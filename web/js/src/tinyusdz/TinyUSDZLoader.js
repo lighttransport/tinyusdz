@@ -1,5 +1,6 @@
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 import { parseUSDZEntries } from '../usdzconvert.js';
+import { markOwnedFloat32Array } from './TypedArrayOwnership.js';
 
 // tinyusdz module are dynamically imported at TinyUSDZLoader
 
@@ -353,6 +354,17 @@ export class NextRenderSceneAdapter {
             });
         };
         const yieldForProgress = onProgress ? nextAnimationFrame : async () => {};
+        const now = () => globalThis.performance?.now?.() ?? Date.now();
+        const createStart = now();
+        const timings = {
+            archiveMs: 0,
+            nativeBeginMs: 0,
+            animationCopyMs: 0,
+            entityCopyMs: 0,
+            meshCopyMs: 0,
+            totalMs: 0
+        };
+        const archiveStart = now();
         const previousNextCrateProgress = native.onNextCrateProgress;
         if (onProgress) {
             native.onNextCrateProgress = (info = {}) => {
@@ -371,6 +383,7 @@ export class NextRenderSceneAdapter {
 
         const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
         let crate = u8;
+        let rootAssetName = '';
         const archiveEntries = new Map();
 
         report('archive', 0, 'Preparing next backend input...');
@@ -383,6 +396,7 @@ export class NextRenderSceneAdapter {
             if (!root) {
                 throw new Error('TinyUSDZ next backend could not find a USD root layer in the USDZ archive.');
             }
+            rootAssetName = this._normTexPathStatic(root.name);
             // Prefer the owned USDC root path for crate-reader progress and
             // lower native memory pressure. USDA-root USDZ files are passed as
             // the full archive so next-core can detect and load them.
@@ -405,6 +419,7 @@ export class NextRenderSceneAdapter {
             report('archive', 20, `Indexed USDZ assets ${entries.length}/${entries.length}`,
                 { archiveCurrent: entries.length, archiveTotal: entries.length });
         }
+        timings.archiveMs = now() - archiveStart;
 
         const renderStream = new native.RenderStream();
         let beginResult;
@@ -425,6 +440,10 @@ export class NextRenderSceneAdapter {
                 typeof renderStream.setFlattenRenderTree === 'function') {
                 renderStream.setFlattenRenderTree(!!options.flattenRenderTree);
             }
+            if (options.meshOnly !== undefined &&
+                typeof renderStream.setMeshOnly === 'function') {
+                renderStream.setMeshOnly(!!options.meshOnly);
+            }
             if (options.computeTangents !== undefined &&
                 typeof renderStream.setComputeTangents === 'function') {
                 renderStream.setComputeTangents(!!options.computeTangents);
@@ -442,7 +461,11 @@ export class NextRenderSceneAdapter {
             // depending on a filesystem inside WASM.
             if (typeof renderStream.provideAsset === 'function') {
                 for (const [assetName, assetBytes] of archiveEntries) {
-                    if (this._isUsdName(assetName)) {
+                    // begin() already receives the root layer. Supplying it
+                    // again retains a second native string copy for value-clip
+                    // lookup (hundreds of MiB for large crates).
+                    if (assetName !== rootAssetName &&
+                        this._isUsdName(assetName)) {
                         renderStream.provideAsset(assetName, assetBytes);
                     }
                 }
@@ -457,6 +480,7 @@ export class NextRenderSceneAdapter {
             }
             report('native-load', 24, 'Starting USD crate reader...');
             await yieldForProgress();
+            const nativeBeginStart = now();
             beginResult = renderStream.begin(crate);
             if (!beginResult || !beginResult.success) {
                 const error = beginResult?.error || renderStream.error?.() || 'RenderStream begin failed';
@@ -464,6 +488,7 @@ export class NextRenderSceneAdapter {
             }
             report('native-load', 48, 'Constructed render stream.');
             await yieldForProgress();
+            timings.nativeBeginMs = now() - nativeBeginStart;
 
             // Surface authored variant sets in the legacy extractVariants()
             // shape: [{primPath, variantSets: [{name, selection, options}]}].
@@ -487,77 +512,88 @@ export class NextRenderSceneAdapter {
             const metadata = typeof renderStream.getSceneMetadata === 'function'
                 ? renderStream.getSceneMetadata()
                 : {};
+            const meshOnly = options.meshOnly === true;
             const meshCount = beginResult.meshCount ?? renderStream.meshCount();
-            const nodeCount = Number.isFinite(beginResult.nodeCount)
+            const nodeCount = meshOnly ? 0 : Number.isFinite(beginResult.nodeCount)
                 ? beginResult.nodeCount
                 : (typeof renderStream.nodeCount === 'function'
                     ? renderStream.nodeCount()
                     : 0);
-            const lightCount = Number.isFinite(beginResult.lightCount)
+            const lightCount = meshOnly ? 0 : Number.isFinite(beginResult.lightCount)
                 ? beginResult.lightCount
                 : (typeof renderStream.lightCount === 'function'
                     ? renderStream.lightCount()
                     : 0);
-            const pointsCount = Number.isFinite(beginResult.pointsCount)
+            const pointsCount = meshOnly ? 0 : Number.isFinite(beginResult.pointsCount)
                 ? beginResult.pointsCount
                 : (typeof beginResult.points === 'number' ? beginResult.points
                     : (typeof renderStream.numPoints === 'function'
                         ? renderStream.numPoints()
                         : 0));
-            const curvesCount = Number.isFinite(beginResult.curvesCount)
+            const curvesCount = meshOnly ? 0 : Number.isFinite(beginResult.curvesCount)
                 ? beginResult.curvesCount
                 : (typeof beginResult.curves === 'number' ? beginResult.curves
                     : (typeof renderStream.numCurves === 'function'
                         ? renderStream.numCurves()
                         : 0));
-            const cameraCount = Number.isFinite(beginResult.cameraCount)
+            const cameraCount = meshOnly ? 0 : Number.isFinite(beginResult.cameraCount)
                 ? beginResult.cameraCount
                 : (typeof renderStream.cameraCount === 'function'
                     ? renderStream.cameraCount()
                     : 0);
-            const animationCount = Number.isFinite(beginResult.animationCount)
+            const animationCount = meshOnly ? 0 : Number.isFinite(beginResult.animationCount)
                 ? beginResult.animationCount
                 : (typeof beginResult.animations === 'number' ? beginResult.animations
                     : (typeof renderStream.numAnimations === 'function'
                         ? renderStream.numAnimations()
                         : 0));
-            const pointInstancerCount = Number.isFinite(beginResult.pointInstancerCount)
+            const pointInstancerCount = meshOnly ? 0 : Number.isFinite(beginResult.pointInstancerCount)
                 ? beginResult.pointInstancerCount
                 : (typeof renderStream.pointInstancerCount === 'function'
                     ? renderStream.pointInstancerCount()
                     : 0);
-            const skeletonCount = Number.isFinite(beginResult.skeletonCount)
+            const skeletonCount = meshOnly ? 0 : Number.isFinite(beginResult.skeletonCount)
                 ? beginResult.skeletonCount
                 : (typeof renderStream.skeletonCount === 'function'
                     ? renderStream.skeletonCount()
                 : 0);
-            const unsupportedRenderableCount = Number.isFinite(
+            const unsupportedRenderableCount = meshOnly ? 0 : Number.isFinite(
                 beginResult.unsupportedRenderableCount)
                 ? beginResult.unsupportedRenderableCount
                 : (typeof renderStream.unsupportedRenderableCount === 'function'
                     ? renderStream.unsupportedRenderableCount()
                     : 0);
-            const pointInstanceDrawCount = Number.isFinite(
+            const pointInstanceDrawCount = meshOnly ? 0 : Number.isFinite(
                 beginResult.pointInstanceDrawCount)
                 ? beginResult.pointInstanceDrawCount
                 : (typeof renderStream.pointInstanceDrawCount === 'function'
                     ? renderStream.pointInstanceDrawCount()
                     : 0);
 
+            const animationCopyStart = now();
             const animations = [];
             for (let i = 0; i < animationCount; i++) {
-                if (typeof renderStream.getAnimation === 'function') {
-                    const item = renderStream.getAnimation(i);
+                const getAnimation = typeof renderStream.getAnimationView === 'function'
+                    ? renderStream.getAnimationView.bind(renderStream)
+                    : (typeof renderStream.getAnimation === 'function'
+                        ? renderStream.getAnimation.bind(renderStream)
+                        : null);
+                if (getAnimation) {
+                    const item = getAnimation(i);
                     if (!item || item.error) {
                         if (item?.error) {
                             console.warn(`NextRenderSceneAdapter: getAnimation(${i}) returned ${item.error}`);
                         }
                         continue;
                     }
-                    animations[i] = item;
+                    animations[i] = typeof renderStream.getAnimationView === 'function'
+                        ? this._copyAnimationView(native, item)
+                        : item;
                 }
             }
+            timings.animationCopyMs = now() - animationCopyStart;
 
+            const entityCopyStart = now();
             const animationInfos = [];
             if (typeof renderStream.getAllAnimationInfos === 'function') {
                 const items = renderStream.getAllAnimationInfos();
@@ -685,6 +721,8 @@ export class NextRenderSceneAdapter {
             const unsupportedRenderables = typeof renderStream.getUnsupportedRenderables === 'function'
                 ? renderStream.getUnsupportedRenderables()
                 : [];
+            timings.entityCopyMs = now() - entityCopyStart;
+            const meshCopyStart = now();
             const meshes = [];
             for (let i = 0; i < meshCount; i++) {
                 if (i === 0 || (i & 31) === 0) {
@@ -705,9 +743,12 @@ export class NextRenderSceneAdapter {
             report('mesh-copy', 95, `Materialized meshes ${meshCount}/${meshCount}`,
                 { meshCurrent: meshCount, meshTotal: meshCount });
             await yieldForProgress();
+            timings.meshCopyMs = now() - meshCopyStart;
             const stats = typeof renderStream.getStats === 'function'
                 ? renderStream.getStats()
                 : {};
+            timings.totalMs = now() - createStart;
+            stats.timings = timings;
             try { renderStream.end(); } catch (_) {}
             try { renderStream.delete(); } catch (_) {}
             return new NextRenderSceneAdapter(native, null, {
@@ -756,6 +797,64 @@ export class NextRenderSceneAdapter {
         }
     }
 
+    static _copyAnimationView(native, animation) {
+        const copyFloat = (value, label) => {
+            if (value && Number.isFinite(value.ptr) && Number.isFinite(value.length)) {
+                return markOwnedFloat32Array(
+                    new Float32Array(nextHeapView(native, value)), label);
+            }
+            return markOwnedFloat32Array(new Float32Array(value || []), label);
+        };
+        const channels = Array.isArray(animation.channels) ? animation.channels : [];
+        const samplers = Array.isArray(animation.samplers)
+            ? animation.samplers.map((sampler, index) => {
+                const copied = {
+                    ...sampler,
+                    index: Number.isFinite(sampler?.index) ? sampler.index : index,
+                    times: copyFloat(sampler?.times, `animation.samplers[${index}].times`),
+                    values: copyFloat(sampler?.values, `animation.samplers[${index}].values`)
+                };
+                if (sampler?.arrayValues) {
+                    copied.arrayValues = copyFloat(
+                        sampler.arrayValues,
+                        `animation.samplers[${index}].arrayValues`);
+                }
+                return copied;
+            })
+            : [];
+        const tracks = channels.map((channel, index) => {
+            const sampler = samplers[channel?.sampler];
+            let type = 'number';
+            if (channel?.path === 'Translation' || channel?.path === 'Scale') {
+                type = channel.isSkeletal ? 'vector3Array' : 'vector3';
+            } else if (channel?.path === 'Rotation') {
+                type = channel.isSkeletal ? 'quaternionArray' : 'quaternion';
+            } else if (channel?.path === 'Weights') {
+                type = channel.isSkeletal ? 'weightArray' : 'number';
+            }
+            const track = {
+                sampler: channel?.sampler ?? index,
+                target_node: channel?.target_node ?? -1,
+                path: channel?.path || '',
+                name: channel?.path || '',
+                interpolation: sampler?.interpolation || 'LINEAR',
+                times: sampler?.times,
+                values: sampler?.values,
+                isSkeletal: !!channel?.isSkeletal,
+                propertyName: channel?.propertyName || '',
+                targetSkeletonId: channel?.skeleton_id ?? -1,
+                targetSkeletonPath: channel?.targetSkeletonPath || '',
+                jointRemap: channel?.jointRemap || [],
+                valueStride: channel?.valueStride ?? sampler?.valueStride ?? 0,
+                elementCount: channel?.elementCount ?? sampler?.elementCount ?? 0,
+                type
+            };
+            if (sampler?.arrayValues) track.arrayValues = sampler.arrayValues;
+            return track;
+        });
+        return { ...animation, channels, samplers, tracks };
+    }
+
     static _copyMesh(native, mesh, index) {
         const copy = (desc, Type) => desc && desc.length ? new Type(nextHeapView(native, desc)) : null;
         const normalizeMaterial = (source) => {
@@ -766,7 +865,8 @@ export class NextRenderSceneAdapter {
                 roughness: material.roughnessTexture || '',
                 metallic: material.metallicTexture || '',
                 occlusion: material.occlusionTexture || '',
-                emissive: material.emissiveTexture || ''
+                emissive: material.emissiveTexture || '',
+                opacity: material.opacityTexture || ''
             };
             const textureMetadata = material.textureMetadata || {};
             return {
@@ -824,6 +924,7 @@ export class NextRenderSceneAdapter {
             index,
             primName: mesh.primName || `mesh_${index}`,
             primPath: mesh.primPath || '',
+            doubleSided: !!mesh.doubleSided,
             points: copy(mesh.points, Float32Array),
             indices: copy(mesh.indices, Uint32Array),
             normals: copy(mesh.normals, Float32Array),

@@ -168,6 +168,11 @@ struct Primvar {
   std::string name;
   TypeId type_id;
   std::string interpolation;  // "constant", "uniform", "vertex", "faceVarying"
+  // True when the interpolation token was authored (property metadata or the
+  // legacy `<name>:interpolation` attribute). When false, `interpolation` is
+  // the USD spec default "constant"; consumers with topology knowledge may
+  // instead infer a mode from the element count.
+  bool interpolation_authored = false;
   const Value* value;
   std::vector<int32_t> indices;  // Optional indices for indexed primvars
 };

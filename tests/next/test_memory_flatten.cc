@@ -275,6 +275,12 @@ static void test_suffix_fallback_resolution() {
   CHECK(hit.original_path == "F:/projects/other-machine/textures/wood.png",
         "original path preserved");
 
+  ResolvedAsset strict_miss = resolver.Resolve(
+      "F:/projects/other-machine/textures/wood.png", "",
+      /*allow_suffix_fallback=*/false);
+  CHECK(!strict_miss.exists,
+        "per-call strict resolution disables suffix fallback");
+
   ResolverConfig cfg = resolver.GetConfig();
   cfg.enable_suffix_fallback = false;
   resolver.SetConfig(cfg);
@@ -283,6 +289,113 @@ static void test_suffix_fallback_resolution() {
   CHECK(!miss.exists, "fallback disabled -> foreign path stays unresolved");
 
   fs::remove_all(root);
+}
+
+static void test_recursive_resolution_and_identifiers() {
+  std::cout << "[AssetResolver recursive search + identifiers]\n";
+
+  namespace fs = std::filesystem;
+  const fs::path root = fs::path("recursive-resolver-assets");
+  fs::create_directories(root / "a" / "nested");
+  {
+    std::ofstream f((root / "a" / "nested" / "material.usda").string());
+    f << "#usda 1.0\n";
+  }
+
+  ResolverConfig cfg;
+  cfg.working_directory = root.string();
+  cfg.search_paths = {root.string()};
+  cfg.search_recursively = true;
+  cfg.enable_suffix_fallback = false;
+  AssetResolver resolver(cfg);
+  const ResolvedAsset hit = resolver.Resolve("material.usda");
+  CHECK(hit.exists, "recursive search finds a nested asset");
+  CHECK(hit.resolved_path.find("a/nested/material.usda") != std::string::npos,
+        "recursive search returns the nested path");
+
+  cfg.search_recursively = false;
+  resolver.SetConfig(cfg);
+  CHECK(!resolver.Resolve("material.usda").exists,
+        "recursive search obeys its configuration switch");
+
+  const std::string id_a = resolver.CreateIdentifier(
+      "future.usda", (root / "layerA" / "root.usda").string());
+  const std::string id_b = resolver.CreateIdentifier(
+      "future.usda", (root / "layerB" / "root.usda").string());
+  CHECK(id_a != id_b,
+        "unresolved relative identifiers retain their anchor context");
+  CHECK(!AssetResolver::IsPackagePath("pkg.usdz[item.usda]trailing"),
+        "malformed package identifiers are rejected");
+
+  fs::remove_all(root);
+}
+
+static void test_scheme_and_anonymous_assets() {
+  std::cout << "[AssetResolver schemes + anonymous assets]\n";
+
+  AssetResolver resolver;
+  const std::string dep(kBaseUSDA);
+  resolver.RegisterScheme(
+      "StUdIo",
+      [](const std::string& identifier, const std::string&) {
+        return identifier;
+      },
+      [&dep](const std::string& identifier, std::vector<uint8_t>* out,
+             std::string*) {
+        if (identifier != "studio:dep.usda") return false;
+        out->assign(dep.begin(), dep.end());
+        return true;
+      });
+  CHECK(resolver.HasScheme("studio"),
+        "scheme registration is ASCII case-insensitive");
+  const ResolvedAsset scheme_hit = resolver.Resolve("studio:dep.usda");
+  CHECK(scheme_hit.exists && scheme_hit.resolved_path == "studio:dep.usda",
+        "registered scheme resolves without filesystem normalization");
+  CHECK(resolver.CreateIdentifier("missing:asset", "/tmp/root.usda") ==
+            "missing:asset",
+        "unregistered scheme identifier does not become a filesystem path");
+
+  std::vector<uint8_t> bytes;
+  std::string err;
+  CHECK(resolver.ReadAsset(scheme_hit.resolved_path, &bytes, &err) &&
+            std::string(bytes.begin(), bytes.end()) == dep,
+        "registered scheme reader returns bytes");
+
+  const std::string anonymous = resolver.RegisterMemoryAsset(
+      "", std::vector<uint8_t>(dep.begin(), dep.end()));
+  CHECK(AssetResolver::GetIdentifierScheme(anonymous) == "usd-anon" &&
+            resolver.Resolve(anonymous).exists,
+        "empty memory identifier creates a resolvable usd-anon asset");
+  bytes.clear();
+  CHECK(resolver.ReadAsset(anonymous, &bytes, &err) &&
+            std::string(bytes.begin(), bytes.end()) == dep,
+        "anonymous asset bytes are readable");
+  AssetResolver copied_resolver = resolver;
+  AssetResolver moved_resolver = std::move(copied_resolver);
+  bytes.clear();
+  CHECK(moved_resolver.ReadAsset(anonymous, &bytes, &err) &&
+            std::string(bytes.begin(), bytes.end()) == dep &&
+            moved_resolver.HasScheme("studio"),
+        "resolver copy/move preserves registered schemes and memory assets");
+
+  std::string root =
+      "#usda 1.0\ndef Xform \"Root\" (references = @" + anonymous +
+      "@</Base>) {}\n";
+  pipeline::FlattenOptions opts;
+  opts.resolver = &resolver;
+  opts.layer_loader = pipeline::MakeResolverLayerLoader(&resolver);
+  opts.fail_on_composition_error = true;
+  std::vector<uint8_t> flattened;
+  err.clear();
+  CHECK(pipeline::FlattenUSDMemoryToUSDCOwned(
+            "root.usda", std::move(root), flattened, opts, nullptr, &err),
+        ("anonymous referenced layer composes: " + err).c_str());
+
+  CHECK(resolver.UnregisterMemoryAsset(anonymous) &&
+            !resolver.Resolve(anonymous).exists,
+        "unregistered anonymous asset no longer resolves");
+  CHECK(resolver.UnregisterScheme("STUDIO") && !resolver.HasScheme("studio"),
+        "scheme handler can be removed");
 }
 
 
@@ -369,8 +482,8 @@ def Xform "Scene"
       if (mat) {
         CHECK(mat->type_name() == "Material", "composed prim is a Material");
         const Value* version = mat->property_value("config:mtlx:version");
-        CHECK(version && version->as_token() &&
-                  *version->as_token() == "1.38",
+        CHECK(version && version->as_string() &&
+                  *version->as_string() == "1.38",
               "config:mtlx:version composed from the document");
       }
       const PrimSpec* shader = l->prim_at_path("/Scene/WoodShader");
@@ -393,6 +506,8 @@ def Xform "Scene"
 int main() {
   test_load_layer_from_memory_dispatch();
   test_suffix_fallback_resolution();
+  test_recursive_resolution_and_identifiers();
+  test_scheme_and_anonymous_assets();
   test_mtlx_reference_composition();
   test_resolver_layer_loader_usda_dep();
   test_memory_flatten_crate_root();

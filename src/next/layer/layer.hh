@@ -7,6 +7,7 @@
 #pragma once
 
 #include "prim-spec.hh"
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <memory>
@@ -18,6 +19,7 @@ namespace next {
 /// Layer metadata
 struct LayerMeta {
   std::string defaultPrim;
+  bool defaultPrim_set = false;
   std::string upAxis = "Y";
   double metersPerUnit = 0.01;
   double timeCodesPerSecond = 24.0;
@@ -41,20 +43,115 @@ struct LayerMeta {
   bool kilogramsPerUnit_set = false;
   std::string colorConfiguration;   // asset path
   std::string colorManagementSystem;  // token
+  bool colorConfiguration_set = false;
+  bool colorManagementSystem_set = false;
 
   std::string doc;
   std::string comment;
+  std::string owner;
+  bool doc_set = false;
+  bool comment_set = false;
+  bool owner_set = false;
+
+  // Authored pseudo-root namespace order (`reorder rootPrims = [...]`).
+  std::vector<std::string> rootPrimOrder;
+  bool rootPrimOrder_set = false;
 
   // Dictionary-valued stage metadata (Dictionary Value; empty when unauthored).
   Value customLayerData;
   Value expressionVariables;
+  bool customLayerData_set = false;
+  bool expressionVariables_set = false;
+
+  // Layer-level relocates (SdfRelocates, USD 24.11+): composed source path
+  // -> new path. Applied by pcp during stage build (cross-arc prims only).
+  std::vector<std::pair<std::string, std::string>> relocates;
+  // Authored bit: distinguishes explicit-empty `relocates = {}` from
+  // unauthored (matters for layer diffing and round-trip fidelity).
+  bool relocates_set = false;
 
   // Sublayer paths for composition
   std::vector<std::string> subLayers;
+  // Authored bit for subLayers (explicit-empty `subLayers = []` vs absent).
+  bool subLayers_set = false;
   // Per-sublayer layer offsets (offset, scale), parallel to subLayers.
   // May be shorter than subLayers (older files / API construction): missing
   // entries are identity (0, 1).
   std::vector<std::pair<double, double>> subLayerOffsets;
+
+  // Unknown (unmodeled) stage metadata preserved as raw source text in
+  // authored order; the USDA writer re-emits it verbatim.
+  std::vector<std::pair<std::string, std::string>> unknownMeta;
+  // Decodable unregistered USDC fields retained by name and typed value.
+  std::vector<TypedExtensionField> unknownFields;
+
+  /// Fill stage-metadata fields this layer leaves unauthored from a WEAKER
+  /// layer (a sublayer): stage metadata resolves through the whole root
+  /// layer stack in pxr (upAxis/metersPerUnit/timeCodesPerSecond/...), so a
+  /// flatten engine must gap-fill before dropping the subLayers list. Call
+  /// with sublayers strongest-first.
+  void FillAbsentStageMetaFrom(const LayerMeta& weaker) {
+    if (!rootPrimOrder_set &&
+        (weaker.rootPrimOrder_set || !weaker.rootPrimOrder.empty())) {
+      rootPrimOrder = weaker.rootPrimOrder;
+      rootPrimOrder_set = true;
+    }
+    if (!defaultPrim_set &&
+        (weaker.defaultPrim_set || !weaker.defaultPrim.empty())) {
+      defaultPrim = weaker.defaultPrim;
+      defaultPrim_set = true;
+    }
+    if (!doc_set && weaker.doc_set) {
+      doc = weaker.doc;
+      doc_set = true;
+    }
+    if (!owner_set && weaker.owner_set) {
+      owner = weaker.owner;
+      owner_set = true;
+    }
+    if (!comment_set && weaker.comment_set) {
+      comment = weaker.comment;
+      comment_set = true;
+    }
+    if (!colorConfiguration_set && weaker.colorConfiguration_set) {
+      colorConfiguration = weaker.colorConfiguration;
+      colorConfiguration_set = true;
+    }
+    if (!colorManagementSystem_set && weaker.colorManagementSystem_set) {
+      colorManagementSystem = weaker.colorManagementSystem;
+      colorManagementSystem_set = true;
+    }
+    if (!upAxis_set && weaker.upAxis_set) {
+      upAxis = weaker.upAxis;
+      upAxis_set = true;
+    }
+    if (!metersPerUnit_set && weaker.metersPerUnit_set) {
+      metersPerUnit = weaker.metersPerUnit;
+      metersPerUnit_set = true;
+    }
+    if (!timeCodesPerSecond_set && weaker.timeCodesPerSecond_set) {
+      timeCodesPerSecond = weaker.timeCodesPerSecond;
+      timeCodesPerSecond_set = true;
+    }
+    if (!framesPerSecond_set && weaker.framesPerSecond_set) {
+      framesPerSecond = weaker.framesPerSecond;
+      framesPerSecond_set = true;
+    }
+    if (!kilogramsPerUnit_set && weaker.kilogramsPerUnit_set) {
+      kilogramsPerUnit = weaker.kilogramsPerUnit;
+      kilogramsPerUnit_set = true;
+    }
+    if (!startTimeCode_set && weaker.startTimeCode_set) {
+      startTimeCode = weaker.startTimeCode;
+      startTimeCode_set = true;
+    }
+    if (!endTimeCode_set && weaker.endTimeCode_set) {
+      endTimeCode = weaker.endTimeCode;
+      endTimeCode_set = true;
+    }
+    MergeWeakerRawFields(&unknownMeta, weaker.unknownMeta);
+    MergeWeakerExtensionFields(&unknownFields, weaker.unknownFields);
+  }
 };
 
 /// Layer - owns all PrimSpecs for a USD file
@@ -104,6 +201,9 @@ public:
   /// compressed-paths encoding requires this; composition appends grafted
   /// subtrees out of order. Clears the path index (rebuild after).
   void sort_prims_by_path();
+
+  /// Apply authored root/nameChildren ordering to hierarchy index vectors.
+  void apply_namespace_ordering();
 
   /// Clone the layer. PrimSpecs are deep-cloned, while Value array payloads keep
   /// their copy-on-write/lazy shared backing, so this is cheap for crate-backed

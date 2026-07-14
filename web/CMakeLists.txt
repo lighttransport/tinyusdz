@@ -13,12 +13,21 @@ option(TINYUSDZ_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported si
 option(TINYUSDZ_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
 option(TINYUSDZ_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" ON)
 option(TINYUSDZ_WASM_NEXT_ONLY "Build next-core + tydra-next only WASM module as tinyusdz_next" OFF)
+option(TINYUSDZ_WASM_LEGACY_ONLY "Build the tinyusdz WASM module WITHOUT the next core (legacy loader only; drops nextFlatten*/RenderStream APIs)" OFF)
 
 if (TINYUSDZ_WASM_NEXT_ONLY)
   if (TINYUSDZ_WASM64)
     set(BUILD_TARGET "tinyusdz_next_64")
   else()
     set(BUILD_TARGET "tinyusdz_next")
+  endif()
+elseif (TINYUSDZ_WASM_LEGACY_ONLY)
+  # Distinct module name so the stripped variant never clobbers the default
+  # legacy+next tinyusdz.js/wasm output.
+  if (TINYUSDZ_WASM64)
+    set(BUILD_TARGET "tinyusdz_legacy_64")
+  else()
+    set(BUILD_TARGET "tinyusdz_legacy")
   endif()
 elseif (TINYUSDZ_WASM64)
   set(BUILD_TARGET "tinyusdz_64")
@@ -27,6 +36,10 @@ else()
 endif()
 
 project(${BUILD_TARGET} CXX C)
+
+include(CTest)
+option(TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS
+       "Register host-browser WASM regression tests with CTest" ON)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "TinyUSDZ WASM: CMAKE_BUILD_TYPE not set; defaulting to MinSizeRel.")
@@ -68,6 +81,34 @@ endif()
 
 if (TINYUSDZ_WASM64)
   list(APPEND TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS "-sMEMORY64=1")
+endif()
+
+# The OpenPBR visual parity test requires the combined module because it renders
+# every fixture through both the legacy and next backends. It is a host-side
+# Node/Puppeteer test even though this project is configured through emcmake.
+if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
+    NOT TINYUSDZ_WASM_NEXT_ONLY AND NOT TINYUSDZ_WASM_LEGACY_ONLY)
+  find_program(TINYUSDZ_NODE_EXECUTABLE NAMES node nodejs)
+  set(TINYUSDZ_OPENPBR_VISUAL_DIFF
+      "${PROJECT_SOURCE_DIR}/js/cli/openpbr-visual-diff.mjs")
+  if (TINYUSDZ_NODE_EXECUTABLE AND EXISTS "${TINYUSDZ_OPENPBR_VISUAL_DIFF}")
+    add_test(
+      NAME wasm-regression-openpbr-visual-diff
+      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}" "${TINYUSDZ_OPENPBR_VISUAL_DIFF}"
+              --sw --dump-images --dump-composite
+              --out "${CMAKE_CURRENT_BINARY_DIR}/test-artifacts/openpbr-visual-diff")
+    set_tests_properties(
+      wasm-regression-openpbr-visual-diff
+      PROPERTIES
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/js"
+        TIMEOUT 300
+        RUN_SERIAL TRUE
+        LABELS "wasm;browser;regression")
+  else()
+    message(STATUS
+      "TinyUSDZ WASM: skipping OpenPBR browser regression registration "
+      "(Node or visual-diff CLI not found)")
+  endif()
 endif()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -165,6 +206,7 @@ if (TINYUSDZ_WASM_NEXT_ONLY)
      -sMALLOC=emmalloc \
      -sSTACK_SIZE=512000 \
      -sALLOW_MEMORY_GROWTH=1 \
+     -sMEMORY_GROWTH_GEOMETRIC_STEP=0.1 \
      -sFILESYSTEM=0 \
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
@@ -179,6 +221,7 @@ if (TINYUSDZ_WASM_NEXT_ONLY)
      -sMALLOC=emmalloc \
      -sSTACK_SIZE=512000 \
      -sALLOW_MEMORY_GROWTH=1 \
+     -sMEMORY_GROWTH_GEOMETRIC_STEP=0.1 \
      -sFILESYSTEM=0 \
      -sSAFE_HEAP=0 \
      -sWASM_BIGINT=1 \
@@ -217,7 +260,13 @@ list(
   NEXT_SOURCES
   ${TINYUSDZ_NEXT_DIR}/types/type-info.cc
   ${TINYUSDZ_NEXT_DIR}/types/value.cc
+  ${TINYUSDZ_NEXT_DIR}/types/spline.cc
   ${TINYUSDZ_NEXT_DIR}/types/interpolation.cc
+  ${TINYUSDZ_NEXT_DIR}/writer/dtoa.cc
+  # value-printer defines next::PrintValue, referenced by the crate
+  # reader/writer (spline customData round-trip) — without it wasm-ld fails
+  # with an undefined-symbol error on a clean build.
+  ${TINYUSDZ_NEXT_DIR}/writer/value-printer.cc
   ${TINYUSDZ_NEXT_DIR}/prim/path.cc
   ${TINYUSDZ_NEXT_DIR}/prim/attribute.cc
   ${TINYUSDZ_NEXT_DIR}/prim/prim.cc
@@ -259,14 +308,22 @@ list(
   ${TINYUSDZ_NEXT_DIR}/schema/geom-xform.cc
   ${TINYUSDZ_NEXT_DIR}/schema/usd-shade.cc
   ${TINYUSDZ_NEXT_DIR}/eval/attribute-eval.cc
+  ${TINYUSDZ_NEXT_DIR}/eval/value-clip.cc
+  ${TINYUSDZ_NEXT_DIR}/schema/schema-registry.cc
 )
 
 list(
   APPEND
   SOURCES
   binding.cc
-  ${NEXT_SOURCES}
 )
+# Default module = legacy + next (nextFlatten* lazy pipeline + RenderStream).
+# TINYUSDZ_WASM_LEGACY_ONLY=ON strips the next core: NEXT_SOURCES are not
+# compiled and binding.cc's next-dependent APIs compile out (guarded by
+# TINYUSDZ_WASM_WITH_NEXT).
+if (NOT TINYUSDZ_WASM_LEGACY_ONLY)
+  list(APPEND SOURCES ${NEXT_SOURCES})
+endif()
 
 
 add_executable(${BUILD_TARGET} ${SOURCES})
@@ -281,6 +338,9 @@ target_compile_definitions(${BUILD_TARGET}
                                    TINYUSDZ_CXX_EXCEPTIONS=0
                                    TINYUSDZ_CXX_RTTI=0
                                    EMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0)
+if (NOT TINYUSDZ_WASM_LEGACY_ONLY)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_WITH_NEXT=1)
+endif()
 if (TINYUSDZ_WASM64)
   target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_MEMORY64=1)
 endif()

@@ -33,6 +33,15 @@
         if (seen_root.insert(ps->name()).second) root_names.push_back(ps->name());
       }
     }
+    // A relocate may move a prim to a NEW ROOT PRIM. The root layer need not
+    // author a spec for the new name, so take the names from the root layer
+    // stack's namespace edits as well.
+    if (const std::vector<StackRelocates::Arrival> *arrivals =
+            layer_stacks[0].relocates.ArrivalsAt("/")) {
+      for (const StackRelocates::Arrival &a : *arrivals) {
+        if (seen_root.insert(a.name).second) root_names.push_back(a.name);
+      }
+    }
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
     // Structure pass (serial): walk every root, fixing each prim's slot/parent/
     // child-order/instancing and recording its (slot, sources) for opinion fill.
@@ -70,10 +79,25 @@
 
     out->finalize();
     out->meta() = root->meta();
+    // Stage metadata resolves through the whole root layer stack: fields the
+    // root leaves unauthored fill from the strongest sublayer that authors
+    // them (upAxis/metersPerUnit/... — pxr's UsdStage semantics).
+    for (size_t li = 1; li < layer_stacks[0].layers.size(); ++li) {
+      if (layer_stacks[0].layers[li]) {
+        out->meta().FillAbsentStageMetaFrom(layer_stacks[0].layers[li]->meta());
+      }
+    }
     // Sublayer opinions are baked into the flattened output; keeping the
     // subLayers list would re-apply (now stale) layers when the exported
-    // layer is read back.
+    // layer is read back. Relocates are likewise already APPLIED by the
+    // stage-build walk — keeping them would re-relocate on re-read.
     out->meta().subLayers.clear();
+    out->meta().relocates.clear();
+    for (const std::string &path : deferred_payload_prims) {
+      if (PrimSpec *prim = out->prim_at_path_mutable(path)) {
+        prim->meta().loaded = false;
+      }
+    }
     stage->SetRootLayer(std::move(*out));
     return true;
   }
@@ -279,15 +303,20 @@
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // --- parallel-build merge helpers (main thread only) --------------------
 
-  // Adopt a worker's prebuilt LayerStack into the main table (dedup by resolved
-  // identifier). Returns the main-table index. The LayerStack is copied, which
-  // just bumps the shared_ptr<Layer> refcounts -- the layers stay shared.
+  // Adopt a worker's prebuilt LayerStack into the main table (dedup by the
+  // stack's full identity key — (identifier, expression variables), see
+  // InternLayerStack; the bare identifier is the fallback for stacks built
+  // without a key). Returns the main-table index. The LayerStack is copied,
+  // which just bumps the shared_ptr<Layer> refcounts -- the layers stay
+  // shared.
   uint32_t AdoptStack(const LayerStack &ws) {
-    auto it = stack_by_id.find(ws.identifier);
+    const std::string &key =
+        ws.cache_key.empty() ? ws.identifier : ws.cache_key;
+    auto it = stack_by_id.find(key);
     if (it != stack_by_id.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(layer_stacks.size());
     layer_stacks.push_back(ws);
-    stack_by_id.emplace(ws.identifier, idx);
+    stack_by_id.emplace(key, idx);
     return idx;
   }
 
@@ -506,6 +535,8 @@
             LayerLoadOptions load_opts;
             load_opts.max_memory = options.max_layer_memory;
             load_opts.usda_parse_options = options.usda_parse_options;
+            load_opts.strict_aousd_conformance =
+                options.strict_aousd_conformance;
             reg_->GetOrLoad(*resolver, assets[i].first, assets[i].second, &w,
                             &e, load_opts);
           }

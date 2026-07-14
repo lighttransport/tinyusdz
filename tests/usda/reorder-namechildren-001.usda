@@ -1,0 +1,8 @@
+#usda 1.0
+def Xform "W"
+{
+    reorder nameChildren = ["C", "A"]
+    def Sphere "A" {}
+    def Cube "B" {}
+    def Cone "C" {}
+}

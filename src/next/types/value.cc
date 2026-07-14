@@ -5,6 +5,7 @@
 
 #include "value.hh"
 #include "type-info.hh"
+#include "interpolation.hh"
 #include "../crate/lazy-array.hh"
 #include "../crate/crate-data-source.hh"
 
@@ -91,7 +92,8 @@ inline void DetachDict(char* s) {
 
 // Check if type uses string storage
 bool UsesStringStorage(TypeId id) {
-  return id == TypeId::String || id == TypeId::Token || id == TypeId::AssetPath;
+  return id == TypeId::String || id == TypeId::Token ||
+         id == TypeId::AssetPath || id == TypeId::PathExpression;
 }
 
 // Array element types stored as a flat std::vector<float> (FloatArrayStorage):
@@ -147,12 +149,15 @@ bool IsIntBackedArray(TypeId id) {
 }
 
 // UInt-vector element types share the flat uint32 array storage with UInt.
+// uchar[] is widened into the same storage (bit-exact; the crate writer
+// narrows back to tightly-packed uint8).
 bool IsUIntBackedArray(TypeId id) {
   switch (id) {
     case TypeId::UInt:
     case TypeId::UInt2:
     case TypeId::UInt3:
     case TypeId::UInt4:
+    case TypeId::UChar:
       return true;
     default:
       return false;
@@ -173,6 +178,7 @@ bool IsDoubleBackedArray(TypeId id) {
     case TypeId::Color4d:
     case TypeId::Texcoord2d:
     case TypeId::Texcoord3d:
+    case TypeId::Frame4d:
     case TypeId::Quatd:
     case TypeId::Matrix2d:
     case TypeId::Matrix3d:
@@ -394,6 +400,14 @@ Value Value::MakeMatrix4d(const double* data) {
   Value v;
   v.type_id_ = TypeId::Matrix4d;
   std::memcpy(v.storage_, data, 16 * sizeof(double));
+  return v;
+}
+
+Value Value::MakeStringLike(const std::string& s, TypeId type) {
+  Value v;
+  if (!UsesStringStorage(type)) return v;
+  v.type_id_ = type;
+  new (v.storage_) StringStorage{s};
   return v;
 }
 
@@ -734,7 +748,38 @@ void Value::retag_role(TypeId new_type) {
     TypeId c = GetComponentType(t);
     return c == TypeId::Invalid ? t : c;
   };
-  if (comp(type_id_) != comp(new_type)) return;
+  // Signed<->unsigned 32-bit int lanes: the crate encodes uint2/3/4 as the
+  // Vec*i twin, so the reader must be able to restore uintN from the
+  // declared type name. Without this, `uint3 v = (...,4294967295)` read
+  // back Int3-typed and printed a negative lane that fails re-parse. Array
+  // storage is a distinct template instantiation per element type, so the
+  // buffer is REBUILT (bit-exact int32<->uint32) rather than reinterpreted.
+  const TypeId oldc = comp(type_id_);
+  const TypeId newc = comp(new_type);
+  if (oldc != newc) {
+    const bool int_uint_pair =
+        (oldc == TypeId::Int && newc == TypeId::UInt) ||
+        (oldc == TypeId::UInt && newc == TypeId::Int);
+    if (!int_uint_pair) return;
+    if (GetComponentCount(type_id_) != GetComponentCount(new_type)) return;
+    if (is_array_) {
+      ensure_materialized();
+      ArrayHandle& h = *ArraySlot(storage_);
+      if (oldc == TypeId::Int) {
+        auto* st = static_cast<IntArrayStorage*>(h.get());
+        std::vector<uint32_t> u(st->data.begin(), st->data.end());
+        h = std::make_shared<UIntArrayStorage>(std::move(u));
+      } else {
+        auto* st = static_cast<UIntArrayStorage*>(h.get());
+        std::vector<int32_t> i(st->data.begin(), st->data.end());
+        h = std::make_shared<IntArrayStorage>(std::move(i));
+      }
+    } else if (GetTypeSize(type_id_) != GetTypeSize(new_type)) {
+      return;  // SBO scalar/vector: same byte width required (it is, 4/lane)
+    }
+    type_id_ = new_type;
+    return;
+  }
   if (GetComponentCount(type_id_) != GetComponentCount(new_type)) return;
   if (!is_array_ && GetTypeSize(type_id_) != GetTypeSize(new_type)) return;
   type_id_ = new_type;
@@ -970,12 +1015,33 @@ DEFINE_SCALAR_ACCESSOR(uint, UInt, uint32_t)
 DEFINE_SCALAR_ACCESSOR(int64, Int64, int64_t)
 DEFINE_SCALAR_ACCESSOR(uint64, UInt64, uint64_t)
 DEFINE_SCALAR_ACCESSOR(float, Float, float)
-DEFINE_SCALAR_ACCESSOR(double, Double, double)
+DEFINE_SCALAR_ACCESSOR(uchar, UChar, uint8_t)
 
 #undef DEFINE_SCALAR_ACCESSOR
 
+// double additionally accepts TimeCode: same 8-byte storage, and scalar
+// timecode values now keep their type identity through the crate reader.
+const double* Value::as_double() const {
+  if ((type_id_ != TypeId::Double && type_id_ != TypeId::TimeCode) ||
+      is_array_) {
+    return nullptr;
+  }
+  return reinterpret_cast<const double*>(storage_);
+}
+double* Value::as_double() {
+  if ((type_id_ != TypeId::Double && type_id_ != TypeId::TimeCode) ||
+      is_array_) {
+    return nullptr;
+  }
+  return reinterpret_cast<double*>(storage_);
+}
+
 const std::string* Value::as_string() const {
-  if (type_id_ != TypeId::String || is_array_) return nullptr;
+  // PathExpression shares the string storage and reads as a string.
+  if ((type_id_ != TypeId::String && type_id_ != TypeId::PathExpression) ||
+      is_array_) {
+    return nullptr;
+  }
   return &reinterpret_cast<const StringStorage*>(storage_)->value;
 }
 
@@ -1200,7 +1266,11 @@ const double* Value::as_matrix3d() const {
 }
 
 const double* Value::as_matrix4d() const {
-  if (type_id_ != TypeId::Matrix4d || is_array_) return nullptr;
+  // frame4d is a matrix4d role type (same double[16] storage).
+  if ((type_id_ != TypeId::Matrix4d && type_id_ != TypeId::Frame4d) ||
+      is_array_) {
+    return nullptr;
+  }
   return reinterpret_cast<const double*>(storage_);
 }
 
@@ -1555,6 +1625,16 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
 
 Value LerpValue(const Value& a, const Value& b, double t) {
   if (a.type_id() != b.type_id()) return a;  // held on type mismatch
+
+  // Arrays and quaternions: delegate to the full interpolator (per-lane
+  // lerp for float/double/half-backed arrays, per-element slerp for quat
+  // arrays and scalars). This function used to HOLD all of these, so array
+  // timeSamples queried between keys snapped to the earlier sample.
+  if (a.is_array() || a.type_id() == TypeId::Quatf ||
+      a.type_id() == TypeId::Quatd || a.type_id() == TypeId::TimeCode) {
+    Value r = TimeInterpolator::InterpolateValues(a, b, t);
+    return (r.type_id() == TypeId::Invalid) ? a : r;
+  }
   const double s = 1.0 - t;
   auto lf = [&](float x, float y) { return static_cast<float>(s * x + t * y); };
   auto ld = [&](double x, double y) { return s * x + t * y; };

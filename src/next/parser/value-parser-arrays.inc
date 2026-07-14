@@ -178,10 +178,21 @@ struct SliceParser {
       *out = false;
       return true;
     }
-    double v = 0.0;
-    if (!parse_double(&v)) return false;
-    *out = (v != 0.0);
-    return true;
+    // pxr accepts ONLY the integer literals 0 and 1 for bool (no numeric
+    // truthiness). Match the scalar ParseBool: a bare '0'/'1' digit not
+    // followed by more number characters.
+    if (p < end && (*p == '0' || *p == '1')) {
+      const char* q = p + 1;
+      const bool more_number =
+          q < end && ((*q >= '0' && *q <= '9') || *q == '.' || *q == 'e' ||
+                      *q == 'E');
+      if (!more_number) {
+        *out = (*p == '1');
+        p = q;
+        return true;
+      }
+    }
+    return false;
   }
 
   bool parse_string(std::string* out) {
@@ -319,7 +330,11 @@ bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) 
     if (!parse_one(sp, &v)) return false;
     out->push_back(v);
     if (out->size() > kMaxArrayScalars) return false;
-    if (sp->maybe_consume(',')) continue;
+    if (sp->maybe_consume(',')) {
+      // Trailing comma before ']' is valid USDA ([0, 1, 2,]).
+      if (sp->at_array_end()) return sp->finish_array();
+      continue;
+    }
     return sp->finish_array();
   }
 }
@@ -340,7 +355,10 @@ bool ParseTupleArray(SliceParser* sp, std::vector<ScalarT>* out,
     }
     if (!sp->consume(')')) return false;
     if (out->size() > kMaxArrayScalars) return false;
-    if (sp->maybe_consume(',')) continue;
+    if (sp->maybe_consume(',')) {
+      if (sp->at_array_end()) return sp->finish_array();  // trailing comma
+      continue;
+    }
     return sp->finish_array();
   }
 }
@@ -366,7 +384,10 @@ bool ParseMatrixArray(SliceParser* sp, std::vector<ScalarT>* out,
     }
     if (!sp->consume(')')) return false;
     if (out->size() > kMaxArrayScalars) return false;
-    if (sp->maybe_consume(',')) continue;
+    if (sp->maybe_consume(',')) {
+      if (sp->at_array_end()) return sp->finish_array();  // trailing comma
+      continue;
+    }
     return sp->finish_array();
   }
 }
@@ -400,6 +421,7 @@ constexpr size_t kParallelChunkMinBytes = size_t(1) << 20;  // 1 MiB
 template <class T, uint32_t N, class ParseOne>
 bool ParseChunkFlat(const char* b, const char* e, bool is_last,
                     std::vector<T>* local, ParseOne parse_one) {
+  (void)is_last;  // trailing comma before ']' is valid on any chunk
   SliceParser sp{b, e};
   // Inline whitespace skip. `simple` arrays (the only ones reaching here) contain
   // no `#` comments, so this matches SliceParser::skip_ws on this input. Hoisting
@@ -446,9 +468,9 @@ bool ParseChunkFlat(const char* b, const char* e, bool is_last,
     ++sp.p;                            // consume the separator comma
     skipws();
     if (sp.p >= end) {
-      // Trailing separator: the normal inter-chunk boundary, but on the FINAL
-      // chunk it is a trailing comma before ']' which the serial parser rejects.
-      return is_last ? false : true;
+      // Trailing separator: the normal inter-chunk boundary; on the FINAL
+      // chunk it is a trailing comma before ']', which is valid USDA.
+      return true;
     }
   }
 }
@@ -923,6 +945,22 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
     }
     return ParseResult::Ok(Value::MakeUIntArray(std::move(values)));
   }
+  if (element_type == TypeId::UChar) {
+    // uchar[]: widened into the uint32 array storage (element type UChar).
+    std::vector<uint32_t> values;
+    auto parse_u8 = [](SliceParser* s, uint32_t* v) {
+      uint64_t tmp = 0;
+      if (!s->parse_u64(&tmp) || tmp > 255) return false;
+      *v = static_cast<uint32_t>(tmp);
+      return true;
+    };
+    if (!ParseScalarArrayMaybeParallel<uint32_t>(data, len, simple, nt_hint,
+                                                &values, parse_u8)) {
+      return ParseResult::Error("Failed to parse uchar array");
+    }
+    return ParseResult::Ok(
+        Value::MakeUIntCompArray(std::move(values), TypeId::UChar, 1));
+  }
   if (element_type == TypeId::Int64) {
     std::vector<int64_t> values;
     auto parse_i64 = [](SliceParser* s, int64_t* v) { return s->parse_i64(v); };
@@ -1161,6 +1199,7 @@ bool IsUsdaArrayLazyCandidate(TypeId element_type) {
     case TypeId::Bool:
     case TypeId::Int:
     case TypeId::UInt:
+    case TypeId::UChar:
     case TypeId::Int64:
     case TypeId::UInt64:
     case TypeId::Int2:

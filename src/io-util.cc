@@ -606,7 +606,7 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
     }
   }
 #else
-  const std::string expanded = ExpandEnvAndTilde(filepath);
+  std::string expanded = ExpandEnvAndTilde(filepath);
 #endif
 
   // Step 2: simple glob. Only '*' and '?' are wildcards (no brace expansion,
@@ -618,7 +618,9 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
 #if TINYUSDZ_HAVE_GLOB_FS
   if (HasGlobWildcard(expanded)) {
     std::vector<std::string> matches = SimpleGlob(expanded, /* max */ 64);
-    if (!matches.empty()) return matches[0];
+    // Route through the NRVO variable (a second named return defeats copy
+    // elision and trips clang's -Werror,-Wnrvo).
+    if (!matches.empty()) expanded = matches[0];
   }
 #endif
   return expanded;

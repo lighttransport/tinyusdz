@@ -106,7 +106,18 @@ async function convert(id, msg) {
 	const { returnArchiveEntries = false, ...options } = msg.options || {};
 	const progressBase = Number.isFinite(msg.progressBase) ? msg.progressBase : 0;
 	const progressRange = Number.isFinite(msg.progressRange) ? msg.progressRange : 100;
+	let lastProgressPostMs = -Infinity;
 	const report = (info = {}) => {
+		const now = performance.now();
+		const force = info.cratePhase === 'complete' ||
+			(Number.isFinite(info.meshCurrent) && Number.isFinite(info.meshTotal) &&
+				info.meshCurrent >= info.meshTotal);
+		// Stage reconstruction can synchronously emit thousands of callbacks.
+		// Forwarding every one floods the main thread with postMessage events,
+		// DOM text updates and progress-history allocations, roughly doubling
+		// conversion time on large stages. Around 20 updates/s remains smooth.
+		if (!force && now - lastProgressPostMs < 250) return;
+		lastProgressPostMs = now;
 		self.postMessage({
 			type: 'progress',
 			id,
@@ -122,6 +133,10 @@ async function convert(id, msg) {
 		loader.parse(activeBytes, activeName, resolve, reject, {
 			...options,
 			backend: 'next',
+			// This worker serializes only mesh payloads, native stats and scene
+			// metadata. Avoid materializing the full 69k-node render hierarchy,
+			// point-instancer draws, lights and cameras merely to discard them.
+			meshOnly: true,
 			onProgress: report,
 			onTinyUSDZDebug: report,
 			onTydraProgress: report,

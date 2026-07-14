@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Layer Implementation
 
 #include "layer.hh"
+#include "../prim/identifier.hh"
 #include <algorithm>
 
 namespace tinyusdz {
@@ -84,6 +85,39 @@ void Layer::sort_prims_by_path() {
       prims_[parent_it->second].add_child_index(static_cast<uint32_t>(i));
     }
   }
+  apply_namespace_ordering();
+}
+
+void Layer::apply_namespace_ordering() {
+  auto apply = [](std::vector<uint32_t>* indices,
+                  const std::vector<std::string>& order,
+                  const std::vector<PrimSpec>& prims) {
+    if (!indices || order.empty() || indices->empty()) return;
+    std::vector<uint32_t> result;
+    result.reserve(indices->size());
+    for (const std::string& wanted : order) {
+      for (uint32_t idx : *indices) {
+        if (idx < prims.size() && prims[idx].name() == wanted &&
+            std::find(result.begin(), result.end(), idx) == result.end()) {
+          result.push_back(idx);
+          break;
+        }
+      }
+    }
+    for (uint32_t idx : *indices) {
+      if (std::find(result.begin(), result.end(), idx) == result.end()) {
+        result.push_back(idx);
+      }
+    }
+    *indices = std::move(result);
+  };
+  apply(&root_indices_, meta_.rootPrimOrder, prims_);
+  for (PrimSpec& prim : prims_) {
+    std::vector<uint32_t> children = prim.child_indices();
+    apply(&children, prim.meta().primOrder(), prims_);
+    prim.clear_child_indices();
+    for (uint32_t child : children) prim.add_child_index(child);
+  }
 }
 
 Layer Layer::Clone() const {
@@ -108,6 +142,20 @@ uint32_t Layer::define_prim_at_path(const std::string& path,
   for (size_t i = 1; i < path.size(); ++i) {
     if (path[i] == '/' && (i + 1 == path.size() || path[i + 1] == '/')) {
       return UINT32_MAX;
+    }
+  }
+  // Authoring boundary: every component must be a valid identifier
+  // (strict UTF-8 + Unicode XID), so untrusted strings cannot author prims
+  // the parser/validator would reject.
+  {
+    size_t comp = 1;
+    while (comp < path.size()) {
+      size_t next = path.find('/', comp);
+      if (next == std::string::npos) next = path.size();
+      if (!IsValidIdentifier(path.substr(comp, next - comp))) {
+        return UINT32_MAX;
+      }
+      comp = next + 1;
     }
   }
 
@@ -208,6 +256,8 @@ void Layer::finalize() {
   for (auto& prim : prims_) {
     prim.finalize_properties();
   }
+
+  apply_namespace_ordering();
 
   // The prim array is append-only during build and immutable after finalize:
   // release any over-reservation so the per-layer fixed cost matches its

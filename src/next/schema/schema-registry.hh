@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024-Present Light Transport Entertainment Inc.
+
+#pragma once
+
+#include "../layer/prim-spec.hh"
+
+#include <string>
+#include <vector>
+
+namespace tinyusdz {
+namespace next {
+
+struct SchemaPropertyDefinition {
+  std::string schema_type;
+  std::string name;
+  std::string type_name;
+  Value fallback;
+  bool has_fallback = false;
+};
+
+/// Compact built-in prim-definition registry shared by stage population,
+/// value resolution, and validation. It intentionally covers the schemas
+/// implemented by next; generated expansion can add definitions without
+/// changing the resolver.
+class SchemaRegistry {
+ public:
+  const SchemaPropertyDefinition* FindProperty(
+      const PrimSpec& prim, const std::string& property_name) const;
+  std::vector<std::string> PropertyNames(const PrimSpec& prim) const;
+  bool IsKnownSchema(const std::string& schema_type) const;
+  std::vector<std::string> SchemaTypes() const;
+  /// True when `schema_type` is `ancestor` or reaches it through the
+  /// registered parents chain (e.g. InheritsFrom("Volume", "Gprim")).
+  bool InheritsFrom(const std::string& schema_type,
+                    const std::string& ancestor) const;
+  /// True when the registry records an inheritance parent for `schema_type`
+  /// (i.e. its ancestry is KNOWN — InheritsFrom answers are meaningful).
+  bool HasParentEntry(const std::string& schema_type) const;
+
+ private:
+  SchemaRegistry();
+  friend const SchemaRegistry& GetSchemaRegistry();
+
+  std::vector<SchemaPropertyDefinition> properties_;
+  std::vector<std::pair<std::string, std::string>> parents_;
+};
+
+const SchemaRegistry& GetSchemaRegistry();
+
+}  // namespace next
+}  // namespace tinyusdz

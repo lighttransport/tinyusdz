@@ -36,17 +36,16 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     // Malformed header: fall through to eager decode, which reports the error.
   }
 
-  // Arrays below this length are always stored uncompressed even if the
-  // is_compressed bit is set (matches pxrUSD / legacy core kMinCompressedArraySize).
-  constexpr uint64_t kMinCompressedArraySize = 16;
-
+  // The representation's compressed bit is authoritative. The AOUSD advice
+  // not to compress small arrays constrains writers, not the reader layout.
   // payload()==0 (non-inlined) denotes an empty array (pxrUSD convention); no
   // data block to seek to. Otherwise seek to the block and read the count.
   uint64_t count = 0;
   if (rep.payload() != 0) {
     if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
-    if (!reader_->read_u64(count)) return false;
-    count = CrateArrayElementCount(count);
+    // u32 count for crate < 0.7.0, u64 for >= 0.7.0 (pxr crateFile.cpp
+    // _ReadUncompressedArray); element data immediately follows the count.
+    if (!ReadCrateArrayCount(*reader_, version_, &count)) return false;
   }
 
   // Bound the file-controlled element count before any allocation.
@@ -209,7 +208,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   switch (type_id) {
     case CrateTypeId::Float: {
       std::vector<float> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating(data.data())) return false;
       } else if (!read_raw(data.data(), sizeof(float))) {
         return false;
@@ -219,7 +218,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     case CrateTypeId::Int: {
       std::vector<int32_t> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u32(reinterpret_cast<uint32_t*>(data.data()))) return false;
       } else if (!read_raw(data.data(), sizeof(int32_t))) {
         return false;
@@ -233,7 +232,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
         return false;
       }
       std::vector<float> data(data_size);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), data_size)) return false;
       } else if (!read_raw(data.data(), 2 * sizeof(float))) {
         return false;
@@ -247,7 +246,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
         return false;
       }
       std::vector<float> data(data_size);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), data_size)) return false;
       } else if (!read_raw(data.data(), 3 * sizeof(float))) {
         return false;
@@ -257,7 +256,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     case CrateTypeId::Double: {
       std::vector<double> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating(data.data())) return false;
       } else if (!read_raw(data.data(), sizeof(double))) {
         return false;
@@ -267,7 +266,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     case CrateTypeId::Int64: {
       std::vector<int64_t> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u64(reinterpret_cast<uint64_t*>(data.data()))) return false;
       } else if (!read_raw(data.data(), sizeof(int64_t))) {
         return false;
@@ -277,7 +276,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     case CrateTypeId::UInt: {
       std::vector<uint32_t> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u32(data.data())) return false;
       } else if (!read_raw(data.data(), sizeof(uint32_t))) {
         return false;
@@ -285,9 +284,19 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       out = Value::MakeUIntArray(std::move(data));
       return true;
     }
+    case CrateTypeId::UChar: {
+      // uchar[]: tightly packed uint8 on disk (pxr never int-compresses
+      // 8-bit arrays); widened into the uint32 array storage in memory.
+      // Previously these were dropped as unsupported.
+      std::vector<uint8_t> raw8(static_cast<size_t>(count));
+      if (!read_raw(raw8.data(), sizeof(uint8_t))) return false;
+      std::vector<uint32_t> data(raw8.begin(), raw8.end());
+      out = Value::MakeUIntCompArray(std::move(data), TypeId::UChar, 1);
+      return true;
+    }
     case CrateTypeId::UInt64: {
       std::vector<uint64_t> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u64(data.data())) return false;
       } else if (!read_raw(data.data(), sizeof(uint64_t))) {
         return false;
@@ -296,9 +305,19 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       return true;
     }
     case CrateTypeId::Bool: {
-      if (compressed) { AddWarning("Compressed bool arrays not supported"); return false; }
       std::vector<uint8_t> bytes(static_cast<size_t>(count));
-      if (!read_raw(bytes.data(), sizeof(uint8_t))) return false;
+      if (compressed) {
+        // Bool participates in Crate's compressed-integral array encoding.
+        // Decode the integer lanes first, then canonicalize every non-zero
+        // value to true in the in-memory byte representation.
+        std::vector<uint32_t> lanes(static_cast<size_t>(count));
+        if (!read_compressed_u32(lanes.data())) return false;
+        for (size_t i = 0; i < lanes.size(); ++i) {
+          bytes[i] = lanes[i] != 0 ? uint8_t(1) : uint8_t(0);
+        }
+      } else if (!read_raw(bytes.data(), sizeof(uint8_t))) {
+        return false;
+      }
       std::vector<bool> out_bool(static_cast<size_t>(count));
       for (size_t i = 0; i < count; i++) out_bool[i] = (bytes[i] != 0);
       out = Value::MakeBoolArray(out_bool);
@@ -306,7 +325,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     case CrateTypeId::Token: {
       std::vector<uint32_t> idxs(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u32(idxs.data())) return false;
       } else if (!read_raw(idxs.data(), sizeof(uint32_t))) {
         return false;
@@ -326,7 +345,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(4), &scalars)) return false;
       std::vector<float> data(scalars);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), scalars)) return false;
       } else if (!read_raw(data.data(), 16)) {
         return false;
@@ -347,7 +366,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
       std::vector<float> data(scalars);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), scalars)) return false;
       } else if (!read_raw(data.data(), stride_bytes)) {
         return false;
@@ -360,7 +379,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(4), &scalars)) return false;
       std::vector<double> data(scalars);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), scalars)) return false;
       } else if (!read_raw(data.data(), 32)) {
         return false;
@@ -376,7 +395,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     }
     case CrateTypeId::TimeCode: {
       std::vector<double> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating(data.data())) return false;
       } else if (!read_raw(data.data(), sizeof(double))) {
         return false;
@@ -392,7 +411,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
       std::vector<int32_t> data(scalars);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u32_n(reinterpret_cast<uint32_t*>(data.data()),
                                    scalars)) return false;
       } else if (!read_raw(data.data(), stride_bytes)) {
@@ -405,7 +424,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     case CrateTypeId::String: {
       // uint32 indices into the STRINGS section.
       std::vector<uint32_t> idxs(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u32(idxs.data())) return false;
       } else if (!read_raw(idxs.data(), sizeof(uint32_t))) {
         return false;
@@ -421,7 +440,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       // uint32 STRING indices (unlike the scalar form, which uses a token
       // index) — matches pxr's VtArray<SdfAssetPath> layout.
       std::vector<uint32_t> idxs(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u32(idxs.data())) return false;
       } else if (!read_raw(idxs.data(), sizeof(uint32_t))) {
         return false;
@@ -444,7 +463,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
       std::vector<double> data(scalars);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), scalars)) return false;
       } else if (!read_raw(data.data(), stride_bytes)) {
         return false;
@@ -457,7 +476,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(4), &scalars)) return false;
       std::vector<uint16_t> halfs(scalars);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_half_n(halfs.data(), scalars)) return false;
       } else if (!read_raw(halfs.data(), 8)) {
         return false;
@@ -482,7 +501,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       size_t scalars;
       if (comps == 0 || !safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
       std::vector<uint16_t> halfs(scalars);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_half_n(halfs.data(), scalars)) return false;
       } else if (!read_raw(halfs.data(), comps * 2)) {
         return false;

@@ -17,6 +17,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "logger.hh"  // tinyusdz::logging (next routes diagnostics through it)
 #include "next/pcp/cache.hh"
@@ -48,6 +49,7 @@ int main(int argc, char **argv) {
   // an idempotent parse-fidelity oracle (rewriting its own output is byte-identical).
   bool rewrite_layer = false;
   bool openusd_compat = false;
+  bool aousd_strict = false;
   // Default instance flatten = holder (the historical -f behavior). `native`
   // keeps instancing; `prototypes` = usdcat-style /Flattened_Prototype_N.
   pcp::InstanceFlattenMode inst_mode = pcp::InstanceFlattenMode::Holder;
@@ -59,6 +61,7 @@ int main(int argc, char **argv) {
   int compose_threads = 1;
   const char *filename = nullptr;
   const char *out_path = nullptr;  // -o/--output: write flatten to a file (FdSink)
+  std::vector<std::string> required_prims;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "-f") == 0) {
       flatten = true;
@@ -71,6 +74,10 @@ int main(int argc, char **argv) {
       out_path = argv[++i];
     } else if (std::strcmp(argv[i], "--openusd-compat") == 0) {
       openusd_compat = true;  // re-emit deprecated qualifiers (e.g. `custom`)
+    } else if (std::strcmp(argv[i], "--aousd-strict") == 0) {
+      aousd_strict = true;
+    } else if (std::strcmp(argv[i], "--require-prim") == 0 && i + 1 < argc) {
+      required_prims.emplace_back(argv[++i]);
     } else if (std::strcmp(argv[i], "--instance-mode") == 0 && i + 1 < argc) {
       const char *m = argv[++i];
       if (std::strcmp(m, "native") == 0)
@@ -107,9 +114,12 @@ int main(int argc, char **argv) {
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
                          "[--compose-threads N] "
+                         "[--aousd-strict] "
+                         "[--require-prim /Path] "
                          "file.usd[acz]\n");
     return 2;
   }
+
   if (rewrite_layer && flatten) {
     std::fprintf(stderr, "--rewrite-layer and -f cannot be combined "
                          "(rewrite-layer is a compose-free parse->write).\n");
@@ -143,8 +153,12 @@ int main(int argc, char **argv) {
     if (const char* nt = std::getenv("TINYUSDZ_NEXT_NUM_THREADS")) {
       parse_threads = std::atoi(nt);
     }
-    auto layer =
-        pcp::LoadLayerFromFile(filename, &warn, &err, parse_threads);  // PARSE only
+    pcp::LayerLoadOptions load_opts;
+    load_opts.parse_num_threads = parse_threads;
+    load_opts.usda_parse_options.strict_aousd_conformance = aousd_strict;
+    load_opts.strict_aousd_conformance = aousd_strict;
+    auto layer = pcp::LoadLayerFromFile(filename, &warn, &err,
+                                        load_opts);  // PARSE only
     const auto t_parsed = Clock::now();
     emit_lines(warn, "WARN : ");
     if (!layer) {
@@ -223,6 +237,8 @@ int main(int argc, char **argv) {
       }
     }
     pcp::CompositionOptions opts;
+    opts.strict_aousd_conformance = aousd_strict;
+    opts.usda_parse_options.strict_aousd_conformance = aousd_strict;
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
     // Parallel compose (pre-warm sources_cache) is OPT-IN via --compose-threads N
@@ -233,7 +249,9 @@ int main(int argc, char **argv) {
     opts.enable_timing = timing;
     ok = pcp::ComposeStageFromFile(filename, resolver, &stage, opts, &warn, &err);
   } else {
-    ok = LoadUSD(filename, &stage, &warn, &err);
+    LoadUSDOptions load_opts;
+    load_opts.strict_aousd_conformance = aousd_strict;
+    ok = LoadUSD(filename, &stage, load_opts, &warn, &err);
   }
   const auto t_loaded = Clock::now();
 
@@ -241,6 +259,13 @@ int main(int argc, char **argv) {
   if (!ok) {
     emit_lines(err.empty() ? std::string("load failed") : err, "ERR : ");
     return 1;
+  }
+  for (const std::string& path : required_prims) {
+    if (!stage.GetPrimAtPath(path).IsValid()) {
+      std::fprintf(stderr, "ERR : required composed prim is missing: %s\n",
+                   path.c_str());
+      return 1;
+    }
   }
   // Composition errors are accumulated non-fatally; surface them as warnings
   // in flatten mode (the file still loaded).

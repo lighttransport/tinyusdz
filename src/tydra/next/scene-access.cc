@@ -949,8 +949,9 @@ std::vector<Primvar> GetPrimvars(const UsdPrim& prim) {
           std::string interp_attr = name + ":interpolation";
           GetToken(prim, interp_attr, &pv.interpolation);
         }
+        pv.interpolation_authored = !pv.interpolation.empty();
         if (pv.interpolation.empty()) {
-          pv.interpolation = "vertex";  // Default
+          pv.interpolation = "constant";  // USD spec default (pxr/legacy parity)
         }
 
         // Get indices if present
@@ -986,8 +987,9 @@ Primvar GetPrimvar(const UsdPrim& prim, const std::string& name) {
       std::string interp_attr = full_name + ":interpolation";
       GetToken(prim, interp_attr, &pv.interpolation);
     }
+    pv.interpolation_authored = !pv.interpolation.empty();
     if (pv.interpolation.empty()) {
-      pv.interpolation = "vertex";
+      pv.interpolation = "constant";  // USD spec default (pxr/legacy parity)
     }
 
     std::string indices_attr = full_name + ":indices";
@@ -1124,6 +1126,51 @@ bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
 
   out->joint_indices = GetIntArray(mesh_prim, "primvars:skel:jointIndices");
   out->joint_weights = GetFloatArray(mesh_prim, "primvars:skel:jointWeights");
+
+  // Indexed primvars (`primvars:skel:jointIndices:indices`): flatten to the
+  // expanded form all consumers expect. Per UsdGeomPrimvar, each index
+  // addresses a GROUP of elementSize consecutive values.
+  {
+    const PrimSpec* spec = mesh_prim.GetPrimSpec();
+    auto elem_size = [&](const char* pv_name) -> size_t {
+      if (spec) {
+        if (const PropMeta* pm = spec->property_meta(pv_name)) {
+          if (pm->elementSize > 0) return size_t(pm->elementSize);
+        }
+      }
+      return 1;
+    };
+    auto expand_indexed = [](auto& vals, const std::vector<int32_t>& idx,
+                             size_t esize) {
+      if (idx.empty() || vals.empty() || esize == 0 ||
+          (vals.size() % esize) != 0) {
+        return;
+      }
+      // Expansion size is authored data (indices count x elementSize) — a
+      // hostile file can request terabytes, and this TU builds without
+      // exceptions so an oversized reserve aborts. 2^28 lanes (~1 GiB of
+      // int32) is far past any real skin (10M points x 8 influences = 80M).
+      const size_t kMaxExpandedLanes = size_t(1) << 28;
+      if (esize > kMaxExpandedLanes / idx.size()) return;  // keep authored
+      const size_t elems = vals.size() / esize;
+      typename std::remove_reference<decltype(vals)>::type expanded;
+      expanded.reserve(idx.size() * esize);
+      for (int32_t i : idx) {
+        if (i < 0 || size_t(i) >= elems) return;  // malformed: keep authored
+        expanded.insert(expanded.end(), vals.begin() + size_t(i) * esize,
+                        vals.begin() + (size_t(i) + 1) * esize);
+      }
+      vals = std::move(expanded);
+    };
+    const std::vector<int32_t> ji_idx =
+        GetIntArray(mesh_prim, "primvars:skel:jointIndices:indices");
+    const std::vector<int32_t> jw_idx =
+        GetIntArray(mesh_prim, "primvars:skel:jointWeights:indices");
+    expand_indexed(out->joint_indices, ji_idx,
+                   elem_size("primvars:skel:jointIndices"));
+    expand_indexed(out->joint_weights, jw_idx,
+                   elem_size("primvars:skel:jointWeights"));
+  }
   if (!out->joint_indices.empty() || !out->joint_weights.empty()) any = true;
 
   // Mesh-local joint order (subset/permutation of the skeleton's joints).

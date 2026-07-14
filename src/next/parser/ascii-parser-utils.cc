@@ -37,6 +37,30 @@ bool AsciiParser::Impl::ParseNamespacedName(std::string* out, const char* what) 
   return true;
 }
 
+bool AsciiParser::Impl::ParseOrderList(std::vector<std::string>* out) {
+  if (!out || !Match(TokenType::Equals) || !Match(TokenType::OpenBracket)) {
+    AddError("Expected '= [...]' after reorder field");
+    return false;
+  }
+  std::vector<std::string> parsed;
+  while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+    const Token& tok = lexer_->peek();
+    if (tok.type != TokenType::String && !IsNameToken(tok)) {
+      AddError("Expected a name in reorder list");
+      return false;
+    }
+    parsed.push_back(tok.value);
+    lexer_->next();
+    if (!Check(TokenType::CloseBracket)) Match(TokenType::Comma);
+  }
+  if (!Match(TokenType::CloseBracket)) {
+    AddError("Unterminated reorder list");
+    return false;
+  }
+  *out = std::move(parsed);
+  return true;
+}
+
 bool AsciiParser::Impl::SkipBalancedBlock(TokenType open, TokenType close,
                                          size_t depth_level) {
   if (!Check(open)) return false;
@@ -133,6 +157,12 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
       Match(TokenType::Comma);
       continue;
     }
+    std::string qualifier;
+    if (Match(TokenType::Prepend)) qualifier = "prepend ";
+    else if (Match(TokenType::Append)) qualifier = "append ";
+    else if (Match(TokenType::Add)) qualifier = "add ";
+    else if (Match(TokenType::Delete)) qualifier = "delete ";
+    else if (Match(TokenType::Reorder)) qualifier = "reorder ";
     std::string key;
     if (!lexer_->expect(TokenType::Identifier, key)) {
       // expect() consumes the mismatched token; do NOT skip another one (a
@@ -166,6 +196,7 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
     else if (key == "displayName") read_str(m.displayName, PropMeta::kDisplayName);
     else if (key == "displayGroup") read_str(m.displayGroup, PropMeta::kDisplayGroup);
     else if (key == "doc" || key == "documentation") read_str(m.doc, PropMeta::kDoc);
+    else if (key == "comment") read_str(m.comment, PropMeta::kComment);
     else if (key == "elementSize") {
       ParseResult r = ParseValue(*lexer_, TypeId::Int);
       if (r.success && r.value.as_int()) {
@@ -206,8 +237,28 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
       ParseResult r = ParseDict(*lexer_);
       if (r.success) { m.sdrMetadata = std::move(r.value); m.authored |= PropMeta::kSdrMetadata; }
     } else {
-      AddWarning("Unknown property metadata: " + key);
-      SkipValueLike();
+      // Unknown property metadata: consume the value structurally but
+      // preserve its raw source text for verbatim re-emit (same treatment
+      // as unknown PRIM metadata).
+      lexer_->peek();  // ensure the value's first token is scanned
+      const size_t vstart = lexer_->token_start();
+      const bool skipped = SkipValueLike();
+      if (skipped) {
+        lexer_->peek();  // the following token's start bounds the value
+        size_t vend = lexer_->token_start();
+        const char* base = lexer_->input_data();
+        while (vend > vstart &&
+               (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+                base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+          vend--;
+        }
+        if (vend > vstart) {
+          m.unknownMeta.emplace_back(qualifier + key,
+                                     std::string(base + vstart, vend - vstart));
+          m.authored |= PropMeta::kUnknownMeta;
+        }
+      }
+      AddWarning("Unknown property metadata (preserved): " + key);
     }
   }
   Match(TokenType::CloseParen);

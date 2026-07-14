@@ -24,6 +24,69 @@ import { buildNodeIndexMap } from 'tinyusdz/USDAnimationConverter.js';
 import { extractUSDSceneAnimations } from 'tinyusdz/USDSceneAnimationPipeline.js';
 
 const LOADER_BACKEND = getBackendFromURL();
+const VERBOSE_LOAD_LOGS = new URLSearchParams(window.location.search).get('traceLoad') === 'true';
+const animationLoadLogger = VERBOSE_LOAD_LOGS ? console : {
+	log() {},
+	warn: console.warn.bind(console),
+	error: console.error.bind(console)
+};
+const MAX_PROGRESS_HISTORY = 200;
+const LOAD_PROGRESS_UPDATE_INTERVAL_MS = 100;
+const activeLoadProgress = { stage: 'idle', percentage: 0, message: '' };
+const loadProgressHistory = [];
+let lastLoadProgressUpdateMs = -Infinity;
+let progressHideTimer = null;
+
+function showLoadProgress(stage, percentage, message, force = false) {
+	const now = performance.now();
+	const nextStage = stage || activeLoadProgress.stage;
+	const stageChanged = nextStage !== activeLoadProgress.stage;
+	if (!force && !stageChanged && now - lastLoadProgressUpdateMs < LOAD_PROGRESS_UPDATE_INTERVAL_MS) {
+		return;
+	}
+	lastLoadProgressUpdateMs = now;
+	activeLoadProgress.stage = nextStage;
+	activeLoadProgress.percentage = Math.max(0, Math.min(100,
+		Number.isFinite(percentage) ? percentage : activeLoadProgress.percentage));
+	activeLoadProgress.message = message || activeLoadProgress.message;
+	loadProgressHistory.push({ time: now, ...activeLoadProgress });
+	if (loadProgressHistory.length > MAX_PROGRESS_HISTORY) {
+		loadProgressHistory.splice(0, loadProgressHistory.length - MAX_PROGRESS_HISTORY);
+	}
+
+	const panel = document.getElementById('progressPanel');
+	const label = document.getElementById('progressLabel');
+	const bar = document.getElementById('progressBar');
+	if (panel) panel.style.display = 'block';
+	if (label) {
+		label.textContent = `${Math.round(activeLoadProgress.percentage)}%: ${activeLoadProgress.message}`;
+	}
+	if (bar) bar.style.transform = `scaleX(${activeLoadProgress.percentage / 100})`;
+}
+
+function hideLoadProgress(delayMs = 1200) {
+	if (progressHideTimer) clearTimeout(progressHideTimer);
+	progressHideTimer = setTimeout(() => {
+		const panel = document.getElementById('progressPanel');
+		if (panel && activeLoadProgress.percentage >= 100) panel.style.display = 'none';
+	}, delayMs);
+}
+
+function reportNextParseProgress(info = {}) {
+	const percentage = Number.isFinite(info.percentage) ? info.percentage : 10;
+	const message = info.message || info.stage || 'Parsing USD scene...';
+	const completeCount = Number(info.crateCurrent ?? info.meshCurrent);
+	const totalCount = Number(info.crateTotal ?? info.meshTotal);
+	const compactCount = `${Math.min(completeCount, totalCount)}/${totalCount}`;
+	const spacedCount = `${Math.min(completeCount, totalCount)} / ${totalCount}`;
+	const hasCount = message.includes(compactCount) || message.includes(spacedCount);
+	const count = !hasCount && Number.isFinite(completeCount) &&
+		Number.isFinite(totalCount) && totalCount > 0 ? ` (${spacedCount})` : '';
+	showLoadProgress(info.stage || 'parsing', percentage, `${message}${count}`,
+		percentage >= 70);
+}
+
+window.animationLoadProgress = { active: activeLoadProgress, history: loadProgressHistory };
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
 	return getAssetUriFromURL(params, ['usd']);
@@ -85,6 +148,16 @@ function formatTextureStats(stats) {
 		`${countText}, loading`;
 }
 
+function formatNativeTimings(stats) {
+	const timings = stats?.nativeTimings;
+	if (!timings) return null;
+	return `Native: archive ${formatDurationMs(timings.archiveMs)}, ` +
+		`crate ${formatDurationMs(timings.nativeBeginMs)}, ` +
+		`entities ${formatDurationMs(timings.entityCopyMs)}, ` +
+		`meshes ${formatDurationMs(timings.meshCopyMs)}, ` +
+		`animations ${formatDurationMs(timings.animationCopyMs)}`;
+}
+
 function beginLoadStats(fileSize = null) {
 	const stats = {
 		startTime: performance.now(),
@@ -101,6 +174,8 @@ function beginLoadStats(fileSize = null) {
 		memoryBefore: captureMemorySnapshot(),
 		memoryAfter: null
 	};
+	window.animationLoadStats = stats;
+	showLoadProgress('start', 0, 'Preparing load...', true);
 	updateLoadStatsPanel(stats, 'Loading...');
 	return stats;
 }
@@ -113,7 +188,7 @@ function updateLoadStatsPanel(stats, overrideText = null) {
 		el.textContent = overrideText;
 		return;
 	}
-	el.textContent = [
+	const lines = [
 		`File: ${formatBytes(stats.fileSize)}`,
 		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
 		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
@@ -122,7 +197,10 @@ function updateLoadStatsPanel(stats, overrideText = null) {
 		`Total: ${formatDurationMs(stats.totalMs)}`,
 		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
 		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
-	].join('\n');
+	];
+	const nativeTimings = formatNativeTimings(stats);
+	if (nativeTimings) lines.splice(3, 0, nativeTimings);
+	el.textContent = lines.join('\n');
 }
 
 function failLoadStats(stats) {
@@ -130,6 +208,7 @@ function failLoadStats(stats) {
 	stats.totalMs = performance.now() - stats.startTime;
 	stats.memoryAfter = captureMemorySnapshot();
 	updateLoadStatsPanel(stats, 'Failed');
+	showLoadProgress('failed', 100, 'Load failed', true);
 }
 
 function setCurrentFileName(filename) {
@@ -147,6 +226,14 @@ function updateTextureStats(stats, info = {}) {
 		stats.textureComplete = true;
 		stats.memoryAfter = captureMemorySnapshot();
 	}
+	if (stats.textureTotal > 0) {
+		const completed = stats.textureLoaded + stats.textureFailed;
+		const percentage = 90 + Math.min(10, (completed / stats.textureTotal) * 10);
+		showLoadProgress('textures', percentage,
+			`Loading textures ${completed} / ${stats.textureTotal}`,
+			stats.textureComplete);
+		if (stats.textureComplete) hideLoadProgress();
+	}
 	updateLoadStatsPanel(stats);
 }
 
@@ -162,8 +249,11 @@ function startTrackedTextureLoading(manager, stats, label = 'textureQueue') {
 		failed: manager.failed || 0,
 		total: manager.total || 0
 	});
+	const largeAsset = Number.isFinite(stats?.fileSize) && stats.fileSize >= 128 * 1024 * 1024;
 	return manager.startLoading({
-		concurrency: 16,
+		// Bound simultaneous image decode buffers on texture-heavy USDZ files.
+		// Texture upload is asynchronous and is not part of process/build time.
+		concurrency: largeAsset ? 4 : 8,
 		yieldInterval: 16,
 		onTextureLoaded: (material) => { material.needsUpdate = true; },
 		onProgress: (info) => updateTextureStats(stats, info)
@@ -1235,9 +1325,8 @@ async function reloadMaterials() {
 				child.material.needsUpdate = true;
 
 				// Apply double-sided if enabled
-				if (animationParams.doubleSided) {
-					child.material.side = THREE.DoubleSide;
-				}
+				child.material.side = (animationParams.doubleSided ||
+					child.userData?.usdMesh?.doubleSided) ? THREE.DoubleSide : THREE.FrontSide;
 			} catch (e) {
 				console.warn(`Failed to reload material for ${child.name}:`, e);
 			}
@@ -1351,10 +1440,10 @@ async function loadUSDModel() {
 	// Add loaded USD scene to usdSceneRoot
 	usdSceneRoot.add(threeNode);
 
-	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
-	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
-		usdSceneRoot.rotation.x = -Math.PI / 2;
-	}
+	// Always reset the shared scene root when loading a new file. Otherwise a
+	// Y-up scene loaded after a Z-up scene inherits the previous -90° rotation.
+	usdSceneRoot.rotation.x =
+		(animationParams.applyUpAxisConversion && fileUpAxis === "Z") ? -Math.PI / 2 : 0;
 
 	// Apply scene scale and update shadow frustum based on model bounds
 	animationParams.applySceneScale();
@@ -2157,8 +2246,8 @@ const animationParams = {
 		// Update all loaded USD objects
 		usdSceneRoot.traverse((child) => {
 			if (child.isMesh) {
-				child.castShadow = this.shadowsEnabled;
-				child.receiveShadow = this.shadowsEnabled;
+				child.castShadow = this.shadowsEnabled && !child.userData.skipShadows;
+				child.receiveShadow = this.shadowsEnabled && !child.userData.skipShadows;
 			}
 		});
 	},
@@ -2187,23 +2276,25 @@ const animationParams = {
 		// Update all loaded USD objects
 		usdSceneRoot.traverse((child) => {
 			if (child.isMesh && child.material) {
+				const side = (this.doubleSided || child.userData?.usdMesh?.doubleSided)
+					? THREE.DoubleSide : THREE.FrontSide;
 				if (Array.isArray(child.material)) {
 					child.material.forEach(mat => {
-						mat.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+						mat.side = side;
 						mat.needsUpdate = true;
 					});
 				} else {
-					child.material.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+					child.material.side = side;
 					child.material.needsUpdate = true;
 				}
 				// Also update original material if stored
 				if (child.userData.originalMaterial) {
 					if (Array.isArray(child.userData.originalMaterial)) {
 						child.userData.originalMaterial.forEach(mat => {
-							mat.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+							mat.side = side;
 						});
 					} else {
-						child.userData.originalMaterial.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+						child.userData.originalMaterial.side = side;
 					}
 				}
 			}
@@ -2255,6 +2346,14 @@ const animationParams = {
 				ground.userData.originalMaterial = null;
 			}
 		}
+	},
+
+	// Curves can be numerous and expensive, and are usually guide/debug data.
+	showCurves: false,
+	toggleCurves: function() {
+		usdSceneRoot.traverse((child) => {
+			if (child.userData?.usdCurves) child.visible = this.showCurves;
+		});
 	},
 
 	// Scene scaling
@@ -2547,6 +2646,9 @@ renderingFolder.add(animationParams, 'doubleSided')
 renderingFolder.add(animationParams, 'showNormals')
 	.name('Show Normals')
 	.onChange(() => animationParams.toggleNormalVisualization());
+renderingFolder.add(animationParams, 'showCurves')
+	.name('Show Curves')
+	.onChange(() => animationParams.toggleCurves());
 
 // Add master helpers toggle
 renderingFolder.add(animationParams, 'showHelpers')
@@ -3049,13 +3151,19 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 	const parseStart = performance.now();
 	let usd_scene;
 	if (LOADER_BACKEND === 'next' || LOADER_BACKEND === 'auto') {
+		showLoadProgress('parsing', 10, 'Preparing next backend input...', true);
 		usd_scene = await new Promise((resolve, reject) => {
 			loader.parse(
 				new Uint8Array(arrayBuffer),
 				filename,
 				resolve,
 				reject,
-				makeStaticNextParseOptions({ backend: LOADER_BACKEND })
+				makeStaticNextParseOptions({
+					backend: LOADER_BACKEND,
+					onProgress: reportNextParseProgress,
+					progressBase: 10,
+					progressRange: 60
+				})
 			);
 		});
 	} else {
@@ -3069,9 +3177,12 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 	}
 	stats.parseMs = performance.now() - parseStart;
 	currentUSDScene = usd_scene; // Store reference for cleanup
+	stats.nativeStats = usd_scene?.getStats?.() || null;
+	stats.nativeTimings = stats.nativeStats?.timings || null;
 	const processStart = performance.now();
 
 	if (isNextScene(usd_scene)) {
+		showLoadProgress('processing', 70, 'Preparing scene metadata and animation...', true);
 		const sceneMetadata = readNextSceneMeta(usd_scene);
 		const fileUpAxis = sceneMetadata.upAxis || "Y";
 		const rawSceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
@@ -3102,13 +3213,21 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		const built = buildNextThreeNode(usd_scene, {
 			skipTextures: false,
 			lazyTextures: true,
+			showCurves: animationParams.showCurves,
+			pruneEmptyNodes: true,
+			onProgress: (info = {}) => {
+				const local = Math.max(0, Math.min(100, Number(info.percentage) || 0));
+				showLoadProgress('building', 72 + local * 0.16,
+					info.message || `Building scene ${info.builtMeshes || 0} / ${info.totalMeshes || 0}`);
+			},
 			// Animations/skinning are extracted from the adapter AFTER the
 			// build; the default releaseBuildData would wipe them.
 			releaseBuildData: false
 		});
-		if (built.textureManager) {
-			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
-		}
+		// Start texture decode only after geometry, skinning and animation are
+		// ready. Running four-to-sixteen decoders here used to compete with the
+		// synchronous build and inflated its peak memory.
+		const nextTextureManager = built.textureManager;
 		// Next animation target_node is a RenderScene node-table index; use the
 		// table map from buildNextThreeNode, not a DFS walk of the built tree.
 		const nodeIndexMap = built.nodeIndexMap || buildNodeIndexMap(built.node);
@@ -3127,14 +3246,36 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		});
 		usdContentNode = built.node;
 
-		if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
-			usdSceneRoot.rotation.x = -Math.PI / 2;
+		// Match the legacy animation path: prefer an authored DomeLight over the
+		// demo's startup HDRI. The next path previously returned without this
+		// step, leaving exported scenes under the much brighter goegap environment
+		// even though the RenderScene contained the same DomeLight.
+		// Load after the Three.js hierarchy is attached so applyEnvironment()
+		// updates every generated material as well as scene.environment.
+		try {
+			const domeLightData = await loadDomeLightFromUSD(usd_scene);
+			if (domeLightData && envPresetController) {
+				envPresetController.updateDisplay();
+			}
+		} catch (error) {
+			console.warn('Error checking next scene for DomeLight:', error);
 		}
+
+		// usdSceneRoot is reused between loads, so reset stale Z-up conversion for
+		// Y-up files as well as applying it for Z-up files.
+		usdSceneRoot.rotation.x =
+			(animationParams.applyUpAxisConversion && fileUpAxis === "Z") ? -Math.PI / 2 : 0;
 		animationParams.applySceneScale();
 		for (const child of skinningResult.allSceneMeshes || []) {
 			if (child.isMesh) {
-				child.castShadow = true;
-				child.receiveShadow = true;
+				const materials = Array.isArray(child.material) ? child.material : [child.material];
+				const opacityMapped = materials.some((material) =>
+					!!material?.userData?.nextTexturePaths?.opacity);
+				// VFX cards (lasers, beams, projected shadows) should not render
+				// another full-card pass into the directional shadow map.
+				child.userData.skipShadows = opacityMapped;
+				child.castShadow = !opacityMapped;
+				child.receiveShadow = !opacityMapped;
 			}
 		}
 		try {
@@ -3143,7 +3284,9 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 				nodeIndexMap,
 				threeRoot: built.node,
 				timeCodesPerSecond,
-				logger: console
+				// Large animated stages can contain thousands of clips. Retaining a
+				// console line per clip is measurable time and memory in DevTools.
+				logger: animationLoadLogger
 			});
 			usdAnimations = [
 				...animData.usdAnimations,
@@ -3186,6 +3329,14 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		stats.memoryAfter = captureMemorySnapshot();
 		updateLoadStatsPanel(stats);
 		window.renderComplete = true;
+		if (nextTextureManager && nextTextureManager.total > 0) {
+			showLoadProgress('textures', 90,
+				`Loading textures 0 / ${nextTextureManager.total}`, true);
+			startTrackedTextureLoading(nextTextureManager, stats, 'nextTextureQueue');
+		} else {
+			showLoadProgress('complete', 100, 'Load complete', true);
+			hideLoadProgress();
+		}
 		return;
 	}
 
@@ -3275,14 +3426,12 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 	// });
 	// console.log('=================================');
 
-	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
-	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
-		usdSceneRoot.rotation.x = -Math.PI / 2;
-		// console.log(`[loadUSDFromArrayBuffer] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
-	} else if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y") {
+	// Always assign the shared scene-root rotation so a Y-up file loaded after
+	// a Z-up file does not retain the previous file's conversion.
+	usdSceneRoot.rotation.x =
+		(animationParams.applyUpAxisConversion && fileUpAxis === "Z") ? -Math.PI / 2 : 0;
+	if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y" && fileUpAxis !== "Z") {
 		console.warn(`[loadUSDFromArrayBuffer] File upAxis is "${fileUpAxis}" (not Y or Z), no rotation applied`);
-	} else {
-		// console.log(`[loadUSDFromArrayBuffer] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
 	}
 
 	// Apply scene scale and update shadow frustum based on model bounds
@@ -3392,10 +3541,12 @@ window.addEventListener('loadUSDFile', async (event) => {
 
 	const stats = beginLoadStats();
 	try {
+		showLoadProgress('fetch', 2, 'Reading USD file...', true);
 		const readStart = performance.now();
 		const arrayBuffer = await file.arrayBuffer();
 		stats.fetchMs = performance.now() - readStart;
 		stats.fileSize = arrayBuffer.byteLength;
+		showLoadProgress('fetch', 10, 'USD file read', true);
 		await loadUSDFromArrayBuffer(arrayBuffer, file.name, stats);
 		console.log('USD file loaded successfully:', file.name);
 
@@ -3422,6 +3573,7 @@ async function loadUSDFromURI(uri) {
 	const loadingIndicator = document.getElementById('loadingIndicator');
 	if (loadingIndicator) loadingIndicator.classList.add('active');
 	try {
+		showLoadProgress('fetch', 2, 'Fetching USD file...', true);
 		const fetchStart = performance.now();
 		const response = await fetch(uri);
 		if (!response.ok) {
@@ -3430,6 +3582,7 @@ async function loadUSDFromURI(uri) {
 		const arrayBuffer = await response.arrayBuffer();
 		stats.fetchMs = performance.now() - fetchStart;
 		stats.fileSize = arrayBuffer.byteLength;
+		showLoadProgress('fetch', 10, 'USD file fetched', true);
 		await loadUSDFromArrayBuffer(arrayBuffer, displayName, stats);
 	} catch (error) {
 		failLoadStats(stats);

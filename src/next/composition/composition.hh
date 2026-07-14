@@ -8,6 +8,7 @@
 #pragma once
 
 #include "../layer/layer.hh"
+#include "expression-variables.hh"
 #include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
 #include <string>
@@ -53,6 +54,9 @@ struct VariantSelection {
 
 /// Composition options
 struct CompositionOptions {
+  bool strict_aousd_conformance = false;
+  ExpressionVariablePolicy expression_variable_policy =
+      ExpressionVariablePolicy::Evaluate;
   bool load_payloads = true;              // Load payloads (false = unloaded)
   bool resolve_inherits = true;           // Resolve inherits
   bool resolve_specializes = true;        // Resolve specializes
@@ -64,7 +68,10 @@ struct CompositionOptions {
   size_t max_layer_memory = 0;
   ParseOptions usda_parse_options = {};
 
-  // Strongest variant selections for flattening: set name -> variant name.
+  // Strongest variant selections for flattening. Keys are either a bare
+  // variant-set name ("shape" — applies to every prim carrying that set) or
+  // prim-scoped "<primPath>{<set>}" ("/World/B{shape}" — applies to that
+  // prim only and wins over the bare-set key; pxr keys selections per prim).
   // Empty keeps authored selections.
   std::map<std::string, std::string> variant_overrides;
 };
@@ -95,7 +102,12 @@ public:
   void SetLayerLoader(LayerLoader loader) { layer_loader_ = std::move(loader); }
 
   /// Set composition options
-  void SetOptions(const CompositionOptions& options) { options_ = options; }
+  void SetOptions(const CompositionOptions& options) {
+    options_ = options;
+    if (options_.strict_aousd_conformance) {
+      options_.usda_parse_options.strict_aousd_conformance = true;
+    }
+  }
   const CompositionOptions& GetOptions() const { return options_; }
 
   // ============================================================
@@ -147,10 +159,15 @@ public:
   /// the source (arc-local) namespace into the composed namespace — pass the
   /// arc's NamespaceMapping::Apply so a referenced asset's internal targets
   /// resolve to their flattened paths. Default (empty) leaves targets verbatim.
+  /// `dict_conflicts`, if set, collects dotted key paths of dictionary TYPE
+  /// CONFLICTS met while merging weaker dictionary-valued metadata (a key
+  /// that is a dictionary on one side and a scalar on the other; the
+  /// stronger opinion wins but the weaker subtree is silently shadowed).
   static void CopyLocalOpinions(
       PrimSpec& target, const PrimSpec& source, double time_offset = 0.0,
       double time_scale = 1.0,
-      const std::function<std::string(const std::string&)>& remap_path = {});
+      const std::function<std::string(const std::string&)>& remap_path = {},
+      std::vector<std::string>* dict_conflicts = nullptr);
 
   // ============================================================
   // Layer cache

@@ -719,10 +719,12 @@ class NextFlattenSession {
     return result;
   }
 
-  emscripten::val setVariantOverride(const std::string& prim_path,
+  // Key is a variant-set name ("shape", applies stage-wide) or the
+  // prim-scoped form "<primPath>{<set>}" (wins over the bare-set key).
+  emscripten::val setVariantOverride(const std::string& set_or_scoped_key,
                                      const std::string& selection) {
     emscripten::val result = emscripten::val::object();
-    variant_overrides_[prim_path] = selection;
+    variant_overrides_[set_or_scoped_key] = selection;
     result.set("success", true);
     return result;
   }
@@ -945,6 +947,7 @@ nlohmann::json NextValueJSON(const tn::Value& value) {
   if (const uint32_t* v = value.as_uint()) return *v;
   if (const int64_t* v = value.as_int64()) return *v;
   if (const uint64_t* v = value.as_uint64()) return *v;
+  if (const uint8_t* v = value.as_uchar()) return *v;
   if (const float* v = value.as_float()) return *v;
   if (const double* v = value.as_double()) return *v;
   if (const std::string* v = value.as_string()) return *v;
@@ -998,11 +1001,156 @@ nlohmann::json NextValueJSON(const tn::Value& value) {
     case tn::TypeId::Matrix4f:
       return float_array(value.as_matrix4f(), 16);
     case tn::TypeId::Matrix4d:
+    case tn::TypeId::Frame4d:  // matrix4d role
       return double_array(value.as_matrix4d(), 16);
     default:
       break;
   }
   return nullptr;
+}
+
+const std::vector<tn::Path>* NextPropertyConnections(
+    const tn::UsdPrim& prim, const std::string& property_name) {
+  const tn::PrimSpec* spec = prim.GetPrimSpec();
+  return spec ? spec->connection(property_name) : nullptr;
+}
+
+std::string NextConnectionPrimPath(const std::string& connection) {
+  size_t dot = connection.find(".outputs:");
+  if (dot == std::string::npos) dot = connection.find(".inputs:");
+  if (dot == std::string::npos) dot = connection.rfind('.');
+  return dot == std::string::npos ? connection : connection.substr(0, dot);
+}
+
+std::string NextConnectionOutputName(const std::string& connection) {
+  const size_t marker = connection.find(".outputs:");
+  if (marker != std::string::npos) return connection.substr(marker + 9);
+  const size_t dot = connection.rfind('.');
+  return dot == std::string::npos ? std::string() : connection.substr(dot + 1);
+}
+
+std::string NextConnectionNodeName(const std::string& connection) {
+  const std::string path = NextConnectionPrimPath(connection);
+  const size_t slash = path.rfind('/');
+  return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+std::string NextMtlxCategory(const std::string& node_id) {
+  if (node_id.rfind("ND_", 0) != 0) return node_id;
+  const std::string body = node_id.substr(3);
+  const size_t suffix = body.rfind('_');
+  return suffix == std::string::npos ? body : body.substr(0, suffix);
+}
+
+void CollectNextNodeGraphs(const tn::UsdPrim& prim,
+                           std::vector<tn::UsdPrim>* graphs) {
+  if (!graphs) return;
+  for (const tn::UsdPrim& child : prim.GetChildren()) {
+    if (child.GetTypeName() == "NodeGraph") graphs->push_back(child);
+    CollectNextNodeGraphs(child, graphs);
+  }
+}
+
+// Reconstruct the compact MaterialX graph payload expected by the web graph
+// editor. The next render converter deliberately stores GPU-facing shader
+// parameters; the authored node network remains in the Stage and must be
+// serialized before RenderStream releases it.
+std::string BuildNextNodeGraphJson(const tn::UsdPrim& material,
+                                   const tn::UsdPrim& shader,
+                                   const std::string& version) {
+  if (!material.IsValid() || !shader.IsValid()) return {};
+  std::vector<tn::UsdPrim> graphs;
+  CollectNextNodeGraphs(material, &graphs);
+  if (graphs.empty()) return {};
+
+  tn::UsdPrim graph = graphs.front();
+  for (const std::string& property : shader.GetPropertyNames()) {
+    if (property.rfind("inputs:", 0) != 0) continue;
+    const std::vector<tn::Path>* connections =
+        NextPropertyConnections(shader, property);
+    if (!connections || connections->empty()) continue;
+    const std::string source = NextConnectionPrimPath((*connections)[0].str());
+    for (const tn::UsdPrim& candidate : graphs) {
+      const std::string candidate_path = candidate.GetPath().str();
+      if (source == candidate_path ||
+          source.rfind(candidate_path + "/", 0) == 0) {
+        graph = candidate;
+        break;
+      }
+    }
+  }
+
+  nlohmann::json root;
+  root["version"] = version.empty() ? "1.39" : version;
+  nlohmann::json graph_json;
+  graph_json["name"] = graph.GetName();
+  graph_json["nodes"] = nlohmann::json::array();
+  graph_json["outputs"] = nlohmann::json::array();
+
+  for (const tn::UsdPrim& node : graph.GetChildren()) {
+    if (!tn::IsShader(node)) continue;
+    std::string node_id;
+    if (const tn::Value* value = node.GetPropertyValue("info:id")) {
+      if (const std::string* token = value->as_token()) node_id = *token;
+      else if (const std::string* str = value->as_string()) node_id = *str;
+    }
+    nlohmann::json node_json;
+    node_json["name"] = node.GetName();
+    node_json["category"] = NextMtlxCategory(node_id);
+    node_json["type"] = node_id;
+    node_json["inputs"] = nlohmann::json::array();
+    for (const std::string& property : node.GetPropertyNames()) {
+      if (property.rfind("inputs:", 0) != 0) continue;
+      nlohmann::json input;
+      input["name"] = property.substr(7);
+      const std::vector<tn::Path>* connections =
+          NextPropertyConnections(node, property);
+      if (connections && !connections->empty()) {
+        const std::string source = (*connections)[0].str();
+        input["nodename"] = NextConnectionNodeName(source);
+        input["output"] = NextConnectionOutputName(source);
+      } else if (const tn::Value* value = node.GetPropertyValue(property)) {
+        nlohmann::json encoded = NextValueJSON(*value);
+        if (!encoded.is_null()) input["value"] = std::move(encoded);
+      }
+      node_json["inputs"].push_back(std::move(input));
+    }
+    graph_json["nodes"].push_back(std::move(node_json));
+  }
+
+  for (const std::string& property : graph.GetPropertyNames()) {
+    if (property.rfind("outputs:", 0) != 0) continue;
+    nlohmann::json output;
+    output["name"] = property.substr(8);
+    const std::vector<tn::Path>* connections =
+        NextPropertyConnections(graph, property);
+    if (connections && !connections->empty()) {
+      const std::string source = (*connections)[0].str();
+      output["nodename"] = NextConnectionNodeName(source);
+      output["output"] = NextConnectionOutputName(source);
+    }
+    graph_json["outputs"].push_back(std::move(output));
+  }
+
+  root["nodegraph"] = std::move(graph_json);
+  root["connections"] = nlohmann::json::array();
+  const std::string graph_path = graph.GetPath().str();
+  for (const std::string& property : shader.GetPropertyNames()) {
+    if (property.rfind("inputs:", 0) != 0) continue;
+    const std::vector<tn::Path>* connections =
+        NextPropertyConnections(shader, property);
+    if (!connections || connections->empty()) continue;
+    const std::string source = (*connections)[0].str();
+    const std::string source_prim = NextConnectionPrimPath(source);
+    if (source_prim != graph_path &&
+        source_prim.rfind(graph_path + "/", 0) != 0) continue;
+    nlohmann::json connection;
+    connection["input"] = property.substr(7);
+    connection["nodegraph"] = graph.GetName();
+    connection["output"] = NextConnectionOutputName(source);
+    root["connections"].push_back(std::move(connection));
+  }
+  return root.dump();
 }
 
 void AppendNextPhysicsPrimJSON(const tn::UsdPrim& prim, nlohmann::json* out) {
@@ -1355,6 +1503,7 @@ class RenderStream {
     mesh_merge_bake_transform_ = enabled;
   }
   void setFlattenRenderTree(bool enabled) { flatten_render_tree_ = enabled; }
+  void setMeshOnly(bool enabled) { mesh_only_ = enabled; }
   void setComputeTangents(bool enabled) { compute_tangents_ = enabled; }
   void setBuildVertexIndices(bool enabled) {
     build_vertex_indices_ = enabled;
@@ -1374,12 +1523,13 @@ class RenderStream {
   }
   void clearAssets() { clip_assets_.clear(); }
 
-  // Strongest variant selection for a variant SET (applies to every prim
-  // carrying that set, matching the compositor's set-name-keyed overrides).
-  // Takes effect on the next begin()/beginOwned().
-  void setVariantOverride(const std::string &set_name,
+  // Strongest variant selection. `key` is a variant-set name (applies to
+  // every prim carrying that set) or the prim-scoped form
+  // "<primPath>{<set>}" which wins over the bare-set key. Takes effect on
+  // the next begin()/beginOwned().
+  void setVariantOverride(const std::string &key,
                           const std::string &selection) {
-    variant_overrides_[set_name] = selection;
+    variant_overrides_[key] = selection;
   }
   void clearVariantOverrides() { variant_overrides_.clear(); }
 
@@ -1478,7 +1628,10 @@ class RenderStream {
     if (mesh_merge_) {
       buildOptimizedOutputs_();
     }
-    buildRenderScene_();
+    if (!mesh_only_) {
+      buildRenderScene_();
+      buildAnalyticOutputs_();
+    }
     loaded_ = true;
     r.set("success", true);
     r.set("meshCount", meshCount());
@@ -1531,8 +1684,8 @@ class RenderStream {
 
   int meshCount() const {
     if (!loaded_ && outputs_.empty()) return 0;
-    if (mesh_merge_) return static_cast<int>(outputs_.size());
-    return static_cast<int>(meshes_.size());
+    const size_t authored = mesh_merge_ ? outputs_.size() : meshes_.size();
+    return static_cast<int>(authored + analytic_outputs_.size());
   }
 
   int nodeCount() const {
@@ -1661,6 +1814,19 @@ class RenderStream {
         break;
       case tr::LightType::Dome: {
         out.set("textureId", light.params.dome.texture_id);
+        // Legacy light consumers use textureFile/envmapTextureId. The next
+        // scene keeps dome images in RenderScene::images rather than the
+        // legacy decoded-image table, so expose the authored path and let the
+        // browser archive adapter resolve it (or recognize color_RRGGBB.exr).
+        out.set("envmapTextureId", -1);
+        if (light.params.dome.texture_id >= 0 &&
+            static_cast<size_t>(light.params.dome.texture_id) <
+                render_scene_.images.size()) {
+          const tr::TextureImage& image = render_scene_.images[
+              static_cast<size_t>(light.params.dome.texture_id)];
+          out.set("textureFile", image.name.empty() ? image.resolved_path
+                                                    : image.name);
+        }
         const char* format = "automatic";
         switch (light.params.dome.texture_format) {
           case tr::RenderLight::DomeTextureFormat::Latlong:
@@ -2084,6 +2250,99 @@ class RenderStream {
     return out;
   }
 
+  // Adapter-oriented animation getter. Large aggregate skeletal arrays are
+  // exposed as transient WASM heap descriptors instead of being pushed into
+  // JavaScript arrays (and duplicated in both samplers and tracks). Consumers
+  // must copy descriptor-backed data before the next heap-growing native call
+  // or end(). getAnimation() remains the compatibility getter for direct API
+  // users.
+  emscripten::val getAnimationView(int32_t anim_id) const {
+    emscripten::val out = emscripten::val::object();
+    if (!loaded_ || anim_id < 0 ||
+        static_cast<size_t>(anim_id) >= render_scene_.animations.size()) {
+      return out;
+    }
+    const tr::AnimationClip& clip =
+        render_scene_.animations[static_cast<size_t>(anim_id)];
+
+    const double duration = clip.end_time - clip.start_time;
+    const double clamped_duration = std::isfinite(duration)
+                                        ? std::max(0.0, duration)
+                                        : 0.0;
+    out.set("index", anim_id);
+    out.set("name", clip.name.empty()
+                        ? std::string("Animation") + std::to_string(anim_id)
+                        : clip.name);
+    out.set("primPath", clip.prim_path);
+    out.set("startTime", clip.start_time);
+    out.set("endTime", clip.end_time);
+    out.set("duration", clamped_duration);
+
+    emscripten::val channels = emscripten::val::array();
+    emscripten::val samplers = emscripten::val::array();
+    for (size_t i = 0; i < clip.channels.size(); ++i) {
+      const tr::AnimationChannel& channel = clip.channels[i];
+      std::vector<float> times;
+      times.reserve(channel.keyframes.size());
+      std::vector<float> values;
+      values.reserve(channel.keyframes.size() *
+                     AnimationComponentCount(channel));
+      for (const auto& keyframe : channel.keyframes) {
+        times.push_back(static_cast<float>(keyframe.time));
+        AppendAnimationKeyframeValues(channel, keyframe, &values);
+      }
+
+      const std::string path = AnimationPathName(channel.target_path);
+      const std::string interpolation =
+          AnimationInterpolationName(channel.interpolation);
+      const int32_t sampler_id = static_cast<int32_t>(i);
+
+      emscripten::val sampler = emscripten::val::object();
+      sampler.set("index", sampler_id);
+      sampler.set("interpolation", interpolation);
+      sampler.set("times", VectorToArray(times));
+      sampler.set("values", VectorToArray(values));
+      sampler.set("valueStride", static_cast<int>(channel.value_stride));
+      sampler.set("elementCount", static_cast<int>(channel.element_count));
+      sampler.set("isSkeletal", channel.is_skeletal);
+      if (!channel.array_values.empty()) {
+        sampler.set("arrayValues", heapF_(channel.array_values,
+                                          static_cast<int>(channel.value_stride)));
+      }
+      samplers.set(sampler_id, sampler);
+
+      emscripten::val ch = emscripten::val::object();
+      ch.set("sampler", sampler_id);
+      ch.set("target_node", channel.target_node);
+      ch.set("target_prim_path", channel.target_prim_path);
+      ch.set("target_type", channel.is_skeletal ? std::string("SkelAnimation")
+                                                  : std::string("SceneNode"));
+      ch.set("skeleton_id", channel.target_skeleton);
+      ch.set("joint_id", -1);
+      ch.set("path", path);
+      ch.set("isCustomProperty",
+             channel.target_path ==
+                 tr::AnimationChannel::TargetPath::CustomProperty);
+      ch.set("propertyName", channel.property_name);
+      ch.set("isSkeletal", channel.is_skeletal);
+      ch.set("targetSkeletonPath", channel.target_skeleton_path);
+      ch.set("jointOrder", VectorToArray(channel.joint_order));
+      ch.set("jointRemap", VectorToArray(channel.joint_remap));
+      ch.set("blendShapeOrder", VectorToArray(channel.blend_shape_order));
+      ch.set("valueStride", static_cast<int>(channel.value_stride));
+      ch.set("elementCount", static_cast<int>(channel.element_count));
+      channels.set(static_cast<int>(i), ch);
+    }
+
+    out.set("channels", channels);
+    out.set("samplers", samplers);
+    out.set("numChannels", static_cast<int>(clip.channels.size()));
+    out.set("numSamplers", static_cast<int>(clip.channels.size()));
+    out.set("has_skeletal_animation", AnimationHasSkeletalChannels(clip));
+    out.set("has_node_animation", static_cast<bool>(!clip.channels.empty()));
+    return out;
+  }
+
   emscripten::val getAllAnimations() const {
     emscripten::val animations = emscripten::val::array();
     if (!loaded_) {
@@ -2173,7 +2432,37 @@ class RenderStream {
     s.set("meshMerge", mesh_merge_);
     s.set("meshMergeBakeTransform", mesh_merge_bake_transform_);
     s.set("flattenRenderTree", flatten_render_tree_);
+    size_t provided_asset_bytes = 0;
+    for (const auto& asset : clip_assets_) {
+      provided_asset_bytes += asset.second.size();
+    }
+    s.set("providedAssetBytes", static_cast<double>(provided_asset_bytes));
+    s.set("stageMemoryBytes", static_cast<double>(stage_.GetMemoryUsage()));
     if (render_scene_valid_) {
+      s.set("renderSceneMemoryBytes",
+            static_cast<double>(render_scene_.memory_usage()));
+      size_t mesh_points_bytes = 0;
+      size_t mesh_normals_bytes = 0;
+      size_t mesh_uv_bytes = 0;
+      size_t mesh_topology_bytes = 0;
+      size_t mesh_triangulation_bytes = 0;
+      for (const tr::RenderMesh &mesh : render_scene_.meshes) {
+        mesh_points_bytes += mesh.points.memory_usage();
+        mesh_normals_bytes += mesh.normals.memory_usage();
+        mesh_uv_bytes += mesh.texcoords_0.memory_usage() +
+                         mesh.texcoords_1.memory_usage();
+        mesh_topology_bytes += mesh.face_vertex_counts.memory_usage() +
+                               mesh.face_vertex_indices.memory_usage();
+        mesh_triangulation_bytes +=
+            mesh.triangulated_indices.memory_usage() +
+            mesh.triangulated_face_vertex_indices.memory_usage();
+      }
+      s.set("renderMeshPointsBytes", static_cast<double>(mesh_points_bytes));
+      s.set("renderMeshNormalsBytes", static_cast<double>(mesh_normals_bytes));
+      s.set("renderMeshUvBytes", static_cast<double>(mesh_uv_bytes));
+      s.set("renderMeshTopologyBytes", static_cast<double>(mesh_topology_bytes));
+      s.set("renderMeshTriangulationBytes",
+            static_cast<double>(mesh_triangulation_bytes));
       s.set("renderSceneNodes", static_cast<int>(render_scene_.nodes.size()));
       s.set("renderSceneMeshes", static_cast<int>(render_scene_.meshes.size()));
       s.set("renderScenePoints", static_cast<int>(render_scene_.points.size()));
@@ -2223,6 +2512,9 @@ class RenderStream {
     const tinyusdz::next::StageMeta &meta = stage_.GetMeta();
     metadata.set("upAxis", meta.upAxis);
     metadata.set("metersPerUnit", meta.metersPerUnit);
+    // MassAPI SI conversion on the web/sim side (parity with the legacy
+    // binding's kilogramsPerUnit export).
+    metadata.set("kilogramsPerUnit", meta.kilogramsPerUnit);
     metadata.set("framesPerSecond", meta.framesPerSecond);
     metadata.set("timeCodesPerSecond", meta.timeCodesPerSecond);
     metadata.set("startTimeCode", meta.startTimeCode);
@@ -2240,11 +2532,17 @@ class RenderStream {
       return out;
     }
     if (mesh_merge_) {
-      const OutputMesh &record = outputs_[static_cast<size_t>(i)];
-      if (record.merged) return outputMergedMesh_(record);
-      return outputSourceMesh_(record.source_index);
+      if (static_cast<size_t>(i) < outputs_.size()) {
+        const OutputMesh &record = outputs_[static_cast<size_t>(i)];
+        if (record.merged) return outputMergedMesh_(record);
+        return outputSourceMesh_(record.source_index);
+      }
+      return outputMergedMesh_(
+          analytic_outputs_[static_cast<size_t>(i) - outputs_.size()]);
     }
-    return outputSourceMesh_(i);
+    if (static_cast<size_t>(i) < meshes_.size()) return outputSourceMesh_(i);
+    return outputMergedMesh_(
+        analytic_outputs_[static_cast<size_t>(i) - meshes_.size()]);
   }
 
   // Free the stage, mesh list and scratch (returns the heap to the allocator).
@@ -2257,6 +2555,8 @@ class RenderStream {
     meshes_.shrink_to_fit();
     outputs_.clear();
     outputs_.shrink_to_fit();
+    analytic_outputs_.clear();
+    analytic_outputs_.shrink_to_fit();
     materials_.clear();
     material_key_to_id_.clear();
     material_path_to_id_.clear();
@@ -2290,6 +2590,14 @@ class RenderStream {
     cfg.mesh.tangent_method = tangentMethod_();
     cfg.mesh.enable_bone_reduction = true;
     cfg.mesh.target_bone_count = 4;
+    // RenderStream builds one browser-facing mesh lazily from Stage. Keeping a
+    // second, complete geometry copy in RenderScene only inflates the wasm
+    // heap; retain its material/skinning/animation metadata instead. Keep the
+    // compact earcut result used by the lazy mesh builder, plus generated
+    // analytic geometry which has no authored Mesh payload to rebuild from.
+    cfg.mesh.retain_geometry = false;
+    cfg.mesh.retain_triangulation = true;
+    cfg.mesh.retain_analytic_geometry = true;
     cfg.material.load_textures = false;
     cfg.material.allow_missing_textures = true;
     cfg.point_instancer.duplicate_meshes = false;
@@ -2352,12 +2660,14 @@ class RenderStream {
     std::string metallic_texture;
     std::string occlusion_texture;
     std::string emissive_texture;
+    std::string opacity_texture;
     TextureMeta base_color_meta;
     TextureMeta normal_meta;
     TextureMeta roughness_meta;
     TextureMeta metallic_meta;
     TextureMeta occlusion_meta;
     TextureMeta emissive_meta;
+    TextureMeta opacity_meta;
   };
 
   struct OutputMesh {
@@ -2371,9 +2681,111 @@ class RenderStream {
     std::vector<uint32_t> indices;
     bool soup = false;
     int32_t material_id = -1;
+    bool double_sided = false;
     std::array<double, 16> local_matrix;
     std::array<double, 16> world_matrix;
   };
+
+  template <typename Chunked>
+  static void copyChunked_(const Chunked& src, std::vector<float>* dst) {
+    if (!dst) return;
+    dst->resize(src.size());
+    for (size_t i = 0; i < src.size(); ++i) (*dst)[i] = src[i];
+  }
+
+  void buildAnalyticOutputs_() {
+    analytic_outputs_.clear();
+    if (!render_scene_valid_) return;
+    for (const tr::RenderMesh& source : render_scene_.meshes) {
+      const tinyusdz::next::UsdPrim prim =
+          stage_.GetPrimAtPath(source.prim_path);
+      if (!prim.IsValid() || prim.GetTypeName() == "Mesh") continue;
+
+      OutputMesh out;
+      out.name = source.name;
+      out.prim_path = source.prim_path;
+      out.double_sided = matBool_(prim, "doubleSided", false);
+      out.local_matrix = localMatrix_(prim);
+      out.world_matrix = worldMatrixForPrim_(prim);
+
+      tinyusdz::next::UsdPrim material;
+      if (source.material_id >= 0 &&
+          static_cast<size_t>(source.material_id) <
+              render_scene_.materials.size()) {
+        material = stage_.GetPrimAtPath(
+            render_scene_.materials[static_cast<size_t>(source.material_id)]
+                .prim_path);
+      }
+      if (!material.IsValid()) {
+        material = tinyusdz::next::GetBoundMaterial(stage_, prim);
+      }
+      out.material_id = registerMaterial_(material);
+
+      const size_t point_count = source.points.size() / 3;
+      const bool vertex_normals =
+          source.normals.empty() ||
+          (source.normals_interp == tr::Interpolation::Vertex &&
+           source.normals.size() == point_count * 3);
+      const bool vertex_uvs =
+          source.texcoords_0.empty() ||
+          (source.texcoords_0_interp == tr::Interpolation::Vertex &&
+           source.texcoords_0.size() == point_count * 2);
+
+      if (vertex_normals && vertex_uvs) {
+        copyChunked_(source.points, &out.points);
+        copyChunked_(source.normals, &out.normals);
+        copyChunked_(source.texcoords_0, &out.uv);
+        out.indices.resize(source.triangulated_indices.size());
+        for (size_t i = 0; i < source.triangulated_indices.size(); ++i) {
+          out.indices[i] = source.triangulated_indices[i];
+        }
+      } else {
+        // Face-varying analytic attributes need one vertex per triangulated
+        // corner. Preserve the converter's authored-corner remap so generated
+        // sphere/cone UV seams and normals stay aligned.
+        out.soup = true;
+        const size_t corners = source.triangulated_indices.size();
+        out.points.reserve(corners * 3);
+        if (!source.normals.empty()) out.normals.reserve(corners * 3);
+        if (!source.texcoords_0.empty()) out.uv.reserve(corners * 2);
+        for (size_t corner = 0; corner < corners; ++corner) {
+          const uint32_t vertex = source.triangulated_indices[corner];
+          if (vertex >= point_count) continue;
+          for (size_t c = 0; c < 3; ++c) {
+            out.points.push_back(source.points[static_cast<size_t>(vertex) * 3 + c]);
+          }
+          const size_t authored_corner =
+              corner < source.triangulated_face_vertex_indices.size()
+                  ? source.triangulated_face_vertex_indices[corner]
+                  : corner;
+          if (!source.normals.empty()) {
+            const size_t normal_element =
+                source.normals_interp == tr::Interpolation::FaceVarying
+                    ? authored_corner
+                    : static_cast<size_t>(vertex);
+            if (normal_element * 3 + 2 < source.normals.size()) {
+              for (size_t c = 0; c < 3; ++c) {
+                out.normals.push_back(source.normals[normal_element * 3 + c]);
+              }
+            }
+          }
+          if (!source.texcoords_0.empty()) {
+            const size_t uv_element =
+                source.texcoords_0_interp == tr::Interpolation::FaceVarying
+                    ? authored_corner
+                    : static_cast<size_t>(vertex);
+            if (uv_element * 2 + 1 < source.texcoords_0.size()) {
+              out.uv.push_back(source.texcoords_0[uv_element * 2]);
+              out.uv.push_back(source.texcoords_0[uv_element * 2 + 1]);
+            }
+          }
+        }
+        if (out.normals.size() != out.points.size()) out.normals.clear();
+        if (out.uv.size() * 3 != out.points.size() * 2) out.uv.clear();
+      }
+      if (!out.points.empty()) analytic_outputs_.push_back(std::move(out));
+    }
+  }
 
   struct Stats {
     size_t source_mesh_count = 0;
@@ -2403,6 +2815,7 @@ class RenderStream {
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
     out.set("primPath", prim.GetPath().str());
+    out.set("doubleSided", matBool_(prim, "doubleSided", false));
     out.set("points", heapF_(s_points_, 3));
     if (!soup && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
     if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
@@ -2540,6 +2953,7 @@ class RenderStream {
     out.set("vertexCount", static_cast<double>(record.points.size() / 3));
     out.set("primName", record.name);
     out.set("primPath", record.prim_path);
+    out.set("doubleSided", record.double_sided);
     out.set("points", heapF_(record.points, 3));
     if (!record.soup && !record.indices.empty()) {
       out.set("indices", heapU32_(record.indices));
@@ -2577,16 +2991,91 @@ class RenderStream {
         s_uv_.size() != vertex_count * 2) {
       return false;
     }
-    // ~40B/vertex of temporaries; fail the (optional) tangents instead of
-    // abort()ing when the heap is nearly full.
-    if (!tr::ProbeAlloc(vertex_count * (3 + 3 + 4) * sizeof(float))) {
-      return false;
+
+    // A triangle soup has no shared vertices, so accumulating a tangent and
+    // bitangent for every vertex is unnecessary. Write the final frame for
+    // each triangle directly, avoiding two additional 3-float arrays. This is
+    // a substantial peak-memory reduction for face-varying meshes.
+    if (s_indices_.empty()) {
+      if (vertex_count >
+              (std::numeric_limits<size_t>::max)() / (4 * sizeof(float)) ||
+          !tr::ProbeAlloc(vertex_count * 4 * sizeof(float))) {
+        return false;
+      }
+      s_tangents_.assign(vertex_count * 4, 0.0f);
+      for (size_t i = 0; i + 2 < vertex_count; i += 3) {
+        const float *p0 = &s_points_[i * 3];
+        const float *p1 = &s_points_[(i + 1) * 3];
+        const float *p2 = &s_points_[(i + 2) * 3];
+        const float *u0 = &s_uv_[i * 2];
+        const float *u1 = &s_uv_[(i + 1) * 2];
+        const float *u2 = &s_uv_[(i + 2) * 2];
+        const float e1[3] = {p1[0] - p0[0], p1[1] - p0[1],
+                             p1[2] - p0[2]};
+        const float e2[3] = {p2[0] - p0[0], p2[1] - p0[1],
+                             p2[2] - p0[2]};
+        const float du1 = u1[0] - u0[0];
+        const float dv1 = u1[1] - u0[1];
+        const float du2 = u2[0] - u0[0];
+        const float dv2 = u2[1] - u0[1];
+        const float det = du1 * dv2 - du2 * dv1;
+        const float inv_det = std::fabs(det) > 1.0e-12f ? 1.0f / det : 0.0f;
+        const float tangent[3] = {
+            (dv2 * e1[0] - dv1 * e2[0]) * inv_det,
+            (dv2 * e1[1] - dv1 * e2[1]) * inv_det,
+            (dv2 * e1[2] - dv1 * e2[2]) * inv_det};
+        const float bitangent[3] = {
+            (du1 * e2[0] - du2 * e1[0]) * inv_det,
+            (du1 * e2[1] - du2 * e1[1]) * inv_det,
+            (du1 * e2[2] - du2 * e1[2]) * inv_det};
+        for (size_t corner = 0; corner < 3; ++corner) {
+          const size_t vertex = i + corner;
+          const float *normal = &s_normals_[vertex * 3];
+          const float ndt = normal[0] * tangent[0] +
+                            normal[1] * tangent[1] +
+                            normal[2] * tangent[2];
+          float tx = tangent[0] - normal[0] * ndt;
+          float ty = tangent[1] - normal[1] * ndt;
+          float tz = tangent[2] - normal[2] * ndt;
+          const float length = std::sqrt(tx * tx + ty * ty + tz * tz);
+          if (length > 1.0e-12f) {
+            tx /= length;
+            ty /= length;
+            tz /= length;
+          } else {
+            tx = 1.0f;
+            ty = 0.0f;
+            tz = 0.0f;
+          }
+          const float cx = normal[1] * tz - normal[2] * ty;
+          const float cy = normal[2] * tx - normal[0] * tz;
+          const float cz = normal[0] * ty - normal[1] * tx;
+          const float handedness =
+              (cx * bitangent[0] + cy * bitangent[1] +
+               cz * bitangent[2]) < 0.0f
+                  ? -1.0f
+                  : 1.0f;
+          s_tangents_[vertex * 4 + 0] = tx;
+          s_tangents_[vertex * 4 + 1] = ty;
+          s_tangents_[vertex * 4 + 2] = tz;
+          s_tangents_[vertex * 4 + 3] = handedness;
+        }
+      }
+      return true;
     }
 
-    std::vector<float> tan(vertex_count * 3, 0.0f);
-    std::vector<float> bit(vertex_count * 3, 0.0f);
+    // Accumulate directly into the final xyzw array. Handedness is computed
+    // in a second triangle pass after tangent normalization, avoiding the old
+    // 24B/vertex tangent + bitangent temporaries.
+    if (vertex_count >
+            (std::numeric_limits<size_t>::max)() / (4 * sizeof(float)) ||
+        !tr::ProbeAlloc(vertex_count * 4 * sizeof(float))) {
+      return false;
+    }
+    s_tangents_.assign(vertex_count * 4, 0.0f);
 
-    auto addTri = [&](uint32_t i0, uint32_t i1, uint32_t i2) {
+    auto visitTri = [&](uint32_t i0, uint32_t i1, uint32_t i2,
+                        bool handedness_pass) {
       if (i0 >= vertex_count || i1 >= vertex_count || i2 >= vertex_count) {
         return;
       }
@@ -2613,30 +3102,32 @@ class RenderStream {
                              (du1 * e2[2] - du2 * e1[2]) * r};
       const uint32_t ids[3] = {i0, i1, i2};
       for (uint32_t id : ids) {
-        tan[size_t(id) * 3 + 0] += sdir[0];
-        tan[size_t(id) * 3 + 1] += sdir[1];
-        tan[size_t(id) * 3 + 2] += sdir[2];
-        bit[size_t(id) * 3 + 0] += tdir[0];
-        bit[size_t(id) * 3 + 1] += tdir[1];
-        bit[size_t(id) * 3 + 2] += tdir[2];
+        float *out = &s_tangents_[size_t(id) * 4];
+        if (!handedness_pass) {
+          out[0] += sdir[0];
+          out[1] += sdir[1];
+          out[2] += sdir[2];
+        } else {
+          const float *normal = &s_normals_[size_t(id) * 3];
+          const float cx = normal[1] * out[2] - normal[2] * out[1];
+          const float cy = normal[2] * out[0] - normal[0] * out[2];
+          const float cz = normal[0] * out[1] - normal[1] * out[0];
+          out[3] += cx * tdir[0] + cy * tdir[1] + cz * tdir[2];
+        }
       }
     };
 
-    if (!s_indices_.empty()) {
+    auto visitAllTriangles = [&](bool handedness_pass) {
       for (size_t i = 0; i + 2 < s_indices_.size(); i += 3) {
-        addTri(s_indices_[i], s_indices_[i + 1], s_indices_[i + 2]);
+        visitTri(s_indices_[i], s_indices_[i + 1], s_indices_[i + 2],
+                 handedness_pass);
       }
-    } else {
-      for (size_t i = 0; i + 2 < vertex_count; i += 3) {
-        addTri(static_cast<uint32_t>(i), static_cast<uint32_t>(i + 1),
-               static_cast<uint32_t>(i + 2));
-      }
-    }
+    };
+    visitAllTriangles(false);
 
-    s_tangents_.assign(vertex_count * 4, 0.0f);
     for (size_t v = 0; v < vertex_count; ++v) {
       const float *n = &s_normals_[v * 3];
-      const float *tv = &tan[v * 3];
+      float *tv = &s_tangents_[v * 4];
       const float ndt = n[0] * tv[0] + n[1] * tv[1] + n[2] * tv[2];
       float tx = tv[0] - n[0] * ndt;
       float ty = tv[1] - n[1] * ndt;
@@ -2651,17 +3142,14 @@ class RenderStream {
         ty = 0.0f;
         tz = 0.0f;
       }
-      const float *bv = &bit[v * 3];
-      const float cx = n[1] * tz - n[2] * ty;
-      const float cy = n[2] * tx - n[0] * tz;
-      const float cz = n[0] * ty - n[1] * tx;
-      const float w = (cx * bv[0] + cy * bv[1] + cz * bv[2]) < 0.0f
-                          ? -1.0f
-                          : 1.0f;
       s_tangents_[v * 4 + 0] = tx;
       s_tangents_[v * 4 + 1] = ty;
       s_tangents_[v * 4 + 2] = tz;
-      s_tangents_[v * 4 + 3] = w;
+    }
+    visitAllTriangles(true);
+    for (size_t v = 0; v < vertex_count; ++v) {
+      s_tangents_[v * 4 + 3] =
+          s_tangents_[v * 4 + 3] < 0.0f ? -1.0f : 1.0f;
     }
     return true;
   }
@@ -2681,6 +3169,13 @@ class RenderStream {
     tinyusdz::next::Value tmp = *v;
     const std::vector<int32_t> *a = tmp.as_int_array();
     return a ? *a : std::vector<int32_t>{};
+  }
+  static bool matBool_(const tinyusdz::next::UsdPrim &prim, const char *name,
+                       bool fallback) {
+    const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+    if (!v) return fallback;
+    if (const bool *b = v->as_bool()) return *b;
+    return fallback;
   }
 
   // Build render geometry for one mesh into the scratch (s_points_/s_normals_/
@@ -2711,6 +3206,37 @@ class RenderStream {
     const size_t faceVtx = fvi.size();
     const size_t uvCount = UV.size() / 2;
     const size_t nCount = N.size() / 3;
+
+    // The next render converter already performs robust earcut triangulation,
+    // handles left-handed winding, holes and topology sanitization, and keeps
+    // a triangulated-corner -> authored-corner remap for face-varying data.
+    // Reuse that result instead of independently fan-triangulating n-gons.
+    const tr::RenderMesh *converted_mesh = nullptr;
+    tr::RenderMesh mesh_only_triangulation;
+    if (render_scene_valid_) {
+      const auto it = render_scene_.mesh_by_path.find(prim.GetPath().str());
+      if (it != render_scene_.mesh_by_path.end() && it->second >= 0 &&
+          static_cast<size_t>(it->second) < render_scene_.meshes.size()) {
+        const tr::RenderMesh &candidate =
+            render_scene_.meshes[static_cast<size_t>(it->second)];
+        if (candidate.is_triangulated &&
+            (candidate.points.empty() || candidate.points.size() == P.size()) &&
+            (candidate.triangulated_indices.size() % 3) == 0 &&
+            candidate.triangulated_face_vertex_indices.size() ==
+                candidate.triangulated_indices.size()) {
+          bool valid = true;
+          for (size_t corner = 0;
+               corner < candidate.triangulated_indices.size(); ++corner) {
+            if (candidate.triangulated_indices[corner] >= vtxCount ||
+                candidate.triangulated_face_vertex_indices[corner] >= faceVtx) {
+              valid = false;
+              break;
+            }
+          }
+          if (valid) converted_mesh = &candidate;
+        }
+      }
+    }
 
     auto fail = [&](const std::string &msg) {
       if (err) *err = msg;
@@ -2766,6 +3292,50 @@ class RenderStream {
       }
     }
 
+    // meshOnly deliberately skips the full RenderScene conversion, but it
+    // must not fall back to fan triangulation for polygonal meshes. Populate
+    // only the topology needed by the shared robust converter so this path
+    // matches animation/full-scene earcut, quad, winding and hole behavior.
+    if (!converted_mesh &&
+        std::any_of(fvc.begin(), fvc.end(), [](int32_t n) { return n != 3; })) {
+      mesh_only_triangulation.prim_path = prim.GetPath().str();
+      mesh_only_triangulation.points.append(P.data(), P.size());
+      for (int32_t n : fvc) {
+        mesh_only_triangulation.face_vertex_counts.push_back(
+            static_cast<uint32_t>(n));
+      }
+      for (int32_t index : fvi) {
+        mesh_only_triangulation.face_vertex_indices.push_back(
+            static_cast<uint32_t>(index));
+      }
+      if (const tinyusdz::next::Value *orientation =
+              prim.GetPropertyValue("orientation")) {
+        if (const std::string *token = orientation->as_token()) {
+          mesh_only_triangulation.left_handed = (*token == "leftHanded");
+        }
+      }
+      std::vector<int32_t> holes = matInt_(prim, "holeIndices");
+      for (int32_t face : holes) {
+        if (face >= 0 && static_cast<size_t>(face) < fvc.size()) {
+          mesh_only_triangulation.hole_faces.push_back(
+              static_cast<uint32_t>(face));
+        }
+      }
+      std::sort(mesh_only_triangulation.hole_faces.begin(),
+                mesh_only_triangulation.hole_faces.end());
+      tr::ConverterConfig triangulation_config;
+      triangulation_config.mesh.compute_normals = false;
+      triangulation_config.mesh.compute_tangents = false;
+      tr::RenderSceneConverter triangulator(triangulation_config);
+      if (!mesh_only_triangulation.has_alloc_failure() &&
+          triangulator.TriangulateMesh(&mesh_only_triangulation) &&
+          mesh_only_triangulation.is_triangulated &&
+          mesh_only_triangulation.triangulated_face_vertex_indices.size() ==
+              mesh_only_triangulation.triangulated_indices.size()) {
+        converted_mesh = &mesh_only_triangulation;
+      }
+    }
+
     const bool uvFaceVarying = !UV.empty() && uvCount != vtxCount &&
                                (uvCount == faceVtx || !stIdx.empty());
     const bool nFaceVarying = !N.empty() && nCount != vtxCount && nCount == faceVtx;
@@ -2780,7 +3350,14 @@ class RenderStream {
       for (size_t i = 0; i < vtxCount; ++i) {
         s_point_source_indices_[i] = static_cast<uint32_t>(i);
       }
-      triangulate_(fvi, fvc, s_indices_);
+      if (converted_mesh) {
+        s_indices_.resize(converted_mesh->triangulated_indices.size());
+        for (size_t i = 0; i < s_indices_.size(); ++i) {
+          s_indices_[i] = converted_mesh->triangulated_indices[i];
+        }
+      } else {
+        triangulate_(P, fvi, fvc, s_indices_);
+      }
       if (nCount == vtxCount) s_normals_ = std::move(N);
       else computeNormals_(s_points_, s_indices_, s_normals_);
       if (uvCount == vtxCount) s_uv_ = std::move(UV);
@@ -2832,19 +3409,40 @@ class RenderStream {
       }
       return base + add;
     };
+    auto quadUsesDiagonal13 = [&](size_t base) {
+      if (base > fvi.size() || 4 > fvi.size() - base) return false;
+      const int32_t ids[4] = {fvi[base], fvi[base + 1],
+                              fvi[base + 2], fvi[base + 3]};
+      for (int32_t id : ids) {
+        if (id < 0 || static_cast<size_t>(id) >= vtxCount) return false;
+      }
+      auto distSq = [&](int32_t a, int32_t b) {
+        const size_t ia = static_cast<size_t>(a) * 3;
+        const size_t ib = static_cast<size_t>(b) * 3;
+        const float dx = P[ia] - P[ib];
+        const float dy = P[ia + 1] - P[ib + 1];
+        const float dz = P[ia + 2] - P[ib + 2];
+        return dx * dx + dy * dy + dz * dz;
+      };
+      return distSq(ids[1], ids[3]) < distSq(ids[0], ids[2]);
+    };
 
     // Preserve the pre-existing adaptive behavior unless callers explicitly
     // request an index strategy.
     const bool doWeld = build_vertex_indices_set_ ? build_vertex_indices_ : [&]() {
-      size_t triCount = 0;
-      for (int32_t nn : fvc) {
-        if (nn >= 3) {
-          const size_t add = static_cast<size_t>(nn - 2);
-          if (triCount > (std::numeric_limits<size_t>::max)() - add) {
-            triCount = (std::numeric_limits<size_t>::max)();
-            break;
+      size_t triCount = converted_mesh
+                            ? converted_mesh->triangulated_indices.size() / 3
+                            : 0;
+      if (!converted_mesh) {
+        for (int32_t nn : fvc) {
+          if (nn >= 3) {
+            const size_t add = static_cast<size_t>(nn - 2);
+            if (triCount > (std::numeric_limits<size_t>::max)() - add) {
+              triCount = (std::numeric_limits<size_t>::max)();
+              break;
+            }
+            triCount += add;
           }
-          triCount += add;
         }
       }
       const size_t cornerCount =
@@ -2857,21 +3455,32 @@ class RenderStream {
     if (!doWeld) {
       // Non-indexed triangle soup (the minimal form for unique-per-corner UVs).
       std::vector<size_t> slots;
-      size_t b = 0;
-      for (int32_t n : fvc) {
-        if (faceSpanAvailable(b, n, faceVtx)) {
-          for (int32_t k = 2; k < n; ++k) {
-            if (slots.size() > kMaxRenderCorners - 3) {
-              s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
-              if (err) *err = "Mesh exceeds RenderStream triangle-corner limit";
-              return false;
-            }
-            slots.push_back(b);
-            slots.push_back(b + static_cast<size_t>(k) - 1);
-            slots.push_back(b + static_cast<size_t>(k));
-          }
+      if (converted_mesh) {
+        slots.resize(converted_mesh->triangulated_face_vertex_indices.size());
+        for (size_t i = 0; i < slots.size(); ++i) {
+          slots[i] = converted_mesh->triangulated_face_vertex_indices[i];
         }
-        b = advanceFaceBase(b, n);
+      } else {
+        size_t b = 0;
+        for (int32_t n : fvc) {
+          if (faceSpanAvailable(b, n, faceVtx)) {
+            if (n == 4 && quadUsesDiagonal13(b)) {
+              const size_t quad[6] = {b, b + 1, b + 3,
+                                      b + 1, b + 2, b + 3};
+              slots.insert(slots.end(), quad, quad + 6);
+            } else for (int32_t k = 2; k < n; ++k) {
+              if (slots.size() > kMaxRenderCorners - 3) {
+                s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+                if (err) *err = "Mesh exceeds RenderStream triangle-corner limit";
+                return false;
+              }
+              slots.push_back(b);
+              slots.push_back(b + static_cast<size_t>(k) - 1);
+              slots.push_back(b + static_cast<size_t>(k));
+            }
+          }
+          b = advanceFaceBase(b, n);
+        }
       }
       const size_t corners = slots.size();
       // Pre-flight the expanded-soup buffers (~44B per corner incl. this
@@ -2932,9 +3541,13 @@ class RenderStream {
     // per corner). This turns the realistic huge-mesh OOM into a per-mesh
     // error instead of an allocator abort; the map still grows incrementally.
     {
-      size_t weld_corners = 0;
-      for (int32_t nn : fvc) {
-        if (nn >= 3) weld_corners += static_cast<size_t>(nn - 2) * 3;
+      size_t weld_corners = converted_mesh
+                                ? converted_mesh->triangulated_indices.size()
+                                : 0;
+      if (!converted_mesh) {
+        for (int32_t nn : fvc) {
+          if (nn >= 3) weld_corners += static_cast<size_t>(nn - 2) * 3;
+        }
       }
       const size_t probe = weld_corners * 4 +
                            std::min(weld_corners, vtxCount ? vtxCount * 2 : weld_corners) * 56;
@@ -2987,20 +3600,42 @@ class RenderStream {
       return true;
     };
 
-    size_t base = 0;
-    for (int32_t n : fvc) {
-      if (faceSpanAvailable(base, n, faceVtx)) {
-        for (int32_t k = 2; k < n; ++k) {
-          if (!emit(base) ||
-              !emit(base + static_cast<size_t>(k) - 1) ||
-              !emit(base + static_cast<size_t>(k))) {
-            s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
-            if (err) *err = "Mesh exceeds RenderStream emitted-vertex limit";
-            return false;
-          }
+    if (converted_mesh) {
+      for (size_t corner = 0;
+           corner < converted_mesh->triangulated_face_vertex_indices.size();
+           ++corner) {
+        if (!emit(converted_mesh->triangulated_face_vertex_indices[corner])) {
+          s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+          if (err) *err = "Mesh exceeds RenderStream emitted-vertex limit";
+          return false;
         }
       }
-      base = advanceFaceBase(base, n);
+    } else {
+      size_t base = 0;
+      for (int32_t n : fvc) {
+        if (faceSpanAvailable(base, n, faceVtx)) {
+          if (n == 4 && quadUsesDiagonal13(base)) {
+            const size_t quad[6] = {base, base + 1, base + 3,
+                                    base + 1, base + 2, base + 3};
+            for (size_t slot : quad) {
+              if (!emit(slot)) {
+                s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+                if (err) *err = "Mesh exceeds RenderStream emitted-vertex limit";
+                return false;
+              }
+            }
+          } else for (int32_t k = 2; k < n; ++k) {
+            if (!emit(base) ||
+                !emit(base + static_cast<size_t>(k) - 1) ||
+                !emit(base + static_cast<size_t>(k))) {
+              s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+              if (err) *err = "Mesh exceeds RenderStream emitted-vertex limit";
+              return false;
+            }
+          }
+        }
+        base = advanceFaceBase(base, n);
+      }
     }
     // Normals not authored -> smooth normals on the welded indexed mesh.
     if (!haveN) computeNormals_(s_points_, s_indices_, s_normals_);
@@ -3096,6 +3731,7 @@ class RenderStream {
     *ss << "|metaltex=" << normTexKey_(m.metallic_texture);
     *ss << "|occtex=" << normTexKey_(m.occlusion_texture);
     *ss << "|emittex=" << normTexKey_(m.emissive_texture);
+    *ss << "|opacitytex=" << normTexKey_(m.opacity_texture);
   }
 
   MaterialRecord materialRecordForPrim_(
@@ -3109,6 +3745,88 @@ class RenderStream {
       return rec;
     }
     rec.prim_path = mat.GetPath().str();
+    bool populated_from_render_scene = false;
+    if (render_scene_valid_) {
+      const auto material_it = render_scene_.material_by_path.find(rec.prim_path);
+      if (material_it != render_scene_.material_by_path.end()) {
+        const tr::RenderMaterial *render_mat =
+            render_scene_.get_material(material_it->second);
+        auto metaFromParam = [&](const tr::ShaderParam &param) {
+          TextureMeta meta;
+          const tr::RenderTexture *texture = TextureAt(render_scene_,
+                                                        param.texture_id);
+          if (!texture) return meta;
+          meta.path = texture->asset_path;
+          meta.source_color_space = texture->source_color_space;
+          auto wrapName = [](tr::WrapMode mode) {
+            switch (mode) {
+              case tr::WrapMode::Repeat: return std::string("repeat");
+              case tr::WrapMode::Mirror: return std::string("mirror");
+              case tr::WrapMode::Black: return std::string("black");
+              case tr::WrapMode::Clamp:
+              default: return std::string("clamp");
+            }
+          };
+          meta.wrap_s = wrapName(texture->wrap_s);
+          meta.wrap_t = wrapName(texture->wrap_t);
+          meta.is_udim = isUdimPath_(meta.path);
+          return meta;
+        };
+        if (render_mat && render_mat->preview_surface) {
+          const tr::PreviewSurfaceShader &ps = *render_mat->preview_surface;
+          rec.base_color[0] = ps.diffuse_color.value.x;
+          rec.base_color[1] = ps.diffuse_color.value.y;
+          rec.base_color[2] = ps.diffuse_color.value.z;
+          rec.metallic = ps.metallic.value.x;
+          rec.roughness = ps.roughness.value.x;
+          rec.opacity = ps.opacity.value.x;
+          rec.occlusion = ps.occlusion.value.x;
+          rec.emissive[0] = ps.emissive_color.value.x;
+          rec.emissive[1] = ps.emissive_color.value.y;
+          rec.emissive[2] = ps.emissive_color.value.z;
+          rec.opacity_threshold = ps.opacity_threshold.value.x > 0.0f
+                                      ? ps.opacity_threshold.value.x
+                                      : -1.0f;
+          rec.base_color_meta = metaFromParam(ps.diffuse_color);
+          rec.normal_meta = metaFromParam(ps.normal);
+          rec.roughness_meta = metaFromParam(ps.roughness);
+          rec.metallic_meta = metaFromParam(ps.metallic);
+          rec.occlusion_meta = metaFromParam(ps.occlusion);
+          rec.emissive_meta = metaFromParam(ps.emissive_color);
+          rec.opacity_meta = metaFromParam(ps.opacity);
+          populated_from_render_scene = true;
+        } else if (render_mat && render_mat->openpbr) {
+          const tr::OpenPBRSurfaceShader &op = *render_mat->openpbr;
+          rec.base_color[0] = op.base_color.value.x;
+          rec.base_color[1] = op.base_color.value.y;
+          rec.base_color[2] = op.base_color.value.z;
+          rec.metallic = op.base_metalness.value.x;
+          rec.roughness = op.specular_roughness.value.x;
+          rec.opacity = op.opacity.value.x;
+          rec.emissive[0] = op.emission_color.value.x;
+          rec.emissive[1] = op.emission_color.value.y;
+          rec.emissive[2] = op.emission_color.value.z;
+          rec.base_color_meta = metaFromParam(op.base_color);
+          rec.normal_meta = metaFromParam(op.normal);
+          rec.roughness_meta = metaFromParam(
+              op.specular_roughness.is_texture() ? op.specular_roughness
+                                                 : op.base_roughness);
+          rec.metallic_meta = metaFromParam(op.base_metalness);
+          rec.emissive_meta = metaFromParam(op.emission_color);
+          rec.opacity_meta = metaFromParam(op.opacity);
+          populated_from_render_scene = true;
+        }
+        if (populated_from_render_scene) {
+          rec.base_color_texture = rec.base_color_meta.path;
+          rec.normal_texture = rec.normal_meta.path;
+          rec.roughness_texture = rec.roughness_meta.path;
+          rec.metallic_texture = rec.metallic_meta.path;
+          rec.occlusion_texture = rec.occlusion_meta.path;
+          rec.emissive_texture = rec.emissive_meta.path;
+          rec.opacity_texture = rec.opacity_meta.path;
+        }
+      }
+    }
     tinyusdz::next::UsdPrim shader;
     const std::string shaderPath = tinyusdz::next::GetSurfaceShader(stage_, mat);
     if (!shaderPath.empty()) shader = stage_.GetPrimAtPath(shaderPath);
@@ -3117,7 +3835,7 @@ class RenderStream {
         if (tinyusdz::next::IsPreviewSurface(ch)) { shader = ch; break; }
       }
     }
-    if (shader.IsValid()) {
+    if (!populated_from_render_scene && shader.IsValid()) {
       tinyusdz::next::PreviewSurfaceData ps;
       if (tinyusdz::next::GetPreviewSurfaceData(stage_, shader, &ps)) {
         rec.base_color[0] = ps.diffuse_color[0];
@@ -3139,12 +3857,45 @@ class RenderStream {
         rec.metallic_meta = texMeta_(ps.metallic_texture);
         rec.occlusion_meta = texMeta_(ps.occlusion_texture);
         rec.emissive_meta = texMeta_(ps.emissive_texture);
+        rec.opacity_meta = texMeta_(ps.opacity_texture);
         rec.base_color_texture = rec.base_color_meta.path;
         rec.normal_texture = rec.normal_meta.path;
         rec.roughness_texture = rec.roughness_meta.path;
         rec.metallic_texture = rec.metallic_meta.path;
         rec.occlusion_texture = rec.occlusion_meta.path;
         rec.emissive_texture = rec.emissive_meta.path;
+        rec.opacity_texture = rec.opacity_meta.path;
+      }
+    }
+    // The schema helper above intentionally models PreviewSurface only.
+    // Pull evaluated OpenPBR values from the next render converter so
+    // constant MaterialX node networks drive the Three.js fallback material.
+    const auto render_material_it =
+        render_scene_.material_by_path.find(rec.prim_path);
+    if (render_material_it != render_scene_.material_by_path.end()) {
+      const tr::RenderMaterial* render_material =
+          render_scene_.get_material(render_material_it->second);
+      if (render_material && render_material->openpbr) {
+        const tr::OpenPBRSurfaceShader& openpbr = *render_material->openpbr;
+        rec.base_color[0] = openpbr.base_color.value.x;
+        rec.base_color[1] = openpbr.base_color.value.y;
+        rec.base_color[2] = openpbr.base_color.value.z;
+        rec.metallic = openpbr.base_metalness.value.x;
+        rec.roughness = openpbr.specular_roughness.value.x;
+        rec.opacity = openpbr.opacity.value.x;
+        const float emission = openpbr.emission_luminance.value.x;
+        rec.emissive[0] = openpbr.emission_color.value.x * emission;
+        rec.emissive[1] = openpbr.emission_color.value.y * emission;
+        rec.emissive[2] = openpbr.emission_color.value.z * emission;
+        rec.base_color_texture = TexturePath(render_scene_, openpbr.base_color);
+        rec.normal_texture = TexturePath(render_scene_, openpbr.normal);
+        rec.roughness_texture =
+            TexturePath(render_scene_, openpbr.specular_roughness);
+        rec.metallic_texture =
+            TexturePath(render_scene_, openpbr.base_metalness);
+        rec.emissive_texture =
+            TexturePath(render_scene_, openpbr.emission_color);
+        rec.opacity_texture = TexturePath(render_scene_, openpbr.opacity);
       }
     }
     std::ostringstream ss;
@@ -3164,6 +3915,9 @@ class RenderStream {
     addTextureKey_("data", rec.metallic_texture, &source_texture_keys_);
     addTextureKey_("data", rec.occlusion_texture, &source_texture_keys_);
     addTextureKey_("color", rec.emissive_texture, &source_texture_keys_);
+    if (rec.opacity_texture != rec.base_color_texture) {
+      addTextureKey_("data", rec.opacity_texture, &source_texture_keys_);
+    }
 
     const std::string key = material_dedup_ ? rec.key : mat_path;
     auto it = material_key_to_id_.find(key);
@@ -3179,6 +3933,9 @@ class RenderStream {
     addTextureKey_("data", rec.metallic_texture, &texture_keys_);
     addTextureKey_("data", rec.occlusion_texture, &texture_keys_);
     addTextureKey_("color", rec.emissive_texture, &texture_keys_);
+    if (rec.opacity_texture != rec.base_color_texture) {
+      addTextureKey_("data", rec.opacity_texture, &texture_keys_);
+    }
     return rec.id;
   }
 
@@ -3241,6 +3998,7 @@ class RenderStream {
   struct MergeAccumulator {
     OutputMesh mesh;
     size_t source_count = 0;
+    int first_source_index = -1;
   };
 
   static size_t triangleIndexCount_(const std::vector<uint32_t> &indices,
@@ -3250,17 +4008,32 @@ class RenderStream {
 
   void flushAccumulator_(MergeAccumulator *acc) {
     if (!acc || acc->source_count == 0) return;
+    if (acc->source_count == 1) {
+      // A singleton is not a merge. Keep the authored mesh and transform
+      // hierarchy instead of baking it into world-space float vertices.
+      OutputMesh out;
+      out.merged = false;
+      out.source_index = acc->first_source_index;
+      outputs_.push_back(std::move(out));
+      acc->mesh = OutputMesh{};
+      acc->source_count = 0;
+      acc->first_source_index = -1;
+      return;
+    }
     acc->mesh.merged = true;
     acc->mesh.name = "merged_material_" + std::to_string(acc->mesh.material_id);
     acc->mesh.prim_path = "/__tinyusdz_next_merged/" + acc->mesh.name + "_" +
                           std::to_string(outputs_.size());
     outputs_.push_back(std::move(acc->mesh));
     stats_.merge_group_count++;
+    stats_.merged_mesh_count += acc->source_count;
     acc->mesh = OutputMesh{};
     acc->source_count = 0;
+    acc->first_source_index = -1;
   }
 
   bool appendToAccumulator_(const tinyusdz::next::UsdPrim &prim,
+                            int source_index,
                             int32_t material_id,
                             bool soup,
                             MergeAccumulator *acc) {
@@ -3277,8 +4050,10 @@ class RenderStream {
     }
     const std::array<double, 16> world = worldMatrixForPrim_(prim);
     if (acc->source_count == 0) {
+      acc->first_source_index = source_index;
       acc->mesh.soup = soup;
       acc->mesh.material_id = material_id;
+      acc->mesh.double_sided = matBool_(prim, "doubleSided", false);
       acc->mesh.local_matrix = mesh_merge_bake_transform_ ? identityMatrix_()
                                                           : localMatrix_(prim);
       acc->mesh.world_matrix = mesh_merge_bake_transform_ ? identityMatrix_()
@@ -3317,7 +4092,6 @@ class RenderStream {
       }
     }
     acc->source_count++;
-    stats_.merged_mesh_count++;
     return true;
   }
 
@@ -3351,15 +4125,17 @@ class RenderStream {
       }
       const bool has_normals = !s_normals_.empty();
       const bool has_uv = !s_uv_.empty();
+      const bool double_sided = matBool_(prim, "doubleSided", false);
       const std::array<double, 16> world = worldMatrixForPrim_(prim);
       std::ostringstream key;
       key << material_id << "|soup=" << soup << "|n=" << has_normals
-          << "|uv=" << has_uv;
+          << "|uv=" << has_uv << "|double=" << double_sided;
       if (!mesh_merge_bake_transform_) key << "|m=" << matrixKey_(world);
       MergeAccumulator &acc = groups[key.str()];
       if (acc.source_count > 0 &&
           (acc.mesh.soup != soup ||
            acc.mesh.material_id != material_id ||
+           acc.mesh.double_sided != double_sided ||
            (!mesh_merge_bake_transform_ &&
             !sameMatrix_(acc.mesh.world_matrix, world)))) {
         flushAccumulator_(&acc);
@@ -3372,7 +4148,8 @@ class RenderStream {
           (next_vertices > kMaxGroupVertices || next_indices > kMaxGroupIndices)) {
         flushAccumulator_(&acc);
       }
-      if (!appendToAccumulator_(prim, material_id, soup, &acc)) {
+      if (!appendToAccumulator_(prim, static_cast<int>(i), material_id, soup,
+                                &acc)) {
         // Heap too full to merge: flush the group and emit this mesh unmerged.
         flushAccumulator_(&acc);
         OutputMesh out;
@@ -3403,8 +4180,11 @@ class RenderStream {
     return "";
   }
 
-  // Fan-triangulate faceVertexIndices grouped by faceVertexCounts.
-  static void triangulate_(const std::vector<int32_t> &fvi,
+  // Triangulate faceVertexIndices grouped by faceVertexCounts. Quads use the
+  // shorter diagonal, matching the full render converter; larger polygons
+  // retain the bounded fan fallback used by the mesh-only fast path.
+  static void triangulate_(const std::vector<float> &points,
+                           const std::vector<int32_t> &fvi,
                            const std::vector<int32_t> &fvc,
                            std::vector<uint32_t> &out) {
     out.clear();
@@ -3430,12 +4210,36 @@ class RenderStream {
       }
       return base + add;
     };
+    auto quadUsesDiagonal13 = [&](size_t base) {
+      if (base > fvi.size() || 4 > fvi.size() - base) return false;
+      const int32_t ids[4] = {fvi[base], fvi[base + 1],
+                              fvi[base + 2], fvi[base + 3]};
+      const size_t point_count = points.size() / 3;
+      for (int32_t id : ids) {
+        if (id < 0 || static_cast<size_t>(id) >= point_count) return false;
+      }
+      auto distSq = [&](int32_t a, int32_t b) {
+        const size_t ia = static_cast<size_t>(a) * 3;
+        const size_t ib = static_cast<size_t>(b) * 3;
+        const float dx = points[ia] - points[ib];
+        const float dy = points[ia + 1] - points[ib + 1];
+        const float dz = points[ia + 2] - points[ib + 2];
+        return dx * dx + dy * dy + dz * dz;
+      };
+      return distSq(ids[1], ids[3]) < distSq(ids[0], ids[2]);
+    };
     for (int32_t n : fvc) {
       if (!faceSpanAvailable(base, n, fvi.size())) {
         base = advanceFaceBase(base, n);
         continue;
       }
-      for (int32_t k = 2; k < n; ++k) {
+      if (n == 4 && quadUsesDiagonal13(base)) {
+        const size_t corners[6] = {base, base + 1, base + 3,
+                                   base + 1, base + 2, base + 3};
+        for (size_t corner : corners) {
+          out.push_back(static_cast<uint32_t>(fvi[corner]));
+        }
+      } else for (int32_t k = 2; k < n; ++k) {
         const int32_t a = fvi[base];
         const int32_t b = fvi[base + static_cast<size_t>(k) - 1];
         const int32_t c = fvi[base + static_cast<size_t>(k)];
@@ -3638,6 +4442,7 @@ class RenderStream {
     setTex("metallicTexture", ps.metallic_texture);
     setTex("occlusionTexture", ps.occlusion_texture);
     setTex("emissiveTexture", ps.emissive_texture);
+    setTex("opacityTexture", ps.opacity_texture);
     return m;
   }
 
@@ -3666,9 +4471,32 @@ class RenderStream {
       mtlx.set("sourceUri", render_mat->mtlx_config.source_uri);
       m.set("materialXConfig", mtlx);
       m.set("materialXJson", RenderMaterialJson(render_scene_, *render_mat));
-      if (render_mat->openpbr &&
-          !render_mat->openpbr->nodegraph_json.empty()) {
-        m.set("openPBRNodeGraphJson", render_mat->openpbr->nodegraph_json);
+      std::string nodegraph_json = render_mat->openpbr
+                                       ? render_mat->openpbr->nodegraph_json
+                                       : std::string();
+      if (nodegraph_json.empty()) {
+        const tinyusdz::next::UsdPrim mat =
+            stage_.GetPrimAtPath(rec.prim_path);
+        tinyusdz::next::UsdPrim shader;
+        // A material may author both PreviewSurface and MaterialX terminals.
+        // Graph reconstruction must prefer outputs:mtlx:surface even when the
+        // renderer intentionally chose the generic outputs:surface fallback.
+        const std::vector<tinyusdz::next::Path>* mtlx_connections =
+            NextPropertyConnections(mat, "outputs:mtlx:surface");
+        if (mtlx_connections && !mtlx_connections->empty()) {
+          shader = stage_.GetPrimAtPath(
+              NextConnectionPrimPath((*mtlx_connections)[0].str()));
+        }
+        if (!shader.IsValid()) {
+          const std::string shader_path =
+              tinyusdz::next::GetSurfaceShader(stage_, mat);
+          if (!shader_path.empty()) shader = stage_.GetPrimAtPath(shader_path);
+        }
+        nodegraph_json = BuildNextNodeGraphJson(
+            mat, shader, render_mat->mtlx_config.version);
+      }
+      if (!nodegraph_json.empty()) {
+        m.set("openPBRNodeGraphJson", nodegraph_json);
       }
     }
     m.set("baseColor", arr3_(rec.base_color));
@@ -3698,6 +4526,9 @@ class RenderStream {
     if (!rec.emissive_texture.empty()) {
       m.set("emissiveTexture", rec.emissive_texture);
     }
+    if (!rec.opacity_texture.empty()) {
+      m.set("opacityTexture", rec.opacity_texture);
+    }
     auto metaObject = [](const TextureMeta &meta) {
       emscripten::val out = emscripten::val::object();
       out.set("path", meta.path);
@@ -3725,6 +4556,9 @@ class RenderStream {
     }
     if (!rec.emissive_meta.path.empty()) {
       texture_meta.set("emissive", metaObject(rec.emissive_meta));
+    }
+    if (!rec.opacity_meta.path.empty()) {
+      texture_meta.set("opacity", metaObject(rec.opacity_meta));
     }
     m.set("textureMetadata", texture_meta);
     return m;
@@ -3864,6 +4698,7 @@ class RenderStream {
   std::vector<std::string> render_scene_warnings_;
   std::vector<tinyusdz::next::UsdGeomMesh> meshes_;
   std::vector<OutputMesh> outputs_;
+  std::vector<OutputMesh> analytic_outputs_;
   std::vector<MaterialRecord> materials_;
   std::unordered_map<std::string, int32_t> material_key_to_id_;
   std::unordered_map<std::string, int32_t> material_path_to_id_;
@@ -3922,6 +4757,7 @@ class RenderStream {
   bool mesh_merge_ = false;
   bool mesh_merge_bake_transform_ = false;
   bool flatten_render_tree_ = false;
+  bool mesh_only_ = false;
   bool compute_tangents_ = false;
   bool build_vertex_indices_ = true;
   bool build_vertex_indices_set_ = false;
@@ -4001,6 +4837,8 @@ tn::ValidationOptions ParseValidationOptionsJSONForWeb(
       opts.lux = true;
     } else if (name == "physics") {
       opts.physics = true;
+    } else if (name == "render") {
+      opts.render = true;
     } else if (name == "crate") {
       opts.crate = true;
     } else if (name == "all") {
@@ -4008,7 +4846,7 @@ tn::ValidationOptions ParseValidationOptionsJSONForWeb(
     }
   }
   if (!opts.core && !opts.geom && !opts.shade && !opts.lux && !opts.physics &&
-      !opts.crate) {
+      !opts.render && !opts.crate) {
     opts.core = true;
   }
   return opts;
@@ -4208,6 +5046,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
       .function("setMeshMergeBakeTransform",
                 &RenderStream::setMeshMergeBakeTransform)
       .function("setFlattenRenderTree", &RenderStream::setFlattenRenderTree)
+      .function("setMeshOnly", &RenderStream::setMeshOnly)
       .function("setComputeTangents", &RenderStream::setComputeTangents)
       .function("setBuildVertexIndices", &RenderStream::setBuildVertexIndices)
       .function("setTangentMethod", &RenderStream::setTangentMethod)
@@ -4241,6 +5080,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
       .function("numUnsupportedRenderables", &RenderStream::unsupportedRenderableCount)
       .function("numAnimations", &RenderStream::animationCount)
       .function("getAnimation", &RenderStream::getAnimation)
+      .function("getAnimationView", &RenderStream::getAnimationView)
       .function("getAllAnimations", &RenderStream::getAllAnimations)
       .function("getAnimationInfo", &RenderStream::getAnimationInfo)
       .function("getAllAnimationInfos", &RenderStream::getAllAnimationInfos)

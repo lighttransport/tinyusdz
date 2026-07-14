@@ -4,10 +4,56 @@
 // TinyUSDZ Next - USDA ASCII parser prim/property bodies.
 
 #include "ascii-parser-internal.hh"
+#include "../prim/identifier.hh"
+#include "../types/spline.hh"
 #include "value-parser.hh"
 
 namespace tinyusdz {
 namespace next {
+
+namespace {
+
+// Resolve a relative prim/property path (../Sibling, ./Child, Child.attr,
+// .prop, ..) against the owning prim's absolute path. Crate files never
+// hold relative paths, and downstream lookups are absolute-only — resolve
+// at parse time (pxr does the same when building SdfPaths).
+std::string ResolveRelativeTargetPath(const ::tinyusdz::next::PrimSpec* prim,
+                                      const std::string& target) {
+  if (target.empty() || target[0] == '/' || !prim) return target;
+  std::string base = prim->path().str();
+  // Variant-option content parses into an internal layer rooted at
+  // /__self__; the final host path is unknown until composition, so keep
+  // the authored relative form (GraftSubtree remaps it on selection) —
+  // resolving here would leak the sentinel into written layers.
+  if (base.rfind("/__self__", 0) == 0) return target;
+  // ".prop" / "." anchor forms: a leading dot NOT followed by '.' or '/'
+  // names a property of the anchor prim itself.
+  if (target[0] == '.') {
+    if (target.size() == 1) return base;                      // "."
+    if (target[1] != '.' && target[1] != '/') return base + target;  // ".prop"
+  }
+  std::string rest = target;
+  while (!rest.empty()) {
+    const bool bare_up = (rest == "..");
+    if (bare_up || rest.rfind("../", 0) == 0) {
+      if (base.empty() || base == "/") return target;  // past root: keep authored
+      const size_t up = base.rfind('/');
+      base = (up == std::string::npos || up == 0) ? "/" : base.substr(0, up);
+      rest = bare_up ? std::string() : rest.substr(3);
+    } else if (rest == ".") {
+      rest.clear();
+    } else if (rest.rfind("./", 0) == 0) {
+      rest = rest.substr(2);
+    } else {
+      break;
+    }
+  }
+  if (rest.empty()) return base;
+  if (base.empty() || base == "/") return "/" + rest;
+  return base + "/" + rest;
+}
+
+}  // namespace
 
 bool AsciiParser::Impl::ParsePrim() {
   if (depth_ >= options_.max_depth) {
@@ -39,6 +85,13 @@ bool AsciiParser::Impl::ParsePrim() {
   std::string prim_name;
   if (!lexer_->expect(TokenType::String, prim_name)) {
     AddError("Expected prim name");
+    return false;
+  }
+
+  if (!IsValidIdentifier(prim_name)) {
+    // AOUSD §7.3/§8 uses Unicode XID_Start/XID_Continue. Reuse the same
+    // generated XID tables as legacy TinyUSDZ rather than bytewise ctype.
+    AddError("Prim name contains invalid character(s): \"" + prim_name + "\"");
     return false;
   }
 
@@ -99,9 +152,23 @@ bool AsciiParser::Impl::ParsePrimContents() {
 
     if (tok.type == TokenType::Reorder) {
       lexer_->next();
+      if (lexer_->peek().type == TokenType::Rel) {
+        if (!ParseRelationship(PrimSpec::RelationshipListOp::Reorder,
+                               /*explicit_list=*/false)) return false;
+        continue;
+      }
       std::string what;
-      lexer_->expect(TokenType::Identifier, what);
-      if (Match(TokenType::Equals)) SkipValueLike();
+      if (!lexer_->expect(TokenType::Identifier, what)) return false;
+      if (what == "nameChildren" || what == "primChildren") {
+        if (!ParseOrderList(&prim->meta().primOrder())) return false;
+        prim->meta().setPrimOrderAuthored();
+      } else if (what == "properties" || what == "propertyChildren") {
+        if (!ParseOrderList(&prim->meta().propertyOrder())) return false;
+        prim->meta().setPropertyOrderAuthored();
+      } else {
+        if (!ParseAttribute(PrimSpec::RelationshipListOp::Reorder,
+                            /*explicit_connection=*/false, what)) return false;
+      }
       continue;
     }
 
@@ -119,7 +186,16 @@ bool AsciiParser::Impl::ParsePrimContents() {
           op = PrimSpec::RelationshipListOp::Add;
         }
         if (!ParseRelationship(op, /*explicit_list=*/false)) return false;
+        continue;
       }
+      PrimSpec::RelationshipListOp op = PrimSpec::RelationshipListOp::Append;
+      if (op_tok == TokenType::Prepend)
+        op = PrimSpec::RelationshipListOp::Prepend;
+      else if (op_tok == TokenType::Delete)
+        op = PrimSpec::RelationshipListOp::Delete;
+      else if (op_tok == TokenType::Add)
+        op = PrimSpec::RelationshipListOp::Add;
+      if (!ParseAttribute(op, /*explicit_connection=*/false)) return false;
       continue;
     }
 
@@ -155,9 +231,13 @@ bool AsciiParser::Impl::ParsePrimContents() {
   return true;
 }
 
-bool AsciiParser::Impl::ParseAttribute() {
+bool AsciiParser::Impl::ParseAttribute(
+    PrimSpec::RelationshipListOp connection_op, bool explicit_connection,
+    const std::string& preconsumed_type) {
   bool is_custom = false;
   bool is_uniform = false;
+  bool is_varying = false;
+  bool variability_authored = false;
 
   while (true) {
     const Token& tok = lexer_->peek();
@@ -166,8 +246,11 @@ bool AsciiParser::Impl::ParseAttribute() {
       lexer_->next();
     } else if (tok.type == TokenType::Uniform) {
       is_uniform = true;
+      variability_authored = true;
       lexer_->next();
     } else if (tok.type == TokenType::Varying) {
+      is_varying = true;
+      variability_authored = true;
       lexer_->next();
     } else {
       break;
@@ -178,12 +261,14 @@ bool AsciiParser::Impl::ParseAttribute() {
     uint16_t rflags = 0;
     if (is_custom) rflags |= PropSlot::kFlagCustom;
     if (is_uniform) rflags |= PropSlot::kFlagUniform;
+    if (variability_authored) rflags |= PropSlot::kFlagVariabilityAuthored;
+    if (is_varying) rflags |= PropSlot::kFlagVarying;
     return ParseRelationship(PrimSpec::RelationshipListOp::Append,
                              /*explicit_list=*/true, rflags);
   }
 
-  std::string type_name;
-  if (!lexer_->expect(TokenType::Identifier, type_name)) {
+  std::string type_name = preconsumed_type;
+  if (type_name.empty() && !lexer_->expect(TokenType::Identifier, type_name)) {
     AddError("Expected attribute type");
     return false;
   }
@@ -222,42 +307,78 @@ bool AsciiParser::Impl::ParseAttribute() {
   if (is_uniform) flags |= PropSlot::kFlagUniform;
 
   if (Check(TokenType::Equals)) {
+    if (!explicit_connection) {
+      AddError("List-edit qualifier is valid only for attribute connections");
+      return false;
+    }
     lexer_->next();
 
     if (type_id == TypeId::Invalid) {
-      // Unknown attribute type: keep the VALUE via literal inference where the
-      // form is unambiguous (pxr preserves `widget w = 5`); the declared type
-      // name is preserved separately, so the writer re-emits `widget w = 5`.
-      Value inferred;
-      const Token& vt = lexer_->peek();
-      if (vt.type == TokenType::Number) {
-        ParseResult r = ParseValue(*lexer_, TypeId::Double);
-        if (r.success) inferred = std::move(r.value);
-      } else if (vt.type == TokenType::String) {
-        ParseResult r = ParseValue(*lexer_, TypeId::String);
-        if (r.success) inferred = std::move(r.value);
-      } else if (vt.type == TokenType::True || vt.type == TokenType::False) {
-        ParseResult r = ParseValue(*lexer_, TypeId::Bool);
-        if (r.success) inferred = std::move(r.value);
-      }
-      if (!inferred.is_empty()) {
-        if (PrimSpec* cur = builder_->current()) {
-          cur->upsert_property(attr_name, std::move(inferred), flags);
-        }
-      } else {
-        if (!SkipValueLike()) {
-          AddError("Failed to skip value for unknown attribute type: " +
-                   type_name);
+      // `opaque` and its `group` role cannot carry ordinary serialized values,
+      // but AOUSD permits the universal ValueBlock sentinel. Accept that form
+      // in strict mode without pretending either type has a concrete codec.
+      if ((type_name == "opaque" || type_name == "group") &&
+          Check(TokenType::None)) {
+        ParseResult result = ParseValue(*lexer_, type_id);
+        if (!result.success) {
+          AddError(result.error);
           return false;
         }
-        // Declared-only slot: storing an Invalid-typed Value here would
-        // surface as a `default` field with type enum 0 in the crate writer
-        // (pxr hard error).
         if (PrimSpec* cur = builder_->current()) {
-          const PropNameId nid = GetPropNameTable().intern(attr_name);
-          if (!cur->property(nid)) cur->add_property_slot(nid, type_id, flags);
+          cur->upsert_property(attr_name, std::move(result.value), flags);
         }
+        ParsePropertyMetadata(attr_name);
+        return true;
       }
+      const bool normative_unsupported =
+          type_name == "frame4d" || type_name == "opaque" ||
+          type_name == "group";
+      if (options_.strict_aousd_conformance && normative_unsupported) {
+        AddError("Unsupported AOUSD foundational value type in strict mode: " +
+                 type_name);
+        return false;
+      }
+      // Preserve the complete authored literal rather than guessing a storage
+      // type or silently leaving a declared-only slot. Extension types can
+      // therefore round-trip in compatibility mode without corrupting data.
+      lexer_->peek();
+      const size_t vstart = lexer_->token_start();
+      if (!SkipValueLike()) {
+        AddError("Failed to preserve value for unsupported attribute type: " +
+                 type_name);
+        return false;
+      }
+      lexer_->peek();
+      size_t vend = lexer_->token_start();
+      const char* base = lexer_->input_data();
+      while (vend > vstart &&
+             (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+              base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+        --vend;
+      }
+      if (PrimSpec* cur = builder_->current()) {
+        const PropNameId nid = GetPropNameTable().intern(attr_name);
+        std::string raw(base + vstart, vend - vstart);
+        // Preserve the former generic-read convenience for unambiguous scalar
+        // extension values while retaining the exact authored bytes for write.
+        Lexer scalar(raw.data(), raw.size());
+        ParseResult inferred;
+        const TokenType first = scalar.peek().type;
+        if (first == TokenType::Number)
+          inferred = ParseValue(scalar, TypeId::Double);
+        else if (first == TokenType::String)
+          inferred = ParseValue(scalar, TypeId::String);
+        else if (first == TokenType::True || first == TokenType::False)
+          inferred = ParseValue(scalar, TypeId::Bool);
+        if (inferred.success && !inferred.value.is_empty()) {
+          cur->upsert_property(nid, std::move(inferred.value), flags);
+        } else if (!cur->property(nid)) {
+          cur->add_property_slot(nid, type_id, flags);
+        }
+        cur->set_raw_default_source(attr_name, std::move(raw));
+      }
+      AddWarning("Unsupported attribute type preserved as raw authored data: " +
+                 type_name);
     } else {
       ParseResult result;
       ParseArrayContext array_ctx;
@@ -290,8 +411,18 @@ bool AsciiParser::Impl::ParseAttribute() {
   } else if (Check(TokenType::Dot)) {
     lexer_->next();
     const Token& prop_tok = lexer_->peek();
+    if (!explicit_connection &&
+        !(prop_tok.type == TokenType::Identifier &&
+          prop_tok.value == "connect")) {
+      AddError("List-edit qualifier is valid only for attribute connections");
+      return false;
+    }
 
     if (prop_tok.type == TokenType::TimeSamples) {
+      if (!explicit_connection) {
+        AddError("List-edit qualifier is valid only for attribute connections");
+        return false;
+      }
       lexer_->next();
       if (!Match(TokenType::Equals)) {
         AddError("Expected '=' after timeSamples");
@@ -316,16 +447,18 @@ bool AsciiParser::Impl::ParseAttribute() {
       if (cur && !cur->property(nid)) {
         cur->add_property_slot(nid, type_id, flags);
       }
+      std::vector<Path> targets;
+      bool authored_empty = false;
       if (Check(TokenType::None)) {
         // `.connect = None`: an authored connection block.
         lexer_->next();
-        if (cur) cur->set_connection_block(attr_name);
+        authored_empty = true;
       } else if (Check(TokenType::OpenBracket)) {
         lexer_->next();
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
           std::string p;
           if (lexer_->expect(TokenType::PathRef, p) && cur) {
-            cur->add_connection(attr_name, Path(p));
+            targets.emplace_back(ResolveRelativeTargetPath(cur, p));
           }
           Match(TokenType::Comma);
         }
@@ -336,14 +469,117 @@ bool AsciiParser::Impl::ParseAttribute() {
           AddError("Expected path for connection");
           return false;
         }
-        if (cur) cur->add_connection(attr_name, Path(path));
+        if (cur) targets.emplace_back(ResolveRelativeTargetPath(cur, path));
+      }
+      if (cur) {
+        if (explicit_connection) {
+          cur->set_connection_targets(attr_name, std::move(targets));
+          ArcEdit& edit = cur->ensure_connection_edit(attr_name);
+          edit = ArcEdit();
+          edit.authored = true;
+          edit.is_explicit = true;
+        } else {
+          const ArcEdit* prior_edit = cur->connection_edit(attr_name);
+          const bool explicit_base =
+              prior_edit && prior_edit->authored && prior_edit->is_explicit &&
+              cur->connection(attr_name) && !cur->connection(attr_name)->empty();
+          cur->apply_connection_list_op(attr_name, targets, connection_op);
+          ArcEdit& edit = cur->ensure_connection_edit(attr_name);
+          if (explicit_base) {
+            edit = ArcEdit();
+            edit.authored = true;
+            edit.is_explicit = true;
+            ParsePropertyMetadata(attr_name);
+            return true;
+          }
+          edit.authored = true;
+          edit.is_explicit = false;
+          std::vector<std::string>* sublist = nullptr;
+          switch (connection_op) {
+            case PrimSpec::RelationshipListOp::Add: sublist = &edit.added; break;
+            case PrimSpec::RelationshipListOp::Prepend:
+              sublist = &edit.prepended;
+              break;
+            case PrimSpec::RelationshipListOp::Append:
+              sublist = &edit.appended;
+              break;
+            case PrimSpec::RelationshipListOp::Delete:
+              sublist = &edit.deleted;
+              break;
+            case PrimSpec::RelationshipListOp::Reorder:
+              sublist = &edit.ordered;
+              break;
+          }
+          if (sublist) {
+            for (const Path& target : targets) sublist->push_back(target.str());
+          }
+        }
+        if (authored_empty && explicit_connection) cur->set_connection_block(attr_name);
       }
       ParsePropertyMetadata(attr_name);
-    } else {
-      AddWarning("Unknown attribute property: " + prop_tok.value);
+    } else if (prop_tok.type == TokenType::Identifier &&
+               prop_tok.value == "spline") {
       lexer_->next();
+      if (!Match(TokenType::Equals)) {
+        AddError("Expected '=' after spline");
+        return false;
+      }
+      // The raw authored text is the storage (lossless round-trip through
+      // composition and the USDA writer); the typed view (ParseSplineText)
+      // drives evaluation and crate encoding on demand.
+      lexer_->peek();
+      const size_t vstart = lexer_->token_start();
+      if (!SkipValueLike()) {
+        AddError("Failed to parse spline field");
+        return false;
+      }
+      lexer_->peek();
+      size_t vend = lexer_->token_start();
+      const char* base = lexer_->input_data();
+      while (vend > vstart &&
+             (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+              base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+        --vend;
+      }
+      std::string spline_text(base + vstart, vend - vstart);
+      // Validate the grammar up front so malformed splines fail at parse time
+      // instead of at first evaluation/crate write.
+      {
+        SplineData sd;
+        std::string serr;
+        if (!ParseSplineText(spline_text, &sd, &serr)) {
+          if (options_.strict_aousd_conformance) {
+            AddError("Malformed AOUSD spline value: " + serr);
+            return false;
+          }
+          AddWarning("Spline preserved as raw text but not evaluable: " +
+                     serr);
+        }
+      }
+      if (PrimSpec* cur = builder_->current()) {
+        const PropNameId nid = GetPropNameTable().intern(attr_name);
+        if (!cur->property(nid)) {
+          cur->add_property_slot(nid, type_id, flags);
+        }
+        cur->set_spline_source(attr_name, std::move(spline_text));
+      }
+    } else {
+      // Unknown property suffix: never silently ignore it in strict mode.
+      const std::string suffix = prop_tok.value;
+      if (options_.strict_aousd_conformance) {
+        AddError("Unsupported attribute field in strict AOUSD mode: ." +
+                 suffix);
+        return false;
+      }
+      AddWarning("Unknown attribute property: " + suffix);
+      lexer_->next();
+      if (Match(TokenType::Equals)) SkipValueLike();
     }
   } else {
+    if (!explicit_connection) {
+      AddError("List-edit qualifier is valid only for attribute connections");
+      return false;
+    }
     // Bare declaration (`token outputs:out`): declared-only slot with no
     // value; an Invalid-typed Value would emit a type-enum-0 `default` field.
     if (PrimSpec* cur = builder_->current()) {
@@ -354,6 +590,8 @@ bool AsciiParser::Impl::ParseAttribute() {
 
   return true;
 }
+
+
 
 bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
                                           bool explicit_list,
@@ -386,12 +624,13 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
   }
 
   std::vector<Path> targets;
+  const ::tinyusdz::next::PrimSpec* owner = builder_->current();
   if (Check(TokenType::OpenBracket)) {
     lexer_->next();
     while (!Check(TokenType::CloseBracket) && !AtEnd()) {
       std::string target;
       if (lexer_->expect(TokenType::PathRef, target)) {
-        targets.emplace_back(target);
+        targets.emplace_back(ResolveRelativeTargetPath(owner, target));
       }
       if (!Check(TokenType::CloseBracket)) {
         Match(TokenType::Comma);
@@ -401,7 +640,7 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
   } else if (Check(TokenType::PathRef)) {
     std::string target;
     lexer_->expect(TokenType::PathRef, target);
-    targets.emplace_back(target);
+    targets.emplace_back(ResolveRelativeTargetPath(owner, target));
   } else if (Check(TokenType::None)) {
     lexer_->next();
   }
@@ -409,10 +648,15 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
   if (PrimSpec* prim = builder_->current()) {
     if (targets.empty()) {
       // `= None` / `= []`: keep the relationship declared (empty) rather than
-      // dropping it.
+      // dropping it, and retain the authored explicit-empty targetPaths
+      // opinion separately from a bare relationship declaration.
       if (!prim->relationship(rel_name)) {
         prim->set_relationship_targets(rel_name, {});
       }
+      ArcEdit& e = prim->ensure_relationship_edit(rel_name);
+      e = ArcEdit();
+      e.authored = true;
+      e.is_explicit = explicit_list;
     } else {
       // A bare explicit list authored BEFORE any edits dominates: the
       // explicit base is not representable in edit sublists, so subsequent
@@ -434,11 +678,16 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
             sub = &e.prepended;
             break;
           case PrimSpec::RelationshipListOp::Append:
-          case PrimSpec::RelationshipListOp::Add:
             sub = &e.appended;
+            break;
+          case PrimSpec::RelationshipListOp::Add:
+            sub = &e.added;
             break;
           case PrimSpec::RelationshipListOp::Delete:
             sub = &e.deleted;
+            break;
+          case PrimSpec::RelationshipListOp::Reorder:
+            sub = &e.ordered;
             break;
         }
         if (sub) {

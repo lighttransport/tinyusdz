@@ -12,6 +12,9 @@
 class CrateWriter::Impl {
 public:
   #include "crate-writer-write.inc"
+  bool strict_aousd_conformance() const {
+    return options_.strict_aousd_conformance;
+  }
 
 private:
   CrateWriteOptions options_;
@@ -48,6 +51,10 @@ private:
     std::shared_ptr<const LazyArraySource> src;  // null => inline `data`
     uint64_t src_offset = 0;
     uint64_t src_len = 0;
+    // Byte offsets of recursively-written ValueReps embedded in this block.
+    // These payloads start as value_data_ indices and are relocated after the
+    // VALUE layout is known (used by spline per-knot customData maps).
+    std::vector<size_t> embedded_value_rep_offsets;
     DataBlock() : type(TypeId::Invalid) {}
     DataBlock(TypeId t, std::vector<uint8_t>&& bytes)
         : type(t), data(std::move(bytes)) {}
@@ -92,6 +99,10 @@ private:
 
   // Lazy-array write accounting.
   size_t arrays_passed_through_ = 0;
+  // Highest crate minor version the authored content REQUIRES (pxr-style
+  // write-version upgrade): timecode values need 0.9, relocates 0.11.
+  // WriteBootstrap stamps max(options version, this).
+  uint8_t required_version_minor_ = 0;
   size_t arrays_reencoded_ = 0;
 
   // Parallel build: when these point at the main builder's COMPLETED token/string

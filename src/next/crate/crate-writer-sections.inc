@@ -13,7 +13,7 @@
     size_t pos = 0;
     std::memcpy(buffer_.data() + pos, kCrateMagic, 8); pos += 8;
     buffer_[pos++] = options_.version_major;
-    buffer_[pos++] = options_.version_minor;
+    buffer_[pos++] = std::max(options_.version_minor, required_version_minor_);
     buffer_[pos++] = options_.version_patch;
     buffer_[pos++] = 0; // pad
     buffer_[pos++] = 0; buffer_[pos++] = 0;
@@ -188,10 +188,17 @@
     // 36-byte {std::string, uint32} entries, and no path string is duplicated.
     // `sorted[i]` is the index of the i-th path in pre-order; downstream reads
     // `paths_[sorted[i]]`.
+    // The empty path (SdfPath(), interned for a relocate-to-nothing target
+    // `</a>: <>`) must NOT be encoded as a PATHS tree node: pxr excludes it
+    // ("we do not write out the empty path", crateFile.cpp) and a real node
+    // for it makes pxr reject the whole crate ("spec has empty path"). Keep it
+    // in total_paths so its index stays valid; the reader leaves an unencoded
+    // index as the empty path, matching pxr.
     std::vector<uint32_t> sorted;
-    sorted.resize(paths_.size());
+    sorted.reserve(paths_.size());
     for (size_t i = 0; i < paths_.size(); i++) {
-      sorted[i] = static_cast<uint32_t>(i);
+      if (paths_[i].empty()) continue;
+      sorted.push_back(static_cast<uint32_t>(i));
     }
     // Pre-order sort. Plain byte-lexicographic order is NOT pre-order when a
     // sibling name extends another with a character below '/' (e.g. prims
@@ -511,6 +518,24 @@
     }
   }
 
+  void _PatchEmbeddedValueReps(DataBlock* block) {
+    if (!block) return;
+    for (size_t offset : block->embedded_value_rep_offsets) {
+      if (offset + 8 > block->data.size()) continue;
+      uint64_t raw = 0;
+      std::memcpy(&raw, block->data.data() + offset, 8);
+      ValueRep rep(raw);
+      if (rep.is_inlined()) continue;
+      const uint64_t payload = rep.payload();
+      if (payload == 0 || payload >= value_offsets_.size()) continue;
+      const uint64_t absolute =
+          value_start_offset_ + value_offsets_[static_cast<size_t>(payload)];
+      raw = ValueRep::Make(rep.type_id(), absolute, rep.is_array(), false,
+                           rep.is_compressed()).raw();
+      std::memcpy(block->data.data() + offset, &raw, 8);
+    }
+  }
+
   // Compute the VALUE section layout (8-byte-aligned block offsets) and patch
   // every field/time-sample ValueRep with its absolute file offset. Returns the
   // total VALUE section size in bytes (== the offset just past the last block).
@@ -561,6 +586,7 @@
       if (value_data_[i].type == TypeId::Dictionary) {
         _PatchDictBlock(static_cast<uint64_t>(i));
       }
+      _PatchEmbeddedValueReps(&value_data_[i]);
     }
 
     return current_offset;

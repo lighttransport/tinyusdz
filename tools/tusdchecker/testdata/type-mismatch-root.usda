@@ -1,0 +1,9 @@
+#usda 1.0
+(
+    subLayers = [@type-mismatch-weak.usda@]
+)
+
+over "World"
+{
+    float size = 1
+}

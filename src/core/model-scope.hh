@@ -138,8 +138,13 @@ struct Scope : Collection, MaterialBinding {
 
   PrimMeta meta;
 
+  // Scope is a UsdGeomImageable, so it carries `visibility` and `purpose`.
+  // Assets routinely author purpose on a Scope (a `render`/`proxy` Scope pair is
+  // the standard way to ship both representations of an asset), so these must be
+  // typed attributes -- authored() is what tells a reader whether to inherit from
+  // an ancestor or honor the value here.
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
 
   std::map<std::string, VariantSet> variantSet;
 

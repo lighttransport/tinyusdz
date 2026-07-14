@@ -457,10 +457,18 @@ PrimSpec PrimSpec::Clone() const {
     c.rel_edits_.reset(
         new std::unordered_map<std::string, ArcEdit>(*rel_edits_));
   }
+  c.rel_opinion_stacks_ = rel_opinion_stacks_;
   c.rel_flags_ = rel_flags_;
 
   // Deep copy attribute connections + declared type names
   c.connections_ = connections_;
+  if (connection_edits_) {
+    c.connection_edits_.reset(
+        new std::unordered_map<uint32_t, ArcEdit>(*connection_edits_));
+  }
+  c.connection_opinion_stacks_ = connection_opinion_stacks_;
+  c.spline_sources_ = spline_sources_;
+  c.raw_default_sources_ = raw_default_sources_;
   c.prop_type_names_ = prop_type_names_;
 
   // Deep copy per-property metadata (unique_ptr side table).
@@ -616,6 +624,8 @@ bool PrimSpec::remove_property(PropNameId name_id) {
   if (!name_id.is_valid()) return false;
   bool removed = props_.remove(name_id);
   if (connections_.erase(name_id.id) > 0) removed = true;
+  if (connection_edits_) connection_edits_->erase(name_id.id);
+  connection_opinion_stacks_.erase(name_id.id);
   prop_type_names_.erase(name_id.id);
   prop_metas_.erase(name_id.id);
   if (time_samples_ && time_samples_->remove(name_id)) removed = true;
@@ -714,6 +724,34 @@ SampleResult PrimSpec::interpolate_time_sample(const std::string& name, double t
   return interpolate_time_sample(name_id, time, mode);
 }
 
+void PrimSpec::set_spline_source(const std::string& prop_name,
+                                 std::string source) {
+  spline_sources_[GetPropNameTable().intern(prop_name).id] = std::move(source);
+}
+
+const std::string* PrimSpec::spline_source(PropNameId name_id) const {
+  if (!name_id.is_valid()) return nullptr;
+  auto it = spline_sources_.find(name_id.id);
+  return it == spline_sources_.end() ? nullptr : &it->second;
+}
+
+const std::string* PrimSpec::spline_source(
+    const std::string& prop_name) const {
+  return spline_source(GetPropNameTable().find(prop_name));
+}
+
+void PrimSpec::set_raw_default_source(const std::string& prop_name,
+                                      std::string source) {
+  raw_default_sources_[GetPropNameTable().intern(prop_name).id] =
+      std::move(source);
+}
+
+const std::string* PrimSpec::raw_default_source(PropNameId name_id) const {
+  if (!name_id.is_valid()) return nullptr;
+  auto it = raw_default_sources_.find(name_id.id);
+  return it == raw_default_sources_.end() ? nullptr : &it->second;
+}
+
 void PrimSpec::add_relationship(const std::string& name, const Path& target) {
   relationships_[name].push_back(target);
 }
@@ -723,6 +761,17 @@ ArcEdit& PrimSpec::ensure_relationship_edit(const std::string& name) {
     rel_edits_.reset(new std::unordered_map<std::string, ArcEdit>());
   }
   return (*rel_edits_)[name];
+}
+
+const std::vector<PrimSpec::RelationshipOpinion>*
+PrimSpec::relationship_opinion_stack(const std::string& name) const {
+  auto it = rel_opinion_stacks_.find(name);
+  return it == rel_opinion_stacks_.end() ? nullptr : &it->second;
+}
+
+void PrimSpec::set_relationship_opinion_stack(
+    const std::string& name, std::vector<RelationshipOpinion> opinions) {
+  rel_opinion_stacks_[name] = std::move(opinions);
 }
 
 uint16_t PrimSpec::relationship_flags(const std::string& name) const {
@@ -760,6 +809,19 @@ void PrimSpec::apply_relationship_list_op(const std::string& name,
                 dst.end());
       if (dst.empty()) relationships_.erase(name);
       break;
+    case RelationshipListOp::Reorder: {
+      std::vector<Path> ordered;
+      for (const Path& target : targets) {
+        auto it = std::find(dst.begin(), dst.end(), target);
+        if (it != dst.end()) ordered.push_back(*it);
+      }
+      for (const Path& target : dst) {
+        if (std::find(ordered.begin(), ordered.end(), target) == ordered.end())
+          ordered.push_back(target);
+      }
+      dst = std::move(ordered);
+      break;
+    }
     case RelationshipListOp::Append:
     default:
       dst.insert(dst.end(), targets.begin(), targets.end());
@@ -774,6 +836,8 @@ void PrimSpec::set_relationship_targets(const std::string& name,
 
 bool PrimSpec::remove_relationship(const std::string& name) {
   bool removed = relationships_.erase(name) > 0;
+  rel_opinion_stacks_.erase(name);
+  if (rel_edits_) rel_edits_->erase(name);
   PropNameId id = GetPropNameTable().find(name);
   if (id.is_valid()) {
     const PropSlot* slot = props_.find(id);
@@ -804,11 +868,100 @@ std::vector<std::string> PrimSpec::relationship_names() const {
 }
 
 void PrimSpec::add_connection(const std::string& prop_name, const Path& target) {
-  connections_[GetPropNameTable().intern(prop_name).id].push_back(target);
+  const PropNameId id = GetPropNameTable().intern(prop_name);
+  connections_[id.id].push_back(target);
+  // Mark the slot as carrying a connection so serializers that gate on the
+  // flag (the USDC writer) emit it even when the property ALSO has a default
+  // value — otherwise `attr = v` + `attr.connect = <t>` loses the connection
+  // through a crate round trip.
+  if (PropSlot* s = property_mutable(id)) s->flags |= PropSlot::kFlagConnection;
 }
 
 void PrimSpec::set_connection_block(const std::string& prop_name) {
-  connections_[GetPropNameTable().intern(prop_name).id];  // empty vector
+  const PropNameId id = GetPropNameTable().intern(prop_name);
+  connections_[id.id];  // empty vector (authored `.connect = None`)
+  if (PropSlot* s = property_mutable(id)) s->flags |= PropSlot::kFlagConnection;
+}
+
+const ArcEdit* PrimSpec::connection_edit(const std::string& prop_name) const {
+  if (!connection_edits_) return nullptr;
+  const PropNameId id = GetPropNameTable().find(prop_name);
+  if (!id.is_valid()) return nullptr;
+  auto it = connection_edits_->find(id.id);
+  return it == connection_edits_->end() ? nullptr : &it->second;
+}
+
+ArcEdit& PrimSpec::ensure_connection_edit(const std::string& prop_name) {
+  if (!connection_edits_) {
+    connection_edits_.reset(new std::unordered_map<uint32_t, ArcEdit>());
+  }
+  return (*connection_edits_)[GetPropNameTable().intern(prop_name).id];
+}
+
+const std::vector<PrimSpec::RelationshipOpinion>*
+PrimSpec::connection_opinion_stack(const std::string& prop_name) const {
+  const PropNameId id = GetPropNameTable().find(prop_name);
+  if (!id.is_valid()) return nullptr;
+  auto it = connection_opinion_stacks_.find(id.id);
+  return it == connection_opinion_stacks_.end() ? nullptr : &it->second;
+}
+
+void PrimSpec::set_connection_opinion_stack(
+    const std::string& prop_name, std::vector<RelationshipOpinion> opinions) {
+  connection_opinion_stacks_[GetPropNameTable().intern(prop_name).id] =
+      std::move(opinions);
+}
+
+void PrimSpec::set_connection_targets(const std::string& prop_name,
+                                      std::vector<Path> targets) {
+  const PropNameId id = GetPropNameTable().intern(prop_name);
+  connections_[id.id] = std::move(targets);
+  if (PropSlot* slot = property_mutable(id)) {
+    slot->flags |= PropSlot::kFlagConnection;
+  }
+}
+
+void PrimSpec::apply_connection_list_op(const std::string& prop_name,
+                                        const std::vector<Path>& targets,
+                                        RelationshipListOp op) {
+  const PropNameId id = GetPropNameTable().intern(prop_name);
+  std::vector<Path>& dst = connections_[id.id];
+  switch (op) {
+    case RelationshipListOp::Prepend:
+      dst.insert(dst.begin(), targets.begin(), targets.end());
+      break;
+    case RelationshipListOp::Add:
+      for (const Path& target : targets) {
+        if (std::find(dst.begin(), dst.end(), target) == dst.end())
+          dst.push_back(target);
+      }
+      break;
+    case RelationshipListOp::Delete:
+      dst.erase(std::remove_if(dst.begin(), dst.end(), [&](const Path& path) {
+                  return std::find(targets.begin(), targets.end(), path) !=
+                         targets.end();
+                }), dst.end());
+      break;
+    case RelationshipListOp::Reorder: {
+      std::vector<Path> ordered;
+      for (const Path& target : targets) {
+        auto it = std::find(dst.begin(), dst.end(), target);
+        if (it != dst.end()) ordered.push_back(*it);
+      }
+      for (const Path& target : dst) {
+        if (std::find(ordered.begin(), ordered.end(), target) == ordered.end())
+          ordered.push_back(target);
+      }
+      dst = std::move(ordered);
+      break;
+    }
+    case RelationshipListOp::Append:
+      dst.insert(dst.end(), targets.begin(), targets.end());
+      break;
+  }
+  if (PropSlot* slot = property_mutable(id)) {
+    slot->flags |= PropSlot::kFlagConnection;
+  }
 }
 
 const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) const {
@@ -833,8 +986,42 @@ void PrimSpec::remap_target_prefix(const std::string& old_prefix,
       }
     }
   };
+  auto remap_strings = [&](std::vector<std::string>& targets) {
+    for (std::string& value : targets) {
+      if (value == old_prefix) {
+        value = new_prefix;
+      } else if (value.size() > old_prefix.size() &&
+                 value.compare(0, old_prefix.size(), old_prefix) == 0 &&
+                 (value[old_prefix.size()] == '/' ||
+                  value[old_prefix.size()] == '.')) {
+        value = new_prefix + value.substr(old_prefix.size());
+      }
+    }
+  };
+  auto remap_edit = [&](ArcEdit& edit) {
+    remap_strings(edit.added);
+    remap_strings(edit.prepended);
+    remap_strings(edit.appended);
+    remap_strings(edit.deleted);
+    remap_strings(edit.ordered);
+  };
   for (auto& kv : relationships_) remap(kv.second);
   for (auto& kv : connections_) remap(kv.second);
+  if (rel_edits_) for (auto& kv : *rel_edits_) remap_edit(kv.second);
+  if (connection_edits_)
+    for (auto& kv : *connection_edits_) remap_edit(kv.second);
+  for (auto& kv : rel_opinion_stacks_) {
+    for (RelationshipOpinion& opinion : kv.second) {
+      remap(opinion.items);
+      remap_edit(opinion.edit);
+    }
+  }
+  for (auto& kv : connection_opinion_stacks_) {
+    for (RelationshipOpinion& opinion : kv.second) {
+      remap(opinion.items);
+      remap_edit(opinion.edit);
+    }
+  }
 }
 
 void PrimSpec::set_property_type_name(const std::string& prop_name,

@@ -4,6 +4,8 @@
 // TinyUSDZ Next - USDC Crate Reader scalar/value unpackers
 
 #include "crate-reader-internal.hh"
+#include "../writer/value-printer.hh"
+#include "../types/spline.hh"
 
 #include <cstdint>
 #include <cstring>
@@ -136,13 +138,12 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
   // NOTE: a proper fix requires a TimeSamples-aware value path and a writer that
   // names the field after its property (see the review's out-of-scope note).
   if (rep.is_inlined()) {
-    // pxrUSD inlines integer-valued vectors/matrices as int8 components
-    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
-    uint64_t p = rep.payload();
-    int8_t b[8];
-    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeInt2(int32_t(b[0]), int32_t(b[1]));
-    return true;
+    // pxr never emits an inlined TimeSamples rep (crateFile.cpp packs
+    // TimeSamples exclusively through the recursive-offset block form; there
+    // is no _EncodeInline for it). An inlined rep here is malformed — fail
+    // instead of fabricating a value from the payload bits (this branch used
+    // to conjure an int2 out of garbage).
+    return false;
   }
 
   uint64_t header_offset = rep.payload();
@@ -221,6 +222,79 @@ bool CrateReader::Impl::DecodeTimeSamples(
     UnpackValue(sample_reps[i], v);
     out->emplace_back((*times)[i], std::move(v));
   }
+  return true;
+}
+
+bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
+  if (!out) return false;
+  if (rep.is_inlined()) return false;  // splines are heap-stored
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+
+  uint64_t blob_size = 0;
+  if (!reader_->read_u64(blob_size)) return false;
+  // The blob is bounded by the file; guard the allocation against a bogus size.
+  if (blob_size > options_.max_array_elements || blob_size > 100000000ull)
+    return false;
+  if (blob_size > 0 && !reader_->has_elements(static_cast<size_t>(blob_size), 1))
+    return false;
+  std::vector<uint8_t> blob(static_cast<size_t>(blob_size));
+  if (blob_size > 0 && !reader_->read(blob.data(), static_cast<size_t>(blob_size)))
+    return false;
+
+  SplineData sd;
+  std::string serr;
+  if (!DecodeSplineBinary(blob.data(), blob.size(), &sd, &serr)) return false;
+
+  // Per-knot customData is an unordered_map<double, VtDictionary> written
+  // directly after the spline blob.
+  uint64_t custom_count = 0;
+  if (!reader_->read_u64(custom_count) ||
+      custom_count > options_.max_array_elements) {
+    return false;
+  }
+  for (uint64_t ci = 0; ci < custom_count; ++ci) {
+    double knot_time = 0.0;
+    uint64_t dict_count = 0;
+    if (!reader_->read_f64(knot_time) || !reader_->read_u64(dict_count) ||
+        dict_count > options_.max_array_elements) {
+      return false;
+    }
+    Value dict_value = Value::MakeDictionary();
+    Dict* dict = dict_value.as_dictionary();
+    for (uint64_t di = 0; di < dict_count; ++di) {
+      uint32_t key_index = 0;
+      if (!reader_->read_u32(key_index)) return false;
+      std::string key;
+      GetString(key_index, key);
+      const size_t value_start = reader_->position();
+      uint64_t recursive_offset_raw = 0;
+      if (!reader_->read_u64(recursive_offset_raw)) return false;
+      const size_t rep_position = static_cast<size_t>(
+          static_cast<int64_t>(value_start) +
+          static_cast<int64_t>(recursive_offset_raw));
+      if (!reader_->seek(rep_position)) return false;
+      uint64_t raw = 0;
+      if (!reader_->read_u64(raw)) return false;
+      const size_t next_entry = reader_->position();
+      ValueRep value_rep(raw);
+      Value value;
+      if (value_rep.type_id() == CrateTypeId::Dictionary) {
+        if (!DecodeDictionary(value_rep, value, 1)) return false;
+      } else if (value_rep.type_id() != CrateTypeId::Invalid &&
+                 !UnpackValue(value_rep, value)) {
+        return false;
+      }
+      dict->set(std::move(key), std::move(value));
+      if (!reader_->seek(next_entry)) return false;
+    }
+    for (SplineKnot& knot : sd.knots) {
+      if (knot.time == knot_time) {
+        knot.custom_data_source = PrintValue(dict_value);
+        break;
+      }
+    }
+  }
+  *out = FormatSplineText(sd, "");
   return true;
 }
 
@@ -354,12 +428,12 @@ bool CrateReader::Impl::UnpackQuatf(ValueRep rep, Value& out) {
   // Crate / GfQuat layout is imaginary-first (x, y, z, w); internal layout is
   // real-first (w, x, y, z). Swizzle on read (the writer swizzles back).
   if (rep.is_inlined()) {
-    // pxrUSD inlines integer-valued quats as int8 components in memory order.
-    uint64_t p = rep.payload();
-    int8_t b[8];
-    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeQuatf(float(b[3]), float(b[0]), float(b[1]), float(b[2]));
-    return true;
+    // pxr never inlines quaternions: crateValueInliners.h has _EncodeInline
+    // overloads only for scalars, GfVec (int8 lanes), GfMatrix (int8 diag)
+    // and VtDictionary — no GfQuat overload — and sizeof(GfQuat*) > 4 rules
+    // out the always-inlined path. Fail instead of fabricating a quat from
+    // garbage payload bits.
+    return false;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[4];
@@ -370,14 +444,9 @@ bool CrateReader::Impl::UnpackQuatf(ValueRep rep, Value& out) {
 
 bool CrateReader::Impl::UnpackQuatd(ValueRep rep, Value& out) {
   if (rep.is_inlined()) {
-    // pxrUSD inlines integer-valued vectors/matrices as int8 components
-    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
-    uint64_t p = rep.payload();
-    int8_t b[8];
-    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    // Imaginary-first on disk; internal is real-first (see UnpackQuatf).
-    out = Value::MakeQuatd(double(b[3]), double(b[0]), double(b[1]), double(b[2]));
-    return true;
+    // pxr never inlines quaternions (see UnpackQuatf) — fail instead of
+    // fabricating a value.
+    return false;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[4];
@@ -517,48 +586,6 @@ bool CrateReader::Impl::UnpackVec4i(ValueRep rep, Value& out) {
 // Half-precision unpackers
 // ============================================================
 
-namespace {
-
-// Decode IEEE 754 half-precision (16-bit) to float32
-inline float half_to_float(uint16_t h) {
-  // Sign: bit 15
-  // Exponent: bits 14-10 (5 bits, bias 15)
-  // Mantissa: bits 9-0 (10 bits)
-  uint32_t sign = (h >> 15) & 1;
-  uint32_t exp = (h >> 10) & 0x1F;
-  uint32_t mant = h & 0x3FF;
-
-  uint32_t f;
-  if (exp == 0) {
-    // Zero/subnormal
-    if (mant == 0) {
-      f = sign << 31;  // +/- zero
-    } else {
-      // Subnormal: normalize so the leading 1 lands at bit 10, then drop it
-      // (it becomes the implicit float mantissa bit). Each left shift lowers
-      // the effective exponent by one: after s shifts e == -(s+1), and the
-      // float exponent field is 113 - s == 114 + e. The leading 1 must be
-      // masked off (0x3FF) so it does not bleed into the exponent field.
-      int e = -1;
-      uint32_t m = mant;
-      while (!(m & 0x400)) { m <<= 1; e--; }
-      f = (sign << 31) | (static_cast<uint32_t>(114 + e) << 23) |
-          ((m & 0x3FF) << 13);
-    }
-  } else if (exp == 31) {
-    // Inf/NaN
-    f = (sign << 31) | 0x7F800000 | (mant << 13);
-  } else {
-    // Normal
-    f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
-  }
-  float result;
-  std::memcpy(&result, &f, sizeof(result));
-  return result;
-}
-
-} // namespace
-
 bool CrateReader::Impl::UnpackHalf(ValueRep rep, Value& out) {
   // Preserve the half domain: the usda parser stores scalar halves as raw
   // half bits under TypeId::Half, so the crate reader must match for value
@@ -638,12 +665,11 @@ bool CrateReader::Impl::UnpackQuath(ValueRep rep, Value& out) {
   // the usda parser's Quath SBO layout).
   uint16_t raw[4];
   if (rep.is_inlined()) {
-    // pxrUSD inlines integer-valued quats as int8 components in memory order.
-    uint64_t p = rep.payload();
-    int8_t b[8];
-    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    for (int i = 0; i < 4; ++i) raw[i] = FloatToHalf(float(b[i]));
-  } else {
+    // pxr never inlines quaternions (see UnpackQuatf) — fail instead of
+    // fabricating a value.
+    return false;
+  }
+  {
     if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
     if (!reader_->read(raw, sizeof(raw))) return false;
   }
