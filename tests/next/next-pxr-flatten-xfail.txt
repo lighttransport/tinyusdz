@@ -1,0 +1,188 @@
+# next-vs-pxr flatten differential: accepted divergences (burn-down list).
+# Format: <input-relpath> <reason>. Lines here are expected to FAIL the
+# semantic compare in tests/next/run-next-pxr-flatten-diff.mjs; when an entry
+# starts passing the runner reports XPASS and it must be pruned. Every entry
+# is a REAL recorded divergence from pinned OpenUSD 26.05 flatten output
+# (first differing item quoted), kept visible here until fixed.
+# Baseline: 2026-07-14, 797 inputs, 597 pass / 181 listed.
+supplemental/BasicInstancingAndNestedInstances_root key_missing Key "references" in /Set_1 metadata exists in file1 but not in file2
+supplemental/BasicInstancingAndVariants_root key_missing Key "references" in /InstancedModel metadata exists in file1 but not in file2
+supplemental/BasicInstancing_root key_missing Key "references" in /Set_1/InstancedProp metadata exists in file1 but not in file2
+supplemental/BasicListEditing_root attribute_missing /A Attribute "targets" at "/A" exists in file1 but not in file2
+supplemental/BasicNestedPayload_root key_missing Key "comment" in /Set metadata exists in file1 but not in file2
+supplemental/BasicNestedVariantsWithSameName_root specifier_mismatch /foo Specifier mismatch at "/foo": "def" vs "over"
+supplemental/BasicOwner_root key_missing Key "owner" in metadata exists in file1 but not in file2
+supplemental/BasicPayload_root key_missing Key "comment" in /InternalSublayerPayload metadata exists in file1 but not in file2
+supplemental/BasicReference_session key_missing Key "comment" in /InternalSublayerReference metadata exists in file1 but not in file2
+supplemental/BasicRelocateToAnimInterfaceAsNewRootPrim_root specifier_mismatch /Model/Anim/Path Specifier mismatch at "/Model/Anim/Path": "over" vs "def"
+supplemental/BasicRelocateToAnimInterface_root attribute_missing /Model/Rig/PathRig Attribute "relationshipToPathAvar" at "/Model/Rig/PathRig" exists in file1 but not in file2
+supplemental/BasicSpecializes_root key_missing Key "comment" in /NonExistentSpecializes metadata exists in file1 but not in file2
+supplemental/BasicTimeOffset_root key_missing Key "comment" in /Root metadata exists in file1 but not in file2
+supplemental/BasicVariantWithConnections_root attribute_value_mismatch /main_cam/Rig Attribute "breathingScale.connect" at "/main_cam/Rig" differs: "/camera/Lens.breathingScale" vs "/mai
+supplemental/BasicVariantWithReference_root attribute_value_mismatch /ModelRefWithChildren/_prototype Attribute "attr1.connect" at "/ModelRefWithChildren/_prototype" differs: "/Model.m
+supplemental/ErrorArcCycle_root specifier_mismatch /AnotherParent/AnotherChild/AnotherChild Specifier mismatch at "/AnotherParent/AnotherChild/AnotherChild": "def" vs "over
+supplemental/ErrorConnectionPermissionDenied_root key_missing Key "permission" in /PermissionsAcrossReferences/PrivatePrimFromRef metadata exists in file2 but not in file1
+supplemental/ErrorInconsistentProperties_root attribute_value_mismatch /InconsistentPropertyType Attribute "x" at "/InconsistentPropertyType" differs: "None" vs "1"
+supplemental/ErrorInvalidInstanceTargetPath_root key_missing Key "comment" in /ConnectionToLocalClass metadata exists in file1 but not in file2
+supplemental/ErrorInvalidPreRelocateTargetPath_root attribute_value_mismatch /SublayerRoot Attribute "badAttrA.connect" at "/SublayerRoot" differs: "/SublayerRoot/Anim/Scope.x" vs "/SublayerRo
+supplemental/ErrorInvalidReferenceToRelocationSource_root prim_missing /Good_RefToRelocated/PreReloChild Prim "/Good_RefToRelocated/PreReloChild" exists in file1 but not in file2
+supplemental/ErrorInvalidTargetPath_root attribute_missing /Root Attribute "A.connect" at "/Root" exists in file1 but not in file2
+supplemental/ErrorOpinionAtRelocationSource_root key_missing Key "comment" in /CharRig metadata exists in file1 but not in file2
+supplemental/ErrorOwner_root key_missing Key "owner" in metadata exists in file1 but not in file2
+supplemental/ErrorPermissionDenied_root attribute_missing /Root Attribute "privateRel" at "/Root" exists in file1 but not in file2
+supplemental/ExpressionsInPayloads_root key_missing Key "comment" in /SinglePayload metadata exists in file1 but not in file2
+supplemental/ExpressionsInReferences_root key_missing Key "comment" in /SingleRef metadata exists in file1 but not in file2
+supplemental/PayloadsAndAncestralArcs2_root key_missing Key "comment" in /SubrootInherits metadata exists in file1 but not in file2
+supplemental/PayloadsAndAncestralArcs3_root key_missing Key "comment" in /Model metadata exists in file1 but not in file2
+supplemental/PayloadsAndAncestralArcs_root key_missing Key "comment" in /Root/UnloadedInheritedPayload metadata exists in file1 but not in file2
+supplemental/RelocatePrimsWithSameName_root specifier_mismatch /ChainedReferences/Child_1 Specifier mismatch at "/ChainedReferences/Child_1": "def" vs "over"
+supplemental/RelocateToNone_root attribute_missing /Char Attribute "relationship1" at "/Char" exists in file1 but not in file2
+supplemental/SpecializesAndAncestralArcs_root key_missing Key "comment" in /AncestralReference metadata exists in file1 but not in file2
+supplemental/SpecializesAndVariants3_root attribute_missing /implementation Attribute "variantAttr" at "/implementation" exists in file2 but not in file1
+supplemental/SpecializesAndVariants4_root attribute_value_mismatch /A/render Attribute "test" at "/A/render" differs: "value from /_class_/defaultImplementation" vs "value from /A/de
+supplemental/SubrootInheritsAndVariants_root specifier_mismatch /Group Specifier mismatch at "/Group": "def" vs "over"
+supplemental/SubrootReferenceAndVariants2_root key_missing Key "comment" in /Character metadata exists in file1 but not in file2
+supplemental/TimeCodesPerSecond_root key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
+supplemental/TimeCodesPerSecond_root_12fps key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
+supplemental/TimeCodesPerSecond_root_24tcps_12fps key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
+supplemental/TimeCodesPerSecond_root_48tcps key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
+supplemental/TimeCodesPerSecond_session key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
+supplemental/TimeCodesPerSecond_session_24fps key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
+supplemental/TimeCodesPerSecond_session_48tcps key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
+supplemental/TrickyClassHierarchy_root type_mismatch /Sullivan_1 Type mismatch at "/Sullivan_1": "Model" vs "Scope"
+supplemental/TrickyConnectionToRelocatedAttribute_root attribute_missing /HumanRig/Anim/Face/LEye Attribute "baz" at "/HumanRig/Anim/Face/LEye" exists in file2 but not in file1
+supplemental/TrickyInheritsAndRelocates5_root attribute_value_mismatch /CharRig/Anim/Arms/R1Arm/Knot03 Attribute "foo" at "/CharRig/Anim/Arms/R1Arm/Knot03" differs: "from TentacleRig" vs
+supplemental/TrickyInheritsAndRelocatesToNewRootPrim_root attribute_missing /Model_Renamed/A Attribute "a_src" at "/Model_Renamed/A" exists in file1 but not in file2
+supplemental/TrickyInheritsAndRelocates_root attribute_missing /Group/Model_Renamed/A Attribute "a_src" at "/Group/Model_Renamed/A" exists in file1 but not in file2
+supplemental/TrickyInheritsInVariants_root prim_missing /Model/Scope/LowClassStuff Prim "/Model/Scope/LowClassStuff" exists in file1 but not in file2
+supplemental/TrickyListEditedTargetPaths_root attribute_missing /ExternalReferences Attribute "relToExternalPrim" at "/ExternalReferences" exists in file1 but not in file2
+supplemental/TrickyLocalClassHierarchyWithRelocates_root type_mismatch /C_1/CollisionRig/Body/CollBody/SimRegions/LArm Type mismatch at "/C_1/CollisionRig/Body/CollBody/SimRegions/LArm": "" vs "Pep
+supplemental/TrickyMultipleRelocations2_root attribute_missing /ModelGroup Attribute "groupRel" at "/ModelGroup" exists in file1 but not in file2
+supplemental/TrickyMultipleRelocations4_root attribute_missing /SymRig/Leg_bone Attribute "bones" at "/SymRig/Leg_bone" exists in file1 but not in file2
+supplemental/TrickyMultipleRelocations5_root prim_missing /Group/Character Prim "/Group/Character" exists in file1 but not in file2
+supplemental/TrickyMultipleRelocationsAndClasses2_root attribute_missing /CharRig/Anim/Legs/LHip/Knee Attribute "JointBlend" at "/CharRig/Anim/Legs/LHip/Knee" exists in file2 but not in file1
+supplemental/TrickyMultipleRelocationsAndClasses_root value_mismatch Value for "prefix" in /HumanRig/rig/Face/EyeLidRig/SymEyeLidRig/Mover metadata differs: "Side" vs "$Side"
+supplemental/TrickyRelocatedTargetInVariant_root attribute_missing /Root Attribute "myRel" at "/Root" exists in file1 but not in file2
+supplemental/TrickyRelocationOfPrimFromVariant_root type_mismatch /Char/Anim/Tail Type mismatch at "/Char/Anim/Tail": "" vs "Scope"
+supplemental/TrickySpookyInheritsInSymmetricBrowRig_root prim_missing /FaceRig/BrowRig/Anim/LBrow Prim "/FaceRig/BrowRig/Anim/LBrow" exists in file1 but not in file2
+supplemental/TrickySpookyVariantSelectionInClass_root type_mismatch /Char/Anim/LeftLeg Type mismatch at "/Char/Anim/LeftLeg": "" vs "Scope"
+supplemental/TrickyVariantOverrideOfLocalClass_root attribute_value_mismatch /HandRig/_Class_FingerRig Attribute "armature_enabled" at "/HandRig/_Class_FingerRig" differs: "false" vs "0"
+supplemental/TrickyVariantOverrideOfRelocatedPrim_root attribute_value_mismatch /Model/RelocatedSphere/Geom Attribute "x" at "/Model/RelocatedSphere/Geom" differs: "model_default" vs "variant_ove
+supplemental/TrickyVariantSelectionInVariant2_root key_missing Key "comment" in /Root metadata exists in file1 but not in file2
+supplemental/TrickyVariantWeakerSelection3_root type_mismatch /Model Type mismatch at "/Model": "__AnyType__" vs "Model"
+supplemental/TrickyVariantWeakerSelection_root attribute_value_mismatch /A Attribute "v2" at "/A" differs: "v2_model" vs "v2_root"
+supplemental/TypicalReferenceToChargroup_root attribute_value_mismatch /Group/Model Attribute "standin_name" at "/Group/Model" differs: "render" vs "sim"
+supplemental/TypicalReferenceToRiggedModel_root attribute_missing /Model Attribute "standin_name" at "/Model" exists in file1 but not in file2
+supplemental/VariantSpecializesAndReferenceSurprisingBehavior_root attribute_value_mismatch /Model/Material_Child Attribute "myInt" at "/Model/Material_Child" differs: "1" vs "0"
+supplemental/bug92827_root specifier_mismatch /Rig/B Specifier mismatch at "/Rig/B": "def" vs "over"
+supplemental/case1_root prim_missing /FergusCloak/rig Prim "/FergusCloak/rig" exists in file1 but not in file2
+tests/usda/anytype-001.usda type_mismatch /bora Type mismatch at "/bora": "__AnyType__" vs ""
+tests/usda/aousd-unknown-property-metadata.usda key_missing Key "extensionLayerProbe" in metadata exists in file1 but not in file2
+tests/usda/ar-interactive.usda attribute_value_mismatch /Root/TapBehavior Attribute "exclusive" at "/Root/TapBehavior" differs: "true" vs "1"
+tests/usda/array_edit_basic.usda next-error: ERR : Failed to load USDA layer: /mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/array_edit_basic.usda : Line 5, column 30: Line 5, column 30:
+tests/usda/assetpath-array-001.usda next-error: ERR : Failed to load USDA layer: /mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/assetpath-array-001.usda : Line 6, column 42: Failed to parse
+tests/usda/bool-array-001.usda attribute_value_mismatch /bora Attribute "myval" at "/bora" differs: "[true, false, false, true, false, true, true, t..." vs "[1, 0, 0, 1, 0
+tests/usda/clips-primmeta-001.usda key_missing Key "clips" in /GEO metadata exists in file1 but not in file2
+tests/usda/collection-002.usda attribute_value_mismatch /bora Attribute "collection:mycol:includeRoot" at "/bora" differs: "true" vs "1"
+tests/usda/customData-prim-002.usda value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zU
+tests/usda/customData-prim-003.usda value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool[] zUp = [true], dictionary Maya = { bool..." vs "{ bool[] 
+tests/usda/customData-prim.usda value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zU
+tests/usda/customData-stage.usda value_mismatch Value for "customLayerData" in metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zUp = 1, dic
+tests/usda/enum-roundtrip-002.usda attribute_value_mismatch /EnumTests2/LightWithAPIs Attribute "inputs:shadow:enable" at "/EnumTests2/LightWithAPIs" differs: "true" vs "1"
+tests/usda/geommesh-002.usda key_missing Key "active" in /mymesh metadata exists in file2 but not in file1
+tests/usda/instancing-001.usda prim_missing /InstancingTests/Prototypes Prim "/InstancingTests/Prototypes" exists in file1 but not in file2
+tests/usda/int-assign-float-001.usda next-error: ERR : Failed to load USDA layer: /mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/int-assign-float-001.usda : Line 6, column 15: Expected integ
+tests/usda/layer-metadata-001.usda value_mismatch Value for "customLayerData" in metadata differs: "{ bool isProduction = false, dictionary renderS..." vs "{ bool isProduction
+tests/usda/lights-full-001.usda attribute_value_mismatch /Lights/DistantLight Attribute "inputs:enableColorTemperature" at "/Lights/DistantLight" differs: "false" vs "0"
+tests/usda/listop-delete-000.usda relationship_value_mismatch /hello Relationship "myheight" at "/hello" differs: "None" vs "null"
+tests/usda/material-binding-003.usda relationship_value_mismatch /geom Relationship "material:binding" at "/geom" differs: "None" vs "null"
+tests/usda/material-binding-no-target.usda relationship_value_mismatch /world/decl_only Relationship "material:binding" at "/world/decl_only" differs: "None" vs "null"
+tests/usda/material-binding-none-001.usda relationship_value_mismatch /geom Relationship "material:binding" at "/geom" differs: "None" vs "null"
+tests/usda/material-binding-none-002.usda relationship_value_mismatch /geom Relationship "material:binding" at "/geom" differs: "None" vs "null"
+tests/usda/materialx-001.usda attribute_missing /bora/Materials/USD_Default Attribute "config:mtlx:colorspace" at "/bora/Materials/USD_Default" exists in file1 but not in
+tests/usda/multi-attribute-003.usda attribute_missing /bora Attribute "val.connect" at "/bora" exists in file2 but not in file1
+tests/usda/multi-attribute-005.usda attribute_missing /bora Attribute "size.connect" at "/bora" exists in file2 but not in file1
+tests/usda/payload-deferred-001.usda prim_missing /HighDetailAsset Prim "/HighDetailAsset" exists in file1 but not in file2
+tests/usda/physics-collision-group-001.usda attribute_value_mismatch /World/GroupA Attribute "physics:invertFilteredGroups" at "/World/GroupA" differs: "false" vs "0"
+tests/usda/physics-collision-group-003.usda attribute_value_mismatch /World/G1 Attribute "physics:invertFilteredGroups" at "/World/G1" differs: "true" vs "1"
+tests/usda/physics-joint.usda attribute_value_mismatch /Root/D6Joint Attribute "physics:collisionEnabled" at "/Root/D6Joint" differs: "false" vs "0"
+tests/usda/physics-mjc-actuator-001.usda attribute_value_mismatch /World/SimScene Attribute "mjc:flag:gravity" at "/World/SimScene" differs: "true" vs "1"
+tests/usda/physics-mjc-mesh-collision-001.usda attribute_value_mismatch /World/Robot/DisabledCollider Attribute "physics:collisionEnabled" at "/World/Robot/DisabledCollider" differs: "fal
+tests/usda/physics-mjc-scene-001.usda attribute_value_mismatch /SimScene Attribute "mjc:compiler:autoLimits" at "/SimScene" differs: "true" vs "1"
+tests/usda/physics-schema-defaults-001.usda attribute_value_mismatch /World/Body Attribute "physics:kinematicEnabled" at "/World/Body" differs: "true" vs "1"
+tests/usda/pointinstancer-001.usda attribute_value_mismatch /Box Attribute "doubleSided" at "/Box" differs: "true" vs "1"
+tests/usda/purpose-hierarchy-001.usda key_missing Key "purpose" in /PurposeHierarchyTests/RenderPurpose metadata exists in file1 but not in file2
+tests/usda/reference-nested-001.usda prim_missing /BaseGeometry Prim "/BaseGeometry" exists in file1 but not in file2
+tests/usda/reference-offset-001.usda prim_missing /LocalAsset Prim "/LocalAsset" exists in file1 but not in file2
+tests/usda/rel-003.usda relationship_value_mismatch /bora Relationship "myval" at "/bora" differs: "None" vs "null"
+tests/usda/relocates_basic.usda specifier_mismatch /World/new Specifier mismatch at "/World/new": "def" vs "over"
+tests/usda/sceneLibrary-001.usda key_missing Key "sceneName" in /Root/PrimaryScene metadata exists in file1 but not in file2
+tests/usda/shader-nonconformant-types.usda attribute_value_mismatch /Mtl/Tex Attribute "inputs:file" at "/Mtl/Tex" differs: "@./tex.png@" vs "@/mnt/nvme02/work/tinyusdz-repo/dev/tests
+tests/usda/stmt-semicolon-000.usda next-error: ERR : Failed to load USDA layer: /mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/stmt-semicolon-000.usda : Line 3, column 16: Expected metadat
+tests/usda/sublayers-002.usda key_missing Key "startTimeCode" in metadata exists in file1 but not in file2
+tests/usda/sublayers-005.usda key_missing Key "defaultPrim" in metadata exists in file1 but not in file2
+tests/usda/sublayers-006.usda key_missing Key "defaultPrim" in metadata exists in file1 but not in file2
+tests/usda/sublayers.usda key_missing Key "metersPerUnit" in metadata exists in file1 but not in file2
+tests/usda/texture-colorspace-as-meta-000.usda attribute_value_mismatch /knight_rig_file9 Attribute "inputs:file" at "/knight_rig_file9" differs: "@./Textures/brushed_metal_rough_F.png@" 
+tests/usda/timesamples-array-bool-001.usda attribute_value_mismatch /test_bool_array Attribute "flags.timeSamples" at "/test_bool_array" differs: "{ 0: [false, true, false], 10: [true
+tests/usda/timesamples-array-dedup-004.usda attribute_value_mismatch /muda Attribute "primvars:flag.timeSamples" at "/muda" differs: "{ 0: [false, true, false, false, true], 1: [fal...
+tests/usda/timesamples-scalar-bool-001.usda attribute_value_mismatch /test_bool Attribute "enabled.timeSamples" at "/test_bool" differs: "{ 0: false, 10: true, 20: false }" vs "{ 0: 0,
+tests/usda/triple-quoted-string-in-meta-001.usda key_missing Key "doc" in /hello metadata exists in file1 but not in file2
+tests/usda/uint2-array-001.usda attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
+tests/usda/uint2-type-001.usda attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
+tests/usda/unregistered-prim-meta-001.usda key_missing Key "aa" in /bora metadata exists in file1 but not in file2
+tests/usda/usdlux_advanced_features.usda attribute_value_mismatch /Scene/Lights/IESLight Attribute "inputs:shaping:ies:file" at "/Scene/Lights/IESLight" differs: "@./lights/chandeli
+tests/usda/usdlux_basic_lights.usda attribute_value_mismatch /World/Lights/KeyLight Attribute "inputs:normalize" at "/World/Lights/KeyLight" differs: "true" vs "1"
+tests/usda/usdlux_mesh_lights_simple.usda attribute_value_mismatch /World/Lights/EmissiveCube Attribute "inputs:normalize" at "/World/Lights/EmissiveCube" differs: "true" vs "1"
+tests/usda/usdz-schema-autoplay-001.usda key_missing Key "autoPlay" in metadata exists in file1 but not in file2
+tests/usda/usdz-schema-playbackmode-001.usda key_missing Key "playbackMode" in metadata exists in file1 but not in file2
+tests/usda/valuetypes-edge-001.usda attribute_value_mismatch /ValueTypeTests/StringTests Attribute "unicodeString" at "/ValueTypeTests/StringTests" differs: "Hello 世界" vs "Hell
+tests/usda/variantSet-comment-block-001.usda key_missing Key "kind" in /isCoral/geometry metadata exists in file2 but not in file1
+tests/usda/variantSet-meta-002.usda key_missing Key "hidden" in /bora metadata exists in file2 but not in file1
+tests/usda/variantSet-prim-001.usda key_missing Key "hidden" in /bora metadata exists in file2 but not in file1
+tests/usdc/anytype-001.usdc type_mismatch /bora Type mismatch at "/bora": "__AnyType__" vs ""
+tests/usdc/aousd-unknown-property-metadata.usdc attribute_missing /P Attribute "r" at "/P" exists in file1 but not in file2
+tests/usdc/bindMaterialAs-001.usdc attribute_missing /sphere Attribute "material:binding" at "/sphere" exists in file1 but not in file2
+tests/usdc/bindMaterialAs-002.usdc attribute_missing /sphere Attribute "material:binding" at "/sphere" exists in file1 but not in file2
+tests/usdc/blendshape-001.usdc attribute_missing /mymesh Attribute "skel:blendShapeTargets" at "/mymesh" exists in file1 but not in file2
+tests/usdc/bool-array-001.usdc attribute_value_mismatch /bora Attribute "myval" at "/bora" differs: "[true, false, false, true, false, true, true, t..." vs "[1, 0, 0, 1, 0
+tests/usdc/clips-primmeta-001.usdc key_missing Key "clips" in /GEO metadata exists in file1 but not in file2
+tests/usdc/customData-prim-002.usdc value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zU
+tests/usdc/customData-prim-003.usdc value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool[] zUp = [true], dictionary Maya = { bool..." vs "{ bool[] 
+tests/usdc/customData-prim.usdc value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zU
+tests/usdc/customData-stage.usdc value_mismatch Value for "customLayerData" in metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zUp = 1, dic
+tests/usdc/geommesh-002.usdc key_missing Key "active" in /mymesh metadata exists in file2 but not in file1
+tests/usdc/listop-add-000.usdc attribute_missing /hello Attribute "myheight" at "/hello" exists in file1 but not in file2
+tests/usdc/listop-delete-000.usdc attribute_missing /hello Attribute "myheight" at "/hello" exists in file1 but not in file2
+tests/usdc/listop-prepend-000.usdc attribute_missing /hello Attribute "myheight" at "/hello" exists in file1 but not in file2
+tests/usdc/material-binding-003.usdc attribute_missing /geom Attribute "material:binding" at "/geom" exists in file1 but not in file2
+tests/usdc/material-binding.usdc attribute_missing /mymesh Attribute "material:binding" at "/mymesh" exists in file1 but not in file2
+tests/usdc/memory-budget-customdata-001-runtime.usdc prim_missing /MetaHeavy Prim "/MetaHeavy" exists in file1 but not in file2
+tests/usdc/prim-with-no-specifier-001.usdc specifier_mismatch /File Specifier mismatch at "/File": "def" vs "over"
+tests/usdc/ref.usdc attribute_missing /Marble/marble_geom Attribute "material:binding" at "/Marble/marble_geom" exists in file1 but not in file2
+tests/usdc/rel-005.usdc attribute_missing /bora Attribute "myrel" at "/bora" exists in file1 but not in file2
+tests/usdc/rel-inherits-none-001.usdc attribute_missing /A Attribute "r" at "/A" exists in file1 but not in file2
+tests/usdc/sceneLibrary-001.usdc key_missing Key "sceneName" in /Root/PrimaryScene metadata exists in file1 but not in file2
+tests/usdc/schema-collection-001.usdc attribute_value_mismatch /mesh Attribute "collection:foo:includeRoot" at "/mesh" differs: "true" vs "1"
+tests/usdc/schema-light-001.usdc attribute_value_mismatch /light Attribute "inputs:enableColorTemperature" at "/light" differs: "true" vs "1"
+tests/usdc/schema-light-linking-001.usdc attribute_missing /light Attribute "collection:lightLink:includes" at "/light" exists in file1 but not in file2
+tests/usdc/schema-lights-extra-001.usdc attribute_missing /glight Attribute "geometry" at "/glight" exists in file1 but not in file2
+tests/usdc/schema-matbind-collection-001.usdc attribute_missing /mesh Attribute "collection:metalBits:includes" at "/mesh" exists in file1 but not in file2
+tests/usdc/schema-physics-apis-001.usdc attribute_value_mismatch /body Attribute "physics:collisionEnabled" at "/body" differs: "false" vs "0"
+tests/usdc/schema-physics-colliders-001.usdc attribute_missing /cg Attribute "collection:colliders:excludes" at "/cg" exists in file1 but not in file2
+tests/usdc/schema-physics-collisiongroup-001.usdc attribute_value_mismatch /cg Attribute "physics:invertFilteredGroups" at "/cg" differs: "true" vs "1"
+tests/usdc/schema-physics-joint-001.usdc attribute_value_mismatch /joint Attribute "physics:jointEnabled" at "/joint" differs: "true" vs "1"
+tests/usdc/shader-varname-connect-001.usdc attribute_missing /mesh Attribute "material:binding" at "/mesh" exists in file1 but not in file2
+tests/usdc/skeleton-purpose-001.usdc attribute_missing /root/Armature/Grid/Grid Attribute "skel:skeleton" at "/root/Armature/Grid/Grid" exists in file1 but not in file2
+tests/usdc/targetPath-relative-000.usdc attribute_missing /hello/world Attribute "mypath" at "/hello/world" exists in file1 but not in file2
+tests/usdc/timesamples-array-bool-001.usdc attribute_value_mismatch /test_bool_array Attribute "flags.timeSamples" at "/test_bool_array" differs: "{ 0: [false, true, false], 10: [true
+tests/usdc/timesamples-array-dedup-004.usdc attribute_value_mismatch /muda Attribute "primvars:flag.timeSamples" at "/muda" differs: "{ 0: [false, true, false, false, true], 1: [fal...
+tests/usdc/timesamples-scalar-bool-001.usdc attribute_value_mismatch /test_bool Attribute "enabled.timeSamples" at "/test_bool" differs: "{ 0: false, 10: true, 20: false }" vs "{ 0: 0,
+tests/usdc/triple-quoted-string-in-meta-001.usdc key_missing Key "comment" in /hello metadata exists in file1 but not in file2
+tests/usdc/uint2-array-001.usdc attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
+tests/usdc/uint2-type-001.usdc attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
+tests/usdc/unregistered-prim-meta-001.usdc key_missing Key "aa" in /bora metadata exists in file1 but not in file2
+tests/usdc/usdskel-001.usdc attribute_missing /Model/Skel Attribute "skel:animationSource" at "/Model/Skel" exists in file1 but not in file2
+tests/usdc/utf8-001.usdc key_missing Key "displayName" in /hello metadata exists in file1 but not in file2
+tests/usdc/variantSet-meta-002.usdc key_missing Key "hidden" in /bora metadata exists in file2 but not in file1
+tests/usdc/variantSet-prim-001.usdc key_missing Key "hidden" in /bora metadata exists in file2 but not in file1

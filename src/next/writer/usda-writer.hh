@@ -57,6 +57,16 @@ struct USDAWriteOptions {
   /// existing callers are unchanged); <= 0 = auto (hardware_concurrency); > 1 =
   /// that many. Output is byte-for-byte identical regardless of thread count.
   int num_threads = 1;
+
+  /// Composed-stage semantics (pxr UsdStage::Flatten parity), for writing a
+  /// stage produced by COMPOSITION (pcp::ComposeStageFromFile): consumed
+  /// composition directives (layer subLayers/relocates) are omitted and
+  /// string list-op prim metadata (apiSchemas) is emitted as its composed
+  /// EXPLICIT list instead of the residual authored edit. Leave false for
+  /// stages that came from a plain load (LoadUSD) and for Layer writes —
+  /// there the directives are not consumed and authored list-op fidelity
+  /// must round-trip.
+  bool composed_stage_output = false;
 };
 
 /// Result of write operation
