@@ -324,9 +324,11 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + um.first + " = " + um.second);
   }
   for (const auto& field : meta.unknownFields) {
+    // Verbatim raw source only for DICT payloads (its whole purpose); plain
+    // strings must go through PrintValue so quoting survives ("$Side").
     lines.push_back(opts.indent + field.name + " = " +
-                    (field.unregistered &&
-                             !field.unregistered_source.empty()
+                    (field.unregistered && !field.unregistered_source.empty() &&
+                             field.value.is_dictionary()
                          ? field.unregistered_source
                          : PrintValue(field.value, PrintOptions{})));
   }
@@ -475,7 +477,8 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   }
   for (const auto& field : m->unknownFields) {
     kv(field.name + " = " +
-       (field.unregistered && !field.unregistered_source.empty()
+       (field.unregistered && !field.unregistered_source.empty() &&
+                field.value.is_dictionary()
             ? field.unregistered_source
             : PrintValue(field.value, PrintOptions{})));
   }
@@ -1287,7 +1290,8 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     }
     for (const auto& field : meta.unknownFields()) {
       kv(field.name + " = " +
-         (field.unregistered && !field.unregistered_source.empty()
+         (field.unregistered && !field.unregistered_source.empty() &&
+                  field.value.is_dictionary()
               ? field.unregistered_source
               : PrintValue(field.value, PrintOptions{})));
     }

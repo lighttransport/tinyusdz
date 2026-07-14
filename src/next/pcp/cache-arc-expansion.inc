@@ -238,7 +238,7 @@
           // option doc composes onto the prim).
           if (!vd->properties.empty() || !vd->relationships.empty() ||
               !vd->active || vd->hidden || vd->active_authored ||
-              vd->hidden_authored || !vd->doc.empty()) {
+              vd->hidden_authored || !vd->doc.empty() || !vd->kind.empty()) {
             Src vsrc = src;
             vsrc.arc_kind = ArcType::Variant;
             vsrc.variant = vd;
