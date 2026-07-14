@@ -10,8 +10,8 @@
 # bare-string-comment interop fix; 3 after the parser-leniency port ->
 # 633 pass / 145 listed; 1 after crate variant-spec specifier; 19 after the
 # unmappable-relocate-target drop + bare-rel + varying-only qualifier -> 653 / 125).
+supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
 supplemental/BasicListEditing_root relationship_value_mismatch /A Relationship "targets" at "/A" differs: "None" vs "[/A/root_prepend, /A/sub1_prepend, /A/sub2_prep..."
-supplemental/BasicNestedVariantsWithSameName_root attribute_missing /foo/bar Attribute "value" at "/foo/bar" exists in file2 but not in file1
 supplemental/BasicOwner_root key_missing Key "hasOwnedSubLayers" in metadata exists in file2 but not in file1
 supplemental/BasicRelocateToAnimInterfaceAsNewRootPrim_root relationship_value_mismatch /Model/Rig/PathRig Relationship "relationshipToPathAvar2" at "/Model/Rig/PathRig" differs: "null" vs "/Model/Rig/PathRig/P
 supplemental/BasicVariantWithConnections_root attribute_value_mismatch /main_cam/Rig Attribute "breathingScale.connect" at "/main_cam/Rig" differs: "/camera/Lens.breathingScale" vs "/main_cam/Lens
@@ -29,7 +29,6 @@ supplemental/ErrorPermissionDenied_root key_missing Key "permission" in /Parent/
 supplemental/PayloadsAndAncestralArcs3_root type_mismatch /ReferencePayloadedModel Type mismatch at "/ReferencePayloadedModel": "__AnyType__" vs "Model"
 supplemental/RelocatePrimsWithSameName_root specifier_mismatch /ChainedReferences/Child_1 Specifier mismatch at "/ChainedReferences/Child_1": "def" vs "over"
 supplemental/RelocateToNone_root prim_missing /Char/ToBeDeleted Prim "/Char/ToBeDeleted" exists in file1 but not in file2
-supplemental/SpecializesAndVariants3_root attribute_missing /implementation Attribute "variantAttr" at "/implementation" exists in file2 but not in file1
 supplemental/SpecializesAndVariants4_root attribute_value_mismatch /A/render Attribute "test" at "/A/render" differs: "value from /_class_/defaultImplementation" vs "value from /A/defaultImple
 supplemental/TrickyClassHierarchy_root attribute_value_mismatch /Sullivan_1 Attribute "name" at "/Sullivan_1" differs: "_Class_Model" vs "_Class_Sullivan"
 supplemental/TrickyConnectionToRelocatedAttribute_root attribute_missing /HumanRig/Anim/Face/LEye Attribute "baz" at "/HumanRig/Anim/Face/LEye" exists in file2 but not in file1
@@ -49,7 +48,6 @@ supplemental/TrickySpookyVariantSelectionInClass_root type_mismatch /Char/Anim/L
 supplemental/TrickyVariantOverrideOfLocalClass_root attribute_value_mismatch /HandRig/_Class_FingerRig Attribute "armature_enabled" at "/HandRig/_Class_FingerRig" differs: "false" vs "0"
 supplemental/TrickyVariantOverrideOfRelocatedPrim_root attribute_value_mismatch /Model/RelocatedSphere/Geom Attribute "x" at "/Model/RelocatedSphere/Geom" differs: "model_default" vs "variant_override"
 supplemental/TrickyVariantWeakerSelection3_root type_mismatch /Model Type mismatch at "/Model": "__AnyType__" vs "Model"
-supplemental/TrickyVariantWeakerSelection_root attribute_value_mismatch /A Attribute "v2" at "/A" differs: "v2_model" vs "v2_root"
 supplemental/TypicalReferenceToChargroup_root attribute_value_mismatch /Group/Model Attribute "standin_name" at "/Group/Model" differs: "render" vs "sim"
 supplemental/TypicalReferenceToRiggedModel_root attribute_missing /Model Attribute "standin_name" at "/Model" exists in file1 but not in file2
 supplemental/VariantSpecializesAndReferenceSurprisingBehavior_root attribute_value_mismatch /Model/Material_Child Attribute "myInt" at "/Model/Material_Child" differs: "1" vs "0"
