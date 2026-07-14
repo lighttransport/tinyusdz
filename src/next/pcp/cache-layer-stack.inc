@@ -153,11 +153,18 @@
         bool has_spec = false;
         bool has_arc = false;
         for (const auto &lp : st->layers) {
-          // Walk self + every ancestor prim path.
+          // Walk STRICT ancestors: an arc on the source spec itself does not
+          // make the prim arc-introduced (pxr still calls it local).
           std::string cur = src;
           for (;;) {
             if (const PrimSpec *psp = lp->prim_at_path(cur)) {
-              if (cur == src) has_spec = true;
+              if (cur == src) {
+                has_spec = true;
+                const size_t up = cur.rfind('/');
+                if (up == std::string::npos || up == 0) break;
+                cur.resize(up);
+                continue;  // self arcs do not count
+              }
               const PrimSpecMeta &m = psp->meta();
               const ArcListOpEdits *ae = m.arc_edits();
               if (!m.references.empty() || !m.payloads.empty() ||
