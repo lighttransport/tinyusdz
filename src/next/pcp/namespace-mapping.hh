@@ -108,6 +108,7 @@ struct NamespaceMapping {
     size_t best_len = 0;
     for (size_t i = 0; i < pairs.size(); ++i) {
       const std::string &tgt = pairs[i].second;
+      if (tgt.empty()) continue;  // DROP-marker pair: matches nothing
       if (!AtOrUnder(path, tgt)) continue;
       if (best < 0 || tgt.size() > best_len) {
         best = static_cast<int>(i);
@@ -123,6 +124,9 @@ struct NamespaceMapping {
     const int i = MatchSource(path);
     if (i < 0) return path;
     const Pair &p = pairs[static_cast<size_t>(i)];
+    // DROP-marker pair (see ApplyTarget): sites are never dropped — keep the
+    // identity fallback for non-target path mapping.
+    if (p.second.empty()) return path;
     return p.second + path.substr(p.first.size());
   }
 
@@ -143,6 +147,10 @@ struct NamespaceMapping {
     const int i = MatchSource(path);
     if (i < 0) return crosses_arc ? std::string() : path;
     const Pair &p = pairs[static_cast<size_t>(i)];
+    // An empty pair target is a DROP marker: content under this source is
+    // not addressable through the arc (e.g. a relocate whose destination
+    // lies outside the arc's namespace) — the target is unmappable.
+    if (p.second.empty()) return std::string();
     return p.second + path.substr(p.first.size());
   }
 
