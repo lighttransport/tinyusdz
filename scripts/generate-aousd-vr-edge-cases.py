@@ -124,6 +124,28 @@ def "Root"
 """,
 }
 
+CASES["tcps-ref"] = {
+    "root.usda": """#usda 1.0
+(
+    timeCodesPerSecond = 24
+)
+def "Root" (
+    references = @./refd48.usda@</R>
+)
+{
+}
+""",
+    "refd48.usda": """#usda 1.0
+(
+    timeCodesPerSecond = 48
+)
+def "R"
+{
+    double v.timeSamples = { 0: 0, 48: 480 }
+}
+""",
+}
+
 CASES["default-vs-zero"] = {"root.usda": """#usda 1.0
 def "Root"
 {
@@ -189,6 +211,11 @@ for t in [5.0, 10.0, 15.0]:
 # 48tcps sublayer under a 24tcps root: samples {0:0,48:480} -> stage 0..24.
 for t in [0.0, 12.0, 24.0]:
     Q.append(("tcps-mapping", "/Root", "v", t, "linear"))
+
+# 48tcps layer REFERENCED from a 24tcps root: same auto-scale across the
+# reference arc.
+for t in [0.0, 12.0, 24.0]:
+    Q.append(("tcps-ref", "/Root", "v", t, "linear"))
 
 Q += [
     ("default-vs-zero", "/Root", "v", DEFAULT, "linear"),
