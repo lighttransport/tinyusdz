@@ -8,12 +8,12 @@
 # the stage-metadata root-layer-only fix; 2 more after the timeSampled
 # value+connect writer fix; 6 after variant authored-state; 14 after the
 # bare-string-comment interop fix; 3 after the parser-leniency port ->
-# 633 pass / 145 listed).
+# 633 pass / 145 listed; 1 after crate variant-spec specifier -> 634 / 144).
 supplemental/BasicInstancingAndNestedInstances_root key_missing Key "references" in /Set_1 metadata exists in file1 but not in file2
 supplemental/BasicInstancingAndVariants_root key_missing Key "references" in /InstancedModel metadata exists in file1 but not in file2
 supplemental/BasicInstancing_root key_missing Key "references" in /Set_1/InstancedProp metadata exists in file1 but not in file2
 supplemental/BasicListEditing_root attribute_missing /A Attribute "targets" at "/A" exists in file1 but not in file2
-supplemental/BasicNestedVariantsWithSameName_root specifier_mismatch /foo Specifier mismatch at "/foo": "def" vs "over"
+supplemental/BasicNestedVariantsWithSameName_root value_mismatch: same-name nested variant set on the child — parent-driven child selection picks a different option value than pxr
 supplemental/BasicOwner_root key_missing Key "owner" in metadata exists in file1 but not in file2
 supplemental/BasicRelocateToAnimInterfaceAsNewRootPrim_root specifier_mismatch /Model/Anim/Path Specifier mismatch at "/Model/Anim/Path": "over" vs "def"
 supplemental/BasicRelocateToAnimInterface_root attribute_missing /Model/Rig/PathRig Attribute "relationshipToPathAvar" at "/Model/Rig/PathRig" exists in file1 but not in file2
@@ -34,7 +34,6 @@ supplemental/RelocatePrimsWithSameName_root specifier_mismatch /ChainedReference
 supplemental/RelocateToNone_root attribute_missing /Char Attribute "relationship1" at "/Char" exists in file1 but not in file2
 supplemental/SpecializesAndVariants3_root attribute_missing /implementation Attribute "variantAttr" at "/implementation" exists in file2 but not in file1
 supplemental/SpecializesAndVariants4_root attribute_value_mismatch /A/render Attribute "test" at "/A/render" differs: "value from /_class_/defaultImplementation" vs "value from /A/de
-supplemental/SubrootInheritsAndVariants_root specifier_mismatch /Group Specifier mismatch at "/Group": "def" vs "over"
 supplemental/TrickyClassHierarchy_root type_mismatch /Sullivan_1 Type mismatch at "/Sullivan_1": "Model" vs "Scope"
 supplemental/TrickyConnectionToRelocatedAttribute_root attribute_missing /HumanRig/Anim/Face/LEye Attribute "baz" at "/HumanRig/Anim/Face/LEye" exists in file2 but not in file1
 supplemental/TrickyInheritsAndRelocates5_root attribute_value_mismatch /CharRig/Anim/Arms/R1Arm/Knot03 Attribute "foo" at "/CharRig/Anim/Arms/R1Arm/Knot03" differs: "from TentacleRig" vs
