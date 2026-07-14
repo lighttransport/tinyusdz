@@ -599,7 +599,15 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   // A present-but-empty entry is an authored connection BLOCK
   // (`.connect = None`); absent means no connection opinion.
   const std::vector<Path>* conns = spec.connection(name);
-  const bool has_conn = conns != nullptr;
+  bool has_conn = conns != nullptr;
+  // Composed-stage output: an authored connection BLOCK (`.connect = None`)
+  // resolved to "no connection"; pxr flatten drops the statement entirely
+  // (value blocks, by contrast, are preserved). Qualified edits keep their
+  // statement.
+  if (opts.composed_stage_output && has_conn && conns->empty()) {
+    const ArcEdit* cedit = spec.connection_edit(name);
+    if (!(cedit && cedit->authored && !cedit->is_explicit)) has_conn = false;
+  }
 
   // Connection statement: `<type> <name>.connect = </path>` (or `[...]`).
   // `wrote_meta` = authored property metadata already emitted on an earlier
@@ -810,7 +818,9 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
 
   head();
   if (targets.empty()) {
-    if (explicit_empty) os << " = None";
+    // Composed-stage output: an explicit-None (block) relationship resolved
+    // to "no targets"; pxr flatten writes the bare declaration.
+    if (explicit_empty && !opts.composed_stage_output) os << " = None";
     // Otherwise this is a declared-only relationship: bare `rel name` (pxr
     // re-parses it without an authored targetPaths opinion).
   } else {
