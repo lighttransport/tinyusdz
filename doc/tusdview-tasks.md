@@ -43,15 +43,30 @@ program has web/Basis follow-ups left.
   per-mesh displayOpacity already works via `materialWithAlpha` variants). Both
   deferred; neither is wired into GL/VK/RT yet.
 
-- **Cross-tool parity oracle (highest-value test, not built).** Nothing renders
-  the *same* scene through both binaries and asserts agreement — exactly why the
-  tusdrender-next-only findings (R1/R2/R4) went unnoticed. Build
-  `models/parity-material-uv-subset.usda` (one mesh, two UV sets — `st` full +
-  `uvSet1` a `[0,0.25]` sub-tile; a checkerboard bound via `varname="uvSet1"`;
-  three `materialBind` GeomSubsets → R/G/B; one DistantLight) + a registered
-  harness that renders `tusdview --headless` (Vulkan) and `tusdrender -rtPreview`
-  and asserts three distinct colored regions (R1), the zoomed `uvSet1` crop (R2),
-  and region-mean agreement (catches R9/R10/T11-class drift going forward).
+- ~~Cross-tool parity oracle~~ **DONE (2026-07-14)** — `models/parity-material-uv-subset.usda`
+  + `tools/tusdrender/tests/run-cross-tool-parity.sh`, registered as
+  `tusdview-tusdrender-parity`. Four coplanar quads, each bound through a
+  `materialBind` GeomSubset: red | green | blue | (texture cropped via `uvSet1`
+  onto a yellow quadrant). Renders `tusdview --headless` (Vulkan) and
+  `tusdrender -rtPreview` and asserts both give `r g b y` AND agree region-by-region.
+  It found **two real tusdview `--next` bugs on its first run** (both fixed, both
+  now pinned by it — verified by reverting each and watching it fail):
+  1. **Constant-color materials grayed out.** `BakeLightRtOpenPBR` →
+     `BakeUsdPreviewSurface` read via a PARAM MAP (`mat.params`) that only the
+     LEGACY loader populates, then copied its own defaults back over the material —
+     so on the (default) `--next` path every untextured constant-color material lost
+     its color. Fixed by seeding from `DrawMaterialCPU`'s direct fields first.
+  2. **The secondary UV set never reached the GPU.** `uv0` rides inside `DrawVertex`,
+     but `uv1` is a PARALLEL array, and the batch builder appended vertices without
+     it — so every batched draw carried an EMPTY `uv1` and any texture routed to
+     `uvSet1` sampled one fixed coordinate (GL: the corner texel; VK: the averaged
+     mip). Fixed by carrying `uv1` through both batch-append paths (`anyUv1`,
+     mirroring `anyColor`). Affected GL *and* VK.
+     **`tusdview-uv-set-routing` was pinning this bug**: it asserted the `uvSet1`
+     render is "3x flatter than st", which is only true when uv1 is broken (a 4x
+     zoom of a checkerboard is still a checkerboard — same contrast, bigger cells).
+     Its second assertion is now a contrast FLOOR (the crop must not be flat).
+     Do not re-add the flatness ratio.
 
 ### Texture / KTX2 (B)
 
@@ -66,7 +81,8 @@ program has web/Basis follow-ups left.
 
 ## Status snapshot
 
-- **Audit (A): backlog EMPTY** except T12 + the parity oracle above. All other
+- **Audit (A): backlog EMPTY** except T12 above (the parity oracle is DONE and
+  landed two fixes with it). All other
   findings fixed or refuted, pushed to `tusdview` (latest `79d0c8dcd`). Highlights
   of the last pass: R10 light `normalize` + dome `texture:format`; T8 doubleSided
   on `--next` + VK back-face cull; R12 doubleSided cull in the tracer; **T11 +
@@ -97,6 +113,15 @@ program has web/Basis follow-ups left.
   itself (`next_scene_loader.cc` + tydra-next cache), bypassing `mesh_build`'s
   `BuildDrawTextures` / `ApplyTextureRuntimeOptions`. A feature wired only into
   the legacy path is silently inert by default.
+- **Anything PARALLEL to `DrawMeshCPU::vertices` must be appended by hand in the
+  batch builder** (`next_scene_loader.cc`, both the single-material fast path AND
+  the multi-material GeomSubset path). Position/normal/uv0 ride inside `DrawVertex`
+  and travel for free; `uv1`, `vertexColors`, `vertexAlpha`, `tangents`, skin and
+  morph attributes do NOT. Forget one and the batched draw silently carries an
+  EMPTY buffer — the shader then reads a default (uv1 = one fixed coordinate) and
+  the failure looks like a *shader* bug, not a loader one. Follow the `anyColor` /
+  `anyUv1` pattern: back-fill the vertices already in the batch, then push per
+  vertex (zeros for meshes that lack the attribute).
 - **`raytrace_comp.spv.h` must be regenerated with the SDK glslang 14.0.0**
   (`build-vulkan-sdk-1.3.275.0/src/Vulkan-ValidationLayers/external/glslang/build/install/bin/glslang`),
   NOT the PATH `/usr/bin/glslang` 15.1.0 — the latter emits ray-query SPIR-V that

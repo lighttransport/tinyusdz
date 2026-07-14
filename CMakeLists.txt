@@ -2508,6 +2508,25 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-uv-set-routing PROPERTIES SKIP_RETURN_CODE 77)
 
+      # Cross-tool parity oracle: ONE scene through BOTH binaries. tusdview and
+      # tusdrender consume the same tydra-next RenderScene, so they must read
+      # GeomSubset material bindings and the secondary UV set the same way.
+      # Nothing else in the suite compares the two -- which is precisely how a run
+      # of tusdview-only material/UV regressions stayed invisible while every
+      # per-tool test kept passing. Needs a real Vulkan device (tusdview
+      # --headless); skips without one.
+      if(TARGET tusdrender)
+        add_test(
+          NAME tusdview-tusdrender-parity
+          COMMAND bash
+                  ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-cross-tool-parity.sh
+          )
+        set_tests_properties(tusdview-tusdrender-parity PROPERTIES
+          SKIP_RETURN_CODE 77
+          ENVIRONMENT
+            "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDRENDER=$<TARGET_FILE:tusdrender>")
+      endif()
+
       # Raster LOD must reach NON-instanced meshes, which also requires each one
       # to carry its own AABB (the next loader used to hand every static mesh the
       # scene-spanning box, disabling the per-mesh frustum cull along with it).

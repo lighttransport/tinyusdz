@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """tusdview: a texture must sample the UV set its UsdPrimvarReader names.
 
-Two bugs, one behind the other:
+Three bugs, one behind the other:
 
   1. tydra-next derived the SECONDARY UV set as `<primary> + "1"`, so only st1 /
      UVMap1 / uv1 were ever extracted. A mesh whose second set is named `uvSet1`,
@@ -9,18 +9,25 @@ Two bugs, one behind the other:
      RenderTexture::uv_primvar pointed at a set that did not exist.
   2. Even when it did exist, nothing routed it: every texture sampled uv0. The
      second set reached the GPU only as a debug AOV.
+  3. Even once it was extracted AND routed, it never reached the GPU on the --next
+     path: uv0 rides inside DrawVertex, but uv1 is a parallel array, and the batch
+     builder appended the vertices without it. Every batched draw got an EMPTY uv1,
+     so the sampler fetched one fixed coordinate and the crop came out FLAT.
 
 The fixture is one quad with `primvars:st` (the full [0,1] square) and
 `primvars:uvSet1` (the lower-left quarter). Its base-color texture reads uvSet1,
-so a correctly-routed render samples a ZOOMED crop of the checkerboard -- nearly
-flat -- while a mis-routed one samples st and shows the full high-contrast
-checker. The control renders the same scene with the reader pointed at `st`.
+so a correctly-routed render samples a 4x ZOOMED crop of the checkerboard -- the
+same black/white contrast, in 4x bigger cells -- while a mis-routed one samples st
+and shows the full fine checker. The control renders the scene with the reader
+pointed at `st`.
 
 Asserts, per backend (GL always, Vulkan when present):
-  1. the two renders DIFFER -- with either bug, the uvSet1 texture silently falls
+  1. the two renders DIFFER -- under bug 1 or 2 the uvSet1 texture silently falls
      back to st and the images are identical; and
-  2. the uvSet1 render is markedly FLATTER than the st one, i.e. it really is the
-     zoomed crop and not merely a different-looking wrong answer.
+  2. the uvSet1 render still has CONTRAST -- under bug 3 it collapses to a flat
+     fill. (Do NOT re-add the old "uvSet1 must be flatter than st" assertion: a
+     zoomed checkerboard is not flat, and that check passed only because bug 3
+     made it flat. It was pinning the bug.)
 
 Exits 77 (skip) if the binary/fixture is missing or no display is available.
 """
@@ -36,13 +43,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gpu_backend import device_name, is_software_renderer  # noqa: E402
 
 SKIP = 77
-# Compare the two renders by RATIO rather than absolute stdev: the checker's
-# contrast depends on the backend's shading (GL and Vulkan light this quad
-# slightly differently), but "the zoomed crop is much flatter than the full
-# checker" holds on both. MIN_FULL_STDEV only guards against the texture failing
-# to load, which would make everything flat and the test vacuous.
-MIN_CONTRAST_RATIO = 3.0
-MIN_FULL_STDEV = 100
+# This test used to demand the uvSet1 render be 3x FLATTER than the st one, on the
+# theory that a zoomed crop is nearly uniform. That is wrong for a checkerboard --
+# a 4x zoom of one is still a checkerboard, just with 4x bigger cells and the SAME
+# black/white contrast -- and the assertion only ever passed because uv1 was broken:
+# the batched draw carried an empty uv1 buffer, so every fetch used one coordinate
+# and the render came out perfectly flat. The test was pinning the bug.
+#
+# What actually distinguishes the three outcomes:
+#   uvSet1 routed correctly -> differs from st, and still has checker contrast
+#   uvSet1 falls back to st -> identical to st            (caught by the != check)
+#   uv1 never reaches the GPU -> flat                     (caught by MIN_CROP_STDEV)
+MIN_FULL_STDEV = 100   # the st control must show the checker, else nothing is proven
+MIN_CROP_STDEV = 40    # the uvSet1 crop must NOT be flat
 BRIGHT_SUM = 60
 
 
@@ -168,17 +181,16 @@ def check_backend(binary, secondary, primary, work, backend):
               f"(stdev {s_pri:.0f}, expected > {MIN_FULL_STDEV}). The texture "
               f"probably failed to load, so this test proves nothing.")
         return 1
-    ratio = s_pri / max(s_sec, 1e-6)
-    if ratio < MIN_CONTRAST_RATIO:
-        print(f"FAIL [{backend}]: the `uvSet1` render still shows checker detail "
-              f"(stdev {s_sec:.0f} vs {s_pri:.0f} for st; ratio {ratio:.1f}, need "
-              f"{MIN_CONTRAST_RATIO}). uvSet1 covers only the lower-left quarter, "
-              f"so a correct render is a nearly flat zoomed crop -- this one is "
-              f"still sampling st.")
+    if s_sec < MIN_CROP_STDEV:
+        print(f"FAIL [{backend}]: the `uvSet1` render is FLAT (stdev {s_sec:.0f}, "
+              f"expected > {MIN_CROP_STDEV}). uvSet1 is a 4x zoom of a checkerboard, "
+              f"so it must still show big black/white cells. A flat render means the "
+              f"uv1 attribute never reached the shader and every texel fetch used the "
+              f"same coordinate -- the batched draw's uv1 buffer is empty.")
         return 1
 
     print(f"PASS [{backend}]: uvSet1 -> zoomed crop (stdev {s_sec:.0f}), "
-          f"st -> full checker (stdev {s_pri:.0f}), {ratio:.1f}x contrast")
+          f"st -> full checker (stdev {s_pri:.0f}); the two differ")
     return 0
 
 
