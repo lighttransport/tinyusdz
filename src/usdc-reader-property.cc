@@ -307,6 +307,12 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
           }
         }
 
+        // A `timeSamples` FIELD is present, so timeSamples were authored --
+        // even if the block holds no samples (`float x.timeSamples = {}`). Mark
+        // it, or PrimVar::has_timesamples() (size() > 0) reports false and the
+        // empty block is dropped again on the way out.
+        ts_final.set_authored();
+
         var.set_timesamples(std::move(ts_final));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
@@ -395,7 +401,13 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         auto qual = std::get<0>(ps[0]);
         auto items = std::get<1>(ps[0]);
 
-        if (items.size() == 1 && (spec_type != SpecType::Connection)) {
+        if (items.empty() && (spec_type != SpecType::Connection)) {
+          // An authored but EMPTY bucket: a list-edit qualifier on a
+          // relationship with no targets (`append rel myval`). rel.set({}) would
+          // make it a PathVector of zero targets and print `rel myval = []`;
+          // it is declaration-only, and the qualifier below is all it carries.
+          rel.set_novalue();
+        } else if (items.size() == 1 && (spec_type != SpecType::Connection)) {
           // Single (relationship)
           const Path path = items[0];
           rel.set(path);

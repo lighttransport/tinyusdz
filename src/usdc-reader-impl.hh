@@ -402,7 +402,7 @@ class USDCReader::Impl {
     if (arg.IsExplicit()) {  // fast path
       dst.push_back({ListEditQual::ResetToExplicit, arg.GetExplicitItems()});
     } else {
-      if (arg.GetExplicitItems().size()) {
+      if (arg.HasExplicitItems()) {
         dst.push_back({ListEditQual::ResetToExplicit, arg.GetExplicitItems()});
       }
       // Bucket order matters: it is the order the qualifiers get PRINTED in, and
@@ -410,19 +410,19 @@ class USDCReader::Impl {
       // USD's canonical one (delete, add, prepend, append), so a prim authored
       // with `prepend references` + `append references` does not come back with
       // the two lines swapped.
-      if (arg.GetDeletedItems().size()) {
+      if (arg.HasDeletedItems()) {
         dst.push_back({ListEditQual::Delete, arg.GetDeletedItems()});
       }
-      if (arg.GetAddedItems().size()) {
+      if (arg.HasAddedItems()) {
         dst.push_back({ListEditQual::Add, arg.GetAddedItems()});
       }
-      if (arg.GetPrependedItems().size()) {
+      if (arg.HasPrependedItems()) {
         dst.push_back({ListEditQual::Prepend, arg.GetPrependedItems()});
       }
-      if (arg.GetAppendedItems().size()) {
+      if (arg.HasAppendedItems()) {
         dst.push_back({ListEditQual::Append, arg.GetAppendedItems()});
       }
-      if (arg.GetOrderedItems().size()) {
+      if (arg.HasOrderedItems()) {
         dst.push_back({ListEditQual::Order, arg.GetOrderedItems()});
       }
     }
