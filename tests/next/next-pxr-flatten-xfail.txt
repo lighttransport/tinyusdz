@@ -7,7 +7,8 @@
 # Baseline: 2026-07-14, 797 inputs, 608 pass / 170 listed (11 pruned after
 # the stage-metadata root-layer-only fix; 2 more after the timeSampled
 # value+connect writer fix; 6 after variant authored-state; 14 after the
-# bare-string-comment interop fix -> 630 pass / 148 listed).
+# bare-string-comment interop fix; 3 after the parser-leniency port ->
+# 633 pass / 145 listed).
 supplemental/BasicInstancingAndNestedInstances_root key_missing Key "references" in /Set_1 metadata exists in file1 but not in file2
 supplemental/BasicInstancingAndVariants_root key_missing Key "references" in /InstancedModel metadata exists in file1 but not in file2
 supplemental/BasicInstancing_root key_missing Key "references" in /Set_1/InstancedProp metadata exists in file1 but not in file2
@@ -63,8 +64,7 @@ supplemental/case1_root prim_missing /FergusCloak/rig Prim "/FergusCloak/rig" ex
 tests/usda/anytype-001.usda type_mismatch /bora Type mismatch at "/bora": "__AnyType__" vs ""
 tests/usda/aousd-unknown-property-metadata.usda key_missing Key "extensionLayerProbe" in metadata exists in file1 but not in file2
 tests/usda/ar-interactive.usda attribute_value_mismatch /Root/TapBehavior Attribute "exclusive" at "/Root/TapBehavior" differs: "true" vs "1"
-tests/usda/array_edit_basic.usda next-error: ERR : Failed to load USDA layer: tests/usda/array_edit_basic.usda : Line 5, column 30: Line 5, column 30:
-tests/usda/assetpath-array-001.usda next-error: ERR : Failed to load USDA layer: tests/usda/assetpath-array-001.usda : Line 6, column 42: Failed to parse
+tests/usda/array_edit_basic.usda prim_missing: sparse VtArrayEdit parses now (leniency port) but the array-edit prim /W is dropped from the composed stage
 tests/usda/bool-array-001.usda attribute_value_mismatch /bora Attribute "myval" at "/bora" differs: "[true, false, false, true, false, true, true, t..." vs "[1, 0, 0, 1, 0
 tests/usda/clips-primmeta-001.usda key_missing Key "clips" in /GEO metadata exists in file1 but not in file2
 tests/usda/collection-002.usda attribute_value_mismatch /bora Attribute "collection:mycol:includeRoot" at "/bora" differs: "true" vs "1"
@@ -74,7 +74,6 @@ tests/usda/customData-prim.usda value_mismatch Value for "customData" in /teapot
 tests/usda/customData-stage.usda value_mismatch Value for "customLayerData" in metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zUp = 1, dic
 tests/usda/enum-roundtrip-002.usda attribute_value_mismatch /EnumTests2/LightWithAPIs Attribute "inputs:shadow:enable" at "/EnumTests2/LightWithAPIs" differs: "true" vs "1"
 tests/usda/instancing-001.usda prim_missing /InstancingTests/Prototypes Prim "/InstancingTests/Prototypes" exists in file1 but not in file2
-tests/usda/int-assign-float-001.usda next-error: ERR : Failed to load USDA layer: tests/usda/int-assign-float-001.usda : Line 6, column 15: Expected integ
 tests/usda/layer-metadata-001.usda value_mismatch Value for "customLayerData" in metadata differs: "{ bool isProduction = false, dictionary renderS..." vs "{ bool isProduction
 tests/usda/lights-full-001.usda attribute_value_mismatch /Lights/DistantLight Attribute "inputs:enableColorTemperature" at "/Lights/DistantLight" differs: "false" vs "0"
 tests/usda/listop-delete-000.usda relationship_value_mismatch /hello Relationship "myheight" at "/hello" differs: "None" vs "null"
@@ -99,7 +98,6 @@ tests/usda/rel-003.usda relationship_value_mismatch /bora Relationship "myval" a
 tests/usda/relocates_basic.usda specifier_mismatch /World/new Specifier mismatch at "/World/new": "def" vs "over"
 tests/usda/sceneLibrary-001.usda key_missing Key "sceneName" in /Root/PrimaryScene metadata exists in file1 but not in file2
 tests/usda/shader-nonconformant-types.usda attribute_value_mismatch /Mtl/Tex Attribute "inputs:file" at "/Mtl/Tex" differs: "@./tex.png@" vs "@tests
-tests/usda/stmt-semicolon-000.usda next-error: ERR : Failed to load USDA layer: tests/usda/stmt-semicolon-000.usda : Line 3, column 16: Expected metadat
 tests/usda/texture-colorspace-as-meta-000.usda attribute_value_mismatch /knight_rig_file9 Attribute "inputs:file" at "/knight_rig_file9" differs: "@./Textures/brushed_metal_rough_F.png@" 
 tests/usda/timesamples-array-bool-001.usda attribute_value_mismatch /test_bool_array Attribute "flags.timeSamples" at "/test_bool_array" differs: "{ 0: [false, true, false], 10: [true
 tests/usda/timesamples-array-dedup-004.usda attribute_value_mismatch /muda Attribute "primvars:flag.timeSamples" at "/muda" differs: "{ 0: [false, true, false, false, true], 1: [fal...
