@@ -718,7 +718,10 @@ bool CrateWriter::ConvertVariantSetSpecToFields(
     std::string* err) {
 
   // VariantSet path: parent{variantSetName} (e.g., /Chair{materialVariant})
-  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "}";
+  // pxr's SdfPath has no bare `{set}` form: a VariantSet spec lives at the
+  // EMPTY variant selection, `{set=}`. See ConvertVariantSetToFields in
+  // stage-converter.cc.
+  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "=}";
   Path vs_path(variantset_path_str, "");
 
   DCOUT("[ConvertVariantSetSpecToFields] Creating VariantSet spec: "

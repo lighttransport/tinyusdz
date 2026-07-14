@@ -429,7 +429,8 @@ bool CrateWriter::Finalize(std::string* err) {
       // and retagging those bytes as TokenVector produces scalar ValueReps
       // with the compressed bit set, which OpenUSD rejects.
       const std::string& fname = field_pair.first;
-      if ((fname == "primChildren" || fname == "properties") &&
+      if ((fname == "primChildren" || fname == "properties" ||
+           fname == "variantSetChildren" || fname == "variantChildren") &&
           field_pair.second.as<std::vector<value::token>>()) {
         field.value_rep = PackTokenVectorValue(
             *field_pair.second.as<std::vector<value::token>>(), err);
@@ -490,6 +491,17 @@ bool CrateWriter::Finalize(std::string* err) {
   GetOrCreateToken("");
   for (const auto& path : paths_) {
     std::string elem = path.element_name();
+    // Keep in lockstep with WritePathsSection: a trailing variant selection is
+    // tokenized as the bare `{set=sel}` group, not the whole slash-segment.
+    // Registering the unstripped form here would leave the stripped one to be
+    // appended AFTER the TOKENS section is serialized -- the exact "Corrupt
+    // path element token index" failure this loop exists to prevent.
+    if (!elem.empty() && elem.back() == '}') {
+      size_t open = elem.find_last_of('{');
+      if (open != std::string::npos) {
+        elem = elem.substr(open);
+      }
+    }
     if (!elem.empty() && elem != "/") {
       GetOrCreateToken(elem);
     }
@@ -977,6 +989,22 @@ bool CrateWriter::WritePathsSection(std::string* err) {
       bool is_prop = p.first.is_prim_property_path();
       std::string elem = is_prop ? p.first.prop_part() : p.first.element_name();
       if (elem == "/") elem.clear();
+
+      // A variant selection is its OWN path element on the crate wire: the
+      // node for /Implicits{shapeVariant=Capsule} carries the element token
+      // `{shapeVariant=Capsule}` (its tree parent is the /Implicits node).
+      // element_name() returns the last '/'-segment, so it hands back
+      // `Implicits{shapeVariant=Capsule}` -- which OpenUSD's reader rejects
+      // ("Invalid prim name") and then cascades into empty/repeated specs,
+      // refusing the whole file. Strip to the last `{...}` group; a multi-group
+      // tail (`/A{v1=x}{v2=y}`, nested variantSets) peels one group per tree
+      // level because get_parent_path() strips exactly one group too.
+      if (!is_prop && !elem.empty() && elem.back() == '}') {
+        size_t open = elem.find_last_of('{');
+        if (open != std::string::npos) {
+          elem = elem.substr(open);
+        }
+      }
 
       uint32_t thisIdx = currentIdx++;
       encoded_path_indices[thisIdx] = p.second.value;
