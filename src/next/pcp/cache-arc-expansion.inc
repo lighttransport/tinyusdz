@@ -1049,6 +1049,10 @@
     std::vector<NamespaceMapping::Pair> renames;
     renames.reserve(rel.src_to_dst.size());
     for (const auto &r : rel.src_to_dst) {
+      // A DELETION edit (empty destination) contributes no rename pair:
+      // pxr keeps targets to the deleted paths as authored (dangling),
+      // RelocateToNone.
+      if (r.second.empty()) continue;
       // A relocate destination OUTSIDE the arc's namespace means the moved
       // content is not addressable through this arc: record a DROP-marker
       // pair (empty target) so relationship/connection targets under the
@@ -1137,6 +1141,15 @@
         SourcesForRelocateSource(ps.stack_idx, arrival.src_site, warn, err);
     for (const Src &s : content) {
       Src c = s;
+      // Opinions authored in the RELOCATING layer stack at exactly the
+      // relocation SOURCE path are ignored by pxr ("opinions at relocation
+      // source" is a composition error; only arc-delivered content follows
+      // the move — ErrorOpinionAtRelocationSource). The Src itself stays:
+      // chained relocations derive children through this raw site.
+      if (c.stack_idx == ps.stack_idx && c.arc_kind == ArcType::Root &&
+          c.site == arrival.src_site) {
+        c.suppress_site_specs = true;
+      }
       c.map_idx =
           InternMapping(NamespaceMapping::Compose(outer, Mapping(s.map_idx)));
       c.offset = ps.offset.Compose(s.offset);
@@ -1184,6 +1197,7 @@
       c.offset = ps.offset;
       c.arc_kind = ps.arc_kind;
       c.implied_anchor = ps.implied_anchor;
+      c.suppress_site_specs = false;  // suppression applies to the source only
       c.arc_chain = ps.arc_chain;  // implied class arcs need the whole chain
       c.ancestral = true;          // arc was introduced at the parent
       base.push_back(std::move(c));

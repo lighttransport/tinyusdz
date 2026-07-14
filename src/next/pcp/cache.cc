@@ -73,6 +73,11 @@ struct Src {
   // NOT at the introducing reference's position (see ExpandList's reorder).
   // UINT32_MAX == not an implied source.
   uint32_t implied_anchor = UINT32_MAX;
+  // Relocation-source anchor whose OWN spec opinions are ignored (pxr:
+  // "opinions at relocation source" are a composition error). The Src stays
+  // in the list because child derivation descends through it (chained
+  // relocations address content via this raw site).
+  bool suppress_site_specs = false;
 };
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.
