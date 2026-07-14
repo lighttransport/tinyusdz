@@ -16,7 +16,6 @@
 supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
 supplemental/BasicRelocateToAnimInterfaceAsNewRootPrim_root relationship_value_mismatch /Model/Rig/PathRig Relationship "relationshipToPathAvar2" at "/Model/Rig/PathRig" differs: "null" vs "/Model/Rig/PathRig/P
 supplemental/ErrorArcCycle_root specifier_mismatch /AnotherParent/AnotherChild/AnotherChild Specifier mismatch at "/AnotherParent/AnotherChild/AnotherChild": "def" vs "over"
-supplemental/ErrorInconsistentProperties_root relationship_missing /InconsistentPropertyType Relationship "x" at "/InconsistentPropertyType" exists in file1 but not in file2
 supplemental/ErrorInvalidInstanceTargetPath_root attribute_missing /ConnectionToLocalClass/Instance_1 Attribute "x.connect" at "/ConnectionToLocalClass/Instance_1" exists in file2 but not in file1
 supplemental/ErrorInvalidPreRelocateTargetPath_root attribute_value_mismatch /SublayerRoot Attribute "badAttrA.connect" at "/SublayerRoot" differs: "/SublayerRoot/Anim/Scope.x" vs "/SublayerRoot/Rig/Sco
 supplemental/ErrorInvalidReferenceToRelocationSource_root prim_missing /Good_RefToRelocated/PreReloChild Prim "/Good_RefToRelocated/PreReloChild" exists in file1 but not in file2
