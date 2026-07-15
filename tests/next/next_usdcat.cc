@@ -330,7 +330,10 @@ int main(int argc, char **argv) {
 
   if (flatten) {
     USDAWriteOptions wopts;
-    wopts.emit_custom = openusd_compat;
+    // A composed stage carries `custom` on user attributes exactly like pxr's
+    // `usdcat --flatten` (which always emits it). `--openusd-compat` additionally
+    // forces it on the non-flatten/layer path.
+    wopts.emit_custom = true;
     // The stage came from pcp composition: emit composed-stage semantics
     // (consumed subLayers/relocates dropped, apiSchemas composed to explicit).
     wopts.composed_stage_output = true;
