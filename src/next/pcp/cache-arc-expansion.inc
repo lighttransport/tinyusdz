@@ -761,6 +761,21 @@
       }
       s.arc_chain = std::make_shared<const ArcChain>(child_chain);
 
+      // Extend the persisted arc-site trail with EVERY arc hop (cross-stack
+      // references AND same-stack internal inherits/specializes), so both an
+      // ancestral reference cycle (AnotherParent) and a same-stack co-recursive
+      // inherit cycle (CoRecursiveParent1<->2) are detectable after the live
+      // frame chain is gone (see Src::arc_sites). A benign re-reference does NOT
+      // false-positive: a LOCAL child derives from its local parent with a clean
+      // trail (only content reached THROUGH the arc carries the target), so a
+      // hit means the arc genuinely re-enters its own derivation path.
+      {
+        auto sites = std::make_shared<std::vector<std::pair<uint32_t, std::string>>>();
+        if (src.arc_sites) *sites = *src.arc_sites;
+        sites->emplace_back(s.stack_idx, s.site);
+        s.arc_sites = std::move(sites);
+      }
+
       const ExpansionFrame cframe{s.stack_idx, s.map_idx, &s.site, frame,
                                   frame ? frame->depth + 1 : 0};
       ExpandArcs(s, &cframe, target, spec_out, sels, child_chain, warn, err);
@@ -1033,7 +1048,24 @@
           chain.back().second != s.map_idx) {
         chain.emplace_back(s.stack_idx, s.map_idx);
       }
-      const ExpansionFrame seed{s.stack_idx, s.map_idx, &s.site, nullptr, 0};
+      // Re-seed the cycle-detection frame from the persisted arc-site trail:
+      // the live frame chain reset when the BuildStage walk cached this source
+      // and derived it as a child, so an arc that re-targets a site crossed to
+      // REACH this source is otherwise invisible. Rebuilding synthetic frames
+      // (only stack_idx + site matter to frame->Contains) lets ProcessArc drop
+      // the cyclic arc — pxr's ancestral-reference-cycle behavior. The strings
+      // live in s.arc_sites (held for this call), so the pointers stay valid.
+      std::vector<ExpansionFrame> anc_frames;
+      const ExpansionFrame *anc = nullptr;
+      if (s.arc_sites && !s.arc_sites->empty()) {
+        anc_frames.reserve(s.arc_sites->size());
+        for (const auto &hop : *s.arc_sites) {
+          anc_frames.push_back(
+              ExpansionFrame{hop.first, 0u, &hop.second, anc, 0u});
+          anc = &anc_frames.back();
+        }
+      }
+      const ExpansionFrame seed{s.stack_idx, s.map_idx, &s.site, anc, 0};
       ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
     }
     // Variant sets whose selection was authored at a WEAKER site graft now,
@@ -1186,6 +1218,7 @@
     dst.suppress_site_specs = false;  // the TARGET address is a legal site
     dst.expression_variables = ps.expression_variables;
     dst.arc_chain = ps.arc_chain;
+    dst.arc_sites = ps.arc_sites;
     dst.ancestral = true;  // child derivation, like DeriveChildSources
     base->push_back(std::move(dst));
 
@@ -1256,6 +1289,7 @@
       // relocations (arrivals registered under another relocate's source).
       c.suppress_site_specs = ps.suppress_site_specs;
       c.arc_chain = ps.arc_chain;  // implied class arcs need the whole chain
+      c.arc_sites = ps.arc_sites;  // ancestral cycle trail (see Src::arc_sites)
       c.ancestral = true;          // arc was introduced at the parent
       base.push_back(std::move(c));
     }

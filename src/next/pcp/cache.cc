@@ -66,6 +66,14 @@ struct Src {
   std::shared_ptr<const Value> expression_variables;
   // The arc chain this source was reached through (null == the root stack).
   std::shared_ptr<const ArcChain> arc_chain;
+  // Parallel to arc_chain, but records each crossed arc's TARGET (stack, site)
+  // in the target stack's own namespace. The live ExpansionFrame cycle chain
+  // resets at every prim during the BuildStage namespace walk, so an ANCESTRAL
+  // reference cycle (a child whose arc re-targets a site crossed to reach an
+  // ancestor) is invisible to it. Re-seeding the cycle-detection frame from
+  // this persisted trail restores pxr's behavior: the cyclic arc is dropped and
+  // the re-entrant prim materializes once as `over` (ErrorArcCycle).
+  std::shared_ptr<const std::vector<std::pair<uint32_t, std::string>>> arc_sites;
   // For IMPLIED class sources (and their subtree): the layer stack whose
   // strength position this source composes at. pxr expresses an implied
   // class in each ancestor stack of the introducing arc chain, and its

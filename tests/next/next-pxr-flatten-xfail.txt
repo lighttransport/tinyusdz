@@ -14,8 +14,9 @@
 #     tail: relocate chains, class-hierarchy value selection, connection
 #     mapping through variant+reference, permission enforcement).
 supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
+tests/usda/instancing-001.usda ORACLE-NONDETERMINISTIC: pxr usdcat --flatten assigns Flattened_Prototype_N by internal TfHashMap order — observed ~40/60 flip of Tree/Rock between _1 and _2 across repeated runs; next's numbering (reverse discovery, matching pxr's stack registration) is stable and matches pxr's majority output, but the case cannot be a deterministic gate input
 supplemental/BasicRelocateToAnimInterfaceAsNewRootPrim_root relationship_value_mismatch /Model/Rig/PathRig Relationship "relationshipToPathAvar2" at "/Model/Rig/PathRig" differs: "null" vs "/Model/Rig/PathRig/Path/Anim.t
-supplemental/ErrorArcCycle_root specifier_mismatch /AnotherParent/AnotherChild/AnotherChild Specifier mismatch at "/AnotherParent/AnotherChild/AnotherChild": "def" vs "over"
+supplemental/ErrorArcCycle_root specifier_mismatch /CoRecursiveParent1/Child1/Child2/Child1 — arc_sites trail now bounds all cycle types (6MB->108 lines, AnotherParent/Parent exact); co-recursive same-stack inherit cycles (CoRecursiveParent1<->2) stop one composed level late (next: Child1/Child2/Child1-over, pxr: Child1/Child2-over) because pxr uses COMPOSED-path ancestor detection, not just the arc-crossing trail
 supplemental/ErrorInvalidInstanceTargetPath_root attribute_missing /FaceRig/BrowRig/LBrow/BrowInnUDPosBrowInnUDNeg_sculpt Attribute "amount.connect" at "/FaceRig/BrowRig/LBrow/BrowInnUDPosBrowInnUDNeg_sculpt" 
 supplemental/ErrorInvalidPreRelocateTargetPath_root attribute_value_mismatch /SublayerRoot Attribute "badAttrA.connect" at "/SublayerRoot" differs: "/SublayerRoot/Anim/Scope.x" vs "/SublayerRoot/Rig/Scope.x"
 supplemental/ErrorInvalidReferenceToRelocationSource_root prim_missing /Good_RefToRelocated/PreReloChild Prim "/Good_RefToRelocated/PreReloChild" exists in file1 but not in file2
