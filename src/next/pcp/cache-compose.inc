@@ -235,6 +235,11 @@
       }
     }
     for (const std::string &name : edits.arrived) {
+      // A name that one stack relocates IN and another relocates OUT is a
+      // chained-relocation pass-through (CHARACTER -> Character -> Model): the
+      // content flows to the final destination, so the intermediate name must
+      // NOT materialize (pxr collapses the chain). TrickyMultipleRelocations5.
+      if (edits.departed.count(name)) continue;
       if (seen_child.insert(name).second) child_names.push_back(name);
     }
     return child_names;

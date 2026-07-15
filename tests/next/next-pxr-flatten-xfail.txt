@@ -26,11 +26,9 @@ supplemental/TrickyConnectionToRelocatedAttribute_root attribute_missing /HumanR
 supplemental/TrickyInheritsAndRelocates5_root attribute_value_mismatch /CharRig/Anim/Arms/R1Arm/Knot03 Attribute "foo" at "/CharRig/Anim/Arms/R1Arm/Knot03" differs: "from TentacleRig" vs "from CharRig"
 supplemental/TrickyInheritsInVariants_root prim_missing /Model/Scope/LowClassStuff Prim "/Model/Scope/LowClassStuff" exists in file1 but not in file2
 supplemental/TrickyMultipleRelocations2_root specifier_mismatch /ModelGroup/Model_2/Anim/Collider Specifier mismatch at "/ModelGroup/Model_2/Anim/Collider": "over" vs "def"
-supplemental/TrickyMultipleRelocations5_root prim_missing /Group/Character Prim "/Group/Character" exists in file1 but not in file2
 supplemental/TrickyMultipleRelocationsAndClasses2_root attribute_missing /CharRig/Anim/Legs/LHip/Knee Attribute "JointBlend" at "/CharRig/Anim/Legs/LHip/Knee" exists in file2 but not in file1
 supplemental/TrickyMultipleRelocationsAndClasses_root attribute_value_mismatch /HumanRig/Face/Eyes/LEye Attribute "value" at "/HumanRig/Face/Eyes/LEye" differs: "9" vs "808"
 supplemental/TrickyRelocationOfPrimFromVariant_root specifier_mismatch /Char/Anim/Tail Specifier mismatch at "/Char/Anim/Tail": "over" vs "def"
-supplemental/TrickySpookyInheritsInSymmetricBrowRig_root prim_missing /FaceRig/BrowRig/Anim/LBrow Prim "/FaceRig/BrowRig/Anim/LBrow" exists in file1 but not in file2
 supplemental/TrickySpookyVariantSelectionInClass_root specifier_mismatch /Char/Anim/LeftLeg Specifier mismatch at "/Char/Anim/LeftLeg": "over" vs "def"
 supplemental/TrickyVariantOverrideOfRelocatedPrim_root attribute_value_mismatch /Model/RelocatedSphere/Geom Attribute "x" at "/Model/RelocatedSphere/Geom" differs: "model_default" vs "variant_override"
 supplemental/VariantSpecializesAndReferenceSurprisingBehavior_root attribute_value_mismatch /Model/Material_Child Attribute "myInt" at "/Model/Material_Child" differs: "1" vs "0"
