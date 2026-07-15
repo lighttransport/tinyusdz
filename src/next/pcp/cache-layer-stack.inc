@@ -209,9 +209,9 @@
       }
     }
     // A relocate may be authored in a namespace an ANCESTRAL relocate already
-    // produced (`/A -> /W`, then `/W/B -> /W/X`). Composed prims address their
-    // opinions by raw (pre-relocation) site, so normalize such paths back:
-    // `/W/B` -> `/A/B`.
+    // produced (`/A -> /W`, then `/W/B -> /W/X`). `raw_path` normalizes such a
+    // path back to the pre-ancestral-relocation ("raw") namespace (`/W/B` ->
+    // `/A/B`). Used ONLY for `src_to_dst` below (see the split explanation).
     auto raw_path = [&](std::string path) {
       for (size_t pass = 0; pass < candidates.size(); ++pass) {
         size_t best = candidates.size();
@@ -232,22 +232,38 @@
       return path;
     };
 
+    // Two consumers need DIFFERENT keyings, so key each table for its consumer:
+    //
+    //  * `src_to_dst` (WithStackRelocates relationship/connection target remap,
+    //    PathInRelocateSource) uses the RAW source. WithStackRelocates adds one
+    //    rename per relocate to a single mapping applied in ONE pass; keying by
+    //    the raw source pre-chains ancestral relocates (raw target -> FINAL
+    //    dst), so a relationship authored in the pre-relocation namespace remaps
+    //    correctly through a chain (BasicRelocateToAnimInterface: PathRig/Path/
+    //    Anim -> Anim/Path/AnimScope in one hop).
+    //
+    //  * `departed` / `arrivals` (ComposeChildNames, SourcesForRelocateSource)
+    //    use the COMPOSED (as-authored) path. The source's ancestors exist in
+    //    the composed namespace as arrivals of the ancestral relocate, carrying
+    //    both the relocated content AND any `over` opinions at the post-
+    //    relocation path (TrickyMultipleRelocations2 `over Model_2 { Rig }`); the
+    //    composed prim's departed children are keyed by their composed parent.
     StackRelocates &rel = st->relocates;
     for (size_t i = 0; i < candidates.size(); ++i) {
       if (invalid[i]) continue;
-      const std::string src = raw_path(candidates[i].first);
+      const std::string &src = candidates[i].first;  // composed (as-authored)
       const std::string &dst = candidates[i].second;
       const Path sp(src), dp(dst);
-      rel.src_to_dst[src] = dst;
+      rel.src_to_dst[raw_path(src)] = dst;
       rel.departed[sp.parent().str()].insert(sp.name());
       if (dst.empty()) continue;  // deletion: departed only, no arrival
                                   // (and no target rename — pxr keeps
                                   // targets to deleted paths as authored).
       StackRelocates::Arrival arrival;
       arrival.name = dp.name();
-      arrival.src_site = src;
+      arrival.src_site = src;  // composed: SourcesForRelocateSource walks it
       arrival.dst_site = dst;
-      rel.arrivals[raw_path(dp.parent().str())].push_back(std::move(arrival));
+      rel.arrivals[dp.parent().str()].push_back(std::move(arrival));
     }
   }
 
