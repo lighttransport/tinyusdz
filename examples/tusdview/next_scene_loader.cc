@@ -1996,10 +1996,38 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     if (neutralize3) { neutralize3[0] = neutralize3[1] = neutralize3[2] = 1.0f; }
   };
 
+  auto channelScaleBias = [](const tydn::RenderTexture& rt, int ch,
+                             float* scale, float* bias) {
+    const float sc[4] = {rt.scale_value.x, rt.scale_value.y,
+                         rt.scale_value.z, rt.scale_value.w};
+    const float bi[4] = {rt.bias.x, rt.bias.y, rt.bias.z, rt.bias.w};
+    const int c = (ch >= 0 && ch < 4) ? ch : 0;
+    *scale = sc[c];
+    *bias = bi[c];
+  };
+
   DrawMaterialCPU dm;
   dm.name = rm.name;
   dm.absPath = rm.prim_path;
   dm.displayName = rm.name;
+
+  auto loadOpacity = [&](const tydn::ShaderParam& sp, int baseTextureId) {
+    if (sp.texture_id < 0 ||
+        static_cast<size_t>(sp.texture_id) >= scratch.textures.size()) return;
+    const tydn::RenderTexture& rt =
+        scratch.textures[static_cast<size_t>(sp.texture_id)];
+    const int channel = NextScalarChannel(rt.output_channel);
+    // The material shader already multiplies base-color alpha. A common USD
+    // graph connects the SAME UsdUVTexture outputs:rgb to diffuseColor and
+    // outputs:a to opacity; binding it again would square the alpha.
+    if (sp.texture_id == baseTextureId && channel == 3) return;
+    int t = LoadNextTexture(texCache, draw, scratch, sp.texture_id, false);
+    if (t < 0) return;
+    dm.opacityTex = t;
+    dm.opacityChannel = channel;
+    FillNextSample(rt, &dm.opacitySample, uv0Name, uv1Name);
+    channelScaleBias(rt, channel, &dm.opacityTexScale, &dm.opacityTexBias);
+  };
 
   // Load a normal-map slot (linear; default [0,1]->[-1,1] remap if unauthored).
   auto loadNormal = [&](const tydn::ShaderParam& sp) {
@@ -2029,15 +2057,6 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     // (they used to stay 1/0) mis-scaled any roughness/metallic map authored
     // with a non-identity scale -- tusdrender applies them, so the two tools
     // disagreed on the same asset.
-    auto channelScaleBias = [](const tydn::RenderTexture& rt, int ch,
-                               float* scale, float* bias) {
-      const float sc[4] = {rt.scale_value.x, rt.scale_value.y,
-                           rt.scale_value.z, rt.scale_value.w};
-      const float bi[4] = {rt.bias.x, rt.bias.y, rt.bias.z, rt.bias.w};
-      const int c = (ch >= 0 && ch < 4) ? ch : 0;
-      *scale = sc[c];
-      *bias = bi[c];
-    };
     if (roughness.texture_id >= 0) {
       int t = LoadNextTexture(texCache, draw, scratch, roughness.texture_id, false);
       if (t >= 0) {
@@ -2083,13 +2102,13 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     const tydn::PreviewSurfaceShader& s = *rm.preview_surface;
     pvTex = texCount({s.diffuse_color.texture_id, s.normal.texture_id,
                       s.emissive_color.texture_id, s.metallic.texture_id,
-                      s.roughness.texture_id});
+                      s.roughness.texture_id, s.opacity.texture_id});
   }
   if (rm.openpbr) {
     const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
     opTex = texCount({s.base_color.texture_id, s.normal.texture_id,
                       s.emission_color.texture_id, s.base_metalness.texture_id,
-                      s.base_roughness.texture_id});
+                      s.base_roughness.texture_id, s.opacity.texture_id});
   }
   const bool usePreview = rm.preview_surface && (!rm.openpbr || pvTex >= opTex);
 
@@ -2108,6 +2127,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.ior = s.ior.value.x;
     colorSlot(s.diffuse_color, true, &dm.baseColorTex, &dm.baseColorSample, dm.baseColor);
     colorSlot(s.emissive_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
+    loadOpacity(s.opacity, s.diffuse_color.texture_id);
     loadNormal(s.normal);
     loadMetalRough(s.metallic, s.roughness);
   } else if (rm.openpbr) {
@@ -2123,6 +2143,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.ior = s.specular_ior.value.x;
     colorSlot(s.base_color, true, &dm.baseColorTex, &dm.baseColorSample, dm.baseColor);
     colorSlot(s.emission_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
+    loadOpacity(s.opacity, s.base_color.texture_id);
     loadNormal(s.normal);
     loadMetalRough(s.base_metalness, s.base_roughness);
   } else {
@@ -3195,6 +3216,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   struct Batch {
     DrawMeshCPU dm;
     bool anyColor = false;
+    bool anyAlpha = false;
     // Same deal for the SECONDARY UV set: a batch gains a uv1 buffer the first
     // time a mesh that has one joins it. uv0 rides inside DrawVertex, but uv1 is
     // a parallel array, so it has to be appended by hand or the batched draw ends
@@ -3240,7 +3262,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         uv1Name);
   };
 
-  // A clone of material `base` with its alpha replaced, made once per distinct
+  // A clone of material `base` with its alpha modulated, made once per distinct
   // (material, opacity) pair. Lets a mesh's `displayOpacity` render through the
   // existing material alpha without mutating a material other meshes share.
   std::map<std::pair<int, int>, int> matAlphaVariants;
@@ -3252,7 +3274,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     auto it = matAlphaVariants.find({base, key});
     if (it != matAlphaVariants.end()) return it->second;
     DrawMaterialCPU variant = draw->materials[static_cast<size_t>(base)];
-    variant.alpha = alpha;
+    // displayOpacity modulates the material opacity; it does not replace an
+    // authored UsdPreviewSurface/OpenPBR opacity constant.
+    variant.alpha = std::max(0.0f, std::min(1.0f, variant.alpha * alpha));
+    if (variant.hasLightRtOpenPBR) {
+      // CUDA/HIP consume the baked LightRT block in preference to the compact
+      // raster fallback, so keep both representations of opacity in sync.
+      variant.lightRtOpenPBR.opacity = std::max(
+          0.0f, std::min(1.0f, variant.lightRtOpenPBR.opacity * alpha));
+    }
     if (variant.alphaMode == static_cast<int>(AlphaMode::Opaque)) {
       variant.alphaMode = static_cast<int>(AlphaMode::Blend);
     }
@@ -3342,6 +3372,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   auto flushBatch = [&](Batch& b) {
     if (b.dm.vertices.empty()) return;
     if (!b.anyColor) b.dm.vertexColors.clear();
+    if (!b.anyAlpha) b.dm.vertexAlpha.clear();
     if (!b.anyUv1) b.dm.uv1.clear();
     if (b.anySkin && b.dm.jointIdx.size() == b.dm.vertices.size() * 4) {
       // Bone rows are absolute and geomBind/world are already folded into them
@@ -3672,15 +3703,17 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                              le[2] * std::fabs(M[2 * 4 + a]);
       }
     }
-    // USD `primvars:displayOpacity`. No renderer here samples a per-vertex alpha
-    // attribute, but the overwhelmingly common authoring is one opacity for the
-    // whole mesh -- so when it does not actually vary, fold it into an
-    // alpha-adjusted MATERIAL VARIANT (a clone of the bound material, made once
-    // per distinct opacity). That renders correctly through the existing
-    // material alpha, and folding it into the shared material in place would be
-    // wrong the moment two meshes with different opacities share one material.
-    // A genuinely per-vertex opacity keeps its buffer and is reported below.
+    // USD `primvars:displayOpacity`. When it does not actually vary, fold it
+    // into an alpha-adjusted MATERIAL VARIANT (a clone of the bound material,
+    // made once per distinct opacity). That renders correctly through the
+    // existing material alpha, and folding it into the shared material in place
+    // would be wrong when two meshes with different opacities share a material.
+    // A genuinely per-vertex opacity keeps its buffer for the raster and RT
+    // backends. Clamp before classifying so authoring such as [1, 2] is correctly
+    // treated as fully opaque rather than needlessly entering the blend path.
     if (!loc.vertexAlpha.empty()) {
+      for (float& a : loc.vertexAlpha)
+        a = std::max(0.0f, std::min(1.0f, a));
       float lo = loc.vertexAlpha[0], hi = loc.vertexAlpha[0];
       for (float a : loc.vertexAlpha) { lo = std::min(lo, a); hi = std::max(hi, a); }
       if (hi - lo <= 1e-6f) {
@@ -3689,10 +3722,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         loc.vertexAlpha.shrink_to_fit();
       } else {
         ++varyingOpacityMeshes;
+        // Clone instead of mutating a shared material. The factor is one: this
+        // variant exists to move an otherwise-opaque material into the blend
+        // pass; the actual modulation remains per vertex.
+        wholeMat = materialWithAlpha(wholeMat, 1.0f);
       }
     }
 
     const bool hasC = !loc.vertexColors.empty();
+    const bool hasAlpha = loc.vertexAlpha.size() == loc.vertices.size();
     const bool hasUv1 = loc.uv1.size() == loc.vertices.size() * 2;
     const bool hasSkin = loc.jointIdx.size() == loc.vertices.size() * 4 &&
                          loc.jointWt.size() == loc.vertices.size() * 4;
@@ -3754,6 +3792,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // Per-triangle materials from face GeomSubsets (empty => uniform wholeMat).
     std::vector<int> triMat;
     buildTriMaterials(mp, m, loc.indices.size() / 3, wholeMat, &triMat);
+    if (hasAlpha) {
+      for (int& mid : triMat) mid = materialWithAlpha(mid, 1.0f);
+    }
 
     if (triMat.empty()) {
       // --- Single-material fast path: append the whole mesh to one batch. ---
@@ -3773,6 +3814,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       if (hasC && !b.anyColor) {
         b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
         b.anyColor = true;
+      }
+      if (hasAlpha && !b.anyAlpha) {
+        b.dm.vertexAlpha.assign(b.dm.vertices.size(), 1.0f);
+        b.anyAlpha = true;
       }
       if (hasUv1 && !b.anyUv1) {
         b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
@@ -3798,6 +3843,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             b.dm.vertexColors.push_back(1.0f);
           }
         }
+        if (b.anyAlpha)
+          b.dm.vertexAlpha.push_back(hasAlpha ? loc.vertexAlpha[i] : 1.0f);
         if (b.anyUv1) {
           b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * i + 0] : 0.0f);
           b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * i + 1] : 0.0f);
@@ -3828,6 +3875,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
           b.anyColor = true;
         }
+        if (hasAlpha && !b.anyAlpha) {
+          b.dm.vertexAlpha.assign(b.dm.vertices.size(), 1.0f);
+          b.anyAlpha = true;
+        }
         if (hasUv1 && !b.anyUv1) {
           b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
           b.anyUv1 = true;
@@ -3852,6 +3903,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                 b.dm.vertexColors.push_back(1.0f);
               }
             }
+            if (b.anyAlpha)
+              b.dm.vertexAlpha.push_back(hasAlpha ? loc.vertexAlpha[vi] : 1.0f);
             if (b.anyUv1) {
               b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 0] : 0.0f);
               b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 1] : 0.0f);
@@ -3978,13 +4031,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
          sourcePoints,
          double(weldedVertices) / double(sourcePoints));
   }
-  if (varyingOpacityMeshes > 0 && warn) {
-    if (!warn->empty()) *warn += "\n";
-    *warn += "next: " + std::to_string(varyingOpacityMeshes) +
-             " mesh(es) author a per-vertex displayOpacity; it is carried on "
-             "DrawMeshCPU::vertexAlpha but no renderer samples a per-vertex "
-             "alpha attribute yet, so they render at their material alpha";
-  }
+  if (varyingOpacityMeshes > 0)
+    LOGI("next: %zu mesh(es) use varying per-vertex displayOpacity",
+         varyingOpacityMeshes);
   // GPU block compression + content-aware mip chains. The size cap / byte budget
   // are already applied inside the --next texture decoder above, so only the
   // compression pass runs here; without this `--texture-compress` would be inert

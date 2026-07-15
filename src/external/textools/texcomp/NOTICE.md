@@ -68,10 +68,13 @@ headers.
   follows the *concept* pioneered by Basis Universal / UASTC — a canonical
   single-subset block re-packed cheaply to the device's GPU format. It is a
   texcomp-native intermediate and is **not** the Basis `.basis`/UASTC bitstream.
-  Its optional codebook supercompression (`--basis`) is a BasisLZ-*style*
+  Every stored block is valid ASTC 4x4, so `TP_UNI_ASTC_KTX2` can write a
+  standard ASTC KTX2 without transcoding; the default wrapper remains private.
+- Its optional codebook supercompression (`--basis`) is a BasisLZ-*style*
   endpoint/selector deduplication with RDO; it is **not** the Basis ETC1S codec
-  and does not emit KTX2 `supercompressionScheme=1` (BasisLZ) — the KTX2 output
-  uses Zstd (scheme 2) with the codebook as an inner pre-transform.
+  and does not emit KTX2
+  `supercompressionScheme=1`; KTX2 output uses Zstd (scheme 2), optionally with
+  the codebook as an inner pre-transform.
 
 ### QuickBC7 / etcpak
 - BC7 quick-mode heuristics and API naming derive from a pure-C11 port of the

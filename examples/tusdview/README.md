@@ -103,8 +103,10 @@ displays it with an ImGui docking UI.
   overlay** (depth-test disabled, so bones stay visible through solid geometry).
   Joint bind poses are placed by the skinned mesh's world matrix (so bones align
   with the mesh even across an up-axis conversion). Toggle from **View ▸ Skeleton**.
-- **Base-color textures** on both backends (UsdPreviewSurface diffuse maps; GL
-  also does metal/rough + emissive maps).
+- **Material textures** on both raster backends: base color, metal/rough,
+  normal, emissive, and separate scalar opacity masks. Opacity honors selected
+  channels, scale/bias, UV transforms and UV sets; ordinary and UDIM masks are
+  supported. Varying `primvars:displayOpacity` modulates raster and RT output.
 - **Surface displacement** (`UsdPreviewSurface inputs:displacement` — constant or
   a height texture, honoring the `UsdUVTexture` `scale`/`bias`). The **raster**
   paths displace in the vertex shader (coarse, no extra geometry), with an opt-in
@@ -128,8 +130,9 @@ displays it with an ImGui docking UI.
   **View ▸ Ray tracing (Vulkan)** (greyed out when unsupported) or start in RT
   with `--rt`. RT uses a ray-tracer-friendly conversion (no single-index dedup;
   `build_vertex_indices=false`); displacement is baked into the traced geometry.
-  _v1 RT limitations:_ base color only (no shading textures), one material per
-  mesh, no helper-line overlay.
+  _RT limitations:_ material textures (including separate opacity images) are
+  not sampled; varying displayOpacity and material constants are supported. One
+  material per mesh and no helper-line overlay.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive
@@ -409,9 +412,8 @@ ready. The worker only touches CPU data — no GL/VK calls off-thread.
 
 ## Known limitations
 
-- The **Vulkan** backend applies the **base-color** texture only; the OpenGL
-  backend additionally uses metal-rough and emissive maps. Normal mapping is not
-  done on either backend yet.
+- Ray-tracing backends use material constants and varying displayOpacity but do
+  not yet sample material images; texture opacity is raster-only.
 - Single hard-coded directional light (USD lights are not consumed yet).
 - Skeleton display shows the **bind pose** only (no animation/skinning playback).
 - Tangents/normal-mapping, animation, instancing transforms and multi-viewport

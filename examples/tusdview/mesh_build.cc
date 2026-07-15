@@ -1691,6 +1691,23 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       dm.baseColorTex = mapTex(s.diffuseColor.texture_id);
       dm.emissiveTex = mapTex(s.emissiveColor.texture_id);
       dm.normalTex = mapTex(s.normal.texture_id);
+      const int opacityChannel = channelFor(s.opacity.texture_id, 3);
+      // Do not sample the same texture twice when its rgb drives base color and
+      // its alpha drives opacity: base-color sampling already contributes alpha.
+      if (!(s.opacity.texture_id >= 0 &&
+            s.opacity.texture_id == s.diffuseColor.texture_id &&
+            opacityChannel == 3)) {
+        dm.opacityTex = mapTex(s.opacity.texture_id);
+        dm.opacityChannel = opacityChannel;
+        CopyTexSample(rs, s.opacity.texture_id, &dm.opacitySample);
+        if (s.opacity.texture_id >= 0 &&
+            static_cast<size_t>(s.opacity.texture_id) < rs.textures.size()) {
+          const tydra::UVTexture& ot =
+              rs.textures[static_cast<size_t>(s.opacity.texture_id)];
+          dm.opacityTexScale = ot.scale[dm.opacityChannel];
+          dm.opacityTexBias = ot.bias[dm.opacityChannel];
+        }
+      }
       int mrTex = mapTex(s.metallic.texture_id);
       if (mrTex < 0) mrTex = mapTex(s.roughness.texture_id);
       dm.metalRoughTex = mrTex;
@@ -1857,6 +1874,21 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       dm.baseColorTex = mapTex(s.base_color.texture_id);
       dm.emissiveTex = mapTex(s.emission_color.texture_id);
       dm.normalTex = mapTex(s.normal.texture_id);
+      const int opacityChannel = channelFor(s.opacity.texture_id, 3);
+      if (!(s.opacity.texture_id >= 0 &&
+            s.opacity.texture_id == s.base_color.texture_id &&
+            opacityChannel == 3)) {
+        dm.opacityTex = mapTex(s.opacity.texture_id);
+        dm.opacityChannel = opacityChannel;
+        CopyTexSample(rs, s.opacity.texture_id, &dm.opacitySample);
+        if (s.opacity.texture_id >= 0 &&
+            static_cast<size_t>(s.opacity.texture_id) < rs.textures.size()) {
+          const tydra::UVTexture& ot =
+              rs.textures[static_cast<size_t>(s.opacity.texture_id)];
+          dm.opacityTexScale = ot.scale[dm.opacityChannel];
+          dm.opacityTexBias = ot.bias[dm.opacityChannel];
+        }
+      }
       dm.coatNormalTex = mapTex(s.coat_normal.texture_id);
       int mrTex = mapTex(s.base_metalness.texture_id);
       if (mrTex < 0) mrTex = mapTex(s.base_roughness.texture_id);

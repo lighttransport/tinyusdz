@@ -3697,6 +3697,9 @@ def Xform "World"
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (0.5, 0), (0.5, 0.5), (0, 0.5)] (
+            interpolation = "vertex"
+        )
         texCoord2f[] primvars:customUV = [(0, 0), (1, 0), (1, 1), (0, 1)] (
             interpolation = "vertex"
         )
@@ -3799,6 +3802,10 @@ def Xform "World"
 
   // ...and the customUV primvar is promoted into texcoords_0.
   assert(quad_mesh.texcoords_0.size() == 8);
+  assert(quad_mesh.texcoords_0_name == "customUV");
+  // The displaced conventional set remains available as the secondary UVs.
+  assert(quad_mesh.texcoords_1.size() == 8);
+  assert(quad_mesh.texcoords_1_name == "st");
 
   // Transmissive OpenPBR takes the blend path.
   const RenderMesh& glass_mesh = result.scene.meshes[static_cast<size_t>(glass)];

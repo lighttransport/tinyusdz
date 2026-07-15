@@ -3,45 +3,38 @@
 Single source of truth for in-flight work on the two renderers and the texture
 program. Supersedes the old `doc/tusdview-audit.md` (full audit) and the
 untracked `resume-tex.md` (KTX2 resume) — done history was dropped on merge; it
-lives in git history if needed. Updated 2026-07-13.
+lives in git history if needed. Updated 2026-07-16.
 
 Two programs run here: (A) the **tusdview/tusdrender audit** and (B) the
-**texture-compression / KTX2** work. The audit backlog is empty; the texture
-program has web/Basis follow-ups left.
+**texture-compression / KTX2** work. Both backlogs are empty.
 
 ---
 
-## OPEN tasks
+## Task status
 
 ### Audit (A)
 
-- **T12 [medium] — tusdview `--next` material gaps.** PARTIALLY FIXED
-  (2026-07-13): **specular workflow + IOR done.** The loader now reads
+- ~~**T12 [medium] — tusdview `--next` material gaps.**~~ **DONE 2026-07-15.**
+  The loader reads
   `use_specular_workflow` / `specular_color` / `ior` (UsdPreviewSurface) and
   `specular_ior` (OpenPBR) into `DrawMaterialCPU`; both raster backends compute
   F0 = specularColor (spec workflow) or dielectric-from-ior (metallic), unified
   GL↔VK (`computeF0`). VK routes it through a new `specParams` vec4 in the set-6
   SSBO (workflow flag folded into ior's sign, so no push-constant lane); GL uses
-  three uniforms. Pinned by `tusdview-specular-workflow`.
-  **Still open:** (1) the **opacity texture** — `s.opacity.texture_id` is a
-  SEPARATE grayscale mask (the base-color alpha case already works via
-  `baseSample.a`). ATTEMPTED 2026-07-13 and REVERTED: the VK side worked fully
-  (new descriptor set 25 `uOpacityTex` non-UDIM + opacity UV/params in the set-6
-  SSBO, stride 20→23, byte-identical across mesh.frag/.vert/tese; loader loads
-  the mask only when it differs from the base texture; cutout verified) but the
-  **GL side hit a radeonsi shader-complexity ceiling**: adding a 13th
-  distinctly-bound fragment sampler to the GL330 material shader corrupts
-  base-color UV-set routing (`tusdview-uv-set-routing` fails) regardless of the
-  unit chosen (tried 6, 19, 20 — only unit 0, i.e. aliasing the base-color
-  sampler, works, and `GL_MAX_TEXTURE_IMAGE_UNITS`=32 so it is NOT a hard limit).
-  A future attempt must first CONSOLIDATE the GL fragment shader's samplers (it
-  has 12: base/mr/normal/emissive + 8 UDIM tex/lut — e.g. fold the UDIM luts, or
-  go bindless) to make room, then re-land the (working) VK path alongside it. Do
-  NOT ship a VK-only opacity texture — it breaks the GL↔VK parity the rest of the
-  renderer holds. (2) **varying `displayOpacity`** — `dm.vertexAlpha` is built
-  and size-tracked but never uploaded as a vertex attribute / sampled (constant
-  per-mesh displayOpacity already works via `materialWithAlpha` variants). Both
-  deferred; neither is wired into GL/VK/RT yet.
+  three uniforms. Pinned by `tusdview-specular-workflow`. Separate scalar
+  opacity textures now work in GL/VK raster for ordinary images and UDIMs,
+  including channel selection, UV transforms/UV-set routing, and scale/bias.
+  The base-rgb/same-texture-alpha graph is sampled once rather than squared.
+  Both rasterizers use one scene-wide 100-column UDIM lookup atlas, replacing
+  the per-slot LUT samplers that previously crossed radeonsi's shader-complexity
+  cliff. Missing opacity tiles are opaque. Varying `displayOpacity` is packed
+  with displayColor as RGBA and consumed by GL/VK raster, Vulkan ray query, and
+  the shared CUDA/HIP tracer; constant values still fold into per-mesh material
+  variants, multiplicatively with authored material opacity. The opacity AOV is
+  GL/VK-identical and includes the separate mask plus varying vertex and
+  PointInstancer opacity. Prototype vertex alpha also participates in instanced
+  batch transparency classification in both raster backends, pinned by the
+  point-instanced opacity-ramp case in `tusdview-opacity-material`.
 
 - ~~Cross-tool parity oracle~~ **DONE (2026-07-14)** — `models/parity-material-uv-subset.usda`
   + `tools/tusdrender/tests/run-cross-tool-parity.sh`, registered as
@@ -70,30 +63,47 @@ program has web/Basis follow-ups left.
 
 ### Texture / KTX2 (B)
 
-- **Web scene-texture routing:** route real USD scene textures through the
-  compressed path in `getTextureFromUSD` (`TinyUSDZLoaderUtils.js` L404-534) —
-  needs the tinyusdz WASM to expose uni bytes / link textools. The standalone
-  `texcomp` demo already proves the pipeline.
-- **Basis Universal / KHR_texture_basisu** transcoder — the "Basis later" seam.
-- **Land tinyexr PR #259** (`texpipe-ktx2-zstd-writer`, the KTX2 Zstd writer).
+- ~~**Web scene-texture routing.**~~ **DONE locally 2026-07-15.** The main
+  tinyusdz WASM module links textools and exposes RGBA8 -> `uni` plus
+  `uni` -> BC7/ASTC/ETC2/RGBA8 bindings. `getTextureFromUSD` sends both
+  native-decoded and ordinary browser-decoded scene images through the best
+  supported GPU block format, with linear/sRGB variants, pre-encode Y flip,
+  and the original uncompressed fallback. Three.js receives its recognized base
+  compressed-format constant; `texture.colorSpace` selects the sRGB upload.
+- ~~**Basis Universal / KHR_texture_basisu** transcoder.~~ **DONE locally
+  2026-07-15.** Undecoded external and embedded `.ktx2` scene textures route
+  through a lazy Three.js `KTX2Loader` for ETC1S/UASTC. Applications may supply
+  a renderer-configured loader or use the automatic WebGL capability probe;
+  decoded tinyexr `uni` textures retain the Basis-free fast path. Embedded
+  headers distinguish private `uni` from real Basis/standard ASTC before
+  dispatch, and a Chrome render/readback regression pins decoded pixels.
+- ~~**Land tinyexr PR #259** (`texpipe-ktx2-zstd-writer`, the KTX2 Zstd
+  writer).~~ **DONE 2026-07-15.** Merged into TinyEXR `release` as `1b10661` and
+  re-synced into `src/external/textools`; upstream `make tools-test`, upstream's
+  standalone Three.js KTX2Loader test, native textools/tusdview tests, and the
+  four tusdview WASM/browser texture gates all pass.
 
 ---
 
 ## Status snapshot
 
-- **Audit (A): backlog EMPTY** except T12 above (the parity oracle is DONE and
-  landed two fixes with it). All other
+- **Audit (A): backlog EMPTY** (T12 and the parity oracle are DONE). All other
   findings fixed or refuted, pushed to `tusdview` (latest `79d0c8dcd`). Highlights
   of the last pass: R10 light `normalize` + dome `texture:format`; T8 doubleSided
   on `--next` + VK back-face cull; R12 doubleSided cull in the tracer; **T11 +
   GL↔VK unification** — linear sRGB workflow (sRGB textures upload `_SRGB`,
   `linearToSrgb` OETF on the shaded output; GL adopted VK's derivative-TBN normal
   map, VK adopted GL's soft-headlight diffuse — GL==VK byte-identical now; RT got
-  the encode too). T7 (Facing AOV) refuted.
+  the encode too). T7 (Facing AOV) refuted. The standalone `src/next` gate also
+  found a post-merge UV-slot edge locally: a material-referenced set already in
+  `texcoords_1` was not normalized to primary. Promotion now swaps it into slot 0
+  while preserving the displaced set in slot 1, pinned by
+  `TestMaterialParityFixes`.
 - **Texture (B): all 5 phases + kept-compressed / Zstd / HDR-BC6H follow-ups DONE,
-  verified, pushed.** tinyusdz `tusdview` through `fe30d477c`; tinyexr
-  `texcomp-ktx2-reader` merged (PR #258), `texpipe-ktx2-zstd-writer` open
-  (PR #259). textools/tusdview ctests are re-registered (`textools-*`,
+  plus web scene-texture routing and Basis interop done locally.** tinyusdz
+  `tusdview` through `fe30d477c`; TinyEXR's reader and Zstd writer work are both
+  merged (`release` `1b10661`, PRs #258/#259) and the vendored textools snapshot
+  is synchronized. textools/tusdview ctests are re-registered (`textools-*`,
   `tusdview_texture_pipeline_test`).
 
 ## By-design residuals (NOT todo — documented so they aren't re-opened)
@@ -157,9 +167,8 @@ program has web/Basis follow-ups left.
 ## Resuming prompt
 
 > Read `doc/tusdview-tasks.md`. Two programs: the tusdview/tusdrender audit
-> (backlog empty except **T12** — `--next` opacity-texture/displayOpacity/specular
-> -workflow/ior — and the **cross-tool parity oracle**) and the KTX2 texture
-> program (done + pushed; remaining: web scene-texture routing, Basis interop,
-> land tinyexr PR #259). Native build `@build -j16`, gate with `ctest`
+> (backlog empty; T12 and the cross-tool parity oracle are done) and the KTX2
+> texture program (all local and upstream work complete; TinyEXR PR #259 merged
+> and vendored at `release` `1b10661`). Native build `@build -j16`, gate with `ctest`
 > (`DISPLAY=:0` for GPU). Mind the gotchas above — especially the SDK-glslang
 > requirement for `raytrace_comp.spv.h`. Pre-push audit + permission every time.

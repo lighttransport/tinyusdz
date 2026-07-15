@@ -1,18 +1,27 @@
 # textools Vendor Import (pristine snapshot)
 
 Upstream: tinyexr `release` branch, `tools/` subtree
-(local worktree: `/mnt/nvme02/work/tinyexr-tocio`,
-https://github.com/syoyo/tinyexr).
+(local worktree: `<tinyexr-worktree>`, https://github.com/syoyo/tinyexr).
 
 Four pure-C11 texture libraries imported as a **pristine snapshot** (not a
 fork, not a submodule). Initial import at upstream commit
 `8b89eea948b221321df19773968d38735a611257` on 2026-07-05.
 
-Re-synced 2026-07-11 from upstream **`release`** commit `4066447` (PR #258
-merged). This brings the KTX2 reader / transcode-on-load API (incl. Zstd-super-
-compression read via `tp_ktx2_read_zstd`, the crafted-header hardening, cube/array
-slice decode `tp_ktx2_decode_slice_rgba8`, KV data `tp_ktx2_kv_lookup`, and float
-decode `tp_ktx2_decode_*_rgbaf`) plus a **complete decoder set**: new
+Re-synced 2026-07-15 from upstream **`release`** commit `1b10661` (PR #259
+merged). This adds Zstd-supercompressed KTX2 writing through callback-based
+`tp_ktx2_write_uni_zstd`, strict shared validation for raw/Zstd uni mip chains,
+and an explicit standard ASTC KTX2 carrier (`TP_UNI_ASTC_KTX2`). The default
+carrier remains TinyEXR-private and now uses an UNSPECIFIED DFD model so genuine
+Basis UASTC is never silently misclassified as texcomp uni. The upstream PR also
+adds an optional standalone Three.js KTX2Loader render/readback test; tinyusdz
+has an equivalent CMake-registered browser gate in
+`web/js/tests/texture-compression-three-ktx2.mjs`.
+
+The previous 2026-07-11 sync from `4066447` (PR #258) brought the KTX2 reader /
+transcode-on-load API (including Zstd read via `tp_ktx2_read_zstd`, crafted-header
+hardening, cube/array slice decode `tp_ktx2_decode_slice_rgba8`, KV data
+`tp_ktx2_kv_lookup`, and float decode `tp_ktx2_decode_*_rgbaf`) plus a
+**complete decoder set**: new
 `texcomp/src/texcomp_bc6h_decode.c` and `texcomp/src/texcomp_etc2_decode.c` mean
 BC1/BC3/BC5/BC6H/BC7, ETC2/EAC, ASTC LDR+HDR and `uni` all decode, so
 `tp_ktx2_decode_level_rgba8` now handles every LDR codec (previously only
@@ -40,10 +49,13 @@ patches" below.
   writer. Header: `texpipe/include/texpipe.h` (includes `tir.h`+`texcomp.h`).
   **KTX2 reader** (`tp_ktx2_read`, `tp_ktx2_decode_level_rgba8`,
   `tp_ktx2_write_uni`): the consumer side of the writers — parse a KTX2, map its
-  VkFormat to a codec (or detect the Basis-free `uni` UASTC intermediate at
-  `vkFormat==0`), then decode-to-RGBA8 (uni / BC7 / ASTC LDR) or hand the blocks
+  VkFormat to a codec (or detect the private ASTC-backed `uni` intermediate at
+  `vkFormat==0` with its UNSPECIFIED-model DFD), then decode-to-RGBA8 (uni / BC7 / ASTC LDR) or hand the blocks
   to `texcomp`'s `tc_uni_transcode_*` for per-device transcoding.
-  supercompressionScheme 0 only (Zstd/BasisLZ deferred — no zstd in this vendor).
+  Supercompression scheme 0 is zero-copy; scheme 2 read/write is available
+  through caller-supplied Zstd callbacks, keeping textools itself independent of
+  a particular Zstd implementation. BasisLZ remains unsupported by native
+  textools and is handled by Three.js KTX2Loader in the web loader.
 - `envmap/` — IBL: equirect/cube/octahedral projections + conversion,
   GGX prefiltered specular cube mip chain, diffuse irradiance cube,
   split-sum BRDF LUT, spherical harmonics/gaussians. Header:
@@ -66,8 +78,9 @@ license files, and the self-contained plain-`main()` test programs
 
 Skipped: all CLIs (`tir_resize_main.c`, `texcomp_cli.c`, `texpipe_cli.c`,
 `envmap_cli.c` — they include tinyexr's `exr.h` and zstd), `bench/`, fuzzers,
-test corpora, the optional astcenc C++ ASTC backend, and the zstd-based
-xbc7/uni-KTX2 supercompression paths (CLI-only upstream).
+test corpora, the optional astcenc C++ ASTC backend, and upstream's optional
+Node/Puppeteer/Zstd Three.js interop harness. The equivalent tinyusdz browser
+gate is registered by `web/CMakeLists.txt`.
 
 ## Build (tinyusdz-local; upstream has no CMake)
 

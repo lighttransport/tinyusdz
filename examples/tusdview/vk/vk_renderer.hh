@@ -151,7 +151,7 @@ class VulkanRenderer final : public Renderer {
     bool skinned{false};
     bool extendedSkinned{false};
     // RT instancing + displayColor + authored-normal flag (mirrors the GL path).
-    VkBuffer vtxColorBuf{VK_NULL_HANDLE};   // per-vertex displayColor (vec3[]), 0=none
+    VkBuffer vtxColorBuf{VK_NULL_HANDLE};   // displayColor+displayOpacity (vec4[])
     VkDeviceMemory vtxColorMem{VK_NULL_HANDLE};
     VkDeviceAddress vtxColorAddr{0};
     // Raster per-vertex displayColor: set-24 SSBO the mesh vertex shader fetches
@@ -328,6 +328,8 @@ class VulkanRenderer final : public Renderer {
                                    VkImageView* outView);
   bool createUdimLookupImage(const DrawTextureCPU& tex, VkImage* outImg,
                              VkDeviceMemory* outMem, VkImageView* outView);
+  bool createUdimLookupAtlas(int rows);
+  bool updateUdimLookupAtlasRow(int row, const DrawTextureCPU& tex);
   // DomeLight split-sum IBL (sets 21-23; 1x1 black cube/2D fallbacks).
   // `levels` are face-major float RGB cube levels (DomeIblCPU layout).
   bool createIblCubeImage(const std::vector<std::vector<float>>& levels,
@@ -644,12 +646,17 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkImageView> texViews_;
   std::vector<VkDescriptorSet> texDescs_;
   std::vector<VkDescriptorSet> texUdimArrayDescs_;
-  std::vector<VkDescriptorSet> texUdimLutDescs_;
   std::vector<uint8_t> texIsUdim_;
+  VkImage udimLutAtlasImg_{VK_NULL_HANDLE};
+  VkDeviceMemory udimLutAtlasMem_{VK_NULL_HANDLE};
+  VkImageView udimLutAtlasView_{VK_NULL_HANDLE};
+  VkDescriptorSet udimLutAtlasDesc_{VK_NULL_HANDLE};
+  int udimLutAtlasRows_{0};
   std::vector<int> matBaseTex_;  // per material: DrawScene texture index or -1
   std::vector<int> matMetalRoughTex_;  // per material: DrawScene texture index or -1
   std::vector<int> matNormalTex_;      // per material: DrawScene texture index or -1
   std::vector<int> matEmissiveTex_;    // per material: DrawScene texture index or -1
+  std::vector<int> matOpacityTex_;     // scalar opacity texture index or -1
   std::vector<int> matDispTex_;  // per material: displacement texture index or -1
   std::vector<float> matDispConst_;  // per material: constant displacement amount
 

@@ -1,12 +1,63 @@
-# tusdview — remaining work
+# tusdview — status and resume notes
 
 Tracked companion to the (local, untracked) `resume-tusdview.md` scratch notes.
-This file is the durable list: what is still open, why, and what it touches.
+This file records completed work, verification, design residuals, and any future
+follow-ups. The active audit and texture/KTX2 backlogs are empty.
 
-Status as of 2026-07-13. The `--next` primvars / texturing / texture-VRAM
+Status as of 2026-07-16. The `--next` primvars / texturing / texture-VRAM
 workstream is **done and pushed**, including GPU skinning (raster, both backends,
 instanced prototypes included) and the large-scene verification (numbers in
 [large-scene.md §2.9](large-scene.md)).
+
+Done locally on 2026-07-15 (T12): separate opacity textures, including UDIM
+masks, are sampled by both raster backends after consolidating UDIM lookup maps
+into one scene-wide atlas. Varying `primvars:displayOpacity` is preserved through
+batching and multiplied in GL/VK raster, Vulkan ray query, and the shared
+CUDA/HIP trace kernel. Ray-tracing material textures remain deliberately outside
+this change; RT receives the varying vertex alpha but does not sample the
+separate opacity image. The GL and Vulkan opacity AOVs report the same composed
+raster opacity (material/base alpha, separate mask, and per-vertex or
+per-instance `displayOpacity`). Point-instanced prototypes retain their own
+per-vertex opacity, and both raster backends classify those batches as
+translucent before drawing so the alpha ramp blends rather than overwrites.
+
+Also done locally on 2026-07-15: real web scene textures now use the Basis-free
+textools compression path. The main WASM module exposes `uni` encode/transcode
+bindings, and `getTextureFromUSD` selects BC7/ASTC/ETC2 for native- or
+browser-decoded RGBA8 images while preserving sRGB/data roles, Y orientation,
+and the uncompressed fallback. Compressed color maps retain Three.js's base
+compressed-format constant and select sRGB through `texture.colorSpace`, which
+is required for Three to choose a valid GPU upload format.
+
+Also done locally on 2026-07-15: undecoded external and USDZ-embedded Basis
+KTX2 scene textures now route through a lazy Three.js `KTX2Loader` for
+ETC1S/UASTC. The automatic WebGL capability probe can be replaced with an
+application-owned renderer-configured loader; decoded tinyexr `uni` textures
+continue to use the Basis-free path above. Embedded KTX2 headers are classified
+before dispatch: private tinyexr `uni` (valid ASTC blocks, but not Basis UASTC
+wire data) is never sent to the Basis transcoder, while standard ASTC and Basis
+KTX2 use `KTX2Loader`. A browser render/readback gate verifies both gradients.
+
+TinyEXR PR #259 is now merged on `release` as `1b10661`, and the imported
+texpipe header, implementation, and C test are synchronized byte-for-byte with
+that release. The upstream self-contained tool suite and standalone Three.js
+KTX2Loader test pass, as do tinyusdz's native textools/tusdview gates and all
+four WASM/browser texture gates.
+
+The explicit standalone `src/next` regression gate also caught and fixed one
+UV-slot merge edge: when a material-referenced custom primvar had already been
+extracted into `texcoords_1`, `PromoteMaterialUVPrimvars` treated either occupied
+slot as equivalent and left an unrelated/default set in `texcoords_0`. The pass
+now normalizes the first material UV to slot 0 and preserves a referenced or
+displaced secondary set in slot 1. `TestMaterialParityFixes` pins both names and
+payloads; the full standalone next suite is green.
+
+The current OpenUSD compatibility gate is also green. The usable local tools are
+under `../dist-usd-pxr-reldeb/bin`; printer comparison reports zero different
+files, and `usdchecker` parity reports 426 compared, 0 failed, 2 skipped. The
+skips are source fixtures this OpenUSD build cannot open
+(`material-binding-005.usda` and `rel-value-block-with-meta-001.usda`), not
+generated-crate failures.
 
 Also done since the last revision of this file, and no longer listed below: the
 shared material-eval Phase 2 (sphere-light NEE + MIS), per-texture UV-set
@@ -143,20 +194,21 @@ Their `usda: accept layer-level reorder and unregistered metadata` (`8e77cd30d`)
 lands on the READ side of two still-open sweep categories; the writer still drops
 both (the 2 new `aousd-*` fixtures below).
 
-## Prompts for a fresh session
+## Historical prompts for a fresh writer-focused session
 
 Paste one of these verbatim. Each is self-contained: it says what is broken, how
 to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
 **1. (DONE 2026-07-14)** The crate-writer round-trip sweep is finished — 0 of
-427 — and the pxr cross-check runs (OpenUSD at `~/work/OpenUSD/dist`). The
+427 — and the pxr cross-check runs (OpenUSD currently available under
+`../dist-usd-pxr-reldeb`). The
 verification battery to hold, from the repo root, on BOTH branches (tusdview
 and the `physics-2026-fix2` worktree at `~/work/tinyusdz/physics-2026-fix2`):
 
 > ```bash
 > bash tests/run-scope-imageable-roundtrip.sh      # 31 checks, self-skips pxr ones
-> USDCAT_PATH=$HOME/work/OpenUSD/dist/bin/usdcat bash tests/run-usdcat-compare.sh
+> USDCAT_PATH=../dist-usd-pxr-reldeb/bin/usdcat bash tests/run-usdcat-compare.sh
 >   # printer comparison must be 0 different AND the usdchecker parity pass
 >   # must be 0 failed (it exits 1 otherwise)
 > cd build && ctest --output-on-failure
@@ -166,8 +218,8 @@ and the `physics-2026-fix2` worktree at `~/work/tinyusdz/physics-2026-fix2`):
 > new wire-format fix needs a mutation-verified check in
 > run-scope-imageable-roundtrip.sh (the pxr-facing ones are checks 22-27).
 
-**2. Audit the remaining hand-rolled writer paths for role-typeName loss**
-(small, self-contained):
+**2. If role-typeName loss regresses, audit hand-rolled writer paths**
+(historical diagnostic prompt; no known failing fixtures):
 
 > ConvertValue degrades role types (point3f[] -> float3[] crate value), so any
 > writer site that pushes a converted value WITHOUT also emitting a
@@ -187,7 +239,7 @@ and the `physics-2026-fix2` worktree at `~/work/tinyusdz/physics-2026-fix2`):
 **3. Mesh lights on the legacy `-rtPreview` path** — see the section below; decide
 whether that path is worth keeping before building anything.
 
-## Open
+## Closed writer investigations
 
 ### The crate writer drops data — CLOSED 2026-07-14 (0 of 427; kept for the sweep commands and reasoning)
 
@@ -326,7 +378,7 @@ helper to hand-rolling a field push.
 
 CAVEAT on all of it, now RESOLVED: the checks above verify that tinyusdz's
 reader and writer agree with each other — a bug they SHARE is invisible to
-them. OpenUSD is now installed at `~/work/OpenUSD/dist` and exactly that bug
+them. OpenUSD is available locally under `../dist-usd-pxr-reldeb` and exactly that bug
 class turned up FIVE times: the empty-timeSamples payload=0 encoding, the
 variant path-encoding family, the ignored `subLayers` value type (+ mandatory
 `subLayerOffsets`), re-typed role typeNames, and dropped unregistered
@@ -778,7 +830,8 @@ world-transform in the batch-append path, a new VBO/binding, and shader edits in
 ## Verification
 
 ```bash
-cd build && make -j16 && ctest --output-on-failure     # 87/87
+cmake --build build_ninja -j16
+ctest --test-dir build_ninja --output-on-failure      # 164/164
 
 # The GL/Vulkan tests need a display; headless, on NVIDIA:
 # xvfb-run -a env __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \

@@ -20,6 +20,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <new>
 #include <unordered_map>
@@ -90,6 +91,9 @@
 #include "safe-arithmetic.hh"
 #include "tydra/texture-util.hh"
 #include "usdz-convert.hh"
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+#include "texcomp.h"
+#endif
 
 namespace {
 
@@ -11852,6 +11856,132 @@ static emscripten::val bytesToUint8Array(const std::vector<uint8_t>& v) {
   return u8;
 }
 
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+// Encode decoded scene pixels into texcomp's compact universal intermediate.
+// `flipY` is applied before block encoding because WebGL cannot unpack-flip a
+// CompressedTexture at upload time.
+static emscripten::val compressTextureToUni(const emscripten::val& data,
+                                            int width, int height,
+                                            bool flipY) {
+  emscripten::val result = emscripten::val::object();
+  size_t rgbaBytes = 0;
+  if (!ComputeImageComponentCount(width, height, 4, &rgbaBytes)) {
+    result.set("success", false);
+    result.set("error", std::string("Invalid RGBA8 texture dimensions."));
+    return result;
+  }
+
+  std::vector<uint8_t> rgba;
+  copyFromJSBuffer(data, rgba);
+  if (rgba.size() != rgbaBytes) {
+    result.set("success", false);
+    result.set(
+        "error",
+        std::string("RGBA8 byte length does not match width * height * 4."));
+    return result;
+  }
+
+  std::vector<uint8_t> flipped;
+  const uint8_t* src = rgba.data();
+  if (flipY) {
+    const size_t rowBytes = static_cast<size_t>(width) * 4u;
+    flipped.resize(rgbaBytes);
+    for (int y = 0; y < height; ++y) {
+      std::memcpy(flipped.data() + static_cast<size_t>(y) * rowBytes,
+                  rgba.data() + static_cast<size_t>(height - 1 - y) * rowBytes,
+                  rowBytes);
+    }
+    src = flipped.data();
+  }
+
+  const size_t uniBytes =
+      tc_uni_compressed_size(static_cast<uint32_t>(width),
+                             static_cast<uint32_t>(height));
+  std::vector<uint8_t> uni(uniBytes);
+  const tc_result rc = tc_uni_compress_rgba8(
+      src, static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+      static_cast<size_t>(width) * 4u, uni.data(), uni.size());
+  if (rc != TC_SUCCESS) {
+    result.set("success", false);
+    result.set("error",
+               std::string("texcomp failed to encode the uni texture."));
+    return result;
+  }
+
+  result.set("success", true);
+  result.set("data", bytesToUint8Array(uni));
+  result.set("byteLength", emscripten::val(static_cast<double>(uni.size())));
+  result.set("width", width);
+  result.set("height", height);
+  return result;
+}
+
+// Transcode a uni image to the GPU format selected by the browser. The RGBA8
+// target is retained as a universal diagnostic/fallback ABI.
+static emscripten::val transcodeTextureUni(const emscripten::val& data,
+                                           int width, int height,
+                                           const std::string& target) {
+  emscripten::val result = emscripten::val::object();
+  size_t rgbaBytes = 0;
+  if (!ComputeImageComponentCount(width, height, 4, &rgbaBytes)) {
+    result.set("success", false);
+    result.set("error", std::string("Invalid uni texture dimensions."));
+    return result;
+  }
+
+  std::vector<uint8_t> uni;
+  copyFromJSBuffer(data, uni);
+  const size_t expected =
+      tc_uni_compressed_size(static_cast<uint32_t>(width),
+                             static_cast<uint32_t>(height));
+  if (uni.size() != expected) {
+    result.set("success", false);
+    result.set("error",
+               std::string("Uni byte length does not match its dimensions."));
+    return result;
+  }
+
+  const size_t blockBytes =
+      static_cast<size_t>((static_cast<uint32_t>(width) + 3u) / 4u) *
+      static_cast<size_t>((static_cast<uint32_t>(height) + 3u) / 4u) * 16u;
+  const bool rgbaTarget = target == "rgba8";
+  std::vector<uint8_t> out(rgbaTarget ? rgbaBytes : blockBytes);
+  tc_result rc = TC_ERROR_UNSUPPORTED;
+  if (target == "bc7") {
+    rc = tc_uni_transcode_bc7(uni.data(), static_cast<uint32_t>(width),
+                              static_cast<uint32_t>(height), out.data(),
+                              out.size());
+  } else if (target == "astc4x4") {
+    rc = tc_uni_transcode_astc(uni.data(), static_cast<uint32_t>(width),
+                               static_cast<uint32_t>(height), out.data(),
+                               out.size());
+  } else if (target == "etc2rgba") {
+    rc = tc_uni_transcode_etc2(uni.data(), static_cast<uint32_t>(width),
+                               static_cast<uint32_t>(height), 1, out.data(),
+                               out.size());
+  } else if (rgbaTarget) {
+    rc = tc_uni_decompress_rgba8(
+        uni.data(), static_cast<uint32_t>(width),
+        static_cast<uint32_t>(height), static_cast<size_t>(width) * 4u,
+        out.data(), out.size());
+  }
+  if (rc != TC_SUCCESS) {
+    result.set("success", false);
+    result.set("error", std::string("texcomp failed to transcode target '") +
+                            target + "'.");
+    return result;
+  }
+
+  result.set("success", true);
+  result.set("data", bytesToUint8Array(out));
+  result.set("byteLength", emscripten::val(static_cast<double>(out.size())));
+  result.set("target", target);
+  result.set("width", width);
+  result.set("height", height);
+  return result;
+}
+#endif  // TINYUSDZ_WITH_TEXTOOLS
+
 static int optInt(const emscripten::val& opts, const char* key, int def) {
   if (opts.isUndefined() || opts.isNull()) return def;
   emscripten::val v = opts[key];
@@ -12662,6 +12792,13 @@ EMSCRIPTEN_BINDINGS(image_module) {
   // fitTextures({images:[{data,name}], targetBytes, strategy:"size"|"quality", ...})
   //   -> { success, results:[{data, ext, width, height, name}], totalBytes }
   function("fitTextures", &fitTextures);
+
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+  // Browser scene-texture path: RGBA8 -> universal `uni` bytes -> native GPU
+  // block format (or RGBA8 for diagnostics/universal fallback).
+  function("compressTextureToUni", &compressTextureToUni);
+  function("transcodeTextureUni", &transcodeTextureUni);
+#endif
 
   // usddiff({left:{data,name?}, right:{data,name?}, format?:"text"|"json"|"both"})
   //   -> { success, hasDiffs, text?, json?, error?, warn? }

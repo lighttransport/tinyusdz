@@ -214,10 +214,12 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uHasMetalRoughTex_ = glGetUniformLocation(program_, "uHasMetalRoughTex");
   uHasNormalTex_ = glGetUniformLocation(program_, "uHasNormalTex");
   uHasEmissiveTex_ = glGetUniformLocation(program_, "uHasEmissiveTex");
+  uHasOpacityTex_ = glGetUniformLocation(program_, "uHasOpacityTex");
   uBaseColorTexIsUdim_ = glGetUniformLocation(program_, "uBaseColorTexIsUdim");
   uMetalRoughTexIsUdim_ = glGetUniformLocation(program_, "uMetalRoughTexIsUdim");
   uNormalTexIsUdim_ = glGetUniformLocation(program_, "uNormalTexIsUdim");
   uEmissiveTexIsUdim_ = glGetUniformLocation(program_, "uEmissiveTexIsUdim");
+  uOpacityTexIsUdim_ = glGetUniformLocation(program_, "uOpacityTexIsUdim");
   uBaseColorUv0_ = glGetUniformLocation(program_, "uBaseColorUv0");
   uBaseColorUv1_ = glGetUniformLocation(program_, "uBaseColorUv1");
   uMetalRoughUv0_ = glGetUniformLocation(program_, "uMetalRoughUv0");
@@ -226,6 +228,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uNormalUv1_ = glGetUniformLocation(program_, "uNormalUv1");
   uEmissiveUv0_ = glGetUniformLocation(program_, "uEmissiveUv0");
   uEmissiveUv1_ = glGetUniformLocation(program_, "uEmissiveUv1");
+  uOpacityUv0_ = glGetUniformLocation(program_, "uOpacityUv0");
+  uOpacityUv1_ = glGetUniformLocation(program_, "uOpacityUv1");
   uUvSet_ = glGetUniformLocation(program_, "uUvSet");
   uBaseColorTexScale_ = glGetUniformLocation(program_, "uBaseColorTexScale");
   uBaseColorTexBias_ = glGetUniformLocation(program_, "uBaseColorTexBias");
@@ -239,6 +243,12 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uMetallicTexBias_ = glGetUniformLocation(program_, "uMetallicTexBias");
   uRoughnessTexScale_ = glGetUniformLocation(program_, "uRoughnessTexScale");
   uRoughnessTexBias_ = glGetUniformLocation(program_, "uRoughnessTexBias");
+  uOpacityUvSet_ = glGetUniformLocation(program_, "uOpacityUvSet");
+  uOpacityChannel_ = glGetUniformLocation(program_, "uOpacityChannel");
+  uOpacityTexScale_ = glGetUniformLocation(program_, "uOpacityTexScale");
+  uOpacityTexBias_ = glGetUniformLocation(program_, "uOpacityTexBias");
+  uUdimSlots_ = glGetUniformLocation(program_, "uUdimSlots");
+  uOpacityUdimSlot_ = glGetUniformLocation(program_, "uOpacityUdimSlot");
   uHasDisplacement_ = glGetUniformLocation(program_, "uHasDisplacement");
   uHasDisplacementTex_ = glGetUniformLocation(program_, "uHasDisplacementTex");
   uDisplacementConst_ = glGetUniformLocation(program_, "uDisplacementConst");
@@ -255,14 +265,13 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uMetalRoughTex"), 1);
   glUniform1i(glGetUniformLocation(program_, "uNormalTex"), 2);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveTex"), 3);
+  glUniform1i(glGetUniformLocation(program_, "uOpacityTex"), 14);
   glUniform1i(glGetUniformLocation(program_, "uBaseColorUdimTex"), 11);
-  glUniform1i(glGetUniformLocation(program_, "uBaseColorUdimLut"), 12);
+  glUniform1i(glGetUniformLocation(program_, "uUdimLutAtlas"), 12);
   glUniform1i(glGetUniformLocation(program_, "uMetalRoughUdimTex"), 13);
-  glUniform1i(glGetUniformLocation(program_, "uMetalRoughUdimLut"), 14);
   glUniform1i(glGetUniformLocation(program_, "uNormalUdimTex"), 15);
-  glUniform1i(glGetUniformLocation(program_, "uNormalUdimLut"), 16);
+  glUniform1i(glGetUniformLocation(program_, "uOpacityUdimTex"), 16);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveUdimTex"), 17);
-  glUniform1i(glGetUniformLocation(program_, "uEmissiveUdimLut"), 18);
   glUniform1i(glGetUniformLocation(program_, "uBoneTex"), 4);
   glUniform1i(glGetUniformLocation(program_, "uInfluenceTex"), 5);
   glUniform1i(uFaceIdTex_, 6);  // source-face-id texture buffer
@@ -306,7 +315,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "layout(location=6) in uvec4 aJoint;\n"
       "layout(location=7) in vec4 aWeight;\n"
       "layout(location=9) in vec3 aColor;\n"     // per-instance color or constant
-      "layout(location=10) in vec3 aVtxColor;\n"  // per-vertex prototype color (or 1)
+      "layout(location=10) in vec4 aVtxColor;\n"  // displayColor.rgb + displayOpacity
       "layout(location=11) in float aOpacity;\n"  // per-instance opacity or constant
       // GPU blendshape morph (shared by instanced prototypes): per-vertex CSR
       // (offset,count) + delta/coeff/channelId texture-buffers, summed into the
@@ -371,8 +380,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "  vWorldPos = wp;\n"
       "  vNormal = normalize(n);\n"
       // Prototype per-vertex displayColor x per-instance color (both default 1).
-      "  vColor = aColor * aVtxColor;\n"
-      "  vOpacity = clamp(aOpacity, 0.0, 1.0);\n"
+      "  vColor = aColor * aVtxColor.rgb;\n"
+      "  vOpacity = clamp(aOpacity * aVtxColor.a, 0.0, 1.0);\n"
       "  gl_Position = uViewProj * vec4(wp, 1.0);\n"
       "}\n";
   static const char* kInstancedFS =
@@ -393,7 +402,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "uniform vec3 uEmissive;\n"  // selection-highlight override (else 0)
       // Debug-AOV uniforms (mirror the non-instanced material shader). Instanced
       // prototypes carry no UVs or material scalars, so UV / roughness / metallic /
-      // emissive / opacity modes fall through to a neutral gray here.
+      // emissive modes fall through to neutral gray; opacity is carried explicitly.
       "uniform int uRenderMode;\n"
       "uniform float uDepthScale;\n"
       "uniform vec3 uSceneMin;\n"
@@ -453,10 +462,11 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "    if (uRenderMode == 18) { FragColor = vec4(purposeColor(uPurpose), 1.0); return; }\n"
       "    if (uRenderMode == 29) { FragColor = vec4(kindColor(uKind), 1.0); return; }\n"  // kind
       "    if (uRenderMode == 26) { FragColor = vec4(idColor(vInstanceId), 1.0); return; }\n"  // instance id
+      "    if (uRenderMode == 12) { FragColor = vec4(vec3(vOpacity), 1.0); return; }\n"
       "    if (uRenderMode == 25) {\n"  // curvature (screen-space geometric normal variation)
       "      vec3 n = Ngeo; float c = clamp((length(dFdx(n))+length(dFdy(n)))*8.0, 0.0, 1.0);\n"
       "      FragColor = vec4(c, 1.0-abs(c-0.5)*2.0, 1.0-c, 1.0); return; }\n"
-      // Modes instanced geometry cannot supply (UV/material scalars): neutral gray
+      // Modes instanced geometry cannot supply (UV/other material scalars): neutral gray
       // so it is visually obvious the channel has no data here, vs masquerading as
       // a lit render.
       "    FragColor = vec4(0.18,0.18,0.18,1.0); return;\n"
@@ -988,8 +998,9 @@ void GLRenderer::destroyScene() {
   for (GLTexture& tex : textures_) {
     if (tex.tex2d) glDeleteTextures(1, &tex.tex2d);
     if (tex.arrayTex) glDeleteTextures(1, &tex.arrayTex);
-    if (tex.lutTex) glDeleteTextures(1, &tex.lutTex);
   }
+  if (udimLutAtlas_) glDeleteTextures(1, &udimLutAtlas_);
+  udimLutAtlas_ = 0;
   textures_.clear();
   materials_.clear();
   destroyIblTextures();
@@ -1001,6 +1012,17 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   // Reserve texture slots (0 = not yet uploaded -> resolved to white at draw).
   textures_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
                    GLTexture{});
+  const int atlasRows = std::max(textureCount, 1);
+  std::vector<int16_t> emptyLut(static_cast<size_t>(atlasRows) * 100, -1);
+  glGenTextures(1, &udimLutAtlas_);
+  glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_R16I, 100, atlasRows, 0,
+               GL_RED_INTEGER, GL_SHORT, emptyLut.data());
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
   materials_.reserve(materials.size());
   for (const auto& m : materials) {
     GLMaterial gm;
@@ -1024,10 +1046,15 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     gm.metalRoughTex = m.metalRoughTex;
     gm.normalTex = m.normalTex;
     gm.emissiveTex = m.emissiveTex;
+    gm.opacityTex = m.opacityTex;
     gm.baseColorSample = m.baseColorSample;
     gm.metalRoughSample = m.metalRoughSample;
     gm.normalSample = m.normalSample;
     gm.emissiveSample = m.emissiveSample;
+    gm.opacitySample = m.opacitySample;
+    gm.opacityChannel = m.opacityChannel;
+    gm.opacityTexScale = m.opacityTexScale;
+    gm.opacityTexBias = m.opacityTexBias;
     gm.metallicChannel = m.metallicChannel;
     gm.roughnessChannel = m.roughnessChannel;
     gm.metallicTexScale = m.metallicTexScale;
@@ -1170,14 +1197,10 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     for (size_t i = 0; i < t.udimLayer.size(); ++i) {
       lut[i] = static_cast<int16_t>(t.udimLayer[i]);
     }
-    glGenTextures(1, &gpu.lutTex);
-    glBindTexture(GL_TEXTURE_1D, gpu.lutTex);
-    glTexImage1D(GL_TEXTURE_1D, 0, GL_R16I, 100, 0, GL_RED_INTEGER, GL_SHORT,
-                 lut.data());
-    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_1D, 0);
+    glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, slot, 100, 1, GL_RED_INTEGER,
+                    GL_SHORT, lut.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
     gpu.isUdim = true;
 
     glGenTextures(1, &gpu.tex2d);
@@ -1253,7 +1276,6 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   GLTexture& old = textures_[static_cast<size_t>(slot)];
   if (old.tex2d) glDeleteTextures(1, &old.tex2d);
   if (old.arrayTex) glDeleteTextures(1, &old.arrayTex);
-  if (old.lutTex) glDeleteTextures(1, &old.lutTex);
   old = gpu;
 }
 
@@ -1686,14 +1708,33 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   // when absent so the base color is unmodulated.
   const bool gmInstanced = !sm.instanceXforms.empty();
   const GLuint vtxColorAttrib = gmInstanced ? 10u : 9u;
-  if (sm.vertexColors.size() == sm.vertices.size() * 3 && !sm.vertexColors.empty()) {
+  const bool hasVtxColor = sm.vertexColors.size() == sm.vertices.size() * 3;
+  const bool hasVtxAlpha = sm.vertexAlpha.size() == sm.vertices.size();
+  if (gmInstanced && hasVtxAlpha) {
+    for (float opacity : sm.vertexAlpha) {
+      if (opacity < 1.0f - 1.0e-6f) {
+        gm.hasTranslucentInstances = true;
+        break;
+      }
+    }
+  }
+  if ((hasVtxColor || hasVtxAlpha) && !sm.vertices.empty()) {
+    std::vector<float> rgba(sm.vertices.size() * 4, 1.0f);
+    for (size_t i = 0; i < sm.vertices.size(); ++i) {
+      if (hasVtxColor) {
+        rgba[i * 4 + 0] = sm.vertexColors[i * 3 + 0];
+        rgba[i * 4 + 1] = sm.vertexColors[i * 3 + 1];
+        rgba[i * 4 + 2] = sm.vertexColors[i * 3 + 2];
+      }
+      if (hasVtxAlpha) rgba[i * 4 + 3] = sm.vertexAlpha[i];
+    }
     glGenBuffers(1, &gm.vertexColorVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.vertexColorVbo);
     glBufferData(GL_ARRAY_BUFFER,
-                 static_cast<GLsizeiptr>(sm.vertexColors.size() * sizeof(float)),
-                 sm.vertexColors.data(), GL_STATIC_DRAW);
+                 static_cast<GLsizeiptr>(rgba.size() * sizeof(float)),
+                 rgba.data(), GL_STATIC_DRAW);
     glEnableVertexAttribArray(vtxColorAttrib);
-    glVertexAttribPointer(vtxColorAttrib, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float),
+    glVertexAttribPointer(vtxColorAttrib, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
                           (void*)0);
     glVertexAttribDivisor(vtxColorAttrib, 0);
   } else {
@@ -1858,7 +1899,8 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glVertexAttribPointer(11, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
       glVertexAttribDivisor(11, 1);
     } else {
-      gm.hasTranslucentInstances = gm.flatOpacity < 1.0f - 1.0e-6f;
+      gm.hasTranslucentInstances = gm.hasTranslucentInstances ||
+                                   gm.flatOpacity < 1.0f - 1.0e-6f;
       glDisableVertexAttribArray(11);  // constant opacity set per draw
     }
   }
@@ -2226,7 +2268,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     }
     // Default per-vertex color to white when the mesh has none (so uBaseColor is
     // unmodulated); the VAO supplies the array when vertexColorVbo is set.
-    if (!mesh.vertexColorVbo) glVertexAttrib3f(9, 1.0f, 1.0f, 1.0f);
+    if (!mesh.vertexColorVbo) glVertexAttrib4f(9, 1.0f, 1.0f, 1.0f, 1.0f);
     const bool skinOn = mesh.skinned && skinningFrameEnabled_;
     glUniform1i(uSkinningEnabled_, skinOn ? 1 : 0);
     glUniform1i(uExtendedSkinningEnabled_,
@@ -2283,7 +2325,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       auto slotGpuTex = [&](int slot) -> const GLTexture* {
         if (slot >= 0 && static_cast<size_t>(slot) < textures_.size()) {
           const GLTexture& tex = textures_[static_cast<size_t>(slot)];
-          if (tex.tex2d || (tex.isUdim && tex.arrayTex && tex.lutTex)) return &tex;
+          if (tex.tex2d || (tex.isUdim && tex.arrayTex)) return &tex;
         }
         return nullptr;
       };
@@ -2394,10 +2436,12 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uHasMetalRoughTex_, 0);
         glUniform1i(uHasNormalTex_, 0);
         glUniform1i(uHasEmissiveTex_, 0);
+        glUniform1i(uHasOpacityTex_, 0);
         glUniform1i(uBaseColorTexIsUdim_, 0);
         glUniform1i(uMetalRoughTexIsUdim_, 0);
         glUniform1i(uNormalTexIsUdim_, 0);
         glUniform1i(uEmissiveTexIsUdim_, 0);
+        glUniform1i(uOpacityTexIsUdim_, 0);
       } else {
         glUniform3fv(uBaseColor_, 1, mat.baseColor);
         glUniform1f(uMetallic_, mat.metallic);
@@ -2413,6 +2457,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         SetUvUniform(uMetalRoughUv0_, uMetalRoughUv1_, mat.metalRoughSample.uv);
         SetUvUniform(uNormalUv0_, uNormalUv1_, mat.normalSample.uv);
         SetUvUniform(uEmissiveUv0_, uEmissiveUv1_, mat.emissiveSample.uv);
+        SetUvUniform(uOpacityUv0_, uOpacityUv1_, mat.opacitySample.uv);
         {
           const GLint uvSets[4] = {mat.baseColorSample.uvSet,
                                    mat.metalRoughSample.uvSet,
@@ -2432,13 +2477,22 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1f(uMetallicTexBias_, mat.metallicTexBias);
         glUniform1f(uRoughnessTexScale_, mat.roughnessTexScale);
         glUniform1f(uRoughnessTexBias_, mat.roughnessTexBias);
+        glUniform1i(uOpacityUvSet_, mat.opacitySample.uvSet);
+        glUniform1i(uOpacityChannel_, mat.opacityChannel);
+        glUniform1f(uOpacityTexScale_, mat.opacityTexScale);
+        glUniform1f(uOpacityTexBias_, mat.opacityTexBias);
+        const GLint udimSlots[4] = {mat.baseColorTex, mat.metalRoughTex,
+                                    mat.normalTex, mat.emissiveTex};
+        glUniform4iv(uUdimSlots_, 1, udimSlots);
+        glUniform1i(uOpacityUdimSlot_, mat.opacityTex);
+        glActiveTexture(GL_TEXTURE12);
+        glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
         auto bindMaterialTexture = [&](int slot, GLenum texUnit2D,
-                                       GLenum texUnitArray, GLenum texUnitLut,
+                                       GLenum texUnitArray,
                                        GLint hasLoc, GLint isUdimLoc) {
           const GLTexture* tex = slotGpuTex(slot);
           const bool hasTex = tex != nullptr;
-          const bool isUdim =
-              hasTex && tex->isUdim && tex->arrayTex && tex->lutTex;
+          const bool isUdim = hasTex && tex->isUdim && tex->arrayTex;
           glUniform1i(hasLoc, hasTex ? 1 : 0);
           glUniform1i(isUdimLoc, isUdim ? 1 : 0);
           glActiveTexture(texUnit2D);
@@ -2447,22 +2501,22 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
           if (isUdim) {
             glActiveTexture(texUnitArray);
             glBindTexture(GL_TEXTURE_2D_ARRAY, tex->arrayTex);
-            glActiveTexture(texUnitLut);
-            glBindTexture(GL_TEXTURE_1D, tex->lutTex);
           }
         };
         bindMaterialTexture(mat.baseColorTex, GL_TEXTURE0, GL_TEXTURE11,
-                            GL_TEXTURE12, uHasBaseColorTex_,
+                            uHasBaseColorTex_,
                             uBaseColorTexIsUdim_);
         bindMaterialTexture(mat.metalRoughTex, GL_TEXTURE1, GL_TEXTURE13,
-                            GL_TEXTURE14, uHasMetalRoughTex_,
+                            uHasMetalRoughTex_,
                             uMetalRoughTexIsUdim_);
         bindMaterialTexture(mat.normalTex, GL_TEXTURE2, GL_TEXTURE15,
-                            GL_TEXTURE16, uHasNormalTex_,
+                            uHasNormalTex_,
                             uNormalTexIsUdim_);
         bindMaterialTexture(mat.emissiveTex, GL_TEXTURE3, GL_TEXTURE17,
-                            GL_TEXTURE18, uHasEmissiveTex_,
+                            uHasEmissiveTex_,
                             uEmissiveTexIsUdim_);
+        bindMaterialTexture(mat.opacityTex, GL_TEXTURE14, GL_TEXTURE16,
+                            uHasOpacityTex_, uOpacityTexIsUdim_);
         glActiveTexture(GL_TEXTURE0);
       }
       glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
@@ -2544,7 +2598,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       if (!mesh.hasInstanceOpacities) glVertexAttrib1f(11, mesh.flatOpacity);
       // Default per-vertex color to white when the prototype has none (the VAO
       // supplies attrib 10 from vertexColorVbo otherwise).
-      if (!mesh.vertexColorVbo) glVertexAttrib3f(10, 1.0f, 1.0f, 1.0f);
+      if (!mesh.vertexColorVbo) glVertexAttrib4f(10, 1.0f, 1.0f, 1.0f, 1.0f);
       // GPU blendshape morph for a morphed prototype: bind its delta/coeff/chan
       // texture-buffers (units 8/9/10, matching the instanced program's samplers)
       // and enable the in-shader morph. Same as the non-instanced material pass.
@@ -2723,6 +2777,7 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glUniform1i(uHasMetalRoughTex_, 0);
     glUniform1i(uHasNormalTex_, 0);
     glUniform1i(uHasEmissiveTex_, 0);
+    glUniform1i(uHasOpacityTex_, 0);
     glDisable(GL_CULL_FACE);
     glBindVertexArray(mesh.vao);
     if (params.highlightIndices && params.highlightIndexCount > 0) {

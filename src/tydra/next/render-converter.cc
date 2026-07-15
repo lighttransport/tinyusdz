@@ -1573,22 +1573,15 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
       if (static_cast<size_t>(mid) >= scene->materials.size()) continue;
       texture_uv_names(scene->materials[static_cast<size_t>(mid)], &wanted);
     }
-    // A name the mesh already selected into texcoords_0/1 needs no promotion.
-    wanted.erase(std::remove_if(wanted.begin(), wanted.end(),
-                                [&mesh](const std::string& n) {
-                                  return n == mesh.texcoords_0_name ||
-                                         n == mesh.texcoords_1_name;
-                                }),
-                 wanted.end());
     if (wanted.empty()) continue;
 
-    auto promote = [&mesh, warnings](const std::string& name,
-                                     FloatChunked* dst,
-                                     Interpolation* dst_interp) -> bool {
+    auto take_primvar = [&mesh, warnings](const std::string& name,
+                                         FloatChunked* value,
+                                         Interpolation* interp) -> bool {
       for (size_t ai = 0; ai < mesh.primvars.size(); ++ai) {
         VertexAttribute& attr = mesh.primvars[ai];
         if (attr.name != name || attr.format != VertexFormat::Vec2) continue;
-        dst->clear();
+        FloatChunked promoted;
         if (attr.has_indices()) {
           const size_t elems = attr.float_data.size() / 2;
           for (size_t k = 0; k < attr.indices.size(); ++k) {
@@ -1596,18 +1589,23 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
             if (idx >= elems) {
               warnings->push_back("Mesh '" + mesh.prim_path + "': UV primvar '" +
                                   name + "' has out-of-range indices; not promoted");
-              dst->clear();
               return false;
             }
-            dst->push_back(attr.float_data[idx * 2 + 0]);
-            dst->push_back(attr.float_data[idx * 2 + 1]);
+            promoted.push_back(attr.float_data[idx * 2 + 0]);
+            promoted.push_back(attr.float_data[idx * 2 + 1]);
           }
         } else {
           for (size_t k = 0; k < attr.float_data.size(); ++k) {
-            dst->push_back(attr.float_data[k]);
+            promoted.push_back(attr.float_data[k]);
           }
         }
-        *dst_interp = attr.interpolation;
+        if (promoted.alloc_failed()) {
+          warnings->push_back("Mesh '" + mesh.prim_path + "': UV primvar '" +
+                              name + "' allocation failed; not promoted");
+          return false;
+        }
+        *value = std::move(promoted);
+        *interp = attr.interpolation;
         mesh.primvars.erase(mesh.primvars.begin() +
                             static_cast<std::ptrdiff_t>(ai));
         return true;
@@ -1615,15 +1613,49 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
       return false;
     };
 
-    // The material-referenced UV set takes the primary slot (matching
-    // legacy's shader-network-driven selection); a second distinct name
-    // fills the secondary slot when free.
-    if (promote(wanted[0], &mesh.texcoords_0, &mesh.texcoords_0_interp)) {
-      mesh.texcoords_0_name = wanted[0];
-      if (wanted.size() > 1 && mesh.texcoords_1.empty()) {
-        if (promote(wanted[1], &mesh.texcoords_1, &mesh.texcoords_1_interp)) {
-          mesh.texcoords_1_name = wanted[1];
+    auto swap_uv_slots = [&mesh]() {
+      std::swap(mesh.texcoords_0, mesh.texcoords_1);
+      std::swap(mesh.texcoords_0_interp, mesh.texcoords_1_interp);
+      std::swap(mesh.texcoords_0_name, mesh.texcoords_1_name);
+    };
+
+    // The first material-referenced UV set must occupy the primary slot
+    // (matching legacy's shader-network-driven selection). Mesh extraction may
+    // already have selected it as texcoords_1; normalize that case instead of
+    // treating either occupied slot as equivalent. If a second referenced set
+    // currently occupies slot 0, preserve it by swapping before slot 0 is
+    // overwritten by a promoted generic primvar.
+    bool primary_ready = false;
+    if (mesh.texcoords_0_name == wanted[0]) {
+      primary_ready = true;
+    } else if (mesh.texcoords_1_name == wanted[0]) {
+      swap_uv_slots();
+      primary_ready = true;
+    } else {
+      FloatChunked primary;
+      Interpolation primary_interp = Interpolation::Vertex;
+      if (take_primvar(wanted[0], &primary, &primary_interp)) {
+        if (wanted.size() > 1 && mesh.texcoords_0_name == wanted[1]) {
+          swap_uv_slots();
         }
+        mesh.texcoords_0 = std::move(primary);
+        mesh.texcoords_0_interp = primary_interp;
+        mesh.texcoords_0_name = wanted[0];
+        primary_ready = true;
+      }
+    }
+
+    // Keep the second distinct material-referenced UV set in slot 1. It may
+    // already be there after the normalization above or may still be a generic
+    // primvar that needs promotion.
+    if (primary_ready && wanted.size() > 1 &&
+        mesh.texcoords_1_name != wanted[1]) {
+      FloatChunked secondary;
+      Interpolation secondary_interp = Interpolation::Vertex;
+      if (take_primvar(wanted[1], &secondary, &secondary_interp)) {
+        mesh.texcoords_1 = std::move(secondary);
+        mesh.texcoords_1_interp = secondary_interp;
+        mesh.texcoords_1_name = wanted[1];
       }
     }
   }
