@@ -36,7 +36,6 @@ supplemental/VariantSpecializesAndReferenceSurprisingBehavior_root attribute_val
 tests/usda/aousd-unknown-property-metadata.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
 tests/usda/array_edit_basic.usda INTENTIONAL: sparse VtArrayEdit values preserved as authored text (keep-don't-evaluate policy); pxr flatten evaluates them to dense arrays
 tests/usda/clips-primmeta-001.usda INTENTIONAL: value-clips metadata preserved on flatten (lossless clip indirection); pxr flatten bakes clips into dense samples
-tests/usda/instancing-001.usda value_mismatch Value for "add references" in /InstancingTests/Forest/Tree1 metadata differs: "/Flattened_Prototype_1" vs "/Flattened_Prototype_2"
 tests/usda/layer-metadata-001.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
 tests/usda/materialx-001.usda INTENTIONAL: config:mtlx:colorspace attribute preserved; pxr 26.05 drops it on flatten
 tests/usda/purpose-hierarchy-001.usda INTENTIONAL: `purpose` authored as PRIM metadata is unregistered (purpose is an attribute); tinyusdz preserves it losslessly, pxr drops it
