@@ -1267,15 +1267,22 @@
     return out;
   }
 
-  // Graft a prim a relocate moved INTO this parent: first the opinions authored
-  // AT the destination path in the same layer stack (strongest -- e.g. the root
-  // layer's `over` on the new name), then the content from its pre-relocation
-  // source site. `ps` is the parent source whose stack authored the relocate.
+  // Graft a prim a relocate moved INTO this parent: the opinions authored AT the
+  // destination path (`dst`, pushed to `base`) and the content from its pre-
+  // relocation source site (pushed to `content_out`). `ps` is the parent source
+  // whose stack authored the relocate. When `content_out != base` the caller
+  // DEFERS the relocated content below every arrival-local destination-site
+  // opinion for the arrival name -- pxr composes arrival-local opinions
+  // (including a sibling variant graft) STRONGER than the relocated content
+  // (TrickyVariantOverrideOfRelocatedPrim). `content_out == nullptr` keeps the
+  // historical inline order.
   void AddRelocatedSources(const Src &ps,
                            const StackRelocates::Arrival &arrival,
                            const std::string &child_composed,
                            std::vector<Src> *base, std::string *warn,
-                           std::string *err) {
+                           std::string *err,
+                           std::vector<Src> *content_out = nullptr) {
+    if (!content_out) content_out = base;
     // The parent's namespace mapping, plus the rename this relocate performs
     // (expressed in the parent stack's namespace -> composed namespace). Both
     // pairs are kept: paths outside the relocated subtree still map through the
@@ -1320,7 +1327,7 @@
       c.offset = ps.offset.Compose(s.offset);
       if (!c.expression_variables) c.expression_variables = ps.expression_variables;
       if (c.arc_kind == ArcType::Root) c.arc_kind = ArcType::Relocate;
-      base->push_back(std::move(c));
+      content_out->push_back(std::move(c));
     }
   }
 
@@ -1340,6 +1347,19 @@
                                       const std::string &raw_site = "") {
     std::vector<Src> base;
     base.reserve(psrcs.size());
+    // A relocate DESTINATION owns the arrival name. pxr composes, for that name:
+    // (a) destination-site opinions authored AT-OR-STRONGER-THAN the relocating
+    // stack (the relocating stack's own `over`/variant graft, and stronger
+    // stacks' overs), then (b) the relocated content, WEAKEST. A coincidental
+    // same-name child in a stack WEAKER than the relocating stack is a COLLISION
+    // pxr shadows ("should not show up"). `arrival_stacks` accumulates the
+    // relocating stacks as we walk psrcs strong->weak, so a NORMAL child from a
+    // weaker DIFFERENT stack is shadowed while stronger pre-arrival opinions and
+    // same-stack grafts are kept. `deferred_content` holds (b), appended last.
+    // (TrickyVariantOverrideOfRelocatedPrim / TrickyMultipleRelocations /
+    // TrickySpookyVariantSelection, verified vs pcp.txt prim stacks.)
+    std::vector<Src> deferred_content;
+    std::set<uint32_t> arrival_stacks;
     for (const Src &ps : psrcs) {
       // Variant sources are inline opinions on the prim itself; they do not
       // (yet) carry child prims, so they don't propagate to children.
@@ -1350,10 +1370,18 @@
         if (rel.IsDeparted(ps.site, cn)) continue;
         if (const StackRelocates::Arrival *arrival =
                 rel.ArrivalOf(ps.site, cn)) {
-          AddRelocatedSources(ps, *arrival, child_composed, &base, warn, err);
+          // dst-site opinions inline (strong); relocated content deferred.
+          AddRelocatedSources(ps, *arrival, child_composed, &base, warn, err,
+                              &deferred_content);
+          arrival_stacks.insert(ps.stack_idx);
           continue;
         }
       }
+      // Same-name collision with a relocate destination owned by another
+      // (stronger) stack: shadowed. Opinions stronger than the arrival (seen
+      // before it here) and same-stack grafts pass through.
+      if (!arrival_stacks.empty() && !arrival_stacks.count(ps.stack_idx))
+        continue;
       Src c;
       c.stack_idx = ps.stack_idx;
       c.site = ps.site + "/" + cn;
@@ -1372,6 +1400,8 @@
       c.ancestral = true;          // arc was introduced at the parent
       base.push_back(std::move(c));
     }
+    // Relocated content composes weakest, after every arrival-local dst opinion.
+    for (Src &c : deferred_content) base.push_back(std::move(c));
     return base;
   }
 
