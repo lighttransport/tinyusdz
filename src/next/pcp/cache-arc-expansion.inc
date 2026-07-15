@@ -1304,13 +1304,85 @@
   std::vector<Src> SourcesForRelocatedContent(
       const Src &ps, const StackRelocates::Arrival &arrival,
       const std::string &child_composed, std::string *warn, std::string *err) {
+    if (ComposedRelocApplicable(ps, arrival)) {
+      const std::string guard_key =
+          "@" + UIntToStr(ps.stack_idx) + ":" + child_composed;
+      reloc_content_in_progress.insert(guard_key);
+      std::vector<Src> comp =
+          ComposedRelocatedContent(ps, arrival, child_composed, warn, err);
+      reloc_content_in_progress.erase(guard_key);
+      return comp;
+    }
+    return IsolatedRelocatedContent(ps, arrival, child_composed, warn, err);
+  }
+
+  // The composed-parent derivation is equivalent to (and richer than) the
+  // isolated walk ONLY for the OUTERMOST, non-chained relocate:
+  //   * ctx1: not inside an isolated SourcesForRelocateSource walk (a nested
+  //     chained relocate resolved in a stack's own namespace).
+  //   * outermost: no composed relocated-content derivation already active
+  //     (its SourcesForSite(0,..) would re-enter this one).
+  //   * non-chained: no ancestor of the source is itself a relocate
+  //     destination of this stack -- deriving via the composed parent would
+  //     re-expand that ancestor relocate (double count).
+  //   * the source's composed parent is a real prim (not a root-level move).
+  bool ComposedRelocApplicable(const Src &ps,
+                               const StackRelocates::Arrival &arrival) {
+    if (isolated_reloc_depth_ != 0) return false;
+    if (!reloc_content_in_progress.empty()) return false;
+    const StackRelocates &rel = layer_stacks[ps.stack_idx].relocates;
+    // Chained: an ancestor of the source is itself a relocate destination of
+    // this stack -- deriving via the composed parent would re-expand it.
+    for (Path a = Path(arrival.src_site).parent();
+         !(a.is_root() || a.empty() || a.str() == "/"); a = a.parent()) {
+      const Path ap = a.parent();
+      const std::string aparent =
+          (ap.is_root() || ap.empty()) ? "/" : ap.str();
+      if (rel.ArrivalOf(aparent, a.name())) return false;  // chained
+    }
+    // The source must map cleanly into ROOT namespace. A relocate authored in
+    // the root stack (idx 0) is already root-ns. Otherwise the stack's arc
+    // pairs (relocate renames stripped) must cover the source path; a SUBROOT
+    // reference source that lies outside every arc pair (e.g.
+    // /Groups/CharGroup/Char referenced only under /Groups/CrowdGroup) does
+    // NOT resolve via SourcesForSite(0, ..) -- keep the isolated walk.
+    if (ps.stack_idx != 0) {
+      NamespaceMapping arc_only = ArcOnlyMapping(ps);
+      if (arc_only.MatchSource(arrival.src_site) < 0) return false;
+    }
+    // Salted-earth opinions authored AT the relocation source in the relocating
+    // stack (an erroneous `over` at the source path, possibly over an inherited
+    // class) are ignored by pxr and their suppression extends to DESCENDANTS.
+    // The isolated walk models that descendant-salting exactly; the composed
+    // derivation does not, so defer to it whenever the relocating stack authors
+    // a spec at the source (TrickyInheritsAndRelocates / ...ToNewRootPrim).
+    if (!Specs(ps.stack_idx, arrival.src_site).empty()) return false;
+    return true;
+  }
+
+  // ps.map_idx with this stack's relocate-rename pairs dropped (arc pairs only).
+  NamespaceMapping ArcOnlyMapping(const Src &ps) const {
+    NamespaceMapping arc_only = Mapping(ps.map_idx);
+    const StackRelocates &rel = layer_stacks[ps.stack_idx].relocates;
+    std::vector<NamespaceMapping::Pair> kept;
+    for (const auto &pr : arc_only.pairs) {
+      if (rel.src_to_dst.count(pr.first)) continue;  // relocate rename
+      kept.push_back(pr);
+    }
+    arc_only.pairs = std::move(kept);
+    return arc_only;
+  }
+
+  // ISOLATED branch (historical behavior): resolve the source in the relocating
+  // stack's OWN namespace, then compose `outer` -- ps's mapping to root plus the
+  // src_site -> child_composed redirect rename -- on top of each content
+  // source's own map. Offsets compose under ps; a source arriving as a Root
+  // opinion becomes a Relocate; the relocation source's own raw-site opinions
+  // are salted (suppress_site_specs).
+  std::vector<Src> IsolatedRelocatedContent(
+      const Src &ps, const StackRelocates::Arrival &arrival,
+      const std::string &child_composed, std::string *warn, std::string *err) {
     std::vector<Src> out;
-    // ISOLATED branch (current behavior): resolve the source in the relocating
-    // stack's OWN namespace, then compose `outer` -- ps's mapping to root plus
-    // the src_site -> child_composed redirect rename -- on top of each content
-    // source's own map. Offsets compose under ps; a source arriving as a Root
-    // opinion becomes a Relocate; the relocation source's own raw-site opinions
-    // are salted (suppress_site_specs).
     NamespaceMapping outer = Mapping(ps.map_idx);
     outer.AddRename(arrival.src_site, child_composed);
     const std::vector<Src> &content =
@@ -1325,6 +1397,75 @@
       c.map_idx =
           InternMapping(NamespaceMapping::Compose(outer, Mapping(s.map_idx)));
       c.offset = ps.offset.Compose(s.offset);
+      if (!c.expression_variables) c.expression_variables = ps.expression_variables;
+      if (c.arc_kind == ArcType::Root) c.arc_kind = ArcType::Relocate;
+      out.push_back(std::move(c));
+    }
+    return out;
+  }
+
+  // COMPOSED-PARENT branch (Step 1): derive the relocated content from the
+  // source's parent resolved in ROOT (stack 0) namespace, so the caller's
+  // variant-selection / implied-class context reaches the relocated prim. The
+  // source path is mapped through ps's arc into root namespace; its parent is
+  // composed there; the source child is derived (with its own departure
+  // suppressed) and redirected to child_composed. Returns final composed-form
+  // Srcs, directly comparable to IsolatedRelocatedContent.
+  std::vector<Src> ComposedRelocatedContent(
+      const Src &ps, const StackRelocates::Arrival &arrival,
+      const std::string &child_composed, std::string *warn, std::string *err) {
+    std::vector<Src> out;
+    // Map the source path from the relocating stack's namespace into root using
+    // ps's mapping WITHOUT this stack's relocate renames -- ps.map_idx bakes in
+    // every relocate of the stack (WithStackRelocates), so a plain Apply would
+    // send src_site to its own relocate DESTINATION (circular). Drop the pairs
+    // that rename a relocate source of this stack, keeping only the arc pairs,
+    // so src_site maps to its PRE-relocate composed location.
+    const NamespaceMapping arc_only = ArcOnlyMapping(ps);
+    const std::string src_root = arc_only.Apply(arrival.src_site);
+    const Path src_root_path(src_root);
+    const Path src_root_parent = src_root_path.parent();
+    const bool parent_is_root = src_root_parent.is_root() ||
+                                src_root_parent.empty() ||
+                                src_root_parent.str() == "/";
+    if (parent_is_root)  // relocate to a new root prim: keep the isolated walk.
+      return IsolatedRelocatedContent(ps, arrival, child_composed, warn, err);
+
+    const std::vector<Src> &parent_srcs =
+        SourcesForSite(0, src_root_parent, warn, err);
+    // Suppress the relocating stack's own departure of this child so the source
+    // stays resolvable. raw match is (stack, site) in the parent-source's ns;
+    // for a root-authored relocate the relocating stack's site == src_root_parent.
+    std::vector<Src> derived = DeriveChildSources(
+        parent_srcs, src_root_path.name(), src_root, warn, err, ps.stack_idx,
+        src_root_parent.str());
+    // Salt BEFORE expansion: opinions authored in the RELOCATING stack AT the
+    // relocation source are ignored by pxr ("opinions at relocation source"),
+    // and so are the ARCS they author (ExpandList skips a salted spec's arcs).
+    // Marking after ExpandList would be too late -- the source's own
+    // (prohibited) reference/inherit would already have been expanded
+    // (ErrorOpinionAtRelocationSource). The Src stays so arc-delivered content
+    // and chained derivation still descend through it.
+    for (Src &s : derived) {
+      if (s.stack_idx == ps.stack_idx && s.arc_kind == ArcType::Root &&
+          s.site == src_root) {
+        s.suppress_site_specs = true;
+      }
+    }
+    // Expand the source prim's own (non-salted) arcs -- the isolated walk does
+    // this via ExpandList at each ancestor level. Arc-delivered content (a
+    // reference on an ANCESTOR that carries the source, e.g. `/Group references
+    // @g.usd@`) is what should follow the move (TrickyInheritsAndRelocates).
+    derived = ExpandList(derived, warn, err);
+
+    // Redirect the source subtree (root ns) onto the arrival destination.
+    NamespaceMapping redirect;
+    redirect.AddRename(src_root, child_composed);
+    out.reserve(derived.size());
+    for (const Src &s : derived) {
+      Src c = s;
+      c.map_idx =
+          InternMapping(NamespaceMapping::Compose(redirect, Mapping(s.map_idx)));
       if (!c.expression_variables) c.expression_variables = ps.expression_variables;
       if (c.arc_kind == ArcType::Root) c.arc_kind = ArcType::Relocate;
       out.push_back(std::move(c));
@@ -1479,6 +1620,7 @@
       if (it != sources_cache.end()) return it->second;
     }
     if (!sources_in_progress.insert(key).second) return empty_sources_;
+    ++isolated_reloc_depth_;
 
     // The WHOLE ancestor chain is addressed raw in this stack, not just the leaf:
     // relocates chain, so an ancestor of this source may itself have been moved
@@ -1555,6 +1697,7 @@
       slot = ExpandList(base, warn, err);
       result = &slot;
     }
+    --isolated_reloc_depth_;
     sources_in_progress.erase(key);
     return *result;
   }

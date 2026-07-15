@@ -176,6 +176,11 @@ struct Cache::Impl {
   // path; on re-entry the helper falls back to the isolated relocate-source
   // walk instead of recursing (see cache-arc-expansion.inc).
   std::set<std::string> reloc_content_in_progress;
+  // >0 while inside an isolated SourcesForRelocateSource walk. The composed-
+  // parent relocated-content derivation only applies at the true composed
+  // (stack-0) level; nested calls from within the isolated walk (chained
+  // relocates resolved in a stack's own namespace) must use the isolated path.
+  size_t isolated_reloc_depth_ = 0;
   const std::vector<Src> empty_sources_;
 
   // Pool of namespace mappings shared by Src.map_idx. Index 0 is identity, so a
