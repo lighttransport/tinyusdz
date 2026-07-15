@@ -1,10 +1,39 @@
 # Resume: `src/next` pcp composition — remaining relocate/specialize gaps
 
 Handoff for a fresh coding-agent session. The next-vs-pxr **flatten differential**
-gate is at **743 pass / 13 untagged / 0 FAIL** of 798 inputs (campaign started at
-181 listed / 597 passing). This doc lists the **13 remaining untagged cases**,
+gate is at **747 pass / 9 untagged / 0 FAIL** of 798 inputs (campaign started at
+181 listed / 597 passing). This doc lists the **9 remaining untagged cases**,
 their **precise pcp.txt-derived root causes**, what has already been tried and
 reverted, and the recommended next arc.
+
+## UPDATE (composed-parent relocated-content derivation LANDED, commit 9748515ec)
+
+Cluster A's core architecture is now IN: `ComposedRelocatedContent`
+(`cache-arc-expansion.inc`) derives a relocated prim's content from the source's
+parent resolved in ROOT (stack-0) namespace, so the caller's variant/implied-class
+context reaches it. It maps the source through ps's arc pairs (**relocate renames
+stripped** via `ArcOnlyMapping` — `ps.map_idx` otherwise circularly sends src to
+its own dst), composes the parent via `SourcesForSite(0,..)`, salts-BEFORE-expands
+the source child, and redirects it onto the arrival dst. Gated by
+`ComposedRelocApplicable` to the shapes proven bit-for-bit equivalent to the
+isolated walk; everything else keeps `IsolatedRelocatedContent`. Reentrancy guards:
+`isolated_reloc_depth_` (nested chained relocates) + `reloc_content_in_progress`
+(outermost-only). **Fixed 4 cases, 0 regressions:** `TrickyRelocationOfPrimFrom-
+Variant`, `TrickyInheritsAndRelocates5`, `ErrorArcCycle`,
+`TrickyMultipleRelocationsAndClasses`.
+
+**Applicability boundaries discovered (the remaining 3 Cluster A cases live outside
+them — this is the next arc):** the composed branch falls back to isolated when
+(a) **chained** — an ancestor of the source is itself a relocate dst (double-count);
+(b) **subroot-ref source** — the source path lies outside every arc pair, so
+`SourcesForSite(0,..)` can't resolve it (`SubrootReferenceAndRelocates`);
+(c) **spec-at-source** — the relocating stack authors an `over` at the source path,
+whose salted-earth descendant-suppression the composed derivation does not model
+(`TrickyInheritsAndRelocates`/`...ToNewRootPrim`). The remaining 3 need either the
+implied-class site mapped through the relocate ((b)/implied-class) or the spooky
+variant-selection carried through an inherit into the relocated prim ((c)-adjacent);
+extending the composed branch to those shapes without breaking the fall-back
+canaries is the work.
 
 The authoritative spec for every composed prim is its corpus **`pcp.txt`** — a
 prim-stack dump listing the exact ordered `(layer, path)` sources pxr composes.
@@ -49,58 +78,50 @@ grep -A12 'composing </Some/Prim>' $CASE/pcp.txt
 ```
 
 ### Hard regression bar (every commit)
-743 pass / 0 FAIL flatten, supplemental 138, build-next 36/36, main 37/37,
+747 pass / 0 FAIL flatten, supplemental 138, build-next 36/36, main 37/37,
 roundtrip 222/1. **Any net regression that can't be reconciled against `pcp.txt`
 = revert that step.** Prune newly-passing entries from
 `tests/next/next-pxr-flatten-xfail.txt`; keep `INTENTIONAL:`/`ORACLE-` tagged
 lines verbatim.
 
-## The 13 remaining cases, grouped by root cause
+## The 9 remaining cases, grouped by root cause
 
-### A. Context-lost relocate-source resolution — 5 cases (HIGHEST VALUE)
-`SourcesForRelocateSource(stack, site)` composes the relocate source in the
-relocating stack's **isolated** namespace, losing the caller's composition
-context, so opinions that need that context never reach the relocated prim.
+### A. Context-lost relocate-source resolution — 3 cases REMAIN (was 5; 2 FIXED)
+The composed-parent derivation (commit 9748515ec, see UPDATE above) fixed
+`TrickyRelocationOfPrimFromVariant` + `TrickyInheritsAndRelocates5`. The 3 below
+fall OUTSIDE `ComposedRelocApplicable` (or run it but still miss) and need more:
 
-| Case | pcp.txt shows | next misses |
+| Case | pcp.txt shows | why the composed branch doesn't fix it |
 |---|---|---|
-| `TrickyRelocationOfPrimFromVariant` `/Char/Anim/Tail` | `TailRig.usd /TailRig/Tail` (def) | Tail is under the root-selected `Standard` variant; isolated walk uses CharRig's default `None` |
-| `TrickySpookyVariantSelectionInClass` `/Char/Anim/LeftLeg` | def | same variant-selection context |
-| `TrickyConnectionToRelocatedAttribute` `/HumanRig/Anim/Face/LEye` | `root.usd /HumanRig/rig/Face/rig/SymEyeRig/Anim` (`baz`) + `eye_rig.usd /EyeRig/Anim` (`foo`) | `baz` is an IMPLIED-class over at the `SymEyeRig` inherit path in an ancestor stack |
-| `TrickyMultipleRelocationsAndClasses2` `/CharRig/Anim/Legs/LHip/Knee` | `root.usd .../SymLegRig/TentacleRig/Tentacle/Seg2` (`JointBlend`) | same implied-class-through-relocation |
-| `TrickyInheritsAndRelocates5` `/CharRig/Anim/Arms/R1Arm/Knot03` | `foo` "from CharRig" | implied-inherit opinion reaching the relocated prim |
+| `TrickySpookyVariantSelectionInClass` `/Char/Anim/LeftLeg` | `LegRig.usd /LegRig{LegRigStyle=1Leg}Anim` | the variant selection is overridden on `SymLegRig` and must propagate through an INHERIT (LeftLegRig inherits SymLeg) into the relocated prim — "spooky" ancestral-selection-through-inherit; pxr's own comment says the TrickySpookyVariantSelection fix is insufficient |
+| `TrickyConnectionToRelocatedAttribute` `/HumanRig/Anim/Face/LEye` | `root.usd /HumanRig/rig/Face/rig/SymEyeRig/Anim` (`baz`) + `eye_rig.usd /EyeRig/Anim` (`foo`) | `baz` is an IMPLIED-class over at the `SymEyeRig` inherit path in an ancestor stack — the implied-class site must map through the relocate |
+| `TrickyMultipleRelocationsAndClasses2` `/CharRig/Anim/Legs/LHip/Knee` | `root.usd .../SymLegRig/TentacleRig/Tentacle/Seg2` (`JointBlend`) | implied-class-through-relocation; likely excluded as CHAINED (ancestor of source is itself a relocate dst) |
 
-**Verified architecture:** the fix is to derive the arrival CONTENT from the
-source's **composed parent** (`SourcesForSite(0, composed_src_parent)` +
-`DeriveChildSources` with the source's departure suppressed + a redirect rename
-`composed_src -> arrival_dst`). Confirmed the composed parent (e.g. `/Char/TailRig`)
-DOES carry the Standard-variant + reference context the isolated walk loses.
+**Landed architecture (keep):** `ComposedRelocatedContent` derives arrival CONTENT
+from the source's **composed parent** (`SourcesForSite(0, composed_src_parent)` +
+`DeriveChildSources` departure-suppressed + salt-before-`ExpandList` + redirect
+rename `src_root -> child_composed`). The **key fix vs the earlier reverts** was
+`ArcOnlyMapping` (strip the stack's relocate-rename pairs from `ps.map_idx` before
+mapping src to root — otherwise `Apply` sends src to its own dst, circular) and
+gating to the equivalence-safe shapes instead of chasing strict Src-list identity
+(functional equivalence = the flatten gate). The 3 remaining cases need the branch
+EXTENDED to the excluded shapes (implied-class site mapping / spooky-inherit
+selection) WITHOUT breaking the fall-back canaries.
 
-**Reverted attempts (2 rounds) and their exact blockers:**
-1. Threading `ps.arc_chain` into the isolated walk's seed (+ chain-keyed cache):
-   0 FAIL but `baz` still absent — arc_chain alone is insufficient; the
-   implied-class block must map `SymEyeRig/Anim` (FaceRig ns) ->
-   `/HumanRig/rig/Face/rig/SymEyeRig/Anim` (root) via the chain's per-node
-   `map_idx`, and the seeded maps don't line up through the relocate.
-2. The composed-parent rewrite itself: **crashes** (gdb: mutual
-   `AddRelocatedSources<->DeriveChildSources` recursion when the composed parent
-   is itself an arrival re-deriving the same child — chained shapes like
-   `Path->Anim/Path` then `Anim->AnimScope`). A **recursion guard**
-   (`reloc_content_in_progress` set in `cache.cc`, keyed by `child_composed`,
-   falling back to the isolated walk on re-entry) **stops all crashes** — keep
-   this. But even guarded it (a) didn't fix the targets and (b) broke **13
-   passing** relocate cases, because the redirect-mapping
-   `Compose{composed_src->child_composed}` + departure-suppression-across-a-
-   composed-parent are **not equivalent** to the isolated walk's
-   `outer=renamed_map` in the relocating-stack namespace.
+**Superseded — earlier reverted attempts:** threading `arc_chain` into the isolated
+seed (baz still absent) and the un-gated composed-parent rewrite (crashed +
+broke 13 passing) are both obsolete; the landed approach uses the reentrancy guards
+and `ArcOnlyMapping` they lacked.
 
-**Next step (the real task):** with the recursion guard in place, make the
-composed-parent derivation **bit-for-bit equivalent to the isolated walk on all
-~30 currently-passing relocate cases FIRST** (fix the redirect/departure model),
-THEN the 5 context cases fall out for free. This is a multi-step debugging arc,
-not a one-shot. Broken-canary list to diff against: `BasicRelocateToAnimInterface`,
-`TrickyMultipleRelocations`/`2`/`3`/`4`/`5`, `TrickyInheritsAndRelocates`/`2`,
-`RelocateToNone`, `TrickyVariantOverrideOfRelocatedPrim`,
+**Next step (the real task):** extend `ComposedRelocatedContent` /
+`ComposedRelocApplicable` to the 3 excluded shapes above. A useful debugging aid:
+re-add the temporary A/B equivalence harness (compute both `Isolated`- and
+`Composed`-RelocatedContent, diff Src lists to stderr keyed by `child_composed`) —
+it was how the current fix's boundaries were found. Fall-back canaries that MUST
+stay green while widening applicability: `BasicRelocateToAnimInterface`,
+`SubrootReferenceAndRelocates`, `ErrorOpinionAtRelocationSource`,
+`TrickyInheritsAndRelocates`/`...ToNewRootPrim`, `TrickyMultipleRelocations`/`2`/`3`/
+`4`/`5`, `RelocateToNone`, `TrickyVariantOverrideOfRelocatedPrim`,
 `TypicalReferenceToChargroupWithRename`, `TrickySpecializesAndRelocates`,
 `ErrorInvalidConflictingRelocates`.
 
@@ -145,16 +166,18 @@ residual after the local-class-arc fix; connection target mapping through the
 relocated + inherited chain.
 
 ## Recommended order
-1. **A** (composed-parent relocate-source, keep the recursion guard) — unblocks 5
-   cases and is the correct architecture; the remaining work is the mapping-
-   equivalence debugging. Highest value.
+1. **A tail** (3 cases) — EXTEND the landed composed-parent branch to the
+   implied-class-site-mapping and spooky-inherit-selection shapes (see §A). The
+   architecture is in; this is widening `ComposedRelocApplicable` + the derivation.
 2. **C** (specialize order) — 1 case, self-contained once the pxr order rule is
    modeled from pcp.txt.
 3. **B** (per-arc scoping / arc-origin tracking) — 4 cases but a shared model
    addition; D and E likely fall out of A+B.
 
 ## Already-landed this campaign (do NOT redo)
-Composed-namespace relocate keying redesign (`27a34d5c1`), arrival opinion-strength
+Composed-parent relocated-content derivation (`ComposedRelocatedContent` +
+`ArcOnlyMapping` + reentrancy guards, `9748515ec` — 4 cases),
+composed-namespace relocate keying redesign (`27a34d5c1`), arrival opinion-strength
 (defer content + incremental collision-shadow, `8252db49d`), same-stack
 implied-specialize (`dfcd318f1`), salted-earth suppression (`0e0f9bba0`),
 chained-relocation child collapse (`11a445865`), ancestral cycle detection
@@ -164,15 +187,18 @@ implied-class chain order (`8d27a577d`). See `git log` and memory for details.
 ## Resuming prompt (paste into a fresh session)
 
 > Continue the `src/next` pcp composition burn-down. Read
-> `doc/next-pcp-relocate-remaining.md` first — it lists the 13 remaining
-> `next_pxr_flatten_diff` untagged cases with their pcp.txt-derived root causes and
-> the exact reverted-attempt blockers. Start with **Cluster A** (context-lost
-> relocate-source resolution, 5 cases): re-establish the recursion guard
-> (`reloc_content_in_progress` in `cache.cc`), then make the composed-parent
-> content derivation in `AddRelocatedSources` bit-for-bit equivalent to the
-> isolated `SourcesForRelocateSource` on all currently-passing relocate cases
-> before adding the variant/implied-class context. Model every change against the
-> per-case `pcp.txt` prim stack. Hard bar: 743 pass / 0 FAIL flatten, supplemental
+> `doc/next-pcp-relocate-remaining.md` first — the composed-parent relocated-content
+> derivation is LANDED (commit 9748515ec, `ComposedRelocatedContent` /
+> `ComposedRelocApplicable` / `ArcOnlyMapping` in `cache-arc-expansion.inc`), fixing
+> 4 cases with 0 regressions. 9 untagged cases remain. Start with the **Cluster A
+> tail** (3 cases: `TrickySpookyVariantSelectionInClass`,
+> `TrickyConnectionToRelocatedAttribute`, `TrickyMultipleRelocationsAndClasses2`) —
+> EXTEND the composed branch to the excluded shapes (implied-class site mapped
+> through the relocate; spooky variant-selection carried through an inherit) WITHOUT
+> breaking the fall-back canaries listed in §A. The A/B Src-list equivalence harness
+> (compute Isolated- vs Composed-RelocatedContent, diff to stderr) is the debugging
+> aid — re-add it temporarily behind a compile flag. Model every change against the
+> per-case `pcp.txt` prim stack. Hard bar: 747 pass / 0 FAIL flatten, supplemental
 > 138, build-next 36/36, main 37/37, roundtrip 222/1 — revert anything that can't
 > be reconciled. Commit per case with the gate green; prune passing entries from
 > `tests/next/next-pxr-flatten-xfail.txt`.
