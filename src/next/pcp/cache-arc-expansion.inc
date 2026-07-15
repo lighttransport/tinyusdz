@@ -540,6 +540,27 @@
       return;
     }
 
+    // Same rule in COMPOSED space: a same-stack internal arc whose target maps
+    // to an ANCESTOR of this prim's own composed path is a cycle even when the
+    // source sites live under different roots (co-recursive inherits across
+    // sibling root prims: CoRecursiveParent1/Child1 inherits CoRecursiveParent2
+    // whose child inherits back — the arc target composes to /CoRecursiveParent1,
+    // an ancestor of the composed /CoRecursiveParent1/Child1/Child2). pxr drops
+    // the arc, leaving the re-entrant prim as a bare `over`. The source-site
+    // check above misses this because the sites are under different roots.
+    if (arc_stack_idx == src.stack_idx) {
+      const std::string cur_composed = Mapping(src.map_idx).Apply(src.site);
+      const std::string arc_composed = Mapping(src.map_idx).Apply(arc_site);
+      if (arc_composed != cur_composed &&
+          IsPathAtOrUnder(cur_composed, arc_composed)) {
+        AddIssue(ErrorCode::ArcCycle, src.site,
+                 "Composition cycle detected: arc composed target " +
+                     arc_composed + " is an ancestor of " + cur_composed,
+                 err);
+        return;
+      }
+    }
+
     NamespaceMapping local{arc_site, src.site};
     // A LOCAL class-based arc (class and instance in the same layer stack)
     // gets pxr's identity-plus-pair map function: targets outside the class
