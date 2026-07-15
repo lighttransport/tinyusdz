@@ -149,12 +149,20 @@ through the arc are kept). This is the per-opinion arc-origin distinction — a
 relocate skips its own layer's opinions. (`ErrorArcCycle` was already fixed by the
 composed-parent arc.)
 - `RelocatePrimsWithSameName` `/ChainedReferences/Child_1` (STILL FAILING): EMPTY
-  stack -> `over`. Content Srcs (instrumented): `ChainedRef_1/Child` (stk0, INTERNAL
-  ref — same stack, must be excluded) + `base.usd/Base/Child` (stk2 — must have
-  DEPARTED via the chained `/ChainedRef_2/Child->Child_2` relocate in the content
-  walk). next applies neither (two coupled rules) — this is the CONTENT-side
-  per-arc scoping (which arc delivered the content), distinct from the target-remap
-  fix above; needs arc-origin tracking on CONTENT sources, not just targets.
+  stack -> `over`. RPWS-instrumented content Srcs: `ChainedRef_1/Child` (stk0,
+  INTERNAL ref — same stack, must be excluded) + `base.usd/Base/Child` (stk2 — must
+  have DEPARTED via the chained `/ChainedRef_2/Child->Child_2` relocate). next
+  applies neither (TWO coupled rules). CONTENT-side arc-origin ATTEMPTED (reverted):
+  a blanket "suppress content sources with `stack_idx == ps.stack_idx`" broke 4
+  cases (TrickyInheritsAndRelocates5, TrickyLocalClassHierarchyWithRelocates,
+  TrickyMultipleRelocations4, TrickySpookyInheritsInSymmetricBrowRig) AND didn't fix
+  this one. Blanket same-stack is WRONG: some same-stack sources DELIVER legitimate
+  cross-stack content (TrickyMultipleRelocations2 `over Model_2 {def Rig references
+  rig.usd}`). Unlike the target-side (clean per-Src signal), the content-side needs
+  to know whether a same-stack source's content ORIGINATES locally vs is delivered
+  through a chain to ANOTHER stack — true per-opinion origin tracking through the
+  composition graph, PLUS chained-departure-through-internal-ref-chains. This is the
+  genuine "real model addition" — high risk, deferred.
 
 ### C. Implied-specialize composed-target / order quirk — 1 case
 `VariantSpecializesAndReferenceSurprisingBehavior` `/Model/Material_Child`:
