@@ -724,6 +724,30 @@
                                     frame ? frame->depth + 1 : 0};
         ExpandArcs(implied, &iframe, target, spec_out, sels, ichain, warn, err);
       }
+
+      // Same-stack implied class/specialize: this arc's target may map (through
+      // an ANCESTOR class arc in THIS stack -- `/A specializes /_class_`) to a
+      // DIFFERENT path that carries opinions. `/A/render` specializing
+      // `/_class_/defaultImplementation` therefore ALSO implies a specialize to
+      // `/A/defaultImplementation` (root_implied_site == Apply(arc_site)), whose
+      // ancestor-context override composes STRONGER than the direct target
+      // (SpecializesAndVariants4, VariantSpecializesAndReferenceSurprising-
+      // Behavior). Add it before the direct target below, mirroring the chain
+      // loop but for the current stack (which that loop skips via as==arc_stack).
+      if (root_implied_site != arc_site &&
+          !Specs(arc_stack_idx, root_implied_site).empty()) {
+        Src implied = arc_src;
+        implied.stack_idx = arc_stack_idx;
+        implied.site = root_implied_site;
+        implied.implied_anchor = arc_stack_idx;
+        implied.map_idx = InternMapping(NamespaceMapping{
+            root_implied_site, Mapping(src.map_idx).Apply(src.site)});
+        const ArcChain ichain{{arc_stack_idx, implied.map_idx}};
+        const ExpansionFrame iframe{arc_stack_idx, implied.map_idx,
+                                    &implied.site, frame,
+                                    frame ? frame->depth + 1 : 0};
+        ExpandArcs(implied, &iframe, target, spec_out, sels, ichain, warn, err);
+      }
     }
 
     // The arc's target is not just the spec at `arc_site`: the target prim's own
