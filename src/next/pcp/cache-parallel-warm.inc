@@ -172,16 +172,19 @@
       if (numbering == PrototypeNumbering::Deterministic) {
         ordered = std::move(protos);
       } else {
-        // UsdcatCompatible: pxr ranks prototypes in DISCOVERY order (the
-        // order their instance keys first appeared during the stage walk),
-        // labels them `__Prototype_{rank+1}`, then GetPrototypes() re-sorts
-        // by label STRING (differs from numeric at >9 groups: _1,_10,_2...).
+        // UsdcatCompatible: pxr labels prototypes `__Prototype_{rank+1}` in
+        // REVERSE discovery order (the LAST instance key to first appear during
+        // the stage walk becomes __Prototype_1) — pxr registers prototypes on a
+        // stack, so the numbering is last-in-first-numbered. GetPrototypes()
+        // then re-sorts by label STRING (differs from numeric at >9 groups:
+        // _1,_10,_2...). Verified against usdcat: instances referencing A,B,C
+        // discovered in that order number A=_3, B=_2, C=_1.
         std::vector<std::string> front;
         front.reserve(protos.size());
         {
           std::set<std::string> remaining(protos.begin(), protos.end());
-          for (const std::string &ik : instance_key_order) {
-            auto kit = prototype_by_key.find(ik);
+          for (size_t r = instance_key_order.size(); r-- > 0;) {
+            auto kit = prototype_by_key.find(instance_key_order[r]);
             if (kit == prototype_by_key.end()) continue;
             if (remaining.erase(kit->second)) front.push_back(kit->second);
           }
