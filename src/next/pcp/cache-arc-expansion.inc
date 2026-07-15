@@ -716,8 +716,44 @@
           // stack (src.map_idx non-identity); mapping to the class path would
           // land the implied opinions (and their relationship targets) on the
           // class instead of on the prim that inherits it.
-          implied.map_idx = InternMapping(NamespaceMapping{
-              implied_site, Mapping(src.map_idx).Apply(src.site)});
+          const std::string destination = Mapping(src.map_idx).Apply(src.site);
+          NamespaceMapping im{implied_site, destination};
+          // A relocate authored in the arc's (referenced) stack that moves a
+          // DESCENDANT of the inheriting prim must chain into this implied map:
+          // a connection/relationship target authored in the CLASS namespace
+          // that points at a relocated descendant otherwise stops at the
+          // pre-relocate inherited path. Add, per such relocate, a class-namespace
+          // rename so one longest-prefix ApplyTarget does inherit-then-relocate
+          // (TrickyConnectionToRelocatedAttribute: SymEyeRig/Anim.baz -> LEye.baz,
+          // where LEyeRig/Anim->LEye lives in the FaceRig stack).
+          const StackRelocates &arel = layer_stacks[arc_stack_idx].relocates;
+          if (!arel.empty()) {
+            const NamespaceMapping &amap = Mapping(src.map_idx);
+            // Arc pairs only (relocate renames stripped): maps a relocate SOURCE
+            // to its PRE-relocate composed path so it lands under `destination`;
+            // the full amap (relocates baked in by WithStackRelocates) gives the
+            // post-relocate destination.
+            NamespaceMapping arc_only = amap;
+            {
+              std::vector<NamespaceMapping::Pair> kept;
+              for (const auto &pr : arc_only.pairs)
+                if (!arel.src_to_dst.count(pr.first)) kept.push_back(pr);
+              arc_only.pairs = std::move(kept);
+            }
+            for (const auto &r : arel.src_to_dst) {
+              if (r.second.empty()) continue;
+              const std::string rsrc = arc_only.crosses_arc
+                                           ? arc_only.ApplyTarget(r.first)
+                                           : arc_only.Apply(r.first);
+              const std::string rdst = amap.crosses_arc
+                                           ? amap.ApplyTarget(r.first)
+                                           : amap.Apply(r.first);
+              if (rsrc.empty() || rdst.empty()) continue;
+              if (!NamespaceMapping::AtOrUnder(rsrc, destination)) continue;
+              im.AddRename(implied_site + rsrc.substr(destination.size()), rdst);
+            }
+          }
+          implied.map_idx = InternMapping(std::move(im));
         }
         const ArcChain ichain{{as, implied.map_idx}};
         const ExpansionFrame iframe{as, implied.map_idx, &implied.site, frame,
