@@ -1,8 +1,8 @@
 # Resume: `src/next` pcp composition — remaining relocate/specialize gaps
 
 Handoff for a fresh coding-agent session. The next-vs-pxr **flatten differential**
-gate is at **749 pass / 8 untagged / 0 FAIL** of 798 inputs (campaign started at
-181 listed / 597 passing). This doc lists the **8 remaining untagged cases**,
+gate is at **750 pass / 6 untagged / 0 FAIL** of 798 inputs (campaign started at
+181 listed / 597 passing). This doc lists the **6 remaining untagged cases**,
 their **precise pcp.txt-derived root causes**, what has already been tried and
 reverted, and the recommended next arc.
 
@@ -78,13 +78,13 @@ grep -A12 'composing </Some/Prim>' $CASE/pcp.txt
 ```
 
 ### Hard regression bar (every commit)
-749 pass / 0 FAIL flatten, supplemental 138, build-next 36/36, main 37/37,
+750 pass / 0 FAIL flatten, supplemental 138, build-next 36/36, main 37/37,
 roundtrip 222/1. **Any net regression that can't be reconciled against `pcp.txt`
 = revert that step.** Prune newly-passing entries from
 `tests/next/next-pxr-flatten-xfail.txt`; keep `INTENTIONAL:`/`ORACLE-` tagged
 lines verbatim.
 
-## The 9 remaining cases, grouped by root cause
+## The 6 remaining cases, grouped by root cause
 
 ### A. Context-lost relocate-source resolution — 2 cases REMAIN (was 5; 3 FIXED)
 Fixed: `TrickyRelocationOfPrimFromVariant` + `TrickyInheritsAndRelocates5`
@@ -137,21 +137,24 @@ stay green while widening applicability: `BasicRelocateToAnimInterface`,
 `TypicalReferenceToChargroupWithRename`, `TrickySpecializesAndRelocates`,
 `ErrorInvalidConflictingRelocates`.
 
-### B. Per-arc scoping — 4 cases: relocates apply ONLY to content/targets
-introduced by arcs BENEATH the relocating stack, never authored in it.
-- `RelocatePrimsWithSameName` `/ChainedReferences/Child_1`: EMPTY stack -> `over`.
-  Content Srcs (instrumented): `ChainedRef_1/Child` (stk0, INTERNAL ref — same
-  stack, must be excluded) + `base.usd/Base/Child` (stk2 — must have DEPARTED via
-  the chained `/ChainedRef_2/Child->Child_2` relocate in the content walk). next
-  applies neither (two coupled rules).
-- `ErrorArcCycle` `/RelocatedInheritOfChild/Object`: EMPTY -> `over`. Object is
-  INHERITED within the relocating stack -> does not follow (same rule 1).
-- `ErrorInvalidPreRelocateTargetPath`, `BasicRelocateToAnimInterfaceAsNewRootPrim`:
-  a rel/connection target authored IN the relocating layer pointing at a
-  pre-relocate path is KEPT dangling (NOT remapped); a target from BENEATH is
-  remapped. Needs per-opinion authoring-level tracking in `WithStackRelocates`.
-- Needs **arc-origin tracking** (which layer-stack each opinion/target came from
-  relative to each relocate). Real model addition, high regression risk.
+### B. Per-arc scoping — 1 case REMAINS (was 4; 2 FIXED, 1 was cluster A)
+**FIXED (arc-origin target remap, commit cbd00dd98):** `ErrorInvalidPreRelocate-
+TargetPath` + `BasicRelocateToAnimInterfaceAsNewRootPrim` — a rel/connection
+target authored IN the relocating layer pointing at a pre-relocate path is now
+KEPT (mapped up through outer arcs), while a target from BENEATH is still
+relocated. The model: every source composed in `ComposeInto` (cache-compose.inc)
+is a site-own opinion of `s.stack_idx`, so its target-remap uses `ArcOnlyMapping(s)`
+(that stack's OWN relocate renames stripped; ancestor stacks' relocates carried
+through the arc are kept). This is the per-opinion arc-origin distinction — a
+relocate skips its own layer's opinions. (`ErrorArcCycle` was already fixed by the
+composed-parent arc.)
+- `RelocatePrimsWithSameName` `/ChainedReferences/Child_1` (STILL FAILING): EMPTY
+  stack -> `over`. Content Srcs (instrumented): `ChainedRef_1/Child` (stk0, INTERNAL
+  ref — same stack, must be excluded) + `base.usd/Base/Child` (stk2 — must have
+  DEPARTED via the chained `/ChainedRef_2/Child->Child_2` relocate in the content
+  walk). next applies neither (two coupled rules) — this is the CONTENT-side
+  per-arc scoping (which arc delivered the content), distinct from the target-remap
+  fix above; needs arc-origin tracking on CONTENT sources, not just targets.
 
 ### C. Implied-specialize composed-target / order quirk — 1 case
 `VariantSpecializesAndReferenceSurprisingBehavior` `/Model/Material_Child`:
@@ -218,7 +221,7 @@ implied-class chain order (`8d27a577d`). See `git log` and memory for details.
 > breaking the fall-back canaries listed in §A. The A/B Src-list equivalence harness
 > (compute Isolated- vs Composed-RelocatedContent, diff to stderr) is the debugging
 > aid — re-add it temporarily behind a compile flag. Model every change against the
-> per-case `pcp.txt` prim stack. Hard bar: 749 pass / 0 FAIL flatten, supplemental
+> per-case `pcp.txt` prim stack. Hard bar: 750 pass / 0 FAIL flatten, supplemental
 > 138, build-next 36/36, main 37/37, roundtrip 222/1 — revert anything that can't
 > be reconciled. Commit per case with the gate green; prune passing entries from
 > `tests/next/next-pxr-flatten-xfail.txt`.
