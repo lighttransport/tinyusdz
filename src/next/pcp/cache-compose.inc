@@ -215,6 +215,13 @@
     for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
       const Src &s = *sit;
       if (s.variant) continue;  // variant child prims not modeled yet
+      // Opinions authored at a relocation SOURCE path are prohibited (pxr
+      // "salted earth"): their child prims must NOT enter the composed child
+      // list either. The Src itself stays for traversal (chained relocations),
+      // but its own spec children are suppressed — a child authored at the
+      // source (ErrorInvalidReferenceToRelocationSource PreReloChild) leaked
+      // while arc-delivered children (model.usd ModelChild) correctly follow.
+      if (s.suppress_site_specs) continue;
       const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
       for (auto rit = specs.rbegin(); rit != specs.rend(); ++rit) {
         const PrimSpec *spec = rit->spec;

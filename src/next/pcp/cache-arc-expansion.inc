@@ -536,6 +536,20 @@
       }
     }
 
+    // A reference/payload to a relocation SOURCE path in the TARGET layer stack
+    // is prohibited (pxr "salted earth"): the arc composes nothing, exactly like
+    // the internal-arc case checked above but for external @asset@ targets
+    // (ErrorInvalidReferenceToRelocationSource /Bad_RefToPreRelo references
+    // char.usd</Char/PreRelo>, which char.usd relocated away).
+    if (!evaluated_asset_path.empty() &&
+        PathInRelocateSource(arc_stack_idx, arc_site)) {
+      AddIssue(ErrorCode::UnresolvedPrimPath, arc_site,
+               "Reference targets a relocation source path (prohibited): " +
+                   arc_site,
+               warn);
+      return;
+    }
+
     if (frame && frame->Contains(arc_stack_idx, arc_site)) {
       const std::string site =
           layer_stacks[arc_stack_idx].identifier + ":" + arc_site;
@@ -781,6 +795,12 @@
       Src s = arc_src;
       s.stack_idx = target_src.stack_idx;
       s.site = target_src.site;
+      // A relocation-source anchor stays suppressed when reached THROUGH an arc
+      // (a reference to a relocate arrival re-delivers the arrival's sources,
+      // including the prohibited source-site opinions): without carrying the
+      // flag, the source's specs and children leak into the referencing prim
+      // (ErrorInvalidReferenceToRelocationSource /Good_RefToRelocated).
+      s.suppress_site_specs = target_src.suppress_site_specs;
       // target_src's mapping is expressed in the TARGET STACK's namespace (it
       // maps its own site to `arc_site`); compose it under this arc's mapping.
       s.map_idx = InternMapping(NamespaceMapping::Compose(
