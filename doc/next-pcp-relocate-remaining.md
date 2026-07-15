@@ -91,11 +91,16 @@ The composed-parent derivation (commit 9748515ec, see UPDATE above) fixed
 `TrickyRelocationOfPrimFromVariant` + `TrickyInheritsAndRelocates5`. The 3 below
 fall OUTSIDE `ComposedRelocApplicable` (or run it but still miss) and need more:
 
-| Case | pcp.txt shows | why the composed branch doesn't fix it |
-|---|---|---|
-| `TrickySpookyVariantSelectionInClass` `/Char/Anim/LeftLeg` | `LegRig.usd /LegRig{LegRigStyle=1Leg}Anim` | the variant selection is overridden on `SymLegRig` and must propagate through an INHERIT (LeftLegRig inherits SymLeg) into the relocated prim — "spooky" ancestral-selection-through-inherit; pxr's own comment says the TrickySpookyVariantSelection fix is insufficient |
-| `TrickyConnectionToRelocatedAttribute` `/HumanRig/Anim/Face/LEye` | `root.usd /HumanRig/rig/Face/rig/SymEyeRig/Anim` (`baz`) + `eye_rig.usd /EyeRig/Anim` (`foo`) | `baz` is an IMPLIED-class over at the `SymEyeRig` inherit path in an ancestor stack — the implied-class site must map through the relocate |
-| `TrickyMultipleRelocationsAndClasses2` `/CharRig/Anim/Legs/LHip/Knee` | `root.usd .../SymLegRig/TentacleRig/Tentacle/Seg2` (`JointBlend`) | implied-class-through-relocation; likely excluded as CHAINED (ancestor of source is itself a relocate dst) |
+| Case | remaining residual (post `emit_custom`, commit f28a7574f) |
+|---|---|
+| `TrickyConnectionToRelocatedAttribute` `/HumanRig/Anim/Face/LEye` | The relocated ATTRIBUTES (`baz`/`foo`) now compose CORRECTLY (composed branch pulls them, `emit_custom` restores `custom`). Sole residual: the CONNECTION TARGET `bar.connect = [.../SymEyeRig/Anim.baz]` resolves to the pre-relocate `.../LEyeRig/Anim.baz` instead of `.../LEye.baz` — the target is composed at the pre-relocate (inherit) level and the relocate does not re-map the already-composed connection value. Deep connection-through-relocate interaction. |
+| `TrickySpookyVariantSelectionInClass` `/Char/Anim/LeftLeg`/`RightLeg` | `RightLeg` picks the WRONG variant (next `avarFor1LegStyle` vs pxr `avarFor2LegStyle`) — the variant selection overridden on `SymLegRig` must propagate through an INHERIT (LeftLegRig inherits SymLeg) into the relocated prim; "spooky" ancestral-selection-through-inherit (pxr's own comment: the TrickySpookyVariantSelection fix is insufficient). |
+| `TrickyMultipleRelocationsAndClasses2` `/CharRig/Anim/Legs/LHip/Knee` | `JointBlend` (implied-class through a CHAINED relocate) missing — the composed branch is chained-excluded here, and EMPIRICALLY relaxing the chained rule breaks 5 relocate cases (ErrorInvalidConflictingRelocates, TrickyMultipleRelocations/2/3/4) WITHOUT fixing this one, so the chained rule is load-bearing and JointBlend needs a different mechanism. |
+
+**Note:** the `custom`-qualifier residual that used to dominate these 3 diffs was a
+GENERAL flatten-writer bug (not relocate-specific) — `emit_custom` defaulted false
+so `next_usdcat -f` dropped `custom` even on a plain local/referenced attribute.
+Fixed for the composed-stage path (commit f28a7574f); pxr always emits it.
 
 **Landed architecture (keep):** `ComposedRelocatedContent` derives arrival CONTENT
 from the source's **composed parent** (`SourcesForSite(0, composed_src_parent)` +
@@ -113,8 +118,12 @@ seed (baz still absent) and the un-gated composed-parent rewrite (crashed +
 broke 13 passing) are both obsolete; the landed approach uses the reentrancy guards
 and `ArcOnlyMapping` they lacked.
 
-**Next step (the real task):** extend `ComposedRelocatedContent` /
-`ComposedRelocApplicable` to the 3 excluded shapes above. A useful debugging aid:
+**Next step (the real task):** the 3 residuals above are each a distinct deep
+interaction (connection-target-remap-through-relocate; spooky-variant-through-
+inherit; implied-class-through-chained-relocate) — NOT a shared applicability
+widening (the chained rule is load-bearing, proven empirically). Treat each as its
+own sub-arc. Extend `ComposedRelocatedContent` / `ComposedRelocApplicable` only
+where an isolated experiment proves gate-safe. A useful debugging aid:
 re-add the temporary A/B equivalence harness (compute both `Isolated`- and
 `Composed`-RelocatedContent, diff Src lists to stderr keyed by `child_composed`) —
 it was how the current fix's boundaries were found. Fall-back canaries that MUST
