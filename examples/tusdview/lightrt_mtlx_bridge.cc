@@ -133,6 +133,29 @@ void StoreUvVec4Rows(const DrawUvXformCPU& uv, float* dst) {
 }
 
 void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, DrawLightRtOpenPBRCPU* p) {
+  // Seed from the material's DIRECT fields first. The --next loader
+  // (next_scene_loader.cc) sets baseColor/metallic/roughness/specularColor/ior/
+  // alpha/emissive directly and does NOT populate mat.params, so the param
+  // lookups below leave p at its constructor defaults (gray 0.8, etc.), and
+  // BakeLightRtOpenPBR then copies those defaults back OVER the loader's values
+  // -- graying out every untextured constant-color material on the next path.
+  // The legacy path sets both the direct fields AND the params, so its lookups
+  // override this seed with identical values (no behavior change there).
+  p->baseColor[0] = mat.baseColor[0];
+  p->baseColor[1] = mat.baseColor[1];
+  p->baseColor[2] = mat.baseColor[2];
+  p->specularColor[0] = mat.specularColor[0];
+  p->specularColor[1] = mat.specularColor[1];
+  p->specularColor[2] = mat.specularColor[2];
+  p->metalness = mat.metallic;
+  p->specularRoughness = mat.roughness;
+  p->specularIor = mat.ior;
+  p->opacity = mat.alpha;
+  p->emissionColor[0] = mat.emissive[0];
+  p->emissionColor[1] = mat.emissive[1];
+  p->emissionColor[2] = mat.emissive[2];
+  p->emission = (Luminance(p->emissionColor) > 0.0f) ? 1.0f : 0.0f;
+
   Vec3Param(mat, {"UsdPreviewSurface"}, {"diffuseColor"}, p->baseColor);
   Vec3Param(mat, {"UsdPreviewSurface"}, {"specularColor"}, p->specularColor);
   FloatParam(mat, {"UsdPreviewSurface"}, {"metallic"}, &p->metalness);
