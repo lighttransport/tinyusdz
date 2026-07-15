@@ -169,6 +169,13 @@ struct Cache::Impl {
   std::map<std::string, std::unique_ptr<PrimIndex>> index_cache;
   std::unordered_map<std::string, std::vector<Src>> sources_cache;  // path -> expanded sources
   std::set<std::string> sources_in_progress;
+  // Reentrancy guard for SourcesForRelocatedContent: derives a relocate
+  // arrival's CONTENT from the source's COMPOSED parent (SourcesForSite), which
+  // can chain back into another arrival re-deriving the same child (shapes like
+  // Path->Anim/Path then Anim->AnimScope). Keyed by the arrival dst composed
+  // path; on re-entry the helper falls back to the isolated relocate-source
+  // walk instead of recursing (see cache-arc-expansion.inc).
+  std::set<std::string> reloc_content_in_progress;
   const std::vector<Src> empty_sources_;
 
   // Pool of namespace mappings shared by Src.map_idx. Index 0 is identity, so a
