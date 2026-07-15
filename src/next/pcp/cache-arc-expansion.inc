@@ -1195,19 +1195,34 @@
     const StackRelocates &rel = layer_stacks[stack].relocates;
     if (rel.empty()) return m;
     std::vector<NamespaceMapping::Pair> renames;
+    // A relationship/connection target that points at a relocated prim maps to
+    // the relocate destination. The pointing target may be expressed in EITHER
+    // namespace, so emit a rename from both source spellings:
+    //   * the RAW (pre-ancestral-relocation) source (`src_to_dst`) -- a target
+    //     delivered by a reference that lands at the pre-relocation path
+    //     (BasicRelocateToAnimInterface: pathRig.usd referenced at PathRig,
+    //     before Path is relocated out);
+    //   * the COMPOSED (as-authored) source (`arrivals.src_site`) -- a target
+    //     delivered by a reference that lands at the POST-relocation path (an
+    //     `over` on an ancestral arrival: TrickyMultipleRelocations2 rigRel from
+    //     rig.usd referenced at the composed `over Model_2/Rig`).
+    // Longest-prefix matching in Apply picks the right one; when raw==composed
+    // (non-chained) the two pairs coincide harmlessly.
+    const auto add = [&](const std::string &src, const std::string &dst) {
+      // A DELETION edit (empty destination) contributes no rename pair: pxr
+      // keeps targets to deleted paths as authored (RelocateToNone). A relocate
+      // destination OUTSIDE the arc's namespace maps to "" (a DROP-marker) so
+      // targets under the source are dropped like pxr, not leaked.
+      if (dst.empty()) return;
+      renames.emplace_back(src,
+                           m.crosses_arc ? m.ApplyTarget(dst) : m.Apply(dst));
+    };
     renames.reserve(rel.src_to_dst.size());
-    for (const auto &r : rel.src_to_dst) {
-      // A DELETION edit (empty destination) contributes no rename pair:
-      // pxr keeps targets to the deleted paths as authored (dangling),
-      // RelocateToNone.
-      if (r.second.empty()) continue;
-      // A relocate destination OUTSIDE the arc's namespace means the moved
-      // content is not addressable through this arc: record a DROP-marker
-      // pair (empty target) so relationship/connection targets under the
-      // source are dropped like pxr, instead of leaking the raw dst path.
-      renames.emplace_back(r.first,
-                           m.crosses_arc ? m.ApplyTarget(r.second)
-                                         : m.Apply(r.second));
+    for (const auto &r : rel.src_to_dst) add(r.first, r.second);
+    for (const auto &kv : rel.arrivals) {
+      for (const StackRelocates::Arrival &a : kv.second) {
+        add(a.src_site, a.dst_site);
+      }
     }
     for (auto &rename : renames) {
       m.AddRename(rename.first, rename.second);
@@ -1362,11 +1377,15 @@
 
   // Composition sources of a relocate's SOURCE prim, expanded in `stack`'s own
   // namespace. The composed namespace no longer holds this prim (its parent
-  // there lists it as departed), and its ancestors inside `stack` may carry the
-  // arcs that actually deliver it -- e.g. `/CharRig/Rig/SubRig` references
-  // subrig.usd and the relocate moves `/CharRig/Rig/SubRig/Anim/AnimScope` up to
-  // `/CharRig/Anim/AnimScope`. So the chain is expanded here rather than
-  // re-rooted from the composed parent.
+  // there lists it as departed), but its ANCESTORS do (relocate paths are keyed
+  // in the composed namespace -- BuildStackRelocates), either as normal prims or
+  // as arrivals of ancestral relocates. So the ancestor chain is composed with
+  // arrival handling ON (bringing each arrival's `over` opinions AND its
+  // relocated content) and only the LEAF's own departure is suppressed. Handles
+  // both an arc-delivered source (`/CharRig/Rig/SubRig` references subrig.usd,
+  // relocate moves `.../Anim/AnimScope` up -- content via the reference) and a
+  // source authored at a post-relocation path (`over Model_2 { Rig }` on an
+  // ancestral arrival -- TrickyMultipleRelocations2).
   const std::vector<Src> &SourcesForRelocateSource(uint32_t stack,
                                                    const std::string &site,
                                                    std::string *warn,
@@ -1403,26 +1422,48 @@
     for (size_t i = pending.size(); i-- > 0;) {
       const Path &p = pending[i];
       const Path parent = p.parent();
+      // Relocate paths are keyed in the COMPOSED namespace (see BuildStack-
+      // Relocates), so the source's ANCESTORS exist there -- either normal prims
+      // or ARRIVALS of ancestral relocates carrying an `over` plus the relocated
+      // content. Compose them normally (arrival handling ON). Only the LEAF (the
+      // relocate source itself) departed to the relocate target: suppress its
+      // departure so it stays resolvable, and its own spec opinions (salted
+      // earth) below.
+      const bool is_leaf = (p.str() == site);
       std::vector<Src> base;
       if (parent.is_root() || parent.empty() || parent.str() == "/") {
+        // A non-leaf root ancestor may itself be a relocate ARRIVAL (chained
+        // relocate whose source sits under a root-level arrival): compose it.
+        const StackRelocates &rel = layer_stacks[stack].relocates;
+        const StackRelocates::Arrival *arrival =
+            is_leaf ? nullptr : rel.ArrivalOf("/", p.name());
         Src s;
         s.stack_idx = stack;
         s.site = p.str();
         s.expression_variables = std::make_shared<const Value>(
             layer_stacks[stack].expression_variables);
-        base.push_back(std::move(s));
+        if (arrival) {
+          AddRelocatedSources(s, *arrival, p.str(), &base, warn, err);
+        } else {
+          base.push_back(std::move(s));
+        }
       } else {
         const std::vector<Src> &psrc = sources_cache[raw_key(parent.str())];
-        // Raw for this stack's own site (the departure that moved this prim out
-        // of the composed namespace must not remove it here as well); sources
-        // contributed by arcs into other stacks still honor their own relocates.
-        base = DeriveChildSources(psrc, p.name(), p.str(), warn, err, stack,
-                                  parent.str());
+        // raw_stack/raw_site suppresses BOTH departure and arrival for the
+        // matching source; use it ONLY for the leaf (whose departure we cancel)
+        // -- intermediate ancestors keep arrival handling so their `over` and
+        // relocated content compose (TrickyMultipleRelocations2 over Model_2).
+        if (is_leaf) {
+          base = DeriveChildSources(psrc, p.name(), p.str(), warn, err, stack,
+                                    parent.str());
+        } else {
+          base = DeriveChildSources(psrc, p.name(), p.str(), warn, err);
+        }
       }
       // The relocation SOURCE itself: this stack's own opinions there are
       // prohibited (pxr "opinions at relocation source") — including the
       // spec's ARCS and variant selections, so mark before expansion.
-      if (p.str() == site) {
+      if (is_leaf) {
         for (Src &b : base) {
           if (b.stack_idx == stack && b.arc_kind == ArcType::Root &&
               b.site == site) {
