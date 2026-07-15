@@ -6,6 +6,32 @@ gate is at **750 pass / 6 untagged / 0 FAIL** of 798 inputs (campaign started at
 their **precise pcp.txt-derived root causes**, what has already been tried and
 reverted, and the recommended next arc.
 
+## DESIGN-PASS STATUS (all 6 attacked; each needs a substantial architectural add)
+A proper design pass was done on every remaining case; NONE is a clean low-risk fix
+(the two most-promising attempts hit real walls, both reverted):
+- **1 `TrickyMultipleRelocationsAndClasses2`** — KNEE-instrumented: the b2fc9a9d0
+  implied opinion (anchored at LLegRig, map Seg2→Knee) is correct, but Knee's
+  arrival CONTENT walk (isolated, chained-excluded) has only stk1 inherit + stk2 ref,
+  NO stk0 root source, so the root implied-class `JointBlend` never reaches Knee.
+  Needs the arrival content walk to carry root implied-class context (= the deep
+  content walk). NOT an attachment-redirect.
+- **2 `ErrorInvalidInstanceTargetPath`** — same reach-relocated-context need as 1.
+- **3 `TrickySpookyVariantSelectionInClass`** — LEG-instrumented: instance selection
+  `RightLegRig=2Leg` must beat class `SymLegRig=1Leg`, but the LegRig variantSet is
+  grafted inside the CharRig-reference sub-expansion where the implied-class block
+  OVERWRITES sels with the class 1Leg (~L705). Tried: seed_sels (too late — parent
+  already grafted 1Leg); overwrite→emplace (didn't reach + broke
+  TypicalReferenceToRiggedModel). Needs cross-arc instance-beats-class variant-
+  selection propagation (pxr says the base fix is insufficient).
+- **4 `VariantSpecializesAndReferenceSurprisingBehavior`** — pcp CONFIRMS the order
+  REVERSAL: `/Model/Material`'s own stack has New_Shading_Variant STRONGER (myInt=1),
+  but for the specialize target Model_defaultShadingVariant (prepend ref) is STRONGER
+  (myInt=0). Needs pxr's specializes-propagation order (prepend/ancestral > variant-
+  introduced for a specialize). LOW confidence.
+- **5 `RelocatePrimsWithSameName` / 6 `ErrorInvalidReferenceToRelocationSource`** —
+  per-opinion content-origin tracking + chained departure (see §B below); blanket
+  same-stack suppression broke 4 cases.
+
 ## UPDATE (composed-parent relocated-content derivation LANDED, commit 9748515ec)
 
 Cluster A's core architecture is now IN: `ComposedRelocatedContent`
