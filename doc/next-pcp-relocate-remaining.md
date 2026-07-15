@@ -1,8 +1,8 @@
 # Resume: `src/next` pcp composition — remaining relocate/specialize gaps
 
 Handoff for a fresh coding-agent session. The next-vs-pxr **flatten differential**
-gate is at **747 pass / 9 untagged / 0 FAIL** of 798 inputs (campaign started at
-181 listed / 597 passing). This doc lists the **9 remaining untagged cases**,
+gate is at **749 pass / 8 untagged / 0 FAIL** of 798 inputs (campaign started at
+181 listed / 597 passing). This doc lists the **8 remaining untagged cases**,
 their **precise pcp.txt-derived root causes**, what has already been tried and
 reverted, and the recommended next arc.
 
@@ -78,7 +78,7 @@ grep -A12 'composing </Some/Prim>' $CASE/pcp.txt
 ```
 
 ### Hard regression bar (every commit)
-747 pass / 0 FAIL flatten, supplemental 138, build-next 36/36, main 37/37,
+749 pass / 0 FAIL flatten, supplemental 138, build-next 36/36, main 37/37,
 roundtrip 222/1. **Any net regression that can't be reconciled against `pcp.txt`
 = revert that step.** Prune newly-passing entries from
 `tests/next/next-pxr-flatten-xfail.txt`; keep `INTENTIONAL:`/`ORACLE-` tagged
@@ -86,14 +86,17 @@ lines verbatim.
 
 ## The 9 remaining cases, grouped by root cause
 
-### A. Context-lost relocate-source resolution — 3 cases REMAIN (was 5; 2 FIXED)
-The composed-parent derivation (commit 9748515ec, see UPDATE above) fixed
-`TrickyRelocationOfPrimFromVariant` + `TrickyInheritsAndRelocates5`. The 3 below
-fall OUTSIDE `ComposedRelocApplicable` (or run it but still miss) and need more:
+### A. Context-lost relocate-source resolution — 2 cases REMAIN (was 5; 3 FIXED)
+Fixed: `TrickyRelocationOfPrimFromVariant` + `TrickyInheritsAndRelocates5`
+(composed-parent derivation, 9748515ec); `TrickyConnectionToRelocatedAttribute`
+(deeper-stack relocate chained into the implied-class opinion's map, b2fc9a9d0 —
+the implied block ~line 719 now adds, per relocate authored in the arc's stack
+whose PRE-relocate composed source lands under the inheriting prim, a
+class-namespace rename so one longest-prefix ApplyTarget does inherit-then-
+relocate). The 2 below still miss:
 
-| Case | remaining residual (post `emit_custom`, commit f28a7574f) |
+| Case | remaining residual |
 |---|---|
-| `TrickyConnectionToRelocatedAttribute` `/HumanRig/Anim/Face/LEye` | The relocated ATTRIBUTES (`baz`/`foo`) now compose CORRECTLY (composed branch pulls them, `emit_custom` restores `custom`). Sole residual: the CONNECTION TARGET on `.../LEyeRig/rig/Mover.bar.connect = [.../SymEyeRig/Anim.baz]` resolves to the pre-relocate `.../LEyeRig/Anim.baz` instead of `.../LEye.baz`. PRECISE CAUSE (WSR_DUMP-confirmed): the `bar.connect` opinion is a ROOT over on the CLASS path `.../SymEyeRig/rig/Mover` reaching the composed Mover as a ROOT IMPLIED-CLASS opinion; its target is a HumanRig-ns path `.../SymEyeRig/Anim.baz`. The eye-rig relocate `LEyeRig/Anim→LEye` lives in the **FaceRig stack (idx 1)**, whose inherit arc map DOES correctly chain (it has the pair `/FaceRig/rig/SymEyeRig/Anim → /HumanRig/Anim/Face/LEye`). BUT the winning opinion's map is the ROOT one (HumanRig-ns sources), and `WithStackRelocates` only applies the OWN (root) stack's relocates — root has only `Face/Anim→Face`, NOT the eye-rig relocate. So the root implied-class map does the inherit remap (`SymEyeRig→LEyeRig`) but never the FaceRig relocate → target stops at `LEyeRig/Anim.baz`. This is a CROSS-STACK gap: a relocate authored in a DEEPER stack must reach an implied-class opinion built in an ancestor stack. TRIED+reverted (gate-neutral): `WithStackRelocates` emitting `m.ReverseApply(src)` pairs — wrong namespace (relocate sources are FaceRig-ns, that map is FaceRig's not root's). The fix must compose the FaceRig relocate (expressed in HumanRig ns) into the implied-class opinion's map (chain loop / implied block ~line 687-750). |
 | `TrickySpookyVariantSelectionInClass` `/Char/Anim/LeftLeg`/`RightLeg` | `RightLeg` picks the WRONG variant (next `avarFor1LegStyle` vs pxr `avarFor2LegStyle`) — the variant selection overridden on `SymLegRig` must propagate through an INHERIT (LeftLegRig inherits SymLeg) into the relocated prim; "spooky" ancestral-selection-through-inherit (pxr's own comment: the TrickySpookyVariantSelection fix is insufficient). |
 | `TrickyMultipleRelocationsAndClasses2` `/CharRig/Anim/Legs/LHip/Knee` | `JointBlend` (implied-class through a CHAINED relocate) missing — the composed branch is chained-excluded here, and EMPIRICALLY relaxing the chained rule breaks 5 relocate cases (ErrorInvalidConflictingRelocates, TrickyMultipleRelocations/2/3/4) WITHOUT fixing this one, so the chained rule is load-bearing and JointBlend needs a different mechanism. |
 
@@ -207,7 +210,7 @@ implied-class chain order (`8d27a577d`). See `git log` and memory for details.
 > breaking the fall-back canaries listed in §A. The A/B Src-list equivalence harness
 > (compute Isolated- vs Composed-RelocatedContent, diff to stderr) is the debugging
 > aid — re-add it temporarily behind a compile flag. Model every change against the
-> per-case `pcp.txt` prim stack. Hard bar: 747 pass / 0 FAIL flatten, supplemental
+> per-case `pcp.txt` prim stack. Hard bar: 749 pass / 0 FAIL flatten, supplemental
 > 138, build-next 36/36, main 37/37, roundtrip 222/1 — revert anything that can't
 > be reconciled. Commit per case with the gate green; prune passing entries from
 > `tests/next/next-pxr-flatten-xfail.txt`.
