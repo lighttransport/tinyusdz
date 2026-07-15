@@ -1,21 +1,27 @@
 # Resume: `src/next` pcp composition — remaining relocate/specialize gaps
 
 Handoff for a fresh coding-agent session. The next-vs-pxr **flatten differential**
-gate is at **750 pass / 6 untagged / 0 FAIL** of 798 inputs (campaign started at
-181 listed / 597 passing). This doc lists the **6 remaining untagged cases**,
+gate is at **751 pass / 5 untagged / 0 FAIL** of 798 inputs (campaign started at
+181 listed / 597 passing). This doc lists the **5 remaining untagged cases**,
 their **precise pcp.txt-derived root causes**, what has already been tried and
 reverted, and the recommended next arc.
 
-## DESIGN-PASS STATUS (all 6 attacked; each needs a substantial architectural add)
-A proper design pass was done on every remaining case; NONE is a clean low-risk fix
-(the two most-promising attempts hit real walls, both reverted):
-- **1 `TrickyMultipleRelocationsAndClasses2`** — KNEE-instrumented: the b2fc9a9d0
-  implied opinion (anchored at LLegRig, map Seg2→Knee) is correct, but Knee's
-  arrival CONTENT walk (isolated, chained-excluded) has only stk1 inherit + stk2 ref,
-  NO stk0 root source, so the root implied-class `JointBlend` never reaches Knee.
-  Needs the arrival content walk to carry root implied-class context (= the deep
-  content walk). NOT an attachment-redirect.
-- **2 `ErrorInvalidInstanceTargetPath`** — same reach-relocated-context need as 1.
+## DESIGN-PASS STATUS (all attacked; 5 remain, each needs a substantial architectural add)
+- **1 `TrickyMultipleRelocationsAndClasses2`** — ✅ **FIXED (2ca7930f5)**. The arrival
+  CONTENT walk (isolated, chained) missed the root implied-class `JointBlend` over on
+  the inherited class. Fix: `FullyUnrelocate()` walks a source back through the
+  stack's CHAINED relocates to its fully-pre-relocation path, so the composed
+  derivation composes at the un-relocated composed class-inheriting path; and for
+  chained arrivals the isolated walk is SUPPLEMENTED with the composed walk's stk0
+  implied-class sources it lacks (full replacement regressed TrickyMultipleRelocations/2
+  which author content at the POST-relocation path). `ComposedRelocApplicable` split
+  into `ComposedBaseApplicable` + `IsChainedArrival`.
+- **2 `ErrorInvalidInstanceTargetPath`** — NOT covered by case 1's fix. DISTINCT
+  mechanism: the missing `amount.connect` is an INHERITED CONNECTION (authored on
+  class `SymBrow`'s sculpt in ref.usd, reaching descendants of the relocated
+  `LBrow`/`RBrow` instances) — not a stk0 root over, so the stk0-supplement doesn't
+  add it. Needs connection-through-inherit-into-relocated-instance-descendant +
+  invalid-instance-target handling (a separate arc).
 - **3 `TrickySpookyVariantSelectionInClass`** — LEG-instrumented: instance selection
   `RightLegRig=2Leg` must beat class `SymLegRig=1Leg`, but the LegRig variantSet is
   grafted inside the CharRig-reference sub-expansion where the implied-class block
@@ -104,13 +110,13 @@ grep -A12 'composing </Some/Prim>' $CASE/pcp.txt
 ```
 
 ### Hard regression bar (every commit)
-750 pass / 0 FAIL flatten, supplemental 138, build-next 36/36, main 37/37,
+751 pass / 0 FAIL flatten, supplemental 138, build-next 36/36, main 37/37,
 roundtrip 222/1. **Any net regression that can't be reconciled against `pcp.txt`
 = revert that step.** Prune newly-passing entries from
 `tests/next/next-pxr-flatten-xfail.txt`; keep `INTENTIONAL:`/`ORACLE-` tagged
 lines verbatim.
 
-## The 6 remaining cases, grouped by root cause
+## The 5 remaining cases, grouped by root cause
 
 ### A. Context-lost relocate-source resolution — 2 cases REMAIN (was 5; 3 FIXED)
 Fixed: `TrickyRelocationOfPrimFromVariant` + `TrickyInheritsAndRelocates5`
@@ -255,7 +261,7 @@ implied-class chain order (`8d27a577d`). See `git log` and memory for details.
 > breaking the fall-back canaries listed in §A. The A/B Src-list equivalence harness
 > (compute Isolated- vs Composed-RelocatedContent, diff to stderr) is the debugging
 > aid — re-add it temporarily behind a compile flag. Model every change against the
-> per-case `pcp.txt` prim stack. Hard bar: 750 pass / 0 FAIL flatten, supplemental
+> per-case `pcp.txt` prim stack. Hard bar: 751 pass / 0 FAIL flatten, supplemental
 > 138, build-next 36/36, main 37/37, roundtrip 222/1 — revert anything that can't
 > be reconciled. Commit per case with the gate green; prune passing entries from
 > `tests/next/next-pxr-flatten-xfail.txt`.
