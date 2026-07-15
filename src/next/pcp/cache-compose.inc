@@ -103,6 +103,17 @@
       const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
       if (specs.empty()) continue;
 
+      // A relocate authored in a layer stack does NOT remap the TARGET paths of
+      // opinions authored in THAT SAME stack's own layers -- only targets brought
+      // in via arcs BENEATH it (pxr: "relocates only affect target paths brought
+      // in from the reference, not paths authored locally in this layer",
+      // BasicRelocateToAnimInterfaceAsNewRootPrim). Every source `s` here is a
+      // site-own opinion of `s.stack_idx`, so strip that stack's own relocate
+      // renames from its target-remap map (ancestor stacks' relocates, carried
+      // through the arc, are kept). Falls back to the full map when the stack
+      // authored no relocates.
+      const NamespaceMapping s_target_map = ArcOnlyMapping(s);
+
       for (const SpecRef &sr : specs) {
         const PrimSpec *spec = sr.spec;
 
@@ -139,7 +150,7 @@
               if (s.arc_kind == ArcType::Variant) {
                 return Mapping(s.map_idx).Apply(p);
               }
-              return Mapping(s.map_idx).ApplyTarget(p);
+              return s_target_map.ApplyTarget(p);
             });
         snapshot_pre_clip_props();
       }
