@@ -1291,6 +1291,23 @@
     return out;
   }
 
+  // The relocated CONTENT sources for an arrival (the source prim's own
+  // composition sources, before the departure-suppression + outer rename that
+  // AddRelocatedSources composes on top). `child_composed` is the arrival's
+  // destination composed path (the recursion-guard key).
+  //
+  // Step 0: forwards to the isolated relocate-source walk. Step 1 will derive
+  // this from the source's COMPOSED parent when not re-entrant, so the caller's
+  // variant/implied-class context reaches the relocated prim; the guard
+  // (`reloc_content_in_progress`) falls back to the isolated walk on the
+  // re-entrant chained-relocate shapes that would otherwise recurse.
+  std::vector<Src> SourcesForRelocatedContent(
+      const Src &ps, const StackRelocates::Arrival &arrival,
+      const std::string &child_composed, std::string *warn, std::string *err) {
+    (void)child_composed;
+    return SourcesForRelocateSource(ps.stack_idx, arrival.src_site, warn, err);
+  }
+
   // Graft a prim a relocate moved INTO this parent: the opinions authored AT the
   // destination path (`dst`, pushed to `base`) and the content from its pre-
   // relocation source site (pushed to `content_out`). `ps` is the parent source
@@ -1333,8 +1350,8 @@
     base->push_back(std::move(dst));
 
     const NamespaceMapping outer = renamed_map(arrival.src_site);
-    const std::vector<Src> &content =
-        SourcesForRelocateSource(ps.stack_idx, arrival.src_site, warn, err);
+    const std::vector<Src> content =
+        SourcesForRelocatedContent(ps, arrival, child_composed, warn, err);
     for (const Src &s : content) {
       Src c = s;
       // Opinions authored in the RELOCATING layer stack at exactly the
