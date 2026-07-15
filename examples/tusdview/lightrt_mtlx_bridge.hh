@@ -12,10 +12,9 @@ constexpr int kLightRtOpenPBRVec4s =
 constexpr int kLightRtOpenPBRFloats =
     tinyusdz::tydra::kLightRtOpenPBRFloats;
 constexpr int kRtMaterialTextureParamFloats = 56;
-// Row 18 carries the per-slot UV-set selector (base, metal/rough, normal,
-// emissive): 0 = texcoords_0, 1 = texcoords_1. Keep in lockstep with the
-// MaterialTexParam struct in mesh.vert / mesh.frag.
-constexpr int kRasterMaterialTextureParamVec4s = 20;  // +1: specular F0 (T12)
+// Rows 20-24 add opacity sampling and scene-wide UDIM-atlas row selectors. Keep
+// in lockstep with MaterialTexParam in every Vulkan mesh shader stage.
+constexpr int kRasterMaterialTextureParamVec4s = 25;
 constexpr int kRasterMaterialTextureParamFloats =
     kRasterMaterialTextureParamVec4s * 4;
 

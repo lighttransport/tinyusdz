@@ -1030,13 +1030,13 @@ if(TINYUSDZ_WITH_TEXTOOLS)
           PROPERTIES COMPILE_OPTIONS "-march=armv8-a+sve")
     endif()
   endif()
-  if(UNIX)
+  if(UNIX AND NOT EMSCRIPTEN)
     target_compile_definitions(tinyusdz_textools PRIVATE
         TIR_ENABLE_THREADS TIR_THREADS_PTHREAD)
     find_package(Threads REQUIRED)
     target_link_libraries(tinyusdz_textools PUBLIC Threads::Threads)
   endif()
-  if(UNIX AND NOT APPLE)
+  if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     target_link_libraries(tinyusdz_textools PUBLIC m)
   endif()
 endif()
@@ -2687,6 +2687,16 @@ if(TINYUSDZ_BUILD_TESTS)
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-specular-workflow.sh"
       )
     set_tests_properties(tusdview-specular-workflow PROPERTIES SKIP_RETURN_CODE 77)
+
+    # T12 opacity completion: separate scalar opacity textures (ordinary/UDIM)
+    # on both raster backends, and varying displayOpacity on raster + RT.
+    add_test(
+      NAME tusdview-opacity-material
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-opacity-material.sh"
+      )
+    set_tests_properties(tusdview-opacity-material PROPERTIES SKIP_RETURN_CODE 77)
 
     # USD `proxy` and `render` are ALTERNATIVES, not two things to draw. Drawing
     # both put the stand-in on top of the geometry it stands in for (intent-vfx's

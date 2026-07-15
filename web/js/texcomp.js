@@ -1,7 +1,7 @@
 // texcomp.js — Basis-free GPU texture compression in the browser.
 //
-// Pipeline: draw a sample RGBA8 texture -> compress once to the tinyexr `uni`
-// UASTC-subset intermediate (WASM) -> detect the browser's compressed-texture
+// Pipeline: draw a sample RGBA8 texture -> compress once to the private tinyexr
+// `uni` intermediate (WASM) -> detect the browser's compressed-texture
 // support -> transcode `uni` to the GPU-native block format the device
 // advertises (BC7 desktop / ASTC / ETC2 mobile) -> upload as a
 // THREE.CompressedTexture. If no compressed format is available, decode `uni`

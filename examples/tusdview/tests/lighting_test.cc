@@ -83,6 +83,7 @@ int main() {
   tydra::RenderLight dome;
   dome.name = "dome_env";
   dome.type = tydra::RenderLight::Type::Dome;
+  dome.transform = tydra::mat4::identity();
   dome.envmap_texture_id = AddImage(&scene);
   dome.domeTextureFormat = tydra::RenderLight::DomeTextureFormat::Latlong;
   scene.lights.push_back(dome);

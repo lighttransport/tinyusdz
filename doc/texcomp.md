@@ -34,8 +34,9 @@ No single GPU compressed format is available everywhere:
 Only **BC6H** and **ASTC-HDR** carry HDR; everything else is LDR. Because formats
 don't overlap, the portable strategy is: ship one *transcodable* asset and
 convert it to the device's native format at load. tinyusdz uses its own
-**Basis-free `uni`** intermediate (a UASTC-4x4 subset that is itself valid ASTC
-4x4 and transcodes cheaply to BC7 / ASTC / ETC2, or decodes to RGBA8).
+private **Basis-free `uni`** intermediate. Its blocks are valid ASTC 4x4 and
+convert to BC7 / ASTC / ETC2 or RGBA8, but they are not the Basis UASTC wire
+representation.
 
 ## USD authoring: the legacy-safe KTX2 hint
 
@@ -72,7 +73,7 @@ legacy/ARKit target is requested (`IsAllowedTextureExt` allows `ktx2` as an
 ### Authoring the companions: `usd-texcomp`
 
 `examples/usd-texcomp` is the producer side. For every `UsdUVTexture.inputs:file`
-image it writes a `.ktx2` (uni/UASTC, full mip chain) next to the output and adds
+image it writes a `.ktx2` (private `uni`, full mip chain) next to the output and adds
 the `customData ktx2` hint to the attribute — leaving `inputs:file` untouched:
 
 ```sh
@@ -181,10 +182,10 @@ tusdview models/ktx2-uni-plane.usda --texture-keep-compressed on
   `RenderSceneConverterConfig::keep_compressed_textures`. `--texture-compress`
   applies on both as well.
 
-## Web demo
+## Web
 
 `web/js/texcomp.{html,js}` demonstrates the same strategy in the browser,
-Basis-free (no `basis_universal`, no `KTX2Loader`):
+using the Basis-free path by itself:
 
 1. A sample RGBA8 texture is compressed once to `uni` in a small WebAssembly
    module (`web/js/texcomp/texcomp_web.c`, built by `build.sh` with emscripten —
@@ -206,6 +207,38 @@ cd web/js && npm run dev:texcomp      # or any static server, open /texcomp.html
 The page reports the detected caps, the chosen GPU format, and the VRAM saving
 (e.g. a 256×256 texture: 256 KiB RGBA8 → 64 KiB BC7 = 4×).
 
+The main tinyusdz WASM module also links textools and exports
+`compressTextureToUni` / `transcodeTextureUni`. `getTextureFromUSD` uses that ABI
+for real scene textures: native-decoded RGBA8 images go directly through it;
+ordinary images decoded by the browser are read back once and follow the same
+path. The loader probes BC7, ASTC 4x4, then ETC2 RGBA, uploads a
+`THREE.CompressedTexture`, and retains the existing `THREE.DataTexture` /
+`THREE.Texture` path when no compressed format or WASM ABI is available. Color
+maps set `THREE.SRGBColorSpace` while retaining Three.js's base compressed-format
+constant (Three selects the sRGB GPU internal format); data maps stay linear.
+The usual scene-texture Y flip is performed before block encoding because WebGL
+cannot unpack-flip compressed uploads. Applications can opt out globally with
+`TinyUSDZLoaderUtils.setSceneTextureCompressionEnabled(false)`.
+
+Standard KTX2 is supported alongside that path. External URLs and undecoded
+embedded streams are passed to Three.js `KTX2Loader`, which handles Basis
+ETC1S/UASTC as well as defined VkFormats such as ASTC. Before dispatch, embedded
+headers are classified: TinyEXR's private UNSPECIFIED-model `uni` carrier is
+never sent to the Basis transcoder and receives a targeted error if the native
+tinyusdz/textools layer did not already decode it. The loader and its worker are
+initialized lazily; ordinary images do not pay that startup cost. By default a
+short-lived WebGL capability probe configures the loader. Applications may
+instead provide their renderer-configured instance with
+`TinyUSDZLoaderUtils.setKTX2Loader(loader)`, or set a separately hosted
+transcoder directory before first use with
+`TinyUSDZLoaderUtils.setKTX2TranscoderPath(path)`. Passing `null` to
+`setKTX2Loader` disables the Basis path.
+
+Private `uni` KTX2 files written before this discriminator was introduced used
+the real Basis UASTC DFD model by mistake. Regenerate those companions with the
+current `usd-texcomp`; the reader now rejects the ambiguous legacy marker rather
+than risking a silent misdecode of genuine Basis content.
+
 ## Building / gating
 
 - `TINYUSDZ_WITH_TEXTOOLS` (default ON) builds `tinyusdz_textools` and enables
@@ -214,12 +247,15 @@ The page reports the detected caps, the chosen GPU format, and the VRAM saving
   back to its built-in BC1/BC3 encoder.
 - textools tests: `ctest -R 'textools-' --output-on-failure` (KTX2
   write→read→decode round-trips live in `textools-texpipe`).
+- Web scene-texture tests: `ctest --test-dir web/build_ninja -R
+  'texture-compression|basis-ktx2' --output-on-failure` after the normal
+  Emscripten build. The Chrome-gated
+  `wasm-texture-compression-three-ktx2` test creates ASTC blocks with the main
+  WASM ABI, checks both KTX2Loader and the real decoded-scene constructor,
+  renders, and verifies both image gradients by GPU readback. The latter pins
+  Three.js's base-format + `colorSpace` contract for compressed color maps.
 
-## Not yet supported / follow-ups
+## Follow-ups
 
-- **Basis Universal / `KHR_texture_basisu`** interop (ETC1S/UASTC) for glTF and
-  three.js `KTX2Loader` — the "Basis later" seam; the current pipeline is
-  intentionally Basis-free.
-- Routing real USD **scene** textures through the web compressed path (the demo
-  uses a generated texture; wiring the tinyusdz WASM to expose `uni` bytes is a
-  follow-up).
+- The native textools path intentionally remains Basis-free; Basis
+  ETC1S/UASTC interoperability is supplied by Three.js in the web loader.

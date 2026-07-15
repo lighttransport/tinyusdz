@@ -280,9 +280,11 @@ record/submit p95 was 0.3 ms.
 screenshots are deterministic. Pixel-compare two screenshots (e.g. backend or
 threaded-vs-single parity) with PIL/numpy:
 
-The Vulkan RT shaded mode uses the material base color, alpha, roughness,
-metallic, and emissive constants in the RT material buffer. Texture sampling in
-RT remains a separate follow-up; this branch does not change texture resize or
+The Vulkan RT shaded mode uses material base color, alpha, roughness, metallic,
+and emissive constants plus interpolated `displayOpacity`. Material-image
+sampling remains a separate follow-up: separate opacity images are supported by
+GL/VK raster only (including UDIM masks), while RT receives the vertex alpha but
+does not sample that image. This does not change texture resize or
 compressed-texture behavior.
 
 ```sh

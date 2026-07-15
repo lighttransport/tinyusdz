@@ -15,7 +15,7 @@ layout(location = 3) in vec4 aRow0;       // o2w row 0 (instance-rate)
 layout(location = 4) in vec4 aRow1;
 layout(location = 5) in vec4 aRow2;
 layout(location = 9) in vec4 aInstColor;  // per-instance color/opacity (instance-rate)
-layout(location = 10) in vec3 aVtxColor;  // per-vertex prototype color
+layout(location = 10) in vec4 aVtxColor;  // displayColor.rgb + displayOpacity
 layout(location = 8) in uvec2 aMorphOffsetCount;  // GPU morph (offset,count); 0=none
 
 // Skeletal skinning of the PROTOTYPE, in prototype-LOCAL space (before the
@@ -123,7 +123,7 @@ void main() {
                 dot(nrm, aRow2.xyz));
   vWorldPos = wp;
   vNormal = normalize(n);
-  vColor = aInstColor.rgb * aVtxColor;  // per-instance x per-vertex (both default 1)
-  vOpacity = clamp(aInstColor.a, 0.0, 1.0);
+  vColor = aInstColor.rgb * aVtxColor.rgb;
+  vOpacity = clamp(aInstColor.a * aVtxColor.a, 0.0, 1.0);
   gl_Position = fr.viewProj * vec4(wp, 1.0);
 }

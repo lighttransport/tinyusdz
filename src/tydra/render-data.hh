@@ -329,8 +329,8 @@ enum class ComponentType {
 // GPU block-compressed texture format for a TextureImage whose `buffer_id`
 // holds compressed block bytes rather than uncompressed texels (see
 // TextureImage::blockFormat). `None` = uncompressed (the default; texels are
-// described by ComponentType/channels as before). `UNI` is the tinyexr
-// Basis-free UASTC-subset transcodable intermediate: it is valid ASTC 4x4 and
+// described by ComponentType/channels as before). `UNI` is the private tinyexr
+// transcodable intermediate: its payload is valid ASTC 4x4 and
 // can be transcoded per device to BC7/BC1/ASTC/ETC2 (texcomp tc_uni_transcode_*)
 // or decoded to RGBA8 (tc_uni_decompress_rgba8). Populated when a KTX2 asset is
 // loaded in "keep compressed" mode; consumers (tusdview GPU upload) map it to a
@@ -347,7 +347,7 @@ enum class TextureBlockFormat {
   EAC_R11,
   EAC_RG11,
   ASTC_4x4,
-  UNI,    // tinyexr uni / UASTC transcodable intermediate
+  UNI,    // private tinyexr uni transcodable intermediate
 };
 
 

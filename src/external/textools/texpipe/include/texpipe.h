@@ -275,9 +275,10 @@ typedef struct tp_ktx2_level {
 typedef struct tp_ktx2_image {
     uint32_t vk_format;      /* 0 = UNDEFINED (the tinyexr uni intermediate)   */
     tp_codec codec;          /* mapped block codec (valid only when !is_uni)   */
-    int is_uni;              /* 1 = uni/UASTC transcodable intermediate        */
+    int is_uni;              /* 1 = TinyEXR-private uni intermediate           */
     int is_hdr;
-    int srgb;
+    int srgb;                /* for is_uni, read back from the DFD transfer fn  */
+    int has_alpha;           /* uni only: private DFD carries TP_UNI_ALPHA      */
     int is_signed;           /* BC6H sf16 / BC5 snorm (vs the unsigned variant) */
     int block_w, block_h, block_bytes;
     uint32_t width, height;  /* base (level 0) dimensions                      */
@@ -298,9 +299,9 @@ typedef struct tp_ktx2_image {
 /* Parse a KTX2 blob (identifier + header + level index + DFD). Fills `out` with
  * pointers into `data` (no allocation). Supports supercompressionScheme 0 only
  * (Zstd/BasisLZ return TP_ERROR_UNSUPPORTED — use tp_ktx2_read_zstd for Zstd).
- * vk_format == 0 is interpreted as the uni intermediate (is_uni = 1). Returns
- * TP_ERROR_INVALID_ARGUMENT on a bad identifier / out-of-bounds level index,
- * TP_ERROR_UNSUPPORTED for an unrecognized vk_format or supercompression. */
+ * vk_format == 0 with texpipe's private UNSPECIFIED-model DFD is interpreted as
+ * uni (is_uni = 1). Basis UASTC and other undefined-format payloads return
+ * TP_ERROR_UNSUPPORTED rather than being misdecoded. */
 tp_result tp_ktx2_read(const uint8_t *data, size_t size, tp_ktx2_image *out);
 
 /* Zstd decompressor callback: decompress `src_size` bytes at `src` into `dst`
@@ -369,17 +370,49 @@ tp_result tp_ktx2_decode_slice_rgbaf(const tp_ktx2_image *img, int level,
                                      int layer, int face, float *out_rgba,
                                      size_t out_size);
 
-/* Serialize pre-encoded uni (UASTC) mip levels as a KTX2 (vkFormat = UNDEFINED,
- * supercompressionScheme = 0, KHR_DF UASTC descriptor). This is the Basis-free
- * transcodable carrier: the reader reports is_uni = 1 and a consumer transcodes
- * per device with tc_uni_transcode_{bc7,bc1,astc,etc2} or decodes with
- * tc_uni_decompress_rgba8. `uni_levels[l]`/`uni_sizes[l]` are the level-l uni
- * bytes (from tc_uni_compress_rgba8), level 0 = largest. Only level_w[0] /
- * level_h[0] reach the header: levels 1..num_levels-1 must be the standard
- * halving pyramid (max(1, w >> l)), which is how the reader re-derives them.
+/* KTX2 flags for pre-encoded uni levels. The private carrier's colour space and
+ * alpha use cannot be inferred from the block bytes, so pass TP_UNI_SRGB for
+ * non-linear (albedo/colour) textures and TP_UNI_ALPHA when alpha carries
+ * information. TP_UNI_ASTC_KTX2 selects a standards-defined ASTC 4x4 KTX2
+ * carrier instead: the uni bytes are valid ASTC blocks, while they are not the
+ * Basis UASTC wire representation. In ASTC mode TP_UNI_ALPHA has no effect on
+ * the KTX2 descriptor because the ASTC format always carries RGBA. */
+#define TP_UNI_SRGB 0x1u       /* transfer = sRGB rather than linear */
+#define TP_UNI_ALPHA 0x2u      /* private carrier: RGBA rather than RGB */
+#define TP_UNI_ASTC_KTX2 0x4u  /* standard ASTC 4x4 KTX2 carrier */
+
+/* Serialize pre-encoded uni mip levels as KTX2. By default this writes the
+ * TinyEXR-private carrier (vkFormat = UNDEFINED): the reader reports is_uni = 1
+ * and callers use tc_uni_transcode_{bc7,bc1,astc,etc2} or
+ * tc_uni_decompress_rgba8. It must not be passed to a Basis UASTC consumer.
+ *
+ * With TP_UNI_ASTC_KTX2, the writer emits a standard ASTC 4x4 VkFormat and DFD.
+ * External KTX2 consumers can then upload/decode it as ASTC; texpipe's reader
+ * reports codec = TP_CODEC_ASTC and is_uni = 0. `uni_levels[l]`/`uni_sizes[l]`
+ * are the level-l bytes from tc_uni_compress_rgba8, level 0 = largest.
+ *
+ * Only the base dimensions are used: every other level's size is derived as
+ * max(1, base >> l), which is how the reader re-derives them, so uni_sizes[l]
+ * must be exactly the 4x4x16B block payload for that level. num_levels may not
+ * exceed the pyramid base_w x base_h actually has, and neither dimension may
+ * exceed TP_KTX2_MAX_DIM -- the reader refuses all of these, so writing one
+ * would only produce a file that cannot be read back.
+ *
  * tp_ktx2_uni_size returns the required output size, or 0 if num_levels is out
  * of range or the level sizes would overflow the layout. */
 size_t tp_ktx2_uni_size(const size_t *uni_sizes, int num_levels);
+tp_result tp_ktx2_write_uni_ex(const uint8_t *const *uni_levels,
+                               const size_t *uni_sizes, uint32_t base_w,
+                               uint32_t base_h, int num_levels, uint32_t flags,
+                               uint8_t *out, size_t out_size, size_t *written);
+
+/* The pre-flags form, kept so existing callers keep compiling. Equivalent to
+ * tp_ktx2_write_uni_ex(..., level_w[0], level_h[0], num_levels, 0, ...): only
+ * element [0] of level_w/level_h was ever read, and flags = 0 means the DFD says
+ * linear, no alpha -- what this function always emitted.
+ *
+ * Prefer tp_ktx2_write_uni_ex so colour/alpha metadata can be supplied, or so
+ * TP_UNI_ASTC_KTX2 can request the interoperable standard ASTC carrier. */
 tp_result tp_ktx2_write_uni(const uint8_t *const *uni_levels,
                             const size_t *uni_sizes, const uint32_t *level_w,
                             const uint32_t *level_h, int num_levels,
@@ -394,26 +427,21 @@ typedef size_t (*tp_zstd_bound_fn)(void *user, size_t src_size);
 typedef size_t (*tp_zstd_compress_fn)(void *user, uint8_t *dst, size_t dst_cap,
                                       const uint8_t *src, size_t src_size);
 
-/* tp_ktx2_write_uni, but Zstd-supercompressed (supercompressionScheme = 2) --
- * the form real KTX2/UASTC assets ship in on disk (block data typically packs to
- * a fraction of its raw size). Each level is compressed independently so a reader
- * can inflate them one at a time; read it back with tp_ktx2_read_zstd.
+/* tp_ktx2_write_uni_ex, but Zstd-supercompressed
+ * (supercompressionScheme = 2). Each level is compressed independently so a
+ * reader can inflate them one at a time; read it back with tp_ktx2_read_zstd.
  *
  * The output size is not known until the levels are compressed, so unlike
  * tp_ktx2_write_uni the buffer is *allocated* with `a` (NULL = malloc) and
  * returned via *out / *out_size; release it with tp_free(a, *out). On failure
  * *out / *out_size are cleared to NULL / 0.
  *
- * Level rules match tp_ktx2_write_uni: only level_w[0] / level_h[0] reach the
- * header, levels 1.. must be the standard halving pyramid, and uni_sizes[l] must
- * be the exact block payload for level l (the reader pins uncompressedByteLength
- * to it). */
+ * Level, dimension and flag rules are exactly tp_ktx2_write_uni's. */
 tp_result tp_ktx2_write_uni_zstd(const tir_allocator *a, tp_zstd_bound_fn zbound,
                                  tp_zstd_compress_fn zenc, void *user,
                                  const uint8_t *const *uni_levels,
-                                 const size_t *uni_sizes,
-                                 const uint32_t *level_w,
-                                 const uint32_t *level_h, int num_levels,
+                                 const size_t *uni_sizes, uint32_t base_w,
+                                 uint32_t base_h, int num_levels, uint32_t flags,
                                  uint8_t **out, size_t *out_size);
 
 /* ===========================================================================

@@ -1277,7 +1277,8 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   // Sets 7 & 8: per-mesh GPU blendshape morph delta + coefficient SSBOs.
   // Set 9: per-mesh per-entry channelId SSBO (active-channel skip pre-check).
   // Sets 10-12: preview-shading metal/roughness, emissive and normal textures.
-  // Sets 13-20: sparse UDIM array/LUT pairs for base, MR, normal and emissive.
+  // Sets 13-19: base array, shared UDIM LUT atlas, MR/normal/emissive arrays,
+  // opacity 2D, and opacity array. Set 20 is retained as an ABI-reserved slot.
   // Sets 21-23: DomeLight IBL (irradiance cube, prefiltered cube, BRDF LUT).
   // Set 24: per-vertex displayColor SSBO (vertex stage; dummy when absent).
   VkDescriptorSetLayout setLayouts[25] = {texSetLayout_, skinSetLayout_,
@@ -1636,13 +1637,13 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
 
   // binding 0 = DrawVertex (vertex-rate); 1 = per-instance 3x4 o2w (instance-rate,
   // 48B); 2 = per-instance RGBA color/opacity (instance-rate, 16B); 3 = per-vertex prototype
-  // color (vertex-rate, 12B); 4 = per-vertex morph (offset,count) (vertex-rate,
+  // color/opacity (vertex-rate, 16B); 4 = per-vertex morph (offset,count) (vertex-rate,
   // 8B). Instance rows sit at locations 3/4/5 so location 8 carries the morph CSR.
   VkVertexInputBindingDescription bind[5]{};
   bind[0] = {0, sizeof(DrawVertex), VK_VERTEX_INPUT_RATE_VERTEX};
   bind[1] = {1, 12 * sizeof(float), VK_VERTEX_INPUT_RATE_INSTANCE};
   bind[2] = {2, 4 * sizeof(float), VK_VERTEX_INPUT_RATE_INSTANCE};
-  bind[3] = {3, 3 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX};
+  bind[3] = {3, 4 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX};
   bind[4] = {4, 2 * sizeof(uint32_t), VK_VERTEX_INPUT_RATE_VERTEX};
   VkVertexInputAttributeDescription attrs[8]{};
   attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                   // aPos
@@ -1651,7 +1652,7 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
   attrs[3] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 4 * sizeof(float)};  // aRow1
   attrs[4] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 8 * sizeof(float)};  // aRow2
   attrs[5] = {9, 2, VK_FORMAT_R32G32B32A32_SFLOAT, 0};               // aInstColor
-  attrs[6] = {10, 3, VK_FORMAT_R32G32B32_SFLOAT, 0};                 // aVtxColor
+  attrs[6] = {10, 3, VK_FORMAT_R32G32B32A32_SFLOAT, 0};              // aVtxColor
   attrs[7] = {8, 4, VK_FORMAT_R32G32_UINT, 0};                       // aMorphOffsetCount
 
   VkPipelineVertexInputStateCreateInfo vin{};
@@ -3290,6 +3291,74 @@ bool VulkanRenderer::createUdimLookupImage(const DrawTextureCPU& tex,
   return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
 }
 
+bool VulkanRenderer::createUdimLookupAtlas(int rows) {
+  rows = std::max(rows, 1);
+  light3d::Image atlas;
+  atlas.width = 100;
+  atlas.height = rows;
+  atlas.channels = 4;
+  atlas.data.assign(static_cast<size_t>(100 * rows * 4), 0);
+  for (size_t i = 3; i < atlas.data.size(); i += 4) atlas.data[i] = 255;
+  if (!createTextureImage(atlas, &udimLutAtlasImg_, &udimLutAtlasMem_,
+                          &udimLutAtlasView_)) {
+    return false;
+  }
+  udimLutAtlasRows_ = rows;
+  return true;
+}
+
+bool VulkanRenderer::updateUdimLookupAtlasRow(int row,
+                                               const DrawTextureCPU& tex) {
+  if (!udimLutAtlasImg_ || row < 0 || row >= udimLutAtlasRows_) return false;
+  std::array<uint8_t, 100 * 4> rgba{};
+  for (int i = 0; i < 100; ++i) {
+    const int layer = tex.udimLayer[static_cast<size_t>(i)];
+    rgba[static_cast<size_t>(i) * 4] =
+        static_cast<uint8_t>(layer >= 0 ? std::min(layer + 1, 255) : 0);
+    rgba[static_cast<size_t>(i) * 4 + 3] = 255;
+  }
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(sizeof(rgba), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                        rgba.data(), &staging, &stagingMem)) return false;
+
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = udimLutAtlasImg_;
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.layerCount = 1;
+  toDst.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                       1, &toDst);
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageOffset = {0, row, 0};
+  region.imageExtent = {100u, 1u, 1u};
+  vkCmdCopyBufferToImage(cb, staging, udimLutAtlasImg_,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
+  endOneShot(cb);
+  vkDestroyBuffer(device_, staging, nullptr);
+  vkFreeMemory(device_, stagingMem, nullptr);
+  return true;
+}
+
 bool VulkanRenderer::createRgba32fTextureImage(int width, int height,
                                                const float* data,
                                                VkImage* outImg,
@@ -4165,8 +4234,15 @@ void VulkanRenderer::destroyScene() {
   texMems_.clear();
   texDescs_.clear();
   texUdimArrayDescs_.clear();
-  texUdimLutDescs_.clear();
   texIsUdim_.clear();
+  if (udimLutAtlasView_) vkDestroyImageView(device_, udimLutAtlasView_, nullptr);
+  if (udimLutAtlasImg_) vkDestroyImage(device_, udimLutAtlasImg_, nullptr);
+  if (udimLutAtlasMem_) vkFreeMemory(device_, udimLutAtlasMem_, nullptr);
+  udimLutAtlasView_ = VK_NULL_HANDLE;
+  udimLutAtlasImg_ = VK_NULL_HANDLE;
+  udimLutAtlasMem_ = VK_NULL_HANDLE;
+  udimLutAtlasDesc_ = VK_NULL_HANDLE;
+  udimLutAtlasRows_ = 0;
   // Free all per-texture descriptor sets (incl. whiteDesc_) in one shot.
   if (texPool_) vkResetDescriptorPool(device_, texPool_, 0);
   if (influencePool_) vkResetDescriptorPool(device_, influencePool_, 0);
@@ -4206,9 +4282,10 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   texDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, whiteDesc_);
   texUdimArrayDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
                             dummyArrayDesc_);
-  texUdimLutDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-                          dummyLutDesc_);
   texIsUdim_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
+  if (createUdimLookupAtlas(textureCount))
+    udimLutAtlasDesc_ = allocTexDescriptor(udimLutAtlasView_);
+  if (!udimLutAtlasDesc_) udimLutAtlasDesc_ = dummyLutDesc_;
 
   // RT materials SSBO: 3 vec4 (12 floats) per material -- baseColor.rgb+alpha,
   // (metallic, roughness, alphaMode, alphaCutoff), emissive.rgb+0. The raster
@@ -4220,6 +4297,7 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   matMetalRoughTex_.resize(materials.size());
   matNormalTex_.resize(materials.size());
   matEmissiveTex_.resize(materials.size());
+  matOpacityTex_.resize(materials.size());
   matDispTex_.resize(materials.size());
   matDispConst_.resize(materials.size());
   for (size_t i = 0; i < materials.size(); ++i) {
@@ -4240,6 +4318,7 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     matMetalRoughTex_[i] = materials[i].metalRoughTex;
     matNormalTex_[i] = materials[i].normalTex;
     matEmissiveTex_[i] = materials[i].emissiveTex;
+    matOpacityTex_[i] = materials[i].opacityTex;
     matDispTex_[i] = materials[i].displacementTex;
     matDispConst_[i] = materials[i].displacementConst;
     // Per-material texture sampling params -> set 6 SSBO.
@@ -4335,32 +4414,21 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     texViews_.push_back(view);
     texDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(view);
   }
-  if (t.isUdim && static_cast<size_t>(slot) < texUdimArrayDescs_.size() &&
-      static_cast<size_t>(slot) < texUdimLutDescs_.size()) {
+  if (t.isUdim && static_cast<size_t>(slot) < texUdimArrayDescs_.size()) {
     VkImage arrImg = VK_NULL_HANDLE;
     VkDeviceMemory arrMem = VK_NULL_HANDLE;
     VkImageView arrView = VK_NULL_HANDLE;
-    VkImage lutImg = VK_NULL_HANDLE;
-    VkDeviceMemory lutMem = VK_NULL_HANDLE;
-    VkImageView lutView = VK_NULL_HANDLE;
     if (createUdimTextureArrayImage(t, &arrImg, &arrMem, &arrView) &&
-        createUdimLookupImage(t, &lutImg, &lutMem, &lutView)) {
+        updateUdimLookupAtlasRow(slot, t)) {
       texImgs_.push_back(arrImg);
       texMems_.push_back(arrMem);
       texViews_.push_back(arrView);
-      texImgs_.push_back(lutImg);
-      texMems_.push_back(lutMem);
-      texViews_.push_back(lutView);
       texUdimArrayDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(arrView);
-      texUdimLutDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(lutView);
       texIsUdim_[static_cast<size_t>(slot)] = 1;
     } else {
       if (arrView) vkDestroyImageView(device_, arrView, nullptr);
       if (arrImg) vkDestroyImage(device_, arrImg, nullptr);
       if (arrMem) vkFreeMemory(device_, arrMem, nullptr);
-      if (lutView) vkDestroyImageView(device_, lutView, nullptr);
-      if (lutImg) vkDestroyImage(device_, lutImg, nullptr);
-      if (lutMem) vkFreeMemory(device_, lutMem, nullptr);
     }
   }
 }
@@ -4717,18 +4785,29 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   if (gm.faceDesc == VK_NULL_HANDLE) gm.faceDesc = dummyFaceDesc_;
 
-  // Per-vertex displayColor (packed vec3[]) as an SSBO, only when per-vertex
+  // Per-vertex displayColor + displayOpacity (packed vec4[]) as an SSBO.
   // aligned (matches the GL attrib-9 path). The RASTER mesh vertex shader
   // fetches it by gl_VertexIndex through set 24 (vtxColorDesc, flag-gated); the
   // RT path additionally takes its device address below. Created regardless of
   // RT support so vertex-painted meshes color correctly on raster-only devices.
-  if (sm.vertexColors.size() == sm.vertices.size() * 3 && !sm.vertexColors.empty()) {
-    if (createHostBuffer(sm.vertexColors.size() * sizeof(float),
-                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sm.vertexColors.data(),
+  const bool hasVtxColor = sm.vertexColors.size() == sm.vertices.size() * 3;
+  const bool hasVtxAlpha = sm.vertexAlpha.size() == sm.vertices.size();
+  if ((hasVtxColor || hasVtxAlpha) && !sm.vertices.empty()) {
+    std::vector<float> rgba(sm.vertices.size() * 4, 1.0f);
+    for (size_t i = 0; i < sm.vertices.size(); ++i) {
+      if (hasVtxColor) {
+        rgba[i * 4 + 0] = sm.vertexColors[i * 3 + 0];
+        rgba[i * 4 + 1] = sm.vertexColors[i * 3 + 1];
+        rgba[i * 4 + 2] = sm.vertexColors[i * 3 + 2];
+      }
+      if (hasVtxAlpha) rgba[i * 4 + 3] = sm.vertexAlpha[i];
+    }
+    if (createHostBuffer(rgba.size() * sizeof(float),
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, rgba.data(),
                          &gm.vtxColorBuf, &gm.vtxColorMem,
                          /*deviceAddress=*/rtSupported_, pool)) {
       gm.vtxColorDesc = allocMorphDescriptor(
-          gm.vtxColorBuf, sm.vertexColors.size() * sizeof(float));
+          gm.vtxColorBuf, rgba.size() * sizeof(float));
     }
   }
 
@@ -4820,9 +4899,19 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       }
     }
     // Per-vertex prototype color (binding 3; white when the prototype has none).
-    std::vector<float> vcol = sm.vertexColors;
-    if (vcol.size() != sm.vertices.size() * 3)
-      vcol.assign(sm.vertices.size() * 3, 1.0f);
+    std::vector<float> vcol(sm.vertices.size() * 4, 1.0f);
+    for (size_t k = 0; k < sm.vertices.size(); ++k) {
+      if (hasVtxColor) {
+        vcol[k * 4 + 0] = sm.vertexColors[k * 3 + 0];
+        vcol[k * 4 + 1] = sm.vertexColors[k * 3 + 1];
+        vcol[k * 4 + 2] = sm.vertexColors[k * 3 + 2];
+      }
+      if (hasVtxAlpha) {
+        vcol[k * 4 + 3] = sm.vertexAlpha[k];
+        if (sm.vertexAlpha[k] < 1.0f - 1.0e-6f)
+          gm.hasTranslucentInstances = true;
+      }
+    }
 
     // MDI-eligible (device supports it, non-morph prototype): stage this mesh's
     // geometry + instances into the shared buffers instead of allocating per-mesh.
@@ -7112,12 +7201,6 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           }
           return dummyArrayDesc_;
         };
-        auto udimLutDesc = [&](int slot) -> VkDescriptorSet {
-          if (slot >= 0 && static_cast<size_t>(slot) < texUdimLutDescs_.size()) {
-            return texUdimLutDescs_[static_cast<size_t>(slot)];
-          }
-          return dummyLutDesc_;
-        };
         auto isUdimSlot = [&](int slot) -> bool {
           return slot >= 0 && static_cast<size_t>(slot) < texIsUdim_.size() &&
                  texIsUdim_[static_cast<size_t>(slot)] != 0;
@@ -7126,6 +7209,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         const int mrSlot = materialTexSlot(matMetalRoughTex_);
         const int emSlot = materialTexSlot(matEmissiveTex_);
         const int nmSlot = materialTexSlot(matNormalTex_);
+        const int opSlot = materialTexSlot(matOpacityTex_);
 
         // Bind the submesh's base-color texture (white if untextured).
         VkDescriptorSet ds = textureDesc(baseSlot, whiteDesc_);
@@ -7148,12 +7232,12 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                                   12, 1, &nmDs, 0, nullptr);
         }
-        VkDescriptorSet udimSets[8] = {udimArrayDesc(baseSlot), udimLutDesc(baseSlot),
-                                       udimArrayDesc(mrSlot),   udimLutDesc(mrSlot),
-                                       udimArrayDesc(nmSlot),   udimLutDesc(nmSlot),
-                                       udimArrayDesc(emSlot),   udimLutDesc(emSlot)};
-        for (uint32_t si = 0; si < 8; ++si) {
-          if (udimSets[si] != VK_NULL_HANDLE) {
+        VkDescriptorSet udimSets[7] = {
+            udimArrayDesc(baseSlot), udimLutAtlasDesc_, udimArrayDesc(mrSlot),
+            udimArrayDesc(nmSlot), udimArrayDesc(emSlot),
+            textureDesc(opSlot, whiteDesc_), udimArrayDesc(opSlot)};
+        for (uint32_t si = 0; si < 7; ++si) {
+          if (udimSets[si]) {
             vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     pipelineLayout_, 13 + si, 1, &udimSets[si],
                                     0, nullptr);
@@ -7218,8 +7302,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         if (isUdimSlot(nmSlot)) pc.ids[3] |= 4;
         if (isUdimSlot(emSlot)) pc.ids[3] |= 8;
         if (nmSlot >= 0) pc.ids[3] |= 16;
-        // bit 32: per-vertex displayColor present (set-24 SSBO is real, not dummy).
+        // bit 32: per-vertex displayColor/displayOpacity RGBA stream present.
         if (mesh.vtxColorDesc != VK_NULL_HANDLE) pc.ids[3] |= 32;
+        if (opSlot >= 0) pc.ids[3] |= 64;
+        if (isUdimSlot(opSlot)) pc.ids[3] |= 128;
         vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(PushC), &pc);
         // GPU tessellation for displaced meshes in Shaded mode when the slider
         // asks for it: bind the PATCH-list tess pipeline for this draw, then
@@ -7227,7 +7313,9 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         // stage applies the blendshape morph + skinning, so morphed and/or
         // skinned meshes tessellate too.
         const bool useTess = displaced && tessPipeline_ != VK_NULL_HANDLE &&
-                             maxTessLevel_ > 1 && rtMode_ == 0 && apass == 0;
+                             maxTessLevel_ > 1 && rtMode_ == 0 && apass == 0 &&
+                             pc.matAux[2] < 0.5f && opSlot < 0 &&
+                             mesh.vtxColorDesc == VK_NULL_HANDLE;
         if (useTess) {
           vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, tessPipeline_);
           vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);

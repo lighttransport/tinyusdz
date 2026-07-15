@@ -192,7 +192,7 @@ layout(location = 5) in uvec2 aInfluence;
 layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV; default 0)
 layout(location = 7) in float aMorphInfl; // blendshape influence magnitude (default 0)
 layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); default 0
-layout(location = 9) in vec3 aColor;  // per-vertex displayColor (default white)
+layout(location = 9) in vec4 aColor;  // displayColor.rgb + displayOpacity (default 1)
 
 uniform mat4 uModelViewProj;
 uniform mat4 uModel;
@@ -229,7 +229,7 @@ uniform usamplerBuffer uMorphChanTex;
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
-out vec3 vColor;
+out vec4 vColor;
 flat out int vDomJoint;    // dominant skin joint (SkinWeights AOV); -1 = unskinned
 out float vDomWeight;      // its weight
 out vec2 vUV1;             // 2nd texcoord set (multi-UV AOV)
@@ -334,7 +334,7 @@ const char* getMaterialFragmentShaderGL330() {
 in vec3 vWorldPos;
 in vec3 vNormal;
 in vec2 vUV;
-in vec3 vColor;
+in vec4 vColor;
 flat in int vDomJoint;   // dominant skin joint (SkinWeights AOV)
 in float vDomWeight;
 in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
@@ -375,24 +375,30 @@ uniform int uPrefilteredLods;
 // Texture samplers
 uniform sampler2D uBaseColorTex;
 uniform sampler2DArray uBaseColorUdimTex;
-uniform isampler1D uBaseColorUdimLut;
 uniform bool uHasBaseColorTex;
 uniform bool uBaseColorTexIsUdim;
 uniform sampler2D uMetalRoughTex;
 uniform sampler2DArray uMetalRoughUdimTex;
-uniform isampler1D uMetalRoughUdimLut;
 uniform bool uHasMetalRoughTex;
 uniform bool uMetalRoughTexIsUdim;
 uniform sampler2D uNormalTex;
 uniform sampler2DArray uNormalUdimTex;
-uniform isampler1D uNormalUdimLut;
 uniform bool uHasNormalTex;
 uniform bool uNormalTexIsUdim;
 uniform sampler2D uEmissiveTex;
 uniform sampler2DArray uEmissiveUdimTex;
-uniform isampler1D uEmissiveUdimLut;
 uniform bool uHasEmissiveTex;
 uniform bool uEmissiveTexIsUdim;
+uniform sampler2D uOpacityTex;
+uniform sampler2DArray uOpacityUdimTex;
+uniform bool uHasOpacityTex;
+uniform bool uOpacityTexIsUdim;
+// One scene-wide 100 x texture-count atlas. Each row maps UDIM 1001..1100 to
+// an array layer; -1 means the tile is absent. Consolidating four independent
+// LUT samplers avoids the GL 3.3 fragment-sampler ceiling.
+uniform isampler2D uUdimLutAtlas;
+uniform ivec4 uUdimSlots;  // base, metal/rough, normal, emissive texture rows
+uniform int uOpacityUdimSlot;
 // Per-slot UV set: 0 = vUV (texcoords_0), 1 = vUV1 (texcoords_1).
 // x = base color, y = metal/rough, z = normal, w = emissive.
 uniform ivec4 uUvSet;
@@ -404,6 +410,8 @@ uniform vec3 uNormalUv0;
 uniform vec3 uNormalUv1;
 uniform vec3 uEmissiveUv0;
 uniform vec3 uEmissiveUv1;
+uniform vec3 uOpacityUv0;
+uniform vec3 uOpacityUv1;
 uniform vec4 uBaseColorTexScale;
 uniform vec4 uBaseColorTexBias;
 uniform vec4 uNormalTexScale;
@@ -416,6 +424,10 @@ uniform float uMetallicTexScale;
 uniform float uMetallicTexBias;
 uniform float uRoughnessTexScale;
 uniform float uRoughnessTexBias;
+uniform int uOpacityUvSet;
+uniform int uOpacityChannel;
+uniform float uOpacityTexScale;
+uniform float uOpacityTexBias;
 
 out vec4 fragColor;
 
@@ -456,15 +468,15 @@ vec3 kindColor(int k) {
     return vec3(0.35);                         // no kind: dark gray
 }
 
-vec4 sampleUdim(sampler2DArray tex, isampler1D lut, vec2 uv) {
+vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
     ivec2 tile = ivec2(floor(uv));
     int idx = tile.x + tile.y * 10;
     if (idx < 0 || idx >= 100) {
-        return vec4(1.0, 0.0, 1.0, 1.0);
+        return missing;
     }
-    int layer = texelFetch(lut, idx, 0).r;
+    int layer = texelFetch(uUdimLutAtlas, ivec2(idx, slot), 0).r;
     if (layer < 0) {
-        return vec4(1.0, 0.0, 1.0, 1.0);
+        return missing;
     }
     return texture(tex, vec3(fract(uv), float(layer)));
 }
@@ -502,16 +514,17 @@ float channelOf(vec4 c, int ch) {
 }
 
 void main() {
-    vec3 baseColor = uBaseColor * vColor;  // vColor defaults to white
+    vec3 baseColor = uBaseColor * vColor.rgb;  // vColor defaults to white
     float metallic = uMetallic;
     float roughness = uRoughness;
     vec3 emissive = uEmissive;
-    float opacity = clamp(uAlpha, 0.0, 1.0);
+    float opacity = clamp(uAlpha * vColor.a, 0.0, 1.0);
 
     if (uHasBaseColorTex) {
         vec2 uv = xformUv(uUvSet.x == 1 ? vUV1 : vUV, uBaseColorUv0, uBaseColorUv1);
         vec4 texel = uBaseColorTexIsUdim
-                         ? sampleUdim(uBaseColorUdimTex, uBaseColorUdimLut, uv)
+                         ? sampleUdim(uBaseColorUdimTex, uUdimSlots.x, uv,
+                                      vec4(1.0, 0.0, 1.0, 1.0))
                          : texture(uBaseColorTex, uv);
         vec4 sample = texel * uBaseColorTexScale + uBaseColorTexBias;
         baseColor *= sample.rgb;
@@ -520,7 +533,8 @@ void main() {
     if (uHasMetalRoughTex) {
         vec2 uv = xformUv(uUvSet.y == 1 ? vUV1 : vUV, uMetalRoughUv0, uMetalRoughUv1);
         vec4 mr = uMetalRoughTexIsUdim
-                      ? sampleUdim(uMetalRoughUdimTex, uMetalRoughUdimLut, uv)
+                      ? sampleUdim(uMetalRoughUdimTex, uUdimSlots.y, uv,
+                                   vec4(1.0, 0.0, 1.0, 1.0))
                       : texture(uMetalRoughTex, uv);
         roughness *= channelOf(mr, uRoughnessChannel) * uRoughnessTexScale + uRoughnessTexBias;
         metallic *= channelOf(mr, uMetallicChannel) * uMetallicTexScale + uMetallicTexBias;
@@ -528,7 +542,8 @@ void main() {
     if (uHasEmissiveTex) {
         vec2 uv = xformUv(uUvSet.w == 1 ? vUV1 : vUV, uEmissiveUv0, uEmissiveUv1);
         vec4 texel = uEmissiveTexIsUdim
-                         ? sampleUdim(uEmissiveUdimTex, uEmissiveUdimLut, uv)
+                         ? sampleUdim(uEmissiveUdimTex, uUdimSlots.w, uv,
+                                      vec4(1.0, 0.0, 1.0, 1.0))
                          : texture(uEmissiveTex, uv);
         emissive *= (texel * uEmissiveTexScale + uEmissiveTexBias).rgb;
     }
@@ -539,7 +554,8 @@ void main() {
     if (uHasNormalTex) {
         vec2 uv = xformUv(uUvSet.z == 1 ? vUV1 : vUV, uNormalUv0, uNormalUv1);
         vec3 tangentNormal = ((uNormalTexIsUdim
-                                  ? sampleUdim(uNormalUdimTex, uNormalUdimLut, uv)
+                                  ? sampleUdim(uNormalUdimTex, uUdimSlots.z, uv,
+                                               vec4(0.5, 0.5, 1.0, 1.0))
                                   : texture(uNormalTex, uv)) * uNormalTexScale +
                               uNormalTexBias).xyz;
         // Full derivative TBN (unified with the Vulkan backend). The old
@@ -558,6 +574,17 @@ void main() {
         vec3 b = normalize(cross(N, t)) * (r < 0.0 ? -1.0 : 1.0);
         N = normalize(mat3(t, b, N) * tangentNormal);
     }
+    if (uHasOpacityTex) {
+        vec2 uv = xformUv(uOpacityUvSet == 1 ? vUV1 : vUV,
+                          uOpacityUv0, uOpacityUv1);
+        // Missing opacity UDIM tiles are opaque, not magenta/channel-dependent.
+        vec4 ot = uOpacityTexIsUdim
+                      ? sampleUdim(uOpacityUdimTex, uOpacityUdimSlot, uv, vec4(1.0))
+                      : texture(uOpacityTex, uv);
+        opacity *= clamp(channelOf(ot, uOpacityChannel) * uOpacityTexScale +
+                         uOpacityTexBias, 0.0, 1.0);
+    }
+    opacity = clamp(opacity, 0.0, 1.0);
     if (uAlphaMode == 1) {
         opacity = (opacity >= uAlphaCutoff) ? 1.0 : 0.0;
     }

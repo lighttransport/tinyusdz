@@ -101,6 +101,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   if (m.vertices.empty() || m.indices.empty()) return mb;
   const bool instanced = m.instanceCount() > 0;
   const bool hasVtxCol = m.vertexColors.size() == m.vertices.size() * 3;
+  const bool hasVtxAlpha = m.vertexAlpha.size() == m.vertices.size();
   const bool hasUV1 = m.uv1.size() == m.vertices.size() * 2;
   const bool hasInfl = m.morphInfluence.size() == m.vertices.size();
   const bool hasSkin = m.jointIdx.size() == m.vertices.size() * 4 &&
@@ -141,7 +142,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   std::vector<uint8_t> lg, le;
   std::vector<int> lm, lf, ldomj;
   for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
-    float wp[9], wn[9], wc[9], wuv[6], wuv1[6], winfl[3], wdomw[3];
+    float wp[9], wn[9], wc[12], wuv[6], wuv1[6], winfl[3], wdomw[3];
     int domJoint = -1;
     float curTint[3] = {0.6f, 0.6f, 0.6f};
     if (instanced) {
@@ -173,9 +174,10 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
         const float* c = &m.vertexColors[vidx * 3];
         dc[0] = c[0]; dc[1] = c[1]; dc[2] = c[2];
       }
-      wc[k * 3 + 0] = curTint[0] * dc[0];
-      wc[k * 3 + 1] = curTint[1] * dc[1];
-      wc[k * 3 + 2] = curTint[2] * dc[2];
+      wc[k * 4 + 0] = curTint[0] * dc[0];
+      wc[k * 4 + 1] = curTint[1] * dc[1];
+      wc[k * 4 + 2] = curTint[2] * dc[2];
+      wc[k * 4 + 3] = hasVtxAlpha ? m.vertexAlpha[vidx] : 1.0f;
     }
     if (displacementScale != 0.0f) {
       const DrawMaterialCPU* dmat = submeshMat(static_cast<uint32_t>(t));
@@ -208,7 +210,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     }
     lt.insert(lt.end(), wp, wp + 9);
     ln.insert(ln.end(), wn, wn + 9);
-    lc.insert(lc.end(), wc, wc + 9);
+    lc.insert(lc.end(), wc, wc + 12);
     luv.insert(luv.end(), wuv, wuv + 6);
     luv1.insert(luv1.end(), wuv1, wuv1 + 6);
     linfl.insert(linfl.end(), winfl, winfl + 3);
@@ -252,7 +254,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   BuildBvh(mb.blas, bidx, 0, static_cast<int>(ltc), cent, lt);
 
   // Emit per-tri arrays in BVH leaf order (so the local blas leaf refs are valid).
-  mb.tris.reserve(ltc * 9); mb.nrms.reserve(ltc * 9); mb.cols.reserve(ltc * 9);
+  mb.tris.reserve(ltc * 9); mb.nrms.reserve(ltc * 9); mb.cols.reserve(ltc * 12);
   mb.uv.reserve(ltc * 6); mb.uv1.reserve(ltc * 6); mb.infl.reserve(ltc * 3);
   mb.domw.reserve(ltc * 3); mb.geo.reserve(ltc); mb.mat.reserve(ltc);
   mb.face.reserve(ltc); mb.domj.reserve(ltc); mb.emask.reserve(ltc);
@@ -260,7 +262,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     int s = bidx[i];
     mb.tris.insert(mb.tris.end(), &lt[s * 9], &lt[s * 9] + 9);
     mb.nrms.insert(mb.nrms.end(), &ln[s * 9], &ln[s * 9] + 9);
-    mb.cols.insert(mb.cols.end(), &lc[s * 9], &lc[s * 9] + 9);
+    mb.cols.insert(mb.cols.end(), &lc[s * 12], &lc[s * 12] + 12);
     mb.uv.insert(mb.uv.end(), &luv[s * 6], &luv[s * 6] + 6);
     mb.uv1.insert(mb.uv1.end(), &luv1[s * 6], &luv1[s * 6] + 6);
     mb.infl.insert(mb.infl.end(), &linfl[s * 3], &linfl[s * 3] + 3);

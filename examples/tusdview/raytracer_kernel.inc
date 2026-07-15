@@ -402,8 +402,9 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       F3 nl=mk(nv[0]*w0+nv[3]*bu+nv[6]*bv, nv[1]*w0+nv[4]*bu+nv[7]*bv, nv[2]*w0+nv[5]*bu+nv[8]*bv);
       N=norm3(xfNrm(I->w2o,nl));  // object->world normal (inverse-transpose)
     }
-    const float* cv=&cols[ht*9];
-    F3 base=mk(cv[0]*w0+cv[3]*bu+cv[6]*bv, cv[1]*w0+cv[4]*bu+cv[7]*bv, cv[2]*w0+cv[5]*bu+cv[8]*bv);
+    const float* cv=&cols[ht*12];
+    F3 base=mk(cv[0]*w0+cv[4]*bu+cv[8]*bv, cv[1]*w0+cv[5]*bu+cv[9]*bv, cv[2]*w0+cv[6]*bu+cv[10]*bv);
+    float vertexOpacity=cv[3]*w0+cv[7]*bu+cv[11]*bv;
     base=mk(base.x*I->tint[0], base.y*I->tint[1], base.z*I->tint[2]);  // per-instance tint
     const float* uvh=&uvs[ht*6];
     float uu=uvh[0]*w0+uvh[2]*bu+uvh[4]*bv;
@@ -453,11 +454,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     roughness=fminf(fmaxf(roughness*(channel4(mrt,roughCh)*roughS+roughB),0.f),1.f);
     metallic=fminf(fmaxf(metallic*(channel4(mrt,metalCh)*metalS+metalB),0.f),1.f);
     opacity=fminf(fmaxf(opacity*bt4.w,0.f),1.f);
-    float materialOpacity=opacity;
+    float materialOpacity=fminf(fmaxf(opacity*vertexOpacity*I->tint[3],0.f),1.f);
     if (alphaMode > 0.5f && alphaMode < 1.5f) {
-      materialOpacity=(opacity >= alphaCutoff) ? 1.f : 0.f;
+      materialOpacity=(materialOpacity >= alphaCutoff) ? 1.f : 0.f;
     }
-    materialOpacity=fminf(fmaxf(materialOpacity*I->tint[3],0.f),1.f);
     if (I->tint[3] < 1.f && materialOpacity > 0.f) alphaMode=2.f;
     if (normalTex>=0) {
       F4 nt=sampleTexRGBA(texels,textures,numTextures,normalTex,nuu,nvv);
