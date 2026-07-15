@@ -1304,8 +1304,32 @@
   std::vector<Src> SourcesForRelocatedContent(
       const Src &ps, const StackRelocates::Arrival &arrival,
       const std::string &child_composed, std::string *warn, std::string *err) {
-    (void)child_composed;
-    return SourcesForRelocateSource(ps.stack_idx, arrival.src_site, warn, err);
+    std::vector<Src> out;
+    // ISOLATED branch (current behavior): resolve the source in the relocating
+    // stack's OWN namespace, then compose `outer` -- ps's mapping to root plus
+    // the src_site -> child_composed redirect rename -- on top of each content
+    // source's own map. Offsets compose under ps; a source arriving as a Root
+    // opinion becomes a Relocate; the relocation source's own raw-site opinions
+    // are salted (suppress_site_specs).
+    NamespaceMapping outer = Mapping(ps.map_idx);
+    outer.AddRename(arrival.src_site, child_composed);
+    const std::vector<Src> &content =
+        SourcesForRelocateSource(ps.stack_idx, arrival.src_site, warn, err);
+    out.reserve(content.size());
+    for (const Src &s : content) {
+      Src c = s;
+      if (c.stack_idx == ps.stack_idx && c.arc_kind == ArcType::Root &&
+          c.site == arrival.src_site) {
+        c.suppress_site_specs = true;
+      }
+      c.map_idx =
+          InternMapping(NamespaceMapping::Compose(outer, Mapping(s.map_idx)));
+      c.offset = ps.offset.Compose(s.offset);
+      if (!c.expression_variables) c.expression_variables = ps.expression_variables;
+      if (c.arc_kind == ArcType::Root) c.arc_kind = ArcType::Relocate;
+      out.push_back(std::move(c));
+    }
+    return out;
   }
 
   // Graft a prim a relocate moved INTO this parent: the opinions authored AT the
@@ -1349,27 +1373,12 @@
     dst.ancestral = true;  // child derivation, like DeriveChildSources
     base->push_back(std::move(dst));
 
-    const NamespaceMapping outer = renamed_map(arrival.src_site);
-    const std::vector<Src> content =
+    // Relocated content, already in final composed form (see
+    // SourcesForRelocatedContent). Deferred below arrival-local dst opinions
+    // when content_out != base.
+    std::vector<Src> content =
         SourcesForRelocatedContent(ps, arrival, child_composed, warn, err);
-    for (const Src &s : content) {
-      Src c = s;
-      // Opinions authored in the RELOCATING layer stack at exactly the
-      // relocation SOURCE path are ignored by pxr ("opinions at relocation
-      // source" is a composition error; only arc-delivered content follows
-      // the move — ErrorOpinionAtRelocationSource). The Src itself stays:
-      // chained relocations derive children through this raw site.
-      if (c.stack_idx == ps.stack_idx && c.arc_kind == ArcType::Root &&
-          c.site == arrival.src_site) {
-        c.suppress_site_specs = true;
-      }
-      c.map_idx =
-          InternMapping(NamespaceMapping::Compose(outer, Mapping(s.map_idx)));
-      c.offset = ps.offset.Compose(s.offset);
-      if (!c.expression_variables) c.expression_variables = ps.expression_variables;
-      if (c.arc_kind == ArcType::Root) c.arc_kind = ArcType::Relocate;
-      content_out->push_back(std::move(c));
-    }
+    for (Src &c : content) content_out->push_back(std::move(c));
   }
 
   // Sources of the composed child `cn` (composed path `child_composed`) of a
