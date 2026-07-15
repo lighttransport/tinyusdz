@@ -323,6 +323,28 @@
     return false;
   }
 
+  // Does any STRICT ancestor of `path` in `stack` author a variantSet? Such a
+  // target's composition depends on a variant selection that may be resolved in
+  // an OUTER layer stack (a reference selects the variant): the isolated
+  // target-stack re-derive uses that stack's DEFAULT selection and grafts the
+  // wrong variant's children into the arc target (TrickyInheritsInVariants:
+  // /Model/Scope inherits /Model/Class, whose children come from /Model's
+  // variantSet — model.usd defaults complexity=low but the root selects high).
+  // Reusing the composed target instead picks up the authoritative selection.
+  bool AncestorAuthorsVariantSet(uint32_t stack,
+                                 const std::string &path) const {
+    Path cur(path);
+    for (;;) {
+      Path parent = cur.parent();
+      if (parent.is_root() || parent.empty() || parent.str() == "/") break;
+      for (const SpecRef &sr : Specs(stack, parent.str())) {
+        if (!sr.spec->meta().variantSets().empty()) return true;
+      }
+      cur = parent;
+    }
+    return false;
+  }
+
   void ProcessArc(const Src &src, const CompositionArc &arc_in, ArcType kind,
                   const ExpansionFrame *frame, std::vector<Src> *out,
                   std::vector<Src> *spec_out,
@@ -394,7 +416,8 @@
     if ((arc.is_internal || evaluated_asset_path.empty()) &&
         !arc.prim_path.empty() &&
         (Specs(src.stack_idx, arc.prim_path).empty() ||
-         PathInRelocateTarget(src.stack_idx, arc.prim_path))) {
+         PathInRelocateTarget(src.stack_idx, arc.prim_path) ||
+         AncestorAuthorsVariantSet(src.stack_idx, arc.prim_path))) {
       const std::string destination = Mapping(src.map_idx).Apply(src.site);
       const std::string composed_path = Mapping(src.map_idx).Apply(arc.prim_path);
       // A target at or under this site composes from this site -- reusing its
