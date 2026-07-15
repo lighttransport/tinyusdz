@@ -172,10 +172,18 @@ invalid -> pxr `over` (empty); next `def` + ModelChild. `BuildStackRelocates` is
 per-stack; needs to detect the source departed/relocated in a contributing stack.
 (Overlaps the chained-departure half of B / the content walk of A.)
 
-### E. Connection through inherit+relocate — 1 case
-`ErrorInvalidInstanceTargetPath` `/FaceRig/BrowRig/LBrow/...` `amount.connect`:
-residual after the local-class-arc fix; connection target mapping through the
-relocated + inherited chain.
+### E. Connection through inherit into a relocated-instance-context prim — 1 case
+`ErrorInvalidInstanceTargetPath`: the `ConnectionToLocalClass` half now MATCHES
+pxr (Instance_1/2 self-target drop works). Residual is the BrowRig half: there are
+THREE `BrowInnUDPosBrowInnUDNeg_sculpt` prims (one direct under BrowRig, one under
+the relocated `LBrow`, one under the relocated `RBrow`), each inheriting a class
+with `amount.connect`. next composes `amount.connect` ONLY on the direct one (with
+correctly-relocated targets `RBrow.InnUD`/`LBrow.InnUD` — the b2fc9a9d0 fix works
+there); the two under the relocated LBrow/RBrow instances are MISSING it entirely
+(same "opinion doesn't reach the relocated-context prim" as Classes2). Also pxr
+keeps the SELF-instance target at its PRE-relocate path (LBrow's sculpt →
+`/FaceRig/BrowRig/Anim/LBrow.InnUD`, un-relocated) while relocating the OTHER
+instance's target — the arc-origin/local-target-keep nuance shared with cluster B.
 
 ## Recommended order
 1. **A tail** (3 cases) — EXTEND the landed composed-parent branch to the
