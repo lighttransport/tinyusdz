@@ -1,12 +1,25 @@
 # Resume: `src/next` pcp composition — remaining relocate/specialize gaps
 
 Handoff for a fresh coding-agent session. The next-vs-pxr **flatten differential**
-gate is at **754 pass / 3 untagged / 0 FAIL** of 798 inputs (campaign started at
-181 listed / 597 passing). This doc lists the **3 remaining untagged cases**,
+gate is at **755 pass / 2 untagged / 0 FAIL** of 798 inputs (campaign started at
+181 listed / 597 passing). This doc lists the **2 remaining untagged cases**,
 their **precise pcp.txt-derived root causes**, what has already been tried and
 reverted, and the recommended next arc.
 
-## DESIGN-PASS STATUS (gate 754 pass / 3 untagged / 0 FAIL; 3 FIXED this arc, 3 remain — each a distinct deep redesign)
+## DESIGN-PASS STATUS (gate 755 pass / 2 untagged / 0 FAIL; 4 FIXED this arc, 2 remain — each a distinct deep redesign)
+
+- **3 `TrickySpookyVariantSelectionInClass`** — ✅ **FIXED (65272912a)**. Instance-beats-
+  class variant selection through inherit+relocate. Two coupled defects: (1) the
+  implied-class block unconditionally overwrote `sels` with the class's ancestor-stack
+  selection (SymLegRig=1Leg), clobbering the instance's stronger own selection
+  (RightLegRig=2Leg) — now read the inheriting prim's OWN selections at that ancestor
+  stack (`Specs(as, dest_in_as)`) and never let the class overwrite them; (2) with (1)
+  fixed, derived held BOTH the instance's 2Leg (arc=Variant) AND the class's default
+  1Leg (arc=Inherit, which outranks Variant) — added a post-`ProcessDeferredVariants`
+  filter in `ExpandList` that drops any source whose site bakes a `{Set=Val}` selector
+  conflicting with the finally-resolved `sels[Set]` (pxr resolves one selection per set
+  across the prim index; only fires when the set was actually re-selected).
+
 
 ### FIXED this arc
 - **1 `TrickyMultipleRelocationsAndClasses2`** — ✅ **FIXED (2ca7930f5)**. Arrival
@@ -25,29 +38,25 @@ reverted, and the recommended next arc.
   invalid → empty `over`. `SourcesForRelocatedContent` composes the source's parent and
   checks `IsDeparted(s.site, name)` for each contributing stack ≠ the relocating one.
 
-### REMAINING (3, each precisely diagnosed — see memory `aousd-pxr-diff-gates` Round 37)
-- **2 `ErrorInvalidInstanceTargetPath`** — 2-PART deep fix (CT-instrumented). next DROPS
-  `amount.connect` ENTIRELY on the LBrow/RBrow inherited-instance sculpts (class SymBrow
-  gets it fine). PART 1: the inherit source's target map (`ArcOnlyMapping`, map=11) lost
-  the general `/BrowRig=>/FaceRig/BrowRig` reference pair — `NamespaceMapping::Compose`
-  DEMOTES `intra_stack`→false when a local-class inner composes under a crosses_arc
-  reference outer (namespace-mapping.hh L196-198), so out-of-class targets strict-drop
-  (''). PART 2 (harder): the SELF-instance target `/BrowRig/Anim/LBrow.InnUD`
-  reverse-relocates to `/BrowRig/LBrow/...` = the inherited-into instance → INVALID
-  (non-invertible); pxr keeps it UN-relocated (`/FaceRig/BrowRig/Anim/LBrow.InnUD`)
-  while the OTHER-instance target relocates normally. BOTH parts needed to flip; part 1
-  risks cross-arc aliasing regressions (the demotion's original purpose).
-- **3 `TrickySpookyVariantSelectionInClass`** — 3-PART (2 verified in-place, reverted).
-  PART a (verified): instance-beats-class — in the implied-class sels block skip
-  overwriting selections the inheriting prim authors itself (`own_sels` via
-  RecordSelections on `Specs(as, dest_in_as)`); makes RightLegRig's own graft use 2Leg,
-  0 FAIL. PART b (verified): `ExpandList` gained `seed_sels`; `ComposedRelocatedContent`
-  seeds `parent_sels` (confirmed `{LegRigStyle=2Leg}`). PART c (BLOCKER, unbuilt): even
-  with a+b, RightLeg stays 1Leg because SymLegRig's 1Leg variant content is ALREADY
-  pre-composed in `parent_srcs` (SymLegRig has own root over=1Leg; RightLegRig inherits
-  it). pxr grafts only ONE variant per set (the instance's re-selection). ROOT FIX: the
-  inherit must bring SymLegRig's UN-selected variantSet, not its 1Leg-selected content,
-  so the instance re-selects. a+b verified then reverted (neither flips alone).
+### REMAINING (2, each precisely diagnosed — see memory `aousd-pxr-diff-gates` Round 37)
+- **2 `ErrorInvalidInstanceTargetPath`** — 2-to-3-PART deep fix (CT/IA-instrumented). next
+  DROPS `amount.connect` ENTIRELY on the LBrow/RBrow inherited-instance sculpts (class
+  SymBrow gets it fine). PART 1: the sculpt's connection-target map lacks the general
+  `/BrowRig=>/FaceRig/BrowRig` reference pair, so out-of-class targets strict-drop (''). 
+  IA-instrumented finding: the SymBrow-inherit ProcessArc compose #1 (into LBrow, with the
+  reference outer) DOES produce a map containing `/BrowRig=>/FaceRig/BrowRig` (intra=0), and
+  `DeriveChildSources` shares `ps.map_idx` (L1839) — yet the observed sculpt target map had
+  only the 3 SymBrow pairs. UNRESOLVED derivation discrepancy: the sculpt appears to bind a
+  DIFFERENT (reduced) interned map than compose #1 — pin this before fixing. Naive fix:
+  preserving `intra_stack` under the reference (namespace-mapping.hh L196-198) makes the
+  connect APPEAR but with WRONG ref-ns targets (`/BrowRig/Anim/...` unmapped — intra_stack
+  ApplyTarget returns identity outside the class, NOT reference-mapped); reverted. Correct
+  part 1 = ensure the sculpt's target map carries+applies the reference pairs (map through
+  the reference for out-of-class), NOT identity. PART 2 (harder): the SELF-instance target
+  `/BrowRig/Anim/LBrow.InnUD` reverse-relocates to `/BrowRig/LBrow/...` = the inherited-into
+  instance → INVALID (non-invertible); pxr keeps it UN-relocated
+  (`/FaceRig/BrowRig/Anim/LBrow.InnUD`) while the OTHER-instance target relocates normally.
+  BOTH parts needed to flip.
 - **4 `VariantSpecializesAndReferenceSurprisingBehavior`** — pcp CONFIRMS order REVERSAL:
   `/Model/Material`'s own stack has New_Shading_Variant STRONGER (myInt=1), but for the
   specialize target Model_defaultShadingVariant the prepend ref is STRONGER (myInt=0).
