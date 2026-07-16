@@ -1,12 +1,30 @@
 # Resume: `src/next` pcp composition — remaining relocate/specialize gaps
 
 Handoff for a fresh coding-agent session. The next-vs-pxr **flatten differential**
-gate is at **751 pass / 5 untagged / 0 FAIL** of 798 inputs (campaign started at
-181 listed / 597 passing). This doc lists the **5 remaining untagged cases**,
+gate is at **753 pass / 4 untagged / 0 FAIL** of 798 inputs (campaign started at
+181 listed / 597 passing). This doc lists the **4 remaining untagged cases**,
 their **precise pcp.txt-derived root causes**, what has already been tried and
 reverted, and the recommended next arc.
 
-## DESIGN-PASS STATUS (all attacked; 5 remain, each needs a substantial architectural add)
+## DESIGN-PASS STATUS (all attacked; 4 remain, each needs a substantial architectural add)
+- **6 `ErrorInvalidReferenceToRelocationSource`** — ✅ **FIXED (705230658)**. A relocate
+  whose SOURCE is a relocation source (departed) in a CONTRIBUTING REFERENCED stack
+  (not the relocating stack) is invalid → empty `over`. `SourcesForRelocatedContent`
+  (root-authored relocate) composes the source's parent and checks
+  `IsDeparted(s.site, name)` for each contributing stack ≠ the relocating one; if
+  departed, returns empty content.
+- **3 `TrickySpookyVariantSelectionInClass`** (updated) — VGR-instrumented: the LegRig
+  variantSet is grafted at `/LegRig` with `sels[LegRigStyle]` = 2Leg (RightLegRig path)
+  AND 1Leg (inherited SymLegRig path); the inherited-class (1Leg) grafted content wins
+  when it should be WEAKER than the instance's own (2Leg). It's a variant-graft
+  strength-ordering (instance vs inherited-class) issue AND the sels overwrite at ~L705
+  clobbers the instance selection; emplace didn't reach the graft's sels context and
+  broke TypicalReferenceToRiggedModel. Needs a sels-flow / graft-strength redesign.
+- **5 `RelocatePrimsWithSameName`** (updated) — now SPECIFIER-only (`def` vs `over`):
+  content is already empty, but a `def` leaks from same-stack internal-ref content
+  (`/ChainedRef_1/Child` from a different subtree). A targeted "salt same-stack
+  content NOT under the source subtree" broke 2 (TrickyMultipleRelocations4,
+  TrickySpookyInheritsInSymmetricBrowRig) and didn't fix it — needs full content-origin.
 - **1 `TrickyMultipleRelocationsAndClasses2`** — ✅ **FIXED (2ca7930f5)**. The arrival
   CONTENT walk (isolated, chained) missed the root implied-class `JointBlend` over on
   the inherited class. Fix: `FullyUnrelocate()` walks a source back through the
@@ -110,13 +128,13 @@ grep -A12 'composing </Some/Prim>' $CASE/pcp.txt
 ```
 
 ### Hard regression bar (every commit)
-751 pass / 0 FAIL flatten, supplemental 138, build-next 36/36, main 37/37,
+753 pass / 0 FAIL flatten, supplemental 138, build-next 36/36, main 37/37,
 roundtrip 222/1. **Any net regression that can't be reconciled against `pcp.txt`
 = revert that step.** Prune newly-passing entries from
 `tests/next/next-pxr-flatten-xfail.txt`; keep `INTENTIONAL:`/`ORACLE-` tagged
 lines verbatim.
 
-## The 5 remaining cases, grouped by root cause
+## The 4 remaining cases, grouped by root cause
 
 ### A. Context-lost relocate-source resolution — 2 cases REMAIN (was 5; 3 FIXED)
 Fixed: `TrickyRelocationOfPrimFromVariant` + `TrickyInheritsAndRelocates5`
@@ -261,7 +279,7 @@ implied-class chain order (`8d27a577d`). See `git log` and memory for details.
 > breaking the fall-back canaries listed in §A. The A/B Src-list equivalence harness
 > (compute Isolated- vs Composed-RelocatedContent, diff to stderr) is the debugging
 > aid — re-add it temporarily behind a compile flag. Model every change against the
-> per-case `pcp.txt` prim stack. Hard bar: 751 pass / 0 FAIL flatten, supplemental
+> per-case `pcp.txt` prim stack. Hard bar: 753 pass / 0 FAIL flatten, supplemental
 > 138, build-next 36/36, main 37/37, roundtrip 222/1 — revert anything that can't
 > be reconciled. Commit per case with the gate green; prune passing entries from
 > `tests/next/next-pxr-flatten-xfail.txt`.
