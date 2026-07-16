@@ -6,55 +6,53 @@ gate is at **754 pass / 3 untagged / 0 FAIL** of 798 inputs (campaign started at
 their **precise pcp.txt-derived root causes**, what has already been tried and
 reverted, and the recommended next arc.
 
-## DESIGN-PASS STATUS (all attacked; 4 remain, each needs a substantial architectural add)
+## DESIGN-PASS STATUS (gate 754 pass / 3 untagged / 0 FAIL; 3 FIXED this arc, 3 remain — each a distinct deep redesign)
+
+### FIXED this arc
+- **1 `TrickyMultipleRelocationsAndClasses2`** — ✅ **FIXED (2ca7930f5)**. Arrival
+  CONTENT walk (isolated, chained) missed the root implied-class `JointBlend` over.
+  `FullyUnrelocate()` walks a source back through the stack's CHAINED relocates to its
+  fully-pre-relocation path; chained arrivals SUPPLEMENT the isolated walk with the
+  composed walk's stk0 implied-class sources. `ComposedRelocApplicable` → split into
+  `ComposedBaseApplicable` + `IsChainedArrival`.
+- **5 `RelocatePrimsWithSameName`** — ✅ **FIXED (144a1e8b3)**. Content-side arc-origin:
+  `SaltInternalRefContent` = `FlowsThroughRelocateSource` (Reference-only; arc_sites
+  trail intermediate matches `PathInRelocateSource`, excludes arrival's own src_site) +
+  `ContentSiteDeparted` (same-stack Reference content not-under-source, guarded
+  re-entrant `SourcesForSite(0,parent)`+`RelocationsAt` departed-name check).
 - **6 `ErrorInvalidReferenceToRelocationSource`** — ✅ **FIXED (705230658)**. A relocate
-  whose SOURCE is a relocation source (departed) in a CONTRIBUTING REFERENCED stack
-  (not the relocating stack) is invalid → empty `over`. `SourcesForRelocatedContent`
-  (root-authored relocate) composes the source's parent and checks
-  `IsDeparted(s.site, name)` for each contributing stack ≠ the relocating one; if
-  departed, returns empty content.
-- **3 `TrickySpookyVariantSelectionInClass`** (updated) — VGR-instrumented: the LegRig
-  variantSet is grafted at `/LegRig` with `sels[LegRigStyle]` = 2Leg (RightLegRig path)
-  AND 1Leg (inherited SymLegRig path); the inherited-class (1Leg) grafted content wins
-  when it should be WEAKER than the instance's own (2Leg). It's a variant-graft
-  strength-ordering (instance vs inherited-class) issue AND the sels overwrite at ~L705
-  clobbers the instance selection; emplace didn't reach the graft's sels context and
-  broke TypicalReferenceToRiggedModel. Needs a sels-flow / graft-strength redesign.
-- **5 `RelocatePrimsWithSameName`** (updated) — now SPECIFIER-only (`def` vs `over`):
-  content is already empty, but a `def` leaks from same-stack internal-ref content
-  (`/ChainedRef_1/Child` from a different subtree). A targeted "salt same-stack
-  content NOT under the source subtree" broke 2 (TrickyMultipleRelocations4,
-  TrickySpookyInheritsInSymmetricBrowRig) and didn't fix it — needs full content-origin.
-- **1 `TrickyMultipleRelocationsAndClasses2`** — ✅ **FIXED (2ca7930f5)**. The arrival
-  CONTENT walk (isolated, chained) missed the root implied-class `JointBlend` over on
-  the inherited class. Fix: `FullyUnrelocate()` walks a source back through the
-  stack's CHAINED relocates to its fully-pre-relocation path, so the composed
-  derivation composes at the un-relocated composed class-inheriting path; and for
-  chained arrivals the isolated walk is SUPPLEMENTED with the composed walk's stk0
-  implied-class sources it lacks (full replacement regressed TrickyMultipleRelocations/2
-  which author content at the POST-relocation path). `ComposedRelocApplicable` split
-  into `ComposedBaseApplicable` + `IsChainedArrival`.
-- **2 `ErrorInvalidInstanceTargetPath`** — NOT covered by case 1's fix. DISTINCT
-  mechanism: the missing `amount.connect` is an INHERITED CONNECTION (authored on
-  class `SymBrow`'s sculpt in ref.usd, reaching descendants of the relocated
-  `LBrow`/`RBrow` instances) — not a stk0 root over, so the stk0-supplement doesn't
-  add it. Needs connection-through-inherit-into-relocated-instance-descendant +
-  invalid-instance-target handling (a separate arc).
-- **3 `TrickySpookyVariantSelectionInClass`** — LEG-instrumented: instance selection
-  `RightLegRig=2Leg` must beat class `SymLegRig=1Leg`, but the LegRig variantSet is
-  grafted inside the CharRig-reference sub-expansion where the implied-class block
-  OVERWRITES sels with the class 1Leg (~L705). Tried: seed_sels (too late — parent
-  already grafted 1Leg); overwrite→emplace (didn't reach + broke
-  TypicalReferenceToRiggedModel). Needs cross-arc instance-beats-class variant-
-  selection propagation (pxr says the base fix is insufficient).
-- **4 `VariantSpecializesAndReferenceSurprisingBehavior`** — pcp CONFIRMS the order
-  REVERSAL: `/Model/Material`'s own stack has New_Shading_Variant STRONGER (myInt=1),
-  but for the specialize target Model_defaultShadingVariant (prepend ref) is STRONGER
-  (myInt=0). Needs pxr's specializes-propagation order (prepend/ancestral > variant-
-  introduced for a specialize). LOW confidence.
-- **5 `RelocatePrimsWithSameName` / 6 `ErrorInvalidReferenceToRelocationSource`** —
-  per-opinion content-origin tracking + chained departure (see §B below); blanket
-  same-stack suppression broke 4 cases.
+  whose SOURCE is a relocation source (departed) in a CONTRIBUTING REFERENCED stack is
+  invalid → empty `over`. `SourcesForRelocatedContent` composes the source's parent and
+  checks `IsDeparted(s.site, name)` for each contributing stack ≠ the relocating one.
+
+### REMAINING (3, each precisely diagnosed — see memory `aousd-pxr-diff-gates` Round 37)
+- **2 `ErrorInvalidInstanceTargetPath`** — 2-PART deep fix (CT-instrumented). next DROPS
+  `amount.connect` ENTIRELY on the LBrow/RBrow inherited-instance sculpts (class SymBrow
+  gets it fine). PART 1: the inherit source's target map (`ArcOnlyMapping`, map=11) lost
+  the general `/BrowRig=>/FaceRig/BrowRig` reference pair — `NamespaceMapping::Compose`
+  DEMOTES `intra_stack`→false when a local-class inner composes under a crosses_arc
+  reference outer (namespace-mapping.hh L196-198), so out-of-class targets strict-drop
+  (''). PART 2 (harder): the SELF-instance target `/BrowRig/Anim/LBrow.InnUD`
+  reverse-relocates to `/BrowRig/LBrow/...` = the inherited-into instance → INVALID
+  (non-invertible); pxr keeps it UN-relocated (`/FaceRig/BrowRig/Anim/LBrow.InnUD`)
+  while the OTHER-instance target relocates normally. BOTH parts needed to flip; part 1
+  risks cross-arc aliasing regressions (the demotion's original purpose).
+- **3 `TrickySpookyVariantSelectionInClass`** — 3-PART (2 verified in-place, reverted).
+  PART a (verified): instance-beats-class — in the implied-class sels block skip
+  overwriting selections the inheriting prim authors itself (`own_sels` via
+  RecordSelections on `Specs(as, dest_in_as)`); makes RightLegRig's own graft use 2Leg,
+  0 FAIL. PART b (verified): `ExpandList` gained `seed_sels`; `ComposedRelocatedContent`
+  seeds `parent_sels` (confirmed `{LegRigStyle=2Leg}`). PART c (BLOCKER, unbuilt): even
+  with a+b, RightLeg stays 1Leg because SymLegRig's 1Leg variant content is ALREADY
+  pre-composed in `parent_srcs` (SymLegRig has own root over=1Leg; RightLegRig inherits
+  it). pxr grafts only ONE variant per set (the instance's re-selection). ROOT FIX: the
+  inherit must bring SymLegRig's UN-selected variantSet, not its 1Leg-selected content,
+  so the instance re-selects. a+b verified then reverted (neither flips alone).
+- **4 `VariantSpecializesAndReferenceSurprisingBehavior`** — pcp CONFIRMS order REVERSAL:
+  `/Model/Material`'s own stack has New_Shading_Variant STRONGER (myInt=1), but for the
+  specialize target Model_defaultShadingVariant the prepend ref is STRONGER (myInt=0).
+  Needs pxr's specializes-propagation order (prepend/ancestral > variant-introduced for
+  a specialize). LOWEST confidence.
 
 ## UPDATE (composed-parent relocated-content derivation LANDED, commit 9748515ec)
 
