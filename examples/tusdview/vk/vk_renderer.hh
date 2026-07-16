@@ -142,6 +142,17 @@ class VulkanRenderer final : public Renderer {
     VkBuffer blasBuf{VK_NULL_HANDLE};
     VkDeviceMemory blasMem{VK_NULL_HANDLE};
     VkDeviceAddress blasAddr{0};
+    // Per-frame skinned/morphed geometry: once updateMeshVertices touches a
+    // mesh it is marked update-wanting; its next (re)build adds
+    // ALLOW_UPDATE + keeps a persistent scratch sized for build+update, and
+    // subsequent vertex updates REFIT (MODE_UPDATE) the existing BLAS in
+    // place instead of destroy+rebuild (topology never changes on this path).
+    bool blasWantUpdatable{false};  // sticky: mesh gets per-frame vertex updates
+    bool blasUpdatable{false};      // current BLAS was built with ALLOW_UPDATE
+    bool blasNeedsRefit{false};     // vertices changed since last build/refit
+    VkBuffer blasScratch{VK_NULL_HANDLE};        // persistent build+update scratch
+    VkDeviceMemory blasScratchMem{VK_NULL_HANDLE};
+    VkDeviceAddress blasScratchAddr{0};          // aligned scratch address
     VkDeviceAddress vboAddr{0};
     VkDeviceAddress eboAddr{0};
     uint32_t vertexCount{0};
@@ -264,6 +275,9 @@ class VulkanRenderer final : public Renderer {
                                const void* data, VkBuffer* buf, VkDeviceMemory* mem);
   void destroyBlas(VkMeshGPU& m);
   void buildBlas(VkMeshGPU& m);
+  // Refit (MODE_UPDATE) an ALLOW_UPDATE BLAS after its vertex buffer changed
+  // (per-frame skinning/morph; same topology). No-op unless blasNeedsRefit.
+  void refitBlas(VkMeshGPU& m);
   void buildBoxBlas();                  // shared unit-cube BLAS for LOD box proxies
   void initBoxProxyRaster();            // static box geometry for raster LOD proxies
   void drawBoxProxies(VkCommandBuffer cb);  // upload + instanced draw of box proxies
