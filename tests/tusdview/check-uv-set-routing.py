@@ -40,7 +40,12 @@ import sys
 import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gpu_backend import device_name, is_software_renderer, nvidia_offload_env  # noqa: E402
+from gpu_backend import (  # noqa: E402
+    device_name,
+    gpu_offload_env,
+    is_software_renderer,
+    vk_device_args,
+)
 
 SKIP = 77
 # This test used to demand the uvSet1 render be 3x FLATTER than the st one, on the
@@ -123,6 +128,7 @@ def stdev_of_lit(px):
 def render(binary, model, out_png, backend):
     args = [binary, "--backend", backend, "--next", "--frames", "4",
             "--screenshot", out_png, model]
+    args[1:1] = vk_device_args(backend)
     xvfb = shutil.which("xvfb-run")
     # Prefer an inherited DISPLAY -- that is where a HARDWARE GL device lives,
     # and this test only means something there (see gpu_backend.py). Fall back to
@@ -134,9 +140,9 @@ def render(binary, model, out_png, backend):
     if xvfb:
         prefixes.append([xvfb, "-a"])
     for prefix in prefixes:
-        # Xvfb prefix: route GL to the NVIDIA GPU when one is present, else
+        # Xvfb prefix: route GL to the hardware GPU when one is present, else
         # Mesa gives llvmpipe and check_backend can only skip (gpu_backend.py).
-        env = nvidia_offload_env() if prefix else None
+        env = gpu_offload_env() if prefix else None
         r = subprocess.run(prefix + args, stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, timeout=600, env=env)
         if r.returncode == 0 and os.path.exists(out_png):

@@ -15,7 +15,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gpu_backend import device_name, is_software_renderer, nvidia_offload_env  # noqa: E402
+from gpu_backend import (  # noqa: E402
+    detect_gpu,
+    device_name,
+    gpu_offload_env,
+    is_software_renderer,
+)
 
 
 def parse_args():
@@ -146,8 +151,8 @@ def run_viewer(args, mode, output_path):
         env = child_env(args)
         if prefix:
             # Xvfb prefix: without DRI Mesa gives llvmpipe, so route GL to the
-            # NVIDIA GPU when one is present -- see gpu_backend.py.
-            env = nvidia_offload_env(env)
+            # hardware GPU when one is present -- see gpu_backend.py.
+            env = gpu_offload_env(env)
         proc = subprocess.run(
             cmd, text=True, capture_output=True, check=False, env=env
         )
@@ -312,6 +317,10 @@ def compare_ppm(cpu_path, gpu_path):
 
 def main():
     args = parse_args()
+    if args.backend in ("vk", "vulkan") and not args.vk_device:
+        # Inside Xvfb/sandboxed sessions the default Vulkan device can be
+        # lavapipe even though the hardware ICD enumerates -- see gpu_backend.py.
+        args.vk_device = detect_gpu()
     app = Path(args.app)
     model = Path(args.model)
     if not app.is_file():

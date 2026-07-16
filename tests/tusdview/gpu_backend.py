@@ -24,20 +24,65 @@ import re
 
 _NVIDIA_GLVND_JSON = "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
 
+_gpu_vendor_cache = "unprobed"
 
-def nvidia_offload_env(base=None):
-    """Environment for the Xvfb fallback, with NVIDIA PRIME render-offload.
 
-    Xvfb has no DRI, so Mesa hands out llvmpipe even when the host has a
-    discrete NVIDIA GPU. When the NVIDIA driver is installed, the GLVND
-    render-offload variables route the GL context to the hardware device
-    instead (doc/tusdview.md, "Headless HW-accelerated GL"). Without the
-    driver the variables are NOT set -- forcing the nvidia GLX vendor on a
-    non-NVIDIA host breaks GL outright -- so other hosts keep llvmpipe and
-    the callers' software-renderer skip. Explicitly exported values win.
+def detect_gpu():
+    """The GPU vendor whose kernel driver is loaded: "nvidia", "amd", or None.
+
+    - "nvidia": the proprietary driver is up (/proc/driver/nvidia/version).
+    - "amd": the amdgpu KMS driver is loaded (/sys/module/amdgpu), or the ROCm
+      compute node exists (/dev/kfd -- amdkfd, what HIP enumerates).
+    - None: no hardware GPU driver; GL/Vulkan can only be software.
+
+    Driver presence, not device health: a wedged GPU still detects. That is
+    fine for the tests here -- the render either works or fails/skips loudly.
+    """
+    global _gpu_vendor_cache
+    if _gpu_vendor_cache == "unprobed":
+        if os.path.exists("/proc/driver/nvidia/version"):
+            _gpu_vendor_cache = "nvidia"
+        elif os.path.exists("/sys/module/amdgpu") or os.path.exists("/dev/kfd"):
+            _gpu_vendor_cache = "amd"
+        else:
+            _gpu_vendor_cache = None
+    return _gpu_vendor_cache
+
+
+def vk_device_args(backend):
+    """Extra tusdview args selecting the hardware Vulkan device, when present.
+
+    Inside Xvfb (or a sandboxed session) the default Vulkan device can be
+    llvmpipe/lavapipe even though the hardware ICD enumerates fine -- explicit
+    selection routes the backend to the hardware device (doc/tusdview.md,
+    "Vulkan on NVIDIA PRIME/offload under Xvfb"). tusdview's --vk-device does
+    a case-insensitive substring match over device name + driver, so "nvidia"
+    and "amd" (RADV reports "AMD Radeon ...") each select the right ICD. On a
+    host with a real display this is a no-op (the hardware device would win
+    the auto-selection anyway); with no GPU driver no args are added, and the
+    default (possibly software) device keeps the callers' skip behavior.
+    """
+    vendor = detect_gpu()
+    if backend in ("vk", "vulkan") and vendor:
+        return ["--vk-device", vendor]
+    return []
+
+
+def gpu_offload_env(base=None):
+    """Environment for the Xvfb fallback, with GL routed to the hardware GPU.
+
+    Xvfb has no DRI, so Mesa hands out llvmpipe regardless of the installed
+    GPU. On NVIDIA, the GLVND PRIME render-offload variables route the GL
+    context to the hardware device anyway (doc/tusdview.md, "Headless
+    HW-accelerated GL"). AMD has no equivalent escape hatch -- Mesa's radeonsi
+    needs DRI on the X server itself -- so there (and with no GPU) the
+    environment is returned unchanged and GL under Xvfb stays llvmpipe, which
+    the callers already detect and skip. Forcing the nvidia GLX vendor on a
+    non-NVIDIA host would break GL outright, hence the vendor gate; explicitly
+    exported values win (setdefault).
     """
     env = dict(os.environ if base is None else base)
-    if os.path.exists("/proc/driver/nvidia/version"):
+    if detect_gpu() == "nvidia":
         env.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")
         env.setdefault("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
         if os.path.exists(_NVIDIA_GLVND_JSON):
