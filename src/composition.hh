@@ -358,6 +358,15 @@ bool CompositeVariant(
     Layer *composited_layer, std::string *warn, std::string *err);
 
 ///
+/// In-place version of CompositeVariant: consumes `layer` instead of
+/// deep-copying it (variant selection needs no pristine-layer lookups, so the
+/// copy the const-ref API makes is pure overhead on large scenes).
+///
+bool CompositeVariantInPlace(std::unique_ptr<Layer> layer,
+                             Layer *composited_layer, std::string *warn,
+                             std::string *err);
+
+///
 /// Resolve `specializes` for each PrimSpec, and return composited(flattened) Layer
 /// to `composited_layer` in `layer`.
 ///
