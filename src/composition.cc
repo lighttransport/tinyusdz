@@ -73,6 +73,12 @@ namespace {
 // staying well above any real scene.
 constexpr uint32_t kMaxCompositionDepth = 1024;
 
+// Guards every find/insert on the shared parsed-layer cache
+// (options.layer_cache): the parallel per-subtree composition workers hit it
+// concurrently. std::map nodes are address-stable, so borrowed Layer pointers
+// stay valid outside the lock.
+std::mutex g_layer_cache_mutex;
+
 bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
                const std::string &name) {
   for (size_t i = 0; i < layer_names_stack.size(); i++) {
@@ -555,6 +561,10 @@ bool LoadAsset(AssetResolutionResolver &resolver,
       layer_cache_key += '\n';
       layer_cache_key += sp;
     }
+    // The cache map is shared across the parallel per-subtree composition
+    // workers; guard find/insert (map node addresses stay stable, so the
+    // borrowed pointer remains valid outside the lock).
+    std::lock_guard<std::mutex> cache_lock(g_layer_cache_mutex);
     auto it = layer_cache->find(layer_cache_key);
     if (it != layer_cache->end()) {
       if (dst_primspec_root) {
@@ -724,32 +734,46 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   }
 
   if (layer_cache && !layer_from_cache) {
+    std::lock_guard<std::mutex> cache_lock(g_layer_cache_mutex);
     if (dst_primspec_root) {
       // Cache the parsed (and sublayer-composited) layer by MOVE and stamp
       // the resolution context into every prim once here — later arcs to
       // the same file borrow the entry directly (see above).
-      Layer &slot = (*layer_cache)[layer_cache_key];
-      slot = std::move(layer);
-      for (auto &ps_item : slot.primspecs()) {
-        // only_if_unset: preserve the per-prim cwp that variant-nested prims
-        // were stamped with at load (Bug 2 sub-case) — the cache entry must
-        // not flatten those to the layer-level context.
-        if (!PropagateAssetResolverState(ps_item.second,
-                                         resolver.current_working_path(),
-                                         resolver.search_paths(),
-                                         /* only_if_unset */ true)) {
-          PUSH_ERROR_AND_RETURN(
-              "Store AssetResolver state to each PrimSpec failed.\n");
+      //
+      // Lost-race re-check (parallel subtree workers): if another worker
+      // inserted this key while we were parsing, BORROW its entry and drop
+      // our parse — overwriting the slot would invalidate PrimSpec pointers
+      // the other worker already borrowed into its composition.
+      auto race_it = layer_cache->find(layer_cache_key);
+      if (race_it != layer_cache->end()) {
+        borrowed_cache_layer = &race_it->second;
+      } else {
+        Layer &slot = (*layer_cache)[layer_cache_key];
+        slot = std::move(layer);
+        for (auto &ps_item : slot.primspecs()) {
+          // only_if_unset: preserve the per-prim cwp that variant-nested
+          // prims were stamped with at load (Bug 2 sub-case) — the cache
+          // entry must not flatten those to the layer-level context.
+          if (!PropagateAssetResolverState(ps_item.second,
+                                           resolver.current_working_path(),
+                                           resolver.search_paths(),
+                                           /* only_if_unset */ true)) {
+            PUSH_ERROR_AND_RETURN(
+                "Store AssetResolver state to each PrimSpec failed.\n");
+          }
         }
+        slot.set_asset_resolution_state(resolver.current_working_path(),
+                                        resolver.search_paths(),
+                                        resolver.get_userdata());
+        borrowed_cache_layer = &slot;
       }
-      slot.set_asset_resolution_state(resolver.current_working_path(),
-                                      resolver.search_paths(),
-                                      resolver.get_userdata());
-      borrowed_cache_layer = &slot;
     } else {
       // Cache the parsed (and sublayer-composited) layer; later arcs to the
-      // same file take a COW copy instead of re-parsing.
-      (*layer_cache)[layer_cache_key] = layer;
+      // same file take a COW copy instead of re-parsing. Keep the first
+      // insertion on a lost race (same content either way).
+      if (!layer_cache->count(layer_cache_key)) {
+        (*layer_cache)[layer_cache_key] = layer;
+      }
     }
   }
 
@@ -1376,27 +1400,18 @@ static void PropagateImpliedArcPaths(const PrimSpec &src_ps,
   }
 }
 
-bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
-                            const std::vector<std::string> &asset_search_paths,
-                            const Path &dst_prim_path,
-                            const Layer &in_layer,
-                            PrimSpec &primspec /* [inout] */, std::string *warn,
-                            std::string *err,
-                            const ReferencesCompositionOptions &options,
-                            ArcVisitedSet &visited) {
-  if (depth > options.max_depth) {
-    PUSH_ERROR_AND_RETURN("Too deep.");
-  }
-
-  // Traverse children first.
-  for (auto &child : primspec.children()) {
-    const Path parent_prim_path = dst_prim_path.AppendPrim(child.name());
-    if (!CompositeReferencesRec(depth + 1, resolver, asset_search_paths, parent_prim_path, in_layer, child,
-                                warn, err, options, visited)) {
-      return false;
-    }
-  }
-
+// Process ONLY `primspec`'s own reference arcs (no child traversal). Split
+// out of CompositeReferencesRec so the parallel per-subtree composition can
+// run the shell ancestors' own arcs serially after their descendants'
+// subtrees completed in parallel (preserving the post-order semantics).
+bool CompositeReferencesLocal(uint32_t depth, AssetResolutionResolver &resolver,
+                              const std::vector<std::string> &asset_search_paths,
+                              const Path &dst_prim_path,
+                              const Layer &in_layer,
+                              PrimSpec &primspec /* [inout] */,
+                              std::string *warn, std::string *err,
+                              const ReferencesCompositionOptions &options,
+                              ArcVisitedSet &visited) {
   // Use PrimSpec's AssetResolution state.
   std::string cwp = primspec.get_current_working_path();
   std::vector<std::string> search_paths = primspec.get_asset_search_paths();
@@ -1718,14 +1733,14 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
   return true;
 }
 
-bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
-                         const std::vector<std::string> &asset_search_paths,
-                         const Path &dst_prim_path,
-                         const Layer &in_layer,
-                         PrimSpec &primspec /* [inout] */, std::string *warn,
-                         std::string *err,
-                         const PayloadCompositionOptions &options,
-                         ArcVisitedSet &visited) {
+bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
+                            const std::vector<std::string> &asset_search_paths,
+                            const Path &dst_prim_path,
+                            const Layer &in_layer,
+                            PrimSpec &primspec /* [inout] */, std::string *warn,
+                            std::string *err,
+                            const ReferencesCompositionOptions &options,
+                            ArcVisitedSet &visited) {
   if (depth > options.max_depth) {
     PUSH_ERROR_AND_RETURN("Too deep.");
   }
@@ -1733,12 +1748,27 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
   // Traverse children first.
   for (auto &child : primspec.children()) {
     const Path parent_prim_path = dst_prim_path.AppendPrim(child.name());
-    if (!CompositePayloadRec(depth + 1, resolver, asset_search_paths, parent_prim_path, in_layer, child,
-                             warn, err, options, visited)) {
+    if (!CompositeReferencesRec(depth + 1, resolver, asset_search_paths,
+                                parent_prim_path, in_layer, child, warn, err,
+                                options, visited)) {
       return false;
     }
   }
 
+  return CompositeReferencesLocal(depth, resolver, asset_search_paths,
+                                  dst_prim_path, in_layer, primspec, warn, err,
+                                  options, visited);
+}
+
+// Own payload arcs only (no child traversal) — see CompositeReferencesLocal.
+bool CompositePayloadLocal(uint32_t depth, AssetResolutionResolver &resolver,
+                           const std::vector<std::string> &asset_search_paths,
+                           const Path &dst_prim_path,
+                           const Layer &in_layer,
+                           PrimSpec &primspec /* [inout] */, std::string *warn,
+                           std::string *err,
+                           const PayloadCompositionOptions &options,
+                           ArcVisitedSet &visited) {
   // Use PrimSpec's AssetResolution state.
   std::string cwp = primspec.get_current_working_path();
   std::vector<std::string> search_paths = primspec.get_asset_search_paths();
@@ -2003,6 +2033,51 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
   return true;
 }
 
+bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
+                         const std::vector<std::string> &asset_search_paths,
+                         const Path &dst_prim_path,
+                         const Layer &in_layer,
+                         PrimSpec &primspec /* [inout] */, std::string *warn,
+                         std::string *err,
+                         const PayloadCompositionOptions &options,
+                         ArcVisitedSet &visited) {
+  if (depth > options.max_depth) {
+    PUSH_ERROR_AND_RETURN("Too deep.");
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    const Path parent_prim_path = dst_prim_path.AppendPrim(child.name());
+    if (!CompositePayloadRec(depth + 1, resolver, asset_search_paths,
+                             parent_prim_path, in_layer, child, warn, err,
+                             options, visited)) {
+      return false;
+    }
+  }
+
+  return CompositePayloadLocal(depth, resolver, asset_search_paths,
+                               dst_prim_path, in_layer, primspec, warn, err,
+                               options, visited);
+}
+
+// Own variant selection only (no child traversal) — see
+// CompositeReferencesLocal for the shell/subtree split rationale.
+bool CompositeVariantLocal(PrimSpec &primspec /* [inout] */, std::string *warn,
+                           std::string *err) {
+  PrimSpec dst;
+  std::map<std::string, std::string>
+      variant_selection;  // empty = use variant settings in PrimSpec.
+
+  if (!VariantSelectPrimSpec(dst, std::move(primspec), variant_selection, warn,
+                             err)) {
+    return false;
+  }
+
+  primspec = std::move(dst);
+
+  return true;
+}
+
 bool CompositeVariantRec(uint32_t depth, PrimSpec &primspec /* [inout] */,
                          std::string *warn, std::string *err) {
   if (depth > kMaxCompositionDepth) {
@@ -2016,18 +2091,7 @@ bool CompositeVariantRec(uint32_t depth, PrimSpec &primspec /* [inout] */,
     }
   }
 
-  PrimSpec dst;
-  std::map<std::string, std::string>
-      variant_selection;  // empty = use variant settings in PrimSpec.
-
-  if (!VariantSelectPrimSpec(dst, std::move(primspec), variant_selection, warn,
-                             err)) {
-    return false;
-  }
-
-  primspec = std::move(dst);
-
-  return true;
+  return CompositeVariantLocal(primspec, warn, err);
 }
 
 // Visited set for cycle detection in inherits/specializes.
@@ -2555,6 +2619,101 @@ void WarmLayerCacheParallel(
 }
 #endif  // TINYUSDZ_ENABLE_THREAD
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+
+// One unit of parallel composition work: a prim subtree composed
+// independently of its siblings (all mutations stay inside the subtree).
+struct CompSubtreeTask {
+  PrimSpec *ps{nullptr};
+  Path dst_path;
+  uint32_t depth{0};
+};
+
+// Split the layer's prim forest into >= `target` independent subtree tasks
+// plus the list of shell ancestors (level-order discovery). The composition
+// passes are post-order (children before a prim's own arcs), so callers run
+// the tasks in parallel first, then the shells' OWN arcs serially in REVERSE
+// discovery order (deepest shells first — every descendant is then done).
+void CollectCompSubtreeFrontier(Layer &layer, size_t target,
+                                std::vector<CompSubtreeTask> *tasks,
+                                std::vector<CompSubtreeTask> *shells) {
+  std::vector<CompSubtreeTask> cur;
+  for (auto &item : layer.primspecs()) {
+    cur.push_back({&item.second, Path("/" + item.first, ""), 0});
+  }
+  for (;;) {
+    if (cur.size() + tasks->size() >= target) break;
+    bool any_expanded = false;
+    std::vector<CompSubtreeTask> next;
+    for (auto &node : cur) {
+      if (!node.ps->children().empty()) {
+        shells->push_back(node);
+        any_expanded = true;
+        for (auto &child : node.ps->children()) {
+          next.push_back({&child, node.dst_path.AppendPrim(child.name()),
+                          node.depth + 1});
+        }
+      } else {
+        tasks->push_back(node);  // leaf: only its own arcs remain
+      }
+    }
+    cur = std::move(next);
+    if (!any_expanded) break;
+  }
+  tasks->insert(tasks->end(), cur.begin(), cur.end());
+}
+
+// Run `fn(task, warn, err)` over the tasks on `nthreads` workers. Per-task
+// warn/err strings are merged in task order (deterministic); the first failed
+// task's error (lowest index) wins. Subtrees are disjoint, so `fn` must only
+// mutate the task's own subtree plus internally-synchronized shared caches.
+template <typename Fn>
+bool RunCompSubtreesParallel(std::vector<CompSubtreeTask> &tasks,
+                             size_t nthreads, std::string *warn,
+                             std::string *err, Fn &&fn) {
+  std::vector<std::string> task_warns(tasks.size());
+  std::vector<std::string> task_errs(tasks.size());
+  std::vector<uint8_t> task_ok(tasks.size(), 1);
+  std::atomic<size_t> cursor{0};
+  auto worker = [&]() {
+    for (;;) {
+      const size_t i = cursor.fetch_add(1);
+      if (i >= tasks.size()) break;
+      task_ok[i] = fn(tasks[i], &task_warns[i], &task_errs[i]) ? 1 : 0;
+    }
+  };
+  std::vector<std::thread> ths;
+  const size_t n = (std::min)(nthreads, tasks.size());
+  ths.reserve(n);
+  for (size_t t = 0; t < n; t++) {
+    ths.emplace_back(worker);
+  }
+  for (auto &th : ths) {
+    th.join();
+  }
+  for (size_t i = 0; i < tasks.size(); i++) {
+    if (warn && !task_warns[i].empty()) {
+      (*warn) += task_warns[i];
+    }
+    if (!task_ok[i]) {
+      if (err && !task_errs[i].empty()) {
+        (*err) += task_errs[i];
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
+// Composition worker-thread budget (matches the crate writer's cap).
+size_t CompParallelThreads() {
+  const unsigned hw = std::thread::hardware_concurrency();
+  return (std::max<size_t>)(
+      1, (std::min<size_t>)(static_cast<size_t>(hw ? hw : 1), size_t(16)));
+}
+
+#endif  // TINYUSDZ_ENABLE_THREAD
+
 bool CompositeReferencesImpl(AssetResolutionResolver &resolver,
                              const Layer &in_layer, Layer *composited_layer,
                              std::string *warn, std::string *err,
@@ -2684,18 +2843,70 @@ bool CompositeReferencesInPlace(AssetResolutionResolver &resolver,
   Layer dst = std::move(*layer);
   layer.reset();
 
-  for (auto &item : dst.primspecs()) {
-    Path primPath("/" + item.first, "");
-    // `dst` doubles as the internal-lookup layer; never consulted since the
-    // scan above found no internal arcs (arcs appended during this pass are
-    // processed by the next fixed-point iteration, which rescans).
-    if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths,
-                                primPath, dst, item.second, warn, err, options,
-                                visited)) {
-      if (err) {
-        (*err) += "Composite `references` failed.\n";
+  // Parallel per-subtree composition: sibling subtrees only mutate
+  // themselves, LoadAsset's shared layer cache is mutex-guarded, each task
+  // gets its own resolver copy (LoadAsset re-seeds resolver state from its
+  // args on every call) and its own cycle set (the serial chain set is
+  // insert/erase-balanced, so it is empty between top-level prims). Internal
+  // references would read the tree being mutated — this path is only taken
+  // when the scan above found none. `dst` is the internal-lookup layer and is
+  // never consulted here for the same reason.
+  bool parallel_done = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    const size_t nthreads = CompParallelThreads();
+    if (nthreads > 1) {
+      std::vector<CompSubtreeTask> tasks;
+      std::vector<CompSubtreeTask> shells;
+      CollectCompSubtreeFrontier(dst, (std::max<size_t>)(512, 32 * nthreads),
+                                 &tasks, &shells);
+      if (tasks.size() >= 2) {
+        if (!RunCompSubtreesParallel(
+                tasks, nthreads, warn, err,
+                [&](CompSubtreeTask &task, std::string *twarn,
+                    std::string *terr) {
+                  AssetResolutionResolver task_resolver = resolver;
+                  ArcVisitedSet task_visited;
+                  return CompositeReferencesRec(
+                      task.depth, task_resolver, search_paths, task.dst_path,
+                      dst, *task.ps, twarn, terr, options, task_visited);
+                })) {
+          if (err) {
+            (*err) += "Composite `references` failed.\n";
+          }
+          return false;
+        }
+        // Shell ancestors' own arcs, deepest-first (all descendants done).
+        for (auto it = shells.rbegin(); it != shells.rend(); ++it) {
+          if (!CompositeReferencesLocal(it->depth, resolver, search_paths,
+                                        it->dst_path, dst, *(it->ps), warn,
+                                        err, options, visited)) {
+            if (err) {
+              (*err) += "Composite `references` failed.\n";
+            }
+            return false;
+          }
+        }
+        parallel_done = true;
       }
-      return false;
+    }
+  }
+#endif
+
+  if (!parallel_done) {
+    for (auto &item : dst.primspecs()) {
+      Path primPath("/" + item.first, "");
+      // `dst` doubles as the internal-lookup layer; never consulted since the
+      // scan above found no internal arcs (arcs appended during this pass are
+      // processed by the next fixed-point iteration, which rescans).
+      if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths,
+                                  primPath, dst, item.second, warn, err,
+                                  options, visited)) {
+        if (err) {
+          (*err) += "Composite `references` failed.\n";
+        }
+        return false;
+      }
     }
   }
 
@@ -2839,15 +3050,63 @@ bool CompositePayloadInPlace(AssetResolutionResolver &resolver,
   Layer dst = std::move(*layer);
   layer.reset();
 
-  for (auto &item : dst.primspecs()) {
-    Path primPath("/" + item.first, "");
-    if (!CompositePayloadRec(/* depth */ 0, resolver,
-                             item.second.get_asset_search_paths(), primPath,
-                             dst, item.second, warn, err, options, visited)) {
-      if (err) {
-        (*err) += "Composite `payload` failed.\n";
+  // Parallel per-subtree composition — see CompositeReferencesInPlace for the
+  // isolation argument (same LoadAsset cache mutex / per-task resolver +
+  // cycle set / no-internal-arcs precondition).
+  bool parallel_done = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    const size_t nthreads = CompParallelThreads();
+    if (nthreads > 1) {
+      std::vector<CompSubtreeTask> tasks;
+      std::vector<CompSubtreeTask> shells;
+      CollectCompSubtreeFrontier(dst, (std::max<size_t>)(512, 32 * nthreads),
+                                 &tasks, &shells);
+      if (tasks.size() >= 2) {
+        if (!RunCompSubtreesParallel(
+                tasks, nthreads, warn, err,
+                [&](CompSubtreeTask &task, std::string *twarn,
+                    std::string *terr) {
+                  AssetResolutionResolver task_resolver = resolver;
+                  ArcVisitedSet task_visited;
+                  return CompositePayloadRec(
+                      task.depth, task_resolver,
+                      task.ps->get_asset_search_paths(), task.dst_path, dst,
+                      *task.ps, twarn, terr, options, task_visited);
+                })) {
+          if (err) {
+            (*err) += "Composite `payload` failed.\n";
+          }
+          return false;
+        }
+        for (auto it = shells.rbegin(); it != shells.rend(); ++it) {
+          if (!CompositePayloadLocal(it->depth, resolver,
+                                     it->ps->get_asset_search_paths(),
+                                     it->dst_path, dst, *(it->ps), warn, err,
+                                     options, visited)) {
+            if (err) {
+              (*err) += "Composite `payload` failed.\n";
+            }
+            return false;
+          }
+        }
+        parallel_done = true;
       }
-      return false;
+    }
+  }
+#endif
+
+  if (!parallel_done) {
+    for (auto &item : dst.primspecs()) {
+      Path primPath("/" + item.first, "");
+      if (!CompositePayloadRec(/* depth */ 0, resolver,
+                               item.second.get_asset_search_paths(), primPath,
+                               dst, item.second, warn, err, options, visited)) {
+        if (err) {
+          (*err) += "Composite `payload` failed.\n";
+        }
+        return false;
+      }
     }
   }
 
@@ -2855,17 +3114,57 @@ bool CompositePayloadInPlace(AssetResolutionResolver &resolver,
   return true;
 }
 
-bool CompositeVariant(const Layer &in_layer, Layer *composited_layer,
-                      std::string *warn, std::string *err) {
+namespace {
+
+// Shared body of CompositeVariant/CompositeVariantInPlace: composes an
+// already-owned layer (the copying entry point pays the deep copy, the
+// in-place one just moves).
+bool CompositeVariantOwned(Layer &&owned, Layer *composited_layer,
+                           std::string *warn, std::string *err) {
   if (!composited_layer) {
     return false;
   }
 
-  Layer dst = in_layer;  // deep copy
+  Layer dst = std::move(owned);
 
-  for (auto &item : dst.primspecs()) {
-    if (!CompositeVariantRec(/* depth */ 0, item.second, warn, err)) {
-      PUSH_ERROR_AND_RETURN("Composite `variantSet` failed.");
+  // Parallel per-subtree variant selection: VariantSelectPrimSpec only
+  // touches the prim it is applied to, so sibling subtrees are independent
+  // (no resolver, no I/O, no cycle set).
+  bool parallel_done = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    const size_t nthreads = CompParallelThreads();
+    if (nthreads > 1) {
+      std::vector<CompSubtreeTask> tasks;
+      std::vector<CompSubtreeTask> shells;
+      CollectCompSubtreeFrontier(dst, (std::max<size_t>)(512, 32 * nthreads),
+                                 &tasks, &shells);
+      if (tasks.size() >= 2) {
+        if (!RunCompSubtreesParallel(
+                tasks, nthreads, warn, err,
+                [&](CompSubtreeTask &task, std::string *twarn,
+                    std::string *terr) {
+                  return CompositeVariantRec(task.depth, *task.ps, twarn,
+                                             terr);
+                })) {
+          PUSH_ERROR_AND_RETURN("Composite `variantSet` failed.");
+        }
+        for (auto it = shells.rbegin(); it != shells.rend(); ++it) {
+          if (!CompositeVariantLocal(*(it->ps), warn, err)) {
+            PUSH_ERROR_AND_RETURN("Composite `variantSet` failed.");
+          }
+        }
+        parallel_done = true;
+      }
+    }
+  }
+#endif
+
+  if (!parallel_done) {
+    for (auto &item : dst.primspecs()) {
+      if (!CompositeVariantRec(/* depth */ 0, item.second, warn, err)) {
+        PUSH_ERROR_AND_RETURN("Composite `variantSet` failed.");
+      }
     }
   }
 
@@ -2873,6 +3172,25 @@ bool CompositeVariant(const Layer &in_layer, Layer *composited_layer,
 
   DCOUT("Composite `variantSet` ok.");
   return true;
+}
+
+}  // namespace
+
+bool CompositeVariant(const Layer &in_layer, Layer *composited_layer,
+                      std::string *warn, std::string *err) {
+  Layer dst = in_layer;  // deep copy
+  return CompositeVariantOwned(std::move(dst), composited_layer, warn, err);
+}
+
+bool CompositeVariantInPlace(std::unique_ptr<Layer> layer,
+                             Layer *composited_layer, std::string *warn,
+                             std::string *err) {
+  if (!layer) {
+    return false;
+  }
+  Layer dst = std::move(*layer);
+  layer.reset();
+  return CompositeVariantOwned(std::move(dst), composited_layer, warn, err);
 }
 
 bool CompositeInherits(const Layer &in_layer, Layer *composited_layer,
