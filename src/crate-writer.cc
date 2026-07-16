@@ -5,6 +5,8 @@
 #include "crate-writer.hh"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <set>
 #include <sstream>
@@ -482,6 +484,20 @@ bool CrateWriter::Finalize(std::string* err) {
     return false;
   }
 
+  // Finalize phase profiling (TINYUSDZ_CRATE_PROFILE=1): stderr report of the
+  // sort / path-rebuild / field-pack split, with PackValue further split into
+  // inline/dedup/write/other. Timer overhead inflates the profiled run; use
+  // the shares, not the absolute wall.
+  profile_finalize_ = (std::getenv("TINYUSDZ_CRATE_PROFILE") != nullptr);
+  const auto prof_now = []() { return std::chrono::steady_clock::now(); };
+  const auto prof_ns = [](std::chrono::steady_clock::time_point a,
+                          std::chrono::steady_clock::time_point b) -> uint64_t {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(b - a).count());
+  };
+  const auto prof_t0 = prof_now();
+  auto prof_t_sort = prof_t0, prof_t_paths = prof_t0, prof_t_fields = prof_t0;
+
   // ========================================================================
   // Step 1: Process all specs and build internal tables
   // ========================================================================
@@ -565,6 +581,7 @@ bool CrateWriter::Finalize(std::string* err) {
     }
     spec_data_ = std::move(sorted_specs);
   }
+  if (profile_finalize_) prof_t_sort = prof_now();
 
   // Verify that the first spec is PseudoRoot (required by USD spec)
   if (!spec_data_.empty()) {
@@ -612,6 +629,7 @@ bool CrateWriter::Finalize(std::string* err) {
     }
     spec_data_.resize(w);
   }
+  if (profile_finalize_) prof_t_paths = prof_now();
 
   // Build field and fieldset tables
   for (auto& spec_data : spec_data_) {
@@ -620,7 +638,11 @@ bool CrateWriter::Finalize(std::string* err) {
     for (const auto& field_pair : spec_data.fields) {
       // Create field
       crate::Field field;
+      const auto prof_f0 = profile_finalize_
+                               ? prof_now()
+                               : std::chrono::steady_clock::time_point{};
       field.token_index = GetOrCreateToken(field_pair.first);
+      if (profile_finalize_) prof_field_dedup_ns_ += prof_ns(prof_f0, prof_now());
 
       // USD metadata fields `primChildren` and `properties` store a list of
       // child/property names. On the wire, pxrusd expects these as the
@@ -652,16 +674,43 @@ bool CrateWriter::Finalize(std::string* err) {
       }
 
       // Get or create field index
+      const auto prof_f1 = profile_finalize_
+                               ? prof_now()
+                               : std::chrono::steady_clock::time_point{};
       crate::FieldIndex field_idx = GetOrCreateField(field);
+      if (profile_finalize_) prof_field_dedup_ns_ += prof_ns(prof_f1, prof_now());
       field_indices.push_back(field_idx);
     }
 
     // Get or create fieldset
+    const auto prof_f2 = profile_finalize_
+                             ? prof_now()
+                             : std::chrono::steady_clock::time_point{};
     crate::FieldSetIndex fieldset_idx = GetOrCreateFieldSet(field_indices);
+    if (profile_finalize_) prof_field_dedup_ns_ += prof_ns(prof_f2, prof_now());
 
     // (spec.path_index was assigned in the sorted-rebuild loop above.)
     spec_data.spec.fieldset_index = fieldset_idx;
     spec_data.spec.spec_type = spec_data.spec_type;  // Use the stored spec type
+  }
+  if (profile_finalize_) {
+    prof_t_fields = prof_now();
+    const double ms = 1e-6;
+    fprintf(stderr,
+            "[crate-writer profile] Finalize: sort %.1fms | path-rebuild %.1fms "
+            "| field-pack %.1fms (PackValue: inline %.1fms, dedup %.1fms, "
+            "write %.1fms, other %.1fms; field/fieldset dedup %.1fms)\n",
+            double(prof_ns(prof_t0, prof_t_sort)) * ms,
+            double(prof_ns(prof_t_sort, prof_t_paths)) * ms,
+            double(prof_ns(prof_t_paths, prof_t_fields)) * ms,
+            double(prof_pack_inline_ns_) * ms, double(prof_pack_dedup_ns_) * ms,
+            double(prof_pack_write_ns_) * ms,
+            double(prof_pack_total_ns_ -
+                   (std::min)(prof_pack_total_ns_,
+                              prof_pack_inline_ns_ + prof_pack_dedup_ns_ +
+                                  prof_pack_write_ns_)) *
+                ms,
+            double(prof_field_dedup_ns_) * ms);
   }
 
   // ========================================================================
@@ -1720,7 +1769,29 @@ bool CrateWriter::WriteBootStrap(std::string* /* err */) {
 // Value Encoding
 // ============================================================================
 
+// Scoped ns accumulator for the TINYUSDZ_CRATE_PROFILE Finalize report.
+// Zero-cost (one branch) when disabled.
+namespace {
+struct ProfScope {
+  bool on;
+  uint64_t* acc;
+  std::chrono::steady_clock::time_point t0;
+  ProfScope(bool enabled, uint64_t* accumulator) : on(enabled), acc(accumulator) {
+    if (on) t0 = std::chrono::steady_clock::now();
+  }
+  ~ProfScope() {
+    if (on) {
+      *acc += static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - t0)
+              .count());
+    }
+  }
+};
+}  // namespace
+
 crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::string* err) {
+  ProfScope prof_total(profile_finalize_, &prof_pack_total_ns_);
   crate::ValueRep rep;
 
   // VtArrayEdit (crate >= 0.14.0): a ValueRep with the IsArrayEdit bit set, the
@@ -1759,8 +1830,11 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   }
 
   // Try to inline the value
-  if (!value.IsUnregisteredValue() && TryInlineValue(value, &rep)) {
-    return crate::ValueRep(rep.GetData());
+  {
+    ProfScope prof_inline(profile_finalize_, &prof_pack_inline_ns_);
+    if (!value.IsUnregisteredValue() && TryInlineValue(value, &rep)) {
+      return crate::ValueRep(rep.GetData());
+    }
   }
 
   bool dedup_candidate = false;
@@ -1770,23 +1844,30 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   uint32_t dedup_wire_tag = 0;
   size_t dedup_hash = 0;
 
-  if (options_.enable_deduplication &&
-      ComputeValueDedupDescriptor(value, &dedup_bytes, &dedup_element_size,
-                                  &dedup_is_float, &dedup_wire_tag)) {
-    dedup_hash = NanAwareHash::combine(
-        NanAwareHash::hash_buffer(dedup_bytes.data(), dedup_bytes.size(),
-                                  dedup_element_size, dedup_is_float),
-        dedup_wire_tag);
-    if (LookupDeduplicatedValue(dedup_bytes, dedup_element_size,
-                                dedup_is_float, dedup_wire_tag, &rep)) {
-      return crate::ValueRep(rep.GetData());
+  {
+    ProfScope prof_dedup(profile_finalize_, &prof_pack_dedup_ns_);
+    if (options_.enable_deduplication &&
+        ComputeValueDedupDescriptor(value, &dedup_bytes, &dedup_element_size,
+                                    &dedup_is_float, &dedup_wire_tag)) {
+      dedup_hash = NanAwareHash::combine(
+          NanAwareHash::hash_buffer(dedup_bytes.data(), dedup_bytes.size(),
+                                    dedup_element_size, dedup_is_float),
+          dedup_wire_tag);
+      if (LookupDeduplicatedValue(dedup_bytes, dedup_element_size,
+                                  dedup_is_float, dedup_wire_tag, &rep)) {
+        return crate::ValueRep(rep.GetData());
+      }
+      dedup_candidate = true;
     }
-    dedup_candidate = true;
   }
 
   // Value cannot be inlined, write to value data section
   bool is_compressed = false;
-  int64_t offset = WriteValueData(value, &is_compressed, err);
+  int64_t offset;
+  {
+    ProfScope prof_write(profile_finalize_, &prof_pack_write_ns_);
+    offset = WriteValueData(value, &is_compressed, err);
+  }
   if (offset < 0 || (err && !err->empty())) {
     return crate::ValueRep();
   }

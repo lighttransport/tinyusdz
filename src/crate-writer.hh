@@ -1036,6 +1036,16 @@ private:
 
   std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
   size_t value_dedup_bytes_ = 0;
+
+  // Finalize phase profiling, enabled by TINYUSDZ_CRATE_PROFILE=1 (stderr
+  // report at the end of Finalize). Accumulators are only touched when
+  // profile_finalize_ is set, so the default path pays one branch.
+  bool profile_finalize_ = false;
+  uint64_t prof_pack_total_ns_ = 0;    // whole PackValue
+  uint64_t prof_pack_inline_ns_ = 0;   // TryInlineValue (incl. interning)
+  uint64_t prof_pack_dedup_ns_ = 0;    // dedup descriptor + hash + lookup
+  uint64_t prof_pack_write_ns_ = 0;    // WriteValueData (out-of-line encode)
+  uint64_t prof_field_dedup_ns_ = 0;   // field-name intern + field/fieldset dedup
 };
 
 } // namespace experimental
