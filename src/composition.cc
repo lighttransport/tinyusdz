@@ -4414,6 +4414,14 @@ static void RemoveInactivePrimsRec(std::vector<PrimSpec> &children) {
 bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
                       Layer *composited_layer, std::string *warn,
                       std::string *err) {
+  return CompositeAllArcs(resolver, layer, composited_layer, warn, err,
+                          AllArcsCompositionOptions());
+}
+
+bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err,
+                      const AllArcsCompositionOptions &options) {
   if (!composited_layer) {
     if (err) { *err = "composited_layer is nullptr."; }
     return false;
@@ -4449,9 +4457,8 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
   // R: References
   if (HasReferences(working)) {
     Layer tmp;
-    ReferencesCompositionOptions ref_opts;
     if (!CompositeReferencesImpl(resolver, working, &tmp, warn, err,
-                                 ref_opts, arc_visited)) {
+                                 options.references, arc_visited)) {
       return false;
     }
     working = std::move(tmp);
@@ -4462,9 +4469,8 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
   // P: Payloads
   if (HasPayload(working)) {
     Layer tmp;
-    PayloadCompositionOptions pl_opts;
     if (!CompositePayloadImpl(resolver, working, &tmp, warn, err,
-                              pl_opts, arc_visited)) {
+                              options.payload, arc_visited)) {
       return false;
     }
     working = std::move(tmp);

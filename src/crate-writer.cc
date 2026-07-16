@@ -1392,7 +1392,15 @@ bool CrateWriter::WritePathsSection(std::string* err) {
         const char* pd = prim.c_str();
         for (size_t ci = 0; ci < prim.size(); ci++) {
           const char c = pd[ci];
-          if (c != '/' && static_cast<unsigned char>(c) <= '/') {
+          // Variant-selection elements are embedded in prim_part as
+          // `{set=sel}` (variant_part_raw() is EMPTY for them — the guard
+          // above does not catch this spelling). '{' passes the > '/' name
+          // test, but the fast tree build derives parents via
+          // find_last_of('/'), which is WRONG for `/Host{v=a}` (its parent
+          // is /Host, not /). Classify as non-simple so variant paths take
+          // the legacy Path-based ordering, which handles them correctly.
+          if ((c != '/' && static_cast<unsigned char>(c) <= '/') ||
+              c == '{') {
             all_simple = false;
             break;
           }

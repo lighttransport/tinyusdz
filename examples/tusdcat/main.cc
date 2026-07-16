@@ -1787,8 +1787,14 @@ int main(int argc, char **argv) {
         }
 
         tinyusdz::Layer composited_layer;
+        // Pass the configured per-arc options (parent-relative path policy for
+        // UE-style exports, asset size caps, the shared parsed-layer cache) —
+        // the option-less overload would reject `../` asset paths.
+        tinyusdz::AllArcsCompositionOptions all_opts;
+        all_opts.references = reference_opts;
+        all_opts.payload = payload_opts;
         if (!tinyusdz::CompositeAllArcs(resolver, src_layer, &composited_layer,
-                                        &warn, &err)) {
+                                        &warn, &err, all_opts)) {
           std::cerr << "Failed to composite arcs: " << err << "\n";
           return -1;
         }
