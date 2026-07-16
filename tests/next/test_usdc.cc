@@ -479,12 +479,17 @@ void test_crate_reader_audit_cluster() {
         field(root->meta().unknownFields, "extensionLayerProbe");
     assert(layer_probe && layer_probe->unregistered &&
            layer_probe->unregistered_source == "\"kept-by-openusd\"");
+    // The raw source keeps the authored quotes; the typed value must be the
+    // parsed string so USDA output quotes once (no "\"...\"" double-quoting).
+    assert(layer_probe->value.as_string() &&
+           *layer_probe->value.as_string() == "kept-by-openusd");
     UsdPrim p = compat.stage.GetPrimAtPath("/P");
     assert(p.IsValid() && !p.HasProperty("extensionPrimProbe") &&
            "unknown Prim metadata must not become a phantom property");
     const TypedExtensionField* prim_probe =
         field(p.GetMeta().unknownFields(), "extensionPrimProbe");
     assert(prim_probe && prim_probe->unregistered_source == "17");
+    assert(prim_probe->value.as_int() && *prim_probe->value.as_int() == 17);
     const PropMeta* attr_meta = p.GetPrimSpec()->property_meta("v");
     const PropMeta* rel_meta = p.GetPrimSpec()->property_meta("r");
     const TypedExtensionField* attr_probe =
