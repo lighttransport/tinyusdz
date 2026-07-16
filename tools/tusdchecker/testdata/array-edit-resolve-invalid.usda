@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    defaultPrim = "root"
+)
+
+# The edit resolves to faceVertexIndices = [0, 1, 99]: index 99 is out of
+# range for 3 points. geom.mesh.topology.index can only fire if composition
+# actually EVALUATES the edit -- this fixture pins array-edit evaluation.
+def Xform "root"
+{
+    def Mesh "m"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = edit [ append 0; append 1; append 99 ]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+}

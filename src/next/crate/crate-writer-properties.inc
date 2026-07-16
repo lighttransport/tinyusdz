@@ -732,6 +732,15 @@
         if (df.value_rep.type_id() != CrateTypeId::Invalid) {
           flds.push_back(df);
         }
+      } else if (const ArrayEditData* aedit = prim.array_edit(slot.name_id)) {
+        // Sparse array-edit default (VtArrayEdit, crate 0.14).
+        CrateField df;
+        df.token_index.value = InternToken("default");
+        df.value_rep = EncodeArrayEdit(
+            *aedit, static_cast<TypeId>(slot.value_type));
+        if (df.value_rep.type_id() != CrateTypeId::Invalid) {
+          flds.push_back(df);
+        }
       }
 
       if (slot.flags & PropSlot::kFlagConnection) {

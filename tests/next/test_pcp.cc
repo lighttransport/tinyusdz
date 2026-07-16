@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "next/eval/attribute-eval.hh"
+#include "next/layer/asset-anchor.hh"
 #include "next/layer/layer.hh"
 #include "next/tinyusdz-next.hh"
 #include "next/writer/usda-writer.hh"
@@ -2272,6 +2273,75 @@ static void test_sublayer_authored_reference_anchor() {
   std::cout << "  OK" << std::endl;
 }
 
+// payload_policy_with_prim must receive the payload's AUTHORING PrimSpec after
+// list-op merging across the layer stack, not the strongest spec. The root
+// layer holds the strongest spec (an `over`); the payload arc lives on the
+// weaker sublayer in a DIFFERENT directory, and only the authoring spec's
+// asset anchor lets a policy stat the relative payload path correctly.
+static void test_payload_policy_owner_anchor() {
+  std::cout << "test_payload_policy_owner_anchor..." << std::endl;
+  // /tmp/ppoa/root.usda      (strongest: over /World/P, no payload)
+  // /tmp/ppoa/sub/weak.usda  (def /World/P, prepend payload = @./pay.usda@)
+  // /tmp/ppoa/sub/pay.usda   (def Mesh "Pay" -- relative to sub/)
+  ::system("mkdir -p /tmp/ppoa/sub");
+  { std::ofstream f("/tmp/ppoa/sub/pay.usda");
+    f << "#usda 1.0\ndef Mesh \"Pay\" { custom int marker = 42 }\n"; }
+  { std::ofstream f("/tmp/ppoa/sub/weak.usda");
+    f << "#usda 1.0\n"
+         "def Xform \"World\"\n{\n"
+         "    def \"P\" (\n"
+         "        prepend payload = @./pay.usda@</Pay>\n"
+         "    )\n    {\n    }\n}\n"; }
+  { std::ofstream f("/tmp/ppoa/root.usda");
+    f << "#usda 1.0\n(\n    subLayers = [@sub/weak.usda@]\n)\n"
+         "over \"World\"\n{\n"
+         "    over \"P\"\n    {\n"
+         "        custom int strongOpinion = 1\n"
+         "    }\n}\n"; }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp/ppoa");
+
+  // Mimic LargeSceneLoader's budget policy: stat the relative asset against
+  // the OWNER's anchor and admit only if the file exists there.
+  std::vector<std::string> seen_anchors;
+  pcp::CompositionOptions opts;
+  opts.payload_policy_with_prim = [&seen_anchors](
+      const Path &, const std::string &asset, const PrimSpec &owner) -> bool {
+    const std::string &anchor = AssetAnchorPath(owner.asset_anchor_id());
+    seen_anchors.push_back(anchor);
+    if (anchor.empty()) return false;
+    std::ifstream probe(anchor + "/" + asset);
+    return probe.good();
+  };
+
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile("/tmp/ppoa/root.usda", resolver, &stage,
+                                   opts, &warn, &err));
+
+  // The policy saw the AUTHORING layer's anchor (sub/), not the root's.
+  assert(!seen_anchors.empty() && "payload policy was never consulted");
+  for (const std::string &anchor : seen_anchors) {
+    assert(anchor.find("/ppoa/sub") != std::string::npos &&
+           "policy owner is not the payload's authoring spec (wrong anchor)");
+  }
+
+  // And therefore the payload was admitted and composed.
+  UsdPrim p = stage.GetPrimAtPath("/World/P");
+  assert(p.IsValid() && p.GetTypeName() == "Mesh" &&
+         "cross-layer payload was deferred (policy stat used wrong anchor)");
+  assert(p.GetPropertyValue("marker") != nullptr &&
+         "payload content missing after owner-anchored admission");
+  assert(p.GetPropertyValue("strongOpinion") != nullptr &&
+         "root layer's stronger over lost during list-op merge");
+
+  std::remove("/tmp/ppoa/root.usda");
+  std::remove("/tmp/ppoa/sub/weak.usda");
+  std::remove("/tmp/ppoa/sub/pay.usda");
+  std::cout << "  OK" << std::endl;
+}
+
 // Sublayers: weaker layer-stack opinions fill stronger root opinions; roots,
 // child prims, and arcs authored only in a sublayer must still compose.
 static void test_sublayer_stack_composition() {
@@ -4218,6 +4288,7 @@ int main() {
   test_compose_from_file();
   test_nested_relative_reference();
   test_sublayer_authored_reference_anchor();
+  test_payload_policy_owner_anchor();
   test_sublayer_stack_composition();
   test_usdz_package_layers();
   test_sublayer_cycle_and_depth();

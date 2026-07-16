@@ -243,6 +243,19 @@
       }
       if (!cm.variantSelections().empty()) out->meta().variantSelections().clear();
     }
+
+    // Sparse array edits stacked across the sources above (CopyLocalOpinions
+    // concatenates weaker-under-stronger); this loop has now seen EVERY source
+    // of the prim, so nothing weaker can still supply a base array. Resolve the
+    // leftovers -- over the prim's own value, else an empty array -- exactly as
+    // the serial compositor's depth-1 ResolveArrayEditsInLayer does (pxr
+    // flatten emits concrete arrays, never edit text). Failures stay silent by
+    // design: this can run from a parallel-warm worker fill (issues_ is not
+    // thread-safe there), and a failed edit degrades to its authored text.
+    {
+      std::string apply_err;
+      Compositor::ResolveArrayEditsOnPrim(out, &apply_err);
+    }
   }
 
   // Resolved `active` for a prim's sources: strongest authored opinion wins
