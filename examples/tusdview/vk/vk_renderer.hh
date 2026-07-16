@@ -142,6 +142,16 @@ class VulkanRenderer final : public Renderer {
     VkBuffer blasBuf{VK_NULL_HANDLE};
     VkDeviceMemory blasMem{VK_NULL_HANDLE};
     VkDeviceAddress blasAddr{0};
+    // Dynamic (per-frame deformed) BLAS: updateMeshVertices marks the mesh, its
+    // BLAS is then built with ALLOW_UPDATE (and skips compaction -- a compacted
+    // AS cannot be refit), and later poses REFIT it in place (MODE_UPDATE)
+    // instead of destroy + full rebuild. The refit scratch is persistent: same
+    // size every frame, so allocate once and keep it until the BLAS dies.
+    bool blasDynamic{false};        // sticky: describes the mesh, not the AS
+    bool blasRefitPending{false};   // vertices changed since last build/refit
+    VkBuffer blasScratchBuf{VK_NULL_HANDLE};
+    VkDeviceMemory blasScratchMem{VK_NULL_HANDLE};
+    VkDeviceSize blasUpdateScratchSize{0};
     VkDeviceAddress vboAddr{0};
     VkDeviceAddress eboAddr{0};
     uint32_t vertexCount{0};
@@ -267,6 +277,7 @@ class VulkanRenderer final : public Renderer {
                                const void* data, VkBuffer* buf, VkDeviceMemory* mem);
   void destroyBlas(VkMeshGPU& m);
   void buildBlas(VkMeshGPU& m);
+  void refitBlas(VkMeshGPU& m);         // MODE_UPDATE in-place rebuild (dynamic BLAS)
   void buildBoxBlas();                  // shared unit-cube BLAS for LOD box proxies
   void initBoxProxyRaster();            // static box geometry for raster LOD proxies
   void drawBoxProxies(VkCommandBuffer cb);  // upload + instanced draw of box proxies

@@ -4168,6 +4168,8 @@ void VulkanRenderer::destroyScene() {
     if (m.blas && pfnDestroyAS_) pfnDestroyAS_(device_, m.blas, nullptr);
     if (m.blasBuf) vkDestroyBuffer(device_, m.blasBuf, nullptr);
     if (m.blasMem) vkFreeMemory(device_, m.blasMem, nullptr);
+    if (m.blasScratchBuf) vkDestroyBuffer(device_, m.blasScratchBuf, nullptr);
+    if (m.blasScratchMem) vkFreeMemory(device_, m.blasScratchMem, nullptr);
   }
   meshes_.clear();
   // Shared multi-draw-indirect buffers + their CPU staging (the aliases above were
@@ -4499,7 +4501,23 @@ void VulkanRenderer::updateMeshVertices(int meshIndex,
   std::memcpy(mapped, verts.data(), static_cast<size_t>(bytes));
   vkUnmapMemory(device_, targetMem);
   if (rtActive_) {
-    destroyBlas(gm);
+    // Both callers (legacy RT skinning, --next RT deform) rewrite this vbo every
+    // pose, so mark the mesh dynamic: its next BLAS build uses ALLOW_UPDATE and
+    // later poses REFIT in place (rebuildTlas drains blasRefitPending) instead
+    // of paying a full destroy + MODE_BUILD per frame.
+    // TUSDVIEW_NO_BLAS_REFIT=1 restores the destroy+rebuild path (A/B lever:
+    // parity + perf comparison, or a driver whose refit misbehaves).
+    static const bool kNoRefit =
+        std::getenv("TUSDVIEW_NO_BLAS_REFIT") != nullptr;
+    if (!kNoRefit && gm.blas != VK_NULL_HANDLE && gm.blasDynamic &&
+        gm.blasUpdateScratchSize > 0) {
+      gm.blasRefitPending = true;
+    } else {
+      destroyBlas(gm);
+      // Under the A/B lever stay on the historical path exactly (compacted
+      // fast-trace rebuild, no ALLOW_UPDATE).
+      if (!kNoRefit) gm.blasDynamic = true;
+    }
     bool first = true;
     float mn[3] = {std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max(),
@@ -5181,6 +5199,12 @@ void VulkanRenderer::destroyBlas(VkMeshGPU& m) {
   m.blasBuf = VK_NULL_HANDLE;
   m.blasMem = VK_NULL_HANDLE;
   m.blasAddr = 0;
+  if (m.blasScratchBuf) vkDestroyBuffer(device_, m.blasScratchBuf, nullptr);
+  if (m.blasScratchMem) vkFreeMemory(device_, m.blasScratchMem, nullptr);
+  m.blasScratchBuf = VK_NULL_HANDLE;
+  m.blasScratchMem = VK_NULL_HANDLE;
+  m.blasUpdateScratchSize = 0;
+  m.blasRefitPending = false;  // blasDynamic stays: it describes the mesh
 }
 
 void VulkanRenderer::buildBlas(VkMeshGPU& m) {
@@ -5205,6 +5229,10 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
   bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
   bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  // A skinned/deformed mesh's BLAS is refit per pose, which needs ALLOW_UPDATE
+  // at build time (and MODE_UPDATE's flags must match the build's).
+  if (m.blasDynamic)
+    bgi.flags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
   bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
   bgi.geometryCount = 1;
   bgi.pGeometries = &geom;
@@ -5213,6 +5241,7 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
   pfnGetASBuildSizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bgi,
                       &primCount, &sizes);
+  if (m.blasDynamic) m.blasUpdateScratchSize = sizes.updateScratchSize;
 
   if (!createDeviceBuffer(sizes.accelerationStructureSize,
                           VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
@@ -5258,6 +5287,72 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   blasBytesUncompacted_ += sizes.accelerationStructureSize;
 }
 
+// In-place refit of a dynamic BLAS after updateMeshVertices rewrote its vertex
+// buffer. Same topology (index buffer + counts unchanged), so MODE_UPDATE only
+// re-fits node bounds -- far cheaper than the full MODE_BUILD, at the cost of a
+// gradually less optimal tree (fine for a viewer: the pose deltas are small).
+// The AS object and its device address are unchanged, so TLAS instances built
+// from blasAddr stay valid (the TLAS itself is still rebuilt: its instance
+// bounds come from the BLAS).
+void VulkanRenderer::refitBlas(VkMeshGPU& m) {
+  if (m.blas == VK_NULL_HANDLE || !m.blasDynamic || m.indexCount < 3 ||
+      !pfnCmdBuildAS_) {
+    return;
+  }
+  if (m.blasUpdateScratchSize == 0) {
+    // Built before the mesh was marked dynamic (no ALLOW_UPDATE): cannot refit.
+    // Drop it; the next rebuildTlas wave rebuilds it refit-able.
+    destroyBlas(m);
+    return;
+  }
+
+  VkAccelerationStructureGeometryKHR geom{};
+  geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+  geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+  geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+  auto& tri = geom.geometry.triangles;
+  tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+  tri.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+  tri.vertexData.deviceAddress = m.vboAddr;
+  tri.vertexStride = sizeof(DrawVertex);
+  tri.maxVertex = m.vertexCount - 1;
+  tri.indexType = VK_INDEX_TYPE_UINT32;
+  tri.indexData.deviceAddress = m.eboAddr;
+
+  // Persistent scratch: the update scratch size is fixed per BLAS, so allocate
+  // once (first refit) instead of churning an allocation every frame.
+  if (m.blasScratchBuf == VK_NULL_HANDLE) {
+    if (!createDeviceBuffer(m.blasUpdateScratchSize + scratchAlign_,
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                            &m.blasScratchBuf, &m.blasScratchMem)) {
+      destroyBlas(m);  // rebuild next wave rather than trace a stale pose
+      return;
+    }
+  }
+  VkDeviceAddress sa = bufferDeviceAddress(m.blasScratchBuf);
+  sa = (sa + scratchAlign_ - 1) & ~(static_cast<VkDeviceAddress>(scratchAlign_) - 1);
+
+  VkAccelerationStructureBuildGeometryInfoKHR bgi{};
+  bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+  bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+  bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+              VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+  bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+  bgi.srcAccelerationStructure = m.blas;
+  bgi.dstAccelerationStructure = m.blas;
+  bgi.geometryCount = 1;
+  bgi.pGeometries = &geom;
+  bgi.scratchData.deviceAddress = sa;
+
+  VkAccelerationStructureBuildRangeInfoKHR range{};
+  range.primitiveCount = m.indexCount / 3;
+  const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+
+  VkCommandBuffer cb = beginOneShot();
+  pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
+  endOneShot(cb);
+}
+
 // BLAS compaction, in waves.
 //
 // The old path built one BLAS per prototype, each in its own one-shot command
@@ -5291,6 +5386,15 @@ void VulkanRenderer::buildBlasWave(const std::vector<uint32_t>& meshIds) {
     VkMeshGPU& m = meshes_[id];
     if (m.blas == VK_NULL_HANDLE && m.indexCount >= 3) {
       queued[id] = true;
+      // A dynamic (per-frame deformed) BLAS is refit in place, and a COMPACTED
+      // AS cannot be refit -- build it directly, uncompacted, with ALLOW_UPDATE
+      // (buildBlas adds the flag). The size cost is bounded by the deforming
+      // meshes, not the scene.
+      if (m.blasDynamic) {
+        buildBlas(m);
+        ++blasUniqueBuilt_;
+        continue;
+      }
       todo.push_back(id);
     }
   }
@@ -5713,6 +5817,28 @@ void VulkanRenderer::rebuildTlas() {
          double(blasBytesUncompacted_) / (1024.0 * 1024.0),
          100.0 * double(blasBytes_) / double(blasBytesUncompacted_),
          blasUniqueBuilt_, fullIds.size(), blasCompact_ ? 1 : 0);
+  }
+
+  // Refit the dynamic (skinned/deformed) BLAS whose vertices changed this pose.
+  // Eviction above may have destroyed one (LOD demotion) -- then the pending bit
+  // just clears and the wave rebuild (from the already-updated vbo) covered it.
+  {
+    auto refitT0 = std::chrono::steady_clock::now();
+    uint32_t refitCount = 0;
+    for (VkMeshGPU& m : meshes_) {
+      if (!m.blasRefitPending) continue;
+      m.blasRefitPending = false;
+      if (m.blas != VK_NULL_HANDLE) {
+        refitBlas(m);
+        ++refitCount;
+      }
+    }
+    if (rtTiming && refitCount) {
+      auto tr = std::chrono::steady_clock::now();
+      std::fprintf(stderr, "[vk_rt] BLAS refit: %u mesh(es), %.2f ms\n",
+                   refitCount,
+                   std::chrono::duration<double, std::milli>(tr - refitT0).count());
+    }
   }
 
   insts.reserve(sel.size());

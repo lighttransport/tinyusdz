@@ -225,6 +225,7 @@ int main(int argc, char** argv) {
   std::optional<double> timeCode;         // --time T: evaluate the scene at this
                                           // time code (animated screenshots)
   tusdview::SkinningMode skinningMode = tusdview::SkinningMode::Auto;
+  bool playAnim = false;                  // --play: start timeline playback on load
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--config") == 0) {
@@ -467,6 +468,8 @@ int main(int argc, char** argv) {
         LOGE("--skinning must be auto, cpu, or gpu");
         return 1;
       }
+    } else if (std::strcmp(argv[i], "--play") == 0) {
+      playAnim = true;
     } else if (std::strcmp(argv[i], "--rt") == 0) {
       wantRt = true;
     } else if (std::strcmp(argv[i], "--cuda") == 0) {
@@ -663,6 +666,9 @@ int main(int argc, char** argv) {
           "transforms/points/skinning). Useful with --frames for a screenshot at "
           "a specific frame. Interactive runs play from the Timeline panel.\n"
           "  --skinning MODE  Skinning path: auto (default), cpu, or gpu.\n"
+          "  --play        Start timeline playback on load. With --frames the "
+          "playback clock steps a fixed 1/60 s per frame (deterministic pose at "
+          "every frame, so --screenshot captures are pixel-comparable).\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
           "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
           "  --mcp         Both transports.\n"
@@ -956,6 +962,7 @@ int main(int argc, char** argv) {
   app.setDevicePreference(devicePreference);
   app.setAllowBackendFallback(!backendExplicit && backend == tusdview::Backend::Vulkan);
   app.setSkinningMode(skinningMode);
+  app.setPlayAnimation(playAnim);
   app.setMcpStdio(mcpStdio);
   app.setMcpHttp(mcpHttpPort);
   app.setStreamHttp(streamHttpPort);

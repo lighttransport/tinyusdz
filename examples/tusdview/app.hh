@@ -159,6 +159,7 @@ class App
     devicePreference_ = preference;
   }
   void setSkinningMode(SkinningMode mode) { skinningRequested_ = mode; }
+  void setPlayAnimation(bool on) { playRequested_ = on; }
 
   // Write a PPM of the full composited window after the last frame (QA).
   void setWindowShot(const std::string& path) { windowShot_ = path; }
@@ -452,6 +453,10 @@ class App
   // Animation playback (main-thread owned unless noted).
   bool hasAnimation_{false};
   bool animPlaying_{false};
+  // --play: start playback once the scene is in (one-shot). Fixed-frame runs
+  // (--frames) step a FIXED 1/60 s per frame so the pose at frame N -- and the
+  // final screenshot -- is deterministic, not wall-clock dependent.
+  bool playRequested_{false};
   bool animLoop_{true};
   float animSpeed_{1.0f};
   double animStart_{0.0};
