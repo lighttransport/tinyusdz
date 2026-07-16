@@ -1830,10 +1830,16 @@ bool App::renderHipViewport() {
       // The worker reads draw_ (stable while building: the re-pose below only runs
       // once the build has completed) and builds + uploads on the device
       // (hipSetDevice runs in build()).
-      hipBuildThread_ = std::thread([this, dispScale] {
+      // A deformable scene re-poses per time code: retain the host arrays so
+      // those re-poses REFIT the BVH in place instead of paying a full rebuild.
+      // (The builder refuses the refit map when displacement is actually live
+      // on some mesh -- a displaced flatten re-samples textures per pose.)
+      const bool retainForRefit = sceneIsNextDeformable();
+      hipBuildThread_ = std::thread([this, dispScale, retainForRefit] {
         std::string e;
         const bool ok = hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
-                                         dispScale, &hipBuildProgress_);
+                                         dispScale, &hipBuildProgress_,
+                                         retainForRefit);
         hipBuildErr_ = e;
         hipBuildOk_.store(ok, std::memory_order_release);
         hipBuildDone_.store(true, std::memory_order_release);
@@ -1876,17 +1882,27 @@ bool App::renderHipViewport() {
       LOGI("freed CPU geometry after RT build: %zu -> %zu MB host RSS", before, after);
   }
 
-  // Animation. The BVH is built from vertex positions, so a new time code means a
-  // re-pose and a rebuild -- but a rebuild only, not the whole-converter re-run
-  // this path used to need (it had none: the HIP scene was simply frozen at the
-  // load time code). Synchronous: the timeline should not run ahead of what is on
-  // screen, and a rebuild is a fraction of the initial build (no conversion, no
-  // material/texture work).
+  // Animation. The BVH is built from vertex positions, so a new time code means
+  // a re-pose and an acceleration-structure update. When the initial build
+  // retained its host arrays (deformable, no displacement), that update is a
+  // REFIT: rewrite tris/nrms in leaf order, refit node bounds over the unchanged
+  // trees, upload only those four buffers. Otherwise (or if the topology guard
+  // trips) it falls back to the full rebuild -- still far cheaper than the
+  // whole-converter re-run this path originally needed. Synchronous: the
+  // timeline should not run ahead of what is on screen.
   if (sceneIsNextDeformable() && animTime_ != nextTracerPosedTime_) {
     if (poseNextDrawForTracer(animTime_)) {
       std::string e;
-      if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
-                            gui_.displacementScale())) {
+      const float dispScale = gui_.displacementScale();
+      // TUSDVIEW_NO_BVH_REFIT=1 restores the rebuild-per-pose path (A/B lever:
+      // the refit parity gate compares the two).
+      static const bool kNoRefit =
+          std::getenv("TUSDVIEW_NO_BVH_REFIT") != nullptr;
+      if (!kNoRefit && hipTracer_.canRefit() && hipTracer_.refit(draw_, &e)) {
+        // refit done
+      } else if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
+                                   dispScale, nullptr,
+                                   /*retainForRefit=*/!kNoRefit)) {
         LOGW("HIP re-pose rebuild failed: %s", e.c_str());
       }
     }
@@ -2751,9 +2767,18 @@ int App::run(const std::string& initialFile, int maxFrames,
   if (hipRt_ && !screenshot.empty() && !draw_.empty()) {
     std::string cerr;
     poseNextDrawForTracer(animTime_);  // as CUDA above
+    // A windowed --frames run already built (and per-pose refit/rebuilt) the
+    // interactive scene at this very time code: trace THAT instead of paying a
+    // redundant full rebuild. This is also what lets the refit parity gate see
+    // refit geometry in the screenshot -- the window capture composites the UI,
+    // not the traced pixels. Headless (or a failed interactive build) still
+    // builds here as before.
+    const bool reuseInteractive =
+        hipInteractiveBuilt_ && animTime_ == nextTracerPosedTime_;
     if (!hipTracer_.init(&cerr)) {
       LOGW("HIP ray tracing unavailable: %s", cerr.c_str());
-    } else if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
+    } else if (!reuseInteractive &&
+               !hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
                                  gui_.displacementScale())) {
       LOGW("HIP ray tracing build failed: %s", cerr.c_str());
     } else {

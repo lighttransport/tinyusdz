@@ -12,14 +12,14 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "gpu_scene.hh"
+#include "rt_scene_build.hh"  // BuildProgress, HostScene, RefitMap
 
 namespace tusdview {
-
-struct BuildProgress;  // rt_scene_build.hh (background-build progress)
 
 class HipRayTracer {
  public:
@@ -36,12 +36,22 @@ class HipRayTracer {
   bool initialized() const { return ready_; }
 
   // Flatten `scene` into world-space triangles, build a BVH, and upload to the
-  // device. See CudaRayTracer::build for the full contract.
+  // device. See CudaRayTracer::build for the full contract. `retainForRefit`
+  // keeps the host-side arrays + tri permutation so a later refit() can re-pose
+  // without a rebuild (costs host memory; only worth it for deformable scenes).
   bool build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
              std::string* err, float displacementScale = 0.0f,
-             BuildProgress* progress = nullptr);
+             BuildProgress* progress = nullptr, bool retainForRefit = false);
   size_t triangleCount() const { return triCount_; }
   bool truncated() const { return truncated_; }
+
+  // Re-pose the built scene from `scene`'s CURRENT vertices: rewrite tris/nrms
+  // in leaf order, refit BLAS/TLAS bounds over the unchanged trees, and upload
+  // only those four buffers (materials/textures/uvs stay resident). Requires
+  // build(..., retainForRefit=true); returns false (fall back to build) when
+  // refit is unavailable or the topology changed.
+  bool refit(const DrawScene& scene, std::string* err);
+  bool canRefit() const { return retained_ != nullptr && refitMap_.valid; }
 
   // Trace one frame. See CudaRayTracer::trace for the argument contract.
   bool trace(const float invViewProj[16], const float viewProj[16],
@@ -103,6 +113,11 @@ class HipRayTracer {
   size_t nodeCount_{0};
   bool truncated_{false};
   std::string deviceName_;
+
+  // Refit state (build(..., retainForRefit=true)): the host scene stays alive
+  // so refit() can rewrite tris/nrms + node bounds in place and re-upload them.
+  std::unique_ptr<HostScene> retained_;
+  RefitMap refitMap_;
 };
 
 }  // namespace tusdview

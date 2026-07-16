@@ -2431,6 +2431,22 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-skinning-screenshot-diff
                            PROPERTIES SKIP_RETURN_CODE 77)
+
+      # The HIP interactive tracer refits its BVH per pose instead of paying a
+      # full scene rebuild. Refit must trace byte-identically to the rebuild
+      # path (TUSDVIEW_NO_BVH_REFIT=1) over the same --play run. Self-skips
+      # without a HIP device.
+      add_test(
+        NAME tusdview-hip-bvh-refit
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-hip-bvh-refit.py
+                "${TINYUSDZ_XVFB_RUN}"
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-hip-bvh-refit"
+        )
+      set_tests_properties(tusdview-hip-bvh-refit
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800)
       # Skinning must also reach INSTANCED prototypes (a shared prototype behind
       # `instanceable = true`), which the next loader used to convert but never
       # skin -- every instance rendered the rest pose. Asserts the rig actually

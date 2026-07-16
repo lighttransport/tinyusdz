@@ -94,8 +94,32 @@ prints the per-phase breakdown, both loaders. A GPU-compute skin pass was
 CONSIDERED AND REJECTED for now: it cannot keep the byte-parity contract
 (check-rt-skinning asserts the RT re-pose == the CPU bake exactly; GPU
 FMA/ULP drift breaks that architecture for ~1-2 ms of remaining headroom).
-Still open on perf: the CUDA/HIP tracers below full-rebuild their BVH per
-time code.
+
+Also 2026-07-16, the last open perf item: the HIP interactive tracer now
+REFITS its 2-level BVH per pose instead of a full scene rebuild. The initial
+build retains the host arrays + per-mesh triangle permutation
+(`BuildHostScene(..., RefitMap*)`); each re-pose runs `RefitHostScene`
+(rewrite tris/nrms in leaf order, refit BLAS/TLAS node bounds over the
+unchanged trees -- the builders append children after their parent, so a
+single reverse-index sweep computes children before parents; instance AABBs
+re-derive from each Inst's o2w x its blasRoot node's refit bounds) and
+uploads ONLY tris/nrms/blas/tlas. 205k tris: ~270 ms rebuild -> ~16.5 ms
+refit per pose, byte-identical screenshots (108-refit vs 108-rebuild runs).
+The builder refuses the refit map when displacement is actually LIVE on a
+mesh (a displaced flatten re-samples textures per pose) -- and note the trap
+that found: `gui_.displacementScale()` defaults to 1.0, so "scale != 0" is
+NOT the displacement test. The HIP --screenshot path now reuses the
+interactive scene when it is posed at the current time code (was a redundant
+full rebuild; also what lets the gate compare traced pixels -- a
+--window-shot composites the UI, NOT the traced viewport image, and a
+parity check over window shots proved vacuous). `TUSDVIEW_NO_BVH_REFIT=1`
+restores rebuild-per-pose. Gate: `tusdview-hip-bvh-refit` (xvfb + HIP,
+self-skips; DOUBLY mutation-verified: a skipped refit trips the refit-count
+guard, a computed-but-not-uploaded refit trips the pixel parity -- the
+latter also required the capture frame to land MID-CYCLE of the looping
+fixture, since at a full loop a stale trace equals the live one). The CUDA
+tracer keeps the rebuild: it is screenshot-only (one build per run), so
+there is no per-pose path to refit.
 
 Done since (2026-07-12): the CUDA/HIP tracers now take the SHARED deform rather
 than their own load-time bake (`poseNextDrawForTracer`, on both the interactive and
