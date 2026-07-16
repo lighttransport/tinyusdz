@@ -796,6 +796,31 @@ private:
   int64_t WriteValueData(const crate::CrateValue& value, bool* is_compressed,
                          std::string* err);
 
+  /// The body of WriteValueData: the per-type out-of-line encoding chain,
+  /// WITHOUT the seek-to-section prologue / end-offset epilogue. Returns 0 on
+  /// success, -1 on error. Split out so pass A of the two-pass Finalize can
+  /// run it against a thread-local capture buffer (tls_value_capture) for
+  /// PURE values — same encoder, two output targets, byte-equal by
+  /// construction.
+  int64_t WriteValueBody(const crate::CrateValue& value, bool* is_compressed,
+                         std::string* err);
+
+  /// True when WriteValueBody for this value is a pure function of the value
+  /// bits routed entirely through Write/WriteBytes: no token/string/path
+  /// interning, no Tell/Seek, no value_data_end_offset_ bookkeeping, no crate
+  /// version bump. Exactly the numeric scalar/array branches — keep this list
+  /// in lockstep with the WriteValueBody chain. Pure values may be encoded
+  /// concurrently under a capture sink; everything else must run serially on
+  /// the real stream.
+  static bool IsPureValueData(const crate::CrateValue& value);
+
+  /// Per-thread value-encoding capture sink. When set, WriteBytes appends to
+  /// this buffer instead of the output stream (and does NOT count toward the
+  /// file-size limit — the bytes are appended for real, with the limit check,
+  /// when the serial pass replays them). Only WriteValueBody on
+  /// IsPureValueData values may run under a capture sink.
+  static std::vector<char>*& tls_value_capture();
+
   /// Intern sink for TryInlineValue: the ONLY writer state the inline
   /// decision touches is token/string interning (token, string and inlined
   /// asset-path values store an index in the ValueRep payload). Routing those

@@ -2464,7 +2464,22 @@ bool CrateWriter::Seek(int64_t pos) {
   return stream_->Seek(pos);
 }
 
+std::vector<char>*& CrateWriter::tls_value_capture() {
+  static thread_local std::vector<char>* sink = nullptr;
+  return sink;
+}
+
 bool CrateWriter::WriteBytes(const void* data, size_t size) {
+  // Value-encoding capture (two-pass Finalize pass A): append to the
+  // per-thread buffer instead of the stream. No file-size accounting here —
+  // the serial replay appends these bytes through the normal path below,
+  // which enforces the limit.
+  if (std::vector<char>* capture = tls_value_capture()) {
+    const char* p = static_cast<const char*>(data);
+    capture->insert(capture->end(), p, p + size);
+    return true;
+  }
+
   // Check file size limit before writing
   if (WouldExceedFileSizeLimit(static_cast<int64_t>(size))) {
     std::cerr << "ERROR: Writing " << size << " bytes would exceed file size limit of "
