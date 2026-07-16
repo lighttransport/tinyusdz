@@ -7,6 +7,8 @@
 //   large-scene-load <scene.usd[a]> [options]
 //     --mode=none|all|budget   payload mode (default: none)
 //     --budget-mb=N            payload byte budget for --mode=budget
+//     --extent-budget=N        optional projected extentsHint-area cap
+//     --no-mmap-zero-copy      disable next-PCP mmap/lazy-array composition
 //     --no-dedup               disable parse-once layer registry
 //     --load-some=N            after load, stream in the first N deferred payloads
 //     --unload                 after --load-some, unload them again
@@ -15,8 +17,11 @@
 // estimated Stage memory, and unique-file parse count.
 
 #include <algorithm>
+#include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <functional>
@@ -84,7 +89,8 @@ int main(int argc, char **argv) {
   if (argc < 2) {
     std::printf(
         "Usage: %s <scene.usd[a]> [--mode=none|all|budget] [--budget-mb=N] "
-        "[--no-dedup] [--load-some=N] [--unload]\n",
+        "[--extent-budget=N] [--no-mmap-zero-copy] [--no-dedup] "
+        "[--load-some=N] [--unload]\n",
         argv[0]);
     return 1;
   }
@@ -105,8 +111,21 @@ int main(int argc, char **argv) {
       opts.payload_mode = tinyusdz::LargeSceneLoadOptions::PayloadMode::Budget;
     } else if (a.rfind("--budget-mb=", 0) == 0) {
       opts.payload_budget_mb = std::stoul(a.substr(strlen("--budget-mb=")));
+    } else if (a.rfind("--extent-budget=", 0) == 0) {
+      const char *text = a.c_str() + strlen("--extent-budget=");
+      char *end = nullptr;
+      errno = 0;
+      opts.payload_extent_budget = std::strtod(text, &end);
+      if (end == text || *end != '\0' || errno == ERANGE ||
+          !std::isfinite(opts.payload_extent_budget) ||
+          opts.payload_extent_budget < 0.0) {
+        std::printf("--extent-budget must be a finite non-negative number\n");
+        return 1;
+      }
     } else if (a == "--no-dedup") {
       opts.dedup_layers = false;
+    } else if (a == "--no-mmap-zero-copy") {
+      opts.mmap_zero_copy = false;
     } else if (a.rfind("--load-some=", 0) == 0) {
       load_some = std::stoi(a.substr(strlen("--load-some=")));
     } else if (a == "--unload") {
@@ -118,8 +137,10 @@ int main(int argc, char **argv) {
   }
 
   std::printf("Loading: %s\n", filename.c_str());
-  std::printf("  payload_mode = %d, dedup_layers = %d\n",
-              int(opts.payload_mode), int(opts.dedup_layers));
+  std::printf("  payload_mode = %d, dedup_layers = %d, extent_budget = %.3f, "
+              "mmap_zero_copy = %d\n",
+              int(opts.payload_mode), int(opts.dedup_layers),
+              opts.payload_extent_budget, int(opts.mmap_zero_copy));
   print_mem("before");
 
   tinyusdz::LargeSceneLoader loader;
