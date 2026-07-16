@@ -802,6 +802,45 @@
                                     &implied.site, frame,
                                     frame ? frame->depth + 1 : 0};
         ExpandArcs(implied, &iframe, target, spec_out, sels, ichain, warn, err);
+      } else if (root_implied_site != arc_site &&
+                 kind == ArcType::Specialize) {
+        // The implied specialize target (`root_implied_site`, e.g. /Model/Material)
+        // composes via ARCS, with no raw spec of its own. pxr propagates the
+        // specialize to it, and its contributors reached via an arc ANCESTRAL to
+        // the specialize-declaration (a prepend reference on the INSTANCE, not
+        // inside the selected variant) compose STRONGER than the DIRECT target —
+        // the reverse of the target's own composition. But a contributor that is
+        // also part of the DIRECT target's (`arc_site`) OWN composition (a
+        // reference authored INSIDE the variant that carries the declaration) is
+        // NOT ancestral and must stay in normal order.
+        //   VariantSpecializesAndReferenceSurprisingBehavior: the reference is on
+        //     /Model (ancestral) -> reference>variant, Material_Child.myInt=0.
+        //   VariantSpecializesAndReference: the reference is inside the variant
+        //     (on /New_Shading_Variant) -> variant>reference, myInt=1 (unchanged).
+        // Route only the contributors of `root_implied_site` that the DIRECT
+        // target does NOT already deliver, ahead of it (stronger).
+        std::set<std::pair<uint32_t, std::string>> direct_sites;
+        for (const Src &ds :
+             SourcesForSite(arc_stack_idx, Path(arc_site), warn, err))
+          direct_sites.emplace(ds.stack_idx, ds.site);
+        const std::string destination = Mapping(src.map_idx).Apply(src.site);
+        NamespaceMapping redirect;
+        redirect.AddRename(root_implied_site, destination);
+        for (const Src &cs :
+             SourcesForSite(arc_stack_idx, Path(root_implied_site), warn, err)) {
+          if (cs.variant) continue;  // the variant graft that carries the decl
+          if (cs.arc_kind == ArcType::Root && cs.site == root_implied_site)
+            continue;  // the empty composed-prim placeholder
+          if (direct_sites.count({cs.stack_idx, cs.site}))
+            continue;  // delivered by the DIRECT specialize (not ancestral)
+          Src si = cs;
+          si.map_idx =
+              InternMapping(NamespaceMapping::Compose(redirect, Mapping(cs.map_idx)));
+          si.arc_kind = ArcType::Specialize;
+          si.implied_anchor = arc_stack_idx;
+          si.ancestral = true;
+          spec_out->push_back(std::move(si));
+        }
       }
     }
 
