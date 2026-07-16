@@ -75,10 +75,27 @@ Per-pose AS update on a 205k-tri skinned tube: 3.2-3.3 ms -> 1.4-1.5 ms
 `--play` flag drives deterministic fixed-step playback for --frames runs.
 Gate: `tusdview-rt-blas-refit` (mutation-verified); `tusdview-blas-compaction`
 moved to the static fixture `models/blastest-instanced-static.usda` since a
-skinned prototype's BLAS is now deliberately uncompacted. Still open on perf:
-the pose cost is now dominated by the CPU skin + `vkDeviceWaitIdle` + memcpy
-(a GPU-compute skin pass would remove it), and the CUDA/HIP tracers below
-still full-rebuild their BVH per time code.
+skinned prototype's BLAS is now deliberately uncompacted.
+
+Also 2026-07-16, the CPU side of the RT pose: the per-vertex deform loops
+(next `BuildNextRtDeformedVertices`; legacy `ApplySkinningToVertices` +
+`RecomputeSmoothNormals`, restructured into parallel face-normals / SERIAL
+order-preserving accumulate / parallel normalize) now thread via
+`DeformParallelFor` (skinning.hh) -- contiguous ranges, no shared accumulation,
+so the result is BIT-IDENTICAL to serial and every byte-parity oracle holds.
+Median over 120 poses at 102k verts: deform 3.2 -> 1.67 ms (7 workers).
+TRAP recorded the hard way: single-shot timings of this path swing 2-4x
+(governor/wake noise) -- three consecutive 8-frame runs "showed" threading as
+a wash; only medians over ~100 poses are trustworthy. Also fixed: the legacy
+RT pose deep-copied the ENTIRE DrawMeshCPU every frame just to probe for
+displacement (now gated on `MeshHasDisplacement`). `TUSDVIEW_RT_TIMING` now
+also prints `[rt-skin] cpu pose / vbo upload`, and `TUSDVIEW_RT_POSE_TIMING`
+prints the per-phase breakdown, both loaders. A GPU-compute skin pass was
+CONSIDERED AND REJECTED for now: it cannot keep the byte-parity contract
+(check-rt-skinning asserts the RT re-pose == the CPU bake exactly; GPU
+FMA/ULP drift breaks that architecture for ~1-2 ms of remaining headroom).
+Still open on perf: the CUDA/HIP tracers below full-rebuild their BVH per
+time code.
 
 Done since (2026-07-12): the CUDA/HIP tracers now take the SHARED deform rather
 than their own load-time bake (`poseNextDrawForTracer`, on both the interactive and

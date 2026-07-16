@@ -1357,13 +1357,31 @@ void App::updateGpuSkinningFrameIfNeeded() {
 
   if (renderer_->rayTracingActive()) {
     if (!idxOk) return;
+    // TUSDVIEW_RT_TIMING: the CPU side of the RT pose (morph + LBS + normal
+    // regen + displacement bake), the counterpart of the [vk_rt] AS lines.
+    static const bool kRtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
+    const auto skinT0 = std::chrono::steady_clock::now();
     std::vector<RtSkinnedMeshUpload> uploads;
     if (BuildRtSkinnedMeshVertices(loaded_.stage, loaded_.render, &draw_,
                                    animTime_, gui_.blendOverrides(),
                                    gui_.showSkeletonOverlay(), &uploads)) {
+      if (kRtTiming) {
+        size_t verts = 0;
+        for (const RtSkinnedMeshUpload& u : uploads) verts += u.vertices.size();
+        std::fprintf(stderr, "[rt-skin] cpu pose: %.2f ms (%zu meshes, %zu verts)\n",
+                     std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - skinT0).count(),
+                     uploads.size(), verts);
+      }
       postGpu([this, ups = std::move(uploads)]() {
+        const auto upT0 = std::chrono::steady_clock::now();
         for (const RtSkinnedMeshUpload& upload : ups) {
           renderer_->updateMeshVertices(upload.meshIndex, upload.vertices);
+        }
+        if (kRtTiming) {
+          std::fprintf(stderr, "[rt-skin] vbo upload: %.2f ms\n",
+                       std::chrono::duration<double, std::milli>(
+                           std::chrono::steady_clock::now() - upT0).count());
         }
       });
     }
@@ -1432,11 +1450,27 @@ void App::updateNextDeformFrameIfNeeded() {
   // that mesh's BLAS. The alternative -- what this path did before -- was to
   // re-run the whole converter at every time code.
   if (renderer_->rayTracingActive()) {
+    static const bool kRtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
+    const auto skinT0 = std::chrono::steady_clock::now();
     std::vector<RtSkinnedMeshUpload> uploads;
     if (BuildNextRtDeformedVertices(nextSession_->GetStage(), draw_, animTime_,
                                     gui_.blendOverrides(), &uploads)) {
+      if (kRtTiming) {
+        size_t verts = 0;
+        for (const RtSkinnedMeshUpload& u : uploads) verts += u.vertices.size();
+        std::fprintf(stderr, "[rt-skin] cpu pose: %.2f ms (%zu meshes, %zu verts)\n",
+                     std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - skinT0).count(),
+                     uploads.size(), verts);
+      }
+      const auto upT0 = std::chrono::steady_clock::now();
       for (const RtSkinnedMeshUpload& up : uploads) {
         renderer_->updateMeshVertices(up.meshIndex, up.vertices);
+      }
+      if (kRtTiming) {
+        std::fprintf(stderr, "[rt-skin] vbo upload: %.2f ms\n",
+                     std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - upT0).count());
       }
     }
     skinFrameTime_ = animTime_;

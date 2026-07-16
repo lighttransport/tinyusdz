@@ -2,7 +2,10 @@
 #include "skinning.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <unordered_map>
@@ -525,7 +528,10 @@ bool ApplySkinningToVertices(const DrawMeshCPU& dm,
       !dm.influenceTexels.empty() && dm.influenceTexels.size() % 4 == 0;
   if (!skinned && !extendedSkinned) return false;
 
-  for (size_t vi = 0; vi < verts->size(); ++vi) {
+  // Per-vertex independent (each vi reads and writes only its own element), so
+  // range-split threading is bit-identical to the serial loop.
+  DeformParallelFor(verts->size(), 16384, [&](size_t vBegin, size_t vEnd) {
+  for (size_t vi = vBegin; vi < vEnd; ++vi) {
     const DrawVertex& in = (*verts)[vi];
     const point3f p{in.px, in.py, in.pz};
     point3f acc{0.0f, 0.0f, 0.0f};
@@ -573,6 +579,7 @@ bool ApplySkinningToVertices(const DrawMeshCPU& dm,
       out.pz = acc.z;
     }
   }
+  });
   return true;
 }
 
@@ -580,18 +587,37 @@ void RecomputeSmoothNormals(std::vector<DrawVertex>* verts,
                             const std::vector<uint32_t>& indices,
                             float normalSign) {
   if (!verts || verts->empty()) return;
+  // Three passes so the FP-heavy parts can thread while the accumulation stays
+  // bit-identical to the old fused loop: (1) face normals, per-triangle
+  // independent, parallel; (2) scatter-accumulate SERIAL in triangle order --
+  // the same adds in the same order as before, so the per-vertex sums cannot
+  // drift; (3) normalize, per-vertex independent, parallel.
+  const size_t triCount = indices.size() / 3;
+  std::vector<float> faceN(triCount * 3);
+  DeformParallelFor(triCount, 65536, [&](size_t tBegin, size_t tEnd) {
+    for (size_t t = tBegin; t < tEnd; ++t) {
+      const uint32_t ia = indices[t * 3 + 0], ib = indices[t * 3 + 1],
+                     ic = indices[t * 3 + 2];
+      if (ia >= verts->size() || ib >= verts->size() || ic >= verts->size()) {
+        faceN[t * 3 + 0] = faceN[t * 3 + 1] = faceN[t * 3 + 2] = 0.0f;
+        continue;
+      }
+      const DrawVertex& a = (*verts)[ia];
+      const DrawVertex& b = (*verts)[ib];
+      const DrawVertex& c = (*verts)[ic];
+      const float e1x = b.px - a.px, e1y = b.py - a.py, e1z = b.pz - a.pz;
+      const float e2x = c.px - a.px, e2y = c.py - a.py, e2z = c.pz - a.pz;
+      faceN[t * 3 + 0] = (e1y * e2z - e1z * e2y) * normalSign;
+      faceN[t * 3 + 1] = (e1z * e2x - e1x * e2z) * normalSign;
+      faceN[t * 3 + 2] = (e1x * e2y - e1y * e2x) * normalSign;
+    }
+  });
   for (DrawVertex& v : *verts) v.nx = v.ny = v.nz = 0.0f;
-  for (size_t t = 0; t + 2 < indices.size(); t += 3) {
-    const uint32_t ia = indices[t + 0], ib = indices[t + 1], ic = indices[t + 2];
+  for (size_t t = 0; t < triCount; ++t) {
+    const uint32_t ia = indices[t * 3 + 0], ib = indices[t * 3 + 1],
+                   ic = indices[t * 3 + 2];
     if (ia >= verts->size() || ib >= verts->size() || ic >= verts->size()) continue;
-    const DrawVertex& a = (*verts)[ia];
-    const DrawVertex& b = (*verts)[ib];
-    const DrawVertex& c = (*verts)[ic];
-    const float e1x = b.px - a.px, e1y = b.py - a.py, e1z = b.pz - a.pz;
-    const float e2x = c.px - a.px, e2y = c.py - a.py, e2z = c.pz - a.pz;
-    const float nx = (e1y * e2z - e1z * e2y) * normalSign;
-    const float ny = (e1z * e2x - e1x * e2z) * normalSign;
-    const float nz = (e1x * e2y - e1y * e2x) * normalSign;
+    const float nx = faceN[t * 3 + 0], ny = faceN[t * 3 + 1], nz = faceN[t * 3 + 2];
     DrawVertex* tri[3] = {&(*verts)[ia], &(*verts)[ib], &(*verts)[ic]};
     for (DrawVertex* v : tri) {
       v->nx += nx;
@@ -599,15 +625,18 @@ void RecomputeSmoothNormals(std::vector<DrawVertex>* verts,
       v->nz += nz;
     }
   }
-  for (DrawVertex& v : *verts) {
-    const float len = std::sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
-    if (len > 1e-12f) {
-      const float inv = 1.0f / len;
-      v.nx *= inv;
-      v.ny *= inv;
-      v.nz *= inv;
+  DeformParallelFor(verts->size(), 262144, [&](size_t vBegin, size_t vEnd) {
+    for (size_t vi = vBegin; vi < vEnd; ++vi) {
+      DrawVertex& v = (*verts)[vi];
+      const float len = std::sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
+      if (len > 1e-12f) {
+        const float inv = 1.0f / len;
+        v.nx *= inv;
+        v.ny *= inv;
+        v.nz *= inv;
+      }
     }
-  }
+  });
 }
 
 void UpdateMeshBoundsFromVertices(DrawMeshCPU* dm,
@@ -1015,11 +1044,20 @@ bool BuildRtSkinnedMeshVertices(
   outUploads->clear();
   if (draw->meshes.empty()) return true;
 
+  const bool kPoseTiming = std::getenv("TUSDVIEW_RT_POSE_TIMING") != nullptr;
+  auto tick = [&]() { return std::chrono::steady_clock::now(); };
+  auto ms = [](auto a, auto b) {
+    return std::chrono::duration<double, std::milli>(b - a).count();
+  };
+  auto t0 = tick();
   std::unordered_map<std::string, float> blendWeights =
       GatherBlendWeights(stage, timecode);
   if (blendOverride) {
     for (const auto& kv : *blendOverride) blendWeights[kv.first] = kv.second;
   }
+  auto t1 = tick();
+  if (kPoseTiming)
+    std::fprintf(stderr, "[rt-pose] blend-weights %.2f ms\n", ms(t0, t1));
 
   std::unordered_map<int, std::vector<matrix4d>> skinCache;
   std::vector<matrix4d> composed;
@@ -1034,28 +1072,46 @@ bool BuildRtSkinnedMeshVertices(
         dm.jointWt.size() == dm.vertices.size() * 4;
     if (!hasMorph && !hasSkinAttrs) continue;
 
+    auto tA = tick();
     std::vector<DrawVertex> verts = dm.vertices;
+    auto tB = tick();
     bool deformed = false;
     if (hasMorph) {
       ApplyMorphTargetsToVertices(dm, blendWeights, &verts);
       deformed = true;  // upload rest pose too so stale morphs can be cleared.
     }
+    auto tC = tick();
     if (hasSkinAttrs &&
         BuildComposedSkinningMatrices(render, dm, timecode, &skinCache, &composed)) {
       if (ApplySkinningToVertices(dm, composed, &verts)) deformed = true;
     }
+    auto tD = tick();
     if (!deformed) continue;
 
     if (!dm.geometricNormal) RecomputeSmoothNormals(&verts, dm.indices, dm.normalSign);
+    auto tE = tick();
     UpdateMeshBoundsFromVertices(&dm, verts, updateSkinnedHelpers);
+    auto tF = tick();
+    if (kPoseTiming)
+      std::fprintf(stderr,
+                   "[rt-pose] mesh %zu: copy %.2f morph %.2f skin %.2f "
+                   "normals %.2f bounds %.2f ms\n",
+                   mi, ms(tA, tB), ms(tB, tC), ms(tC, tD), ms(tD, tE), ms(tE, tF));
     anyBoundsChanged = true;
 
     RtSkinnedMeshUpload upload;
     upload.meshIndex = static_cast<int>(mi);
-    DrawMeshCPU displacedMesh = dm;
-    displacedMesh.vertices = verts;
-    if (!BakeDisplacedVertices(*draw, displacedMesh, /*globalScale=*/1.0f,
-                               &upload.vertices)) {
+    // Only pay the whole-mesh deep copy (indices, weights, morphs, ...) when
+    // there is actually displacement to bake -- for a plain skinned mesh this
+    // copy was a fixed multi-MB tax on EVERY pose.
+    if (MeshHasDisplacement(*draw, dm)) {
+      DrawMeshCPU displacedMesh = dm;
+      displacedMesh.vertices = verts;
+      if (!BakeDisplacedVertices(*draw, displacedMesh, /*globalScale=*/1.0f,
+                                 &upload.vertices)) {
+        upload.vertices = std::move(verts);
+      }
+    } else {
       upload.vertices = std::move(verts);
     }
     outUploads->push_back(std::move(upload));
