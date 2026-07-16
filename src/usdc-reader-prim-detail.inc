@@ -23,7 +23,8 @@
 namespace tinyusdz {
 namespace prim {
 
-EXTERN_RECONSTRUCT_PRIM(FieldAsset);
+// Placeholder schema prim types (UsdVol / UsdRender / UsdProc): defined in
+// prim-reconstruct.cc, explicitly instantiated in usdc-reader-prim-reconstruct-1.cc.
 EXTERN_RECONSTRUCT_PRIM(GeomPlane);
 EXTERN_RECONSTRUCT_PRIM(GeomCylinder_1);
 EXTERN_RECONSTRUCT_PRIM(Volume);
@@ -153,6 +154,13 @@ USDC_EXTERN_RECONSTRUCT_PRIM(GeomSphere);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomSubset);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomBasisCurves);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomNurbsCurves);
+USDC_EXTERN_RECONSTRUCT_PRIM(Volume);
+USDC_EXTERN_RECONSTRUCT_PRIM(OpenVDBAsset);
+USDC_EXTERN_RECONSTRUCT_PRIM(Field3DAsset);
+USDC_EXTERN_RECONSTRUCT_PRIM(RenderSettings);
+USDC_EXTERN_RECONSTRUCT_PRIM(RenderProduct);
+USDC_EXTERN_RECONSTRUCT_PRIM(RenderVar);
+USDC_EXTERN_RECONSTRUCT_PRIM(GenerativeProcedural);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomPlane);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomCylinder_1);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomCapsule_1);

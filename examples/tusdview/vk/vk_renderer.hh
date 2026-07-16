@@ -145,22 +145,19 @@ class VulkanRenderer final : public Renderer {
     VkBuffer blasBuf{VK_NULL_HANDLE};
     VkDeviceMemory blasMem{VK_NULL_HANDLE};
     VkDeviceAddress blasAddr{0};
-    // Per-frame skinned/morphed geometry: the SECOND vertex update marks the
-    // mesh update-wanting ("compact until proven animated" -- a single posed
-    // update, e.g. a fixed --time screenshot, keeps the compacted static
-    // path); its next (re)build then adds ALLOW_UPDATE + keeps a persistent
-    // scratch sized for build+update, and subsequent vertex updates REFIT
-    // (MODE_UPDATE) the existing BLAS in place instead of destroy+rebuild
-    // (topology never changes on this path).
-    bool blasSawVertexUpdate{false};  // sticky: at least one vertex update
-    bool blasWantUpdatable{false};  // sticky: mesh gets per-frame vertex updates
-    bool blasUpdatable{false};      // current BLAS was built with ALLOW_UPDATE
-    bool blasNeedsRefit{false};     // vertices changed since last build/refit
-    VkBuffer blasScratch{VK_NULL_HANDLE};        // persistent build+update scratch
+    // Dynamic (per-frame deformed) BLAS: updateMeshVertices marks the mesh, its
+    // BLAS is then built with ALLOW_UPDATE (and skips compaction -- a compacted
+    // AS cannot be refit), and later poses REFIT it in place (MODE_UPDATE)
+    // instead of destroy + full rebuild. The refit scratch is persistent: same
+    // size every frame, so allocate once and keep it until the BLAS dies.
+    bool blasDynamic{false};        // sticky: describes the mesh, not the AS
+    bool blasRefitPending{false};   // vertices changed since last build/refit
+    VkBuffer blasScratchBuf{VK_NULL_HANDLE};
     VkDeviceMemory blasScratchMem{VK_NULL_HANDLE};
-    VkDeviceAddress blasScratchAddr{0};          // aligned scratch address
-    // GPU compute skinning (skin.comp): persistently-mapped per-mesh SSBO of
-    // composed skinning matrices (16 floats each), re-filled per frame.
+    VkDeviceSize blasUpdateScratchSize{0};
+    // Opt-in GPU compute skinning (skin.comp, TUSDVIEW_RT_GPU_SKIN=1):
+    // persistently-mapped per-mesh SSBO of composed skinning matrices
+    // (16 floats each), re-filled per frame by updateMeshSkinningGpu.
     VkBuffer skinMatBuf{VK_NULL_HANDLE};
     VkDeviceMemory skinMatMem{VK_NULL_HANDLE};
     VkDeviceAddress skinMatAddr{0};
@@ -175,7 +172,7 @@ class VulkanRenderer final : public Renderer {
     bool skinned{false};
     bool extendedSkinned{false};
     // RT instancing + displayColor + authored-normal flag (mirrors the GL path).
-    VkBuffer vtxColorBuf{VK_NULL_HANDLE};   // per-vertex displayColor (vec3[]), 0=none
+    VkBuffer vtxColorBuf{VK_NULL_HANDLE};   // displayColor+displayOpacity (vec4[])
     VkDeviceMemory vtxColorMem{VK_NULL_HANDLE};
     VkDeviceAddress vtxColorAddr{0};
     // Raster per-vertex displayColor: set-24 SSBO the mesh vertex shader fetches
@@ -291,9 +288,7 @@ class VulkanRenderer final : public Renderer {
                                const void* data, VkBuffer* buf, VkDeviceMemory* mem);
   void destroyBlas(VkMeshGPU& m);
   void buildBlas(VkMeshGPU& m);
-  // Refit (MODE_UPDATE) an ALLOW_UPDATE BLAS after its vertex buffer changed
-  // (per-frame skinning/morph; same topology). No-op unless blasNeedsRefit.
-  void refitBlas(VkMeshGPU& m);
+  void refitBlas(VkMeshGPU& m);         // MODE_UPDATE in-place rebuild (dynamic BLAS)
   void buildBoxBlas();                  // shared unit-cube BLAS for LOD box proxies
   void initBoxProxyRaster();            // static box geometry for raster LOD proxies
   void drawBoxProxies(VkCommandBuffer cb);  // upload + instanced draw of box proxies
@@ -355,6 +350,8 @@ class VulkanRenderer final : public Renderer {
                                    VkImageView* outView);
   bool createUdimLookupImage(const DrawTextureCPU& tex, VkImage* outImg,
                              VkDeviceMemory* outMem, VkImageView* outView);
+  bool createUdimLookupAtlas(int rows);
+  bool updateUdimLookupAtlasRow(int row, const DrawTextureCPU& tex);
   // DomeLight split-sum IBL (sets 21-23; 1x1 black cube/2D fallbacks).
   // `levels` are face-major float RGB cube levels (DomeIblCPU layout).
   bool createIblCubeImage(const std::vector<std::vector<float>>& levels,
@@ -671,12 +668,17 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkImageView> texViews_;
   std::vector<VkDescriptorSet> texDescs_;
   std::vector<VkDescriptorSet> texUdimArrayDescs_;
-  std::vector<VkDescriptorSet> texUdimLutDescs_;
   std::vector<uint8_t> texIsUdim_;
+  VkImage udimLutAtlasImg_{VK_NULL_HANDLE};
+  VkDeviceMemory udimLutAtlasMem_{VK_NULL_HANDLE};
+  VkImageView udimLutAtlasView_{VK_NULL_HANDLE};
+  VkDescriptorSet udimLutAtlasDesc_{VK_NULL_HANDLE};
+  int udimLutAtlasRows_{0};
   std::vector<int> matBaseTex_;  // per material: DrawScene texture index or -1
   std::vector<int> matMetalRoughTex_;  // per material: DrawScene texture index or -1
   std::vector<int> matNormalTex_;      // per material: DrawScene texture index or -1
   std::vector<int> matEmissiveTex_;    // per material: DrawScene texture index or -1
+  std::vector<int> matOpacityTex_;     // scalar opacity texture index or -1
   std::vector<int> matDispTex_;  // per material: displacement texture index or -1
   std::vector<float> matDispConst_;  // per material: constant displacement amount
 
@@ -844,10 +846,10 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout rtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline rtPipeline_{VK_NULL_HANDLE};
 
-  // GPU compute skinning of the RT vertex stream (skin.comp): descriptor-less
-  // (push constants carry buffer device addresses). Created lazily on the first
-  // updateMeshSkinningGpu(); a failed creation latches skinPipelineTried_ so the
-  // caller permanently falls back to CPU skinning.
+  // Opt-in GPU compute skinning of the RT vertex stream (skin.comp):
+  // descriptor-less (push constants carry buffer device addresses). Created
+  // lazily on the first updateMeshSkinningGpu(); a failed creation latches
+  // skinPipelineTried_ so the caller permanently falls back to CPU skinning.
   bool ensureSkinPipeline();
   VkPipelineLayout skinPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline skinPipeline_{VK_NULL_HANDLE};

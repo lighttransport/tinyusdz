@@ -1,7 +1,7 @@
 {
   "name": "tinyusdz",
   "private": true,
-  "version": "0.9.9-rc6",
+  "version": "0.9.10",
   "description": "TinyUSDZ WebAssembly and JavaScript loaders for USD and USDZ assets",
   "type": "module",
   "main": "./index.js",
@@ -58,6 +58,6 @@
     "node": ">=24"
   },
   "dependencies": {
-    "three": ">=0.177.0"
+    "three": ">=0.178.0"
   }
 }

@@ -1357,12 +1357,10 @@ void App::updateGpuSkinningFrameIfNeeded() {
 
   if (renderer_->rayTracingActive()) {
     if (!idxOk) return;
-    // Per-frame RT-skinning cost split (TUSDVIEW_RT_TIMING=1): GPU compute
-    // dispatch + CPU skin/morph math vs the vertex upload (map+memcpy behind a
-    // vkDeviceWaitIdle). The BLAS refit + TLAS rebuild are timed renderer-side
-    // ([vk_rt] lines).
-    static const bool rtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
-    const auto t0 = std::chrono::steady_clock::now();
+    // TUSDVIEW_RT_TIMING: the CPU side of the RT pose (morph + LBS + normal
+    // regen + displacement bake), the counterpart of the [vk_rt] AS lines.
+    static const bool kRtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
+    const auto skinT0 = std::chrono::steady_clock::now();
 
     // OPT-IN (TUSDVIEW_RT_GPU_SKIN=1) GPU compute skinning for the eligible
     // class (pure <=4-influence skeletal, no morph/displacement): composed
@@ -1377,12 +1375,13 @@ void App::updateGpuSkinningFrameIfNeeded() {
     // surface, so shading differs on smooth meshes (~3% of pixels beyond a
     // 32/255 delta on the probe). Also: the skeleton overlay's dense
     // point-joint samples fall back to rest-pose display for GPU-skinned
-    // meshes (no CPU-skinned helper points).
-    static const bool gpuSkinOptIn =
+    // meshes (no CPU-skinned helper points). Runs inline (not postGpu): the
+    // dispatch's return value gates the CPU fallback, and the RT path never
+    // runs on the threaded-GL build.
+    static const bool kGpuSkinOptIn =
         std::getenv("TUSDVIEW_RT_GPU_SKIN") != nullptr;
     std::unordered_set<int> gpuHandled;
-    size_t gpuMeshes = 0;
-    if (gpuSkinOptIn) {
+    if (kGpuSkinOptIn) {
       std::vector<RtGpuSkinUpdate> gpuUpdates;
       std::unordered_set<int> eligible;
       BuildRtGpuSkinUpdates(loaded_.render, &draw_, animTime_, &gpuUpdates,
@@ -1394,43 +1393,40 @@ void App::updateGpuSkinningFrameIfNeeded() {
                                              u.jointCount, u.matrixBase,
                                              u.aabbMin, u.aabbMax)) {
           gpuHandled.insert(u.meshIndex);
-        } else if (rtTiming) {
-          static bool once = false;
-          if (!once) {
-            std::fprintf(stderr,
-                         "[rt_skin] renderer refused GPU skin for mesh %d "
-                         "(CPU fallback)\n", u.meshIndex);
-            once = true;
-          }
         }
       }
-      gpuMeshes = gpuHandled.size();
+      if (kRtTiming && !gpuHandled.empty()) {
+        std::fprintf(stderr, "[rt-skin] gpu compute skin: %.2f ms (%zu meshes)\n",
+                     std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - skinT0).count(),
+                     gpuHandled.size());
+      }
     }
-    const auto tg = std::chrono::steady_clock::now();
 
     std::vector<RtSkinnedMeshUpload> uploads;
     if (BuildRtSkinnedMeshVertices(loaded_.stage, loaded_.render, &draw_,
                                    animTime_, gui_.blendOverrides(),
                                    gui_.showSkeletonOverlay(), &uploads,
                                    gpuHandled.empty() ? nullptr : &gpuHandled)) {
-      const size_t cpuMeshes = uploads.size();  // uploads is moved below
-      const auto t1 = std::chrono::steady_clock::now();
+      if (kRtTiming) {
+        size_t verts = 0;
+        for (const RtSkinnedMeshUpload& u : uploads) verts += u.vertices.size();
+        std::fprintf(stderr, "[rt-skin] cpu pose: %.2f ms (%zu meshes, %zu verts)\n",
+                     std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - skinT0).count(),
+                     uploads.size(), verts);
+      }
       postGpu([this, ups = std::move(uploads)]() {
+        const auto upT0 = std::chrono::steady_clock::now();
         for (const RtSkinnedMeshUpload& upload : ups) {
           renderer_->updateMeshVertices(upload.meshIndex, upload.vertices);
         }
+        if (kRtTiming) {
+          std::fprintf(stderr, "[rt-skin] vbo upload: %.2f ms\n",
+                       std::chrono::duration<double, std::milli>(
+                           std::chrono::steady_clock::now() - upT0).count());
+        }
       });
-      if (rtTiming && (cpuMeshes || gpuMeshes)) {
-        const auto t2 = std::chrono::steady_clock::now();
-        std::fprintf(stderr,
-                     "[rt_skin] gpu %.1f ms (%zu mesh(es)), cpu skin %.1f ms, "
-                     "upload %.1f ms (%zu mesh(es))\n",
-                     std::chrono::duration<double, std::milli>(tg - t0).count(),
-                     gpuMeshes,
-                     std::chrono::duration<double, std::milli>(t1 - tg).count(),
-                     std::chrono::duration<double, std::milli>(t2 - t1).count(),
-                     cpuMeshes);
-      }
     }
     skinFrameTime_ = animTime_;
     return;
@@ -1497,11 +1493,27 @@ void App::updateNextDeformFrameIfNeeded() {
   // that mesh's BLAS. The alternative -- what this path did before -- was to
   // re-run the whole converter at every time code.
   if (renderer_->rayTracingActive()) {
+    static const bool kRtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
+    const auto skinT0 = std::chrono::steady_clock::now();
     std::vector<RtSkinnedMeshUpload> uploads;
     if (BuildNextRtDeformedVertices(nextSession_->GetStage(), draw_, animTime_,
                                     gui_.blendOverrides(), &uploads)) {
+      if (kRtTiming) {
+        size_t verts = 0;
+        for (const RtSkinnedMeshUpload& u : uploads) verts += u.vertices.size();
+        std::fprintf(stderr, "[rt-skin] cpu pose: %.2f ms (%zu meshes, %zu verts)\n",
+                     std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - skinT0).count(),
+                     uploads.size(), verts);
+      }
+      const auto upT0 = std::chrono::steady_clock::now();
       for (const RtSkinnedMeshUpload& up : uploads) {
         renderer_->updateMeshVertices(up.meshIndex, up.vertices);
+      }
+      if (kRtTiming) {
+        std::fprintf(stderr, "[rt-skin] vbo upload: %.2f ms\n",
+                     std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - upT0).count());
       }
     }
     skinFrameTime_ = animTime_;
@@ -1861,10 +1873,16 @@ bool App::renderHipViewport() {
       // The worker reads draw_ (stable while building: the re-pose below only runs
       // once the build has completed) and builds + uploads on the device
       // (hipSetDevice runs in build()).
-      hipBuildThread_ = std::thread([this, dispScale] {
+      // A deformable scene re-poses per time code: retain the host arrays so
+      // those re-poses REFIT the BVH in place instead of paying a full rebuild.
+      // (The builder refuses the refit map when displacement is actually live
+      // on some mesh -- a displaced flatten re-samples textures per pose.)
+      const bool retainForRefit = sceneIsNextDeformable();
+      hipBuildThread_ = std::thread([this, dispScale, retainForRefit] {
         std::string e;
         const bool ok = hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
-                                         dispScale, &hipBuildProgress_);
+                                         dispScale, &hipBuildProgress_,
+                                         retainForRefit);
         hipBuildErr_ = e;
         hipBuildOk_.store(ok, std::memory_order_release);
         hipBuildDone_.store(true, std::memory_order_release);
@@ -1907,17 +1925,27 @@ bool App::renderHipViewport() {
       LOGI("freed CPU geometry after RT build: %zu -> %zu MB host RSS", before, after);
   }
 
-  // Animation. The BVH is built from vertex positions, so a new time code means a
-  // re-pose and a rebuild -- but a rebuild only, not the whole-converter re-run
-  // this path used to need (it had none: the HIP scene was simply frozen at the
-  // load time code). Synchronous: the timeline should not run ahead of what is on
-  // screen, and a rebuild is a fraction of the initial build (no conversion, no
-  // material/texture work).
+  // Animation. The BVH is built from vertex positions, so a new time code means
+  // a re-pose and an acceleration-structure update. When the initial build
+  // retained its host arrays (deformable, no displacement), that update is a
+  // REFIT: rewrite tris/nrms in leaf order, refit node bounds over the unchanged
+  // trees, upload only those four buffers. Otherwise (or if the topology guard
+  // trips) it falls back to the full rebuild -- still far cheaper than the
+  // whole-converter re-run this path originally needed. Synchronous: the
+  // timeline should not run ahead of what is on screen.
   if (sceneIsNextDeformable() && animTime_ != nextTracerPosedTime_) {
     if (poseNextDrawForTracer(animTime_)) {
       std::string e;
-      if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
-                            gui_.displacementScale())) {
+      const float dispScale = gui_.displacementScale();
+      // TUSDVIEW_NO_BVH_REFIT=1 restores the rebuild-per-pose path (A/B lever:
+      // the refit parity gate compares the two).
+      static const bool kNoRefit =
+          std::getenv("TUSDVIEW_NO_BVH_REFIT") != nullptr;
+      if (!kNoRefit && hipTracer_.canRefit() && hipTracer_.refit(draw_, &e)) {
+        // refit done
+      } else if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
+                                   dispScale, nullptr,
+                                   /*retainForRefit=*/!kNoRefit)) {
         LOGW("HIP re-pose rebuild failed: %s", e.c_str());
       }
     }
@@ -2349,11 +2377,16 @@ int App::run(const std::string& initialFile, int maxFrames,
     stepProgressiveUpload();
     finishReconvertIfReady();  // swap in re-evaluated animation geometry
 
-    // Advance the playback clock and request a re-evaluation at the new time
-    // (interactive only; headless renders a fixed --time frame deterministically,
-    // unless --play asked for a fixed 1/60 s step per frame -- still deterministic,
-    // and it exercises the per-frame skinning/BLAS-update path).
-    if (!headless_) {
+    // Advance the playback clock and request a re-evaluation at the new time.
+    // Headless renders a fixed --time frame unless --play asked for playback --
+    // then the fixed 1/60 step below keeps it just as deterministic.
+    if (!headless_ || playRequested_ || animPlaying_) {
+      // --play: start once the scene (and its timeline) is in. One-shot, so the
+      // user can still pause from the Timeline panel afterwards.
+      if (playRequested_ && loaded_.ok && hasAnimation_ && !loadActive_) {
+        animPlaying_ = true;
+        playRequested_ = false;
+      }
       const auto now = std::chrono::steady_clock::now();
       float dt = haveLastFrameTime_
                      ? std::chrono::duration<float>(now - lastFrameTime_).count()
@@ -2361,10 +2394,12 @@ int App::run(const std::string& initialFile, int maxFrames,
       lastFrameTime_ = now;
       haveLastFrameTime_ = true;
       if (dt > 0.1f) dt = 0.1f;  // clamp after stalls/load hitches
+      // Fixed-frame runs step deterministically (frame N = N/60 s of playback),
+      // so a --play --frames --screenshot capture is pixel-comparable across
+      // runs and machines -- wall-clock dt would land on a different pose every
+      // run.
+      if (maxFrames >= 0) dt = 1.0f / 60.0f;
       advancePlayback(dt);
-    } else if (headlessPlay_ && hasAnimation_ && loaded_.ok && !loadActive_) {
-      animPlaying_ = true;  // readAnimationRange() paused it at load
-      advancePlayback(1.0f / 60.0f);
     }
     if (renderer_ && renderer_->rayTracingActive() != lastRtActiveForSkinning_) {
       updateSkinningEffective();
@@ -2775,9 +2810,18 @@ int App::run(const std::string& initialFile, int maxFrames,
   if (hipRt_ && !screenshot.empty() && !draw_.empty()) {
     std::string cerr;
     poseNextDrawForTracer(animTime_);  // as CUDA above
+    // A windowed --frames run already built (and per-pose refit/rebuilt) the
+    // interactive scene at this very time code: trace THAT instead of paying a
+    // redundant full rebuild. This is also what lets the refit parity gate see
+    // refit geometry in the screenshot -- the window capture composites the UI,
+    // not the traced pixels. Headless (or a failed interactive build) still
+    // builds here as before.
+    const bool reuseInteractive =
+        hipInteractiveBuilt_ && animTime_ == nextTracerPosedTime_;
     if (!hipTracer_.init(&cerr)) {
       LOGW("HIP ray tracing unavailable: %s", cerr.c_str());
-    } else if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
+    } else if (!reuseInteractive &&
+               !hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
                                  gui_.displacementScale())) {
       LOGW("HIP ray tracing build failed: %s", cerr.c_str());
     } else {

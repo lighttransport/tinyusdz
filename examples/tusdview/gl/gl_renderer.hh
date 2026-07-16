@@ -82,7 +82,7 @@ class GLRenderer final : public Renderer {
     bool hasTranslucentInstances{false};
     float flatColor[3]{0.8f, 0.8f, 0.8f};  // per-draw color when no per-instance
     float flatOpacity{1.0f};
-    GLuint vertexColorVbo{0};        // per-vertex displayColor (non-instanced); 0 = none
+    GLuint vertexColorVbo{0};        // RGBA: displayColor + displayOpacity; 0 = none
     GLuint uv1Vbo{0};                // 2nd texcoord set (attrib 6, non-instanced); 0 = none
     GLuint morphInflVbo{0};          // blendshape influence (attrib 7, non-instanced); 0 = none
     GLuint faceIdBuf{0};             // texture buffer: per-triangle source face id; 0 = none
@@ -129,10 +129,15 @@ class GLRenderer final : public Renderer {
     // Texture slot indices into textures_ (-1 = none). Resolved at draw time so
     // lazily-uploaded textures appear without re-touching materials.
     int baseColorTex{-1}, metalRoughTex{-1}, normalTex{-1}, emissiveTex{-1};
+    int opacityTex{-1};
     DrawTexSampleCPU baseColorSample;
     DrawTexSampleCPU metalRoughSample;
     DrawTexSampleCPU normalSample;
     DrawTexSampleCPU emissiveSample;
+    DrawTexSampleCPU opacitySample;
+    int opacityChannel{0};
+    float opacityTexScale{1.0f};
+    float opacityTexBias{0.0f};
     int metallicChannel{2};
     int roughnessChannel{1};
     float metallicTexScale{1.0f};
@@ -180,12 +185,14 @@ class GLRenderer final : public Renderer {
   GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
   GLint uUseSpecularWorkflow_{-1}, uSpecularColor_{-1}, uIor_{-1};  // F0 (T12)
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
+  GLint uHasOpacityTex_{-1};
   GLint uBaseColorTexIsUdim_{-1}, uMetalRoughTexIsUdim_{-1};
-  GLint uNormalTexIsUdim_{-1}, uEmissiveTexIsUdim_{-1};
+  GLint uNormalTexIsUdim_{-1}, uEmissiveTexIsUdim_{-1}, uOpacityTexIsUdim_{-1};
   GLint uBaseColorUv0_{-1}, uBaseColorUv1_{-1};
   GLint uMetalRoughUv0_{-1}, uMetalRoughUv1_{-1};
   GLint uNormalUv0_{-1}, uNormalUv1_{-1};
   GLint uEmissiveUv0_{-1}, uEmissiveUv1_{-1};
+  GLint uOpacityUv0_{-1}, uOpacityUv1_{-1};
   GLint uUvSet_{-1};  // per-slot UV set (base, metal/rough, normal, emissive)
   GLint uBaseColorTexScale_{-1}, uBaseColorTexBias_{-1};
   GLint uNormalTexScale_{-1}, uNormalTexBias_{-1};
@@ -193,6 +200,9 @@ class GLRenderer final : public Renderer {
   GLint uMetallicChannel_{-1}, uRoughnessChannel_{-1};
   GLint uMetallicTexScale_{-1}, uMetallicTexBias_{-1};
   GLint uRoughnessTexScale_{-1}, uRoughnessTexBias_{-1};
+  GLint uOpacityUvSet_{-1}, uOpacityChannel_{-1};
+  GLint uOpacityTexScale_{-1}, uOpacityTexBias_{-1};
+  GLint uUdimSlots_{-1}, uOpacityUdimSlot_{-1};
   GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)
   GLint uDisplacementConst_{-1}, uDisplacementScale_{-1};
   GLint uDisplacementTexScale_{-1}, uDisplacementTexBias_{-1};
@@ -293,9 +303,9 @@ class GLRenderer final : public Renderer {
   struct GLTexture {
     GLuint tex2d{0};
     GLuint arrayTex{0};
-    GLuint lutTex{0};
     bool isUdim{false};
   };
+  GLuint udimLutAtlas_{0};
   std::vector<GLTexture> textures_;
   std::vector<GLMaterial> materials_;
   std::vector<GLMesh> meshes_;

@@ -1,7 +1,7 @@
 #usda 1.0
 (
     defaultPrim = "world"
-    doc = "Example: a textured plane whose base color is a GPU-compressed KTX2 (tinyexr uni / UASTC intermediate) with a full mip chain. Load with tusdview --texture-keep-compressed on to upload/transcode the blocks directly (no decode + re-encode); see doc/texcomp.md. Stock USD tools decode the .ktx2 to RGBA8 via the core loader."
+    doc = "Example: a textured plane whose base color is a private tinyexr uni KTX2 with a full mip chain. Load with tusdview --texture-keep-compressed on to upload/transcode the blocks directly (no decode + re-encode); see doc/texcomp.md. The private carrier is decoded by tinyusdz/textools and is not Basis UASTC."
     metersPerUnit = 1
     upAxis = "Y"
 )

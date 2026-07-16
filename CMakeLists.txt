@@ -1030,13 +1030,13 @@ if(TINYUSDZ_WITH_TEXTOOLS)
           PROPERTIES COMPILE_OPTIONS "-march=armv8-a+sve")
     endif()
   endif()
-  if(UNIX)
+  if(UNIX AND NOT EMSCRIPTEN)
     target_compile_definitions(tinyusdz_textools PRIVATE
         TIR_ENABLE_THREADS TIR_THREADS_PTHREAD)
     find_package(Threads REQUIRED)
     target_link_libraries(tinyusdz_textools PUBLIC Threads::Threads)
   endif()
-  if(UNIX AND NOT APPLE)
+  if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     target_link_libraries(tinyusdz_textools PUBLIC m)
   endif()
 endif()
@@ -2346,9 +2346,12 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   if(TARGET tusdcat AND _tinyusdz_tusdcat_e2e_ok)
-    # Scope is imageable, so `visibility` / `purpose` are parsed into TYPED
-    # fields (not `props`) and every writer must emit them explicitly. Neither
-    # the USDA printer nor the crate writer did, so they vanished on write.
+    # Crate-writer round-trip pins. Every check here is a fix for authored USD
+    # data that the .usdc writer silently DROPPED or INVENTED: schema fallbacks
+    # written for declaration-only attributes, prim/attribute metadata blocks,
+    # timeSamples on typed writers, list-edit qualifiers, and imageable fields
+    # such as Scope visibility/purpose. Several are latent -- no tests/usda
+    # fixture exercises them -- so this suite prevents silent regressions.
     add_test(
       NAME scope-imageable-roundtrip
       COMMAND bash "${PROJECT_SOURCE_DIR}/tests/run-scope-imageable-roundtrip.sh"
@@ -2428,6 +2431,22 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-skinning-screenshot-diff
                            PROPERTIES SKIP_RETURN_CODE 77)
+
+      # The HIP interactive tracer refits its BVH per pose instead of paying a
+      # full scene rebuild. Refit must trace byte-identically to the rebuild
+      # path (TUSDVIEW_NO_BVH_REFIT=1) over the same --play run. Self-skips
+      # without a HIP device.
+      add_test(
+        NAME tusdview-hip-bvh-refit
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-hip-bvh-refit.py
+                "${TINYUSDZ_XVFB_RUN}"
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-hip-bvh-refit"
+        )
+      set_tests_properties(tusdview-hip-bvh-refit
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800)
       # Skinning must also reach INSTANCED prototypes (a shared prototype behind
       # `instanceable = true`), which the next loader used to convert but never
       # skin -- every instance rendered the rest pose. Asserts the rig actually
@@ -2490,7 +2509,7 @@ if(TINYUSDZ_BUILD_TESTS)
         COMMAND python3
                 ${PROJECT_SOURCE_DIR}/tests/tusdview/check-blas-compaction.py
                 "$<TARGET_FILE:tusdview>"
-                "${PROJECT_SOURCE_DIR}/models/skintest-instanced.usda"
+                "${PROJECT_SOURCE_DIR}/models/blastest-instanced-static.usda"
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-blas-compaction"
         )
       set_tests_properties(tusdview-blas-compaction PROPERTIES SKIP_RETURN_CODE 77)
@@ -2551,6 +2570,19 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-skinning"
         )
       set_tests_properties(tusdview-rt-skinning PROPERTIES SKIP_RETURN_CODE 77)
+
+      # A skinned mesh's BLAS is refit in place per pose (MODE_UPDATE) instead
+      # of destroyed + fully rebuilt. Refit must trace byte-identically to the
+      # rebuild path (TUSDVIEW_NO_BLAS_REFIT=1) over the same --play run.
+      add_test(
+        NAME tusdview-rt-blas-refit
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-rt-blas-refit.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-blas-refit"
+        )
+      set_tests_properties(tusdview-rt-blas-refit PROPERTIES SKIP_RETURN_CODE 77)
 
       # A non-instanced blendshaped mesh must morph: the static batch path used to
       # build no morph channels at all, so it rendered its rest shape forever.
@@ -2687,6 +2719,16 @@ if(TINYUSDZ_BUILD_TESTS)
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-specular-workflow.sh"
       )
     set_tests_properties(tusdview-specular-workflow PROPERTIES SKIP_RETURN_CODE 77)
+
+    # T12 opacity completion: separate scalar opacity textures (ordinary/UDIM)
+    # on both raster backends, and varying displayOpacity on raster + RT.
+    add_test(
+      NAME tusdview-opacity-material
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-opacity-material.sh"
+      )
+    set_tests_properties(tusdview-opacity-material PROPERTIES SKIP_RETURN_CODE 77)
 
     # USD `proxy` and `render` are ALTERNATIVES, not two things to draw. Drawing
     # both put the stand-in on top of the geometry it stands in for (intent-vfx's

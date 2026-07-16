@@ -61,25 +61,6 @@ int HexVal(char c) {
   return -1;
 }
 
-// Append a Unicode code point to `out` as UTF-8.
-void AppendUtf8(std::string& out, uint32_t cp) {
-  if (cp <= 0x7f) {
-    out += static_cast<char>(cp);
-  } else if (cp <= 0x7ff) {
-    out += static_cast<char>(0xc0 | (cp >> 6));
-    out += static_cast<char>(0x80 | (cp & 0x3f));
-  } else if (cp <= 0xffff) {
-    out += static_cast<char>(0xe0 | (cp >> 12));
-    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3f));
-    out += static_cast<char>(0x80 | (cp & 0x3f));
-  } else if (cp <= 0x10ffff) {
-    out += static_cast<char>(0xf0 | (cp >> 18));
-    out += static_cast<char>(0x80 | ((cp >> 12) & 0x3f));
-    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3f));
-    out += static_cast<char>(0x80 | (cp & 0x3f));
-  }
-}
-
 struct Keyword {
   const char* name;
   TokenType type;
@@ -625,21 +606,9 @@ Token Lexer::scan_string() {
           else value += static_cast<char>(v);
           break;
         }
-        case 'u':
-        case 'U': {
-          // \uXXXX (4 hex) or \UXXXXXXXX (8 hex) -> UTF-8
-          int want = (escaped == 'u') ? 4 : 8;
-          uint32_t cp = 0;
-          int n = 0;
-          while (n < want && HexVal(current_char()) >= 0) {
-            cp = cp * 16 + static_cast<uint32_t>(HexVal(current_char()));
-            advance();
-            n++;
-          }
-          if (n != want) { value += '\\'; value += escaped; }
-          else AppendUtf8(value, cp);
-          break;
-        }
+        // NOTE: `\u`/`\U` are NOT USD escapes (the grammar has only
+        // single-char, \xNN hex and octal): pxr treats them as unknown
+        // escapes and keeps the character without the backslash.
         case '0': case '1': case '2': case '3':
         case '4': case '5': case '6': case '7': {
           // Octal \NNN - first digit is `escaped`, up to two more
@@ -653,7 +622,7 @@ Token Lexer::scan_string() {
           break;
         }
         default:
-          value += '\\';
+          // Unknown escape: pxr drops the backslash and keeps the character.
           value += escaped;
           break;
       }

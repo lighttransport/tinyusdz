@@ -12,13 +12,25 @@
 #define __has_attribute(x) 0
 #endif
 
+#ifndef __has_include
+#define __has_include(x) 0
+#endif
+
+// Pull in __GLIBC__ so the multiversioning gate below can detect glibc. musl
+// libc also ships <features.h> but deliberately does NOT define __GLIBC__.
+#if defined(__linux__) && __has_include(<features.h>)
+#include <features.h>
+#endif
+
 // Native runtime multi-versioning via GCC/Clang target_clones + ELF ifunc
 // (Linux). The build defines TINYUSDZ_IMAGEPROC_MULTIVERSION when this is wanted
-// and the toolchain/target support it.
+// and the toolchain/target support it. target_clones emits an ifunc resolver,
+// which requires glibc — musl libc has no ifunc support, so musllinux builds
+// must fall back to the scalar/default path (gate on __GLIBC__).
 #if defined(TINYUSDZ_IMAGEPROC_MULTIVERSION) && !defined(__wasm__) &&         \
     (defined(__i386__) || defined(__x86_64__)) &&                            \
     (defined(__GNUC__) || defined(__clang__)) && defined(__ELF__) &&          \
-    __has_attribute(target_clones)
+    defined(__GLIBC__) && __has_attribute(target_clones)
 #define IMAGEPROC_MV \
   __attribute__((target_clones("avx2", "avx", "sse4.1", "sse2", "default")))
 #define IMAGEPROC_MV_ON 1

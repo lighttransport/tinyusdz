@@ -47,12 +47,18 @@ function parseArgs(argv) {
     // Regression gate: exit non-zero if (FAIL + CRASH) exceeds this. Default
     // off (report only); CI passes e.g. `--max-fail 0`.
     maxFail: Infinity,
+    // Compare-mode ratchet: exit non-zero if DIFFER+DIFFERR exceeds this.
+    maxDiffer: Infinity,
     out: 'tests/asset-parse-results',
     // Compare mode: cross-check each asset against the OpenUSD reference
     // (`usdcat`) and diff tinyusdz's re-serialization against it (`tusddiff`).
     compare: false,
     usdcat: process.env.USDCAT_PATH || '/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist/bin/usdcat',
     tusddiff: process.env.TUSDDIFF_PATH || './build/tusddiff',
+    // Extra args prepended when invoking --tusdcat for the compare-mode layer
+    // serialization (legacy tusdcat prints the layer bare; next_usdcat needs
+    // `--rewrite-layer`).
+    serializeArgs: [],
   };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i];
@@ -65,10 +71,12 @@ function parseArgs(argv) {
       case '--jobs': a.jobs = parseInt(val(), 10); break;
       case '--include-mtlx': a.includeMtlx = true; break;
       case '--max-fail': a.maxFail = parseInt(val(), 10); break;
+      case '--max-differ': a.maxDiffer = parseInt(val(), 10); break;
       case '--out': a.out = val(); break;
       case '--compare': a.compare = true; break;
       case '--usdcat': a.usdcat = val(); break;
       case '--tusddiff': a.tusddiff = val(); break;
+      case '--serialize-args': a.serializeArgs = val().split(/\s+/).filter(Boolean); break;
       case '-h': case '--help':
         console.log('Usage: node tests/parse-asset-corpus.mjs [--assets DIR] [--tusdcat PATH] ' +
           '[--mode load|flatten] [--timeout MS] [--jobs N] [--include-mtlx] [--out DIR]\n' +
@@ -188,7 +196,7 @@ async function compareOne(a, file, tmpdir, idx) {
   if (ref !== 'REF_FAIL') {
     // ref serialization via usdcat -o; ours via tusdcat to stdout (-o is buggy).
     const ru = await run(a.usdcat, [file, '-o', refOut], a.timeout);
-    const ro = await run(a.tusdcat, [file], a.timeout);
+    const ro = await run(a.tusdcat, [...a.serializeArgs, file], a.timeout);
     if (ru.code === 0 && ro.code === 0 && ro.stdout) {
       try {
         await fs.writeFile(oursOut, ro.stdout);
@@ -505,6 +513,15 @@ async function main() {
       process.exit(1);
     }
     console.log(`Regression gate OK: ${hard} FAIL+CRASH <= --max-fail ${a.maxFail}.`);
+  }
+  if (a.compare && Number.isFinite(a.maxDiffer)) {
+    const differ = (diffTally.DIFFER || 0) + (diffTally.DIFFERR || 0);
+    if (differ > a.maxDiffer) {
+      console.error(`\nREGRESSION: ${differ} DIFFER+DIFFERR > --max-differ ${a.maxDiffer} ` +
+        `(mode ${a.mode}). See ${path.join(a.out, 'summary.md')}.`);
+      process.exit(1);
+    }
+    console.log(`Compare gate OK: ${differ} DIFFER+DIFFERR <= --max-differ ${a.maxDiffer}.`);
   }
 }
 

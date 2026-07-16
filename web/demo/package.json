@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "prepare:local-tinyusdz": "bash scripts/prepare-local-tinyusdz.sh",
+    "dev": "bash scripts/prepare-local-tinyusdz.sh && vite --mode development",
     "build": "vite build",
     "preview": "vite preview",
     "capture-previews": "node scripts/capture-previews.mjs"

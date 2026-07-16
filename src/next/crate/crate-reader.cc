@@ -225,6 +225,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::Matrix3d: return UnpackMatrix3d(rep, out);
     case CrateTypeId::Matrix4d: return UnpackMatrix4d(rep, out);
     case CrateTypeId::Specifier: return UnpackSpecifier(rep, out);
+    case CrateTypeId::Permission: return UnpackPermission(rep, out);
     case CrateTypeId::Variability: return UnpackVariability(rep, out);
     case CrateTypeId::TimeCode: {
       // Decode like a double but preserve the TimeCode type identity

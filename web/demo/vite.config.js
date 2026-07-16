@@ -2,14 +2,26 @@ import { defineConfig } from 'vite'
 import path from 'path'
 import { compression } from 'vite-plugin-compression2'
 
-// The demo intentionally resolves TinyUSDZ from the npm package in
-// node_modules instead of the repository's web/js source tree.
-
 // Do not minify(we want to make demo website simple)
 // base: "./" => make asset path relative(required for static hosting of tinyusdz demo page at github pages)
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+  const useLocalTinyUSDZ = command === 'serve' && mode === 'development';
+  const tinyusdzRoot = useLocalTinyUSDZ
+    ? path.resolve(__dirname, '../js/src/tinyusdz')
+    : path.resolve(__dirname, 'node_modules/tinyusdz');
+  const nextUtils = useLocalTinyUSDZ
+    ? path.resolve(__dirname, '../js/src/tinyusdz/NextRenderSceneUtils.js')
+    : path.resolve(__dirname, 'src/next-backend-production-shim.js');
+
+  return {
     base: "./",
+    define: {
+        __TINYUSDZ_LOCAL_DEV__: JSON.stringify(useLocalTinyUSDZ),
+    },
     server: {
+        fs: {
+            allow: [__dirname, path.resolve(__dirname, '../js')],
+        },
         headers: {
             'Cross-Origin-Opener-Policy': 'same-origin',
             'Cross-Origin-Embedder-Policy': 'require-corp',
@@ -17,7 +29,10 @@ export default defineConfig({
     },
     resolve: {
         alias: [
-            { find: 'tinyusdz', replacement: path.resolve(__dirname, 'node_modules/tinyusdz') },
+            { find: 'tinyusdz-next-demo-utils', replacement: nextUtils },
+            { find: 'tinyusdz', replacement: tinyusdzRoot },
+            { find: 'fzstd', replacement: path.resolve(__dirname, 'node_modules/fzstd') },
+            { find: 'three', replacement: path.resolve(__dirname, 'node_modules/three') },
         ],
     },
     build: {
@@ -45,4 +60,5 @@ export default defineConfig({
     plugins: [
       compression({algorithms: ['gzip']}),
     ],
+  };
 });

@@ -42,6 +42,10 @@ struct MaterialTexParam {
                 // copy of this struct must stay byte-identical.
   vec4 specParams;  // specular F0 (see mesh.frag); unused here, kept for
                     // the byte-identical SSBO stride.
+  vec4 opacityUv0; vec4 opacityUv1;
+  vec4 opacityParams;
+  vec4 udimSlots0;
+  vec4 udimSlots1;
 };
 layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -62,7 +66,7 @@ layout(location = 5) out vec2 vUV1;
 layout(location = 6) out float vMorphInfl;
 // The frag shader consumes vColor (location 7). The tess path serves displaced
 // meshes and carries no per-vertex color; white keeps shading unmodulated.
-layout(location = 7) out vec3 vColor;
+layout(location = 7) out vec4 vColor;
 
 void main() {
   vec3 bc = gl_TessCoord;
@@ -85,6 +89,6 @@ void main() {
   vDomWeight = 0.0;
   vUV1 = vec2(0.0);
   vMorphInfl = 0.0;
-  vColor = vec3(1.0);
+  vColor = vec4(1.0);
   gl_Position = fr.viewProj * pc.model * vec4(pos, 1.0);
 }

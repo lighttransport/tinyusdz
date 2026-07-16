@@ -15,7 +15,7 @@ layout(local_size_x = 8, local_size_y = 8) in;
 // Vertex buffer = interleaved DrawVertex (8 floats: pos.xyz, nrm.xyz, uv.xy).
 layout(buffer_reference, scalar) readonly buffer Verts { float v[]; };
 layout(buffer_reference, scalar) readonly buffer Idx   { uint  i[]; };
-// Optional per-vertex displayColor (vec3 packed as 3 floats / vertex).
+// Optional displayColor.rgb + displayOpacity (vec4 packed per vertex).
 layout(buffer_reference, scalar) readonly buffer Cols  { float c[]; };
 layout(buffer_reference, scalar) readonly buffer UV1s  { float u[]; };  // vec2 per vertex
 layout(buffer_reference, scalar) readonly buffer Infls { float f[]; };  // float per vertex
@@ -97,8 +97,9 @@ vec3 fetchPos(Verts vb, uint vi) {
 vec3 fetchNrm(Verts vb, uint vi) {
   return vec3(vb.v[vi * 8u + 3u], vb.v[vi * 8u + 4u], vb.v[vi * 8u + 5u]);
 }
-vec3 fetchCol(Cols cb, uint vi) {
-  return vec3(cb.c[vi * 3u + 0u], cb.c[vi * 3u + 1u], cb.c[vi * 3u + 2u]);
+vec4 fetchCol(Cols cb, uint vi) {
+  return vec4(cb.c[vi * 4u + 0u], cb.c[vi * 4u + 1u],
+              cb.c[vi * 4u + 2u], cb.c[vi * 4u + 3u]);
 }
 vec2 fetchUV(Verts vb, uint vi) {
   return vec2(vb.v[vi * 8u + 6u], vb.v[vi * 8u + 7u]);
@@ -305,11 +306,14 @@ void main() {
     }
     if (md.vtxColorAddr != 0ul) {
       Cols cb = Cols(md.vtxColorAddr);
-      base *= fetchCol(cb, i0) * w0 + fetchCol(cb, i1) * bc.x + fetchCol(cb, i2) * bc.y;
+      vec4 vc = fetchCol(cb, i0) * w0 + fetchCol(cb, i1) * bc.x +
+                fetchCol(cb, i2) * bc.y;
+      base *= vc.rgb;
+      alpha *= vc.a;
     }
     float materialOpacity = clamp(alpha, 0.0, 1.0);
     if (alphaMode > 0.5 && alphaMode < 1.5) {
-      materialOpacity = (alpha >= alphaCutoff) ? 1.0 : 0.0;
+      materialOpacity = (materialOpacity >= alphaCutoff) ? 1.0 : 0.0;
     }
 
     // Render mode (RenderMode in camPos.w). Only shaded/wireframe need the
