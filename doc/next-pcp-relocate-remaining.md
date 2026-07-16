@@ -1,12 +1,29 @@
-# Resume: `src/next` pcp composition — remaining relocate/specialize gaps
+# Resume: `src/next` pcp composition — relocate/specialize gaps (COMPLETE)
 
 Handoff for a fresh coding-agent session. The next-vs-pxr **flatten differential**
-gate is at **755 pass / 2 untagged / 0 FAIL** of 798 inputs (campaign started at
-181 listed / 597 passing). This doc lists the **2 remaining untagged cases**,
-their **precise pcp.txt-derived root causes**, what has already been tried and
-reverted, and the recommended next arc.
+gate is at **756 pass / 0 untagged / 0 FAIL** of 798 inputs (campaign started at
+181 listed / 597 passing). **All untagged differential cases are now fixed.** This
+doc records the final arc's root causes and fixes for reference; the DESIGN-PASS
+STATUS section below has the per-case detail.
 
-## DESIGN-PASS STATUS (gate 755 pass / 2 untagged / 0 FAIL; 4 FIXED this arc, 2 remain — each a distinct deep redesign)
+## DESIGN-PASS STATUS (gate 756 pass / 0 untagged / 0 FAIL — ALL FIXED)
+
+- **2 `ErrorInvalidInstanceTargetPath`** — ✅ **FIXED (b2ff45f49)**. An inherited-class
+  connection (SymBrow.sculpt.amount.connect) into relocated instances was dropped: the
+  sculpt binds the implied-class map (class subtree only), so sibling-instance targets
+  strict-dropped. Two parts in the target-remap lambda: (1) fall back to the Src's
+  `arc_chain` reference map when the class's own map can't express the target; (2)
+  invalid SELF-instance target — a target that un-relocates (in the referenced stack)
+  UNDER the inheriting instance is kept at the reference-mapped PRE-relocate path
+  (`FullyUnrelocate(0, .)`), while other-instance targets relocate normally.
+- **4 `VariantSpecializesAndReferenceSurprisingBehavior`** — ✅ **FIXED (07227930c)**.
+  Material_Child specializes /Model/Material, whose implied-specialize target composes
+  via arcs with no raw spec (the block only fired for a raw spec). Extend: compose the
+  target's contributors and route to spec_out (ahead of the direct target) ONLY those
+  the DIRECT target (arc_site) does not itself deliver — the ancestral prepend-reference,
+  not variant-internal references. Distinguishes SurprisingBehavior (ref on /Model,
+  ancestral -> myInt=0) from VariantSpecializesAndReference (ref inside the variant ->
+  myInt=1, unchanged via the direct_sites filter).
 
 - **3 `TrickySpookyVariantSelectionInClass`** — ✅ **FIXED (65272912a)**. Instance-beats-
   class variant selection through inherit+relocate. Two coupled defects: (1) the
