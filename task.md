@@ -34,8 +34,12 @@
 > architecture (check-rt-skinning asserts RT re-pose == CPU bake exactly;
 > GPU FMA/ULP drift breaks that) for ~1-2 ms of remaining headroom.
 >
-> REMAINING (optional): the CUDA/HIP tracers still full-rebuild their BVH per
-> time code (doc/resume-tusdview.md notes it; perf, not correctness).
+> Final follow-up (2026-07-16): the HIP interactive tracer now REFITS its
+> 2-level BVH per pose (~270 ms rebuild -> ~16.5 ms at 205k tris,
+> byte-identical; gate `tusdview-hip-bvh-refit`, doubly mutation-verified),
+> and its --screenshot path reuses the interactive scene instead of a
+> redundant rebuild. CUDA keeps the rebuild -- it is screenshot-only, no
+> per-pose path exists. Nothing from this task remains open.
 > Original task text kept below for context.
 
 > Resume prompt. This is the last remaining GPU-skinning gap. Raster-path GPU

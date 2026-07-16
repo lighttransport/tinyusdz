@@ -88,6 +88,7 @@ struct MeshBuild {
   std::vector<uint8_t> geo, emask;
   std::vector<int> mat, face, domj;
   std::vector<Node> blas;  // local node/leaf refs (rebased during assembly)
+  std::vector<int> leafOrder;  // output slot i <- original triangle leafOrder[i]
   float lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
   std::vector<float> instO2W;   // 12 floats/placement (1 for non-instanced)
   std::vector<float> instTint;  // 4 floats/placement (rgba)
@@ -273,6 +274,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     mb.face.push_back(lf[s]);
     mb.domj.push_back(ldomj[s]);
   }
+  mb.leafOrder = std::move(bidx);
 
   // Placements (instanced: N; non-instanced: one identity-style placement).
   if (instanced) {
@@ -393,7 +395,21 @@ void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
 
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     float displacementScale, HostScene* out, std::string* err,
-                    BuildProgress* progress) {
+                    BuildProgress* progress, RefitMap* refitOut) {
+  if (refitOut) {
+    refitOut->valid = false;
+    refitOut->meshes.clear();
+  }
+  // Refit rewrites positions/normals only, so it cannot reproduce a DISPLACED
+  // flatten (it re-samples textures per pose). displacementScale alone is not
+  // the test -- the default GUI scale is 1.0 -- displacement must actually be
+  // live on some mesh to disqualify the map.
+  bool recordRefit = refitOut != nullptr;
+  if (recordRefit && displacementScale != 0.0f) {
+    for (const DrawMeshCPU& m : scene.meshes) {
+      if (MeshHasDisplacement(scene, m)) { recordRefit = false; break; }
+    }
+  }
   const size_t cap = maxTris ? maxTris : (size_t(1) << 62);
   const size_t instCap = maxInstances ? maxInstances : ~size_t(0);
   auto setPhase = [&](int p, size_t total) {
@@ -430,12 +446,20 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   std::vector<InstSrc> isrc;
   std::vector<std::array<float, 6>> protoBox;  // {lo.xyz, hi.xyz} per accepted mesh
   setPhase(1, mbs.size());  // assemble
-  for (MeshBuild& mb : mbs) {
+  for (size_t mbi = 0; mbi < mbs.size(); ++mbi) {
+    MeshBuild& mb = mbs[mbi];
     tick();
     if (!mb.valid) continue;
     if (out->tris.size() / 9 >= cap) { out->truncated = true; break; }
     if (isrc.size() >= instCap) { out->truncated = true; break; }
     const size_t triOff = out->tris.size() / 9;
+    if (recordRefit) {
+      RefitMeshMap rm;
+      rm.sceneMesh = mbi;
+      rm.triOffset = triOff;
+      rm.leafOrder = std::move(mb.leafOrder);
+      refitOut->meshes.push_back(std::move(rm));
+    }
     const size_t nodeOff = out->blas.size();
     const int blasRoot = static_cast<int>(nodeOff);
     out->tris.insert(out->tris.end(), mb.tris.begin(), mb.tris.end());
@@ -609,6 +633,125 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     const DrawLightCPU& light = scene.lights[i];
     PackRtLightParams(light, mapTex(light.envmapTexture),
                       &out->lightParams[i * kRtLightParamFloats]);
+  }
+  if (recordRefit) refitOut->valid = true;
+  return true;
+}
+
+bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
+                    std::string* err) {
+  if (!hs || !map.valid) {
+    if (err) *err = "no refit map (scene was not built with refit retained)";
+    return false;
+  }
+  using Clock = std::chrono::steady_clock;
+  const auto t0 = Clock::now();
+
+  // Topology guard first, across all meshes, so a mismatch never leaves hs
+  // half-rewritten (the caller falls back to a full rebuild on false).
+  for (const RefitMeshMap& rm : map.meshes) {
+    if (rm.sceneMesh >= scene.meshes.size()) {
+      if (err) *err = "refit: mesh list changed";
+      return false;
+    }
+    const DrawMeshCPU& m = scene.meshes[rm.sceneMesh];
+    const size_t triCount = rm.leafOrder.size();
+    if (m.indices.size() / 3 != triCount || m.vertices.empty() ||
+        (rm.triOffset + triCount) * 9 > hs->tris.size()) {
+      if (err) *err = "refit: mesh topology changed";
+      return false;
+    }
+  }
+
+  // 1. Rewrite positions + normals in the recorded leaf order (same values a
+  //    fresh flatten would emit for this pose; everything else -- uvs, colors,
+  //    materials, masks -- is pose-invariant and stays).
+  ParallelFor(map.meshes.size(), [&](size_t i) {
+    const RefitMeshMap& rm = map.meshes[i];
+    const DrawMeshCPU& m = scene.meshes[rm.sceneMesh];
+    const size_t triCount = rm.leafOrder.size();
+    for (size_t o = 0; o < triCount; ++o) {
+      const size_t s = static_cast<size_t>(rm.leafOrder[o]);
+      float* tp = &hs->tris[(rm.triOffset + o) * 9];
+      float* np = &hs->nrms[(rm.triOffset + o) * 9];
+      for (int k = 0; k < 3; ++k) {
+        const DrawVertex& vtx = m.vertices[m.indices[s * 3 + k]];
+        tp[k * 3 + 0] = vtx.px; tp[k * 3 + 1] = vtx.py; tp[k * 3 + 2] = vtx.pz;
+        np[k * 3 + 0] = vtx.nx; np[k * 3 + 1] = vtx.ny; np[k * 3 + 2] = vtx.nz;
+      }
+    }
+  });
+
+  // 2. Refit BLAS node bounds over the unchanged tree. BuildBvh appends a node
+  //    before recursing into its children, so every child index is greater than
+  //    its parent's: one reverse sweep computes children before parents. Leaf
+  //    `left` is already rebased to the global tri array.
+  for (size_t n = hs->blas.size(); n-- > 0;) {
+    Node& nd = hs->blas[n];
+    if (nd.count > 0) {
+      float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+      for (int t = 0; t < nd.count; ++t) {
+        const float* tv = &hs->tris[(static_cast<size_t>(nd.left) + t) * 9];
+        for (int v = 0; v < 3; ++v)
+          for (int k = 0; k < 3; ++k) {
+            lo[k] = std::min(lo[k], tv[v * 3 + k]);
+            hi[k] = std::max(hi[k], tv[v * 3 + k]);
+          }
+      }
+      for (int k = 0; k < 3; ++k) { nd.bmin[k] = lo[k]; nd.bmax[k] = hi[k]; }
+    } else {
+      const Node& l = hs->blas[static_cast<size_t>(nd.left)];
+      const Node& r = hs->blas[static_cast<size_t>(nd.right)];
+      for (int k = 0; k < 3; ++k) {
+        nd.bmin[k] = std::min(l.bmin[k], r.bmin[k]);
+        nd.bmax[k] = std::max(l.bmax[k], r.bmax[k]);
+      }
+    }
+  }
+
+  // 3. Instance world AABBs: each Inst's blasRoot node now carries the mesh's
+  //    refit prototype bounds; worlds are static on this path (the deform is
+  //    vertex-level), so o2w is reused as-is.
+  std::vector<float> instAabb(hs->instances.size() * 6);
+  ParallelFor(hs->instances.size(), [&](size_t i) {
+    const Inst& I = hs->instances[i];
+    const Node& root = hs->blas[static_cast<size_t>(I.blasRoot)];
+    float wlo[3], whi[3];
+    O2WAabb(I.o2w, root.bmin, root.bmax, wlo, whi);
+    for (int k = 0; k < 3; ++k) {
+      instAabb[i * 6 + k] = wlo[k];
+      instAabb[i * 6 + 3 + k] = whi[k];
+    }
+  });
+
+  // 4. Refit TLAS node bounds (same reverse-sweep argument; a TLAS leaf's
+  //    `left` is its first instance in the reordered instance table).
+  for (size_t n = hs->tlas.size(); n-- > 0;) {
+    Node& nd = hs->tlas[n];
+    if (nd.count > 0) {
+      float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+      for (int t = 0; t < nd.count; ++t) {
+        const float* a = &instAabb[(static_cast<size_t>(nd.left) + t) * 6];
+        for (int k = 0; k < 3; ++k) {
+          lo[k] = std::min(lo[k], a[k]);
+          hi[k] = std::max(hi[k], a[3 + k]);
+        }
+      }
+      for (int k = 0; k < 3; ++k) { nd.bmin[k] = lo[k]; nd.bmax[k] = hi[k]; }
+    } else {
+      const Node& l = hs->tlas[static_cast<size_t>(nd.left)];
+      const Node& r = hs->tlas[static_cast<size_t>(nd.right)];
+      for (int k = 0; k < 3; ++k) {
+        nd.bmin[k] = std::min(l.bmin[k], r.bmin[k]);
+        nd.bmax[k] = std::max(l.bmax[k], r.bmax[k]);
+      }
+    }
+  }
+
+  if (std::getenv("TUSDVIEW_RT_TIMING")) {
+    std::fprintf(stderr, "[rt_scene_build] refit: %zu meshes, %zu tris: %.2f ms\n",
+                 map.meshes.size(), hs->triCount,
+                 std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
   }
   return true;
 }
