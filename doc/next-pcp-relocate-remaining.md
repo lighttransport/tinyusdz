@@ -1,8 +1,8 @@
 # Resume: `src/next` pcp composition — remaining relocate/specialize gaps
 
 Handoff for a fresh coding-agent session. The next-vs-pxr **flatten differential**
-gate is at **753 pass / 4 untagged / 0 FAIL** of 798 inputs (campaign started at
-181 listed / 597 passing). This doc lists the **4 remaining untagged cases**,
+gate is at **754 pass / 3 untagged / 0 FAIL** of 798 inputs (campaign started at
+181 listed / 597 passing). This doc lists the **3 remaining untagged cases**,
 their **precise pcp.txt-derived root causes**, what has already been tried and
 reverted, and the recommended next arc.
 
@@ -134,7 +134,7 @@ roundtrip 222/1. **Any net regression that can't be reconciled against `pcp.txt`
 `tests/next/next-pxr-flatten-xfail.txt`; keep `INTENTIONAL:`/`ORACLE-` tagged
 lines verbatim.
 
-## The 4 remaining cases, grouped by root cause
+## The 3 remaining cases, grouped by root cause
 
 ### A. Context-lost relocate-source resolution — 2 cases REMAIN (was 5; 3 FIXED)
 Fixed: `TrickyRelocationOfPrimFromVariant` + `TrickyInheritsAndRelocates5`
