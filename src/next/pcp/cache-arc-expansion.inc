@@ -1342,6 +1342,32 @@
       const std::string &child_composed, std::string *warn, std::string *err) {
     const std::string guard_key =
         "@" + UIntToStr(ps.stack_idx) + ":" + child_composed;
+    // Cross-stack relocate validity: a relocate whose SOURCE is itself a
+    // relocation source (departed) in a CONTRIBUTING REFERENCED stack -- not the
+    // relocating stack itself -- is invalid; pxr composes nothing (an empty
+    // `over`, ErrorInvalidReferenceToRelocationSource: the root relocates
+    // /ReferencedChar/PreRelo, but char.usd already relocated Char/PreRelo away).
+    // Detect by composing the source's parent and checking whether a referenced
+    // stack departed this name. (Only for a root-authored relocate, where the
+    // source path is already in the composed namespace.)
+    if (ps.stack_idx == 0 && isolated_reloc_depth_ == 0 &&
+        reloc_content_in_progress.empty()) {
+      const Path src_p(arrival.src_site);
+      const Path parent = src_p.parent();
+      if (!(parent.is_root() || parent.empty() || parent.str() == "/")) {
+        reloc_content_in_progress.insert(guard_key);
+        const std::vector<Src> psrcs = SourcesForSite(0, parent, warn, err);
+        reloc_content_in_progress.erase(guard_key);
+        const std::string name = src_p.name();
+        for (const Src &s : psrcs) {
+          if (s.variant || s.stack_idx == ps.stack_idx) continue;
+          const StackRelocates &rel = layer_stacks[s.stack_idx].relocates;
+          if (!rel.empty() && rel.IsDeparted(s.site, name)) {
+            return {};  // invalid relocate -> empty over
+          }
+        }
+      }
+    }
     if (ComposedRelocApplicable(ps, arrival)) {
       reloc_content_in_progress.insert(guard_key);
       std::vector<Src> comp =
