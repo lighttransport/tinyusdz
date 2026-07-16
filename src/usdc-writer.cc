@@ -316,6 +316,7 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
   writer.Close();
 
   *output = mem_ptr->TakeBuffer();
+  report_phase("Close+TakeBuffer");
   return true;
 }
 

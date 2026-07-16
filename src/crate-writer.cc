@@ -683,6 +683,7 @@ bool CrateWriter::Finalize(std::string* err) {
       spec_path_hashes[i] = static_cast<uint32_t>(hasher(spec_data_[i].path));
     }
 #endif
+    paths_.reserve(spec_data_.size());
     size_t w = 0;
     for (size_t r = 0; r < spec_data_.size(); r++) {
       SpecData& spec_data = spec_data_[r];
@@ -693,7 +694,11 @@ bool CrateWriter::Finalize(std::string* err) {
         continue;
       }
       const uint32_t idx = static_cast<uint32_t>(paths_.size());
-      paths_.push_back(spec_data.path);
+      // MOVE the path into paths_: nothing reads spec_data.path after this
+      // rebuild (the sort keys and the hash precompute above were the last
+      // readers), and the duplicate check compares against the moved-in
+      // paths_.back(). Saves one Path (two-string) copy per unique spec.
+      paths_.push_back(std::move(spec_data.path));
       InsertPathSlot(spec_path_hashes[r], idx);
       spec_data.spec.path_index.value = idx;
       if (w != r) spec_data_[w] = std::move(spec_data);
@@ -962,6 +967,26 @@ bool CrateWriter::Finalize(std::string* err) {
   prof_section("PATHS");
   if (!WriteSpecsSection(err)) return false;
   prof_section("SPECS");
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    // All sections that consume spec data are written — release the heavy
+    // per-spec payload (fields hold the CrateValues, i.e. the attribute
+    // arrays) in parallel now instead of serially in the writer destructor.
+    // Element cleanup is independent; the destructor then frees only empty
+    // shells. Not byte-observable (nothing reads spec fields/paths after
+    // SPECS), but it moves ~all of the teardown wall onto worker threads.
+    ParallelForRanges(spec_data_.size(), WriterParallelThreads(),
+                      [&](size_t b, size_t e) {
+                        for (size_t i = b; i < e; i++) {
+                          crate::FieldValuePairVector().swap(
+                              spec_data_[i].fields);
+                          spec_data_[i].path = Path();
+                        }
+                      });
+    prof_section("spec-data release");
+  }
+#endif
 
   // ========================================================================
   // Step 3: Write Table of Contents

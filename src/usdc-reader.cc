@@ -223,11 +223,26 @@ bool USDCReader::Impl::ToLayer(Layer *layer) {
 
   _prim_table.reset(_nodes->size());
 
-  int root_node_id = 0;
-  bool ret = ReconstructPrimSpecRecursively(/* no further root for root_node */ -1,
-                                        root_node_id, /* root Prim */ nullptr,
-                                        /* level */ 0,
-                                        path_index_to_spec_index_map, layer);
+  bool ret = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Parallel reconstruction: same gate as the Stage path (disabled with mmap
+  // zero-copy — the deferred-array handoff uses single-slot reader state —
+  // and when a single thread is requested or the layer is small).
+  const bool parallel_reconstruct =
+      (_config.numThreads != 1) && !_config.mmap_zero_copy &&
+      (std::thread::hardware_concurrency() > 1) && (_nodes->size() > 256);
+  if (parallel_reconstruct) {
+    ret = ReconstructPrimSpecHierarchyParallel(path_index_to_spec_index_map,
+                                               layer);
+  } else
+#endif
+  {
+    int root_node_id = 0;
+    ret = ReconstructPrimSpecRecursively(/* no further root for root_node */ -1,
+                                         root_node_id, /* root Prim */ nullptr,
+                                         /* level */ 0,
+                                         path_index_to_spec_index_map, layer);
+  }
 
   if (!ret) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct Layer(PrimSpec hierarchy)");

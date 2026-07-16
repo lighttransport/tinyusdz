@@ -1285,7 +1285,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
 bool USDCReader::Impl::ReconstructPrimSpecRecursively(
     int parent, int current, PrimSpec *parentPrimSpec, int level,
-    const PathIndexToSpecIndexMap &psmap, Layer *layer) {
+    const PathIndexToSpecIndexMap &psmap, Layer *layer,
+    PrimSpec *top_level_sink) {
   if (level > int32_t(_config.kMaxPrimNestLevel)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "PrimSpec hierarchy is too deep.");
   }
@@ -1414,7 +1415,14 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
   DCOUT(fmt::format("-<---"));
 
-  if (parent == 0) {  // root prim
+  if (top_level_sink) {
+    // Parallel subtree job: collect the root into the caller-owned sink
+    // (worker threads must not touch layer->primspecs()). Mirrors the
+    // "prim-less node contributes nothing" behavior of the branches below.
+    if (primspec) {
+      top_level_sink->children().emplace_back(std::move(*primspec));
+    }
+  } else if (parent == 0) {  // root prim
     if (primspec) {
       std::string name = primspec->name();
       layer->primspecs()[name] = std::move(*primspec);
@@ -1718,6 +1726,290 @@ bool USDCReader::Impl::ReconstructPrimHierarchyParallel(
         children_vec.back() = std::move(*cp->get());
       }
       cp->reset();
+    }
+  }
+
+  return true;
+}
+
+//
+// Parallel PrimSpec (Layer) reconstruction — the Layer analog of
+// ReconstructPrimHierarchyParallel above. Same plan: shells serial in
+// pre-order, non-variant subtree jobs on workers, variant jobs serial after
+// the join (the variant bookkeeping maps are unsynchronized by design),
+// assembly bottom-up in traversal order. Jobs reuse the SERIAL recursion
+// with `top_level_sink` collecting the subtree root, so worker threads never
+// touch layer->primspecs() (a std::map) or a shared parent's children.
+//
+bool USDCReader::Impl::ReconstructPrimSpecHierarchyParallel(
+    const PathIndexToSpecIndexMap &psmap, Layer *layer) {
+  const size_t num_nodes = _nodes->size();
+  if (num_nodes == 0) {
+    return true;
+  }
+
+  //
+  // Pass 1: per-node variant flag + subtree size/has-variant (identical to
+  // the Prim planner above).
+  //
+  std::vector<uint8_t> is_variant_node(num_nodes, 0);
+  for (size_t i = 0; i < num_nodes; i++) {
+    if (auto ep = GetElemPath(crate::Index(uint32_t(i)))) {
+      const std::string &s = ep.value().full_path_name();
+      if (s.find('{') != std::string::npos) {
+        is_variant_node[i] = 1;
+      }
+    }
+  }
+
+  std::vector<uint64_t> subtree_size(num_nodes, 1);
+  std::vector<uint8_t> subtree_has_variant = is_variant_node;
+  {
+    struct SEntry {
+      uint32_t node;
+      uint32_t child_idx;
+    };
+    std::vector<SEntry> st;
+    st.push_back({0u, 0u});
+    std::vector<uint8_t> visited(num_nodes, 0);
+    visited[0] = 1;
+    while (!st.empty()) {
+      SEntry &e = st.back();
+      const auto &children = (*_nodes)[e.node].GetChildren();
+      if (e.child_idx < children.size()) {
+        const uint32_t c = uint32_t(children[e.child_idx++]);
+        if (c < num_nodes && !visited[c]) {
+          visited[c] = 1;
+          st.push_back({c, 0u});
+        }
+      } else {
+        const uint32_t n = e.node;
+        st.pop_back();
+        if (!st.empty()) {
+          subtree_size[st.back().node] += subtree_size[n];
+          subtree_has_variant[st.back().node] =
+              uint8_t(subtree_has_variant[st.back().node] |
+                      subtree_has_variant[n]);
+        }
+      }
+    }
+  }
+
+  //
+  // Pass 2: build the plan (pre-order).
+  //
+  struct ShellNode {
+    int node_id;
+    int parent_id;
+    int level;
+    std::unique_ptr<PrimSpec> primspec;
+    // (is_shell, index into shells/jobs), in child order
+    std::vector<std::pair<bool, size_t>> children;
+  };
+  struct SubtreeJob {
+    int node_id;
+    int parent_id;
+    int level;
+    bool has_variant;
+    // Dummy collect parent: the serial recursion appends the reconstructed
+    // subtree root to collect.children() via `top_level_sink`.
+    PrimSpec collect;
+  };
+  std::vector<ShellNode> shells;
+  std::vector<SubtreeJob> jobs;
+
+  uint32_t nthreads = std::max(1u, std::thread::hardware_concurrency());
+  if (_config.numThreads > 0) {
+    nthreads = std::min(nthreads, uint32_t(_config.numThreads));
+  }
+  const uint64_t job_grain =
+      std::max<uint64_t>(64, subtree_size[0] / (uint64_t(nthreads) * 8u));
+  const int kMaxShellDepth = 16;
+
+  {
+    struct PEntry {
+      uint32_t node;
+      int parent;
+      int level;
+      size_t shell_idx;
+      uint32_t child_idx;
+    };
+    std::vector<PEntry> st;
+
+    auto want_shell = [&](uint32_t node, int level) -> bool {
+      if (level >= kMaxShellDepth) {
+        return false;
+      }
+      if (subtree_size[node] <= job_grain) {
+        return false;
+      }
+      const auto &children = (*_nodes)[node].GetChildren();
+      if (children.empty()) {
+        return false;
+      }
+      for (const auto &c : children) {
+        if ((size_t(c) < num_nodes) && is_variant_node[size_t(c)]) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    // node 0 (pseudo-root "/") is always a shell (it also carries LayerMeta).
+    shells.push_back(ShellNode{0, -1, 0, nullptr, {}});
+    st.push_back({0u, -1, 0, 0, 0u});
+
+    while (!st.empty()) {
+      PEntry &e = st.back();
+      const auto &children = (*_nodes)[e.node].GetChildren();
+      if (e.child_idx >= children.size()) {
+        st.pop_back();
+        continue;
+      }
+      const uint32_t c = uint32_t(children[e.child_idx++]);
+      if (size_t(c) >= num_nodes) {
+        continue;
+      }
+      const size_t parent_shell = e.shell_idx;
+      const int child_level = st.back().level + 1;
+      if (want_shell(c, child_level)) {
+        const size_t si = shells.size();
+        shells.push_back(
+            ShellNode{int(c), int(e.node), child_level, nullptr, {}});
+        shells[parent_shell].children.push_back({true, si});
+        st.push_back({c, int(e.node), child_level, si, 0u});
+      } else {
+        jobs.push_back(SubtreeJob{int(c), int(e.node), child_level,
+                                  subtree_has_variant[c] != 0, PrimSpec()});
+        shells[parent_shell].children.push_back({false, jobs.size() - 1});
+      }
+    }
+  }
+
+  //
+  // Pass 3: reconstruct shell PrimSpecs serially, in pre-order (marks
+  // _prim_table so job-root property children early-out like the serial
+  // walk; node 0 also fills layer->metas()).
+  //
+  for (size_t si = 0; si < shells.size(); si++) {
+    ShellNode &sh = shells[si];
+    std::unique_ptr<PrimSpec> ps;
+    if (!ReconstructPrimSpecNode(sh.parent_id, sh.node_id, sh.level,
+                                 /* is_parent_variant */ false, psmap, layer,
+                                 &ps)) {
+      return false;
+    }
+    sh.primspec = std::move(ps);
+  }
+
+  // Defensive serial fallback: the serial walk parents a primspec-less
+  // interior node's children to the GRANDPARENT (nextParent fall-through).
+  // Shells are always real prims in practice, so instead of replicating that
+  // exotic fall-through in the assembly, redo the reconstruction serially if
+  // it ever shows up. (Only _prim_table marks and layer metas were touched
+  // so far; both are reset/idempotent.)
+  for (size_t si = 1; si < shells.size(); si++) {
+    if (!shells[si].primspec) {
+      layer->primspecs().clear();
+      _prim_table.reset(num_nodes);
+      return ReconstructPrimSpecRecursively(
+          /* parent */ -1, /* root node */ 0, nullptr, /* level */ 0, psmap,
+          layer);
+    }
+  }
+
+  //
+  // Pass 4: non-variant subtree jobs on worker threads.
+  //
+  {
+    std::atomic<size_t> next_job{0};
+    std::atomic<bool> failed{false};
+
+    crate_reader->set_parallel_io_active(true);
+
+    const uint32_t nworkers =
+        uint32_t(std::min<size_t>(nthreads, jobs.size()));
+    std::vector<std::thread> workers;
+    workers.reserve(nworkers);
+    for (uint32_t t = 0; t < nworkers; t++) {
+      workers.emplace_back([&]() {
+        while (true) {
+          const size_t i = next_job.fetch_add(1);
+          if (i >= jobs.size()) {
+            break;
+          }
+          if (jobs[i].has_variant || failed.load(std::memory_order_relaxed)) {
+            continue;
+          }
+          if (!ReconstructPrimSpecRecursively(
+                  jobs[i].parent_id, jobs[i].node_id, nullptr, jobs[i].level,
+                  psmap, layer, /* top_level_sink */ &jobs[i].collect)) {
+            failed.store(true, std::memory_order_relaxed);
+          }
+        }
+      });
+    }
+    for (auto &w : workers) {
+      w.join();
+    }
+
+    crate_reader->set_parallel_io_active(false);
+
+    if (failed.load()) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "Failed to reconstruct PrimSpec hierarchy (parallel subtree).");
+    }
+  }
+
+  //
+  // Pass 5: variant-containing subtree jobs, serially (variant bookkeeping
+  // maps are unsynchronized by design).
+  //
+  for (auto &job : jobs) {
+    if (!job.has_variant) {
+      continue;
+    }
+    if (!ReconstructPrimSpecRecursively(job.parent_id, job.node_id, nullptr,
+                                        job.level, psmap, layer,
+                                        /* top_level_sink */ &job.collect)) {
+      return false;
+    }
+  }
+
+  //
+  // Pass 6: assemble bottom-up. Reverse pre-order visits every shell after
+  // all of its descendant shells, so children lists are final before the
+  // shell prim itself is attached to its parent. Root children go into
+  // layer->primspecs() keyed by name (a map — same last-wins overwrite
+  // order as the serial walk, since children are visited in child order).
+  //
+  for (size_t ri = shells.size(); ri > 0; ri--) {
+    ShellNode &sh = shells[ri - 1];
+    const bool is_root = (sh.node_id == 0);
+    if (!is_root && !sh.primspec) {
+      // Serial parity: children of a primspec-less (non-root) parent are
+      // dropped.
+      continue;
+    }
+    for (const auto &child : sh.children) {
+      PrimSpec *cres = nullptr;
+      if (child.first) {
+        cres = shells[child.second].primspec.get();
+      } else {
+        auto &collected = jobs[child.second].collect.children();
+        if (!collected.empty()) {
+          cres = &collected[0];
+        }
+      }
+      if (!cres) {
+        continue;
+      }
+      if (is_root) {
+        std::string name = cres->name();
+        layer->primspecs()[name] = std::move(*cres);
+      } else {
+        sh.primspec->children().emplace_back(std::move(*cres));
+      }
     }
   }
 
