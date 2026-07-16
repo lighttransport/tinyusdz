@@ -1689,7 +1689,7 @@ int main(int argc, char **argv) {
       std::cout << root_layer << "\n";
     }
 
-    phase_mark("load-root-layer(+copy)");
+    phase_mark("load-root-layer");
 
     tinyusdz::Stage stage;
     stage.metas() = root_layer.metas();
