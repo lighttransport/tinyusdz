@@ -131,6 +131,12 @@ void test_point_instancer_schema() {
   assert(transforms[1].matrix[0] == 2.0);
   assert(transforms[1].matrix[12] == 2.0);
 
+  // ComputeMaskAtTime: instance 0 (id 100) visible, instance 1 (id 101) is in
+  // invisibleIds. Use explicit FAIL (assert is compiled out under NDEBUG).
+  std::vector<bool> mask = pi.ComputeMaskAtTime();
+  if (mask.size() != 2) { FAIL("mask size"); return; }
+  if (!mask[0] || mask[1]) { FAIL("invisibleId not masked"); return; }
+
   auto all = GetAllPointInstancers(stage);
   assert(all.size() == 1);
 

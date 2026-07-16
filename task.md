@@ -1,117 +1,145 @@
-# Task: Skinning under ray tracing for tusdview
+# Tasks — resume hub
 
-> Resume prompt. This is the last remaining GPU-skinning gap. Raster-path GPU
-> skinning (skeletal + blendshape + node-animated/mixed scenes) is **done and
-> committed**; the Vulkan ray-query (RT) path still falls back to the slow CPU
-> reconvert. Make skinning efficient under RT.
+Fresh-context resume prompts for the open `tinyusdz` workstreams. Pick one,
+paste its **Resume prompt**, and go. Newest completion at top.
 
-## Resume prompt (paste to continue)
+---
+
+## ✅ Recently completed (don't re-open)
+
+- **refactor-next Phase-5 leftovers — DONE** (branch `dev`, 2026-07-16).
+  Exploration found most once-open Phase-5 items already landed (I1 instance-key
+  variant-sel+offset, I2 tri-state `instanceable`, I4 PointInstancer compute API,
+  M5 GraftSubtree child-walk — the `memory-and-performance.md` "reverted" note was
+  stale). Closed the one genuine gap: **I3 instance↔prototype path-translation
+  API** (`Cache::TranslatePathToPrototype`/`TranslatePathFromPrototype` in
+  `src/next/pcp/cache.{hh,cc}`, with nested-instance recursion) + nested-instancing
+  tests (`test_pcp.cc:test_path_translation`, two-level rewrite) + PointInstancer
+  `ComputeMaskAtTime`. Docs reconciled (`doc/refator-next.md`,
+  `doc/memory-and-performance.md`). Gates: build-next **36/36**, build **37/37**.
+  Only **M3** (u32-interning of pcp hot maps) stays intentionally deferred —
+  invasive vs. benefit post-CoW; revisit only if massif shows path strings
+  dominating.
+
+- **next-vs-pxr flatten-differential burn-down — DONE** (branch `dev`, 2026-07-16).
+  All untagged composition divergences fixed; gate **756 pass / 0 untagged xfail /
+  0 FAIL** of 798 (build-next 36/36, build 37/37). 13 cases fixed this campaign;
+  the last arc (this session) landed relocate/inherit/variant/specialize cases —
+  see commits `65272912a`, `b2ff45f49`, `07227930c` and `doc/next-pcp-relocate-remaining.md`.
+  The 26 remaining xfail entries are all `INTENTIONAL:`/`ORACLE-` tagged (pxr
+  nondeterminism / known non-bugs), not defects. Detail in memory `aousd-pxr-diff-gates`.
+
+---
+
+## Open workstream A — Skinning under ray tracing (tusdview)  [PRIMARY]
+
+> Branch `tusdview`. Raster-path GPU skinning (skeletal + blendshape +
+> node-animated/mixed) is **done and committed**; the Vulkan ray-query (RT) path
+> still falls back to the slow per-frame CPU reconvert. Make skinning efficient
+> under RT. Requires a real RT-capable GPU + RT glslang (RTX 3070 here).
+
+### Resume prompt (paste to continue)
 
 Make skeletal/blendshape **skinning work efficiently under the Vulkan ray-query
 (RT) technique** in the tusdview viewer (`examples/tusdview`). Today, when RT is
 active the viewer skins via the per-frame **CPU reconvert** fallback (re-runs
 Tydra conversion every frame, re-uploads geometry, rebuilds the BLAS) — correct
 but slow. Skin without the Tydra reconvert and update the acceleration structure
-per frame instead. Build in `build/` with `ninja -j16`; verify with
-`--headless --backend vk --rt --frames N --time T --screenshot out.ppm` and the
-parity script (see Verification). Requires a real RT-capable GPU + RT-capable
-glslang (already set up here; RTX 3070).
+per frame instead. Build in `build/` with `ninja -j16`; verify headless with
+`--backend vk --rt --frames N --time T --screenshot out.ppm` and the parity
+script (see Verification).
 
-## Where things stand (git: branch `tusdview`)
-
-Recent commits (newest first):
-- `d590c08e` GPU skinning for mixed (skeletal + node-animated) scenes
-- `0fb8c702` GPU blendshape skinning (remove CPU fallback)
-- `629017c5` Add GPU skinning to tusdview (raster bone-texture path, both backends)
-- `8d36d658` CPU skeletal + blendshape skinning
-
-Skinning lives in `examples/tusdview/skinning.{hh,cc}` + `app.cc`. Raster GPU
-path: rest mesh uploaded once with per-vertex joint idx/weights; per frame
-`BuildGpuSkinningFrame` computes `skinMat[j] = inverse(bind)·posedWorld` →
-RGBA32F bone texture (`uploadSkinningFrame`); the vertex shader does LBS.
-Blendshapes morph rest verts on the CPU and re-upload via
-`Renderer::updateMeshVertices`. Mixed scenes update per-mesh worlds via
-`Renderer::updateMeshWorld` (`UpdateAnimatedMeshWorlds` → `BuildXformNodeFromStage`).
-
-**The RT veto** (the thing to remove/replace) is in `App::updateSkinningEffective`
-(app.cc): `if (renderer_->rayTracingActive()) { skinningReason_ = "ray tracing
-uses CPU-skinned BLAS geometry"; return; }` → falls to the CPU reconvert path
+**The RT veto to remove/replace** is in `App::updateSkinningEffective` (app.cc,
+~L549): `if (renderer_->rayTracingActive()) { skinningReason_ = "ray tracing uses
+CPU-skinned BLAS geometry"; return; }` → falls to the CPU reconvert path
 (`requestReconvert` → `startReconvertAsync` → `RenderSceneAtTime` →
 `finishReconvertIfReady` → `uploadScene`, which `appendMesh`-rebuilds the BLAS).
 
-## Why RT is different
+**Why RT differs:** the ray-query shader (`vk/shaders/raytrace.comp`) traces a
+**BLAS** built from each mesh's vbo/ebo — it does NOT run the raster vertex
+shader, so bone-texture GPU skinning never touches RT geometry. To animate RT,
+the vbo positions must change AND the BLAS must be updated.
 
-The ray-query shader (`vk/shaders/raytrace.comp`) traces against a **BLAS** built
-from each mesh's vbo/ebo — it does NOT run the raster vertex shader, so the
-bone-texture GPU skinning never touches RT geometry. To animate RT, the actual
-**vertex positions in the vbo must change** and the **BLAS must be updated**.
+### Plan
 
-## Plan
-
-### MVP: skin into the vbo without Tydra reconvert, rebuild BLAS
+**MVP — skin into the vbo without Tydra reconvert, rebuild BLAS**
 1. **Eligibility**: in `updateSkinningEffective`, when `rayTracingActive()` and the
-   scene is skinnable, pick a new effective mode (e.g. keep `GPU` but flag
-   `skinningRtPath_`) instead of vetoing to the CPU reconvert.
-2. **Per-frame skin → vbo**: reuse the CPU skinning math already in `skinning.cc`
-   (the `BuildGpuSkinningFrame` bounds loop already CPU-skins every vertex with
-   `composed[j] = geomBind·skinMat[j]`; factor that into a function returning the
-   skinned `DrawVertex` buffer per mesh, including morph offsets + regenerated
-   normals — same as the blendshape morph path). Upload via the existing
-   `Renderer::updateMeshVertices`. This skips the Tydra reconvert (the expensive
-   part); it is CPU skinning but only the cheap deform, not a full convert.
-3. **BLAS update**: `updateMeshVertices` currently just memcpys the vbo (raster is
-   gated non-RT). For RT, after rewriting the vbo, mark the mesh's BLAS stale and
-   rebuild it. Today `buildBlas` uses `MODE_BUILD` + `PREFER_FAST_TRACE`
-   (vk_renderer.cc:1564); `rebuildTlas` (1636) builds all BLAS when `tlasDirty_`.
-   Simplest: add a `Renderer::refreshSkinnedAccel()` (or set `tlasDirty_` +
-   per-mesh `blasDirty`) so the next trace rebuilds BLAS+TLAS from the updated
-   vbo. Wire it from `App::updateGpuSkinningFrameIfNeeded` on the RT path.
+   scene is skinnable, pick a new effective mode (keep `GPU`, flag `skinningRtPath_`)
+   instead of vetoing to the CPU reconvert.
+2. **Per-frame skin → vbo**: reuse the CPU skinning math in `skinning.cc` — the
+   `BuildGpuSkinningFrame` bounds loop already CPU-skins every vertex
+   (`composed[j] = geomBind·skinMat[j]`); factor it into a function returning the
+   skinned `DrawVertex` buffer per mesh (incl. morph offsets + regenerated
+   normals, same as the blendshape morph path). Upload via existing
+   `Renderer::updateMeshVertices`. Skips the reconvert (the expensive part).
+3. **BLAS update**: after rewriting the vbo, mark the mesh's BLAS stale and
+   rebuild. `buildBlas` uses `MODE_BUILD`+`PREFER_FAST_TRACE` (vk_renderer.cc:1564);
+   `rebuildTlas` (1636) rebuilds all BLAS on `tlasDirty_`. Add a
+   `Renderer::refreshSkinnedAccel()` (or set `tlasDirty_` + per-mesh `blasDirty`)
+   and wire it from `App::updateGpuSkinningFrameIfNeeded` on the RT path.
 
-### Optimization (after MVP works): BLAS refit + GPU-compute skinning
+**Optimization (after MVP): BLAS refit + GPU-compute skinning**
 - Build BLAS with `VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR` and use
-  `MODE_UPDATE` (refit) instead of full rebuild when only vertices moved
-  (topology unchanged) — much cheaper per frame.
-- Optionally move skinning to a **GPU compute pass** that writes skinned vertices
-  into the vbo (reusing the bone-matrix texture + joint attrs), so the CPU never
-  touches per-vertex data. Then refit the BLAS from the GPU-written vbo.
+  `MODE_UPDATE` (refit) when only vertices moved (topology unchanged).
+- Move skinning to a **GPU compute pass** writing skinned verts into the vbo
+  (reuse bone-matrix texture + joint attrs), then refit BLAS from GPU-written vbo.
 
-## Key references
-- RT BLAS/TLAS: `vk/vk_renderer.cc` `buildBlas` (1564, `MODE_BUILD`,
-  `PREFER_FAST_TRACE`), `rebuildTlas` (1636, `tlasDirty_` gate, trace-time at
-  2159), `appendMesh` BLAS-input usage (~1500). RT toggle / `rayTracingActive()`
-  in renderer.hh + vk_renderer; `--rt` in main.cc.
-- Skinning math: `skinning.cc` `BuildSkinningMatrices` (skinMat = inverse(bind)·
-  posedWorld), `BuildGpuSkinningFrame` (the per-vertex CPU skin in its bounds
-  loop is exactly the deform to reuse), morph path (`MorphTargetCPU`,
-  `RegenNormalsOriented`). `Renderer::updateMeshVertices` (GL/VK, already exists).
-- `App::updateSkinningEffective` / `updateGpuSkinningFrameIfNeeded` (app.cc) —
-  eligibility + per-frame driver. `lastRtActiveForSkinning_` already tracks RT
-  state so toggling `--rt` / View ▸ Ray tracing re-evaluates the path.
-- The current CPU-under-RT fallback works (just slow): `RenderSceneAtTime` +
-  `finishReconvertIfReady` + `uploadScene` rebuilds geometry+BLAS each frame.
-  Keep it as the correctness oracle for parity.
+### Key references
+- RT AS: `vk/vk_renderer.cc` `buildBlas` (1564), `rebuildTlas` (1636, trace-time
+  ~2159), `appendMesh` BLAS input (~1500); `rayTracingActive()` in renderer.hh +
+  vk_renderer; `--rt` in main.cc.
+- Skinning: `skinning.cc` `BuildSkinningMatrices` (skinMat = inverse(bind)·posedWorld),
+  `BuildGpuSkinningFrame` (per-vertex CPU skin to reuse), morph path
+  (`MorphTargetCPU`, `RegenNormalsOriented`). `Renderer::updateMeshVertices` exists.
+- `App::updateSkinningEffective` / `updateGpuSkinningFrameIfNeeded` (app.cc);
+  `lastRtActiveForSkinning_` tracks RT state so toggling re-evaluates the path.
+- CPU-under-RT fallback is the correctness oracle (`RenderSceneAtTime` +
+  `finishReconvertIfReady` + `uploadScene`).
 
-## Verification
-- Build: `cd build && ninja -j16`; `ctest` stays 23/23.
+### Verification
+- Build `cd build && ninja -j16`; `ctest` stays 23/23.
 - RT animates: `build/tusdview --headless --backend vk --rt --frames 4 --time 12
-  --screenshot rt12.ppm models/skintest-animated.usda` differs from `--time 1`
-  (skinning visible under RT). Compare RT-GPU vs RT-CPU-fallback screenshots —
-  should match closely (same geometry, RT shading). The parity harness
-  `tests/tusdview/compare-skinning-screenshots.py` runs windowed via xvfb; add an
-  RT variant or compare `--skinning gpu`(new RT path) vs `--skinning cpu` with
-  `--rt`.
-- Performance: the RT skinned path should not run the Tydra reconvert each frame
-  (check it is not calling `RenderSceneAtTime` on the RT skinning path).
-- Test assets: `models/skintest-animated.usda` (skeletal),
-  `models/blendshape-and-animation-test-001.usda` (skel+blendshape). For a mixed
-  RT case, a skinned asset with an animated SkelRoot translate (the phase used
-  `skintest-animated` with `xformOp:translate.timeSamples` 1→(0,0,0),
-  48→(4,0,0)).
+  --screenshot rt12.ppm models/skintest-animated.usda` differs from `--time 1`.
+  Compare RT-GPU vs RT-CPU-fallback screenshots — should match closely.
+- Parity harness `tests/tusdview/compare-skinning-screenshots.py` (windowed via
+  xvfb); add an RT variant or compare new RT `--skinning gpu` vs `--skinning cpu --rt`.
+- Perf: the RT skinned path must NOT call `RenderSceneAtTime` each frame.
+- Assets: `models/skintest-animated.usda` (skeletal),
+  `models/blendshape-and-animation-test-001.usda` (skel+blendshape); mixed RT case
+  = skinned asset with animated SkelRoot translate.
 
-## Notes / gotchas (learned in the raster phase)
+### Gotchas (from the raster phase)
 - `points` is `std::vector<vec3>` (TYDRA_USE_CHUNKED_ARRAY OFF). Sampler `times`
   are **time codes**, not seconds. Matrix `a*b` applies `a` first (row-vector).
-- VK per-frame buffer/AS updates here use `vkDeviceWaitIdle` (see
-  `uploadSkinningFrame`, `updateMeshVertices`) — simple and safe for a viewer.
-- Camera framing must use the **posed** bounds: `applyLoaded` poses the GPU frame
-  after upload, then fits the camera (don't reintroduce a rest-bounds fit).
+- VK per-frame buffer/AS updates use `vkDeviceWaitIdle` (`uploadSkinningFrame`,
+  `updateMeshVertices`) — simple/safe for a viewer.
+- Camera framing must use the **posed** bounds (`applyLoaded` poses then fits).
+
+---
+
+## Open workstream B — refactor-next M3 (deferred perf item only)  [LOW]
+
+> Phase-5 leftovers are DONE (see completed section). The one remaining item is
+> M3, intentionally deferred as invasive vs. its post-CoW memory benefit.
+
+### Resume prompt
+Only if massif/profiling shows path strings dominating pcp RSS: implement M3 —
+convert the string-keyed pcp hot maps (`index_cache`, `sources_cache`, `Site`,
+payload/prototype maps) to u32 interned ids via the existing `InternPath` table
+(`doc/refator-next.md` Phase-4 §2). Otherwise leave deferred. Validate with
+`scripts/run-next-checks.sh` + `ctest --test-dir build-next` (36/36) and the
+`next_*` differential gates; keep TSan opt-in (memory `tsan-tests-opt-in`).
+
+---
+
+## Open workstream C — intentional-tag triage (flatten differential)  [LOW]
+
+### Resume prompt
+Audit the 26 `INTENTIONAL:`/`ORACLE-` tagged entries in
+`tests/next/next-pxr-flatten-xfail.txt` to see whether any were mis-tagged and are
+now fixable (the untagged burn-down is complete, so the tagged set is the only
+remaining differential surface). For each, re-derive pxr's pcp.txt prim stack and
+confirm the divergence is genuinely pxr-nondeterminism / oracle-limited vs. a real
+next bug. Reclassify or fix accordingly; keep the tag taxonomy from memory
+`aousd-pxr-diff-gates`. Hard bar: gate stays ≥756 pass / 0 untagged / 0 FAIL,
+build-next 36/36, build 37/37.

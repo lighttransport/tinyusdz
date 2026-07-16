@@ -18,14 +18,22 @@ Landed so far:
   conversion (M3) and GraftSubtree child-walk (M5) deferred/reverted — see
   doc/memory-and-performance.md.
 - **Phase 5 (core)** — stable variant-content instance key (fixes pointer
-  aliasing S4). Strongest-opinion tri-state instanceable and path-translation
-  API remain TODO; PointInstancer typed accessors/transform computation and
-  lightweight Tydra draw-reference expansion now exist, including direct and
-  inherited mesh material IDs, prototype-relative mesh transforms, and
-  unresolved-prototype diagnostics on draw refs. Bounds-checked draw view
-  resolution, O(1) per-instancer draw ranges, and draw/prototype binding
-  validators are available; opt-in transformed mesh duplication is available for
-  consumers that cannot use draw refs directly.
+  aliasing S4); the instance key now folds in the accumulated variant selections
+  and non-identity layer offsets (I1). Strongest-opinion tri-state
+  `instanceable` landed (`instanceable_authored`, so authored `false` ≠
+  unauthored — I2). Instance↔prototype **path-translation API landed** (I3):
+  `Cache::TranslatePathToPrototype` (longest enclosing instance prefix, recursing
+  through nested instances, empty when under none) and
+  `TranslatePathFromPrototype` (single named instance); covered by
+  `test_pcp.cc:test_path_translation` including a two-level nested case.
+  PointInstancer typed accessors/transform computation (plus
+  `ComputeMaskAtTime`) and lightweight Tydra draw-reference expansion now exist,
+  including direct and inherited mesh material IDs, prototype-relative mesh
+  transforms, and unresolved-prototype diagnostics on draw refs. Bounds-checked
+  draw view resolution, O(1) per-instancer draw ranges, and draw/prototype
+  binding validators are available; opt-in transformed mesh duplication is
+  available for consumers that cannot use draw refs directly. Only the M3 pcp
+  hot-map interning stays intentionally deferred (see below).
 - **Phase 6** — payload LoadRules model (`pcp/load-rules.{hh,cc}`, a
   `UsdStageLoadRules` port); `LoadPayload(With/WithoutDescendants)`,
   `SetLoadRules`; `UnloadPayload` recomposes (S7 fix); BuildStage rebuilds
@@ -399,16 +407,21 @@ Gate: `bench_lazy_mem eager` should approach `lazy` for the clone portion;
      keys — add a test (load one of a pair → prototypes split; load both → re-merge).
    - Strongest-opinion `instanceable` resolution; `instanceable` becomes tri-state
      in `PrimSpecMeta` (parser change: authored `false` ≠ unauthored).
-2. Path translation API for consumers (Tydra):
+2. Path translation API for consumers (Tydra): **DONE** —
    `Cache::TranslatePathToPrototype(path)` (longest registered instance prefix,
-   recurse for nesting, bounded by path depth) and
-   `TranslatePathFromPrototype(proto_path, instance_root)`.
-3. Nested-instancing tests: prototype-within-prototype, invalidate+recompose
-   identity consistency, dropped-group exclusion.
-4. Port the PointInstancer compute API:
-   `src/next/schema/geom-point-instancer.{hh,cc}` mirroring legacy signatures and
-   S·R·T math 1:1 (`ComputeInstanceTransformsAtTime`, `ComputeMaskAtTime`;
-   same preliminary limitations: velocities ignored, orientations held).
+   recurse for nesting, iteration-capped) returns empty when `path` is under no
+   instance; `TranslatePathFromPrototype(proto_path, instance_root)` is the
+   single-instance inverse. `src/next/pcp/cache.{hh,cc}`.
+3. Nested-instancing tests: **DONE** — `test_pcp.cc:test_path_translation`
+   covers prototype-within-prototype (two-level rewrite through both prototype
+   roots), recompose identity consistency, and empty-on-no-instance exclusion.
+4. Port the PointInstancer compute API: **DONE** —
+   `src/next/schema/geom-point-instancer.{hh,cc}` provides `GetPrototypes`,
+   the instance arrays, `ComputeInstanceTransforms(time)`, and
+   `ComputeMaskAtTime(time)` (per-instance visibility from `invisibleIds` +
+   `inactiveIds`, id-mapped via `ids`); same preliminary limitations (velocities
+   ignored, orientations held). Bounds/length mismatches return empties, not UB.
+   Covered by `tests/next/test_schemas.cc:test_point_instancer_schema`.
    Security: `protoIndices[i] < prototypes.size()` and array-length mismatches →
    error, not UB. Shared fixture `tests/usda/pointinstancer-expand-001.usda`,
    numeric parity with the legacy test asserted from `tests/next/test_pointinstancer.cc`.

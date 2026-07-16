@@ -53,6 +53,11 @@ class UsdGeomPointInstancer {
   /// orientations/scales default to identity.
   std::vector<PointInstancerTransform> ComputeInstanceTransforms(double time = 0.0) const;
 
+  /// Per-instance visibility mask (size == GetInstanceCount): element `i` is
+  /// false when instance `i`'s id appears in `invisibleIds` (at `time`) or
+  /// `inactiveIds`. When `ids` is unauthored the id equals the instance index.
+  std::vector<bool> ComputeMaskAtTime(double time = 0.0) const;
+
  private:
   std::vector<float> GetFloatArray(const char* name, double time) const;
   std::vector<int32_t> GetIntArray(const char* name, double time) const;

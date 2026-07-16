@@ -140,6 +140,21 @@ class Cache {
   /// All instances (including the prototype) sharing a prototype.
   std::vector<Path> GetInstancesForPrototype(const Path &prototype) const;
 
+  /// Translate an instance-space path into prototype space: given a path that is
+  /// an instance root or any descendant of one, rewrite the nearest enclosing
+  /// instance prefix to its prototype root, recursing for nested instances
+  /// (a prim inside a prototype that is itself an instance). Returns an empty
+  /// Path when `path` lies under no instance (mirrors OpenUSD's
+  /// `UsdPrim::GetPathInPrototypeForPath` returning an empty path).
+  Path TranslatePathToPrototype(const Path &path) const;
+
+  /// Inverse of the above for a single, caller-named instance: rewrite a
+  /// prototype-space path (which must lie at/under `instance_root`'s prototype)
+  /// onto `instance_root`. Returns an empty Path when `instance_root` is not an
+  /// instance or `proto_path` is not within its prototype.
+  Path TranslatePathFromPrototype(const Path &proto_path,
+                                  const Path &instance_root) const;
+
   /// Number of distinct prototypes (instance groups).
   size_t PrototypeCount() const;
 
