@@ -1224,12 +1224,25 @@ void App::updateGpuSkinningFrameIfNeeded() {
 
   if (renderer_->rayTracingActive()) {
     if (!idxOk) return;
+    // Per-frame RT-skinning cost split (TUSDVIEW_RT_TIMING=1): CPU skin/morph
+    // math vs the vertex upload (map+memcpy behind a vkDeviceWaitIdle). The
+    // BLAS refit + TLAS rebuild are timed renderer-side ([vk_rt] lines).
+    static const bool rtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
+    const auto t0 = std::chrono::steady_clock::now();
     std::vector<RtSkinnedMeshUpload> uploads;
     if (BuildRtSkinnedMeshVertices(loaded_.stage, loaded_.render, &draw_,
                                    animTime_, gui_.blendOverrides(),
                                    gui_.showSkeletonOverlay(), &uploads)) {
+      const auto t1 = std::chrono::steady_clock::now();
       for (const RtSkinnedMeshUpload& upload : uploads) {
         renderer_->updateMeshVertices(upload.meshIndex, upload.vertices);
+      }
+      if (rtTiming && !uploads.empty()) {
+        const auto t2 = std::chrono::steady_clock::now();
+        std::fprintf(stderr, "[rt_skin] cpu skin %.1f ms, upload %.1f ms (%zu mesh(es))\n",
+                     std::chrono::duration<double, std::milli>(t1 - t0).count(),
+                     std::chrono::duration<double, std::milli>(t2 - t1).count(),
+                     uploads.size());
       }
     }
     skinFrameTime_ = animTime_;
@@ -2019,7 +2032,9 @@ int App::run(const std::string& initialFile, int maxFrames,
     finishReconvertIfReady();  // swap in re-evaluated animation geometry
 
     // Advance the playback clock and request a re-evaluation at the new time
-    // (interactive only; headless renders a fixed --time frame deterministically).
+    // (interactive only; headless renders a fixed --time frame deterministically,
+    // unless --play asked for a fixed 1/60 s step per frame -- still deterministic,
+    // and it exercises the per-frame skinning/BLAS-update path).
     if (!headless_) {
       const auto now = std::chrono::steady_clock::now();
       float dt = haveLastFrameTime_
@@ -2029,6 +2044,9 @@ int App::run(const std::string& initialFile, int maxFrames,
       haveLastFrameTime_ = true;
       if (dt > 0.1f) dt = 0.1f;  // clamp after stalls/load hitches
       advancePlayback(dt);
+    } else if (headlessPlay_ && hasAnimation_ && loaded_.ok && !loadActive_) {
+      animPlaying_ = true;  // readAnimationRange() paused it at load
+      advancePlayback(1.0f / 60.0f);
     }
     if (renderer_ && renderer_->rayTracingActive() != lastRtActiveForSkinning_) {
       updateSkinningEffective();

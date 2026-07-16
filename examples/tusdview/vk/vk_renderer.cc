@@ -4192,7 +4192,19 @@ void VulkanRenderer::updateMeshVertices(int meshIndex,
   std::memcpy(mapped, verts.data(), static_cast<size_t>(bytes));
   vkUnmapMemory(device_, targetMem);
   if (rtActive_) {
-    destroyBlas(gm);
+    // Same topology, new vertex positions: refit the existing BLAS in place
+    // (MODE_UPDATE, persistent scratch) instead of destroy+rebuild. The first
+    // update still lands on a non-updatable BLAS (built before we knew the
+    // mesh animates): drop it once and rebuild with ALLOW_UPDATE; every
+    // later frame refits. TUSDVIEW_RT_NO_REFIT=1 forces the old full
+    // destroy+rebuild every frame (debugging escape hatch / A-B check).
+    static const bool noRefit = std::getenv("TUSDVIEW_RT_NO_REFIT") != nullptr;
+    if (!noRefit) gm.blasWantUpdatable = true;
+    if (!noRefit && gm.blas != VK_NULL_HANDLE && gm.blasUpdatable) {
+      gm.blasNeedsRefit = true;  // refitted in rebuildTlas before the trace
+    } else {
+      destroyBlas(gm);
+    }
     bool first = true;
     float mn[3] = {std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max(),
@@ -4821,10 +4833,19 @@ void VulkanRenderer::destroyBlas(VkMeshGPU& m) {
   if (m.blas && pfnDestroyAS_) pfnDestroyAS_(device_, m.blas, nullptr);
   if (m.blasBuf) vkDestroyBuffer(device_, m.blasBuf, nullptr);
   if (m.blasMem) vkFreeMemory(device_, m.blasMem, nullptr);
+  if (m.blasScratch) vkDestroyBuffer(device_, m.blasScratch, nullptr);
+  if (m.blasScratchMem) vkFreeMemory(device_, m.blasScratchMem, nullptr);
   m.blas = VK_NULL_HANDLE;
   m.blasBuf = VK_NULL_HANDLE;
   m.blasMem = VK_NULL_HANDLE;
   m.blasAddr = 0;
+  m.blasScratch = VK_NULL_HANDLE;
+  m.blasScratchMem = VK_NULL_HANDLE;
+  m.blasScratchAddr = 0;
+  m.blasUpdatable = false;
+  m.blasNeedsRefit = false;
+  // blasWantUpdatable is sticky: a rebuilt BLAS for a mesh that receives
+  // per-frame vertex updates must come back ALLOW_UPDATE.
 }
 
 void VulkanRenderer::buildBlas(VkMeshGPU& m) {
@@ -4849,6 +4870,10 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
   bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
   bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  // A mesh whose vertices change per frame (skinning/morph) builds updatable
+  // so later frames REFIT (refitBlas) instead of destroy+rebuild.
+  if (m.blasWantUpdatable)
+    bgi.flags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
   bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
   bgi.geometryCount = 1;
   bgi.pGeometries = &geom;
@@ -4871,10 +4896,17 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   if (pfnCreateAS_(device_, &aci, nullptr, &m.blas) != VK_SUCCESS) return;
 
   // Scratch (over-allocate by the alignment so we can align the start address).
+  // Updatable meshes keep the scratch alive on the mesh -- sized for build AND
+  // update -- so per-frame refits allocate nothing.
+  const VkDeviceSize scratchSize =
+      (m.blasWantUpdatable
+           ? std::max(sizes.buildScratchSize, sizes.updateScratchSize)
+           : sizes.buildScratchSize) +
+      scratchAlign_;
   VkBuffer scratch = VK_NULL_HANDLE;
   VkDeviceMemory scratchMem = VK_NULL_HANDLE;
-  if (!createDeviceBuffer(sizes.buildScratchSize + scratchAlign_,
-                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &scratch, &scratchMem)) {
+  if (!createDeviceBuffer(scratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                          &scratch, &scratchMem)) {
     return;
   }
   VkDeviceAddress sa = bufferDeviceAddress(scratch);
@@ -4890,13 +4922,65 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
   endOneShot(cb);
 
-  vkDestroyBuffer(device_, scratch, nullptr);
-  vkFreeMemory(device_, scratchMem, nullptr);
+  if (m.blasWantUpdatable) {
+    m.blasScratch = scratch;
+    m.blasScratchMem = scratchMem;
+    m.blasScratchAddr = sa;
+    m.blasUpdatable = true;
+    m.blasNeedsRefit = false;  // this build already sees the current vertices
+  } else {
+    vkDestroyBuffer(device_, scratch, nullptr);
+    vkFreeMemory(device_, scratchMem, nullptr);
+  }
 
   VkAccelerationStructureDeviceAddressInfoKHR dai{};
   dai.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
   dai.accelerationStructure = m.blas;
   m.blasAddr = pfnGetASDeviceAddress_(device_, &dai);
+}
+
+void VulkanRenderer::refitBlas(VkMeshGPU& m) {
+  if (!m.blasNeedsRefit) return;
+  if (m.blas == VK_NULL_HANDLE || !m.blasUpdatable || !m.blasScratchAddr ||
+      m.indexCount < 3 || !pfnCmdBuildAS_) {
+    return;
+  }
+  // Same geometry description as buildBlas -- the vertex buffer contents
+  // changed in place (vboAddr already points at the skinned RT buffer).
+  VkAccelerationStructureGeometryKHR geom{};
+  geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+  geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+  geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+  auto& tri = geom.geometry.triangles;
+  tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+  tri.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+  tri.vertexData.deviceAddress = m.vboAddr;
+  tri.vertexStride = sizeof(DrawVertex);
+  tri.maxVertex = m.vertexCount - 1;
+  tri.indexType = VK_INDEX_TYPE_UINT32;
+  tri.indexData.deviceAddress = m.eboAddr;
+
+  VkAccelerationStructureBuildGeometryInfoKHR bgi{};
+  bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+  bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+  bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+              VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+  bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+  bgi.srcAccelerationStructure = m.blas;  // update in place
+  bgi.dstAccelerationStructure = m.blas;
+  bgi.geometryCount = 1;
+  bgi.pGeometries = &geom;
+  bgi.scratchData.deviceAddress = m.blasScratchAddr;  // persistent, presized
+
+  VkAccelerationStructureBuildRangeInfoKHR range{};
+  range.primitiveCount = m.indexCount / 3;
+  const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+
+  VkCommandBuffer cb = beginOneShot();
+  pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
+  endOneShot(cb);  // queue-waits: the refit completes before the TLAS build
+
+  m.blasNeedsRefit = false;
 }
 
 // Below this instance count the flat per-instance LOD loop is already cheap, so the
@@ -5037,9 +5121,15 @@ void VulkanRenderer::rebuildTlas() {
 
   // Build the full BLAS only for prototypes that an instance actually renders at
   // Full this pose (the long Proxy/Cull tail keeps no full BLAS -> memory bound by
-  // the visible near set, not the scene size).
-  for (const RtLodInstance& s : sel)
-    if (s.level == RtLod::Full) buildBlas(meshes_[s.meshId]);
+  // the visible near set, not the scene size). Skinned/morphed meshes whose
+  // vertices changed this frame refit their existing BLAS (buildBlas no-ops on
+  // an existing one).
+  for (const RtLodInstance& s : sel) {
+    if (s.level != RtLod::Full) continue;
+    VkMeshGPU& sm = meshes_[s.meshId];
+    buildBlas(sm);
+    refitBlas(sm);
+  }
 
   insts.reserve(sel.size());
   instInfos.reserve(sel.size());
