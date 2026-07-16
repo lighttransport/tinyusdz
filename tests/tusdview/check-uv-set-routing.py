@@ -40,7 +40,7 @@ import sys
 import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gpu_backend import device_name, is_software_renderer  # noqa: E402
+from gpu_backend import device_name, is_software_renderer, nvidia_offload_env  # noqa: E402
 
 SKIP = 77
 # This test used to demand the uvSet1 render be 3x FLATTER than the st one, on the
@@ -134,8 +134,11 @@ def render(binary, model, out_png, backend):
     if xvfb:
         prefixes.append([xvfb, "-a"])
     for prefix in prefixes:
+        # Xvfb prefix: route GL to the NVIDIA GPU when one is present, else
+        # Mesa gives llvmpipe and check_backend can only skip (gpu_backend.py).
+        env = nvidia_offload_env() if prefix else None
         r = subprocess.run(prefix + args, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT, timeout=600)
+                           stderr=subprocess.STDOUT, timeout=600, env=env)
         if r.returncode == 0 and os.path.exists(out_png):
             return r.stdout.decode(errors="replace")
     return None
