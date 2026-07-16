@@ -54,9 +54,9 @@ struct Model : public Collection, MaterialBinding {
   const std::vector<value::token> &primChildrenNames() const {
     return _primChildren;
   }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -93,8 +93,8 @@ struct Model : public Collection, MaterialBinding {
     const std::vector<value::token> &propertyNames() const {                 \
       return _properties;                                                    \
     }                                                                        \
-    std::vector<value::token> &primChildrenNames() { return _primChildren; } \
-    std::vector<value::token> &propertyNames() { return _properties; }       \
+    std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; } \
+    std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }       \
                                                                              \
    private:                                                                  \
     std::vector<value::token> _primChildren;                                 \
@@ -153,9 +153,9 @@ struct Scope : Collection, MaterialBinding {
   const std::vector<value::token> &primChildrenNames() const {
     return _primChildren;
   }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;

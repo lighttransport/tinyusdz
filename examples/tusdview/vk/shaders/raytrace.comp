@@ -15,7 +15,7 @@ layout(local_size_x = 8, local_size_y = 8) in;
 // Vertex buffer = interleaved DrawVertex (8 floats: pos.xyz, nrm.xyz, uv.xy).
 layout(buffer_reference, scalar) readonly buffer Verts { float v[]; };
 layout(buffer_reference, scalar) readonly buffer Idx   { uint  i[]; };
-// Optional per-vertex displayColor (vec3 packed as 3 floats / vertex).
+// Optional displayColor.rgb + displayOpacity (vec4 packed per vertex).
 layout(buffer_reference, scalar) readonly buffer Cols  { float c[]; };
 layout(buffer_reference, scalar) readonly buffer UV1s  { float u[]; };  // vec2 per vertex
 layout(buffer_reference, scalar) readonly buffer Infls { float f[]; };  // float per vertex
@@ -46,26 +46,50 @@ struct InstInfo {
   uint useMaterial;  // 1 = non-instanced (material + normalMat); 0 = tint + o2w normal
   uint pad0;
   uint pad1;
-  vec4 tint;         // per-instance color or flatColor (xyz used)
+  vec4 tint;         // per-instance color/opacity or flatColor/flatOpacity
 };
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT TLAS;
 layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outImg;
 layout(set = 0, binding = 2, scalar) readonly buffer Meshes { MeshDesc meshes[]; };
-// 3 vec4 per material: [0]=baseColor.rgb + alpha, [1]=(metallic,roughness,0,0),
-// [2]=emissive.rgb + 0. mat(id,k) indexes row k of material id.
+// 3 vec4 per material: [0]=baseColor.rgb + alpha,
+// [1]=(metallic,roughness,alphaMode,alphaCutoff), [2]=emissive.rgb + 0.
+// mat(id,k) indexes row k of material id.
 layout(set = 0, binding = 3, scalar) readonly buffer Mats   { vec4 matRows[]; };
 #define mat(id, k) matRows[(id) * 3u + (k)]
 layout(set = 0, binding = 4, scalar) readonly buffer Insts  { InstInfo insts[]; };
+// Progressive accumulation buffer (radiance sum). Read+write rgba32f.
+layout(set = 0, binding = 5, rgba32f) uniform image2D accumImg;
+// 14 vec4 per material: LightRT/OpenPBR constant fallback. lrt(id,12).w is 1
+// when populated.
+layout(set = 0, binding = 6, scalar) readonly buffer LrtMats { vec4 lrtRows[]; };
+#define lrt(id, k) lrtRows[(id) * 14u + (k)]
+// 10 vec4 per light: packed DrawLightCPU params. light(0,0).y holds validity flags.
+layout(set = 0, binding = 7, scalar) readonly buffer RtLights { vec4 lightRows[]; };
+#define RT_LIGHT_ROWS 20u
+#define light(id, k) lightRows[(id) * RT_LIGHT_ROWS + (k)]
+// Dome environment cube for ray misses (sharp IBL prefilter level 0; a 1x1
+// black cube when no dome is baked).
+layout(set = 0, binding = 8) uniform samplerCube uEnvCube;
+// GGX-prefiltered cube + split-sum BRDF LUT for surface specular IBL.
+layout(set = 0, binding = 9) uniform samplerCube uPrefilteredCube;
+layout(set = 0, binding = 10) uniform sampler2D uBrdfLut;
 
 layout(push_constant) uniform PC {
   mat4 invViewProj;  // inverse(proj * view)
   vec4 camPos;       // xyz = camera world position, w = RenderMode
   vec4 lightDir;     // xyz = unit direction *towards* the light, w = depthScale
   vec4 clearColor;   // rgb background for ray misses
-  vec4 sceneMin;     // position AOV bbox min
-  vec4 sceneExtent;  // position AOV bbox size
+  vec4 sceneMin;     // xyz = position AOV bbox min, w = accumulated sample index
+  vec4 sceneExtent;  // xyz = position AOV bbox size, w = accumulate enable (>0.5)
 } pc;
+
+// Radical-inverse (Halton) low-discrepancy sequence for sub-pixel jitter.
+float halton(uint i, uint b) {
+  float f = 1.0, r = 0.0;
+  while (i > 0u) { f /= float(b); r += f * float(i % b); i /= b; }
+  return r;
+}
 
 vec3 fetchPos(Verts vb, uint vi) {
   return vec3(vb.v[vi * 8u + 0u], vb.v[vi * 8u + 1u], vb.v[vi * 8u + 2u]);
@@ -73,8 +97,9 @@ vec3 fetchPos(Verts vb, uint vi) {
 vec3 fetchNrm(Verts vb, uint vi) {
   return vec3(vb.v[vi * 8u + 3u], vb.v[vi * 8u + 4u], vb.v[vi * 8u + 5u]);
 }
-vec3 fetchCol(Cols cb, uint vi) {
-  return vec3(cb.c[vi * 3u + 0u], cb.c[vi * 3u + 1u], cb.c[vi * 3u + 2u]);
+vec4 fetchCol(Cols cb, uint vi) {
+  return vec4(cb.c[vi * 4u + 0u], cb.c[vi * 4u + 1u],
+              cb.c[vi * 4u + 2u], cb.c[vi * 4u + 3u]);
 }
 vec2 fetchUV(Verts vb, uint vi) {
   return vec2(vb.v[vi * 8u + 6u], vb.v[vi * 8u + 7u]);
@@ -104,10 +129,45 @@ vec3 cosHemi(vec3 n, float u1, float u2) {
 }
 
 // Stable distinct color per material id (-1 / 0xffffffff -> neutral gray).
+// Order-2 SH irradiance eval (basis matches the bake in texture_tools.cc).
+// `li` = light index, rows 13-19 hold 27 coeff-major RGB floats.
+float shCoef(uint li, uint i) {
+  vec4 r = light(li, 13u + i / 4u);
+  return r[i % 4u];
+}
+vec3 shIrradiance(uint li, vec3 n) {
+  float b[9];
+  b[0] = 0.282095;
+  b[1] = 0.488603 * n.y;
+  b[2] = 0.488603 * n.z;
+  b[3] = 0.488603 * n.x;
+  b[4] = 1.092548 * n.x * n.y;
+  b[5] = 1.092548 * n.y * n.z;
+  b[6] = 0.315392 * (3.0 * n.z * n.z - 1.0);
+  b[7] = 1.092548 * n.x * n.z;
+  b[8] = 0.546274 * (n.x * n.x - n.y * n.y);
+  vec3 e = vec3(0.0);
+  for (uint k = 0u; k < 9u; ++k) {
+    e += b[k] * vec3(shCoef(li, k * 3u + 0u), shCoef(li, k * 3u + 1u),
+                     shCoef(li, k * 3u + 2u));
+  }
+  return max(e, vec3(0.0));
+}
+
 vec3 idColor(uint id) {
   if (id == 0xffffffffu) return vec3(0.45);
   uint h = (id + 1u) * 2654435761u;
   return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
+// Linear -> sRGB OETF for the final shaded image, matching the raster path
+// (mesh.frag). The tracer lights in linear space and the target image is UNORM,
+// so shaded/wireframe output is encoded here; debug AOVs are left raw.
+vec3 linearToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+  return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
 }
 
 void main() {
@@ -115,10 +175,18 @@ void main() {
   ivec2 size = imageSize(outImg);
   if (px.x >= size.x || px.y >= size.y) return;
 
+  // Progressive sample index (0 = first sample after a reset). Drives both the
+  // sub-pixel jitter (anti-aliasing) and the stochastic-AOV RNG so they converge.
+  uint fi = uint(pc.sceneMin.w + 0.5);
+  bool accumulate = pc.sceneExtent.w > 0.5;
+
   // Pixel -> NDC -> world ray via the inverse view-projection. Flip Y so image
   // row 0 maps to ndc.y=+1 (scene top), matching the raster path's negative-
-  // height viewport; otherwise the traced image is vertically inverted.
-  vec2 uv = (vec2(px) + 0.5) / vec2(size);
+  // height viewport; otherwise the traced image is vertically inverted. Jitter the
+  // sample point inside the pixel by a Halton(2,3) offset for anti-aliasing.
+  vec2 jit = accumulate ? (vec2(halton(fi + 1u, 2u), halton(fi + 1u, 3u)) - 0.5)
+                        : vec2(0.0);
+  vec2 uv = (vec2(px) + 0.5 + jit) / vec2(size);
   vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
   vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);
   vec4 farH  = pc.invViewProj * vec4(ndc, 1.0, 1.0);
@@ -132,6 +200,27 @@ void main() {
   rayQueryEXT rq;
   rayQueryInitializeEXT(rq, TLAS, gl_RayFlagsOpaqueEXT, 0xFF, origin, 1e-3, dir, 1e30);
   while (rayQueryProceedEXT(rq)) {}
+
+  // Dome env background on miss (shaded mode only): sample the baked env cube
+  // scaled by the dome's effectiveColor.
+  if (int(pc.camPos.w + 0.5) == 0 &&
+      rayQueryGetIntersectionTypeEXT(rq, true) !=
+          gl_RayQueryCommittedIntersectionTriangleEXT) {
+    uint numL = uint(lightRows.length()) / RT_LIGHT_ROWS;
+    for (uint li = 0u; li < numL; ++li) {
+      vec4 l0 = light(li, 0u);  // .x type, .y flags, .z mapped envmap tex
+      if (int(l0.x + 0.5) != 6) continue;             // DomeLight
+      // Bit 4: 8-bit envmap texture mapped; bit 7: baked IBL env cube bound.
+      if ((int(l0.y + 0.5) & (16 | 128)) == 0) continue;
+      vec4 l4 = light(li, 4u);                        // effectiveColor.rgb
+      // Rows 10-12: world -> environment rotation (dome orientation).
+      vec3 de = vec3(dot(light(li, 10u).xyz, dir),
+                     dot(light(li, 11u).xyz, dir),
+                     dot(light(li, 12u).xyz, dir));
+      outc = textureLod(uEnvCube, de, 0.0).rgb * l4.xyz;
+      break;
+    }
+  }
 
   if (rayQueryGetIntersectionTypeEXT(rq, true) ==
       gl_RayQueryCommittedIntersectionTriangleEXT) {
@@ -180,22 +269,71 @@ void main() {
     // Base color: material (non-instanced) or per-instance tint (instanced), times
     // the interpolated per-vertex displayColor when present.
     vec3 base;
+    float alpha = 1.0;
+    float metallic = 0.0;
+    float roughness = 0.5;
+    float alphaMode = 0.0;
+    float alphaCutoff = 0.5;
+    vec3 emissive = vec3(0.0);
+    float specWeight = 1.0;
+    float coatWeight = 0.0;
+    float coatRoughness = 0.1;
     if (ii.useMaterial != 0u) {
-      base = (md.matId != 0xffffffffu) ? mat(md.matId, 0u).rgb : vec3(0.6);
+      if (md.matId != 0xffffffffu) {
+        base = mat(md.matId, 0u).rgb;
+        alpha = mat(md.matId, 0u).a;
+        metallic = mat(md.matId, 1u).x;
+        roughness = mat(md.matId, 1u).y;
+        alphaMode = mat(md.matId, 1u).z;
+        alphaCutoff = mat(md.matId, 1u).w;
+        emissive = mat(md.matId, 2u).rgb;
+        if (lrt(md.matId, 12u).w > 0.5) {
+          metallic = lrt(md.matId, 10u).x;
+          roughness = lrt(md.matId, 10u).z;
+          alpha = lrt(md.matId, 9u).w;
+          emissive = lrt(md.matId, 8u).rgb * lrt(md.matId, 8u).w;
+          specWeight = lrt(md.matId, 1u).w;
+          coatWeight = lrt(md.matId, 6u).w;
+          coatRoughness = lrt(md.matId, 11u).x;
+        }
+      } else {
+        base = vec3(0.6);
+      }
     } else {
       base = ii.tint.rgb;  // per-instance color or the prototype's flatColor
+      alpha = clamp(ii.tint.a, 0.0, 1.0);
+      alphaMode = (alpha < 1.0) ? 2.0 : 0.0;  // approximate Blend like material RT
     }
     if (md.vtxColorAddr != 0ul) {
       Cols cb = Cols(md.vtxColorAddr);
-      base *= fetchCol(cb, i0) * w0 + fetchCol(cb, i1) * bc.x + fetchCol(cb, i2) * bc.y;
+      vec4 vc = fetchCol(cb, i0) * w0 + fetchCol(cb, i1) * bc.x +
+                fetchCol(cb, i2) * bc.y;
+      base *= vc.rgb;
+      alpha *= vc.a;
+    }
+    float materialOpacity = clamp(alpha, 0.0, 1.0);
+    if (alphaMode > 0.5 && alphaMode < 1.5) {
+      materialOpacity = (materialOpacity >= alphaCutoff) ? 1.0 : 0.0;
     }
 
+    // Render mode (RenderMode in camPos.w). Only shaded/wireframe need the
+    // default hard shadow below; debug AOVs overwrite outc and should avoid this
+    // extra ray query on large RT scenes. AO/soft-shadow modes issue their own
+    // ray queries in their AOV branches.
+    int rmode = int(pc.camPos.w + 0.5);
     vec3 L = normalize(pc.lightDir.xyz);
+    vec3 lightColor = vec3(1.0);
+    if (lightRows.length() >= RT_LIGHT_ROWS && light(0u, 0u).y > 0.5) {
+      vec3 packedL = light(0u, 2u).xyz;
+      if (dot(packedL, packedL) > 1e-10) L = normalize(packedL);
+      lightColor = light(0u, 3u).rgb;
+      if (dot(lightColor, lightColor) <= 1e-10) lightColor = vec3(1.0);
+    }
     float diff = max(dot(N, L), 0.0);
 
     // Shadow ray towards the light (hard shadows).
     float shadow = 1.0;
-    if (diff > 0.0) {
+    if ((rmode == 0 || rmode == 1) && diff > 0.0) {
       rayQueryEXT sq;
       rayQueryInitializeEXT(sq, TLAS,
                             gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
@@ -206,12 +344,59 @@ void main() {
         shadow = 0.0;
       }
     }
-    outc = base * (0.25 + 0.85 * diff * shadow);
+    vec3 V = normalize(pc.camPos.xyz - hit);
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(N, H), 0.0),
+                     mix(96.0, 8.0, clamp(roughness, 0.0, 1.0))) *
+                 max(specWeight, 0.0);
+    float coat = pow(max(dot(N, H), 0.0),
+                     mix(128.0, 12.0, clamp(coatRoughness, 0.0, 1.0))) *
+                 clamp(coatWeight, 0.0, 1.0) * 0.25;
+    // Ambient: dome split-sum IBL when baked (matches the raster IBL: SH
+    // irradiance diffuse + GGX-prefiltered specular), else the constant floor.
+    vec3 ambient = vec3(0.25);
+    vec3 specIBL = vec3(0.0);
+    {
+      uint numL2 = uint(lightRows.length()) / RT_LIGHT_ROWS;
+      for (uint li = 0u; li < numL2; ++li) {
+        vec4 l0 = light(li, 0u);
+        if (int(l0.x + 0.5) != 6) continue;         // DomeLight
+        if ((int(l0.y + 0.5) & 128) == 0) continue; // baked IBL present
+        vec3 envColor = light(li, 4u).xyz;
+        vec3 Ne = normalize(vec3(dot(light(li, 10u).xyz, N),
+                                 dot(light(li, 11u).xyz, N),
+                                 dot(light(li, 12u).xyz, N)));
+        ambient = shIrradiance(li, Ne) * envColor;
+        // Specular: prefiltered env along the (env-rotated) reflection vector,
+        // weighted by the split-sum DFG term. F0 = mix(0.04, base, metallic).
+        vec3 Rw = reflect(-V, N);
+        vec3 Re = normalize(vec3(dot(light(li, 10u).xyz, Rw),
+                                 dot(light(li, 11u).xyz, Rw),
+                                 dot(light(li, 12u).xyz, Rw)));
+        float rgh = clamp(roughness, 0.0, 1.0);
+        float maxLod = float(textureQueryLevels(uPrefilteredCube) - 1);
+        vec3 pref = textureLod(uPrefilteredCube, Re, rgh * maxLod).rgb;
+        vec2 dfg = texture(uBrdfLut, vec2(max(dot(N, V), 0.0), rgh)).rg;
+        vec3 F0 = mix(vec3(0.04), base, clamp(metallic, 0.0, 1.0));
+        specIBL = pref * (F0 * dfg.x + dfg.y) * envColor * max(specWeight, 0.0);
+        break;
+      }
+    }
+    outc = base * (ambient + 0.85 * diff * shadow * lightColor) + specIBL +
+           vec3((spec * mix(0.04, 0.35, clamp(metallic, 0.0, 1.0)) + coat) *
+                shadow) * lightColor +
+           emissive;
 
     // Render mode (RenderMode in camPos.w): 1=wireframe (edges only), 2=shading
     // normal, 3=material-id, 4=geometric normal, 5=uv set 0, 6=depth (t /
     // depthScale in lightDir.w).
-    int rmode = int(pc.camPos.w + 0.5);
+    if (rmode == 0) {
+      if (alphaMode > 0.5 && alphaMode < 1.5 && materialOpacity <= 0.0) {
+        outc = pc.clearColor.rgb;
+      } else if (alphaMode > 1.5 && materialOpacity < 1.0) {
+        outc = mix(pc.clearColor.rgb, outc, materialOpacity);
+      }
+    }
     if (rmode == 1) {
       float e = min(w0, min(bc.x, bc.y));
       if (e > 0.02) outc = pc.clearColor.rgb;
@@ -249,8 +434,7 @@ void main() {
     } else if (rmode == 11) {  // emissive
       outc = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 2u).rgb : vec3(0.0);
     } else if (rmode == 12) {  // opacity
-      float a = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 0u).a : 1.0;
-      outc = vec3(a);
+      outc = vec3(materialOpacity);
     } else if (rmode == 13) {  // world position
       outc = clamp((hit - pc.sceneMin.xyz) / pc.sceneExtent.xyz, 0.0, 1.0);
     } else if (rmode == 23) {  // uv checker
@@ -355,7 +539,7 @@ void main() {
       vec3 Ng = normalize(cross(wp1 - wp0, wp2 - wp0));
       if (dot(Ng, dir) > 0.0) Ng = -Ng;
       float aoRadius = max(pc.lightDir.w, 1e-3) * 0.15;  // 15% of scene extent
-      uint seed = hashU(uint(px.x) * 1973u + uint(px.y) * 9277u + 1u);
+      uint seed = hashU(uint(px.x) * 1973u + uint(px.y) * 9277u + fi * 26699u + 1u);
       const int NS = 24;
       float occ = 0.0;
       for (int s = 0; s < NS; ++s) {
@@ -373,7 +557,7 @@ void main() {
       vec3 Lc = normalize(pc.lightDir.xyz);
       vec3 tt = normalize(abs(Lc.x) > 0.9 ? vec3(0,1,0) : vec3(1,0,0));
       vec3 bb = normalize(cross(Lc, tt)); tt = cross(bb, Lc);
-      uint seed = hashU(uint(px.x) * 2719u + uint(px.y) * 5051u + 7u);
+      uint seed = hashU(uint(px.x) * 2719u + uint(px.y) * 5051u + fi * 40503u + 7u);
       const int NS = 16; float vis = 0.0; const float coneR = 0.08;
       for (int s = 0; s < NS; ++s) {
         float a = rnd(seed) * 6.2831853, rr = sqrt(rnd(seed)) * coneR;
@@ -390,5 +574,18 @@ void main() {
     }
   }
 
+  // Progressive accumulation: add this sample's radiance to the running sum and
+  // display the average. fi==0 (or accumulation off) overwrites, so a stale or
+  // uninitialised accum buffer never bleeds into a fresh trace.
+  if (accumulate) {
+    vec3 sum = (fi == 0u) ? outc : (imageLoad(accumImg, px).rgb + outc);
+    imageStore(accumImg, px, vec4(sum, 1.0));
+    outc = sum / float(fi + 1u);
+  }
+  // Encode the shaded/wireframe image for display (linear -> sRGB), consistent
+  // with the raster backends' output (T11). Debug AOVs stay raw. Accumulation
+  // stays linear above, so only the displayed average is encoded.
+  int outMode = int(pc.camPos.w + 0.5);
+  if (outMode == 0 || outMode == 1) outc = linearToSrgb(outc);
   imageStore(outImg, px, vec4(outc, 1.0));
 }

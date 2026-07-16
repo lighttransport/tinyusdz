@@ -59,7 +59,7 @@ STATUS section below has the per-case detail.
 - **2 `ErrorInvalidInstanceTargetPath`** — 2-to-3-PART deep fix (CT/IA-instrumented). next
   DROPS `amount.connect` ENTIRELY on the LBrow/RBrow inherited-instance sculpts (class
   SymBrow gets it fine). PART 1: the sculpt's connection-target map lacks the general
-  `/BrowRig=>/FaceRig/BrowRig` reference pair, so out-of-class targets strict-drop (''). 
+  `/BrowRig=>/FaceRig/BrowRig` reference pair, so out-of-class targets strict-drop ('').
   IA-instrumented finding: the SymBrow-inherit ProcessArc compose #1 (into LBrow, with the
   reference outer) DOES produce a map containing `/BrowRig=>/FaceRig/BrowRig` (intra=0), and
   `DeriveChildSources` shares `ps.map_idx` (L1839) — yet the observed sculpt target map had

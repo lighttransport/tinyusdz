@@ -8,11 +8,16 @@
 // lives behind this interface so the app main-loop is backend-agnostic.
 #pragma once
 
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "gpu_scene.hh"
+#include "rt_lod.hh"  // RtLodCamera (view-dependent RT LOD)
 
 struct GLFWwindow;
 struct ImDrawData;
@@ -20,6 +25,13 @@ struct ImDrawData;
 namespace tusdview {
 
 enum class Backend { GL, Vulkan };
+
+struct RendererDevicePreference {
+  // Vulkan device selector. Empty = automatic. Non-empty accepts either a
+  // physical-device index ("0", "1", ...) or a case-insensitive substring of
+  // the device name / driver name / driver info.
+  std::optional<std::string> vulkanDevice;
+};
 
 // Shaded/Wireframe + debug AOVs. Normals = the shading normal used by the lit path;
 // GeomNormal = the geometric face normal; Uv = texcoord set 0; Depth = camera
@@ -79,6 +91,16 @@ struct RendererCaps {
   bool supportsRayTracing{false};  // device has the RT extensions (Vulkan only)
   bool supportsGpuSkinning{false};
   bool supportsExtendedGpuSkinning{false};  // texture-backed >4 influences
+
+  // GPU compressed-texture format support (queried at init). Used to cap-gate
+  // the `--texture-compress` mode: a requested format the device can't sample is
+  // remapped to a supported one (or uncompressed) before CPU encoding, so e.g.
+  // `--texture-compress astc` on a desktop BC-only GPU falls back to BC7.
+  bool supportsBC{false};      // S3TC/RGTC/BPTC (BC1/3/5/6H/7) — desktop
+  bool supportsASTC{false};    // KHR_texture_compression_astc_ldr — mobile/some
+  bool supportsETC2{false};    // ETC2/EAC — GLES3 baseline / mobile
+  bool supportsBC5{false};     // RGTC (BC5) — usually with BC
+  bool supportsBC6H{false};    // BPTC float (BC6H) — usually with BC7
 };
 
 struct RenderFrameParams {
@@ -86,7 +108,16 @@ struct RenderFrameParams {
   const float* proj{nullptr};  // column-major 4x4 (GL: Z[-1,1]; VK: Z[0,1])
   float cameraPos[3]{0, 0, 0};
   RenderMode mode{RenderMode::Shaded};
+  // Wireframe overlay state, cycled with the 'w' key (GL backend):
+  //   0 = off (shaded fill only)
+  //   1 = wireframe only (hidden-line: depth-only fill, then polygon edges)
+  //   2 = wireframe + shading (shaded fill, then polygon edges on top)
+  // Edges are the ORIGINAL polygon edges of the base (pre-tessellation) mesh --
+  // triangulation diagonals are dropped via per-triangle source face ids.
+  int wireMode{0};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
+  float lightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
+  float lightColor[3]{1.0f, 1.0f, 1.0f};
   float depthScale{1.0f};  // Depth AOV: normalize camera distance by this (scene extent)
   float sceneMin[3]{0, 0, 0};     // Position AOV: scene bbox min
   float sceneExtent[3]{1, 1, 1};  // Position AOV: scene bbox size (max-min)
@@ -113,9 +144,18 @@ struct RenderFrameParams {
 
   // Per-mesh visibility mask (index i <-> the i-th appended mesh, same order as
   // highlightMeshIndex). null = all meshes visible. Applies to the raster paths
-  // (GL + VK raster); the VK ray-tracing path traces the whole TLAS.
+  // (GL + VK raster); the VK ray-tracing path traces the whole TLAS (it must
+  // keep off-screen geometry for shadow/AO rays, so this frustum-culled raster
+  // mask cannot drive it) EXCEPT for whole USD purposes, filtered below.
   const uint8_t* meshVisible{nullptr};
   int meshVisibleCount{0};
+
+  // Visible USD purposes, bit i = PurposeId i (0 default, 1 render, 2 proxy,
+  // 3 guide). The VK ray-tracing path leaves meshes of hidden purposes out of
+  // the TLAS entirely (a purpose toggle triggers a rebuild). Without this,
+  // Caldera's guide breadcrumb planes -- hidden in raster -- engulf the RT
+  // camera ("--rt renders near-blank"). Default matches the GUI: guide hidden.
+  uint32_t purposeVisibleMask{0xBu};
 
   // Surface displacement (UsdPreviewSurface inputs:displacement). When enabled, a
   // material's displacement (constant or height-map red channel) offsets the
@@ -147,6 +187,14 @@ class Renderer {
   // before init() when `window` is null. No-op for backends that need a window.
   virtual void setHeadlessSize(int /*w*/, int /*h*/) {}
 
+  virtual void setDevicePreference(
+      const RendererDevicePreference& /*preference*/) {}
+
+  // Resize the headless composite at runtime (recreate the offscreen swap images
+  // + framebuffers). Returns false if unsupported / not headless. The caller must
+  // also update ImGui's DisplaySize. No-op for backends that need a window.
+  virtual bool resizeHeadless(int /*w*/, int /*h*/) { return false; }
+
   // Wire up the ImGui platform+renderer backends. Call after ImGui::CreateContext().
   virtual bool initImGui(std::string* err) = 0;
 
@@ -156,6 +204,7 @@ class Renderer {
   // texture slots by index.
   virtual void beginScene(const std::vector<DrawMaterialCPU>& materials,
                           int textureCount) = 0;
+  virtual void setLights(const std::vector<DrawLightCPU>& /*lights*/) {}
   // Append one mesh (uploaded immediately). Rendered from the next frame on.
   virtual void appendMesh(const DrawMeshCPU& mesh) = 0;
   // Append one UsdVol volume (OpenVDB). Default: no-op (backend has no volume
@@ -166,18 +215,34 @@ class Renderer {
   virtual void uploadSkinningFrame(const SkinningFrameCPU& /*skin*/) {}
   // Per-instance frustum culling: replace mesh `meshIndex`'s drawn instance set
   // with `count` visible instances (xforms = 12 floats/instance, 3x4 o2w row-major;
-  // colors = 3 floats/instance or null to keep the existing per-instance colors).
+  // colors = 3 floats/instance or null to keep the existing per-instance colors;
+  // opacities = 1 float/instance or null to keep the existing per-instance opacity).
   // count == instanceCount restores the full set. No-op for non-instanced meshes
   // or backends that flatten instances. Called each frame the view changes.
   virtual void updateInstanceVisibility(size_t /*meshIndex*/,
                                         const float* /*xforms*/,
                                         const float* /*colors*/,
+                                        const float* /*opacities*/,
                                         uint32_t /*count*/) {}
   // Replace mesh `meshIndex`'s vertex buffer in place (same vertex count) — used
   // for per-frame GPU blendshape morph (positions/normals re-derived on the CPU
   // from the rest pose, then GPU-skinned). No-op if unsupported or size differs.
   virtual void updateMeshVertices(int /*meshIndex*/,
                                   const std::vector<DrawVertex>& /*verts*/) {}
+  // GPU compute skinning for the RAY-TRACED vertex stream: linear-blend skin the
+  // rest pose into the RT vertex buffer on the GPU (then refit the BLAS), given
+  // the mesh's composed skinning matrices (`jointCount` matrices of 16 floats,
+  // row-major, applied as row-vector p*M; joint attribute ids are absolute and
+  // offset by `matrixBase`). `aabbMin/aabbMax` is the caller's conservative
+  // posed bound (union of per-joint transformed rest boxes) for LOD/proxy use.
+  // Returns false when the backend cannot GPU-skin this mesh (no RT stream, no
+  // skin attributes, shader unavailable) — the caller then CPU-skins instead.
+  virtual bool updateMeshSkinningGpu(int /*meshIndex*/, const float* /*mats*/,
+                                     int /*jointCount*/, int /*matrixBase*/,
+                                     const float /*aabbMin*/[3],
+                                     const float /*aabbMax*/[3]) {
+    return false;
+  }
   // Upload mesh `meshIndex`'s per-channel blendshape coefficients (one float per
   // morph channel) for GPU-side morphing in the raster vertex shader. Only the
   // tiny coefficient buffer updates per frame — no vertex re-upload, no GPU stall.
@@ -197,14 +262,43 @@ class Renderer {
   // mesh count; callers verify before per-index updates.
   virtual int meshCount() const { return 0; }
 
+  // Raster view-dependent LOD box proxies (optimization B). supportsProxyDraw()
+  // gates whether the cull emits proxies at all; updateProxyInstances uploads the
+  // shared per-frame set (`xforms`: 12 floats/proxy box-fit o2w; `tints`: 3
+  // floats/proxy) drawn in one instanced call. Default: unsupported / no-op.
+  virtual bool supportsProxyDraw() const { return false; }
+  virtual void updateProxyInstances(const float* /*xforms*/, const float* /*tints*/,
+                                    uint32_t /*count*/) {}
+
   // Convenience: upload an entire scene in one call (used by the headless /
   // synchronous path so screenshots are deterministic).
   bool uploadScene(const DrawScene& scene, std::string* /*err*/) {
     beginScene(scene.materials, static_cast<int>(scene.textures.size()));
+    setLights(scene.lights);
     for (size_t i = 0; i < scene.textures.size(); ++i) {
       uploadTexture(static_cast<int>(i), scene.textures[i]);
     }
-    for (const auto& m : scene.meshes) appendMesh(m);
+    static const bool timeit = std::getenv("TUSDVIEW_TIME_UPLOAD") != nullptr;
+    if (timeit) {
+      const auto t0 = std::chrono::steady_clock::now();
+      auto last = t0;
+      for (size_t i = 0; i < scene.meshes.size(); ++i) {
+        appendMesh(scene.meshes[i]);
+        if (((i + 1) % 5000) == 0 || i + 1 == scene.meshes.size()) {
+          const auto now = std::chrono::steady_clock::now();
+          const double tot =
+              std::chrono::duration<double>(now - t0).count();
+          const double dt =
+              std::chrono::duration<double>(now - last).count();
+          last = now;
+          std::fprintf(stderr,
+                       "[upload] meshes %zu/%zu  +%.2fs (total %.2fs)\n",
+                       i + 1, scene.meshes.size(), dt, tot);
+        }
+      }
+    } else {
+      for (const auto& m : scene.meshes) appendMesh(m);
+    }
     for (const auto& v : scene.volumes) appendVolume(v);
     return true;
   }
@@ -241,6 +335,27 @@ class Renderer {
   virtual bool initImGuiBackend(std::string* /*err*/) { return true; }
 #endif
 
+  // GPU video-memory usage in MB (used, total). Returns false if the backend
+  // can't report it. Used by the Stats panel.
+  virtual bool gpuMemoryMB(size_t* /*usedMB*/, size_t* /*totalMB*/) const {
+    return false;
+  }
+
+  // Current offscreen viewport (color target) size in pixels. Default no-op.
+  virtual void viewportSize(int* w, int* h) const {
+    if (w) *w = 0;
+    if (h) *h = 0;
+  }
+
+  // Upload an externally-traced RGBA8 image (R8G8B8A8_UNORM, w*h*4, top-down) into
+  // the offscreen color target for display this frame. Used by the interactive
+  // HIP/CUDA path, which traces on the GPU outside Vulkan: the next present()
+  // composites this image instead of running the raster/RT 3D pass. Returns false
+  // if unsupported. The flag is consumed by a single present().
+  virtual bool uploadViewportImage(const uint8_t* /*rgba*/, int /*w*/, int /*h*/) {
+    return false;
+  }
+
   // Read back the offscreen 3D viewport as top-down RGBA8 (headless QA).
   // Returns false if unsupported.
   virtual bool captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) {
@@ -276,6 +391,13 @@ class Renderer {
   // consume the same uploaded scene, so toggling needs no reload.
   virtual void setRayTracing(bool /*enable*/) {}
 
+  // View-dependent RT LOD: supply the camera snapshot used to classify instances
+  // as Full / Proxy / Cull when the TLAS is (re)built. `reselect` requests a TLAS
+  // rebuild now (call it when the camera has settled). focalPx is filled by the
+  // backend from its own viewport height; the caller leaves it 0. No-op unless
+  // the ray-tracing backend supports it.
+  virtual void setLodCamera(const RtLodCamera& /*cam*/, bool /*reselect*/) {}
+
   // Tear down ImGui backend + device resources.
   virtual void shutdown() = 0;
 };
@@ -283,6 +405,13 @@ class Renderer {
 std::unique_ptr<Renderer> CreateGLRenderer();
 #if defined(HAVE_VULKAN)
 std::unique_ptr<Renderer> CreateVulkanRenderer();
+
+// Total DEVICE_LOCAL heap bytes of the GPU we would render on, via a throwaway
+// VkInstance so it can be called BEFORE a renderer exists -- the large-scene
+// budgets are resolved during argument parsing, long before device creation.
+// Returns 0 if Vulkan is unavailable; callers need a fallback. Prefers a
+// discrete GPU, matching startup device selection.
+uint64_t QueryDeviceLocalVramBytes();
 #endif
 
 }  // namespace tusdview

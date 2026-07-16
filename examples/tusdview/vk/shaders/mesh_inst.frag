@@ -1,25 +1,46 @@
 #version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 // Instanced flat-shaded prototype fragment shader. Mirrors the GL kInstancedFS
 // AOV ladder + headlight so instanced geometry looks identical across backends.
-// Prototypes carry no UV / material scalars, so those AOV modes fall through to
-// a neutral gray (visually obvious there is no data, vs masquerading as a render).
+// Prototypes carry no UV / most material scalars, so those AOV modes fall
+// through to neutral gray. Per-instance/prototype opacity is available.
 layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec3 vColor;
-layout(location = 3) flat in int vInstanceId;
+layout(location = 3) in float vOpacity;
+layout(location = 4) flat in int vInstanceId;
+layout(location = 5) flat in int vDrawSlot;
 
-layout(push_constant) uniform InstPushC {
+// Per-draw metadata (set 6), indexed by the vertex-resolved draw slot. Replaces
+// the old per-draw push constant so a whole multi-draw-indirect batch shares one
+// binding: each draw's meshId + flag bits come from meta[vDrawSlot]. Instanced
+// prototypes are never selection-highlighted, so there is no emissive term.
+// Must match DrawMetaCPU / mesh_inst.vert: the skin addresses are unused here but
+// are part of the layout.
+struct DrawMeta { ivec4 ids; uint64_t jointAddr; uint64_t weightAddr; };
+layout(set = 6, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
+
+// Frame UBO (set 5): camera / scene bbox / renderMode (frame-constant).
+// DomeLight IBL irradiance (diffuse-only: prototypes carry no material
+// scalars). Set 0 is otherwise unused by the instanced pipeline; a 1x1 black
+// cube is bound when no dome IBL is baked.
+layout(set = 0, binding = 0) uniform samplerCube uIrradianceMap;
+
+layout(set = 5, binding = 0) uniform Frame {
+  vec4 disp;
   mat4 viewProj;
-  vec4 camPos;       // xyz = camera, w = depthScale
+  vec4 camPos;       // xyz camera, w depthScale
   vec4 sceneMin;
   vec4 sceneExtent;
-  vec4 emissive;
-  int renderMode;
-  int meshId;
-  int flags;         // bit0=geometricNormal, bit1=doubleSided, bits2-3=purpose, bits4-6=kind
-  int pad;
-} pc;
+  vec4 lightDir;
+  vec4 lightColor;
+  ivec4 mode;        // .x renderMode
+  mat4 envRot;        // world -> environment rotation (dome IBL)
+  vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
+  vec4 iblParams;     // .x = prefiltered mip count
+} fr;
+layout(push_constant) uniform InstPushC { ivec4 draw; } pc;  // .x = baseDraw (unused here)
 
 layout(location = 0) out vec4 outColor;
 
@@ -27,6 +48,15 @@ vec3 idColor(int id) {
   if (id < 0) return vec3(0.45);
   uint h = (uint(id) + 1u) * 2654435761u;
   return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
+// Linear -> sRGB OETF for the final shaded output (see mesh.frag); the
+// framebuffer is UNORM and the scene is lit in linear space.
+vec3 linearToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+  return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
 }
 vec3 purposeColor(int p) {
   if (p == 1) return vec3(0.2, 0.8, 0.3);
@@ -47,52 +77,73 @@ void main() {
   // Face the geometric normal toward the camera (winding-independent). Using the
   // view vector instead of gl_FrontFacing avoids the VK Y-flipped-viewport
   // winding inversion that would otherwise leave every face unlit.
-  vec3 Vdir = normalize(pc.camPos.xyz - vWorldPos);
+  vec3 Vdir = normalize(fr.camPos.xyz - vWorldPos);
   vec3 N = Ngeo;
   if (dot(N, Vdir) < 0.0) N = -N;
-  const bool geoNrm = (pc.flags & 1) != 0;
-  const bool dsided = (pc.flags & 2) != 0;
-  const int purpose = (pc.flags >> 2) & 3;
-  const int kind = (pc.flags >> 4) & 7;
-  if (pc.renderMode != 0) {
+  const ivec4 ids = meta[vDrawSlot].ids;
+  const bool geoNrm = (ids.y & 1) != 0;
+  const bool dsided = (ids.y & 2) != 0;
+  const int purpose = (ids.y >> 2) & 3;
+  const int kind = (ids.y >> 4) & 7;
+  if (fr.mode.x != 0) {
     vec3 Nshade = geoNrm ? Ngeo : normalize(vNormal);
-    if (pc.renderMode == 2) { outColor = vec4(Nshade * 0.5 + 0.5, 1.0); return; }
-    if (pc.renderMode == 4) { outColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }
-    if (pc.renderMode == 6) {
-      float d = clamp(length(pc.camPos.xyz - vWorldPos) / max(pc.camPos.w, 1e-3), 0.0, 1.0);
+    if (fr.mode.x == 2) { outColor = vec4(Nshade * 0.5 + 0.5, 1.0); return; }
+    if (fr.mode.x == 4) { outColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }
+    if (fr.mode.x == 6) {
+      float d = clamp(length(fr.camPos.xyz - vWorldPos) / max(fr.camPos.w, 1e-3), 0.0, 1.0);
       outColor = vec4(vec3(1.0 - d), 1.0); return;
     }
-    if (pc.renderMode == 7) { outColor = vec4(vColor, 1.0); return; }  // albedo
-    if (pc.renderMode == 8) {
+    if (fr.mode.x == 7) { outColor = vec4(vColor, 1.0); return; }  // albedo
+    if (fr.mode.x == 8) {
       outColor = gl_FrontFacing ? vec4(0.1, 0.7, 0.1, 1.0) : vec4(0.7, 0.1, 0.1, 1.0); return;
     }
-    if (pc.renderMode == 13) {  // world position
-      outColor = vec4(clamp((vWorldPos - pc.sceneMin.xyz) / pc.sceneExtent.xyz, 0.0, 1.0), 1.0); return;
+    if (fr.mode.x == 13) {  // world position
+      outColor = vec4(clamp((vWorldPos - fr.sceneMin.xyz) / fr.sceneExtent.xyz, 0.0, 1.0), 1.0); return;
     }
-    if (pc.renderMode == 15) { outColor = vec4(idColor(gl_PrimitiveID), 1.0); return; }  // prim id
-    if (pc.renderMode == 16) { outColor = vec4(idColor(pc.meshId), 1.0); return; }        // mesh id
-    if (pc.renderMode == 19) {  // missing normals
+    if (fr.mode.x == 15) { outColor = vec4(idColor(gl_PrimitiveID), 1.0); return; }  // prim id
+    if (fr.mode.x == 16) { outColor = vec4(idColor(ids.x), 1.0); return; }           // mesh id
+    if (fr.mode.x == 19) {  // missing normals
       outColor = geoNrm ? vec4(0.95, 0.1, 0.85, 1.0) : vec4(0.2, 0.2, 0.2, 1.0); return;
     }
-    if (pc.renderMode == 20) {  // double-sided
+    if (fr.mode.x == 20) {  // double-sided
       outColor = dsided ? vec4(0.95, 0.55, 0.1, 1.0) : vec4(0.2, 0.2, 0.2, 1.0); return;
     }
-    if (pc.renderMode == 18) { outColor = vec4(purposeColor(purpose), 1.0); return; }
-    if (pc.renderMode == 29) { outColor = vec4(kindColor(kind), 1.0); return; }
-    if (pc.renderMode == 26) { outColor = vec4(idColor(vInstanceId), 1.0); return; }  // instance id
-    if (pc.renderMode == 25) {  // curvature (screen-space geometric normal variation)
+    if (fr.mode.x == 18) { outColor = vec4(purposeColor(purpose), 1.0); return; }
+    if (fr.mode.x == 29) { outColor = vec4(kindColor(kind), 1.0); return; }
+    if (fr.mode.x == 26) { outColor = vec4(idColor(vInstanceId), 1.0); return; }  // instance id
+    if (fr.mode.x == 12) { outColor = vec4(vec3(vOpacity), 1.0); return; }        // opacity
+    if (fr.mode.x == 25) {  // curvature (screen-space geometric normal variation)
       vec3 n = Ngeo;
       float c = clamp((length(dFdx(n)) + length(dFdy(n))) * 8.0, 0.0, 1.0);
       outColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0); return;
     }
-    // Modes instanced prototypes cannot supply (UV/material scalars): neutral gray.
+    // Modes instanced prototypes cannot supply (UV/other material scalars): neutral gray.
     outColor = vec4(0.18, 0.18, 0.18, 1.0); return;
   }
-  vec3 V = normalize(pc.camPos.xyz - vWorldPos);
-  vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-  float NdotL = max(dot(N, L), 0.0);
+  vec3 V = normalize(fr.camPos.xyz - vWorldPos);
+  // Soft camera-headlight shading, matching mesh.frag / the GL backend so an
+  // instanced prototype shades like the same mesh drawn non-instanced. No
+  // material scalars here (flat prototypes): metallic 0, a mid roughness for the
+  // specular tightness.
+  vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+  float facing = max(dot(Nf, V), 0.0);
+  vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
+               ? normalize(fr.lightDir.xyz)
+               : normalize(vec3(0.3, 0.5, 0.8));
+  vec3 lightColor = (dot(fr.lightColor.rgb, fr.lightColor.rgb) > 1e-8)
+                        ? fr.lightColor.rgb
+                        : vec3(1.0);
+  float key = dot(Nf, L) * 0.5 + 0.5;
+  float shade = 0.6 * facing + 0.4 * key;
+  vec3 ambient = (fr.iblColor.w > 0.5)
+                 ? vColor * texture(uIrradianceMap,
+                                    normalize(mat3(fr.envRot) * Nf)).rgb *
+                       fr.iblColor.rgb
+                 : vColor * 0.25;
   vec3 H = normalize(L + V);
-  float NdotH = max(dot(N, H), 0.0);
-  vec3 col = vColor * (0.05 + NdotL) + vec3(0.15) * pow(NdotH, 32.0);
-  outColor = vec4(col + pc.emissive.xyz, 1.0);
+  // Spec matches the GL instanced shader (kInstancedFS) exactly, so instanced
+  // prototypes are GL<->VK identical: a fixed 0.12 * pow(N.H, 32) * facing.
+  float spec = 0.12 * pow(max(dot(Nf, H), 0.0), 32.0) * facing;
+  vec3 col = ambient + vColor * lightColor * (0.75 * shade) + lightColor * spec;
+  outColor = vec4(linearToSrgb(col), vOpacity);  // no selection emissive here
 }

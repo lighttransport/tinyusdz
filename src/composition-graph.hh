@@ -292,7 +292,8 @@ class PrimIndex {
 };
 
 // Incremental payload (un)load helpers (friends of PrimIndex).
-CompNode &GetMutableNode(PrimIndex &index, uint16_t node_idx);
+CompNode &GetMutableNode(PrimIndex &index TINYUSDZ_LIFETIMEBOUND,
+                         uint16_t node_idx);
 void RecomputeStrengthOrder(PrimIndex &index);
 
 /// Compose a PrimSpec by walking a PrimIndex in strength order (strongest
@@ -377,6 +378,15 @@ struct CompositionGraphOptions {
   /// closure must be thread-safe (or capture nothing mutable).
   std::function<bool(const Path &prim_path, const Payload &payload)>
       payload_policy;
+
+  /// Extended payload loading policy with access to the PrimSpec that authors
+  /// the payload. When set, this takes precedence over `payload_policy`.
+  /// Keeping this as a separate callback preserves source compatibility for
+  /// existing two-argument policies while allowing policies based on authored
+  /// properties such as `extentsHint`.
+  std::function<bool(const Path &prim_path, const Payload &payload,
+                     const PrimSpec &owner)>
+      payload_policy_with_prim;
 
   /// Maximum composition depth (prevents infinite recursion).
   uint32_t max_depth{256};

@@ -33,6 +33,11 @@ struct ResolverConfig {
   std::vector<std::string> search_paths;  // Directories to search
   std::string working_directory;           // Base directory for relative paths
   bool allow_absolute_paths = true;        // Allow absolute path resolution
+  // USD asset paths are anchored to the layer that authored them, and valid
+  // layer stacks commonly use ".." to reach sibling asset directories.
+  // Hardened applications can disable this when loading inside a strict
+  // asset-root sandbox.
+  bool allow_parent_paths = true;
   bool search_recursively = false;         // Search subdirectories
   // When the literal path does not resolve, retry progressively shorter
   // path suffixes (SuffixCandidates) against anchor/working-dir/search

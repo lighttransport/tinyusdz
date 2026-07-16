@@ -255,9 +255,11 @@ public:
   /// Create from components
   static ValueRep Make(CrateTypeId type, uint64_t payload,
                        bool is_array = false, bool is_inlined = false,
-                       bool is_compressed = false) {
+                       bool is_compressed = false,
+                       bool is_array_edit = false) {
     uint64_t data = (payload & 0xFFFFFFFFFFFFULL) |
                     (static_cast<uint64_t>(type) << 48) |
+                    (static_cast<uint64_t>(is_array_edit) << 60) |
                     (static_cast<uint64_t>(is_compressed) << 61) |
                     (static_cast<uint64_t>(is_inlined) << 62) |
                     (static_cast<uint64_t>(is_array) << 63);

@@ -60,7 +60,7 @@ const Layer *LayerRegistry::GetOrLoad(AssetResolutionResolver &resolver,
     } else {
       Asset asset;
       if (resolver.open_asset(resolved_path, asset_path, &asset, warn, err)) {
-        if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+        if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
           if (err) {
             (*err) += "Resolved asset exceeds max read bytes: " + asset_path +
                       "\n";

@@ -156,7 +156,8 @@ InstanceKey ComputeInstanceKey(const PrimIndex &index,
 // PrimIndex incremental-mutation helpers (friends of PrimIndex)
 // ---------------------------------------------------------------------------
 
-CompNode &GetMutableNode(PrimIndex &index, uint16_t node_idx) {
+CompNode &GetMutableNode(PrimIndex &index TINYUSDZ_LIFETIMEBOUND,
+                         uint16_t node_idx) {
   return index._nodes[node_idx];
 }
 
@@ -419,11 +420,11 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
     Asset asset;
     if (ctx->_resolver->open_asset(resolved_path, asset_path, &asset, warn,
                                    err)) {
-      if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+      if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
         if (err) {
           *err = fmt::format("Resolved asset exceeds max bytes ({} > {}).",
                              asset.size(),
-                             security_policy::kResolverMaxAssetReadBytes);
+                             security_policy::GetMaxAssetReadBytes());
         }
       } else {
         Layer layer;
@@ -434,8 +435,8 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
         if (LoadLayerFromMemory(asset.data(), asset.size(), resolved_path, &layer,
                                 warn, err)) {
           auto layer_ptr = std::make_unique<Layer>(std::move(layer));
-          result = layer_ptr.get();
           ctx->_loaded_layers.push_back(std::move(layer_ptr));
+          result = ctx->_loaded_layers.back().get();
         }
       }
     }
@@ -1038,7 +1039,10 @@ bool PrimIndexBuilder::EvalPayloads(uint16_t node_idx, std::string *err) {
 
       // Check load policy
       bool should_load = true;
-      if (_ctx->_options.payload_policy) {
+      if (_ctx->_options.payload_policy_with_prim) {
+        should_load = _ctx->_options.payload_policy_with_prim(
+            _result._prim_path, pl, *ps);
+      } else if (_ctx->_options.payload_policy) {
         should_load =
             _ctx->_options.payload_policy(_result._prim_path, pl);
       }
@@ -2236,11 +2240,11 @@ nonstd::expected<bool, std::string> CompositionGraph::LoadPayload(
     return nonstd::make_unexpected("Failed to open payload asset: " + load_err);
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     if (!old_cwp.empty()) resolver.set_current_working_path(old_cwp);
     return nonstd::make_unexpected(
         fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                    asset.size(), security_policy::kResolverMaxAssetReadBytes));
+                    asset.size(), security_policy::GetMaxAssetReadBytes()));
   }
 
   if (!LoadLayerFromMemory(asset.data(), asset.size(), resolved_path,

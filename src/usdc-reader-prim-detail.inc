@@ -25,13 +25,6 @@ namespace prim {
 
 // Placeholder schema prim types (UsdVol / UsdRender / UsdProc): defined in
 // prim-reconstruct.cc, explicitly instantiated in usdc-reader-prim-reconstruct-1.cc.
-EXTERN_RECONSTRUCT_PRIM(Volume);
-EXTERN_RECONSTRUCT_PRIM(OpenVDBAsset);
-EXTERN_RECONSTRUCT_PRIM(Field3DAsset);
-EXTERN_RECONSTRUCT_PRIM(RenderSettings);
-EXTERN_RECONSTRUCT_PRIM(RenderProduct);
-EXTERN_RECONSTRUCT_PRIM(RenderVar);
-EXTERN_RECONSTRUCT_PRIM(GenerativeProcedural);
 EXTERN_RECONSTRUCT_PRIM(GeomPlane);
 EXTERN_RECONSTRUCT_PRIM(GeomCylinder_1);
 EXTERN_RECONSTRUCT_PRIM(Volume);

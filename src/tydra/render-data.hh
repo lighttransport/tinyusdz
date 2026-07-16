@@ -326,6 +326,30 @@ enum class ComponentType {
   Double,
 };
 
+// GPU block-compressed texture format for a TextureImage whose `buffer_id`
+// holds compressed block bytes rather than uncompressed texels (see
+// TextureImage::blockFormat). `None` = uncompressed (the default; texels are
+// described by ComponentType/channels as before). `UNI` is the private tinyexr
+// transcodable intermediate: its payload is valid ASTC 4x4 and
+// can be transcoded per device to BC7/BC1/ASTC/ETC2 (texcomp tc_uni_transcode_*)
+// or decoded to RGBA8 (tc_uni_decompress_rgba8). Populated when a KTX2 asset is
+// loaded in "keep compressed" mode; consumers (tusdview GPU upload) map it to a
+// GL/VK compressed format, or fall back to CPU-decoding it.
+enum class TextureBlockFormat {
+  None = 0,
+  BC1,
+  BC3,
+  BC5,
+  BC6H,   // HDR
+  BC7,
+  ETC2_RGB,
+  ETC2_RGBA,
+  EAC_R11,
+  EAC_RG11,
+  ASTC_4x4,
+  UNI,    // private tinyexr uni transcodable intermediate
+};
+
 
 // glTF-like BufferData
 struct BufferData {
@@ -761,6 +785,17 @@ struct TextureImage {
   int64_t buffer_id{-1};  // index to buffer_id(texel data)
 
   bool decoded{false}; // true if texture data(buffer_id) is decoded. false if buffer_id contains raw image data(e.g. JPEG data)
+
+  // GPU block-compressed representation. When blockFormat != None, `buffer_id`
+  // holds compressed block bytes (a level-0 block stream; optional precomputed
+  // mip levels may follow depending on the loader) instead of uncompressed
+  // texels, `decoded` is false, and `channels`/`texelComponentType` describe the
+  // decoded form. `blockWidth`/`blockHeight` are the codec block footprint
+  // (e.g. 4x4). Default None = ordinary uncompressed image (unchanged behavior).
+  TextureBlockFormat blockFormat{TextureBlockFormat::None};
+  int32_t blockWidth{0};
+  int32_t blockHeight{0};
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
 
@@ -1105,6 +1140,10 @@ struct RenderInstance {
   int32_t prototype_index{-1}; ///< Index to prototype group
   int32_t mesh_id{-1};         ///< Index to RenderScene::meshes (shared)
   int32_t material_id{-1};     ///< Material index (-1 = use mesh default)
+  bool has_display_color{false};
+  std::array<float, 3> display_color{{1.0f, 1.0f, 1.0f}};
+  bool has_display_opacity{false};
+  float display_opacity{1.0f};
 
   value::matrix4d local_matrix;   ///< Instance local transform
   value::matrix4d global_matrix;  ///< Instance world transform
@@ -1313,6 +1352,10 @@ struct RenderMesh {
       0.18f, 0.18f,
       0.18f};  // displayColor primvar(The number of array elements = 1) in USD.
                // default is set to the same in UsdPreviewSurface::diffuseColor
+  // True when a constant (single-element) primvars:displayColor was authored on
+  // the prim and stored in `displayColor` above (vs the 0.18 default). Lets a
+  // consumer distinguish an authored constant color from the fallback.
+  bool has_authored_displayColor{false};
   float displayOpacity{
       1.0};  // displayOpacity primvar(The number of array elements = 1) in USD
   bool is_rightHanded{true};  // orientation attribute in USD.

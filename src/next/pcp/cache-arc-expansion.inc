@@ -136,8 +136,9 @@
           for (const auto &op : vd->variantSelections) {
             sels->emplace(op.first, op.second);
           }
-          ApplyVariantOption(e.src, nullptr, e.set_name, vd, 0, e.layer_id,
-                             &tmp_main, &tmp_spec, sels, e.chain, warn, err);
+          ApplyVariantOption(e.src, nullptr, e.set_name, vd, *e.spec, 0,
+                             e.layer_id, &tmp_main, &tmp_spec, sels, e.chain,
+                             warn, err);
         }
         // Crate-holder representation of the same set.
         const std::string holder =
@@ -201,7 +202,8 @@
   // can be grafted afterwards at their recorded strength position.)
   void ApplyVariantOption(const Src &src, const ExpansionFrame *frame,
                           const std::string &set_name, const VariantData *vd,
-                          int vdepth, const std::string &layer_id,
+                          const PrimSpec &owner, int vdepth,
+                          const std::string &layer_id,
                           std::vector<Src> *out, std::vector<Src> *spec_out,
                           std::map<std::string, std::string> *sels,
                           const ArcChain &chain, std::string *warn,
@@ -263,7 +265,8 @@
             bool any_deferred = false;
             for (const std::string &pl_str : vd->payloads) {
               CompositionArc arc = Compositor::ParsePayload(pl_str);
-              if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+              if (!ShouldLoadPayload(root_prim_path, arc.asset_path,
+                                     owner)) {
                 any_deferred = true;
                 continue;
               }
@@ -292,9 +295,9 @@
               if (chosen.empty()) continue;
               for (const VariantData &nvd : nvs.variants) {
                 if (nvd.name == chosen) {
-                  ApplyVariantOption(src, frame, nvs.name, &nvd, vdepth + 1,
-                                     layer_id, out, spec_out, sels, chain, warn,
-                                     err);
+                  ApplyVariantOption(src, frame, nvs.name, &nvd, owner,
+                                     vdepth + 1, layer_id, out, spec_out, sels,
+                                     chain, warn, err);
                   break;
                 }
               }
@@ -522,6 +525,8 @@
         const std::string anchor = RealAnchorOf(anchor_source);
         LayerLoadOptions load_opts;
         load_opts.max_memory = options.max_layer_memory;
+        load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
+        load_opts.usdc_use_mmap = options.usdc_use_mmap;
         load_opts.usda_parse_options = options.usda_parse_options;
         load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
         arc_layer =
@@ -1106,8 +1111,8 @@
           if (!changed) break;
         }
         for (const SelectedVariant &sv : SelectVariants(*spec, *sels)) {
-          ApplyVariantOption(src, frame, *sv.set_name, sv.vd, 0, sr.layer_id,
-                             out, spec_out, sels, chain, warn, err);
+          ApplyVariantOption(src, frame, *sv.set_name, sv.vd, *spec, 0,
+                             sr.layer_id, out, spec_out, sels, chain, warn, err);
         }
         // A variantSet whose selection is authored at a WEAKER site (not yet
         // expanded) cannot graft now, but its opinions must compose at THIS
@@ -1167,7 +1172,7 @@
         bool any_deferred = false;
         for (const std::string &pl_str : spec->meta().payloads) {
           CompositionArc arc = Compositor::ParsePayload(pl_str);
-          if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+          if (!ShouldLoadPayload(root_prim_path, arc.asset_path, *spec)) {
             any_deferred = true;
             continue;  // deferred: contributes no opinions.
           }
@@ -1205,7 +1210,18 @@
         bool any_deferred = false;
         for (const auto &pl : mpay) {
           CompositionArc arc = Compositor::ParsePayload(pl.first);
-          if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+          // Preserve the payload's authoring PrimSpec after list-op merging.
+          // Besides property-based policies, the owner carries the layer
+          // anchor required to stat relative payload asset paths correctly.
+          const PrimSpec *policy_owner = specs.front().spec;
+          for (const SpecRef &candidate : specs) {
+            if (candidate.layer_id == pl.second) {
+              policy_owner = candidate.spec;
+              break;
+            }
+          }
+          if (!ShouldLoadPayload(root_prim_path, arc.asset_path,
+                                 *policy_owner)) {
             any_deferred = true;
             continue;
           }
@@ -1225,8 +1241,9 @@
     }
   }
 
-  std::vector<Src> ExpandList(const std::vector<Src> &base, std::string *warn,
-                              std::string *err) {
+  std::vector<Src> ExpandList(const std::vector<Src> &base,
+                              const std::string &root_prim_path,
+                              std::string *warn, std::string *err) {
     std::vector<Src> main;
     std::vector<Src> spec;  // specialize-derived: globally weakest
     // Variant selections accumulated across the prim's sources (cross-source).
@@ -1238,6 +1255,10 @@
     std::map<std::string, std::string> sels;
     for (const auto &ov : options.variant_overrides) {
       sels[ov.first] = ov.second;
+    }
+    const auto scoped = options.variant_overrides_by_path.find(root_prim_path);
+    if (scoped != options.variant_overrides_by_path.end()) {
+      for (const auto &ov : scoped->second) sels[ov.first] = ov.second;
     }
     for (const Src &s : base) {
       // Carry a base source's own arc kind so a specialize re-rooted onto a
@@ -1783,7 +1804,7 @@
     // this via ExpandList at each ancestor level. Arc-delivered content (a
     // reference on an ANCESTOR that carries the source, e.g. `/Group references
     // @g.usd@`) is what should follow the move (TrickyInheritsAndRelocates).
-    derived = ExpandList(derived, warn, err);
+    derived = ExpandList(derived, child_composed, warn, err);
 
     // Redirect the source subtree (root ns) onto the arrival destination.
     NamespaceMapping redirect;
@@ -2019,7 +2040,7 @@
         }
       }
       std::vector<Src> &slot = sources_cache.get_or_create(raw_key(p.str()));
-      slot = ExpandList(base, warn, err);
+      slot = ExpandList(base, p.str(), warn, err);
       result = &slot;
     }
     --isolated_reloc_depth_;
@@ -2097,7 +2118,7 @@
       // SrcCache element refs are stable across later inserts (deque-backed),
       // and pending[0] (the queried leaf) is filled last, so this captures it.
       std::vector<Src> &slot = sources_cache.get_or_create(key_i);
-      slot = ExpandList(base, warn, err);
+      slot = ExpandList(base, p.str(), warn, err);
       result = &slot;
     }
     sources_in_progress.erase(key);

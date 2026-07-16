@@ -153,6 +153,9 @@ enum class PrototypeNumbering { Deterministic, UsdcatCompatible };
 
 /// Composition options.
 struct CompositionOptions {
+  using VariantSelectionMap =
+      std::map<std::string, std::map<std::string, std::string>>;
+
   /// Opt into fail-closed AOUSD parsing/resolution policy. Compatibility mode
   /// remains the default for legacy assets.
   bool strict_aousd_conformance = false;
@@ -201,6 +204,12 @@ struct CompositionOptions {
   // (sublayers, references, payloads). 0 = no limit.
   size_t max_layer_memory = 0;
 
+  // USDC backing policy for every file-backed layer loaded by PCP. With both
+  // enabled, lazy array Values retain shared mmap-backed CrateDataSources as
+  // they are copied into composed PrimSpecs and the rebuilt Stage.
+  bool usdc_lazy_arrays = true;
+  bool usdc_use_mmap = true;
+
   // USDA parser options for external USDA layers loaded by this compose path.
   // Keep defaults aligned with next's parser defaults (non-lazy unless the
   // caller enables it in LoadUSDOptions).
@@ -218,6 +227,12 @@ struct CompositionOptions {
   /// Must be thread-safe when PrewarmPrimIndices runs with num_threads != 1.
   std::function<bool(const Path &, const std::string &)> payload_policy;
 
+  /// Extended payload policy with the authoring PrimSpec. Takes precedence
+  /// over `payload_policy` when set; the two-argument form remains for source
+  /// compatibility and simple path/asset filters.
+  std::function<bool(const Path &, const std::string &, const PrimSpec &)>
+      payload_policy_with_prim;
+
   /// Fallback variant selections, consulted ONLY when no selection is authored
   /// anywhere for that set (pxr's PcpVariantFallbackMap / UsdStage global
   /// variant fallbacks). Candidates are tried in order; the first one the set
@@ -232,6 +247,11 @@ struct CompositionOptions {
   ///   {{"districtLod", "full"}} selects the "full" variant on every prim that
   ///   defines a "districtLod" variantSet.
   std::map<std::string, std::string> variant_overrides;
+
+  /// Path-scoped variant overrides. The outer key is an absolute prim path;
+  /// the inner map is variantSet -> selection. An exact path-scoped override
+  /// wins over the global variant_overrides entry for the same set.
+  VariantSelectionMap variant_overrides_by_path;
 };
 
 /// The composed graph for a single prim. Borrows its layer-stack table from the

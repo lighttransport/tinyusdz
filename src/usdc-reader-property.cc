@@ -614,6 +614,14 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`unauthoredValuesIndex` must be type `int`, but got type `"
                       << fv.second.type_name() << "`");
       }
+    } else if (fv.second.IsUnregisteredValue()) {
+      // Unregistered property metadata (pxr SdfUnregisteredValue): the crate
+      // stores the raw USDA text of the value (quotes included for string
+      // values). Keep it verbatim so the printer can write it back unchanged.
+      if (const std::string *uv = fv.second.GetUnregisteredValueString()) {
+        meta.unregisteredMetas[fv.first] = *uv;
+      }
+      DCOUT("Preserved unregistered property metadata: " << fv.first);
     } else {
       MetaVariable unknown_meta;
       if (allow_move_from_fvs) {

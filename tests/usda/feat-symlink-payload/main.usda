@@ -1,0 +1,22 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+    upAxis = "Y"
+)
+
+# Regression fixture for the next-module asset resolver symlink bug.
+#
+# `root` references a geometry fragment (geo/frag.usda); that fragment carries a
+# `payload` whose TARGET FILE (geo/mesh_link.usda) is a SYMLINK to the real mesh
+# layer (geo/mesh_real.usda). This mirrors how Animal Logic ALab merges
+# techvar_assets / baked_procedurals into the tree as symlinks.
+#
+# The bug: AssetResolver::FileExistsImpl used lstat+S_ISREG, which is false for a
+# symlink (S_ISLNK). The resolver then reported the payload target "missing" and
+# returned the bare, unanchored relative path, so the payloaded geometry was
+# silently dropped. usdcat --flatten of this file must yield /root/SymlinkedMesh.
+def Xform "root" (
+    prepend references = @geo/frag.usda@
+)
+{
+}

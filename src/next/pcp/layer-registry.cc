@@ -5,6 +5,7 @@
 
 #include "layer-registry.hh"
 
+#include "../layer/asset-anchor.hh"
 #include "../layer/layer.hh"
 #include "../reader/usda-reader.hh"
 #include "../reader/usdc-reader.hh"
@@ -145,6 +146,8 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
   if (is_usdc) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
+    lopts.crate_options.use_mmap = options.usdc_use_mmap;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
@@ -184,9 +187,53 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
 
 }  // namespace
 
+namespace {
+
+// Stamp every prim in a freshly-loaded layer with the directory its RELATIVE
+// asset paths anchor to: the layer's own directory. Composition flattens prims
+// from many layers into one, so without this the authoring layer -- and with it
+// the only correct anchor for `@../tex/foo.png@` -- is lost. See asset-anchor.hh.
+//
+// USDZ is deliberately excluded: paths inside a package are package-relative and
+// are resolved against the archive, not the filesystem, so they must keep
+// anchor 0 (the consumer's existing package handling takes over).
+void StampAssetAnchor(Layer *layer, const std::string &resolved_path) {
+  if (!layer) return;
+  const size_t slash = resolved_path.find_last_of("/\\");
+  if (slash == std::string::npos) return;  // bare filename: cwd, nothing to add
+
+  const uint32_t id = InternAssetAnchor(resolved_path.substr(0, slash));
+  if (id == 0) return;
+  for (size_t i = 0; i < layer->prim_count(); ++i) {
+    if (PrimSpec *ps = layer->prim_mutable(static_cast<uint32_t>(i))) {
+      ps->set_asset_anchor_id(id);
+    }
+  }
+}
+
+std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
+    const std::string &resolved_path, std::string *warn, std::string *err,
+    const LayerLoadOptions &options);
+
+}  // namespace
+
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
                                          const LayerLoadOptions &options) {
+  std::shared_ptr<Layer> layer =
+      LoadLayerFromFileUnstamped(resolved_path, warn, err, options);
+  // Package entries resolve inside the archive; leave them at anchor 0.
+  if (layer && !AssetResolver::IsPackagePath(resolved_path)) {
+    StampAssetAnchor(layer.get(), resolved_path);
+  }
+  return layer;
+}
+
+namespace {
+
+std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
+    const std::string &resolved_path, std::string *warn, std::string *err,
+    const LayerLoadOptions &options) {
   if (AssetResolver::IsPackagePath(resolved_path)) {
     std::string package_file;
     std::string entry_name;
@@ -228,6 +275,8 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
+    lopts.crate_options.use_mmap = options.usdc_use_mmap;
     return ConvertLoadedUSDC(LoadUSDCFromFile(resolved_path, lopts),
                              resolved_path, err);
   }
@@ -272,6 +321,8 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
   }
   return nullptr;
 }
+
+}  // namespace
 
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
@@ -467,6 +518,7 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
   if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), key, err);
@@ -525,6 +577,7 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
   if (data.size() >= 8 && std::memcmp(data.data(), "PXR-USDC", 8) == 0) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemoryOwned(std::move(data), lopts),

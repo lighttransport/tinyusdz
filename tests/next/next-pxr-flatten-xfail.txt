@@ -7,7 +7,7 @@
 # Reason tags:
 #   INTENTIONAL: deliberate tinyusdz behavior kept on purpose (lossless
 #     unknown-metadata preservation, uint2/3/4 support, portable relative
-#     asset paths, clip/array-edit preservation) — permanent, counted in the
+#     asset paths, clip preservation) — permanent, counted in the
 #     runner's `intentional` bucket.
 #   ORACLE-*: a pinned-pxr bug/nondeterminism/limitation — permanent.
 #   (untagged): a REAL remaining divergence to burn down (deep composition
@@ -16,7 +16,6 @@
 supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
 tests/usda/instancing-001.usda ORACLE-NONDETERMINISTIC: pxr usdcat --flatten assigns Flattened_Prototype_N by internal TfHashMap order — observed ~40/60 flip of Tree/Rock between _1 and _2 across repeated runs; next's numbering (reverse discovery, matching pxr's stack registration) is stable and matches pxr's majority output, but the case cannot be a deterministic gate input
 tests/usda/aousd-unknown-property-metadata.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
-tests/usda/array_edit_basic.usda INTENTIONAL: sparse VtArrayEdit values preserved as authored text (keep-don't-evaluate policy); pxr flatten evaluates them to dense arrays
 tests/usda/clips-primmeta-001.usda INTENTIONAL: value-clips metadata preserved on flatten (lossless clip indirection); pxr flatten bakes clips into dense samples
 tests/usda/layer-metadata-001.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
 tests/usda/materialx-001.usda INTENTIONAL: config:mtlx:colorspace attribute preserved; pxr 26.05 drops it on flatten

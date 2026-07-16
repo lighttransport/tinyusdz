@@ -106,6 +106,61 @@ std::string GetBoundMaterialPath(const UsdPrim& prim) {
   return "";
 }
 
+namespace {
+
+std::string ParentPathOf(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  if (slash == std::string::npos || slash == 0) return "";
+  return path.substr(0, slash);
+}
+
+}  // namespace
+
+bool BindingIsStrongerThanDescendants(const UsdPrim& prim) {
+  static const char* kBindingOrder[] = {"material:binding:preview",
+                                        "material:binding",
+                                        "material:binding:full"};
+  const PrimSpec* spec = prim.GetPrimSpec();
+  if (!spec) return false;
+  for (const char* rel : kBindingOrder) {
+    const std::vector<Path>* targets = prim.GetRelationship(rel);
+    if (!targets || targets->empty()) continue;
+    if (const PropMeta* pm = spec->property_meta(rel)) {
+      if ((pm->authored & PropMeta::kBindMaterialAs) &&
+          pm->bindMaterialAs == "strongerThanDescendants") {
+        return true;
+      }
+    }
+    return false;  // binding found; default weakerThanDescendants
+  }
+  return false;
+}
+
+std::string GetInheritedBoundMaterialPath(const Stage& stage,
+                                          const std::string& prim_path) {
+  // UsdShade binding INHERITANCE: a binding authored on an ancestor applies to
+  // every descendant. Walk leaf->root; the nearest binding wins by default, but
+  // an ancestor marked `bindMaterialAs="strongerThanDescendants"` overrides
+  // everything below it, so keep the highest such ancestor.
+  std::string leaf_binding;
+  std::string strongest_ancestor;
+  std::string path = prim_path;
+  while (!path.empty() && path != "/") {
+    UsdPrim prim = stage.GetPrimAtPath(path);
+    if (prim.IsValid()) {
+      const std::string material_path = GetBoundMaterialPath(prim);
+      if (!material_path.empty()) {
+        if (leaf_binding.empty()) leaf_binding = material_path;
+        if (path != prim_path && BindingIsStrongerThanDescendants(prim)) {
+          strongest_ancestor = material_path;  // higher ancestors overwrite
+        }
+      }
+    }
+    path = ParentPathOf(path);
+  }
+  return strongest_ancestor.empty() ? leaf_binding : strongest_ancestor;
+}
+
 // ============================================================
 // Shader API Implementation
 // ============================================================

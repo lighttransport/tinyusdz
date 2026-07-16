@@ -9,9 +9,12 @@
 // points in place so the existing pack + upload path renders the posed mesh.
 #pragma once
 
+#include <algorithm>
 #include <map>
 #include <string>
+#include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -61,12 +64,102 @@ bool BuildSkeletonJointWorlds(const tinyusdz::tydra::RenderScene& render,
 // `draw`; scene bounds stay stable during playback to avoid grid/helper scale
 // wobble.
 //
-// Blendshapes are NOT applied here: the raster path morphs in the GPU vertex
-// shader (see BuildMorphChannelWeights + the renderer's morph buffers), so this
-// builds only the bone matrices + bounds from rest geometry.
+// The raster path morphs in the GPU vertex shader (BuildMorphChannelWeights +
+// the renderer's morph buffers), so no morphed vertices are produced here -- but
+// the BOUNDS have to see the morph anyway, or a morph-only mesh keeps its rest box
+// and the grid / depth ramp / auto-fit sit where the mesh no longer is. Pass
+// `stage` (and any manual weight overrides) to include it; without a stage the
+// bounds are skin-only, as they used to be.
 bool BuildGpuSkinningFrame(
     const tinyusdz::tydra::RenderScene& render, DrawScene* draw, double timecode,
-    SkinningFrameCPU* frame, bool updateSkinnedHelpers);
+    SkinningFrameCPU* frame, bool updateSkinnedHelpers,
+    const tinyusdz::Stage* stage = nullptr,
+    const std::unordered_map<std::string, float>* blendOverride = nullptr);
+
+struct RtSkinnedMeshUpload {
+  int meshIndex{-1};
+  std::vector<DrawVertex> vertices;
+};
+
+// Deterministic parallel-for over [0, n): contiguous ranges, one per worker,
+// no shared accumulation -- each index runs exactly the serial loop body, so
+// the result is BIT-IDENTICAL to serial regardless of thread count. That is
+// the contract that lets the per-frame RT deform be threaded without touching
+// any of the byte-parity oracles (refit-vs-rebuild, gpu-vs-cpu-bake).
+//
+// grainMin is the MINIMUM indices per worker, set from the measured cost of
+// the loop body. Measured 2026-07-16 (Ryzen/Linux, medians over 120 poses --
+// single-shot timings of this path swing 2-4x, do not trust them): the
+// 102k-vert LBS deform runs 3.2 ms serial vs 1.67 ms with 7 workers at grain
+// 16384, byte-identical; at 1M verts threading is ~3x. Thread wake latency is
+// real (~0.3 ms plus outliers) but amortizes once a worker carries a few tens
+// of thousands of deform-weight indices; use larger grains for cheaper loop
+// bodies (see RecomputeSmoothNormals).
+template <typename F>
+inline void DeformParallelFor(size_t n, size_t grainMin, F&& fn) {
+  const unsigned hw = std::thread::hardware_concurrency();
+  const size_t maxWorkers = grainMin ? (n + grainMin - 1) / grainMin : 1;
+  const size_t workers = std::min<size_t>(hw ? hw : 1, maxWorkers);
+  if (workers <= 1 || n == 0) {
+    if (n) fn(size_t(0), n);
+    return;
+  }
+  std::vector<std::thread> ts;
+  ts.reserve(workers);
+  const size_t chunk = (n + workers - 1) / workers;
+  for (size_t w = 0; w < workers; ++w) {
+    const size_t b = w * chunk;
+    const size_t e = std::min(n, b + chunk);
+    if (b >= e) break;
+    ts.emplace_back([&fn, b, e]() { fn(b, e); });
+  }
+  for (std::thread& t : ts) t.join();
+}
+
+// Ray-query RT cannot use the raster vertex shader's morph/skinning path: the
+// BLAS is built from actual vertex buffers. Build per-mesh posed DrawVertex
+// buffers from the retained rest DrawScene so the renderer can update the VBO and
+// rebuild the acceleration structure without re-running Tydra conversion.
+// `skipMeshes` (optional) excludes meshes the GPU compute-skinning path already
+// handled this frame (see BuildRtGpuSkinUpdates).
+bool BuildRtSkinnedMeshVertices(
+    const tinyusdz::Stage& stage,
+    const tinyusdz::tydra::RenderScene& render, DrawScene* draw,
+    double timecode,
+    const std::unordered_map<std::string, float>* blendOverride,
+    bool updateSkinnedHelpers,
+    std::vector<RtSkinnedMeshUpload>* outUploads,
+    const std::unordered_set<int>* skipMeshes = nullptr);
+
+// One GPU-compute-skinnable mesh's per-frame inputs: the composed skinning
+// matrices (geomBind * skinMat * inv(geomBind), 16 floats each, row-major,
+// row-vector p*M — exactly what ApplySkinningToVertices applies on the CPU)
+// plus a conservative posed object-space bound (union of the per-joint
+// transformed rest prototype box; the skinned mesh is a convex combination of
+// per-joint transforms, so it is contained in that union).
+struct RtGpuSkinUpdate {
+  int meshIndex{-1};
+  int matrixBase{0};  // absolute joint id - matrixBase indexes mats
+  int jointCount{0};
+  std::vector<float> mats;  // 16 floats per joint
+  float aabbMin[3]{0, 0, 0};
+  float aabbMax[3]{0, 0, 0};
+};
+
+// Partition per-frame RT skinning between the GPU compute path and the CPU
+// path: emit composed matrices + conservative posed bounds for every
+// GPU-ELIGIBLE mesh — pure <= 4-influence skeletal skinning, no morphs, no
+// displacement bake. Positions and normals are skinned in the compute shader
+// (normals via the weighted joint matrices, the raster deform.glsl
+// convention); the CPU path instead regenerates smooth normals on the posed
+// surface, so GPU output is close but not bit-identical on smooth-shaded
+// meshes. Handled meshes are recorded so BuildRtSkinnedMeshVertices can skip
+// them; their dm/scene bounds are updated from the conservative bound.
+// Ineligible meshes are left for the CPU path.
+bool BuildRtGpuSkinUpdates(const tinyusdz::tydra::RenderScene& render,
+                           DrawScene* draw, double timecode,
+                           std::vector<RtGpuSkinUpdate>* outUpdates,
+                           std::unordered_set<int>* outHandled);
 
 // Update each draw mesh's world transform to its value at `timecode`, evaluated
 // from the Stage's xform hierarchy. For scenes whose node transforms animate

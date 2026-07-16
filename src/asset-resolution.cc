@@ -236,7 +236,7 @@ std::string AssetResolutionResolver::resolve_literal(
 #endif
   }
 
-  return resolvedPath;
+  return std::string(resolvedPath);
 
 }
 

@@ -138,6 +138,13 @@ function startVite(port) {
   return spawn(executable, ['--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
     cwd: WEB_JS_DIR,
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      // Serve the tracked demo fixtures directly. web/js/assets is an ignored
+      // developer convenience directory and may be empty in a clean checkout.
+      TINYUSDZ_VITE_PUBLIC_DIR: process.env.TINYUSDZ_VITE_PUBLIC_DIR ||
+        path.resolve(WEB_JS_DIR, '../demo/public'),
+    },
   });
 }
 
@@ -184,7 +191,15 @@ async function renderViewport(browser, baseUrl, scene, backend, output, options)
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message || String(error)));
   page.on('console', (message) => {
-    if (message.type() === 'error') errors.push(message.text());
+    if (message.type() === 'error' &&
+        !message.text().startsWith('Failed to load resource:')) {
+      errors.push(message.text());
+    }
+  });
+  page.on('response', (response) => {
+    if (response.status() >= 400 && !response.url().endsWith('/favicon.ico')) {
+      errors.push(`HTTP ${response.status()}: ${response.url()}`);
+    }
   });
   try {
     await page.setViewport({width: options.width, height: options.height, deviceScaleFactor: 1});

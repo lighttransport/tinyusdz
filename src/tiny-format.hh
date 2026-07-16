@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "compiler-features.hh"
+
 #include "nonstd/expected.hpp"
 
 namespace tinyusdz {
@@ -47,7 +49,8 @@ inline std::string g(double v) {
 namespace detail {
 
 template <class T>
-std::ostringstream &format_sv_rec(std::ostringstream &ss,
+std::ostringstream &format_sv_rec(
+    std::ostringstream &ss TINYUSDZ_LIFETIMEBOUND,
                                   const std::vector<std::string> &sv,
                                   size_t idx, T const &v) {
   if (idx >= sv.size()) {
@@ -74,7 +77,8 @@ std::ostringstream &format_sv_rec(std::ostringstream &ss,
 }
 
 template <class T, class... Rest>
-std::ostringstream &format_sv_rec(std::ostringstream &ss,
+std::ostringstream &format_sv_rec(
+    std::ostringstream &ss TINYUSDZ_LIFETIMEBOUND,
                                   const std::vector<std::string> &sv,
                                   size_t idx, T const &v, Rest const &...args) {
   if (idx >= sv.size()) {
@@ -93,7 +97,7 @@ std::ostringstream &format_sv_rec(std::ostringstream &ss,
 }
 
 template <class... Args>
-std::ostringstream &format_sv(std::ostringstream &ss,
+std::ostringstream &format_sv(std::ostringstream &ss TINYUSDZ_LIFETIMEBOUND,
                               const std::vector<std::string> &sv,
                               Args const &...args) {
   format_sv_rec(ss, sv, 0, args...);
@@ -101,7 +105,7 @@ std::ostringstream &format_sv(std::ostringstream &ss,
   return ss;
 }
 
-std::ostringstream &format_sv(std::ostringstream &ss,
+std::ostringstream &format_sv(std::ostringstream &ss TINYUSDZ_LIFETIMEBOUND,
                               const std::vector<std::string> &sv);
 
 nonstd::expected<std::vector<std::string>, std::string> tokenize(

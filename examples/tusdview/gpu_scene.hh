@@ -9,13 +9,29 @@
 // identical structure.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 #include "light3d/texture.h"  // light3d::Image (CPU texel container)
+#include "tydra/openpbr-params.hh"
 
 namespace tusdview {
+
+// Halton(2,3) sub-pixel jitter offset in [-0.5, 0.5) for supersampled ray-traced
+// screenshots (the CUDA/HIP trace path). Sample 0 is the pixel center (0,0), so
+// spp==1 reproduces the un-jittered image exactly. Shared by both GPU tracers.
+inline void RtPixelJitter(int s, int spp, float* jx, float* jy) {
+  if (spp <= 1 || s == 0) { *jx = 0.0f; *jy = 0.0f; return; }
+  auto radical = [](int i, int base) {
+    float f = 1.0f, r = 0.0f;
+    while (i > 0) { f /= float(base); r += f * float(i % base); i /= base; }
+    return r;
+  };
+  *jx = radical(s, 2) - 0.5f;
+  *jy = radical(s, 3) - 0.5f;
+}
 
 // Interleaved vertex: matches the GL330 / VK450 shader attribute layout
 //   location 0: vec3 aPosition  (offset 0)
@@ -78,10 +94,24 @@ struct DrawMeshCPU {
   // Used by the flat --next preview to tint geometry; the material shader
   // multiplies baseColor by it (default white when absent).
   std::vector<float> vertexColors;
+  // Optional per-vertex alpha (parallel to `vertices`); empty = fully opaque.
+  // Carries USD `primvars:displayOpacity` when it is authored per-point or
+  // per-face-vertex; constant/uniform opacity folds into DrawMaterialCPU::alpha
+  // instead and leaves this empty.
+  std::vector<float> vertexAlpha;
+  // Optional tangent-space basis, parallel to `vertices`; each entry is xyz.
+  // Populated from USD primvars or Tydra-computed tangents/binormals. Current
+  // renderers ignore these until full normal-map/anisotropy evaluation lands.
+  std::vector<float> tangents;
+  std::vector<float> binormals;
   // True when the mesh has no authored normals: the shader shades it with the
   // geometric (screen-derivative) normal instead of the per-vertex normal, so
   // hard-surface geometry isn't smeared by averaged smooth normals.
   bool geometricNormal{false};
+  // Winding sign used when regenerating smooth normals from triangle topology.
+  // Tydra preserves source handedness; CPU repacks apply this sign after
+  // skinning/blendshape deformation.
+  float normalSign{1.0f};
   // Blendshape targets remapped to DrawVertex order; empty = no blendshapes.
   // The CPU/RT path morphs `vertices` (ApplyMorphTarget) for baked geometry.
   std::vector<MorphTargetCPU> morphs;
@@ -134,12 +164,16 @@ struct DrawMeshCPU {
   // non-instanced draw.
   std::vector<float> instanceXforms;
   size_t instanceCount() const { return instanceXforms.size() / 12; }
-  // Instance/prototype displayColor for the flat instanced path. When
-  // instanceColors is non-empty (3 floats/instance) each instance is tinted
+  // Instance/prototype displayColor/displayOpacity for the flat instanced path.
+  // When instanceColors is non-empty (3 floats/instance) each instance is tinted
   // individually; otherwise the whole instanced draw uses flatColor (e.g. the
-  // prototype's average displayColor). Ignored for non-instanced draws.
+  // prototype's average displayColor). instanceOpacities follows the same rule
+  // with one float/instance, falling back to flatOpacity. Ignored for
+  // non-instanced draws.
   std::vector<float> instanceColors;
+  std::vector<float> instanceOpacities;
   float flatColor[3]{0.8f, 0.8f, 0.8f};
+  float flatOpacity{1.0f};
 
   float world[16];  // column-major (light3d::Mat4 layout), world transform
   // USD row-vector matrix copied with the same convention as `world`.
@@ -157,6 +191,21 @@ struct DrawMeshCPU {
   // culling (raster) and the CUDA instance world-AABBs transform per instance.
   float protoAabbMin[3]{0, 0, 0};
   float protoAabbMax[3]{0, 0, 0};
+  // Max per-axis morph displacement (object space), used to pad protoAabb so a
+  // GPU-morphed instanced prototype is not wrongly frustum-culled when the morph
+  // pushes geometry past the rest box. 0 = no morph. See BuildMorphChannelsNext.
+  float morphExtent[3]{0, 0, 0};
+  // --next deform: this mesh's OWN rest-pose world box, and the absolute bone-row
+  // range its jointIdx references. aabbMin/Max cannot serve: a skinned batch keeps
+  // the conservative whole-scene box there (a tight rest box would pop the mesh out
+  // of view as the rig moves). These let BuildNextPosedSceneBounds re-derive the
+  // scene box at a new time code from 8 corners per bone, instead of re-skinning
+  // every vertex -- which is what the Tydra path does, and what the next loader is
+  // built to avoid. boneLo < 0 = unskinned.
+  float restAabbMin[3]{0, 0, 0};
+  float restAabbMax[3]{0, 0, 0};
+  int boneLo{-1};
+  int boneHi{-1};
   bool doubleSided{false};
   int kindId{0};  // USD model kind AOV (resolved up ancestors); see KindId()
   // Optional 2nd texcoord set (2 floats/vertex, parallel to `vertices`); empty =
@@ -170,6 +219,11 @@ struct DrawMeshCPU {
   // triangulated from), parallel to the triangles of `indices` (grouped order).
   // Empty when triangulation face counts were unavailable. Drives SourceFaceId.
   std::vector<uint32_t> sourceFaceId;
+  // Original-polygon wireframe edges as GL_LINES vertex-index pairs (perimeter of
+  // each USD face, deduped). Built from the pre-triangulation topology so the
+  // wireframe shows quads/ngons -- correct even for double-sided (doubled-tri)
+  // meshes where a per-triangle approach fails. Empty => fall back to tri edges.
+  std::vector<uint32_t> wireframeIndices;
   // Coarse displacement baked into geometry for the ray-tracing backends (which
   // intersect real triangles, so displacement can't be a vertex/tess-shader effect
   // like the raster path). Parallel to `vertices`; empty when the mesh has no
@@ -199,8 +253,103 @@ inline int KindId(const std::string& k) {
 
 enum class AlphaMode : int { Opaque = 0, Mask = 1, Blend = 2 };
 
+enum class UdimMode : int { Sparse = 0, Atlas = 1 };
+// Requested texture compression. Astc/Etc2 are mobile formats; Auto picks the
+// best available for the device (BC7 desktop, ASTC/ETC2 mobile, else BCn/off).
+// The requested mode is cap-gated against RendererCaps before CPU encoding.
+enum class TextureCompressionMode : int {
+  Off = 0,
+  BCn = 1,
+  BC7 = 2,
+  Astc = 3,
+  Etc2 = 4,
+  Auto = 5,
+};
+
+// GPU compressed-format capabilities, mirrored from RendererCaps so the CPU-side
+// texture build (ApplyTextureRuntimeOptions) can cap-gate the requested format
+// without a renderer dependency. Default = BC-only desktop assumption.
+struct TextureCompressCaps {
+  bool bc{true};
+  bool astc{false};
+  bool etc2{false};
+  bool bc5{false};
+  bool bc6h{false};
+};
+
+struct TextureRuntimeOptions {
+  int maxTextureSize{0};       // longest edge cap in texels; 0 = no cap
+  int textureBudgetMB{0};      // decoded/upload budget; 0 = no budget
+  UdimMode udimMode{UdimMode::Sparse};
+  TextureCompressionMode compression{TextureCompressionMode::Off};
+  TextureCompressCaps caps{};  // populated from renderer->caps() before build
+  // Keep already-compressed .ktx2 textures compressed (upload/transcode the GPU
+  // blocks directly instead of decoding + re-encoding). Requires textools.
+  bool keepCompressed{false};
+  // Build content-aware CPU mip chains (sRGB/alpha-coverage/normal-map aware;
+  // needs the vendored textools; no-op otherwise). Backends upload the
+  // precomputed levels instead of glGenerateMipmap (GL) / no mips (VK).
+  bool generateMips{false};
+  // DomeLight image-based lighting bake at load (vendored envmap lib):
+  // 0 = off, 1 = low (32px faces), 2 = high (64px faces). Needs textools.
+  int domeIbl{2};
+};
+
+struct DrawUvXformCPU {
+  // Affine UV transform:
+  //   u' = m00*u + m01*v + tx
+  //   v' = m10*u + m11*v + ty
+  float m00{1.0f};
+  float m01{0.0f};
+  float m10{0.0f};
+  float m11{1.0f};
+  float tx{0.0f};
+  float ty{0.0f};
+};
+
+struct DrawTexSampleCPU {
+  DrawUvXformCPU uv;
+  float scale[4]{1.0f, 1.0f, 1.0f, 1.0f};
+  float bias[4]{0.0f, 0.0f, 0.0f, 0.0f};
+  // Which UV set this texture samples: 0 = texcoords_0, 1 = texcoords_1. Resolved
+  // from the texture's UsdPrimvarReader varname against the bound mesh's UV-set
+  // names. Meshes with one UV set (the overwhelming majority) always leave it 0.
+  int uvSet{0};
+};
+
+enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };
+
+struct DrawMaterialParamCPU {
+  // Neutral USD/MaterialX shader input record for future evaluators. Existing
+  // preview shaders intentionally ignore this and keep using the legacy fields.
+  std::string shader;  // "UsdPreviewSurface" or "OpenPBRSurface"
+  std::string name;    // input name without the "inputs:" namespace
+  DrawMaterialParamType type{DrawMaterialParamType::Float};
+  float value[4]{0.0f, 0.0f, 0.0f, 1.0f};
+  int texture{-1};        // DrawScene::textures index, -1 when unconnected/unloaded
+  int renderTexture{-1};  // Tydra RenderScene::textures index, preserves connection
+  int channel{-1};        // selected packed channel, -1 when whole value is used
+  DrawTexSampleCPU sample;
+};
+
+// Baked constant fallback for raster/RT backends. Texture-connected inputs keep
+// their texture ids in DrawMaterialParamCPU and the legacy material slots.
+using DrawLightRtOpenPBRCPU = tinyusdz::tydra::LightRtOpenPBRParams;
+
 struct DrawMaterialCPU {
   std::string name;
+  std::string absPath;
+  std::string displayName;
+  bool hasUsdPreviewSurface{false};
+  bool hasOpenPBRSurface{false};
+  bool hasDisplacementOutput{false};
+  bool hasVolumeOutput{false};
+  std::string displacementShaderPath;
+  std::string volumeShaderPath;
+  std::string materialXNodeGraphJson;
+  std::vector<DrawMaterialParamCPU> params;
+  bool hasLightRtOpenPBR{false};
+  DrawLightRtOpenPBRCPU lightRtOpenPBR;
   float baseColor[3]{0.8f, 0.8f, 0.8f};
   float metallic{0.0f};
   float roughness{0.5f};
@@ -208,15 +357,42 @@ struct DrawMaterialCPU {
   float alpha{1.0f};
   int alphaMode{static_cast<int>(AlphaMode::Opaque)};
   float alphaCutoff{0.5f};
+  // UsdPreviewSurface specular workflow (T12): when true, F0 is specularColor
+  // directly; else F0 is the dielectric reflectance from `ior` lerped toward the
+  // base color by metalness (ior 1.5 -> the fixed 0.04 the metallic path used).
+  bool useSpecularWorkflow{false};
+  float specularColor[3]{0.0f, 0.0f, 0.0f};
+  float ior{1.5f};
   // Indices into DrawScene::textures (-1 = no texture)
   int baseColorTex{-1};
   int metalRoughTex{-1};
   int normalTex{-1};
+  int coatNormalTex{-1};
   int emissiveTex{-1};
+  // Separate scalar opacity map. This is distinct from baseColorTex's alpha:
+  // DCCs commonly connect an independent grayscale/UDIM mask to
+  // UsdPreviewSurface inputs:opacity.
+  int opacityTex{-1};
+  DrawTexSampleCPU baseColorSample;
+  DrawTexSampleCPU metalRoughSample;
+  DrawTexSampleCPU normalSample;
+  DrawTexSampleCPU coatNormalSample;
+  DrawTexSampleCPU emissiveSample;
+  DrawTexSampleCPU opacitySample;
+  int opacityChannel{0};
+  float opacityTexScale{1.0f};
+  float opacityTexBias{0.0f};
+  int metallicChannel{2};  // glTF ORM default: B
+  int roughnessChannel{1}; // glTF ORM default: G
+  float metallicTexScale{1.0f};
+  float metallicTexBias{0.0f};
+  float roughnessTexScale{1.0f};
+  float roughnessTexBias{0.0f};
   // UsdPreviewSurface inputs:displacement. The surface is offset along its normal
   // by (displacementConst, or the displacement texture's red channel when present)
   // times the global displacement scale. The displacement map is linear (raw).
   int displacementTex{-1};
+  DrawUvXformCPU displacementUv;
   float displacementConst{0.0f};
   // UsdUVTexture inputs:scale/inputs:bias for the displacement map's sampled
   // channel: effective height = texel*scale + bias (bias commonly centers a [0,1]
@@ -228,12 +404,78 @@ struct DrawMaterialCPU {
 
 // Wrap modes (match light3d / GL semantics).
 enum class WrapMode : int { ClampToEdge = 0, Repeat = 1, Mirror = 2, ClampToBorder = 3 };
+enum class DrawCompressedFormat : int {
+  None = 0,
+  BC1 = 1,
+  BC3 = 3,
+  BC5 = 5,       // RGTC two-channel (normal maps)
+  BC6H = 6,      // BPTC float (HDR) — reserved; encode path is RGBA8-only for now
+  BC7 = 7,
+  ETC2_RGB = 10,
+  ETC2_RGBA = 11,
+  ASTC_4x4 = 20,
+};
+
+struct DrawCompressedMipCPU {
+  int width{0};
+  int height{0};
+  std::vector<uint8_t> data;
+};
+
+struct DrawCompressedImageCPU {
+  DrawCompressedFormat format{DrawCompressedFormat::None};
+  int width{0};
+  int height{0};
+  std::vector<uint8_t> data;
+  // Optional precomputed mip payloads for levels 1..N (level 0 is
+  // width/height/data above), same block format. Empty = single level.
+  std::vector<DrawCompressedMipCPU> mips;
+};
+
+struct DrawUdimTileCPU {
+  uint32_t udim{1001};
+  uint32_t u{0};
+  uint32_t v{0};
+  std::string assetIdentifier;
+  int renderImageId{-1};
+  light3d::Image image;  // RGBA8 tile layer
+  DrawCompressedImageCPU compressed;
+  // Optional precomputed RGBA8 mips for levels 1..N (level 0 = `image`).
+  // NormalizeUdimTiles equalizes tile dims, so all tiles of a texture carry
+  // the same level count/dims when mips are generated.
+  std::vector<light3d::Image> mipImages;
+};
 
 struct DrawTextureCPU {
   light3d::Image image;  // always normalized to RGBA8 (channels == 4) on the CPU side
+  std::string assetIdentifier;  // Tydra TextureImage::asset_identifier, if known
+  int renderImageId{-1};        // source RenderScene::images index, or -1
+  int renderUdimId{-1};         // source RenderScene::udim_textures index, or -1
   bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear (normal/metalRough)
   int wrapS{static_cast<int>(WrapMode::Repeat)};
   int wrapT{static_cast<int>(WrapMode::Repeat)};
+  bool requestedCompressed{false};
+  // The compressed payload is already final (kept-compressed KTX2 passthrough):
+  // skip re-encoding and mip generation from `image`. `image` may be empty.
+  bool compressedFinal{false};
+  DrawCompressedImageCPU compressed;
+  bool isUdim{false};
+  std::vector<DrawUdimTileCPU> udimTiles;
+  std::array<int, 100> udimLayer{};
+  int udimTileWidth{0};
+  int udimTileHeight{0};
+  // Texture usage, classified from the materials after BuildDrawMaterials
+  // (FinalizeDrawTextures). Drives content-aware mip generation.
+  bool isNormalMap{false};
+  bool isAlphaTested{false};
+  float alphaCutoff{0.5f};
+  // Per-channel downsample rule for packed maps (0=linear, 1=majority,
+  // 2=roughness variance-aware); indices match RGBA.
+  int channelOp[4]{0, 0, 0, 0};
+  // Optional precomputed RGBA8 mip images for levels 1..N (level 0 is
+  // `image`). Empty = backends fall back to GPU mip generation (GL) or a
+  // single level (VK).
+  std::vector<light3d::Image> mipImages;
 };
 
 // A UsdVol volume (OpenVDB) as a dense scalar (density) grid, for GPU 3D-texture
@@ -252,12 +494,138 @@ struct DrawVolumeCPU {
   float background{0.0f};
 };
 
+// Precomputed split-sum IBL for a DomeLight (baked at load from the HDR float
+// envmap by the vendored envmap library). Cube data is face-major float RGB in
+// the KTX/D3D/GL face order +X,-X,+Y,-Y,+Z,-Z (matches GL cube upload).
+struct DomeIblCPU {
+  bool valid{false};
+  int specFaceSize{0};  // level 0 face dim; level l is specFaceSize >> l
+  // specLevels[l]: 6 * (specFaceSize>>l)^2 * 3 floats, GGX-prefiltered at
+  // roughness l/(N-1); level 0 = mirror.
+  std::vector<std::vector<float>> specLevels;
+  int irrFaceSize{0};
+  std::vector<float> irradiance;  // 6 * irrFaceSize^2 * 3, stored as E/pi
+  int lutSize{0};
+  std::vector<float> brdfLut;  // lutSize^2 * 2 (scale, bias)
+  // Full-resolution (pre-firefly-clamp) source cube for env backgrounds (RT
+  // miss); 6 * envCubeSize^2 * 3 floats, same face order as specLevels.
+  int envCubeSize{0};
+  std::vector<float> envCube;
+  // Order-2 real-SH projection of the irradiance (E/pi), 9 coefficients x RGB
+  // (coefficient-major: coeff k channel c at [k*3+c]). Evaluated by the RT
+  // shaders as the surface ambient term; the basis polynomial set matches
+  // ShIrradianceBasis in texture_tools.cc / the RT kernels.
+  std::vector<float> shIrradiance;
+};
+
+struct DrawLightCPU {
+  enum class Type : int {
+    Point = 0,
+    Sphere = 1,
+    Disk = 2,
+    Rect = 3,
+    Cylinder = 4,
+    Distant = 5,
+    Dome = 6,
+    Geometry = 7,
+    Portal = 8,
+  };
+  enum class DomeTextureFormat : int {
+    Automatic = 0,
+    Latlong = 1,
+    MirroredBall = 2,
+    Angular = 3,
+  };
+
+  std::string name;
+  std::string absPath;
+  std::string displayName;
+  Type type{Type::Point};
+  float color[3]{1.0f, 1.0f, 1.0f};
+  float intensity{1.0f};
+  float exposure{0.0f};
+  // color * colorTemperature(if enabled) * intensity * 2^exposure.
+  float effectiveColor[3]{1.0f, 1.0f, 1.0f};
+  // effectiveColor divided by shape area when normalize=true and area > 0.
+  float normalizedColor[3]{1.0f, 1.0f, 1.0f};
+  float effectiveIntensity{1.0f};
+  float diffuse{1.0f};
+  float specular{1.0f};
+  bool normalize{false};
+  bool enableColorTemperature{false};
+  float colorTemperature{6500.0f};
+  float transform[16]{};
+  float position[3]{0.0f, 0.0f, 0.0f};
+  float direction[3]{0.0f, -1.0f, 0.0f};
+  float radius{0.5f};
+  float width{1.0f};
+  float height{1.0f};
+  float length{1.0f};
+  float area{0.0f};
+  float invArea{0.0f};
+  float angle{0.53f};
+  std::string textureFile;
+  int envmapTexture{-1};  // DrawScene::textures index when decoded/uploadable
+  int renderEnvmapImage{-1};  // Tydra RenderScene::images index for DomeLight
+  DomeTextureFormat domeTextureFormat{DomeTextureFormat::Automatic};
+  DomeIblCPU ibl;  // split-sum IBL bake (Dome only; empty when disabled)
+  float guideRadius{1.0e5f};
+  float shapingConeAngle{90.0f};
+  float shapingConeSoftness{0.0f};
+  float shapingFocus{0.0f};
+  float shapingFocusTint[3]{0.0f, 0.0f, 0.0f};
+  std::string shapingIesFile;
+  float shapingIesAngleScale{0.0f};
+  bool shapingIesNormalize{false};
+  bool hasShaping{false};
+  bool shadowEnable{true};
+  float shadowColor[3]{0.0f, 0.0f, 0.0f};
+  float shadowDistance{-1.0f};
+  float shadowFalloff{-1.0f};
+  float shadowFalloffGamma{1.0f};
+  int geometryMesh{-1};
+  std::string materialSyncMode;
+  bool lightLinksAll{true};
+  std::vector<int> lightLinkMeshIndices;
+  bool shadowLinksAll{true};
+  std::vector<int> shadowLinkMeshIndices;
+  bool hasSpectralEmission{false};
+};
+
 struct DrawScene {
   std::vector<DrawMeshCPU> meshes;
   std::vector<DrawMaterialCPU> materials;
   std::vector<DrawTextureCPU> textures;
   std::vector<DrawVolumeCPU> volumes;  // UsdVol volumes (OpenVDB)
+  std::vector<DrawLightCPU> lights;    // USD light parameters for later shading
+  bool hasPreviewLight{false};
+  // A single derived key light used by today's simple preview shaders. Full
+  // multi-light evaluation will consume DrawLightCPU directly later.
+  float previewLightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
+  float previewLightColor[3]{1.0f, 1.0f, 1.0f};
   int boneMatrixCount{0};  // height of the per-frame 4xN RGBA32F bone texture
+
+  // --next per-frame GPU skinning. The Tydra path re-poses from
+  // RenderScene::skeletons; the next path has no RenderScene, so each skinned
+  // source mesh records here how to re-pose itself straight from the retained
+  // next Stage. One entry per skinned source mesh (not per DrawMesh: the next
+  // loader merges meshes into material batches, so one batch may draw vertices
+  // from several of these).
+  //
+  // The mesh's vertices are already world-baked into its batch, so the bone rows
+  // this entry owns ([matrixBase, matrixBase + numJoints)) are pre-composed with
+  // both `geomBind` and the mesh's world transform -- see BuildNextSkinningFrame.
+  // Vertices reference them by ABSOLUTE row index through DrawMeshCPU::jointIdx.
+  struct NextSkelBinding {
+    std::string skelPath;  // Skeleton prim
+    std::string animPath;  // bound SkelAnimation ("" = rest pose)
+    std::string meshPath;  // the skinned mesh (diagnostics)
+    int numJoints{0};
+    int matrixBase{0};
+    double geomBind[16];  // primvars:skel:geomBindTransform (row-vector)
+    double world[16];     // mesh world transform baked into the vertices
+  };
+  std::vector<NextSkelBinding> nextSkels;
 
   // World-space bounds over all meshes.
   float aabbMin[3]{-1, -1, -1};
@@ -271,12 +639,16 @@ struct DrawScene {
   // Diagnostics surfaced in the GUI (skipped meshes/textures, UDIM, etc.)
   std::vector<std::string> skipped;
   size_t triangleCount{0};
+  // Total vertex count, captured at load time. Stored separately because the
+  // --next path frees per-mesh CPU geometry after GPU upload (so summing
+  // meshes[].vertices later would report 0).
+  size_t vertexCount{0};
 
   // True when a render budget (triangles / VRAM) was hit and the scene was only
   // partially built to avoid freezing / VRAM thrashing.
   bool truncated{false};
 
-  bool empty() const { return meshes.empty() && volumes.empty(); }
+  bool empty() const { return meshes.empty() && volumes.empty() && lights.empty(); }
 };
 
 struct SkinningFrameCPU {

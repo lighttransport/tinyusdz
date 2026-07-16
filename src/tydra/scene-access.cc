@@ -30,6 +30,11 @@
 #include <memory>
 #include <unordered_set>
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnrvo"
+#endif
+
 namespace tinyusdz {
 namespace tydra {
 
@@ -5452,3 +5457,7 @@ bool GetPhysicsMeshCollisionAPI(const Prim &prim, PhysicsMeshCollisionAPI *out) 
 }
 
 }  // namespace tinyusdz
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

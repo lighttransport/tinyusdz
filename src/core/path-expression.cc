@@ -8,6 +8,11 @@
 #include <cctype>
 #include <memory>
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnrvo"
+#endif
+
 namespace tinyusdz {
 
 namespace {
@@ -551,3 +556,7 @@ ParsedPathExpression ParsePathExpression(const value::PathExpression &expr,
 }
 
 }  // namespace tinyusdz
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

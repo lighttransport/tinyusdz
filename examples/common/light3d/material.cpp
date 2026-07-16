@@ -192,7 +192,7 @@ layout(location = 5) in uvec2 aInfluence;
 layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV; default 0)
 layout(location = 7) in float aMorphInfl; // blendshape influence magnitude (default 0)
 layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); default 0
-layout(location = 9) in vec3 aColor;  // per-vertex displayColor (default white)
+layout(location = 9) in vec4 aColor;  // displayColor.rgb + displayOpacity (default 1)
 
 uniform mat4 uModelViewProj;
 uniform mat4 uModel;
@@ -229,7 +229,7 @@ uniform usamplerBuffer uMorphChanTex;
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
-out vec3 vColor;
+out vec4 vColor;
 flat out int vDomJoint;    // dominant skin joint (SkinWeights AOV); -1 = unskinned
 out float vDomWeight;      // its weight
 out vec2 vUV1;             // 2nd texcoord set (multi-UV AOV)
@@ -334,7 +334,7 @@ const char* getMaterialFragmentShaderGL330() {
 in vec3 vWorldPos;
 in vec3 vNormal;
 in vec2 vUV;
-in vec3 vColor;
+in vec4 vColor;
 flat in int vDomJoint;   // dominant skin joint (SkinWeights AOV)
 in float vDomWeight;
 in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
@@ -346,22 +346,88 @@ uniform float uMetallic;
 uniform float uRoughness;
 uniform vec3 uEmissive;
 uniform float uAlpha;
+uniform int uAlphaMode;       // 0=opaque, 1=mask, 2=blend
+uniform float uAlphaCutoff;
+// Specular F0 (T12): specular workflow -> specularColor directly; else the
+// dielectric reflectance from ior. Unified with the Vulkan mesh.frag.
+uniform int uUseSpecularWorkflow;
+uniform vec3 uSpecularColor;
+uniform float uIor;
 // When set, shade with the geometric (screen-derivative) normal -- used for
 // meshes without authored normals so hard surfaces aren't smeared by smooth
 // (averaged) normals.
 uniform bool uGeometricNormal;
 
 uniform vec3 uCameraPos;
+uniform vec3 uLightDir;
+uniform vec3 uLightColor;
+
+// DomeLight split-sum IBL (precomputed at load; replaces the constant ambient
+// floor when present).
+uniform bool uHasIbl;
+uniform vec3 uIblColor;             // dome effectiveColor (intensity baked in)
+uniform mat3 uEnvRotation;          // world -> environment direction
+uniform samplerCube uIrradianceMap; // cosine-convolved env, stored E/pi
+uniform samplerCube uPrefilteredMap;// GGX chain, lod = roughness*(lods-1)
+uniform sampler2D uBrdfLut;         // split-sum DFG: x=NdotV, y=roughness
+uniform int uPrefilteredLods;
 
 // Texture samplers
 uniform sampler2D uBaseColorTex;
+uniform sampler2DArray uBaseColorUdimTex;
 uniform bool uHasBaseColorTex;
+uniform bool uBaseColorTexIsUdim;
 uniform sampler2D uMetalRoughTex;
+uniform sampler2DArray uMetalRoughUdimTex;
 uniform bool uHasMetalRoughTex;
+uniform bool uMetalRoughTexIsUdim;
 uniform sampler2D uNormalTex;
+uniform sampler2DArray uNormalUdimTex;
 uniform bool uHasNormalTex;
+uniform bool uNormalTexIsUdim;
 uniform sampler2D uEmissiveTex;
+uniform sampler2DArray uEmissiveUdimTex;
 uniform bool uHasEmissiveTex;
+uniform bool uEmissiveTexIsUdim;
+uniform sampler2D uOpacityTex;
+uniform sampler2DArray uOpacityUdimTex;
+uniform bool uHasOpacityTex;
+uniform bool uOpacityTexIsUdim;
+// One scene-wide 100 x texture-count atlas. Each row maps UDIM 1001..1100 to
+// an array layer; -1 means the tile is absent. Consolidating four independent
+// LUT samplers avoids the GL 3.3 fragment-sampler ceiling.
+uniform isampler2D uUdimLutAtlas;
+uniform ivec4 uUdimSlots;  // base, metal/rough, normal, emissive texture rows
+uniform int uOpacityUdimSlot;
+// Per-slot UV set: 0 = vUV (texcoords_0), 1 = vUV1 (texcoords_1).
+// x = base color, y = metal/rough, z = normal, w = emissive.
+uniform ivec4 uUvSet;
+uniform vec3 uBaseColorUv0;   // m00,m01,tx
+uniform vec3 uBaseColorUv1;   // m10,m11,ty
+uniform vec3 uMetalRoughUv0;
+uniform vec3 uMetalRoughUv1;
+uniform vec3 uNormalUv0;
+uniform vec3 uNormalUv1;
+uniform vec3 uEmissiveUv0;
+uniform vec3 uEmissiveUv1;
+uniform vec3 uOpacityUv0;
+uniform vec3 uOpacityUv1;
+uniform vec4 uBaseColorTexScale;
+uniform vec4 uBaseColorTexBias;
+uniform vec4 uNormalTexScale;
+uniform vec4 uNormalTexBias;
+uniform vec4 uEmissiveTexScale;
+uniform vec4 uEmissiveTexBias;
+uniform int uMetallicChannel;
+uniform int uRoughnessChannel;
+uniform float uMetallicTexScale;
+uniform float uMetallicTexBias;
+uniform float uRoughnessTexScale;
+uniform float uRoughnessTexBias;
+uniform int uOpacityUvSet;
+uniform int uOpacityChannel;
+uniform float uOpacityTexScale;
+uniform float uOpacityTexBias;
 
 out vec4 fragColor;
 
@@ -402,30 +468,125 @@ vec3 kindColor(int k) {
     return vec3(0.35);                         // no kind: dark gray
 }
 
+vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
+    ivec2 tile = ivec2(floor(uv));
+    int idx = tile.x + tile.y * 10;
+    if (idx < 0 || idx >= 100) {
+        return missing;
+    }
+    int layer = texelFetch(uUdimLutAtlas, ivec2(idx, slot), 0).r;
+    if (layer < 0) {
+        return missing;
+    }
+    return texture(tex, vec3(fract(uv), float(layer)));
+}
+
+vec2 xformUv(vec2 uv, vec3 row0, vec3 row1) {
+    return vec2(dot(vec3(uv, 1.0), row0), dot(vec3(uv, 1.0), row1));
+}
+
+// Linear -> sRGB OETF for the final shaded output. sRGB base-color textures are
+// uploaded as GL_SRGB8_ALPHA8 (linearized on sample) and the scene is lit in
+// linear space, so the encode happens here (the FBO is plain RGBA8). Lit path
+// only -- AOVs stay raw. Matches the Vulkan mesh.frag.
+vec3 linearToSrgb(vec3 c) {
+    c = clamp(c, 0.0, 1.0);
+    vec3 lo = c * 12.92;
+    vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+    return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));
+}
+
+// Specular F0 (T12), matching the Vulkan mesh.frag: specular workflow ->
+// specularColor; else the dielectric reflectance from ior lerped to base by
+// metalness. ior 1.5 (the default) gives exactly 0.04.
+vec3 computeF0(vec3 base, float metallic) {
+    if (uUseSpecularWorkflow != 0) return uSpecularColor;
+    float ior = max(1.0, uIor);
+    float d = (ior - 1.0) / (ior + 1.0);
+    return mix(vec3(d * d), base, clamp(metallic, 0.0, 1.0));
+}
+
+float channelOf(vec4 c, int ch) {
+    if (ch == 1) return c.g;
+    if (ch == 2) return c.b;
+    if (ch == 3) return c.a;
+    return c.r;
+}
+
 void main() {
-    vec3 baseColor = uBaseColor * vColor;  // vColor defaults to white
+    vec3 baseColor = uBaseColor * vColor.rgb;  // vColor defaults to white
     float metallic = uMetallic;
     float roughness = uRoughness;
     vec3 emissive = uEmissive;
+    float opacity = clamp(uAlpha * vColor.a, 0.0, 1.0);
 
     if (uHasBaseColorTex) {
-        baseColor *= texture(uBaseColorTex, vUV).rgb;
+        vec2 uv = xformUv(uUvSet.x == 1 ? vUV1 : vUV, uBaseColorUv0, uBaseColorUv1);
+        vec4 texel = uBaseColorTexIsUdim
+                         ? sampleUdim(uBaseColorUdimTex, uUdimSlots.x, uv,
+                                      vec4(1.0, 0.0, 1.0, 1.0))
+                         : texture(uBaseColorTex, uv);
+        vec4 sample = texel * uBaseColorTexScale + uBaseColorTexBias;
+        baseColor *= sample.rgb;
+        opacity *= clamp(sample.a, 0.0, 1.0);
     }
     if (uHasMetalRoughTex) {
-        vec4 mr = texture(uMetalRoughTex, vUV);
-        roughness *= mr.g;
-        metallic *= mr.b;
+        vec2 uv = xformUv(uUvSet.y == 1 ? vUV1 : vUV, uMetalRoughUv0, uMetalRoughUv1);
+        vec4 mr = uMetalRoughTexIsUdim
+                      ? sampleUdim(uMetalRoughUdimTex, uUdimSlots.y, uv,
+                                   vec4(1.0, 0.0, 1.0, 1.0))
+                      : texture(uMetalRoughTex, uv);
+        roughness *= channelOf(mr, uRoughnessChannel) * uRoughnessTexScale + uRoughnessTexBias;
+        metallic *= channelOf(mr, uMetallicChannel) * uMetallicTexScale + uMetallicTexBias;
     }
     if (uHasEmissiveTex) {
-        emissive *= texture(uEmissiveTex, vUV).rgb;
+        vec2 uv = xformUv(uUvSet.w == 1 ? vUV1 : vUV, uEmissiveUv0, uEmissiveUv1);
+        vec4 texel = uEmissiveTexIsUdim
+                         ? sampleUdim(uEmissiveUdimTex, uUdimSlots.w, uv,
+                                      vec4(1.0, 0.0, 1.0, 1.0))
+                         : texture(uEmissiveTex, uv);
+        emissive *= (texel * uEmissiveTexScale + uEmissiveTexBias).rgb;
     }
 
     vec3 N = uGeometricNormal
                  ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
                  : normalize(vNormal);
     if (uHasNormalTex) {
-        vec3 tangentNormal = texture(uNormalTex, vUV).xyz * 2.0 - 1.0;
-        N = normalize(N + tangentNormal * 0.1);
+        vec2 uv = xformUv(uUvSet.z == 1 ? vUV1 : vUV, uNormalUv0, uNormalUv1);
+        vec3 tangentNormal = ((uNormalTexIsUdim
+                                  ? sampleUdim(uNormalUdimTex, uUdimSlots.z, uv,
+                                               vec4(0.5, 0.5, 1.0, 1.0))
+                                  : texture(uNormalTex, uv)) * uNormalTexScale +
+                              uNormalTexBias).xyz;
+        // Full derivative TBN (unified with the Vulkan backend). The old
+        // `normalize(N + tangentNormal*0.1)` was a weak non-TBN perturbation
+        // that made relief nearly flat on GL and pronounced on VK; build the
+        // tangent frame from the screen-space position/UV gradients so the
+        // tangent-space sample perturbs N at full strength in the right basis.
+        vec3 dp1 = dFdx(vWorldPos);
+        vec3 dp2 = dFdy(vWorldPos);
+        vec2 du1 = dFdx(uv);
+        vec2 du2 = dFdy(uv);
+        float r = du1.x * du2.y - du2.x * du1.y;
+        vec3 t = dp1 * du2.y - dp2 * du1.y;
+        t = (abs(r) > 1e-8) ? t / r : dp1;
+        t = normalize(t - N * dot(N, t));
+        vec3 b = normalize(cross(N, t)) * (r < 0.0 ? -1.0 : 1.0);
+        N = normalize(mat3(t, b, N) * tangentNormal);
+    }
+    if (uHasOpacityTex) {
+        vec2 uv = xformUv(uOpacityUvSet == 1 ? vUV1 : vUV,
+                          uOpacityUv0, uOpacityUv1);
+        // Missing opacity UDIM tiles are opaque, not magenta/channel-dependent.
+        vec4 ot = uOpacityTexIsUdim
+                      ? sampleUdim(uOpacityUdimTex, uOpacityUdimSlot, uv, vec4(1.0))
+                      : texture(uOpacityTex, uv);
+        opacity *= clamp(channelOf(ot, uOpacityChannel) * uOpacityTexScale +
+                         uOpacityTexBias, 0.0, 1.0);
+    }
+    opacity = clamp(opacity, 0.0, 1.0);
+    if (uAlphaMode == 1) {
+        opacity = (opacity >= uAlphaCutoff) ? 1.0 : 0.0;
     }
 
     // Debug AOVs: override the shaded output with the requested channel.
@@ -448,7 +609,7 @@ void main() {
         if (uRenderMode == 9)  { fragColor = vec4(vec3(roughness), 1.0); return; }     // roughness
         if (uRenderMode == 10) { fragColor = vec4(vec3(metallic), 1.0); return; }      // metallic
         if (uRenderMode == 11) { fragColor = vec4(emissive, 1.0); return; }            // emissive
-        if (uRenderMode == 12) { fragColor = vec4(vec3(uAlpha), 1.0); return; }        // opacity
+        if (uRenderMode == 12) { fragColor = vec4(vec3(opacity), 1.0); return; }       // opacity
         if (uRenderMode == 13) {                                                       // world position
             fragColor = vec4(clamp((vWorldPos - uSceneMin) / uSceneExtent, 0.0, 1.0), 1.0);
             return;
@@ -519,24 +680,51 @@ void main() {
 
     vec3 V = normalize(uCameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = (dot(uLightDir, uLightDir) > 1e-8)
+                 ? normalize(uLightDir)
+                 : normalize(vec3(0.3, 0.5, 0.8));
+    vec3 lightColor = (dot(uLightColor, uLightColor) > 1e-8)
+                          ? uLightColor
+                          : vec3(1.0);
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient: DomeLight split-sum IBL when baked, else a constant floor
+    // (keeps unlit faces lifted off black).
+    vec3 ambient;
+    if (uHasIbl) {
+        vec3 Ne = normalize(uEnvRotation * Nf);
+        vec3 Re = normalize(uEnvRotation * reflect(-V, Nf));
+        vec3 irr = texture(uIrradianceMap, Ne).rgb;
+        float lod = clamp(roughness, 0.0, 1.0) * float(uPrefilteredLods - 1);
+        vec3 pref = textureLod(uPrefilteredMap, Re, lod).rgb;
+        vec2 dfg = texture(uBrdfLut, vec2(max(dot(Nf, V), 0.0),
+                                          clamp(roughness, 0.0, 1.0))).rg;
+        vec3 F0 = computeF0(baseColor, metallic);
+        ambient = (baseColor * (1.0 - metallic) * irr +
+                   pref * (F0 * dfg.x + dfg.y)) * uIblColor;
+    } else {
+        ambient = baseColor * 0.25;
+    }
+    vec3 diffuse = baseColor * lightColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
-    vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
+    vec3 specColor = computeF0(baseColor, metallic);
+    vec3 specular = specColor * lightColor * pow(NdotH, specPower) * facing;
 
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
-
-    vec3 color = ambient + diffuse + specular + emissive;
-    fragColor = vec4(color, uAlpha);
+    if (uAlphaMode == 1 && opacity <= 0.0) {
+        discard;
+    }
+    vec3 color = linearToSrgb(ambient + diffuse + specular + emissive);
+    fragColor = vec4(color, opacity);
 }
 )glsl";
 }
@@ -632,21 +820,25 @@ void main() {
 
     vec3 V = normalize(uCameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = normalize(vec3(0.3, 0.5, 0.8));
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient floor + view-driven diffuse (keeps unlit faces lifted off black).
+    vec3 ambient = baseColor * 0.25;
+    vec3 diffuse = baseColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
     vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
-
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
+    vec3 specular = specColor * pow(NdotH, specPower) * facing;
 
     vec3 color = ambient + diffuse + specular + emissive;
     fragColor = vec4(color, alpha);
@@ -749,21 +941,25 @@ void main() {
 
     vec3 V = normalize(cameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = normalize(vec3(0.3, 0.5, 0.8));
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient floor + view-driven diffuse (keeps unlit faces lifted off black).
+    vec3 ambient = baseColor * 0.25;
+    vec3 diffuse = baseColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
     vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
-
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
+    vec3 specular = specColor * pow(NdotH, specPower) * facing;
 
     vec3 color = ambient + diffuse + specular + emissive;
     fragColor = vec4(color, alpha);

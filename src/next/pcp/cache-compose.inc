@@ -133,6 +133,15 @@
           // `over` never contributes a defining specifier.
         }
 
+        // A relative asset path anchors to the layer that AUTHORED it, and this
+        // loop runs strong->weak, so the strongest source carrying an anchor is
+        // the one whose opinions (and asset paths) win. Without this the
+        // flattened prim loses its authoring layer and `@../tex/foo.png@` gets
+        // resolved against the stage root. See asset-anchor.hh.
+        if (out->asset_anchor_id() == 0 && spec->asset_anchor_id() != 0) {
+          out->set_asset_anchor_id(spec->asset_anchor_id());
+        }
+
         // Remap relationship/connection TARGET paths from this arc's
         // (site-local) namespace into the composed namespace, so a referenced
         // asset's internal targets (e.g. material:binding, .connect) resolve to
@@ -233,6 +242,19 @@
         out->meta().variantSetNameEdits() = StringListOpEdits();
       }
       if (!cm.variantSelections().empty()) out->meta().variantSelections().clear();
+    }
+
+    // Sparse array edits stacked across the sources above (CopyLocalOpinions
+    // concatenates weaker-under-stronger); this loop has now seen EVERY source
+    // of the prim, so nothing weaker can still supply a base array. Resolve the
+    // leftovers -- over the prim's own value, else an empty array -- exactly as
+    // the serial compositor's depth-1 ResolveArrayEditsInLayer does (pxr
+    // flatten emits concrete arrays, never edit text). Failures stay silent by
+    // design: this can run from a parallel-warm worker fill (issues_ is not
+    // thread-safe there), and a failed edit degrades to its authored text.
+    {
+      std::string apply_err;
+      Compositor::ResolveArrayEditsOnPrim(out, &apply_err);
     }
   }
 

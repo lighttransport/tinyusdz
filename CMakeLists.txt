@@ -309,6 +309,9 @@ option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minimal codecs: no HTJ2K/ZSTD). Set OFF for the deprecated legacy v1 API" ON)
 # ---------
 
+option(TINYUSDZ_WITH_TEXTOOLS
+       "Build vendored tir/texcomp/texpipe/envmap texture tools" ON)
+
 # -- ColorIO --
 option(TINYUSDZ_WITH_COLORIO
        "Build with Color IO Baked LUT support(through tinycolorio)" ON)
@@ -998,6 +1001,44 @@ if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
     find_package(zstd REQUIRED)
   endif()
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
+endif()
+
+# Vendored pure-C11 texture processing stack used by tusdview/tusdrender.
+if(TINYUSDZ_WITH_TEXTOOLS)
+  set(TEXTOOLS_DIR ${PROJECT_SOURCE_DIR}/src/external/textools)
+  file(GLOB TEXTOOLS_SOURCES CONFIGURE_DEPENDS
+       ${TEXTOOLS_DIR}/resize/src/*.c
+       ${TEXTOOLS_DIR}/texcomp/src/*.c
+       ${TEXTOOLS_DIR}/texpipe/src/*.c
+       ${TEXTOOLS_DIR}/envmap/src/*.c)
+  add_library(tinyusdz_textools STATIC ${TEXTOOLS_SOURCES})
+  target_include_directories(tinyusdz_textools PUBLIC
+      ${TEXTOOLS_DIR}/resize/include
+      ${TEXTOOLS_DIR}/texcomp/include
+      ${TEXTOOLS_DIR}/texpipe/include
+      ${TEXTOOLS_DIR}/envmap/include)
+  target_compile_features(tinyusdz_textools PRIVATE c_std_11)
+  if(NOT MSVC)
+    target_compile_options(tinyusdz_textools PRIVATE -w)
+  endif()
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64" AND NOT MSVC)
+    include(CheckCCompilerFlag)
+    check_c_compiler_flag("-march=armv8-a+sve" TEXTOOLS_HAS_SVE)
+    if(TEXTOOLS_HAS_SVE)
+      set_source_files_properties(
+          ${TEXTOOLS_DIR}/resize/src/tir_kernels_sve.c
+          PROPERTIES COMPILE_OPTIONS "-march=armv8-a+sve")
+    endif()
+  endif()
+  if(UNIX AND NOT EMSCRIPTEN)
+    target_compile_definitions(tinyusdz_textools PRIVATE
+        TIR_ENABLE_THREADS TIR_THREADS_PTHREAD)
+    find_package(Threads REQUIRED)
+    target_link_libraries(tinyusdz_textools PUBLIC Threads::Threads)
+  endif()
+  if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    target_link_libraries(tinyusdz_textools PUBLIC m)
+  endif()
 endif()
 
 # -- nanoimage --
@@ -1733,6 +1774,18 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_WITH_COLORIO")
   endif(TINYUSDZ_WITH_COLORIO)
 
+  if(TINYUSDZ_WITH_TEXTOOLS)
+    # KTX2 / GPU-compressed texture decode in image-loader.cc goes through the
+    # vendored texpipe/texcomp reader (tp_ktx2_read + tc_*_decompress). Link the
+    # C texture libs into core; the PUBLIC include dirs of tinyusdz_textools
+    # propagate texpipe.h/texcomp.h to the core sources.
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_TEXTOOLS")
+    # NOTE: core uses the plain target_link_libraries signature everywhere; keep
+    # it plain here so CMake doesn't reject a mixed plain/keyword usage.
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} tinyusdz_textools)
+  endif(TINYUSDZ_WITH_TEXTOOLS)
+
   if(TINYUSDZ_WITH_AUDIO)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_AUDIO")
@@ -1965,8 +2018,21 @@ endif()
 #
 #endif()
 
+# Enable CTest before the example subdirectories are added, so a subdirectory
+# (e.g. examples/tusdview) can register its own tests with add_test(). The
+# main enable_testing() inside the TINYUSDZ_BUILD_TESTS block below runs after
+# these add_subdirectory() calls, which is too late for the subdirectory's own
+# add_test() to take effect. Calling it twice is harmless.
+if(TINYUSDZ_BUILD_TESTS)
+  enable_testing()
+endif()
+
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/tusdcat)
+  if(TINYUSDZ_WITH_TEXTOOLS)
+    # Authors .ktx2 texture companions + the legacy-safe customData hints.
+    add_subdirectory(examples/usd-texcomp)
+  endif()
   if (TINYUSDZ_WITH_TYDRA)
     add_subdirectory(examples/tydra_api)
     add_subdirectory(examples/tydra_to_renderscene)
@@ -2057,6 +2123,44 @@ endif()
 
 if(TINYUSDZ_BUILD_TESTS)
   #
+  # textools (vendored tir/texcomp/texpipe/envmap) upstream self-tests.
+  # Plain-C main() programs, no GPU/display needed. These were dropped from
+  # CMake in a merge while the sources stayed under src/external/textools;
+  # re-register so `ctest -L textools` runs them again.
+  #
+  if(TINYUSDZ_WITH_TEXTOOLS)
+    set(TEXTOOLS_TEST_PROGRAMS
+      "textools_tir_test|${TEXTOOLS_DIR}/resize/tests/tir_test.c|textools-tir"
+      "textools_tir_f16_test|${TEXTOOLS_DIR}/resize/tests/tir_f16_test.c|textools-tir-f16"
+      "textools_texcomp_test|${TEXTOOLS_DIR}/texcomp/test/test_texcomp.c|textools-texcomp"
+      "textools_texpipe_test|${TEXTOOLS_DIR}/texpipe/test/test_texpipe.c|textools-texpipe"
+      "textools_envmap_test|${TEXTOOLS_DIR}/envmap/test/test_envmap.c|textools-envmap"
+      "textools_pbr_test|${TEXTOOLS_DIR}/envmap/test/test_pbr.c|textools-pbr")
+    foreach(entry IN LISTS TEXTOOLS_TEST_PROGRAMS)
+      string(REPLACE "|" ";" entry "${entry}")
+      list(GET entry 0 tt_target)
+      list(GET entry 1 tt_source)
+      list(GET entry 2 tt_name)
+      add_executable(${tt_target} ${tt_source})
+      target_link_libraries(${tt_target} PRIVATE tinyusdz_textools)
+      # Some tests poke library internals (tir_internal.h / texcomp_internal.h).
+      target_include_directories(${tt_target} PRIVATE
+        ${TEXTOOLS_DIR}/resize/src ${TEXTOOLS_DIR}/texcomp/src)
+      target_compile_features(${tt_target} PRIVATE c_std_11)
+      if(NOT MSVC)
+        target_compile_options(${tt_target} PRIVATE -w)
+      endif()
+      add_test(NAME ${tt_name} COMMAND ${tt_target})
+      set_tests_properties(${tt_name} PROPERTIES LABELS "textools")
+    endforeach()
+  endif()
+
+  # (The tusdview unit tests are registered inside
+  # examples/tusdview/CMakeLists.txt, where their targets are in scope; that
+  # works because enable_testing() is now called before that subdirectory is
+  # added — see the top-level enable_testing() call.)
+
+  #
   # Standalone tester
   #
   set(TINYUSDZ_TEST_SOURCES ${PROJECT_SOURCE_DIR}/tests/test-main.cc)
@@ -2105,6 +2209,107 @@ if(TINYUSDZ_BUILD_TESTS)
               ${PROJECT_SOURCE_DIR}
               ${CMAKE_BINARY_DIR}/tools/tusdrender
     )
+
+    # The legacy (eager tydra) path handles every .usda/.usdz; it used to drop
+    # every UsdUVTexture and render a flat constant base color.
+    add_test(
+      NAME tool-tusdrender-legacy-texture
+      COMMAND ${TUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_legacy_texture.py
+              "$<TARGET_FILE:tusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/tusdrender
+    )
+    set_tests_properties(tool-tusdrender-legacy-texture
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
+    # -autoframe on a FLAT scene (a quad / ground plane) used to frame it exactly
+    # edge-on and render black.
+    add_test(
+      NAME tool-tusdrender-autoframe-flat
+      COMMAND ${TUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_autoframe_flat.py
+              "$<TARGET_FILE:tusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/tusdrender
+    )
+    set_tests_properties(tool-tusdrender-autoframe-flat
+                         PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+
+  # tusdrender's shell regressions in tools/tusdrender/tests/. These existed for
+  # a long time with NO add_test() anywhere, so nothing ran them and the docs
+  # cited ctest names that did not resolve; run-degraded-material.sh had been
+  # segfaulting (infinite MtlxConverter <-> ConvertMaterial recursion) unnoticed.
+  # Each takes the binary as $1 and exits 77 to skip.
+  #
+  # Only the hermetic ones are registered: run-gpu-render.sh needs a GPU, and
+  # run-large-scene-profiles.sh / run-material-resolver.sh /
+  # run-alpha-blend-sort-external.sh need external multi-GB asset corpora.
+  if(TARGET tusdrender)
+    set(TUSDR_SHELL_TESTS
+        camera-modes
+        cli-robustness
+        cmyk-jpeg-texture
+        degraded-material
+        dome-format
+        double-sided-cull
+        frames-framespec
+        geomsubset-materials
+        ibl-specular-bound
+        instancer-invisible-ids
+        instancer-orientation
+        light-double-count
+        light-normalize
+        material-shading-bsdf-sample
+        mesh-light-gaps
+        mtlx-usdz-texture-equivalence
+        mtlx-usdz-udim-equivalence
+        opacity-texture-alpha
+        purpose-filtering
+        purpose-visibility
+        shaped-area-lights
+        sphere-light-nee
+        subdivision-schemes
+        textureless-dome
+        timecode-blendshape-animation
+        timecode-normals-animation
+        timecode-points-animation
+        timecode-transform-animation
+        transparency
+        usdz-texture-equivalence
+        uv-set-routing
+        vk-ray-tiling)
+    foreach(t ${TUSDR_SHELL_TESTS})
+      add_test(
+        NAME tool-tusdrender-${t}
+        COMMAND bash
+                ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-${t}.sh
+                "$<TARGET_FILE:tusdrender>"
+      )
+      set_tests_properties(tool-tusdrender-${t} PROPERTIES SKIP_RETURN_CODE 77)
+    endforeach()
+
+    # run-material-resolver.sh takes the binary via $TUSDRENDER (its positional
+    # args are options) and skips itself when USD_ASSETS_ROOT is unset, so it is
+    # safe to register: it runs on machines that have the corpus, skips on those
+    # that don't. README.md already told people to run it by this ctest name.
+    add_test(
+      NAME tool-tusdrender-material-resolver
+      COMMAND bash ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-material-resolver.sh
+    )
+    set_tests_properties(tool-tusdrender-material-resolver
+                         PROPERTIES SKIP_RETURN_CODE 77
+                         ENVIRONMENT "TUSDRENDER=$<TARGET_FILE:tusdrender>")
+
+    add_test(
+      NAME tool-tusdrender-alpha-blend-sort-external
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-alpha-blend-sort-external.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+    set_tests_properties(tool-tusdrender-alpha-blend-sort-external
+                         PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 
   #
@@ -2144,9 +2349,9 @@ if(TINYUSDZ_BUILD_TESTS)
     # Crate-writer round-trip pins. Every check here is a fix for authored USD
     # data that the .usdc writer silently DROPPED or INVENTED: schema fallbacks
     # written for declaration-only attributes, prim/attribute metadata blocks,
-    # timeSamples on the typed writers, list-edit qualifiers, and so on. Several
-    # of them are latent -- no tests/usda fixture exercises them -- so this suite
-    # is the only thing standing between those bugs and a silent return.
+    # timeSamples on typed writers, list-edit qualifiers, and imageable fields
+    # such as Scope visibility/purpose. Several are latent -- no tests/usda
+    # fixture exercises them -- so this suite prevents silent regressions.
     add_test(
       NAME scope-imageable-roundtrip
       COMMAND bash "${PROJECT_SOURCE_DIR}/tests/run-scope-imageable-roundtrip.sh"
@@ -2201,8 +2406,14 @@ if(TINYUSDZ_BUILD_TESTS)
   #
   # tusdview CPU/GPU skinning screenshot parity. This is intentionally
   # registered only for Linux GUI builds with xvfb-run available: OpenGL needs a
-  # window/context, and xvfb supplies a headless X server while preserving the
-  # normal hardware-rendered window path.
+  # window/context, and xvfb supplies a headless X server.
+  #
+  # It needs a HARDWARE GL device to mean anything. Xvfb (and a forwarded
+  # DISPLAY) has no DRI, so Mesa falls back to llvmpipe, which fetches no vertex
+  # attribute but aPosition -- the skin joints/weights read as zero and the
+  # GPU-skinned render is stuck in the rest pose regardless of the code under
+  # test. The script detects that device and exits 77 (skip); see
+  # tests/tusdview/gpu_backend.py.
   #
   if(UNIX AND NOT APPLE AND TARGET tusdview)
     find_program(TINYUSDZ_XVFB_RUN xvfb-run)
@@ -2218,9 +2429,363 @@ if(TINYUSDZ_BUILD_TESTS)
                 --time 12
                 --xvfb-run "${TINYUSDZ_XVFB_RUN}"
         )
+      set_tests_properties(tusdview-skinning-screenshot-diff
+                           PROPERTIES SKIP_RETURN_CODE 77)
+
+      # The HIP interactive tracer refits its BVH per pose instead of paying a
+      # full scene rebuild. Refit must trace byte-identically to the rebuild
+      # path (TUSDVIEW_NO_BVH_REFIT=1) over the same --play run. Self-skips
+      # without a HIP device.
+      add_test(
+        NAME tusdview-hip-bvh-refit
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-hip-bvh-refit.py
+                "${TINYUSDZ_XVFB_RUN}"
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-hip-bvh-refit"
+        )
+      set_tests_properties(tusdview-hip-bvh-refit
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800)
+      # Skinning must also reach INSTANCED prototypes (a shared prototype behind
+      # `instanceable = true`), which the next loader used to convert but never
+      # skin -- every instance rendered the rest pose. Asserts the rig actually
+      # animates inside the instance; CPU/GPU are not pixel-compared here (a
+      # GPU-skinned prototype is de-instanced onto the material shader).
+      add_test(
+        NAME tusdview-instanced-prototype-skinning
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-instanced-prototype-skinning.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-instanced.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-instanced-skinning"
+        )
+      # It exits 77 when no usable GL display is present (it renders WINDOWED, to
+      # exercise the real context). Without this the skip is reported as a failure.
+      set_tests_properties(tusdview-instanced-prototype-skinning
+                           PROPERTIES SKIP_RETURN_CODE 77)
+
+      # The large-scene budget tree must descend from the real device, not the
+      # GiB(32)/GiB(16) literals it used to be fed, and --vram-budget must
+      # override the probe. Headless + tiny scene; skips without Vulkan.
+      add_test(
+        NAME tusdview-vram-budget
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-vram-budget.py
+                "$<TARGET_FILE:tusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-vram-budget"
+        )
+      set_tests_properties(tusdview-vram-budget PROPERTIES SKIP_RETURN_CODE 77)
+
+      # A non-instanced blendshape mesh must animate on the default --next loader.
+      # Morph used to be built only for instanced prototypes, so a plain
+      # SkelRoot -> Mesh blendshape rendered frozen at its rest pose. Headless
+      # (Vulkan); skips without a device.
+      add_test(
+        NAME tusdview-noninstanced-blendshape
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-noninstanced-blendshape.py
+                "$<TARGET_FILE:tusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-noninstanced-blendshape"
+        )
+      set_tests_properties(tusdview-noninstanced-blendshape
+                           PROPERTIES SKIP_RETURN_CODE 77)
+
+      # Per-vertex displayColor must render on the Vulkan raster backend (it used
+      # to reach only the RT path; VK raster drew the flat material color).
+      add_test(
+        NAME tusdview-vertex-color
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-vertex-color.py
+                "$<TARGET_FILE:tusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-vertex-color"
+        )
+      set_tests_properties(tusdview-vertex-color PROPERTIES SKIP_RETURN_CODE 77)
+
+      # Vulkan RT BLAS compaction: must shrink the acceleration structures, must
+      # build ONE BLAS per prototype (not per instance), and must be image-neutral.
+      add_test(
+        NAME tusdview-blas-compaction
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-blas-compaction.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/blastest-instanced-static.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-blas-compaction"
+        )
+      set_tests_properties(tusdview-blas-compaction PROPERTIES SKIP_RETURN_CODE 77)
+
+      # A texture must sample the UV set its UsdPrimvarReader names. The secondary
+      # set used to be hard-coded as <primary>+"1" (so `uvSet1` was never
+      # extracted), and nothing routed it even when it existed.
+      add_test(
+        NAME tusdview-uv-set-routing
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-uv-set-routing.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/multi-uv-quad.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-uv-set-routing"
+        )
+      set_tests_properties(tusdview-uv-set-routing PROPERTIES SKIP_RETURN_CODE 77)
+
+      # Cross-tool parity oracle: ONE scene through BOTH binaries. tusdview and
+      # tusdrender consume the same tydra-next RenderScene, so they must read
+      # GeomSubset material bindings and the secondary UV set the same way.
+      # Nothing else in the suite compares the two -- which is precisely how a run
+      # of tusdview-only material/UV regressions stayed invisible while every
+      # per-tool test kept passing. Needs a real Vulkan device (tusdview
+      # --headless); skips without one.
+      if(TARGET tusdrender)
+        add_test(
+          NAME tusdview-tusdrender-parity
+          COMMAND bash
+                  ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-cross-tool-parity.sh
+          )
+        set_tests_properties(tusdview-tusdrender-parity PROPERTIES
+          SKIP_RETURN_CODE 77
+          ENVIRONMENT
+            "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDRENDER=$<TARGET_FILE:tusdrender>")
+      endif()
+
+      # Raster LOD must reach NON-instanced meshes, which also requires each one
+      # to carry its own AABB (the next loader used to hand every static mesh the
+      # scene-spanning box, disabling the per-mesh frustum cull along with it).
+      add_test(
+        NAME tusdview-noninstanced-lod
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-noninst-lod.py
+                "$<TARGET_FILE:tusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-noninstanced-lod"
+        )
+      set_tests_properties(tusdview-noninstanced-lod PROPERTIES SKIP_RETURN_CODE 77)
+
+      # The ray tracer traces vertex buffers, so the raster vertex shader's
+      # deform never reaches it. --next --rt used to give up and re-run the whole
+      # converter per time code; it now re-poses the retained rest vertices.
+      add_test(
+        NAME tusdview-rt-skinning
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-rt-skinning.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-skinning"
+        )
+      set_tests_properties(tusdview-rt-skinning PROPERTIES SKIP_RETURN_CODE 77)
+
+      # A skinned mesh's BLAS is refit in place per pose (MODE_UPDATE) instead
+      # of destroyed + fully rebuilt. Refit must trace byte-identically to the
+      # rebuild path (TUSDVIEW_NO_BLAS_REFIT=1) over the same --play run.
+      add_test(
+        NAME tusdview-rt-blas-refit
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-rt-blas-refit.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-blas-refit"
+        )
+      set_tests_properties(tusdview-rt-blas-refit PROPERTIES SKIP_RETURN_CODE 77)
+
+      # A non-instanced blendshaped mesh must morph: the static batch path used to
+      # build no morph channels at all, so it rendered its rest shape forever.
+      add_test(
+        NAME tusdview-blendshape-morph
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-blendshape-morph.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/blendshape-and-animation-test-001.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-blendshape-morph"
+        )
+      set_tests_properties(tusdview-blendshape-morph PROPERTIES SKIP_RETURN_CODE 77)
+
+      # GPU deform vs CPU bake, in depth through a fixed camera, over the three
+      # deform paths that had no fixture at all. Each of these caught a live bug:
+      #   skin-xform     -- skinning under a rotated/scaled parent (the bone rows
+      #                     must undo the static path's world bake and re-apply it);
+      #   morph-subsets  -- a morphed mesh torn into two batches by material-bind
+      #                     GeomSubsets, which re-index the sparse delta lists;
+      #   morph-skin     -- both deforms live at once, which pins the ORDER (morph
+      #                     the bind pose, then skin the morphed points);
+      #   instanced-proto -- the same deform reached through NATIVE INSTANCING,
+      #                     which is a different emitter (EmitInstancedProto) whose
+      #                     vertices stay prototype-LOCAL. It was called exempt from
+      #                     the world-bake bugs by construction, and it was -- but
+      #                     the scene box then grew from those local vertices without
+      #                     the instance placement, so the grid and the depth ramp
+      #                     landed in the wrong place.
+      #   pointinstancer -- the same prototype placed by a PointInstancer, whose
+      #                     placements come from positions/orientations/scales arrays
+      #                     rather than from prims referencing it. It caught the
+      #                     orientation quaternion being read imaginary-first when the
+      #                     next stage stores it real-first: a 30-degree Z rotation
+      #                     decoded as a 150-degree X rotation, i.e. upside-down.
+      foreach(deform_case skin-xform morph-subsets morph-skin instanced-proto
+                          pointinstancer)
+        add_test(
+          NAME tusdview-deform-${deform_case}
+          COMMAND python3
+                  ${PROJECT_SOURCE_DIR}/tests/tusdview/check-deform-parity.py
+                  "$<TARGET_FILE:tusdview>"
+                  "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-${deform_case}.usda"
+                  "${CMAKE_BINARY_DIR}/Testing/tusdview-deform-${deform_case}"
+          )
+        set_tests_properties(tusdview-deform-${deform_case}
+                             PROPERTIES SKIP_RETURN_CODE 77)
+      endforeach()
+
+      # An instanced prototype under the RAY TRACER: RT cannot use the raster vertex
+      # shader's deform (the BLAS is built from vertex buffers, so the geometry itself
+      # has to move), and for a prototype those re-posed vertices are prototype-LOCAL
+      # -- one BLAS, re-posed once, referenced by every placement's TLAS instance.
+      # Raster and RT therefore reach the same pixels by genuinely different routes.
+      add_test(
+        NAME tusdview-deform-instanced-proto-rt
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-deform-parity.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-instanced-proto.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-deform-instanced-proto-rt"
+                rt
+        )
+      set_tests_properties(tusdview-deform-instanced-proto-rt
+                           PROPERTIES SKIP_RETURN_CODE 77)
+
+      # The CUDA tracer builds its BVH from draw_ geometry, so it takes the deform
+      # through poseNextDrawForTracer instead of the vertex shader. It used to be
+      # pinned to the load-time CPU bake -- a second deform implementation, free to
+      # disagree with the shader's, and it did. Skips (77) where CUDA is absent.
+      add_test(
+        NAME tusdview-deform-cuda
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-deform-parity.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-morph-skin.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-deform-cuda"
+                cuda
+        )
+      set_tests_properties(tusdview-deform-cuda PROPERTIES SKIP_RETURN_CODE 77)
+
+      # LEGACY loader: an animated --time load must pose the mesh ONCE. It bakes the
+      # pose into the geometry at load, and the rest-pose load that keeps the shader
+      # from posing it a second time was gated on an EXPLICIT --skinning gpu -- so
+      # the DEFAULT (auto) deformed twice.
+      add_test(
+        NAME tusdview-legacy-double-deform
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-legacy-double-deform.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-skin-xform.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-legacy-double-deform"
+        )
+      set_tests_properties(tusdview-legacy-double-deform
+                           PROPERTIES SKIP_RETURN_CODE 77)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()
+  endif()
+
+  #
+  # UsdShade material-binding resolution: purpose-scoped (material:binding:preview
+  # / :full) bindings authored on an ANCESTOR, as production scenes (ALab) bind.
+  # Reading only the Mesh's own `material:binding` drops the material and every
+  # texture with it. Renders headless (Vulkan offscreen); SKIPs without a GPU.
+  #
+  if(UNIX AND NOT APPLE AND TARGET tusdview)
+    add_test(
+      NAME tusdview-material-binding-inheritance
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-material-binding-inheritance.sh"
+      )
+    set_tests_properties(tusdview-material-binding-inheritance
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
+    # doubleSided (audit T8): a single-sided mesh back-face culls, a doubleSided
+    # one does not -- identically on GL and Vulkan. The --next loader used to
+    # drop the authored flag entirely, and Vulkan never culled anything.
+    add_test(
+      NAME tusdview-double-sided
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-double-sided.sh"
+      )
+    set_tests_properties(tusdview-double-sided PROPERTIES SKIP_RETURN_CODE 77)
+
+    # UsdPreviewSurface specular workflow + IOR on --next (audit T12): a colored
+    # specularColor must tint the highlight (not fall back to white dielectric),
+    # identically on GL and VK.
+    add_test(
+      NAME tusdview-specular-workflow
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-specular-workflow.sh"
+      )
+    set_tests_properties(tusdview-specular-workflow PROPERTIES SKIP_RETURN_CODE 77)
+
+    # T12 opacity completion: separate scalar opacity textures (ordinary/UDIM)
+    # on both raster backends, and varying displayOpacity on raster + RT.
+    add_test(
+      NAME tusdview-opacity-material
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-opacity-material.sh"
+      )
+    set_tests_properties(tusdview-opacity-material PROPERTIES SKIP_RETURN_CODE 77)
+
+    # USD `proxy` and `render` are ALTERNATIVES, not two things to draw. Drawing
+    # both put the stand-in on top of the geometry it stands in for (intent-vfx's
+    # simpleAsset: a proxy Cube of size 2 exactly encloses the render Sphere of
+    # radius 1). Both loaders must supersede the proxy -- and still draw it when
+    # there is no render geometry to supersede it.
+    add_test(
+      NAME tusdview-purpose-proxy-supersede
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-purpose-proxy-supersede.sh"
+      )
+    set_tests_properties(tusdview-purpose-proxy-supersede
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
+    # Layer-relative asset-path anchoring: a look layer nested below the root
+    # reaches its texture with `../tex/...`, which only resolves when anchored to
+    # the layer that authored it (see src/next/layer/asset-anchor.hh).
+    add_test(
+      NAME tusdview-asset-path-anchoring
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-material-binding-inheritance.sh"
+                   "${PROJECT_SOURCE_DIR}/models/nested-look-texture/root.usda"
+      )
+    set_tests_properties(tusdview-asset-path-anchoring
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
+    # usd-wg/assets regression baseline. The batch harness could always RENDER the
+    # corpus; what it had no answer for was "did this change what any of it looks
+    # like?" -- so a render that silently turned a scene black still passed. The
+    # checked-in baseline (examples/tusdview/tests/usd-assets-goldens.tsv) records a
+    # COVERAGE fingerprint per (mode, asset): a silhouette bitfield, chosen over a
+    # pixel hash because it survives the GPU/driver lighting differences that would
+    # otherwise make the file useless anywhere but the machine that wrote it. A
+    # geometry, composition, or material-binding regression moves the silhouette; a
+    # shading nudge does not.
+    #
+    # Still a per-machine artifact in the end, so it is OPT-IN twice over: it needs
+    # the corpus (USD_ASSETS_ROOT, else SKIP) and TUSDVIEW_RUN_GOLDEN=1 (else SKIP).
+    # Refresh it deliberately, and read the diff before committing it:
+    #
+    #   TUSDVIEW_RUN_GOLDEN=1 tests/tusdview/run-usd-assets-batch.sh \
+    #     --golden-kind coverage \
+    #     --update-golden examples/tusdview/tests/usd-assets-goldens.tsv
+    add_test(
+      NAME tusdview-usd-assets-golden
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_GOLDEN"
+              "TUSDVIEW_USD_ASSETS_FAIL_ON=timeout,backend_error,golden_mismatch"
+              bash "${PROJECT_SOURCE_DIR}/tests/tusdview/run-usd-assets-batch.sh"
+                   --golden-kind coverage
+                   --golden "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/usd-assets-goldens.tsv"
+      )
+    set_tests_properties(tusdview-usd-assets-golden
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 5400)
   endif()
 
   #

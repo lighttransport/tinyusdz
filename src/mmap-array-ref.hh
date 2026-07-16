@@ -31,11 +31,7 @@ class MMapArrayTable {
 
   const MMapArrayRef *find(const std::string &prim_path,
                            const std::string &attr_name) const {
-    auto it = _entries.find(make_key(prim_path, attr_name));
-    if (it != _entries.end()) {
-      return &it->second;
-    }
-    return nullptr;
+    return _entries.find_value_ptr(make_key(prim_path, attr_name));
   }
 
   const MMapArrayRef *find_compatible(const std::string &prim_path,
@@ -53,16 +49,15 @@ class MMapArrayTable {
       with_slash = "/" + with_slash;
       if (const MMapArrayRef *ref = find(with_slash, attr_name)) return ref;
     }
-    for (const auto &kv : _entries) {
-      const size_t sep = kv.first.find('\0');
-      if (sep == std::string::npos) continue;
-      const std::string p = kv.first.substr(0, sep);
-      const std::string a = kv.first.substr(sep + 1);
-      if (a == attr_name && (p == prim_path || p == no_slash || p == with_slash)) {
-        return &kv.second;
-      }
-    }
-    return nullptr;
+    return _entries.find_value_if([&](const std::string &key,
+                                      const MMapArrayRef &) {
+      const size_t sep = key.find('\0');
+      if (sep == std::string::npos) return false;
+      const std::string p = key.substr(0, sep);
+      const std::string a = key.substr(sep + 1);
+      return a == attr_name &&
+             (p == prim_path || p == no_slash || p == with_slash);
+    });
   }
 
   bool empty() const { return _entries.empty(); }

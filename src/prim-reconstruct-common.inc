@@ -275,6 +275,15 @@ static ParseResult ParseTypedAttributeUnified(
   bool has_default = false;
   bool has_timesamples = false;
 
+  // The type gate above accepts spellings other than the schema's own (role
+  // types over the same storage, e.g. authored `float3` for a color3f field).
+  // Record the authored spelling so printers/writers do not silently re-type
+  // the attribute (OpenUSD preserves the authored typeName on the spec).
+  if (!attr_type_name.empty() &&
+      attr_type_name != value::TypeTraits<T>::type_name()) {
+    target.set_actual_type_name(attr_type_name);
+  }
+
   // Handle connections
   if (attr.has_connections()) {
     target.set_connections(attr.connections());

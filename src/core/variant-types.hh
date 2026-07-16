@@ -32,18 +32,32 @@ struct Variant {
   // const std::string &name() const { return _name; }
   // std::string &name() { return _name; }
 
-  const PrimMeta &metas() const { return _metas; }
-  PrimMeta &metas() { return _metas; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
 
-  std::map<std::string, Property> &properties() { return _props; }
-  const std::map<std::string, Property> &properties() const { return _props; }
+  std::map<std::string, Property> &properties() TINYUSDZ_LIFETIMEBOUND {
+    return _props;
+  }
+  const std::map<std::string, Property> &properties() const
+      TINYUSDZ_LIFETIMEBOUND {
+    return _props;
+  }
 
-  const std::vector<Prim> &primChildren() const { return _primChildren; }
-  std::vector<Prim> &primChildren() { return _primChildren; }
+  const std::vector<Prim> &primChildren() const TINYUSDZ_LIFETIMEBOUND {
+    return _primChildren;
+  }
+  std::vector<Prim> &primChildren() TINYUSDZ_LIFETIMEBOUND {
+    return _primChildren;
+  }
 
   // For nested variantSet
-  const std::map<std::string, VariantSet> &variantSets() const { return _variantSets; }
-  std::map<std::string, VariantSet> &variantSets() { return _variantSets; }
+  const std::map<std::string, VariantSet> &variantSets() const
+      TINYUSDZ_LIFETIMEBOUND {
+    return _variantSets;
+  }
+  std::map<std::string, VariantSet> &variantSets() TINYUSDZ_LIFETIMEBOUND {
+    return _variantSets;
+  }
 
  private:
   std::map<std::string, VariantSet> _variantSets;

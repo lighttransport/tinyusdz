@@ -24,6 +24,7 @@
 #include "next/tinyusdz-next.hh"
 #include "next/types/value.hh"
 #include "tydra/next/scene-access.hh"
+#include "tydra/next/texture-cache.hh"
 extern "C" {
 #include "lightrt_c_tri.h"
 }
@@ -52,7 +53,15 @@ struct Texture {
     int w, h;
     std::vector<uint8_t> data;
   };
+  struct UdimTile {
+    int udim{1001};
+    int width{0}, height{0}, channels{0};
+    std::vector<uint8_t> pixels;
+    std::vector<Mip> mips;
+  };
   std::vector<Mip> mips;
+  bool is_udim{false};
+  std::vector<UdimTile> udim_tiles;
   WrapMode wrap_s{WrapMode::Repeat};
   WrapMode wrap_t{WrapMode::Repeat};
   bool srgb{true};  // sourceColorSpace: decode sRGB->linear when sampled
@@ -116,6 +125,118 @@ struct Texture {
     }
   }
 
+  static int UdimFromUv(float u, float v, float *local_u, float *local_v) {
+    const int tu = int(std::floor(u));
+    const int tv = int(std::floor(v));
+    if (local_u) *local_u = u - float(tu);
+    if (local_v) *local_v = v - float(tv);
+    return 1001 + tu + tv * 10;
+  }
+
+  const UdimTile *find_udim_tile(int udim) const {
+    for (const UdimTile &tile : udim_tiles) {
+      if (tile.udim == udim) return &tile;
+    }
+    return nullptr;
+  }
+
+  static Vec3 bilinear_level_data(const uint8_t *d, int w, int h, int ch,
+                                  float wu, float wv) {
+    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
+    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
+    float tx = fu - float(x0), ty = fv - float(y0);
+    auto texel = [&](int x, int y) -> Vec3 {
+      x = ((x % w) + w) % w;
+      y = ((y % h) + h) % h;
+      const uint8_t *p = &d[(size_t(y) * w + x) * size_t(ch)];
+      return Vec3{float(p[0]) / 255.0f,
+                  float(ch > 1 ? p[1] : p[0]) / 255.0f,
+                  float(ch > 2 ? p[2] : p[0]) / 255.0f};
+    };
+    auto lerp = [](const Vec3 &a, const Vec3 &b, float t) {
+      return Vec3{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                  a.z + (b.z - a.z) * t};
+    };
+    Vec3 c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
+    Vec3 c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
+    return lerp(lerp(c00, c10, tx), lerp(c01, c11, tx), ty);
+  }
+
+  static float bilinear_channel_data(const uint8_t *d, int w, int h, int ch,
+                                     float wu, float wv, int chan) {
+    if (chan >= ch) return chan == 3 ? 1.0f : 0.0f;
+    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
+    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
+    float tx = fu - float(x0), ty = fv - float(y0);
+    auto texel = [&](int x, int y) -> float {
+      x = ((x % w) + w) % w;
+      y = ((y % h) + h) % h;
+      return float(d[(size_t(y) * w + x) * size_t(ch) + size_t(chan)]) / 255.0f;
+    };
+    float c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
+    float c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
+    float a = c00 + (c10 - c00) * tx;
+    float b = c01 + (c11 - c01) * tx;
+    return a + (b - a) * ty;
+  }
+
+  static Vec3 sample_data(const uint8_t *pixels, int width, int height,
+                          int channels, const std::vector<Mip> &mips,
+                          WrapMode wrap_s, WrapMode wrap_t, bool srgb,
+                          float u, float v, float lod) {
+    if (width <= 0 || height <= 0 || !pixels) return Vec3{0.5f, 0.5f, 0.5f};
+    bool su = true, sv = true;
+    float wu = ApplyWrap(u, wrap_s, &su);
+    float wv = ApplyWrap(1.0f - v, wrap_t, &sv);
+    if (!su || !sv) return Vec3{0.0f, 0.0f, 0.0f};
+    const float maxlvl = float(mips.size());
+    const float L = std::max(0.0f, std::min(lod, maxlvl));
+    const int l0 = int(std::floor(L));
+    const float f = L - float(l0);
+    auto level = [&](int lvl) -> Vec3 {
+      if (lvl <= 0 || mips.empty()) {
+        return bilinear_level_data(pixels, width, height, channels, wu, wv);
+      }
+      const Mip &m = mips[std::min(size_t(lvl) - 1, mips.size() - 1)];
+      return bilinear_level_data(m.data.data(), m.w, m.h, channels, wu, wv);
+    };
+    Vec3 c = level(l0);
+    if (f > 0.0f && float(l0) < maxlvl) {
+      Vec3 c1 = level(l0 + 1);
+      c = Vec3{c.x + (c1.x - c.x) * f, c.y + (c1.y - c.y) * f,
+               c.z + (c1.z - c.z) * f};
+    }
+    if (srgb) c = Vec3{SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z)};
+    return c;
+  }
+
+  static float sample_channel_data(const uint8_t *pixels, int width, int height,
+                                   int channels, const std::vector<Mip> &mips,
+                                   WrapMode wrap_s, WrapMode wrap_t, float u,
+                                   float v, float lod, int chan) {
+    if (width <= 0 || height <= 0 || !pixels) return 0.5f;
+    bool su = true, sv = true;
+    float wu = ApplyWrap(u, wrap_s, &su);
+    float wv = ApplyWrap(1.0f - v, wrap_t, &sv);
+    if (!su || !sv) return 0.0f;
+    const float maxlvl = float(mips.size());
+    const float L = std::max(0.0f, std::min(lod, maxlvl));
+    const int l0 = int(std::floor(L));
+    const float f = L - float(l0);
+    auto level = [&](int lvl) -> float {
+      if (lvl <= 0 || mips.empty()) {
+        return bilinear_channel_data(pixels, width, height, channels, wu, wv, chan);
+      }
+      const Mip &m = mips[std::min(size_t(lvl) - 1, mips.size() - 1)];
+      return bilinear_channel_data(m.data.data(), m.w, m.h, channels, wu, wv, chan);
+    };
+    float c = level(l0);
+    if (f > 0.0f && float(l0) < maxlvl) {
+      c = c + (level(l0 + 1) - c) * f;
+    }
+    return c;
+  }
+
   // Bilinear lookup in a single level (raw, no sRGB), at pre-wrapped (wu,wv).
   Vec3 bilinear_level(int lvl, float wu, float wv) const {
     int w, h;
@@ -130,29 +251,22 @@ struct Texture {
       h = m.h;
       d = m.data.data();
     }
-    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
-    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
-    float tx = fu - float(x0), ty = fv - float(y0);
-    auto texel = [&](int x, int y) -> Vec3 {
-      x = ((x % w) + w) % w;
-      y = ((y % h) + h) % h;
-      const uint8_t *p = &d[(size_t(y) * w + x) * size_t(channels)];
-      return Vec3{float(p[0]) / 255.0f,
-                  float(channels > 1 ? p[1] : p[0]) / 255.0f,
-                  float(channels > 2 ? p[2] : p[0]) / 255.0f};
-    };
-    auto lerp = [](const Vec3 &a, const Vec3 &b, float t) {
-      return Vec3{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
-                  a.z + (b.z - a.z) * t};
-    };
-    Vec3 c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
-    Vec3 c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
-    return lerp(lerp(c00, c10, tx), lerp(c01, c11, tx), ty);
+    return bilinear_level_data(d, w, h, channels, wu, wv);
   }
 
   // Trilinear sample at mip level `lod` (lod<=0 = full res); wrap + sRGB applied.
   // (USD UV origin is bottom-left, so v is flipped.)
   Vec3 sample(float u, float v, float lod = 0.0f) const {
+    if (is_udim) {
+      float lu = 0.0f, lv = 0.0f;
+      const UdimTile *tile = find_udim_tile(UdimFromUv(u, v, &lu, &lv));
+      if (!tile || tile->width <= 0 || tile->height <= 0 || tile->pixels.empty()) {
+        return Vec3{0.5f, 0.5f, 0.5f};
+      }
+      return sample_data(tile->pixels.data(), tile->width, tile->height,
+                         tile->channels, tile->mips, wrap_s, wrap_t, srgb, lu,
+                         lv, lod);
+    }
     if (width <= 0 || height <= 0 || pixels.empty()) {
       return Vec3{0.5f, 0.5f, 0.5f};
     }
@@ -223,26 +337,23 @@ struct Texture {
       w = m.w; h = m.h; d = m.data.data();
     }
     if (ch >= channels) return ch == 3 ? 1.0f : 0.0f;
-    float fu = wu * float(w) - 0.5f, fv = wv * float(h) - 0.5f;
-    int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
-    float tx = fu - float(x0), ty = fv - float(y0);
-    auto texel = [&](int x, int y) -> float {
-      x = ((x % w) + w) % w;
-      y = ((y % h) + h) % h;
-      return float(d[(size_t(y) * w + x) * size_t(channels) + size_t(ch)]) /
-             255.0f;
-    };
-    float c00 = texel(x0, y0), c10 = texel(x0 + 1, y0);
-    float c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
-    float a = c00 + (c10 - c00) * tx;
-    float b = c01 + (c11 - c01) * tx;
-    return a + (b - a) * ty;
+    return bilinear_channel_data(d, w, h, channels, wu, wv, ch);
   }
 
   // Trilinear single-channel sample (incl. alpha). Raw (scalar inputs are always
   // sourceColorSpace=raw), so no sRGB. Matches ChannelOf(sample(...)) bit-for-bit
   // for r/g/b on a raw texture; additionally exposes alpha (ch=3).
   float sample_channel(float u, float v, float lod, int ch) const {
+    if (is_udim) {
+      float lu = 0.0f, lv = 0.0f;
+      const UdimTile *tile = find_udim_tile(UdimFromUv(u, v, &lu, &lv));
+      if (!tile || tile->width <= 0 || tile->height <= 0 || tile->pixels.empty()) {
+        return 0.5f;
+      }
+      return sample_channel_data(tile->pixels.data(), tile->width, tile->height,
+                                 tile->channels, tile->mips, wrap_s, wrap_t,
+                                 lu, lv, lod, ch);
+    }
     if (width <= 0 || height <= 0 || pixels.empty()) return 0.5f;
     bool su = true, sv = true;
     float wu = ApplyWrap(u, wrap_s, &su);
@@ -312,7 +423,14 @@ struct PreviewLight {
   float radius{0.0f};
   float width{1.0f};
   float height{1.0f};
+  float length{1.0f};   // CylinderLight: extent along its axis (UsdLux: local +X)
   float area{0.0f};
+  // World-space local axes, needed to sample the SURFACE of a shaped light
+  // rather than collapsing it to its center. UsdLux puts a RectLight/DiskLight in
+  // the local XY plane emitting along -Z (so `normal` is local +Z... times -1 of
+  // `direction`), and runs a CylinderLight's axis along local +X.
+  Vec3 axis_u{1.0f, 0.0f, 0.0f};   // local +X in world space
+  Vec3 axis_v{0.0f, 1.0f, 0.0f};   // local +Y in world space
   float power{0.0f};
   float cdf{0.0f};
   int tri_id{-1};
@@ -328,7 +446,19 @@ struct LightCache {
   std::vector<float> env_cdf;
   bool has_dome{false};
   PreviewLight dome;
+  // Dome orientation (local axes in world, normalized rows of the dome's world
+  // rotation); copied into IblCache::rx/ry/rz so authored dome rotations
+  // orient the environment. Identity + !rotated when untransformed.
+  bool dome_rotated{false};
+  Vec3 dome_rx{1.0f, 0.0f, 0.0f};
+  Vec3 dome_ry{0.0f, 1.0f, 0.0f};
+  Vec3 dome_rz{0.0f, 0.0f, 1.0f};
   Vec3 env_color{0.0f, 0.0f, 0.0f};
+  // UsdLux texture:format of the dome's envmap, as
+  // RenderLight::DomeTextureFormat (0 Automatic, 1 Latlong, 2 MirroredBall,
+  // 3 Angular). Automatic/Latlong sample the image as-is; the probe formats
+  // are resampled to latlong before the IBL bake (RemapProbeToLatlong).
+  int dome_texture_format{0};
 };
 
 struct EnvImage {
@@ -387,26 +517,95 @@ struct Options {
   bool no_assetresolver{false};
   bool stats{false};
   bool direct_prims{true};
+  enum class LargeSceneProfile { Off, Auto, Caldera, Island, ALab };
+  LargeSceneProfile large_scene_profile{LargeSceneProfile::Off};
+  bool backend_explicit{false};  // -rtPreview/-vk/-vkr/-vkInstanced/-d3d/-hip
+  bool camera_explicit{false};
+  bool max_mem_explicit{false};
+  bool max_vram_explicit{false};
+  bool lod_stream_explicit{false};
+  bool rt_lod_explicit{false};
+  bool rt_lod_full_px_explicit{false};
+  bool rt_lod_cull_px_explicit{false};
   bool rt_preview{false};
   bool legacy_load{false};  // use the legacy eager loader instead of `next`
   bool smooth{false};       // interpolate authored normals (smooth shading)
+  bool ibl_envmap{false};   // -ibl envmap: vendored envmap-lib IBL precompute
   bool progress{false};
+  enum class MaterialResolver { Legacy, TydraNext, Compare };
+  MaterialResolver material_resolver{MaterialResolver::TydraNext};
+  enum class MaterialShading { Legacy, LightRtBsdf };
+  MaterialShading material_shading{MaterialShading::Legacy};
   lrt_tri_quality quality{LRT_TRI_BUILD_FAST};
   int threads{0};
   int subdivision_level{0};
   bool autoframe{false};  // OpenUSD usdrecord-style auto camera framing
   std::string js_script;  // -js <file>: drive rendering from a JS script
   bool mcp{false};        // -mcp: run an MCP stdio control server
+  int stream_http{0};     // -streamHttp <port>: WebSocket browser stream server
+  std::string stream_codec{"jpeg"};  // -streamCodec: idle-refine codec (png|qoi)
+  int stream_motion_res{1280};       // -streamMotionRes: motion-frame long-edge cap
+  int stream_motion_quality{45};     // -streamMotionQuality: motion JPEG quality
+  int stream_idle_ms{320};           // -streamIdleMs: quiet time before lossless refine
   std::vector<std::string> mask;  // -mask: restrict to these prim subtrees
   std::string frames;             // -frames FRAMESPEC: render an animation
   bool default_time{false};       // -defaultTime: evaluate at the default time
   double max_mem_gib{0.0};        // -maxMem <GiB>: 0 = auto min(32, 0.5*avail)
   std::map<std::string, std::string> variant_overrides;  // --variant set=selection
+  // -lodStream: view-dependent district LOD. A cheap proxy pass measures each
+  // district's camera distance + proxy size, then promotes the nearest districts
+  // to the `full` districtLod variant (via a generated wrapper layer) until the
+  // host/VRAM budgets are hit; the rest stay proxy. See tusdr_lod.cc.
+  bool lod_stream{false};
+  double max_vram_gib{0.0};       // -maxVram <GiB>: GPU budget, 0 = auto 0.5*VRAM
+  // Cost model: a flat estimated host RSS / GPU VRAM charge per promoted
+  // district. Deliberately simple + conservative (proxy geometry does not
+  // predict full cost, so per-district variation is not modelled). Tune up to
+  // promote fewer / down to promote more. Calibrated to observed single-district
+  // peaks (heavy Caldera districts compose at ~10-20 GiB host, ~2.5 GiB BLAS).
+  double lod_district_mem_gib{10.0};   // -lodDistrictMem
+  double lod_district_vram_gib{3.0};   // -lodDistrictVram
+  // Skip container children outside this proxy-vert band: below min are tiny
+  // trigger/volume/bounds prims; above max are sprawling non-district overlays
+  // (e.g. a 14.6 M-vert spawn-marker set) whose vert count dwarfs real districts
+  // (~<=0.5 M) and would hijack the importance ranking. Both author no `full`
+  // geometry, so promoting them is a wasted, no-op budget slot.
+  double lod_min_verts{1000.0};         // -lodMinVerts
+  double lod_max_verts{2000000.0};      // -lodMaxVerts (0 = no upper bound)
+  // Namespace component whose immediate children are the LOD districts
+  // (Caldera: .../mp_wz_island_geo/<district>). -lodContainer to override.
+  std::string lod_container{"mp_wz_island_geo"};
+  // -rtLod: per-instance view-dependent LOD at TLAS build (parity with the
+  // interactive viewer's --rt-lod). Distant prototypes collapse to a shared box
+  // proxy; sub-pixel placements are dropped. OFF by default. Frustum cull is
+  // separately opt-in (-rtLodFrustumCull) because a path tracer needs off-screen
+  // geometry for shadows/reflections/GI. See tusdr_rt_lod.{hh,cc}.
+  bool rt_lod{false};
+  bool rt_lod_proxy{true};         // distant -> box proxy (false = Full-or-Cull)
+  bool rt_lod_frustum_cull{false}; // GI-unsafe; opt-in speed flag
+  float rt_lod_full_px{64.0f};     // -rtLodFullPx
+  float rt_lod_cull_px{2.0f};      // -rtLodCullPx
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
+  enum class GpuShadeMode { Cpu, Preview };
+  GpuShadeMode gpu_shade{GpuShadeMode::Cpu};  // -gpuShade cpu|preview
+  // -vkInstanced: on -vkr, build a TRUE two-level GPU TLAS (one BLAS per
+  // prototype, one instance per placement) instead of flattening instances into
+  // one world-space BLAS. Stores instanced geometry ONCE on the device (memory
+  // sharing). Requires ray query; falls back to the flat path when unavailable or
+  // when the scene has no shareable instances. OFF by default.
+  bool vulkan_instanced{false};
+  bool use_d3d{false};             // -d3d: use the Direct3D 11 compute backend
+  bool hip{false};                 // -hip: use the HIP/ROCm compute backend
   std::string env_file;            // --env <hdr>: IBL environment map override
   bool displace{true};             // apply UsdPreviewSurface displacement (coarse)
   float displace_scale{1.0f};      // -displaceScale: global displacement multiplier
+  int texture_max_size{0};         // -texMaxSize: longest edge cap, 0 = source
+  int texture_budget_mb{0};        // -texBudgetMb: best-effort decoded budget
+  enum class TextureCompress { Off, BCn };
+  TextureCompress texture_compress{TextureCompress::Off};  // -texCompress
+  enum class UdimMode { Sparse, Atlas };
+  UdimMode udim_mode{UdimMode::Sparse};  // -udim; sparse is the large-scene default
 };
 
 struct DirectShape {
@@ -469,6 +668,8 @@ struct RTPreviewStats {
   size_t meshes_with_mmap_points{0};
   size_t meshes_with_owned_points{0};
   size_t skipped_meshes{0};
+  size_t degraded_materials{0};  // materials that fell back after resolver failure
+  size_t missing_textures{0};  // textures/images that failed to load or resolve
   size_t triangles{0};
   uint64_t mmap_deferred_bytes{0};
   uint64_t copied_point_bytes{0};
@@ -517,6 +718,7 @@ struct Blas {
   IdxVec indices;
   TriStoreVec tris;   // local p0/p1/p2/n/purpose + mat_id (into mat_table)
   std::vector<TriMat> mat_table;  // one entry per source mesh-job
+  std::vector<tinyusdz::tydra::LightRtOpenPBRParams> openpbr_table;
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
   ByteVec tri_colors;   // 12 bytes/tri (per-corner RGBA8, prim_id order) or empty
   // Phase 5: per-corner colors reordered into BVH leaf-slot order (12 bytes/slot)
@@ -545,6 +747,7 @@ struct Blas {
       indices = std::move(o.indices);
       tris = std::move(o.tris);
       mat_table = std::move(o.mat_table);
+      openpbr_table = std::move(o.openpbr_table);
       tri_uvs = std::move(o.tri_uvs);
       tri_colors = std::move(o.tri_colors);
       tri_colors_slot = std::move(o.tri_colors_slot);
@@ -592,6 +795,15 @@ struct MeshJobNext {
   tinyusdz::next::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
   tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
+  // Face-GeomSubset split (ExpandGeomSubsetJobsNext): a mesh whose faces are
+  // material-bound per GeomSubset becomes one job per bound subset + a
+  // remainder job.
+  // `subset_faces` (indexed by AUTHORED face id; empty = whole mesh) masks which
+  // faces this job emits, and `bind_prim` (the GeomSubset prim) supplies the
+  // material binding instead of the mesh -- GetInheritedBoundMaterialPath on it
+  // finds the subset's own binding first, then falls back up the ancestry.
+  std::vector<char> subset_faces;
+  tinyusdz::next::UsdPrim bind_prim;
   Vec3 base_color{0.55f, 0.55f, 0.55f};  // resolved diffuse constant
   int32_t tex_id{-1};                    // resolved diffuse texture, or -1
   float roughness{0.55f};                // resolved inputs:roughness
@@ -604,6 +816,11 @@ struct MeshJobNext {
   float occlusion{1.0f};                 // resolved inputs:occlusion
   ScalarTex occ_tex;                     // occlusion texture + channel
   UvXform uv_xform;                      // UsdTransform2d on the st chain
+  // The UV set the bound base-color texture reads (RenderTexture::uv_primvar,
+  // i.e. its UsdPrimvarReader varname). Empty = fall back to the exporter
+  // preference list. Used to pick which mesh primvar feeds `st` so a texture
+  // bound to a secondary set (e.g. `uvSet1`) is not silently sampled with `st`.
+  std::string uv_primvar;
   float opacity{1.0f};                   // displayOpacity / inputs:opacity constant
   ScalarTex opacity_tex;                 // UsdPreviewSurface inputs:opacity texture
   float opacity_threshold{0.0f};         // inputs:opacityThreshold (alpha cutout)
@@ -618,6 +835,8 @@ struct MeshJobNext {
   bool vertex_color{false};              // displayColor/Opacity is per-vertex
   float displacement{0.0f};              // inputs:displacement constant (scene units)
   ScalarTex displacement_tex;            // inputs:displacement texture + channel
+  bool has_openpbr{false};
+  tinyusdz::tydra::LightRtOpenPBRParams openpbr;
 };
 
 struct TextureCache {
@@ -625,6 +844,12 @@ struct TextureCache {
   std::unordered_map<std::string, int32_t> by_key;
   std::string base_dir;  // directory of the input file, for relative paths
   const tinyusdz::next::USDZReader *usdz{nullptr};
+  const Options *options{nullptr};
+  // Shared decode + size cap + byte budget (built on first use in tusdr_next).
+  std::shared_ptr<tinyusdz::tydra::next::TextureDecoder> decoder;
+  size_t decoded_bytes{0};
+  size_t *degraded_materials{nullptr};  // -> RTPreviewStats::degraded_materials
+  size_t *missing_textures{nullptr};  // -> RTPreviewStats::missing_textures
 };
 
 struct ResolvedMat {
@@ -654,6 +879,8 @@ struct ResolvedMat {
   bool vertex_color{false};
   float displacement{0.0f};
   ScalarTex displacement_tex;
+  bool has_openpbr{false};
+  tinyusdz::tydra::LightRtOpenPBRParams openpbr;
 };
 
 struct ProtoBuildReq {

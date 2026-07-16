@@ -18,8 +18,11 @@
 #include "core/model-scope.hh"  // Model, Scope
 #include "usdGeom.hh"
 #include "usdLux.hh"
+#include "usdPhysics.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "mjcPhysics.hh"
+#include "newtonPhysics.hh"
 #include "value-types.hh"
 
 #define PushError(s) \
@@ -82,6 +85,19 @@ RECONSTRUCT_PRIM_DECL(BlendShape);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
 RECONSTRUCT_PRIM_DECL(NodeGraph);
+RECONSTRUCT_PRIM_DECL(PhysicsScene);
+RECONSTRUCT_PRIM_DECL(PhysicsJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsRevoluteJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsPrismaticJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsSphericalJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsFixedJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsDistanceJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsCollisionGroup);
+RECONSTRUCT_PRIM_DECL(MjcActuator);
+RECONSTRUCT_PRIM_DECL(MjcTendon);
+RECONSTRUCT_PRIM_DECL(MjcKeyframe);
+RECONSTRUCT_PRIM_DECL(MjcSensor);
+RECONSTRUCT_PRIM_DECL(NewtonActuator);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -179,6 +195,19 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   RECONSTRUCT_PRIM(BlendShape)
   RECONSTRUCT_PRIM(Shader)
   RECONSTRUCT_PRIM(NodeGraph)
+  RECONSTRUCT_PRIM(PhysicsScene)
+  RECONSTRUCT_PRIM(PhysicsJoint)
+  RECONSTRUCT_PRIM(PhysicsRevoluteJoint)
+  RECONSTRUCT_PRIM(PhysicsPrismaticJoint)
+  RECONSTRUCT_PRIM(PhysicsSphericalJoint)
+  RECONSTRUCT_PRIM(PhysicsFixedJoint)
+  RECONSTRUCT_PRIM(PhysicsDistanceJoint)
+  RECONSTRUCT_PRIM(PhysicsCollisionGroup)
+  RECONSTRUCT_PRIM(MjcActuator)
+  RECONSTRUCT_PRIM(MjcTendon)
+  RECONSTRUCT_PRIM(MjcKeyframe)
+  RECONSTRUCT_PRIM(MjcSensor)
+  RECONSTRUCT_PRIM(NewtonActuator)
   RECONSTRUCT_PRIM(Material) {
     PUSH_WARN("TODO or unsupported prim type: " << primspec.typeName());
     return nonstd::nullopt;
@@ -647,6 +676,14 @@ bool VariantSelectPrimSpec(
   // they can win over variant opinions per LIVRPS (Local > VariantSets).
   PrimSpec ps;
 
+  // A SELECTED variant block may author its own NESTED variantSets (e.g. ALab's
+  // `render_high` geo variant contains a `geo_vis` variantSet that supplies the
+  // proxy mesh). Those nested sets -- and their selections -- must SURVIVE this
+  // pass (which only consumes the OUTER sets) so a subsequent CompositeVariant
+  // pass resolves them. Collect them here; re-established after the clear below.
+  std::map<std::string, VariantSetSpec> promoted_vsets;
+  VariantSelectionMap promoted_selections;
+
   // Evaluate from the last element.
   for (int64_t i = int64_t(allVariantSetNames.size()) - 1; i >= 0; i--) {
     const auto &variantSetName = allVariantSetNames[size_t(i)];
@@ -743,6 +780,20 @@ bool VariantSelectPrimSpec(
               std::make_move_iterator(new_variant_children.begin()),
               std::make_move_iterator(new_variant_children.end()));
         }
+
+        // Promote the selected variant block's OWN (nested) variantSets and
+        // their selections so they outlive the wholesale clear below and a later
+        // pass can resolve them (the variant content -- not just metadata --
+        // lives in vs.variantSets(), which the prop/child merge above does not
+        // touch).
+        for (const auto &nvs : vs.variantSets()) {
+          promoted_vsets[nvs.first] = nvs.second;
+        }
+        if (vs.metas().variants) {
+          for (const auto &sel : vs.metas().variants.value()) {
+            promoted_selections[sel.first] = sel.second;
+          }
+        }
       }
     }
   }
@@ -783,9 +834,29 @@ bool VariantSelectPrimSpec(
     dst.metas().primChildren = ps.metas().primChildren;
   }
 
+  // The OUTER variantSets resolved in this pass are consumed: clear ALL variant
+  // metadata/content, then re-establish only the NESTED variantSets promoted
+  // from the selected variant block(s). Without the re-establish, a variant
+  // whose content contains a nested variantSet (ALab render_high -> geo_vis ->
+  // proxy mesh) would silently lose that nested content on selection.
   dst.metas().variants.reset();
   dst.metas().variantSets.reset();
   dst.variantSets().clear();
+
+  if (!promoted_vsets.empty()) {
+    std::vector<std::string> names;
+    names.reserve(promoted_vsets.size());
+    for (auto &kv : promoted_vsets) {
+      names.push_back(kv.first);
+      dst.variantSets()[kv.first] = std::move(kv.second);
+    }
+    dst.metas().variantSets =
+        std::vector<std::pair<ListEditQual, std::vector<std::string>>>{
+            {ListEditQual::ResetToExplicit, std::move(names)}};
+    if (!promoted_selections.empty()) {
+      dst.metas().variants = std::move(promoted_selections);
+    }
+  }
 
   return true;
 }

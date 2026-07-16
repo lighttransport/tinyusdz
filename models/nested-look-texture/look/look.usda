@@ -1,0 +1,49 @@
+#usda 1.0
+(
+    doc = """Look layer for the anchoring fixture.
+
+`inputs:file` below is relative to THIS layer's directory (`look/`), so it must
+be anchored to `look/` -- not to the root layer's directory -- to find
+`../tex/checkerboard.png`.
+"""
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    def Scope "MATERIAL"
+    {
+        def Material "preview"
+        {
+            token outputs:surface.connect = </root/MATERIAL/preview/surface.outputs:surface>
+
+            def Shader "surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </root/MATERIAL/preview/color_texture.outputs:rgb>
+                float inputs:metallic = 0
+                float inputs:roughness = 0.6
+                token outputs:surface
+            }
+
+            def Shader "color_texture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                # Relative to look/ -- resolving this against the ROOT layer's dir
+                # climbs out of the asset and finds nothing.
+                asset inputs:file = @../tex/checkerboard.png@
+                float2 inputs:st.connect = </root/MATERIAL/preview/uv_reader.outputs:result>
+                token inputs:wrapS = "repeat"
+                token inputs:wrapT = "repeat"
+                float3 outputs:rgb
+            }
+
+            def Shader "uv_reader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+        }
+    }
+}

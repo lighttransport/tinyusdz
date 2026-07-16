@@ -2845,6 +2845,16 @@ static bool ExtractCommonLightProperties(
     }
   }
 
+  if (light.spectralEmission.authored() &&
+      !light.spectralEmission.is_blocked()) {
+    std::vector<value::float2> samples;
+    if (light.spectralEmission.get_value(&samples) && !samples.empty()) {
+      SpectralEmission spd;
+      spd.samples = std::move(samples);
+      rlight->spd_emission = std::move(spd);
+    }
+  }
+
   return true;
 }
 
@@ -2882,6 +2892,33 @@ static bool ExtractShapingProperties(
     float val;
     if (light.shapingConeSoftness.get_value().get(env.timecode, &val)) {
       rlight->shapingConeSoftness = val;
+    }
+  }
+
+  if (light.shapingIesFile.authored() && !light.shapingIesFile.is_blocked()) {
+    value::AssetPath asset;
+    std::string eval_err;
+    if (EvaluateTypedAnimatableAttribute(
+            env.stage, light.shapingIesFile,
+            "inputs:shaping:ies:file", &asset, &eval_err, env.timecode,
+            env.tinterp)) {
+      rlight->shapingIesFile = asset.GetAssetPath();
+    }
+  }
+
+  if (light.shapingIesAngleScale.authored() &&
+      !light.shapingIesAngleScale.is_blocked()) {
+    float val;
+    if (light.shapingIesAngleScale.get_value().get(env.timecode, &val)) {
+      rlight->shapingIesAngleScale = val;
+    }
+  }
+
+  if (light.shapingIesNormalize.authored() &&
+      !light.shapingIesNormalize.is_blocked()) {
+    bool val;
+    if (light.shapingIesNormalize.get_value().get(env.timecode, &val)) {
+      rlight->shapingIesNormalize = val;
     }
   }
 
@@ -2945,6 +2982,10 @@ bool RenderSceneConverter::ConvertDistantLight(
     return false;
   }
 
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
   // Extract angle (angular diameter in degrees)
   if (light.angle.authored() && !light.angle.is_blocked()) {
     float val;
@@ -2974,6 +3015,10 @@ bool RenderSceneConverter::ConvertDomeLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -3237,6 +3282,10 @@ bool RenderSceneConverter::ConvertDiskLight(
     return false;
   }
 
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
   // Extract radius
   if (light.radius.authored() && !light.radius.is_blocked()) {
     float val;
@@ -3266,6 +3315,10 @@ bool RenderSceneConverter::ConvertCylinderLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -3306,6 +3359,10 @@ bool RenderSceneConverter::ConvertGeometryLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -3622,10 +3679,11 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
       AnimationClip anim;
 
       if (!ConvertSkelAnimation(env, animPath, *panimPtr, skeleton_id, &anim)) {
-        PushError(fmt::format(
-            "Failed to convert SkelAnimation: {} for skeleton {}\n",
-            animPathStr, skeleton_id));
-        return false;
+        PushWarn(fmt::format(
+            "Skipping invalid SkelAnimation {} for skeleton {}: {}\n",
+            animPathStr, skeleton_id, GetError()));
+        _err.clear();
+        continue;
       }
 
       DCOUT("Converted SkelAnimation " << animPathStr << " for skeleton " << skeleton_id);

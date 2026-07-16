@@ -1,83 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 // tusdrender — LightRT Vulkan backend (GPU BVH traversal via lightrt_c_vk).
-// Compiles to nothing unless HAVE_VULKAN is defined.
+// Compiles to nothing unless HAVE_VULKAN is defined. Geometry flatten, ray
+// generation and shading are shared with the HIP backend (tusdr_gpu_common).
 #ifdef HAVE_VULKAN
+#include <chrono>
 #include <vector>
 
-#include "image-writer.hh"
 #include "lightrt_c_vk.h"
 #include "tusdr_context.hh"
+#include "tusdr_gpu_common.hh"
 
 namespace tusdr {
 
-bool RunVulkanLightRT(const Options &opt,
-                              const std::vector<Vec3> &base_colors,
-                              const std::vector<RTPreviewStats::MeshGeometry> &geos,
-                              const CameraFrame &camera, int height) {
-  // Build an lrt_tri_scene from the geometry.
-  // Flatten all meshes into a single vertex/index array that LightRT expects.
-  std::vector<float> flat_verts;
-  std::vector<uint32_t> flat_idx;
-  std::vector<Vec3> mesh_base_colors;
-  std::vector<Vec3> mesh_normals;  // per-triangle flat normals for shading
-  uint32_t base_idx = 0;
-  for (const auto &g : geos) {
-    uint32_t nv = uint32_t(g.positions.size() / 3);
-    for (uint32_t j = 0; j < nv; ++j) {
-      flat_verts.push_back(g.positions[j * 3 + 0]);
-      flat_verts.push_back(g.positions[j * 3 + 1]);
-      flat_verts.push_back(g.positions[j * 3 + 2]);
-    }
-    for (uint32_t j = 0; j < uint32_t(g.indices.size()); ++j) {
-      flat_idx.push_back(g.indices[j] + base_idx);
-    }
-    // Store per-triangle shading data.
-    for (uint32_t j = 0; j < uint32_t(g.indices.size()) / 3; ++j) {
-      uint32_t i0 = g.indices[j * 3 + 0];
-      uint32_t i1 = g.indices[j * 3 + 1];
-      uint32_t i2 = g.indices[j * 3 + 2];
-      // Face normal.
-      Vec3 p0{g.positions[i0 * 3 + 0], g.positions[i0 * 3 + 1], g.positions[i0 * 3 + 2]};
-      Vec3 p1{g.positions[i1 * 3 + 0], g.positions[i1 * 3 + 1], g.positions[i1 * 3 + 2]};
-      Vec3 p2{g.positions[i2 * 3 + 0], g.positions[i2 * 3 + 1], g.positions[i2 * 3 + 2]};
-      Vec3 e1 = Sub(p1, p0), e2 = Sub(p2, p0);
-      Vec3 n = Normalize(Cross(e1, e2));
-      mesh_normals.push_back(n);
-    }
-    size_t nm = (base_colors.size() > geos.size()) ? geos.size() : base_colors.size();
-    Vec3 bc = (&g - &geos[0]) < nm ? base_colors[&g - &geos[0]] : Vec3{0.5f, 0.5f, 0.5f};
-    for (uint32_t j = 0; j < uint32_t(g.indices.size()) / 3; ++j) {
-      mesh_base_colors.push_back(bc);
-    }
-    base_idx += nv;
-  }
+namespace {
 
-  uint32_t ntris = uint32_t(flat_idx.size() / 3);
-  if (ntris == 0) {
-    std::cerr << "No triangles to render.\n";
-    return false;
-  }
+// Seconds since `t0`, for the -stats per-stage timing lines.
+double SecsSince(std::chrono::steady_clock::time_point t0) {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+      .count();
+}
 
-  // Build the BVH scene.
-  lrt_tri_build_options bopts;
-  std::memset(&bopts, 0, sizeof(bopts));
-  bopts.quality = LRT_TRI_BUILD_DEFAULT;
-  bopts.layout = LRT_TRI_LAYOUT_BVH4;
-  bopts.num_threads = 1;
+}  // namespace
 
-  lrt_result lrterr = LRT_RESULT_OK;
-  // Indexed build: flat_verts holds the unique vertices and flat_idx the 3*ntris
-  // vertex ids. (The plain lrt_tri_scene_build expects a de-indexed 9*ntris soup,
-  // so passing the unique-vertex array there over-reads and fails the build.)
-  lrt_tri_scene *scene = lrt_tri_scene_build_indexed(
-      flat_verts.data(), flat_verts.size() / 3, flat_idx.data(), ntris, &bopts,
-      &lrterr);
-  if (!scene || lrterr != LRT_RESULT_OK) {
-    std::cerr << "Failed to build LightRT scene.\n";
-    return false;
-  }
-
-  // Create the Vulkan engine.
+bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
+                      const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                      const CameraFrame &camera, int height) {
+  // Create the Vulkan engine first: whether the device traces via hardware ray
+  // query decides if the CPU BVH is needed at all (the -vkr AS is GPU-built
+  // from the indexed mesh, so the CPU build would be pure waste there).
   lrt_vk_engine_options vopts;
   std::memset(&vopts, 0, sizeof(vopts));
   vopts.device_index = -1;
@@ -87,105 +37,296 @@ bool RunVulkanLightRT(const Options &opt,
   lrt_vk_engine *vk = lrt_vk_engine_create(&vopts, &vkerr);
   if (!vk) {
     std::cerr << "Failed to create LightRT Vulkan engine.\n";
-    lrt_tri_scene_free(scene);
     return false;
   }
 
   uint32_t vk_caps = lrt_vk_engine_caps(vk);
   bool has_rt = (vk_caps & LRT_VK_CAP_RAY_QUERY) != 0;
-  std::cerr << "Vulkan device: " << lrt_vk_engine_device_name(vk) << "\n";
+  const bool use_hw_rt = has_rt && opt.vulkan_rt;
+  std::cerr << "Vulkan device: " << lrt_vk_engine_device_name(vk) << " ("
+            << (lrt_vk_device_local_bytes(1) >> 20) << " MiB device-local)\n";
   std::cerr << "Vulkan caps: compute=1"
             << ((vk_caps & LRT_VK_CAP_BUFFER_ADDRESS) ? " buf_addr" : "")
             << ((vk_caps & LRT_VK_CAP_ACCEL_STRUCT) ? " accel" : "")
             << ((vk_caps & LRT_VK_CAP_RAY_QUERY) ? " ray_query" : "")
             << "\n";
 
-  // Render — per-pixel tracing with flat shading.
+  GpuTriScene s;
+  auto t0 = std::chrono::steady_clock::now();
+  if (!BuildGpuTriScene(base_colors, geos, opt.threads, !use_hw_rt, &s,
+                        opt.quality)) {
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  const double flatten_s = SecsSince(t0);
+
+  // Generate every primary ray and trace the whole frame in ONE batched GPU
+  // dispatch (the -vkr ray-query AS is built once, not per pixel).
   const int w = opt.width > 0 ? opt.width : 960;
   const int h = height;
-  tinyusdz::Image img;
-  img.width = w;
-  img.height = h;
-  img.channels = 4;
-  img.bpp = 8;
-  img.data.resize(size_t(w) * size_t(h) * 4, 0);
-
-  Vec3 eye = camera.origin;
-  Vec3 fwd = camera.forward;
-  Vec3 up = camera.up;
-  Vec3 right = Normalize(Cross(fwd, up));
-  Vec3 camUp = Cross(right, fwd);
-  float aspect = float(w) / float(h);
-  float fov = camera.yfov;
-  float half_h = std::tan(fov * 0.5f);
-  float half_w = half_h * aspect;
   const int spp = std::max(1, opt.samples);
-  const float ambient = opt.ambient;
-  const float light_dir[3] = {0.5f, 0.8f, 0.6f};
-
-  for (int y = 0; y < h; ++y) {
-    for (int x = 0; x < w; ++x) {
-      Vec3 color{0, 0, 0};
-      for (int s = 0; s < spp; ++s) {
-        float fx = (float(x) + 0.5f) / float(w) * 2.0f - 1.0f;
-        float fy = (float(y) + 0.5f) / float(h) * 2.0f - 1.0f;
-        Vec3 dir = Add(Mul(right, fx * half_w), Add(Mul(camUp, fy * half_h), fwd));
-        dir = Normalize(dir);
-
-        lrt_ray ray;
-        ray.org[0] = eye.x; ray.org[1] = eye.y; ray.org[2] = eye.z;
-        ray.tmin = 0.001f;
-        ray.dir[0] = dir.x; ray.dir[1] = dir.y; ray.dir[2] = dir.z;
-        ray.tmax = 1.0e10f;
-
-        lrt_hit hit;
-        lrt_result trerr;
-        int traced;
-        if (has_rt && opt.vulkan_rt) {
-          traced = lrt_vk_trace_scene_rtx(vk, flat_verts.data(), ntris,
-                                           &ray, 1, &hit, &trerr);
-        } else {
-          traced = lrt_vk_trace_scene(vk, scene, &ray, 1, &hit, &trerr);
-        }
-        if (traced > 0 && hit.prim_id != 0xFFFFFFFFu && hit.prim_id < ntris) {
-          Vec3 bc = hit.prim_id < mesh_base_colors.size()
-                        ? mesh_base_colors[hit.prim_id]
-                        : Vec3{0.5f, 0.5f, 0.5f};
-          Vec3 N = hit.prim_id < mesh_normals.size()
-                       ? mesh_normals[hit.prim_id]
-                       : Vec3{0, 1, 0};
-          float diff = std::max(0.0f, Dot(N, Vec3{light_dir[0], light_dir[1], light_dir[2]}));
-          Vec3 shaded = Add(Mul(bc, diff), Mul(bc, ambient));
-          color = Add(color, shaded);
-        }
-      }
-      color = Mul(color, 1.0f / float(spp));
-      size_t pi = (size_t(y) * size_t(w) + size_t(x)) * 4;
-      img.data[pi + 0] = uint8_t(std::min(255.0f, color.x * 255.0f));
-      img.data[pi + 1] = uint8_t(std::min(255.0f, color.y * 255.0f));
-      img.data[pi + 2] = uint8_t(std::min(255.0f, color.z * 255.0f));
-      img.data[pi + 3] = 255;
-    }
+  size_t nrays = 0;
+  if (!ValidateGpuFrameSize(w, h, spp, "Vulkan", &nrays)) {
+    if (s.scene) lrt_tri_scene_free(s.scene);
+    lrt_vk_engine_destroy(vk);
+    return false;
   }
+  const uint32_t ray_count = uint32_t(nrays);
+  std::vector<lrt_ray> rays;
+  GenerateCameraRays(camera, w, h, spp, &rays);
 
-  // Write PNG.
-  tinyusdz::image::WriteOption wopt;
-  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
-  auto ret = tinyusdz::image::WriteImageToFile(opt.output, img, wopt);
-  if (!ret) {
-    std::cerr << "Failed to write PNG: " << ret.error() << "\n";
-    lrt_tri_scene_free(scene);
+  std::vector<lrt_hit> hits(nrays);
+  lrt_result trerr = LRT_RESULT_OK;
+  int traced = -1;
+  double as_build_s = 0.0, trace_s = 0.0;
+  bool used_hw_rt = false;
+  bool ray_query_fallback = false;
+  const bool force_vkr_fallback = std::getenv("TUSDR_FORCE_VKR_FALLBACK") != nullptr;
+  if (use_hw_rt) {
+    // Build the ray-query acceleration structure directly from the indexed mesh
+    // (the GPU builds a VK_INDEX_TYPE_UINT32 BLAS, so no de-indexing needed);
+    // primitiveIndex == triangle build order == caller index, matching the
+    // CPU/compute paths. Build once, trace the whole frame, free.
+    uint32_t nverts = uint32_t(s.flat_verts.size() / 3u);
+    t0 = std::chrono::steady_clock::now();
+    lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_indexed(
+        vk, s.flat_verts.data(), nverts, s.flat_idx.data(), s.ntris, &trerr);
+    as_build_s = SecsSince(t0);
+    if (rtx) {
+      t0 = std::chrono::steady_clock::now();
+      if (force_vkr_fallback) {
+        trerr = LRT_RESULT_UNSUPPORTED;
+      } else {
+        traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), ray_count,
+                                        hits.data(), &trerr);
+      }
+      trace_s = SecsSince(t0);
+      lrt_vk_rtx_scene_free(vk, rtx);
+    }
+    if (traced >= 0) {
+      used_hw_rt = true;
+    } else {
+      std::cerr << "Vulkan ray-query trace failed (rc=" << trerr
+                << "); falling back to compute trace.\n";
+      t0 = std::chrono::steady_clock::now();
+      if (!BuildGpuCpuScene(opt.threads, &s, opt.quality)) {
+        lrt_vk_engine_destroy(vk);
+        return false;
+      }
+      trerr = LRT_RESULT_OK;
+      traced = lrt_vk_trace_scene(vk, s.scene, rays.data(), ray_count,
+                                  hits.data(), &trerr);
+      trace_s = SecsSince(t0);
+      ray_query_fallback = traced >= 0;
+    }
+  } else {
+    t0 = std::chrono::steady_clock::now();
+    traced = lrt_vk_trace_scene(vk, s.scene, rays.data(), ray_count,
+                                hits.data(), &trerr);
+    trace_s = SecsSince(t0);
+  }
+  if (traced < 0) {
+    std::cerr << "Vulkan trace failed (rc=" << trerr << ").\n";
+    if (s.scene) lrt_tri_scene_free(s.scene);
     lrt_vk_engine_destroy(vk);
     return false;
   }
 
-  std::cerr << "triangles: " << ntris << " (" << geos.size() << " meshes)\n";
-  std::cerr << "backend: LightRT VK ("
-            << (has_rt && opt.vulkan_rt ? "ray_query" : "compute trace")
-            << ")\n";
-  lrt_tri_scene_free(scene);
+  t0 = std::chrono::steady_clock::now();
+  bool ok = ShadeAndWriteImage(opt, s, rays, hits, w, h, spp);
+  if (opt.stats) {
+    std::cerr << "[gpu-stats] flatten+bvh " << flatten_s << " s, ";
+    if (use_hw_rt) std::cerr << "as-build " << as_build_s << " s, ";
+    std::cerr << "trace " << trace_s << " s, shade+write " << SecsSince(t0)
+              << " s\n";  // compute-path trace includes the BVH upload
+  }
+  if (ok) {
+    std::cerr << "triangles: " << s.ntris << " (" << geos.size() << " meshes)\n";
+    std::cerr << "backend: LightRT VK (";
+    if (used_hw_rt) {
+      std::cerr << "ray_query, indexed Vulkan AS, CPU BVH skipped";
+    } else if (ray_query_fallback) {
+      std::cerr << "compute trace, ray_query fallback";
+    } else {
+      std::cerr << "compute trace";
+    }
+    std::cerr << ")\n";
+  }
+  if (s.scene) lrt_tri_scene_free(s.scene);
   lrt_vk_engine_destroy(vk);
-  return true;
+  return ok;
+}
+
+bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
+                               const CameraFrame &camera, int height) {
+  if (scene.protos.empty() || scene.insts.empty()) return false;
+
+  lrt_vk_engine_options vopts;
+  std::memset(&vopts, 0, sizeof(vopts));
+  vopts.device_index = -1;
+  vopts.prefer_discrete = 1;
+  vopts.want_ray_tracing = 1;
+  lrt_result vkerr = LRT_RESULT_OK;
+  lrt_vk_engine *vk = lrt_vk_engine_create(&vopts, &vkerr);
+  if (!vk) {
+    std::cerr << "Failed to create LightRT Vulkan engine.\n";
+    return false;
+  }
+  uint32_t vk_caps = lrt_vk_engine_caps(vk);
+  if (!(vk_caps & LRT_VK_CAP_RAY_QUERY)) {
+    std::cerr << "-vkInstanced needs ray query; falling back to the flat path.\n";
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  std::cerr << "Vulkan device: " << lrt_vk_engine_device_name(vk) << " ("
+            << (lrt_vk_device_local_bytes(1) >> 20) << " MiB device-local)\n";
+
+  // Marshal the prototype + instance lists for the C API (views into `scene`).
+  std::vector<lrt_vk_proto> cprotos(scene.protos.size());
+  uint64_t unique_tris = 0;
+  for (size_t p = 0; p < scene.protos.size(); ++p) {
+    const GpuInstProto &pr = scene.protos[p];
+    cprotos[p].vertices = pr.verts.data();
+    cprotos[p].nverts = uint32_t(pr.verts.size() / 3u);
+    cprotos[p].indices = pr.idx.data();
+    cprotos[p].ntris = pr.ntris;
+    unique_tris += pr.ntris;
+  }
+  std::vector<lrt_vk_instance> cinsts(scene.insts.size());
+  uint64_t placed_tris = 0;
+  for (size_t i = 0; i < scene.insts.size(); ++i) {
+    std::memcpy(cinsts[i].transform, scene.insts[i].o2w, 12u * sizeof(float));
+    cinsts[i].proto = scene.insts[i].proto;
+    placed_tris += scene.protos[scene.insts[i].proto].ntris;
+  }
+
+  // Pick the hit encoding: the narrow (4-word) trace packs the hit as
+  // instanceId*stride + localTri, which must fit 32 bits (ninsts*maxProtoTris <
+  // 2^32). When it would overflow (Moana-island scale, a large prototype poisons
+  // stride), use the wide (5-word) trace that stores instanceId + localTri
+  // separately -- no product to overflow. The wide build is the MULTI-TLAS builder,
+  // which additionally splits > ~16M instances across several TLASes (sharing one
+  // BLAS set) so scenes past the device TLAS maxInstanceCount (2^24) -- the full
+  // ~42.8M-instance Moana island -- render in full; it builds a single TLAS when
+  // the scene fits, so smaller wide scenes are unaffected.
+  uint32_t max_ntris = 1;
+  for (const lrt_vk_proto &pr : cprotos)
+    max_ntris = std::max(max_ntris, pr.ntris);
+  bool wide = uint64_t(cinsts.size()) * uint64_t(max_ntris) >= 0xFFFFFFFFull ||
+              cinsts.size() > 16000000u;  // multi-TLAS also needs the wide decode
+  // Debug: force the wide encoding on any scene to validate the wide path against
+  // the narrow one (they must be pixel-identical).
+  if (std::getenv("TUSDR_FORCE_WIDE")) wide = true;
+
+  const int w = opt.width > 0 ? opt.width : 960;
+  const int h = height;
+  const int spp = std::max(1, opt.samples);
+  size_t nrays = 0;
+  if (!ValidateGpuFrameSize(w, h, spp, "Vulkan instanced", &nrays)) {
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  const uint32_t ray_count = uint32_t(nrays);
+  std::vector<lrt_ray> rays;
+  GenerateCameraRays(camera, w, h, spp, &rays);
+  std::vector<InstSampleHit> decoded(nrays);
+
+  lrt_result builderr = LRT_RESULT_OK, trerr = LRT_RESULT_OK;
+  int traced = -1;
+  uint32_t scene_ntlas = 1;
+  double as_build_s = 0.0, trace_s = 0.0;
+  auto t0 = std::chrono::steady_clock::now();
+  if (wide) {
+    lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_instanced_multi(
+        vk, cprotos.data(), uint32_t(cprotos.size()), cinsts.data(),
+        uint32_t(cinsts.size()), &builderr);
+    as_build_s = SecsSince(t0);
+    if (!rtx) {
+      // OUT_OF_MEMORY here means the GPU ran out building the BLAS/TLAS set (e.g.
+      // full Moana island: ~110k prototype BLAS exhaust VRAM). The flat fallback
+      // would flatten to even MORE geometry and fail harder, so report and stop
+      // rather than fall back. Lower TUSDR_INST_BUDGET to render a bounded subset.
+      const bool oom = builderr == LRT_RESULT_OUT_OF_MEMORY;
+      std::cerr << "-vkInstanced wide/multi build failed (rc=" << builderr << ")"
+                << (oom ? "; the scene exceeds GPU memory -- lower TUSDR_INST_BUDGET "
+                          "to render a bounded subset.\n"
+                        : "; falling back to the flat path.\n");
+      lrt_vk_engine_destroy(vk);
+      return oom;  // true = handled (do not try the doomed flat path)
+    }
+    scene_ntlas = lrt_vk_rtx_scene_ntlas(rtx);
+    scene.stride = max_ntris;  // reported only; wide decode does not use it
+    std::vector<lrt_hit_wide> hits(rays.size());
+    t0 = std::chrono::steady_clock::now();
+    traced = lrt_vk_rtx_scene_trace_wide(vk, rtx, rays.data(),
+                                         ray_count, hits.data(), &trerr);
+    trace_s = SecsSince(t0);
+    lrt_vk_rtx_scene_free(vk, rtx);
+    if (traced >= 0)
+      for (size_t i = 0; i < hits.size(); ++i) {
+        const lrt_hit_wide &hd = hits[i];
+        decoded[i].valid = hd.inst != 0xFFFFFFFFu;
+        decoded[i].inst = hd.inst;
+        decoded[i].local = hd.local;
+        decoded[i].u = hd.u;
+        decoded[i].v = hd.v;
+      }
+  } else {
+    uint32_t stride = 0;
+    lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_instanced(
+        vk, cprotos.data(), uint32_t(cprotos.size()), cinsts.data(),
+        uint32_t(cinsts.size()), &stride, &builderr);
+    as_build_s = SecsSince(t0);
+    if (!rtx) {
+      std::cerr << "-vkInstanced build failed (rc=" << builderr
+                << "); falling back to the flat path.\n";
+      lrt_vk_engine_destroy(vk);
+      return false;
+    }
+    scene.stride = stride;
+    std::vector<lrt_hit> hits(rays.size());
+    t0 = std::chrono::steady_clock::now();
+    traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), ray_count,
+                                    hits.data(), &trerr);
+    trace_s = SecsSince(t0);
+    lrt_vk_rtx_scene_free(vk, rtx);
+    if (traced >= 0)
+      for (size_t i = 0; i < hits.size(); ++i) {
+        const lrt_hit &hd = hits[i];
+        decoded[i].valid = hd.prim_id != 0xFFFFFFFFu && stride != 0;
+        if (decoded[i].valid) {
+          decoded[i].inst = hd.prim_id / stride;
+          decoded[i].local = hd.prim_id % stride;
+        }
+        decoded[i].u = hd.u;
+        decoded[i].v = hd.v;
+      }
+  }
+  if (traced < 0) {
+    std::cerr << "Vulkan instanced trace failed (rc=" << trerr << ").\n";
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+
+  t0 = std::chrono::steady_clock::now();
+  bool ok = ShadeAndWriteImageInstanced(opt, scene, rays, decoded, w, h, spp);
+  if (opt.stats) {
+    std::cerr << "[gpu-stats] as-build " << as_build_s << " s, trace+decode "
+              << trace_s << " s, shade+write " << SecsSince(t0) << " s\n";
+  }
+  if (ok) {
+    std::cerr << "backend: LightRT VK (ray_query, two-level TLAS, "
+              << (wide ? "wide 64-bit hit id" : "32-bit hit id");
+    if (scene_ntlas > 1) std::cerr << ", " << scene_ntlas << "-way multi-TLAS";
+    std::cerr << ")\n";
+    std::cerr << "instanced: " << scene.protos.size() << " prototypes ("
+              << unique_tris << " unique tris) x " << scene.insts.size()
+              << " instances = " << placed_tris << " placed tris; BLAS memory "
+              << "stores " << unique_tris << " (vs " << placed_tris
+              << " flattened)\n";
+  }
+  lrt_vk_engine_destroy(vk);
+  return ok;
 }
 
 }  // namespace tusdr

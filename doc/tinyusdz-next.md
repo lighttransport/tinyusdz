@@ -23,9 +23,9 @@ In this document:
 - **tydra-next** means the render conversion layer in `src/tydra/next/`, which
   converts a `tinyusdz::next::Stage` into render-ready data.
 
-The next stack is not a drop-in replacement for every legacy API yet. It is
-used selectively where it gives a clear benefit, especially low-memory USDC
-flattening and browser/wasm conversion.
+The next stack is the default document and render-conversion path for
+`tusdview`, and the default material-resolution path for `tusdrender`. Legacy
+paths remain available as explicit compatibility modes.
 
 ## next-core
 
@@ -75,6 +75,28 @@ int main() {
   return 0;
 }
 ```
+
+For interactive applications, keep a `StageSession` alive instead of repeatedly
+calling the one-shot loader. The session retains the resolver and PCP layer
+cache across payload and variant edits:
+
+```cpp
+tinyusdz::next::StageSession session;
+tinyusdz::next::StageSessionOptions options;
+options.composition.load_payloads = false;
+options.progress_callback = [](const tinyusdz::next::ProgressEvent& event) {
+  return !ApplicationRequestedCancel(event);
+};
+
+if (!session.OpenFile("scene.usdc", options)) return 1;
+session.SetVariantSelection("/World/Model", "lod", "high");
+session.LoadPayload("/World/Model");
+const tinyusdz::next::Stage& stage = session.GetStage();
+```
+
+Variant overrides are scoped by prim path, so identically named variant sets on
+different prims do not interfere. Diagnostics and deferred-payload state remain
+available on the session after each rebuild.
 
 ## next-io
 
@@ -127,6 +149,32 @@ Tydra Next is designed for fewer intermediate copies:
 - conversion can extract directly from next prim/value data,
 - render data is shaped for WebGL/WebGPU/OpenGL/Vulkan style upload,
 - texture loading can be supplied by a host callback.
+
+Large applications can use `RenderSceneConverter::ConvertToSink()` with a
+`SceneSink`. It emits geometry one prim at a time while retaining only the
+lightweight scene catalog, avoiding a second full copy of mesh/point/curve data.
+
+Shared render conversion currently covers meshes, analytic primitives, TetMesh
+boundary surfaces, points, BasisCurves, NurbsCurves, HermiteCurves, materials,
+lights, cameras, skeletons, animations, and point instancers. TetMesh conversion
+cancels shared tetrahedron faces and retains only the external triangle surface.
+Volume field loading remains application-owned because the host supplies the
+OpenVDB decoder and GPU representation. NurbsPatch remains an explicit
+unsupported renderable in tydra-next rather than being silently triangulated
+with lossy assumptions.
+
+## Application Defaults
+
+- `tusdview`: next-core and tydra-next are used by default. Use
+  `--legacy-load` only for compatibility investigation. `--next` remains an
+  accepted no-op for existing scripts.
+- `tusdrender`: next loading remains the primary render path and
+  `-materialResolver tydra-next` is the default. Use
+  `-materialResolver legacy` to compare against the former hand-written
+  material resolver.
+- Parent-relative asset paths are enabled because USD resolves them relative to
+  the authoring layer. Sandboxed hosts can disable them through
+  `ResolverConfig::allow_parent_paths`.
 
 Minimal C++ conversion sketch:
 

@@ -141,6 +141,16 @@ bool ExtractCommonLightProperties(
     }
   }
 
+  if (light.spectralEmission.authored() &&
+      !light.spectralEmission.is_blocked()) {
+    std::vector<value::float2> samples;
+    if (light.spectralEmission.get_value(&samples) && !samples.empty()) {
+      SpectralEmission spd;
+      spd.samples = std::move(samples);
+      rlight->spd_emission = std::move(spd);
+    }
+  }
+
   return true;
 }
 
@@ -178,6 +188,29 @@ bool ExtractShapingProperties(
     float val;
     if (light.shapingConeSoftness.get_value().get(env.timecode, &val)) {
       rlight->shapingConeSoftness = val;
+    }
+  }
+
+  if (light.shapingIesFile.authored() && !light.shapingIesFile.is_blocked()) {
+    value::AssetPath asset;
+    if (light.shapingIesFile.get_value()->get(env.timecode, &asset)) {
+      rlight->shapingIesFile = asset.GetAssetPath();
+    }
+  }
+
+  if (light.shapingIesAngleScale.authored() &&
+      !light.shapingIesAngleScale.is_blocked()) {
+    float val;
+    if (light.shapingIesAngleScale.get_value().get(env.timecode, &val)) {
+      rlight->shapingIesAngleScale = val;
+    }
+  }
+
+  if (light.shapingIesNormalize.authored() &&
+      !light.shapingIesNormalize.is_blocked()) {
+    bool val;
+    if (light.shapingIesNormalize.get_value().get(env.timecode, &val)) {
+      rlight->shapingIesNormalize = val;
     }
   }
 
@@ -243,6 +276,10 @@ bool RenderSceneConverter::ConvertDistantLight(
     return false;
   }
 
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
   // Extract angle (angular diameter in degrees)
   if (light.angle.authored() && !light.angle.is_blocked()) {
     float val;
@@ -272,6 +309,10 @@ bool RenderSceneConverter::ConvertDomeLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -336,8 +377,9 @@ bool RenderSceneConverter::ConvertDomeLight(
 
           // Try to store the raw asset for later decoding (e.g., in JS layer)
           Asset asset;
-          std::string sanitized_path =
-              utils::SanitizeAssetPath(assetPath.GetAssetPath());
+          std::string sanitized_path = utils::SanitizeAssetPath(
+              assetPath.GetAssetPath(),
+              env.asset_resolver.get_allow_parent_relative_paths());
           if (sanitized_path.empty()) {
             PushWarn(fmt::format("Unsafe envmap asset path: `{}`",
                                  assetPath.GetAssetPath()));
@@ -350,10 +392,10 @@ bool RenderSceneConverter::ConvertDomeLight(
               resolvedPath, sanitized_path, &asset, &readWarn, &readErr);
 
           if (asset_opened) {
-            if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+            if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
               PushWarn(fmt::format(
                   "Envmap asset exceeds max bytes ({} > {}).",
-                  asset.size(), security_policy::kResolverMaxAssetReadBytes));
+                  asset.size(), security_policy::GetMaxAssetReadBytes()));
               continue;
             }
             TextureImage fallbackTexImage;
@@ -383,8 +425,9 @@ bool RenderSceneConverter::ConvertDomeLight(
       } else if (!env.scene_config.load_texture_assets) {
         // Store asset path only without decoding
         Asset asset;
-        std::string sanitized_path =
-            utils::SanitizeAssetPath(assetPath.GetAssetPath());
+        std::string sanitized_path = utils::SanitizeAssetPath(
+            assetPath.GetAssetPath(),
+            env.asset_resolver.get_allow_parent_relative_paths());
         if (sanitized_path.empty()) {
           PushWarn(fmt::format("Unsafe envmap asset path: `{}`",
                                assetPath.GetAssetPath()));
@@ -397,10 +440,10 @@ bool RenderSceneConverter::ConvertDomeLight(
             resolvedPath, sanitized_path, &asset, &readWarn, &readErr);
 
         if (asset_opened) {
-          if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+          if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
             PushWarn(fmt::format(
                 "Envmap asset exceeds max bytes ({} > {}).",
-                asset.size(), security_policy::kResolverMaxAssetReadBytes));
+                asset.size(), security_policy::GetMaxAssetReadBytes()));
             continue;
           }
           TextureImage texImage;
@@ -539,6 +582,10 @@ bool RenderSceneConverter::ConvertDiskLight(
     return false;
   }
 
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
   // Extract radius
   if (light.radius.authored() && !light.radius.is_blocked()) {
     float val;
@@ -568,6 +615,10 @@ bool RenderSceneConverter::ConvertCylinderLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -608,6 +659,10 @@ bool RenderSceneConverter::ConvertGeometryLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 

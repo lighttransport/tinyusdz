@@ -11,6 +11,10 @@ constexpr float kPi = 3.14159265358979323846f;
 constexpr float kDeg2Rad = kPi / 180.0f;
 constexpr float kPitchLimit = 89.0f * kDeg2Rad;
 
+float Clamp(float v, float lo, float hi) {
+  return std::max(lo, std::min(hi, v));
+}
+
 light3d::Vec3 DirFromAngles(float yaw, float pitch, int upAxis) {
   const float cp = std::cos(pitch);
   const float sp = std::sin(pitch);
@@ -21,6 +25,31 @@ light3d::Vec3 DirFromAngles(float yaw, float pitch, int upAxis) {
     return light3d::Vec3{sy * cp, cy * cp, sp};
   }
   return light3d::Vec3{sy * cp, sp, cy * cp};  // +Y up: ground = XZ plane
+}
+
+light3d::Vec3 RotateAroundAxis(light3d::Vec3 v, light3d::Vec3 axis,
+                               float angle) {
+  axis = light3d::normalize(axis);
+  if (light3d::length(axis) < 1e-6f || !std::isfinite(angle)) return v;
+  const float c = std::cos(angle);
+  const float s = std::sin(angle);
+  return v * c + light3d::cross(axis, v) * s +
+         axis * (light3d::dot(axis, v) * (1.0f - c));
+}
+
+void AnglesFromDir(const light3d::Vec3& dir, int upAxis, float* yaw,
+                   float* pitch) {
+  if (!yaw || !pitch) return;
+  const light3d::Vec3 n = light3d::normalize(dir);
+  if (light3d::length(n) < 1e-6f) return;
+  if (upAxis == 2) {
+    *pitch = std::asin(Clamp(n.z, -1.0f, 1.0f));
+    *yaw = std::atan2(n.x, n.y);
+  } else {
+    *pitch = std::asin(Clamp(n.y, -1.0f, 1.0f));
+    *yaw = std::atan2(n.x, n.z);
+  }
+  *pitch = Clamp(*pitch, -kPitchLimit, kPitchLimit);
 }
 }  // namespace
 
@@ -72,25 +101,64 @@ void OrbitCamera::setClipPlanes(float nearPlaneValue, float farPlaneValue) {
 
 void OrbitCamera::orbit(float dxPix, float dyPix) {
   const float k = 0.008f * orbitSensitivity_;
-  yaw_ += dxPix * k;
-  pitch_ += dyPix * k;
-  pitch_ = std::max(-kPitchLimit, std::min(kPitchLimit, pitch_));
+  if (!std::isfinite(dxPix) || !std::isfinite(dyPix)) return;
+
+  light3d::Vec3 viewFromTarget = eye() - target_;
+  if (light3d::length(viewFromTarget) < 1e-6f) {
+    viewFromTarget = DirFromAngles(yaw_, pitch_, upAxis_) * distance_;
+  }
+
+  // Maya-style tumble: horizontal motion yaws around the scene up axis; vertical
+  // motion pitches around the current camera-right axis. This keeps the pivot
+  // fixed and makes the drag operate in the current view basis instead of just
+  // accumulating Euler components.
+  const light3d::Vec3 up = worldUp();
+  const float yawPixels = invertYaw_ ? -dxPix : dxPix;
+  viewFromTarget = RotateAroundAxis(viewFromTarget, up, yawPixels * k);
+
+  const light3d::Vec3 fwd = light3d::normalize(-viewFromTarget);
+  light3d::Vec3 right = light3d::normalize(light3d::cross(fwd, up));
+  if (light3d::length(right) < 1e-6f) {
+    right = light3d::Vec3{1, 0, 0};
+  }
+  viewFromTarget = RotateAroundAxis(viewFromTarget, right, -dyPix * k);
+
+  AnglesFromDir(viewFromTarget, upAxis_, &yaw_, &pitch_);
+}
+
+// Reference distance for pan/dolly speed. Pan is proportional to distance so a
+// drag moves a consistent screen fraction -- but on a large scene the framed
+// distance is huge (pan feels hyper-fast), and after dollying in close it goes
+// near zero (pan appears frozen). Clamp the reference into a band around the
+// scene radius so the speed stays usable at both ends of the zoom range.
+float OrbitCamera::moveRefDistance() const {
+  if (!(sceneRadius_ > 1e-4f)) return distance_;
+  // Pan/dolly are distance-proportional so a drag pans a consistent screen
+  // fraction at any zoom. Clamp only the extremes relative to the scene: a tiny
+  // floor avoids freezing at extreme zoom-in, and a ceiling near one scene
+  // diameter keeps a framed (zoomed-way-out) drag from flinging across a huge,
+  // far-from-origin scene like the Caldera districts.
+  const float lo = sceneRadius_ * 0.001f;
+  const float hi = sceneRadius_ * 1.5f;
+  return std::max(lo, std::min(distance_, hi));
 }
 
 void OrbitCamera::pan(float dxPix, float dyPix) {
-  // Camera basis (relative to the world up axis).
+  // Camera basis (relative to the world up axis). Near the pole the forward axis
+  // approaches worldUp; pitch is clamped to <90 so the cross stays well-defined.
   light3d::Vec3 fwd = light3d::normalize(target_ - eye());
   light3d::Vec3 right = light3d::normalize(light3d::cross(fwd, worldUp()));
   light3d::Vec3 up = light3d::cross(right, fwd);
-  const float scale = distance_ * 0.0015f * panSensitivity_;
+  const float scale = moveRefDistance() * 0.0015f * panSensitivity_;
   target_ = target_ - right * (dxPix * scale) + up * (dyPix * scale);
 }
 
 void OrbitCamera::dolly(float amount) {
-  // Exponential zoom keeps the feel consistent at any distance.
+  // Exponential zoom: distance scales by a constant factor per notch, so the
+  // feel is consistent at any distance (and it never reaches 0).
   const float signedAmount = invertDolly_ ? -amount : amount;
   distance_ *= std::exp(-signedAmount * 0.12f * dollySensitivity_);
-  distance_ = std::max(distance_, 1e-3f);
+  distance_ = std::max(distance_, 1e-4f);
 }
 
 void OrbitCamera::setPreset(CameraViewPreset preset) {
