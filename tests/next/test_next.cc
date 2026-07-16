@@ -4,15 +4,20 @@
 // TinyUSDZ Next - Unit tests
 
 #include <iostream>
+#include <fstream>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <limits>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "next/types/type-id.hh"
 #include "next/types/type-info.hh"
 #include "next/types/value.hh"
+#include "next/crate/lazy-array.hh"
 #include "next/prim/path.hh"
 #include "next/prim/attribute.hh"
 #include "next/prim/prim.hh"
@@ -23,10 +28,19 @@
 #include "next/reader/usda-reader.hh"
 #include "next/schema/physics-api.hh"
 #include "next/schema/physics-joint.hh"
+#include "next/tinyusdz-next.hh"
 
 using namespace tinyusdz::next;
 
 namespace {
+
+#if !defined(TINYUSDZ_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+    !defined(__wasi__) &&                                             \
+    (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
+constexpr bool kExpectUsdaLazyMmap = true;
+#else
+constexpr bool kExpectUsdaLazyMmap = false;
+#endif
 
 std::string UsdaFixturePath(const std::string& filename) {
   const std::string file_path(__FILE__);
@@ -446,6 +460,168 @@ def Sphere "MySphere" {
   std::cout << "  USDAReader tests passed!" << std::endl;
 }
 
+void test_usda_lazy_parse_policies() {
+  std::cout << "Testing USDA lazy parse policies..." << std::endl;
+
+  const char* input = R"(#usda 1.0
+def Mesh "MeshA" {
+    int[] small = [1, 2]
+    int[] large = [1, 2, 3, 4]
+    point3f[] points = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
+}
+)";
+
+  // Lazy parsing disabled by default -> every supported array is eager.
+  {
+    LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("small"));
+    assert(!mesh.GetPropertyValue("small")->is_lazy());
+    assert(!mesh.GetPropertyValue("large")->is_lazy());
+    assert(!mesh.GetPropertyValue("points")->is_lazy());
+  }
+
+  LoadOptions enabled_opts;
+  enabled_opts.parse_options.enable_usda_lazy_arrays = true;
+
+  // Enable lazy arrays with default policy -> all supported arrays become lazy.
+  {
+    LoadResult result =
+        LoadUSDAFromString(input, std::strlen(input), enabled_opts);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("small")->is_lazy());
+    assert(mesh.GetPropertyValue("large")->is_lazy());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    assert(!points->lazy_ref()->source->is_mmapped());
+    assert(!points->lazy_ref()->source->can_borrow());
+    assert(points->array_size() == 3);
+    assert(points->as_float_array());
+  }
+
+  // Owned string parsing adopts the caller's buffer as the retained lazy source.
+  // This is the WASM/browser path after JS bytes have already been copied into a
+  // C++ string; it avoids a second full USDA source copy.
+  {
+    std::string owned(input);
+    LoadResult result = LoadUSDAFromStringOwned(std::move(owned), enabled_opts);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    assert(!points->lazy_ref()->source->is_mmapped());
+    assert(!points->lazy_ref()->source->can_borrow());
+    const std::vector<float>* values = points->as_float_array();
+    assert(values && values->size() == 9);
+    assert((*values)[0] == 1.0f && (*values)[8] == 9.0f);
+  }
+
+  // Top-level owned memory loader should take the same single-copy USDA path.
+  {
+    std::string owned(input);
+    LoadUSDOptions opts;
+    opts.usda_options = enabled_opts;
+    Stage stage;
+    std::string warn, err;
+    bool ok = LoadUSDFromMemoryOwned(std::move(owned), &stage, opts, &warn, &err);
+    assert(ok);
+    UsdPrim mesh = stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    assert(!points->lazy_ref()->source->is_mmapped());
+    assert(points->array_size() == 3);
+    assert(points->as_float_array());
+  }
+
+  // File-backed lazy parsing should retain the source through mmap on native
+  // POSIX builds, avoiding the extra full-file string copy kept by the string
+  // input path above.
+  {
+    const char* path = "/tmp/tinyusdz_next_usda_lazy_mmap_test.usda";
+    {
+      std::ofstream f(path, std::ios::binary);
+      f << input;
+    }
+
+    LoadResult result = LoadUSDAFromFile(path, enabled_opts);
+    std::remove(path);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    if (kExpectUsdaLazyMmap) {
+      assert(points->lazy_ref()->source->is_mmapped());
+    } else {
+      assert(!points->lazy_ref()->source->is_mmapped());
+    }
+    assert(!points->lazy_ref()->source->can_borrow());
+    assert(points->array_size() == 3);
+    const std::vector<float>* values = points->as_float_array();
+    assert(values && values->size() == 9);
+    assert((*values)[0] == 1.0f && (*values)[8] == 9.0f);
+  }
+
+  // Tight max element policy should keep oversized arrays eager.
+  {
+    LoadOptions limited = enabled_opts;
+    limited.parse_options.max_usda_lazy_array_elements = 2;
+    LoadResult result =
+        LoadUSDAFromString(input, std::strlen(input), limited);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("small")->is_lazy());
+    assert(!mesh.GetPropertyValue("large")->is_lazy());
+    assert(!mesh.GetPropertyValue("points")->is_lazy());
+  }
+
+  // 0 => no cap.
+  {
+    LoadOptions unlimited = enabled_opts;
+    unlimited.parse_options.max_usda_lazy_array_elements = 0;
+    LoadResult result =
+        LoadUSDAFromString(input, std::strlen(input), unlimited);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("large")->is_lazy());
+  }
+
+  // Non-simple arrays are still parsed correctly, but not captured lazily.
+  const char* comments = R"(#usda 1.0
+def Mesh "MeshB" {
+    int[] with_comment = [1, # inline comment
+        2, 3]
+}
+)";
+  {
+    LoadResult result =
+        LoadUSDAFromString(comments, std::strlen(comments), enabled_opts);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshB");
+    assert(mesh.IsValid());
+    const Value* with_comment = mesh.GetPropertyValue("with_comment");
+    assert(with_comment);
+    assert(!with_comment->is_lazy());
+    const std::vector<int32_t>* values = with_comment->as_int_array();
+    assert(values && values->size() == 3);
+    assert((*values)[1] == 2);
+  }
+
+  std::cout << "  USDA lazy parse policy tests passed!" << std::endl;
+}
+
 // ============================================================
 // Arc list-op qualifiers (prepend / append / delete)
 // ============================================================
@@ -514,6 +690,10 @@ void test_physics_schema() {
   std::cout << "Testing physics schema readers..." << std::endl;
 
   const char* input = R"(#usda 1.0
+(
+    upAxis = "Z"
+)
+
 def Xform "Body" (
     prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
 )
@@ -536,16 +716,53 @@ def PhysicsScene "Scene"
 {
 }
 
+def PhysicsScene "AuthoredScene"
+{
+    vector3f physics:gravityDirection = (0, -1, 0)
+    float physics:gravityMagnitude = 3
+}
+
 def PhysicsRevoluteJoint "Joint"
 {
+    token physics:axis = "Z"
     point3f physics:localPos0 = (1, 0, 0)
     point3f physics:localPos1 = (0, 1, 0)
+}
+
+def PhysicsSliderJoint "Slider"
+{
+    token physics:axis = "Y"
+    float physics:lowerLimit = -2
+    float physics:upperLimit = 4
 }
 
 def PhysicsSphericalJoint "Ball"
 {
     float physics:coneAngle0Limit = 30
     float physics:coneAngle1Limit = 45
+}
+
+def PhysicsBallJoint "BallAlias"
+{
+    float physics:coneAngle0Limit = 15
+    float physics:coneAngle1Limit = 25
+}
+
+def Mesh "MeshCollider" (
+    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"]
+)
+{
+    token physics:approximation = "convexHull"
+}
+
+def PhysicsJoint "Driven" (
+    prepend apiSchemas = ["PhysicsDriveAPI:rotX", "PhysicsLimitAPI:transY"]
+)
+{
+    token physics:drive:rotX:type = "acceleration"
+    float physics:drive:rotX:maxForce = 8
+    float physics:limit:transY:low = -1
+    float physics:limit:transY:high = 2
 }
 )";
 
@@ -600,6 +817,31 @@ def PhysicsSphericalJoint "Ball"
   UsdPrim scene = result.stage.GetPrimAtPath("/Scene");
   assert(scene.IsValid());
   assert(!IsPhysicsJoint(scene));
+  PhysicsSceneData scene_data;
+  assert(GetPhysicsSceneData(result.stage, scene, &scene_data));
+  assert(std::abs(scene_data.gravityMagnitude - 9.81f) < 0.001f);
+  assert(std::abs(scene_data.gravityDirection[0]) < 0.001f);
+  assert(std::abs(scene_data.gravityDirection[1]) < 0.001f);
+  assert(std::abs(scene_data.gravityDirection[2] + 1.0f) < 0.001f);
+
+  UsdPrim authored_scene = result.stage.GetPrimAtPath("/AuthoredScene");
+  assert(authored_scene.IsValid());
+  PhysicsSceneData authored_scene_data;
+  assert(GetPhysicsSceneData(result.stage, authored_scene, &authored_scene_data));
+  assert(std::abs(authored_scene_data.gravityMagnitude - 3.0f) < 0.001f);
+  assert(std::abs(authored_scene_data.gravityDirection[1] + 1.0f) < 0.001f);
+
+  PhysicsRevoluteJointData rj;
+  assert(GetPhysicsRevoluteJointData(result.stage, joint, &rj, 0.0));
+  assert(std::abs(rj.axis[2] - 1.0f) < 0.001f);
+
+  UsdPrim slider = result.stage.GetPrimAtPath("/Slider");
+  assert(slider.IsValid());
+  PhysicsSliderJointData slider_data;
+  assert(GetPhysicsSliderJointData(result.stage, slider, &slider_data, 0.0));
+  assert(std::abs(slider_data.axis[1] - 1.0f) < 0.001f);
+  assert(std::abs(slider_data.lowerLimit + 2.0f) < 0.001f);
+  assert(std::abs(slider_data.upperLimit - 4.0f) < 0.001f);
 
   UsdPrim ball = result.stage.GetPrimAtPath("/Ball");
   assert(ball.IsValid());
@@ -607,6 +849,30 @@ def PhysicsSphericalJoint "Ball"
   assert(GetPhysicsSphericalJointData(result.stage, ball, &sj, 0.0));
   assert(std::abs(sj.coneAngle0Limit - 30.0f) < 0.001f);
   assert(std::abs(sj.coneAngle1Limit - 45.0f) < 0.001f);
+
+  UsdPrim ball_alias = result.stage.GetPrimAtPath("/BallAlias");
+  assert(ball_alias.IsValid());
+  PhysicsBallJointData ball_alias_data;
+  assert(GetPhysicsBallJointData(result.stage, ball_alias, &ball_alias_data, 0.0));
+  assert(std::abs(ball_alias_data.coneAngle0Limit - 15.0f) < 0.001f);
+  assert(std::abs(ball_alias_data.coneAngle1Limit - 25.0f) < 0.001f);
+
+  UsdPrim mesh_collider = result.stage.GetPrimAtPath("/MeshCollider");
+  assert(mesh_collider.IsValid());
+  PhysicsMeshCollisionData mesh_collision;
+  assert(GetPhysicsMeshCollisionData(mesh_collider, &mesh_collision));
+  assert(mesh_collision.approximation == "convexHull");
+
+  UsdPrim driven = result.stage.GetPrimAtPath("/Driven");
+  assert(driven.IsValid());
+  PhysicsDriveData drive;
+  assert(GetPhysicsDriveData(driven, "rotX", &drive));
+  assert(drive.type == "acceleration");
+  assert(std::abs(drive.maxForce - 8.0f) < 0.001f);
+  PhysicsLimitData limit;
+  assert(GetPhysicsLimitData(driven, "transY", &limit));
+  assert(std::abs(limit.low + 1.0f) < 0.001f);
+  assert(std::abs(limit.high - 2.0f) < 0.001f);
 
   {
     LoadResult fixture =
@@ -647,6 +913,158 @@ def PhysicsSphericalJoint "Ball"
   std::cout << "  physics schema tests passed!" << std::endl;
 }
 
+void test_load_usd_from_memory() {
+  std::cout << "Testing LoadUSDFromMemory..." << std::endl;
+
+  const char* usda = R"(#usda 1.0
+def Xform "root" {
+  def Mesh "geom" {
+    float radius = 3.0
+  }
+}
+)";
+
+  // USDA sniffed from content
+  Stage stage;
+  std::string warn, err;
+  bool ok = LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(usda),
+                              std::strlen(usda), &stage, &warn, &err);
+  assert(ok && "memory load should succeed");
+  assert(stage.GetPrimAtPath("/root/geom").IsValid());
+
+  // USDC: write the stage to memory, load it back
+  std::vector<uint8_t> usdc;
+  USDCWriteResult wres = WriteUSDCToMemory(usdc, stage);
+  assert(wres.success && "usdc memory write should succeed");
+  Stage stage2;
+  ok = LoadUSDFromMemory(usdc.data(), usdc.size(), &stage2, &warn, &err);
+  assert(ok && "usdc memory load should succeed");
+  assert(stage2.GetPrimAtPath("/root/geom").IsValid());
+
+  // Garbage input fails cleanly
+  const uint8_t garbage[] = {0xFF, 0xFE, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  Stage stage3;
+  err.clear();
+  ok = LoadUSDFromMemory(garbage, sizeof(garbage), &stage3, &warn, &err);
+  assert(!ok && !err.empty() && "garbage input should fail with an error");
+
+  // Empty input fails cleanly
+  ok = LoadUSDFromMemory(nullptr, 0, &stage3, &warn, &err);
+  assert(!ok && "empty input should fail");
+
+  std::cout << "  LoadUSDFromMemory tests passed!" << std::endl;
+}
+
+void test_stage_session_variants() {
+  std::cout << "Testing StageSession path-scoped variants..." << std::endl;
+  const char* path = "/tmp/tinyusdz_next_stage_session.usda";
+  {
+    std::ofstream ofs(path);
+    ofs << R"(#usda 1.0
+def Xform "A" (
+  variants = { string model = "low" }
+  prepend variantSets = "model"
+) {
+  variantSet "model" = {
+    "low" { int level = 1 }
+    "high" { int level = 2 }
+  }
+}
+def Xform "B" (
+  variants = { string model = "low" }
+  prepend variantSets = "model"
+) {
+  variantSet "model" = {
+    "low" { int level = 1 }
+    "high" { int level = 2 }
+  }
+}
+)";
+  }
+
+  StageSession session;
+  assert(session.OpenFile(path));
+  assert(session.IsComposed());
+  assert(session.SetVariantSelection(Path("/A"), "model", "high"));
+  const Value* a = session.GetStage().GetPrimAtPath("/A").GetPropertyValue("level");
+  const Value* b = session.GetStage().GetPrimAtPath("/B").GetPropertyValue("level");
+  assert(a && a->as_int() && *a->as_int() == 2);
+  assert(b && b->as_int() && *b->as_int() == 1);
+  assert(session.ClearVariantSelection(Path("/A"), "model"));
+  a = session.GetStage().GetPrimAtPath("/A").GetPropertyValue("level");
+  assert(a && a->as_int() && *a->as_int() == 1);
+  std::remove(path);
+  std::cout << "  StageSession variant tests passed!" << std::endl;
+}
+
+void test_stage_session_payloads_and_cancel() {
+  std::cout << "Testing StageSession payload edits and cancellation..."
+            << std::endl;
+  const char* root_path = "/tmp/tinyusdz_next_session_root.usda";
+  const char* payload_path = "/tmp/tinyusdz_next_session_payload.usda";
+  {
+    std::ofstream ofs(payload_path);
+    ofs << "#usda 1.0\ndef Xform \"Payload\" { int loadedValue = 7 }\n";
+  }
+  {
+    std::ofstream ofs(root_path);
+    ofs << "#usda 1.0\ndef Xform \"P\" (payload = "
+           "@tinyusdz_next_session_payload.usda@</Payload>) {}\n"
+           "def Xform \"Q\" (payload = "
+           "@tinyusdz_next_session_payload.usda@</Payload>) {}\n";
+  }
+
+  StageSessionOptions options;
+  options.composition.load_payloads = false;
+  options.cache_retention = CacheRetention::LayersOnly;
+  StageSession session;
+  assert(session.OpenFile(root_path, options));
+  StageSessionMemoryStats initial_stats = session.GetMemoryStats();
+  assert(initial_stats.source_layer_bytes > 0);
+  assert(initial_stats.composed_stage_bytes > 0);
+  assert(initial_stats.prim_index_count == 0);
+  assert(session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
+         nullptr);
+  assert(!session.GetDeferredPayloadPaths().empty());
+  assert(session.LoadPayloads({Path("/P"), Path("/Q")}));
+  const Value* loaded =
+      session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
+  loaded = session.GetStage().GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
+  assert(session.GetMemoryStats().prim_index_count == 0);
+  assert(session.UnloadPayload(Path("/P")));
+  assert(session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
+         nullptr);
+  Stage taken = session.TakeStage();
+  assert(!session.IsOpen());
+  assert(!session.IsComposed());
+  loaded = taken.GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
+
+  StageSessionOptions cancelled_options;
+  cancelled_options.progress_callback =
+      [](const ProgressEvent&) { return false; };
+  StageSession cancelled;
+  assert(!cancelled.OpenFile(root_path, cancelled_options));
+  assert(!cancelled.IsOpen());
+  assert(!cancelled.GetDiagnostics().empty());
+
+  StageSessionOptions tiny_budget;
+  tiny_budget.max_total_memory = 1;
+  StageSession budgeted;
+  assert(!budgeted.OpenFile(root_path, tiny_budget));
+  bool saw_memory_budget = false;
+  for (const Diagnostic& diagnostic : budgeted.GetDiagnostics()) {
+    if (diagnostic.code == "memory_budget") saw_memory_budget = true;
+  }
+  assert(saw_memory_budget);
+
+  std::remove(root_path);
+  std::remove(payload_path);
+  std::cout << "  StageSession payload/cancel tests passed!" << std::endl;
+}
+
 // ============================================================
 // Main
 // ============================================================
@@ -664,9 +1082,13 @@ int main() {
     test_value_parser();
     test_ascii_parser();
     test_usda_reader();
+    test_usda_lazy_parse_policies();
     test_arc_listops();
     test_arc_layer_offset_parse();
     test_physics_schema();
+    test_load_usd_from_memory();
+    test_stage_session_variants();
+    test_stage_session_payloads_and_cancel();
 
     std::cout << std::endl;
     std::cout << "All tests passed!" << std::endl;

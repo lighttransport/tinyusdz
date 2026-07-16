@@ -195,7 +195,8 @@ class PreviewSurfaceShader {
   ShaderParam<float> ior{1.5f};
   ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
   ShaderParam<float> displacement{0.0f};
-  ShaderParam<float> occlusion{0.0f};
+  // UsdPreviewSurface spec: `occlusion` fallback is 1.0 (fully unoccluded).
+  ShaderParam<float> occlusion{1.0f};
 
   // LTE SpectralAPI: Optional spectral properties
   // Only exported if has_data() returns true

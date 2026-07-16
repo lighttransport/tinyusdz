@@ -8,6 +8,8 @@
 #pragma once
 
 #include "../layer/layer.hh"
+#include "expression-variables.hh"
+#include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
 #include <string>
 #include <vector>
@@ -52,12 +54,26 @@ struct VariantSelection {
 
 /// Composition options
 struct CompositionOptions {
+  bool strict_aousd_conformance = false;
+  ExpressionVariablePolicy expression_variable_policy =
+      ExpressionVariablePolicy::Evaluate;
   bool load_payloads = true;              // Load payloads (false = unloaded)
   bool resolve_inherits = true;           // Resolve inherits
   bool resolve_specializes = true;        // Resolve specializes
   bool resolve_variants = true;           // Apply variant selections
   int max_depth = 100;                    // Max composition recursion depth
   std::vector<std::string> muted_layers;  // Layers to skip
+  // Flatten pipeline memory/parse policy for external USDA layers loaded by the
+  // low-memory compositing path.
+  size_t max_layer_memory = 0;
+  ParseOptions usda_parse_options = {};
+
+  // Strongest variant selections for flattening. Keys are either a bare
+  // variant-set name ("shape" — applies to every prim carrying that set) or
+  // prim-scoped "<primPath>{<set>}" ("/World/B{shape}" — applies to that
+  // prim only and wins over the bare-set key; pxr keys selections per prim).
+  // Empty keeps authored selections.
+  std::map<std::string, std::string> variant_overrides;
 };
 
 /// Composition error
@@ -86,7 +102,12 @@ public:
   void SetLayerLoader(LayerLoader loader) { layer_loader_ = std::move(loader); }
 
   /// Set composition options
-  void SetOptions(const CompositionOptions& options) { options_ = options; }
+  void SetOptions(const CompositionOptions& options) {
+    options_ = options;
+    if (options_.strict_aousd_conformance) {
+      options_.usda_parse_options.strict_aousd_conformance = true;
+    }
+  }
   const CompositionOptions& GetOptions() const { return options_; }
 
   // ============================================================
@@ -138,10 +159,15 @@ public:
   /// the source (arc-local) namespace into the composed namespace — pass the
   /// arc's NamespaceMapping::Apply so a referenced asset's internal targets
   /// resolve to their flattened paths. Default (empty) leaves targets verbatim.
+  /// `dict_conflicts`, if set, collects dotted key paths of dictionary TYPE
+  /// CONFLICTS met while merging weaker dictionary-valued metadata (a key
+  /// that is a dictionary on one side and a scalar on the other; the
+  /// stronger opinion wins but the weaker subtree is silently shadowed).
   static void CopyLocalOpinions(
       PrimSpec& target, const PrimSpec& source, double time_offset = 0.0,
       double time_scale = 1.0,
-      const std::function<std::string(const std::string&)>& remap_path = {});
+      const std::function<std::string(const std::string&)>& remap_path = {},
+      std::vector<std::string>* dict_conflicts = nullptr);
 
   // ============================================================
   // Layer cache
@@ -182,6 +208,17 @@ private:
   std::shared_ptr<std::map<std::string, std::shared_ptr<Layer>>>
       composed_ext_cache_;
   std::shared_ptr<std::set<std::string>> composing_ext_;
+  // Resolved sublayer paths currently being composed (cycle guard; shared
+  // across the recursion like composing_ext_).
+  std::shared_ptr<std::set<std::string>> composing_sublayers_;
+  // Arc strings deleted by STRONGER layers, per prim path. Consulted by
+  // ResolveArcsForPrim during the nested sublayer composition, where a weaker
+  // layer's reference would otherwise be resolved (baked) before the
+  // stronger layer's `delete references = ...` can remove it.
+  std::map<std::string, std::set<std::string>> pending_arc_deletes_;
+  void CollectArcDeletes(const Layer& layer);
+  bool ArcDeletedByStronger(const std::string& prim_path,
+                            const std::string& arc) const;
 
   // Composition state (for cycle detection)
   std::vector<std::string> composition_stack_;
@@ -220,10 +257,21 @@ private:
                      const std::string& anchor_path, int depth);
   // Graft the descendant subtree of `src_root` in `src` under `dst_root`.
   void GraftSubtree(const Layer& src, const std::string& src_anchor,
-                    const std::string& src_root,
-                    const std::string& dst_root);
+                    const std::string& src_root, const std::string& dst_root,
+                    double t_offset = 0.0, double t_scale = 1.0);
   bool ApplyVariants(PrimSpec& prim, const Layer& layer,
                      const std::string& anchor_path, int depth);
+  void ApplyOneVariant(PrimSpec& prim, const Layer& layer,
+                       const std::string& anchor_path, int depth,
+                       const VariantData& variant);
+
+  // Resolve every remaining sparse array edit in the fully composed layer
+  // against its (absent -> empty) base array, like pxr's flatten. Runs only
+  // at the TOP-LEVEL Compose (compose_depth_ == 1): a nested compose result
+  // (sublayer / referenced layer) is one opinion among many, and its edits
+  // must survive to stack against the arcs still to come.
+  void ResolveArrayEditsInLayer(Layer& layer);
+  int compose_depth_ = 0;
 
   // Helper methods
   void AddError(const std::string& msg, const std::string& prim_path,

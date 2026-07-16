@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "next/eval/attribute-eval.hh"
+#include "next/layer/asset-anchor.hh"
 #include "next/layer/layer.hh"
 #include "next/tinyusdz-next.hh"
 #include "next/writer/usda-writer.hh"
@@ -146,6 +147,7 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.begin_prim("Lib", "Scope");
   lb.begin_prim("Model", "Mesh");
   lb.add_property("size", Value::MakeFloat3(1.0f, 2.0f, 3.0f));
+  lb.add_relationship("inside", Path("/Lib/Model/Inner"));
   lb.begin_prim("Inner", "Sphere");
   lb.end_prim();  // Inner
   lb.end_prim();  // Model
@@ -1020,6 +1022,7 @@ static void test_deferred_payload() {
   assert(!cache.HasDeferredPayload(Path("/World/P")));
   Stage stage2;
   assert(cache.BuildStage(&stage2, &warn, &err));
+  assert(stage2.GetPrimAtPath("/World/P").IsLoaded());
   UsdPrim p2 = stage2.GetPrimAtPath("/World/P");
   assert(p2.GetPropertyValue("size") != nullptr && "payload did not load");
   assert(stage2.GetPrimAtPath("/World/P/Inner").IsValid());
@@ -1052,6 +1055,8 @@ static void test_load_rules_lifecycle() {
          "UnloadPayload left HasDeferredPayload stale");
   Stage s1;
   assert(cache.BuildStage(&s1, &warn, &err));
+  assert(!s1.GetPrimAtPath("/World/P").IsLoaded() &&
+         "populated stage lost deferred-payload state");
   assert(!s1.GetPrimAtPath("/World/P/Inner").IsValid() && "payload content leaked after unload");
 
   // Load it back with descendants.
@@ -1059,6 +1064,7 @@ static void test_load_rules_lifecycle() {
   assert(!cache.HasDeferredPayload(Path("/World/P")));
   Stage s2;
   assert(cache.BuildStage(&s2, &warn, &err));
+  assert(s2.GetPrimAtPath("/World/P").IsLoaded());
   assert(s2.GetPrimAtPath("/World/P/Inner").IsValid() && "payload did not reload");
   std::cout << "  OK" << std::endl;
 }
@@ -1663,12 +1669,33 @@ static void test_instance_proxy() {
   // The prototype owns the referenced child; the instance's subtree is NOT
   // duplicated in the layer.
   assert(stage.GetPrimAtPath("/World/Inst1/Inner").IsValid());
-  assert(!stage.GetPrimAtPath("/World/Inst2/Inner").IsValid() &&
+  assert(stage.GetRootLayer()->prim_at_path("/World/Inst2/Inner") == nullptr &&
          "instance subtree was duplicated");
+  UsdPrim direct_proxy = stage.GetPrimAtPath("/World/Inst2/Inner");
+  assert(direct_proxy.IsValid() &&
+         direct_proxy.GetPath().str() == "/World/Inst2/Inner" &&
+         "direct instance-proxy lookup failed");
 
   // ...but child access through the instance is transparent (proxy).
   assert(i2.GetChildCount() == i1.GetChildCount());
-  assert(i2.GetChild("Inner").IsValid() && "instance proxy child access failed");
+  assert(i2.GetPropertyValue("size") != nullptr &&
+         "instance root must expose prototype properties");
+  const std::vector<std::string> instance_properties = i2.GetPropertyNames();
+  assert(std::find(instance_properties.begin(), instance_properties.end(),
+                   "size") != instance_properties.end());
+  const std::vector<std::string> instance_relationships =
+      i2.GetRelationshipNames();
+  assert(std::find(instance_relationships.begin(), instance_relationships.end(),
+                   "inside") != instance_relationships.end());
+  UsdPrim proxy_child = i2.GetChild("Inner");
+  assert(proxy_child.IsValid() && "instance proxy child access failed");
+  assert(proxy_child.GetPath().str() == "/World/Inst2/Inner" &&
+         proxy_child.GetParent().GetPath().str() == "/World/Inst2");
+  std::vector<Path> forwarded;
+  assert(i2.GetForwardedRelationshipTargets("inside", &forwarded));
+  assert(forwarded.size() == 1 &&
+         forwarded[0].str() == "/World/Inst2/Inner" &&
+         "prototype relationship target was not mapped into instance namespace");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1797,34 +1824,34 @@ static void test_implied_intermediate() {
   auto B = std::make_shared<Layer>();
   {
     LayerBuilder bb(*B);
+    bb.begin_prim("B", "Mesh");
+    bb.current()->meta().inherits.push_back("</B/_class_Foo>");
     bb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
     bb.add_property("fooB", Value::MakeFloat3(1, 0, 0));
     bb.end_prim();
-    bb.begin_prim("B", "Mesh");
-    bb.current()->meta().inherits.push_back("</_class_Foo>");
     bb.end_prim();
     bb.finalize();
   }
   auto A = std::make_shared<Layer>();
   {
     LayerBuilder ab(*A);
+    ab.begin_prim("A", "");
+    ab.current()->meta().references.push_back("@assetB@</B>");
     ab.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
     ab.add_property("fooA", Value::MakeFloat3(0, 1, 0));
     ab.end_prim();
-    ab.begin_prim("A", "");
-    ab.current()->meta().references.push_back("@assetB@</B>");
     ab.end_prim();
     ab.finalize();
   }
   auto rootL = std::make_shared<Layer>();
   {
     LayerBuilder rb(*rootL);
-    rb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
-    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
-    rb.end_prim();
     rb.begin_prim("World", "Xform");
     rb.begin_prim("T", "");
     rb.current()->meta().references.push_back("@assetA@</A>");
+    rb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
+    rb.end_prim();
     rb.end_prim();
     rb.end_prim();
     rb.finalize();
@@ -2192,6 +2219,75 @@ static void test_sublayer_authored_reference_anchor() {
   std::cout << "  OK" << std::endl;
 }
 
+// payload_policy_with_prim must receive the payload's AUTHORING PrimSpec after
+// list-op merging across the layer stack, not the strongest spec. The root
+// layer holds the strongest spec (an `over`); the payload arc lives on the
+// weaker sublayer in a DIFFERENT directory, and only the authoring spec's
+// asset anchor lets a policy stat the relative payload path correctly.
+static void test_payload_policy_owner_anchor() {
+  std::cout << "test_payload_policy_owner_anchor..." << std::endl;
+  // /tmp/ppoa/root.usda      (strongest: over /World/P, no payload)
+  // /tmp/ppoa/sub/weak.usda  (def /World/P, prepend payload = @./pay.usda@)
+  // /tmp/ppoa/sub/pay.usda   (def Mesh "Pay" -- relative to sub/)
+  ::system("mkdir -p /tmp/ppoa/sub");
+  { std::ofstream f("/tmp/ppoa/sub/pay.usda");
+    f << "#usda 1.0\ndef Mesh \"Pay\" { custom int marker = 42 }\n"; }
+  { std::ofstream f("/tmp/ppoa/sub/weak.usda");
+    f << "#usda 1.0\n"
+         "def Xform \"World\"\n{\n"
+         "    def \"P\" (\n"
+         "        prepend payload = @./pay.usda@</Pay>\n"
+         "    )\n    {\n    }\n}\n"; }
+  { std::ofstream f("/tmp/ppoa/root.usda");
+    f << "#usda 1.0\n(\n    subLayers = [@sub/weak.usda@]\n)\n"
+         "over \"World\"\n{\n"
+         "    over \"P\"\n    {\n"
+         "        custom int strongOpinion = 1\n"
+         "    }\n}\n"; }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp/ppoa");
+
+  // Mimic LargeSceneLoader's budget policy: stat the relative asset against
+  // the OWNER's anchor and admit only if the file exists there.
+  std::vector<std::string> seen_anchors;
+  pcp::CompositionOptions opts;
+  opts.payload_policy_with_prim = [&seen_anchors](
+      const Path &, const std::string &asset, const PrimSpec &owner) -> bool {
+    const std::string &anchor = AssetAnchorPath(owner.asset_anchor_id());
+    seen_anchors.push_back(anchor);
+    if (anchor.empty()) return false;
+    std::ifstream probe(anchor + "/" + asset);
+    return probe.good();
+  };
+
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile("/tmp/ppoa/root.usda", resolver, &stage,
+                                   opts, &warn, &err));
+
+  // The policy saw the AUTHORING layer's anchor (sub/), not the root's.
+  assert(!seen_anchors.empty() && "payload policy was never consulted");
+  for (const std::string &anchor : seen_anchors) {
+    assert(anchor.find("/ppoa/sub") != std::string::npos &&
+           "policy owner is not the payload's authoring spec (wrong anchor)");
+  }
+
+  // And therefore the payload was admitted and composed.
+  UsdPrim p = stage.GetPrimAtPath("/World/P");
+  assert(p.IsValid() && p.GetTypeName() == "Mesh" &&
+         "cross-layer payload was deferred (policy stat used wrong anchor)");
+  assert(p.GetPropertyValue("marker") != nullptr &&
+         "payload content missing after owner-anchored admission");
+  assert(p.GetPropertyValue("strongOpinion") != nullptr &&
+         "root layer's stronger over lost during list-op merge");
+
+  std::remove("/tmp/ppoa/root.usda");
+  std::remove("/tmp/ppoa/sub/weak.usda");
+  std::remove("/tmp/ppoa/sub/pay.usda");
+  std::cout << "  OK" << std::endl;
+}
+
 // Sublayers: weaker layer-stack opinions fill stronger root opinions; roots,
 // child prims, and arcs authored only in a sublayer must still compose.
 static void test_sublayer_stack_composition() {
@@ -2481,8 +2577,18 @@ static void test_sublayer_cycle_and_depth() {
   resolver.SetWorkingDirectory("/tmp");
   std::string warn, err;
   auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root);
-  assert(!cycle_opened && "sublayer cycle should fail Cache::Open");
-  assert(cycle_opened.error().find("Sublayer cycle") != std::string::npos);
+  // pxr parity: a sublayer cycle is WARNED and the repeated layer skipped —
+  // the rest of the scene still composes (previously the whole load failed).
+  assert(cycle_opened && "sublayer cycle should warn + skip, not fail");
+  {
+    bool cycle_reported = false;
+    for (const auto& is : cycle_opened->GetCompositionIssues()) {
+      if (is.message.find("Sublayer cycle") != std::string::npos) {
+        cycle_reported = true;
+      }
+    }
+    assert(cycle_reported && "cycle must still be diagnosed");
+  }
 
   const std::string depth_sub = "/tmp/next_pcp_depth_sub.usda";
   {
@@ -2976,6 +3082,12 @@ static void test_typed_composition_issues() {
     lb.current()->meta().references.push_back("</A>");  // ancestor cycle
     lb.end_prim();
     lb.end_prim();
+    lb.begin_prim("Source", "Xform");
+    lb.end_prim();
+    lb.begin_prim("InvalidOffset", "");
+    lb.current()->meta().references.push_back(
+        "</Source>?layerOffset=0:0");
+    lb.end_prim();
     lb.finalize();
   }
 
@@ -2989,13 +3101,20 @@ static void test_typed_composition_issues() {
   assert(cache.BuildStage(&stage, nullptr, nullptr));
   const auto &issues = cache.GetCompositionIssues();
   bool saw_cycle = false;
+  bool saw_invalid_offset = false;
   for (const auto &iss : issues) {
     if (iss.code == EC::ArcCycle) {
       saw_cycle = true;
       assert(!iss.message.empty() && !iss.site.empty());
     }
+    if (iss.code == EC::InvalidReferenceOffset) {
+      saw_invalid_offset = true;
+      assert(iss.message.find("identity") != std::string::npos);
+    }
   }
   assert(saw_cycle && "ArcCycle issue must be recorded even with err==nullptr");
+  assert(saw_invalid_offset &&
+         "invalid arc offsets must surface a typed diagnostic");
 
   // Invalidate begins a fresh diagnostics cycle (and bounds accumulation).
   cache.Invalidate(Path("/A"));
@@ -3134,6 +3253,919 @@ static void test_variant_selected_field() {
   std::cout << "  OK" << std::endl;
 }
 
+
+// ------------------------------------------------------------------
+// Regression tests from the 2026-07 composition/pcp audit.
+// ------------------------------------------------------------------
+
+// Authored `active = false` must survive weaker sources (a referenced prim's
+// DEFAULT active=true used to flip it back — the inverse of LIVRPS).
+static void test_active_survives_weaker_arc() {
+  std::cout << "test_active_survives_weaker_arc..." << std::endl;
+  const std::string ref = "/tmp/next_act_ref.usda";
+  const std::string root = "/tmp/next_act_root.usda";
+  {
+    std::ofstream o(ref);
+    o << "#usda 1.0\ndef Xform \"R\"\n{\n    float x = 1\n}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"A\" (\n"
+         "    active = false\n"
+         "    prepend references = @./next_act_ref.usda@</R>\n"
+         ")\n{\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  UsdPrim a = stage.GetPrimAtPath("/A");
+  assert(a.IsValid());
+  assert(!a.IsActive() && "authored active=false clobbered by weaker source");
+  assert(a.GetPropertyValue("x") != nullptr && "reference still composes");
+  std::remove(ref.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// Relationship / connection targets pointing OUTSIDE a referenced subtree are
+// not expressible in the composed namespace and must be dropped (pxr warns
+// and drops); leaking them verbatim silently aliased unrelated stage prims.
+// In-scope targets keep retargeting.
+static void test_out_of_scope_targets_dropped() {
+  std::cout << "test_out_of_scope_targets_dropped..." << std::endl;
+  const std::string asset = "/tmp/next_scope_asset.usda";
+  const std::string root = "/tmp/next_scope_root.usda";
+  {
+    std::ofstream o(asset);
+    o << "#usda 1.0\n"
+         "def Xform \"Model\"\n{\n"
+         "    def Mesh \"Geo\"\n    {\n"
+         "        rel material:binding = </Materials/Red>\n"
+         "        rel ok = </Model/Geo>\n"
+         "    }\n"
+         "}\n"
+         "def Scope \"Materials\" { def Material \"Red\" { } }\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"W\" (prepend references = "
+         "@./next_scope_asset.usda@</Model>)\n{\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  UsdPrim geo = stage.GetPrimAtPath("/W/Geo");
+  assert(geo.IsValid());
+  const std::vector<Path>* binding = geo.GetRelationship("material:binding");
+  assert((!binding || binding->empty()) &&
+         "out-of-scope rel target must be dropped, not leaked verbatim");
+  const std::vector<Path>* ok = geo.GetRelationship("ok");
+  assert(ok && ok->size() == 1 && (*ok)[0].str() == "/W/Geo" &&
+         "in-scope rel target retargeted");
+  std::remove(asset.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// HasDeferredPayload must not depend on authored payload ORDER: with two
+// payloads where only one loads, a later loaded arc used to erase the
+// deferral marker set by an earlier deferred one.
+static void test_deferred_payload_marker_order() {
+  std::cout << "test_deferred_payload_marker_order..." << std::endl;
+  const std::string pay1 = "/tmp/next_def_p1.usda";
+  const std::string pay2 = "/tmp/next_def_p2.usda";
+  {
+    std::ofstream o(pay1);
+    o << "#usda 1.0\ndef Xform \"P1\" { float a = 1 }\n";
+  }
+  {
+    std::ofstream o(pay2);
+    o << "#usda 1.0\ndef Xform \"P2\" { float b = 2 }\n";
+  }
+  for (int order = 0; order < 2; ++order) {
+    const std::string root = "/tmp/next_def_root.usda";
+    {
+      std::ofstream o(root);
+      o << "#usda 1.0\n"
+           "def Xform \"A\" (prepend payload = [";
+      if (order == 0) {
+        o << "@./next_def_p2.usda@</P2>, @./next_def_p1.usda@</P1>";
+      } else {
+        o << "@./next_def_p1.usda@</P1>, @./next_def_p2.usda@</P2>";
+      }
+      o << "])\n{\n}\n";
+    }
+    AssetResolver resolver;
+    resolver.SetWorkingDirectory("/tmp");
+    pcp::CompositionOptions opts;
+    // Load only p1; p2 stays deferred — regardless of arc order.
+    opts.payload_policy = [](const Path&, const std::string& asset) {
+      return asset.find("p1") != std::string::npos;
+    };
+    auto layer = std::make_shared<Layer>();
+    {
+      Stage tmp;
+      std::string w, e;
+      assert(LoadUSDA(root, &tmp, &w, &e));
+      layer = std::shared_ptr<Layer>(tmp.ReleaseRootLayer());
+    }
+    auto opened = pcp::Cache::Open(resolver, layer, root, opts);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    UsdPrim a = stage.GetPrimAtPath("/A");
+    assert(a.GetPropertyValue("a") != nullptr && "loaded payload composes");
+    assert(a.GetPropertyValue("b") == nullptr && "deferred payload leaked");
+    assert(cache.HasDeferredPayload(Path("/A")) &&
+           "deferral marker lost (payload order dependence)");
+    std::remove(root.c_str());
+  }
+  std::remove(pay1.c_str());
+  std::remove(pay2.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// A per-sublayer layer offset must not fail the whole load (offsets are
+// parsed and skipped with a warning until composition plumbs them through).
+static void test_sublayer_offset_parses() {
+  std::cout << "test_sublayer_offset_parses..." << std::endl;
+  const std::string sub = "/tmp/next_slo_sub.usda";
+  const std::string root = "/tmp/next_slo_root.usda";
+  {
+    std::ofstream o(sub);
+    o << "#usda 1.0\ndef Xform \"p\" { float a = 1 }\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n(\n"
+         "    subLayers = [ @./next_slo_sub.usda@ (offset = 10; scale = 2) ]\n"
+         ")\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err) &&
+         "sublayer layer-offset syntax must not fail the load");
+  assert(stage.GetPrimAtPath("/p").IsValid());
+  std::remove(sub.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+
+// 2026-07 deferred audit items: layer-level relocates apply during
+// BuildStage (cross-parent move, matching pxr), and the applied list is
+// dropped from the flattened output metadata.
+static void test_layer_relocates() {
+  std::cout << "test_layer_relocates..." << std::endl;
+
+  auto asset = std::make_shared<Layer>();
+  {
+    LayerBuilder ab(*asset);
+    ab.begin_prim("CharRig", "Xform");
+    ab.begin_prim("Rig", "Xform");
+    ab.begin_prim("Anim", "Xform");
+    ab.add_property("v", Value(int32_t(7)));
+    ab.end_prim();
+    ab.end_prim();
+    ab.end_prim();
+    ab.finalize();
+  }
+  auto rootL = std::make_shared<Layer>();
+  {
+    rootL->meta().relocates.emplace_back("/Char/Rig/Anim", "/Char/Anim");
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("Char", "Xform");
+    rb.current()->meta().references.push_back("@mem_rig@</CharRig>");
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("mem_rig", asset);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim moved = stage.GetPrimAtPath("/Char/Anim");
+  assert(moved.IsValid() && "relocated prim must exist at the new path");
+  const Value* v = moved.GetPropertyValue("v");
+  assert(v && v->as_int() && *v->as_int() == 7);
+  UsdPrim old_loc = stage.GetPrimAtPath("/Char/Rig/Anim");
+  assert(!old_loc.IsValid() && "source location must be vacated");
+  UsdPrim rig = stage.GetPrimAtPath("/Char/Rig");
+  assert(rig.IsValid() && "unrelocated sibling structure intact");
+  // Applied relocates must not survive into the flattened metadata.
+  assert(stage.GetRootLayer()->meta().relocates.empty());
+  std::cout << "  OK" << std::endl;
+}
+
+// Relocates are a per-LAYER-STACK namespace edit, not a root-layer-only one: a
+// relocate authored in a REFERENCED layer renames prims inside the referenced
+// namespace, and the rename maps through the arc into root space. Mirrors the
+// AOUSD supplemental TrickyMultipleRelocations case:
+//   subrig.usd  /SubRig/Anim/AnimScope        (content, delivered by a reference)
+//               /SubRig/Rig2                  (shadow spec at a relocated path)
+//   rig.usd     /CharRig{Anim, Rig{SubRig -> @subrig@</SubRig>}}
+//               relocates { /CharRig/Rig/SubRig/Anim/AnimScope -> /CharRig/Anim/AnimScope }
+//   root.usd    /Char -> @rig@</CharRig>
+//               relocates { /Char/Anim -> /Char/Anim2 }   (renames on top of the above)
+static void test_relocates_in_referenced_layer_stack() {
+  std::cout << "test_relocates_in_referenced_layer_stack..." << std::endl;
+
+  auto subrig = std::make_shared<Layer>();
+  {
+    LayerBuilder sb(*subrig);
+    sb.begin_prim("SubRig", "Xform");
+    sb.begin_prim("Anim", "Xform");
+    sb.begin_prim("AnimScope", "Xform");
+    sb.add_property("x", Value(int32_t(42)));
+    sb.end_prim();
+    sb.end_prim();
+    sb.end_prim();
+    sb.finalize();
+  }
+  auto rig = std::make_shared<Layer>();
+  {
+    rig->meta().relocates.emplace_back("/CharRig/Rig/SubRig/Anim/AnimScope",
+                                       "/CharRig/Anim/AnimScope");
+    LayerBuilder rb(*rig);
+    rb.begin_prim("CharRig", "Xform");
+    rb.begin_prim("Anim", "Xform");
+    rb.end_prim();
+    rb.begin_prim("Rig", "Xform");
+    rb.begin_prim("SubRig", "Xform");
+    rb.current()->meta().references.push_back("@mem_subrig@</SubRig>");
+    rb.end_prim();
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+  auto rootL = std::make_shared<Layer>();
+  {
+    rootL->meta().relocates.emplace_back("/Char/Anim", "/Char/Anim2");
+    LayerBuilder lb(*rootL);
+    lb.begin_prim("Char", "Xform");
+    lb.current()->meta().references.push_back("@mem_rig@</CharRig>");
+    lb.end_prim();
+    // An opinion authored at the relocate TARGET path composes on top of the
+    // relocated content (the target address is a real site in this layer stack).
+    lb.begin_prim("Char2Anim2Holder", "Xform");
+    lb.end_prim();
+    lb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("mem_rig", rig);
+  cache.PreloadLayer("mem_subrig", subrig);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  // The referenced stack's relocate moved AnimScope up to /CharRig/Anim, which
+  // the root stack's relocate then renamed to Anim2 -- and the content still
+  // resolves through the SubRig reference into subrig.usd.
+  UsdPrim moved = stage.GetPrimAtPath("/Char/Anim2/AnimScope");
+  assert(moved.IsValid() && "relocate authored in a referenced layer stack");
+  const Value *x = moved.GetPropertyValue("x");
+  assert(x && x->as_int() && *x->as_int() == 42);
+  // Both source locations are vacated, in both namespaces.
+  assert(!stage.GetPrimAtPath("/Char/Anim").IsValid());
+  assert(!stage.GetPrimAtPath("/Char/Rig/SubRig/Anim/AnimScope").IsValid());
+  // The unrelocated structure around them is intact.
+  assert(stage.GetPrimAtPath("/Char/Rig/SubRig/Anim").IsValid());
+  assert(stage.GetRootLayer()->meta().relocates.empty());
+  std::cout << "  OK" << std::endl;
+}
+
+// A relocate may move a prim to a NEW ROOT PRIM; opinions authored at the new
+// root name compose on top of the relocated content (supplemental
+// TrickyInheritsAndRelocatesToNewRootPrim).
+static void test_relocate_to_new_root_prim() {
+  std::cout << "test_relocate_to_new_root_prim..." << std::endl;
+
+  auto model = std::make_shared<Layer>();
+  {
+    LayerBuilder mb(*model);
+    mb.begin_prim("Model", "Xform");
+    mb.begin_prim("Scope", "Xform");
+    mb.add_property("v", Value(int32_t(3)));
+    mb.end_prim();
+    mb.end_prim();
+    mb.finalize();
+  }
+  auto rootL = std::make_shared<Layer>();
+  {
+    rootL->meta().relocates.emplace_back("/Group/Model", "/Model_Renamed");
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("Group", "Xform");
+    rb.begin_prim("Model", "Xform");
+    rb.current()->meta().references.push_back("@mem_model@</Model>");
+    rb.end_prim();
+    rb.end_prim();
+    // An `over` at the new root name: authored at the relocate TARGET.
+    rb.begin_prim("Model_Renamed", "");
+    rb.current()->set_specifier(PrimSpecifier::Over);
+    rb.add_property("tag", Value(std::string("target")));
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("mem_model", model);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim moved = stage.GetPrimAtPath("/Model_Renamed");
+  assert(moved.IsValid() && "relocate to a new root prim");
+  const Value *tag = moved.GetPropertyValue("tag");
+  assert(tag && tag->as_string() && *tag->as_string() == "target");
+  UsdPrim scope = stage.GetPrimAtPath("/Model_Renamed/Scope");
+  assert(scope.IsValid() && "relocated subtree follows the prim");
+  const Value *v = scope.GetPropertyValue("v");
+  assert(v && v->as_int() && *v->as_int() == 3);
+  assert(!stage.GetPrimAtPath("/Group/Model").IsValid());
+  assert(stage.GetPrimAtPath("/Group").IsValid());
+  std::cout << "  OK" << std::endl;
+}
+
+// An inherit/specialize target may be authored RELATIVE to the prim that
+// authors it (`<../_Y>`), which resolves against the authoring site.
+static void test_relative_class_arc_target() {
+  std::cout << "test_relative_class_arc_target..." << std::endl;
+
+  auto rootL = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("X", "");
+    rb.current()->set_specifier(PrimSpecifier::Class);
+    rb.begin_prim("_Y", "");
+    rb.current()->set_specifier(PrimSpecifier::Class);
+    rb.add_property("v", Value(int32_t(9)));
+    rb.end_prim();
+    rb.begin_prim("B", "Xform");
+    rb.current()->meta().inherits.push_back("<../_Y>");
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim b = stage.GetPrimAtPath("/X/B");
+  assert(b.IsValid());
+  const Value *v = b.GetPropertyValue("v");
+  assert(v && v->as_int() && *v->as_int() == 9 &&
+         "relative inherit target must resolve against the authoring prim");
+  std::cout << "  OK" << std::endl;
+}
+
+// Composed specifier resolution (pxr _GetPrimSpecifierImpl): a defining
+// specifier always beats `over`, and a `class` due to a DIRECT inherit is
+// weaker than any other defining specifier (classness is not inherited) —
+// but a class reached through an ANCESTRAL inherit resolves in plain
+// strength order and must NOT be downgraded by a weaker `def`.
+static void test_specifier_resolution() {
+  std::cout << "test_specifier_resolution..." << std::endl;
+
+  // Case 1 (regression): /World/Foo inherits /_C; `class _C { class Child }`;
+  // _C inherits /_D; `class _D { def Child }`. The inherit arcs are introduced
+  // at Foo, so for the CHILD they are ancestral: /World/Foo/Child stays class.
+  {
+    auto rootL = std::make_shared<Layer>();
+    {
+      LayerBuilder rb(*rootL);
+      rb.begin_prim("_D", "");
+      rb.current()->set_specifier(PrimSpecifier::Class);
+      rb.begin_prim("Child", "Scope");  // def Child
+      rb.end_prim();
+      rb.end_prim();
+      rb.begin_prim("_C", "");
+      rb.current()->set_specifier(PrimSpecifier::Class);
+      rb.current()->meta().inherits.push_back("</_D>");
+      rb.begin_prim("Child", "Scope");
+      rb.current()->set_specifier(PrimSpecifier::Class);
+      rb.end_prim();
+      rb.end_prim();
+      rb.begin_prim("World", "Xform");
+      rb.begin_prim("Foo", "Xform");
+      rb.current()->meta().inherits.push_back("</_C>");
+      rb.end_prim();
+      rb.end_prim();
+      rb.finalize();
+    }
+    AssetResolver resolver;
+    auto opened = pcp::Cache::Open(resolver, rootL);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    UsdPrim child = stage.GetPrimAtPath("/World/Foo/Child");
+    assert(child.IsValid());
+    assert(child.GetSpecifier() == PrimSpecifier::Class &&
+           "ancestral-inherit class must not be downgraded by a weaker def");
+    UsdPrim foo = stage.GetPrimAtPath("/World/Foo");
+    assert(foo.IsValid() && foo.GetSpecifier() == PrimSpecifier::Def);
+  }
+
+  // Case 2 (pxr stage.cpp doc case): `over A (references @other@</B>)` where
+  // `def B (inherits </C>)` and `class C {}`. The class comes from a DIRECT
+  // inherit, so the weaker def from /B wins: /A composes as `def`.
+  {
+    auto other = std::make_shared<Layer>();
+    {
+      LayerBuilder ob(*other);
+      ob.begin_prim("C", "");
+      ob.current()->set_specifier(PrimSpecifier::Class);
+      ob.end_prim();
+      ob.begin_prim("B", "Xform");
+      ob.current()->meta().inherits.push_back("</C>");
+      ob.end_prim();
+      ob.finalize();
+    }
+    auto rootL = std::make_shared<Layer>();
+    {
+      LayerBuilder rb(*rootL);
+      rb.begin_prim("C", "");
+      rb.current()->set_specifier(PrimSpecifier::Class);
+      rb.end_prim();
+      rb.begin_prim("A", "");
+      rb.current()->set_specifier(PrimSpecifier::Over);
+      rb.current()->meta().references.push_back("@mem_other@</B>");
+      rb.end_prim();
+      rb.finalize();
+    }
+    AssetResolver resolver;
+    resolver.SetCustomResolver(
+        [](const std::string &a, const std::string &) { return a; });
+    auto opened = pcp::Cache::Open(resolver, rootL);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    cache.PreloadLayer("mem_other", other);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    UsdPrim a = stage.GetPrimAtPath("/A");
+    assert(a.IsValid());
+    assert(a.GetSpecifier() == PrimSpecifier::Def &&
+           "class due to a direct inherit must lose to a weaker def");
+  }
+
+  // Case 3: an `over` prim with direct inherits [class, def] composes as
+  // `def` regardless of the inherit list order (a direct-inherit class is
+  // weaker than any other defining specifier).
+  {
+    auto rootL = std::make_shared<Layer>();
+    {
+      LayerBuilder rb(*rootL);
+      rb.begin_prim("_CLS", "");
+      rb.current()->set_specifier(PrimSpecifier::Class);
+      rb.end_prim();
+      rb.begin_prim("_DEF", "Scope");  // def
+      rb.end_prim();
+      rb.begin_prim("O", "");
+      rb.current()->set_specifier(PrimSpecifier::Over);
+      rb.current()->meta().inherits.push_back("</_CLS>");
+      rb.current()->meta().inherits.push_back("</_DEF>");
+      rb.end_prim();
+      rb.finalize();
+    }
+    AssetResolver resolver;
+    auto opened = pcp::Cache::Open(resolver, rootL);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    UsdPrim o = stage.GetPrimAtPath("/O");
+    assert(o.IsValid());
+    assert(o.GetSpecifier() == PrimSpecifier::Def &&
+           "def among direct inherits wins over class regardless of order");
+  }
+
+  std::cout << "  OK" << std::endl;
+}
+
+// Variable expressions in SUBLAYER asset paths (evaluated against the stack
+// root layer's expressionVariables) and in VARIANT SELECTIONS (evaluated
+// against the source's composed expression variables).
+static void test_expression_sublayer_and_variant_selection() {
+  std::cout << "test_expression_sublayer_and_variant_selection..." << std::endl;
+  const std::string sub = "/tmp/next_exprvar_sub.usda";
+  const std::string root = "/tmp/next_exprvar_root.usda";
+  {
+    std::ofstream o(sub);
+    o << "#usda 1.0\n"
+         "def Xform \"FromSub\" { int tag = 42 }\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "(\n"
+         "    expressionVariables = {\n"
+         "        string SUB = \"next_exprvar_sub.usda\"\n"
+         "        string COLOR = \"green\"\n"
+         "    }\n"
+         "    subLayers = [@`${SUB}`@]\n"
+         ")\n"
+         "def Xform \"Root\" (\n"
+         "    variants = { string shadingVariant = \"`if(eq(${COLOR}, "
+         "\\\"green\\\"), \\\"green\\\", \\\"red\\\")`\" }\n"
+         "    prepend variantSets = \"shadingVariant\"\n"
+         ") {\n"
+         "    variantSet \"shadingVariant\" = {\n"
+         "        \"red\" { int c = 1 }\n"
+         "        \"green\" { int c = 2 }\n"
+         "    }\n"
+         "}\n";
+  }
+
+  AssetResolver resolver;
+  Stage stage;
+  pcp::CompositionOptions opts;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
+  UsdPrim from_sub = stage.GetPrimAtPath("/FromSub");
+  assert(from_sub.IsValid() &&
+         "sublayer expression must resolve against the root layer's "
+         "expressionVariables");
+  const Value* tag = from_sub.GetPropertyValue("tag");
+  assert(tag && tag->as_int() && *tag->as_int() == 42);
+  UsdPrim root_prim = stage.GetPrimAtPath("/Root");
+  assert(root_prim.IsValid());
+  const Value* c = root_prim.GetPropertyValue("c");
+  assert(c && c->as_int() && *c->as_int() == 2 &&
+         "variant selection expression must evaluate before selection");
+  std::cout << "  OK" << std::endl;
+}
+
+// Layer-stack identity includes expression variables (pxr keys stacks by
+// (identifier, expression variables)): the SAME asset referenced from two
+// sites whose inherited variables differ must produce two DISTINCT layer
+// stacks, and each stack's sublayer expressions must evaluate against the
+// referencing site's variables (root-most opinion wins).
+static void test_layer_stack_identity_expression_vars() {
+  std::cout << "test_layer_stack_identity_expression_vars..." << std::endl;
+  {
+    std::ofstream o("/tmp/next_stackid_sub_a.usda");
+    o << "#usda 1.0\ndef Xform \"X\" { int tag = 1 }\n";
+  }
+  {
+    std::ofstream o("/tmp/next_stackid_sub_b.usda");
+    o << "#usda 1.0\ndef Xform \"X\" { int tag = 2 }\n";
+  }
+  {
+    // The shared lib: its only content arrives through an EXPRESSION-valued
+    // sublayer path; the variable is authored by the REFERENCING stacks.
+    std::ofstream o("/tmp/next_stackid_lib.usda");
+    o << "#usda 1.0\n( subLayers = [@`${SUB}`@] )\n";
+  }
+  {
+    std::ofstream o("/tmp/next_stackid_mid_a.usda");
+    o << "#usda 1.0\n"
+         "( expressionVariables = { string SUB = \"next_stackid_sub_a.usda\" } )\n"
+         "def Xform \"P\" (references = @next_stackid_lib.usda@</X>) {}\n";
+  }
+  {
+    std::ofstream o("/tmp/next_stackid_mid_b.usda");
+    o << "#usda 1.0\n"
+         "( expressionVariables = { string SUB = \"next_stackid_sub_b.usda\" } )\n"
+         "def Xform \"Q\" (references = @next_stackid_lib.usda@</X>) {}\n";
+  }
+  {
+    std::ofstream o("/tmp/next_stackid_root.usda");
+    o << "#usda 1.0\n"
+         "def Xform \"A\" (references = @next_stackid_mid_a.usda@</P>) {}\n"
+         "def Xform \"B\" (references = @next_stackid_mid_b.usda@</Q>) {}\n";
+  }
+
+  AssetResolver resolver;
+  Stage stage;
+  pcp::CompositionOptions opts;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile("/tmp/next_stackid_root.usda", resolver,
+                                   &stage, opts, &warn, &err));
+  const Value* a = stage.GetPrimAtPath("/A").GetPropertyValue("tag");
+  const Value* b = stage.GetPrimAtPath("/B").GetPropertyValue("tag");
+  assert(a && a->as_int() && *a->as_int() == 1 &&
+         "lib referenced under SUB=sub_a must compose sub_a's content");
+  assert(b && b->as_int() && *b->as_int() == 2 &&
+         "the same lib under SUB=sub_b must be a DISTINCT stack with "
+         "sub_b's content");
+  std::cout << "  OK" << std::endl;
+}
+
+// Generated multi-layer string list-op combinations (item 4b breadth):
+// every qualifier of a STRONGER layer's apiSchemas edit applied over a
+// weaker layer's explicit list, plus a clipSets ordering edit. Locks in the
+// weakest->strongest AOUSD list-op merge across a sublayer stack.
+static void test_cross_layer_string_listop_matrix() {
+  std::cout << "test_cross_layer_string_listop_matrix..." << std::endl;
+  const std::string weak_path = "/tmp/next_listop_weak.usda";
+  {
+    std::ofstream o(weak_path);
+    o << "#usda 1.0\n"
+         "def Xform \"P\" (\n"
+         "    apiSchemas = [\"CollectionAPI:a\", \"CollectionAPI:b\"]\n"
+         ") {}\n";
+  }
+  struct Case {
+    const char* edit;                       // authored in the STRONG layer
+    std::vector<std::string> expected;      // composed apiSchemas
+  };
+  const Case cases[] = {
+      {"apiSchemas = [\"NewAPI\"]", {"NewAPI"}},  // explicit replaces
+      {"prepend apiSchemas = [\"NewAPI\"]",
+       {"NewAPI", "CollectionAPI:a", "CollectionAPI:b"}},
+      {"append apiSchemas = [\"NewAPI\"]",
+       {"CollectionAPI:a", "CollectionAPI:b", "NewAPI"}},
+      {"add apiSchemas = [\"NewAPI\"]",
+       {"CollectionAPI:a", "CollectionAPI:b", "NewAPI"}},
+      {"delete apiSchemas = [\"CollectionAPI:b\"]", {"CollectionAPI:a"}},
+      {"reorder apiSchemas = [\"CollectionAPI:b\", \"CollectionAPI:a\"]",
+       {"CollectionAPI:b", "CollectionAPI:a"}},
+      // Multi-op in one stronger layer: delete + prepend compose.
+      {"prepend apiSchemas = [\"NewAPI\"]\n"
+       "    delete apiSchemas = [\"CollectionAPI:a\"]",
+       {"NewAPI", "CollectionAPI:b"}},
+  };
+  for (const Case& c : cases) {
+    const std::string root_path = "/tmp/next_listop_root.usda";
+    {
+      std::ofstream o(root_path);
+      o << "#usda 1.0\n"
+           "( subLayers = [@next_listop_weak.usda@] )\n"
+           "over \"P\" (\n    "
+        << c.edit << "\n) {}\n";
+    }
+    AssetResolver resolver;
+    Stage stage;
+    pcp::CompositionOptions opts;
+    std::string warn, err;
+    assert(pcp::ComposeStageFromFile(root_path, resolver, &stage, opts, &warn,
+                                     &err)
+               ? true
+               : (std::cerr << err << std::endl, false));
+    UsdPrim p = stage.GetPrimAtPath("/P");
+    assert(p.IsValid());
+    const std::vector<std::string>& got = p.GetMeta().apiSchemas();
+    if (got != c.expected) {
+      std::cerr << "  edit: " << c.edit << "\n  got: [";
+      for (const auto& s : got) std::cerr << s << ", ";
+      std::cerr << "]" << std::endl;
+    }
+    assert(got == c.expected && "cross-layer apiSchemas list-op combination");
+  }
+  std::cout << "  OK" << std::endl;
+}
+
+// P2 audit: a reference that names no prim path to a layer without an
+// authored defaultPrim contributes NOTHING and warns (pxr: "Unresolved
+// reference prim path @...@<defaultPrim>") — never silently the first root
+// prim.
+static void test_p2_ref_no_default_prim() {
+  std::cout << "test_p2_ref_no_default_prim..." << std::endl;
+  const std::string lib = "/tmp/next_p2_nodef_lib.usda";
+  const std::string root = "/tmp/next_p2_nodef_root.usda";
+  {
+    std::ofstream o(lib);
+    o << "#usda 1.0\n"
+         "def Xform \"First\" { double size = 1 }\n"
+         "def Xform \"Second\" { double size = 2 }\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"Hello\" (prepend references = "
+         "@./next_p2_nodef_lib.usda@) { }\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err) &&
+         "unresolved default-prim reference must not fail the compose");
+  UsdPrim hello = stage.GetPrimAtPath("/Hello");
+  assert(hello.IsValid() && "referencing prim kept (empty)");
+  assert(hello.GetPropertyValue("size") == nullptr &&
+         "no silent fallback to the first root prim");
+  assert(warn.find("defaultPrim") != std::string::npos &&
+         "warning names the missing defaultPrim");
+  std::remove(lib.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// P2 audit: BuildStage prunes the SUBTREE of a deactivated prim (pxr composes
+// no children under active=false; the prim itself is kept, with its authored
+// active=false, so consumers can query IsActive). A stronger layer's
+// active=true re-activation keeps the subtree.
+static void test_p2_inactive_subtree_pruned() {
+  std::cout << "test_p2_inactive_subtree_pruned..." << std::endl;
+  const std::string f = "/tmp/next_p2_inactive.usda";
+  {
+    std::ofstream o(f);
+    o << "#usda 1.0\n"
+         "def Xform \"A\" (active = false)\n{\n"
+         "    def Sphere \"B\" { double radius = 3 }\n"
+         "}\n"
+         "def Xform \"C\" { double v = 1 }\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(f, resolver, &stage, {}, &warn, &err));
+  UsdPrim a = stage.GetPrimAtPath("/A");
+  assert(a.IsValid() && !a.IsActive() &&
+         "inactive prim kept with active=false");
+  assert(!stage.GetPrimAtPath("/A/B").IsValid() &&
+         "child of inactive prim pruned from the stage");
+  assert(stage.GetPrimAtPath("/C").IsValid() && "sibling untouched");
+  std::remove(f.c_str());
+
+  // Re-activation: root-authored active=true is stronger than the referenced
+  // prim's active=false — the referenced subtree must survive.
+  const std::string ref = "/tmp/next_p2_react_ref.usda";
+  const std::string root = "/tmp/next_p2_react_root.usda";
+  {
+    std::ofstream o(ref);
+    o << "#usda 1.0\n"
+         "def Xform \"R\" (active = false)\n{\n"
+         "    def Sphere \"S\" { double radius = 1 }\n"
+         "}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"P\" (active = true\n"
+         "                 prepend references = @./next_p2_react_ref.usda@</R>"
+         ")\n{\n}\n";
+  }
+  Stage stage2;
+  warn.clear(); err.clear();
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage2, {}, &warn, &err));
+  UsdPrim p = stage2.GetPrimAtPath("/P");
+  assert(p.IsValid() && p.IsActive() && "stronger active=true wins");
+  assert(stage2.GetPrimAtPath("/P/S").IsValid() &&
+         "re-activated prim keeps its referenced subtree");
+  std::remove(ref.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// P2 audit: an inherit to a SUB-ROOT class reached through a reference is
+// implied at the MAPPED class path in the referencing stack, so a root-layer
+// override at that path composes onto the inheriting prim (pxr maps implied
+// classes through the arc's map function). Also covers the root-level class
+// case for a CHILD prim of the referenced root (the re-rooted source's
+// ancestor chain must include the root stack).
+static void test_p2_implied_subroot_class() {
+  std::cout << "test_p2_implied_subroot_class..." << std::endl;
+  const std::string models = "/tmp/next_p2_models.usda";
+  const std::string root = "/tmp/next_p2_models_root.usda";
+  {
+    std::ofstream o(models);
+    o << "#usda 1.0\n(\n    defaultPrim = \"Models\"\n)\n"
+         "def Scope \"Models\"\n{\n"
+         "    class \"_class_X\" { double a = 1 }\n"
+         "    def Xform \"M\" (inherits = </Models/_class_X>) { }\n"
+         "}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"World\" (references = @./next_p2_models.usda@)\n{\n"
+         "    over \"_class_X\" { double a = 2 }\n"
+         "}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  UsdPrim m = stage.GetPrimAtPath("/World/M");
+  assert(m.IsValid());
+  const Value* a = m.GetPropertyValue("a");
+  assert(a && a->as_double() && *a->as_double() == 2.0 &&
+         "root override on the implied sub-root class path must win");
+  std::remove(models.c_str());
+  std::remove(root.c_str());
+
+  // Root-level class inherited by a CHILD of the referenced root prim.
+  const std::string lib2 = "/tmp/next_p2_models2.usda";
+  const std::string root2 = "/tmp/next_p2_models2_root.usda";
+  {
+    std::ofstream o(lib2);
+    o << "#usda 1.0\n(\n    defaultPrim = \"Models\"\n)\n"
+         "class \"_class_X\" { double a = 1 }\n"
+         "def Scope \"Models\"\n{\n"
+         "    def Xform \"M\" (inherits = </_class_X>) { }\n"
+         "}\n";
+  }
+  {
+    std::ofstream o(root2);
+    o << "#usda 1.0\n"
+         "over \"_class_X\" { double a = 2 }\n"
+         "def Xform \"World\" (references = @./next_p2_models2.usda@) { }\n";
+  }
+  Stage stage2;
+  warn.clear(); err.clear();
+  assert(pcp::ComposeStageFromFile(root2, resolver, &stage2, {}, &warn, &err));
+  UsdPrim m2 = stage2.GetPrimAtPath("/World/M");
+  assert(m2.IsValid());
+  const Value* a2 = m2.GetPropertyValue("a");
+  assert(a2 && a2->as_double() && *a2->as_double() == 2.0 &&
+         "root override on a root-level implied class must reach a "
+         "referenced CHILD prim");
+  std::remove(lib2.c_str());
+  std::remove(root2.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+
+// `reorder nameChildren` / `reorder rootPrims` apply to the flattened child
+// order (pxr semantics: listed names move to the front in list order, the
+// rest keep authored order). Locked here because the audit once flagged
+// reorder as unimplemented.
+static void test_reorder_children() {
+  std::cout << "test_reorder_children..." << std::endl;
+  auto parse_to_layer = [](const char* usda) -> std::shared_ptr<Layer> {
+    std::string w, e;
+    auto lp = pcp::LoadLayerFromMemory(
+        "mem.usda", reinterpret_cast<const uint8_t*>(usda),
+        std::strlen(usda), &w, &e);
+    return lp;
+  };
+  auto rootL = parse_to_layer(
+      "#usda 1.0\n"
+      "reorder rootPrims = [\"Z\", \"M\"]\n"
+      "def Xform \"M\" { }\n"
+      "def Xform \"Q\" { }\n"
+      "def Xform \"Z\"\n"
+      "{\n"
+      "    reorder nameChildren = [\"C\", \"A\"]\n"
+      "    def Sphere \"A\" { }\n"
+      "    def Cube \"B\" { }\n"
+      "    def Cone \"C\" { }\n"
+      "}\n");
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  std::vector<UsdPrim> roots = stage.GetRootPrims();
+  assert(roots.size() == 3);
+  assert(roots[0].GetName() == "Z");
+  assert(roots[1].GetName() == "M");
+  assert(roots[2].GetName() == "Q");
+  std::vector<UsdPrim> kids = roots[0].GetChildren();
+  assert(kids.size() == 3);
+  assert(kids[0].GetName() == "C");
+  assert(kids[1].GetName() == "A");
+  assert(kids[2].GetName() == "B");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_typed_composition_issues();
@@ -3143,6 +4175,10 @@ int main() {
   test_crate_style_variant_holder();
   test_usda_connection_and_custom_rel();
   test_variant_option_payload_arc();
+  test_active_survives_weaker_arc();
+  test_out_of_scope_targets_dropped();
+  test_deferred_payload_marker_order();
+  test_sublayer_offset_parses();
   test_parallel_compose_byte_identical();
   test_value_block_roundtrip();
   test_extracted_prototypes();
@@ -3171,6 +4207,18 @@ int main() {
   test_flatten_instances();
   test_relocates();
   test_implied_inherit();
+  test_layer_relocates();
+  test_relocates_in_referenced_layer_stack();
+  test_relocate_to_new_root_prim();
+  test_relative_class_arc_target();
+  test_specifier_resolution();
+  test_expression_sublayer_and_variant_selection();
+  test_cross_layer_string_listop_matrix();
+  test_layer_stack_identity_expression_vars();
+  test_reorder_children();
+  test_p2_ref_no_default_prim();
+  test_p2_inactive_subtree_pruned();
+  test_p2_implied_subroot_class();
   test_instance_proxy();
   test_parallel_prewarm();
   test_cross_source_variant();
@@ -3182,6 +4230,7 @@ int main() {
   test_compose_from_file();
   test_nested_relative_reference();
   test_sublayer_authored_reference_anchor();
+  test_payload_policy_owner_anchor();
   test_sublayer_stack_composition();
   test_usdz_package_layers();
   test_sublayer_cycle_and_depth();

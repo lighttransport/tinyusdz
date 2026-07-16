@@ -133,9 +133,13 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
   // the backend on first call, so this is just for metadata consistency.
   ts_out->set_type_id(value::TypeTraits<T>::type_id());
 
+  // `{` seen: a timeSamples block WAS authored, even if it turns out to hold no
+  // samples (`float x.timeSamples = {}`). Without this, size()==0 is
+  // indistinguishable from "no timeSamples at all" and the block is dropped.
   if (!Expect('{')) {
     return false;
   }
+  ts_out->set_authored();
 
   if (!SkipWhitespaceAndNewline()) {
     return false;
@@ -327,9 +331,13 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
   // (strings, tokens, paths, arrays, etc.)
   value::TimeSamples ts;
 
+  // `{` seen: a timeSamples block WAS authored, even if it turns out to hold no
+  // samples (`float x.timeSamples = {}`). Without this, size()==0 is
+  // indistinguishable from "no timeSamples at all" and the block is dropped.
   if (!Expect('{')) {
     return false;
   }
+  ts.set_authored();
 
   if (!SkipWhitespaceAndNewline()) {
     return false;

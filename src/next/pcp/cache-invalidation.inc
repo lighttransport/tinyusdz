@@ -52,9 +52,18 @@
     for (const std::string &k : to_drop) DropIndex(k);
 
     // sources_cache + deferred state may have descendants not in index_cache.
+    // Stack-qualified intermediate keys ("@N:/path" / "!N:/path") are not prim
+    // paths, so IsPathAtOrUnder never matches them; drop them all (they are
+    // cheap to recompute and a stale relocate-source / arc-target expansion
+    // under the invalidated subtree would otherwise survive).
     for (auto it = sources_cache.begin(); it != sources_cache.end();) {
-      if (IsPathAtOrUnder(it->first, base)) it = sources_cache.erase(it);
-      else ++it;
+      const bool qualified =
+          !it->first.empty() && (it->first[0] == '@' || it->first[0] == '!');
+      if (qualified || IsPathAtOrUnder(it->first, base)) {
+        it = sources_cache.erase(it);
+      } else {
+        ++it;
+      }
     }
     for (auto it = deferred_payload_prims.begin();
          it != deferred_payload_prims.end();) {
@@ -141,4 +150,25 @@
     composed_cache_.clear();  // Phase 10
     composed_children_.clear();
     issues_.clear();  // fresh diagnostics for the recomposition.
+  }
+
+  void SetVariantSelections(
+      const CompositionOptions::VariantSelectionMap &selections) {
+    NEXT_PCP_LOCK(api_mu_);
+    std::set<std::string> changed;
+    for (const auto &entry : options.variant_overrides_by_path) {
+      const auto it = selections.find(entry.first);
+      if (it == selections.end() || it->second != entry.second) {
+        changed.insert(entry.first);
+      }
+    }
+    for (const auto &entry : selections) {
+      const auto it = options.variant_overrides_by_path.find(entry.first);
+      if (it == options.variant_overrides_by_path.end() ||
+          it->second != entry.second) {
+        changed.insert(entry.first);
+      }
+    }
+    options.variant_overrides_by_path = selections;
+    for (const std::string &path : changed) Invalidate_locked(Path(path));
   }

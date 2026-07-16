@@ -4,12 +4,36 @@
 // TinyUSDZ Next - Time Sample Interpolation Implementation
 
 #include "interpolation.hh"
+#include "../crate/crate-format.hh"
 #include "type-id.hh"
 #include <cmath>
 #include <cstring>
 
 namespace tinyusdz {
 namespace next {
+
+bool TimeInterpolator::IsLinearInterpolatable(TypeId type) {
+  switch (type) {
+    case TypeId::Half: case TypeId::Float: case TypeId::Double:
+    case TypeId::TimeCode:
+    case TypeId::Matrix2d: case TypeId::Matrix3d: case TypeId::Matrix4d:
+    case TypeId::Frame4d:
+    case TypeId::Half2: case TypeId::Float2: case TypeId::Double2:
+    case TypeId::Half3: case TypeId::Float3: case TypeId::Double3:
+    case TypeId::Half4: case TypeId::Float4: case TypeId::Double4:
+    case TypeId::Quath: case TypeId::Quatf: case TypeId::Quatd:
+    case TypeId::Point3h: case TypeId::Point3f: case TypeId::Point3d:
+    case TypeId::Vector3h: case TypeId::Vector3f: case TypeId::Vector3d:
+    case TypeId::Normal3h: case TypeId::Normal3f: case TypeId::Normal3d:
+    case TypeId::Color3h: case TypeId::Color3f: case TypeId::Color3d:
+    case TypeId::Color4h: case TypeId::Color4f: case TypeId::Color4d:
+    case TypeId::Texcoord2h: case TypeId::Texcoord2f: case TypeId::Texcoord2d:
+    case TypeId::Texcoord3h: case TypeId::Texcoord3f: case TypeId::Texcoord3d:
+      return true;
+    default:
+      return false;
+  }
+}
 
 // ============================================================
 // Scalar interpolation
@@ -152,27 +176,99 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       return Value();
     }
 
-    // Handle float arrays
-    if (type == TypeId::Float || type == TypeId::Float3 || type == TypeId::Point3f ||
-        type == TypeId::Vector3f || type == TypeId::Normal3f || type == TypeId::Color3f) {
+    const size_t comps = GetComponentCount(type);
+
+    // Quaternion arrays: per-element slerp. Elementwise lerp is wrong for
+    // rotations between keys (SkelAnimation `rotations` is quatf[]); quath
+    // arrays materialize into the float buffer like the other half types.
+    if (type == TypeId::Quatf || type == TypeId::Quath) {
       const std::vector<float>* arr_a = a.as_float_array();
       const std::vector<float>* arr_b = b.as_float_array();
-      if (arr_a && arr_b && arr_a->size() == arr_b->size()) {
+      if (arr_a && arr_b && arr_a->size() == arr_b->size() &&
+          (arr_a->size() % 4) == 0) {
         std::vector<float> result(arr_a->size());
-        LerpFloatN(result.data(), arr_a->data(), arr_b->data(), tf, arr_a->size());
-        return Value::MakeFloatArray(std::move(result));
+        for (size_t i = 0; i < result.size(); i += 4) {
+          SlerpQuatf(result.data() + i, arr_a->data() + i, arr_b->data() + i,
+                     tf);
+        }
+        return Value::MakeFloatCompArray(std::move(result), type, 4);
       }
+      return Value();
+    }
+    if (type == TypeId::Quatd) {
+      const std::vector<double>* arr_a = a.as_double_array();
+      const std::vector<double>* arr_b = b.as_double_array();
+      if (arr_a && arr_b && arr_a->size() == arr_b->size() &&
+          (arr_a->size() % 4) == 0) {
+        std::vector<double> result(arr_a->size());
+        for (size_t i = 0; i < result.size(); i += 4) {
+          SlerpQuatd(result.data() + i, arr_a->data() + i, arr_b->data() + i,
+                     t);
+        }
+        return Value::MakeDoubleCompArray(std::move(result), type, 4);
+      }
+      return Value();
     }
 
-    // Handle int arrays - use held interpolation (can't lerp integers meaningfully)
-    if (type == TypeId::Int) {
-      const std::vector<int32_t>* arr_a = a.as_int_array();
-      if (arr_a) {
-        return Value::MakeIntArray(*arr_a);
+    // Any float-backed array (float/half scalars, vectors, matrices — half
+    // element types materialize into the float buffer): lerp all lanes.
+    if (const std::vector<float>* arr_a = a.as_float_array()) {
+      const std::vector<float>* arr_b = b.as_float_array();
+      if (arr_b && arr_a->size() == arr_b->size() && comps > 0) {
+        std::vector<float> result(arr_a->size());
+        LerpFloatN(result.data(), arr_a->data(), arr_b->data(), tf,
+                   arr_a->size());
+        if (type == TypeId::Float) {
+          return Value::MakeFloatArray(std::move(result));
+        }
+        return Value::MakeFloatCompArray(std::move(result), type,
+                                         static_cast<uint32_t>(comps));
       }
+      return Value();
     }
 
-    return Value();
+    // Double-backed arrays.
+    if (const std::vector<double>* arr_a = a.as_double_array()) {
+      const std::vector<double>* arr_b = b.as_double_array();
+      if (arr_b && arr_a->size() == arr_b->size() && comps > 0) {
+        std::vector<double> result(arr_a->size());
+        LerpDoubleN(result.data(), arr_a->data(), arr_b->data(), t,
+                    arr_a->size());
+        if (type == TypeId::Double) {
+          return Value::MakeDoubleArray(std::move(result));
+        }
+        return Value::MakeDoubleCompArray(std::move(result), type,
+                                          static_cast<uint32_t>(comps));
+      }
+      return Value();
+    }
+
+    // Non-interpolatable arrays (int/uint/bool/string-like): held.
+    return Value(a);
+  }
+
+  // Half-backed scalars and semantic aliases use raw uint16 lanes in Value's
+  // SBO. Widen, interpolate (or slerp for quath), then quantize once at the
+  // result while preserving the declared role type.
+  const TypeId component =
+      (type == TypeId::Half) ? TypeId::Half : GetComponentType(type);
+  const size_t components = GetComponentCount(type);
+  if (component == TypeId::Half && components >= 1 && components <= 4) {
+    float va[4] = {}, vb[4] = {}, result[4] = {};
+    bool ok = false;
+    if (components == 1) ok = a.to_float(va) && b.to_float(vb);
+    else if (components == 2) ok = a.to_float2(va) && b.to_float2(vb);
+    else if (components == 3) ok = a.to_float3(va) && b.to_float3(vb);
+    else ok = a.to_float4(va) && b.to_float4(vb);
+    if (!ok) return Value(a);
+    if (type == TypeId::Quath) {
+      SlerpQuatf(result, va, vb, tf);
+    } else {
+      LerpFloatN(result, va, vb, tf, components);
+    }
+    uint16_t bits[4] = {};
+    for (size_t i = 0; i < components; ++i) bits[i] = FloatToHalf(result[i]);
+    return Value::MakeFromRaw(type, bits);
   }
 
   // Handle scalar/vector types
@@ -196,6 +292,16 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       break;
     }
 
+    case TypeId::TimeCode: {  // same 8-byte double storage; keep the type
+      const double* va = a.as_double();
+      const double* vb = b.as_double();
+      if (va && vb) {
+        const double r = LerpDouble(*va, *vb, t);
+        return Value::MakeFromRaw(TypeId::TimeCode, &r);
+      }
+      break;
+    }
+
     // Integer types - use held (can't interpolate meaningfully)
     case TypeId::Int:
     case TypeId::UInt:
@@ -212,7 +318,7 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       if (va && vb) {
         float result[2];
         LerpFloatN(result, va, vb, tf, 2);
-        return Value::MakeFloat2(result[0], result[1]);
+        return Value::MakeFromRaw(type, result);
       }
       break;
     }
@@ -222,22 +328,14 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
     case TypeId::Point3f:
     case TypeId::Vector3f:
     case TypeId::Normal3f:
-    case TypeId::Color3f: {
+    case TypeId::Color3f:
+    case TypeId::Texcoord3f: {
       const float* va = a.as_float3();
       const float* vb = b.as_float3();
       if (va && vb) {
         float result[3];
         LerpFloatN(result, va, vb, tf, 3);
-        if (type == TypeId::Point3f) {
-          return Value::MakePoint3f(result[0], result[1], result[2]);
-        } else if (type == TypeId::Vector3f) {
-          return Value::MakeVector3f(result[0], result[1], result[2]);
-        } else if (type == TypeId::Normal3f) {
-          return Value::MakeNormal3f(result[0], result[1], result[2]);
-        } else if (type == TypeId::Color3f) {
-          return Value::MakeColor3f(result[0], result[1], result[2]);
-        }
-        return Value::MakeFloat3(result[0], result[1], result[2]);
+        return Value::MakeFromRaw(type, result);
       }
       break;
     }
@@ -250,10 +348,7 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       if (va && vb) {
         float result[4];
         LerpFloatN(result, va, vb, tf, 4);
-        if (type == TypeId::Color4f) {
-          return Value::MakeColor4f(result[0], result[1], result[2], result[3]);
-        }
-        return Value::MakeFloat4(result[0], result[1], result[2], result[3]);
+        return Value::MakeFromRaw(type, result);
       }
       break;
     }
@@ -266,7 +361,7 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       if (va && vb) {
         double result[2];
         LerpDoubleN(result, va, vb, t, 2);
-        return Value::MakeDouble2(result[0], result[1]);
+        return Value::MakeFromRaw(type, result);
       }
       break;
     }
@@ -275,32 +370,28 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
     case TypeId::Double3:
     case TypeId::Point3d:
     case TypeId::Vector3d:
-    case TypeId::Normal3d: {
+    case TypeId::Normal3d:
+    case TypeId::Color3d:
+    case TypeId::Texcoord3d: {
       const double* va = a.as_double3();
       const double* vb = b.as_double3();
       if (va && vb) {
         double result[3];
         LerpDoubleN(result, va, vb, t, 3);
-        if (type == TypeId::Point3d) {
-          return Value::MakePoint3d(result[0], result[1], result[2]);
-        } else if (type == TypeId::Vector3d) {
-          return Value::MakeVector3d(result[0], result[1], result[2]);
-        } else if (type == TypeId::Normal3d) {
-          return Value::MakeNormal3d(result[0], result[1], result[2]);
-        }
-        return Value::MakeDouble3(result[0], result[1], result[2]);
+        return Value::MakeFromRaw(type, result);
       }
       break;
     }
 
     // Double4
-    case TypeId::Double4: {
+    case TypeId::Double4:
+    case TypeId::Color4d: {
       const double* va = a.as_double4();
       const double* vb = b.as_double4();
       if (va && vb) {
         double result[4];
         LerpDoubleN(result, va, vb, t, 4);
-        return Value::MakeDouble4(result[0], result[1], result[2], result[3]);
+        return Value::MakeFromRaw(type, result);
       }
       break;
     }
@@ -342,13 +433,25 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
     }
 
     // Matrix4d
-    case TypeId::Matrix4d: {
+    case TypeId::Matrix4d:
+    case TypeId::Frame4d: {
       const double* va = a.as_matrix4d();
       const double* vb = b.as_matrix4d();
       if (va && vb) {
         double result[16];
         LerpDoubleN(result, va, vb, t, 16);
-        return Value::MakeMatrix4d(result);
+        return Value::MakeFromRaw(type, result);
+      }
+      break;
+    }
+
+    case TypeId::Matrix2d: {
+      const double* va = a.as_matrix2d();
+      const double* vb = b.as_matrix2d();
+      if (va && vb) {
+        double result[4];
+        LerpDoubleN(result, va, vb, t, 4);
+        return Value::MakeMatrix2d(result);
       }
       break;
     }
@@ -387,7 +490,8 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       break;
   }
 
-  return Value();
+  // Linear mode normatively falls back to held for all other types.
+  return Value(a);
 }
 
 // ============================================================
@@ -516,7 +620,8 @@ SampleResult TimeInterpolator::Interpolate(
 
   result.value = InterpolateValues(samples[low].second, samples[high].second, t);
   result.success = !result.value.is_empty();
-  result.interpolated = result.success;
+  result.interpolated =
+      result.success && IsLinearInterpolatable(samples[low].second.type_id());
 
   return result;
 }

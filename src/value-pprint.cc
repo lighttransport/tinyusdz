@@ -599,7 +599,9 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::timecode &tc)
 }
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::token &tok) {
-  ofs << tinyusdz::quote(tok.str());
+  // Escape the token content so that a token containing quotation chars,
+  // backslashes or control chars re-parses correctly (matches pxr behavior).
+  ofs << tinyusdz::buildEscapedAndQuotedStringForUSDA(tok.str());
 
   return ofs;
 }

@@ -8,57 +8,45 @@
   // Table building
   // ============================================================
 
-  uint32_t InternToken(std::string_view s) {
-    if (frozen_tok_) {
+  uint32_t InternToken(const std::string& s) {
+    if (frozen_tok_) {  // parallel worker: read-only lookup in the shared table
       auto it = frozen_tok_->find(s);
-      if (it != frozen_tok_->end()) return *it;
-      frozen_miss_ = true;
+      if (it != frozen_tok_->end()) return it->second;
+      frozen_miss_ = true;  // pre-pass incomplete -> driver falls back to serial
       return 0;
     }
     auto it = token_to_index_.find(s);
-    if (it != token_to_index_.end()) return *it;
-
+    if (it != token_to_index_.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(tokens_.size());
-    token_storage_.emplace_back(s);
-    const std::string_view key(token_storage_.back());
-    tokens_.push_back(key);
-    token_to_index_.set(key, idx);
+    tokens_.push_back(s);
+    token_to_index_[s] = idx;
     return idx;
   }
 
-  uint32_t InternString(std::string_view s) {
-    if (frozen_str_) {
+  uint32_t InternString(const std::string& s) {
+    if (frozen_str_) {  // parallel worker: read-only lookup
       auto it = frozen_str_->find(s);
-      if (it != frozen_str_->end()) return *it;
+      if (it != frozen_str_->end()) return it->second;
       frozen_miss_ = true;
       return 0;
     }
     auto it = string_to_index_.find(s);
-    if (it != string_to_index_.end()) return *it;
-
+    if (it != string_to_index_.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(string_indices_.size());
-    string_storage_.emplace_back(s);
-    const std::string_view key(string_storage_.back());
 
-    uint32_t token_idx = InternToken(key);
+    // String values in USDC: index into string_indices, which maps to tokens
+    uint32_t token_idx = InternToken(s);
     string_indices_.push_back(token_idx);
-    string_to_index_.set(key, idx);
+    string_to_index_[s] = idx;
     return idx;
   }
 
   uint32_t InternPath(const std::string& path) {
-    std::string_view key(path);
-    if (frozen_path_) {
-      auto it = frozen_path_->find(key);
-      if (it != frozen_path_->end()) return *it;
-      frozen_miss_ = true;
-      return 0;
-    }
-    auto it = path_to_index_.find(key);
-    if (it != path_to_index_.end()) return *it;
+    auto it = path_to_index_.find(path);
+    if (it != path_to_index_.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(paths_.size());
     paths_.push_back(path);
-    path_to_index_.set(std::string_view(paths_.back()), idx);
+    path_to_index_[path] = idx;
     return idx;
   }
 
@@ -75,6 +63,7 @@
     InternToken("active");
     InternToken("hidden");
     InternToken("doc");
+    InternToken("documentation");
     InternToken("apiSchemas");
     InternToken("kind");
     InternToken("permission");
@@ -93,6 +82,8 @@
     InternToken("variants");
     InternToken("variantSelection");
     InternToken("customData");
+    InternToken("clips");
+    InternToken("clipSets");
     InternToken("comment");
     InternToken("subLayers");
 
@@ -118,10 +109,10 @@
     InternToken("Z");
 
     // Intern layer metadata
-    if (!layer.meta().defaultPrim.empty()) {
+    if (layer.meta().defaultPrim_set || !layer.meta().defaultPrim.empty()) {
       InternToken(layer.meta().defaultPrim);
     }
-    if (!layer.meta().doc.empty()) {
+    if (layer.meta().doc_set || !layer.meta().doc.empty()) {
       InternString(layer.meta().doc);
     }
 
@@ -136,9 +127,41 @@
       }
 
       // Metadata strings
-      if (!prim.meta().doc().empty()) InternString(prim.meta().doc());
+      if (prim.meta().doc_authored() || !prim.meta().doc().empty()) {
+        InternString(prim.meta().doc());
+      }
       for (const auto& schema : prim.meta().apiSchemas()) {
         InternToken(schema);
+      }
+      {
+        const StringListOpEdits& edits = prim.meta().apiSchemaEdits();
+        const std::vector<std::string>* lists[] = {
+            &edits.explicit_items, &edits.added, &edits.prepended,
+            &edits.appended, &edits.deleted, &edits.ordered};
+        for (const std::vector<std::string>* list : lists) {
+          for (const std::string& item : *list) InternToken(item);
+        }
+      }
+      {
+        const StringListOpEdits& edits = prim.meta().clipSetEdits();
+        const std::vector<std::string>* lists[] = {
+            &edits.explicit_items, &edits.added, &edits.prepended,
+            &edits.appended, &edits.deleted, &edits.ordered};
+        for (const std::vector<std::string>* list : lists) {
+          for (const std::string& item : *list) InternToken(item);
+        }
+      }
+      for (const auto& variant_set : prim.meta().variantSets()) {
+        InternString(variant_set.name);
+      }
+      {
+        const StringListOpEdits& edits = prim.meta().variantSetNameEdits();
+        const std::vector<std::string>* lists[] = {
+            &edits.explicit_items, &edits.added, &edits.prepended,
+            &edits.appended, &edits.deleted, &edits.ordered};
+        for (const std::vector<std::string>* list : lists) {
+          for (const std::string& item : *list) InternString(item);
+        }
       }
       for (const auto& ref : prim.meta().references) {
         InternString(ref);

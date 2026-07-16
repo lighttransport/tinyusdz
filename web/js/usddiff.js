@@ -11,6 +11,7 @@
 
 import { loadWasm } from './src/usdzconvert.js';
 import { McpFetchClient, toBase64 } from './src/mcp-fetch-client.js';
+import { basenameFromUri, mountBackendSelector } from './src/tinyusdz/LoaderConfigUtils.js';
 
 // ---------------------------------------------------------------------------
 // UI
@@ -50,6 +51,8 @@ container.innerHTML = `
     <span id="status" style="color:#aaa;margin-left:6px"></span>
   </div>
 
+  <div id="loadStats" style="display:none;color:#889;font-family:ui-monospace,monospace;font-size:12px;margin:-2px 0 10px"></div>
+
   <div class="bar">
     <span class="lbl">View</span>
     <span id="tabs">
@@ -77,6 +80,10 @@ container.innerHTML = `
 `;
 document.body.style.background = '#0d0d1a';
 document.body.appendChild(container);
+
+// Backend switch reloads the page (the WASM module is chosen at startup);
+// mounted into the options bar next to ULPs/eps.
+mountBackendSelector(container.querySelector('.bar'), { append: true });
 
 const styleEl = document.createElement('style');
 styleEl.textContent = `
@@ -116,7 +123,7 @@ const els = {
   btnDiff: $('btnDiff'), status: $('status'),
   optUlps: $('optUlps'), optEps: $('optEps'), optMeta: $('optMeta'),
   tabs: $('tabs'), filterPath: $('filterPath'), filterReason: $('filterReason'),
-  report: $('report'), raw: $('raw'),
+  report: $('report'), raw: $('raw'), loadStats: $('loadStats'),
   mcpUrl: $('mcpUrl'), btnConnect: $('btnConnect'), useMcp: $('useMcp'), mcpStatus: $('mcpStatus'),
 };
 
@@ -137,7 +144,12 @@ function setStatus(s) { els.status.textContent = s; }
 async function ensureWasm() {
   if (native) return native;
   setStatus('Loading WASM…');
-  native = await loadWasm(() => import('./src/tinyusdz/tinyusdz.js'));
+  // backend=next / wasm=next load the next-only module (its usddiff diffs
+  // next::Layer with the same options/result contract).
+  const params = new URLSearchParams(window.location.search);
+  const useNext = params.get('backend') === 'next' || params.get('wasm') === 'next';
+  const glue = useNext ? './src/tinyusdz/tinyusdz_next.js' : './src/tinyusdz/tinyusdz.js';
+  native = await loadWasm(() => import(/* @vite-ignore */ new URL(glue, import.meta.url).href));
   setStatus('');
   return native;
 }
@@ -147,13 +159,20 @@ function refresh() {
   els.rightName.textContent = files.right ? files.right.name : '(none)';
   els.btnDiff.disabled = !(files.left && files.right);
 }
+const USD_EXT_RE = /\.(usd|usda|usdc|usdz)$/i;
 async function setFile(slot, file) {
   if (!file) { files[slot] = null; refresh(); return; }
-  files[slot] = { name: file.name, data: new Uint8Array(await file.arrayBuffer()) };
+  if (!USD_EXT_RE.test(file.name)) {
+    setStatus(`Unsupported file "${file.name}" — pick a .usd / .usda / .usdc / .usdz file.`);
+    return;
+  }
+  const t0 = performance.now();
+  files[slot] = { name: file.name, data: new Uint8Array(await file.arrayBuffer()), readMs: performance.now() - t0 };
   refresh();
 }
-els.leftInput.addEventListener('change', e => setFile('left', e.target.files[0]));
-els.rightInput.addEventListener('change', e => setFile('right', e.target.files[0]));
+// Reset the input value after each pick so re-selecting the same file works.
+els.leftInput.addEventListener('change', e => { setFile('left', e.target.files[0]); e.target.value = ''; });
+els.rightInput.addEventListener('change', e => { setFile('right', e.target.files[0]); e.target.value = ''; });
 function wireDrop(el, slot) {
   ['dragenter', 'dragover'].forEach(ev => el.addEventListener(ev, e => { e.preventDefault(); el.classList.add('active'); }));
   ['dragleave', 'drop'].forEach(ev => el.addEventListener(ev, e => { e.preventDefault(); el.classList.remove('active'); }));
@@ -444,7 +463,7 @@ els.btnDiff.addEventListener('click', async () => {
     lastText = res.text || '';
     try { lastJson = res.json ? JSON.parse(res.json) : null; } catch (_) { lastJson = null; }
     render();
-    setStatus(res.hasDiffs ? 'Differences found.' : 'No differences.');
+    setStatus(res.hasDiffs ? 'Differences found.' : 'No differences found.');
   } catch (err) {
     els.raw.style.display = 'block'; els.report.style.display = 'none';
     els.raw.textContent = 'Error: ' + (err && err.message ? err.message : err);
@@ -456,3 +475,26 @@ els.btnDiff.addEventListener('click', async () => {
 
 setStatus('Pick two USD files to compare.');
 render();
+
+// URL-driven compare: ?left=<url>&right=<url> fetches both files and runs
+// the diff automatically (used by the browser regression suite).
+(async () => {
+  const params = new URLSearchParams(window.location.search);
+  const leftUrl = params.get('left');
+  const rightUrl = params.get('right');
+  if (!leftUrl || !rightUrl) return;
+  const fetchSide = async (slot, url) => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`fetch ${url}: HTTP ${res.status}`);
+    const name = decodeURIComponent(url.split('?')[0].split('#')[0].split('/').pop() || slot);
+    files[slot] = { name, data: new Uint8Array(await res.arrayBuffer()), readMs: 0 };
+  };
+  try {
+    setStatus('Fetching files from URL…');
+    await Promise.all([fetchSide('left', leftUrl), fetchSide('right', rightUrl)]);
+    refresh();
+    els.btnDiff.click();
+  } catch (err) {
+    setStatus('Failed to load URL inputs: ' + (err && err.message ? err.message : err));
+  }
+})();

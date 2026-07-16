@@ -10,6 +10,9 @@
     const PrimSpec *spec = nullptr;
     const Layer *layer = nullptr;
     std::string layer_id;
+    // Time offset of the owning layer within its stack (sublayer offsets),
+    // relative to the stack root. Identity for the root layer.
+    LayerOffset layer_offset;
   };
 
   // Memoized spec resolution. The same (stack, site) is resolved 3-5x per
@@ -54,6 +57,7 @@
         r.spec = s;
         r.layer = lp.get();
         if (i < st.layer_identifiers.size()) r.layer_id = st.layer_identifiers[i];
+        if (i < st.layer_offsets.size()) r.layer_offset = st.layer_offsets[i];
         refs.push_back(std::move(r));
       }
     }
@@ -80,7 +84,8 @@
   // --- payload policy -----------------------------------------------------
 
   bool ShouldLoadPayload(const std::string &root_prim_path,
-                         const std::string &asset) {
+                         const std::string &asset,
+                         const PrimSpec &owner) {
     // Explicit load rules win; a path with no governing rule falls back to the
     // base policy (payload_policy callback, else the load_payloads flag).
     switch (load_rules_.GetEffect(root_prim_path)) {
@@ -92,6 +97,10 @@
       case LoadRules::Effect::Default:
         break;
     }
+    if (options.payload_policy_with_prim) {
+      return options.payload_policy_with_prim(Path(root_prim_path), asset,
+                                              owner);
+    }
     if (options.payload_policy) {
       return options.payload_policy(Path(root_prim_path), asset);
     }
@@ -102,23 +111,52 @@
 
   // Record `spec`'s variant selections into the accumulator (strong-first wins,
   // so a selection authored on a stronger source overrides a weaker one).
+  // Backtick selection values are variable expressions and evaluate against
+  // the recording source's composed expression variables; an expression that
+  // fails (or evaluates to None) records no selection for that set.
   void RecordSelections(const PrimSpec &spec,
-                        std::map<std::string, std::string> *sels) const {
+                        std::map<std::string, std::string> *sels,
+                        const std::shared_ptr<const Value> &expr_vars = nullptr,
+                        std::string *warn = nullptr,
+                        std::string *err = nullptr) {
+    const auto record = [&](const std::string &set, const std::string &sel) {
+      if (!sel.empty() && sel.front() == '`' &&
+          options.expression_variable_policy !=
+              ExpressionVariablePolicy::Disabled) {
+        const Value empty = Value::MakeDictionary();
+        const ExpressionEvaluation expression = EvaluateAssetPathExpression(
+            sel, expr_vars ? *expr_vars : empty);
+        if (expression.is_expression && !expression.success) {
+          AddIssue(ErrorCode::ExpressionVariableError, sel, expression.error,
+                   options.expression_variable_policy ==
+                           ExpressionVariablePolicy::RequireResolved
+                       ? err
+                       : warn);
+          return;
+        }
+        if (expression.is_none) return;  // no opinion
+        if (expression.success && expression.is_expression) {
+          sels->emplace(set, expression.value);
+          return;
+        }
+      }
+      sels->emplace(set, sel);
+    };
     // Per-set `selected` field FIRST: it is the authoritative per-set form (what
     // the crate reader sets for EVERY selected set, and what the Compositor's
     // ApplyVariants reads first). The legacy variantSelection string carries only
     // ONE set, so without this a MULTI-set selection loaded from USDC loses every
     // set after the first. (emplace keeps the first/strongest opinion per set.)
     for (const VariantSetData &vss : spec.meta().variantSets()) {
-      if (!vss.selected.empty()) sels->emplace(vss.name, vss.selected);
+      if (!vss.selected.empty()) record(vss.name, vss.selected);
     }
     if (!spec.meta().variantSelection.empty()) {
       VariantSelection s =
           Compositor::ParseVariantSelection(spec.meta().variantSelection);
-      if (!s.variant_set.empty()) sels->emplace(s.variant_set, s.variant_name);
+      if (!s.variant_set.empty()) record(s.variant_set, s.variant_name);
     }
     for (const auto &sel : spec.meta().variantSelections()) {
-      sels->emplace(sel.first, sel.second);
+      record(sel.first, sel.second);
     }
   }
 
@@ -129,6 +167,20 @@
     const VariantData *vd;
   };
 
+  // The fallback option for a variantSet nothing selects: the first candidate
+  // (in configured order) the set actually defines, or null. See
+  // CompositionOptions::variant_fallbacks.
+  const std::string *FallbackSelection(const VariantSetData &vss) const {
+    auto it = options.variant_fallbacks.find(vss.name);
+    if (it == options.variant_fallbacks.end()) return nullptr;
+    for (const std::string &candidate : it->second) {
+      for (const VariantData &vd : vss.variants) {
+        if (vd.name == candidate) return &vd.name;
+      }
+    }
+    return nullptr;
+  }
+
   // Resolve the selected variants for the variantSets defined on `spec`, using
   // the accumulated cross-source selection map. Returns one entry per selected
   // set.
@@ -138,9 +190,15 @@
     std::vector<SelectedVariant> out;
     for (const VariantSetData &vss : spec.meta().variantSets()) {
       auto sit = sels.find(vss.name);
-      if (sit == sels.end()) continue;  // no selection for this set
+      // No authored selection anywhere: fall back to a registered global default
+      // (pxr's variant fallbacks; `standin -> render`). Consulted here only, so
+      // an authored selection always wins and the fallback never poisons `sels`
+      // (and thus never pre-empts a selection authored in a weaker layer).
+      const std::string *chosen =
+          sit != sels.end() ? &sit->second : FallbackSelection(vss);
+      if (!chosen) continue;  // no selection for this set
       for (const VariantData &vd : vss.variants) {
-        if (vd.name == sit->second) {
+        if (vd.name == *chosen) {
           out.push_back({&vss.name, &vd});
           break;
         }
@@ -172,10 +230,11 @@
   // instance accumulates sources whose `site` is the instance's path WITHIN an
   // ancestor asset (e.g. `/root/set/.../leaf_0069` vs `_0070`), carrying the
   // instance-LOCAL opinions (transform/placement) that live outside the
-  // instancing boundary. Those have `site != map.source_prefix` (the arc has a
+  // instancing boundary. Their mapping renames an ANCESTOR prefix (the arc has a
   // positional offset beyond where it was introduced). A master-defining arc
-  // targets the prim directly, so `site == map.source_prefix` (asset-relative,
-  // identical across instances). Keep only the latter.
+  // targets the prim directly, so the mapping renames from exactly this site
+  // (asset-relative, identical across instances). Keep only the latter --
+  // `NamespaceMapping::MapsFrom`.
   std::string ComputeInstanceKeyImpl(const std::vector<Src> &srcs) const {
     std::string key;
     for (const Src &s : srcs) {
@@ -191,7 +250,11 @@
     }
     for (size_t i = 1; i < srcs.size(); ++i) {
       const Src &s = srcs[i];
-      if (s.site != Mapping(s.map_idx).source_prefix) continue;  // ancestral/positional
+      // Only sources an arc targeted DIRECTLY identify the instance; ancestral/
+      // positional ones (a child re-rooted under an arc) map from an ancestor
+      // prefix. (A mapping can carry several pairs -- one per arc plus one per
+      // relocate -- so this asks whether ANY of them starts at this site.)
+      if (!Mapping(s.map_idx).MapsFrom(s.site)) continue;
       key += ArcTypeName(s.arc_kind);
       key += "|" + layer_stacks[s.stack_idx].identifier + "|" + s.site;
       if (s.variant) key += "|v:" + s.variant->name;

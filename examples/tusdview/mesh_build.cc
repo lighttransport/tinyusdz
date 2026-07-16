@@ -5,6 +5,15 @@
 #include "lightrt_mtlx_bridge.hh"
 #include "texture_tools.hh"
 
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+extern "C" {
+#include "texpipe.h"  // tp_ktx2_read[_zstd] for the kept-compressed passthrough
+}
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#include "external/zstd.h"  // ZSTD_decompress (KTX2 supercompressionScheme 2)
+#endif
+#endif
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -15,8 +24,10 @@
 #include <limits>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "light3d/math.h"
+#include "log.hh"
 #include "skinning.hh"  // InbetweenSamples, CollectBlendShapeInbetweens
 #include "stage.hh"
 #include "core/prim.hh"
@@ -44,20 +55,31 @@ const char* PurposeName(tinyusdz::Purpose purpose) {
   }
 }
 
+// `purpose` lives on UsdGeomImageable, so it can be authored on ANY imageable
+// prim -- not just the Mesh/Xform pair this used to check. Assets routinely
+// author it on the grouping prim (intent-vfx's simpleAsset puts it on the
+// `proxy` and `render` Scopes), and missing that made every mesh under it
+// resolve to `default`.
+template <typename T>
+bool TypedAuthoredPurpose(const tinyusdz::Prim& prim, std::string* out) {
+  const auto* p = prim.as<T>();
+  if (!p || !p->purpose.authored()) return false;
+  *out = PurposeName(p->purpose.get_value());
+  return true;
+}
+
 bool AuthoredPurpose(const tinyusdz::Prim& prim, std::string* out) {
-  if (const auto* mesh = prim.as<tinyusdz::GeomMesh>()) {
-    if (mesh->purpose.authored()) {
-      *out = PurposeName(mesh->purpose.get_value());
-      return true;
-    }
-  }
-  if (const auto* xform = prim.as<tinyusdz::Xform>()) {
-    if (xform->purpose.authored()) {
-      *out = PurposeName(xform->purpose.get_value());
-      return true;
-    }
-  }
-  return false;
+  return TypedAuthoredPurpose<tinyusdz::Scope>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomMesh>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::Xform>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomSphere>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomCube>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomCylinder>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomCone>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomCapsule>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomPlane>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomBasisCurves>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomPoints>(prim, out);
 }
 
 std::string ResolveInheritedPurpose(const tinyusdz::Stage& stage,
@@ -83,6 +105,28 @@ std::string ResolveInheritedPurpose(const tinyusdz::Stage& stage,
 
 // USD `kind` is authored on the model prim (component/group/assembly), usually an
 // ancestor of the mesh, so walk up to the nearest prim carrying a kind.
+// Path of the nearest ancestor (self included) that roots a MODEL -- any
+// authored kind other than `group`, which is the container for many models
+// (/World) rather than one asset. Empty when there is none. Used to scope
+// proxy/render purpose alternatives to the asset that authored both.
+std::string ResolveModelRoot(const tinyusdz::Stage& stage,
+                             const std::string& absPath) {
+  std::string path = absPath;
+  while (!path.empty()) {
+    const tinyusdz::Prim* prim = nullptr;
+    std::string err;
+    if (stage.find_prim_at_path(tinyusdz::Path(path, ""), prim, &err) && prim &&
+        prim->metas().has_kind()) {
+      const std::string kind = prim->metas().get_kind_str();
+      if (!kind.empty() && kind != "group") return path;
+    }
+    if (path == "/") break;
+    const size_t slash = path.find_last_of('/');
+    path = (slash == std::string::npos || slash == 0) ? "/" : path.substr(0, slash);
+  }
+  return {};
+}
+
 int ResolveInheritedKind(const tinyusdz::Stage& stage, const std::string& absPath) {
   std::string path = absPath;
   while (!path.empty()) {
@@ -733,13 +777,26 @@ void NormalizeUdimTiles(DrawTextureCPU* tex, bool srgb, DrawScene* out) {
     h = std::max(h, tile.image.height);
   }
   if (w <= 0 || h <= 0) return;
+  // Resize every tile to the common (w,h); DROP any that fail -- the renderer
+  // uploads udimTiles as a 2D array requiring all layers to be exactly
+  // udimTileWidth/Height, so a leftover wrong-sized tile rendered as a
+  // black/garbage layer instead of the intended "missing" sentinel. Mirrors the
+  // --next loader (LoadNextUdimTexture); the dropped tile's UDIM id stays
+  // unmapped in the LUT rebuilt by InitUdimLookup below.
+  std::vector<DrawUdimTileCPU> sized;
+  sized.reserve(tex->udimTiles.size());
   for (DrawUdimTileCPU& tile : tex->udimTiles) {
-    if (tile.image.width == w && tile.image.height == h) continue;
-    std::string err;
-    if (!ResizeDrawImage(&tile.image, w, h, srgb, &err) && out) {
-      out->skipped.push_back("UDIM tile resize failed: " + err);
+    if (tile.image.width != w || tile.image.height != h) {
+      std::string err;
+      if (!ResizeDrawImage(&tile.image, w, h, srgb, &err)) {
+        if (out) out->skipped.push_back("UDIM tile resize failed (dropped): " + err);
+        continue;
+      }
     }
+    sized.push_back(std::move(tile));
   }
+  tex->udimTiles = std::move(sized);
+  if (tex->udimTiles.empty()) return;
   tex->udimTileWidth = w;
   tex->udimTileHeight = h;
   tex->image = tex->udimTiles.front().image;  // representative fallback.
@@ -847,28 +904,90 @@ void EncodeBC3AlphaBlock(const uint8_t rgba[16][4], uint8_t* out) {
 }
 #endif  // !TUSDVIEW_WITH_TEXTOOLS
 
-bool EncodeBCn(const light3d::Image& img, bool srgb, bool preferBc7,
-               DrawCompressedImageCPU* out) {
+// Resolve a requested compression mode to a concrete block format the device
+// can actually sample, given its capabilities. `opaque` only affects the BCn
+// (BC1 vs BC3) auto choice; ASTC/ETC2/BC7 carry alpha regardless. Falls back
+// gracefully (e.g. Astc on a BC-only desktop GPU -> BC7) and returns None when
+// nothing is available so the caller keeps the texture uncompressed.
+DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
+                                            const TextureCompressCaps& caps,
+                                            bool opaque, bool normal_map) {
+  // A tangent-space normal map's X/Y are independent, so a BC1/BC3 endpoint
+  // color line cross-contaminates them (visibly wrong lighting). Force a
+  // full-channel format instead. BC5 would be ideal (two independent channels)
+  // but the raster shaders don't reconstruct Z from a two-channel sample yet, so
+  // BC7 (all four channels, high quality) is the safe choice; ASTC/ETC2 are also
+  // full-channel. Never BC1/BC3 for a normal map.
+  const DrawCompressedFormat bcn =
+      normal_map ? DrawCompressedFormat::BC7
+                 : (opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3);
+  switch (mode) {
+    case TextureCompressionMode::Off:
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::BCn:
+      if (caps.bc) return bcn;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::BC7:
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::Astc:
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::Etc2:
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::Auto:
+      // Prefer the highest-quality format available on the platform.
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+  }
+  return DrawCompressedFormat::None;
+}
+
+bool EncodeBCn(const light3d::Image& img, bool srgb,
+               TextureCompressionMode mode, const TextureCompressCaps& caps,
+               DrawCompressedImageCPU* out, bool normal_map,
+               const bool* opaque_override = nullptr) {
   if (!out || img.width <= 0 || img.height <= 0 || img.channels != 4 ||
       img.data.empty()) {
     return false;
   }
   bool opaque = true;
-  for (size_t i = 3; i < img.data.size(); i += 4) {
-    if (img.data[i] < 250) {
-      opaque = false;
-      break;
+  if (opaque_override) {
+    // UDIM: one opacity decision for the whole tile set (see CompressTexture) --
+    // per-tile choices mixed BC1 (8 B) and BC3 (16 B) blocks, which the 2D-array
+    // upload cannot combine, silently falling back to uncompressed.
+    opaque = *opaque_override;
+  } else {
+    for (size_t i = 3; i < img.data.size(); i += 4) {
+      if (img.data[i] < 250) {
+        opaque = false;
+        break;
+      }
     }
   }
 #if defined(TUSDVIEW_WITH_TEXTOOLS)
   const DrawCompressedFormat format =
-      preferBc7 ? DrawCompressedFormat::BC7
-                : (opaque ? DrawCompressedFormat::BC1
-                          : DrawCompressedFormat::BC3);
+      ChooseCompressedFormat(mode, caps, opaque, normal_map);
+  if (format == DrawCompressedFormat::None) return false;
   return TexToolsCompress(img, srgb, format, out);
 #else
   (void)srgb;
-  (void)preferBc7;  // BC7 needs the vendored texcomp encoder.
+  (void)mode;
+  (void)caps;  // ASTC/ETC2/BC7 need the vendored texcomp encoder.
+  // Without textools the only encoders are BC1/BC3, both of which corrupt a
+  // normal map's X/Y. Leave normal maps uncompressed here.
+  if (normal_map) return false;
   out->format = opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3;
   out->width = img.width;
   out->height = img.height;
@@ -904,14 +1023,69 @@ bool EncodeBCn(const light3d::Image& img, bool srgb, bool preferBc7,
 #endif  // TUSDVIEW_WITH_TEXTOOLS
 }
 
-void CompressTexture(DrawTextureCPU* tex, bool preferBc7) {
+void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
+                     const TextureCompressCaps& caps, bool normal_map) {
   if (!tex) return;
   if (tex->isUdim) {
+    // One opacity decision for the whole tile set, so every layer gets the SAME
+    // block format (the 2D-array upload needs uniform format + layer size).
+    bool set_opaque = true;
+    for (const DrawUdimTileCPU& tile : tex->udimTiles) {
+      const auto& d = tile.image.data;
+      for (size_t i = 3; i < d.size(); i += 4) {
+        if (d[i] < 250) { set_opaque = false; break; }
+      }
+      if (!set_opaque) break;
+    }
     for (DrawUdimTileCPU& tile : tex->udimTiles) {
-      EncodeBCn(tile.image, tex->srgb, preferBc7, &tile.compressed);
+      EncodeBCn(tile.image, tex->srgb, mode, caps, &tile.compressed, normal_map,
+                &set_opaque);
+    }
+    EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed, normal_map,
+              &set_opaque);
+    return;
+  }
+  EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed, normal_map);
+}
+
+}  // namespace  (the texture post-passes below are shared with the --next loader)
+
+// GPU block-compression pass over already-decoded DrawScene textures. Split out
+// of ApplyTextureRuntimeOptions so the `--next` loader — which does its own size
+// cap / byte budget inside its texture decoder and must not re-run those passes —
+// can still honor `--texture-compress`. Declared in mesh_build.hh, so these three
+// live outside the anonymous namespace (external linkage).
+void ClassifyTextureUsage(DrawScene* out);  // defined below (near FinalizeDrawTextures)
+
+void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
+  if (!out || opt.compression == TextureCompressionMode::Off) return;
+  // Classify usage first so a normal map is not compressed onto a BC1/BC3 color
+  // line (which corrupts the independent X/Y components); it goes to a
+  // full-channel format (BC7/ASTC/ETC2) instead. FinalizeDrawTextures re-runs
+  // this (idempotent).
+  ClassifyTextureUsage(out);
+  size_t n = 0, raw = 0, comp = 0;
+  for (DrawTextureCPU& tex : out->textures) {
+    if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
+    tex.requestedCompressed = true;
+    CompressTexture(&tex, opt.compression, opt.caps, tex.isNormalMap);
+    if (!tex.compressed.data.empty()) {
+      ++n;
+      raw += tex.image.data.size();
+      comp += tex.compressed.data.size();
     }
   }
-  EncodeBCn(tex->image, tex->srgb, preferBc7, &tex->compressed);
+  if (n) {
+    std::fprintf(stderr,
+                 "[tusdview] texture-compress: %zu texture(s) -> fmt %d, "
+                 "%.1f MB -> %.1f MB (%.1fx)\n",
+                 n, static_cast<int>(out->textures.empty()
+                                         ? DrawCompressedFormat::None
+                                         : out->textures[0].compressed.format),
+                 double(raw) / (1024.0 * 1024.0),
+                 double(comp) / (1024.0 * 1024.0),
+                 comp ? double(raw) / double(comp) : 0.0);
+  }
 }
 
 void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out) {
@@ -969,14 +1143,9 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
       }
     }
   }
-
-  if (opt.compression != TextureCompressionMode::Off) {
-    const bool preferBc7 = opt.compression == TextureCompressionMode::BC7;
-    for (DrawTextureCPU& tex : out->textures) {
-      tex.requestedCompressed = true;
-      CompressTexture(&tex, preferBc7);
-    }
-  }
+  // NOTE: texture compression is intentionally NOT applied here. It runs after
+  // BuildDrawMaterials (in the callers), so ClassifyTextureUsage can see which
+  // textures are normal maps and keep them off a BC1 color line.
 }
 
 // Classify texture usage from the built materials, then (with --texture-mips)
@@ -984,7 +1153,11 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
 // run after BuildDrawMaterials on every load path (one-shot and streaming) so
 // both produce identical DrawScenes; texture usage (normal map / ORM packing /
 // alpha-tested) is only known once materials exist.
-void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
+// Tag each texture with how its bound materials use it (normal map, packed-ORM
+// roughness channel, alpha-tested base color). Idempotent. Must run BEFORE
+// ApplyTextureCompression so the block-format choice can see the usage -- a
+// normal map must not be squeezed onto a BC1 color line.
+void ClassifyTextureUsage(DrawScene* out) {
   if (!out) return;
   auto texAt = [&](int idx) -> DrawTextureCPU* {
     if (idx < 0 || static_cast<size_t>(idx) >= out->textures.size()) {
@@ -1009,6 +1182,11 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
       }
     }
   }
+}
+
+void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
+  if (!out) return;
+  ClassifyTextureUsage(out);
   if (!opt.generateMips || !TexToolsAvailable()) return;
   // Build the content-aware chain for one RGBA8 base image + its compressed
   // per-level payloads (same block format as the base level).
@@ -1035,11 +1213,24 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
         lvl.data = std::move(c.data);
         compressed->mips.push_back(std::move(lvl));
       }
-      if (!ok) compressed->mips.clear();  // base-only upload fallback
+      if (!ok) {
+        compressed->mips.clear();  // base-only upload fallback
+      } else {
+        // The uploaders read compressed.mips on this path and never touch the
+        // RGBA chain; keeping it retained ~21 MB of dead CPU RAM per 4K texture
+        // for the DrawScene's lifetime. The format was cap-gated, so no
+        // uncompressed fallback needs these levels.
+        mips->clear();
+        mips->shrink_to_fit();
+      }
     }
     return true;
   };
   for (DrawTextureCPU& tex : out->textures) {
+    // Kept-compressed KTX2 passthrough: the compressed payload is final and
+    // `image` is empty, so there is nothing to build a mip chain from (the KTX2
+    // level 0 is uploaded directly; multi-level KTX2 mips are a follow-up).
+    if (tex.compressedFinal) continue;
     TexUsage usage;
     usage.srgb = tex.srgb;
     usage.normalMap = tex.isNormalMap;
@@ -1077,11 +1268,238 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
   }
 }
 
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+namespace {
+
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+size_t Ktx2ZstdDecompress(void* /*user*/, uint8_t* dst, size_t dst_cap,
+                          const uint8_t* src, size_t src_size) {
+  const size_t r = ZSTD_decompress(dst, dst_cap, src, src_size);
+  return ZSTD_isError(r) ? 0u : r;
+}
+#endif
+
+// Map a KTX2 block codec to the draw format (uni is handled via `isUni`).
+DrawCompressedFormat Ktx2CodecToDraw(tp_codec c) {
+  switch (c) {
+    case TP_CODEC_BC1: return DrawCompressedFormat::BC1;
+    case TP_CODEC_BC3: return DrawCompressedFormat::BC3;
+    case TP_CODEC_BC5: return DrawCompressedFormat::BC5;
+    case TP_CODEC_BC6H: return DrawCompressedFormat::BC6H;
+    case TP_CODEC_BC7: return DrawCompressedFormat::BC7;
+    case TP_CODEC_ETC2_RGB: return DrawCompressedFormat::ETC2_RGB;
+    case TP_CODEC_ETC2_RGBA: return DrawCompressedFormat::ETC2_RGBA;
+    case TP_CODEC_ASTC: return DrawCompressedFormat::ASTC_4x4;
+    default: return DrawCompressedFormat::None;  // EAC / ASTC-HDR
+  }
+}
+
+}  // namespace
+
+bool BuildKeptCompressedFromKtx2(const uint8_t* data, size_t size,
+                                 const TextureRuntimeOptions& opt,
+                                 DrawTextureCPU* tex) {
+  if (!data || !size || !tex) return false;
+  // A size cap / byte budget needs decoded texels; fall back to the normal path.
+  if (opt.maxTextureSize > 0 || opt.textureBudgetMB > 0) return false;
+
+  tp_ktx2_image k;
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+  if (!TP_OK(tp_ktx2_read_zstd(data, size, nullptr, &Ktx2ZstdDecompress, nullptr,
+                               &k))) {
+    return false;
+  }
+#else
+  if (!TP_OK(tp_ktx2_read(data, size, &k))) return false;
+#endif
+
+  bool ok = false;
+  const bool isUni = k.is_uni != 0;
+  const DrawCompressedFormat srcFmt =
+      isUni ? DrawCompressedFormat::ASTC_4x4 : Ktx2CodecToDraw(k.codec);
+  if (k.num_faces == 1 && k.num_layers <= 1 && k.num_levels >= 1 &&
+      (isUni || srcFmt != DrawCompressedFormat::None)) {
+    const uint32_t w = k.levels[0].width;
+    const uint32_t h = k.levels[0].height;
+    DrawCompressedImageCPU comp;
+    light3d::Image rgba;
+    if (TexToolsAdaptCompressed(k.levels[0].data, k.levels[0].size, isUni, srcFmt,
+                                w, h, opt.caps, &comp, &rgba)) {
+      if (!comp.data.empty()) {
+        // Carry the KTX2's precomputed mip chain to the same target format.
+        for (int l = 1; l < k.num_levels; ++l) {
+          std::vector<uint8_t> mip;
+          if (!TexToolsAdaptCompressedLevel(k.levels[l].data, k.levels[l].size,
+                                            isUni, srcFmt, comp.format,
+                                            k.levels[l].width,
+                                            k.levels[l].height, &mip)) {
+            comp.mips.clear();
+            break;
+          }
+          DrawCompressedMipCPU m;
+          m.width = static_cast<int>(k.levels[l].width);
+          m.height = static_cast<int>(k.levels[l].height);
+          m.data = std::move(mip);
+          comp.mips.push_back(std::move(m));
+        }
+        std::fprintf(stderr,
+                     "[tusdview] kept-compressed KTX2: %s -> draw fmt %d, %ux%u, "
+                     "%zu levels, %zu base bytes (no re-encode)\n",
+                     isUni ? "uni" : "block", static_cast<int>(comp.format), w, h,
+                     1 + comp.mips.size(), comp.data.size());
+        tex->compressed = std::move(comp);
+        tex->requestedCompressed = true;
+        tex->compressedFinal = true;
+        // Metadata only; the blocks (+ mips) are uploaded directly.
+        tex->image.width = static_cast<int>(w);
+        tex->image.height = static_cast<int>(h);
+        tex->image.channels = 4;
+        tex->image.data.clear();
+      } else {
+        tex->image = std::move(rgba);  // uncompressed fallback
+      }
+      ok = true;
+    }
+  }
+  tp_ktx2_image_free(nullptr, &k);
+  return ok;
+}
+#endif  // TUSDVIEW_WITH_TEXTOOLS
+
+namespace {  // (resume the file-local helpers)
+
 // --- Shared per-element builders (used by both BuildDrawScene and the
 // streaming path so the two produce identical output) ---------------------
 
 // Build the renderable textures (dedup by texture_image_id) and a mapping
 // drawTexMap[uvTextureIndex] -> DrawScene texture index (-1 if skipped).
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+// Map a tydra block format to the tusdview draw format (UNI is handled via the
+// srcIsUni flag, not this map). Returns None for formats with no draw mapping.
+static DrawCompressedFormat MapTydraBlockFormat(tydra::TextureBlockFormat f) {
+  switch (f) {
+    case tydra::TextureBlockFormat::BC1: return DrawCompressedFormat::BC1;
+    case tydra::TextureBlockFormat::BC3: return DrawCompressedFormat::BC3;
+    case tydra::TextureBlockFormat::BC5: return DrawCompressedFormat::BC5;
+    case tydra::TextureBlockFormat::BC6H: return DrawCompressedFormat::BC6H;
+    case tydra::TextureBlockFormat::BC7: return DrawCompressedFormat::BC7;
+    case tydra::TextureBlockFormat::ETC2_RGB: return DrawCompressedFormat::ETC2_RGB;
+    case tydra::TextureBlockFormat::ETC2_RGBA: return DrawCompressedFormat::ETC2_RGBA;
+    case tydra::TextureBlockFormat::ASTC_4x4: return DrawCompressedFormat::ASTC_4x4;
+    case tydra::TextureBlockFormat::UNI: return DrawCompressedFormat::ASTC_4x4;  // uni ~ astc4x4
+    default: return DrawCompressedFormat::None;  // EAC_R11/RG11, None
+  }
+}
+
+// Bytes per 4x4 (or codec-native) block, for splitting a packed mip chain.
+static int BlockFormatBytes(tydra::TextureBlockFormat f) {
+  switch (f) {
+    case tydra::TextureBlockFormat::BC1:
+    case tydra::TextureBlockFormat::ETC2_RGB:
+    case tydra::TextureBlockFormat::EAC_R11: return 8;
+    default: return 16;  // BC3/5/6H/7, ETC2_RGBA, EAC_RG11, ASTC_4x4, UNI
+  }
+}
+
+// Kept-compressed KTX2 passthrough: a tydra image whose blockFormat != None
+// carries GPU block bytes. Adapt them to the device (upload as-is / transcode
+// uni / decode fallback) instead of decoding-then-re-encoding. Only engages when
+// no size cap / budget resize is requested (those need decoded texels). Returns
+// true if the texture was populated (compressed or RGBA fallback).
+static bool TryKeepCompressedTexture(const tydra::RenderScene& rs,
+                                     const tydra::TextureImage& img,
+                                     const TextureRuntimeOptions& opt,
+                                     DrawTextureCPU* tex) {
+  if (img.blockFormat == tydra::TextureBlockFormat::None) return false;
+  if (opt.maxTextureSize > 0 || opt.textureBudgetMB > 0) return false;
+  if (img.buffer_id < 0 ||
+      static_cast<size_t>(img.buffer_id) >= rs.buffers.size())
+    return false;
+  if (img.width <= 0 || img.height <= 0) return false;
+  const std::vector<uint8_t>& buf =
+      rs.buffers[static_cast<size_t>(img.buffer_id)].data;
+  if (buf.empty()) return false;
+
+  const bool isUni = img.blockFormat == tydra::TextureBlockFormat::UNI;
+  const DrawCompressedFormat srcFmt = MapTydraBlockFormat(img.blockFormat);
+  const int blockBytes = BlockFormatBytes(img.blockFormat);
+  const int bw = img.blockWidth > 0 ? img.blockWidth : 4;
+  const int bh = img.blockHeight > 0 ? img.blockHeight : 4;
+  auto levelBytes = [&](int lw, int lh) -> size_t {
+    return static_cast<size_t>((lw + bw - 1) / bw) *
+           static_cast<size_t>((lh + bh - 1) / bh) *
+           static_cast<size_t>(blockBytes);
+  };
+
+  // Split the tightly-packed buffer into mip levels (largest-first), deriving
+  // each level's size from its dimensions + block geometry.
+  struct Lvl { size_t off; size_t size; int w; int h; };
+  std::vector<Lvl> levels;
+  size_t off = 0;
+  int lw = img.width, lh = img.height;
+  for (int l = 0; l < 24 && off < buf.size(); ++l) {
+    const size_t sz = levelBytes(lw, lh);
+    if (sz == 0 || off + sz > buf.size()) break;
+    levels.push_back({off, sz, lw, lh});
+    off += sz;
+    if (lw == 1 && lh == 1) break;
+    lw = std::max(1, lw >> 1);
+    lh = std::max(1, lh >> 1);
+  }
+  if (levels.empty()) return false;
+
+  // Level 0 decides the device target (compressed format or RGBA fallback).
+  DrawCompressedImageCPU comp;
+  light3d::Image rgba;
+  if (!TexToolsAdaptCompressed(buf.data() + levels[0].off, levels[0].size, isUni,
+                               srcFmt, static_cast<uint32_t>(levels[0].w),
+                               static_cast<uint32_t>(levels[0].h), opt.caps,
+                               &comp, &rgba)) {
+    return false;
+  }
+
+  if (comp.data.empty()) {
+    tex->image = std::move(rgba);  // uncompressed fallback (level 0 only)
+    return true;
+  }
+
+  // Compressed: carry the precomputed mip chain (levels 1..N) to the same
+  // target format by copy/transcode. On any failure, fall back to base-only.
+  for (size_t l = 1; l < levels.size(); ++l) {
+    std::vector<uint8_t> mipBytes;
+    if (!TexToolsAdaptCompressedLevel(buf.data() + levels[l].off, levels[l].size,
+                                      isUni, srcFmt, comp.format,
+                                      static_cast<uint32_t>(levels[l].w),
+                                      static_cast<uint32_t>(levels[l].h),
+                                      &mipBytes)) {
+      comp.mips.clear();
+      break;
+    }
+    DrawCompressedMipCPU m;
+    m.width = levels[l].w;
+    m.height = levels[l].h;
+    m.data = std::move(mipBytes);
+    comp.mips.push_back(std::move(m));
+  }
+
+  std::fprintf(stderr,
+               "[tusdview] kept-compressed KTX2: %s (block fmt %d) -> draw fmt "
+               "%d, %dx%d, %zu levels, %zu base bytes (no re-encode)\n",
+               isUni ? "uni" : "block", static_cast<int>(img.blockFormat),
+               static_cast<int>(comp.format), comp.width, comp.height,
+               1 + comp.mips.size(), comp.data.size());
+  tex->compressed = std::move(comp);
+  tex->requestedCompressed = true;
+  tex->compressedFinal = true;
+  // Metadata only; the compressed payload (+ mips) is uploaded directly.
+  tex->image.width = img.width;
+  tex->image.height = img.height;
+  tex->image.channels = 4;
+  tex->image.data.clear();
+  return true;
+}
+#endif  // TUSDVIEW_WITH_TEXTOOLS
+
 void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
                        std::vector<int>* drawTexMap,
                        const TextureRuntimeOptions& textureOptions) {
@@ -1171,7 +1589,13 @@ void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
     }
     const tydra::TextureImage& img = rs.images[static_cast<size_t>(imgId)];
     DrawTextureCPU tex;
-    if (!DecodeToRGBA8(rs, img, &tex.image)) {
+    bool built = false;
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+    // Kept-compressed KTX2 passthrough (blockFormat != None): upload/transcode
+    // the GPU blocks directly instead of decoding + re-encoding.
+    built = TryKeepCompressedTexture(rs, img, textureOptions, &tex);
+#endif
+    if (!built && !DecodeToRGBA8(rs, img, &tex.image)) {
       out->skipped.push_back("texture '" + uv.prim_name +
                              "': undecoded/unsupported image");
       continue;
@@ -2229,23 +2653,21 @@ void PlaceDrawMesh(DrawMeshCPU* dm, const matrix4d& worldMat) {
   MatToColMajor(worldMat, world.m);
   std::memcpy(dm->world, world.m, sizeof(world.m));
 
-  float lmin[3] = {1e30f, 1e30f, 1e30f};
-  float lmax[3] = {-1e30f, -1e30f, -1e30f};
-  for (const auto& v : dm->vertices) {
-    const float p[3] = {v.px, v.py, v.pz};
-    for (int c = 0; c < 3; ++c) {
-      lmin[c] = std::min(lmin[c], p[c]);
-      lmax[c] = std::max(lmax[c], p[c]);
-    }
-  }
+  // World bounds from the vertices THEMSELVES, not from the 8 corners of the local
+  // AABB transformed into world -- that box is a strict superset (rotate a box and
+  // its axis-aligned hull grows), so it disagreed with every other bounds
+  // computation in the app. UpdateMeshBoundsFromVertices, which re-derives the box
+  // once GPU skinning poses a mesh, walks the vertices; so the same scene came out
+  // with a LOOSE box under CPU skinning and a TIGHT one under GPU, which moved the
+  // ground grid and the depth normalization (both scale with scene bounds) between
+  // two paths that render identical geometry. One extra transform per vertex, in a
+  // loop that already visits every vertex.
   float wmin[3] = {1e30f, 1e30f, 1e30f};
   float wmax[3] = {-1e30f, -1e30f, -1e30f};
-  for (int corner = 0; corner < 8; ++corner) {
-    light3d::Vec3 lp{(corner & 1) ? lmax[0] : lmin[0],
-                     (corner & 2) ? lmax[1] : lmin[1],
-                     (corner & 4) ? lmax[2] : lmin[2]};
-    light3d::Vec3 wp = light3d::transformPoint(world, lp);
-    float wparr[3] = {wp.x, wp.y, wp.z};
+  for (const auto& v : dm->vertices) {
+    const light3d::Vec3 wp =
+        light3d::transformPoint(world, light3d::Vec3{v.px, v.py, v.pz});
+    const float wparr[3] = {wp.x, wp.y, wp.z};
     for (int c = 0; c < 3; ++c) {
       wmin[c] = std::min(wmin[c], wparr[c]);
       wmax[c] = std::max(wmax[c], wparr[c]);
@@ -2499,6 +2921,46 @@ void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw) {
                                         : ResolveInheritedPurpose(stage, mesh.absPath);
     mesh.kindId =
         mesh.absPath.empty() ? 0 : ResolveInheritedKind(stage, mesh.absPath);
+  }
+
+  // `proxy` and `render` are ALTERNATIVES in USD, not two things to draw: the
+  // proxy is a stand-in for a render prim too heavy to show. Drawing both puts
+  // the stand-in on top of the geometry it stands in for (in intent-vfx's
+  // simpleAsset, a proxy Cube of size 2 exactly encloses the render Sphere of
+  // radius 1, hiding it completely). So a proxy is SUPERSEDED by render-purpose
+  // geometry; one that stands in for nothing still draws, which is the whole
+  // point of authoring it.
+  //
+  // The two are alternatives of the same ASSET, so the model root scopes the
+  // pairing -- see the matching rule in next_scene_loader.cc for why a shared
+  // ancestor is the wrong scope (it deletes unrelated proxy-only geometry).
+  std::unordered_set<std::string> renderModels;
+  for (const DrawMeshCPU& mesh : draw->meshes) {
+    if (mesh.purpose != "render" || mesh.absPath.empty()) continue;
+    const std::string model = ResolveModelRoot(stage, mesh.absPath);
+    if (!model.empty()) renderModels.insert(model);
+  }
+  if (renderModels.empty()) return;
+
+  const size_t before = draw->meshes.size();
+  draw->meshes.erase(
+      std::remove_if(draw->meshes.begin(), draw->meshes.end(),
+                     [&](const DrawMeshCPU& mesh) {
+                       if (mesh.purpose != "proxy" || mesh.absPath.empty()) {
+                         return false;
+                       }
+                       return renderModels.count(
+                                  ResolveModelRoot(stage, mesh.absPath)) > 0;
+                     }),
+      draw->meshes.end());
+
+  const size_t superseded = before - draw->meshes.size();
+  if (superseded > 0) {
+    LOGI("legacy: %zu proxy-purpose mesh(es) superseded by render-purpose geometry",
+         superseded);
+    // The dropped proxies were folded into the scene box by BuildDrawScene, and
+    // the box drives the ground grid, depth normalization and auto-fit.
+    ComputeSceneBounds(draw);
   }
 }
 
@@ -3043,6 +3505,9 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
   std::vector<int> drawTexMap;
   BuildDrawTextures(rs, out, &drawTexMap, textureOptions);
   BuildDrawMaterials(rs, out, drawTexMap);
+  // Compress after materials so normal maps are classified first (see
+  // ApplyTextureCompression / ClassifyTextureUsage).
+  ApplyTextureCompression(textureOptions, out);
   FinalizeDrawTextures(textureOptions, out);
   BuildDrawLights(rs, out, textureOptions);
 
@@ -3174,6 +3639,8 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
     std::vector<int> drawTexMap;
     BuildDrawTextures(scene, out, &drawTexMap, textureOptions);
     BuildDrawMaterials(scene, out, drawTexMap);
+    // Compress after materials so normal maps are classified first.
+    ApplyTextureCompression(textureOptions, out);
     FinalizeDrawTextures(textureOptions, out);
     BuildDrawLights(scene, out, textureOptions);
     // Any mesh not referenced by a node keeps identity placement (matches

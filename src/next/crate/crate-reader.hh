@@ -8,6 +8,7 @@
 
 #include "crate-format.hh"
 #include "../stage/stage.hh"
+#include <functional>
 #include <string>
 #include <vector>
 #include <memory>
@@ -17,6 +18,15 @@ namespace next {
 
 /// Options for reading crate files
 struct CrateReadOptions {
+  /// Fail closed when any field/value must be ignored or approximated. This
+  /// turns reader warnings into errors for AOUSD conformance-sensitive loads.
+  bool strict_aousd_conformance = false;
+
+  /// Optional progress callback. `phase` is a stable short string, `current`
+  /// and `total` are phase-local counts when available. Return false to cancel.
+  std::function<bool(const char* phase, size_t current, size_t total)>
+      progress_callback;
+
   /// Maximum number of tokens allowed
   size_t max_tokens = 1024 * 1024;
 
@@ -54,15 +64,6 @@ struct CrateReadOptions {
   /// mapping fails. The mapping stays alive as long as any lazy value (or the
   /// reader) references it. Set false to force the owned-buffer path.
   bool use_mmap = true;
-
-  /// Skip layer finalization (path-index build + property sort) after raw
-  /// reconstruction. This is valid for parse-only workloads where the resulting
-  /// stage is not traversed/composed immediately.
-  bool finalize_stage = true;
-
-  /// Emit crate-reader phase timings to stderr. Intended for CLI benchmarks;
-  /// disabled by default so library users do not receive diagnostics.
-  bool enable_timing = false;
 };
 
 /// Error from crate reading
@@ -97,12 +98,6 @@ public:
 
   /// Read from memory buffer (copies the input into a retained buffer).
   CrateReadResult Read(const uint8_t* data, size_t size);
-
-  /// Read from a borrowed memory buffer without copying.
-  ///
-  /// The caller must keep `data` alive until all lazy arrays/materialized values
-  /// that reference this source are destroyed (typically stage lifetime).
-  CrateReadResult ReadBorrowed(const uint8_t* data, size_t size);
 
   /// Read from an owned buffer, adopted by move (single in-heap copy). Prefer
   /// this on memory-constrained targets (e.g. WASM) when the caller can give up

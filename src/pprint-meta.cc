@@ -55,11 +55,12 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
     return ofs;
   }
 
-  // TODO: Do not print scale when it is 1.0
-  ofs << "(";
+  // Print in pxr USDA form: ` (offset = X; scale = Y)`
+  // (space before paren, `;` separator).
+  ofs << " (";
   if (print_offset && print_scale) {
     ofs << "offset = " << tinyusdz::dtos(v._offset)
-        << ", scale = " << tinyusdz::dtos(v._scale);
+        << "; scale = " << tinyusdz::dtos(v._scale);
   } else if (print_offset) {
     ofs << "offset = " << tinyusdz::dtos(v._offset);
   } else {  // print_scale
@@ -601,8 +602,14 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
   }
 
   if (meta.has_comment()) {
-    ss << pprint::Indent(indent)
-       << "comment = " << to_string(meta.get_comment()) << "\n";
+    // Honor how it was authored, exactly as the PRIM metadata printer above
+    // does. A bare string in a metadata block IS the comment in USD; only the
+    // ASCII spelling differs, and only the ASCII parser knows which was used.
+    ss << pprint::Indent(indent);
+    if (meta.get_comment().has_comment_prefix) {
+      ss << "comment = ";
+    }
+    ss << to_string(meta.get_comment()) << "\n";
   }
 
   if (meta.has_weight()) {
@@ -631,6 +638,14 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
     if (is_known_key(item.first)) continue;
     // attribute meta does not emit type_name
     ss << print_meta(item.second, indent, /* emit_type_name */false, item.first);
+  }
+
+  // Unregistered property metadata: write the stored raw text verbatim -- it
+  // already contains quotes if the original value was a quoted string, and
+  // non-string values (numbers, arrays, None, ...) are stored without quotes.
+  // This matches OpenUSD behaviour (SdfUnregisteredValue).
+  for (const auto &item : meta.unregisteredMetas) {
+    ss << pprint::Indent(indent) << item.first << " = " << item.second << "\n";
   }
 
   for (const auto &item : meta.stringData) {
@@ -769,9 +784,11 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       ss << "\n";
     }
 
-    // Check if timeSamples were authored (even if empty)
-    // An authored but empty timeSamples will have a valid type_id but size=0
-    bool has_timesamples_authored = (attr.has_timesamples() || attr.get_var().ts_raw().type_id() != 0);
+    // `has_timesamples()` now means "timeSamples were AUTHORED", empty or not
+    // (value::TimeSamples::authored()). It used to be size() > 0, so this had to
+    // sniff a valid-type_id-but-no-samples TimeSamples to catch an authored-empty
+    // block -- which the WRITER had no equivalent of, so it dropped it.
+    bool has_timesamples_authored = attr.has_timesamples();
 
     if (has_timesamples_authored && (attr.variability() != Variability::Uniform)) {
 

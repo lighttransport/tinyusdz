@@ -16,6 +16,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "frame_packet.hh"
@@ -40,7 +41,7 @@
 
 struct GLFWwindow;
 
-namespace tinyusdz { namespace next { class Stage; } }
+namespace tinyusdz { namespace next { class Stage; class StageSession; } }
 
 namespace tusdview {
 
@@ -182,7 +183,7 @@ class App
   void setLodStream(bool on) { lodStream_ = on; }
   void setLodMaxMemGiB(double g) { lodMaxMemGiB_ = g; }
   void setLodMaxVramGiB(double g) { lodMaxVramGiB_ = g; }
-  // --camera <name>: frame the viewer on a named USD Camera (--next path) instead
+  // --camera <name>: frame the viewer on a named USD Camera (either loader) instead
   // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
   void setCameraName(const std::string& n) { cameraName_ = n; }
   // Recently-opened scenes: the config file path to persist to, and the initial
@@ -283,11 +284,19 @@ class App
   // --next per-frame GPU morph: upload blendshape coefficients for instanced
   // prototypes from the retained next stage at animTime_. Runs independently of
   // the Tydra-path GPU-skinning gate (which --next does not engage).
-  void updateNextMorphFrameIfNeeded();
+  void updateNextDeformFrameIfNeeded();
+  // Does the --next scene carry deform data (skeleton bone rows / morph channels)?
+  bool sceneIsNextDeformable() const;
+  // Write the pose at `time` into draw_ geometry, for the CUDA/HIP tracers: they
+  // build their BVH from draw_ meshes, not from renderer-owned vertex buffers, so
+  // they cannot be fed the way Vulkan RT is. Restores the retained rest pose
+  // first, so it is idempotent across time codes. True when draw_ now holds `time`.
+  bool poseNextDrawForTracer(double time);
   // Non-GPU (ray-traced / CPU-skinned) path: when manual blendshape weights
   // change, re-bake the deformed geometry + BLAS via an async reconvert.
   void maybeReconvertForManualBlend();
   bool wantsGpuSkinningLoad() const;
+  bool wantsNextGpuSkinning() const;
   const char* skinningModeName(SkinningMode mode) const;
   // Advance the playback clock by `dtSec` and request a re-evaluation at the new
   // time (called once per frame while playing).
@@ -327,11 +336,9 @@ class App
   DrawScene draw_;
   LoadOptions loadOpts_;
   bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview
-  // Retained lazy `next` stage (--next): kept alive so per-frame blendshape
-  // weights can be sampled at animTime_ (lazy arrays stay mmap-backed). Set on
-  // load; pending* is the worker-thread staging slot moved in at finishLoad.
-  std::shared_ptr<tinyusdz::next::Stage> nextStage_;
-  std::shared_ptr<tinyusdz::next::Stage> pendingNextStage_;
+  // Persistent next document: owns the composed stage, resolver, and PCP cache.
+  std::shared_ptr<tinyusdz::next::StageSession> nextSession_;
+  std::shared_ptr<tinyusdz::next::StageSession> pendingNextSession_;
   bool hasNextMorph_{false};   // any --next draw mesh carries GPU morph channels
   float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
   OrbitCamera camera_;
@@ -429,6 +436,10 @@ class App
   std::string skinningReason_{"CPU path"};
   SkinningFrameCPU skinFrame_;
   double skinFrameTime_{std::numeric_limits<double>::quiet_NaN()};
+  // CUDA/HIP tracer re-pose (poseNextDrawForTracer): the retained rest vertices of
+  // the deformable meshes, and the time code draw_ currently holds.
+  std::unordered_map<int, std::vector<DrawVertex>> nextRestVerts_;
+  double nextTracerPosedTime_{std::numeric_limits<double>::quiet_NaN()};
   bool lastRtActiveForSkinning_{false};
   bool warnedMeshIndexMismatch_{false};
 

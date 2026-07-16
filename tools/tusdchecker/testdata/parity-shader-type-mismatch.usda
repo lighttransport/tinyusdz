@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    defaultPrim = "mat"
+)
+def Material "mat"
+{
+    def Shader "surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        float3 inputs:diffuseColor = (1, 0, 0)
+    }
+    def Shader "reader"
+    {
+        uniform token info:id = "UsdPrimvarReader_float2"
+        token inputs:varname = "st"
+    }
+}

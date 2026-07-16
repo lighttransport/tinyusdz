@@ -389,10 +389,20 @@ CMakeUserPresets.json
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
 !tests/unit/fixtures/*.usda
+!tests/next/fixtures/*.usda
 !tests/usda/validation/valid/*.usda
+!tests/usdc/aousd-unknown-property-metadata.usdc
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
 # top-level usdcat round-trip compare which globs only tests/usda/*.usda).
 !tests/usda/composition/listop-xlayer-*.usda
+# tusdview material regression fixtures (tusdview-material-binding-inheritance /
+# tusdview-asset-path-anchoring). Listed explicitly rather than un-ignoring all of
+# models/*.usda, which would also catch scratch scenes dropped in that directory.
+!models/tusdview-material-binding-inheritance.usda
+!models/skintest-instanced.usda
+!models/multi-uv-quad.usda
+!models/nested-look-texture/root.usda
+!models/nested-look-texture/look/look.usda
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda
@@ -427,6 +437,9 @@ web/build_64
 web/js/assets/*
 !web/js/assets/physics-robot-arm.usda
 
+# vite build output
+web/js/dist/
+
 # fuzzer
 tests/fuzzer/corpus/
 
@@ -447,6 +460,8 @@ aousd/spec/
 # Build directories (CMake / ninja / pip editable extension)
 build_py/
 build_py_ext/
+build_py_ext_next/
+build-next/
 build_test/
 web/build_ninja/
 web/build_64_ninja/
@@ -468,4 +483,19 @@ python/tinyusdz/_version.py
 # Private notes / scratch docs (may reference proprietary asset names) — never commit
 priv/
 resume.md
+# Root-level scratch notes only -- doc/resume-tusdview.md is tracked.
+/resume-tusdview.md
 gpu-task.md
+python/tinyusdz.egg-info/
+python/tinyusdz/_core.*.so
+
+# tusdchecker composition regression fixtures
+!tools/tusdchecker/testdata/type-mismatch-root.usda
+!tools/tusdchecker/testdata/type-mismatch-weak.usda
+!tools/tusdchecker/testdata/invalid-variant-body.usda
+!tools/tusdchecker/testdata/unknown-api-schema.usda
+!tools/tusdchecker/testdata/varying-relationship.usda
+
+# tusdchecker ARKit profile fixtures
+!tools/tusdchecker/testdata/arkit-clean.usda
+!tools/tusdchecker/testdata/arkit-violations.usda

@@ -112,17 +112,35 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
       root_fields.push_back({"customLayerData", custom_data_value});
     }
 
+    // Unregistered layer metadata: emit as the crate UNREGISTERED_VALUE type
+    // (what pxr writes for SdfUnregisteredValue), carrying the raw USDA text.
+    for (const auto &kv : metas.unregisteredMetas) {
+      crate::CrateValue v;
+      v.SetUnregisteredValueString(kv.second);
+      root_fields.push_back({kv.first, v});
+    }
+
     if (!metas.subLayers.empty()) {
       std::vector<std::string> sublayer_paths;
+      std::vector<LayerOffset> sublayer_offsets;
       sublayer_paths.reserve(metas.subLayers.size());
+      sublayer_offsets.reserve(metas.subLayers.size());
 
       for (const SubLayer &sublayer : metas.subLayers) {
         sublayer_paths.push_back(sublayer.assetPath.GetAssetPath());
+        sublayer_offsets.push_back(sublayer.layerOffset);
       }
 
       crate::CrateValue sublayers_value;
       sublayers_value.Set(sublayer_paths);
       root_fields.push_back({"subLayers", sublayers_value});
+
+      // pxr's SdfLayer requires subLayerOffsets to be the same length as
+      // subLayers ("Invalid sublayer index" otherwise); pxr always writes
+      // identity offsets alongside.
+      crate::CrateValue offsets_value;
+      offsets_value.Set(sublayer_offsets);
+      root_fields.push_back({"subLayerOffsets", offsets_value});
     }
 
     // Root `primChildren`: list the top-level prim names so readers can
@@ -413,10 +431,11 @@ bool CrateWriter::ConvertSinglePrimSpec(
               << metas.get_customData().size() << " entries");
   }
 
-  // Add unregistered metadata (OpenUSD-compatible: stored as strings)
+  // Add unregistered metadata as the crate UNREGISTERED_VALUE type (what pxr
+  // writes for SdfUnregisteredValue), carrying the raw USDA text.
   for (const auto &item : metas.unregisteredMetas) {
     crate::CrateValue unreg_value;
-    unreg_value.Set(item.second);  // Store as string in crate
+    unreg_value.SetUnregisteredValueString(item.second);
     fields.push_back({item.first, unreg_value});
   }
 
@@ -718,7 +737,10 @@ bool CrateWriter::ConvertVariantSetSpecToFields(
     std::string* err) {
 
   // VariantSet path: parent{variantSetName} (e.g., /Chair{materialVariant})
-  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "}";
+  // pxr's SdfPath has no bare `{set}` form: a VariantSet spec lives at the
+  // EMPTY variant selection, `{set=}`. See ConvertVariantSetToFields in
+  // stage-converter.cc.
+  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "=}";
   Path vs_path(variantset_path_str, "");
 
   DCOUT("[ConvertVariantSetSpecToFields] Creating VariantSet spec: "

@@ -199,7 +199,37 @@ extern template bool AsciiParser::ParseBasicTypeArray(
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<bool> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<char> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::char2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::char3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::char4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<uint8_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uchar2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uchar3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uchar4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<int16_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::short2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::short3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::short4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<uint16_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::ushort2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::ushort3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::ushort4> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<int32_t> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
@@ -438,10 +468,28 @@ AsciiParser::ParsePrimMeta() {
 
       return std::make_pair(qual, var);
     } else {
-      PUSH_ERROR(fmt::format(
-          "[Internal error] Unsupported/unimplemented PrimSpec metadata {}",
-          varname));
-      return nonstd::nullopt;
+      // Unregistered Prim metadata without the `custom` qualifier. OpenUSD
+      // accepts metadata it does not know, so erroring here rejects an
+      // otherwise valid prim. Consume the opinion (line-oriented, like the
+      // `custom` path above) and carry on.
+      if (!Expect('=')) {
+        PUSH_ERROR(fmt::format(
+            "'=' expected after unregistered Prim metadata {}", varname));
+        return nonstd::nullopt;
+      }
+      if (!SkipWhitespace()) {
+        return nonstd::nullopt;
+      }
+      std::string content;
+      if (!ReadUntilNewline(&content)) {
+        PUSH_ERROR(fmt::format(
+            "Failed to parse unregistered Prim metadata {}", varname));
+        return nonstd::nullopt;
+      }
+      DCOUT("Consumed unregistered Prim metadata: " << varname);
+      MetaVariable var;
+      var.set_value(varname, content);
+      return std::make_pair(qual, var);
     }
   }
 }
@@ -592,9 +640,32 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
       bool supported = _supported_prop_metas.count(varname);
       if (!supported) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Unsupported Property metadatum name: {}", varname));
+        // Unregistered property metadata (attribute or relationship). OpenUSD
+        // accepts metadata it does not know; rejecting made an otherwise valid
+        // property unloadable. Preserve the opinion verbatim (raw USDA text of
+        // the value), matching the unregistered Prim/Stage metadata paths.
+        if (!Expect('=')) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kAscii,
+              fmt::format("'=' expected after unregistered Property metadatum "
+                          "'{}'.", varname));
+        }
+        if (!SkipWhitespace()) {
+          return false;
+        }
+        std::string content;
+        if (!ReadUntilNewline(&content)) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kAscii,
+              fmt::format("Failed to parse unregistered Property metadatum "
+                          "'{}'.", varname));
+        }
+        DCOUT("Preserved unregistered Property metadatum: " << varname);
+        out_meta->unregisteredMetas[varname] = content;
+        if (!SkipCommentAndWhitespaceAndNewline()) {
+          return false;
+        }
+        continue;
       }
 
       {
@@ -1546,8 +1617,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
           fmt::format("Failed to parse token array for `reorder {}`.",
                       reorder_field));
     }
-    DCOUT("Parsed and ignored `reorder " << reorder_field << "` ("
-          << reorder_toks.size() << " entries; ordering only).");
+    DCOUT("Parsed `reorder " << reorder_field << "` ("
+          << reorder_toks.size() << " entries; preserved for round-trip).");
+    _pending_reorders.emplace_back(reorder_field, std::move(reorder_toks));
     return true;
   }
 

@@ -13,7 +13,9 @@
 
 #pragma once
 
+#include "../parser/ascii-parser.hh"
 #include "arc-types.hh"
+#include "../composition/expression-variables.hh"
 #include "namespace-mapping.hh"
 #include "../layer/layer.hh"
 #include "../prim/path.hh"
@@ -23,6 +25,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -30,14 +33,78 @@ namespace tinyusdz {
 namespace next {
 namespace pcp {
 
+/// The namespace edits a layer stack authors (`relocates`), resolved in THAT
+/// stack's own namespace -- pxr's PcpLayerStack relocates tables. Every stack
+/// has one (root, referenced, payloaded and variant-content stacks alike): a
+/// relocate authored in a referenced layer renames prims inside the referenced
+/// namespace, and the rename then maps through the arc into root space.
+///
+/// Keys are PRE-relocation ("raw") spec paths, because that is what a composed
+/// prim's source site is: a relocate whose paths are expressed in a namespace
+/// already renamed by an ancestral relocate (`/A -> /W`, then `/W/B -> /W/X`)
+/// is normalized back to the raw namespace (`/A/B -> X`) when this is built.
+struct StackRelocates {
+  /// raw source path -> authored destination path.
+  std::map<std::string, std::string> src_to_dst;
+  /// raw parent path -> child names that moved away ("prohibited child names").
+  std::map<std::string, std::set<std::string>> departed;
+  /// One prim arriving under a parent through a relocate.
+  struct Arrival {
+    std::string name;        // composed child name (last component of `dst`)
+    std::string src_site;    // raw source path the content comes from
+    std::string dst_site;    // authored destination path (may carry opinions)
+  };
+  /// raw destination-parent path -> prims relocated into it.
+  std::map<std::string, std::vector<Arrival>> arrivals;
+
+  bool empty() const { return src_to_dst.empty(); }
+
+  const std::set<std::string> *DepartedAt(const std::string &parent) const {
+    auto it = departed.find(parent);
+    return it == departed.end() ? nullptr : &it->second;
+  }
+  const std::vector<Arrival> *ArrivalsAt(const std::string &parent) const {
+    auto it = arrivals.find(parent);
+    return it == arrivals.end() ? nullptr : &it->second;
+  }
+  const Arrival *ArrivalOf(const std::string &parent,
+                           const std::string &name) const {
+    const std::vector<Arrival> *list = ArrivalsAt(parent);
+    if (!list) return nullptr;
+    for (const Arrival &a : *list) {
+      if (a.name == name) return &a;
+    }
+    return nullptr;
+  }
+  bool IsDeparted(const std::string &parent, const std::string &name) const {
+    const std::set<std::string> *names = DepartedAt(parent);
+    return names && names->count(name) != 0;
+  }
+};
+
 /// An ordered stack of layers (strong -> weak): a root/referenced layer plus
 /// its composed sublayers. Layers are shared_ptr so a parsed file exists once
 /// and is refcount-shared across every node/index that uses it (parse-once).
 struct LayerStack {
   std::vector<std::shared_ptr<Layer>> layers;  // strongest first
   std::vector<std::string> layer_identifiers;  // resolved id for each layer
+  // Per-layer time offset RELATIVE TO THE STACK ROOT, accumulated through
+  // nested sublayer `(offset = ..; scale = ..)` annotations. Parallel to
+  // `layers`; entry 0 (the root) is identity.
+  std::vector<LayerOffset> layer_offsets;
   std::string identifier;                       // resolved asset path (registry key)
+  // Stack-table dedup key: identifier plus a fingerprint of the expression
+  // variables inherited from the referencing site (pxr keys layer stacks by
+  // (identifier, expression variables) — the same asset referenced under
+  // different variable contexts is a DIFFERENT stack when its sublayer
+  // expressions can resolve differently). Equals `identifier` when no
+  // variables were inherited.
+  std::string cache_key;
   LayerOffset offset;                           // cumulative time offset to root
+  // Variables authored by this stack, composed weakest-to-strongest.
+  Value expression_variables;
+  // Namespace edits authored by this stack, in this stack's own namespace.
+  StackRelocates relocates;
 };
 
 /// One composition source for a prim. The site prim path is interned into a
@@ -81,6 +148,14 @@ enum class PrototypeNumbering { Deterministic, UsdcatCompatible };
 
 /// Composition options.
 struct CompositionOptions {
+  using VariantSelectionMap =
+      std::map<std::string, std::map<std::string, std::string>>;
+
+  /// Opt into fail-closed AOUSD parsing/resolution policy. Compatibility mode
+  /// remains the default for legacy assets.
+  bool strict_aousd_conformance = false;
+  ExpressionVariablePolicy expression_variable_policy =
+      ExpressionVariablePolicy::Evaluate;
   bool load_payloads = true;       // default policy when payload_policy is null.
   uint32_t max_depth = 256;        // arc recursion limit / cycle backstop.
   uint32_t max_namespace_depth = 1024;  // composed prim-tree depth backstop
@@ -124,6 +199,17 @@ struct CompositionOptions {
   // (sublayers, references, payloads). 0 = no limit.
   size_t max_layer_memory = 0;
 
+  // USDC backing policy for every file-backed layer loaded by PCP. With both
+  // enabled, lazy array Values retain shared mmap-backed CrateDataSources as
+  // they are copied into composed PrimSpecs and the rebuilt Stage.
+  bool usdc_lazy_arrays = true;
+  bool usdc_use_mmap = true;
+
+  // USDA parser options for external USDA layers loaded by this compose path.
+  // Keep defaults aligned with next's parser defaults (non-lazy unless the
+  // caller enables it in LoadUSDOptions).
+  ParseOptions usda_parse_options = {};
+
   // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
   // [next_warm]). Off by default. Replaces the former TINYUSDZ_NEXT_TIMING env
   // read so the composition core takes no implicit process-environment input;
@@ -136,12 +222,32 @@ struct CompositionOptions {
   /// Must be thread-safe when PrewarmPrimIndices runs with num_threads != 1.
   std::function<bool(const Path &, const std::string &)> payload_policy;
 
+  /// Extended payload policy with the authoring PrimSpec. Takes precedence
+  /// over `payload_policy` when set; the two-argument form remains for source
+  /// compatibility and simple path/asset filters.
+  std::function<bool(const Path &, const std::string &, const PrimSpec &)>
+      payload_policy_with_prim;
+
+  /// Fallback variant selections, consulted ONLY when no selection is authored
+  /// anywhere for that set (pxr's PcpVariantFallbackMap / UsdStage global
+  /// variant fallbacks). Candidates are tried in order; the first one the set
+  /// actually defines is selected. Defaults to USD's registered `standin`
+  /// fallbacks, so an asset whose standin set is left unselected still composes
+  /// its render standin, as pxr does.
+  std::map<std::string, std::vector<std::string>> variant_fallbacks{
+      {"standin", {"render", "proxy"}}};
+
   /// Variant selection overrides: map of variantSet -> variantName. Overrides
   /// any authored variantSelection on the same set (stronger than authored).
   /// Empty by default (use authored selections as-is). Example:
   ///   {{"districtLod", "full"}} selects the "full" variant on every prim that
   ///   defines a "districtLod" variantSet.
   std::map<std::string, std::string> variant_overrides;
+
+  /// Path-scoped variant overrides. The outer key is an absolute prim path;
+  /// the inner map is variantSet -> selection. An exact path-scoped override
+  /// wins over the global variant_overrides entry for the same set.
+  VariantSelectionMap variant_overrides_by_path;
 };
 
 /// The composed graph for a single prim. Borrows its layer-stack table from the

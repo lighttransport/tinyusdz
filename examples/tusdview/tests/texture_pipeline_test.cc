@@ -15,6 +15,8 @@
 
 #if defined(TUSDVIEW_WITH_TEXTOOLS)
 #include "texcomp.h"  // tc_bc7_decompress_rgba8 (reference round-trip)
+#include "texpipe.h"  // tp_ktx2_write_uni / tp_ktx2_read (KTX2 fixtures)
+#include "image-loader.hh"  // image::LoadImageFromMemory (core KTX2 decode)
 #endif
 
 namespace {
@@ -248,42 +250,76 @@ void TestPipelineClassification() {
   material.computeMaterialTag();
   scene.materials.push_back(std::move(material));
 
-  tusdview::TextureRuntimeOptions opt;
-  opt.generateMips = true;
-  opt.compression = tusdview::TextureCompressionMode::BCn;
-
-  tusdview::DrawScene out;
-  tusdview::BuildDrawScene(scene, &out, nullptr, nullptr, opt);
-
-  CHECK(out.materials.size() == 1);
-  if (out.materials.size() != 1) return;
-  const tusdview::DrawMaterialCPU& m = out.materials[0];
-  CHECK(m.baseColorTex >= 0 && m.normalTex >= 0);
-  if (m.baseColorTex < 0 || m.normalTex < 0) return;
-
-  const tusdview::DrawTextureCPU& bt =
-      out.textures[static_cast<size_t>(m.baseColorTex)];
-  const tusdview::DrawTextureCPU& nt =
-      out.textures[static_cast<size_t>(m.normalTex)];
-  CHECK(!bt.isNormalMap);
-  CHECK(nt.isNormalMap);
+  // Pass 1: UNCOMPRESSED, so the RGBA mip chains survive for content checks
+  // (the compressed path frees them once the compressed chain is built).
+  {
+    tusdview::TextureRuntimeOptions opt;
+    opt.generateMips = true;
+    opt.compression = tusdview::TextureCompressionMode::Off;
+    tusdview::DrawScene out;
+    tusdview::BuildDrawScene(scene, &out, nullptr, nullptr, opt);
+    CHECK(out.materials.size() == 1);
+    if (out.materials.size() != 1) return;
+    const tusdview::DrawMaterialCPU& m = out.materials[0];
+    CHECK(m.baseColorTex >= 0 && m.normalTex >= 0);
+    if (m.baseColorTex < 0 || m.normalTex < 0) return;
+    const tusdview::DrawTextureCPU& bt =
+        out.textures[static_cast<size_t>(m.baseColorTex)];
+    const tusdview::DrawTextureCPU& nt =
+        out.textures[static_cast<size_t>(m.normalTex)];
+    CHECK(!bt.isNormalMap);
+    CHECK(nt.isNormalMap);
+    if (!tusdview::TexToolsAvailable()) return;
+    CHECK(bt.mipImages.size() == 4);  // 8,4,2,1
+    CHECK(nt.mipImages.size() == 4);
+    // Flat +Z normal map must stay flat at every level.
+    for (const light3d::Image& mip : nt.mipImages) {
+      CHECK(std::abs(int(mip.data[0]) - 128) <= 2);
+      CHECK(std::abs(int(mip.data[1]) - 128) <= 2);
+      CHECK(int(mip.data[2]) >= 252);
+    }
+  }
   if (!tusdview::TexToolsAvailable()) return;
 
-  CHECK(bt.mipImages.size() == 4);  // 8,4,2,1
-  CHECK(nt.mipImages.size() == 4);
-  // Flat +Z normal map must stay flat at every level.
-  for (const light3d::Image& mip : nt.mipImages) {
-    CHECK(std::abs(int(mip.data[0]) - 128) <= 2);
-    CHECK(std::abs(int(mip.data[1]) - 128) <= 2);
-    CHECK(int(mip.data[2]) >= 252);
-  }
-  // Compressed chain: one format, one payload per level.
-  CHECK(bt.requestedCompressed);
-  CHECK(bt.compressed.format != tusdview::DrawCompressedFormat::None);
-  CHECK(bt.compressed.mips.size() == bt.mipImages.size());
-  for (size_t l = 0; l < bt.compressed.mips.size(); ++l) {
-    CHECK(bt.compressed.mips[l].width == bt.mipImages[l].width);
-    CHECK(!bt.compressed.mips[l].data.empty());
+  // Pass 2: COMPRESSED (BCn). Format choice must be usage-aware, the compressed
+  // chain complete, and the now-dead RGBA chain freed (memory contract).
+  {
+    tusdview::TextureRuntimeOptions opt;
+    opt.generateMips = true;
+    opt.compression = tusdview::TextureCompressionMode::BCn;
+    tusdview::DrawScene out;
+    tusdview::BuildDrawScene(scene, &out, nullptr, nullptr, opt);
+    CHECK(out.materials.size() == 1);
+    if (out.materials.size() != 1) return;
+    const tusdview::DrawMaterialCPU& m = out.materials[0];
+    if (m.baseColorTex < 0 || m.normalTex < 0) return;
+    const tusdview::DrawTextureCPU& bt =
+        out.textures[static_cast<size_t>(m.baseColorTex)];
+    const tusdview::DrawTextureCPU& nt =
+        out.textures[static_cast<size_t>(m.normalTex)];
+    // Compressed chain: one format, one payload per level (8,4,2,1).
+    CHECK(bt.requestedCompressed);
+    CHECK(bt.compressed.format != tusdview::DrawCompressedFormat::None);
+    CHECK(bt.compressed.mips.size() == 4);
+    int expectW = 8;
+    for (size_t l = 0; l < bt.compressed.mips.size(); ++l) {
+      CHECK(bt.compressed.mips[l].width == expectW);
+      CHECK(!bt.compressed.mips[l].data.empty());
+      expectW /= 2;
+    }
+    // The RGBA chain is an intermediate on this path; it must be FREED once the
+    // compressed chain is built (it retained ~21 MB/4K texture of dead CPU RAM).
+    CHECK(bt.mipImages.empty());
+    CHECK(nt.mipImages.empty());
+    // Block-format choice must be usage-aware: an OPAQUE base color under BCn
+    // goes to BC1 (a 2-endpoint color line is fine for color), but a NORMAL map
+    // must NOT -- BC1/BC3 cross-contaminate its independent X/Y. It goes to a
+    // full-channel format (BC7 on this BC-capable default cap set) instead.
+    // This is the T4 regression: normal maps used to be squeezed onto BC1.
+    CHECK(bt.compressed.format == tusdview::DrawCompressedFormat::BC1);
+    CHECK(nt.compressed.format != tusdview::DrawCompressedFormat::BC1);
+    CHECK(nt.compressed.format != tusdview::DrawCompressedFormat::BC3);
+    CHECK(nt.compressed.format == tusdview::DrawCompressedFormat::BC7);
   }
 }
 
@@ -342,6 +378,113 @@ void TestDecodedFormatNormalization() {
 
 }  // namespace
 
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+// Kept-compressed KTX2 passthrough + core KTX2 load. Builds a uni KTX2 in memory
+// and exercises: the core image loader's KTX2->RGBA8 decode, and the tusdview
+// device-adaptive block adaption (uni -> ASTC byte-copy / BC7 transcode / RGBA8
+// fallback) used by TryKeepCompressedTexture.
+static double Psnr(const uint8_t* a, const uint8_t* b, size_t n) {
+  double se = 0;
+  for (size_t i = 0; i < n; ++i) {
+    const double d = double(a[i]) - double(b[i]);
+    se += d * d;
+  }
+  const double mse = se / double(n);
+  return mse <= 0 ? 1e9 : 10.0 * std::log10(255.0 * 255.0 / mse);
+}
+
+void TestKeepCompressedKtx2() {
+  const uint32_t W = 64, H = 64;
+  light3d::Image src = MakeImage(int(W), int(H), [](int x, int y, uint8_t* p) {
+    p[0] = uint8_t(x * 4); p[1] = uint8_t(y * 4);
+    p[2] = uint8_t(((x / 8) ^ (y / 8)) & 1 ? 220 : 40); p[3] = 255;
+  });
+
+  // RGBA8 -> uni -> KTX2 (single level).
+  const size_t uniSize = tc_uni_compressed_size(W, H);
+  std::vector<uint8_t> uni(uniSize);
+  CHECK(tc_uni_compress_rgba8(src.data.data(), W, H, size_t(W) * 4u, uni.data(),
+                              uniSize) == TC_SUCCESS);
+  const uint8_t* levels[1] = {uni.data()};
+  size_t sizes[1] = {uniSize};
+  uint32_t lw[1] = {W}, lh[1] = {H};
+  const size_t ktxSize = tp_ktx2_uni_size(sizes, 1);
+  std::vector<uint8_t> ktx(ktxSize);
+  CHECK(TP_OK(tp_ktx2_write_uni(levels, sizes, lw, lh, 1, ktx.data(), ktxSize,
+                                nullptr)));
+
+  // Core loader: KTX2 -> RGBA8.
+  {
+    auto r = tinyusdz::image::LoadImageFromMemory(ktx.data(), ktx.size(),
+                                                  "mem://uni.ktx2");
+    CHECK(bool(r));
+    if (r) {
+      const auto& im = r.value().image;
+      CHECK(im.width == int(W) && im.height == int(H) && im.channels == 4);
+      CHECK(im.data.size() == size_t(W) * H * 4u);
+      CHECK(Psnr(src.data.data(), im.data.data(), im.data.size()) >= 25.0);
+    }
+  }
+
+  // Reader reports the uni intermediate.
+  {
+    tp_ktx2_image k;
+    CHECK(TP_OK(tp_ktx2_read(ktx.data(), ktx.size(), &k)));
+    CHECK(k.is_uni && k.vk_format == 0u && k.width == W && k.height == H);
+  }
+
+  using tusdview::DrawCompressedFormat;
+  const DrawCompressedFormat srcFmt = DrawCompressedFormat::ASTC_4x4;  // uni ~ astc
+
+  // caps: BC only -> transcode uni to BC7.
+  {
+    tusdview::TextureCompressCaps caps; caps.bc = true;
+    tusdview::DrawCompressedImageCPU comp; light3d::Image rgba;
+    CHECK(tusdview::TexToolsAdaptCompressed(uni.data(), uniSize, true, srcFmt, W,
+                                            H, caps, &comp, &rgba));
+    CHECK(comp.format == DrawCompressedFormat::BC7 && !comp.data.empty());
+    CHECK(comp.data.size() == tc_bc7_compressed_size(W, H));
+    std::vector<uint8_t> dec(size_t(W) * H * 4u);
+    CHECK(tc_bc7_decompress_rgba8(comp.data.data(), W, H, size_t(W) * 4u,
+                                  dec.data(), dec.size()) == TC_SUCCESS);
+    CHECK(Psnr(src.data.data(), dec.data(), dec.size()) >= 25.0);
+  }
+
+  // caps: ASTC -> byte-copy (uni blocks are valid ASTC 4x4).
+  {
+    tusdview::TextureCompressCaps caps; caps.astc = true;
+    tusdview::DrawCompressedImageCPU comp; light3d::Image rgba;
+    CHECK(tusdview::TexToolsAdaptCompressed(uni.data(), uniSize, true, srcFmt, W,
+                                            H, caps, &comp, &rgba));
+    CHECK(comp.format == DrawCompressedFormat::ASTC_4x4);
+    CHECK(comp.data.size() == uniSize);  // exact byte-copy
+  }
+
+  // caps: none -> RGBA8 fallback (TextureCompressCaps defaults bc=true, so
+  // explicitly clear every capability here).
+  {
+    tusdview::TextureCompressCaps caps;
+    caps.bc = caps.astc = caps.etc2 = caps.bc5 = caps.bc6h = false;
+    tusdview::DrawCompressedImageCPU comp; light3d::Image rgba;
+    CHECK(tusdview::TexToolsAdaptCompressed(uni.data(), uniSize, true, srcFmt, W,
+                                            H, caps, &comp, &rgba));
+    CHECK(comp.data.empty());
+    CHECK(rgba.width == int(W) && rgba.height == int(H) &&
+          rgba.data.size() == size_t(W) * H * 4u);
+    CHECK(Psnr(src.data.data(), rgba.data.data(), rgba.data.size()) >= 25.0);
+  }
+
+  // Per-level adaption (mip-chain carry): uni level -> BC7.
+  {
+    std::vector<uint8_t> lvl;
+    CHECK(tusdview::TexToolsAdaptCompressedLevel(
+        uni.data(), uniSize, true, srcFmt, DrawCompressedFormat::BC7, W, H, &lvl));
+    CHECK(lvl.size() == tc_bc7_compressed_size(W, H));
+  }
+  std::printf("  keep-compressed KTX2 (core decode + adapt bc7/astc/rgba/level): ok\n");
+}
+#endif  // TUSDVIEW_WITH_TEXTOOLS
+
 int main() {
   if (!tusdview::TexToolsAvailable()) {
     std::printf("textools disabled; running classification-only checks\n");
@@ -357,6 +500,7 @@ int main() {
   TestCompressedSizes();
 #if defined(TUSDVIEW_WITH_TEXTOOLS)
   TestBc7Roundtrip();
+  TestKeepCompressedKtx2();
 #endif
   TestAlphaCoverage();
   TestPipelineClassification();

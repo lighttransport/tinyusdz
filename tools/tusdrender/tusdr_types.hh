@@ -24,6 +24,7 @@
 #include "next/tinyusdz-next.hh"
 #include "next/types/value.hh"
 #include "tydra/next/scene-access.hh"
+#include "tydra/next/texture-cache.hh"
 extern "C" {
 #include "lightrt_c_tri.h"
 }
@@ -422,7 +423,14 @@ struct PreviewLight {
   float radius{0.0f};
   float width{1.0f};
   float height{1.0f};
+  float length{1.0f};   // CylinderLight: extent along its axis (UsdLux: local +X)
   float area{0.0f};
+  // World-space local axes, needed to sample the SURFACE of a shaped light
+  // rather than collapsing it to its center. UsdLux puts a RectLight/DiskLight in
+  // the local XY plane emitting along -Z (so `normal` is local +Z... times -1 of
+  // `direction`), and runs a CylinderLight's axis along local +X.
+  Vec3 axis_u{1.0f, 0.0f, 0.0f};   // local +X in world space
+  Vec3 axis_v{0.0f, 1.0f, 0.0f};   // local +Y in world space
   float power{0.0f};
   float cdf{0.0f};
   int tri_id{-1};
@@ -446,6 +454,11 @@ struct LightCache {
   Vec3 dome_ry{0.0f, 1.0f, 0.0f};
   Vec3 dome_rz{0.0f, 0.0f, 1.0f};
   Vec3 env_color{0.0f, 0.0f, 0.0f};
+  // UsdLux texture:format of the dome's envmap, as
+  // RenderLight::DomeTextureFormat (0 Automatic, 1 Latlong, 2 MirroredBall,
+  // 3 Angular). Automatic/Latlong sample the image as-is; the probe formats
+  // are resampled to latlong before the IBL bake (RemapProbeToLatlong).
+  int dome_texture_format{0};
 };
 
 struct EnvImage {
@@ -520,7 +533,7 @@ struct Options {
   bool ibl_envmap{false};   // -ibl envmap: vendored envmap-lib IBL precompute
   bool progress{false};
   enum class MaterialResolver { Legacy, TydraNext, Compare };
-  MaterialResolver material_resolver{MaterialResolver::Legacy};
+  MaterialResolver material_resolver{MaterialResolver::TydraNext};
   enum class MaterialShading { Legacy, LightRtBsdf };
   MaterialShading material_shading{MaterialShading::Legacy};
   lrt_tri_quality quality{LRT_TRI_BUILD_FAST};
@@ -782,6 +795,15 @@ struct MeshJobNext {
   tinyusdz::next::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
   tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
+  // Face-GeomSubset split (ExpandGeomSubsetJobsNext): a mesh whose faces are
+  // material-bound per GeomSubset becomes one job per bound subset + a
+  // remainder job.
+  // `subset_faces` (indexed by AUTHORED face id; empty = whole mesh) masks which
+  // faces this job emits, and `bind_prim` (the GeomSubset prim) supplies the
+  // material binding instead of the mesh -- GetInheritedBoundMaterialPath on it
+  // finds the subset's own binding first, then falls back up the ancestry.
+  std::vector<char> subset_faces;
+  tinyusdz::next::UsdPrim bind_prim;
   Vec3 base_color{0.55f, 0.55f, 0.55f};  // resolved diffuse constant
   int32_t tex_id{-1};                    // resolved diffuse texture, or -1
   float roughness{0.55f};                // resolved inputs:roughness
@@ -794,6 +816,11 @@ struct MeshJobNext {
   float occlusion{1.0f};                 // resolved inputs:occlusion
   ScalarTex occ_tex;                     // occlusion texture + channel
   UvXform uv_xform;                      // UsdTransform2d on the st chain
+  // The UV set the bound base-color texture reads (RenderTexture::uv_primvar,
+  // i.e. its UsdPrimvarReader varname). Empty = fall back to the exporter
+  // preference list. Used to pick which mesh primvar feeds `st` so a texture
+  // bound to a secondary set (e.g. `uvSet1`) is not silently sampled with `st`.
+  std::string uv_primvar;
   float opacity{1.0f};                   // displayOpacity / inputs:opacity constant
   ScalarTex opacity_tex;                 // UsdPreviewSurface inputs:opacity texture
   float opacity_threshold{0.0f};         // inputs:opacityThreshold (alpha cutout)
@@ -818,6 +845,8 @@ struct TextureCache {
   std::string base_dir;  // directory of the input file, for relative paths
   const tinyusdz::next::USDZReader *usdz{nullptr};
   const Options *options{nullptr};
+  // Shared decode + size cap + byte budget (built on first use in tusdr_next).
+  std::shared_ptr<tinyusdz::tydra::next::TextureDecoder> decoder;
   size_t decoded_bytes{0};
   size_t *degraded_materials{nullptr};  // -> RTPreviewStats::degraded_materials
   size_t *missing_textures{nullptr};  // -> RTPreviewStats::missing_textures

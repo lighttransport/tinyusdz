@@ -10,6 +10,7 @@
 #pragma once
 
 #include "../layer/layer.hh"
+#include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
 
 #include <cstddef>
@@ -26,29 +27,20 @@ namespace next {
 namespace pcp {
 
 struct LayerLoadOptions {
+  bool strict_aousd_conformance = false;
+  /// Keep uncompressed USDC arrays lazy and backed by the crate data source.
+  bool usdc_lazy_arrays = true;
+  /// mmap file-backed USDC layers when supported. LazyArrayRef retains shared
+  /// ownership of each source through composition and Stage reconstruction.
+  bool usdc_use_mmap = true;
   /// Maximum file/input bytes for each loaded external layer (0 = no limit).
   size_t max_memory = 0;
 
-  /// Whether USDC layers should run stage finalization after crate reconstruction.
-  /// Keep false for parse/benchmark workloads that only need low-level validity.
-  bool finalize_usdc_stage = true;
-
-  /// Emit USDC crate-reader timing diagnostics for layers loaded through the
-  /// registry. This is opt-in and intended for benchmark CLIs.
-  bool enable_usdc_timing = false;
+  /// USDA parser options applied to each external USDA layer.
+  ParseOptions usda_parse_options = {};
 
   /// USDA parser worker-thread hint (0 = auto/default, 1 = serial, >1 = fixed).
   int parse_num_threads = 0;
-
-  /// USDC crate-reader limits (for nested crate input and self-contained `.usdc`
-  /// stages). Shared with `--parse-usdc-*` benching where very large scenes
-  /// can exceed default hard caps.
-  size_t max_tokens = 1024 * 1024;
-  size_t max_strings = 1024 * 1024;
-  size_t max_fields = 10 * 1024 * 1024;
-  size_t max_specs = 10 * 1024 * 1024;
-  size_t max_paths = 10 * 1024 * 1024;
-  size_t max_array_elements = 1024 * 1024 * 1024;
 };
 
 class LayerRegistry {
@@ -106,6 +98,18 @@ class LayerRegistry {
     return parse_count_;
   }
 
+  size_t memory_usage() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(*mu_);
+#endif
+    size_t bytes = 0;
+    for (const auto &entry : by_resolved_) {
+      bytes += entry.first.capacity();
+      if (entry.second) bytes += entry.second->memory_usage();
+    }
+    return bytes;
+  }
+
  private:
   std::unordered_map<std::string, std::shared_ptr<Layer>> by_resolved_;
   size_t parse_count_ = 0;
@@ -127,7 +131,7 @@ class LayerRegistry {
 };
 
 /// Load a layer from a resolved file/package path, dispatching by extension to
-/// the next USDA / USDC / USDZ readers. Returns nullptr on failure.
+/// the next USDA / USDC / USDZ / MaterialX readers. Returns nullptr on failure.
 /// `options.parse_num_threads` forwards to ParseOptions::num_threads for the
 /// USDA large-array parallel parse; `options.max_memory` caps USDA file size
 /// and USDC crate input/allocation checks.
@@ -139,6 +143,34 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
                                          int parse_num_threads = 0);
+
+/// Load a layer from an in-memory buffer, dispatching by content: the
+/// "PXR-USDC" magic selects the crate reader, a ZIP local-file header selects
+/// the USDZ reader (a package-path `key` like "pkg.usdz[entry.usdc]" selects
+/// that entry; otherwise the first .usdc/.usda entry), anything else parses as
+/// USDA text. `key` is used for diagnostics and package-entry selection only.
+/// Returns nullptr on failure.
+/// Synthesize a skeletal /MaterialX layer from MaterialX XML bytes (see
+/// layer-registry.cc for the produced prim shape). Used when a composition
+/// arc references a .mtlx document.
+std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
+                                               const uint8_t *data,
+                                               size_t size, std::string *warn,
+                                               std::string *err);
+
+/// Content sniff: true when the buffer looks like a MaterialX XML document.
+bool LooksLikeMtlxXML(const uint8_t *data, size_t size);
+
+std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
+                                           const uint8_t *data, size_t size,
+                                           std::string *warn, std::string *err,
+                                           const LayerLoadOptions &options = {});
+
+/// Owned-buffer variant: adopts `data` by move so USDC avoids a second copy
+/// and USDA lazy arrays can retain the source text.
+std::shared_ptr<Layer> LoadLayerFromMemoryOwned(
+    const std::string &key, std::string &&data, std::string *warn,
+    std::string *err, const LayerLoadOptions &options = {});
 
 }  // namespace pcp
 }  // namespace next

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>tinyusdz — Basis-free GPU texture compression (uni transcode)</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; display: flex; font-family: system-ui, sans-serif;
+           background: #0d0f13; color: #e6e6e6; overflow: hidden; }
+    #view { flex: 1 1 auto; display: block; height: 100vh; width: 100%; }
+    #panel { flex: 0 0 320px; padding: 20px; overflow-y: auto;
+             background: #15181e; border-left: 1px solid #262a33; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    .sub { font-size: 12px; color: #9aa4b2; margin: 0 0 16px; line-height: 1.4; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 14px; }
+    td { padding: 4px 0; vertical-align: top; }
+    td.k { color: #9aa4b2; white-space: nowrap; padding-right: 10px; }
+    td.v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+    #savings { color: #4ade80; }
+    #format { color: #60a5fa; }
+    pre#log { font-size: 11px; color: #7d8794; white-space: pre-wrap;
+              background: #0d0f13; border: 1px solid #262a33; border-radius: 6px;
+              padding: 8px; max-height: 220px; overflow-y: auto; margin: 0; }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="panel">
+    <h1>GPU texture compression</h1>
+    <p class="sub">One RGBA8 texture → tinyexr <code>uni</code> (UASTC) intermediate →
+      transcoded in WebAssembly to the block format this browser supports.
+      Basis-free; RGBA8 fallback where no compressed format is available.</p>
+    <table>
+      <tr><td class="k">WebGL</td><td class="v" id="backend">—</td></tr>
+      <tr><td class="k">Device supports</td><td class="v" id="caps">—</td></tr>
+      <tr><td class="k">Chosen GPU format</td><td class="v" id="format">—</td></tr>
+      <tr><td class="k">Source RGBA8</td><td class="v" id="rgba">—</td></tr>
+      <tr><td class="k">uni intermediate</td><td class="v" id="uni">—</td></tr>
+      <tr><td class="k">GPU upload</td><td class="v" id="gpu">—</td></tr>
+      <tr><td class="k">VRAM</td><td class="v" id="savings">—</td></tr>
+    </table>
+    <pre id="log"></pre>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js"
+      }
+    }
+  </script>
+  <script type="module" src="./texcomp.js"></script>
+</body>
+</html>

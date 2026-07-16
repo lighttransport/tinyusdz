@@ -12,6 +12,7 @@ set(TINYUSDZ_NEXT_SOURCES
     # Type system
     types/type-info.cc
     types/value.cc
+    types/spline.cc
     types/value-view.cc
     types/interpolation.cc
 
@@ -23,7 +24,9 @@ set(TINYUSDZ_NEXT_SOURCES
     # Layer (unified PrimSpec storage)
     layer/property-index.cc
     layer/prim-spec.cc
+    layer/array-edit.cc
     layer/layer.cc
+    layer/asset-anchor.cc
 
     # Stage (composed scene)
     stage/stage.cc
@@ -53,6 +56,7 @@ set(TINYUSDZ_NEXT_SOURCES
     crate/crate-reader-vectors.cc
     crate/crate-writer-types.cc
     crate/crate-writer.cc
+    crate/variant-holders.cc
 
     # High-level readers
     reader/usda-reader.cc
@@ -69,6 +73,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Schema convenience APIs
     schema/geom-mesh.cc
+    schema/schema-registry.cc
     schema/geom-point-instancer.cc
     schema/geom-xform.cc
     schema/usd-lux.cc
@@ -85,24 +90,36 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Attribute evaluation
     eval/attribute-eval.cc
+    eval/value-clip.cc
 
     # Asset resolution
     resolver/asset-resolver.cc
 
     # Composition
+    composition/expression-variables.cc
     composition/composition.cc
+
+    # Layer / PrimSpec diff
+    diff/layer-diff.cc
 
     # Low-memory flatten pipeline
     pipeline/flatten.cc
 
     # PCP-style lazy composition cache (native to next)
     pcp/layer-registry.cc
+    # MaterialX XML stack (dependency-free): layer-registry synthesizes
+    # /MaterialX layers from referenced .mtlx documents.
+    ../mtlx-xml-tokenizer.cc
+    ../mtlx-xml-parser.cc
+    ../mtlx-dom.cc
     pcp/load-rules.cc
     pcp/cache.cc
 
+    # AOUSD Core validation
+    validation/usd-validation.cc
+
     # High-level API
     tinyusdz-next.cc
-    c-tinyusd-next.cc
 )
 
 # Define header files (for IDE project generation)
@@ -116,8 +133,12 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Prim types
     prim/path.hh
+    prim/identifier.hh
     prim/attribute.hh
     prim/prim.hh
+
+    # Composition policy
+    composition/expression-variables.hh
 
     # Layer (unified PrimSpec storage)
     layer/property-index.hh
@@ -165,6 +186,7 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Schema convenience APIs
     schema/geom-mesh.hh
+    schema/schema-registry.hh
     schema/geom-point-instancer.hh
     schema/geom-xform.hh
     schema/usd-lux.hh
@@ -182,6 +204,7 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Attribute evaluation
     eval/attribute-eval.hh
+    eval/value-clip.hh
 
     # Asset resolution
     resolver/asset-resolver.hh
@@ -189,11 +212,17 @@ set(TINYUSDZ_NEXT_HEADERS
     # Composition
     composition/composition.hh
 
+    # Layer / PrimSpec diff
+    diff/layer-diff.hh
+
     # PCP-style lazy composition cache (native to next)
     pcp/arc-types.hh
     pcp/namespace-mapping.hh
     pcp/prim-index.hh
     pcp/layer-registry.hh
+
+    # AOUSD Core validation
+    validation/usd-validation.hh
     pcp/cache-arc-expansion.inc
     pcp/cache.hh
     pcp/cache-compose.inc
@@ -208,7 +237,6 @@ set(TINYUSDZ_NEXT_HEADERS
     # High-level API
     tinyusdz-next.hh
     compat.hh
-    c-tinyusd-next.h
 )
 
 # LZ4 source (from existing TinyUSDZ)
@@ -287,6 +315,8 @@ endif()
 # and run its ctests. Keep the tests in a Debug build: many test programs use
 # assert(), which is compiled out under NDEBUG.
 option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for stable TinyUSDZ Next" OFF)
+set(TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT "" CACHE PATH
+    "External AOUSD Core supplemental release checkout")
 
 if(TINYUSDZ_NEXT_BUILD_TESTS)
     # The next tests validate behavior with assert(); a Release build (-DNDEBUG)
@@ -410,6 +440,33 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_load_rules PRIVATE tinyusdz_next)
 
+    add_executable(test_layer_diff
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_layer_diff.cc
+    )
+    target_link_libraries(test_layer_diff PRIVATE tinyusdz_next)
+
+    add_executable(test_memory_flatten
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_memory_flatten.cc
+    )
+    target_link_libraries(test_memory_flatten PRIVATE tinyusdz_next)
+
+    add_executable(test_validation
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation.cc
+    )
+    target_link_libraries(test_validation PRIVATE tinyusdz_next)
+
+    add_executable(test_aousd_conformance
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_aousd_conformance.cc
+    )
+    target_link_libraries(test_aousd_conformance PRIVATE tinyusdz_next)
+
+    # Sampled-value oracle for the AOUSD supplemental value_resolution cases
+    # (self-skips with exit 77 when the corpus is unavailable).
+    add_executable(test_aousd_value_resolution
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_aousd_value_resolution.cc
+    )
+    target_link_libraries(test_aousd_value_resolution PRIVATE tinyusdz_next)
+
     # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
     add_executable(next_usdcat
@@ -462,10 +519,10 @@ set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/texture-cache.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../external/mikktspace/mikktspace.c
 )
 
 set(TYDRA_NEXT_HEADERS
@@ -475,6 +532,8 @@ set(TYDRA_NEXT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/urdf-payload.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.hh
@@ -517,6 +576,44 @@ if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     endif()
 endif()
 
+# ============================================================
+# C API (tinyusdz_c): FFI layer over tinyusdz_next + tydra_next.
+# Used by the Python binding and any other language binding.
+# ============================================================
+add_library(tinyusdz_c STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/tinyusdz-c.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/tinyusdz-render-c.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/tinyusdz-c.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/tinyusdz-render-c.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/c-internal.hh
+)
+target_link_libraries(tinyusdz_c PUBLIC tinyusdz_next tydra_next)
+target_compile_features(tinyusdz_c PUBLIC cxx_std_17)
+target_include_directories(tinyusdz_c PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../c-api>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
+    $<INSTALL_INTERFACE:include>
+)
+if(MSVC)
+    target_compile_options(tinyusdz_c PRIVATE /W4)
+else()
+    target_compile_options(tinyusdz_c PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+if(NOT TINYUSDZ_CXX_RTTI)
+    if(MSVC)
+        target_compile_options(tinyusdz_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+    else()
+        target_compile_options(tinyusdz_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+    endif()
+endif()
+if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if(MSVC)
+        target_compile_options(tinyusdz_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+    else()
+        target_compile_options(tinyusdz_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+    endif()
+endif()
+
 # Tydra Next test
 if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_executable(test_tydra_next
@@ -532,6 +629,16 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
 
     # Register tests with ctest
     enable_testing()
+
+    # C API smoke test (pure C11 translation unit)
+    add_executable(test_tinyusdz_c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/c-api/test_tinyusdz_c.c
+    )
+    target_link_libraries(test_tinyusdz_c PRIVATE tinyusdz_c)
+    set_target_properties(test_tinyusdz_c PROPERTIES C_STANDARD 11)
+    add_test(NAME next_test_c_api COMMAND test_tinyusdz_c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/cube.usda
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
     add_test(NAME next_test_tinyusdz COMMAND test_tinyusdz_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -577,6 +684,14 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_load_rules COMMAND test_load_rules
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_layer_diff COMMAND test_layer_diff
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_memory_flatten COMMAND test_memory_flatten
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_validation COMMAND test_validation
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_aousd_conformance COMMAND test_aousd_conformance
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_tydra COMMAND test_tydra_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
@@ -605,11 +720,52 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         next_test_crash_regressions
         next_test_usdc_malformed
         next_test_load_rules
+        next_test_layer_diff
+        next_test_memory_flatten
+        next_test_validation
+        next_test_aousd_conformance
         next_test_tydra)
     set_tests_properties(${TINYUSDZ_NEXT_SMOKE_TESTS}
         PROPERTIES LABELS "next")
     set_tests_properties(next_benchmark
         PROPERTIES LABELS "next;benchmark")
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME next_aousd_generated_tables
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/generate-next-aousd-tables.py
+                    --root ${CMAKE_CURRENT_SOURCE_DIR}/../.. --check)
+        set_tests_properties(next_aousd_generated_tables
+            PROPERTIES LABELS "next;aousd;generated")
+    endif()
+    if(NOT TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT AND
+       DEFINED ENV{AOUSD_CORE_SUPPLEMENTAL_ROOT})
+        set(TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT
+            "$ENV{AOUSD_CORE_SUPPLEMENTAL_ROOT}")
+    endif()
+    if(Python3_Interpreter_FOUND AND TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT AND
+       EXISTS "${TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT}/composition")
+        add_test(
+            NAME next_aousd_supplemental
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/run-aousd-supplemental.py
+                    --suite-root "${TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT}"
+                    --next-usdcat "$<TARGET_FILE:next_usdcat>"
+                    --aousd-test "$<TARGET_FILE:test_aousd_conformance>"
+                    --aousd-value-test "$<TARGET_FILE:test_aousd_value_resolution>"
+                    --max-composition-fail 0)
+        set_tests_properties(next_aousd_supplemental
+            PROPERTIES LABELS "next;aousd;supplemental" TIMEOUT 600)
+    endif()
+    # Sampled-value oracle also runs as its own ctest entry; the binary
+    # self-skips (exit 77) when the corpus is missing.
+    add_test(NAME next_test_aousd_value_resolution
+        COMMAND test_aousd_value_resolution "${TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_test_aousd_value_resolution
+        PROPERTIES SKIP_RETURN_CODE 77 LABELS "next;aousd")
 
     # usd-wg asset-corpus regression gate (mirrors the top-level
     # corpus-parse-native test, but drives next_usdcat). Registered only when
@@ -646,43 +802,5 @@ endif()
 # Python extension module (optional)
 # ============================================================
 
-option(TINYUSDZ_NEXT_BUILD_PYTHON "Build Python extension for TinyUSDZ Next" OFF)
-
-if(TINYUSDZ_NEXT_BUILD_PYTHON)
-    find_package(Python3 3.10 COMPONENTS Interpreter Development REQUIRED)
-
-    # Determine extension suffix
-    if(WIN32)
-        set(PYTHON_EXT_SUFFIX ".pyd")
-    else()
-        set(PYTHON_EXT_SUFFIX ".so")
-    endif()
-
-    add_library(_next_core MODULE
-        ${CMAKE_CURRENT_SOURCE_DIR}/python/module.c
-    )
-
-    target_include_directories(_next_core PRIVATE
-        ${Python3_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-
-    target_link_libraries(_next_core PRIVATE
-        tinyusdz_next
-    )
-
-    set_target_properties(_next_core PROPERTIES
-        PREFIX ""
-        SUFFIX ${PYTHON_EXT_SUFFIX}
-    )
-
-    # Install to python package directory
-    install(TARGETS _next_core
-        LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/python/next/tinyusdz_next
-        RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/python/next/tinyusdz_next
-    )
-
-    message(STATUS "TinyUSDZ Next Python extension: enabled")
-    message(STATUS "  Python version: ${Python3_VERSION}")
-    message(STATUS "  Python include: ${Python3_INCLUDE_DIRS}")
-endif()
+# (The Python binding is built by setup.py at the repo root; see
+#  src/python/py-*.c and src/c-api/.)

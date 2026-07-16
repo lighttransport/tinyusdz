@@ -113,6 +113,18 @@ bool CrateReader::ReadVariantSelectionMap(VariantSelectionMap *d) {
 }
 
 bool CrateReader::ReadCustomData(CustomDataType *d) {
+  // A dict element value can itself be a DICTIONARY, so ReadCustomData recurses
+  // through UnpackValueRep. maxDictElements caps breadth, not nesting depth (or
+  // an offset cycle), so bound the depth here.
+  if (_customDataDepth > _config.maxValueRecursion) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many nested Dictionary values.");
+  }
+  ++_customDataDepth;
+  struct CustomDataDepthGuard {
+    uint32_t &d;
+    ~CustomDataDepthGuard() { --d; }
+  } _cdguard{_customDataDepth};
+
   CustomDataType dict;
   uint64_t sz;
   if (!_sr->read8(&sz)) {
@@ -1006,6 +1018,19 @@ bool CrateReader::UnpackArrayEditRep(const crate::ValueRep &rep,
     return false;
   }
 
+  // A VtArrayEdit's valuesRep/indexesRep may themselves be array edits whose
+  // payload points back to this offset (self-loop) — the recursion seeks to a
+  // fixed offset and consumes no input, so bound it.
+  if (_arrayEditDepth > _config.maxValueRecursion) {
+    PUSH_ERROR("Too many nested array-edit values.");
+    return false;
+  }
+  ++_arrayEditDepth;
+  struct ArrayEditDepthGuard {
+    uint32_t &d;
+    ~ArrayEditDepthGuard() { --d; }
+  } _aeguard{_arrayEditDepth};
+
   crate::ValueRep valuesRep, indexesRep;
   if (!ReadValueRep(&valuesRep)) {
     PUSH_ERROR("Failed to read array edit valuesRep.");
@@ -1082,7 +1107,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
   DCOUT("ValueRep type value = " << rep.GetType());
   auto tyRet = crate::GetCrateDataType(rep.GetType());
   if (!tyRet) {
-    PUSH_ERROR(tyRet.error());
+    // Unknown/invalid crate data type id from the file. PUSH_ERROR does NOT
+    // return, so calling tyRet.value() below would abort (bad_expected_access
+    // under -fno-exceptions) on a crafted rep.GetType(). Bail out cleanly.
+    PUSH_ERROR_AND_RETURN_TAG(kTag, tyRet.error());
   }
 
   const auto dty = tyRet.value();
@@ -1347,11 +1375,27 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (!safe::n_to_size<crate::Index>(n, &crate_Index_size)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(crate::Index)");
         }
+        // For the UNCOMPRESSED path the index data must physically be present:
+        // reject an `n` larger than the remaining file (a tiny crafted file
+        // otherwise claims ~1e9 elements, and the token-vector construction
+        // below allocates n*sizeof(token) — a multi-GB / multi-minute DoS even
+        // before the read fails). The compressed path is bounded by the
+        // decompressor + maxArrayElements.
+        const bool token_array_compressed =
+            rep.IsCompressed() && n >= crate::kMinCompressedArraySize;
+        if (!token_array_compressed) {
+          const uint64_t remaining =
+              (_sr->size() > _sr->tell()) ? (_sr->size() - _sr->tell()) : 0;
+          if (crate_Index_size > remaining) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag,
+                "Token array element count exceeds remaining file size.");
+          }
+        }
         CHECK_MEMORY_USAGE(crate_Index_size);
 
         std::vector<crate::Index> v;
         v.resize(static_cast<size_t>(n));
-        if (rep.IsCompressed() && n >= crate::kMinCompressedArraySize) {
+        if (token_array_compressed) {
           if (!ReadCompressedInts(reinterpret_cast<uint32_t *>(v.data()),
                                   static_cast<size_t>(n))) {
             PUSH_ERROR("Failed to read compressed TokenIndex array.");
@@ -3492,8 +3536,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
             // Preserve the string exactly as stored in the crate file.
             // Quotes are part of the value for string-typed unregistered
-            // metadata and must roundtrip losslessly.
-            value->Set(str);
+            // metadata and must roundtrip losslessly. Keep the UNREGISTERED
+            // marker on the CrateValue: consumers (property/prim/stage meta
+            // reconstruction) use it to route the raw text into their
+            // unregisteredMetas maps instead of treating it as a typed string.
+            value->SetUnregisteredValueString(str);
 
             if (!_sr->seek_set(saved_position)) {
               PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
@@ -3629,6 +3676,19 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (n > _config.maxArrayElements) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of relocates too large. TinyUSDZ limits it up to {}", _config.maxArrayElements));
+      }
+
+      // Account the reservation against the memory budget (with overflow-safe
+      // size math), like every other array path — n is only bounded by
+      // maxArrayElements (~1e9), and each pair is large, so an unguarded
+      // reserve() is a ~10^11-byte OOM primitive.
+      {
+        size_t reloc_bytes = 0;
+        if (!safe::mul(static_cast<size_t>(n),
+                       sizeof(std::pair<Path, Path>), &reloc_bytes)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow computing relocates size.");
+        }
+        CHECK_MEMORY_USAGE(reloc_bytes);
       }
 
       std::vector<std::pair<Path, Path>> relocates;

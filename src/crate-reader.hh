@@ -619,6 +619,12 @@ class CrateReader {
 
   // To prevent recursive Value unpack(The Value encodes itself)
   std::unordered_set<uint64_t> unpackRecursionGuard;
+  // Nesting depth for ReadCustomData (crate DICTIONARY) — capped against
+  // _config.maxValueRecursion to stop a deeply-nested / cyclic dict from
+  // overflowing the native stack.
+  uint32_t _customDataDepth{0};
+  // Nesting depth for UnpackArrayEditRep (VtArrayEdit) — same purpose.
+  uint32_t _arrayEditDepth{0};
 
   bool ReserveDecompressionBuffers(size_t comp_buffer_size,
                                    size_t working_buffer_size) const;

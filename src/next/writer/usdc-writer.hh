@@ -44,9 +44,6 @@ USDCWriteResult WriteUSDCToFile(const char* filename, const Stage& stage,
 /// Write Stage to USDC memory buffer
 USDCWriteResult WriteUSDCToMemory(std::vector<uint8_t>& buffer, const Stage& stage,
                                    const USDCWriteOptions& options = {});
-/// Write Stage to USDC string buffer
-USDCWriteResult WriteUSDCToString(std::string& buffer, const Stage& stage,
-                                  const USDCWriteOptions& options = {});
 
 /// Write Layer to USDC file
 USDCWriteResult WriteLayerToUSDCFile(const std::string& filename, const Layer& layer,
@@ -54,10 +51,7 @@ USDCWriteResult WriteLayerToUSDCFile(const std::string& filename, const Layer& l
 
 /// Write Layer to USDC memory buffer
 USDCWriteResult WriteLayerToUSDCMemory(std::vector<uint8_t>& buffer, const Layer& layer,
-                                       const USDCWriteOptions& options = {});
-/// Write Layer to USDC string buffer
-USDCWriteResult WriteLayerToUSDCString(std::string& buffer, const Layer& layer,
-                                       const USDCWriteOptions& options = {});
+                                        const USDCWriteOptions& options = {});
 
 /// Check if a file path looks like a USDC file (by extension)
 bool IsUSDCPath(const std::string& path);

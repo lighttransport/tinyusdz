@@ -41,10 +41,12 @@
   }
 
   // The numeric-array block format ([u64 count][raw] and the integer
-  // delta+LZ4 encoding) is stable across all supported crate versions, so a
-  // block read from any supported source can be written verbatim.
+  // delta+LZ4 encoding) is stable across crate versions >= 0.7.0. Pre-0.7
+  // crates store the element count as a uint32 (pxr crateFile.cpp
+  // _WriteUncompressedArray), so their blocks cannot be copied verbatim into
+  // the modern layout — those materialize and re-encode instead.
   static bool VersionPassThroughOk(CrateVersion v) {
-    return v.major == kCrateMinVersionMajor && v.minor >= kCrateMinVersionMinor &&
+    return v.major == kCrateMinVersionMajor && !v.is_pre_070() &&
            v.minor <= kCrateMaxVersionMinor;
   }
 
@@ -73,7 +75,6 @@
     block.src = lr->source;  // pins the source buffer alive until the write
     block.src_offset = lr->block_offset;
     block.src_len = lr->block_len;
-    CacheBlockHash(&block);
     uint64_t idx = InternBlock(std::move(block));
 
     *out_rep = ValueRep::Make(lr->crate_type, idx, /*array=*/true,

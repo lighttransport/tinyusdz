@@ -255,6 +255,22 @@ if(TINYUSDZ_BUILD_TESTS)
   if(UNIX AND NOT APPLE)
     target_link_libraries(tusdview_lightrt_mtlx_eval_test PRIVATE m)
   endif()
+
+  # Register the tusdview unit tests with ctest. They were built here but never
+  # registered (this file had no add_test at all), so a regression in any of
+  # them went unnoticed. Works because the top-level CMakeLists.txt calls
+  # enable_testing() before this subdirectory is added. All are self-contained
+  # (no GPU/display) and take no arguments; non-zero exit == failure.
+  foreach(tv_test
+      tusdview_lightrt_bridge_test
+      tusdview_openpbr_material_test
+      tusdview_lighting_test
+      tusdview_geometry_primvar_test
+      tusdview_texture_pipeline_test
+      tusdview_lightrt_mtlx_eval_test)
+    add_test(NAME ${tv_test} COMMAND ${tv_test})
+    set_tests_properties(${tv_test} PROPERTIES LABELS "tusdview")
+  endforeach()
 endif()
 
 # Vendored texture tools (tir/texcomp/texpipe/envmap). All calls are routed
@@ -273,6 +289,12 @@ if(TINYUSDZ_WITH_TEXTOOLS)
   foreach(tt_consumer IN LISTS TUSDVIEW_TEXTOOLS_CONSUMERS)
     target_link_libraries(${tt_consumer} PRIVATE tinyusdz_textools)
     target_compile_definitions(${tt_consumer} PRIVATE TUSDVIEW_WITH_TEXTOOLS=1)
+    # Zstd-supercompressed KTX2 (scheme 2) is what usd-texcomp writes by default;
+    # the core lib defines this PRIVATEly, so mesh_build.cc needs its own copy.
+    # ZSTD_decompress itself comes from tinyusdz_static (src/external/zstd.c).
+    if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+      target_compile_definitions(${tt_consumer} PRIVATE TINYUSDZ_WITH_ZSTD_COMPRESSION)
+    endif()
   endforeach()
 endif()
 

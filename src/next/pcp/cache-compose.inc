@@ -16,7 +16,36 @@
   // (and interns property names into the shared, locked PropNameTable), so
   // distinct slots fill concurrently without interfering.
   void ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
-    bool specifier_set = false;
+    // Composed specifier (pxr _GetPrimSpecifierImpl): NOT plain strength
+    // order. A defining specifier always beats `over`, and a `class` due to a
+    // DIRECT (non-ancestral) inherit is weaker than any other defining
+    // specifier — classness is not inherited, so scanning continues looking
+    // for a (possibly weaker) `def`. A class reached through an ancestral
+    // inherit resolves in plain strength order. Resolved here independently
+    // of CopyLocalOpinions' fill-absent promotion and applied after the loop.
+    PrimSpecifier resolved_specifier = PrimSpecifier::Over;
+    bool specifier_done = false;
+    bool specifier_seen = false;
+
+    // Value-clip strength (LVRPS): opinions from sources at-or-stronger than
+    // the source that introduces the `clips` metadata beat clips; opinions
+    // from weaker sources (a reference/payload behind the clips author) LOSE
+    // to clips. Composition merges opinions fill-absent with provenance lost,
+    // so snapshot which properties already carry a value/samples when clips
+    // first compose; anything filled afterwards is recorded as clip-shadowed
+    // for AttributeEval.
+    bool clips_snapshot_taken = false;
+    std::vector<PropNameId> pre_clip_props;
+    const auto snapshot_pre_clip_props = [&]() {
+      if (clips_snapshot_taken || !out->meta().clips().is_dictionary()) return;
+      clips_snapshot_taken = true;
+      for (const PropSlot &sl : out->properties().slots()) {
+        if (sl.is_relationship()) continue;
+        if (sl.value_offset != UINT32_MAX || sl.is_time_sampled()) {
+          pre_clip_props.push_back(sl.name_id);
+        }
+      }
+    };
 
     // Pass 1 (strong->weak): compose opinions.
     for (const Src &s : srcs) {
@@ -24,6 +53,22 @@
       // (properties + relationships) with fill-absent semantics. Variant child
       // prims are not yet modeled (VariantData has no child storage).
       if (s.variant) {
+        // Prim-state opinions from the selected option (authored, so a
+        // weaker source's default cannot flip them back). Fill-absent like
+        // every other authored opinion: a STRONGER source's authored active
+        // wins over a weaker variant's (keeps ComposedActive() in agreement
+        // with the filled output).
+        if (!s.variant->active && !out->meta().active_authored) {
+          out->meta().active = false;
+          out->meta().active_authored = true;
+        }
+        if (s.variant->hidden) {
+          out->meta().hidden = true;
+          out->meta().hidden_authored = true;
+        }
+        if (!s.variant->doc.empty() && out->meta().doc().empty()) {
+          out->meta().doc() = s.variant->doc;
+        }
         for (const auto &pr : s.variant->properties) {
           const PropSlot *ts = out->property(pr.name);
           if (!ts) {
@@ -50,18 +95,62 @@
       for (const SpecRef &sr : specs) {
         const PrimSpec *spec = sr.spec;
 
-        if (!specifier_set) {
-          out->set_specifier(spec->specifier());
-          specifier_set = true;
+        specifier_seen = true;
+        if (!specifier_done) {
+          const PrimSpecifier cur = spec->specifier();
+          if (cur == PrimSpecifier::Def) {
+            resolved_specifier = PrimSpecifier::Def;
+            specifier_done = true;
+          } else if (cur == PrimSpecifier::Class) {
+            resolved_specifier = PrimSpecifier::Class;
+            // A direct-inherit class is tentative: keep scanning for a def.
+            if (s.arc_kind != ArcType::Inherit || s.ancestral) {
+              specifier_done = true;
+            }
+          }
+          // `over` never contributes a defining specifier.
+        }
+
+        // A relative asset path anchors to the layer that AUTHORED it, and this
+        // loop runs strong->weak, so the strongest source carrying an anchor is
+        // the one whose opinions (and asset paths) win. Without this the
+        // flattened prim loses its authoring layer and `@../tex/foo.png@` gets
+        // resolved against the stage root. See asset-anchor.hh.
+        if (out->asset_anchor_id() == 0 && spec->asset_anchor_id() != 0) {
+          out->set_asset_anchor_id(spec->asset_anchor_id());
         }
 
         // Remap relationship/connection TARGET paths from this arc's
         // (site-local) namespace into the composed namespace, so a referenced
         // asset's internal targets (e.g. material:binding, .connect) resolve to
-        // their flattened paths. Identity for local opinions.
+        // their flattened paths. Identity for local opinions. The time offset
+        // composes the arc's offset with the spec layer's sublayer offset.
+        const LayerOffset spec_off = s.offset.Compose(sr.layer_offset);
         Compositor::CopyLocalOpinions(
-            *out, *spec, s.offset.offset, s.offset.scale,
-            [&](const std::string &p) { return Mapping(s.map_idx).Apply(p); });
+            *out, *spec, spec_off.offset, spec_off.scale,
+            [&](const std::string &p) {
+              // Target paths outside a reference/payload arc's namespace are
+              // unmappable: return "" so CopyLocalOpinions drops them (pxr
+              // behavior). VARIANT arcs are namespace-preserving — targets in
+              // a variant body are authored in the HOST's namespace (outside
+              // the holder/content prefix by construction), so map leniently.
+              if (s.arc_kind == ArcType::Variant) {
+                return Mapping(s.map_idx).Apply(p);
+              }
+              return Mapping(s.map_idx).ApplyTarget(p);
+            });
+        snapshot_pre_clip_props();
+      }
+    }
+    if (specifier_seen) out->set_specifier(resolved_specifier);
+    if (clips_snapshot_taken) {
+      for (const PropSlot &sl : out->properties().slots()) {
+        if (sl.is_relationship()) continue;
+        if (sl.value_offset == UINT32_MAX && !sl.is_time_sampled()) continue;
+        if (std::find(pre_clip_props.begin(), pre_clip_props.end(),
+                      sl.name_id) == pre_clip_props.end()) {
+          out->meta().clipShadowedProps().push_back(sl.name_id);
+        }
       }
     }
 
@@ -75,8 +164,30 @@
       const PrimSpecMeta &cm = out->meta();
       if (!cm.variantSelection.empty()) out->meta().variantSelection.clear();
       if (!cm.variantSets().empty()) out->meta().variantSets().clear();
+      if (cm.variantSetNameEdits().authored) {
+        out->meta().variantSetNameEdits() = StringListOpEdits();
+      }
       if (!cm.variantSelections().empty()) out->meta().variantSelections().clear();
     }
+  }
+
+  // Resolved `active` for a prim's sources: strongest authored opinion wins
+  // (fill-absent, mirroring ComposeOpinions' metadata merge — a selected
+  // variant authors active only when it deactivates). Used by BuildStage to
+  // prune the subtree of a deactivated prim WITHOUT composing its opinions
+  // (those are deferred to the parallel fill pass).
+  bool ComposedActive(const std::vector<Src> &srcs) {
+    for (const Src &s : srcs) {
+      if (s.variant) {
+        if (!s.variant->active) return false;
+        continue;  // variant active=true is not an authored opinion
+      }
+      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
+      for (const SpecRef &sr : specs) {
+        if (sr.spec->meta().active_authored) return sr.spec->meta().active;
+      }
+    }
+    return true;
   }
 
   // Composed child-name ORDER for a prim's sources (weak->strong): iterate sources
@@ -85,6 +196,12 @@
   // ComposeInto's Pass 2, factored out so the parallel source-warming pre-pass
   // discovers exactly the same child namespace the serial compose walks.
   std::vector<std::string> ComposeChildNames(const std::vector<Src> &srcs) {
+    // Namespace edits authored by any contributing layer stack: a relocated-away
+    // name is PROHIBITED here (it no longer exists at this parent, even when a
+    // weaker stack still authors a spec for it -- the "shadow spec" case), and a
+    // relocated-in name is a child of this prim regardless of where its content
+    // physically lives.
+    const ChildRelocations edits = RelocationsAt(srcs);
     std::vector<std::string> child_names;
     std::set<std::string> seen_child;
     for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
@@ -102,11 +219,15 @@
           // onto the host as a Variant source (see ExpandArcs). Skip the markers
           // so they never leak into the composed child list.
           if (!cs->name().empty() && cs->name().front() == '{') continue;
+          if (edits.departed.count(cs->name())) continue;
           if (seen_child.insert(cs->name()).second) {
             child_names.push_back(cs->name());
           }
         }
       }
+    }
+    for (const std::string &name : edits.arrived) {
+      if (seen_child.insert(name).second) child_names.push_back(name);
     }
     return child_names;
   }

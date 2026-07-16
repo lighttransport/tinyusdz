@@ -196,6 +196,47 @@ void test_layer_stats() {
   std::cout << "  Memory usage: " << stats.memory_bytes << " bytes" << std::endl;
 }
 
+void test_layer_sort_rebuilds_hierarchy() {
+  std::cout << "Testing Layer sort hierarchy rebuild..." << std::endl;
+
+  Layer layer;
+
+  uint32_t shader = layer.add_prim(PrimSpec("Shader", "Shader"));
+  layer.prim_mutable(shader)->set_path(Path("/Root/Material/Shader"));
+  uint32_t root = layer.add_prim(PrimSpec("Root", "Xform"));
+  layer.prim_mutable(root)->set_path(Path("/Root"));
+  uint32_t material = layer.add_prim(PrimSpec("Material", "Material"));
+  layer.prim_mutable(material)->set_path(Path("/Root/Material"));
+  uint32_t mesh = layer.add_prim(PrimSpec("Mesh", "Mesh"));
+  layer.prim_mutable(mesh)->set_path(Path("/Root/Mesh"));
+
+  layer.add_root(root);
+  layer.set_parent(material, root);
+  layer.set_parent(mesh, root);
+  layer.set_parent(shader, material);
+  layer.build_path_index();
+
+  layer.sort_prims_by_path();
+
+  const PrimSpec* sorted_root = layer.prim_at_path("/Root");
+  const PrimSpec* sorted_material = layer.prim_at_path("/Root/Material");
+  const PrimSpec* sorted_shader = layer.prim_at_path("/Root/Material/Shader");
+  const PrimSpec* sorted_mesh = layer.prim_at_path("/Root/Mesh");
+
+  assert(sorted_root && sorted_material && sorted_shader && sorted_mesh);
+  assert(layer.root_indices().size() == 1 && "sort should rebuild roots");
+  assert(layer.prim(layer.root_indices()[0]) == sorted_root);
+  assert(sorted_root->child_count() == 2 && "root children must survive sort");
+  assert(sorted_material->child_count() == 1 &&
+         "nested children must survive sort");
+  assert(layer.children(layer.index_at_path("/Root")).size() == 2);
+  assert(layer.children(layer.index_at_path("/Root/Material")).size() == 1);
+  assert(layer.children(layer.index_at_path("/Root/Material"))[0] ==
+         sorted_shader);
+
+  std::cout << "  Layer sort hierarchy rebuild: PASSED" << std::endl;
+}
+
 void test_metadata() {
   std::cout << "Testing metadata..." << std::endl;
 
@@ -386,6 +427,73 @@ void test_relationships() {
   std::cout << "  Relationships: PASSED" << std::endl;
 }
 
+void test_path_authoring() {
+  std::cout << "Testing path-addressed authoring..." << std::endl;
+
+  Layer layer;
+
+  // define_prim_at_path creates missing ancestors as typeless defs
+  uint32_t idx = layer.define_prim_at_path("/World/Geo/Mesh", "Mesh");
+  assert(idx != UINT32_MAX && "define should succeed");
+  const PrimSpec* mesh = layer.prim_at_path("/World/Geo/Mesh");
+  assert(mesh && mesh->type_name() == "Mesh");
+  const PrimSpec* world = layer.prim_at_path("/World");
+  assert(world && world->type_name().empty() && "ancestor should be typeless");
+  assert(layer.root_indices().size() == 1 && "one root");
+  assert(world->child_count() == 1);
+
+  // Re-defining an existing prim updates the type, no duplicate
+  uint32_t idx2 = layer.define_prim_at_path("/World", "Xform");
+  assert(idx2 != UINT32_MAX && layer.prim(idx2) == world);
+  assert(world->type_name() == "Xform");
+  assert(layer.root_indices().size() == 1 && "still one root");
+
+  // Invalid paths
+  assert(layer.define_prim_at_path("") == UINT32_MAX);
+  assert(layer.define_prim_at_path("relative/path") == UINT32_MAX);
+  assert(layer.define_prim_at_path("/a//b") == UINT32_MAX);
+  assert(layer.define_prim_at_path("/a/") == UINT32_MAX);
+
+  // upsert_property: create, then replace in place (no duplicate slot)
+  PrimSpec* mesh_mut = layer.prim_at_path_mutable("/World/Geo/Mesh");
+  mesh_mut->upsert_property("radius", Value(1.5f));
+  const Value* v = mesh_mut->property_value("radius");
+  assert(v && v->as_float() && *v->as_float() == 1.5f);
+  mesh_mut->upsert_property("radius", Value(2.5f));
+  v = mesh_mut->property_value("radius");
+  assert(v && v->as_float() && *v->as_float() == 2.5f);
+  assert(mesh_mut->properties().size() == 1 && "no duplicate slot");
+
+  // remove_property
+  assert(mesh_mut->remove_property("radius"));
+  assert(!mesh_mut->property("radius"));
+  assert(!mesh_mut->remove_property("radius") && "second remove is a no-op");
+
+  // set_relationship_targets replaces wholesale; remove_relationship erases
+  mesh_mut->add_relationship("material:binding", Path("/Looks/A"));
+  mesh_mut->set_relationship_targets("material:binding", {Path("/Looks/B")});
+  const std::vector<Path>* targets = mesh_mut->relationship("material:binding");
+  assert(targets && targets->size() == 1 && (*targets)[0].str() == "/Looks/B");
+  assert(mesh_mut->remove_relationship("material:binding"));
+  assert(!mesh_mut->relationship("material:binding"));
+
+  // remove_prim_at_path unlinks the subtree and its path-index entries
+  layer.define_prim_at_path("/World/Geo/Mesh/Sub", "Scope");
+  assert(layer.remove_prim_at_path("/World/Geo"));
+  assert(!layer.prim_at_path("/World/Geo"));
+  assert(!layer.prim_at_path("/World/Geo/Mesh"));
+  assert(!layer.prim_at_path("/World/Geo/Mesh/Sub"));
+  assert(layer.prim_at_path("/World") && "parent survives");
+  assert(world->child_count() == 0 && "child link removed");
+  assert(!layer.remove_prim_at_path("/World/Geo") && "second remove fails");
+
+  // removing a root prim
+  assert(layer.remove_prim_at_path("/World"));
+  assert(layer.root_indices().empty());
+
+  std::cout << "  Path-addressed authoring: PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
@@ -394,10 +502,12 @@ int main() {
   test_prim_spec();
   test_layer_builder();
   test_layer_stats();
+  test_layer_sort_rebuilds_hierarchy();
   test_metadata();
   test_interpolation();
   test_time_samples();
   test_relationships();
+  test_path_authoring();
 
   std::cout << "\n=== All Layer tests PASSED ===" << std::endl;
   return 0;

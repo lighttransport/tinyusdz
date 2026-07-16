@@ -7,7 +7,8 @@
 
 #include "large-scene-loader.hh"
 
-#include <atomic>
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -21,6 +22,10 @@
 #include "layer.hh"
 #include "pcp/layer-registry.hh"
 #include "tinyusdz.hh"
+#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+#include "next/layer/asset-anchor.hh"
+#include "next/types/value-view.hh"
+#endif
 
 namespace tinyusdz {
 
@@ -55,46 +60,98 @@ uint64_t BudgetMiBToBytes(size_t mib) {
 namespace {
 
 // Shared state for PayloadMode::Budget. Kept alive by the closure captured into
-// CompositionGraphOptions::payload_policy (owned by the graph).
+// CompositionGraphOptions::payload_policy_with_prim (owned by the graph).
 struct BudgetPolicyState {
-  std::atomic<uint64_t> loaded_bytes{0};
+  uint64_t loaded_bytes{0};
+  double loaded_extent_coverage{0.0};
   uint64_t budget_bytes{0};
+  double extent_budget{0.0};
   AssetResolutionResolver *resolver{nullptr};
   std::mutex mu;  // serializes resolver re-entrancy (future threaded Compose)
 };
 
-std::function<bool(const Path &, const Payload &)> MakePayloadPolicy(
+bool ExtentCoverage(const PrimSpec &owner, double *coverage) {
+  if (!coverage) return false;
+  const auto it = owner.props().find("extentsHint");
+  if (it == owner.props().end() || !it->second.is_attribute()) return false;
+
+  const Attribute *attr = it->second.get_attribute_or_null();
+  if (!attr || !attr->has_value()) return false;
+  const auto points = attr->get_value<std::vector<value::float3>>();
+  if (!points || points->size() < 2 || (points->size() % 2) != 0) return false;
+
+  double lo[3] = {std::numeric_limits<double>::infinity(),
+                  std::numeric_limits<double>::infinity(),
+                  std::numeric_limits<double>::infinity()};
+  double hi[3] = {-std::numeric_limits<double>::infinity(),
+                  -std::numeric_limits<double>::infinity(),
+                  -std::numeric_limits<double>::infinity()};
+  for (const value::float3 &p : *points) {
+    for (size_t axis = 0; axis < 3; ++axis) {
+      const double v = static_cast<double>(p[axis]);
+      if (!std::isfinite(v)) return false;
+      lo[axis] = std::min(lo[axis], v);
+      hi[axis] = std::max(hi[axis], v);
+    }
+  }
+
+  const double dx = std::max(0.0, hi[0] - lo[0]);
+  const double dy = std::max(0.0, hi[1] - lo[1]);
+  const double dz = std::max(0.0, hi[2] - lo[2]);
+  *coverage = std::max({dx * dy, dx * dz, dy * dz});
+  return std::isfinite(*coverage);
+}
+
+std::function<bool(const Path &, const Payload &, const PrimSpec &)>
+MakePayloadPolicy(
     const LargeSceneLoadOptions &opts, AssetResolutionResolver *resolver) {
   switch (opts.payload_mode) {
     case LargeSceneLoadOptions::PayloadMode::LoadAll:
       return nullptr;  // null => eager load (CompositionGraph default).
     case LargeSceneLoadOptions::PayloadMode::LoadNone:
-      return [](const Path &, const Payload &) { return false; };
+      return [](const Path &, const Payload &, const PrimSpec &) {
+        return false;
+      };
     case LargeSceneLoadOptions::PayloadMode::Budget: {
       auto st = std::make_shared<BudgetPolicyState>();
       st->budget_bytes = BudgetMiBToBytes(opts.payload_budget_mb);
+      st->extent_budget = opts.payload_extent_budget;
       st->resolver = resolver;
-      return [st](const Path &, const Payload &pl) -> bool {
-        const std::string ap = pl.asset_path.GetAssetPath();
-        uint64_t sz = 0;
-        {
-          std::lock_guard<std::mutex> lk(st->mu);
-          const std::string rp = st->resolver->resolve(ap);
-          sz = FileSizeBytes(rp);
+      return [st](const Path &, const Payload &pl,
+                  const PrimSpec &owner) -> bool {
+        std::lock_guard<std::mutex> lk(st->mu);
+
+        const std::string old_cwp = st->resolver->current_working_path();
+        if (!owner.get_current_working_path().empty()) {
+          st->resolver->set_current_working_path(
+              owner.get_current_working_path());
         }
-        if (sz == 0) {
-          return false;
-        }
-        const uint64_t prev = st->loaded_bytes.fetch_add(sz);
-        if (prev > st->budget_bytes || sz > st->budget_bytes - prev) {
-          st->loaded_bytes.fetch_sub(sz);
+        const std::string rp =
+            st->resolver->resolve(pl.asset_path.GetAssetPath());
+        st->resolver->set_current_working_path(old_cwp);
+        const uint64_t sz = FileSizeBytes(rp);
+        if (sz == 0 || st->loaded_bytes > st->budget_bytes ||
+            sz > st->budget_bytes - st->loaded_bytes) {
           return false;  // over budget => defer
         }
+
+        double extent_cost = 0.0;
+        const bool has_extent = st->extent_budget > 0.0 &&
+                                ExtentCoverage(owner, &extent_cost);
+        if (has_extent &&
+            (st->loaded_extent_coverage > st->extent_budget ||
+             extent_cost >
+                 st->extent_budget - st->loaded_extent_coverage)) {
+          return false;
+        }
+
+        st->loaded_bytes += sz;
+        if (has_extent) st->loaded_extent_coverage += extent_cost;
         return true;
       };
     }
   }
-  return [](const Path &, const Payload &) { return false; };
+  return [](const Path &, const Payload &, const PrimSpec &) { return false; };
 }
 
 }  // namespace
@@ -114,6 +171,7 @@ const Layer *LargeSceneLoader::LoadLayerThunk(
 bool LargeSceneLoader::Load(const std::string &filename,
                             const LargeSceneLoadOptions &options,
                             std::string *warn, std::string *err) {
+  std::lock_guard<std::mutex> lock(_mutex);
   _loaded = false;
 
   // 1. Resolver anchored at the scene's base directory.
@@ -157,10 +215,17 @@ bool LargeSceneLoader::Load(const std::string &filename,
 
   // 5. Build the composition graph (R/V/P phases) with the payload policy.
   CompositionGraphOptions cgopts;
-  cgopts.payload_policy = MakePayloadPolicy(options, _resolver.get());
+  cgopts.payload_policy_with_prim =
+      MakePayloadPolicy(options, _resolver.get());
   cgopts.detect_instances = options.detect_instances;
   cgopts.allow_parent_relative_paths = options.allow_parent_relative_paths;
   cgopts.max_depth = options.max_composition_depth;
+  // Large scenes legitimately have many millions of composed prims / arc nodes;
+  // raise the general-API safety backstops accordingly (this loader is the
+  // explicit large-scene path).
+  cgopts.max_composed_prims = 64u * 1024u * 1024u;
+  cgopts.max_arc_nodes = 64u * 1024u * 1024u;
+  cgopts.max_namespace_depth = 8192;
   if (_registry) {
     cgopts.load_layer_fn = &LargeSceneLoader::LoadLayerThunk;
     cgopts.load_layer_userdata = this;
@@ -174,25 +239,35 @@ bool LargeSceneLoader::Load(const std::string &filename,
   _graph = std::make_unique<CompositionGraph>(std::move(*r));
 
   // 6. Reconstruct the Stage from the graph.
-  if (!_graph->BuildStage(&_stage, warn, err)) {
+  auto rebuilt = std::make_shared<Stage>();
+  if (!_graph->BuildStage(rebuilt.get(), warn, err)) {
     return false;
   }
+  _stage = std::move(rebuilt);
 
   _loaded = true;
   return true;
 }
 
 std::vector<Path> LargeSceneLoader::deferred_payload_paths() const {
+  std::lock_guard<std::mutex> lock(_mutex);
   if (!_graph) return {};
   return _graph->GetDeferredPayloadPaths();
 }
 
 size_t LargeSceneLoader::deferred_count() const {
-  return deferred_payload_paths().size();
+  std::lock_guard<std::mutex> lock(_mutex);
+  return _graph ? _graph->GetDeferredPayloadPaths().size() : 0;
+}
+
+std::shared_ptr<const Stage> LargeSceneLoader::stage_snapshot() const {
+  std::lock_guard<std::mutex> lock(_mutex);
+  return _stage;
 }
 
 bool LargeSceneLoader::load_payload(const Path &prim_path, std::string *warn,
                                     std::string *err) {
+  std::lock_guard<std::mutex> lock(_mutex);
   if (!_graph || !_resolver) {
     if (err) *err = "LargeSceneLoader: not loaded.";
     return false;
@@ -202,7 +277,7 @@ bool LargeSceneLoader::load_payload(const Path &prim_path, std::string *warn,
     if (err) *err = r.error();
     return false;
   }
-  if (!rebuild_stage(warn, err)) {
+  if (!RebuildStageLocked(warn, err)) {
     return false;
   }
   return true;
@@ -210,6 +285,7 @@ bool LargeSceneLoader::load_payload(const Path &prim_path, std::string *warn,
 
 bool LargeSceneLoader::unload_payload(const Path &prim_path, std::string *warn,
                                       std::string *err) {
+  std::lock_guard<std::mutex> lock(_mutex);
   if (!_graph) {
     if (err) *err = "LargeSceneLoader: not loaded.";
     return false;
@@ -219,19 +295,25 @@ bool LargeSceneLoader::unload_payload(const Path &prim_path, std::string *warn,
     if (err) *err = r.error();
     return false;
   }
-  if (!rebuild_stage(warn, err)) {
+  if (!RebuildStageLocked(warn, err)) {
     return false;
   }
   return true;
 }
 
 bool LargeSceneLoader::rebuild_stage(std::string *warn, std::string *err) {
+  std::lock_guard<std::mutex> lock(_mutex);
+  return RebuildStageLocked(warn, err);
+}
+
+bool LargeSceneLoader::RebuildStageLocked(std::string *warn,
+                                          std::string *err) {
   if (!_graph) {
     if (err) *err = "LargeSceneLoader: not loaded.";
     return false;
   }
-  Stage rebuilt;
-  if (!_graph->BuildStage(&rebuilt, warn, err)) {
+  auto rebuilt = std::make_shared<Stage>();
+  if (!_graph->BuildStage(rebuilt.get(), warn, err)) {
     return false;
   }
   _stage = std::move(rebuilt);
@@ -239,10 +321,12 @@ bool LargeSceneLoader::rebuild_stage(std::string *warn, std::string *err) {
 }
 
 size_t LargeSceneLoader::estimate_stage_memory_bytes() const {
-  return _stage.estimate_memory_usage();
+  const std::shared_ptr<const Stage> snapshot = stage_snapshot();
+  return snapshot ? snapshot->estimate_memory_usage() : 0;
 }
 
 size_t LargeSceneLoader::layer_parse_count() const {
+  std::lock_guard<std::mutex> lock(_mutex);
   return _registry ? _registry->parse_count() : 0;
 }
 
@@ -258,13 +342,49 @@ namespace {
 // Signature: bool(const next::Path &prim_path, const std::string &asset_path).
 
 struct NextBudgetPolicyState {
-  std::atomic<uint64_t> loaded_bytes{0};
+  uint64_t loaded_bytes{0};
+  double loaded_extent_coverage{0.0};
   uint64_t budget_bytes{0};
+  double extent_budget{0.0};
   next::AssetResolver *resolver{nullptr};
   std::mutex mu;
 };
 
-std::function<bool(const next::Path &, const std::string &)>
+bool ExtentCoverage(const next::PrimSpec &owner, double *coverage) {
+  if (!coverage) return false;
+  const next::Value *value = owner.property_value("extentsHint");
+  if (!value || !value->is_array()) return false;
+  next::ArrayScratch<float> scratch;
+  next::ArrayView<float> points;
+  if (!next::GetFloatArrayView(*value, &scratch, &points) ||
+      points.size < 6 || (points.size % 6) != 0) {
+    return false;
+  }
+
+  double lo[3] = {std::numeric_limits<double>::infinity(),
+                  std::numeric_limits<double>::infinity(),
+                  std::numeric_limits<double>::infinity()};
+  double hi[3] = {-std::numeric_limits<double>::infinity(),
+                  -std::numeric_limits<double>::infinity(),
+                  -std::numeric_limits<double>::infinity()};
+  for (size_t i = 0; i < points.size; i += 3) {
+    for (size_t axis = 0; axis < 3; ++axis) {
+      const double v = static_cast<double>(points[i + axis]);
+      if (!std::isfinite(v)) return false;
+      lo[axis] = std::min(lo[axis], v);
+      hi[axis] = std::max(hi[axis], v);
+    }
+  }
+
+  const double dx = std::max(0.0, hi[0] - lo[0]);
+  const double dy = std::max(0.0, hi[1] - lo[1]);
+  const double dz = std::max(0.0, hi[2] - lo[2]);
+  *coverage = std::max({dx * dy, dx * dz, dy * dz});
+  return std::isfinite(*coverage);
+}
+
+std::function<bool(const next::Path &, const std::string &,
+                   const next::PrimSpec &)>
 MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
                       next::AssetResolver *resolver,
                       bool *load_payloads) {
@@ -274,31 +394,46 @@ MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
       if (load_payloads) *load_payloads = true;
       return nullptr;  // null policy + load_payloads=true => eager load.
     case LargeSceneLoadOptions::PayloadMode::LoadNone:
-      return [](const next::Path &, const std::string &) { return false; };
+      return [](const next::Path &, const std::string &,
+                const next::PrimSpec &) { return false; };
     case LargeSceneLoadOptions::PayloadMode::Budget: {
       auto st = std::make_shared<NextBudgetPolicyState>();
       st->budget_bytes = BudgetMiBToBytes(opts.payload_budget_mb);
+      st->extent_budget = opts.payload_extent_budget;
       st->resolver = resolver;
-      return [st](const next::Path &, const std::string &ap) -> bool {
-        uint64_t sz = 0;
-        {
-          std::lock_guard<std::mutex> lk(st->mu);
-          const std::string rp = st->resolver->ResolvePath(ap);
-          sz = FileSizeBytes(rp);
-        }
-        if (sz == 0) {
+      return [st](const next::Path &, const std::string &ap,
+                  const next::PrimSpec &owner) -> bool {
+        std::lock_guard<std::mutex> lk(st->mu);
+        const std::string &anchor_dir =
+            next::AssetAnchorPath(owner.asset_anchor_id());
+        const std::string anchor = anchor_dir.empty()
+                                       ? std::string()
+                                       : anchor_dir + "/__layer__.usd";
+        const std::string rp = st->resolver->ResolvePath(ap, anchor);
+        const uint64_t sz = FileSizeBytes(rp);
+        if (sz == 0 || st->loaded_bytes > st->budget_bytes ||
+            sz > st->budget_bytes - st->loaded_bytes) {
           return false;
         }
-        const uint64_t prev = st->loaded_bytes.fetch_add(sz);
-        if (prev > st->budget_bytes || sz > st->budget_bytes - prev) {
-          st->loaded_bytes.fetch_sub(sz);
+
+        double extent_cost = 0.0;
+        const bool has_extent = st->extent_budget > 0.0 &&
+                                ExtentCoverage(owner, &extent_cost);
+        if (has_extent &&
+            (st->loaded_extent_coverage > st->extent_budget ||
+             extent_cost >
+                 st->extent_budget - st->loaded_extent_coverage)) {
           return false;
         }
+
+        st->loaded_bytes += sz;
+        if (has_extent) st->loaded_extent_coverage += extent_cost;
         return true;
       };
     }
   }
-  return [](const next::Path &, const std::string &) { return false; };
+  return [](const next::Path &, const std::string &,
+            const next::PrimSpec &) { return false; };
 }
 
 }  // namespace
@@ -309,6 +444,7 @@ LargeSceneLoader::~LargeSceneLoader() = default;
 bool LargeSceneLoader::Load(const std::string &filename,
                             const LargeSceneLoadOptions &options,
                             std::string *warn, std::string *err) {
+  std::lock_guard<std::mutex> lock(_mutex);
   _loaded = false;
 
   // 1. Setup next-style resolver anchored at the scene's base directory.
@@ -328,7 +464,14 @@ bool LargeSceneLoader::Load(const std::string &filename,
   //    a shared_ptr<next::Layer> (the type that Cache::Open expects).
   std::string resolved_path = _resolver->ResolvePath(filename);
   if (resolved_path.empty()) resolved_path = filename;
-  auto root_shared = next::pcp::LoadLayerFromFile(resolved_path, warn, err);
+  next::pcp::LayerLoadOptions root_load_options;
+  root_load_options.max_memory = static_cast<size_t>(std::min<uint64_t>(
+      BudgetMiBToBytes(options.max_asset_bytes_mb),
+      static_cast<uint64_t>((std::numeric_limits<size_t>::max)())));
+  root_load_options.usdc_lazy_arrays = options.mmap_zero_copy;
+  root_load_options.usdc_use_mmap = options.mmap_zero_copy;
+  auto root_shared = next::pcp::LoadLayerFromFile(
+      resolved_path, warn, err, root_load_options);
   if (!root_shared) {
     if (err) {
       std::string prev = *err;
@@ -341,11 +484,13 @@ bool LargeSceneLoader::Load(const std::string &filename,
   // 3. Open the next::pcp::Cache (handles sublayers, references + payload
   //    according to options).
   next::pcp::CompositionOptions copts;
-  copts.payload_policy =
+  copts.payload_policy_with_prim =
       MakeNextPayloadPolicy(options, _resolver.get(), &copts.load_payloads);
   copts.detect_instances = options.detect_instances;
   copts.max_depth = options.max_composition_depth;
   copts.max_namespace_depth = options.max_composition_depth;
+  copts.usdc_lazy_arrays = options.mmap_zero_copy;
+  copts.usdc_use_mmap = options.mmap_zero_copy;
 
   auto cache_r = next::pcp::Cache::Open(*_resolver, root_shared,
                                         filename, copts);
@@ -356,9 +501,11 @@ bool LargeSceneLoader::Load(const std::string &filename,
   _cache = std::make_unique<next::pcp::Cache>(std::move(*cache_r));
 
   // 4. Materialize the Stage.
-  if (!_cache->BuildStage(&_stage, warn, err)) {
+  auto rebuilt = std::make_shared<next::Stage>();
+  if (!_cache->BuildStage(rebuilt.get(), warn, err)) {
     return false;
   }
+  _stage = std::move(rebuilt);
 
   _loaded = true;
   return true;
@@ -375,6 +522,7 @@ static Path FromNextPath(const next::Path &np) {
 }
 
 std::vector<Path> LargeSceneLoader::deferred_payload_paths() const {
+  std::lock_guard<std::mutex> lock(_mutex);
   if (!_cache) return {};
   const std::vector<next::Path> npaths = _cache->GetDeferredPayloadPaths();
   std::vector<Path> out;
@@ -384,12 +532,19 @@ std::vector<Path> LargeSceneLoader::deferred_payload_paths() const {
 }
 
 size_t LargeSceneLoader::deferred_count() const {
+  std::lock_guard<std::mutex> lock(_mutex);
   if (!_cache) return 0;
   return _cache->GetDeferredPayloadPaths().size();
 }
 
+std::shared_ptr<const next::Stage> LargeSceneLoader::stage_snapshot() const {
+  std::lock_guard<std::mutex> lock(_mutex);
+  return _stage;
+}
+
 bool LargeSceneLoader::load_payload(const Path &prim_path, std::string *warn,
                                     std::string *err) {
+  std::lock_guard<std::mutex> lock(_mutex);
   if (!_cache) {
     if (err) *err = "LargeSceneLoader: not loaded.";
     return false;
@@ -398,7 +553,7 @@ bool LargeSceneLoader::load_payload(const Path &prim_path, std::string *warn,
     return false;
   }
   // Rebuild the stage to materialize the loaded payload.
-  if (!rebuild_stage(warn, err)) {
+  if (!RebuildStageLocked(warn, err)) {
     return false;
   }
   return true;
@@ -406,6 +561,7 @@ bool LargeSceneLoader::load_payload(const Path &prim_path, std::string *warn,
 
 bool LargeSceneLoader::unload_payload(const Path &prim_path, std::string *warn,
                                       std::string *err) {
+  std::lock_guard<std::mutex> lock(_mutex);
   if (!_cache) {
     if (err) *err = "LargeSceneLoader: not loaded.";
     return false;
@@ -415,19 +571,25 @@ bool LargeSceneLoader::unload_payload(const Path &prim_path, std::string *warn,
     return false;
   }
   // Rebuild the stage to materialize the unloaded payload.
-  if (!rebuild_stage(warn, err)) {
+  if (!RebuildStageLocked(warn, err)) {
     return false;
   }
   return true;
 }
 
 bool LargeSceneLoader::rebuild_stage(std::string *warn, std::string *err) {
+  std::lock_guard<std::mutex> lock(_mutex);
+  return RebuildStageLocked(warn, err);
+}
+
+bool LargeSceneLoader::RebuildStageLocked(std::string *warn,
+                                          std::string *err) {
   if (!_cache) {
     if (err) *err = "LargeSceneLoader: not loaded.";
     return false;
   }
-  next::Stage rebuilt;
-  if (!_cache->BuildStage(&rebuilt, warn, err)) {
+  auto rebuilt = std::make_shared<next::Stage>();
+  if (!_cache->BuildStage(rebuilt.get(), warn, err)) {
     return false;
   }
   _stage = std::move(rebuilt);
@@ -435,10 +597,12 @@ bool LargeSceneLoader::rebuild_stage(std::string *warn, std::string *err) {
 }
 
 size_t LargeSceneLoader::estimate_stage_memory_bytes() const {
-  return _stage.GetMemoryUsage();
+  const std::shared_ptr<const next::Stage> snapshot = stage_snapshot();
+  return snapshot ? snapshot->GetMemoryUsage() : 0;
 }
 
 size_t LargeSceneLoader::layer_parse_count() const {
+  std::lock_guard<std::mutex> lock(_mutex);
   return _cache ? _cache->layer_registry().parse_count() : 0;
 }
 

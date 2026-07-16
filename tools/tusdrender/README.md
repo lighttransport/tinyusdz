@@ -16,7 +16,7 @@ Common flags:
 |------|---------|
 | `-rtPreview` | ray-traced preview (the `next` loader; default for USDC) |
 | `-vk` / `-vkr` / `-d3d` | GPU backends — Vulkan compute / Vulkan ray query / Direct3D 11 compute — see [`doc/tusdrender.md`](../../doc/tusdrender.md) for status + testing |
-| `-largeSceneProfile caldera\|island\|alab` | Vulkan large-scene preset over backend/LOD/memory knobs; explicit flags win |
+| `-largeSceneProfile caldera\|island\|alab` | Vulkan large-scene preset over backend/LOD/shared memory policy; explicit flags win |
 | `-w N -height N` | image size (`-height` omitted → from camera aspect) |
 | `-autoframe` | usdrecord-style auto camera framing |
 | `-camera <path>` | render through a named `UsdGeomCamera` |
@@ -25,9 +25,9 @@ Common flags:
 | `-smooth` | interpolate authored normals (smooth shading) |
 | `-threads N` | cap build and CPU shade-after-hit worker threads (`0` = auto) |
 | `-displaceScale <f>` | `UsdPreviewSurface` displacement multiplier (default 1.0; `-noDisplace` disables) |
-| `-materialResolver legacy\|tydra-next\|compare` | next-loader material resolver. `legacy` is the default hand-rolled path; `tydra-next` routes through `RenderMaterial` + the shared OpenPBR block; `compare` renders legacy and reports resolver field differences. |
+| `-materialResolver legacy\|tydra-next\|compare` | next-loader material resolver. `tydra-next` is the default shared path; `legacy` keeps the hand-rolled compatibility path; `compare` renders legacy and reports resolver field differences. |
 | `-materialShading legacy\|lightrt-bsdf` | CPU shading path. `lightrt-bsdf` is experimental and evaluates direct-light/headlight response through the shared LightRT OpenPBR BSDF; `legacy` remains the default. |
-| `-maxMem <GiB>` | memory cap override (default `min(32, 0.5·MemAvailable)`) |
+| `-maxMem <GiB>` | memory cap override (automatic policy reserves 2 GiB on the 32 GiB target) |
 | `-stats` | print mesh/triangle/memory/timing stats |
 
 ## Composition, instancing, memory
@@ -68,7 +68,8 @@ Common flags:
   glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair. `-smooth`
   interpolates authored `normals` for smooth shading (default is per-face
   geometric normals, which keeps the lean 4 B/triangle instanced footprint).
-  The experimental `-materialResolver tydra-next` path is a migration aid for the
+  The default `-materialResolver tydra-next` path uses the shared material
+  converter. The legacy and compare modes remain migration aids for the
   shared material-eval layer; measure coverage on usd-assets with:
   `USD_ASSETS_ROOT=/path/to/usd-assets TUSDR_RUN_MATERIAL_RESOLVER=1 ctest --test-dir build -R tool-tusdrender-material-resolver --output-on-failure`.
   Add `TUSDR_MATERIAL_SHADING=lightrt-bsdf` to smoke the experimental BSDF
@@ -92,8 +93,11 @@ Common flags:
   is image-based lighting (`--env` overrides it). Scenes with no lights fall back
   to a camera headlight. This lights interiors a dome can't reach (e.g. ALab's
   shot lighting rig, which renders the full lit shot directly from `entry.usda`).
-* **Memory cap** — a process budget of `min(32 GiB, 0.5 × system MemAvailable)`
-  (override with `-maxMem`). When a scene would exceed it, tusdrender aborts
+* **Memory cap** — the shared automatic host policy caps the target at 32 GiB
+  and reserves 2 GiB for the OS/driver (30 GiB process cap; override with
+  `-maxMem`). StageSession composition receives 55% of that cap, leaving room
+  for streamed geometry and BVH construction. When a scene would exceed it,
+  tusdrender aborts
   cleanly with an actionable message (raise `-maxMem`, narrow with `-mask`, or
   lower `-complexity`) instead of being OOM-killed.
 

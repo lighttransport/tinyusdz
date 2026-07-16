@@ -551,7 +551,8 @@ bool MtlxConverter::ConvertFileToRenderMaterial(const std::string& filename,
 
 bool MtlxConverter::ConvertUsdMtlxMaterial(const tinyusdz::next::Stage& stage,
                                             const tinyusdz::next::UsdPrim& material_prim,
-                                            RenderMaterial* out) {
+                                            RenderMaterial* out,
+                                            bool allow_converter_delegation) {
   if (!out) {
     error_ = "Output material is null";
     return false;
@@ -587,7 +588,10 @@ bool MtlxConverter::ConvertUsdMtlxMaterial(const tinyusdz::next::Stage& stage,
   // Prefer the shared next render converter when the shader is material-local.
   // It already handles UsdPreviewSurface, MaterialX UsdPreviewSurface, and
   // OpenPBR inputs consistently with tusdview/tusdrender extraction.
-  if (shader_prim.GetParent().IsValid() &&
+  // Guarded: ConvertMaterial itself falls back to ConvertUsdMtlxMaterial when
+  // it cannot convert the shader, so delegating back from that path would
+  // recurse until stack overflow.
+  if (allow_converter_delegation && shader_prim.GetParent().IsValid() &&
       shader_prim.GetParent().GetPath().str() == material_prim.GetPath().str()) {
     RenderSceneConverter converter;
     if (converter.ConvertMaterial(stage, material_prim, out)) {
@@ -622,10 +626,13 @@ bool MtlxConverter::ConvertUsdMtlxMaterial(const tinyusdz::next::Stage& stage,
   // Check for MaterialX shader binding (implementationSource = "mtlx")
   std::string impl_source = tinyusdz::next::GetShaderImplementationSource(shader_prim);
   if (impl_source != "mtlx" && shader_id.find("ND_") != 0) {
-    // Not MaterialX - try default conversion
+    // Not MaterialX, and not a shader anyone else claimed either: hand back a
+    // neutral stand-in rather than failing, but mark it, or the mesh silently
+    // shades gray and no consumer can tell.
     warning_ = "Shader is not MaterialX: " + shader_id;
     out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
     out->preview_surface = std::make_unique<PreviewSurfaceShader>();
+    out->default_fallback = true;
     SetShaderParam(out->preview_surface->diffuse_color, 0.5f, 0.5f, 0.5f);
     return true;
   }
@@ -636,6 +643,7 @@ bool MtlxConverter::ConvertUsdMtlxMaterial(const tinyusdz::next::Stage& stage,
   warning_ = "MaterialX shader graph is external to the material; using fallback PreviewSurface";
   out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
   out->preview_surface = std::make_unique<PreviewSurfaceShader>();
+  out->default_fallback = true;
   SetShaderParam(out->preview_surface->diffuse_color, 0.5f, 0.5f, 0.5f);
 
   return true;

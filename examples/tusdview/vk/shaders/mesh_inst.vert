@@ -1,5 +1,8 @@
 #version 450
 #extension GL_ARB_shader_draw_parameters : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 // Instanced flat-shaded prototype (large-scene --next path). Per-instance 3x4
 // object-to-world (instance-rate, rows = output x/y/z) at locations 3/4/5 -- the
@@ -14,6 +17,31 @@ layout(location = 5) in vec4 aRow2;
 layout(location = 9) in vec4 aInstColor;  // per-instance color/opacity (instance-rate)
 layout(location = 10) in vec3 aVtxColor;  // per-vertex prototype color
 layout(location = 8) in uvec2 aMorphOffsetCount;  // GPU morph (offset,count); 0=none
+
+// Skeletal skinning of the PROTOTYPE, in prototype-LOCAL space (before the
+// per-instance transform), so all instances of a prototype share one bone block --
+// sound because USD instancing requires identical composed contents, hence one
+// skeleton and one pose. Joints/weights come in BY ADDRESS (DrawMeta), not as
+// vertex attributes: locations 3/4/5 are taken by the instance rows, and the
+// merged multi-draw path could not supply per-mesh vertex bindings anyway. Those
+// MDI draws carry jointAddr == 0 and skip skinning entirely.
+layout(set = 1, binding = 0, std430) readonly buffer BoneRows { vec4 boneRows[]; };
+layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer JointRef {
+  uvec4 v[];
+};
+layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer WeightRef {
+  vec4 v[];
+};
+
+// Per-draw metadata (set 6), shared with mesh_inst.frag -- must match DrawMetaCPU.
+struct DrawMeta { ivec4 ids; uint64_t jointAddr; uint64_t weightAddr; };
+layout(set = 6, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
+
+mat4 fetchBone(uint idx) {
+  int base = int(idx) * 4;
+  return mat4(boneRows[base + 0], boneRows[base + 1],
+              boneRows[base + 2], boneRows[base + 3]);
+}
 
 // GPU blendshape morph (sets 7/8/9, same layout as deform.glsl): a morphed
 // prototype is summed into its local position before the per-instance transform.
@@ -73,10 +101,26 @@ void main() {
       pos += c * vec3(a.y, b.x, b.y);
     }
   }
+  // Linear-blend skinning (prototype-local), before the per-instance transform.
+  // A vertex whose weights sum to 0 -- every vertex of an unskinned prototype --
+  // passes through untouched, mirroring the non-instanced program.
+  vec3 nrm = aNormal;
+  DrawMeta md = meta[vDrawSlot];
+  if (md.jointAddr != 0ul) {
+    uvec4 joint = JointRef(md.jointAddr).v[gl_VertexIndex];
+    vec4 weight = WeightRef(md.weightAddr).v[gl_VertexIndex];
+    float wsum = weight.x + weight.y + weight.z + weight.w;
+    if (wsum > 0.0) {
+      mat4 skin = fetchBone(joint.x) * weight.x + fetchBone(joint.y) * weight.y
+                + fetchBone(joint.z) * weight.z + fetchBone(joint.w) * weight.w;
+      pos = (skin * vec4(pos, 1.0)).xyz;
+      nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
+    }
+  }
   vec4 p = vec4(pos, 1.0);
   vec3 wp = vec3(dot(p, aRow0), dot(p, aRow1), dot(p, aRow2));
-  vec3 n = vec3(dot(aNormal, aRow0.xyz), dot(aNormal, aRow1.xyz),
-                dot(aNormal, aRow2.xyz));
+  vec3 n = vec3(dot(nrm, aRow0.xyz), dot(nrm, aRow1.xyz),
+                dot(nrm, aRow2.xyz));
   vWorldPos = wp;
   vNormal = normalize(n);
   vColor = aInstColor.rgb * aVtxColor;  // per-instance x per-vertex (both default 1)

@@ -48,6 +48,11 @@ enum class LightKind {
   SphereLight,
   CylinderLight,
   PointLight,  // Non-standard but common
+  GeometryLight,
+  PortalLight,
+  PluginLight,
+  LightFilter,
+  PluginLightFilter,
 };
 LightKind GetLightKind(const UsdPrim& prim);
 
@@ -163,6 +168,11 @@ struct Primvar {
   std::string name;
   TypeId type_id;
   std::string interpolation;  // "constant", "uniform", "vertex", "faceVarying"
+  // True when the interpolation token was authored (property metadata or the
+  // legacy `<name>:interpolation` attribute). When false, `interpolation` is
+  // the USD spec default "constant"; consumers with topology knowledge may
+  // instead infer a mode from the element count.
+  bool interpolation_authored = false;
   const Value* value;
   std::vector<int32_t> indices;  // Optional indices for indexed primvars
 };
@@ -216,9 +226,17 @@ struct SkinBindingInfo {
   std::vector<float> joint_weights;    // Per-influence weights
   int32_t influences_per_vertex;       // Typically 4
   float geom_bind_transform[16];
+  // Mesh-local `uniform token[] skel:joints`: when authored, jointIndices
+  // index into THIS list (a subset/permutation of the skeleton's joints)
+  // and must be remapped to skeleton joint order.
+  std::vector<std::string> joint_order;
 };
 
 bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out);
+
+/// Read a token[] (or string[]) property; empty when absent.
+std::vector<std::string> GetTokenArray(const UsdPrim& prim,
+                                       const std::string& name);
 
 //
 // Connection following

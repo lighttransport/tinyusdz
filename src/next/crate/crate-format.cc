@@ -9,10 +9,10 @@
 // Include LZ4 from existing TinyUSDZ
 #include "../../lz4/lz4.h"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <map>
-#include <unordered_map>
 
 namespace tinyusdz {
 namespace next {
@@ -78,6 +78,7 @@ const char* CrateTypeIdName(CrateTypeId id) {
     case CrateTypeId::TimeCode: return "TimeCode";
     case CrateTypeId::PathExpression: return "PathExpression";
     case CrateTypeId::Spline: return "Spline";
+    case CrateTypeId::Relocates: return "Relocates";
   }
   return "Unknown";
 }
@@ -391,6 +392,67 @@ DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
   return result;
 }
 
+DecompressResult DecompressCrateBlobWithCapacityHint(
+    const uint8_t* src, size_t src_size, size_t uncompressed_size_limit,
+    size_t initial_capacity) {
+  DecompressResult result;
+  if (!src || src_size == 0) {
+    result.success = (uncompressed_size_limit == 0);
+    return result;
+  }
+
+  if (src_size < 1) {
+    result.error = "Crate blob too small (missing n_chunks)";
+    return result;
+  }
+
+  if (uncompressed_size_limit == 0) {
+    result.success = true;
+    return result;
+  }
+
+  if (uncompressed_size_limit > 1024 * 1024 * 1024) {
+    result.error = "Uncompressed size too large";
+    return result;
+  }
+
+  const uint8_t n_chunks = src[0];
+  if (n_chunks != 0) {
+    return DecompressCrateBlob(src, src_size, uncompressed_size_limit);
+  }
+
+  const uint8_t* data_start = src + 1;
+  const size_t data_size = src_size - 1;
+  size_t capacity =
+      std::min(uncompressed_size_limit,
+               (std::max)(size_t(1), initial_capacity));
+
+  for (;;) {
+    result.data.resize(capacity);
+    const int decoded = LZ4_decompress_safe(
+        reinterpret_cast<const char*>(data_start),
+        reinterpret_cast<char*>(result.data.data()),
+        static_cast<int>(data_size), static_cast<int>(capacity));
+
+    if (decoded >= 0) {
+      result.data.resize(static_cast<size_t>(decoded));
+      result.success = true;
+      return result;
+    }
+
+    if (capacity >= uncompressed_size_limit) {
+      result.data.clear();
+      result.error = "LZ4 decompression failed";
+      return result;
+    }
+    const size_t next_capacity =
+        (capacity > uncompressed_size_limit / 2)
+            ? uncompressed_size_limit
+            : capacity * 2;
+    capacity = (std::max)(next_capacity, capacity + size_t(1));
+  }
+}
+
 // USD Integer compression encoder based on pxrUSD's Usd_IntegerCompression
 std::vector<uint8_t> EncodeIntegers(const uint32_t* values, size_t count) {
   std::vector<uint8_t> result;
@@ -564,18 +626,18 @@ std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   std::vector<uint8_t> result;
   if (count == 0) return result;
 
-  // Find most common delta. The writer calls this on multi-million-entry
-  // structural streams; an ordered map makes that pass O(n log unique). Keep
-  // the original tie-break (smaller delta wins) with an unordered counter. Do
-  // this directly from the input to avoid a second multi-MB deltas buffer.
-  std::unordered_map<int32_t, size_t> freq;
-  freq.reserve((std::min)(count, size_t(65536)));
+  // Compute deltas
+  std::vector<int32_t> deltas(count);
   int32_t prev = 0;
   for (size_t i = 0; i < count; i++) {
-    int32_t d = static_cast<int32_t>(
-        static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
+    deltas[i] = static_cast<int32_t>(static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
     prev = static_cast<int32_t>(values[i]);
-    ++freq[d];
+  }
+
+  // Find most common delta
+  std::map<int32_t, size_t> freq;
+  for (size_t i = 0; i < count; i++) {
+    freq[deltas[i]]++;
   }
   int32_t common_delta = 0;
   size_t max_freq = 0;
@@ -598,11 +660,8 @@ std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   // Variable-length integer data appended at end
   std::vector<uint8_t> vints;
 
-  prev = 0;
   for (size_t i = 0; i < count; i++) {
-    int32_t d = static_cast<int32_t>(
-        static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
-    prev = static_cast<int32_t>(values[i]);
+    int32_t d = deltas[i];
     uint8_t code;
     if (d == common_delta) {
       code = 0;
@@ -628,53 +687,6 @@ std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   }
 
   // Append variable-length integers
-  result.insert(result.end(), vints.begin(), vints.end());
-  return result;
-}
-
-std::vector<uint8_t> EncodeDeltaU32WithCommon(const uint32_t* values,
-                                              size_t count,
-                                              int32_t common_delta) {
-  std::vector<uint8_t> result;
-  if (count == 0) return result;
-
-  result.resize(sizeof(int32_t));
-  std::memcpy(result.data(), &common_delta, sizeof(int32_t));
-
-  size_t codes_bytes = (count * 2 + 7) / 8;
-  size_t codes_start = result.size();
-  result.resize(codes_start + codes_bytes, 0);
-
-  std::vector<uint8_t> vints;
-  int32_t prev = 0;
-  for (size_t i = 0; i < count; i++) {
-    int32_t d = static_cast<int32_t>(
-        static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
-    prev = static_cast<int32_t>(values[i]);
-
-    uint8_t code;
-    if (d == common_delta) {
-      code = 0;
-    } else if (d >= INT8_MIN && d <= INT8_MAX) {
-      code = 1;
-      int8_t v = static_cast<int8_t>(d);
-      vints.push_back(*reinterpret_cast<const uint8_t*>(&v));
-    } else if (d >= INT16_MIN && d <= INT16_MAX) {
-      code = 2;
-      int16_t v = static_cast<int16_t>(d);
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int16_t));
-      std::memcpy(vints.data() + pos, &v, sizeof(int16_t));
-    } else {
-      code = 3;
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int32_t));
-      std::memcpy(vints.data() + pos, &d, sizeof(int32_t));
-    }
-
-    result[codes_start + i / 4] |= (code << ((i % 4) * 2));
-  }
-
   result.insert(result.end(), vints.begin(), vints.end());
   return result;
 }
@@ -919,18 +931,25 @@ DecompressResult DecompressCompressedU32(const uint8_t* data, size_t data_size,
   size_t code_bits = 0;
   size_t code_bytes = 0;
   size_t value_bytes = 0;
+  size_t hint_value_bytes = 0;
+  size_t initial_delta_size = 0;
   size_t max_delta_size = 0;
   if (!safe::mul(count, size_t(2), &code_bits) ||
       !safe::add(code_bits, size_t(7), &code_bits) ||
       !safe::mul(count, sizeof(int32_t), &value_bytes) ||
+      !safe::mul(count, size_t(2), &hint_value_bytes) ||
       !safe::add(sizeof(int32_t), code_bits / 8, &code_bytes) ||
+      !safe::add(code_bytes, hint_value_bytes, &initial_delta_size) ||
       !safe::add(code_bytes, value_bytes, &max_delta_size)) {
     result.error = "Compressed integer decoded size overflow";
     return result;
   }
+  initial_delta_size = std::min(initial_delta_size, max_delta_size);
 
   // Decompress the n_chunks LZ4 blob
-  DecompressResult dr = DecompressCrateBlob(data + 8, static_cast<size_t>(comp_size), max_delta_size);
+  DecompressResult dr = DecompressCrateBlobWithCapacityHint(
+      data + 8, static_cast<size_t>(comp_size), max_delta_size,
+      initial_delta_size);
   if (!dr.success) {
     result.error = "Failed to decompress compressed integers: " + dr.error;
     return result;

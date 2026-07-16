@@ -58,6 +58,7 @@ export function replaceWithSkinnedMesh(mesh) {
 	skinnedMesh.position.copy(mesh.position);
 	skinnedMesh.quaternion.copy(mesh.quaternion);
 	skinnedMesh.scale.copy(mesh.scale);
+	skinnedMesh.userData = { ...mesh.userData };
 	skinnedMesh.frustumCulled = false; // Skinned mesh bbox can be stale
 
 	// Move children from original to new

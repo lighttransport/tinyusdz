@@ -18,6 +18,7 @@ void tp_dealloc(const tir_allocator *a, void *ptr);
 typedef struct tp_codec_desc {
     const char *name;
     int is_hdr;          /* 1 = consumes float RGB, 0 = 8-bit RGBA */
+    int is_signed;       /* 1 = signed variant (BC6H sf16, BC5 snorm)        */
     int block_w;         /* texels per block (4 for BC/ETC; ASTC uses opt) */
     int block_h;
     int block_bytes;     /* bytes per block */
@@ -29,6 +30,14 @@ typedef struct tp_codec_desc {
 /* Fill `d` for `codec`, honoring sRGB / signed / block-size options. Returns
  * TP_ERROR_UNSUPPORTED for an unknown codec. */
 tp_result tp_codec_describe(tp_codec codec, const tp_options *opt, tp_codec_desc *d);
+
+/* Reverse of the vk_format assignment in tp_codec_describe: given a KTX2
+ * VkFormat, fill `d` (block geometry / bytes / is_hdr) and report the matching
+ * tp_codec + sRGB flag. Returns TP_ERROR_UNSUPPORTED for an unrecognized value.
+ * (VkFormat 0 = UNDEFINED is handled by the reader as the uni intermediate, not
+ * here.) */
+tp_result tp_vk_format_describe(uint32_t vk_format, tp_codec_desc *d,
+                                tp_codec *out_codec, int *out_srgb);
 
 /* Byte size of the compressed payload for one w*h surface with `codec`. */
 size_t tp_codec_block_size(tp_codec codec, const tp_options *opt, uint32_t w,

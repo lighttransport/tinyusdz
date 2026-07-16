@@ -6,9 +6,41 @@ import {
 } from './ExtendedSkinning.js';
 import { collectMeshesInHierarchy } from './SceneGraphUtils.js';
 
-function registerMeshVisibility(mesh, showMesh, allSceneMeshes, meshVisibility) {
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+/**
+ * Recover a skeleton prim's WORLD transform from the RenderScene node table
+ * (next backend). The next-built three tree is flat — every mesh has its world
+ * matrix baked — so the Skeleton prim has no named node to parent bones under;
+ * without its ancestor transform (e.g. an axis-correcting Z_UP xform) the
+ * bones deform in the wrong space. Returns a fixed-matrix Group or null.
+ */
+function skeletonWorldParentFromScene(usdScene, skelAbsPath) {
+  const nodes = usdScene && Array.isArray(usdScene.nodes) ? usdScene.nodes : null;
+  if (!nodes || !skelAbsPath) return null;
+  const node = nodes.find((n) => n && n.primPath === skelAbsPath);
+  const m = node && node.worldMatrix;
+  if (!m || m.length !== 16) return null;
+  const group = new THREE.Group();
+  group.name = `${skelAbsPath}`;
+  // USD row-major -> three.js column-major
+  group.matrix.set(
+    m[0], m[4], m[8], m[12],
+    m[1], m[5], m[9], m[13],
+    m[2], m[6], m[10], m[14],
+    m[3], m[7], m[11], m[15]
+  );
+  group.matrixAutoUpdate = false;
+  return group;
+}
+
+function registerMeshVisibility(
+  mesh,
+  showMesh,
+  allSceneMeshes,
+  meshVisibility,
+  enableShadows
+) {
+  mesh.castShadow = enableShadows;
+  mesh.receiveShadow = enableShadows;
   mesh.visible = showMesh;
   allSceneMeshes.push(mesh);
   meshVisibility.set(mesh, true);
@@ -201,6 +233,7 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
   const skinnedMeshDataByName = options.skinnedMeshDataByName || new Map();
   const usdScene = options.usdScene;
   const showMesh = options.showMesh !== false;
+  const enableShadows = options.enableShadows !== false;
   const showSkeleton = !!options.showSkeleton;
   const skeletonDisplayMode = options.skeletonDisplayMode || 'full';
   const showSkeletonTips = options.showSkeletonTips !== false;
@@ -262,9 +295,21 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
             `Placing rootBone ${skelId} at skeleton node: ${boneParent.name} (path: ${skelAbsPath})`
           );
         } else {
-          logger.warn(
-            `Could not find skeleton node "${skelAbsPath}" in hierarchy for skeleton ${skelId}, falling back to threeNode root`
-          );
+          // Flat (next) trees have no per-prim nodes; rebuild the skeleton
+          // prim's world transform from the RenderScene node table so bones
+          // deform in the same space the baked mesh worlds use.
+          const worldParent = skeletonWorldParentFromScene(usdScene, skelAbsPath);
+          if (worldParent) {
+            threeNode.add(worldParent);
+            boneParent = worldParent;
+            logger.log(
+              `Placing rootBone ${skelId} under reconstructed skeleton world node (path: ${skelAbsPath})`
+            );
+          } else {
+            logger.warn(
+              `Could not find skeleton node "${skelAbsPath}" in hierarchy for skeleton ${skelId}, falling back to threeNode root`
+            );
+          }
         }
       }
       boneParent.add(skelRootBone);
@@ -334,7 +379,13 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
         logger.log(`  Skinning mode: ${skinningConfig.mode}`);
 
         const newSkinnedMesh = replaceWithSkinnedMesh(mesh);
-        registerMeshVisibility(newSkinnedMesh, showMesh, allSceneMeshes, meshVisibility);
+        registerMeshVisibility(
+          newSkinnedMesh,
+          showMesh,
+          allSceneMeshes,
+          meshVisibility,
+          enableShadows
+        );
 
         newSkinnedMesh.bind(meshSkeleton);
         logger.log(
@@ -373,7 +424,13 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
         logger.log(
           `Mesh ${meshName} (${meshAbsPath || 'no absPath'}): no USD skinning data, keeping as regular mesh`
         );
-        registerMeshVisibility(mesh, showMesh, allSceneMeshes, meshVisibility);
+        registerMeshVisibility(
+          mesh,
+          showMesh,
+          allSceneMeshes,
+          meshVisibility,
+          enableShadows
+        );
         if (!firstRenderableMesh) {
           firstRenderableMesh = mesh;
         }
@@ -424,7 +481,13 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
   } else {
     logger.log('No skeleton data or no meshes, scene added as-is');
     for (const child of allMeshes) {
-      registerMeshVisibility(child, showMesh, allSceneMeshes, meshVisibility);
+      registerMeshVisibility(
+        child,
+        showMesh,
+        allSceneMeshes,
+        meshVisibility,
+        enableShadows
+      );
       if (!firstRenderableMesh) {
         firstRenderableMesh = child;
       }

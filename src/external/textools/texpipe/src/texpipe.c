@@ -47,6 +47,7 @@ const char *tp_result_string(tp_result r) {
     case TP_ERROR_OUT_OF_MEMORY: return "out of memory";
     case TP_ERROR_UNSUPPORTED: return "unsupported";
     case TP_ERROR_IO: return "i/o error";
+    case TP_ERROR_NOT_FOUND: return "not found";
     }
     return "unknown";
 }
@@ -98,14 +99,18 @@ int tp_level_count(int w, int h, int max_levels) {
 #define TP_VK_ASTC_4x4_UNORM 157u        /* LDR blocks step by 2 (unorm/srgb) */
 #define TP_VK_ASTC_4x4_SFLOAT 1000066000u/* HDR blocks step by 1 */
 
-/* ASTC block table in VkFormat order for the LDR base index. */
+/* ASTC block dimensions in VkFormat index order, shared by the codec -> VkFormat
+ * and VkFormat -> codec directions below. */
+#define TP_ASTC_NUM_BLOCKS 14
+static const uint8_t tp_astc_dims[TP_ASTC_NUM_BLOCKS][2] = {
+    {4, 4},  {5, 4},   {5, 5},   {6, 5},   {6, 6},   {8, 5},  {8, 6},
+    {8, 8},  {10, 5},  {10, 6},  {10, 8},  {10, 10}, {12, 10},{12, 12}};
+
 static uint32_t tp_astc_vk_format(uint32_t bx, uint32_t by, int srgb, int hdr) {
-    static const uint8_t dims[14][2] = {
-        {4, 4},  {5, 4},   {5, 5},   {6, 5},   {6, 6},   {8, 5},  {8, 6},
-        {8, 8},  {10, 5},  {10, 6},  {10, 8},  {10, 10}, {12, 10},{12, 12}};
     int i;
-    for (i = 0; i < 14; ++i) {
-        if ((uint32_t)dims[i][0] == bx && (uint32_t)dims[i][1] == by) {
+    for (i = 0; i < TP_ASTC_NUM_BLOCKS; ++i) {
+        if ((uint32_t)tp_astc_dims[i][0] == bx &&
+            (uint32_t)tp_astc_dims[i][1] == by) {
             if (hdr) return TP_VK_ASTC_4x4_SFLOAT + (uint32_t)i;
             return TP_VK_ASTC_4x4_UNORM + (uint32_t)(i * 2) + (srgb ? 1u : 0u);
         }
@@ -181,6 +186,81 @@ tp_result tp_codec_describe(tp_codec codec, const tp_options *opt,
         d->is_hdr = 1; d->block_w = 4; d->block_h = 4;
         d->vk_format = tp_astc_vk_format(4u, 4u, 0, 1);
         return TP_SUCCESS;
+    }
+    return TP_ERROR_UNSUPPORTED;
+}
+
+tp_result tp_vk_format_describe(uint32_t vk, tp_codec_desc *d,
+                                tp_codec *out_codec, int *out_srgb) {
+    if (!d || !out_codec) return TP_ERROR_INVALID_ARGUMENT;
+    memset(d, 0, sizeof(*d));
+    d->block_w = 4;
+    d->block_h = 4;
+    if (out_srgb) *out_srgb = 0;
+    d->vk_format = vk;
+    switch (vk) {
+    case TP_VK_BC1_RGBA_UNORM:
+    case TP_VK_BC1_RGBA_SRGB:
+        d->name = "bc1"; d->block_bytes = 8; d->channels_in = 4;
+        if (out_srgb) *out_srgb = (vk == TP_VK_BC1_RGBA_SRGB);
+        *out_codec = TP_CODEC_BC1; return TP_SUCCESS;
+    case TP_VK_BC3_UNORM:
+    case TP_VK_BC3_SRGB:
+        d->name = "bc3"; d->block_bytes = 16; d->channels_in = 4;
+        if (out_srgb) *out_srgb = (vk == TP_VK_BC3_SRGB);
+        *out_codec = TP_CODEC_BC3; return TP_SUCCESS;
+    case TP_VK_BC5_UNORM:
+    case TP_VK_BC5_SNORM:
+        d->name = "bc5"; d->block_bytes = 16; d->channels_in = 4;
+        d->is_signed = (vk == TP_VK_BC5_SNORM);
+        *out_codec = TP_CODEC_BC5; return TP_SUCCESS;
+    case TP_VK_BC6H_UFLOAT:
+    case TP_VK_BC6H_SFLOAT:
+        d->name = "bc6h"; d->block_bytes = 16; d->channels_in = 3; d->is_hdr = 1;
+        d->is_signed = (vk == TP_VK_BC6H_SFLOAT);
+        *out_codec = TP_CODEC_BC6H; return TP_SUCCESS;
+    case TP_VK_BC7_UNORM:
+    case TP_VK_BC7_SRGB:
+        d->name = "bc7"; d->block_bytes = 16; d->channels_in = 4;
+        if (out_srgb) *out_srgb = (vk == TP_VK_BC7_SRGB);
+        *out_codec = TP_CODEC_BC7; return TP_SUCCESS;
+    case TP_VK_ETC2_RGB_UNORM:
+    case TP_VK_ETC2_RGB_SRGB:
+        d->name = "etc2_rgb"; d->block_bytes = 8; d->channels_in = 4;
+        if (out_srgb) *out_srgb = (vk == TP_VK_ETC2_RGB_SRGB);
+        *out_codec = TP_CODEC_ETC2_RGB; return TP_SUCCESS;
+    case TP_VK_ETC2_RGBA_UNORM:
+    case TP_VK_ETC2_RGBA_SRGB:
+        d->name = "etc2_rgba"; d->block_bytes = 16; d->channels_in = 4;
+        if (out_srgb) *out_srgb = (vk == TP_VK_ETC2_RGBA_SRGB);
+        *out_codec = TP_CODEC_ETC2_RGBA; return TP_SUCCESS;
+    case TP_VK_EAC_R11_UNORM:
+        d->name = "eac_r11"; d->block_bytes = 8; d->channels_in = 4;
+        *out_codec = TP_CODEC_EAC_R11; return TP_SUCCESS;
+    case TP_VK_EAC_RG11_UNORM:
+        d->name = "eac_rg11"; d->block_bytes = 16; d->channels_in = 4;
+        *out_codec = TP_CODEC_EAC_RG11; return TP_SUCCESS;
+    default: break;
+    }
+    /* ASTC LDR: base 157, unorm/srgb interleaved (step 2) over the block sizes. */
+    if (vk >= TP_VK_ASTC_4x4_UNORM &&
+        vk < TP_VK_ASTC_4x4_UNORM + 2u * TP_ASTC_NUM_BLOCKS) {
+        uint32_t rel = vk - TP_VK_ASTC_4x4_UNORM;
+        uint32_t idx = rel / 2u;
+        d->name = "astc"; d->block_bytes = 16; d->channels_in = 4;
+        d->block_w = tp_astc_dims[idx][0];
+        d->block_h = tp_astc_dims[idx][1];
+        if (out_srgb) *out_srgb = (int)(rel & 1u);
+        *out_codec = TP_CODEC_ASTC; return TP_SUCCESS;
+    }
+    /* ASTC HDR: base 1000066000, step 1 over the block sizes. */
+    if (vk >= TP_VK_ASTC_4x4_SFLOAT &&
+        vk < TP_VK_ASTC_4x4_SFLOAT + TP_ASTC_NUM_BLOCKS) {
+        uint32_t idx = vk - TP_VK_ASTC_4x4_SFLOAT;
+        d->name = "astc_hdr"; d->block_bytes = 16; d->channels_in = 3; d->is_hdr = 1;
+        d->block_w = tp_astc_dims[idx][0];
+        d->block_h = tp_astc_dims[idx][1];
+        *out_codec = TP_CODEC_ASTC_HDR; return TP_SUCCESS;
     }
     return TP_ERROR_UNSUPPORTED;
 }

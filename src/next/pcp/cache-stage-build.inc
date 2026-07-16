@@ -87,21 +87,20 @@
 
       if (is_instance) continue;  // prototype provides the subtree
 
+      // A deactivated prim composes NO subtree (pxr prunes children of an
+      // inactive prim; usdcat --flatten drops the prim itself too — the prim
+      // is kept here, with its authored active=false, so stage consumers can
+      // still query IsActive on it).
+      if (!ComposedActive(srcs)) continue;
+
       // Push children in reverse order so the first child processes first
-      // (preserving the original visitation order).
+      // (preserving the original visitation order). `children` is already the
+      // post-relocation child list: departed names are gone and relocated-in
+      // names are present (ComposeChildNames), and each child's sources resolve
+      // back to its pre-relocation site (DeriveChildSources).
       for (auto it = children.rbegin(); it != children.rend(); ++it) {
-        const std::string &cn = *it;
-        Path child_src = w.src_path.append_child(cn);
-        Path child_out;
-        auto rit = relocates_map.find(child_src.str());
-        if (rit != relocates_map.end() &&
-            Path(rit->second).parent().str() == w.out_path.str()) {
-          child_out = Path(rit->second);
-        } else {
-          child_out = w.out_path.append_child(cn);
-        }
-        stack.push_back({child_src, child_out, idx, /*is_root=*/false,
-                         w.depth + 1});
+        const Path child = w.out_path.append_child(*it);
+        stack.push_back({child, child, idx, /*is_root=*/false, w.depth + 1});
       }
     }
   }

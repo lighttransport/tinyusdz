@@ -15,6 +15,23 @@
       background: #171717;
     }
     canvas { display: block; }
+    body.drag-over canvas {
+      outline: 3px solid #60a5fa;
+      outline-offset: -8px;
+    }
+    body.drag-over::after {
+      content: 'Drop URDF, MJCF, or USD';
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      z-index: 20;
+      pointer-events: none;
+      background: rgba(37, 99, 235, 0.18);
+      color: #eff6ff;
+      font-size: 22px;
+      font-weight: 700;
+    }
     #topbar {
       position: absolute;
       top: 12px;
@@ -57,6 +74,15 @@
     .btn.convert { background: #4f6f45; }
     .btn.tool { background: #4a5568; min-width: 32px; padding: 0 9px; }
     .btn:disabled { opacity: 0.45; cursor: default; }
+    select.control {
+      height: 32px;
+      padding: 0 8px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 6px;
+      background: #111827;
+      color: #f3f4f6;
+      font-size: 12px;
+    }
     input[type="file"] { display: none; }
     #status {
       margin-left: auto;
@@ -134,6 +160,17 @@
       color: #d1d5db;
     }
     #robotInfo span:nth-child(odd) { color: #9ca3af; }
+    #loadStats {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 4px 10px;
+      margin: 0 0 10px;
+      padding: 8px 0 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      font-size: 12px;
+      color: #d1d5db;
+    }
+    #loadStats span:nth-child(odd) { color: #9ca3af; }
     #jointHeader {
       width: 100%;
       display: flex;
@@ -212,6 +249,11 @@
     <div id="title">TinyUSDZ Robot Physics</div>
     <label class="btn">Import URDF/MJCF<input id="urdfInput" type="file" accept=".urdf,.xml"></label>
     <label class="btn secondary">Assets<input id="assetInput" type="file" multiple webkitdirectory></label>
+    <select id="backendSelect" class="control" title="USD backend">
+      <option value="legacy">legacy</option>
+      <option value="next">next</option>
+      <option value="auto">auto</option>
+    </select>
     <button id="exportSource" class="btn export" disabled>Export XML</button>
     <label class="btn">Import USD<input id="usdInput" type="file" accept=".usd,.usda,.usdc,.usdz"></label>
     <button id="convertToUSD" class="btn convert" disabled>URDF/MJCF -> USD</button>
@@ -226,6 +268,18 @@
   <div id="panel">
     <h2 id="panelHeader" role="button" tabindex="0">Robot<span id="panelFoldIcon">▾</span></h2>
     <div id="panelBody">
+      <div id="loadStats">
+        <span>File</span><span id="currentFile">-</span>
+        <span>Backend</span><span id="backendName">legacy</span>
+        <span>FPS</span><span id="fpsValue">--</span>
+        <span>Size</span><span id="fileSize">--</span>
+        <span>Read/fetch</span><span id="readTime">--</span>
+        <span>Parse/load</span><span id="parseTime">--</span>
+        <span>Process/build</span><span id="processTime">--</span>
+        <span>Total</span><span id="totalTime">--</span>
+        <span>JS heap</span><span id="jsHeapStat">--</span>
+        <span>WASM heap</span><span id="wasmHeapStat">--</span>
+      </div>
       <div id="robotInfo">
         <span>Name</span><span id="robotName">-</span>
         <span>Links</span><span id="linkCount">0</span>

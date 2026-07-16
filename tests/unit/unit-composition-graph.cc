@@ -490,6 +490,66 @@ def Xform "Root"
 // Verify strength order is sorted correctly (root before children).
 // ---------------------------------------------------------------------------
 
+// Nested-arc strength: pxr strength order is a PRE-ORDER traversal of the
+// prim-index tree, so an inherit reached THROUGH a reference is weaker than
+// the reference node itself. The old flat arc-type formula sorted every
+// Inherit node ahead of every Reference node regardless of nesting.
+void compgraph_nested_strength_order_test(void) {
+  const char *usda = R"(#usda 1.0
+class Xform "_c"
+{
+    int fromClass = 1
+}
+
+def Xform "Asset" (
+    prepend inherits = [</_c>]
+)
+{
+    int fromAsset = 2
+}
+
+def Xform "Root" (
+    prepend references = [</Asset>]
+)
+{
+    int localAttr = 3
+}
+)";
+
+  std::string warn, err;
+  CompositionGraph graph;
+  TEST_CHECK(compose_via_graph(usda, graph, warn, err));
+  if (!err.empty()) { TEST_MSG("err: %s", err.c_str()); return; }
+
+  const PrimIndex *idx = graph.GetPrimIndex(Path("/Root", ""));
+  TEST_CHECK(idx != nullptr);
+  if (!idx) return;
+
+  const auto &order = idx->GetStrengthOrder();
+  TEST_CHECK(order.size() >= 2);
+  int ref_rank = -1;
+  int nested_inherit_rank = -1;
+  for (size_t r = 0; r < order.size(); r++) {
+    const CompNode &n = idx->GetNode(order[r]);
+    if (n.arc_type == ArcType::Reference && ref_rank < 0) {
+      ref_rank = int(r);
+    }
+    if (n.arc_type == ArcType::Inherit &&
+        n.parent != CompNode::kInvalidIndex &&
+        idx->GetNode(n.parent).arc_type == ArcType::Reference) {
+      nested_inherit_rank = int(r);
+    }
+  }
+  TEST_CHECK(ref_rank >= 0);
+  if (nested_inherit_rank >= 0) {
+    TEST_CHECK(ref_rank < nested_inherit_rank);
+    TEST_MSG("reference rank %d must be stronger than its nested inherit %d",
+             ref_rank, nested_inherit_rank);
+  }
+  // Root (local) is always strongest.
+  TEST_CHECK(idx->GetNode(order[0]).arc_type == ArcType::Root);
+}
+
 void compgraph_strength_order_test(void) {
   const char *usda = R"(#usda 1.0
 class Xform "BaseClass"

@@ -19,6 +19,7 @@ if [ -z "$USDCAT_PATH" ]; then
     USDCAT_PATH="$HOME/local/USD/dist/bin/usdcat"
   fi
 fi
+USDCHECKER_PATH="${USDCHECKER_PATH:-$(dirname "$USDCAT_PATH")/usdchecker}"
 TIMEOUT_MS="${TIMEOUT_MS:-60000}"
 SHOW_DETAILED_DIFF="${SHOW_DETAILED_DIFF:-true}"
 SHOW_FAILURE_SUMMARY="${SHOW_FAILURE_SUMMARY:-true}"
@@ -147,6 +148,84 @@ print_failure_summary() {
   fi
 }
 
+
+# ---------------------------------------------------------------------------
+# usdchecker validation pass (differential).
+#
+# For every tests/usda fixture, write a .usdc with tusdcat and require that
+# OpenUSD's usdchecker reports EXACTLY the same set of validator rules on our
+# crate as on the source .usda. The fixtures intentionally trip content lints
+# (MissingUpAxisMetadata, MissingMetersPerUnitMetadata, unresolvable refs, ...),
+# so absolute cleanliness is not the bar -- parity is: a crate-encoding bug
+# shows up as usdchecker failing to open our file, or as extra/missing rules.
+# Rule IDs only (the parenthesized validator tokens) so differing file paths
+# in the messages don't produce false diffs.
+# ---------------------------------------------------------------------------
+run_usdchecker_pass() {
+  local fail_marker="$1"
+
+  if [ ! -x "$USDCHECKER_PATH" ]; then
+    echo "usdchecker not found at: $USDCHECKER_PATH (set USDCHECKER_PATH) -- skipping validation pass"
+    return 0
+  fi
+
+  print_section "usdchecker validation pass (usda vs our usdc)"
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local checked=0 skipped=0 failed=0
+
+  # Relative references/payloads/sublayers in the fixtures must resolve from
+  # the written .usdc exactly as they do from the source .usda, or resolver
+  # lints (UnresolvableDependency) fire differently on the two and produce
+  # false parity diffs. Symlink the fixture directory's contents next to the
+  # crates we write.
+  ln -s "$SCRIPT_DIR"/usda/* "$tmpdir"/ 2>/dev/null || true
+
+  # Rule multiset: "count (validator:Rule.Name)" lines. "Failed to open stage."
+  # has no rule token; represent it explicitly so an unreadable crate FAILS
+  # parity instead of comparing as an empty set.
+  checker_rules() {
+    local out
+    out=$("$USDCHECKER_PATH" --noAssetChecks -s "$1" 2>&1)
+    { echo "$out" | grep -oE '\((usd|sdf|ar)[A-Za-z]*[Vv]alidators?:[A-Za-z0-9_.]+\)';
+      echo "$out" | grep -cF "Failed to open stage." | grep -v '^0$' | sed 's/^/FAILED_TO_OPEN x/'; } \
+      | sort | uniq -c | sed 's/^ *//'
+  }
+
+  local f base
+  for f in "$SCRIPT_DIR"/usda/*.usda; do
+    base=$(basename "$f")
+
+    if ! "$TUSDCAT_PATH" --output-format usdc -o "$tmpdir/$base.usdc" "$f" >/dev/null 2>&1; then
+      skipped=$((skipped+1))   # fixture tusdcat cannot write standalone
+      continue
+    fi
+
+    checker_rules "$f" > "$tmpdir/a.rules"
+    if grep -q FAILED_TO_OPEN "$tmpdir/a.rules"; then
+      skipped=$((skipped+1))   # pxr cannot open the SOURCE usda; nothing to compare
+      continue
+    fi
+    checker_rules "$tmpdir/$base.usdc" > "$tmpdir/b.rules"
+
+    checked=$((checked+1))
+    if ! cmp -s "$tmpdir/a.rules" "$tmpdir/b.rules"; then
+      failed=$((failed+1))
+      echo -e "${RED}✗ usdchecker parity: $base${NC}"
+      diff "$tmpdir/a.rules" "$tmpdir/b.rules" | sed 's/^/    /'
+    fi
+    rm -f "$tmpdir/$base.usdc"
+  done
+  rm -rf "$tmpdir"
+
+  echo ""
+  echo "usdchecker parity: $checked compared, $failed failed, $skipped skipped"
+  if [ "$failed" -gt 0 ]; then
+    echo "usdchecker" >> "$fail_marker"
+  fi
+}
+
 # Main execution
 main() {
   # Expand tilde in paths
@@ -191,6 +270,11 @@ main() {
   echo "Results will be saved to: $RESULTS_FILE"
   echo ""
 
+  # The report block below runs on the left side of a pipe (a subshell), so
+  # pass/fail state must escape through a marker file.
+  FAIL_MARKER=$(mktemp)
+  : > "$FAIL_MARKER"
+
   # Run comparisons and capture output
   {
     print_header "USD File Format Comparison Results - $TIMESTAMP"
@@ -207,8 +291,19 @@ main() {
     echo ""
     run_folder_comparison "$SCRIPT_DIR/usdc" "USDC Files" "*.usdc" || true
 
+    # usdchecker validation pass (differential; skipped when usdchecker absent)
+    run_usdchecker_pass "$FAIL_MARKER" || true
+
     print_header "Comparison Complete"
   } | tee "$RESULTS_FILE"
+
+  if [ -s "$FAIL_MARKER" ]; then
+    echo ""
+    echo -e "${RED}✗ usdchecker parity failures detected (see log above)${NC}"
+    rm -f "$FAIL_MARKER"
+    exit 1
+  fi
+  rm -f "$FAIL_MARKER"
 
   # Print failure summary if enabled
   if [ "$SHOW_FAILURE_SUMMARY" = "true" ]; then

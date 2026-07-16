@@ -77,4 +77,22 @@ elif [ -n "${TUSDZCONVERT}" ]; then
   echo "SKIP: tusdzconvert not found at ${TUSDZCONVERT}"
 fi
 
+# --- LIVRPS strength: inherits beats references (L > I > ... > R) ---
+# tusdcat default --flatten routes through CompositeAllArcs; the legacy
+# per-feature loop applied R before I and let the referenced opinion win.
+LIVRPS_MAIN="${SRCDIR}/tests/usda/feat-livrps-inherits-main.usda"
+if [ -x "${TUSDCAT}" ] && [ -f "${LIVRPS_MAIN}" ]; then
+  OUT="${WORK}/tusdcat-livrps.usda"
+  if "${TUSDCAT}" --flatten "${LIVRPS_MAIN}" -o "${OUT}" >/dev/null 2>&1; then
+    if grep -q "int x = 50" "${OUT}" && ! grep -q "int x = 100" "${OUT}"; then
+      echo "PASS: tusdcat: inherited class opinion (x=50) beats referenced (x=100)"
+    else
+      echo "FAIL: tusdcat: expected inherits (x=50) to beat references (x=100)."
+      rc=1
+    fi
+  else
+    echo "FAIL: tusdcat --flatten failed on ${LIVRPS_MAIN}"; rc=1
+  fi
+fi
+
 exit ${rc}

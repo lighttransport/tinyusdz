@@ -38,7 +38,8 @@ typedef enum tp_result {
     TP_ERROR_INVALID_ARGUMENT = -1,
     TP_ERROR_OUT_OF_MEMORY = -2,
     TP_ERROR_UNSUPPORTED = -3,
-    TP_ERROR_IO = -4
+    TP_ERROR_IO = -4,
+    TP_ERROR_NOT_FOUND = -5 /* a lookup missed; the input is not malformed */
 } tp_result;
 
 #define TP_OK(r) ((int)(r) == 0)
@@ -247,6 +248,173 @@ size_t tp_ktx2_array_size(const tp_blocks *layers, int num_layers,
 tp_result tp_write_ktx2_array(const tp_blocks *layers, int num_layers,
                               const tp_options *opt, uint8_t *out,
                               size_t out_size, size_t *written);
+
+/* ===========================================================================
+ * KTX2 reading / transcode-on-load (the consumer side of the writers above)
+ * ========================================================================= */
+
+#define TP_KTX2_MAX_LEVELS 32
+/* Sanity bounds on the header fields of a parsed (untrusted) KTX2: dimensions
+ * and layer count beyond these are rejected, which also keeps the level-size
+ * arithmetic in the reader well clear of a 64-bit overflow. */
+#define TP_KTX2_MAX_DIM 65536
+#define TP_KTX2_MAX_LAYERS 2048
+
+/* One mip level of a parsed KTX2. `data` points into the caller's source buffer
+ * (no copy); `size` is the level byte length (all faces/layers of that level).
+ * `width`/`height` are the level dimensions. */
+typedef struct tp_ktx2_level {
+    const uint8_t *data;
+    size_t size;
+    uint32_t width;
+    uint32_t height;
+} tp_ktx2_level;
+
+/* A parsed KTX2 image header + level index. All level `data` pointers alias the
+ * source buffer passed to tp_ktx2_read (which must outlive this struct). */
+typedef struct tp_ktx2_image {
+    uint32_t vk_format;      /* 0 = UNDEFINED (the tinyexr uni intermediate)   */
+    tp_codec codec;          /* mapped block codec (valid only when !is_uni)   */
+    int is_uni;              /* 1 = uni/UASTC transcodable intermediate        */
+    int is_hdr;
+    int srgb;
+    int is_signed;           /* BC6H sf16 / BC5 snorm (vs the unsigned variant) */
+    int block_w, block_h, block_bytes;
+    uint32_t width, height;  /* base (level 0) dimensions                      */
+    int num_levels;
+    int num_faces;           /* 1 (2D) or 6 (cube)                             */
+    int num_layers;          /* 0 or 1 = non-array                             */
+    uint32_t supercompression; /* 0 = none, 2 = Zstd (via tp_ktx2_read_zstd)    */
+    /* Key/value data block, aliasing the source buffer (NULL when absent).
+     * Query it with tp_ktx2_kv_lookup. */
+    const uint8_t *kvd;
+    size_t kvd_size;
+    tp_ktx2_level levels[TP_KTX2_MAX_LEVELS]; /* level 0 = largest             */
+    /* Internal: allocation backing the decompressed levels for a supercompressed
+     * read (NULL for a zero-copy scheme-0 read). Release with tp_ktx2_image_free. */
+    void *_owned;
+} tp_ktx2_image;
+
+/* Parse a KTX2 blob (identifier + header + level index + DFD). Fills `out` with
+ * pointers into `data` (no allocation). Supports supercompressionScheme 0 only
+ * (Zstd/BasisLZ return TP_ERROR_UNSUPPORTED — use tp_ktx2_read_zstd for Zstd).
+ * vk_format == 0 is interpreted as the uni intermediate (is_uni = 1). Returns
+ * TP_ERROR_INVALID_ARGUMENT on a bad identifier / out-of-bounds level index,
+ * TP_ERROR_UNSUPPORTED for an unrecognized vk_format or supercompression. */
+tp_result tp_ktx2_read(const uint8_t *data, size_t size, tp_ktx2_image *out);
+
+/* Zstd decompressor callback: decompress `src_size` bytes at `src` into `dst`
+ * (capacity `dst_cap`); return the number of bytes written, or 0 on error.
+ * Wrap the host's ZSTD_decompress (this library carries no zstd dependency). */
+typedef size_t (*tp_zstd_decompress_fn)(void *user, uint8_t *dst, size_t dst_cap,
+                                        const uint8_t *src, size_t src_size);
+
+/* Like tp_ktx2_read, but also supports supercompressionScheme 2 (Zstd) when
+ * `zdec` is non-NULL: each level's compressed payload is decompressed into a
+ * single buffer allocated with `a` (tir_allocator; NULL = malloc). On success
+ * with a Zstd input, `out->_owned` holds that buffer and MUST be released with
+ * tp_ktx2_image_free(a, out); the level `data` pointers alias it. For scheme 0
+ * this is identical to tp_ktx2_read (zero-copy, `_owned` == NULL). Returns
+ * TP_ERROR_UNSUPPORTED for scheme 2 when zdec is NULL, or for BasisLZ.
+ * Each level's uncompressedByteLength must match the level's block-data size
+ * exactly, so `zdec` is never handed a destination capacity larger than the
+ * buffer behind it (a decompressor is trusted to honour `dst_cap`, so this is
+ * checked here rather than left to the callback). */
+tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
+                            const tir_allocator *a, tp_zstd_decompress_fn zdec,
+                            void *user, tp_ktx2_image *out);
+
+/* Release the buffer allocated by a supercompressed tp_ktx2_read_zstd (no-op
+ * when `_owned` is NULL). Use the same allocator passed to the read. */
+void tp_ktx2_image_free(const tir_allocator *a, tp_ktx2_image *img);
+
+/* Look up a NUL-terminated key in the parsed key/value data. On a hit, *value
+ * points into the source buffer and *value_size is the value's byte length
+ * (which includes the trailing NUL for the string-valued keys the spec defines,
+ * e.g. "KTXorientation" -> "rd\0"). Returns TP_ERROR_NOT_FOUND when the key is
+ * absent or the file carries no KVD, TP_ERROR_INVALID_ARGUMENT on a malformed
+ * KVD block. The KVD is not decompressed: for a Zstd file it is stored plain. */
+tp_result tp_ktx2_kv_lookup(const tp_ktx2_image *img, const char *key,
+                            const uint8_t **value, size_t *value_size);
+
+/* Decode one level of a parsed KTX2 to RGBA8 (width*height*4 bytes, tightly
+ * packed, top-to-bottom). Handles the whole LDR set: uni, BC7, BC1, BC3, BC5,
+ * ETC2 (RGB/RGBA), EAC (R11/RG11) and ASTC LDR. Only BC6H returns
+ * TP_ERROR_UNSUPPORTED — it is HDR, so RGBA8 is the wrong target: upload its
+ * blocks directly, or transcode a uni source via texcomp's tc_uni_transcode_*.
+ * EAC decodes its 11-bit channels into R (and G for RG11), with B = 0, A = 255.
+ * For a cube or array KTX2 this decodes the first slice (layer 0, face 0); use
+ * tp_ktx2_decode_slice_rgba8 to reach the others. */
+tp_result tp_ktx2_decode_level_rgba8(const tp_ktx2_image *img, int level,
+                                     uint8_t *out_rgba, size_t out_size);
+
+/* Decode one slice of one level: `face` in [0, num_faces) and `layer` in
+ * [0, max(1, num_layers)). A level stores its slices in KTX2 order (layer,
+ * face), each a tightly packed block image of the level's dimensions, so this
+ * is what reads back a cubemap (faceCount 6) or an array (layerCount N) written
+ * by tp_write_ktx2 / tp_write_ktx2_array. Same codec support as above. */
+tp_result tp_ktx2_decode_slice_rgba8(const tp_ktx2_image *img, int level,
+                                     int layer, int face, uint8_t *out_rgba,
+                                     size_t out_size);
+
+/* Decode one level/slice to float RGBA (width*height*4 floats, tightly packed).
+ * This is the HDR path — BC6H and ASTC HDR have no meaningful RGBA8 form, so
+ * they are decodable only here. BC6H yields alpha 1.0 (it carries no alpha) and
+ * img->is_signed selects sf16 vs uf16; ASTC HDR decodes the full 2D HDR format
+ * (every endpoint mode, mixed-CEM partitions, both void-extent kinds). The LDR codecs stay on the RGBA8 path
+ * above rather than being widened here, and return TP_ERROR_UNSUPPORTED. */
+tp_result tp_ktx2_decode_level_rgbaf(const tp_ktx2_image *img, int level,
+                                     float *out_rgba, size_t out_size);
+tp_result tp_ktx2_decode_slice_rgbaf(const tp_ktx2_image *img, int level,
+                                     int layer, int face, float *out_rgba,
+                                     size_t out_size);
+
+/* Serialize pre-encoded uni (UASTC) mip levels as a KTX2 (vkFormat = UNDEFINED,
+ * supercompressionScheme = 0, KHR_DF UASTC descriptor). This is the Basis-free
+ * transcodable carrier: the reader reports is_uni = 1 and a consumer transcodes
+ * per device with tc_uni_transcode_{bc7,bc1,astc,etc2} or decodes with
+ * tc_uni_decompress_rgba8. `uni_levels[l]`/`uni_sizes[l]` are the level-l uni
+ * bytes (from tc_uni_compress_rgba8), level 0 = largest. Only level_w[0] /
+ * level_h[0] reach the header: levels 1..num_levels-1 must be the standard
+ * halving pyramid (max(1, w >> l)), which is how the reader re-derives them.
+ * tp_ktx2_uni_size returns the required output size, or 0 if num_levels is out
+ * of range or the level sizes would overflow the layout. */
+size_t tp_ktx2_uni_size(const size_t *uni_sizes, int num_levels);
+tp_result tp_ktx2_write_uni(const uint8_t *const *uni_levels,
+                            const size_t *uni_sizes, const uint32_t *level_w,
+                            const uint32_t *level_h, int num_levels,
+                            uint8_t *out, size_t out_size, size_t *written);
+
+/* Zstd compressor callbacks -- the write-side counterpart of
+ * tp_zstd_decompress_fn. `zbound` returns the worst-case compressed size for
+ * `src_size` (wrap ZSTD_compressBound); `zenc` compresses and returns the bytes
+ * written, or 0 on error (wrap ZSTD_compress). As on the read side, the library
+ * carries no zstd dependency -- the host supplies these. */
+typedef size_t (*tp_zstd_bound_fn)(void *user, size_t src_size);
+typedef size_t (*tp_zstd_compress_fn)(void *user, uint8_t *dst, size_t dst_cap,
+                                      const uint8_t *src, size_t src_size);
+
+/* tp_ktx2_write_uni, but Zstd-supercompressed (supercompressionScheme = 2) --
+ * the form real KTX2/UASTC assets ship in on disk (block data typically packs to
+ * a fraction of its raw size). Each level is compressed independently so a reader
+ * can inflate them one at a time; read it back with tp_ktx2_read_zstd.
+ *
+ * The output size is not known until the levels are compressed, so unlike
+ * tp_ktx2_write_uni the buffer is *allocated* with `a` (NULL = malloc) and
+ * returned via *out / *out_size; release it with tp_free(a, *out). On failure
+ * *out / *out_size are cleared to NULL / 0.
+ *
+ * Level rules match tp_ktx2_write_uni: only level_w[0] / level_h[0] reach the
+ * header, levels 1.. must be the standard halving pyramid, and uni_sizes[l] must
+ * be the exact block payload for level l (the reader pins uncompressedByteLength
+ * to it). */
+tp_result tp_ktx2_write_uni_zstd(const tir_allocator *a, tp_zstd_bound_fn zbound,
+                                 tp_zstd_compress_fn zenc, void *user,
+                                 const uint8_t *const *uni_levels,
+                                 const size_t *uni_sizes,
+                                 const uint32_t *level_w,
+                                 const uint32_t *level_h, int num_levels,
+                                 uint8_t **out, size_t *out_size);
 
 /* ===========================================================================
  * Leaf helpers (also the Phase 1 test surface)

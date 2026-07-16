@@ -159,6 +159,16 @@ vec3 idColor(uint id) {
   return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
 }
 
+// Linear -> sRGB OETF for the final shaded image, matching the raster path
+// (mesh.frag). The tracer lights in linear space and the target image is UNORM,
+// so shaded/wireframe output is encoded here; debug AOVs are left raw.
+vec3 linearToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+  return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
+}
+
 void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy);
   ivec2 size = imageSize(outImg);
@@ -568,5 +578,10 @@ void main() {
     imageStore(accumImg, px, vec4(sum, 1.0));
     outc = sum / float(fi + 1u);
   }
+  // Encode the shaded/wireframe image for display (linear -> sRGB), consistent
+  // with the raster backends' output (T11). Debug AOVs stay raw. Accumulation
+  // stays linear above, so only the displayed average is encoded.
+  int outMode = int(pc.camPos.w + 0.5);
+  if (outMode == 0 || outMode == 1) outc = linearToSrgb(outc);
   imageStore(outImg, px, vec4(outc, 1.0));
 }

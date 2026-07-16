@@ -82,13 +82,6 @@ USDCWriteResult WriteUSDCToMemory(std::vector<uint8_t>& buffer, const Stage& sta
   return ConvertResult(crate_result);
 }
 
-USDCWriteResult WriteUSDCToString(std::string& buffer, const Stage& stage,
-                                  const USDCWriteOptions& options) {
-  CrateWriter writer(options.crate_options);
-  CrateWriteResult crate_result = writer.WriteToString(buffer, stage);
-  return ConvertResult(crate_result);
-}
-
 USDCWriteResult WriteLayerToUSDCFile(const std::string& filename, const Layer& layer,
                                       const USDCWriteOptions& options) {
   USDCWriteResult result;
@@ -110,13 +103,6 @@ USDCWriteResult WriteLayerToUSDCMemory(std::vector<uint8_t>& buffer, const Layer
                                         const USDCWriteOptions& options) {
   CrateWriter writer(options.crate_options);
   CrateWriteResult crate_result = writer.WriteLayerToMemory(buffer, layer);
-  return ConvertResult(crate_result);
-}
-
-USDCWriteResult WriteLayerToUSDCString(std::string& buffer, const Layer& layer,
-                                       const USDCWriteOptions& options) {
-  CrateWriter writer(options.crate_options);
-  CrateWriteResult crate_result = writer.WriteLayerToString(buffer, layer);
   return ConvertResult(crate_result);
 }
 

@@ -11,6 +11,9 @@ set(TYDRA_NEXT_SOURCES
     scene-access.cc
     render-extract.cc
     render-converter.cc
+    texture-cache.cc
+    urdf-to-usd.cc
+    ../../external/mikktspace/mikktspace.c
 )
 
 set(TYDRA_NEXT_HEADERS
@@ -19,6 +22,10 @@ set(TYDRA_NEXT_HEADERS
     scene-access.hh
     render-extract.hh
     render-converter.hh
+    resource-budget.hh
+    texture-cache.hh
+    urdf-to-usd.hh
+    ../urdf-payload.hh
 )
 
 # Prepend source directory to all files

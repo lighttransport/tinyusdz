@@ -30,6 +30,71 @@ size_t StringVectorBytes(const std::vector<std::string>& v) {
 // RenderMesh
 //
 
+void RenderMesh::compact() {
+  face_vertex_counts.shrink_to_fit();
+  face_vertex_indices.shrink_to_fit();
+  points.shrink_to_fit();
+  normals.shrink_to_fit();
+  tangents.shrink_to_fit();
+  texcoords_0.shrink_to_fit();
+  texcoords_1.shrink_to_fit();
+  colors.shrink_to_fit();
+  opacities.shrink_to_fit();
+  triangulated_indices.shrink_to_fit();
+  triangulated_face_vertex_indices.shrink_to_fit();
+
+  for (auto& pv : primvars) {
+    pv.float_data.shrink_to_fit();
+    pv.int_data.shrink_to_fit();
+    pv.uint_data.shrink_to_fit();
+    pv.indices.shrink_to_fit();
+  }
+
+  if (skin) {
+    skin->joint_indices.shrink_to_fit();
+    skin->joint_weights.shrink_to_fit();
+  }
+
+  for (auto& bs : blend_shapes) {
+    bs.point_offsets.shrink_to_fit();
+    bs.normal_offsets.shrink_to_fit();
+    for (auto& inbetween : bs.inbetweens) {
+      inbetween.point_offsets.shrink_to_fit();
+    }
+  }
+}
+
+bool RenderMesh::has_alloc_failure() const {
+  if (face_vertex_counts.alloc_failed() || face_vertex_indices.alloc_failed() ||
+      points.alloc_failed() || normals.alloc_failed() ||
+      tangents.alloc_failed() || texcoords_0.alloc_failed() ||
+      texcoords_1.alloc_failed() || colors.alloc_failed() ||
+      opacities.alloc_failed() ||
+      triangulated_indices.alloc_failed() ||
+      triangulated_face_vertex_indices.alloc_failed()) {
+    return true;
+  }
+  for (const auto& pv : primvars) {
+    if (pv.float_data.alloc_failed() || pv.int_data.alloc_failed() ||
+        pv.uint_data.alloc_failed() || pv.indices.alloc_failed()) {
+      return true;
+    }
+  }
+  if (skin && (skin->joint_indices.alloc_failed() ||
+               skin->joint_weights.alloc_failed())) {
+    return true;
+  }
+  for (const auto& bs : blend_shapes) {
+    if (bs.point_offsets.alloc_failed() || bs.normal_offsets.alloc_failed()) {
+      return true;
+    }
+    for (const auto& inbetween : bs.inbetweens) {
+      if (inbetween.point_offsets.alloc_failed()) return true;
+    }
+  }
+  return false;
+}
+
 size_t RenderMesh::memory_usage() const {
   size_t total = sizeof(*this);
   total += face_vertex_counts.memory_usage();
@@ -40,7 +105,9 @@ size_t RenderMesh::memory_usage() const {
   total += texcoords_0.memory_usage();
   total += texcoords_1.memory_usage();
   total += colors.memory_usage();
+  total += opacities.memory_usage();
   total += triangulated_indices.memory_usage();
+  total += triangulated_face_vertex_indices.memory_usage();
 
   for (const auto& pv : primvars) {
     total += pv.memory_usage();
@@ -54,8 +121,45 @@ size_t RenderMesh::memory_usage() const {
   for (const auto& bs : blend_shapes) {
     total += bs.point_offsets.memory_usage();
     total += bs.normal_offsets.memory_usage();
+    for (const auto& inbetween : bs.inbetweens) {
+      total += inbetween.name.capacity();
+      total += inbetween.point_offsets.memory_usage();
+    }
   }
 
+  return total;
+}
+
+//
+// RenderPointInstancer
+//
+
+size_t RenderPoints::memory_usage() const {
+  size_t total = sizeof(*this);
+  total += name.capacity();
+  total += prim_path.capacity();
+  total += points.memory_usage();
+  total += widths.memory_usage();
+  total += colors.memory_usage();
+  return total;
+}
+
+//
+// RenderCurves
+//
+
+size_t RenderCurves::memory_usage() const {
+  size_t total = sizeof(*this);
+  total += name.capacity();
+  total += prim_path.capacity();
+  total += VectorBytes(curve_vertex_counts);
+  total += points.memory_usage();
+  total += widths.memory_usage();
+  total += colors.memory_usage();
+  total += VectorBytes(tessellated_vertex_counts);
+  total += tessellated_points.memory_usage();
+  total += tessellated_widths.memory_usage();
+  total += tessellated_colors.memory_usage();
   return total;
 }
 
@@ -80,9 +184,8 @@ size_t RenderPointInstancer::memory_usage() const {
   total += VectorBytes(invisible_ids);
   total += VectorBytes(inactive_ids);
   total += VectorBytes(transforms);
-  total += VectorBytes(display_colors);
-  total += VectorBytes(display_opacities);
   total += VectorBytes(instance_visible);
+  total += VectorBytes(compact_instances);
   total += name.capacity();
   total += prim_path.capacity();
   total += validation_error.capacity();
@@ -109,6 +212,13 @@ bool RenderPointInstancer::has_valid_prototype_mesh_bindings() const {
 }
 
 size_t RenderPointInstancer::visible_instance_count() const {
+  if (instance_visible.empty() && !compact_instances.empty()) {
+    size_t total = 0;
+    for (const CompactInstance& instance : compact_instances) {
+      if ((instance.flags & 1u) != 0) ++total;
+    }
+    return total;
+  }
   if (instance_visible.empty()) return instance_count();
   size_t total = 0;
   for (uint8_t visible : instance_visible) {
@@ -158,6 +268,14 @@ size_t RenderScene::memory_usage() const {
     total += mesh.memory_usage();
   }
 
+  for (const auto& point_cloud : points) {
+    total += point_cloud.memory_usage();
+  }
+
+  for (const auto& curve : curves) {
+    total += curve.memory_usage();
+  }
+
   for (const auto& instancer : point_instancers) {
     total += instancer.memory_usage();
   }
@@ -175,6 +293,7 @@ size_t RenderScene::memory_usage() const {
   total += cameras.size() * sizeof(RenderCamera);
   total += animations.size() * sizeof(AnimationClip);
   total += skeletons.size() * sizeof(Skeleton);
+  total += unsupported_renderables.size() * sizeof(UnsupportedRenderable);
 
   return total;
 }
@@ -182,6 +301,18 @@ size_t RenderScene::memory_usage() const {
 const RenderMesh* RenderScene::get_mesh(int32_t mesh_id) const {
   if (mesh_id < 0 || static_cast<size_t>(mesh_id) >= meshes.size()) return nullptr;
   return &meshes[static_cast<size_t>(mesh_id)];
+}
+
+const RenderPoints* RenderScene::get_points(int32_t points_id) const {
+  if (points_id < 0 || static_cast<size_t>(points_id) >= points.size()) return nullptr;
+  return &points[static_cast<size_t>(points_id)];
+}
+
+const RenderCurves* RenderScene::get_curves(int32_t curves_id) const {
+  if (curves_id < 0 || static_cast<size_t>(curves_id) >= curves.size()) {
+    return nullptr;
+  }
+  return &curves[static_cast<size_t>(curves_id)];
 }
 
 const RenderMaterial* RenderScene::get_material(int32_t material_id) const {
@@ -263,6 +394,7 @@ RenderScene::Stats RenderScene::get_stats() const {
   Stats s = {};
   s.node_count = nodes.size();
   s.mesh_count = meshes.size();
+  s.points_count = points.size();
   s.point_instancer_count = point_instancers.size();
   s.point_instance_draw_count = point_instance_draws.size();
   s.material_count = materials.size();
@@ -293,6 +425,16 @@ RenderScene::Stats RenderScene::get_stats() const {
   for (const auto& instancer : point_instancers) {
     s.point_instance_count += instancer.instance_count();
     s.visible_point_instance_count += instancer.visible_instance_count();
+  }
+
+  for (const auto& point_cloud : points) {
+    s.point_cloud_point_count += point_cloud.point_count();
+  }
+
+  s.curves_count = curves.size();
+  for (const auto& curve : curves) {
+    s.curve_count += curve.curve_count();
+    s.curve_tessellated_point_count += curve.tessellated_point_count();
   }
 
   s.memory_bytes = memory_usage();

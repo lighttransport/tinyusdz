@@ -232,9 +232,21 @@ static v3 face_forward(v3 N, v3 wo) { return v3_dot(N, wo) < 0.0f ? v3_neg(N) : 
 
 /* Unified reflection-lobe evaluation (diffuse + spec + sheen + coat). Fills the
  * mixture pdf for the sampled wi. Returns f (rgb). Excludes the glass lobe. */
-static v3 eval_reflection(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf) {
+/* Evaluate the reflection lobes. `out_diff` / `out_spec` (either may be NULL)
+ * receive the diffuse and the specular halves separately: a split-sum IBL has to
+ * weigh each against a DIFFERENT prefiltered environment (irradiance vs the
+ * reflection lobe), so handing it the sum makes it count both lobes twice. Sheen
+ * is grouped with the specular half: it is a directional grazing lobe, not part
+ * of the cosine-distributed diffuse response. */
+static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
+                                v3 *out_diff, v3 *out_spec) {
     float NdotL = v3_dot(N, wi), NdotV = v3_dot(N, wo);
-    if (NdotL <= 0.0f || NdotV <= 0.0f) { *pdf = 0.0f; return v3_splat(0.0f); }
+    if (NdotL <= 0.0f || NdotV <= 0.0f) {
+        *pdf = 0.0f;
+        if (out_diff) *out_diff = v3_splat(0.0f);
+        if (out_spec) *out_spec = v3_splat(0.0f);
+        return v3_splat(0.0f);
+    }
     v3 H = v3_normalize(v3_add(wo, wi));
     float NdotH = v3_dot(N, H), VdotH = v3_dot(wo, H);
 
@@ -285,7 +297,13 @@ static v3 eval_reflection(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf) {
     float pdf_coat = ggx_D(NdotH, L->coat_alpha) * NdotH / (4.0f * VdotH + 1e-6f);
     *pdf = L->pd * pdf_diff + L->ps * pdf_spec + L->pc * pdf_coat;
 
+    if (out_diff) *out_diff = diff;
+    if (out_spec) *out_spec = v3_add(spec, v3_add(sheen, coat));
     return v3_add(v3_add(diff, spec), v3_add(sheen, coat));
+}
+
+static v3 eval_reflection(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf) {
+    return eval_reflection_split(L, N, wo, wi, pdf, (v3 *)0, (v3 *)0);
 }
 
 int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *out) {
@@ -384,4 +402,11 @@ v3 bsdf_eval(const OpenPBRParams *p, v3 Ns, v3 wo, v3 wi, float *pdf_out) {
     v3 N = face_forward(v3_normalize(Ns), wo);
     Layers L = extract(p);
     return eval_reflection(&L, N, wo, wi, pdf_out);
+}
+
+v3 bsdf_eval_lobes(const OpenPBRParams *p, v3 Ns, v3 wo, v3 wi, v3 *out_diffuse,
+                   v3 *out_specular, float *pdf_out) {
+    v3 N = face_forward(v3_normalize(Ns), wo);
+    Layers L = extract(p);
+    return eval_reflection_split(&L, N, wo, wi, pdf_out, out_diffuse, out_specular);
 }

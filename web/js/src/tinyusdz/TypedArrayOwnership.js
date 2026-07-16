@@ -11,13 +11,41 @@ function assertArrayLike(data, label) {
   }
 }
 
+const ownedFloat32Arrays = new WeakSet();
+const ownedUint32Arrays = new WeakSet();
+
+export function markOwnedFloat32Array(data, label = 'data') {
+  if (!(data instanceof Float32Array)) {
+    throw new Error(`${label} must be a Float32Array`);
+  }
+  ownedFloat32Arrays.add(data);
+  return data;
+}
+
+export function markOwnedUint32Array(data, label = 'data') {
+  if (!(data instanceof Uint32Array)) {
+    throw new Error(`${label} must be a Uint32Array`);
+  }
+  ownedUint32Arrays.add(data);
+  return data;
+}
+
+export function isOwnedFloat32Array(data) {
+  return data instanceof Float32Array && ownedFloat32Arrays.has(data);
+}
+
+export function isOwnedUint32Array(data) {
+  return data instanceof Uint32Array && ownedUint32Arrays.has(data);
+}
+
 export function toOwnedFloat32Array(data, label = 'data') {
   assertArrayLike(data, label);
-  return new Float32Array(data);
+  if (isOwnedFloat32Array(data)) return data;
+  return markOwnedFloat32Array(new Float32Array(data), label);
 }
 
 export function toOwnedUint32Array(data, label = 'data') {
   assertArrayLike(data, label);
-  return new Uint32Array(data);
+  if (isOwnedUint32Array(data)) return data;
+  return markOwnedUint32Array(new Uint32Array(data), label);
 }
-

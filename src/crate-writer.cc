@@ -429,10 +429,21 @@ bool CrateWriter::Finalize(std::string* err) {
       // and retagging those bytes as TokenVector produces scalar ValueReps
       // with the compressed bit set, which OpenUSD rejects.
       const std::string& fname = field_pair.first;
-      if ((fname == "primChildren" || fname == "properties") &&
+      if ((fname == "primChildren" || fname == "properties" ||
+           fname == "variantSetChildren" || fname == "variantChildren") &&
           field_pair.second.as<std::vector<value::token>>()) {
         field.value_rep = PackTokenVectorValue(
             *field_pair.second.as<std::vector<value::token>>(), err);
+      } else if (fname == "subLayers" &&
+                 field_pair.second.as<std::vector<std::string>>()) {
+        // Must be the dedicated StringVector type or pxr ignores the
+        // sublayers entirely (see PackStringVectorValue).
+        field.value_rep = PackStringVectorValue(
+            *field_pair.second.as<std::vector<std::string>>(), err);
+      } else if (fname == "subLayerOffsets" &&
+                 field_pair.second.as<std::vector<LayerOffset>>()) {
+        field.value_rep = PackLayerOffsetVectorValue(
+            *field_pair.second.as<std::vector<LayerOffset>>(), err);
       } else {
         field.value_rep = PackValue(field_pair.second, err);
       }
@@ -490,6 +501,17 @@ bool CrateWriter::Finalize(std::string* err) {
   GetOrCreateToken("");
   for (const auto& path : paths_) {
     std::string elem = path.element_name();
+    // Keep in lockstep with WritePathsSection: a trailing variant selection is
+    // tokenized as the bare `{set=sel}` group, not the whole slash-segment.
+    // Registering the unstripped form here would leave the stripped one to be
+    // appended AFTER the TOKENS section is serialized -- the exact "Corrupt
+    // path element token index" failure this loop exists to prevent.
+    if (!elem.empty() && elem.back() == '}') {
+      size_t open = elem.find_last_of('{');
+      if (open != std::string::npos) {
+        elem = elem.substr(open);
+      }
+    }
     if (!elem.empty() && elem != "/") {
       GetOrCreateToken(elem);
     }
@@ -978,6 +1000,22 @@ bool CrateWriter::WritePathsSection(std::string* err) {
       std::string elem = is_prop ? p.first.prop_part() : p.first.element_name();
       if (elem == "/") elem.clear();
 
+      // A variant selection is its OWN path element on the crate wire: the
+      // node for /Implicits{shapeVariant=Capsule} carries the element token
+      // `{shapeVariant=Capsule}` (its tree parent is the /Implicits node).
+      // element_name() returns the last '/'-segment, so it hands back
+      // `Implicits{shapeVariant=Capsule}` -- which OpenUSD's reader rejects
+      // ("Invalid prim name") and then cascades into empty/repeated specs,
+      // refusing the whole file. Strip to the last `{...}` group; a multi-group
+      // tail (`/A{v1=x}{v2=y}`, nested variantSets) peels one group per tree
+      // level because get_parent_path() strips exactly one group too.
+      if (!is_prop && !elem.empty() && elem.back() == '}') {
+        size_t open = elem.find_last_of('{');
+        if (open != std::string::npos) {
+          elem = elem.substr(open);
+        }
+      }
+
       uint32_t thisIdx = currentIdx++;
       encoded_path_indices[thisIdx] = p.second.value;
       element_token_indices[thisIdx] =
@@ -1339,7 +1377,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
       // model (no literals are packed to derive it from).
       aerep.SetType(ae->element_type_id);
       aerep.SetPayload(0);
-      return aerep;
+      return crate::ValueRep(aerep.GetData());
     }
     last_array_edit_elem_type_ = 0;
     bool is_compressed = false;
@@ -1352,19 +1390,19 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     aerep.SetType(last_array_edit_elem_type_ ? last_array_edit_elem_type_
                                              : ae->element_type_id);
     aerep.SetPayload(static_cast<uint64_t>(offset));
-    return aerep;
+    return crate::ValueRep(aerep.GetData());
   }
 
   if (value.as<Reference>()) {
     if (err) {
       *err = "Standalone Reference values are not representable in Crate; use ReferenceListOp.";
     }
-    return rep;
+    return crate::ValueRep(rep.GetData());
   }
 
   // Try to inline the value
   if (!value.IsUnregisteredValue() && TryInlineValue(value, &rep)) {
-    return rep;
+    return crate::ValueRep(rep.GetData());
   }
 
   bool dedup_candidate = false;
@@ -1383,7 +1421,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
         dedup_wire_tag);
     if (LookupDeduplicatedValue(dedup_bytes, dedup_element_size,
                                 dedup_is_float, dedup_wire_tag, &rep)) {
-      return rep;
+      return crate::ValueRep(rep.GetData());
     }
     dedup_candidate = true;
   }
@@ -1392,8 +1430,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   bool is_compressed = false;
   int64_t offset = WriteValueData(value, &is_compressed, err);
   if (offset < 0 || (err && !err->empty())) {
-    rep = crate::ValueRep();
-    return rep;
+    return crate::ValueRep();
   }
 
   // Create ValueRep with offset and proper type
@@ -1560,7 +1597,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
                             dedup_wire_tag, rep);
   }
 
-  return rep;
+  return crate::ValueRep(rep.GetData());
 }
 
 

@@ -5,7 +5,8 @@
 // URL-driven so Puppeteer can drive it without interacting with in-page controls.
 
 import { StreamingUSDRenderer } from './streaming.js';
-import { HttpAssetResolver, composeOverHttp, detectMaterialX } from './http-asset-resolver.js';
+import { renderHttpUSD } from './http-asset-resolver.js';
+import { getBackendFromURL } from './src/tinyusdz/LoaderConfigUtils.js';
 
 const DEFAULT_URL = '/@fs/mnt/nvme02/work/usd/assets/test_assets/AlphaBlendModeTest/AlphaBlendModeTest.usd';
 const DEFAULT_CAMERA = {
@@ -29,6 +30,14 @@ function baseOf(url) {
 function basename(url) {
   const clean = String(url || '').split(/[?#]/)[0];
   return decodeURIComponent(clean.slice(clean.lastIndexOf('/') + 1)) || 'scene.usd';
+}
+
+function urlParam(params) {
+  return params.get('uri') || params.get('url') || params.get('src') || params.get('model') || DEFAULT_URL;
+}
+
+function jsHeapBytes() {
+  return performance.memory ? performance.memory.usedJSHeapSize : 0;
 }
 
 function parseJsonParam(params, name) {
@@ -68,6 +77,21 @@ async function settleFrames(n = 3) {
   }
 }
 
+function startFpsMeter(onFps) {
+  let frames = 0;
+  let last = performance.now();
+  const tick = (now) => {
+    frames++;
+    if (now - last >= 500) {
+      onFps(Math.round((frames * 1000) / (now - last)));
+      frames = 0;
+      last = now;
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 async function loadPreloads(params) {
   const raw = parseJsonParam(params, 'preload') || [];
   const out = [];
@@ -86,11 +110,12 @@ async function main() {
   const params = new URLSearchParams(location.search);
   if (params.get('ui') === '0') document.body.classList.add('hide-ui');
 
-  const url = params.get('url') || DEFAULT_URL;
+  const url = urlParam(params);
   const baseUrl = params.get('base') || baseOf(url);
   const filename = params.get('name') || basename(url);
   const label = params.get('label') || filename;
   const camera = parseCamera(params);
+  const backend = getBackendFromURL(params, 'legacy');
 
   window.__usdAssetsViewer = {
     ready: false,
@@ -100,35 +125,45 @@ async function main() {
     baseUrl,
     label,
     camera,
+    backend,
   };
 
   const canvas = document.getElementById('gl');
   const renderer = new StreamingUSDRenderer(canvas);
   await renderer.init();
   renderer.setClearColor(parseClear(params));
+  startFpsMeter((fps) => {
+    if (window.__usdAssetsViewer?.stats) {
+      window.__usdAssetsViewer.stats.fps = fps;
+    }
+  });
 
   try {
+    const totalStart = performance.now();
+    const jsStart = jsHeapBytes();
     status(`Fetching ${url}`);
+    const fetchStart = performance.now();
     const resp = await fetch(url, { cache: 'no-store' });
     if (!resp.ok && resp.status !== 206) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
     const rootBytes = new Uint8Array(await resp.arrayBuffer());
-    const shadeLabel = detectMaterialX(rootBytes) ? 'MaterialX/tydra' : 'UsdPreviewSurface';
+    const fetchMs = performance.now() - fetchStart;
     const preloadedAssets = await loadPreloads(params);
 
-    status(`Composing ${label}\n${baseUrl}`);
-    const resolver = new HttpAssetResolver({ baseUrl });
-    const { usd, textureBytesById } = await composeOverHttp({
+    status(`Loading ${label}\nbackend=${backend}\n${baseUrl}`);
+    const t0 = performance.now();
+    const loaded = await renderHttpUSD({
       renderer,
       rootBytes,
       filename,
-      resolver,
+      baseUrl,
+      label,
+      backend,
       onStatus: (msg) => status(`${label}\n${msg}`),
       preloadedAssets,
     });
+    const processMs = performance.now() - t0;
 
-    const inputBytes = rootBytes.byteLength + resolver.bytesFetched;
-    const t0 = performance.now();
-    const result = await renderer.renderComposedNative(usd, label, { inputBytes, textureBytesById });
+    const result = loaded.result;
     renderer.frameCamera(camera);
     await settleFrames(4);
 
@@ -138,18 +173,25 @@ async function main() {
       filename,
       url,
       baseUrl,
+      backend: loaded.backend,
+      requestedBackend: loaded.requestedBackend,
       sourceBytes: rootBytes.byteLength,
-      fetchedBytes: resolver.bytesFetched,
-      fetches: resolver.fetchLog.length,
-      fetchLog: resolver.fetchLog,
+      fetchedBytes: loaded.fetchedBytes,
+      fetches: loaded.fetches,
+      fetchLog: loaded.fetchLog,
       result,
-      shadeLabel,
-      elapsedMs: Math.round(performance.now() - t0),
+      shadeLabel: loaded.shadeLabel,
+      fetchMs: Math.round(fetchMs),
+      processMs: Math.round(processMs),
+      elapsedMs: Math.round(performance.now() - totalStart),
+      jsHeapDelta: jsHeapBytes() - jsStart,
+      fps: 0,
     };
     window.__usdAssetsViewer.ready = true;
     window.__usdAssetsViewer.stats = stats;
     window.__usdAssetsViewer.camera = stats.camera;
-    status(`${label}: ${stats.meshes} meshes, ${result.textures} textures, ${result.materials} materials (${shadeLabel})`);
+    status(`${label}: ${stats.meshes} meshes, ${result.textures} textures, ${result.materials} materials ` +
+      `(${stats.backend}, ${stats.shadeLabel})\nfetch ${stats.fetchMs} ms, process ${stats.processMs} ms, total ${stats.elapsedMs} ms`);
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
     window.__usdAssetsViewer.error = msg;

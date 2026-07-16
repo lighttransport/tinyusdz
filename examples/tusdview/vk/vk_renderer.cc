@@ -343,6 +343,69 @@ bool Mat4Inverse(const float m[16], float out[16]) {
 
 }  // namespace
 
+uint64_t QueryDeviceLocalVramBytes() {
+  // Deliberately standalone: this runs during argument parsing, before any
+  // renderer (or GLFW window) exists, so it stands up its own instance and tears
+  // it down. Any failure returns 0 and the caller falls back to a default.
+  //
+  // Every vk* name here is a volk function POINTER, null until volkInitialize().
+  // The renderer normally does that during init -- far too late for us -- so the
+  // probe must bootstrap volk itself, then load the instance-level entry points
+  // off its own instance before it can enumerate anything. The renderer re-runs
+  // both steps against its real instance later, which overwrites these.
+  if (volkInitialize() != VK_SUCCESS) return 0;
+
+  VkApplicationInfo app{};
+  app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+  app.pApplicationName = "tusdview-vram-probe";
+  app.apiVersion = VK_API_VERSION_1_1;
+
+  VkInstanceCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+  ici.pApplicationInfo = &app;
+
+  VkInstance inst = VK_NULL_HANDLE;
+  if (vkCreateInstance(&ici, nullptr, &inst) != VK_SUCCESS) return 0;
+  volkLoadInstance(inst);
+
+  uint32_t count = 0;
+  vkEnumeratePhysicalDevices(inst, &count, nullptr);
+  if (count == 0) {
+    vkDestroyInstance(inst, nullptr);
+    return 0;
+  }
+  std::vector<VkPhysicalDevice> devices(count);
+  vkEnumeratePhysicalDevices(inst, &count, devices.data());
+
+  // Same preference as startup device selection: a discrete GPU if there is one,
+  // else the first device. Picking the largest heap instead would be wrong on a
+  // laptop whose iGPU reports all of system RAM as device-local.
+  VkPhysicalDevice chosen = devices[0];
+  for (VkPhysicalDevice d : devices) {
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(d, &props);
+    if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+      chosen = d;
+      break;
+    }
+  }
+
+  VkPhysicalDeviceMemoryProperties mp{};
+  vkGetPhysicalDeviceMemoryProperties(chosen, &mp);
+  // The LARGEST device-local heap, not the sum: a discrete GPU also exposes a
+  // small DEVICE_LOCAL|HOST_VISIBLE heap (the BAR / ReBAR window), which is a
+  // *view* into the same VRAM, not extra memory. Summing them reports ~16.2 GiB
+  // on a 16 GiB card and inflates every budget derived from it.
+  uint64_t bytes = 0;
+  for (uint32_t i = 0; i < mp.memoryHeapCount; ++i) {
+    if (mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+      bytes = std::max(bytes, uint64_t(mp.memoryHeaps[i].size));
+    }
+  }
+  vkDestroyInstance(inst, nullptr);
+  return bytes;
+}
+
 VulkanRenderer::~VulkanRenderer() { shutdown(); }
 
 uint32_t VulkanRenderer::findMemoryType(uint32_t typeBits,
@@ -610,10 +673,19 @@ bool VulkanRenderer::createDevice(std::string* err) {
     std::vector<VkExtensionProperties> have(n);
     vkEnumerateDeviceExtensionProperties(phys_, nullptr, &n, have.data());
     for (const auto& e : have) {
-      if (std::strcmp(e.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0) {
+      if (!memBudgetSupported_ &&
+          std::strcmp(e.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0) {
         devExts.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
         memBudgetSupported_ = true;
-        break;
+      }
+      // Extended dynamic state: per-draw vkCmdSetCullMode, so the mesh pipelines
+      // can back-face-cull single-sided meshes (matching the GL backend) without
+      // doubling every pipeline. Optional -- absent, culling stays off (the old
+      // behavior) rather than failing device creation.
+      if (!dynCullSupported_ &&
+          std::strcmp(e.extensionName,
+                      VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME) == 0) {
+        dynCullSupported_ = true;
       }
     }
   }
@@ -670,6 +742,30 @@ bool VulkanRenderer::createDevice(std::string* err) {
       ci.pNext = &sdp;
     }
   }
+  // Extended-dynamic-state feature bit: confirm the device actually reports the
+  // feature (not just the extension string) before enabling it and declaring
+  // VK_DYNAMIC_STATE_CULL_MODE_EXT in the mesh pipelines.
+  VkPhysicalDeviceExtendedDynamicStateFeaturesEXT eds{};
+  eds.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+  if (dynCullSupported_) {
+    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT edsQuery{};
+    edsQuery.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+    VkPhysicalDeviceFeatures2 f2{};
+    f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    f2.pNext = &edsQuery;
+    vkGetPhysicalDeviceFeatures2(phys_, &f2);
+    if (edsQuery.extendedDynamicState) {
+      devExts.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
+      eds.extendedDynamicState = VK_TRUE;
+      eds.pNext = const_cast<void*>(ci.pNext);
+      ci.pNext = &eds;
+    } else {
+      dynCullSupported_ = false;
+    }
+  }
+
   ci.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
   ci.ppEnabledExtensionNames = devExts.data();
 
@@ -679,6 +775,19 @@ bool VulkanRenderer::createDevice(std::string* err) {
   VkPhysicalDeviceFeatures supported{};
   vkGetPhysicalDeviceFeatures(phys_, &supported);
   VkPhysicalDeviceFeatures enabledFeatures{};
+  // Compressed-texture format support: record caps for --texture-compress
+  // cap-gating and enable the features so sampling the corresponding VkFormats
+  // is valid (Vulkan requires the feature enabled at device creation — this also
+  // makes the existing BC1/3/7 upload path spec-correct).
+  caps_.supportsBC = supported.textureCompressionBC;
+  caps_.supportsBC5 = supported.textureCompressionBC;    // RGTC is part of BC
+  caps_.supportsBC6H = supported.textureCompressionBC;   // BPTC float is part of BC
+  caps_.supportsETC2 = supported.textureCompressionETC2;
+  caps_.supportsASTC = supported.textureCompressionASTC_LDR;
+  if (supported.textureCompressionBC) enabledFeatures.textureCompressionBC = VK_TRUE;
+  if (supported.textureCompressionETC2) enabledFeatures.textureCompressionETC2 = VK_TRUE;
+  if (supported.textureCompressionASTC_LDR)
+    enabledFeatures.textureCompressionASTC_LDR = VK_TRUE;
   if (supported.tessellationShader) {
     enabledFeatures.tessellationShader = VK_TRUE;
     tessSupported_ = true;
@@ -703,6 +812,16 @@ bool VulkanRenderer::createDevice(std::string* err) {
   VK_CHECK(vkCreateDevice(phys_, &ci, nullptr, &device_), "vkCreateDevice");
   vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
 
+  if (dynCullSupported_) {
+    vkCmdSetCullMode_ = reinterpret_cast<PFN_vkCmdSetCullModeEXT>(
+        vkGetDeviceProcAddr(device_, "vkCmdSetCullModeEXT"));
+    if (!vkCmdSetCullMode_) {
+      vkCmdSetCullMode_ = reinterpret_cast<PFN_vkCmdSetCullModeEXT>(
+          vkGetDeviceProcAddr(device_, "vkCmdSetCullMode"));  // 1.3 core alias
+    }
+    if (!vkCmdSetCullMode_) dynCullSupported_ = false;
+  }
+
   // Load the RT entrypoints (extension functions aren't statically exported).
   if (rtSupported_) {
     // bufferDeviceAddress is Vulkan 1.2 core here (not the KHR extension), so the
@@ -725,6 +844,18 @@ bool VulkanRenderer::createDevice(std::string* err) {
     pfnGetASDeviceAddress_ =
         reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
             vkGetDeviceProcAddr(device_, "vkGetAccelerationStructureDeviceAddressKHR"));
+    // Compaction is optional: if either entry point is missing we still build,
+    // just uncompacted. Never a reason to disable RT.
+    pfnCmdWriteASProps_ =
+        reinterpret_cast<PFN_vkCmdWriteAccelerationStructuresPropertiesKHR>(
+            vkGetDeviceProcAddr(device_,
+                                "vkCmdWriteAccelerationStructuresPropertiesKHR"));
+    pfnCmdCopyAS_ = reinterpret_cast<PFN_vkCmdCopyAccelerationStructureKHR>(
+        vkGetDeviceProcAddr(device_, "vkCmdCopyAccelerationStructureKHR"));
+    if (const char* e = std::getenv("TUSDVIEW_BLAS_COMPACT")) {
+      blasCompact_ = (std::atoi(e) != 0);
+    }
+    if (!pfnCmdWriteASProps_ || !pfnCmdCopyAS_) blasCompact_ = false;
     if (!pfnGetBufferDeviceAddress_ || !pfnGetASBuildSizes_ || !pfnCreateAS_ ||
         !pfnDestroyAS_ || !pfnCmdBuildAS_ || !pfnGetASDeviceAddress_) {
       rtSupported_ = false;  // any missing entrypoint -> rasterization only
@@ -1151,7 +1282,8 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   // Sets 10-12: preview-shading metal/roughness, emissive and normal textures.
   // Sets 13-20: sparse UDIM array/LUT pairs for base, MR, normal and emissive.
   // Sets 21-23: DomeLight IBL (irradiance cube, prefiltered cube, BRDF LUT).
-  VkDescriptorSetLayout setLayouts[24] = {texSetLayout_, skinSetLayout_,
+  // Set 24: per-vertex displayColor SSBO (vertex stage; dummy when absent).
+  VkDescriptorSetLayout setLayouts[25] = {texSetLayout_, skinSetLayout_,
                                           influenceSetLayout_, faceSetLayout_,
                                           texSetLayout_, dispParamsSetLayout_,
                                           dispMatSetLayout_, morphSetLayout_,
@@ -1162,8 +1294,9 @@ bool VulkanRenderer::createPipeline(std::string* err) {
                                           texSetLayout_, texSetLayout_,
                                           texSetLayout_, texSetLayout_,
                                           texSetLayout_, texSetLayout_,
-                                          texSetLayout_, texSetLayout_};
-  plci.setLayoutCount = 24;
+                                          texSetLayout_, texSetLayout_,
+                                          morphSetLayout_};
+  plci.setLayoutCount = 25;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -1261,10 +1394,14 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   cb.attachmentCount = 1;
   cb.pAttachments = &cba;
 
-  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  // Cull mode is dynamic when the device supports it: single-sided meshes
+  // back-face-cull (parity with GL), double-sided ones don't. The draw loop
+  // sets it before every draw that uses this pipeline.
+  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                          VK_DYNAMIC_STATE_CULL_MODE_EXT};
   VkPipelineDynamicStateCreateInfo dynState{};
   dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-  dynState.dynamicStateCount = 2;
+  dynState.dynamicStateCount = dynCullSupported_ ? 3 : 2;
   dynState.pDynamicStates = dyn;
 
   VkGraphicsPipelineCreateInfo ci{};
@@ -1409,10 +1546,14 @@ void VulkanRenderer::createTessPipeline() {
   cb.attachmentCount = 1;
   cb.pAttachments = &cba;
 
-  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  // Cull mode is dynamic when the device supports it: single-sided meshes
+  // back-face-cull (parity with GL), double-sided ones don't. The draw loop
+  // sets it before every draw that uses this pipeline.
+  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                          VK_DYNAMIC_STATE_CULL_MODE_EXT};
   VkPipelineDynamicStateCreateInfo dynState{};
   dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-  dynState.dynamicStateCount = 2;
+  dynState.dynamicStateCount = dynCullSupported_ ? 3 : 2;
   dynState.pDynamicStates = dyn;
 
   VkGraphicsPipelineCreateInfo ci{};
@@ -1551,10 +1692,14 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
   cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   cb.attachmentCount = 1;
   cb.pAttachments = &cba;
-  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  // Cull mode is dynamic when the device supports it: single-sided meshes
+  // back-face-cull (parity with GL), double-sided ones don't. The draw loop
+  // sets it before every draw that uses this pipeline.
+  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                          VK_DYNAMIC_STATE_CULL_MODE_EXT};
   VkPipelineDynamicStateCreateInfo dynState{};
   dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-  dynState.dynamicStateCount = 2;
+  dynState.dynamicStateCount = dynCullSupported_ ? 3 : 2;
   dynState.pDynamicStates = dyn;
 
   VkGraphicsPipelineCreateInfo ci{};
@@ -2358,16 +2503,17 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
     }
   }
 
-  // Set 6 of the INSTANCED pipeline: per-draw metadata SSBO (DrawMeta[]), read in
-  // the fragment stage via (baseDraw + gl_DrawIDARB). The layout/pool/set are fixed
-  // at init; the backing buffer is (re)built by ensureDrawMeta() once meshes exist.
+  // Set 6 of the INSTANCED pipeline: per-draw metadata SSBO (DrawMeta[]), read via
+  // (baseDraw + gl_DrawIDARB) in the fragment stage AND -- for the skin joint/weight
+  // device addresses -- in the vertex stage. The layout/pool/set are fixed at init;
+  // the backing buffer is (re)built by ensureDrawMeta() once meshes exist.
   // (The main mesh pipeline keeps dispMatSet_ at set 6 -- separate pipeline layout.)
   {
     VkDescriptorSetLayoutBinding db{};
     db.binding = 0;
     db.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     db.descriptorCount = 1;
-    db.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    db.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo dlci{};
     dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     dlci.bindingCount = 1;
@@ -2578,8 +2724,14 @@ VkDescriptorSet VulkanRenderer::allocFaceDescriptor(VkBuffer buffer,
 
 bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outImg,
                                         VkDeviceMemory* outMem, VkImageView* outView,
-                                        const std::vector<light3d::Image>* mips) {
+                                        const std::vector<light3d::Image>* mips,
+                                        bool srgb) {
   if (img.width <= 0 || img.height <= 0 || img.data.empty()) return false;
+  // sRGB color textures (base color / emissive) upload as _SRGB so the sampler
+  // linearizes them for the linear-space lighting (T11); normal / metal-rough
+  // stay _UNORM. Mirrors the compressed path, which already keyed on srgb.
+  const VkFormat texFormat =
+      srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 
   // Precomputed mip chain (FinalizeDrawTextures): validate the level sizes;
   // fall back to a single level when anything looks off.
@@ -2627,7 +2779,7 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   VkImageCreateInfo ici{};
   ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   ici.imageType = VK_IMAGE_TYPE_2D;
-  ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+  ici.format = texFormat;
   ici.extent = {static_cast<uint32_t>(img.width), static_cast<uint32_t>(img.height), 1};
   ici.mipLevels = mipLevels;
   ici.arrayLayers = 1;
@@ -2646,8 +2798,18 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   mai.allocationSize = req.size;
   mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -2699,7 +2861,7 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   vci.image = *outImg;
   vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-  vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+  vci.format = texFormat;
   vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vci.subresourceRange.levelCount = mipLevels;
   vci.subresourceRange.layerCount = 1;
@@ -2717,8 +2879,21 @@ bool VulkanRenderer::createCompressedTextureImage(const DrawCompressedImageCPU& 
                   : VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
   } else if (img.format == DrawCompressedFormat::BC3) {
     format = srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
+  } else if (img.format == DrawCompressedFormat::BC5) {
+    format = VK_FORMAT_BC5_UNORM_BLOCK;  // no sRGB variant
+  } else if (img.format == DrawCompressedFormat::BC6H) {
+    format = VK_FORMAT_BC6H_UFLOAT_BLOCK;  // HDR, no sRGB variant
   } else if (img.format == DrawCompressedFormat::BC7) {
     format = srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+  } else if (img.format == DrawCompressedFormat::ETC2_RGB) {
+    format = srgb ? VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK
+                  : VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
+  } else if (img.format == DrawCompressedFormat::ETC2_RGBA) {
+    format = srgb ? VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK
+                  : VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK;
+  } else if (img.format == DrawCompressedFormat::ASTC_4x4) {
+    format = srgb ? VK_FORMAT_ASTC_4x4_SRGB_BLOCK
+                  : VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
   }
   if (format == VK_FORMAT_UNDEFINED) return false;
 
@@ -2786,8 +2961,18 @@ bool VulkanRenderer::createCompressedTextureImage(const DrawCompressedImageCPU& 
   mai.allocationSize = req.size;
   mai.memoryTypeIndex =
       findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -2855,6 +3040,10 @@ bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
       tex.udimTileHeight <= 0) {
     return false;
   }
+  // sRGB color UDIM (base color) -> _SRGB; normal / metal-rough UDIM stay
+  // _UNORM (T11), same rule as the single-image path.
+  const VkFormat udimFormat =
+      tex.srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
   // Precomputed per-tile mip chains: usable only when every tile carries the
   // same level count (NormalizeDrawTextures equalizes dims first).
   size_t mipCount = tex.udimTiles[0].mipImages.size();
@@ -2916,7 +3105,7 @@ bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
   VkImageCreateInfo ici{};
   ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   ici.imageType = VK_IMAGE_TYPE_2D;
-  ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+  ici.format = udimFormat;
   ici.extent = {static_cast<uint32_t>(tex.udimTileWidth),
                 static_cast<uint32_t>(tex.udimTileHeight), 1};
   ici.mipLevels = mipLevels;
@@ -2937,8 +3126,18 @@ bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
   mai.allocationSize = req.size;
   mai.memoryTypeIndex =
       findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -2991,7 +3190,7 @@ bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
   vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   vci.image = *outImg;
   vci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-  vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+  vci.format = udimFormat;
   vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vci.subresourceRange.levelCount = mipLevels;
   vci.subresourceRange.layerCount = ici.arrayLayers;
@@ -3037,8 +3236,18 @@ bool VulkanRenderer::createUdimLookupImage(const DrawTextureCPU& tex,
   mai.allocationSize = req.size;
   mai.memoryTypeIndex =
       findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -3123,8 +3332,18 @@ bool VulkanRenderer::createRgba32fTextureImage(int width, int height,
   mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   mai.allocationSize = req.size;
   mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -3326,8 +3545,18 @@ bool VulkanRenderer::createIblCubeImage(
   mai.allocationSize = req.size;
   mai.memoryTypeIndex =
       findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -3419,8 +3648,18 @@ bool VulkanRenderer::createIblLutImage(const std::vector<float>& rg, int size,
   mai.allocationSize = req.size;
   mai.memoryTypeIndex =
       findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -4094,7 +4333,7 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   }
   if (!ok) {
     ok = createTextureImage(t.image, &img, &mem, &view,
-                            t.mipImages.empty() ? nullptr : &t.mipImages);
+                            t.mipImages.empty() ? nullptr : &t.mipImages, t.srgb);
   }
   if (ok) {
     texImgs_.push_back(img);
@@ -4199,13 +4438,15 @@ void VulkanRenderer::updateMeshVertices(int meshIndex,
   vkUnmapMemory(device_, targetMem);
   if (rtActive_) {
     // Same topology, new vertex positions: refit the existing BLAS in place
-    // (MODE_UPDATE, persistent scratch) instead of destroy+rebuild. The first
-    // update still lands on a non-updatable BLAS (built before we knew the
-    // mesh animates): drop it once and rebuild with ALLOW_UPDATE; every
-    // later frame refits. TUSDVIEW_RT_NO_REFIT=1 forces the old full
-    // destroy+rebuild every frame (debugging escape hatch / A-B check).
+    // (MODE_UPDATE, persistent scratch) instead of destroy+rebuild. Compact
+    // until proven animated: the FIRST update (a fixed-time pose) keeps the
+    // compacted static path; the SECOND update marks the mesh updatable, drops
+    // the compacted BLAS once, rebuilds with ALLOW_UPDATE, and every later
+    // frame refits. TUSDVIEW_RT_NO_REFIT=1 forces the old full destroy+rebuild
+    // every frame (debugging escape hatch / A-B check).
     static const bool noRefit = std::getenv("TUSDVIEW_RT_NO_REFIT") != nullptr;
-    if (!noRefit) gm.blasWantUpdatable = true;
+    if (!noRefit && gm.blasSawVertexUpdate) gm.blasWantUpdatable = true;
+    gm.blasSawVertexUpdate = true;
     if (!noRefit && gm.blas != VK_NULL_HANDLE && gm.blasUpdatable) {
       gm.blasNeedsRefit = true;  // refitted in rebuildTlas before the trace
     } else {
@@ -4370,9 +4611,11 @@ bool VulkanRenderer::updateMeshSkinningGpu(int meshIndex, const float* mats,
   std::memcpy(gm.protoAabbMin, aabbMin, sizeof(float) * 3);
   std::memcpy(gm.protoAabbMax, aabbMax, sizeof(float) * 3);
 
-  // Same refit-or-rebuild policy as updateMeshVertices.
+  // Same refit-or-rebuild policy as updateMeshVertices (compact until proven
+  // animated: the second update flips to the updatable/refit path).
   static const bool noRefit = std::getenv("TUSDVIEW_RT_NO_REFIT") != nullptr;
-  if (!noRefit) gm.blasWantUpdatable = true;
+  if (!noRefit && gm.blasSawVertexUpdate) gm.blasWantUpdatable = true;
+  gm.blasSawVertexUpdate = true;
   if (!noRefit && gm.blas != VK_NULL_HANDLE && gm.blasUpdatable) {
     gm.blasNeedsRefit = true;  // refitted in rebuildTlas before the trace
   } else {
@@ -4404,7 +4647,16 @@ void VulkanRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
 }
 
 void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
-  if (sm.vertices.empty() || sm.indices.empty()) return;
+  if (sm.vertices.empty() || sm.indices.empty()) {
+    // Keep the SLOT: meshes_ must stay 1:1 with DrawScene/appendMesh order --
+    // every per-mesh index (visibility mask, highlight, updateMeshWorld/
+    // Vertices, RT meshId) is keyed by it. The GL backend keeps a placeholder
+    // for empty meshes; silently dropping here desynced all of those (toggling
+    // mesh N's visibility affected the wrong mesh). A default VkMeshGPU draws
+    // nothing (null vbo, no submeshes) and builds no BLAS (indexCount < 3).
+    meshes_.push_back(VkMeshGPU{});
+    return;
+  }
   VkMeshGPU gm;
   gm.submeshes = sm.submeshes;
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
@@ -4467,17 +4719,20 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   // Joints/weights double as the SkinWeights AOV source in the RT path, so when RT
   // is supported they also get a device address (raytrace.comp reads them via
   // MeshDesc.jointAddr / weightAddr and derives the dominant joint per vertex).
+  // A skinned mesh also needs device addresses without RT: the INSTANCED vertex
+  // shader reads joints/weights by address (DrawMeta), not as vertex attributes.
+  const bool skinAddressable = rtSupported_ || gm.skinned;
   const VkBufferUsageFlags skinUsage =
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-      (rtSupported_ ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
+      (skinAddressable ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
   if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(uint32_t), skinUsage, joints,
-                        &gm.jointVbo, &gm.jointVboMem, rtSupported_, pool)) {
+                        &gm.jointVbo, &gm.jointVboMem, skinAddressable, pool)) {
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
     return;
   }
   if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(float), skinUsage, weights,
-                        &gm.weightVbo, &gm.weightVboMem, rtSupported_, pool)) {
+                        &gm.weightVbo, &gm.weightVboMem, skinAddressable, pool)) {
     vkDestroyBuffer(device_, gm.jointVbo, nullptr);
     vkFreeMemory(device_, gm.jointVboMem, nullptr);
     vkDestroyBuffer(device_, gm.vbo, nullptr);
@@ -4631,6 +4886,21 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   if (gm.faceDesc == VK_NULL_HANDLE) gm.faceDesc = dummyFaceDesc_;
 
+  // Per-vertex displayColor (packed vec3[]) as an SSBO, only when per-vertex
+  // aligned (matches the GL attrib-9 path). The RASTER mesh vertex shader
+  // fetches it by gl_VertexIndex through set 24 (vtxColorDesc, flag-gated); the
+  // RT path additionally takes its device address below. Created regardless of
+  // RT support so vertex-painted meshes color correctly on raster-only devices.
+  if (sm.vertexColors.size() == sm.vertices.size() * 3 && !sm.vertexColors.empty()) {
+    if (createHostBuffer(sm.vertexColors.size() * sizeof(float),
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sm.vertexColors.data(),
+                         &gm.vtxColorBuf, &gm.vtxColorMem,
+                         /*deviceAddress=*/rtSupported_, pool)) {
+      gm.vtxColorDesc = allocMorphDescriptor(
+          gm.vtxColorBuf, sm.vertexColors.size() * sizeof(float));
+    }
+  }
+
   if (rtSupported_) {
     gm.vertexCount = static_cast<uint32_t>(sm.vertices.size());
     gm.indexCount = static_cast<uint32_t>(sm.indices.size());
@@ -4661,28 +4931,25 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     gm.instanceXforms = sm.instanceXforms;
     gm.instanceColors = sm.instanceColors;
     gm.instanceOpacities = sm.instanceOpacities;
-    // Per-vertex displayColor (packed vec3[]) as a device-address SSBO for the
-    // shader; only when it is per-vertex aligned (matches the GL attrib-10 path).
-    if (sm.vertexColors.size() == sm.vertices.size() * 3 && !sm.vertexColors.empty()) {
-      if (createHostBuffer(sm.vertexColors.size() * sizeof(float),
-                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sm.vertexColors.data(),
-                           &gm.vtxColorBuf, &gm.vtxColorMem, /*deviceAddress=*/true,
-                           pool)) {
-        gm.vtxColorAddr = bufferDeviceAddress(gm.vtxColorBuf);
-      }
-    }
+    // Per-vertex displayColor: the SSBO was created above (shared with raster
+    // set 24); the RT hit shader reads it by device address.
+    if (gm.vtxColorBuf) gm.vtxColorAddr = bufferDeviceAddress(gm.vtxColorBuf);
     // Multi-UV + blendshape-influence per-vertex aux buffers (created above with a
     // device address when RT is on) for the uv1 / influence AOVs in raytrace.comp.
     if (gm.uv1Vbo) gm.uv1Addr = bufferDeviceAddress(gm.uv1Vbo);
     if (gm.morphInflVbo) gm.inflAddr = bufferDeviceAddress(gm.morphInflVbo);
     // faceBuf was created above (always); take its device address for the RT path.
     if (gm.faceBuf) gm.faceAddr = bufferDeviceAddress(gm.faceBuf);
-    // Skin joint/weight buffers (device address taken above) for the SkinWeights AOV.
-    if (gm.skinned) {
-      gm.jointAddr = bufferDeviceAddress(gm.jointVbo);
-      gm.weightAddr = bufferDeviceAddress(gm.weightVbo);
-    }
     tlasDirty_ = true;  // BLAS built lazily in rebuildTlas() before the next trace
+  }
+
+  // Skin joint/weight device addresses. NOT gated on RT: besides the SkinWeights
+  // AOV, the INSTANCED vertex shader fetches joints/weights by address (DrawMeta)
+  // instead of through vertex-input state -- that is what lets a skinned prototype
+  // stay instanced without adding vertex bindings the merged MDI path can't supply.
+  if (gm.skinned) {
+    gm.jointAddr = bufferDeviceAddress(gm.jointVbo);
+    gm.weightAddr = bufferDeviceAddress(gm.weightVbo);
   }
 
   // Raster GPU instancing buffers (flat --next path; independent of RT support).
@@ -4732,7 +4999,9 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     // the cull path writes the visible subset into this mesh's slice. Morph
     // prototypes (MDI can't switch morph descriptor sets per draw) keep the legacy
     // per-mesh buffers below and are drawn by the per-mesh fallback loop.
-    if (mdiSupported_ && !gm.hasMorph && !gm.hasTranslucentInstances) {
+    // Skinned prototypes are excluded: MDI merges geometry into one shared VBO, so
+    // gl_VertexIndex would no longer index the mesh's own joint/weight arrays.
+    if (mdiSupported_ && !gm.hasMorph && !gm.hasTranslucentInstances && !gm.skinned) {
       gm.mdiEligible = true;
       gm.mdiInstFirst = mdiInstTotal_;
       gm.mdiVertBase = mdiVertTotal_;
@@ -4915,6 +5184,8 @@ void VulkanRenderer::drawBoxProxies(VkCommandBuffer cb) {
   }
 
   vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipeline_);
+  // The LOD box proxy is a closed cube: back-face cull it, as GL does.
+  if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_BACK_BIT);
   {
     // Set 0: dome IBL irradiance cube (black fallback) for the flat ambient.
     VkDescriptorSet irrDs =
@@ -5090,6 +5361,316 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   dai.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
   dai.accelerationStructure = m.blas;
   m.blasAddr = pfnGetASDeviceAddress_(device_, &dai);
+
+  blasBytes_ += sizes.accelerationStructureSize;
+  blasBytesUncompacted_ += sizes.accelerationStructureSize;
+}
+
+// BLAS compaction, in waves.
+//
+// The old path built one BLAS per prototype, each in its own one-shot command
+// buffer -- so one vkQueueSubmit + vkQueueWaitIdle (a full queue stall) and one
+// vkAllocateMemory per prototype -- and kept the build-time size forever. A
+// built BLAS is typically ~half its build-time size, so on Island's Full set
+// that is gigabytes of dead VRAM.
+//
+// Here each wave does exactly two submits: build every BLAS in the wave into one
+// shared transient buffer and write their compacted sizes into a query pool;
+// then copy each into a right-sized AS. Transient storage is one wave's worth,
+// not the whole set's.
+static constexpr uint32_t kBlasWaveMax = 512;                       // query-pool capacity
+static constexpr VkDeviceSize kBlasWaveBytes = 128ull * 1024 * 1024;  // transient budget
+
+void VulkanRenderer::buildBlasWave(const std::vector<uint32_t>& meshIds) {
+  if (!pfnCreateAS_) return;
+
+  // meshIds is one entry per INSTANCE at Full, so a prototype appears many times
+  // (Island: 17k instances over a few thousand prototypes). The old per-mesh path
+  // absorbed that silently -- buildBlas early-returns once m.blas exists -- but a
+  // batch planner must dedupe explicitly: filtering on `blas == NULL` alone admits
+  // every duplicate (nothing is built yet at planning time), builds the same mesh
+  // N times and leaks all but the last copy. That was a 6.7x memory blowup on
+  // Island, which is exactly what it did.
+  std::vector<uint32_t> todo;
+  todo.reserve(meshIds.size());
+  std::vector<bool> queued(meshes_.size(), false);
+  for (uint32_t id : meshIds) {
+    if (id >= meshes_.size() || queued[id]) continue;
+    VkMeshGPU& m = meshes_[id];
+    if (m.blas == VK_NULL_HANDLE && m.indexCount >= 3) {
+      queued[id] = true;
+      // Per-frame skinned/morphed meshes need ALLOW_UPDATE (refitBlas) and
+      // gain nothing from compaction (their BLAS changes every frame), so they
+      // build via buildBlas -- persistent scratch, updatable -- and skip the
+      // compact wave (a compacted BLAS built without ALLOW_UPDATE must not be
+      // refit).
+      if (m.blasWantUpdatable) {
+        buildBlas(m);
+        ++blasUniqueBuilt_;
+        continue;
+      }
+      todo.push_back(id);
+    }
+  }
+  blasUniqueBuilt_ += todo.size();
+  if (todo.empty()) return;
+
+  if (!blasCompact_) {
+    for (uint32_t id : todo) buildBlas(meshes_[id]);
+    return;
+  }
+
+  size_t next = 0;
+  while (next < todo.size()) {
+    // ---- plan one wave -------------------------------------------------------
+    struct Item {
+      uint32_t meshId;
+      VkDeviceSize asOffset;      // into the shared transient AS buffer
+      VkDeviceSize asSize;
+      VkDeviceSize scratchOffset;
+      uint32_t primCount;
+      VkAccelerationStructureKHR fullAs{VK_NULL_HANDLE};
+    };
+    std::vector<Item> items;
+    // These must stay alive until vkCmdBuildAccelerationStructuresKHR is
+    // recorded: bgi.pGeometries points into `geoms`. A vector that reallocates
+    // would dangle every earlier pointer, so both are reserved up front.
+    std::vector<VkAccelerationStructureGeometryKHR> geoms;
+    std::vector<VkAccelerationStructureBuildGeometryInfoKHR> bgis;
+    const size_t cap = std::min<size_t>(kBlasWaveMax, todo.size() - next);
+    items.reserve(cap);
+    geoms.reserve(cap);
+    bgis.reserve(cap);
+
+    VkDeviceSize asBytes = 0, scratchBytes = 0;
+    while (next < todo.size() && items.size() < kBlasWaveMax) {
+      VkMeshGPU& m = meshes_[todo[next]];
+
+      VkAccelerationStructureGeometryKHR geom{};
+      geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+      geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+      geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+      auto& tri = geom.geometry.triangles;
+      tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+      tri.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+      tri.vertexData.deviceAddress = m.vboAddr;
+      tri.vertexStride = sizeof(DrawVertex);
+      tri.maxVertex = m.vertexCount - 1;
+      tri.indexType = VK_INDEX_TYPE_UINT32;
+      tri.indexData.deviceAddress = m.eboAddr;
+
+      const uint32_t primCount = m.indexCount / 3;
+
+      VkAccelerationStructureBuildGeometryInfoKHR bgi{};
+      bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+      bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+      bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+                  VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+      bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+      bgi.geometryCount = 1;
+
+      VkAccelerationStructureBuildSizesInfoKHR sizes{};
+      sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+      bgi.pGeometries = &geom;  // sizing only reads the geometry description
+      pfnGetASBuildSizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                          &bgi, &primCount, &sizes);
+
+      const VkDeviceSize asAligned = (sizes.accelerationStructureSize + 255) & ~VkDeviceSize(255);
+      const VkDeviceSize scratchAligned =
+          (sizes.buildScratchSize + scratchAlign_ - 1) & ~VkDeviceSize(scratchAlign_ - 1);
+
+      // Always take the first item, even if it alone blows the budget -- a single
+      // huge mesh must still build.
+      if (!items.empty() &&
+          (asBytes + asAligned + scratchBytes + scratchAligned) > kBlasWaveBytes) {
+        break;
+      }
+
+      Item it{};
+      it.meshId = todo[next];
+      it.asOffset = asBytes;
+      it.asSize = sizes.accelerationStructureSize;
+      it.scratchOffset = scratchBytes;
+      it.primCount = primCount;
+      items.push_back(it);
+      geoms.push_back(geom);
+      bgis.push_back(bgi);
+
+      asBytes += asAligned;
+      scratchBytes += scratchAligned;
+      ++next;
+    }
+    if (items.empty()) break;
+
+    // ---- transient wave storage ---------------------------------------------
+    VkBuffer fullBuf = VK_NULL_HANDLE, scratchBuf = VK_NULL_HANDLE;
+    VkDeviceMemory fullMem = VK_NULL_HANDLE, scratchMem = VK_NULL_HANDLE;
+    const bool ok =
+        createDeviceBuffer(asBytes, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                           &fullBuf, &fullMem) &&
+        createDeviceBuffer(scratchBytes + scratchAlign_, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                           &scratchBuf, &scratchMem);
+    if (!ok) {
+      // Out of memory for the wave: fall back to the one-at-a-time path, which
+      // needs far less transient headroom, rather than dropping the geometry.
+      if (fullBuf) vkDestroyBuffer(device_, fullBuf, nullptr);
+      if (fullMem) vkFreeMemory(device_, fullMem, nullptr);
+      if (scratchBuf) vkDestroyBuffer(device_, scratchBuf, nullptr);
+      if (scratchMem) vkFreeMemory(device_, scratchMem, nullptr);
+      for (const Item& it : items) buildBlas(meshes_[it.meshId]);
+      continue;
+    }
+
+    VkDeviceAddress scratchBase = bufferDeviceAddress(scratchBuf);
+    scratchBase = (scratchBase + scratchAlign_ - 1) &
+                  ~static_cast<VkDeviceAddress>(scratchAlign_ - 1);
+
+    VkQueryPoolCreateInfo qpi{};
+    qpi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    qpi.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+    qpi.queryCount = static_cast<uint32_t>(items.size());
+    VkQueryPool qp = VK_NULL_HANDLE;
+    if (vkCreateQueryPool(device_, &qpi, nullptr, &qp) != VK_SUCCESS) {
+      vkDestroyBuffer(device_, fullBuf, nullptr);
+      vkFreeMemory(device_, fullMem, nullptr);
+      vkDestroyBuffer(device_, scratchBuf, nullptr);
+      vkFreeMemory(device_, scratchMem, nullptr);
+      for (const Item& it : items) buildBlas(meshes_[it.meshId]);
+      continue;
+    }
+
+    // Create the full-size AS handles over slices of the shared buffer.
+    bool created = true;
+    for (size_t i = 0; i < items.size(); ++i) {
+      VkAccelerationStructureCreateInfoKHR aci{};
+      aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+      aci.buffer = fullBuf;
+      aci.offset = items[i].asOffset;
+      aci.size = items[i].asSize;
+      aci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+      if (pfnCreateAS_(device_, &aci, nullptr, &items[i].fullAs) != VK_SUCCESS) {
+        created = false;
+        break;
+      }
+      bgis[i].pGeometries = &geoms[i];
+      bgis[i].dstAccelerationStructure = items[i].fullAs;
+      bgis[i].scratchData.deviceAddress = scratchBase + items[i].scratchOffset;
+    }
+
+    if (created) {
+      // ---- submit 1: build the whole wave, then query compacted sizes --------
+      std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges(items.size());
+      std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> pRanges(items.size());
+      for (size_t i = 0; i < items.size(); ++i) {
+        ranges[i].primitiveCount = items[i].primCount;
+        pRanges[i] = &ranges[i];
+      }
+      VkCommandBuffer cb = beginOneShot();
+      pfnCmdBuildAS_(cb, static_cast<uint32_t>(bgis.size()), bgis.data(), pRanges.data());
+      VkMemoryBarrier bar{};
+      bar.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+      bar.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+      bar.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+      vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                           VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1,
+                           &bar, 0, nullptr, 0, nullptr);
+      vkCmdResetQueryPool(cb, qp, 0, static_cast<uint32_t>(items.size()));
+      std::vector<VkAccelerationStructureKHR> fulls(items.size());
+      for (size_t i = 0; i < items.size(); ++i) fulls[i] = items[i].fullAs;
+      pfnCmdWriteASProps_(cb, static_cast<uint32_t>(fulls.size()), fulls.data(),
+                          VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, qp, 0);
+      endOneShot(cb);
+
+      std::vector<VkDeviceSize> compacted(items.size(), 0);
+      const VkResult qr = vkGetQueryPoolResults(
+          device_, qp, 0, static_cast<uint32_t>(items.size()),
+          compacted.size() * sizeof(VkDeviceSize), compacted.data(),
+          sizeof(VkDeviceSize),
+          VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+
+      // ---- submit 2: copy each into right-sized storage ----------------------
+      VkCommandBuffer cb2 = beginOneShot();
+      for (size_t i = 0; i < items.size(); ++i) {
+        VkMeshGPU& m = meshes_[items[i].meshId];
+        const VkDeviceSize csize = (qr == VK_SUCCESS) ? compacted[i] : 0;
+        // A compacted size of 0, or one that is not actually smaller, means
+        // there is nothing to win: keep the full-size build by handing its
+        // storage to the mesh and skipping the copy.
+        if (csize == 0 || csize >= items[i].asSize) {
+          // Cannot hand over a slice of the shared buffer, so rebuild this one
+          // standalone after the wave is torn down.
+          continue;
+        }
+        if (!createDeviceBuffer(csize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                                &m.blasBuf, &m.blasMem)) {
+          continue;
+        }
+        VkAccelerationStructureCreateInfoKHR aci{};
+        aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        aci.buffer = m.blasBuf;
+        aci.size = csize;
+        aci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        if (pfnCreateAS_(device_, &aci, nullptr, &m.blas) != VK_SUCCESS) {
+          vkDestroyBuffer(device_, m.blasBuf, nullptr);
+          vkFreeMemory(device_, m.blasMem, nullptr);
+          m.blasBuf = VK_NULL_HANDLE;
+          m.blasMem = VK_NULL_HANDLE;
+          continue;
+        }
+        VkCopyAccelerationStructureInfoKHR cpi{};
+        cpi.sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR;
+        cpi.src = items[i].fullAs;
+        cpi.dst = m.blas;
+        cpi.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+        pfnCmdCopyAS_(cb2, &cpi);
+        blasBytes_ += csize;
+        blasBytesUncompacted_ += items[i].asSize;
+      }
+      endOneShot(cb2);
+
+      for (size_t i = 0; i < items.size(); ++i) {
+        VkMeshGPU& m = meshes_[items[i].meshId];
+        if (m.blas == VK_NULL_HANDLE) continue;  // skipped above; rebuilt below
+        VkAccelerationStructureDeviceAddressInfoKHR dai{};
+        dai.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+        dai.accelerationStructure = m.blas;
+        m.blasAddr = pfnGetASDeviceAddress_(device_, &dai);
+      }
+    }
+
+    // The transient wave storage (and its full-size AS handles) dies here; the
+    // compacted copies own their own memory.
+    for (const Item& it : items) {
+      if (it.fullAs && pfnDestroyAS_) pfnDestroyAS_(device_, it.fullAs, nullptr);
+    }
+    vkDestroyQueryPool(device_, qp, nullptr);
+    vkDestroyBuffer(device_, fullBuf, nullptr);
+    vkFreeMemory(device_, fullMem, nullptr);
+    vkDestroyBuffer(device_, scratchBuf, nullptr);
+    vkFreeMemory(device_, scratchMem, nullptr);
+
+    // Anything the wave could not compact (or failed to create) still needs a
+    // BLAS: build it the plain way now that the wave's memory is back.
+    for (const Item& it : items) {
+      if (meshes_[it.meshId].blas == VK_NULL_HANDLE) buildBlas(meshes_[it.meshId]);
+    }
+  }
+}
+
+void VulkanRenderer::evictBlasNotIn(const std::vector<uint32_t>& keepMeshIds) {
+  // RT LOD promotes a prototype to Full lazily but never demoted its BLAS, so the
+  // resident set only grew: pan across Island and every region the camera has
+  // ever visited keeps its full-size BLAS forever. Drop the ones this pose does
+  // not render at Full -- they rebuild (compacted) if the camera comes back.
+  if (!rtSupported_) return;
+  std::vector<bool> keep(meshes_.size(), false);
+  for (uint32_t id : keepMeshIds) {
+    if (id < keep.size()) keep[id] = true;
+  }
+  for (size_t i = 0; i < meshes_.size(); ++i) {
+    if (keep[i] || meshes_[i].blas == VK_NULL_HANDLE) continue;
+    destroyBlas(meshes_[i]);
+  }
 }
 
 void VulkanRenderer::refitBlas(VkMeshGPU& m) {
@@ -5274,14 +5855,30 @@ void VulkanRenderer::rebuildTlas() {
 
   // Build the full BLAS only for prototypes that an instance actually renders at
   // Full this pose (the long Proxy/Cull tail keeps no full BLAS -> memory bound by
-  // the visible near set, not the scene size). Skinned/morphed meshes whose
-  // vertices changed this frame refit their existing BLAS (buildBlas no-ops on
-  // an existing one).
+  // the visible near set, not the scene size).
+  std::vector<uint32_t> fullIds;
+  fullIds.reserve(sel.size());
   for (const RtLodInstance& s : sel) {
-    if (s.level != RtLod::Full) continue;
-    VkMeshGPU& sm = meshes_[s.meshId];
-    buildBlas(sm);
-    refitBlas(sm);
+    if (s.level == RtLod::Full) fullIds.push_back(s.meshId);
+  }
+  // Evict BEFORE building: the demoted set's memory is what pays for the new
+  // wave, which matters exactly when VRAM is tight.
+  evictBlasNotIn(fullIds);
+  blasBytes_ = 0;
+  blasBytesUncompacted_ = 0;
+  blasUniqueBuilt_ = 0;
+  buildBlasWave(fullIds);
+  // Skinned/morphed meshes whose vertices changed this frame refit their
+  // existing ALLOW_UPDATE BLAS in place (no-op unless blasNeedsRefit; the wave
+  // routed updatable meshes through buildBlas, never the compact path).
+  for (uint32_t id : fullIds) refitBlas(meshes_[id]);
+  if (blasBytesUncompacted_ > 0) {
+    LOGI("[vk_rt] BLAS: %.1f MiB resident from %.1f MiB built (%.0f%%), "
+         "%zu unique of %zu full instances, compact=%d",
+         double(blasBytes_) / (1024.0 * 1024.0),
+         double(blasBytesUncompacted_) / (1024.0 * 1024.0),
+         100.0 * double(blasBytes_) / double(blasBytesUncompacted_),
+         blasUniqueBuilt_, fullIds.size(), blasCompact_ ? 1 : 0);
   }
 
   insts.reserve(sel.size());
@@ -5311,7 +5908,16 @@ void VulkanRenderer::rebuildTlas() {
     insts.push_back(inst);
     InstanceInfoGPU info{};
     info.meshId = s.meshId;  // Proxy: boxMeshId; Full: the real mesh
-    info.useMaterial = (s.level == RtLod::Full && !s.instanced) ? 1u : 0u;
+    // Instanced prototypes historically had no material (submesh id 0), so RT
+    // shaded them by per-instance tint only. The loader now resolves the
+    // prototype's bound material (matId >= 1); use it when present so an
+    // instanced prototype's material (color/roughness/metal) shades in RT like
+    // a non-instanced mesh. Unmateraled prototypes (matId <= 0) keep the tint.
+    const bool instHasMaterial =
+        s.instanced && s.level == RtLod::Full &&
+        size_t(s.meshId) < meshes_.size() && meshes_[s.meshId].matId > 0;
+    info.useMaterial =
+        ((s.level == RtLod::Full && !s.instanced) || instHasMaterial) ? 1u : 0u;
     info.tint[0] = s.tint[0];
     info.tint[1] = s.tint[1];
     info.tint[2] = s.tint[2];
@@ -5344,10 +5950,21 @@ void VulkanRenderer::rebuildTlas() {
   geom.geometry.instances.data.deviceAddress = bufferDeviceAddress(instBuf_);
 
   const uint32_t instCount = static_cast<uint32_t>(insts.size());
+  // PREFER_FAST_BUILD for settle rebuilds was on the large-scene.md 2.8 list. It
+  // is NOT worth taking: on Island the TLAS build itself is 0.7-4.6 ms of a
+  // 600-8400 ms rebuild (which is dominated by the BLAS builds and the instance
+  // array), so trading trace speed -- paid on every accumulation frame after the
+  // camera settles -- to save ~1 ms of a rebuild that only happens on settle is a
+  // straight loss. Kept as a lever (TUSDVIEW_TLAS_FAST_BUILD=1) for a GPU or scene
+  // where the balance differs; measure the "AS build" line below before flipping it.
+  static const bool kTlasFastBuild =
+      std::getenv("TUSDVIEW_TLAS_FAST_BUILD") != nullptr;
   VkAccelerationStructureBuildGeometryInfoKHR bgi{};
   bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
   bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-  bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  bgi.flags = kTlasFastBuild
+                  ? VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR
+                  : VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
   bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
   bgi.geometryCount = 1;
   bgi.pGeometries = &geom;
@@ -5383,17 +6000,24 @@ void VulkanRenderer::rebuildTlas() {
   VkAccelerationStructureBuildRangeInfoKHR range{};
   range.primitiveCount = instCount;
   const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+  auto asT0 = std::chrono::steady_clock::now();
   VkCommandBuffer cb = beginOneShot();
   pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
   endOneShot(cb);
+  const double asMs =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                asT0)
+          .count();
   vkDestroyBuffer(device_, scratch, nullptr);
   vkFreeMemory(device_, scratchMem, nullptr);
   if (rtTiming) {
     auto tt = std::chrono::steady_clock::now();
     std::fprintf(stderr,
-                 "[vk_rt] TLAS: storage %.2f GB, scratch %.2f GB, total build %.1f ms\n",
+                 "[vk_rt] TLAS: storage %.2f GB, scratch %.2f GB, AS build %.1f ms "
+                 "(%s), total build %.1f ms\n",
                  double(sizes.accelerationStructureSize) / 1e9,
-                 double(sizes.buildScratchSize) / 1e9,
+                 double(sizes.buildScratchSize) / 1e9, asMs,
+                 kTlasFastBuild ? "fast-build" : "fast-trace",
                  std::chrono::duration<double, std::milli>(tt - tlasT0).count());
     uint64_t used = 0, budget = 0;
     if (memoryBudget(&used, &budget)) {
@@ -6105,6 +6729,8 @@ void VulkanRenderer::ensureDrawMeta() {
     meta[mi].ids[1] = (m.geometricNormal ? 1 : 0) | (m.doubleSided ? 2 : 0) |
                       ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
     meta[mi].ids[2] = meta[mi].ids[3] = 0;
+    meta[mi].jointAddr = m.jointAddr;  // 0 = unskinned
+    meta[mi].weightAddr = m.weightAddr;
   }
   mdiMeshMetaBase_ = 0;  // per-mesh loop pushes baseDraw = mesh index directly
   boxMetaSlot_ = static_cast<uint32_t>(meshes_.size());
@@ -6327,15 +6953,22 @@ void VulkanRenderer::buildInstMdi() {
   mdiMeshMetaBase_ = mdiDrawCount_;
   const uint32_t nmesh = static_cast<uint32_t>(meshes_.size());
   std::vector<DrawMetaCPU> meta(mdiDrawCount_ + nmesh + 1u);
-  auto meshIds = [&](size_t mi, DrawMetaCPU& d) {
+  auto meshIds = [&](size_t mi, DrawMetaCPU& d, bool skinnable) {
     const auto& m = meshes_[mi];
     d.ids[0] = static_cast<int32_t>(mi);
     d.ids[1] = (m.geometricNormal ? 1 : 0) | (m.doubleSided ? 2 : 0) |
                ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
     d.ids[2] = d.ids[3] = 0;
+    // MDI draws read a MERGED vertex buffer, so gl_VertexIndex would not index the
+    // mesh's own skin arrays: leave those draws unskinned (skinned prototypes are
+    // never MDI-eligible, so this only ever zeroes what is already zero).
+    d.jointAddr = skinnable ? m.jointAddr : 0;
+    d.weightAddr = skinnable ? m.weightAddr : 0;
   };
-  for (uint32_t i = 0; i < mdiDrawCount_; ++i) meshIds(mdiCmds_[i].meshIndex, meta[i]);
-  for (uint32_t mi = 0; mi < nmesh; ++mi) meshIds(mi, meta[mdiDrawCount_ + mi]);
+  for (uint32_t i = 0; i < mdiDrawCount_; ++i)
+    meshIds(mdiCmds_[i].meshIndex, meta[i], /*skinnable=*/false);
+  for (uint32_t mi = 0; mi < nmesh; ++mi)
+    meshIds(mi, meta[mdiDrawCount_ + mi], /*skinnable=*/true);
   boxMetaSlot_ = mdiDrawCount_ + nmesh;
   meta[boxMetaSlot_].ids[0] = -1;
   meta[boxMetaSlot_].ids[1] = 1;
@@ -6575,6 +7208,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     for (int apass = 0; apass < alphaPasses; ++apass) {
     const VkPipeline meshPl = (apass == 0) ? pipeline_ : translucentPipeline_;
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPl);
+    int cullState = -1;  // -1 unknown; dedup vkCmdSetCullMode across meshes
     if (boneDesc_ != VK_NULL_HANDLE) {
       vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                               1, 1, &boneDesc_, 0, nullptr);
@@ -6657,6 +7291,19 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       }
       if (meshes_[mi].instanceCount > 0) continue;  // drawn in the instanced pass
       const auto& mesh = meshes_[mi];
+      // Empty-mesh placeholder (slot kept for index sync): nothing to draw.
+      if (mesh.vbo == VK_NULL_HANDLE || mesh.submeshes.empty()) continue;
+      // Back-face cull single-sided meshes, exactly like the GL backend
+      // (gl_renderer's wantCull). Dynamic state, so it persists across the
+      // tess-pipeline switch below; only touched on a transition.
+      if (dynCullSupported_) {
+        const VkCullModeFlags want =
+            mesh.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+        if (static_cast<int>(want) != cullState) {
+          vkCmdSetCullMode_(cb, want);
+          cullState = static_cast<int>(want);
+        }
+      }
       light3d::Mat4 W = ToMat4(mesh.world);
       // mvp = viewProj*model and the normal matrix are derived in the shader from
       // pc.model (frees the push-constant lanes they used).
@@ -6686,6 +7333,13 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       if (morphCh != VK_NULL_HANDLE)
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                                 9, 1, &morphCh, 0, nullptr);
+      // Set 24: per-vertex displayColor SSBO (dummy + a cleared pc flag when the
+      // mesh carries none -- the shader statically references it).
+      VkDescriptorSet vtxColD =
+          mesh.vtxColorDesc ? mesh.vtxColorDesc : dummyMorphDesc_;
+      if (vtxColD != VK_NULL_HANDLE)
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                                24, 1, &vtxColD, 0, nullptr);
       VkDeviceSize offs[7] = {0, 0, 0, 0, 0, 0, 0};
       VkBuffer bufs[7] = {mesh.vbo,          mesh.jointVbo,   mesh.weightVbo,
                           mesh.influenceVbo, mesh.uv1Vbo,     mesh.morphInflVbo,
@@ -6821,6 +7475,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         if (isUdimSlot(nmSlot)) pc.ids[3] |= 4;
         if (isUdimSlot(emSlot)) pc.ids[3] |= 8;
         if (nmSlot >= 0) pc.ids[3] |= 16;
+        // bit 32: per-vertex displayColor present (set-24 SSBO is real, not dummy).
+        if (mesh.vtxColorDesc != VK_NULL_HANDLE) pc.ids[3] |= 32;
         vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(PushC), &pc);
         // GPU tessellation for displaced meshes in Shaded mode when the slider
         // asks for it: bind the PATCH-list tess pipeline for this draw, then
@@ -6847,6 +7503,19 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     }
     if (anyInstanced && instPipeline_) {
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipeline_);
+      // The MDI batch draws every eligible prototype in a few indirect calls, so
+      // cull mode cannot vary per mesh here: leave it off (the pre-dynamic-state
+      // behavior). The per-mesh instanced loop below does cull single-sided
+      // prototypes; GL culls them in both paths.
+      if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_NONE);
+      // Set 1: the scene-wide bone rows, so a skinned prototype poses in the
+      // instanced vertex shader (same buffer the mesh pass binds). Absent when the
+      // scene has no skinning -- every draw then carries jointAddr == 0 and the
+      // shader never touches the binding.
+      if (boneDesc_ != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                instPipelineLayout_, 1, 1, &boneDesc_, 0, nullptr);
+      }
       // Set 0: dome IBL irradiance cube (black fallback) for the flat ambient.
       {
         VkDescriptorSet irrDs =
@@ -6902,6 +7571,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
             translucentInst ? instTranslucentPipeline_ : instPipeline_;
         if (pipe == VK_NULL_HANDLE) continue;
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+        int instCullState = -1;  // dedup vkCmdSetCullMode across prototypes
         InstPushC ipc{};
         for (size_t mi = 0; mi < meshes_.size(); ++mi) {
           if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
@@ -6910,6 +7580,16 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           if (mesh.hasTranslucentInstances != translucentInst) continue;
           if (mesh.instanceCount == 0 || mesh.drawInstanceCount == 0) continue;
           if (!mesh.instVbo || !mesh.instColorBuf || !mesh.instVtxColorBuf) continue;
+          // Back-face cull single-sided prototypes (parity with GL's instanced
+          // pass); only touched on a transition.
+          if (dynCullSupported_) {
+            const VkCullModeFlags want =
+                mesh.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+            if (static_cast<int>(want) != instCullState) {
+              vkCmdSetCullMode_(cb, want);
+              instCullState = static_cast<int>(want);
+            }
+          }
           ipc.draw[0] =
               static_cast<int>(mdiMeshMetaBase_ + mi);  // per-mesh DrawMeta slot
           vkCmdPushConstants(cb, instPipelineLayout_,

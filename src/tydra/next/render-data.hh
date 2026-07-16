@@ -16,6 +16,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <utility>
 
 #include "chunked-array.hh"
 
@@ -27,9 +28,9 @@ namespace next {
 // Forward declarations
 //
 class RenderScene;
-class RenderMesh;
-class RenderMaterial;
-class RenderTexture;
+struct RenderMesh;
+struct RenderMaterial;
+struct RenderTexture;
 
 //
 // Enums
@@ -91,6 +92,7 @@ enum class Interpolation : uint8_t {
 enum class NodeType : uint8_t {
   Xform = 0,
   Mesh,
+  Points,
   PointInstancer,
   Camera,
   PointLight,
@@ -100,7 +102,29 @@ enum class NodeType : uint8_t {
   DiskLight,
   DomeLight,
   SphereLight,
-  Skeleton
+  Skeleton,
+  Curves
+};
+
+//
+// Curve enums (UsdGeomBasisCurves / UsdGeomNurbsCurves)
+//
+
+enum class CurveType : uint8_t {
+  Linear = 0,  // Polyline segments between control points
+  Cubic        // Cubic spans (see CurveBasis)
+};
+
+enum class CurveBasis : uint8_t {
+  Bezier = 0,
+  BSpline,
+  CatmullRom
+};
+
+enum class CurveWrap : uint8_t {
+  Nonperiodic = 0,
+  Periodic,   // Curve closes back onto its first point
+  Pinned      // bspline/catmullRom interpolate their end control points
 };
 
 enum class LightType : uint8_t {
@@ -208,6 +232,9 @@ struct VertexAttribute {
 struct RenderMesh {
   std::string name;
   std::string prim_path;
+  // True for an extent-derived low-cost stand-in emitted by a streaming sink
+  // policy instead of the authored geometry payload.
+  bool is_proxy = false;
 
   // Topology
   UInt32Chunked face_vertex_counts;   // Number of verts per face
@@ -222,12 +249,22 @@ struct RenderMesh {
   FloatChunked texcoords_0;       // Primary UV (st), xy interleaved
   FloatChunked texcoords_1;       // Secondary UV
   FloatChunked colors;            // Vertex colors (rgb or rgba)
+  FloatChunked opacities;         // displayOpacity (1 float per element)
+
+  // Authored primvar names of the two UV sets (e.g. "st", "UVMap"). Empty when
+  // the set is absent. A texture names the set it samples via
+  // RenderTexture::uv_primvar, so a consumer matches that against these to pick
+  // the slot.
+  std::string texcoords_0_name;
+  std::string texcoords_1_name;
 
   // Interpolation modes for attributes
   Interpolation normals_interp = Interpolation::Vertex;
+  Interpolation tangents_interp = Interpolation::Vertex;
   Interpolation texcoords_0_interp = Interpolation::Vertex;
   Interpolation texcoords_1_interp = Interpolation::Vertex;
   Interpolation colors_interp = Interpolation::Vertex;
+  Interpolation opacities_interp = Interpolation::Vertex;
 
   // Additional primvars (custom attributes)
   std::vector<VertexAttribute> primvars;
@@ -236,7 +273,10 @@ struct RenderMesh {
   int32_t material_id = -1;  // -1 = no material
 
   // Per-face material (GeomSubset)
-  // Maps face range [start, end) to material_id
+  // Maps face range [start, start+count) to material_id. When the mesh is
+  // triangulated (face_triangle_offsets non-empty), the ranges are in
+  // TRIANGLE space (indexing triangulated_indices/3); otherwise they are
+  // authored polygon-face ranges.
   struct MaterialSubset {
     uint32_t face_start;
     uint32_t face_count;
@@ -244,26 +284,81 @@ struct RenderMesh {
   };
   std::vector<MaterialSubset> material_subsets;
 
+  // Prefix sums of triangles emitted per authored face (size = nfaces + 1);
+  // filled by triangulation. Holes/degenerate faces contribute 0 triangles.
+  std::vector<uint32_t> face_triangle_offsets;
+
+  // Faces dropped by topology sanitization: authored face numbering (and any
+  // GeomSubset indices referring to it) no longer aligns when > 0.
+  uint32_t sanitize_dropped_faces = 0;
+
+  // When sanitize_dropped_faces > 0: maps each AUTHORED face index to its
+  // post-sanitize face index (-1 = the face was dropped). Empty when
+  // sanitization kept the authored face numbering intact.
+  std::vector<int32_t> sanitize_face_remap;
+
   // Skinning data
   struct SkinBinding {
-    UInt16Chunked joint_indices;  // 4 joints per vertex
-    FloatChunked joint_weights;   // 4 weights per vertex
+    UInt16Chunked joint_indices;
+    FloatChunked joint_weights;
+    uint32_t influences_per_vertex = 0;
     int32_t skeleton_id = -1;
+    std::string skeleton_path;    // bound Skeleton prim (resolves skeleton_id)
     Matrix4 geom_bind_transform;
+    // Mesh-local `skel:joints` order: when non-empty, joint_indices index
+    // into this list until the converter remaps them to skeleton joint
+    // order (done in the skeleton-resolve pass).
+    std::vector<std::string> mesh_joint_order;
   };
   std::unique_ptr<SkinBinding> skin;
 
   // Blend shapes
   struct BlendShape {
+    struct Inbetween {
+      std::string name;
+      FloatChunked point_offsets;
+      float weight = 0.0f;
+    };
     std::string name;
     FloatChunked point_offsets;   // xyz deltas
     FloatChunked normal_offsets;  // xyz deltas (optional)
+    // Sparse target: point_offsets[k] applies to point point_indices[k].
+    // Empty = dense (offsets parallel to points).
+    std::vector<uint32_t> point_indices;
     float weight = 0.0f;
+    std::vector<Inbetween> inbetweens;
   };
   std::vector<BlendShape> blend_shapes;
 
+  // holeIndices: faces excluded from rendering (skipped at triangulation;
+  // kept in the topology so uniform/faceVarying primvar alignment holds).
+  std::vector<uint32_t> hole_faces;
+
+  // Release the chunk-allocation slack of every chunked member (exact-size
+  // tail chunks). Called once after conversion: scenes with thousands of
+  // small meshes otherwise pay the 64KB minimum chunk per non-empty array.
+  void compact();
+
+  // True when any chunked member failed a (nothrow) chunk allocation during
+  // conversion — the mesh is incomplete and must be dropped with an error
+  // instead of silently rendering truncated data.
+  bool has_alloc_failure() const;
+
+  // Authored winding: `orientation = "leftHanded"`. Triangulation emits
+  // reversed (rightHanded) winding for these meshes so consumers can treat
+  // triangulated_indices as CCW uniformly; computed normals follow.
+  bool left_handed = false;
+
+  // Authored `doubleSided`. false (the USD default) = back-face cull.
+  bool double_sided = false;
+
   // Triangulated data (computed on demand)
   UInt32Chunked triangulated_indices;
+  // Per triangulated CORNER, the original face-vertex (corner) index into the
+  // authored faceVarying arrays, so a consumer can index faceVarying primvars
+  // (uv/normals) against the triangulated topology. Parallel to
+  // triangulated_indices (same length). Empty until TriangulateMesh runs.
+  UInt32Chunked triangulated_face_vertex_indices;
   bool is_triangulated = false;
 
   // Bounding box
@@ -278,6 +373,7 @@ struct RenderMesh {
   bool has_tangents() const { return !tangents.empty(); }
   bool has_texcoords() const { return !texcoords_0.empty(); }
   bool has_colors() const { return !colors.empty(); }
+  bool has_opacities() const { return !opacities.empty(); }
   bool has_skin() const { return skin != nullptr; }
   bool has_blend_shapes() const { return !blend_shapes.empty(); }
 
@@ -285,12 +381,103 @@ struct RenderMesh {
 };
 
 //
+// RenderPoints - GPU-ready point cloud data for UsdGeomPoints
+//
+struct RenderPoints {
+  std::string name;
+  std::string prim_path;
+
+  FloatChunked points;  // xyz interleaved, size = point_count * 3
+  FloatChunked widths;  // optional per-point or constant authored width
+  FloatChunked colors;  // optional rgb/rgba displayColor data
+  Interpolation colors_interp = Interpolation::Vertex;
+
+  int32_t material_id = -1;
+
+  Float3 bbox_min;
+  Float3 bbox_max;
+  bool has_bbox = false;
+
+  size_t point_count() const { return points.size() / 3; }
+  bool has_widths() const { return !widths.empty(); }
+  bool has_colors() const { return !colors.empty(); }
+  size_t memory_usage() const;
+};
+
+//
+// RenderCurves - curve prim data for BasisCurves, NurbsCurves and HermiteCurves.
+//
+// Carries both the authored CONTROL data (control points, widths, colors,
+// topology) and a render-ready TESSELLATED polyline representation produced
+// by the converter (CurvesConfig::tessellation_segments samples per span;
+// linear curves pass through unchanged).
+//
+struct RenderCurves {
+  std::string name;
+  std::string prim_path;
+
+  //
+  // Control (authored) data
+  //
+  std::vector<uint32_t> curve_vertex_counts;  // control points per curve
+  FloatChunked points;   // control points, xyz interleaved
+  FloatChunked widths;   // authored widths (element count per widths_interp)
+  Interpolation widths_interp = Interpolation::Constant;
+  FloatChunked colors;   // displayColor, rgb interleaved
+  Interpolation colors_interp = Interpolation::Constant;
+
+  CurveType type = CurveType::Cubic;
+  CurveBasis basis = CurveBasis::Bezier;  // cubic BasisCurves only
+  CurveWrap wrap = CurveWrap::Nonperiodic;
+  bool is_nurbs = false;  // true = NurbsCurves (order/knots evaluated)
+  bool is_hermite = false;  // true = HermiteCurves (point/tangent pairs)
+
+  //
+  // Tessellated polylines (render-ready output)
+  //
+  // Each curve becomes one polyline; periodic curves are closed by
+  // duplicating the first tessellated point at the end.
+  std::vector<uint32_t> tessellated_vertex_counts;  // points per polyline
+  FloatChunked tessellated_points;  // xyz interleaved
+  // Per-tessellated-point widths (linearly interpolated along the curve).
+  // Empty when widths are absent or constant (use widths[0] instead).
+  FloatChunked tessellated_widths;
+  // Per-tessellated-point display colors. Empty when displayColor is absent.
+  FloatChunked tessellated_colors;
+
+  int32_t material_id = -1;
+
+  Float3 bbox_min;
+  Float3 bbox_max;
+  bool has_bbox = false;
+
+  size_t curve_count() const { return curve_vertex_counts.size(); }
+  size_t control_point_count() const { return points.size() / 3; }
+  size_t tessellated_point_count() const {
+    return tessellated_points.size() / 3;
+  }
+  bool has_widths() const { return !widths.empty(); }
+  bool has_colors() const { return !colors.empty(); }
+  size_t memory_usage() const;
+};
+
+//
 // RenderPointInstancer - render-ready instance arrays for UsdGeomPointInstancer
 //
 struct RenderPointInstancer {
+  struct CompactInstance {
+    float position[3];
+    uint32_t packed_orientation;  // four signed normalized 8-bit components
+    uint16_t scale[3];            // IEEE 754 binary16
+    uint16_t flags;               // bit 0: visible and active
+    int32_t prototype_index;
+    uint32_t source_index;
+  };
+  static_assert(sizeof(CompactInstance) == 32,
+                "Compact PointInstancer record must remain 32 bytes");
+
   std::string name;
   std::string prim_path;
-  int32_t material_id = -1;  // Optional material binding on the instancer.
 
   std::vector<std::string> prototype_paths;
   std::vector<int32_t> prototype_node_ids;     // One entry per prototype path.
@@ -307,16 +494,18 @@ struct RenderPointInstancer {
   std::vector<int64_t> invisible_ids;
   std::vector<int64_t> inactive_ids;
   std::vector<Matrix4> transforms;
-  std::vector<float> display_colors;    // rgb, size = instance_count * 3
-  std::vector<float> display_opacities; // alpha, size = instance_count
   std::vector<uint8_t> instance_visible;  // 1 = visible/active, 0 = hidden
+  std::vector<CompactInstance> compact_instances;
   uint32_t draw_start = 0;
   uint32_t draw_count = 0;
 
   bool valid = false;
   std::string validation_error;
 
-  size_t instance_count() const { return proto_indices.size(); }
+  size_t instance_count() const {
+    return proto_indices.empty() ? compact_instances.size()
+                                 : proto_indices.size();
+  }
   size_t visible_instance_count() const;
   bool has_valid_draw_range(size_t total_draw_count) const;
   bool has_orientations() const { return !orientations.empty(); }
@@ -324,8 +513,6 @@ struct RenderPointInstancer {
   bool has_velocities() const { return !velocities.empty(); }
   bool has_angular_velocities() const { return !angular_velocities.empty(); }
   bool has_ids() const { return !ids.empty(); }
-  bool has_display_colors() const { return !display_colors.empty(); }
-  bool has_display_opacities() const { return !display_opacities.empty(); }
   size_t prototype_count() const { return prototype_paths.size(); }
   size_t prototype_mesh_count(size_t prototype_index) const;
   bool has_valid_prototype_mesh_bindings() const;
@@ -342,10 +529,6 @@ struct RenderPointInstanceDraw {
   int32_t mesh_id = -1;
   int32_t material_id = -1;
   int32_t expanded_mesh_id = -1;  // Optional duplicated mesh generated from this draw.
-  bool has_display_color = false;
-  Float3 display_color = {1.0f, 1.0f, 1.0f};
-  bool has_display_opacity = false;
-  float display_opacity = 1.0f;
   Matrix4 transform;
 };
 
@@ -391,22 +574,24 @@ struct ShaderParam {
 // PreviewSurface shader parameters
 //
 struct PreviewSurfaceShader {
-  ShaderParam diffuse_color = {{-1}, {0.18f, 0.18f, 0.18f, 1.0f}};
-  ShaderParam emissive_color = {{-1}, {0, 0, 0, 1}};
-  ShaderParam specular_color = {{-1}, {1, 1, 1, 1}};
+  ShaderParam diffuse_color = {-1, {0.18f, 0.18f, 0.18f, 1.0f}};
+  ShaderParam emissive_color = {-1, {0, 0, 0, 1}};
+  // UsdPreviewSurface spec fallback is (0,0,0) — only meaningful when
+  // useSpecularWorkflow is on.
+  ShaderParam specular_color = {-1, {0, 0, 0, 1}};
 
-  ShaderParam metallic = {{-1}, {0, 0, 0, 0}};
-  ShaderParam roughness = {{-1}, {0.5f, 0, 0, 0}};
-  ShaderParam clearcoat = {{-1}, {0, 0, 0, 0}};
-  ShaderParam clearcoat_roughness = {{-1}, {0.01f, 0, 0, 0}};
+  ShaderParam metallic = {-1, {0, 0, 0, 0}};
+  ShaderParam roughness = {-1, {0.5f, 0, 0, 0}};
+  ShaderParam clearcoat = {-1, {0, 0, 0, 0}};
+  ShaderParam clearcoat_roughness = {-1, {0.01f, 0, 0, 0}};
 
-  ShaderParam opacity = {{-1}, {1, 0, 0, 0}};
-  ShaderParam opacity_threshold = {{-1}, {0, 0, 0, 0}};
-  ShaderParam ior = {{-1}, {1.5f, 0, 0, 0}};
+  ShaderParam opacity = {-1, {1, 0, 0, 0}};
+  ShaderParam opacity_threshold = {-1, {0, 0, 0, 0}};
+  ShaderParam ior = {-1, {1.5f, 0, 0, 0}};
 
-  ShaderParam normal = {{-1}, {0, 0, 1, 0}};
-  ShaderParam displacement = {{-1}, {0, 0, 0, 0}};
-  ShaderParam occlusion = {{-1}, {1, 0, 0, 0}};
+  ShaderParam normal = {-1, {0, 0, 1, 0}};
+  ShaderParam displacement = {-1, {0, 0, 0, 0}};
+  ShaderParam occlusion = {-1, {1, 0, 0, 0}};
 
   bool use_specular_workflow = false;
 };
@@ -416,48 +601,48 @@ struct PreviewSurfaceShader {
 //
 struct OpenPBRSurfaceShader {
   // Base
-  ShaderParam base_weight = {{-1}, {1, 0, 0, 0}};
-  ShaderParam base_color = {{-1}, {0.8f, 0.8f, 0.8f, 1}};
-  ShaderParam base_roughness = {{-1}, {0, 0, 0, 0}};
-  ShaderParam base_metalness = {{-1}, {0, 0, 0, 0}};
+  ShaderParam base_weight = {-1, {1, 0, 0, 0}};
+  ShaderParam base_color = {-1, {0.8f, 0.8f, 0.8f, 1}};
+  ShaderParam base_roughness = {-1, {0, 0, 0, 0}};
+  ShaderParam base_metalness = {-1, {0, 0, 0, 0}};
 
   // Specular
-  ShaderParam specular_weight = {{-1}, {1, 0, 0, 0}};
-  ShaderParam specular_color = {{-1}, {1, 1, 1, 1}};
-  ShaderParam specular_roughness = {{-1}, {0.3f, 0, 0, 0}};
-  ShaderParam specular_ior = {{-1}, {1.5f, 0, 0, 0}};
-  ShaderParam specular_anisotropy = {{-1}, {0, 0, 0, 0}};
-  ShaderParam specular_rotation = {{-1}, {0, 0, 0, 0}};
+  ShaderParam specular_weight = {-1, {1, 0, 0, 0}};
+  ShaderParam specular_color = {-1, {1, 1, 1, 1}};
+  ShaderParam specular_roughness = {-1, {0.3f, 0, 0, 0}};
+  ShaderParam specular_ior = {-1, {1.5f, 0, 0, 0}};
+  ShaderParam specular_anisotropy = {-1, {0, 0, 0, 0}};
+  ShaderParam specular_rotation = {-1, {0, 0, 0, 0}};
 
   // Transmission
-  ShaderParam transmission_weight = {{-1}, {0, 0, 0, 0}};
-  ShaderParam transmission_color = {{-1}, {1, 1, 1, 1}};
-  ShaderParam transmission_depth = {{-1}, {0, 0, 0, 0}};
+  ShaderParam transmission_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam transmission_color = {-1, {1, 1, 1, 1}};
+  ShaderParam transmission_depth = {-1, {0, 0, 0, 0}};
 
   // Subsurface
-  ShaderParam subsurface_weight = {{-1}, {0, 0, 0, 0}};
-  ShaderParam subsurface_color = {{-1}, {0.8f, 0.8f, 0.8f, 1}};
-  ShaderParam subsurface_radius = {{-1}, {1, 1, 1, 0}};
+  ShaderParam subsurface_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam subsurface_color = {-1, {0.8f, 0.8f, 0.8f, 1}};
+  ShaderParam subsurface_radius = {-1, {1, 1, 1, 0}};
 
   // Coat
-  ShaderParam coat_weight = {{-1}, {0, 0, 0, 0}};
-  ShaderParam coat_color = {{-1}, {1, 1, 1, 1}};
-  ShaderParam coat_roughness = {{-1}, {0, 0, 0, 0}};
-  ShaderParam coat_ior = {{-1}, {1.5f, 0, 0, 0}};
+  ShaderParam coat_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam coat_color = {-1, {1, 1, 1, 1}};
+  ShaderParam coat_roughness = {-1, {0, 0, 0, 0}};
+  ShaderParam coat_ior = {-1, {1.5f, 0, 0, 0}};
 
   // Sheen
-  ShaderParam sheen_weight = {{-1}, {0, 0, 0, 0}};
-  ShaderParam sheen_color = {{-1}, {1, 1, 1, 1}};
-  ShaderParam sheen_roughness = {{-1}, {0.3f, 0, 0, 0}};
+  ShaderParam sheen_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam sheen_color = {-1, {1, 1, 1, 1}};
+  ShaderParam sheen_roughness = {-1, {0.3f, 0, 0, 0}};
 
   // Emission
-  ShaderParam emission_luminance = {{-1}, {0, 0, 0, 0}};
-  ShaderParam emission_color = {{-1}, {1, 1, 1, 1}};
+  ShaderParam emission_luminance = {-1, {0, 0, 0, 0}};
+  ShaderParam emission_color = {-1, {1, 1, 1, 1}};
 
   // Geometry
-  ShaderParam opacity = {{-1}, {1, 0, 0, 0}};
-  ShaderParam normal = {{-1}, {0, 0, 1, 0}};
-  ShaderParam tangent = {{-1}, {1, 0, 0, 0}};
+  ShaderParam opacity = {-1, {1, 0, 0, 0}};
+  ShaderParam normal = {-1, {0, 0, 1, 0}};
+  ShaderParam tangent = {-1, {1, 0, 0, 0}};
 
   // MaterialX node graph as JSON (optional)
   std::string nodegraph_json;
@@ -470,6 +655,14 @@ struct RenderMaterial {
   std::string name;
   std::string prim_path;
 
+  struct MaterialXConfig {
+    bool authored = false;
+    std::string version;
+    std::string name_space;
+    std::string colorspace;
+    std::string source_uri;
+  };
+
   // Shader type
   enum class ShaderType : uint8_t {
     None = 0,
@@ -477,6 +670,13 @@ struct RenderMaterial {
     OpenPBR
   };
   ShaderType shader_type = ShaderType::None;
+
+  // The material had no convertible surface shader and carries a neutral
+  // default instead of being dropped (see ConvertMaterial). Conversion still
+  // SUCCEEDS in that case, so a caller that only checks the return value cannot
+  // tell a real material from a gray stand-in; consumers that report load
+  // degradation must look here.
+  bool default_fallback = false;
 
   // Shader data (one of these based on shader_type)
   std::unique_ptr<PreviewSurfaceShader> preview_surface;
@@ -493,6 +693,17 @@ struct RenderMaterial {
   };
   AlphaMode alpha_mode = AlphaMode::Opaque;
   float alpha_cutoff = 0.5f;
+
+  // Material displacement/volume terminals (outputs:displacement /
+  // outputs:volume connections). Recorded as metadata (legacy parity:
+  // has_displacement/displacement_shader_path etc.); the shader networks
+  // themselves are not converted.
+  bool has_displacement = false;
+  std::string displacement_shader_path;
+  bool has_volume = false;
+  std::string volume_shader_path;
+
+  MaterialXConfig mtlx_config;
 };
 
 //
@@ -503,14 +714,27 @@ struct RenderTexture {
   std::string prim_path;
   std::string asset_path;  // Original USD asset path
 
+  // Legacy-safe GPU-compressed companion named by the `inputs:file` attribute's
+  // `customData = { asset ktx2 = @foo.ktx2@ }` hint (see doc/texcomp.md). Empty
+  // when unauthored. `asset_path` still points at the plain image, so unaware
+  // consumers are unaffected; a consumer that can upload GPU blocks loads this
+  // instead.
+  std::string ktx2_hint;
+
   // UV transform
   Float2 offset = {0, 0};
   Float2 scale = {1, 1};
   float rotation = 0.0f;  // Radians
 
+  // UV set sampled by this texture (UsdPrimvarReader varname on the st
+  // chain); empty = the default uv primvar ("st").
+  std::string uv_primvar;
+
   // Sampling
-  WrapMode wrap_s = WrapMode::Repeat;
-  WrapMode wrap_t = WrapMode::Repeat;
+  // Effective UsdUVTexture default: unauthored/useMetadata wrap is Clamp
+  // (matches legacy/pxr; the converter always assigns via ParseWrapMode).
+  WrapMode wrap_s = WrapMode::Clamp;
+  WrapMode wrap_t = WrapMode::Clamp;
 
   // Bias/scale for texture values
   Float4 bias = {0, 0, 0, 0};
@@ -518,6 +742,11 @@ struct RenderTexture {
 
   // Image reference
   int32_t image_id = -1;
+
+  // Authored colorspace: colorSpace asset metadata on inputs:file when
+  // present, else inputs:sourceColorSpace ("auto"/"sRGB"/"raw"/...). Web
+  // consumers decode in the browser and need the authored intent.
+  std::string source_color_space = "auto";
 
   // Which channel to use (for single-channel textures)
   enum class Channel : uint8_t { R = 0, G, B, A, RGB, RGBA };
@@ -559,6 +788,37 @@ struct RenderLight {
   float intensity = 1.0f;
   float exposure = 0.0f;
   bool normalize = false;
+  bool enable_color_temperature = false;
+  float color_temperature = 6500.0f;
+  float diffuse = 1.0f;
+  float specular = 1.0f;
+  float shaping_focus = 0.0f;
+  Float3 shaping_focus_tint = {0, 0, 0};  // color3f per UsdLux ShapingAPI
+  float shaping_cone_softness = 0.0f;
+  std::string shaping_ies_file;
+  float shaping_ies_angle_scale = 0.0f;
+  bool shaping_ies_normalize = false;
+  std::vector<std::string> light_link_targets;
+  std::vector<std::string> shadow_link_targets;
+  std::vector<std::string> filter_targets;
+
+  // Light/shadow linking resolved to RenderScene mesh indices (CollectionAPI
+  // collection:lightLink / collection:shadowLink relationship form). When the
+  // collection is unauthored the light links everything and *_links_all stays
+  // true; membershipExpression collections are not evaluated (no path
+  // expression parser in next) and also keep *_links_all = true.
+  bool light_links_all = true;
+  std::vector<int32_t> light_link_mesh_indices;
+  bool shadow_links_all = true;
+  std::vector<int32_t> shadow_link_mesh_indices;
+
+  // DomeLight inputs:texture:format token (matches UsdLux).
+  enum class DomeTextureFormat : uint8_t {
+    Automatic = 0,
+    Latlong,
+    MirroredBall,
+    Angular,
+  };
 
   // Transform
   Matrix4 transform;
@@ -569,12 +829,17 @@ struct RenderLight {
     struct { float width, height; } rect;
     struct { float radius; } disk;
     struct { float angle; } spot;  // Cone angle in radians
-    struct { int32_t texture_id; } dome;
+    struct { int32_t texture_id; DomeTextureFormat texture_format; } dome;
+    struct { float radius, length; } cylinder;
+    struct { float angle; } distant;  // Angular size in degrees
   } params = {};
 
   // Shadow
   bool enable_shadow = true;
   Float3 shadow_color = {0, 0, 0};
+  float shadow_distance = -1.0f;
+  float shadow_falloff = -1.0f;
+  float shadow_falloff_gamma = 1.0f;
 };
 
 //
@@ -599,6 +864,15 @@ struct RenderCamera {
   // Clipping
   float near_clip = 0.1f;
   float far_clip = 10000.0f;
+
+  // Depth of field / exposure
+  float focus_distance = 0.0f;  // 0 = no DoF
+  float fstop = 0.0f;           // 0 = no DoF
+
+  // Motion-blur shutter interval (UsdGeomCamera shutter:open/close), in
+  // time-code offsets relative to the sample time.
+  double shutter_open = 0.0;
+  double shutter_close = 0.0;
 
   // Computed FOV
   float fov_y() const;
@@ -651,11 +925,28 @@ struct AnimationChannel {
 
   TargetPath target_path = TargetPath::Translation;
   int32_t target_node = -1;
+  int32_t target_skeleton = -1;
   std::string target_prim_path;
   std::string property_name;
+  std::string target_skeleton_path;
+  std::vector<std::string> joint_order;
+  std::vector<std::string> blend_shape_order;
+  // Maps each SkelAnimation joint_order element to a Skeleton::joints index.
+  // -1 means the animation joint could not be resolved on the target skeleton.
+  std::vector<int32_t> joint_remap;
 
   // Keyframes (sorted by time)
   std::vector<Keyframe> keyframes;
+
+  // Optional full array payload for UsdSkelAnimation channels. For frame i,
+  // slice array_values at:
+  //   i * element_count * value_stride
+  // with element_count values, each value_stride floats wide.
+  // Existing scalar keyframes keep a first-element preview for compatibility.
+  std::vector<float> array_values;
+  uint32_t element_count = 1;
+  uint32_t value_stride = 4;
+  bool is_skeletal = false;
 
   // Interpolation
   enum class Interpolation : uint8_t {
@@ -677,6 +968,11 @@ struct AnimationClip {
   double end_time = 0.0;
 
   std::vector<AnimationChannel> channels;
+
+  // Source value-clip metadata retained after baking for diagnostics and web
+  // feature-parity reporting.
+  std::vector<std::string> clip_asset_paths;
+  bool value_clip_baked = false;
 };
 
 //
@@ -705,6 +1001,102 @@ struct Skeleton {
 
   // Animation reference
   int32_t animation_id = -1;
+  std::string animation_source_path;
+};
+
+//
+// USD Physics annotations extracted from next::Stage.
+// These are descriptive data for render/tool consumers; tydra-next does not
+// simulate physics.
+//
+struct PhysicsProperty {
+  std::string name;
+  std::string value;
+};
+
+struct PhysicsSceneAnnotation {
+  std::string prim_path;
+  Float3 gravity_direction{0.0f, -1.0f, 0.0f};
+  float gravity_magnitude = 9.81f;
+  std::vector<PhysicsProperty> extension_properties;
+};
+
+struct PhysicsRigidBodyAnnotation {
+  std::string prim_path;
+  bool rigid_body_enabled = true;
+  bool kinematic_enabled = false;
+  std::string simulation_owner;
+  Float3 velocity{0.0f, 0.0f, 0.0f};
+  Float3 angular_velocity{0.0f, 0.0f, 0.0f};
+  bool starts_asleep = false;
+  bool has_mass = false;
+  float mass = 0.0f;
+  float density = 0.0f;
+  Float3 center_of_mass{0.0f, 0.0f, 0.0f};
+  Float3 diagonal_inertia{0.0f, 0.0f, 0.0f};
+  Float4 principal_axes{0.0f, 0.0f, 0.0f, 0.0f};
+  std::vector<PhysicsProperty> extension_properties;
+};
+
+struct PhysicsColliderAnnotation {
+  std::string prim_path;
+  bool collision_enabled = true;
+  std::string simulation_owner;
+  bool has_mesh_collision = false;
+  std::string approximation = "none";
+  std::vector<PhysicsProperty> extension_properties;
+};
+
+struct PhysicsJointAnnotation {
+  std::string prim_path;
+  std::string type_name;
+  std::string body0;
+  std::string body1;
+  bool has_body0 = false;
+  bool has_body1 = false;
+  Float3 local_pos0{0.0f, 0.0f, 0.0f};
+  Float3 local_pos1{0.0f, 0.0f, 0.0f};
+  Float4 local_rot0{1.0f, 0.0f, 0.0f, 0.0f};
+  Float4 local_rot1{1.0f, 0.0f, 0.0f, 0.0f};
+  Float3 axis{1.0f, 0.0f, 0.0f};
+  float lower_limit = 0.0f;
+  float upper_limit = 0.0f;
+  float cone_angle0_limit = -1.0f;
+  float cone_angle1_limit = -1.0f;
+  float min_distance = -1.0f;
+  float max_distance = -1.0f;
+  bool collision_enabled = false;
+  std::vector<PhysicsProperty> extension_properties;
+};
+
+struct PhysicsMaterialAnnotation {
+  std::string prim_path;
+  float static_friction = 0.0f;
+  float dynamic_friction = 0.0f;
+  float restitution = 0.0f;
+  float density = 0.0f;
+  std::vector<PhysicsProperty> extension_properties;
+};
+
+struct PhysicsFilteredPairsAnnotation {
+  std::string prim_path;
+  std::vector<std::string> filtered_pair_paths;
+};
+
+struct PhysicsAnnotations {
+  std::vector<PhysicsSceneAnnotation> scenes;
+  std::vector<PhysicsRigidBodyAnnotation> rigid_bodies;
+  std::vector<PhysicsColliderAnnotation> colliders;
+  std::vector<PhysicsJointAnnotation> joints;
+  std::vector<PhysicsMaterialAnnotation> materials;
+  std::vector<PhysicsFilteredPairsAnnotation> filtered_pairs;
+  std::vector<std::string> articulation_roots;
+};
+
+struct UnsupportedRenderable {
+  std::string prim_path;
+  std::string type_name;
+  std::string reason;
 };
 
 //
@@ -735,6 +1127,8 @@ class RenderScene {
   // Scene data
   std::vector<SceneNode> nodes;
   std::vector<RenderMesh> meshes;
+  std::vector<RenderPoints> points;
+  std::vector<RenderCurves> curves;
   std::vector<RenderPointInstancer> point_instancers;
   std::vector<RenderPointInstanceDraw> point_instance_draws;
   std::vector<RenderMaterial> materials;
@@ -744,6 +1138,8 @@ class RenderScene {
   std::vector<RenderCamera> cameras;
   std::vector<AnimationClip> animations;
   std::vector<Skeleton> skeletons;
+  std::vector<UnsupportedRenderable> unsupported_renderables;
+  PhysicsAnnotations physics;
 
   // Root nodes
   std::vector<int32_t> root_nodes;
@@ -751,6 +1147,8 @@ class RenderScene {
   // Lookup by path
   std::unordered_map<std::string, int32_t> node_by_path;
   std::unordered_map<std::string, int32_t> mesh_by_path;
+  std::unordered_map<std::string, int32_t> points_by_path;
+  std::unordered_map<std::string, int32_t> curves_by_path;
   std::unordered_map<std::string, int32_t> point_instancer_by_path;
   std::unordered_map<std::string, int32_t> material_by_path;
 
@@ -759,6 +1157,8 @@ class RenderScene {
 
   // Bounds-checked accessors
   const RenderMesh* get_mesh(int32_t mesh_id) const;
+  const RenderPoints* get_points(int32_t points_id) const;
+  const RenderCurves* get_curves(int32_t curves_id) const;
   const RenderMaterial* get_material(int32_t material_id) const;
   const RenderPointInstancer* get_point_instancer(int32_t instancer_id) const;
   const RenderPointInstanceDraw* get_point_instance_draw(size_t draw_id) const;
@@ -771,6 +1171,11 @@ class RenderScene {
   struct Stats {
     size_t node_count;
     size_t mesh_count;
+    size_t points_count;
+    size_t point_cloud_point_count;
+    size_t curves_count;                    // RenderCurves records
+    size_t curve_count;                     // individual curves (all records)
+    size_t curve_tessellated_point_count;   // total tessellated polyline points
     size_t point_instancer_count;
     size_t point_instance_count;
     size_t visible_point_instance_count;

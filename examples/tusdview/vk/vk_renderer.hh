@@ -145,11 +145,14 @@ class VulkanRenderer final : public Renderer {
     VkBuffer blasBuf{VK_NULL_HANDLE};
     VkDeviceMemory blasMem{VK_NULL_HANDLE};
     VkDeviceAddress blasAddr{0};
-    // Per-frame skinned/morphed geometry: once updateMeshVertices touches a
-    // mesh it is marked update-wanting; its next (re)build adds
-    // ALLOW_UPDATE + keeps a persistent scratch sized for build+update, and
-    // subsequent vertex updates REFIT (MODE_UPDATE) the existing BLAS in
-    // place instead of destroy+rebuild (topology never changes on this path).
+    // Per-frame skinned/morphed geometry: the SECOND vertex update marks the
+    // mesh update-wanting ("compact until proven animated" -- a single posed
+    // update, e.g. a fixed --time screenshot, keeps the compacted static
+    // path); its next (re)build then adds ALLOW_UPDATE + keeps a persistent
+    // scratch sized for build+update, and subsequent vertex updates REFIT
+    // (MODE_UPDATE) the existing BLAS in place instead of destroy+rebuild
+    // (topology never changes on this path).
+    bool blasSawVertexUpdate{false};  // sticky: at least one vertex update
     bool blasWantUpdatable{false};  // sticky: mesh gets per-frame vertex updates
     bool blasUpdatable{false};      // current BLAS was built with ALLOW_UPDATE
     bool blasNeedsRefit{false};     // vertices changed since last build/refit
@@ -175,6 +178,9 @@ class VulkanRenderer final : public Renderer {
     VkBuffer vtxColorBuf{VK_NULL_HANDLE};   // per-vertex displayColor (vec3[]), 0=none
     VkDeviceMemory vtxColorMem{VK_NULL_HANDLE};
     VkDeviceAddress vtxColorAddr{0};
+    // Raster per-vertex displayColor: set-24 SSBO the mesh vertex shader fetches
+    // by gl_VertexIndex (dummyMorphDesc_ + a cleared flag bit when absent).
+    VkDescriptorSet vtxColorDesc{VK_NULL_HANDLE};
     VkDeviceAddress uv1Addr{0};              // uv1 SSBO address (RT multi-UV AOV)
     VkDeviceAddress inflAddr{0};             // influence SSBO address (RT influence AOV)
     VkBuffer faceBuf{VK_NULL_HANDLE};        // per-triangle source face id (uint[])
@@ -339,7 +345,8 @@ class VulkanRenderer final : public Renderer {
   void freeHostPool();  // unmap + free every block (after buffers are destroyed)
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView,
-                          const std::vector<light3d::Image>* mips = nullptr);
+                          const std::vector<light3d::Image>* mips = nullptr,
+                          bool srgb = false);
   bool createCompressedTextureImage(const DrawCompressedImageCPU& img, bool srgb,
                                     VkImage* outImg, VkDeviceMemory* outMem,
                                     VkImageView* outView);
@@ -422,6 +429,10 @@ class VulkanRenderer final : public Renderer {
   // topology + tesc/tese). Created only when the device supports the
   // tessellationShader feature; otherwise displaced meshes stay coarse.
   bool tessSupported_{false};
+  // VK_EXT_extended_dynamic_state: per-draw cull mode, so single-sided meshes
+  // back-face-cull like the GL backend. Optional; false = no culling (legacy).
+  bool dynCullSupported_{false};
+  PFN_vkCmdSetCullModeEXT vkCmdSetCullMode_{nullptr};
   // multiDrawIndirect + drawIndirectFirstInstance + shaderDrawParameters all
   // present -> the instanced raster pass can draw via vkCmdDrawIndexedIndirect
   // batches (per-draw meshId/flags come from a gl_DrawIDARB-indexed SSBO).
@@ -529,7 +540,18 @@ class VulkanRenderer final : public Renderer {
   void ensureDrawMeta();         // rebuild drawMetaBuf_ when meshes_ changes (non-MDI)
   // (Re)create drawMetaBuf_ to hold `meta` and repoint drawMetaSet_ at it. Shared by
   // ensureDrawMeta (per-mesh layout) and buildInstMdi (per-command layout).
-  struct DrawMetaCPU { int32_t ids[4]; };
+  // Per-draw metadata (set 6), shared by mesh_inst.vert/.frag. `jointAddr` /
+  // `weightAddr` are the device addresses of this mesh's per-vertex skin arrays
+  // (0 = unskinned): the instanced vertex shader fetches them by gl_VertexIndex
+  // rather than through vertex-input state, so the merged multi-draw path needs
+  // no extra bindings -- its draws simply carry 0 (skinned prototypes are kept
+  // out of MDI, whose gl_VertexIndex would index the MERGED buffer).
+  struct DrawMetaCPU {
+    int32_t ids[4];
+    uint64_t jointAddr{0};
+    uint64_t weightAddr{0};
+  };
+  static_assert(sizeof(int32_t) * 4 + sizeof(uint64_t) * 2 == 32, "DrawMeta 32B");
   void writeDrawMeta(const std::vector<DrawMetaCPU>& meta);
 
   // ---- Multi-draw-indirect instanced path (large-scene --next) ----
@@ -722,6 +744,23 @@ class VulkanRenderer final : public Renderer {
   PFN_vkDestroyAccelerationStructureKHR pfnDestroyAS_{nullptr};
   PFN_vkCmdBuildAccelerationStructuresKHR pfnCmdBuildAS_{nullptr};
   PFN_vkGetAccelerationStructureDeviceAddressKHR pfnGetASDeviceAddress_{nullptr};
+  // BLAS compaction: build with ALLOW_COMPACTION, query the compacted size, then
+  // copy into a right-sized AS. A BLAS is typically ~half its build-time size.
+  PFN_vkCmdWriteAccelerationStructuresPropertiesKHR pfnCmdWriteASProps_{nullptr};
+  PFN_vkCmdCopyAccelerationStructureKHR pfnCmdCopyAS_{nullptr};
+  bool blasCompact_{true};  // TUSDVIEW_BLAS_COMPACT=0 opts out
+  // Resident compacted BLAS bytes for this pose, and what they would have cost
+  // uncompacted (reported in the [vk_rt] log; also what the test asserts on).
+  uint64_t blasBytes_{0};
+  uint64_t blasBytesUncompacted_{0};
+  size_t blasUniqueBuilt_{0};  // prototypes actually built this pose (post-dedup)
+
+  // Build the Full-LOD BLAS set as compacted waves (one build submit + one copy
+  // submit per wave), instead of one build + one queue stall per prototype.
+  void buildBlasWave(const std::vector<uint32_t>& meshIds);
+  // Drop the BLAS of prototypes this pose does not render at Full. Without this
+  // the BLAS set only ever grows as the camera visits new regions.
+  void evictBlasNotIn(const std::vector<uint32_t>& keepMeshIds);
 
   VkAccelerationStructureKHR tlas_{VK_NULL_HANDLE};
   VkBuffer tlasBuf_{VK_NULL_HANDLE};

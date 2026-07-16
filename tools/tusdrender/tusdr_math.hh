@@ -33,6 +33,7 @@
 
 #include "value-types.hh"
 #include "tydra/openpbr-params.hh"
+#include "tydra/next/resource-budget.hh"
 #include "xform.hh"
 
 namespace tusdr {
@@ -50,14 +51,18 @@ class MemBudget {
     return inst;
   }
 
-  // cap_override_gib <= 0 -> auto: min(32 GiB, 0.5 * MemAvailable).
+  // cap_override_gib <= 0 -> the shared 32 GiB-target host policy.
   void Init(double cap_override_gib) {
     if (cap_override_gib > 0.0) {
       cap_ = size_t(cap_override_gib * double(size_t(1) << 30));
     } else {
       size_t avail = AvailableSystemMemory();
-      size_t half = avail ? avail / 2 : 0;
-      cap_ = half ? std::min(kDefaultCapBytes, half) : kDefaultCapBytes;
+      const uint64_t target_capacity =
+          avail ? std::min<uint64_t>(avail, tinyusdz::tydra::next::GiB(32))
+                : tinyusdz::tydra::next::GiB(32);
+      cap_ = static_cast<size_t>(
+          tinyusdz::tydra::next::ComputeResourceBudget(target_capacity, 0)
+              .host_limit);
     }
     base_.store(0);
     tracked_.store(0);
@@ -309,6 +314,8 @@ struct TriInfo {
   Vec3 p1;
   Vec3 p2;
   Vec3 n;
+  // USD doubleSided (default 1 = pre-cull behavior; see FlatTri::double_sided).
+  uint8_t double_sided{1};
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
   float roughness{0.55f};
@@ -351,6 +358,11 @@ struct TriInfo {
   float ior{1.5f};                   // inputs:ior; dielectric F0 = ((ior-1)/(ior+1))^2
   uint8_t use_specular_workflow{0};  // inputs:useSpecularWorkflow
   uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
+  // This triangle is part of an emissive mesh that is ALSO registered as an
+  // analytic mesh light (LightCache::mesh). Its emission is therefore already
+  // being delivered by direct lighting, and a BSDF-bounce ray that lands on it
+  // must not add it a second time -- see the `indirect` argument of Shade.
+  uint8_t area_light{0};
 };
 
 // Per-material shading parameters, factored out of the per-triangle record. A
@@ -400,6 +412,11 @@ struct TriMat {
   float ior{1.5f};
   uint8_t use_specular_workflow{0};
   uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
+  // This triangle is part of an emissive mesh that is ALSO registered as an
+  // analytic mesh light (LightCache::mesh). Its emission is therefore already
+  // being delivered by direct lighting, and a BSDF-bounce ray that lands on it
+  // must not add it a second time -- see the `indirect` argument of Shade.
+  uint8_t area_light{0};
 };
 
 // Slim per-triangle record for instanced BLAS storage: just a material id into
@@ -422,9 +439,13 @@ struct FlatTri {
   Vec3 p0;
   Vec3 p1;
   Vec3 p2;
-  Vec3 n;
+  Vec3 n;  // geometric (winding) normal: the front face points along +n
   uint32_t purpose_bit{kPurposeDefaultBit};
   uint32_t mat_id{0};
+  // USD doubleSided (default 1 here = the pre-cull behavior, so any unstamped
+  // flat tri keeps rendering from both sides). Stamped from the authored value
+  // at every mesh creation site; 0 = single-sided -> back-face culled.
+  uint8_t double_sided{1};
 };
 
 // Build a full TriInfo from a material record (positions/normal are filled by the
@@ -472,6 +493,7 @@ inline TriInfo CombineTriMat(const TriMat &m) {
   t.ior = m.ior;
   t.use_specular_workflow = m.use_specular_workflow;
   t.openpbr_id = m.openpbr_id;
+  t.area_light = m.area_light;
   return t;
 }
 
@@ -522,6 +544,7 @@ inline TriMat ExtractTriMat(const TriInfo &t) {
   m.ior = t.ior;
   m.use_specular_workflow = t.use_specular_workflow;
   m.openpbr_id = t.openpbr_id;
+  m.area_light = t.area_light;
   return m;
 }
 
@@ -544,6 +567,7 @@ inline void SplitTriInfos(const std::vector<TriInfo> &tris,
     ft.n = t.n;
     ft.purpose_bit = t.purpose_bit;
     ft.mat_id = uint32_t(i);
+    ft.double_sided = t.double_sided;
     (*out_mats)[i] = ExtractTriMat(t);
   }
 }
@@ -584,7 +608,7 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
          a.specular_color.z == b.specular_color.z &&
          a.specular_tex_id == b.specular_tex_id && a.ior == b.ior &&
          a.use_specular_workflow == b.use_specular_workflow &&
-         a.openpbr_id == b.openpbr_id;
+         a.openpbr_id == b.openpbr_id && a.area_light == b.area_light;
 }
 
 // A scalar texture binding: texture index + source channel (UsdUVTexture
@@ -652,6 +676,15 @@ inline Vec3 Normalize(const Vec3 &v) {
     return Vec3{0.0f, 0.0f, 0.0f};
   }
   return Mul(v, 1.0f / len);
+}
+
+// Any two unit vectors perpendicular to `w` and to each other. Gives a shaped
+// light a sampling basis when its world matrix carries no usable axes.
+inline void OrthonormalBasis(const Vec3 &w, Vec3 *u, Vec3 *v) {
+  const Vec3 a = (std::fabs(w.x) > 0.9f) ? Vec3{0.0f, 1.0f, 0.0f}
+                                         : Vec3{1.0f, 0.0f, 0.0f};
+  *u = Normalize(Cross(a, w));
+  *v = Cross(w, *u);
 }
 
 inline Vec3 Clamp01(const Vec3 &v) {

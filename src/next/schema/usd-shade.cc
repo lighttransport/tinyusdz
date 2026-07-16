@@ -24,35 +24,47 @@ bool IsNodeGraph(const UsdPrim& prim) {
 // Material API Implementation
 // ============================================================
 
-std::string GetSurfaceShader(const Stage& /* stage */, const UsdPrim& material) {
-  if (!IsMaterial(material)) return "";
-
-  // Get outputs:surface relationship
-  const std::vector<Path>* targets = material.GetRelationship("outputs:surface");
+// A material terminal ("outputs:surface" etc.) is an ATTRIBUTE CONNECTION in
+// USD (`token outputs:surface.connect = </Mat/Shader.outputs:surface>`), not a
+// relationship. Accept both (some hand-authored files use a rel). The returned
+// path is the connected PRIM (property suffix stripped).
+static std::string GetTerminalShaderPath(const UsdPrim& material,
+                                         const char* output_name) {
+  auto strip_prop = [](const std::string& p) {
+    size_t dot = p.rfind('.');
+    // Property separator only when the dot comes after the last '/'.
+    size_t slash = p.rfind('/');
+    if (dot != std::string::npos &&
+        (slash == std::string::npos || dot > slash)) {
+      return p.substr(0, dot);
+    }
+    return p;
+  };
+  if (const PrimSpec* spec = material.GetPrimSpec()) {
+    if (const std::vector<Path>* conns = spec->connection(output_name)) {
+      if (!conns->empty()) return strip_prop((*conns)[0].str());
+    }
+  }
+  const std::vector<Path>* targets = material.GetRelationship(output_name);
   if (targets && !targets->empty()) {
-    return (*targets)[0].str();
+    return strip_prop((*targets)[0].str());
   }
   return "";
+}
+
+std::string GetSurfaceShader(const Stage& /* stage */, const UsdPrim& material) {
+  if (!IsMaterial(material)) return "";
+  return GetTerminalShaderPath(material, "outputs:surface");
 }
 
 std::string GetDisplacementShader(const Stage& /* stage */, const UsdPrim& material) {
   if (!IsMaterial(material)) return "";
-
-  const std::vector<Path>* targets = material.GetRelationship("outputs:displacement");
-  if (targets && !targets->empty()) {
-    return (*targets)[0].str();
-  }
-  return "";
+  return GetTerminalShaderPath(material, "outputs:displacement");
 }
 
 std::string GetVolumeShader(const Stage& /* stage */, const UsdPrim& material) {
   if (!IsMaterial(material)) return "";
-
-  const std::vector<Path>* targets = material.GetRelationship("outputs:volume");
-  if (targets && !targets->empty()) {
-    return (*targets)[0].str();
-  }
-  return "";
+  return GetTerminalShaderPath(material, "outputs:volume");
 }
 
 bool GetMaterialBinding(const Stage& stage, const UsdPrim& material,
@@ -78,12 +90,75 @@ UsdPrim GetBoundMaterial(const Stage& stage, const UsdPrim& prim) {
 std::string GetBoundMaterialPath(const UsdPrim& prim) {
   if (!prim.IsValid()) return "";
 
-  // Check material:binding relationship
-  const std::vector<Path>* targets = prim.GetRelationship("material:binding");
-  if (targets && !targets->empty()) {
-    return (*targets)[0].str();
+  // Purpose-specific bindings take precedence for a preview extractor:
+  // material:binding:preview, then the all-purpose material:binding, then
+  // material:binding:full (UsdShade ComputeBoundMaterial semantics for the
+  // "preview" purpose).
+  static const char* kBindingOrder[] = {"material:binding:preview",
+                                        "material:binding",
+                                        "material:binding:full"};
+  for (const char* rel : kBindingOrder) {
+    const std::vector<Path>* targets = prim.GetRelationship(rel);
+    if (targets && !targets->empty()) {
+      return (*targets)[0].str();
+    }
   }
   return "";
+}
+
+namespace {
+
+std::string ParentPathOf(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  if (slash == std::string::npos || slash == 0) return "";
+  return path.substr(0, slash);
+}
+
+}  // namespace
+
+bool BindingIsStrongerThanDescendants(const UsdPrim& prim) {
+  static const char* kBindingOrder[] = {"material:binding:preview",
+                                        "material:binding",
+                                        "material:binding:full"};
+  const PrimSpec* spec = prim.GetPrimSpec();
+  if (!spec) return false;
+  for (const char* rel : kBindingOrder) {
+    const std::vector<Path>* targets = prim.GetRelationship(rel);
+    if (!targets || targets->empty()) continue;
+    if (const PropMeta* pm = spec->property_meta(rel)) {
+      if ((pm->authored & PropMeta::kBindMaterialAs) &&
+          pm->bindMaterialAs == "strongerThanDescendants") {
+        return true;
+      }
+    }
+    return false;  // binding found; default weakerThanDescendants
+  }
+  return false;
+}
+
+std::string GetInheritedBoundMaterialPath(const Stage& stage,
+                                          const std::string& prim_path) {
+  // UsdShade binding INHERITANCE: a binding authored on an ancestor applies to
+  // every descendant. Walk leaf->root; the nearest binding wins by default, but
+  // an ancestor marked `bindMaterialAs="strongerThanDescendants"` overrides
+  // everything below it, so keep the highest such ancestor.
+  std::string leaf_binding;
+  std::string strongest_ancestor;
+  std::string path = prim_path;
+  while (!path.empty() && path != "/") {
+    UsdPrim prim = stage.GetPrimAtPath(path);
+    if (prim.IsValid()) {
+      const std::string material_path = GetBoundMaterialPath(prim);
+      if (!material_path.empty()) {
+        if (leaf_binding.empty()) leaf_binding = material_path;
+        if (path != prim_path && BindingIsStrongerThanDescendants(prim)) {
+          strongest_ancestor = material_path;  // higher ancestors overwrite
+        }
+      }
+    }
+    path = ParentPathOf(path);
+  }
+  return strongest_ancestor.empty() ? leaf_binding : strongest_ancestor;
 }
 
 // ============================================================
@@ -294,6 +369,7 @@ bool GetPreviewSurfaceData(const Stage& stage, const UsdPrim& shader,
   out->roughness_texture = check_texture("roughness");
   out->emissive_texture = check_texture("emissiveColor");
   out->occlusion_texture = check_texture("occlusion");
+  out->opacity_texture = check_texture("opacity");
 
   return true;
 }
@@ -377,20 +453,47 @@ bool IsPrimvarReader(const UsdPrim& shader) {
   return id.size() >= 16 && id.substr(0, 16) == "UsdPrimvarReader";
 }
 
+namespace {
+
+std::string TokenishValue(const Value* v) {
+  if (!v) return "";
+  if (const std::string* tok = v->as_token()) return *tok;
+  if (const std::string* str = v->as_string()) return *str;
+  return "";
+}
+
+}  // namespace
+
 std::string GetPrimvarReaderVarname(const UsdPrim& shader) {
   if (!IsPrimvarReader(shader)) return "";
+  return TokenishValue(shader.GetPropertyValue("inputs:varname"));
+}
 
-  const Value* result = shader.GetPropertyValue("inputs:varname");
-  if (result) {
-    if (result->type_id() == TypeId::Token) {
-      if (const std::string* str = result->as_token()) {
-        return *str;
-      }
-    } else if (result->type_id() == TypeId::String) {
-      if (const std::string* str = result->as_string()) {
-        return *str;
-      }
-    }
+std::string GetPrimvarReaderVarname(const Stage& stage,
+                                    const UsdPrim& shader) {
+  if (!IsPrimvarReader(shader)) return "";
+
+  // Authored value wins; otherwise follow inputs:varname connections
+  // (usdMtlx/Apple flattens author e.g.
+  // `token inputs:varname.connect = </Mat.inputs:frame:stPrimvarName>`).
+  std::string value = TokenishValue(shader.GetPropertyValue("inputs:varname"));
+  if (!value.empty()) return value;
+
+  const ::tinyusdz::next::PrimSpec* spec = shader.GetPrimSpec();
+  const std::vector<Path>* conns =
+      spec ? spec->connection("inputs:varname") : nullptr;
+  for (int hop = 0; conns && !conns->empty() && hop < 4; ++hop) {
+    const std::string target = (*conns)[0].str();
+    const size_t dot = target.rfind('.');
+    if (dot == std::string::npos) break;
+    const std::string prim_path = target.substr(0, dot);
+    const std::string prop_name = target.substr(dot + 1);
+    UsdPrim src = stage.GetPrimAtPath(prim_path);
+    if (!src.IsValid()) break;
+    value = TokenishValue(src.GetPropertyValue(prop_name));
+    if (!value.empty()) return value;
+    const ::tinyusdz::next::PrimSpec* src_spec = src.GetPrimSpec();
+    conns = src_spec ? src_spec->connection(prop_name) : nullptr;
   }
   return "";
 }

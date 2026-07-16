@@ -1,0 +1,70 @@
+#usda 1.0
+(
+    doc = """The prototype for deform-instanced-proto.usda: a bar that is both
+    blendshaped and skinned, so an instance of it exercises the morph AND the
+    skeleton through the instanced code path."""
+    defaultPrim = "Rig"
+    endTimeCode = 20
+    startTimeCode = 1
+    upAxis = "Y"
+)
+
+def SkelRoot "Rig" (
+    prepend apiSchemas = ["SkelBindingAPI"]
+)
+{
+    def Mesh "Bar" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 3, 2, 4, 6, 7, 5, 0, 4, 5, 1, 2, 3, 7, 6, 0, 2, 6, 4, 1, 5, 7, 3]
+        point3f[] points = [(-1, 0, 1), (1, 0, 1), (-1, 0, -1), (1, 0, -1), (-1, 3, 1), (1, 3, 1), (-1, 3, -1), (1, 3, -1)]
+        color3f[] primvars:displayColor = [(0.85, 0.85, 0.85)]
+        int[] primvars:skel:jointIndices = [0, 0, 0, 0, 1, 1, 1, 1] (
+            elementSize = 1
+            interpolation = "vertex"
+        )
+        float[] primvars:skel:jointWeights = [1, 1, 1, 1, 1, 1, 1, 1] (
+            elementSize = 1
+            interpolation = "vertex"
+        )
+        uniform token[] skel:blendShapes = ["Stretch"]
+        rel skel:blendShapeTargets = </Rig/Bar/Stretch>
+        prepend rel skel:skeleton = </Rig/Skel>
+        uniform token subdivisionScheme = "none"
+
+        def BlendShape "Stretch"
+        {
+            uniform vector3f[] offsets = [(0, 2, 0), (0, 2, 0), (0, 2, 0), (0, 2, 0)]
+            uniform int[] pointIndices = [4, 5, 6, 7]
+        }
+    }
+
+    def Skeleton "Skel" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        uniform matrix4d[] bindTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ), ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1.5, 0, 1) )]
+        uniform token[] joints = ["joint1", "joint1/joint2"]
+        uniform matrix4d[] restTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ), ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1.5, 0, 1) )]
+        prepend rel skel:animationSource = </Rig/Skel/Anim>
+
+        def SkelAnimation "Anim"
+        {
+            uniform token[] blendShapes = ["Stretch"]
+            float[] blendShapeWeights.timeSamples = {
+                1: [0],
+                20: [1],
+            }
+            uniform token[] joints = ["joint1", "joint1/joint2"]
+            quatf[] rotations.timeSamples = {
+                1: [(1, 0, 0, 0), (1, 0, 0, 0)],
+                20: [(1, 0, 0, 0), (0.8660254, 0, 0, 0.5)],
+            }
+            half3[] scales = [(1, 1, 1), (1, 1, 1)]
+            float3[] translations = [(0, 0, 0), (0, 1.5, 0)]
+        }
+    }
+}
