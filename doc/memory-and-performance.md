@@ -539,12 +539,51 @@ materialized (USDA + eager-crate-type) arrays, not just lazy crate arrays.
 The same `(stack, site)` was resolved 3–5× per composed prim; memoizing
 `FindSpecs` (stable references across rehash; cleared on `InvalidateLayer`)
 removes the redundant layer walks + Path parses on the BuildStage path. The
-full u32-interned-key conversion of pcp hot maps (M3) is deferred — invasive
-relative to its memory benefit now that CoW (Phase 3) removed the dominant copy
-cost; revisit if massif shows path strings dominating. The GraftSubtree
-child-index walk (M5) **landed** (`composition.cc` `GraftSubtree`): it walks the
-source subtree via `child_indices` when they validate for the subtree (every
-visited index in range, unseen, and prefixed by `src_root`), and falls back to
-the full path-prefix scan otherwise — composed-in-place / cloned-and-renamed
-layers can carry stale child indices, so the guarded fallback keeps correctness
-(CoW already removed the per-graft array-copy cost the earlier revert cited).
+GraftSubtree child-index walk (M5) **landed** (`composition.cc` `GraftSubtree`):
+it walks the source subtree via `child_indices` when they validate for the
+subtree (every visited index in range, unseen, and prefixed by `src_root`), and
+falls back to the full path-prefix scan otherwise — composed-in-place /
+cloned-and-renamed layers can carry stale child indices, so the guarded
+fallback keeps correctness (CoW already removed the per-graft array-copy cost
+the earlier revert cited).
+
+### M3 (pcp hot-map keys) — landed 2026-07-16 as open-addressed caches + memos
+
+The originally-sketched full u32-interned-key conversion stayed too invasive,
+but its targets were hit with the pattern proven on the `next-refactor` branch
+(open-addressed hash→index tables over stable deque value storage, fast
+8-byte-chunked FNV-mix hash, keyed by the caller's string with no per-call key
+copy) plus one new memo:
+
+1. **`StackSpecCache`** (`cache.cc`) — per-layer-stack Specs() memo replaces the
+   `unordered_map<(stack,site-string), vector<SpecRef>>` whose struct key
+   deep-copied the site string on every call (hits included).
+2. **`Src::specs_` / `SpecsFor()`** — per-Src memo of the resolved Specs()
+   pointer for the 2–3 read-side lookups per composed prim. The memo
+   self-resets on any Src copy/move (`SpecsMemo`), so child-build /
+   worker-seed / merge copies can never carry a stale or cross-Impl pointer;
+   the one buffer-steal vector move (MergeSources) resets it explicitly.
+3. **`SrcCache`** (`cache.cc`) — sources_cache (path → expanded Srcs), the
+   structure pass's hottest map. Reference stability across recursive
+   ExpandList inserts and `operator[]`-creates-empty semantics are preserved
+   (deque values, tombstone erase for invalidation).
+4. **`arc_target_memo_`** (new on dev) — ProcessArc's external-arc resolution
+   (`RealAnchorOf` + resolver `Resolve` ×2 + expression-vars fingerprint +
+   `stack_by_id` std::map walk) runs per arc *instance*; the resolved
+   (layer, arc_id, stack_idx) depends only on (anchor source, evaluated asset
+   path, expression-vars **content fingerprint** — pointer identity never hits
+   because arc crossings `make_shared` a fresh dict per instance). Successes
+   are memoized; failures re-run so per-instance diagnostics are unchanged.
+   Cleared with the spec cache on InvalidateLayer.
+
+Measured (serial `next_usdcat -f`, warm cache, all byte-identical): Island
+load+compose 26.5→22.8 s (−14%, instance-register 322→16 ms), ALab 495→415 ms
+(−16%), Caldera 4.1→3.5 s (−14%). Peak RSS flat (write-phase dominated).
+Parallel compose (8 threads) byte-identical to serial and TSan-clean.
+
+Post-conversion profile (fp-unwound): the remaining Island "sources"-phase cost
+is first-load *parsing* of referenced layers attributed under
+GetOrLoad→ProcessArc (parse-side, parallelized by `--compose-threads`), plus
+small residues in ApplyVariantOption and ExpandArcs. The pcp string-map lever
+is now exhausted on dev too; further compose wins are parse- or
+allocator-side.

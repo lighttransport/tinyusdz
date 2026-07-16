@@ -129,10 +129,10 @@
         for (const std::string &cn : children) {
           const Path child = w.out_path.append_child(cn);
           const std::string ck = SourcesKey(0, child.str());
-          if (!sources_cache.count(ck)) {
+          if (!sources_cache.contains(ck)) {
             std::vector<Src> base =
                 DeriveChildSources(shared_srcs, cn, child.str(), warn, err);
-            sources_cache[ck] = ExpandList(base, warn, err);
+            sources_cache.get_or_create(ck) = ExpandList(base, warn, err);
           }
         }
       }

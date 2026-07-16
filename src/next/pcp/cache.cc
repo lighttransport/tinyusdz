@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <limits>
 #include <chrono>
@@ -39,6 +40,126 @@ namespace {
 // INTERMEDIATE stack's opinion on the class path is otherwise lost (bug69932).
 // Shared, so propagating it to a whole subtree costs one refcount.
 using ArcChain = std::vector<std::pair<uint32_t, uint32_t>>;
+
+// One resolved spec: a PrimSpec + its owning layer (identity). File scope (was
+// Cache::Impl::SpecRef) so Src can cache a pointer to a Specs() result.
+struct SpecRef {
+  const PrimSpec *spec = nullptr;
+  const Layer *layer = nullptr;
+  std::string layer_id;
+  // Time offset of the owning layer within its stack (sublayer offsets),
+  // relative to the stack root. Identity for the root layer.
+  LayerOffset layer_offset;
+};
+
+// Per-layer-stack memo of FindSpecs(site) results (the compose hot path:
+// Specs() is the single largest self-cost during BuildStage). Replaces a
+// std::unordered_map keyed by a (stack, site) struct: an open-addressed
+// hash->value-index table (cache-friendly, no per-entry node alloc) over
+// STABLE value storage (a deque, so a returned `const vector<SpecRef>&`
+// stays valid across later inserts — required, callers and Src::specs_ hold
+// it). A fast 8-byte-chunked mix hash replaces std::hash's per-byte path.
+struct StackSpecCache {
+  static uint64_t HashSite(const char *p, size_t n) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+      uint64_t k;
+      std::memcpy(&k, p + i, 8);
+      h = (h ^ k) * 0x100000001b3ull;
+      h = (h << 27) | (h >> 37);
+    }
+    for (; i < n; ++i) h = (h ^ static_cast<uint8_t>(p[i])) * 0x100000001b3ull;
+    h ^= h >> 33;
+    return h ? h : 1;  // reserve 0 for empty slot
+  }
+
+  struct Slot {
+    uint64_t hash = 0;  // 0 = empty
+    uint32_t val_idx = 0;
+  };
+  std::vector<Slot> slots_;
+  std::deque<std::string> keys_;              // keys_[i] backs vals_[i]
+  std::deque<std::vector<SpecRef>> vals_;     // stable value storage
+  size_t count_ = 0;
+
+  std::vector<SpecRef> *find(const std::string &site, uint64_t h) {
+    if (slots_.empty()) return nullptr;
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    while (slots_[i].hash != 0) {
+      if (slots_[i].hash == h) {
+        const uint32_t vi = slots_[i].val_idx;
+        const std::string &k = keys_[vi];
+        if (k.size() == site.size() &&
+            std::memcmp(k.data(), site.data(), site.size()) == 0) {
+          return &vals_[vi];
+        }
+      }
+      i = (i + 1) & mask;
+    }
+    return nullptr;
+  }
+
+  std::vector<SpecRef> &insert(const std::string &site, uint64_t h,
+                               std::vector<SpecRef> &&v) {
+    if (slots_.empty() || (count_ + 1) * 2 > slots_.size()) rehash();
+    const uint32_t vi = static_cast<uint32_t>(vals_.size());
+    keys_.emplace_back(site);
+    vals_.emplace_back(std::move(v));
+    place(h, vi);
+    ++count_;
+    return vals_[vi];
+  }
+
+  void clear() {
+    slots_.clear();
+    keys_.clear();
+    vals_.clear();
+    count_ = 0;
+  }
+
+ private:
+  void place(uint64_t h, uint32_t vi) {
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    while (slots_[i].hash != 0) i = (i + 1) & mask;
+    slots_[i].hash = h;
+    slots_[i].val_idx = vi;
+  }
+  void rehash() {
+    const size_t new_cap = slots_.empty() ? 16 : slots_.size() * 2;
+    std::vector<Slot> old = std::move(slots_);
+    slots_.assign(new_cap, Slot{});
+    for (const Slot &s : old) {
+      if (s.hash != 0) place(s.hash, s.val_idx);
+    }
+  }
+};
+
+// Memoized Specs() pointer that RESETS on copy/move. A Src copied on
+// child-build gets a different site, a Src seeded into (or merged back from) a
+// parallel-warm worker crosses Impls, and an Impl's spec cache is dropped on
+// InvalidateLayer — in every case a carried-over pointer would be stale or
+// semantically wrong, so any copy/move starts unresolved and SpecsFor()
+// re-resolves on first use (one extra hash, not a correctness risk).
+// CAVEAT: moving a whole std::vector<Src> is a buffer steal — element
+// copy/move (and this reset) never runs — so a cross-Impl vector move must
+// null specs_ explicitly (see MergeSources).
+struct SpecsMemo {
+  mutable const std::vector<SpecRef> *p = nullptr;
+  SpecsMemo() = default;
+  SpecsMemo(const SpecsMemo &) {}
+  SpecsMemo &operator=(const SpecsMemo &) {
+    p = nullptr;
+    return *this;
+  }
+  SpecsMemo(SpecsMemo &&) {}
+  SpecsMemo &operator=(SpecsMemo &&) {
+    p = nullptr;
+    return *this;
+  }
+};
 
 // A single composition source (one node's worth of provenance).
 struct Src {
@@ -86,6 +207,175 @@ struct Src {
   // in the list because child derivation descends through it (chained
   // relocations address content via this raw site).
   bool suppress_site_specs = false;
+  // Memoized Specs(stack_idx, site) result for this exact (stack_idx, site), so
+  // the 2-3 read-side lookups per composed prim (ComposeChildNames,
+  // IsInstanceable, instance-key, ComposeOpinions) skip re-hashing `site`.
+  // Points into the owning Impl's spec_cache_by_stack_ (stable storage). Resets
+  // itself on any copy/move of the Src (see SpecsMemo).
+  SpecsMemo specs_;
+};
+
+// path -> expanded composition sources. The compose structure pass hammers
+// this (SourcesForPath: one find + one get-or-create per composed prim, plus
+// a parent read). Was std::unordered_map<string, vector<Src>>: node alloc,
+// pointer chase, per-byte std::hash. This is an open-addressed hash->index
+// table over STABLE value storage (a deque of vector<Src>): the loop in
+// SourcesForSite reads a parent slot's ref, then inserts the child slot, and
+// returns a slot ref to its caller — all of which must survive later inserts
+// (ExpandList re-enters recursively), so values live in a deque (append never
+// moves) and rehash rebuilds only the index slots. get_or_create default-
+// constructs an absent value exactly like unordered_map::operator[], which
+// the in-progress re-entry semantics rely on. Erase is invalidation-only
+// (never on the flatten hot path): tombstones keep probe chains valid; dead
+// deque entries are reclaimed on clear(). Default copy deep-copies (worker
+// seeding; Src's SpecsMemo resets on that element-wise copy).
+struct SrcCache {
+  static uint64_t Hash(const std::string &s) {
+    return StackSpecCache::HashSite(s.data(), s.size());
+  }
+  struct Slot {
+    uint64_t hash = 0;
+    uint32_t idx = 0;
+    uint8_t state = 0;  // 0 empty, 1 used, 2 tombstone
+  };
+  std::vector<Slot> slots_;
+  std::deque<std::string> keys_;           // keys_[i] backs vals_[i]
+  std::deque<std::vector<Src>> vals_;      // STABLE value storage
+  std::vector<uint8_t> live_;              // parallel to vals_ (1 = live)
+  size_t count_ = 0;                       // live entries
+  size_t occupied_ = 0;                    // used + tombstone slots
+
+  size_t size() const { return count_; }
+
+  void clear() {  // full free (drops the path-string keys too)
+    std::vector<Slot>().swap(slots_);
+    std::deque<std::string>().swap(keys_);
+    std::deque<std::vector<Src>>().swap(vals_);
+    std::vector<uint8_t>().swap(live_);
+    count_ = 0;
+    occupied_ = 0;
+  }
+
+  std::vector<Src> *find(const std::string &k) {
+    if (slots_.empty()) return nullptr;
+    const uint64_t h = Hash(k);
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    for (;;) {
+      const Slot &s = slots_[i];
+      if (s.state == 0) return nullptr;
+      if (s.state == 1 && s.hash == h) {
+        const std::string &key = keys_[s.idx];
+        if (key.size() == k.size() &&
+            std::memcmp(key.data(), k.data(), k.size()) == 0) {
+          return &vals_[s.idx];
+        }
+      }
+      i = (i + 1) & mask;
+    }
+  }
+  bool contains(const std::string &k) { return find(k) != nullptr; }
+
+  // find-or-insert; returns a reference that stays valid across later inserts.
+  std::vector<Src> &get_or_create(const std::string &k) {
+    const uint64_t h = Hash(k);
+    if (slots_.empty() || (occupied_ + 1) * 2 > slots_.size()) rehash();
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    size_t first_tomb = SIZE_MAX;
+    for (;;) {
+      Slot &s = slots_[i];
+      if (s.state == 0) {
+        const size_t at = (first_tomb == SIZE_MAX) ? i : first_tomb;
+        return emplace_at(at, h, k, /*was_tomb=*/slots_[at].state == 2);
+      }
+      if (s.state == 2) {
+        if (first_tomb == SIZE_MAX) first_tomb = i;
+      } else if (s.hash == h) {
+        const std::string &key = keys_[s.idx];
+        if (key.size() == k.size() &&
+            std::memcmp(key.data(), k.data(), k.size()) == 0) {
+          return vals_[s.idx];
+        }
+      }
+      i = (i + 1) & mask;
+    }
+  }
+
+  // Insert only if absent (merge path). Consumes v when it inserts.
+  void emplace_if_absent(const std::string &k, std::vector<Src> &&v) {
+    if (contains(k)) return;
+    get_or_create(k) = std::move(v);
+  }
+
+  void erase(const std::string &k) {
+    if (slots_.empty()) return;
+    const uint64_t h = Hash(k);
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    for (;;) {
+      Slot &s = slots_[i];
+      if (s.state == 0) return;
+      if (s.state == 1 && s.hash == h) {
+        const std::string &key = keys_[s.idx];
+        if (key.size() == k.size() &&
+            std::memcmp(key.data(), k.data(), k.size()) == 0) {
+          live_[s.idx] = 0;
+          std::string().swap(keys_[s.idx]);
+          std::vector<Src>().swap(vals_[s.idx]);
+          s.state = 2;  // tombstone: keeps the probe chain valid
+          --count_;
+          return;
+        }
+      }
+      i = (i + 1) & mask;
+    }
+  }
+
+  template <typename Pred>
+  void erase_if(Pred pred) {
+    for (uint32_t vi = 0; vi < live_.size(); ++vi) {
+      if (live_[vi] && pred(keys_[vi])) erase(keys_[vi]);
+    }
+  }
+
+  template <typename Fn>
+  void for_each(Fn fn) {
+    for (uint32_t vi = 0; vi < live_.size(); ++vi) {
+      if (live_[vi]) fn(const_cast<const std::string &>(keys_[vi]), vals_[vi]);
+    }
+  }
+
+ private:
+  std::vector<Src> &emplace_at(size_t slot, uint64_t h, const std::string &k,
+                               bool was_tomb) {
+    const uint32_t vi = static_cast<uint32_t>(vals_.size());
+    keys_.emplace_back(k);
+    vals_.emplace_back();
+    live_.push_back(1);
+    slots_[slot].hash = h;
+    slots_[slot].idx = vi;
+    slots_[slot].state = 1;
+    ++count_;
+    if (!was_tomb) ++occupied_;
+    return vals_[vi];
+  }
+  void rehash() {
+    const size_t new_cap = slots_.empty() ? 16 : slots_.size() * 2;
+    slots_.assign(new_cap, Slot{});
+    occupied_ = 0;
+    const size_t mask = new_cap - 1;
+    for (uint32_t vi = 0; vi < live_.size(); ++vi) {
+      if (!live_[vi]) continue;
+      const uint64_t h = Hash(keys_[vi]);
+      size_t i = static_cast<size_t>(h) & mask;
+      while (slots_[i].state != 0) i = (i + 1) & mask;
+      slots_[i].hash = h;
+      slots_[i].idx = vi;
+      slots_[i].state = 1;
+      ++occupied_;
+    }
+  }
 };
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.
@@ -154,6 +444,29 @@ struct Cache::Impl {
   std::deque<LayerStack> layer_stacks;              // table; [0] == root stack
   std::map<std::string, uint32_t> stack_by_id;      // dedup by resolved identifier
 
+  // Memoized EXTERNAL-arc target resolution. A heavily-referenced scene runs
+  // ProcessArc for millions of arc INSTANCES that name the same few hundred
+  // (authoring layer, asset path) pairs; each un-memoized instance re-paid
+  // RealAnchorOf + resolver.Resolve (twice: GetOrLoad + ResolvePath) + the
+  // expression-vars fingerprint build + the stack_by_id std::map walk (long
+  // near-identical path keys -> memcmp storm). The resolved target depends
+  // only on (anchor source, evaluated asset path, referencing expression-vars
+  // identity) plus per-Impl constants, so successful resolutions are memoized;
+  // failures re-run so per-instance diagnostics are unchanged. Cleared with
+  // the spec cache on InvalidateLayer (a dropped layer re-resolves).
+  struct ArcTargetEntry {
+    std::shared_ptr<Layer> layer;
+    std::string arc_id;  // resolved identifier (diagnostics + salted-earth)
+    uint32_t stack_idx = UINT32_MAX;
+  };
+  struct ArcMemoHash {
+    size_t operator()(const std::string &s) const {
+      return static_cast<size_t>(
+          StackSpecCache::HashSite(s.data(), s.size()));
+    }
+  };
+  std::unordered_map<std::string, ArcTargetEntry, ArcMemoHash> arc_target_memo_;
+
   // Interned prim-path table shared by all PrimIndex nodes (dedup across indices).
   std::deque<std::string> path_table;
   std::unordered_map<std::string, uint32_t> path_intern;
@@ -167,7 +480,7 @@ struct Cache::Impl {
   }
 
   std::map<std::string, std::unique_ptr<PrimIndex>> index_cache;
-  std::unordered_map<std::string, std::vector<Src>> sources_cache;  // path -> expanded sources
+  SrcCache sources_cache;  // path -> expanded sources (open-addressed, stable values)
   std::set<std::string> sources_in_progress;
   // Reentrancy guard for SourcesForRelocatedContent: derives a relocate
   // arrival's CONTENT from the source's COMPOSED parent (SourcesForSite), which

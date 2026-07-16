@@ -100,7 +100,7 @@
       }
 
       if (s.suppress_site_specs) continue;  // relocation-source opinions
-      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
+      const std::vector<SpecRef> &specs = SpecsFor(s);
       if (specs.empty()) continue;
 
       // A relocate authored in a layer stack does NOT remap the TARGET paths of
@@ -247,7 +247,7 @@
         if (!s.variant->active) return false;
         continue;  // variant active=true is not an authored opinion
       }
-      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
+      const std::vector<SpecRef> &specs = SpecsFor(s);
       for (const SpecRef &sr : specs) {
         if (sr.spec->meta().active_authored) return sr.spec->meta().active;
       }
@@ -279,7 +279,7 @@
       // source (ErrorInvalidReferenceToRelocationSource PreReloChild) leaked
       // while arc-delivered children (model.usd ModelChild) correctly follow.
       if (s.suppress_site_specs) continue;
-      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
+      const std::vector<SpecRef> &specs = SpecsFor(s);
       for (auto rit = specs.rbegin(); rit != specs.rend(); ++rit) {
         const PrimSpec *spec = rit->spec;
         const Layer *layer = rit->layer;
@@ -383,7 +383,7 @@
       n.site_path_idx = InternPath(s.site);
       n.map_to_root = Mapping(s.map_idx);
       n.offset = s.offset;
-      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
+      const std::vector<SpecRef> &specs = SpecsFor(s);
       if (!specs.empty()) {
         n.flags |= NodeFlags::HasSpecs;
         for (const SpecRef &sr : specs) {

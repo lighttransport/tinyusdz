@@ -14,9 +14,15 @@ Landed so far:
   gate; 6 fuzzer-found crash/UB bugs fixed and pinned by a replay test.
 - **Phase 3** — copy-on-write array storage in `Value` (12× memory cut on the
   clone benchmark).
-- **Phase 4** — `FindSpecs` memoization (−24% BuildStage). Interned-key
-  conversion (M3) and GraftSubtree child-walk (M5) deferred/reverted — see
-  doc/memory-and-performance.md.
+- **Phase 4** — `FindSpecs` memoization (−24% BuildStage). GraftSubtree
+  child-walk (M5) landed with a validity-guarded fallback. M3 landed 2026-07-16
+  as open-addressed caches/memos instead of a full u32-interned rekeying:
+  `StackSpecCache` (per-stack Specs memo, no per-call key copy),
+  `Src::specs_`/`SpecsFor` (self-resetting per-Src memo), `SrcCache`
+  (sources_cache), and `arc_target_memo_` (per-arc external-target resolution
+  keyed by anchor+asset+expression-vars fingerprint). Island/ALab/Caldera
+  load+compose −14–16%, byte-identical, TSan-clean — see
+  doc/memory-and-performance.md §M3.
 - **Phase 5 (core)** — stable variant-content instance key (fixes pointer
   aliasing S4); the instance key now folds in the accumulated variant selections
   and non-identity layer offsets (I1). Strongest-opinion tri-state
@@ -32,8 +38,8 @@ Landed so far:
   transforms, and unresolved-prototype diagnostics on draw refs. Bounds-checked
   draw view resolution, O(1) per-instancer draw ranges, and draw/prototype
   binding validators are available; opt-in transformed mesh duplication is
-  available for consumers that cannot use draw refs directly. Only the M3 pcp
-  hot-map interning stays intentionally deferred (see below).
+  available for consumers that cannot use draw refs directly. (The M3 pcp
+  hot-map work, once deferred, landed 2026-07-16 — see Phase 4 above.)
 - **Phase 6** — payload LoadRules model (`pcp/load-rules.{hh,cc}`, a
   `UsdStageLoadRules` port); `LoadPayload(With/WithoutDescendants)`,
   `SetLoadRules`; `UnloadPayload` recomposes (S7 fix); BuildStage rebuilds
