@@ -19,7 +19,31 @@ tusdview prints its device at startup, e.g.
   [tusdview] renderer: Vulkan, GPU: AMD Radeon RX 9070 XT (RADV GFX1201), ...
 """
 
+import os
 import re
+
+_NVIDIA_GLVND_JSON = "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
+
+
+def nvidia_offload_env(base=None):
+    """Environment for the Xvfb fallback, with NVIDIA PRIME render-offload.
+
+    Xvfb has no DRI, so Mesa hands out llvmpipe even when the host has a
+    discrete NVIDIA GPU. When the NVIDIA driver is installed, the GLVND
+    render-offload variables route the GL context to the hardware device
+    instead (doc/tusdview.md, "Headless HW-accelerated GL"). Without the
+    driver the variables are NOT set -- forcing the nvidia GLX vendor on a
+    non-NVIDIA host breaks GL outright -- so other hosts keep llvmpipe and
+    the callers' software-renderer skip. Explicitly exported values win.
+    """
+    env = dict(os.environ if base is None else base)
+    if os.path.exists("/proc/driver/nvidia/version"):
+        env.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")
+        env.setdefault("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
+        if os.path.exists(_NVIDIA_GLVND_JSON):
+            env.setdefault("__EGL_VENDOR_LIBRARY_FILENAMES", _NVIDIA_GLVND_JSON)
+    return env
+
 
 _SOFTWARE = re.compile(
     r"llvmpipe|softpipe|swrast|SwiftShader|lavapipe|Software Rasterizer",

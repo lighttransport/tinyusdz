@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gpu_backend import device_name, is_software_renderer  # noqa: E402
+from gpu_backend import device_name, is_software_renderer, nvidia_offload_env  # noqa: E402
 
 
 def parse_args():
@@ -143,13 +143,24 @@ def run_viewer(args, mode, output_path):
     prefixes = command_prefixes(args)
     for i, prefix in enumerate(prefixes):
         cmd = prefix + viewer
+        env = child_env(args)
+        if prefix:
+            # Xvfb prefix: without DRI Mesa gives llvmpipe, so route GL to the
+            # NVIDIA GPU when one is present -- see gpu_backend.py.
+            env = nvidia_offload_env(env)
         proc = subprocess.run(
-            cmd, text=True, capture_output=True, check=False, env=child_env(args)
+            cmd, text=True, capture_output=True, check=False, env=env
         )
         log = (proc.stdout or "") + (proc.stderr or "")
-        # An inherited DISPLAY that cannot be opened (stale forwarded X11) is not
-        # a failure -- fall through to the Xvfb prefix.
-        if proc.returncode != 0 and i + 1 < len(prefixes) and "glfwInit failed" in log:
+        # An inherited DISPLAY that is unusable is not a failure -- fall through
+        # to the Xvfb prefix. A stale forwarded X11 socket fails glfwInit; a
+        # live forwarded display can open but still refuse a GL context
+        # (GLX BadValue), which surfaces as glfwCreateWindow failing.
+        if (
+            proc.returncode != 0
+            and i + 1 < len(prefixes)
+            and ("glfwInit failed" in log or "glfwCreateWindow failed" in log)
+        ):
             continue
         break
     # A software rasterizer (Xvfb / forwarded X11 give Mesa llvmpipe, which has
