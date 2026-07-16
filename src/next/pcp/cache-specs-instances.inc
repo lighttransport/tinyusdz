@@ -204,13 +204,24 @@
 
   // --- instancing ---------------------------------------------------------
 
-  // Instanceable iff some contributing spec set instanceable=true AND the prim
+  // Instanceable iff the COMPOSED `instanceable` value is true AND the prim
   // actually has a composition arc (more than just its own root opinions).
+  // `instanceable` is ordinary boolean metadata: the STRONGEST authored opinion
+  // wins (srcs are strong-first), so a local `instanceable = false` override on
+  // a prim that references an instanceable=true prototype de-instances it
+  // (instancing-001 ModifiedTree).
   bool IsInstanceableSources(const std::vector<Src> &srcs) const {
     if (srcs.size() <= 1) return false;
     for (const Src &s : srcs) {
       for (const SpecRef &sr : Specs(s.stack_idx, s.site)) {
-        if (sr.spec->meta().instanceable) return true;
+        const PrimSpecMeta &m = sr.spec->meta();
+        // `instanceable = true` is always an authored opinion (the field
+        // defaults to false), so it counts even when the authoring path did
+        // not stamp instanceable_authored (hand-built layers). Only an
+        // explicit `instanceable = false` needs the flag to distinguish it
+        // from the unset default.
+        if (m.instanceable) return true;
+        if (m.instanceable_authored) return false;  // explicit false override
       }
     }
     return false;
@@ -283,6 +294,7 @@
       prototype_by_key[ik] = prim_path;  // first of its key seeds the prototype
       prototype_of[prim_path] = prim_path;
       instances_by_prototype[prim_path].push_back(prim_path);
+      instance_key_order.push_back(ik);
       return;
     }
     const std::string old_proto = pit->second;

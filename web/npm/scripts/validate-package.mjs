@@ -21,9 +21,16 @@ const REQUIRED_STAGED_FILES = [
   'tinyusdz_64.js',
   'tinyusdz_64.wasm',
   'tinyusdz_64.wasm.zst',
+  'tinyusdz_next.js',
+  'tinyusdz_next.wasm',
+  'tinyusdz_next.wasm.zst',
+  'tinyusdz_next_64.js',
+  'tinyusdz_next_64.wasm',
+  'tinyusdz_next_64.wasm.zst',
   'TinyUSDZLoader.js',
   'TinyUSDZLoaderUtils.js',
-  'TinyUSDZWorkerLoader.js'
+  'TinyUSDZWorkerLoader.js',
+  'usdzconvert.js'
 ];
 
 function readPublishManifest() {
@@ -102,6 +109,21 @@ assert.equal(require.resolve('tinyusdz/tinyusdz.wasm').endsWith('tinyusdz.wasm')
 assert.equal(require.resolve('tinyusdz/tinyusdz.wasm.zst').endsWith('tinyusdz.wasm.zst'), true);
 assert.equal(require.resolve('tinyusdz/tinyusdz_64.wasm').endsWith('tinyusdz_64.wasm'), true);
 assert.equal(require.resolve('tinyusdz/tinyusdz_64.wasm.zst').endsWith('tinyusdz_64.wasm.zst'), true);
+assert.equal(require.resolve('tinyusdz/tinyusdz_next.wasm').endsWith('tinyusdz_next.wasm'), true);
+assert.equal(require.resolve('tinyusdz/tinyusdz_next.wasm.zst').endsWith('tinyusdz_next.wasm.zst'), true);
+assert.equal(require.resolve('tinyusdz/tinyusdz_next_64.wasm').endsWith('tinyusdz_next_64.wasm'), true);
+assert.equal(require.resolve('tinyusdz/tinyusdz_next_64.wasm.zst').endsWith('tinyusdz_next_64.wasm.zst'), true);
+
+// Instantiate the lean next-only modules (wasm32 + wasm64) and check the
+// embind API surface used by TinyUSDZLoader({ next: true }).
+for (const nextModule of ['tinyusdz/tinyusdz_next.js', 'tinyusdz/tinyusdz_next_64.js']) {
+  const factory = (await import(nextModule)).default;
+  assert.equal(typeof factory, 'function', nextModule + ' default export is a module factory');
+  const instance = await factory();
+  for (const api of ['NextUSDZConverterNative', 'NextFlattenSession', 'RenderStream']) {
+    assert.equal(typeof instance[api], 'function', nextModule + ' exposes ' + api);
+  }
+}
 `;
 
   fs.writeFileSync(path.join(smokeDir, 'smoke.mjs'), script.trimStart(), 'utf8');

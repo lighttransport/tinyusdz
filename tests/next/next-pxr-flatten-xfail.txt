@@ -1,0 +1,39 @@
+# next-vs-pxr flatten differential: divergence ledger.
+# Format: <input-relpath> <reason>. Entries fail the semantic compare in
+# tests/next/run-next-pxr-flatten-diff.mjs; an unlisted divergence FAILS the
+# gate (ratchet 0), and a listed entry that starts passing reports XPASS and
+# must be pruned.
+#
+# Reason tags:
+#   INTENTIONAL: deliberate tinyusdz behavior kept on purpose (lossless
+#     unknown-metadata preservation, uint2/3/4 support, portable relative
+#     asset paths, clip/array-edit preservation) — permanent, counted in the
+#     runner's `intentional` bucket.
+#   ORACLE-*: a pinned-pxr bug/nondeterminism/limitation — permanent.
+#   (untagged): a REAL remaining divergence to burn down (deep composition
+#     tail: relocate chains, class-hierarchy value selection, connection
+#     mapping through variant+reference, permission enforcement).
+supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
+tests/usda/instancing-001.usda ORACLE-NONDETERMINISTIC: pxr usdcat --flatten assigns Flattened_Prototype_N by internal TfHashMap order — observed ~40/60 flip of Tree/Rock between _1 and _2 across repeated runs; next's numbering (reverse discovery, matching pxr's stack registration) is stable and matches pxr's majority output, but the case cannot be a deterministic gate input
+tests/usda/aousd-unknown-property-metadata.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
+tests/usda/array_edit_basic.usda INTENTIONAL: sparse VtArrayEdit values preserved as authored text (keep-don't-evaluate policy); pxr flatten evaluates them to dense arrays
+tests/usda/clips-primmeta-001.usda INTENTIONAL: value-clips metadata preserved on flatten (lossless clip indirection); pxr flatten bakes clips into dense samples
+tests/usda/layer-metadata-001.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
+tests/usda/materialx-001.usda INTENTIONAL: config:mtlx:colorspace attribute preserved; pxr 26.05 drops it on flatten
+tests/usda/purpose-hierarchy-001.usda INTENTIONAL: `purpose` authored as PRIM metadata is unregistered (purpose is an attribute); tinyusdz preserves it losslessly, pxr drops it
+tests/usda/sceneLibrary-001.usda INTENTIONAL: Apple sceneLibrary extension metadata (sceneName) preserved losslessly; pxr 26.05 drops it
+tests/usda/shader-nonconformant-types.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
+tests/usda/texture-colorspace-as-meta-000.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
+tests/usda/uint2-array-001.usda INTENTIONAL: tinyusdz supports uint2/3/4 attribute types; pxr has no such Sdf types and silently DROPS the data
+tests/usda/uint2-type-001.usda INTENTIONAL: tinyusdz supports uint2/3/4 attribute types; pxr has no such Sdf types and silently DROPS the data
+tests/usda/unregistered-prim-meta-001.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
+tests/usda/usdlux_advanced_features.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
+tests/usda/usdz-schema-autoplay-001.usda INTENTIONAL: Apple usdz preliminary schema metadata (autoPlay) preserved losslessly; pxr 26.05 drops it
+tests/usda/usdz-schema-playbackmode-001.usda INTENTIONAL: Apple usdz preliminary schema metadata (playbackMode) preserved losslessly; pxr 26.05 drops it
+tests/usdc/aousd-unknown-property-metadata.usdc INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
+tests/usdc/clips-primmeta-001.usdc INTENTIONAL: value-clips metadata preserved on flatten (lossless clip indirection); pxr flatten bakes clips into dense samples
+tests/usdc/memory-budget-customdata-001-runtime.usdc ORACLE-LIMITATION: pxr usdcat --flatten silently produces an EMPTY stage for this crate (exit 0, zero prims); next composes it fully
+tests/usdc/sceneLibrary-001.usdc INTENTIONAL: Apple sceneLibrary extension metadata (sceneName) preserved losslessly; pxr 26.05 drops it
+tests/usdc/uint2-array-001.usdc INTENTIONAL: tinyusdz supports uint2/3/4 attribute types; pxr has no such Sdf types and silently DROPS the data
+tests/usdc/uint2-type-001.usdc INTENTIONAL: tinyusdz supports uint2/3/4 attribute types; pxr has no such Sdf types and silently DROPS the data
+tests/usdc/unregistered-prim-meta-001.usdc INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields

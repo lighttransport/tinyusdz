@@ -77,6 +77,9 @@ bool CrateReader::Impl::DecodePropMetaField(const std::string& name,
   if (name == "outputName") return tok_or_str(pm.outputName, PropMeta::kOutputName);
   if (name == "bindMaterialAs") return tok_or_str(pm.bindMaterialAs, PropMeta::kBindMaterialAs);
   if (name == "kind") return tok_or_str(pm.kind, PropMeta::kKind);
+  if (name == "permission") {
+    return tok_or_str(pm.permission, PropMeta::kPermission);
+  }
   if (name == "displayName") return tok_or_str(pm.displayName, PropMeta::kDisplayName);
   if (name == "displayGroup") return tok_or_str(pm.displayGroup, PropMeta::kDisplayGroup);
   if (name == "comment") return tok_or_str(pm.comment, PropMeta::kComment);
@@ -194,6 +197,11 @@ bool CrateReader::Impl::BuildStage() {
         if (d) {
           layer.meta().metersPerUnit = *d;
           layer.meta().metersPerUnit_set = true;
+        }
+      } else if (field.first == "hasOwnedSubLayers") {
+        if (const bool* b = field.second.as_bool()) {
+          layer.meta().hasOwnedSubLayers = *b;
+          layer.meta().hasOwnedSubLayers_set = true;
         }
       } else if (field.first == "timeCodesPerSecond") {
         const double* d = field.second.as_double();
@@ -448,13 +456,21 @@ bool CrateReader::Impl::BuildStage() {
     // referenced prim (a forced "Xform" default would mask e.g. a referenced
     // Mesh definition; the writer already skips empty type names).
     entry.type_name.clear();
-    entry.specifier = PrimSpecifier::Def;
+    // A crate spec with NO `specifier` field composes as `over` in pxr —
+    // for variant holder specs (which never carry one) AND for prim specs
+    // (prim-with-no-specifier-001; pxr writes the field for every def, so
+    // real crates are unaffected). A Def default here wrongly promoted
+    // specifier-less specs to def during composition.
+    entry.specifier = PrimSpecifier::Over;
     for (auto& f : value_field_scratch) {
       if (f.first == "typeName") {
         if (const std::string* s = f.second.as_token()) entry.type_name = *s;
+        // Legacy "no prim type" spelling (pxr composes it as untyped).
+        if (entry.type_name == "__AnyType__") entry.type_name.clear();
       } else if (f.first == "specifier") {
         if (const std::string* s = f.second.as_token()) {
-          if (*s == "over") entry.specifier = PrimSpecifier::Over;
+          if (*s == "def") entry.specifier = PrimSpecifier::Def;
+          else if (*s == "over") entry.specifier = PrimSpecifier::Over;
           else if (*s == "class") entry.specifier = PrimSpecifier::Class;
         }
       }
@@ -1012,6 +1028,13 @@ bool CrateReader::Impl::BuildStage() {
           else if (const std::string* s = field.second.as_string())
             ps->meta().kind() = *s;
           ps->meta().setKindAuthored();
+          continue;
+        }
+        if (field.first == "permission") {
+          if (const std::string* s = field.second.as_token())
+            ps->meta().permission() = *s;
+          else if (const std::string* s = field.second.as_string())
+            ps->meta().permission() = *s;
           continue;
         }
         if (field.first == "displayName") {

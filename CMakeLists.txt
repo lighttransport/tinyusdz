@@ -2346,9 +2346,12 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   if(TARGET tusdcat AND _tinyusdz_tusdcat_e2e_ok)
-    # Scope is imageable, so `visibility` / `purpose` are parsed into TYPED
-    # fields (not `props`) and every writer must emit them explicitly. Neither
-    # the USDA printer nor the crate writer did, so they vanished on write.
+    # Crate-writer round-trip pins. Every check here is a fix for authored USD
+    # data that the .usdc writer silently DROPPED or INVENTED: schema fallbacks
+    # written for declaration-only attributes, prim/attribute metadata blocks,
+    # timeSamples on typed writers, list-edit qualifiers, and imageable fields
+    # such as Scope visibility/purpose. Several are latent -- no tests/usda
+    # fixture exercises them -- so this suite prevents silent regressions.
     add_test(
       NAME scope-imageable-roundtrip
       COMMAND bash "${PROJECT_SOURCE_DIR}/tests/run-scope-imageable-roundtrip.sh"

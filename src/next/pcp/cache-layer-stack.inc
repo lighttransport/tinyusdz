@@ -135,11 +135,56 @@
       // Invalid authored relocates are composition errors but contribute no
       // namespace edit: identity, ancestor/descendant moves, and root-prim
       // moves are all ignored by Pcp. Applying them would delete valid subtrees
-      // (the supplemental ErrorInvalidAuthoredRelocates cases).
-      if (src.empty() || dst.empty() || src == dst ||
-          IsPathAtOrUnder(src, dst) || IsPathAtOrUnder(dst, src) ||
+      // (the supplemental ErrorInvalidAuthoredRelocates cases). An EMPTY
+      // target is NOT invalid: `</X>: <>` deletes the prim (RelocateToNone).
+      if (src.empty() || src == dst ||
+          (!dst.empty() &&
+           (IsPathAtOrUnder(src, dst) || IsPathAtOrUnder(dst, src))) ||
           sp.parent().str() == "/") {
         invalid[i] = true;
+      }
+      // pxr only relocates prims introduced ACROSS a composition arc: a
+      // source authored purely locally (a spec exists in this stack and no
+      // ancestor-or-self spec carries any arc) cannot be relocated — the edit
+      // is dropped and the local spec composes at its original path
+      // (relocates_basic; "Cannot relocate a prim defined in the local layer
+      // stack").
+      if (!invalid[i]) {
+        bool has_spec = false;
+        bool has_arc = false;
+        for (const auto &lp : st->layers) {
+          // Walk STRICT ancestors: an arc on the source spec itself does not
+          // make the prim arc-introduced (pxr still calls it local).
+          std::string cur = src;
+          for (;;) {
+            if (const PrimSpec *psp = lp->prim_at_path(cur)) {
+              if (cur == src) {
+                has_spec = true;
+                const size_t up = cur.rfind('/');
+                if (up == std::string::npos || up == 0) break;
+                cur.resize(up);
+                continue;  // self arcs do not count
+              }
+              const PrimSpecMeta &m = psp->meta();
+              const ArcListOpEdits *ae = m.arc_edits();
+              if (!m.references.empty() || !m.payloads.empty() ||
+                  !m.inherits.empty() || !m.specializes.empty() ||
+                  !m.variantSets().empty() ||
+                  (ae && (ae->references.has_authored_opinion() ||
+                          ae->payloads.has_authored_opinion() ||
+                          ae->inherits.has_authored_opinion() ||
+                          ae->specializes.has_authored_opinion()))) {
+                has_arc = true;
+                break;
+              }
+            }
+            const size_t slash = cur.rfind('/');
+            if (slash == std::string::npos || slash == 0) break;
+            cur.resize(slash);
+          }
+          if (has_arc) break;
+        }
+        if (has_spec && !has_arc) invalid[i] = true;
       }
     }
     for (size_t i = 0; i < candidates.size(); ++i) {
@@ -148,8 +193,9 @@
         const auto &b = candidates[j];
         // Two sources cannot claim the same target; and a relocate chain whose
         // target is another relocate's source invalidates both opinions.
-        if (a.second == b.second || a.second == b.first ||
-            b.second == a.first) {
+        // (Empty targets are DELETES: any number may coexist.)
+        if ((!a.second.empty() && a.second == b.second) ||
+            a.second == b.first || b.second == a.first) {
           invalid[i] = true;
           invalid[j] = true;
         }
@@ -163,9 +209,9 @@
       }
     }
     // A relocate may be authored in a namespace an ANCESTRAL relocate already
-    // produced (`/A -> /W`, then `/W/B -> /W/X`). Composed prims address their
-    // opinions by raw (pre-relocation) site, so normalize such paths back:
-    // `/W/B` -> `/A/B`.
+    // produced (`/A -> /W`, then `/W/B -> /W/X`). `raw_path` normalizes such a
+    // path back to the pre-ancestral-relocation ("raw") namespace (`/W/B` ->
+    // `/A/B`). Used ONLY for `src_to_dst` below (see the split explanation).
     auto raw_path = [&](std::string path) {
       for (size_t pass = 0; pass < candidates.size(); ++pass) {
         size_t best = candidates.size();
@@ -173,6 +219,7 @@
         for (size_t k = 0; k < candidates.size(); ++k) {
           if (invalid[k]) continue;
           const std::string &target = candidates[k].second;
+          if (target.empty()) continue;  // deletion edit: no arrival namespace
           if ((path == target || strict_descendant(path, target)) &&
               target.size() > best_len) {
             best = k;
@@ -185,19 +232,38 @@
       return path;
     };
 
+    // Two consumers need DIFFERENT keyings, so key each table for its consumer:
+    //
+    //  * `src_to_dst` (WithStackRelocates relationship/connection target remap,
+    //    PathInRelocateSource) uses the RAW source. WithStackRelocates adds one
+    //    rename per relocate to a single mapping applied in ONE pass; keying by
+    //    the raw source pre-chains ancestral relocates (raw target -> FINAL
+    //    dst), so a relationship authored in the pre-relocation namespace remaps
+    //    correctly through a chain (BasicRelocateToAnimInterface: PathRig/Path/
+    //    Anim -> Anim/Path/AnimScope in one hop).
+    //
+    //  * `departed` / `arrivals` (ComposeChildNames, SourcesForRelocateSource)
+    //    use the COMPOSED (as-authored) path. The source's ancestors exist in
+    //    the composed namespace as arrivals of the ancestral relocate, carrying
+    //    both the relocated content AND any `over` opinions at the post-
+    //    relocation path (TrickyMultipleRelocations2 `over Model_2 { Rig }`); the
+    //    composed prim's departed children are keyed by their composed parent.
     StackRelocates &rel = st->relocates;
     for (size_t i = 0; i < candidates.size(); ++i) {
       if (invalid[i]) continue;
-      const std::string src = raw_path(candidates[i].first);
+      const std::string &src = candidates[i].first;  // composed (as-authored)
       const std::string &dst = candidates[i].second;
       const Path sp(src), dp(dst);
-      rel.src_to_dst[src] = dst;
+      rel.src_to_dst[raw_path(src)] = dst;
       rel.departed[sp.parent().str()].insert(sp.name());
+      if (dst.empty()) continue;  // deletion: departed only, no arrival
+                                  // (and no target rename — pxr keeps
+                                  // targets to deleted paths as authored).
       StackRelocates::Arrival arrival;
       arrival.name = dp.name();
-      arrival.src_site = src;
+      arrival.src_site = src;  // composed: SourcesForRelocateSource walks it
       arrival.dst_site = dst;
-      rel.arrivals[raw_path(dp.parent().str())].push_back(std::move(arrival));
+      rel.arrivals[dp.parent().str()].push_back(std::move(arrival));
     }
   }
 
@@ -254,6 +320,12 @@
         }
         sub_cum = cum_offset.Compose(LayerOffset{offset, scale});
       }
+      // timeCodesPerSecond auto-scale (pxr parity): a sublayer authored at a
+      // different tcps than its PARENT layer is scaled underneath the
+      // authored offset so its samples land at the same wall-clock time.
+      // Effective tcps falls back framesPerSecond -> 24 like
+      // SdfLayer::GetTimeCodesPerSecond. Applied after the sublayer is
+      // loaded (below) since it needs the sublayer's metadata.
       const std::string sub_id = resolver->ResolvePath(
           sub, anchor, !options.strict_aousd_conformance);
       if (sub_id.empty()) {
@@ -276,6 +348,12 @@
       std::shared_ptr<Layer> sl =
           reg_->GetOrLoad(*resolver, sub, anchor, warn, err, load_opts);
       if (sl) {
+        const double parent_tcps = layer->effective_timeCodesPerSecond();
+        const double sub_tcps = sl->effective_timeCodesPerSecond();
+        if (parent_tcps != sub_tcps && sub_tcps > 0.0 &&
+            std::isfinite(parent_tcps) && std::isfinite(sub_tcps)) {
+          sub_cum = sub_cum.Compose(LayerOffset{0.0, parent_tcps / sub_tcps});
+        }
         if (visiting) visiting->insert(sub_id);
         if (!AppendLayerAndSublayers(st, sl, sub_id, visiting, depth + 1,
                                      sub_cum, expr_vars, warn, err)) {

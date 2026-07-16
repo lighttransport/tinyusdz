@@ -735,7 +735,8 @@ static void test_sublayer_merge() {
   }
   CHECK(!kid_is_root, "sublayer child not leaked to stage root");
   CHECK(out->meta().subLayers.empty(), "baked subLayers cleared from output");
-  CHECK(out->meta().defaultPrim == "p", "defaultPrim filled from sublayer");
+  CHECK(out->meta().defaultPrim.empty(),
+        "sublayer defaultPrim does NOT fill (root-layer-only, pxr parity)");
 }
 
 // LIVRPS strength: inherits > variants > references; specializes weakest.
@@ -1129,7 +1130,8 @@ static void test_audit_stage_meta_and_variant_overrides() {
       "\"s2\" { int v = 2 } }\n"
       "}\n");
 
-  // Root-authored upAxis wins; sublayer fills mPU/tCPS. Prim-scoped
+  // Root-authored upAxis wins; sublayer-authored stage metadata is IGNORED
+  // (pxr parity: stage fields resolve from the root layer only). Prim-scoped
   // override flips only /B to s2.
   CompositionOptions opts;
   opts.variant_overrides["/B{shape}"] = "s2";
@@ -1140,10 +1142,10 @@ static void test_audit_stage_meta_and_variant_overrides() {
   CHECK(out != nullptr, "compose succeeds");
   CHECK(out->meta().upAxis == "Y" && out->meta().upAxis_set,
         "root upAxis wins over sublayer");
-  CHECK(out->meta().timeCodesPerSecond == 30.0 &&
-            out->meta().timeCodesPerSecond_set,
-        "sublayer tCPS gap-fills");
-  CHECK(out->meta().metersPerUnit_set, "sublayer mPU gap-fills");
+  CHECK(!out->meta().timeCodesPerSecond_set,
+        "sublayer tCPS does NOT gap-fill (root-layer-only, pxr parity)");
+  CHECK(!out->meta().metersPerUnit_set,
+        "sublayer mPU does NOT gap-fill (root-layer-only, pxr parity)");
   const Value* va = PropOf(*out, "/A", "v");
   CHECK(va && va->as_int() && *va->as_int() == 1,
         "/A keeps authored selection (s1)");
