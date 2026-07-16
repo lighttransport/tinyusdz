@@ -441,6 +441,21 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
                       std::string *err);
 
 ///
+/// Options for CompositeAllArcs: per-arc-type composition options for the
+/// R and P phases (parent-relative path policy, asset size caps, the shared
+/// parsed-layer cache, ...). The option-less overload uses defaults.
+///
+struct AllArcsCompositionOptions {
+  ReferencesCompositionOptions references;
+  PayloadCompositionOptions payload;
+};
+
+bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err,
+                      const AllArcsCompositionOptions &options);
+
+///
 /// Build USD Stage from Layer
 ///
 /// `layer` object will be destroyed after `stage` is being build.
