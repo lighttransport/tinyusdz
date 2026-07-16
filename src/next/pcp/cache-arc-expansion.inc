@@ -701,7 +701,26 @@
           RecordSelections(*implied_spec.spec, &ancestor_selections,
                            arc_src.expression_variables, warn, err);
         }
+        // A variant selection the INHERITING prim (instance) authors on ITS OWN
+        // path in this same ancestor stack beats the class's implied selection
+        // (pxr: an instance's direct selection is stronger than the selection it
+        // inherits from its class -- TrickySpookyVariantSelectionInClass, where
+        // RightLegRig authors LegRigStyle=2Leg but inherits SymLegRig whose root
+        // over selects 1Leg). Read the instance's own selections at this stack
+        // (the class arc's destination, mapped back into `as`) and never let the
+        // class overwrite them.
+        std::map<std::string, std::string> own_selections;
+        {
+          const std::string dest = Mapping(src.map_idx).Apply(src.site);
+          const std::string dest_in_as =
+              Mapping(ancestor_map_idx).ReverseApply(dest);
+          for (const SpecRef& own_spec : Specs(as, dest_in_as)) {
+            RecordSelections(*own_spec.spec, &own_selections,
+                             arc_src.expression_variables, warn, err);
+          }
+        }
         for (const auto& selection : ancestor_selections) {
+          if (own_selections.count(selection.first)) continue;  // instance wins
           (*sels)[selection.first] = selection.second;
         }
         Src implied = arc_src;
@@ -1196,6 +1215,39 @@
     // at their recorded strength position (pxr resolves selections across the
     // whole prim index before applying each node's sets).
     ProcessDeferredVariants(&main, &spec, &sels, warn, err);
+    // Shadow STALE variant content: a source whose site bakes in a variant
+    // selector `{Set=Val}` that CONFLICTS with the finally-resolved selection
+    // (sels[Set] != Val) is a superseded variant option's content. It reaches
+    // here when a class's own (weaker) selection eagerly grafted its option at
+    // the class site, then the INHERITING instance re-selected the same set to a
+    // different value (TrickySpookyVariantSelectionInClass: SymLegRig's default
+    // 1Leg content arrives via the inherit AND RightLegRig re-selects 2Leg;
+    // Inherit outranks Variant, so the stale 1Leg would otherwise win). pxr
+    // resolves ONE selection per set across the whole prim index, so drop the
+    // conflicting content. Only fires when the set was actually re-selected --
+    // an unmentioned set (sels has no entry) keeps all its content.
+    const auto has_conflicting_selector = [&](const std::string &site) {
+      for (size_t i = 0; (i = site.find('{', i)) != std::string::npos;) {
+        const size_t close = site.find('}', i);
+        if (close == std::string::npos) break;
+        const size_t eq = site.find('=', i);
+        if (eq != std::string::npos && eq < close) {
+          const std::string set = site.substr(i + 1, eq - i - 1);
+          const std::string val = site.substr(eq + 1, close - eq - 1);
+          auto it = sels.find(set);
+          if (it != sels.end() && it->second != val) return true;
+        }
+        i = close + 1;
+      }
+      return false;
+    };
+    for (std::vector<Src> *lst : {&main, &spec}) {
+      lst->erase(std::remove_if(lst->begin(), lst->end(),
+                                [&](const Src &s) {
+                                  return has_conflicting_selector(s.site);
+                                }),
+                 lst->end());
+    }
     // pxr strength for IMPLIED classes: the implied block composes at its
     // expressing ancestor stack's position — immediately after that stack's
     // own positional opinions — not at the position of the reference that
