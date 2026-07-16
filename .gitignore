@@ -505,3 +505,7 @@ python/tinyusdz/_core.*.so
 !tools/tusdchecker/testdata/arkit-clean.usda
 !tools/tusdchecker/testdata/arkit-violations.usda
 .xmake/
+
+# Local per-machine work notes (resume hub); intentionally untracked --
+# each machine keeps its own copy and it conflicted in every cross-merge.
+task.md
