@@ -534,6 +534,8 @@
             std::string w, e;
             LayerLoadOptions load_opts;
             load_opts.max_memory = options.max_layer_memory;
+            load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
+            load_opts.usdc_use_mmap = options.usdc_use_mmap;
             load_opts.usda_parse_options = options.usda_parse_options;
             load_opts.strict_aousd_conformance =
                 options.strict_aousd_conformance;

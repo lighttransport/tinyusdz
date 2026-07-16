@@ -202,6 +202,8 @@
               : layer_stacks[src.stack_idx].identifier);
       LayerLoadOptions load_opts;
       load_opts.max_memory = options.max_layer_memory;
+      load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
+      load_opts.usdc_use_mmap = options.usdc_use_mmap;
       load_opts.usda_parse_options = options.usda_parse_options;
       load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
       std::shared_ptr<Layer> arc_layer =
@@ -603,7 +605,7 @@
             bool any_deferred = false;
             for (const std::string &pl_str : vd->payloads) {
               CompositionArc arc = Compositor::ParsePayload(pl_str);
-              if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+              if (!ShouldLoadPayload(root_prim_path, arc.asset_path, *spec)) {
                 any_deferred = true;
                 continue;
               }
@@ -688,7 +690,7 @@
         bool any_deferred = false;
         for (const std::string &pl_str : spec->meta().payloads) {
           CompositionArc arc = Compositor::ParsePayload(pl_str);
-          if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+          if (!ShouldLoadPayload(root_prim_path, arc.asset_path, *spec)) {
             any_deferred = true;
             continue;  // deferred: contributes no opinions.
           }
@@ -726,7 +728,18 @@
         bool any_deferred = false;
         for (const auto &pl : mpay) {
           CompositionArc arc = Compositor::ParsePayload(pl.first);
-          if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+          // Preserve the payload's authoring PrimSpec after list-op merging.
+          // Besides property-based policies, the owner carries the layer
+          // anchor required to stat relative payload asset paths correctly.
+          const PrimSpec *policy_owner = specs.front().spec;
+          for (const SpecRef &candidate : specs) {
+            if (candidate.layer_id == pl.second) {
+              policy_owner = candidate.spec;
+              break;
+            }
+          }
+          if (!ShouldLoadPayload(root_prim_path, arc.asset_path,
+                                 *policy_owner)) {
             any_deferred = true;
             continue;
           }
