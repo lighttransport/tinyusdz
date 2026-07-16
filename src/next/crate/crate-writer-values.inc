@@ -71,6 +71,134 @@
             : field.unregistered_source);
   }
 
+  // Encode a sparse array edit (VtArrayEdit, crate >= 0.14) as a ValueRep
+  // with the array-edit bit, the ELEMENT crate type in the type byte, and a
+  // payload block holding (valuesRep, indexesRep, isDense). Literal element
+  // texts are parsed back into one typed literals array; the op stream uses
+  // OpenUSD's Vt_ArrayEditOps encoding.
+  ValueRep EncodeArrayEdit(const ArrayEditData& edit, TypeId elem_type) {
+    const CrateTypeId elem_crate = ToCrateTypeId(elem_type);
+    if (elem_crate == CrateTypeId::Invalid) {
+      return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+    }
+    if (required_version_minor_ < 14) required_version_minor_ = 14;
+    if (edit.ops.empty()) {
+      // Identity edit: no out-of-line data.
+      return ValueRep::Make(elem_crate, 0, false, false, false,
+                            /*is_array_edit=*/true);
+    }
+
+    // Collect literal texts (deduplicated) and assign indices.
+    std::vector<std::string> lit_texts;
+    auto lit_index = [&](const std::string& t) -> int64_t {
+      for (size_t i = 0; i < lit_texts.size(); ++i) {
+        if (lit_texts[i] == t) return static_cast<int64_t>(i);
+      }
+      lit_texts.push_back(t);
+      return static_cast<int64_t>(lit_texts.size()) - 1;
+    };
+
+    std::vector<int64_t> ins;
+    auto word = [](uint8_t op) {
+      return static_cast<int64_t>((static_cast<uint64_t>(op) << 56) | 1u);
+    };
+    for (const ArrayEditOpRec& op : edit.ops) {
+      switch (op.kind) {
+        case ArrayEditOpRec::WriteLiteral:
+          ins.push_back(word(0));
+          ins.push_back(lit_index(op.literal));
+          ins.push_back(op.a2);
+          break;
+        case ArrayEditOpRec::WriteRef:
+          ins.push_back(word(1));
+          ins.push_back(op.a1);
+          ins.push_back(op.a2);
+          break;
+        case ArrayEditOpRec::InsertLiteral:
+          ins.push_back(word(2));
+          ins.push_back(lit_index(op.literal));
+          ins.push_back(op.a2);
+          break;
+        case ArrayEditOpRec::InsertRef:
+          ins.push_back(word(3));
+          ins.push_back(op.a1);
+          ins.push_back(op.a2);
+          break;
+        case ArrayEditOpRec::Erase:
+          ins.push_back(word(4));
+          ins.push_back(op.a1);
+          break;
+        case ArrayEditOpRec::MinSize:
+          if (op.has_fill) {
+            ins.push_back(word(6));
+            ins.push_back(op.a1);
+            ins.push_back(lit_index(op.literal));
+          } else {
+            ins.push_back(word(5));
+            ins.push_back(op.a1);
+          }
+          break;
+        case ArrayEditOpRec::SetSize:
+          if (op.has_fill) {
+            ins.push_back(word(8));
+            ins.push_back(op.a1);
+            ins.push_back(lit_index(op.literal));
+          } else {
+            ins.push_back(word(7));
+            ins.push_back(op.a1);
+          }
+          break;
+        case ArrayEditOpRec::MaxSize:
+          ins.push_back(word(9));
+          ins.push_back(op.a1);
+          break;
+      }
+    }
+
+    // Literal texts -> one typed array Value via the usda codec.
+    Value literals;
+    {
+      std::string text = "[";
+      for (size_t i = 0; i < lit_texts.size(); ++i) {
+        if (i) text += ", ";
+        text += lit_texts[i];
+      }
+      text += "]";
+      Lexer lexer(text.data(), text.size());
+      ParseArrayContext ctx;
+      ParseResult r = ParseArrayValue(lexer, elem_type, ctx);
+      if (!r.success) {
+        return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+      }
+      literals = std::move(r.value);
+    }
+    const ValueRep values_rep = EncodeValue(literals);
+    const ValueRep indexes_rep = EncodeValue(Value::MakeInt64Array(ins));
+    if (values_rep.type_id() == CrateTypeId::Invalid ||
+        indexes_rep.type_id() == CrateTypeId::Invalid) {
+      return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+    }
+
+    // (valuesRep, indexesRep, isDense) tuple. The embedded reps carry
+    // value_data_ indices until ComputeValueLayoutAndPatch relocates them
+    // (embedded_value_rep_offsets); push directly like dictionaries so the
+    // in-place patch never applies to a shared block twice.
+    DataBlock block;
+    block.type = TypeId::Invalid;
+    block.data.resize(17, 0);
+    const uint64_t vraw = values_rep.raw();
+    const uint64_t iraw = indexes_rep.raw();
+    std::memcpy(block.data.data(), &vraw, 8);
+    std::memcpy(block.data.data() + 8, &iraw, 8);
+    block.data[16] = 0;  // isDense: legacy, always false
+    block.embedded_value_rep_offsets.push_back(0);
+    block.embedded_value_rep_offsets.push_back(8);
+    const uint64_t idx = value_data_.size();
+    value_data_.push_back(std::move(block));
+    return ValueRep::Make(elem_crate, idx, false, false, false,
+                          /*is_array_edit=*/true);
+  }
+
   ValueRep EncodeValue(const Value& val) {
     if (val.is_dictionary()) {
       const Dict* d = val.as_dictionary();

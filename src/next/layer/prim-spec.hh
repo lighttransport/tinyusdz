@@ -12,6 +12,8 @@
 #include "../types/interpolation.hh"
 #include "../prim/path.hh"
 #include <algorithm>
+#include <climits>
+#include <cstdint>
 #include <list>
 #include <string>
 #include <vector>
@@ -153,6 +155,38 @@ struct VariantData {
   // whose descendants become the host prim's children when this variant is
   // selected. (Composed reference-style, so it supports child prims.)
   std::shared_ptr<Layer> content;
+};
+
+/// One op of a sparse array edit (VtArrayEdit, usda 1.2 / crate 0.14).
+/// Literal element values are carried as canonical usda element TEXT --
+/// evaluation reprints/reparses through the usda codec, which keeps the op
+/// list element-type-agnostic (see layer/array-edit.hh).
+struct ArrayEditOpRec {
+  enum Kind : uint8_t {
+    WriteLiteral,  // write <literal> to [a2]
+    WriteRef,      // write [a1] to [a2]
+    InsertLiteral, // insert <literal> at [a2] (append/prepend sugar included)
+    InsertRef,     // insert [a1] at [a2]
+    Erase,         // erase [a1]
+    MinSize,       // minsize a1 (fill <literal> when has_fill)
+    SetSize,       // resize a1 (fill <literal> when has_fill)
+    MaxSize,       // maxsize a1
+  };
+  Kind kind = WriteLiteral;
+  int64_t a1 = 0;         // source/ref index or size argument
+  int64_t a2 = 0;         // destination index (write/insert)
+  bool has_fill = false;  // minsize/resize carries a fill literal
+  std::string literal;    // canonical element text (literal ops and fills)
+};
+
+/// Insert-at-end sentinel (`append`): mirrors Vt_ArrayEditOps::EndIndex.
+constexpr int64_t kArrayEditEnd = INT64_MIN;
+
+/// A property's authored sparse array edit: the ordered op list. Weaker-over-
+/// stronger composition concatenates op lists (weaker first), like pxr's
+/// VtArrayEdit::ComposeOver.
+struct ArrayEditData {
+  std::vector<ArrayEditOpRec> ops;
 };
 
 /// Variant set - a named set of variant options
@@ -1174,6 +1208,18 @@ public:
   void set_raw_default_source(const std::string& prop_name,
                               std::string source);
   const std::string* raw_default_source(PropNameId name_id) const;
+  void clear_raw_default_source(PropNameId name_id);
+
+  /// Sparse array edit authored as this property's default (`= edit [...]`).
+  /// The canonical `edit [...]` text lives in raw_default_source (the usda
+  /// writer re-emits it); this is the structured op list composition uses to
+  /// stack and resolve edits (see layer/array-edit.hh).
+  void set_array_edit(const std::string& prop_name, ArrayEditData edit);
+  const ArrayEditData* array_edit(PropNameId name_id) const;
+  void clear_array_edit(PropNameId name_id);
+  const std::unordered_map<uint32_t, ArrayEditData>& array_edits() const {
+    return array_edits_;
+  }
 
   // ============================================================
   // Relationships
@@ -1369,6 +1415,9 @@ private:
   // because spline is a specialized sampled field, not an attribute default.
   std::unordered_map<uint32_t, std::string> spline_sources_;
   std::unordered_map<uint32_t, std::string> raw_default_sources_;
+  // Structured sparse array edits keyed by property id (empty for almost all
+  // specs; the canonical text twin lives in raw_default_sources_).
+  std::unordered_map<uint32_t, ArrayEditData> array_edits_;
 
   // Declared USD type names: interned property-name id -> interned typeName id
   // (both interned in the global PropNameTable). Lets the writer re-emit the

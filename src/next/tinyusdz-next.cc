@@ -636,6 +636,9 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
     if (comp_opts->num_threads >= 1) copts.num_threads = comp_opts->num_threads;
     copts.enable_timing = comp_opts->enable_timing || copts.enable_timing;
     if (comp_opts->payload_policy) copts.payload_policy = comp_opts->payload_policy;
+    if (comp_opts->payload_policy_with_prim) {
+      copts.payload_policy_with_prim = comp_opts->payload_policy_with_prim;
+    }
     if (!comp_opts->variant_overrides.empty())
       copts.variant_overrides = comp_opts->variant_overrides;
     if (!comp_opts->variant_overrides_by_path.empty()) {
@@ -644,6 +647,8 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
     copts.usda_parse_options = comp_opts->usda_parse_options;
     copts.max_layer_memory =
         MinNonZero(copts.max_layer_memory, comp_opts->max_layer_memory);
+    copts.usdc_lazy_arrays = comp_opts->usdc_lazy_arrays;
+    copts.usdc_use_mmap = comp_opts->usdc_use_mmap;
   }
 
   Stage composed;

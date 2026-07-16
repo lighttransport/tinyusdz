@@ -1039,7 +1039,10 @@ bool PrimIndexBuilder::EvalPayloads(uint16_t node_idx, std::string *err) {
 
       // Check load policy
       bool should_load = true;
-      if (_ctx->_options.payload_policy) {
+      if (_ctx->_options.payload_policy_with_prim) {
+        should_load = _ctx->_options.payload_policy_with_prim(
+            _result._prim_path, pl, *ps);
+      } else if (_ctx->_options.payload_policy) {
         should_load =
             _ctx->_options.payload_policy(_result._prim_path, pl);
       }

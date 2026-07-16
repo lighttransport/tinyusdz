@@ -114,9 +114,9 @@ tinyusdz::LargeSceneLoader loader;
 loader.Load("caldera.usda", opts, &warn, &err);
 
 loader.stage();                                  // composed structure
+auto snapshot = loader.stage_snapshot();         // immutable, worker-safe view
 loader.deferred_payload_paths();                 // geometry not yet loaded
-loader.load_payload(path, &warn, &err);          // stream one in on demand
-loader.rebuild_stage(&warn, &err);
+loader.load_payload(path, &warn, &err);          // may run on a worker; rebuilds
 ```
 
 Pipeline: `LoadLayerFromFile` (root) → `CompositeSublayers` (L phase) →
@@ -125,10 +125,17 @@ owns the resolver, `pcp::LayerRegistry`, flattened root, and `CompositionGraph`
 together so `load_payload`/`unload_payload`/`deferred_payload_paths` work after
 the initial load. Loading or unloading a payload now refreshes the payload
 node's own arcs plus the composed descendant PrimIndices under that prim before
-`rebuild_stage`, so children that exist only inside streamed geometry appear on
-load and disappear again on unload; nested relative arcs inside the streamed
+Stage publication, so children that exist only inside streamed geometry appear
+on load and disappear again on unload; nested relative arcs inside the streamed
 payload resolve against the payload file's directory; deferred-payload queries
 report only payloads still in the deferred state.
+
+Payload graph/cache mutations are serialized. `load_payload` and
+`unload_payload` build a replacement Stage and publish it only after the build
+succeeds, so they may run on a worker thread. Render/traversal code that overlaps
+streaming must hold `stage_snapshot()`; its immutable Stage remains alive while
+the loader publishes a newer snapshot. The legacy `stage()` reference remains
+for single-threaded callers.
 
 ### 2.2 Payload modes
 
@@ -136,11 +143,16 @@ report only payloads still in the deferred state.
 |---|---|
 | `LoadNone` | defer every payload (lightest; geometry streamed later) — default |
 | `LoadAll` | eager (may exceed RAM on huge scenes) |
-| `Budget(mb)` | load payloads until a byte budget of asset file sizes is reached, then defer the rest |
+| `Budget(mb)` | load payloads until a byte budget of asset file sizes is reached, then defer the rest; an optional `payload_extent_budget` adds a projected `extentsHint`-area cap |
 
-The policy is a `std::function<bool(const Path&, const Payload&)>` passed to
-`CompositionGraphOptions::payload_policy`; deferred payloads are recorded in the
-graph and retrievable via `GetDeferredPayloadPaths()`.
+The policy is passed to `CompositionGraphOptions`; the extended
+`payload_policy_with_prim` callback also receives the authoring `PrimSpec`, so it
+can inspect `extentsHint` without breaking existing two-argument policies.
+Deferred payloads are recorded in the graph and retrievable via
+`GetDeferredPayloadPaths()`. `LargeSceneLoadOptions::payload_extent_budget` is
+opt-in (`0` disables it) and caps the cumulative view-independent projected AABB
+area (`max(XY, XZ, YZ)`, squared stage units) alongside the byte cap. Payloads
+without a valid hint retain byte-only behavior.
 
 ### 2.3 Parse-once layer sharing
 
@@ -1030,20 +1042,26 @@ also reprocesses the newly loaded payload node, so references/payloads authored
 inside a streamed payload layer are visible immediately after `LoadPayload`.
 Regression: `pcp_external_payload_load_reprocesses_nested_arcs_test`.
 
-### 3.3 mmap-through-composition / fd bounds (PARTIAL)
+### 3.3 mmap-through-composition / fd bounds
 
 mmap zero-copy (`USDLoadOptions::mmap_zero_copy`) defers large uncompressed
-float arrays to disk, but only via `LoadUSDCFromFile(... Stage*)`. It does **not**
-flow through composition: `Layer` has no mmap storage, and
-`BuildStage`/`ComposePrimSpecFromIndex` (`composition-graph.cc:1389`) deep-copy
-PrimSpec arrays into the Stage. For the 16 GB target this does not matter
-(deferred geometry never enters the Stage), but to keep *loaded* geometry on disk
-the project would need: an mmap table on `Layer`, `LoadUSDCLayerFromMemory`
-honoring `mmap_zero_copy` against a file-backed mmap, non-copying
-(move/alias) array handling in `ComposePrimSpecFromIndex`, and
-`Stage::adopt_mmap_*` after `BuildStage`. A pragmatic interim: stream a single
-on-demand payload via `LoadUSDCFromFile(... mmap_zero_copy=true)` into a side
-Stage.
+float arrays to disk on the legacy direct-Stage reader. Full composed-layer mmap
+is now supported through the **next PCP backend**
+(`TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=ON`): every file-backed USDC layer is read
+with lazy arrays and mmap enabled, each `LazyArrayRef` retains shared ownership
+of its own `CrateDataSource`, and that reference survives Layer → composed
+PrimSpec → rebuilt Stage copies without materialization. This naturally handles
+many sublayers/references/payload files rather than relying on a single global
+mmap table. `LargeSceneLoadOptions::mmap_zero_copy` controls both lazy arrays and
+mmap for the whole next-PCP load (default ON); disabling it produces the same
+composed result with eagerly decoded, owned array values.
+
+The legacy CompositionGraph backend deliberately stays in copy mode for
+composed layers: its `Stage` mmap table addresses one source buffer and cannot
+identify per-layer sources. Extending that representation would duplicate the
+shared-source ownership already provided by next PCP. Direct legacy
+`LoadUSDCFromFile(..., mmap_zero_copy=true)` remains supported for one-file
+Stages.
 
 The descriptor-bound part is now implemented: `AssetResolutionResolver` tracks a
 per-resolver concurrent open file-descriptor / asset-handle budget
@@ -1130,15 +1148,18 @@ composition.
 
 ### 3.6 Smaller items
 
-- **Budget-by-extent**: the `Budget` policy currently sizes payloads by file
-  bytes; authored `extentsHint` would let it bound by world-space coverage, but
-  the payload-policy callback would need the owning `PrimSpec`.
-- **Layer-owned mmap**: true mmap-through-composition still needs Layer/Stage
-  ownership plumbing for mapped crate buffers. If future code keeps file handles
-  open for long-lived mappings, add an LRU on top of the existing descriptor
-  budget.
-- **Threaded streaming**: `load_payload`/`unload_payload` mutate the graph in
-  place and are single-threaded post-load.
+- **Budget-by-extent — implemented**: `payload_policy_with_prim` exposes the
+  authoring `PrimSpec`, and `LargeSceneLoadOptions::payload_extent_budget` adds
+  an optional projected-area cap from authored `extentsHint` while preserving
+  the byte budget and byte-only fallback for unannotated payloads.
+- **Layer-owned mmap — implemented in next PCP**: per-array shared
+  `CrateDataSource` ownership survives composition and Stage publication. The
+  legacy single-source mmap table remains direct-load-only by design. If future
+  code bounds long-lived mappings by open handles rather than closing the file
+  after `mmap`, add an LRU on top of the existing descriptor budget.
+- **Threaded streaming — implemented**: graph/cache mutation is serialized and
+  rebuilt Stages are published as immutable shared snapshots. A worker may call
+  `load_payload`/`unload_payload` while readers retain `stage_snapshot()`.
 
 ---
 
@@ -1476,6 +1497,15 @@ not disk I/O.
 cd build && cmake --build . -j16
 # cross-directory cwp anchoring regression test (§3.1):
 cd build && ctest -R feat-large-scene --output-on-failure
+# the same suite end-to-end on the next::pcp::Cache backend (extent budget,
+# worker-thread snapshot, cross-layer payload-owner anchoring):
+cmake -S . -B build-next-pcp -DCMAKE_BUILD_TYPE=Release \
+  -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=ON -DTINYUSDZ_BUILD_TESTS=ON \
+  -DTINYUSDZ_BUILD_EXAMPLES=OFF -DTINYUSDZ_BUILD_TOOLS=OFF
+cd build-next-pcp && make feat-large-scene -j16 && \
+  ctest -R feat-large-scene --output-on-failure
+# focused payload-policy owner-anchor regression (next pcp unit level):
+cd build-next && ctest -R 'next_test_pcp$' --output-on-failure
 # structural load within budget (absolute path works from any cwd now):
 <build>/large-scene-load /mnt/disk1/data/caldera/caldera.usda --mode=none
 # expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.

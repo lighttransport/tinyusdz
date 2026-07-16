@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDC Crate Reader stage reconstruction
 
 #include "crate-reader-internal.hh"
+#include "../layer/array-edit.hh"
 #include "../layer/layer.hh"
 #include "../parser/lexer.hh"          // dict-as-USDA-text decode
 #include "../parser/value-parser.hh"  // ParseDict
@@ -493,6 +494,8 @@ bool CrateReader::Impl::BuildStage() {
     std::string type_name;
     bool has_default = false;
     Value default_value;
+    bool has_array_edit = false;
+    ArrayEditData array_edit;  // VtArrayEdit default (crate 0.14)
     bool is_connection = false;
     std::vector<std::string> connection_targets;
     ArcEdit connection_edit;
@@ -632,10 +635,17 @@ bool CrateReader::Impl::BuildStage() {
           if (const std::string* s = v.as_token()) ai.type_name = *s;
         }
       } else if (f.first == "default") {
-        Value v;
-        if (UnpackValue(f.second, v)) {
-          ai.default_value = std::move(v);
-          ai.has_default = true;
+        if (f.second.is_array_edit()) {
+          // Sparse VtArrayEdit default: structured edit, not a Value.
+          if (UnpackArrayEditData(f.second, &ai.array_edit)) {
+            ai.has_array_edit = true;
+          }
+        } else {
+          Value v;
+          if (UnpackValue(f.second, v)) {
+            ai.default_value = std::move(v);
+            ai.has_default = true;
+          }
         }
       } else if (f.first == "timeSamples") {
         DecodeTimeSamples(f.second, &ai.time_samples);
@@ -1305,6 +1315,21 @@ bool CrateReader::Impl::BuildStage() {
             ai.type_name.compare(ai.type_name.size() - 2, 2, "[]") == 0;
         if (ai.has_default) {
           ps->add_property(ai.name, std::move(ai.default_value), flags);
+        } else if (ai.has_array_edit) {
+          // Sparse array-edit default: a typed slot with the structured edit
+          // and its canonical `edit [...]` text (usda writer re-emits it;
+          // composition stacks/resolves it).
+          uint16_t edit_flags = flags;
+          if (is_array) edit_flags |= PropSlot::kFlagArray;
+          std::string base_tn = is_array
+              ? ai.type_name.substr(0, ai.type_name.size() - 2)
+              : ai.type_name;
+          ps->add_property_slot(GetPropNameTable().intern(ai.name),
+                                GetTypeIdFromName(base_tn.c_str()),
+                                edit_flags);
+          ps->set_raw_default_source(ai.name,
+                                     BuildArrayEditText(ai.array_edit));
+          ps->set_array_edit(ai.name, std::move(ai.array_edit));
         } else {
           // Connection-only / declared-only / timeSamples-only attribute:
           // register a typed slot with no authored default so it round-trips.

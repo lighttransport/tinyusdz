@@ -547,6 +547,8 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
                           std::string *warn, std::string *err) {
   LayerLoadOptions lopts;
   lopts.max_memory = options.max_layer_memory;
+  lopts.usdc_lazy_arrays = options.usdc_lazy_arrays;
+  lopts.usdc_use_mmap = options.usdc_use_mmap;
   lopts.strict_aousd_conformance = options.strict_aousd_conformance;
   lopts.usda_parse_options = options.usda_parse_options;
   if (options.strict_aousd_conformance) {

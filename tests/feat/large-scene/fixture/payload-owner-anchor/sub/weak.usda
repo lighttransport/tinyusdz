@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "World"
+{
+    def Xform "P" (
+        prepend payload = @./pay.usda@</Pay>
+    )
+    {
+    }
+}

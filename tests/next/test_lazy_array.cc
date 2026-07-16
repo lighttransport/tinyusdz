@@ -21,7 +21,9 @@
 #include "next/crate/lazy-array.hh"
 #include "next/layer/layer.hh"
 #include "next/pipeline/flatten.hh"
+#include "next/pcp/cache.hh"
 #include "next/reader/usdc-reader.hh"
+#include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 #include "next/types/value-view.hh"
@@ -244,8 +246,9 @@ int main() {
     big_lb.end_prim();
     big_lb.finalize();
 
+    Stage big_stage = big_sb.Build();
     std::vector<uint8_t> big_buf;
-    USDCWriteResult big_wr = WriteUSDCToMemory(big_buf, big_sb.Build());
+    USDCWriteResult big_wr = WriteUSDCToMemory(big_buf, big_stage);
     assert(big_wr.success);
     USDCLoadResult big_lr = LoadUSDCFromMemory(big_buf.data(), big_buf.size());
     assert(big_lr.success);
@@ -265,6 +268,52 @@ int main() {
     assert(lazy_points->is_lazy());
     assert(!lazy_points->is_dirty());
     std::cout << "  serial range printer preserves lazy array text" << std::endl;
+
+    // File-backed USDC arrays must remain mmap-backed after crossing an
+    // external reference and PCP Stage reconstruction. The same composition
+    // with mmap disabled stays lazy but retains an owned byte source instead.
+    const std::string asset_path = "/tmp/next_pcp_mmap_asset.usdc";
+    const std::string root_path = "/tmp/next_pcp_mmap_root.usda";
+    USDCWriteResult file_wr = WriteUSDCToFile(asset_path, big_stage);
+    assert(file_wr.success);
+    {
+      std::ofstream root(root_path);
+      root << "#usda 1.0\n"
+              "def Xform \"Composed\" (prepend references = "
+              "@./next_pcp_mmap_asset.usdc@</BigMesh>)\n{\n}\n";
+    }
+
+    AssetResolver resolver;
+    resolver.SetWorkingDirectory("/tmp");
+    pcp::CompositionOptions compose_options;
+    Stage composed;
+    std::string compose_warn, compose_err;
+    assert(pcp::ComposeStageFromFile(root_path, resolver, &composed,
+                                     compose_options, &compose_warn,
+                                     &compose_err));
+    UsdPrim composed_prim = composed.GetPrimAtPath("/Composed");
+    assert(composed_prim.IsValid());
+    const Value* composed_points = composed_prim.GetPropertyValue("points");
+    assert(composed_points && composed_points->is_lazy());
+    assert(composed_points->lazy_ref() && composed_points->lazy_ref()->source);
+    assert(composed_points->lazy_ref()->source->is_mmapped());
+
+    compose_options.usdc_use_mmap = false;
+    Stage composed_owned;
+    compose_warn.clear();
+    compose_err.clear();
+    assert(pcp::ComposeStageFromFile(root_path, resolver, &composed_owned,
+                                     compose_options, &compose_warn,
+                                     &compose_err));
+    UsdPrim owned_prim = composed_owned.GetPrimAtPath("/Composed");
+    const Value* owned_points = owned_prim.GetPropertyValue("points");
+    assert(owned_points && owned_points->is_lazy());
+    assert(owned_points->lazy_ref() && owned_points->lazy_ref()->source);
+    assert(!owned_points->lazy_ref()->source->is_mmapped());
+    std::remove(root_path.c_str());
+    std::remove(asset_path.c_str());
+    std::cout << "  PCP composition retains mmap-backed lazy arrays"
+              << std::endl;
   }
 
   // Compressed lazy int arrays should print without materializing a decoded

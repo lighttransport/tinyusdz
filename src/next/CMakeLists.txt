@@ -24,6 +24,7 @@ set(TINYUSDZ_NEXT_SOURCES
     # Layer (unified PrimSpec storage)
     layer/property-index.cc
     layer/prim-spec.cc
+    layer/array-edit.cc
     layer/layer.cc
     layer/asset-anchor.cc
 

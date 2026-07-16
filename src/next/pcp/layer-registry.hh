@@ -28,6 +28,11 @@ namespace pcp {
 
 struct LayerLoadOptions {
   bool strict_aousd_conformance = false;
+  /// Keep uncompressed USDC arrays lazy and backed by the crate data source.
+  bool usdc_lazy_arrays = true;
+  /// mmap file-backed USDC layers when supported. LazyArrayRef retains shared
+  /// ownership of each source through composition and Stage reconstruction.
+  bool usdc_use_mmap = true;
   /// Maximum file/input bytes for each loaded external layer (0 = no limit).
   size_t max_memory = 0;
 

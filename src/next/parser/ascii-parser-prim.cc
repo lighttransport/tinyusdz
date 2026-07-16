@@ -23,7 +23,8 @@ namespace {
 // parsed with the array's ELEMENT type, so a type error inside an edit body
 // fails the parse exactly like a plain array literal would.
 bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
-                        std::string* canonical, std::string* err) {
+                        std::string* canonical, ArrayEditData* out_edit,
+                        std::string* err) {
   auto fail = [&](const std::string& m) {
     if (err) *err = "array edit: " + m;
     return false;
@@ -34,11 +35,12 @@ bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
   }
 
   // `[ <int> ]` index reference (End-relative negatives are grammatical).
-  auto parse_index = [&](std::string* txt) -> bool {
+  auto parse_index = [&](std::string* txt, int64_t* val) -> bool {
     if (!lexer.expect(TokenType::OpenBracket)) return false;
     const Token& n = lexer.peek();
     if (n.type != TokenType::Number ||
-        !value_parser_detail::IsDecimalIntToken(n.value, /*allow_neg=*/true)) {
+        !value_parser_detail::IsDecimalIntToken(n.value, /*allow_neg=*/true) ||
+        !value_parser_detail::DecimalToI64Checked(n.value.c_str(), val)) {
       return false;
     }
     *txt = "[" + n.value + "]";
@@ -108,39 +110,64 @@ bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
     };
 
     std::string op;
+    ArrayEditOpRec rec;
     if (kw == "write" || kw == "insert") {
       const char* conj = (kw == "write") ? "to" : "at";
+      const bool is_write = (kw == "write");
       std::string a1;
       if (next_is_index()) {
-        if (!parse_index(&a1)) return fail("bad source index in `" + kw + "`");
+        if (!parse_index(&a1, &rec.a1)) {
+          return fail("bad source index in `" + kw + "`");
+        }
+        rec.kind = is_write ? ArrayEditOpRec::WriteRef
+                            : ArrayEditOpRec::InsertRef;
       } else if (!parse_literal(&a1)) {
         return fail("bad literal in `" + kw + "`");
+      } else {
+        rec.kind = is_write ? ArrayEditOpRec::WriteLiteral
+                            : ArrayEditOpRec::InsertLiteral;
+        rec.literal = a1;
       }
       if (!expect_word(conj)) {
         return fail("expected `" + std::string(conj) + "` in `" + kw + "`");
       }
       std::string a2;
-      if (!parse_index(&a2)) return fail("bad target index in `" + kw + "`");
+      if (!parse_index(&a2, &rec.a2)) {
+        return fail("bad target index in `" + kw + "`");
+      }
       op = kw + " " + a1 + " " + conj + " " + a2;
     } else if (kw == "append" || kw == "prepend") {
       std::string a1;
       if (next_is_index()) {
-        if (!parse_index(&a1)) return fail("bad index in `" + kw + "`");
+        if (!parse_index(&a1, &rec.a1)) {
+          return fail("bad index in `" + kw + "`");
+        }
+        rec.kind = ArrayEditOpRec::InsertRef;
       } else if (!parse_literal(&a1)) {
         return fail("bad literal in `" + kw + "`");
+      } else {
+        rec.kind = ArrayEditOpRec::InsertLiteral;
+        rec.literal = a1;
       }
+      rec.a2 = (kw == "append") ? kArrayEditEnd : 0;
       op = kw + " " + a1;
     } else if (kw == "erase") {
       std::string a1;
-      if (!parse_index(&a1)) return fail("bad index in `erase`");
+      if (!parse_index(&a1, &rec.a1)) return fail("bad index in `erase`");
+      rec.kind = ArrayEditOpRec::Erase;
       op = "erase " + a1;
     } else if (kw == "minsize" || kw == "resize" || kw == "maxsize") {
       const Token& n = lexer.peek();
       if (n.type != TokenType::Number ||
           !value_parser_detail::IsDecimalIntToken(n.value,
-                                                  /*allow_neg=*/false)) {
+                                                  /*allow_neg=*/false) ||
+          !value_parser_detail::DecimalToI64Checked(n.value.c_str(),
+                                                    &rec.a1)) {
         return fail("expected a size in `" + kw + "`");
       }
+      rec.kind = (kw == "minsize")  ? ArrayEditOpRec::MinSize
+                 : (kw == "resize") ? ArrayEditOpRec::SetSize
+                                    : ArrayEditOpRec::MaxSize;
       op = kw + " " + n.value;
       lexer.next();
       if (kw != "maxsize" && lexer.peek().type == TokenType::Identifier &&
@@ -148,11 +175,14 @@ bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
         lexer.next();
         std::string f;
         if (!parse_literal(&f)) return fail("bad fill literal in `" + kw + "`");
+        rec.has_fill = true;
+        rec.literal = f;
         op += " fill " + f;
       }
     } else {
       return fail("unknown edit op `" + kw + "`");
     }
+    if (out_edit) out_edit->ops.push_back(std::move(rec));
     if (!first) out += "; ";
     out += op;
     first = false;
@@ -544,9 +574,14 @@ bool AsciiParser::Impl::ParseAttribute(
       const Token& vtok = lexer_->peek();
       if (is_array && vtok.type == TokenType::Identifier &&
           vtok.value == "edit") {
-        // VtArrayEdit value (usda 1.2): validate and preserve as raw text.
+        // VtArrayEdit value (usda 1.2): keep the canonical text for printing
+        // and the structured op list for composition (which stacks weaker
+        // edits and resolves against weaker array values -- see
+        // layer/array-edit.hh).
         std::string canonical, edit_err;
-        if (!ParseArrayEditText(*lexer_, type_id, &canonical, &edit_err)) {
+        ArrayEditData edit_data;
+        if (!ParseArrayEditText(*lexer_, type_id, &canonical, &edit_data,
+                                &edit_err)) {
           AddError(edit_err);
           return false;
         }
@@ -558,9 +593,8 @@ bool AsciiParser::Impl::ParseAttribute(
                 static_cast<uint16_t>(flags | PropSlot::kFlagArray));
           }
           cur->set_raw_default_source(attr_name, std::move(canonical));
+          cur->set_array_edit(attr_name, std::move(edit_data));
         }
-        AddWarning("VtArrayEdit value on `" + attr_name +
-                   "` preserved as authored text; edits are not evaluated");
         ParsePropertyMetadata(attr_name);
         return true;
       }

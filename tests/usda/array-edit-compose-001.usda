@@ -1,0 +1,21 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    defaultPrim = "W"
+)
+
+# Sparse array edits across a composition arc (usda 1.2 VtArrayEdit):
+# `a` edits a referenced base array (WriteRef copy, insert, maxsize),
+# `b` stacks an edit over the base's own edit,
+# `c` uses from-end negative indices.
+# pxr `usdcat --flatten` resolves these to
+#   a = [30, 99, 20]   b = [0, 7, 2]   c = [1, 2, 42]
+def Xform "W" (
+    references = @./array-edit-base-001.usda@</B>
+)
+{
+    custom int[] a = edit [ write [2] to [0]; insert 99 at [1]; maxsize 3 ]
+    custom int[] b = edit [ prepend 0; write 7 to [1] ]
+    custom int[] c = edit [ erase [-1]; write 42 to [-1] ]
+}
