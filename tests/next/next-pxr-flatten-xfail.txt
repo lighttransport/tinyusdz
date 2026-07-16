@@ -16,7 +16,6 @@
 supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
 tests/usda/instancing-001.usda ORACLE-NONDETERMINISTIC: pxr usdcat --flatten assigns Flattened_Prototype_N by internal TfHashMap order — observed ~40/60 flip of Tree/Rock between _1 and _2 across repeated runs; next's numbering (reverse discovery, matching pxr's stack registration) is stable and matches pxr's majority output, but the case cannot be a deterministic gate input
 supplemental/ErrorInvalidInstanceTargetPath_root attribute_missing /FaceRig/BrowRig/LBrow/BrowInnUDPosBrowInnUDNeg_sculpt Attribute "amount.connect" at "/FaceRig/BrowRig/LBrow/BrowInnUDPosBrowInnUDNeg_sculpt" 
-supplemental/RelocatePrimsWithSameName_root specifier_mismatch /ChainedReferences/Child_1 Specifier mismatch at "/ChainedReferences/Child_1": "def" vs "over"
 supplemental/TrickySpookyVariantSelectionInClass_root specifier_mismatch /Char/Anim/LeftLeg Specifier mismatch at "/Char/Anim/LeftLeg": "over" vs "def"
 supplemental/VariantSpecializesAndReferenceSurprisingBehavior_root attribute_value_mismatch /Model/Material_Child Attribute "myInt" at "/Model/Material_Child" differs: "1" vs "0"
 tests/usda/aousd-unknown-property-metadata.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
