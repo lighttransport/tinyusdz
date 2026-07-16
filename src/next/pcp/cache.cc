@@ -365,6 +365,53 @@ size_t Cache::PrototypeCount() const {
   NEXT_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->instances_by_prototype.size();
 }
+Path Cache::TranslatePathToPrototype(const Path &path) const {
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  if (path.empty()) return Path();
+  // An instance root A maps A -> prototype_of[A] (which differs from A; the
+  // prototype maps to itself). Rewrite the nearest enclosing instance prefix,
+  // then repeat so a nested instance living inside the prototype is translated
+  // too. Bounded by a hard iteration cap: a prototype cannot structurally
+  // contain itself (instance keys forbid it), so this converges well within.
+  std::string cur = path.str();
+  bool translated = false;
+  for (int iter = 0; iter < 128; ++iter) {
+    // Nearest ancestor (or cur itself) that is an instance (prototype_of maps
+    // it to a *different* prototype root).
+    std::string a;
+    for (Path p(cur); !p.empty(); p = p.parent()) {
+      auto it = impl_->prototype_of.find(p.str());
+      if (it != impl_->prototype_of.end() && it->second != p.str()) {
+        a = p.str();
+        break;
+      }
+      if (p.is_root()) break;
+    }
+    if (a.empty()) break;  // no enclosing instance remains
+    // `a` is a prefix of `cur` on a '/' boundary (or equal); splice its
+    // prototype root in for the instance-space prefix.
+    cur = impl_->prototype_of.at(a) + cur.substr(a.size());
+    translated = true;
+  }
+  return translated ? Path(cur) : Path();
+}
+Path Cache::TranslatePathFromPrototype(const Path &proto_path,
+                                       const Path &instance_root) const {
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  auto it = impl_->prototype_of.find(instance_root.str());
+  if (it == impl_->prototype_of.end() || it->second == instance_root.str()) {
+    return Path();  // instance_root is not an instance
+  }
+  const std::string &proto = it->second;
+  const std::string &pp = proto_path.str();
+  if (pp == proto) return instance_root;  // the prototype root itself
+  // proto must enclose proto_path on a '/' boundary.
+  if (pp.size() > proto.size() && pp.compare(0, proto.size(), proto) == 0 &&
+      pp[proto.size()] == '/') {
+    return Path(instance_root.str() + pp.substr(proto.size()));
+  }
+  return Path();
+}
 std::string Cache::ComputeInstanceKey(const Path &p, std::string *warn,
                                       std::string *err) {
   return impl_->ComputeInstanceKey(p, warn, err);

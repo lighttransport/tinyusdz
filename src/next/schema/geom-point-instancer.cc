@@ -8,6 +8,7 @@
 #include "../types/value-view.hh"
 
 #include <cmath>
+#include <unordered_set>
 
 namespace tinyusdz {
 namespace next {
@@ -285,6 +286,24 @@ UsdGeomPointInstancer::ComputeInstanceTransforms(double time) const {
     ComposeTRS(t, q, s, out[i].matrix);
   }
   return out;
+}
+
+std::vector<bool> UsdGeomPointInstancer::ComputeMaskAtTime(double time) const {
+  const size_t n = GetInstanceCount(time);
+  std::vector<bool> mask(n, true);
+  if (n == 0) return mask;
+  const std::vector<int64_t> invisible = GetInvisibleIds(time);
+  const std::vector<int64_t> inactive = GetInactiveIds();
+  if (invisible.empty() && inactive.empty()) return mask;  // all visible
+  std::unordered_set<int64_t> hidden(invisible.begin(), invisible.end());
+  hidden.insert(inactive.begin(), inactive.end());
+  // ids[i] is instance i's authored id; absent -> id == index.
+  const std::vector<int64_t> ids = GetIds(time);
+  for (size_t i = 0; i < n; ++i) {
+    const int64_t id = (i < ids.size()) ? ids[i] : static_cast<int64_t>(i);
+    if (hidden.count(id)) mask[i] = false;
+  }
+  return mask;
 }
 
 bool IsPointInstancer(const UsdPrim& prim) {

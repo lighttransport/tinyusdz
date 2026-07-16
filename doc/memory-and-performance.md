@@ -542,6 +542,9 @@ removes the redundant layer walks + Path parses on the BuildStage path. The
 full u32-interned-key conversion of pcp hot maps (M3) is deferred — invasive
 relative to its memory benefit now that CoW (Phase 3) removed the dominant copy
 cost; revisit if massif shows path strings dominating. The GraftSubtree
-child-index walk (M5) was attempted but reverted: composed-in-place layers
-don't reliably carry child_indices, so the path-prefix scan is the correct form
-(CoW already removed its per-graft array-copy cost).
+child-index walk (M5) **landed** (`composition.cc` `GraftSubtree`): it walks the
+source subtree via `child_indices` when they validate for the subtree (every
+visited index in range, unseen, and prefixed by `src_root`), and falls back to
+the full path-prefix scan otherwise — composed-in-place / cloned-and-renamed
+layers can carry stale child indices, so the guarded fallback keeps correctness
+(CoW already removed the per-graft array-copy cost the earlier revert cited).

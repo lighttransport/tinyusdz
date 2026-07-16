@@ -27,6 +27,19 @@
 
 using namespace tinyusdz::next;
 
+// Always-on check: this file's build type is Release for the ctest gate, where
+// assert() is compiled out (-DNDEBUG). New assertions that must genuinely gate
+// use PCP_CHECK, which records a failure and is honored by main()'s exit code.
+static int g_pcp_check_failures = 0;
+#define PCP_CHECK(cond, msg)                                              \
+  do {                                                                    \
+    if (!(cond)) {                                                        \
+      std::cerr << "PCP_CHECK FAILED: " << (msg) << " @ " << __FILE__     \
+                << ":" << __LINE__ << std::endl;                          \
+      ++g_pcp_check_failures;                                             \
+    }                                                                     \
+  } while (0)
+
 // Build an in-memory root layer:
 //   /World (Xform)
 //     /A (Xform)  -> references </Lib/Model>
@@ -1607,6 +1620,154 @@ static void test_instancing() {
   bool i1 = cache.IsInstance(Path("/World/Inst1"));
   bool i2 = cache.IsInstance(Path("/World/Inst2"));
   assert(i1 != i2);
+  std::cout << "  OK" << std::endl;
+}
+
+// Nested-instancing fixture:
+//   /World (Xform)
+//     /CA (instanceable) -> </Lib/Cluster>
+//     /CB (instanceable) -> </Lib/Cluster>
+//   /Lib (Scope)
+//     /Cluster (Xform) { /L1 (instanceable -> </Lib/Leaf>),
+//                        /L2 (instanceable -> </Lib/Leaf>) }
+//     /Leaf (Mesh) { /Tip (Sphere) }
+static std::shared_ptr<Layer> BuildNestedInstanceLayer() {
+  Layer layer;
+  LayerBuilder lb(layer);
+  lb.begin_prim("World", "Xform");
+  lb.begin_prim("CA", "");
+  lb.current()->meta().references.push_back("</Lib/Cluster>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
+  lb.begin_prim("CB", "");
+  lb.current()->meta().references.push_back("</Lib/Cluster>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
+  lb.end_prim();  // World
+
+  lb.begin_prim("Lib", "Scope");
+  lb.begin_prim("Cluster", "Xform");
+  lb.begin_prim("L1", "");
+  lb.current()->meta().references.push_back("</Lib/Leaf>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
+  lb.begin_prim("L2", "");
+  lb.current()->meta().references.push_back("</Lib/Leaf>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
+  lb.end_prim();  // Cluster
+  lb.begin_prim("Leaf", "Mesh");
+  lb.begin_prim("Tip", "Sphere");
+  lb.end_prim();  // Tip
+  lb.end_prim();  // Leaf
+  lb.end_prim();  // Lib
+
+  lb.finalize();
+  return std::make_shared<Layer>(std::move(layer));
+}
+
+// I3: instance<->prototype path translation API.
+static void test_path_translation() {
+  std::cout << "test_path_translation..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  std::string warn, err;
+  std::vector<Path> paths{Path("/World/Inst1"), Path("/World/Inst2"),
+                          Path("/World/Inst3")};
+  assert(cache.PrewarmPrimIndices(paths, &warn, &err));
+
+  // Identify which of Inst1/Inst2 is the (non-prototype) instance and its shared
+  // prototype root.
+  const Path proto = cache.GetPrototype(Path("/World/Inst1"));
+  PCP_CHECK(!proto.empty(), "Inst1 should have a prototype");
+  const Path inst = cache.IsInstance(Path("/World/Inst1"))
+                        ? Path("/World/Inst1")
+                        : Path("/World/Inst2");
+  PCP_CHECK(cache.IsInstance(inst), "picked path must be an instance");
+
+  // Instance root -> prototype root.
+  PCP_CHECK(cache.TranslatePathToPrototype(inst) == proto,
+            "instance root should translate to its prototype root");
+  // Descendant of the instance -> matching descendant of the prototype (the
+  // referenced /Lib/Model has child Inner).
+  const Path inst_inner = Path(inst.str() + "/Inner");
+  const Path proto_inner = Path(proto.str() + "/Inner");
+  PCP_CHECK(cache.TranslatePathToPrototype(inst_inner) == proto_inner,
+            "instance descendant should translate into prototype space");
+  // A path under no instance yields an empty translation.
+  PCP_CHECK(cache.TranslatePathToPrototype(Path("/World")).empty(),
+            "non-instance path should translate to empty");
+  PCP_CHECK(cache.TranslatePathToPrototype(Path("/Lib/Model")).empty(),
+            "prototype-space/library path should translate to empty");
+
+  // Inverse translation + round-trip onto the specific instance.
+  PCP_CHECK(cache.TranslatePathFromPrototype(proto, inst) == inst,
+            "prototype root should map back to the instance root");
+  PCP_CHECK(cache.TranslatePathFromPrototype(proto_inner, inst) == inst_inner,
+            "prototype descendant should map back onto the instance");
+  PCP_CHECK(cache.TranslatePathFromPrototype(
+                cache.TranslatePathToPrototype(inst_inner), inst) == inst_inner,
+            "to/from prototype should round-trip");
+  // FromPrototype requires an instance root and an enclosing prototype.
+  PCP_CHECK(
+      cache.TranslatePathFromPrototype(proto_inner, Path("/World")).empty(),
+      "FromPrototype on a non-instance root should be empty");
+  PCP_CHECK(
+      cache.TranslatePathFromPrototype(Path("/Lib/Other"), inst).empty(),
+      "FromPrototype of a path outside the prototype should be empty");
+
+  // --- Nested instancing: an instance inside a prototype. ---
+  {
+    auto nroot = BuildNestedInstanceLayer();
+    auto nopened = pcp::Cache::Open(resolver, nroot);
+    assert(nopened);
+    pcp::Cache ncache = std::move(*nopened);
+    Stage stage;
+    // BuildStage discovers the full nested prototype grouping in one pass.
+    assert(ncache.BuildStage(&stage, &warn, &err));
+
+    // Two prototype groups: the Cluster group ({CA,CB}) and the nested Leaf
+    // group ({L1,L2}) living inside the Cluster prototype holder.
+    PCP_CHECK(ncache.PrototypeCount() == 2,
+              "nested scene should have two prototype groups");
+    const Path proto_cluster = ncache.GetPrototype(Path("/World/CB"));
+    const Path proto_leaf = ncache.GetPrototype(Path("/World/CA/L2"));
+    PCP_CHECK(!proto_cluster.empty() && !proto_leaf.empty(),
+              "nested prototypes should resolve");
+
+    // Single level: a Cluster instance -> the Cluster prototype root.
+    PCP_CHECK(ncache.TranslatePathToPrototype(Path("/World/CB")) == proto_cluster,
+              "Cluster instance should translate to the Cluster prototype");
+    // Nested instance living inside the prototype holder -> the Leaf prototype.
+    PCP_CHECK(ncache.TranslatePathToPrototype(Path("/World/CA/L2")) == proto_leaf,
+              "nested instance inside a prototype should translate to Leaf proto");
+    // Two-level: a leaf descendant reached through the outer instance AND the
+    // nested instance rewrites through both prototype roots.
+    const Path leaf_tip = Path(proto_leaf.str() + "/Tip");
+    PCP_CHECK(ncache.TranslatePathToPrototype(Path("/World/CB/L2/Tip")) == leaf_tip,
+              "two-level nested descendant should rewrite through both prototypes");
+    PCP_CHECK(ncache.TranslatePathToPrototype(Path("/World/CB/L1")) ==
+                  proto_leaf,
+              "outer-instance nested child should translate to the Leaf proto");
+
+    // Inverse round-trips at the outer level.
+    PCP_CHECK(
+        ncache.TranslatePathFromPrototype(proto_cluster, Path("/World/CB")) ==
+            Path("/World/CB"),
+        "Cluster prototype root should map back to the CB instance");
+
+    // Identity consistency: a fresh recompose yields the same grouping.
+    pcp::Cache ncache2 = std::move(*pcp::Cache::Open(resolver, nroot));
+    Stage stage2;
+    assert(ncache2.BuildStage(&stage2, &warn, &err));
+    PCP_CHECK(ncache2.GetPrototype(Path("/World/CB")) == proto_cluster &&
+                  ncache2.GetPrototype(Path("/World/CA/L2")) == proto_leaf,
+              "prototype grouping must be identical across recompose");
+  }
   std::cout << "  OK" << std::endl;
 }
 
@@ -4192,6 +4353,7 @@ int main() {
   test_variant_content_key_stable();
   test_variants_v2();
   test_instancing();
+  test_path_translation();
   test_flatten_instances();
   test_relocates();
   test_implied_inherit();
@@ -4231,6 +4393,10 @@ int main() {
   test_variant_content_cycle();
   test_deep_hierarchy();
   test_reference_chain_at_max_depth();
+  if (g_pcp_check_failures != 0) {
+    std::cerr << g_pcp_check_failures << " PCP_CHECK failure(s)." << std::endl;
+    return 1;
+  }
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }
