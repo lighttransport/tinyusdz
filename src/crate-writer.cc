@@ -477,6 +477,39 @@ inline void SortOrderByKeys(std::vector<uint32_t>& order,
 // Scoped ns accumulator for the TINYUSDZ_CRATE_PROFILE Finalize report.
 // Zero-cost (one branch) when disabled.
 namespace {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+// Writer worker-thread budget (same cap as the two-pass field packing).
+size_t WriterParallelThreads() {
+  const unsigned hw = std::thread::hardware_concurrency();
+  return (std::max<size_t>)(
+      1, (std::min<size_t>)(static_cast<size_t>(hw ? hw : 1), size_t(16)));
+}
+
+// Blocking parallel-for over [0, n) in static contiguous ranges;
+// fn(begin, end) must only write disjoint slots.
+template <typename Fn>
+void ParallelForRanges(size_t n, size_t nthreads, Fn&& fn) {
+  if (n == 0) return;
+  const size_t nt = (std::min)(nthreads, n);
+  if (nt <= 1) {
+    fn(size_t(0), n);
+    return;
+  }
+  std::vector<std::thread> ths;
+  const size_t chunk = (n + nt - 1) / nt;
+  ths.reserve(nt);
+  for (size_t t = 0; t < nt; t++) {
+    const size_t b = t * chunk;
+    const size_t e = (std::min)(n, b + chunk);
+    if (b >= e) break;
+    ths.emplace_back([&fn, b, e]() { fn(b, e); });
+  }
+  for (auto& th : ths) {
+    th.join();
+  }
+}
+#endif  // TINYUSDZ_ENABLE_THREAD
+
 struct ProfScope {
   bool on;
   uint64_t* acc;
@@ -633,6 +666,23 @@ bool CrateWriter::Finalize(std::string* err) {
   paths_.clear();
   {
     const crate::PathHasher hasher;
+    // Path hashing is a pure function of the (immutable here) spec paths —
+    // precompute it in parallel and keep only the order-dependent slot
+    // insertion serial.
+    std::vector<uint32_t> spec_path_hashes(spec_data_.size());
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    ParallelForRanges(spec_data_.size(), WriterParallelThreads(),
+                      [&](size_t b, size_t e) {
+                        for (size_t i = b; i < e; i++) {
+                          spec_path_hashes[i] =
+                              static_cast<uint32_t>(hasher(spec_data_[i].path));
+                        }
+                      });
+#else
+    for (size_t i = 0; i < spec_data_.size(); i++) {
+      spec_path_hashes[i] = static_cast<uint32_t>(hasher(spec_data_[i].path));
+    }
+#endif
     size_t w = 0;
     for (size_t r = 0; r < spec_data_.size(); r++) {
       SpecData& spec_data = spec_data_[r];
@@ -644,7 +694,7 @@ bool CrateWriter::Finalize(std::string* err) {
       }
       const uint32_t idx = static_cast<uint32_t>(paths_.size());
       paths_.push_back(spec_data.path);
-      InsertPathSlot(static_cast<uint32_t>(hasher(spec_data.path)), idx);
+      InsertPathSlot(spec_path_hashes[r], idx);
       spec_data.spec.path_index.value = idx;
       if (w != r) spec_data_[w] = std::move(spec_data);
       w++;
@@ -892,12 +942,26 @@ bool CrateWriter::Finalize(std::string* err) {
   }
 
   // Write sections in order
+  auto prof_t_sec = prof_now();
+  const auto prof_section = [&](const char* name) {
+    if (!profile_finalize_) return;
+    const auto now = prof_now();
+    fprintf(stderr, "[crate-writer profile]   section %s: %.1fms\n", name,
+            double(prof_ns(prof_t_sec, now)) * 1e-6);
+    prof_t_sec = now;
+  };
   if (!WriteTokensSection(err)) return false;
+  prof_section("TOKENS");
   if (!WriteStringsSection(err)) return false;
+  prof_section("STRINGS");
   if (!WriteFieldsSection(err)) return false;
+  prof_section("FIELDS");
   if (!WriteFieldSetsSection(err)) return false;
+  prof_section("FIELDSETS");
   if (!WritePathsSection(err)) return false;
+  prof_section("PATHS");
   if (!WriteSpecsSection(err)) return false;
+  prof_section("SPECS");
 
   // ========================================================================
   // Step 3: Write Table of Contents
@@ -1328,11 +1392,21 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     return false;
   }
 
-  // Full path names in ids order (both modes need them).
+  // Full path names in ids order (both modes need them). Pure per-slot
+  // string builds — parallel.
   std::vector<std::string> fulls(num_encoded_paths);
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  ParallelForRanges(num_encoded_paths, WriterParallelThreads(),
+                    [&](size_t b, size_t e) {
+                      for (size_t k = b; k < e; k++) {
+                        fulls[k] = paths_[ids[k]].full_path_name();
+                      }
+                    });
+#else
   for (size_t k = 0; k < num_encoded_paths; k++) {
     fulls[k] = paths_[ids[k]].full_path_name();
   }
+#endif
 
   if (all_simple) {
     // Tree encoding needs sorted USD path order == byte order of full names.
@@ -1342,12 +1416,28 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     // can break it) — verify in O(N) and skip the N-log-N string sort in
     // the common case.
     bool presorted = true;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (num_encoded_paths > 1) {
+      std::atomic<bool> sorted_flag{true};
+      ParallelForRanges(num_encoded_paths - 1, WriterParallelThreads(),
+                        [&](size_t b, size_t e) {
+                          for (size_t k = b; k < e; k++) {
+                            if (!(fulls[k] < fulls[k + 1])) {
+                              sorted_flag.store(false, std::memory_order_relaxed);
+                              return;
+                            }
+                          }
+                        });
+      presorted = sorted_flag.load();
+    }
+#else
     for (size_t k = 1; k < num_encoded_paths; k++) {
       if (!(fulls[k - 1] < fulls[k])) {
         presorted = false;
         break;
       }
     }
+#endif
     if (!presorted) {
       std::vector<uint32_t> order(num_encoded_paths);
       for (size_t k = 0; k < num_encoded_paths; k++) order[k] = static_cast<uint32_t>(k);
@@ -1408,6 +1498,46 @@ bool CrateWriter::WritePathsSection(std::string* err) {
       parent_fulls[k] = paths_[ids[k]].get_parent_path().full_path_name();
     }
   }
+
+  // Per-node signed element token indices, precomputed in parallel: Finalize
+  // pre-registers every path element name / prop part / "" before the TOKENS
+  // section is serialized, so these are read-only lookups. If anything is
+  // unexpectedly missing, fall back to interning inside the tree recursion
+  // (the historical behavior — interning order must be the DFS build order).
+  std::vector<int32_t> node_elem_tokens(num_encoded_paths);
+  bool elem_tokens_ok = true;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    std::atomic<bool> all_found{true};
+    ParallelForRanges(
+        num_encoded_paths, WriterParallelThreads(), [&](size_t b, size_t e) {
+          for (size_t k = b; k < e; k++) {
+            const Path& p = paths_[ids[k]];
+            const bool is_prop = p.is_prim_property_path();
+            std::string elem = is_prop ? p.prop_part() : p.element_name();
+            if (elem == "/") elem.clear();
+            // Same variant-selection stripping as the serial tree build and
+            // the pre-registration loop (pxr rejects unstripped elements).
+            if (!is_prop && !elem.empty() && elem.back() == '}') {
+              size_t open = elem.find_last_of('{');
+              if (open != std::string::npos) {
+                elem = elem.substr(open);
+              }
+            }
+            auto it = token_to_index_.find(elem);
+            if (it == token_to_index_.end()) {
+              all_found.store(false, std::memory_order_relaxed);
+              return;
+            }
+            const int32_t tok = static_cast<int32_t>(it->second.value);
+            node_elem_tokens[k] = is_prop ? -tok : tok;
+          }
+        });
+    elem_tokens_ok = all_found.load();
+  }
+#else
+  elem_tokens_ok = false;
+#endif
 
   // Build the three compressed arrays directly from sorted paths
   // (matches OpenUSD's _BuildCompressedPathDataRecursive)
@@ -1519,33 +1649,30 @@ bool CrateWriter::WritePathsSection(std::string* err) {
         }
       }
 
-      const Path& p = paths_[ids[pIdx]];
-      bool is_prop = p.is_prim_property_path();
-      std::string elem = is_prop ? p.prop_part() : p.element_name();
-      if (elem == "/") elem.clear();
-
-      // A variant selection is its OWN path element on the crate wire: the
-      // node for /Implicits{shapeVariant=Capsule} carries the element token
-      // `{shapeVariant=Capsule}` (its tree parent is the /Implicits node).
-      // element_name() returns the last '/'-segment, so it hands back
-      // `Implicits{shapeVariant=Capsule}` -- which OpenUSD's reader rejects
-      // ("Invalid prim name") and then cascades into empty/repeated specs,
-      // refusing the whole file. Strip to the last `{...}` group; a multi-group
-      // tail (`/A{v1=x}{v2=y}`, nested variantSets) peels one group per tree
-      // level because get_parent_path() strips exactly one group too.
-      if (!is_prop && !elem.empty() && elem.back() == '}') {
-        size_t open = elem.find_last_of('{');
-        if (open != std::string::npos) {
-          elem = elem.substr(open);
-        }
-      }
-
       uint32_t thisIdx = currentIdx++;
       encoded_path_indices[thisIdx] = ids[pIdx];
-      element_token_indices[thisIdx] =
-          static_cast<int32_t>(GetOrCreateToken(elem).value);
-      if (is_prop) {
-        element_token_indices[thisIdx] = -element_token_indices[thisIdx];
+      if (elem_tokens_ok) {
+        element_token_indices[thisIdx] = node_elem_tokens[pIdx];
+      } else {
+        const Path& p = paths_[ids[pIdx]];
+        const bool is_prop = p.is_prim_property_path();
+        std::string elem = is_prop ? p.prop_part() : p.element_name();
+        if (elem == "/") elem.clear();
+        // A variant selection is its OWN path element on the crate wire:
+        // strip `Prim{set=sel}` to the bare `{set=sel}` group or OpenUSD's
+        // reader rejects the file ("Invalid prim name"). Keep in lockstep
+        // with the pre-registration loop and the pass-A precompute.
+        if (!is_prop && !elem.empty() && elem.back() == '}') {
+          size_t open = elem.find_last_of('{');
+          if (open != std::string::npos) {
+            elem = elem.substr(open);
+          }
+        }
+        element_token_indices[thisIdx] =
+            static_cast<int32_t>(GetOrCreateToken(elem).value);
+        if (is_prop) {
+          element_token_indices[thisIdx] = -element_token_indices[thisIdx];
+        }
       }
 
       if (has_child) {
@@ -1614,57 +1741,59 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     return false;
   }
 
-  // 3. Compressed pathIndexes
+  // 3-5. Compressed pathIndexes / elementTokenIndexes / jumps. The three
+  // compressions are independent pure computations — run them concurrently,
+  // then write the (order-sensitive) size+bytes pairs sequentially.
   {
-    size_t buf_size = Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
-    std::vector<char> comp(buf_size);
-    std::string cerr;
-    size_t csz = Usd_IntegerCompression::CompressToBuffer(
-        encoded_path_indices.data(), num_encoded_paths, comp.data(), &cerr);
-    if (csz == 0) {
-      if (err) *err = "Compress pathIndexes failed: " + cerr;
-      return false;
+    struct PathsComp {
+      const char* name;
+      // Exactly one is set: the int32 and uint32 CompressToBuffer overloads
+      // encode DIFFERENTLY, so the original per-array overload must be kept.
+      const uint32_t* u32 = nullptr;
+      const int32_t* i32 = nullptr;
+      std::vector<char> comp;
+      size_t csz = 0;
+      std::string cerr;
+    };
+    PathsComp comps[3];
+    comps[0].name = "pathIndexes";
+    comps[0].u32 = encoded_path_indices.data();
+    comps[1].name = "elementTokenIndexes";
+    comps[1].i32 = element_token_indices.data();
+    comps[2].name = "jumps";
+    comps[2].i32 = jump_indices.data();
+    auto compress_one = [&](PathsComp& c) {
+      const size_t buf_size =
+          Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
+      c.comp.resize(buf_size);
+      c.csz = c.u32 ? Usd_IntegerCompression::CompressToBuffer(
+                          c.u32, num_encoded_paths, c.comp.data(), &c.cerr)
+                    : Usd_IntegerCompression::CompressToBuffer(
+                          c.i32, num_encoded_paths, c.comp.data(), &c.cerr);
+    };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    {
+      std::thread t1([&]() { compress_one(comps[1]); });
+      std::thread t2([&]() { compress_one(comps[2]); });
+      compress_one(comps[0]);
+      t1.join();
+      t2.join();
     }
-    uint64_t sz = static_cast<uint64_t>(csz);
-    if (!Write(sz) || !WriteBytes(comp.data(), csz)) {
-      if (err) *err = "Failed to write pathIndexes";
-      return false;
+#else
+    for (auto& c : comps) {
+      compress_one(c);
     }
-  }
-
-  // 4. Compressed elementTokenIndexes
-  {
-    size_t buf_size = Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
-    std::vector<char> comp(buf_size);
-    std::string cerr;
-    size_t csz = Usd_IntegerCompression::CompressToBuffer(
-        element_token_indices.data(), num_encoded_paths, comp.data(), &cerr);
-    if (csz == 0) {
-      if (err) *err = "Compress elementTokenIndexes failed: " + cerr;
-      return false;
-    }
-    uint64_t sz = static_cast<uint64_t>(csz);
-    if (!Write(sz) || !WriteBytes(comp.data(), csz)) {
-      if (err) *err = "Failed to write elementTokenIndexes";
-      return false;
-    }
-  }
-
-  // 5. Compressed jumps
-  {
-    size_t buf_size = Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
-    std::vector<char> comp(buf_size);
-    std::string cerr;
-    size_t csz = Usd_IntegerCompression::CompressToBuffer(
-        jump_indices.data(), num_encoded_paths, comp.data(), &cerr);
-    if (csz == 0) {
-      if (err) *err = "Compress jumps failed: " + cerr;
-      return false;
-    }
-    uint64_t sz = static_cast<uint64_t>(csz);
-    if (!Write(sz) || !WriteBytes(comp.data(), csz)) {
-      if (err) *err = "Failed to write jumps";
-      return false;
+#endif
+    for (auto& c : comps) {
+      if (c.csz == 0) {
+        if (err) *err = std::string("Compress ") + c.name + " failed: " + c.cerr;
+        return false;
+      }
+      const uint64_t sz = static_cast<uint64_t>(c.csz);
+      if (!Write(sz) || !WriteBytes(c.comp.data(), c.csz)) {
+        if (err) *err = std::string("Failed to write ") + c.name;
+        return false;
+      }
     }
   }
 
@@ -1736,50 +1865,55 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
     spec_types.push_back(static_cast<uint32_t>(spec_data.spec.spec_type));
   }
 
-  // Helper to compress and write an integer array
-  auto writeCompressedIntArray = [this, err](const std::vector<uint32_t>& data,
-                                              const char* array_name) -> bool {
-    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(data.size());
-    std::vector<char> compressed(buffer_size);
-
-    std::string compress_err;
-    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
-        data.data(), data.size(), compressed.data(), &compress_err);
-
-    if (compressed_size == 0) {
-      if (err) *err = std::string("Failed to compress ") + array_name + ": " + compress_err;
-      return false;
-    }
-
-    // Write compressed size
-    uint64_t size = static_cast<uint64_t>(compressed_size);
-    if (!Write(size)) {
-      if (err) *err = std::string("Failed to write ") + array_name + " size";
-      return false;
-    }
-
-    // Write compressed data
-    if (!WriteBytes(compressed.data(), compressed_size)) {
-      if (err) *err = std::string("Failed to write compressed ") + array_name;
-      return false;
-    }
-
-    return true;
+  // The three column compressions are independent pure computations — run
+  // them concurrently, then write the (order-sensitive) size+bytes pairs
+  // sequentially.
+  struct SpecsComp {
+    const char* name;
+    const std::vector<uint32_t>* data;
+    std::vector<char> comp;
+    size_t csz = 0;
+    std::string cerr;
   };
-
-  // Compress and write pathIndexes
-  if (!writeCompressedIntArray(path_indexes, "pathIndexes")) {
-    return false;
+  SpecsComp comps[3] = {
+      {"pathIndexes", &path_indexes, {}, 0, {}},
+      {"fieldSetIndexes", &fieldset_indexes, {}, 0, {}},
+      {"specTypes", &spec_types, {}, 0, {}},
+  };
+  auto compress_one = [](SpecsComp& c) {
+    const size_t buffer_size =
+        Usd_IntegerCompression::GetCompressedBufferSize(c.data->size());
+    c.comp.resize(buffer_size);
+    c.csz = Usd_IntegerCompression::CompressToBuffer(
+        c.data->data(), c.data->size(), c.comp.data(), &c.cerr);
+  };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    std::thread t1([&]() { compress_one(comps[1]); });
+    std::thread t2([&]() { compress_one(comps[2]); });
+    compress_one(comps[0]);
+    t1.join();
+    t2.join();
   }
-
-  // Compress and write fieldSetIndexes
-  if (!writeCompressedIntArray(fieldset_indexes, "fieldSetIndexes")) {
-    return false;
+#else
+  for (auto& c : comps) {
+    compress_one(c);
   }
-
-  // Compress and write specTypes
-  if (!writeCompressedIntArray(spec_types, "specTypes")) {
-    return false;
+#endif
+  for (auto& c : comps) {
+    if (c.csz == 0) {
+      if (err) *err = std::string("Failed to compress ") + c.name + ": " + c.cerr;
+      return false;
+    }
+    const uint64_t size = static_cast<uint64_t>(c.csz);
+    if (!Write(size)) {
+      if (err) *err = std::string("Failed to write ") + c.name + " size";
+      return false;
+    }
+    if (!WriteBytes(c.comp.data(), c.csz)) {
+      if (err) *err = std::string("Failed to write compressed ") + c.name;
+      return false;
+    }
   }
 
   int64_t section_end = Tell();
