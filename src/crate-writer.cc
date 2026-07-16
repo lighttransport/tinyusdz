@@ -5,6 +5,7 @@
 #include "crate-writer.hh"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -473,6 +474,27 @@ inline void SortOrderByKeys(std::vector<uint32_t>& order,
 
 }  // namespace
 
+// Scoped ns accumulator for the TINYUSDZ_CRATE_PROFILE Finalize report.
+// Zero-cost (one branch) when disabled.
+namespace {
+struct ProfScope {
+  bool on;
+  uint64_t* acc;
+  std::chrono::steady_clock::time_point t0;
+  ProfScope(bool enabled, uint64_t* accumulator) : on(enabled), acc(accumulator) {
+    if (on) t0 = std::chrono::steady_clock::now();
+  }
+  ~ProfScope() {
+    if (on) {
+      *acc += static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - t0)
+              .count());
+    }
+  }
+};
+}  // namespace
+
 bool CrateWriter::Finalize(std::string* err) {
   if (!is_open_) {
     if (err) *err = "File not open";
@@ -631,11 +653,17 @@ bool CrateWriter::Finalize(std::string* err) {
   }
   if (profile_finalize_) prof_t_paths = prof_now();
 
-  // Build field and fieldset tables
-  for (auto& spec_data : spec_data_) {
+  // Build field and fieldset tables.
+  //
+  // Pass B / serial body: identical shared-state effect sequence either way —
+  // field-name intern, TokenVector special case, value pack (from a pass-A
+  // plan when one exists, plain PackValue otherwise), field/fieldset dedup.
+  auto pack_spec_fields = [&](SpecData& spec_data,
+                              std::vector<PackPlan>* plans_for_spec) -> bool {
     std::vector<crate::FieldIndex> field_indices;
 
-    for (const auto& field_pair : spec_data.fields) {
+    for (size_t fi = 0; fi < spec_data.fields.size(); fi++) {
+      const auto& field_pair = spec_data.fields[fi];
       // Create field
       crate::Field field;
       const auto prof_f0 = profile_finalize_
@@ -659,13 +687,18 @@ bool CrateWriter::Finalize(std::string* err) {
       } else if (fname == "subLayers" &&
                  field_pair.second.as<std::vector<std::string>>()) {
         // Must be the dedicated StringVector type or pxr ignores the
-        // sublayers entirely (see PackStringVectorValue).
+        // sublayers entirely (see PackStringVectorValue). Intercepts BEFORE
+        // the pass-A plan (like the TokenVector special case above) — a plan
+        // for this field is ignored.
         field.value_rep = PackStringVectorValue(
             *field_pair.second.as<std::vector<std::string>>(), err);
       } else if (fname == "subLayerOffsets" &&
                  field_pair.second.as<std::vector<LayerOffset>>()) {
         field.value_rep = PackLayerOffsetVectorValue(
             *field_pair.second.as<std::vector<LayerOffset>>(), err);
+      } else if (plans_for_spec) {
+        field.value_rep =
+            PackValueFromPlan(field_pair.second, (*plans_for_spec)[fi], err);
       } else {
         field.value_rep = PackValue(field_pair.second, err);
       }
@@ -692,7 +725,85 @@ bool CrateWriter::Finalize(std::string* err) {
     // (spec.path_index was assigned in the sorted-rebuild loop above.)
     spec_data.spec.fieldset_index = fieldset_idx;
     spec_data.spec.spec_type = spec_data.spec_type;  // Use the stored spec type
+    return true;
+  };
+
+  // Deferred-interning two-pass (round 14), gated on TINYUSDZ_ENABLE_THREAD:
+  // pass A precomputes pure per-field work in parallel (see BuildPackPlan),
+  // pass B replays shared-state effects in exact serial order. Windowed so
+  // the prebuilt out-of-line buffers never hold more than a slice of the
+  // VALUE section at once.
+  bool two_pass_pack = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  size_t pack_nthreads = 1;
+  {
+    const unsigned hw = std::thread::hardware_concurrency();
+    pack_nthreads = (std::max<size_t>)(
+        1, (std::min<size_t>)(static_cast<size_t>(hw ? hw : 1), size_t(16)));
   }
+  two_pass_pack = (pack_nthreads > 1) && (spec_data_.size() >= 1024);
+#endif
+
+  if (!two_pass_pack) {
+    for (auto& spec_data : spec_data_) {
+      if (!pack_spec_fields(spec_data, nullptr)) {
+        return false;
+      }
+    }
+  }
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  else {
+    const size_t kWindowSpecs = 65536;
+    const size_t total = spec_data_.size();
+    std::vector<std::vector<PackPlan>> window_plans;
+    for (size_t w0 = 0; w0 < total; w0 += kWindowSpecs) {
+      const size_t w1 = (std::min)(total, w0 + kWindowSpecs);
+      window_plans.assign(w1 - w0, std::vector<PackPlan>());
+
+      // Pass A: fill plans concurrently. Dynamic chunking — value sizes are
+      // heavily skewed (giant mesh arrays next to one-field specs).
+      {
+        ProfScope prof_pa(profile_finalize_, &prof_passa_ns_);
+        PackPlanContext ctx;
+        std::atomic<size_t> cursor{w0};
+        const size_t kChunk = 64;
+        auto worker = [&]() {
+          for (;;) {
+            const size_t begin = cursor.fetch_add(kChunk);
+            if (begin >= w1) break;
+            const size_t end = (std::min)(w1, begin + kChunk);
+            for (size_t i = begin; i < end; i++) {
+              SpecData& sd = spec_data_[i];
+              std::vector<PackPlan>& plans = window_plans[i - w0];
+              plans.resize(sd.fields.size());
+              for (size_t fi = 0; fi < sd.fields.size(); fi++) {
+                BuildPackPlan(sd.fields[fi].second, &plans[fi], &ctx);
+              }
+            }
+          }
+        };
+        std::vector<std::thread> ths;
+        ths.reserve(pack_nthreads);
+        for (size_t t = 0; t < pack_nthreads; t++) {
+          ths.emplace_back(worker);
+        }
+        for (auto& th : ths) {
+          th.join();
+        }
+      }
+
+      // Pass B: serial replay in exact order.
+      {
+        ProfScope prof_pb(profile_finalize_, &prof_passb_ns_);
+        for (size_t i = w0; i < w1; i++) {
+          if (!pack_spec_fields(spec_data_[i], &window_plans[i - w0])) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+#endif
   if (profile_finalize_) {
     prof_t_fields = prof_now();
     const double ms = 1e-6;
@@ -711,6 +822,12 @@ bool CrateWriter::Finalize(std::string* err) {
                                   prof_pack_write_ns_)) *
                 ms,
             double(prof_field_dedup_ns_) * ms);
+    if (prof_passa_ns_ || prof_passb_ns_) {
+      fprintf(stderr,
+              "[crate-writer profile]   two-pass: pass A %.1fms (parallel) | "
+              "pass B %.1fms (serial replay)\n",
+              double(prof_passa_ns_) * ms, double(prof_passb_ns_) * ms);
+    }
   }
 
   // ========================================================================
@@ -1769,27 +1886,6 @@ bool CrateWriter::WriteBootStrap(std::string* /* err */) {
 // Value Encoding
 // ============================================================================
 
-// Scoped ns accumulator for the TINYUSDZ_CRATE_PROFILE Finalize report.
-// Zero-cost (one branch) when disabled.
-namespace {
-struct ProfScope {
-  bool on;
-  uint64_t* acc;
-  std::chrono::steady_clock::time_point t0;
-  ProfScope(bool enabled, uint64_t* accumulator) : on(enabled), acc(accumulator) {
-    if (on) t0 = std::chrono::steady_clock::now();
-  }
-  ~ProfScope() {
-    if (on) {
-      *acc += static_cast<uint64_t>(
-          std::chrono::duration_cast<std::chrono::nanoseconds>(
-              std::chrono::steady_clock::now() - t0)
-              .count());
-    }
-  }
-};
-}  // namespace
-
 crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::string* err) {
   ProfScope prof_total(profile_finalize_, &prof_pack_total_ns_);
   crate::ValueRep rep;
@@ -1873,7 +1969,28 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   }
 
   // Create ValueRep with offset and proper type
-  // Determine the type for out-of-line values
+  SetOutOfLineRepType(value, &rep);
+
+  rep.SetPayload(static_cast<uint64_t>(offset));
+  if (is_compressed) {
+    rep.SetIsCompressed();
+  }
+
+  if (dedup_candidate) {
+    RetainDeduplicatedValue(dedup_hash, std::move(dedup_bytes),
+                            dedup_element_size, dedup_is_float,
+                            dedup_wire_tag, rep);
+  }
+
+  return rep;
+}
+
+// Determine the ValueRep type/flags for out-of-line values (shared by
+// PackValue and the two-pass BuildPackPlan; see the header note about the
+// version-bumping branches).
+void CrateWriter::SetOutOfLineRepType(const crate::CrateValue& value,
+                                      crate::ValueRep* rep_out) {
+  crate::ValueRep& rep = *rep_out;
 
   // Macro to reduce repetitive scalar type dispatch
 #define PACK_SCALAR_TYPE(CppType, CrateTypeId) \
@@ -2024,19 +2141,183 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   else {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID));
   }
+}
 
-  rep.SetPayload(static_cast<uint64_t>(offset));
-  if (is_compressed) {
-    rep.SetIsCompressed();
+void CrateWriter::BuildPackPlan(const crate::CrateValue& value, PackPlan* plan,
+                                PackPlanContext* ctx) {
+  plan->kind = PackPlan::kSerial;
+  // Mirror PackValue's pre-inline special cases: standalone Reference (error
+  // path), VtArrayEdit (version bump + last_array_edit_elem_type_) and
+  // unregistered values (recursive wrapper) all stay serial.
+  if (value.as<Reference>() || value.as<value::ArrayEdit>() ||
+      value.IsUnregisteredValue()) {
+    return;
   }
 
-  if (dedup_candidate) {
-    RetainDeduplicatedValue(dedup_hash, std::move(dedup_bytes),
-                            dedup_element_size, dedup_is_float,
-                            dedup_wire_tag, rep);
+  // Inline classification: same decision procedure as the serial writer, but
+  // interning is only OBSERVED, never performed.
+  struct RecordingSink final : public InternSink {
+    bool interned = false;
+    uint32_t InternToken(const std::string&) override {
+      interned = true;
+      return 0;
+    }
+    uint32_t InternString(const std::string&) override {
+      interned = true;
+      return 0;
+    }
+  } sink;
+  crate::ValueRep inline_rep;
+  if (TryInlineValue(value, &inline_rep, sink)) {
+    if (sink.interned) {
+      // Payload is an intern index: pass B re-runs TryInlineValue with the
+      // direct sink (first-branch hit + one intern — the mandatory serial
+      // part), avoiding any captured-string lifetime concerns.
+      plan->kind = PackPlan::kInlineIntern;
+    } else {
+      plan->kind = PackPlan::kInlinePure;
+      plan->rep = inline_rep;
+    }
+    return;
   }
 
-  return crate::ValueRep(rep.GetData());
+  if (!IsPureValueData(value)) {
+    return;  // index-embedding / seeking encodings stay serial
+  }
+
+  // Dedup descriptor + hash first (parallel; pass B's lookup consumes them).
+  if (options_.enable_deduplication &&
+      ComputeValueDedupDescriptor(value, &plan->dedup_bytes,
+                                  &plan->dedup_element_size,
+                                  &plan->dedup_is_float,
+                                  &plan->dedup_wire_tag)) {
+    plan->dedup_hash = NanAwareHash::combine(
+        NanAwareHash::hash_buffer(plan->dedup_bytes.data(),
+                                  plan->dedup_bytes.size(),
+                                  plan->dedup_element_size,
+                                  plan->dedup_is_float),
+        plan->dedup_wire_tag);
+    plan->dedup_candidate = true;
+  }
+
+  // Prebuild only values that will actually need encoding. Instanced scenes
+  // are dominated by dedup HITS, whose serial path never encodes at all —
+  // blindly prebuilding every duplicate costs more than the parallelism buys
+  // (measured on the large reference scene: 4317 meshes from 177 unique assets). Skip when the
+  // value is already retained (frozen-table probe) and claim within-window
+  // firsts so each new unique value is encoded by exactly one thread; the
+  // other duplicates dedup-hit in pass B once the first is retained. A plan
+  // that skips prebuild keeps `bytes` empty — pass B falls back to the serial
+  // WriteValueData on a genuine miss, so hash collisions and dedup-budget
+  // refusals stay correct.
+  bool prebuild = true;
+  if (plan->dedup_candidate) {
+    crate::ValueRep probe;
+    if (LookupDeduplicatedValueWithHash(
+            plan->dedup_hash, plan->dedup_bytes, plan->dedup_element_size,
+            plan->dedup_is_float, plan->dedup_wire_tag, &probe)) {
+      // Certain, FINAL hit: the table only grows (one entry per unique
+      // descriptor, added on miss, never mutated), so pass B would resolve to
+      // this same rep — resolve it here and skip the serial lookup entirely.
+      plan->rep = probe;
+      plan->kind = PackPlan::kOolDedupHit;
+      return;
+    } else if (ctx) {
+      std::lock_guard<std::mutex> lock(ctx->mu);
+      prebuild = ctx->claimed.insert(plan->dedup_hash).second;
+    }
+  }
+
+  if (prebuild) {
+    // Prebuild the out-of-line byte image with the REAL encoder, captured
+    // into the plan buffer (see tls_value_capture).
+    plan->bytes.clear();
+    bool is_compressed = false;
+    std::string local_err;
+    tls_value_capture() = &plan->bytes;
+    const int64_t body_result =
+        WriteValueBody(value, &is_compressed, &local_err);
+    tls_value_capture() = nullptr;
+    if (body_result < 0) {
+      // Shouldn't happen for pure values (capture writes cannot fail); let
+      // the serial pass reproduce whatever the error is.
+      plan->bytes.clear();
+      plan->kind = PackPlan::kSerial;
+      return;
+    }
+    plan->is_compressed = is_compressed;
+  }
+
+  SetOutOfLineRepType(value, &plan->rep);
+  plan->kind = PackPlan::kOolPure;
+}
+
+crate::ValueRep CrateWriter::PackValueFromPlan(const crate::CrateValue& value,
+                                               PackPlan& plan,
+                                               std::string* err) {
+  switch (plan.kind) {
+    case PackPlan::kInlinePure:
+    case PackPlan::kOolDedupHit:
+      return plan.rep;
+    case PackPlan::kInlineIntern: {
+      crate::ValueRep rep;
+      if (TryInlineValue(value, &rep)) {
+        return rep;
+      }
+      return PackValue(value, err);  // defensive; classification is deterministic
+    }
+    case PackPlan::kOolPure: {
+      crate::ValueRep rep = plan.rep;  // type + array flag preset
+      if (plan.dedup_candidate &&
+          LookupDeduplicatedValueWithHash(
+              plan.dedup_hash, plan.dedup_bytes, plan.dedup_element_size,
+              plan.dedup_is_float, plan.dedup_wire_tag, &rep)) {
+        return rep;
+      }
+      int64_t value_offset;
+      bool is_compressed = plan.is_compressed;
+      if (plan.bytes.empty()) {
+        // Prebuild was skipped (pass A expected a dedup hit that didn't
+        // materialize — hash collision or dedup-budget refusal): encode
+        // serially, exactly as PackValue would.
+        value_offset = WriteValueData(value, &is_compressed, err);
+        if (value_offset < 0 || (err && !err->empty())) {
+          return crate::ValueRep();
+        }
+      } else {
+        // Append the prebuilt bytes exactly where WriteValueData would have
+        // written them (same prologue/epilogue bookkeeping).
+        const int64_t current_pos = Tell();
+        if (!Seek(value_data_end_offset_)) {
+          if (err) *err = "Failed to seek to value data section";
+          return crate::ValueRep();
+        }
+        value_offset = Tell();
+        if (!WriteBytes(plan.bytes.data(), plan.bytes.size())) {
+          if (err) *err = "Failed to write prebuilt value data";
+          return crate::ValueRep();
+        }
+        value_data_end_offset_ = Tell();
+        if (!Seek(current_pos)) {
+          if (err) *err = "Failed to seek back after writing value";
+          return crate::ValueRep();
+        }
+      }
+      rep.SetPayload(static_cast<uint64_t>(value_offset));
+      if (is_compressed) {
+        rep.SetIsCompressed();
+      }
+      if (plan.dedup_candidate) {
+        RetainDeduplicatedValue(plan.dedup_hash, std::move(plan.dedup_bytes),
+                                plan.dedup_element_size, plan.dedup_is_float,
+                                plan.dedup_wire_tag, rep);
+      }
+      return rep;
+    }
+    case PackPlan::kSerial:
+    default:
+      return PackValue(value, err);
+  }
 }
 
 
