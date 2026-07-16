@@ -150,7 +150,53 @@
               if (s.arc_kind == ArcType::Variant) {
                 return Mapping(s.map_idx).Apply(p);
               }
-              return s_target_map.ApplyTarget(p);
+              std::string r = s_target_map.ApplyTarget(p);
+              if (!r.empty() || s.arc_kind != ArcType::Inherit || !s.arc_chain)
+                return r;
+              // A connection/relationship target authored in an inherited local
+              // CLASS that points OUTSIDE the class namespace (at a SIBLING
+              // instance of that class) is unmappable by the class's own
+              // implied-class map, which only covers the class subtree — yet the
+              // class lives in a REFERENCED layer stack, so the target resolves
+              // through that reference. Walk the arc chain (deepest first) and map
+              // through the first arc-crossing (reference/payload) map that can
+              // express the target. pxr: ErrorInvalidInstanceTargetPath's
+              // SymBrow.sculpt.amount.connect -> sibling {L,R}Brow.InnUD.
+              const std::string inst_root =
+                  Path(Mapping(s.map_idx).Apply(s.site)).parent().str();
+              const std::string prim =
+                  p.substr(0, p.find_first_of(".["));  // strip .prop / [target]
+              for (auto it = s.arc_chain->rbegin(); it != s.arc_chain->rend();
+                   ++it) {
+                const NamespaceMapping &cm = Mapping(it->second);
+                if (!cm.crosses_arc) continue;
+                const std::string cr = cm.ApplyTarget(p);
+                if (cr.empty()) continue;
+                // INVALID SELF-INSTANCE TARGET: a target that, un-relocated in the
+                // referenced stack, lies UNDER the very instance this class is
+                // inherited into is a non-invertible self-reference. pxr keeps it
+                // at the reference-mapped but PRE-relocate path (does NOT apply the
+                // instance's own relocate). Other-instance targets relocate
+                // normally.
+                const std::string inst_arc = cm.ReverseApply(inst_root);
+                const std::string prim_unrelo =
+                    FullyUnrelocate(it->first, prim);
+                if (NamespaceMapping::AtOrUnder(prim_unrelo, inst_arc)) {
+                  // Un-do the composed (root-stack) relocate that `cm` applied,
+                  // returning the reference-mapped but PRE-relocate path — the
+                  // invalid self-instance target is kept there (pxr does not
+                  // relocate it, unlike an other-instance target).
+                  const size_t dot = cr.find_first_of(".[");
+                  const std::string cr_prim =
+                      dot == std::string::npos ? cr : cr.substr(0, dot);
+                  const std::string cr_suf =
+                      dot == std::string::npos ? std::string() : cr.substr(dot);
+                  const std::string ur = FullyUnrelocate(0, cr_prim);
+                  if (!ur.empty()) return ur + cr_suf;
+                }
+                return cr;
+              }
+              return r;
             });
         snapshot_pre_clip_props();
       }
