@@ -1337,6 +1337,86 @@
   // variant/implied-class context reaches the relocated prim; the guard
   // (`reloc_content_in_progress`) falls back to the isolated walk on the
   // re-entrant chained-relocate shapes that would otherwise recurse.
+  // Same-stack INTERNAL-REFERENCE content: a relocate follows content brought in
+  // via arcs into OTHER layer stacks, and same-stack content delivered by an
+  // INHERIT (the relocated prim's own class opinions -- TrickyMultipleRelocations4
+  // inherits /SymRig), but NOT content delivered by a same-stack (internal)
+  // REFERENCE from a DIFFERENT subtree (pxr per-arc scoping). Salt the latter --
+  // its specs (incl. a `def` specifier) must not compose, while it stays
+  // traversable (RelocatePrimsWithSameName).
+  void SaltInternalRefContent(std::vector<Src> &content, const Src &ps,
+                              const StackRelocates::Arrival &arrival,
+                              std::string *warn, std::string *err) {
+    for (Src &c : content) {
+      if (c.suppress_site_specs) continue;
+      if (FlowsThroughRelocateSource(c, arrival) ||
+          ContentSiteDeparted(c, ps, arrival, warn, err)) {
+        c.suppress_site_specs = true;
+      }
+    }
+  }
+
+  // Is this content source's leaf name relocated AWAY (departed) under its
+  // parent in the COMPOSED namespace -- e.g. via a reference to a relocating
+  // stack (RelocatePrimsWithSameName: /ChainedRef_1/Child is departed because
+  // /ChainedRef_1 references /ChainedRef_2 which relocates Child->Child_2)?
+  // Such content does not compose. Distinct from an arc-introduced relocated
+  // prim that is NOT departed (test_relocates /Lib/Model/Inner -> /World/New).
+  // Only checked for same-stack (relocating stack) content whose site sits
+  // outside the source subtree -- content brought in by an internal reference.
+  bool ContentSiteDeparted(const Src &c, const Src &ps,
+                           const StackRelocates::Arrival &arrival,
+                           std::string *warn, std::string *err) {
+    if (c.stack_idx != ps.stack_idx || c.arc_kind != ArcType::Reference)
+      return false;
+    if (IsPathAtOrUnder(c.site, arrival.src_site)) return false;
+    const Path cp(c.site);
+    const Path parent = cp.parent();
+    if (parent.is_root() || parent.empty() || parent.str() == "/") return false;
+    // Guard the re-entrant composition of the parent.
+    const std::string gk = "$dep:" + UIntToStr(c.stack_idx) + ":" + parent.str();
+    if (!reloc_content_in_progress.insert(gk).second) return false;
+    const std::vector<Src> psrcs = SourcesForSite(0, parent, warn, err);
+    reloc_content_in_progress.erase(gk);
+    const ChildRelocations edits = RelocationsAt(psrcs);
+    return edits.departed.count(cp.name()) != 0;
+  }
+
+  // Did this content source arrive THROUGH a relocation-source path in an
+  // intermediate contributing stack? Its `arc_sites` trail records the (stack,
+  // target) of every arc it crossed; if the source's leaf name under any
+  // INTERMEDIATE arc target is a relocation source there, that stack relocated
+  // the prim away, so the content DEPARTED and must not compose (chained
+  // departure through a reference chain -- RelocatePrimsWithSameName:
+  // base.usd/Base/Child arrives via /ChainedRef_2 where /ChainedRef_2/Child is a
+  // relocation source). EXCLUDE the arrival's OWN source (composing the arrival
+  // OF that same relocate legitimately pulls this content). Salted (not dropped)
+  // so it stays traversable.
+  bool FlowsThroughRelocateSource(const Src &c,
+                                  const StackRelocates::Arrival &arrival) const {
+    // Only REFERENCE-delivered content: the leaf-name-under-target suffix is
+    // valid only across NAME-PRESERVING reference arcs. An INHERIT renames its
+    // subtree (SymRig -> LRig), so the intermediate path would be mis-computed
+    // (TrickyRelocationOfPrimFromPayload false-positive on inherited /Rig/SymRig).
+    if (c.arc_kind != ArcType::Reference) return false;
+    if (!c.arc_sites || c.arc_sites->size() < 2) return false;
+    const auto &trail = *c.arc_sites;
+    const std::string &leaf_tgt = trail.back().second;
+    if (!NamespaceMapping::AtOrUnder(c.site, leaf_tgt)) return false;
+    const std::string suffix = c.site.substr(leaf_tgt.size());  // e.g. "/Child"
+    if (suffix.empty()) return false;
+    for (size_t i = 0; i + 1 < trail.size(); ++i) {
+      const std::string inter = trail[i].second + suffix;
+      // The current arrival's OWN relocate source is not a departure here.
+      if (inter == arrival.src_site ||
+          NamespaceMapping::AtOrUnder(inter, arrival.src_site) ||
+          NamespaceMapping::AtOrUnder(arrival.src_site, inter))
+        continue;
+      if (PathInRelocateSource(trail[i].first, inter)) return true;
+    }
+    return false;
+  }
+
   std::vector<Src> SourcesForRelocatedContent(
       const Src &ps, const StackRelocates::Arrival &arrival,
       const std::string &child_composed, std::string *warn, std::string *err) {
@@ -1373,10 +1453,12 @@
       std::vector<Src> comp =
           ComposedRelocatedContent(ps, arrival, child_composed, warn, err);
       reloc_content_in_progress.erase(guard_key);
+      SaltInternalRefContent(comp, ps, arrival, warn, err);
       return comp;
     }
     std::vector<Src> iso =
         IsolatedRelocatedContent(ps, arrival, child_composed, warn, err);
+    SaltInternalRefContent(iso, ps, arrival, warn, err);
     // Chained relocate: the isolated walk resolves in the relocating stack's own
     // namespace, so its implied-class propagation chain never reaches ROOT and it
     // MISSES a root over on an INHERITED class that the relocate moved (e.g.
