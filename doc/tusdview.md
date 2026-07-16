@@ -368,6 +368,17 @@ xvfb-run -a env \
 Startup logs print `renderer`, `GPU`, and `API` for both OpenGL and Vulkan, so a
 headless run can reject llvmpipe without requiring `glxinfo`.
 
+The GL/VK screenshot ctests (`tusdview-skinning-screenshot-diff`,
+`tusdview-instanced-prototype-skinning`, `tusdview-uv-set-routing`) apply this
+recipe **automatically**: `tests/tusdview/gpu_backend.py` detects the loaded GPU
+driver (`detect_gpu()` → `nvidia` via `/proc/driver/nvidia/version`, `amd` via
+`/sys/module/amdgpu` or `/dev/kfd`, or none) and, on the Xvfb fallback, sets the
+NVIDIA offload environment for GL and passes `--vk-device <vendor>` for Vulkan.
+A plain `ctest` therefore exercises hardware GL+VK on NVIDIA and hardware VK on
+AMD, with no environment setup; without a GPU driver the tests keep their
+software-renderer skip. (AMD GL under Xvfb stays llvmpipe — radeonsi needs DRI
+on the X server itself, so only the Vulkan half reaches hardware there.)
+
 A successful run prints the selected hardware device and ray-query support, for
 example:
 
