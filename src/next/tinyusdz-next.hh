@@ -17,6 +17,9 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
+#include <memory>
+#include <vector>
 
 // Core types
 #include "types/type-id.hh"
@@ -24,8 +27,8 @@
 #include "types/value.hh"
 #include "types/interpolation.hh"
 
-// PCP composition options (for --variant support)
-#include "pcp/prim-index.hh"
+// Persistent PCP composition/cache APIs.
+#include "pcp/cache.hh"
 
 // Prim types
 #include "prim/path.hh"
@@ -54,6 +57,7 @@
 
 // Evaluation
 #include "eval/attribute-eval.hh"
+#include "eval/value-clip.hh"
 
 // Asset resolution
 #include "resolver/asset-resolver.hh"
@@ -63,6 +67,7 @@
 
 // Schema APIs
 #include "schema/geom-mesh.hh"
+#include "schema/schema-registry.hh"
 #include "schema/geom-point-instancer.hh"
 #include "schema/geom-xform.hh"
 #include "schema/usd-lux.hh"
@@ -89,6 +94,10 @@ constexpr const char* version_string = "0.1.0-dev";
 
 /// Options for high-level USD loading.
 struct LoadUSDOptions {
+  /// Fail closed on unsupported/invalid AOUSD-authored data across USDA and
+  /// USDC. Compatibility mode (false) preserves legacy permissive ingestion.
+  bool strict_aousd_conformance = false;
+
   /// Global per-input memory cap in bytes (0 = no limit). Applied to USDA file
   /// size, USDC crate input/allocation checks, USDZ archive/entry size, and
   /// composed external layer loads. Nested format-specific caps are combined
@@ -103,6 +112,109 @@ struct LoadUSDOptions {
 
   /// Format-specific USDZ options.
   USDZReadOptions usdz_options;
+};
+
+enum class DiagnosticSeverity : uint8_t { Info, Warning, Error };
+enum class DiagnosticDomain : uint8_t { Load, Resolve, Compose, Convert };
+
+struct Diagnostic {
+  DiagnosticSeverity severity = DiagnosticSeverity::Info;
+  DiagnosticDomain domain = DiagnosticDomain::Load;
+  std::string code;
+  std::string message;
+  std::string path;
+  std::string asset_path;
+};
+
+enum class ProgressPhase : uint8_t { RootLoad, Compose, Recompose };
+
+struct ProgressEvent {
+  ProgressPhase phase = ProgressPhase::RootLoad;
+  float progress = 0.0f;
+  std::string message;
+  size_t estimated_resident_bytes = 0;
+};
+
+enum class CacheRetention : uint8_t { Full, LayersOnly };
+
+struct StageSessionMemoryStats {
+  size_t source_layer_bytes = 0;
+  size_t transient_cache_bytes = 0;
+  size_t composed_stage_bytes = 0;
+  size_t estimated_total_bytes = 0;
+  size_t peak_estimated_total_bytes = 0;
+  size_t layer_count = 0;
+  size_t prim_index_count = 0;
+  size_t composed_prim_count = 0;
+};
+
+struct StageSessionOptions {
+  LoadUSDOptions load;
+  pcp::CompositionOptions composition;
+  ResolverConfig resolver;
+  bool compose = true;
+  // Aggregate logical residency cap for parsed layers, composition caches and
+  // the composed Stage. Unlike LoadUSDOptions::max_memory this is not a
+  // per-file input limit. Zero means unlimited.
+  size_t max_total_memory = 0;
+  CacheRetention cache_retention = CacheRetention::Full;
+  using ProgressCallback = std::function<bool(const ProgressEvent&)>;
+  ProgressCallback progress_callback;
+};
+
+/// Persistent next-core document. It keeps the resolver and PCP cache alive so
+/// payload and variant edits reuse parsed dependency layers.
+class StageSession {
+ public:
+  StageSession();
+  ~StageSession();
+  StageSession(StageSession&&) noexcept;
+  StageSession& operator=(StageSession&&) noexcept;
+  StageSession(const StageSession&) = delete;
+  StageSession& operator=(const StageSession&) = delete;
+
+  bool OpenFile(const std::string& filename,
+                const StageSessionOptions& options = {});
+
+  const Stage& GetStage() const;
+  // Transfer the composed Stage out of a one-shot session and release its PCP
+  // cache. The session becomes closed; payload/variant edits are no longer
+  // available. This avoids copying Stage, which is intentionally move-only.
+  Stage TakeStage();
+  const StageSessionOptions& GetOptions() const;
+  const std::string& GetRootIdentifier() const;
+  bool IsOpen() const;
+  bool IsComposed() const;
+
+  bool Rebuild();
+  bool LoadPayload(const Path& prim_path,
+                   pcp::Cache::LoadPolicy policy =
+                       pcp::Cache::LoadPolicy::WithDescendants);
+  bool UnloadPayload(const Path& prim_path);
+  bool LoadPayloads(const std::vector<Path>& prim_paths,
+                    pcp::Cache::LoadPolicy policy =
+                        pcp::Cache::LoadPolicy::WithDescendants);
+  bool SetVariantSelection(const Path& prim_path,
+                           const std::string& variant_set,
+                           const std::string& selection);
+  bool ClearVariantSelection(const Path& prim_path,
+                             const std::string& variant_set);
+  bool SetVariantSelections(
+      const pcp::CompositionOptions::VariantSelectionMap& selections);
+
+  pcp::CompositionOptions::VariantSelectionMap GetVariantSelections() const;
+  std::vector<Path> GetDeferredPayloadPaths() const;
+  std::vector<pcp::Cache::CompositionIssue> GetCompositionIssues() const;
+  const std::vector<Diagnostic>& GetDiagnostics() const;
+  StageSessionMemoryStats GetMemoryStats() const;
+  void TrimCaches();
+  const std::string& GetWarning() const;
+  const std::string& GetError() const;
+
+  struct Impl;
+
+ private:
+  std::unique_ptr<Impl> impl_;
 };
 
 /// Load a USD file (auto-detects format: USDA, USDC)
@@ -137,6 +249,47 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
                      const LoadUSDOptions& options,
                      std::string* warn = nullptr, std::string* err = nullptr,
                      const pcp::CompositionOptions* comp_opts = nullptr);
+
+/// True when the stage's root layer authors composition arcs (sublayers,
+/// references, payloads, inherits, specializes, or variants) that a plain
+/// single-layer load leaves unresolved.
+bool StageNeedsComposition(const Stage& stage);
+
+/// Compose an already-loaded stage in place through the PCP engine (variants,
+/// internal references/inherits/specializes; external arcs resolve through
+/// `resolver`). No-op for self-contained stages. `anchor_label` names the root
+/// layer in diagnostics and anchors arcs authored in it.
+bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
+                        const std::string& anchor_label,
+                        const LoadUSDOptions& load_options,
+                        std::string* warn, std::string* err,
+                        const pcp::CompositionOptions* comp_opts = nullptr);
+
+/// Convenience overload for memory-rooted stages (wasm): no anchor directory;
+/// external arcs resolve only through resolver custom callbacks (none by
+/// default). Primary use: applying variant selections / internal arcs after
+/// LoadUSDFromMemory[Owned].
+bool ComposeLoadedStage(Stage* stage, std::string* warn, std::string* err,
+                        const pcp::CompositionOptions* comp_opts = nullptr,
+                        const std::string& anchor_label = "");
+
+/// Load USD from an in-memory buffer (auto-detects USDA / USDC / USDZ from the
+/// content). Single-layer load only: composition arcs are not resolved (there
+/// is no anchor directory for external assets).
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       std::string* warn = nullptr, std::string* err = nullptr);
+
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       const LoadUSDOptions& options,
+                       std::string* warn = nullptr, std::string* err = nullptr);
+
+/// Load USD from an owned in-memory buffer adopted by move. USDA lazy arrays and
+/// USDC lazy arrays retain this buffer directly, avoiding an extra heap copy in
+/// WASM/browser bindings that already copied JS bytes into a C++ string.
+bool LoadUSDFromMemoryOwned(std::string&& data, Stage* stage,
+                            const LoadUSDOptions& options = {},
+                            std::string* warn = nullptr,
+                            std::string* err = nullptr);
 
 /// Load USDA (ASCII) file
 bool LoadUSDA(const std::string& filename, Stage* stage,

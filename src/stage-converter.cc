@@ -294,8 +294,22 @@ bool CrateWriter::AddArrayAttribute(
     const std::string& attr_name, const value::Value& val,
     crate::FieldValuePairVector& fields, std::string* err) {
   crate::CrateValue crate_val;
-  return ConvertValue(val, crate_val, err) &&
-         (fields.push_back({attr_name, crate_val}), true);
+  if (!ConvertValue(val, crate_val, err)) {
+    return false;
+  }
+  fields.push_back({attr_name, crate_val});
+  // ConvertValue degrades role types to their underlying storage (point3f[]
+  // becomes a float3[] crate value -- the crate has no role wire types), and
+  // the spec assembly then infers the typeName from the VALUE. Emit the
+  // original spelling as an explicit `.typeName` field (routed into the spec
+  // by ConvertSinglePrim) so `point3f[] points` does not come back -- and is
+  // not shown to OpenUSD -- as `float3[] points`.
+  if (val.type_name() != crate_val.type_name()) {
+    crate::CrateValue ty;
+    ty.Set(value::token(val.type_name()));
+    fields.push_back({attr_name + ".typeName", ty});
+  }
+  return true;
 }
 
 bool CrateWriter::AddArrayAttributeWithMetas(
@@ -406,11 +420,46 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     root_fields.push_back({"comment", comment_value});
   }
 
-  // Add customLayerData
-  if (!metas.customLayerData.empty()) {
+  // Add customLayerData. An AUTHORED-but-empty `customLayerData = {}` is an
+  // opinion too, so consult customLayerDataAuthored rather than just !empty().
+  if (metas.customLayerDataAuthored || !metas.customLayerData.empty()) {
     crate::CrateValue cld_value;
     cld_value.Set(metas.customLayerData);
     root_fields.push_back({"customLayerData", cld_value});
+  }
+
+  // Unregistered layer metadata: emit as the crate UNREGISTERED_VALUE type
+  // (what pxr writes for SdfUnregisteredValue), carrying the raw USDA text.
+  for (const auto &kv : metas.unregisteredMetas) {
+    crate::CrateValue v;
+    v.SetUnregisteredValueString(kv.second);
+    root_fields.push_back({kv.first, v});
+  }
+
+  // kilogramsPerUnit (UsdPhysics) and the two USDZ playback metas were written by
+  // the Layer path (sconv-layer.cc) but not by this one, so they vanished on a
+  // Stage write. (The timecode family above is already handled -- do not add it
+  // again: a duplicate root field corrupts the fieldset encoding and the crate
+  // then fails to read back at all.)
+  if (metas.kilogramsPerUnit.authored()) {
+    crate::CrateValue v;
+    v.Set(metas.kilogramsPerUnit.get_value());
+    root_fields.push_back({"kilogramsPerUnit", v});
+  }
+
+  if (metas.autoPlay.authored()) {
+    crate::CrateValue v;
+    v.Set(metas.autoPlay.get_value());
+    root_fields.push_back({"autoPlay", v});
+  }
+
+  if (metas.playbackMode.authored()) {
+    crate::CrateValue v;
+    v.Set(value::token(
+        metas.playbackMode.get_value() == LayerMetas::PlaybackMode::PlaybackModeLoop
+            ? "loop"
+            : "none"));
+    root_fields.push_back({"playbackMode", v});
   }
 
   // Add subLayers
@@ -442,8 +491,12 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     sublayers_value.Set(sublayer_paths);
     root_fields.push_back({"subLayers", sublayers_value});
 
-    // Serialize subLayerOffsets as LayerOffset array (only if non-default)
-    if (has_non_default_offsets) {
+    // Serialize subLayerOffsets UNCONDITIONALLY: pxr's SdfLayer requires the
+    // offsets vector to be the same length as subLayers (GetSubLayerOffset
+    // raises "Invalid sublayer index" otherwise -- the whole file becomes
+    // unreadable). pxr itself always writes identity offsets.
+    (void)has_non_default_offsets;
+    {
       crate::CrateValue offsets_value;
       offsets_value.Set(sublayer_offsets);
       root_fields.push_back({"subLayerOffsets", offsets_value});
@@ -516,8 +569,12 @@ bool CrateWriter::ConvertSinglePrim(
   // programmatically-built prims too. Without this, an authored UsdShade
   // network round-trips through USDA but loses every shader input/output on
   // USDC/USDZ write (only `info:id` survived via the generic prop path).
+  // Exception: a genuinely typeless prim is held internally as the catch-all
+  // `Model` struct, whose type_name() unconditionally returns "Model" as an
+  // internal label, not an authored or inferable schema name -- falling back
+  // to it here resurrects a typeName the prim never had.
   std::string type_name = prim.prim_type_name();
-  if (type_name.empty()) {
+  if (type_name.empty() && prim.type_name() != "Model") {
     type_name = prim.type_name();
   }
 
@@ -560,6 +617,9 @@ bool CrateWriter::ConvertSinglePrim(
     std::vector<std::pair<std::string, crate::CrateValue>> extra_metas;
     crate::CrateValue spline_val;
     bool has_spline{false};
+    crate::CrateValue conn_val;
+    bool has_conn{false};
+    std::string decl_type_name;  // set for a declaration-only attribute
   };
   std::vector<PropEntry> prop_entries;
 
@@ -580,9 +640,19 @@ bool CrateWriter::ConvertSinglePrim(
     "assetInfo", "instanceable", "clips",
     "apiSchemas", "inherits", "inheritPaths", "specializes", "references", "payload",
     "displayName", "displayGroup", "sceneName",
+    // `reorder nameChildren` / `reorder properties`. Anything NOT named here is
+    // re-routed into an attribute spec below, which is exactly what happened to
+    // these two: they came back as `token[] primOrder = [...]` properties.
+    "primOrder", "propertyOrder",
   };
   std::set<std::string> prim_field_names = kPrimFields;
   for (const auto& kv : prim.metas().data()) {
+    prim_field_names.insert(kv.first);
+  }
+  // ...and the ASCII-reader-only spelling of the same thing. Without this, an
+  // unregistered prim meta is re-routed into an ATTRIBUTE spec instead of staying
+  // prim metadata (the same trap `reorder` fell into).
+  for (const auto& kv : prim.metas().unregisteredMetas) {
     prim_field_names.insert(kv.first);
   }
 
@@ -597,11 +667,27 @@ bool CrateWriter::ConvertSinglePrim(
     bool is_ts = false;
     bool is_interp = false;
     bool is_spline = false;
+    bool is_conn = false;
+    bool is_decl_type = false;
     std::string meta_key;  // non-empty when fv.first is `<base>.<meta_key>`
     const std::string ts_suffix = ".timeSamples";
     const std::string interp_suffix = ".interpolation";
     const std::string spline_suffix = ".spline";
-    if (base_name.size() > ts_suffix.size() &&
+    const std::string conn_suffix = ".connect";
+    const std::string decl_suffix = ".typeName";
+    if (base_name.size() > conn_suffix.size() &&
+        base_name.compare(base_name.size() - conn_suffix.size(),
+                          conn_suffix.size(), conn_suffix) == 0) {
+      base_name = base_name.substr(0, base_name.size() - conn_suffix.size());
+      is_conn = true;
+    } else if (base_name.size() > decl_suffix.size() &&
+               base_name.compare(base_name.size() - decl_suffix.size(),
+                                 decl_suffix.size(), decl_suffix) == 0) {
+      // A declaration-only attribute: the spec carries a typeName and NO
+      // default, so the type cannot be inferred from a value.
+      base_name = base_name.substr(0, base_name.size() - decl_suffix.size());
+      is_decl_type = true;
+    } else if (base_name.size() > ts_suffix.size() &&
         base_name.compare(base_name.size() - ts_suffix.size(),
                           ts_suffix.size(), ts_suffix) == 0) {
       base_name = base_name.substr(0, base_name.size() - ts_suffix.size());
@@ -623,7 +709,12 @@ bool CrateWriter::ConvertSinglePrim(
       auto dot = base_name.rfind('.');
       if (dot != std::string::npos && dot + 1 < base_name.size()) {
         std::string suffix = base_name.substr(dot + 1);
-        if (kAttrMetaSuffixes.count(suffix)) {
+        // An UNREGISTERED-marked value is by construction a `<base>.<key>`
+        // property-metadata field (see sconv_detail::EmitAttrMetas) -- the
+        // key cannot be in kAttrMetaSuffixes because it is unknown by
+        // definition, so route it by the marker instead.
+        if (kAttrMetaSuffixes.count(suffix) ||
+            fv.second.IsUnregisteredValue()) {
           meta_key = std::move(suffix);
           base_name = base_name.substr(0, dot);
         }
@@ -653,7 +744,14 @@ bool CrateWriter::ConvertSinglePrim(
       entry = &prop_entries.back();
     }
 
-    if (is_ts) {
+    if (is_conn) {
+      entry->conn_val = std::move(fv.second);
+      entry->has_conn = true;
+    } else if (is_decl_type) {
+      if (auto tok = fv.second.get_value<value::token>()) {
+        entry->decl_type_name = tok.value().str();
+      }
+    } else if (is_ts) {
       entry->ts_val = std::move(fv.second);
       entry->has_ts = true;
     } else if (is_spline) {
@@ -687,6 +785,23 @@ bool CrateWriter::ConvertSinglePrim(
     prim_fields.push_back({"primChildren", children_value});
   }
 
+  // Add "variantSetChildren": the names of the variantSets that have specs
+  // beneath this prim. This is the HIERARCHY field -- pxr's reader walks from
+  // the prim to its {set=} VariantSet specs through it (variantSetNames is
+  // only the list-op OPINION, not the child list). Without it, OpenUSD opens
+  // the file, shows the prim, and silently never visits a single variant spec.
+  // Our own reader reconstructs variants from the spec PATHS, so it never
+  // noticed the field was missing.
+  if (!prim.variantSets().empty()) {
+    std::vector<value::token> vs_tokens;
+    for (const auto& vs : prim.variantSets()) {
+      vs_tokens.push_back(value::token(vs.first));
+    }
+    crate::CrateValue vs_children_value;
+    vs_children_value.Set(vs_tokens);
+    prim_fields.push_back({"variantSetChildren", vs_children_value});
+  }
+
   // Add spec for this prim (prim-level fields only; "properties" added later)
   if (!AddSpec(prim_path, SpecType::Prim, prim_fields, err)) {
     if (err) *err = "Failed to add spec for: " + abs_path_str + ": " + *err;
@@ -713,9 +828,14 @@ bool CrateWriter::ConvertSinglePrim(
     Path attr_path = prim_path.AppendProperty(pe.name);
     crate::FieldValuePairVector attr_fields;
 
-    // Determine type name from the value
+    // Determine type name: an explicit `.typeName` field wins -- it carries
+    // the AUTHORED spelling, which may be a role variant of the value's type
+    // (e.g. authored `float3` stored as a color3f value). Fall back to
+    // inferring from the value.
     std::string prop_type_name;
-    if (pe.has_default) {
+    if (!pe.decl_type_name.empty()) {
+      prop_type_name = pe.decl_type_name;
+    } else if (pe.has_default) {
       prop_type_name = pe.default_val.type_name();
     } else if (pe.has_ts) {
       // For timeSamples, get the element type from the first sample
@@ -732,8 +852,25 @@ bool CrateWriter::ConvertSinglePrim(
       attr_fields.push_back({"typeName", type_value});
     }
 
-    // Add variability for uniform properties
-    if (kUniformProps.count(pe.name)) {
+    // Add variability for uniform properties -- but NOT when the attribute is
+    // time-sampled. A uniform attribute cannot vary over time, and the reader
+    // enforces it ("Attribute `projection` is declared `uniform`, but a
+    // time-sampled value was authored") by failing the whole prim. Stamping
+    // Uniform unconditionally here made an animated `projection` unreadable the
+    // moment the writer started emitting its timeSamples at all.
+    // `subsetFamily:<FAMILYNAME>:familyType` is uniform too, but its name is not
+    // a fixed token -- the family name is authored -- so it cannot live in the
+    // set above. The reader parses it with ParseUniformEnumProperty and rejects
+    // a non-uniform one.
+    const std::string kFamilyTypeSuffix = ":familyType";
+    const bool is_family_type =
+        (pe.name.compare(0, 13, "subsetFamily:") == 0) &&
+        (pe.name.size() > kFamilyTypeSuffix.size()) &&
+        (pe.name.compare(pe.name.size() - kFamilyTypeSuffix.size(),
+                         kFamilyTypeSuffix.size(), kFamilyTypeSuffix) == 0);
+    const bool is_uniform = kUniformProps.count(pe.name) || is_family_type;
+
+    if (is_uniform && !pe.has_ts) {
       crate::CrateValue var_value;
       var_value.Set(Variability::Uniform);
       attr_fields.push_back({"variability", var_value});
@@ -753,6 +890,10 @@ bool CrateWriter::ConvertSinglePrim(
 
     if (pe.has_interpolation) {
       attr_fields.push_back({"interpolation", std::move(pe.interpolation_val)});
+    }
+
+    if (pe.has_conn) {
+      attr_fields.push_back({"connectionPaths", std::move(pe.conn_val)});
     }
 
     for (auto& mk : pe.extra_metas) {
@@ -831,7 +972,10 @@ bool CrateWriter::ConvertSinglePrim(
             return false;
           }
           if (transform2d->result.authored()) {
-            Attribute a; a.set_type_name("float2");
+            Attribute a;
+            a.set_type_name(transform2d->result.has_actual_type()
+                                ? transform2d->result.get_actual_type_name()
+                                : "float2");
             ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
           }
         }
@@ -841,9 +985,18 @@ bool CrateWriter::ConvertSinglePrim(
           return false;
         }
         // Terminal output for all PrimvarReader variants
+        // `result.type_name()` is STATIC -- it is the C++ template parameter, so
+        // it always reports the canonical type (float2 for
+        // UsdPrimvarReader_float2) and threw away a non-conformant authored one
+        // (`token outputs:result`). The authored spelling is kept in
+        // actual_type_name, exactly as the UsdUVTexture terminals above use it.
         auto add_pr_terminal = [&](auto *pr) {
           if (pr && pr->result.authored()) {
-            Attribute a; a.set_type_name(pr->result.type_name().empty() ? "float2" : pr->result.type_name());
+            Attribute a;
+            std::string tname = pr->result.has_actual_type()
+                                    ? pr->result.get_actual_type_name()
+                                    : pr->result.type_name();
+            a.set_type_name(tname.empty() ? "float2" : tname);
             ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
           }
         };
@@ -894,9 +1047,14 @@ bool CrateWriter::ConvertSinglePrim(
       Attribute ds_attr;
       ds_attr.set_type_name("bool");
       ds_attr.variability() = Variability::Uniform;
-      primvar::PrimVar pvar;
-      pvar.set_value(gprim->doubleSided.get_value());
-      ds_attr.set_var(std::move(pvar));
+      // DECLARED without a value (`uniform bool doubleSided`): leave the
+      // Attribute value-less. get_value() would hand back GPrim's `false`
+      // fallback and author it as though the scene had said so.
+      if (!gprim->doubleSided.is_value_empty()) {
+        primvar::PrimVar pvar;
+        pvar.set_value(gprim->doubleSided.get_value());
+        ds_attr.set_var(std::move(pvar));
+      }
       crate::FieldValuePairVector dummy;
       ConvertPropertyToFields("doubleSided", Property(ds_attr, /* custom */ false), prim_path, dummy, err);
     }
@@ -938,7 +1096,7 @@ bool CrateWriter::ConvertSinglePrim(
         std::string ce;
         if (!ConvertRelationshipToFields(prefix + ":includes",
                                          inst.includes.relationship(),
-                                         prim_path, &ce)) {
+                                         prim_path, &ce, /*is_custom=*/false)) {
           DCOUT("WARNING: Collection includes emit failed: " << ce);
         }
       }
@@ -946,7 +1104,7 @@ bool CrateWriter::ConvertSinglePrim(
         std::string ce;
         if (!ConvertRelationshipToFields(prefix + ":excludes",
                                          inst.excludes.relationship(),
-                                         prim_path, &ce)) {
+                                         prim_path, &ce, /*is_custom=*/false)) {
           DCOUT("WARNING: Collection excludes emit failed: " << ce);
         }
       }
@@ -1268,6 +1426,23 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"instanceable", v});
   }
 
+  // `reorder nameChildren = [...]` / `reorder properties = [...]`. Parsed into
+  // PrimMeta and then written by nobody, so both statements vanished on write.
+  // pxr's crate spelling for the two body statements is primOrder /
+  // propertyOrder (NOT primChildren / properties, which are the full name
+  // vectors); the reader picks them back up in usdc-reader-prim.cc.
+  if (!metas.nameChildrenReorder.empty()) {
+    crate::CrateValue v;
+    v.Set(metas.nameChildrenReorder);
+    fields.push_back({"primOrder", v});
+  }
+
+  if (!metas.propertiesReorder.empty()) {
+    crate::CrateValue v;
+    v.Set(metas.propertiesReorder);
+    fields.push_back({"propertyOrder", v});
+  }
+
   // customData (Dictionary). Keep this on the Stage path so prim-level
   // customData survives USDC round-trip; the writer supports the common scalar,
   // vector, array, nested-dictionary, token and asset-path metadata values.
@@ -1291,30 +1466,101 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"clips", v});
   }
 
-  // apiSchemas
+  // sdrMetadata (Dictionary, UsdShade). Parsed by the readers into MetadataBase
+  // and then written by nobody, so it vanished on write.
+  if (metas.has_sdrMetadata()) {
+    crate::CrateValue v;
+    v.Set(metas.get_sdrMetadata());
+    fields.push_back({"sdrMetadata", v});
+  }
+
+  // UNREGISTERED prim metadata (`def "bora" ( aa = a )`) written by the CRATE
+  // reader lands in PrimMeta::data(), and the generic data() loop further down
+  // already emits it. But the ASCII reader does NOT populate data() for these --
+  // it keeps them only in unregisteredMetas, already pretty-printed to their
+  // source spelling (see usda-reader-impl.hh), so a usda-authored one was
+  // dropped. Round-trip that spelling verbatim as the crate UNREGISTERED_VALUE
+  // type (what pxr writes for SdfUnregisteredValue): the crate reader routes it
+  // straight back into unregisteredMetas and the printer emits it as authored.
+  for (const auto &kv : metas.unregisteredMetas) {
+    if (metas.data().count(kv.first)) {
+      continue;  // the data() loop below owns it
+    }
+    crate::CrateValue v;
+    v.SetUnregisteredValueString(kv.second);
+    fields.push_back({kv.first, v});
+  }
+
+  // apiSchemas. `authoredOps` (populated by the ASCII/USDC readers, see
+  // ToAPISchemas in usdc-reader-prim.cc) is the verbatim authored
+  // SdfTokenListOp -- possibly SEVERAL ops on one prim (e.g. `delete` +
+  // `prepend`, the Omniverse/Newton-asset pattern) -- and is the only source
+  // that can reproduce it losslessly. The OLD code instead rebuilt a single
+  // ListOp from the *resolved* view (`names`/`unknownSchemas`), which always
+  // collapses to one explicit-or-prepend op: any `delete` was silently
+  // dropped, `names` and `unknownSchemas` are separate vectors so interleaved
+  // authoring order was lost, and an `apiSchemas = None` block (explicitly
+  // empty, so both vectors are empty too) wrote nothing at all instead of an
+  // explicit empty list.
   if (metas.has_apiSchemas()) {
-    const auto schemas = metas.get_apiSchemas();
-    // Convert APISchemas to ListOp<value::token>
-    std::vector<value::token> schema_tokens;
-    for (const auto &s : schemas.names) {
-      std::string name = to_string(s.first);
-      if (!s.second.empty()) {
-        name += ":" + s.second;  // Multi-apply instance
+    const auto &schemas = metas.get_apiSchemas();
+    if (schemas.explicitlyEmpty) {
+      // `apiSchemas = None`: an explicit, empty list-op, distinct from no
+      // opinion at all.
+      ListOp<value::token> listop;
+      listop.ClearAndMakeExplicit();
+      crate::CrateValue v;
+      v.Set(listop);
+      fields.push_back({"apiSchemas", v});
+    } else if (!schemas.authoredOps.empty()) {
+      ListOp<value::token> listop;
+      for (const auto &op : schemas.authoredOps) {
+        std::vector<value::token> toks;
+        toks.reserve(op.second.size());
+        for (const auto &item : op.second) {
+          toks.push_back(value::token(item.first));
+        }
+        switch (op.first) {
+          case ListEditQual::ResetToExplicit:
+            listop.ClearAndMakeExplicit();
+            listop.SetExplicitItems(toks);
+            break;
+          case ListEditQual::Append:  listop.SetAppendedItems(toks); break;
+          case ListEditQual::Prepend: listop.SetPrependedItems(toks); break;
+          case ListEditQual::Add:     listop.SetAddedItems(toks); break;
+          case ListEditQual::Delete:  listop.SetDeletedItems(toks); break;
+          default:
+            listop.ClearAndMakeExplicit();
+            listop.SetExplicitItems(toks);
+            break;
+        }
       }
-      schema_tokens.push_back(value::token(name));
-    }
-    for (const auto &s : schemas.unknownSchemas) {
-      std::string name = s.first;
-      if (!s.second.empty()) {
-        name += ":" + s.second;
+      crate::CrateValue v;
+      v.Set(listop);
+      fields.push_back({"apiSchemas", v});
+    } else if (!schemas.names.empty() || !schemas.unknownSchemas.empty()) {
+      // Fallback for APISchemas built programmatically (e.g. attached via the
+      // C API or a tydra converter) with no authored-op history to replay.
+      std::vector<value::token> schema_tokens;
+      for (const auto &s : schemas.names) {
+        std::string name = to_string(s.first);
+        if (!s.second.empty()) {
+          name += ":" + s.second;  // Multi-apply instance
+        }
+        schema_tokens.push_back(value::token(name));
       }
-      schema_tokens.push_back(value::token(name));
-    }
-    if (!schema_tokens.empty()) {
+      for (const auto &s : schemas.unknownSchemas) {
+        std::string name = s.first;
+        if (!s.second.empty()) {
+          name += ":" + s.second;
+        }
+        schema_tokens.push_back(value::token(name));
+      }
       ListOp<value::token> listop;
       if (schemas.listOpQual == ListEditQual::Prepend) {
         listop.SetPrependedItems(schema_tokens);
       } else {
+        listop.ClearAndMakeExplicit();
         listop.SetExplicitItems(schema_tokens);
       }
       crate::CrateValue v;
@@ -1342,6 +1588,7 @@ void CrateWriter::ExtractPrimMeta(
       "properties",
       "references",
       "sceneName",
+      "sdrMetadata",  // emitted above from the typed member
       "specializes",
       "variantChildren",
       "variantSelection",
@@ -1470,8 +1717,12 @@ bool CrateWriter::ExtractPrimProperties(
   // Without this fallback the writer skips both the `typeName` crate
   // field and the type-specific property extraction, and the reader sees
   // a generic prim with no schema and no attributes.
+  // Exception: a genuinely typeless prim is held internally as the catch-all
+  // `Model` struct, whose type_name() unconditionally returns "Model" as an
+  // internal label, not an authored or inferable schema name -- falling back
+  // to it here resurrects a typeName the prim never had.
   std::string type_name = prim.prim_type_name();
-  if (type_name.empty()) {
+  if (type_name.empty() && prim.type_name() != "Model") {
     type_name = prim.type_name();
   }
 
@@ -1582,6 +1833,8 @@ bool CrateWriter::ExtractTypeSpecificProperties(
   // Try to extract properties based on prim type
   if (type_name == "Xform") {
     return ExtractXformProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Scope") {
+    return ExtractScopeProperties(prim, prim_path, fields, err);
   } else if (type_name == "Mesh") {
     return ExtractMeshProperties(prim, prim_path, fields, err);
   } else if (type_name == "Volume") {
@@ -2628,7 +2881,8 @@ bool CrateWriter::ConvertPropertyToFields(
         prop.get_listedit_qual() != ListEditQual::ResetToExplicit) {
       rel_copy.set_listedit_qual(prop.get_listedit_qual());
     }
-    return ConvertRelationshipToFields(prop_name, rel_copy, parent_path, err);
+    return ConvertRelationshipToFields(prop_name, rel_copy, parent_path, err,
+                                       prop.has_custom());
   } else if (prop.is_attribute_connection()) {
     // Convert connection - creates separate spec, doesn't add to fields
     return ConvertConnectionToFields(prop_name, prop.get_attribute(), parent_path, err);
@@ -2820,9 +3074,23 @@ bool CrateWriter::ConvertAttributeToFields(
     v.Set(static_cast<float>(metas.get_weight()));
     attr_fields.push_back({"weight", v});
   }
-  if (metas.has_comment()) {
+  // A bare string in an attribute's metadata block IS the comment in USD -- the
+  // two ASCII spellings are one Sdf field, and only the ASCII parser knows which
+  // was used (it parks the bare form in AttrMeta::stringData). Both go out as
+  // the STANDARD `comment` field rather than a private one pxr could not read.
+  // Emit exactly ONE: two `comment` fields would corrupt the fieldset encoding.
+  if (metas.has_comment() || !metas.stringData.empty()) {
+    std::string comment_str;
+    if (metas.has_comment()) {
+      comment_str = metas.get_comment().value;
+    } else {
+      for (size_t i = 0; i < metas.stringData.size(); i++) {
+        if (i > 0) comment_str += "\n";
+        comment_str += metas.stringData[i].value;
+      }
+    }
     crate::CrateValue v;
-    v.Set(metas.get_comment().value);
+    v.Set(comment_str);
     attr_fields.push_back({"comment", v});
   }
   if (metas.has_bindMaterialAs()) {
@@ -2888,6 +3156,14 @@ bool CrateWriter::ConvertAttributeToFields(
     attr_fields.push_back({kv.first, v});
   }
 
+  // Unregistered property metadata: emit as the crate UNREGISTERED_VALUE type
+  // (what pxr writes for SdfUnregisteredValue), carrying the raw USDA text.
+  for (const auto& kv : metas.unregisteredMetas) {
+    crate::CrateValue v;
+    v.SetUnregisteredValueString(kv.second);
+    attr_fields.push_back({kv.first, v});
+  }
+
   // Add attribute connection paths if any.
   if (attr.has_connections()) {
     ListOp<Path> connection_paths_listop;
@@ -2916,7 +3192,8 @@ bool CrateWriter::ConvertRelationshipToFields(
     const std::string& rel_name,
     const Relationship& rel,
     const Path& parent_path,
-    std::string* err) {
+    std::string* err,
+    bool is_custom) {
 
   // Create separate spec for this relationship (proper USD Crate format)
   // Relationships are property specs, not prim fields
@@ -2979,15 +3256,40 @@ bool CrateWriter::ConvertRelationshipToFields(
     apply_listed_qual(listop, rel.targetPathVector);
     paths_value.Set(listop);
     rel_fields.push_back({"targetPaths", paths_value});
+  } else if (rel.get_listedit_qual() != ListEditQual::ResetToExplicit) {
+    // A list-edit qualifier on a relationship with NO targets at all
+    // (`append rel myval`, `delete rel myheight`). The qualifier is the only
+    // thing authored, and it lives on the ListOp -- so emit a targetPaths ListOp
+    // whose qualifier bucket is authored but EMPTY. ListOp records that
+    // faithfully now (see ListOp::Has*Items), and the crate format has always had
+    // a presence bit per bucket, so this needs no format change.
+    crate::CrateValue empty_value;
+    ListOp<Path> listop;
+    apply_listed_qual(listop, std::vector<Path>{});
+    empty_value.Set(listop);
+    rel_fields.push_back({"targetPaths", empty_value});
   }
-  // DefineOnly relationships don't add targetPaths field
+  // A DefineOnly relationship with no qualifier (`rel myrel`) adds no
+  // targetPaths field: there is nothing to record.
 
-  // 3. Relationships have implicit uniform variability
-  // Add it explicitly in the Crate format
+  // 3. Relationships are uniform by convention, but USD still allows (and the
+  // ascii/crate readers both preserve, via Relationship::is_varying_authored)
+  // an explicitly-authored `varying rel`. Hardcoding Uniform here silently
+  // dropped that authored opinion on every round-trip.
   crate::CrateValue var_value;
-  Variability var = Variability::Uniform;  // Relationships are always uniform
+  Variability var = rel.is_varying_authored() ? Variability::Varying
+                                              : Variability::Uniform;
   var_value.Set(var);
   rel_fields.push_back({"variability", var_value});
+
+  // `custom` lives on the enclosing Property, not the Relationship itself
+  // (mirrors ConvertAttributeToFields's `is_custom` parameter); callers that
+  // have no Property wrapper (e.g. Collection includes/excludes) pass false.
+  if (is_custom) {
+    crate::CrateValue custom_value;
+    custom_value.Set(true);
+    rel_fields.push_back({"custom", custom_value});
+  }
 
   // 4. Add relationship metadata from AttrMetas
   const AttrMeta& metas = rel.metas();
@@ -3004,6 +3306,18 @@ bool CrateWriter::ConvertRelationshipToFields(
     crate::CrateValue hidden_value;
     hidden_value.Set(metas.get_hidden());
     rel_fields.push_back({"hidden", hidden_value});
+  }
+
+  // Add bindMaterialAs if present. Written for Attribute metadata
+  // (ConvertAttributeToFields) but never for Relationship metadata, even
+  // though `bindMaterialAs` is authored on RELATIONSHIPS (e.g.
+  // `material:binding`) far more often than on attributes -- every
+  // `strongerThanDescendants`/`weakerThanDescendants` qualifier on a
+  // material binding was silently dropped on USDC round-trip.
+  if (metas.has_bindMaterialAs()) {
+    crate::CrateValue bind_material_as_value;
+    bind_material_as_value.Set(metas.get_bindMaterialAs());
+    rel_fields.push_back({"bindMaterialAs", bind_material_as_value});
   }
 
   // Add customData if present
@@ -3027,6 +3341,14 @@ bool CrateWriter::ConvertRelationshipToFields(
     crate::CrateValue display_group_value;
     display_group_value.Set(metas.get_displayGroup());
     rel_fields.push_back({"displayGroup", display_group_value});
+  }
+
+  // Unregistered property metadata: emit as the crate UNREGISTERED_VALUE type
+  // (what pxr writes for SdfUnregisteredValue), carrying the raw USDA text.
+  for (const auto& kv : metas.unregisteredMetas) {
+    crate::CrateValue v;
+    v.SetUnregisteredValueString(kv.second);
+    rel_fields.push_back({kv.first, v});
   }
 
   // Create the relationship spec
@@ -3114,7 +3436,10 @@ bool CrateWriter::ConvertVariantSetToFields(
     std::string* err) {
 
   // VariantSet path: parent{variantSetName} (e.g., /Chair{materialVariant})
-  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "}";
+  // pxr's SdfPath has no bare `{set}` form: a VariantSet spec lives at the
+  // EMPTY variant selection, `{set=}` (see any pxr-written crate). Our old
+  // `{set}` spelling made OpenUSD reject the element outright.
+  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "=}";
   Path vs_path(variantset_path_str, "");
 
   DCOUT("[ConvertVariantSetToFields] Creating VariantSet spec: "
@@ -3181,6 +3506,12 @@ bool CrateWriter::ConvertVariantToFields(
   spec_value.Set(Specifier::Def);
   v_fields.push_back({"specifier", spec_value});
 
+  // A variant statement carries its own Prim metadata block -- `active`,
+  // `hidden`, `kind`, and (for a nested variantSet) `variantSets`. It is a
+  // full PrimMeta, populated by the readers just like a Prim's, so reuse the
+  // same extractor rather than hand-rolling a subset here.
+  ExtractPrimMeta(variant.metas(), v_fields);
+
   // Add variant properties as separate attribute specs
   for (const auto& prop_item : variant.properties()) {
     const auto& prop_name = prop_item.first;
@@ -3193,10 +3524,28 @@ bool CrateWriter::ConvertVariantToFields(
         return false;
       }
     } else if (prop.is_relationship()) {
-      if (!ConvertRelationshipToFields(prop_name, prop.get_relationship(), v_path, err)) {
+      if (!ConvertRelationshipToFields(prop_name, prop.get_relationship(), v_path, err,
+                                       prop.has_custom())) {
         if (err) *err = "Failed to convert variant relationship: " + prop_name;
         return false;
       }
+    }
+  }
+
+  // "primChildren" on the VARIANT spec: pxr descends from the variant to the
+  // prims defined inside it through this field, exactly as it does from a
+  // regular prim. (Our reader walks spec paths instead, so round-trips never
+  // missed it.)
+  {
+    const auto& vchildren = variant.primChildren();
+    if (!vchildren.empty()) {
+      std::vector<value::token> child_tokens;
+      for (const auto& child_prim : vchildren) {
+        child_tokens.push_back(value::token(child_prim.element_name()));
+      }
+      crate::CrateValue children_value;
+      children_value.Set(child_tokens);
+      v_fields.push_back({"primChildren", children_value});
     }
   }
 

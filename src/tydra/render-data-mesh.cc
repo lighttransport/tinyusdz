@@ -160,8 +160,18 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
         num_uniforms, faceVertexCounts.size()));
   }
 
-  const uint32_t num_vertices =
-      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend()) + 1;
+  // max_element on an empty range is UB, and `max + 1` on uint32 wraps to 0
+  // for a 0xFFFFFFFF index (a source -1), making dst.resize(0) then OOB writes
+  // below. The sole live caller validates indices first, but guard here too.
+  if (faceVertexIndices.empty()) {
+    return nonstd::make_unexpected("faceVertexIndices is empty.");
+  }
+  const uint32_t max_index =
+      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend());
+  if (max_index == (std::numeric_limits<uint32_t>::max)()) {
+    return nonstd::make_unexpected("faceVertexIndices contains an invalid (max-uint32) index.");
+  }
+  const size_t num_vertices = size_t(max_index) + 1;
 
   size_t resize_size;
   if (!safe::mul(num_vertices, stride_bytes, &resize_size)) {
@@ -336,8 +346,15 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
                     faceVertexIndices.size()));
   }
 
-  const uint32_t num_vertices =
-      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend()) + 1;
+  if (faceVertexIndices.empty()) {
+    return nonstd::make_unexpected("faceVertexIndices is empty.");
+  }
+  const uint32_t max_index =
+      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend());
+  if (max_index == (std::numeric_limits<uint32_t>::max)()) {
+    return nonstd::make_unexpected("faceVertexIndices contains an invalid (max-uint32) index.");
+  }
+  const size_t num_vertices = size_t(max_index) + 1;
 
   std::vector<uint8_t> dst;
 
@@ -1438,7 +1455,8 @@ bool TriangulatePolygon(
     std::vector<uint32_t> &triangulatedToOrigFaceVertexIndexMap,
     std::vector<uint32_t> &triangulatedFaceCounts,
     MeshConverterConfig::TriangulationMethod triangulation_method,
-    std::string &warn, std::string &err) {
+    std::string &warn, std::string &err,
+    const std::set<uint32_t> &holeFaceIndices = std::set<uint32_t>()) {
   triangulatedFaceVertexCounts.clear();
   triangulatedFaceVertexIndices.clear();
   triangulatedToOrigFaceVertexIndexMap.clear();
@@ -1486,6 +1504,15 @@ bool TriangulatePolygon(
           "exceeds faceVertexIndices.size() at [{}]\n",
           i);
       return false;
+    }
+
+    // Skip hole faces (`holeIndices` in USD GeomMesh): emit no triangles for
+    // them. Still record a 0 entry in triangulatedFaceCounts so per-original-
+    // face bookkeeping(e.g. GeomSubset face index remapping) stays aligned.
+    if (holeFaceIndices.count(uint32_t(i))) {
+      triangulatedFaceCounts.push_back(0);
+      faceIndexOffset += npolys;
+      continue;
     }
 
     if (npolys == 3) {
@@ -4148,6 +4175,42 @@ bool RenderSceneConverter::ConvertMesh(
   ///  colors/opacities).
   ///
   bool triangulate = env.mesh_config.triangulate;
+
+  //
+  // Evaluate `holeIndices`(faces to be removed from the rendered surface).
+  // Skip when subdivision ran: the subdiv pipeline consumes holeIndices
+  // natively as hole TAGS (dropping the refined children of the tagged base
+  // face), and the face numbering here is already refined-space.
+  //
+  std::set<uint32_t> holeFaceIndices;
+  if (mesh.holeIndices.authored() && !subdivision_applied) {
+    std::vector<int32_t> hole_indices;
+    bool ret = EvaluateTypedAnimatableAttribute(
+        env.stage, mesh.holeIndices, "holeIndices", &hole_indices, &_err,
+        env.timecode, value::TimeSampleInterpolationType::Held);
+    if (!ret) {
+      return false;
+    }
+
+    for (size_t i = 0; i < hole_indices.size(); i++) {
+      if ((hole_indices[i] < 0) ||
+          (size_t(hole_indices[i]) >= dst.usdFaceVertexCounts.size())) {
+        PUSH_WARN(fmt::format(
+            "holeIndices[{}] = {} is out of range [0, {}). Ignored.", i,
+            hole_indices[i], dst.usdFaceVertexCounts.size()));
+        continue;
+      }
+      holeFaceIndices.insert(uint32_t(hole_indices[i]));
+    }
+
+    if (holeFaceIndices.size() && !triangulate) {
+      PUSH_WARN(
+          "`holeIndices` is authored, but hole face removal is only applied "
+          "when triangulation is enabled. Hole faces are kept in the "
+          "polygonal output.");
+    }
+  }
+
   if (triangulate) {
     DCOUT("Triangulate mesh");
     std::vector<uint32_t> triangulatedFaceVertexCounts;  // should be all 3's
@@ -4166,7 +4229,7 @@ bool RenderSceneConverter::ConvertMesh(
             triangulatedFaceVertexCounts, triangulatedFaceVertexIndices,
             triangulatedToOrigFaceVertexIndexMap, triangulatedFaceCounts,
             env.mesh_config.triangulation_method,
-            _warn, err)) {
+            _warn, err, holeFaceIndices)) {
       PUSH_ERROR_AND_RETURN("Triangulation failed: " + err);
     }
 
@@ -4960,8 +5023,11 @@ bool RenderSceneConverter::ConvertMesh(
     //TUSDZ_LOG_I("Build normals");
     DCOUT("Compute normals");
     std::vector<vec3> normals;
+    // For leftHanded orientation meshes, flip the computed geometric normals
+    // (faces wind clockwise).
     if (!ComputeNormals(dst.points, dst.faceVertexCounts(),
-                       dst.faceVertexIndices(), normals, &_err)) {
+                       dst.faceVertexIndices(), normals, &_err,
+                       /* flip_normals */ !dst.is_rightHanded)) {
       DCOUT("compute normals failed.");
       return false;
     }

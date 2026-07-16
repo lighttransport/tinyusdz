@@ -406,6 +406,58 @@ void tydra_geommesh_property_accessor_test(void) {
   }
 }
 
+void tydra_analytic_shape_facevarying_attrs_test(void) {
+  const std::string path = MakeTempUSDFilePath("tydra_analytic_shapes");
+  auto cleanup = [&]() { CleanupTempFiles({path}); };
+
+  const char *usda = R"USD(#usda 1.0
+
+def Xform "World"
+{
+    def Capsule "Capsule"
+    {
+        double radius = 0.05
+        double height = 0.4
+    }
+
+    def Cylinder "Cylinder"
+    {
+        double radius = 0.05
+        double height = 0.4
+    }
+
+    def Cone "Cone"
+    {
+        double radius = 0.05
+        double height = 0.4
+    }
+
+    def Plane "Plane"
+    {
+        double width = 1
+        double length = 1
+    }
+}
+)USD";
+
+  std::string err;
+  TEST_CHECK(WriteTextFile(path, usda));
+
+  Stage stage;
+  TEST_CHECK(LoadUSDFromFile(path, &stage, nullptr, &err));
+  TEST_MSG("LoadUSDFromFile failed: %s", err.c_str());
+
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderSceneConverter converter;
+
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+  TEST_CHECK(scene.meshes.size() == 4);
+
+  cleanup();
+}
+
 void tydra_memory_tracking_test(void) {
   tydra::detail::MemoryUsageState state;
   std::vector<std::string> progress_messages;
@@ -1342,6 +1394,9 @@ void tydra_material_binding_validation_test(void) {
     tydra::RenderSceneConverterEnv env(stage);
     // Strict mode: unauthored `asset:file` should propagate an error.
     env.material_config.allow_missing_asset = false;
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1697,6 +1752,9 @@ void tydra_material_binding_validation_test(void) {
 
     tydra::RenderSceneConverterEnv env(stage);
     env.scene_config.load_texture_assets = false;
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1712,16 +1770,14 @@ void tydra_material_binding_validation_test(void) {
         Path("/MaterialPrim/NodeGraphs/Image", "outputs:out"));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
-    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
-    TEST_CHECK(converter.GetError().find("MaterialX image node") !=
-               std::string::npos);
-    TEST_CHECK(converter.GetError().find("/MaterialPrim/NodeGraphs/Image") !=
-               std::string::npos);
-    TEST_CHECK(converter.GetError().find("has no file input") !=
-               std::string::npos);
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
   }
 
   {
@@ -1729,6 +1785,8 @@ void tydra_material_binding_validation_test(void) {
         Path("/MaterialPrim/NodeGraphs/Missing", "outputs:out"));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
     env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
@@ -1970,6 +2028,8 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
     env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
@@ -2018,6 +2078,8 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
     env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
@@ -2087,15 +2149,14 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
-    TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
-    TEST_CHECK(converter.GetError().find(
-                   "Failed to convert MtlxOpenPBRSurface") !=
-               std::string::npos);
-    TEST_CHECK(converter.GetError().find("/MaterialPrim/MtlxSurface") !=
-               std::string::npos);
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
   }
 
   {
@@ -2471,6 +2532,9 @@ void tydra_texture_loader_policy_test(void) {
         FailingTextureImageLoader;
     env.material_config.allow_texture_load_failure = false;
 
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 

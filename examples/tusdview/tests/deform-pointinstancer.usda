@@ -1,0 +1,57 @@
+#usda 1.0
+(
+    doc = """The same blendshape + skeleton deform, placed by a PointInstancer.
+
+    A PointInstancer reaches EmitInstancedProto like native instancing does, but its
+    placements come from positions/orientations/scales arrays rather than from the
+    prims that reference a prototype -- a different composition of the same emitter,
+    and the prototype lives under a `prototypes` scope that must NOT also render on
+    its own.
+
+    Three instances, one of them rotated and one scaled, so a placement applied on the
+    wrong side of the deform (or a prototype drawn at the origin in addition to its
+    instances) is unmistakable."""
+    defaultPrim = "root"
+    endTimeCode = 20
+    startTimeCode = 1
+    upAxis = "Y"
+)
+
+def Xform "root"
+{
+    def Camera "Cam"
+    {
+        float2 clippingRange = (0.1, 1000)
+        float focalLength = 24
+        float horizontalAperture = 20.955
+        float verticalAperture = 15.2908
+        double3 xformOp:translate = (0, 3, 26)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def SphereLight "Key"
+    {
+        float inputs:intensity = 900
+        float inputs:radius = 0.5
+        double3 xformOp:translate = (6, 8, 10)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def PointInstancer "Crowd"
+    {
+        point3f[] positions = [(-6, 0, 0), (0, 0, 0), (6, 0, 0)]
+        quath[] orientations = [(1, 0, 0, 0), (0.9659258, 0, 0, 0.258819), (1, 0, 0, 0)]
+        int[] protoIndices = [0, 0, 0]
+        rel prototypes = </root/Crowd/Prototypes/Rig>
+        float3[] scales = [(1, 1, 1), (1, 1, 1), (1, 1.5, 1)]
+
+        def Scope "Prototypes"
+        {
+            def "Rig" (
+                prepend references = @./deform-instanced-proto-asset.usda@
+            )
+            {
+            }
+        }
+    }
+}

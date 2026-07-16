@@ -94,6 +94,11 @@ struct DrawMeshCPU {
   // Used by the flat --next preview to tint geometry; the material shader
   // multiplies baseColor by it (default white when absent).
   std::vector<float> vertexColors;
+  // Optional per-vertex alpha (parallel to `vertices`); empty = fully opaque.
+  // Carries USD `primvars:displayOpacity` when it is authored per-point or
+  // per-face-vertex; constant/uniform opacity folds into DrawMaterialCPU::alpha
+  // instead and leaves this empty.
+  std::vector<float> vertexAlpha;
   // Optional tangent-space basis, parallel to `vertices`; each entry is xyz.
   // Populated from USD primvars or Tydra-computed tangents/binormals. Current
   // renderers ignore these until full normal-map/anisotropy evaluation lands.
@@ -190,6 +195,17 @@ struct DrawMeshCPU {
   // GPU-morphed instanced prototype is not wrongly frustum-culled when the morph
   // pushes geometry past the rest box. 0 = no morph. See BuildMorphChannelsNext.
   float morphExtent[3]{0, 0, 0};
+  // --next deform: this mesh's OWN rest-pose world box, and the absolute bone-row
+  // range its jointIdx references. aabbMin/Max cannot serve: a skinned batch keeps
+  // the conservative whole-scene box there (a tight rest box would pop the mesh out
+  // of view as the rig moves). These let BuildNextPosedSceneBounds re-derive the
+  // scene box at a new time code from 8 corners per bone, instead of re-skinning
+  // every vertex -- which is what the Tydra path does, and what the next loader is
+  // built to avoid. boneLo < 0 = unskinned.
+  float restAabbMin[3]{0, 0, 0};
+  float restAabbMax[3]{0, 0, 0};
+  int boneLo{-1};
+  int boneHi{-1};
   bool doubleSided{false};
   int kindId{0};  // USD model kind AOV (resolved up ancestors); see KindId()
   // Optional 2nd texcoord set (2 floats/vertex, parallel to `vertices`); empty =
@@ -238,13 +254,38 @@ inline int KindId(const std::string& k) {
 enum class AlphaMode : int { Opaque = 0, Mask = 1, Blend = 2 };
 
 enum class UdimMode : int { Sparse = 0, Atlas = 1 };
-enum class TextureCompressionMode : int { Off = 0, BCn = 1, BC7 = 2 };
+// Requested texture compression. Astc/Etc2 are mobile formats; Auto picks the
+// best available for the device (BC7 desktop, ASTC/ETC2 mobile, else BCn/off).
+// The requested mode is cap-gated against RendererCaps before CPU encoding.
+enum class TextureCompressionMode : int {
+  Off = 0,
+  BCn = 1,
+  BC7 = 2,
+  Astc = 3,
+  Etc2 = 4,
+  Auto = 5,
+};
+
+// GPU compressed-format capabilities, mirrored from RendererCaps so the CPU-side
+// texture build (ApplyTextureRuntimeOptions) can cap-gate the requested format
+// without a renderer dependency. Default = BC-only desktop assumption.
+struct TextureCompressCaps {
+  bool bc{true};
+  bool astc{false};
+  bool etc2{false};
+  bool bc5{false};
+  bool bc6h{false};
+};
 
 struct TextureRuntimeOptions {
   int maxTextureSize{0};       // longest edge cap in texels; 0 = no cap
   int textureBudgetMB{0};      // decoded/upload budget; 0 = no budget
   UdimMode udimMode{UdimMode::Sparse};
   TextureCompressionMode compression{TextureCompressionMode::Off};
+  TextureCompressCaps caps{};  // populated from renderer->caps() before build
+  // Keep already-compressed .ktx2 textures compressed (upload/transcode the GPU
+  // blocks directly instead of decoding + re-encoding). Requires textools.
+  bool keepCompressed{false};
   // Build content-aware CPU mip chains (sRGB/alpha-coverage/normal-map aware;
   // needs the vendored textools; no-op otherwise). Backends upload the
   // precomputed levels instead of glGenerateMipmap (GL) / no mips (VK).
@@ -270,6 +311,10 @@ struct DrawTexSampleCPU {
   DrawUvXformCPU uv;
   float scale[4]{1.0f, 1.0f, 1.0f, 1.0f};
   float bias[4]{0.0f, 0.0f, 0.0f, 0.0f};
+  // Which UV set this texture samples: 0 = texcoords_0, 1 = texcoords_1. Resolved
+  // from the texture's UsdPrimvarReader varname against the bound mesh's UV-set
+  // names. Meshes with one UV set (the overwhelming majority) always leave it 0.
+  int uvSet{0};
 };
 
 enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };
@@ -312,6 +357,12 @@ struct DrawMaterialCPU {
   float alpha{1.0f};
   int alphaMode{static_cast<int>(AlphaMode::Opaque)};
   float alphaCutoff{0.5f};
+  // UsdPreviewSurface specular workflow (T12): when true, F0 is specularColor
+  // directly; else F0 is the dielectric reflectance from `ior` lerped toward the
+  // base color by metalness (ior 1.5 -> the fixed 0.04 the metallic path used).
+  bool useSpecularWorkflow{false};
+  float specularColor[3]{0.0f, 0.0f, 0.0f};
+  float ior{1.5f};
   // Indices into DrawScene::textures (-1 = no texture)
   int baseColorTex{-1};
   int metalRoughTex{-1};
@@ -345,7 +396,17 @@ struct DrawMaterialCPU {
 
 // Wrap modes (match light3d / GL semantics).
 enum class WrapMode : int { ClampToEdge = 0, Repeat = 1, Mirror = 2, ClampToBorder = 3 };
-enum class DrawCompressedFormat : int { None = 0, BC1 = 1, BC3 = 3, BC7 = 7 };
+enum class DrawCompressedFormat : int {
+  None = 0,
+  BC1 = 1,
+  BC3 = 3,
+  BC5 = 5,       // RGTC two-channel (normal maps)
+  BC6H = 6,      // BPTC float (HDR) — reserved; encode path is RGBA8-only for now
+  BC7 = 7,
+  ETC2_RGB = 10,
+  ETC2_RGBA = 11,
+  ASTC_4x4 = 20,
+};
 
 struct DrawCompressedMipCPU {
   int width{0};
@@ -386,6 +447,9 @@ struct DrawTextureCPU {
   int wrapS{static_cast<int>(WrapMode::Repeat)};
   int wrapT{static_cast<int>(WrapMode::Repeat)};
   bool requestedCompressed{false};
+  // The compressed payload is already final (kept-compressed KTX2 passthrough):
+  // skip re-encoding and mip generation from `image`. `image` may be empty.
+  bool compressedFinal{false};
   DrawCompressedImageCPU compressed;
   bool isUdim{false};
   std::vector<DrawUdimTileCPU> udimTiles;
@@ -532,6 +596,28 @@ struct DrawScene {
   float previewLightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float previewLightColor[3]{1.0f, 1.0f, 1.0f};
   int boneMatrixCount{0};  // height of the per-frame 4xN RGBA32F bone texture
+
+  // --next per-frame GPU skinning. The Tydra path re-poses from
+  // RenderScene::skeletons; the next path has no RenderScene, so each skinned
+  // source mesh records here how to re-pose itself straight from the retained
+  // next Stage. One entry per skinned source mesh (not per DrawMesh: the next
+  // loader merges meshes into material batches, so one batch may draw vertices
+  // from several of these).
+  //
+  // The mesh's vertices are already world-baked into its batch, so the bone rows
+  // this entry owns ([matrixBase, matrixBase + numJoints)) are pre-composed with
+  // both `geomBind` and the mesh's world transform -- see BuildNextSkinningFrame.
+  // Vertices reference them by ABSOLUTE row index through DrawMeshCPU::jointIdx.
+  struct NextSkelBinding {
+    std::string skelPath;  // Skeleton prim
+    std::string animPath;  // bound SkelAnimation ("" = rest pose)
+    std::string meshPath;  // the skinned mesh (diagnostics)
+    int numJoints{0};
+    int matrixBase{0};
+    double geomBind[16];  // primvars:skel:geomBindTransform (row-vector)
+    double world[16];     // mesh world transform baked into the vertices
+  };
+  std::vector<NextSkelBinding> nextSkels;
 
   // World-space bounds over all meshes.
   float aabbMin[3]{-1, -1, -1};

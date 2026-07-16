@@ -69,6 +69,70 @@ Vec3 SampleEnv(const EnvImage &img, const Vec3 &dir) {
   return SampleEnvNearest(img, u, v);
 }
 
+// Resample a light-probe image (mirroredBall = 2 / angular = 3) into latlong.
+// For every latlong texel's direction, invert the probe projection -- both are
+// expressed in the dome's local frame, photographed along -Z with +Y up, the
+// same formulas tusdview's TexToolsProbeToEquirect uses -- and bilinearly
+// sample the probe there. Any other format value passes through untouched.
+EnvImage RemapProbeToLatlong(EnvImage &&env, int format) {
+  if ((format != 2 && format != 3) || env.width <= 0 || env.height <= 0 ||
+      env.pixels.empty()) {
+    return std::move(env);
+  }
+  constexpr float kPi = 3.14159265358979323846f;
+  const EnvImage src = std::move(env);
+  auto bilinear = [&src](float u, float v) -> Vec3 {
+    const float fx = u * float(src.width) - 0.5f;
+    const float fy = v * float(src.height) - 0.5f;
+    const int x0 = int(std::floor(fx));
+    const int y0 = int(std::floor(fy));
+    const float tx = fx - float(x0);
+    const float ty = fy - float(y0);
+    auto at = [&src](int x, int y) -> const Vec3 & {
+      x = x < 0 ? 0 : (x >= src.width ? src.width - 1 : x);
+      y = y < 0 ? 0 : (y >= src.height ? src.height - 1 : y);
+      return src.pixels[size_t(y) * size_t(src.width) + size_t(x)];
+    };
+    const Vec3 a = Lerp(at(x0, y0), at(x0 + 1, y0), tx);
+    const Vec3 b = Lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), tx);
+    return Lerp(a, b, ty);
+  };
+  EnvImage out;
+  out.width = std::min(2048, std::max(256, 2 * src.width));
+  out.height = out.width / 2;
+  out.pixels.resize(size_t(out.width) * size_t(out.height));
+  for (int y = 0; y < out.height; y++) {
+    for (int x = 0; x < out.width; x++) {
+      const Vec3 d = DirectionFromLatlong((float(x) + 0.5f) / float(out.width),
+                                          (float(y) + 0.5f) / float(out.height));
+      float u = 0.5f, v = 0.5f;
+      if (format == 2) {
+        // Mirrored ball: the ball normal reflecting `d` back to the camera is
+        // normalize(d + (0,0,1)); its xy IS the position in the unit disc.
+        const Vec3 n{d.x, d.y, d.z + 1.0f};
+        const float len = Length(n);
+        if (len > 1.0e-8f) {
+          u = 0.5f + 0.5f * (n.x / len);
+          v = 0.5f - 0.5f * (n.y / len);
+        }
+      } else {
+        // Angular / light-probe (Debevec): image radius = angle from the
+        // forward axis (-Z) / pi, the full sphere at the disc edge.
+        const float z = ClampFloat(d.z, -1.0f, 1.0f);
+        const float theta = std::acos(-z);
+        const float lxy = std::sqrt(d.x * d.x + d.y * d.y);
+        if (lxy > 1.0e-8f) {
+          const float r = theta / kPi;
+          u = 0.5f + 0.5f * r * (d.x / lxy);
+          v = 0.5f - 0.5f * r * (d.y / lxy);
+        }
+      }
+      out.pixels[size_t(y) * size_t(out.width) + size_t(x)] = bilinear(u, v);
+    }
+  }
+  return out;
+}
+
 bool DecodeTextureToEnvImage(const RenderScene &scene, int texture_id,
                              EnvImage *out) {
   if (!out || texture_id < 0 || size_t(texture_id) >= scene.images.size()) {
@@ -342,6 +406,7 @@ bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
   if (!DecodeTextureToEnvImage(scene, lights.dome.texture_id, &env)) {
     return false;
   }
+  env = RemapProbeToLatlong(std::move(env), lights.dome_texture_format);
   if (!BuildIblFromEnv(std::move(env), ibl)) return false;
   ibl->rotated = lights.dome_rotated;
   ibl->rx = lights.dome_rx;
@@ -460,11 +525,34 @@ void AddFiniteLight(const RenderLight &light, PreviewLight::Kind kind,
   if (Length(dst.direction) < 1.0e-6f) {
     dst.direction = Vec3{0.0f, -1.0f, 0.0f};
   }
-  dst.normal = Mul(dst.direction, -1.0f);
+  // The OUTWARD normal of the emitting face, which for a UsdLux light IS its
+  // emission direction (rect/disk/cylinder emit along local -Z / radially).
+  // This used to be stored negated, while eval_light's emission-cone test and
+  // the mesh lights (PreviewLight::Kind::Mesh, normal = the triangle's outward
+  // normal) both read it as the emitting face -- so a rect light pointed AT a
+  // surface lit nothing at all, and only lit what was behind it.
+  dst.normal = dst.direction;
   dst.radiance = LightColor(light);
   dst.radius = light.radius;
   dst.width = light.width;
   dst.height = light.height;
+  dst.length = light.length;
+  // Local axes in world space (normalized rows of the world matrix), so the light
+  // can be SAMPLED over its surface: a rect/disk lies in the local XY plane, a
+  // cylinder runs along local +X. Degenerate rows fall back to an arbitrary basis
+  // perpendicular to the emission normal, which keeps the sampler well-defined.
+  {
+    Vec3 ax{light.transform.m[0][0], light.transform.m[0][1],
+            light.transform.m[0][2]};
+    Vec3 ay{light.transform.m[1][0], light.transform.m[1][1],
+            light.transform.m[1][2]};
+    if (Length(ax) > 1.0e-8f && Length(ay) > 1.0e-8f) {
+      dst.axis_u = Normalize(ax);
+      dst.axis_v = Normalize(ay);
+    } else {
+      OrthonormalBasis(dst.normal, &dst.axis_u, &dst.axis_v);
+    }
+  }
   if (kind == PreviewLight::Kind::Sphere) {
     dst.area = SphereArea(light);
   } else if (kind == PreviewLight::Kind::Rect) {
@@ -473,6 +561,16 @@ void AddFiniteLight(const RenderLight &light, PreviewLight::Kind kind,
     dst.area = DiskArea(light);
   } else if (kind == PreviewLight::Kind::Cylinder) {
     dst.area = CylinderArea(light);
+  }
+  // UsdLux inputs:normalize: hold the light's POWER fixed as its size changes,
+  // by dividing the emitted radiance by the shape's full surface area (sphere
+  // 4*pi*r^2, rect w*h, disk pi*r^2, cylinder 2*pi*r*l) -- the same convention
+  // as tusdview's BakeLightDerivedParams and the mesh lights. A sphere at or
+  // below the punctual gate (1e-5) keeps the undivided intensity: it is shaded
+  // as a point light (I/d^2), where this division would blow up as r -> 0.
+  if (light.normalize && dst.area > 1.0e-8f &&
+      (kind != PreviewLight::Kind::Sphere || dst.radius > 1.0e-5f)) {
+    dst.radiance = Mul(dst.radiance, 1.0f / dst.area);
   }
   dst.power = std::max(0.0f, Luminance(dst.radiance) *
                                  std::max(1.0f, dst.area));
@@ -511,6 +609,7 @@ void CollectLights(const RenderScene &scene, LightCache *cache) {
         cache->dome.power = std::max(0.0f, Luminance(cache->dome.radiance));
         cache->dome.texture_id = light.envmap_texture_id;
         cache->dome.texture_file = light.textureFile;
+        cache->dome_texture_format = int(light.domeTextureFormat);
         cache->env_color = Add(cache->env_color, cache->dome.radiance);
         cache->env_cdf.clear();
         // Dome orientation: local axes in world = normalized rows of the world

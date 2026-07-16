@@ -5,20 +5,30 @@
 
 #include "layer-registry.hh"
 
+#include "../layer/asset-anchor.hh"
+#include "../layer/layer.hh"
 #include "../reader/usda-reader.hh"
 #include "../reader/usdc-reader.hh"
 #include "../reader/usdz-reader.hh"
+#include "../../mtlx-dom.hh"
 
 #include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <fstream>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
 namespace pcp {
 
 namespace {
+
+size_t MinNonZero(size_t a, size_t b) {
+  if (a == 0) return b;
+  if (b == 0) return a;
+  return std::min(a, b);
+}
 
 std::string ToLowerExt(const std::string &path) {
   std::string p = path;
@@ -80,6 +90,80 @@ std::shared_ptr<Layer> ConvertLoadedUSDC(USDCLoadResult &&r,
   return r.stage.ReleaseRootLayer();
 }
 
+ParseOptions MakeUSDAParseOptions(const LayerLoadOptions &options) {
+  ParseOptions popts = options.usda_parse_options;
+  if (options.strict_aousd_conformance) {
+    popts.strict_aousd_conformance = true;
+  }
+  popts.num_threads = options.parse_num_threads > 0 ? options.parse_num_threads
+                                                    : popts.num_threads;
+  popts.max_file_size = MinNonZero(popts.max_file_size, options.max_memory);
+  return popts;
+}
+
+std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
+                                              const std::string &package_label,
+                                              const std::string &entry_name,
+                                              const LayerLoadOptions &options,
+                                              std::string *warn,
+                                              std::string *err) {
+  int idx = -1;
+  if (entry_name.empty()) {
+    idx = reader.FindUSDCFile();
+    if (idx < 0) idx = reader.FindUSDAFile();
+  } else {
+    const std::string want = NormalizeEntryName(entry_name);
+    for (size_t i = 0; i < reader.NumEntries(); ++i) {
+      if (NormalizeEntryName(reader.EntryName(i)) == want) {
+        idx = static_cast<int>(i);
+        break;
+      }
+    }
+  }
+  if (idx < 0) {
+    if (err) {
+      *err += "USDZ layer entry not found: " + package_label +
+              (entry_name.empty() ? std::string() : "[" + entry_name + "]") +
+              "\n";
+    }
+    return nullptr;
+  }
+
+  const uint8_t *data = reader.EntryData(static_cast<size_t>(idx));
+  const size_t size = reader.EntrySize(static_cast<size_t>(idx));
+  if (!data || size == 0) {
+    if (err) *err += "USDZ layer entry is empty\n";
+    return nullptr;
+  }
+
+  const std::string label = package_label + "[" + reader.EntryName(static_cast<size_t>(idx)) + "]";
+  bool is_usdc = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usdc");
+  bool is_usda = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usda");
+  if (!is_usdc && !is_usda && size >= 8 &&
+      std::memcmp(data, "PXR-USDC", 8) == 0) {
+    is_usdc = true;
+  }
+  if (is_usdc) {
+    USDCLoadOptions lopts;
+    lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
+    lopts.crate_options.use_mmap = options.usdc_use_mmap;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
+    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
+  }
+  if (is_usda) {
+    LoadOptions lopts;
+    lopts.parse_options = MakeUSDAParseOptions(options);
+    return ConvertLoadedUSDA(
+        LoadUSDAFromString(reinterpret_cast<const char *>(data), size, lopts),
+        label, warn, err);
+  }
+
+  if (err) *err += "Unsupported USDZ layer entry format: " + label + "\n";
+  return nullptr;
+}
+
 std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
                                          const std::string &entry_name,
                                          const LayerLoadOptions &options,
@@ -97,73 +181,59 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
     return nullptr;
   }
 
-  int idx = -1;
-  if (entry_name.empty()) {
-    idx = reader.FindUSDCFile();
-    if (idx < 0) idx = reader.FindUSDAFile();
-  } else {
-    const std::string want = NormalizeEntryName(entry_name);
-    for (size_t i = 0; i < reader.NumEntries(); ++i) {
-      if (NormalizeEntryName(reader.EntryName(i)) == want) {
-        idx = static_cast<int>(i);
-        break;
-      }
-    }
-  }
-  if (idx < 0) {
-    if (err) {
-      *err += "USDZ layer entry not found: " + package_file +
-              (entry_name.empty() ? std::string() : "[" + entry_name + "]") +
-              "\n";
-    }
-    return nullptr;
-  }
-
-  const uint8_t *data = reader.EntryData(static_cast<size_t>(idx));
-  const size_t size = reader.EntrySize(static_cast<size_t>(idx));
-  if (!data || size == 0) {
-    if (err) *err += "USDZ layer entry is empty\n";
-    return nullptr;
-  }
-
-  const std::string label = package_file + "[" + reader.EntryName(static_cast<size_t>(idx)) + "]";
-  bool is_usdc = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usdc");
-  bool is_usda = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usda");
-  if (!is_usdc && !is_usda && size >= 8 &&
-      std::memcmp(data, "PXR-USDC", 8) == 0) {
-    is_usdc = true;
-  }
-  if (is_usdc) {
-    USDCLoadOptions lopts;
-    lopts.crate_options.max_memory = options.max_memory;
-    lopts.crate_options.max_tokens = options.max_tokens;
-    lopts.crate_options.max_strings = options.max_strings;
-    lopts.crate_options.max_fields = options.max_fields;
-    lopts.crate_options.max_specs = options.max_specs;
-    lopts.crate_options.max_paths = options.max_paths;
-    lopts.crate_options.finalize_stage = options.finalize_usdc_stage;
-    lopts.crate_options.enable_timing = options.enable_usdc_timing;
-    lopts.crate_options.max_array_elements = options.max_array_elements;
-    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
-  }
-  if (is_usda) {
-    LoadOptions lopts;
-    lopts.parse_options.num_threads = options.parse_num_threads;
-    lopts.parse_options.max_file_size = options.max_memory;
-    return ConvertLoadedUSDA(
-        LoadUSDAFromString(reinterpret_cast<const char *>(data), size, lopts),
-        label, warn, err);
-  }
-
-  if (err) *err += "Unsupported USDZ layer entry format: " + label + "\n";
-  return nullptr;
+  return LoadLayerFromUSDZEntry(reader, package_file, entry_name, options,
+                                warn, err);
 }
+
+}  // namespace
+
+namespace {
+
+// Stamp every prim in a freshly-loaded layer with the directory its RELATIVE
+// asset paths anchor to: the layer's own directory. Composition flattens prims
+// from many layers into one, so without this the authoring layer -- and with it
+// the only correct anchor for `@../tex/foo.png@` -- is lost. See asset-anchor.hh.
+//
+// USDZ is deliberately excluded: paths inside a package are package-relative and
+// are resolved against the archive, not the filesystem, so they must keep
+// anchor 0 (the consumer's existing package handling takes over).
+void StampAssetAnchor(Layer *layer, const std::string &resolved_path) {
+  if (!layer) return;
+  const size_t slash = resolved_path.find_last_of("/\\");
+  if (slash == std::string::npos) return;  // bare filename: cwd, nothing to add
+
+  const uint32_t id = InternAssetAnchor(resolved_path.substr(0, slash));
+  if (id == 0) return;
+  for (size_t i = 0; i < layer->prim_count(); ++i) {
+    if (PrimSpec *ps = layer->prim_mutable(static_cast<uint32_t>(i))) {
+      ps->set_asset_anchor_id(id);
+    }
+  }
+}
+
+std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
+    const std::string &resolved_path, std::string *warn, std::string *err,
+    const LayerLoadOptions &options);
 
 }  // namespace
 
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
                                          const LayerLoadOptions &options) {
+  std::shared_ptr<Layer> layer =
+      LoadLayerFromFileUnstamped(resolved_path, warn, err, options);
+  // Package entries resolve inside the archive; leave them at anchor 0.
+  if (layer && !AssetResolver::IsPackagePath(resolved_path)) {
+    StampAssetAnchor(layer.get(), resolved_path);
+  }
+  return layer;
+}
+
+namespace {
+
+std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
+    const std::string &resolved_path, std::string *warn, std::string *err,
+    const LayerLoadOptions &options) {
   if (AssetResolver::IsPackagePath(resolved_path)) {
     std::string package_file;
     std::string entry_name;
@@ -190,23 +260,23 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
 
   if (ext == "usda") {
     LoadOptions lopts;
-    lopts.parse_options.num_threads = options.parse_num_threads;
-    lopts.parse_options.max_file_size = options.max_memory;
+    lopts.parse_options = options.usda_parse_options;
+    lopts.parse_options.num_threads =
+        options.parse_num_threads > 0 ? options.parse_num_threads
+                                     : lopts.parse_options.num_threads;
+    lopts.parse_options.max_file_size =
+        MinNonZero(lopts.parse_options.max_file_size, options.max_memory);
     return ConvertLoadedUSDA(LoadUSDAFromFile(resolved_path, lopts),
                              resolved_path, warn, err);
   }
 
   if (ext == "usdc") {
     USDCLoadOptions lopts;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
     lopts.crate_options.max_memory = options.max_memory;
-    lopts.crate_options.max_tokens = options.max_tokens;
-    lopts.crate_options.max_strings = options.max_strings;
-    lopts.crate_options.max_fields = options.max_fields;
-    lopts.crate_options.max_specs = options.max_specs;
-    lopts.crate_options.max_paths = options.max_paths;
-    lopts.crate_options.finalize_stage = options.finalize_usdc_stage;
-    lopts.crate_options.enable_timing = options.enable_usdc_timing;
-    lopts.crate_options.max_array_elements = options.max_array_elements;
+    lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
+    lopts.crate_options.use_mmap = options.usdc_use_mmap;
     return ConvertLoadedUSDC(LoadUSDCFromFile(resolved_path, lopts),
                              resolved_path, err);
   }
@@ -215,18 +285,324 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
     return LoadLayerFromUSDZ(resolved_path, std::string(), options, warn, err);
   }
 
+  if (ext == "mtlx") {
+    std::ifstream f(resolved_path, std::ios::binary | std::ios::ate);
+    if (!f) {
+      if (err) *err += "Failed to open MaterialX layer: " + resolved_path + "\n";
+      return nullptr;
+    }
+    const std::streamoff end = f.tellg();
+    if (end <= 0 ||
+        static_cast<uint64_t>(end) >
+            static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+      if (err) *err += "Invalid MaterialX layer size: " + resolved_path + "\n";
+      return nullptr;
+    }
+    const size_t size = static_cast<size_t>(end);
+    if (options.max_memory > 0 && size > options.max_memory) {
+      if (err) {
+        *err += "MaterialX layer exceeds max_memory: " + resolved_path + "\n";
+      }
+      return nullptr;
+    }
+    std::string data(size, '\0');
+    f.seekg(0, std::ios::beg);
+    if (!f.read(&data[0], static_cast<std::streamsize>(size))) {
+      if (err) *err += "Failed to read MaterialX layer: " + resolved_path + "\n";
+      return nullptr;
+    }
+    return LoadLayerFromMtlxMemory(
+        resolved_path, reinterpret_cast<const uint8_t *>(data.data()),
+        data.size(), warn, err);
+  }
+
   if (err) {
     *err += "Unsupported layer file format for: " + resolved_path + "\n";
   }
   return nullptr;
 }
 
+}  // namespace
+
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
                                          int parse_num_threads) {
   LayerLoadOptions options;
   options.parse_num_threads = parse_num_threads;
+  options.usda_parse_options.num_threads = parse_num_threads;
   return LoadLayerFromFile(resolved_path, warn, err, options);
+}
+
+
+// ============================================================
+// MaterialX (.mtlx) layers
+// ============================================================
+//
+// A reference like @mat.mtlx@</MaterialX/Materials/Foo> composes against a
+// skeletal /MaterialX prim tree synthesized from the MaterialX XML (the same
+// shape legacy usdMtlx ToPrimSpec produces):
+//
+//   /MaterialX/Materials/<mat>       Material  (config:mtlx:version,
+//                                    outputs:mtlx:surface source shader name)
+//   /MaterialX/Shaders/<node>        Shader    (info:id + scalar inputs)
+//   /MaterialX/NodeGraphs/<ng>/<n>   Shader    (info:id = mtlx category)
+
+bool LooksLikeMtlxXML(const uint8_t *data, size_t size) {
+  size_t pos = 0;
+  while (pos < size &&
+         (data[pos] == ' ' || data[pos] == '\t' || data[pos] == '\r' ||
+          data[pos] == '\n')) {
+    pos++;
+  }
+  if (pos + 5 < size && std::memcmp(data + pos, "<?xml", 5) == 0) {
+    // XML prolog: look for a materialx root element in the head of the file.
+    const size_t scan = size - pos < 512 ? size - pos : 512;
+    const char *head = reinterpret_cast<const char *>(data + pos);
+    for (size_t i = 0; i + 10 < scan; ++i) {
+      if (std::memcmp(head + i, "<materialx", 10) == 0) return true;
+    }
+    return false;
+  }
+  return pos + 10 < size && std::memcmp(data + pos, "<materialx", 10) == 0;
+}
+
+namespace {
+
+Value MtlxValueToNextValue(const mtlx::MtlxValue &v) {
+  switch (v.type) {
+    case mtlx::MtlxValue::TYPE_BOOL: return Value(v.bool_val);
+    case mtlx::MtlxValue::TYPE_INT: return Value(static_cast<int32_t>(v.int_val));
+    case mtlx::MtlxValue::TYPE_FLOAT: return Value(v.float_val);
+    case mtlx::MtlxValue::TYPE_STRING: return Value::MakeToken(v.string_val);
+    case mtlx::MtlxValue::TYPE_FLOAT_VECTOR: {
+      const std::vector<float> &f = v.float_vec;
+      if (f.size() == 2) return Value::MakeFloat2(f[0], f[1]);
+      if (f.size() == 3) return Value::MakeFloat3(f[0], f[1], f[2]);
+      if (f.size() == 4) return Value::MakeFloat4(f[0], f[1], f[2], f[3]);
+      return Value();
+    }
+    default: return Value();
+  }
+}
+
+const char *MtlxShaderInfoId(const std::string &category) {
+  if (category == "standard_surface") return "MtlxAutodeskStandardSurface";
+  if (category == "open_pbr_surface") return "MtlxOpenPBRSurface";
+  if (category == "UsdPreviewSurface") return "UsdPreviewSurface";
+  return nullptr;
+}
+
+void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
+                      const char *forced_info_id) {
+  lb.begin_prim(node.GetName().empty() ? std::string("node") : node.GetName(),
+                "Shader");
+  const char *info_id = forced_info_id ? forced_info_id
+                                       : MtlxShaderInfoId(node.GetCategory());
+  lb.add_property("info:id", Value::MakeToken(
+      info_id ? std::string(info_id) : node.GetCategory()));
+  for (const mtlx::MtlxInputPtr &input : node.GetInputs()) {
+    if (!input) continue;
+    Value value = MtlxValueToNextValue(input->GetValue());
+    if (!value.is_empty()) {
+      lb.add_property("inputs:" + input->GetName(), std::move(value));
+    }
+  }
+  if (!node.GetType().empty()) {
+    lb.add_property("outputs:out", Value::MakeToken(node.GetType()));
+  }
+  lb.end_prim();
+}
+
+}  // namespace
+
+std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
+                                               const uint8_t *data,
+                                               size_t size, std::string *warn,
+                                               std::string *err) {
+  mtlx::MtlxDocument doc;
+  if (!doc.ParseFromXML(
+          std::string(reinterpret_cast<const char *>(data), size))) {
+    if (err) {
+      *err += "Failed to parse MaterialX layer: " + key +
+              (doc.GetError().empty() ? std::string()
+                                      : " : " + doc.GetError()) +
+              "\n";
+    }
+    return nullptr;
+  }
+  if (warn && !doc.GetWarning().empty()) {
+    *warn += "MaterialX layer " + key + ": " + doc.GetWarning() + "\n";
+  }
+
+  auto layer = std::make_shared<Layer>();
+  LayerBuilder lb(*layer);
+
+  lb.begin_prim("MaterialX", "");
+
+  lb.begin_prim("Materials", "");
+  for (const mtlx::MtlxMaterialPtr &mat : doc.GetMaterials()) {
+    if (!mat || mat->GetName().empty()) continue;
+    lb.begin_prim(mat->GetName(), "Material");
+    if (PrimSpec *prim = lb.current()) {
+      prim->meta().apiSchemas().push_back("MaterialXConfigAPI");
+    }
+    if (!doc.GetVersion().empty()) {
+      lb.add_property("config:mtlx:version", Value(doc.GetVersion()));
+    }
+    if (!doc.GetColorSpace().empty()) {
+      lb.add_property("config:mtlx:colorspace", Value(doc.GetColorSpace()));
+    }
+    if (!mat->GetSurfaceShader().empty()) {
+      lb.add_relationship(
+          "mtlx:surface:source",
+          Path("/MaterialX/Shaders/" + mat->GetSurfaceShader()));
+    }
+    if (!mat->GetDisplacementShader().empty()) {
+      lb.add_relationship(
+          "mtlx:displacement:source",
+          Path("/MaterialX/Shaders/" + mat->GetDisplacementShader()));
+    }
+    if (!mat->GetVolumeShader().empty()) {
+      lb.add_relationship("mtlx:volume:source",
+                          Path("/MaterialX/Shaders/" +
+                               mat->GetVolumeShader()));
+    }
+    lb.end_prim();
+  }
+  lb.end_prim();  // Materials
+
+  lb.begin_prim("Shaders", "");
+  for (const mtlx::MtlxNodePtr &node : doc.GetNodes()) {
+    if (!node || node->GetName().empty()) continue;
+    // surfacematerial nodes are represented under /MaterialX/Materials.
+    if (node->GetCategory() == "surfacematerial") continue;
+    EmitMtlxNodePrim(lb, *node, nullptr);
+  }
+  lb.end_prim();  // Shaders
+
+  if (!doc.GetNodeGraphs().empty()) {
+    lb.begin_prim("NodeGraphs", "");
+    for (const mtlx::MtlxNodeGraphPtr &graph : doc.GetNodeGraphs()) {
+      if (!graph || graph->GetName().empty()) continue;
+      lb.begin_prim(graph->GetName(), "NodeGraph");
+      for (const mtlx::MtlxNodePtr &node : graph->GetNodes()) {
+        if (!node || node->GetName().empty()) continue;
+        EmitMtlxNodePrim(lb, *node, nullptr);
+      }
+      lb.end_prim();
+    }
+    lb.end_prim();  // NodeGraphs
+  }
+
+  lb.end_prim();  // MaterialX
+  lb.finalize();
+  layer->build_path_index();
+  return layer;
+}
+
+std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
+                                           const uint8_t *data, size_t size,
+                                           std::string *warn, std::string *err,
+                                           const LayerLoadOptions &options) {
+  if (!data || size == 0) {
+    if (err) *err += "Empty layer buffer for: " + key + "\n";
+    return nullptr;
+  }
+  if (options.max_memory > 0 && size > options.max_memory) {
+    if (err) {
+      *err += "Layer buffer exceeds max_memory for: " + key + "\n";
+    }
+    return nullptr;
+  }
+
+  if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
+    USDCLoadOptions lopts;
+    lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
+    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), key, err);
+  }
+
+  if (size >= 4 && std::memcmp(data, "PK\x03\x04", 4) == 0) {
+    // A package-path key ("pkg.usdz[entry]") selects a specific entry;
+    // otherwise the first .usdc (then .usda) entry is the root layer.
+    std::string entry_name;
+    if (AssetResolver::IsPackagePath(key)) {
+      std::string package_file;
+      AssetResolver::ParsePackagePath(key, &package_file, &entry_name);
+    }
+    USDZReadOptions zopts;
+    zopts.max_archive_size = options.max_memory;
+    zopts.max_entry_size = options.max_memory;
+    USDZReader reader;
+    if (!reader.Open(data, size, zopts)) {
+      if (err) {
+        *err += "Failed to open USDZ layer buffer: " + key + " : " +
+                (reader.Error().empty() ? "open failed" : reader.Error()) +
+                "\n";
+      }
+      return nullptr;
+    }
+    return LoadLayerFromUSDZEntry(reader, key, entry_name, options, warn, err);
+  }
+
+  if (LooksLikeMtlxXML(data, size)) {
+    return LoadLayerFromMtlxMemory(key, data, size, warn, err);
+  }
+
+  LoadOptions lopts;
+  lopts.parse_options = MakeUSDAParseOptions(options);
+  return ConvertLoadedUSDA(
+      LoadUSDAFromString(reinterpret_cast<const char *>(data), size, lopts),
+      key, warn, err);
+}
+
+std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
+                                                std::string &&data,
+                                                std::string *warn,
+                                                std::string *err,
+                                                const LayerLoadOptions &options) {
+  if (data.empty()) {
+    if (err) *err += "Empty layer buffer for: " + key + "\n";
+    return nullptr;
+  }
+  if (options.max_memory > 0 && data.size() > options.max_memory) {
+    if (err) {
+      *err += "Layer buffer exceeds max_memory for: " + key + "\n";
+    }
+    return nullptr;
+  }
+
+  if (data.size() >= 8 && std::memcmp(data.data(), "PXR-USDC", 8) == 0) {
+    USDCLoadOptions lopts;
+    lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
+    return ConvertLoadedUSDC(LoadUSDCFromMemoryOwned(std::move(data), lopts),
+                             key, err);
+  }
+
+  if (data.size() >= 4 && std::memcmp(data.data(), "PK\x03\x04", 4) == 0) {
+    // USDZ entries are parsed with copying readers, so the archive buffer can
+    // be released when this call returns.
+    return LoadLayerFromMemory(key,
+                               reinterpret_cast<const uint8_t *>(data.data()),
+                               data.size(), warn, err, options);
+  }
+
+  if (LooksLikeMtlxXML(reinterpret_cast<const uint8_t *>(data.data()),
+                       data.size())) {
+    return LoadLayerFromMtlxMemory(
+        key, reinterpret_cast<const uint8_t *>(data.data()), data.size(), warn,
+        err);
+  }
+
+  LoadOptions lopts;
+  lopts.parse_options = MakeUSDAParseOptions(options);
+  return ConvertLoadedUSDA(LoadUSDAFromStringOwned(std::move(data), lopts),
+                           key, warn, err);
 }
 
 std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
@@ -235,12 +611,24 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
                                                 std::string *warn,
                                                 std::string *err,
                                                 const LayerLoadOptions &options) {
-  ResolvedAsset resolved_asset = resolver.Resolve(asset_path, anchor);
+  ResolvedAsset resolved_asset = resolver.Resolve(
+      asset_path, anchor, !options.strict_aousd_conformance);
   const std::string resolved = resolved_asset.resolved_path;
   if (resolved.empty()) {
     if (err) *err += "Failed to resolve asset path: " + asset_path + "\n";
     return nullptr;
   }
+  auto load_resolved = [&](std::string* load_warn,
+                           std::string* load_err) -> std::shared_ptr<Layer> {
+    if (!AssetResolver::GetIdentifierScheme(resolved).empty() ||
+        resolver.HasAssetReader()) {
+      std::vector<uint8_t> bytes;
+      if (!resolver.ReadAsset(resolved, &bytes, load_err)) return nullptr;
+      return LoadLayerFromMemory(resolved, bytes.data(), bytes.size(),
+                                 load_warn, load_err, options);
+    }
+    return LoadLayerFromFile(resolved, load_warn, load_err, options);
+  };
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   std::shared_future<LoadOutcome> wait_fut;
@@ -270,8 +658,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
 
   // Parse WITHOUT holding the lock, so other paths load concurrently.
   LoadOutcome outcome;
-  outcome.layer = LoadLayerFromFile(resolved, &outcome.warn, &outcome.err,
-                                    options);
+  outcome.layer = load_resolved(&outcome.warn, &outcome.err);
   {
     std::lock_guard<std::mutex> lk(*mu_);
     if (outcome.layer) {
@@ -290,8 +677,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     return it->second;  // Cache hit -- no re-parse.
   }
 
-  std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err,
-                                                   options);
+  std::shared_ptr<Layer> layer = load_resolved(warn, err);
   if (!layer) {
     return nullptr;
   }

@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import {
   convertUSDSkeletalAnimationsToThreeJS,
-  convertUSDNodeAnimationsToThreeJS
+  convertUSDNodeAnimationsToThreeJS,
+  convertUSDMorphAnimationsToThreeJS
 } from './USDAnimationConverter.js';
 
 /**
@@ -39,6 +40,16 @@ export function extractUSDSceneAnimations(usdScene, options = {}) {
     );
   }
 
+  // Morph-target (blendShapeWeights) clips join the node-animation set so
+  // they play alongside skeletal clips in every demo's playback path.
+  if (options.threeRoot) {
+    const morphAnimations = convertUSDMorphAnimationsToThreeJS(usdScene, options.threeRoot);
+    if (morphAnimations.length > 0) {
+      logger.log(`Extracted ${morphAnimations.length} morph (blendshape) animation clip(s)`);
+      usdNodeAnimations.push(...morphAnimations);
+    }
+  }
+
   const hasAnyAnimation =
     usdAnimations.length > 0 || usdNodeAnimations.length > 0;
   if (hasAnyAnimation) {
@@ -54,7 +65,7 @@ export function extractUSDSceneAnimations(usdScene, options = {}) {
       if (!usdAnim || !usdAnim.channels) continue;
       const skelIdsInAnim = new Set();
       for (const channel of usdAnim.channels) {
-        if (channel.target_type === 'SkeletonJoint') {
+        if (channel.target_type === 'SkeletonJoint' || channel.isSkeletal) {
           const skelId =
             channel.skeleton_id !== undefined ? channel.skeleton_id : 0;
           skelIdsInAnim.add(skelId);

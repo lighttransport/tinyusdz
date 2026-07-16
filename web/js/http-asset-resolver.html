@@ -10,6 +10,10 @@
     body { margin: 0; height: 100vh; overflow: hidden; font-family: system-ui, sans-serif;
            background: #14161a; color: #e7e9ee; }
     #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    body.drag-over #gl { outline: 3px solid #4f9cff; outline-offset: -8px; }
+    body.drag-over::after { content: 'Drop USD file'; position: absolute; inset: 0; z-index: 5;
+          display: grid; place-items: center; pointer-events: none; color: #e7f0ff;
+          background: rgba(35, 88, 153, 0.2); font-size: 22px; font-weight: 600; }
     .ui { position: absolute; z-index: 2; background: rgba(20, 22, 27, 0.86);
           border: 1px solid #2a2e37; border-radius: 10px; padding: 12px 14px;
           backdrop-filter: blur(6px); font-size: 13px; }
@@ -52,6 +56,13 @@
 
     <div class="row">
       <button id="btn-demo1">① Local USDA (HTTP texture)</button>
+      <button id="btn-file">Load USD</button>
+      <select id="backend" title="Backend">
+        <option value="legacy">legacy</option>
+        <option value="next">next</option>
+        <option value="auto">auto</option>
+      </select>
+      <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz" hidden />
     </div>
     <p class="hint">A local <code>.usda</code> whose texture is an absolute
        <code>https://</code> URL — fetched over HTTP, then rendered.</p>
@@ -81,8 +92,12 @@
 
   <script type="module">
     import { mountHttpAssetResolverDemo } from './http-asset-resolver.js';
-    mountHttpAssetResolverDemo().catch((e) => {
+    const fileInput = document.getElementById('file-input');
+    document.getElementById('btn-file').addEventListener('click', () => fileInput.click());
+    mountHttpAssetResolverDemo({ fileInput }).catch((e) => {
       document.getElementById('status').textContent = 'Init failed: ' + e.message;
+      window.renderError = e.message || String(e);
+      window.renderComplete = true;
       console.error(e);
     });
   </script>

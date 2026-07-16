@@ -91,6 +91,16 @@ struct RendererCaps {
   bool supportsRayTracing{false};  // device has the RT extensions (Vulkan only)
   bool supportsGpuSkinning{false};
   bool supportsExtendedGpuSkinning{false};  // texture-backed >4 influences
+
+  // GPU compressed-texture format support (queried at init). Used to cap-gate
+  // the `--texture-compress` mode: a requested format the device can't sample is
+  // remapped to a supported one (or uncompressed) before CPU encoding, so e.g.
+  // `--texture-compress astc` on a desktop BC-only GPU falls back to BC7.
+  bool supportsBC{false};      // S3TC/RGTC/BPTC (BC1/3/5/6H/7) — desktop
+  bool supportsASTC{false};    // KHR_texture_compression_astc_ldr — mobile/some
+  bool supportsETC2{false};    // ETC2/EAC — GLES3 baseline / mobile
+  bool supportsBC5{false};     // RGTC (BC5) — usually with BC
+  bool supportsBC6H{false};    // BPTC float (BC6H) — usually with BC7
 };
 
 struct RenderFrameParams {
@@ -395,6 +405,13 @@ class Renderer {
 std::unique_ptr<Renderer> CreateGLRenderer();
 #if defined(HAVE_VULKAN)
 std::unique_ptr<Renderer> CreateVulkanRenderer();
+
+// Total DEVICE_LOCAL heap bytes of the GPU we would render on, via a throwaway
+// VkInstance so it can be called BEFORE a renderer exists -- the large-scene
+// budgets are resolved during argument parsing, long before device creation.
+// Returns 0 if Vulkan is unavailable; callers need a fallback. Prefers a
+// discrete GPU, matching startup device selection.
+uint64_t QueryDeviceLocalVramBytes();
 #endif
 
 }  // namespace tusdview

@@ -7,12 +7,24 @@
 #pragma once
 
 #include "../types/value.hh"
+#include <memory>
 #include <string>
 
 namespace tinyusdz {
 namespace next {
 
 class Lexer;
+class LazyArraySource;
+struct ParseArrayContext {
+  /// Retained USDA source backing lazy arrays.
+  std::shared_ptr<LazyArraySource> source;
+
+  /// Copy of parser options relevant to lazy USDA array behavior.
+  bool enable_usda_lazy_arrays = false;
+  /// Hard cap for lazy USDA array element count; 0 means no cap.
+  size_t max_usda_lazy_array_elements = (static_cast<size_t>(1) << 30);
+  int num_threads = 0;
+};
 
 /// Result of a parse operation
 struct ParseResult {
@@ -43,7 +55,8 @@ ParseResult ParseValue(Lexer& lexer, TypeId expected_type);
 
 /// Parse an array value of the expected element type
 /// The lexer should be positioned at the opening bracket
-ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type);
+ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
+                            const ParseArrayContext& context = {});
 
 /// Parse a generic value, inferring the type from syntax
 /// Returns the value and sets type_id to the inferred type

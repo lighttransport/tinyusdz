@@ -16,6 +16,47 @@
 #endif
 
 namespace tinyusdz {
+
+namespace {
+
+// Emit `<name>.timeSamples` for an Animatable<T> whose samples are stored in the
+// SAME representation on disk as in memory (arrays of points/floats/quats, ...),
+// i.e. everything except the enums and Extent, which need a shape conversion and
+// are handled at their own sites.
+//
+// Several typed writers emitted only has_default() and had NO timeSamples branch
+// at all, so animation on those attributes was dropped wholesale on write. This
+// is the missing half.
+template <typename T>
+void EmitAnimatableTimeSamples(const std::string &name,
+                               const Animatable<T> &anim,
+                               crate::FieldValuePairVector &fields) {
+  if (!anim.has_timesamples()) {
+    return;
+  }
+
+  const value::TimeSamples *src = anim.get_timesamples_ptr();
+  if (!src) {
+    return;
+  }
+
+  value::TimeSamples ts;
+  const auto &samples = src->get_samples();
+  for (size_t i = 0; i < samples.size(); i++) {
+    if (samples[i].blocked) {
+      ts.add_blocked_sample(samples[i].t, value::Value());
+    } else {
+      ts.add_sample(samples[i].t, samples[i].value);
+    }
+  }
+
+  crate::CrateValue ts_crate_val;
+  ts_crate_val.Set(ts);
+  fields.push_back({name + ".timeSamples", ts_crate_val});
+}
+
+}  // namespace
+
 namespace experimental {
 
 // ============================================================================
@@ -60,6 +101,19 @@ bool CrateWriter::ExtractMeshProperties(
     return false;
   }
 
+  // `uniform token subsetFamily:<FAMILYNAME>:familyType`. This lives on the
+  // MESH, not on the GeomSubset (see usdGeom.hh), so it is not a member of any
+  // schema struct -- it is a map keyed by family name, and the writer had no
+  // branch for it at all, silently dropping every family's type on write. The
+  // reader reconstructs it by pattern-matching the property name
+  // (prim-reconstruct-geom2.cc), so emitting the same spelling is enough.
+  for (const auto& item : mesh->subsetFamilyTypeMap) {
+    crate::CrateValue crate_val;
+    crate_val.Set(value::token(to_string(item.second)));
+    fields.push_back(
+        {"subsetFamily:" + item.first.str() + ":familyType", crate_val});
+  }
+
   // Extract points
   if (mesh->points.has_value()) {
     auto points_animatable = mesh->points.get_value();
@@ -71,6 +125,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value points_value(points_val);
         if (ConvertValue(points_value, crate_val, err)) {
           fields.push_back({"points", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (points_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(points_value.type_name()));
+            fields.push_back({std::string("points") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -136,6 +198,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value normals_value(normals_val);
         if (ConvertValue(normals_value, crate_val, err)) {
           fields.push_back({"normals", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (normals_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(normals_value.type_name()));
+            fields.push_back({std::string("normals") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -192,6 +262,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value val(vel_val);
         if (ConvertValue(val, crate_val, err)) {
           fields.push_back({"velocities", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (val.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(val.type_name()));
+            fields.push_back({std::string("velocities") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -207,6 +285,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value counts_value(counts_val);
         if (ConvertValue(counts_value, crate_val, err)) {
           fields.push_back({"faceVertexCounts", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (counts_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(counts_value.type_name()));
+            fields.push_back({std::string("faceVertexCounts") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -222,6 +308,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value indices_value(indices_val);
         if (ConvertValue(indices_value, crate_val, err)) {
           fields.push_back({"faceVertexIndices", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (indices_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(indices_value.type_name()));
+            fields.push_back({std::string("faceVertexIndices") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -238,6 +332,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value corner_indices_value(corner_indices_val);
         if (ConvertValue(corner_indices_value, crate_val, err)) {
           fields.push_back({"cornerIndices", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (corner_indices_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(corner_indices_value.type_name()));
+            fields.push_back({std::string("cornerIndices") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -253,6 +355,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value corner_sharp_value(corner_sharp_val);
         if (ConvertValue(corner_sharp_value, crate_val, err)) {
           fields.push_back({"cornerSharpnesses", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (corner_sharp_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(corner_sharp_value.type_name()));
+            fields.push_back({std::string("cornerSharpnesses") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -269,6 +379,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value crease_indices_value(crease_indices_val);
         if (ConvertValue(crease_indices_value, crate_val, err)) {
           fields.push_back({"creaseIndices", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (crease_indices_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(crease_indices_value.type_name()));
+            fields.push_back({std::string("creaseIndices") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -284,6 +402,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value crease_lengths_value(crease_lengths_val);
         if (ConvertValue(crease_lengths_value, crate_val, err)) {
           fields.push_back({"creaseLengths", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (crease_lengths_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(crease_lengths_value.type_name()));
+            fields.push_back({std::string("creaseLengths") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -299,6 +425,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value crease_sharp_value(crease_sharp_val);
         if (ConvertValue(crease_sharp_value, crate_val, err)) {
           fields.push_back({"creaseSharpnesses", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (crease_sharp_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(crease_sharp_value.type_name()));
+            fields.push_back({std::string("creaseSharpnesses") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -314,6 +448,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value hole_indices_value(hole_indices_val);
         if (ConvertValue(hole_indices_value, crate_val, err)) {
           fields.push_back({"holeIndices", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (hole_indices_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(hole_indices_value.type_name()));
+            fields.push_back({std::string("holeIndices") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -373,7 +515,11 @@ bool CrateWriter::ExtractMeshProperties(
       crate::CrateValue crate_val;
       value::Value val(*blend_shapes_val);
       if (ConvertValue(val, crate_val, err)) {
-        fields.push_back({"blendShapes", crate_val});
+        // On a Mesh this is the UsdSkelBindingAPI attribute, so it is NAMESPACED:
+        // `uniform token[] skel:blendShapes`. (SkelAnimation's own `blendShapes`
+        // is genuinely unprefixed -- both spellings are correct, on different
+        // prim types. See AddSkelAnimationAttrs in sconv-skel.cc.)
+        fields.push_back({"skel:blendShapes", crate_val});
       }
     }
   }
@@ -418,8 +564,8 @@ bool CrateWriter::ExtractCubeProperties(
     return false;
   }
 
-  if (cube->size.authored()) {
-    if (!ExtractAnimatableDefault(cube->size.get_value(), "size", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("size", cube->size, fields, err)) {
+    return false;
   }
 
   // Extract extent
@@ -435,6 +581,14 @@ bool CrateWriter::ExtractCubeProperties(
         value::Value extent_value(extent_array);
         if (ConvertValue(extent_value, crate_val, err)) {
           fields.push_back({"extent", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (extent_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(extent_value.type_name()));
+            fields.push_back({std::string("extent") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -460,8 +614,9 @@ bool CrateWriter::ExtractSphereProperties(
     return false;
   }
 
-  if (sphere->radius.authored()) {
-    if (!ExtractAnimatableDefault(sphere->radius.get_value(), "radius", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radius", sphere->radius, fields,
+                               err)) {
+    return false;
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
@@ -559,11 +714,11 @@ bool CrateWriter::ExtractCylinderProperties(
     return false;
   }
 
-  if (cylinder->radius.authored()) {
-    if (!ExtractAnimatableDefault(cylinder->radius.get_value(), "radius", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radius", cylinder->radius, fields, err)) {
+    return false;
   }
-  if (cylinder->height.authored()) {
-    if (!ExtractAnimatableDefault(cylinder->height.get_value(), "height", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("height", cylinder->height, fields, err)) {
+    return false;
   }
 
   // Extract axis (mirrors Cone/Capsule). Was missing — caused the
@@ -592,11 +747,11 @@ bool CrateWriter::ExtractConeProperties(
     return false;
   }
 
-  if (cone->radius.authored()) {
-    if (!ExtractAnimatableDefault(cone->radius.get_value(), "radius", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radius", cone->radius, fields, err)) {
+    return false;
   }
-  if (cone->height.authored()) {
-    if (!ExtractAnimatableDefault(cone->height.get_value(), "height", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("height", cone->height, fields, err)) {
+    return false;
   }
 
   // Extract axis
@@ -624,11 +779,11 @@ bool CrateWriter::ExtractCapsuleProperties(
     return false;
   }
 
-  if (capsule->radius.authored()) {
-    if (!ExtractAnimatableDefault(capsule->radius.get_value(), "radius", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radius", capsule->radius, fields, err)) {
+    return false;
   }
-  if (capsule->height.authored()) {
-    if (!ExtractAnimatableDefault(capsule->height.get_value(), "height", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("height", capsule->height, fields, err)) {
+    return false;
   }
 
   // Extract axis
@@ -701,6 +856,14 @@ bool CrateWriter::ExtractPointsProperties(
         value::Value val(ids_val);
         if (ConvertValue(val, crate_val, err)) {
           fields.push_back({"ids", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (val.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(val.type_name()));
+            fields.push_back({std::string("ids") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -737,6 +900,7 @@ bool CrateWriter::ExtractPointsProperties(
           }
         }
       }
+      EmitAnimatableTimeSamples("velocities", velocities_anim, fields);
     }
   }
 
@@ -754,6 +918,7 @@ bool CrateWriter::ExtractPointsProperties(
           }
         }
       }
+      EmitAnimatableTimeSamples("accelerations", accelerations_anim, fields);
     }
   }
 
@@ -772,62 +937,27 @@ bool CrateWriter::ExtractCameraProperties(
     return false;
   }
 
-  // Helper lambda to add float attributes with fallback.
-  // Only writes when the attribute was actually authored.
-  auto add_float_attr = [&](const std::string& name, const TypedAttributeWithFallback<Animatable<float>>& attr) -> bool {
-    if (!attr.authored()) return true;
-    const Animatable<float>& anim = attr.get_value();
-    float scalar_val;
-    if (anim.get_scalar(&scalar_val)) {
-      crate::CrateValue crate_val;
-      crate_val.Set(scalar_val);
-      fields.push_back({name, crate_val});
-    }
-    // Time-sampled scalar (e.g. animated focalLength)
-    if (anim.has_timesamples()) {
-      value::TimeSamples ts;
-      if (const value::TimeSamples *_tsp = anim.get_timesamples_ptr()) {
-        ts = *_tsp;
-      }
-      crate::CrateValue ts_crate_val;
-      ts_crate_val.Set(ts);
-      fields.push_back({name + ".timeSamples", ts_crate_val});
-    }
-    return true;
+  // Camera's float/double attributes all have NON-ZERO schema fallbacks
+  // (focalLength 50, clippingRange (0.1, 1e6), ...), so they must go through
+  // EmitTypedAnimatableAttr, which declines to invent one for an attribute that
+  // was declared without a value. These two lambdas used to hand-roll the
+  // default + timeSamples extraction that ExtractAnimatableDefault already does.
+  auto add_float_attr =
+      [&](const std::string &name,
+          const TypedAttributeWithFallback<Animatable<float>> &attr) -> bool {
+    return EmitTypedAnimatableAttr(name.c_str(), attr, fields, err);
   };
 
-  // Helper lambda to add double attributes with fallback.
-  // Only writes when the attribute was actually authored.
-  auto add_double_attr = [&](const std::string& name, const TypedAttributeWithFallback<Animatable<double>>& attr) -> bool {
-    if (!attr.authored()) return true;
-    const Animatable<double>& anim = attr.get_value();
-    double scalar_val;
-    if (anim.get_scalar(&scalar_val)) {
-      crate::CrateValue crate_val;
-      crate_val.Set(scalar_val);
-      fields.push_back({name, crate_val});
-    }
-    if (anim.has_timesamples()) {
-      value::TimeSamples ts;
-      if (const value::TimeSamples *_tsp = anim.get_timesamples_ptr()) {
-        ts = *_tsp;
-      }
-      crate::CrateValue ts_crate_val;
-      ts_crate_val.Set(ts);
-      fields.push_back({name + ".timeSamples", ts_crate_val});
-    }
-    return true;
+  auto add_double_attr =
+      [&](const std::string &name,
+          const TypedAttributeWithFallback<Animatable<double>> &attr) -> bool {
+    return EmitTypedAnimatableAttr(name.c_str(), attr, fields, err);
   };
 
   // Extract float2 clippingRange
-  if (camera->clippingRange.authored()) {
-    const Animatable<value::float2>& anim = camera->clippingRange.get_value();
-    value::float2 range_val;
-    if (anim.get_scalar(&range_val)) {
-      crate::CrateValue crate_val;
-      crate_val.Set(range_val);
-      fields.push_back({"clippingRange", crate_val});
-    }
+  if (!EmitTypedAnimatableAttr("clippingRange", camera->clippingRange, fields,
+                               err)) {
+    return false;
   }
 
   // Extract exposure (float)
@@ -857,13 +987,42 @@ bool CrateWriter::ExtractCameraProperties(
   // Extract projection (token enum)
   if (camera->projection.authored()) {
     const Animatable<GeomCamera::Projection>& proj_anim = camera->projection.get_value();
+
+    auto proj_to_token = [](GeomCamera::Projection p) {
+      return value::token(p == GeomCamera::Projection::Perspective ? "perspective"
+                                                                  : "orthographic");
+    };
+
     GeomCamera::Projection proj_val;
-    if (proj_anim.get_scalar(&proj_val)) {
-      std::string proj_str = (proj_val == GeomCamera::Projection::Perspective) ? "perspective" : "orthographic";
+    if (proj_anim.has_default() && proj_anim.get_default(&proj_val)) {
       crate::CrateValue crate_val;
-      value::token tok(proj_str);
-      crate_val.Set(tok);
+      crate_val.Set(proj_to_token(proj_val));
       fields.push_back({"projection", crate_val});
+    }
+
+    // ANIMATED projection. There was no timeSamples branch, so `token
+    // projection.timeSamples` was dropped wholesale. An enum's samples are stored
+    // as int64 in memory (same as visibility, see ExtractImageableAttrs) and must
+    // go out as tokens.
+    if (proj_anim.has_timesamples()) {
+      const value::TimeSamples *proj_ts = proj_anim.get_timesamples_ptr();
+
+      value::TimeSamples ts;
+      const auto &samples = proj_ts->get_samples();
+      for (size_t i = 0; i < samples.size(); i++) {
+        if (samples[i].blocked) {
+          ts.add_blocked_sample(samples[i].t, value::Value());
+        } else if (const int64_t *iv = samples[i].value.as<int64_t>()) {
+          ts.add_sample(samples[i].t, value::Value(proj_to_token(
+                                          static_cast<GeomCamera::Projection>(*iv))));
+        } else {
+          ts.add_sample(samples[i].t, samples[i].value);
+        }
+      }
+
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(ts);
+      fields.push_back({"projection.timeSamples", ts_crate_val});
     }
   }
 
@@ -884,11 +1043,15 @@ bool CrateWriter::ExtractCameraProperties(
     fields.push_back({"stereoRole", crate_val});
   }
 
-  // Extract shutterOpen (double)
-  add_double_attr("shutterOpen", camera->shutterOpen);
+  // Extract shutter:open (double). Namespaced in the schema (usdGeom.hh,
+  // prim-property-tables.hh) unlike this function's other Camera attributes,
+  // which are all plain names -- writing it as "shutterOpen" put it under a
+  // property name the reader never looks for, so it round-tripped as if
+  // never authored.
+  add_double_attr("shutter:open", camera->shutterOpen);
 
-  // Extract shutterClose (double)
-  add_double_attr("shutterClose", camera->shutterClose);
+  // Extract shutter:close (double), same namespacing as shutter:open above.
+  add_double_attr("shutter:close", camera->shutterClose);
 
   // Extract clippingPlanes (float4[]) if present - TypedAttribute (no fallback)
   if (camera->clippingPlanes.authored()) {
@@ -900,6 +1063,14 @@ bool CrateWriter::ExtractCameraProperties(
         crate::CrateValue crate_val;
         if (ConvertValue(value::Value(planes_val), crate_val, err)) {
           fields.push_back({"clippingPlanes", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (value::Value(planes_val).type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(value::Value(planes_val).type_name()));
+            fields.push_back({std::string("clippingPlanes") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -1295,6 +1466,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
           }
         }
       }
+      EmitAnimatableTimeSamples("positions", positions_anim, fields);
     }
   }
 
@@ -1312,6 +1484,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
           }
         }
       }
+      EmitAnimatableTimeSamples("scales", scales_anim, fields);
     }
   }
 
@@ -1397,6 +1570,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
           }
         }
       }
+      EmitAnimatableTimeSamples("orientations", orientations_anim, fields);
     }
   }
 
@@ -1447,8 +1621,11 @@ bool CrateWriter::ExtractGeomSubsetProperties(
 
 
 
-  // Extract elementType enum (Face/Point/Edge/Tetrahedron)
-  {
+  // Extract elementType enum (Face/Point/Edge/Tetrahedron). Only when AUTHORED:
+  // elementType is a TypedAttributeWithFallback, so get_value() hands back
+  // ElementType::Face for an unauthored subset and writing it unconditionally
+  // invented `uniform token elementType = "face"` on read-back.
+  if (subset->elementType.authored()) {
     const GeomSubset::ElementType& elem_type = subset->elementType.get_value();
     std::string elem_str;
     switch (elem_type) {
@@ -1599,6 +1776,34 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     xformable = static_cast<const Xformable*>(instancer);
   } else if (auto* xform = prim.data().as<Xform>()) {
     xformable = xform;
+  } else if (auto* volume = prim.data().as<Volume>()) {
+    xformable = static_cast<const Xformable*>(volume);
+  } else if (auto* skelroot = prim.data().as<SkelRoot>()) {
+    xformable = static_cast<const Xformable*>(skelroot);
+  } else if (auto* skel = prim.data().as<Skeleton>()) {
+    xformable = static_cast<const Xformable*>(skel);
+  }
+  // Lights are Xformable too (via Boundable/NonboundableLight). Leaving them out
+  // of this list silently dropped every light's transform on write, so a scene
+  // round-tripped through .usdc came back with all its lights at the origin.
+  else if (auto* l = prim.data().as<SphereLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<RectLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DiskLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<CylinderLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DistantLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DomeLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DomeLight_1>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<GeometryLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<PortalLight>()) {
+    xformable = static_cast<const Xformable*>(l);
   } else {
     // Not a type we handle yet
     return true;
@@ -1695,8 +1900,20 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     type_value.Set(type_tok);
     attr_fields.push_back({"typeName", type_value});
 
-    // Add default value if present
-    if (xformOp.has_default()) {
+    // A BLOCKED value (`float xformOp:rotateZ:spin = None`) must be written as a
+    // ValueBlock. It has to be tested BEFORE has_default(), because has_default()
+    // is has_value(), which deliberately reports true for a ValueBlock -- so the
+    // block fell into the branch below, where ConvertValue turned it into the
+    // type's zero and `= None` came back as `= 0`. ConvertAttributeToFields (the
+    // generic path, stage-converter.cc) already ordered these two correctly.
+    // Use XformOp::is_blocked(), not _var.is_blocked(): XformOp keeps its OWN
+    // _is_blocked flag (the reader sets that one) and only its accessor ORs the
+    // two together.
+    if (xformOp.is_blocked()) {
+      crate::CrateValue blocked_value;
+      blocked_value.Set(value::ValueBlock());
+      attr_fields.push_back({"default", blocked_value});
+    } else if (xformOp.has_default()) {
       const value::Value& val = xformOp._var.value_raw();
 
       crate::CrateValue crate_val;
@@ -1763,6 +1980,92 @@ bool CrateWriter::ExtractXformOpsFromXformable(
 }
 
 // ============================================================================
+// Scope Property Extraction
+// ============================================================================
+
+// Scope is imageable but NOT a GPrim, so ExtractGPrimProperties skips it and its
+// typed `visibility` / `purpose` would never reach the crate. Authoring purpose
+// on a Scope is the standard way to ship a render/proxy pair, so losing it drops
+// the asset's whole purpose structure on write.
+bool CrateWriter::ExtractScopeProperties(
+  const Prim& prim,
+  const Path& prim_path,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  (void)prim_path;
+  const Scope* scope = prim.data().as<Scope>();
+  if (!scope) {
+    if (err) *err = "Failed to cast prim to Scope";
+    return false;
+  }
+
+  return ExtractImageableAttrs(scope->visibility, scope->purpose, fields, err);
+}
+
+// ============================================================================
+// Imageable Common Property Extraction (visibility / purpose)
+// ============================================================================
+
+// Every UsdGeomImageable carries `visibility` and `purpose` as TYPED fields, so
+// each writer has to emit them explicitly -- and the ones that forgot dropped
+// them silently on write (Scope, all the lights, Volume, Material/NodeGraph).
+// One shared implementation so a new imageable cannot quietly lose them again.
+bool CrateWriter::ExtractImageableAttrs(
+  const TypedAttributeWithFallback<Animatable<Visibility>>& visibility,
+  const TypedAttributeWithFallback<Purpose>& purpose,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  (void)err;
+
+  // NOTE: an AUTHORED opinion is written even when it equals the schema fallback.
+  // `visibility = "inherited"` is not the same as no opinion at all: an authored
+  // opinion blocks weaker ones during composition, so dropping it because it
+  // "looks like the default" silently changes what the layer means.
+  if (visibility.authored()) {
+    const auto& vis_animatable = visibility.get_value();
+    if (vis_animatable.has_default()) {
+      Visibility vis_val;
+      if (vis_animatable.get_default(&vis_val)) {
+        crate::CrateValue vis_crate_val;
+        vis_crate_val.Set(value::token(to_string(vis_val)));
+        fields.push_back({"visibility", vis_crate_val});
+      }
+    }
+
+    // Animated visibility (TimeSamples). Enum timesamples are stored as int64;
+    // cast back to Visibility and emit token timeSamples for the crate writer.
+    if (vis_animatable.has_timesamples()) {
+      const value::TimeSamples *vis_ts = vis_animatable.get_timesamples_ptr();
+
+      value::TimeSamples ts;
+      const auto &samples = vis_ts->get_samples();
+      for (size_t i = 0; i < samples.size(); i++) {
+        if (samples[i].blocked) {
+          ts.add_blocked_sample(samples[i].t, value::Value());
+        } else if (const int64_t *iv = samples[i].value.as<int64_t>()) {
+          value::token vis_token(to_string(static_cast<Visibility>(*iv)));
+          ts.add_sample(samples[i].t, value::Value(vis_token));
+        }
+      }
+
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(ts);
+      fields.push_back({"visibility.timeSamples", ts_crate_val});
+    }
+  }
+
+  if (purpose.authored()) {
+    crate::CrateValue purpose_crate_val;
+    purpose_crate_val.Set(value::token(to_string(purpose.get_value())));
+    fields.push_back({"purpose", purpose_crate_val});
+  }
+
+  return true;
+}
+
+// ============================================================================
 // GPrim Common Property Extraction
 // ============================================================================
 
@@ -1788,6 +2091,7 @@ bool CrateWriter::ExtractGPrimProperties(
     // chained `if (auto *t = …) else if (auto *t = …)`.
 #define TRY_AS_GPRIM(__TY) if (!gprim) { if (auto *p = prim.data().as<__TY>()) gprim = static_cast<const GPrim *>(p); }
     TRY_AS_GPRIM(Xform)
+    TRY_AS_GPRIM(Volume)
     TRY_AS_GPRIM(GeomMesh)
     TRY_AS_GPRIM(GeomSphere)
     TRY_AS_GPRIM(GeomCube)
@@ -1812,61 +2116,31 @@ bool CrateWriter::ExtractGPrimProperties(
     return true;
   }
 
-  // Extract common GPrim properties
-
-  // Extract visibility
-  if (gprim->visibility.authored()) {
-    const auto& vis_animatable = gprim->visibility.get_value();
-    if (vis_animatable.has_default()) {
-      Visibility vis_val;
-      if (vis_animatable.get_default(&vis_val)) {
-        if (vis_val != Visibility::Inherited) {  // Only write if not default
-          crate::CrateValue vis_crate_val;
-          value::token vis_tok(to_string(vis_val));
-          vis_crate_val.Set(vis_tok);
-          fields.push_back({"visibility", vis_crate_val});
-        }
-      }
-    }
-
-    // Handle animated visibility (TimeSamples)
-    if (vis_animatable.has_timesamples()) {
-      const value::TimeSamples *vis_ts = vis_animatable.get_timesamples_ptr();
-
-      // Enum timesamples are stored as int64; cast back to Visibility and emit
-      // token timeSamples for the crate writer.
-      value::TimeSamples ts;
-      const auto &samples = vis_ts->get_samples();
-      for (size_t i = 0; i < samples.size(); i++) {
-        if (samples[i].blocked) {
-          ts.add_blocked_sample(samples[i].t, value::Value());
-        } else if (const int64_t *iv = samples[i].value.as<int64_t>()) {
-          value::token vis_token(to_string(static_cast<Visibility>(*iv)));
-          ts.add_sample(samples[i].t, value::Value(vis_token));
-        }
-      }
-
-      crate::CrateValue ts_crate_val;
-      ts_crate_val.Set(ts);
-      fields.push_back({"visibility.timeSamples", ts_crate_val});
-
-      DCOUT("[ExtractGPrimProperties] Added animated visibility with "
-                << ts.size() << " samples");
-    }
+  // Extract the imageable attributes (visibility / purpose) shared with every
+  // other imageable prim -- Scope, the lights, Material/NodeGraph.
+  if (!ExtractImageableAttrs(gprim->visibility, gprim->purpose, fields, err)) {
+    return false;
   }
 
-  // Extract purpose
-  if (gprim->purpose.authored()) {
-    Purpose purpose_val = gprim->purpose.get_value();
-    if (purpose_val != Purpose::Default) {  // Only write if not default
-      crate::CrateValue purpose_crate_val;
-      value::token purpose_tok(to_string(purpose_val));
-      purpose_crate_val.Set(purpose_tok);
-      fields.push_back({"purpose", purpose_crate_val});
+  // Extract proxyPrim (rel proxyPrim). Parsed into a typed field on every
+  // GPrim but never re-emitted by this function, so it was silently dropped
+  // on USDC round-trip -- same class of bug as visibility/purpose above.
+  if (gprim->proxyPrim.authored()) {
+    if (!ConvertRelationshipToFields("proxyPrim", gprim->proxyPrim.relationship(),
+                                     prim_path, err)) {
+      return false;
     }
   }
 
   // Extract extent (bounding box) - stored as float3[2] in USD
+  //
+  // `has_value()` is not an authored test: a DECLARED-but-value-less
+  // `float3[] extent` has no value, so the guard skipped it and the declaration
+  // was dropped outright.
+  if (gprim->extent.authored() && gprim->extent.is_value_empty()) {
+    sconv_detail::EmitAttrDeclaration("extent", "float3[]", fields);
+  }
+
   if (gprim->extent.has_value()) {
     auto extent_animatable = gprim->extent.get_value();
     if (extent_animatable && extent_animatable->has_default()) {
@@ -1878,8 +2152,42 @@ bool CrateWriter::ExtractGPrimProperties(
         value::Value extent_value(extent_vec);
         if (ConvertValue(extent_value, extent_crate_val, err)) {
           fields.push_back({"extent", extent_crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (extent_value.type_name() != extent_crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(extent_value.type_name()));
+            fields.push_back({std::string("extent") + ".typeName", ty_val});
+          }
         }
       }
+    }
+
+    // ANIMATED extent. This branch did not exist: the writer emitted only the
+    // default, so `extent.timeSamples` was dropped wholesale. Each sample is an
+    // Extent struct in memory and float3[2] on disk, the same shape conversion
+    // the default above does.
+    if (extent_animatable && extent_animatable->has_timesamples()) {
+      const value::TimeSamples *ext_ts = extent_animatable->get_timesamples_ptr();
+
+      value::TimeSamples ts;
+      const auto &samples = ext_ts->get_samples();
+      for (size_t i = 0; i < samples.size(); i++) {
+        if (samples[i].blocked) {
+          ts.add_blocked_sample(samples[i].t, value::Value());
+        } else if (const Extent *ev = samples[i].value.as<Extent>()) {
+          std::vector<value::float3> ev_vec = {ev->lower, ev->upper};
+          ts.add_sample(samples[i].t, value::Value(ev_vec));
+        } else {
+          // Already float3[2] (e.g. a programmatically-built prim).
+          ts.add_sample(samples[i].t, samples[i].value);
+        }
+      }
+
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(ts);
+      fields.push_back({"extent.timeSamples", ts_crate_val});
     }
   }
 
@@ -1889,7 +2197,10 @@ bool CrateWriter::ExtractGPrimProperties(
   // Extract orientation
   if (gprim->orientation.authored()) {
     Orientation orient_val = gprim->orientation.get_value();
-    if (orient_val != Orientation::RightHanded) {  // Only write if not default
+    {  // Write it even when it EQUALS the default: `uniform token orientation =
+       // "rightHanded"` is an authored opinion, and an authored opinion blocks
+       // weaker ones during composition. Skipping it "because it looks like the
+       // default" silently changed what the layer means.
       crate::CrateValue orient_crate_val;
       value::token orient_tok(to_string(orient_val));
       orient_crate_val.Set(orient_tok);
@@ -2021,19 +2332,27 @@ bool CrateWriter::AddMaterialBindingSpecs(
     }
   }
 
-  // Add collection-based material bindings
+  // Add collection-based material bindings. The map's outer key is the
+  // binding/collection NAME (e.g. "beauty"); the inner dict's key is the
+  // material PURPOSE ("" for no purpose). The property name syntax orders
+  // these `material:binding:collection:<purpose>:<name>` -- purpose FIRST --
+  // when a purpose is present. The old code always wrote name-then-purpose
+  // (correct only for the no-purpose case, where there is nothing to put
+  // first), so a purpose-qualified binding like
+  // `material:binding:collection:mypurpose:beauty` came back on USDC
+  // round-trip as `material:binding:collection:beauty:mypurpose`.
   for (const auto& coll_entry : mat_binding->materialBindingCollectionMap()) {
     const std::string& coll_name = coll_entry.first;
     const auto& purpose_map = coll_entry.second;
 
-    // Iterate through all purposes in this collection
     for (const auto& purpose : purpose_map.keys()) {
       const Relationship* rel = nullptr;
       if (purpose_map.at(purpose, &rel)) {
-        std::string rel_name = "material:binding:collection:" + coll_name;
+        std::string rel_name = "material:binding:collection:";
         if (!purpose.empty()) {
-          rel_name += ":" + purpose;
+          rel_name += purpose + ":";
         }
+        rel_name += coll_name;
 
         if (!ConvertRelationshipToFields(rel_name, *rel, prim_path, err)) {
           if (err) *err = "Failed to add " + rel_name + " relationship: " + *err;
@@ -2131,11 +2450,11 @@ bool CrateWriter::ExtractGeomPlaneProperties(
     return false;
   }
 
-  if (plane->width.authored()) {
-    if (!ExtractAnimatableDefault(plane->width.get_value(), "width", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("width", plane->width, fields, err)) {
+    return false;
   }
-  if (plane->length.authored()) {
-    if (!ExtractAnimatableDefault(plane->length.get_value(), "length", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("length", plane->length, fields, err)) {
+    return false;
   }
 
   // Extract axis (uniform token, non-animatable)
@@ -2167,14 +2486,14 @@ bool CrateWriter::ExtractGeomCylinder1Properties(
     return false;
   }
 
-  if (cylinder->height.authored()) {
-    if (!ExtractAnimatableDefault(cylinder->height.get_value(), "height", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("height", cylinder->height, fields, err)) {
+    return false;
   }
-  if (cylinder->radiusTop.authored()) {
-    if (!ExtractAnimatableDefault(cylinder->radiusTop.get_value(), "radiusTop", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radiusTop", cylinder->radiusTop, fields, err)) {
+    return false;
   }
-  if (cylinder->radiusBottom.authored()) {
-    if (!ExtractAnimatableDefault(cylinder->radiusBottom.get_value(), "radiusBottom", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radiusBottom", cylinder->radiusBottom, fields, err)) {
+    return false;
   }
 
   // Extract axis (uniform token, non-animatable)
@@ -2206,14 +2525,14 @@ bool CrateWriter::ExtractGeomCapsule1Properties(
     return false;
   }
 
-  if (capsule->height.authored()) {
-    if (!ExtractAnimatableDefault(capsule->height.get_value(), "height", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("height", capsule->height, fields, err)) {
+    return false;
   }
-  if (capsule->radiusTop.authored()) {
-    if (!ExtractAnimatableDefault(capsule->radiusTop.get_value(), "radiusTop", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radiusTop", capsule->radiusTop, fields, err)) {
+    return false;
   }
-  if (capsule->radiusBottom.authored()) {
-    if (!ExtractAnimatableDefault(capsule->radiusBottom.get_value(), "radiusBottom", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radiusBottom", capsule->radiusBottom, fields, err)) {
+    return false;
   }
 
   // Extract axis (uniform token, non-animatable)

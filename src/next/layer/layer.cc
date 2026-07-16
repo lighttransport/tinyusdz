@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Layer Implementation
 
 #include "layer.hh"
+#include "../prim/identifier.hh"
 #include <algorithm>
 
 namespace tinyusdz {
@@ -58,7 +59,65 @@ void Layer::sort_prims_by_path() {
                    [](const PrimSpec& a, const PrimSpec& b) {
                      return a.path().str() < b.path().str();
                    });
+
   path_to_index_.clear();
+  path_to_index_.reserve(prims_.size());
+  for (size_t i = 0; i < prims_.size(); ++i) {
+    prims_[i].clear_child_indices();
+    const std::string& path_str = prims_[i].path().str();
+    if (!path_str.empty()) {
+      path_to_index_[path_str] = static_cast<uint32_t>(i);
+    }
+  }
+
+  root_indices_.clear();
+  for (size_t i = 0; i < prims_.size(); ++i) {
+    const std::string& path_str = prims_[i].path().str();
+    if (path_str.size() < 2 || path_str[0] != '/') continue;
+    const size_t slash = path_str.rfind('/');
+    if (slash == 0) {
+      root_indices_.push_back(static_cast<uint32_t>(i));
+      continue;
+    }
+    const std::string parent_path = path_str.substr(0, slash);
+    auto parent_it = path_to_index_.find(parent_path);
+    if (parent_it != path_to_index_.end()) {
+      prims_[parent_it->second].add_child_index(static_cast<uint32_t>(i));
+    }
+  }
+  apply_namespace_ordering();
+}
+
+void Layer::apply_namespace_ordering() {
+  auto apply = [](std::vector<uint32_t>* indices,
+                  const std::vector<std::string>& order,
+                  const std::vector<PrimSpec>& prims) {
+    if (!indices || order.empty() || indices->empty()) return;
+    std::vector<uint32_t> result;
+    result.reserve(indices->size());
+    for (const std::string& wanted : order) {
+      for (uint32_t idx : *indices) {
+        if (idx < prims.size() && prims[idx].name() == wanted &&
+            std::find(result.begin(), result.end(), idx) == result.end()) {
+          result.push_back(idx);
+          break;
+        }
+      }
+    }
+    for (uint32_t idx : *indices) {
+      if (std::find(result.begin(), result.end(), idx) == result.end()) {
+        result.push_back(idx);
+      }
+    }
+    *indices = std::move(result);
+  };
+  apply(&root_indices_, meta_.rootPrimOrder, prims_);
+  for (PrimSpec& prim : prims_) {
+    std::vector<uint32_t> children = prim.child_indices();
+    apply(&children, prim.meta().primOrder(), prims_);
+    prim.clear_child_indices();
+    for (uint32_t child : children) prim.add_child_index(child);
+  }
 }
 
 Layer Layer::Clone() const {
@@ -74,6 +133,119 @@ Layer Layer::Clone() const {
   return out;
 }
 
+uint32_t Layer::define_prim_at_path(const std::string& path,
+                                    const std::string& type_name,
+                                    PrimSpecifier specifier) {
+  if (path.size() < 2 || path[0] != '/') return UINT32_MAX;
+  // Validate the whole path before creating anything, so an invalid path
+  // (empty component / trailing slash) does not leave partial ancestors.
+  for (size_t i = 1; i < path.size(); ++i) {
+    if (path[i] == '/' && (i + 1 == path.size() || path[i + 1] == '/')) {
+      return UINT32_MAX;
+    }
+  }
+  // Authoring boundary: every component must be a valid identifier
+  // (strict UTF-8 + Unicode XID), so untrusted strings cannot author prims
+  // the parser/validator would reject.
+  {
+    size_t comp = 1;
+    while (comp < path.size()) {
+      size_t next = path.find('/', comp);
+      if (next == std::string::npos) next = path.size();
+      if (!IsValidIdentifier(path.substr(comp, next - comp))) {
+        return UINT32_MAX;
+      }
+      comp = next + 1;
+    }
+  }
+
+  // The incremental updates below rely on the path index being current.
+  if (path_to_index_.empty() && !prims_.empty()) {
+    build_path_index();
+  }
+
+  uint32_t parent_index = UINT32_MAX;
+  uint32_t index = UINT32_MAX;
+  size_t pos = 1;
+  std::string cur_path;
+  cur_path.reserve(path.size());
+
+  while (pos <= path.size()) {
+    size_t next = path.find('/', pos);
+    if (next == std::string::npos) next = path.size();
+    if (next == pos) return UINT32_MAX;  // empty component ("//" or trailing '/')
+    const std::string name = path.substr(pos, next - pos);
+    cur_path += '/';
+    cur_path += name;
+    const bool is_leaf = (next == path.size());
+
+    auto it = path_to_index_.find(cur_path);
+    if (it != path_to_index_.end()) {
+      index = it->second;
+    } else {
+      PrimSpec spec(name);  // typeless def for intermediate ancestors
+      spec.set_path(Path(cur_path));
+      index = add_prim(std::move(spec));  // may reallocate prims_
+      path_to_index_[cur_path] = index;
+      if (parent_index == UINT32_MAX) {
+        add_root(index);
+      } else {
+        set_parent(index, parent_index);
+      }
+    }
+
+    if (is_leaf) {
+      PrimSpec* leaf = prim(index);
+      if (!type_name.empty()) leaf->set_type_name(type_name);
+      leaf->set_specifier(specifier);
+      return index;
+    }
+
+    parent_index = index;
+    pos = next + 1;
+  }
+  return UINT32_MAX;
+}
+
+bool Layer::remove_prim_at_path(const std::string& path) {
+  if (path_to_index_.empty() && !prims_.empty()) {
+    build_path_index();
+  }
+  auto it = path_to_index_.find(path);
+  if (it == path_to_index_.end()) return false;
+  const uint32_t index = it->second;
+
+  // Unlink from parent (or the root list).
+  size_t slash = path.find_last_of('/');
+  if (slash == 0) {
+    auto rit = std::find(root_indices_.begin(), root_indices_.end(), index);
+    if (rit != root_indices_.end()) root_indices_.erase(rit);
+  } else {
+    const std::string parent_path = path.substr(0, slash);
+    auto pit = path_to_index_.find(parent_path);
+    if (pit != path_to_index_.end()) {
+      if (PrimSpec* parent = prim(pit->second)) {
+        parent->remove_child_index(index);
+      }
+    }
+  }
+
+  // Drop the whole subtree from the path index (iterative DFS; the specs stay
+  // allocated but unreachable).
+  std::vector<uint32_t> stack{index};
+  while (!stack.empty()) {
+    uint32_t cur = stack.back();
+    stack.pop_back();
+    const PrimSpec* p = prim(cur);
+    if (!p) continue;
+    path_to_index_.erase(p->path().str());
+    for (uint32_t child : p->child_indices()) {
+      stack.push_back(child);
+    }
+  }
+  return true;
+}
+
 void Layer::finalize() {
   if (finalized_) return;
 
@@ -84,6 +256,8 @@ void Layer::finalize() {
   for (auto& prim : prims_) {
     prim.finalize_properties();
   }
+
+  apply_namespace_ordering();
 
   // The prim array is append-only during build and immutable after finalize:
   // release any over-reservation so the per-layer fixed cost matches its
@@ -194,42 +368,58 @@ Layer::Stats Layer::stats() const {
 LayerBuilder::LayerBuilder(Layer& layer)
     : layer_(layer) {}
 
-uint32_t LayerBuilder::begin_prim(std::string_view name, std::string_view type_name,
+uint32_t LayerBuilder::begin_prim(const std::string& name, const std::string& type_name,
                                    PrimSpecifier specifier) {
-  return begin_prim(name, type_name, specifier, std::string_view{});
-}
-
-uint32_t LayerBuilder::begin_prim(std::string_view name, std::string_view type_name,
-                                 PrimSpecifier specifier,
-                                 std::string_view full_path) {
   PrimSpec spec(name, type_name);
   spec.set_specifier(specifier);
 
-  if (full_path.empty()) {
-    // Build path based on parent stack.
-    std::string path_str;
-    if (prim_stack_.empty()) {
-      path_str.reserve(name.size() + 1);
-      path_str.push_back('/');
-      path_str.append(name);
+  // Build path based on parent stack
+  std::string path_str;
+  if (prim_stack_.empty()) {
+    path_str = "/" + name;
+  } else {
+    // Get parent path
+    const PrimSpec* parent = layer_.prim(prim_stack_.back());
+    if (parent) {
+      path_str = parent->path().str() + "/" + name;
     } else {
-      // Get parent path
-      const PrimSpec* parent = layer_.prim(prim_stack_.back());
-      if (parent) {
-        const std::string& parent_path = parent->path().str();
-        path_str.reserve(parent_path.size() + 1 + name.size());
-        path_str = parent_path;
-        path_str.push_back('/');
-        path_str.append(name);
-      } else {
-        path_str.reserve(name.size() + 1);
-        path_str.push_back('/');
-        path_str.append(name);
+      path_str = "/" + name;
+    }
+  }
+  spec.set_path(Path(path_str));
+
+  // Duplicate sibling name: re-open the existing prim instead of appending a
+  // second spec with the same path. Two same-path specs corrupt a subsequent
+  // crate write (pxr: "invalid specs: spec repeated") — pxr errors on the
+  // duplicate at parse time; merging keeps the file loadable while staying
+  // single-spec-per-path.
+  if (!prim_stack_.empty()) {
+    const PrimSpec* parent = layer_.prim(prim_stack_.back());
+    if (parent) {
+      for (uint32_t ci : parent->child_indices()) {
+        const PrimSpec* child = layer_.prim(ci);
+        if (child && child->name() == name) {
+          current_index_ = ci;
+          if (!type_name.empty() && layer_.prim(ci)->type_name().empty()) {
+            layer_.prim_mutable(ci)->set_type_name(type_name);
+          }
+          prim_stack_.push_back(current_index_);
+          return current_index_;
+        }
       }
     }
-    spec.set_path(Path(path_str));
   } else {
-    spec.set_path(Path(std::string(full_path)));
+    for (uint32_t ri : layer_.root_indices()) {
+      const PrimSpec* root = layer_.prim(ri);
+      if (root && root->name() == name) {
+        current_index_ = ri;
+        if (!type_name.empty() && layer_.prim(ri)->type_name().empty()) {
+          layer_.prim_mutable(ri)->set_type_name(type_name);
+        }
+        prim_stack_.push_back(current_index_);
+        return current_index_;
+      }
+    }
   }
 
   current_index_ = layer_.add_prim(std::move(spec));
@@ -259,14 +449,13 @@ PrimSpec* LayerBuilder::current() {
   return layer_.prim(current_index_);
 }
 
-void LayerBuilder::add_property(std::string_view name, Value value,
-                               uint16_t flags) {
+void LayerBuilder::add_property(const std::string& name, Value value, uint16_t flags) {
   if (PrimSpec* p = current()) {
     p->add_property(name, std::move(value), flags);
   }
 }
 
-void LayerBuilder::add_time_sample(std::string_view prop_name, double time, Value value) {
+void LayerBuilder::add_time_sample(const std::string& prop_name, double time, Value value) {
   if (PrimSpec* p = current()) {
     PropNameId name_id = GetPropNameTable().intern(prop_name);
 
@@ -294,7 +483,7 @@ void LayerBuilder::add_time_sample(std::string_view prop_name, double time, Valu
   }
 }
 
-void LayerBuilder::add_relationship(std::string_view name, const Path& target) {
+void LayerBuilder::add_relationship(const std::string& name, const Path& target) {
   if (PrimSpec* p = current()) {
     p->add_relationship(name, target);
   }

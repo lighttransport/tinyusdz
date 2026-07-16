@@ -8,7 +8,6 @@
 
 #include <cstdint>
 #include <cstddef>
-#include <string_view>
 
 namespace tinyusdz {
 namespace next {
@@ -138,6 +137,16 @@ enum class TypeId : uint16_t {
   Relationship,
   Reference,
 
+  // uchar / uchar[] (pxr's UChar). Appended at the END so existing numeric
+  // TypeId values stay stable. Scalar storage is one byte in the SBO;
+  // arrays are widened into the UInt array storage (bit-exact lanes).
+  UChar,
+
+  // frame4d: a matrix4d role type (same double[16] storage).
+  Frame4d,
+  // pathExpression: SdfPathExpression, string-backed.
+  PathExpression,
+
   // Sentinel for array sizing
   Count
 };
@@ -149,7 +158,6 @@ const char* GetTypeName(TypeId id);
 /// Get TypeId from a USD type name string
 /// Returns TypeId::Invalid if the name is not recognized
 TypeId GetTypeIdFromName(const char* name);
-TypeId GetTypeIdFromName(std::string_view name);
 
 /// Get the size in bytes of the type
 /// Returns 0 for variable-size types (String, Dictionary) or Invalid

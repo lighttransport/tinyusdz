@@ -133,6 +133,29 @@ void StoreUvVec4Rows(const DrawUvXformCPU& uv, float* dst) {
 }
 
 void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, DrawLightRtOpenPBRCPU* p) {
+  // Seed from the material's DIRECT fields first. The --next loader
+  // (next_scene_loader.cc) sets baseColor/metallic/roughness/specularColor/ior/
+  // alpha/emissive directly and does NOT populate mat.params, so the param
+  // lookups below leave p at its constructor defaults (gray 0.8, etc.), and
+  // BakeLightRtOpenPBR then copies those defaults back OVER the loader's values
+  // -- graying out every untextured constant-color material on the next path.
+  // The legacy path sets both the direct fields AND the params, so its lookups
+  // override this seed with identical values (no behavior change there).
+  p->baseColor[0] = mat.baseColor[0];
+  p->baseColor[1] = mat.baseColor[1];
+  p->baseColor[2] = mat.baseColor[2];
+  p->specularColor[0] = mat.specularColor[0];
+  p->specularColor[1] = mat.specularColor[1];
+  p->specularColor[2] = mat.specularColor[2];
+  p->metalness = mat.metallic;
+  p->specularRoughness = mat.roughness;
+  p->specularIor = mat.ior;
+  p->opacity = mat.alpha;
+  p->emissionColor[0] = mat.emissive[0];
+  p->emissionColor[1] = mat.emissive[1];
+  p->emissionColor[2] = mat.emissive[2];
+  p->emission = (Luminance(p->emissionColor) > 0.0f) ? 1.0f : 0.0f;
+
   Vec3Param(mat, {"UsdPreviewSurface"}, {"diffuseColor"}, p->baseColor);
   Vec3Param(mat, {"UsdPreviewSurface"}, {"specularColor"}, p->specularColor);
   FloatParam(mat, {"UsdPreviewSurface"}, {"metallic"}, &p->metalness);
@@ -986,6 +1009,14 @@ void PackRtMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[51] = mat.metallicTexBias;
   dst[52] = mat.roughnessTexScale;
   dst[53] = mat.roughnessTexBias;
+  // Per-slot UV set, bit-packed into one free float (the RT layout has exactly
+  // two spare): bit 0 = base color, 1 = metal/rough, 2 = normal, 3 = emissive.
+  int uvSetBits = 0;
+  if (mat.baseColorSample.uvSet == 1) uvSetBits |= 1;
+  if (mat.metalRoughSample.uvSet == 1) uvSetBits |= 2;
+  if (mat.normalSample.uvSet == 1) uvSetBits |= 4;
+  if (mat.emissiveSample.uvSet == 1) uvSetBits |= 8;
+  dst[54] = static_cast<float>(uvSetBits);
 }
 
 void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
@@ -1010,6 +1041,21 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[17 * 4 + 1] = mat.roughnessTexBias;
   dst[17 * 4 + 2] = mat.displacementTexScale;
   dst[17 * 4 + 3] = mat.displacementTexBias;
+  // Per-slot UV set. Displacement stays on uv0: it is sampled in the vertex /
+  // tessellation stages, which do not carry the second set.
+  dst[18 * 4 + 0] = static_cast<float>(mat.baseColorSample.uvSet);
+  dst[18 * 4 + 1] = static_cast<float>(mat.metalRoughSample.uvSet);
+  dst[18 * 4 + 2] = static_cast<float>(mat.normalSample.uvSet);
+  dst[18 * 4 + 3] = static_cast<float>(mat.emissiveSample.uvSet);
+  // Specular F0 (T12): rgb = inputs:specularColor, w = ior with the specular-
+  // workflow flag folded into its SIGN (w < 0 => use specularColor directly as
+  // F0; w >= 0 => dielectric F0 from |ior|, lerped to base by metalness). ior is
+  // always positive, so the sign is a free flag and no push-constant lane is
+  // needed.
+  dst[19 * 4 + 0] = mat.specularColor[0];
+  dst[19 * 4 + 1] = mat.specularColor[1];
+  dst[19 * 4 + 2] = mat.specularColor[2];
+  dst[19 * 4 + 3] = mat.useSpecularWorkflow ? -mat.ior : mat.ior;
 }
 
 }  // namespace tusdview

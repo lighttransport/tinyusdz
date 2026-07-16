@@ -80,6 +80,11 @@ Vec3 MaterialEmission(const RenderScene &scene, int material_id);
 float MaterialRoughness(const RenderScene &scene, int material_id);
 
 float MaterialMetallic(const RenderScene &scene, int material_id);
+// Constant opacity (surface opacity x constant displayOpacity) and the
+// UsdPreviewSurface alpha-cutout threshold; see tusdr_material.cc.
+float MaterialOpacity(const RenderScene &scene, const RenderMesh &mesh,
+                      int material_id);
+float MaterialOpacityThreshold(const RenderScene &scene, int material_id);
 
 Vec3 MeshLightEmission(const RenderScene &scene, const RenderMesh &mesh,
                        int material_id, float total_area);
@@ -97,6 +102,13 @@ Vec3 SampleEnv(const EnvImage &img, const Vec3 &dir);
 
 bool DecodeTextureToEnvImage(const RenderScene &scene, int texture_id,
                              EnvImage *out);
+
+// Resample a light-probe environment (UsdLux texture:format "mirroredBall" = 2
+// or "angular" = 3, the RenderLight::DomeTextureFormat values) into the latlong
+// layout every sampler here assumes; other formats pass through untouched.
+// Same probe mapping as tusdview's TexToolsProbeToEquirect, so both tools read
+// a probe identically.
+EnvImage RemapProbeToLatlong(EnvImage &&env, int format);
 
 EnvImage ConvolveDiffuseEnv(const EnvImage &env, int width, int height);
 
@@ -247,7 +259,16 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const ByteVec *tri_colors = nullptr,
            const std::vector<float> *tri_normals = nullptr,
            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
-               *openpbr_mats = nullptr);
+               *openpbr_mats = nullptr,
+           // This ray is a BSDF-sampled indirect bounce, not a camera/transmission
+           // ray. Two contributions are then already accounted for at the surface
+           // that spawned it and must NOT be gathered again:
+           //   - the environment / dome, which the split-sum IBL term integrates
+           //     over the whole lobe, so an escaping bounce contributes nothing;
+           //   - the emission of an analytic mesh light, which direct lighting
+           //     already delivers (TriInfo::area_light marks those triangles).
+           // Without this, both are counted twice in `-materialShading lightrt-bsdf`.
+           bool indirect = false);
 
 uint8_t ToSRGB8(float linear);
 
@@ -573,6 +594,11 @@ std::string SubstituteFrame(const std::string &path, long frame);
 
 int RunRTPreviewNext(const Options &opt);
 
+// Compose through the persistent next-core session with aggregate accounting,
+// then release transient PCP caches before returning the retained Stage.
+bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
+                           std::string *warn, std::string *err);
+
 // ---- tusdr_lod.cc (view-dependent district LOD pre-pass) ----
 // Largest DEVICE_LOCAL Vulkan heap (VRAM) in bytes; 0 if no Vulkan/device.
 size_t QueryDeviceLocalVRAMBytes();
@@ -601,23 +627,79 @@ void MergeBounds(Bounds *dst, const Bounds &src);
 inline const Vec3 kCurveColor{0.62f, 0.50f, 0.34f};
 
 // ---- tusdr_legacy.cc (legacy loader + shared utils) ----
+
+// Load `path` into `stage` WITH composition (sublayers / references / payloads /
+// inherits / variants / specializes composed to a fixed point).
+// `tinyusdz::LoadUSDFromFile` alone parses a single layer and expands no arcs, so
+// anything contributed by a reference or payload — a Material in a look layer,
+// payload-gated geometry — was simply absent from the legacy render. Falls back to
+// the direct parser for .usdz and for layers with no arcs (which keeps zero-copy
+// USDC storage and the schemas LayerToStage does not carry).
+bool LoadStageComposedLegacy(const std::string &path,
+                             const tinyusdz::USDLoadOptions &load_options,
+                             tinyusdz::Stage *stage, std::string *warn,
+                             std::string *err);
+
 std::vector<int> FaceMaterialIds(const RenderMesh &mesh);
 
+// Textures bound by one legacy RenderMaterial, as indices into the `Texture`
+// table filled by BuildLegacyTextures. -1 = not textured.
+struct LegacyMaterialTex {
+  int32_t diffuse{-1};
+  int32_t emissive{-1};
+  int32_t normal{-1};
+  int32_t roughness{-1};
+  int32_t metallic{-1};
+  int32_t occlusion{-1};
+  int32_t opacity{-1};
+  uint8_t roughness_ch{0};  // scalar source channel: 0=r,1=g,2=b,3=a
+  uint8_t metallic_ch{0};
+  uint8_t occlusion_ch{0};
+  uint8_t opacity_ch{0};
+};
+
+// Decode tydra's already-resolved UsdUVTextures into renderer `Texture`s and
+// return the per-material bindings, indexed by RenderScene material id. The
+// legacy path previously ignored these entirely, so .usda/.usdz rendered with a
+// flat constant base color.
+std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
+                                                   std::vector<Texture> *out);
+
+// Absolute prim path -> inherited purpose bit; 0 = visibility="invisible"
+// (subtree pruned). Built by BuildLegacyPurposeVisibility.
+using PurposeVisibilityMap = std::unordered_map<std::string, uint32_t>;
+void BuildLegacyPurposeVisibility(const tinyusdz::Stage &stage,
+                                  PurposeVisibilityMap *out);
+
+// `tri_uvs` (when non-null) receives 6 floats per emitted triangle — the raw USD
+// per-corner UVs, parallel to *tris, as the integrator expects. Textures are
+// bound per triangle from `mat_tex` (null = untextured, the old behavior).
+// `pv` (when non-null) stamps each mesh's inherited purpose bit and prunes
+// invisible meshes.
 void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
                       const matrix4d &world, std::vector<float> *vertices,
                       std::vector<TriInfo> *tris, Bounds *bounds,
-                      LightCache *lights = nullptr);
+                      LightCache *lights = nullptr,
+                      std::vector<float> *tri_uvs = nullptr,
+                      const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
+                      const PurposeVisibilityMap *pv = nullptr);
 
 void CollectGeometry(const RenderScene &scene, const Node &node,
                      std::vector<float> *vertices, std::vector<TriInfo> *tris,
                      Bounds *bounds,
                      const std::unordered_set<std::string> *skip_paths,
-                     LightCache *lights);
+                     LightCache *lights,
+                     std::vector<float> *tri_uvs = nullptr,
+                     const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
+                     const PurposeVisibilityMap *pv = nullptr);
 
 void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
                         std::vector<TriInfo> *tris, Bounds *bounds,
                         const std::unordered_set<std::string> *skip_paths,
-                        LightCache *lights);
+                        LightCache *lights,
+                        std::vector<float> *tri_uvs = nullptr,
+                        const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
+                        const PurposeVisibilityMap *pv = nullptr);
 
 matrix4d LocalMatrixOrIdentity(const tinyusdz::Xformable *xformable, double time,
                                bool *reset);

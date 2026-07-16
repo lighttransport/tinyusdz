@@ -1,0 +1,11 @@
+#usda 1.0
+class Xform "_c"
+{
+    int x = 50
+}
+def Xform "M" (
+    prepend inherits = </_c>
+    prepend references = @feat-livrps-inherits-ref.usda@</Ref>
+)
+{
+}

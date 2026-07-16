@@ -5,10 +5,8 @@
 
 #include "type-info.hh"
 
-#include <array>
 #include <cstring>
-#include <string_view>
-#include <unordered_map>
+#include <array>
 
 namespace tinyusdz {
 namespace next {
@@ -243,41 +241,22 @@ std::array<TypeInfo, kTypeCount> g_type_info = {{
   // Relationship types
   { TypeId::Relationship, "rel", "Relationship", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
   { TypeId::Reference, "reference", "Reference", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
+
+  // uchar (appended; keep in enum order)
+  POD_TYPE_INFO(UChar, "uchar", "uint8_t", uint8_t),
+
+  // frame4d: matrix4d role (double[16] storage).
+  { TypeId::Frame4d, "frame4d", "frame4d", sizeof(double) * 16, alignof(double),
+    nullptr, nullptr, nullptr, nullptr, nullptr },
+  // pathExpression: string storage (variable size).
+  { TypeId::PathExpression, "pathExpression", "PathExpression", 0, 1,
+    nullptr, nullptr, nullptr, nullptr, nullptr },
 }};
 
 #undef POD_TYPE_INFO
 #undef COMPLEX_TYPE_INFO
 
 bool g_registry_initialized = false;
-
-struct TypeNameViewHash {
-  using is_transparent = void;
-  size_t operator()(std::string_view s) const noexcept {
-    return std::hash<std::string_view>{}(s);
-  }
-};
-
-struct TypeNameViewEq {
-  using is_transparent = void;
-  bool operator()(std::string_view lhs, std::string_view rhs) const noexcept {
-    return lhs == rhs;
-  }
-};
-
-const std::unordered_map<std::string_view, TypeId, TypeNameViewHash, TypeNameViewEq>& GetTypeNameToIdMap() {
-  static std::unordered_map<std::string_view, TypeId, TypeNameViewHash, TypeNameViewEq> map;
-  static bool initialized = false;
-  if (!initialized) {
-    map.reserve(kTypeCount * 2);
-    for (size_t i = 1; i < kTypeCount; ++i) {
-      if (g_type_info[i].name) {
-        map.emplace(g_type_info[i].name, static_cast<TypeId>(i));
-      }
-    }
-    initialized = true;
-  }
-  return map;
-}
 
 }  // anonymous namespace
 
@@ -327,19 +306,23 @@ TypeId GetTypeIdFromName(const char* name) {
   if (!name) {
     return TypeId::Invalid;
   }
-  return GetTypeIdFromName(std::string_view(name));
-}
-
-TypeId GetTypeIdFromName(std::string_view name) {
-  if (name.empty()) {
-    return TypeId::Invalid;
+  // Several storage variants share one USD name (Matrix4f and Matrix4d are
+  // both "matrix4d" -- USD only has double matrices). Prefer the canonical
+  // entry, i.e. the one whose C++ name also matches the USD name, falling
+  // back to the first USD-name match.
+  TypeId first = TypeId::Invalid;
+  for (size_t i = 1; i < kTypeCount; ++i) {
+    if (g_type_info[i].name && std::strcmp(g_type_info[i].name, name) == 0) {
+      if (g_type_info[i].cpp_name &&
+          std::strcmp(g_type_info[i].cpp_name, name) == 0) {
+        return static_cast<TypeId>(i);
+      }
+      if (first == TypeId::Invalid) {
+        first = static_cast<TypeId>(i);
+      }
+    }
   }
-  const auto& map = GetTypeNameToIdMap();
-  const auto it = map.find(name);
-  if (it != map.end()) {
-    return it->second;
-  }
-  return TypeId::Invalid;
+  return first;
 }
 
 size_t GetTypeSize(TypeId id) {
@@ -363,6 +346,7 @@ bool IsScalarType(TypeId id) {
     case TypeId::Float:
     case TypeId::Double:
     case TypeId::TimeCode:
+    case TypeId::UChar:
       return true;
     default:
       return false;
@@ -372,6 +356,7 @@ bool IsScalarType(TypeId id) {
 bool IsNumericType(TypeId id) {
   switch (id) {
     case TypeId::Bool:
+    case TypeId::UChar:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::Int64:
@@ -403,6 +388,7 @@ bool IsNumericType(TypeId id) {
     case TypeId::Matrix3d:
     case TypeId::Matrix4f:
     case TypeId::Matrix4d:
+    case TypeId::Frame4d:
       return true;
     default:
       return false;
@@ -420,6 +406,9 @@ TypeId GetComponentType(TypeId id) {
     case TypeId::UInt3:
     case TypeId::UInt4:
       return TypeId::UInt;
+
+    case TypeId::Frame4d:
+      return TypeId::Double;
 
     case TypeId::Half2:
     case TypeId::Half3:
@@ -475,6 +464,7 @@ size_t GetComponentCount(TypeId id) {
   switch (id) {
     // Scalars
     case TypeId::Bool:
+    case TypeId::UChar:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::Int64:
@@ -543,6 +533,7 @@ size_t GetComponentCount(TypeId id) {
     // 16-component (4x4 matrix)
     case TypeId::Matrix4f:
     case TypeId::Matrix4d:
+    case TypeId::Frame4d:
       return 16;
 
     default:

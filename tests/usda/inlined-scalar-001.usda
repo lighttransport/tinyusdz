@@ -1,0 +1,10 @@
+#usda 1.0
+def "T"
+{
+    int64 negOne = -1
+    int64 negBig = -2000000000
+    int64 posSmall = 42
+    int64 nonInlined = 5000000000
+    half3 hv = (1, 2, 3)
+    half4 hv4 = (1, -2, 3, 4)
+}

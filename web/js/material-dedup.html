@@ -125,6 +125,28 @@
 				color: #999;
 				min-height: 14px;
 			}
+			#pickInfo {
+				display: none;
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				color: #ccc;
+			}
+			#pickInfo h4 {
+				margin: 0 0 6px;
+				color: #6bb6ff;
+				font-size: 12px;
+			}
+			#pickDetails {
+				margin: 0;
+				white-space: pre-wrap;
+				overflow-wrap: anywhere;
+				max-height: 240px;
+				overflow: auto;
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+				line-height: 1.35;
+			}
 			#loadStats {
 				display: none;
 				margin-top: 8px;
@@ -133,6 +155,34 @@
 				font-size: 11px;
 				white-space: pre-line;
 				color: #bbb;
+			}
+			#progressPanel {
+				display: none;
+				margin-top: 8px;
+				padding-top: 8px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+			}
+			#progressLabel {
+				font-size: 11px;
+				color: #bbb;
+				margin-bottom: 5px;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+			}
+			#progressTrack {
+				height: 5px;
+				background: rgba(255, 255, 255, 0.14);
+				border-radius: 999px;
+				overflow: hidden;
+			}
+			#progressBar {
+				height: 100%;
+				width: 100%;
+				transform: scaleX(0);
+				transform-origin: left center;
+				background: linear-gradient(90deg, #4CAF50, #6bb6ff);
+				transition: transform 120ms ease-out;
 			}
 			#gui-toggle {
 				position: fixed;
@@ -173,6 +223,10 @@
 				<strong>Current model:</strong> <span id="currentFile">sample scene</span>
 			</p>
 			<p><strong>FPS:</strong> <span id="fpsValue">-</span></p>
+			<div id="progressPanel">
+				<div id="progressLabel">Loading...</div>
+				<div id="progressTrack"><div id="progressBar"></div></div>
+			</div>
 			<div id="loadStats"></div>
 			<div id="file-controls">
 				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
@@ -223,6 +277,10 @@
 					</tbody>
 				</table>
 				<div id="status"></div>
+			</div>
+			<div id="pickInfo">
+				<h4>Picked Mesh</h4>
+				<pre id="pickDetails">Click a mesh to inspect material and texture bindings.</pre>
 			</div>
 		</div>
 

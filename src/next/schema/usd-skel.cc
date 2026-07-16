@@ -35,6 +35,37 @@ bool IsBlendShape(const UsdPrim& prim) {
 // Skeleton data
 // ============================================================
 
+namespace {
+
+// A Skeleton's bind/rest transforms: `matrix4d[]`, i.e. a flat DOUBLE array of
+// 16 scalars per joint. Two traps this centralizes:
+//   - UsdSkel authors them PLAIN on the Skeleton (`bindTransforms`), not under
+//     the `primvars:skel:` prefix -- that prefix belongs on the skinned MESH.
+//     Reading only the prefixed name left every skeleton with an identity bind
+//     pose, which silently skews every skinning matrix.
+//   - they are doubles; asking for a float array yields nothing.
+// The prefixed name is still accepted as a fallback for scenes that author it.
+void ReadMatrix4dArray(const UsdPrim& prim, const char* name,
+                       std::vector<double>* out) {
+  const Value* val = prim.GetPropertyValue(name);
+  if (!val) {
+    val = prim.GetPropertyValue(std::string("primvars:skel:") + name);
+  }
+  if (!val || !val->is_array()) return;
+  if (const std::vector<double>* darray = val->as_double_array()) {
+    *out = *darray;
+    return;
+  }
+  if (const std::vector<float>* farray = val->as_float_array()) {
+    out->resize(farray->size());
+    for (size_t i = 0; i < farray->size(); ++i) {
+      (*out)[i] = static_cast<double>((*farray)[i]);
+    }
+  }
+}
+
+}  // namespace
+
 bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
                      SkeletonData* out) {
   if (!IsSkeleton(prim) || !out) return false;
@@ -64,18 +95,9 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // bindTransforms (uniform matrix4d[]) - stored as float array, convert to double
+  // bindTransforms (uniform matrix4d[]).
   {
-    const Value* val = prim.GetPropertyValue("primvars:skel:bindTransforms");
-    if (val && val->is_array()) {
-      const std::vector<float>* farray = val->as_float_array();
-      if (farray) {
-        out->bindTransforms.resize(farray->size());
-        for (size_t i = 0; i < farray->size(); ++i) {
-          out->bindTransforms[i] = static_cast<double>((*farray)[i]);
-        }
-      }
-    }
+    ReadMatrix4dArray(prim, "bindTransforms", &out->bindTransforms);
   }
 
   // jointNames (uniform token[])
@@ -93,18 +115,9 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // restTransforms (uniform matrix4d[]) - stored as float array, convert to double
+  // restTransforms (uniform matrix4d[]) — same addressing as bindTransforms.
   {
-    const Value* val = prim.GetPropertyValue("primvars:skel:restTransforms");
-    if (val && val->is_array()) {
-      const std::vector<float>* farray = val->as_float_array();
-      if (farray) {
-        out->restTransforms.resize(farray->size());
-        for (size_t i = 0; i < farray->size(); ++i) {
-          out->restTransforms[i] = static_cast<double>((*farray)[i]);
-        }
-      }
-    }
+    ReadMatrix4dArray(prim, "restTransforms", &out->restTransforms);
   }
 
   // animationSource (rel skel:animationSource)
@@ -138,7 +151,12 @@ bool ReadFloat3Array(const Value* val, std::vector<float>* out) {
 
 bool ReadQuatArray(const Value* val, std::vector<float>* out) {
   if (!val || !out) return false;
-  // quatf[] stored as float4[] in Value (xyzw)
+  // quatf[] is stored as a flat float4[] in REAL-FIRST order (w, x, y, z) --
+  // next's canonical quat layout, which the crate reader swizzles disk's
+  // imaginary-first order into (CrateReader::Impl::UnpackQuatf), and which USDA
+  // text authors directly. SkelAnimationData keeps that layout; consumers that
+  // need xyzw (GPU / three.js quaternion order) swizzle at their own boundary
+  // -- tydra-next's AnimationChannel does, for one.
   const std::vector<float>* arr = val->as_float_array();
   if (arr) {
     *out = *arr;
@@ -156,7 +174,7 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
   AttributeEval eval(&stage);
   eval.SetTime(time);
 
-  // blendShapes (uniform token[])
+  // blendShapes (uniform token[]; accept scalar string/token authoring too)
   {
     const Value* val = prim.GetPropertyValue("blendShapes");
     if (val) {
@@ -182,7 +200,10 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // joints (uniform token[])
+  // joints (uniform token[]). An ARRAY -- reading it with only the scalar token
+  // accessors leaves it empty, which silently drops the whole animation (every
+  // joint keeps its rest transform). Scalar string/token authoring is accepted
+  // as a fallback.
   {
     const Value* val = prim.GetPropertyValue("joints");
     if (val) {
@@ -279,6 +300,33 @@ bool GetBlendShapeData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
+  // In-between shapes are namespaced vector3f[] attributes with authored
+  // `weight` metadata on the attribute.
+  const PrimSpec* spec = prim.GetPrimSpec();
+  if (spec) {
+    for (const std::string& property : prim.GetPropertyNames()) {
+      if (property.rfind("inbetweens:", 0) != 0) continue;
+      const Value* value = prim.GetPropertyValue(property);
+      const std::vector<float>* offsets =
+          value && value->is_array() ? value->as_float_array() : nullptr;
+      if (!offsets || offsets->empty()) continue;
+      BlendShapeData::Inbetween inbetween;
+      inbetween.name = property.substr(std::strlen("inbetweens:"));
+      inbetween.offsets = *offsets;
+      if (const PropMeta* meta = spec->property_meta(property)) {
+        if (meta->authored & PropMeta::kWeight) {
+          inbetween.weight = static_cast<float>(meta->weight);
+          inbetween.has_weight = true;
+        }
+      }
+      out->inbetweens.push_back(std::move(inbetween));
+    }
+    std::stable_sort(out->inbetweens.begin(), out->inbetweens.end(),
+                     [](const auto& a, const auto& b) {
+                       return a.weight < b.weight;
+                     });
+  }
+
   return true;
 }
 
@@ -342,24 +390,30 @@ bool BuildSkelTopology(const std::vector<std::string>& joints,
       continue;
     }
 
-    std::string parentPath = path.substr(0, lastSlash);
-
-    // Find parent index
+    // Find the nearest ANCESTOR present in the joint list: UsdSkel allows
+    // sparse joint lists (e.g. ["Root", "Root/Pelvis/Spine"]), where the
+    // parent is the closest listed ancestor, not necessarily the immediate
+    // path prefix (pxr UsdSkelTopology semantics).
     bool found = false;
-    for (size_t j = 0; j < joints.size(); ++j) {
-      if (joints[j] == parentPath) {
-        dst[i] = static_cast<int>(j);
-        found = true;
-        break;
+    std::string parentPath = path.substr(0, lastSlash);
+    while (!parentPath.empty()) {
+      for (size_t j = 0; j < joints.size(); ++j) {
+        if (joints[j] == parentPath) {
+          dst[i] = static_cast<int>(j);
+          found = true;
+          break;
+        }
       }
+      if (found) break;
+      const size_t up = parentPath.rfind('/');
+      if (up == std::string::npos || up == 0) break;
+      parentPath = parentPath.substr(0, up);
     }
 
     if (!found) {
-      if (err) {
-        *err = "Parent joint not found: " + parentPath +
-               " for joint: " + path;
-      }
-      return false;
+      // No listed ancestor at all: treat the joint as an extra root (pxr
+      // tolerates this rather than failing the topology).
+      dst[i] = -1;
     }
   }
 

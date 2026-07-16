@@ -18,11 +18,48 @@ See `js` folder for JS codes.
 Emscripten and emcmake required.
 TinyUSDZ is beging built with C++20 to use C++20 coruntine to support async over JS/WASM boundary, without requiring sASYNCIFY and JSPI(JavaScript Promise Integration)
 
+### Module variants: legacy / next
+
+TinyUSDZ has two USD cores, and the WASM build can package them in three ways:
+
+| Variant | CMake option | Module (`js/src/tinyusdz/`) | Contents | .wasm (MinSizeRel) |
+|---|---|---|---|---|
+| **legacy+next** (default) | (none) | `tinyusdz.js/.wasm` | Classic loader (`loadFromBinary`, Tydra RenderScene) **plus** the next-core `nextFlatten*` low-memory lazy flatten pipeline and the `RenderStream` streaming API | ~6.4MB |
+| **legacy only** | `-DTINYUSDZ_WASM_LEGACY_ONLY=ON` | `tinyusdz_legacy.js/.wasm` | Classic loader only — the next core is compiled out (`nextFlatten*` and `RenderStream` are absent from the module) | ~5.9MB |
+| **next only** | `-DTINYUSDZ_WASM_NEXT_ONLY=ON` | `tinyusdz_next.js/.wasm` | next-core + tydra-next only (USDA/USDC/USDZ parse, pcp composition, render extraction, URDF/subdiv streaming); no legacy loader | ~1.4MB |
+
+Each variant emits a distinctly-named module, so builds never clobber each
+other's output. `TINYUSDZ_WASM64=ON` combines with any variant and appends
+`_64` to the module name (`tinyusdz_64`, `tinyusdz_legacy_64`,
+`tinyusdz_next_64`).
+
+- **legacy** (`src/*.cc`) is the shipped npm loader: mature reader + Tydra
+  RenderScene conversion.
+- **next** (`src/next/`) is the standalone AOUSD-conformant core (parser,
+  crate, pcp composition, eval, validation, writer). In the default combined
+  module it powers the `nextFlatten*` family (composition/flattening with
+  lazy value arrays, ~5-10x lower peak heap than the eager path) and
+  `RenderStream` (mesh-at-a-time streaming extraction).
+
 ### Standard WASM32 build (2GB memory limit)
+
+Builds the default legacy+next combined module:
 
 ```bash
 $ ./bootstrap-linux.sh
 $ ninja -C build          # or: cmake --build build
+```
+
+### Legacy-only / next-only variants
+
+```bash
+# legacy only -> js/src/tinyusdz/tinyusdz_legacy.js/.wasm
+$ ./bootstrap-linux-legacy-only.sh
+$ ninja -C build_legacy_only
+
+# next only -> js/src/tinyusdz/tinyusdz_next.js/.wasm
+$ ./bootstrap-linux-next-only.sh
+$ ninja -C build_next_only
 ```
 
 ### WASM64/MEMORY64 build (8GB memory limit)

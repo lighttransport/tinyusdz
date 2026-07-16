@@ -816,6 +816,8 @@ bool ReconstructPrim<Scope>(
   for (auto &prop : properties) {  // Non-const to allow move from property metadata
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, Scope,
                    scope->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, Scope,
+                   scope->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, Scope, scope->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }

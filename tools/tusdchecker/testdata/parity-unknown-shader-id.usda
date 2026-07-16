@@ -1,0 +1,13 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    defaultPrim = "mat"
+)
+def Material "mat"
+{
+    def Shader "surface"
+    {
+        uniform token info:id = "MyCustomSurface"
+    }
+}

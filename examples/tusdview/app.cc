@@ -6,11 +6,13 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -47,6 +49,14 @@ namespace tusdview {
 namespace {
 void GlfwErrorCallback(int code, const char* desc) {
   LOGE("glfw error %d: %s", code, desc);
+}
+
+// --next blendshape capability: the next loader emits GPU morph channels rather
+// than the RenderScene targets SceneHasBlendShapes() looks for.
+bool DrawSceneHasMorphChannels(const DrawScene& draw) {
+  for (const DrawMeshCPU& m : draw.meshes)
+    if (m.morphChannelCount > 0) return true;
+  return false;
 }
 
 constexpr int kBaseWindowWidth = 1280;
@@ -474,6 +484,15 @@ bool App::initImGui(std::string* err) {
 // animation re-pose, GPU skinning, or meaningful per-mesh pick on batched
 // geometry). Halves resident RAM for large scenes. Keeps small metadata
 // (name/purpose/world/aabb/submeshes) the GUI's visibility mask still reads.
+// A mesh the RT path has to be able to re-pose: its rest vertices and skin/morph
+// attributes are the ONLY inputs to BuildNextRtDeformedVertices, so freeing them
+// would leave the ray tracer stuck on whatever pose the BLAS was built with.
+// (The raster path can free them freely -- it deforms in the vertex shader from
+// the GPU-side copies.)
+static bool MeshIsDeformable(const DrawMeshCPU& m) {
+  return !m.jointIdx.empty() || !m.morphDeltaHalf.empty();
+}
+
 static void FreeMeshGeometryCPU(DrawMeshCPU& m) {
   std::vector<DrawVertex>().swap(m.vertices);
   std::vector<uint32_t>().swap(m.indices);
@@ -602,6 +621,9 @@ void App::applyLoaded(bool ok, bool progressive) {
       reconvApplied_ = animTime_;
     }
     updateSkinningEffective();
+    // The tracer re-pose cache indexes draw_.meshes; this is a different scene.
+    nextRestVerts_.clear();
+    nextTracerPosedTime_ = std::numeric_limits<double>::quiet_NaN();
     // Robust auto-frame bounds: compute from the full per-mesh set NOW, before
     // the LOD merge collapses 80k meshes into one 42M-instance proxy (whose mass
     // would otherwise swamp the weighting). Cached for the framing step below.
@@ -668,8 +690,11 @@ void App::applyLoaded(bool ok, bool progressive) {
       postGpu([this, freeCpu] {
         std::string uerr;
         renderer_->uploadScene(draw_, &uerr);
+        // Deformable meshes keep their CPU geometry: RT re-poses from it every
+        // frame (and RT can be toggled on at any time).
         if (freeCpu)
-          for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPU(m);
+          for (DrawMeshCPU& m : draw_.meshes)
+            if (!MeshIsDeformable(m)) FreeMeshGeometryCPU(m);
       });
     }
     if (ok) {
@@ -706,11 +731,12 @@ void App::applyLoaded(bool ok, bool progressive) {
   if (ok && skinningEffective_ == SkinningMode::GPU && !progressiveActive_) {
     updateGpuSkinningFrameIfNeeded();
   }
-  // --next morph: upload the initial blendshape coefficients (the render loop
-  // re-poses each frame as animTime_ advances). Skipped while streaming; the
-  // loop catches up once meshes land.
-  if (ok && useNextLoader_ && hasNextMorph_ && !progressiveActive_) {
-    updateNextMorphFrameIfNeeded();
+  // --next deformation: upload the initial bone matrices / blendshape
+  // coefficients (the render loop re-poses each frame as animTime_ advances).
+  // Skipped while streaming; the loop catches up once meshes land.
+  if (ok && useNextLoader_ && (hasNextMorph_ || draw_.boneMatrixCount > 0) &&
+      !progressiveActive_) {
+    updateNextDeformFrameIfNeeded();
   }
   // Frame the camera AFTER the GPU pose updates draw_ bounds (so an animated
   // load, e.g. --time, frames the posed geometry, matching the CPU bake path).
@@ -722,8 +748,18 @@ void App::applyLoaded(bool ok, bool progressive) {
     const int upAxis = (draw_.upAxis == "Z") ? 2 : 1;
     camera_.setUpAxis(upAxis);
     NextCameraPose campose;
-    if (!cameraName_.empty() && useNextLoader_ && nextStage_ &&
-        FindNextCamera(*nextStage_, cameraName_, animTime_, &campose)) {
+    // Either loader can be framed on a named USD camera. The legacy path reads the
+    // camera out of the converted RenderScene (FindLegacyCamera); it used to just
+    // warn "need --next" and auto-fit instead, which meant the two loaders could
+    // never be pointed at the same camera -- and so could not be compared.
+    const bool haveCamera =
+        !cameraName_.empty() &&
+        (useNextLoader_ && nextSession_
+             ? FindNextCamera(nextSession_->GetStage(), cameraName_, animTime_,
+                              &campose)
+             : (loaded_.ok &&
+                FindLegacyCamera(loaded_.render, cameraName_, &campose)));
+    if (haveCamera) {
       // Drive the orbit rig from a scene camera. The auto-fit framing is useless
       // on vast scenes (Caldera's 8 km map frames to a sub-pixel speck); a named
       // USD camera gives a meaningful district view across raster / --rt / --cuda.
@@ -759,7 +795,7 @@ void App::applyLoaded(bool ok, bool progressive) {
            cameraName_.c_str(), campose.fovYDeg, campose.zNear, campose.zFar);
     } else {
       if (!cameraName_.empty()) {
-        LOGW("camera '%s' not found (need --next + a Camera prim); auto-fitting",
+        LOGW("camera '%s' not found (no such Camera prim); auto-fitting",
              cameraName_.c_str());
       }
       // Frame on the visible geometry. Two inflators are excluded so pan/dolly
@@ -807,6 +843,7 @@ void App::applyLoaded(bool ok, bool progressive) {
     }
   }
   gui_.setScene(&loaded_, &draw_);
+  gui_.setNextStage(nextSession_ ? &nextSession_->GetStage() : nullptr);
   // Apply a one-shot --select (prim path) once the scene + draw meshes exist.
   if (!initialSelect_.empty()) {
     gui_.selectByPath(initialSelect_, -1);
@@ -825,7 +862,9 @@ void App::stepProgressiveUpload() {
   // Geometry first so meshes appear, ~4ms/frame.
   while (nextMesh_ < draw_.meshes.size()) {
     renderer_->appendMesh(draw_.meshes[nextMesh_]);
-    if (useNextLoader_ && !cudaRt_ && !hipRt_) FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
+    if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
+        !MeshIsDeformable(draw_.meshes[nextMesh_]))
+      FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
     ++nextMesh_;
     if (elapsedMs() > 4.0) break;
   }
@@ -856,6 +895,7 @@ void App::loadFileBlocking(const std::string& path) {
   LoadedScene tmp;
   DrawScene drawTmp;
   LoadOptions opts = loadOpts_;
+  opts.gpuSkinning = wantsNextGpuSkinning();
   // View-dependent district LOD (--lod-stream): a proxy pre-pass promotes the
   // camera-nearest districts to full and writes a wrapper layer we load instead.
   // Only meaningful on the --next path (the only one that composes huge scenes
@@ -871,19 +911,17 @@ void App::loadFileBlocking(const std::string& path) {
     if (!wrapper.empty()) effPath = wrapper;
   }
   if (useNextLoader_) {
-    // `next` flat-preview path: builds only the DrawScene (no Tydra
-    // RenderScene/skinning); the hierarchy browser/inspector stay empty. Retain
-    // the stage + surface its animation range so per-frame blendshape morph works.
-    std::shared_ptr<tinyusdz::next::Stage> stage;
+    std::shared_ptr<tinyusdz::next::StageSession> session;
     const bool ok = LoadUSDViaNext(effPath, opts, &drawTmp, &tmp.warn, &tmp.err,
-                                   &loadCtrl_, &stage);
+                                   &loadCtrl_, &session);
     tmp.ok = ok;
     tmp.filepath = path;
     tmp.render.meta.upAxis = drawTmp.upAxis;  // drive camera/grid up-axis
-    if (stage) {
-      const double s = stage->GetStartTimeCode();
-      const double e = stage->GetEndTimeCode();
-      const double fps = stage->GetTimeCodesPerSecond();
+    if (session) {
+      const tinyusdz::next::Stage& stage = session->GetStage();
+      const double s = stage.GetStartTimeCode();
+      const double e = stage.GetEndTimeCode();
+      const double fps = stage.GetTimeCodesPerSecond();
       if (fps > 0.0) tmp.render.meta.timeCodesPerSecond = fps;
       if (e > s) {
         tmp.render.meta.startTimeCode = s;
@@ -892,12 +930,21 @@ void App::loadFileBlocking(const std::string& path) {
     }
     loaded_ = std::move(tmp);
     draw_ = ok ? std::move(drawTmp) : DrawScene{};
-    nextStage_ = ok ? std::move(stage) : nullptr;
+    nextSession_ = ok ? std::move(session) : nullptr;
     applyLoaded(ok, /*progressive=*/false);
     return;
   }
-  const bool gpuRestLoad = std::isfinite(loadOpts_.timecode) &&
-                           skinningRequested_ == SkinningMode::GPU;
+  // Load the REST pose whenever the deform may be re-applied downstream -- which is
+  // whenever GPU skinning could win, i.e. Auto as much as an explicit GPU. Gating
+  // this on an explicit GPU alone (as it did) left the DEFAULT, Auto, baking the
+  // pose into the geometry at load (DeformSkinnedMeshes) and then letting
+  // updateSkinningEffective pick GPU anyway -- so the vertex shader, and the RT
+  // vertex re-pose, deformed the ALREADY-DEFORMED geometry. Every animated
+  // `--time` screenshot on the legacy loader was posed twice. If GPU turns out to
+  // be ineligible, the block below re-renders with the CPU bake, so Auto still
+  // lands on a correctly posed scene either way.
+  const bool gpuRestLoad =
+      std::isfinite(loadOpts_.timecode) && wantsGpuSkinningLoad();
   if (gpuRestLoad) opts.timecode = std::numeric_limits<double>::quiet_NaN();
   int autoW = 0, autoH = 0;
   getRequestedWindowSize(&autoW, &autoH);
@@ -984,6 +1031,19 @@ void App::startLoadAsync(const std::string& path) {
   // streaming load convert+builds the DrawScene (dp) in one pass.
   const bool rt = rtPath_;
   LoadOptions opts = loadOpts_;
+  opts.gpuSkinning = wantsNextGpuSkinning();
+  // Populate GPU compressed-format capabilities so the CPU texture build can
+  // cap-gate `--texture-compress` (e.g. astc -> BC7 fallback on a BC-only
+  // desktop GPU). renderer_ is initialized before any load is started; caps are
+  // copied by value into `opts` here, before the worker thread launches.
+  if (renderer_) {
+    const RendererCaps& rc = renderer_->caps();
+    opts.textureOptions.caps.bc = rc.supportsBC;
+    opts.textureOptions.caps.astc = rc.supportsASTC;
+    opts.textureOptions.caps.etc2 = rc.supportsETC2;
+    opts.textureOptions.caps.bc5 = rc.supportsBC5;
+    opts.textureOptions.caps.bc6h = rc.supportsBC6H;
+  }
   if (std::isfinite(opts.timecode) && skinningRequested_ == SkinningMode::GPU) {
     opts.timecode = std::numeric_limits<double>::quiet_NaN();
   }
@@ -1004,15 +1064,16 @@ void App::startLoadAsync(const std::string& path) {
                              autoSubdivView]() {
     if (useNext) {
       lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_,
-                              &pendingNextStage_);
+                              &pendingNextSession_);
       lp->filepath = path;
       lp->render.meta.upAxis = dp->upAxis;  // drive camera/grid up-axis
       // Surface the stage's animation range so --next gets a timeline (the Tydra
       // RenderScene meta is otherwise empty here). readAnimationRange reads these.
-      if (pendingNextStage_) {
-        const double s = pendingNextStage_->GetStartTimeCode();
-        const double e = pendingNextStage_->GetEndTimeCode();
-        const double fps = pendingNextStage_->GetTimeCodesPerSecond();
+      if (pendingNextSession_) {
+        const tinyusdz::next::Stage& stage = pendingNextSession_->GetStage();
+        const double s = stage.GetStartTimeCode();
+        const double e = stage.GetEndTimeCode();
+        const double fps = stage.GetTimeCodesPerSecond();
         if (fps > 0.0) lp->render.meta.timeCodesPerSecond = fps;
         if (e > s) {
           lp->render.meta.startTimeCode = s;
@@ -1028,6 +1089,36 @@ void App::startLoadAsync(const std::string& path) {
 }
 
 void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
+  if (useNextLoader_ && nextSession_) {
+    if (addPrimPaths.empty() && loadOpts_.variantOverrides.empty()) return;
+    cancelAndJoinLoad();
+    loadCtrl_.resetProgress();
+    loadingPath_ = loaded_.filepath;
+    loadStart_ = std::chrono::steady_clock::now();
+    loadFinished_.store(false);
+    loadActive_ = true;
+    pendingLoaded_ = std::make_unique<LoadedScene>();
+    pendingDraw_ = std::make_unique<DrawScene>();
+    pendingNextSession_ = nextSession_;
+    LoadedScene* lp = pendingLoaded_.get();
+    DrawScene* dp = pendingDraw_.get();
+    LoadOptions opts = loadOpts_;
+    opts.gpuSkinning = wantsNextGpuSkinning();
+    if (!addPrimPaths.empty()) {
+      opts.payloadPolicy = PayloadPolicy::Whitelist;
+      opts.payloadWhitelist = addPrimPaths;
+    }
+    const std::string path = loaded_.filepath;
+    loadThread_ = std::thread([this, path, opts, lp, dp]() {
+      lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_,
+                              &pendingNextSession_);
+      lp->filepath = path;
+      lp->render.meta.upAxis = dp->upAxis;
+      loadFinished_.store(true, std::memory_order_release);
+    });
+    return;
+  }
+
   if (!loaded_.comp.composed || !loaded_.comp.rootLayer) return;
   if (addPrimPaths.empty() && loadOpts_.variantOverrides.empty()) return;
   cancelAndJoinLoad();
@@ -1049,6 +1140,7 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
   prev.rootLayer = loaded_.comp.rootLayer;
   prev.searchPaths = loaded_.comp.searchPaths;
   LoadOptions opts = loadOpts_;
+  opts.gpuSkinning = wantsNextGpuSkinning();
   opts.payloadPolicy = PayloadPolicy::Whitelist;
   opts.payloadWhitelist = loaded_.comp.loadedPayloads;
   opts.payloadWhitelist.insert(addPrimPaths.begin(), addPrimPaths.end());
@@ -1068,8 +1160,8 @@ void App::finishLoadIfReady() {
   loaded_ = std::move(*pendingLoaded_);
   const bool ok = loaded_.ok;
   draw_ = ok ? std::move(*pendingDraw_) : DrawScene{};
-  nextStage_ = ok ? std::move(pendingNextStage_) : nullptr;
-  pendingNextStage_.reset();
+  nextSession_ = ok ? std::move(pendingNextSession_) : nullptr;
+  pendingNextSession_.reset();
   pendingLoaded_.reset();
   pendingDraw_.reset();
   loadActive_ = false;
@@ -1088,7 +1180,7 @@ void App::cancelAndJoinLoad() {
   loadFinished_.store(false);
   pendingLoaded_.reset();
   pendingDraw_.reset();
-  pendingNextStage_.reset();
+  pendingNextSession_.reset();
 }
 
 void App::readAnimationRange() {
@@ -1124,6 +1216,27 @@ bool App::wantsGpuSkinningLoad() const {
          skinningRequested_ == SkinningMode::Auto;
 }
 
+// Should the --next loader emit GPU skinning attributes instead of baking the
+// pose into the geometry at load? (LoadOptions::gpuSkinning; the Tydra path
+// always emits them and decides in updateSkinningEffective.)
+//
+// The Vulkan ray tracer keeps the rest pose too: it cannot run the raster vertex
+// shader (its BLAS is built from vertex buffers), but it re-poses those retained
+// rest vertices per frame and rebuilds the BLAS -- far cheaper than what it used
+// to do, which was re-run the entire converter for every new time code. See
+// updateNextDeformFrameIfNeeded.
+//
+// The CUDA/HIP tracers read draw_ geometry directly rather than owning vertex
+// buffers, so they cannot run the raster vertex shader either -- but they can
+// take the same re-posed vertices, written back into draw_ before their BVH is
+// built (poseNextDrawForTracer). They used to be pinned to the load-time CPU
+// bake, which meant a converter re-run for every new time code and, worse, a
+// SECOND deform implementation that could (and did) disagree with the shader's.
+bool App::wantsNextGpuSkinning() const {
+  return useNextLoader_ && wantsGpuSkinningLoad() && renderer_ &&
+         renderer_->caps().supportsGpuSkinning;
+}
+
 void App::updateSkinningEffective() {
   skinningEffective_ = SkinningMode::CPU;
   skinningReason_ = "CPU skinning selected";
@@ -1138,23 +1251,32 @@ void App::updateSkinningEffective() {
     return;
   }
   const bool rtActive = renderer_->rayTracingActive();
-  const bool skeletal = SceneHasSkeletalSkinning(loaded_.render);
-  const bool morph = SceneHasBlendShapes(loaded_.render);
+  // --next has no RenderScene: what it can deform is recorded in the DrawScene
+  // (a bone-matrix layout for skinning, morph channels for blendshapes).
+  const bool skeletal = useNextLoader_
+                            ? draw_.boneMatrixCount > 0
+                            : SceneHasSkeletalSkinning(loaded_.render);
+  const bool morph = useNextLoader_ ? DrawSceneHasMorphChannels(draw_)
+                                    : SceneHasBlendShapes(loaded_.render);
   if (!loaded_.ok || (!skeletal && !morph)) {
     skinningReason_ = "scene has no skeletal skinning or blendshapes";
     return;
   }
-  // The CUDA/HIP ray tracers read CPU-side draw_ geometry directly, so GPU
-  // (vertex-shader) skinning never reaches them: they would trace the rest
-  // pose. Force CPU skinning so the reconvert path bakes the posed geometry
-  // into draw_ before the tracer builds its BLAS. (Also avoids the spurious
-  // "renderer mesh count 0 != draw mesh count" warning, since the raster
-  // renderer holds no meshes on the tracer-owned screenshot path.)
-  if (cudaRt_ || hipRt_) {
-    skinningReason_ = "CPU skinning (CUDA/HIP tracer reads CPU geometry)";
+  // The CUDA/HIP ray tracers read CPU-side draw_ geometry directly, so the raster
+  // vertex shader's deform never reaches them: they would trace the rest pose.
+  // Under the LEGACY loader the only way to pose them is the CPU bake, which the
+  // reconvert path writes into draw_ before the tracer builds its BVH. The next
+  // loader instead re-poses the retained rest vertices straight into draw_
+  // (poseNextDrawForTracer), so it keeps the GPU deform data -- one deform
+  // implementation for every backend, and no converter re-run per time code.
+  if ((cudaRt_ || hipRt_) && !useNextLoader_) {
+    skinningReason_ = "CPU skinning (legacy loader + CUDA/HIP tracer reads CPU geometry)";
     return;
   }
-  const int maxInfluences = MaxSkinInfluenceCount(loaded_.render);
+  // The next loader renormalizes onto the 4 strongest influences per vertex, so
+  // it never needs the extended (texture) influence path.
+  const int maxInfluences =
+      useNextLoader_ ? 0 : MaxSkinInfluenceCount(loaded_.render);
   if (maxInfluences > 4 &&
       (!renderer_->caps().supportsExtendedGpuSkinning ||
        maxInfluences > kMaxGpuTextureInfluences)) {
@@ -1187,9 +1309,9 @@ void App::updateSkinningEffective() {
 }
 
 void App::updateGpuSkinningFrameIfNeeded() {
-  // --next does not engage Tydra GPU skinning (empty loaded_.render/.stage); its
-  // GPU blendshape morph rides a separate per-frame coefficient upload.
-  if (useNextLoader_) { updateNextMorphFrameIfNeeded(); return; }
+  // --next has no RenderScene for Tydra to pose from; it re-poses from its
+  // retained Stage instead (bone matrices + GPU morph coefficients).
+  if (useNextLoader_) { updateNextDeformFrameIfNeeded(); return; }
   if (skinningEffective_ != SkinningMode::GPU || !loaded_.ok) return;
   const bool hasMorph = SceneHasBlendShapes(loaded_.render);
   const bool mixed = SceneHasNonSkeletalAnimation(loaded_.render);
@@ -1215,11 +1337,22 @@ void App::updateGpuSkinningFrameIfNeeded() {
   }
 
   // Node/xform animation alongside skinning: re-evaluate the animated mesh world
-  // transforms (no geometry re-pack) and push them to the renderer.
+  // transforms (no geometry re-pack) and push them to the renderer. All renderer
+  // uploads here go through postGpu(): on the threaded path the render thread
+  // owns the GL context (the main thread has released it), so a direct GL call
+  // from this main-thread function would hit no current context / race the
+  // render thread. postGpu runs inline when single-threaded (no behavior change).
   if (idxOk && mixed && UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_)) {
+    std::vector<std::pair<int, std::array<float, 16>>> worldUploads;
+    worldUploads.reserve(draw_.meshes.size());
     for (size_t i = 0; i < draw_.meshes.size(); ++i) {
-      renderer_->updateMeshWorld(static_cast<int>(i), draw_.meshes[i].world);
+      std::array<float, 16> w;
+      std::memcpy(w.data(), draw_.meshes[i].world, sizeof(w));
+      worldUploads.push_back({static_cast<int>(i), w});
     }
+    postGpu([this, ups = std::move(worldUploads)]() {
+      for (const auto& u : ups) renderer_->updateMeshWorld(u.first, u.second.data());
+    });
   }
 
   if (renderer_->rayTracingActive()) {
@@ -1280,11 +1413,14 @@ void App::updateGpuSkinningFrameIfNeeded() {
                                    animTime_, gui_.blendOverrides(),
                                    gui_.showSkeletonOverlay(), &uploads,
                                    gpuHandled.empty() ? nullptr : &gpuHandled)) {
+      const size_t cpuMeshes = uploads.size();  // uploads is moved below
       const auto t1 = std::chrono::steady_clock::now();
-      for (const RtSkinnedMeshUpload& upload : uploads) {
-        renderer_->updateMeshVertices(upload.meshIndex, upload.vertices);
-      }
-      if (rtTiming && (!uploads.empty() || gpuMeshes)) {
+      postGpu([this, ups = std::move(uploads)]() {
+        for (const RtSkinnedMeshUpload& upload : ups) {
+          renderer_->updateMeshVertices(upload.meshIndex, upload.vertices);
+        }
+      });
+      if (rtTiming && (cpuMeshes || gpuMeshes)) {
         const auto t2 = std::chrono::steady_clock::now();
         std::fprintf(stderr,
                      "[rt_skin] gpu %.1f ms (%zu mesh(es)), cpu skin %.1f ms, "
@@ -1293,7 +1429,7 @@ void App::updateGpuSkinningFrameIfNeeded() {
                      gpuMeshes,
                      std::chrono::duration<double, std::milli>(t1 - tg).count(),
                      std::chrono::duration<double, std::milli>(t2 - t1).count(),
-                     uploads.size());
+                     cpuMeshes);
       }
     }
     skinFrameTime_ = animTime_;
@@ -1303,8 +1439,9 @@ void App::updateGpuSkinningFrameIfNeeded() {
   // Bone matrices for GPU skinning. Blendshapes are applied in the vertex shader
   // (GPU morph, via updateMorphWeights below), not by CPU-morphing the VBO.
   if (BuildGpuSkinningFrame(loaded_.render, &draw_, animTime_, &skinFrame_,
-                            gui_.showSkeletonOverlay())) {
-    renderer_->uploadSkinningFrame(skinFrame_);
+                            gui_.showSkeletonOverlay(), &loaded_.stage,
+                            gui_.blendOverrides())) {
+    postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
   }
   // GPU blendshape morph: upload only the tiny per-channel coefficient array per
   // morphed mesh (the vertex shader sums coeff*delta). No VBO re-upload, no GPU
@@ -1313,15 +1450,18 @@ void App::updateGpuSkinningFrameIfNeeded() {
     std::vector<std::pair<int, std::vector<float>>> coeffs;
     BuildMorphChannelWeights(loaded_.stage, draw_, animTime_,
                              gui_.blendOverrides(), &coeffs);
-    for (auto& mc : coeffs) {
-      renderer_->updateMorphWeights(mc.first, mc.second);
-    }
+    postGpu([this, mc = std::move(coeffs)]() {
+      for (const auto& c : mc) renderer_->updateMorphWeights(c.first, c.second);
+    });
   }
   skinFrameTime_ = animTime_;
 }
 
-void App::updateNextMorphFrameIfNeeded() {
-  if (!useNextLoader_ || !hasNextMorph_ || !nextStage_ || !loaded_.ok) return;
+void App::updateNextDeformFrameIfNeeded() {
+  if (!useNextLoader_ || !nextSession_ || !loaded_.ok) return;
+  if (skinningEffective_ != SkinningMode::GPU) return;
+  const bool hasSkin = draw_.boneMatrixCount > 0;
+  if (!hasNextMorph_ && !hasSkin) return;
   // Manual blendshape weights (editor) re-pose even at the same time code.
   const bool blendDirty = gui_.consumeBlendDirty();
   if (skinFrameTime_ == animTime_ && !blendDirty) return;  // already posed
@@ -1329,12 +1469,107 @@ void App::updateNextMorphFrameIfNeeded() {
   // valid once the renderer holds exactly these meshes (post-streaming). Mark
   // "posed" only when we actually uploaded, so a too-early call (meshes not yet
   // streamed on the threaded path) re-tries next frame instead of latching.
+  // (The bone texture is scene-wide, so it is safe to upload before then -- but
+  // keep both on one clock so a partially-streamed frame is never half-posed.)
   if (renderer_->meshCount() != static_cast<int>(draw_.meshes.size())) return;
-  std::vector<std::pair<int, std::vector<float>>> coeffs;
-  BuildNextMorphWeights(*nextStage_, draw_, animTime_, gui_.blendOverrides(),
-                        &coeffs);
-  for (auto& mc : coeffs) renderer_->updateMorphWeights(mc.first, mc.second);
+
+  // The load-time scene box is the REST box (the loader world-bakes and uploads
+  // rest vertices; the pose only happens downstream), so refresh it for the pose
+  // at this time code -- the ground grid is sized from it, `--mode depth` is
+  // normalized by it, and the initial auto-fit frames on it. Per-MESH boxes are
+  // left alone on purpose: a skinned batch keeps the conservative scene box so a
+  // moving rig cannot cull or LOD itself out of the frame.
+  {
+    float bmin[3], bmax[3];
+    if (BuildNextPosedSceneBounds(nextSession_->GetStage(), draw_, animTime_,
+                                  gui_.blendOverrides(), bmin, bmax)) {
+      for (int k = 0; k < 3; ++k) {
+        draw_.aabbMin[k] = bmin[k];
+        draw_.aabbMax[k] = bmax[k];
+      }
+      draw_.hasBounds = true;
+    }
+  }
+
+  // Ray tracing traces the vertex buffers themselves, so the raster shader's
+  // deform never reaches it: re-pose the retained rest vertices on the CPU and
+  // hand them to the renderer, which refills the RT vertex buffer and rebuilds
+  // that mesh's BLAS. The alternative -- what this path did before -- was to
+  // re-run the whole converter at every time code.
+  if (renderer_->rayTracingActive()) {
+    std::vector<RtSkinnedMeshUpload> uploads;
+    if (BuildNextRtDeformedVertices(nextSession_->GetStage(), draw_, animTime_,
+                                    gui_.blendOverrides(), &uploads)) {
+      for (const RtSkinnedMeshUpload& up : uploads) {
+        renderer_->updateMeshVertices(up.meshIndex, up.vertices);
+      }
+    }
+    skinFrameTime_ = animTime_;
+    return;
+  }
+
+  // Renderer uploads go through postGpu() so they run on the render thread when
+  // it owns the context (threaded path); inline otherwise. See the note in
+  // updateGpuSkinningFrameIfNeeded.
+  if (hasSkin && BuildNextSkinningFrame(nextSession_->GetStage(), &draw_,
+                                        animTime_, &skinFrame_)) {
+    postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
+  }
+  if (hasNextMorph_) {
+    std::vector<std::pair<int, std::vector<float>>> coeffs;
+    BuildNextMorphWeights(nextSession_->GetStage(), draw_, animTime_,
+                          gui_.blendOverrides(), &coeffs);
+    postGpu([this, mc = std::move(coeffs)]() {
+      for (const auto& c : mc) renderer_->updateMorphWeights(c.first, c.second);
+    });
+  }
   skinFrameTime_ = animTime_;
+}
+
+bool App::sceneIsNextDeformable() const {
+  return useNextLoader_ && nextSession_ && loaded_.ok &&
+         (hasNextMorph_ || draw_.boneMatrixCount > 0);
+}
+
+// Write the pose at `time` into draw_ geometry, for the CUDA/HIP tracers -- which
+// build their BVH from draw_ meshes rather than from renderer-owned vertex
+// buffers, and so cannot be fed the way Vulkan RT is (updateMeshVertices).
+//
+// The rest pose is snapshotted on first use and restored before every re-pose, so
+// this is idempotent and can run at any time code in any order. Only deformable
+// meshes are copied. Returns true when draw_ now holds the pose at `time`.
+bool App::poseNextDrawForTracer(double time) {
+  if (!sceneIsNextDeformable()) return false;
+  if (nextRestVerts_.empty()) {
+    for (size_t i = 0; i < draw_.meshes.size(); ++i) {
+      const DrawMeshCPU& m = draw_.meshes[i];
+      if (m.vertices.empty()) continue;
+      if (m.jointIdx.empty() && m.morphDeltaHalf.empty()) continue;
+      nextRestVerts_[static_cast<int>(i)] = m.vertices;
+    }
+    if (nextRestVerts_.empty()) return false;
+  }
+  // BuildNextRtDeformedVertices deforms whatever is in draw_, so it must see the
+  // REST pose -- not the pose we left behind at the previous time code.
+  for (const auto& kv : nextRestVerts_) {
+    const size_t i = static_cast<size_t>(kv.first);
+    if (i < draw_.meshes.size()) draw_.meshes[i].vertices = kv.second;
+  }
+  std::vector<RtSkinnedMeshUpload> uploads;
+  if (!BuildNextRtDeformedVertices(nextSession_->GetStage(), draw_, time,
+                                   gui_.blendOverrides(), &uploads)) {
+    return false;
+  }
+  for (RtSkinnedMeshUpload& up : uploads) {
+    if (up.meshIndex < 0 ||
+        static_cast<size_t>(up.meshIndex) >= draw_.meshes.size()) {
+      continue;
+    }
+    draw_.meshes[static_cast<size_t>(up.meshIndex)].vertices =
+        std::move(up.vertices);
+  }
+  nextTracerPosedTime_ = time;
+  return true;
 }
 
 void App::maybeReconvertForManualBlend() {
@@ -1622,8 +1857,10 @@ bool App::renderHipViewport() {
       hipBuildStarted_ = true;
       hipBuildStart_ = std::chrono::steady_clock::now();
       const float dispScale = gui_.displacementScale();  // read on the main thread
-      // The worker reads draw_ (stable while building: no reload/anim on the HIP
-      // path) and builds + uploads on the device (hipSetDevice runs in build()).
+      poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
+      // The worker reads draw_ (stable while building: the re-pose below only runs
+      // once the build has completed) and builds + uploads on the device
+      // (hipSetDevice runs in build()).
       hipBuildThread_ = std::thread([this, dispScale] {
         std::string e;
         const bool ok = hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
@@ -1646,8 +1883,11 @@ bool App::renderHipViewport() {
     hipInteractiveBuilt_ = true;
     LOGI("HIP interactive: %zu tris%s on %s", hipTracer_.triangleCount(),
          hipTracer_.truncated() ? " [truncated]" : "", hipTracer_.deviceName());
-    // The scene now lives entirely in the GPU BVH; reclaim the (large) CPU
-    // geometry -- the interactive trace never reads draw_ geometry again.
+    // A deformable scene keeps its CPU geometry: the timeline re-poses it and
+    // rebuilds the BVH below, so draw_ is read again on every new time code.
+    if (sceneIsNextDeformable()) return true;
+    // Otherwise the scene now lives entirely in the GPU BVH; reclaim the (large)
+    // CPU geometry -- the interactive trace never reads draw_ geometry again.
     auto rssMB = [] {
       FILE* f = std::fopen("/proc/self/statm", "r");
       if (!f) return size_t(0);
@@ -1665,6 +1905,22 @@ bool App::renderHipViewport() {
     const size_t after = rssMB();
     if (before > after)
       LOGI("freed CPU geometry after RT build: %zu -> %zu MB host RSS", before, after);
+  }
+
+  // Animation. The BVH is built from vertex positions, so a new time code means a
+  // re-pose and a rebuild -- but a rebuild only, not the whole-converter re-run
+  // this path used to need (it had none: the HIP scene was simply frozen at the
+  // load time code). Synchronous: the timeline should not run ahead of what is on
+  // screen, and a rebuild is a fraction of the initial build (no conversion, no
+  // material/texture work).
+  if (sceneIsNextDeformable() && animTime_ != nextTracerPosedTime_) {
+    if (poseNextDrawForTracer(animTime_)) {
+      std::string e;
+      if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
+                            gui_.displacementScale())) {
+        LOGW("HIP re-pose rebuild failed: %s", e.c_str());
+      }
+    }
   }
 
   int w = 0, h = 0;
@@ -2014,7 +2270,18 @@ int App::run(const std::string& initialFile, int maxFrames,
     }
   }
 
+  {
+    const RendererCaps& rendererCaps = renderer_->caps();
+    LOGI("renderer: %s, GPU: %s, API: %s",
+         rendererCaps.backend_name ? rendererCaps.backend_name : "unknown",
+         rendererCaps.gpu_name.empty() ? "unknown"
+                                       : rendererCaps.gpu_name.c_str(),
+         rendererCaps.api_info.empty() ? "unknown"
+                                       : rendererCaps.api_info.c_str());
+  }
+
   gui_.setScene(&loaded_, &draw_);
+  gui_.setNextStage(nextSession_ ? &nextSession_->GetStage() : nullptr);
   gui_.setBudget(&loadCtrl_);
   // Route the GUI's GPU side-effects (viewport resize, instance visibility) to the
   // render thread; runs inline on the single-threaded path.
@@ -2352,14 +2619,22 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (!loadActive_ && (loadAllPayloads || !payloadReqs.empty())) {
       std::set<std::string> add(payloadReqs.begin(), payloadReqs.end());
       if (loadAllPayloads) {
-        for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
+        if (useNextLoader_ && nextSession_) {
+          for (const tinyusdz::next::Path& path :
+               nextSession_->GetDeferredPayloadPaths()) {
+            add.insert(path.str());
+          }
+        } else {
+          for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
+        }
       }
       startRecomposeAsync(add);
     }
 
     // Variant switch: recompose with the user's variant selections.
-    if (!loadActive_ && gui_.wantVariantSwitch() && loaded_.comp.composed &&
-        loaded_.comp.rootLayer) {
+    if (!loadActive_ && gui_.wantVariantSwitch() &&
+        ((useNextLoader_ && nextSession_) ||
+         (loaded_.comp.composed && loaded_.comp.rootLayer))) {
       loadOpts_.variantOverrides = gui_.variantOverrides();
       startRecomposeAsync(std::set<std::string>());
     }
@@ -2436,6 +2711,9 @@ int App::run(const std::string& initialFile, int maxFrames,
   // loaded at runtime via cuew) and write it in place of the rasterized capture.
   if (cudaRt_ && !screenshot.empty() && !draw_.empty()) {
     std::string cerr;
+    // The tracer builds from draw_ geometry, which the next loader hands over in
+    // its REST pose (the deform lives in the GPU skin/morph channels). Pose it.
+    poseNextDrawForTracer(animTime_);
     if (!cudaTracer_.init(&cerr)) {
       LOGW("CUDA ray tracing unavailable: %s", cerr.c_str());
     } else if (!cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
@@ -2496,6 +2774,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   // hiprtc loaded at runtime via hipew). Same scene flatten / BVH / kernel.
   if (hipRt_ && !screenshot.empty() && !draw_.empty()) {
     std::string cerr;
+    poseNextDrawForTracer(animTime_);  // as CUDA above
     if (!hipTracer_.init(&cerr)) {
       LOGW("HIP ray tracing unavailable: %s", cerr.c_str());
     } else if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,

@@ -245,10 +245,17 @@ test scene: mean |diff| 0.16/255, 0.06% of channels >32/255).
 ./build_ninja/tusdview --headless --frames 8 --screenshot out.png model.usdz
 ./build_ninja/tusdview --headless --rt --frames 8 --screenshot rt.png model.usdz
 
-# Large-scene realtime presets: resolves existing Vulkan/LOD/budget flags for
-# Caldera, Island, or ALab. Profiles do not enable texture resize or compression.
+# Large-scene realtime presets: resolve Vulkan/LOD/budget flags and render a
+# deferred-payload overview first. Payload roots with authored extents use them;
+# otherwise compact marker boxes preserve the composed spatial distribution.
+# The automatic profile also postpones DomeLight IBL precompute.
 ./build_ninja/tusdview --headless --large-scene-profile island \
   --frames 8 --screenshot island.ppm /path/to/island.usda
+
+# Explicit complete/offline-quality load (higher latency and memory):
+./build_ninja/tusdview --headless --large-scene-profile island \
+  --load-payloads --dome-ibl high --frames 1 --screenshot island-full.ppm \
+  /path/to/island.usda
 
 # Optional local harness. Set any scene path env var that exists on the machine.
 CALDERA=/path/to/caldera.usda ISLAND=/path/to/island.usda ALAB=/path/to/alab.usda \
@@ -260,6 +267,14 @@ CALDERA=/path/to/caldera.usda ISLAND=/path/to/island.usda ALAB=/path/to/alab.usd
 xvfb-run -a -s "-screen 0 1280x800x24" \
   ./build_ninja/tusdview --backend gl --frames 8 --screenshot out.png model.usdz
 ```
+
+The shared automatic policy targets a 32 GiB host and a 16 GiB GPU: 30 GiB
+process headroom, an 8 GiB effective VRAM cap, and a 512 MiB upload-staging cap.
+On an RTX 5060 Ti through the NVIDIA/Xvfb path below, first proxy frames measured
+1.36 s / 0.49 GB peak RSS (Island), 8.29 s / 2.18 GB (Caldera), and 1.97 s /
+0.55 GB (ALab). A 120-frame Island proxy run on a 1920x1080 Xvfb surface
+measured 75.0 ms present/readback p95 (81.3 ms maximum); Vulkan CPU
+record/submit p95 was 0.3 ms.
 
 `.png` and `.ppm` outputs are both supported; `--frames N` loads synchronously so
 screenshots are deterministic. Pixel-compare two screenshots (e.g. backend or
@@ -347,6 +362,9 @@ xvfb-run -a env \
   ./build_ninja/tusdview --backend vk --vk-device nvidia --rt \
   --frames 1 --size 64x64 tests/usda/anytype-001.usda
 ```
+
+Startup logs print `renderer`, `GPU`, and `API` for both OpenGL and Vulkan, so a
+headless run can reject llvmpipe without requiring `glxinfo`.
 
 A successful run prints the selected hardware device and ray-query support, for
 example:

@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 // Instanced flat-shaded prototype fragment shader. Mirrors the GL kInstancedFS
 // AOV ladder + headlight so instanced geometry looks identical across backends.
@@ -15,7 +16,9 @@ layout(location = 5) flat in int vDrawSlot;
 // the old per-draw push constant so a whole multi-draw-indirect batch shares one
 // binding: each draw's meshId + flag bits come from meta[vDrawSlot]. Instanced
 // prototypes are never selection-highlighted, so there is no emissive term.
-struct DrawMeta { ivec4 ids; };  // .x meshId, .y flags (as before)
+// Must match DrawMetaCPU / mesh_inst.vert: the skin addresses are unused here but
+// are part of the layout.
+struct DrawMeta { ivec4 ids; uint64_t jointAddr; uint64_t weightAddr; };
 layout(set = 6, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
 
 // Frame UBO (set 5): camera / scene bbox / renderMode (frame-constant).
@@ -45,6 +48,15 @@ vec3 idColor(int id) {
   if (id < 0) return vec3(0.45);
   uint h = (uint(id) + 1u) * 2654435761u;
   return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
+// Linear -> sRGB OETF for the final shaded output (see mesh.frag); the
+// framebuffer is UNORM and the scene is lit in linear space.
+vec3 linearToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+  return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
 }
 vec3 purposeColor(int p) {
   if (p == 1) return vec3(0.2, 0.8, 0.3);
@@ -108,20 +120,29 @@ void main() {
     outColor = vec4(0.18, 0.18, 0.18, 1.0); return;
   }
   vec3 V = normalize(fr.camPos.xyz - vWorldPos);
+  // Soft camera-headlight shading, matching mesh.frag / the GL backend so an
+  // instanced prototype shades like the same mesh drawn non-instanced. No
+  // material scalars here (flat prototypes): metallic 0, a mid roughness for the
+  // specular tightness.
+  vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+  float facing = max(dot(Nf, V), 0.0);
   vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
                ? normalize(fr.lightDir.xyz)
-               : normalize(vec3(1.0, 1.0, 1.0));
+               : normalize(vec3(0.3, 0.5, 0.8));
   vec3 lightColor = (dot(fr.lightColor.rgb, fr.lightColor.rgb) > 1e-8)
                         ? fr.lightColor.rgb
                         : vec3(1.0);
-  float NdotL = max(dot(N, L), 0.0);
-  vec3 H = normalize(L + V);
-  float NdotH = max(dot(N, H), 0.0);
-  vec3 amb = (fr.iblColor.w > 0.5)
-                 ? texture(uIrradianceMap, normalize(mat3(fr.envRot) * N)).rgb *
+  float key = dot(Nf, L) * 0.5 + 0.5;
+  float shade = 0.6 * facing + 0.4 * key;
+  vec3 ambient = (fr.iblColor.w > 0.5)
+                 ? vColor * texture(uIrradianceMap,
+                                    normalize(mat3(fr.envRot) * Nf)).rgb *
                        fr.iblColor.rgb
-                 : vec3(0.05);
-  vec3 col = vColor * (amb + lightColor * NdotL) +
-             lightColor * vec3(0.15) * pow(NdotH, 32.0);
-  outColor = vec4(col, vOpacity);  // instanced prototypes carry no selection emissive
+                 : vColor * 0.25;
+  vec3 H = normalize(L + V);
+  // Spec matches the GL instanced shader (kInstancedFS) exactly, so instanced
+  // prototypes are GL<->VK identical: a fixed 0.12 * pow(N.H, 32) * facing.
+  float spec = 0.12 * pow(max(dot(Nf, H), 0.0), 32.0) * facing;
+  vec3 col = ambient + vColor * lightColor * (0.75 * shade) + lightColor * spec;
+  outColor = vec4(linearToSrgb(col), vOpacity);  // no selection emissive here
 }

@@ -16,6 +16,7 @@
 #include <cstring>
 #include <cctype>
 #include <cstdint>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <string>
@@ -26,6 +27,7 @@
 #include "config.hh"
 #include "log.hh"
 #include "renderer.hh"
+#include "tydra/next/resource-budget.hh"
 
 namespace {
 
@@ -109,6 +111,26 @@ bool ParsePrimLevel(const std::string& text, std::string* prim, int* level) {
   return !prim->empty();
 }
 
+// Host memory the budget tree may plan against: MemAvailable, capped at the
+// 32 GiB the policy targets (planning against a 256 GiB workstation's full RAM
+// would size the stage/geometry limits far past anything sensible). Falls back
+// to 32 GiB where /proc/meminfo does not exist (macOS, Windows).
+uint64_t HostMemoryCapacityBytes() {
+  constexpr uint64_t kTarget = tinyusdz::tydra::next::GiB(32);
+  std::ifstream f("/proc/meminfo");
+  std::string tok;
+  while (f >> tok) {
+    if (tok == "MemAvailable:") {
+      uint64_t kb = 0;
+      f >> kb;
+      const uint64_t bytes = kb * 1024ull;
+      return bytes ? std::min(bytes, kTarget) : kTarget;
+    }
+    std::getline(f, tok);
+  }
+  return kTarget;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -125,6 +147,10 @@ int main(int argc, char** argv) {
   int maxFrames = -1;
   long long maxTris = 0;      // 0 = default budget
   double maxGpuMemGiB = 0.0;  // --max-gpu-mem: raster full-mesh VRAM cap (GiB)
+  // --vram-budget: the ONE number the whole budget tree descends from. Left at 0
+  // it is probed from the device (see QueryDeviceLocalVramBytes).
+  double vramBudgetGiB = 0.0;
+  bool vramBudgetExplicit = false;
   long long maxDrawMeshes = 0;  // --max-draw-meshes: raster full-mesh count cap
   bool robustFrame = true;      // trim outlier meshes from fit-all auto-frame
   bool rtLod = false;           // --rt-lod: view-dependent RT instance LOD
@@ -179,16 +205,18 @@ int main(int argc, char** argv) {
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
   bool headlessPlay = false;  // --play: advance the anim clock per headless frame
   bool threaded = false;      // --threaded: experimental render-thread GL path
-  bool useNextLoader = false;             // --next: next loader + flat GL preview
+  bool useNextLoader = true;              // next-core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--next)
   bool noComposition = false;             // --no-composition: root layer only
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
-  bool allowParentPaths = false;          // --allow-parent-paths: permit '..' in
-                                          // composition asset paths (e.g. ALab)
+  bool allowParentPaths = true;           // USD layer-relative paths may use '..'.
   tusdview::TextureRuntimeOptions textureOptions;
+  bool domeIblExplicit = false;
+  bool maxTextureSizeExplicit = false;
+  bool textureBudgetExplicit = false;
   std::optional<int> subdivisionLevel;
   bool subdivisionAuto = false;
   bool subdivisionAutoExplicit = false;
@@ -245,6 +273,9 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "--max-gpu-mem") == 0 && (i + 1) < argc) {
       maxGpuMemGiB = std::atof(argv[++i]);
       maxGpuMemExplicit = true;
+    } else if (std::strcmp(argv[i], "--vram-budget") == 0 && (i + 1) < argc) {
+      vramBudgetGiB = std::atof(argv[++i]);
+      vramBudgetExplicit = true;
     } else if (std::strcmp(argv[i], "--max-draw-meshes") == 0 && (i + 1) < argc) {
       maxDrawMeshes = std::atoll(argv[++i]);
       maxDrawMeshesExplicit = true;
@@ -294,6 +325,10 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "--next") == 0) {
       useNextLoader = true;
       useNextExplicit = true;
+    } else if (std::strcmp(argv[i], "--legacy-load") == 0 ||
+               std::strcmp(argv[i], "--legacyLoad") == 0) {
+      useNextLoader = false;
+      useNextExplicit = true;
     } else if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
     } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
@@ -316,11 +351,13 @@ int main(int argc, char** argv) {
       if (textureOptions.maxTextureSize < 0) {
         textureOptions.maxTextureSize = 0;
       }
+      maxTextureSizeExplicit = true;
     } else if (std::strcmp(argv[i], "--texture-budget-mb") == 0 && (i + 1) < argc) {
       textureOptions.textureBudgetMB = std::atoi(argv[++i]);
       if (textureOptions.textureBudgetMB < 0) {
         textureOptions.textureBudgetMB = 0;
       }
+      textureBudgetExplicit = true;
     } else if (std::strcmp(argv[i], "--subdivision-level") == 0 && (i + 1) < argc) {
       subdivisionLevel = std::max(0, std::atoi(argv[++i]));
     } else if (std::strncmp(argv[i], "--subdivision-level=", 20) == 0) {
@@ -361,8 +398,25 @@ int main(int argc, char** argv) {
         textureOptions.compression = tusdview::TextureCompressionMode::BCn;
       } else if (std::strcmp(mode, "bc7") == 0) {
         textureOptions.compression = tusdview::TextureCompressionMode::BC7;
+      } else if (std::strcmp(mode, "astc") == 0) {
+        textureOptions.compression = tusdview::TextureCompressionMode::Astc;
+      } else if (std::strcmp(mode, "etc2") == 0) {
+        textureOptions.compression = tusdview::TextureCompressionMode::Etc2;
+      } else if (std::strcmp(mode, "auto") == 0) {
+        textureOptions.compression = tusdview::TextureCompressionMode::Auto;
       } else {
-        LOGE("--texture-compress must be off, bc or bc7");
+        LOGE("--texture-compress must be off, bc, bc7, astc, etc2 or auto");
+        return 1;
+      }
+    } else if (std::strcmp(argv[i], "--texture-keep-compressed") == 0 &&
+               (i + 1) < argc) {
+      const char* mode = argv[++i];
+      if (std::strcmp(mode, "on") == 0) {
+        textureOptions.keepCompressed = true;
+      } else if (std::strcmp(mode, "off") == 0) {
+        textureOptions.keepCompressed = false;
+      } else {
+        LOGE("--texture-keep-compressed must be on or off");
         return 1;
       }
     } else if (std::strcmp(argv[i], "--texture-mips") == 0 && (i + 1) < argc) {
@@ -376,6 +430,7 @@ int main(int argc, char** argv) {
         return 1;
       }
     } else if (std::strcmp(argv[i], "--dome-ibl") == 0 && (i + 1) < argc) {
+      domeIblExplicit = true;
       const char* mode = argv[++i];
       if (std::strcmp(mode, "off") == 0) {
         textureOptions.domeIbl = 0;
@@ -547,16 +602,20 @@ int main(int argc, char** argv) {
           "  --max-instances N  Cap the --cuda/--hip 2-level-BVH instance count "
           "(default 16M; 0 = unlimited). Bounds the host BVH build for massively "
           "instanced scenes (e.g. Moana Island).\n"
-          "  --lod-stream  View-dependent district LOD (needs --next): promote "
+          "  --lod-stream  View-dependent district LOD: promote "
           "the camera-nearest districts to full under memory budgets.\n"
           "  --max-mem G / --max-vram G  Host / GPU GiB budgets for --lod-stream "
           "(0 = auto, 50%%).\n"
-          "  --camera NAME Frame a named USD Camera (--next path) instead of "
+          "  --camera NAME Frame a named USD Camera instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
           "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
           "Vulkan realtime preset for public large scenes. Profiles set existing "
           "large-scene knobs only; explicit CLI flags win. No texture resize or "
           "compression behavior is changed.\n"
+          "  --vram-budget G  GPU memory the large-scene budgets may plan "
+          "against (GiB). Default: probed from the device. Everything else "
+          "(--max-gpu-mem, texture edge/byte caps, upload staging) is derived "
+          "from it, so lowering this one number rehearses a smaller card.\n"
           "  --max-asset-bytes N  Override the per-asset composition read cap "
           "(default 512M; accepts K/M/G suffix, e.g. 2G) for scenes with large "
           "single crates (e.g. Moore Lane's 896MB subLayer).\n"
@@ -571,8 +630,9 @@ int main(int argc, char** argv) {
           "live in the Inspector's Blend Shapes panel.\n"
           "  --headless    Windowless offscreen rendering, no display needed "
           "(Vulkan only; needs --frames + --screenshot/--window-shot).\n"
-          "  --next        Load via the `next` lazy loader + tydra-next converter "
-          "(flat-shaded OpenGL preview for large scenes; defaults to --backend gl).\n"
+          "  --next        Use the default next-core + tydra-next loader "
+          "(compatibility flag).\n"
+          "  --legacy-load Use the legacy eager loader.\n"
           "  --no-composition  Load the root layer only (skip USD composition arcs).\n"
           "  --defer-payloads  Lazy payloads: skip payload arcs on load; load on "
           "demand from the GUI (default for interactive runs).\n"
@@ -581,9 +641,9 @@ int main(int argc, char** argv) {
           "  --defer-references  Also defer `references` arcs (loaded on demand "
           "like payloads). Non-standard: USD assumes references always resolve, "
           "so most scene content stays unloaded until requested.\n"
-          "  --allow-parent-paths  Permit parent-directory ('..') segments in "
-          "composition asset paths (rejected by default as unsafe). Needed by some "
-          "production scenes, e.g. Animal Logic ALab's `../lightingrenderovers/`.\n"
+          "  --allow-parent-paths  Compatibility flag: parent-directory ('..') "
+          "segments are permitted by default because USD anchors them to the "
+          "authoring layer.\n"
           "  --texture-max-size N  Downsize decoded textures whose longest edge "
           "exceeds N texels (0 = keep source size).\n"
           "  --texture-budget-mb N  Best-effort decoded texture memory budget "
@@ -632,6 +692,32 @@ int main(int argc, char** argv) {
   if (effectiveProfile == LargeSceneProfile::Auto) {
     effectiveProfile = DetectProfileFromPath(file);
   }
+  // Every large-scene budget -- --max-gpu-mem, the texture edge/byte caps, the
+  // upload-staging cap, the proxy threshold -- descends from these two numbers.
+  // They used to be the literals GiB(32) and GiB(16): the budget tree was
+  // computed for an imaginary 32 GiB / 16 GiB machine no matter what you ran on,
+  // so an 8 GiB card was handed a 8 GiB VRAM limit and a 24 GiB card left half
+  // its memory unused. Probe the real values; --vram-budget overrides the GPU
+  // side (useful to rehearse a smaller card, or when the probe is unavailable).
+  const uint64_t hostCapacity = HostMemoryCapacityBytes();
+  uint64_t vramCapacity = 0;
+  if (vramBudgetExplicit && vramBudgetGiB > 0.0) {
+    vramCapacity = static_cast<uint64_t>(
+        vramBudgetGiB * double(tinyusdz::tydra::next::GiB(1)));
+  } else {
+#if defined(HAVE_VULKAN)
+    vramCapacity = tusdview::QueryDeviceLocalVramBytes();
+#endif
+    // No Vulkan, or the probe failed: keep the historical 16 GiB assumption
+    // rather than collapsing every budget to zero.
+    if (vramCapacity == 0) vramCapacity = tinyusdz::tydra::next::GiB(16);
+  }
+  const tinyusdz::tydra::next::ResourceBudget targetBudget =
+      tinyusdz::tydra::next::ComputeResourceBudget(hostCapacity, vramCapacity);
+  const double targetVramGiB =
+      double(targetBudget.vram_limit) / double(tinyusdz::tydra::next::GiB(1));
+  const double targetHostGiB =
+      double(targetBudget.host_limit) / double(tinyusdz::tydra::next::GiB(1));
   if (effectiveProfile != LargeSceneProfile::Off) {
     if (!useNextExplicit) useNextLoader = true;
     if (!backendExplicit) {
@@ -644,35 +730,52 @@ int main(int argc, char** argv) {
     if (!rtLodCullExplicit) rtLodCullPx = 2.0f;
     if (!rtLodBandExplicit) rtLodBand = 0.25f;
     if (!maxAssetBytesExplicit) maxAssetReadBytes = 2ull * 1024ull * 1024ull * 1024ull;
+    if (!domeIblExplicit) textureOptions.domeIbl = 0;
+    // Bound texture residency the same way geometry already is. The --next
+    // loader applies these while decoding, so peak RAM is bounded too.
+    {
+      const tinyusdz::tydra::next::TextureBudget textureBudget =
+          tinyusdz::tydra::next::DeriveTextureBudget(targetBudget);
+      if (!maxTextureSizeExplicit && textureBudget.max_edge > 0) {
+        textureOptions.maxTextureSize = static_cast<int>(textureBudget.max_edge);
+      }
+      if (!textureBudgetExplicit && textureBudget.budget_bytes > 0) {
+        textureOptions.textureBudgetMB =
+            static_cast<int>(textureBudget.budget_bytes / (1024ull * 1024ull));
+      }
+    }
 
     if (effectiveProfile == LargeSceneProfile::Caldera) {
       if (!maxTrisExplicit) maxTris = 40000000;
-      if (!maxGpuMemExplicit) maxGpuMemGiB = 12.0;
+      if (!maxGpuMemExplicit) maxGpuMemGiB = targetVramGiB;
       if (!maxDrawMeshesExplicit) maxDrawMeshes = 80000;
       if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
       if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
       if (cameraName.empty()) cameraName = "phospate_mine_overview";
     } else if (effectiveProfile == LargeSceneProfile::Island) {
-      if (!maxGpuMemExplicit) maxGpuMemGiB = 10.0;
+      if (!maxGpuMemExplicit) maxGpuMemGiB = targetVramGiB;
       if (!maxDrawMeshesExplicit) maxDrawMeshes = 20000;
       if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
       if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
     } else if (effectiveProfile == LargeSceneProfile::ALab) {
-      if (!maxGpuMemExplicit) maxGpuMemGiB = 10.0;
+      if (!maxGpuMemExplicit) maxGpuMemGiB = targetVramGiB;
       if (!maxDrawMeshesExplicit) maxDrawMeshes = 50000;
       if (!rasterLodFullExplicit) rasterLodFullPx = 36.0f;
       if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
       if (!allowParentPathsExplicit) allowParentPaths = true;
     } else {
-      if (!maxGpuMemExplicit) maxGpuMemGiB = 10.0;
+      if (!maxGpuMemExplicit) maxGpuMemGiB = targetVramGiB;
       if (!maxDrawMeshesExplicit) maxDrawMeshes = 40000;
       if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
       if (!rasterLodCullExplicit) rasterLodCullPx = 1.5f;
     }
-    if (effectiveProfile == LargeSceneProfile::Caldera && !lodStreamExplicit) {
-      lodStream = true;
-      if (!lodMaxMemExplicit) lodMaxMem = 32.0;
-      if (!lodMaxVramExplicit) lodMaxVram = 8.0;
+    // The district wrapper prepass composes a full proxy stage before the
+    // viewer load and can consume the entire first-frame latency budget.
+    // Keep it as an explicit refinement tool (`--lod-stream`); automatic
+    // profiles start from deferred payload markers instead.
+    if (lodStream) {
+      if (!lodMaxMemExplicit) lodMaxMem = targetHostGiB;
+      if (!lodMaxVramExplicit) lodMaxVram = targetVramGiB;
     }
   }
   if (maxAssetReadBytes > 0) {
@@ -705,6 +808,13 @@ int main(int argc, char** argv) {
 #endif
 
   if (effectiveProfile != LargeSceneProfile::Off) {
+    LOGI("resource budget: vram capacity=%.1f GiB (%s) -> limit=%.1f GiB, "
+         "host capacity=%.1f GiB -> limit=%.1f GiB",
+         double(vramCapacity) / double(tinyusdz::tydra::next::GiB(1)),
+         vramBudgetExplicit ? "--vram-budget" : "probed",
+         targetVramGiB,
+         double(hostCapacity) / double(tinyusdz::tydra::next::GiB(1)),
+         targetHostGiB);
     LOGI("large-scene-profile %s resolved: backend=%s --next=%s "
          "--raster-lod=%s full=%.1f cull=%.1f --rt-lod=%s full=%.1f cull=%.1f "
          "--max-gpu-mem=%.1f --max-draw-meshes=%lld --max-tris=%lld",
@@ -788,6 +898,15 @@ int main(int argc, char** argv) {
   {
     tusdview::LoadOptions lo;
     lo.composition = !noComposition;
+    if (effectiveProfile != LargeSceneProfile::Off) {
+      lo.maxMemoryBytes = static_cast<size_t>(targetBudget.host_limit);
+      lo.gpuGeometryBudgetBytes = static_cast<size_t>(
+          maxGpuMemExplicit && maxGpuMemGiB > 0.0
+              ? maxGpuMemGiB * double(tinyusdz::tydra::next::GiB(1))
+              : double(targetBudget.gpu_geometry_limit));
+      lo.uploadStagingBytes =
+          static_cast<size_t>(targetBudget.upload_staging_limit);
+    }
     if (config.status == tusdview::ConfigLoadStatus::Loaded) {
       if (config.config.composition && !noComposition) {
         lo.composition = *config.config.composition;
@@ -796,7 +915,9 @@ int main(int argc, char** argv) {
         deferPayloads = (*config.config.payloadPolicy == "defer");
       }
     }
-    const bool defer = deferPayloads.value_or(maxFrames < 0 && !headless);
+    const bool defer = deferPayloads.value_or(
+        effectiveProfile != LargeSceneProfile::Off ||
+        (maxFrames < 0 && !headless));
     lo.payloadPolicy = defer ? tusdview::PayloadPolicy::DeferAll
                              : tusdview::PayloadPolicy::LoadAll;
     // Explicit opt-in only (no headless default flip): deferring references is

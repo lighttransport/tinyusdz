@@ -7,8 +7,8 @@
 #pragma once
 
 #include "prim-spec.hh"
+#include <algorithm>
 #include <string>
-#include <string_view>
 #include <vector>
 #include <memory>
 #include <unordered_map>
@@ -19,17 +19,15 @@ namespace next {
 /// Layer metadata
 struct LayerMeta {
   std::string defaultPrim;
+  bool defaultPrim_set = false;
   std::string upAxis = "Y";
   double metersPerUnit = 0.01;
   double timeCodesPerSecond = 24.0;
   double startTimeCode = 0.0;
   double endTimeCode = 0.0;
-
-  // Authored-tracking flags for the value-defaulted fields above, so the writer
-  // re-emits an authored opinion even when it equals the schema fallback (e.g.
-  // `upAxis = "Y"`, `metersPerUnit = 0.01`) -- matching pxr usdcat, which prints
-  // authored stage metadata regardless of value. Without these the writer could
-  // only "omit if == default" and silently dropped authored defaults on flatten.
+  // Authored flags for the core fields above: an opinion authored AT the
+  // fallback value ("upAxis = \"Y\"", "startTimeCode = 0") must round-trip
+  // as authored, and an unauthored field must not be written.
   bool upAxis_set = false;
   bool metersPerUnit_set = false;
   bool timeCodesPerSecond_set = false;
@@ -45,16 +43,115 @@ struct LayerMeta {
   bool kilogramsPerUnit_set = false;
   std::string colorConfiguration;   // asset path
   std::string colorManagementSystem;  // token
+  bool colorConfiguration_set = false;
+  bool colorManagementSystem_set = false;
 
   std::string doc;
   std::string comment;
+  std::string owner;
+  bool doc_set = false;
+  bool comment_set = false;
+  bool owner_set = false;
+
+  // Authored pseudo-root namespace order (`reorder rootPrims = [...]`).
+  std::vector<std::string> rootPrimOrder;
+  bool rootPrimOrder_set = false;
 
   // Dictionary-valued stage metadata (Dictionary Value; empty when unauthored).
   Value customLayerData;
   Value expressionVariables;
+  bool customLayerData_set = false;
+  bool expressionVariables_set = false;
+
+  // Layer-level relocates (SdfRelocates, USD 24.11+): composed source path
+  // -> new path. Applied by pcp during stage build (cross-arc prims only).
+  std::vector<std::pair<std::string, std::string>> relocates;
+  // Authored bit: distinguishes explicit-empty `relocates = {}` from
+  // unauthored (matters for layer diffing and round-trip fidelity).
+  bool relocates_set = false;
 
   // Sublayer paths for composition
   std::vector<std::string> subLayers;
+  // Authored bit for subLayers (explicit-empty `subLayers = []` vs absent).
+  bool subLayers_set = false;
+  // Per-sublayer layer offsets (offset, scale), parallel to subLayers.
+  // May be shorter than subLayers (older files / API construction): missing
+  // entries are identity (0, 1).
+  std::vector<std::pair<double, double>> subLayerOffsets;
+
+  // Unknown (unmodeled) stage metadata preserved as raw source text in
+  // authored order; the USDA writer re-emits it verbatim.
+  std::vector<std::pair<std::string, std::string>> unknownMeta;
+  // Decodable unregistered USDC fields retained by name and typed value.
+  std::vector<TypedExtensionField> unknownFields;
+
+  /// Fill stage-metadata fields this layer leaves unauthored from a WEAKER
+  /// layer (a sublayer): stage metadata resolves through the whole root
+  /// layer stack in pxr (upAxis/metersPerUnit/timeCodesPerSecond/...), so a
+  /// flatten engine must gap-fill before dropping the subLayers list. Call
+  /// with sublayers strongest-first.
+  void FillAbsentStageMetaFrom(const LayerMeta& weaker) {
+    if (!rootPrimOrder_set &&
+        (weaker.rootPrimOrder_set || !weaker.rootPrimOrder.empty())) {
+      rootPrimOrder = weaker.rootPrimOrder;
+      rootPrimOrder_set = true;
+    }
+    if (!defaultPrim_set &&
+        (weaker.defaultPrim_set || !weaker.defaultPrim.empty())) {
+      defaultPrim = weaker.defaultPrim;
+      defaultPrim_set = true;
+    }
+    if (!doc_set && weaker.doc_set) {
+      doc = weaker.doc;
+      doc_set = true;
+    }
+    if (!owner_set && weaker.owner_set) {
+      owner = weaker.owner;
+      owner_set = true;
+    }
+    if (!comment_set && weaker.comment_set) {
+      comment = weaker.comment;
+      comment_set = true;
+    }
+    if (!colorConfiguration_set && weaker.colorConfiguration_set) {
+      colorConfiguration = weaker.colorConfiguration;
+      colorConfiguration_set = true;
+    }
+    if (!colorManagementSystem_set && weaker.colorManagementSystem_set) {
+      colorManagementSystem = weaker.colorManagementSystem;
+      colorManagementSystem_set = true;
+    }
+    if (!upAxis_set && weaker.upAxis_set) {
+      upAxis = weaker.upAxis;
+      upAxis_set = true;
+    }
+    if (!metersPerUnit_set && weaker.metersPerUnit_set) {
+      metersPerUnit = weaker.metersPerUnit;
+      metersPerUnit_set = true;
+    }
+    if (!timeCodesPerSecond_set && weaker.timeCodesPerSecond_set) {
+      timeCodesPerSecond = weaker.timeCodesPerSecond;
+      timeCodesPerSecond_set = true;
+    }
+    if (!framesPerSecond_set && weaker.framesPerSecond_set) {
+      framesPerSecond = weaker.framesPerSecond;
+      framesPerSecond_set = true;
+    }
+    if (!kilogramsPerUnit_set && weaker.kilogramsPerUnit_set) {
+      kilogramsPerUnit = weaker.kilogramsPerUnit;
+      kilogramsPerUnit_set = true;
+    }
+    if (!startTimeCode_set && weaker.startTimeCode_set) {
+      startTimeCode = weaker.startTimeCode;
+      startTimeCode_set = true;
+    }
+    if (!endTimeCode_set && weaker.endTimeCode_set) {
+      endTimeCode = weaker.endTimeCode;
+      endTimeCode_set = true;
+    }
+    MergeWeakerRawFields(&unknownMeta, weaker.unknownMeta);
+    MergeWeakerExtensionFields(&unknownFields, weaker.unknownFields);
+  }
 };
 
 /// Layer - owns all PrimSpecs for a USD file
@@ -105,10 +202,34 @@ public:
   /// subtrees out of order. Clears the path index (rebuild after).
   void sort_prims_by_path();
 
+  /// Apply authored root/nameChildren ordering to hierarchy index vectors.
+  void apply_namespace_ordering();
+
   /// Clone the layer. PrimSpecs are deep-cloned, while Value array payloads keep
   /// their copy-on-write/lazy shared backing, so this is cheap for crate-backed
   /// large arrays.
   Layer Clone() const;
+
+  // ============================================================
+  // Path-addressed authoring (post-load editing)
+  // ============================================================
+
+  /// Define (or fetch) a prim at an absolute path, creating missing ancestors
+  /// as typeless `def`s (pxr DefinePrim semantics). If the prim already exists,
+  /// a non-empty `type_name` overwrites its type and `specifier` is applied.
+  /// Keeps the path index and root/child links up to date incrementally.
+  /// Returns the prim's index, or UINT32_MAX for an invalid path (empty,
+  /// relative, or containing empty components).
+  uint32_t define_prim_at_path(const std::string& path,
+                               const std::string& type_name = "",
+                               PrimSpecifier specifier = PrimSpecifier::Def);
+
+  /// Remove the prim at `path` (and its whole subtree) from the hierarchy:
+  /// unlinks it from its parent / the root list and drops all subtree entries
+  /// from the path index. The PrimSpec storage itself is append-only, so the
+  /// removed specs stay allocated but unreachable (writers traverse from
+  /// root_indices). Returns false if no prim exists at `path`.
+  bool remove_prim_at_path(const std::string& path);
 
   // ============================================================
   // Access
@@ -132,6 +253,12 @@ public:
 
   /// Get root prim indices
   const std::vector<uint32_t>& root_indices() const { return root_indices_; }
+
+  /// Replace the root prim order (namespace reordering; e.g. the crate reader
+  /// restoring authored order from the pseudo-root's primChildren).
+  void set_root_indices(std::vector<uint32_t>&& idx) {
+    root_indices_ = std::move(idx);
+  }
 
   /// Get all prims (flat array)
   const std::vector<PrimSpec>& prims() const { return prims_; }
@@ -181,13 +308,8 @@ public:
 
   /// Start a new prim at the given path
   /// Returns the prim index
-  uint32_t begin_prim(std::string_view name, std::string_view type_name,
+  uint32_t begin_prim(const std::string& name, const std::string& type_name,
                       PrimSpecifier specifier = PrimSpecifier::Def);
-
-  /// Start a new prim with an explicit absolute path.
-  /// Returns the prim index.
-  uint32_t begin_prim(std::string_view name, std::string_view type_name,
-                      PrimSpecifier specifier, std::string_view full_path);
 
   /// End current prim (validates and finalizes)
   void end_prim();
@@ -196,13 +318,13 @@ public:
   PrimSpec* current();
 
   /// Add property to current prim
-  void add_property(std::string_view name, Value value, uint16_t flags = 0);
+  void add_property(const std::string& name, Value value, uint16_t flags = 0);
 
   /// Add time sample to current prim
-  void add_time_sample(std::string_view prop_name, double time, Value value);
+  void add_time_sample(const std::string& prop_name, double time, Value value);
 
   /// Add relationship to current prim
-  void add_relationship(std::string_view name, const Path& target);
+  void add_relationship(const std::string& name, const Path& target);
 
   /// Set metadata on current prim
   void set_active(bool active);

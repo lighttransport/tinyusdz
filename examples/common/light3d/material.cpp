@@ -348,6 +348,11 @@ uniform vec3 uEmissive;
 uniform float uAlpha;
 uniform int uAlphaMode;       // 0=opaque, 1=mask, 2=blend
 uniform float uAlphaCutoff;
+// Specular F0 (T12): specular workflow -> specularColor directly; else the
+// dielectric reflectance from ior. Unified with the Vulkan mesh.frag.
+uniform int uUseSpecularWorkflow;
+uniform vec3 uSpecularColor;
+uniform float uIor;
 // When set, shade with the geometric (screen-derivative) normal -- used for
 // meshes without authored normals so hard surfaces aren't smeared by smooth
 // (averaged) normals.
@@ -388,6 +393,9 @@ uniform sampler2DArray uEmissiveUdimTex;
 uniform isampler1D uEmissiveUdimLut;
 uniform bool uHasEmissiveTex;
 uniform bool uEmissiveTexIsUdim;
+// Per-slot UV set: 0 = vUV (texcoords_0), 1 = vUV1 (texcoords_1).
+// x = base color, y = metal/rough, z = normal, w = emissive.
+uniform ivec4 uUvSet;
 uniform vec3 uBaseColorUv0;   // m00,m01,tx
 uniform vec3 uBaseColorUv1;   // m10,m11,ty
 uniform vec3 uMetalRoughUv0;
@@ -465,6 +473,27 @@ vec2 xformUv(vec2 uv, vec3 row0, vec3 row1) {
     return vec2(dot(vec3(uv, 1.0), row0), dot(vec3(uv, 1.0), row1));
 }
 
+// Linear -> sRGB OETF for the final shaded output. sRGB base-color textures are
+// uploaded as GL_SRGB8_ALPHA8 (linearized on sample) and the scene is lit in
+// linear space, so the encode happens here (the FBO is plain RGBA8). Lit path
+// only -- AOVs stay raw. Matches the Vulkan mesh.frag.
+vec3 linearToSrgb(vec3 c) {
+    c = clamp(c, 0.0, 1.0);
+    vec3 lo = c * 12.92;
+    vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+    return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));
+}
+
+// Specular F0 (T12), matching the Vulkan mesh.frag: specular workflow ->
+// specularColor; else the dielectric reflectance from ior lerped to base by
+// metalness. ior 1.5 (the default) gives exactly 0.04.
+vec3 computeF0(vec3 base, float metallic) {
+    if (uUseSpecularWorkflow != 0) return uSpecularColor;
+    float ior = max(1.0, uIor);
+    float d = (ior - 1.0) / (ior + 1.0);
+    return mix(vec3(d * d), base, clamp(metallic, 0.0, 1.0));
+}
+
 float channelOf(vec4 c, int ch) {
     if (ch == 1) return c.g;
     if (ch == 2) return c.b;
@@ -480,7 +509,7 @@ void main() {
     float opacity = clamp(uAlpha, 0.0, 1.0);
 
     if (uHasBaseColorTex) {
-        vec2 uv = xformUv(vUV, uBaseColorUv0, uBaseColorUv1);
+        vec2 uv = xformUv(uUvSet.x == 1 ? vUV1 : vUV, uBaseColorUv0, uBaseColorUv1);
         vec4 texel = uBaseColorTexIsUdim
                          ? sampleUdim(uBaseColorUdimTex, uBaseColorUdimLut, uv)
                          : texture(uBaseColorTex, uv);
@@ -489,7 +518,7 @@ void main() {
         opacity *= clamp(sample.a, 0.0, 1.0);
     }
     if (uHasMetalRoughTex) {
-        vec2 uv = xformUv(vUV, uMetalRoughUv0, uMetalRoughUv1);
+        vec2 uv = xformUv(uUvSet.y == 1 ? vUV1 : vUV, uMetalRoughUv0, uMetalRoughUv1);
         vec4 mr = uMetalRoughTexIsUdim
                       ? sampleUdim(uMetalRoughUdimTex, uMetalRoughUdimLut, uv)
                       : texture(uMetalRoughTex, uv);
@@ -497,7 +526,7 @@ void main() {
         metallic *= channelOf(mr, uMetallicChannel) * uMetallicTexScale + uMetallicTexBias;
     }
     if (uHasEmissiveTex) {
-        vec2 uv = xformUv(vUV, uEmissiveUv0, uEmissiveUv1);
+        vec2 uv = xformUv(uUvSet.w == 1 ? vUV1 : vUV, uEmissiveUv0, uEmissiveUv1);
         vec4 texel = uEmissiveTexIsUdim
                          ? sampleUdim(uEmissiveUdimTex, uEmissiveUdimLut, uv)
                          : texture(uEmissiveTex, uv);
@@ -508,12 +537,26 @@ void main() {
                  ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
                  : normalize(vNormal);
     if (uHasNormalTex) {
-        vec2 uv = xformUv(vUV, uNormalUv0, uNormalUv1);
+        vec2 uv = xformUv(uUvSet.z == 1 ? vUV1 : vUV, uNormalUv0, uNormalUv1);
         vec3 tangentNormal = ((uNormalTexIsUdim
                                   ? sampleUdim(uNormalUdimTex, uNormalUdimLut, uv)
                                   : texture(uNormalTex, uv)) * uNormalTexScale +
                               uNormalTexBias).xyz;
-        N = normalize(N + tangentNormal * 0.1);
+        // Full derivative TBN (unified with the Vulkan backend). The old
+        // `normalize(N + tangentNormal*0.1)` was a weak non-TBN perturbation
+        // that made relief nearly flat on GL and pronounced on VK; build the
+        // tangent frame from the screen-space position/UV gradients so the
+        // tangent-space sample perturbs N at full strength in the right basis.
+        vec3 dp1 = dFdx(vWorldPos);
+        vec3 dp2 = dFdy(vWorldPos);
+        vec2 du1 = dFdx(uv);
+        vec2 du2 = dFdy(uv);
+        float r = du1.x * du2.y - du2.x * du1.y;
+        vec3 t = dp1 * du2.y - dp2 * du1.y;
+        t = (abs(r) > 1e-8) ? t / r : dp1;
+        t = normalize(t - N * dot(N, t));
+        vec3 b = normalize(cross(N, t)) * (r < 0.0 ? -1.0 : 1.0);
+        N = normalize(mat3(t, b, N) * tangentNormal);
     }
     if (uAlphaMode == 1) {
         opacity = (opacity >= uAlphaCutoff) ? 1.0 : 0.0;
@@ -636,7 +679,7 @@ void main() {
         vec3 pref = textureLod(uPrefilteredMap, Re, lod).rgb;
         vec2 dfg = texture(uBrdfLut, vec2(max(dot(Nf, V), 0.0),
                                           clamp(roughness, 0.0, 1.0))).rg;
-        vec3 F0 = mix(vec3(0.04), baseColor, metallic);
+        vec3 F0 = computeF0(baseColor, metallic);
         ambient = (baseColor * (1.0 - metallic) * irr +
                    pref * (F0 * dfg.x + dfg.y)) * uIblColor;
     } else {
@@ -647,13 +690,13 @@ void main() {
     vec3 H = normalize(L + V);
     float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
-    vec3 specColor = mix(vec3(0.04), baseColor, metallic);
+    vec3 specColor = computeF0(baseColor, metallic);
     vec3 specular = specColor * lightColor * pow(NdotH, specPower) * facing;
 
     if (uAlphaMode == 1 && opacity <= 0.0) {
         discard;
     }
-    vec3 color = ambient + diffuse + specular + emissive;
+    vec3 color = linearToSrgb(ambient + diffuse + specular + emissive);
     fragColor = vec4(color, opacity);
 }
 )glsl";

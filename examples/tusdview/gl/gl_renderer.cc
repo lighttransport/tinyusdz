@@ -37,6 +37,32 @@ void SetUvUniform(GLint loc0, GLint loc1, const DrawUvXformCPU& uv) {
   glUniform3f(loc1, uv.m10, uv.m11, uv.ty);
 }
 
+// Compressed-format enum values that may be absent from older glad headers.
+#ifndef GL_COMPRESSED_RG_RGTC2
+#define GL_COMPRESSED_RG_RGTC2 0x8DBD
+#endif
+#ifndef GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT
+#define GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT 0x8E8F
+#endif
+#ifndef GL_COMPRESSED_RGB8_ETC2
+#define GL_COMPRESSED_RGB8_ETC2 0x9274
+#endif
+#ifndef GL_COMPRESSED_SRGB8_ETC2
+#define GL_COMPRESSED_SRGB8_ETC2 0x9275
+#endif
+#ifndef GL_COMPRESSED_RGBA8_ETC2_EAC
+#define GL_COMPRESSED_RGBA8_ETC2_EAC 0x9278
+#endif
+#ifndef GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC
+#define GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC 0x9279
+#endif
+#ifndef GL_COMPRESSED_RGBA_ASTC_4x4_KHR
+#define GL_COMPRESSED_RGBA_ASTC_4x4_KHR 0x93B0
+#endif
+#ifndef GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR
+#define GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR 0x93D0
+#endif
+
 GLenum GLCompressedFormat(DrawCompressedFormat format, bool srgb) {
   switch (format) {
     case DrawCompressedFormat::BC1:
@@ -45,10 +71,24 @@ GLenum GLCompressedFormat(DrawCompressedFormat format, bool srgb) {
     case DrawCompressedFormat::BC3:
       return srgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
                   : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+    case DrawCompressedFormat::BC5:
+      // GL_ARB_texture_compression_rgtc (core since GL 3.0). No sRGB variant.
+      return GL_COMPRESSED_RG_RGTC2;
+    case DrawCompressedFormat::BC6H:
+      // GL_ARB_texture_compression_bptc float (HDR). No sRGB variant.
+      return GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT;
     case DrawCompressedFormat::BC7:
       // GL_ARB_texture_compression_bptc (core since GL 4.2).
       return srgb ? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM
                   : GL_COMPRESSED_RGBA_BPTC_UNORM;
+    case DrawCompressedFormat::ETC2_RGB:
+      return srgb ? GL_COMPRESSED_SRGB8_ETC2 : GL_COMPRESSED_RGB8_ETC2;
+    case DrawCompressedFormat::ETC2_RGBA:
+      return srgb ? GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC
+                  : GL_COMPRESSED_RGBA8_ETC2_EAC;
+    case DrawCompressedFormat::ASTC_4x4:
+      return srgb ? GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR
+                  : GL_COMPRESSED_RGBA_ASTC_4x4_KHR;
     case DrawCompressedFormat::None:
     default:
       return 0;
@@ -111,6 +151,25 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   caps_.api_info = version ? reinterpret_cast<const char*>(version) : "OpenGL";
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize_);
 
+  // Compressed-texture format support (extension strings + core versions).
+  {
+    std::string exts;
+    GLint next = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &next);
+    exts.reserve(static_cast<size_t>(next) * 24);
+    for (GLint i = 0; i < next; ++i) {
+      const GLubyte* e = glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i));
+      if (e) { exts += reinterpret_cast<const char*>(e); exts += ' '; }
+    }
+    auto has = [&](const char* s) { return exts.find(s) != std::string::npos; };
+    const bool bptc = has("texture_compression_bptc") || GLAD_GL_VERSION_4_2;
+    caps_.supportsBC = has("GL_EXT_texture_compression_s3tc") || bptc;  // BC1/3/7
+    caps_.supportsBC5 = has("texture_compression_rgtc") || GLAD_GL_VERSION_3_0;
+    caps_.supportsBC6H = bptc;
+    caps_.supportsASTC = has("GL_KHR_texture_compression_astc_ldr");
+    caps_.supportsETC2 = has("GL_ARB_ES3_compatibility") || GLAD_GL_VERSION_4_3;
+  }
+
   program_ = glutil::CompileProgram(light3d::getMaterialVertexShaderGL330(),
                                     light3d::getMaterialFragmentShaderGL330(), err);
   if (!program_) {
@@ -144,6 +203,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
+  uUseSpecularWorkflow_ = glGetUniformLocation(program_, "uUseSpecularWorkflow");
+  uSpecularColor_ = glGetUniformLocation(program_, "uSpecularColor");
+  uIor_ = glGetUniformLocation(program_, "uIor");
   uEmissive_ = glGetUniformLocation(program_, "uEmissive");
   uAlpha_ = glGetUniformLocation(program_, "uAlpha");
   uAlphaMode_ = glGetUniformLocation(program_, "uAlphaMode");
@@ -164,6 +226,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uNormalUv1_ = glGetUniformLocation(program_, "uNormalUv1");
   uEmissiveUv0_ = glGetUniformLocation(program_, "uEmissiveUv0");
   uEmissiveUv1_ = glGetUniformLocation(program_, "uEmissiveUv1");
+  uUvSet_ = glGetUniformLocation(program_, "uUvSet");
   uBaseColorTexScale_ = glGetUniformLocation(program_, "uBaseColorTexScale");
   uBaseColorTexBias_ = glGetUniformLocation(program_, "uBaseColorTexBias");
   uNormalTexScale_ = glGetUniformLocation(program_, "uNormalTexScale");
@@ -233,11 +296,15 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "layout(location=1) in vec3 aNormal;\n"
       // Per-instance 3x4 object-to-world (row-major o2w; rows = output x/y/z):
       // worldP.c = dot(vec4(pos,1), aRow[c]).  48 B/instance vs a full mat4's 64.
-      // At locations 3/4/5 (the unused skin slots) so location 8 is free for the
-      // per-vertex morph offset/count -- the flat instanced path does not skin.
+      // The non-instanced program's skin slots (3/4) are taken by these rows, so
+      // instanced skinning carries its joints/weights at 6/7 instead (attrib 8 is
+      // the morph CSR). All instances of a prototype share ONE bone block: USD
+      // instancing requires identical composed contents, hence one skeleton+pose.
       "layout(location=3) in vec4 aRow0;\n"
       "layout(location=4) in vec4 aRow1;\n"
       "layout(location=5) in vec4 aRow2;\n"
+      "layout(location=6) in uvec4 aJoint;\n"
+      "layout(location=7) in vec4 aWeight;\n"
       "layout(location=9) in vec3 aColor;\n"     // per-instance color or constant
       "layout(location=10) in vec3 aVtxColor;\n"  // per-vertex prototype color (or 1)
       "layout(location=11) in float aOpacity;\n"  // per-instance opacity or constant
@@ -251,6 +318,21 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "uniform samplerBuffer uMorphDeltaTex;\n"
       "uniform samplerBuffer uMorphCoeffTex;\n"
       "uniform usamplerBuffer uMorphChanTex;\n"
+      // Skeletal skinning, shared with the non-instanced program: the same 4xN
+      // RGBA32F bone texture (unit 4), absolute joint rows. Skinning happens in
+      // PROTOTYPE-LOCAL space, before the per-instance transform.
+      "uniform bool uSkinningEnabled;\n"
+      "uniform sampler2D uBoneTex;\n"
+      "uniform int uBoneTexWidth;\n"
+      "uniform int uBoneMatrixCount;\n"
+      "mat4 fetchBone(uint idx){\n"
+      "  int base=int(idx)*4;\n"
+      "  return mat4(\n"
+      "    texelFetch(uBoneTex,ivec2((base+0)%uBoneTexWidth,(base+0)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+1)%uBoneTexWidth,(base+1)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+2)%uBoneTexWidth,(base+2)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+3)%uBoneTexWidth,(base+3)/uBoneTexWidth),0));\n"
+      "}\n"
       "out vec3 vWorldPos;\n"
       "out vec3 vNormal;\n"
       "out vec3 vColor;\n"
@@ -270,10 +352,22 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "      pos += c * texelFetch(uMorphDeltaTex, mbase + i).yzw;\n"
       "    }\n"
       "  }\n"
+      // Linear-blend skinning (prototype-local). Vertices of an unskinned mesh --
+      // or of an unskinned vertex in a skinned one -- carry zero weights and pass
+      // through untouched, exactly as in the non-instanced program.
+      "  vec3 nrm = aNormal;\n"
+      "  float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;\n"
+      "  uint maxJoint = max(max(aJoint.x, aJoint.y), max(aJoint.z, aJoint.w));\n"
+      "  if (uSkinningEnabled && wsum > 0.0 && int(maxJoint) < uBoneMatrixCount) {\n"
+      "    mat4 skin = fetchBone(aJoint.x) * aWeight.x + fetchBone(aJoint.y) * aWeight.y\n"
+      "              + fetchBone(aJoint.z) * aWeight.z + fetchBone(aJoint.w) * aWeight.w;\n"
+      "    pos = (skin * vec4(pos, 1.0)).xyz;\n"
+      "    nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);\n"
+      "  }\n"
       "  vec4 p = vec4(pos, 1.0);\n"
       "  vec3 wp = vec3(dot(p, aRow0), dot(p, aRow1), dot(p, aRow2));\n"
-      "  vec3 n = vec3(dot(aNormal, aRow0.xyz), dot(aNormal, aRow1.xyz),\n"
-      "                dot(aNormal, aRow2.xyz));\n"
+      "  vec3 n = vec3(dot(nrm, aRow0.xyz), dot(nrm, aRow1.xyz),\n"
+      "                dot(nrm, aRow2.xyz));\n"
       "  vWorldPos = wp;\n"
       "  vNormal = normalize(n);\n"
       // Prototype per-vertex displayColor x per-instance color (both default 1).
@@ -328,6 +422,14 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "  if (k==4) return vec3(0.5,0.85,0.4);\n"
       "  return vec3(0.35);\n"
       "}\n"
+      // Linear -> sRGB OETF for the final shaded output (see material.cpp):
+      // scene lit in linear, FBO is RGBA8. Lit path only.
+      "vec3 linearToSrgb(vec3 c){\n"
+      "  c = clamp(c, 0.0, 1.0);\n"
+      "  vec3 lo = c * 12.92;\n"
+      "  vec3 hi = 1.055 * pow(c, vec3(1.0/2.4)) - 0.055;\n"
+      "  return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));\n"
+      "}\n"
       "void main(){\n"
       // Geometric (screen-derivative) normal: instanced prototypes usually ship
       // without authored normals, and faceted shading reads cleanly for them.
@@ -372,7 +474,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "  float NdotH = max(dot(Nf, H), 0.0);\n"
       "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.25);\n"
       "  vec3 col = vColor * (amb + lightColor * (shade - 0.25)) + lightColor * 0.12 * pow(NdotH, 32.0) * facing;\n"
-      "  FragColor = vec4(col + uEmissive, vOpacity);\n"
+      "  FragColor = vec4(linearToSrgb(col + uEmissive), vOpacity);\n"
       "}\n";
   instProgram_ = glutil::CompileProgram(kInstancedVS, kInstancedFS, err);
   if (!instProgram_) {
@@ -398,6 +500,10 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   iPurpose_ = glGetUniformLocation(instProgram_, "uPurpose");
   iKind_ = glGetUniformLocation(instProgram_, "uKind");
   iHasMorph_ = glGetUniformLocation(instProgram_, "uHasMorph");
+  iSkinningEnabled_ = glGetUniformLocation(instProgram_, "uSkinningEnabled");
+  iBoneTexWidth_ = glGetUniformLocation(instProgram_, "uBoneTexWidth");
+  iBoneMatrixCount_ = glGetUniformLocation(instProgram_, "uBoneMatrixCount");
+  glUniform1i(glGetUniformLocation(instProgram_, "uBoneTex"), 4);  // same unit as mesh
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphDeltaTex"), 8);
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphCoeffTex"), 9);
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphChanTex"), 10);
@@ -909,6 +1015,11 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     gm.alpha = m.alpha;
     gm.alphaMode = m.alphaMode;
     gm.alphaCutoff = m.alphaCutoff;
+    gm.useSpecularWorkflow = m.useSpecularWorkflow;
+    gm.specularColor[0] = m.specularColor[0];
+    gm.specularColor[1] = m.specularColor[1];
+    gm.specularColor[2] = m.specularColor[2];
+    gm.ior = m.ior;
     gm.baseColorTex = m.baseColorTex;  // slot indices (resolved at draw)
     gm.metalRoughTex = m.metalRoughTex;
     gm.normalTex = m.normalTex;
@@ -935,6 +1046,10 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
 void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return;
   GLTexture gpu;
+  // sRGB color textures (base color / emissive) upload as GL_SRGB8_ALPHA8 so the
+  // sampler linearizes them for the linear-space lighting (T11); normal /
+  // metal-rough stay GL_RGBA8. Same rule the compressed path already applies.
+  const GLenum uncompFmt = t.srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
   if (t.isUdim && !t.udimTiles.empty() && t.udimTileWidth > 0 &&
       t.udimTileHeight > 0) {
     glGenTextures(1, &gpu.arrayTex);
@@ -1005,7 +1120,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                                static_cast<GLsizei>(lvl.size()), lvl.data());
       }
     } else {
-      glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, t.udimTileWidth,
+      glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, uncompFmt, t.udimTileWidth,
                    t.udimTileHeight, static_cast<GLsizei>(t.udimTiles.size()), 0,
                    GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
       for (size_t layer = 0; layer < t.udimTiles.size(); ++layer) {
@@ -1021,7 +1136,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
       }
       for (size_t l = 1; l <= arrayMips; ++l) {
         const light3d::Image& ref = t.udimTiles[0].mipImages[l - 1];
-        glTexImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(l), GL_RGBA8,
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(l), uncompFmt,
                      ref.width, ref.height,
                      static_cast<GLsizei>(t.udimTiles.size()), 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, nullptr);
@@ -1074,7 +1189,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                              static_cast<GLsizei>(t.compressed.data.size()),
                              t.compressed.data.data());
     } else {
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.image.width, t.image.height, 0,
+      glTexImage2D(GL_TEXTURE_2D, 0, uncompFmt, t.image.width, t.image.height, 0,
                    GL_RGBA, GL_UNSIGNED_BYTE,
                    t.image.data.empty() ? nullptr : t.image.data.data());
     }
@@ -1111,12 +1226,12 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                                mip.data.data());
       }
     } else {
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.image.width, t.image.height, 0,
+      glTexImage2D(GL_TEXTURE_2D, 0, uncompFmt, t.image.width, t.image.height, 0,
                    GL_RGBA, GL_UNSIGNED_BYTE,
                    t.image.data.empty() ? nullptr : t.image.data.data());
       for (size_t l = 0; l < t.mipImages.size(); ++l) {
         const light3d::Image& mip = t.mipImages[l];
-        glTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(l + 1), GL_RGBA8,
+        glTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(l + 1), uncompFmt,
                      mip.width, mip.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                      mip.data.empty() ? nullptr : mip.data.data());
       }
@@ -1374,21 +1489,34 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+  // Skin attribute locations differ by program: the mesh program takes joints at 3
+  // and weights at 4, but in the INSTANCED program those slots (and 5) carry the
+  // per-instance o2w rows, so a skinned prototype binds 6/7 instead. The extended
+  // (>4 influence) stream needs attrib 5 and therefore has no instanced form --
+  // instanced prototypes use the 4-influence path only.
+  const bool skinInstanced = !sm.instanceXforms.empty();
+  const GLuint jointLoc = skinInstanced ? 6u : 3u;
+  const GLuint weightLoc = skinInstanced ? 7u : 4u;
+  if (skinInstanced) gm.extendedSkinned = false;
   if (gm.skinned) {
     glGenBuffers(1, &gm.jointVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.jointVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointIdx.size() * sizeof(uint32_t)),
                  sm.jointIdx.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(3);
-    glVertexAttribIPointer(3, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t), (void*)0);
+    glEnableVertexAttribArray(jointLoc);
+    glVertexAttribIPointer(jointLoc, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t),
+                           (void*)0);
+    glVertexAttribDivisor(jointLoc, 0);
     glGenBuffers(1, &gm.weightVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.weightVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointWt.size() * sizeof(float)),
                  sm.jointWt.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(4);
-    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(weightLoc);
+    glVertexAttribPointer(weightLoc, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          (void*)0);
+    glVertexAttribDivisor(weightLoc, 0);
     if (gm.extendedSkinned) {
       glGenBuffers(1, &gm.influenceVbo);
       glBindBuffer(GL_ARRAY_BUFFER, gm.influenceVbo);
@@ -1411,6 +1539,14 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
       glDisableVertexAttribArray(5);
       glVertexAttribI2ui(5, 0, 0);
     }
+  } else if (skinInstanced) {
+    // Unskinned prototype: constant zero weights, so the instanced shader passes
+    // every vertex through. Slots 3/4/5 belong to the instance rows here and are
+    // set up below -- do NOT touch them.
+    glDisableVertexAttribArray(6);
+    glDisableVertexAttribArray(7);
+    glVertexAttribI4ui(6, 0, 0, 0, 0);
+    glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
   } else {
     glDisableVertexAttribArray(3);
     glDisableVertexAttribArray(4);
@@ -1472,21 +1608,34 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+  // Skin attribute locations differ by program: the mesh program takes joints at 3
+  // and weights at 4, but in the INSTANCED program those slots (and 5) carry the
+  // per-instance o2w rows, so a skinned prototype binds 6/7 instead. The extended
+  // (>4 influence) stream needs attrib 5 and therefore has no instanced form --
+  // instanced prototypes use the 4-influence path only.
+  const bool skinInstanced = !sm.instanceXforms.empty();
+  const GLuint jointLoc = skinInstanced ? 6u : 3u;
+  const GLuint weightLoc = skinInstanced ? 7u : 4u;
+  if (skinInstanced) gm.extendedSkinned = false;
   if (gm.skinned) {
     glGenBuffers(1, &gm.jointVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.jointVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointIdx.size() * sizeof(uint32_t)),
                  sm.jointIdx.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(3);
-    glVertexAttribIPointer(3, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t), (void*)0);
+    glEnableVertexAttribArray(jointLoc);
+    glVertexAttribIPointer(jointLoc, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t),
+                           (void*)0);
+    glVertexAttribDivisor(jointLoc, 0);
     glGenBuffers(1, &gm.weightVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.weightVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointWt.size() * sizeof(float)),
                  sm.jointWt.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(4);
-    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(weightLoc);
+    glVertexAttribPointer(weightLoc, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          (void*)0);
+    glVertexAttribDivisor(weightLoc, 0);
     if (gm.extendedSkinned) {
       glGenBuffers(1, &gm.influenceVbo);
       glBindBuffer(GL_ARRAY_BUFFER, gm.influenceVbo);
@@ -1510,6 +1659,14 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glDisableVertexAttribArray(5);
       glVertexAttribI2ui(5, 0, 0);
     }
+  } else if (skinInstanced) {
+    // Unskinned prototype: constant zero weights, so the instanced shader passes
+    // every vertex through. Slots 3/4/5 belong to the instance rows here and are
+    // set up below -- do NOT touch them.
+    glDisableVertexAttribArray(6);
+    glDisableVertexAttribArray(7);
+    glVertexAttribI4ui(6, 0, 0, 0, 0);
+    glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
   } else {
     glDisableVertexAttribArray(3);
     glDisableVertexAttribArray(4);
@@ -2226,6 +2383,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3f(uBaseColor_, 0.f, 0.f, 0.f);
         glUniform1f(uMetallic_, 0.f);
         glUniform1f(uRoughness_, 1.f);
+        glUniform1i(uUseSpecularWorkflow_, 0);
+        glUniform3f(uSpecularColor_, 0.f, 0.f, 0.f);
+        glUniform1f(uIor_, 1.5f);
         glUniform3fv(uEmissive_, 1, overrideEmissive);
         glUniform1f(uAlpha_, 1.f);
         glUniform1i(uAlphaMode_, 0);
@@ -2242,6 +2402,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3fv(uBaseColor_, 1, mat.baseColor);
         glUniform1f(uMetallic_, mat.metallic);
         glUniform1f(uRoughness_, mat.roughness);
+        glUniform1i(uUseSpecularWorkflow_, mat.useSpecularWorkflow ? 1 : 0);
+        glUniform3fv(uSpecularColor_, 1, mat.specularColor);
+        glUniform1f(uIor_, mat.ior);
         glUniform3fv(uEmissive_, 1, mat.emissive);
         glUniform1f(uAlpha_, mat.alpha);
         glUniform1i(uAlphaMode_, mat.alphaMode);
@@ -2250,6 +2413,13 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         SetUvUniform(uMetalRoughUv0_, uMetalRoughUv1_, mat.metalRoughSample.uv);
         SetUvUniform(uNormalUv0_, uNormalUv1_, mat.normalSample.uv);
         SetUvUniform(uEmissiveUv0_, uEmissiveUv1_, mat.emissiveSample.uv);
+        {
+          const GLint uvSets[4] = {mat.baseColorSample.uvSet,
+                                   mat.metalRoughSample.uvSet,
+                                   mat.normalSample.uvSet,
+                                   mat.emissiveSample.uvSet};
+          glUniform4iv(uUvSet_, 1, uvSets);
+        }
         glUniform4fv(uBaseColorTexScale_, 1, mat.baseColorSample.scale);
         glUniform4fv(uBaseColorTexBias_, 1, mat.baseColorSample.bias);
         glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
@@ -2327,6 +2497,10 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniform1f(iDepthScale_, params.depthScale > 1e-4f ? params.depthScale : 1.0f);
     glUniform3fv(iSceneMin_, 1, params.sceneMin);
     glUniform3fv(iSceneExtent_, 1, params.sceneExtent);
+    // Scene-wide bone texture (unit 4), shared with the mesh program.
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+    glActiveTexture(GL_TEXTURE0);
     cullState = -1;  // reset across the program switch; dedup within this pass
     for (size_t mi = 0; mi < meshes_.size(); ++mi) {
       if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
@@ -2342,6 +2516,18 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glUniform1i(iDoubleSided_, mesh.doubleSided ? 1 : 0);
       glUniform1i(iPurpose_, mesh.purposeId);
       glUniform1i(iKind_, mesh.kindId);
+      // Skeletal skinning of the PROTOTYPE (all its instances share one pose).
+      // The bone texture is scene-wide and stays bound for the whole pass; only
+      // the enable flag is per-draw. Unskinned prototypes carry zero weights, so
+      // the shader would pass them through even without this, but skip the fetch.
+      const bool instSkinOn = mesh.skinned && skinningFrameEnabled_;
+      glUniform1i(iSkinningEnabled_, instSkinOn ? 1 : 0);
+      glUniform1i(iBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+      glUniform1i(iBoneMatrixCount_, boneMatrixCount_);
+      if (!mesh.jointVbo) {  // no skin attrs: constant zero weights
+        glVertexAttribI4ui(6, 0, 0, 0, 0);
+        glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
+      }
       // Only touch cull state on a transition: across tens of thousands of
       // prototypes the back-face cull flag almost never changes, so the per-draw
       // glEnable/glDisable/glCullFace was pure redundant driver traffic.

@@ -46,15 +46,6 @@ std::shared_ptr<CrateDataSource> CrateDataSource::Adopt(
   return ds;
 }
 
-std::shared_ptr<CrateDataSource> CrateDataSource::AdoptBorrowed(
-    const uint8_t* bytes, size_t size, CrateVersion version) {
-  std::shared_ptr<CrateDataSource> ds(new CrateDataSource());
-  ds->borrowed_base_ = bytes;
-  ds->borrowed_size_ = size;
-  ds->version_ = version;
-  return ds;
-}
-
 std::shared_ptr<CrateDataSource> CrateDataSource::Adopt(std::string&& bytes,
                                                         CrateVersion version) {
   std::shared_ptr<CrateDataSource> ds(new CrateDataSource());
@@ -97,9 +88,31 @@ CrateDataSource::~CrateDataSource() {
 #endif
 }
 
+void CrateDataSource::DiscardRange(uint64_t offset, uint64_t length) const {
+#if defined(TINYUSDZ_NEXT_HAVE_MMAP)
+  if (!mmap_addr_ || length == 0 || offset >= mmap_size_) return;
+  uint64_t end = offset + length;
+  if (end < offset || end > mmap_size_) end = mmap_size_;
+  const long page = ::sysconf(_SC_PAGESIZE);
+  if (page <= 0) return;
+  const uint64_t page_size = static_cast<uint64_t>(page);
+  const uint64_t aligned_begin = offset & ~(page_size - 1u);
+  const uint64_t aligned_end = (end + page_size - 1u) & ~(page_size - 1u);
+  if (aligned_end <= aligned_begin || aligned_begin >= mmap_size_) return;
+  const uint64_t clamped_end =
+      aligned_end > mmap_size_ ? static_cast<uint64_t>(mmap_size_) : aligned_end;
+  (void)::madvise(const_cast<uint8_t*>(mmap_base_ + aligned_begin),
+                 static_cast<size_t>(clamped_end - aligned_begin),
+                 MADV_DONTNEED);
+#else
+  (void)offset;
+  (void)length;
+#endif
+}
+
 bool CrateDataSource::MaterializeArray(const LazyArrayRef& ref, Value* out) const {
   if (!out) return false;
-  return DecodeCrateArray(base(), size(), ref.rep, tokens_,
+  return DecodeCrateArray(base(), size(), ref.rep, version_, tokens_,
                           /*max_elements=*/1024ull * 1024ull * 1024ull, out);
 }
 
@@ -124,6 +137,7 @@ uint32_t CrateArrayElemStride(CrateTypeId id) {
     case CrateTypeId::Int64:
     case CrateTypeId::UInt64:
     case CrateTypeId::Double:
+    case CrateTypeId::TimeCode:
     case CrateTypeId::Vec2f:
     case CrateTypeId::Vec2i:
     case CrateTypeId::Vec4h:
@@ -156,6 +170,61 @@ uint32_t CrateArrayElemStride(CrateTypeId id) {
   }
 }
 
+uint32_t CrateArrayCountHeaderBytes(CrateVersion version) {
+  // pxr crateFile.cpp _Write/_ReadUncompressedArray (and the compressed-array
+  // paths): `(ver < CrateFile::Version(0,7,0)) ? <uint32_t> : <uint64_t>`.
+  return version.is_pre_070() ? 4u : 8u;
+}
+
+bool ReadCrateArrayCount(StreamReader& r, CrateVersion version,
+                         uint64_t* count) {
+  if (!count) return false;
+  if (version.is_pre_070()) {
+    uint32_t c32 = 0;
+    if (!r.read_u32(c32)) return false;
+    *count = c32;
+    return true;
+  }
+  return r.read_u64(*count);
+}
+
+bool CrateArrayTypeCanBeLazy(CrateTypeId id, bool compressed) {
+  (void)compressed;
+  switch (id) {
+    case CrateTypeId::Int:
+    case CrateTypeId::UInt:
+      return true;
+    case CrateTypeId::Float:
+    case CrateTypeId::Vec2f:
+    case CrateTypeId::Vec3f:
+    case CrateTypeId::Vec4f:
+    case CrateTypeId::Double:
+    case CrateTypeId::Vec2d:
+    case CrateTypeId::Vec3d:
+    case CrateTypeId::Vec4d:
+    case CrateTypeId::Matrix2d:
+    case CrateTypeId::Matrix3d:
+    case CrateTypeId::Matrix4d:
+    case CrateTypeId::Half:
+    case CrateTypeId::Vec2h:
+    case CrateTypeId::Vec3h:
+    case CrateTypeId::Vec4h:
+    case CrateTypeId::Int64:
+    case CrateTypeId::UInt64:
+    case CrateTypeId::Bool:
+      return true;
+    // Quat arrays need a per-element component swizzle (disk is
+    // imaginary-first, internal is real-first). DecodeCrateArray now applies
+    // it on materialize, but they are conservatively kept eager.
+    case CrateTypeId::Quatf:
+    case CrateTypeId::Quatd:
+    case CrateTypeId::Quath:
+      return false;
+    default:
+      return false;
+  }
+}
+
 TypeId CrateArrayValueType(CrateTypeId id) {
   switch (id) {
     case CrateTypeId::Bool:
@@ -175,6 +244,8 @@ TypeId CrateArrayValueType(CrateTypeId id) {
       return TypeId::Float;
     case CrateTypeId::Double:
       return TypeId::Double;
+    case CrateTypeId::TimeCode:
+      return TypeId::TimeCode;
     case CrateTypeId::String:
       return TypeId::String;
     case CrateTypeId::Token:
@@ -248,8 +319,10 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
   StreamReader r(source->base(), source->size());
   const size_t off = static_cast<size_t>(rep.payload_as_offset());
   if (!r.seek(off)) return false;
+  const CrateVersion version = source->version();
+  const uint64_t hdr = CrateArrayCountHeaderBytes(version);
   uint64_t count = 0;
-  if (!r.read_u64(count)) return false;
+  if (!ReadCrateArrayCount(r, version, &count)) return false;
   if (count > max_elements) return false;
 
   out->element_count = count;
@@ -257,11 +330,9 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
 
   const CrateTypeId t = rep.type_id();
   const bool compressed = rep.is_compressed();
-  constexpr uint64_t kMinCompressedArraySize = 16;
 
-  if (compressed && (t == CrateTypeId::Int || t == CrateTypeId::UInt) &&
-      count >= kMinCompressedArraySize) {
-    // Block layout: [u64 count][u64 comp_size][comp_size bytes].
+  if (compressed && (t == CrateTypeId::Int || t == CrateTypeId::UInt)) {
+    // Block layout: [count header][u64 comp_size][comp_size bytes].
     uint64_t comp_size = 0;
     if (!r.read_u64(comp_size)) return false;
     if (comp_size >
@@ -269,15 +340,15 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
       out->block_len = 0;
       return true;
     }
-    out->block_len = 8ull + 8ull + comp_size;
+    out->block_len = hdr + 8ull + comp_size;
   } else if (!compressed && out->src_elem_stride > 0) {
-    // Block layout: [u64 count][count*stride bytes].
+    // Block layout: [count header][count*stride bytes].
     const uint64_t stride = uint64_t(out->src_elem_stride);
     if (count > ((std::numeric_limits<uint64_t>::max)() - 8ull) / stride) {
       out->block_len = 0;
       return true;
     }
-    out->block_len = 8ull + count * stride;
+    out->block_len = hdr + count * stride;
   } else {
     // Unknown layout (e.g. a compressed array of an unsupported type) — leave
     // block_len = 0 so write-time pass-through declines and re-encodes instead.
@@ -299,21 +370,21 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
 // ============================================================
 
 bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
+                      CrateVersion version,
                       const std::vector<std::string>& tokens, size_t max_elements,
                       Value* out) {
   if (!out) return false;
   const CrateTypeId type_id = rep.type_id();
 
-  // Arrays below this length are stored uncompressed even if the compressed bit
-  // is set (matches pxrUSD / legacy core kMinCompressedArraySize).
-  constexpr uint64_t kMinCompressedArraySize = 16;
+  // The compressed bit determines the payload layout even for a small array.
+  // AOUSD's small-array threshold is writer guidance, not a reader exception.
 
   StreamReader r(base, size);
 
   uint64_t count = 0;
   if (rep.payload() != 0) {
     if (!r.seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
-    if (!r.read_u64(count)) return false;
+    if (!ReadCrateArrayCount(r, version, &count)) return false;
   }
   if (count > max_elements) return false;
 
@@ -453,7 +524,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
   switch (type_id) {
     case CrateTypeId::Float: {
       std::vector<float> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), static_cast<size_t>(count))) return false;
       } else if (!read_raw(data.data(), sizeof(float))) {
         return false;
@@ -463,7 +534,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     }
     case CrateTypeId::Int: {
       std::vector<int32_t> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u32(reinterpret_cast<uint32_t*>(data.data()))) return false;
       } else if (!read_raw(data.data(), sizeof(int32_t))) {
         return false;
@@ -475,7 +546,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(2), &scalars)) return false;
       std::vector<float> data(scalars);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), scalars)) return false;
       } else if (!read_raw(data.data(), 2 * sizeof(float))) {
         return false;
@@ -487,7 +558,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       size_t scalars;
       if (!safe::mul(static_cast<size_t>(count), size_t(3), &scalars)) return false;
       std::vector<float> data(scalars);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), scalars)) return false;
       } else if (!read_raw(data.data(), 3 * sizeof(float))) {
         return false;
@@ -497,7 +568,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     }
     case CrateTypeId::Double: {
       std::vector<double> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), static_cast<size_t>(count))) return false;
       } else if (!read_raw(data.data(), sizeof(double))) {
         return false;
@@ -507,7 +578,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     }
     case CrateTypeId::Int64: {
       std::vector<int64_t> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u64(reinterpret_cast<uint64_t*>(data.data()))) return false;
       } else if (!read_raw(data.data(), sizeof(int64_t))) {
         return false;
@@ -517,7 +588,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     }
     case CrateTypeId::UInt: {
       std::vector<uint32_t> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u32(data.data())) return false;
       } else if (!read_raw(data.data(), sizeof(uint32_t))) {
         return false;
@@ -527,7 +598,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
     }
     case CrateTypeId::UInt64: {
       std::vector<uint64_t> data(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u64(data.data())) return false;
       } else if (!read_raw(data.data(), sizeof(uint64_t))) {
         return false;
@@ -536,15 +607,24 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       return true;
     }
     case CrateTypeId::Bool: {
-      if (compressed) return false;
       std::vector<uint8_t> bytes(static_cast<size_t>(count));
-      if (!read_raw(bytes.data(), sizeof(uint8_t))) return false;
-      *out = Value::MakeBoolArrayFromBytes(std::move(bytes));
+      if (compressed) {
+        std::vector<uint32_t> lanes(static_cast<size_t>(count));
+        if (!read_compressed_u32(lanes.data())) return false;
+        for (size_t i = 0; i < lanes.size(); ++i) {
+          bytes[i] = lanes[i] != 0 ? uint8_t(1) : uint8_t(0);
+        }
+      } else if (!read_raw(bytes.data(), sizeof(uint8_t))) {
+        return false;
+      }
+      std::vector<bool> out_bool(static_cast<size_t>(count));
+      for (size_t i = 0; i < count; i++) out_bool[i] = (bytes[i] != 0);
+      *out = Value::MakeBoolArray(out_bool);
       return true;
     }
     case CrateTypeId::Token: {
       std::vector<uint32_t> idxs(static_cast<size_t>(count));
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_u32(idxs.data())) return false;
       } else if (!read_raw(idxs.data(), sizeof(uint32_t))) {
         return false;
@@ -566,10 +646,19 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
         return false;
       }
       std::vector<float> data(static_cast<size_t>(count) * comps);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), data.size())) return false;
       } else if (!read_raw(data.data(), stride_bytes)) {
         return false;
+      }
+      if (type_id == CrateTypeId::Quatf) {
+        // Disk / GfQuat layout is imaginary-first (x,y,z,w); internal is
+        // real-first (w,x,y,z). Mirrors UnpackArray's eager Quatf path.
+        for (size_t e = 0; e < count; ++e) {
+          float* q = data.data() + e * 4;
+          const float w = q[3];
+          q[3] = q[2]; q[2] = q[1]; q[1] = q[0]; q[0] = w;
+        }
       }
       *out = Value::MakeFloatCompArray(std::move(data),
                                        CrateArrayValueType(type_id), comps);
@@ -589,10 +678,18 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
         return false;
       }
       std::vector<double> data(static_cast<size_t>(count) * comps);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_floating_n(data.data(), data.size())) return false;
       } else if (!read_raw(data.data(), stride_bytes)) {
         return false;
+      }
+      if (type_id == CrateTypeId::Quatd) {
+        // Imaginary-first on disk -> real-first internal (see Quatf above).
+        for (size_t e = 0; e < count; ++e) {
+          double* q = data.data() + e * 4;
+          const double w = q[3];
+          q[3] = q[2]; q[2] = q[1]; q[1] = q[0]; q[0] = w;
+        }
       }
       *out = Value::MakeDoubleCompArray(std::move(data),
                                         CrateArrayValueType(type_id), comps);
@@ -609,10 +706,18 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
         return false;
       }
       std::vector<uint16_t> halfs(static_cast<size_t>(count) * comps);
-      if (compressed && count >= kMinCompressedArraySize) {
+      if (compressed) {
         if (!read_compressed_half_n(halfs.data(), halfs.size())) return false;
       } else if (!read_raw(halfs.data(), comps * 2)) {
         return false;
+      }
+      if (type_id == CrateTypeId::Quath) {
+        // Imaginary-first on disk -> real-first internal (see Quatf above).
+        for (size_t e = 0; e < count; ++e) {
+          uint16_t* q = halfs.data() + e * 4;
+          const uint16_t w = q[3];
+          q[3] = q[2]; q[2] = q[1]; q[1] = q[0]; q[0] = w;
+        }
       }
       std::vector<float> data(halfs.size());
       for (size_t i = 0; i < halfs.size(); ++i) data[i] = HalfToFloat(halfs[i]);

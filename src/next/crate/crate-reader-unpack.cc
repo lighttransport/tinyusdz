@@ -4,9 +4,12 @@
 // TinyUSDZ Next - USDC Crate Reader scalar/value unpackers
 
 #include "crate-reader-internal.hh"
+#include "../writer/value-printer.hh"
+#include "../types/spline.hh"
 
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace tinyusdz {
@@ -50,7 +53,23 @@ bool CrateReader::Impl::UnpackUInt(ValueRep rep, Value& out) {
 
 bool CrateReader::Impl::UnpackInt64(ValueRep rep, Value& out) {
   if (rep.is_inlined()) {
-    out = Value(static_cast<int64_t>(rep.payload_as_offset()));
+    // pxr inlines int64 as an exact int32 in the low payload bits: a
+    // negative value has all-ones low 32 bits with ZERO high bits, so
+    // sign-extending from bit 47 (payload_as_offset) would decode -1 as
+    // +4294967295. Reinterpret the low 32 bits as int32 when the high
+    // payload bits are clear; keep the old-TinyUSDZ 48-bit sign extension
+    // only when they are set.
+    const uint64_t payload48 = rep.payload();
+    int64_t value = 0;
+    if ((payload48 >> 32) == 0) {
+      int32_t low32 = 0;
+      const uint32_t bits = static_cast<uint32_t>(payload48);
+      std::memcpy(&low32, &bits, sizeof(low32));
+      value = static_cast<int64_t>(low32);
+    } else {
+      value = rep.payload_as_offset();  // 48-bit sign extension
+    }
+    out = Value(value);
     return true;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
@@ -119,13 +138,12 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
   // NOTE: a proper fix requires a TimeSamples-aware value path and a writer that
   // names the field after its property (see the review's out-of-scope note).
   if (rep.is_inlined()) {
-    // pxrUSD inlines integer-valued vectors/matrices as int8 components
-    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
-    uint64_t p = rep.payload();
-    int8_t b[8];
-    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeInt2(int32_t(b[0]), int32_t(b[1]));
-    return true;
+    // pxr never emits an inlined TimeSamples rep (crateFile.cpp packs
+    // TimeSamples exclusively through the recursive-offset block form; there
+    // is no _EncodeInline for it). An inlined rep here is malformed — fail
+    // instead of fabricating a value from the payload bits (this branch used
+    // to conjure an int2 out of garbage).
+    return false;
   }
 
   uint64_t header_offset = rep.payload();
@@ -150,7 +168,6 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
 bool CrateReader::Impl::DecodeTimeSamples(
     ValueRep rep, std::vector<std::pair<double, Value>>* out) {
   out->clear();
-
   if (rep.is_inlined()) return false;  // inlined TimeSamples not produced
 
   // pxr crate TimeSamples are DOUBLY recursive (crateFile.cpp RecursiveRead):
@@ -171,96 +188,134 @@ bool CrateReader::Impl::DecodeTimeSamples(
   const int64_t off_v_field = times_pos + 8;  // the values' recursive-offset field
 
   Value times_val;
-  if (!UnpackValue(ValueRep(times_rep_raw), times_val)) {
-    return false;
-  }
+  if (!UnpackValue(ValueRep(times_rep_raw), times_val)) return false;
   const std::vector<double>* times = times_val.as_double_array();
-  if (!times) {
-    return false;
-  }
+  if (!times) return false;
 
-  // Values block: follow the second recursive offset. Read each ValueRep and decode
-  // only the number of pairs that are actually needed; if the file carries
-  // extra sample entries (or fewer times), still consume all sample records.
+  // Values block: follow the second recursive offset.
   if (!reader_->seek(static_cast<size_t>(off_v_field))) return false;
   int64_t off_v = 0;
-  if (!reader_->read(&off_v, 8)) {
-    AddWarning("TimeSamples: failed reading value block offset");
-    return false;
-  }
+  if (!reader_->read(&off_v, 8)) return false;
   const int64_t vals_pos = off_v_field + off_v;  // Q=off_v_field, target=Q+off_v
   if (vals_pos < 0 || !reader_->seek(static_cast<size_t>(vals_pos))) return false;
   uint64_t n = 0;
-  if (!reader_->read_u64(n)) {
-    AddWarning("TimeSamples: failed reading sample count");
-    return false;
-  }
+  if (!reader_->read_u64(n)) return false;
   if (n > options_.max_array_elements || n > 100000000ull) return false;
+  // Each sample ValueRep is an 8-byte read that immediately follows; require the
+  // file to actually hold n*8 bytes before allocating the vector, so a tiny file
+  // cannot demand an ~800 MB allocation via an absurd count (has_elements uses
+  // division, so no count*8 overflow).
+  if (n > 0 && !reader_->has_elements(static_cast<size_t>(n), 8)) return false;
 
-  const size_t sample_count = static_cast<size_t>(n);
-  const size_t pair_count = std::min<size_t>(times->size(), sample_count);
-  if (sample_count != pair_count) {
-    AddWarning("TimeSamples sample count mismatch");
-  }
-  out->reserve(pair_count);
-
-  const size_t values_list_end = static_cast<size_t>(vals_pos) + 8 + sample_count * 8;
-  if (values_list_end < static_cast<size_t>(vals_pos)) {
-    AddWarning("TimeSamples: sample list offset overflow");
-    return false;
-  }
-  if (values_list_end > reader_->size()) {
-    return false;
-  }
-
-  auto& sample_raws = array_scratch_.u64_values;
-  sample_raws.clear();
-  if (sample_raws.capacity() < pair_count) {
-    sample_raws.reserve(pair_count);
-  }
-
-  // Read all sample ValueReps we'll decode first, so unpacking those values cannot
-  // disturb the shared stream cursor.
-  for (size_t i = 0; i < pair_count; ++i) {
+  // Read all sample ValueReps before decoding (decoding seeks elsewhere).
+  std::vector<ValueRep> sample_reps(static_cast<size_t>(n));
+  for (uint64_t i = 0; i < n; ++i) {
     uint64_t raw = 0;
     if (!reader_->read_u64(raw)) return false;
-    sample_raws.push_back(raw);
+    sample_reps[static_cast<size_t>(i)] = ValueRep(raw);
   }
 
-  if (sample_count > pair_count) {
-    if (!reader_->skip((sample_count - pair_count) * 8)) return false;
-  }
-
-  for (size_t i = 0; i < pair_count; ++i) {
-    Value v;
-    const uint64_t raw = sample_raws[i];
-    if (!UnpackValue(ValueRep(raw), v)) {
-      return false;
-    }
+  const size_t count = std::min<size_t>(times->size(), sample_reps.size());
+  out->reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    Value v;  // a ValueBlock sample (no authored value at this time) stays empty
+    UnpackValue(sample_reps[i], v);
     out->emplace_back((*times)[i], std::move(v));
   }
-  if (!reader_->seek(values_list_end)) return false;
+  return true;
+}
+
+bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
+  if (!out) return false;
+  if (rep.is_inlined()) return false;  // splines are heap-stored
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+
+  uint64_t blob_size = 0;
+  if (!reader_->read_u64(blob_size)) return false;
+  // The blob is bounded by the file; guard the allocation against a bogus size.
+  if (blob_size > options_.max_array_elements || blob_size > 100000000ull)
+    return false;
+  if (blob_size > 0 && !reader_->has_elements(static_cast<size_t>(blob_size), 1))
+    return false;
+  std::vector<uint8_t> blob(static_cast<size_t>(blob_size));
+  if (blob_size > 0 && !reader_->read(blob.data(), static_cast<size_t>(blob_size)))
+    return false;
+
+  SplineData sd;
+  std::string serr;
+  if (!DecodeSplineBinary(blob.data(), blob.size(), &sd, &serr)) return false;
+
+  // Per-knot customData is an unordered_map<double, VtDictionary> written
+  // directly after the spline blob.
+  uint64_t custom_count = 0;
+  if (!reader_->read_u64(custom_count) ||
+      custom_count > options_.max_array_elements) {
+    return false;
+  }
+  for (uint64_t ci = 0; ci < custom_count; ++ci) {
+    double knot_time = 0.0;
+    uint64_t dict_count = 0;
+    if (!reader_->read_f64(knot_time) || !reader_->read_u64(dict_count) ||
+        dict_count > options_.max_array_elements) {
+      return false;
+    }
+    Value dict_value = Value::MakeDictionary();
+    Dict* dict = dict_value.as_dictionary();
+    for (uint64_t di = 0; di < dict_count; ++di) {
+      uint32_t key_index = 0;
+      if (!reader_->read_u32(key_index)) return false;
+      std::string key;
+      GetString(key_index, key);
+      const size_t value_start = reader_->position();
+      uint64_t recursive_offset_raw = 0;
+      if (!reader_->read_u64(recursive_offset_raw)) return false;
+      const size_t rep_position = static_cast<size_t>(
+          static_cast<int64_t>(value_start) +
+          static_cast<int64_t>(recursive_offset_raw));
+      if (!reader_->seek(rep_position)) return false;
+      uint64_t raw = 0;
+      if (!reader_->read_u64(raw)) return false;
+      const size_t next_entry = reader_->position();
+      ValueRep value_rep(raw);
+      Value value;
+      if (value_rep.type_id() == CrateTypeId::Dictionary) {
+        if (!DecodeDictionary(value_rep, value, 1)) return false;
+      } else if (value_rep.type_id() != CrateTypeId::Invalid &&
+                 !UnpackValue(value_rep, value)) {
+        return false;
+      }
+      dict->set(std::move(key), std::move(value));
+      if (!reader_->seek(next_entry)) return false;
+    }
+    for (SplineKnot& knot : sd.knots) {
+      if (knot.time == knot_time) {
+        knot.custom_data_source = PrintValue(dict_value);
+        break;
+      }
+    }
+  }
+  *out = FormatSplineText(sd, "");
   return true;
 }
 
 bool CrateReader::Impl::UnpackToken(ValueRep rep, Value& out) {
-  std::string_view s;
-  if (!GetToken(static_cast<uint32_t>(rep.payload()), &s)) return false;
-  out = Value::MakeToken(s);
+  std::string s;
+  if (!GetToken(static_cast<uint32_t>(rep.payload()), s)) return false;
+  out = Value::MakeToken(std::move(s));
   return true;
 }
 
 bool CrateReader::Impl::UnpackString(ValueRep rep, Value& out) {
-  std::string_view s;
-  if (!GetString(static_cast<uint32_t>(rep.payload()), &s)) return false;
-  out = Value(s);
+  std::string s;
+  if (!GetString(static_cast<uint32_t>(rep.payload()), s)) return false;
+  out = Value(std::move(s));
   return true;
 }
 
 bool CrateReader::Impl::UnpackAssetPath(ValueRep rep, Value& out) {
-  std::string_view s;
-  if (!GetToken(static_cast<uint32_t>(rep.payload()), &s)) return false;
-  out = Value::MakeAssetPath(s);
+  std::string s;
+  if (!GetToken(static_cast<uint32_t>(rep.payload()), s)) return false;
+  out = Value::MakeAssetPath(std::move(s));
   return true;
 }
 
@@ -285,6 +340,8 @@ bool CrateReader::Impl::UnpackVec3f(ValueRep rep, Value& out) {
   if (rep.is_inlined()) {
     // pxrUSD inlines integer-valued vectors/matrices as int8 components
     // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    // Reconstruct as Float3 — the rep type is Vec3f; producing Half3 here
+    // broke every as_float3() consumer (identity xformOp:scale/rotateXYZ).
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
@@ -302,6 +359,7 @@ bool CrateReader::Impl::UnpackVec4f(ValueRep rep, Value& out) {
   if (rep.is_inlined()) {
     // pxrUSD inlines integer-valued vectors/matrices as int8 components
     // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    // Reconstruct as Float4 (rep type is Vec4f), not Half4 — see UnpackVec3f.
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
@@ -367,36 +425,33 @@ bool CrateReader::Impl::UnpackVec4d(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackQuatf(ValueRep rep, Value& out) {
+  // Crate / GfQuat layout is imaginary-first (x, y, z, w); internal layout is
+  // real-first (w, x, y, z). Swizzle on read (the writer swizzles back).
   if (rep.is_inlined()) {
-    // pxrUSD inlines integer-valued vectors/matrices as int8 components
-    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
-    uint64_t p = rep.payload();
-    int8_t b[8];
-    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeQuatf(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
-    return true;
+    // pxr never inlines quaternions: crateValueInliners.h has _EncodeInline
+    // overloads only for scalars, GfVec (int8 lanes), GfMatrix (int8 diag)
+    // and VtDictionary — no GfQuat overload — and sizeof(GfQuat*) > 4 rules
+    // out the always-inlined path. Fail instead of fabricating a quat from
+    // garbage payload bits.
+    return false;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[4];
   if (!reader_->read(data, sizeof(data))) return false;
-  out = Value::MakeQuatf(data[0], data[1], data[2], data[3]);
+  out = Value::MakeQuatf(data[3], data[0], data[1], data[2]);
   return true;
 }
 
 bool CrateReader::Impl::UnpackQuatd(ValueRep rep, Value& out) {
   if (rep.is_inlined()) {
-    // pxrUSD inlines integer-valued vectors/matrices as int8 components
-    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
-    uint64_t p = rep.payload();
-    int8_t b[8];
-    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeQuatd(double(b[0]), double(b[1]), double(b[2]), double(b[3]));
-    return true;
+    // pxr never inlines quaternions (see UnpackQuatf) — fail instead of
+    // fabricating a value.
+    return false;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[4];
   if (!reader_->read(data, sizeof(data))) return false;
-  out = Value::MakeQuatd(data[0], data[1], data[2], data[3]);
+  out = Value::MakeQuatd(data[3], data[0], data[1], data[2]);
   return true;
 }
 
@@ -442,11 +497,10 @@ bool CrateReader::Impl::UnpackMatrix2d(ValueRep rep, Value& out) {
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    // Diagonal int8 encoding, matching Matrix3d/Matrix4d inline forms.
     double m[4] = {0.0};
     m[0] = double(b[0]);
-    m[1] = double(b[1]);
-    m[2] = double(b[2]);
-    m[3] = double(b[3]);
+    m[3] = double(b[1]);
     out = Value::MakeMatrix2d(m);
     return true;
   }
@@ -461,16 +515,16 @@ bool CrateReader::Impl::UnpackSpecifier(ValueRep rep, Value& out) {
   uint32_t spec = static_cast<uint32_t>(rep.payload());
   const char* names[] = {"def", "over", "class"};
   if (spec < 3) {
-    out = Value::MakeToken(std::string_view(names[spec]));
+    out = Value::MakeToken(names[spec]);
   } else {
-    out = Value::MakeToken(std::string_view("def"));
+    out = Value::MakeToken("def");
   }
   return true;
 }
 
 bool CrateReader::Impl::UnpackVariability(ValueRep rep, Value& out) {
   uint32_t var = static_cast<uint32_t>(rep.payload());
-  out = Value::MakeToken(std::string_view(var == 0 ? "varying" : "uniform"));
+  out = Value::MakeToken(var == 0 ? "varying" : "uniform");
   return true;
 }
 
@@ -479,8 +533,14 @@ bool CrateReader::Impl::UnpackVariability(ValueRep rep, Value& out) {
 // ============================================================
 
 bool CrateReader::Impl::UnpackVec2i(ValueRep rep, Value& out) {
-  // 8 bytes — never inlinable (inline payload is 6 bytes).
-  if (rep.is_inlined()) return false;
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors as int8 components.
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeInt2(int32_t(b[0]), int32_t(b[1]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   int32_t data[2];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -526,60 +586,20 @@ bool CrateReader::Impl::UnpackVec4i(ValueRep rep, Value& out) {
 // Half-precision unpackers
 // ============================================================
 
-namespace {
-
-// Decode IEEE 754 half-precision (16-bit) to float32
-inline float half_to_float(uint16_t h) {
-  // Sign: bit 15
-  // Exponent: bits 14-10 (5 bits, bias 15)
-  // Mantissa: bits 9-0 (10 bits)
-  uint32_t sign = (h >> 15) & 1;
-  uint32_t exp = (h >> 10) & 0x1F;
-  uint32_t mant = h & 0x3FF;
-
-  uint32_t f;
-  if (exp == 0) {
-    // Zero/subnormal
-    if (mant == 0) {
-      f = sign << 31;  // +/- zero
-    } else {
-      // Subnormal: normalize so the leading 1 lands at bit 10, then drop it
-      // (it becomes the implicit float mantissa bit). Each left shift lowers
-      // the effective exponent by one: after s shifts e == -(s+1), and the
-      // float exponent field is 113 - s == 114 + e. The leading 1 must be
-      // masked off (0x3FF) so it does not bleed into the exponent field.
-      int e = -1;
-      uint32_t m = mant;
-      while (!(m & 0x400)) { m <<= 1; e--; }
-      f = (sign << 31) | (static_cast<uint32_t>(114 + e) << 23) |
-          ((m & 0x3FF) << 13);
-    }
-  } else if (exp == 31) {
-    // Inf/NaN
-    f = (sign << 31) | 0x7F800000 | (mant << 13);
-  } else {
-    // Normal
-    f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
-  }
-  float result;
-  std::memcpy(&result, &f, sizeof(result));
-  return result;
-}
-
-} // namespace
-
 bool CrateReader::Impl::UnpackHalf(ValueRep rep, Value& out) {
-  if (rep.is_inlined()) {
-    uint16_t h = static_cast<uint16_t>(rep.payload() & 0xFFFF);
-    out = Value(half_to_float(h));
-    return true;
-  }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  // Preserve the half domain: the usda parser stores scalar halves as raw
+  // half bits under TypeId::Half, so the crate reader must match for value
+  // equality across formats.
   uint16_t h;
-  uint8_t hb[2];
-  if (!reader_->read(hb, 2)) return false;
-  h = static_cast<uint16_t>(hb[0]) | (static_cast<uint16_t>(hb[1]) << 8);
-  out = Value(half_to_float(h));
+  if (rep.is_inlined()) {
+    h = static_cast<uint16_t>(rep.payload() & 0xFFFF);
+  } else {
+    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    uint8_t hb[2];
+    if (!reader_->read(hb, 2)) return false;
+    h = static_cast<uint16_t>(hb[0]) | (static_cast<uint16_t>(hb[1]) << 8);
+  }
+  out = Value::MakeFromRaw(TypeId::Half, &h);
   return true;
 }
 
@@ -594,45 +614,67 @@ bool CrateReader::Impl::UnpackVec2h(ValueRep rep, Value& out) {
     if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
     if (!reader_->read(raw, sizeof(raw))) return false;
   }
-  out = Value::MakeFloat2(half_to_float(raw[0]), half_to_float(raw[1]));
+  out = Value::MakeFromRaw(TypeId::Half2, raw);
   return true;
 }
 
 bool CrateReader::Impl::UnpackVec3h(ValueRep rep, Value& out) {
   uint16_t raw[3];
   if (rep.is_inlined()) {
-    // 6 bytes fit in the 48-bit inline payload (little-endian half lanes).
+    // pxrUSD inlines integer-valued half vectors as int8 components (verified
+    // against pxr crates: Vec3h (1,2,3) -> payload 0x030201), not half lanes.
     uint64_t p = rep.payload();
-    raw[0] = static_cast<uint16_t>(p & 0xFFFF);
-    raw[1] = static_cast<uint16_t>((p >> 16) & 0xFFFF);
-    raw[2] = static_cast<uint16_t>((p >> 32) & 0xFFFF);
-  } else {
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    // Keep the declared type: emit Half3 (raw half-bit lanes), not Float3 —
+    // the same attribute must not change TypeId based on whether pxr
+    // happened to inline it.
+    for (int i = 0; i < 3; ++i) raw[i] = FloatToHalf(float(b[i]));
+    out = Value::MakeFromRaw(TypeId::Half3, raw);
+    return true;
+  }
+  {
     if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
     if (!reader_->read(raw, sizeof(raw))) return false;
   }
-  out = Value::MakeFloat3(half_to_float(raw[0]), half_to_float(raw[1]), half_to_float(raw[2]));
+  out = Value::MakeFromRaw(TypeId::Half3, raw);
   return true;
 }
 
 bool CrateReader::Impl::UnpackVec4h(ValueRep rep, Value& out) {
-  // 8 bytes — never inlinable (inline payload is 6 bytes).
-  if (rep.is_inlined()) return false;
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued half vectors as int8 components.
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    // Keep the declared type: emit Half4 (raw half-bit lanes), not Float4.
+    uint16_t half_bits[4];
+    for (int i = 0; i < 4; ++i) half_bits[i] = FloatToHalf(float(b[i]));
+    out = Value::MakeFromRaw(TypeId::Half4, half_bits);
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint16_t raw[4];
   if (!reader_->read(raw, sizeof(raw))) return false;
-  out = Value::MakeFloat4(half_to_float(raw[0]), half_to_float(raw[1]),
-                           half_to_float(raw[2]), half_to_float(raw[3]));
+  out = Value::MakeFromRaw(TypeId::Half4, raw);
   return true;
 }
 
 bool CrateReader::Impl::UnpackQuath(ValueRep rep, Value& out) {
-  // 8 bytes — never inlinable (inline payload is 6 bytes).
-  if (rep.is_inlined()) return false;
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  // Imaginary-first on disk; internal is real-first raw half bits (matching
+  // the usda parser's Quath SBO layout).
   uint16_t raw[4];
-  if (!reader_->read(raw, sizeof(raw))) return false;
-  out = Value::MakeQuatf(half_to_float(raw[0]), half_to_float(raw[1]),
-                          half_to_float(raw[2]), half_to_float(raw[3]));
+  if (rep.is_inlined()) {
+    // pxr never inlines quaternions (see UnpackQuatf) — fail instead of
+    // fabricating a value.
+    return false;
+  }
+  {
+    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!reader_->read(raw, sizeof(raw))) return false;
+  }
+  const uint16_t wxyz[4] = {raw[3], raw[0], raw[1], raw[2]};
+  out = Value::MakeFromRaw(TypeId::Quath, wxyz);
   return true;
 }
 

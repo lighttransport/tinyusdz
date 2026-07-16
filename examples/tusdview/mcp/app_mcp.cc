@@ -8,6 +8,7 @@
 
 #include "app.hh"
 #include "light3d/math.h"
+#include "next/tinyusdz-next.hh"
 #include "tydra/mcp-tools.hh"  // tinyusdz::tydra::mcp::CallTool
 
 namespace tusdview {
@@ -17,6 +18,22 @@ using nlohmann::json;
 namespace {
 json arr3(const float a[3]) { return json::array({a[0], a[1], a[2]}); }
 json vec3json(const light3d::Vec3& v) { return json::array({v.x, v.y, v.z}); }
+
+json nextValueJson(const tinyusdz::next::Value& value) {
+  if (value.is_array()) {
+    return json{{"type", tinyusdz::next::GetTypeName(value.type_id())},
+                {"count", value.array_size()}};
+  }
+  if (const bool* v = value.as_bool()) return *v;
+  if (const int32_t* v = value.as_int()) return *v;
+  if (const int64_t* v = value.as_int64()) return *v;
+  if (const float* v = value.as_float()) return *v;
+  if (const double* v = value.as_double()) return *v;
+  if (const std::string* v = value.as_string()) return *v;
+  if (const std::string* v = value.as_token()) return *v;
+  if (const std::string* v = value.as_asset_path()) return *v;
+  return json{{"type", tinyusdz::next::GetTypeName(value.type_id())}};
+}
 
 // Build the focused-prim payload from the current selection + DrawScene.
 json focusedPayload(const Gui& gui, const DrawScene& draw) {
@@ -96,6 +113,16 @@ json App::mcpSceneInfo(const json&, std::string&) {
           json{{"prim", d.primPath}, {"asset", d.assetPath}, {"arc", d.arc}});
     }
     out["deferred_payloads"] = deferred;
+  } else if (nextSession_) {
+    out["composed"] = nextSession_->IsComposed();
+    const std::vector<tinyusdz::next::Path> deferred =
+        nextSession_->GetDeferredPayloadPaths();
+    out["deferred_payload_count"] = deferred.size();
+    json paths = json::array();
+    for (const tinyusdz::next::Path& path : deferred) {
+      paths.push_back(json{{"prim", path.str()}, {"arc", "payload"}});
+    }
+    out["deferred_payloads"] = std::move(paths);
   }
   return out;
 }
@@ -131,7 +158,7 @@ json App::mcpSkinning(const json& args, std::string& err) {
 }
 
 json App::mcpLoadPayloads(const json& args, std::string& err) {
-  if (!loaded_.comp.composed) {
+  if (!loaded_.comp.composed && !nextSession_) {
     err = "load_payloads: scene was not composed (no deferred payloads)";
     return json::object();
   }
@@ -141,7 +168,14 @@ json App::mcpLoadPayloads(const json& args, std::string& err) {
       if (p.is_string()) add.insert(p.get<std::string>());
     }
   } else {
-    for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
+    if (nextSession_) {
+      for (const tinyusdz::next::Path& path :
+           nextSession_->GetDeferredPayloadPaths()) {
+        add.insert(path.str());
+      }
+    } else {
+      for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
+    }
   }
   if (add.empty()) {
     return json{{"started", false}, {"reason", "no deferred payloads"}};
@@ -333,15 +367,150 @@ json App::mcpListPrims(const json& args, std::string&) {
     if (m > 0) cap = static_cast<size_t>(m);
   }
   json paths = json::array();
-  for (const auto& m : draw_.meshes) {
-    if (paths.size() >= cap) break;
-    paths.push_back(m.absPath);
+  if (nextSession_) {
+    nextSession_->GetStage().Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+      if (paths.size() >= cap) return false;
+      paths.push_back(prim.GetPath().str());
+      return true;
+    });
+  } else {
+    for (const auto& m : draw_.meshes) {
+      if (paths.size() >= cap) break;
+      paths.push_back(m.absPath);
+    }
   }
   return json{{"count", paths.size()}, {"paths", paths}};
 }
 
 json App::mcpCallLibraryTool(const std::string& name, const json& args,
                              std::string& err) {
+  if (nextSession_) {
+    const tinyusdz::next::Stage& stage = nextSession_->GetStage();
+    if (name == "stage_info") {
+      const tinyusdz::next::StageMeta& meta = stage.GetMeta();
+      return json{{"loaded", true},
+                  {"defaultPrim", meta.defaultPrim},
+                  {"upAxis", meta.upAxis},
+                  {"metersPerUnit", meta.metersPerUnit},
+                  {"startTimeCode", meta.startTimeCode},
+                  {"endTimeCode", meta.endTimeCode},
+                  {"timeCodesPerSecond", meta.timeCodesPerSecond},
+                  {"primCount", stage.GetPrimCount()}};
+    }
+
+    if (name == "prim_list" || name == "query_prims_by_type" ||
+        name == "search") {
+      const std::string root = args.value("path", std::string("/"));
+      const std::string type = args.value("type", std::string());
+      const std::string query = args.value("query", std::string());
+      json prims = json::array();
+      stage.Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+        const std::string path = prim.GetPath().str();
+        if (root != "/" && path != root &&
+            path.compare(0, root.size() + 1, root + "/") != 0) {
+          return true;
+        }
+        if (!type.empty() && prim.GetTypeName() != type) return true;
+        if (!query.empty() && path.find(query) == std::string::npos &&
+            prim.GetName().find(query) == std::string::npos) {
+          return true;
+        }
+        prims.push_back(json{{"path", path},
+                             {"name", prim.GetName()},
+                             {"type", prim.GetTypeName()},
+                             {"active", prim.IsActive()}});
+        return true;
+      });
+      return json{{"path", root}, {"prims", prims}, {"count", prims.size()}};
+    }
+
+    if (!args.contains("path") || !args["path"].is_string()) {
+      err = "Missing 'path' argument";
+      return json::object();
+    }
+    const std::string path = args["path"].get<std::string>();
+    const tinyusdz::next::UsdPrim prim = stage.GetPrimAtPath(path);
+    if (!prim.IsValid()) {
+      err = "Prim not found: " + path;
+      return json::object();
+    }
+
+    if (name == "prim_get") {
+      return json{{"path", path},
+                  {"name", prim.GetName()},
+                  {"type", prim.GetTypeName()},
+                  {"active", prim.IsActive()},
+                  {"propertyCount", prim.GetPropertyNames().size()},
+                  {"childCount", prim.GetChildCount()}};
+    }
+    if (name == "attr_list") {
+      json attributes = json::array();
+      for (const std::string& attr : prim.GetPropertyNames()) {
+        const tinyusdz::next::Value* value = prim.GetPropertyValue(attr);
+        attributes.push_back(
+            json{{"name", attr},
+                 {"type", value ? tinyusdz::next::GetTypeName(value->type_id())
+                                : "unknown"},
+                 {"hasValue", value != nullptr}});
+      }
+      return json{{"path", path},
+                  {"attributes", attributes},
+                  {"count", attributes.size()}};
+    }
+    if (name == "attr_get") {
+      const std::string attr = args.value("attr_name", std::string());
+      if (attr.empty()) {
+        err = "Missing 'attr_name' argument";
+        return json::object();
+      }
+      const tinyusdz::next::Value* value = prim.GetPropertyValue(attr);
+      if (!value) {
+        err = "Attribute not found: " + attr;
+        return json::object();
+      }
+      return json{{"path", path},
+                  {"attr_name", attr},
+                  {"value", nextValueJson(*value)}};
+    }
+    if (name == "variant_list_sets" || name == "variant_get_selection") {
+      json sets = json::object();
+      for (const tinyusdz::next::VariantSetData& set :
+           prim.GetMeta().variantSets()) {
+        json variants = json::array();
+        for (const tinyusdz::next::VariantData& variant : set.variants) {
+          variants.push_back(variant.name);
+        }
+        sets[set.name] = json{{"selection", set.selected},
+                              {"variants", variants}};
+      }
+      if (name == "variant_get_selection") {
+        const std::string set = args.value("variant_set", std::string());
+        return json{{"path", path},
+                    {"variant_set", set},
+                    {"selection", sets.contains(set)
+                                      ? sets[set].value("selection", "")
+                                      : ""}};
+      }
+      return json{{"path", path},
+                  {"variantSets", sets},
+                  {"count", sets.size()}};
+    }
+    if (name == "variant_set_selection") {
+      const std::string set = args.value("variant_set", std::string());
+      const std::string variant = args.value("variant", std::string());
+      if (set.empty() || variant.empty()) {
+        err = "variant_set_selection requires variant_set and variant";
+        return json::object();
+      }
+      loadOpts_.variantOverrides[path][set] = variant;
+      startRecomposeAsync(std::set<std::string>());
+      return json{{"success", true}, {"started", true}, {"path", path}};
+    }
+
+    err = "Tool is not available on the read-only next document: " + name;
+    return json::object();
+  }
+
   // Lazily snapshot the loaded Stage into the library-tool Context (copied at
   // most once per loaded scene; the viewer's Stage is never disturbed).
   if (loaded_.ok) {

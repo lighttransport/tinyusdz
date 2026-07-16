@@ -10,6 +10,7 @@
 #endif
 #endif
 
+#include <type_traits>
 #include "crate-reader.hh"
 
 #if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
@@ -1092,6 +1093,20 @@ bool CrateReader::ReadArray(std::vector<T> *d) {
     return true;
   }
 
+  // The generic path does a raw byte read into d->data() (memcpy over object
+  // storage); that is only valid for trivially-copyable element types. A
+  // non-POD T (e.g. std::string / Path / Token) would corrupt object internals
+  // — an arbitrary-free / OOB-write primitive. Non-POD element arrays are
+  // decoded by the dedicated guarded readers (ReadStringArray / ReadTokenListOp
+  // / ReadPathListOp); this generic path is reached for them only via the
+  // (dead-but-instantiated) generic ReadListOp<T>. Reject at runtime rather
+  // than memcpy'ing over object storage.
+  if (!std::is_trivially_copyable<T>::value) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag,
+        "Internal: generic ReadArray called for a non-trivially-copyable "
+        "element type; use the dedicated reader.");
+  }
+
 #if SIZE_MAX < UINT64_MAX
   if (n > static_cast<uint64_t>(SIZE_MAX)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Array element count exceeds addressable memory");
@@ -1106,12 +1121,18 @@ bool CrateReader::ReadArray(std::vector<T> *d) {
     CHECK_MEMORY_USAGE(byte_count);
   }
 
-  d->resize(size_t(n));
-  if (!_sr->read(sizeof(T) * n, sizeof(T) * size_t(n), reinterpret_cast<uint8_t *>(d->data()))) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read array data");
+  if constexpr (std::is_trivially_copyable<T>::value) {
+    d->resize(size_t(n));
+    if (!_sr->read(sizeof(T) * n, sizeof(T) * size_t(n),
+                   reinterpret_cast<uint8_t *>(d->data()))) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read array data");
+    }
+    return true;
+  } else {
+    // Unreachable: the guard above returns first. Kept so the memcpy is never
+    // instantiated for a non-POD T.
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Unsupported non-POD array element type.");
   }
-
-  return true;
 }
 
 // Explicit instantiations for types used in timesamples
@@ -1136,8 +1157,6 @@ template bool CrateReader::ReadArray<value::double4>(std::vector<value::double4>
 template bool CrateReader::ReadArray<value::quatf>(std::vector<value::quatf>*);
 template bool CrateReader::ReadArray<value::quath>(std::vector<value::quath>*);
 template bool CrateReader::ReadArray<value::quatd>(std::vector<value::quatd>*);
-// String type instantiation needed by crate-reader-timesamples.cc
-template bool CrateReader::ReadArray<std::string>(std::vector<std::string>*);
 
 template<typename T>
 bool CrateReader::ReadListOp(ListOp<T> *d) {

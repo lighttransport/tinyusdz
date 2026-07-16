@@ -2,7 +2,21 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 
-import initTinyUSDZ from './src/tinyusdz/tinyusdz.js';
+import {
+	getBackendFromURL,
+	LOADER_BACKEND_CHOICES,
+	setBackendAndReload
+} from './src/tinyusdz/LoaderConfigUtils.js';
+
+// WASM module selection: backend=next / wasm=next load the next-only module
+// (both export SubdivStreamer); default stays the legacy module.
+async function importTinyUSDZModule() {
+	const params = new URLSearchParams(window.location.search);
+	const useNext = params.get('backend') === 'next' || params.get('wasm') === 'next';
+	const glue = useNext ? './src/tinyusdz/tinyusdz_next.js' : './src/tinyusdz/tinyusdz.js';
+	const module = await import(/* @vite-ignore */ new URL(glue, import.meta.url).href);
+	return module.default;
+}
 
 // ===========================================================================
 // Scene Setup
@@ -446,6 +460,9 @@ function updateStats(refined) {
 // ===========================================================================
 
 const gui = new GUI();
+// Backend switch reloads the page: the WASM module is chosen at startup.
+gui.add({ backend: getBackendFromURL() }, 'backend', LOADER_BACKEND_CHOICES)
+	.name('WASM Backend').onChange(setBackendAndReload);
 gui.add(state, 'subdivisionLevel', 0, 5, 1).name('Subdivision Level').onChange(updateMesh);
 gui.add(state, 'scheme', ['catmullclark', 'loop', 'bilinear']).name('Scheme').onChange(updateMesh);
 gui.add(state, 'boundary', ['edgeAndCorner', 'edgeOnly', 'none']).name('Boundary').onChange(updateMesh);
@@ -475,10 +492,23 @@ memFolder.open();
 // Animation / resize / init
 // ===========================================================================
 
+// FPS display (updated every ~500 ms to keep UI overhead low)
+let fpsFrameCount = 0;
+let fpsLastUpdateMs = performance.now();
+
 function animate() {
 	requestAnimationFrame(animate);
 	controls.update();
 	renderer.render(scene, camera);
+
+	fpsFrameCount++;
+	const now = performance.now();
+	if (now - fpsLastUpdateMs >= 500) {
+		const fps = fpsFrameCount * 1000 / (now - fpsLastUpdateMs);
+		setText('fps', fps.toFixed(1));
+		fpsFrameCount = 0;
+		fpsLastUpdateMs = now;
+	}
 }
 
 window.addEventListener('resize', () => {
@@ -489,6 +519,7 @@ window.addEventListener('resize', () => {
 
 async function main() {
 	setStatus('loading wasm…');
+	const initTinyUSDZ = await importTinyUSDZModule();
 	Module = await initTinyUSDZ();
 	streamer = new Module.SubdivStreamer();
 	setStatus('ready');

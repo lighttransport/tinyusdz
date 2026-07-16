@@ -11,6 +11,14 @@ const statusEl = document.getElementById('status');
 const modelInfoEl = document.getElementById('model-info');
 const meshCountEl = document.getElementById('mesh-count');
 const materialCountEl = document.getElementById('material-count');
+const lightCountEl = document.getElementById('light-count');
+const cameraCountEl = document.getElementById('camera-count');
+const nodeCountEl = document.getElementById('node-count');
+const pointInstancerCountEl = document.getElementById('point-instancer-count');
+const pointInstanceDrawCountEl = document.getElementById('point-instance-draw-count');
+const skeletonCountEl = document.getElementById('skeleton-count');
+const unsupportedRenderableCountEl = document.getElementById('unsupported-renderable-count');
+const animationCountEl = document.getElementById('animation-count');
 const upAxisEl = document.getElementById('up-axis');
 const loadBtn = document.getElementById('load-btn');
 const fileInput = document.getElementById('file-input');
@@ -48,7 +56,21 @@ worker.postMessage(
 // ─── Worker → DOM message handler ─────────────────────────────────────────
 
 worker.addEventListener('message', (e) => {
-    const { type, message, meshCount, materialCount, upAxis } = e.data;
+    const {
+        type,
+        message,
+        meshCount,
+        materialCount,
+        upAxis,
+        lights,
+        cameras,
+        nodes,
+        pointInstancers,
+        pointInstanceDraws,
+        skeletons,
+        unsupportedRenderables,
+        animations
+    } = e.data;
 
     if (type === 'status') {
         statusEl.textContent = message;
@@ -58,6 +80,14 @@ worker.addEventListener('message', (e) => {
         statusEl.className = '';
         meshCountEl.textContent = meshCount;
         materialCountEl.textContent = materialCount;
+        if (lightCountEl) lightCountEl.textContent = lights || 0;
+        if (cameraCountEl) cameraCountEl.textContent = cameras || 0;
+        if (nodeCountEl) nodeCountEl.textContent = nodes || 0;
+        if (pointInstancerCountEl) pointInstancerCountEl.textContent = pointInstancers || 0;
+        if (pointInstanceDrawCountEl) pointInstanceDrawCountEl.textContent = pointInstanceDraws || 0;
+        if (skeletonCountEl) skeletonCountEl.textContent = skeletons || 0;
+        if (unsupportedRenderableCountEl) unsupportedRenderableCountEl.textContent = unsupportedRenderables || 0;
+        if (animationCountEl) animationCountEl.textContent = animations || 0;
         upAxisEl.textContent = upAxis || 'Y';
         modelInfoEl.style.display = 'block';
     } else if (type === 'error') {

@@ -61,6 +61,19 @@ UsdPrim GetBoundMaterial(const Stage& stage, const UsdPrim& prim);
 /// Get bound material path
 std::string GetBoundMaterialPath(const UsdPrim& prim);
 
+/// Resolve the material bound to `prim_path`, honoring UsdShade binding
+/// INHERITANCE (a binding on an ancestor applies to its descendants) on top of
+/// the purpose fallback chain in `GetBoundMaterialPath`. Returns "" if nothing
+/// in the ancestor chain binds a material.
+std::string GetInheritedBoundMaterialPath(const Stage& stage,
+                                          const std::string& prim_path);
+
+/// Does this prim's winning binding declare `bindMaterialAs =
+/// "strongerThanDescendants"`? (The default is "weakerThanDescendants", i.e. a
+/// descendant binding overrides an ancestor's.) Callers doing their own
+/// inheritance walk -- e.g. one that also skips dangling targets -- need this.
+bool BindingIsStrongerThanDescendants(const UsdPrim& prim);
+
 // ============================================================
 // Shader API
 // ============================================================
@@ -118,6 +131,7 @@ struct PreviewSurfaceData {
   std::string roughness_texture;
   std::string emissive_texture;
   std::string occlusion_texture;
+  std::string opacity_texture;
 };
 
 /// Check if shader is UsdPreviewSurface
@@ -159,6 +173,10 @@ bool IsPrimvarReader(const UsdPrim& shader);
 
 /// Get primvar name being read
 std::string GetPrimvarReaderVarname(const UsdPrim& shader);
+
+/// Stage-aware variant: additionally follows inputs:varname connections
+/// (e.g. to a Material's inputs:frame:stPrimvarName interface attribute).
+std::string GetPrimvarReaderVarname(const Stage& stage, const UsdPrim& shader);
 
 }  // namespace next
 }  // namespace tinyusdz

@@ -27,6 +27,12 @@ enum class PayloadPolicy {
 };
 
 struct LoadOptions {
+  // Aggregate host/GPU limits for the next large-scene path. Zero preserves
+  // legacy behavior. The loader applies these before geometry materialization.
+  size_t maxMemoryBytes{0};
+  size_t gpuGeometryBudgetBytes{0};
+  size_t uploadStagingBytes{0};
+
   // Compose USD composition arcs (subLayers/references/payload/inherits/
   // variants) on load. When false, only the root layer is loaded (legacy
   // behavior, keeps the mmap zero-copy fast path).
@@ -65,6 +71,12 @@ struct LoadOptions {
   // referenced as `../lightingrenderovers/...`) need it; resolution of the
   // surviving '..' is delegated to the asset resolver, anchored at searchPaths.
   bool allowParentRelativePaths{false};
+  // Emit per-vertex GPU skinning attributes (joint indices/weights + a bone
+  // matrix layout) instead of baking a static skinned pose into the geometry at
+  // load. Only the `next` loader reads this: the Tydra path always emits the
+  // attributes and decides afterwards. Off = load-time CPU bake (the pose at
+  // `timecode`), which is what the CPU-skinning and CPU-tracer paths need.
+  bool gpuSkinning{false};
   TextureRuntimeOptions textureOptions;
 };
 

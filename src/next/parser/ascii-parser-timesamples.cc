@@ -40,7 +40,19 @@ bool AsciiParser::Impl::ParseTimeSamples(const std::string& prop_name,
 
     ParseResult value_result;
     if (is_array) {
-      value_result = ParseArrayValue(*lexer_, type_id);
+      ParseArrayContext array_ctx;
+      array_ctx.source = source_;
+      array_ctx.enable_usda_lazy_arrays = options_.enable_usda_lazy_arrays;
+      array_ctx.max_usda_lazy_array_elements =
+          options_.max_usda_lazy_array_elements;
+      array_ctx.num_threads = options_.num_threads;
+      value_result = ParseArrayValue(*lexer_, type_id, array_ctx);
+    } else if (Check(TokenType::Number) && !IsScalarType(type_id)) {
+      // AOUSD permits format implementations to retain a default/time sample
+      // whose stored value disagrees with the declared type. Parse the scalar
+      // as its own VariantValue instead of rejecting the whole layer (the
+      // supplemental attributes fixture deliberately exercises this).
+      value_result = ParseValue(*lexer_, TypeId::Double);
     } else {
       value_result = ParseValue(*lexer_, type_id);
     }

@@ -455,6 +455,10 @@ std::string to_string(const Material &material, const uint32_t indent,
   }
   ss << pprint::Indent(indent) << "{\n";
 
+  // Imageable: `purpose` is a typed field, so print it from there or it is
+  // silently dropped on write.
+  ss << print_typed_token_attr(material.purpose, "purpose", indent + 1);
+
   if (material.surface.authored()) {
     // assume connection when authored.
     // TODO: list edit?.
@@ -672,6 +676,8 @@ std::string to_string(const NodeGraph &nodegraph, const uint32_t indent,
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
+
+  ss << print_typed_token_attr(nodegraph.purpose, "purpose", indent + 1);
 
   // NodeGraph-specific attributes
   if (nodegraph.nodedef.authored()) {

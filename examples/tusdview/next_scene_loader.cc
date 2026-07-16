@@ -5,6 +5,7 @@
 #include "next_scene_loader.hh"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -13,6 +14,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 #include <tuple>
 #include <unordered_map>
@@ -24,10 +26,12 @@
 // `next` + tydra-next (built on demand; see CMakeLists.txt).
 #include "next/tinyusdz-next.hh"
 #include "next/reader/usdz-reader.hh"  // USDZReader (embedded --next textures)
+#include "next/schema/usd-shade.hh"    // GetInheritedBoundMaterialPath
 #include "next/schema/usd-skel.hh"     // GetSkeletonData / GetSkelAnimationData
 #include "tydra/scene-access.hh"       // SkinPointsLBS / ConcatJointTransforms
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-extract.hh"
+#include "tydra/next/texture-cache.hh"  // shared decode + size cap + byte budget
 #include "tydra/next/scene-access.hh"  // ComputeWorldTransform
 #include "value-types.hh"              // value::matrix4d / quatf / double3
 #include "xform.hh"                    // to_matrix3x3 / to_matrix / inverse
@@ -82,15 +86,20 @@ inline matrix4d Mul4(const matrix4d& a, const matrix4d& b) {
   return r;
 }
 
-// Per-instance local transform from position + orientation quaternion (xyzw) +
-// scale, matching tusdrender's InstanceTRS (p * S * R, translation in row 3).
-inline matrix4d InstanceTRS(const float* pos, const float* q_xyzw,
+// Per-instance local transform from position + orientation quaternion + scale,
+// matching tusdrender's InstanceTRS (p * S * R, translation in row 3).
+// `q_wxyz` is REAL-FIRST (w, x, y, z), which is how the next stage stores a quat:
+// crate is imaginary-first on disk and the reader swizzles on load
+// (crate-reader-unpack.cc). Reading these four floats as (x,y,z,w) turns a
+// 30-degree Z rotation into a 150-degree X rotation -- it flips the instance
+// upside down, which is exactly what a PointInstancer of an oriented prototype did.
+inline matrix4d InstanceTRS(const float* pos, const float* q_wxyz,
                             const float* s3) {
   ::tinyusdz::value::quatf q;
-  q.imag[0] = q_xyzw[0];
-  q.imag[1] = q_xyzw[1];
-  q.imag[2] = q_xyzw[2];
-  q.real = q_xyzw[3];
+  q.real = q_wxyz[0];
+  q.imag[0] = q_wxyz[1];
+  q.imag[1] = q_wxyz[2];
+  q.imag[2] = q_wxyz[3];
   ::tinyusdz::value::matrix3d rot = ::tinyusdz::to_matrix3x3(q);
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) rot.m[i][j] *= static_cast<double>(s3[i]);
@@ -161,70 +170,300 @@ std::vector<std::string> ReadTokens(const tnext::UsdPrim& p, const char* name,
   return r;
 }
 
+// One tydra-next float vertex attribute, sampled per triangulated corner in
+// whatever interpolation it was authored with.
+struct NextAttr {
+  const tydn::FloatChunked* data{nullptr};
+  const tydn::UInt32Chunked* indices{nullptr};  // indexed primvars; may be null
+  tydn::Interpolation interp{tydn::Interpolation::Vertex};
+  uint32_t comps{0};
+
+  explicit operator bool() const { return data && comps > 0 && !data->empty(); }
+
+  // Element index for a corner, given its point id, its authored face-vertex
+  // (corner) index, and its face id. SIZE_MAX when out of range.
+  size_t element(uint32_t pointId, uint32_t cornerId, uint32_t faceId) const {
+    size_t e = 0;
+    switch (interp) {
+      case tydn::Interpolation::Constant: e = 0; break;
+      case tydn::Interpolation::Uniform: e = faceId; break;
+      case tydn::Interpolation::FaceVarying: e = cornerId; break;
+      case tydn::Interpolation::Vertex:
+      case tydn::Interpolation::Varying:
+      default: e = pointId; break;
+    }
+    if (indices && !indices->empty()) {
+      if (e >= indices->size()) return SIZE_MAX;
+      e = (*indices)[e];
+    }
+    if ((e + 1) * comps > data->size()) return SIZE_MAX;
+    return e;
+  }
+
+  // Read up to `n` components into `out` (zero-filled on a miss).
+  void read(uint32_t pointId, uint32_t cornerId, uint32_t faceId, uint32_t n,
+            float* out) const {
+    for (uint32_t c = 0; c < n; ++c) out[c] = 0.0f;
+    if (!*this) return;
+    const size_t e = element(pointId, cornerId, faceId);
+    if (e == SIZE_MAX) return;
+    for (uint32_t c = 0; c < std::min(n, comps); ++c) {
+      out[c] = (*data)[e * comps + c];
+    }
+  }
+};
+
+NextAttr MakeNextAttr(const tydn::FloatChunked& data, tydn::Interpolation interp,
+                      uint32_t comps) {
+  NextAttr a;
+  if (!data.empty() && comps > 0) {
+    a.data = &data;
+    a.interp = interp;
+    a.comps = comps;
+  }
+  return a;
+}
+
+// Find a generic primvar by name and expose it as a NextAttr.
+NextAttr FindNextPrimvar(const tydn::RenderMesh& m, const char* name,
+                         uint32_t comps) {
+  for (const tydn::VertexAttribute& pv : m.primvars) {
+    if (pv.name != name || pv.float_data.empty()) continue;
+    NextAttr a;
+    a.data = &pv.float_data;
+    a.indices = pv.has_indices() ? &pv.indices : nullptr;
+    a.interp = pv.interpolation;
+    a.comps = comps;
+    return a;
+  }
+  return NextAttr{};
+}
+
 // Build interleaved DrawVertex geometry (mesh-LOCAL space) + indices from a
 // tydra-next RenderMesh. Returns false if there is no renderable geometry.
-bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm) {
+//
+// tydra-next keeps every primvar in its AUTHORED interpolation (constant /
+// uniform / vertex / varying / faceVarying) and hands us
+// `triangulated_face_vertex_indices` to index the faceVarying ones against the
+// triangulated topology. Production USD overwhelmingly authors faceVarying `st`
+// and `normals`, so we resolve all five interpolations here and WELD the
+// corners: a point is split into multiple DrawVertex entries only where its
+// attributes actually differ (a UV seam or a hard edge). Naive per-corner
+// expansion would multiply a quad mesh's vertex count ~4x, which is exactly the
+// VRAM we are trying not to spend.
+//
+// `vertexToPoint` receives the source point id per emitted vertex, since the
+// weld breaks the old vertex-i == point-i invariant that the skinning,
+// blendshape, and wireframe passes relied on.
+bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
+                      std::vector<uint32_t>* vertexToPoint) {
   const size_t np = m.point_count();
-  if (np == 0 || m.triangulated_indices.size() < 3) return false;
-  // Authored vertex normals -> smooth shading; otherwise shade geometrically in
-  // the shader (screen-derivative normal), which reads correctly on hard
-  // surfaces instead of being smeared by averaged smooth normals.
-  const bool authoredNormals = m.has_normals() &&
-                               m.normals_interp == tydn::Interpolation::Vertex &&
-                               m.normals.size() == 3 * np;
-  dm->geometricNormal = !authoredNormals;
+  const size_t ncorners = m.triangulated_indices.size();
+  if (np == 0 || ncorners < 3) return false;
 
-  const bool hasUV = m.has_texcoords() &&
-                     m.texcoords_0_interp == tydn::Interpolation::Vertex &&
-                     m.texcoords_0.size() == 2 * np;
+  // Authored doubleSided reaches the renderers (GL back-face-culls
+  // single-sided meshes; VK matches via dynamic cull mode). Without this every
+  // --next mesh defaulted to single-sided regardless of what was authored.
+  dm->doubleSided = m.double_sided;
 
-  // Per-vertex displayColor: Vertex (per-point) directly; Constant broadcast.
+  // faceVarying lookups need the corner remap; without it, treat faceVarying
+  // attributes as absent rather than reading garbage.
+  const bool haveCornerMap =
+      m.triangulated_face_vertex_indices.size() == ncorners;
+
+  const NextAttr nrm = MakeNextAttr(m.normals, m.normals_interp, 3);
+  const NextAttr uv0 = MakeNextAttr(m.texcoords_0, m.texcoords_0_interp, 2);
+  const NextAttr uv1 = MakeNextAttr(m.texcoords_1, m.texcoords_1_interp, 2);
+  // displayColor is color3f, but tydra-next also accepts a 4-component authoring
+  // (rgba); the 4th component is folded into the alpha channel below. Component
+  // count follows from the element count its interpolation implies.
+  auto expectedElems = [&](tydn::Interpolation interp) -> size_t {
+    switch (interp) {
+      case tydn::Interpolation::Constant: return 1;
+      case tydn::Interpolation::Uniform: return m.face_count();
+      case tydn::Interpolation::FaceVarying: return m.face_vertex_indices.size();
+      default: return np;
+    }
+  };
+  uint32_t colorComps = 3;
   if (!m.colors.empty()) {
-    if (m.colors_interp == tydn::Interpolation::Vertex &&
-        m.colors.size() >= 3 * np) {
-      dm->vertexColors.resize(3 * np);
-      for (size_t i = 0; i < np; ++i) {
-        dm->vertexColors[3 * i + 0] = m.colors[3 * i + 0];
-        dm->vertexColors[3 * i + 1] = m.colors[3 * i + 1];
-        dm->vertexColors[3 * i + 2] = m.colors[3 * i + 2];
-      }
-    } else if (m.colors_interp == tydn::Interpolation::Constant &&
-               m.colors.size() >= 3) {
-      dm->vertexColors.resize(3 * np);
-      for (size_t i = 0; i < np; ++i) {
-        dm->vertexColors[3 * i + 0] = m.colors[0];
-        dm->vertexColors[3 * i + 1] = m.colors[1];
-        dm->vertexColors[3 * i + 2] = m.colors[2];
+    const size_t elems = expectedElems(m.colors_interp);
+    if (elems > 0 && m.colors.size() == elems * 4) colorComps = 4;
+  }
+  const NextAttr col = MakeNextAttr(m.colors, m.colors_interp, colorComps);
+  // displayOpacity is not a tydra-next builtin: it lands in the generic primvar
+  // bag as a float attribute.
+  const NextAttr opacity = FindNextPrimvar(m, "displayOpacity", 1);
+  // Tangents are computed only for normal-mapped meshes (see the tangent-aware
+  // converter in LoadUSDViaNext); xyzw with w = handedness.
+  const NextAttr tan = MakeNextAttr(m.tangents, m.tangents_interp, 4);
+
+  auto usesFaceVarying = [&](const NextAttr& a) {
+    return a && a.interp == tydn::Interpolation::FaceVarying;
+  };
+  if (!haveCornerMap &&
+      (usesFaceVarying(nrm) || usesFaceVarying(uv0) || usesFaceVarying(uv1) ||
+       usesFaceVarying(col) || usesFaceVarying(opacity) ||
+       usesFaceVarying(tan))) {
+    return false;  // triangulation did not produce a usable corner remap
+  }
+
+  // Authored normals (in any interpolation) -> smooth shading; otherwise shade
+  // geometrically in the shader (screen-derivative normal), which reads
+  // correctly on hard surfaces instead of being smeared by averaged normals.
+  dm->geometricNormal = !static_cast<bool>(nrm);
+
+  // Uniform (per-face) attributes need a corner -> face lookup. Only pay for it
+  // when something is actually authored that way.
+  auto usesUniform = [&](const NextAttr& a) {
+    return a && a.interp == tydn::Interpolation::Uniform;
+  };
+  std::vector<uint32_t> cornerToFace;
+  if (usesUniform(nrm) || usesUniform(uv0) || usesUniform(uv1) ||
+      usesUniform(col) || usesUniform(opacity) || usesUniform(tan)) {
+    const size_t nfaces = m.face_vertex_counts.size();
+    size_t authoredCorners = 0;
+    for (size_t f = 0; f < nfaces; ++f) authoredCorners += m.face_vertex_counts[f];
+    cornerToFace.resize(authoredCorners);
+    size_t off = 0;
+    for (size_t f = 0; f < nfaces; ++f) {
+      const uint32_t c = m.face_vertex_counts[f];
+      for (uint32_t k = 0; k < c && off < authoredCorners; ++k, ++off) {
+        cornerToFace[off] = static_cast<uint32_t>(f);
       }
     }
   }
 
+  const bool wantColors = static_cast<bool>(col);
+  const bool wantAlpha =
+      static_cast<bool>(opacity) || (wantColors && colorComps == 4);
+  const bool wantUv1 = static_cast<bool>(uv1);
+  const bool wantTangents = static_cast<bool>(tan);
+
   dm->name = m.name;
   dm->absPath = m.prim_path;
-  dm->vertices.resize(np);
-  for (size_t i = 0; i < np; ++i) {
-    DrawVertex& v = dm->vertices[i];
-    v.px = m.points[3 * i + 0];
-    v.py = m.points[3 * i + 1];
-    v.pz = m.points[3 * i + 2];
-    v.nx = authoredNormals ? m.normals[3 * i + 0] : 0.0f;
-    v.ny = authoredNormals ? m.normals[3 * i + 1] : 0.0f;
-    v.nz = authoredNormals ? m.normals[3 * i + 2] : 0.0f;
-    v.u = hasUV ? m.texcoords_0[2 * i + 0] : 0.0f;
-    v.v = hasUV ? m.texcoords_0[2 * i + 1] : 0.0f;
+
+  // Weld: per point, a short chain of already-emitted variants. Almost every
+  // point has one; seams add a second. This is much cheaper in both time and
+  // peak memory than hashing a full attribute tuple per corner.
+  std::vector<int32_t> firstVariant(np, -1);
+  std::vector<int32_t> nextVariant;
+  std::vector<uint32_t>& v2p = *vertexToPoint;
+  v2p.clear();
+
+  nextVariant.reserve(np);
+  v2p.reserve(np);
+  dm->vertices.reserve(np);
+  dm->indices.resize(ncorners);
+
+  auto sameFloats = [](const float* a, const float* b, uint32_t n) {
+    for (uint32_t i = 0; i < n; ++i) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  };
+
+  for (size_t c = 0; c < ncorners; ++c) {
+    const uint32_t pid = m.triangulated_indices[c];
+    if (pid >= np) {  // sanitized upstream, but never index out of bounds
+      dm->indices[c] = 0;
+      continue;
+    }
+    const uint32_t cornerId =
+        haveCornerMap ? m.triangulated_face_vertex_indices[c] : pid;
+    const uint32_t faceId = (cornerToFace.empty() || cornerId >= cornerToFace.size())
+                                ? 0u
+                                : cornerToFace[cornerId];
+
+    float n[3], t0[2], t1[2], rgb[4], a = 1.0f, tg[4];
+    nrm.read(pid, cornerId, faceId, 3, n);
+    uv0.read(pid, cornerId, faceId, 2, t0);
+    uv1.read(pid, cornerId, faceId, 2, t1);
+    if (wantColors) {
+      col.read(pid, cornerId, faceId, colorComps, rgb);
+    } else {
+      rgb[0] = rgb[1] = rgb[2] = 1.0f;
+      rgb[3] = 1.0f;
+    }
+    if (colorComps == 4 && wantColors) a = rgb[3];
+    if (opacity) {
+      float o[1];
+      opacity.read(pid, cornerId, faceId, 1, o);
+      a = o[0];
+    }
+    if (wantTangents) tan.read(pid, cornerId, faceId, 4, tg);
+
+    // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
+    // top-row-first and uploaded so v=0 samples the top, so invert here (same as
+    // the legacy path in mesh_build.cc).
+    const float u0 = t0[0], v0 = 1.0f - t0[1];
+    const float u1 = t1[0], v1 = 1.0f - t1[1];
+
+    int32_t found = -1;
+    for (int32_t vi = firstVariant[pid]; vi >= 0; vi = nextVariant[size_t(vi)]) {
+      const DrawVertex& cand = dm->vertices[size_t(vi)];
+      if (cand.nx != n[0] || cand.ny != n[1] || cand.nz != n[2]) continue;
+      if (cand.u != u0 || cand.v != v0) continue;
+      if (wantUv1 && (dm->uv1[size_t(vi) * 2 + 0] != u1 ||
+                      dm->uv1[size_t(vi) * 2 + 1] != v1)) {
+        continue;
+      }
+      if (wantColors &&
+          !sameFloats(&dm->vertexColors[size_t(vi) * 3], rgb, 3)) {
+        continue;
+      }
+      if (wantAlpha && dm->vertexAlpha[size_t(vi)] != a) continue;
+      if (wantTangents &&
+          !sameFloats(&dm->tangents[size_t(vi) * 3], tg, 3)) {
+        continue;
+      }
+      found = vi;
+      break;
+    }
+
+    if (found < 0) {
+      found = static_cast<int32_t>(dm->vertices.size());
+      DrawVertex v;
+      v.px = m.points[3 * pid + 0];
+      v.py = m.points[3 * pid + 1];
+      v.pz = m.points[3 * pid + 2];
+      v.nx = n[0]; v.ny = n[1]; v.nz = n[2];
+      v.u = u0; v.v = v0;
+      dm->vertices.push_back(v);
+      if (wantUv1) { dm->uv1.push_back(u1); dm->uv1.push_back(v1); }
+      if (wantColors) {
+        dm->vertexColors.push_back(rgb[0]);
+        dm->vertexColors.push_back(rgb[1]);
+        dm->vertexColors.push_back(rgb[2]);
+      }
+      if (wantAlpha) dm->vertexAlpha.push_back(a);
+      if (wantTangents) {
+        dm->tangents.push_back(tg[0]);
+        dm->tangents.push_back(tg[1]);
+        dm->tangents.push_back(tg[2]);
+        // Binormal from the handedness sign, so the shader gets a full basis.
+        const float w = tg[3] < 0.0f ? -1.0f : 1.0f;
+        dm->binormals.push_back((n[1] * tg[2] - n[2] * tg[1]) * w);
+        dm->binormals.push_back((n[2] * tg[0] - n[0] * tg[2]) * w);
+        dm->binormals.push_back((n[0] * tg[1] - n[1] * tg[0]) * w);
+      }
+      nextVariant.push_back(firstVariant[pid]);
+      v2p.push_back(pid);
+      firstVariant[pid] = found;
+    }
+    dm->indices[c] = static_cast<uint32_t>(found);
   }
-  dm->indices.resize(m.triangulated_indices.size());
-  for (size_t i = 0; i < m.triangulated_indices.size(); ++i) {
-    dm->indices[i] = m.triangulated_indices[i];
-  }
+
+  if (dm->vertices.empty()) return false;
   dm->submeshes.push_back(
       DrawSubmesh{0, static_cast<uint32_t>(dm->indices.size()), 0});
 
   // Original-polygon wireframe edges: the perimeter of each USD face, from the
   // pre-triangulation topology. This shows quads/ngons (not triangulation
   // diagonals) and is correct even for double-sided meshes (whose triangulation
-  // doubles the tri count, defeating any per-triangle scheme). Indices match the
-  // vertex buffer because FillFlatGeometry keeps vertex i == point i.
+  // doubles the tri count, defeating any per-triangle scheme). Point ids map to
+  // their first emitted variant -- every variant of a point shares its position,
+  // so any of them draws the same edge.
   {
     const std::vector<uint32_t> fvc = m.face_vertex_counts.flatten();
     const std::vector<uint32_t> fvi = m.face_vertex_indices.flatten();
@@ -238,9 +477,13 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm) {
       for (uint32_t c : fvc) {
         if (off + c > fvi.size()) { ok = false; break; }
         for (uint32_t k = 0; k < c; ++k) {
-          const uint32_t a = fvi[off + k];
-          const uint32_t b = fvi[off + (k + 1u) % c];
-          if (a == b || a >= np || b >= np) continue;
+          const uint32_t pa = fvi[off + k];
+          const uint32_t pb = fvi[off + (k + 1u) % c];
+          if (pa == pb || pa >= np || pb >= np) continue;
+          const int32_t va = firstVariant[pa], vb = firstVariant[pb];
+          if (va < 0 || vb < 0) continue;
+          const uint32_t a = static_cast<uint32_t>(va);
+          const uint32_t b = static_cast<uint32_t>(vb);
           const uint64_t key =
               a < b ? (uint64_t(a) << 32 | b) : (uint64_t(b) << 32 | a);
           if (seen.insert(key).second) { wire.push_back(a); wire.push_back(b); }
@@ -393,8 +636,12 @@ MorphBracket FindMorphBracket(const std::vector<float>& ibWeights, float w) {
 // matching the GPU-morph coeff eval); without in-betweens this is a plain linear
 // primary scale. Limitation (acceptable for a static preview): load-time weights
 // only -- no animated morph. Authored smooth normals are recomputed below.
+void RecomputeSmoothNormalsNext(DrawMeshCPU* dm);
+
 void BakeBlendShapes(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
-                     double time, DrawMeshCPU* dm) {
+                     double time, DrawMeshCPU* dm,
+                     const std::vector<uint32_t>& vertexToPoint,
+                     size_t numPoints) {
   const std::vector<std::string> shapeNames =
       ReadTokens(meshPrim, "skel:blendShapes", time);
   const std::vector<tnext::Path>* targets =
@@ -405,8 +652,12 @@ void BakeBlendShapes(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
       ResolveBlendWeights(stage, meshPrim, time);
   if (weights.empty()) return;
 
-  const size_t np = dm->vertices.size();
-  if (np == 0) return;
+  const size_t nv = dm->vertices.size();
+  if (nv == 0 || numPoints == 0) return;
+  if (!vertexToPoint.empty() && vertexToPoint.size() != nv) return;
+  // Offsets are accumulated per authored POINT (that is what BlendShape
+  // `pointIndices` index), then scattered onto the welded vertices.
+  const size_t np = numPoints;
   std::vector<float> delta(3 * np, 0.0f);
   bool any = false;
 
@@ -459,47 +710,18 @@ void BakeBlendShapes(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
     }
   }
   if (!any) return;
-  for (size_t i = 0; i < np; ++i) {
-    dm->vertices[i].px += delta[3 * i + 0];
-    dm->vertices[i].py += delta[3 * i + 1];
-    dm->vertices[i].pz += delta[3 * i + 2];
+  for (size_t i = 0; i < nv; ++i) {
+    const size_t p = vertexToPoint.empty() ? i : size_t(vertexToPoint[i]);
+    if (p >= np) continue;
+    dm->vertices[i].px += delta[3 * p + 0];
+    dm->vertices[i].py += delta[3 * p + 1];
+    dm->vertices[i].pz += delta[3 * p + 2];
   }
 
   // Recompute smooth vertex normals from the baked positions so authored-normal
   // (smooth-shaded) meshes don't keep stale rest normals. Geometric-shaded meshes
   // re-derive normals in the shader and ignore the attribute, so skip them.
-  if (dm->geometricNormal) return;
-  for (size_t i = 0; i < np; ++i) {
-    dm->vertices[i].nx = dm->vertices[i].ny = dm->vertices[i].nz = 0.0f;
-  }
-  for (size_t t = 0; t + 2 < dm->indices.size(); t += 3) {
-    const uint32_t a = dm->indices[t], b = dm->indices[t + 1],
-                   c = dm->indices[t + 2];
-    if (a >= np || b >= np || c >= np) continue;
-    const DrawVertex& va = dm->vertices[a];
-    const DrawVertex& vb = dm->vertices[b];
-    const DrawVertex& vc = dm->vertices[c];
-    // Cross product of two edges = area-weighted face normal (accumulated to
-    // each vertex for an area-weighted smooth normal).
-    const float e1x = vb.px - va.px, e1y = vb.py - va.py, e1z = vb.pz - va.pz;
-    const float e2x = vc.px - va.px, e2y = vc.py - va.py, e2z = vc.pz - va.pz;
-    const float fnx = e1y * e2z - e1z * e2y;
-    const float fny = e1z * e2x - e1x * e2z;
-    const float fnz = e1x * e2y - e1y * e2x;
-    for (uint32_t v : {a, b, c}) {
-      dm->vertices[v].nx += fnx;
-      dm->vertices[v].ny += fny;
-      dm->vertices[v].nz += fnz;
-    }
-  }
-  for (size_t i = 0; i < np; ++i) {
-    DrawVertex& v = dm->vertices[i];
-    const float len = std::sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
-    if (len > 1e-12f) {
-      const float inv = 1.0f / len;
-      v.nx *= inv; v.ny *= inv; v.nz *= inv;
-    }
-  }
+  RecomputeSmoothNormalsNext(dm);
 }
 
 // Recompute area-weighted smooth vertex normals from positions (mirrors the
@@ -600,34 +822,119 @@ matrix4d SkinMakeLocal(const float t[3], const ::tinyusdz::value::quatf& r,
   return m;
 }
 
-// Load-time skeletal skinning bake: pose the bound skeleton at `time` and LBS-
-// deform dm->vertices (rest, point-indexed) in place, then recompute normals.
-// Consistent with the --next static-preview design (blendshapes are likewise
-// baked at load; per-frame GPU skinning is the legacy path's job). No-op --
-// leaves the rest pose -- on any missing/mismatched skin/skeleton data.
-void BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
-                  double time, DrawMeshCPU* dm) {
-  if (!dm || dm->vertices.empty()) return;
+// A mesh's POSE-INDEPENDENT skin binding: the bound skeleton/animation, the
+// geomBindTransform, and the per-VERTEX influences. Resolved once at load and
+// consumed either by the CPU bake (BakeSkinning) or by the GPU path, which keeps
+// the influences as vertex attributes and re-poses the skeleton every frame
+// (SetupGpuSkinNext / BuildNextSkinningFrame).
+struct NextSkinBinding {
+  std::string skelPath;
+  std::string animPath;  // "" = no animation (rest pose)
+  size_t numJoints = 0;
+  int numInfl = 0;
+  matrix4d geomBind = matrix4d::identity();
+  std::vector<int> vidx;    // nv * numInfl, in SKELETON joint order
+  std::vector<float> vwgt;  // nv * numInfl
+};
+
+// false = not skinned, or the skin data is missing/inconsistent (callers then
+// leave the mesh in its rest pose).
+bool ResolveNextSkinBinding(const tnext::Stage& stage,
+                            const tnext::UsdPrim& meshPrim, double time,
+                            size_t nv,
+                            const std::vector<uint32_t>& vertexToPoint,
+                            size_t numPoints, NextSkinBinding* out) {
+  if (!out || nv == 0) return false;
   std::vector<int32_t> ji = ReadInts(meshPrim, "primvars:skel:jointIndices", time);
   std::vector<float> jw = ReadFloats(meshPrim, "primvars:skel:jointWeights", time);
-  if (ji.empty() || ji.size() != jw.size()) return;
-  const size_t np = dm->vertices.size();
-  if (np == 0 || ji.size() % np != 0) return;  // needs vertex==point layout
-  const int numInfl = static_cast<int>(ji.size() / np);
-  if (numInfl <= 0) return;
+  if (ji.empty() || ji.size() != jw.size()) return false;
+  // skel:jointIndices/Weights are authored per POINT; the weld may have split
+  // points into several vertices, so influences are gathered through
+  // `vertexToPoint` below rather than read at the vertex index.
+  if (numPoints == 0 || ji.size() % numPoints != 0) return false;
+  const int numInfl = static_cast<int>(ji.size() / numPoints);
+  if (numInfl <= 0) return false;
+  if (!vertexToPoint.empty() && vertexToPoint.size() != nv) return false;
 
   tnext::UsdPrim skelPrim = FindBoundSkeletonNext(stage, meshPrim);
-  if (!skelPrim.IsValid()) return;
+  if (!skelPrim.IsValid()) return false;
   tinyusdz::next::SkeletonData skel;
-  if (!tinyusdz::next::GetSkeletonData(stage, skelPrim, &skel)) return;
+  if (!tinyusdz::next::GetSkeletonData(stage, skelPrim, &skel)) return false;
   const size_t nj = skel.joints.size();
-  if (nj == 0) return;
+  if (nj == 0) return false;
+
+  // Remap mesh-authored joint order into skeleton order (when authored).
+  std::vector<int> idx(ji.begin(), ji.end());
+  std::vector<std::string> meshJoints = ReadTokens(meshPrim, "primvars:skel:joints", time);
+  if (!meshJoints.empty()) {
+    std::unordered_map<std::string, int> skelIdx;
+    for (size_t j = 0; j < nj; ++j) skelIdx[skel.joints[j]] = static_cast<int>(j);
+    std::vector<int> remap(meshJoints.size(), -1);
+    for (size_t i = 0; i < meshJoints.size(); ++i) {
+      auto it = skelIdx.find(meshJoints[i]);
+      if (it != skelIdx.end()) remap[i] = it->second;
+    }
+    for (int& v : idx) {
+      v = (v >= 0 && v < static_cast<int>(remap.size())) ? remap[v] : -1;
+      if (v < 0) return false;  // unresolved joint -> leave rest pose (safe)
+    }
+  }
+  for (int& v : idx)
+    if (v < 0 || v >= static_cast<int>(nj)) v = 0;  // clamp stray indices
+
+  // geomBindTransform (single matrix4d; identity when absent).
+  matrix4d geomBind = matrix4d::identity();
+  if (const tnext::Value* gv =
+          meshPrim.GetPropertyValue("primvars:skel:geomBindTransform")) {
+    tnext::Value tmp;
+    const tnext::Value* v = gv;
+    if (gv->is_lazy()) { tmp = gv->materialized_copy(); v = &tmp; }
+    if (const double* d = v->as_matrix4d()) geomBind = Mat4dFromArray(d);
+  }
+
+  // Gather the per-point influences onto the (possibly welded) vertex array, so
+  // every variant of a split point is skinned by that point's weights.
+  std::vector<int> vidx(nv * size_t(numInfl));
+  std::vector<float> vwgt(nv * size_t(numInfl));
+  for (size_t i = 0; i < nv; ++i) {
+    const size_t p = vertexToPoint.empty() ? i : size_t(vertexToPoint[i]);
+    if (p >= numPoints) return false;
+    for (int k = 0; k < numInfl; ++k) {
+      vidx[i * size_t(numInfl) + size_t(k)] = idx[p * size_t(numInfl) + size_t(k)];
+      vwgt[i * size_t(numInfl) + size_t(k)] = jw[p * size_t(numInfl) + size_t(k)];
+    }
+  }
+
+  tnext::UsdPrim animPrim = FindSkelAnimationNext(stage, meshPrim, skel);
+  out->skelPath = skelPrim.GetPath().str();
+  out->animPath = animPrim.IsValid() ? animPrim.GetPath().str() : std::string();
+  out->numJoints = nj;
+  out->numInfl = numInfl;
+  out->geomBind = geomBind;
+  out->vidx = std::move(vidx);
+  out->vwgt = std::move(vwgt);
+  return true;
+}
+
+// Pose a skeleton at `time`: skinMat[j] carries a bind-space point (i.e. one the
+// geomBindTransform has already been applied to) into the posed skeleton space.
+// Row-vector convention, matching tydra::SkinPointsLBS.
+bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
+                      const std::string& animPath, double time,
+                      std::vector<matrix4d>* skinMat) {
+  if (!skinMat) return false;
+  tnext::UsdPrim skelPrim = stage.GetPrimAtPath(skelPath);
+  if (!skelPrim.IsValid()) return false;
+  tinyusdz::next::SkeletonData skel;
+  if (!tinyusdz::next::GetSkeletonData(stage, skelPrim, &skel)) return false;
+  const size_t nj = skel.joints.size();
+  if (nj == 0) return false;
 
   std::vector<int> topo;
   std::string terr;
   if (!tinyusdz::next::BuildSkelTopology(skel.joints, topo, &terr) ||
       topo.size() != nj) {
-    return;
+    return false;
   }
 
   const bool haveRest = skel.restTransforms.size() == nj * 16;
@@ -643,11 +950,13 @@ void BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
   // Animated local transforms: default each joint's TRS from its rest local (so
   // a partial animation keeps rest offsets), override with the SkelAnimation.
   std::vector<matrix4d> local = restLocal;
-  tnext::UsdPrim animPrim = FindSkelAnimationNext(stage, meshPrim, skel);
+  tnext::UsdPrim animPrim =
+      animPath.empty() ? tnext::UsdPrim() : stage.GetPrimAtPath(animPath);
   if (animPrim.IsValid()) {
     tinyusdz::next::SkelAnimationData anim;
     if (tinyusdz::next::GetSkelAnimationData(stage, animPrim, &anim, time) &&
         !anim.joints.empty()) {
+
       std::unordered_map<std::string, int> skelIdx;
       for (size_t j = 0; j < nj; ++j) skelIdx[skel.joints[j]] = static_cast<int>(j);
       for (size_t a = 0; a < anim.joints.size(); ++a) {
@@ -671,10 +980,13 @@ void BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
           t3[2] = anim.translations[a * 3 + 2];
         }
         if (anim.hasRotations && (a + 1) * 4 <= anim.rotations.size()) {
-          q.imag[0] = anim.rotations[a * 4 + 0];
-          q.imag[1] = anim.rotations[a * 4 + 1];
-          q.imag[2] = anim.rotations[a * 4 + 2];
-          q.real = anim.rotations[a * 4 + 3];
+          // next's canonical quat layout is REAL-FIRST (w, x, y, z) -- the crate
+          // reader swizzles disk's imaginary-first order into it (see
+          // CrateReader::Impl::UnpackQuatf), and ASCII parses in authored order.
+          q.real = anim.rotations[a * 4 + 0];
+          q.imag[0] = anim.rotations[a * 4 + 1];
+          q.imag[1] = anim.rotations[a * 4 + 2];
+          q.imag[2] = anim.rotations[a * 4 + 3];
         }
         if (anim.hasScales && (a + 1) * 3 <= anim.scales.size()) {
           s3[0] = anim.scales[a * 3 + 0];
@@ -689,7 +1001,7 @@ void BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
   std::vector<matrix4d> world;
   if (!tinyusdz::tydra::ConcatJointTransforms(topo, local, &world) ||
       world.size() != nj) {
-    return;
+    return false;
   }
   // Synthesize the bind pose from the rest world transform when bind is absent.
   if (!haveBind) {
@@ -699,79 +1011,203 @@ void BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
       bindWorld = std::move(restWorld);
     }
   }
-  std::vector<matrix4d> skinMat(nj);
+  skinMat->assign(nj, matrix4d::identity());
   for (size_t j = 0; j < nj; ++j)
-    skinMat[j] = ::tinyusdz::inverse(bindWorld[j]) * world[j];
+    (*skinMat)[j] = ::tinyusdz::inverse(bindWorld[j]) * world[j];
+  return true;
+}
 
-  // Remap mesh-authored joint order into skeleton order (when authored).
-  std::vector<int> idx(ji.begin(), ji.end());
-  std::vector<std::string> meshJoints = ReadTokens(meshPrim, "primvars:skel:joints", time);
-  if (!meshJoints.empty()) {
-    std::unordered_map<std::string, int> skelIdx;
-    for (size_t j = 0; j < nj; ++j) skelIdx[skel.joints[j]] = static_cast<int>(j);
-    std::vector<int> remap(meshJoints.size(), -1);
-    for (size_t i = 0; i < meshJoints.size(); ++i) {
-      auto it = skelIdx.find(meshJoints[i]);
-      if (it != skelIdx.end()) remap[i] = it->second;
-    }
-    for (int& v : idx) {
-      v = (v >= 0 && v < static_cast<int>(remap.size())) ? remap[v] : -1;
-      if (v < 0) return;  // unresolved joint -> leave rest pose (safe)
-    }
+// Load-time skeletal skinning bake: pose the bound skeleton at `time` and LBS-
+// deform dm->vertices (rest, point-indexed) in place, then recompute normals.
+// The CPU-skinning path (and the CPU ray tracers, which read this geometry).
+// No-op -- leaves the rest pose -- on any missing/mismatched skin/skeleton data.
+// Returns true when the mesh was actually skinned (so the caller knows its
+// vertices are ONE pose of an animated rig, not static geometry).
+bool BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
+                  double time, DrawMeshCPU* dm,
+                  const std::vector<uint32_t>& vertexToPoint,
+                  size_t numPoints) {
+  if (!dm || dm->vertices.empty()) return false;
+  const size_t nv = dm->vertices.size();
+  NextSkinBinding bind;
+  if (!ResolveNextSkinBinding(stage, meshPrim, time, nv, vertexToPoint,
+                              numPoints, &bind)) {
+    return false;
   }
-  for (int& v : idx)
-    if (v < 0 || v >= static_cast<int>(nj)) v = 0;  // clamp stray indices
-
-  // geomBindTransform (single matrix4d; identity when absent).
-  matrix4d geomBind = matrix4d::identity();
-  if (const tnext::Value* gv =
-          meshPrim.GetPropertyValue("primvars:skel:geomBindTransform")) {
-    tnext::Value tmp;
-    const tnext::Value* v = gv;
-    if (gv->is_lazy()) { tmp = gv->materialized_copy(); v = &tmp; }
-    if (const double* d = v->as_matrix4d()) geomBind = Mat4dFromArray(d);
+  std::vector<matrix4d> skinMat;
+  if (!PoseNextSkeleton(stage, bind.skelPath, bind.animPath, time, &skinMat)) {
+    return false;
   }
 
-  std::vector<::tinyusdz::value::point3f> rest(np), skinned;
-  for (size_t i = 0; i < np; ++i) {
+  std::vector<::tinyusdz::value::point3f> rest(nv), skinned;
+  for (size_t i = 0; i < nv; ++i) {
     rest[i].x = dm->vertices[i].px;
     rest[i].y = dm->vertices[i].py;
     rest[i].z = dm->vertices[i].pz;
   }
   std::string lerr;
-  if (!tinyusdz::tydra::SkinPointsLBS(rest, geomBind, skinMat, idx, jw, numInfl,
-                                      &skinned, &lerr) ||
-      skinned.size() != np) {
-    return;
+  if (!tinyusdz::tydra::SkinPointsLBS(rest, bind.geomBind, skinMat, bind.vidx,
+                                      bind.vwgt, bind.numInfl, &skinned, &lerr) ||
+      skinned.size() != nv) {
+    return false;
   }
-  for (size_t i = 0; i < np; ++i) {
+  // Skin the NORMALS with the same blended matrix the GPU vertex shader uses,
+  // rather than regenerating a smooth normal field from the posed positions:
+  // the two disagree wherever the pose bends the surface, and the CPU and GPU
+  // skinning paths must render the same image (tusdview-skinning-screenshot-diff).
+  const matrix4d invGeomBind = ::tinyusdz::inverse(bind.geomBind);
+  std::vector<matrix4d> composed(skinMat.size());
+  for (size_t j = 0; j < skinMat.size(); ++j)
+    composed[j] = bind.geomBind * skinMat[j] * invGeomBind;
+
+  for (size_t i = 0; i < nv; ++i) {
     dm->vertices[i].px = skinned[i].x;
     dm->vertices[i].py = skinned[i].y;
     dm->vertices[i].pz = skinned[i].z;
+
+    const float n[3] = {dm->vertices[i].nx, dm->vertices[i].ny,
+                        dm->vertices[i].nz};
+    double acc[3] = {0.0, 0.0, 0.0};
+    double wsum = 0.0;
+    for (int k = 0; k < bind.numInfl; ++k) {
+      const float w = bind.vwgt[i * size_t(bind.numInfl) + size_t(k)];
+      if (!(w > 0.0f)) continue;
+      const int j = bind.vidx[i * size_t(bind.numInfl) + size_t(k)];
+      if (j < 0 || j >= static_cast<int>(composed.size())) continue;
+      const matrix4d& m = composed[size_t(j)];
+      for (int c = 0; c < 3; ++c) {  // row-vector, rotation part only
+        acc[c] += double(w) * (double(n[0]) * m.m[0][c] +
+                               double(n[1]) * m.m[1][c] +
+                               double(n[2]) * m.m[2][c]);
+      }
+      wsum += double(w);
+    }
+    if (wsum <= 0.0) continue;
+    const double len =
+        std::sqrt(acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]);
+    if (len <= 1e-12) continue;
+    dm->vertices[i].nx = static_cast<float>(acc[0] / len);
+    dm->vertices[i].ny = static_cast<float>(acc[1] / len);
+    dm->vertices[i].nz = static_cast<float>(acc[2] / len);
   }
-  RecomputeSmoothNormalsNext(dm);
+  return true;
+}
+
+// GPU skinning alternative to BakeSkinning: keep the mesh in its REST pose and
+// emit per-vertex joint attributes + a bone-matrix block, so the vertex shader
+// poses it every frame. `worldM` is the mesh world transform the caller is about
+// to bake into the vertices (row-vector, row-major); it is folded into the bone
+// matrices instead of the attributes -- see BuildNextSkinningFrame.
+//
+// The GPU attribute path carries the 4 strongest influences per vertex (the
+// shader's fixed 4-wide skin); meshes authored with more are renormalized onto
+// those 4, matching mesh_build.cc's Tydra-path behavior.
+// Returns false when the mesh is not skinned (caller leaves it alone).
+bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
+                      double time, DrawMeshCPU* dm,
+                      const std::vector<uint32_t>& vertexToPoint,
+                      size_t numPoints, const double worldM[16],
+                      DrawScene* draw) {
+  if (!dm || dm->vertices.empty() || !draw) return false;
+  const size_t nv = dm->vertices.size();
+  NextSkinBinding bind;
+  if (!ResolveNextSkinBinding(stage, meshPrim, time, nv, vertexToPoint,
+                              numPoints, &bind)) {
+    return false;
+  }
+  const int nj = static_cast<int>(bind.numJoints);
+  if (nj <= 0) return false;
+  // Guard the bone-texture row space (int rows, absolute indices).
+  if (draw->boneMatrixCount > std::numeric_limits<int>::max() - nj) return false;
+
+  const int base = draw->boneMatrixCount;
+  const int ni = bind.numInfl;
+  dm->jointIdx.assign(nv * 4, 0u);
+  dm->jointWt.assign(nv * 4, 0.0f);
+  for (size_t v = 0; v < nv; ++v) {
+    // Top-4 influences by weight.
+    std::array<std::pair<float, int>, 4> top{};  // (weight, joint)
+    for (auto& t : top) t = {0.0f, 0};
+    for (int k = 0; k < ni; ++k) {
+      const float w = bind.vwgt[v * size_t(ni) + size_t(k)];
+      if (!(w > 0.0f)) continue;
+      const int j = bind.vidx[v * size_t(ni) + size_t(k)];
+      // Insertion sort into the 4-slot top list.
+      for (int s = 0; s < 4; ++s) {
+        if (w > top[size_t(s)].first) {
+          for (int t = 3; t > s; --t) top[size_t(t)] = top[size_t(t - 1)];
+          top[size_t(s)] = {w, j};
+          break;
+        }
+      }
+    }
+    float sum = 0.0f;
+    for (const auto& t : top) sum += t.first;
+    for (int s = 0; s < 4; ++s) {
+      dm->jointIdx[v * 4 + size_t(s)] =
+          static_cast<uint32_t>(base + top[size_t(s)].second);
+      dm->jointWt[v * 4 + size_t(s)] =
+          sum > 0.0f ? top[size_t(s)].first / sum : 0.0f;
+    }
+  }
+
+  DrawScene::NextSkelBinding nb;
+  nb.skelPath = bind.skelPath;
+  nb.animPath = bind.animPath;
+  nb.meshPath = meshPrim.GetPath().str();
+  nb.numJoints = nj;
+  nb.matrixBase = base;
+  for (int r = 0; r < 4; ++r)
+    for (int c = 0; c < 4; ++c) nb.geomBind[r * 4 + c] = bind.geomBind.m[r][c];
+  for (int k = 0; k < 16; ++k) nb.world[k] = worldM[k];
+  draw->nextSkels.push_back(std::move(nb));
+  draw->boneMatrixCount = base + nj;
+  return true;
 }
 
 // Build GPU-morph CSR channels for a prototype mesh, so the instanced raster
 // shader morphs per-frame from a tiny per-channel coefficient buffer instead of
 // the morph being baked into geometry. Mirrors BuildMorphChannels in
-// mesh_build.cc, but point-indexed (FillFlatGeometry keeps vertex i == point i,
-// so pointIndices map straight to vertices) and reading directly from the next
-// stage. A channel = one delta stream (an in-between sample or the primary); per
-// target the channels are [in-betweens ascending..., primary] with usdWeights
-// [ibWeights..., 1.0], matching EvalMorphChannelCoeffs' bracket eval. No-op (no
-// channels) when the mesh has no resolvable blendshape targets.
+// mesh_build.cc, reading directly from the next stage. A channel = one delta
+// stream (an in-between sample or the primary); per target the channels are
+// [in-betweens ascending..., primary] with usdWeights [ibWeights..., 1.0],
+// matching EvalMorphChannelCoeffs' bracket eval. No-op (no channels) when the
+// mesh has no resolvable blendshape targets.
+//
+// BlendShape `pointIndices` index authored POINTS, and FillFlatGeometry's weld
+// can back one point with several vertices (UV seams / hard edges), so each
+// delta entry fans out to every vertex of its point.
 void BuildMorphChannelsNext(const tnext::Stage& stage,
                             const tnext::UsdPrim& meshPrim, double time,
-                            DrawMeshCPU* dm) {
+                            DrawMeshCPU* dm,
+                            const std::vector<uint32_t>& vertexToPoint,
+                            size_t numPoints) {
   const std::vector<std::string> shapeNames =
       ReadTokens(meshPrim, "skel:blendShapes", time);
   const std::vector<tnext::Path>* targets =
       meshPrim.GetRelationship("skel:blendShapeTargets");
   if (shapeNames.empty() || !targets || targets->empty()) return;
 
-  const size_t np = dm->vertices.size();
-  if (np == 0) return;
+  const size_t nv = dm->vertices.size();
+  const size_t np = numPoints;
+  if (nv == 0 || np == 0) return;
+  if (!vertexToPoint.empty() && vertexToPoint.size() != nv) return;
+
+  // point -> its welded vertices, as a CSR (counting sort over vertexToPoint).
+  std::vector<uint32_t> pvOffset(np + 1, 0u);
+  std::vector<uint32_t> pvVerts(nv, 0u);
+  {
+    for (size_t i = 0; i < nv; ++i) {
+      const size_t p = vertexToPoint.empty() ? i : size_t(vertexToPoint[i]);
+      if (p < np) pvOffset[p + 1]++;
+    }
+    for (size_t p = 0; p < np; ++p) pvOffset[p + 1] += pvOffset[p];
+    std::vector<uint32_t> cur(pvOffset.begin(), pvOffset.end() - 1);
+    for (size_t i = 0; i < nv; ++i) {
+      const size_t p = vertexToPoint.empty() ? i : size_t(vertexToPoint[i]);
+      if (p < np) pvVerts[cur[p]++] = static_cast<uint32_t>(i);
+    }
+  }
 
   // One delta stream per channel: its offsets (3/entry) + the point indices the
   // entries map to (empty => identity 0..M-1). Streams own their data so the
@@ -815,22 +1251,32 @@ void BuildMorphChannelsNext(const tnext::Stage& stage,
   if (chans.empty()) return;
   dm->morphChannelCount = nextChannel;
 
-  // entry's target vertex (or -1 to skip).
-  auto vtxOf = [np](const Chan& c, size_t e) -> int64_t {
-    const int64_t v = c.pidx->empty() ? int64_t(e) : int64_t((*c.pidx)[e]);
-    return (v >= 0 && size_t(v) < np && e * 3 + 2 < c.offsets.size()) ? v : -1;
+  // The entry's target POINT (or -1 to skip); `fanout` visits every welded
+  // vertex of that point.
+  auto ptOf = [np](const Chan& c, size_t e) -> int64_t {
+    const int64_t p = c.pidx->empty() ? int64_t(e) : int64_t((*c.pidx)[e]);
+    return (p >= 0 && size_t(p) < np && e * 3 + 2 < c.offsets.size()) ? p : -1;
   };
+  auto fanout = [&](int64_t p, const std::function<void(uint32_t)>& fn) {
+    for (uint32_t k = pvOffset[size_t(p)]; k < pvOffset[size_t(p) + 1]; ++k) {
+      fn(pvVerts[k]);
+    }
+  };
+
   // Pass 1: count entries per vertex. M = offsets/3 (== pidx size when present).
-  std::vector<uint32_t> count(np, 0u);
+  std::vector<uint32_t> count(nv, 0u);
   for (const Chan& c : chans) {
     const size_t m = c.offsets.size() / 3;
-    for (size_t e = 0; e < m; ++e)
-      if (vtxOf(c, e) >= 0) count[size_t(vtxOf(c, e))]++;
+    for (size_t e = 0; e < m; ++e) {
+      const int64_t p = ptOf(c, e);
+      if (p < 0) continue;
+      fanout(p, [&](uint32_t v) { count[v]++; });
+    }
   }
   // Prefix-sum into morphOffsetCount (offset,count per vertex).
-  dm->morphOffsetCount.assign(np * 2, 0u);
+  dm->morphOffsetCount.assign(nv * 2, 0u);
   uint64_t total = 0;
-  for (size_t v = 0; v < np; ++v) {
+  for (size_t v = 0; v < nv; ++v) {
     dm->morphOffsetCount[v * 2 + 0] = static_cast<uint32_t>(total);
     dm->morphOffsetCount[v * 2 + 1] = count[v];
     total += count[v];
@@ -840,46 +1286,48 @@ void BuildMorphChannelsNext(const tnext::Stage& stage,
   auto h = [](float f) { return tinyusdz::value::float_to_half_full(f).value; };
   dm->morphDeltaHalf.assign(total * 4, 0);
   dm->morphChannelId.assign(total, 0);
-  std::vector<uint32_t> cursor(np, 0u);
+  std::vector<uint32_t> cursor(nv, 0u);
   for (const Chan& c : chans) {
     const uint16_t chHalf = h(static_cast<float>(c.id));
     const uint16_t chId = static_cast<uint16_t>(c.id);
     const size_t m = c.offsets.size() / 3;
     for (size_t e = 0; e < m; ++e) {
-      const int64_t v = vtxOf(c, e);
-      if (v < 0) continue;
-      const uint64_t slot = dm->morphOffsetCount[size_t(v) * 2 + 0] + cursor[size_t(v)]++;
-      uint16_t* o = &dm->morphDeltaHalf[slot * 4];
-      o[0] = chHalf;
-      o[1] = h(c.offsets[e * 3 + 0]);
-      o[2] = h(c.offsets[e * 3 + 1]);
-      o[3] = h(c.offsets[e * 3 + 2]);
-      dm->morphChannelId[slot] = chId;
+      const int64_t p = ptOf(c, e);
+      if (p < 0) continue;
+      fanout(p, [&](uint32_t v) {
+        const uint64_t slot = dm->morphOffsetCount[size_t(v) * 2 + 0] + cursor[v]++;
+        uint16_t* o = &dm->morphDeltaHalf[slot * 4];
+        o[0] = chHalf;
+        o[1] = h(c.offsets[e * 3 + 0]);
+        o[2] = h(c.offsets[e * 3 + 1]);
+        o[3] = h(c.offsets[e * 3 + 2]);
+        dm->morphChannelId[slot] = chId;
+      });
     }
   }
 
   // Max per-axis morph displacement, to pad protoAabb for per-instance culling.
-  // Conservative: per vertex, sum each axis's positive and negative deltas across
+  // Conservative: per point, sum each axis's positive and negative deltas across
   // ALL channels (worst case = every channel at full coefficient), then take the
-  // largest absolute swing over vertices. Safe superset (over-pads, never culls a
-  // visible morphed instance); small overdrive (weight > 1) is not bounded.
+  // largest absolute swing. Safe superset (over-pads, never culls a visible
+  // morphed instance); small overdrive (weight > 1) is not bounded.
   std::vector<float> sumPos(np * 3, 0.0f), sumNeg(np * 3, 0.0f);
   for (const Chan& c : chans) {
     const size_t m = c.offsets.size() / 3;
     for (size_t e = 0; e < m; ++e) {
-      const int64_t v = vtxOf(c, e);
-      if (v < 0) continue;
+      const int64_t p = ptOf(c, e);
+      if (p < 0) continue;
       for (int a = 0; a < 3; ++a) {
         const float d = c.offsets[e * 3 + a];
-        (d >= 0.0f ? sumPos : sumNeg)[size_t(v) * 3 + a] += d;
+        (d >= 0.0f ? sumPos : sumNeg)[size_t(p) * 3 + a] += d;
       }
     }
   }
-  for (size_t v = 0; v < np; ++v)
+  for (size_t p = 0; p < np; ++p)
     for (int a = 0; a < 3; ++a)
       dm->morphExtent[a] = std::max(
           dm->morphExtent[a],
-          std::max(sumPos[v * 3 + a], -sumNeg[v * 3 + a]));
+          std::max(sumPos[p * 3 + a], -sumNeg[p * 3 + a]));
 }
 
 // Build a prototype mesh's local geometry (+ flat displayColor) from the
@@ -888,12 +1336,19 @@ void BuildMorphChannelsNext(const tnext::Stage& stage,
 // no converter geometry.
 bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
                     const tnext::UsdPrim& mp, const matrix4d& inv_protoroot,
-                    double time, DrawMeshCPU* dm, matrix4d* mesh_rel) {
+                    double time, DrawMeshCPU* dm, matrix4d* mesh_rel,
+                    std::vector<uint32_t>* out_vertexToPoint,
+                    size_t* out_numPoints) {
   // Convert just this mesh on demand (streaming) -- avoids holding the whole
   // RenderScene in RAM.
   tydn::RenderMesh rm;
-  if (!conv.ConvertMesh(mp, &rm)) return false;
-  if (!FillFlatGeometry(rm, dm)) return false;
+  if (!conv.ConvertMesh(stage, mp, &rm)) return false;
+  std::vector<uint32_t> vertexToPoint;
+  if (!FillFlatGeometry(rm, dm, &vertexToPoint)) return false;
+  const size_t numPoints = rm.point_count();
+  // Skinning is resolved by the CALLER (it alone knows the instance count, which
+  // decides GPU-skin vs static bake), so hand the weld map back out.
+  if (out_numPoints) *out_numPoints = numPoints;
   // Blendshapes on the prototype. Default: build GPU-morph channels so the
   // instanced raster shader morphs per-frame (animated weights). Opt-out
   // (TUSDVIEW_NEXT_MORPH_BAKE=1): bake the morph into geometry at load -- a
@@ -905,9 +1360,9 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
     return e && e[0] == '1';
   }();
   if (kBakeMorph)
-    BakeBlendShapes(stage, mp, time, dm);
+    BakeBlendShapes(stage, mp, time, dm, vertexToPoint, numPoints);
   else
-    BuildMorphChannelsNext(stage, mp, time, dm);
+    BuildMorphChannelsNext(stage, mp, time, dm, vertexToPoint, numPoints);
   dm->purpose = ResolveNextPurpose(stage, mp.GetPath().str());
   // Prototype displayColor is carried PER-VERTEX (FillFlatGeometry filled
   // dm->vertexColors -- uploaded to GL attrib 10 for instanced draws, shared by all
@@ -919,6 +1374,7 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
   double mw16[16];
   tydn::ComputeWorldTransform(stage, mp, mw16, time);
   *mesh_rel = Mul4(Mat4dFromArray(mw16), inv_protoroot);
+  if (out_vertexToPoint) *out_vertexToPoint = std::move(vertexToPoint);
   return true;
 }
 
@@ -958,14 +1414,34 @@ void SplitProtoSubtree(const tnext::UsdPrim& root,
 // top-level PointInstancer/native passes through this is byte-identical when nothing
 // nests (same mesh order, same per-placement loop). `placementColors`, when set, is
 // 3 floats/placement applied as per-instance color to this level's direct meshes.
+//
+// SKINNED prototypes stay INSTANCED (an earlier design de-instanced them, one
+// DrawMeshCPU per placement; the comment here outlived it, along with a
+// kMaxSkinnedProtoInstances cap that no longer exists). Under `gpuSkinning` the
+// prototype emits skin attributes plus ONE bone block whose rows carry geomBind but
+// an IDENTITY world: the bones are prototype-local, and the instanced vertex shader
+// applies each instance's o2w AFTER skinning. All placements share that block, which
+// is sound because USD instancing requires identical composed contents -- so they
+// necessarily share a skeleton and an animation. Without `gpuSkinning` the static
+// pose at `time` is baked into the prototype's geometry instead.
+//
+// The corollary for anything reading these meshes back: a skinned/morphed prototype's
+// vertices (rest OR posed) are prototype-LOCAL, and mean nothing until they go through
+// instanceXforms. BuildNextPosedSceneBounds learned that the hard way.
 void EmitInstancedProto(const tnext::Stage& stage,
                         tydn::RenderSceneConverter& conv,
                         const tnext::UsdPrim& protoRoot,
                         const std::vector<matrix4d>& placements,
                         const std::vector<float>* placementColors, double time,
+                        bool gpuSkinning,
                         DrawScene* draw, Bounds* bounds, long long* instTotal,
                         long long* effectiveTris, size_t instBudget,
-                        std::unordered_set<std::string>* consumed) {
+                        std::unordered_set<std::string>* consumed,
+                        // Resolve a bound-material path to a DrawScene material
+                        // index (the loader's cached resolveMaterialPath).
+                        // Null = keep material 0 (default gray).
+                        const std::function<int(const std::string&)>* resolveMat =
+                            nullptr) {
   if (placements.empty()) return;
   double pr16[16];
   tydn::ComputeWorldTransform(stage, protoRoot, pr16, time);
@@ -981,7 +1457,43 @@ void EmitInstancedProto(const tnext::Stage& stage,
     if (consumed) consumed->insert(mp.GetPath().str());
     DrawMeshCPU dm;
     matrix4d mesh_rel;
-    if (!BuildProtoMesh(stage, conv, mp, inv_proto, time, &dm, &mesh_rel)) continue;
+    std::vector<uint32_t> vertexToPoint;
+    size_t numPoints = 0;
+    if (!BuildProtoMesh(stage, conv, mp, inv_proto, time, &dm, &mesh_rel,
+                        &vertexToPoint, &numPoints)) {
+      continue;
+    }
+
+    // Skeletal skinning on the prototype, which stays INSTANCED either way. GPU:
+    // emit skin attributes + a bone block with an IDENTITY world -- the bones are
+    // prototype-local and the instanced vertex shader applies each instance's o2w
+    // AFTER skinning, so all instances share the one block. (Sound because USD
+    // instancing requires identical composed contents: one skeleton, one pose.)
+    // CPU: bake the static pose at `time` into the prototype's geometry. Both
+    // no-op for unskinned prototypes.
+    bool gpuSkinned = false;
+    if (gpuSkinning) {
+      double identW[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+      gpuSkinned = SetupGpuSkinNext(stage, mp, time, &dm, vertexToPoint,
+                                    numPoints, identW, draw);
+    }
+    if (!gpuSkinned) BakeSkinning(stage, mp, time, &dm, vertexToPoint, numPoints);
+
+    // Resolve the prototype mesh's bound material. FillFlatGeometry emits the
+    // submesh with materialId 0 (default gray); without this every instanced
+    // prototype ignored its material in the RT path and material-driven AOVs
+    // (the flat instanced raster shader shades per-vertex color regardless).
+    if (resolveMat) {
+      const std::string bind =
+          tnext::GetInheritedBoundMaterialPath(stage, mp.GetPath().str());
+      if (!bind.empty()) {
+        const int protoMat = (*resolveMat)(bind);
+        if (protoMat > 0) {
+          for (DrawSubmesh& sub : dm.submeshes) sub.materialId = protoMat;
+        }
+      }
+    }
+
     // Prototype-LOCAL bbox over the (untransformed) vertices, for per-instance
     // frustum culling + CUDA instance world-AABBs (each instance transforms it).
     if (!dm.vertices.empty()) {
@@ -1014,10 +1526,22 @@ void EmitInstancedProto(const tnext::Stage& stage,
         dm.instanceColors.push_back((*placementColors)[k * 3 + 1]);
         dm.instanceColors.push_back((*placementColors)[k * 3 + 2]);
       }
-      const float tpos[3] = {static_cast<float>(fin.m[3][0]),
-                             static_cast<float>(fin.m[3][1]),
-                             static_cast<float>(fin.m[3][2])};
-      bounds->add(tpos);
+      // Scene bounds from this placement's transformed prototype BOX, not just its
+      // origin: a prototype's geometry extends around its instance translation, and
+      // bounding only the translations yields a degenerate box (two points for a
+      // 2-instance scene) that auto-framing then aims the camera at, pushing the
+      // geometry out of frame.
+      for (int c = 0; c < 8; ++c) {
+        const float lp[3] = {(c & 1) ? dm.protoAabbMax[0] : dm.protoAabbMin[0],
+                             (c & 2) ? dm.protoAabbMax[1] : dm.protoAabbMin[1],
+                             (c & 4) ? dm.protoAabbMax[2] : dm.protoAabbMin[2]};
+        float wp[3];
+        for (int a = 0; a < 3; ++a) {
+          wp[a] = static_cast<float>(lp[0] * fin.m[0][a] + lp[1] * fin.m[1][a] +
+                                     lp[2] * fin.m[2][a] + fin.m[3][a]);
+        }
+        bounds->add(wp);
+      }
     }
     if (dm.instanceXforms.empty()) continue;
     const size_t ninst = dm.instanceXforms.size() / 12;
@@ -1035,7 +1559,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
 
   // Nested instancers: compose each per-instance transform (relative to protoRoot)
   // with every outer placement, then recurse on the inner prototype.
-  static const float kIdentQuat[4] = {0, 0, 0, 1};
+  static const float kIdentQuat[4] = {1, 0, 0, 0};  // real-first (w,x,y,z)
   static const float kUnitScale[3] = {1, 1, 1};
   for (const tnext::UsdPrim& ni : nestedInstancers) {
     if (static_cast<size_t>(*instTotal) >= instBudget) break;
@@ -1090,8 +1614,9 @@ void EmitInstancedProto(const tnext::Stage& stage,
           }
           if (capped) break;
         }
-        EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, time, draw,
-                           bounds, instTotal, effectiveTris, instBudget, consumed);
+        EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, time,
+                           gpuSkinning, draw, bounds, instTotal, effectiveTris,
+                           instBudget, consumed, resolveMat);
       }
     } else {
       const auto* s = ni.GetPrimSpec();
@@ -1111,8 +1636,9 @@ void EmitInstancedProto(const tnext::Stage& stage,
       std::vector<matrix4d> innerPl;
       innerPl.reserve(placements.size());
       for (const matrix4d& P : placements) innerPl.push_back(Mul4(m_rel, P));
-      EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, time, draw,
-                         bounds, instTotal, effectiveTris, instBudget, consumed);
+      EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, time,
+                         gpuSkinning, draw, bounds, instTotal, effectiveTris,
+                         instBudget, consumed, resolveMat);
     }
   }
 }
@@ -1182,73 +1708,49 @@ bool FindNextCameraRec(const tnext::Stage& stage, const tnext::UsdPrim& prim,
 // --- Phase 2 --next texture loading -----------------------------------------
 // The tydra-next converter records texture *metadata* (RenderTexture: asset
 // path, wrap, value scale/bias, channel) into a scratch RenderScene even with
-// load_textures=false, but never decodes pixels. We decode them ourselves here,
-// mirroring tusdrender's next texture path (tusdr_next.cc): resolve the asset
-// against the source dir / .usdz archive, load via tinyusdz::image, and store a
-// deduped RGBA8 DrawTextureCPU. Returns the DrawScene texture index or -1.
+// load_textures=false, but never decodes pixels. Decoding is ours, and it runs
+// through tydra::next::TextureDecoder -- the same decoder tusdrender uses, so
+// the size cap and byte budget are applied identically and AT DECODE TIME (a
+// large scene never has to hold every texture at full resolution first).
 
 struct NextTexCache {
   std::unordered_map<std::string, int> byKey;  // key -> draw->textures index (-1 miss)
-  std::string baseDir;
-  const tinyusdz::next::USDZReader* usdz = nullptr;
+  std::unique_ptr<tydn::TextureDecoder> decoder;
+  // Texture runtime options (keepCompressed + device caps) for the kept-
+  // compressed KTX2 passthrough. Null = plain decode.
+  const TextureRuntimeOptions* opt = nullptr;
 };
 
-// tinyusdz::Image (8-bit RGB/RGBA) -> RGBA8 light3d::Image.
-bool NextImageToRGBA8(const tinyusdz::Image& src, light3d::Image* out) {
-  if (src.width <= 0 || src.height <= 0 || src.bpp != 8 ||
-      (src.channels != 3 && src.channels != 4)) {
-    return false;
-  }
-  const size_t npix = static_cast<size_t>(src.width) * static_cast<size_t>(src.height);
-  const size_t ch = static_cast<size_t>(src.channels);
-  if (src.data.size() < npix * ch) return false;
-  out->width = src.width;
-  out->height = src.height;
+// ".ktx2" suffix (case-insensitive).
+bool EndsWithKtx2(const std::string& s) {
+  if (s.size() < 5) return false;
+  std::string e = s.substr(s.size() - 5);
+  for (char& c : e) c = char(std::tolower(static_cast<unsigned char>(c)));
+  return e == ".ktx2";
+}
+
+// Resolve `rel` (a companion named relative to the same layer as the texture)
+// against an already-resolved sibling asset path.
+std::string ResolveSiblingAsset(const std::string& resolved,
+                                const std::string& rel) {
+  if (rel.empty()) return std::string();
+  if (rel[0] == '/') return rel;
+  const size_t p = resolved.find_last_of('/');
+  if (p == std::string::npos) return rel;
+  return resolved.substr(0, p + 1) + rel;
+}
+
+// Decode an asset into an RGBA8 light3d::Image through the shared decoder.
+bool DecodeNextImage(NextTexCache& tc, const std::string& asset,
+                     bool srgb, light3d::Image* out) {
+  if (!tc.decoder || asset.empty()) return false;
+  tydn::DecodedImage img;
+  if (!tc.decoder->Decode(asset, srgb, &img)) return false;
+  out->width = static_cast<int>(img.width);
+  out->height = static_cast<int>(img.height);
   out->channels = 4;
-  out->data.assign(npix * 4, 255);
-  for (size_t i = 0; i < npix; ++i) {
-    out->data[i * 4 + 0] = src.data[i * ch + 0];
-    out->data[i * 4 + 1] = src.data[i * ch + 1];
-    out->data[i * 4 + 2] = src.data[i * ch + 2];
-    out->data[i * 4 + 3] = (ch == 4) ? src.data[i * ch + 3] : 255;
-  }
+  out->data = std::move(img.pixels);
   return true;
-}
-
-// Match a USD asset path against a .usdz entry name (mirrors tusdrender).
-bool NextUsdzEntryMatches(const std::string& entry, const std::string& asset) {
-  std::string a = asset;
-  if (a.rfind("./", 0) == 0) a = a.substr(2);
-  if (entry == a) return true;
-  if (entry.size() > a.size() &&
-      entry.compare(entry.size() - a.size(), a.size(), a) == 0 &&
-      entry[entry.size() - a.size() - 1] == '/') {
-    return true;
-  }
-  auto base = [](const std::string& s) {
-    size_t p = s.find_last_of('/');
-    return p == std::string::npos ? s : s.substr(p + 1);
-  };
-  return base(entry) == base(a);
-}
-
-bool DecodeNextImage(const NextTexCache& tc, const std::string& asset,
-                     light3d::Image* out) {
-  if (asset.empty()) return false;
-  if (tc.usdz) {
-    for (size_t i = 0; i < tc.usdz->NumEntries(); ++i) {
-      if (!NextUsdzEntryMatches(tc.usdz->EntryName(i), asset)) continue;
-      auto res = tinyusdz::image::LoadImageFromMemory(
-          tc.usdz->EntryData(i), tc.usdz->EntrySize(i), tc.usdz->EntryName(i));
-      if (res) return NextImageToRGBA8(res.value().image, out);
-      return false;
-    }
-  }
-  std::string path = asset;
-  if (path[0] != '/' && !tc.baseDir.empty()) path = tc.baseDir + "/" + path;
-  auto res = tinyusdz::image::LoadImageFromFile(path);
-  if (!res) return false;
-  return NextImageToRGBA8(res.value().image, out);
 }
 
 int NextWrapToDraw(tydn::WrapMode w) {
@@ -1312,7 +1814,7 @@ int LoadNextUdimTexture(NextTexCache& tc, DrawScene* draw,
   for (uint32_t id = 1001; id <= 1100; ++id) {
     const std::string tilePath = pre + std::to_string(id) + post;
     DrawUdimTileCPU tile;
-    if (!DecodeNextImage(tc, tilePath, &tile.image)) continue;  // absent tile
+    if (!DecodeNextImage(tc, tilePath, srgb, &tile.image)) continue;  // absent tile
     tile.udim = id;
     tile.u = (id - 1001u) % 10u;
     tile.v = (id - 1001u) / 10u;
@@ -1370,11 +1872,18 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
                     const tydn::RenderScene& scratch, int32_t texId, bool srgb) {
   if (texId < 0 || static_cast<size_t>(texId) >= scratch.textures.size()) return -1;
   const tydn::RenderTexture& rt = scratch.textures[static_cast<size_t>(texId)];
-  std::string asset = rt.asset_path;
-  if (asset.empty() && rt.image_id >= 0 &&
+  // Prefer the image's RESOLVED path. `RenderTexture::asset_path` is the raw
+  // authored string, and for a look layer nested below the root that is relative
+  // to THAT layer (`../../texture/foo.png`) -- it does not resolve against the
+  // scene file. `resolved_path` has been anchored to the authoring layer by the
+  // converter (see next/layer/asset-anchor.hh). For root-layer and USDZ-internal
+  // assets the two are identical, so this only ever adds the anchor.
+  std::string asset;
+  if (rt.image_id >= 0 &&
       static_cast<size_t>(rt.image_id) < scratch.images.size()) {
     asset = scratch.images[static_cast<size_t>(rt.image_id)].resolved_path;
   }
+  if (asset.empty()) asset = rt.asset_path;
   if (asset.empty()) return -1;
 
   const std::string key = asset + (srgb ? "|s" : "|l") + "|" +
@@ -1392,11 +1901,34 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   }
 
   DrawTextureCPU dt;
-  if (!DecodeNextImage(tc, asset, &dt.image)) {
+  bool built = false;
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+  // Kept-compressed KTX2 passthrough. The compressed companion is named by the
+  // `inputs:file` customData `ktx2` hint (RenderTexture::ktx2_hint), or the
+  // asset itself may already be a .ktx2. Upload/transcode its GPU blocks instead
+  // of decoding + re-encoding.
+  if (tc.opt && tc.opt->keepCompressed && tc.decoder) {
+    std::string ktxAsset;
+    if (EndsWithKtx2(asset)) {
+      ktxAsset = asset;
+    } else if (!rt.ktx2_hint.empty()) {
+      ktxAsset = ResolveSiblingAsset(asset, rt.ktx2_hint);
+    }
+    if (!ktxAsset.empty()) {
+      std::vector<uint8_t> bytes;
+      if (tc.decoder->ReadAssetBytes(ktxAsset, &bytes) &&
+          BuildKeptCompressedFromKtx2(bytes.data(), bytes.size(), *tc.opt, &dt)) {
+        dt.assetIdentifier = ktxAsset;
+        built = true;
+      }
+    }
+  }
+#endif
+  if (!built && !DecodeNextImage(tc, asset, srgb, &dt.image)) {
     tc.byKey[key] = -1;  // negative-cache the miss
     return -1;
   }
-  dt.assetIdentifier = asset;
+  if (!built) dt.assetIdentifier = asset;
   dt.srgb = srgb;
   dt.wrapS = NextWrapToDraw(rt.wrap_s);
   dt.wrapT = NextWrapToDraw(rt.wrap_t);
@@ -1406,8 +1938,23 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   return idx;
 }
 
+// Which UV set a texture samples. RenderTexture::uv_primvar carries the name the
+// texture's UsdPrimvarReader asked for; the mesh reports the names it actually
+// extracted into slots 0 and 1. Anything that is not the secondary set -- the
+// usual case, and any unresolvable name -- falls back to slot 0, which is what
+// the renderer did unconditionally before.
+int ResolveUvSet(const tydn::RenderTexture& rt, const std::string& uv0Name,
+                 const std::string& uv1Name) {
+  if (uv1Name.empty() || rt.uv_primvar.empty()) return 0;
+  if (rt.uv_primvar == uv1Name && uv1Name != uv0Name) return 1;
+  return 0;
+}
+
 // Fill a DrawTexSampleCPU's UV affine + value scale/bias from a RenderTexture.
-void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp) {
+void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp,
+                    const std::string& uv0Name = std::string(),
+                    const std::string& uv1Name = std::string()) {
+  smp->uvSet = ResolveUvSet(rt, uv0Name, uv1Name);
   const float c = std::cos(rt.rotation), s = std::sin(rt.rotation);
   smp->uv.m00 = c * rt.scale.x; smp->uv.m01 = -s * rt.scale.y;
   smp->uv.m10 = s * rt.scale.x; smp->uv.m11 =  c * rt.scale.y;
@@ -1427,7 +1974,8 @@ void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp) {
 // usable surface shader (caller then keeps the default gray material, index 0).
 int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
                       const tnext::UsdPrim& matPrim, DrawScene* draw,
-                      NextTexCache& texCache) {
+                      NextTexCache& texCache, const std::string& uv0Name,
+                      const std::string& uv1Name) {
   tydn::RenderScene scratch;  // texture/image metadata (pixels decoded by us)
   tydn::RenderMaterial rm;
   if (!conv.ConvertMaterial(stage, matPrim, &rm, &scratch)) return -1;
@@ -1443,7 +1991,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     int t = LoadNextTexture(texCache, draw, scratch, sp.texture_id, srgb);
     if (t < 0) return;
     *texField = t;
-    FillNextSample(scratch.textures[static_cast<size_t>(sp.texture_id)], smp);
+    FillNextSample(scratch.textures[static_cast<size_t>(sp.texture_id)], smp,
+                   uv0Name, uv1Name);
     if (neutralize3) { neutralize3[0] = neutralize3[1] = neutralize3[2] = 1.0f; }
   };
 
@@ -1459,7 +2008,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     if (t < 0) return;
     dm.normalTex = t;
     const tydn::RenderTexture& rt = scratch.textures[static_cast<size_t>(sp.texture_id)];
-    FillNextSample(rt, &dm.normalSample);
+    FillNextSample(rt, &dm.normalSample, uv0Name, uv1Name);
     const bool defScale = rt.scale_value.x == 1.0f && rt.scale_value.y == 1.0f &&
                           rt.scale_value.z == 1.0f;
     const bool defBias = rt.bias.x == 0.0f && rt.bias.y == 0.0f && rt.bias.z == 0.0f;
@@ -1475,6 +2024,20 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   // known Phase-2 limitation for non-packed ORM inputs).
   auto loadMetalRough = [&](const tydn::ShaderParam& metallic,
                             const tydn::ShaderParam& roughness) {
+    // Per-channel value scale/bias for a scalar texture: the sampled channel's
+    // component of the texture's inputs:scale / inputs:bias. Dropping these
+    // (they used to stay 1/0) mis-scaled any roughness/metallic map authored
+    // with a non-identity scale -- tusdrender applies them, so the two tools
+    // disagreed on the same asset.
+    auto channelScaleBias = [](const tydn::RenderTexture& rt, int ch,
+                               float* scale, float* bias) {
+      const float sc[4] = {rt.scale_value.x, rt.scale_value.y,
+                           rt.scale_value.z, rt.scale_value.w};
+      const float bi[4] = {rt.bias.x, rt.bias.y, rt.bias.z, rt.bias.w};
+      const int c = (ch >= 0 && ch < 4) ? ch : 0;
+      *scale = sc[c];
+      *bias = bi[c];
+    };
     if (roughness.texture_id >= 0) {
       int t = LoadNextTexture(texCache, draw, scratch, roughness.texture_id, false);
       if (t >= 0) {
@@ -1483,7 +2046,9 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
         const tydn::RenderTexture& rt =
             scratch.textures[static_cast<size_t>(roughness.texture_id)];
         dm.roughnessChannel = NextScalarChannel(rt.output_channel);
-        FillNextSample(rt, &dm.metalRoughSample);
+        channelScaleBias(rt, dm.roughnessChannel, &dm.roughnessTexScale,
+                         &dm.roughnessTexBias);
+        FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
       }
     }
     if (metallic.texture_id >= 0) {
@@ -1493,10 +2058,12 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
             scratch.textures[static_cast<size_t>(metallic.texture_id)];
         if (dm.metalRoughTex < 0) {
           dm.metalRoughTex = t;
-          FillNextSample(rt, &dm.metalRoughSample);
+          FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
         }
         dm.metallic = 1.0f;
         dm.metallicChannel = NextScalarChannel(rt.output_channel);
+        channelScaleBias(rt, dm.metallicChannel, &dm.metallicTexScale,
+                         &dm.metallicTexBias);
       }
     }
   };
@@ -1534,6 +2101,11 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.roughness = s.roughness.value.x;
     setRGB(dm.emissive, s.emissive_color.value, 1.0f);
     dm.alpha = s.opacity.value.x;
+    // Specular workflow + IOR (T12): tusdrender honors both; tusdview used to
+    // fall back to the metallic workflow at a fixed dielectric IOR 1.5.
+    dm.useSpecularWorkflow = s.use_specular_workflow;
+    setRGB(dm.specularColor, s.specular_color.value, 1.0f);
+    dm.ior = s.ior.value.x;
     colorSlot(s.diffuse_color, true, &dm.baseColorTex, &dm.baseColorSample, dm.baseColor);
     colorSlot(s.emissive_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
     loadNormal(s.normal);
@@ -1547,6 +2119,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.roughness = s.specular_roughness.value.x;
     setRGB(dm.emissive, s.emission_color.value, s.emission_luminance.value.x);
     dm.alpha = s.opacity.value.x;
+    // OpenPBR is a metalness workflow; honor its dielectric IOR for F0 (T12).
+    dm.ior = s.specular_ior.value.x;
     colorSlot(s.base_color, true, &dm.baseColorTex, &dm.baseColorSample, dm.baseColor);
     colorSlot(s.emission_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
     loadNormal(s.normal);
@@ -1573,6 +2147,254 @@ bool FindNextCamera(const tnext::Stage& stage, const std::string& name,
     if (FindNextCameraRec(stage, root, name, time, out)) return true;
   }
   return false;
+}
+
+// The legacy loader has no next Stage, only the converted RenderScene -- so
+// `--camera` was silently unavailable there. The camera's world matrix is already
+// baked into its Node (Tydra composes the hierarchy), and its lens lives in the
+// parallel RenderCamera the node's id indexes.
+bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
+                         const tinyusdz::tydra::Node& node,
+                         const std::string& name, NextCameraPose* out) {
+  // scene.nodes is the ROOTS of a tree, not a flat list -- a camera is almost
+  // always nested under an Xform (Blender writes /root/Camera/Camera), so a
+  // top-level-only scan finds nothing.
+  if (node.nodeType == tinyusdz::tydra::NodeType::Camera) {
+    // Match by exact name, exact path, or a "/<name>" path suffix -- the same
+    // three ways FindNextCameraRec matches, so one --camera argument means the
+    // same thing to both loaders.
+    const std::string& path = node.abs_path;
+    const bool match =
+        name.empty() || node.prim_name == name || path == name ||
+        (path.size() > name.size() &&
+         path.compare(path.size() - name.size(), name.size(), name) == 0 &&
+         path[path.size() - name.size() - 1] == '/');
+    if (!match) {
+      for (const tinyusdz::tydra::Node& c : node.children)
+        if (FindLegacyCameraRec(scene, c, name, out)) return true;
+      return false;
+    }
+
+    // Row-major (p*M): translation in row 3, local axes in rows 0..2. USD cameras
+    // look down local -Z with local +Y up.
+    const tinyusdz::value::matrix4d& m = node.global_matrix;
+    float up[3] = {float(m.m[1][0]), float(m.m[1][1]), float(m.m[1][2])};
+    float fwd[3] = {-float(m.m[2][0]), -float(m.m[2][1]), -float(m.m[2][2])};
+    auto norm3 = [](float v[3]) {
+      const float l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+      if (l > 1e-12f) { v[0] /= l; v[1] /= l; v[2] /= l; }
+    };
+    norm3(up);
+    norm3(fwd);
+    for (int k = 0; k < 3; ++k) {
+      out->eye[k] = float(m.m[3][k]);
+      out->up[k] = up[k];
+      out->forward[k] = fwd[k];
+    }
+    out->fovYDeg = 60.0f;
+    if (node.id >= 0 && size_t(node.id) < scene.cameras.size()) {
+      const tinyusdz::tydra::RenderCamera& cam = scene.cameras[size_t(node.id)];
+      out->fovYDeg = 2.0f *
+                     std::atan(0.5f * cam.verticalAperture /
+                               std::max(1.0e-6f, cam.focalLength)) *
+                     (180.0f / 3.14159265358979323846f);
+      out->zNear = std::max(1.0e-4f, cam.znear);
+      out->zFar = std::max(out->zNear + 1.0e-3f, cam.zfar);
+    }
+    return true;
+  }
+  for (const tinyusdz::tydra::Node& c : node.children)
+    if (FindLegacyCameraRec(scene, c, name, out)) return true;
+  return false;
+}
+
+bool FindLegacyCamera(const tinyusdz::tydra::RenderScene& scene,
+                      const std::string& name, NextCameraPose* out) {
+  if (!out) return false;
+  for (const tinyusdz::tydra::Node& root : scene.nodes)
+    if (FindLegacyCameraRec(scene, root, name, out)) return true;
+  return false;
+}
+
+// The scene's absolute bone rows at `time`, indexed exactly as DrawMeshCPU::
+// jointIdx indexes them. Shared by the raster bone-texture upload
+// (BuildNextSkinningFrame) and the RT vertex re-pose (BuildNextRtDeformedVertices),
+// which must agree row-for-row or the two backends pose differently.
+static bool ComputeNextBoneRows(const tnext::Stage& stage, const DrawScene& draw,
+                                double time, std::vector<matrix4d>* out) {
+  if (!out || draw.boneMatrixCount <= 0 || draw.nextSkels.empty()) return false;
+
+  // One row per (skinned source mesh, joint), addressed absolutely by
+  // DrawMeshCPU::jointIdx. Identity is the safe default: it renders the vertex
+  // at its world-baked REST position, so a skeleton that stops resolving degrades
+  // to the rest pose instead of collapsing the mesh to the origin.
+  const size_t rows = static_cast<size_t>(draw.boneMatrixCount);
+  std::vector<matrix4d> bones(rows, matrix4d::identity());
+  // Skeletons are shared between meshes far more often than not; pose each once.
+  std::map<std::pair<std::string, std::string>, std::vector<matrix4d>> posed;
+
+  for (const DrawScene::NextSkelBinding& nb : draw.nextSkels) {
+    const auto key = std::make_pair(nb.skelPath, nb.animPath);
+    auto it = posed.find(key);
+    if (it == posed.end()) {
+      std::vector<matrix4d> sm;
+      if (!PoseNextSkeleton(stage, nb.skelPath, nb.animPath, time, &sm)) continue;
+      it = posed.emplace(key, std::move(sm)).first;
+    }
+    const std::vector<matrix4d>& sm = it->second;
+    const matrix4d G = Mat4dFromArray(nb.geomBind);
+    const matrix4d W = Mat4dFromArray(nb.world);
+    const matrix4d invG = ::tinyusdz::inverse(G);
+    const matrix4d invW = ::tinyusdz::inverse(W);
+    const size_t nj =
+        std::min(sm.size(), static_cast<size_t>(std::max(0, nb.numJoints)));
+    for (size_t j = 0; j < nj; ++j) {
+      const size_t row = static_cast<size_t>(nb.matrixBase) + j;
+      if (row >= rows) break;
+      // Row-vector: undo the world bake, LBS in bind space, re-apply the world.
+      bones[row] = invW * (G * sm[j] * invG) * W;
+    }
+  }
+
+  *out = std::move(bones);
+  return true;
+}
+
+bool BuildNextSkinningFrame(const tnext::Stage& stage, DrawScene* draw,
+                            double time, SkinningFrameCPU* frame) {
+  if (!draw || !frame) return false;
+  std::vector<matrix4d> bones;
+  if (!ComputeNextBoneRows(stage, *draw, time, &bones)) return false;
+  const size_t rows = bones.size();
+
+  // Pack straight from `bones` rather than walking draw->meshes (as the Tydra
+  // path does): the next loader frees each mesh's CPU geometry after GPU upload,
+  // so the per-vertex skin attributes are no longer resident here -- only the GL
+  // buffers hold them.
+  frame->matrixCount = draw->boneMatrixCount;
+  frame->rgba32f.assign(rows * 16, 0.0f);
+  frame->enabled = true;
+  for (size_t row = 0; row < rows; ++row) {
+    for (int r = 0; r < 4; ++r) {
+      for (int c = 0; c < 4; ++c) {
+        frame->rgba32f[row * 16 + static_cast<size_t>(r) * 4 +
+                       static_cast<size_t>(c)] =
+            static_cast<float>(bones[row].m[r][c]);
+      }
+    }
+  }
+  return true;
+}
+
+bool BuildNextPosedSceneBounds(
+    const tnext::Stage& stage, const DrawScene& draw, double time,
+    const std::unordered_map<std::string, float>* blendOverride,
+    float outMin[3], float outMax[3]) {
+  // The box is taken from the POSED VERTICES, and from the same deform the ray
+  // tracer uploads -- not from a cheaper conservative bound. It has to be the
+  // tight box: the Tydra/CPU-bake path derives its box from posed vertices too,
+  // and the scene box drives the ground grid, the depth normalization and the
+  // auto-fit, so a looser box here would make the two paths render the same
+  // geometry differently. (A bone-box union -- 8 rest corners through each bone
+  // -- was tried first and is ~10% loose on a 60-degree bend, which was visible.)
+  std::vector<RtSkinnedMeshUpload> posed;
+  if (!BuildNextRtDeformedVertices(stage, draw, time, blendOverride, &posed)) {
+    return false;
+  }
+  std::unordered_map<int, const std::vector<DrawVertex>*> posedByMesh;
+  for (const RtSkinnedMeshUpload& up : posed)
+    posedByMesh[up.meshIndex] = &up.vertices;
+
+  bool has = false;
+  float mn[3] = {0, 0, 0}, mx[3] = {0, 0, 0};
+  auto grow = [&](const float p[3]) {
+    for (int k = 0; k < 3; ++k) {
+      if (!has) { mn[k] = mx[k] = p[k]; continue; }
+      mn[k] = std::min(mn[k], p[k]);
+      mx[k] = std::max(mx[k], p[k]);
+    }
+    has = true;
+  };
+
+  // Fallback for a deformable mesh whose CPU geometry WAS freed (so it has no
+  // posed vertices here): push the 8 corners of its rest box through each bone it
+  // references. A posed vertex is a convex combination of itself under its bones,
+  // so the union of those boxes contains it -- conservative, but it keeps such a
+  // mesh inside the scene box instead of dropping it out of the framing.
+  std::vector<matrix4d> bones;
+  bool bonesReady = false, bonesOk = false;
+
+  for (size_t mi = 0; mi < draw.meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw.meshes[mi];
+    auto pit = posedByMesh.find(static_cast<int>(mi));
+    if (pit != posedByMesh.end()) {
+      const size_t ninst = m.instanceCount();
+      if (ninst > 0) {
+        // An instanced prototype's posed vertices are prototype-LOCAL (that is the
+        // whole point of the instanced path: the placement lives in the instance
+        // matrix, not in the vertices). Each placement gets its own box.
+        for (size_t k = 0; k < ninst; ++k) {
+          const float* X = &m.instanceXforms[k * 12];  // 3 rows of (x,y,z,tx)
+          for (const DrawVertex& v : *pit->second) {
+            const float p[3] = {
+                X[0] * v.px + X[1] * v.py + X[2] * v.pz + X[3],
+                X[4] * v.px + X[5] * v.py + X[6] * v.pz + X[7],
+                X[8] * v.px + X[9] * v.py + X[10] * v.pz + X[11]};
+            grow(p);
+          }
+        }
+      } else {
+        for (const DrawVertex& v : *pit->second) {
+          const float p[3] = {v.px, v.py, v.pz};
+          grow(p);
+        }
+      }
+      continue;
+    }
+    if (m.boneLo >= 0 && m.boneHi >= m.boneLo && m.vertices.empty()) {
+      if (!bonesReady) {
+        bonesOk = ComputeNextBoneRows(stage, draw, time, &bones);
+        bonesReady = true;
+      }
+      const float rlo[3] = {m.restAabbMin[0] - m.morphExtent[0],
+                            m.restAabbMin[1] - m.morphExtent[1],
+                            m.restAabbMin[2] - m.morphExtent[2]};
+      const float rhi[3] = {m.restAabbMax[0] + m.morphExtent[0],
+                            m.restAabbMax[1] + m.morphExtent[1],
+                            m.restAabbMax[2] + m.morphExtent[2]};
+      if (bonesOk && rlo[0] <= rhi[0]) {
+        for (int row = m.boneLo; row <= m.boneHi; ++row) {
+          if (static_cast<size_t>(row) >= bones.size()) break;
+          const matrix4d& B = bones[static_cast<size_t>(row)];
+          for (int c = 0; c < 8; ++c) {
+            const double p[3] = {(c & 1) ? rhi[0] : rlo[0],
+                                 (c & 2) ? rhi[1] : rlo[1],
+                                 (c & 4) ? rhi[2] : rlo[2]};
+            float q[3];  // row-vector p*B, as the vertex shader applies it
+            for (int k = 0; k < 3; ++k) {
+              q[k] = static_cast<float>(p[0] * B.m[0][k] + p[1] * B.m[1][k] +
+                                        p[2] * B.m[2][k] + B.m[3][k]);
+            }
+            grow(q);
+          }
+        }
+        continue;
+      }
+    }
+    // Everything else -- static meshes, instanced prototypes -- already carries a
+    // correct world box (morphExtent included).
+    if (m.aabbMax[0] >= m.aabbMin[0] && std::isfinite(m.aabbMin[0]) &&
+        std::isfinite(m.aabbMax[0])) {
+      grow(m.aabbMin);
+      grow(m.aabbMax);
+    }
+  }
+  if (!has) return false;
+  for (int k = 0; k < 3; ++k) {
+    outMin[k] = mn[k];
+    outMax[k] = mx[k];
+  }
+  return true;
 }
 
 void BuildNextMorphWeights(
@@ -1634,6 +2456,104 @@ static float NextHalfToFloat(uint16_t h) {
   float f;
   std::memcpy(&f, &bits, sizeof(f));
   return f;
+}
+
+bool BuildNextRtDeformedVertices(
+    const tnext::Stage& stage, const DrawScene& draw, double time,
+    const std::unordered_map<std::string, float>* blendOverride,
+    std::vector<RtSkinnedMeshUpload>* out) {
+  if (!out) return false;
+  out->clear();
+
+  std::vector<matrix4d> bones;
+  const bool hasSkin = ComputeNextBoneRows(stage, draw, time, &bones);
+
+  // Morph coefficients per morphed mesh -- the same evaluation the raster vertex
+  // shader is fed, so RT and raster morph identically.
+  std::vector<std::pair<int, std::vector<float>>> morphCoeffs;
+  BuildNextMorphWeights(stage, draw, time, blendOverride, &morphCoeffs);
+  std::unordered_map<int, const std::vector<float>*> coeffByMesh;
+  for (const auto& mc : morphCoeffs) coeffByMesh[mc.first] = &mc.second;
+
+  for (size_t mi = 0; mi < draw.meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw.meshes[mi];
+    const size_t nv = m.vertices.size();
+    if (nv == 0) continue;  // CPU geometry freed: nothing to re-pose from
+    const bool skinned = hasSkin && m.jointIdx.size() == nv * 4 &&
+                         m.jointWt.size() == nv * 4;
+    auto ci = coeffByMesh.find(static_cast<int>(mi));
+    const bool morphed = ci != coeffByMesh.end() &&
+                         m.morphOffsetCount.size() == nv * 2 &&
+                         !m.morphDeltaHalf.empty();
+    if (!skinned && !morphed) continue;
+
+    std::vector<DrawVertex> verts = m.vertices;  // rest pose
+    const size_t entries = m.morphDeltaHalf.size() / 4;
+    for (size_t v = 0; v < nv; ++v) {
+      float p[3] = {verts[v].px, verts[v].py, verts[v].pz};
+      const float rest_n[3] = {verts[v].nx, verts[v].ny, verts[v].nz};
+      float n[3] = {rest_n[0], rest_n[1], rest_n[2]};
+
+      // Blendshape morph, before skinning (deform.glsl's order). Each entry packs
+      // 4 halfs: (channelId, dx, dy, dz).
+      if (morphed) {
+        const std::vector<float>& coeff = *ci->second;
+        const size_t base = m.morphOffsetCount[v * 2 + 0];
+        const size_t count = m.morphOffsetCount[v * 2 + 1];
+        for (size_t k = 0; k < count && base + k < entries; ++k) {
+          const uint16_t* e = &m.morphDeltaHalf[(base + k) * 4];
+          const size_t chan = static_cast<size_t>(NextHalfToFloat(e[0]) + 0.5f);
+          if (chan >= coeff.size()) continue;
+          const float c = coeff[chan];
+          if (std::fabs(c) < 1e-6f) continue;
+          p[0] += c * NextHalfToFloat(e[1]);
+          p[1] += c * NextHalfToFloat(e[2]);
+          p[2] += c * NextHalfToFloat(e[3]);
+        }
+      }
+
+      // Linear-blend skinning. The bone rows are absolute and already carry both
+      // the mesh's geomBind and its world transform (the next loader world-bakes
+      // its vertices), so this is the same row-vector p*M the vertex shader
+      // applies -- the two must not drift apart.
+      if (skinned) {
+        double acc[3] = {0, 0, 0}, accn[3] = {0, 0, 0}, wsum = 0.0;
+        for (int k = 0; k < 4; ++k) {
+          const float w = m.jointWt[v * 4 + static_cast<size_t>(k)];
+          if (!(w > 0.0f)) continue;
+          const uint32_t j = m.jointIdx[v * 4 + static_cast<size_t>(k)];
+          if (j >= bones.size()) continue;
+          const matrix4d& B = bones[j];
+          for (int c = 0; c < 3; ++c) {
+            acc[c] += double(w) * (double(p[0]) * B.m[0][c] +
+                                   double(p[1]) * B.m[1][c] +
+                                   double(p[2]) * B.m[2][c] + B.m[3][c]);
+            accn[c] += double(w) * (double(rest_n[0]) * B.m[0][c] +
+                                    double(rest_n[1]) * B.m[1][c] +
+                                    double(rest_n[2]) * B.m[2][c]);
+          }
+          wsum += double(w);
+        }
+        if (wsum > 0.0) {
+          for (int c = 0; c < 3; ++c) p[c] = static_cast<float>(acc[c] / wsum);
+          const double len = std::sqrt(accn[0] * accn[0] + accn[1] * accn[1] +
+                                       accn[2] * accn[2]);
+          if (len > 1e-12) {
+            for (int c = 0; c < 3; ++c) n[c] = static_cast<float>(accn[c] / len);
+          }
+        }
+      }
+
+      verts[v].px = p[0]; verts[v].py = p[1]; verts[v].pz = p[2];
+      verts[v].nx = n[0]; verts[v].ny = n[1]; verts[v].nz = n[2];
+    }
+
+    RtSkinnedMeshUpload up;
+    up.meshIndex = static_cast<int>(mi);
+    up.vertices = std::move(verts);
+    out->push_back(std::move(up));
+  }
+  return !out->empty();
 }
 
 // DomeLight support for the `next` path: walk the stage for DomeLight prims,
@@ -1943,19 +2863,72 @@ void BuildNextVolumes(const tnext::Stage& stage, const std::string& usdPath,
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
                     LoadControl* ctrl,
-                    std::shared_ptr<tnext::Stage>* out_stage) {
-  // --- 1. Compose with the next loader (default options load payloads). ---
-  // Heap-allocate the stage so the caller can keep it alive for per-frame
-  // animation (the lazy arrays stay mmap-backed, not materialized).
-  auto stagePtr = std::make_shared<tnext::Stage>();
-  tnext::Stage& stage = *stagePtr;
-  std::string lwarn, lerr;
-  if (!tnext::LoadUSDComposed(path, &stage, &lwarn, &lerr, /*comp_opts=*/nullptr)) {
-    if (err) *err = "next: compose failed: " + lerr;
+                    std::shared_ptr<tnext::StageSession>* out_session) {
+  // --- 1. Open a persistent next document. Parsed dependency layers remain in
+  // the PCP cache for payload and variant edits instead of being reparsed. ---
+  auto session = (out_session && *out_session)
+                     ? *out_session
+                     : std::make_shared<tnext::StageSession>();
+  tnext::StageSessionOptions session_options;
+  session_options.compose = opts.composition;
+  session_options.max_total_memory = opts.maxMemoryBytes;
+  if (opts.maxMemoryBytes > 0) {
+    session_options.cache_retention = tnext::CacheRetention::LayersOnly;
+  }
+  session_options.resolver.allow_parent_paths = opts.allowParentRelativePaths;
+  session_options.composition.variant_overrides_by_path = opts.variantOverrides;
+  if (opts.payloadPolicy == PayloadPolicy::DeferAll) {
+    session_options.composition.load_payloads = false;
+  } else if (opts.payloadPolicy == PayloadPolicy::Whitelist) {
+    session_options.composition.load_payloads = false;
+    const std::set<std::string> whitelist = opts.payloadWhitelist;
+    session_options.composition.payload_policy =
+        [whitelist](const tnext::Path& prim_path, const std::string&) {
+          return whitelist.count(prim_path.str()) != 0;
+        };
+  }
+  if (ctrl) {
+    session_options.progress_callback =
+        [ctrl](const tnext::ProgressEvent& event) {
+          ctrl->stage.store(static_cast<int>(event.phase));
+          return !ctrl->cancel.load();
+        };
+  }
+  bool opened = session->IsOpen();
+  if (opened) {
+    if (session->GetVariantSelections() != opts.variantOverrides) {
+      opened = session->SetVariantSelections(opts.variantOverrides);
+    }
+    if (opened && opts.payloadPolicy == PayloadPolicy::Whitelist) {
+      std::vector<tnext::Path> payload_paths;
+      payload_paths.reserve(opts.payloadWhitelist.size());
+      for (const std::string& payload_path : opts.payloadWhitelist) {
+        payload_paths.emplace_back(payload_path);
+      }
+      opened = session->LoadPayloads(payload_paths);
+    }
+  } else {
+    opened = session->OpenFile(path, session_options);
+  }
+  if (!opened) {
+    if (err) *err = "next: compose failed: " + session->GetError();
     return false;
   }
-  if (out_stage) *out_stage = stagePtr;
-  if (warn && !lwarn.empty()) *warn = lwarn;
+  if (out_session) *out_session = session;
+  if (warn && !session->GetWarning().empty()) *warn = session->GetWarning();
+  const tnext::Stage& stage = session->GetStage();
+  const std::vector<tnext::Path> deferredPayloads =
+      session->GetDeferredPayloadPaths();
+  if (!deferredPayloads.empty()) {
+    std::string deferredSummary;
+    const size_t shown = std::min<size_t>(deferredPayloads.size(), 8);
+    for (size_t i = 0; i < shown; ++i) {
+      if (!deferredSummary.empty()) deferredSummary += ", ";
+      deferredSummary += deferredPayloads[i].str();
+    }
+    LOGI("next: %zu payloads deferred%s%s", deferredPayloads.size(),
+         deferredSummary.empty() ? "" : ": ", deferredSummary.c_str());
+  }
   const double time = std::isnan(opts.timecode) ? 0.0 : opts.timecode;
 
   // --- 2. A per-mesh converter (NOT a full-scene Convert). We triangulate each
@@ -1988,6 +2961,69 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   const std::size_t triCap =
       ctrl ? ctrl->maxTriangles : std::numeric_limits<std::size_t>::max();
 
+  // Texture cache for material building: resolve texture assets against the
+  // source directory and, for a .usdz package, its embedded entries. The size
+  // cap and byte budget are applied while decoding, so a large scene never
+  // materializes every texture at full resolution.
+  NextTexCache texCache;
+  texCache.opt = &opts.textureOptions;  // kept-compressed KTX2 passthrough
+  tydn::TextureDecodeOptions texOpts;
+  texOpts.base_dir = tinyusdz::io::GetBaseDir(path);
+  texOpts.max_edge = opts.textureOptions.maxTextureSize > 0
+                         ? uint32_t(opts.textureOptions.maxTextureSize)
+                         : 0u;
+  texOpts.budget_bytes =
+      opts.textureOptions.textureBudgetMB > 0
+          ? uint64_t(opts.textureOptions.textureBudgetMB) * 1024ull * 1024ull
+          : 0ull;
+  tinyusdz::next::USDZReader usdzArchive;
+  if (path.size() >= 5 && path.compare(path.size() - 5, 5, ".usdz") == 0 &&
+      usdzArchive.OpenFile(path)) {
+    texOpts.usdz = &usdzArchive;
+  }
+  texCache.decoder = std::make_unique<tydn::TextureDecoder>(texOpts);
+
+  // Resolve a material prim path to a DrawScene material index (cached by path).
+  // Unbound / unconvertible -> 0 (default gray material).
+  std::unordered_map<std::string, int> matIndexByPath;
+  // A material is built ONCE and shared by every mesh that binds it, but the
+  // UV-set names are the MESH's. Resolve the texture->UV-set routing at the first
+  // mesh that binds the material, and warn if a later mesh would have resolved it
+  // differently (two meshes binding one material with differently-named secondary
+  // sets cannot both be satisfied without splitting the material -- rare enough
+  // that reporting beats silently rendering one of them with the wrong UVs).
+  std::unordered_map<std::string, std::string> matUv1ByPath;
+  auto resolveMaterialPath = [&](const std::string& mpath,
+                                 const std::string& uv0Name,
+                                 const std::string& uv1Name) -> int {
+    if (mpath.empty()) return 0;
+    auto it = matIndexByPath.find(mpath);
+    if (it != matIndexByPath.end()) {
+      const auto uit = matUv1ByPath.find(mpath);
+      if (uit != matUv1ByPath.end() && uit->second != uv1Name) {
+        LOGW("material '%s' is bound by meshes with different secondary UV sets "
+             "('%s' vs '%s'); keeping the first. Textures routed to the second "
+             "UV set may sample the wrong coordinates on the later mesh.",
+             mpath.c_str(), uit->second.c_str(), uv1Name.c_str());
+      }
+      return it->second;
+    }
+    tnext::UsdPrim matPrim = stage.GetPrimAtPath(mpath);
+    int idx = matPrim.IsValid() ? BuildNextMaterial(stage, conv, matPrim, draw,
+                                                    texCache, uv0Name, uv1Name)
+                                : -1;
+    if (idx < 0) idx = 0;
+    matIndexByPath[mpath] = idx;
+    matUv1ByPath[mpath] = uv1Name;
+    return idx;
+  };
+  // Prototype-material wrapper for EmitInstancedProto (no per-mesh UV-set names
+  // for a shared prototype; secondary-UV routing falls back to set 0).
+  const std::function<int(const std::string&)> resolveProtoMat =
+      [&](const std::string& mpath) -> int {
+    return resolveMaterialPath(mpath, std::string(), std::string());
+  };
+
   // --- 3a. PointInstancer pass: emit one GPU-instanced DrawMeshCPU per prototype
   //         mesh. Prototype geometry lives at the converter's authored location,
   //         so we re-express it relative to the prototype root and bake each
@@ -1998,8 +3034,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // Optional cap on total emitted instances (VRAM budget / headless software-GL
   // testing). Each instance matrix is 64 B, so e.g. 50M ~= 3.2 GB.
   size_t instBudget = std::numeric_limits<size_t>::max();
+  if (opts.gpuGeometryBudgetBytes > 0) {
+    instBudget = opts.gpuGeometryBudgetBytes / sizeof(matrix4d);
+  }
   if (const char* mc = std::getenv("TUSDVIEW_NEXT_MAX_INSTANCES")) {
-    instBudget = static_cast<size_t>(std::strtoull(mc, nullptr, 10));
+    instBudget = std::min(
+        instBudget, static_cast<size_t>(std::strtoull(mc, nullptr, 10)));
   }
 
   std::function<void(const tnext::UsdPrim&)> walk = [&](const tnext::UsdPrim& p) {
@@ -2039,7 +3079,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           int pi = (i < protoIdx.size()) ? protoIdx[i] : 0;
           if (pi >= 0 && pi < int(protos->size())) byProto[pi].push_back(uint32_t(i));
         }
-        static const float kIdentQuat[4] = {0, 0, 0, 1};
+        static const float kIdentQuat[4] = {1, 0, 0, 0};  // real-first (w,x,y,z)
         static const float kUnitScale[3] = {1, 1, 1};
 
         for (size_t pi = 0; pi < protos->size(); ++pi) {
@@ -2074,8 +3114,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             }
           }
           EmitInstancedProto(stage, conv, protoRoot, placements,
-                             perInstColor ? &colors : nullptr, time, draw, &bounds,
-                             &instTotal, &effectiveTris, instBudget, &consumed);
+                             perInstColor ? &colors : nullptr, time,
+                             opts.gpuSkinning, draw, &bounds, &instTotal,
+                             &effectiveTris, instBudget, &consumed,
+                             &resolveProtoMat);
         }
       }
       return;  // do not descend into a PointInstancer's prototypes as geometry
@@ -2099,6 +3141,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         nativeGroups[s->meta().instance_prototype()].push_back(Mat4dFromArray(w16));
         // The instance's children are proxies of the prototype; the converter
         // flattened them, so consume those mesh paths (excluded from 3b).
+        // These resolve to the INSTANCE's own paths: pcp remaps
+        // prototype_root -> instance_root, so they are NOT the prototype's mesh
+        // paths. The prototype's own paths are consumed separately below.
         std::vector<tnext::UsdPrim> ms;
         tydn::GatherMeshPrims(p, &ms);
         for (const tnext::UsdPrim& m : ms) consumed.insert(m.GetPath().str());
@@ -2109,16 +3154,35 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     for (const tnext::UsdPrim& r : stage.GetRootPrims()) wn(r);
 
     for (const auto& kv : nativeGroups) {
-      // A single instance is just the prototype shown twice; let 3b draw it.
-      if (kv.second.size() < 2) continue;
       tnext::UsdPrim protoRoot = stage.GetPrimAtPath(kv.first);
       if (!protoRoot.IsValid()) continue;
-      // GPU-instance the prototype's geometry at each native-instance placement;
-      // EmitInstancedProto recurses into any nested instancers under the prototype.
-      // consumed=nullptr: the prototype prim itself still renders via 3b (unchanged).
-      EmitInstancedProto(stage, conv, protoRoot, kv.second, /*placementColors=*/nullptr,
-                         time, draw, &bounds, &instTotal, &effectiveTris, instBudget,
-                         /*consumed=*/nullptr);
+      // The prototype of a native-instance group is ITSELF one of the authored
+      // instanceable prims (the pcp cache designates the first sibling and points
+      // the others at it), so it needs its own placement here -- without this, one
+      // instance (all of them, for a 2-instance group) silently vanished.
+      //
+      // Consume the PROTOTYPE's mesh paths too. An instance's children resolve to
+      // the instance's own paths (pcp remaps prototype_root -> instance_root), so
+      // the loop above consumed those, not these. EmitInstancedProto draws the
+      // prototype's geometry at EVERY placement below, including the prototype
+      // prim's own, so leaving its paths unconsumed makes the static-batching pass
+      // in 3b draw that same geometry a second time as a standalone mesh.
+      std::vector<tnext::UsdPrim> pms;
+      tydn::GatherMeshPrims(protoRoot, &pms);
+      for (const tnext::UsdPrim& m : pms) consumed.insert(m.GetPath().str());
+
+      std::vector<matrix4d> placements;
+      placements.reserve(kv.second.size() + 1);
+      double pw16[16];
+      tydn::ComputeWorldTransform(stage, protoRoot, pw16, time);
+      placements.push_back(Mat4dFromArray(pw16));
+      placements.insert(placements.end(), kv.second.begin(), kv.second.end());
+      // GPU-instance the prototype's geometry at each placement; EmitInstancedProto
+      // recurses into any nested instancers under the prototype.
+      EmitInstancedProto(stage, conv, protoRoot, placements,
+                         /*placementColors=*/nullptr, time, opts.gpuSkinning, draw,
+                         &bounds, &instTotal, &effectiveTris, instBudget,
+                         /*consumed=*/nullptr, &resolveProtoMat);
     }
   }
 
@@ -2128,41 +3192,74 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   //         (one VAO/VBO/EBO per batch) instead of 33k -- far less draw-call + GL
   //         object overhead. Purpose stays per-batch so the GUI toggles still
   //         work; per-mesh pick/hide is not a goal of the flat large-scene path.
-  struct Batch { DrawMeshCPU dm; bool anyColor = false; int matId = 0; };
-  // key = (purpose, geometricNormal, materialId) -> current batch. Keying by
-  // material keeps per-material draws distinct so each batch can reference its
-  // own DrawMaterialCPU instead of the single default gray material.
-  std::map<std::tuple<std::string, bool, int>, Batch> open;
-
-  // Texture cache for material building: resolve texture assets against the
-  // source directory and, for a .usdz package, its embedded entries.
-  NextTexCache texCache;
-  texCache.baseDir = tinyusdz::io::GetBaseDir(path);
-  tinyusdz::next::USDZReader usdzArchive;
-  if (path.size() >= 5 && path.compare(path.size() - 5, 5, ".usdz") == 0 &&
-      usdzArchive.OpenFile(path)) {
-    texCache.usdz = &usdzArchive;
-  }
-
-  // Resolve a material prim path to a DrawScene material index (cached by path).
-  // Unbound / unconvertible -> 0 (default gray material).
-  std::unordered_map<std::string, int> matIndexByPath;
-  auto resolveMaterialPath = [&](const std::string& mpath) -> int {
-    if (mpath.empty()) return 0;
-    auto it = matIndexByPath.find(mpath);
-    if (it != matIndexByPath.end()) return it->second;
-    tnext::UsdPrim matPrim = stage.GetPrimAtPath(mpath);
-    int idx = matPrim.IsValid()
-                  ? BuildNextMaterial(stage, conv, matPrim, draw, texCache)
-                  : -1;
-    if (idx < 0) idx = 0;
-    matIndexByPath[mpath] = idx;
-    return idx;
+  struct Batch {
+    DrawMeshCPU dm;
+    bool anyColor = false;
+    // Same deal for the SECONDARY UV set: a batch gains a uv1 buffer the first
+    // time a mesh that has one joins it. uv0 rides inside DrawVertex, but uv1 is
+    // a parallel array, so it has to be appended by hand or the batched draw ends
+    // up with an EMPTY uv1 -- and every texture routed to the second UV set then
+    // samples a constant instead of the crop it asked for.
+    bool anyUv1 = false;
+    // A batch gains skin attributes the first time a SKINNED mesh joins it; the
+    // vertices already in it (and every unskinned mesh that joins later) get
+    // zero weights, which the vertex shader passes through unskinned. Joint
+    // indices are absolute bone-texture rows, so one batch can draw vertices
+    // posed by several different skeletons.
+    bool anySkin = false;
+    // True when a SKINNED mesh joined this batch under CPU skinning: its vertices
+    // are one baked pose, so they do not bound the rig over the animation (the GPU
+    // path signals the same thing through anySkin).
+    bool anyCpuSkin = false;
+    // A morphed mesh gets a batch to ITSELF (the key carries a unique id), so the
+    // batch's channel ids and its bound SkelAnimation are unambiguous.
+    bool anyMorph = false;
+    int matId = 0;
   };
-  auto resolveMeshMaterial = [&](const tnext::UsdPrim& mp) -> int {
-    const std::vector<tnext::Path>* bind = mp.GetRelationship("material:binding");
-    if (!bind || bind->empty()) return 0;
-    return resolveMaterialPath((*bind)[0].str());
+  // key = (purpose, geometricNormal, doubleSided, materialId, morphId) -> current
+  // batch. Keying by material keeps per-material draws distinct so each batch can
+  // reference its own DrawMaterialCPU instead of the single default gray material.
+  // doubleSided is per-DrawMeshCPU (it drives back-face culling), so single- and
+  // double-sided meshes must not merge. morphId is 0 for ordinary meshes and
+  // unique per BLENDSHAPED mesh: morph channel ids and the bound SkelAnimation
+  // are per-mesh, so two morphed meshes must not share a batch.
+  std::map<std::tuple<std::string, bool, bool, int, int>, Batch> open;
+  int nextMorphBatchId = 0;
+
+  // Full UsdShade binding semantics: the purpose fallback chain
+  // (material:binding:preview -> material:binding -> material:binding:full) AND
+  // inheritance from ancestors. Production scenes (ALab) bind purpose-scoped on
+  // an ancestor Xform and never author a plain `material:binding` on the Mesh —
+  // reading only the Mesh's own `material:binding` dropped every material (and
+  // so every texture) on those scenes.
+  auto resolveMeshMaterial = [&](const tnext::UsdPrim& mp,
+                                 const std::string& uv0Name = std::string(),
+                                 const std::string& uv1Name = std::string()) -> int {
+    return resolveMaterialPath(
+        tnext::GetInheritedBoundMaterialPath(stage, mp.GetPath().str()), uv0Name,
+        uv1Name);
+  };
+
+  // A clone of material `base` with its alpha replaced, made once per distinct
+  // (material, opacity) pair. Lets a mesh's `displayOpacity` render through the
+  // existing material alpha without mutating a material other meshes share.
+  std::map<std::pair<int, int>, int> matAlphaVariants;
+  size_t varyingOpacityMeshes = 0;
+  auto materialWithAlpha = [&](int base, float alpha) -> int {
+    if (base < 0 || static_cast<size_t>(base) >= draw->materials.size()) return base;
+    // Quantize so near-identical opacities share one variant.
+    const int key = static_cast<int>(std::lround(alpha * 1000.0f));
+    auto it = matAlphaVariants.find({base, key});
+    if (it != matAlphaVariants.end()) return it->second;
+    DrawMaterialCPU variant = draw->materials[static_cast<size_t>(base)];
+    variant.alpha = alpha;
+    if (variant.alphaMode == static_cast<int>(AlphaMode::Opaque)) {
+      variant.alphaMode = static_cast<int>(AlphaMode::Blend);
+    }
+    const int idx = static_cast<int>(draw->materials.size());
+    draw->materials.push_back(std::move(variant));
+    matAlphaVariants[{base, key}] = idx;
+    return idx;
   };
 
   // GeomSubset per-face materials: when a mesh has `face` GeomSubset children
@@ -2184,11 +3281,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         if (const std::string* t = et->as_token())
           isFace = t->empty() || *t == "face";
       if (!isFace) continue;
-      const std::vector<tnext::Path>* bind = c.GetRelationship("material:binding");
-      if (!bind || bind->empty()) continue;
+      // Purpose chain, but no ancestor walk: a subset that binds nothing itself
+      // must keep falling back to the whole-mesh material.
+      const std::string bind = tnext::GetBoundMaterialPath(c);
+      if (bind.empty()) continue;
       std::vector<int32_t> faces = ReadInts(c, "indices", time);
       if (faces.empty()) continue;
-      subs.push_back({std::move(faces), resolveMaterialPath((*bind)[0].str())});
+      subs.push_back({std::move(faces),
+                      resolveMaterialPath(bind, m.texcoords_0_name,
+                                          m.texcoords_1_name)});
     }
     if (subs.empty()) return;
 
@@ -2200,9 +3301,26 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     if (triFace.size() != numTris) return;  // triangulation mismatch -> whole-mesh
 
     std::vector<int> faceMat(fvc.size(), wholeMat);
-    for (const Sub& s : subs)
-      for (int32_t f : s.faces)
-        if (f >= 0 && static_cast<size_t>(f) < faceMat.size()) faceMat[f] = s.mat;
+    // Authored subset indices use the ORIGINAL face numbering. When
+    // SanitizeMeshTopology dropped faces, fvc/faceMat are in the COMPACTED
+    // numbering, so route each authored index through sanitize_face_remap
+    // (-1 = the face was dropped) -- the core converter does the same
+    // (render-converter.cc); applying authored indices directly shifted the
+    // bindings onto the wrong faces.
+    const bool remap = m.sanitize_dropped_faces > 0 &&
+                       !m.sanitize_face_remap.empty();
+    for (const Sub& s : subs) {
+      for (int32_t f : s.faces) {
+        if (f < 0) continue;
+        int32_t cf = f;
+        if (remap) {
+          if (static_cast<size_t>(f) >= m.sanitize_face_remap.size()) continue;
+          cf = m.sanitize_face_remap[static_cast<size_t>(f)];
+          if (cf < 0) continue;  // face was dropped by sanitize
+        }
+        if (static_cast<size_t>(cf) < faceMat.size()) faceMat[cf] = s.mat;
+      }
+    }
 
     std::vector<int> tm(numTris);
     bool split = false;
@@ -2212,15 +3330,77 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
     if (split) *triMat = std::move(tm);  // uniform -> leave empty
   };
-  const size_t kBatchVtxCap = size_t(8) << 20;  // 8M verts/batch (indices stay 32-bit)
+  const size_t bytesPerBatchVertex = sizeof(DrawVertex) + 3 * sizeof(uint32_t);
+  const size_t stagingVertexCap =
+      opts.uploadStagingBytes > 0
+          ? std::max<size_t>(size_t(64) << 10,
+                             opts.uploadStagingBytes / bytesPerBatchVertex)
+          : (size_t(8) << 20);
+  const size_t kBatchVtxCap =
+      std::min<size_t>(size_t(8) << 20, stagingVertexCap);
 
   auto flushBatch = [&](Batch& b) {
     if (b.dm.vertices.empty()) return;
     if (!b.anyColor) b.dm.vertexColors.clear();
-    if (bounds.has)
+    if (!b.anyUv1) b.dm.uv1.clear();
+    if (b.anySkin && b.dm.jointIdx.size() == b.dm.vertices.size() * 4) {
+      // Bone rows are absolute and geomBind/world are already folded into them
+      // (BuildNextSkinningFrame), so the batch needs no per-mesh bind matrix and
+      // no row offset. skelId only has to be valid for the skinning frame to
+      // pick this mesh up; the next path indexes DrawScene::nextSkels, not
+      // RenderScene::skeletons.
+      b.dm.skelId = 0;
+      b.dm.skinMatrixBase = 0;
+      std::memset(b.dm.skinGeomBind, 0, sizeof(b.dm.skinGeomBind));
+      b.dm.skinGeomBind[0] = b.dm.skinGeomBind[5] = b.dm.skinGeomBind[10] =
+          b.dm.skinGeomBind[15] = 1.0f;
+    } else {
+      b.dm.jointIdx.clear();
+      b.dm.jointWt.clear();
+    }
+    // This batch's OWN world bounds, over its (already world-baked) vertices.
+    // Copying the running scene-bounds accumulator here instead -- as this used to
+    // -- gives every static mesh the scene-spanning box, which makes both the
+    // per-mesh frustum cull and raster LOD no-ops: nothing is ever outside the
+    // frustum or small on screen.
+    //
+    // Skinned batches keep the conservative scene box (either skinning mode): the
+    // vertices here are a single pose -- rest for GPU skinning, one sampled time
+    // for CPU skinning -- so they do not bound the mesh over the animation, and a
+    // tight box would pop it out of view as the rig moves.
+    float lo[3] = {b.dm.vertices[0].px, b.dm.vertices[0].py,
+                   b.dm.vertices[0].pz};
+    float hi[3] = {lo[0], lo[1], lo[2]};
+    for (const DrawVertex& v : b.dm.vertices) {
+      lo[0] = std::min(lo[0], v.px); hi[0] = std::max(hi[0], v.px);
+      lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
+      lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
+    }
+    // The rest box and the bone range are kept even for a skinned batch, whose
+    // aabbMin/Max is the scene box: BuildNextPosedSceneBounds re-derives the
+    // scene's box at a new time code from these.
+    for (int k = 0; k < 3; ++k) {
+      b.dm.restAabbMin[k] = lo[k];
+      b.dm.restAabbMax[k] = hi[k];
+    }
+    if (!b.dm.jointIdx.empty()) {
+      uint32_t jlo = std::numeric_limits<uint32_t>::max(), jhi = 0;
+      for (uint32_t j : b.dm.jointIdx) { jlo = std::min(jlo, j); jhi = std::max(jhi, j); }
+      if (jlo <= jhi) {
+        b.dm.boneLo = static_cast<int>(jlo);
+        b.dm.boneHi = static_cast<int>(jhi);
+      }
+    }
+    if ((b.anySkin || b.anyCpuSkin) && bounds.has) {
       for (int k = 0; k < 3; ++k) {
         b.dm.aabbMin[k] = bounds.mn[k]; b.dm.aabbMax[k] = bounds.mx[k];
       }
+    } else {
+      for (int k = 0; k < 3; ++k) {
+        b.dm.aabbMin[k] = lo[k] - b.dm.morphExtent[k];
+        b.dm.aabbMax[k] = hi[k] + b.dm.morphExtent[k];
+      }
+    }
     b.dm.submeshes.push_back(
         DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), b.matId});
     std::memset(b.dm.world, 0, sizeof(b.dm.world));
@@ -2232,7 +3412,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
   // Gather the non-prototype mesh prims by walking the stage (there is no
   // RenderScene node list now); convert + bake each one streaming.
-  std::vector<tnext::UsdPrim> meshPrims;
+  struct PendingMesh {
+    tnext::UsdPrim prim;
+    bool forceProxy = false;
+  };
+  std::vector<PendingMesh> meshPrims;
+  std::unordered_set<std::string> pendingPaths;
+  float deferredTranslationMin[3] = {1e30f, 1e30f, 1e30f};
+  float deferredTranslationMax[3] = {-1e30f, -1e30f, -1e30f};
+  size_t deferredTranslationCount = 0;
   {
     tydn::RenderExtractOptions xopts;
     xopts.time_code = time;
@@ -2242,26 +3430,193 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     tydn::CollectRenderPrims(stage, xopts, &xres);
     meshPrims.reserve(xres.meshes.size());
     for (const tydn::RenderPrimRecord& rec : xres.meshes) {
-      if (!consumed.count(rec.path)) meshPrims.push_back(rec.prim);
+      if (!consumed.count(rec.path)) {
+        meshPrims.push_back(PendingMesh{rec.prim, false});
+        pendingPaths.insert(rec.path);
+      }
     }
+    for (const tnext::Path& deferred : deferredPayloads) {
+      if (pendingPaths.count(deferred.str()) != 0) continue;
+      tnext::UsdPrim prim = stage.GetPrimAtPath(deferred);
+      if (!prim.IsValid()) continue;
+      meshPrims.push_back(PendingMesh{prim, true});
+      pendingPaths.insert(deferred.str());
+      double world[16];
+      tydn::ComputeWorldTransform(stage, prim, world, time);
+      for (size_t axis = 0; axis < 3; ++axis) {
+        const float translation = static_cast<float>(world[12 + axis]);
+        deferredTranslationMin[axis] =
+            std::min(deferredTranslationMin[axis], translation);
+        deferredTranslationMax[axis] =
+            std::max(deferredTranslationMax[axis], translation);
+      }
+      ++deferredTranslationCount;
+    }
+  }
+  float deferredProxyHalfSize = 1.0f;
+  if (deferredTranslationCount > 1) {
+    float diagonal2 = 0.0f;
+    for (size_t axis = 0; axis < 3; ++axis) {
+      const float span =
+          deferredTranslationMax[axis] - deferredTranslationMin[axis];
+      diagonal2 += span * span;
+    }
+    deferredProxyHalfSize = std::max(1.0f, std::sqrt(diagonal2) / 200.0f);
   }
 
   bool capped = false;
   long long totalTris = 0;
-  for (const tnext::UsdPrim& mp : meshPrims) {
+  size_t admittedGeometryBytes = 0;
+  size_t proxyMeshCount = 0;
+  // Weld effectiveness: emitted vertices vs authored points. ~1.0 means the
+  // faceVarying split cost nothing; a ratio near the corners-per-point count
+  // means the weld is not catching (see FillFlatGeometry).
+  size_t weldedVertices = 0;
+  size_t sourcePoints = 0;
+  size_t deferredProxyCount = 0;
+
+  // USD's `proxy` and `render` purposes are ALTERNATIVES -- a stand-in and the real
+  // geometry, two representations of one thing -- not two things to draw at once.
+  // Drawn together they land on top of each other: intent-vfx/simpleAsset authors an
+  // unadorned Cube as the proxy for an unadorned Sphere, and USD's defaults make that
+  // cube (size 2) exactly enclose that sphere (radius 1), so the stand-in box hid the
+  // asset completely. Prefer the real thing: a proxy is SUPERSEDED by render-purpose
+  // geometry and not emitted; a proxy that stands in for nothing still draws, which is
+  // the whole point of authoring one.
+  //
+  // The two are alternatives of the same ASSET, so the model root is the scope that
+  // pairs them -- NOT any shared ancestor. Scoping by shared ancestor deletes real
+  // geometry: Apple's stage_composition/purpose.usda puts four unrelated cubes side by
+  // side under one Scope, one of them proxy-purpose, and a shared-ancestor rule drops
+  // that cube even though nothing supersedes it. `group` is excluded for the same
+  // reason -- it is the container for many models (/World), not one asset.
+  auto modelRootOf = [&](const std::string& abs) -> std::string {
+    std::string p = abs;
+    while (!p.empty()) {
+      const tnext::UsdPrim prim = stage.GetPrimAtPath(p);
+      if (prim.IsValid()) {
+        const std::string& kind = prim.GetMeta().kind();
+        if (!kind.empty() && kind != "group") return p;
+      }
+      if (p == "/") break;
+      const size_t slash = p.find_last_of('/');
+      p = (slash == std::string::npos || slash == 0) ? "/" : p.substr(0, slash);
+    }
+    return {};  // no enclosing model: nothing to scope a supersede to
+  };
+
+  std::unordered_set<std::string> renderModels;
+  for (const PendingMesh& pending : meshPrims) {
+    const std::string path = pending.prim.GetPath().str();
+    if (ResolveNextPurpose(stage, path) != "render") continue;
+    const std::string model = modelRootOf(path);
+    if (!model.empty()) renderModels.insert(model);
+  }
+  size_t supersededProxyCount = 0;
+
+  for (const PendingMesh& pending : meshPrims) {
+    const tnext::UsdPrim& mp = pending.prim;
     if (ctrl && ctrl->cancel.load()) break;
     if (capped) break;
+    if (!renderModels.empty()) {
+      const std::string path = mp.GetPath().str();
+      if (ResolveNextPurpose(stage, path) == "proxy" &&
+          renderModels.count(modelRootOf(path))) {
+        ++supersededProxyCount;
+        continue;
+      }
+    }
     tydn::RenderMesh m;
-    if (!conv.ConvertMesh(mp, &m)) continue;
+    const tydn::GeometryInfo geometry =
+        conv.GetGeometryInfo(mp, tydn::GeometryKind::Mesh);
+    const bool overGeometryBudget =
+        opts.gpuGeometryBudgetBytes > 0 &&
+        (admittedGeometryBytes >= opts.gpuGeometryBudgetBytes ||
+         geometry.estimated_resident_bytes >
+             opts.gpuGeometryBudgetBytes - admittedGeometryBytes);
+    if (pending.forceProxy || overGeometryBudget) {
+      bool proxyConverted = conv.ConvertExtentProxy(mp, &m);
+      if (!proxyConverted && pending.forceProxy) {
+        const tydn::Float3 mn(-deferredProxyHalfSize,
+                             -deferredProxyHalfSize,
+                             -deferredProxyHalfSize);
+        const tydn::Float3 mx(deferredProxyHalfSize,
+                             deferredProxyHalfSize,
+                             deferredProxyHalfSize);
+        proxyConverted = conv.ConvertBoundsProxy(mp, mn, mx, &m);
+      }
+      if (!proxyConverted) {
+        draw->skipped.push_back("GPU budget skipped mesh without extent: " +
+                                mp.GetPath().str());
+        draw->truncated = true;
+        continue;
+      }
+      ++proxyMeshCount;
+      if (pending.forceProxy) ++deferredProxyCount;
+      draw->truncated = true;
+    } else if (!conv.ConvertRenderableMesh(stage, mp, &m)) {
+      continue;
+    }
     DrawMeshCPU loc;
-    if (!FillFlatGeometry(m, &loc)) continue;
-    // Load-time skeletal skinning bake (static pose at `time`), before the
-    // vertices are world-baked into the batch. No-op for unskinned meshes.
-    BakeSkinning(stage, mp, time, &loc);
+    std::vector<uint32_t> vertexToPoint;
+    if (!FillFlatGeometry(m, &loc, &vertexToPoint)) continue;
+    weldedVertices += loc.vertices.size();
+    sourcePoints += m.point_count();
+    admittedGeometryBytes +=
+        loc.vertices.size() * sizeof(DrawVertex) +
+        loc.indices.size() * sizeof(uint32_t) +
+        loc.vertexColors.size() * sizeof(float) +
+        loc.vertexAlpha.size() * sizeof(float) +
+        loc.uv1.size() * sizeof(float) +
+        loc.tangents.size() * sizeof(float) +
+        loc.binormals.size() * sizeof(float);
     const std::string purpose = ResolveNextPurpose(stage, mp.GetPath().str());
-    const int wholeMat = resolveMeshMaterial(mp);
+    int wholeMat = resolveMeshMaterial(mp, m.texcoords_0_name, m.texcoords_1_name);
     double mw16[16];
     tydn::ComputeWorldTransform(stage, mp, mw16, time);
+    // Blendshapes, BEFORE skinning: a blendshape deforms the bind-space points and
+    // the skeleton then poses the RESULT (deform.glsl morphs, then runs LBS on the
+    // morphed position, and the instanced prototype path bakes in that order too).
+    // Baking the skin first and the morph second -- as this used to -- adds the
+    // bind-space offsets to already-posed points, so a mesh that is blendshaped AND
+    // skinned at the same time code lands somewhere neither path intended.
+    //
+    // This ran ONLY on the instanced-prototype path, so an ordinary (non-instanced)
+    // blendshaped mesh never morphed at all under --next -- it rendered its rest
+    // shape at every time code. Same choice as there: bake the pose in
+    // (TUSDVIEW_NEXT_MORPH_BAKE=1) or build GPU-morph channels the shader applies
+    // per frame. CPU skinning forces the bake: the shader's morph is applied to
+    // whatever position it is handed, which for a CPU-skinned mesh is the POSED
+    // one -- the wrong order again, and not fixable in the shader (the delta would
+    // have to be carried into pose space per frame). Baking both keeps them ordered.
+    // A CPU-skinning run re-converts on every time change anyway, so the baked morph
+    // still animates.
+    static const bool kBakeMorphStatic = [] {
+      const char* e = std::getenv("TUSDVIEW_NEXT_MORPH_BAKE");
+      return e && e[0] == '1';
+    }();
+    if (kBakeMorphStatic || !opts.gpuSkinning) {
+      BakeBlendShapes(stage, mp, time, &loc, vertexToPoint, m.point_count());
+    } else {
+      BuildMorphChannelsNext(stage, mp, time, &loc, vertexToPoint,
+                             m.point_count());
+    }
+    // Skeletal skinning, before the vertices are world-baked into the batch.
+    // GPU: keep the (morphed) bind pose and emit per-vertex joint attributes (the
+    // shader poses every frame). CPU: bake the static pose at `time` into the
+    // geometry. Both no-op for unskinned meshes.
+    bool cpuSkinned = false;
+    if (opts.gpuSkinning) {
+      SetupGpuSkinNext(stage, mp, time, &loc, vertexToPoint, m.point_count(),
+                       mw16, draw);
+    } else {
+      cpuSkinned =
+          BakeSkinning(stage, mp, time, &loc, vertexToPoint, m.point_count());
+    }
+    // A morphed mesh must not share a batch with anything else: its channel ids
+    // and its bound animation are its own. 0 = poolable with other static meshes.
+    const int morphBatchId =
+        (loc.morphChannelCount > 0) ? ++nextMorphBatchId : 0;
     float Mf[16];
     for (int k = 0; k < 16; ++k) Mf[k] = static_cast<float>(mw16[k]);
     const float* M = Mf;  // row-major, p*M (same as the converter's node xform)
@@ -2280,7 +3635,121 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       if (nl > 1e-12f) { v.nx = wn[0] / nl; v.ny = wn[1] / nl; v.nz = wn[2] / nl; }
       else { v.nx = 0; v.ny = 0; v.nz = 0; }
     }
+    // The morph deltas are MESH-LOCAL (BlendShape offsets), but the vertices are
+    // now world-baked and every consumer -- the vertex shader (deform.glsl) and
+    // BuildNextRtDeformedVertices alike -- adds the delta straight onto the
+    // position it is handed. So the deltas have to be rotated/scaled into the same
+    // space, or a blendshaped mesh under a rotated or scaled parent morphs along
+    // the wrong axes. Skinning already does the equivalent (its bone rows are
+    // invW * (G*sm*invG) * W); the instanced prototype path needs none of this,
+    // because its vertices stay mesh-local and each instance applies its own o2w
+    // after the deform.
+    const bool linIdentity =
+        M[0] == 1.0f && M[1] == 0.0f && M[2] == 0.0f && M[4] == 0.0f &&
+        M[5] == 1.0f && M[6] == 0.0f && M[8] == 0.0f && M[9] == 0.0f &&
+        M[10] == 1.0f;
+    if (loc.morphChannelCount > 0 && !linIdentity) {
+      auto toHalf = [](float f) {
+        return tinyusdz::value::float_to_half_full(f).value;
+      };
+      for (size_t e = 0; e + 3 < loc.morphDeltaHalf.size(); e += 4) {
+        const float d[3] = {NextHalfToFloat(loc.morphDeltaHalf[e + 1]),
+                            NextHalfToFloat(loc.morphDeltaHalf[e + 2]),
+                            NextHalfToFloat(loc.morphDeltaHalf[e + 3])};
+        for (int c = 0; c < 3; ++c) {  // a direction: no translation row
+          loc.morphDeltaHalf[e + 1 + size_t(c)] =
+              toHalf(d[0] * M[0 * 4 + c] + d[1] * M[1 * 4 + c] +
+                     d[2] * M[2 * 4 + c]);
+        }
+      }
+      // The extent pads a world-space box, so carry it through |M| (each world
+      // axis takes the worst case over the local axes that feed it).
+      const float le[3] = {loc.morphExtent[0], loc.morphExtent[1],
+                           loc.morphExtent[2]};
+      for (int a = 0; a < 3; ++a) {
+        loc.morphExtent[a] = le[0] * std::fabs(M[0 * 4 + a]) +
+                             le[1] * std::fabs(M[1 * 4 + a]) +
+                             le[2] * std::fabs(M[2 * 4 + a]);
+      }
+    }
+    // USD `primvars:displayOpacity`. No renderer here samples a per-vertex alpha
+    // attribute, but the overwhelmingly common authoring is one opacity for the
+    // whole mesh -- so when it does not actually vary, fold it into an
+    // alpha-adjusted MATERIAL VARIANT (a clone of the bound material, made once
+    // per distinct opacity). That renders correctly through the existing
+    // material alpha, and folding it into the shared material in place would be
+    // wrong the moment two meshes with different opacities share one material.
+    // A genuinely per-vertex opacity keeps its buffer and is reported below.
+    if (!loc.vertexAlpha.empty()) {
+      float lo = loc.vertexAlpha[0], hi = loc.vertexAlpha[0];
+      for (float a : loc.vertexAlpha) { lo = std::min(lo, a); hi = std::max(hi, a); }
+      if (hi - lo <= 1e-6f) {
+        if (lo < 1.0f - 1e-6f) wholeMat = materialWithAlpha(wholeMat, lo);
+        loc.vertexAlpha.clear();
+        loc.vertexAlpha.shrink_to_fit();
+      } else {
+        ++varyingOpacityMeshes;
+      }
+    }
+
     const bool hasC = !loc.vertexColors.empty();
+    const bool hasUv1 = loc.uv1.size() == loc.vertices.size() * 2;
+    const bool hasSkin = loc.jointIdx.size() == loc.vertices.size() * 4 &&
+                         loc.jointWt.size() == loc.vertices.size() * 4;
+    // Give `b` skin attribute arrays sized to the vertices it already holds
+    // (zero-weight = unskinned), so the two arrays stay parallel to b.dm.vertices.
+    auto openSkin = [&](Batch& b) {
+      if (cpuSkinned) b.anyCpuSkin = true;
+      if (!hasSkin || b.anySkin) return;
+      b.dm.jointIdx.assign(b.dm.vertices.size() * 4, 0u);
+      b.dm.jointWt.assign(b.dm.vertices.size() * 4, 0.0f);
+      b.anySkin = true;
+    };
+    // Append vertex `i`'s influences (or zeros when this mesh is unskinned but
+    // the batch is already carrying skin attributes).
+    auto pushSkin = [&](Batch& b, size_t i) {
+      if (!b.anySkin) return;
+      for (size_t k = 0; k < 4; ++k) {
+        b.dm.jointIdx.push_back(hasSkin ? loc.jointIdx[i * 4 + k] : 0u);
+        b.dm.jointWt.push_back(hasSkin ? loc.jointWt[i * 4 + k] : 0.0f);
+      }
+    };
+
+    // GPU morph. The channel metadata is per MESH, and a morphed mesh owns its
+    // batch (see the key), so the batch simply inherits it; the per-vertex delta
+    // lists are re-indexed as vertices are appended, since a GeomSubset split
+    // routes different vertices to different batches.
+    const bool hasMorph = loc.morphChannelCount > 0 &&
+                          loc.morphOffsetCount.size() == loc.vertices.size() * 2;
+    auto openMorph = [&](Batch& b) {
+      if (!hasMorph || b.anyMorph) return;
+      b.anyMorph = true;
+      b.dm.morphChannelCount = loc.morphChannelCount;
+      b.dm.morphTargetChannels = loc.morphTargetChannels;
+      b.dm.absPath = loc.absPath;  // BuildNextMorphWeights resolves weights by path
+      for (int k = 0; k < 3; ++k) b.dm.morphExtent[k] = loc.morphExtent[k];
+      // Vertices already in the batch (there are none for a fresh morph batch, but
+      // a flush can leave the slot reused) carry an empty delta list.
+      b.dm.morphOffsetCount.assign(b.dm.vertices.size() * 2, 0u);
+    };
+    auto pushMorph = [&](Batch& b, size_t i) {
+      if (!b.anyMorph) return;
+      const uint32_t base =
+          static_cast<uint32_t>(b.dm.morphDeltaHalf.size() / 4);
+      const uint32_t src = loc.morphOffsetCount[i * 2 + 0];
+      const uint32_t cnt = loc.morphOffsetCount[i * 2 + 1];
+      for (uint32_t k = 0; k < cnt; ++k) {
+        const size_t e = size_t(src + k);
+        if (e * 4 + 3 >= loc.morphDeltaHalf.size()) break;
+        for (int c = 0; c < 4; ++c)
+          b.dm.morphDeltaHalf.push_back(loc.morphDeltaHalf[e * 4 + size_t(c)]);
+        b.dm.morphChannelId.push_back(e < loc.morphChannelId.size()
+                                          ? loc.morphChannelId[e]
+                                          : uint16_t{0});
+      }
+      b.dm.morphOffsetCount.push_back(base);
+      b.dm.morphOffsetCount.push_back(cnt);
+    };
 
     // Per-triangle materials from face GeomSubsets (empty => uniform wholeMat).
     std::vector<int> triMat;
@@ -2288,7 +3757,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
     if (triMat.empty()) {
       // --- Single-material fast path: append the whole mesh to one batch. ---
-      Batch& b = open[{purpose, loc.geometricNormal, wholeMat}];
+      Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, wholeMat,
+                       morphBatchId}];
       b.matId = wholeMat;
       if (!b.dm.vertices.empty() &&
           b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
@@ -2296,6 +3766,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
       b.dm.purpose = purpose;
       b.dm.geometricNormal = loc.geometricNormal;
+      b.dm.doubleSided = m.double_sided;
       // Allocate the batch color buffer only once a mesh actually contributes a
       // color: back-fill white for the vertices already in the batch. No-color
       // batches (e.g. the hotel) then never allocate a 12 B/vertex white buffer.
@@ -2303,11 +3774,19 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
         b.anyColor = true;
       }
+      if (hasUv1 && !b.anyUv1) {
+        b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
+        b.anyUv1 = true;
+      }
+      openSkin(b);
+      openMorph(b);
       // NOTE: rely on the vectors' amortized (doubling) growth -- an exact
       // reserve(size()+n) per mesh would reallocate the whole batch (O(N^2)).
       const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
       for (size_t i = 0; i < loc.vertices.size(); ++i) {
         b.dm.vertices.push_back(loc.vertices[i]);
+        pushSkin(b, i);
+        pushMorph(b, i);
         if (b.anyColor) {
           if (hasC) {
             b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 0]);
@@ -2318,6 +3797,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             b.dm.vertexColors.push_back(1.0f);
             b.dm.vertexColors.push_back(1.0f);
           }
+        }
+        if (b.anyUv1) {
+          b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * i + 0] : 0.0f);
+          b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * i + 1] : 0.0f);
         }
       }
       for (uint32_t idx : loc.indices) b.dm.indices.push_back(vbase + idx);
@@ -2331,7 +3814,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       const size_t numTris = loc.indices.size() / 3;
       bool firstGroup = true;
       for (int gm : groups) {
-        Batch& b = open[{purpose, loc.geometricNormal, gm}];
+        Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, gm,
+                         morphBatchId}];
         b.matId = gm;
         if (!b.dm.vertices.empty() &&
             b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
@@ -2339,15 +3823,24 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         }
         b.dm.purpose = purpose;
         b.dm.geometricNormal = loc.geometricNormal;
+        b.dm.doubleSided = m.double_sided;
         if (hasC && !b.anyColor) {
           b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
           b.anyColor = true;
         }
+        if (hasUv1 && !b.anyUv1) {
+          b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
+          b.anyUv1 = true;
+        }
+        openSkin(b);
+        openMorph(b);
         std::vector<int> remap(loc.vertices.size(), -1);
         auto vtx = [&](uint32_t vi) -> uint32_t {
           if (remap[vi] < 0) {
             remap[vi] = static_cast<int>(b.dm.vertices.size());
             b.dm.vertices.push_back(loc.vertices[vi]);
+            pushSkin(b, vi);
+            pushMorph(b, vi);
             if (b.anyColor) {
               if (hasC) {
                 b.dm.vertexColors.push_back(loc.vertexColors[3 * vi + 0]);
@@ -2358,6 +3851,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                 b.dm.vertexColors.push_back(1.0f);
                 b.dm.vertexColors.push_back(1.0f);
               }
+            }
+            if (b.anyUv1) {
+              b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 0] : 0.0f);
+              b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 1] : 0.0f);
             }
           }
           return static_cast<uint32_t>(remap[vi]);
@@ -2378,7 +3875,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
     }
 
-    // World-space AABB from the 8 local-bbox corners (scene bounds for framing).
+    // Provisional scene bounds, from the 8 local-bbox corners pushed through the
+    // world matrix. Loose once the mesh is rotated (the axis-aligned hull of a
+    // rotated box grows), and it is REPLACED below by the union of the batches'
+    // own vertex boxes -- but a skinned batch reads `bounds` inside flushBatch (it
+    // deliberately carries the whole-scene box), so it has to exist by then.
     const tydn::Float3& lo = m.bbox_min;
     const tydn::Float3& hi = m.bbox_max;
     for (int corner = 0; corner < 8; ++corner) {
@@ -2396,7 +3897,52 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       capped = true;
     }
   }
+
+  if (proxyMeshCount > 0 && warn) {
+    if (!warn->empty()) *warn += "\n";
+    *warn += "next: emitted " + std::to_string(proxyMeshCount) +
+             " geometry proxies before full payload materialization";
+  }
+  if (deferredProxyCount > 0) {
+    LOGI("next: first frame uses %zu deferred-payload proxies",
+         deferredProxyCount);
+  }
+  if (supersededProxyCount > 0) {
+    LOGI("next: %zu proxy-purpose mesh(es) superseded by render-purpose geometry",
+         supersededProxyCount);
+  }
   for (auto& kv : open) flushBatch(kv.second);
+
+  // Re-derive the scene box from the batches' own (tight, vertex-derived) boxes,
+  // discarding the provisional corner-transformed one. The corner box is a strict
+  // superset under rotation, and the scene box is not cosmetic: the ground grid is
+  // sized from it, `--mode depth` is normalized by it, and the auto-fit frames on
+  // it -- so a loose box here made the next loader draw the same geometry
+  // differently from the Tydra path, which takes its box from vertices.
+  // restAabb is the batch's tight box in every skinning mode (aabbMin/Max is not:
+  // a skinned batch keeps the conservative scene box there on purpose); meshes
+  // with no restAabb -- instanced prototypes -- carry a correct world box in aabb.
+  {
+    Bounds tight;
+    for (const DrawMeshCPU& dm : draw->meshes) {
+      const bool haveRest = dm.restAabbMax[0] >= dm.restAabbMin[0] &&
+                            (dm.restAabbMax[0] != dm.restAabbMin[0] ||
+                             dm.restAabbMax[1] != dm.restAabbMin[1] ||
+                             dm.restAabbMax[2] != dm.restAabbMin[2]);
+      const float* blo = haveRest ? dm.restAabbMin : dm.aabbMin;
+      const float* bhi = haveRest ? dm.restAabbMax : dm.aabbMax;
+      if (!(bhi[0] >= blo[0]) || !std::isfinite(blo[0]) || !std::isfinite(bhi[0]))
+        continue;
+      const float pad[3] = {haveRest ? dm.morphExtent[0] : 0.0f,
+                            haveRest ? dm.morphExtent[1] : 0.0f,
+                            haveRest ? dm.morphExtent[2] : 0.0f};
+      const float p0[3] = {blo[0] - pad[0], blo[1] - pad[1], blo[2] - pad[2]};
+      const float p1[3] = {bhi[0] + pad[0], bhi[1] + pad[1], bhi[2] + pad[2]};
+      tight.add(p0);
+      tight.add(p1);
+    }
+    if (tight.has) bounds = tight;
+  }
 
   // UsdVol volumes (OpenVDB): emit DrawVolumeCPU + extend bounds.
   BuildNextVolumes(stage, path, time, draw, &bounds);
@@ -2427,6 +3973,36 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
        draw->triangleCount, effectiveTris, draw->materials.size(),
        draw->textures.size(), double(instTotal) * 48.0 / 1e9,
        draw->upAxis.c_str(), draw->truncated ? " (truncated)" : "");
+  if (sourcePoints > 0) {
+    LOGI("next: weld %zu vertices from %zu points (%.2fx)", weldedVertices,
+         sourcePoints,
+         double(weldedVertices) / double(sourcePoints));
+  }
+  if (varyingOpacityMeshes > 0 && warn) {
+    if (!warn->empty()) *warn += "\n";
+    *warn += "next: " + std::to_string(varyingOpacityMeshes) +
+             " mesh(es) author a per-vertex displayOpacity; it is carried on "
+             "DrawMeshCPU::vertexAlpha but no renderer samples a per-vertex "
+             "alpha attribute yet, so they render at their material alpha";
+  }
+  // GPU block compression + content-aware mip chains. The size cap / byte budget
+  // are already applied inside the --next texture decoder above, so only the
+  // compression pass runs here; without this `--texture-compress` would be inert
+  // on the (default) --next path, which builds its textures itself instead of
+  // going through mesh_build's BuildDrawTextures.
+  ApplyTextureCompression(opts.textureOptions, draw);
+  FinalizeDrawTextures(opts.textureOptions, draw);
+
+  if (texCache.decoder && !draw->textures.empty()) {
+    const tydn::TextureDecoder& dec = *texCache.decoder;
+    LOGI("next: textures %zu, decoded %.1f MB (cap %u px, budget %.0f MB, "
+         "%llu downscaled)",
+         draw->textures.size(),
+         double(dec.decoded_bytes()) / (1024.0 * 1024.0),
+         dec.options().max_edge,
+         double(dec.options().budget_bytes) / (1024.0 * 1024.0),
+         static_cast<unsigned long long>(dec.downscaled_count()));
+  }
 
   if (draw->meshes.empty() && draw->volumes.empty()) {
     if (err) *err = "next: no renderable mesh produced";

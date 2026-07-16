@@ -179,10 +179,22 @@ std::string ToRelativePath(const std::string &base_dir,
 
 bool IsAllowedTextureExt(const std::string &ext_lower) {
   return ext_lower == "png" || ext_lower == "jpg" || ext_lower == "jpeg" ||
-         ext_lower == "exr";
+         ext_lower == "exr"
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+         // KTX2 is a valid *input* texture (the core loader decodes uni/BC7/ASTC
+         // to RGBA8). A direct `inputs:file = @tex.ktx2@` reference is thus
+         // collected and, when a legacy/ARKit target is requested, transcoded to
+         // png/jpg by ProcessTexture. KTX2 is NOT ARKit/USDZ-legal (see
+         // IsAllowedARKitTextureExt), so it is never emitted as a final USDZ
+         // texture — only decoded away.
+         || ext_lower == "ktx2"
+#endif
+      ;
 }
 
 bool IsAllowedARKitTextureExt(const std::string &ext_lower) {
+  // Deliberately excludes ktx2: USDZ / AR Quick Look permit only png/jpg/exr
+  // (+avif). A .ktx2 input must be transcoded to one of these before output.
   return ext_lower == "png" || ext_lower == "jpg" || ext_lower == "jpeg" ||
          ext_lower == "exr";
 }
@@ -766,6 +778,13 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     src_layer = std::move(tmp);
   }
 
+  // NOTE: this loop applies R -> P -> I -> V rather than routing through
+  // CompositeAllArcs (LIVRPS strength order) because the InPlace variants
+  // below halve peak memory — this converter's job is multi-GB scenes.
+  // Deferred variant evaluation (ShouldDeferVariantComposition) covers the
+  // common selection-vs-late-variantSet hazard; the residual divergence is
+  // the inherits-vs-references strength edge, which tusdcat/web/binding
+  // handle via CompositeAllArcs.
   constexpr int kMaxIteration = 64;
   for (int i = 0; i < kMaxIteration; i++) {
     bool has_unresolved = false;

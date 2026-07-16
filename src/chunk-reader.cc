@@ -212,7 +212,13 @@ nonstd::expected<size_t, std::string> ChunkReader::ReadDirect(size_t offset, siz
       }
     }
 
-    // Calculate how much to read from this chunk
+    // Calculate how much to read from this chunk. Guard the subtraction: a
+    // corrupt offset > chunk->size would underflow to a huge value and feed an
+    // out-of-bounds memcpy. Offsets are validated upstream, but this is cheap
+    // defense-in-depth.
+    if (offset_in_chunk > chunk->size) {
+      break;
+    }
     size_t remaining_in_chunk = chunk->size - offset_in_chunk;
     size_t to_read = std::min(remaining_in_chunk, actual_size - bytes_read);
 

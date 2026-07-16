@@ -122,6 +122,10 @@ class GLRenderer final : public Renderer {
     float alpha{1.0f};
     int alphaMode{0};
     float alphaCutoff{0.5f};
+    // Specular workflow + IOR for F0 (T12).
+    bool useSpecularWorkflow{false};
+    float specularColor[3]{0.0f, 0.0f, 0.0f};
+    float ior{1.5f};
     // Texture slot indices into textures_ (-1 = none). Resolved at draw time so
     // lazily-uploaded textures appear without re-touching materials.
     int baseColorTex{-1}, metalRoughTex{-1}, normalTex{-1}, emissiveTex{-1};
@@ -174,6 +178,7 @@ class GLRenderer final : public Renderer {
   GLint uFaceIdTex_{-1}, uFaceBase_{-1}, uHasFaceId_{-1}; // source-face-id AOV
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
+  GLint uUseSpecularWorkflow_{-1}, uSpecularColor_{-1}, uIor_{-1};  // F0 (T12)
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uBaseColorTexIsUdim_{-1}, uMetalRoughTexIsUdim_{-1};
   GLint uNormalTexIsUdim_{-1}, uEmissiveTexIsUdim_{-1};
@@ -181,6 +186,7 @@ class GLRenderer final : public Renderer {
   GLint uMetalRoughUv0_{-1}, uMetalRoughUv1_{-1};
   GLint uNormalUv0_{-1}, uNormalUv1_{-1};
   GLint uEmissiveUv0_{-1}, uEmissiveUv1_{-1};
+  GLint uUvSet_{-1};  // per-slot UV set (base, metal/rough, normal, emissive)
   GLint uBaseColorTexScale_{-1}, uBaseColorTexBias_{-1};
   GLint uNormalTexScale_{-1}, uNormalTexBias_{-1};
   GLint uEmissiveTexScale_{-1}, uEmissiveTexBias_{-1};
@@ -192,6 +198,9 @@ class GLRenderer final : public Renderer {
   GLint uDisplacementTexScale_{-1}, uDisplacementTexBias_{-1};
   GLint uHasMorph_{-1};  // GPU blendshape morph enable (per-draw)
   GLint iHasMorph_{-1};  // GPU morph enable in the instanced program (per-draw)
+  // Skeletal skinning in the instanced program (prototype-local, bone texture on
+  // unit 4 -- the same scene-wide texture the mesh program samples).
+  GLint iSkinningEnabled_{-1}, iBoneTexWidth_{-1}, iBoneMatrixCount_{-1};
 
   // GPU tessellation displacement program (built only on GL >= 4.0). Adaptive
   // sub-triangle subdivision in the TCS + per-sample displacement in the TES, so a

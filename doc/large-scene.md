@@ -114,9 +114,9 @@ tinyusdz::LargeSceneLoader loader;
 loader.Load("caldera.usda", opts, &warn, &err);
 
 loader.stage();                                  // composed structure
+auto snapshot = loader.stage_snapshot();         // immutable, worker-safe view
 loader.deferred_payload_paths();                 // geometry not yet loaded
-loader.load_payload(path, &warn, &err);          // stream one in on demand
-loader.rebuild_stage(&warn, &err);
+loader.load_payload(path, &warn, &err);          // may run on a worker; rebuilds
 ```
 
 Pipeline: `LoadLayerFromFile` (root) → `CompositeSublayers` (L phase) →
@@ -125,10 +125,17 @@ owns the resolver, `pcp::LayerRegistry`, flattened root, and `CompositionGraph`
 together so `load_payload`/`unload_payload`/`deferred_payload_paths` work after
 the initial load. Loading or unloading a payload now refreshes the payload
 node's own arcs plus the composed descendant PrimIndices under that prim before
-`rebuild_stage`, so children that exist only inside streamed geometry appear on
-load and disappear again on unload; nested relative arcs inside the streamed
+Stage publication, so children that exist only inside streamed geometry appear
+on load and disappear again on unload; nested relative arcs inside the streamed
 payload resolve against the payload file's directory; deferred-payload queries
 report only payloads still in the deferred state.
+
+Payload graph/cache mutations are serialized. `load_payload` and
+`unload_payload` build a replacement Stage and publish it only after the build
+succeeds, so they may run on a worker thread. Render/traversal code that overlaps
+streaming must hold `stage_snapshot()`; its immutable Stage remains alive while
+the loader publishes a newer snapshot. The legacy `stage()` reference remains
+for single-threaded callers.
 
 ### 2.2 Payload modes
 
@@ -136,11 +143,16 @@ report only payloads still in the deferred state.
 |---|---|
 | `LoadNone` | defer every payload (lightest; geometry streamed later) — default |
 | `LoadAll` | eager (may exceed RAM on huge scenes) |
-| `Budget(mb)` | load payloads until a byte budget of asset file sizes is reached, then defer the rest |
+| `Budget(mb)` | load payloads until a byte budget of asset file sizes is reached, then defer the rest; an optional `payload_extent_budget` adds a projected `extentsHint`-area cap |
 
-The policy is a `std::function<bool(const Path&, const Payload&)>` passed to
-`CompositionGraphOptions::payload_policy`; deferred payloads are recorded in the
-graph and retrievable via `GetDeferredPayloadPaths()`.
+The policy is passed to `CompositionGraphOptions`; the extended
+`payload_policy_with_prim` callback also receives the authoring `PrimSpec`, so it
+can inspect `extentsHint` without breaking existing two-argument policies.
+Deferred payloads are recorded in the graph and retrievable via
+`GetDeferredPayloadPaths()`. `LargeSceneLoadOptions::payload_extent_budget` is
+opt-in (`0` disables it) and caps the cumulative view-independent projected AABB
+area (`max(XY, XZ, YZ)`, squared stage units) alongside the byte cap. Payloads
+without a valid hint retain byte-only behavior.
 
 ### 2.3 Parse-once layer sharing
 
@@ -177,9 +189,20 @@ structure — **32,811 prims, 122 files parsed, 373 deferred payloads** — in
 **~1.7 GiB / ~3 s**, well within the 16 GB budget. `--load-some=N` streams the
 deferred proxy geometry on demand.
 
-**ALab** (`ALab/entry.usda`, the `mk020_0281` shot) composes **3,293 prims /
-1,271 deferred geometry payloads in ~120 MiB**; the set asset alone
-(`entity/alab_set01/alab_set01.usda`) composes **3,251 prims / 1,264 payloads**.
+**ALab** should be run from the extracted/merged tree when validating full-scene
+composition locally:
+
+```
+/mnt/disk1/data/alab/_merged_ALab/entry.usda
+/mnt/disk1/data/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
+```
+
+The packaged `ALab/entry.usda` path is valid, but in the local extracted
+directory it resolves to the small package layout rather than the full merged
+shot used by the large-scene measurements. The `mk020_0281` shot composes
+**3,293 prims / 1,271 deferred geometry payloads in ~120 MiB** in the legacy
+large-scene loader; the set asset alone composes **3,251 prims / 1,264
+payloads**.
 ALab's asset-centric structure needed three further composition fixes (§3.4):
 (a) composing a *referenced/payload* layer's own subLayers — ALab entity files
 just sublayer their department layers, so without this the referenced content is
@@ -828,6 +851,121 @@ raster LOD for *non-instanced* meshes (the island `--raster-lod` frame is
 bound by 55 M non-instanced drawn tris — the instanced side is already
 solved).
 
+### 2.9 Host-memory matrix: weld ratio + texture cap (`--next`, 2026-07-11)
+
+Companion to §2.8, measuring a different thing: these are **host peak RSS**
+(`/usr/bin/time -v`, so process startup is included), not device VRAM. They
+exist to catch two `--next` regressions no unit test can see — a weld key that
+over-splits (the memory win silently evaporates) and a texture cap that stops
+bounding decode. Xvfb + NVIDIA RTX 5060 Ti.
+
+Deferred-payload profiles (`examples/tusdview/tests/run-large-scene-profiles.sh`,
+all three PASS). Each resolves `backend=vk --next=on --raster-lod=on --rt-lod=on
+--max-gpu-mem=8.0` — the 8 GiB is `ComputeResourceBudget`'s half-of-16-GiB, not
+a hardcode:
+
+| Scene | Peak RSS | Prior baseline | Wall |
+|---|---|---|---|
+| Island | 0.45 GB | 0.49 GB | 2.9 s |
+| Caldera | 2.06 GB | 2.18 GB | 6.5 s |
+| ALab | 0.52 GB | 0.55 GB | 3.0 s |
+
+**These profiles defer payloads and therefore decode 0 textures** — they do not
+exercise the texture cap, and their weld ratios cover only the proxy geometry.
+Add `--load-payloads` for the runs that do:
+
+| Scene | Weld ratio | Textures | Wall | Peak RSS |
+|---|---|---|---|---|
+| Island | **1.04x** (21 159 184 verts / 20 437 898 points) | 0 | 72 s | 18.7 GB |
+| Caldera | **1.48x** (31 905 889 / 21 547 797) | 0 | 32 s | 10.8 GB |
+| ALab | **1.29x** (6 726 046 / 5 193 895) | 343, 1372 MB decoded (budget 1920 MB, **0 downscaled**) | 17 s | 5.3 GB |
+
+The weld ratio is the number to watch: a ratio drifting toward the
+corners-per-point count (~4-6x) means the weld key is too strict and the
+deduplication is gone. Island composes 40.9 M instances / 11.7 G effective tris
+in this configuration and still fits the 30 GiB host headroom.
+
+```bash
+CALDERA=/mnt/disk1/data/caldera/caldera.usda \
+ISLAND=/mnt/disk1/data/island/usd/island.usda \
+ALAB=/mnt/disk1/data/alab/_merged_ALab/entry.usda \
+  bash examples/tusdview/tests/run-large-scene-profiles.sh
+
+# The full-payload run (weld + texture cap), per scene:
+/usr/bin/time -v ./build/tusdview --headless --large-scene-profile alab \
+  --load-payloads --frames 1 --screenshot alab.ppm \
+  /mnt/disk1/data/alab/_merged_ALab/entry.usda
+# watch: 'next: weld N vertices from M points (Kx)'
+#        'next: textures N, decoded X MB (cap ..., budget ..., K downscaled)'
+```
+
+---
+
+### 2.10 Raster LOD reaches non-instanced geometry (2026-07-11)
+
+`--raster-lod` classified only instanced prototypes, so Island's unique geometry
+was drawn in full no matter how small it was on screen. It now runs the same
+Cull / Proxy / Full classification over non-instanced meshes.
+
+The prerequisite was a loader bug: the `--next` static-batch path copied the
+running **scene**-bounds accumulator into every batch as its AABB, so no unique
+mesh could ever be outside the frustum or small on screen — the per-mesh frustum
+cull was a no-op too. Each batch now carries its own world bounds (skinned
+batches keep the conservative scene box, since their vertices are a single pose).
+
+| Island, `--next`, 1456×1264 headless | drawn tris | meshes drawn |
+|---|---|---|
+| `--raster-lod` off | 21 646 M (43.2 M instances) | 100 801 / 100 801 |
+| `--raster-lod` on, before | 40.3 M | 100 801 / 100 801 |
+| `--raster-lod` on, after | **15.2 M** | 84 400 / 100 801 |
+
+Regression test: `tusdview-noninstanced-lod`.
+
+### 2.11 tusdrender `-vk` compute trace: ray tiling, and the device-local BVH
+that did not pay (2026-07-11)
+
+`lrt_vk_trace_scene` allocated the whole frame's rays and hits up front —
+48 B × w × h × spp, i.e. **6.3 GB of VRAM for 1920×1080 at 64 spp**, on top of
+the BVH — and dispatched them as one job. It now traces in fixed tiles
+(`LRT_VK_RAY_TILE`, default 4 M rays = a 192 MiB working set). Rays are
+independent, so this is exactly image-neutral, and it is also *faster*:
+
+| Suzanne, 1024×1024 × 32 spp (33.5 M rays), RTX 5060 Ti | trace | ray+hit VRAM |
+|---|---|---|
+| one whole-frame dispatch | 3.61 s | ~1.6 GiB |
+| tiled, 4 M rays | **2.83 s** | **192 MiB** |
+
+Device-local node/block buffers (`LRT_VK_DEVICE_LOCAL=1`) were the other half of
+the §2.8 plan, and they do **not** pay off — left implemented but off by default.
+Measured on ALab (29.2 M tris; 297 MiB nodes + 1.6 GiB blocks, verified resident
+in VRAM):
+
+| | per-ray trace | 16.7 M-ray trace |
+|---|---|---|
+| host-visible BVH | 0.144 µs | 4.65 s |
+| device-local BVH | 0.144 µs | 4.92 s (the staging copy) |
+
+Traversal is simply not bound by where the BVH lives on this GPU, and moving it
+into VRAM spends ~1.9 GiB of the budget this work exists to reclaim. The
+reasoning still holds for a GPU whose traversal *is* bandwidth-bound, hence the
+flag — but measure before enabling it.
+
+Regression test: `tool-tusdrender-vk-ray-tiling` (4 tiles must be byte-identical
+to one whole-frame dispatch).
+
+### 2.12 TLAS `PREFER_FAST_BUILD`: measured, rejected (2026-07-12)
+
+The last item of the §2.8 list, and it does not pay. On Island (`--rt --rt-lod`,
+36 k TLAS instances) the TLAS acceleration-structure build is **0.7–4.6 ms of a
+600–8400 ms rebuild** — the rebuild is dominated by the BLAS builds and the
+instance array, not the TLAS. `PREFER_FAST_BUILD` would save ~1 ms of a rebuild
+that only happens when the camera settles, and charge for it on every
+accumulation frame afterwards.
+
+Left as a lever (`TUSDVIEW_TLAS_FAST_BUILD=1`) for a GPU or scene where the
+balance differs. `TUSDVIEW_RT_TIMING=1` now prints the AS-build time on its own
+line, so the trade can be re-measured rather than re-argued.
+
 ---
 
 ## 3. Roadmap (remaining implementation)
@@ -904,20 +1042,26 @@ also reprocesses the newly loaded payload node, so references/payloads authored
 inside a streamed payload layer are visible immediately after `LoadPayload`.
 Regression: `pcp_external_payload_load_reprocesses_nested_arcs_test`.
 
-### 3.3 mmap-through-composition / fd bounds (PARTIAL)
+### 3.3 mmap-through-composition / fd bounds
 
 mmap zero-copy (`USDLoadOptions::mmap_zero_copy`) defers large uncompressed
-float arrays to disk, but only via `LoadUSDCFromFile(... Stage*)`. It does **not**
-flow through composition: `Layer` has no mmap storage, and
-`BuildStage`/`ComposePrimSpecFromIndex` (`composition-graph.cc:1389`) deep-copy
-PrimSpec arrays into the Stage. For the 16 GB target this does not matter
-(deferred geometry never enters the Stage), but to keep *loaded* geometry on disk
-the project would need: an mmap table on `Layer`, `LoadUSDCLayerFromMemory`
-honoring `mmap_zero_copy` against a file-backed mmap, non-copying
-(move/alias) array handling in `ComposePrimSpecFromIndex`, and
-`Stage::adopt_mmap_*` after `BuildStage`. A pragmatic interim: stream a single
-on-demand payload via `LoadUSDCFromFile(... mmap_zero_copy=true)` into a side
-Stage.
+float arrays to disk on the legacy direct-Stage reader. Full composed-layer mmap
+is now supported through the **next PCP backend**
+(`TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=ON`): every file-backed USDC layer is read
+with lazy arrays and mmap enabled, each `LazyArrayRef` retains shared ownership
+of its own `CrateDataSource`, and that reference survives Layer → composed
+PrimSpec → rebuilt Stage copies without materialization. This naturally handles
+many sublayers/references/payload files rather than relying on a single global
+mmap table. `LargeSceneLoadOptions::mmap_zero_copy` controls both lazy arrays and
+mmap for the whole next-PCP load (default ON); disabling it produces the same
+composed result with eagerly decoded, owned array values.
+
+The legacy CompositionGraph backend deliberately stays in copy mode for
+composed layers: its `Stage` mmap table addresses one source buffer and cannot
+identify per-layer sources. Extending that representation would duplicate the
+shared-source ownership already provided by next PCP. Direct legacy
+`LoadUSDCFromFile(..., mmap_zero_copy=true)` remains supported for one-file
+Stages.
 
 The descriptor-bound part is now implemented: `AssetResolutionResolver` tracks a
 per-resolver concurrent open file-descriptor / asset-handle budget
@@ -1004,15 +1148,18 @@ composition.
 
 ### 3.6 Smaller items
 
-- **Budget-by-extent**: the `Budget` policy currently sizes payloads by file
-  bytes; authored `extentsHint` would let it bound by world-space coverage, but
-  the payload-policy callback would need the owning `PrimSpec`.
-- **Layer-owned mmap**: true mmap-through-composition still needs Layer/Stage
-  ownership plumbing for mapped crate buffers. If future code keeps file handles
-  open for long-lived mappings, add an LRU on top of the existing descriptor
-  budget.
-- **Threaded streaming**: `load_payload`/`unload_payload` mutate the graph in
-  place and are single-threaded post-load.
+- **Budget-by-extent — implemented**: `payload_policy_with_prim` exposes the
+  authoring `PrimSpec`, and `LargeSceneLoadOptions::payload_extent_budget` adds
+  an optional projected-area cap from authored `extentsHint` while preserving
+  the byte budget and byte-only fallback for unannotated payloads.
+- **Layer-owned mmap — implemented in next PCP**: per-array shared
+  `CrateDataSource` ownership survives composition and Stage publication. The
+  legacy single-source mmap table remains direct-load-only by design. If future
+  code bounds long-lived mappings by open handles rather than closing the file
+  after `mmap`, add an LRU on top of the existing descriptor budget.
+- **Threaded streaming — implemented**: graph/cache mutation is serialized and
+  rebuilt Stages are published as immutable shared snapshots. A worker may call
+  `load_payload`/`unload_payload` while readers retain `stage_snapshot()`.
 
 ---
 
@@ -1186,13 +1333,36 @@ still much slower and higher-memory than `next_usdcat`, but it no longer fails a
 `xgGroundCover.usd` solely because that layer is 683,530,559 bytes.
 
 The table above is the pre-optimization snapshot; the ASCII writer was then
-optimized substantially (§6.2). After that work `next_usdcat` streams the
-flattened USDA for Caldera at ~850–925 MB/s and for Island at ~1000 MB/s (auto
-threads), with the Island write phase dropping from 26.17 s to ~11.7 s and peak
-RSS from 9.67 GiB to ~8.0 GiB. The Island run completes with non-fatal warnings
-for several XGen USDC layers whose arrays exceed the current `max_array_elements`
-guard, so it is a large-scene stress result rather than a full-fidelity Island
-flatten.
+optimized substantially (§6.2). Current full-composition validation uses
+`next_usdcat -f -o /dev/null` so the scene is actually composed and flattened
+while keeping the output off disk:
+
+```sh
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/caldera/caldera.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/island/usd/island.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/alab/_merged_ALab/entry.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
+```
+
+Recent measurements on the local workstation:
+
+| Scene | load+compose | total incl. USDA write | max RSS | flattened bytes |
+|---|---:|---:|---:|---:|
+| Caldera `caldera.usda` | 12.43 s | 1:36.17 | 2.11 GiB | 4.26 GB |
+| Moana Island `island.usda` | 213.74 s | 7:44.93 | 7.40 GiB | 10.80 GB |
+| ALab `_merged_ALab/entry.usda` | 8.25 s | 1:50.80 | 1.31 GiB | 4.75 GB |
+| ALab set asset | 5.85 s | 38.67 s | 677 MiB | 1.62 GB |
+
+Island's large XGen arrays are kept lazy/mmap-backed during compose/write. The
+USDC reader decodes older packed array-count headers (low 32 bits = element
+count, high 32 bits = auxiliary metadata) before applying guards. It still
+rejects malformed over-cap arrays through file-size/addressability checks, but
+does not reject valid lazy POD arrays purely because their packed header exceeds
+the default eager-decode element guard.
 
 For a pure USDC reader comparison, the pre-flattened Caldera crate isolates parse
 memory from composition:
@@ -1295,16 +1465,56 @@ byte-identical) in `tests/next/test_writer.cc`.
 The remaining serial cost is the ~6 s Phase-1 build walk on Island (not yet
 overlapped with Phase 2) — the next available lever.
 
+### 6.3 USDA `/dev/null` write vs USDC crate write
+
+Do not compare the USDA `/dev/null` write numbers above with
+`next_usdcat -f -o out.usdc` timings as if they were the same writer path.
+They exercise different serializers:
+
+- `-o /dev/null` has no `.usdc` suffix, so `next_usdcat` writes flattened USDA
+  text through the optimized parallel ASCII writer. On the local 32-thread /
+  16-core workstation, Island writes ~10.8 GB of USDA text to `/dev/null` in
+  about **14 s** with `TINYUSDZ_NEXT_NUM_THREADS=16` and `--compose-threads 16`.
+- `-o out.usdc` uses the next crate writer. Island's crate output is only
+  ~2.5 GB, but the write phase is still about **36-40 s** even when the output
+  path is a `.usdc` symlink to `/dev/null` or a real file under `/dev/shm`.
+  Thus the time is not storage bandwidth.
+
+The remaining USDC cost is internal crate construction. As detailed in
+[`crate-writer.md`](crate-writer.md), the Island crate writer is dominated by the
+serial per-spec structural build and global interning/dedup tables over ~4.25M
+specs (paths, tokens/strings, fieldsets, value-block dedup). Final byte emission
+and array encoding are a smaller slice. Threaded crate writer paths help
+moderately: for Island, a `/dev/null`-symlink USDC write was ~47.6 s with
+`TINYUSDZ_NEXT_NUM_THREADS=1` and ~36.1 s with `TINYUSDZ_NEXT_NUM_THREADS=16`,
+but they do not remove the global-dedup floor. Writing the same USDC to
+`/dev/shm` remains ~40 s, confirming the bottleneck is CPU/structure building,
+not disk I/O.
+
 ## 7. Verification
 
 ```
 cd build && cmake --build . -j16
 # cross-directory cwp anchoring regression test (§3.1):
 cd build && ctest -R feat-large-scene --output-on-failure
+# the same suite end-to-end on the next::pcp::Cache backend (extent budget,
+# worker-thread snapshot, cross-layer payload-owner anchoring):
+cmake -S . -B build-next-pcp -DCMAKE_BUILD_TYPE=Release \
+  -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=ON -DTINYUSDZ_BUILD_TESTS=ON \
+  -DTINYUSDZ_BUILD_EXAMPLES=OFF -DTINYUSDZ_BUILD_TOOLS=OFF
+cd build-next-pcp && make feat-large-scene -j16 && \
+  ctest -R feat-large-scene --output-on-failure
+# focused payload-policy owner-anchor regression (next pcp unit level):
+cd build-next && ctest -R 'next_test_pcp$' --output-on-failure
 # structural load within budget (absolute path works from any cwd now):
 <build>/large-scene-load /mnt/disk1/data/caldera/caldera.usda --mode=none
 # expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.
 # --load-some=N streams deferred proxy geometry on demand.
+# full composition + USDA writer stress checks:
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/island/usd/island.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/alab/_merged_ALab/entry.usda
 cd build && ctest --output-on-failure     # no regressions (2 pre-existing
                                            # MaterialX failures are unrelated)
 # suffix-fallback unit tests (§4):

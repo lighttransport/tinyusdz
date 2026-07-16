@@ -38,11 +38,15 @@ void MulRowMajor(const double a[16], const double b[16], double out[16]) {
 bool IsLightType(const std::string& t) {
   return t == "RectLight" || t == "SphereLight" || t == "DiskLight" ||
          t == "CylinderLight" || t == "DistantLight" || t == "DomeLight" ||
-         t == "PointLight";
+         t == "DomeLight_1" || t == "PointLight" ||
+         t == "GeometryLight" || t == "PortalLight" ||
+         t == "PluginLight" || t == "LightFilter" ||
+         t == "PluginLightFilter";
 }
 
 bool IsCurveType(const std::string& t) {
-  return t == "BasisCurves" || t == "NurbsCurves";
+  return t == "BasisCurves" || t == "NurbsCurves" ||
+         t == "HermiteCurves";
 }
 
 RenderPrimKind Classify(const ::tinyusdz::next::UsdPrim& prim,
@@ -53,7 +57,7 @@ RenderPrimKind Classify(const ::tinyusdz::next::UsdPrim& prim,
     if (native_prototype) *native_prototype = spec->meta().instance_prototype();
     return RenderPrimKind::NativeInstance;
   }
-  if (type_name == "Mesh") return RenderPrimKind::Mesh;
+  if (IsMeshRenderableTypeName(type_name)) return RenderPrimKind::Mesh;
   if (type_name == "PointInstancer") return RenderPrimKind::PointInstancer;
   if (IsLightType(type_name)) return RenderPrimKind::Light;
   if (type_name == "Camera") return RenderPrimKind::Camera;
@@ -61,12 +65,18 @@ RenderPrimKind Classify(const ::tinyusdz::next::UsdPrim& prim,
   if (type_name == "Volume") return RenderPrimKind::Volume;
   if (IsCurveType(type_name)) return RenderPrimKind::Curve;
   if (type_name == "Skeleton") return RenderPrimKind::Skeleton;
+  if (IsUnsupportedRenderableTypeName(type_name)) return RenderPrimKind::Other;
   return RenderPrimKind::Other;
 }
 
 std::string PurposeForPrim(const ::tinyusdz::next::UsdPrim& prim,
                            const std::string& inherited) {
-  if (const ::tinyusdz::next::Value* v = prim.GetPropertyValue("purpose")) {
+  // Purpose is inherited. Inspect only an AUTHORED local opinion here;
+  // UsdPrim::GetPropertyValue also exposes the schema fallback "default",
+  // which must not shadow an ancestor's authored "render/proxy/guide".
+  const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
+  if (const ::tinyusdz::next::Value* v =
+          spec ? spec->property_value("purpose") : nullptr) {
     if (const std::string* s = v->as_token()) {
       if (*s == "render" || *s == "proxy" || *s == "guide") return *s;
       if (*s == "default") return "default";
@@ -133,12 +143,41 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
 
 const ::tinyusdz::next::Value* ValueAtOrDefault(
     const ::tinyusdz::next::UsdPrim& prim, const char* name, double time) {
-  const ::tinyusdz::next::Value* v =
-      std::isnan(time) ? nullptr : prim.GetValueAtTime(name, time);
-  return v ? v : prim.GetPropertyValue(name);
+  if (!std::isnan(time)) {
+    // Linear interpolation between samples (pxr semantics). The scratch slot
+    // is per-thread and callers consume the pointer before requesting the
+    // next value (single-live-pointer pattern throughout this TU).
+    static thread_local ::tinyusdz::next::Value scratch;
+    ::tinyusdz::next::Value v = prim.GetInterpolatedValue(name, time);
+    if (!v.is_empty()) {
+      scratch = std::move(v);
+      return &scratch;
+    }
+    if (const ::tinyusdz::next::Value* held = prim.GetValueAtTime(name, time)) {
+      return held;
+    }
+  }
+  return prim.GetPropertyValue(name);
 }
 
 }  // namespace
+
+bool IsAnalyticGeomTypeName(const std::string& type_name) {
+  return type_name == "Cube" || type_name == "Sphere" ||
+         type_name == "Cone" || type_name == "Cylinder" ||
+         type_name == "Capsule" || type_name == "Plane" ||
+         type_name == "Cylinder_1" || type_name == "Capsule_1";
+}
+
+bool IsMeshRenderableTypeName(const std::string& type_name) {
+  return type_name == "Mesh" || type_name == "TetMesh" ||
+         IsAnalyticGeomTypeName(type_name);
+}
+
+bool IsUnsupportedRenderableTypeName(const std::string& type_name) {
+  return type_name == "Points" || type_name == "Volume" ||
+         type_name == "NurbsPatch";
+}
 
 bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
                         const RenderExtractOptions& options,
@@ -155,7 +194,8 @@ bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
 
 bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
                             double time_code,
-                            PointInstancerData* out) {
+                            PointInstancerData* out,
+                            bool compute_transforms) {
   if (!out) return false;
   *out = PointInstancerData();
   ::tinyusdz::next::UsdGeomPointInstancer pi(prim);
@@ -177,11 +217,9 @@ bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
   out->ids = pi.GetIds(time_code);
   out->invisible_ids = pi.GetInvisibleIds(time_code);
   out->inactive_ids = pi.GetInactiveIds();
-  out->display_colors =
-      ReadFloatArrayCopy(prim, "primvars:displayColor", time_code);
-  out->display_opacities =
-      ReadFloatArrayCopy(prim, "primvars:displayOpacity", time_code);
-  out->transforms = pi.ComputeInstanceTransforms(time_code);
+  if (compute_transforms) {
+    out->transforms = pi.ComputeInstanceTransforms(time_code);
+  }
   out->valid = pi.HasValidInstanceArrays(time_code, &out->validation_error);
   return true;
 }

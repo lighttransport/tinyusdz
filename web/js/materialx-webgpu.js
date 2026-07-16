@@ -100,7 +100,6 @@ const threeState = {
     controls: null,
     pmremGenerator: null,
     envMap: null,
-    clock: new THREE.Clock(),
     gridHelper: null,
     axesHelper: null
 };

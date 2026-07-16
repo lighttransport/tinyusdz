@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    subLayers = [@aousd-specifier-weak.usda@]
+)
+
+over "WeakDefStrongOver"
+{
+}
+
+over "WeakClassStrongOver"
+{
+}
+
+class "WeakDefStrongClass"
+{
+}
+
+def "WeakClassStrongDef"
+{
+}

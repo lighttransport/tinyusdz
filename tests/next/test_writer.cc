@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Writer Test
 
 #include <iostream>
+#include <cstring>
 #include <sstream>
 #include <fstream>
 #include <cassert>
@@ -21,6 +22,7 @@
 #include "next/writer/value-printer.hh"
 #include "next/writer/prim-printer.hh"
 #include "next/writer/usda-writer.hh"
+#include "next/reader/usda-reader.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/dtoa.hh"
 
@@ -938,6 +940,238 @@ void test_timesamples_metadata_placement() {
   std::cout << "  timeSamples metadata placement test passed!\n\n";
 }
 
+
+// An authored DEFAULT must survive alongside .timeSamples on the same
+// attribute (pxr keeps both; the writer used to drop the default).
+void test_default_with_timesamples() {
+  std::cout << "Testing default + timeSamples coexistence...\n";
+  const char* src =
+      "#usda 1.0\n"
+      "def Xform \"p\"\n{\n"
+      "    double v = 5\n"
+      "    double v.timeSamples = {\n        0: 1,\n        10: 2,\n    }\n"
+      "}\n";
+  LoadResult r = LoadUSDAFromString(src, std::strlen(src));
+  assert(r.success);
+  std::string usda = WriteUSDAToString(r.stage);
+  assert(usda.find("double v = 5") != std::string::npos &&
+         "authored default dropped when timeSamples coexist");
+  assert(usda.find("v.timeSamples") != std::string::npos &&
+         "timeSamples block missing");
+  // Round-trip: both fields still there after re-parsing the output.
+  LoadResult r2 = LoadUSDAFromString(usda.c_str(), usda.size());
+  assert(r2.success);
+  const PrimSpec* p2 = r2.stage.GetRootLayer()->prim_at_path("/p");
+  assert(p2);
+  const Value* def = p2->property_value("v");
+  assert(def && def->as_double() && *def->as_double() == 5.0);
+  PropNameId vid = GetPropNameTable().find("v");
+  const auto* ts = p2->time_samples(vid);
+  assert(ts && ts->size() == 2);
+  std::cout << "  default + timeSamples test passed!\n\n";
+}
+
+
+// Regression coverage for the 2026-07 usda reader/writer audit: raw-half /
+// role-typed / timecode scalar+array printing (previously "<unsupported
+// type N>"), layer-offset arc syntax (pxr rejects the internal
+// "?layerOffset=o:s" form), target-less relationships, and 32-bit integer
+// saturation. Everything is verified as a parse -> write -> re-parse -> write
+// fixpoint (the second write must be byte-identical).
+void test_usda_audit_roundtrip() {
+  std::cout << "Testing usda audit roundtrip fixpoint...\n";
+
+  static const char kUsda[] = R"(#usda 1.0
+(
+    defaultPrim = "E"
+)
+
+def Scope "E" (
+    prepend references = @./ref.usda@</P> (offset = 10; scale = 2)
+)
+{
+    half h = 0.5
+    half2 h2 = (0.5, 1.5)
+    half3 h3 = (0.25, 0.5, 0.75)
+    half4 h4 = (1, 2, 3, 4)
+    quath qh = (1, 2, 3, 4)
+    texCoord2f uv = (0.25, 0.75)
+    texCoord3f uvw = (0.25, 0.5, 0.75)
+    color3d cd = (0.1, 0.2, 0.3)
+    color4d cd4 = (0.1, 0.2, 0.3, 0.4)
+    texCoord2d uvd = (0.5, 0.25)
+    timecode tc = 42
+    timecode[] tca = [1, 2.5, 3]
+    custom rel material:binding
+    rel none_rel = None
+    rel empty_rel = []
+    int sat = 2147483647
+    uint usat = 4294967295
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(kUsda, sizeof(kUsda) - 1);
+  assert(lr.success && "audit usda must parse");
+  Stage& stage = lr.stage;
+
+  USDAWriteOptions wopts;
+  std::string out1 = WriteUSDAToString(stage, wopts);
+  assert(!out1.empty());
+
+  // No printer fallback markers.
+  assert(out1.find("<unsupported type") == std::string::npos);
+  // Half / role / timecode values render with real numbers.
+  assert(out1.find("half h = 0.5") != std::string::npos);
+  assert(out1.find("half2 h2 = (0.5, 1.5)") != std::string::npos);
+  assert(out1.find("quath qh = (1, 2, 3, 4)") != std::string::npos);
+  assert(out1.find("texCoord2f uv = (0.25, 0.75)") != std::string::npos);
+  assert(out1.find("timecode[] tca = [1, 2.5, 3]") != std::string::npos);
+  // Layer offsets re-emit in pxr syntax, not the internal form.
+  assert(out1.find("?layerOffset") == std::string::npos);
+  assert(out1.find("(offset = 10; scale = 2)") != std::string::npos);
+  // A bare relationship declaration is distinct from authored explicit-empty
+  // targetPaths (`= None` / `= []`), which normalize to `= None`.
+  assert(out1.find("rel material:binding") != std::string::npos);
+  assert(out1.find("rel material:binding =") == std::string::npos);
+  assert(out1.find("rel none_rel = None") != std::string::npos);
+  assert(out1.find("rel empty_rel = None") != std::string::npos);
+  // 32-bit integers saturate instead of truncating bits.
+  assert(out1.find("int sat = 2147483647") != std::string::npos);
+  assert(out1.find("uint usat = 4294967295") != std::string::npos);
+
+  // Fixpoint: re-parse the output and write again; must be byte-identical.
+  LoadResult lr2 = LoadUSDAFromString(out1.data(), out1.size());
+  assert(lr2.success && "writer output must re-parse");
+  Stage& stage2 = lr2.stage;
+  std::string out2 = WriteUSDAToString(stage2, wopts);
+  assert(out1 == out2 && "usda write must be a fixpoint");
+
+  std::cout << "  usda audit roundtrip fixpoint passed!\n\n";
+}
+
+
+// Second wave of 2026-07 usda audit fixes: leading-dot floats, timeSample
+// ordering, `references = None`, keyword/quoted dictionary keys, triple-@
+// asset paths, uint-vector arrays, half-role arrays, control-char escaping,
+// property doc shorthand, duplicate sibling prims, `delete apiSchemas`,
+// authored active/hidden, and strict scalar integers.
+void test_usda_audit_roundtrip2() {
+  std::cout << "Testing usda audit roundtrip (wave 2)...\n";
+
+  static const char kUsda[] = R"(#usda 1.0
+def Scope "V" (
+    active = true
+    hidden = false
+    references = None
+    apiSchemas = ["A", "B"]
+    delete apiSchemas = ["B"]
+    customData = {
+        bool add = 1
+        string custom = "c"
+        string "key with space" = "v"
+    }
+)
+{
+    float ld = .5
+    float ld2 = -.25
+    float3 trail = (1., 2., .5)
+    float ts.timeSamples = { 10: 10, 0: 0, 20: 20 }
+    float x = 1 ( "property doc string" )
+    asset at = @@@pa@th@@@
+    asset[] ata = [@@@x@y@@@, @plain.png@]
+    uint2[] ua = [(1, 2)]
+    uint3 u3 = (1, 2, 3)
+    point3h[] p3h = [(1, 2, 3)]
+    color4h[] c4h = [(0.5, 0.5, 0.5, 1)]
+    string ctrl = "a\x01b"
+    string esc_arr_parity = "\x41\103"
+    string[] esc_arr = ["\x41\103"]
+    double dts.timeSamples = { 0.3: 1, 0.30000000000000004: 2 }
+}
+
+def Scope "V"
+{
+    float merged = 3
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(kUsda, sizeof(kUsda) - 1);
+  assert(lr.success && "audit wave-2 usda must parse");
+  Stage& stage = lr.stage;
+  const Layer* layer = stage.GetRootLayer();
+
+  // Duplicate sibling prim merged into ONE spec.
+  {
+    size_t v_count = 0;
+    for (const auto& pr : layer->prims()) {
+      if (pr.path().str() == "/V") ++v_count;
+    }
+    assert(v_count == 1 && "duplicate sibling prims must merge");
+    const PrimSpec* v = layer->prim_at_path("/V");
+    assert(v && v->property_value("merged") && "merged prim keeps opinions");
+    // A later non-explicit list edit exits explicit mode. OpenUSD retains only
+    // the delete sublist here, so applying it to an empty weaker base is empty.
+    assert(v->meta().apiSchemas().empty());
+    assert(v->meta().apiSchemaEdits().authored &&
+           !v->meta().apiSchemaEdits().is_explicit &&
+           v->meta().apiSchemaEdits().deleted ==
+               std::vector<std::string>{"B"});
+    // timeSamples stored sorted regardless of authored order.
+    const auto* ts = v->time_samples(GetPropNameTable().intern("ts"));
+    assert(ts && ts->size() == 3);
+    assert((*ts)[0].first == 0.0 && (*ts)[1].first == 10.0 &&
+           (*ts)[2].first == 20.0);
+    // Array/scalar string escape parity (\x41 = 'A', \103 = octal 'C').
+    const Value* sv = v->property_value("esc_arr_parity");
+    assert(sv && sv->as_string() && *sv->as_string() == "AC");
+    const Value* av = v->property_value("esc_arr");
+    assert(av && av->as_token_array() && (*av->as_token_array())[0] == "AC");
+    // Triple-@ asset paths.
+    const Value* at = v->property_value("at");
+    assert(at && at->as_asset_path() && *at->as_asset_path() == "pa@th");
+    const Value* ata = v->property_value("ata");
+    assert(ata && ata->as_token_array() && (*ata->as_token_array())[0] == "x@y");
+    // uint-vector array parsed.
+    const Value* ua = v->property_value("ua");
+    assert(ua && ua->as_uint_array() && ua->as_uint_array()->size() == 2);
+    // half-role array float-backed.
+    const Value* p3h = v->property_value("p3h");
+    assert(p3h && p3h->as_float_array() && p3h->as_float_array()->size() == 3);
+    // Property doc shorthand captured.
+    const PropMeta* xm = v->property_meta("x");
+    assert(xm && (xm->authored & PropMeta::kDoc) && xm->doc == "property doc string");
+  }
+
+  // Strict scalar integers: overflow-ish garbage must be a parse error now.
+  {
+    static const char kBad[] = "#usda 1.0\ndef \"B\"\n{\n    int i = 0x10\n}\n";
+    LoadResult bad = LoadUSDAFromString(kBad, sizeof(kBad) - 1);
+    assert(!bad.success && "hex int literal must be rejected");
+  }
+
+  // Write and verify wave-2 output shape.
+  USDAWriteOptions wopts;
+  std::string out1 = WriteUSDAToString(stage, wopts);
+  assert(out1.find("<unsupported type") == std::string::npos);
+  assert(out1.find("references = None") != std::string::npos);
+  assert(out1.find("active = true") != std::string::npos);
+  assert(out1.find("hidden = false") != std::string::npos);
+  assert(out1.find("@@@pa@th@@@") != std::string::npos);
+  assert(out1.find("\"key with space\"") != std::string::npos);
+  assert(out1.find("\\x01") != std::string::npos);  // control byte escaped
+  assert(out1.find("0.30000000000000004") != std::string::npos);  // exact key
+  assert(out1.find("uint2[] ua = [(1, 2)]") != std::string::npos);
+  assert(out1.find("point3h[] p3h = [(1, 2, 3)]") != std::string::npos);
+
+  // Fixpoint.
+  LoadResult lr2 = LoadUSDAFromString(out1.data(), out1.size());
+  assert(lr2.success && "wave-2 writer output must re-parse");
+  std::string out2 = WriteUSDAToString(lr2.stage, wopts);
+  assert(out1 == out2 && "usda write must be a fixpoint (wave 2)");
+
+  std::cout << "  usda audit roundtrip (wave 2) passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next Writer Tests ===\n\n";
 
@@ -947,6 +1181,7 @@ int main() {
     test_array_range_split_parity();
     test_lazy_usdc_stream_value_printer();
     test_timesamples_metadata_placement();
+    test_default_with_timesamples();
     test_layer_printer();
     test_stage_writer();
     test_time_samples();
@@ -957,6 +1192,8 @@ int main() {
     test_usda_stream_failure();
     test_usda_api_error_paths();
     test_custom_qualifier_opt_in();
+    test_usda_audit_roundtrip();
+    test_usda_audit_roundtrip2();
 
     std::cout << "=== All writer tests passed! ===\n";
     return 0;

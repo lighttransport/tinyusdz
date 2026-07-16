@@ -75,6 +75,17 @@ static bool WriteLocalFileHeader(std::vector<uint8_t>& buf,
 
   size_t local_header_offset = buf.size();
 
+  // ZIP32 limits: entry size and local-header offset are 4-byte fields.
+  // Exceeding them silently truncated (corrupt archive); fail loudly until
+  // ZIP64 records are implemented.
+  if (data_size > 0xFFFFFFFFull || local_header_offset > 0xFFFFFFFFull) {
+    if (err) {
+      *err = "USDZ entry '" + name +
+             "' exceeds the 4 GiB ZIP32 limit (ZIP64 is not supported)";
+    }
+    return false;
+  }
+
   uint32_t crc = 0;
   if (data && data_size > 0) {
     crc = ComputeCRC32(data, data_size);
@@ -163,6 +174,8 @@ static void WriteCentralDirectory(
   }
 
   size_t cd_size = buf.size() - cd_offset;
+  // entries.size()/cd offsets were bounds-checked by the caller before the
+  // local headers were laid down; offsets past 4 GiB cannot reach here.
 
   // End of central directory record
   uint8_t eocd[22];
@@ -225,6 +238,14 @@ USDZWriteResult WriteUSDZToFile(const std::string& filename, const Stage& stage)
 USDZWriteResult WriteUSDZFromUSDCToMemory(std::vector<uint8_t>& buffer,
                                            const uint8_t* usdc_data,
                                            size_t usdc_size) {
+  const std::map<std::string, std::vector<uint8_t>> no_assets;
+  return WriteUSDZFromUSDCAndAssetsToMemory(buffer, usdc_data, usdc_size,
+                                            no_assets);
+}
+
+USDZWriteResult WriteUSDZFromUSDCAndAssetsToMemory(
+    std::vector<uint8_t>& buffer, const uint8_t* usdc_data, size_t usdc_size,
+    const std::map<std::string, std::vector<uint8_t>>& assets) {
   USDZWriteResult result;
 
   if (!usdc_data || usdc_size == 0) {
@@ -243,8 +264,39 @@ USDZWriteResult WriteUSDZFromUSDCToMemory(std::vector<uint8_t>& buffer,
     return result;
   }
 
-  // Write central directory
   std::vector<CentralDirEntry> entries = {entry};
+  for (const auto& asset : assets) {
+    const std::string& name = asset.first;
+    if (name.empty() || name == root_name || name[0] == '/' ||
+        name.find("..") != std::string::npos || name.find('\\') != std::string::npos) {
+      result.error = "Invalid USDZ asset path: " + name;
+      buffer.clear();
+      return result;
+    }
+    if (asset.second.size() > static_cast<size_t>(UINT32_MAX)) {
+      result.error = "USDZ asset exceeds ZIP32 size limit: " + name;
+      buffer.clear();
+      return result;
+    }
+    CentralDirEntry asset_entry;
+    const uint8_t* data = asset.second.empty() ? nullptr : asset.second.data();
+    if (!WriteLocalFileHeader(buffer, name, data, asset.second.size(),
+                              &asset_entry, &err)) {
+      result.error = err.empty() ? "Failed to write USDZ asset" : err;
+      buffer.clear();
+      return result;
+    }
+    entries.push_back(std::move(asset_entry));
+  }
+
+  // ZIP32 EOCD limits: 2-byte entry count, 4-byte central-dir offset.
+  if (entries.size() > 0xFFFFu || buffer.size() > 0xFFFFFFFFull) {
+    result.error = "USDZ archive exceeds ZIP32 limits (ZIP64 not supported)";
+    buffer.clear();
+    return result;
+  }
+
+  // Write central directory
   WriteCentralDirectory(buffer, entries);
 
   result.bytes_written = buffer.size();

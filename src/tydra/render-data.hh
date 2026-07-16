@@ -326,6 +326,30 @@ enum class ComponentType {
   Double,
 };
 
+// GPU block-compressed texture format for a TextureImage whose `buffer_id`
+// holds compressed block bytes rather than uncompressed texels (see
+// TextureImage::blockFormat). `None` = uncompressed (the default; texels are
+// described by ComponentType/channels as before). `UNI` is the tinyexr
+// Basis-free UASTC-subset transcodable intermediate: it is valid ASTC 4x4 and
+// can be transcoded per device to BC7/BC1/ASTC/ETC2 (texcomp tc_uni_transcode_*)
+// or decoded to RGBA8 (tc_uni_decompress_rgba8). Populated when a KTX2 asset is
+// loaded in "keep compressed" mode; consumers (tusdview GPU upload) map it to a
+// GL/VK compressed format, or fall back to CPU-decoding it.
+enum class TextureBlockFormat {
+  None = 0,
+  BC1,
+  BC3,
+  BC5,
+  BC6H,   // HDR
+  BC7,
+  ETC2_RGB,
+  ETC2_RGBA,
+  EAC_R11,
+  EAC_RG11,
+  ASTC_4x4,
+  UNI,    // tinyexr uni / UASTC transcodable intermediate
+};
+
 
 // glTF-like BufferData
 struct BufferData {
@@ -761,6 +785,17 @@ struct TextureImage {
   int64_t buffer_id{-1};  // index to buffer_id(texel data)
 
   bool decoded{false}; // true if texture data(buffer_id) is decoded. false if buffer_id contains raw image data(e.g. JPEG data)
+
+  // GPU block-compressed representation. When blockFormat != None, `buffer_id`
+  // holds compressed block bytes (a level-0 block stream; optional precomputed
+  // mip levels may follow depending on the loader) instead of uncompressed
+  // texels, `decoded` is false, and `channels`/`texelComponentType` describe the
+  // decoded form. `blockWidth`/`blockHeight` are the codec block footprint
+  // (e.g. 4x4). Default None = ordinary uncompressed image (unchanged behavior).
+  TextureBlockFormat blockFormat{TextureBlockFormat::None};
+  int32_t blockWidth{0};
+  int32_t blockHeight{0};
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
 

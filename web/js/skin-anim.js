@@ -5,8 +5,18 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
 	createConfiguredTinyUSDZLoader,
-	parseUSDSceneFromArrayBuffer
+	getAssetUriFromURL,
+	getBackendFromURL,
+	LOADER_BACKEND_CHOICES,
+	makeStaticNextParseOptions,
+	parseUSDSceneFromArrayBuffer,
+	setBackendAndReload
 } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+	buildNextThreeNode,
+	isNextScene,
+	readNextSceneMeta
+} from 'tinyusdz/NextRenderSceneUtils.js';
 import { buildJointHierarchyHTML } from 'tinyusdz/JointHierarchyUtils.js';
 import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
 import { getUSDSceneMetadata } from 'tinyusdz/USDSceneMetadata.js';
@@ -41,6 +51,7 @@ import {
 // ===========================================
 
 const DEFAULT_USD_MODEL_URI = './assets/skintest-animated.usda';
+const LOADER_BACKEND = getBackendFromURL();
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -235,6 +246,45 @@ let timelineBaseEnd = 30;
 let selectAnimationController = null;
 let _lastMixerUpdateTime = 0; // For mixer update throttling
 let _mixerAccumDelta = 0; // Accumulated delta for throttled updates
+let _enableBoneInterpolation = true;
+let _totalLoadedBones = 0;
+let _shadowsAutoDisabled = false;
+const BONE_INTERPOLATION_MAX_BONES = 512;
+const SHADOWS_MAX_BONES = 512;
+
+function currentMixerUpdateInterval() {
+	if (_totalLoadedBones > BONE_INTERPOLATION_MAX_BONES) {
+		const authoredFps = Number.isFinite(currentTimeCodesPerSecond)
+			? currentTimeCodesPerSecond
+			: 24;
+		return 1 / Math.max(1, Math.min(24, authoredFps));
+	}
+	return 1 / 30;
+}
+
+function setMeshShadowFlags(mesh, visible = mesh.visible) {
+	const shadowsEnabled = animationParams?.enableShadows === true;
+	mesh.castShadow = shadowsEnabled && visible;
+	mesh.receiveShadow = shadowsEnabled;
+}
+
+function applyShadowSettings() {
+	const enabled = animationParams?.enableShadows === true;
+	renderer.shadowMap.enabled = enabled;
+	directionalLight.castShadow = enabled;
+	ground.receiveShadow = enabled;
+	for (const mesh of allSceneMeshes) {
+		const visible = meshVisibility.get(mesh) !== false && animationParams.showMesh;
+		setMeshShadowFlags(mesh, visible);
+		if (mesh.material) {
+			if (Array.isArray(mesh.material)) {
+				mesh.material.forEach((mat) => { if (mat) mat.needsUpdate = true; });
+			} else {
+				mesh.material.needsUpdate = true;
+			}
+		}
+	}
+}
 
 
 // Store the current file's timeCodesPerSecond (default 24)
@@ -265,8 +315,8 @@ let availableVariantSelections = [];
 // mixer.update() at 60fps causes ~67MB/s of transient allocations from
 // Three.js interpolants, ballooning the JS heap to ~2.5GB before GC.
 // Keeping the mixer at 30fps halves the allocation rate, but makes
-// animation visibly choppy (every other rendered frame shows the same
-// skeletal pose).
+	// animation visibly choppy (every other rendered frame shows the same
+	// skeletal pose).
 //
 // Solution: run the mixer at 30fps and on intermediate frames lerp/slerp
 // bone local transforms between the two most recent mixer snapshots.
@@ -910,12 +960,7 @@ async function createConfiguredLoader() {
 }
 
 function getStartupUSDModelURI() {
-	const params = new URLSearchParams(window.location.search);
-	for (const key of ['uri', 'url', 'src', 'model']) {
-		const value = params.get(key);
-		if (value) return value;
-	}
-	return DEFAULT_USD_MODEL_URI;
+	return getAssetUriFromURL(undefined, ['usd']) || DEFAULT_USD_MODEL_URI;
 }
 
 function getDisplayNameFromURI(uri) {
@@ -1010,6 +1055,7 @@ function updateVariantControls(variantInfos, activeSelection = null) {
 async function parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, variantSelection = null) {
 	let variantInfos = [];
 	const usdScene = await parseUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, {
+		...makeStaticNextParseOptions({ backend: LOADER_BACKEND }),
 		variantSelection,
 		onVariants: (infos) => {
 			variantInfos = infos;
@@ -1087,12 +1133,25 @@ function updateLoadStatsPanel(stats) {
 		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
 		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
 	];
+	if (stats.nextTimings) {
+		const timing = stats.nextTimings;
+		lines.push(
+			`Next archive setup: ${formatDurationMs(timing.archiveMs)}`,
+			`Next native begin: ${formatDurationMs(timing.nativeBeginMs)}`,
+			`Next animation copy: ${formatDurationMs(timing.animationCopyMs)}`,
+			`Next entity copy: ${formatDurationMs(timing.entityCopyMs)}`,
+			`Next mesh copy: ${formatDurationMs(timing.meshCopyMs)}`,
+			`Next adapter total: ${formatDurationMs(timing.totalMs)}`
+		);
+	}
 
 	details.textContent = lines.join('\n');
 	details.style.whiteSpace = 'pre-line';
+	window.__skinAnimLoadStats = stats;
 }
 
 function beginLoadStats(fileSize = null) {
+	window.renderComplete = false;
 	const stats = {
 		status: 'loading',
 		startTime: performance.now(),
@@ -1113,6 +1172,9 @@ async function parseAndProcessUSD(loader, arrayBuffer, filename, stats) {
 	const { usdScene: usd_scene, variantInfos } =
 		await parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, currentVariantSelection);
 	stats.parseMs = performance.now() - parseStart;
+	stats.nextTimings = isNextScene(usd_scene)
+		? (usd_scene.getStats?.().timings || null)
+		: null;
 	updateVariantControls(variantInfos, currentVariantSelection);
 
 	console.log('USD scene loaded:', usd_scene);
@@ -1124,6 +1186,7 @@ async function parseAndProcessUSD(loader, arrayBuffer, filename, stats) {
 	stats.memoryAfter = captureMemorySnapshot();
 	stats.status = 'done';
 	updateLoadStatsPanel(stats);
+	window.renderComplete = true;
 }
 
 /**
@@ -1381,6 +1444,30 @@ async function processUSDScene(usd_scene, filename) {
 		characterGroup.remove(characterGroup.children[0]);
 	}
 
+	let nextBuiltNode = null;
+	let nextNodeIndexMap = null;
+	let nextTextureManager = null;
+	let nextTextureLoadPromise = null;
+	if (isNextScene(usd_scene)) {
+		const built = buildNextThreeNode(usd_scene, {
+			skipTextures: false,
+			lazyTextures: true,
+			releaseBuildData: false
+		});
+		nextBuiltNode = built.node;
+		nextNodeIndexMap = built.nodeIndexMap || null;
+		nextTextureManager = built.textureManager || null;
+		if (nextTextureManager) {
+			nextTextureLoadPromise = nextTextureManager.startLoading({
+				concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
+				yieldInterval: 16,
+				onTextureLoaded: (material) => { material.needsUpdate = true; }
+			}).catch((err) => {
+				console.warn('[skin-anim] Next texture loading failed:', err);
+			});
+		}
+	}
+
 	// Get normalized scene metadata from library helper.
 	const {
 		sceneMetadata,
@@ -1448,9 +1535,17 @@ async function processUSDScene(usd_scene, filename) {
 	const skeletonDataArray = skeletonBuild.skeletonDataArray;
 	let bones = skeletonBuild.firstBones;
 	boneMaps = skeletonBuild.boneMaps;
-
-	// Get the default root node from USD
-	const usdRootNode = usd_scene.getDefaultRootNode();
+	_totalLoadedBones = skeletonDataArray.reduce((sum, skel) => {
+		const count = skel?.bones?.length ?? skel?.joints?.length ?? 0;
+		return sum + count;
+	}, 0);
+	_enableBoneInterpolation = _totalLoadedBones <= BONE_INTERPOLATION_MAX_BONES;
+	if (!_enableBoneInterpolation) {
+		_clearBoneInterpData();
+		console.log(
+			`Sub-frame bone interpolation disabled for large rig (${_totalLoadedBones} bones > ${BONE_INTERPOLATION_MAX_BONES})`
+		);
+	}
 
 	// Create default material
 	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
@@ -1467,8 +1562,13 @@ async function processUSDScene(usd_scene, filename) {
 	const wasmHeapBefore = typeof WebAssembly !== 'undefined' && WebAssembly.Memory ?
 		(window._tinyusdz_wasm_memory ? window._tinyusdz_wasm_memory.buffer.byteLength : null) : null;
 
-	// Build Three.js node from USD
-	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	// Build Three.js node from USD. Next scenes are already materialized from
+	// RenderScene data; legacy scenes are built from the USD node tree.
+	let threeNode = nextBuiltNode;
+	if (!threeNode) {
+		const usdRootNode = usd_scene.getDefaultRootNode();
+		threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	}
 
 	if (wasmHeapBefore !== null && window._tinyusdz_wasm_memory) {
 		const wasmHeapAfter = window._tinyusdz_wasm_memory.buffer.byteLength;
@@ -1480,7 +1580,9 @@ async function processUSDScene(usd_scene, filename) {
 	// Build node index map BEFORE bones are added to the hierarchy.
 	// Adding bones changes the DFS traversal order, which would break
 	// the mapping from USD node indices to Three.js objects.
-	const nodeIndexMap = buildNodeIndexMap(threeNode);
+	// Next scenes use the RenderScene node-table map from buildNextThreeNode:
+	// animation target_node is a table index, not a DFS index.
+	const nodeIndexMap = nextNodeIndexMap || buildNodeIndexMap(threeNode);
 
 	// Set Z-up to Y-up conversion based on file metadata.
 	animationParams.convertZUp = (fileUpAxis.toUpperCase() === 'Z');
@@ -1510,6 +1612,15 @@ async function processUSDScene(usd_scene, filename) {
 	skeletonHelpers = skinningResult.skeletonHelpers;
 	allSceneMeshes = skinningResult.allSceneMeshes;
 	meshVisibility = skinningResult.meshVisibility;
+	if (_totalLoadedBones > SHADOWS_MAX_BONES && animationParams.enableShadows) {
+		animationParams.enableShadows = false;
+		_shadowsAutoDisabled = true;
+		console.log(`Shadows disabled for large rig (${_totalLoadedBones} bones > ${SHADOWS_MAX_BONES}); re-enable in GUI if needed`);
+	} else if (_totalLoadedBones <= SHADOWS_MAX_BONES && _shadowsAutoDisabled) {
+		animationParams.enableShadows = true;
+		_shadowsAutoDisabled = false;
+	}
+	applyShadowSettings();
 
 	skinnedMesh = skinningResult.primaryMesh || null;
 	originalMaterial = skinnedMesh ? skinnedMesh.material : null;
@@ -1535,6 +1646,7 @@ async function processUSDScene(usd_scene, filename) {
 		const animationData = extractUSDSceneAnimations(usd_scene, {
 			boneMaps,
 			nodeIndexMap,
+			threeRoot: threeNode,
 			timeCodesPerSecond,
 			logger: console
 		});
@@ -1558,7 +1670,7 @@ async function processUSDScene(usd_scene, filename) {
 
 		if (window.updateAnimationList) {
 			if (animationData.hasAnyAnimation) {
-				window.updateAnimationList(usdAnimations, animationData.animationInfos);
+				window.updateAnimationList(usdAnimations, animationData.animationInfos, timeCodesPerSecond);
 			} else {
 				window.updateAnimationList([], []);
 			}
@@ -1633,6 +1745,13 @@ async function processUSDScene(usd_scene, filename) {
 		}
 	}
 
+	// Geometry, skeleton, metadata, and animation data are now JS-owned. Drop
+	// the next adapter's large build-time arrays while retaining archiveEntries
+	// for the lazy texture loader. delete() still runs after textures settle.
+	if (isNextScene(usd_scene) && typeof usd_scene.releaseBuildData === 'function') {
+		usd_scene.releaseBuildData();
+	}
+
 	// Update mesh list GUI
 	updateMeshListGUI();
 
@@ -1648,15 +1767,27 @@ async function processUSDScene(usd_scene, filename) {
 	// BEFORE this point. The C++ destructor frees render_scene_ vectors, invalidating
 	// all typed_memory_view references (mesh.points, sampler.times/values, etc.).
 	// Keeping it alive retains the entire parsed USD scene in WASM heap memory.
-	if (usd_scene && typeof usd_scene.delete === 'function') {
-		usd_scene.delete();
-	}
-	window.usd_scene = null;
+	// Exception: next-backend lazy textures read archive bytes from the adapter
+	// asynchronously; adapter.delete() clears that archive map, so it must wait
+	// for texture loading to settle.
+	const releaseUSDScene = () => {
+		if (usd_scene && typeof usd_scene.delete === 'function') {
+			usd_scene.delete();
+		}
+		if (window.usd_scene === usd_scene) {
+			window.usd_scene = null;
+		}
 
-	// Hint GC after scene loading — processUSDScene creates many transient objects
-	// (WASM data copies, temporary matrices, skeleton building intermediaries) that
-	// should be collected before the animation loop starts allocating.
-	hintGC();
+		// Hint GC after scene loading — processUSDScene creates many transient objects
+		// (WASM data copies, temporary matrices, skeleton building intermediaries) that
+		// should be collected before the animation loop starts allocating.
+		hintGC();
+	};
+	if (nextTextureLoadPromise) {
+		nextTextureLoadPromise.then(releaseUSDScene);
+	} else {
+		releaseUSDScene();
+	}
 }
 
 /**
@@ -2009,7 +2140,7 @@ animationParams = {
 		for (const mesh of allSceneMeshes) {
 			const perMesh = meshVisibility.get(mesh) !== false;
 			mesh.visible = perMesh && this.showMesh;
-			mesh.castShadow = mesh.visible;
+			setMeshShadowFlags(mesh, mesh.visible);
 		}
 	},
 
@@ -2189,14 +2320,8 @@ animationParams = {
 	// Shadows
 	enableShadows: true,
 	toggleShadows: function() {
-		renderer.shadowMap.enabled = this.enableShadows;
-		directionalLight.castShadow = this.enableShadows;
-		// Need to update materials and re-render
-		scene.traverse((child) => {
-			if (child.isMesh) {
-				child.material.needsUpdate = true;
-			}
-		});
+		_shadowsAutoDisabled = false;
+		applyShadowSettings();
 		console.log(`Shadows ${this.enableShadows ? 'enabled' : 'disabled'}`);
 	},
 
@@ -2220,7 +2345,7 @@ animationParams = {
 		const newState = !current;
 		meshVisibility.set(mesh, newState);
 		mesh.visible = newState && this.showMesh;
-		mesh.castShadow = mesh.visible;
+		setMeshShadowFlags(mesh, mesh.visible);
 		updateMeshListGUI();
 	},
 	deselectMesh: function() {
@@ -2245,6 +2370,9 @@ animationParams = {
 // GUI setup
 const gui = new GUI();
 gui.title('Skeletal Animation Controls');
+// Backend switch reloads the page: the loader binds its WASM module at init.
+gui.add({ backend: LOADER_BACKEND }, 'backend', LOADER_BACKEND_CHOICES)
+	.name('Loader Backend').onChange(setBackendAndReload);
 
 // Wire up the GUI toggle button
 document.getElementById('gui-toggle')?.addEventListener('click', () => {
@@ -2713,7 +2841,7 @@ function animate() {
 	// timeline display), mixer evaluates at throttled rate to limit Three.js
 	// interpolant allocations, bone interpolation fills intermediate frames.
 	if (mixer && animationParams.isPlaying) {
-		const mixerInterval = 1 / 30;
+		const mixerInterval = currentMixerUpdateInterval();
 		_mixerAccumDelta += deltaTime;
 
 		// Advance timeline by real time every frame
@@ -2743,11 +2871,15 @@ function animate() {
 				syncPlaybackState(animationPlayback.setTime(animationParams.time, true));
 			}
 
-			// Snapshot bone transforms after mixer evaluation
-			for (const [skelId, skel] of skeletons) {
-				_snapshotBones(skelId, skel.bones);
+			// Snapshot bone transforms after mixer evaluation only when
+			// interpolation is enabled. Very large rigs spend more time
+			// interpolating every rendered frame than they save in smoothness.
+			if (_enableBoneInterpolation) {
+				for (const [skelId, skel] of skeletons) {
+					_snapshotBones(skelId, skel.bones);
+				}
 			}
-		} else if (skeletons.size > 0) {
+		} else if (_enableBoneInterpolation && skeletons.size > 0) {
 			// Intermediate frame: lerp/slerp between prev and curr snapshots
 			const alpha = _mixerAccumDelta / mixerInterval;
 			for (const [skelId, skel] of skeletons) {
@@ -2795,8 +2927,7 @@ function animate() {
 				const debugMat = mesh.material.clone();
 				const debugMesh = new THREE.Mesh(debugGeo, debugMat);
 				debugMesh.name = mesh.name + '_cpuSkin';
-				debugMesh.castShadow = true;
-				debugMesh.receiveShadow = true;
+				setMeshShadowFlags(debugMesh, animationParams.showMesh);
 				// Place at mesh's world transform
 				debugMesh.matrixAutoUpdate = false;
 				mesh._cpuDebugMesh = debugMesh;
@@ -2883,8 +3014,7 @@ function animate() {
 				const debugMat = mesh.material.clone();
 				const debugMesh = new THREE.Mesh(debugGeo, debugMat);
 				debugMesh.name = mesh.name + '_rawMesh';
-				debugMesh.castShadow = true;
-				debugMesh.receiveShadow = true;
+				setMeshShadowFlags(debugMesh, animationParams.showMesh);
 				debugMesh.matrixAutoUpdate = false;
 				mesh._rawDebugMesh = debugMesh;
 				scene.add(debugMesh);

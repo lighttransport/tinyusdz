@@ -11,15 +11,35 @@ option(TINYUSDZ_WASM64 "Use wasm64(memory64). Available only for Chrome and Fire
 option(TINYUSDZ_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
 option(TINYUSDZ_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
 option(TINYUSDZ_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
-option(TINYUSDZ_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" OFF)
+option(TINYUSDZ_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" ON)
+option(TINYUSDZ_WASM_NEXT_ONLY "Build next-core + tydra-next only WASM module as tinyusdz_next" OFF)
+option(TINYUSDZ_WASM_LEGACY_ONLY "Build the tinyusdz WASM module WITHOUT the next core (legacy loader only; drops nextFlatten*/RenderStream APIs)" OFF)
 
-if (TINYUSDZ_WASM64)
+if (TINYUSDZ_WASM_NEXT_ONLY)
+  if (TINYUSDZ_WASM64)
+    set(BUILD_TARGET "tinyusdz_next_64")
+  else()
+    set(BUILD_TARGET "tinyusdz_next")
+  endif()
+elseif (TINYUSDZ_WASM_LEGACY_ONLY)
+  # Distinct module name so the stripped variant never clobbers the default
+  # legacy+next tinyusdz.js/wasm output.
+  if (TINYUSDZ_WASM64)
+    set(BUILD_TARGET "tinyusdz_legacy_64")
+  else()
+    set(BUILD_TARGET "tinyusdz_legacy")
+  endif()
+elseif (TINYUSDZ_WASM64)
   set(BUILD_TARGET "tinyusdz_64")
 else()
   set(BUILD_TARGET "tinyusdz")
 endif()
 
 project(${BUILD_TARGET} CXX C)
+
+include(CTest)
+option(TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS
+       "Register host-browser WASM regression tests with CTest" ON)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "TinyUSDZ WASM: CMAKE_BUILD_TYPE not set; defaulting to MinSizeRel.")
@@ -61,6 +81,34 @@ endif()
 
 if (TINYUSDZ_WASM64)
   list(APPEND TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS "-sMEMORY64=1")
+endif()
+
+# The OpenPBR visual parity test requires the combined module because it renders
+# every fixture through both the legacy and next backends. It is a host-side
+# Node/Puppeteer test even though this project is configured through emcmake.
+if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
+    NOT TINYUSDZ_WASM_NEXT_ONLY AND NOT TINYUSDZ_WASM_LEGACY_ONLY)
+  find_program(TINYUSDZ_NODE_EXECUTABLE NAMES node nodejs)
+  set(TINYUSDZ_OPENPBR_VISUAL_DIFF
+      "${PROJECT_SOURCE_DIR}/js/cli/openpbr-visual-diff.mjs")
+  if (TINYUSDZ_NODE_EXECUTABLE AND EXISTS "${TINYUSDZ_OPENPBR_VISUAL_DIFF}")
+    add_test(
+      NAME wasm-regression-openpbr-visual-diff
+      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}" "${TINYUSDZ_OPENPBR_VISUAL_DIFF}"
+              --sw --dump-images --dump-composite
+              --out "${CMAKE_CURRENT_BINARY_DIR}/test-artifacts/openpbr-visual-diff")
+    set_tests_properties(
+      wasm-regression-openpbr-visual-diff
+      PROPERTIES
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/js"
+        TIMEOUT 300
+        RUN_SERIAL TRUE
+        LABELS "wasm;browser;regression")
+  else()
+    message(STATUS
+      "TinyUSDZ WASM: skipping OpenPBR browser regression registration "
+      "(Node or visual-diff CLI not found)")
+  endif()
 endif()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -115,6 +163,90 @@ endif()
 # browser-threading build option opts into it.
 set(TINYUSDZ_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
 
+if (TINYUSDZ_WASM_NEXT_ONLY)
+  message(STATUS "TinyUSDZ WASM: building next-core + tydra-next only module")
+  set(TINYUSDZ_CXX_RTTI OFF CACHE BOOL "Disable RTTI in next/tydra-next libs" FORCE)
+  set(TINYUSDZ_CXX_EXCEPTIONS OFF CACHE BOOL "Disable C++ exceptions in next/tydra-next libs" FORCE)
+  set(TINYUSDZ_NEXT_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
+
+  add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next tinyusdz_next_build EXCLUDE_FROM_ALL)
+
+  add_executable(tinyusdz_next_wasm binding-next.cc)
+  # tinysubdiv (tsd): dependency-free subdivision streaming for SubdivStreamer.
+  target_sources(tinyusdz_next_wasm PRIVATE
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-validate.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-topology.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-bilinear.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-catmark.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-loop.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-fvar.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-refine.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-stream.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-limit.cc)
+  target_link_libraries(tinyusdz_next_wasm PRIVATE tydra_next tinyusdz_next)
+  target_include_directories(tinyusdz_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
+  target_compile_features(tinyusdz_next_wasm PRIVATE cxx_std_17)
+  target_compile_options(tinyusdz_next_wasm
+                         PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+  target_compile_definitions(tinyusdz_next_wasm
+                             PRIVATE JSON_NOEXCEPTION=1
+                                     TINYUSDZ_CXX_EXCEPTIONS=0)
+  if (TINYUSDZ_WASM64)
+    target_compile_definitions(tinyusdz_next_wasm PRIVATE TINYUSDZ_WASM_MEMORY64=1)
+  endif()
+
+  if (TINYUSDZ_WASM_DEMODEV)
+    set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo/node_modules/tinyusdz/)
+  else()
+    set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/tinyusdz/)
+  endif()
+
+  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(TINYUSDZ_NEXT_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
+     -sMALLOC=emmalloc \
+     -sSTACK_SIZE=512000 \
+     -sALLOW_MEMORY_GROWTH=1 \
+     -sMEMORY_GROWTH_GEOMETRIC_STEP=0.1 \
+     -sFILESYSTEM=0 \
+     -sWASM_BIGINT=1 \
+     -sMODULARIZE=1 -sEXPORT_ES6 \
+     -sINVOKE_RUN=0 --bind ")
+  else()
+    if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+      set(TINYUSDZ_NEXT_EMCC_LINK_OPT_FLAGS "-Oz ")
+    else()
+      set(TINYUSDZ_NEXT_EMCC_LINK_OPT_FLAGS "")
+    endif()
+    set(TINYUSDZ_NEXT_EMCC_LINK_FLAGS "${TINYUSDZ_NEXT_EMCC_LINK_OPT_FLAGS}-sENVIRONMENT='web,worker,node' \
+     -sMALLOC=emmalloc \
+     -sSTACK_SIZE=512000 \
+     -sALLOW_MEMORY_GROWTH=1 \
+     -sMEMORY_GROWTH_GEOMETRIC_STEP=0.1 \
+     -sFILESYSTEM=0 \
+     -sSAFE_HEAP=0 \
+     -sWASM_BIGINT=1 \
+     -sMODULARIZE=1 -sEXPORT_ES6 \
+     -sINVOKE_RUN=0 --bind ")
+  endif()
+  if (TINYUSDZ_SIMD_FLAGS)
+    string(APPEND TINYUSDZ_NEXT_EMCC_LINK_FLAGS " ${TINYUSDZ_SIMD_FLAGS}")
+  endif()
+  if (TINYUSDZ_WASM64)
+    string(APPEND TINYUSDZ_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=16GB -sMALLOC=dlmalloc")
+  else()
+    string(APPEND TINYUSDZ_NEXT_EMCC_LINK_FLAGS " -sASSERTIONS=1")
+  endif()
+  string(APPEND TINYUSDZ_NEXT_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
+
+  set_target_properties(
+      tinyusdz_next_wasm
+      PROPERTIES OUTPUT_NAME ${BUILD_TARGET}
+                 SUFFIX ".js"
+                 RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
+                 LINK_FLAGS "${TINYUSDZ_NEXT_EMCC_LINK_FLAGS}")
+  return()
+endif()
+
 # [tinyusdz]
 add_subdirectory(../  tinyusdz)
 
@@ -128,7 +260,13 @@ list(
   NEXT_SOURCES
   ${TINYUSDZ_NEXT_DIR}/types/type-info.cc
   ${TINYUSDZ_NEXT_DIR}/types/value.cc
+  ${TINYUSDZ_NEXT_DIR}/types/spline.cc
   ${TINYUSDZ_NEXT_DIR}/types/interpolation.cc
+  ${TINYUSDZ_NEXT_DIR}/writer/dtoa.cc
+  # value-printer defines next::PrintValue, referenced by the crate
+  # reader/writer (spline customData round-trip) — without it wasm-ld fails
+  # with an undefined-symbol error on a clean build.
+  ${TINYUSDZ_NEXT_DIR}/writer/value-printer.cc
   ${TINYUSDZ_NEXT_DIR}/prim/path.cc
   ${TINYUSDZ_NEXT_DIR}/prim/attribute.cc
   ${TINYUSDZ_NEXT_DIR}/prim/prim.cc
@@ -148,27 +286,44 @@ list(
   ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-vectors.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-writer-types.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-writer.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/variant-holders.cc
   ${TINYUSDZ_NEXT_DIR}/parser/lexer.cc
   ${TINYUSDZ_NEXT_DIR}/parser/value-parser.cc
   ${TINYUSDZ_NEXT_DIR}/parser/value-parser-types.cc
   ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-metadata.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-prim.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-timesamples.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-utils.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-variants.cc
   ${TINYUSDZ_NEXT_DIR}/parser/simd-scan.cc
   ${TINYUSDZ_NEXT_DIR}/composition/composition.cc
   ${TINYUSDZ_NEXT_DIR}/resolver/asset-resolver.cc
   ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
+  ${TINYUSDZ_NEXT_DIR}/pcp/layer-registry.cc
+  ${TINYUSDZ_NEXT_DIR}/reader/usda-reader.cc
   ${TINYUSDZ_NEXT_DIR}/reader/usdc-reader.cc
+  ${TINYUSDZ_NEXT_DIR}/reader/usdz-reader.cc
   ${TINYUSDZ_NEXT_DIR}/schema/geom-mesh.cc
   ${TINYUSDZ_NEXT_DIR}/schema/geom-xform.cc
   ${TINYUSDZ_NEXT_DIR}/schema/usd-shade.cc
   ${TINYUSDZ_NEXT_DIR}/eval/attribute-eval.cc
+  ${TINYUSDZ_NEXT_DIR}/eval/value-clip.cc
+  ${TINYUSDZ_NEXT_DIR}/schema/schema-registry.cc
 )
 
 list(
   APPEND
   SOURCES
   binding.cc
-  ${NEXT_SOURCES}
 )
+# Default module = legacy + next (nextFlatten* lazy pipeline + RenderStream).
+# TINYUSDZ_WASM_LEGACY_ONLY=ON strips the next core: NEXT_SOURCES are not
+# compiled and binding.cc's next-dependent APIs compile out (guarded by
+# TINYUSDZ_WASM_WITH_NEXT).
+if (NOT TINYUSDZ_WASM_LEGACY_ONLY)
+  list(APPEND SOURCES ${NEXT_SOURCES})
+endif()
 
 
 add_executable(${BUILD_TARGET} ${SOURCES})
@@ -176,12 +331,16 @@ add_sanitizers(${BUILD_TARGET})
 
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
 target_compile_options(${BUILD_TARGET}
-                       PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+                       PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+                               $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
 target_compile_definitions(${BUILD_TARGET}
                            PRIVATE JSON_NOEXCEPTION=1
                                    TINYUSDZ_CXX_EXCEPTIONS=0
-                                   TINYUSDZ_CXX_RTTI=1
+                                   TINYUSDZ_CXX_RTTI=0
                                    EMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0)
+if (NOT TINYUSDZ_WASM_LEGACY_ONLY)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_WITH_NEXT=1)
+endif()
 if (TINYUSDZ_WASM64)
   target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_MEMORY64=1)
 endif()

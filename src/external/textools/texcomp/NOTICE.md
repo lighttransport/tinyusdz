@@ -46,8 +46,9 @@ headers.
   `test/bc7_ref_decode.h`, and the **BC6H two-region (mode 9) partition table
   and block bit layout** in `src/texcomp_bc6h.c`, are transcribed / mirrored
   from bcdec (the tables published in the Khronos spec contain known errors).
-  bcdec was also used during development to cross-validate texcomp's BC7 and
-  BC6H reference decoders; it is not vendored or shipped.
+- The **BC6H reference decoder** `test/bc6h_ref_decode.h` (all 14 modes) is a
+  C port of bcdec's `bcdec_bc6h_half`, used test-only as the conformance oracle
+  for the `texcomp-bc6h-gate`. It is not linked into the shipped library.
 
 ### Khronos ASTC / BPTC specifications
 - The ISE codec, 2D block-mode tables, partition-pattern hashing, and

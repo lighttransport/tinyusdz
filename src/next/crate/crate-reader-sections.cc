@@ -4,28 +4,36 @@
 // TinyUSDZ Next - USDC Crate Reader structural section readers
 
 #include "crate-reader-internal.hh"
+#include "lazy-array.hh"
 #include "safe-arithmetic.hh"
 #include "../strfmt.hh"
 
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace tinyusdz {
 namespace next {
 
-namespace {
-
-uint64_t CrateValueRepMinPayloadBytes(ValueRep rep) {
-  if (rep.is_array()) return 8;  // array element count header.
+uint64_t CrateValueRepMinPayloadBytes(ValueRep rep, CrateVersion version) {
+  // Array element count header: uint32 for crate < 0.7.0, uint64 for >= 0.7.0
+  // (pxr crateFile.cpp _Write/_ReadUncompressedArray).
+  if (rep.is_array()) return CrateArrayCountHeaderBytes(version);
   switch (rep.type_id()) {
     case CrateTypeId::Bool: return 1;
     case CrateTypeId::UChar: return 1;
     case CrateTypeId::Half: return 2;
+    // Half vectors are stored as 2-byte lanes (GfVec{2,3,4}h = 4/6/8 bytes);
+    // these entries used to reuse the float-vector sizes (8/12/16), rejecting
+    // valid files whose half payload sits near EOF as "truncated".
+    case CrateTypeId::Vec2h: return 4;
+    case CrateTypeId::Vec3h: return 6;
+    case CrateTypeId::Vec4h:
+    case CrateTypeId::Quath: return 8;  // 4 half lanes, not 4 float lanes
     case CrateTypeId::Int:
     case CrateTypeId::UInt:
     case CrateTypeId::Float: return 4;
@@ -34,16 +42,12 @@ uint64_t CrateValueRepMinPayloadBytes(ValueRep rep) {
     case CrateTypeId::Double:
     case CrateTypeId::TimeCode: return 8;
     case CrateTypeId::Vec2i:
-    case CrateTypeId::Vec2f:
-    case CrateTypeId::Vec2h: return 8;
+    case CrateTypeId::Vec2f: return 8;
     case CrateTypeId::Vec3i:
-    case CrateTypeId::Vec3f:
-    case CrateTypeId::Vec3h: return 12;
+    case CrateTypeId::Vec3f: return 12;
     case CrateTypeId::Vec4i:
     case CrateTypeId::Vec4f:
-    case CrateTypeId::Vec4h:
-    case CrateTypeId::Quatf:
-    case CrateTypeId::Quath: return 16;
+    case CrateTypeId::Quatf: return 16;
     case CrateTypeId::Vec2d: return 16;
     case CrateTypeId::Vec3d: return 24;
     case CrateTypeId::Vec4d:
@@ -71,8 +75,6 @@ uint64_t CrateValueRepMinPayloadBytes(ValueRep rep) {
   }
 }
 
-}  // namespace
-
 bool CrateReader::Impl::ReadBootstrap() {
   // Check magic
   char magic[8];
@@ -98,6 +100,19 @@ bool CrateReader::Impl::ReadBootstrap() {
   if (!version_.is_valid()) {
     AddError("Unsupported USDC version: " + version_.to_string());
     return false;
+  }
+  // AOUSD Core 1.0.1 standardizes Crate through 0.12. Compatibility mode can
+  // read additive OpenUSD 0.13/0.14 containers and diagnose any unsupported
+  // values, but strict conformance must not imply support for those versions.
+  if (version_.major == 0 && version_.minor > 12) {
+    const std::string message =
+        "USDC version " + version_.to_string() +
+        " is newer than the AOUSD Core 1.0.1 Crate 0.12 profile";
+    if (options_.strict_aousd_conformance) {
+      AddError("Strict AOUSD mode: " + message);
+      return false;
+    }
+    AddWarning(message);
   }
 
   // Read TOC offset
@@ -428,7 +443,7 @@ bool CrateReader::Impl::ReadFields() {
         return false;
       }
       if (rep.payload() != 0) {
-        const uint64_t min_bytes = CrateValueRepMinPayloadBytes(rep);
+        const uint64_t min_bytes = CrateValueRepMinPayloadBytes(rep, version_);
         const uint64_t file_size = static_cast<uint64_t>(reader_->size());
         if (min_bytes > 0 &&
             (min_bytes > file_size ||
@@ -444,7 +459,7 @@ bool CrateReader::Impl::ReadFields() {
           return false;
         }
         uint64_t count = 0;
-        if (!reader_->read_u64(count)) {
+        if (!ReadCrateArrayCount(*reader_, version_, &count)) {
           AddError("Failed to read array ValueRep element count");
           return false;
         }
@@ -452,9 +467,29 @@ bool CrateReader::Impl::ReadFields() {
           AddError("Failed to restore FIELDS reader position");
           return false;
         }
-        if (count > options_.max_array_elements) {
+        const bool lazy_over_cap_ok =
+            options_.lazy_arrays &&
+            CrateArrayTypeCanBeLazy(rep.type_id(), rep.is_compressed());
+        if (count > options_.max_array_elements && !lazy_over_cap_ok) {
           AddError("Array ValueRep element count exceeds max_array_elements limit");
           return false;
+        }
+        if (count >
+            static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+          AddError("Array ValueRep element count exceeds addressable memory");
+          return false;
+        }
+        bool valid_lazy_block = false;
+        if (lazy_over_cap_ok && source_) {
+          LazyArrayRef lr;
+          valid_lazy_block =
+              ProbeArrayBlock(source_, rep,
+                              (std::numeric_limits<size_t>::max)(), &lr) &&
+              (rep.payload() == 0 || lr.block_len > 0);
+          if (!valid_lazy_block && count > options_.max_array_elements) {
+            AddError("Lazy Array ValueRep payload is out of bounds");
+            return false;
+          }
         }
         const uint64_t stride = CrateArrayElemStride(rep.type_id());
         const uint64_t elem_bytes = stride ? stride : 1;
@@ -463,7 +498,8 @@ bool CrateReader::Impl::ReadFields() {
           AddError("Array ValueRep payload byte size overflow");
           return false;
         }
-        if (!CheckByteAllocation(count * elem_bytes, "Array ValueRep payload")) {
+        if (!valid_lazy_block &&
+            !CheckByteAllocation(count * elem_bytes, "Array ValueRep payload")) {
           return false;
         }
       } else if (rep.payload() != 0) {
@@ -656,14 +692,7 @@ bool CrateReader::Impl::ReadFieldsets() {
 
   // fieldset_indices_ entries index into fields_; bound the count to avoid a
   // huge allocation from a malformed value (no dedicated max, reuse max_fields).
-  size_t max_fieldsets = options_.max_fields;
-  if (options_.max_fields >= (std::numeric_limits<size_t>::max)() -
-                                   options_.max_specs) {
-    max_fieldsets = std::numeric_limits<size_t>::max();
-  } else {
-    max_fieldsets = options_.max_fields + options_.max_specs;
-  }
-  if (num_fieldsets > max_fieldsets) {
+  if (num_fieldsets > options_.max_fields) {
     AddError("Too many fieldset indices");
     return false;
   }
@@ -709,50 +738,6 @@ bool CrateReader::Impl::ReadFieldsets() {
     }
     if (fieldset_index_bytes > 0) {
       std::memcpy(fieldset_indices_.data(), dr.data.data(), fieldset_index_bytes);
-    }
-  }
-
-  // Build compact span lookup (start/count) for each fieldset. This avoids
-  // rescanning fieldset_indices_ for every spec during stage-build.
-  fieldset_offsets_.clear();
-  fieldset_counts_.clear();
-  fieldset_offsets_.reserve(static_cast<size_t>(num_fieldsets));
-  fieldset_counts_.reserve(static_cast<size_t>(num_fieldsets));
-  size_t pos = 0;
-  while (pos < fieldset_indices_.size()) {
-    const size_t start = pos;
-    while (pos < fieldset_indices_.size() && fieldset_indices_[pos] != 0xFFFFFFFFu) {
-      ++pos;
-    }
-    if (pos >= fieldset_indices_.size()) {
-      AddError("Fieldset indices missing terminator");
-      return false;
-    }
-    const size_t span = pos - start;
-    if (span > static_cast<size_t>((std::numeric_limits<uint32_t>::max)())) {
-      AddError("Fieldset length overflow");
-      return false;
-    }
-    fieldset_offsets_.push_back(static_cast<uint32_t>(start));
-    fieldset_counts_.push_back(static_cast<uint32_t>(span));
-    ++pos;
-  }
-
-  fieldset_index_to_id_.clear();
-  if (!fieldset_indices_.empty()) {
-    if (!CheckByteAllocation(fieldset_indices_.size() * sizeof(uint32_t),
-                             "Fieldset index lookup table")) {
-      return false;
-    }
-    fieldset_index_to_id_.assign(fieldset_indices_.size(),
-                                static_cast<uint32_t>(0xFFFFFFFFu));
-    for (uint32_t fi = 0; fi < fieldset_offsets_.size(); ++fi) {
-      const size_t start = static_cast<size_t>(fieldset_offsets_[fi]);
-      if (start >= fieldset_index_to_id_.size()) {
-        AddError("Fieldset offset out of range");
-        return false;
-      }
-      fieldset_index_to_id_[start] = fi;
     }
   }
 
@@ -1071,92 +1056,62 @@ bool CrateReader::Impl::ReadPaths() {
   // O(num_nodes) and correct.
   paths_.assign(static_cast<size_t>(num_paths), std::string());
 
-  auto element_for = [&](size_t i, bool& is_prop, std::string_view& elem) -> bool {
+  auto element_for = [&](size_t i, bool& is_prop) -> std::string {
     int32_t elem_token = static_cast<int32_t>(element_tokens[i]);
     is_prop = elem_token < 0;
     // Promote to int64 before negating (-INT32_MIN is UB).
     uint32_t token_idx = is_prop
         ? static_cast<uint32_t>(-static_cast<int64_t>(elem_token))
         : static_cast<uint32_t>(elem_token);
-    if (token_idx >= tokens_.size()) {
-      AddError("Path element token index out of range");
-      return false;
-    }
-    elem = tokens_.view(token_idx);
-    return true;
+    return tokens_.str(token_idx);
   };
 
-  struct PathFrame {
-    size_t next_index = 0;
-    size_t parent_path_len = 0;
-    size_t depth = 0;
-  };
-  std::vector<PathFrame> stack;
-  stack.reserve(options_.max_path_depth + 1);
+  // Recurse over a sibling chain that all share `parent` (the parent prim path,
+  // without any property '.' prefix). Depth is bounded by max_path_depth.
+  //
+  // A well-formed pre-order tree visits every encoded node exactly once. A
+  // malformed jump table can make the child pointer (i+1) and a sibling pointer
+  // (i+jump) reference the SAME node from different parents, so a node gets
+  // re-entered — e.g. a chain of `jump == 1` nodes visits node k 2^k times
+  // (super-linear/exponential CPU hang) from a sub-kilobyte input. `visited`
+  // bounds total work to O(n): re-entering an already-emitted node stops that
+  // chain (the input is malformed, but we terminate instead of hanging).
+  std::vector<uint8_t> visited(n, uint8_t{0});
+  std::function<void(size_t, const std::string&, size_t)> build =
+      [&](size_t i, const std::string& parent, size_t depth) {
+        while (i < n) {
+          if (visited[i]) return;  // node already emitted: malformed, stop
+          visited[i] = uint8_t{1};
+          bool is_prop = false;
+          std::string elem = element_for(i, is_prop);
+          int32_t jump = static_cast<int32_t>(jump_raw[i]);
 
-  size_t i = 0;
-  size_t depth = 0;
-  std::string parent_path;
-  while (i < n) {
-    bool is_prop = false;
-    std::string_view elem;
-    if (!element_for(i, is_prop, elem)) return false;
-    int32_t jump = static_cast<int32_t>(jump_raw[i]);
+          bool is_root = parent.empty() && (elem.empty() || elem == "/");
+          std::string prim_path;  // base path (no '.' prefix) for children
+          if (is_root) {
+            prim_path = "/";
+          } else if (parent.empty() || parent == "/") {
+            prim_path = "/" + elem;
+          } else {
+            prim_path = parent + "/" + elem;
+          }
 
-    const bool is_root = parent_path.empty() && (elem.empty() || elem == "/");
-    const size_t parent_len = parent_path.size();
-    if (is_root) {
-      parent_path = "/";
-    } else if (parent_path.empty()) {
-      parent_path = "/";
-      parent_path.append(elem);
-    } else if (parent_path == "/") {
-      parent_path.append(elem);
-    } else {
-      parent_path.push_back('/');
-      parent_path.append(elem);
-    }
+          uint32_t store_idx = path_indices[i];
+          if (store_idx < num_paths) {
+            paths_[store_idx] = is_prop ? ("." + prim_path) : prim_path;
+          }
 
-    const uint32_t store_idx = path_indices[i];
-    if (store_idx < num_paths) {
-      std::string& out = paths_[store_idx];
-      if (is_prop) {
-        out.clear();
-        out.reserve(parent_path.size() + 1);
-        out.push_back('.');
-        out.append(parent_path);
-      } else {
-        out = parent_path;
-      }
-    }
+          const bool has_child = (jump == -1 || jump > 0);
+          const bool has_sibling = (jump == 0 || jump > 0);
 
-    const bool has_child = (jump == -1 || jump > 0);
-    const bool has_sibling = (jump == 0 || jump > 0);
-    const bool descend = has_child && (depth < options_.max_path_depth);
-    if (descend) {
-      if (has_sibling) {
-        stack.push_back({jump > 0 ? static_cast<size_t>(i + jump) : i + 1,
-                         parent_len,
-                         depth});
-      }
-      i = i + 1;
-      ++depth;
-      continue;
-    }
-
-    if (!has_sibling) {
-      if (stack.empty()) break;
-      const PathFrame frame = stack.back();
-      stack.pop_back();
-      i = frame.next_index;
-      parent_path.resize(frame.parent_path_len);
-      depth = frame.depth;
-      continue;
-    }
-
-    parent_path.resize(parent_len);
-    i = jump > 0 ? static_cast<size_t>(i + jump) : i + 1;
-  }
+          if (has_child && depth < options_.max_path_depth) {
+            build(i + 1, prim_path, depth + 1);
+          }
+          if (!has_sibling) return;
+          i += (jump > 0) ? static_cast<size_t>(jump) : 1;
+        }
+      };
+  build(0, std::string(), 0);
 
   for (const CrateSpec& spec : specs_) {
     if (spec.path_index.value >= paths_.size()) {

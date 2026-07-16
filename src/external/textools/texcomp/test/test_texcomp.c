@@ -10,10 +10,12 @@
 #include "../src/texcomp_internal.h"
 
 #include "astc_ref_decode.h"
+#include "bc7_ref_decode.h"
 #include "astc_hdr_ref_decode.h"
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h> /* abs(): glibc leaks it in via other headers, clang does not */
 #include <string.h>
 
 /* Decode FP16 bits to float (for HDR round-trip checks). */
@@ -563,6 +565,577 @@ static int astc_ref_roundtrip_test(void) {
     return 0;
 }
 
+/* The public BC1/BC3/BC5 surface decoders must agree, texel for texel, with the
+ * independent reference block decoders above (bc1_decode / bc4_decode), which
+ * were written from the S3TC spec rather than from the library. That pins the
+ * palette maths, the block/texel ordering and the partial-block edge handling.
+ * Exercised on a non-multiple-of-4 surface so the edge blocks are partial. */
+static int test_bc_decoders(void) {
+    enum { W = 13, H = 7 };
+    uint8_t src[W * H * 4], dec[W * H * 4];
+    uint8_t bc1[64 * 8], bc3[64 * 16], bc5[64 * 16];
+    tc_bc1_options o1;
+    tc_bc3_options o3;
+    tc_bc5_options o5;
+    uint32_t bxc = (W + 3u) / 4u, x, y, bx, by;
+    tc_bc1_options_init(&o1);
+    tc_bc3_options_init(&o3);
+    tc_bc5_options_init(&o5);
+    for (y = 0; y < H; ++y)
+        for (x = 0; x < W; ++x) {
+            uint8_t *p = src + ((size_t)y * W + x) * 4u;
+            p[0] = (uint8_t)(x * 19u);
+            p[1] = (uint8_t)(y * 31u);
+            p[2] = (uint8_t)((x + y) * 11u);
+            p[3] = (uint8_t)(255u - x * 7u);
+        }
+
+    CHECK(tc_bc1_compress_rgba8(src, W, H, W * 4u, &o1, bc1, sizeof(bc1)) ==
+              TC_SUCCESS, "bc1 compress (decoder xcheck)");
+    CHECK(tc_bc1_decompress_rgba8(bc1, W, H, W * 4u, dec, sizeof(dec)) ==
+              TC_SUCCESS, "bc1 decompress");
+    for (by = 0; by < H; by += 4u)
+        for (bx = 0; bx < W; bx += 4u) {
+            uint8_t ref[16][3];
+            bc1_decode(bc1 + ((size_t)(by / 4u) * bxc + bx / 4u) * 8u, ref);
+            for (y = 0; y < 4u && by + y < H; ++y)
+                for (x = 0; x < 4u && bx + x < W; ++x) {
+                    const uint8_t *d = dec + ((size_t)(by + y) * W + bx + x) * 4u;
+                    const uint8_t *r = ref[y * 4u + x];
+                    CHECK(d[0] == r[0] && d[1] == r[1] && d[2] == r[2],
+                          "bc1 decode matches reference");
+                    CHECK(d[3] == 255u, "bc1 decode alpha opaque");
+                }
+        }
+
+    CHECK(tc_bc3_compress_rgba8(src, W, H, W * 4u, &o3, bc3, sizeof(bc3)) ==
+              TC_SUCCESS, "bc3 compress (decoder xcheck)");
+    CHECK(tc_bc3_decompress_rgba8(bc3, W, H, W * 4u, dec, sizeof(dec)) ==
+              TC_SUCCESS, "bc3 decompress");
+    for (by = 0; by < H; by += 4u)
+        for (bx = 0; bx < W; bx += 4u) {
+            uint8_t ref[16][3], refa[16];
+            size_t bi = ((size_t)(by / 4u) * bxc + bx / 4u) * 16u;
+            bc4_decode(bc3 + bi, refa);
+            bc1_decode(bc3 + bi + 8u, ref);
+            for (y = 0; y < 4u && by + y < H; ++y)
+                for (x = 0; x < 4u && bx + x < W; ++x) {
+                    const uint8_t *d = dec + ((size_t)(by + y) * W + bx + x) * 4u;
+                    const uint8_t *r = ref[y * 4u + x];
+                    CHECK(d[0] == r[0] && d[1] == r[1] && d[2] == r[2],
+                          "bc3 decode colour matches reference");
+                    CHECK(d[3] == refa[y * 4u + x],
+                          "bc3 decode alpha matches reference");
+                }
+        }
+
+    CHECK(tc_bc5_compress_rgba8(src, W, H, W * 4u, &o5, bc5, sizeof(bc5)) ==
+              TC_SUCCESS, "bc5 compress (decoder xcheck)");
+    CHECK(tc_bc5_decompress_rgba8(bc5, W, H, 0, W * 4u, dec, sizeof(dec)) ==
+              TC_SUCCESS, "bc5 decompress");
+    for (by = 0; by < H; by += 4u)
+        for (bx = 0; bx < W; bx += 4u) {
+            uint8_t refr[16], refg[16];
+            size_t bi = ((size_t)(by / 4u) * bxc + bx / 4u) * 16u;
+            bc4_decode(bc5 + bi, refr);
+            bc4_decode(bc5 + bi + 8u, refg);
+            for (y = 0; y < 4u && by + y < H; ++y)
+                for (x = 0; x < 4u && bx + x < W; ++x) {
+                    const uint8_t *d = dec + ((size_t)(by + y) * W + bx + x) * 4u;
+                    CHECK(d[0] == refr[y * 4u + x] && d[1] == refg[y * 4u + x],
+                          "bc5 decode matches reference");
+                    CHECK(d[2] == 0u && d[3] == 255u, "bc5 decode b=0 a=255");
+                }
+        }
+
+    /* Undersized output and a too-narrow stride must be refused, not written. */
+    CHECK(tc_bc1_decompress_rgba8(bc1, W, H, W * 4u, dec, sizeof(dec) - 1u) ==
+              TC_ERROR_INVALID_ARGUMENT, "bc1 decompress rejects short output");
+    CHECK(tc_bc3_decompress_rgba8(bc3, W, H, W * 4u - 1u, dec, sizeof(dec)) ==
+              TC_ERROR_INVALID_ARGUMENT, "bc3 decompress rejects short stride");
+    CHECK(tc_bc5_decompress_rgba8(NULL, W, H, 0, W * 4u, dec, sizeof(dec)) ==
+              TC_ERROR_INVALID_ARGUMENT, "bc5 decompress rejects null input");
+    return 0;
+}
+
+
+/* ---- ETC2 / EAC conformance ------------------------------------------------
+ * Golden vectors produced by Mesa's ETC decoder (src/mesa/main/texcompress_etc.c,
+ * MIT) -- an independent implementation, not this one. Three blocks per RGB mode
+ * cover all five (individual, differential, T, H, planar); our encoder only ever
+ * emits three of them, so a round-trip test alone could not reach T and H.
+ * Regenerating: decode the blocks below with any conformant ETC2 decoder.
+ * Cross-checked at 200k random blocks against Mesa with zero mismatches; these
+ * vectors pin that result in-tree.
+ */
+/* mode, 8 block bytes, then 16 RGB triples (Mesa reference) */
+static const struct { const char *mode; uint8_t blk[8]; uint8_t rgb[16][3]; }
+etc2_golden[] = {
+    {"planar", {0xb0,0x66,0x15,0x2a,0xc7,0xc2,0x97,0xc3},
+     {{97,102,73},{93,126,112},{89,151,150},{85,175,189},{93,124,58},{89,149,96},{85,173,135},{81,197,173},{89,147,43},{85,171,81},{81,195,120},{77,219,158},{85,169,27},{81,193,66},{77,217,104},{73,242,143}}},
+    {"differential", {0x2a,0x8a,0x19,0xd3,0x0f,0x62,0xee,0x9d},
+     {{147,246,130},{147,246,130},{8,107,0},{74,173,57},{8,107,0},{8,107,0},{0,34,0},{147,246,130},{117,216,93},{39,138,15},{0,96,0},{117,216,93},{117,216,93},{117,216,93},{0,96,0},{117,216,93}}},
+    {"individual", {0xea,0x2f,0xaa,0xa5,0x6d,0x14,0x22,0xb0},
+     {{255,58,194},{158,0,90},{214,10,146},{255,58,194},{255,58,194},{255,114,250},{255,114,250},{158,0,90},{165,250,165},{175,255,175},{165,250,165},{165,250,165},{175,255,175},{187,255,187},{165,250,165},{175,255,175}}},
+    {"individual", {0x8e,0x75,0x69,0xc1,0x80,0xf6,0xd3,0x1c},
+     {{169,152,135},{30,13,0},{242,225,208},{242,225,208},{103,86,69},{103,86,69},{242,225,208},{169,152,135},{230,77,145},{236,83,151},{240,87,155},{246,93,161},{246,93,161},{236,83,151},{240,87,155},{230,77,145}}},
+    {"individual", {0xb7,0x7c,0xf4,0x45,0xe7,0x2a,0xa1,0x00},
+     {{196,128,255},{196,128,255},{158,90,226},{196,128,255},{178,110,246},{178,110,246},{178,110,246},{158,90,226},{124,209,73},{124,209,73},{114,199,63},{114,199,63},{114,199,63},{124,209,73},{124,209,73},{102,187,51}}},
+    {"T", {0x05,0x64,0xed,0x52,0x44,0xce,0x2c,0x7e},
+     {{17,102,68},{241,224,88},{17,102,68},{17,102,68},{235,218,82},{241,224,88},{17,102,68},{241,224,88},{235,218,82},{235,218,82},{235,218,82},{238,221,85},{235,218,82},{238,221,85},{241,224,88},{17,102,68}}},
+    {"differential", {0xe3,0x49,0xb0,0xdf,0x89,0xee,0xee,0xfe},
+     {{255,107,214},{255,180,255},{198,41,148},{255,107,214},{125,0,75},{125,0,75},{255,180,255},{255,180,255},{72,0,0},{72,0,0},{255,255,255},{255,255,255},{72,0,0},{72,0,0},{72,0,0},{72,0,0}}},
+    {"differential", {0xb4,0xd8,0x24,0x2b,0x19,0x2a,0x24,0x2b},
+     {{198,239,50},{186,227,38},{176,217,28},{176,217,28},{164,205,16},{164,205,16},{186,227,38},{198,239,50},{157,231,9},{157,231,9},{177,251,29},{157,231,9},{119,193,0},{157,231,9},{139,213,0},{157,231,9}}},
+    {"H", {0x84,0x07,0xa9,0x92,0x70,0x34,0xc9,0x24},
+     {{3,139,122},{88,54,37},{0,133,116},{88,54,37},{3,139,122},{82,48,31},{3,139,122},{88,54,37},{82,48,31},{3,139,122},{3,139,122},{82,48,31},{3,139,122},{3,139,122},{0,133,116},{0,133,116}}},
+    {"T", {0xfa,0x96,0x3f,0x3e,0xfb,0xdb,0x90,0x54},
+     {{51,255,51},{10,214,10},{51,255,51},{10,214,10},{51,255,51},{238,153,102},{51,255,51},{51,255,51},{92,255,92},{10,214,10},{238,153,102},{51,255,51},{51,255,51},{51,255,51},{51,255,51},{10,214,10}}},
+    {"planar", {0x63,0x46,0x06,0xba,0x25,0x57,0xc0,0x25},
+     {{199,199,20},{178,158,58},{156,118,95},{135,77,133},{212,149,53},{191,109,90},{169,68,128},{148,27,165},{225,100,85},{204,59,123},{182,18,160},{161,0,198},{238,50,118},{217,9,155},{195,0,193},{174,0,230}}},
+    {"H", {0x3a,0xf9,0xde,0x7a,0xa6,0xac,0xd3,0xd7},
+     {{116,82,184},{116,82,184},{116,82,184},{116,82,184},{116,82,184},{190,207,255},{184,201,252},{190,207,255},{184,201,252},{116,82,184},{190,207,255},{116,82,184},{190,207,255},{184,201,252},{122,88,190},{184,201,252}}},
+    {"planar", {0x01,0xdd,0x04,0xae,0x58,0x86,0x6f,0x1c},
+     {{0,221,134},{22,188,117},{45,155,100},{67,121,82},{52,196,129},{74,163,112},{96,129,94},{119,96,77},{104,171,124},{126,137,106},{148,104,89},{170,71,72},{155,145,118},{178,112,101},{200,79,84},{222,46,67}}},
+    {"H", {0xdf,0xf3,0xac,0x8f,0xda,0xe9,0x08,0x27},
+     {{21,89,0},{251,255,183},{251,255,183},{149,217,81},{123,191,55},{21,89,0},{149,217,81},{251,255,183},{123,191,55},{149,217,81},{251,255,183},{149,217,81},{149,217,81},{149,217,81},{21,89,0},{149,217,81}}},
+    {"T", {0xf3,0xa4,0x9b,0xe2,0x86,0x59,0xa3,0x3d},
+     {{150,184,235},{150,184,235},{156,190,241},{187,170,68},{187,170,68},{156,190,241},{150,184,235},{156,190,241},{156,190,241},{153,187,238},{153,187,238},{187,170,68},{150,184,235},{187,170,68},{187,170,68},{150,184,235}}},
+};
+
+static const struct { uint8_t blk[8]; uint8_t a8[16]; uint8_t r11[16]; }
+eac_golden[] = {
+    {{0xb7,0x8a,0x7a,0x9e,0xb9,0xdb,0x74,0x49},
+     {103,255,239,119,239,119,239,151,207,255,239,151,151,151,255,151},
+     {103,255,239,119,239,119,239,151,207,255,239,151,151,151,255,151}},
+    {{0x6e,0xb9,0x3e,0x6f,0xbd,0xf3,0x0d,0xeb},
+     {55,209,209,187,209,187,121,209,121,209,187,154,187,154,88,0},
+     {55,209,209,187,209,187,121,209,121,209,187,154,187,154,88,0}},
+    {{0x39,0xec,0x35,0xe5,0x15,0x4f,0x1a,0x72},
+     {1,0,0,99,99,85,0,1,0,0,141,141,141,99,1,0},
+     {1,0,0,99,99,85,0,1,0,0,141,141,141,99,1,0}},
+    {{0x19,0x23,0x61,0xfe,0xc2,0xef,0x9a,0xdc},
+     {0,49,49,31,21,0,0,0,0,21,49,0,49,13,17,27},
+     {0,49,49,31,21,0,0,0,0,21,49,0,49,13,17,27}},
+};
+
+static int test_etc2_decoders(void) {
+    size_t i;
+    for (i = 0; i < sizeof(etc2_golden) / sizeof(etc2_golden[0]); ++i) {
+        uint8_t dec[4 * 4 * 4];
+        int k;
+        CHECK(tc_etc2_decompress_rgba8(etc2_golden[i].blk, 4, 4, 0, 16, dec,
+                                       sizeof(dec)) == TC_SUCCESS,
+              "etc2 golden decode");
+        for (k = 0; k < 16; ++k)
+            CHECK(dec[k * 4 + 0] == etc2_golden[i].rgb[k][0] &&
+                      dec[k * 4 + 1] == etc2_golden[i].rgb[k][1] &&
+                      dec[k * 4 + 2] == etc2_golden[i].rgb[k][2] &&
+                      dec[k * 4 + 3] == 255u,
+                  "etc2 golden matches reference decoder");
+    }
+    for (i = 0; i < sizeof(eac_golden) / sizeof(eac_golden[0]); ++i) {
+        uint8_t rgba[16 * 16], dec[4 * 4 * 4];
+        int k;
+        /* ETC2 RGBA = EAC alpha block + RGB block; only the alpha half is pinned
+         * here (the RGB half is covered above). */
+        memcpy(rgba, eac_golden[i].blk, 8);
+        memcpy(rgba + 8, etc2_golden[0].blk, 8);
+        CHECK(tc_etc2_decompress_rgba8(rgba, 4, 4, 1, 16, dec, sizeof(dec)) ==
+                  TC_SUCCESS, "etc2 rgba golden decode");
+        for (k = 0; k < 16; ++k)
+            CHECK(dec[k * 4 + 3] == eac_golden[i].a8[k],
+                  "eac alpha golden matches reference decoder");
+        CHECK(tc_eac_decompress_rgba8(eac_golden[i].blk, 4, 4, 0, 16, dec,
+                                      sizeof(dec)) == TC_SUCCESS,
+              "eac r11 golden decode");
+        for (k = 0; k < 16; ++k)
+            CHECK(dec[k * 4 + 0] == eac_golden[i].r11[k],
+                  "eac r11 golden matches reference decoder");
+    }
+    return 0;
+}
+
+/* ETC numbers texels down columns; gathering blocks row-major transposed every
+ * block we emitted. A pure horizontal ramp is the sharpest probe: transposed, it
+ * decodes as a vertical one. Encode -> decode must preserve the orientation. */
+static int test_etc2_orientation(void) {
+    enum { W = 8, H = 8 };
+    uint8_t src[W * H * 4], dec[W * H * 4], enc[W * H];
+    tc_etc2_options o;
+    uint32_t x, y;
+    tc_etc2_options_init(&o);
+    o.alpha = 0;
+    for (y = 0; y < H; ++y)
+        for (x = 0; x < W; ++x) {
+            uint8_t *p = src + ((size_t)y * W + x) * 4u;
+            p[0] = p[1] = p[2] = (uint8_t)(x * 36u); /* varies along X only */
+            p[3] = 255u;
+        }
+    CHECK(tc_etc2_compress_rgba8(src, W, H, W * 4u, &o, enc, sizeof(enc)) ==
+              TC_SUCCESS, "etc2 orientation compress");
+    CHECK(tc_etc2_decompress_rgba8(enc, W, H, 0, W * 4u, dec, sizeof(dec)) ==
+              TC_SUCCESS, "etc2 orientation decompress");
+    for (y = 0; y < H; ++y)
+        for (x = 0; x < W; ++x) {
+            int got = dec[((size_t)y * W + x) * 4u];
+            int want = (int)(x * 36u);
+            CHECK(got >= want - 24 && got <= want + 24,
+                  "etc2 round-trip preserves the X ramp (not transposed)");
+        }
+    /* Each column must be constant down its rows; a transposed block would make
+     * the value vary with y instead. */
+    for (x = 0; x < W; ++x)
+        for (y = 1; y < H; ++y)
+            CHECK(dec[((size_t)y * W + x) * 4u] == dec[(size_t)x * 4u],
+                  "etc2 round-trip: columns stay constant");
+    return 0;
+}
+
+/* EAC R11 carries the roughness companion texture, so its orientation matters
+ * for the same reason. */
+static int test_eac_orientation(void) {
+    enum { W = 8, H = 8 };
+    uint8_t src[W * H * 4], dec[W * H * 4], enc[W * H];
+    uint32_t x, y;
+    for (y = 0; y < H; ++y)
+        for (x = 0; x < W; ++x) {
+            uint8_t *p = src + ((size_t)y * W + x) * 4u;
+            p[0] = (uint8_t)(x * 36u);
+            p[1] = p[2] = 0u;
+            p[3] = 255u;
+        }
+    CHECK(tc_eac_compress_rgba8(src, W, H, W * 4u, 0, enc, sizeof(enc)) ==
+              TC_SUCCESS, "eac orientation compress");
+    CHECK(tc_eac_decompress_rgba8(enc, W, H, 0, W * 4u, dec, sizeof(dec)) ==
+              TC_SUCCESS, "eac orientation decompress");
+    for (y = 0; y < H; ++y)
+        for (x = 0; x < W; ++x) {
+            int got = dec[((size_t)y * W + x) * 4u];
+            int want = (int)(x * 36u);
+            CHECK(got >= want - 24 && got <= want + 24,
+                  "eac round-trip preserves the X ramp (not transposed)");
+        }
+    return 0;
+}
+
+
+/* BC7 decoder conformance on arbitrary blocks.
+ *
+ * The xbc7 gate already cross-checks the library decoder against
+ * bc7_ref_decode.h, but only on blocks our own encoder produced -- which use a
+ * handful of the eight modes. Random blocks reach every mode, every partition,
+ * rotation, p-bit and index-selection combination a foreign encoder might emit
+ * (a BC7 block has no invalid bit patterns once its mode prefix is set).
+ *
+ * bc7_ref_decode.h is an independent implementation, and it was itself verified
+ * bit-exact against upstream bcdec (iOrange, public domain / MIT) over 320k
+ * random blocks -- 40k per mode -- so agreeing with it here is a real
+ * conformance statement, not just self-consistency.
+ */
+static uint32_t bc7c_rs = 99u;
+static uint32_t bc7c_rnd(void) {
+    bc7c_rs = bc7c_rs * 1664525u + 1013904223u;
+    return bc7c_rs >> 8;
+}
+
+static int test_bc7_decoder_conformance(void) {
+    int mode;
+    long total = 0;
+    for (mode = 0; mode < 8; ++mode) {
+        int i;
+        for (i = 0; i < 2000; ++i) {
+            uint8_t blk[16], ours[16 * 4], ref[16][4];
+            int k;
+            for (k = 0; k < 16; ++k) blk[k] = (uint8_t)bc7c_rnd();
+            /* Select the mode: `mode` low zero bits, then the marker bit. */
+            blk[0] = (uint8_t)((blk[0] & ~((1u << (mode + 1)) - 1u)) | (1u << mode));
+            CHECK(tc_bc7_decompress_rgba8(blk, 4, 4, 16, ours, sizeof(ours)) ==
+                      TC_SUCCESS, "bc7 conformance decode");
+            tc_bc7_ref_decode_block(blk, ref);
+            CHECK(memcmp(ours, &ref[0][0], 64) == 0,
+                  "bc7 decode matches the reference decoder on a random block");
+            total++;
+        }
+    }
+    printf("  bc7 decoder conformance: %ld random blocks over all 8 modes\n", total);
+    return 0;
+}
+
+
+/* Reference decode of a BC4_SNORM block, written from the spec: the stored
+ * endpoints are int8, and the 6-value palette substitutes the signed extremes
+ * -1.0 (-127) and +1.0 (127) for the unsigned 0 and 255. Independent of the
+ * library's tc_decode_bc4_block_snorm, which it is used to check. */
+static void bc4_decode_snorm(const uint8_t in[8], int out[16]) {
+    int r0 = (int8_t)in[0], r1 = (int8_t)in[1], pal[8], i;
+    uint64_t bits = 0;
+    pal[0] = r0;
+    pal[1] = r1;
+    if (r0 > r1) {
+        for (i = 1; i <= 6; ++i) pal[i + 1] = ((7 - i) * r0 + i * r1) / 7;
+    } else {
+        for (i = 1; i <= 4; ++i) pal[i + 1] = ((5 - i) * r0 + i * r1) / 5;
+        pal[6] = -127;
+        pal[7] = 127;
+    }
+    for (i = 0; i < 6; ++i) bits |= (uint64_t)in[2 + i] << (8 * i);
+    for (i = 0; i < 16; ++i) {
+        int p = pal[(bits >> (3 * i)) & 7u];
+        out[i] = p < -127 ? -127 : p;
+    }
+}
+
+/* BC5_SNORM: the stored bytes must be *signed*, and must round-trip.
+ *
+ * This used to be broken in a way nothing could see: tc_bc5_compress_rgba8
+ * ignored the options entirely and stored UNORM bytes, while the DDS/KTX2
+ * writers tagged the format as SNORM -- so a GPU read a stored 200 as -56.
+ * The checks below pin both halves: the bytes really are signed (a mid-grey
+ * input, meaning x = 0, must store ~0 rather than ~128), and encode -> decode
+ * returns what went in. */
+static int test_bc5_snorm(void) {
+    enum { W = 16, H = 8 };
+    uint8_t src[W * H * 4], dec[W * H * 4], enc[32 * 16], enc_u[32 * 16];
+    tc_bc5_options os, ou;
+    uint32_t x, y, bxc = (W + 3u) / 4u, bx, by;
+    tc_bc5_options_init(&os);
+    tc_bc5_options_init(&ou);
+    os.snorm = 1;
+    ou.snorm = 0;
+
+    for (y = 0; y < H; ++y)
+        for (x = 0; x < W; ++x) {
+            uint8_t *p = src + ((size_t)y * W + x) * 4u;
+            p[0] = (uint8_t)(x * 17u);  /* sweeps the full [-1,1] range */
+            p[1] = (uint8_t)(y * 36u);
+            p[2] = 0u;
+            p[3] = 255u;
+        }
+    CHECK(tc_bc5_compress_rgba8(src, W, H, W * 4u, &os, enc, sizeof(enc)) ==
+              TC_SUCCESS, "bc5 snorm compress");
+    CHECK(tc_bc5_compress_rgba8(src, W, H, W * 4u, &ou, enc_u, sizeof(enc_u)) ==
+              TC_SUCCESS, "bc5 unorm compress");
+    /* The option must actually change the stored bytes. It used to not. */
+    CHECK(memcmp(enc, enc_u, sizeof(enc)) != 0,
+          "bc5 snorm changes the encoded bytes (not just the container tag)");
+
+    /* Block decode must match the independent signed reference decoder. */
+    for (by = 0; by < H; by += 4u)
+        for (bx = 0; bx < W; bx += 4u) {
+            size_t bi = ((size_t)(by / 4u) * bxc + bx / 4u) * 16u;
+            int refr[16], refg[16];
+            int8_t sr[16], sg[16];
+            int k;
+            bc4_decode_snorm(enc + bi, refr);
+            bc4_decode_snorm(enc + bi + 8u, refg);
+            tc_decode_bc4_block_snorm(enc + bi, sr);
+            tc_decode_bc4_block_snorm(enc + bi + 8u, sg);
+            for (k = 0; k < 16; ++k)
+                CHECK((int)sr[k] == refr[k] && (int)sg[k] == refg[k],
+                      "bc5 snorm block decode matches the reference decoder");
+        }
+
+    /* Round-trip through the public decoder, in the caller's UNORM8 convention.
+     * Judged against the UNORM path rather than an absolute bound: BC4's 8-level
+     * palette has its own error on this ramp, and the point here is that the
+     * signed storage costs essentially nothing on top of it. */
+    {
+        int worst_s = 0, worst_u = 0;
+        CHECK(tc_bc5_decompress_rgba8(enc, W, H, 1, W * 4u, dec, sizeof(dec)) ==
+                  TC_SUCCESS, "bc5 snorm decompress");
+        for (y = 0; y < H; ++y)
+            for (x = 0; x < W; ++x) {
+                const uint8_t *sp = src + ((size_t)y * W + x) * 4u;
+                const uint8_t *d = dec + ((size_t)y * W + x) * 4u;
+                int e0 = abs((int)d[0] - (int)sp[0]), e1 = abs((int)d[1] - (int)sp[1]);
+                if (e0 > worst_s) worst_s = e0;
+                if (e1 > worst_s) worst_s = e1;
+            }
+        CHECK(tc_bc5_decompress_rgba8(enc_u, W, H, 0, W * 4u, dec, sizeof(dec)) ==
+                  TC_SUCCESS, "bc5 unorm decompress");
+        for (y = 0; y < H; ++y)
+            for (x = 0; x < W; ++x) {
+                const uint8_t *sp = src + ((size_t)y * W + x) * 4u;
+                const uint8_t *d = dec + ((size_t)y * W + x) * 4u;
+                int e0 = abs((int)d[0] - (int)sp[0]), e1 = abs((int)d[1] - (int)sp[1]);
+                if (e0 > worst_u) worst_u = e0;
+                if (e1 > worst_u) worst_u = e1;
+            }
+        printf("  bc5 round-trip worst error: unorm=%d snorm=%d\n", worst_u, worst_s);
+        CHECK(worst_s <= worst_u + 2,
+              "bc5 snorm round-trip is no worse than the unorm path");
+    }
+
+    /* Mid-grey means x = 0, so a signed store must be ~0, not ~128 -- this is
+     * the check that fails if the encoder quietly stores unorm bytes. */
+    {
+        uint8_t flat[4 * 4 * 4], one[16];
+        int i;
+        for (i = 0; i < 16; ++i) {
+            flat[i * 4 + 0] = 128u;
+            flat[i * 4 + 1] = 128u;
+            flat[i * 4 + 2] = 0u;
+            flat[i * 4 + 3] = 255u;
+        }
+        CHECK(tc_bc5_compress_rgba8(flat, 4, 4, 16u, &os, one, sizeof(one)) ==
+                  TC_SUCCESS, "bc5 snorm flat compress");
+        CHECK(abs((int)(int8_t)one[0]) <= 2 && abs((int)(int8_t)one[1]) <= 2,
+              "bc5 snorm stores x=0 as ~0 (signed), not ~128 (unsigned)");
+    }
+
+    /* Decoding snorm blocks as unorm (or vice versa) must not silently pass. */
+    CHECK(tc_bc5_decompress_rgba8(enc, W, H, 0, W * 4u, dec, sizeof(dec)) ==
+              TC_SUCCESS, "bc5 snorm-as-unorm decodes (but wrongly)");
+    {
+        int differs = 0;
+        for (y = 0; y < H && !differs; ++y)
+            for (x = 0; x < W; ++x) {
+                const uint8_t *s = src + ((size_t)y * W + x) * 4u;
+                const uint8_t *d = dec + ((size_t)y * W + x) * 4u;
+                if (abs((int)d[0] - (int)s[0]) > 8) { differs = 1; break; }
+            }
+        CHECK(differs, "bc5 signedness is load-bearing (mismatched decode is wrong)");
+    }
+    return 0;
+}
+
+
+/* ETC2 encode quality, measured through the (Mesa-validated) decoder.
+ *
+ * The decoder goldens and the orientation test both passed while the encoder's
+ * differential mode was writing its 5-bit base and 3-bit delta at overlapping
+ * bit positions -- every differential block decoded to a wrong base colour, and
+ * ETC2 scored ~13 dB where BC1 scored ~35 dB on the same image. Nothing noticed,
+ * because no test asserted that ETC2 was any *good*, only that it round-tripped
+ * the modes it happened to emit.
+ *
+ * So: hold ETC2 to BC1's standard on identical content. They are both 4 bpp and
+ * ETC2 (with its planar mode) should be at least as good, so a generous floor of
+ * "within 2 dB of BC1" still catches a broken mode immediately.
+ */
+static int test_etc2_quality(void) {
+    enum { W = 64, H = 64 };
+    static uint8_t src[W * H * 4], dec[W * H * 4];
+    static uint8_t etc[W * H / 2], bc1[W * H / 2];
+    tc_etc2_options eo;
+    tc_bc1_options bo;
+    double sse_etc = 0.0, sse_bc1 = 0.0, p_etc, p_bc1;
+    uint32_t rs = 7u, x, y;
+    size_t i;
+    int c;
+    tc_etc2_options_init(&eo);
+    eo.alpha = 0;
+    tc_bc1_options_init(&bo);
+
+    /* Smooth luma with a little detail and a natural (correlated) tint -- the
+     * content both codecs are built for. */
+    for (y = 0; y < H; ++y)
+        for (x = 0; x < W; ++x) {
+            uint8_t *p = src + ((size_t)y * W + x) * 4u;
+            int v;
+            rs = rs * 1664525u + 1013904223u;
+            v = (int)(128.0 + 100.0 * sin(x * 0.3) * cos(y * 0.25)) +
+                (int)((rs >> 26) % 8u) - 4;
+            if (v < 0) v = 0;
+            if (v > 255) v = 255;
+            p[0] = (uint8_t)v;
+            p[1] = (uint8_t)(v * 230 / 255);
+            p[2] = (uint8_t)(v * 200 / 255);
+            p[3] = 255u;
+        }
+
+    CHECK(tc_etc2_compress_rgba8(src, W, H, W * 4u, &eo, etc, sizeof(etc)) ==
+              TC_SUCCESS, "etc2 quality: compress");
+    CHECK(tc_etc2_decompress_rgba8(etc, W, H, 0, W * 4u, dec, sizeof(dec)) ==
+              TC_SUCCESS, "etc2 quality: decompress");
+    for (i = 0; i < (size_t)W * H; ++i)
+        for (c = 0; c < 3; ++c) {
+            double d = (double)src[i * 4u + (size_t)c] - (double)dec[i * 4u + (size_t)c];
+            sse_etc += d * d;
+        }
+    CHECK(tc_bc1_compress_rgba8(src, W, H, W * 4u, &bo, bc1, sizeof(bc1)) ==
+              TC_SUCCESS, "etc2 quality: bc1 compress");
+    CHECK(tc_bc1_decompress_rgba8(bc1, W, H, W * 4u, dec, sizeof(dec)) ==
+              TC_SUCCESS, "etc2 quality: bc1 decompress");
+    for (i = 0; i < (size_t)W * H; ++i)
+        for (c = 0; c < 3; ++c) {
+            double d = (double)src[i * 4u + (size_t)c] - (double)dec[i * 4u + (size_t)c];
+            sse_bc1 += d * d;
+        }
+    p_etc = 10.0 * log10(255.0 * 255.0 / (sse_etc / (double)(W * H * 3)));
+    p_bc1 = 10.0 * log10(255.0 * 255.0 / (sse_bc1 / (double)(W * H * 3)));
+    printf("  etc2 quality: ETC2=%.2f dB  BC1=%.2f dB (same content, both 4bpp)\n",
+           p_etc, p_bc1);
+    CHECK(p_etc >= 30.0, "etc2 encode quality clears an absolute floor");
+    CHECK(p_etc >= p_bc1 - 2.0, "etc2 encode quality is competitive with bc1");
+    return 0;
+}
+
+
+/* ASTC HDR, RGBA (CEM 15) path, on the block that actually broke it.
+ *
+ * The gate's CEM 15 case is a smooth correlated RGBA gradient. It never chose
+ * the dual-plane sub-path, so it never touched the bug -- and neither did my
+ * first attempt at a synthetic replacement, which passed identically against the
+ * broken encoder. The content below is the exact 4x4 block, lifted from a real
+ * photo, that decoded to 30208.
+ *
+ * The bug: the dual-plane path wrote its 8 endpoint values at colour quant 256
+ * (64 bits from bit 17) underneath 32 dual-plane weight symbols that already
+ * occupied the top 52 bits. They overlapped -- and the decoder, which derives
+ * the colour quant level from whatever space the weights leave behind, read them
+ * back at a different level entirely. astcenc decodes those blocks to the same
+ * garbage we do, which is how we know the encoder was at fault and not us.
+ *
+ * The range check is the load-bearing one: a blown-up endpoint shows up there
+ * immediately, and long before a PSNR number explains why.
+ */
+static int test_astc_hdr_rgba_quality(void) {
+    /* Ordinary, smooth, mid-grey-ish -- nothing exotic about it. */
+    static const float BR[16] = {
+        0.678f, 0.772f, 0.800f, 0.804f, 0.745f, 0.867f, 0.886f, 0.882f,
+        0.749f, 0.859f, 0.878f, 0.875f, 0.749f, 0.878f, 0.894f, 0.890f};
+    static const float BG[16] = {
+        0.643f, 0.757f, 0.792f, 0.780f, 0.788f, 0.910f, 0.957f, 0.945f,
+        0.788f, 0.914f, 0.937f, 0.933f, 0.800f, 0.933f, 0.953f, 0.949f};
+    static const float BB[16] = {
+        0.655f, 0.745f, 0.804f, 0.796f, 0.812f, 0.917f, 0.965f, 0.945f,
+        0.828f, 0.917f, 0.949f, 0.945f, 0.832f, 0.937f, 0.965f, 0.961f};
+    float src[16 * 4], dec[16 * 4];
+    uint8_t enc[16];
+    tc_astc_hdr_options o;
+    double sse = 0.0, psnr;
+    float dmax = 0.0f;
+    int i, c;
+    tc_astc_hdr_options_init(&o);
+    for (i = 0; i < 16; ++i) {
+        src[i * 4 + 0] = BR[i];
+        src[i * 4 + 1] = BG[i];
+        src[i * 4 + 2] = BB[i];
+        src[i * 4 + 3] = 1.0f;
+    }
+    CHECK(tc_astc_hdr_compress_rgbaf(src, 4, 4, 4u * 4u * sizeof(float), &o, enc,
+                                     sizeof(enc)) == TC_SUCCESS,
+          "astc hdr rgba: compress");
+    CHECK(tc_astc_hdr_decompress_rgbaf(enc, 4, 4, 4, 4, 4u * 4u * sizeof(float),
+                                       dec, sizeof(dec)) == TC_SUCCESS,
+          "astc hdr rgba: decompress");
+    for (i = 0; i < 16; ++i)
+        for (c = 0; c < 3; ++c) {
+            double d = (double)src[i * 4 + c] - (double)dec[i * 4 + c];
+            sse += d * d;
+            if (dec[i * 4 + c] > dmax) dmax = dec[i * 4 + c];
+        }
+    psnr = 10.0 * log10(1.0 / (sse / 48.0));
+    printf("  astc hdr rgba (cem15): %.2f dB, decoded max %.2f (source max ~0.97)\n",
+           psnr, (double)dmax);
+    CHECK((double)dmax <= 4.0,
+          "astc hdr rgba decode stays in range (no endpoint blow-up)");
+    CHECK(psnr >= 25.0, "astc hdr rgba encode quality clears its floor");
+    return 0;
+}
+
 int main(void) {
     uint8_t rgba[7 * 5 * 4];
     uint8_t part_rgba[4 * 4 * 4];
@@ -680,6 +1253,37 @@ int main(void) {
     CHECK(bc7_mode(bc7) == 1u, "forced mode1 emitted");
     CHECK(rd_bits(bc7, 2, 6) == 5u, "quickbc7 mode1 partition");
     opt.mode_mask = 0xffu;
+
+    /* Float-input wrapper must produce valid output. */
+    {
+        float f_rgba[7 * 5 * 4];
+        uint8_t bc7_f[64];
+        uint32_t i;
+        for (i = 0; i < 7u * 5u * 4u; ++i)
+            f_rgba[i] = (float)rgba[i] / 255.0f;
+        CHECK(tc_bc7_compress_rgbaf(f_rgba, 7, 5, 7 * 4 * sizeof(float),
+                                    &opt, bc7_f, sizeof(bc7_f)) == TC_SUCCESS,
+              "bc7 float compress");
+        CHECK(bc7_mode(bc7_f) < 8u, "bc7 float valid mode");
+    }
+    /* Float decompress round-trip: compress uint8, decompress to float, check
+     * the float output matches the expected uint8 reconstruction. */
+    {
+        uint8_t dec_u8[7 * 5 * 4];
+        float dec_f[7 * 5 * 4];
+        uint32_t i, mismatches = 0;
+        CHECK(tc_bc7_decompress_rgba8(bc7, 7, 5, 7 * 4, dec_u8,
+                                      sizeof(dec_u8)) == TC_SUCCESS,
+              "bc7 u8 decompress");
+        CHECK(tc_bc7_decompress_rgbaf(bc7, 7, 5, 7 * 4 * sizeof(float),
+                                      dec_f, sizeof(dec_f)) == TC_SUCCESS,
+              "bc7 float decompress");
+        for (i = 0; i < 7u * 5u * 4u; ++i) {
+            float expected = (float)dec_u8[i] / 255.0f;
+            if (fabsf(dec_f[i] - expected) > 1e-6f) ++mismatches;
+        }
+        CHECK(mismatches == 0u, "bc7 float decompress matches u8 decompress");
+    }
 
     CHECK(tc_bc5_compress_rgba8(rgba, 7, 5, 7 * 4, &bc5_opt, bc5,
                                 sizeof(bc5)) == TC_SUCCESS,
@@ -1557,7 +2161,8 @@ int main(void) {
     CHECK(tc_bc6h_compress_rgb32f(rgbf, 7, 5, 7 * 3 * sizeof(float), &bc6h_opt,
                                   bc6h, sizeof(bc6h)) == TC_SUCCESS,
           "bc6h signed compress");
-    CHECK(rd_bits(bc6h, 0, 5) == 3u, "bc6h signed mode11 bits");
+    CHECK(rd_bits(bc6h, 0, 5) == 3u || rd_bits(bc6h, 0, 5) == 30u ||
+              rd_bits(bc6h, 0, 5) == 0u, "bc6h signed mode bits (10/9/0)");
     CHECK(tc_dds_write_bc6h_memory(bc6h, 7, 5, &bc6h_opt, dds, sizeof(dds)) ==
               TC_SUCCESS,
           "bc6h signed dds write");
@@ -1625,6 +2230,14 @@ int main(void) {
     if (astc_ref_roundtrip_test()) return 1;
     if (astc_backend_parity_test()) return 1;
     if (astc_thread_parity_test()) return 1;
+    if (test_bc_decoders()) return 1;
+    if (test_bc7_decoder_conformance()) return 1;
+    if (test_bc5_snorm()) return 1;
+    if (test_etc2_quality()) return 1;
+    if (test_astc_hdr_rgba_quality()) return 1;
+    if (test_etc2_decoders()) return 1;
+    if (test_etc2_orientation()) return 1;
+    if (test_eac_orientation()) return 1;
 
     printf("texcomp tests: OK\n");
     return 0;

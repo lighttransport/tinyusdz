@@ -743,9 +743,43 @@ int MaxSkinInfluenceCount(const tydra::RenderScene& render) {
   return maxInfluences;
 }
 
+// Apply the GPU-morph channels on the CPU: the same sum the vertex shader does
+// (coeff[channelId] * delta), from the same half-precision buffers it reads. Used
+// only for BOUNDS -- the raster path never morphs vertices on the CPU.
+static void ApplyMorphChannelsToVertices(const DrawMeshCPU& dm,
+                                         const std::vector<float>& coeff,
+                                         std::vector<DrawVertex>* verts) {
+  if (!verts) return;
+  const size_t entries = dm.morphDeltaHalf.size() / 4;
+  const bool haveIds = dm.morphChannelId.size() == entries;
+  for (size_t v = 0; v < verts->size(); ++v) {
+    const size_t base = dm.morphOffsetCount[v * 2 + 0];
+    const size_t count = dm.morphOffsetCount[v * 2 + 1];
+    for (size_t k = 0; k < count && base + k < entries; ++k) {
+      const uint16_t* e = &dm.morphDeltaHalf[(base + k) * 4];
+      auto f16 = [](uint16_t bits) {
+        tinyusdz::value::half h;
+        h.value = bits;
+        return tinyusdz::value::half_to_float(h);
+      };
+      const size_t chan =
+          haveIds ? dm.morphChannelId[base + k]
+                  : static_cast<size_t>(f16(e[0]) + 0.5f);
+      if (chan >= coeff.size()) continue;
+      const float c = coeff[chan];
+      if (std::fabs(c) < 1e-6f) continue;
+      (*verts)[v].px += c * f16(e[1]);
+      (*verts)[v].py += c * f16(e[2]);
+      (*verts)[v].pz += c * f16(e[3]);
+    }
+  }
+}
+
 bool BuildGpuSkinningFrame(
     const tydra::RenderScene& render, DrawScene* draw, double timecode,
-    SkinningFrameCPU* frame, bool updateSkinnedHelpers) {
+    SkinningFrameCPU* frame, bool updateSkinnedHelpers,
+    const tinyusdz::Stage* stage,
+    const std::unordered_map<std::string, float>* blendOverride) {
   if (!draw || !frame) return false;
   const int matrices = draw->boneMatrixCount;
   if (matrices > 0) {
@@ -762,7 +796,16 @@ bool BuildGpuSkinningFrame(
   }
 
   // The raster path applies blendshapes + skinning in the GPU vertex shader, so
-  // the CPU keeps rest geometry; bounds/skin reads use dm.vertices directly.
+  // the CPU keeps rest geometry. The BOUNDS below still have to account for the
+  // morph -- they drive the ground grid, the depth normalization and the auto-fit
+  // -- so morph a scratch copy of the vertices for that, exactly as the RT path
+  // does (BuildRtSkinnedMeshVertices) before it re-derives its boxes.
+  std::unordered_map<std::string, float> blendWeights;
+  if (stage) blendWeights = GatherBlendWeights(*stage, timecode);
+  if (blendOverride)
+    for (const auto& kv : *blendOverride) blendWeights[kv.first] = kv.second;
+  const bool morphBounds = stage != nullptr;
+  std::vector<float> morphCoeff;
 
   std::unordered_map<int, std::vector<matrix4d>> skinCache;
   std::unordered_map<int, std::vector<matrix4d>> composedByBase;
@@ -806,7 +849,20 @@ bool BuildGpuSkinningFrame(
   };
   for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
     DrawMeshCPU& dm = draw->meshes[mi];
-    const std::vector<DrawVertex>& verts = dm.vertices;
+    // The morph is applied from the half-precision GPU channels, not from
+    // dm.morphs -- mesh_build frees those once the channels are built (at facial
+    // scale they are the dominant CPU copy), so they are empty here.
+    std::vector<DrawVertex> morphed;
+    if (morphBounds && dm.morphChannelCount > 0 &&
+        !dm.morphTargetChannels.empty() &&
+        dm.morphOffsetCount.size() == dm.vertices.size() * 2 &&
+        !dm.morphDeltaHalf.empty()) {
+      EvalMorphChannelCoeffs(dm, blendWeights, &morphCoeff);
+      morphed = dm.vertices;
+      ApplyMorphChannelsToVertices(dm, morphCoeff, &morphed);
+    }
+    const std::vector<DrawVertex>& verts =
+        morphed.empty() ? dm.vertices : morphed;
     bool meshFirst = true;
     float mn[3] = {std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max(),
@@ -815,14 +871,33 @@ bool BuildGpuSkinningFrame(
                    -std::numeric_limits<float>::max(),
                    -std::numeric_limits<float>::max()};
 
-    auto update = [&](const point3f& local) {
-      float w[3];
-      TransformPointWorld(dm.world, local, w);
+    // An INSTANCED mesh's vertices are prototype-local and `world` is ignored (each
+    // placement carries its own o2w, 3 rows of (x,y,z,tx)); bounding them through
+    // `world` would stack every instance on top of the prototype's origin. A
+    // PointInstancer of a deforming prototype is exactly that case.
+    const size_t ninst = dm.instanceCount();
+    auto grow = [&](const float w[3]) {
       for (int c = 0; c < 3; ++c) {
         mn[c] = std::min(mn[c], w[c]);
         mx[c] = std::max(mx[c], w[c]);
       }
       meshFirst = false;
+    };
+    auto update = [&](const point3f& local) {
+      if (ninst > 0) {
+        for (size_t k = 0; k < ninst; ++k) {
+          const float* X = &dm.instanceXforms[k * 12];
+          const float w[3] = {
+              X[0] * local.x + X[1] * local.y + X[2] * local.z + X[3],
+              X[4] * local.x + X[5] * local.y + X[6] * local.z + X[7],
+              X[8] * local.x + X[9] * local.y + X[10] * local.z + X[11]};
+          grow(w);
+        }
+        return;
+      }
+      float w[3];
+      TransformPointWorld(dm.world, local, w);
+      grow(w);
     };
 
     const bool skinned = dm.skelId >= 0 && dm.skinMatrixBase >= 0 &&
@@ -835,12 +910,20 @@ bool BuildGpuSkinningFrame(
         !dm.influenceTexels.empty() && dm.influenceTexels.size() % 4 == 0;
     dm.skinnedHelperPoints.clear();
     if (!skinned && !extendedSkinned) {
-      if (dm.aabbMin[0] <= dm.aabbMax[0] && dm.aabbMin[1] <= dm.aabbMax[1] &&
-          dm.aabbMin[2] <= dm.aabbMax[2]) {
+      if (!morphed.empty()) {
+        // Morph-only mesh: its box moves with the blendshape, so take it from the
+        // morphed vertices rather than leaving the rest box standing.
+        for (const DrawVertex& v : verts) update(point3f{v.px, v.py, v.pz});
+        if (!meshFirst) {
+          for (int c = 0; c < 3; ++c) { dm.aabbMin[c] = mn[c]; dm.aabbMax[c] = mx[c]; }
+          updateScene(dm.aabbMin, dm.aabbMax);
+        }
+      } else if (dm.aabbMin[0] <= dm.aabbMax[0] && dm.aabbMin[1] <= dm.aabbMax[1] &&
+                 dm.aabbMin[2] <= dm.aabbMax[2]) {
         updateScene(dm.aabbMin, dm.aabbMax);
       }
       continue;
-    } else if ((!skinned && !extendedSkinned) || bit == composedByBase.end()) {
+    } else if (bit == composedByBase.end()) {
       for (const DrawVertex& v : verts) {
         update(point3f{v.px, v.py, v.pz});
       }

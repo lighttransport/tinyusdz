@@ -9,7 +9,6 @@
 #include "type-id.hh"
 #include <cstddef>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace tinyusdz {
@@ -61,7 +60,6 @@ public:
   explicit Value(float v);
   explicit Value(double v);
   explicit Value(const char* v);
-  explicit Value(std::string_view v);
   explicit Value(const std::string& v);
   explicit Value(std::string&& v);
 
@@ -92,12 +90,8 @@ public:
   static Value MakeMatrix4d(const double* data);  // 16 doubles
 
   static Value MakeToken(const std::string& s);
-  static Value MakeToken(const char* s);
-  static Value MakeToken(std::string_view s);
   static Value MakeToken(std::string&& s);
   static Value MakeAssetPath(const std::string& s);
-  static Value MakeAssetPath(const char* s);
-  static Value MakeAssetPath(std::string_view s);
   static Value MakeAssetPath(std::string&& s);
 
   // Dictionary (recursive key->Value map; insertion-ordered for round-trip).
@@ -150,7 +144,6 @@ public:
   static Value MakeUInt64Array(const std::vector<uint64_t>& data);
   static Value MakeUInt64Array(std::vector<uint64_t>&& data);
   static Value MakeBoolArray(const std::vector<bool>& data);
-  static Value MakeBoolArrayFromBytes(std::vector<uint8_t>&& data);
   static Value MakeTokenArray(const std::vector<std::string>& data);
   static Value MakeTokenArray(std::vector<std::string>&& data);
 
@@ -162,6 +155,19 @@ public:
                                   uint32_t comps_per_elem);
   static Value MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
                                    uint32_t comps_per_elem);
+  /// Int-vector element types (Int2/Int3/Int4): flat int32 buffer.
+  static Value MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
+                                uint32_t comps_per_elem);
+  /// UInt-vector element types (UInt2/UInt3/UInt4): flat uint32 buffer.
+  static Value MakeUIntCompArray(std::vector<uint32_t>&& data, TypeId elem_type,
+                                 uint32_t comps_per_elem);
+  /// String-family arrays with an explicit element type (Token / String /
+  /// AssetPath); same storage as MakeTokenArray.
+  static Value MakeStringLikeArray(std::vector<std::string>&& data,
+                                   TypeId elem_type);
+  /// Scalar string-family value with an explicit type (Token / String /
+  /// AssetPath / PathExpression).
+  static Value MakeStringLike(const std::string& s, TypeId type);
 
   // ============================================================
   // Type queries
@@ -169,6 +175,11 @@ public:
 
   /// Get the type ID
   TypeId type_id() const { return type_id_; }
+
+  /// Re-tag the semantic (role) type without touching storage — e.g.
+  /// Float2 -> Texcoord2f after a crate read, where roles exist only in the
+  /// declared type name. No-op unless the two types share a storage layout.
+  void retag_role(TypeId new_type);
 
   /// Check if empty (no value stored). A value BLOCK (`= None`) is NOT empty:
   /// it is an authored opinion that blocks weaker values and must round-trip.
@@ -238,6 +249,7 @@ public:
   const uint64_t* as_uint64() const;
   const float* as_float() const;
   const double* as_double() const;
+  const uint8_t* as_uchar() const;
   const std::string* as_string() const;
 
   // Mutable accessors
@@ -248,6 +260,7 @@ public:
   uint64_t* as_uint64();
   float* as_float();
   double* as_double();
+  uint8_t* as_uchar();
   std::string* as_string();
 
   // Vector accessors (return pointer to first element)
@@ -260,6 +273,16 @@ public:
   const double* as_double2() const;
   const double* as_double3() const;
   const double* as_double4() const;
+
+  /// Converting scalar reads: also widen raw-half SBO scalars (authored
+  /// half/half2/half3/half4 and their role types store half-bit lanes that
+  /// as_float*() cannot see) and narrow double-backed values. Lanes are
+  /// copied in storage order (quats stay real-first like as_float4()).
+  /// Return false when the value is not a matching-arity scalar.
+  bool to_float(float* out) const;
+  bool to_float2(float* out) const;   // out[2]
+  bool to_float3(float* out) const;   // out[3]
+  bool to_float4(float* out) const;   // out[4]
 
   // Matrix accessors (return pointer to first element)
   const float* as_matrix2f() const;
@@ -322,6 +345,9 @@ public:
   const uint8_t* raw_bytes(size_t* out_size) const;
 
 private:
+  // Shared implementation for the to_float* converting reads.
+  bool ToFloatLanes(int lanes, float* out) const;
+
   TypeId type_id_ = TypeId::Invalid;
   bool is_array_ = false;
   bool is_lazy_ = false;  // array payload not decoded; storage_ holds LazyArrayRef*

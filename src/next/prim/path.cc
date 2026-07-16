@@ -5,8 +5,19 @@
 
 #include "path.hh"
 
+#include "identifier.hh"
+
 namespace tinyusdz {
 namespace next {
+
+bool Path::is_valid() const {
+  return !path_.empty() && IsValidPathString(path_);
+}
+
+Path Path::Parse(const std::string& path_str) {
+  if (path_str.empty() || !IsValidPathString(path_str)) return Path();
+  return Path(path_str);
+}
 
 Path::Path(const std::string& path_str) : path_(path_str) {}
 
@@ -106,6 +117,11 @@ std::vector<std::string> Path::elements() const {
 }
 
 Path Path::append_child(const std::string& child_name) const {
+  // Authoring boundary: an appended component must be a valid identifier
+  // (strict UTF-8 + XID). Invalid input yields an empty Path.
+  if (!IsValidIdentifier(child_name)) {
+    return Path();
+  }
   if (path_.empty()) {
     return Path("/" + child_name);
   }
@@ -116,6 +132,11 @@ Path Path::append_child(const std::string& child_name) const {
 }
 
 Path Path::append_property(const std::string& prop_name) const {
+  // Authoring boundary: property names must be valid (possibly namespaced)
+  // identifiers. Invalid input yields an empty Path.
+  if (!IsValidNamespacedIdentifier(prop_name)) {
+    return Path();
+  }
   if (has_property()) {
     // Already has property - replace it
     return Path(prim_path().str() + "." + prop_name);

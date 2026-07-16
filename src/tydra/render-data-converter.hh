@@ -446,6 +446,14 @@ struct RenderSceneConverterConfig {
   // App/User must setup TextureImage manually after the conversion.
   bool load_texture_assets{true};
 
+  // Keep GPU-compressed KTX2 textures compressed instead of decoding them to
+  // RGBA8. When a resolved `inputs:file` (or its `customData ktx2` companion)
+  // is a `.ktx2`, the level-0 block payload is stored verbatim in the buffer
+  // and `TextureImage::blockFormat` is set, so a GPU consumer (e.g. tusdview)
+  // can upload/transcode the blocks directly instead of re-encoding decoded
+  // texels. Requires TINYUSDZ_WITH_TEXTOOLS; ignored otherwise. Non-UDIM only.
+  bool keep_compressed_textures{false};
+
   //
   // Merge meshes with the same material for performant rendering.
   //
@@ -904,6 +912,10 @@ class RenderSceneConverter {
   const std::string &GetTimingInfo() const { return _timing_info; }
   void AddWarning(const std::string &msg) { _warn += msg + "\n"; }
   void ClearError() { _err.clear(); }
+
+  // Append a warning line. Public so free-function prim visitors (which hold a
+  // RenderSceneConverter*) can record non-fatal degradations.
+  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
 
   // Prim path <-> index for corresponding array
   // e.g. meshMap: primPath/index to `meshes`.
@@ -1484,7 +1496,6 @@ class RenderSceneConverter {
   bool IsMeshMergeable(const RenderMesh &mesh) const;
 
   void PushInfo(const std::string &msg) { _info += msg + "\n"; }
-  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
   void PushError(const std::string &msg) { _err += msg + "\n"; }
 
   ///

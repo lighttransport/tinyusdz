@@ -1,0 +1,15 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    doc = "Anonymous invalid topology regression fixture."
+)
+
+def Xform "Root"
+{
+    def Mesh "Prim"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 9]
+    }
+}

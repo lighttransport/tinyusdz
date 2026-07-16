@@ -162,6 +162,15 @@ bool TexToolsCompress(const light3d::Image& img, bool srgb,
       r = tc_bc3_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
       break;
     }
+    case DrawCompressedFormat::BC5: {
+      // Two-channel (R,G) — normal maps. Encoder reads R,G of the RGBA8 input.
+      tc_bc5_options o;
+      tc_bc5_options_init(&o);
+      size = tc_bc5_compressed_size(w, h);
+      blocks.resize(size);
+      r = tc_bc5_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
+      break;
+    }
     case DrawCompressedFormat::BC7: {
       tc_bc7_options o;
       tc_bc7_options_init(&o);
@@ -173,6 +182,42 @@ bool TexToolsCompress(const light3d::Image& img, bool srgb,
       r = tc_bc7_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
       break;
     }
+    case DrawCompressedFormat::ETC2_RGB: {
+      tc_etc2_options o;
+      tc_etc2_options_init(&o);
+      o.srgb = srgb ? 1 : 0;
+      o.alpha = 0;
+      size = tc_etc2_rgb_compressed_size(w, h);
+      blocks.resize(size);
+      r = tc_etc2_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
+      break;
+    }
+    case DrawCompressedFormat::ETC2_RGBA: {
+      tc_etc2_options o;
+      tc_etc2_options_init(&o);
+      o.srgb = srgb ? 1 : 0;
+      o.alpha = 1;
+      size = tc_etc2_rgba_compressed_size(w, h);
+      blocks.resize(size);
+      r = tc_etc2_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
+      break;
+    }
+    case DrawCompressedFormat::ASTC_4x4: {
+      tc_astc_options o;
+      tc_astc_options_init(&o);
+      o.block_x = 4;
+      o.block_y = 4;
+      o.srgb = srgb ? 1 : 0;
+      o.threads = TexToolsThreads();
+      size = tc_astc_compressed_size(w, h, &o);
+      blocks.resize(size);
+      r = tc_astc_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
+      break;
+    }
+    case DrawCompressedFormat::BC6H:
+      // HDR (float RGB) — the RGBA8 compress-on-load path can't feed BC6H.
+      // Reserved for the HDR/EXR texture path (follow-up).
+      return false;
     case DrawCompressedFormat::None:
       return false;
   }
@@ -182,6 +227,160 @@ bool TexToolsCompress(const light3d::Image& img, bool srgb,
   out->height = img.height;
   out->data = std::move(blocks);
   return true;
+}
+
+namespace {
+bool CapsAllow(DrawCompressedFormat f, const TextureCompressCaps& c) {
+  switch (f) {
+    case DrawCompressedFormat::BC1:
+    case DrawCompressedFormat::BC3:
+    case DrawCompressedFormat::BC7: return c.bc;
+    case DrawCompressedFormat::BC5: return c.bc5 || c.bc;
+    case DrawCompressedFormat::BC6H: return c.bc6h || c.bc;
+    case DrawCompressedFormat::ETC2_RGB:
+    case DrawCompressedFormat::ETC2_RGBA: return c.etc2;
+    case DrawCompressedFormat::ASTC_4x4: return c.astc;
+    case DrawCompressedFormat::None: return false;
+  }
+  return false;
+}
+bool DecodeToImage(uint32_t w, uint32_t h, light3d::Image* out) {
+  out->width = static_cast<int>(w);
+  out->height = static_cast<int>(h);
+  out->channels = 4;
+  out->data.assign(static_cast<size_t>(w) * h * 4u, 0);
+  return true;
+}
+}  // namespace
+
+bool TexToolsAdaptCompressed(const uint8_t* blocks, size_t nbytes, bool srcIsUni,
+                             DrawCompressedFormat srcFmt, uint32_t w, uint32_t h,
+                             const TextureCompressCaps& caps,
+                             DrawCompressedImageCPU* outCompressed,
+                             light3d::Image* outRGBA) {
+  if (!blocks || !nbytes || !w || !h || !outCompressed || !outRGBA) return false;
+  const size_t rowBytes = static_cast<size_t>(w) * 4u;
+
+  auto keepBlocks = [&](DrawCompressedFormat f) {
+    outCompressed->format = f;
+    outCompressed->width = static_cast<int>(w);
+    outCompressed->height = static_cast<int>(h);
+    outCompressed->data.assign(blocks, blocks + nbytes);
+  };
+
+  if (srcIsUni) {
+    // uni is a valid ASTC 4x4 block stream and transcodes cheaply.
+    if (caps.astc) { keepBlocks(DrawCompressedFormat::ASTC_4x4); return true; }
+    if (caps.bc) {
+      const size_t sz = tc_bc7_compressed_size(w, h);
+      outCompressed->data.resize(sz);
+      if (tc_uni_transcode_bc7(blocks, w, h, outCompressed->data.data(), sz) != TC_SUCCESS)
+        return false;
+      outCompressed->format = DrawCompressedFormat::BC7;
+      outCompressed->width = static_cast<int>(w);
+      outCompressed->height = static_cast<int>(h);
+      return true;
+    }
+    if (caps.etc2) {
+      const size_t sz = tc_etc2_rgba_compressed_size(w, h);
+      outCompressed->data.resize(sz);
+      if (tc_uni_transcode_etc2(blocks, w, h, 1, outCompressed->data.data(), sz) != TC_SUCCESS)
+        return false;
+      outCompressed->format = DrawCompressedFormat::ETC2_RGBA;
+      outCompressed->width = static_cast<int>(w);
+      outCompressed->height = static_cast<int>(h);
+      return true;
+    }
+    // No compressed format: decode uni -> RGBA8.
+    DecodeToImage(w, h, outRGBA);
+    return tc_uni_decompress_rgba8(blocks, w, h, rowBytes, outRGBA->data.data(),
+                                   outRGBA->data.size()) == TC_SUCCESS;
+  }
+
+  // Stored (non-uni) block format: upload as-is if the device supports it.
+  if (CapsAllow(srcFmt, caps)) { keepBlocks(srcFmt); return true; }
+
+  // Otherwise decode to RGBA8. texcomp now ships a decoder for every LDR block
+  // format, so any LDR payload can fall back to an uncompressed upload.
+  DecodeToImage(w, h, outRGBA);
+  uint8_t* dst = outRGBA->data.data();
+  const size_t dsz = outRGBA->data.size();
+  switch (srcFmt) {
+    case DrawCompressedFormat::BC7:
+      return tc_bc7_decompress_rgba8(blocks, w, h, rowBytes, dst, dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::BC1:
+      return tc_bc1_decompress_rgba8(blocks, w, h, rowBytes, dst, dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::BC3:
+      return tc_bc3_decompress_rgba8(blocks, w, h, rowBytes, dst, dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::BC5:
+      return tc_bc5_decompress_rgba8(blocks, w, h, /*snorm=*/0, rowBytes, dst,
+                                     dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::ETC2_RGB:
+    case DrawCompressedFormat::ETC2_RGBA:
+      return tc_etc2_decompress_rgba8(
+                 blocks, w, h,
+                 /*alpha=*/srcFmt == DrawCompressedFormat::ETC2_RGBA, rowBytes,
+                 dst, dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::ASTC_4x4:
+      return tc_astc_decompress_rgba8(blocks, w, h, 4u, 4u, dst, dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::BC6H: {
+      // HDR has no RGBA8 form. On a device that can't sample BC6H, decode to
+      // float and tone-map (Reinhard) so the texture is still usable.
+      std::vector<float> hdr(static_cast<size_t>(w) * h * 4u);
+      if (tc_bc6h_decompress_rgbaf(blocks, w, h, /*is_signed=*/0,
+                                   static_cast<size_t>(w) * 4u * sizeof(float),
+                                   hdr.data(),
+                                   hdr.size() * sizeof(float)) != TC_SUCCESS) {
+        outRGBA->data.clear();
+        return false;
+      }
+      for (size_t i = 0; i < static_cast<size_t>(w) * h; ++i) {
+        for (int c = 0; c < 3; ++c) {
+          const float v = hdr[i * 4 + static_cast<size_t>(c)];
+          const float t = v / (1.0f + v);  // Reinhard
+          const float s = t <= 0.0f ? 0.0f : (t >= 1.0f ? 1.0f : t);
+          dst[i * 4 + static_cast<size_t>(c)] =
+              static_cast<uint8_t>(s * 255.0f + 0.5f);
+        }
+        dst[i * 4 + 3] = 255;
+      }
+      return true;
+    }
+    case DrawCompressedFormat::None:
+    default:
+      outRGBA->data.clear();
+      return false;
+  }
+}
+
+bool TexToolsAdaptCompressedLevel(const uint8_t* blocks, size_t nbytes,
+                                  bool srcIsUni, DrawCompressedFormat srcFmt,
+                                  DrawCompressedFormat targetFmt, uint32_t w,
+                                  uint32_t h, std::vector<uint8_t>* out) {
+  if (!blocks || !nbytes || !w || !h || !out) return false;
+  if (srcIsUni) {
+    if (targetFmt == DrawCompressedFormat::ASTC_4x4) {
+      out->assign(blocks, blocks + nbytes);  // uni blocks are valid ASTC 4x4
+      return true;
+    }
+    if (targetFmt == DrawCompressedFormat::BC7) {
+      const size_t sz = tc_bc7_compressed_size(w, h);
+      out->resize(sz);
+      return tc_uni_transcode_bc7(blocks, w, h, out->data(), sz) == TC_SUCCESS;
+    }
+    if (targetFmt == DrawCompressedFormat::ETC2_RGBA) {
+      const size_t sz = tc_etc2_rgba_compressed_size(w, h);
+      out->resize(sz);
+      return tc_uni_transcode_etc2(blocks, w, h, 1, out->data(), sz) == TC_SUCCESS;
+    }
+    return false;
+  }
+  // Stored block format: only a direct copy to the same format is supported.
+  if (targetFmt == srcFmt) {
+    out->assign(blocks, blocks + nbytes);
+    return true;
+  }
+  return false;
 }
 
 bool TexToolsBuildMips(const light3d::Image& base, const TexUsage& usage,

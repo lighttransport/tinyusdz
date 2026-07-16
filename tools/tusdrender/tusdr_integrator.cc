@@ -24,6 +24,10 @@ int PurposeAnyHitFilter(void *user, uint32_t prim_id, float, float, float) {
   if (!filter || !filter->tris || size_t(prim_id) >= filter->tris->size()) {
     return 0;
   }
+  // Back-face culling is a VISIBILITY property, not an occlusion one: a
+  // single-sided surface still blocks light from either side (an opaque
+  // occluder, like the raster backends' shadowing), so shadow rays are NOT
+  // face-culled -- only the primary/bounce visibility walk is.
   return PurposeVisible((*filter->tris)[size_t(prim_id)].purpose_bit,
                         filter->mask)
              ? 1
@@ -46,10 +50,20 @@ bool IntersectVisibleTriangles(lrt_tri_scene *scene,
       if (prim_id == LRT_TRI_NO_HIT || size_t(prim_id) >= tris.size()) {
         continue;
       }
-      if (PurposeVisible(tris[size_t(prim_id)].purpose_bit, purpose_mask)) {
-        *hit = hits[i];
-        return true;
+      const FlatTri &ft = tris[size_t(prim_id)];
+      if (!PurposeVisible(ft.purpose_bit, purpose_mask)) continue;
+      // Back-face cull a single-sided triangle: the ray sees through it to
+      // whatever lies behind (USD doubleSided=false, matching the raster
+      // backends). The geometric normal points out of the front face, so a ray
+      // travelling with it (dot > 0) struck the back. Skip and keep walking the
+      // hit list rather than stopping here.
+      if (!ft.double_sided) {
+        const float d = ft.n.x * query.dir[0] + ft.n.y * query.dir[1] +
+                        ft.n.z * query.dir[2];
+        if (d > 0.0f) continue;
       }
+      *hit = hits[i];
+      return true;
     }
     query.tmin = std::nextafter(hits[n - 1].t, query.tmax);
     if (!(query.tmin < query.tmax)) return false;
@@ -216,8 +230,17 @@ OpenPBRParams OpenPBRParamsFromLightRt(
 OpenPBRParams OpenPBRParamsForMaterial(
     const TriInfo &tri, const Vec3 &normal,
     const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
-  return openpbr ? OpenPBRParamsFromLightRt(*openpbr, normal)
-                 : OpenPBRParamsFromTri(tri, normal);
+  if (openpbr) {
+    OpenPBRParams p = OpenPBRParamsFromLightRt(*openpbr, normal);
+    // tri.base_color carries the per-hit base-color TEXTURE sample (and any
+    // per-corner displayColor); the resolver neutralizes the constant to white
+    // when a texture loads, so for untextured materials this equals
+    // src.baseColor. The struct's own baseColor is only the constant -- using it
+    // alone shaded textured surfaces flat in lightrt-bsdf mode.
+    p.base_color = v3_make(tri.base_color.x, tri.base_color.y, tri.base_color.z);
+    return p;
+  }
+  return OpenPBRParamsFromTri(tri, normal);
 }
 
 uint32_t FloatBits(float v) {
@@ -274,6 +297,234 @@ Vec3 EvalMaterialDirect(const TriInfo &tri, const Vec3 &normal,
               brdf.z * radiance.z * ndotl};
 }
 
+// ---------------------------------------------------------------------------
+// Next-event estimation for SPHERE lights, with power-heuristic MIS.
+//
+// Every finite light used to be collapsed to a point: irradiance = I / d², with
+// an ad-hoc `max(1, area)` fudge for the ones that are obviously not points.
+// That is exactly right only in the far field, and increasingly wrong as a
+// sphere light gets large or close -- no penumbra, and a light you are standing
+// inside of divides by ~0.
+//
+// A sphere is the one light whose geometry is fully described by what
+// PreviewLight already carries (position + radius; no tangent frame needed), so
+// it is where area sampling can be added without changing the light plumbing.
+// The other kinds keep the analytic path for now.
+//
+// Radiance vs intensity: PreviewLight::radiance holds an INTENSITY (the punctual
+// path divides it by d²). A sphere of radius r emitting uniform radiance L
+// presents projected area pi*r², so L = I / (pi*r²) reproduces the same far-field
+// irradiance -- i.e. this is energy-preserving against the old look, and only
+// differs where the punctual approximation was wrong to begin with.
+struct LightSample {
+  Vec3 wi{0.0f, 0.0f, 0.0f};
+  float dist{0.0f};
+  float pdf{0.0f};        // solid angle
+  Vec3 radiance{0.0f, 0.0f, 0.0f};
+};
+
+void OrthoBasis(const Vec3 &w, Vec3 *u, Vec3 *v) {
+  const Vec3 a = (std::fabs(w.x) > 0.9f) ? Vec3{0.0f, 1.0f, 0.0f}
+                                         : Vec3{1.0f, 0.0f, 0.0f};
+  *u = Normalize(Cross(a, w));
+  *v = Cross(w, *u);
+}
+
+Vec3 SphereLightRadiance(const PreviewLight &light) {
+  // PreviewLight.radiance IS the sphere's emitted radiance: color * intensity *
+  // 2^exposure, divided by the surface area when inputs:normalize is authored
+  // (UsdLux semantics, applied at collection). The old convention here divided
+  // by pi*r^2 unconditionally -- an implicit, always-on normalize that ignored
+  // the authored flag and disagreed with tusdview and the other shapes.
+  return light.radiance;
+}
+
+// Uniform cone sampling of the sphere's visible solid angle.
+bool SampleSphereLight(const PreviewLight &light, const Vec3 &p, float u1,
+                       float u2, LightSample *out) {
+  const Vec3 d = Sub(light.position, p);
+  const float dist = Length(d);
+  const float r = light.radius;
+  // Degenerate, or the shading point is inside the sphere: the cone is not
+  // defined. Fall back to the punctual path rather than producing nonsense.
+  if (r <= 1.0e-5f || dist <= r + 1.0e-5f) return false;
+
+  const Vec3 w = Mul(d, 1.0f / dist);
+  Vec3 su, sv;
+  OrthoBasis(w, &su, &sv);
+
+  const float sin_max_sq = (r * r) / (dist * dist);
+  const float cos_max = std::sqrt(std::max(0.0f, 1.0f - sin_max_sq));
+  const float cos_theta = 1.0f - u1 * (1.0f - cos_max);
+  const float sin_theta = std::sqrt(std::max(0.0f, 1.0f - cos_theta * cos_theta));
+  const float phi = 2.0f * MTLX_PI * u2;
+
+  out->wi = Normalize(Add(Add(Mul(su, std::cos(phi) * sin_theta),
+                              Mul(sv, std::sin(phi) * sin_theta)),
+                          Mul(w, cos_theta)));
+  // Distance to the sphere along wi (for the shadow ray); the cone always hits.
+  const float b = Dot(out->wi, d);
+  const float disc = std::max(0.0f, b * b - (dist * dist - r * r));
+  out->dist = std::max(0.0f, b - std::sqrt(disc));
+  const float solid_angle = 2.0f * MTLX_PI * (1.0f - cos_max);
+  out->pdf = (solid_angle > 1.0e-8f) ? (1.0f / solid_angle) : 0.0f;
+  out->radiance = SphereLightRadiance(light);
+  return out->pdf > 0.0f;
+}
+
+// The solid-angle pdf SampleSphereLight would have had for direction `wi` --
+// zero if the direction misses the sphere. This is the light-side pdf that the
+// BSDF-sampled branch needs for its MIS weight.
+float SphereLightPdf(const PreviewLight &light, const Vec3 &p, const Vec3 &wi) {
+  const Vec3 d = Sub(light.position, p);
+  const float dist = Length(d);
+  const float r = light.radius;
+  if (r <= 1.0e-5f || dist <= r + 1.0e-5f) return 0.0f;
+  const float b = Dot(wi, d);
+  if (b <= 0.0f) return 0.0f;  // behind us
+  if ((dist * dist - b * b) > r * r) return 0.0f;  // ray misses the sphere
+  const float cos_max =
+      std::sqrt(std::max(0.0f, 1.0f - (r * r) / (dist * dist)));
+  const float solid_angle = 2.0f * MTLX_PI * (1.0f - cos_max);
+  return (solid_angle > 1.0e-8f) ? (1.0f / solid_angle) : 0.0f;
+}
+
+// --- Shaped area lights: Rect / Disk / Cylinder ------------------------------
+//
+// These were punctual: collapsed to their center, so a 10-unit rect cast exactly
+// the same razor-sharp shadow as a bare point. They are now sampled over their
+// SURFACE, with the same NEE + power-heuristic MIS the sphere gets.
+//
+// Radiance: the punctual path computed irradiance as
+//   E = radiance * cos_emit * max(1, area) / d^2,
+// and the area estimator integrates L * cos_emit * cos_theta / d^2 over the
+// surface, which for a distant light is L * area * cos_emit / d^2. So the surface
+// radiance L IS PreviewLight::radiance, and the far field is preserved -- except
+// for the max(1, area) clamp, which the area estimator drops. A light SMALLER than
+// one square unit therefore gets dimmer (correctly: the clamp was inventing energy
+// for it), while every light at or above unit area is unchanged at distance.
+
+// Does `wi` from `p` hit the light's surface? Fills the distance and the surface
+// normal at the hit, which the pdf and the shadow ray both need.
+bool IntersectAreaLight(const PreviewLight &light, const Vec3 &p, const Vec3 &wi,
+                        float *out_t, Vec3 *out_n) {
+  const Vec3 c = light.position;
+  if (light.kind == PreviewLight::Kind::Rect ||
+      light.kind == PreviewLight::Kind::Disk) {
+    const Vec3 nl = light.normal;
+    const float denom = Dot(wi, nl);
+    if (std::fabs(denom) < 1.0e-8f) return false;  // parallel to the plane
+    const float t = Dot(Sub(c, p), nl) / denom;
+    if (t <= 1.0e-5f) return false;
+    const Vec3 q = Sub(Add(p, Mul(wi, t)), c);
+    const float du = Dot(q, light.axis_u);
+    const float dv = Dot(q, light.axis_v);
+    if (light.kind == PreviewLight::Kind::Rect) {
+      if (std::fabs(du) > 0.5f * light.width ||
+          std::fabs(dv) > 0.5f * light.height) {
+        return false;
+      }
+    } else if (du * du + dv * dv > light.radius * light.radius) {
+      return false;
+    }
+    *out_t = t;
+    *out_n = nl;
+    return true;
+  }
+  if (light.kind == PreviewLight::Kind::Cylinder) {
+    // Lateral surface of a finite cylinder about axis_u, radius r, length L.
+    const Vec3 a = light.axis_u;
+    const float r = light.radius;
+    if (r <= 1.0e-5f) return false;
+    const Vec3 oc = Sub(p, c);
+    const Vec3 d_perp = Sub(wi, Mul(a, Dot(wi, a)));
+    const Vec3 o_perp = Sub(oc, Mul(a, Dot(oc, a)));
+    const float A = Dot(d_perp, d_perp);
+    if (A < 1.0e-12f) return false;  // travelling along the axis
+    const float B = 2.0f * Dot(o_perp, d_perp);
+    const float C = Dot(o_perp, o_perp) - r * r;
+    const float disc = B * B - 4.0f * A * C;
+    if (disc < 0.0f) return false;
+    const float sq = std::sqrt(disc);
+    for (const float t : {(-B - sq) / (2.0f * A), (-B + sq) / (2.0f * A)}) {
+      if (t <= 1.0e-5f) continue;
+      const Vec3 q = Sub(Add(p, Mul(wi, t)), c);
+      if (std::fabs(Dot(q, a)) > 0.5f * light.length) continue;  // past an end cap
+      const Vec3 radial = Sub(q, Mul(a, Dot(q, a)));
+      if (Length(radial) < 1.0e-8f) continue;
+      *out_t = t;
+      *out_n = Normalize(radial);
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+// Uniform-area sampling of the light's surface, converted to a solid-angle pdf
+// (pdf_A * d^2 / cos_emit) so it is directly comparable with the BSDF's pdf.
+bool SampleAreaLight(const PreviewLight &light, const Vec3 &p, float u1, float u2,
+                     LightSample *out) {
+  if (!(light.area > 1.0e-8f)) return false;
+  Vec3 q, nl;
+  if (light.kind == PreviewLight::Kind::Rect) {
+    q = Add(light.position,
+            Add(Mul(light.axis_u, (u1 - 0.5f) * light.width),
+                Mul(light.axis_v, (u2 - 0.5f) * light.height)));
+    nl = light.normal;
+  } else if (light.kind == PreviewLight::Kind::Disk) {
+    const float rr = light.radius * std::sqrt(std::max(0.0f, u1));
+    const float phi = 2.0f * MTLX_PI * u2;
+    q = Add(light.position,
+            Add(Mul(light.axis_u, rr * std::cos(phi)),
+                Mul(light.axis_v, rr * std::sin(phi))));
+    nl = light.normal;
+  } else if (light.kind == PreviewLight::Kind::Cylinder) {
+    Vec3 b1, b2;
+    OrthonormalBasis(light.axis_u, &b1, &b2);
+    const float phi = 2.0f * MTLX_PI * u2;
+    const Vec3 radial = Add(Mul(b1, std::cos(phi)), Mul(b2, std::sin(phi)));
+    q = Add(light.position, Add(Mul(light.axis_u, (u1 - 0.5f) * light.length),
+                                Mul(radial, light.radius)));
+    nl = radial;  // emits radially outward
+  } else {
+    return false;
+  }
+
+  const Vec3 d = Sub(q, p);
+  const float dist = Length(d);
+  if (dist <= 1.0e-5f) return false;
+  out->wi = Mul(d, 1.0f / dist);
+  const float cos_emit = Dot(nl, Mul(out->wi, -1.0f));
+  if (cos_emit <= 1.0e-6f) return false;  // shading point is behind the emitter
+  out->dist = dist;
+  out->pdf = (dist * dist) / (cos_emit * light.area);
+  out->radiance = light.radiance;
+  return out->pdf > 0.0f && std::isfinite(out->pdf);
+}
+
+// The solid-angle pdf SampleAreaLight would have had for `wi`; 0 if it misses.
+float AreaLightPdf(const PreviewLight &light, const Vec3 &p, const Vec3 &wi) {
+  if (!(light.area > 1.0e-8f)) return 0.0f;
+  float t = 0.0f;
+  Vec3 nl;
+  if (!IntersectAreaLight(light, p, wi, &t, &nl)) return 0.0f;
+  const float cos_emit = Dot(nl, Mul(wi, -1.0f));
+  if (cos_emit <= 1.0e-6f) return 0.0f;
+  const float pdf = (t * t) / (cos_emit * light.area);
+  return std::isfinite(pdf) ? pdf : 0.0f;
+}
+
+// Power heuristic (beta = 2). Both pdfs are in solid angle, so they are directly
+// comparable; a delta lobe (pdf_b reported as 1.0 with `specular`) must never
+// reach this -- the caller skips MIS entirely there.
+float PowerHeuristic(float pdf_a, float pdf_b) {
+  const float a = pdf_a * pdf_a;
+  const float b = pdf_b * pdf_b;
+  const float sum = a + b;
+  return (sum > 1.0e-12f) ? (a / sum) : 0.0f;
+}
+
 Vec3 EvalMaterialIblDiffuse(
     const TriInfo &tri, const Vec3 &normal, const Vec3 &wo,
     const Vec3 &diffuse_irradiance, const Options &opt,
@@ -283,30 +534,33 @@ Vec3 EvalMaterialIblDiffuse(
   }
   OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
   float pdf = 0.0f;
-  v3 f = bsdf_eval(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(normal), &pdf);
-  Vec3 brdf = FromMtlxV3(f);
+  v3 fd, fs;
+  // ONLY the diffuse lobe belongs against the irradiance map. Using the full BSDF
+  // here (and again against the prefiltered reflection map below) counted both
+  // lobes twice over: a white Lambert surface in a uniform furnace came out at
+  // 1.32x the radiance of the dome lighting it, where it must come out at 1.0x.
+  bsdf_eval_lobes(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(normal), &fd, &fs,
+                  &pdf);
+  Vec3 brdf = FromMtlxV3(fd);
   const float scale = MTLX_PI * tri.occlusion;
   return Vec3{brdf.x * diffuse_irradiance.x * scale,
               brdf.y * diffuse_irradiance.y * scale,
               brdf.z * diffuse_irradiance.z * scale};
 }
 
-Vec3 EvalMaterialIblSpecular(
-    const TriInfo &tri, const Vec3 &normal, const Vec3 &wo, const Vec3 &wi,
-    const Vec3 &prefiltered_radiance, const Options &opt,
-    const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
-  if (opt.material_shading != Options::MaterialShading::LightRtBsdf) {
-    return Vec3{0.0f, 0.0f, 0.0f};
-  }
-  const float ndotl = std::max(0.0f, Dot(normal, wi));
-  if (ndotl <= 0.0f) return Vec3{0.0f, 0.0f, 0.0f};
-  OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
-  float pdf = 0.0f;
-  v3 f = bsdf_eval(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(wi), &pdf);
-  Vec3 brdf = FromMtlxV3(f);
-  return Vec3{brdf.x * prefiltered_radiance.x * ndotl,
-              brdf.y * prefiltered_radiance.y * ndotl,
-              brdf.z * prefiltered_radiance.z * ndotl};
+// Environment specular for a prefiltered radiance, via the bounded split-sum
+// approximation: spec_env * (F0*A + B), where (A,B) come from the environment
+// BRDF LUT. This is used for BOTH shading modes. The old lightrt-bsdf path
+// instead evaluated the analytic microfacet BRDF at the exact mirror direction
+// and multiplied it by the prefiltered radiance -- but the prefilter already
+// integrated the NDF, so at the mirror direction D = 1/(pi*alpha) blew the term
+// up without bound as roughness -> 0 (a ~280x-too-bright highlight at
+// roughness 0.05). f0 already carries the material's reflectance (OpenPBR
+// metalness/specularColor/ior in bsdf mode), so the split-sum stays material-
+// correct while remaining bounded.
+Vec3 EvalIblSpecularSplitSum(const Vec3 &spec_env, const Vec3 &f0, float brdf_a,
+                             float brdf_b) {
+  return Mul(spec_env, Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
 }
 
 bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
@@ -751,7 +1005,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const ByteVec *tri_colors,
            const std::vector<float> *tri_normals,
            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
-               *openpbr_mats) {
+               *openpbr_mats,
+           bool indirect) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -933,7 +1188,23 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   float best_t = tri_hit ? tri_t : camera.zfar;
   DirectHit direct_hit;
   IntersectDirectScene(direct, ray_org, ray_dir, camera.znear, best_t, &direct_hit);
+  // Escape hatch for A/B-ing the double-count fix (and for bisecting a render
+  // change): TUSDR_LIGHT_DOUBLE_COUNT=1 restores the old behavior, where an
+  // indirect bounce re-gathered the dome and the analytic mesh lights on top of
+  // the direct lighting that already delivered them.
+  static const bool kDoubleCount = [] {
+    const char *e = std::getenv("TUSDR_LIGHT_DOUBLE_COUNT");
+    return e && std::atoi(e) == 1;
+  }();
+  const bool gathered_directly = indirect && !kDoubleCount;
   if (!tri_hit && !direct_hit.hit) {
+    // An escaping BSDF bounce must not bring the ENVIRONMENT back with it: the
+    // surface that spawned it already integrated the dome over this very lobe
+    // (the split-sum IBL term, or the flat dome term), so returning it here
+    // counts the dome twice. The background is a different thing -- a flat
+    // backdrop that no IBL term accounts for -- so an indirect ray still returns
+    // it, and a reflective surface still picks up the backdrop's tint.
+    if (gathered_directly) return opt.bg;
     if (ibl && ibl->valid) {
       return Add(opt.bg, SampleEnv(ibl->env, EnvDir(*ibl, ray_dir)));
     }
@@ -965,7 +1236,13 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   }
   Vec3 view = Normalize(Mul(ray_dir, -1.0f));
   // Occlusion (AO) modulates the indirect/ambient response, not self-emission.
-  Vec3 c = Add(Mul(tri.base_color, opt.ambient * tri.occlusion), tri.emission);
+  // An indirect bounce that lands on an analytic mesh light must not pick up its
+  // emission: the shading point it came from already received that light through
+  // the direct-lighting term (eval_light over LightCache::mesh).
+  const Vec3 emitted = (gathered_directly && tri.area_light)
+                           ? Vec3{0.0f, 0.0f, 0.0f}
+                           : tri.emission;
+  Vec3 c = Add(Mul(tri.base_color, opt.ambient * tri.occlusion), emitted);
   if (ibl && ibl->valid) {
     Vec3 diffuse = SampleEnv(ibl->diffuse, EnvDir(*ibl, n));
     float ndotv = std::max(0.0f, Dot(n, view));
@@ -995,12 +1272,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     float brdf_a = 1.0f;
     float brdf_b = 0.0f;
     SampleBrdfLut(*ibl, ndotv, tri.roughness, &brdf_a, &brdf_b);
-    Vec3 spec =
-        opt.material_shading == Options::MaterialShading::LightRtBsdf
-            ? EvalMaterialIblSpecular(tri, n, view, refl, spec_env, opt,
-                                      tri_openpbr)
-            : Mul(spec_env,
-                  Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
+    // Both modes use the bounded split-sum for environment specular (see
+    // EvalIblSpecularSplitSum). f0 already reflects the OpenPBR reflectance in
+    // bsdf mode, so this stays material-correct.
+    Vec3 spec = EvalIblSpecularSplitSum(spec_env, f0, brdf_a, brdf_b);
     Vec3 kd = Mul(Vec3{1.0f - f0.x, 1.0f - f0.y, 1.0f - f0.z},
                   1.0f - kd_metal);
     Vec3 diff =
@@ -1038,9 +1313,62 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     const Vec3 behind =
         Shade(scene, direct, tris, mats, lights, ibl, behind_camera, opt, behind_org,
               ray_dir, textures, tri_uvs, tlas, blas, instances, rd, depth + 1,
-              tri_colors, tri_normals, openpbr_mats);
+              tri_colors, tri_normals, openpbr_mats, indirect);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
   };
+  // Is this light area-sampled (NEE + MIS) rather than treated as a point? Only
+  // in lightrt-bsdf mode -- the legacy shading path has no BSDF pdf to weigh
+  // against, so MIS is not even defined there, and its look must not change.
+  const bool bsdf_mode =
+      (opt.material_shading == Options::MaterialShading::LightRtBsdf);
+  // Escape hatch for A/B-ing the estimator (and for bisecting a render change):
+  // TUSDR_LIGHT_NEE=0 puts every light back on the punctual path.
+  static const bool kNeeEnabled = [] {
+    const char *e = std::getenv("TUSDR_LIGHT_NEE");
+    return !(e && std::atoi(e) == 0);
+  }();
+  auto is_area_sampled = [&](const PreviewLight &light) -> bool {
+    if (!kNeeEnabled || !bsdf_mode) return false;
+    switch (light.kind) {
+      case PreviewLight::Kind::Sphere:
+        return light.radius > 1.0e-5f &&
+               Length(Sub(light.position, p)) > light.radius + 1.0e-5f;
+      case PreviewLight::Kind::Rect:
+      case PreviewLight::Kind::Disk:
+      case PreviewLight::Kind::Cylinder:
+        return light.area > 1.0e-8f;
+      default:
+        return false;  // Point / Distant are genuinely delta lights
+    }
+  };
+  // Light-side quantities for the BSDF-sampled MIS term: the pdf of having chosen
+  // `wi` by light sampling, the distance to the surface it hits (for the shadow
+  // ray), and the radiance there.
+  auto light_pdf_along = [&](const PreviewLight &light, const Vec3 &wi,
+                             float *hit_dist, Vec3 *radiance) -> float {
+    if (light.kind == PreviewLight::Kind::Sphere) {
+      const float pdf = SphereLightPdf(light, p, wi);
+      if (pdf <= 0.0f) return 0.0f;
+      const Vec3 d = Sub(light.position, p);
+      const float b = Dot(wi, d);
+      const float disc =
+          std::max(0.0f, b * b - (Dot(d, d) - light.radius * light.radius));
+      *hit_dist = std::max(0.0f, b - std::sqrt(disc));
+      *radiance = SphereLightRadiance(light);
+      return pdf;
+    }
+    float t = 0.0f;
+    Vec3 nl;
+    if (!IntersectAreaLight(light, p, wi, &t, &nl)) return 0.0f;
+    const float cos_emit = Dot(nl, Mul(wi, -1.0f));
+    if (cos_emit <= 1.0e-6f) return 0.0f;
+    const float pdf = (t * t) / (cos_emit * light.area);
+    if (!(pdf > 0.0f) || !std::isfinite(pdf)) return 0.0f;
+    *hit_dist = t;
+    *radiance = light.radiance;
+    return pdf;
+  };
+
   auto sample_bsdf_bounce = [&]() -> Vec3 {
     if (opt.material_shading != Options::MaterialShading::LightRtBsdf ||
         depth >= 2 || tri.opacity < 0.999f) {
@@ -1069,9 +1397,30 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     Vec3 bounce = Shade(scene, direct, tris, mats, lights, ibl, bounce_camera,
                         opt, bounce_org, wi, textures, tri_uvs, tlas, blas,
                         instances, bounce_rd, depth + 1, tri_colors,
-                        tri_normals, openpbr_mats);
-    return FiniteColor(bounce) ? Mul(bounce, throughput)
-                               : Vec3{0.0f, 0.0f, 0.0f};
+                        tri_normals, openpbr_mats, /*indirect=*/true);
+    Vec3 out = FiniteColor(bounce) ? Mul(bounce, throughput)
+                                   : Vec3{0.0f, 0.0f, 0.0f};
+
+    // The other half of MIS. Analytic lights are not in the BVH, so the bounce
+    // ray cannot hit them: pick them up explicitly along wi and weight by the
+    // chance NEE would have found this direction instead. A delta lobe (`specular`)
+    // is unreachable by light sampling, so it takes the full contribution -- this
+    // is what BsdfSample::specular is for.
+    for (const PreviewLight &light : lights.finite) {
+      if (!is_area_sampled(light)) continue;
+      float hit_dist = 0.0f;
+      Vec3 L{0.0f, 0.0f, 0.0f};
+      const float pdf_l = light_pdf_along(light, wi, &hit_dist, &L);
+      if (pdf_l <= 0.0f) continue;
+      if (opt.shadows &&
+          occluded(p, n, wi, std::max(0.0f, hit_dist - 1.0e-3f))) {
+        continue;
+      }
+      const float w = sample.specular ? 1.0f : PowerHeuristic(sample.pdf, pdf_l);
+      out = Add(out, Vec3{throughput.x * L.x * w, throughput.y * L.y * w,
+                          throughput.z * L.z * w});
+    }
+    return out;
   };
   if (lights.finite.empty() && lights.mesh.empty()) {
     Vec3 l = Normalize(Sub(camera.origin, p));
@@ -1085,7 +1434,44 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     c = Add(c, sample_bsdf_bounce());
     return apply_opacity(c);
   }
+  // NEE: sample a point on the light, weigh the estimate against the chance the
+  // BSDF sampler would have found the same direction on its own. The power
+  // heuristic is only valid when the BSDF-sampling partner actually runs;
+  // sample_bsdf_bounce early-returns at depth >= 2, for non-opaque hits and in
+  // the non-bsdf shading modes, and then nothing supplies the pdf_b^2 share --
+  // the light was systematically under-counted (up to ~2x too dark where
+  // pdf_l ~ pdf_b). Light sampling is the sole estimator there, weight 1.
+  const bool bsdf_partner_runs =
+      opt.material_shading == Options::MaterialShading::LightRtBsdf &&
+      depth < 2 && tri.opacity >= 0.999f;
+  auto nee_light = [&](const PreviewLight &light, pcg32 *rng) {
+    LightSample ls;
+    const float u1 = pcg32_f(rng);
+    const float u2 = pcg32_f(rng);
+    const bool ok = (light.kind == PreviewLight::Kind::Sphere)
+                        ? SampleSphereLight(light, p, u1, u2, &ls)
+                        : SampleAreaLight(light, p, u1, u2, &ls);
+    if (!ok) return;
+    const float ndotl = Dot(n, ls.wi);
+    if (ndotl <= 0.0f || ls.pdf <= 0.0f) return;
+    if (opt.shadows &&
+        occluded(p, n, ls.wi, std::max(0.0f, ls.dist - 1.0e-3f))) {
+      return;
+    }
+    OpenPBRParams params = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+    float pdf_b = 0.0f;
+    v3 f = bsdf_eval(&params, ToMtlxV3(n), ToMtlxV3(view), ToMtlxV3(ls.wi),
+                     &pdf_b);
+    const Vec3 brdf = FromMtlxV3(f);
+    if (!FiniteColor(brdf)) return;
+    const float w = bsdf_partner_runs ? PowerHeuristic(ls.pdf, pdf_b) : 1.0f;
+    const float k = w * ndotl / ls.pdf;
+    c = Add(c, Vec3{brdf.x * ls.radiance.x * k, brdf.y * ls.radiance.y * k,
+                    brdf.z * ls.radiance.z * k});
+  };
+
   auto eval_light = [&](const PreviewLight &light) {
+    if (is_area_sampled(light)) return;  // handled by NEE below
     Vec3 l;
     float max_t = 1.0e30f;
     Vec3 radiance = light.radiance;
@@ -1104,6 +1490,15 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         float emit_cos = std::max(0.0f, Dot(light.normal, Mul(l, -1.0f)));
         if (emit_cos <= 0.0f) return;
         radiance = Mul(radiance, emit_cos * std::max(1.0f, light.area));
+      } else if (light.kind == PreviewLight::Kind::Sphere &&
+                 light.radius > 1.0e-5f) {
+        // Small-sphere limit of the area integral: E = L * (projected area
+        // pi*r^2) / d^2. This is what NEE converges to for a distant sphere, so
+        // the punctual fallback (NEE disabled, non-bsdf modes) agrees with it
+        // for both normalize settings. At or below the gate the sphere is a
+        // point-light stand-in and keeps the plain I/d^2 (its radiance was
+        // never area-divided at collection).
+        radiance = Mul(radiance, MTLX_PI * light.radius * light.radius);
       }
       radiance = Mul(radiance, 1.0f / std::max(1.0e-4f, dist * dist));
     }
@@ -1119,6 +1514,15 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   }
   for (const PreviewLight &light : lights.mesh) {
     eval_light(light);
+  }
+  // Area-sampled lights. Its own RNG stream: seeding from (org, dir, depth) like
+  // the BSDF sampler would correlate the light sample with the BSDF sample and
+  // defeat the whole point of combining them.
+  {
+    pcg32 lrng = MakeBsdfRng(p, n, depth + 0x5eed);
+    for (const PreviewLight &light : lights.finite) {
+      if (is_area_sampled(light)) nee_light(light, &lrng);
+    }
   }
   c = Add(c, sample_bsdf_bounce());
   // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
