@@ -489,34 +489,62 @@
       // derives its dir). A reference/payload authored in a SUBLAYER resolves
       // relative to that sublayer, not the layer-stack's root — fall back to the
       // stack identifier only when the authoring layer is unknown.
-      // COPY, not a reference: GetOrLoad/InternLayerStack below can grow
-      // layer_stacks and invalidate a reference into it.
-      const std::string anchor = RealAnchorOf(
+      const std::string &anchor_source =
           !authoring_layer_id.empty()
               ? authoring_layer_id
-              : layer_stacks[src.stack_idx].identifier);
-      LayerLoadOptions load_opts;
-      load_opts.max_memory = options.max_layer_memory;
-      load_opts.usda_parse_options = options.usda_parse_options;
-      load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
-      std::shared_ptr<Layer> arc_layer =
-          reg_->GetOrLoad(*resolver, evaluated_asset_path, anchor, warn, err,
-                          load_opts);
-      if (!arc_layer) {
-        if (options.error_when_asset_not_found) {
-          AddIssue(ErrorCode::InvalidAssetPath, arc.asset_path,
-                   "Arc asset not found: " + arc.asset_path, err);
-        }
-        return;
+              : layer_stacks[src.stack_idx].identifier;
+      // Memo key = the arc target's pre-resolution identity (see
+      // arc_target_memo_). Expression variables join by the SAME content
+      // fingerprint InternLayerStack keys stacks with (arc crossings
+      // make_shared a fresh — but usually equal — dictionary per instance,
+      // so pointer identity would never hit; the fingerprint is empty/cheap
+      // for the no-expression-variables common case).
+      std::string memo_key;
+      memo_key.reserve(anchor_source.size() + evaluated_asset_path.size() + 2);
+      memo_key += anchor_source;
+      memo_key += '\1';
+      memo_key += evaluated_asset_path;
+      memo_key += '\1';
+      if (src.expression_variables) {
+        AppendExpressionVarsFingerprint(*src.expression_variables, &memo_key);
       }
-      const std::string arc_id = resolver->ResolvePath(
-          evaluated_asset_path, anchor, !options.strict_aousd_conformance);
-      // The referencing site's composed expression variables become part of
-      // the target stack's IDENTITY (pxr: (identifier, expression variables))
-      // and feed its sublayer path expressions.
-      arc_stack_idx = InternLayerStack(arc_layer, arc_id, warn, err,
-                                       src.expression_variables);
-      if (arc_stack_idx == kInvalidStack) return;
+
+      std::shared_ptr<Layer> arc_layer;
+      std::string arc_id;
+      auto mit = arc_target_memo_.find(memo_key);
+      if (mit != arc_target_memo_.end()) {
+        arc_layer = mit->second.layer;
+        arc_id = mit->second.arc_id;
+        arc_stack_idx = mit->second.stack_idx;
+      } else {
+        // COPY, not a reference: GetOrLoad/InternLayerStack below can grow
+        // layer_stacks and invalidate a reference into it.
+        const std::string anchor = RealAnchorOf(anchor_source);
+        LayerLoadOptions load_opts;
+        load_opts.max_memory = options.max_layer_memory;
+        load_opts.usda_parse_options = options.usda_parse_options;
+        load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
+        arc_layer =
+            reg_->GetOrLoad(*resolver, evaluated_asset_path, anchor, warn, err,
+                            load_opts);
+        if (!arc_layer) {
+          if (options.error_when_asset_not_found) {
+            AddIssue(ErrorCode::InvalidAssetPath, arc.asset_path,
+                     "Arc asset not found: " + arc.asset_path, err);
+          }
+          return;
+        }
+        arc_id = resolver->ResolvePath(
+            evaluated_asset_path, anchor, !options.strict_aousd_conformance);
+        // The referencing site's composed expression variables become part of
+        // the target stack's IDENTITY (pxr: (identifier, expression variables))
+        // and feed its sublayer path expressions.
+        arc_stack_idx = InternLayerStack(arc_layer, arc_id, warn, err,
+                                         src.expression_variables);
+        if (arc_stack_idx == kInvalidStack) return;
+        arc_target_memo_.emplace(
+            std::move(memo_key), ArcTargetEntry{arc_layer, arc_id, arc_stack_idx});
+      }
       if (!arc.prim_path.empty()) {
         arc_site = arc.prim_path;
       } else if (!arc_layer->meta().defaultPrim.empty()) {
@@ -1914,10 +1942,7 @@
       return "!" + UIntToStr(stack) + ":" + path;
     };
     const std::string key = raw_key(site);
-    {
-      auto it = sources_cache.find(key);
-      if (it != sources_cache.end()) return it->second;
-    }
+    if (const std::vector<Src> *hit = sources_cache.find(key)) return *hit;
     if (!sources_in_progress.insert(key).second) return empty_sources_;
     ++isolated_reloc_depth_;
 
@@ -1934,7 +1959,7 @@
         pending.push_back(cur);
         Path parent = cur.parent();
         if (parent.is_root() || parent.empty() || parent.str() == "/") break;
-        if (sources_cache.count(raw_key(parent.str()))) break;
+        if (sources_cache.contains(raw_key(parent.str()))) break;
         cur = parent;
       }
     }
@@ -1969,7 +1994,8 @@
           base.push_back(std::move(s));
         }
       } else {
-        const std::vector<Src> &psrc = sources_cache[raw_key(parent.str())];
+        const std::vector<Src> &psrc =
+            sources_cache.get_or_create(raw_key(parent.str()));
         // raw_stack/raw_site suppresses BOTH departure and arrival for the
         // matching source; use it ONLY for the leaf (whose departure we cancel)
         // -- intermediate ancestors keep arrival handling so their `over` and
@@ -1992,7 +2018,7 @@
           }
         }
       }
-      std::vector<Src> &slot = sources_cache[raw_key(p.str())];
+      std::vector<Src> &slot = sources_cache.get_or_create(raw_key(p.str()));
       slot = ExpandList(base, warn, err);
       result = &slot;
     }
@@ -2018,10 +2044,7 @@
   const std::vector<Src> &SourcesForSite(uint32_t stack, const Path &path,
                                          std::string *warn, std::string *err) {
     const std::string key = SourcesKey(stack, path.str());
-    {
-      auto it = sources_cache.find(key);
-      if (it != sources_cache.end()) return it->second;
-    }
+    if (const std::vector<Src> *hit = sources_cache.find(key)) return *hit;
     if (!sources_in_progress.insert(key).second) return empty_sources_;
 
     // Collect the uncached ancestor chain (leaf -> topmost uncached), then
@@ -2034,7 +2057,7 @@
         pending.push_back(cur);
         Path parent = cur.parent();
         if (parent.is_root() || parent.empty() || parent.str() == "/") break;
-        if (sources_cache.count(SourcesKey(stack, parent.str()))) break;
+        if (sources_cache.contains(SourcesKey(stack, parent.str()))) break;
         cur = parent;
       }
     }
@@ -2066,13 +2089,14 @@
           base.push_back(std::move(s));
         }
       } else {
-        const std::vector<Src> &psrc = sources_cache[SourcesKey(stack, parent.str())];
+        const std::vector<Src> &psrc =
+            sources_cache.get_or_create(SourcesKey(stack, parent.str()));
         base = DeriveChildSources(psrc, p.name(), p.str(), warn, err);
       }
 
-      // unordered_map element refs are stable across later inserts, and
-      // pending[0] (the queried leaf) is filled last, so this captures it.
-      std::vector<Src> &slot = sources_cache[key_i];
+      // SrcCache element refs are stable across later inserts (deque-backed),
+      // and pending[0] (the queried leaf) is filled last, so this captures it.
+      std::vector<Src> &slot = sources_cache.get_or_create(key_i);
       slot = ExpandList(base, warn, err);
       result = &slot;
     }

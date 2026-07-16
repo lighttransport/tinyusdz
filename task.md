@@ -7,6 +7,18 @@ paste its **Resume prompt**, and go. Newest completion at top.
 
 ## ✅ Recently completed (don't re-open)
 
+- **refactor-next M3 (pcp hot-map perf) — DONE** (branch `dev`, 2026-07-16).
+  Landed as open-addressed caches/memos (the full u32 rekeying stayed
+  unnecessary): `StackSpecCache` per-stack Specs memo, self-resetting
+  `Src::specs_`/`SpecsFor`, `SrcCache` for sources_cache, and a new
+  `arc_target_memo_` (per-arc external-target resolution keyed by
+  anchor+asset+expr-vars **fingerprint** — pointer identity never hits).
+  Island/ALab/Caldera load+compose **−14–16%**, byte-identical (4 scenes),
+  parallel==serial, TSan-clean; gates 36/36 + 37/37. Remaining compose cost is
+  first-load layer parsing (parallelized by `--compose-threads`), not maps —
+  the pcp string-map lever is exhausted on dev. Detail:
+  `doc/memory-and-performance.md` §M3.
+
 - **refactor-next Phase-5 leftovers — DONE** (branch `dev`, 2026-07-16).
   Exploration found most once-open Phase-5 items already landed (I1 instance-key
   variant-sel+offset, I2 tri-state `instanceable`, I4 PointInstancer compute API,
@@ -17,9 +29,7 @@ paste its **Resume prompt**, and go. Newest completion at top.
   tests (`test_pcp.cc:test_path_translation`, two-level rewrite) + PointInstancer
   `ComputeMaskAtTime`. Docs reconciled (`doc/refator-next.md`,
   `doc/memory-and-performance.md`). Gates: build-next **36/36**, build **37/37**.
-  Only **M3** (u32-interning of pcp hot maps) stays intentionally deferred —
-  invasive vs. benefit post-CoW; revisit only if massif shows path strings
-  dominating.
+  (M3, then still deferred, landed the same day — see the entry above.)
 
 - **next-vs-pxr flatten-differential burn-down — DONE** (branch `dev`, 2026-07-16).
   All untagged composition divergences fixed; gate **756 pass / 0 untagged xfail /
@@ -116,19 +126,6 @@ the vbo positions must change AND the BLAS must be updated.
 - Camera framing must use the **posed** bounds (`applyLoaded` poses then fits).
 
 ---
-
-## Open workstream B — refactor-next M3 (deferred perf item only)  [LOW]
-
-> Phase-5 leftovers are DONE (see completed section). The one remaining item is
-> M3, intentionally deferred as invasive vs. its post-CoW memory benefit.
-
-### Resume prompt
-Only if massif/profiling shows path strings dominating pcp RSS: implement M3 —
-convert the string-keyed pcp hot maps (`index_cache`, `sources_cache`, `Site`,
-payload/prototype maps) to u32 interned ids via the existing `InternPath` table
-(`doc/refator-next.md` Phase-4 §2). Otherwise leave deferred. Validate with
-`scripts/run-next-checks.sh` + `ctest --test-dir build-next` (36/36) and the
-`next_*` differential gates; keep TSan opt-in (memory `tsan-tests-opt-in`).
 
 ---
 

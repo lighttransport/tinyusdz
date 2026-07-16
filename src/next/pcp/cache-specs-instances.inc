@@ -5,46 +5,48 @@
 // Included inside Cache::Impl.
 
   // --- spec lookup --------------------------------------------------------
-
-  struct SpecRef {
-    const PrimSpec *spec = nullptr;
-    const Layer *layer = nullptr;
-    std::string layer_id;
-    // Time offset of the owning layer within its stack (sublayer offsets),
-    // relative to the stack root. Identity for the root layer.
-    LayerOffset layer_offset;
-  };
+  // SpecRef is defined at file scope (see cache.cc) so Src can cache a pointer
+  // to a Specs() result.
 
   // Memoized spec resolution. The same (stack, site) is resolved 3-5x per
   // composed prim (ExpandArcs, AnyAuthors, ComposeInto, ComputePrimIndex,
-  // instance-key); each call walked every layer and parsed the site Path. The
-  // cache keys by (stack_idx, site) and returns a stable reference (unordered_map
-  // keeps element addresses valid across rehash, so a recursive insert during
-  // expansion never dangles the outer reference). Results depend only on layer
-  // contents, which change solely on InvalidateLayer -> spec_cache_ is cleared
-  // there (Invalidate(prim) leaves layer stacks intact, so it stays valid).
-  struct SpecCacheKey {
-    uint32_t stack;
-    std::string site;
-    bool operator==(const SpecCacheKey &o) const {
-      return stack == o.stack && site == o.site;
-    }
-  };
-  struct SpecCacheKeyHash {
-    size_t operator()(const SpecCacheKey &k) const {
-      return std::hash<std::string>()(k.site) * 1000003u + k.stack;
-    }
-  };
-  mutable std::unordered_map<SpecCacheKey, std::vector<SpecRef>, SpecCacheKeyHash>
-      spec_cache_;
+  // instance-key); each call walked every layer and parsed the site Path.
+  //
+  // Keyed per-stack (outer index = stack_idx) then by the `site` string via an
+  // open-addressed StackSpecCache, so a lookup keys by the CALLER's existing
+  // `site` string BY REFERENCE with no per-call key allocation. (The old
+  // (stack_idx, site) struct key deep-copied the site string into the key on
+  // every call — hits included.) Stable element addresses: the per-stack caches
+  // live in a deque (growing it never relocates an in-use cache) and
+  // StackSpecCache stores its values in a deque (append never moves), so a
+  // recursive insert during expansion never dangles an outer reference.
+  // Results depend only on layer contents, which change solely on
+  // InvalidateLayer -> the cache is cleared there (Invalidate(prim) leaves
+  // layer stacks intact, so it stays valid).
+  mutable std::deque<StackSpecCache> spec_cache_by_stack_;
 
   const std::vector<SpecRef> &Specs(uint32_t stack_idx,
                                     const std::string &site) const {
-    SpecCacheKey key{stack_idx, site};
-    auto it = spec_cache_.find(key);
-    if (it != spec_cache_.end()) return it->second;
+    if (stack_idx >= spec_cache_by_stack_.size())
+      spec_cache_by_stack_.resize(stack_idx + 1);
+    auto &m = spec_cache_by_stack_[stack_idx];
+    const uint64_t h = StackSpecCache::HashSite(site.data(), site.size());
+    if (std::vector<SpecRef> *v = m.find(site, h)) return *v;
     std::vector<SpecRef> refs = FindSpecs(layer_stacks[stack_idx], site);
-    return spec_cache_.emplace(std::move(key), std::move(refs)).first->second;
+    return m.insert(site, h, std::move(refs));
+  }
+
+  // Specs() with a per-Src memo: the 2-3 read-side spec lookups per composed prim
+  // (ComposeChildNames, IsInstanceable, instance-key, ComposeOpinions) all key on
+  // the SAME (stack_idx, site) -> cache the resolved vector pointer in the Src so
+  // only the first pays the site-string hash. The memo self-resets on any Src
+  // copy/move (see SpecsMemo in cache.cc), so child-build/worker-seed/merge
+  // copies can never carry a stale or cross-Impl pointer.
+  const std::vector<SpecRef> &SpecsFor(const Src &s) const {
+    if (s.specs_.p) return *s.specs_.p;
+    const std::vector<SpecRef> &r = Specs(s.stack_idx, s.site);
+    s.specs_.p = &r;
+    return r;
   }
   std::vector<SpecRef> FindSpecs(const LayerStack &st,
                                  const std::string &site) const {
@@ -76,7 +78,7 @@
 
   bool AnyAuthors(const std::vector<Src> &srcs) const {
     for (const Src &s : srcs) {
-      if (!Specs(s.stack_idx, s.site).empty()) return true;
+      if (!SpecsFor(s).empty()) return true;
     }
     return false;
   }
@@ -213,7 +215,7 @@
   bool IsInstanceableSources(const std::vector<Src> &srcs) const {
     if (srcs.size() <= 1) return false;
     for (const Src &s : srcs) {
-      for (const SpecRef &sr : Specs(s.stack_idx, s.site)) {
+      for (const SpecRef &sr : SpecsFor(s)) {
         const PrimSpecMeta &m = sr.spec->meta();
         // `instanceable = true` is always an authored opinion (the field
         // defaults to false), so it counts even when the authoring path did
@@ -245,7 +247,7 @@
     std::string key;
     for (const Src &s : srcs) {
       bool found_type = false;
-      for (const SpecRef &sr : Specs(s.stack_idx, s.site)) {
+      for (const SpecRef &sr : SpecsFor(s)) {
         if (!sr.spec->type_name().empty()) {
           key += "T:" + sr.spec->type_name() + ";";
           found_type = true;

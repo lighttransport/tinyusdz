@@ -23,10 +23,10 @@
     GetPropNameTable().freeze();
     auto do_range = [&](size_t b, size_t e) {
       for (size_t i = b; i < e; ++i) {
-        auto it = sources_cache.find(fill_[i].second);
-        if (it == sources_cache.end()) continue;
+        const std::vector<Src> *srcs = sources_cache.find(fill_[i].second);
+        if (!srcs) continue;
         if (PrimSpec *ps = out->prim_mutable(fill_[i].first)) {
-          ComposeOpinions(it->second, ps);
+          ComposeOpinions(*srcs, ps);
         }
       }
     };
