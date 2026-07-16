@@ -219,12 +219,17 @@ struct Animatable {
   // Direct access to the type-erased timesamples store. For enum-valued T the
   // samples hold the enum's underlying int64; render them by casting int64 -> T
   // (see EnumTimeSamplesToTypelessTimeSamples and the pprint enum path).
-  const value::TimeSamples *get_timesamples_ptr() const { return _ts.get(); }
-  value::TimeSamples *get_timesamples_ptr() { return _ts.get(); }
+  const value::TimeSamples *get_timesamples_ptr() const
+      TINYUSDZ_LIFETIMEBOUND {
+    return _ts.get();
+  }
+  value::TimeSamples *get_timesamples_ptr() TINYUSDZ_LIFETIMEBOUND {
+    return _ts.get();
+  }
 
   /// Get const reference to the scalar/default value (no copy).
   /// Only valid when has_default() is true.
-  const T &get_scalar_ref() const { return _value; }
+  const T &get_scalar_ref() const TINYUSDZ_LIFETIMEBOUND { return _value; }
 
   Animatable() = default;
 

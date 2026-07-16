@@ -19,6 +19,7 @@
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
+#include "tydra/next/resource-budget.hh"
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/schema/usd-skel.hh"
@@ -436,8 +437,61 @@ def Xform "World"
 // Converter Tests
 //
 
+class RetainedStreamSink : public SceneSink {
+ public:
+  bool BeginScene(RenderScene&& catalog) override {
+    scene = std::move(catalog);
+    return true;
+  }
+  bool AddMesh(int32_t id, RenderMesh&& mesh) override {
+    if (id < 0 || static_cast<size_t>(id) >= scene.meshes.size()) return false;
+    scene.meshes[static_cast<size_t>(id)] = std::move(mesh);
+    return true;
+  }
+  bool AddPoints(int32_t id, RenderPoints&& points) override {
+    if (id < 0 || static_cast<size_t>(id) >= scene.points.size()) return false;
+    scene.points[static_cast<size_t>(id)] = std::move(points);
+    return true;
+  }
+  bool AddCurves(int32_t id, RenderCurves&& curves) override {
+    if (id < 0 || static_cast<size_t>(id) >= scene.curves.size()) return false;
+    scene.curves[static_cast<size_t>(id)] = std::move(curves);
+    return true;
+  }
+  bool EndScene() override { return true; }
+
+  RenderScene scene;
+};
+
+class SelectiveStreamSink : public RetainedStreamSink {
+ public:
+  GeometryDisposition SelectGeometry(const GeometryInfo& info) override {
+    inspected.push_back(info);
+    if (cancel_on_first) return GeometryDisposition::Cancel;
+    if (info.prim_path == "/World/Plane") {
+      return GeometryDisposition::Proxy;
+    }
+    return GeometryDisposition::Skip;
+  }
+  void AbortScene() override { aborted = true; }
+
+  bool cancel_on_first = false;
+  bool aborted = false;
+  std::vector<GeometryInfo> inspected;
+};
+
 void TestRenderConverter() {
   std::cout << "Testing RenderConverter...\n";
+
+  const ResourceBudget target_budget =
+      ComputeResourceBudget(GiB(32), GiB(16));
+  assert(target_budget.host_limit == GiB(30));
+  assert(target_budget.vram_limit == GiB(8));
+  assert(target_budget.upload_staging_limit == MiB(512));
+  assert(target_budget.gpu_geometry_limit > target_budget.gpu_texture_limit);
+  assert(ComputeVramLimit(GiB(8)) == GiB(6));
+  assert(ComputeVramLimit(GiB(10)) == GiB(8));
+  assert(ComputeVramLimit(GiB(24)) == GiB(12));
 
   const char* usda = R"(#usda 1.0
 (
@@ -481,6 +535,7 @@ def Xform "World"
     def Mesh "Plane"
     {
         rel material:binding = </World/AnimatedMaterial>
+        float3[] extent = [(-1, 0, -1), (1, 0, 1)]
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
@@ -572,6 +627,52 @@ def Xform "World"
     std::cout << "  FAILED: " << result.error << "\n";
     return;
   }
+
+  RenderSceneConverter stream_converter(config);
+  RetainedStreamSink stream_sink;
+  StreamConvertResult streamed =
+      stream_converter.ConvertToSink(load_result.stage, &stream_sink);
+  assert(streamed.success);
+  assert(stream_sink.scene.meshes.size() == result.scene.meshes.size());
+  assert(stream_sink.scene.materials.size() == result.scene.materials.size());
+  assert(stream_sink.scene.point_instancers.size() ==
+         result.scene.point_instancers.size());
+  assert(streamed.mesh_count == result.scene.meshes.size());
+
+  RenderSceneConverter selective_converter(config);
+  SelectiveStreamSink selective_sink;
+  StreamConvertResult selected =
+      selective_converter.ConvertToSink(load_result.stage, &selective_sink);
+  assert(selected.success);
+  assert(selected.mesh_count == 1);
+  assert(!selective_sink.aborted);
+  assert(!selective_sink.inspected.empty());
+  const auto selected_info = std::find_if(
+      selective_sink.inspected.begin(), selective_sink.inspected.end(),
+      [](const GeometryInfo& info) {
+        return info.prim_path == "/World/Plane";
+      });
+  assert(selected_info != selective_sink.inspected.end());
+  assert(selected_info->point_count == 4);
+  assert(selected_info->index_count == 4);
+  assert(selected_info->estimated_resident_bytes > 0);
+  const int32_t selected_plane_id =
+      selective_sink.scene.mesh_by_path.at("/World/Plane");
+  const RenderMesh& selected_plane =
+      selective_sink.scene.meshes[static_cast<size_t>(selected_plane_id)];
+  assert(selected_plane.is_proxy);
+  assert(selected_plane.point_count() == 8);
+  assert(selected_plane.triangulated_indices.size() == 36);
+
+  RenderSceneConverter cancelled_converter(config);
+  SelectiveStreamSink cancelled_sink;
+  cancelled_sink.cancel_on_first = true;
+  StreamConvertResult cancelled =
+      cancelled_converter.ConvertToSink(load_result.stage, &cancelled_sink);
+  assert(!cancelled.success);
+  assert(cancelled.cancelled);
+  assert(cancelled_sink.aborted);
+  assert(cancelled.mesh_count == 0);
 
   assert(result.scene.meshes.size() == 3);
   assert(result.scene.point_instancers.size() == 1);
@@ -683,6 +784,29 @@ def Xform "World"
   assert(result.scene.point_instance_draws[0].material_id ==
          result.scene.point_instance_draws[1].material_id);
   assert(std::abs(result.scene.point_instance_draws[1].transform.m[12] - 4.5f) < 0.001f);
+
+  ConverterConfig compact_config = config;
+  compact_config.point_instancer.compact_instances = true;
+  compact_config.point_instancer.retain_source_arrays = false;
+  compact_config.point_instancer.build_instance_transforms = false;
+  compact_config.point_instancer.build_instance_draws = false;
+  RenderSceneConverter compact_converter(compact_config);
+  ConvertResult compact_result = compact_converter.Convert(load_result.stage);
+  assert(compact_result.success);
+  assert(compact_result.scene.point_instancers.size() == 1);
+  const RenderPointInstancer& compact_instancer =
+      compact_result.scene.point_instancers[0];
+  assert(compact_instancer.compact_instances.size() == 3);
+  assert(compact_instancer.instance_count() == 3);
+  assert(compact_instancer.visible_instance_count() == 2);
+  assert(compact_instancer.proto_indices.empty());
+  assert(compact_instancer.positions.empty());
+  assert(compact_instancer.transforms.empty());
+  assert(compact_instancer.instance_visible.empty());
+  assert(compact_result.scene.point_instance_draws.empty());
+  assert(compact_instancer.compact_instances[1].prototype_index == 1);
+  assert(compact_instancer.compact_instances[2].flags == 0);
+  assert(compact_instancer.memory_usage() < instancer.memory_usage());
 
   ConverterConfig duplicate_config = config;
   duplicate_config.point_instancer.duplicate_meshes = true;
@@ -2255,6 +2379,13 @@ def Xform "World"
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0)]
     }
 
+    def HermiteCurves "Hermite"
+    {
+        int[] curveVertexCounts = [2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0)]
+        vector3f[] tangents = [(1, 2, 0), (1, -2, 0)]
+    }
+
     def BasisCurves "PeriodicCatmullRom"
     {
         uniform token type = "cubic"
@@ -2399,9 +2530,9 @@ def Xform "World"
   RenderSceneConverter converter(cfg);
   ConvertResult result = converter.Convert(lr.stage);
   assert(result.success);
-  assert(result.scene.curves.size() == 5);
-  assert(result.scene.get_stats().curves_count == 5);
-  assert(result.scene.get_stats().curve_count == 6);
+  assert(result.scene.curves.size() == 6);
+  assert(result.scene.get_stats().curves_count == 6);
+  assert(result.scene.get_stats().curve_count == 7);
 
   auto curve = [&](const char* path) -> const RenderCurves& {
     auto it = result.scene.curves_by_path.find(path);
@@ -2430,6 +2561,15 @@ def Xform "World"
   assert(std::fabs(bezier.tessellated_points[8] - 0.0f) < 0.001f);
   assert(std::fabs(bezier.tessellated_points[6] - 2.0f) < 0.001f);
   assert(std::fabs(bezier.tessellated_points[7] - 1.0f) < 0.001f);
+
+  const RenderCurves& hermite = curve("/World/Hermite");
+  assert(hermite.is_hermite);
+  assert(hermite.tessellated_vertex_counts == std::vector<uint32_t>({3}));
+  assert(std::fabs(hermite.tessellated_points[0]) < 0.001f);
+  assert(std::fabs(hermite.tessellated_points[3] - 0.5f) < 0.001f);
+  assert(std::fabs(hermite.tessellated_points[4] - 0.5f) < 0.001f);
+  assert(std::fabs(hermite.tessellated_points[6] - 1.0f) < 0.001f);
+  assert(std::fabs(hermite.tessellated_points[7]) < 0.001f);
 
   const RenderCurves& periodic = curve("/World/PeriodicCatmullRom");
   assert(periodic.wrap == CurveWrap::Periodic);
@@ -2536,6 +2676,12 @@ def Xform "Root"
     def LightFilter "Filter" {}
 
     def BasisCurves "Curve" {}
+    def TetMesh "Tets"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0),
+                            (0, 0, 1), (0, 0, -1)]
+        int4[] tetVertexIndices = [(0, 1, 2, 3), (0, 2, 1, 4)]
+    }
     def Points "Pts"
     {
         point3f[] points = [(0, 0, 0), (1, 2, 3), (-1, 0, 2)]
@@ -2555,7 +2701,7 @@ def Xform "Root"
   opts.collect_other = true;
   RenderExtractResult er;
   assert(CollectRenderPrims(lr.stage, opts, &er));
-  assert(er.meshes.size() == 4);
+  assert(er.meshes.size() == 5);
   assert(er.lights.size() == 4);
   assert(er.curves.size() == 1);
   assert(er.volumes.size() == 1);
@@ -2582,6 +2728,16 @@ def Xform "Root"
   assert(pipe.has_bbox);
   assert(std::fabs(pipe.bbox_min.z + 1.5f) < 0.001f);
   assert(std::fabs(pipe.bbox_max.z - 1.5f) < 0.001f);
+
+  auto tet_it = scene.mesh_by_path.find("/Root/Tets");
+  assert(tet_it != scene.mesh_by_path.end());
+  const RenderMesh& tets = scene.meshes[static_cast<size_t>(tet_it->second)];
+  assert(tets.point_count() == 5);
+  assert(tets.face_count() == 6);  // shared face is removed
+  assert(tets.triangulated_indices.size() == 18);
+  assert(tets.has_bbox);
+  assert(std::fabs(tets.bbox_min.z + 1.0f) < 0.001f);
+  assert(std::fabs(tets.bbox_max.z - 1.0f) < 0.001f);
 
   auto mat_it = scene.material_by_path.find("/Root/Mat");
   assert(mat_it != scene.material_by_path.end());
@@ -3541,6 +3697,9 @@ def Xform "World"
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (0.5, 0), (0.5, 0.5), (0, 0.5)] (
+            interpolation = "vertex"
+        )
         texCoord2f[] primvars:customUV = [(0, 0), (1, 0), (1, 1), (0, 1)] (
             interpolation = "vertex"
         )
@@ -3643,6 +3802,10 @@ def Xform "World"
 
   // ...and the customUV primvar is promoted into texcoords_0.
   assert(quad_mesh.texcoords_0.size() == 8);
+  assert(quad_mesh.texcoords_0_name == "customUV");
+  // The displaced conventional set remains available as the secondary UVs.
+  assert(quad_mesh.texcoords_1.size() == 8);
+  assert(quad_mesh.texcoords_1_name == "st");
 
   // Transmissive OpenPBR takes the blend path.
   const RenderMesh& glass_mesh = result.scene.meshes[static_cast<size_t>(glass)];

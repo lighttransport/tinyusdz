@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""tusdview `--next --rt`: skeletal skinning and blendshapes must reach the tracer.
+
+The ray tracer builds its BLAS from actual vertex buffers, so the raster vertex
+shader's deform never reaches it. The `--next` path handled that by refusing GPU
+skinning under RT entirely and falling back to the load-time CPU bake -- which
+means every new time code re-ran the whole converter, the most expensive thing in
+the program, to move one skeleton.
+
+RT now keeps the rest pose like the raster path and re-poses those retained
+vertices per frame (morph, then linear-blend skinning, from the same bone rows
+the raster bone texture is packed from), then rebuilds the BLAS for the meshes
+that moved.
+
+The assertion is parity, in both directions:
+
+  1. `--skinning gpu` (the new re-pose) must render EXACTLY what `--skinning cpu`
+     (the load-time bake, the known-correct reference) renders at the same time
+     code; and
+  2. the pose must actually change with the time code, so that (1) cannot be
+     satisfied by two rest poses agreeing with each other.
+
+Only the skeletal case is asserted. The re-pose applies blendshape morph too (in
+deform.glsl's order: morph, then skin), but no fixture here animates a blendshape
+under `--time` -- neither the next path nor the legacy Tydra path moves for
+models/blendshape-and-animation-test-001.usda, which is a separate, pre-existing
+gap. Asserting morph parity against that would only assert two rest poses.
+
+Exits 77 (skip) when the binary is missing or the GPU cannot ray trace.
+"""
+import os
+import subprocess
+import sys
+
+SKIP = 77
+
+
+def render(binary, model, out, skinning, time):
+    cmd = [binary, "--next", "--headless", "--rt", "--frames", "3",
+           "--time", str(time), "--skinning", skinning, "--screenshot", out,
+           model]
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       timeout=600)
+    return r.stdout.decode(errors="replace")
+
+
+def read(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def main():
+    if len(sys.argv) < 4:
+        print("usage: check-rt-skinning.py <tusdview> <skinned.usda> <work_dir>")
+        return SKIP
+    binary, skin_model, work = sys.argv[1:4]
+    for p in (binary, skin_model):
+        if not os.path.exists(p):
+            print(f"SKIP: missing {p}")
+            return SKIP
+    os.makedirs(work, exist_ok=True)
+
+    probe = os.path.join(work, "rt_skin_gpu_t12.png")
+    log = render(binary, skin_model, probe, "gpu", 12)
+    if not os.path.exists(probe):
+        print("SKIP: --rt produced no image (no ray-tracing capable device?)")
+        return SKIP
+    if "RT skeletal skinning" not in log and "RT blendshape" not in log:
+        print("FAIL: --next --rt did not take the RT skinning path. It fell back "
+              "to the load-time CPU bake, which re-runs the whole converter for "
+              "every time code.\n--- log ---\n" + log)
+        return 1
+
+    for name, model in [("skeletal", skin_model)]:
+        gpu12 = os.path.join(work, f"rt_{name}_gpu_t12.png")
+        cpu12 = os.path.join(work, f"rt_{name}_cpu_t12.png")
+        gpu0 = os.path.join(work, f"rt_{name}_gpu_t0.png")
+        render(binary, model, gpu12, "gpu", 12)
+        render(binary, model, cpu12, "cpu", 12)
+        render(binary, model, gpu0, "gpu", 0)
+        if not (os.path.exists(gpu12) and os.path.exists(cpu12)
+                and os.path.exists(gpu0)):
+            print(f"FAIL: {name}: a render produced no image")
+            return 1
+
+        if read(gpu12) != read(cpu12):
+            print(f"FAIL: {name}: the RT per-frame re-pose does not match the "
+                  f"CPU bake at the same time code. The tracer is posing the "
+                  f"geometry differently from the reference -- check the bone-row "
+                  f"convention (row-vector p*M, world+geomBind already folded in) "
+                  f"and the morph-before-skin order.")
+            return 1
+        if read(gpu0) == read(gpu12):
+            print(f"FAIL: {name}: t=0 and t=12 render identically, so nothing is "
+                  f"being posed at all -- the parity check above is vacuous "
+                  f"(two rest poses agreeing).")
+            return 1
+
+    print("PASS: --next --rt re-poses the skinned mesh per frame, byte-identical "
+          "to the CPU bake")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

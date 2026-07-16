@@ -92,7 +92,8 @@ bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
 
 bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
                             double time_code,
-                            PointInstancerData* out);
+                            PointInstancerData* out,
+                            bool compute_transforms = true);
 
 void GatherMeshPrims(const ::tinyusdz::next::UsdPrim& root,
                      std::vector<::tinyusdz::next::UsdPrim>* out);

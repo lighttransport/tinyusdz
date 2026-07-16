@@ -2250,11 +2250,43 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       times.push_back(time_opt.value());
     }
 
-    crate::CrateValue times_value;
-    times_value.Set(times);
-    crate::ValueRep times_rep = PackValue(times_value, err);
-    if (err && !err->empty()) {
-      return -1;
+    crate::ValueRep times_rep;
+    if (times.empty()) {
+      // An AUTHORED but EMPTY timeSamples block (`float x.timeSamples = {}`).
+      //
+      // PackValue() would route this through TryInlineValue, which encodes an
+      // empty array as payload=0 (see crate-writer-inline.cc). OUR reader treats
+      // payload=0 as "empty array", but OpenUSD reads the payload as a FILE
+      // OFFSET: it seeks to byte 0, tries to unpack a vector<double> out of the
+      // bootstrap header, and rejects the whole file as a corrupt asset. pxr
+      // itself writes the empty times array OUT-OF-LINE -- a real offset whose
+      // payload is a count of zero -- so do the same.
+      //
+      // Found only by cross-checking against pxr: our reader and writer agreed
+      // with each other, so every tinyusdz-only test passed.
+      const int64_t times_offset = value_data_end_offset_;
+      if (!Seek(times_offset)) {
+        if (err) *err = "Failed to seek to write empty times array";
+        return -1;
+      }
+      uint64_t zero_count = 0;
+      if (!Write(zero_count)) {
+        if (err) *err = "Failed to write empty times array count";
+        return -1;
+      }
+      value_data_end_offset_ = Tell();
+
+      times_rep.SetType(
+          static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE));
+      times_rep.SetIsArray();
+      times_rep.SetPayload(static_cast<uint64_t>(times_offset));
+    } else {
+      crate::CrateValue times_value;
+      times_value.Set(times);
+      times_rep = PackValue(times_value, err);
+      if (err && !err->empty()) {
+        return -1;
+      }
     }
 
     // === Step 7: Go back and fill in times_rep ValueRep ===
@@ -2325,6 +2357,116 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   }
 
   return value_offset;
+}
+
+crate::ValueRep CrateWriter::PackTokenVectorValue(
+    const std::vector<value::token>& tokens, std::string* err) {
+  const int64_t current_pos = Tell();
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to value data section for TokenVector";
+    return crate::ValueRep();
+  }
+
+  const int64_t value_offset = Tell();
+  const uint64_t count = static_cast<uint64_t>(tokens.size());
+  if (!Write(count)) {
+    if (err) *err = "Failed to write TokenVector count";
+    return crate::ValueRep();
+  }
+
+  for (const auto& tok : tokens) {
+    const uint32_t token_index = GetOrCreateToken(tok.str()).value;
+    if (!Write(token_index)) {
+      if (err) *err = "Failed to write TokenVector token index";
+      return crate::ValueRep();
+    }
+  }
+
+  value_data_end_offset_ = Tell();
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing TokenVector";
+    return crate::ValueRep();
+  }
+
+  return crate::ValueRep(
+      static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR),
+      false, false, static_cast<uint64_t>(value_offset));
+}
+
+// `subLayers` must be the dedicated StringVector crate type (uint64 count +
+// uint32 STRING indices), like pxr writes it. A VtArray<string> encoding is
+// readable but has the wrong value type, so SdfLayer never recognises the
+// entries as sublayers -- pxr silently composed nothing from them.
+crate::ValueRep CrateWriter::PackStringVectorValue(
+    const std::vector<std::string>& strs, std::string* err) {
+  const int64_t current_pos = Tell();
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to value data section for StringVector";
+    return crate::ValueRep();
+  }
+
+  const int64_t value_offset = Tell();
+  const uint64_t count = static_cast<uint64_t>(strs.size());
+  if (!Write(count)) {
+    if (err) *err = "Failed to write StringVector count";
+    return crate::ValueRep();
+  }
+
+  for (const auto& str : strs) {
+    const uint32_t string_index = GetOrCreateString(str).value;
+    if (!Write(string_index)) {
+      if (err) *err = "Failed to write StringVector string index";
+      return crate::ValueRep();
+    }
+  }
+
+  value_data_end_offset_ = Tell();
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing StringVector";
+    return crate::ValueRep();
+  }
+
+  return crate::ValueRep(
+      static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR),
+      false, false, static_cast<uint64_t>(value_offset));
+}
+
+// `subLayerOffsets` is the LayerOffsetVector crate type: uint64 count + raw
+// (double offset, double scale) pairs.
+crate::ValueRep CrateWriter::PackLayerOffsetVectorValue(
+    const std::vector<LayerOffset>& offsets, std::string* err) {
+  const int64_t current_pos = Tell();
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to value data section for LayerOffsetVector";
+    return crate::ValueRep();
+  }
+
+  const int64_t value_offset = Tell();
+  const uint64_t count = static_cast<uint64_t>(offsets.size());
+  if (!Write(count)) {
+    if (err) *err = "Failed to write LayerOffsetVector count";
+    return crate::ValueRep();
+  }
+
+  for (const auto& lo : offsets) {
+    if (!Write(lo._offset) || !Write(lo._scale)) {
+      if (err) *err = "Failed to write LayerOffsetVector element";
+      return crate::ValueRep();
+    }
+  }
+
+  value_data_end_offset_ = Tell();
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing LayerOffsetVector";
+    return crate::ValueRep();
+  }
+
+  return crate::ValueRep(
+      static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR),
+      false, false, static_cast<uint64_t>(value_offset));
 }
 
 } // namespace experimental

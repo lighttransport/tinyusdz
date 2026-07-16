@@ -17,6 +17,8 @@ void tydra_default_material_assignment_test(void);
 void tydra_texture_loader_policy_test(void);
 void tydra_udim_texture_test(void);
 void tydra_envmap_loader_policy_test(void);
+void tydra_light_shaping_ies_conversion_test(void);
+void tydra_light_spectral_emission_conversion_test(void);
 void tydra_geometry_light_validation_test(void);
 void tydra_mesh_fallback_policy_test(void);
 void tydra_progress_cancellation_test(void);

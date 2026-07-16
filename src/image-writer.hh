@@ -17,7 +17,7 @@ namespace image {
 // Autodetect = determine file format using filename or Image's pixelformat +
 // bpp.
 //
-enum class WriteImageFormat { Autodetect, BMP, PNG, JPEG, EXR, TIFF, DNG };
+enum class WriteImageFormat { Autodetect, BMP, PNG, JPEG, EXR, TIFF, DNG, QOI };
 
 // PNG encoder backend selection.
 // Auto  : use fpnge(veluca93) when available(TINYUSDZ_HAVE_FPNGE), otherwise fpng.

@@ -1385,7 +1385,14 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
     if (_variantPrimSpecs.count(parent)) {
       DCOUT("parent is variantPrim: " << parent);
       if (!primspec) {
-        PUSH_WARN("parent is variantPrim, but current is not Prim.");
+        // A null child under a variant parent is benign for the expected
+        // non-prim spec kinds (Variant/VariantSet/Attribute/Relationship/...);
+        // only warn for genuinely unexpected ones. Mirrors the guard at the
+        // ReconstructPrimNode sites above (was unguarded here, which flooded
+        // hundreds of false warnings on caldera).
+        if (!IsExpectedNonPrimVariantChild(current, psmap)) {
+          PUSH_WARN("parent is variantPrim, but current is not Prim.");
+        }
       } else {
         DCOUT("Adding prim to child...");
         PrimSpec &vps = _variantPrimSpecs.at(parent);

@@ -396,6 +396,18 @@ static void RemapMaterialTextureIds(RenderMaterial &mat,
 
 }  // namespace
 
+// Copy authored displayColor / displayOpacity primvars from an analytic Gprim
+// (Cube/Sphere/Cone/Cylinder/Capsule) onto the tessellated temp GeomMesh so
+// ConvertMesh applies them. Without this, analytic primitives always render
+// with the default material even when the prim authors primvars:displayColor.
+static void CopyDisplayPrimvarsToTempMesh(const GPrim &src, GeomMesh *dst) {
+  if (!dst) return;
+  GeomPrimvar pv;
+  if (src.get_primvar("displayColor", &pv)) dst->set_primvar(pv);
+  GeomPrimvar po;
+  if (src.get_primvar("displayOpacity", &po)) dst->set_primvar(po);
+}
+
 //
 // Convert GeomCube to RenderMesh by generating tessellated geometry
 //
@@ -463,6 +475,7 @@ bool RenderSceneConverter::ConvertCube(
   }
 
   // Forward to ConvertMesh
+  CopyDisplayPrimvarsToTempMesh(cube, &temp_mesh);
   return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
                      subset_material_path_map, rmaterial_map,
                      material_subsets, blendshapes, dstMesh);
@@ -541,6 +554,7 @@ bool RenderSceneConverter::ConvertSphere(
   }
 
   // Forward to ConvertMesh
+  CopyDisplayPrimvarsToTempMesh(sphere, &temp_mesh);
   return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
                      subset_material_path_map, rmaterial_map,
                      material_subsets, blendshapes, dstMesh);
@@ -592,12 +606,12 @@ bool RenderSceneConverter::ConvertCylinder(
       normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
     }
     temp_mesh.normals.set_value(normal3f_data);
-    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
   }
   {
     GeomPrimvar primvar;
     primvar.set_name("st");
-    primvar.set_interpolation(Interpolation::FaceVarying);
+    primvar.set_interpolation(Interpolation::Vertex);
     std::vector<value::texcoord2f> uv_data;
     for (const auto &uv : uvs_f2) {
       uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
@@ -606,6 +620,7 @@ bool RenderSceneConverter::ConvertCylinder(
     temp_mesh.set_primvar(primvar);
   }
 
+  CopyDisplayPrimvarsToTempMesh(cylinder, &temp_mesh);
   return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
                      subset_material_path_map, rmaterial_map,
                      material_subsets, blendshapes, dstMesh);
@@ -656,12 +671,12 @@ bool RenderSceneConverter::ConvertCone(
       normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
     }
     temp_mesh.normals.set_value(normal3f_data);
-    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
   }
   {
     GeomPrimvar primvar;
     primvar.set_name("st");
-    primvar.set_interpolation(Interpolation::FaceVarying);
+    primvar.set_interpolation(Interpolation::Vertex);
     std::vector<value::texcoord2f> uv_data;
     for (const auto &uv : uvs_f2) {
       uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
@@ -670,6 +685,7 @@ bool RenderSceneConverter::ConvertCone(
     temp_mesh.set_primvar(primvar);
   }
 
+  CopyDisplayPrimvarsToTempMesh(cone, &temp_mesh);
   return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
                      subset_material_path_map, rmaterial_map,
                      material_subsets, blendshapes, dstMesh);
@@ -721,12 +737,12 @@ bool RenderSceneConverter::ConvertCapsule(
       normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
     }
     temp_mesh.normals.set_value(normal3f_data);
-    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
   }
   {
     GeomPrimvar primvar;
     primvar.set_name("st");
-    primvar.set_interpolation(Interpolation::FaceVarying);
+    primvar.set_interpolation(Interpolation::Vertex);
     std::vector<value::texcoord2f> uv_data;
     for (const auto &uv : uvs_f2) {
       uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
@@ -735,6 +751,7 @@ bool RenderSceneConverter::ConvertCapsule(
     temp_mesh.set_primvar(primvar);
   }
 
+  CopyDisplayPrimvarsToTempMesh(capsule, &temp_mesh);
   return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
                      subset_material_path_map, rmaterial_map,
                      material_subsets, blendshapes, dstMesh);
@@ -909,7 +926,8 @@ bool RenderSceneConverter::ConvertVolume(
     }
 
     // Resolve + open the .vdb asset.
-    std::string sanitized = utils::SanitizeAssetPath(filePath.GetAssetPath());
+    std::string sanitized = utils::SanitizeAssetPath(
+        filePath.GetAssetPath(), assetResolver.get_allow_parent_relative_paths());
     if (sanitized.empty()) {
       DCOUT("Unsafe vdb asset path: " << filePath.GetAssetPath());
       continue;
@@ -1862,9 +1880,11 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
         primName = primName.substr(lastSlash + 1);
       }
       if (!ConvertSkeletonFromPtr(env, Path(skelPathStr, ""), *skelPtr, primName, &skel)) {
-        PushError(fmt::format("Failed to convert standalone skeleton: {}\n",
-                              skelPathStr));
-        return false;
+        PushWarn(fmt::format(
+            "Skipping invalid standalone skeleton {}: {}\n",
+            skelPathStr, GetError()));
+        _err.clear();
+        continue;
       }
 
       _skelPathToIndex[skelPathStr] = skel_id;
@@ -2406,8 +2426,8 @@ bool DefaultTextureImageLoaderFunction(
   (void)userdata;
   (void)warn;
 
-  std::string sanitized_path =
-      utils::SanitizeAssetPath(assetPath.GetAssetPath());
+  std::string sanitized_path = utils::SanitizeAssetPath(
+      assetPath.GetAssetPath(), assetResolver.get_allow_parent_relative_paths());
   if (sanitized_path.empty()) {
     if (err) {
       (*err) += fmt::format("Unsafe asset path: {}\n", assetPath.GetAssetPath());
@@ -2435,10 +2455,10 @@ bool DefaultTextureImageLoaderFunction(
     return false;
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     if (err) {
       (*err) += fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                            asset.size(), security_policy::kResolverMaxAssetReadBytes);
+                            asset.size(), security_policy::GetMaxAssetReadBytes());
     }
     return false;
   }
@@ -2503,6 +2523,12 @@ bool DefaultTextureImageLoaderFunction(
   texImage.channels = result.value().image.channels;
   texImage.width = result.value().image.width;
   texImage.height = result.value().image.height;
+
+  // `imageData` receives the decoder output as-is, so the buffer's texel type
+  // equals the asset's texel type (HDR/EXR = Float32, 16-bit PNG = UInt16,
+  // ...). Without this, float buffers were tagged UInt8 and every consumer
+  // read the raw float bytes as 8-bit texels (garbage for HDR envmaps).
+  texImage.texelComponentType = texImage.assetTexelComponentType;
 
   (*texImageOut) = texImage;
 
@@ -2579,7 +2605,26 @@ namespace {
 bool UDIMDecodeImageAsset(const std::string &assetPath,
                           const AssetResolutionResolver &assetResolver,
                           Image *out, std::string *warn, std::string *err) {
-  std::string sanitized = utils::SanitizeAssetPath(assetPath);
+  std::vector<uint8_t> direct_data;
+  if (io::FileExists(assetPath)) {
+    const size_t max_bytes = security_policy::GetMaxAssetReadBytes();
+    if (!io::ReadWholeFile(&direct_data, err, assetPath, max_bytes)) {
+      if (err) (*err) += fmt::format("Failed to read asset: {}\n", assetPath);
+      return false;
+    }
+    auto result = tinyusdz::image::LoadImageFromMemory(direct_data.data(),
+                                                       direct_data.size(),
+                                                       assetPath);
+    if (!result) {
+      if (err) (*err) += "Failed to load image file: " + result.error() + "\n";
+      return false;
+    }
+    (*out) = result.value().image;
+    return true;
+  }
+
+  std::string sanitized = utils::SanitizeAssetPath(
+      assetPath, assetResolver.get_allow_parent_relative_paths());
   if (sanitized.empty()) {
     if (err) (*err) += fmt::format("Unsafe asset path: {}\n", assetPath);
     return false;
@@ -2597,11 +2642,11 @@ bool UDIMDecodeImageAsset(const std::string &assetPath,
     return false;
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     if (err) {
       (*err) += fmt::format("Resolved asset exceeds max bytes ({} > {}).\n",
                             asset.size(),
-                            security_policy::kResolverMaxAssetReadBytes);
+                            security_policy::GetMaxAssetReadBytes());
     }
     return false;
   }
@@ -2613,23 +2658,13 @@ bool UDIMDecodeImageAsset(const std::string &assetPath,
     return false;
   }
 
-  if (result.value().image.bpp != 8) {
-    if (err) {
-      (*err) += fmt::format(
-          "UDIM atlas combine currently supports only 8-bit images "
-          "(asset `{}` has bpp={}).\n",
-          assetPath, result.value().image.bpp);
-    }
-    return false;
-  }
-
   (*out) = result.value().image;
   return true;
 }
 
-// Expand `src` (1-4 channels, 8-bit) into a 4-channel RGBA `Image`.
+// Expand `src` (1-4 channels, 8-bit or fp32) into a 4-channel RGBA8 `Image`.
 bool UDIMToRGBA8(const Image &src, Image *dst) {
-  if (src.bpp != 8) return false;
+  if (src.bpp != 8 && src.bpp != 32) return false;
   if (src.channels < 1 || src.channels > 4) return false;
 
   const size_t npixels = size_t(src.width) * size_t(src.height);
@@ -2643,8 +2678,31 @@ bool UDIMToRGBA8(const Image &src, Image *dst) {
 
   const int sc = src.channels;
   for (size_t i = 0; i < npixels; i++) {
-    const uint8_t *s = src.data.data() + i * size_t(sc);
     uint8_t *d = dst->data.data() + i * 4;
+    if (src.bpp == 32) {
+      const float *s = reinterpret_cast<const float *>(src.data.data()) +
+                       i * size_t(sc);
+      auto q = [](float v) -> uint8_t {
+        if (!(v > 0.0f)) return 0;
+        if (v >= 1.0f) return 255;
+        return static_cast<uint8_t>(v * 255.0f + 0.5f);
+      };
+      if (sc == 1) {
+        d[0] = d[1] = d[2] = q(s[0]);
+        d[3] = 255;
+      } else if (sc == 2) {
+        d[0] = d[1] = d[2] = q(s[0]);
+        d[3] = q(s[1]);
+      } else if (sc == 3) {
+        d[0] = q(s[0]); d[1] = q(s[1]); d[2] = q(s[2]);
+        d[3] = 255;
+      } else {
+        d[0] = q(s[0]); d[1] = q(s[1]); d[2] = q(s[2]); d[3] = q(s[3]);
+      }
+      continue;
+    }
+
+    const uint8_t *s = src.data.data() + i * size_t(sc);
     if (sc == 1) {
       d[0] = d[1] = d[2] = s[0];
       d[3] = 255;
@@ -2700,12 +2758,20 @@ bool ExpandUDIMTiles(const std::string &udimAssetPath,
   tilesOut->clear();
   for (uint32_t id = kUDIMStart; id <= kUDIMEnd; id++) {
     const std::string tilePath = prefix + std::to_string(id) + suffix;
-    const std::string sanitized = utils::SanitizeAssetPath(tilePath);
-    if (sanitized.empty()) {
-      continue;
+    bool found = io::FileExists(tilePath);
+    if (!found) {
+      const std::string sanitized = utils::SanitizeAssetPath(
+          tilePath, assetResolver.get_allow_parent_relative_paths());
+      if (sanitized.empty()) {
+        continue;
+      }
+      const std::string resolved = assetResolver.resolve(sanitized);
+      if (resolved.empty()) {
+        continue;
+      }
+      found = true;
     }
-    const std::string resolved = assetResolver.resolve(sanitized);
-    if (resolved.empty()) {
+    if (!found) {
       continue;
     }
 

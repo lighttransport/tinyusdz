@@ -1,0 +1,351 @@
+#include "mtlx_doc.h"
+#include "mtlx_xml.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* ---- type / value parsing --------------------------------------------- */
+
+static MtlxType parse_type(const char *t) {
+    if (!t) return MV_NONE;
+    if (!strcmp(t, "float")) return MV_FLOAT;
+    if (!strcmp(t, "color3")) return MV_COLOR3;
+    if (!strcmp(t, "color4")) return MV_COLOR4;
+    if (!strcmp(t, "vector2")) return MV_VEC2;
+    if (!strcmp(t, "vector3")) return MV_VEC3;
+    if (!strcmp(t, "vector4")) return MV_VEC4;
+    if (!strcmp(t, "integer")) return MV_INT;
+    if (!strcmp(t, "boolean")) return MV_BOOL;
+    if (!strcmp(t, "string")) return MV_STRING;
+    if (!strcmp(t, "filename")) return MV_FILENAME;
+    return MV_NONE;
+}
+
+static int type_ncomp(MtlxType t) {
+    switch (t) {
+        case MV_FLOAT: case MV_INT: case MV_BOOL: return 1;
+        case MV_VEC2: return 2;
+        case MV_COLOR3: case MV_VEC3: return 3;
+        case MV_COLOR4: case MV_VEC4: return 4;
+        default: return 0;
+    }
+}
+
+static void parse_value(const char *s, MtlxType type, MtlxValue *out) {
+    memset(out, 0, sizeof(*out));
+    out->type = type;
+    if (!s) return;
+    if (type == MV_STRING || type == MV_FILENAME) {
+        out->s = strdup(s);
+        return;
+    }
+    if (type == MV_BOOL) {
+        out->v[0] = (!strcmp(s, "true") || !strcmp(s, "1")) ? 1.0f : 0.0f;
+        return;
+    }
+    int n = type_ncomp(type);
+    if (n == 0) n = 1;
+    const char *p = s;
+    for (int i = 0; i < n; i++) {
+        char *end = NULL;
+        float val = strtof(p, &end);
+        out->v[i] = val;
+        if (end == p) break;
+        p = end;
+        while (*p == ',' || *p == ' ' || *p == '\t') p++;
+    }
+    /* scalar -> broadcast to all components for color/vector convenience */
+    if (n >= 3 && p == s) { /* nothing parsed */ }
+}
+
+/* ---- growable document builder ---------------------------------------- */
+
+typedef struct {
+    MtlxDoc d;
+    /* pending output records: graph_id, output-name -> nodename (+sub) */
+    struct { int graph_id; char *name; char *nodename; char *sub; } *outs;
+    int nout;
+    /* pending material surfaceshader nodenames (top-level scope) */
+    char **mat_shadernames;
+} Builder;
+
+static int add_graph(Builder *b, const char *name) {
+    b->d.graph_names = realloc(b->d.graph_names, sizeof(char *) * (b->d.ngraph + 1));
+    b->d.graph_names[b->d.ngraph] = strdup(name ? name : "");
+    return b->d.ngraph++;
+}
+
+static int add_node(Builder *b, const char *category, const char *name, MtlxType type, int graph_id) {
+    b->d.nodes = realloc(b->d.nodes, sizeof(MtlxNode) * (b->d.nnode + 1));
+    MtlxNode *n = &b->d.nodes[b->d.nnode];
+    memset(n, 0, sizeof(*n));
+    n->category = strdup(category ? category : "");
+    n->name = strdup(name ? name : "");
+    n->type = type;
+    n->graph_id = graph_id;
+    return b->d.nnode++;
+}
+
+static void node_add_input(MtlxNode *n, const XmlNode *x, const char *fileprefix) {
+    n->inputs = realloc(n->inputs, sizeof(MtlxInput) * (n->ninput + 1));
+    MtlxInput *in = &n->inputs[n->ninput];
+    memset(in, 0, sizeof(*in));
+    in->src_node = -1;
+    in->name = strdup(xml_attr(x, "name") ? xml_attr(x, "name") : "");
+    in->type = parse_type(xml_attr(x, "type"));
+    const char *val = xml_attr(x, "value");
+    if (val) { in->has_value = 1; parse_value(val, in->type, &in->value); }
+    /* MaterialX `fileprefix` (on the <materialx> root and/or enclosing
+     * <nodegraph>) is prepended to every filename value in scope. e.g. the
+     * boombox material's fileprefix="boombox/" puts its textures in a
+     * subdirectory the search path could never reach by walking up. */
+    if (in->type == MV_FILENAME && in->value.s && fileprefix && fileprefix[0]) {
+        size_t L = strlen(fileprefix) + strlen(in->value.s) + 1;
+        char *full = (char *)malloc(L);
+        snprintf(full, L, "%s%s", fileprefix, in->value.s);
+        free(in->value.s);
+        in->value.s = full;
+    }
+    const char *cs = xml_attr(x, "colorspace");
+    if (cs && !strcmp(cs, "srgb_texture")) in->colorspace_srgb = 1;
+    const char *channels = xml_attr(x, "channels");
+    if (channels && channels[0]) in->channels = strdup(channels);
+    /* connection attrs stashed temporarily as strings in src_output/value.s;
+     * resolved in pass B. We store raw nodename/nodegraph/output via a small
+     * side channel encoded in src_output: "N:<nodename>" or "G:<graph>|<out>". */
+    const char *nodename = xml_attr(x, "nodename");
+    const char *nodegraph = xml_attr(x, "nodegraph");
+    const char *output = xml_attr(x, "output");
+    const char *interfacename = xml_attr(x, "interfacename");
+    if (nodename) {
+        const char *o = output ? output : "";
+        size_t L = strlen(nodename) + strlen(o) + 4;
+        in->src_output = malloc(L);
+        snprintf(in->src_output, L, "N:%s\x01%s", nodename, o);
+    } else if (nodegraph) {
+        const char *o = output ? output : "";
+        size_t L = strlen(nodegraph) + strlen(o) + 4;
+        in->src_output = malloc(L);
+        snprintf(in->src_output, L, "G:%s|%s", nodegraph, o);
+    } else if (interfacename) {
+        /* references an interface input of the owning nodegraph; resolved in
+         * pass B against the synthetic "input"-category node for that name. */
+        size_t L = strlen(interfacename) + 3;
+        in->src_output = malloc(L);
+        snprintf(in->src_output, L, "I:%s", interfacename);
+    }
+    n->ninput++;
+}
+
+static int find_graph(const Builder *b, const char *name) {
+    for (int i = 0; i < b->d.ngraph; i++)
+        if (!strcmp(b->d.graph_names[i], name)) return i;
+    return -1;
+}
+
+int mtlx_find_node(const MtlxDoc *d, int graph_id, const char *name) {
+    for (int i = 0; i < d->nnode; i++)
+        if (d->nodes[i].graph_id == graph_id && !strcmp(d->nodes[i].name, name)) return i;
+    return -1;
+}
+
+int mtlx_find_material(const MtlxDoc *d, const char *name) {
+    for (int i = 0; i < d->nmat; i++)
+        if (!strcmp(d->mats[i].name, name)) return i;
+    return -1;
+}
+
+/* resolve a graph output (graph_id, outname) -> global node id; sub via *sub */
+static int resolve_graph_output(Builder *b, int graph_id, const char *outname, char **sub) {
+    for (int i = 0; i < b->nout; i++) {
+        if (b->outs[i].graph_id == graph_id && !strcmp(b->outs[i].name, outname)) {
+            if (sub) *sub = b->outs[i].sub;
+            return mtlx_find_node(&b->d, graph_id, b->outs[i].nodename);
+        }
+    }
+    return -1;
+}
+
+static const char *is_shader_category(const char *tag) {
+    if (!strcmp(tag, "standard_surface")) return tag;
+    if (!strcmp(tag, "open_pbr_surface")) return tag;
+    return NULL;
+}
+
+static MtlxDoc *mtlx_build(XmlNode *root) {
+    if (!root) return NULL;
+    const XmlNode *mx = xml_child(root, "materialx");
+    if (!mx) { xml_free(root); return NULL; }
+
+    Builder b;
+    memset(&b, 0, sizeof(b));
+
+    /* document-level file prefix (prepended to all filename values in scope) */
+    const char *root_pre = xml_attr(mx, "fileprefix");
+    if (!root_pre) root_pre = "";
+
+    /* ---- pass A: create nodes, graphs, outputs, materials, assigns ---- */
+    for (int i = 0; i < mx->nchild; i++) {
+        const XmlNode *el = &mx->children[i];
+        const char *tag = el->tag;
+
+        if (!strcmp(tag, "nodegraph")) {
+            int gid = add_graph(&b, xml_attr(el, "name"));
+            /* nodegraph fileprefix concatenates after the document one */
+            const char *gfp = xml_attr(el, "fileprefix");
+            char gpre[1024];
+            snprintf(gpre, sizeof(gpre), "%s%s", root_pre, gfp ? gfp : "");
+            for (int j = 0; j < el->nchild; j++) {
+                const XmlNode *c = &el->children[j];
+                if (!strcmp(c->tag, "output")) {
+                    b.outs = realloc(b.outs, sizeof(*b.outs) * (b.nout + 1));
+                    b.outs[b.nout].graph_id = gid;
+                    b.outs[b.nout].name = strdup(xml_attr(c, "name") ? xml_attr(c, "name") : "");
+                    const char *nn = xml_attr(c, "nodename");
+                    b.outs[b.nout].nodename = strdup(nn ? nn : "");
+                    const char *sub = xml_attr(c, "output");
+                    b.outs[b.nout].sub = sub ? strdup(sub) : NULL;
+                    b.nout++;
+                } else if (!strcmp(c->tag, "input")) {
+                    /* nodegraph interface input: a node of category "input"
+                     * whose self-input carries the interface's value (or an
+                     * upstream connection). Referenced via interfacename. */
+                    int nid = add_node(&b, "input", xml_attr(c, "name"), parse_type(xml_attr(c, "type")), gid);
+                    node_add_input(&b.d.nodes[nid], c, gpre);
+                } else {
+                    int nid = add_node(&b, c->tag, xml_attr(c, "name"), parse_type(xml_attr(c, "type")), gid);
+                    for (int k = 0; k < c->nchild; k++)
+                        if (!strcmp(c->children[k].tag, "input"))
+                            node_add_input(&b.d.nodes[nid], &c->children[k], gpre);
+                }
+            }
+        } else if (is_shader_category(tag)) {
+            int nid = add_node(&b, tag, xml_attr(el, "name"), parse_type(xml_attr(el, "type")), -1);
+            for (int k = 0; k < el->nchild; k++)
+                if (!strcmp(el->children[k].tag, "input"))
+                    node_add_input(&b.d.nodes[nid], &el->children[k], root_pre);
+        } else if (!strcmp(tag, "surfacematerial")) {
+            b.d.mats = realloc(b.d.mats, sizeof(MtlxMaterial) * (b.d.nmat + 1));
+            b.mat_shadernames = realloc(b.mat_shadernames, sizeof(char *) * (b.d.nmat + 1));
+            MtlxMaterial *m = &b.d.mats[b.d.nmat];
+            m->name = strdup(xml_attr(el, "name") ? xml_attr(el, "name") : "");
+            m->surface_node = -1;
+            const char *shadername = NULL;
+            for (int k = 0; k < el->nchild; k++) {
+                const XmlNode *in = &el->children[k];
+                if (!strcmp(in->tag, "input") && xml_attr(in, "name") &&
+                    !strcmp(xml_attr(in, "name"), "surfaceshader"))
+                    shadername = xml_attr(in, "nodename");
+            }
+            b.mat_shadernames[b.d.nmat] = strdup(shadername ? shadername : "");
+            b.d.nmat++;
+        } else if (!strcmp(tag, "look")) {
+            for (int k = 0; k < el->nchild; k++) {
+                const XmlNode *a = &el->children[k];
+                if (strcmp(a->tag, "materialassign")) continue;
+                b.d.assigns = realloc(b.d.assigns, sizeof(MtlxAssign) * (b.d.nassign + 1));
+                const char *g = xml_attr(a, "geom");
+                const char *mtl = xml_attr(a, "material");
+                b.d.assigns[b.d.nassign].geom = strdup(g ? g : "");
+                b.d.assigns[b.d.nassign].material = strdup(mtl ? mtl : "");
+                b.d.nassign++;
+            }
+        } else {
+            /* any other top-level node (constant, etc.) */
+            int nid = add_node(&b, tag, xml_attr(el, "name"), parse_type(xml_attr(el, "type")), -1);
+            for (int k = 0; k < el->nchild; k++)
+                if (!strcmp(el->children[k].tag, "input"))
+                    node_add_input(&b.d.nodes[nid], &el->children[k], root_pre);
+        }
+    }
+
+    /* ---- pass B: resolve input connections ---- */
+    for (int i = 0; i < b.d.nnode; i++) {
+        MtlxNode *n = &b.d.nodes[i];
+        for (int j = 0; j < n->ninput; j++) {
+            MtlxInput *in = &n->inputs[j];
+            if (!in->src_output) continue; /* literal or unconnected */
+            char *enc = in->src_output;
+            if (enc[0] == 'N' && enc[1] == ':') {
+                char *sep = strchr(enc + 2, '\x01');
+                char *sub = NULL;
+                if (sep) { *sep = '\0'; if (sep[1]) sub = sep + 1; }
+                int nid = mtlx_find_node(&b.d, n->graph_id, enc + 2);
+                in->src_node = nid;
+                char *subdup = sub ? strdup(sub) : NULL;
+                free(in->src_output);
+                in->src_output = subdup;
+            } else if (enc[0] == 'I' && enc[1] == ':') {
+                /* interface input: bind to the owning graph's "input" node. */
+                int nid = mtlx_find_node(&b.d, n->graph_id, enc + 2);
+                in->src_node = nid;
+                free(in->src_output);
+                in->src_output = NULL;
+            } else if (enc[0] == 'G' && enc[1] == ':') {
+                char *bar = strchr(enc + 2, '|');
+                char *sub = NULL;
+                if (bar) {
+                    *bar = '\0';
+                    int gid = find_graph(&b, enc + 2);
+                    int nid = (gid >= 0) ? resolve_graph_output(&b, gid, bar + 1, &sub) : -1;
+                    in->src_node = nid;
+                }
+                free(in->src_output);
+                in->src_output = sub ? strdup(sub) : NULL;
+            }
+        }
+    }
+
+    /* ---- resolve material surface nodes (top-level scope) ---- */
+    for (int i = 0; i < b.d.nmat; i++) {
+        b.d.mats[i].surface_node = mtlx_find_node(&b.d, -1, b.mat_shadernames[i]);
+        free(b.mat_shadernames[i]);
+    }
+    free(b.mat_shadernames);
+
+    /* free pending output records */
+    for (int i = 0; i < b.nout; i++) { free(b.outs[i].name); free(b.outs[i].nodename); free(b.outs[i].sub); }
+    free(b.outs);
+
+    const char *cs = xml_attr(mx, "colorspace");
+    b.d.doc_colorspace_srgb = (cs && strstr(cs, "srgb")) ? 1 : 0;
+
+    xml_free(root);
+
+    MtlxDoc *out = malloc(sizeof(MtlxDoc));
+    *out = b.d;
+    return out;
+}
+
+MtlxDoc *mtlx_load(const char *path) {
+    return mtlx_build(xml_parse_file(path));
+}
+
+MtlxDoc *mtlx_load_string(const char *xml) {
+    return mtlx_build(xml_parse_memory(xml, strlen(xml)));
+}
+
+void mtlx_free(MtlxDoc *d) {
+    if (!d) return;
+    for (int i = 0; i < d->nnode; i++) {
+        MtlxNode *n = &d->nodes[i];
+        for (int j = 0; j < n->ninput; j++) {
+            free(n->inputs[j].name);
+            free(n->inputs[j].value.s);
+            free(n->inputs[j].src_output);
+            free(n->inputs[j].channels);
+        }
+        free(n->inputs);
+        free(n->category);
+        free(n->name);
+    }
+    free(d->nodes);
+    for (int i = 0; i < d->nmat; i++) free(d->mats[i].name);
+    free(d->mats);
+    for (int i = 0; i < d->nassign; i++) { free(d->assigns[i].geom); free(d->assigns[i].material); }
+    free(d->assigns);
+    for (int i = 0; i < d->ngraph; i++) free(d->graph_names[i]);
+    free(d->graph_names);
+    free(d);
+}

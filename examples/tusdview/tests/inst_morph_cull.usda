@@ -1,0 +1,63 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+    doc = """Regression scene for instanced-prototype GPU-morph frustum culling.
+
+A PointInstancer with two prototypes:
+  - MorphProto (proto 0): a blendshaped cube whose PROTOTYPE-LOCAL geometry sits
+    far off-screen (x ~= -12). Its instance translation is the origin, and a
+    +X-by-12 blendshape (weight 1) morphs the geometry to the center (x ~= 0).
+    So the REST-pose bounding box is off-screen while the MORPHED geometry is in
+    full view at the origin.
+  - StaticProto (proto 1): three small anchor cubes that frame the center.
+
+Per-instance frustum culling tests the prototype's REST-pose protoAabb. Without
+padding protoAabb by the GPU morph's displacement, the morph instance's rest box
+(off-screen) tests Outside and the instance is wrongly culled -- its visible
+morphed cube at the origin disappears (3/4 instances visible). With the pad
+(DrawMeshCPU::morphExtent, BuildMorphChannelsNext) it is kept (4/4 visible).
+
+Driven by run-inst-morph-cull.sh, which asserts 4/4 instances visible.
+"""
+)
+def Xform "World"
+{
+    def PointInstancer "PI"
+    {
+        point3f[] positions = [(0, 0, 0), (-3, 0, 0), (3, 0, 0), (0, 0, 3)]
+        int[] protoIndices = [0, 1, 1, 1]
+        rel prototypes = [</World/PI/MorphProto>, </World/PI/StaticProto>]
+
+        def SkelRoot "MorphProto"
+        {
+            def Mesh "Cube" ( prepend apiSchemas = ["SkelBindingAPI"] )
+            {
+                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                int[] faceVertexIndices = [0,1,3,2, 2,3,5,4, 4,5,7,6, 6,7,1,0, 1,7,5,3, 6,0,2,4]
+                # Cube of half-size 0.4 centered at local x = -12 (far off-screen at rest).
+                point3f[] points = [(-12.4,-0.4,-0.4),(-12.4,-0.4,0.4),(-12.4,0.4,-0.4),(-12.4,0.4,0.4),(-11.6,0.4,-0.4),(-11.6,0.4,0.4),(-11.6,-0.4,-0.4),(-11.6,-0.4,0.4)]
+                uniform token[] skel:blendShapes = ["Key"]
+                rel skel:blendShapeTargets = </World/PI/MorphProto/Cube/Key>
+                def BlendShape "Key"
+                {
+                    # +X by 12 -> morphed geometry lands at the origin (in view).
+                    uniform vector3f[] offsets = [(12,0,0),(12,0,0),(12,0,0),(12,0,0),(12,0,0),(12,0,0),(12,0,0),(12,0,0)]
+                    uniform int[] pointIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+                }
+            }
+            def SkelAnimation "Anim"
+            {
+                uniform token[] blendShapes = ["Key"]
+                float[] blendShapeWeights = [1.0]
+            }
+        }
+
+        def Mesh "StaticProto"
+        {
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0,1,3,2, 2,3,5,4, 4,5,7,6, 6,7,1,0, 1,7,5,3, 6,0,2,4]
+            point3f[] points = [(-0.4,-0.4,-0.4),(-0.4,-0.4,0.4),(-0.4,0.4,-0.4),(-0.4,0.4,0.4),(0.4,0.4,-0.4),(0.4,0.4,0.4),(0.4,-0.4,-0.4),(0.4,-0.4,0.4)]
+        }
+    }
+}

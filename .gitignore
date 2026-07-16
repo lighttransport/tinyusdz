@@ -400,9 +400,20 @@ CMakeUserPresets.json
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
 # top-level usdcat round-trip compare which globs only tests/usda/*.usda).
 !tests/usda/composition/listop-xlayer-*.usda
+# tusdview material regression fixtures (tusdview-material-binding-inheritance /
+# tusdview-asset-path-anchoring). Listed explicitly rather than un-ignoring all of
+# models/*.usda, which would also catch scratch scenes dropped in that directory.
+!models/tusdview-material-binding-inheritance.usda
+!models/skintest-instanced.usda
+!models/multi-uv-quad.usda
+!models/nested-look-texture/root.usda
+!models/nested-look-texture/look/look.usda
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda
+!models/tusdview-curves-ribbons.usda
+!models/tusdview-nurbs-patch.usda
+!models/tusdview-transparency.usda
 !tests/usdc/dedup-global-001.usdc
 !aousd/validation_*.usda
 # Test-generated runtime artifacts (roundtrip/runtime tests)
@@ -477,6 +488,8 @@ python/tinyusdz/_version.py
 # Private notes / scratch docs (may reference proprietary asset names) — never commit
 priv/
 resume.md
+# Root-level scratch notes only -- doc/resume-tusdview.md is tracked.
+/resume-tusdview.md
 gpu-task.md
 python/tinyusdz.egg-info/
 python/tinyusdz/_core.*.so

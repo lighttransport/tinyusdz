@@ -22,6 +22,13 @@ namespace experimental {
     std::string _cerr; \
     if (ConvertValue(_v, _cv, &_cerr)) { \
       fields.push_back({(name), _cv}); \
+      /* Preserve the role spelling degraded by ConvertValue (vector3f -> */ \
+      /* float3 crate value) -- see AddArrayAttribute in stage-converter.cc. */ \
+      if (_v.type_name() != _cv.type_name()) { \
+        crate::CrateValue _ty; \
+        _ty.Set(value::token(_v.type_name())); \
+        fields.push_back({std::string(name) + ".typeName", _ty}); \
+      } \
     } \
   } \
 } while(0)
@@ -39,6 +46,13 @@ namespace experimental {
   std::string _cerr; \
   if (ConvertValue(_v, _cv, &_cerr)) { \
     fields.push_back({(name), _cv}); \
+    /* Preserve the role spelling degraded by ConvertValue (point3f -> */ \
+    /* float3 crate value) -- see AddArrayAttribute in stage-converter.cc. */ \
+    if (_v.type_name() != _cv.type_name()) { \
+      crate::CrateValue _ty; \
+      _ty.Set(value::token(_v.type_name())); \
+      fields.push_back({std::string(name) + ".typeName", _ty}); \
+    } \
   } \
 } while(0)
 

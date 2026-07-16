@@ -15,15 +15,23 @@ paste its **Resume prompt**, and go. Newest completion at top.
   `TUSDVIEW_RT_TIMING=1`; `TUSDVIEW_NO_BLAS_REFIT=1` reverts. NOTE: BOTH
   machines implemented refit+--play in parallel; upstream's (RX 9070 XT)
   implementation won the merge — canonical names are `blasDynamic`/
-  `blasRefitPending`. This machine's unique addition: **OPT-IN GPU compute
-  skinning** (`TUSDVIEW_RT_GPU_SKIN=1`, skin.comp) — off by default: RT
-  vertex/joint/weight buffers are host-visible (compute streams over PCIe,
-  ~30 ms vs ~7 ms CPU at 200k tris) and its matrix-skinned normals differ from
-  the CPU path's regenerated smooth normals. Follow-ups: device-local RT
-  geometry streams (+ staging for the CPU fallback) then flip compute skin
-  default-on; batch refits into one command buffer; replace the per-frame
-  vkDeviceWaitIdle with per-buffer sync. Verified: parity harness max=0,
-  refit==rebuild pixel-identical (both loaders), ctest 171/171.
+  `blasRefitPending`. The other machine also: threaded the CPU pose
+  (`DeformParallelFor`, bit-identical range-split, 3.2→1.67 ms @102k verts),
+  landed the HIP 2-level BVH refit (~270→16.5 ms, gate
+  `tusdview-hip-bvh-refit`), and moved `tusdview-blas-compaction` to a STATIC
+  fixture (a skinned prototype's BLAS is deliberately uncompacted). It
+  **considered and rejected default GPU-compute skinning** — GPU FMA/ULP drift
+  breaks the byte-parity oracle gates (`check-rt-skinning` asserts RT re-pose
+  == CPU bake exactly). This machine's unique addition survives as **OPT-IN
+  GPU compute skinning** (`TUSDVIEW_RT_GPU_SKIN=1`, skin.comp; default-off so
+  the parity gates hold) — also off because the RT vertex/joint/weight buffers
+  are host-visible (compute streams over PCIe, ~30 ms vs ~7 ms CPU at 200k
+  tris) and its matrix-skinned normals differ from the CPU path's regenerated
+  smooth normals. Follow-ups if ever revisited: device-local RT geometry
+  streams (+ staging for the CPU fallback); batch refits into one command
+  buffer; per-buffer sync instead of the per-frame vkDeviceWaitIdle. Verified:
+  parity harness max=0, refit==rebuild pixel-identical (both loaders),
+  ctest 171/171.
 
 - **refactor-next M3 (pcp hot-map perf) — DONE** (branch `dev`, 2026-07-16).
   Landed as open-addressed caches/memos (the full u32 rekeying stayed

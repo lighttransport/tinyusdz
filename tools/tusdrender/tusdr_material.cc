@@ -55,6 +55,36 @@ float MaterialMetallic(const RenderScene &scene, int material_id) {
   return 0.0f;
 }
 
+// Constant opacity: UsdPreviewSurface inputs:opacity (or OpenPBR
+// geometry_opacity), combined with the mesh's constant displayOpacity. The
+// legacy path used to drop all of these (tri.opacity stayed 1.0), so constant
+// transparency rendered fully opaque while the next path honored it.
+float MaterialOpacity(const RenderScene &scene, const RenderMesh &mesh,
+                      int material_id) {
+  float o = 1.0f;
+  if (material_id >= 0 && size_t(material_id) < scene.materials.size()) {
+    const RenderMaterial &mat = scene.materials[size_t(material_id)];
+    if (mat.openPBRShader.has_value()) {
+      o = mat.openPBRShader->opacity.value;
+    } else if (mat.surfaceShader.has_value()) {
+      o = mat.surfaceShader->opacity.value;
+    }
+  }
+  o *= ClampFloat(mesh.displayOpacity, 0.0f, 1.0f);  // constant displayOpacity (default 1)
+  return ClampFloat(o, 0.0f, 1.0f);
+}
+
+// UsdPreviewSurface inputs:opacityThreshold (alpha cutout); 0 = no cutout.
+float MaterialOpacityThreshold(const RenderScene &scene, int material_id) {
+  if (material_id >= 0 && size_t(material_id) < scene.materials.size()) {
+    const RenderMaterial &mat = scene.materials[size_t(material_id)];
+    if (mat.surfaceShader.has_value()) {
+      return ClampFloat(mat.surfaceShader->opacityThreshold.value, 0.0f, 1.0f);
+    }
+  }
+  return 0.0f;
+}
+
 Vec3 MeshLightEmission(const RenderScene &scene, const RenderMesh &mesh,
                        int material_id, float total_area) {
   if (!mesh.is_area_light) return Vec3{0.0f, 0.0f, 0.0f};

@@ -150,6 +150,11 @@ class AsciiParser {
     nonstd::optional<std::map<std::string, MetaVariable>> expressionVariables;
     // relocates: source path -> target path mappings
     std::vector<std::pair<Path, Path>> relocates;
+
+    // Unregistered layer metadata, preserved verbatim as the raw USDA text of
+    // the value (quotes included for string values). OpenUSD preserves such
+    // opinions; mirrors the unregistered *prim* metadata handling.
+    std::map<std::string, std::string> unregisteredMetas;
   };
 
   struct ParseState {
@@ -204,25 +209,21 @@ class AsciiParser {
     }
 
     const StoredCursor *FindLayerMeta(const std::string &meta_name) const {
-      auto it = layer_metas.find(meta_name);
-      return (it != layer_metas.end()) ? &it->second : nullptr;
+      return layer_metas.find_value_ptr(meta_name);
     }
 
     const StoredCursor *FindPrim(const std::string &prim_path) const {
-      auto it = prims.find(prim_path);
-      return (it != prims.end()) ? &it->second : nullptr;
+      return prims.find_value_ptr(prim_path);
     }
 
     const StoredCursor *FindPrimAttr(const std::string &prim_path,
                                      const std::string &property_name) const {
-      auto it = prim_attrs.find(MakePropertyKey(prim_path, property_name));
-      return (it != prim_attrs.end()) ? &it->second : nullptr;
+      return prim_attrs.find_value_ptr(MakePropertyKey(prim_path, property_name));
     }
 
     const StoredCursor *FindProperty(const std::string &prim_path,
                                      const std::string &property_name) const {
-      auto it = properties.find(MakePropertyKey(prim_path, property_name));
-      return (it != properties.end()) ? &it->second : nullptr;
+      return properties.find_value_ptr(MakePropertyKey(prim_path, property_name));
     }
   };
 

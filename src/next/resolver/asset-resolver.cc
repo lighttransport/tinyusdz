@@ -42,11 +42,24 @@ bool FileExistsImpl(const std::string& path) {
   std::ifstream f(path);
   return f.good();
 #else
-  // Use lstat (not stat) to avoid following symlinks. Note: a TOCTOU
-  // window still exists between this check and any subsequent open().
+  // Follow symlinks: production USD asset trees commonly use them for shared
+  // payload and texture roots. The subsequent reader still enforces its size
+  // and format limits.
   struct stat st;
-  return lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+  return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 #endif
+}
+
+bool HasParentComponent(const std::string& path) {
+  size_t begin = 0;
+  while (begin <= path.size()) {
+    size_t end = path.find_first_of("/\\", begin);
+    if (end == std::string::npos) end = path.size();
+    if (path.compare(begin, end - begin, "..") == 0) return true;
+    if (end == path.size()) break;
+    begin = end + 1;
+  }
+  return false;
 }
 
 std::string FindRecursively(const std::string& root,
@@ -378,6 +391,12 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
   result.original_path = asset_path;
 
   if (asset_path.empty()) {
+    return result;
+  }
+
+  // Reject `..` escapes before any lookup -- this is a containment check, so it
+  // must run ahead of the scheme/memory-asset resolution below.
+  if (!config_.allow_parent_paths && HasParentComponent(asset_path)) {
     return result;
   }
 

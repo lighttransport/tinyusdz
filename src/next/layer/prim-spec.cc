@@ -469,6 +469,7 @@ PrimSpec PrimSpec::Clone() const {
   c.connection_opinion_stacks_ = connection_opinion_stacks_;
   c.spline_sources_ = spline_sources_;
   c.raw_default_sources_ = raw_default_sources_;
+  c.array_edits_ = array_edits_;
   c.prop_type_names_ = prop_type_names_;
 
   // Deep copy per-property metadata (unique_ptr side table).
@@ -744,6 +745,24 @@ void PrimSpec::set_raw_default_source(const std::string& prop_name,
                                       std::string source) {
   raw_default_sources_[GetPropNameTable().intern(prop_name).id] =
       std::move(source);
+}
+
+void PrimSpec::clear_raw_default_source(PropNameId name_id) {
+  raw_default_sources_.erase(name_id.id);
+}
+
+void PrimSpec::set_array_edit(const std::string& prop_name,
+                              ArrayEditData edit) {
+  array_edits_[GetPropNameTable().intern(prop_name).id] = std::move(edit);
+}
+
+const ArrayEditData* PrimSpec::array_edit(PropNameId name_id) const {
+  auto it = array_edits_.find(name_id.id);
+  return it == array_edits_.end() ? nullptr : &it->second;
+}
+
+void PrimSpec::clear_array_edit(PropNameId name_id) {
+  array_edits_.erase(name_id.id);
 }
 
 const std::string* PrimSpec::raw_default_source(PropNameId name_id) const {

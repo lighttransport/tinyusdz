@@ -955,6 +955,116 @@ def Xform "root" {
   std::cout << "  LoadUSDFromMemory tests passed!" << std::endl;
 }
 
+void test_stage_session_variants() {
+  std::cout << "Testing StageSession path-scoped variants..." << std::endl;
+  const char* path = "/tmp/tinyusdz_next_stage_session.usda";
+  {
+    std::ofstream ofs(path);
+    ofs << R"(#usda 1.0
+def Xform "A" (
+  variants = { string model = "low" }
+  prepend variantSets = "model"
+) {
+  variantSet "model" = {
+    "low" { int level = 1 }
+    "high" { int level = 2 }
+  }
+}
+def Xform "B" (
+  variants = { string model = "low" }
+  prepend variantSets = "model"
+) {
+  variantSet "model" = {
+    "low" { int level = 1 }
+    "high" { int level = 2 }
+  }
+}
+)";
+  }
+
+  StageSession session;
+  assert(session.OpenFile(path));
+  assert(session.IsComposed());
+  assert(session.SetVariantSelection(Path("/A"), "model", "high"));
+  const Value* a = session.GetStage().GetPrimAtPath("/A").GetPropertyValue("level");
+  const Value* b = session.GetStage().GetPrimAtPath("/B").GetPropertyValue("level");
+  assert(a && a->as_int() && *a->as_int() == 2);
+  assert(b && b->as_int() && *b->as_int() == 1);
+  assert(session.ClearVariantSelection(Path("/A"), "model"));
+  a = session.GetStage().GetPrimAtPath("/A").GetPropertyValue("level");
+  assert(a && a->as_int() && *a->as_int() == 1);
+  std::remove(path);
+  std::cout << "  StageSession variant tests passed!" << std::endl;
+}
+
+void test_stage_session_payloads_and_cancel() {
+  std::cout << "Testing StageSession payload edits and cancellation..."
+            << std::endl;
+  const char* root_path = "/tmp/tinyusdz_next_session_root.usda";
+  const char* payload_path = "/tmp/tinyusdz_next_session_payload.usda";
+  {
+    std::ofstream ofs(payload_path);
+    ofs << "#usda 1.0\ndef Xform \"Payload\" { int loadedValue = 7 }\n";
+  }
+  {
+    std::ofstream ofs(root_path);
+    ofs << "#usda 1.0\ndef Xform \"P\" (payload = "
+           "@tinyusdz_next_session_payload.usda@</Payload>) {}\n"
+           "def Xform \"Q\" (payload = "
+           "@tinyusdz_next_session_payload.usda@</Payload>) {}\n";
+  }
+
+  StageSessionOptions options;
+  options.composition.load_payloads = false;
+  options.cache_retention = CacheRetention::LayersOnly;
+  StageSession session;
+  assert(session.OpenFile(root_path, options));
+  StageSessionMemoryStats initial_stats = session.GetMemoryStats();
+  assert(initial_stats.source_layer_bytes > 0);
+  assert(initial_stats.composed_stage_bytes > 0);
+  assert(initial_stats.prim_index_count == 0);
+  assert(session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
+         nullptr);
+  assert(!session.GetDeferredPayloadPaths().empty());
+  assert(session.LoadPayloads({Path("/P"), Path("/Q")}));
+  const Value* loaded =
+      session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
+  loaded = session.GetStage().GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
+  assert(session.GetMemoryStats().prim_index_count == 0);
+  assert(session.UnloadPayload(Path("/P")));
+  assert(session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
+         nullptr);
+  Stage taken = session.TakeStage();
+  assert(!session.IsOpen());
+  assert(!session.IsComposed());
+  loaded = taken.GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
+
+  StageSessionOptions cancelled_options;
+  cancelled_options.progress_callback =
+      [](const ProgressEvent&) { return false; };
+  StageSession cancelled;
+  assert(!cancelled.OpenFile(root_path, cancelled_options));
+  assert(!cancelled.IsOpen());
+  assert(!cancelled.GetDiagnostics().empty());
+
+  StageSessionOptions tiny_budget;
+  tiny_budget.max_total_memory = 1;
+  StageSession budgeted;
+  assert(!budgeted.OpenFile(root_path, tiny_budget));
+  bool saw_memory_budget = false;
+  for (const Diagnostic& diagnostic : budgeted.GetDiagnostics()) {
+    if (diagnostic.code == "memory_budget") saw_memory_budget = true;
+  }
+  assert(saw_memory_budget);
+
+  std::remove(root_path);
+  std::remove(payload_path);
+  std::cout << "  StageSession payload/cancel tests passed!" << std::endl;
+}
+
 // ============================================================
 // Main
 // ============================================================
@@ -977,6 +1087,8 @@ int main() {
     test_arc_layer_offset_parse();
     test_physics_schema();
     test_load_usd_from_memory();
+    test_stage_session_variants();
+    test_stage_session_payloads_and_cancel();
 
     std::cout << std::endl;
     std::cout << "All tests passed!" << std::endl;

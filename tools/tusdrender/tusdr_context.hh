@@ -4,6 +4,8 @@
 // as the monolith is split into per-module .cc files).
 #pragma once
 
+#include <functional>
+
 #include "tusdr_types.hh"
 
 namespace tusdr {
@@ -16,6 +18,7 @@ struct RenderContext {
   std::vector<float> vertices;  // packed triangle positions (flat-path BVH input)
   std::vector<FlatTri> tris;    // slim per-triangle: geometry + purpose + mat_id
   std::vector<TriMat> flat_mats;  // flat-path material table (one per mesh-job)
+  std::vector<tinyusdz::tydra::LightRtOpenPBRParams> flat_openpbr_mats;
   std::vector<Texture> textures;  // diffuse textures referenced by flat_mats[].tex_id
   std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
   ByteVec tri_colors;  // 12 bytes/tri (per-corner RGBA8); empty if none
@@ -77,6 +80,11 @@ Vec3 MaterialEmission(const RenderScene &scene, int material_id);
 float MaterialRoughness(const RenderScene &scene, int material_id);
 
 float MaterialMetallic(const RenderScene &scene, int material_id);
+// Constant opacity (surface opacity x constant displayOpacity) and the
+// UsdPreviewSurface alpha-cutout threshold; see tusdr_material.cc.
+float MaterialOpacity(const RenderScene &scene, const RenderMesh &mesh,
+                      int material_id);
+float MaterialOpacityThreshold(const RenderScene &scene, int material_id);
 
 Vec3 MeshLightEmission(const RenderScene &scene, const RenderMesh &mesh,
                        int material_id, float total_area);
@@ -95,6 +103,13 @@ Vec3 SampleEnv(const EnvImage &img, const Vec3 &dir);
 bool DecodeTextureToEnvImage(const RenderScene &scene, int texture_id,
                              EnvImage *out);
 
+// Resample a light-probe environment (UsdLux texture:format "mirroredBall" = 2
+// or "angular" = 3, the RenderLight::DomeTextureFormat values) into the latlong
+// layout every sampler here assumes; other formats pass through untouched.
+// Same probe mapping as tusdview's TexToolsProbeToEquirect, so both tools read
+// a probe identically.
+EnvImage RemapProbeToLatlong(EnvImage &&env, int format);
+
 EnvImage ConvolveDiffuseEnv(const EnvImage &env, int width, int height);
 
 EnvImage PrefilterEnvMip(const EnvImage &env, int width, int height,
@@ -111,6 +126,9 @@ float GeometrySmith(float ndotv, float ndotl, float roughness);
 void BuildBrdfLut(int size, IblCache *ibl);
 
 bool BuildIblFromEnv(EnvImage &&env, IblCache *ibl);
+// -ibl envmap: switch BuildIblFromEnv to the vendored envmap-library backend
+// (opt-in; no-op when built without TUSDR_WITH_TEXTOOLS).
+void SetIblBackendEnvmap(bool enabled);
 
 bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
                    IblCache *ibl);
@@ -223,7 +241,9 @@ bool ComputeUVFootprint(const Vec3 &org, const Vec3 &dir, const RayDiff &rd,
 bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const std::vector<InstanceRT> &instances,
                     const std::vector<Texture> *textures, const Vec3 &ray_org,
-                    const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out);
+                    const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out,
+                    const tinyusdz::tydra::LightRtOpenPBRParams **out_openpbr =
+                        nullptr);
 
 Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const std::vector<FlatTri> &tris, const std::vector<TriMat> &mats,
@@ -237,7 +257,18 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const std::vector<InstanceRT> *instances = nullptr,
            const RayDiff &rd = RayDiff{}, int depth = 0,
            const ByteVec *tri_colors = nullptr,
-           const std::vector<float> *tri_normals = nullptr);
+           const std::vector<float> *tri_normals = nullptr,
+           const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+               *openpbr_mats = nullptr,
+           // This ray is a BSDF-sampled indirect bounce, not a camera/transmission
+           // ray. Two contributions are then already accounted for at the surface
+           // that spawned it and must NOT be gathered again:
+           //   - the environment / dome, which the split-sum IBL term integrates
+           //     over the whole lobe, so an escaping bounce contributes nothing;
+           //   - the emission of an analytic mesh light, which direct lighting
+           //     already delivers (TriInfo::area_light marks those triangles).
+           // Without this, both are counted twice in `-materialShading lightrt-bsdf`.
+           bool indirect = false);
 
 uint8_t ToSRGB8(float linear);
 
@@ -267,7 +298,9 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<InstanceRT> *instances = nullptr,
                             const ByteVec *tri_colors = nullptr,
                             const std::vector<float> *tri_normals = nullptr,
-                            const std::vector<VolumeData> *volumes = nullptr);
+                            const std::vector<VolumeData> *volumes = nullptr,
+                            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+                                *openpbr_mats = nullptr);
 
 bool LoadProgress(float progress, void *);
 
@@ -283,11 +316,31 @@ int RunJSScriptMode(const Options &opt, const std::string &script_path);
 int RunMCPMode(const Options &opt);
 #endif
 
+#ifdef TUSDRENDER_WITH_STREAM
+// tusdr_stream.cc — WebSocket browser streaming server (orbit/pan/dolly from the
+// browser, frames pushed as JPEG/QOI/PNG). Blocks until stopped.
+int RunStreamServer(const Options &opt);
+#endif
+
 #ifdef HAVE_VULKAN
 bool RunVulkanLightRT(const Options &opt,
                               const std::vector<Vec3> &base_colors,
                               const std::vector<RTPreviewStats::MeshGeometry> &geos,
                               const CameraFrame &camera, int height);
+#endif
+
+#ifdef HAVE_D3D11
+bool RunD3D11LightRT(const Options &opt,
+                     const std::vector<Vec3> &base_colors,
+                     const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                     const CameraFrame &camera, int height);
+#endif
+
+#ifdef HAVE_HIP
+bool RunHipLightRT(const Options &opt,
+                   const std::vector<Vec3> &base_colors,
+                   const std::vector<RTPreviewStats::MeshGeometry> &geos,
+                   const CameraFrame &camera, int height);
 #endif
 
 // ---- tusdr_next.cc (next loader + driver) ----
@@ -369,12 +422,51 @@ bool SubtreeGeometryAnimated(const tinyusdz::next::UsdPrim &prim,
 bool SceneGeometryAnimated(const tinyusdz::next::Stage &stage,
                            const std::vector<std::string> &mask);
 
+// When `expand_instancers` is true, UsdGeomPointInstancer prims are EXPANDED in
+// place: every visible instance's prototype meshes are emitted as world-space
+// MeshJobNext (transform = prototype-local * instance TRS * instancer world),
+// recursively (nested instancers expand too). This is the GPU flatten path's
+// only way to render instanced geometry (no GPU TLAS). Default false keeps the
+// two-level proto-collection callers byte-identical (they stop at instancers and
+// place prototype BLAS via the TLAS instead).
+//
+// `max_jobs` (0 = unlimited) caps the emitted-job count: once `jobs` reaches it,
+// instancer expansion stops early. This bounds host memory on scenes with tens of
+// millions of instances (e.g. Moana island) -- the -vkInstanced collector passes
+// a budget so a huge instancer yields a bounded preview instead of OOMing.
 void CollectRTPreviewMeshesNext(const tinyusdz::next::Stage &stage,
                                 const tinyusdz::next::UsdPrim &prim,
                                 const matrix4d &parent_world,
                                 tinyusdz::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
-                                std::vector<MeshJobNext> *jobs);
+                                std::vector<MeshJobNext> *jobs,
+                                bool expand_instancers = false,
+                                size_t max_jobs = 0);
+
+// Streaming instance sink: called once per emitted placement with the prototype
+// mesh prim, its world transform, and purpose. Same (prim, world, purpose) an
+// expanded MeshJobNext would carry -- the two-level -vkInstanced collector uses
+// this to group placements on the fly instead of materializing one MeshJobNext
+// per instance (each ~392 B); a large instanced scene then costs ~88 B/placement
+// of host memory during collection instead of ~392 B, so Moana island fits in far
+// less RAM. See CollectRTInstancePlacementsNext.
+using RtInstanceSink = std::function<void(const tinyusdz::next::UsdPrim & /*prim*/,
+                                          const matrix4d & /*world*/,
+                                          tinyusdz::Purpose /*purpose*/)>;
+
+// Streaming counterpart of CollectRTPreviewMeshesNext(expand_instancers=true):
+// traverses `prim`, expands PointInstancer / native instances, and delivers each
+// placement to `sink` instead of appending a MeshJobNext. Stops after
+// `max_placements` sink calls (0 = unlimited). Returns the number of placements
+// emitted (so the caller can report a hit budget).
+size_t CollectRTInstancePlacementsNext(const tinyusdz::next::Stage &stage,
+                                       const tinyusdz::next::UsdPrim &prim,
+                                       const matrix4d &parent_world,
+                                       tinyusdz::Purpose inherited_purpose,
+                                       double time,
+                                       const std::vector<std::string> &mask,
+                                       const RtInstanceSink &sink,
+                                       size_t max_placements);
 
 void CollectVolumesNext(const tinyusdz::next::Stage &stage,
                         const tinyusdz::next::UsdPrim &prim,
@@ -502,6 +594,23 @@ std::string SubstituteFrame(const std::string &path, long frame);
 
 int RunRTPreviewNext(const Options &opt);
 
+// Compose through the persistent next-core session with aggregate accounting,
+// then release transient PCP caches before returning the retained Stage.
+bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
+                           std::string *warn, std::string *err);
+
+// ---- tusdr_lod.cc (view-dependent district LOD pre-pass) ----
+// Largest DEVICE_LOCAL Vulkan heap (VRAM) in bytes; 0 if no Vulkan/device.
+size_t QueryDeviceLocalVRAMBytes();
+
+// When opt.lod_stream is set, compose the scene in proxy LOD, rank districts by
+// camera distance, and write a wrapper layer that promotes the nearest districts
+// to districtLod=full within the host/VRAM budgets. On success rewrites
+// opt->input to the generated wrapper path (so the normal render flow loads it)
+// and returns true. Returns false (leaving opt->input unchanged) if no districts
+// were found or composition failed -- the caller renders the scene as-is.
+bool PrepareLodStream(Options *opt, std::string *generated_wrapper);
+
 // ---- shared helpers (defined in tusdrender.cc) ----
 void AppendLinearCurveStrands(const std::vector<tinyusdz::value::point3f> &points,
                               const std::vector<int> &counts,
@@ -518,23 +627,79 @@ void MergeBounds(Bounds *dst, const Bounds &src);
 inline const Vec3 kCurveColor{0.62f, 0.50f, 0.34f};
 
 // ---- tusdr_legacy.cc (legacy loader + shared utils) ----
+
+// Load `path` into `stage` WITH composition (sublayers / references / payloads /
+// inherits / variants / specializes composed to a fixed point).
+// `tinyusdz::LoadUSDFromFile` alone parses a single layer and expands no arcs, so
+// anything contributed by a reference or payload — a Material in a look layer,
+// payload-gated geometry — was simply absent from the legacy render. Falls back to
+// the direct parser for .usdz and for layers with no arcs (which keeps zero-copy
+// USDC storage and the schemas LayerToStage does not carry).
+bool LoadStageComposedLegacy(const std::string &path,
+                             const tinyusdz::USDLoadOptions &load_options,
+                             tinyusdz::Stage *stage, std::string *warn,
+                             std::string *err);
+
 std::vector<int> FaceMaterialIds(const RenderMesh &mesh);
 
+// Textures bound by one legacy RenderMaterial, as indices into the `Texture`
+// table filled by BuildLegacyTextures. -1 = not textured.
+struct LegacyMaterialTex {
+  int32_t diffuse{-1};
+  int32_t emissive{-1};
+  int32_t normal{-1};
+  int32_t roughness{-1};
+  int32_t metallic{-1};
+  int32_t occlusion{-1};
+  int32_t opacity{-1};
+  uint8_t roughness_ch{0};  // scalar source channel: 0=r,1=g,2=b,3=a
+  uint8_t metallic_ch{0};
+  uint8_t occlusion_ch{0};
+  uint8_t opacity_ch{0};
+};
+
+// Decode tydra's already-resolved UsdUVTextures into renderer `Texture`s and
+// return the per-material bindings, indexed by RenderScene material id. The
+// legacy path previously ignored these entirely, so .usda/.usdz rendered with a
+// flat constant base color.
+std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
+                                                   std::vector<Texture> *out);
+
+// Absolute prim path -> inherited purpose bit; 0 = visibility="invisible"
+// (subtree pruned). Built by BuildLegacyPurposeVisibility.
+using PurposeVisibilityMap = std::unordered_map<std::string, uint32_t>;
+void BuildLegacyPurposeVisibility(const tinyusdz::Stage &stage,
+                                  PurposeVisibilityMap *out);
+
+// `tri_uvs` (when non-null) receives 6 floats per emitted triangle — the raw USD
+// per-corner UVs, parallel to *tris, as the integrator expects. Textures are
+// bound per triangle from `mat_tex` (null = untextured, the old behavior).
+// `pv` (when non-null) stamps each mesh's inherited purpose bit and prunes
+// invisible meshes.
 void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
                       const matrix4d &world, std::vector<float> *vertices,
                       std::vector<TriInfo> *tris, Bounds *bounds,
-                      LightCache *lights = nullptr);
+                      LightCache *lights = nullptr,
+                      std::vector<float> *tri_uvs = nullptr,
+                      const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
+                      const PurposeVisibilityMap *pv = nullptr);
 
 void CollectGeometry(const RenderScene &scene, const Node &node,
                      std::vector<float> *vertices, std::vector<TriInfo> *tris,
                      Bounds *bounds,
                      const std::unordered_set<std::string> *skip_paths,
-                     LightCache *lights);
+                     LightCache *lights,
+                     std::vector<float> *tri_uvs = nullptr,
+                     const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
+                     const PurposeVisibilityMap *pv = nullptr);
 
 void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
                         std::vector<TriInfo> *tris, Bounds *bounds,
                         const std::unordered_set<std::string> *skip_paths,
-                        LightCache *lights);
+                        LightCache *lights,
+                        std::vector<float> *tri_uvs = nullptr,
+                        const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
+                        const PurposeVisibilityMap *pv = nullptr);
 
 matrix4d LocalMatrixOrIdentity(const tinyusdz::Xformable *xformable, double time,
                                bool *reset);

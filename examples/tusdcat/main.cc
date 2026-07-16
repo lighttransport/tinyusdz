@@ -946,6 +946,10 @@ void print_help() {
   std::cout << "                      (default off).\n";
   std::cout << "  --memstat           Print memory usage statistics\n";
   std::cout << "                      (includes USDC parser budget report for .usdc)\n";
+  std::cout << "  --relax-asset-cap   Raise composition asset cap to 8 GiB\n";
+  std::cout << "                      (opt-in for trusted public large scenes)\n";
+  std::cout << "  --max-composition-asset-mb=N\n";
+  std::cout << "                      Override per-layer composition asset cap in MiB\n";
   std::cout << "  --no-asset-path-fallback Disable suffix-fallback rebasing of "
                "unresolvable composition asset paths\n";
   std::cout << "  --error-detail      Show full error stack and full source lines\n";
@@ -1039,6 +1043,7 @@ int main(int argc, char **argv) {
   bool show_progress{false};
   bool asset_path_fallback{true};
   bool compress_float_arrays{false};
+  size_t max_composition_asset_mb{0};
   OutputFormat output_format{OutputFormat::Infer};
 
   // Inspect options
@@ -1142,6 +1147,23 @@ int main(int argc, char **argv) {
       }
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
+    } else if (arg.compare("--relax-asset-cap") == 0) {
+      max_composition_asset_mb = 8192;
+    } else if (tinyusdz::startsWith(arg, "--max-composition-asset-mb=")) {
+      std::string mb_str =
+          tinyusdz::removePrefix(arg, "--max-composition-asset-mb=");
+      if (mb_str.empty()) {
+        std::cerr << "--max-composition-asset-mb requires a value.\n";
+        return EXIT_FAILURE;
+      }
+      char *end = nullptr;
+      unsigned long long mb = std::strtoull(mb_str.c_str(), &end, 10);
+      if ((end == mb_str.c_str()) || (end && *end != '\0')) {
+        std::cerr << "Invalid --max-composition-asset-mb value: "
+                  << mb_str << "\n";
+        return EXIT_FAILURE;
+      }
+      max_composition_asset_mb = static_cast<size_t>(mb);
     } else if (arg.compare("--no-asset-path-fallback") == 0) {
       asset_path_fallback = false;
     } else if (arg.compare("--error-detail") == 0) {
@@ -1674,6 +1696,13 @@ int main(int argc, char **argv) {
     reference_opts.allow_parent_relative_paths = true;
     tinyusdz::PayloadCompositionOptions payload_opts;
     payload_opts.allow_parent_relative_paths = true;
+    if (max_composition_asset_mb > 0) {
+      const size_t max_composition_asset_bytes =
+          max_composition_asset_mb * 1024ull * 1024ull;
+      sublayer_opts.max_asset_bytes = max_composition_asset_bytes;
+      reference_opts.max_asset_bytes = max_composition_asset_bytes;
+      payload_opts.max_asset_bytes = max_composition_asset_bytes;
+    }
 
     // Parse each referenced file once across the whole fixed-point loop; all
     // arcs to the same file share one copy of the heavy attribute data (COW).

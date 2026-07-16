@@ -1,0 +1,90 @@
+#usda 1.0
+(
+    doc = """UsdShade material-binding regression fixture.
+
+The textured material is bound the way production scenes (e.g. Animal Logic's
+ALab) actually bind: PURPOSE-SCOPED (`material:binding:preview` /
+`material:binding:full`) and authored on an ANCESTOR Xform, never as a plain
+`material:binding` on the Mesh itself.
+
+A renderer that only reads the Mesh's own `material:binding` finds no binding,
+falls back to the default gray material, and silently drops the texture — the
+whole scene renders as untextured flat-shaded soup. Correct resolution must walk
+the ancestor chain and honor the purpose fallback chain, so the quad below must
+render the CHECKERBOARD, not a flat color.
+"""
+    defaultPrim = "root"
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+def Xform "root"
+{
+    def Xform "GEO" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        # Purpose-scoped only, and on the ANCESTOR of the Mesh -- no plain
+        # `material:binding` anywhere in the scene.
+        rel material:binding:full = </root/MATERIAL/usd_full>
+        rel material:binding:preview = </root/MATERIAL/usd_preview>
+
+        def Mesh "quad"
+        {
+            float3[] extent = [(-1, -1, 0), (1, 1, 0)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+            texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "faceVarying"
+            )
+        }
+    }
+
+    def Scope "MATERIAL"
+    {
+        def Material "usd_preview"
+        {
+            token outputs:surface.connect = </root/MATERIAL/usd_preview/surface.outputs:surface>
+
+            def Shader "surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.18, 0.18, 0.18)
+                color3f inputs:diffuseColor.connect = </root/MATERIAL/usd_preview/color_texture.outputs:rgb>
+                float inputs:metallic = 0
+                float inputs:roughness = 0.6
+                token outputs:surface
+            }
+
+            def Shader "color_texture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/checkerboard.png@
+                float2 inputs:st.connect = </root/MATERIAL/usd_preview/uv_reader.outputs:result>
+                token inputs:wrapS = "repeat"
+                token inputs:wrapT = "repeat"
+                float3 outputs:rgb
+            }
+
+            def Shader "uv_reader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+        }
+
+        def Material "usd_full"
+        {
+            token outputs:surface.connect = </root/MATERIAL/usd_full/surface.outputs:surface>
+
+            def Shader "surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (1, 0, 0)
+                token outputs:surface
+            }
+        }
+    }
+}

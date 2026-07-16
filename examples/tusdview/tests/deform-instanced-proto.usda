@@ -1,0 +1,65 @@
+#usda 1.0
+(
+    doc = """The same blendshape + skeleton deform, reached through NATIVE INSTANCING.
+
+    The instanced prototype takes a different code path from the static batch one
+    (EmitInstancedProto): its vertices stay prototype-LOCAL and each placement's
+    transform lives in the instance matrix, where the static path world-BAKES the
+    vertices and carries an identity world. That is why the world-bake bugs -- morph
+    deltas left in mesh space, bone rows composed against the wrong world -- cannot
+    bite here; nothing pinned that claim, so this does.
+
+    Two instances of the SAME external reference: one `instanceable` prim on its own
+    does not produce native instancing, it needs at least two placements of one
+    prototype. They sit side by side and are placed differently (one is rotated and
+    scaled), so an instance transform applied on the wrong side of the deform shows
+    up immediately.
+
+    Compared, like every deform fixture, against the CPU bake in `--mode depth`
+    through the fixed camera."""
+    defaultPrim = "root"
+    endTimeCode = 20
+    startTimeCode = 1
+    upAxis = "Y"
+)
+
+def Xform "root"
+{
+    def Camera "Cam"
+    {
+        float2 clippingRange = (0.1, 1000)
+        float focalLength = 24
+        float horizontalAperture = 20.955
+        float verticalAperture = 15.2908
+        double3 xformOp:translate = (0, 3, 24)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def SphereLight "Key"
+    {
+        float inputs:intensity = 900
+        float inputs:radius = 0.5
+        double3 xformOp:translate = (6, 8, 10)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def "InstA" (
+        instanceable = true
+        prepend references = @./deform-instanced-proto-asset.usda@
+    )
+    {
+        double3 xformOp:translate = (-4, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def "InstB" (
+        instanceable = true
+        prepend references = @./deform-instanced-proto-asset.usda@
+    )
+    {
+        double3 xformOp:rotateXYZ = (0, 0, 25)
+        double3 xformOp:scale = (1, 1.4, 1)
+        double3 xformOp:translate = (4, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+    }
+}

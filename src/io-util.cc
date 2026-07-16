@@ -623,7 +623,7 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
     if (!matches.empty()) expanded = matches[0];
   }
 #endif
-  return expanded;
+  return std::string(expanded);
 }
 
 #ifdef _WIN32
@@ -1191,6 +1191,18 @@ std::string FindFile(const std::string &filename,
 
   if (filename.empty()) {
     return filename;
+  }
+
+  // An ABSOLUTE path must be tried as-is, whether or not search paths are set:
+  // JoinPath(dir, "/abs/path") produces "<dir>//abs/path", which never exists, so
+  // the loop below can only ever miss. Before this, an absolute asset path failed
+  // to resolve whenever the resolver had a search path / working directory —
+  // which is exactly what an already-anchored texture path looks like.
+  if (IsAbsPath(filename)) {
+    std::string absPath = io::ExpandFilePath(filename, /* userdata */ nullptr);
+    if (io::FileExists(absPath, /* userdata */ nullptr)) {
+      return absPath;
+    }
   }
 
   if (search_paths.empty()) {

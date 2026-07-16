@@ -24,6 +24,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "compiler-features.hh"
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -234,9 +236,13 @@ class AssetPath {
     return false;
   }
 
-  const std::string &GetAssetPath() const { return asset_path_; }
+  const std::string &GetAssetPath() const TINYUSDZ_LIFETIMEBOUND {
+    return asset_path_;
+  }
 
-  const std::string &GetResolvedPath() const { return resolved_path_; }
+  const std::string &GetResolvedPath() const TINYUSDZ_LIFETIMEBOUND {
+    return resolved_path_;
+  }
 
  private:
   std::string asset_path_;
@@ -292,7 +298,7 @@ class PathExpression {
   explicit PathExpression(const std::string &text) : text_(text) {}
   explicit PathExpression(std::string &&text) : text_(std::move(text)) {}
 
-  const std::string &GetText() const { return text_; }
+  const std::string &GetText() const TINYUSDZ_LIFETIMEBOUND { return text_; }
   void SetText(const std::string &text) { text_ = text; }
 
   bool empty() const { return text_.empty(); }
@@ -2242,8 +2248,8 @@ class Value {
   }
 
 
-  const any_value &get_raw() const { return v_; }
-  any_value &get_raw_mutable() { return v_; }
+  const any_value &get_raw() const TINYUSDZ_LIFETIMEBOUND { return v_; }
+  any_value &get_raw_mutable() TINYUSDZ_LIFETIMEBOUND { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
 

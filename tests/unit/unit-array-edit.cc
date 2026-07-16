@@ -13,7 +13,7 @@
 #include "usdc-writer.hh"
 #include "array-edit.hh"
 #include "crate-format.hh"
-#include "prim-types.hh"
+#include "core/property.hh"
 #include "usdGeom.hh"  // Xform
 
 #include <string>

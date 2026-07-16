@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    defaultPrim = "T"
+)
+# Mimics an ALab sub-assembly definition (techvar) that `add payload`s a leaf
+# component which lives in a sibling directory. The leaf in turn references a
+# file relative to ITS OWN directory.
+def "T" (
+    add payload = @leaf/leaf.usda@
+)
+{
+}

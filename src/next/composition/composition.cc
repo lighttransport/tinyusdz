@@ -5,6 +5,7 @@
 // Full support: references, payloads, inherits, specializes, variants, layer offsets
 
 #include "composition.hh"
+#include "../layer/array-edit.hh"
 #include "../layer/listop-field-table.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 #include <algorithm>
@@ -263,6 +264,14 @@ Compositor::~Compositor() = default;
 
 std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
                                             const std::string& anchor_path) {
+  // Track re-entrancy (sublayer / external-layer composes share this
+  // instance): array edits resolve only at depth 1 (see
+  // ResolveArrayEditsInLayer).
+  struct DepthGuard {
+    int& d;
+    explicit DepthGuard(int& x) : d(x) { ++d; }
+    ~DepthGuard() { --d; }
+  } depth_guard(compose_depth_);
   errors_.clear();
   composition_stack_.clear();
   arc_resolved_.clear();
@@ -365,6 +374,13 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   // end, so restore hierarchical order first.
   result->sort_prims_by_path();
 
+  // Resolve remaining sparse array edits (over an empty base when no weaker
+  // opinion supplied one), so the composed layer carries concrete arrays like
+  // a pxr flattened stage.
+  if (compose_depth_ == 1) {
+    ResolveArrayEditsInLayer(*result);
+  }
+
   // Finalize the composed layer
   result->finalize();
 
@@ -393,6 +409,48 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   }
 
   return result;
+}
+
+bool Compositor::ResolveArrayEditsOnPrim(PrimSpec* p, std::string* err) {
+  if (!p || p->array_edits().empty()) return true;
+  bool ok = true;
+  std::vector<uint32_t> ids;
+  ids.reserve(p->array_edits().size());
+  for (const auto& kv : p->array_edits()) ids.push_back(kv.first);
+  for (uint32_t raw_id : ids) {
+    PropNameId nid;
+    nid.id = raw_id;
+    const ArrayEditData* edit = p->array_edit(nid);
+    const PropSlot* slot = p->property(nid);
+    if (!edit || !slot) continue;
+    Value resolved;
+    std::string apply_err;
+    if (!ApplyArrayEdit(*edit, p->property_value(nid),
+                        static_cast<TypeId>(slot->value_type), &resolved,
+                        &apply_err)) {
+      if (ok && err) *err = apply_err;
+      ok = false;
+      continue;
+    }
+    if (!p->fill_property_value_if_absent(nid, resolved)) {
+      p->set_property_value(nid, std::move(resolved));
+    }
+    p->clear_array_edit(nid);
+    p->clear_raw_default_source(nid);
+  }
+  return ok;
+}
+
+void Compositor::ResolveArrayEditsInLayer(Layer& layer) {
+  const size_t n = layer.prim_count();
+  for (size_t i = 0; i < n; ++i) {
+    PrimSpec* p = layer.prim_mutable(static_cast<uint32_t>(i));
+    if (!p) continue;
+    std::string apply_err;
+    if (!ResolveArrayEditsOnPrim(p, &apply_err)) {
+      AddError(apply_err, p->path().str(), "", ArcType::Local);
+    }
+  }
 }
 
 std::unique_ptr<Layer> Compositor::ComposeSublayers(const Layer& root_layer,
@@ -772,6 +830,51 @@ void Compositor::CopyLocalOpinions(
           }
         }
       }
+      // Sparse array edits (VtArrayEdit) compose BEFORE the fill-absent
+      // value logic below: a stronger edit is not an opinion that blocks the
+      // weaker default -- it TRANSFORMS it (pxr VtArrayEdit::ComposeOver).
+      const ArrayEditData* target_edit = target.array_edit(slot.name_id);
+      const ArrayEditData* source_edit = source.array_edit(slot.name_id);
+      if (target_edit) {
+        if (source_edit) {
+          // Edit over edit: concatenate op lists, weaker first. Stays an
+          // edit (a still-weaker arc may yet supply the base array).
+          ArrayEditData stacked = *source_edit;
+          stacked.ops.insert(stacked.ops.end(), target_edit->ops.begin(),
+                             target_edit->ops.end());
+          target.set_raw_default_source(pname, BuildArrayEditText(stacked));
+          target.set_array_edit(pname, std::move(stacked));
+        } else if (const Value* weaker_value =
+                       source.property_value(slot.name_id)) {
+          // Weaker plain array: resolve the edit against it now.
+          Value resolved;
+          std::string apply_err;
+          if (ApplyArrayEdit(*target_edit, weaker_value,
+                             static_cast<TypeId>(tgt_slot->value_type),
+                             &resolved, &apply_err)) {
+            target.clear_array_edit(slot.name_id);
+            target.clear_raw_default_source(slot.name_id);
+            if (!target.fill_property_value_if_absent(slot.name_id,
+                                                      resolved)) {
+              target.set_property_value(slot.name_id, std::move(resolved));
+            }
+            default_filled_from_source.insert(slot.name_id);
+          }
+        }
+        // Weaker has neither: the edit rides along and resolves later.
+      } else if (source_edit && tgt_slot->value_offset == UINT32_MAX &&
+                 !target.raw_default_source(slot.name_id)) {
+        // Target slot carries no default opinion at all (declared-only /
+        // connection-only): the weaker edit is the strongest default seen.
+        target.set_array_edit(pname, *source_edit);
+        if (const std::string* sraw =
+                source.raw_default_source(slot.name_id)) {
+          target.set_raw_default_source(pname, *sraw);
+        } else {
+          target.set_raw_default_source(pname,
+                                        BuildArrayEditText(*source_edit));
+        }
+      }
       // Field-level fill-absent: pxr composes a property's default VALUE and its
       // CONNECTIONS as INDEPENDENT fields. A stronger source may author only one
       // of them; fill the other from this weaker source rather than dropping it.
@@ -814,7 +917,7 @@ void Compositor::CopyLocalOpinions(
           target.set_spline_source(pname, *spline);
         }
       }
-      if (!target.raw_default_source(slot.name_id)) {
+      if (!target.raw_default_source(slot.name_id) && !source_edit) {
         if (const std::string* raw = source.raw_default_source(slot.name_id)) {
           target.set_raw_default_source(pname, *raw);
         }
@@ -851,6 +954,9 @@ void Compositor::CopyLocalOpinions(
     }
     if (const std::string* raw = source.raw_default_source(slot.name_id)) {
       target.set_raw_default_source(pname, *raw);
+    }
+    if (const ArrayEditData* new_edit = source.array_edit(slot.name_id)) {
+      target.set_array_edit(pname, *new_edit);
     }
   }
 

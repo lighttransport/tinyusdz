@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <map>
 #include <string>
 
 #include "tinyusdz.hh"
@@ -92,6 +93,24 @@ bool ConvertSceneWithSubdivision(const std::string &usda, int32_t subdivision_le
   }
   if (warn) {
     *warn = converter.GetWarning();
+  }
+  return ret;
+}
+
+bool ConvertSceneWithSubdivision(
+    const std::string &usda, int32_t subdivision_level,
+    const std::map<std::string, int32_t> &subdivision_prim_levels,
+    tinyusdz::tydra::RenderScene *scene, std::string *err) {
+  tinyusdz::Stage stage = LoadStageFromString(usda);
+
+  tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+  env.mesh_config.subdivision_level = subdivision_level;
+  env.mesh_config.subdivision_prim_levels = subdivision_prim_levels;
+
+  tinyusdz::tydra::RenderSceneConverter converter;
+  bool ret = converter.ConvertToRenderScene(env, scene);
+  if (err) {
+    *err = converter.GetError();
   }
   return ret;
 }
@@ -750,6 +769,73 @@ def Xform "Root"
   TEST_CHECK(mesh.points.size() == 4);
   TEST_CHECK(mesh.faceVertexCounts().size() == 2);
   TEST_CHECK(mesh.faceVertexIndices().size() == 6);
+}
+
+void tydra_subdivision_per_prim_override_test(void) {
+  const std::string usda = R"usda(#usda 1.0
+(
+    defaultPrim = "Root"
+)
+
+def Xform "Root"
+{
+    def Mesh "Base"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [
+            (-1, -1, 0),
+            ( 1, -1, 0),
+            ( 1,  1, 0),
+            (-1,  1, 0)
+        ]
+        uniform token subdivisionScheme = "catmullClark"
+    }
+    def Mesh "Refined"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [
+            (2, -1, 0),
+            (4, -1, 0),
+            (4,  1, 0),
+            (2,  1, 0)
+        ]
+        uniform token subdivisionScheme = "catmullClark"
+    }
+}
+)usda";
+
+  tinyusdz::tydra::RenderScene scene;
+  std::string err;
+  bool ret = ConvertSceneWithSubdivision(
+      usda, 0, {{"/Root/Refined", 1}}, &scene, &err);
+  TEST_CHECK(ret);
+  if (!ret) {
+    TEST_MSG("ConvertToRenderScene failed: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(scene.meshes.size() == 2);
+
+  const tinyusdz::tydra::RenderMesh *base = nullptr;
+  const tinyusdz::tydra::RenderMesh *refined = nullptr;
+  for (const auto &mesh : scene.meshes) {
+    if (mesh.abs_path == "/Root/Base") {
+      base = &mesh;
+    } else if (mesh.abs_path == "/Root/Refined") {
+      refined = &mesh;
+    }
+  }
+
+  TEST_CHECK(base != nullptr);
+  TEST_CHECK(refined != nullptr);
+  if (!base || !refined) {
+    return;
+  }
+  TEST_CHECK(base->points.size() == 4);
+  TEST_CHECK(refined->points.size() > 4);
+  TEST_CHECK(base->faceVertexCounts().size() == 2);
+  TEST_CHECK(refined->faceVertexCounts().size() > 2);
 }
 
 void tydra_subdivision_scheme_none_ignores_requested_level_test(void) {

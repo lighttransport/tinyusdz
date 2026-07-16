@@ -6,7 +6,10 @@ files. This document analyzes three publicly-available scenes — **Moana Island
 how TinyUSDZ loads them within a bounded RAM budget (target: **fit a parse into
 16 GB**, geometry deferred), plus the remaining implementation work.
 
-See also [instancing.md](instancing.md) for the Island instancing analysis.
+See also [instancing.md](instancing.md) for the Island instancing analysis, and
+[midscale-benchmark.md](midscale-benchmark.md) for middle-scale public scenes
+(Pixar Kitchen_set, Intel Moore Lane) that render interactively *without* the
+large-scene budgeting flags described here.
 
 ## Why it is hard
 
@@ -111,9 +114,9 @@ tinyusdz::LargeSceneLoader loader;
 loader.Load("caldera.usda", opts, &warn, &err);
 
 loader.stage();                                  // composed structure
+auto snapshot = loader.stage_snapshot();         // immutable, worker-safe view
 loader.deferred_payload_paths();                 // geometry not yet loaded
-loader.load_payload(path, &warn, &err);          // stream one in on demand
-loader.rebuild_stage(&warn, &err);
+loader.load_payload(path, &warn, &err);          // may run on a worker; rebuilds
 ```
 
 Pipeline: `LoadLayerFromFile` (root) → `CompositeSublayers` (L phase) →
@@ -122,10 +125,17 @@ owns the resolver, `pcp::LayerRegistry`, flattened root, and `CompositionGraph`
 together so `load_payload`/`unload_payload`/`deferred_payload_paths` work after
 the initial load. Loading or unloading a payload now refreshes the payload
 node's own arcs plus the composed descendant PrimIndices under that prim before
-`rebuild_stage`, so children that exist only inside streamed geometry appear on
-load and disappear again on unload; nested relative arcs inside the streamed
+Stage publication, so children that exist only inside streamed geometry appear
+on load and disappear again on unload; nested relative arcs inside the streamed
 payload resolve against the payload file's directory; deferred-payload queries
 report only payloads still in the deferred state.
+
+Payload graph/cache mutations are serialized. `load_payload` and
+`unload_payload` build a replacement Stage and publish it only after the build
+succeeds, so they may run on a worker thread. Render/traversal code that overlaps
+streaming must hold `stage_snapshot()`; its immutable Stage remains alive while
+the loader publishes a newer snapshot. The legacy `stage()` reference remains
+for single-threaded callers.
 
 ### 2.2 Payload modes
 
@@ -133,11 +143,16 @@ report only payloads still in the deferred state.
 |---|---|
 | `LoadNone` | defer every payload (lightest; geometry streamed later) — default |
 | `LoadAll` | eager (may exceed RAM on huge scenes) |
-| `Budget(mb)` | load payloads until a byte budget of asset file sizes is reached, then defer the rest |
+| `Budget(mb)` | load payloads until a byte budget of asset file sizes is reached, then defer the rest; an optional `payload_extent_budget` adds a projected `extentsHint`-area cap |
 
-The policy is a `std::function<bool(const Path&, const Payload&)>` passed to
-`CompositionGraphOptions::payload_policy`; deferred payloads are recorded in the
-graph and retrievable via `GetDeferredPayloadPaths()`.
+The policy is passed to `CompositionGraphOptions`; the extended
+`payload_policy_with_prim` callback also receives the authoring `PrimSpec`, so it
+can inspect `extentsHint` without breaking existing two-argument policies.
+Deferred payloads are recorded in the graph and retrievable via
+`GetDeferredPayloadPaths()`. `LargeSceneLoadOptions::payload_extent_budget` is
+opt-in (`0` disables it) and caps the cumulative view-independent projected AABB
+area (`max(XY, XZ, YZ)`, squared stage units) alongside the byte cap. Payloads
+without a valid hint retain byte-only behavior.
 
 ### 2.3 Parse-once layer sharing
 
@@ -202,6 +217,493 @@ prims and the value-clip `GEO` behind the `alfro=render` variant — in a few Mi
 with the multi-GB binaries and the value-clip layer deferred. This needed the
 variant-content fix (§3.5).
 
+### 2.6.1 Rendering Caldera (tusdrender + tusdview, NVIDIA RTX 5060 Ti)
+
+Both viewers compose Caldera through the `next` loader (`LoadUSDComposed`,
+payloads eager), which handles its `..`-relative payload paths and variant LOD.
+The **default Tydra loader rejects Caldera** ("Unsafe asset path" on the
+`..`-relative payloads), so tusdview must use `--next`.
+
+**Scene facts.** The default (root-authored) LOD is `districtLod = proxy`
+(12.67 M default-purpose triangles + ~26 M `purpose = guide` breadcrumb/endpoint
+Points). The map is a flat ~8 km island, so **auto-framing the whole bounds is
+useless** — frame a scene camera instead (`layers/cameras.usd`:
+`phospate_mine_overview`, `map_capital_square`, `map_capital_overview`,
+`map_airfield_overview`, `tile_p_beach`, …). **Use the exact prim name** —
+most cameras are `map_`-prefixed (`map_capital_square`, not `capital_square`);
+a name that doesn't match **silently falls back to auto-fit** (the useless
+whole-island shot). List them with
+`build/tusdcat layers/cameras.usd | grep 'def Camera'`. The guide Points
+triangulate into huge planes that engulf the camera, so they must be hidden
+(both viewers hide `guide` by default).
+
+**tusdrender** (ray tracing) — renders the proxy correctly on every backend at
+1280×720, `~4–5 GiB` RSS:
+
+```sh
+T=tests; M=/mnt/disk1/data/caldera/caldera.usda
+./build/tools/tusdrender/tusdrender $M cald_cpu.png -rtPreview -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14
+./build/tools/tusdrender/tusdrender $M cald_vk.png  -vk  -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU compute trace
+./build/tools/tusdrender/tusdrender $M cald_vkr.png -vkr -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14  # GPU ray query
+# full LOD: NOT  -variant districtLod=full  (no-op — root authors per-district proxy). See §2.6.2 (wrapper layer).
+```
+
+This needed the GPU-collector fix: `-vk/-vkr` previously emitted **raw local**
+points for every Mesh (no world transform / purpose / mask), piling all
+districts at the origin; they now reuse the CPU path's world-space,
+purpose-filtered, masked collection. (Native instances are not yet emitted on
+the GPU path — negligible for Caldera: ~29 K of 12.70 M tris.)
+
+**tusdview** (`--next`) — frame a scene camera with the new `--camera` flag:
+
+```sh
+./build/tusdview --headless --next --backend gl --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # best shading
+./build/tusdview --headless --next --backend vk --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # raster
+```
+
+- `--camera <name>` resolves the named USD Camera's world pose from the `--next`
+  stage and drives the orbit rig (tusdview otherwise auto-fits the whole scene
+  and ignores USD cameras).
+- The **GL** backend renders the district cleanly (buildings, terrain, the mine
+  tank). The **VK rasterizer** renders the geometry correctly but with flat
+  geometric-normal shading (dark, low contrast — a *shading* limitation, not a
+  geometry one). This path was unblocked by fixing a latent
+  `normalize(vec3(0))` NaN in `mesh.vert` that clipped every zero-normal mesh
+  (the `--next` flat preview stores zero normals); before the fix `--next`
+  rasterized **nothing** on VK (even plain suzanne).
+- tusdview's 30 M default `--max-tris` budget **truncates** Caldera; raise it
+  (`--max-tris 40000000`) to load the whole proxy (the log prints `truncated`).
+
+**Known limitations (follow-ups).** ~~tusdview's VK ray-query (`--rt`) is
+blank on Caldera~~ — **fixed**: the RT TLAS included *every* USD purpose, so
+Caldera's ~26 M-tri `guide` breadcrumb planes (hidden in raster) engulfed the
+camera; the TLAS now skips purposes hidden in the UI and the mine district
+ray-traces correctly (see §2.8 for the measured recipe). The VK-raster flat
+shading still wants the smooth-normal + headlight treatment the tusdrender
+preview already uses. For full LOD, see §2.6.2.
+
+### 2.6.2 Full LOD (`districtLod = full`) — per-shot, not whole-island
+
+**Whole-island full LOD does not fit, and the wall is host RAM, not VRAM.**
+Both viewers (and every tusdrender backend, including `-vk`/`-vkr`) *eagerly
+compose all 45 districts' full payloads into host-RAM arrays and build a single
+in-memory triangle soup before anything is uploaded to the GPU.* On a 62 GiB
+host, promoting all districts to `full` climbs steadily during composition and
+exceeds **50 GiB while still composing** — it never reaches the triangle count
+or BVH build, let alone the GPU. So the 16 GiB VRAM budget is irrelevant: the
+host-side working set is the limit, and there is no out-of-core / chunked-BVH
+path today (one soup, one BLAS).
+
+Two gotchas when forcing full LOD:
+
+- **A global `-variant districtLod=full` has no effect.** The root `caldera.usda`
+  authors an explicit per-district `over … (variants = {string districtLod =
+  "proxy"})` for all 45 districts, and an authored selection beats a load-time
+  override. You must re-author the selection in a **stronger wrapper layer**.
+- **`-maxMem` does not bound composition.** It guards the triangle-stream / BVH
+  allocations (throwing `bad_alloc` → clean abort), but the `next` compose phase
+  balloons freely. Past the host's physical RAM the OS OOM-killer fires before
+  any clean abort — run heavy full-LOD jobs under a memory cgroup
+  (`systemd-run --user --scope -p MemoryMax=50G -p MemorySwapMax=0 …`) so only
+  the job dies, never the machine.
+
+**Per-shot full LOD is the production-correct approach and fits comfortably.**
+Promote only the district the shot frames; leave the rest proxy. Write a wrapper
+that sublayers the scene and re-authors *just that district* to `full`:
+
+```usda
+#usda 1.0
+(
+    subLayers = [ @/mnt/disk1/data/caldera/caldera.usda@ ]
+    upAxis = "Z"
+)
+over "world" { over "mp_wz_island" { over "mp_wz_island_paths" {
+    over "mp_wz_island_geo" {
+        over "map_phosphate_mine" ( variants = { string districtLod = "full" } ) {}
+    }
+}}}
+```
+
+Render the wrapper exactly like the scene, framing the matching camera:
+
+```sh
+W=caldera_mine_full.usda   # the wrapper above
+# tusdrender CPU ray tracing:
+./build/tools/tusdrender/tusdrender $W mine_cpu.png -rtPreview \
+    -camera phospate_mine_overview -w 1280 -height 720 -maxMem 45 -stats
+# tusdrender GPU ray query (hide guide: 'default' must be in the visible list):
+./build/tools/tusdrender/tusdrender $W mine_vkr.png -vkr \
+    -camera phospate_mine_overview -purpose default,render,proxy -w 1280 -height 720 -maxMem 45
+# tusdview VK rasterizer (raise --max-tris; full mine is ~88 M unique / ~184 M effective tris):
+./build/tusdview --headless --next --backend vk --camera phospate_mine_overview \
+    --max-tris 60000000 --frames 4 --screenshot mine_vk.ppm $W
+```
+
+Measured on the RTX 5060 Ti / 62 GiB host (phosphate-mine shot, mine at full,
+rest proxy):
+
+| Path | Result | Peak host RSS | Notes |
+|------|--------|--------------|-------|
+| tusdrender `-rtPreview` (CPU) | ✅ full detail | 11.9 GiB | 29.8 M default-purpose tris (vs 12.67 M proxy), 35 M unique |
+| tusdrender `-vkr` (GPU ray query) | ✅ full detail | 9.1 GiB | 35.3 M tris traced on the GPU; BLAS fits 16 GiB VRAM |
+| tusdview `--backend vk` (raster) | ✅ full detail | 15.3 GiB | 162.8 M tris drawn, 57 k instances; richest result |
+| tusdview `--rt` (VK ray query) | ⚠️ blank | 11.4 GiB | 30 M-tri cap truncates away the hero geometry (only guide lines remain) — the §2.6.1 large-scene VK-RT limitation |
+
+The mine at full LOD reveals geometry the proxy lacks — lattice crane towers,
+domed silos, palm trees, detailed buildings, the circular tank, rocks and
+pipework. Note tusdview counts ~88 M unique tris for the full mine (more than
+tusdrender's 35 M) because the `--next` converter expands instancing differently;
+its 30 M `--max-tris` default truncates heavily, so raise it for raster (which
+scales) but expect `--rt`/`--cuda` to stay capped on 16 GiB VRAM.
+
+**Per-district full-LOD gallery.** The same per-shot recipe (one district to
+`full`, frame its camera, `tusdrender -rtPreview`) renders any district at full
+detail within the host budget. Every district measured so far fits comfortably
+as a single promotion (18–50 M default-purpose tris, ≤21 GiB host RSS) — it is
+only the whole *island* at full that does not fit (see top of this section).
+
+| District (camera) | Default tris @ full | View |
+|---|---:|---|
+| `map_phosphate_mine` (`phospate_mine_overview`) | 29.8 M | ![phosphate mine](images/caldera/caldera-phosphate-mine-full.jpg) |
+| `map_capital` (`map_capital_square`) | 44.3 M | ![capital square](images/caldera/caldera-capital-square-full.jpg) |
+| `map_beachhead` (`map_beachhead_village`) | 23.6 M | ![beachhead village](images/caldera/caldera-beachhead-village-full.jpg) |
+| `map_tile_p` (`tile_p_beach`) | 27.8 M | ![tile_p beach](images/caldera/caldera-tile-p-beach-full.jpg) |
+| `map_airfield` (`map_airfield_overview`) | 36.9 M | ![airfield](images/caldera/caldera-airfield-full.jpg) |
+| `map_arsenal` (`map_arsenal_ship`) | 24.1 M | ![arsenal shipyard](images/caldera/caldera-arsenal-shipyard-full.jpg) |
+| `map_agricultural_center` (`map_agricultural_center_bridge`) | 18.1 M | ![agricultural center](images/caldera/caldera-agricultural-center-full.jpg) |
+
+Every other authored camera frames one of these same districts from a different
+pose — the district is promoted to `full` exactly as above, only the `-camera`
+changes:
+
+| District (camera) | Default tris @ full | View |
+|---|---:|---|
+| `map_phosphate_mine` (`phospate_mine_bridge`) | 29.8 M | ![mine bridge](images/caldera/caldera-phosphate-mine-bridge-full.jpg) |
+| `map_capital` (`map_capital_overview`) | 44.3 M | ![capital overview](images/caldera/caldera-capital-overview-full.jpg) |
+| `map_beachhead` (`map_beachhead_overview`) | 23.6 M | ![beachhead overview](images/caldera/caldera-beachhead-overview-full.jpg) |
+| `map_tile_p` (`tile_p_road`) | 27.8 M | ![tile_p road](images/caldera/caldera-tile-p-road-full.jpg) |
+| `map_airfield` (`map_airfield_waiting_room`) | 36.9 M | ![airfield waiting room](images/caldera/caldera-airfield-waiting-room-full.jpg) |
+| `map_arsenal` (`map_arsenal_overview`) | 24.1 M | ![arsenal overview](images/caldera/caldera-arsenal-overview-full.jpg) |
+
+(1280×720 `tusdrender -rtPreview -purpose default,render,proxy` shots, downscaled
+to 512 px JPEG for the repo. The colored speckles in some frames are neighboring
+districts still at `proxy`, drawn with their `displayColor`. The default-tri
+count is per *district*, so it is identical across that district's cameras.)
+
+### 2.6.3 `-lodStream`: automatic view-dependent district LOD (tusdrender)
+
+The per-shot wrappers above pick the `full` district by hand. `tusdrender
+-lodStream` does it automatically: a cheap **proxy pass** composes the scene,
+scores each district by **screen-space importance**, then promotes the
+top-scoring districts to `full` (via a generated wrapper layer) until a host-RSS
+/ GPU-VRAM budget is hit; the rest stay `proxy`. This is the load-time form of
+streamed LOD — only the selected `full` payloads get composed and made resident
+— and the designed use of the `districtLod` variant.
+
+The importance score is **projected coverage × view-alignment**:
+`proxyVerts / distance² × max(0, dot(dir-to-district, camera-forward))²`. Pure
+camera distance is not enough — for an *overview* camera it rewards small
+gameplay overlays sitting near the eye over the dense district the shot actually
+frames. Coverage adds geometric weight; the alignment term adds "what the camera
+looks at". (E.g. `phospate_mine_overview`: distance ranks `map_loot_zones`
+first and `map_phosphate_mine` 8th; the coverage+alignment score ranks the mine
+first at `align=0.98`.)
+
+```sh
+M=/mnt/disk1/data/caldera/caldera.usda
+# CPU ray tracing, default budgets (host = 50% of MemAvailable):
+./build/tools/tusdrender/tusdrender $M out.png -lodStream -rtPreview \
+    -camera map_capital_square -purpose default,render,proxy -w 1280 -height 720 -stats
+# GPU ray query also caps by VRAM (default = 50% of the device-local heap):
+./build/tools/tusdrender/tusdrender $M out.png -lodStream -vkr -camera map_capital_square ...
+```
+
+Flags: `-maxMem <GiB>` (host budget, else 50% MemAvailable), `-maxVram <GiB>`
+(GPU budget, else 50% of the device-local heap — queried via a new
+`lrt_vk_device_local_bytes()`), `-lodDistrictMem`/`-lodDistrictVram` (the flat
+per-district cost charge; default 10 / 3 GiB), `-lodMinVerts`/`-lodMaxVerts`
+(proxy-vert band; skip tiny trigger/volume children and sprawling non-district
+overlays that author no `full` geometry — e.g. a 14.6 M-vert spawn-marker set
+that would otherwise hijack the ranking; defaults 1000 / 2000000),
+`-lodContainer` (the namespace prim whose children are districts; default
+`mp_wz_island_geo`).
+
+Measured (`phospate_mine_overview`, RTX 5060 Ti / 62 GiB host, default budgets):
+
+```
+[lodStream] budgets: host 24.7 GiB (avail 49.4, proxy 2.1)
+[lodStream] 36 districts (10 sub-threshold skipped), promoting 2 to full ...
+[lodStream]   FULL map_phosphate_mine score=1.67e-3 align=0.98   FULL map_tile_f align=0.92   proxy (rest) ...
+```
+
+It auto-promoted `map_phosphate_mine` (what the camera frames) + the in-view
+`map_tile_f`, leaving the other 34 districts proxy. CPU peak RSS **13.7 GiB**.
+Across `map_capital_square` / `phospate_mine_overview` / `map_beachhead_village`
+the score always promotes the framed district first (capital, mine, beachhead
+respectively). On the capital shot at default budgets, GPU built the 50 M-tri
+BLAS within the 16 GiB card with VRAM the binding budget (7.96 GiB → 2
+districts); CPU peak RSS there was 19.5 GiB (est 22.1 — the estimate runs
+slightly high, i.e. safe).
+
+**Cost model is intentionally simple.** Proxy geometry does not predict `full`
+cost (a low-poly stand-in's vertex count is uncorrelated with the heavy geometry
+behind its `full` variant — a 0.25 M-vert capital proxy explodes to 44 M `full`
+tris), so the charge is a **flat per-district constant** rather than a
+proxy-scaled estimate. Proxy-vert count is used only as a coarse
+importance/footprint signal, and only within the `-lodMinVerts`..`-lodMaxVerts`
+band — outside it lie trigger/volume prims (tiny) and sprawling non-district
+overlays (e.g. the 14.6 M-vert `map_vehicle_spawns` spawn-marker set) that
+author no `full` geometry and would otherwise hijack the ranking. Tune
+`-lodDistrictMem` up to promote fewer districts / down to promote more.
+When `-maxMem` is not set, the hard memory-abort cap is raised to 90% of
+MemAvailable — *above* the 50%-of-avail selection budget — so a modest
+underestimate on the heaviest district pair completes instead of aborting (the
+abort cap stays an OOM safety net, not a tight selection bound). **Limitations**
+(true streaming follow-ups): the selection is computed once at load (not per
+frame), the chosen set is composed in a single soup/BLAS (no eviction), and the
+cost charge ignores per-district size variation — so on a tight machine lower
+`-lodDistrictMem` (fewer promotions) or set `-maxMem` to a higher explicit cap.
+
+### 2.6.4 Realtime island preview: GPU-budget LOD + robust auto-framing (tusdview)
+
+`-lodStream` (above) is a tusdrender, ray-tracing, load-time selection. The
+interactive **tusdview** rasterizer hits a different wall on a fully assembled
+scene. The Moana island (`/mnt/disk1/data/island`) composes via `--next` to
+**83,801 draws / 42.9 M instances / 56.5 M unique tris**, and after instance
+dedup the geometry itself fits comfortably in 16 GiB VRAM (instance transforms
+~2.06 GiB). The problem is **draw/buffer count**: the per-mesh raster path
+creates ~84 k host-visible Vulkan buffers and stalls for **7+ minutes** before
+the first frame. (A plain `--next --backend vk` whole-island run times out in
+the buffer-creation loop, not on memory.)
+
+**`--max-draw-meshes N` / `--max-gpu-mem <GiB>` (GPU-budget LOD).**
+`gpu_budget_lod.cc:ApplyGpuBudgetLOD()` runs once after load: it ranks meshes by
+prototype size, keeps the **N most prominent** at full geometry within the count
+and VRAM budgets, and **merges the entire long tail into one instanced bbox-proxy
+mesh** — a unit cube instanced once per overflow instance, each instance
+transform box-fitting that original prototype's object-space AABB, tinted by the
+mesh's flat color. The proxy preserves instancing (so its ~2 GiB instance buffer
+still fits) and per-instance frustum cullability (proxy prototype AABB is the
+unit cube, transformed per instance). The scene then uploads as **~N+1 buffers**.
+Simple preview only: the proxy boxes shade flat, no shadows/GI.
+
+```sh
+M=/mnt/disk1/data/island/usd/island.usda
+# 40 GiB host cgroup; keep the 4000 biggest meshes full, cap full VRAM at 16 GiB,
+# merge the other ~79.8 k meshes into one bbox proxy:
+systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
+  ./build/tusdview --headless --next --backend vk \
+    --max-tris 80000000 --max-gpu-mem 16 --max-draw-meshes 4000 \
+    --frames 2 --screenshot island.ppm $M
+```
+
+```
+next: 83801 draws, 42869753 instances, 56553204 unique tris, instXform VRAM ~2.06 GB
+gpu-budget LOD: 4000 meshes full (0.08 GiB), merged 79801 meshes / 42730328
+                instances into bbox proxy (now 4001 draws)
+render stats: 4001/4001 meshes visible, 42869757 instances, 581550424 drawn tris, 4001 draw calls
+```
+
+**`--no-robust-frame` (robust auto-framing, on by default).** The island's *raw*
+scene bbox is **170,091 units across** — a handful of far-flung meshes sit at
+±tens of thousands while the actual island occupies a ~9,200-unit region near the
+origin. `fitToScene` on the raw bbox renders the island as a sub-pixel speck.
+`ComputeRobustSceneBounds()` fixes the framing with **mass-weighted endpoint
+trimming**: each mesh's world-AABB min/max endpoints carry its geometry mass
+(`instanceCount × triCount`), and per axis 1% of the *mass* is trimmed from each
+tail. Sparse far elements weigh ~nothing and drop out; the dense island defines
+the kept range. It only overrides framing when the result is materially tighter
+(robust diag < 70% of full), so normal scenes that fill their bbox are
+untouched. It is computed from the full per-mesh set **before** the LOD merge
+(post-merge the proxy's 42 M instances would swamp the weighting) and cached.
+The named-USD-camera path (`--camera`) is unaffected.
+
+```
+robust auto-frame: trimmed 1% outliers, scene diag 170091.6 -> 9265.6 (95% smaller)
+```
+
+With both on, the whole island uploads in seconds instead of stalling, fits well
+under 16 GiB VRAM, renders all 42.9 M instances through the existing per-instance
+frustum culling, and frames Motunui (shoreline, palms as full trunks + bbox-proxy
+foliage) instead of a speck. **Limitations:** the proxy is rebuilt only on load
+(not per frame / per view), it is a flat-shaded box soup (no materials/textures
+on the merged tail), and the full-mesh set is chosen by prototype size, not
+screen-space importance — a per-view promotion pass (à la `-lodStream`) is the
+follow-up.
+
+### 2.6.5 Per-frame view-dependent raster LOD (`--raster-lod`, tusdview)
+
+§2.6.4's GPU-budget LOD is a **load-time** decision: it bounds upload/VRAM by
+fixing one full/proxy split for the whole session. `--raster-lod` is the
+**per-frame, view-dependent** follow-up it called for. It runs inside the
+existing raster instance cull (`compactMeshInstances`, shared by the sync,
+headless, and async-worker cull paths), so it composes with — and is independent
+of — the load-time merge.
+
+For every instance that passes the frustum cull, the cull classifies it by its
+**projected screen radius** (`ProjectedRadiusPx` = `focalPx · worldRadius /
+viewDepth`, from the instance's world-AABB):
+
+- `px < --raster-lod-cull-px` (default `1.5`) → **dropped** (sub-pixel).
+- `px < --raster-lod-full-px` (default `48`) → **collapsed to a shared unit-box
+  proxy** (box-fit onto the instance's world AABB via `BoxFitXform`, tinted by
+  the instance color), accumulated across all prototypes into one instanced draw.
+- otherwise → drawn **full-detail**.
+
+Box proxies render on both raster backends: GL (`initBoxProxy`) and Vulkan
+(`initBoxProxyRaster` / `drawBoxProxies`, reusing the prototype instanced
+pipeline — meshId `-1`, geometric-normal shading). This matters for the headless
+path specifically: **headless forces the Vulkan backend**, so on island/Caldera
+captures the VK box proxies are what keep the distant scene visible. The feature
+is **off by default** and the LOD-off path is byte-identical (verified MAE 0 on
+both backends). The cull itself is accelerated by a coarse per-prototype spatial
+grid (`BuildRtLodGrid`) that frustum-rejects whole cells before the per-instance
+loop.
+
+```sh
+M=/mnt/disk1/data/island/usd/island.usda
+# Whole island, VK raster, robust auto-frame; collapse anything under 48 px to a
+# box, drop anything under 1 px:
+systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
+  ./build/tusdview --headless --next --backend vk \
+    --raster-lod --raster-lod-cull-px 1 --raster-lod-full-px 48 \
+    --max-tris 80000000 --frames 4 --screenshot island.ppm $M
+```
+
+Measured on the RTX 5060 Ti (whole island, 42.9 M instances, VK raster, robust
+auto-frame, 4 frames so the focal length settles — see note below):
+
+| Mode | Full-detail instances | `present` (GPU+readback) | Distant scene |
+|------|----------------------|--------------------------|---------------|
+| `--raster-lod` off | 23.7 M visible | ~5620 ms | full |
+| size-cull only (`--raster-lod-cull-px 4`, no proxy) | 69 k | ~555 ms | **dropped** |
+| box proxies (`--raster-lod-cull-px 1 --raster-lod-full-px 48`) | 15 + box soup | ~480–610 ms | **kept as boxes** |
+
+So size-culling alone cuts visible instances ~340× (23.7 M → 69 k) and the GPU
+present ~10× (5.6 s → 0.56 s); switching the drop to a box proxy keeps the same
+~10× frame-time win **without** losing the distant island — the far vegetation
+clumps become cheap gray boxes (~12 tris each) instead of vanishing. Unlike
+§2.6.4's merge this re-selects every time the camera settles, so pulling the
+camera in promotes near boxes back to full geometry.
+
+> **Note on focal length.** The viewport height / aspect are not final until
+> after the first `resizeViewport`, so frame 1's projected-radius math uses a
+> stale focal length and the cull re-runs on frame 2. Use `--frames ≥ 4` for
+> headless LOD captures so the final frame reflects the settled camera.
+
+This is a per-frame raster analogue of the RT path's view-dependent LOD
+(`rt_lod.{hh,cc}`, §2.6.3-adjacent), sharing the same `ProjectedRadiusPx` /
+`BoxFitXform` math (`lod_math.hh`). **Limitations:** hard switch at `full-px`
+(no stochastic crossfade band — the raster path has no accumulator to resolve a
+dither), box proxies are flat-shaded (no materials/textures), and `full-px` is a
+single global threshold rather than a per-prototype importance score.
+
+### 2.6.6 Realtime large-scene profiles (`--large-scene-profile`, tusdview)
+
+`tusdview --large-scene-profile off|auto|caldera|island|alab` is a preset layer
+over the existing Vulkan large-scene flags. It is meant for repeatable Caldera,
+Island, and ALab smoke/performance runs without memorizing the full flag list:
+profiles enable `--next`, prefer the Vulkan backend, enable raster/RT LOD, set
+conservative draw/VRAM budgets, and print the resolved settings at startup.
+`auto` only applies a profile when the input path clearly names Caldera, Island
+or Moana, or ALab; otherwise it resolves to `off`.
+
+Explicit CLI flags win. For example, `--large-scene-profile island
+--max-gpu-mem 6 --raster-lod-full-px 32` keeps the Island preset but uses the
+user's GPU budget and LOD threshold. Profiles do **not** enable texture resize or
+BCn/compressed texture paths; those remain controlled only by
+`--texture-max-size`, `--texture-budget-mb`, and `--texture-compress`.
+
+Scene-specific defaults:
+
+- `caldera`: raises the triangle cap to avoid the old 30 M-triangle truncation,
+  uses the named overview camera when no camera is passed, and enables district
+  LOD streaming with host/VRAM budgets.
+- `island`: caps full raster uploads by draw count and VRAM, then relies on
+  per-frame raster LOD to keep the distant island visible as box proxies.
+- `alab`: enables parent-relative composition paths because the public ALab
+  layout uses `../lightingrenderovers/`, then applies the same Vulkan/LOD budget
+  preset pattern.
+
+Optional local harness:
+
+```sh
+TUSDVIEW=./build_ninja/tusdview \
+CALDERA=/path/to/caldera.usda \
+ISLAND=/path/to/island.usda \
+ALAB=/path/to/alab.usda \
+  bash examples/tusdview/tests/run-large-scene-profiles.sh
+
+TUSDRENDER=./build_ninja/tools/tusdrender/tusdrender \
+CALDERA=/path/to/caldera.usda \
+ISLAND=/path/to/island.usda \
+ALAB=/path/to/alab.usda \
+  bash tools/tusdrender/tests/run-large-scene-profiles.sh
+```
+
+The harnesses skip scenes whose environment variables are unset, write one image
+and one log per scene, and check that the resolved profile settings appeared in
+the log. Each writes `summary.tsv` under `OUT_DIR` with profile, asset, exit
+code, elapsed seconds, image bytes, and log path. Use `TUSDVIEW_EXTRA_ARGS` or
+`TUSDRENDER_EXTRA_ARGS` to add per-run flags such as `--rt`, `--mode albedo`,
+`-stats`, or `-gpuShade preview`. `TUSDVIEW_SCENE_TIMEOUT` defaults to `10m` and
+bounds each viewer scene run. They are intentionally not required ctests because
+these large assets are not tracked in the repository.
+
+### 2.6.7 Ray-traced full island (tusdview `--hip`, AMD RX 9070 XT)
+
+§2.6.4 is a *rasterizer* preview: it merges the long tail into a flat box-proxy so
+the per-mesh draw path stays cheap. The **HIP ray tracer** (`--hip`) takes the
+opposite approach — it ignores the raster draw/buffer budget entirely and traces
+the **full** geometry: every prototype's real triangles, instanced by the real
+per-instance transforms, in one 2-level BVH (per-prototype BLAS + a TLAS over all
+instances). On a 16 GiB GPU the **whole Moana island fits** — all 42.9 M instances
+over 30.0 M unique triangles (≈17.5 B effective), no LOD, no proxy.
+
+```sh
+M=/mnt/disk1/data/island/usd/island.usda
+# Full island, HIP ray tracing, framed on the hero shot camera.
+# --max-instances 0 = unlimited (the 16 M default truncates by mesh order).
+./build/tusdview --headless --next --hip \
+  --camera shotCam --max-instances 0 --rt-samples 2 \
+  --frames 4 --screenshot island.ppm $M
+```
+
+```
+next: 83798 draws, 42869753 instances, 30009608 unique tris (17508653596 effective), instXform VRAM ~2.06 GB, up=Y
+[rt_scene_build] 83798 meshes -> 30009608 tris / 42869754 instances: phaseA(geom) 28518 ms, phaseB(assemble+TLAS) 56137 ms
+HIP: traced 42869754 instances, 30009608 unique tris, 91138 colors -> island.ppm
+```
+
+Measured on the RX 9070 XT (gfx1201, 16 GiB): **2 m 03 s** wall-clock end-to-end,
+**~28.7 GiB host RSS** during the CPU scene build, and the device acceleration
+structure fits under 16 GiB VRAM (no OOM). The result is the iconic Motunui
+shoreline — mossy coral-rock boulders in the foreground, sandy beach, the line of
+bare ironwood trees.
+
+Notes and gotchas:
+
+- **`--next` is mandatory.** The standard Tydra loader rejects the island's
+  `..`-relative payloads (same "Unsafe asset path" as Caldera, §2.6.1); `--next`
+  composes them. `--hip` then traces whatever geometry the loader produced — it
+  does **not** apply the §2.6.4 raster box-proxy LOD.
+- **`--max-instances 0`.** The ray tracer defaults to a 16 M instance cap; the
+  island has 42.9 M, so the default **truncates by mesh build order** (not frustum
+  visibility) and drops most of the scene. Pass `0` for the full island.
+- **Named cameras.** `island.usda` authors `shotCam`, `birdseyeCam`, `beachCam`,
+  `dunesACam`, `grassCam`, `palmsCam`, `rootsCam`; select one with `--camera`
+  (a name that doesn't match silently falls back to whole-scene auto-fit, which
+  for the island is a speck — see §2.6.4's robust framing). `--rt-samples N` adds
+  Halton(2,3) sub-pixel AA.
+- **What makes it feasible.** Two earlier fixes: (1) the CPU scene build is
+  parallelized (`rt_scene_build.cc` — per-mesh geometry, per-instance transforms,
+  and TLAS all run multithreaded; byte-identical to the serial path); and (2) for
+  a headless `--hip` screenshot tusdview **skips the rasterizer's `uploadScene` /
+  per-frame `renderViewportScene`** (`rtOwnsScreenshot_`), which would otherwise
+  spend minutes culling 42.9 M instances for a frame that is immediately
+  discarded. Set `TUSDVIEW_RT_TIMING=1` to print the `[rt_scene_build]` phase
+  breakdown.
+
 ### 2.7 RenderScene optimization for realtime viewers
 
 Payload deferral solves structural loading, but realtime web/native viewers have
@@ -264,6 +766,205 @@ also reduced native material conversion from roughly second-scale to
 double-digit milliseconds in that workload. Treat these as shape-of-improvement
 numbers rather than a portable benchmark; exact results depend on material
 duplication, mesh compatibility, and hierarchy depth.
+
+---
+
+### 2.8 Validated VRAM-fit configs: Island + Caldera on 6 GiB / 15 GiB (2026-07)
+
+GPU-backend review outcome (NVIDIA RTX 5060 Ti 16 GiB, driver-reported
+15.57 GiB device-local budget). Every row below was measured with
+`benchmark/tusdrender/bench_vram.sh` (true VRAM: `nvidia-smi` 100 ms peak polling minus
+idle baseline — earlier "VRAM" numbers in this doc that came from RSS are
+host RAM, not VRAM). The **6 GiB rows additionally completed unchanged under
+a 10 GiB VRAM ballast** (`benchmark/tusdrender/vram_ballast.py 10`), i.e. with only
+~5.5 GiB of the card actually available. Cameras: island `shotCam`, caldera
+`phospate_mine_overview`. tusdview headless default 1469×1284; tusdrender
+1280×720.
+
+Perf/VRAM changes this round (all image-neutral — byte-identical or
+pass the cross-backend tolerance test):
+
+- **LightRT VK BLAS compaction** (default ON, `LRT_VK_BLAS_COMPACT=0` opts
+  out): caldera `-vkInstanced` 1051→525 MiB; island full instance set
+  7153→5408 MiB **and** 49.6→31.7 s (the compaction rebuild batches BLAS
+  builds in ≤512-proto waves — two submits per wave instead of one per
+  prototype).
+- **tusdview Caldera `--rt` fixed** (purpose-filtered TLAS, see §2.6.1):
+  BLAS build 1907→901 ms, RT VRAM 2.73→1.23 GiB, mine district now traces.
+- **tusdview device-local MDI instance mirror** (auto when
+  VK_EXT_memory_budget shows ≥20 % headroom; `TUSDVIEW_MDI_DEVLOCAL=0/1`
+  forces): island no-LOD 843→766 ms/frame. No effect with `--raster-lod`
+  (that frame is primitive-bound: 55 M drawn tris of non-instanced unique
+  geometry, 63 visible instances). Costs 1.37 GB VRAM on island — the auto
+  headroom check keeps it off in tight-VRAM situations.
+- **tusdrender flat GPU paths**: `-vkr` skips the unused CPU BVH (15.4→6.6 s
+  on caldera), `-vk` builds it threaded (15.2→8.5 s); shade/write is
+  row-parallel; `-stats` prints per-stage `[gpu-stats]` timings.
+- **CUDA/HIP `--rt-samples`**: device-side accumulation, one readback at the
+  end (was one `cuMemcpyDtoH` + host byte-loop per sample).
+- Live VRAM: tusdview logs `vram=used/budget GiB` in `[present]`/`[vk_rt]`
+  lines (VK_EXT_memory_budget).
+
+**tusdview** (`T=./build/tusdview`, `ISL=/mnt/disk1/data/island/usd/island.usda`,
+`CAL=/mnt/disk01/data/caldera/caldera.usda`):
+
+| Config | Recipe | VRAM peak | Steady frame | Fits |
+|---|---|---|---|---|
+| Island raster, 15 GiB | `--next --camera shotCam` (mirror auto-on) | 1.55 GiB | 766 ms | 15 GiB |
+| Island raster, 6 GiB | `--next --camera shotCam --max-gpu-mem 4 --raster-lod --raster-lod-full-px 32 --raster-lod-cull-px 3` + `TUSDVIEW_MDI_DEVLOCAL=0` | 0.25 GiB | ~362 ms | both |
+| Island RT, 15 GiB | `--next --rt --rt-lod --rt-lod-full-px 96 --rt-lod-cull-px 1 --camera shotCam` | 4.29 GiB | — | both |
+| Island RT, 6 GiB | `--next --rt --rt-lod --rt-lod-full-px 48 --rt-lod-cull-px 3 --camera shotCam` | 4.19 GiB | — | both (ballast-verified) |
+| Caldera raster | `--next --camera phospate_mine_overview --max-tris 40000000` | 0.18 GiB | — | both |
+| Caldera RT | raster recipe + `--rt` | 1.40 GiB | — | both (ballast-verified) |
+| Caldera CUDA, 15 GiB | raster recipe + `--cuda` | 7.48 GiB | — | 15 GiB only |
+| Caldera CUDA, 6 GiB | `--cuda --max-tris 8000000` | 1.98 GiB | — | both (ballast-verified) |
+| Island CUDA | `--next --cuda --camera shotCam` | 2.39 GiB | — | both (ballast-verified) |
+
+Notes: the island RT rt-lod px knobs barely move VRAM (4.19 vs 4.29 GiB —
+the grid + LOD-bound BLAS set is the resident cost); both fit 6 GiB but with
+little margin — the P2 tusdview BLAS-compaction port is the next lever. The
+caldera CUDA cliff between `--max-tris 13000000` (5.53 GiB, marginal) and
+`8000000` (1.98 GiB) is one huge district mesh crossing the cap; the 8 M cap
+renders the same visible content at this camera (identical image stats).
+
+**tusdrender** (`B=./build/tools/tusdrender/tusdrender`):
+
+| Config | Recipe | VRAM peak | Wall | Fits |
+|---|---|---|---|---|
+| Island full set, 15 GiB | `TUSDR_INST_BUDGET=45000000 $B $ISL out.png -vkInstanced -camera shotCam -w 1280 -height 720 -maxMem 24` | 5.41 GiB | 31.7 s | 15 GiB (6 GiB too marginal) |
+| Island, 6 GiB | `TUSDR_INST_BUDGET=16777216 LRT_VK_TLAS_SLICE=8388608 $B $ISL out.png -vkInstanced -rtLod -rtLodFullPx 48 -rtLodCullPx 3 -camera shotCam -w 1280 -height 720 -maxMem 14` | 0.40 GiB | 19.3 s | both (ballast-verified) |
+| Caldera | `$B $CAL out.png -vkInstanced -camera phospate_mine_overview -w 1280 -height 720 -maxMem 14` | 0.52 GiB | 5.8 s | both (ballast-verified) |
+
+Avoid flat `-vkr` on caldera when `-vkInstanced` works (0.95 vs 0.52 GiB);
+its win this round is speed (6.6 s total after the CPU-BVH skip). The island
+full-set row is the compaction headline: 42.8 M instances now render in
+5.41 GiB VRAM (uncompacted: 7.15 GiB) — it even *passes* the nominal
+5.5 GiB bar, but leaves no margin for a real desktop, so it is listed as the
+15 GiB config.
+
+**Remaining follow-ons (P2, unimplemented):** tusdview BLAS-compaction port
+(island RT 4.2 → est. ~2.7 GiB); device-local node/block buffers for the
+`-vk` compute path; tiled ray/hit dispatch; TLAS `PREFER_FAST_BUILD` for
+settle rebuilds; a `--vram-budget <GiB>` umbrella flag deriving
+`--max-gpu-mem`/texture budgets/auto `--rt-lod` from the memory-budget query;
+raster LOD for *non-instanced* meshes (the island `--raster-lod` frame is
+bound by 55 M non-instanced drawn tris — the instanced side is already
+solved).
+
+### 2.9 Host-memory matrix: weld ratio + texture cap (`--next`, 2026-07-11)
+
+Companion to §2.8, measuring a different thing: these are **host peak RSS**
+(`/usr/bin/time -v`, so process startup is included), not device VRAM. They
+exist to catch two `--next` regressions no unit test can see — a weld key that
+over-splits (the memory win silently evaporates) and a texture cap that stops
+bounding decode. Xvfb + NVIDIA RTX 5060 Ti.
+
+Deferred-payload profiles (`examples/tusdview/tests/run-large-scene-profiles.sh`,
+all three PASS). Each resolves `backend=vk --next=on --raster-lod=on --rt-lod=on
+--max-gpu-mem=8.0` — the 8 GiB is `ComputeResourceBudget`'s half-of-16-GiB, not
+a hardcode:
+
+| Scene | Peak RSS | Prior baseline | Wall |
+|---|---|---|---|
+| Island | 0.45 GB | 0.49 GB | 2.9 s |
+| Caldera | 2.06 GB | 2.18 GB | 6.5 s |
+| ALab | 0.52 GB | 0.55 GB | 3.0 s |
+
+**These profiles defer payloads and therefore decode 0 textures** — they do not
+exercise the texture cap, and their weld ratios cover only the proxy geometry.
+Add `--load-payloads` for the runs that do:
+
+| Scene | Weld ratio | Textures | Wall | Peak RSS |
+|---|---|---|---|---|
+| Island | **1.04x** (21 159 184 verts / 20 437 898 points) | 0 | 72 s | 18.7 GB |
+| Caldera | **1.48x** (31 905 889 / 21 547 797) | 0 | 32 s | 10.8 GB |
+| ALab | **1.29x** (6 726 046 / 5 193 895) | 343, 1372 MB decoded (budget 1920 MB, **0 downscaled**) | 17 s | 5.3 GB |
+
+The weld ratio is the number to watch: a ratio drifting toward the
+corners-per-point count (~4-6x) means the weld key is too strict and the
+deduplication is gone. Island composes 40.9 M instances / 11.7 G effective tris
+in this configuration and still fits the 30 GiB host headroom.
+
+```bash
+CALDERA=/mnt/disk1/data/caldera/caldera.usda \
+ISLAND=/mnt/disk1/data/island/usd/island.usda \
+ALAB=/mnt/disk1/data/alab/_merged_ALab/entry.usda \
+  bash examples/tusdview/tests/run-large-scene-profiles.sh
+
+# The full-payload run (weld + texture cap), per scene:
+/usr/bin/time -v ./build/tusdview --headless --large-scene-profile alab \
+  --load-payloads --frames 1 --screenshot alab.ppm \
+  /mnt/disk1/data/alab/_merged_ALab/entry.usda
+# watch: 'next: weld N vertices from M points (Kx)'
+#        'next: textures N, decoded X MB (cap ..., budget ..., K downscaled)'
+```
+
+---
+
+### 2.10 Raster LOD reaches non-instanced geometry (2026-07-11)
+
+`--raster-lod` classified only instanced prototypes, so Island's unique geometry
+was drawn in full no matter how small it was on screen. It now runs the same
+Cull / Proxy / Full classification over non-instanced meshes.
+
+The prerequisite was a loader bug: the `--next` static-batch path copied the
+running **scene**-bounds accumulator into every batch as its AABB, so no unique
+mesh could ever be outside the frustum or small on screen — the per-mesh frustum
+cull was a no-op too. Each batch now carries its own world bounds (skinned
+batches keep the conservative scene box, since their vertices are a single pose).
+
+| Island, `--next`, 1456×1264 headless | drawn tris | meshes drawn |
+|---|---|---|
+| `--raster-lod` off | 21 646 M (43.2 M instances) | 100 801 / 100 801 |
+| `--raster-lod` on, before | 40.3 M | 100 801 / 100 801 |
+| `--raster-lod` on, after | **15.2 M** | 84 400 / 100 801 |
+
+Regression test: `tusdview-noninstanced-lod`.
+
+### 2.11 tusdrender `-vk` compute trace: ray tiling, and the device-local BVH
+that did not pay (2026-07-11)
+
+`lrt_vk_trace_scene` allocated the whole frame's rays and hits up front —
+48 B × w × h × spp, i.e. **6.3 GB of VRAM for 1920×1080 at 64 spp**, on top of
+the BVH — and dispatched them as one job. It now traces in fixed tiles
+(`LRT_VK_RAY_TILE`, default 4 M rays = a 192 MiB working set). Rays are
+independent, so this is exactly image-neutral, and it is also *faster*:
+
+| Suzanne, 1024×1024 × 32 spp (33.5 M rays), RTX 5060 Ti | trace | ray+hit VRAM |
+|---|---|---|
+| one whole-frame dispatch | 3.61 s | ~1.6 GiB |
+| tiled, 4 M rays | **2.83 s** | **192 MiB** |
+
+Device-local node/block buffers (`LRT_VK_DEVICE_LOCAL=1`) were the other half of
+the §2.8 plan, and they do **not** pay off — left implemented but off by default.
+Measured on ALab (29.2 M tris; 297 MiB nodes + 1.6 GiB blocks, verified resident
+in VRAM):
+
+| | per-ray trace | 16.7 M-ray trace |
+|---|---|---|
+| host-visible BVH | 0.144 µs | 4.65 s |
+| device-local BVH | 0.144 µs | 4.92 s (the staging copy) |
+
+Traversal is simply not bound by where the BVH lives on this GPU, and moving it
+into VRAM spends ~1.9 GiB of the budget this work exists to reclaim. The
+reasoning still holds for a GPU whose traversal *is* bandwidth-bound, hence the
+flag — but measure before enabling it.
+
+Regression test: `tool-tusdrender-vk-ray-tiling` (4 tiles must be byte-identical
+to one whole-frame dispatch).
+
+### 2.12 TLAS `PREFER_FAST_BUILD`: measured, rejected (2026-07-12)
+
+The last item of the §2.8 list, and it does not pay. On Island (`--rt --rt-lod`,
+36 k TLAS instances) the TLAS acceleration-structure build is **0.7–4.6 ms of a
+600–8400 ms rebuild** — the rebuild is dominated by the BLAS builds and the
+instance array, not the TLAS. `PREFER_FAST_BUILD` would save ~1 ms of a rebuild
+that only happens when the camera settles, and charge for it on every
+accumulation frame afterwards.
+
+Left as a lever (`TUSDVIEW_TLAS_FAST_BUILD=1`) for a GPU or scene where the
+balance differs. `TUSDVIEW_RT_TIMING=1` now prints the AS-build time on its own
+line, so the trade can be re-measured rather than re-argued.
 
 ---
 
@@ -341,20 +1042,26 @@ also reprocesses the newly loaded payload node, so references/payloads authored
 inside a streamed payload layer are visible immediately after `LoadPayload`.
 Regression: `pcp_external_payload_load_reprocesses_nested_arcs_test`.
 
-### 3.3 mmap-through-composition / fd bounds (PARTIAL)
+### 3.3 mmap-through-composition / fd bounds
 
 mmap zero-copy (`USDLoadOptions::mmap_zero_copy`) defers large uncompressed
-float arrays to disk, but only via `LoadUSDCFromFile(... Stage*)`. It does **not**
-flow through composition: `Layer` has no mmap storage, and
-`BuildStage`/`ComposePrimSpecFromIndex` (`composition-graph.cc:1389`) deep-copy
-PrimSpec arrays into the Stage. For the 16 GB target this does not matter
-(deferred geometry never enters the Stage), but to keep *loaded* geometry on disk
-the project would need: an mmap table on `Layer`, `LoadUSDCLayerFromMemory`
-honoring `mmap_zero_copy` against a file-backed mmap, non-copying
-(move/alias) array handling in `ComposePrimSpecFromIndex`, and
-`Stage::adopt_mmap_*` after `BuildStage`. A pragmatic interim: stream a single
-on-demand payload via `LoadUSDCFromFile(... mmap_zero_copy=true)` into a side
-Stage.
+float arrays to disk on the legacy direct-Stage reader. Full composed-layer mmap
+is now supported through the **next PCP backend**
+(`TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=ON`): every file-backed USDC layer is read
+with lazy arrays and mmap enabled, each `LazyArrayRef` retains shared ownership
+of its own `CrateDataSource`, and that reference survives Layer → composed
+PrimSpec → rebuilt Stage copies without materialization. This naturally handles
+many sublayers/references/payload files rather than relying on a single global
+mmap table. `LargeSceneLoadOptions::mmap_zero_copy` controls both lazy arrays and
+mmap for the whole next-PCP load (default ON); disabling it produces the same
+composed result with eagerly decoded, owned array values.
+
+The legacy CompositionGraph backend deliberately stays in copy mode for
+composed layers: its `Stage` mmap table addresses one source buffer and cannot
+identify per-layer sources. Extending that representation would duplicate the
+shared-source ownership already provided by next PCP. Direct legacy
+`LoadUSDCFromFile(..., mmap_zero_copy=true)` remains supported for one-file
+Stages.
 
 The descriptor-bound part is now implemented: `AssetResolutionResolver` tracks a
 per-resolver concurrent open file-descriptor / asset-handle budget
@@ -441,15 +1148,18 @@ composition.
 
 ### 3.6 Smaller items
 
-- **Budget-by-extent**: the `Budget` policy currently sizes payloads by file
-  bytes; authored `extentsHint` would let it bound by world-space coverage, but
-  the payload-policy callback would need the owning `PrimSpec`.
-- **Layer-owned mmap**: true mmap-through-composition still needs Layer/Stage
-  ownership plumbing for mapped crate buffers. If future code keeps file handles
-  open for long-lived mappings, add an LRU on top of the existing descriptor
-  budget.
-- **Threaded streaming**: `load_payload`/`unload_payload` mutate the graph in
-  place and are single-threaded post-load.
+- **Budget-by-extent — implemented**: `payload_policy_with_prim` exposes the
+  authoring `PrimSpec`, and `LargeSceneLoadOptions::payload_extent_budget` adds
+  an optional projected-area cap from authored `extentsHint` while preserving
+  the byte budget and byte-only fallback for unannotated payloads.
+- **Layer-owned mmap — implemented in next PCP**: per-array shared
+  `CrateDataSource` ownership survives composition and Stage publication. The
+  legacy single-source mmap table remains direct-load-only by design. If future
+  code bounds long-lived mappings by open handles rather than closing the file
+  after `mmap`, add an LRU on top of the existing descriptor budget.
+- **Threaded streaming — implemented**: graph/cache mutation is serialized and
+  rebuilt Stages are published as immutable shared snapshots. A worker may call
+  `load_payload`/`unload_payload` while readers retain `stage_snapshot()`.
 
 ---
 
@@ -595,11 +1305,32 @@ Commands:
   build_ninja/tusdcat -f --memstat --output-format=usda -o /dev/null <root.usda>
 ```
 
+For trusted scenes with individual referenced USD layers larger than the current
+512 MiB composition safety cap, current `tusdcat` has an explicit opt-in cap
+relaxation:
+
+```sh
+/usr/bin/time -v \
+  build_ninja/tusdcat -f --relax-asset-cap --memstat \
+  --output-format=usda -o /dev/null <root.usda>
+```
+
+`--relax-asset-cap` raises the per-composition-layer cap to 8 GiB. Use
+`--max-composition-asset-mb=N` when a tighter scene-specific cap is preferred.
+The default remains the 512 MiB security-policy cap for untrusted inputs.
+
 | Scene | `next_usdcat` load+compose | `next_usdcat` total | `next_usdcat` max RSS | current `tusdcat` result |
 |---|---:|---:|---:|---|
 | Caldera `caldera.usda` | 3.53 s | 9.71 s | 2.93 GiB | 1:46.7 total, 10.37 GiB max RSS |
 | Moana Island `island.usda` | 15.38 s | 43.42 s | 9.67 GiB | failed after 11.6 s: `xgGroundCover.usd` exceeds the 512 MiB per-asset cap |
 | ALab `ALab/entry.usda` | 0.33 s | 0.36 s | 62 MiB | not comparable: resolver missed a referenced ALab asset and built only a 43 KiB stage |
+
+With `--relax-asset-cap`, current `tusdcat` passes the Moana Island cap failure:
+the run completed composition in 8 iterations, wrote USDA to `/dev/null`, and
+reported Stage in-use memory of 7.23 GiB. The measured full current pipeline was
+9:09.98 elapsed with 30,416,912 KiB max RSS on a RelWithDebInfo build. The run is
+still much slower and higher-memory than `next_usdcat`, but it no longer fails at
+`xgGroundCover.usd` solely because that layer is 683,530,559 bytes.
 
 The table above is the pre-optimization snapshot; the ASCII writer was then
 optimized substantially (§6.2). Current full-composition validation uses
@@ -766,6 +1497,15 @@ not disk I/O.
 cd build && cmake --build . -j16
 # cross-directory cwp anchoring regression test (§3.1):
 cd build && ctest -R feat-large-scene --output-on-failure
+# the same suite end-to-end on the next::pcp::Cache backend (extent budget,
+# worker-thread snapshot, cross-layer payload-owner anchoring):
+cmake -S . -B build-next-pcp -DCMAKE_BUILD_TYPE=Release \
+  -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=ON -DTINYUSDZ_BUILD_TESTS=ON \
+  -DTINYUSDZ_BUILD_EXAMPLES=OFF -DTINYUSDZ_BUILD_TOOLS=OFF
+cd build-next-pcp && make feat-large-scene -j16 && \
+  ctest -R feat-large-scene --output-on-failure
+# focused payload-policy owner-anchor regression (next pcp unit level):
+cd build-next && ctest -R 'next_test_pcp$' --output-on-failure
 # structural load within budget (absolute path works from any cwd now):
 <build>/large-scene-load /mnt/disk1/data/caldera/caldera.usda --mode=none
 # expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.

@@ -6,6 +6,7 @@
 #pragma once
 
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -78,6 +79,12 @@ struct LayerMetas {
   TypedAttributeWithFallback<PlaybackMode> playbackMode{
       PlaybackMode::PlaybackModeLoop};
 
+  // Unregistered (unknown-to-tinyusdz) layer metadata, preserved verbatim as the
+  // raw USDA text of the value (quotes included for string values), keyed by the
+  // metadatum name. OpenUSD preserves such opinions (SdfUnregisteredValue);
+  // dropping them silently loses authored data. Mirrors PrimMeta::unregisteredMetas.
+  std::map<std::string, std::string> unregisteredMetas;
+
   // Indirectly used.
   std::vector<value::token> primChildren;
 
@@ -101,6 +108,11 @@ struct LayerMetas {
     for (const auto& kv : customLayerData) {
       total += kv.first.capacity();
       total += sizeof(MetaVariable);  // MetaVariable internal estimation not detailed
+    }
+    // unregistered layer metadata
+    for (const auto& kv : unregisteredMetas) {
+      total += kv.first.capacity();
+      total += kv.second.capacity();
     }
     // primChildren tokens
     for (const auto& tok : primChildren) {

@@ -44,9 +44,9 @@ class Asset {
  public:
   size_t size() const { return buf_.size(); }
 
-  const uint8_t *data() const { return buf_.data(); }
+  const uint8_t *data() const TINYUSDZ_LIFETIMEBOUND { return buf_.data(); }
 
-  uint8_t *data() { return buf_.data(); }
+  uint8_t *data() TINYUSDZ_LIFETIMEBOUND { return buf_.data(); }
 
   void resize(size_t sz) { buf_.resize(sz); }
 
@@ -72,11 +72,11 @@ class Asset {
     resolved_name_ = name;
   }
 
-  const std::string &name() const {
+  const std::string &name() const TINYUSDZ_LIFETIMEBOUND {
     return name_;
   }
 
-  const std::string &resolved_name() const {
+  const std::string &resolved_name() const TINYUSDZ_LIFETIMEBOUND {
     return resolved_name_;
   }
 
@@ -84,7 +84,7 @@ class Asset {
     version_ = version;
   }
 
-  const std::string &version() const {
+  const std::string &version() const TINYUSDZ_LIFETIMEBOUND {
     return version_;
   }
 
@@ -175,6 +175,7 @@ class AssetResolutionResolver {
       _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
       _max_file_descriptors = rhs._max_file_descriptors;
       _enable_suffix_fallback = rhs._enable_suffix_fallback;
+      _allow_parent_relative_paths = rhs._allow_parent_relative_paths;
       _cached_resolved_paths.clear();
     }
   }
@@ -189,6 +190,7 @@ class AssetResolutionResolver {
       _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
       _max_file_descriptors = rhs._max_file_descriptors;
       _enable_suffix_fallback = rhs._enable_suffix_fallback;
+      _allow_parent_relative_paths = rhs._allow_parent_relative_paths;
       _cached_resolved_paths.clear();
     }
     return (*this);
@@ -204,6 +206,7 @@ class AssetResolutionResolver {
       _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
       _max_file_descriptors = rhs._max_file_descriptors;
       _enable_suffix_fallback = rhs._enable_suffix_fallback;
+      _allow_parent_relative_paths = rhs._allow_parent_relative_paths;
       _cached_resolved_paths.clear();
     }
     return (*this);
@@ -231,11 +234,13 @@ class AssetResolutionResolver {
     clear_resolution_cache();
   }
 
-  const std::string &current_working_path() const {
+  const std::string &current_working_path() const TINYUSDZ_LIFETIMEBOUND {
     return _current_working_path;
   }
 
-  const std::vector<std::string> &search_paths() const { return _search_paths; }
+  const std::vector<std::string> &search_paths() const TINYUSDZ_LIFETIMEBOUND {
+    return _search_paths;
+  }
 
   std::string search_paths_str() const;
 
@@ -330,6 +335,26 @@ class AssetResolutionResolver {
 
   bool get_enable_suffix_fallback() const { return _enable_suffix_fallback; }
 
+  ///
+  /// Allow parent-relative(`..`) asset paths?
+  ///
+  /// When disabled(default), asset-path sanitizers(e.g.
+  /// tydra::utils::SanitizeAssetPath) reject any path whose `..` segments
+  /// escape the anchoring root, as a path-traversal guard. When enabled, a
+  /// leading `..` that cannot be lexically collapsed is preserved so the
+  /// resolver can rebase it against its base dir / search paths. This mirrors
+  /// the composition-layer `allow_parent_relative_paths` option, so downstream
+  /// texture/light asset loading honors the same policy the caller chose for
+  /// composition (e.g. usd-wg/assets `../_common/*` references).
+  ///
+  void set_allow_parent_relative_paths(bool allow) {
+    _allow_parent_relative_paths = allow;
+  }
+
+  bool get_allow_parent_relative_paths() const {
+    return _allow_parent_relative_paths;
+  }
+
  private:
   // resolve() without the suffix fallback(literally-authored path only).
   std::string resolve_literal(const std::string &assetPath) const;
@@ -390,6 +415,7 @@ class AssetResolutionResolver {
   mutable size_t _max_asset_bytes_in_mb{1024*1024}; // default 1 TB
   uint32_t _max_file_descriptors{1024};
   bool _enable_suffix_fallback{true};
+  bool _allow_parent_relative_paths{false};
   mutable std::atomic<uint32_t> _open_file_descriptors{0};
 
   std::map<std::string, AssetResolutionHandler> _asset_resolution_handlers;

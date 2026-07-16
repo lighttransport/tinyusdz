@@ -132,7 +132,7 @@
           if (!sources_cache.contains(ck)) {
             std::vector<Src> base =
                 DeriveChildSources(shared_srcs, cn, child.str(), warn, err);
-            sources_cache.get_or_create(ck) = ExpandList(base, warn, err);
+            sources_cache.get_or_create(ck) = ExpandList(base, child.str(), warn, err);
           }
         }
       }

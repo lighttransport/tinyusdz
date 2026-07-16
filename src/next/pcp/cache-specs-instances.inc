@@ -86,7 +86,8 @@
   // --- payload policy -----------------------------------------------------
 
   bool ShouldLoadPayload(const std::string &root_prim_path,
-                         const std::string &asset) {
+                         const std::string &asset,
+                         const PrimSpec &owner) {
     // Explicit load rules win; a path with no governing rule falls back to the
     // base policy (payload_policy callback, else the load_payloads flag).
     switch (load_rules_.GetEffect(root_prim_path)) {
@@ -97,6 +98,10 @@
         return false;
       case LoadRules::Effect::Default:
         break;
+    }
+    if (options.payload_policy_with_prim) {
+      return options.payload_policy_with_prim(Path(root_prim_path), asset,
+                                              owner);
     }
     if (options.payload_policy) {
       return options.payload_policy(Path(root_prim_path), asset);
