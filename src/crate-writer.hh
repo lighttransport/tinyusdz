@@ -796,8 +796,30 @@ private:
   int64_t WriteValueData(const crate::CrateValue& value, bool* is_compressed,
                          std::string* err);
 
-  /// Try to inline a value in ValueRep payload (optimization)
+  /// Intern sink for TryInlineValue: the ONLY writer state the inline
+  /// decision touches is token/string interning (token, string and inlined
+  /// asset-path values store an index in the ValueRep payload). Routing those
+  /// through a sink lets the same decision procedure run in two modes:
+  /// - the real sink (default overload below) interns into the writer tables,
+  ///   exactly the historical behavior;
+  /// - a recording sink (parallel pass A of the deferred-interning two-pass)
+  ///   classifies and computes rep type/flags WITHOUT mutating shared state;
+  ///   the recorded requests are replayed serially in pass B for byte-identical
+  ///   first-seen index assignment.
+  /// There must be NO other side effect inside TryInlineValue — anything new
+  /// must go through the sink or the two-pass breaks.
+  struct InternSink {
+    virtual ~InternSink() = default;
+    virtual uint32_t InternToken(const std::string& s) = 0;
+    virtual uint32_t InternString(const std::string& s) = 0;
+  };
+
+  /// Try to inline a value in ValueRep payload (optimization).
+  /// The sink-taking overload is the implementation; the two-argument form
+  /// interns directly into the writer tables (historical behavior).
   bool TryInlineValue(const crate::CrateValue& value, crate::ValueRep* rep);
+  bool TryInlineValue(const crate::CrateValue& value, crate::ValueRep* rep,
+                      InternSink& sink);
 
   // ======================================================================
   // Deduplication
