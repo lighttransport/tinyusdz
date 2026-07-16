@@ -1652,6 +1652,19 @@ int main(int argc, char **argv) {
       return EXIT_SUCCESS;
     }
 
+    // Coarse flatten phase timing (TINYUSDZ_CRATE_PROFILE=1): stderr marks at
+    // each pipeline boundary, complementing the crate-writer's Finalize
+    // profiler. Starts BEFORE the root-layer load so nothing is unaccounted.
+    const bool profile_phases = (std::getenv("TINYUSDZ_CRATE_PROFILE") != nullptr);
+    auto phase_t0 = std::chrono::steady_clock::now();
+    auto phase_mark = [&](const char* name) {
+      if (!profile_phases) return;
+      const auto now = std::chrono::steady_clock::now();
+      fprintf(stderr, "[tusdcat profile] %s: %.1fms\n", name,
+              std::chrono::duration<double, std::milli>(now - phase_t0).count());
+      phase_t0 = now;
+    };
+
     tinyusdz::Layer root_layer;
     bool ret = tinyusdz::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
     if (warn.size()) {
@@ -1676,18 +1689,6 @@ int main(int argc, char **argv) {
       std::cout << root_layer << "\n";
     }
 
-    // Coarse flatten phase timing (TINYUSDZ_CRATE_PROFILE=1): stderr marks at
-    // each pipeline boundary, complementing the crate-writer's Finalize
-    // profiler.
-    const bool profile_phases = (std::getenv("TINYUSDZ_CRATE_PROFILE") != nullptr);
-    auto phase_t0 = std::chrono::steady_clock::now();
-    auto phase_mark = [&](const char* name) {
-      if (!profile_phases) return;
-      const auto now = std::chrono::steady_clock::now();
-      fprintf(stderr, "[tusdcat profile] %s: %.1fms\n", name,
-              std::chrono::duration<double, std::milli>(now - phase_t0).count());
-      phase_t0 = now;
-    };
     phase_mark("load-root-layer(+copy)");
 
     tinyusdz::Stage stage;
@@ -2110,6 +2111,7 @@ int main(int argc, char **argv) {
 
       std::cout << "Prim : " << item.first << "\n";
     }
+    phase_mark("list-prims(tail)");
 
   } else {
 

@@ -343,7 +343,11 @@ bool CrateReader::ReadIndex(crate::Index *i) {
     return false;
   }
 
-  CHECK_MEMORY_USAGE(sizeof(uint32_t));
+  // No CHECK_MEMORY_USAGE here: this reads 4 bytes into the caller's stack
+  // struct — there is no allocation to guard, and the (never-released)
+  // per-read reservation both inflated the budget by phantom bytes and made
+  // this the hottest function of the whole crate read (millions of atomic
+  // RMWs). Container reads (ReadIndices etc.) check their real allocations.
 
   (*i) = crate::Index(value);
   return true;
@@ -433,7 +437,8 @@ bool CrateReader::ReadValueRep(crate::ValueRep *rep) {
     return false;
   }
 
-  CHECK_MEMORY_USAGE(sizeof(uint64_t));
+  // No CHECK_MEMORY_USAGE: 8 bytes into the caller's stack struct — no
+  // allocation to guard (see ReadIndex).
 
   DCOUT("ValueRep value = " << rep->GetData());
 
