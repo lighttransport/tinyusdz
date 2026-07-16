@@ -927,7 +927,8 @@ bool BuildRtSkinnedMeshVertices(
     DrawScene* draw, double timecode,
     const std::unordered_map<std::string, float>* blendOverride,
     bool updateSkinnedHelpers,
-    std::vector<RtSkinnedMeshUpload>* outUploads) {
+    std::vector<RtSkinnedMeshUpload>* outUploads,
+    const std::unordered_set<int>* skipMeshes) {
   if (!draw || !outUploads) return false;
   outUploads->clear();
   if (draw->meshes.empty()) return true;
@@ -943,6 +944,7 @@ bool BuildRtSkinnedMeshVertices(
   bool anyBoundsChanged = false;
 
   for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
+    if (skipMeshes && skipMeshes->count(static_cast<int>(mi))) continue;
     DrawMeshCPU& dm = draw->meshes[mi];
     const bool hasMorph = !dm.morphs.empty();
     const bool hasSkinAttrs =
@@ -980,6 +982,111 @@ bool BuildRtSkinnedMeshVertices(
 
   if (anyBoundsChanged) RecomputeDrawSceneBounds(draw);
   return true;
+}
+
+bool BuildRtGpuSkinUpdates(const tydra::RenderScene& render, DrawScene* draw,
+                           double timecode,
+                           std::vector<RtGpuSkinUpdate>* outUpdates,
+                           std::unordered_set<int>* outHandled) {
+  if (!draw || !outUpdates || !outHandled) return false;
+  outUpdates->clear();
+  outHandled->clear();
+
+  std::unordered_map<int, std::vector<matrix4d>> skinCache;
+  std::vector<matrix4d> composed;
+  bool anyBoundsChanged = false;
+  static const bool rtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
+  const auto reject = [&](size_t mi, const char* why) {
+    static bool once = false;
+    if (rtTiming && !once) {
+      std::fprintf(stderr, "[rt_skin] mesh %zu not GPU-eligible: %s\n", mi, why);
+      once = true;
+    }
+  };
+
+  for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
+    DrawMeshCPU& dm = draw->meshes[mi];
+    if (!dm.morphs.empty()) {  // blendshapes -> CPU path
+      reject(mi, "blendshapes");
+      continue;
+    }
+    const bool hasSkinAttrs =
+        dm.skelId >= 0 && dm.skinMatrixBase >= 0 &&
+        dm.jointIdx.size() == dm.vertices.size() * 4 &&
+        dm.jointWt.size() == dm.vertices.size() * 4;
+    if (!hasSkinAttrs) continue;
+    // > 4 influences resolve through the influence texel table -> CPU path.
+    // (The loader fills the table even for <= 4 influences; there its content
+    // matches the top-4 joint/weight attributes the compute shader reads, so
+    // only genuinely-extended meshes must stay on the CPU.)
+    const bool extendedSkinned =
+        dm.influenceOffsetCount.size() == dm.vertices.size() * 2 &&
+        !dm.influenceTexels.empty();
+    if (extendedSkinned && dm.maxInfluencesPerVertex > 4) {
+      reject(mi, "extended influences (>4 per vertex)");
+      continue;
+    }
+    // Normals are skinned in the compute shader with the weighted joint
+    // matrices (the raster deform.glsl convention), so smooth-shaded meshes
+    // are eligible; the CPU path instead REGENERATES smooth normals on the
+    // posed surface (close, not bit-identical — one reason the GPU path is
+    // opt-in, see App::updateGpuSkinningFrameIfNeeded).
+    // Displacement bakes along (recomputed) normals on the CPU.
+    if (MeshHasDisplacement(*draw, dm)) {
+      reject(mi, "displacement");
+      continue;
+    }
+    if (!BuildComposedSkinningMatrices(render, dm, timecode, &skinCache,
+                                       &composed)) {
+      reject(mi, "no composed skinning matrices");
+      continue;
+    }
+
+    RtGpuSkinUpdate u;
+    u.meshIndex = static_cast<int>(mi);
+    u.matrixBase = dm.skinMatrixBase;
+    u.jointCount = static_cast<int>(composed.size());
+    u.mats.resize(composed.size() * 16);
+    for (size_t j = 0; j < composed.size(); ++j) {
+      for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+          u.mats[j * 16 + static_cast<size_t>(r) * 4 + static_cast<size_t>(c)] =
+              static_cast<float>(composed[j].m[r][c]);
+        }
+      }
+    }
+
+    // Conservative posed bounds: a skinned point is a convex combination of
+    // per-joint transforms of its rest position, so the posed mesh lies inside
+    // the union of the per-joint transformed REST prototype boxes (the rest box
+    // itself is included for zero-weight vertices).
+    float mn[3] = {dm.protoAabbMin[0], dm.protoAabbMin[1], dm.protoAabbMin[2]};
+    float mx[3] = {dm.protoAabbMax[0], dm.protoAabbMax[1], dm.protoAabbMax[2]};
+    for (const matrix4d& m : composed) {
+      for (int corner = 0; corner < 8; ++corner) {
+        const point3f p{(corner & 1) ? dm.protoAabbMax[0] : dm.protoAabbMin[0],
+                        (corner & 2) ? dm.protoAabbMax[1] : dm.protoAabbMin[1],
+                        (corner & 4) ? dm.protoAabbMax[2] : dm.protoAabbMin[2]};
+        const point3f q = TransformPointRow(p, m);
+        mn[0] = std::min(mn[0], q.x); mx[0] = std::max(mx[0], q.x);
+        mn[1] = std::min(mn[1], q.y); mx[1] = std::max(mx[1], q.y);
+        mn[2] = std::min(mn[2], q.z); mx[2] = std::max(mx[2], q.z);
+      }
+    }
+    for (int c = 0; c < 3; ++c) {
+      u.aabbMin[c] = mn[c];
+      u.aabbMax[c] = mx[c];
+      dm.aabbMin[c] = mn[c];
+      dm.aabbMax[c] = mx[c];
+    }
+    anyBoundsChanged = true;
+
+    outHandled->insert(u.meshIndex);
+    outUpdates->push_back(std::move(u));
+  }
+
+  if (anyBoundsChanged) RecomputeDrawSceneBounds(draw);
+  return !outUpdates->empty();
 }
 
 void BuildMorphChannelWeights(

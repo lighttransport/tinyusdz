@@ -1224,23 +1224,74 @@ void App::updateGpuSkinningFrameIfNeeded() {
 
   if (renderer_->rayTracingActive()) {
     if (!idxOk) return;
-    // Per-frame RT-skinning cost split (TUSDVIEW_RT_TIMING=1): CPU skin/morph
-    // math vs the vertex upload (map+memcpy behind a vkDeviceWaitIdle). The
-    // BLAS refit + TLAS rebuild are timed renderer-side ([vk_rt] lines).
+    // Per-frame RT-skinning cost split (TUSDVIEW_RT_TIMING=1): GPU compute
+    // dispatch + CPU skin/morph math vs the vertex upload (map+memcpy behind a
+    // vkDeviceWaitIdle). The BLAS refit + TLAS rebuild are timed renderer-side
+    // ([vk_rt] lines).
     static const bool rtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
     const auto t0 = std::chrono::steady_clock::now();
+
+    // OPT-IN (TUSDVIEW_RT_GPU_SKIN=1) GPU compute skinning for the eligible
+    // class (pure <=4-influence skeletal, no morph/displacement): composed
+    // matrices upload + in-place skin of the RT vertex stream + BLAS refit, no
+    // CPU per-vertex work. Off by default for two measured reasons (200k-tri
+    // probe, RTX 3070): (1) the RT vertex/joint/weight buffers are HOST-VISIBLE
+    // (mapped for the CPU-fallback upload), so the compute pass streams over
+    // PCIe and loses to the CPU path (~30 ms vs ~7 ms) — flipping the default
+    // needs device-local RT streams + a staging upload path; (2) it skins
+    // NORMALS with the weighted joint matrices (the raster deform.glsl
+    // convention) while the CPU path regenerates smooth normals on the posed
+    // surface, so shading differs on smooth meshes (~3% of pixels beyond a
+    // 32/255 delta on the probe). Also: the skeleton overlay's dense
+    // point-joint samples fall back to rest-pose display for GPU-skinned
+    // meshes (no CPU-skinned helper points).
+    static const bool gpuSkinOptIn =
+        std::getenv("TUSDVIEW_RT_GPU_SKIN") != nullptr;
+    std::unordered_set<int> gpuHandled;
+    size_t gpuMeshes = 0;
+    if (gpuSkinOptIn) {
+      std::vector<RtGpuSkinUpdate> gpuUpdates;
+      std::unordered_set<int> eligible;
+      BuildRtGpuSkinUpdates(loaded_.render, &draw_, animTime_, &gpuUpdates,
+                            &eligible);
+      for (const RtGpuSkinUpdate& u : gpuUpdates) {
+        // A refused dispatch (no RT stream / shader unavailable) simply stays
+        // out of gpuHandled, so the CPU pass below picks the mesh up.
+        if (renderer_->updateMeshSkinningGpu(u.meshIndex, u.mats.data(),
+                                             u.jointCount, u.matrixBase,
+                                             u.aabbMin, u.aabbMax)) {
+          gpuHandled.insert(u.meshIndex);
+        } else if (rtTiming) {
+          static bool once = false;
+          if (!once) {
+            std::fprintf(stderr,
+                         "[rt_skin] renderer refused GPU skin for mesh %d "
+                         "(CPU fallback)\n", u.meshIndex);
+            once = true;
+          }
+        }
+      }
+      gpuMeshes = gpuHandled.size();
+    }
+    const auto tg = std::chrono::steady_clock::now();
+
     std::vector<RtSkinnedMeshUpload> uploads;
     if (BuildRtSkinnedMeshVertices(loaded_.stage, loaded_.render, &draw_,
                                    animTime_, gui_.blendOverrides(),
-                                   gui_.showSkeletonOverlay(), &uploads)) {
+                                   gui_.showSkeletonOverlay(), &uploads,
+                                   gpuHandled.empty() ? nullptr : &gpuHandled)) {
       const auto t1 = std::chrono::steady_clock::now();
       for (const RtSkinnedMeshUpload& upload : uploads) {
         renderer_->updateMeshVertices(upload.meshIndex, upload.vertices);
       }
-      if (rtTiming && !uploads.empty()) {
+      if (rtTiming && (!uploads.empty() || gpuMeshes)) {
         const auto t2 = std::chrono::steady_clock::now();
-        std::fprintf(stderr, "[rt_skin] cpu skin %.1f ms, upload %.1f ms (%zu mesh(es))\n",
-                     std::chrono::duration<double, std::milli>(t1 - t0).count(),
+        std::fprintf(stderr,
+                     "[rt_skin] gpu %.1f ms (%zu mesh(es)), cpu skin %.1f ms, "
+                     "upload %.1f ms (%zu mesh(es))\n",
+                     std::chrono::duration<double, std::milli>(tg - t0).count(),
+                     gpuMeshes,
+                     std::chrono::duration<double, std::milli>(t1 - tg).count(),
                      std::chrono::duration<double, std::milli>(t2 - t1).count(),
                      uploads.size());
       }

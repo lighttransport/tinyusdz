@@ -219,6 +219,20 @@ class Renderer {
   // from the rest pose, then GPU-skinned). No-op if unsupported or size differs.
   virtual void updateMeshVertices(int /*meshIndex*/,
                                   const std::vector<DrawVertex>& /*verts*/) {}
+  // GPU compute skinning for the RAY-TRACED vertex stream: linear-blend skin the
+  // rest pose into the RT vertex buffer on the GPU (then refit the BLAS), given
+  // the mesh's composed skinning matrices (`jointCount` matrices of 16 floats,
+  // row-major, applied as row-vector p*M; joint attribute ids are absolute and
+  // offset by `matrixBase`). `aabbMin/aabbMax` is the caller's conservative
+  // posed bound (union of per-joint transformed rest boxes) for LOD/proxy use.
+  // Returns false when the backend cannot GPU-skin this mesh (no RT stream, no
+  // skin attributes, shader unavailable) — the caller then CPU-skins instead.
+  virtual bool updateMeshSkinningGpu(int /*meshIndex*/, const float* /*mats*/,
+                                     int /*jointCount*/, int /*matrixBase*/,
+                                     const float /*aabbMin*/[3],
+                                     const float /*aabbMax*/[3]) {
+    return false;
+  }
   // Upload mesh `meshIndex`'s per-channel blendshape coefficients (one float per
   // morph channel) for GPU-side morphing in the raster vertex shader. Only the
   // tiny coefficient buffer updates per frame — no vertex re-upload, no GPU stall.
