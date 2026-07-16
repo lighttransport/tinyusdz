@@ -26,11 +26,17 @@
 >   deliberately uncompacted now -- resident==built on a skinned scene is
 >   correct behavior, and the shrink assertion needs compactable geometry.
 >
-> REMAINING (optional, from the plan below): move the per-frame skin itself to
-> a GPU compute pass (CPU skin + `vkDeviceWaitIdle` + memcpy now dominate the
-> pose cost, not the AS update). Also the CUDA/HIP tracers still full-rebuild
-> their BVH per time code (doc/resume-tusdview.md notes it; perf, not
-> correctness). Original task text kept below for context.
+> Follow-up landed same day: the CPU pose itself is now threaded
+> (`DeformParallelFor`, bit-identical range-split; median 3.2 -> 1.67 ms at
+> 102k verts) and the legacy path's per-frame whole-mesh deep copy for the
+> displacement probe is gone. The GPU-compute skin pass from the plan below
+> was CONSIDERED AND REJECTED: it cannot keep the byte-parity oracle
+> architecture (check-rt-skinning asserts RT re-pose == CPU bake exactly;
+> GPU FMA/ULP drift breaks that) for ~1-2 ms of remaining headroom.
+>
+> REMAINING (optional): the CUDA/HIP tracers still full-rebuild their BVH per
+> time code (doc/resume-tusdview.md notes it; perf, not correctness).
+> Original task text kept below for context.
 
 > Resume prompt. This is the last remaining GPU-skinning gap. Raster-path GPU
 > skinning (skeletal + blendshape + node-animated/mixed scenes) is **done and

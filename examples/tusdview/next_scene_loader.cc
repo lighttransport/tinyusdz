@@ -2486,8 +2486,15 @@ bool BuildNextRtDeformedVertices(
   if (!out) return false;
   out->clear();
 
+  const bool kPoseTiming = std::getenv("TUSDVIEW_RT_POSE_TIMING") != nullptr;
+  auto tick = []() { return std::chrono::steady_clock::now(); };
+  auto msf = [](auto a, auto b) {
+    return std::chrono::duration<double, std::milli>(b - a).count();
+  };
+  auto t0 = tick();
   std::vector<matrix4d> bones;
   const bool hasSkin = ComputeNextBoneRows(stage, draw, time, &bones);
+  auto t1 = tick();
 
   // Morph coefficients per morphed mesh -- the same evaluation the raster vertex
   // shader is fed, so RT and raster morph identically.
@@ -2495,6 +2502,10 @@ bool BuildNextRtDeformedVertices(
   BuildNextMorphWeights(stage, draw, time, blendOverride, &morphCoeffs);
   std::unordered_map<int, const std::vector<float>*> coeffByMesh;
   for (const auto& mc : morphCoeffs) coeffByMesh[mc.first] = &mc.second;
+  auto t2 = tick();
+  if (kPoseTiming)
+    std::fprintf(stderr, "[rt-pose] bone-rows %.2f morph-weights %.2f ms\n",
+                 msf(t0, t1), msf(t1, t2));
 
   for (size_t mi = 0; mi < draw.meshes.size(); ++mi) {
     const DrawMeshCPU& m = draw.meshes[mi];
@@ -2508,9 +2519,14 @@ bool BuildNextRtDeformedVertices(
                          !m.morphDeltaHalf.empty();
     if (!skinned && !morphed) continue;
 
+    auto tA = tick();
     std::vector<DrawVertex> verts = m.vertices;  // rest pose
+    auto tB = tick();
     const size_t entries = m.morphDeltaHalf.size() / 4;
-    for (size_t v = 0; v < nv; ++v) {
+    // Per-vertex independent (verts[v] is the only write), so range-split
+    // threading is bit-identical to the serial loop.
+    DeformParallelFor(nv, 16384, [&](size_t vBegin, size_t vEnd) {
+    for (size_t v = vBegin; v < vEnd; ++v) {
       float p[3] = {verts[v].px, verts[v].py, verts[v].pz};
       const float rest_n[3] = {verts[v].nx, verts[v].ny, verts[v].nz};
       float n[3] = {rest_n[0], rest_n[1], rest_n[2]};
@@ -2568,6 +2584,10 @@ bool BuildNextRtDeformedVertices(
       verts[v].px = p[0]; verts[v].py = p[1]; verts[v].pz = p[2];
       verts[v].nx = n[0]; verts[v].ny = n[1]; verts[v].nz = n[2];
     }
+    });
+    if (kPoseTiming)
+      std::fprintf(stderr, "[rt-pose] mesh %zu: copy %.2f deform %.2f ms\n",
+                   mi, msf(tA, tB), msf(tB, tick()));
 
     RtSkinnedMeshUpload up;
     up.meshIndex = static_cast<int>(mi);
