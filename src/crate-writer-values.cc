@@ -900,7 +900,13 @@ bool CrateWriter::LookupDeduplicatedValue(const std::vector<char>& bytes,
       NanAwareHash::hash_buffer(bytes.data(), bytes.size(), element_size,
                                 is_float),
       wire_tag);
+  return LookupDeduplicatedValueWithHash(h, bytes, element_size, is_float,
+                                         wire_tag, rep);
+}
 
+bool CrateWriter::LookupDeduplicatedValueWithHash(
+    size_t h, const std::vector<char>& bytes, size_t element_size,
+    bool is_float, uint32_t wire_tag, crate::ValueRep* rep) const {
   auto range = value_dedup_map_.equal_range(h);
   for (auto it = range.first; it != range.second; ++it) {
     const auto& entry = it->second;

@@ -9,8 +9,10 @@
 #include <cstring>
 #include <string>
 #include <atomic>
+#include <mutex>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <fstream>
 
@@ -821,6 +823,66 @@ private:
   /// IsPureValueData values may run under a capture sink.
   static std::vector<char>*& tls_value_capture();
 
+  // ======================================================================
+  // Two-pass Finalize field packing (deferred interning, round 14)
+  // ======================================================================
+  // Pass A runs BuildPackPlan concurrently over spec ranges: it classifies
+  // each field value and precomputes everything that is a pure function of
+  // the value bits (inline reps without interning; out-of-line byte images
+  // via WriteValueBody under tls_value_capture; dedup descriptor + hash).
+  // Pass B walks fields in the exact serial order and performs every
+  // shared-state effect (interning, dedup table, stream append) — so the
+  // token/string tables, dedup decisions and value offsets are byte-identical
+  // to the serial writer by construction.
+  struct PackPlan {
+    enum Kind : uint8_t {
+      kSerial = 0,   // pass B runs PackValue unchanged (index-embedding types)
+      kInlinePure,   // rep fully computed in pass A (no interning involved)
+      kInlineIntern, // inlines but interns; pass B re-runs TryInlineValue
+      kOolPure,      // out-of-line pure: bytes prebuilt, dedup precomputed
+      kOolDedupHit,  // pass-A probe hit the frozen dedup table: rep is FINAL
+                     // (entries are only ever added, one per unique
+                     // descriptor, and never mutated — a hit can't change)
+    };
+    Kind kind = kSerial;
+    crate::ValueRep rep;           // kInlinePure: final; kOolPure: type+flags
+    bool is_compressed = false;    // kOolPure
+    std::vector<char> bytes;       // kOolPure: prebuilt WriteValueBody image
+    bool dedup_candidate = false;  // kOolPure
+    std::vector<char> dedup_bytes;
+    size_t dedup_element_size = 1;
+    bool dedup_is_float = false;
+    uint32_t dedup_wire_tag = 0;
+    size_t dedup_hash = 0;
+  };
+
+  /// Shared pass-A window state: dedup-aware prebuild claims. The dedup table
+  /// itself is frozen during pass A (pass B, which is the only mutator, runs
+  /// after the window barrier), so read-only LookupDeduplicatedValue probes
+  /// are safe; `claimed` arbitrates within-window duplicates so each new
+  /// unique value is encoded once.
+  struct PackPlanContext {
+    std::mutex mu;
+    std::unordered_set<size_t> claimed;  // dedup hashes claimed this window
+  };
+
+  /// Pass A per-field builder. Must not mutate any writer state — it may only
+  /// read `options_`/the frozen dedup table and write through
+  /// tls_value_capture (thread-local) and `ctx` (internally locked).
+  void BuildPackPlan(const crate::CrateValue& value, PackPlan* plan,
+                     PackPlanContext* ctx);
+
+  /// Pass B: produce the ValueRep from a plan, byte-identically to what
+  /// PackValue would do in the same table/stream state.
+  crate::ValueRep PackValueFromPlan(const crate::CrateValue& value,
+                                    PackPlan& plan, std::string* err);
+
+  /// Out-of-line rep type/flag dispatch, shared by PackValue and
+  /// BuildPackPlan. May bump the crate version for spline/pathexpr/relocates
+  /// — those types are never IsPureValueData, so pass A (pure values only)
+  /// never reaches a mutating branch.
+  void SetOutOfLineRepType(const crate::CrateValue& value, crate::ValueRep* rep);
+
   /// Intern sink for TryInlineValue: the ONLY writer state the inline
   /// decision touches is token/string interning (token, string and inlined
   /// asset-path values store an index in the ValueRep payload). Routing those
@@ -1074,6 +1136,13 @@ private:
   bool LookupDeduplicatedValue(const std::vector<char>& bytes,
                                size_t element_size, bool is_float,
                                uint32_t wire_tag, crate::ValueRep* rep) const;
+  /// Same lookup with the descriptor hash already computed (the two-pass
+  /// Finalize hashes in parallel pass A and must not re-hash serially).
+  bool LookupDeduplicatedValueWithHash(size_t hash,
+                                       const std::vector<char>& bytes,
+                                       size_t element_size, bool is_float,
+                                       uint32_t wire_tag,
+                                       crate::ValueRep* rep) const;
   bool CanRetainDeduplicatedValue(size_t byte_count) const;
   void RetainDeduplicatedValue(size_t hash, std::vector<char> bytes,
                                size_t element_size, bool is_float,
@@ -1093,6 +1162,8 @@ private:
   uint64_t prof_pack_dedup_ns_ = 0;    // dedup descriptor + hash + lookup
   uint64_t prof_pack_write_ns_ = 0;    // WriteValueData (out-of-line encode)
   uint64_t prof_field_dedup_ns_ = 0;   // field-name intern + field/fieldset dedup
+  uint64_t prof_passa_ns_ = 0;         // two-pass pass A (parallel wall)
+  uint64_t prof_passb_ns_ = 0;         // two-pass pass B (serial replay wall)
 };
 
 } // namespace experimental
