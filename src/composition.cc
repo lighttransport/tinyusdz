@@ -1404,8 +1404,8 @@ static void PropagateImpliedArcPaths(const PrimSpec &src_ps,
 // out of CompositeReferencesRec so the parallel per-subtree composition can
 // run the shell ancestors' own arcs serially after their descendants'
 // subtrees completed in parallel (preserving the post-order semantics).
-bool CompositeReferencesLocal(uint32_t depth, AssetResolutionResolver &resolver,
-                              const std::vector<std::string> &asset_search_paths,
+// The resolution context (cwp/search paths) comes from the primspec itself.
+bool CompositeReferencesLocal(AssetResolutionResolver &resolver,
                               const Path &dst_prim_path,
                               const Layer &in_layer,
                               PrimSpec &primspec /* [inout] */,
@@ -1755,14 +1755,12 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
     }
   }
 
-  return CompositeReferencesLocal(depth, resolver, asset_search_paths,
-                                  dst_prim_path, in_layer, primspec, warn, err,
-                                  options, visited);
+  return CompositeReferencesLocal(resolver, dst_prim_path, in_layer, primspec,
+                                  warn, err, options, visited);
 }
 
 // Own payload arcs only (no child traversal) — see CompositeReferencesLocal.
-bool CompositePayloadLocal(uint32_t depth, AssetResolutionResolver &resolver,
-                           const std::vector<std::string> &asset_search_paths,
+bool CompositePayloadLocal(AssetResolutionResolver &resolver,
                            const Path &dst_prim_path,
                            const Layer &in_layer,
                            PrimSpec &primspec /* [inout] */, std::string *warn,
@@ -2055,9 +2053,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
     }
   }
 
-  return CompositePayloadLocal(depth, resolver, asset_search_paths,
-                               dst_prim_path, in_layer, primspec, warn, err,
-                               options, visited);
+  return CompositePayloadLocal(resolver, dst_prim_path, in_layer, primspec,
+                               warn, err, options, visited);
 }
 
 // Own variant selection only (no child traversal) — see
@@ -2878,9 +2875,8 @@ bool CompositeReferencesInPlace(AssetResolutionResolver &resolver,
         }
         // Shell ancestors' own arcs, deepest-first (all descendants done).
         for (auto it = shells.rbegin(); it != shells.rend(); ++it) {
-          if (!CompositeReferencesLocal(it->depth, resolver, search_paths,
-                                        it->dst_path, dst, *(it->ps), warn,
-                                        err, options, visited)) {
+          if (!CompositeReferencesLocal(resolver, it->dst_path, dst, *(it->ps),
+                                        warn, err, options, visited)) {
             if (err) {
               (*err) += "Composite `references` failed.\n";
             }
@@ -3080,10 +3076,8 @@ bool CompositePayloadInPlace(AssetResolutionResolver &resolver,
           return false;
         }
         for (auto it = shells.rbegin(); it != shells.rend(); ++it) {
-          if (!CompositePayloadLocal(it->depth, resolver,
-                                     it->ps->get_asset_search_paths(),
-                                     it->dst_path, dst, *(it->ps), warn, err,
-                                     options, visited)) {
+          if (!CompositePayloadLocal(resolver, it->dst_path, dst, *(it->ps),
+                                     warn, err, options, visited)) {
             if (err) {
               (*err) += "Composite `payload` failed.\n";
             }

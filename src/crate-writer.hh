@@ -845,7 +845,8 @@ private:
                      // descriptor, and never mutated — a hit can't change)
     };
     Kind kind = kSerial;
-    crate::ValueRep rep;           // kInlinePure: final; kOolPure: type+flags
+    crate::ValueRep rep;           // kInlinePure/kOolDedupHit: final;
+                                   // kOolPure: type+flags only
     bool is_compressed = false;    // kOolPure
     std::vector<char> bytes;       // kOolPure: prebuilt WriteValueBody image
     bool dedup_candidate = false;  // kOolPure
