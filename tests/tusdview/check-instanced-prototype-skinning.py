@@ -36,7 +36,12 @@ import sys
 import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gpu_backend import device_name, is_software_renderer, nvidia_offload_env  # noqa: E402
+from gpu_backend import (  # noqa: E402
+    device_name,
+    gpu_offload_env,
+    is_software_renderer,
+    vk_device_args,
+)
 
 SKIP = 77
 # Fraction of pixels that must change between the two time codes. The rig bends
@@ -104,6 +109,7 @@ def read_png_rgb(path):
 def render(binary, model, out_png, timecode, backend):
     args = [binary, "--backend", backend, "--frames", "4", "--time", str(timecode),
             "--skinning", "gpu", "--screenshot", out_png, model]
+    args[1:1] = vk_device_args(backend)
     xvfb = shutil.which("xvfb-run")
     # Prefer an inherited DISPLAY (that is where a hardware GL device lives) and
     # fall back to Xvfb when there is none, or when the one we inherited cannot
@@ -115,9 +121,9 @@ def render(binary, model, out_png, timecode, backend):
         prefixes.append([xvfb, "-a"])
     log = ""
     for prefix in prefixes:
-        # Xvfb prefix: route GL to the NVIDIA GPU when one is present, else
+        # Xvfb prefix: route GL to the hardware GPU when one is present, else
         # Mesa gives llvmpipe and check_backend can only skip (gpu_backend.py).
-        env = nvidia_offload_env() if prefix else None
+        env = gpu_offload_env() if prefix else None
         r = subprocess.run(prefix + args, stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, timeout=600, env=env)
         log = r.stdout.decode(errors="replace")
