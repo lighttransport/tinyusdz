@@ -225,5 +225,6 @@ bool CrateWriter::ExtractAnimatableDefault(
   return true;
 }
 
+
 } // namespace experimental
 } // namespace tinyusdz

@@ -9,6 +9,10 @@
  */
 #include "texpipe.h"
 
+/* tp_ktx2_size / tp_ktx2_write are internal (the public single-image entry point
+ * is tp_process); the argument-rejection tests below exercise them directly. */
+#include "../src/texpipe_internal.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -99,13 +103,18 @@ static double psnr_rg(const uint8_t *a, const uint8_t *b, size_t npix) {
 /* Smooth RGBA gradient (opaque). */
 static uint8_t *make_gradient(int w, int h) {
     uint8_t *img = (uint8_t *)malloc((size_t)w * h * 4);
+    /* A 1-wide or 1-tall image (the tail of any mip chain) has no span to
+     * divide by; hold that axis at 0 rather than dividing by zero. */
+    int dw = w > 1 ? w - 1 : 1;
+    int dh = h > 1 ? h - 1 : 1;
+    int dd = (w + h - 2) > 0 ? w + h - 2 : 1;
     int x, y;
     for (y = 0; y < h; ++y)
         for (x = 0; x < w; ++x) {
             uint8_t *p = img + (y * w + x) * 4;
-            p[0] = (uint8_t)(x * 255 / (w - 1));
-            p[1] = (uint8_t)(y * 255 / (h - 1));
-            p[2] = (uint8_t)((x + y) * 255 / (w + h - 2));
+            p[0] = (uint8_t)(x * 255 / dw);
+            p[1] = (uint8_t)(y * 255 / dh);
+            p[2] = (uint8_t)((x + y) * 255 / dd);
             p[3] = 255;
         }
     return img;
@@ -780,6 +789,77 @@ static void test_array_ktx2(void) {
                   TP_ERROR_INVALID_ARGUMENT, "array: reject out-of-range face");
         free(d0);
         free(dn);
+    }
+    /* Layers of differing dimensions: the file is sized from layers[0] but the
+     * payload loop copies each layer's own blocks, so a bigger layer used to
+     * memcpy straight off the end of `buf`. It must be refused instead. The
+     * existing cases above cannot catch this -- they reuse one tp_blocks for
+     * every layer, so the sizes trivially agree. */
+    {
+        tir_image_view v2;
+        tp_mip_chain chain2;
+        tp_blocks b2, mixed[2];
+        uint8_t *img2 = make_gradient(65, 65);
+        uint8_t *small = NULL;
+        size_t need2;
+        /* 65x65 has the same 7-level pyramid as 64x64 (so the existing
+         * num_levels/num_faces/codec equality check passes) but 17x17 blocks
+         * instead of 16x16 -- 4624 bytes at level 0 against 4096. */
+        view_u8(&v2, img2, 65, 65);
+        memset(&chain2, 0, sizeof(chain2));
+        memset(&b2, 0, sizeof(b2));
+        CHECK(TP_OK(tp_build_mips(NULL, &v2, 1, &opt, &chain2)), "array: build 65");
+        CHECK(TP_OK(tp_compress_chain(NULL, &chain2, &opt, &b2)), "array: compress 65");
+        CHECK(b2.num_levels == b.num_levels,
+              "array: 65x65 and 64x64 have the same level count");
+        CHECK(b2.blk[0].size > b.blk[0].size, "array: 65x65 level 0 is bigger");
+        mixed[0] = b;   /* 64x64, which the file gets sized from */
+        mixed[1] = b2;  /* 65x65, whose blocks are larger */
+        need2 = tp_ktx2_array_size(mixed, 2, &opt);
+        small = (uint8_t *)malloc(need2);
+        CHECK(tp_write_ktx2_array(mixed, 2, &opt, small, need2, &wrote) !=
+                  TP_SUCCESS,
+              "array: reject layers whose dimensions disagree");
+        free(small);
+        tp_blocks_free(NULL, &b2);
+        tp_mip_chain_free(NULL, &chain2);
+        free(img2);
+    }
+
+    /* A zeroed tp_blocks is what a tp_compress_chain that failed leaves behind.
+     * num_levels == 0 with a NULL blk must be an error, not a NULL dereference
+     * of blk[0] inside the writers' own dimension check. */
+    {
+        tp_blocks empty;
+        uint8_t sink[256];
+        size_t w2 = 0;
+        memset(&empty, 0, sizeof(empty));
+        CHECK(tp_ktx2_size(&empty, &opt) == 0, "ktx2_size rejects a zeroed blocks");
+        CHECK(tp_ktx2_write(&empty, &opt, sink, sizeof(sink), &w2) != TP_SUCCESS,
+              "ktx2_write rejects a zeroed blocks");
+        CHECK(tp_ktx2_array_size(&empty, 1, &opt) == 0,
+              "array_size rejects a zeroed blocks");
+        CHECK(tp_write_ktx2_array(&empty, 1, &opt, sink, sizeof(sink), &w2) !=
+                  TP_SUCCESS,
+              "array write rejects a zeroed blocks");
+    }
+
+    /* The payload bytes come from `b` but the vkFormat and DFD come from opt: if
+     * they disagree the file describes BC1 over BC7 blocks and every reader
+     * decodes garbage. */
+    {
+        tp_options wrong;
+        uint8_t sink[256];
+        size_t w2 = 0;
+        tp_options_init(&wrong, TP_CONTENT_COLOR, TP_CODEC_BC1);
+        CHECK(b.codec == TP_CODEC_BC7, "blocks were encoded as BC7");
+        CHECK(tp_ktx2_size(&b, &wrong) == 0,
+              "ktx2_size rejects a codec that disagrees with the blocks");
+        CHECK(tp_ktx2_write(&b, &wrong, sink, sizeof(sink), &w2) != TP_SUCCESS,
+              "ktx2_write rejects a codec that disagrees with the blocks");
+        CHECK(tp_write_ktx2_array(layers, 3, &wrong, sink, sizeof(sink), &w2) !=
+                  TP_SUCCESS,
+              "array write rejects a codec that disagrees with the blocks");
     }
     printf("  array ktx2 (layerCount=3): ok\n");
     free(buf);
@@ -1470,19 +1550,29 @@ static void test_ktx2_read_roundtrip(void) {
     CHECK(p >= 30.0, "astc ktx2 decode PSNR >= 30 dB");
     tp_free(NULL, ktx); ktx = NULL;
 
-    /* --- uni (UASTC) KTX2: write_uni -> read -> decode + transcode --- */
+    /* --- private uni KTX2: write_uni -> read -> decode + transcode --- */
     {
         size_t usz = tc_uni_compressed_size(64, 64);
         uint8_t *uni = (uint8_t *)malloc(usz);
-        const uint8_t *levels[1]; size_t sizes[1]; uint32_t lw[1], lh[1];
+        const uint8_t *levels[1]; size_t sizes[1];
         uint8_t *ubuf = NULL; size_t ktx_size;
         CHECK(tc_uni_compress_rgba8(ref, 64, 64, (size_t)64 * 4u, uni, usz) == TC_SUCCESS,
               "uni compress");
-        levels[0] = uni; sizes[0] = usz; lw[0] = 64; lh[0] = 64;
+        levels[0] = uni; sizes[0] = usz;
         ktx_size = tp_ktx2_uni_size(sizes, 1);
         ubuf = (uint8_t *)malloc(ktx_size);
-        CHECK(TP_OK(tp_ktx2_write_uni(levels, sizes, lw, lh, 1, ubuf, ktx_size, NULL)),
+        CHECK(TP_OK(tp_ktx2_write_uni_ex(levels, sizes, 64, 64, 1, TP_UNI_SRGB,
+                                      ubuf, ktx_size, NULL)),
               "write uni ktx2");
+        /* The DFD must carry the flags the caller asked for: sRGB transfer (2),
+         * and channelType RGB (0) since TP_UNI_ALPHA was not passed. */
+        {
+            size_t dfd = rd_u32(ubuf + 48);
+            CHECK(ubuf[dfd + 12] == 0u,
+                  "private uni DFD does not claim Basis UASTC");
+            CHECK(ubuf[dfd + 14] == 2u, "uni DFD transfer = sRGB");
+            CHECK(ubuf[dfd + 31] == 0u, "uni DFD channelType = RGB");
+        }
         CHECK(TP_OK(tp_ktx2_read(ubuf, ktx_size, &img)), "read uni ktx2");
         CHECK(img.is_uni && img.vk_format == 0u, "uni marker");
         CHECK(img.width == 64 && img.num_levels == 1, "uni header");
@@ -1490,6 +1580,15 @@ static void test_ktx2_read_roundtrip(void) {
         p = psnr_rgba(ref, dec, npix);
         printf("    uni ktx2 read+decode level0 PSNR=%.2f dB\n", p);
         CHECK(p >= 25.0, "uni ktx2 decode PSNR >= 25 dB");
+        {
+            size_t dfd = rd_u32(ubuf + 48);
+            ubuf[dfd + 12] = 166u;
+            CHECK(tp_ktx2_read(ubuf, ktx_size, &img) == TP_ERROR_UNSUPPORTED,
+                  "Basis UASTC is not mistaken for private uni");
+            ubuf[dfd + 12] = 0u;
+            CHECK(TP_OK(tp_ktx2_read(ubuf, ktx_size, &img)),
+                  "restore private uni parse after rejection check");
+        }
         /* transcode uni -> BC7, decode, and confirm it survives the transcode */
         {
             size_t bsz = tc_bc7_compressed_size(64, 64);
@@ -1503,6 +1602,31 @@ static void test_ktx2_read_roundtrip(void) {
             CHECK(p >= 25.0, "uni->bc7 PSNR >= 25 dB");
             free(bc7);
         }
+
+        /* The same uni bytes are valid standard ASTC 4x4 blocks. This mode is
+         * the interoperable KTX2 carrier: it must not advertise private uni or
+         * Basis UASTC semantics. */
+        CHECK(TP_OK(tp_ktx2_write_uni_ex(
+                  levels, sizes, 64, 64, 1,
+                  TP_UNI_SRGB | TP_UNI_ALPHA | TP_UNI_ASTC_KTX2, ubuf,
+                  ktx_size, NULL)),
+              "write uni bytes as standard ASTC ktx2");
+        {
+            size_t dfd = rd_u32(ubuf + 48);
+            CHECK(rd_u32(ubuf + 12) == 158u,
+                  "ASTC carrier vkFormat = ASTC_4x4_SRGB_BLOCK");
+            CHECK(ubuf[dfd + 12] == 162u, "ASTC carrier DFD colorModel = ASTC");
+            CHECK(ubuf[dfd + 14] == 2u, "ASTC carrier DFD transfer = sRGB");
+        }
+        CHECK(TP_OK(tp_ktx2_read(ubuf, ktx_size, &img)),
+              "read standard ASTC carrier");
+        CHECK(!img.is_uni && img.codec == TP_CODEC_ASTC && img.srgb,
+              "ASTC carrier is parsed as standard ASTC");
+        CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)),
+              "decode standard ASTC carrier");
+        p = psnr_rgba(ref, dec, npix);
+        printf("    uni bytes -> ASTC KTX2 -> decode PSNR=%.2f dB\n", p);
+        CHECK(p >= 25.0, "ASTC carrier decode PSNR >= 25 dB");
         free(ubuf); free(uni);
     }
 
@@ -1566,16 +1690,72 @@ static void test_ktx2_read_roundtrip(void) {
     {
         const uint8_t *ulev[2];
         size_t usz[2];
-        uint32_t uw[2], uh[2];
-        uint8_t dummy[16];
+        uint8_t block[16];
+        /* Big enough for the real file (80 + 2*24 + 44, 16-aligned, + two 16 B
+         * levels = 208). Passing a short buffer here would make every rejection
+         * below fire on `out_size < need` instead of the rule under test, so the
+         * asserts would pass even with the validation deleted. */
+        uint8_t obuf[256];
         size_t wrote = 0;
-        ulev[0] = dummy; ulev[1] = dummy;
+        ulev[0] = block; ulev[1] = block;
         usz[0] = (size_t)-1 - 64u; usz[1] = 1024u; /* cursor + sizes[0] wraps */
-        uw[0] = 4; uh[0] = 4; uw[1] = 2; uh[1] = 2;
         CHECK(tp_ktx2_uni_size(usz, 2) == 0, "uni layout overflow -> size 0");
-        CHECK(tp_ktx2_write_uni(ulev, usz, uw, uh, 2, dummy, sizeof(dummy),
+        CHECK(tp_ktx2_write_uni_ex(ulev, usz, 4, 4, 2, 0u, obuf, sizeof(obuf),
                                 &wrote) == TP_ERROR_INVALID_ARGUMENT,
               "reject uni write with overflowing level sizes");
+
+        /* The control: with a correct 4x4 two-level chain and this same buffer
+         * the write succeeds. Every rejection below therefore comes from the
+         * rule it names, not from the output buffer being too small. */
+        usz[0] = 16u; usz[1] = 16u; /* 4x4 and 2x2 are one block each */
+        CHECK(TP_OK(tp_ktx2_write_uni_ex(ulev, usz, 4, 4, 2, 0u, obuf, sizeof(obuf),
+                                      &wrote)),
+              "control: a valid 4x4 2-level uni write succeeds into this buffer");
+        CHECK(wrote == 208u, "control: the file is 208 bytes");
+
+        /* The scheme-0 writer now enforces the same rules as the Zstd one: each
+         * of these emits a file tp_ktx2_read would refuse, so the write must
+         * fail rather than hand back an unloadable asset. */
+        CHECK(tp_ktx2_write_uni_ex(ulev, usz, 131072, 4, 2, 0u, obuf, sizeof(obuf),
+                                &wrote) == TP_ERROR_INVALID_ARGUMENT,
+              "write_uni rejects a dimension over TP_KTX2_MAX_DIM");
+        CHECK(tp_ktx2_write_uni_ex(ulev, usz, 4, 4, 2, 0x8u, obuf, sizeof(obuf),
+                                &wrote) == TP_ERROR_INVALID_ARGUMENT,
+              "write_uni rejects an unknown flag bit");
+        CHECK(tp_ktx2_write_uni_ex(ulev, usz, 4, 4, 8, 0u, obuf, sizeof(obuf),
+                                &wrote) == TP_ERROR_INVALID_ARGUMENT,
+              "write_uni rejects levelCount past the 4x4 pyramid");
+        usz[1] = 32u; /* level 1 of a 4x4 base is 2x2 = one block = 16 B */
+        CHECK(tp_ktx2_write_uni_ex(ulev, usz, 4, 4, 2, 0u, obuf, sizeof(obuf),
+                                &wrote) == TP_ERROR_INVALID_ARGUMENT,
+              "write_uni rejects a level size that mismatches the dimensions");
+
+        /* The pre-flags form still compiles and still behaves: same call through
+         * the old signature must produce the byte-identical file that
+         * tp_ktx2_write_uni_ex(..., flags = 0) does. This is the compatibility
+         * guarantee for callers already on the release branch. */
+        {
+            uint32_t lw2[2], lh2[2];
+            uint8_t legacy[256];
+            size_t wrote_legacy = 0;
+            usz[0] = 16u; usz[1] = 16u;
+            lw2[0] = 4; lw2[1] = 2;
+            lh2[0] = 4; lh2[1] = 2;
+            CHECK(TP_OK(tp_ktx2_write_uni_ex(ulev, usz, 4, 4, 2, 0u, obuf,
+                                             sizeof(obuf), &wrote)),
+                  "compat: _ex writes the reference file");
+            CHECK(TP_OK(tp_ktx2_write_uni(ulev, usz, lw2, lh2, 2, legacy,
+                                          sizeof(legacy), &wrote_legacy)),
+                  "compat: the pre-flags tp_ktx2_write_uni still works");
+            CHECK(wrote_legacy == wrote && memcmp(legacy, obuf, wrote) == 0,
+                  "compat: the old signature produces the identical file");
+            /* And it validates: the shim goes through the same tp_uni_check. */
+            usz[1] = 32u;
+            CHECK(tp_ktx2_write_uni(ulev, usz, lw2, lh2, 2, legacy,
+                                    sizeof(legacy),
+                                    &wrote_legacy) == TP_ERROR_INVALID_ARGUMENT,
+                  "compat: the old signature still rejects a bad level size");
+        }
     }
 
     free(dec);
@@ -1597,9 +1777,14 @@ static size_t passthrough_zdec(void *user, uint8_t *dst, size_t dst_cap,
 /* Identity compressor pair, the write-side mirror of passthrough_zdec: exercises
  * the tp_ktx2_write_uni_zstd layout / index / callback path without a real zstd
  * (a stream it writes is then read back with passthrough_zdec). */
+/* Deliberately over-reports, the way ZSTD_compressBound does. An identity zenc
+ * then produces clen < bound, so the writer's buffer ends up bigger than the
+ * file and its shrink-copy path runs -- the path every real zstd caller takes.
+ * With bound == src_size the compressed data would exactly fill the worst-case
+ * buffer and that branch would never execute in CI. */
 static size_t passthrough_zbound(void *user, size_t src_size) {
     (void)user;
-    return src_size;
+    return src_size + 64u;
 }
 static size_t passthrough_zenc(void *user, uint8_t *dst, size_t dst_cap,
                                const uint8_t *src, size_t src_size) {
@@ -1619,7 +1804,6 @@ static void test_ktx2_uni_zstd_write(void) {
      * than quietly staying in bounds. */
     const uint8_t *levels[TP_KTX2_MAX_LEVELS];
     size_t sizes[TP_KTX2_MAX_LEVELS], usz, ktx_n = 0;
-    uint32_t lw[TP_KTX2_MAX_LEVELS], lh[TP_KTX2_MAX_LEVELS];
     tp_ktx2_image img;
     const size_t npix = (size_t)W * H;
     int i;
@@ -1629,11 +1813,12 @@ static void test_ktx2_uni_zstd_write(void) {
     CHECK(tc_uni_compress_rgba8(ref, W, H, (size_t)W * 4u, uni, usz) == TC_SUCCESS,
           "uni compress");
     for (i = 0; i < TP_KTX2_MAX_LEVELS; ++i) {
-        levels[i] = uni; sizes[i] = usz; lw[i] = W; lh[i] = H;
+        levels[i] = uni; sizes[i] = usz;
     }
 
     CHECK(TP_OK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound, passthrough_zenc,
-                                       NULL, levels, sizes, lw, lh, 1, &ktx,
+                                       NULL, levels, sizes, W, H, 1,
+                                       TP_UNI_SRGB | TP_UNI_ALPHA, &ktx,
                                        &ktx_n)),
           "write uni zstd ktx2");
     CHECK(ktx != NULL && ktx_n > 0, "zstd ktx2 produced");
@@ -1686,30 +1871,286 @@ static void test_ktx2_uni_zstd_write(void) {
         for (i = 0; i < sizeof(bad_in) / sizeof(bad_in[0]); ++i) {
             uint8_t *bad = (uint8_t *)0x1; /* must be overwritten with NULL */
             size_t bad_n = 123u;
-            sizes[0] = bad_in[i].sz; lw[0] = bad_in[i].w; lh[0] = bad_in[i].h;
+            sizes[0] = bad_in[i].sz;
             CHECK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound,
                                          passthrough_zenc, NULL, levels, sizes,
-                                         lw, lh, bad_in[i].n, &bad,
+                                         bad_in[i].w, bad_in[i].h, bad_in[i].n,
+                                         0u, &bad,
                                          &bad_n) == TP_ERROR_INVALID_ARGUMENT,
                   bad_in[i].what);
             CHECK(bad == NULL && bad_n == 0u, "outputs cleared on failure");
         }
-        sizes[0] = usz; lw[0] = W; lh[0] = H;
+        sizes[0] = usz;
     }
 
-    /* KTX2 >= 2.0.4: a supercompressed file keeps the real pre-deflation
-     * bytesPlane0 (the old "must be 0" rule is retired), so the DFD the writer
-     * emits must still say 16 even under scheme 2. */
+    /* The private DFD must describe what the caller actually encoded without
+     * falsely claiming the Basis UASTC color model. */
     {
         uint8_t *k2 = NULL;
-        size_t k2n = 0, dfd_off;
+        size_t k2n = 0, dfd;
+        /* sRGB + alpha. */
         CHECK(TP_OK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound,
                                            passthrough_zenc, NULL, levels, sizes,
-                                           lw, lh, 1, &k2, &k2n)),
-              "rewrite for DFD check");
-        dfd_off = rd_u32(k2 + 48);
-        CHECK(k2[dfd_off + 20] == 16u, "DFD bytesPlane0 = 16 under scheme 2");
+                                           W, H, 1, TP_UNI_SRGB | TP_UNI_ALPHA,
+                                           &k2, &k2n)),
+              "write uni zstd (srgb + alpha)");
+        dfd = rd_u32(k2 + 48);
+        /* KTX2 >= 2.0.4 keeps the real pre-deflation bytesPlane0 even when
+         * supercompressed; the old "must be 0" rule is retired. */
+        CHECK(k2[dfd + 20] == 16u, "DFD bytesPlane0 = 16 under scheme 2");
+        CHECK(k2[dfd + 12] == 0u, "private DFD colorModel = UNSPECIFIED");
+        CHECK(k2[dfd + 13] == 1u, "DFD primaries = BT709 (sRGB)");
+        CHECK(k2[dfd + 14] == 2u, "DFD transfer = sRGB");
+        CHECK(k2[dfd + 31] == 3u, "private DFD channelType = RGBA");
+        /* The flags must survive the round trip: a uni file has no vkFormat, so
+         * if the reader does not parse the DFD the caller cannot tell sRGB from
+         * linear or RGBA from RGB, and the flags buy nothing. */
+        CHECK(TP_OK(tp_ktx2_read_zstd(k2, k2n, NULL, passthrough_zdec, NULL,
+                                      &img)),
+              "read back srgb+alpha uni");
+        CHECK(img.srgb == 1 && img.has_alpha == 1, "reader recovers srgb + alpha");
+        tp_ktx2_image_free(NULL, &img);
         tp_free(NULL, k2);
+
+        /* Linear + no alpha. */
+        CHECK(TP_OK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound,
+                                           passthrough_zenc, NULL, levels, sizes,
+                                           W, H, 1, 0u, &k2, &k2n)),
+              "write uni zstd (linear, no alpha)");
+        dfd = rd_u32(k2 + 48);
+        CHECK(k2[dfd + 13] == 0u, "DFD primaries = UNSPECIFIED (linear)");
+        CHECK(k2[dfd + 14] == 1u, "DFD transfer = linear");
+        CHECK(k2[dfd + 31] == 0u, "private DFD channelType = RGB");
+        CHECK(TP_OK(tp_ktx2_read_zstd(k2, k2n, NULL, passthrough_zdec, NULL,
+                                      &img)),
+              "read back linear uni");
+        CHECK(img.srgb == 0 && img.has_alpha == 0,
+              "reader recovers linear + no alpha");
+        tp_ktx2_image_free(NULL, &img);
+        tp_free(NULL, k2);
+
+        /* Standard scheme-2 ASTC carrier: unlike the default private wrapper,
+         * this is safe to hand to external KTX2 consumers. */
+        CHECK(TP_OK(tp_ktx2_write_uni_zstd(
+                  NULL, passthrough_zbound, passthrough_zenc, NULL, levels,
+                  sizes, W, H, 1,
+                  TP_UNI_SRGB | TP_UNI_ALPHA | TP_UNI_ASTC_KTX2, &k2, &k2n)),
+              "write uni zstd as standard ASTC");
+        dfd = rd_u32(k2 + 48);
+        CHECK(rd_u32(k2 + 12) == 158u,
+              "zstd ASTC carrier vkFormat = ASTC_4x4_SRGB_BLOCK");
+        CHECK(k2[dfd + 12] == 162u, "zstd ASTC carrier DFD colorModel = ASTC");
+        CHECK(TP_OK(tp_ktx2_read_zstd(k2, k2n, NULL, passthrough_zdec, NULL,
+                                      &img)),
+              "read back zstd ASTC carrier");
+        CHECK(!img.is_uni && img.codec == TP_CODEC_ASTC && img.srgb,
+              "zstd ASTC carrier parsed as standard ASTC");
+        CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)),
+              "decode zstd ASTC carrier");
+        {
+            double p = psnr_rgba(ref, dec, npix);
+            printf("    uni->zstd-ASTC-KTX2->decode PSNR=%.2f dB\n", p);
+            CHECK(p >= 30.0, "zstd ASTC carrier decode PSNR >= 30 dB");
+        }
+        tp_ktx2_image_free(NULL, &img);
+        tp_free(NULL, k2);
+
+        /* An unknown flag bit is a caller bug, not something to silently drop. */
+        CHECK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound, passthrough_zenc,
+                                     NULL, levels, sizes, W, H, 1, 0x8u, &k2,
+                                     &k2n) == TP_ERROR_INVALID_ARGUMENT,
+              "reject an unknown uni flag bit");
+
+        /* A host built without zstd passes no callbacks. That rejection must
+         * clear the outputs too -- it is the one path that returns before the
+         * argument checks, and the header promises the clear unconditionally. */
+        k2 = (uint8_t *)0x1;
+        k2n = 123u;
+        CHECK(tp_ktx2_write_uni_zstd(NULL, NULL, NULL, NULL, levels, sizes, W, H,
+                                     1, 0u, &k2,
+                                     &k2n) == TP_ERROR_INVALID_ARGUMENT,
+              "reject a missing zstd callback pair");
+        CHECK(k2 == NULL && k2n == 0u, "outputs cleared when callbacks are NULL");
+    }
+
+    /* A real mip chain. The single-level case above exercises none of the actual
+     * new logic: the levels are packed smallest-first at a running cursor, and
+     * every level's offset/byteLength/uncompressedByteLength lands in the index.
+     * With one level, a reversed or off-by-one packing loop still round-trips. */
+    {
+        const int NL = 3; /* 64x64, 32x32, 16x16 */
+        uint8_t *mref[3], *muni[3];
+        const uint8_t *mlev[3];
+        size_t msz[3];
+        uint8_t *k2 = NULL;
+        size_t k2n = 0;
+        int l;
+        for (l = 0; l < NL; ++l) {
+            uint32_t w = W >> l, h = H >> l;
+            mref[l] = make_gradient((int)w, (int)h);
+            msz[l] = tc_uni_compressed_size(w, h);
+            muni[l] = (uint8_t *)malloc(msz[l]);
+            CHECK(tc_uni_compress_rgba8(mref[l], w, h, (size_t)w * 4u, muni[l],
+                                        msz[l]) == TC_SUCCESS,
+                  "uni compress mip level");
+            mlev[l] = muni[l];
+        }
+        CHECK(TP_OK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound,
+                                           passthrough_zenc, NULL, mlev, msz, W,
+                                           H, NL, TP_UNI_SRGB, &k2, &k2n)),
+              "write 3-level uni zstd ktx2");
+
+        /* The index must describe three levels that are in-bounds, non-empty and
+         * non-overlapping -- a reversed packing loop would alias them. */
+        {
+            uint64_t prev_end = 0;
+            for (l = NL - 1; l >= 0; --l) { /* smallest first, i.e. ascending offset */
+                uint64_t off = rd_u64(k2 + 80 + (size_t)l * 24 + 0);
+                uint64_t blen = rd_u64(k2 + 80 + (size_t)l * 24 + 8);
+                uint64_t ulen = rd_u64(k2 + 80 + (size_t)l * 24 + 16);
+                CHECK(off >= prev_end, "level does not overlap the previous one");
+                CHECK(blen > 0 && off + blen <= (uint64_t)k2n,
+                      "level payload lies inside the file");
+                CHECK(ulen == (uint64_t)msz[l], "uncompressedByteLength = uni size");
+                prev_end = off + blen;
+            }
+            CHECK(prev_end == (uint64_t)k2n, "levels exactly fill the file");
+        }
+
+        CHECK(TP_OK(tp_ktx2_read_zstd(k2, k2n, NULL, passthrough_zdec, NULL,
+                                      &img)),
+              "read back 3-level zstd ktx2");
+        CHECK(img.num_levels == NL && img.width == W && img.height == H,
+              "3-level round-trip header");
+        /* Decode every level, not just level 0: a mixed-up index would surface
+         * as the wrong mip decoding cleanly at the wrong size. */
+        for (l = 0; l < NL; ++l) {
+            uint32_t w = W >> l, h = H >> l;
+            size_t n = (size_t)w * h;
+            uint8_t *d = (uint8_t *)malloc(n * 4u);
+            double p;
+            CHECK(img.levels[l].width == w && img.levels[l].height == h,
+                  "level dimensions");
+            CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, l, d, n * 4u)),
+                  "decode mip level");
+            p = psnr_rgba(mref[l], d, n);
+            printf("    uni->zstd-KTX2 mip %d (%ux%u) PSNR=%.2f dB\n", l, w, h, p);
+            CHECK(p >= 30.0, "mip level round-trips to the right image");
+            free(d);
+        }
+        tp_ktx2_image_free(NULL, &img);
+        tp_free(NULL, k2);
+
+        /* The same chain through the scheme-0 writer, which shares the layout
+         * and emit helpers but keeps its own 16-byte level alignment. Without
+         * this, dropping the tp_align_up or reversing the layout loop would
+         * leave the suite green while every multi-mip uni KTX2 came out with
+         * misaligned or aliased levels. */
+        {
+            size_t raw_n = tp_ktx2_uni_size(msz, NL);
+            uint8_t *raw = (uint8_t *)malloc(raw_n);
+            uint64_t prev_end = 0;
+            CHECK(raw_n > 0, "uni size for a 3-level chain");
+            CHECK(TP_OK(tp_ktx2_write_uni_ex(mlev, msz, W, H, NL, TP_UNI_SRGB, raw,
+                                          raw_n, NULL)),
+                  "write 3-level uni ktx2 (scheme 0)");
+            memset(raw, 0xAB, raw_n); /* poison: only what the writer writes may survive */
+            CHECK(TP_OK(tp_ktx2_write_uni_ex(mlev, msz, W, H, NL, TP_UNI_SRGB, raw,
+                                          raw_n, NULL)),
+                  "rewrite 3-level uni ktx2 over poison");
+            prev_end = 80u + (uint64_t)NL * 24u + 44u; /* end of the DFD */
+            for (l = NL - 1; l >= 0; --l) { /* smallest first = ascending offset */
+                uint64_t off = rd_u64(raw + 80 + (size_t)l * 24 + 0);
+                uint64_t blen = rd_u64(raw + 80 + (size_t)l * 24 + 8);
+                uint64_t p;
+                CHECK(off % 16u == 0u, "scheme-0 level is 16-byte aligned");
+                CHECK(off >= prev_end, "scheme-0 level does not overlap the previous");
+                CHECK(blen == (uint64_t)msz[l], "scheme-0 byteLength = uni size");
+                CHECK(off + blen <= (uint64_t)raw_n, "scheme-0 level is in-bounds");
+                /* KTX2 requires mipPadding to be zero; the writer only zeroes the
+                 * gaps now, so a missed gap would leave the poison behind. */
+                for (p = prev_end; p < off; ++p)
+                    CHECK(raw[p] == 0u, "scheme-0 mipPadding is zeroed");
+                prev_end = off + blen;
+            }
+            CHECK(prev_end == (uint64_t)raw_n, "scheme-0 levels reach the end of the file");
+            CHECK(TP_OK(tp_ktx2_read(raw, raw_n, &img)), "read 3-level uni ktx2");
+            CHECK(img.num_levels == NL, "scheme-0 3-level header");
+            for (l = 0; l < NL; ++l) {
+                uint32_t w = W >> l, h = H >> l;
+                size_t n = (size_t)w * h;
+                uint8_t *d = (uint8_t *)malloc(n * 4u);
+                CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, l, d, n * 4u)),
+                      "decode scheme-0 mip level");
+                CHECK(psnr_rgba(mref[l], d, n) >= 30.0,
+                      "scheme-0 mip round-trips to the right image");
+                free(d);
+            }
+            tp_ktx2_image_free(NULL, &img);
+            free(raw);
+        }
+        for (l = 0; l < NL; ++l) { free(mref[l]); free(muni[l]); }
+    }
+
+    /* Non-power-of-two, where the block grid does not divide the dimensions and
+     * the mip chain stops halving cleanly (65 -> 32 -> 16). Every level size the
+     * writer demands is computed from the base dims, so an NPOT rounding
+     * disagreement between writer and reader shows up here and nowhere else. */
+    {
+        const uint32_t NW = 65, NH = 33;
+        const int NNL = 7; /* tp_level_count(65, 33) */
+        uint8_t *nref[7], *nuni[7];
+        const uint8_t *nlev[7];
+        size_t nsz[7];
+        uint8_t *k2 = NULL;
+        size_t k2n = 0;
+        int l;
+        for (l = 0; l < NNL; ++l) {
+            uint32_t w = NW >> l, h = NH >> l;
+            if (!w) w = 1u;
+            if (!h) h = 1u;
+            nref[l] = make_gradient((int)w, (int)h);
+            nsz[l] = tc_uni_compressed_size(w, h);
+            nuni[l] = (uint8_t *)malloc(nsz[l]);
+            CHECK(tc_uni_compress_rgba8(nref[l], w, h, (size_t)w * 4u, nuni[l],
+                                        nsz[l]) == TC_SUCCESS,
+                  "npot uni compress");
+            nlev[l] = nuni[l];
+        }
+        CHECK(TP_OK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound,
+                                           passthrough_zenc, NULL, nlev, nsz, NW,
+                                           NH, NNL, TP_UNI_SRGB, &k2, &k2n)),
+              "write NPOT (65x33) uni zstd ktx2");
+        CHECK(TP_OK(tp_ktx2_read_zstd(k2, k2n, NULL, passthrough_zdec, NULL,
+                                      &img)),
+              "read back NPOT uni zstd ktx2");
+        CHECK(img.width == NW && img.height == NH && img.num_levels == NNL,
+              "NPOT header round-trips");
+        for (l = 0; l < NNL; ++l) {
+            uint32_t w = NW >> l, h = NH >> l;
+            size_t n;
+            uint8_t *d;
+            if (!w) w = 1u;
+            if (!h) h = 1u;
+            n = (size_t)w * h;
+            d = (uint8_t *)malloc(n * 4u);
+            CHECK(img.levels[l].width == w && img.levels[l].height == h,
+                  "NPOT level dimensions");
+            CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, l, d, n * 4u)),
+                  "decode NPOT mip level");
+            /* What is under test is the container, not UASTC's rate-distortion:
+             * the tiny levels are one or two blocks of a steep gradient, where
+             * 25 dB is simply what the codec gives (a mixed-up level would come
+             * back at single-digit dB, not 25). Hold the big levels to the usual
+             * bar and only require the small ones to be recognizably the right
+             * image. */
+            CHECK(psnr_rgba(nref[l], d, n) >= (n >= 256 ? 30.0 : 20.0),
+                  "NPOT mip round-trips to the right image");
+            free(d);
+        }
+        tp_ktx2_image_free(NULL, &img);
+        tp_free(NULL, k2);
+        for (l = 0; l < NNL; ++l) { free(nref[l]); free(nuni[l]); }
     }
 
     free(dec);

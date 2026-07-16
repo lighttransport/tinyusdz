@@ -1056,6 +1056,19 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[19 * 4 + 1] = mat.specularColor[1];
   dst[19 * 4 + 2] = mat.specularColor[2];
   dst[19 * 4 + 3] = mat.useSpecularWorkflow ? -mat.ior : mat.ior;
+  StoreUvVec4Rows(mat.opacitySample.uv, dst + 20 * 4);
+  dst[22 * 4 + 0] = static_cast<float>(mat.opacityChannel);
+  dst[22 * 4 + 1] = mat.opacityTexScale;
+  dst[22 * 4 + 2] = mat.opacityTexBias;
+  dst[22 * 4 + 3] = static_cast<float>(mat.opacitySample.uvSet);
+  // Keep atlas coordinates valid even for an unbound slot. Feature flags gate
+  // all actual samples, but some software Vulkan compilers speculate both sides
+  // of the texture branch and otherwise form a negative image coordinate.
+  dst[23 * 4 + 0] = static_cast<float>(std::max(mat.baseColorTex, 0));
+  dst[23 * 4 + 1] = static_cast<float>(std::max(mat.metalRoughTex, 0));
+  dst[23 * 4 + 2] = static_cast<float>(std::max(mat.normalTex, 0));
+  dst[23 * 4 + 3] = static_cast<float>(std::max(mat.emissiveTex, 0));
+  dst[24 * 4 + 0] = static_cast<float>(std::max(mat.opacityTex, 0));
 }
 
 }  // namespace tusdview

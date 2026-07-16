@@ -2,7 +2,7 @@
  * texcomp_web.c — thin Emscripten ABI over the tinyexr `texcomp` library for the
  * web texture-compression demo (web/js/texcomp.{js,html}).
  *
- * Basis-free: the browser compresses an RGBA8 image to the `uni` UASTC-subset
+ * Basis-free: the browser compresses an RGBA8 image to the private `uni`
  * intermediate once, then transcodes it per-device to the GPU-native block
  * format the browser advertises (BC7 desktop, ASTC/ETC2 mobile) or decodes it
  * back to RGBA8 as a universal fallback. No basis_universal / KTX2Loader needed.

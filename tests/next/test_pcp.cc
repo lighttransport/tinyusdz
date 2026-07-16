@@ -138,10 +138,14 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.current()->meta().references.push_back("</Lib/RefModel>");
   lb.current()->meta().instanceable = true;
   lb.end_prim();
-  // Relocate /World/Old -> /World/New (authored on World).
-  lb.current()->meta().relocates().push_back({"/World/Old", "/World/New"});
-  lb.begin_prim("Old", "Scope");
-  lb.end_prim();  // Old (relocated to New)
+  // Relocate an ARC-INTRODUCED prim (pxr only relocates prims delivered
+  // across a composition arc on an ANCESTOR): RigHost references /Lib/Model,
+  // whose child Inner (Sphere) is relocated to /World/New.
+  lb.current()->meta().relocates().push_back(
+      {"/World/RigHost/Inner", "/World/New"});
+  lb.begin_prim("RigHost", "");
+  lb.current()->meta().references.push_back("</Lib/Model>");
+  lb.end_prim();  // RigHost
   lb.end_prim();  // World
 
   lb.begin_prim("Lib", "Scope");
@@ -1386,6 +1390,44 @@ static void test_variant_inline_property_flags() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_variant_option_authored_state() {
+  std::cout << "test_variant_option_authored_state..." << std::endl;
+  const std::string root = "/tmp/next_pcp_var_authored_state.usda";
+  {
+    std::ofstream f(root);
+    // Authored `hidden = 0` on the SELECTED option is a real opinion and must
+    // land on the composed prim (pxr flatten emits `hidden = false`); the
+    // unselected option's `hidden = 1` must not leak.
+    f << "#usda 1.0\n"
+         "def Xform \"P\" (\n"
+         "    variants = { string v = \"a\" }\n"
+         "    prepend variantSets = \"v\"\n"
+         ")\n"
+         "{\n"
+         "    variantSet \"v\" = {\n"
+         "        \"a\" ( hidden = 0 ) {\n"
+         "            float inA = 1\n"
+         "        }\n"
+         "        \"b\" ( hidden = 1 ) {\n"
+         "            float inB = 2\n"
+         "        }\n"
+         "    }\n"
+         "}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  const std::string usda = WriteUSDAToString(stage);
+  assert(usda.find("hidden = false") != std::string::npos &&
+         "authored hidden=0 on the selected variant option must compose");
+  assert(usda.find("hidden = true") == std::string::npos &&
+         "unselected option's hidden=1 must not leak");
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_variants() {
   std::cout << "test_variants..." << std::endl;
   AssetResolver resolver;
@@ -1583,8 +1625,10 @@ static void test_relocates() {
   assert(cache.BuildStage(&stage, &warn, &err));
 
   assert(stage.GetPrimAtPath("/World/New").IsValid() && "relocate target missing");
-  assert(!stage.GetPrimAtPath("/World/Old").IsValid() && "relocate source leaked");
-  assert(stage.GetPrimAtPath("/World/New").GetTypeName() == "Scope");
+  assert(!stage.GetPrimAtPath("/World/RigHost/Inner").IsValid() &&
+         "relocate source leaked");
+  // Content is the arc-delivered Sphere child of the referenced Model.
+  assert(stage.GetPrimAtPath("/World/New").GetTypeName() == "Sphere");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1636,7 +1680,10 @@ static void test_implied_inherit() {
 
   UsdPrim q = stage.GetPrimAtPath("/World/Q");
   assert(q.IsValid());
-  assert(q.GetTypeName() == "Mesh" && "cross-file reference type missing");
+  // Oracle-verified (pxr 26.05): the root-stack IMPLIED class is stronger
+  // than the whole reference subtree, so its authored type (Scope) wins over
+  // the referenced Mesh (usdcat --flatten composes `def Scope`).
+  assert(q.GetTypeName() == "Scope" && "implied-class type must win");
   assert(q.GetPropertyValue("libClassProp") != nullptr &&
          "direct (referenced-stack) inherit missing");
   assert(q.GetPropertyValue("rootClassProp") != nullptr &&
@@ -1821,37 +1868,41 @@ static void test_cross_source_variant() {
 static void test_implied_intermediate() {
   std::cout << "test_implied_intermediate..." << std::endl;
 
+  // ROOT-level untyped classes: pxr REJECTS a prim inheriting its own child
+  // class through a reference chain ("Cycle detected ... CANNOT inherit
+  // from"), so the classes live at each layer's root (oracle-verified shape:
+  // T composes Mesh + fooB/fooA/fooRoot).
   auto B = std::make_shared<Layer>();
   {
     LayerBuilder bb(*B);
-    bb.begin_prim("B", "Mesh");
-    bb.current()->meta().inherits.push_back("</B/_class_Foo>");
-    bb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    bb.begin_prim("_class_Foo", "", PrimSpecifier::Class);
     bb.add_property("fooB", Value::MakeFloat3(1, 0, 0));
     bb.end_prim();
+    bb.begin_prim("B", "Mesh");
+    bb.current()->meta().inherits.push_back("</_class_Foo>");
     bb.end_prim();
     bb.finalize();
   }
   auto A = std::make_shared<Layer>();
   {
     LayerBuilder ab(*A);
-    ab.begin_prim("A", "");
-    ab.current()->meta().references.push_back("@assetB@</B>");
-    ab.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    ab.begin_prim("_class_Foo", "", PrimSpecifier::Class);
     ab.add_property("fooA", Value::MakeFloat3(0, 1, 0));
     ab.end_prim();
+    ab.begin_prim("A", "");
+    ab.current()->meta().references.push_back("@assetB@</B>");
     ab.end_prim();
     ab.finalize();
   }
   auto rootL = std::make_shared<Layer>();
   {
     LayerBuilder rb(*rootL);
+    rb.begin_prim("_class_Foo", "", PrimSpecifier::Class);
+    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
+    rb.end_prim();
     rb.begin_prim("World", "Xform");
     rb.begin_prim("T", "");
     rb.current()->meta().references.push_back("@assetA@</A>");
-    rb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
-    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
-    rb.end_prim();
     rb.end_prim();
     rb.end_prim();
     rb.finalize();
@@ -1915,16 +1966,19 @@ static void test_writer_listop_fidelity() {
 
   std::string out = WriteLayerToString(layer, USDAWriteOptions());
   // The edit's qualifiers are preserved (old writer always emitted `prepend`
-  // and never `delete`).
-  assert(out.find("prepend references = [") != std::string::npos);
-  assert(out.find("delete references = [") != std::string::npos);
+  // and never `delete`). Single arc targets print WITHOUT list brackets
+  // (pxr spelling).
+  assert(out.find("prepend references = ") != std::string::npos &&
+         out.find("prepend references = [") == std::string::npos);
+  assert(out.find("delete references = ") != std::string::npos &&
+         out.find("delete references = [") == std::string::npos);
   // The bare prim emits an unqualified (explicit) list. It is the only prim
-  // whose `references = [` is not preceded by a qualifier word.
-  assert(out.find("\n        references = [") != std::string::npos ||
-         out.find("\n    references = [") != std::string::npos);
-  assert(out.find("inherits = [") != std::string::npos &&
+  // whose `references =` is not preceded by a qualifier word.
+  assert(out.find("\n        references = ") != std::string::npos ||
+         out.find("\n    references = ") != std::string::npos);
+  assert(out.find("inherits = </_class_Base>") != std::string::npos &&
          "USDA writer must emit inherits arcs");
-  assert(out.find("specializes = [") != std::string::npos &&
+  assert(out.find("specializes = </_class_Fallback>") != std::string::npos &&
          "USDA writer must emit specializes arcs");
   std::cout << "  OK" << std::endl;
 }
@@ -3565,12 +3619,17 @@ static void test_relocates_in_referenced_layer_stack() {
 static void test_relocate_to_new_root_prim() {
   std::cout << "test_relocate_to_new_root_prim..." << std::endl;
 
+  // The relocate source must be ARC-INTRODUCED (pxr): the reference sits on
+  // the ANCESTOR /Group, delivering the Model child (museum
+  // TrickyInheritsAndRelocatesToNewRootPrim shape).
   auto model = std::make_shared<Layer>();
   {
     LayerBuilder mb(*model);
+    mb.begin_prim("GroupSrc", "Xform");
     mb.begin_prim("Model", "Xform");
     mb.begin_prim("Scope", "Xform");
     mb.add_property("v", Value(int32_t(3)));
+    mb.end_prim();
     mb.end_prim();
     mb.end_prim();
     mb.finalize();
@@ -3580,9 +3639,7 @@ static void test_relocate_to_new_root_prim() {
     rootL->meta().relocates.emplace_back("/Group/Model", "/Model_Renamed");
     LayerBuilder rb(*rootL);
     rb.begin_prim("Group", "Xform");
-    rb.begin_prim("Model", "Xform");
-    rb.current()->meta().references.push_back("@mem_model@</Model>");
-    rb.end_prim();
+    rb.current()->meta().references.push_back("@mem_model@</GroupSrc>");
     rb.end_prim();
     // An `over` at the new root name: authored at the relocate TARGET.
     rb.begin_prim("Model_Renamed", "");
@@ -4201,6 +4258,7 @@ int main() {
   test_inherits_specializes();
   test_variants();
   test_variant_inline_property_flags();
+  test_variant_option_authored_state();
   test_variant_content_key_stable();
   test_variants_v2();
   test_instancing();

@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+# T12 regression: separate (including UDIM) opacity masks in GL/VK raster, and
+# varying displayOpacity in GL/VK raster + Vulkan/CUDA/HIP ray tracing.
+# Exit 77 when no backend can run; 1 on an observed regression.
+set -uo pipefail
+SKIP=77
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+if [ -n "${TUSDVIEW:-}" ]; then BIN="$TUSDVIEW"
+elif [ -x "$REPO_ROOT/build_ninja/tusdview" ]; then BIN="$REPO_ROOT/build_ninja/tusdview"
+else BIN="$REPO_ROOT/build/tusdview"; fi
+[ -x "$BIN" ] || { echo "SKIP: tusdview not found"; exit "$SKIP"; }
+
+OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"
+mkdir -p "$OUT"
+if [ -z "${TUSDVIEW_TEST_OUT:-}" ]; then trap 'rm -rf "$OUT"' EXIT; fi
+XVFB=""
+if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
+  XVFB="xvfb-run -a"
+fi
+
+# Tiny PPM masks avoid external image-library dependencies. Tile 1001 is fully
+# transparent; 1002 fully opaque.
+python3 - "$OUT" <<'PY'
+import os, sys
+for tile, value in ((1001, 0), (1002, 255)):
+    p = os.path.join(sys.argv[1], f"mask.{tile}.ppm")
+    with open(p, "wb") as f:
+        f.write(b"P6\n4 4\n255\n" + bytes([value, value, value]) * 16)
+PY
+
+cat > "$OUT/opacity-udim.usda" <<'USDA'
+#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World" {
+  def Mesh "Back" {
+    uniform bool doubleSided = 1
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+    rel material:binding = </World/Red>
+  }
+  def Mesh "Mask" {
+    uniform bool doubleSided = 1
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1,-1,0.05), (1,-1,0.05), (1,1,0.05), (-1,1,0.05)]
+    texCoord2f[] primvars:st = [(0,0), (2,0), (2,1), (0,1)] (interpolation = "vertex")
+    rel material:binding = </World/GreenMask>
+  }
+  def Material "Red" {
+    token outputs:surface.connect = </World/Red/P.outputs:surface>
+    def Shader "P" { uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (1,0,0) float inputs:roughness = 1
+      token outputs:surface }
+  }
+  def Material "GreenMask" {
+    token outputs:surface.connect = </World/GreenMask/P.outputs:surface>
+    def Shader "P" { uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (0,1,0)
+      float inputs:opacity.connect = </World/GreenMask/Mask.outputs:r>
+      float inputs:roughness = 1 token outputs:surface }
+    def Shader "ST" { uniform token info:id = "UsdPrimvarReader_float2"
+      token inputs:varname = "st" float2 outputs:result }
+    def Shader "Mask" { uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @./mask.<UDIM>.ppm@
+      float2 inputs:st.connect = </World/GreenMask/ST.outputs:result>
+      float outputs:r }
+  }
+}
+USDA
+
+cat > "$OUT/display-opacity.usda" <<'USDA'
+#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World" {
+  def Mesh "Back" {
+    uniform bool doubleSided = 1 int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    point3f[] points = [(-1,-1,0),(1,-1,0),(1,1,0),(-1,1,0)]
+    rel material:binding = </World/Red>
+  }
+  def Mesh "Varying" {
+    uniform bool doubleSided = 1 int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    point3f[] points = [(-1,-1,0.05),(1,-1,0.05),(1,1,0.05),(-1,1,0.05)]
+    float[] primvars:displayOpacity = [0, 1, 1, 0] (interpolation = "vertex")
+    rel material:binding = </World/Green>
+  }
+  def Material "Red" { token outputs:surface.connect = </World/Red/P.outputs:surface>
+    def Shader "P" { uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (1,0,0) token outputs:surface } }
+  def Material "Green" { token outputs:surface.connect = </World/Green/P.outputs:surface>
+    def Shader "P" { uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (0,1,0) float inputs:opacity = 0.8
+      token outputs:surface } }
+}
+USDA
+
+cat > "$OUT/instance-opacity.usda" <<'USDA'
+#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World" {
+  def PointInstancer "Instances" {
+    rel prototypes = [</World/Instances/Protos/Quad>]
+    point3f[] positions = [(-0.7,0,0), (0.7,0,0)]
+    int[] protoIndices = [0, 0]
+    quatf[] orientations = [(1,0,0,0), (1,0,0,0)]
+    float3[] scales = [(1,1,1), (1,1,1)]
+    float[] primvars:displayOpacity = [0.25, 1.0] (interpolation = "vertex")
+    def Scope "Protos" {
+      def Mesh "Quad" {
+        uniform bool doubleSided = 1
+        point3f[] points = [(-0.5,-0.5,0), (0.5,-0.5,0),
+                            (0.5,0.5,0), (-0.5,0.5,0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0,1,2,3]
+        uniform token subdivisionScheme = "none"
+      }
+    }
+  }
+}
+USDA
+
+cat > "$OUT/instance-vertex-opacity.usda" <<'USDA'
+#usda 1.0
+(defaultPrim = "World" upAxis = "Y")
+def Xform "World" {
+  def Mesh "Back" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    rel material:binding = </World/Red>
+  }
+  def PointInstancer "Instances" {
+    rel prototypes = [</World/Instances/Protos/Quad>]
+    point3f[] positions = [(0,0,0.05)]
+    int[] protoIndices = [0]
+    quatf[] orientations = [(1,0,0,0)]
+    float3[] scales = [(1,1,1)]
+    def Scope "Protos" {
+      def Mesh "Quad" {
+        uniform bool doubleSided = 1
+        point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0,1,2,3]
+        color3f[] primvars:displayColor = [(0,1,0), (0,1,0),
+                                           (0,1,0), (0,1,0)] (
+          interpolation = "vertex"
+        )
+        float[] primvars:displayOpacity = [0,1,1,0] (interpolation = "vertex")
+        uniform token subdivisionScheme = "none"
+      }
+    }
+  }
+  def Material "Red" { token outputs:surface.connect = </World/Red/P.outputs:surface>
+    def Shader "P" { uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (1,0,0) token outputs:surface } }
+}
+USDA
+
+probe() {
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+d=open(sys.argv[1],"rb").read(); m=re.match(rb"P6\s+(\d+)\s+(\d+)\s+(\d+)\s",d)
+if not m: sys.exit(2)
+p=d[m.end():]; red=green=mix=0; green_values=[]
+for i in range(0,len(p)-2,3):
+    r,g,b=p[i:i+3]
+    red += r > g+35 and r > b+35 and r > 35
+    is_green = g > r+35 and g > b+35 and g > 35
+    green += is_green
+    if is_green: green_values.append(g)
+    mix += r > 25 and g > 25 and b < max(r,g)*0.7
+spread=0
+if green_values:
+    green_values.sort()
+    spread=green_values[(len(green_values)*9)//10]-green_values[len(green_values)//10]
+print(f"{sys.argv[2]} red={red} green={green} mixed={mix} green_spread={spread}")
+if red < 300 or green < 300: sys.exit(1)
+if sys.argv[2] in ("vary-cuda", "vary-hip"):
+    # The compact CUDA/HIP tracer is single-hit: Blend surfaces composite over
+    # the environment rather than tracing the red mesh behind them.  A broad
+    # green-intensity distribution verifies the authored horizontal opacity
+    # ramp without assuming multi-layer transparency.
+    if spread < 8: sys.exit(1)
+elif sys.argv[2].startswith("vary") and mix < 200:
+    sys.exit(1)
+PY
+}
+
+# The opacity AOV must report the same composed opacity used by shaded raster:
+# material/base alpha * separate mask * varying displayOpacity. Both fixtures
+# increase from left to right, so a stale AOV that omits either new input is
+# nearly flat and fails this regional comparison.
+probe_opacity_aov() {
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+d=open(sys.argv[1],"rb").read(); m=re.match(rb"P6\s+(\d+)\s+(\d+)\s+(\d+)\s",d)
+if not m: sys.exit(2)
+w,h=map(int,m.groups()[:2]); p=d[m.end():]
+def mean(x0,x1):
+    values=[]
+    for y in range(h*3//10,h*7//10):
+        for x in range(w*x0//10,w*x1//10):
+            i=(y*w+x)*3
+            values.append(sum(p[i:i+3])/3.0)
+    return sum(values)/max(len(values),1)
+left=mean(2,4); right=mean(6,8)
+print(f"{sys.argv[2]} opacity_aov_left={left:.1f} opacity_aov_right={right:.1f}")
+if right-left < 35: sys.exit(1)
+PY
+}
+
+ran=0 mask_ran=0 varying_ran=0 fail=0 vk_software=0
+for spec in "gl:--backend gl" "vk:--backend vk"; do
+  tag="${spec%%:*}"; args="${spec#*:}"
+  backend_ok=0
+  # Run the texture-free varying fixture first; its device log lets the UDIM
+  # probe skip known software rasterizers that cannot fetch textured attributes
+  # reliably (the existing UV-routing test makes the same distinction).
+  for scene in display-opacity opacity-udim instance-vertex-opacity; do
+    if [ "$tag" = vk ] && [ "$scene" = opacity-udim ] &&
+       [ "$vk_software" -ne 0 ]; then
+      echo "SKIP: Vulkan opacity UDIM on software renderer"
+      continue
+    fi
+    img="$OUT/${scene}-${tag}.ppm"
+    if [ "$tag" = gl ]; then
+      # GL needs a display. Do not pass --headless: that option is Vulkan-only
+      # and intentionally forces the Vulkan renderer.
+      # shellcheck disable=SC2086
+      $XVFB "$BIN" $args --frames 4 --view-dir 0,0,-1 --size 256x256 \
+        --screenshot "$img" "$OUT/$scene.usda" >"$OUT/$scene-$tag.log" 2>&1
+    else
+      # Windowless Vulkan must not inherit Xvfb's software-Vulkan selection.
+      # shellcheck disable=SC2086
+      "$BIN" --headless $args --frames 4 --view-dir 0,0,-1 --size 256x256 \
+        --screenshot "$img" "$OUT/$scene.usda" >"$OUT/$scene-$tag.log" 2>&1
+    fi
+    if ! grep -q 'render stats' "$OUT/$scene-$tag.log" || [ ! -s "$img" ]; then
+      echo "SKIP: $tag unavailable for $scene"
+      tail -20 "$OUT/$scene-$tag.log"
+      continue
+    fi
+    if [ "$tag" = vk ] && grep -Eqi 'llvmpipe|\(cpu, driver' "$OUT/$scene-$tag.log"; then
+      vk_software=1
+    fi
+    if grep -Eqi 'llvmpipe|softpipe|lavapipe|software rasterizer|LLVM [0-9]' \
+         "$OUT/$scene-$tag.log"; then
+      echo "SKIP: $tag is a software renderer for $scene"
+      continue
+    fi
+    ran=$((ran+1)); label="${scene}-${tag}"
+    backend_ok=1
+    if [ "$scene" = opacity-udim ]; then mask_ran=$((mask_ran+1));
+    else varying_ran=$((varying_ran+1)); fi
+    [ "$scene" = display-opacity ] && label="vary-${tag}"
+    probe "$img" "$label" || { echo "FAIL: $label"; fail=1; }
+
+    aov="$OUT/${scene}-${tag}-opacity-aov.ppm"
+    if [ "$tag" = gl ]; then
+      # shellcheck disable=SC2086
+      $XVFB "$BIN" $args --mode opacity --frames 4 --view-dir 0,0,-1 \
+        --size 256x256 --screenshot "$aov" "$OUT/$scene.usda" \
+        >"$OUT/$scene-$tag-opacity-aov.log" 2>&1
+    else
+      "$BIN" --headless $args --mode opacity --frames 4 --view-dir 0,0,-1 \
+        --size 256x256 --screenshot "$aov" "$OUT/$scene.usda" \
+        >"$OUT/$scene-$tag-opacity-aov.log" 2>&1
+    fi
+    if ! grep -q 'render stats' "$OUT/$scene-$tag-opacity-aov.log" ||
+       [ ! -s "$aov" ]; then
+      echo "FAIL: $scene-$tag opacity AOV did not render"
+      tail -20 "$OUT/$scene-$tag-opacity-aov.log"
+      fail=1
+    else
+      probe_opacity_aov "$aov" "$scene-$tag" || {
+        echo "FAIL: $scene-$tag opacity AOV"; fail=1;
+      }
+    fi
+  done
+
+  # PointInstancer raster uses a separate fragment shader. It already carries
+  # vOpacity for shaded blending; the opacity AOV must expose that value rather
+  # than falling through to the neutral "unsupported scalar" color.
+  if [ "$backend_ok" -ne 0 ]; then
+    aov="$OUT/instance-opacity-$tag-opacity-aov.ppm"
+    if [ "$tag" = gl ]; then
+      # shellcheck disable=SC2086
+      $XVFB "$BIN" $args --mode opacity --frames 4 --view-dir 0,0,-1 \
+        --size 256x256 --screenshot "$aov" "$OUT/instance-opacity.usda" \
+        >"$OUT/instance-opacity-$tag-opacity-aov.log" 2>&1
+    else
+      "$BIN" --headless $args --mode opacity --frames 4 --view-dir 0,0,-1 \
+        --size 256x256 --screenshot "$aov" "$OUT/instance-opacity.usda" \
+        >"$OUT/instance-opacity-$tag-opacity-aov.log" 2>&1
+    fi
+    if ! grep -q 'render stats' "$OUT/instance-opacity-$tag-opacity-aov.log" ||
+       [ ! -s "$aov" ]; then
+      echo "FAIL: instance-opacity-$tag opacity AOV did not render"
+      fail=1
+    else
+      probe_opacity_aov "$aov" "instance-opacity-$tag" || {
+        echo "FAIL: instance-opacity-$tag opacity AOV"; fail=1;
+      }
+    fi
+  fi
+done
+
+# RT intentionally does not sample the opacity image, but it must interpolate
+# displayOpacity through the shared RGBA stream.
+img="$OUT/display-opacity-vkrt.ppm"
+"$BIN" --headless --backend vk --rt --frames 4 --view-dir 0,0,-1 \
+  --size 256x256 --screenshot "$img" "$OUT/display-opacity.usda" \
+  >"$OUT/display-opacity-vkrt.log" 2>&1
+if grep -q 'Vulkan ray tracing (ray query) enabled' "$OUT/display-opacity-vkrt.log" && [ -s "$img" ]; then
+  ran=$((ran+1)); varying_ran=$((varying_ran+1))
+  probe "$img" vary-vkrt || { echo "FAIL: vary-vkrt"; fail=1; }
+  aov="$OUT/display-opacity-vkrt-opacity-aov.ppm"
+  "$BIN" --headless --backend vk --rt --mode opacity --frames 4 \
+    --view-dir 0,0,-1 --size 256x256 --screenshot "$aov" \
+    "$OUT/display-opacity.usda" >"$OUT/display-opacity-vkrt-opacity-aov.log" 2>&1
+  if grep -q 'Vulkan ray tracing (ray query) enabled' \
+       "$OUT/display-opacity-vkrt-opacity-aov.log" && [ -s "$aov" ]; then
+    probe_opacity_aov "$aov" display-opacity-vkrt || {
+      echo "FAIL: display-opacity-vkrt opacity AOV"; fail=1;
+    }
+  else
+    echo "FAIL: Vulkan ray-query opacity AOV did not render"
+    fail=1
+  fi
+else
+  echo "SKIP: Vulkan ray query unavailable"
+fi
+
+for rt in cuda hip; do
+  img="$OUT/display-opacity-$rt.ppm"
+  "$BIN" --headless --"$rt" --frames 4 --view-dir 0,0,-1 --size 256x256 \
+    --screenshot "$img" "$OUT/display-opacity.usda" \
+    >"$OUT/display-opacity-$rt.log" 2>&1
+  upper="CUDA"; [ "$rt" = hip ] && upper="HIP"
+  if grep -q "$upper RT wrote" "$OUT/display-opacity-$rt.log" && [ -s "$img" ]; then
+    ran=$((ran+1)); varying_ran=$((varying_ran+1))
+    probe "$img" "vary-$rt" || { echo "FAIL: vary-$rt"; fail=1; }
+    aov="$OUT/display-opacity-$rt-opacity-aov.ppm"
+    "$BIN" --headless --"$rt" --mode opacity --frames 4 --view-dir 0,0,-1 \
+      --size 256x256 --screenshot "$aov" "$OUT/display-opacity.usda" \
+      >"$OUT/display-opacity-$rt-opacity-aov.log" 2>&1
+    if grep -q "$upper RT wrote" "$OUT/display-opacity-$rt-opacity-aov.log" &&
+       [ -s "$aov" ]; then
+      probe_opacity_aov "$aov" "display-opacity-$rt" || {
+        echo "FAIL: display-opacity-$rt opacity AOV"; fail=1;
+      }
+    else
+      echo "FAIL: $upper opacity AOV did not render"
+      fail=1
+    fi
+  else
+    echo "SKIP: $upper ray tracing unavailable"
+  fi
+done
+
+[ "$ran" -gt 0 ] || exit "$SKIP"
+[ "$mask_ran" -gt 0 ] || { echo "SKIP: no raster backend could test opacity UDIM"; exit "$SKIP"; }
+[ "$varying_ran" -gt 0 ] || { echo "SKIP: no backend could test displayOpacity"; exit "$SKIP"; }
+[ "$fail" -eq 0 ] || exit 1
+echo "PASS: opacity texture/UDIM and varying displayOpacity"

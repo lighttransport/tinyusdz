@@ -76,6 +76,7 @@ struct HostTextureDesc {
 
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {
+  // cols is RGBA per triangle vertex: displayColor.rgb + displayOpacity.
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
   std::vector<uint8_t> geo;
   // Per-triangle wireframe edge mask (bit0: edge v1v2, bit1: edge v2v0, bit2: edge
@@ -110,12 +111,40 @@ struct HostScene {
   bool truncated = false;
 };
 
+// Refit support: enough of the build's mapping to re-pose an existing
+// HostScene in place when only VERTEX DATA changed (skin/morph re-pose; same
+// meshes, same topology, same worlds). Recorded by BuildHostScene on request.
+struct RefitMeshMap {
+  size_t sceneMesh{0};        // index into DrawScene.meshes
+  size_t triOffset{0};        // this mesh's block in HostScene.tris (tri index)
+  std::vector<int> leafOrder; // output slot i holds original triangle leafOrder[i]
+};
+struct RefitMap {
+  bool valid{false};
+  std::vector<RefitMeshMap> meshes;
+};
+
 // Build `out` from `scene`. `maxTris` caps unique prototype triangles, `maxInstances`
 // caps the instance count (0 = unlimited). `displacementScale` bakes coarse
 // UsdPreviewSurface displacement into the traced geometry (0 = none). Returns
 // false (with *err) only when the scene has no triangles/instances.
+// `refitOut` (optional) records the tri permutation per mesh so RefitHostScene
+// can later re-pose `out` without a rebuild; only recorded when
+// displacementScale == 0 (a displaced flatten cannot be refit -- it re-samples
+// textures per pose).
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     float displacementScale, HostScene* out, std::string* err,
-                    BuildProgress* progress = nullptr);
+                    BuildProgress* progress = nullptr, RefitMap* refitOut = nullptr);
+
+// Re-pose `hs` in place from `scene`'s CURRENT vertex data: rewrite tris/nrms
+// in the recorded leaf order, then refit every BLAS/TLAS node bound over the
+// UNCHANGED tree topology (children are appended after their parent by the
+// builders, so one reverse-index sweep computes children before parents).
+// Instance AABBs are re-derived from each Inst's o2w x its BLAS root bounds --
+// worlds are assumed static (the CUDA/HIP deform path only moves vertices).
+// Returns false (with *err) when the map is invalid or topology changed;
+// the caller should fall back to a full build.
+bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
+                    std::string* err);
 
 }  // namespace tusdview

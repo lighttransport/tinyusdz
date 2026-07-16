@@ -128,16 +128,22 @@ bool HipRayTracer::init(std::string* err) {
 
 bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
                          size_t maxInstances, std::string* err,
-                         float displacementScale, BuildProgress* progress) {
+                         float displacementScale, BuildProgress* progress,
+                         bool retainForRefit) {
   if (!ready_) { if (err) *err = "HIP not initialized"; return false; }
   CU_OK(hipSetDevice(device_), "hipSetDevice");  // also sets the device on a worker thread
   freeScene();
+  retained_.reset();
+  refitMap_ = RefitMap{};
 
   // Build the host scene (parallel per-mesh geometry + TLAS) -- shared with CUDA.
-  HostScene hs;
+  HostScene local;
+  if (retainForRefit) retained_.reset(new HostScene());
+  HostScene& hs = retained_ ? *retained_ : local;
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs, err,
-                      progress)) {
+                      progress, retained_ ? &refitMap_ : nullptr)) {
     if (err) *err = "HIP: " + *err;
+    retained_.reset();
     return false;
   }
   truncated_ = hs.truncated;
@@ -191,6 +197,40 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.lightParams.data(), hs.lightParams.size() * sizeof(float),
           &dLightParams_)) return false;
   if (progress) progress->phase = 4;  // done
+
+  // Refit only needs tris/nrms/blas/tlas/instances; drop the pose-invariant
+  // arrays (texels alone can be hundreds of MB) now that they are on the device.
+  if (retained_) {
+    HostScene& r = *retained_;
+    auto drop = [](auto& v) { v.clear(); v.shrink_to_fit(); };
+    drop(r.cols); drop(r.uv); drop(r.uv1); drop(r.infl); drop(r.domw);
+    drop(r.geo); drop(r.emask); drop(r.mat); drop(r.face); drop(r.domj);
+    drop(r.matPbr); drop(r.matLightRt); drop(r.matTex); drop(r.matTexParam);
+    drop(r.texels); drop(r.textures); drop(r.lightParams);
+    drop(r.volDens); drop(r.volParams);
+  }
+  return true;
+}
+
+bool HipRayTracer::refit(const DrawScene& scene, std::string* err) {
+  if (!ready_ || !dTris_) { if (err) *err = "HIP scene not built"; return false; }
+  if (!canRefit()) {
+    if (err) *err = "scene was not built with refit retained";
+    return false;
+  }
+  CU_OK(hipSetDevice(device_), "hipSetDevice");
+  HostScene& hs = *retained_;
+  if (!RefitHostScene(scene, refitMap_, &hs, err)) return false;
+  // Only the pose-dependent buffers move; sizes are unchanged, so copy into the
+  // existing allocations (no realloc, no touch of materials/textures/uvs).
+  CU_OK(hipMemcpyHtoD(reinterpret_cast<void*>(dTris_), hs.tris.data(),
+                      hs.tris.size() * sizeof(float)), "hipMemcpyHtoD(tris)");
+  CU_OK(hipMemcpyHtoD(reinterpret_cast<void*>(dNrms_), hs.nrms.data(),
+                      hs.nrms.size() * sizeof(float)), "hipMemcpyHtoD(nrms)");
+  CU_OK(hipMemcpyHtoD(reinterpret_cast<void*>(dBlasNodes_), hs.blas.data(),
+                      hs.blas.size() * sizeof(Node)), "hipMemcpyHtoD(blas)");
+  CU_OK(hipMemcpyHtoD(reinterpret_cast<void*>(dTlasNodes_), hs.tlas.data(),
+                      hs.tlas.size() * sizeof(Node)), "hipMemcpyHtoD(tlas)");
   return true;
 }
 

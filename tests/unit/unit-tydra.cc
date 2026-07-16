@@ -2531,6 +2531,7 @@ void tydra_texture_loader_policy_test(void) {
     env.material_config.texture_image_loader_function =
         FailingTextureImageLoader;
     env.material_config.allow_texture_load_failure = false;
+    env.material_config.strict_material_check = true;
 
     // Strict mode: 73330b10b demoted non-strict material failures to
     // warnings + default material; opt in to keep testing the error path.

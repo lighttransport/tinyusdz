@@ -273,6 +273,18 @@ private:
   void ResolveArrayEditsInLayer(Layer& layer);
   int compose_depth_ = 0;
 
+ public:
+  // Per-prim terminal resolution of stacked sparse array edits: apply each
+  // remaining edit over the prim's own base value (or an empty array when no
+  // weaker opinion supplied one) and clear the edit. Static so the pcp cache
+  // compose -- whose ComposeOpinions sees every source of a prim exactly once
+  // -- can resolve at the same "nothing weaker can arrive" point the serial
+  // compositor's depth-1 hook represents. Returns false (first message in
+  // *err) if any edit failed to apply; failed edits stay authored-as-text.
+  static bool ResolveArrayEditsOnPrim(PrimSpec* p, std::string* err);
+
+ private:
+
   // Helper methods
   void AddError(const std::string& msg, const std::string& prim_path,
                 const std::string& arc_path, ArcType type);

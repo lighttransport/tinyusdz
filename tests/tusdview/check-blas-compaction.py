@@ -18,6 +18,11 @@ prototype rebuilt the same mesh and leaked all but the last copy -- and it still
 rendered a perfect image, while using 6.7x the memory. Hence the memory
 assertion, not just the pixels.
 
+The fixture must be STATIC: a skinned/deformed prototype's BLAS is deliberately
+built refit-able (ALLOW_UPDATE, uncompacted -- a compacted AS cannot be refit),
+so on a skinned scene "resident == built" is correct behavior, not a compaction
+failure. check-rt-blas-refit.py owns the dynamic-BLAS gate.
+
 Exits 77 (skip) when the binary is missing or the GPU has no ray tracing.
 """
 import os

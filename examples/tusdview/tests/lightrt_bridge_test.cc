@@ -79,6 +79,13 @@ int main() {
   mat.roughnessTexBias = 0.15f;
   mat.displacementTexScale = 1.25f;
   mat.displacementTexBias = -0.25f;
+  mat.opacityTex = 7;
+  mat.opacityChannel = 2;
+  mat.opacityTexScale = 0.8f;
+  mat.opacityTexBias = 0.1f;
+  mat.opacitySample.uvSet = 1;
+  mat.opacitySample.uv.m00 = 1.5f;
+  mat.opacitySample.uv.tx = 0.25f;
   mat.alphaMode = static_cast<int>(tusdview::AlphaMode::Mask);
   mat.alphaCutoff = 0.42f;
   std::vector<float> directPack(tusdview::kLightRtOpenPBRFloats, -1.0f);
@@ -103,6 +110,7 @@ int main() {
     v.nz = 1.0f;
   }
   mesh.indices = {0, 1, 2};
+  mesh.vertexAlpha = {0.25f, 0.5f, 0.75f};
   tusdview::DrawSubmesh sub;
   sub.indexOffset = 0;
   sub.indexCount = 3;
@@ -160,8 +168,20 @@ int main() {
       !Near(directRasterTexPack[16 * 4 + 0], 0.0f) ||
       !Near(directRasterTexPack[16 * 4 + 1], 3.0f) ||
       !Near(directRasterTexPack[17 * 4 + 2], 1.25f) ||
-      !Near(directRasterTexPack[17 * 4 + 3], -0.25f)) {
+      !Near(directRasterTexPack[17 * 4 + 3], -0.25f) ||
+      !Near(directRasterTexPack[20 * 4 + 0], 1.5f) ||
+      !Near(directRasterTexPack[20 * 4 + 2], 0.25f) ||
+      !Near(directRasterTexPack[22 * 4 + 0], 2.0f) ||
+      !Near(directRasterTexPack[22 * 4 + 1], 0.8f) ||
+      !Near(directRasterTexPack[22 * 4 + 2], 0.1f) ||
+      !Near(directRasterTexPack[22 * 4 + 3], 1.0f) ||
+      !Near(directRasterTexPack[24 * 4 + 0], 7.0f)) {
     std::fprintf(stderr, "unexpected raster texture-param packing\n");
+    return 1;
+  }
+  if (host.cols.size() != 12 || !Near(host.cols[3], 0.25f) ||
+      !Near(host.cols[7], 0.5f) || !Near(host.cols[11], 0.75f)) {
+    std::fprintf(stderr, "displayOpacity RGBA packing changed\n");
     return 1;
   }
 

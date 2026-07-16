@@ -27,6 +27,10 @@ web/site/dist/
 web/build_ninja/
 web/cmake-build/
 web/cmake-build64/
+web/cmake-build-next/
+web/cmake-build-next64/
+web/cmake-build*-configure.log
+web/cmake-build*-build.log
 web/npm/dist/
 web/npm/.tmp-package-smoke/
 web/npm/.nodejs/
@@ -390,6 +394,7 @@ CMakeUserPresets.json
 !tests/usda/spec/*.usda
 !tests/unit/fixtures/*.usda
 !tests/next/fixtures/*.usda
+!tests/next/fixtures/vr-edge/**/*.usda
 !tests/usda/validation/valid/*.usda
 !tests/usdc/aousd-unknown-property-metadata.usdc
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
@@ -499,3 +504,4 @@ python/tinyusdz/_core.*.so
 # tusdchecker ARKit profile fixtures
 !tools/tusdchecker/testdata/arkit-clean.usda
 !tools/tusdchecker/testdata/arkit-violations.usda
+.xmake/

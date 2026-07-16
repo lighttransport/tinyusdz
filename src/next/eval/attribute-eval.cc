@@ -141,6 +141,12 @@ EvalResult AttributeEval::EvalFromPrimSpec(const PrimSpec* spec, const std::stri
       result.interpolated = sample.interpolated;
       return result;
     }
+    if (sample.blocked) {
+      // Authored per-sample BLOCK: the attribute has no value at this time
+      // and weaker sources (spline/default/fallback) must not shine through.
+      result.blocked = true;
+      return result;
+    }
   }
 
   // Spline (AOUSD 12.3 precedence: timeSamples > spline > default). The

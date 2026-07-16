@@ -50,9 +50,13 @@ struct MaterialTexParam {
                  // layout must stay byte-identical across every stage.
   vec4 specParams;  // specular F0 (see mesh.frag); unused here, kept for
                     // the byte-identical SSBO stride.
+  vec4 opacityUv0; vec4 opacityUv1;
+  vec4 opacityParams;
+  vec4 udimSlots0;
+  vec4 udimSlots1;
 };
 layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
-// Per-vertex displayColor (set 24): packed floats, 3 per vertex, indexed by
+// Per-vertex displayColor + displayOpacity (set 24): 4 floats per vertex.
 // gl_VertexIndex. Bound to a shared dummy for meshes without color; the fetch is
 // gated by pc.ids.w bit 32 so the dummy's contents never matter.
 layout(set = 24, binding = 0, std430) readonly buffer VtxColor { float c[]; } vtxcol;
@@ -73,7 +77,7 @@ layout(location = 3) flat out int vDomJoint;   // dominant skin joint (SkinWeigh
 layout(location = 4) out float vDomWeight;
 layout(location = 5) out vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
 layout(location = 6) out float vMorphInfl;     // blendshape influence (world units)
-layout(location = 7) out vec3 vColor;          // per-vertex displayColor (white = none)
+layout(location = 7) out vec4 vColor;          // displayColor.rgb + displayOpacity
 
 void main() {
   // Blendshape morph (before skin) + linear-blend skin -> object-space pos/nrm.
@@ -114,9 +118,10 @@ void main() {
   // backend multiplies it into the base color (attrib 9); parity requires the
   // same here. Gated on pc.ids.w bit 32 -- meshes without color see white.
   vColor = ((pc.ids.w & 32) != 0)
-               ? vec3(vtxcol.c[3 * gl_VertexIndex + 0],
-                      vtxcol.c[3 * gl_VertexIndex + 1],
-                      vtxcol.c[3 * gl_VertexIndex + 2])
-               : vec3(1.0);
+               ? vec4(vtxcol.c[4 * gl_VertexIndex + 0],
+                      vtxcol.c[4 * gl_VertexIndex + 1],
+                      vtxcol.c[4 * gl_VertexIndex + 2],
+                      vtxcol.c[4 * gl_VertexIndex + 3])
+               : vec4(1.0);
   gl_Position = fr.viewProj * pc.model * vec4(pos, 1.0);
 }

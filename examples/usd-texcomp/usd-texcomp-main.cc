@@ -2,7 +2,7 @@
 //
 // For every `UsdUVTexture.inputs:file` that points at an ordinary image
 // (png/jpg/...), compress it to a `.ktx2` carrying the tinyexr `uni`
-// (UASTC-subset) intermediate with a full mip chain, write it next to the
+// private transcodable intermediate with a full mip chain, write it next to the
 // output, and record it on the attribute as a *legacy-safe hint*:
 //
 //     asset inputs:file = @diffuse.png@ ( customData = { asset ktx2 = @diffuse.ktx2@ } )
@@ -170,8 +170,9 @@ bool LoadRGBA8(const std::string &path, std::vector<uint8_t> *out, int *w, int *
   return true;
 }
 
-// RGBA8 -> uni mip chain -> KTX2 bytes. `zstd` supercompresses the level payloads
-// (supercompressionScheme 2) — the form real KTX2/UASTC assets ship in.
+// RGBA8 -> private uni mip chain -> KTX2 bytes. `zstd` supercompresses the
+// level payloads (supercompressionScheme 2). This carrier is decoded by
+// tinyusdz/textools; it is not Basis UASTC.
 bool EncodeUniKtx2(const std::vector<uint8_t> &rgba, int w, int h, bool mips,
                    bool zstd, std::vector<uint8_t> *out, int *levels_out,
                    std::string *err) {
@@ -220,8 +221,9 @@ bool EncodeUniKtx2(const std::vector<uint8_t> &rgba, int w, int h, bool mips,
     uint8_t *buf = nullptr;
     size_t bsz = 0;
     if (!TP_OK(tp_ktx2_write_uni_zstd(nullptr, &ZstdBound, &ZstdCompress, nullptr,
-                                      lp.data(), ls.data(), lw.data(), lh.data(),
-                                      n, &buf, &bsz))) {
+                                      lp.data(), ls.data(), uint32_t(w),
+                                      uint32_t(h), n, TP_UNI_ALPHA, &buf,
+                                      &bsz))) {
       if (err) *err = "tp_ktx2_write_uni_zstd failed";
       return false;
     }
@@ -240,8 +242,8 @@ bool EncodeUniKtx2(const std::vector<uint8_t> &rgba, int w, int h, bool mips,
     return false;
   }
   out->resize(ksz);
-  if (!TP_OK(tp_ktx2_write_uni(lp.data(), ls.data(), lw.data(), lh.data(), n,
-                               out->data(), ksz, nullptr))) {
+  if (!TP_OK(tp_ktx2_write_uni_ex(lp.data(), ls.data(), uint32_t(w), uint32_t(h),
+                                  n, TP_UNI_ALPHA, out->data(), ksz, nullptr))) {
     if (err) *err = "tp_ktx2_write_uni failed";
     return false;
   }
@@ -299,7 +301,7 @@ void Usage() {
       "usage: usd-texcomp <input.usd[a|c]> -o <output.usda> [--mips on|off]\n"
       "                   [--zstd on|off]   (Zstd-supercompress the .ktx2; default on)\n"
       "\n"
-      "For each UsdUVTexture inputs:file image, writes <name>.ktx2 (uni/UASTC,\n"
+      "For each UsdUVTexture inputs:file image, writes <name>.ktx2 (private uni,\n"
       "mipped) next to the output and adds a legacy-safe hint on the attribute:\n"
       "  asset inputs:file = @t.png@ ( customData = { asset ktx2 = @t.ktx2@ } )\n"
       "inputs:file is unchanged, so stock USD tools and USDZ are unaffected.\n"

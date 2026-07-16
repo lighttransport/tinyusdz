@@ -3,8 +3,8 @@
 
 // Instanced flat-shaded prototype fragment shader. Mirrors the GL kInstancedFS
 // AOV ladder + headlight so instanced geometry looks identical across backends.
-// Prototypes carry no UV / material scalars, so those AOV modes fall through to
-// a neutral gray (visually obvious there is no data, vs masquerading as a render).
+// Prototypes carry no UV / most material scalars, so those AOV modes fall
+// through to neutral gray. Per-instance/prototype opacity is available.
 layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec3 vColor;
@@ -111,12 +111,13 @@ void main() {
     if (fr.mode.x == 18) { outColor = vec4(purposeColor(purpose), 1.0); return; }
     if (fr.mode.x == 29) { outColor = vec4(kindColor(kind), 1.0); return; }
     if (fr.mode.x == 26) { outColor = vec4(idColor(vInstanceId), 1.0); return; }  // instance id
+    if (fr.mode.x == 12) { outColor = vec4(vec3(vOpacity), 1.0); return; }        // opacity
     if (fr.mode.x == 25) {  // curvature (screen-space geometric normal variation)
       vec3 n = Ngeo;
       float c = clamp((length(dFdx(n)) + length(dFdy(n))) * 8.0, 0.0, 1.0);
       outColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0); return;
     }
-    // Modes instanced prototypes cannot supply (UV/material scalars): neutral gray.
+    // Modes instanced prototypes cannot supply (UV/other material scalars): neutral gray.
     outColor = vec4(0.18, 0.18, 0.18, 1.0); return;
   }
   vec3 V = normalize(fr.camPos.xyz - vWorldPos);

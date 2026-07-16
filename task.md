@@ -1,5 +1,47 @@
 # Task: Skinning under ray tracing for tusdview
 
+> **STATUS 2026-07-16: DONE through the BLAS-refit optimization.**
+> The MVP (skin into the vbo without Tydra reconvert + BLAS rebuild) landed
+> earlier (`edac29e79` re-pose --next RT geometry per frame, plus the legacy
+> `BuildRtSkinnedMeshVertices` path; gated by `tusdview-rt-skinning` /
+> `tusdview-deform-*-rt`). The refit optimization landed 2026-07-16:
+>
+> - A mesh whose vertices `updateMeshVertices` rewrites under RT is marked
+>   `blasDynamic`; its BLAS builds with `ALLOW_UPDATE` (uncompacted -- a
+>   compacted AS cannot be refit) and later poses REFIT it in place
+>   (`refitBlas`, `MODE_UPDATE`, persistent scratch) instead of paying a full
+>   destroy + `MODE_BUILD` per frame. `TUSDVIEW_NO_BLAS_REFIT=1` is the A/B
+>   lever back to the historical path.
+> - Measured (RX 9070 XT / RADV, 205k-tri skinned tube): per-pose AS update
+>   3.2-3.3 ms -> 1.4-1.5 ms (refit itself 1.2 ms); byte-identical images on
+>   the legacy loader, --next, and the blendshape model.
+> - `--play` flag added: headless playback with a FIXED 1/60 step in --frames
+>   runs, so multi-pose RT runs are deterministic and screenshot-comparable
+>   (this is what lets any per-frame deform be exercised headlessly at all).
+> - Gates: `tusdview-rt-blas-refit` (refit vs rebuild byte-parity over a
+>   --play run + a moved-pose guard; mutation-verified by skipping the
+>   `refitBlas` call). `tusdview-blas-compaction` now runs on the new STATIC
+>   fixture `models/blastest-instanced-static.usda` (+ its referenced
+>   `blastest-proto-sphere.usda`) because a skinned prototype's BLAS is
+>   deliberately uncompacted now -- resident==built on a skinned scene is
+>   correct behavior, and the shrink assertion needs compactable geometry.
+>
+> Follow-up landed same day: the CPU pose itself is now threaded
+> (`DeformParallelFor`, bit-identical range-split; median 3.2 -> 1.67 ms at
+> 102k verts) and the legacy path's per-frame whole-mesh deep copy for the
+> displacement probe is gone. The GPU-compute skin pass from the plan below
+> was CONSIDERED AND REJECTED: it cannot keep the byte-parity oracle
+> architecture (check-rt-skinning asserts RT re-pose == CPU bake exactly;
+> GPU FMA/ULP drift breaks that) for ~1-2 ms of remaining headroom.
+>
+> Final follow-up (2026-07-16): the HIP interactive tracer now REFITS its
+> 2-level BVH per pose (~270 ms rebuild -> ~16.5 ms at 205k tris,
+> byte-identical; gate `tusdview-hip-bvh-refit`, doubly mutation-verified),
+> and its --screenshot path reuses the interactive scene instead of a
+> redundant rebuild. CUDA keeps the rebuild -- it is screenshot-only, no
+> per-pose path exists. Nothing from this task remains open.
+> Original task text kept below for context.
+
 > Resume prompt. This is the last remaining GPU-skinning gap. Raster-path GPU
 > skinning (skeletal + blendshape + node-animated/mixed scenes) is **done and
 > committed**; the Vulkan ray-query (RT) path still falls back to the slow CPU

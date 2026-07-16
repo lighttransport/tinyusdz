@@ -397,7 +397,8 @@ struct RenderMaterial {
     // Prefer OpenPBR if available (MaterialX path)
     if (openPBRShader.has_value()) {
       const auto &s = *openPBRShader;
-      if (s.transmission_weight.value > 0.0f || s.opacity.value < 1.0f) {
+      if (s.transmission_weight.value > 0.0f || s.opacity.value < 1.0f ||
+          s.opacity.is_texture()) {
         materialTag = MaterialTag::Translucent;
       } else {
         materialTag = MaterialTag::Opaque;
@@ -409,7 +410,7 @@ struct RenderMaterial {
       const auto &s = *surfaceShader;
       if (s.opacityThreshold.value > 0.0f) {
         materialTag = MaterialTag::Masked;
-      } else if (s.opacity.value < 1.0f) {
+      } else if (s.opacity.value < 1.0f || s.opacity.is_texture()) {
         materialTag = MaterialTag::Translucent;
       } else {
         materialTag = MaterialTag::Opaque;

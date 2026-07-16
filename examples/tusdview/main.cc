@@ -203,7 +203,6 @@ int main(int argc, char** argv) {
   int streamMotionQuality = 45;      // motion-frame JPEG quality (1-100)
   int streamIdleMs = 350;            // ms of input quiet before the lossless refine
   bool headless = false;      // windowless offscreen rendering (Vulkan only)
-  bool headlessPlay = false;  // --play: advance the anim clock per headless frame
   bool threaded = false;      // --threaded: experimental render-thread GL path
   bool useNextLoader = true;              // next-core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
@@ -226,6 +225,7 @@ int main(int argc, char** argv) {
   std::optional<double> timeCode;         // --time T: evaluate the scene at this
                                           // time code (animated screenshots)
   tusdview::SkinningMode skinningMode = tusdview::SkinningMode::Auto;
+  bool playAnim = false;                  // --play: start timeline playback on load
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--config") == 0) {
@@ -456,8 +456,6 @@ int main(int argc, char** argv) {
                 std::strcmp(argv[i], "--frame") == 0) &&
                (i + 1) < argc) {
       timeCode = std::atof(argv[++i]);
-    } else if (std::strcmp(argv[i], "--play") == 0) {
-      headlessPlay = true;
     } else if (std::strcmp(argv[i], "--skinning") == 0 && (i + 1) < argc) {
       const char* mode = argv[++i];
       if (std::strcmp(mode, "cpu") == 0) {
@@ -470,6 +468,8 @@ int main(int argc, char** argv) {
         LOGE("--skinning must be auto, cpu, or gpu");
         return 1;
       }
+    } else if (std::strcmp(argv[i], "--play") == 0) {
+      playAnim = true;
     } else if (std::strcmp(argv[i], "--rt") == 0) {
       wantRt = true;
     } else if (std::strcmp(argv[i], "--cuda") == 0) {
@@ -665,10 +665,10 @@ int main(int argc, char** argv) {
           "  --time CODE   Evaluate the scene at this USD time code (animated "
           "transforms/points/skinning). Useful with --frames for a screenshot at "
           "a specific frame. Interactive runs play from the Timeline panel.\n"
-          "  --play        Headless runs advance the animation clock by a fixed "
-          "1/60 s per frame (deterministic; exercises per-frame skinning/BLAS "
-          "updates). Default: every headless frame renders at --time.\n"
           "  --skinning MODE  Skinning path: auto (default), cpu, or gpu.\n"
+          "  --play        Start timeline playback on load. With --frames the "
+          "playback clock steps a fixed 1/60 s per frame (deterministic pose at "
+          "every frame, so --screenshot captures are pixel-comparable).\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
           "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
           "  --mcp         Both transports.\n"
@@ -955,7 +955,6 @@ int main(int argc, char** argv) {
     }
   }
   app.setUseNextLoader(useNextLoader);
-  app.setHeadlessPlay(headlessPlay);
   app.setCullEnabled(!noCull);
   app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);
@@ -963,6 +962,7 @@ int main(int argc, char** argv) {
   app.setDevicePreference(devicePreference);
   app.setAllowBackendFallback(!backendExplicit && backend == tusdview::Backend::Vulkan);
   app.setSkinningMode(skinningMode);
+  app.setPlayAnimation(playAnim);
   app.setMcpStdio(mcpStdio);
   app.setMcpHttp(mcpHttpPort);
   app.setStreamHttp(streamHttpPort);

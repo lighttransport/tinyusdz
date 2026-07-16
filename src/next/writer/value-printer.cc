@@ -483,7 +483,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
       size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
       for (size_t i = 0; i < limit; ++i) {
         if (i) out.append(", ");
-        out.append((*a)[i] ? "true" : "false");
+        out.append((*a)[i] ? "1" : "0");  // pxr spells VALUE bools 1/0
       }
       if (limit < a->size()) out.append(", ...");
       out.append(']');
@@ -686,7 +686,7 @@ void PrintValueInto(std::string& out, const Value& value,
       case TypeId::Bool: {
         if (const auto* a = value.as_bool_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
-          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; out += ((*a)[i] ? "true" : "false"); }
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; out += ((*a)[i] ? "1" : "0"); }  // pxr: 1/0
           if (limit < a->size()) out += ", ...";
         }
         break;
@@ -775,7 +775,7 @@ void PrintValueInto(std::string& out, const Value& value,
   switch (type_id) {
     case TypeId::Bool: {
       const bool* v = value.as_bool();
-      out += v ? (*v ? "true" : "false") : "None";
+      out += v ? (*v ? "1" : "0") : "None";  // pxr spells VALUE bools 1/0
       return;
     }
 

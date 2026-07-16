@@ -369,11 +369,19 @@ struct DrawMaterialCPU {
   int normalTex{-1};
   int coatNormalTex{-1};
   int emissiveTex{-1};
+  // Separate scalar opacity map. This is distinct from baseColorTex's alpha:
+  // DCCs commonly connect an independent grayscale/UDIM mask to
+  // UsdPreviewSurface inputs:opacity.
+  int opacityTex{-1};
   DrawTexSampleCPU baseColorSample;
   DrawTexSampleCPU metalRoughSample;
   DrawTexSampleCPU normalSample;
   DrawTexSampleCPU coatNormalSample;
   DrawTexSampleCPU emissiveSample;
+  DrawTexSampleCPU opacitySample;
+  int opacityChannel{0};
+  float opacityTexScale{1.0f};
+  float opacityTexBias{0.0f};
   int metallicChannel{2};  // glTF ORM default: B
   int roughnessChannel{1}; // glTF ORM default: G
   float metallicTexScale{1.0f};
