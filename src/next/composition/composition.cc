@@ -125,6 +125,7 @@ void MergeWeakerPropMeta(PropMeta* stronger, const PropMeta& weaker) {
   fill(PropMeta::kBindMaterialAs, &stronger->bindMaterialAs,
        weaker.bindMaterialAs);
   fill(PropMeta::kKind, &stronger->kind, weaker.kind);
+  fill(PropMeta::kPermission, &stronger->permission, weaker.permission);
   fill(PropMeta::kWeight, &stronger->weight, weaker.weight);
   fill(PropMeta::kUnauthoredIdx, &stronger->unauthoredValuesIndex,
        weaker.unauthoredValuesIndex);
@@ -353,26 +354,11 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   graft_paths_.clear();
 
   // The flattened output has all sublayer opinions baked in: keeping the
-  // subLayers list would re-apply (now stale) layers on re-read. Fill stage
-  // metadata gaps from sublayers first (defaultPrim authored only in a
-  // sublayer must survive), then drop the list.
-  if (!result->meta().subLayers.empty()) {
-    // Stage metadata resolves through the whole root layer STACK (root
-    // wins, then sublayers in strength order); gap-fill before dropping
-    // the list — this flatten output IS the stage for downstream
-    // consumers.
-    for (const std::string& sl : result->meta().subLayers) {
-      std::string resolved = sl;
-      if (resolver_) {
-        resolved = resolver_->ResolvePath(
-            sl, anchor_path, !options_.strict_aousd_conformance);
-      }
-      if (const Layer* sub = GetCachedLayer(resolved)) {
-        result->meta().FillAbsentStageMetaFrom(sub->meta());
-      }
-    }
-    result->meta().subLayers.clear();
-  }
+  // subLayers list would re-apply (now stale) layers on re-read. Stage
+  // metadata comes from the ROOT layer only — pxr does not fall back to
+  // sublayer-authored stage fields (verified against the 26.05 oracle) —
+  // so the consumed list is dropped without any gap-fill.
+  result->meta().subLayers.clear();
 
   // The crate writer's compressed-paths encoding requires ancestors before
   // descendants with contiguous subtrees; grafted prims were appended at the
@@ -835,6 +821,14 @@ void Compositor::CopyLocalOpinions(
       }
       continue;  // target opinion otherwise wins (incl. time-sampled merge)
     }
+    // Mirror of the rel-vs-attr form conflict below: a weaker ATTRIBUTE under
+    // an existing stronger relationship of the same name is ignored (pxr
+    // keeps the defining spec's form and drops the conflicting spec).
+    if (!slot.is_relationship() &&
+        (target.relationship(pname) ||
+         target.relationship_opinion_stack(pname))) {
+      continue;
+    }
     const Value* src_val = source.property_value(slot.name_id);
     if (src_val) {
       target.add_property(slot.name_id, *src_val, slot.flags);
@@ -865,6 +859,23 @@ void Compositor::CopyLocalOpinions(
   // is applied to the weaker effective list (the old skip-on-existing path
   // lost `</A>` from weak A + strong prepend B).
   for (const auto& rel_name : source.relationship_names()) {
+    // pxr: property specs whose FORM conflicts with the defining (strongest)
+    // spec are ignored. A weaker RELATIONSHIP under an existing attribute
+    // slot of the same name contributes no targets — but a relationship
+    // spec's intrinsic `uniform` variability is an authored field and still
+    // fills the composed attribute (usdcat prints `uniform double x`).
+    {
+      const PropNameId aid = GetPropNameTable().find(rel_name);
+      if (aid.is_valid()) {
+        const PropSlot* aslot = target.property(aid);
+        if (aslot && !aslot->is_relationship()) {
+          if (PropSlot* ms = target.property_mutable(aid)) {
+            ms->flags |= PropSlot::kFlagUniform;
+          }
+          continue;
+        }
+      }
+    }
     std::vector<PrimSpec::RelationshipOpinion> opinions;
     if (const auto* existing = target.relationship_opinion_stack(rel_name)) {
       opinions = *existing;
@@ -877,10 +888,24 @@ void Compositor::CopyLocalOpinions(
         opinion.edit = it->second;
         opinion.qualified = !it->second.is_explicit;
       }
-      opinions.push_back(std::move(opinion));
+      // A DECLARED-ONLY relationship (no targets, no authored edit) carries
+      // no target opinion — pushing an empty explicit one here BLOCKED
+      // weaker list-edited targets (BasicListEditing).
+      if (!opinion.items.empty() || opinion.edit.authored) {
+        opinions.push_back(std::move(opinion));
+      }
     }
 
+    // Track opinions whose every target was DROPPED as unmappable across the
+    // arc: pxr keeps the relationship SPEC but no target opinion (a bare
+    // `rel name` on flatten), NOT an authored-explicit empty list (`= None`).
+    size_t src_opinions = 0;
+    size_t src_vacated = 0;
+    const size_t prior_opinions = opinions.size();
     auto remap_opinion = [&](PrimSpec::RelationshipOpinion opinion) {
+      ++src_opinions;
+      const bool had_items = !opinion.items.empty() ||
+                             opinion.edit.has_authored_opinion();
       std::vector<Path> mapped_items;
       for (const Path& item : opinion.items) {
         if (target_mappable(item)) mapped_items.push_back(map_target(item));
@@ -900,6 +925,10 @@ void Compositor::CopyLocalOpinions(
       remap_edit_items(&opinion.edit.appended);
       remap_edit_items(&opinion.edit.deleted);
       remap_edit_items(&opinion.edit.ordered);
+      if (had_items && opinion.items.empty() &&
+          !opinion.edit.has_authored_opinion()) {
+        ++src_vacated;
+      }
       opinions.push_back(std::move(opinion));
     };
 
@@ -916,7 +945,10 @@ void Compositor::CopyLocalOpinions(
         opinion.edit = it->second;
         opinion.qualified = !it->second.is_explicit;
       }
-      remap_opinion(std::move(opinion));
+      // Declared-only source rel: no target opinion (see above).
+      if (!opinion.items.empty() || opinion.edit.authored) {
+        remap_opinion(std::move(opinion));
+      }
     }
 
     std::vector<Path> effective;
@@ -927,12 +959,18 @@ void Compositor::CopyLocalOpinions(
         ApplyRelationshipEdit(&effective, it->edit);
       }
     }
+    // Every contributed opinion lost all its targets to arc mapping and there
+    // was no prior opinion: the composed relationship exists but carries NO
+    // target opinion (bare `rel name`, pxr parity) — an authored-explicit
+    // empty list here would wrongly serialize as `= None`.
+    const bool vacated = prior_opinions == 0 && src_opinions > 0 &&
+                         src_vacated == src_opinions && effective.empty();
     target.set_relationship_targets(rel_name, std::move(effective));
     target.set_relationship_opinion_stack(rel_name, std::move(opinions));
     ArcEdit& resolved = target.ensure_relationship_edit(rel_name);
     resolved = ArcEdit();
-    resolved.authored = true;
-    resolved.is_explicit = true;
+    resolved.authored = !vacated;
+    resolved.is_explicit = !vacated;
     target.set_relationship_flags(
         rel_name, static_cast<uint16_t>(target.relationship_flags(rel_name) |
                                         source.relationship_flags(rel_name)));
@@ -1016,6 +1054,10 @@ void Compositor::CopyLocalOpinions(
       !target.meta().kindAuthored() && target.meta().kind().empty()) {
     target.meta().kind() = source.meta().kind();
     target.meta().setKindAuthored();
+  }
+  if (!source.meta().permission().empty() &&
+      target.meta().permission().empty()) {
+    target.meta().permission() = source.meta().permission();
   }
   if ((source.meta().displayNameAuthored() ||
        !source.meta().displayName().empty()) &&
@@ -1564,6 +1606,11 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
   }
   if (!variant.doc.empty() && prim.meta().doc().empty()) {
     prim.meta().doc() = variant.doc;
+  }
+  if (!variant.kind.empty() && !prim.meta().kindAuthored() &&
+      prim.meta().kind().empty()) {
+    prim.meta().kind() = variant.kind;
+    prim.meta().setKindAuthored();
   }
   if (!variant.active) {
     prim.meta().active = false;

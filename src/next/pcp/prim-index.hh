@@ -39,22 +39,27 @@ namespace pcp {
 /// relocate authored in a referenced layer renames prims inside the referenced
 /// namespace, and the rename then maps through the arc into root space.
 ///
-/// Keys are PRE-relocation ("raw") spec paths, because that is what a composed
-/// prim's source site is: a relocate whose paths are expressed in a namespace
-/// already renamed by an ancestral relocate (`/A -> /W`, then `/W/B -> /W/X`)
-/// is normalized back to the raw namespace (`/A/B -> X`) when this is built.
+/// Tables are keyed for their consumer (BuildStackRelocates splits by keying):
+///   * `src_to_dst` uses the RAW (pre-ancestral-relocation) source, so
+///     WithStackRelocates' single-pass relationship/connection target remap
+///     pre-chains ancestral relocates (raw target -> FINAL dst).
+///   * `departed` / `arrivals` use the COMPOSED (as-authored) path, so
+///     SourcesForRelocateSource resolves a source through the composed
+///     namespace (its ancestors exist there as arrivals, carrying relocated
+///     content AND post-relocation `over` opinions) and ComposeChildNames
+///     removes a composed prim's departed children by their composed parent.
 struct StackRelocates {
-  /// raw source path -> authored destination path.
+  /// RAW source path -> authored destination path (WithStackRelocates remap).
   std::map<std::string, std::string> src_to_dst;
-  /// raw parent path -> child names that moved away ("prohibited child names").
+  /// COMPOSED parent path -> child names that moved away ("prohibited names").
   std::map<std::string, std::set<std::string>> departed;
   /// One prim arriving under a parent through a relocate.
   struct Arrival {
     std::string name;        // composed child name (last component of `dst`)
-    std::string src_site;    // raw source path the content comes from
+    std::string src_site;    // COMPOSED source path the content comes from
     std::string dst_site;    // authored destination path (may carry opinions)
   };
-  /// raw destination-parent path -> prims relocated into it.
+  /// COMPOSED destination-parent path -> prims relocated into it.
   std::map<std::string, std::vector<Arrival>> arrivals;
 
   bool empty() const { return src_to_dst.empty(); }
@@ -219,11 +224,10 @@ struct CompositionOptions {
   /// Fallback variant selections, consulted ONLY when no selection is authored
   /// anywhere for that set (pxr's PcpVariantFallbackMap / UsdStage global
   /// variant fallbacks). Candidates are tried in order; the first one the set
-  /// actually defines is selected. Defaults to USD's registered `standin`
-  /// fallbacks, so an asset whose standin set is left unselected still composes
-  /// its render standin, as pxr does.
-  std::map<std::string, std::vector<std::string>> variant_fallbacks{
-      {"standin", {"render", "proxy"}}};
+  /// actually defines is selected. EMPTY by default: stock OpenUSD registers
+  /// no fallbacks (the classic `standin -> render` map is a Presto plugin
+  /// registration) — pass {"standin", {"render", "proxy"}} to opt in.
+  std::map<std::string, std::vector<std::string>> variant_fallbacks;
 
   /// Variant selection overrides: map of variantSet -> variantName. Overrides
   /// any authored variantSelection on the same set (stronger than authored).

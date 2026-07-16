@@ -632,6 +632,8 @@
     if (pm.authored & PropMeta::kBindMaterialAs)
       tok_field("bindMaterialAs", pm.bindMaterialAs);
     if (pm.authored & PropMeta::kKind) tok_field("kind", pm.kind);
+    if (pm.authored & PropMeta::kPermission)
+      tok_field("permission", pm.permission);
     if (pm.authored & PropMeta::kDisplayName)
       str_field("displayName", pm.displayName);
     if (pm.authored & PropMeta::kDisplayGroup)

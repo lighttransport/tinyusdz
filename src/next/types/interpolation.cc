@@ -171,9 +171,10 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
 
   // Handle array interpolation
   if (a.is_array()) {
-    // Array sizes must match
+    // Size-mismatched arrays cannot lerp; HOLD the earlier sample (pxr
+    // behavior — changing topology must not drop the value entirely).
     if (a.array_size() != b.array_size()) {
-      return Value();
+      return a;
     }
 
     const size_t comps = GetComponentCount(type);

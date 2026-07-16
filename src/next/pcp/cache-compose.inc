@@ -58,16 +58,26 @@
         // every other authored opinion: a STRONGER source's authored active
         // wins over a weaker variant's (keeps ComposedActive() in agreement
         // with the filled output).
-        if (!s.variant->active && !out->meta().active_authored) {
-          out->meta().active = false;
+        if ((!s.variant->active || s.variant->active_authored) &&
+            !out->meta().active_authored) {
+          out->meta().active = s.variant->active;
           out->meta().active_authored = true;
         }
-        if (s.variant->hidden) {
-          out->meta().hidden = true;
+        // Authored hidden (true OR false) is a real opinion: `hidden = 0`
+        // on the selected option must appear on the composed prim (pxr
+        // parity — flatten emits `hidden = false`).
+        if ((s.variant->hidden || s.variant->hidden_authored) &&
+            !out->meta().hidden_authored) {
+          out->meta().hidden = s.variant->hidden;
           out->meta().hidden_authored = true;
         }
         if (!s.variant->doc.empty() && out->meta().doc().empty()) {
           out->meta().doc() = s.variant->doc;
+        }
+        if (!s.variant->kind.empty() && !out->meta().kindAuthored() &&
+            out->meta().kind().empty()) {
+          out->meta().kind() = s.variant->kind;
+          out->meta().setKindAuthored();
         }
         for (const auto &pr : s.variant->properties) {
           const PropSlot *ts = out->property(pr.name);
@@ -89,8 +99,20 @@
         continue;
       }
 
+      if (s.suppress_site_specs) continue;  // relocation-source opinions
       const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
       if (specs.empty()) continue;
+
+      // A relocate authored in a layer stack does NOT remap the TARGET paths of
+      // opinions authored in THAT SAME stack's own layers -- only targets brought
+      // in via arcs BENEATH it (pxr: "relocates only affect target paths brought
+      // in from the reference, not paths authored locally in this layer",
+      // BasicRelocateToAnimInterfaceAsNewRootPrim). Every source `s` here is a
+      // site-own opinion of `s.stack_idx`, so strip that stack's own relocate
+      // renames from its target-remap map (ancestor stacks' relocates, carried
+      // through the arc, are kept). Falls back to the full map when the stack
+      // authored no relocates.
+      const NamespaceMapping s_target_map = ArcOnlyMapping(s);
 
       for (const SpecRef &sr : specs) {
         const PrimSpec *spec = sr.spec;
@@ -137,12 +159,64 @@
               if (s.arc_kind == ArcType::Variant) {
                 return Mapping(s.map_idx).Apply(p);
               }
-              return Mapping(s.map_idx).ApplyTarget(p);
+              std::string r = s_target_map.ApplyTarget(p);
+              if (!r.empty() || s.arc_kind != ArcType::Inherit || !s.arc_chain)
+                return r;
+              // A connection/relationship target authored in an inherited local
+              // CLASS that points OUTSIDE the class namespace (at a SIBLING
+              // instance of that class) is unmappable by the class's own
+              // implied-class map, which only covers the class subtree — yet the
+              // class lives in a REFERENCED layer stack, so the target resolves
+              // through that reference. Walk the arc chain (deepest first) and map
+              // through the first arc-crossing (reference/payload) map that can
+              // express the target. pxr: ErrorInvalidInstanceTargetPath's
+              // SymBrow.sculpt.amount.connect -> sibling {L,R}Brow.InnUD.
+              const std::string inst_root =
+                  Path(Mapping(s.map_idx).Apply(s.site)).parent().str();
+              const std::string prim =
+                  p.substr(0, p.find_first_of(".["));  // strip .prop / [target]
+              for (auto it = s.arc_chain->rbegin(); it != s.arc_chain->rend();
+                   ++it) {
+                const NamespaceMapping &cm = Mapping(it->second);
+                if (!cm.crosses_arc) continue;
+                const std::string cr = cm.ApplyTarget(p);
+                if (cr.empty()) continue;
+                // INVALID SELF-INSTANCE TARGET: a target that, un-relocated in the
+                // referenced stack, lies UNDER the very instance this class is
+                // inherited into is a non-invertible self-reference. pxr keeps it
+                // at the reference-mapped but PRE-relocate path (does NOT apply the
+                // instance's own relocate). Other-instance targets relocate
+                // normally.
+                const std::string inst_arc = cm.ReverseApply(inst_root);
+                const std::string prim_unrelo =
+                    FullyUnrelocate(it->first, prim);
+                if (NamespaceMapping::AtOrUnder(prim_unrelo, inst_arc)) {
+                  // Un-do the composed (root-stack) relocate that `cm` applied,
+                  // returning the reference-mapped but PRE-relocate path — the
+                  // invalid self-instance target is kept there (pxr does not
+                  // relocate it, unlike an other-instance target).
+                  const size_t dot = cr.find_first_of(".[");
+                  const std::string cr_prim =
+                      dot == std::string::npos ? cr : cr.substr(0, dot);
+                  const std::string cr_suf =
+                      dot == std::string::npos ? std::string() : cr.substr(dot);
+                  const std::string ur = FullyUnrelocate(0, cr_prim);
+                  if (!ur.empty()) return ur + cr_suf;
+                }
+                return cr;
+              }
+              return r;
             });
         snapshot_pre_clip_props();
       }
     }
-    if (specifier_seen) out->set_specifier(resolved_specifier);
+    if (specifier_seen) {
+      out->set_specifier(resolved_specifier);
+    } else {
+      // No contributing spec at all (e.g. a relocate-arrival "ghost" prim
+      // whose source authored nothing): pxr materializes it as `over`.
+      out->set_specifier(PrimSpecifier::Over);
+    }
     if (clips_snapshot_taken) {
       for (const PropSlot &sl : out->properties().slots()) {
         if (sl.is_relationship()) continue;
@@ -207,6 +281,13 @@
     for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
       const Src &s = *sit;
       if (s.variant) continue;  // variant child prims not modeled yet
+      // Opinions authored at a relocation SOURCE path are prohibited (pxr
+      // "salted earth"): their child prims must NOT enter the composed child
+      // list either. The Src itself stays for traversal (chained relocations),
+      // but its own spec children are suppressed — a child authored at the
+      // source (ErrorInvalidReferenceToRelocationSource PreReloChild) leaked
+      // while arc-delivered children (model.usd ModelChild) correctly follow.
+      if (s.suppress_site_specs) continue;
       const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
       for (auto rit = specs.rbegin(); rit != specs.rend(); ++rit) {
         const PrimSpec *spec = rit->spec;
@@ -227,6 +308,11 @@
       }
     }
     for (const std::string &name : edits.arrived) {
+      // A name that one stack relocates IN and another relocates OUT is a
+      // chained-relocation pass-through (CHARACTER -> Character -> Model): the
+      // content flows to the final destination, so the intermediate name must
+      // NOT materialize (pxr collapses the chain). TrickyMultipleRelocations5.
+      if (edits.departed.count(name)) continue;
       if (seen_child.insert(name).second) child_names.push_back(name);
     }
     return child_names;

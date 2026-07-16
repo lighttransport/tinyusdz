@@ -466,6 +466,15 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_aousd_value_resolution PRIVATE tinyusdz_next)
 
+    # Self-contained value-resolution edge matrix (pxr-baked expectations in
+    # tests/next/generated/vr-edge-expected.inc; never skips).
+    add_executable(test_vr_edge_matrix
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_vr_edge_matrix.cc
+    )
+    target_link_libraries(test_vr_edge_matrix PRIVATE tinyusdz_next)
+    target_include_directories(test_vr_edge_matrix PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next)
+
     # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
     add_executable(next_usdcat
@@ -766,11 +775,24 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     set_tests_properties(next_test_aousd_value_resolution
         PROPERTIES SKIP_RETURN_CODE 77 LABELS "next;aousd")
 
+    add_test(NAME next_test_vr_edge_matrix
+        COMMAND test_vr_edge_matrix "${CMAKE_CURRENT_SOURCE_DIR}/../.."
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_test_vr_edge_matrix
+        PROPERTIES LABELS "next;aousd;pxrdiff")
+
     # usd-wg asset-corpus regression gate (mirrors the top-level
     # corpus-parse-native test, but drives next_usdcat). Registered only when
     # node and the corpus checkout are present; set USD_WG_ASSETS_DIR to point
     # at a usd-wg/assets clone.
     find_program(TINYUSDZ_NEXT_NODE_EXECUTABLE NAMES node nodejs)
+    # Pinned OpenUSD oracle for the pxr differential gates below. Set
+    # TINYUSDZ_PXR_USDCAT to relocate it.
+    if(DEFINED ENV{TINYUSDZ_PXR_USDCAT})
+        set(NEXT_PXR_USDCAT "$ENV{TINYUSDZ_PXR_USDCAT}")
+    else()
+        set(NEXT_PXR_USDCAT "/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist/bin/usdcat")
+    endif()
     if(DEFINED ENV{USD_WG_ASSETS_DIR})
         set(NEXT_CORPUS_ASSETS_DIR "$ENV{USD_WG_ASSETS_DIR}")
     else()
@@ -794,6 +816,54 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         )
         set_tests_properties(next_corpus_parse
             PROPERTIES LABELS "next;corpus")
+
+        # Compose differential over the same corpus: flatten every asset and
+        # cross-check against the pinned OpenUSD usdcat (needs the legacy
+        # build's tusddiff for the layer re-serialization diff). Ratchets
+        # (2026-07-15 baseline: MATCH 267, DIFFER 2 + DIFFERR 9 = 11; the
+        # DIFFERR set is the LEGACY tusddiff parser failing on pxr output
+        # forms, not next divergences): small headroom only — raising either
+        # number requires justification.
+        if(EXISTS "${NEXT_PXR_USDCAT}" AND
+           EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../build/tusddiff")
+            add_test(
+                NAME next_corpus_flatten_compare
+                COMMAND ${TINYUSDZ_NEXT_NODE_EXECUTABLE}
+                        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/parse-asset-corpus.mjs
+                        --assets "${NEXT_CORPUS_ASSETS_DIR}"
+                        --mode flatten
+                        --tusdcat "$<TARGET_FILE:next_usdcat>"
+                        --serialize-args "--rewrite-layer --openusd-compat"
+                        --compare
+                        --usdcat "${NEXT_PXR_USDCAT}"
+                        --tusddiff "${CMAKE_CURRENT_SOURCE_DIR}/../../build/tusddiff"
+                        --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-flatten-results"
+                        --max-fail 3
+                        --max-differ 15
+            )
+            set_tests_properties(next_corpus_flatten_compare
+                PROPERTIES LABELS "next;corpus;pxrdiff" TIMEOUT 1800)
+        endif()
+    endif()
+
+    # next-vs-pxr flatten differential gate: next_usdcat -f vs the PINNED
+    # OpenUSD 26.05 usdcat --flatten, compared semantically. Ratchet is 0:
+    # any divergence not recorded (with reason) in
+    # tests/next/next-pxr-flatten-xfail.txt fails; entries that start
+    # passing are reported as XPASS for pruning.
+    if(TINYUSDZ_NEXT_NODE_EXECUTABLE AND EXISTS "${NEXT_PXR_USDCAT}")
+        set(NEXT_PXR_FLATTEN_ARGS
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/run-next-pxr-flatten-diff.mjs
+            --next-usdcat "$<TARGET_FILE:next_usdcat>"
+            --usdcat "${NEXT_PXR_USDCAT}")
+        if(TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT)
+            list(APPEND NEXT_PXR_FLATTEN_ARGS
+                 --suite-root "${TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT}")
+        endif()
+        add_test(NAME next_pxr_flatten_diff
+            COMMAND ${TINYUSDZ_NEXT_NODE_EXECUTABLE} ${NEXT_PXR_FLATTEN_ARGS})
+        set_tests_properties(next_pxr_flatten_diff
+            PROPERTIES LABELS "next;pxrdiff" TIMEOUT 900)
     endif()
 endif()
 

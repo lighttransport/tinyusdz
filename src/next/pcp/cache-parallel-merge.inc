@@ -84,6 +84,9 @@
       for (Src &s : srcs) {
         s.stack_idx = remap(s.stack_idx);
         s.map_idx = remap_map(s.map_idx);
+        if (s.implied_anchor != UINT32_MAX) {
+          s.implied_anchor = remap(s.implied_anchor);
+        }
         // The implied-class arc chain also indexes the worker's tables.
         if (s.arc_chain && !s.arc_chain->empty()) {
           ArcChain remapped;

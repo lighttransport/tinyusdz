@@ -1,23 +1,33 @@
-# Demos using TinyUSDZ as npm package.
+# TinyUSDZ web demos
 
 ## Requirements
 
-* bun
-* vite
+* Node.js/npm or Bun
+* Vite (installed by the package manager)
+* CMake, Ninja, and Emscripten (`emcmake`) for local development
 
 ## Setup
 
 `npm install` or `bun install` to install tinyusdz npm package to `node_modules` folder.
 
-## Run locally
+## Run locally with the next backend
 
-Run the server(We use bun + vite).
-
+```bash
+npm install
+npm run dev
 ```
-$ bun run dev
-```
 
-## Run with tinyusdz npm package with vite.
+`npm run dev` incrementally builds the local legacy and next WASM modules and
+serves JavaScript modules from `../js/src/tinyusdz`. The default backend is
+`next`; use `?backend=legacy` or the Backend control to compare with the legacy
+path. Generated builds live in `../build_ninja` and
+`../build_next_ninja`.
+
+The production `npm run build` path intentionally continues to use the pinned
+`tinyusdz` npm dependency and the legacy backend until a next-capable package is
+selected for GitHub Pages.
+
+## Production build with the TinyUSDZ npm package
 
 For some reason, vite cannot find tinyusdz.wasm file for caching(optimzieDeps).
 Please `exclude` tinyusdz package to `vite.config.ts`(or `vite.config.js`) file as a work around.

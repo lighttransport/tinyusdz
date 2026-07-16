@@ -301,6 +301,15 @@
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
+      if (!prim.meta().permission().empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("permission");
+        f.value_rep = ValueRep::Make(
+            CrateTypeId::Token, InternToken(prim.meta().permission()), false,
+            true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
       // displayName is string-typed in pxr's schema (Token would be dropped).
       if (prim.meta().displayNameAuthored() ||
           !prim.meta().displayName().empty()) {

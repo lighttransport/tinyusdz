@@ -117,6 +117,14 @@ RECONSTRUCT_PRIM_DECL(GeomPointInstancer);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
 RECONSTRUCT_PRIM_DECL(NodeGraph);
+// Placeholder schema prim types (UsdVol / UsdRender / UsdProc)
+RECONSTRUCT_PRIM_DECL(Volume);
+RECONSTRUCT_PRIM_DECL(OpenVDBAsset);
+RECONSTRUCT_PRIM_DECL(Field3DAsset);
+RECONSTRUCT_PRIM_DECL(RenderSettings);
+RECONSTRUCT_PRIM_DECL(RenderProduct);
+RECONSTRUCT_PRIM_DECL(RenderVar);
+RECONSTRUCT_PRIM_DECL(GenerativeProcedural);
 // UsdPhysics + mjcPhysics
 RECONSTRUCT_PRIM_DECL(PhysicsJoint);
 RECONSTRUCT_PRIM_DECL(PhysicsScene);

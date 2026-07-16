@@ -1,0 +1,9 @@
+#usda 1.0
+(
+    timeCodesPerSecond = 24
+)
+def "Root" (
+    references = @./refd48.usda@</R>
+)
+{
+}

@@ -54,6 +54,27 @@
       PrimSpec spec(w.out_path.name());
       spec.set_path(w.out_path);
       std::vector<std::string> children = ComposeChildNames(srcs);
+      // pxr instancing rule: descendants of an instanceable prim compose ONLY
+      // from the instance's key-defining arcs (direct references/payloads and
+      // implied classes) — "overrides on descendent prims are ignored". Local
+      // and ancestral-positional sources still apply to the instance ROOT
+      // itself (property overrides there are allowed), so this prim's own
+      // opinion fill keeps the full source list; only the CHILD derivation is
+      // filtered (recursively, via the pre-seeded source cache below).
+      std::vector<Src> shared_srcs;
+      bool subtree_filtered = false;
+      if (IsInstanceableSources(srcs)) {
+        shared_srcs.reserve(srcs.size());
+        for (const Src &s : srcs) {
+          if (!s.variant && Mapping(s.map_idx).MapsFrom(s.site)) {
+            shared_srcs.push_back(s);
+          }
+        }
+        if (!shared_srcs.empty()) {
+          subtree_filtered = true;
+          children = ComposeChildNames(shared_srcs);
+        }
+      }
       auto ps2 = prof ? ProfClock::now() : ProfClock::time_point{};
       if (prof) {
         prof_sources_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ps1 - ps0).count();
@@ -65,7 +86,10 @@
       // -- children are provided by the prototype (UsdPrim follows
       // instance_prototype).
       auto pr0 = prof ? ProfClock::now() : ProfClock::time_point{};
-      RegisterInstance(w.out_path.str(), srcs);
+      // A deactivated prim composes no subtree and forms NO instance in pxr —
+      // registering it would extract an orphan Flattened_Prototype for
+      // content the flatten output prunes.
+      if (ComposedActive(srcs)) RegisterInstance(w.out_path.str(), srcs);
       if (prof) prof_reg_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ProfClock::now() - pr0).count();
       bool is_instance = false;
       {
@@ -98,6 +122,20 @@
       // post-relocation child list: departed names are gone and relocated-in
       // names are present (ComposeChildNames), and each child's sources resolve
       // back to its pre-relocation site (DeriveChildSources).
+      if (subtree_filtered) {
+        // Pre-seed each child's composed-namespace source cache with the
+        // filtered derivation so the entire prototype subtree (recursively)
+        // composes shared content only.
+        for (const std::string &cn : children) {
+          const Path child = w.out_path.append_child(cn);
+          const std::string ck = SourcesKey(0, child.str());
+          if (!sources_cache.count(ck)) {
+            std::vector<Src> base =
+                DeriveChildSources(shared_srcs, cn, child.str(), warn, err);
+            sources_cache[ck] = ExpandList(base, child.str(), warn, err);
+          }
+        }
+      }
       for (auto it = children.rbegin(); it != children.rend(); ++it) {
         const Path child = w.out_path.append_child(*it);
         stack.push_back({child, child, idx, /*is_root=*/false, w.depth + 1});

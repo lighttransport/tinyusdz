@@ -244,6 +244,9 @@ bool AsciiParser::Impl::ParsePrim() {
     return false;
   }
 
+  // `__AnyType__` is legacy spelling for "no prim type" — pxr composes and
+  // re-serializes it as an untyped prim.
+  if (type_name == "__AnyType__") type_name.clear();
   builder_->begin_prim(prim_name, type_name, specifier);
 
   if (Check(TokenType::OpenParen)) {
@@ -282,6 +285,8 @@ bool AsciiParser::Impl::ParsePrimContents() {
   if (!prim) return false;
 
   while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+    // pxr accepts `;` as an optional statement separator in prim bodies.
+    if (Match(TokenType::Semicolon)) continue;
     const Token& tok = lexer_->peek();
 
     if (tok.type == TokenType::Def || tok.type == TokenType::Over ||

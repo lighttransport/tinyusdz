@@ -67,6 +67,26 @@ struct Src {
   std::shared_ptr<const Value> expression_variables;
   // The arc chain this source was reached through (null == the root stack).
   std::shared_ptr<const ArcChain> arc_chain;
+  // Parallel to arc_chain, but records each crossed arc's TARGET (stack, site)
+  // in the target stack's own namespace. The live ExpansionFrame cycle chain
+  // resets at every prim during the BuildStage namespace walk, so an ANCESTRAL
+  // reference cycle (a child whose arc re-targets a site crossed to reach an
+  // ancestor) is invisible to it. Re-seeding the cycle-detection frame from
+  // this persisted trail restores pxr's behavior: the cyclic arc is dropped and
+  // the re-entrant prim materializes once as `over` (ErrorArcCycle).
+  std::shared_ptr<const std::vector<std::pair<uint32_t, std::string>>> arc_sites;
+  // For IMPLIED class sources (and their subtree): the layer stack whose
+  // strength position this source composes at. pxr expresses an implied
+  // class in each ancestor stack of the introducing arc chain, and its
+  // opinions sit immediately after that stack's own positional opinions —
+  // NOT at the introducing reference's position (see ExpandList's reorder).
+  // UINT32_MAX == not an implied source.
+  uint32_t implied_anchor = UINT32_MAX;
+  // Relocation-source anchor whose OWN spec opinions are ignored (pxr:
+  // "opinions at relocation source" are a composition error). The Src stays
+  // in the list because child derivation descends through it (chained
+  // relocations address content via this raw site).
+  bool suppress_site_specs = false;
 };
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.
@@ -150,6 +170,18 @@ struct Cache::Impl {
   std::map<std::string, std::unique_ptr<PrimIndex>> index_cache;
   std::unordered_map<std::string, std::vector<Src>> sources_cache;  // path -> expanded sources
   std::set<std::string> sources_in_progress;
+  // Reentrancy guard for SourcesForRelocatedContent: derives a relocate
+  // arrival's CONTENT from the source's COMPOSED parent (SourcesForSite), which
+  // can chain back into another arrival re-deriving the same child (shapes like
+  // Path->Anim/Path then Anim->AnimScope). Keyed by the arrival dst composed
+  // path; on re-entry the helper falls back to the isolated relocate-source
+  // walk instead of recursing (see cache-arc-expansion.inc).
+  std::set<std::string> reloc_content_in_progress;
+  // >0 while inside an isolated SourcesForRelocateSource walk. The composed-
+  // parent relocated-content derivation only applies at the true composed
+  // (stack-0) level; nested calls from within the isolated walk (chained
+  // relocates resolved in a stack's own namespace) must use the isolated path.
+  size_t isolated_reloc_depth_ = 0;
   const std::vector<Src> empty_sources_;
 
   // Pool of namespace mappings shared by Src.map_idx. Index 0 is identity, so a
@@ -179,6 +211,9 @@ struct Cache::Impl {
 
   // Instancing: instance key -> prototype prim path; and the groupings.
   std::map<std::string, std::string> prototype_by_key;
+  // Instance keys in DISCOVERY order (first registration during the stage
+  // walk): pxr numbers flattened prototypes by this order, not by path.
+  std::vector<std::string> instance_key_order;
   std::unordered_map<std::string, std::string> prototype_of;           // prim -> prototype
   std::unordered_map<std::string, std::vector<std::string>> instances_by_prototype;
 

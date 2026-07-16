@@ -55,6 +55,34 @@ def main():
         missing.append(f"field {scope}.{name}")
     if len(fields) < 70:
         missing.append(f"field table has only {len(fields)} entries (expected >=70)")
+
+    # Spec-matrix floors in the conformance binary: the table-driven tests in
+    # tests/next/test_aousd_conformance.cc must not silently shrink. Rows are
+    # counted between each `k<Name>Matrix[] = {` and its closing `};`.
+    conformance = (args.root /
+                   "tests/next/test_aousd_conformance.cc").read_text()
+    matrix_floors = {
+        "kPathGrammarMatrix": 25,   # §8.3 production-derived path cases
+        "kEscapeMatrix": 14,        # string escape decode/round-trip cases
+        "kCrateVersionMatrix": 5,   # crate feature -> min version rows
+    }
+    for name, floor in matrix_floors.items():
+        m = re.search(name + r"\[\]\s*=\s*\{(.*?)\n  \};", conformance,
+                      re.S)
+        if not m:
+            missing.append(f"matrix {name} not found in conformance test")
+            continue
+        rows = len(re.findall(r'\{\s*"', m.group(1)))
+        if rows < floor:
+            missing.append(
+                f"matrix {name} has only {rows} rows (expected >={floor})")
+
+    # VR edge matrix (pxr-baked expectations) floor.
+    vr_inc = args.root / "tests/next/generated/vr-edge-expected.inc"
+    vr_rows = len(re.findall(r"^VR_EDGE_CASE\(", vr_inc.read_text(), re.M))
+    if vr_rows < 70:
+        missing.append(
+            f"vr-edge-expected.inc has only {vr_rows} rows (expected >=70)")
     if missing:
         print("AOUSD generated coverage is incomplete:", file=sys.stderr)
         for item in missing:

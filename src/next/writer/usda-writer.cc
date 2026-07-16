@@ -283,9 +283,15 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
 
   if ((meta.comment_set || !meta.comment.empty()) && opts.include_comments) {
-    lines.push_back(opts.indent + "comment = " + EscapeString(meta.comment));
+    // Comments are spelled as a BARE string literal (pxr 26.x rejects
+    // `comment = "..."` as a non-metadata field).
+    lines.push_back(opts.indent + EscapeString(meta.comment));
   }
 
+  if (meta.hasOwnedSubLayers_set) {
+    lines.push_back(opts.indent + std::string("hasOwnedSubLayers = ") +
+                    (meta.hasOwnedSubLayers ? "true" : "false"));
+  }
   if (meta.owner_set || !meta.owner.empty()) {
     lines.push_back(opts.indent + "owner = " + EscapeString(meta.owner));
   }
@@ -322,9 +328,11 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + um.first + " = " + um.second);
   }
   for (const auto& field : meta.unknownFields) {
+    // Verbatim raw source only for DICT payloads (its whole purpose); plain
+    // strings must go through PrintValue so quoting survives ("$Side").
     lines.push_back(opts.indent + field.name + " = " +
-                    (field.unregistered &&
-                             !field.unregistered_source.empty()
+                    (field.unregistered && !field.unregistered_source.empty() &&
+                             field.value.is_dictionary()
                          ? field.unregistered_source
                          : PrintValue(field.value, PrintOptions{})));
   }
@@ -396,6 +404,15 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(std::move(s));
   }
 
+  // pxr emits layer metadata in ALPHABETICAL key order (the bare-string
+  // comment's leading quote sorts first, matching pxr's comment-first form).
+  std::stable_sort(lines.begin(), lines.end(),
+                   [&](const std::string& a, const std::string& b) {
+                     const size_t n = opts.indent.size();
+                     return a.compare(n, std::string::npos, b, n,
+                                      std::string::npos) < 0;
+                   });
+
   for (size_t i = 0; i < lines.size(); ++i) {
     os << lines[i];
     if (i + 1 < lines.size()) {
@@ -435,7 +452,9 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   if (m->authored & PropMeta::kDoc)
     kv("doc = " + EscapeString(m->doc));
   if (m->authored & PropMeta::kComment)
-    kv("comment = " + EscapeString(m->comment));
+    kv(EscapeString(m->comment));  // bare string literal = comment (pxr form)
+  if (m->authored & PropMeta::kPermission)
+    kv("permission = " + m->permission);  // unquoted token
   if (m->authored & PropMeta::kHidden)
     kv(std::string("hidden = ") + (m->hidden ? "true" : "false"));
   if (m->authored & PropMeta::kRenderType)
@@ -473,7 +492,8 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   }
   for (const auto& field : m->unknownFields) {
     kv(field.name + " = " +
-       (field.unregistered && !field.unregistered_source.empty()
+       (field.unregistered && !field.unregistered_source.empty() &&
+                field.value.is_dictionary()
             ? field.unregistered_source
             : PrintValue(field.value, PrintOptions{})));
   }
@@ -566,22 +586,99 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
     return;
   }
 
+  // Type name. Prefer the declared name (round-trips string[] vs token[],
+  // role types, and value-less / connection-only attrs whose stored value type
+  // is Invalid). GetTypeName returns nullptr for Invalid, so guard the fallback.
+  TypeId type_id = static_cast<TypeId>(slot.value_type);
+  std::string type_name;
+  if (const std::string* decl = spec.property_type_name(name)) {
+    type_name = *decl;
+  } else {
+    const char* tn = GetTypeName(type_id);
+    type_name = tn ? tn : "token";
+    if (slot.is_array()) type_name += "[]";
+  }
+
+  // Emit the leading `<indent><qualifiers><type> <name>` shared by the value
+  // line, the `.timeSamples` line and the `.connect` line (USDA repeats the
+  // type on each statement).
+  auto emit_decl = [&](const char* prefix = "") {
+    WriteIndent(os, depth, opts.indent);
+    os << prefix;
+    // `custom` is a deprecated qualifier; emit only under opt-in (--openusd-compat).
+    if (opts.emit_custom && slot.is_custom()) os << "custom ";
+    if (slot.is_uniform()) os << "uniform ";
+    os << type_name << " " << name;
+  };
+
+  // Connection targets live in the prim's connection map, NOT in the property
+  // value (a connection-only attr has no authored default). A property may
+  // carry a value AND time samples AND a connection -> separate statements.
+  // A present-but-empty entry is an authored connection BLOCK
+  // (`.connect = None`); absent means no connection opinion.
+  const std::vector<Path>* conns = spec.connection(name);
+  bool has_conn = conns != nullptr;
+  // Composed-stage output: an authored connection BLOCK (`.connect = None`)
+  // resolved to "no connection"; pxr flatten drops the statement entirely
+  // (value blocks, by contrast, are preserved). Qualified edits keep their
+  // statement.
+  if (opts.composed_stage_output && has_conn && conns->empty()) {
+    const ArcEdit* cedit = spec.connection_edit(name);
+    if (!(cedit && cedit->authored && !cedit->is_explicit)) has_conn = false;
+  }
+
+  // Connection statement: `<type> <name>.connect = </path>` (or `[...]`).
+  // `wrote_meta` = authored property metadata already emitted on an earlier
+  // statement for this property.
+  auto emit_connection = [&](bool wrote_meta) {
+    const ArcEdit* edit = spec.connection_edit(name);
+    auto emit_targets = [&](const std::vector<std::string>& targets) {
+      if (targets.empty()) {
+        os << "None";
+      } else if (targets.size() == 1) {
+        os << "<" << targets[0] << ">";
+      } else {
+        os << "[";
+        for (size_t i = 0; i < targets.size(); ++i) {
+          if (i) os << ", ";
+          os << "<" << targets[i] << ">";
+        }
+        os << "]";
+      }
+    };
+    if (edit && edit->authored && !edit->is_explicit) {
+      auto emit_connection_op = [&](const char* qualifier,
+                                    const std::vector<std::string>& targets) {
+        if (targets.empty()) return;
+        emit_decl(qualifier);
+        os << ".connect = ";
+        emit_targets(targets);
+        if (!wrote_meta) {
+          WritePropMeta(os, spec, slot.name_id, depth, opts);
+          wrote_meta = true;
+        }
+        os << "\n";
+      };
+      emit_connection_op("add ", edit->added);
+      emit_connection_op("prepend ", edit->prepended);
+      emit_connection_op("append ", edit->appended);
+      emit_connection_op("delete ", edit->deleted);
+      emit_connection_op("reorder ", edit->ordered);
+    } else {
+      emit_decl();
+      os << ".connect = ";
+      std::vector<std::string> targets;
+      targets.reserve(conns->size());
+      for (const Path& path : *conns) targets.push_back(path.str());
+      emit_targets(targets);
+      if (!wrote_meta) WritePropMeta(os, spec, slot.name_id, depth, opts);
+      os << "\n";
+    }
+  };
+
   // Check if this property has time samples
   if (slot.is_time_sampled() && spec.has_time_samples(slot.name_id)) {
-    // Shared `<qualifiers><type> <name>` prefix for the statements below.
-    auto emit_ts_decl = [&]() {
-      WriteIndent(os, depth, opts.indent);
-      if (opts.emit_custom && slot.is_custom()) os << "custom ";
-      if (slot.is_uniform()) os << "uniform ";
-      if (const std::string* decl = spec.property_type_name(name)) {
-        os << *decl;
-      } else {
-        const char* tn = GetTypeName(static_cast<TypeId>(slot.value_type));
-        os << (tn ? tn : "token");
-        if (slot.is_array()) os << "[]";
-      }
-      os << " " << name;
-    };
+    auto emit_ts_decl = [&]() { emit_decl(); };
     // An authored DEFAULT coexists with time samples as an independent
     // field (pxr keeps both; dropping it loses the value used outside the
     // sampled range / by consumers that ignore samples). Emit it first.
@@ -610,42 +707,18 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
     }
     WriteTimeSamples(os, name, slot.name_id, spec, depth, opts);
     os << "\n";
+    // A connection coexists with time samples (pxr emits it as a third
+    // statement after the `.timeSamples` block); dropping it here silently
+    // severed shading networks with animated fallback values.
+    if (has_conn) {
+      emit_connection(/*wrote_meta=*/(def_val && !def_val->is_empty()) ||
+                      (pm && !pm->empty()));
+    }
     return;
   }
 
-  // Type name. Prefer the declared name (round-trips string[] vs token[],
-  // role types, and value-less / connection-only attrs whose stored value type
-  // is Invalid). GetTypeName returns nullptr for Invalid, so guard the fallback.
-  TypeId type_id = static_cast<TypeId>(slot.value_type);
-  std::string type_name;
-  if (const std::string* decl = spec.property_type_name(name)) {
-    type_name = *decl;
-  } else {
-    const char* tn = GetTypeName(type_id);
-    type_name = tn ? tn : "token";
-    if (slot.is_array()) type_name += "[]";
-  }
-
-  // Emit the leading `<indent><qualifiers><type> <name>` shared by the value
-  // line and the `.connect` line (USDA repeats the type on each statement).
-  auto emit_decl = [&](const char* prefix = "") {
-    WriteIndent(os, depth, opts.indent);
-    os << prefix;
-    // `custom` is a deprecated qualifier; emit only under opt-in (--openusd-compat).
-    if (opts.emit_custom && slot.is_custom()) os << "custom ";
-    if (slot.is_uniform()) os << "uniform ";
-    os << type_name << " " << name;
-  };
-
   const Value* value = spec.property_value(slot.name_id);
   const bool has_value = value && !value->is_empty();
-  // Connection targets live in the prim's connection map, NOT in the property
-  // value (a connection-only attr has no authored default). A property may also
-  // carry BOTH a value and a connection -> emit them as separate statements.
-  const std::vector<Path>* conns = spec.connection(name);
-  // A present-but-empty entry is an authored connection BLOCK
-  // (`.connect = None`); absent means no connection opinion.
-  const bool has_conn = conns != nullptr;
 
   // Value statement (authored default).
   if (has_value && value->is_block()) {
@@ -678,50 +751,7 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
 
   // Connection statement: `<type> <name>.connect = </path>` (or `[...]`).
   if (has_conn) {
-    const ArcEdit* edit = spec.connection_edit(name);
-    auto emit_targets = [&](const std::vector<std::string>& targets) {
-      if (targets.empty()) {
-        os << "None";
-      } else if (targets.size() == 1) {
-        os << "<" << targets[0] << ">";
-      } else {
-        os << "[";
-        for (size_t i = 0; i < targets.size(); ++i) {
-          if (i) os << ", ";
-          os << "<" << targets[i] << ">";
-        }
-        os << "]";
-      }
-    };
-    bool wrote_meta = has_value;
-    if (edit && edit->authored && !edit->is_explicit) {
-      auto emit_connection_op = [&](const char* qualifier,
-                                    const std::vector<std::string>& targets) {
-        if (targets.empty()) return;
-        emit_decl(qualifier);
-        os << ".connect = ";
-        emit_targets(targets);
-        if (!wrote_meta) {
-          WritePropMeta(os, spec, slot.name_id, depth, opts);
-          wrote_meta = true;
-        }
-        os << "\n";
-      };
-      emit_connection_op("add ", edit->added);
-      emit_connection_op("prepend ", edit->prepended);
-      emit_connection_op("append ", edit->appended);
-      emit_connection_op("delete ", edit->deleted);
-      emit_connection_op("reorder ", edit->ordered);
-    } else {
-      emit_decl();
-      os << ".connect = ";
-      std::vector<std::string> targets;
-      targets.reserve(conns->size());
-      for (const Path& path : *conns) targets.push_back(path.str());
-      emit_targets(targets);
-      if (!wrote_meta) WritePropMeta(os, spec, slot.name_id, depth, opts);
-      os << "\n";
-    }
+    emit_connection(/*wrote_meta=*/has_value);
   }
 
   // Declared-only attribute (no value, no connection): emit the bare
@@ -744,9 +774,11 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   auto head = [&]() {
     WriteIndent(os, depth, opts.indent);
     if (opts.emit_custom && is_custom) os << "custom ";
-    if (relationship_flags & PropSlot::kFlagVariabilityAuthored) {
-      os << ((relationship_flags & PropSlot::kFlagVarying) ? "varying "
-                                                           : "uniform ");
+    // Uniform is the relationship DEFAULT: pxr only ever prints `varying rel`
+    // (an authored-uniform variability field, e.g. from crate, stays silent).
+    if ((relationship_flags & PropSlot::kFlagVariabilityAuthored) &&
+        (relationship_flags & PropSlot::kFlagVarying)) {
+      os << "varying ";
     }
     os << "rel " << name;
   };
@@ -804,7 +836,9 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
 
   head();
   if (targets.empty()) {
-    if (explicit_empty) os << " = None";
+    // Composed-stage output: an explicit-None (block) relationship resolved
+    // to "no targets"; pxr flatten writes the bare declaration.
+    if (explicit_empty && !opts.composed_stage_output) os << " = None";
     // Otherwise this is a declared-only relationship: bare `rel name` (pxr
     // re-parses it without an authored targetPaths opinion).
   } else {
@@ -870,6 +904,10 @@ void WriteVariantSets(StreamWriter& os,
           pick_arcs(var.specializes, hmeta ? &hmeta->specializes : nullptr);
       const bool o_inactive = !var.active || (hmeta && !hmeta->active);
       const bool o_hidden = var.hidden || (hmeta && hmeta->hidden);
+      // Authored `hidden = false` is a real opinion that must round-trip.
+      const bool o_hidden_false =
+          !o_hidden && ((var.hidden_authored) ||
+                        (hmeta && hmeta->hidden_authored));
       const std::string& o_doc =
           !var.doc.empty() ? var.doc : (hmeta ? hmeta->doc() : var.doc);
       // Nested variant SELECTIONS: authored on the option's own metadata
@@ -909,7 +947,8 @@ void WriteVariantSets(StreamWriter& os,
               : (hmeta ? hmeta->unknownMeta() : var.unknownMeta);
       const bool has_opt_meta = !o_refs.empty() || !o_pls.empty() ||
                                 !o_inh.empty() || !o_spz.empty() ||
-                                o_inactive || o_hidden || !o_sels.empty() ||
+                                o_inactive || o_hidden || o_hidden_false ||
+                                !o_sels.empty() ||
                                 !o_unknown.empty() ||
                                 (!o_doc.empty() && opts.include_comments);
       if (has_opt_meta) {
@@ -932,6 +971,9 @@ void WriteVariantSets(StreamWriter& os,
         if (o_hidden) {
           WriteIndent(os, depth + 2, opts.indent);
           os << "hidden = true\n";
+        } else if (o_hidden_false) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "hidden = false\n";
         }
         if (!o_doc.empty() && opts.include_comments) {
           WriteIndent(os, depth + 2, opts.indent);
@@ -1078,6 +1120,11 @@ void WriteVariantSets(StreamWriter& os,
 void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
                    SegmentSink* segsink) {
+  // Composed-stage output: pxr usdcat --flatten DROPS deactivated prims
+  // (and their subtrees) from the flattened layer entirely. The in-memory
+  // stage keeps them (IsActive stays queryable); only the flatten output
+  // prunes.
+  if (opts.composed_stage_output && !spec.meta().active) return;
   // Write prim definition line
   WriteIndent(os, depth, opts.indent);
   os << SpecifierKeyword(spec.specifier());
@@ -1122,8 +1169,9 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       variant_edits.authored &&
       (variant_edits.is_explicit ? !variant_edits.explicit_items.empty()
                                  : variant_edits.has_nonexplicit_items());
-  bool has_meta = !meta.active || meta.hidden || meta.instanceable ||
-                  meta.instanceable_authored ||
+  bool has_meta = !meta.active || meta.active_authored || meta.hidden ||
+                  meta.hidden_authored || meta.instanceable ||
+                  meta.instanceable_authored || !meta.permission().empty() ||
                   meta.kindAuthored() || meta.displayNameAuthored() ||
                   meta.displayGroupOrderAuthored() ||
                   !meta.kind().empty() || !meta.displayName().empty() ||
@@ -1155,6 +1203,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     else if (meta.hidden_authored) kv("hidden = false");
     if (meta.instanceable) kv("instanceable = true");
     else if (meta.instanceable_authored) kv("instanceable = false");
+    if (!meta.permission().empty()) kv("permission = " + meta.permission());
     if (meta.kindAuthored() || !meta.kind().empty())
       kv("kind = " + EscapeString(meta.kind()));
     if (meta.displayNameAuthored() || !meta.displayName().empty())
@@ -1170,7 +1219,8 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       kv(value);
     }
     if (has_doc) kv("doc = " + EscapeString(meta.doc()));
-    if (has_comment) kv("comment = " + EscapeString(meta.comment()));
+    // Bare string literal = comment (pxr 26.x rejects `comment = "..."`).
+    if (has_comment) kv(EscapeString(meta.comment()));
     if (meta.apiSchemasAuthored() || !meta.apiSchemas().empty()) {
       const StringListOpEdits& edits = meta.apiSchemaEdits();
       auto write_api_op = [&](const char* qualifier,
@@ -1186,7 +1236,15 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
         kv(s);
       };
       if (edits.authored) {
-        if (edits.is_explicit) {
+        if (opts.composed_stage_output && !edits.is_explicit) {
+          // Composed-stage output: the residual list-op has nothing weaker
+          // left to edit, so publish its composed result as an EXPLICIT list
+          // (pxr UsdStage::Flatten parity).
+          const std::vector<std::string> composed =
+              ApplyStringListOp(edits, {});
+          if (composed.empty()) kv("apiSchemas = None");
+          else write_api_op("", composed);
+        } else if (edits.is_explicit) {
           if (edits.explicit_items.empty()) kv("apiSchemas = None");
           else write_api_op("", edits.explicit_items);
         } else {
@@ -1198,7 +1256,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
         }
       } else {
         std::string qualifier;
-        if (!meta.apiSchemasQualifier().empty()) {
+        if (!opts.composed_stage_output && !meta.apiSchemasQualifier().empty()) {
           qualifier = meta.apiSchemasQualifier() + " ";
         }
         write_api_op(qualifier.c_str(), meta.apiSchemas());
@@ -1253,7 +1311,8 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     }
     for (const auto& field : meta.unknownFields()) {
       kv(field.name + " = " +
-         (field.unregistered && !field.unregistered_source.empty()
+         (field.unregistered && !field.unregistered_source.empty() &&
+                  field.value.is_dictionary()
               ? field.unregistered_source
               : PrintValue(field.value, PrintOptions{})));
     }
@@ -1268,6 +1327,11 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       auto emit = [&](const char* qual, const std::vector<std::string>& items) {
         if (items.empty()) return;
         WriteIndent(os, md, opts.indent);
+        // pxr prints a single arc target without list brackets.
+        if (items.size() == 1) {
+          os << qual << field << " = " << FormatArcRef(items[0]) << "\n";
+          return;
+        }
         os << qual << field << " = [\n";
         for (const auto& a : items) {
           WriteIndent(os, md + 1, opts.indent);
@@ -1735,6 +1799,8 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.endTimeCode_set = stage_meta.endTimeCode_set;
   meta.framesPerSecond = stage_meta.framesPerSecond;
   meta.framesPerSecond_set = stage_meta.framesPerSecond_set;
+  meta.hasOwnedSubLayers = root_layer->meta().hasOwnedSubLayers;
+  meta.hasOwnedSubLayers_set = root_layer->meta().hasOwnedSubLayers_set;
   meta.kilogramsPerUnit = stage_meta.kilogramsPerUnit;
   meta.kilogramsPerUnit_set = stage_meta.kilogramsPerUnit_set;
   meta.colorConfiguration = stage_meta.colorConfiguration;
@@ -1753,11 +1819,17 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.expressionVariables = root_layer->meta().expressionVariables;
   meta.customLayerData_set = root_layer->meta().customLayerData_set;
   meta.expressionVariables_set = root_layer->meta().expressionVariables_set;
-  meta.subLayers = root_layer->meta().subLayers;
-  meta.subLayers_set = root_layer->meta().subLayers_set;
-  meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
-  meta.relocates = root_layer->meta().relocates;
-  meta.relocates_set = root_layer->meta().relocates_set;
+  // subLayers/relocates are composition directives; when this stage came from
+  // a compose they are CONSUMED and a flattened layer must not re-state them
+  // (pxr UsdStage::Flatten drops them as well). For plain-load stages they
+  // are still live opinions and must round-trip.
+  if (!options.composed_stage_output) {
+    meta.subLayers = root_layer->meta().subLayers;
+    meta.subLayers_set = root_layer->meta().subLayers_set;
+    meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
+    meta.relocates = root_layer->meta().relocates;
+    meta.relocates_set = root_layer->meta().relocates_set;
+  }
   meta.unknownMeta = root_layer->meta().unknownMeta;
   meta.rootPrimOrder = root_layer->meta().rootPrimOrder;
   meta.rootPrimOrder_set = root_layer->meta().rootPrimOrder_set;

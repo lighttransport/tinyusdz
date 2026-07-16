@@ -59,6 +59,11 @@ int main(int argc, char **argv) {
   // scenes and currently regresses huge instanced ones, so it stays off by
   // default. (Independent of the writer's TINYUSDZ_NEXT_NUM_THREADS.)
   int compose_threads = 1;
+  // --variant-fallback set=opt1,opt2  (repeatable). Stock pxr registers NO
+  // fallbacks; the AOUSD supplemental corpus expectations were generated in
+  // an environment with the classic standin->render fallback, so its runner
+  // opts in explicitly.
+  std::map<std::string, std::vector<std::string>> variant_fallbacks;
   const char *filename = nullptr;
   const char *out_path = nullptr;  // -o/--output: write flatten to a file (FdSink)
   std::vector<std::string> required_prims;
@@ -105,6 +110,24 @@ int main(int argc, char **argv) {
     } else if (std::strcmp(argv[i], "--compose-threads") == 0 && i + 1 < argc) {
       compose_threads = std::atoi(argv[++i]);  // opt-in parallel compose (>1)
       if (compose_threads < 1) compose_threads = 1;
+    } else if (std::strcmp(argv[i], "--variant-fallback") == 0 && i + 1 < argc) {
+      std::string spec(argv[++i]);
+      const size_t eq = spec.find('=');
+      if (eq != std::string::npos && eq > 0) {
+        std::vector<std::string> opts_list;
+        std::string rest = spec.substr(eq + 1);
+        size_t start = 0;
+        while (start <= rest.size()) {
+          const size_t comma = rest.find(',', start);
+          const size_t end = comma == std::string::npos ? rest.size() : comma;
+          if (end > start) opts_list.push_back(rest.substr(start, end - start));
+          if (comma == std::string::npos) break;
+          start = comma + 1;
+        }
+        if (!opts_list.empty()) {
+          variant_fallbacks[spec.substr(0, eq)] = std::move(opts_list);
+        }
+      }
     } else {
       filename = argv[i];
     }
@@ -238,6 +261,7 @@ int main(int argc, char **argv) {
     }
     pcp::CompositionOptions opts;
     opts.strict_aousd_conformance = aousd_strict;
+    if (!variant_fallbacks.empty()) opts.variant_fallbacks = variant_fallbacks;
     opts.usda_parse_options.strict_aousd_conformance = aousd_strict;
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
@@ -306,7 +330,13 @@ int main(int argc, char **argv) {
 
   if (flatten) {
     USDAWriteOptions wopts;
-    wopts.emit_custom = openusd_compat;
+    // A composed stage carries `custom` on user attributes exactly like pxr's
+    // `usdcat --flatten` (which always emits it). `--openusd-compat` additionally
+    // forces it on the non-flatten/layer path.
+    wopts.emit_custom = true;
+    // The stage came from pcp composition: emit composed-stage semantics
+    // (consumed subLayers/relocates dropped, apiSchemas composed to explicit).
+    wopts.composed_stage_output = true;
     // Parallel subtree serialization (only effective in a TINYUSDZ_ENABLE_THREAD
     // build). Default auto (= hardware_concurrency); TINYUSDZ_NEXT_NUM_THREADS
     // overrides (1 = serial). Output is byte-identical regardless of count.

@@ -435,7 +435,6 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     v.SetUnregisteredValueString(kv.second);
     root_fields.push_back({kv.first, v});
   }
-
   // kilogramsPerUnit (UsdPhysics) and the two USDZ playback metas were written by
   // the Layer path (sconv-layer.cc) but not by this one, so they vanished on a
   // Stage write. (The timecode family above is already handled -- do not add it
@@ -569,10 +568,16 @@ bool CrateWriter::ConvertSinglePrim(
   // programmatically-built prims too. Without this, an authored UsdShade
   // network round-trips through USDA but loses every shader input/output on
   // USDC/USDZ write (only `info:id` survived via the generic prop path).
-  // Exception: a genuinely typeless prim is held internally as the catch-all
-  // `Model` struct, whose type_name() unconditionally returns "Model" as an
-  // internal label, not an authored or inferable schema name -- falling back
-  // to it here resurrects a typeName the prim never had.
+  // Exception: a genuinely typeless prim (`def "bora"`) is held internally as
+  // the catch-all `Model` struct, whose type_name() unconditionally returns
+  // "Model" -- an internal label, not an authored or inferable schema name.
+  // Falling back to it here resurrects a typeName the prim never had, and
+  // `def "bora"` came back from usdc as `def Model "bora"`.
+  //
+  // Do NOT drop the fallback itself: in-memory authored prims (e.g. those built
+  // by the tydra converters) have an empty prim_type_name() but a REAL schema
+  // behind them, and without it the writer skips both the `typeName` field and
+  // the type-specific property extraction -- losing every shader input/output.
   std::string type_name = prim.prim_type_name();
   if (type_name.empty() && prim.type_name() != "Model") {
     type_name = prim.type_name();
@@ -1717,10 +1722,16 @@ bool CrateWriter::ExtractPrimProperties(
   // Without this fallback the writer skips both the `typeName` crate
   // field and the type-specific property extraction, and the reader sees
   // a generic prim with no schema and no attributes.
-  // Exception: a genuinely typeless prim is held internally as the catch-all
-  // `Model` struct, whose type_name() unconditionally returns "Model" as an
-  // internal label, not an authored or inferable schema name -- falling back
-  // to it here resurrects a typeName the prim never had.
+  // Exception: a genuinely typeless prim (`def "bora"`) is held internally as
+  // the catch-all `Model` struct, whose type_name() unconditionally returns
+  // "Model" -- an internal label, not an authored or inferable schema name.
+  // Falling back to it here resurrects a typeName the prim never had, and
+  // `def "bora"` came back from usdc as `def Model "bora"`.
+  //
+  // Do NOT drop the fallback itself: in-memory authored prims (e.g. those built
+  // by the tydra converters) have an empty prim_type_name() but a REAL schema
+  // behind them, and without it the writer skips both the `typeName` field and
+  // the type-specific property extraction -- losing every shader input/output.
   std::string type_name = prim.prim_type_name();
   if (type_name.empty() && prim.type_name() != "Model") {
     type_name = prim.type_name();
