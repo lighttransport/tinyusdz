@@ -332,10 +332,25 @@ class USDCReader::Impl {
   /// For Layer
   ///
 
+  /// `top_level_sink`: when non-null, the TOP-LEVEL call appends the
+  /// reconstructed subtree root to `top_level_sink->children()` instead of
+  /// the normal destination (layer->primspecs() for parent 0 / the parent
+  /// PrimSpec otherwise). Used by the parallel reconstruction so worker
+  /// threads never touch the shared Layer map; the child recursion always
+  /// passes nullptr, so serial behavior is unchanged.
   bool ReconstructPrimSpecRecursively(int parent_id, int current_id, PrimSpec *rootPrim,
                                   int level,
                                   const PathIndexToSpecIndexMap &psmap,
-                                  Layer *stage);
+                                  Layer *stage,
+                                  PrimSpec *top_level_sink = nullptr);
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  /// Parallel PrimSpec-hierarchy reconstruction — the Layer analog of
+  /// ReconstructPrimHierarchyParallel above (same shells/jobs split).
+  /// Produces byte-equal Layer content to the serial walk.
+  bool ReconstructPrimSpecHierarchyParallel(const PathIndexToSpecIndexMap &psmap,
+                                            Layer *layer);
+#endif
 
   bool ToLayer(Layer *layer);
 

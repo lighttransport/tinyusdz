@@ -1293,6 +1293,11 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   config.allow_unknown_apiSchemas = !options.strict_apiSchema_check;
   usdc::USDCReader reader(&sr, config);
 
+  // TINYUSDZ_CRATE_PROFILE=1: split the layer load into crate parse vs
+  // PrimSpec reconstruction (stderr; complements the tusdcat phase marks).
+  const bool profile_load = (std::getenv("TINYUSDZ_CRATE_PROFILE") != nullptr);
+  const auto load_t0 = std::chrono::steady_clock::now();
+
   if (!reader.ReadUSDC()) {
     if (warn) {
       (*warn) = reader.GetWarning();
@@ -1306,6 +1311,8 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
 
   DCOUT("Loaded USDC file.");
 
+  const auto load_t1 = std::chrono::steady_clock::now();
+
   {
     if (!reader.get_as_layer(layer)) {
       DCOUT("Failed to reconstruct Layer from Crate.");
@@ -1318,6 +1325,15 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
       }
       return false;
     }
+  }
+
+  if (profile_load) {
+    const auto load_t2 = std::chrono::steady_clock::now();
+    fprintf(
+        stderr, "[usdc-layer profile] %s: ReadUSDC %.1fms | ToLayer %.1fms\n",
+        filename.c_str(),
+        std::chrono::duration<double, std::milli>(load_t1 - load_t0).count(),
+        std::chrono::duration<double, std::milli>(load_t2 - load_t1).count());
   }
 
   if (warn) {
