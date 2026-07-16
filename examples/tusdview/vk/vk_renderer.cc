@@ -37,6 +37,9 @@
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
 #include "raytrace_comp.spv.h"  // ray-query compute shader (when glslang supports it)
 #endif
+#if defined(TUSDVIEW_HAVE_SKIN_SHADER) && TUSDVIEW_HAVE_SKIN_SHADER
+#include "skin_comp.spv.h"  // RT GPU compute skinning (optional)
+#endif
 
 namespace tusdview {
 
@@ -3828,6 +3831,9 @@ void VulkanRenderer::destroyScene() {
     if (m.jointVboMem) vkFreeMemory(device_, m.jointVboMem, nullptr);
     if (m.weightVbo) vkDestroyBuffer(device_, m.weightVbo, nullptr);
     if (m.weightVboMem) vkFreeMemory(device_, m.weightVboMem, nullptr);
+    if (m.skinMatMapped) vkUnmapMemory(device_, m.skinMatMem);
+    if (m.skinMatBuf) vkDestroyBuffer(device_, m.skinMatBuf, nullptr);
+    if (m.skinMatMem) vkFreeMemory(device_, m.skinMatMem, nullptr);
     if (m.influenceVbo) vkDestroyBuffer(device_, m.influenceVbo, nullptr);
     if (m.influenceVboMem) vkFreeMemory(device_, m.influenceVboMem, nullptr);
     if (m.uv1Vbo) vkDestroyBuffer(device_, m.uv1Vbo, nullptr);
@@ -4227,6 +4233,153 @@ void VulkanRenderer::updateMeshVertices(int meshIndex,
     }
     tlasDirty_ = true;
   }
+}
+
+bool VulkanRenderer::ensureSkinPipeline() {
+#if defined(TUSDVIEW_HAVE_SKIN_SHADER) && TUSDVIEW_HAVE_SKIN_SHADER
+  if (skinPipeline_ != VK_NULL_HANDLE) return true;
+  if (skinPipelineTried_) return false;
+  skinPipelineTried_ = true;
+  if (!device_) return false;
+
+  // Descriptor-less: buffer device addresses ride in push constants (matches
+  // skin.comp's scalar PC block: 5x uint64 + 3x uint).
+  struct SkinPC {
+    uint64_t restAddr, dstAddr, jointAddr, weightAddr, matAddr;
+    uint32_t vertexCount, matrixBase, jointCount;
+  };
+  VkPushConstantRange pcr{};
+  pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  pcr.size = sizeof(SkinPC);
+  VkPipelineLayoutCreateInfo plci{};
+  plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  plci.pushConstantRangeCount = 1;
+  plci.pPushConstantRanges = &pcr;
+  if (vkCreatePipelineLayout(device_, &plci, nullptr, &skinPipelineLayout_) !=
+      VK_SUCCESS) {
+    return false;
+  }
+  VkShaderModule cs = createShader(skin_comp_spv, sizeof(skin_comp_spv));
+  if (!cs) return false;
+  VkComputePipelineCreateInfo cpci{};
+  cpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+  cpci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  cpci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+  cpci.stage.module = cs;
+  cpci.stage.pName = "main";
+  cpci.layout = skinPipelineLayout_;
+  const VkResult r = vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &cpci,
+                                              nullptr, &skinPipeline_);
+  vkDestroyShaderModule(device_, cs, nullptr);
+  if (r != VK_SUCCESS) {
+    skinPipeline_ = VK_NULL_HANDLE;
+    return false;
+  }
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool VulkanRenderer::updateMeshSkinningGpu(int meshIndex, const float* mats,
+                                           int jointCount, int matrixBase,
+                                           const float aabbMin[3],
+                                           const float aabbMax[3]) {
+  if (!device_ || !rtActive_ || !mats || jointCount <= 0 || matrixBase < 0 ||
+      meshIndex < 0 || meshIndex >= static_cast<int>(meshes_.size())) {
+    return false;
+  }
+  VkMeshGPU& gm = meshes_[static_cast<size_t>(meshIndex)];
+  // Needs a dedicated RT vertex stream (vboDisp — leaves the raster rest vbo
+  // untouched), skin attribute addresses, and vertex data to skin.
+  if (gm.vboDisp == VK_NULL_HANDLE || gm.jointAddr == 0 || gm.weightAddr == 0 ||
+      gm.vertexCount == 0 || !gm.skinned) {
+    return false;
+  }
+  if (!ensureSkinPipeline()) return false;
+
+  // Per-mesh composed-matrix SSBO (persistently mapped; grown when a larger
+  // skeleton shows up, which in practice happens once).
+  const uint32_t needed = static_cast<uint32_t>(jointCount);
+  if (gm.skinMatBuf == VK_NULL_HANDLE || gm.skinMatCapacity < needed) {
+    vkDeviceWaitIdle(device_);  // the previous frame may still read the buffer
+    if (gm.skinMatMapped) vkUnmapMemory(device_, gm.skinMatMem);
+    if (gm.skinMatBuf) vkDestroyBuffer(device_, gm.skinMatBuf, nullptr);
+    if (gm.skinMatMem) vkFreeMemory(device_, gm.skinMatMem, nullptr);
+    gm.skinMatBuf = VK_NULL_HANDLE;
+    gm.skinMatMem = VK_NULL_HANDLE;
+    gm.skinMatMapped = nullptr;
+    gm.skinMatAddr = 0;
+    gm.skinMatCapacity = 0;
+    const VkDeviceSize bytes =
+        static_cast<VkDeviceSize>(needed) * 16 * sizeof(float);
+    const std::vector<float> zeros(static_cast<size_t>(needed) * 16, 0.0f);
+    if (!createHostBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                          zeros.data(), &gm.skinMatBuf, &gm.skinMatMem,
+                          /*deviceAddress=*/true)) {
+      return false;
+    }
+    if (vkMapMemory(device_, gm.skinMatMem, 0, bytes, 0, &gm.skinMatMapped) !=
+        VK_SUCCESS) {
+      gm.skinMatMapped = nullptr;
+      return false;
+    }
+    gm.skinMatAddr = bufferDeviceAddress(gm.skinMatBuf);
+    gm.skinMatCapacity = needed;
+  }
+
+  // The previous frame's trace/AS build may still read the RT vertex stream and
+  // the matrix SSBO; wait like updateMeshVertices does (simple/safe for a viewer).
+  vkDeviceWaitIdle(device_);
+  std::memcpy(gm.skinMatMapped, mats,
+              static_cast<size_t>(jointCount) * 16 * sizeof(float));
+
+  struct SkinPC {
+    uint64_t restAddr, dstAddr, jointAddr, weightAddr, matAddr;
+    uint32_t vertexCount, matrixBase, jointCount;
+  } pc{};
+  pc.restAddr = bufferDeviceAddress(gm.vbo);  // rest pose (raster vbo)
+  pc.dstAddr = gm.vboAddr;                    // RT stream (redirected to vboDisp)
+  pc.jointAddr = gm.jointAddr;
+  pc.weightAddr = gm.weightAddr;
+  pc.matAddr = gm.skinMatAddr;
+  pc.vertexCount = gm.vertexCount;
+  pc.matrixBase = static_cast<uint32_t>(matrixBase);
+  pc.jointCount = needed;
+
+  VkCommandBuffer cb = beginOneShot();
+  vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, skinPipeline_);
+  vkCmdPushConstants(cb, skinPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                     sizeof(pc), &pc);
+  vkCmdDispatch(cb, (gm.vertexCount + 255u) / 256u, 1, 1);
+  // Make the compute writes visible to the BLAS refit (recorded in a later
+  // one-shot, but keep the domains explicit).
+  VkMemoryBarrier mb{};
+  mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR |
+                     VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       0, 1, &mb, 0, nullptr, 0, nullptr);
+  endOneShot(cb);
+
+  // Conservative posed bounds from the caller (union of per-joint transformed
+  // rest boxes) — used by the proxy-LOD box fit and instance selection only.
+  std::memcpy(gm.protoAabbMin, aabbMin, sizeof(float) * 3);
+  std::memcpy(gm.protoAabbMax, aabbMax, sizeof(float) * 3);
+
+  // Same refit-or-rebuild policy as updateMeshVertices.
+  static const bool noRefit = std::getenv("TUSDVIEW_RT_NO_REFIT") != nullptr;
+  if (!noRefit) gm.blasWantUpdatable = true;
+  if (!noRefit && gm.blas != VK_NULL_HANDLE && gm.blasUpdatable) {
+    gm.blasNeedsRefit = true;  // refitted in rebuildTlas before the trace
+  } else {
+    destroyBlas(gm);
+  }
+  tlasDirty_ = true;
+  return true;
 }
 
 void VulkanRenderer::updateMorphWeights(int meshIndex,
@@ -5682,6 +5835,8 @@ void VulkanRenderer::destroyRt() {
   if (rtPipelineLayout_) { vkDestroyPipelineLayout(device_, rtPipelineLayout_, nullptr); rtPipelineLayout_ = VK_NULL_HANDLE; }
   if (rtPool_) { vkDestroyDescriptorPool(device_, rtPool_, nullptr); rtPool_ = VK_NULL_HANDLE; rtSet_ = VK_NULL_HANDLE; }
   if (rtSetLayout_) { vkDestroyDescriptorSetLayout(device_, rtSetLayout_, nullptr); rtSetLayout_ = VK_NULL_HANDLE; }
+  if (skinPipeline_) { vkDestroyPipeline(device_, skinPipeline_, nullptr); skinPipeline_ = VK_NULL_HANDLE; }
+  if (skinPipelineLayout_) { vkDestroyPipelineLayout(device_, skinPipelineLayout_, nullptr); skinPipelineLayout_ = VK_NULL_HANDLE; }
 }
 
 void VulkanRenderer::destroyOffscreen() {

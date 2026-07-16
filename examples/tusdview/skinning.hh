@@ -12,6 +12,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -77,13 +78,46 @@ struct RtSkinnedMeshUpload {
 // BLAS is built from actual vertex buffers. Build per-mesh posed DrawVertex
 // buffers from the retained rest DrawScene so the renderer can update the VBO and
 // rebuild the acceleration structure without re-running Tydra conversion.
+// `skipMeshes` (optional) excludes meshes the GPU compute-skinning path already
+// handled this frame (see BuildRtGpuSkinUpdates).
 bool BuildRtSkinnedMeshVertices(
     const tinyusdz::Stage& stage,
     const tinyusdz::tydra::RenderScene& render, DrawScene* draw,
     double timecode,
     const std::unordered_map<std::string, float>* blendOverride,
     bool updateSkinnedHelpers,
-    std::vector<RtSkinnedMeshUpload>* outUploads);
+    std::vector<RtSkinnedMeshUpload>* outUploads,
+    const std::unordered_set<int>* skipMeshes = nullptr);
+
+// One GPU-compute-skinnable mesh's per-frame inputs: the composed skinning
+// matrices (geomBind * skinMat * inv(geomBind), 16 floats each, row-major,
+// row-vector p*M — exactly what ApplySkinningToVertices applies on the CPU)
+// plus a conservative posed object-space bound (union of the per-joint
+// transformed rest prototype box; the skinned mesh is a convex combination of
+// per-joint transforms, so it is contained in that union).
+struct RtGpuSkinUpdate {
+  int meshIndex{-1};
+  int matrixBase{0};  // absolute joint id - matrixBase indexes mats
+  int jointCount{0};
+  std::vector<float> mats;  // 16 floats per joint
+  float aabbMin[3]{0, 0, 0};
+  float aabbMax[3]{0, 0, 0};
+};
+
+// Partition per-frame RT skinning between the GPU compute path and the CPU
+// path: emit composed matrices + conservative posed bounds for every
+// GPU-ELIGIBLE mesh — pure <= 4-influence skeletal skinning, no morphs, no
+// displacement bake. Positions and normals are skinned in the compute shader
+// (normals via the weighted joint matrices, the raster deform.glsl
+// convention); the CPU path instead regenerates smooth normals on the posed
+// surface, so GPU output is close but not bit-identical on smooth-shaded
+// meshes. Handled meshes are recorded so BuildRtSkinnedMeshVertices can skip
+// them; their dm/scene bounds are updated from the conservative bound.
+// Ineligible meshes are left for the CPU path.
+bool BuildRtGpuSkinUpdates(const tinyusdz::tydra::RenderScene& render,
+                           DrawScene* draw, double timecode,
+                           std::vector<RtGpuSkinUpdate>* outUpdates,
+                           std::unordered_set<int>* outHandled);
 
 // Update each draw mesh's world transform to its value at `timecode`, evaluated
 // from the Stage's xform hierarchy. For scenes whose node transforms animate

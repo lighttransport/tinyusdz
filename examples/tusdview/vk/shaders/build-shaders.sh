@@ -62,4 +62,17 @@ else
   echo "    enable the Vulkan ray-query path."
 fi
 
+# --- RT GPU-skinning compute shader (optional) ------------------------------
+# Skins the BLAS vertex stream on the GPU for the ray-query path (same
+# vulkan1.2 / buffer_reference needs as raytrace.comp). Absent -> per-frame
+# RT skinning falls back to the CPU path.
+if "$GLSLANG" -V --target-env vulkan1.2 --vn skin_comp_spv \
+      -o "$OUT/skin_comp.spv.h" "$HERE/skin.comp" 2>/dev/null; then
+  echo "==> skin.comp -> embedded/skin_comp.spv.h (RT GPU skinning ENABLED)"
+else
+  rm -f "$OUT/skin_comp.spv.h"
+  echo "==> WARNING: '$GLSLANG' cannot compile skin.comp — RT GPU compute"
+  echo "    skinning omitted (per-frame CPU skinning fallback)."
+fi
+
 echo "==> done. Commit $OUT/*.spv.h"

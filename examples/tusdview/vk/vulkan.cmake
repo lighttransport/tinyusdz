@@ -44,6 +44,14 @@ else()
   message(STATUS "tusdview: Vulkan backend ENABLED (runtime-loaded via volk; embedded SPIR-V, rasterization only — no raytrace_comp.spv.h)")
 endif()
 
+# GPU compute skinning for the RT vertex stream (skin.comp): optional like the
+# ray-query shader. Absent -> per-frame RT skinning falls back to the CPU path.
+if(EXISTS ${TUSDVIEW_SHADER_EMBED_DIR}/skin_comp.spv.h)
+  set(_have_skin_shader 1)
+else()
+  set(_have_skin_shader 0)
+endif()
+
 # --- Backend sources + link ------------------------------------------------
 # volk (meta-loader) + vendored Vulkan headers. VK_NO_PROTOTYPES makes both the
 # Vulkan headers and volk declare the vk* entry points as function pointers
@@ -58,7 +66,8 @@ target_sources(${EXAMPLE_TARGET} PRIVATE
     ${COMMON_DIR}/imgui/imgui_impl_vulkan.cpp)
 target_compile_definitions(${EXAMPLE_TARGET} PRIVATE HAVE_VULKAN=1
     VK_NO_PROTOTYPES IMGUI_IMPL_VULKAN_USE_VOLK
-    TUSDVIEW_HAVE_RT_SHADER=${_have_rt_shader})
+    TUSDVIEW_HAVE_RT_SHADER=${_have_rt_shader}
+    TUSDVIEW_HAVE_SKIN_SHADER=${_have_skin_shader})
 target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${TUSDVIEW_SHADER_EMBED_DIR}
     ${TUSDVIEW_VULKAN_INCLUDE}

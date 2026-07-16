@@ -51,6 +51,9 @@ class VulkanRenderer final : public Renderer {
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
+  bool updateMeshSkinningGpu(int meshIndex, const float* mats, int jointCount,
+                             int matrixBase, const float aabbMin[3],
+                             const float aabbMax[3]) override;
   void updateMorphWeights(int meshIndex,
                           const std::vector<float>& coeffs) override;
   void updateInstanceVisibility(size_t meshIndex, const float* xforms,
@@ -153,6 +156,13 @@ class VulkanRenderer final : public Renderer {
     VkBuffer blasScratch{VK_NULL_HANDLE};        // persistent build+update scratch
     VkDeviceMemory blasScratchMem{VK_NULL_HANDLE};
     VkDeviceAddress blasScratchAddr{0};          // aligned scratch address
+    // GPU compute skinning (skin.comp): persistently-mapped per-mesh SSBO of
+    // composed skinning matrices (16 floats each), re-filled per frame.
+    VkBuffer skinMatBuf{VK_NULL_HANDLE};
+    VkDeviceMemory skinMatMem{VK_NULL_HANDLE};
+    VkDeviceAddress skinMatAddr{0};
+    void* skinMatMapped{nullptr};
+    uint32_t skinMatCapacity{0};  // capacity in matrices
     VkDeviceAddress vboAddr{0};
     VkDeviceAddress eboAddr{0};
     uint32_t vertexCount{0};
@@ -794,6 +804,15 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSet rtSet_{VK_NULL_HANDLE};
   VkPipelineLayout rtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline rtPipeline_{VK_NULL_HANDLE};
+
+  // GPU compute skinning of the RT vertex stream (skin.comp): descriptor-less
+  // (push constants carry buffer device addresses). Created lazily on the first
+  // updateMeshSkinningGpu(); a failed creation latches skinPipelineTried_ so the
+  // caller permanently falls back to CPU skinning.
+  bool ensureSkinPipeline();
+  VkPipelineLayout skinPipelineLayout_{VK_NULL_HANDLE};
+  VkPipeline skinPipeline_{VK_NULL_HANDLE};
+  bool skinPipelineTried_{false};
 };
 
 }  // namespace tusdview
