@@ -1676,6 +1676,20 @@ int main(int argc, char **argv) {
       std::cout << root_layer << "\n";
     }
 
+    // Coarse flatten phase timing (TINYUSDZ_CRATE_PROFILE=1): stderr marks at
+    // each pipeline boundary, complementing the crate-writer's Finalize
+    // profiler.
+    const bool profile_phases = (std::getenv("TINYUSDZ_CRATE_PROFILE") != nullptr);
+    auto phase_t0 = std::chrono::steady_clock::now();
+    auto phase_mark = [&](const char* name) {
+      if (!profile_phases) return;
+      const auto now = std::chrono::steady_clock::now();
+      fprintf(stderr, "[tusdcat profile] %s: %.1fms\n", name,
+              std::chrono::duration<double, std::milli>(now - phase_t0).count());
+      phase_t0 = now;
+    };
+    phase_mark("load-root-layer(+copy)");
+
     tinyusdz::Stage stage;
     stage.metas() = root_layer.metas();
 
@@ -1817,6 +1831,7 @@ int main(int argc, char **argv) {
           }
 
           src_layer = std::move(composited_layer);
+          phase_mark("  compose:references");
         }
       }
 
@@ -1844,6 +1859,7 @@ int main(int argc, char **argv) {
           }
 
           src_layer = std::move(composited_layer);
+          phase_mark("  compose:payload");
         }
       }
 
@@ -1869,6 +1885,7 @@ int main(int argc, char **argv) {
           }
 
           src_layer = std::move(composited_layer);
+          phase_mark("  compose:inherits");
         }
       }
 
@@ -1888,7 +1905,11 @@ int main(int argc, char **argv) {
           has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
-          if (!tinyusdz::CompositeVariant(src_layer, &composited_layer, &warn, &err)) {
+          // InPlace: consumes src_layer (variant selection needs no
+          // pristine-layer lookups) — skips the whole-layer deep copy.
+          if (!tinyusdz::CompositeVariantInPlace(
+                  std::make_unique<tinyusdz::Layer>(std::move(src_layer)),
+                  &composited_layer, &warn, &err)) {
             std::cerr << "Failed to composite `variantSet`: " << err << "\n";
             return -1;
           }
@@ -1903,6 +1924,7 @@ int main(int argc, char **argv) {
           }
 
           src_layer = std::move(composited_layer);
+          phase_mark("  compose:variantSets");
         }
       }
 
@@ -1920,6 +1942,7 @@ int main(int argc, char **argv) {
 
     }
     }  // !full_livrps
+    phase_mark("compose(LIVRP fixed-point)");
 
     if (has_extract_variants) {
       std::cout << "\n=== VARIANT EXTRACTION (" << variant_format << ") ===\n";
@@ -1975,6 +1998,7 @@ int main(int argc, char **argv) {
     }
 
     tinyusdz::Stage comp_stage;
+    phase_mark("flatten-finalize(apiSchemas/preserve-order)");
     try {
       ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
     } catch (const std::bad_alloc &) {
@@ -1991,7 +2015,8 @@ int main(int argc, char **argv) {
     if (!ret) {
       std::cerr << err << "\n";
     }
-    
+    phase_mark("LayerToStage");
+
     if (memstat) {
       size_t stage_mem = comp_stage.estimate_memory_usage();
       std::cout << "\n# Memory Statistics (Stage after composition)\n";
@@ -2074,6 +2099,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
       }
     }
+    phase_mark("write-output");
 
     using MeshMap = tinyusdz::tydra::PathPrimMap<tinyusdz::GeomMesh>;
     MeshMap meshmap;
