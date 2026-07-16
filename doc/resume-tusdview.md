@@ -65,6 +65,21 @@ selection, the tusdview BLAS-compaction port, `--vram-budget`, raster LOD for
 non-instanced meshes (§2.10), and the `-vk` tiled ray dispatch (§2.11 — which
 also records why device-local BVH buffers were measured and left OFF).
 
+Done since (2026-07-16): Vulkan-RT skinning no longer pays a full BLAS rebuild
+per pose. A mesh `updateMeshVertices` rewrites under RT is marked dynamic: its
+BLAS builds with `ALLOW_UPDATE` (uncompacted, outside the compaction wave) and
+later poses REFIT it in place (`refitBlas`, `MODE_UPDATE`, persistent scratch).
+Per-pose AS update on a 205k-tri skinned tube: 3.2-3.3 ms -> 1.4-1.5 ms
+(RX 9070 XT / RADV), byte-identical images (legacy, --next, blendshape).
+`TUSDVIEW_NO_BLAS_REFIT=1` restores the old path (A/B lever). New headless
+`--play` flag drives deterministic fixed-step playback for --frames runs.
+Gate: `tusdview-rt-blas-refit` (mutation-verified); `tusdview-blas-compaction`
+moved to the static fixture `models/blastest-instanced-static.usda` since a
+skinned prototype's BLAS is now deliberately uncompacted. Still open on perf:
+the pose cost is now dominated by the CPU skin + `vkDeviceWaitIdle` + memcpy
+(a GPU-compute skin pass would remove it), and the CUDA/HIP tracers below
+still full-rebuild their BVH per time code.
+
 Done since (2026-07-12): the CUDA/HIP tracers now take the SHARED deform rather
 than their own load-time bake (`poseNextDrawForTracer`, on both the interactive and
 the screenshot paths — guarded by `tusdview-deform-cuda`; they still rebuild the BVH

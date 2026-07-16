@@ -1,5 +1,37 @@
 # Task: Skinning under ray tracing for tusdview
 
+> **STATUS 2026-07-16: DONE through the BLAS-refit optimization.**
+> The MVP (skin into the vbo without Tydra reconvert + BLAS rebuild) landed
+> earlier (`edac29e79` re-pose --next RT geometry per frame, plus the legacy
+> `BuildRtSkinnedMeshVertices` path; gated by `tusdview-rt-skinning` /
+> `tusdview-deform-*-rt`). The refit optimization landed 2026-07-16:
+>
+> - A mesh whose vertices `updateMeshVertices` rewrites under RT is marked
+>   `blasDynamic`; its BLAS builds with `ALLOW_UPDATE` (uncompacted -- a
+>   compacted AS cannot be refit) and later poses REFIT it in place
+>   (`refitBlas`, `MODE_UPDATE`, persistent scratch) instead of paying a full
+>   destroy + `MODE_BUILD` per frame. `TUSDVIEW_NO_BLAS_REFIT=1` is the A/B
+>   lever back to the historical path.
+> - Measured (RX 9070 XT / RADV, 205k-tri skinned tube): per-pose AS update
+>   3.2-3.3 ms -> 1.4-1.5 ms (refit itself 1.2 ms); byte-identical images on
+>   the legacy loader, --next, and the blendshape model.
+> - `--play` flag added: headless playback with a FIXED 1/60 step in --frames
+>   runs, so multi-pose RT runs are deterministic and screenshot-comparable
+>   (this is what lets any per-frame deform be exercised headlessly at all).
+> - Gates: `tusdview-rt-blas-refit` (refit vs rebuild byte-parity over a
+>   --play run + a moved-pose guard; mutation-verified by skipping the
+>   `refitBlas` call). `tusdview-blas-compaction` now runs on the new STATIC
+>   fixture `models/blastest-instanced-static.usda` (+ its referenced
+>   `blastest-proto-sphere.usda`) because a skinned prototype's BLAS is
+>   deliberately uncompacted now -- resident==built on a skinned scene is
+>   correct behavior, and the shrink assertion needs compactable geometry.
+>
+> REMAINING (optional, from the plan below): move the per-frame skin itself to
+> a GPU compute pass (CPU skin + `vkDeviceWaitIdle` + memcpy now dominate the
+> pose cost, not the AS update). Also the CUDA/HIP tracers still full-rebuild
+> their BVH per time code (doc/resume-tusdview.md notes it; perf, not
+> correctness). Original task text kept below for context.
+
 > Resume prompt. This is the last remaining GPU-skinning gap. Raster-path GPU
 > skinning (skeletal + blendshape + node-animated/mixed scenes) is **done and
 > committed**; the Vulkan ray-query (RT) path still falls back to the slow CPU

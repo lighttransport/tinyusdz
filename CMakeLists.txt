@@ -2493,7 +2493,7 @@ if(TINYUSDZ_BUILD_TESTS)
         COMMAND python3
                 ${PROJECT_SOURCE_DIR}/tests/tusdview/check-blas-compaction.py
                 "$<TARGET_FILE:tusdview>"
-                "${PROJECT_SOURCE_DIR}/models/skintest-instanced.usda"
+                "${PROJECT_SOURCE_DIR}/models/blastest-instanced-static.usda"
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-blas-compaction"
         )
       set_tests_properties(tusdview-blas-compaction PROPERTIES SKIP_RETURN_CODE 77)
@@ -2554,6 +2554,19 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-skinning"
         )
       set_tests_properties(tusdview-rt-skinning PROPERTIES SKIP_RETURN_CODE 77)
+
+      # A skinned mesh's BLAS is refit in place per pose (MODE_UPDATE) instead
+      # of destroyed + fully rebuilt. Refit must trace byte-identically to the
+      # rebuild path (TUSDVIEW_NO_BLAS_REFIT=1) over the same --play run.
+      add_test(
+        NAME tusdview-rt-blas-refit
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-rt-blas-refit.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-blas-refit"
+        )
+      set_tests_properties(tusdview-rt-blas-refit PROPERTIES SKIP_RETURN_CODE 77)
 
       # A non-instanced blendshaped mesh must morph: the static batch path used to
       # build no morph channels at all, so it rendered its rest shape forever.

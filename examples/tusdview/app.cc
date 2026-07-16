@@ -2284,9 +2284,16 @@ int App::run(const std::string& initialFile, int maxFrames,
     stepProgressiveUpload();
     finishReconvertIfReady();  // swap in re-evaluated animation geometry
 
-    // Advance the playback clock and request a re-evaluation at the new time
-    // (interactive only; headless renders a fixed --time frame deterministically).
-    if (!headless_) {
+    // Advance the playback clock and request a re-evaluation at the new time.
+    // Headless renders a fixed --time frame unless --play asked for playback --
+    // then the fixed 1/60 step below keeps it just as deterministic.
+    if (!headless_ || playRequested_ || animPlaying_) {
+      // --play: start once the scene (and its timeline) is in. One-shot, so the
+      // user can still pause from the Timeline panel afterwards.
+      if (playRequested_ && loaded_.ok && hasAnimation_ && !loadActive_) {
+        animPlaying_ = true;
+        playRequested_ = false;
+      }
       const auto now = std::chrono::steady_clock::now();
       float dt = haveLastFrameTime_
                      ? std::chrono::duration<float>(now - lastFrameTime_).count()
@@ -2294,6 +2301,11 @@ int App::run(const std::string& initialFile, int maxFrames,
       lastFrameTime_ = now;
       haveLastFrameTime_ = true;
       if (dt > 0.1f) dt = 0.1f;  // clamp after stalls/load hitches
+      // Fixed-frame runs step deterministically (frame N = N/60 s of playback),
+      // so a --play --frames --screenshot capture is pixel-comparable across
+      // runs and machines -- wall-clock dt would land on a different pose every
+      // run.
+      if (maxFrames >= 0) dt = 1.0f / 60.0f;
       advancePlayback(dt);
     }
     if (renderer_ && renderer_->rayTracingActive() != lastRtActiveForSkinning_) {
