@@ -38,7 +38,14 @@ extern "C" {
 // src/external/textools/README.tinyusdz.md.
 #include "texpipe.h"  // pulls in texcomp.h; tp_ktx2_read / tp_ktx2_decode_level_rgba8
 #if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
 #include "external/zstd.h"  // ZSTD_decompress for KTX2 supercompressionScheme 2
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 #endif
 #endif
 
@@ -1067,7 +1074,7 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
 #else
   tp_result r = tp_ktx2_read(addr, sz, &kimg);
 #endif
-  if (!TP_OK(r)) {
+  if (r != TP_SUCCESS) {
     if (err) {
       (*err) += "KTX2: failed to parse: " + std::string(tp_result_string(r)) +
                 "\n";
@@ -1101,7 +1108,7 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
     // NOTE: out_size is in *bytes* (as on the RGBA8 path), not float count.
     r = tp_ktx2_decode_level_rgbaf(
         &kimg, 0, reinterpret_cast<float *>(image->data.data()), nbytes);
-    if (!TP_OK(r)) {
+    if (r != TP_SUCCESS) {
       image->data.clear();
       if (err) {
         (*err) += "KTX2: failed to decode HDR level 0: " +
@@ -1142,7 +1149,7 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
     }
     image->data.resize(need);
     r = tp_ktx2_decode_level_rgba8(&kimg, 0, image->data.data(), need);
-    if (!TP_OK(r)) {
+    if (r != TP_SUCCESS) {
       image->data.clear();
       if (err) {
         (*err) += "KTX2: failed to decode level 0: " +

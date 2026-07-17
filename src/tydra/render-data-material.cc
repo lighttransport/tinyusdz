@@ -21,7 +21,14 @@
 // keep_compressed_textures). Pulls in texcomp.h too.
 #include "texpipe.h"
 #if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
 #include "external/zstd.h"  // ZSTD_decompress for supercompressionScheme 2
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 #endif
 #endif
 #include "io-util.hh"
@@ -2060,7 +2067,7 @@ static bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
 #else
   const tp_result kr = tp_ktx2_read(asset.data(), asset.size(), &k);
 #endif
-  if (!TP_OK(kr)) {
+  if (kr != TP_SUCCESS) {
     if (err) (*err) += "keep-compressed: tp_ktx2_read failed.\n";
     return false;
   }

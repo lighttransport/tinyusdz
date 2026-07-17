@@ -50,6 +50,19 @@
 namespace tinyusdz {
 
 namespace {
+
+FILE *ProfileOutput() {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdisabled-macro-expansion"
+#endif
+  FILE *output = stderr;
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  return output;
+}
+
 constexpr uint32_t kMaxZstdNestingDepth = 2;
 
 std::string GetLayerBaseDirForAssetName(const std::string &asset_name) {
@@ -1329,8 +1342,8 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
 
   if (profile_load) {
     const auto load_t2 = std::chrono::steady_clock::now();
-    fprintf(
-        stderr, "[usdc-layer profile] %s: ReadUSDC %.1fms | ToLayer %.1fms\n",
+    fprintf(ProfileOutput(),
+            "[usdc-layer profile] %s: ReadUSDC %.1fms | ToLayer %.1fms\n",
         filename.c_str(),
         std::chrono::duration<double, std::milli>(load_t1 - load_t0).count(),
         std::chrono::duration<double, std::milli>(load_t2 - load_t1).count());
