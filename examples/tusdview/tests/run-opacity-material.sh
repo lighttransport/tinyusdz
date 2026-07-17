@@ -213,6 +213,31 @@ if right-left < 35: sys.exit(1)
 PY
 }
 
+# Shaded RT output is encoded from linear to sRGB. The UI clear colour is
+# already authored in display space, so the RT shader must linearize it before
+# that final encode; otherwise 0.12/0.13 becomes roughly (97,97,101) instead of
+# the raster backend's (31,31,33). This fixture leaves ample clear background,
+# making its most common pixel an exact, driver-independent regression probe.
+probe_display_background() {
+  python3 - "$1" <<'PY'
+from collections import Counter
+import re, sys
+d = open(sys.argv[1], "rb").read()
+m = re.match(rb"P6\s+(\d+)\s+(\d+)\s+(\d+)\s", d)
+if not m or int(m.group(3)) != 255:
+    sys.exit(2)
+w, h = int(m.group(1)), int(m.group(2))
+p = d[m.end():m.end() + w * h * 3]
+if len(p) != w * h * 3:
+    sys.exit(2)
+colors = Counter(p[i:i + 3] for i in range(0, len(p), 3))
+actual = colors.most_common(1)[0][0] if colors else b""
+expected = bytes((31, 31, 33))
+print(f"vkrt background={tuple(actual)} expected={tuple(expected)}")
+sys.exit(0 if actual == expected else 1)
+PY
+}
+
 ran=0 mask_ran=0 varying_ran=0 fail=0 vk_software=0
 for spec in "gl:--backend gl" "vk:--backend vk"; do
   tag="${spec%%:*}"; args="${spec#*:}"
@@ -318,6 +343,9 @@ img="$OUT/display-opacity-vkrt.ppm"
 if grep -q 'Vulkan ray tracing (ray query) enabled' "$OUT/display-opacity-vkrt.log" && [ -s "$img" ]; then
   ran=$((ran+1)); varying_ran=$((varying_ran+1))
   probe "$img" vary-vkrt || { echo "FAIL: vary-vkrt"; fail=1; }
+  probe_display_background "$img" || {
+    echo "FAIL: Vulkan RT clear colour was sRGB-encoded twice"; fail=1;
+  }
   aov="$OUT/display-opacity-vkrt-opacity-aov.ppm"
   "$BIN" --headless --backend vk --rt --mode opacity --frames 4 \
     --view-dir 0,0,-1 --size 256x256 --screenshot "$aov" \
