@@ -149,24 +149,44 @@ bool TryInlineMatrixDiagonalInt8(const Matrix& mat,
 }  // namespace
 
 bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep* rep) {
+  // Direct-interning sink: historical behavior (intern into writer tables).
+  struct DirectSink final : public InternSink {
+    CrateWriter* w;
+    explicit DirectSink(CrateWriter* writer) : w(writer) {}
+    uint32_t InternToken(const std::string& s) override {
+      return w->GetOrCreateToken(s).value;
+    }
+    uint32_t InternString(const std::string& s) override {
+      return w->GetOrCreateString(s).value;
+    }
+  } sink(this);
+  return TryInlineValue(value, rep, sink);
+}
+
+bool CrateWriter::TryInlineValue(const crate::CrateValue& value,
+                                 crate::ValueRep* rep, InternSink& sink) {
   // Phase 1: String/Token/AssetPath values
   // Strings and tokens are always inlined as indices in USDC format
+  //
+  // NOTE: interning MUST go through `sink` — see the InternSink contract in
+  // crate-writer.hh (a recording sink runs this concurrently in pass A of the
+  // two-pass Finalize; any other writer-state mutation here breaks it).
 
   // Try to get as token
   if (auto* token_val = value.as<value::token>()) {
-    crate::TokenIndex idx = GetOrCreateToken(token_val->str());
+    const uint32_t idx = sink.InternToken(token_val->str());
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN));
     rep->SetIsInlined();
-    rep->SetPayload(static_cast<uint64_t>(idx.value));
+    rep->SetPayload(static_cast<uint64_t>(idx));
     return true;
   }
 
   // Try to get as string
   if (auto* str_val = value.as<std::string>()) {
-    crate::StringIndex idx = GetOrCreateString(*str_val);
+    const uint32_t idx = sink.InternString(*str_val);
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING));
     rep->SetIsInlined();
-    rep->SetPayload(static_cast<uint64_t>(idx.value));
+    rep->SetPayload(static_cast<uint64_t>(idx));
     return true;
   }
 
@@ -176,10 +196,10 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     // format (matches CrateReader at crate-reader-values.cc which reads
     // it via GetToken). Storing as StringIndex caused the reader to read
     // a token at the wrong index and surface garbage like ";-)".
-    crate::TokenIndex idx = GetOrCreateToken(asset_val->GetAssetPath());
+    const uint32_t idx = sink.InternToken(asset_val->GetAssetPath());
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH));
     rep->SetIsInlined();
-    rep->SetPayload(static_cast<uint64_t>(idx.value));
+    rep->SetPayload(static_cast<uint64_t>(idx));
     return true;
   }
 

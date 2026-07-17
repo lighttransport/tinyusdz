@@ -6,6 +6,12 @@
 
 #include "composition.hh"
 
+#include <atomic>
+#include <functional>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#endif
+
 #include "common-macros.inc"
 #include "layer.hh"
 #include "prim-pprint.hh"
@@ -113,6 +119,10 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   // - primChildrenNames()
 
 
+/* The PrimSpec is consumed (callers hand LayerToStage an rvalue Layer), so
+   metas are moved out and the typed prim is moved into the boxed Value —
+   this path previously copied the fully-built typed prim twice (into the
+   Value, then into the Prim). */
 #define RECONSTRUCT_PRIM(__primty)                                       \
   if (primspec.typeName() == value::TypeTraits<__primty>::type_name()) { \
     __primty typed_prim;                                                 \
@@ -122,13 +132,12 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
                  << " elementName: " << primspec.name());                \
       return nonstd::nullopt;                                            \
     }                                                                    \
-    typed_prim.meta = primspec.metas();                                  \
+    typed_prim.meta = std::move(primspec.metas());                       \
     typed_prim.name = primspec.name();                                   \
     typed_prim.spec = primspec.specifier();                              \
     /*typed_prim.propertyNames() = properties; */                        \
     /*typed_prim.primChildrenNames() = primChildren;*/                   \
-    value::Value primdata = typed_prim;                                  \
-    Prim prim(primspec.name(), primdata);                                \
+    Prim prim(primspec.name(), value::Value(std::move(typed_prim)));     \
     prim.prim_type_name() = primspec.typeName();                         \
     /* also add primChildren to Prim */                                  \
     /* prim.metas().primChildren = primChildren; */                      \
@@ -143,14 +152,13 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
       PUSH_ERROR("Failed to reconstruct Model");
       return nonstd::nullopt;
     }
-    typed_prim.meta = primspec.metas();
+    typed_prim.meta = std::move(primspec.metas());
     typed_prim.name = primspec.name();
     typed_prim.prim_type_name = primspec.typeName();
     typed_prim.spec = primspec.specifier();
     // typed_prim.propertyNames() = properties;
     // typed_prim.primChildrenNames() = primChildren;
-    value::Value primdata = typed_prim;
-    Prim prim(primspec.name(), primdata);
+    Prim prim(primspec.name(), value::Value(std::move(typed_prim)));
     prim.prim_type_name() = primspec.typeName();
     /* also add primChildren to Prim */
     // prim.metas().primChildren = primChildren;
@@ -260,6 +268,115 @@ bool LayerToStage(Layer &&layer, Stage *stage_out, std::string *warn,
 
   stage.metas() = layer.metas();
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Large layers: reconstruct prim subtrees on worker threads, assembled in
+  // DFS order (unit's own prim, then its child units in child order) — the
+  // Prim tree, warning text and error text come out identical to the serial
+  // walk. Children of a failed prim are dropped without merging their
+  // diagnostics, matching the serial "skip subtree on failure" behavior.
+  {
+    size_t approx_prims = 0;
+    for (auto &kv : layer.primspecs()) {
+      approx_prims += 1;
+      for (auto &c1 : kv.second.children()) {
+        approx_prims += 1 + c1.children().size();
+      }
+    }
+    if ((std::thread::hardware_concurrency() > 1) && (approx_prims > 64)) {
+      struct RecUnit {
+        PrimSpec* ps = nullptr;
+        bool whole_subtree = true;
+        uint32_t depth = 0;
+        nonstd::optional<Prim> prim;
+        std::vector<size_t> children;  // unit indices, in child order
+        std::string unit_warn;
+        std::string unit_err;
+      };
+      // Shells above this depth fan out single-root scenes; whole subtrees
+      // below become the parallel jobs.
+      constexpr uint32_t kShellDepth = 3;
+
+      std::vector<RecUnit> units;
+      units.reserve(1024);
+      std::vector<size_t> roots;
+      std::function<size_t(PrimSpec&, uint32_t)> plan =
+          [&](PrimSpec& ps, uint32_t depth) -> size_t {
+        const size_t idx = units.size();
+        units.push_back(RecUnit());
+        RecUnit& u = units.back();
+        u.ps = &ps;
+        u.depth = depth;
+        if (depth < kShellDepth && !ps.children().empty()) {
+          u.whole_subtree = false;
+          std::vector<size_t> child_ids;
+          child_ids.reserve(ps.children().size());
+          for (auto& child : ps.children()) {
+            child_ids.push_back(plan(child, depth + 1));
+          }
+          units[idx].children = std::move(child_ids);
+        }
+        return idx;
+      };
+      for (auto& primspec : layer.primspecs()) {
+        roots.push_back(plan(primspec.second, 0));
+      }
+
+      {
+        const uint32_t hw = std::thread::hardware_concurrency();
+        const uint32_t nworkers = static_cast<uint32_t>(
+            (std::min)(size_t(hw > 0 ? hw : 4), units.size()));
+        std::atomic<size_t> next_unit{0};
+        auto work = [&]() {
+          for (;;) {
+            const size_t i = next_unit.fetch_add(1);
+            if (i >= units.size()) break;
+            RecUnit& u = units[i];
+            if (u.whole_subtree) {
+              u.prim = detail::ReconstructPrimFromPrimSpecRec(
+                  *u.ps, &u.unit_warn, &u.unit_err, u.depth);
+            } else {
+              u.prim = detail::ReconstructPrimFromPrimSpec(*u.ps, &u.unit_warn,
+                                                           &u.unit_err);
+            }
+          }
+        };
+        std::vector<std::thread> workers;
+        workers.reserve(nworkers);
+        for (uint32_t t = 1; t < nworkers; t++) {
+          workers.emplace_back(work);
+        }
+        work();
+        for (auto& th : workers) th.join();
+      }
+
+      std::function<nonstd::optional<Prim>(size_t)> assemble =
+          [&](size_t idx) -> nonstd::optional<Prim> {
+        RecUnit& u = units[idx];
+        if (warn && !u.unit_warn.empty()) (*warn) += u.unit_warn;
+        if (err && !u.unit_err.empty()) (*err) += u.unit_err;
+        if (!u.prim) {
+          return nonstd::nullopt;
+        }
+        Prim p = std::move(u.prim.value());
+        for (size_t c : u.children) {
+          if (auto cv = assemble(c)) {
+            p.children().emplace_back(std::move(cv.value()));
+          }
+        }
+        return nonstd::optional<Prim>(std::move(p));
+      };
+      for (size_t r : roots) {
+        if (auto pv = assemble(r)) {
+          stage.add_root_prim(std::move(pv.value()));
+        }
+      }
+
+      (*stage_out) = std::move(stage);
+      return true;
+    }
+  }
+#endif  // TINYUSDZ_ENABLE_THREAD
+
   // TODO: primChildren metadatum
   for (auto &primspec : layer.primspecs()) {
     if (auto pv =
@@ -268,7 +385,7 @@ bool LayerToStage(Layer &&layer, Stage *stage_out, std::string *warn,
     }
   }
 
-  (*stage_out) = stage;
+  (*stage_out) = std::move(stage);
 
   return true;
 }
@@ -859,6 +976,19 @@ bool VariantSelectPrimSpec(
   }
 
   return true;
+}
+
+bool VariantSelectPrimSpec(
+    PrimSpec &dst, PrimSpec &&src,
+    const std::map<std::string, std::string> &variant_selection,
+    std::string *warn, std::string *err) {
+  // Copy-fallback for the move-in overload: this branch's variant selection
+  // was rewritten for LIVRPS correctness (local opinions kept separate from
+  // variant opinions, nested variantSets promoted) and does not implement the
+  // per-prim move-donation fast path — bind to the copying overload. The big
+  // move win (whole-layer) lives in CompositeVariantInPlace.
+  const PrimSpec &csrc = src;
+  return VariantSelectPrimSpec(dst, csrc, variant_selection, warn, err);
 }
 
 }  // namespace tinyusdz

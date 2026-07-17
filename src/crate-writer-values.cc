@@ -900,7 +900,13 @@ bool CrateWriter::LookupDeduplicatedValue(const std::vector<char>& bytes,
       NanAwareHash::hash_buffer(bytes.data(), bytes.size(), element_size,
                                 is_float),
       wire_tag);
+  return LookupDeduplicatedValueWithHash(h, bytes, element_size, is_float,
+                                         wire_tag, rep);
+}
 
+bool CrateWriter::LookupDeduplicatedValueWithHash(
+    size_t h, const std::vector<char>& bytes, size_t element_size,
+    bool is_float, uint32_t wire_tag, crate::ValueRep* rep) const {
   auto range = value_dedup_map_.equal_range(h);
   for (auto it = range.first; it != range.second; ++it) {
     const auto& entry = it->second;
@@ -956,6 +962,25 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
 
   int64_t value_offset = Tell();
 
+  if (WriteValueBody(value, is_compressed, err) < 0) {
+    return -1;
+  }
+
+  // Update value data end offset
+  value_data_end_offset_ = Tell();
+
+  // Seek back to where we were
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing value";
+    return -1;
+  }
+
+  return value_offset;
+}
+
+int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
+                                    bool* is_compressed,
+                                    std::string* err) {
   // Phase 1: Write out-of-line value data based on type
   // This handles values that cannot be inlined in the 48-bit payload
 
@@ -2347,16 +2372,63 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     return -1;
   }
 
-  // Update value data end offset
-  value_data_end_offset_ = Tell();
+  return 0;
+}
 
-  // Seek back to where we were
-  if (!Seek(current_pos)) {
-    if (err) *err = "Failed to seek back after writing value";
-    return -1;
+// Keep in lockstep with the WriteValueBody chain above: exactly the branches
+// that route every byte through Write/WriteBytes with no interning, no
+// Tell/Seek, no value_data_end_offset_ bookkeeping and no crate version bump.
+// (WriteCompressedArray32/64 and WriteCompressedFloat/Double arrays qualify:
+// pure compression into a local buffer, then Write/WriteBytes.)
+bool CrateWriter::IsPureValueData(const crate::CrateValue& value) {
+  if (value.GetUnregisteredValueString()) {
+    return false;  // wrapper branch seeks + recursively packs
   }
-
-  return value_offset;
+  // Scalars (out-of-line forms of numeric types)
+  if (value.as<value::timecode>() || value.as<double>() ||
+      value.as<int64_t>() || value.as<uint64_t>() ||
+      value.as<value::float2>() || value.as<value::double2>() ||
+      value.as<value::int2>() || value.as<value::float3>() ||
+      value.as<value::double3>() || value.as<value::int3>() ||
+      value.as<value::half2>() || value.as<value::half3>() ||
+      value.as<value::half4>() || value.as<value::float4>() ||
+      value.as<value::double4>() || value.as<value::int4>() ||
+      value.as<value::matrix2d>() || value.as<value::matrix3d>() ||
+      value.as<value::matrix4d>() || value.as<value::quath>() ||
+      value.as<value::quatf>() || value.as<value::quatd>()) {
+    return true;
+  }
+  // Numeric arrays (incl. integer/float compression — pure)
+  if (value.as<std::vector<bool>>() || value.as<std::vector<uint8_t>>() ||
+      value.as<std::vector<int32_t>>() || value.as<std::vector<uint32_t>>() ||
+      value.as<std::vector<int64_t>>() || value.as<std::vector<uint64_t>>() ||
+      value.as<std::vector<value::half>>() ||
+      value.as<std::vector<float>>() || value.as<std::vector<double>>() ||
+      value.as<std::vector<value::timecode>>() ||
+      value.as<std::vector<value::float2>>() ||
+      value.as<std::vector<value::float3>>() ||
+      value.as<std::vector<value::float4>>() ||
+      value.as<std::vector<value::double2>>() ||
+      value.as<std::vector<value::double3>>() ||
+      value.as<std::vector<value::double4>>() ||
+      value.as<std::vector<value::int2>>() ||
+      value.as<std::vector<value::int3>>() ||
+      value.as<std::vector<value::int4>>() ||
+      value.as<std::vector<value::uint2>>() ||
+      value.as<std::vector<value::uint3>>() ||
+      value.as<std::vector<value::uint4>>() ||
+      value.as<std::vector<value::quath>>() ||
+      value.as<std::vector<value::quatf>>() ||
+      value.as<std::vector<value::quatd>>() ||
+      value.as<std::vector<value::half2>>() ||
+      value.as<std::vector<value::half3>>() ||
+      value.as<std::vector<value::half4>>() ||
+      value.as<std::vector<value::matrix2d>>() ||
+      value.as<std::vector<value::matrix3d>>() ||
+      value.as<std::vector<value::matrix4d>>()) {
+    return true;
+  }
+  return false;
 }
 
 crate::ValueRep CrateWriter::PackTokenVectorValue(

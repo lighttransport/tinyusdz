@@ -1007,23 +1007,15 @@ class EmptyStaticMeta {
 
  public:
   static PrimMeta &GetEmptyStaticMeta() {
-    if (!s_meta) {
-      s_meta = new PrimMeta();
-    }
-
+    // Thread-safe magic-static init (heap-allocated to keep avoiding clang's
+    // -Wexit-time-destructors; intentionally never freed). NOTE: this is a
+    // last-resort SHARED object for prim types missing from GetPrimMeta() —
+    // writes through it alias across prims. Keep GetPrimMeta()'s dispatch
+    // complete instead of relying on this fallback.
+    static PrimMeta *s_meta = new PrimMeta();
     return *s_meta;
   }
-
-  ~EmptyStaticMeta() {
-    delete s_meta;
-    s_meta = nullptr;
-  }
-
- private:
-  static PrimMeta *s_meta;
 };
-
-PrimMeta *EmptyStaticMeta::s_meta = nullptr;
 
 PrimMeta &Prim::metas() {
   PrimMeta *p = GetPrimMeta(_data);

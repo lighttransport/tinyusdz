@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "spin-mutex.hh"
 #include "usdc-reader.hh"
 
 #include "common-macros.inc"
@@ -304,10 +305,26 @@ class USDCReader::Impl {
       const std::vector<value::token> &properties,
       const PathIndexToSpecIndexMap &psmap, const PrimMeta &meta, bool *is_unsupported_prim = nullptr);
 
+  /// When `out_root_prim` is non-null the reconstructed subtree-root Prim is
+  /// returned through it instead of being attached to the stage/parent
+  /// (used by parallel reconstruction jobs).
   bool ReconstructPrimRecursively(int parent_id, int current_id, Prim *rootPrimPtr,
                                   int level,
                                   const PathIndexToSpecIndexMap &psmap,
-                                  Stage *stage);
+                                  Stage *stage,
+                                  std::unique_ptr<Prim> *out_root_prim = nullptr);
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  ///
+  /// Parallel prim reconstruction: non-variant subtrees are reconstructed on
+  /// worker threads (per-thread crate stream/scratch state), shells (split
+  /// interior nodes) and variant-containing subtrees stay on the calling
+  /// thread, and the tree is assembled serially in traversal order so the
+  /// result is identical to the serial walk.
+  ///
+  bool ReconstructPrimHierarchyParallel(const PathIndexToSpecIndexMap &psmap,
+                                        Stage *stage);
+#endif
 
   bool ReconstructStage(Stage *stage);
 
@@ -315,10 +332,25 @@ class USDCReader::Impl {
   /// For Layer
   ///
 
+  /// `top_level_sink`: when non-null, the TOP-LEVEL call appends the
+  /// reconstructed subtree root to `top_level_sink->children()` instead of
+  /// the normal destination (layer->primspecs() for parent 0 / the parent
+  /// PrimSpec otherwise). Used by the parallel reconstruction so worker
+  /// threads never touch the shared Layer map; the child recursion always
+  /// passes nullptr, so serial behavior is unchanged.
   bool ReconstructPrimSpecRecursively(int parent_id, int current_id, PrimSpec *rootPrim,
                                   int level,
                                   const PathIndexToSpecIndexMap &psmap,
-                                  Layer *stage);
+                                  Layer *stage,
+                                  PrimSpec *top_level_sink = nullptr);
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  /// Parallel PrimSpec-hierarchy reconstruction — the Layer analog of
+  /// ReconstructPrimHierarchyParallel above (same shells/jobs split).
+  /// Produces byte-equal Layer content to the serial walk.
+  bool ReconstructPrimSpecHierarchyParallel(const PathIndexToSpecIndexMap &psmap,
+                                            Layer *layer);
+#endif
 
   bool ToLayer(Layer *layer);
 
@@ -337,13 +369,40 @@ class USDCReader::Impl {
     return outer + "\n" + inner;
   }
 
-  void PushError(const std::string &s) { _err = StackMessage(s, _err); }
+  // Diagnostics can be pushed from worker threads during parallel
+  // reconstruction.
+  void PushError(const std::string &s) {
+    ScopedSpinLock<SpinMutex> lk(_diag_mutex);
+    _err = StackMessage(s, _err);
+  }
 
-  void PushWarn(const std::string &s) { _warn = StackMessage(s, _warn); }
+  void PushWarn(const std::string &s) {
+    ScopedSpinLock<SpinMutex> lk(_diag_mutex);
+    _warn = StackMessage(s, _warn);
+  }
 
-  std::string GetError() { return _err; }
+  // Append verbatim (no message stacking) — used to merge worker-local
+  // diagnostic buffers.
+  void AppendErrorRaw(const std::string &s) {
+    if (s.empty()) return;
+    ScopedSpinLock<SpinMutex> lk(_diag_mutex);
+    _err += s;
+  }
+  void AppendWarnRaw(const std::string &s) {
+    if (s.empty()) return;
+    ScopedSpinLock<SpinMutex> lk(_diag_mutex);
+    _warn += s;
+  }
 
-  std::string GetWarning() { return _warn; }
+  std::string GetError() {
+    ScopedSpinLock<SpinMutex> lk(_diag_mutex);
+    return _err;
+  }
+
+  std::string GetWarning() {
+    ScopedSpinLock<SpinMutex> lk(_diag_mutex);
+    return _warn;
+  }
 
   // Approximated memory usage in [mb]
   size_t GetMemoryUsage() const {
@@ -438,10 +497,14 @@ class USDCReader::Impl {
                         const PathIndexToSpecIndexMap &psmap,
                         prim::PropertyMap *props);
 
+  /// `reserved_bytes_out` (lazy mode): memory budget reserved while decoding
+  /// into `scratch`; the caller releases it (ReleaseMemoryBudget) once the
+  /// decoded values are consumed.
   bool ResolveFieldValuePairs(
       const crate::Spec &spec,
       const crate::FieldValuePairVector **fvs,
-      crate::FieldValuePairVector *scratch);
+      crate::FieldValuePairVector *scratch,
+      uint64_t *reserved_bytes_out = nullptr);
 
   bool ReconstrcutStageMeta(const crate::FieldValuePairVector &fvs,
                             StageMetas *out);
@@ -509,6 +572,7 @@ class USDCReader::Impl {
   StreamReader *_sr = nullptr;
   std::string _err;
   std::string _warn;
+  SpinMutex _diag_mutex;
 
   USDCReaderConfig _config;
 
@@ -563,10 +627,6 @@ class USDCReader::Impl {
   const crate::LiveFieldSetMap
       *_live_fieldsets = nullptr;  // <fieldset index, List of field with unpacked Values>
 
-  // Budget reserved by the last lazy DecodeFieldSet scratch buffer.
-  // Released when scratch is reused or at end of reconstruction.
-  uint64_t _scratch_budget_reserved{0};
-
   // VariantSet Spec.
   // key = parent idx, value = (prim_id, (variantSetName, variantChildren names))
   std::map<uint32_t, std::unordered_map<int32_t, std::pair<std::string, std::vector<value::token>>>> _variantChildren;
@@ -587,8 +647,24 @@ class USDCReader::Impl {
   // Fast lookup for variant prims by name: {variantSetName, variantName} -> path index
   std::map<std::pair<std::string, std::string>, int32_t> _variantNameIndex;
 
-  // Check if given node_id is a prim node.
-  std::set<int32_t> _prim_table;
+  // Check if given node_id is a prim node. Flag-per-node instead of a
+  // std::set: parallel reconstruction workers mark disjoint node ids
+  // concurrently (element writes to a pre-sized vector<uint8_t> are safe;
+  // shells/ancestors are marked before workers start).
+  struct PrimNodeFlagTable {
+    void reset(size_t num_nodes) { _f.assign(num_nodes, 0); }
+    size_t count(int64_t idx) const {
+      return ((idx >= 0) && (size_t(idx) < _f.size()) && _f[size_t(idx)]) ? 1
+                                                                          : 0;
+    }
+    void insert(int64_t idx) {
+      if ((idx >= 0) && (size_t(idx) < _f.size())) {
+        _f[size_t(idx)] = 1;
+      }
+    }
+    std::vector<uint8_t> _f;
+  };
+  PrimNodeFlagTable _prim_table;
 
   std::set<std::string> _supported_prim_attr_types;
 
