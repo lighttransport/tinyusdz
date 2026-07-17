@@ -99,8 +99,8 @@ option(TINYUSDZ_BUILD_TOOLS "Build tools (tusddumpcrate, etc.)" OFF)
 # Link a drop-in allocator into the CLI example tools (tusdcat,
 # tydra_to_renderscene). The legacy flatten/compose path is allocation-heavy
 # (~20% of a large-scene `tusdcat -f` is glibc malloc/free/consolidate);
-# jemalloc cuts the large reference scene 12.9->10.7s (-17%) and the medium reference scene
-# 7.3->6.1s at ~+4% RSS, byte-identical output. Tools only -- the library
+# jemalloc cut representative large-scene runs by 14-17% at ~+4% RSS with
+# byte-identical output. Tools only -- the library
 # never forces an allocator (apps choose). Same ranking as src/next
 # (TINYUSDZ_NEXT_WITH_TCMALLOC): jemalloc > tcmalloc_minimal > mimalloc.
 # NOTE: unlike src/next tools, no `malloc_conf` no-purge baking here -- the

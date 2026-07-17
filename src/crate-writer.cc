@@ -2370,7 +2370,7 @@ void CrateWriter::BuildPackPlan(const crate::CrateValue& value, PackPlan* plan,
   // Prebuild only values that will actually need encoding. Instanced scenes
   // are dominated by dedup HITS, whose serial path never encodes at all —
   // blindly prebuilding every duplicate costs more than the parallelism buys
-  // (measured on the large reference scene: 4317 meshes from 177 unique assets). Skip when the
+  // (measured on a 4317-mesh scene with 177 unique assets). Skip when the
   // value is already retained (frozen-table probe) and claim within-window
   // firsts so each new unique value is encoded by exactly one thread; the
   // other duplicates dedup-hit in pass B once the first is retained. A plan
