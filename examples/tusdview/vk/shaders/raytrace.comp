@@ -170,6 +170,15 @@ vec3 linearToSrgb(vec3 c) {
   return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
 }
 
+// Inverse of the above (sRGB -> linear), for values authored in DISPLAY space
+// that must survive the encode below.
+vec3 srgbToLinear(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c * (1.0 / 12.92);
+  vec3 hi = pow((c + 0.055) * (1.0 / 1.055), vec3(2.4));
+  return mix(lo, hi, greaterThan(c, vec3(0.04045)));
+}
+
 void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy);
   ivec2 size = imageSize(outImg);
@@ -195,7 +204,18 @@ void main() {
   vec3 origin = nearW;
   vec3 dir = normalize(farW - nearW);
 
-  vec3 outc = pc.clearColor.rgb;
+  // The clear colour is a DISPLAY-space UI constant (0.12 -> 31/255) -- the very
+  // value the raster path clears its UNORM target with. Shaded/wireframe output
+  // is sRGB-encoded on the way out (see the tail of main), so those modes must
+  // start from a LINEARIZED background: it then round-trips to the authored
+  // value and matches raster byte-for-byte, and transparent surfaces composite
+  // against it in linear space. Encoding the display value instead washed the
+  // background out to 97/255 (T11). Raw AOV modes are NOT encoded, so they keep
+  // the display value as-is.
+  int bgMode = int(pc.camPos.w + 0.5);
+  vec3 bgc = (bgMode == 0 || bgMode == 1) ? srgbToLinear(pc.clearColor.rgb)
+                                          : pc.clearColor.rgb;
+  vec3 outc = bgc;
 
   rayQueryEXT rq;
   rayQueryInitializeEXT(rq, TLAS, gl_RayFlagsOpaqueEXT, 0xFF, origin, 1e-3, dir, 1e30);
@@ -392,14 +412,14 @@ void main() {
     // depthScale in lightDir.w).
     if (rmode == 0) {
       if (alphaMode > 0.5 && alphaMode < 1.5 && materialOpacity <= 0.0) {
-        outc = pc.clearColor.rgb;
+        outc = bgc;
       } else if (alphaMode > 1.5 && materialOpacity < 1.0) {
-        outc = mix(pc.clearColor.rgb, outc, materialOpacity);
+        outc = mix(bgc, outc, materialOpacity);
       }
     }
     if (rmode == 1) {
       float e = min(w0, min(bc.x, bc.y));
-      if (e > 0.02) outc = pc.clearColor.rgb;
+      if (e > 0.02) outc = bgc;
     } else if (rmode == 2) {
       outc = N * 0.5 + 0.5;
     } else if (rmode == 3) {
