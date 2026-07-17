@@ -860,9 +860,9 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   }
 
   if (!borrowed_cache_layer) {
-    // FIXME: This may be redundant, since assetresulution state is stored in
+    // FIXME: This may be redundant, since asset resolution state is stored in
     // each PrimSpec.
-    // TODO: Remove layer-level assetresulution state store?
+    // TODO: Remove layer-level asset resolution state store?
     //
     // save assetresolution state for nested composition.
     layer.set_asset_resolution_state(resolver.current_working_path(),
