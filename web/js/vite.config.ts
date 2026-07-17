@@ -1,11 +1,22 @@
 import { defineConfig } from 'vite';
+import { execFileSync } from 'child_process';
 import path from 'path';
 
 const usdAssetsDir = process.env.USD_WG_ASSETS_DIR || '/mnt/nvme02/work/usd/assets';
 const publicDir = process.env.TINYUSDZ_VITE_PUBLIC_DIR;
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => {
+  // The browser loaders consume generated Emscripten glue from
+  // src/tinyusdz. Keep every `vite`-based demo command self-contained instead
+  // of requiring developers to know which bootstrap command produces it.
+  if (command === 'serve') {
+    execFileSync('bash', [
+      path.resolve(__dirname, '../demo/scripts/prepare-local-tinyusdz.sh'),
+    ], { stdio: 'inherit' });
+  }
+
+  return {
   ...(publicDir ? { publicDir: path.resolve(publicDir) } : {}),
   // Multi-page app: serve each .html directly and return 404 for unmatched
   // routes instead of falling back to index.html (the default SPA behavior).
@@ -34,4 +45,5 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['tinyusdz'],
   },
+  };
 });
