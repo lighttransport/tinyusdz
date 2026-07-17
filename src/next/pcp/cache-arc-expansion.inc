@@ -67,6 +67,13 @@
   // A variantSet whose selection was unknown when its spec expanded
   // (authored at a weaker site): grafted by ProcessDeferredVariants at the
   // recorded strength position once the whole prim's selections are known.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+// Src and ArcChain are intentionally file-local implementation types. GCC
+// otherwise warns when this nested, likewise implementation-only helper holds
+// them directly.
+#pragma GCC diagnostic ignored "-Wsubobject-linkage"
+#endif
   struct DeferredVariant {
     std::vector<Src> *out;
     std::vector<Src> *spec_out;
@@ -78,6 +85,9 @@
     std::string layer_id;
     ArcChain chain;
   };
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
   std::vector<DeferredVariant> deferred_variants_;
 
   // Graft every deferred variantSet owned by this ExpandList invocation whose
