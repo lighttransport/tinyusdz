@@ -244,6 +244,11 @@ npm run dev:progress           # progress-demo.html
 npm run dev:progress-offscreen # progress-offscreenwebgl.html
 ```
 
+Starting any Vite development command incrementally builds the local legacy
+and next WASM modules into `src/tinyusdz`. This requires Emscripten
+(`emcmake`), CMake, and Ninja. The generated `tinyusdz*.js` and
+`tinyusdz*.wasm` files are build artifacts and are not committed.
+
 Experimental (WebGPU/WebGL2):
 
 ```bash
@@ -257,4 +262,3 @@ npm run dev:webgl2       # materialx-webgl2.html
 NPM packaing is not handled in this folder.
 
 Please see `../npm`
-

@@ -323,6 +323,7 @@ list(
   ${TINYUSDZ_NEXT_DIR}/prim/path.cc
   ${TINYUSDZ_NEXT_DIR}/prim/attribute.cc
   ${TINYUSDZ_NEXT_DIR}/prim/prim.cc
+  ${TINYUSDZ_NEXT_DIR}/layer/array-edit.cc
   ${TINYUSDZ_NEXT_DIR}/layer/property-index.cc
   ${TINYUSDZ_NEXT_DIR}/layer/prim-spec.cc
   ${TINYUSDZ_NEXT_DIR}/layer/layer.cc
