@@ -71,11 +71,25 @@ namespace pathlib = ::crate;
 namespace tinyusdz {
 namespace experimental {
 
+CrateWriter::InternSink::~InternSink() = default;
+
 // Out-of-line virtual destructors to anchor vtables in this TU.
 IOutputStream::~IOutputStream() = default;
 MemoryOutputStream::~MemoryOutputStream() = default;
 
 namespace {
+
+FILE *ProfileOutput() {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdisabled-macro-expansion"
+#endif
+  FILE *output = stderr;
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  return output;
+}
 
 // Magic identifier for USDC files
 constexpr char kMagicIdent[] = "PXR-USDC";
@@ -862,7 +876,7 @@ bool CrateWriter::Finalize(std::string* err) {
   if (profile_finalize_) {
     prof_t_fields = prof_now();
     const double ms = 1e-6;
-    fprintf(stderr,
+    fprintf(ProfileOutput(),
             "[crate-writer profile] Finalize: sort %.1fms | path-rebuild %.1fms "
             "| field-pack %.1fms (PackValue: inline %.1fms, dedup %.1fms, "
             "write %.1fms, other %.1fms; field/fieldset dedup %.1fms)\n",
@@ -878,7 +892,7 @@ bool CrateWriter::Finalize(std::string* err) {
                 ms,
             double(prof_field_dedup_ns_) * ms);
     if (prof_passa_ns_ || prof_passb_ns_) {
-      fprintf(stderr,
+      fprintf(ProfileOutput(),
               "[crate-writer profile]   two-pass: pass A %.1fms (parallel) | "
               "pass B %.1fms (serial replay)\n",
               double(prof_passa_ns_) * ms, double(prof_passb_ns_) * ms);
@@ -951,7 +965,8 @@ bool CrateWriter::Finalize(std::string* err) {
   const auto prof_section = [&](const char* name) {
     if (!profile_finalize_) return;
     const auto now = prof_now();
-    fprintf(stderr, "[crate-writer profile]   section %s: %.1fms\n", name,
+    fprintf(ProfileOutput(),
+            "[crate-writer profile]   section %s: %.1fms\n", name,
             double(prof_ns(prof_t_sec, now)) * 1e-6);
     prof_t_sec = now;
   };
@@ -2482,9 +2497,9 @@ crate::ValueRep CrateWriter::PackValueFromPlan(const crate::CrateValue& value,
       return rep;
     }
     case PackPlan::kSerial:
-    default:
       return PackValue(value, err);
   }
+  return PackValue(value, err);
 }
 
 
