@@ -2043,6 +2043,16 @@ bool ComposePrimSpecFromIndex(const std::vector<LayerStackEntry> &layer_stacks,
     return false;
   }
 
+  // Children are NOT this function's output: callers compose each child from
+  // its own PrimIndex (which resolves the child's arcs) and append it. The
+  // strongest opinion was copied wholesale above, so it carried that layer's
+  // inline children along uncomposed -- leaving them would emit every child
+  // twice, the uncomposed copy first. GetPrimAtPath takes the first name match,
+  // so it would return the copy and silently ignore the child's own
+  // references/payloads/variants -- e.g. an empty `def Xform "Foo" {}` shadowing
+  // the payload-backed composition of /Foo.
+  out->children().clear();
+
   // Set the correct name
   std::string path_str = index.GetPath().prim_part();
   size_t last_slash = path_str.rfind('/');
