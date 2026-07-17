@@ -321,6 +321,18 @@ bool TimeSampleStorage::remove(PropNameId name_id) {
 void TimeSampleStorage::remap_times(double offset, double scale) {
   if (offset == 0.0 && scale == 1.0) return;
   for (auto& kv : samples_) {
+    // Degenerate offset (scale == 0): every time collapses onto `offset`.
+    // Rewriting in place would leave N samples sharing one key -- a malformed,
+    // no-longer-sorted-by-distinct-time vector that interpolate() reads as its
+    // LAST entry. pxr freezes such a layer at its FIRST sample instead (see
+    // CopyLocalOpinions), so keep only that one. Samples are stored ascending.
+    if (scale == 0.0) {
+      if (!kv.second.empty()) {
+        kv.second.resize(1);
+        kv.second[0].first = offset;
+      }
+      continue;
+    }
     for (auto& tv : kv.second) {
       tv.first = offset + scale * tv.first;
     }

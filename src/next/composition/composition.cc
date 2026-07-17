@@ -1115,11 +1115,22 @@ void Compositor::CopyLocalOpinions(
       }
       // Copy time samples from source to target, remapping the sample time by
       // the layer offset (t -> time_offset + time_scale*t).
+      //
+      // A DEGENERATE offset (scale == 0) maps every sample onto `time_offset`.
+      // It is reachable: the tcps auto-scale divides parent/sublayer rates, so
+      // a root authoring `timeCodesPerSecond = 0` scales its sublayers by 0.
+      // add_time_sample overwrites an equal key ("last opinion wins"), so
+      // copying them all would freeze the layer at its LAST sample. pxr freezes
+      // it at the FIRST instead (its inverse offset is non-finite, so the
+      // layer-time lookup lands on the earliest sample), verified against the
+      // 26.05 oracle. Samples are stored ascending, so stop after the first.
+      const bool collapsed = (time_scale == 0.0);
       for (const auto& [time, val_offset] : *samples) {
         const Value* val = source.time_sample_value(val_offset);
         if (val) {
           target.add_time_sample(ts_prop_id, time_offset + time_scale * time,
                                  *val);
+          if (collapsed) break;
         }
       }
     }
