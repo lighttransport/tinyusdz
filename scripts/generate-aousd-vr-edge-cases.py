@@ -146,6 +146,29 @@ def "R"
 """,
 }
 
+# A root authoring timeCodesPerSecond = 0 makes the tcps auto-scale (parent /
+# sublayer) DEGENERATE: every sublayer sample time collapses onto one instant.
+# `neg` starts below 0 so the baked oracle distinguishes "first sample wins"
+# from "value at layer time 0" (which would interpolate toward 0 instead).
+CASES["tcps-zero"] = {
+    "root.usda": """#usda 1.0
+(
+    timeCodesPerSecond = 0
+    subLayers = [ @./sub24.usda@ ]
+)
+""",
+    "sub24.usda": """#usda 1.0
+(
+    timeCodesPerSecond = 24
+)
+def "Root"
+{
+    double v.timeSamples = { 0: 0, 100: 100 }
+    double neg.timeSamples = { -10: -10, 100: 100 }
+}
+""",
+}
+
 CASES["default-vs-zero"] = {"root.usda": """#usda 1.0
 def "Root"
 {
@@ -216,6 +239,13 @@ for t in [0.0, 12.0, 24.0]:
 # reference arc.
 for t in [0.0, 12.0, 24.0]:
     Q.append(("tcps-ref", "/Root", "v", t, "linear"))
+
+# tcps = 0 root: the auto-scale is degenerate (0/24 == 0), so the sublayer is
+# frozen at ONE instant. Probe across the whole range -- every stage time must
+# give the same value, and `neg` pins WHICH sample survives.
+for t in [0.0, 50.0, 100.0]:
+    Q.append(("tcps-zero", "/Root", "v", t, "linear"))
+    Q.append(("tcps-zero", "/Root", "neg", t, "linear"))
 
 Q += [
     ("default-vs-zero", "/Root", "v", DEFAULT, "linear"),
