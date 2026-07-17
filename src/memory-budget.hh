@@ -5,6 +5,7 @@
 //
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <limits>
@@ -13,6 +14,9 @@
 
 namespace tinyusdz {
 
+// Counters are atomic: budget reserve/release runs concurrently during
+// parallel USDC prim reconstruction (relaxed ordering — the budget is an
+// approximate soft cap, not a synchronization point).
 class MemoryBudgetManager {
  public:
   explicit MemoryBudgetManager(uint64_t max_budget = (std::numeric_limits<uint32_t>::max)())
@@ -20,12 +24,18 @@ class MemoryBudgetManager {
 
   bool CheckAndReserve(uint64_t requested_bytes) {
     // Guard against uint64_t overflow in the addition.
-    if (requested_bytes > max_budget_ - current_usage_) {
-      return false;
-    }
-    current_usage_ += requested_bytes;
-    if (current_usage_ > peak_usage_) {
-      peak_usage_ = current_usage_;
+    uint64_t cur = current_usage_.load(std::memory_order_relaxed);
+    do {
+      if (requested_bytes > max_budget_ - cur) {
+        return false;
+      }
+    } while (!current_usage_.compare_exchange_weak(
+        cur, cur + requested_bytes, std::memory_order_relaxed));
+
+    const uint64_t now = cur + requested_bytes;
+    uint64_t peak = peak_usage_.load(std::memory_order_relaxed);
+    while (now > peak && !peak_usage_.compare_exchange_weak(
+                             peak, now, std::memory_order_relaxed)) {
     }
     return true;
   }
@@ -37,26 +47,32 @@ class MemoryBudgetManager {
   }
 
   void Release(uint64_t bytes_to_release) {
-    if (current_usage_ >= bytes_to_release) {
-      current_usage_ -= bytes_to_release;
-    } else {
-      current_usage_ = 0;
-    }
+    uint64_t cur = current_usage_.load(std::memory_order_relaxed);
+    uint64_t next;
+    do {
+      next = (cur >= bytes_to_release) ? (cur - bytes_to_release) : 0;
+    } while (!current_usage_.compare_exchange_weak(cur, next,
+                                                   std::memory_order_relaxed));
   }
 
-  uint64_t GetCurrentUsage() const { return current_usage_; }
-  uint64_t GetPeakUsage() const { return peak_usage_; }
+  uint64_t GetCurrentUsage() const {
+    return current_usage_.load(std::memory_order_relaxed);
+  }
+  uint64_t GetPeakUsage() const {
+    return peak_usage_.load(std::memory_order_relaxed);
+  }
   uint64_t GetMaxBudget() const { return max_budget_; }
   uint64_t GetRemainingBudget() const {
-    return (current_usage_ <= max_budget_) ? (max_budget_ - current_usage_) : 0;
+    const uint64_t cur = GetCurrentUsage();
+    return (cur <= max_budget_) ? (max_budget_ - cur) : 0;
   }
-  
-  size_t GetUsageInMB() const { return size_t(current_usage_ / (1024 * 1024)); }
-  size_t GetPeakUsageInMB() const { return size_t(peak_usage_ / (1024 * 1024)); }
+
+  size_t GetUsageInMB() const { return size_t(GetCurrentUsage() / (1024 * 1024)); }
+  size_t GetPeakUsageInMB() const { return size_t(GetPeakUsage() / (1024 * 1024)); }
 
   void Reset() {
-    current_usage_ = 0;
-    peak_usage_ = 0;
+    current_usage_.store(0, std::memory_order_relaxed);
+    peak_usage_.store(0, std::memory_order_relaxed);
   }
 
   class ScopedReservation {
@@ -106,8 +122,8 @@ class MemoryBudgetManager {
 
  private:
   uint64_t max_budget_;
-  uint64_t current_usage_;
-  uint64_t peak_usage_;
+  std::atomic<uint64_t> current_usage_;
+  std::atomic<uint64_t> peak_usage_;
 };
 
 template <typename ReturnType>

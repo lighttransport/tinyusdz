@@ -290,7 +290,7 @@ bool ReconstructPrim<Shader>(
       PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kUsdPreviewSurface << "`.");
     }
     shader->info_id = kUsdPreviewSurface;
-    shader->value = surface;
+    shader->value = std::move(surface);
     DCOUT("info_id = " << shader->info_id);
   } else if (shader_type.compare(kUsdUVTexture) == 0) {
     UsdUVTexture texture;
@@ -299,7 +299,7 @@ bool ReconstructPrim<Shader>(
       PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kUsdUVTexture << "`.");
     }
     shader->info_id = kUsdUVTexture;
-    shader->value = texture;
+    shader->value = std::move(texture);
   } else if (shader_type.compare(kUsdPrimvarReader_int) == 0) {
     UsdPrimvarReader_int preader;
     if (!ReconstructShader<UsdPrimvarReader_int>(spec, properties, references,
@@ -308,7 +308,7 @@ bool ReconstructPrim<Shader>(
                             << kUsdPrimvarReader_int << "`.");
     }
     shader->info_id = kUsdPrimvarReader_int;
-    shader->value = preader;
+    shader->value = std::move(preader);
   } else if (shader_type.compare(kUsdPrimvarReader_float) == 0) {
     UsdPrimvarReader_float preader;
     if (!ReconstructShader<UsdPrimvarReader_float>(spec, properties, references,
@@ -317,7 +317,7 @@ bool ReconstructPrim<Shader>(
                             << kUsdPrimvarReader_float << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float;
-    shader->value = preader;
+    shader->value = std::move(preader);
   } else if (shader_type.compare(kUsdPrimvarReader_float2) == 0) {
     UsdPrimvarReader_float2 preader;
     if (!ReconstructShader<UsdPrimvarReader_float2>(spec, properties, references,
@@ -326,7 +326,7 @@ bool ReconstructPrim<Shader>(
                             << kUsdPrimvarReader_float2 << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float2;
-    shader->value = preader;
+    shader->value = std::move(preader);
   } else if (shader_type.compare(kUsdPrimvarReader_float3) == 0) {
     UsdPrimvarReader_float3 preader;
     if (!ReconstructShader<UsdPrimvarReader_float3>(spec,properties, references,
@@ -335,7 +335,7 @@ bool ReconstructPrim<Shader>(
                             << kUsdPrimvarReader_float3 << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float3;
-    shader->value = preader;
+    shader->value = std::move(preader);
   } else if (shader_type.compare(kUsdPrimvarReader_float4) == 0) {
     UsdPrimvarReader_float4 preader;
     if (!ReconstructShader<UsdPrimvarReader_float4>(spec,properties, references,
@@ -344,7 +344,7 @@ bool ReconstructPrim<Shader>(
                             << kUsdPrimvarReader_float4 << "`.");
     }
     shader->info_id = kUsdPrimvarReader_float4;
-    shader->value = preader;
+    shader->value = std::move(preader);
   } else if (shader_type.compare(kUsdPrimvarReader_string) == 0) {
     UsdPrimvarReader_string preader;
     if (!ReconstructShader<UsdPrimvarReader_string>(spec,properties, references,
@@ -353,7 +353,7 @@ bool ReconstructPrim<Shader>(
                             << kUsdPrimvarReader_string << "`.");
     }
     shader->info_id = kUsdPrimvarReader_string;
-    shader->value = preader;
+    shader->value = std::move(preader);
   } else if (shader_type.compare(kUsdPrimvarReader_vector) == 0) {
     UsdPrimvarReader_vector preader;
     if (!ReconstructShader<UsdPrimvarReader_vector>(spec,properties, references,
@@ -362,7 +362,7 @@ bool ReconstructPrim<Shader>(
                             << kUsdPrimvarReader_vector << "`.");
     }
     shader->info_id = kUsdPrimvarReader_vector;
-    shader->value = preader;
+    shader->value = std::move(preader);
   } else if (shader_type.compare(kUsdPrimvarReader_normal) == 0) {
     UsdPrimvarReader_normal preader;
     if (!ReconstructShader<UsdPrimvarReader_normal>(spec,properties, references,
@@ -371,7 +371,7 @@ bool ReconstructPrim<Shader>(
                             << kUsdPrimvarReader_normal << "`.");
     }
     shader->info_id = kUsdPrimvarReader_normal;
-    shader->value = preader;
+    shader->value = std::move(preader);
   } else if (shader_type.compare(kUsdPrimvarReader_point) == 0) {
     UsdPrimvarReader_point preader;
     if (!ReconstructShader<UsdPrimvarReader_point>(spec,properties, references,
@@ -380,7 +380,7 @@ bool ReconstructPrim<Shader>(
                             << kUsdPrimvarReader_point << "`.");
     }
     shader->info_id = kUsdPrimvarReader_point;
-    shader->value = preader;
+    shader->value = std::move(preader);
   } else if (shader_type.compare(kUsdTransform2d) == 0) {
     UsdTransform2d transform;
     if (!ReconstructShader<UsdTransform2d>(spec,properties, references,
@@ -389,7 +389,7 @@ bool ReconstructPrim<Shader>(
                             << kUsdTransform2d << "`.");
     }
     shader->info_id = kUsdTransform2d;
-    shader->value = transform;
+    shader->value = std::move(transform);
   } else if (shader_type.compare(kOpenPBRSurface) == 0) {
     OpenPBRSurface surface;
     if (!ReconstructShader<OpenPBRSurface>(spec, properties, references,
@@ -397,7 +397,7 @@ bool ReconstructPrim<Shader>(
       PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kOpenPBRSurface << "`.");
     }
     shader->info_id = kOpenPBRSurface;
-    shader->value = surface;
+    shader->value = std::move(surface);
   } else if (shader_type.compare(kMtlxAutodeskStandardSurface) == 0) {
     MtlxAutodeskStandardSurface surface;
     if (!ReconstructShader<MtlxAutodeskStandardSurface>(spec, properties, references,
@@ -405,7 +405,7 @@ bool ReconstructPrim<Shader>(
       PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kMtlxAutodeskStandardSurface << "`.");
     }
     shader->info_id = kMtlxAutodeskStandardSurface;
-    shader->value = surface;
+    shader->value = std::move(surface);
   } else if (shader_type.compare(kNdStandardSurfaceSurfaceshader) == 0) {
     // MaterialX Standard Surface via ND_standard_surface_surfaceshader info:id
     MtlxAutodeskStandardSurface surface;
@@ -414,7 +414,7 @@ bool ReconstructPrim<Shader>(
       PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kNdStandardSurfaceSurfaceshader << "`.");
     }
     shader->info_id = kNdStandardSurfaceSurfaceshader;
-    shader->value = surface;
+    shader->value = std::move(surface);
   } else if (shader_type.compare(kNdOpenPbrSurfaceSurfaceshader) == 0) {
     // Blender v4.5 MaterialX OpenPBR Surface export
     MtlxOpenPBRSurface surface;
@@ -423,7 +423,7 @@ bool ReconstructPrim<Shader>(
       PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kNdOpenPbrSurfaceSurfaceshader << "`.");
     }
     shader->info_id = kNdOpenPbrSurfaceSurfaceshader;
-    shader->value = surface;
+    shader->value = std::move(surface);
   } else if (shader_type.compare(kNdUsdPreviewSurfaceSurfaceshader) == 0) {
     // MaterialX's UsdPreviewSurface node (e.g. usd-wg MaterialXTest/basic_flatten):
     // info:id `ND_UsdPreviewSurface_surfaceshader` with the same inputs as
@@ -435,7 +435,7 @@ bool ReconstructPrim<Shader>(
       PUSH_ERROR_AND_RETURN("Failed to reconstruct shader `" << kNdUsdPreviewSurfaceSurfaceshader << "`.");
     }
     shader->info_id = kNdUsdPreviewSurfaceSurfaceshader;
-    shader->value = surface;
+    shader->value = std::move(surface);
   } else {
     // Reconstruct as generic ShaderNode
     ShaderNode surface;
@@ -446,7 +446,7 @@ bool ReconstructPrim<Shader>(
     if (shader_type.size()) {
       shader->info_id = shader_type;
     }
-    shader->value = surface;
+    shader->value = std::move(surface);
   }
 
   DCOUT("Shader reconstructed.");

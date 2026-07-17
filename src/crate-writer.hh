@@ -8,8 +8,11 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <atomic>
+#include <mutex>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <fstream>
 
@@ -196,9 +199,11 @@ public:
   /// @param spec_type Type of spec (Prim, Attribute, etc.)
   /// @param fields Map of field name -> value for this spec
   ///
+  /// `fields` is taken by value: pass with std::move() where possible —
+  /// field values can carry large arrays and are stored, not inspected.
   bool AddSpec(const Path& path,
                SpecType spec_type,
-               const crate::FieldValuePairVector& fields,
+               crate::FieldValuePairVector fields,
                std::string* err = nullptr);
 
   ///
@@ -251,7 +256,9 @@ public:
   ///
   /// Get estimated memory usage
   ///
-  int64_t GetMemoryUsageEstimate() const { return memory_used_estimate_; }
+  int64_t GetMemoryUsageEstimate() const {
+    return memory_used_estimate_.load(std::memory_order_relaxed);
+  }
 
   ///
   /// Check if file size limit would be exceeded
@@ -264,7 +271,8 @@ public:
   /// Check if memory limit would be exceeded
   ///
   bool WouldExceedMemoryLimit(int64_t additional_bytes) const {
-    return (memory_used_estimate_ + additional_bytes) > options_.max_memory_bytes;
+    return (memory_used_estimate_.load(std::memory_order_relaxed) +
+            additional_bytes) > options_.max_memory_bytes;
   }
 
   // Error context tracking
@@ -393,6 +401,13 @@ private:
     SpecType spec_type;  // Store the spec type for later use
     crate::Spec spec;
     crate::FieldValuePairVector fields;
+    // Number of fields present when AddSpec ran. The parallel stage->specs
+    // token replay registers only this prefix: fields appended AFTER AddSpec
+    // (e.g. the post-hoc `properties` field) were never pre-registered by the
+    // serial writer either — their tokens are first seen during Finalize's
+    // field packing, and replaying them early would shift every later token
+    // index (byte-diff).
+    uint32_t fields_at_addspec = 0;
   };
 
   // ======================================================================
@@ -783,8 +798,116 @@ private:
   int64_t WriteValueData(const crate::CrateValue& value, bool* is_compressed,
                          std::string* err);
 
-  /// Try to inline a value in ValueRep payload (optimization)
+  /// The body of WriteValueData: the per-type out-of-line encoding chain,
+  /// WITHOUT the seek-to-section prologue / end-offset epilogue. Returns 0 on
+  /// success, -1 on error. Split out so pass A of the two-pass Finalize can
+  /// run it against a thread-local capture buffer (tls_value_capture) for
+  /// PURE values — same encoder, two output targets, byte-equal by
+  /// construction.
+  int64_t WriteValueBody(const crate::CrateValue& value, bool* is_compressed,
+                         std::string* err);
+
+  /// True when WriteValueBody for this value is a pure function of the value
+  /// bits routed entirely through Write/WriteBytes: no token/string/path
+  /// interning, no Tell/Seek, no value_data_end_offset_ bookkeeping, no crate
+  /// version bump. Exactly the numeric scalar/array branches — keep this list
+  /// in lockstep with the WriteValueBody chain. Pure values may be encoded
+  /// concurrently under a capture sink; everything else must run serially on
+  /// the real stream.
+  static bool IsPureValueData(const crate::CrateValue& value);
+
+  /// Per-thread value-encoding capture sink. When set, WriteBytes appends to
+  /// this buffer instead of the output stream (and does NOT count toward the
+  /// file-size limit — the bytes are appended for real, with the limit check,
+  /// when the serial pass replays them). Only WriteValueBody on
+  /// IsPureValueData values may run under a capture sink.
+  static std::vector<char>*& tls_value_capture();
+
+  // ======================================================================
+  // Two-pass Finalize field packing (deferred interning, round 14)
+  // ======================================================================
+  // Pass A runs BuildPackPlan concurrently over spec ranges: it classifies
+  // each field value and precomputes everything that is a pure function of
+  // the value bits (inline reps without interning; out-of-line byte images
+  // via WriteValueBody under tls_value_capture; dedup descriptor + hash).
+  // Pass B walks fields in the exact serial order and performs every
+  // shared-state effect (interning, dedup table, stream append) — so the
+  // token/string tables, dedup decisions and value offsets are byte-identical
+  // to the serial writer by construction.
+  struct PackPlan {
+    enum Kind : uint8_t {
+      kSerial = 0,   // pass B runs PackValue unchanged (index-embedding types)
+      kInlinePure,   // rep fully computed in pass A (no interning involved)
+      kInlineIntern, // inlines but interns; pass B re-runs TryInlineValue
+      kOolPure,      // out-of-line pure: bytes prebuilt, dedup precomputed
+      kOolDedupHit,  // pass-A probe hit the frozen dedup table: rep is FINAL
+                     // (entries are only ever added, one per unique
+                     // descriptor, and never mutated — a hit can't change)
+    };
+    Kind kind = kSerial;
+    crate::ValueRep rep;           // kInlinePure/kOolDedupHit: final;
+                                   // kOolPure: type+flags only
+    bool is_compressed = false;    // kOolPure
+    std::vector<char> bytes;       // kOolPure: prebuilt WriteValueBody image
+    bool dedup_candidate = false;  // kOolPure
+    std::vector<char> dedup_bytes;
+    size_t dedup_element_size = 1;
+    bool dedup_is_float = false;
+    uint32_t dedup_wire_tag = 0;
+    size_t dedup_hash = 0;
+  };
+
+  /// Shared pass-A window state: dedup-aware prebuild claims. The dedup table
+  /// itself is frozen during pass A (pass B, which is the only mutator, runs
+  /// after the window barrier), so read-only LookupDeduplicatedValue probes
+  /// are safe; `claimed` arbitrates within-window duplicates so each new
+  /// unique value is encoded once.
+  struct PackPlanContext {
+    std::mutex mu;
+    std::unordered_set<size_t> claimed;  // dedup hashes claimed this window
+  };
+
+  /// Pass A per-field builder. Must not mutate any writer state — it may only
+  /// read `options_`/the frozen dedup table and write through
+  /// tls_value_capture (thread-local) and `ctx` (internally locked).
+  void BuildPackPlan(const crate::CrateValue& value, PackPlan* plan,
+                     PackPlanContext* ctx);
+
+  /// Pass B: produce the ValueRep from a plan, byte-identically to what
+  /// PackValue would do in the same table/stream state.
+  crate::ValueRep PackValueFromPlan(const crate::CrateValue& value,
+                                    PackPlan& plan, std::string* err);
+
+  /// Out-of-line rep type/flag dispatch, shared by PackValue and
+  /// BuildPackPlan. May bump the crate version for spline/pathexpr/relocates
+  /// — those types are never IsPureValueData, so pass A (pure values only)
+  /// never reaches a mutating branch.
+  void SetOutOfLineRepType(const crate::CrateValue& value, crate::ValueRep* rep);
+
+  /// Intern sink for TryInlineValue: the ONLY writer state the inline
+  /// decision touches is token/string interning (token, string and inlined
+  /// asset-path values store an index in the ValueRep payload). Routing those
+  /// through a sink lets the same decision procedure run in two modes:
+  /// - the real sink (default overload below) interns into the writer tables,
+  ///   exactly the historical behavior;
+  /// - a recording sink (parallel pass A of the deferred-interning two-pass)
+  ///   classifies and computes rep type/flags WITHOUT mutating shared state;
+  ///   the recorded requests are replayed serially in pass B for byte-identical
+  ///   first-seen index assignment.
+  /// There must be NO other side effect inside TryInlineValue — anything new
+  /// must go through the sink or the two-pass breaks.
+  struct InternSink {
+    virtual ~InternSink() = default;
+    virtual uint32_t InternToken(const std::string& s) = 0;
+    virtual uint32_t InternString(const std::string& s) = 0;
+  };
+
+  /// Try to inline a value in ValueRep payload (optimization).
+  /// The sink-taking overload is the implementation; the two-argument form
+  /// interns directly into the writer tables (historical behavior).
   bool TryInlineValue(const crate::CrateValue& value, crate::ValueRep* rep);
+  bool TryInlineValue(const crate::CrateValue& value, crate::ValueRep* rep,
+                      InternSink& sink);
 
   // ======================================================================
   // Deduplication
@@ -896,7 +1019,11 @@ private:
 
   // Memory and file size tracking for resource limits
   int64_t bytes_written_ = 0;           // Current file size in bytes
-  int64_t memory_used_estimate_ = 0;    // Estimated memory usage (tokens, strings, paths, specs, etc.)
+  // Estimated memory usage (tokens, strings, paths, specs, etc.). Atomic:
+  // the parallel stage->specs conversion accounts from worker threads.
+  // (Unconditionally atomic — TINYUSDZ_ENABLE_THREAD is a private compile
+  // definition, so class layout must not depend on it.)
+  std::atomic<int64_t> memory_used_estimate_{0};
 
   // Error context stack for detailed error messages
   ErrorContextStack error_context_{options_.error_context_depth};
@@ -915,13 +1042,19 @@ private:
   tinyusdz::HashMap<std::string, crate::StringIndex> string_to_index_;
   std::vector<std::string> strings_;  // Index -> string
 
-  tinyusdz::HashMap<Path, crate::PathIndex, crate::PathHasher, crate::PathKeyEqual> path_to_index_;
+  // Open-addressed index over paths_: slot = (hash32, index into paths_ + 1;
+  // 0 = empty). Replaces a Path -> PathIndex hash map whose per-insert Path
+  // copy + node allocation was a top profile entry on spec-dense scenes.
+  // The cached hash makes growth rehash-free and lets lookups skip the
+  // expensive Path equality for non-matching slots.
+  std::vector<std::pair<uint32_t, uint32_t>> path_slots_;
+  size_t path_slots_used_ = 0;
+  // Returns index into paths_, or -1 if absent.
+  int64_t FindPathSlot(const Path& path, uint32_t hash) const;
+  void InsertPathSlot(uint32_t hash, uint32_t path_index);
+  void GrowPathSlots(size_t want);
   std::vector<Path> paths_;  // Index -> path
 
-  // Set of paths that already have a spec, for O(1) duplicate-spec detection in
-  // AddSpec (avoids an O(n^2) linear scan over spec_data_). Keyed like
-  // path_to_index_ but distinct because that map also holds ancestor paths.
-  tinyusdz::HashMap<Path, uint32_t, crate::PathHasher, crate::PathKeyEqual> spec_path_set_;
 
   tinyusdz::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
   std::vector<crate::Field> fields_;  // Index -> field
@@ -931,6 +1064,22 @@ private:
 
   // Spec data (accumulated before writing)
   std::vector<SpecData> spec_data_;
+
+  // --- Parallel stage->specs conversion support -------------------------
+  // Per-thread spec sink: when set (worker threads of the parallel
+  // conversion), AddSpec appends here instead of spec_data_ and SKIPS
+  // field-name token pre-registration — the tokens are replayed serially in
+  // DFS spec order after assembly, reproducing the serial writer's token
+  // numbering byte-for-byte.
+  static std::vector<SpecData>*& tls_spec_sink();
+  std::vector<SpecData>& active_spec_buffer() {
+    std::vector<SpecData>* sink = tls_spec_sink();
+    return sink ? *sink : spec_data_;
+  }
+  // Parallel whole-stage prim conversion (called by ConvertStageToSpecs when
+  // the stage is large and TINYUSDZ_ENABLE_THREAD is on). Byte-identical to
+  // the serial DFS.
+  bool ConvertRootPrimsParallel(const Stage& stage, std::string* err);
 
   // Table of contents (filled during writing)
   crate::TableOfContents toc_;
@@ -988,6 +1137,13 @@ private:
   bool LookupDeduplicatedValue(const std::vector<char>& bytes,
                                size_t element_size, bool is_float,
                                uint32_t wire_tag, crate::ValueRep* rep) const;
+  /// Same lookup with the descriptor hash already computed (the two-pass
+  /// Finalize hashes in parallel pass A and must not re-hash serially).
+  bool LookupDeduplicatedValueWithHash(size_t hash,
+                                       const std::vector<char>& bytes,
+                                       size_t element_size, bool is_float,
+                                       uint32_t wire_tag,
+                                       crate::ValueRep* rep) const;
   bool CanRetainDeduplicatedValue(size_t byte_count) const;
   void RetainDeduplicatedValue(size_t hash, std::vector<char> bytes,
                                size_t element_size, bool is_float,
@@ -997,6 +1153,18 @@ private:
 
   std::unordered_multimap<size_t, ValueDedupEntry> value_dedup_map_;
   size_t value_dedup_bytes_ = 0;
+
+  // Finalize phase profiling, enabled by TINYUSDZ_CRATE_PROFILE=1 (stderr
+  // report at the end of Finalize). Accumulators are only touched when
+  // profile_finalize_ is set, so the default path pays one branch.
+  bool profile_finalize_ = false;
+  uint64_t prof_pack_total_ns_ = 0;    // whole PackValue
+  uint64_t prof_pack_inline_ns_ = 0;   // TryInlineValue (incl. interning)
+  uint64_t prof_pack_dedup_ns_ = 0;    // dedup descriptor + hash + lookup
+  uint64_t prof_pack_write_ns_ = 0;    // WriteValueData (out-of-line encode)
+  uint64_t prof_field_dedup_ns_ = 0;   // field-name intern + field/fieldset dedup
+  uint64_t prof_passa_ns_ = 0;         // two-pass pass A (parallel wall)
+  uint64_t prof_passb_ns_ = 0;         // two-pass pass B (serial replay wall)
 };
 
 } // namespace experimental

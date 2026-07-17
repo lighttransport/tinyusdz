@@ -3,6 +3,9 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 
 #include "usdc-writer.hh"
+#include <chrono>
+#include <cstdlib>
+#include <iostream>
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_WRITER)
 
@@ -276,6 +279,22 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
     return false;
   }
 
+  // TINYUSDZ_FLATTEN_TIMING=1: print write-phase timings to stderr
+  // (diagnostic; off by default).
+  const bool flatten_timing = []() {
+    const char* e = ::getenv("TINYUSDZ_FLATTEN_TIMING");
+    return e && e[0] == '1';
+  }();
+  auto phase_start = std::chrono::steady_clock::now();
+  auto report_phase = [&](const char* name) {
+    if (!flatten_timing) return;
+    auto now = std::chrono::steady_clock::now();
+    std::cerr << "[tinyusdz] usdc-write phase " << name << ": "
+              << std::chrono::duration<double>(now - phase_start).count()
+              << " s\n";
+    phase_start = now;
+  };
+
   std::string convert_err;
   if (!writer.ConvertStageToSpecs(stage, &convert_err)) {
     if (err) {
@@ -283,6 +302,7 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
     }
     return false;
   }
+  report_phase("ConvertStageToSpecs");
 
   std::string finalize_err;
   if (!writer.Finalize(&finalize_err)) {
@@ -291,10 +311,12 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
     }
     return false;
   }
+  report_phase("Finalize");
 
   writer.Close();
 
   *output = mem_ptr->TakeBuffer();
+  report_phase("Close+TakeBuffer");
   return true;
 }
 

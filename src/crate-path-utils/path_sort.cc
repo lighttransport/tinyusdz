@@ -4,22 +4,13 @@
 //
 #include "path_sort.hh"
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 #include <string>
 
 namespace crate {
 
-// Internal helper to parse path into elements
-struct PathElement {
-  std::string name;
-  bool is_absolute = false;
-  bool is_property = false;
-  int depth = 0;
-
-  PathElement() = default;
-  PathElement(const std::string& n, bool abs, bool prop, int d)
-    : name(n), is_absolute(abs), is_property(prop), depth(d) {}
-};
+// (PathElement now declared in path_sort.hh for precomputed sort keys.)
 
 static std::vector<PathElement> ParsePath(const std::string& prim_part, const std::string& prop_part) {
   std::vector<PathElement> elements;
@@ -178,63 +169,86 @@ static int ComparePathElements(
   return 0;
 }
 
-int ComparePaths(const IPath& lhs, const IPath& rhs) {
+ParsedSimplePath MakeParsedSimplePath(const std::string& prim_part,
+                                      const std::string& prop_part) {
+  ParsedSimplePath parsed;
   // IMPORTANT: Parse prim parts ONLY for prim comparison
   // Properties should not be included in prim path comparison,
   // as they don't add depth to the path hierarchy.
   // In USD path ordering: /A < /A.prop < /A/B
   // (prim before its properties, properties before children)
-  auto lhs_prim_elements = ParsePath(lhs.GetPrimPart(), "");  // No property
-  auto rhs_prim_elements = ParsePath(rhs.GetPrimPart(), "");  // No property
+  parsed.prim_elements = ParsePath(prim_part, "");  // No property
+  parsed.is_absolute = !prim_part.empty() && (prim_part[0] == '/');
+  parsed.prop = prop_part;
+  return parsed;
+}
 
-  // Check absolute vs relative
-  bool lhs_is_abs = lhs.IsAbsolute();
-  bool rhs_is_abs = rhs.IsAbsolute();
-
+int CompareParsedPaths(const ParsedSimplePath& lhs,
+                       const ParsedSimplePath& rhs) {
   // Absolute paths are less than relative paths
-  if (lhs_is_abs != rhs_is_abs) {
-    return lhs_is_abs ? -1 : 1;
+  if (lhs.is_absolute != rhs.is_absolute) {
+    return lhs.is_absolute ? -1 : 1;
   }
 
   // Compare prim parts ONLY
-  int prim_cmp = ComparePathElements(lhs_prim_elements, rhs_prim_elements);
+  int prim_cmp = ComparePathElements(lhs.prim_elements, rhs.prim_elements);
   if (prim_cmp != 0) {
     return prim_cmp;
   }
 
   // Prim parts equal, compare property parts
   // Properties sort after their prim but before any child prims
-  const std::string& lhs_prop = lhs.GetPropertyPart();
-  const std::string& rhs_prop = rhs.GetPropertyPart();
-
-  if (lhs_prop.empty() && rhs_prop.empty()) {
+  if (lhs.prop.empty() && rhs.prop.empty()) {
     return 0;
   }
 
   // Prim without property comes first
-  if (lhs_prop.empty()) {
+  if (lhs.prop.empty()) {
     return -1;
   }
 
-  if (rhs_prop.empty()) {
+  if (rhs.prop.empty()) {
     return 1;
   }
 
   // Both have properties - compare alphabetically
-  if (lhs_prop < rhs_prop) {
+  if (lhs.prop < rhs.prop) {
     return -1;
-  } else if (lhs_prop > rhs_prop) {
+  } else if (lhs.prop > rhs.prop) {
     return 1;
   }
 
   return 0;
 }
 
+int ComparePaths(const IPath& lhs, const IPath& rhs) {
+  return CompareParsedPaths(
+      MakeParsedSimplePath(lhs.GetPrimPart(), lhs.GetPropertyPart()),
+      MakeParsedSimplePath(rhs.GetPrimPart(), rhs.GetPropertyPart()));
+}
+
 void SortSimplePaths(std::vector<SimplePath>& paths) {
-  std::sort(paths.begin(), paths.end(),
-            [](const SimplePath& lhs, const SimplePath& rhs) {
-              return ComparePaths(lhs, rhs) < 0;
-            });
+  // Schwartzian transform: parse each path once, sort an index array, apply
+  // the permutation (ComparePaths would re-parse per comparison).
+  const size_t n = paths.size();
+  std::vector<ParsedSimplePath> keys;
+  keys.reserve(n);
+  for (const auto& p : paths) {
+    keys.push_back(MakeParsedSimplePath(p.GetPrimPart(), p.GetPropertyPart()));
+  }
+  std::vector<uint32_t> order(n);
+  for (size_t i = 0; i < n; i++) {
+    order[i] = uint32_t(i);
+  }
+  std::sort(order.begin(), order.end(), [&keys](uint32_t a, uint32_t b) {
+    return CompareParsedPaths(keys[a], keys[b]) < 0;
+  });
+  std::vector<SimplePath> sorted;
+  sorted.reserve(n);
+  for (size_t i = 0; i < n; i++) {
+    sorted.push_back(std::move(paths[order[i]]));
+  }
+  paths = std::move(sorted);
 }
 
 } // namespace crate

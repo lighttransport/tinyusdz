@@ -17,6 +17,11 @@
 #endif
 #endif
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#endif
+
 #include "usdc-reader-impl.hh"
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
@@ -28,9 +33,13 @@ namespace {}
 
 bool USDCReader::Impl::ResolveFieldValuePairs(
     const crate::Spec &spec, const crate::FieldValuePairVector **fvs,
-    crate::FieldValuePairVector *scratch) {
+    crate::FieldValuePairVector *scratch, uint64_t *reserved_bytes_out) {
   if (!fvs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error: `fvs` is nullptr.");
+  }
+
+  if (reserved_bytes_out) {
+    (*reserved_bytes_out) = 0;
   }
 
   if (_config.use_lazy_property_construction) {
@@ -43,15 +52,12 @@ bool USDCReader::Impl::ResolveFieldValuePairs(
                                 "Internal error: crate reader is nullptr.");
     }
 
-    // Release budget reserved by the previous DecodeFieldSet call before
-    // clearing the scratch buffer (scratch->clear() frees the actual memory).
-    if (_scratch_budget_reserved > 0) {
-      crate_reader->ReleaseMemoryBudget(_scratch_budget_reserved);
-      _scratch_budget_reserved = 0;
-    }
-
     scratch->clear();
 
+    // Budget reserved while decoding this fieldset is reported to the caller,
+    // which releases it after the decoded values are consumed (the scratch is
+    // a per-call local). This replaces the previous release-on-next-call
+    // member bookkeeping, which was not usable from worker threads.
     uint64_t budget_before = crate_reader->GetMemoryUsageInBytes();
     if (!crate_reader->DecodeFieldSet(spec.fieldset_index, scratch)) {
       std::string inner = crate_reader->GetError();
@@ -60,8 +66,11 @@ bool USDCReader::Impl::ResolveFieldValuePairs(
                     std::to_string(spec.fieldset_index.value) +
                     (inner.empty() ? "" : "\n  " + inner));
     }
-    _scratch_budget_reserved =
-        crate_reader->GetMemoryUsageInBytes() - budget_before;
+    if (reserved_bytes_out) {
+      uint64_t budget_after = crate_reader->GetMemoryUsageInBytes();
+      (*reserved_bytes_out) =
+          (budget_after > budget_before) ? (budget_after - budget_before) : 0;
+    }
 
     (*fvs) = scratch;
     return true;
@@ -129,11 +138,28 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
 
   stage->root_prims().clear();
 
-  int root_node_id = 0;
-  bool ret = ReconstructPrimRecursively(/* no further root for root_node */ -1,
-                                        root_node_id, /* root Prim */ nullptr,
-                                        /* level */ 0,
-                                        path_index_to_spec_index_map, stage);
+  _prim_table.reset(_nodes->size());
+
+  bool ret = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Parallel reconstruction: disabled with mmap zero-copy (the deferred-array
+  // handoff uses single-slot reader state) and when a single thread is
+  // requested.
+  const bool parallel_reconstruct =
+      (_config.numThreads != 1) && !_config.mmap_zero_copy &&
+      (std::thread::hardware_concurrency() > 1) && (_nodes->size() > 256);
+  if (parallel_reconstruct) {
+    ret = ReconstructPrimHierarchyParallel(path_index_to_spec_index_map,
+                                           stage);
+  } else
+#endif
+  {
+    int root_node_id = 0;
+    ret = ReconstructPrimRecursively(/* no further root for root_node */ -1,
+                                     root_node_id, /* root Prim */ nullptr,
+                                     /* level */ 0,
+                                     path_index_to_spec_index_map, stage);
+  }
 
   if (!ret) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct Stage(Prim hierarchy)");
@@ -195,11 +221,28 @@ bool USDCReader::Impl::ToLayer(Layer *layer) {
 
   layer->primspecs().clear();
 
-  int root_node_id = 0;
-  bool ret = ReconstructPrimSpecRecursively(/* no further root for root_node */ -1,
-                                        root_node_id, /* root Prim */ nullptr,
-                                        /* level */ 0,
-                                        path_index_to_spec_index_map, layer);
+  _prim_table.reset(_nodes->size());
+
+  bool ret = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Parallel reconstruction: same gate as the Stage path (disabled with mmap
+  // zero-copy — the deferred-array handoff uses single-slot reader state —
+  // and when a single thread is requested or the layer is small).
+  const bool parallel_reconstruct =
+      (_config.numThreads != 1) && !_config.mmap_zero_copy &&
+      (std::thread::hardware_concurrency() > 1) && (_nodes->size() > 256);
+  if (parallel_reconstruct) {
+    ret = ReconstructPrimSpecHierarchyParallel(path_index_to_spec_index_map,
+                                               layer);
+  } else
+#endif
+  {
+    int root_node_id = 0;
+    ret = ReconstructPrimSpecRecursively(/* no further root for root_node */ -1,
+                                         root_node_id, /* root Prim */ nullptr,
+                                         /* level */ 0,
+                                         path_index_to_spec_index_map, layer);
+  }
 
   if (!ret) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct Layer(PrimSpec hierarchy)");

@@ -1831,6 +1831,12 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
     meta.relocates_set = root_layer->meta().relocates_set;
   }
   meta.unknownMeta = root_layer->meta().unknownMeta;
+  // Typed unregistered layer fields (the crate reader's store — parallel to
+  // the parser's raw-text unknownMeta). Omitting them silently dropped
+  // layer-level unknown metadata from USDC inputs on the Stage write path
+  // (AOUSD-META-001 lossless preservation), while USDA inputs survived via
+  // unknownMeta.
+  meta.unknownFields = root_layer->meta().unknownFields;
   meta.rootPrimOrder = root_layer->meta().rootPrimOrder;
   meta.rootPrimOrder_set = root_layer->meta().rootPrimOrder_set;
 
