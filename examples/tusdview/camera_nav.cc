@@ -74,12 +74,33 @@ light3d::Mat4 OrbitCamera::proj(bool zeroToOneDepth) const {
 
 float OrbitCamera::nearPlane() const {
   if (!autoClip_) return nearClip_;
-  return std::max(distance_ * 0.01f, 1e-4f);
+  // Orbit distance measures the camera to its navigation pivot, not the nearest
+  // visible surface. In a large building the pivot can remain hundreds of units
+  // behind a wall while the camera is centimeters from it; using 1% of that
+  // distance sliced away the wall and produced an apparent section plane.
+  // Use the scene bounding sphere when available. Inside/near the sphere we need
+  // an inspection-scale near plane; outside it, the empty distance before the
+  // nearest possible surface can safely move the plane out and recover depth
+  // precision for hidden-line wireframe rendering.
+  const float d = std::abs(distance_);
+  const float r = sceneRadius_ > 1e-4f ? sceneRadius_ : 1.0f;
+  const float inspectionNear =
+      std::max(1e-4f, std::min(r * 1e-5f, 0.01f));
+  if (haveSceneBounds_) {
+    const float outside = light3d::length(eye() - sceneCenter_) - r;
+    if (outside > 0.0f) return std::max(inspectionNear, outside * 0.05f);
+    return inspectionNear;
+  }
+  return std::max(d * 0.001f, inspectionNear);
 }
 
 float OrbitCamera::farPlane() const {
   if (!autoClip_) return farClip_;
   const float r = sceneRadius_ > 1e-4f ? sceneRadius_ : 1.0f;
+  if (haveSceneBounds_) {
+    const float farthest = light3d::length(eye() - sceneCenter_) + r;
+    return std::max(farthest * 1.05f, nearPlane() * 2.0f);
+  }
   return std::max(distance_ + r * 3.0f, distance_ * 2.0f);
 }
 
@@ -153,12 +174,19 @@ void OrbitCamera::pan(float dxPix, float dyPix) {
   target_ = target_ - right * (dxPix * scale) + up * (dyPix * scale);
 }
 
+void OrbitCamera::moveForward(float amount) {
+  if (!std::isfinite(amount) || amount == 0.0f) return;
+  // Symmetric exponential response bounds a single large mouse delta while
+  // retaining fine control for wheel notches/key repeats.
+  const float magnitude =
+      1.0f - std::exp(-std::abs(amount) * 0.12f * dollySensitivity_);
+  const float signedMagnitude = amount > 0.0f ? magnitude : -magnitude;
+  const light3d::Vec3 forward = light3d::normalize(target_ - eye());
+  target_ = target_ + forward * (moveRefDistance() * signedMagnitude);
+}
+
 void OrbitCamera::dolly(float amount) {
-  // Exponential zoom: distance scales by a constant factor per notch, so the
-  // feel is consistent at any distance (and it never reaches 0).
-  const float signedAmount = invertDolly_ ? -amount : amount;
-  distance_ *= std::exp(-signedAmount * 0.12f * dollySensitivity_);
-  distance_ = std::max(distance_, 1e-4f);
+  moveForward(invertDolly_ ? -amount : amount);
 }
 
 void OrbitCamera::setPreset(CameraViewPreset preset) {
@@ -195,6 +223,7 @@ void OrbitCamera::setPreset(CameraViewPreset preset) {
 }
 
 void OrbitCamera::fitToScene(const float aabbMin[3], const float aabbMax[3]) {
+  setSceneBounds(aabbMin, aabbMax);
   light3d::Vec3 mn{aabbMin[0], aabbMin[1], aabbMin[2]};
   light3d::Vec3 mx{aabbMax[0], aabbMax[1], aabbMax[2]};
   light3d::Vec3 center = (mn + mx) * 0.5f;
@@ -206,7 +235,19 @@ void OrbitCamera::fitToScene(const float aabbMin[3], const float aabbMax[3]) {
   const float halfH = std::atan(std::tan(halfV) * aspect());
   const float halfMin = std::max(1e-3f, std::min(halfV, halfH));
   distance_ = (radius / std::sin(halfMin)) * 1.1f;
-  // Near/far are derived dynamically in proj() from distance_ + sceneRadius_.
+  // Near/far are derived dynamically in proj() from the recorded scene bounds.
+}
+
+void OrbitCamera::setSceneBounds(const float aabbMin[3],
+                                 const float aabbMax[3]) {
+  if (!aabbMin || !aabbMax) return;
+  const light3d::Vec3 mn{aabbMin[0], aabbMin[1], aabbMin[2]};
+  const light3d::Vec3 mx{aabbMax[0], aabbMax[1], aabbMax[2]};
+  const float radius = 0.5f * light3d::length(mx - mn);
+  if (!(radius > 1e-4f) || !std::isfinite(radius)) return;
+  sceneCenter_ = (mn + mx) * 0.5f;
+  sceneRadius_ = radius;
+  haveSceneBounds_ = true;
 }
 
 void OrbitCamera::setOrbit(const light3d::Vec3& target, float yawRad, float pitchRad,

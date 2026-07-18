@@ -44,6 +44,17 @@
       }
     }
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    // Resolve independent namespace subtrees concurrently before the serial
+    // structure walk. ParallelWarmSources was previously implemented but never
+    // invoked, leaving num_threads effective only for the much cheaper opinion
+    // fill pass.
+    int warm_threads = options.num_threads;
+    if (warm_threads < 0)
+      warm_threads = static_cast<int>(std::thread::hardware_concurrency());
+    if (warm_threads > 1)
+      ParallelWarmSources(root_names, warm_threads, warn, err);
+#endif
     // Structure pass (serial): walk every root, fixing each prim's slot/parent/
     // child-order/instancing and recording its (slot, sources) for opinion fill.
     fill_.clear();

@@ -77,6 +77,10 @@ displays it with an ImGui docking UI.
     name/value), and the Stage metadata panel (filters by key/value).
 - **Maya-style navigation & selection** (only when the viewport is hovered):
   - `Alt + LMB` orbit, `Alt + MMB` pan, `Alt + RMB` / **mouse wheel** dolly.
+  - `W` / `S` moves both camera eye and orbit pivot forward/backward for
+    right-handed mouse navigation; `Up` / `Down` are aliases and `Shift`
+    increases the step.
+  - `V` cycles shaded, wireframe-only, and wireframe-with-shading views.
   - **Navigation HUD** — an in-viewport cheatsheet/status overlay is shown by
     default and can be toggled with `F1`.
   - **Click to pick** — a plain left click selects the nearest mesh under the
@@ -357,7 +361,7 @@ Tools (`tools/list` for schemas):
 | `get_scene_info` / `get_scene_bbox` | filepath, mesh/triangle/material counts, up axis, world-space AABB |
 | `get_focused_prim` | selected prim: path, vertex/triangle counts, bbox, world matrix, material (id/name/base color/metal/rough) |
 | `set_focus {path}` | select a prim by absolute path; returns the same info |
-| `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly {amount}`, `fit`, `home`, `isometric`, `front`, `back`, `right`, `left`, `top`, `bottom`, `bookmark_save {slot}`, `bookmark_load {slot}`, `set {target,yaw,pitch,distance}`; returns the camera state |
+| `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly`/`forward`/`backward {amount}`, `fit`, `home`, `isometric`, `front`, `back`, `right`, `left`, `top`, `bottom`, `bookmark_save {slot}`, `bookmark_load {slot}`, `set {target,yaw,pitch,distance}`; returns the camera state |
 | `list_prims {max?}` | renderable mesh prim paths |
 | `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
 | `timeline {op, time?}` | animation playback: `op` = `play`/`pause`/`stop`/`seek {time}`; async re-eval, poll `get_scene_info` (reports `has_animation`/`time`/`start_time`/`end_time`/`fps`/`playing`) |

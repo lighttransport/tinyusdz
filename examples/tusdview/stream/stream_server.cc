@@ -66,12 +66,13 @@ small{color:#6b7280}
 <div id="right" class="pane">
  <h3>View</h3>
  <button data-k="f">Fit to scene (F)</button>
- <button data-k="w">Wireframe (W)</button>
+ <div class="row"><button data-k="w">Forward (W)</button><button data-k="s">Back (S)</button></div>
+ <button data-k="v">Wireframe (V)</button>
  <h3>Presets</h3>
  <div class="row"><button data-k="1">Front</button><button data-k="3">Right</button></div>
  <div class="row"><button data-k="7">Top</button><button data-k="0">Iso</button></div>
  <h3>Help</h3>
- <small>Left-drag orbit · Shift+drag or middle-drag pan · right-drag / wheel dolly. ImGui widgets in the view are clickable.</small>
+ <small>Left-drag orbit · Shift+drag or middle-drag pan · right-drag / wheel dolly · W/S or Up/Down move forward/back. ImGui widgets in the view are clickable.</small>
 </div>
 
 <script>

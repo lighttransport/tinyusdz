@@ -109,5 +109,8 @@ inline void PackLightRtOpenPBRParams(const LightRtOpenPBRParams& p,
   dst[55] = alpha_cutoff;
 }
 
+
+using DrawLightRtOpenPBRCPU = LightRtOpenPBRParams;
+
 }  // namespace tydra
 }  // namespace tinyusdz

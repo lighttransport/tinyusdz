@@ -41,6 +41,7 @@ struct RenderPrimRecord {
   std::string path;
   std::string type_name;
   std::string purpose = "default";
+  std::string material_path;
   std::string native_prototype;
   double local[16];
   double world[16];
@@ -52,6 +53,10 @@ struct RenderExtractOptions {
   bool stop_at_point_instancers = false;
   bool stop_at_native_instances = false;
   bool collect_other = false;
+  // Keep the combined traversal-order list in addition to the kind-specific
+  // lists. Consumers that only use meshes/native_instances can disable this to
+  // avoid retaining a second full RenderPrimRecord for every renderable prim.
+  bool collect_records = true;
 };
 
 struct RenderExtractResult {

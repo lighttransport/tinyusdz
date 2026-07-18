@@ -897,7 +897,7 @@ private:
   /// There must be NO other side effect inside TryInlineValue — anything new
   /// must go through the sink or the two-pass breaks.
   struct InternSink {
-    virtual ~InternSink() = default;
+    virtual ~InternSink();
     virtual uint32_t InternToken(const std::string& s) = 0;
     virtual uint32_t InternString(const std::string& s) = 0;
   };

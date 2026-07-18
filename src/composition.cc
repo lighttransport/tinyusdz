@@ -77,7 +77,10 @@ constexpr uint32_t kMaxCompositionDepth = 1024;
 // (options.layer_cache): the parallel per-subtree composition workers hit it
 // concurrently. std::map nodes are address-stable, so borrowed Layer pointers
 // stay valid outside the lock.
-std::mutex g_layer_cache_mutex;
+std::mutex &LayerCacheMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
 
 bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
                const std::string &name) {
@@ -564,7 +567,7 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     // The cache map is shared across the parallel per-subtree composition
     // workers; guard find/insert (map node addresses stay stable, so the
     // borrowed pointer remains valid outside the lock).
-    std::lock_guard<std::mutex> cache_lock(g_layer_cache_mutex);
+    std::lock_guard<std::mutex> cache_lock(LayerCacheMutex());
     auto it = layer_cache->find(layer_cache_key);
     if (it != layer_cache->end()) {
       if (dst_primspec_root) {
@@ -734,7 +737,7 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   }
 
   if (layer_cache && !layer_from_cache) {
-    std::lock_guard<std::mutex> cache_lock(g_layer_cache_mutex);
+    std::lock_guard<std::mutex> cache_lock(LayerCacheMutex());
     if (dst_primspec_root) {
       // Cache the parsed (and sublayer-composited) layer by MOVE and stamp
       // the resolution context into every prim once here — later arcs to
