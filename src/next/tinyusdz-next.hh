@@ -208,6 +208,17 @@ class StageSession {
   const std::vector<Diagnostic>& GetDiagnostics() const;
   StageSessionMemoryStats GetMemoryStats() const;
   void TrimCaches();
+  // Drop parsed dependency layers and the PCP cache while keeping the composed
+  // Stage available. In threaded builds destruction retires in the background;
+  // the cache is reconstructed lazily on the next payload or variant edit.
+  void ReleaseCompositionCache();
+  // Drop large static geometry arrays from the composed stage after a renderer
+  // has copied them. Hierarchy and property declarations remain queryable. The
+  // next payload/variant rebuild restores full authored values from source.
+  Stage::StaticGeometryReleaseStats ReleaseStaticGeometryArrays(
+      size_t min_array_elements = 256);
+  Stage::StaticGeometryReleaseStats ReleaseStaticGeometryArraysForPrim(
+      const UsdPrim& prim, size_t min_array_elements = 256);
   const std::string& GetWarning() const;
   const std::string& GetError() const;
 

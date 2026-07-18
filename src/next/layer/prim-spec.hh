@@ -1139,6 +1139,15 @@ public:
   bool remove_property(PropNameId name_id);
   bool remove_property(const std::string& name);
 
+  /// Release a static array default while retaining its property slot, declared
+  /// type and metadata. Time-sampled properties are never changed. This is a
+  /// deliberately lossy residency operation for reconstructable composed
+  /// stages; a subsequent composition rebuild restores the authored value.
+  /// Returns the approximate payload bytes released (zero when ineligible).
+  size_t release_static_array_value(PropNameId name_id,
+                                    size_t min_array_elements,
+                                    size_t* released_elements = nullptr);
+
   /// Get property index (for iteration)
   const PropIndex& properties() const { return props_; }
 
@@ -1218,7 +1227,8 @@ public:
   const ArrayEditData* array_edit(PropNameId name_id) const;
   void clear_array_edit(PropNameId name_id);
   const std::unordered_map<uint32_t, ArrayEditData>& array_edits() const {
-    return array_edits_;
+    static const std::unordered_map<uint32_t, ArrayEditData> kEmpty;
+    return cold_data_ ? cold_data_->array_edits : kEmpty;
   }
 
   // ============================================================
@@ -1250,7 +1260,7 @@ public:
   /// name. Empty map = no relationship carries qualifiers.
   const std::unordered_map<std::string, ArcEdit>& relationship_edits() const {
     static const std::unordered_map<std::string, ArcEdit> kEmpty;
-    return rel_edits_ ? *rel_edits_ : kEmpty;
+    return cold_data_ ? cold_data_->rel_edits : kEmpty;
   }
   ArcEdit& ensure_relationship_edit(const std::string& name);
 
@@ -1397,27 +1407,31 @@ private:
 
   // Relationships: name -> targets
   std::unordered_map<std::string, std::vector<Path>> relationships_;
-  // Lazily allocated (rare): authored rel list-op edits + qualifier flags.
-  std::unique_ptr<std::unordered_map<std::string, ArcEdit>> rel_edits_;
-  std::unordered_map<std::string, std::vector<RelationshipOpinion>>
-      rel_opinion_stacks_;
-  std::unordered_map<std::string, uint16_t> rel_flags_;
 
   // Attribute connections: interned property-name id -> connection targets.
   // (Keyed by PropNameId.id rather than a string to avoid a key string per
   // connected property on shader-heavy scenes.)
   std::unordered_map<uint32_t, std::vector<Path>> connections_;
-  std::unique_ptr<std::unordered_map<uint32_t, ArcEdit>> connection_edits_;
-  std::unordered_map<uint32_t, std::vector<RelationshipOpinion>>
-      connection_opinion_stacks_;
 
-  // Raw USDA `.spline` values keyed by property id. Kept separate from Value
-  // because spline is a specialized sampled field, not an attribute default.
-  std::unordered_map<uint32_t, std::string> spline_sources_;
-  std::unordered_map<uint32_t, std::string> raw_default_sources_;
-  // Structured sparse array edits keyed by property id (empty for almost all
-  // specs; the canonical text twin lives in raw_default_sources_).
-  std::unordered_map<uint32_t, ArrayEditData> array_edits_;
+  // Rare authored fields share one lazy block. Keeping these eight hash-map
+  // objects inline cost hundreds of bytes on every prim even though ordinary
+  // geometry/xform prims use none of them.
+  struct ColdData {
+    std::unordered_map<std::string, ArcEdit> rel_edits;
+    std::unordered_map<std::string, std::vector<RelationshipOpinion>>
+        rel_opinion_stacks;
+    std::unordered_map<std::string, uint16_t> rel_flags;
+    std::unordered_map<uint32_t, ArcEdit> connection_edits;
+    std::unordered_map<uint32_t, std::vector<RelationshipOpinion>>
+        connection_opinion_stacks;
+    // Raw USDA `.spline` values and unsupported defaults are keyed by property
+    // id. Sparse array edits keep a structured twin of the raw default text.
+    std::unordered_map<uint32_t, std::string> spline_sources;
+    std::unordered_map<uint32_t, std::string> raw_default_sources;
+    std::unordered_map<uint32_t, ArrayEditData> array_edits;
+  };
+  ColdData& ensure_cold_data();
+  std::unique_ptr<ColdData> cold_data_;
 
   // Declared USD type names: interned property-name id -> interned typeName id
   // (both interned in the global PropNameTable). Lets the writer re-emit the

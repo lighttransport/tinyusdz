@@ -86,8 +86,9 @@ std::string PurposeForPrim(const ::tinyusdz::next::UsdPrim& prim,
   return inherited.empty() ? std::string("default") : inherited;
 }
 
-void PushRecord(const RenderPrimRecord& rec, RenderExtractResult* out) {
-  out->records.push_back(rec);
+void PushRecord(const RenderPrimRecord& rec, bool collect_records,
+                RenderExtractResult* out) {
+  if (collect_records) out->records.push_back(rec);
   switch (rec.kind) {
     case RenderPrimKind::Mesh: out->meshes.push_back(rec); break;
     case RenderPrimKind::PointInstancer: out->point_instancers.push_back(rec); break;
@@ -139,7 +140,7 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
   }
   rec.kind = Classify(prim, rec.type_name, &rec.native_prototype);
   if (rec.kind != RenderPrimKind::Other || options.collect_other) {
-    PushRecord(rec, out);
+    PushRecord(rec, options.collect_records, out);
   }
 
   if (rec.kind == RenderPrimKind::PointInstancer &&
@@ -255,6 +256,7 @@ void CollectPrototypePaths(const ::tinyusdz::next::Stage& stage,
   RenderExtractOptions options;
   options.stop_at_point_instancers = true;
   options.stop_at_native_instances = true;
+  options.collect_records = false;
   RenderExtractResult result;
   if (!CollectRenderPrims(stage, options, &result)) return;
   out->insert(result.native_prototype_holders.begin(),

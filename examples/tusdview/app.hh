@@ -275,6 +275,18 @@ class App
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
   void drainProgressiveLoad();   // consume loader-produced meshes on context thread
   void ensureWireAuxReady();     // make resident wire buffers complete atomically
+  // Static shaded previews keep diagnostic topology in a delta-varint stream
+  // until wire/source-face display is requested. This avoids retaining another
+  // pair of full uint32 arrays for every uploaded mesh.
+  struct DeferredMeshAux {
+    std::vector<uint8_t> wire;
+    std::vector<uint8_t> sourceFaces;
+    size_t wireCount{0};
+    size_t sourceFaceCount{0};
+  };
+  void compactDeferredMeshAux(size_t meshIndex);
+  bool restoreDeferredMeshAux(size_t meshIndex);
+  void clearDeferredMeshAux();
   void cancelAndJoinLoad();
 
   // --- Animation playback ---
@@ -464,6 +476,9 @@ class App
   bool streamFullUploadLogged_{false};
   bool streamHasUsefulGeometry_{false};
   bool streamAuxEager_{false};
+  std::vector<DeferredMeshAux> deferredMeshAux_;
+  size_t deferredAuxRawBytes_{0};
+  size_t deferredAuxCompressedBytes_{0};
   bool quitAfterFullUpload_{false};
   bool quitAfterFullPresent_{false};
   float streamBoundsMin_[3]{1e30f, 1e30f, 1e30f};

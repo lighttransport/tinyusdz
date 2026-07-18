@@ -275,7 +275,23 @@ struct StageSession::Impl {
   std::string warning;
   std::string error;
   StageSessionMemoryStats memory_stats;
+  pcp::LoadRules released_load_rules;
+  pcp::CompositionOptions::VariantSelectionMap released_variant_selections;
+  std::vector<Path> released_deferred_payloads;
+  std::vector<pcp::Cache::CompositionIssue> released_composition_issues;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::thread retiring_cache_thread;
+#endif
+  bool composition_cache_released = false;
   bool open = false;
+
+  ~Impl() { WaitForRetiringCache(); }
+
+  void WaitForRetiringCache() {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (retiring_cache_thread.joinable()) retiring_cache_thread.join();
+#endif
+  }
 
   void UpdateMemoryStats() {
     StageSessionMemoryStats next;
@@ -324,6 +340,49 @@ struct StageSession::Impl {
     AddDiagnostic(DiagnosticSeverity::Error, DiagnosticDomain::Load,
                   "cancelled", error, root_identifier);
     return false;
+  }
+
+  bool RestoreCompositionCache() {
+    if (cache) return true;
+    if (!composition_cache_released || root_identifier.empty()) return false;
+    // Do not overlap a reparse with destruction of the previous layer set. A
+    // normal viewer edit happens well after this has completed; an immediate
+    // edit waits here rather than doubling the source-layer memory peak.
+    WaitForRetiringCache();
+
+    warning.clear();
+    error.clear();
+    Stage root;
+    if (!LoadUSD(root_identifier, &root, options.load, &warning, &error)) {
+      RecordMessages(DiagnosticDomain::Load);
+      return false;
+    }
+    if (!options.compose || !StageNeedsComposition(root)) {
+      error = "composition cache cannot be restored for an uncomposed stage";
+      RecordMessages(DiagnosticDomain::Compose);
+      return false;
+    }
+
+    pcp::CompositionOptions composition = options.composition;
+    composition.max_layer_memory =
+        MinNonZero(composition.max_layer_memory, options.load.max_memory);
+    composition.usda_parse_options = options.load.usda_options.parse_options;
+    std::shared_ptr<Layer> root_layer(root.ReleaseRootLayer());
+    auto restored = pcp::Cache::Open(resolver, std::move(root_layer),
+                                     root_identifier, composition);
+    if (!restored) {
+      error = restored.error();
+      RecordMessages(DiagnosticDomain::Compose);
+      return false;
+    }
+    std::unique_ptr<pcp::Cache> next_cache(
+        new pcp::Cache(std::move(*restored)));
+    next_cache->SetLoadRules(released_load_rules);
+    next_cache->SetVariantSelections(released_variant_selections);
+    cache = std::move(next_cache);
+    composition_cache_released = false;
+    UpdateMemoryStats();
+    return true;
   }
 
   void AddDiagnostic(DiagnosticSeverity severity, DiagnosticDomain domain,
@@ -440,6 +499,11 @@ Stage StageSession::TakeStage() {
   if (!impl_) return Stage();
   impl_->open = false;
   impl_->cache.reset();
+  impl_->composition_cache_released = false;
+  impl_->released_load_rules.Clear();
+  impl_->released_variant_selections.clear();
+  impl_->released_deferred_payloads.clear();
+  impl_->released_composition_issues.clear();
   return std::move(impl_->stage);
 }
 const StageSessionOptions& StageSession::GetOptions() const {
@@ -449,14 +513,22 @@ const std::string& StageSession::GetRootIdentifier() const {
   return impl_->root_identifier;
 }
 bool StageSession::IsOpen() const { return impl_ && impl_->open; }
-bool StageSession::IsComposed() const { return impl_ && impl_->cache != nullptr; }
+bool StageSession::IsComposed() const {
+  return impl_ && impl_->open &&
+         (impl_->cache != nullptr || impl_->composition_cache_released);
+}
 bool StageSession::Rebuild() {
-  return impl_ && impl_->open && impl_->Rebuild(ProgressPhase::Recompose);
+  if (!impl_ || !impl_->open) return false;
+  if (impl_->composition_cache_released &&
+      !impl_->RestoreCompositionCache()) {
+    return false;
+  }
+  return impl_->Rebuild(ProgressPhase::Recompose);
 }
 
 bool StageSession::LoadPayload(const Path& prim_path,
                                pcp::Cache::LoadPolicy policy) {
-  if (!impl_ || !impl_->cache) return false;
+  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
   impl_->warning.clear();
   impl_->error.clear();
   if (!impl_->cache->LoadPayload(prim_path, policy, &impl_->warning,
@@ -468,7 +540,8 @@ bool StageSession::LoadPayload(const Path& prim_path,
 }
 
 bool StageSession::UnloadPayload(const Path& prim_path) {
-  if (!impl_ || !impl_->cache || !impl_->cache->UnloadPayload(prim_path)) {
+  if (!impl_ || !impl_->RestoreCompositionCache() ||
+      !impl_->cache->UnloadPayload(prim_path)) {
     return false;
   }
   return impl_->Rebuild(ProgressPhase::Recompose);
@@ -476,7 +549,7 @@ bool StageSession::UnloadPayload(const Path& prim_path) {
 
 bool StageSession::LoadPayloads(
     const std::vector<Path>& prim_paths, pcp::Cache::LoadPolicy policy) {
-  if (!impl_ || !impl_->cache) return false;
+  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
   if (!impl_->cache->LoadPayloads(prim_paths, policy)) return false;
   return impl_->Rebuild(ProgressPhase::Recompose);
 }
@@ -484,8 +557,8 @@ bool StageSession::LoadPayloads(
 bool StageSession::SetVariantSelection(const Path& prim_path,
                                        const std::string& variant_set,
                                        const std::string& selection) {
-  if (!impl_ || !impl_->cache || prim_path.empty() || variant_set.empty() ||
-      selection.empty()) {
+  if (!impl_ || prim_path.empty() || variant_set.empty() || selection.empty() ||
+      !impl_->RestoreCompositionCache()) {
     return false;
   }
   auto selections = impl_->cache->GetVariantSelections();
@@ -495,7 +568,7 @@ bool StageSession::SetVariantSelection(const Path& prim_path,
 
 bool StageSession::ClearVariantSelection(const Path& prim_path,
                                          const std::string& variant_set) {
-  if (!impl_ || !impl_->cache) return false;
+  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
   auto selections = impl_->cache->GetVariantSelections();
   auto path_it = selections.find(prim_path.str());
   if (path_it == selections.end()) return true;
@@ -506,7 +579,7 @@ bool StageSession::ClearVariantSelection(const Path& prim_path,
 
 bool StageSession::SetVariantSelections(
     const pcp::CompositionOptions::VariantSelectionMap& selections) {
-  if (!impl_ || !impl_->cache) return false;
+  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
   impl_->cache->SetVariantSelections(selections);
   return impl_->Rebuild(ProgressPhase::Recompose);
 }
@@ -515,16 +588,21 @@ pcp::CompositionOptions::VariantSelectionMap
 StageSession::GetVariantSelections() const {
   return impl_ && impl_->cache
              ? impl_->cache->GetVariantSelections()
-             : pcp::CompositionOptions::VariantSelectionMap();
+             : (impl_ ? impl_->released_variant_selections
+                      : pcp::CompositionOptions::VariantSelectionMap());
 }
 std::vector<Path> StageSession::GetDeferredPayloadPaths() const {
-  return impl_ && impl_->cache ? impl_->cache->GetDeferredPayloadPaths()
-                               : std::vector<Path>();
+  return impl_ && impl_->cache
+             ? impl_->cache->GetDeferredPayloadPaths()
+             : (impl_ ? impl_->released_deferred_payloads
+                      : std::vector<Path>());
 }
 std::vector<pcp::Cache::CompositionIssue>
 StageSession::GetCompositionIssues() const {
-  return impl_ && impl_->cache ? impl_->cache->GetCompositionIssues()
-                               : std::vector<pcp::Cache::CompositionIssue>();
+  return impl_ && impl_->cache
+             ? impl_->cache->GetCompositionIssues()
+             : (impl_ ? impl_->released_composition_issues
+                      : std::vector<pcp::Cache::CompositionIssue>());
 }
 const std::vector<Diagnostic>& StageSession::GetDiagnostics() const {
   return impl_->diagnostics;
@@ -538,6 +616,41 @@ void StageSession::TrimCaches() {
   if (!impl_ || !impl_->cache) return;
   impl_->cache->TrimTransientCaches();
   impl_->UpdateMemoryStats();
+}
+void StageSession::ReleaseCompositionCache() {
+  if (!impl_ || !impl_->cache) return;
+  impl_->WaitForRetiringCache();
+  impl_->released_load_rules = impl_->cache->GetLoadRules();
+  impl_->released_variant_selections = impl_->cache->GetVariantSelections();
+  impl_->released_deferred_payloads = impl_->cache->GetDeferredPayloadPaths();
+  impl_->released_composition_issues = impl_->cache->GetCompositionIssues();
+  std::unique_ptr<pcp::Cache> retiring = std::move(impl_->cache);
+  impl_->composition_cache_released = true;
+  impl_->UpdateMemoryStats();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  impl_->retiring_cache_thread = std::thread(
+      [retiring = std::move(retiring)]() mutable { retiring.reset(); });
+#else
+  retiring.reset();
+#endif
+}
+Stage::StaticGeometryReleaseStats StageSession::ReleaseStaticGeometryArrays(
+    size_t min_array_elements) {
+  if (!impl_ || !IsComposed()) return {};
+  Stage::StaticGeometryReleaseStats stats =
+      impl_->stage.ReleaseStaticGeometryArrays(min_array_elements);
+  impl_->UpdateMemoryStats();
+  return stats;
+}
+Stage::StaticGeometryReleaseStats
+StageSession::ReleaseStaticGeometryArraysForPrim(
+    const UsdPrim& prim, size_t min_array_elements) {
+  if (!impl_ || !IsComposed()) return {};
+  // Do not rescan stage memory here: the streaming converter calls this for
+  // every last-use prim while worker threads are active. A final bulk release
+  // refreshes aggregate memory stats after the workers join.
+  return impl_->stage.ReleaseStaticGeometryArraysForPrim(
+      prim, min_array_elements);
 }
 const std::string& StageSession::GetWarning() const { return impl_->warning; }
 const std::string& StageSession::GetError() const { return impl_->error; }
