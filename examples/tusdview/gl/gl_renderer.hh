@@ -20,7 +20,11 @@ class GLRenderer final : public Renderer {
   bool init(GLFWwindow* window, std::string* err) override;
   bool initImGui(std::string* err) override;
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
+  void syncSceneResources(const std::vector<DrawMaterialCPU>& materials,
+                          int textureCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
+  void appendMeshSurface(const DrawMeshCPU& mesh) override;
+  void uploadMeshAux(size_t meshIndex, const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
   void setLights(const std::vector<DrawLightCPU>& lights) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
@@ -56,6 +60,10 @@ class GLRenderer final : public Renderer {
   void shutdown() override;
 
  private:
+  void appendMaterials(const std::vector<DrawMaterialCPU>& materials,
+                       size_t first);
+  void resizeTextureSlots(int textureCount);
+  void appendMeshImpl(const DrawMeshCPU& mesh, bool includeAux);
   // UsdVol volume (OpenVDB): density grid as a GL_TEXTURE_3D, raymarched in a
   // proxy-box pass over its object-space AABB.
   struct GLVolume {

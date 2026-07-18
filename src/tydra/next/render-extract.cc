@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "next/schema/geom-point-instancer.hh"
+#include "next/schema/usd-shade.hh"
 #include "scene-access.hh"
 
 namespace tinyusdz {
@@ -109,6 +110,8 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
                 const RenderExtractOptions& options,
                 const double parent_world[16],
                 const std::string& inherited_purpose,
+                const std::string& inherited_material,
+                const std::string& inherited_strong_material,
                 RenderExtractResult* out) {
   if (!prim.IsActive() && !options.include_inactive) return;
 
@@ -117,6 +120,17 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
   rec.path = prim.GetPath().str();
   rec.type_name = prim.GetTypeName();
   rec.purpose = PurposeForPrim(prim, inherited_purpose);
+  const std::string local_material =
+      ::tinyusdz::next::GetBoundMaterialPath(prim);
+  const std::string nearest_material =
+      local_material.empty() ? inherited_material : local_material;
+  std::string strong_material = inherited_strong_material;
+  if (strong_material.empty() && !local_material.empty() &&
+      ::tinyusdz::next::BindingIsStrongerThanDescendants(prim)) {
+    strong_material = local_material;
+  }
+  rec.material_path = strong_material.empty() ? nearest_material
+                                               : strong_material;
   ComputeLocalTransform(prim, rec.local, options.time_code);
   if (HasResetXformStack(prim)) {
     std::memcpy(rec.world, rec.local, sizeof(rec.world));
@@ -137,7 +151,8 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
     return;
   }
   for (const ::tinyusdz::next::UsdPrim& child : prim.GetChildren()) {
-    CollectRec(child, options, rec.world, rec.purpose, out);
+    CollectRec(child, options, rec.world, rec.purpose, nearest_material,
+               strong_material, out);
   }
 }
 
@@ -187,7 +202,8 @@ bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
   double identity[16];
   Identity(identity);
   for (const ::tinyusdz::next::UsdPrim& root : stage.GetRootPrims()) {
-    CollectRec(root, options, identity, "default", out);
+    CollectRec(root, options, identity, "default", std::string(),
+               std::string(), out);
   }
   return true;
 }

@@ -88,25 +88,31 @@
   bool ShouldLoadPayload(const std::string &root_prim_path,
                          const std::string &asset,
                          const PrimSpec &owner) {
+    auto selected = [&](bool load) {
+      if (load && options.payload_load_callback) {
+        options.payload_load_callback(Path(root_prim_path));
+      }
+      return load;
+    };
     // Explicit load rules win; a path with no governing rule falls back to the
     // base policy (payload_policy callback, else the load_payloads flag).
     switch (load_rules_.GetEffect(root_prim_path)) {
       case LoadRules::Effect::All:
       case LoadRules::Effect::Only:
-        return true;
+        return selected(true);
       case LoadRules::Effect::None:
         return false;
       case LoadRules::Effect::Default:
         break;
     }
     if (options.payload_policy_with_prim) {
-      return options.payload_policy_with_prim(Path(root_prim_path), asset,
-                                              owner);
+      return selected(options.payload_policy_with_prim(
+          Path(root_prim_path), asset, owner));
     }
     if (options.payload_policy) {
-      return options.payload_policy(Path(root_prim_path), asset);
+      return selected(options.payload_policy(Path(root_prim_path), asset));
     }
-    return options.load_payloads;
+    return selected(options.load_payloads);
   }
 
   // --- variant selection --------------------------------------------------

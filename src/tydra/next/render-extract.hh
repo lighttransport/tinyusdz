@@ -41,6 +41,7 @@ struct RenderPrimRecord {
   std::string path;
   std::string type_name;
   std::string purpose = "default";
+  std::string material_path;
   std::string native_prototype;
   double local[16];
   double world[16];

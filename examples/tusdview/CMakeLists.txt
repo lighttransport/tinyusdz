@@ -256,6 +256,15 @@ if(TINYUSDZ_BUILD_TESTS)
     target_link_libraries(tusdview_lightrt_mtlx_eval_test PRIVATE m)
   endif()
 
+  add_executable(tusdview_camera_nav_test
+      tests/camera_nav_test.cc
+      camera_nav.cc
+      ${COMMON_DIR}/light3d/math.cpp)
+  target_compile_features(tusdview_camera_nav_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_camera_nav_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${COMMON_DIR})
+
   # Register the tusdview unit tests with ctest. They were built here but never
   # registered (this file had no add_test at all), so a regression in any of
   # them went unnoticed. Works because the top-level CMakeLists.txt calls
@@ -267,7 +276,8 @@ if(TINYUSDZ_BUILD_TESTS)
       tusdview_lighting_test
       tusdview_geometry_primvar_test
       tusdview_texture_pipeline_test
-      tusdview_lightrt_mtlx_eval_test)
+      tusdview_lightrt_mtlx_eval_test
+      tusdview_camera_nav_test)
     add_test(NAME ${tv_test} COMMAND ${tv_test})
     set_tests_properties(${tv_test} PROPERTIES LABELS "tusdview")
   endforeach()

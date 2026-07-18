@@ -137,6 +137,8 @@ class App
   // run(); payload whitelist is managed internally by recompose).
   void setLoadOptions(const LoadOptions& o) { loadOpts_ = o; }
   const LoadOptions& loadOptions() const { return loadOpts_; }
+  void setUploadBudgetMs(double ms) { uploadBudgetMs_ = ms; }
+  void setQuitAfterFullUpload(bool on) { quitAfterFullUpload_ = on; }
 
   // Use the `next` lazy loader + tydra-next converter (flat-shaded large-scene
   // mesh preview) instead of the default Tydra path. See next_scene_loader.cc.
@@ -268,8 +270,11 @@ class App
   // top of those already loaded. No-op if the scene wasn't composed.
   void startRecomposeAsync(const std::set<std::string>& addPrimPaths);
   void finishLoadIfReady();
-  void applyLoaded(bool ok, bool progressive);  // upload + bind on the main thread
+  void applyLoaded(bool ok, bool progressive,
+                   bool alreadyUploaded = false);  // upload + bind on main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
+  void drainProgressiveLoad();   // consume loader-produced meshes on context thread
+  void ensureWireAuxReady();     // make resident wire buffers complete atomically
   void cancelAndJoinLoad();
 
   // --- Animation playback ---
@@ -332,6 +337,7 @@ class App
   LoadedScene loaded_;
   DrawScene draw_;
   LoadOptions loadOpts_;
+  double uploadBudgetMs_{8.0};
   bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview
   // Persistent next document: owns the composed stage, resolver, and PCP cache.
   std::shared_ptr<tinyusdz::next::StageSession> nextSession_;
@@ -447,6 +453,25 @@ class App
   bool loadActive_{false};  // main-thread-only UI flag
   std::unique_ptr<LoadedScene> pendingLoaded_;
   std::unique_ptr<DrawScene> pendingDraw_;
+  std::shared_ptr<ProgressiveSceneStream> loadStream_;
+  bool streamLoadActive_{false};
+  bool streamRendererBegun_{false};
+  bool streamCompleteSeen_{false};
+  bool streamCameraFramed_{false};
+  bool streamFirstUploadLogged_{false};
+  bool streamFirstFrameLogged_{false};
+  bool streamFullConversionLogged_{false};
+  bool streamFullUploadLogged_{false};
+  bool streamHasUsefulGeometry_{false};
+  bool streamAuxEager_{false};
+  bool quitAfterFullUpload_{false};
+  bool quitAfterFullPresent_{false};
+  float streamBoundsMin_[3]{1e30f, 1e30f, 1e30f};
+  float streamBoundsMax_[3]{-1e30f, -1e30f, -1e30f};
+  size_t streamUploadedTriangles_{0};
+  size_t streamUploadedEffectiveTriangles_{0};
+  size_t streamUploadedVertices_{0};
+  std::chrono::steady_clock::time_point runStart_;
   std::string loadingPath_;
   std::chrono::steady_clock::time_point loadStart_;
 
@@ -487,6 +512,7 @@ class App
   // Progressive GPU upload (interactive path): stream meshes then textures.
   bool progressiveActive_{false};
   size_t nextMesh_{0};
+  size_t nextAux_{0};
   size_t nextTex_{0};
   size_t nextVolume_{0};  // UsdVol volumes uploaded so far
 

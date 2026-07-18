@@ -821,6 +821,10 @@ bool Cache::LoadPayload(const Path &p, LoadPolicy policy, std::string *warn,
                         std::string *err) {
   return impl_->LoadPayload(p, policy == LoadPolicy::WithDescendants, warn, err);
 }
+bool Cache::LoadPayloads(const std::vector<Path> &paths, LoadPolicy policy) {
+  return impl_->LoadPayloads(paths,
+                            policy == LoadPolicy::WithDescendants);
+}
 bool Cache::UnloadPayload(const Path &p) { return impl_->UnloadPayload(p); }
 void Cache::SetLoadRules(const LoadRules &rules) { impl_->SetLoadRules(rules); }
 LoadRules Cache::GetLoadRules() const {

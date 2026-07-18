@@ -194,6 +194,11 @@ class Cache {
   bool LoadPayload(const Path &prim_path, LoadPolicy policy, std::string *warn,
                    std::string *err);
 
+  /// Apply several payload load rules at once and invalidate their common
+  /// affected subtree once. Unlike SetLoadRules, parsed layers and unrelated
+  /// composition caches are retained.
+  bool LoadPayloads(const std::vector<Path> &prim_paths, LoadPolicy policy);
+
   /// Unload (defer) the payload on `prim_path` and its descendants, then
   /// recompose so HasDeferredPayload is immediately accurate.
   bool UnloadPayload(const Path &prim_path);

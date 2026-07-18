@@ -336,8 +336,9 @@ void main() {
       materialOpacity = (materialOpacity >= alphaCutoff) ? 1.0 : 0.0;
     }
 
-    // Render mode (RenderMode in camPos.w). Only shaded/wireframe need the
-    // default hard shadow below; debug AOVs overwrite outc and should avoid this
+    // Render mode (RenderMode in camPos.w). Only shaded mode needs the default
+    // hard shadow below; wireframe uses a fixed diagnostic color and debug AOVs
+    // overwrite outc, so those modes should avoid this
     // extra ray query on large RT scenes. AO/soft-shadow modes issue their own
     // ray queries in their AOV branches.
     int rmode = int(pc.camPos.w + 0.5);
@@ -353,7 +354,7 @@ void main() {
 
     // Shadow ray towards the light (hard shadows).
     float shadow = 1.0;
-    if ((rmode == 0 || rmode == 1) && diff > 0.0) {
+    if (rmode == 0 && diff > 0.0) {
       rayQueryEXT sq;
       rayQueryInitializeEXT(sq, TLAS,
                             gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
@@ -419,7 +420,8 @@ void main() {
     }
     if (rmode == 1) {
       float e = min(w0, min(bc.x, bc.y));
-      if (e > 0.02) outc = bgc;
+      const vec3 wireColor = vec3(0.04, 0.24, 0.10);
+      outc = (e > 0.02) ? bgc : wireColor;
     } else if (rmode == 2) {
       outc = N * 0.5 + 0.5;
     } else if (rmode == 3) {
