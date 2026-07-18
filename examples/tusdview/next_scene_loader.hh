@@ -35,7 +35,8 @@ namespace tusdview {
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
                     LoadControl* ctrl = nullptr,
-                    std::shared_ptr<tinyusdz::next::StageSession>* out_session = nullptr);
+                    std::shared_ptr<tinyusdz::next::StageSession>* out_session = nullptr,
+                    ProgressiveSceneStream* stream = nullptr);
 
 // A USD camera resolved from the `next` stage, in world space: `eye` position,
 // unit `forward` (the camera looks down its local -Z) and `up` (local +Y), and

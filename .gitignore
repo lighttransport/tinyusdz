@@ -396,6 +396,7 @@ CMakeUserPresets.json
 !tests/next/fixtures/*.usda
 !tests/next/fixtures/vr-edge/**/*.usda
 !tests/usda/validation/valid/*.usda
+!models/concave_ngon.usda
 !tests/usdc/aousd-unknown-property-metadata.usdc
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
 # top-level usdcat round-trip compare which globs only tests/usda/*.usda).

@@ -16,6 +16,9 @@ struct LoadControl {
   std::atomic<int> stage{0};               // tydra DetailedProgressInfo::Stage
   std::atomic<long long> meshesDone{0};
   std::atomic<long long> meshesTotal{0};
+  std::atomic<long long> payloadsDone{0};
+  std::atomic<long long> payloadsTotal{0};
+  std::atomic<int> phasePermille{0};
 
   // --- budgets (set before a load; enforced by worker) ---
   // Abort Tydra conversion if it runs longer than this (0 = unlimited).
@@ -30,6 +33,9 @@ struct LoadControl {
     stage.store(0);
     meshesDone.store(0);
     meshesTotal.store(0);
+    payloadsDone.store(0);
+    payloadsTotal.store(0);
+    phasePermille.store(0);
   }
 };
 

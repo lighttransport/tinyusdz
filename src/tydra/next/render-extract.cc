@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "next/schema/geom-point-instancer.hh"
+#include "next/schema/usd-shade.hh"
 #include "scene-access.hh"
 
 namespace tinyusdz {
@@ -85,8 +86,9 @@ std::string PurposeForPrim(const ::tinyusdz::next::UsdPrim& prim,
   return inherited.empty() ? std::string("default") : inherited;
 }
 
-void PushRecord(const RenderPrimRecord& rec, RenderExtractResult* out) {
-  out->records.push_back(rec);
+void PushRecord(const RenderPrimRecord& rec, bool collect_records,
+                RenderExtractResult* out) {
+  if (collect_records) out->records.push_back(rec);
   switch (rec.kind) {
     case RenderPrimKind::Mesh: out->meshes.push_back(rec); break;
     case RenderPrimKind::PointInstancer: out->point_instancers.push_back(rec); break;
@@ -109,6 +111,8 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
                 const RenderExtractOptions& options,
                 const double parent_world[16],
                 const std::string& inherited_purpose,
+                const std::string& inherited_material,
+                const std::string& inherited_strong_material,
                 RenderExtractResult* out) {
   if (!prim.IsActive() && !options.include_inactive) return;
 
@@ -117,6 +121,17 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
   rec.path = prim.GetPath().str();
   rec.type_name = prim.GetTypeName();
   rec.purpose = PurposeForPrim(prim, inherited_purpose);
+  const std::string local_material =
+      ::tinyusdz::next::GetBoundMaterialPath(prim);
+  const std::string nearest_material =
+      local_material.empty() ? inherited_material : local_material;
+  std::string strong_material = inherited_strong_material;
+  if (strong_material.empty() && !local_material.empty() &&
+      ::tinyusdz::next::BindingIsStrongerThanDescendants(prim)) {
+    strong_material = local_material;
+  }
+  rec.material_path = strong_material.empty() ? nearest_material
+                                               : strong_material;
   ComputeLocalTransform(prim, rec.local, options.time_code);
   if (HasResetXformStack(prim)) {
     std::memcpy(rec.world, rec.local, sizeof(rec.world));
@@ -125,7 +140,7 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
   }
   rec.kind = Classify(prim, rec.type_name, &rec.native_prototype);
   if (rec.kind != RenderPrimKind::Other || options.collect_other) {
-    PushRecord(rec, out);
+    PushRecord(rec, options.collect_records, out);
   }
 
   if (rec.kind == RenderPrimKind::PointInstancer &&
@@ -137,7 +152,8 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
     return;
   }
   for (const ::tinyusdz::next::UsdPrim& child : prim.GetChildren()) {
-    CollectRec(child, options, rec.world, rec.purpose, out);
+    CollectRec(child, options, rec.world, rec.purpose, nearest_material,
+               strong_material, out);
   }
 }
 
@@ -187,7 +203,8 @@ bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
   double identity[16];
   Identity(identity);
   for (const ::tinyusdz::next::UsdPrim& root : stage.GetRootPrims()) {
-    CollectRec(root, options, identity, "default", out);
+    CollectRec(root, options, identity, "default", std::string(),
+               std::string(), out);
   }
   return true;
 }
@@ -239,6 +256,7 @@ void CollectPrototypePaths(const ::tinyusdz::next::Stage& stage,
   RenderExtractOptions options;
   options.stop_at_point_instancers = true;
   options.stop_at_native_instances = true;
+  options.collect_records = false;
   RenderExtractResult result;
   if (!CollectRenderPrims(stage, options, &result)) return;
   out->insert(result.native_prototype_holders.begin(),

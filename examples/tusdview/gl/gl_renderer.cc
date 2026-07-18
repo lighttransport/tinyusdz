@@ -471,19 +471,21 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       // a lit render.
       "    FragColor = vec4(0.18,0.18,0.18,1.0); return;\n"
       "  }\n"
-      // Soft camera-headlight: face the normal to the camera, combine N.V with a
-      // gentle half-Lambert key + ambient floor so no facet renders pure black.
+      // View-facing preview light: N.V carries most of the contrast so pale,
+      // untextured assets remain readable, with a small world-space key to keep
+      // similarly oriented surfaces from collapsing to one value.
       "  vec3 V = normalize(uCameraPos - vWorldPos);\n"
       "  vec3 Nf = (dot(N, V) < 0.0) ? -N : N;\n"
       "  float facing = max(dot(Nf, V), 0.0);\n"
       "  vec3 L = (dot(uLightDir,uLightDir)>1e-8) ? normalize(uLightDir) : normalize(vec3(0.3,0.5,0.8));\n"
       "  vec3 lightColor = (dot(uLightColor,uLightColor)>1e-8) ? uLightColor : vec3(1.0);\n"
       "  float key = dot(Nf, L) * 0.5 + 0.5;\n"
-      "  float shade = 0.25 + 0.75 * (0.6 * facing + 0.4 * key);\n"
+      "  float shade = 0.8 * facing + 0.2 * key;\n"
       "  vec3 H = normalize(L + V);\n"
       "  float NdotH = max(dot(Nf, H), 0.0);\n"
-      "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.25);\n"
-      "  vec3 col = vColor * (amb + lightColor * (shade - 0.25)) + lightColor * 0.12 * pow(NdotH, 32.0) * facing;\n"
+      "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.12);\n"
+      "  amb *= 0.4 + 0.6 * facing;\n"
+      "  vec3 col = vColor * (amb + lightColor * (0.84 * shade)) + lightColor * 0.10 * pow(NdotH, 32.0) * facing;\n"
       "  FragColor = vec4(linearToSrgb(col + uEmissive), vOpacity);\n"
       "}\n";
   instProgram_ = glutil::CompileProgram(kInstancedVS, kInstancedFS, err);
@@ -905,18 +907,18 @@ void GLRenderer::buildTessProgram() {
       // height detail actually shades, matching the coarse path's displaced look.
       "  vec3 N=normalize(cross(dFdx(vWorldPos),dFdy(vWorldPos)));\n"
       "  if(!gl_FrontFacing) N=-N;\n"
-      // Soft camera-headlight (matches the coarse/material path): N.V + half-Lambert
-      // key + ambient floor so no facet renders pure black.
+      // View-facing preview light (matches the coarse/material path).
       "  vec3 V=normalize(uCameraPos-vWorldPos);\n"
       "  vec3 Nf=(dot(N,V)<0.0)?-N:N;\n"
       "  float facing=max(dot(Nf,V),0.0);\n"
       "  vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));\n"
       "  vec3 lightColor=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1.0);\n"
       "  float key=dot(Nf,L)*0.5+0.5;\n"
-      "  float shade=0.25+0.75*(0.6*facing+0.4*key);\n"
+      "  float shade=0.8*facing+0.2*key;\n"
       "  vec3 H=normalize(L+V); float NdotH=max(dot(Nf,H),0.0);\n"
-      "  vec3 amb=uHasIbl?texture(uIrradianceMap,normalize(uEnvRotation*Nf)).rgb*uIblColor:vec3(0.25);\n"
-      "  vec3 col=base*(amb+lightColor*(shade-0.25))+lightColor*0.12*pow(NdotH,32.0)*facing;\n"
+      "  vec3 amb=uHasIbl?texture(uIrradianceMap,normalize(uEnvRotation*Nf)).rgb*uIblColor:vec3(0.12);\n"
+      "  amb*=0.4+0.6*facing;\n"
+      "  vec3 col=base*(amb+lightColor*(0.84*shade))+lightColor*0.10*pow(NdotH,32.0)*facing;\n"
       "  FragColor=vec4(col,1.0);\n"
       "}\n";
   std::string terr;
@@ -1009,9 +1011,20 @@ void GLRenderer::destroyScene() {
 void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                             int textureCount) {
   destroyScene();
+  resizeTextureSlots(textureCount);
+  materials_.reserve(materials.size());
+  appendMaterials(materials, 0);
+}
+
+void GLRenderer::resizeTextureSlots(int textureCount) {
+  const size_t requested = textureCount > 0 ? static_cast<size_t>(textureCount) : 0;
+  if (requested <= textures_.size() && udimLutAtlas_) return;
+  textures_.resize(requested);
   // Reserve texture slots (0 = not yet uploaded -> resolved to white at draw).
-  textures_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
-                   GLTexture{});
+  // Texture pixels are published only after geometry finalization, so rebuilding
+  // the empty UDIM lookup while slots grow cannot discard a live lookup table.
+  if (udimLutAtlas_) glDeleteTextures(1, &udimLutAtlas_);
+  udimLutAtlas_ = 0;
   const int atlasRows = std::max(textureCount, 1);
   std::vector<int16_t> emptyLut(static_cast<size_t>(atlasRows) * 100, -1);
   glGenTextures(1, &udimLutAtlas_);
@@ -1023,8 +1036,14 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void GLRenderer::appendMaterials(const std::vector<DrawMaterialCPU>& materials,
+                                 size_t first) {
+  if (first >= materials.size()) return;
   materials_.reserve(materials.size());
-  for (const auto& m : materials) {
+  for (size_t i = first; i < materials.size(); ++i) {
+    const DrawMaterialCPU& m = materials[i];
     GLMaterial gm;
     gm.baseColor[0] = m.baseColor[0];
     gm.baseColor[1] = m.baseColor[1];
@@ -1068,6 +1087,14 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     gm.displacementTexBias = m.displacementTexBias;
     materials_.push_back(gm);
   }
+}
+
+void GLRenderer::syncSceneResources(
+    const std::vector<DrawMaterialCPU>& materials, int textureCount) {
+  resizeTextureSlots(textureCount);
+  // Existing materials are immutable in the next loader; alpha variants and
+  // newly discovered bound materials append stable indices.
+  appendMaterials(materials, materials_.size());
 }
 
 void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
@@ -1478,6 +1505,7 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
       sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
   gm.influenceTexWidth = sm.influenceTexWidth;
   gm.vertexCount = sm.vertices.size();
+  gm.indexCount = sm.indices.size();
   // Mesh-space bbox center for the translucency back-to-front sort.
   if (!sm.vertices.empty()) {
     float lo[3] = {sm.vertices[0].px, sm.vertices[0].py, sm.vertices[0].pz};
@@ -1583,6 +1611,14 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
 }
 
 void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
+  appendMeshImpl(sm, true);
+}
+
+void GLRenderer::appendMeshSurface(const DrawMeshCPU& sm) {
+  appendMeshImpl(sm, false);
+}
+
+void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
   GLMesh gm;
   gm.submeshes = sm.submeshes;
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
@@ -1597,6 +1633,7 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
   gm.influenceTexWidth = sm.influenceTexWidth;
   gm.vertexCount = sm.vertices.size();
+  gm.indexCount = sm.indices.size();
   // Mesh-space bbox center for the translucency back-to-front sort.
   if (!sm.vertices.empty()) {
     float lo[3] = {sm.vertices[0].px, sm.vertices[0].py, sm.vertices[0].pz};
@@ -1773,7 +1810,8 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
     }
     // Per-triangle source face id as a texture buffer (source-face-id AOV),
     // fetched in the FS by gl_PrimitiveID + the submesh's first-triangle offset.
-    if (sm.sourceFaceId.size() == sm.indices.size() / 3 && !sm.sourceFaceId.empty()) {
+    if (includeAux && sm.sourceFaceId.size() == sm.indices.size() / 3 &&
+        !sm.sourceFaceId.empty()) {
       glGenBuffers(1, &gm.faceIdBuf);
       glBindBuffer(GL_TEXTURE_BUFFER, gm.faceIdBuf);
       glBufferData(GL_TEXTURE_BUFFER,
@@ -1912,9 +1950,13 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   // Wireframe edges. Prefer the loader-provided original-polygon perimeter edges
   // (sm.wireframeIndices: quads/ngons, correct for double-sided meshes). Fall
   // back to deriving edges from triangles + source face ids (drop triangulation
-  // diagonals), and finally to every triangle edge. Always from the base (coarse)
-  // indices, so wireframe shows the pre-tessellation mesh.
-  if (!sm.wireframeIndices.empty()) {
+  // diagonals). Without authored face ids, retain only the mesh boundary instead
+  // of exposing every generated triangle. Always use the base (coarse) indices,
+  // so wireframe shows the pre-tessellation mesh.
+  if (!includeAux) {
+    // Surface-critical data is resident. Wire/source-face data is uploaded by
+    // uploadMeshAux after the first useful frame.
+  } else if (!sm.wireframeIndices.empty()) {
     glGenBuffers(1, &gm.wireEbo);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.wireEbo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER,
@@ -1936,7 +1978,7 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
     for (size_t t = 0; t < triCount; ++t) {
       const uint32_t v[3] = {sm.indices[t * 3], sm.indices[t * 3 + 1],
                              sm.indices[t * 3 + 2]};
-      const uint32_t f = haveFaceIds ? sm.sourceFaceId[t] : static_cast<uint32_t>(t);
+      const uint32_t f = haveFaceIds ? sm.sourceFaceId[t] : 0u;
       const uint32_t e[3][2] = {{v[0], v[1]}, {v[1], v[2]}, {v[2], v[0]}};
       for (int k = 0; k < 3; ++k) {
         const uint64_t ek = key(e[k][0], e[k][1]);
@@ -1944,7 +1986,10 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
         if (it == edges.end()) {
           edges.emplace(ek, std::make_pair(f, true));  // boundary until proven interior
         } else {
-          it->second.second = (it->second.first != f);  // same face -> diagonal -> drop
+          // With authored ids, an edge shared by different faces is a real cage
+          // edge; sharing within one face means a triangulation diagonal. With
+          // no ids, only an unshared mesh-boundary edge is knowably authored.
+          it->second.second = haveFaceIds && it->second.first != f;
         }
       }
     }
@@ -1967,6 +2012,83 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
 
   meshes_.push_back(gm);
+}
+
+void GLRenderer::uploadMeshAux(size_t meshIndex, const DrawMeshCPU& sm) {
+  if (meshIndex >= meshes_.size()) return;
+  GLMesh& gm = meshes_[meshIndex];
+  if (gm.instanceCount == 0 && !gm.faceIdTex &&
+      sm.sourceFaceId.size() == gm.indexCount / 3 &&
+      !sm.sourceFaceId.empty()) {
+    glGenBuffers(1, &gm.faceIdBuf);
+    glBindBuffer(GL_TEXTURE_BUFFER, gm.faceIdBuf);
+    glBufferData(GL_TEXTURE_BUFFER,
+                 static_cast<GLsizeiptr>(sm.sourceFaceId.size() *
+                                        sizeof(uint32_t)),
+                 sm.sourceFaceId.data(), GL_STATIC_DRAW);
+    glGenTextures(1, &gm.faceIdTex);
+    glBindTexture(GL_TEXTURE_BUFFER, gm.faceIdTex);
+    glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, gm.faceIdBuf);
+    glBindBuffer(GL_TEXTURE_BUFFER, 0);
+    glBindTexture(GL_TEXTURE_BUFFER, 0);
+  }
+
+  // Instanced prototypes use the same authored/local edge index buffer and a
+  // dedicated instanced wire vertex shader. Skipping them here made payload
+  // foliage and other progressively loaded instances permanently wireless.
+  if (gm.wireEbo) return;
+  if (!sm.wireframeIndices.empty()) {
+    glGenBuffers(1, &gm.wireEbo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.wireEbo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(sm.wireframeIndices.size() *
+                                        sizeof(uint32_t)),
+                 sm.wireframeIndices.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    gm.wireCount = static_cast<GLsizei>(sm.wireframeIndices.size());
+    return;
+  }
+  std::vector<uint32_t> wire;
+  {
+    const size_t triCount = sm.indices.size() / 3;
+    const bool haveFaceIds =
+        sm.sourceFaceId.size() == triCount && !sm.sourceFaceId.empty();
+    std::unordered_map<uint64_t, std::pair<uint32_t, bool>> edges;
+    edges.reserve(triCount * 3);
+    auto key = [](uint32_t a, uint32_t b) -> uint64_t {
+      if (a > b) std::swap(a, b);
+      return (static_cast<uint64_t>(a) << 32) | b;
+    };
+    for (size_t t = 0; t < triCount; ++t) {
+      const uint32_t v[3] = {sm.indices[t * 3], sm.indices[t * 3 + 1],
+                             sm.indices[t * 3 + 2]};
+      const uint32_t f = haveFaceIds ? sm.sourceFaceId[t] : 0u;
+      const uint32_t e[3][2] = {{v[0], v[1]}, {v[1], v[2]}, {v[2], v[0]}};
+      for (int k = 0; k < 3; ++k) {
+        const uint64_t ek = key(e[k][0], e[k][1]);
+        auto it = edges.find(ek);
+        if (it == edges.end()) {
+          edges.emplace(ek, std::make_pair(f, true));
+        } else {
+          it->second.second = haveFaceIds && it->second.first != f;
+        }
+      }
+    }
+    wire.reserve(edges.size() * 2);
+    for (const auto& edge : edges) {
+      if (!edge.second.second) continue;
+      wire.push_back(static_cast<uint32_t>(edge.first >> 32));
+      wire.push_back(static_cast<uint32_t>(edge.first & 0xffffffffu));
+    }
+  }
+  if (wire.empty()) return;
+  glGenBuffers(1, &gm.wireEbo);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.wireEbo);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(wire.size() * sizeof(uint32_t)),
+               wire.data(), GL_STATIC_DRAW);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+  gm.wireCount = static_cast<GLsizei>(wire.size());
 }
 
 void GLRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
@@ -2033,20 +2155,21 @@ void GLRenderer::newFrame() { ImGui_ImplOpenGL3_NewFrame(); }
 
 void GLRenderer::buildWireProgram() {
   // Anti-aliased thin wireframe: the VS transforms an edge endpoint to clip space
-  // (with a small NDC depth bias to lift it off the surface); the GS expands each
-  // edge into a screen-space quad uHalfWidth pixels to each side; the FS applies an
+  // without changing its depth; the GS expands each edge into a screen-space quad
+  // uHalfWidth pixels to each side; the FS applies an
   // analytic distance-to-center falloff for a crisp ~1 px AA line (usdview look,
   // resolution-independent -- the same edge-distance idea the RT path can use).
   static const char* kWireFS =
       "#version 330 core\n"
       "in float vDist;\n"            // signed pixel distance from the line center
+      "flat in float vEdgeAlpha;\n"  // projected-length density fade
       "out vec4 FragColor;\n"
       "uniform vec3 uWireColor;\n"
       "uniform float uHalfWidth;\n"  // pixels: half the expanded quad width
       "void main(){\n"
       "  float d = abs(vDist);\n"
       // 1 px-wide analytic AA: opaque core, feather to 0 over the last pixel.
-      "  float a = 1.0 - smoothstep(uHalfWidth - 1.0, uHalfWidth, d);\n"
+      "  float a = vEdgeAlpha * (1.0 - smoothstep(uHalfWidth - 1.0, uHalfWidth, d));\n"
       "  if (a <= 0.0) discard;\n"
       "  FragColor = vec4(uWireColor, a);\n"
       "}\n";
@@ -2060,14 +2183,29 @@ void GLRenderer::buildWireProgram() {
       "uniform vec2 uViewport;\n"     // pixels
       "uniform float uHalfWidth;\n"   // pixels
       "out float vDist;\n"
+      "flat out float vEdgeAlpha;\n"
       "void main(){\n"
       "  vec4 c0 = gl_in[0].gl_Position;\n"
       "  vec4 c1 = gl_in[1].gl_Position;\n"
-      "  if (c0.w <= 0.0 || c1.w <= 0.0) return;\n"  // skip edges behind the eye
+      // Clip the segment against the GL near plane in homogeneous space before
+      // dividing by w. Dropping the whole primitive when either endpoint moved
+      // behind the eye made long authored edges pop during dolly.
+      "  float d0 = c0.z + c0.w;\n"
+      "  float d1 = c1.z + c1.w;\n"
+      "  if (d0 < 0.0 && d1 < 0.0) return;\n"
+      "  if (d0 < 0.0) { float t=d0/(d0-d1); c0=mix(c0,c1,t); }\n"
+      "  if (d1 < 0.0) { float t=d1/(d1-d0); c1=mix(c1,c0,t); }\n"
+      "  if (c0.w <= 1e-6 || c1.w <= 1e-6) return;\n"
       "  vec2 s0 = (c0.xy / c0.w) * 0.5 * uViewport;\n"
       "  vec2 s1 = (c1.xy / c1.w) * 0.5 * uViewport;\n"
       "  vec2 dir = s1 - s0;\n"
       "  float len = length(dir);\n"
+      // Suppress sub-pixel topology and fade short edges over a broad range.
+      // Without this, every distant authored edge expands to a full-width quad,
+      // turning detailed buildings/foliage into a solid green mass and popping
+      // abruptly as projected length crosses a pixel.
+      "  vEdgeAlpha = smoothstep(1.0, 7.0, len);\n"
+      "  if (vEdgeAlpha <= 0.001) return;\n"
       "  dir = len > 1e-5 ? dir / len : vec2(1.0, 0.0);\n"
       "  vec2 nrm = vec2(-dir.y, dir.x);\n"
       "  vec2 off = nrm / (0.5 * uViewport) * uHalfWidth;\n"  // pixels -> NDC
@@ -2129,15 +2267,20 @@ void GLRenderer::buildWireProgram() {
 
 void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wireColor[3]) {
   if (!wireProgram_ && !wireInstProgram_) return;
-  const float kBias = 0.0008f;  // NDC z bias: lines just in front of the surface
+  // Do not apply a constant NDC lift: under perspective it can represent meters
+  // of world-space pull at interior-scene distances and expose edges through
+  // foreground walls. LEQUAL resolves exact surface matches against the unbiased
+  // wire-only depth prepass.
+  const float kBias = 0.0f;
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
   glDisable(GL_CULL_FACE);
   // The GS expands each edge into a thin screen-space quad and the FS feathers it
   // analytically, so we get sub-pixel-thin AA lines (no GL_LINE_SMOOTH). Alpha
-  // blend for the feathered edge; depth test on (VS bias keeps lines in front),
-  // depth writes off so overlapping edges don't fight.
+  // blend for the feathered edge; LEQUAL accepts the edge's exact surface depth,
+  // while depth writes stay off so overlapping edges don't fight.
   glDisable(GL_LINE_SMOOTH);
+  glDepthFunc(GL_LEQUAL);
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glDepthMask(GL_FALSE);
@@ -2194,6 +2337,7 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
   glBindVertexArray(0);
   // Restore default state for the rest of the frame (ImGui / next passes).
   glDepthMask(GL_TRUE);
+  glDepthFunc(GL_LESS);
   glDisable(GL_BLEND);
   glDisable(GL_LINE_SMOOTH);
   glUseProgram(program_);  // restore for callers that assume program_ is bound
@@ -2715,7 +2859,9 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   if (wireMode == 0 && params.mode == RenderMode::Wireframe) wireMode = 1;
   const bool haveWire = (wireProgram_ != 0 || wireInstProgram_ != 0);
   const bool wire = (wireMode != 0);  // disables back-face cull in fill passes
-  const float wireCol[3] = {0.75f, 0.85f, 0.95f};  // cool light gray
+  // Wireframe is a diagnostic overlay, independent of the preview light and
+  // material colors. Keep it legible against both the light and dark themes.
+  const float wireCol[3] = {0.04f, 0.24f, 0.10f};  // dark green
 
   if (wireMode == 1 && haveWire) {
     // Wireframe only (hidden-line removed): render the fill into DEPTH ONLY so

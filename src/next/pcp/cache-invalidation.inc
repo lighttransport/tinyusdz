@@ -120,6 +120,27 @@
     return true;
   }
 
+  bool LoadPayloads(const std::vector<Path> &prim_paths,
+                    bool with_descendants) {
+    NEXT_PCP_LOCK(api_mu_);
+    Path common;
+    for (const Path &path : prim_paths) {
+      if (path.empty()) continue;
+      if (with_descendants) load_rules_.LoadWithDescendants(path.str());
+      else load_rules_.LoadWithoutDescendants(path.str());
+      if (common.empty()) {
+        common = path;
+      } else {
+        while (!common.empty() &&
+               !IsPathAtOrUnder(path.str(), common.str())) {
+          common = common.parent();
+        }
+      }
+    }
+    if (!common.empty()) Invalidate_locked(common);
+    return true;
+  }
+
   bool UnloadPayload(const Path &prim_path) {
     NEXT_PCP_LOCK(api_mu_);
     load_rules_.Unload(prim_path.str());

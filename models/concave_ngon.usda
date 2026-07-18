@@ -1,0 +1,23 @@
+#usda 1.0
+(
+    defaultPrim = "ConcaveNgon"
+    upAxis = "Y"
+)
+
+# A concave arrow-shaped pentagon. Triangle-fan triangulation around point 0
+# produces a degenerate middle triangle; robust triangulation produces three
+# non-degenerate triangles covering the polygon exactly.
+def Mesh "ConcaveNgon"
+{
+    int[] faceVertexCounts = [5]
+    int[] faceVertexIndices = [0, 1, 2, 3, 4]
+    point3f[] points = [
+        (0, 0, 0),
+        (2, 0, 0),
+        (2, 0, 2),
+        (1, 0, 1),
+        (0, 0, 2)
+    ]
+    uniform token orientation = "rightHanded"
+    uniform token subdivisionScheme = "none"
+}

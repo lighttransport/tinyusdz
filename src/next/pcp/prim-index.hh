@@ -232,6 +232,9 @@ struct CompositionOptions {
   /// compatibility and simple path/asset filters.
   std::function<bool(const Path &, const std::string &, const PrimSpec &)>
       payload_policy_with_prim;
+  /// Called when composition elects to resolve a payload arc. Used for live
+  /// progress only; must be thread-safe when parallel composition is enabled.
+  std::function<void(const Path &)> payload_load_callback;
 
   /// Fallback variant selections, consulted ONLY when no selection is authored
   /// anywhere for that set (pxr's PcpVariantFallbackMap / UsdStage global

@@ -43,7 +43,12 @@ class OrbitCamera {
   // Pixel-delta driven navigation (call only when the viewport is interactive).
   void orbit(float dxPix, float dyPix);
   void pan(float dxPix, float dyPix);
-  void dolly(float amount);  // mouse wheel notches or RMB horizontal pixels
+  // Translate eye and pivot together along the current view direction. Positive
+  // values move forward; used by explicit navigation keys as well as dolly.
+  void moveForward(float amount);
+  // Mouse wheel notches or RMB pixels. This is a true camera dolly: eye and
+  // orbit pivot move together, so it never stalls at or turns around an origin.
+  void dolly(float amount);
   // Scene-radius-clamped reference distance used to scale pan speed (keeps the
   // feel usable across the zoom range; see camera_nav.cc).
   float moveRefDistance() const;
@@ -63,9 +68,16 @@ class OrbitCamera {
   // Frame the given world-space AABB.
   void fitToScene(const float aabbMin[3], const float aabbMax[3]);
 
+  // World-space bounds used by automatic near/far clipping. Keeping the center
+  // separate from the mutable orbit pivot makes clipping stable after pan/dolly.
+  void setSceneBounds(const float aabbMin[3], const float aabbMax[3]);
+
   // Full-scene radius used to size the near/far planes (so zooming out never
   // clips the scene/grid). Set once per loaded scene from its world AABB.
-  void setSceneRadius(float r) { sceneRadius_ = (r > 1e-4f) ? r : 1.0f; }
+  void setSceneRadius(float r) {
+    sceneRadius_ = (r > 1e-4f) ? r : 1.0f;
+    haveSceneBounds_ = false;
+  }
 
   const light3d::Vec3& target() const { return target_; }
   float yaw() const { return yaw_; }
@@ -100,6 +112,8 @@ class OrbitCamera {
   bool aspectOverrideEnabled_{false};
   float aspectOverride_{1.0f};
   float sceneRadius_{1.0f};  // full-scene radius; drives dynamic near/far
+  light3d::Vec3 sceneCenter_{0.0f, 0.0f, 0.0f};
+  bool haveSceneBounds_{false};
   bool autoClip_{true};
   float nearClip_{0.01f};
   float farClip_{10000.0f};

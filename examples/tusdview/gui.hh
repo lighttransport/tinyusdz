@@ -44,6 +44,10 @@ class Gui {
     std::string path;
     long long meshesDone{0};
     long long meshesTotal{0};
+    long long payloadsDone{0};
+    long long payloadsTotal{0};
+    int stage{0};
+    float phaseProgress{0.0f};
     float elapsed{0.0f};
   };
 
@@ -76,6 +80,11 @@ class Gui {
 
   void setScene(const LoadedScene* loaded, const DrawScene* draw);
   void setNextStage(const tinyusdz::next::Stage* stage) { nextStage_ = stage; }
+  // StageSession owns the authoritative deferred set. The composed next Stage
+  // may no longer expose payload metadata for arcs deliberately left unloaded.
+  void setDeferredPayloadPaths(std::vector<std::string> paths) {
+    deferredPayloadPaths_ = std::move(paths);
+  }
   void setLoadStatus(const LoadStatus& s) { loadStatus_ = s; }
   void setUploadStatus(const UploadStatus& s) { upload_ = s; }
   void setTimeline(const TimelineInfo& t) { timeline_ = t; }
@@ -158,7 +167,7 @@ class Gui {
   void setTransformMode(TransformMode m) { xformMode_ = m; }
   void setRenderMode(RenderMode m) { mode_ = m; }
   RenderMode renderMode() const { return mode_; }
-  // Advance the 'w'-key wireframe cycle (0 off / 1 wire / 2 wire+shade); returns
+  // Advance the 'v'-key wireframe cycle (0 off / 1 wire / 2 wire+shade); returns
   // the new state. Used by the MCP input tool.
   int cycleWireframe() { wireCycle_ = (wireCycle_ + 1) % 3; return wireCycle_; }
   int wireframeMode() const { return wireCycle_; }
@@ -282,6 +291,7 @@ class Gui {
 
   const tinyusdz::Prim* selPrim_{nullptr};
   const tinyusdz::next::Stage* nextStage_{nullptr};
+  std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};
   // When the selection is a GeomSubset, the triangle vertex indices of its faces
@@ -305,7 +315,7 @@ class Gui {
   int selectionHistoryIndex_{-1};
 
   RenderMode mode_{RenderMode::Shaded};
-  // Wireframe overlay state cycled by the 'w' key: 0 off / 1 wire-only / 2 wire+shaded.
+  // Wireframe overlay state cycled by the 'v' key: 0 off / 1 wire-only / 2 wire+shaded.
   int wireCycle_{0};
   // Transform manipulator mode.
   TransformMode xformMode_{TransformMode::None};
@@ -365,6 +375,7 @@ class Gui {
   bool lastCullValid_{false};
   bool lastCullEnabled_{false};
   bool lastCullRasterLod_{false};
+  bool lastCullWireMode_{false};
   const DrawScene* lastCullDraw_{nullptr};
   // One mesh's compacted visible instances, produced by the worker, applied on main.
   struct CullJobMesh {

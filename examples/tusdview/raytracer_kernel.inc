@@ -593,7 +593,8 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       const float hw=1.3f;  // pixels: ~1px line + 1px AA edge (matches the GL path)
       float cov=1.f-fminf(fmaxf((dmin-(hw-1.f))/1.f,0.f),1.f);  // smooth-ish feather
       cov=cov*cov*(3.f-2.f*cov);  // smoothstep
-      F3 wireCol=mk(0.75f,0.85f,0.95f);
+      // Diagnostic wire color: never tint it with the scene/preview light.
+      F3 wireCol=mk(0.04f,0.24f,0.10f);
       F3 bg=mk(cam.clear[0],cam.clear[1],cam.clear[2]);
       outc=mk(bg.x+(wireCol.x-bg.x)*cov, bg.y+(wireCol.y-bg.y)*cov, bg.z+(wireCol.z-bg.z)*cov);
     } else if (rmode==2){

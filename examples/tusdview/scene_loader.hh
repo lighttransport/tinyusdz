@@ -2,9 +2,13 @@
 // tusdview - load a USD file into a Stage and convert it to a Tydra RenderScene.
 #pragma once
 
+#include <atomic>
 #include <limits>
 #include <map>
 #include <memory>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -32,6 +36,13 @@ struct LoadOptions {
   size_t maxMemoryBytes{0};
   size_t gpuGeometryBudgetBytes{0};
   size_t uploadStagingBytes{0};
+  // Maximum CPU geometry held between the next-loader producer and the GPU
+  // context thread. Zero selects 64 MiB for interactive streaming.
+  size_t streamBufferBytes{0};
+  // Explicit performance controls. Zero selects the hardware-derived default.
+  unsigned compositionThreads{0};
+  unsigned conversionThreads{0};
+  bool timing{false};
 
   // Compose USD composition arcs (subLayers/references/payload/inherits/
   // variants) on load. When false, only the root layer is loaded (legacy
@@ -78,6 +89,54 @@ struct LoadOptions {
   // `timecode`), which is what the CPU-skinning and CPU-tracer paths need.
   bool gpuSkinning{false};
   TextureRuntimeOptions textureOptions;
+};
+
+// Move-only messages produced by the next loader and consumed by App on the
+// render/context thread. A complete event contains scene-wide metadata and
+// resources; streamed meshes have already been removed from its DrawScene.
+struct ProgressiveSceneEvent {
+  enum class Type { Resources, Mesh, Complete, Failed };
+  Type type{Type::Failed};
+  std::vector<DrawMaterialCPU> materials;
+  int textureCount{0};
+  std::string upAxis{"Y"};
+  DrawMeshCPU mesh;
+  DrawScene scene;
+  std::string error;
+};
+
+// Bounded producer/consumer handoff. Byte accounting applies to mesh payloads;
+// resource and terminal messages are small/one-shot and never block completion.
+class ProgressiveSceneStream {
+ public:
+  explicit ProgressiveSceneStream(size_t maxBytes);
+  ~ProgressiveSceneStream();
+
+  ProgressiveSceneStream(const ProgressiveSceneStream&) = delete;
+  ProgressiveSceneStream& operator=(const ProgressiveSceneStream&) = delete;
+
+  bool pushResources(const std::vector<DrawMaterialCPU>& materials,
+                     int textureCount, const std::string& upAxis);
+  bool pushMesh(DrawMeshCPU&& mesh, const std::atomic<bool>* cancelled = nullptr);
+  void pushComplete(DrawScene&& scene);
+  void pushFailed(std::string error);
+  bool tryPop(ProgressiveSceneEvent* event);
+  void cancel();
+  bool cancelled() const;
+  size_t queuedBytes() const;
+
+ private:
+  struct QueuedEvent {
+    ProgressiveSceneEvent event;
+    size_t bytes{0};
+  };
+  size_t maxBytes_{0};
+  size_t queuedBytes_{0};
+  bool cancelled_{false};
+  mutable std::mutex mutex_;
+  std::condition_variable ready_;
+  std::condition_variable space_;
+  std::deque<QueuedEvent> queue_;
 };
 
 // A payload/reference arc that was skipped during composition.
