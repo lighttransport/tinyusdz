@@ -1505,6 +1505,7 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
       sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
   gm.influenceTexWidth = sm.influenceTexWidth;
   gm.vertexCount = sm.vertices.size();
+  gm.indexCount = sm.indices.size();
   // Mesh-space bbox center for the translucency back-to-front sort.
   if (!sm.vertices.empty()) {
     float lo[3] = {sm.vertices[0].px, sm.vertices[0].py, sm.vertices[0].pz};
@@ -1632,6 +1633,7 @@ void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
       sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
   gm.influenceTexWidth = sm.influenceTexWidth;
   gm.vertexCount = sm.vertices.size();
+  gm.indexCount = sm.indices.size();
   // Mesh-space bbox center for the translucency back-to-front sort.
   if (!sm.vertices.empty()) {
     float lo[3] = {sm.vertices[0].px, sm.vertices[0].py, sm.vertices[0].pz};
@@ -2016,7 +2018,7 @@ void GLRenderer::uploadMeshAux(size_t meshIndex, const DrawMeshCPU& sm) {
   if (meshIndex >= meshes_.size()) return;
   GLMesh& gm = meshes_[meshIndex];
   if (gm.instanceCount == 0 && !gm.faceIdTex &&
-      sm.sourceFaceId.size() == sm.indices.size() / 3 &&
+      sm.sourceFaceId.size() == gm.indexCount / 3 &&
       !sm.sourceFaceId.empty()) {
     glGenBuffers(1, &gm.faceIdBuf);
     glBindBuffer(GL_TEXTURE_BUFFER, gm.faceIdBuf);
@@ -2035,10 +2037,19 @@ void GLRenderer::uploadMeshAux(size_t meshIndex, const DrawMeshCPU& sm) {
   // dedicated instanced wire vertex shader. Skipping them here made payload
   // foliage and other progressively loaded instances permanently wireless.
   if (gm.wireEbo) return;
-  std::vector<uint32_t> wire;
   if (!sm.wireframeIndices.empty()) {
-    wire = sm.wireframeIndices;
-  } else {
+    glGenBuffers(1, &gm.wireEbo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.wireEbo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(sm.wireframeIndices.size() *
+                                        sizeof(uint32_t)),
+                 sm.wireframeIndices.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    gm.wireCount = static_cast<GLsizei>(sm.wireframeIndices.size());
+    return;
+  }
+  std::vector<uint32_t> wire;
+  {
     const size_t triCount = sm.indices.size() / 3;
     const bool haveFaceIds =
         sm.sourceFaceId.size() == triCount && !sm.sourceFaceId.empty();

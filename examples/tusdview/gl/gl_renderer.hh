@@ -106,6 +106,7 @@ class GLRenderer final : public Renderer {
     GLuint morphChanBuf{0}, morphChanTex{0};     // R16UI: per-entry channelId (skip)
     int morphChannelCount{0};
     bool hasMorph{false};
+    size_t indexCount{0};  // base surface indices; CPU copy may be released
     bool geometricNormal{false};     // shade with screen-derivative normal
     int purposeId{0};                // USD purpose AOV: 0=default/1=render/2=proxy/3=guide
     int kindId{0};                   // USD kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent

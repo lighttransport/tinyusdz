@@ -496,6 +496,12 @@ static bool MeshIsDeformable(const DrawMeshCPU& m) {
 static void FreeMeshSurfaceCPU(DrawMeshCPU& m) {
   std::vector<DrawVertex>().swap(m.vertices);
   std::vector<float>().swap(m.vertexColors);
+  std::vector<float>().swap(m.vertexAlpha);
+  std::vector<float>().swap(m.tangents);
+  std::vector<float>().swap(m.binormals);
+  std::vector<float>().swap(m.uv1);
+  std::vector<float>().swap(m.morphInfluence);
+  std::vector<DrawVertex>().swap(m.rtDisplacedVertices);
   std::vector<uint32_t>().swap(m.morphOffsetCount);
   std::vector<uint16_t>().swap(m.morphDeltaHalf);
   std::vector<uint16_t>().swap(m.morphChannelId);
@@ -503,6 +509,10 @@ static void FreeMeshSurfaceCPU(DrawMeshCPU& m) {
   std::vector<float>().swap(m.jointWt);
   std::vector<uint32_t>().swap(m.influenceOffsetCount);
   std::vector<float>().swap(m.influenceTexels);
+  // The shaded EBO is already resident. When authored perimeter edges exist,
+  // deferred wire upload no longer needs the triangulated CPU indices either.
+  // Keep them only for the fallback that reconstructs edges from triangles.
+  if (!m.wireframeIndices.empty()) std::vector<uint32_t>().swap(m.indices);
   // instanceXforms / instanceColors / instanceOpacities are RETAINED:
   // per-instance frustum culling
   // (gui) re-tests each instance's protoAabb against the frustum and re-uploads
@@ -536,6 +546,130 @@ static void FreeMeshGeometryCPUForRT(DrawMeshCPU& m) {
   std::vector<float>().swap(m.instanceXforms);
   std::vector<float>().swap(m.instanceColors);
   std::vector<float>().swap(m.instanceOpacities);
+}
+
+// Zig-zagged deltas make sequential face ids and locally coherent topology
+// small, while still covering arbitrary uint32 index order. Size first so the
+// byte vector has exactly one allocation; progressive loading already has the
+// uncompressed array live, so geometric vector growth would raise peak RSS.
+static uint64_t ZigZagDelta(uint32_t value, uint32_t previous) {
+  const int64_t delta = static_cast<int64_t>(value) -
+                        static_cast<int64_t>(previous);
+  return (static_cast<uint64_t>(delta) << 1) ^
+         static_cast<uint64_t>(delta >> 63);
+}
+
+static size_t VarintSize(uint64_t value) {
+  size_t n = 1;
+  while (value >= 0x80u) {
+    value >>= 7;
+    ++n;
+  }
+  return n;
+}
+
+static void EncodeDeltaVarints(const std::vector<uint32_t>& values,
+                               std::vector<uint8_t>* encoded) {
+  if (!encoded) return;
+  size_t byteCount = 0;
+  uint32_t previous = 0;
+  for (uint32_t value : values) {
+    byteCount += VarintSize(ZigZagDelta(value, previous));
+    previous = value;
+  }
+  std::vector<uint8_t> bytes(byteCount);
+  size_t dst = 0;
+  previous = 0;
+  for (uint32_t value : values) {
+    uint64_t code = ZigZagDelta(value, previous);
+    previous = value;
+    while (code >= 0x80u) {
+      bytes[dst++] = static_cast<uint8_t>((code & 0x7fu) | 0x80u);
+      code >>= 7;
+    }
+    bytes[dst++] = static_cast<uint8_t>(code);
+  }
+  *encoded = std::move(bytes);
+}
+
+static bool DecodeDeltaVarints(const std::vector<uint8_t>& encoded,
+                               size_t valueCount,
+                               std::vector<uint32_t>* values) {
+  if (!values) return false;
+  std::vector<uint32_t> decoded(valueCount);
+  size_t src = 0;
+  uint32_t previous = 0;
+  for (size_t i = 0; i < valueCount; ++i) {
+    uint64_t code = 0;
+    unsigned shift = 0;
+    for (;;) {
+      if (src >= encoded.size() || shift > 35) return false;
+      const uint8_t byte = encoded[src++];
+      code |= static_cast<uint64_t>(byte & 0x7fu) << shift;
+      if ((byte & 0x80u) == 0) break;
+      shift += 7;
+    }
+    const int64_t delta = static_cast<int64_t>(code >> 1) ^
+                          -static_cast<int64_t>(code & 1u);
+    const int64_t value = static_cast<int64_t>(previous) + delta;
+    if (value < 0 || value > std::numeric_limits<uint32_t>::max()) return false;
+    previous = static_cast<uint32_t>(value);
+    decoded[i] = previous;
+  }
+  if (src != encoded.size()) return false;
+  *values = std::move(decoded);
+  return true;
+}
+
+void App::compactDeferredMeshAux(size_t meshIndex) {
+  if (meshIndex >= draw_.meshes.size() ||
+      meshIndex >= deferredMeshAux_.size())
+    return;
+  DrawMeshCPU& mesh = draw_.meshes[meshIndex];
+  DeferredMeshAux& aux = deferredMeshAux_[meshIndex];
+  if (MeshIsDeformable(mesh)) return;
+
+  aux.wireCount = mesh.wireframeIndices.size();
+  aux.sourceFaceCount = mesh.sourceFaceId.size();
+  deferredAuxRawBytes_ +=
+      (aux.wireCount + aux.sourceFaceCount) * sizeof(uint32_t);
+  if (aux.wireCount > 0) {
+    EncodeDeltaVarints(mesh.wireframeIndices, &aux.wire);
+    std::vector<uint32_t>().swap(mesh.wireframeIndices);
+  }
+  if (aux.sourceFaceCount > 0) {
+    EncodeDeltaVarints(mesh.sourceFaceId, &aux.sourceFaces);
+    std::vector<uint32_t>().swap(mesh.sourceFaceId);
+  }
+  deferredAuxCompressedBytes_ += aux.wire.size() + aux.sourceFaces.size();
+}
+
+bool App::restoreDeferredMeshAux(size_t meshIndex) {
+  if (meshIndex >= deferredMeshAux_.size()) return true;
+  DeferredMeshAux& aux = deferredMeshAux_[meshIndex];
+  DrawMeshCPU& mesh = draw_.meshes[meshIndex];
+  if (aux.wireCount > 0 &&
+      !DecodeDeltaVarints(aux.wire, aux.wireCount, &mesh.wireframeIndices)) {
+    LOGE("could not decode deferred wire topology for mesh %zu", meshIndex);
+    return false;
+  }
+  if (aux.sourceFaceCount > 0 &&
+      !DecodeDeltaVarints(aux.sourceFaces, aux.sourceFaceCount,
+                          &mesh.sourceFaceId)) {
+    LOGE("could not decode deferred source-face ids for mesh %zu", meshIndex);
+    return false;
+  }
+  std::vector<uint8_t>().swap(aux.wire);
+  std::vector<uint8_t>().swap(aux.sourceFaces);
+  aux.wireCount = 0;
+  aux.sourceFaceCount = 0;
+  return true;
+}
+
+void App::clearDeferredMeshAux() {
+  std::vector<DeferredMeshAux>().swap(deferredMeshAux_);
+  deferredAuxRawBytes_ = 0;
+  deferredAuxCompressedBytes_ = 0;
 }
 
 // Frames the camera must hold still before the RT LOD set is re-selected.
@@ -606,6 +740,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
   // progressive-threaded streaming is a follow-up.
   if (renderThreadActive_) progressive = false;
   if (!alreadyUploaded) {
+    clearDeferredMeshAux();
     progressiveActive_ = false;
     nextMesh_ = 0;
     nextAux_ = 0;
@@ -885,11 +1020,12 @@ void App::drainProgressiveLoad() {
         .count();
   };
 
-  // Keep the first useful present surface-only. On subsequent slices, retire
-  // auxiliary CPU arrays as soon as their GL buffers can be created instead of
-  // retaining every source-face/wire array until conversion finishes.
-  if (streamFirstFrameLogged_) {
+  // Diagnostic wire/source-face buffers are optional. Keep their compact CPU
+  // source until a diagnostic mode is requested instead of consuming GPU memory
+  // and upload bandwidth during an ordinary shaded load.
+  if (streamFirstFrameLogged_ && streamAuxEager_) {
     while (nextAux_ < draw_.meshes.size() && elapsedMs() < budgetMs) {
+      restoreDeferredMeshAux(nextAux_);
       renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
       if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
           !MeshIsDeformable(draw_.meshes[nextAux_])) {
@@ -943,12 +1079,15 @@ void App::drainProgressiveLoad() {
       if (mesh.purpose != "guide" && effectiveTriangles > 0)
         streamHasUsefulGeometry_ = true;
       draw_.meshes.push_back(std::move(mesh));
+      deferredMeshAux_.emplace_back();
       DrawMeshCPU& retained = draw_.meshes.back();
       if (useNextLoader_ && !cudaRt_ && !hipRt_ && !MeshIsDeformable(retained)) {
         if (streamAuxEager_)
           FreeMeshGeometryCPU(retained);
-        else
+        else {
           FreeMeshSurfaceCPU(retained);
+          compactDeferredMeshAux(draw_.meshes.size() - 1);
+        }
       }
       if (streamAuxEager_) ++nextAux_;
       if (!streamFirstUploadLogged_ && loadOpts_.timing) {
@@ -980,6 +1119,11 @@ void App::drainProgressiveLoad() {
              std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                           runStart_)
                  .count());
+        if (deferredAuxRawBytes_ > 0) {
+          LOGI("memory: deferred mesh aux %.1f MiB compressed from %.1f MiB",
+               static_cast<double>(deferredAuxCompressedBytes_) / (1024.0 * 1024.0),
+               static_cast<double>(deferredAuxRawBytes_) / (1024.0 * 1024.0));
+        }
       }
     } else if (event.type == ProgressiveSceneEvent::Type::Failed) {
       streamCompleteSeen_ = true;
@@ -1003,6 +1147,7 @@ void App::ensureWireAuxReady() {
       draw_.meshes.size(),
       static_cast<size_t>(std::max(0, renderer_->meshCount())));
   while (nextAux_ < resident) {
+    restoreDeferredMeshAux(nextAux_);
     renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
     if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
         !MeshIsDeformable(draw_.meshes[nextAux_])) {
@@ -1037,10 +1182,11 @@ void App::stepProgressiveUpload() {
     ++nextMesh_;
     if (elapsedMs() > uploadBudgetMs) break;
   }
-  // Auxiliary source-face and authored-polygon wire buffers are not required
-  // for the initial shaded surface. Upload them only after all surfaces exist.
-  if (nextMesh_ >= draw_.meshes.size()) {
+  // Auxiliary source-face and authored-polygon wire buffers are only made
+  // resident when their display mode has actually been requested.
+  if (streamAuxEager_ && nextMesh_ >= draw_.meshes.size()) {
     while (nextAux_ < draw_.meshes.size()) {
+      restoreDeferredMeshAux(nextAux_);
       renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
       if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
           !MeshIsDeformable(draw_.meshes[nextAux_])) {
@@ -1050,8 +1196,9 @@ void App::stepProgressiveUpload() {
       if (elapsedMs() > tailBudgetMs) break;
     }
   }
+  const bool auxReady = !streamAuxEager_ || nextAux_ >= draw_.meshes.size();
   // Then stream textures (meshes show base color until their texture lands).
-  if (nextMesh_ >= draw_.meshes.size() && nextAux_ >= draw_.meshes.size()) {
+  if (nextMesh_ >= draw_.meshes.size() && auxReady) {
     while (nextTex_ < draw_.textures.size()) {
       renderer_->uploadTexture(static_cast<int>(nextTex_), draw_.textures[nextTex_]);
       ++nextTex_;
@@ -1059,7 +1206,7 @@ void App::stepProgressiveUpload() {
     }
   }
   // UsdVol volumes (OpenVDB) after meshes + textures.
-  if (nextMesh_ >= draw_.meshes.size() && nextAux_ >= draw_.meshes.size() &&
+  if (nextMesh_ >= draw_.meshes.size() && auxReady &&
       nextTex_ >= draw_.textures.size()) {
     while (nextVolume_ < draw_.volumes.size()) {
       renderer_->appendVolume(draw_.volumes[nextVolume_]);
@@ -1067,7 +1214,7 @@ void App::stepProgressiveUpload() {
       if (elapsedMs() > tailBudgetMs) break;
     }
   }
-  if (nextMesh_ >= draw_.meshes.size() && nextAux_ >= draw_.meshes.size() &&
+  if (nextMesh_ >= draw_.meshes.size() && auxReady &&
       nextTex_ >= draw_.textures.size() &&
       nextVolume_ >= draw_.volumes.size()) {
     progressiveActive_ = false;
@@ -1259,6 +1406,7 @@ void App::startLoadAsync(const std::string& path) {
     streamUploadedEffectiveTriangles_ = 0;
     streamUploadedVertices_ = 0;
     nextAux_ = 0;
+    clearDeferredMeshAux();
     for (int a = 0; a < 3; ++a) {
       streamBoundsMin_[a] = 1e30f;
       streamBoundsMax_[a] = -1e30f;

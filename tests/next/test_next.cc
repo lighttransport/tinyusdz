@@ -979,17 +979,37 @@ def Xform "B" (
     "high" { int level = 2 }
   }
 }
+def Mesh "M" {
+  point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+  int[] faceVertexCounts = [3]
+  int[] faceVertexIndices = [0, 1, 2]
+  string[] labels = ["retained"]
+}
 )";
   }
 
   StageSession session;
   assert(session.OpenFile(path));
   assert(session.IsComposed());
+  session.ReleaseCompositionCache();
+  assert(session.IsComposed());
+  assert(session.GetStage().GetPrimAtPath("/A").IsValid());
+  Stage::StaticGeometryReleaseStats released =
+      session.ReleaseStaticGeometryArrays(1);
+  assert(released.property_count == 3);
+  assert(released.stage_bytes_after < released.stage_bytes_before);
+  UsdPrim compact_mesh = session.GetStage().GetPrimAtPath("/M");
+  assert(compact_mesh.HasProperty("points"));
+  assert(compact_mesh.GetPropertyValue("points") == nullptr);
+  assert(compact_mesh.GetPropertyValue("labels") != nullptr);
   assert(session.SetVariantSelection(Path("/A"), "model", "high"));
   const Value* a = session.GetStage().GetPrimAtPath("/A").GetPropertyValue("level");
   const Value* b = session.GetStage().GetPrimAtPath("/B").GetPropertyValue("level");
   assert(a && a->as_int() && *a->as_int() == 2);
   assert(b && b->as_int() && *b->as_int() == 1);
+  const Value* restored_points =
+      session.GetStage().GetPrimAtPath("/M").GetPropertyValue("points");
+  assert(restored_points && restored_points->array_size() == 3);
   assert(session.ClearVariantSelection(Path("/A"), "model"));
   a = session.GetStage().GetPrimAtPath("/A").GetPropertyValue("level");
   assert(a && a->as_int() && *a->as_int() == 1);
@@ -1026,6 +1046,10 @@ void test_stage_session_payloads_and_cancel() {
   assert(session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
          nullptr);
   assert(!session.GetDeferredPayloadPaths().empty());
+  session.ReleaseCompositionCache();
+  assert(session.IsComposed());
+  assert(!session.GetDeferredPayloadPaths().empty());
+  assert(session.GetMemoryStats().source_layer_bytes == 0);
   assert(session.LoadPayloads({Path("/P"), Path("/Q")}));
   const Value* loaded =
       session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue");

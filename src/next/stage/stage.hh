@@ -341,6 +341,26 @@ public:
   };
   Stats GetStats() const;
 
+  struct StaticGeometryReleaseStats {
+    size_t property_count{0};
+    size_t element_count{0};
+    size_t estimated_payload_bytes{0};
+    size_t stage_bytes_before{0};
+    size_t stage_bytes_after{0};
+  };
+
+  /// Drop large, non-time-sampled geometry defaults after a renderer has made
+  /// its own copy. Prim hierarchy, property slots/types/metadata, transforms,
+  /// cameras, materials, skeletons and animation stay resident. This is lossy;
+  /// use it only when the Stage can be reconstructed from its source layers.
+  StaticGeometryReleaseStats ReleaseStaticGeometryArrays(
+      size_t min_array_elements = 256);
+  /// Last-use variant for streaming converters. The caller must guarantee no
+  /// worker still reads this prim. Stage byte totals are left zero to keep this
+  /// O(properties) rather than rescanning the whole stage per prim.
+  StaticGeometryReleaseStats ReleaseStaticGeometryArraysForPrim(
+      const UsdPrim& prim, size_t min_array_elements = 256);
+
 private:
   std::unique_ptr<Layer> root_layer_;
   std::vector<std::unique_ptr<Layer>> sub_layers_;

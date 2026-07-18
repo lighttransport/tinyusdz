@@ -12,6 +12,65 @@
 namespace tinyusdz {
 namespace next {
 
+namespace {
+
+bool IsStaticGeometryArray(const std::string& type,
+                           const std::string& property) {
+  const bool primvar = property.compare(0, 9, "primvars:") == 0;
+  if (type == "Mesh") {
+    if (primvar) return true;
+    static const char* names[] = {
+        "points",          "normals",           "velocities",
+        "accelerations",  "faceVertexCounts",  "faceVertexIndices",
+        "holeIndices",    "cornerIndices",     "cornerSharpnesses",
+        "creaseIndices",  "creaseLengths",     "creaseSharpnesses"};
+    for (const char* name : names)
+      if (property == name) return true;
+    return false;
+  }
+  if (type == "PointInstancer") {
+    if (primvar) return true;
+    static const char* names[] = {
+        "protoIndices", "positions", "orientations", "scales",
+        "velocities", "angularVelocities", "accelerations", "ids",
+        "invisibleIds"};
+    for (const char* name : names)
+      if (property == name) return true;
+    return false;
+  }
+  if (type == "BasisCurves" || type == "Points") {
+    if (primvar) return true;
+    static const char* names[] = {"points", "normals", "widths",
+                                  "velocities", "accelerations", "ids",
+                                  "curveVertexCounts"};
+    for (const char* name : names)
+      if (property == name) return true;
+    return false;
+  }
+  return type == "GeomSubset" && property == "indices";
+}
+
+Stage::StaticGeometryReleaseStats ReleasePrimStaticGeometryArrays(
+    PrimSpec* prim, size_t min_array_elements) {
+  Stage::StaticGeometryReleaseStats stats;
+  if (!prim) return stats;
+  PropNameTable& names = GetPropNameTable();
+  for (const PropSlot& slot : prim->properties().slots()) {
+    const PropNameId id = slot.name_id;
+    if (!IsStaticGeometryArray(prim->type_name(), names.get(id))) continue;
+    // release_static_array_value changes only the slot's offset and its Value;
+    // PropIndex storage/order is stable, so this iteration does not invalidate.
+    const size_t bytes = prim->release_static_array_value(
+        id, min_array_elements, &stats.element_count);
+    if (bytes == 0) continue;
+    ++stats.property_count;
+    stats.estimated_payload_bytes += bytes;
+  }
+  return stats;
+}
+
+}  // namespace
+
 // ============================================================
 // UsdPrim
 // ============================================================
@@ -806,6 +865,38 @@ Stage::Stats Stage::GetStats() const {
 
   s.memory_bytes = GetMemoryUsage();
   return s;
+}
+
+Stage::StaticGeometryReleaseStats Stage::ReleaseStaticGeometryArrays(
+    size_t min_array_elements) {
+  StaticGeometryReleaseStats stats;
+  stats.stage_bytes_before = GetMemoryUsage();
+  if (!root_layer_) {
+    stats.stage_bytes_after = stats.stage_bytes_before;
+    return stats;
+  }
+
+  for (size_t i = 0; i < root_layer_->prim_count(); ++i) {
+    PrimSpec* prim = root_layer_->prim_mutable(static_cast<uint32_t>(i));
+    if (!prim) continue;
+    const StaticGeometryReleaseStats one =
+        ReleasePrimStaticGeometryArrays(prim, min_array_elements);
+    stats.property_count += one.property_count;
+    stats.element_count += one.element_count;
+    stats.estimated_payload_bytes += one.estimated_payload_bytes;
+  }
+  stats.stage_bytes_after = GetMemoryUsage();
+  return stats;
+}
+
+Stage::StaticGeometryReleaseStats Stage::ReleaseStaticGeometryArraysForPrim(
+    const UsdPrim& prim, size_t min_array_elements) {
+  if (!root_layer_ || !prim.IsValid() || prim.GetLayer() != root_layer_.get()) {
+    return {};
+  }
+  PrimSpec* mutable_prim = root_layer_->prim_mutable(prim.GetIndex());
+  if (!mutable_prim || mutable_prim != prim.GetPrimSpec()) return {};
+  return ReleasePrimStaticGeometryArrays(mutable_prim, min_array_elements);
 }
 
 // ============================================================

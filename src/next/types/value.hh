@@ -22,9 +22,11 @@ struct Dict;          // recursive USD dictionary (defined below)
 /// All USD scalar and vector types fit in the inline buffer
 class Value {
 public:
-  /// Small buffer size - large enough to hold matrix4d (128 bytes)
-  /// plus potential std::string on the stack
-  static constexpr size_t kSBOSize = 136;
+  /// Small buffer size - exactly the largest inline USD scalar (matrix4d,
+  /// 16 doubles). String/array/dictionary storage uses smaller handles. Keeping
+  /// this at 128 instead of 136 avoids alignment rounding Value from 144 to 160
+  /// bytes, saving 10% in the dense per-prim value pools.
+  static constexpr size_t kSBOSize = 128;
 
   // ============================================================
   // Constructors and assignment
