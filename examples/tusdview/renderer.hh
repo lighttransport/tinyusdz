@@ -108,7 +108,7 @@ struct RenderFrameParams {
   const float* proj{nullptr};  // column-major 4x4 (GL: Z[-1,1]; VK: Z[0,1])
   float cameraPos[3]{0, 0, 0};
   RenderMode mode{RenderMode::Shaded};
-  // Wireframe overlay state, cycled with the 'w' key (GL backend):
+  // Wireframe overlay state, cycled with the 'v' key (GL backend):
   //   0 = off (shaded fill only)
   //   1 = wireframe only (hidden-line: depth-only fill, then polygon edges)
   //   2 = wireframe + shading (shaded fill, then polygon edges on top)
@@ -204,9 +204,17 @@ class Renderer {
   // texture slots by index.
   virtual void beginScene(const std::vector<DrawMaterialCPU>& materials,
                           int textureCount) = 0;
+  // Grow/update scene resources without clearing meshes already uploaded by a
+  // progressive loader. Backends that do not stream may leave this as a no-op.
+  virtual void syncSceneResources(
+      const std::vector<DrawMaterialCPU>& /*materials*/, int /*textureCount*/) {}
   virtual void setLights(const std::vector<DrawLightCPU>& /*lights*/) {}
   // Append one mesh (uploaded immediately). Rendered from the next frame on.
   virtual void appendMesh(const DrawMeshCPU& mesh) = 0;
+  // Progressive surface-first upload. The default preserves existing behavior;
+  // GL defers wireframe/source-face buffers until uploadMeshAux.
+  virtual void appendMeshSurface(const DrawMeshCPU& mesh) { appendMesh(mesh); }
+  virtual void uploadMeshAux(size_t /*meshIndex*/, const DrawMeshCPU& /*mesh*/) {}
   // Append one UsdVol volume (OpenVDB). Default: no-op (backend has no volume
   // support yet; GL implements raymarching, VK/CUDA are placeholders).
   virtual void appendVolume(const DrawVolumeCPU& /*vol*/) {}

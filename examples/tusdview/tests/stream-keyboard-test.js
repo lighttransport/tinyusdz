@@ -6,8 +6,8 @@
 // loads the embedded viewer, and verifies:
 //   1. real keydown/keyup events become the correct WS JSON messages
 //      (printable keys, special keys, and modifier flags),
-//   2. the full loop works -- pressing 'w' (wireframe hotkey) re-renders on the
-//      server and streams changed frames back to the browser.
+//   2. the full loop works -- W/S moves the camera and V toggles wireframe,
+//      causing changed frames to stream back to the browser.
 //
 // Requirements (not part of the default build/test deps):
 //   npm i playwright        # the Node module
@@ -111,13 +111,18 @@ async function launchBrowser() {
     await page.mouse.click(550, 400);  // focus off the page's <input>
     await sleep(700);
 
-    const before = recv.length;
-    await page.keyboard.press('w');    // wireframe hotkey -> re-render
+    const beforeMove = recv.length;
+    await page.keyboard.press('w');    // forward movement -> re-render
     await sleep(1200);
-    const afterW = recv.length - before;
-    await page.keyboard.press('w');
+    const afterW = recv.length - beforeMove;
+    await page.keyboard.press('s');    // restore the previous camera position
     await sleep(1200);
-    check(`'w' keypress streamed new frames back (${afterW})`, afterW > 0);
+    check(`'w' movement streamed new frames back (${afterW})`, afterW > 0);
+
+    await page.keyboard.press('v');    // wireframe hotkey -> re-render
+    await sleep(1200);
+    await page.keyboard.press('v');
+    await sleep(1200);
     check('render changed across wireframe toggles', new Set(recv).size >= 2);
 
     // Special keys + modifier combo.
@@ -128,7 +133,9 @@ async function launchBrowser() {
 
     const keys = sent.filter(m => m.t === 'k');
     const has = (k, down) => keys.some(m => m.k === k && m.down === down);
-    check("'w' sent keydown+keyup", has('w', true) && has('w', false));
+    check("W/S/V sent keydown+keyup",
+      has('w', true) && has('w', false) && has('s', true) && has('s', false) &&
+      has('v', true) && has('v', false));
     check("special keys forwarded (ArrowDown, Backspace)", has('ArrowDown', true) && has('Backspace', true));
     check("modifier flag forwarded (Ctrl+A)", keys.some(m => m.k === 'a' && m.ctrl === true));
   } finally {

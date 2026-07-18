@@ -493,15 +493,9 @@ static bool MeshIsDeformable(const DrawMeshCPU& m) {
   return !m.jointIdx.empty() || !m.morphDeltaHalf.empty();
 }
 
-static void FreeMeshGeometryCPU(DrawMeshCPU& m) {
+static void FreeMeshSurfaceCPU(DrawMeshCPU& m) {
   std::vector<DrawVertex>().swap(m.vertices);
-  std::vector<uint32_t>().swap(m.indices);
   std::vector<float>().swap(m.vertexColors);
-  // Upload-only auxiliary arrays (consumed in appendMesh / the RT build, never
-  // re-read after): free them too. GPU morph/skin re-pose uploads only the
-  // per-frame coefficients, not these source arrays, so dropping them is safe.
-  std::vector<uint32_t>().swap(m.wireframeIndices);
-  std::vector<uint32_t>().swap(m.sourceFaceId);
   std::vector<uint32_t>().swap(m.morphOffsetCount);
   std::vector<uint16_t>().swap(m.morphDeltaHalf);
   std::vector<uint16_t>().swap(m.morphChannelId);
@@ -515,6 +509,17 @@ static void FreeMeshGeometryCPU(DrawMeshCPU& m) {
   // the visible subset every frame, so it needs the CPU transforms. This is the
   // CPU-culling memory cost (one CPU + one GPU copy); GPU compute culling would
   // drop the CPU copy -- a documented follow-up.
+}
+
+static void FreeMeshAuxCPU(DrawMeshCPU& m) {
+  std::vector<uint32_t>().swap(m.indices);
+  std::vector<uint32_t>().swap(m.wireframeIndices);
+  std::vector<uint32_t>().swap(m.sourceFaceId);
+}
+
+static void FreeMeshGeometryCPU(DrawMeshCPU& m) {
+  FreeMeshSurfaceCPU(m);
+  FreeMeshAuxCPU(m);
 }
 
 // Aggressive free for the HIP/CUDA RT path: after the build everything lives in
@@ -594,23 +599,28 @@ void App::updateRtLodCamera() {
   postGpu([this, cam]() { renderer_->setLodCamera(cam, /*reselect=*/true); });
 }
 
-void App::applyLoaded(bool ok, bool progressive) {
+void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
   // Threaded GL: the per-mesh progressive upload would free CPU geometry on the
   // main thread before the render thread drains the queued appendMesh ops (a
   // use-after-free). Use the one-shot uploadScene path instead (load stays async);
   // progressive-threaded streaming is a follow-up.
   if (renderThreadActive_) progressive = false;
-  progressiveActive_ = false;
-  nextMesh_ = 0;
-  nextTex_ = 0;
-  nextVolume_ = 0;
+  if (!alreadyUploaded) {
+    progressiveActive_ = false;
+    nextMesh_ = 0;
+    nextAux_ = 0;
+    nextTex_ = 0;
+    nextVolume_ = 0;
+  }
 
   if (ok) {
     // Capture the vertex total now, before the --next path frees per-mesh CPU
     // geometry on upload (otherwise the Stats panel would show 0 vertices).
-    size_t vtot = 0;
-    for (const DrawMeshCPU& m : draw_.meshes) vtot += m.vertices.size();
-    draw_.vertexCount = vtot;
+    if (!alreadyUploaded) {
+      size_t vtot = 0;
+      for (const DrawMeshCPU& m : draw_.meshes) vtot += m.vertices.size();
+      draw_.vertexCount = vtot;
+    }
     // Record in the recent-scenes list (interactive only -- headless screenshot
     // runs must not mutate the user's config).
     if (!headless_ && !loaded_.filepath.empty()) addRecentScene(loaded_.filepath);
@@ -640,7 +650,8 @@ void App::applyLoaded(bool ok, bool progressive) {
     // scenes (e.g. Moana island ~84k meshes) by merging the long tail of small
     // meshes into one instanced bbox-proxy soup, so the per-mesh-buffer raster
     // upload doesn't create tens of thousands of buffers and stall for minutes.
-    if (useNextLoader_ && (maxFullMeshes_ > 0 || gpuMemBudgetBytes_ > 0)) {
+    if (!alreadyUploaded && useNextLoader_ &&
+        (maxFullMeshes_ > 0 || gpuMemBudgetBytes_ > 0)) {
       std::string rep;
       ApplyGpuBudgetLOD(&draw_, gpuMemBudgetBytes_, maxFullMeshes_, &rep);
       if (!rep.empty()) LOGI("%s", rep.c_str());
@@ -667,6 +678,11 @@ void App::applyLoaded(bool ok, bool progressive) {
     // Windowed --hip: no raster upload (the HIP tracer renders the viewport from
     // draw_ each frame); keep CPU geometry for the tracer build.
     LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s; HIP interactive (no raster upload)",
+         loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
+         draw_.truncated ? " [truncated]" : "");
+  } else if (ok && alreadyUploaded) {
+    renderer_->setLights(draw_.lights);
+    LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s; progressive display complete",
          loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
          draw_.truncated ? " [truncated]" : "");
   } else if (ok && progressive) {
@@ -741,10 +757,7 @@ void App::applyLoaded(bool ok, bool progressive) {
   // Frame the camera AFTER the GPU pose updates draw_ bounds (so an animated
   // load, e.g. --time, frames the posed geometry, matching the CPU bake path).
   if (ok && draw_.hasBounds) {
-    const float dx = draw_.aabbMax[0] - draw_.aabbMin[0];
-    const float dy = draw_.aabbMax[1] - draw_.aabbMin[1];
-    const float dz = draw_.aabbMax[2] - draw_.aabbMin[2];
-    camera_.setSceneRadius(0.5f * std::sqrt(dx * dx + dy * dy + dz * dz));
+    camera_.setSceneBounds(draw_.aabbMin, draw_.aabbMax);
     const int upAxis = (draw_.upAxis == "Z") ? 2 : 1;
     camera_.setUpAxis(upAxis);
     NextCameraPose campose;
@@ -828,11 +841,6 @@ void App::applyLoaded(bool ok, bool progressive) {
         fitMin = robustBoundsMin_;
         fitMax = robustBoundsMax_;
       }
-      {
-        const float dx = fitMax[0] - fitMin[0], dy = fitMax[1] - fitMin[1],
-                    dz = fitMax[2] - fitMin[2];
-        camera_.setSceneRadius(0.5f * std::sqrt(dx * dx + dy * dy + dz * dz));
-      }
       camera_.fitToScene(fitMin, fitMax);
       // --cam-dolly: scale the fitted distance (<1 zooms in past the framing so
       // peripheral geometry leaves the frustum -- exercises culling headlessly).
@@ -844,6 +852,16 @@ void App::applyLoaded(bool ok, bool progressive) {
   }
   gui_.setScene(&loaded_, &draw_);
   gui_.setNextStage(nextSession_ ? &nextSession_->GetStage() : nullptr);
+  {
+    std::vector<std::string> deferred;
+    if (nextSession_) {
+      for (const tinyusdz::next::Path& path :
+           nextSession_->GetDeferredPayloadPaths()) {
+        deferred.push_back(path.str());
+      }
+    }
+    gui_.setDeferredPayloadPaths(std::move(deferred));
+  }
   // Apply a one-shot --select (prim path) once the scene + draw meshes exist.
   if (!initialSelect_.empty()) {
     gui_.selectByPath(initialSelect_, -1);
@@ -851,40 +869,206 @@ void App::applyLoaded(bool ok, bool progressive) {
   }
 }
 
+void App::drainProgressiveLoad() {
+  if (!streamLoadActive_ || !loadStream_) return;
+  const auto sliceStart = std::chrono::steady_clock::now();
+  // Automated progressive benchmarks need one representative useful present,
+  // then can drain aggressively instead of spending llvmpipe time drawing every
+  // intermediate refinement. Interactive runs retain the configured frame slice.
+  const double budgetMs =
+      (quitAfterFullUpload_ && streamFirstFrameLogged_)
+          ? 1000.0
+          : std::clamp(uploadBudgetMs_, 1.0, 33.0);
+  auto elapsedMs = [&]() {
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now() - sliceStart)
+        .count();
+  };
+
+  // Keep the first useful present surface-only. On subsequent slices, retire
+  // auxiliary CPU arrays as soon as their GL buffers can be created instead of
+  // retaining every source-face/wire array until conversion finishes.
+  if (streamFirstFrameLogged_) {
+    while (nextAux_ < draw_.meshes.size() && elapsedMs() < budgetMs) {
+      renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
+      if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
+          !MeshIsDeformable(draw_.meshes[nextAux_])) {
+        FreeMeshAuxCPU(draw_.meshes[nextAux_]);
+      }
+      ++nextAux_;
+    }
+  }
+
+  ProgressiveSceneEvent event;
+  while (loadStream_->tryPop(&event)) {
+    if (event.type == ProgressiveSceneEvent::Type::Resources) {
+      if (!streamRendererBegun_) {
+        renderer_->beginScene(event.materials, event.textureCount);
+        streamRendererBegun_ = true;
+      } else {
+        renderer_->syncSceneResources(event.materials, event.textureCount);
+      }
+      draw_.materials = std::move(event.materials);
+      draw_.textures.resize(static_cast<size_t>(std::max(0, event.textureCount)));
+      draw_.upAxis = event.upAxis;
+      camera_.setUpAxis((event.upAxis == "Z" || event.upAxis == "z") ? 2 : 1);
+    } else if (event.type == ProgressiveSceneEvent::Type::Mesh) {
+      if (!streamRendererBegun_) {
+        draw_.materials.emplace_back();
+        renderer_->beginScene(draw_.materials, 0);
+        streamRendererBegun_ = true;
+      }
+      DrawMeshCPU mesh = std::move(event.mesh);
+      const size_t vertices = mesh.vertices.size();
+      const size_t triangles = mesh.indices.size() / 3;
+      const size_t effectiveTriangles =
+          triangles * std::max<size_t>(size_t(1), mesh.instanceCount());
+      for (int a = 0; a < 3; ++a) {
+        streamBoundsMin_[a] = std::min(streamBoundsMin_[a], mesh.aabbMin[a]);
+        streamBoundsMax_[a] = std::max(streamBoundsMax_[a], mesh.aabbMax[a]);
+      }
+      if (!streamCameraFramed_ && mesh.purpose != "guide" && triangles > 0) {
+        camera_.fitToScene(streamBoundsMin_, streamBoundsMax_);
+        streamCameraFramed_ = true;
+      }
+      if (streamAuxEager_)
+        renderer_->appendMesh(mesh);
+      else
+        renderer_->appendMeshSurface(mesh);
+      streamUploadedVertices_ += vertices;
+      streamUploadedTriangles_ += triangles;
+      streamUploadedEffectiveTriangles_ += effectiveTriangles;
+      draw_.vertexCount = streamUploadedVertices_;
+      draw_.triangleCount += triangles;
+      if (mesh.purpose != "guide" && effectiveTriangles > 0)
+        streamHasUsefulGeometry_ = true;
+      draw_.meshes.push_back(std::move(mesh));
+      DrawMeshCPU& retained = draw_.meshes.back();
+      if (useNextLoader_ && !cudaRt_ && !hipRt_ && !MeshIsDeformable(retained)) {
+        if (streamAuxEager_)
+          FreeMeshGeometryCPU(retained);
+        else
+          FreeMeshSurfaceCPU(retained);
+      }
+      if (streamAuxEager_) ++nextAux_;
+      if (!streamFirstUploadLogged_ && loadOpts_.timing) {
+        streamFirstUploadLogged_ = true;
+        LOGI("timing: first geometry uploaded %.3f s (%zu vertices, %zu triangles)",
+             std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          runStart_)
+                 .count(),
+             vertices, triangles);
+      }
+      if (elapsedMs() >= budgetMs) break;
+    } else if (event.type == ProgressiveSceneEvent::Type::Complete) {
+      std::vector<DrawMeshCPU> streamedMeshes = std::move(draw_.meshes);
+      DrawScene finalScene = std::move(event.scene);
+      renderer_->syncSceneResources(finalScene.materials,
+                                    static_cast<int>(finalScene.textures.size()));
+      draw_ = std::move(finalScene);
+      draw_.meshes = std::move(streamedMeshes);
+      draw_.vertexCount = streamUploadedVertices_;
+      nextMesh_ = draw_.meshes.size();
+      nextTex_ = 0;
+      nextVolume_ = 0;
+      progressiveActive_ = !draw_.meshes.empty() || !draw_.textures.empty() ||
+                           !draw_.volumes.empty();
+      streamCompleteSeen_ = true;
+      if (!streamFullConversionLogged_ && loadOpts_.timing) {
+        streamFullConversionLogged_ = true;
+        LOGI("timing: full scene converted %.3f s",
+             std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          runStart_)
+                 .count());
+      }
+    } else if (event.type == ProgressiveSceneEvent::Type::Failed) {
+      streamCompleteSeen_ = true;
+      if (pendingLoaded_) pendingLoaded_->err = std::move(event.error);
+    }
+  }
+}
+
+void App::ensureWireAuxReady() {
+  const bool requested = gui_.wireframeMode() != 0 ||
+                         gui_.renderMode() == RenderMode::Wireframe ||
+                         gui_.renderMode() == RenderMode::SourceFaceId;
+  if (!requested || !renderer_) return;
+
+  // From this point onward, newly streamed meshes arrive with their auxiliary
+  // buffers already resident. Complete all currently resident meshes in this
+  // same frame so entering wire mode never exposes a partially populated edge
+  // set that grows in visible batches over subsequent frames.
+  streamAuxEager_ = true;
+  const size_t resident = std::min(
+      draw_.meshes.size(),
+      static_cast<size_t>(std::max(0, renderer_->meshCount())));
+  while (nextAux_ < resident) {
+    renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
+    if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
+        !MeshIsDeformable(draw_.meshes[nextAux_])) {
+      FreeMeshAuxCPU(draw_.meshes[nextAux_]);
+    }
+    ++nextAux_;
+  }
+}
+
 void App::stepProgressiveUpload() {
   if (!progressiveActive_) return;
+  // Keep uploads on the render/context thread, but use enough of each frame to
+  // make progress on multi-million-triangle scenes. The old fixed 4 ms slice
+  // could reduce a large scene to one buffer per frame and stretch upload over
+  // many seconds. Override for latency-sensitive systems with
+  // Configured by --upload-budget-ms; keep the render loop control explicit and
+  // reproducible instead of depending on process environment.
+  const double uploadBudgetMs = std::clamp(uploadBudgetMs_, 1.0, 33.0);
+  const double tailBudgetMs = std::min(33.0, uploadBudgetMs + 4.0);
   const auto t0 = std::chrono::steady_clock::now();
   auto elapsedMs = [&]() {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
                                                      t0)
         .count();
   };
-  // Geometry first so meshes appear, ~4ms/frame.
+  // Geometry first so meshes appear, normally ~8ms/frame.
   while (nextMesh_ < draw_.meshes.size()) {
     renderer_->appendMesh(draw_.meshes[nextMesh_]);
     if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
         !MeshIsDeformable(draw_.meshes[nextMesh_]))
       FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
     ++nextMesh_;
-    if (elapsedMs() > 4.0) break;
+    if (elapsedMs() > uploadBudgetMs) break;
+  }
+  // Auxiliary source-face and authored-polygon wire buffers are not required
+  // for the initial shaded surface. Upload them only after all surfaces exist.
+  if (nextMesh_ >= draw_.meshes.size()) {
+    while (nextAux_ < draw_.meshes.size()) {
+      renderer_->uploadMeshAux(nextAux_, draw_.meshes[nextAux_]);
+      if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
+          !MeshIsDeformable(draw_.meshes[nextAux_])) {
+        FreeMeshAuxCPU(draw_.meshes[nextAux_]);
+      }
+      ++nextAux_;
+      if (elapsedMs() > tailBudgetMs) break;
+    }
   }
   // Then stream textures (meshes show base color until their texture lands).
-  if (nextMesh_ >= draw_.meshes.size()) {
+  if (nextMesh_ >= draw_.meshes.size() && nextAux_ >= draw_.meshes.size()) {
     while (nextTex_ < draw_.textures.size()) {
       renderer_->uploadTexture(static_cast<int>(nextTex_), draw_.textures[nextTex_]);
       ++nextTex_;
-      if (elapsedMs() > 7.0) break;
+      if (elapsedMs() > tailBudgetMs) break;
     }
   }
   // UsdVol volumes (OpenVDB) after meshes + textures.
-  if (nextMesh_ >= draw_.meshes.size() && nextTex_ >= draw_.textures.size()) {
+  if (nextMesh_ >= draw_.meshes.size() && nextAux_ >= draw_.meshes.size() &&
+      nextTex_ >= draw_.textures.size()) {
     while (nextVolume_ < draw_.volumes.size()) {
       renderer_->appendVolume(draw_.volumes[nextVolume_]);
       ++nextVolume_;
-      if (elapsedMs() > 7.0) break;
+      if (elapsedMs() > tailBudgetMs) break;
     }
   }
-  if (nextMesh_ >= draw_.meshes.size() && nextTex_ >= draw_.textures.size() &&
+  if (nextMesh_ >= draw_.meshes.size() && nextAux_ >= draw_.meshes.size() &&
+      nextTex_ >= draw_.textures.size() &&
       nextVolume_ >= draw_.volumes.size()) {
     progressiveActive_ = false;
   }
@@ -1048,6 +1232,40 @@ void App::startLoadAsync(const std::string& path) {
     opts.timecode = std::numeric_limits<double>::quiet_NaN();
   }
   const bool useNext = useNextLoader_;
+  bool renderThreadOwnsContext = false;
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+  renderThreadOwnsContext = renderThreadActive_;
+#endif
+  const bool progressiveStream =
+      useNext && backend_ == Backend::GL && !rt && !cudaRt_ && !hipRt_ &&
+      !renderThreadOwnsContext;
+  if (progressiveStream) {
+    const size_t maxBytes =
+        opts.streamBufferBytes ? opts.streamBufferBytes : (size_t(64) << 20);
+    loadStream_ = std::make_shared<ProgressiveSceneStream>(maxBytes);
+    streamLoadActive_ = true;
+    streamRendererBegun_ = false;
+    streamCompleteSeen_ = false;
+    streamCameraFramed_ = false;
+    streamFirstUploadLogged_ = false;
+    streamFirstFrameLogged_ = false;
+    streamFullConversionLogged_ = false;
+    streamFullUploadLogged_ = false;
+    streamHasUsefulGeometry_ = false;
+    streamAuxEager_ = gui_.wireframeMode() != 0 ||
+                      gui_.renderMode() == RenderMode::Wireframe ||
+                      gui_.renderMode() == RenderMode::SourceFaceId;
+    streamUploadedTriangles_ = 0;
+    streamUploadedEffectiveTriangles_ = 0;
+    streamUploadedVertices_ = 0;
+    nextAux_ = 0;
+    for (int a = 0; a < 3; ++a) {
+      streamBoundsMin_[a] = 1e30f;
+      streamBoundsMax_[a] = -1e30f;
+    }
+    draw_ = DrawScene{};
+  }
+  std::shared_ptr<ProgressiveSceneStream> stream = loadStream_;
   int autoW = 0, autoH = 0;
   getRequestedWindowSize(&autoW, &autoH);
   const AutoSubdivisionView autoSubdivView{
@@ -1060,17 +1278,17 @@ void App::startLoadAsync(const std::string& path) {
       tessQuality_,
       camDolly_,
       std::max(1, autoH)};
-  loadThread_ = std::thread([this, path, opts, lp, dp, rt, useNext,
+  loadThread_ = std::thread([this, path, opts, lp, dp, rt, useNext, stream,
                              autoSubdivView]() {
     if (useNext) {
       lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_,
-                              &pendingNextSession_);
+                              &pendingNextSession_, stream.get());
       lp->filepath = path;
-      lp->render.meta.upAxis = dp->upAxis;  // drive camera/grid up-axis
       // Surface the stage's animation range so --next gets a timeline (the Tydra
       // RenderScene meta is otherwise empty here). readAnimationRange reads these.
       if (pendingNextSession_) {
         const tinyusdz::next::Stage& stage = pendingNextSession_->GetStage();
+        lp->render.meta.upAxis = stage.GetUpAxis();
         const double s = stage.GetStartTimeCode();
         const double e = stage.GetEndTimeCode();
         const double fps = stage.GetTimeCodesPerSecond();
@@ -1156,22 +1374,33 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
 void App::finishLoadIfReady() {
   if (!loadActive_) return;
   if (!loadFinished_.load(std::memory_order_acquire)) return;
+  if (streamLoadActive_ && !streamCompleteSeen_) return;
   if (loadThread_.joinable()) loadThread_.join();  // sync point: worker fully done
   loaded_ = std::move(*pendingLoaded_);
   const bool ok = loaded_.ok;
-  draw_ = ok ? std::move(*pendingDraw_) : DrawScene{};
+  const bool alreadyUploaded = streamLoadActive_ && ok;
+  if (!streamLoadActive_) {
+    draw_ = ok ? std::move(*pendingDraw_) : DrawScene{};
+  } else if (!ok) {
+    // Do not leave a partially uploaded scene visible after the producer has
+    // reported a terminal load failure.
+    draw_ = DrawScene{};
+  }
   nextSession_ = ok ? std::move(pendingNextSession_) : nullptr;
   pendingNextSession_.reset();
   pendingLoaded_.reset();
   pendingDraw_.reset();
   loadActive_ = false;
-  applyLoaded(ok, /*progressive=*/true);  // stream to GPU over the next frames
+  applyLoaded(ok, /*progressive=*/!alreadyUploaded, alreadyUploaded);
+  streamLoadActive_ = false;
+  loadStream_.reset();
 }
 
 void App::cancelAndJoinLoad() {
   // A pending file load supersedes any in-flight playback re-evaluation (which
   // reads loaded_ on a worker thread): stop it before loaded_ is replaced.
   cancelAndJoinReconvert();
+  if (loadStream_) loadStream_->cancel();
   if (loadThread_.joinable()) {
     loadCtrl_.cancel.store(true);
     loadThread_.join();
@@ -1181,6 +1410,9 @@ void App::cancelAndJoinLoad() {
   pendingLoaded_.reset();
   pendingDraw_.reset();
   pendingNextSession_.reset();
+  loadStream_.reset();
+  streamLoadActive_ = false;
+  streamCompleteSeen_ = false;
 }
 
 void App::readAnimationRange() {
@@ -2119,7 +2351,12 @@ void App::applyNavCommand(const StreamNav& c) {
       io.AddKeyEvent(ImGuiMod_Ctrl, c.ctrl);
       io.AddKeyEvent(ImGuiMod_Alt, c.alt);
       const ImGuiKey ik = StreamKeyToImGui(k);
-      if (ik != ImGuiKey_None) io.AddKeyEvent(ik, c.down);
+      // These keys are handled immediately below so browser-panel buttons work
+      // even when the streamed viewport is not hovered. Do not also inject them
+      // into ImGui or Gui::handleNavigation would apply the action twice.
+      const bool directViewKey = !io.WantTextInput && !c.alt && !c.ctrl &&
+                                 (k == "v" || k == "w" || k == "s");
+      if (ik != ImGuiKey_None && !directViewKey) io.AddKeyEvent(ik, c.down);
       if (!c.down) break;  // the rest reacts to presses only
       // Printable char into a focused ImGui text field; don't fire hotkeys while
       // editing text.
@@ -2128,8 +2365,12 @@ void App::applyNavCommand(const StreamNav& c) {
           io.AddInputCharacter(static_cast<unsigned>(k[0]));
         break;
       }
-      if (k == "w") {
+      if (k == "v") {
         gui_.cycleWireframe();
+      } else if (k == "w") {
+        camera_.moveForward(c.shift ? 3.0f : 1.0f);
+      } else if (k == "s") {
+        camera_.moveForward(c.shift ? -3.0f : -1.0f);
       } else if (k == "f" || k == "a") {
         if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
       } else if (k == "0") {
@@ -2173,6 +2414,7 @@ void App::applyNavCommand(const StreamNav& c) {
 
 int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
+  runStart_ = std::chrono::steady_clock::now();
   std::string err;
   // Headless composite size (no monitor to clamp to); used for the windowless
   // ImGui DisplaySize and the offscreen composite image.
@@ -2310,6 +2552,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 
   gui_.setScene(&loaded_, &draw_);
   gui_.setNextStage(nextSession_ ? &nextSession_->GetStage() : nullptr);
+  gui_.setDeferredPayloadPaths({});
   gui_.setBudget(&loadCtrl_);
   // Route the GUI's GPU side-effects (viewport resize, instance visibility) to the
   // render thread; runs inline on the single-threaded path.
@@ -2371,8 +2614,9 @@ int App::run(const std::string& initialFile, int maxFrames,
       glfwPollEvents();
     }
 
-    // Pick up a completed async load, then stream its meshes/textures to the
-    // GPU a little per frame so the UI stays responsive (progressive upload).
+    // Drain loader-produced geometry before testing for completion. The worker
+    // may already be done while terminal events are still behind mesh batches.
+    drainProgressiveLoad();
     finishLoadIfReady();
     stepProgressiveUpload();
     finishReconvertIfReady();  // swap in re-evaluated animation geometry
@@ -2436,6 +2680,10 @@ int App::run(const std::string& initialFile, int maxFrames,
     ls.path = loadingPath_;
     ls.meshesDone = loadCtrl_.meshesDone.load();
     ls.meshesTotal = loadCtrl_.meshesTotal.load();
+    ls.payloadsDone = loadCtrl_.payloadsDone.load();
+    ls.payloadsTotal = loadCtrl_.payloadsTotal.load();
+    ls.stage = loadCtrl_.stage.load();
+    ls.phaseProgress = loadCtrl_.phasePermille.load() / 1000.0f;
     ls.elapsed = loadActive_ ? std::chrono::duration<float>(
                                    std::chrono::steady_clock::now() - loadStart_)
                                    .count()
@@ -2470,9 +2718,14 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
     }
     Gui::UploadStatus us;
-    us.active = progressiveActive_;
-    us.meshesDone = nextMesh_;
-    us.meshesTotal = draw_.meshes.size();
+    us.active = streamLoadActive_ || progressiveActive_;
+    us.meshesDone = streamLoadActive_
+                        ? static_cast<size_t>(std::max(0, renderer_->meshCount()))
+                        : nextMesh_;
+    us.meshesTotal = streamLoadActive_
+                         ? static_cast<size_t>(std::max<long long>(
+                               us.meshesDone, loadCtrl_.meshesTotal.load()))
+                         : draw_.meshes.size();
     us.texDone = nextTex_;
     us.texTotal = draw_.textures.size();
     us.volDone = nextVolume_;
@@ -2499,6 +2752,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     gui_.setRasterLod(rasterLodEnabled_, rasterLodFullPx_, rasterLodCullPx_);
 
     gui_.frame(renderer_.get(), &camera_);
+    ensureWireAuxReady();
 
     // View-dependent RT LOD: re-classify the instance set when the camera settles.
     updateRtLodCamera();
@@ -2588,7 +2842,9 @@ int App::run(const std::string& initialFile, int maxFrames,
       // Windowed --hip traces the viewport with the HIP path instead of raster.
       if (hipInteractive_) {
         renderHipViewport();
-      } else if (!rtOwnsScreenshot_) {
+      } else if (!rtOwnsScreenshot_ &&
+                 !(quitAfterFullUpload_ && streamFirstFrameLogged_ &&
+                   loadActive_)) {
         gui_.renderViewportScene();
       }
 
@@ -2620,6 +2876,34 @@ int App::run(const std::string& initialFile, int maxFrames,
       static const bool timeFrame = std::getenv("TUSDVIEW_TIME_FRAME") != nullptr;
       const auto tp0 = std::chrono::steady_clock::now();
       renderer_->present();
+
+      const bool usefulGeometryThreshold =
+          streamUploadedEffectiveTriangles_ >= 100000 ||
+          (streamCompleteSeen_ && streamUploadedEffectiveTriangles_ > 0);
+      if (!streamFirstFrameLogged_ && streamHasUsefulGeometry_ &&
+          usefulGeometryThreshold && streamCameraFramed_) {
+        streamFirstFrameLogged_ = true;
+        if (loadOpts_.timing) {
+          LOGI("timing: first useful frame %.3f s (%zu unique, %zu effective "
+               "uploaded triangles, %d draws)",
+               std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                            runStart_)
+                   .count(),
+               streamUploadedTriangles_, streamUploadedEffectiveTriangles_,
+               renderer_->meshCount());
+        }
+      }
+      if (!streamFullUploadLogged_ && streamCompleteSeen_ && !loadActive_ &&
+          !progressiveActive_ && renderer_->meshCount() > 0) {
+        streamFullUploadLogged_ = true;
+        if (loadOpts_.timing) {
+          LOGI("timing: full scene uploaded and presented %.3f s",
+               std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                            runStart_)
+                   .count());
+        }
+        if (quitAfterFullUpload_) quitAfterFullPresent_ = true;
+      }
 
       if (streamSend) {
         std::vector<uint8_t> rgba;
@@ -2681,6 +2965,8 @@ int App::run(const std::string& initialFile, int maxFrames,
         glfwSetWindowShouldClose(window_, GLFW_TRUE);
       }
     }
+
+    if (quitAfterFullPresent_) running = false;
 
     if (maxFrames >= 0 && ++frameCount >= maxFrames) {
       running = false;

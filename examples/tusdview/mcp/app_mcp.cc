@@ -234,6 +234,10 @@ json App::mcpViewport(const json& args, std::string& err) {
     camera_.pan(args.value("dx", 0.0f), args.value("dy", 0.0f));
   } else if (op == "dolly") {
     camera_.dolly(args.value("amount", 0.0f));
+  } else if (op == "forward") {
+    camera_.moveForward(std::abs(args.value("amount", 1.0f)));
+  } else if (op == "backward") {
+    camera_.moveForward(-std::abs(args.value("amount", 1.0f)));
   } else if (op == "fit") {
     if (draw_.hasBounds) {
       camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
@@ -287,7 +291,7 @@ json App::mcpViewport(const json& args, std::string& err) {
                      args.value("distance", camera_.distance()));
   } else {
     err = "viewport: unknown op '" + op +
-          "' (orbit|pan|dolly|fit|home|isometric|front|back|right|left|top|bottom|bookmark_save|bookmark_load|set)";
+          "' (orbit|pan|dolly|forward|backward|fit|home|isometric|front|back|right|left|top|bottom|bookmark_save|bookmark_load|set)";
     return json::object();
   }
   // Return the resulting camera state.
@@ -295,7 +299,9 @@ json App::mcpViewport(const json& args, std::string& err) {
               {"yaw", camera_.yaw()},
               {"pitch", camera_.pitch()},
               {"distance", camera_.distance()},
-              {"eye", vec3json(camera_.eye())}};
+              {"eye", vec3json(camera_.eye())},
+              {"near", camera_.nearPlane()},
+              {"far", camera_.farPlane()}};
 }
 
 json App::mcpScreenshot(const json& args, std::string& err) {
@@ -328,12 +334,18 @@ json App::mcpScreenshot(const json& args, std::string& err) {
 json App::mcpInput(const json& args, std::string& err) {
   const std::string key = args.value("key", std::string());
   if (key.empty()) {
-    err = "input: 'key' is required (e.g. w|f|a|0|1|3|5|7)";
+    err = "input: 'key' is required (e.g. v|w|s|f|a|0|1|3|5|7)";
     return json::object();
   }
   std::string action;
-  if (key == "w") {
+  if (key == "v") {
     action = "wireframe=" + std::to_string(gui_.cycleWireframe());
+  } else if (key == "w") {
+    camera_.moveForward(1.0f);
+    action = "forward";
+  } else if (key == "s") {
+    camera_.moveForward(-1.0f);
+    action = "backward";
   } else if (key == "f" || key == "a") {
     if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
     action = "frame_all";
@@ -354,7 +366,7 @@ json App::mcpInput(const json& args, std::string& err) {
     camera_.setPreset(CameraViewPreset::Top);
     action = "top";
   } else {
-    err = "input: unhandled key '" + key + "' (w|f|a|0|1|3|5|7)";
+    err = "input: unhandled key '" + key + "' (v|w|s|f|a|0|1|3|5|7)";
     return json::object();
   }
   return json{{"key", key}, {"action", action}, {"wireframe", gui_.wireframeMode()}};

@@ -477,16 +477,7 @@ bool StageSession::UnloadPayload(const Path& prim_path) {
 bool StageSession::LoadPayloads(
     const std::vector<Path>& prim_paths, pcp::Cache::LoadPolicy policy) {
   if (!impl_ || !impl_->cache) return false;
-  pcp::LoadRules rules = impl_->cache->GetLoadRules();
-  for (const Path& path : prim_paths) {
-    if (path.empty()) continue;
-    if (policy == pcp::Cache::LoadPolicy::WithDescendants) {
-      rules.LoadWithDescendants(path.str());
-    } else {
-      rules.LoadWithoutDescendants(path.str());
-    }
-  }
-  impl_->cache->SetLoadRules(rules);
+  if (!impl_->cache->LoadPayloads(prim_paths, policy)) return false;
   return impl_->Rebuild(ProgressPhase::Recompose);
 }
 
@@ -596,9 +587,8 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
   // stage and OOMs on large scenes like Caldera beachhead/capital.)
   pcp::CompositionOptions copts;
   copts.load_payloads = true;
-  // Diagnostics: TINYUSDZ_NEXT_TIMING emits [next_build]/[next_compose] phase
-  // timings; TUSDRENDER_COMPOSE_THREADS=N opts into parallel source pre-warming.
-  if (std::getenv("TINYUSDZ_NEXT_TIMING")) copts.enable_timing = true;
+  // Diagnostics and worker counts are explicit CompositionOptions. Keeping
+  // these out of process environment makes callers and benchmarks reproducible.
   // Parallel composition is opt-in via TINYUSDZ_ENABLE_THREAD so wasm builds do
   // not require Emscripten pthreads / SharedArrayBuffer by default.
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -610,14 +600,6 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
   copts.max_layer_memory = load_options.max_memory;
   copts.strict_aousd_conformance = load_options.strict_aousd_conformance;
   copts.usda_parse_options = load_options.usda_options.parse_options;
-  if (const char *ct = std::getenv("TUSDRENDER_COMPOSE_THREADS")) {
-    int n = std::atoi(ct);
-#if defined(TINYUSDZ_ENABLE_THREAD)
-    if (n >= 1) copts.num_threads = static_cast<unsigned>(n);
-#else
-    (void)n;
-#endif
-  }
   // Merge caller-supplied composition options (e.g. variant_overrides) into our
   // defaults. Caller-populated fields take precedence.
   if (comp_opts) {

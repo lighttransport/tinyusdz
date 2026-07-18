@@ -179,6 +179,12 @@ int main(int argc, char** argv) {
   bool maxAssetBytesExplicit = false;
   std::uint64_t maxAssetReadBytes = 0;
   double timeBudget = 0.0;    // 0 = unlimited
+  unsigned compositionThreads = 0;
+  unsigned conversionThreads = 0;
+  double uploadBudgetMs = 8.0;
+  size_t streamBufferMB = 64;
+  bool timing = false;
+  bool quitAfterFullUpload = false;
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
   tusdview::RendererDevicePreference devicePreference;
@@ -314,6 +320,20 @@ int main(int argc, char** argv) {
       }
     } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
+    } else if (std::strcmp(argv[i], "--compose-threads") == 0 && (i + 1) < argc) {
+      compositionThreads = static_cast<unsigned>(std::max(1, std::atoi(argv[++i])));
+    } else if (std::strcmp(argv[i], "--convert-threads") == 0 && (i + 1) < argc) {
+      conversionThreads = static_cast<unsigned>(std::max(1, std::atoi(argv[++i])));
+    } else if (std::strcmp(argv[i], "--upload-budget-ms") == 0 && (i + 1) < argc) {
+      uploadBudgetMs = std::clamp(std::atof(argv[++i]), 1.0, 33.0);
+    } else if (std::strcmp(argv[i], "--stream-buffer-mb") == 0 &&
+               (i + 1) < argc) {
+      streamBufferMB = static_cast<size_t>(
+          std::clamp(std::atoi(argv[++i]), 4, 1024));
+    } else if (std::strcmp(argv[i], "--quit-after-full-upload") == 0) {
+      quitAfterFullUpload = true;
+    } else if (std::strcmp(argv[i], "--timing") == 0) {
+      timing = true;
     } else if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
       uiScale = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--window-shot") == 0 && (i + 1) < argc) {
@@ -612,6 +632,14 @@ int main(int argc, char** argv) {
           "Vulkan realtime preset for public large scenes. Profiles set existing "
           "large-scene knobs only; explicit CLI flags win. No texture resize or "
           "compression behavior is changed.\n"
+          "  --compose-threads N  Composition worker count (default: hardware, capped).\n"
+          "  --convert-threads N  Geometry conversion worker count.\n"
+          "  --upload-budget-ms N  Interactive upload slice, 1..33 ms.\n"
+          "  --stream-buffer-mb N  Bounded CPU geometry queue for interactive "
+          "OpenGL streaming (default 64 MiB).\n"
+          "  --quit-after-full-upload  Exit after progressive conversion, upload, "
+          "and one complete present.\n"
+          "  --timing             Print detailed load/conversion timing.\n"
           "  --vram-budget G  GPU memory the large-scene budgets may plan "
           "against (GiB). Default: probed from the device. Everything else "
           "(--max-gpu-mem, texture edge/byte caps, upload staging) is derived "
@@ -686,6 +714,11 @@ int main(int argc, char** argv) {
     } else if (argv[i][0] != '-') {
       file = argv[i];
     }
+  }
+
+  if (quitAfterFullUpload && maxFrames >= 0) {
+    LOGE("--quit-after-full-upload cannot be combined with --frames");
+    return 1;
   }
 
   LargeSceneProfile effectiveProfile = largeSceneProfile;
@@ -807,6 +840,14 @@ int main(int argc, char** argv) {
   }
 #endif
 
+  if (quitAfterFullUpload &&
+      (backend != tusdview::Backend::GL || !useNextLoader || threaded || headless ||
+       wantRt || wantCuda || wantHip)) {
+    LOGE("--quit-after-full-upload requires interactive non-threaded OpenGL "
+         "with --next");
+    return 1;
+  }
+
   if (effectiveProfile != LargeSceneProfile::Off) {
     LOGI("resource budget: vram capacity=%.1f GiB (%s) -> limit=%.1f GiB, "
          "host capacity=%.1f GiB -> limit=%.1f GiB",
@@ -898,6 +939,10 @@ int main(int argc, char** argv) {
   {
     tusdview::LoadOptions lo;
     lo.composition = !noComposition;
+    lo.compositionThreads = compositionThreads;
+    lo.conversionThreads = conversionThreads;
+    lo.timing = timing;
+    lo.streamBufferBytes = streamBufferMB * 1024ull * 1024ull;
     if (effectiveProfile != LargeSceneProfile::Off) {
       lo.maxMemoryBytes = static_cast<size_t>(targetBudget.host_limit);
       lo.gpuGeometryBudgetBytes = static_cast<size_t>(
@@ -937,6 +982,8 @@ int main(int argc, char** argv) {
     if (timeCode.has_value()) lo.timecode = *timeCode;
     app.setLoadOptions(lo);
   }
+  app.setUploadBudgetMs(uploadBudgetMs);
+  app.setQuitAfterFullUpload(quitAfterFullUpload);
   app.setLoadBudget(static_cast<std::size_t>(maxTris < 0 ? 0 : maxTris), timeBudget);
   app.setGpuBudget(
       maxGpuMemGiB > 0.0 ? static_cast<std::size_t>(maxGpuMemGiB * 1024.0 *

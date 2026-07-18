@@ -356,13 +356,25 @@ void Gui::drawLoadingModal() {
     ImGui::TextDisabled("%s", loadStatus_.path.c_str());
     ImGui::Separator();
     if (loadStatus_.meshesTotal > 0) {
-      const float frac = static_cast<float>(loadStatus_.meshesDone) /
-                         static_cast<float>(loadStatus_.meshesTotal);
-      ImGui::ProgressBar(frac, ImVec2(300, 0));
+      const float meshFrac = static_cast<float>(loadStatus_.meshesDone) /
+                             static_cast<float>(loadStatus_.meshesTotal);
+      const float frac = loadStatus_.payloadsTotal > 0
+                             ? 0.2f + 0.8f * meshFrac
+                             : meshFrac;
+      ImGui::ProgressBar(std::clamp(frac, 0.0f, 1.0f), ImVec2(300, 0));
       ImGui::Text("Converting meshes: %lld / %lld", loadStatus_.meshesDone,
                   loadStatus_.meshesTotal);
+    } else if (loadStatus_.payloadsTotal > 0) {
+      const float payloadFrac = static_cast<float>(loadStatus_.payloadsDone) /
+                                static_cast<float>(loadStatus_.payloadsTotal);
+      ImGui::ProgressBar(std::clamp(0.2f * payloadFrac, 0.0f, 0.2f),
+                         ImVec2(300, 0));
+      ImGui::Text("Resolving payloads: %lld / %lld",
+                  loadStatus_.payloadsDone, loadStatus_.payloadsTotal);
     } else {
-      ImGui::Text("Parsing / converting...");
+      ImGui::ProgressBar(std::clamp(loadStatus_.phaseProgress, 0.0f, 1.0f),
+                         ImVec2(300, 0));
+      ImGui::Text("Parsing / composing...");
     }
     ImGui::Text("Elapsed: %.1f s", loadStatus_.elapsed);
     ImGui::Spacing();
@@ -489,7 +501,9 @@ void Gui::drawDockspaceAndMenu() {
       }
       if (ImGui::MenuItem("Reload", "Ctrl+R", false, loaded_ != nullptr)) wantReload_ = true;
       {
-        const bool haveDeferred = loaded_ && !loaded_->comp.deferred.empty();
+        const bool haveDeferred =
+            !deferredPayloadPaths_.empty() ||
+            (loaded_ && !loaded_->comp.deferred.empty());
         if (ImGui::MenuItem("Load All Payloads", nullptr, false, haveDeferred)) {
           wantLoadAllPayloads_ = true;
         }
@@ -691,7 +705,8 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::TextUnformatted("Alt+LMB  Orbit");
       ImGui::TextUnformatted("Alt+MMB / Shift+Alt+LMB  Pan");
       ImGui::TextUnformatted("Alt+RMB / Wheel  Dolly");
-      ImGui::TextUnformatted("W  Cycle wireframe (off / wire / wire+shade)");
+      ImGui::TextUnformatted("W / S  Move forward / backward (Shift = fast)");
+      ImGui::TextUnformatted("V  Cycle wireframe (off / wire / wire+shade)");
       ImGui::Separator();
       ImGui::TextDisabled("Selection");
       ImGui::TextUnformatted("[ / ]  Previous / Next visible selection");
@@ -2097,18 +2112,20 @@ void Gui::drawCameraPanel() {
 void Gui::drawPayloads() {
   ImGui::Begin("Payloads");
   if (nextStage_) {
-    std::vector<std::pair<std::string, std::string>> payloads;
+    std::unordered_map<std::string, std::string> authoredAssets;
     nextStage_->Traverse([&](const tinyusdz::next::UsdPrim& prim) {
       for (const std::string& payload : prim.GetMeta().payloads) {
-        payloads.emplace_back(prim.GetPath().str(), payload);
+        authoredAssets.emplace(prim.GetPath().str(), payload);
       }
       return true;
     });
-    if (payloads.empty()) {
-      ImGui::TextDisabled("No authored payload arcs.");
+    if (deferredPayloadPaths_.empty()) {
+      ImGui::TextDisabled(authoredAssets.empty() ? "No deferred payloads."
+                                                 : "All payloads loaded.");
       ImGui::End();
       return;
     }
+    ImGui::Text("Deferred payloads: %zu", deferredPayloadPaths_.size());
     if (ImGui::Button("Load All") && !loadStatus_.active) {
       wantLoadAllPayloads_ = true;
     }
@@ -2121,18 +2138,22 @@ void Gui::drawPayloads() {
       ImGui::TableSetupColumn("Prim");
       ImGui::TableSetupColumn("Asset");
       ImGui::TableHeadersRow();
-      for (size_t i = 0; i < payloads.size(); ++i) {
+      for (size_t i = 0; i < deferredPayloadPaths_.size(); ++i) {
+        const std::string& primPath = deferredPayloadPaths_[i];
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::PushID(static_cast<int>(i));
         if (ImGui::SmallButton("Load") && !loadStatus_.active) {
-          payloadLoadRequests_.push_back(payloads[i].first);
+          payloadLoadRequests_.push_back(primPath);
         }
         ImGui::PopID();
         ImGui::TableNextColumn();
-        ImGui::TextUnformatted(payloads[i].first.c_str());
+        ImGui::TextUnformatted(primPath.c_str());
         ImGui::TableNextColumn();
-        ImGui::TextUnformatted(payloads[i].second.c_str());
+        const auto asset = authoredAssets.find(primPath);
+        ImGui::TextUnformatted(asset == authoredAssets.end()
+                                   ? "(deferred)"
+                                   : asset->second.c_str());
       }
       ImGui::EndTable();
     }
@@ -2760,9 +2781,23 @@ void Gui::handleNavigation() {
 
   // Maya-style hotkeys (viewport hovered, no text field focused).
   if (vpHovered_ && !io.WantTextInput) {
-    // 'w' cycles wireframe: shaded -> wireframe only -> wireframe + shading -> ...
-    if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W)) {
+    // Keep wireframe on V so the left-hand W/S pair remains available for
+    // forward/backward movement with a right-handed mouse.
+    if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V)) {
       wireCycle_ = (wireCycle_ + 1) % 3;
+    }
+    // Walk/fly without changing the orbit relationship: both camera eye and
+    // pivot translate, so repeated movement passes cleanly through world origin.
+    if (!io.KeyAlt && !io.KeyCtrl) {
+      const float step = io.KeyShift ? 3.0f : 1.0f;
+      if (ImGui::IsKeyPressed(ImGuiKey_W) ||
+          ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+        cam_->moveForward(step);
+      }
+      if (ImGui::IsKeyPressed(ImGuiKey_S) ||
+          ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+        cam_->moveForward(-step);
+      }
     }
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) goSelectionBack();
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) goSelectionForward();
@@ -2891,7 +2926,11 @@ void Gui::buildViewVisibilityMask() {
   nonInstProxy_.colors.clear();
   nonInstProxy_.opacities.clear();
   nonInstProxy_.count = 0;
-  const bool lodOn = rasterLodEnabled_ && cam_ && renderer_;
+  const bool wireActive = wireCycle_ != 0 || mode_ == RenderMode::Wireframe;
+  // Wire density is controlled continuously per projected edge in the shader.
+  // Hard mesh/instance size culls make whole edge sets pop during dolly, so keep
+  // only ordinary frustum culling while a wire mode is active.
+  const bool lodOn = rasterLodEnabled_ && !wireActive && cam_ && renderer_;
   RtLodCamera lodCam;
   if (lodOn) lodCam = buildRasterLodCam();
   // Backends without the shared box-proxy draw (VK) still size-cull; they just
@@ -3120,13 +3159,18 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
 // Build the LOD camera (thresholds + focal length) for the raster instance cull.
 RtLodCamera Gui::buildRasterLodCam() const {
   RtLodCamera c;
-  c.lodEnabled = rasterLodEnabled_;
+  const bool wireActive = wireCycle_ != 0 || mode_ == RenderMode::Wireframe;
+  c.lodEnabled = rasterLodEnabled_ && !wireActive;
+  // Box proxies have no authored wire topology. Wire modes disable size LOD
+  // altogether above; the shader's projected-edge fade controls density without
+  // hard full/proxy/cull transitions during dolly.
   c.proxyEnabled =
-      rasterLodEnabled_ && renderer_ && renderer_->supportsProxyDraw();
+      rasterLodEnabled_ && !wireActive && renderer_ &&
+      renderer_->supportsProxyDraw();
   c.frustumCull = true;
   c.fullPx = rasterLodFullPx_;
   c.cullPx = rasterLodCullPx_;
-  c.bandFrac = 0.0f;  // hard switch -- no accumulation to resolve a dithered band
+  c.bandFrac = 0.0f;
   const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
   std::memcpy(c.viewProj.m, vp.m, sizeof(c.viewProj.m));
   const light3d::Vec3 eye = cam_->eye();
@@ -3184,7 +3228,9 @@ void Gui::cullWorkerMain() {
 void Gui::cullInstancesSync() {
   const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
   bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
-                 draw_ != lastCullDraw_ || rasterLodEnabled_ != lastCullRasterLod_;
+                 draw_ != lastCullDraw_ || rasterLodEnabled_ != lastCullRasterLod_ ||
+                 (wireCycle_ != 0 || mode_ == RenderMode::Wireframe) !=
+                     lastCullWireMode_;
   if (!changed)
     for (int i = 0; i < 16; ++i)
       if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
@@ -3194,6 +3240,7 @@ void Gui::cullInstancesSync() {
   lastCullEnabled_ = cullEnabled_;
   lastCullDraw_ = draw_;
   lastCullRasterLod_ = rasterLodEnabled_;
+  lastCullWireMode_ = wireCycle_ != 0 || mode_ == RenderMode::Wireframe;
   ensureInstanceGrids();
   const RtLodCamera lodCam = buildRasterLodCam();
   proxyResult_.xforms.clear();
@@ -3302,12 +3349,15 @@ void Gui::cullInstances() {
   // worker runs the renderer keeps the previous visible set, so the UI never blocks.
   const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
   bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
-                 draw_ != lastCullDraw_ || rasterLodEnabled_ != lastCullRasterLod_;
+                 draw_ != lastCullDraw_ || rasterLodEnabled_ != lastCullRasterLod_ ||
+                 (wireCycle_ != 0 || mode_ == RenderMode::Wireframe) !=
+                     lastCullWireMode_;
   if (!changed)
     for (int i = 0; i < 16; ++i)
       if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
   if (!changed || cullRunning_.load()) return;  // up to date, or worker busy
   lastCullRasterLod_ = rasterLodEnabled_;
+  lastCullWireMode_ = wireCycle_ != 0 || mode_ == RenderMode::Wireframe;
   std::memcpy(lastCullVP_, vp.m, sizeof(lastCullVP_));
   lastCullValid_ = true;
   lastCullEnabled_ = cullEnabled_;
@@ -3336,6 +3386,7 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
   const char* lineOrbit = "Alt+LMB Orbit";
   const char* linePan = "Alt+MMB / Shift+Alt+LMB Pan";
   const char* lineDolly = "Alt+RMB / Wheel Dolly";
+  const char* lineWalk = "W / S Move eye + pivot (Up/Down aliases, Shift = fast)";
   const char* lineSelect = "[ / ] Prev/Next selection";
   const char* lineHistory = "Alt+Left / Alt+Right Selection back/forward";
   const char* lineFrame = "F Frame selected   A Frame all   0 Home";
@@ -3349,6 +3400,7 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineOrbit).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(linePan).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineDolly).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineWalk).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineSelect).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineHistory).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineFrame).x);
@@ -3359,7 +3411,7 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
 
   const float pad = ImGui::GetStyle().FramePadding.x * 1.2f;
   const float lineH = ImGui::GetTextLineHeightWithSpacing();
-  const int lines = showNavHelp_ ? 10 : 2;
+  const int lines = showNavHelp_ ? 11 : 2;
   const ImVec2 pos(imageMin.x + 12.0f, imageMin.y + 12.0f);
   const ImVec2 boxSize(maxWidth + pad * 2.0f, lineH * static_cast<float>(lines) + pad * 2.0f);
 
@@ -3384,6 +3436,8 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), linePan);
     y += lineH;
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineDolly);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineWalk);
     y += lineH;
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineSelect);
     y += lineH;
@@ -3865,7 +3919,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.cameraPos[1] = eye.y;
   p.cameraPos[2] = eye.z;
   p.mode = mode_;
-  p.wireMode = wireCycle_;  // 'w' key: 0 off / 1 wire-only / 2 wire+shaded
+  p.wireMode = wireCycle_;  // 'v' key: 0 off / 1 wire-only / 2 wire+shaded
   p.displacement = displacementEnabled_;
   p.displacementScale = displacementScale_;
   p.maxTessLevel = maxTessLevel_;

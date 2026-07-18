@@ -680,10 +680,9 @@ void main() {
 
     vec3 V = normalize(uCameraPos - vWorldPos);
 
-    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
-    // toward the camera so back / grazing faces never read as pure black, then
-    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
-    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    // View-facing preview shading. N.V carries most of the contrast so pale,
+    // untextured meshes retain readable form; a small world-space key separates
+    // similarly facing surfaces without introducing a hard terminator.
     vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
     float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
     vec3 L = (dot(uLightDir, uLightDir) > 1e-8)
@@ -693,7 +692,7 @@ void main() {
                           ? uLightColor
                           : vec3(1.0);
     float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
-    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
+    float shade = 0.8 * facing + 0.2 * key;              // N.V-dominant [0,1]
 
     // Ambient: DomeLight split-sum IBL when baked, else a constant floor
     // (keeps unlit faces lifted off black).
@@ -710,9 +709,10 @@ void main() {
         ambient = (baseColor * (1.0 - metallic) * irr +
                    pref * (F0 * dfg.x + dfg.y)) * uIblColor;
     } else {
-        ambient = baseColor * 0.25;
+        ambient = baseColor * 0.12;
     }
-    vec3 diffuse = baseColor * lightColor * (1.0 - metallic) * (0.75 * shade);
+    ambient *= 0.4 + 0.6 * facing;
+    vec3 diffuse = baseColor * lightColor * (1.0 - metallic) * (0.84 * shade);
 
     vec3 H = normalize(L + V);
     float NdotH = max(dot(Nf, H), 0.0);

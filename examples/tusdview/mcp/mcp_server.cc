@@ -71,10 +71,11 @@ json MCPServer::buildToolsList() const {
                        json::array({"path"})));
   tools.push_back(tool(
       "viewport",
-      "Manipulate the camera. op=orbit|pan {dx,dy pixels} | dolly {amount} | fit "
+      "Manipulate the camera. op=orbit|pan {dx,dy pixels} | dolly|forward|backward "
+      "{amount} | fit "
       "{frame the scene} | home | isometric | front | back | right | left | top | bottom "
       "| bookmark_save {slot} | bookmark_load {slot} | set {absolute target[3],yaw,pitch,distance}.",
-      {{"op", strProp("orbit | pan | dolly | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | set")},
+      {{"op", strProp("orbit | pan | dolly | forward | backward | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | set")},
        {"dx", numProp("pixels (orbit/pan)")},
        {"dy", numProp("pixels (orbit/pan)")},
        {"amount", numProp("dolly amount (+ zooms in)")},
@@ -94,9 +95,10 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool(
       "input",
       "Synthesize a keyboard key as if pressed in the viewport. "
-      "key=w (cycle wireframe: off/wire/wire+shade) | f or a (frame all) | "
+      "key=v (cycle wireframe: off/wire/wire+shade) | w/s (forward/backward) | "
+      "f or a (frame all) | "
       "0 (home) | 5 (isometric) | 1 (front) | 3 (right) | 7 (top).",
-      {{"key", strProp("w | f | a | 0 | 1 | 3 | 5 | 7")}},
+      {{"key", strProp("v | w | s | f | a | 0 | 1 | 3 | 5 | 7")}},
       json::array({"key"})));
   tools.push_back(tool("list_prims", "List renderable mesh prim paths in the scene.",
                        {{"max", {{"type", "integer"}, {"description", "cap (default 1000)"}}}}));
