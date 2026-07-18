@@ -382,8 +382,7 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     return false;
   }
 
-  if (length < (11 * 8) + 30) {  // 88 for USDC header, 30 for ZIP header
-    // ???
+  if (length < 30) {  // minimum ZIP local-file header
     if (err) {
       (*err) += "File size too short. Looks like this file is not a USDZ\n";
     }
@@ -391,7 +390,8 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
   }
 
   size_t offset = 0;
-  while ((offset + 30) < length) {
+  std::unordered_set<std::string> entry_names;
+  while ((offset + 30) <= length) {
     //
     // PK zip format:
     // https://users.cs.jmu.edu/buchhofp/forensics/formats/pkzip.html
@@ -435,6 +435,19 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     std::string varname(name_len, ' ');
     memcpy(&varname[0], addr + offset, name_len);
 
+    if (!IsSafeUSDZAssetPath(varname)) {
+      if (err) {
+        (*err) += "Unsafe USDZ entry path: `" + varname + "`\n";
+      }
+      return false;
+    }
+    if (!entry_names.insert(varname).second) {
+      if (err) {
+        (*err) += "Duplicate USDZ entry path: `" + varname + "`\n";
+      }
+      return false;
+    }
+
     offset += name_len;
 
     // read in the extra field
@@ -465,7 +478,8 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
 
     uint16_t compr_method;
     memcpy(&compr_method, &local_header[8], sizeof(compr_method));
-    // uint32_t compr_bytes = *reinterpret_cast<uint32_t*>(&local_header[0]+18);
+    uint32_t compr_bytes;
+    memcpy(&compr_bytes, &local_header[18], sizeof(compr_bytes));
     uint32_t uncompr_bytes;
     memcpy(&uncompr_bytes, &local_header[22], sizeof(uncompr_bytes));
 
@@ -473,6 +487,13 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     if (compr_method != 0) {
       if (err) {
         (*err) += "Compressed ZIP is not supported for USDZ\n";
+      }
+      return false;
+    }
+    if (compr_bytes != uncompr_bytes) {
+      if (err) {
+        (*err) += "Stored USDZ entry has mismatched compressed and "
+                  "uncompressed sizes\n";
       }
       return false;
     }
@@ -509,7 +530,53 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     offset += uncompr_bytes;
   }
 
+  if (assets && offset < length) {
+    uint32_t signature = 0;
+    if (length - offset >= sizeof(signature)) {
+      memcpy(&signature, addr + offset, sizeof(signature));
+    }
+    constexpr uint32_t kCentralDirectoryHeader = 0x02014b50u;
+    constexpr uint32_t kEndOfCentralDirectory = 0x06054b50u;
+    if (signature != kCentralDirectoryHeader &&
+        signature != kEndOfCentralDirectory) {
+      if (err) {
+        (*err) += "Invalid or truncated data after USDZ entries\n";
+      }
+      return false;
+    }
+  }
+
   return true;
+}
+
+enum class USDZRootFormat { Invalid, USDA, USDC };
+
+USDZRootFormat GetUSDZRootFormat(const std::string &filename,
+                                 const uint8_t *data, size_t size) {
+  const std::string ext = str_tolower(GetFileExtension(filename));
+  const bool is_usdc = size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0;
+  const bool is_usda = size >= 5 && std::memcmp(data, "#usda", 5) == 0;
+  if ((ext == "usdc" || ext == "usd") && is_usdc) {
+    return USDZRootFormat::USDC;
+  }
+  if ((ext == "usda" || ext == "usd") && is_usda) {
+    return USDZRootFormat::USDA;
+  }
+  return USDZRootFormat::Invalid;
+}
+
+USDZRootFormat GetUSDZRootFormat(const uint8_t *addr, size_t length,
+                                 const std::vector<USDZAssetInfo> &assets) {
+  if (assets.empty()) return USDZRootFormat::Invalid;
+
+  const USDZAssetInfo &root = assets.front();
+  if (root.byte_begin > root.byte_end || root.byte_end > length) {
+    return USDZRootFormat::Invalid;
+  }
+
+  const uint8_t *root_data = addr + root.byte_begin;
+  const size_t root_size = root.byte_end - root.byte_begin;
+  return GetUSDZRootFormat(root.filename, root_data, root_size);
 }
 
 }  // namespace
@@ -530,55 +597,18 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
   }
 #endif
 
-  int32_t usdc_index = -1;
-  int32_t usda_index = -1;
-  {
-    bool warned = false;  // to report single warning message.
-    for (size_t i = 0; i < assets.size(); i++) {
-      std::string ext = str_tolower(GetFileExtension(assets[i].filename));
-      if (ext.compare("usdc") == 0) {
-        if ((usdc_index > -1) && (!warned)) {
-          if (warn) {
-            (*warn) +=
-                "Multiple USDC files were found in USDZ. Use the first found "
-                "one: " +
-                assets[size_t(usdc_index)].filename + "]\n";
-          }
-          warned = true;
-        }
-
-        if (usdc_index == -1) {
-          usdc_index = int32_t(i);
-        }
-      } else if (ext.compare("usda") == 0) {
-        if ((usda_index > -1) && (!warned)) {
-          if (warn) {
-            (*warn) +=
-                "Multiple USDA files were found in USDZ. Use the first found "
-                "one: " +
-                assets[size_t(usda_index)].filename + "]\n";
-          }
-          warned = true;
-        }
-        if (usda_index == -1) {
-          usda_index = int32_t(i);
-        }
-      }
-    }
-  }
+  // USDZ root-layer selection is positional: the first archive entry is the
+  // root. Do not prefer a later USDC merely because it is binary. Accept the
+  // neutral .usd suffix by sniffing its payload.
+  const USDZRootFormat root_format = GetUSDZRootFormat(addr, length, assets);
+  const int32_t usdc_index = root_format == USDZRootFormat::USDC ? 0 : -1;
+  const int32_t usda_index = root_format == USDZRootFormat::USDA ? 0 : -1;
 
   if ((usdc_index == -1) && (usda_index == -1)) {
     if (err) {
-      (*err) += "Neither USDC nor USDA file found in USDZ\n";
+      (*err) += "USDZ first entry is not a valid USD root layer\n";
     }
     return false;
-  }
-
-  if ((usdc_index >= 0) && (usda_index >= 0)) {
-    if (warn) {
-      (*warn) += "Both USDA and USDC file found. Use USDC file [" +
-                 assets[size_t(usdc_index)].filename + "]\n";
-    }
   }
 
   if (usdc_index >= 0) {
@@ -1057,6 +1087,11 @@ bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const
   if (!asset) {
     return false;
   }
+  asset->asset_map.clear();
+  asset->root_asset_name.clear();
+  asset->data.clear();
+  asset->addr = nullptr;
+  asset->size = 0;
 
   std::vector<USDZAssetInfo> assetInfos;
   if (!ParseUSDZHeader(addr, length, &assetInfos, warn, err)) {
@@ -1086,6 +1121,7 @@ bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const
     // Assume same filename does not exist.
     asset->asset_map[assetInfos[i].filename] =
         std::make_pair(assetInfos[i].byte_begin, assetInfos[i].byte_end);
+    if (i == 0) asset->root_asset_name = assetInfos[i].filename;
   }
 
   if (asset_on_memory) {
@@ -1469,55 +1505,16 @@ bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
   }
 #endif
 
-  int32_t usdc_index = -1;
-  int32_t usda_index = -1;
-  {
-    bool warned = false;  // to report single warning message.
-    for (size_t i = 0; i < assets.size(); i++) {
-      std::string ext = str_tolower(GetFileExtension(assets[i].filename));
-      if (ext.compare("usdc") == 0) {
-        if ((usdc_index > -1) && (!warned)) {
-          if (warn) {
-            (*warn) +=
-                "Multiple USDC files were found in USDZ. Use the first found "
-                "one: " +
-                assets[size_t(usdc_index)].filename + "]\n";
-          }
-          warned = true;
-        }
-
-        if (usdc_index == -1) {
-          usdc_index = int32_t(i);
-        }
-      } else if (ext.compare("usda") == 0) {
-        if ((usda_index > -1) && (!warned)) {
-          if (warn) {
-            (*warn) +=
-                "Multiple USDA files were found in USDZ. Use the first found "
-                "one: " +
-                assets[size_t(usda_index)].filename + "]\n";
-          }
-          warned = true;
-        }
-        if (usda_index == -1) {
-          usda_index = int32_t(i);
-        }
-      }
-    }
-  }
+  // Layer loading follows the same USDZ first-entry root rule as Stage loading.
+  const USDZRootFormat root_format = GetUSDZRootFormat(addr, length, assets);
+  const int32_t usdc_index = root_format == USDZRootFormat::USDC ? 0 : -1;
+  const int32_t usda_index = root_format == USDZRootFormat::USDA ? 0 : -1;
 
   if ((usdc_index == -1) && (usda_index == -1)) {
     if (err) {
-      (*err) += "Neither USDC nor USDA file found in USDZ\n";
+      (*err) += "USDZ first entry is not a valid USD root layer\n";
     }
     return false;
-  }
-
-  if ((usdc_index >= 0) && (usda_index >= 0)) {
-    if (warn) {
-      (*warn) += "Both USDA and USDC file found. Use USDC file [" +
-                 assets[size_t(usdc_index)].filename + "]\n";
-    }
   }
 
   if (usdc_index >= 0) {
@@ -1920,11 +1917,6 @@ bool SetupUSDZAssetResolution(
   const USDZAsset *pusdzAsset)
 {
   // https://openusd.org/release/spec_usdz.html
-  //
-  // TODO(LTE):
-  //
-  // [ ] USD: usda, usdc, usd
-  // [ ] Audio: m4a, mp3, wav
 
   if (!pusdzAsset) {
     return false;
@@ -1949,6 +1941,20 @@ bool SetupUSDZAssetResolution(
   // HDR (Radiance HDR format) - commonly used for environment maps
   resolver.register_asset_resolution_handler("hdr", handler);
   resolver.register_asset_resolution_handler("HDR", handler);
+  resolver.register_asset_resolution_handler("avif", handler);
+  resolver.register_asset_resolution_handler("AVIF", handler);
+  resolver.register_asset_resolution_handler("m4a", handler);
+  resolver.register_asset_resolution_handler("M4A", handler);
+  resolver.register_asset_resolution_handler("mp3", handler);
+  resolver.register_asset_resolution_handler("MP3", handler);
+  resolver.register_asset_resolution_handler("wav", handler);
+  resolver.register_asset_resolution_handler("WAV", handler);
+  resolver.register_asset_resolution_handler("usd", handler);
+  resolver.register_asset_resolution_handler("USD", handler);
+  resolver.register_asset_resolution_handler("usda", handler);
+  resolver.register_asset_resolution_handler("USDA", handler);
+  resolver.register_asset_resolution_handler("usdc", handler);
+  resolver.register_asset_resolution_handler("USDC", handler);
 
   return true;
 }
@@ -2541,6 +2547,7 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
   size_t offset = 0;
   size_t entry_index = 0;
   bool found_usd_root = false;
+  std::unordered_set<std::string> entry_names;
 
   while ((offset + kZipLocalHeaderSize) <= length) {
     // Check for local file header signature
@@ -2613,6 +2620,19 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
     std::string name(reinterpret_cast<const char *>(addr + offset), name_len);
     offset += name_len;
 
+    if (!IsSafeUSDZAssetPath(name)) {
+      if (err) {
+        (*err) += "Entry '" + name + "': unsafe USDZ entry path.\n";
+      }
+      valid = false;
+    }
+    if (!entry_names.insert(name).second) {
+      if (err) {
+        (*err) += "Entry '" + name + "': duplicate USDZ entry path.\n";
+      }
+      valid = false;
+    }
+
     // Extra field
     uint16_t extra_len;
     memcpy(&extra_len, &local_header[28], 2);
@@ -2639,20 +2659,18 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
       }
     }
 
-    // First entry must be a USD file (root layer)
+    // The first entry must have an exact USD extension and matching file
+    // magic. In particular, do not accept names such as root.usda.exe or a
+    // USDC payload renamed to .usda.
     if (entry_index == 0) {
-      std::string lower_name;
-      for (char c : name) {
-        lower_name += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-      }
-      if (lower_name.find(".usdc") != std::string::npos ||
-          lower_name.find(".usda") != std::string::npos ||
-          lower_name.find(".usd") != std::string::npos) {
+      if (uncompr_size_hdr <= length - offset &&
+          GetUSDZRootFormat(name, addr + offset, uncompr_size_hdr) !=
+              USDZRootFormat::Invalid) {
         found_usd_root = true;
       } else {
         if (err) {
-          (*err) += "First entry must be a USD file (root layer), got '" +
-                    name + "'.\n";
+          (*err) += "First entry must be a USD root layer whose extension "
+                    "matches its content, got '" + name + "'.\n";
         }
         valid = false;
       }

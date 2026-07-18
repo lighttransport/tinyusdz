@@ -4,14 +4,14 @@
 // GL_GOOGLE_include_directive and to feed the per-vertex attributes as arguments.
 
 layout(set = 1, binding = 0, std430) readonly buffer BoneRows { vec4 boneRows[]; };
-layout(set = 2, binding = 0, std430) readonly buffer InfluenceRows { vec4 influenceRows[]; };
+layout(set = 1, binding = 1, std430) readonly buffer InfluenceRows { vec4 influenceRows[]; };
 // GPU blendshape morph: per-vertex sparse delta list (set 7) + per-frame coefficient
 // per channel (set 8). Each entry packs 4 halfs (channelId,dx,dy,dz) into one uvec2
 // (unpackHalf2x16). Per-entry channelId lives in its own uint16-packed buffer (set 9)
 // so the loop can skip the wide delta fetch when the channel is inactive.
-layout(set = 7, binding = 0, std430) readonly buffer MorphDeltas { uvec2 morphDeltas[]; };
-layout(set = 8, binding = 0, std430) readonly buffer MorphCoeffs { float morphCoeff[]; };
-layout(set = 9, binding = 0, std430) readonly buffer MorphChan { uint morphChanPacked[]; };
+layout(set = 1, binding = 2, std430) readonly buffer MorphDeltas { uvec2 morphDeltas[]; };
+layout(set = 1, binding = 3, std430) readonly buffer MorphCoeffs { float morphCoeff[]; };
+layout(set = 1, binding = 4, std430) readonly buffer MorphChan { uint morphChanPacked[]; };
 
 uint morphChanId(uint e) {  // entry index -> channelId (low/high 16 of the uint)
   return (morphChanPacked[e >> 1u] >> ((e & 1u) << 4u)) & 0xffffu;

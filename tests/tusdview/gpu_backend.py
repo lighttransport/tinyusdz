@@ -21,6 +21,8 @@ tusdview prints its device at startup, e.g.
 
 import os
 import re
+import shutil
+import subprocess
 
 _NVIDIA_GLVND_JSON = "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
 
@@ -120,3 +122,34 @@ def device_name(viewer_output):
             if m:
                 return m.group(1).strip()
     return "unknown"
+
+
+def software_only_vulkan():
+    """True when vulkaninfo proves every visible Vulkan device is a CPU.
+
+    Mesa's llvmpipe can advertise ray-query extensions but take minutes (or
+    never complete) on even tiny RT captures. Driver-presence checks are not
+    enough here: a host may have a kernel GPU module loaded while the sandbox
+    exposes only the CPU ICD. Return False when vulkaninfo is unavailable or
+    inconclusive so a real/virtual device still gets the normal render probe.
+    """
+    vulkaninfo = shutil.which("vulkaninfo")
+    if not vulkaninfo:
+        return False
+    try:
+        r = subprocess.run(
+            [vulkaninfo, "--summary"], stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    output = r.stdout.decode(errors="replace")
+    if r.returncode != 0:
+        return False
+    has_cpu = "PHYSICAL_DEVICE_TYPE_CPU" in output
+    has_non_cpu = any(kind in output for kind in (
+        "PHYSICAL_DEVICE_TYPE_DISCRETE_GPU",
+        "PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU",
+        "PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU",
+        "PHYSICAL_DEVICE_TYPE_OTHER",
+    ))
+    return has_cpu and not has_non_cpu

@@ -35,7 +35,7 @@ layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer We
 
 // Per-draw metadata (set 6), shared with mesh_inst.frag -- must match DrawMetaCPU.
 struct DrawMeta { ivec4 ids; uint64_t jointAddr; uint64_t weightAddr; };
-layout(set = 6, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
+layout(set = 3, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
 
 mat4 fetchBone(uint idx) {
   int base = int(idx) * 4;
@@ -47,16 +47,16 @@ mat4 fetchBone(uint idx) {
 // prototype is summed into its local position before the per-instance transform.
 // Non-morphed meshes bind the shared dummy sets and carry count 0, so the loop
 // is skipped. The morph is per-prototype -- shared by all instances of it.
-layout(set = 7, binding = 0, std430) readonly buffer MorphDeltas { uvec2 morphDeltas[]; };
-layout(set = 8, binding = 0, std430) readonly buffer MorphCoeffs { float morphCoeff[]; };
-layout(set = 9, binding = 0, std430) readonly buffer MorphChan { uint morphChanPacked[]; };
+layout(set = 1, binding = 2, std430) readonly buffer MorphDeltas { uvec2 morphDeltas[]; };
+layout(set = 1, binding = 3, std430) readonly buffer MorphCoeffs { float morphCoeff[]; };
+layout(set = 1, binding = 4, std430) readonly buffer MorphChan { uint morphChanPacked[]; };
 uint morphChanId(uint e) {  // entry index -> channelId (low/high 16 of the uint)
   return (morphChanPacked[e >> 1u] >> ((e & 1u) << 4u)) & 0xffffu;
 }
 
 // Frame UBO (set 5): viewProj / camPos / scene bbox / renderMode, frame-constant
 // for the whole instanced pass (shared with the mesh pipeline).
-layout(set = 5, binding = 0) uniform Frame {
+layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;     // P * V
   vec4 camPos;       // xyz camera, w depthScale

@@ -109,8 +109,7 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
                                               std::string *err) {
   int idx = -1;
   if (entry_name.empty()) {
-    idx = reader.FindUSDCFile();
-    if (idx < 0) idx = reader.FindUSDAFile();
+    idx = reader.FindRootLayer();
   } else {
     const std::string want = NormalizeEntryName(entry_name);
     for (size_t i = 0; i < reader.NumEntries(); ++i) {

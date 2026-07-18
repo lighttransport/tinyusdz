@@ -32,15 +32,22 @@ import os
 import subprocess
 import sys
 
+from gpu_backend import software_only_vulkan, vk_device_args
+
 SKIP = 77
 
 
 def render(binary, model, out, skinning, time):
-    cmd = [binary, "--next", "--headless", "--rt", "--frames", "3",
+    try:
+        os.remove(out)
+    except FileNotFoundError:
+        pass
+    cmd = [binary, *vk_device_args("vk"), "--next", "--headless", "--rt",
+           "--frames", "3",
            "--time", str(time), "--skinning", skinning, "--screenshot", out,
            model]
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       timeout=600)
+                       timeout=120)
     return r.stdout.decode(errors="replace")
 
 
@@ -58,10 +65,20 @@ def main():
         if not os.path.exists(p):
             print(f"SKIP: missing {p}")
             return SKIP
+    if software_only_vulkan():
+        print("SKIP: Vulkan RT unavailable (software Vulkan only)")
+        return SKIP
     os.makedirs(work, exist_ok=True)
 
     probe = os.path.join(work, "rt_skin_gpu_t12.png")
-    log = render(binary, skin_model, probe, "gpu", 12)
+    try:
+        log = render(binary, skin_model, probe, "gpu", 12)
+    except subprocess.TimeoutExpired:
+        print("SKIP: Vulkan RT probe timed out")
+        return SKIP
+    if "ray tracing is unavailable" in log:
+        print("SKIP: no ray-tracing capable Vulkan device")
+        return SKIP
     if not os.path.exists(probe):
         print("SKIP: --rt produced no image (no ray-tracing capable device?)")
         return SKIP
@@ -75,9 +92,13 @@ def main():
         gpu12 = os.path.join(work, f"rt_{name}_gpu_t12.png")
         cpu12 = os.path.join(work, f"rt_{name}_cpu_t12.png")
         gpu0 = os.path.join(work, f"rt_{name}_gpu_t0.png")
-        render(binary, model, gpu12, "gpu", 12)
-        render(binary, model, cpu12, "cpu", 12)
-        render(binary, model, gpu0, "gpu", 0)
+        try:
+            render(binary, model, gpu12, "gpu", 12)
+            render(binary, model, cpu12, "cpu", 12)
+            render(binary, model, gpu0, "gpu", 0)
+        except subprocess.TimeoutExpired:
+            print(f"FAIL: {name}: Vulkan RT render timed out")
+            return 1
         if not (os.path.exists(gpu12) and os.path.exists(cpu12)
                 and os.path.exists(gpu0)):
             print(f"FAIL: {name}: a render produced no image")

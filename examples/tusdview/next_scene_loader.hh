@@ -5,9 +5,8 @@
 // This is the large-scene preview path: the `next` loader composes
 // references/payloads with lazy mmap arrays, and the tydra-next
 // RenderSceneConverter triangulates into a RenderScene we adapt to the
-// backend-neutral DrawScene the GL/Vulkan renderers already consume. Geometry
-// only (default gray material + the renderer's default lighting) for now;
-// instancing/materials/streaming are follow-ups.
+// backend-neutral DrawScene the GL/Vulkan renderers already consume, including
+// instancing, Preview/OpenPBR materials, textures, animation, and streaming.
 #pragma once
 
 #include <memory>

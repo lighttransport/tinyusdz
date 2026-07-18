@@ -72,7 +72,25 @@ struct HostTextureDesc {
   int height{0};
   int wrapS{0};
   int wrapT{0};
+  int srgb{0};
+  int isUdim{0};
+  int udimLayer[100]{};  // texture descriptor ids for tiles 1001..1100
 };
+
+struct HostTextureTable {
+  std::vector<uint8_t> texels;
+  std::vector<HostTextureDesc> textures;
+  std::vector<int> matTex;
+  std::vector<float> matTexParam;
+  std::vector<int> sourceToTable;
+};
+
+// Build the backend-neutral level-zero texture table used by CUDA/HIP and
+// Vulkan ray query. Handles decoded images, compressed-only inputs, sparse
+// UDIM tiles, semantic material slots, UV transforms, and channel metadata.
+void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
+                           const std::vector<DrawMaterialCPU>& materials,
+                           HostTextureTable* out);
 
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {
@@ -91,7 +109,9 @@ struct HostScene {
   // 56 floats/material: vec4-friendly LightRT/OpenPBR constant fallback.
   // See lightrt_mtlx_bridge.hh PackLightRtOpenPBR.
   std::vector<float> matLightRt;
-  std::vector<int> matTex;  // 4 ints/material: base, metalRough, normal, emissive
+  // Six semantic slots/material: base, metallic, roughness, normal, emissive,
+  // opacity. Packed ORM inputs may map multiple slots to one texture.
+  std::vector<int> matTex;
   // UV affine rows, scale/bias vectors and scalar channel selectors. See
   // lightrt_mtlx_bridge.hh PackRtMaterialTextureParams.
   std::vector<float> matTexParam;

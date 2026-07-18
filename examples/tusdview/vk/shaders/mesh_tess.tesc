@@ -25,7 +25,7 @@ layout(push_constant) uniform PushConstants {
 } pc;
 
 // Frame UBO (set 5): .disp.y = max tessellation level, camPos for edge LOD.
-layout(set = 5, binding = 0) uniform Frame {
+layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;
   vec4 camPos;
