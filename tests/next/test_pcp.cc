@@ -2740,6 +2740,80 @@ static void test_usdz_package_layers() {
                       sibling_usda);
 
     {
+      AssetResolver package_resolver;
+      const ResolvedAsset escaped = package_resolver.Resolve(
+          "../../sibling.usda",
+          "/tmp/next_pcp_multi_pkg.usdz[root.usda]",
+          /*allow_suffix_fallback=*/false);
+      assert(!escaped.exists &&
+             "package-relative parent traversal escaped above archive root");
+      const ResolvedAsset explicit_escaped = package_resolver.Resolve(
+          "/tmp/next_pcp_multi_pkg.usdz[../sibling.usda]", "",
+          /*allow_suffix_fallback=*/false);
+      assert(!explicit_escaped.exists &&
+             "explicit package path accepted parent traversal");
+    }
+
+    {
+      Stage direct_stage;
+      std::string direct_warn, direct_err;
+      bool direct_ok = LoadUSDComposed("/tmp/next_pcp_multi_pkg.usdz",
+                                       &direct_stage, &direct_warn, &direct_err);
+      if (!direct_ok) std::cout << "  [diag] err=" << direct_err << std::endl;
+      assert(direct_ok && "direct-root USDZ composition failed");
+      UsdPrim direct_p = direct_stage.GetPrimAtPath("/World/P");
+      assert(direct_p.IsValid());
+      assert(direct_p.GetPropertyValue("siblingVal") != nullptr &&
+             "direct-root USDZ did not anchor sibling reference in package");
+    }
+
+    {
+      const std::string payload_root_usda =
+          "#usda 1.0\n"
+          "def Xform \"World\"\n"
+          "{\n"
+          "    def Xform \"P\" (\n"
+          "        prepend payload = @sibling.usda@</Asset>\n"
+          "    )\n"
+          "    {\n"
+          "    }\n"
+          "}\n";
+      WriteTwoEntryUSDZ("/tmp/next_pcp_payload_pkg.usdz",
+                        payload_root_usda, sibling_usda);
+
+      StageSessionOptions session_options;
+      session_options.composition.load_payloads = false;
+      StageSession session;
+      assert(session.OpenFile("/tmp/next_pcp_payload_pkg.usdz",
+                              session_options) &&
+             "StageSession failed to open deferred package payload");
+      assert(session.IsComposed());
+      assert(session.GetDeferredPayloadPaths().size() == 1);
+      assert(session.GetDeferredPayloadPaths()[0] == Path("/World/P"));
+      UsdPrim deferred = session.GetStage().GetPrimAtPath("/World/P");
+      assert(deferred.IsValid());
+      assert(deferred.GetPropertyValue("siblingVal") == nullptr &&
+             "deferred package payload was composed eagerly");
+
+      assert(session.LoadPayload(Path("/World/P")) &&
+             "package-internal deferred payload failed to load");
+      UsdPrim loaded = session.GetStage().GetPrimAtPath("/World/P");
+      assert(loaded.IsValid());
+      assert(loaded.GetPropertyValue("siblingVal") != nullptr &&
+             "loaded package payload opinion is missing");
+      assert(session.GetDeferredPayloadPaths().empty());
+
+      assert(session.UnloadPayload(Path("/World/P")) &&
+             "package-internal payload failed to unload");
+      assert(session.GetDeferredPayloadPaths().size() == 1);
+      assert(session.LoadPayload(Path("/World/P")) &&
+             "cached package payload failed to reload");
+      assert(session.GetStage()
+                 .GetPrimAtPath("/World/P")
+                 .GetPropertyValue("siblingVal") != nullptr);
+    }
+
+    {
       std::ofstream f("/tmp/next_pcp_usdz_pkg_anchor_root.usda");
       f << "#usda 1.0\n"
            "(\n"
@@ -2764,6 +2838,7 @@ static void test_usdz_package_layers() {
   std::remove("/tmp/next_pcp_ref_pkg.usdz");
   std::remove("/tmp/next_pcp_usdz_ref_root.usda");
   std::remove("/tmp/next_pcp_multi_pkg.usdz");
+  std::remove("/tmp/next_pcp_payload_pkg.usdz");
   std::remove("/tmp/next_pcp_usdz_pkg_anchor_root.usda");
   std::cout << "  OK" << std::endl;
 }

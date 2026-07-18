@@ -58,12 +58,13 @@ int main() {
 
   const int baseImage = AddImage(&scene, tydra::ColorSpace::sRGB_Texture);
   const int mrImage = AddImage(&scene, tydra::ColorSpace::Raw);
+  const int roughImage = AddImage(&scene, tydra::ColorSpace::Raw);
   const int emissiveImage = AddImage(&scene, tydra::ColorSpace::sRGB_Texture);
   const int normalImage = AddImage(&scene, tydra::ColorSpace::Raw);
 
   const int baseTex = AddTexture(&scene, baseImage, tydra::UVTexture::Channel::RGB);
   const int metalTex = AddTexture(&scene, mrImage, tydra::UVTexture::Channel::B);
-  const int roughTex = AddTexture(&scene, mrImage, tydra::UVTexture::Channel::G);
+  const int roughTex = AddTexture(&scene, roughImage, tydra::UVTexture::Channel::G);
   const int emissiveTex =
       AddTexture(&scene, emissiveImage, tydra::UVTexture::Channel::RGB);
   const int normalTex = AddTexture(&scene, normalImage, tydra::UVTexture::Channel::RGB);
@@ -151,27 +152,32 @@ int main() {
                  draw.materials.size());
     return 1;
   }
-  if (draw.textures.size() != 4) {
-    std::fprintf(stderr, "expected four deduplicated textures, got %zu\n",
+  if (draw.textures.size() != 5) {
+    std::fprintf(stderr, "expected five independent/deduplicated textures, got %zu\n",
                  draw.textures.size());
     return 1;
   }
   if (draw.textures[0].assetIdentifier != "asset_0.png" ||
       draw.textures[0].renderImageId != baseImage ||
-      draw.textures[3].assetIdentifier != "asset_3.png" ||
-      draw.textures[3].renderImageId != normalImage) {
+      draw.textures[4].assetIdentifier != "asset_4.png" ||
+      draw.textures[4].renderImageId != normalImage) {
     std::fprintf(stderr, "texture source metadata was not preserved\n");
     return 1;
   }
 
   const tusdview::DrawMaterialCPU& mat = draw.materials[0];
-  if (mat.baseColorTex < 0 || mat.metalRoughTex < 0 || mat.normalTex < 0 ||
+  if (mat.baseColorTex < 0 || mat.metallicTex < 0 || mat.roughnessTex < 0 || mat.normalTex < 0 ||
       mat.coatNormalTex < 0 || mat.emissiveTex < 0) {
     std::fprintf(stderr, "OpenPBR texture slots were not populated\n");
     return 1;
   }
-  if (mat.metalRoughTex != mat.baseColorTex + 1) {
-    std::fprintf(stderr, "unexpected metal/rough texture dedup order\n");
+  if (mat.metallicTex != mat.baseColorTex + 1) {
+    std::fprintf(stderr, "unexpected metallic texture order\n");
+    return 1;
+  }
+  if (mat.roughnessTex != mat.baseColorTex + 2 ||
+      mat.roughnessTex == mat.metallicTex) {
+    std::fprintf(stderr, "independent roughness image collapsed into metallic\n");
     return 1;
   }
   if (mat.metallicChannel != 2 || mat.roughnessChannel != 1 ||

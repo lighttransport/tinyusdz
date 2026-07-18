@@ -211,19 +211,23 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uAlphaMode_ = glGetUniformLocation(program_, "uAlphaMode");
   uAlphaCutoff_ = glGetUniformLocation(program_, "uAlphaCutoff");
   uHasBaseColorTex_ = glGetUniformLocation(program_, "uHasBaseColorTex");
-  uHasMetalRoughTex_ = glGetUniformLocation(program_, "uHasMetalRoughTex");
+  uHasMetallicTex_ = glGetUniformLocation(program_, "uHasMetallicTex");
+  uHasRoughnessTex_ = glGetUniformLocation(program_, "uHasRoughnessTex");
   uHasNormalTex_ = glGetUniformLocation(program_, "uHasNormalTex");
   uHasEmissiveTex_ = glGetUniformLocation(program_, "uHasEmissiveTex");
   uHasOpacityTex_ = glGetUniformLocation(program_, "uHasOpacityTex");
   uBaseColorTexIsUdim_ = glGetUniformLocation(program_, "uBaseColorTexIsUdim");
-  uMetalRoughTexIsUdim_ = glGetUniformLocation(program_, "uMetalRoughTexIsUdim");
+  uMetallicTexIsUdim_ = glGetUniformLocation(program_, "uMetallicTexIsUdim");
+  uRoughnessTexIsUdim_ = glGetUniformLocation(program_, "uRoughnessTexIsUdim");
   uNormalTexIsUdim_ = glGetUniformLocation(program_, "uNormalTexIsUdim");
   uEmissiveTexIsUdim_ = glGetUniformLocation(program_, "uEmissiveTexIsUdim");
   uOpacityTexIsUdim_ = glGetUniformLocation(program_, "uOpacityTexIsUdim");
   uBaseColorUv0_ = glGetUniformLocation(program_, "uBaseColorUv0");
   uBaseColorUv1_ = glGetUniformLocation(program_, "uBaseColorUv1");
-  uMetalRoughUv0_ = glGetUniformLocation(program_, "uMetalRoughUv0");
-  uMetalRoughUv1_ = glGetUniformLocation(program_, "uMetalRoughUv1");
+  uMetallicUv0_ = glGetUniformLocation(program_, "uMetallicUv0");
+  uMetallicUv1_ = glGetUniformLocation(program_, "uMetallicUv1");
+  uRoughnessUv0_ = glGetUniformLocation(program_, "uRoughnessUv0");
+  uRoughnessUv1_ = glGetUniformLocation(program_, "uRoughnessUv1");
   uNormalUv0_ = glGetUniformLocation(program_, "uNormalUv0");
   uNormalUv1_ = glGetUniformLocation(program_, "uNormalUv1");
   uEmissiveUv0_ = glGetUniformLocation(program_, "uEmissiveUv0");
@@ -231,6 +235,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uOpacityUv0_ = glGetUniformLocation(program_, "uOpacityUv0");
   uOpacityUv1_ = glGetUniformLocation(program_, "uOpacityUv1");
   uUvSet_ = glGetUniformLocation(program_, "uUvSet");
+  uRoughnessUvSet_ = glGetUniformLocation(program_, "uRoughnessUvSet");
   uBaseColorTexScale_ = glGetUniformLocation(program_, "uBaseColorTexScale");
   uBaseColorTexBias_ = glGetUniformLocation(program_, "uBaseColorTexBias");
   uNormalTexScale_ = glGetUniformLocation(program_, "uNormalTexScale");
@@ -249,6 +254,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uOpacityTexBias_ = glGetUniformLocation(program_, "uOpacityTexBias");
   uUdimSlots_ = glGetUniformLocation(program_, "uUdimSlots");
   uOpacityUdimSlot_ = glGetUniformLocation(program_, "uOpacityUdimSlot");
+  uRoughnessUdimSlot_ = glGetUniformLocation(program_, "uRoughnessUdimSlot");
   uHasDisplacement_ = glGetUniformLocation(program_, "uHasDisplacement");
   uHasDisplacementTex_ = glGetUniformLocation(program_, "uHasDisplacementTex");
   uDisplacementConst_ = glGetUniformLocation(program_, "uDisplacementConst");
@@ -262,13 +268,15 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uInfluenceTexWidth_ = glGetUniformLocation(program_, "uInfluenceTexWidth");
   // Fixed sampler -> texture-unit bindings.
   glUniform1i(glGetUniformLocation(program_, "uBaseColorTex"), 0);
-  glUniform1i(glGetUniformLocation(program_, "uMetalRoughTex"), 1);
+  glUniform1i(glGetUniformLocation(program_, "uMetallicTex"), 1);
+  glUniform1i(glGetUniformLocation(program_, "uRoughnessTex"), 18);
   glUniform1i(glGetUniformLocation(program_, "uNormalTex"), 2);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveTex"), 3);
   glUniform1i(glGetUniformLocation(program_, "uOpacityTex"), 14);
   glUniform1i(glGetUniformLocation(program_, "uBaseColorUdimTex"), 11);
   glUniform1i(glGetUniformLocation(program_, "uUdimLutAtlas"), 12);
-  glUniform1i(glGetUniformLocation(program_, "uMetalRoughUdimTex"), 13);
+  glUniform1i(glGetUniformLocation(program_, "uMetallicUdimTex"), 13);
+  glUniform1i(glGetUniformLocation(program_, "uRoughnessUdimTex"), 22);
   glUniform1i(glGetUniformLocation(program_, "uNormalUdimTex"), 15);
   glUniform1i(glGetUniformLocation(program_, "uOpacityUdimTex"), 16);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveUdimTex"), 17);
@@ -1062,12 +1070,14 @@ void GLRenderer::appendMaterials(const std::vector<DrawMaterialCPU>& materials,
     gm.specularColor[2] = m.specularColor[2];
     gm.ior = m.ior;
     gm.baseColorTex = m.baseColorTex;  // slot indices (resolved at draw)
-    gm.metalRoughTex = m.metalRoughTex;
+    gm.metallicTex = m.metallicTex;
+    gm.roughnessTex = m.roughnessTex;
     gm.normalTex = m.normalTex;
     gm.emissiveTex = m.emissiveTex;
     gm.opacityTex = m.opacityTex;
     gm.baseColorSample = m.baseColorSample;
-    gm.metalRoughSample = m.metalRoughSample;
+    gm.metallicSample = m.metallicSample;
+    gm.roughnessSample = m.roughnessSample;
     gm.normalSample = m.normalSample;
     gm.emissiveSample = m.emissiveSample;
     gm.opacitySample = m.opacitySample;
@@ -2577,12 +2587,14 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uAlphaMode_, 0);
         glUniform1f(uAlphaCutoff_, 0.5f);
         glUniform1i(uHasBaseColorTex_, 0);
-        glUniform1i(uHasMetalRoughTex_, 0);
+        glUniform1i(uHasMetallicTex_, 0);
+        glUniform1i(uHasRoughnessTex_, 0);
         glUniform1i(uHasNormalTex_, 0);
         glUniform1i(uHasEmissiveTex_, 0);
         glUniform1i(uHasOpacityTex_, 0);
         glUniform1i(uBaseColorTexIsUdim_, 0);
-        glUniform1i(uMetalRoughTexIsUdim_, 0);
+        glUniform1i(uMetallicTexIsUdim_, 0);
+        glUniform1i(uRoughnessTexIsUdim_, 0);
         glUniform1i(uNormalTexIsUdim_, 0);
         glUniform1i(uEmissiveTexIsUdim_, 0);
         glUniform1i(uOpacityTexIsUdim_, 0);
@@ -2598,17 +2610,19 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uAlphaMode_, mat.alphaMode);
         glUniform1f(uAlphaCutoff_, mat.alphaCutoff);
         SetUvUniform(uBaseColorUv0_, uBaseColorUv1_, mat.baseColorSample.uv);
-        SetUvUniform(uMetalRoughUv0_, uMetalRoughUv1_, mat.metalRoughSample.uv);
+        SetUvUniform(uMetallicUv0_, uMetallicUv1_, mat.metallicSample.uv);
+        SetUvUniform(uRoughnessUv0_, uRoughnessUv1_, mat.roughnessSample.uv);
         SetUvUniform(uNormalUv0_, uNormalUv1_, mat.normalSample.uv);
         SetUvUniform(uEmissiveUv0_, uEmissiveUv1_, mat.emissiveSample.uv);
         SetUvUniform(uOpacityUv0_, uOpacityUv1_, mat.opacitySample.uv);
         {
           const GLint uvSets[4] = {mat.baseColorSample.uvSet,
-                                   mat.metalRoughSample.uvSet,
+                                   mat.metallicSample.uvSet,
                                    mat.normalSample.uvSet,
                                    mat.emissiveSample.uvSet};
           glUniform4iv(uUvSet_, 1, uvSets);
         }
+        glUniform1i(uRoughnessUvSet_, mat.roughnessSample.uvSet);
         glUniform4fv(uBaseColorTexScale_, 1, mat.baseColorSample.scale);
         glUniform4fv(uBaseColorTexBias_, 1, mat.baseColorSample.bias);
         glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
@@ -2625,10 +2639,11 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uOpacityChannel_, mat.opacityChannel);
         glUniform1f(uOpacityTexScale_, mat.opacityTexScale);
         glUniform1f(uOpacityTexBias_, mat.opacityTexBias);
-        const GLint udimSlots[4] = {mat.baseColorTex, mat.metalRoughTex,
+        const GLint udimSlots[4] = {mat.baseColorTex, mat.metallicTex,
                                     mat.normalTex, mat.emissiveTex};
         glUniform4iv(uUdimSlots_, 1, udimSlots);
         glUniform1i(uOpacityUdimSlot_, mat.opacityTex);
+        glUniform1i(uRoughnessUdimSlot_, mat.roughnessTex);
         glActiveTexture(GL_TEXTURE12);
         glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
         auto bindMaterialTexture = [&](int slot, GLenum texUnit2D,
@@ -2650,9 +2665,10 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         bindMaterialTexture(mat.baseColorTex, GL_TEXTURE0, GL_TEXTURE11,
                             uHasBaseColorTex_,
                             uBaseColorTexIsUdim_);
-        bindMaterialTexture(mat.metalRoughTex, GL_TEXTURE1, GL_TEXTURE13,
-                            uHasMetalRoughTex_,
-                            uMetalRoughTexIsUdim_);
+        bindMaterialTexture(mat.metallicTex, GL_TEXTURE1, GL_TEXTURE13,
+                            uHasMetallicTex_, uMetallicTexIsUdim_);
+        bindMaterialTexture(mat.roughnessTex, GL_TEXTURE18, GL_TEXTURE22,
+                            uHasRoughnessTex_, uRoughnessTexIsUdim_);
         bindMaterialTexture(mat.normalTex, GL_TEXTURE2, GL_TEXTURE15,
                             uHasNormalTex_,
                             uNormalTexIsUdim_);
@@ -2920,7 +2936,8 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glUniform1i(uAlphaMode_, 0);
     glUniform1f(uAlphaCutoff_, 0.5f);
     glUniform1i(uHasBaseColorTex_, 0);
-    glUniform1i(uHasMetalRoughTex_, 0);
+    glUniform1i(uHasMetallicTex_, 0);
+    glUniform1i(uHasRoughnessTex_, 0);
     glUniform1i(uHasNormalTex_, 0);
     glUniform1i(uHasEmissiveTex_, 0);
     glUniform1i(uHasOpacityTex_, 0);

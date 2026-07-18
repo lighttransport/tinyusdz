@@ -2255,7 +2255,8 @@ void Gui::drawMaterialsPanel() {
                       mat.lightRtOpenPBR.hasNormalInput ? "yes" : "no");
         }
         if (mat.baseColorTex >= 0) ImGui::Text("Base color tex: %d", mat.baseColorTex);
-        if (mat.metalRoughTex >= 0) ImGui::Text("Metallic/roughness tex: %d", mat.metalRoughTex);
+        if (mat.metallicTex >= 0) ImGui::Text("Metallic tex: %d", mat.metallicTex);
+        if (mat.roughnessTex >= 0) ImGui::Text("Roughness tex: %d", mat.roughnessTex);
         if (mat.normalTex >= 0) ImGui::Text("Normal tex: %d", mat.normalTex);
         if (mat.coatNormalTex >= 0) ImGui::Text("Coat normal tex: %d", mat.coatNormalTex);
         if (mat.emissiveTex >= 0) ImGui::Text("Emissive tex: %d", mat.emissiveTex);
@@ -3974,6 +3975,10 @@ void Gui::renderViewportScene(FramePacket* packet) {
     p.meshVisible = viewVisible_.data();
     p.meshVisibleCount = static_cast<int>(viewVisible_.size());
   }
+  if (!meshVisible_.empty()) {
+    p.rtMeshVisible = meshVisible_.data();
+    p.rtMeshVisibleCount = static_cast<int>(meshVisible_.size());
+  }
   // Purpose visibility for the RT TLAS (PurposeId bit order: default, render,
   // proxy, guide). Raster gets the same filtering via viewVisible_.
   p.purposeVisibleMask = (showPurposeDefault_ ? 1u : 0u) |
@@ -4024,6 +4029,10 @@ void Gui::renderViewportScene(FramePacket* packet) {
     packet->overlayLines.assign(p.overlayLines, p.overlayLines + p.overlayLineVertexCount);
   if (p.meshVisible)
     packet->meshVisible.assign(p.meshVisible, p.meshVisible + p.meshVisibleCount);
+  if (p.rtMeshVisible)
+    packet->rtMeshVisible.assign(p.rtMeshVisible,
+                                 p.rtMeshVisible + p.rtMeshVisibleCount);
+  packet->purposeVisibleMask = p.purposeVisibleMask;
   packet->viewportW = vpW;
   packet->viewportH = vpH;
   packet->hasParams = true;

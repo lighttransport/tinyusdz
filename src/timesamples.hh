@@ -717,8 +717,37 @@ struct TimeSamples {
     static_assert(value::uses_binary_timesample_array_storage_v<T>,
                   "add_array_sample requires binary-serializable element types except bool");
 
-    if (!validate_type_or_init(_type_id != 0 ? _type_id : value::TypeTraits<std::vector<T>>::type_id(),
-                                 err, "add_array_sample")) {
+    if ((count > 0) && (values == nullptr)) {
+      if (err) {
+        (*err) += "add_array_sample values is null for a non-empty array.\n";
+      }
+      return false;
+    }
+
+    if (count > (std::numeric_limits<uint32_t>::max)()) {
+      if (err) {
+        (*err) += "add_array_sample element count exceeds uint32_t storage.\n";
+      }
+      return false;
+    }
+
+    if (count > ((std::numeric_limits<size_t>::max)() / sizeof(T))) {
+      if (err) {
+        (*err) += "add_array_sample byte size overflow.\n";
+      }
+      return false;
+    }
+
+    const size_t data_size = sizeof(T) * count;
+    if (data_size > (_data.max_size() - _data.size())) {
+      if (err) {
+        (*err) += "add_array_sample data buffer size overflow.\n";
+      }
+      return false;
+    }
+
+    if (!validate_type_or_init(value::TypeTraits<std::vector<T>>::type_id(),
+                               err, "add_array_sample")) {
       return false;
     }
 
@@ -729,10 +758,11 @@ struct TimeSamples {
     _blocked.push_back(0);
 
     // Append array data to flat buffer
-    size_t byte_offset = _data.size();
-    size_t data_size = sizeof(T) * count;
+    const size_t byte_offset = _data.size();
     _data.resize(_data.size() + data_size);
-    std::memcpy(_data.data() + byte_offset, values, data_size);
+    if (data_size > 0) {
+      std::memcpy(_data.data() + byte_offset, values, data_size);
+    }
 
     _data_offsets.push_back(byte_offset);
     _array_counts.push_back(static_cast<uint32_t>(count));
@@ -821,10 +851,8 @@ struct TimeSamples {
                   "add_array_blocked_sample requires binary-serializable array "
                   "element types");
 
-    if (!validate_type_or_init(
-            _type_id != 0 ? _type_id
-                          : value::TypeTraits<std::vector<T>>::type_id(),
-            err, "add_array_blocked_sample")) {
+    if (!validate_type_or_init(value::TypeTraits<std::vector<T>>::type_id(),
+                               err, "add_array_blocked_sample")) {
       return false;
     }
 

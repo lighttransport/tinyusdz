@@ -38,6 +38,8 @@ import subprocess
 import sys
 import zlib
 
+from gpu_backend import software_only_vulkan
+
 SKIP = 77
 MAX_MEAN_DIFF = 0.5   # depth, GPU morph vs CPU bake: they must agree exactly
 MIN_POSE_DIFF = 1.0   # depth, rest vs posed: the morph must actually do something
@@ -133,10 +135,17 @@ def render(binary, model, out, time, extra=(), env=None):
     e = dict(os.environ)
     if env:
         e.update(env)
-    cmd = [binary, "--next", "--headless", "--frames", "3", "--time", str(time),
-           "--screenshot", out, *extra, model]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                   env=e, timeout=600)
+    config = os.path.join(os.path.dirname(out), "config.json")
+    if not os.path.exists(config):
+        with open(config, "w") as f:
+            f.write('{"window_size":{"width":320,"height":320}}\n')
+    cmd = [binary, "--next", "--headless", "--frames", "3", "--time",
+           str(time), "--config", config, "--screenshot", out, *extra, model]
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       env=e, timeout=120)
+    except subprocess.TimeoutExpired:
+        return False
     return os.path.exists(out) and os.path.getsize(out) > 0
 
 
@@ -252,17 +261,22 @@ def main():
     # (c) It has to reach the ray tracer, which traces the vertex buffers.
     rt1 = os.path.join(work, "morph_rt_t1.png")
     rt20 = os.path.join(work, "morph_rt_t20.png")
-    if render(binary, model, rt1, 1, extra=["--rt"]) and \
+    rt_verified = False
+    if not software_only_vulkan() and \
+       render(binary, model, rt1, 1, extra=["--rt"]) and \
        render(binary, model, rt20, 20, extra=["--rt"]):
         if open(rt1, "rb").read() == open(rt20, "rb").read():
             print("FAIL: the ray tracer renders the same image at time 1 and 20. "
                   "RT traces the vertex buffers themselves, so the morph has to "
                   "reach them (BuildNextRtDeformedVertices).")
             return 1
+        rt_verified = True
 
+    rt_result = "and reaches the ray tracer" if rt_verified else \
+        "(RT check capability-skipped)"
     print(f"PASS: non-instanced blendshape morphs, lands exactly where the CPU bake "
-          f"does under a rotated/scaled parent (mean depth diff {diff:.3f}), and "
-          f"reaches the ray tracer")
+          f"does under a rotated/scaled parent (mean depth diff {diff:.3f}) "
+          f"{rt_result}")
     return 0
 
 

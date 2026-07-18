@@ -19,15 +19,15 @@ layout(location = 5) flat in int vDrawSlot;
 // Must match DrawMetaCPU / mesh_inst.vert: the skin addresses are unused here but
 // are part of the layout.
 struct DrawMeta { ivec4 ids; uint64_t jointAddr; uint64_t weightAddr; };
-layout(set = 6, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
+layout(set = 3, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
 
 // Frame UBO (set 5): camera / scene bbox / renderMode (frame-constant).
 // DomeLight IBL irradiance (diffuse-only: prototypes carry no material
 // scalars). Set 0 is otherwise unused by the instanced pipeline; a 1x1 black
 // cube is bound when no dome IBL is baked.
-layout(set = 0, binding = 0) uniform samplerCube uIrradianceMap;
+layout(set = 0, binding = 12) uniform samplerCube uIrradianceMap;
 
-layout(set = 5, binding = 0) uniform Frame {
+layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;
   vec4 camPos;       // xyz camera, w depthScale

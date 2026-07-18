@@ -369,7 +369,6 @@ uniform vec3 uIblColor;             // dome effectiveColor (intensity baked in)
 uniform mat3 uEnvRotation;          // world -> environment direction
 uniform samplerCube uIrradianceMap; // cosine-convolved env, stored E/pi
 uniform samplerCube uPrefilteredMap;// GGX chain, lod = roughness*(lods-1)
-uniform sampler2D uBrdfLut;         // split-sum DFG: x=NdotV, y=roughness
 uniform int uPrefilteredLods;
 
 // Texture samplers
@@ -377,10 +376,14 @@ uniform sampler2D uBaseColorTex;
 uniform sampler2DArray uBaseColorUdimTex;
 uniform bool uHasBaseColorTex;
 uniform bool uBaseColorTexIsUdim;
-uniform sampler2D uMetalRoughTex;
-uniform sampler2DArray uMetalRoughUdimTex;
-uniform bool uHasMetalRoughTex;
-uniform bool uMetalRoughTexIsUdim;
+uniform sampler2D uMetallicTex;
+uniform sampler2DArray uMetallicUdimTex;
+uniform bool uHasMetallicTex;
+uniform bool uMetallicTexIsUdim;
+uniform sampler2D uRoughnessTex;
+uniform sampler2DArray uRoughnessUdimTex;
+uniform bool uHasRoughnessTex;
+uniform bool uRoughnessTexIsUdim;
 uniform sampler2D uNormalTex;
 uniform sampler2DArray uNormalUdimTex;
 uniform bool uHasNormalTex;
@@ -397,15 +400,19 @@ uniform bool uOpacityTexIsUdim;
 // an array layer; -1 means the tile is absent. Consolidating four independent
 // LUT samplers avoids the GL 3.3 fragment-sampler ceiling.
 uniform isampler2D uUdimLutAtlas;
-uniform ivec4 uUdimSlots;  // base, metal/rough, normal, emissive texture rows
+uniform ivec4 uUdimSlots;  // base, metallic, normal, emissive texture rows
 uniform int uOpacityUdimSlot;
+uniform int uRoughnessUdimSlot;
 // Per-slot UV set: 0 = vUV (texcoords_0), 1 = vUV1 (texcoords_1).
 // x = base color, y = metal/rough, z = normal, w = emissive.
 uniform ivec4 uUvSet;
+uniform int uRoughnessUvSet;
 uniform vec3 uBaseColorUv0;   // m00,m01,tx
 uniform vec3 uBaseColorUv1;   // m10,m11,ty
-uniform vec3 uMetalRoughUv0;
-uniform vec3 uMetalRoughUv1;
+uniform vec3 uMetallicUv0;
+uniform vec3 uMetallicUv1;
+uniform vec3 uRoughnessUv0;
+uniform vec3 uRoughnessUv1;
 uniform vec3 uNormalUv0;
 uniform vec3 uNormalUv1;
 uniform vec3 uEmissiveUv0;
@@ -530,14 +537,19 @@ void main() {
         baseColor *= sample.rgb;
         opacity *= clamp(sample.a, 0.0, 1.0);
     }
-    if (uHasMetalRoughTex) {
-        vec2 uv = xformUv(uUvSet.y == 1 ? vUV1 : vUV, uMetalRoughUv0, uMetalRoughUv1);
-        vec4 mr = uMetalRoughTexIsUdim
-                      ? sampleUdim(uMetalRoughUdimTex, uUdimSlots.y, uv,
-                                   vec4(1.0, 0.0, 1.0, 1.0))
-                      : texture(uMetalRoughTex, uv);
-        roughness *= channelOf(mr, uRoughnessChannel) * uRoughnessTexScale + uRoughnessTexBias;
-        metallic *= channelOf(mr, uMetallicChannel) * uMetallicTexScale + uMetallicTexBias;
+    if (uHasMetallicTex) {
+        vec2 uv = xformUv(uUvSet.y == 1 ? vUV1 : vUV, uMetallicUv0, uMetallicUv1);
+        vec4 texel = uMetallicTexIsUdim
+                      ? sampleUdim(uMetallicUdimTex, uUdimSlots.y, uv, vec4(1.0))
+                      : texture(uMetallicTex, uv);
+        metallic *= channelOf(texel, uMetallicChannel) * uMetallicTexScale + uMetallicTexBias;
+    }
+    if (uHasRoughnessTex) {
+        vec2 uv = xformUv(uRoughnessUvSet == 1 ? vUV1 : vUV, uRoughnessUv0, uRoughnessUv1);
+        vec4 texel = uRoughnessTexIsUdim
+                      ? sampleUdim(uRoughnessUdimTex, uRoughnessUdimSlot, uv, vec4(1.0))
+                      : texture(uRoughnessTex, uv);
+        roughness *= channelOf(texel, uRoughnessChannel) * uRoughnessTexScale + uRoughnessTexBias;
     }
     if (uHasEmissiveTex) {
         vec2 uv = xformUv(uUvSet.w == 1 ? vUV1 : vUV, uEmissiveUv0, uEmissiveUv1);
@@ -703,8 +715,14 @@ void main() {
         vec3 irr = texture(uIrradianceMap, Ne).rgb;
         float lod = clamp(roughness, 0.0, 1.0) * float(uPrefilteredLods - 1);
         vec3 pref = textureLod(uPrefilteredMap, Re, lod).rgb;
-        vec2 dfg = texture(uBrdfLut, vec2(max(dot(Nf, V), 0.0),
-                                          clamp(roughness, 0.0, 1.0))).rg;
+        // Analytic split-sum approximation keeps the GL 3.3 fragment sampler
+        // count within the guaranteed 16 after adding independent roughness.
+        float NoV = max(dot(Nf, V), 0.0);
+        float rr = clamp(roughness, 0.0, 1.0);
+        vec4 r = rr * vec4(-1.0, -0.0275, -0.572, 0.022) +
+                 vec4(1.0, 0.0425, 1.04, -0.04);
+        float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
+        vec2 dfg = vec2(-1.04, 1.04) * a004 + r.zw;
         vec3 F0 = computeF0(baseColor, metallic);
         ambient = (baseColor * (1.0 - metallic) * irr +
                    pref * (F0 * dfg.x + dfg.y)) * uIblColor;

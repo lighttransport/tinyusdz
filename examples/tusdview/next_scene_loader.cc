@@ -2164,9 +2164,8 @@ void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp,
 }
 
 // Convert a bound material prim into a DrawMaterialCPU appended to `draw`, and
-// return its index (>=1). Phase 1 baked PBR constants (base color, metallic,
-// roughness, emissive, alpha) + Phase 2 textures (base color, emissive, normal,
-// metal/rough). GeomSubset per-face materials and skinning remain follow-ups.
+// return its index (>=1). Bakes PBR constants and independent base-color,
+// metallic, roughness, emissive, normal, and opacity texture semantics.
 // Reuses tusdview's own BakeLightRtOpenPBR so the --next path shades materials
 // through the same path the legacy loader uses. Returns -1 if the prim has no
 // usable surface shader (caller then keeps the default gray material, index 0).
@@ -2245,9 +2244,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
           dm.normalSample.bias[2] = -1.0f;
     }
   };
-  // Pack metallic/roughness into the single metalRough slot. Roughness wins the
-  // slot; a separate metallic texture is approximated onto the same slot (a
-  // known Phase-2 limitation for non-packed ORM inputs).
+  // Metallic and roughness are independent slots. Packed ORM inputs naturally
+  // alias the same DrawTextureCPU while retaining their channel and UV metadata.
   auto loadMetalRough = [&](const tydn::ShaderParam& metallic,
                             const tydn::ShaderParam& roughness) {
     // Per-channel value scale/bias for a scalar texture: the sampled channel's
@@ -2258,14 +2256,14 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     if (roughness.texture_id >= 0) {
       int t = LoadNextTexture(texCache, draw, scratch, roughness.texture_id, false);
       if (t >= 0) {
-        dm.metalRoughTex = t;
+        dm.roughnessTex = t;
         dm.roughness = 1.0f;
         const tydn::RenderTexture& rt =
             scratch.textures[static_cast<size_t>(roughness.texture_id)];
         dm.roughnessChannel = NextScalarChannel(rt.output_channel);
         channelScaleBias(rt, dm.roughnessChannel, &dm.roughnessTexScale,
                          &dm.roughnessTexBias);
-        FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
+        FillNextSample(rt, &dm.roughnessSample, uv0Name, uv1Name);
       }
     }
     if (metallic.texture_id >= 0) {
@@ -2273,10 +2271,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
       if (t >= 0) {
         const tydn::RenderTexture& rt =
             scratch.textures[static_cast<size_t>(metallic.texture_id)];
-        if (dm.metalRoughTex < 0) {
-          dm.metalRoughTex = t;
-          FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
-        }
+        dm.metallicTex = t;
+        FillNextSample(rt, &dm.metallicSample, uv0Name, uv1Name);
         dm.metallic = 1.0f;
         dm.metallicChannel = NextScalarChannel(rt.output_channel);
         channelScaleBias(rt, dm.metallicChannel, &dm.metallicTexScale,

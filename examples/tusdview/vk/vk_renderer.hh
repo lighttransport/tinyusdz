@@ -118,18 +118,18 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory influenceDataMem{VK_NULL_HANDLE};
     VkDescriptorSet influenceDesc{VK_NULL_HANDLE};
     // GPU blendshape morph (raster): per-vertex (offset,count) attribute (binding 6,
-    // loc 8) + a static delta SSBO (set 7) + a tiny per-frame coefficient SSBO (set
-    // 8, persistently mapped). hasMorph gates it; non-morph meshes bind dummy sets.
+    // loc 8) plus delta/coefficient/channel SSBOs in deform set 1. hasMorph gates
+    // it; non-morph meshes bind dummy buffers.
     VkBuffer morphOffsetVbo{VK_NULL_HANDLE};     // binding 6: uvec2 (offset,count)
     VkDeviceMemory morphOffsetVboMem{VK_NULL_HANDLE};
-    VkBuffer morphDeltaBuf{VK_NULL_HANDLE};       // set 7 SSBO (vec4: chId,dx,dy,dz)
+    VkBuffer morphDeltaBuf{VK_NULL_HANDLE};       // set 1/binding 2 SSBO
     VkDeviceMemory morphDeltaMem{VK_NULL_HANDLE};
     VkDescriptorSet morphDeltaDesc{VK_NULL_HANDLE};
-    VkBuffer morphCoeffBuf{VK_NULL_HANDLE};       // set 8 SSBO (float/channel, dynamic)
+    VkBuffer morphCoeffBuf{VK_NULL_HANDLE};       // set 1/binding 3 SSBO
     VkDeviceMemory morphCoeffMem{VK_NULL_HANDLE};
     VkDescriptorSet morphCoeffDesc{VK_NULL_HANDLE};
     void* morphCoeffMapped{nullptr};
-    VkBuffer morphChanBuf{VK_NULL_HANDLE};         // set 9 SSBO (uint channelId/entry)
+    VkBuffer morphChanBuf{VK_NULL_HANDLE};         // set 1/binding 4 SSBO
     VkDeviceMemory morphChanMem{VK_NULL_HANDLE};
     VkDescriptorSet morphChanDesc{VK_NULL_HANDLE};
     int morphChannelCount{0};
@@ -183,9 +183,17 @@ class VulkanRenderer final : public Renderer {
     VkBuffer faceBuf{VK_NULL_HANDLE};        // per-triangle source face id (uint[])
     VkDeviceMemory faceMem{VK_NULL_HANDLE};
     VkDeviceAddress faceAddr{0};             // RT source-face-id AOV
+    // Optional per-triangle material ids for GeomSubset meshes. Single-material
+    // meshes keep this null and use matId directly in the ray-query shader.
+    VkBuffer triMatBuf{VK_NULL_HANDLE};
+    VkDeviceMemory triMatMem{VK_NULL_HANDLE};
+    VkDeviceAddress triMatAddr{0};
     VkDeviceAddress jointAddr{0};            // RT skin-weights AOV (joint ids)
     VkDeviceAddress weightAddr{0};           // RT skin-weights AOV (weights)
     VkDescriptorSet faceDesc{VK_NULL_HANDLE}; // raster source-face-id (set 3); else dummy
+    // Consolidated raster set 1: bones, extended influences, morph buffers,
+    // displayColor and source-face ids. Replaces seven separately-bound sets.
+    VkDescriptorSet deformDesc{VK_NULL_HANDLE};
     bool geometricNormal{false};            // no authored normals -> geometric face normal
     bool doubleSided{false};                // double-sided AOV flag
     int purposeId{0};                       // purpose AOV: 0=default/1=render/2=proxy/3=guide
@@ -272,6 +280,10 @@ class VulkanRenderer final : public Renderer {
   bool createLinePipeline(std::string* err);
   bool createSampler(std::string* err);
   bool createDescriptorInfra(std::string* err);
+  VkDescriptorSet allocDeformDescriptor(const VkMeshGPU& mesh);
+  void refreshDeformDescriptors();
+  void updateMaterialDescriptor(size_t materialId);
+  void refreshMaterialDescriptors();
   bool createWhiteTexture(std::string* err);
 
   // --- Ray tracing (ray query) ---
@@ -287,6 +299,8 @@ class VulkanRenderer final : public Renderer {
   bool createDeviceLocalBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                                const void* data, VkBuffer* buf, VkDeviceMemory* mem);
   void destroyBlas(VkMeshGPU& m);
+  bool meshHasAlphaMask(const VkMeshGPU& m) const;
+  bool meshHasBoundMaterial(const VkMeshGPU& m) const;
   void buildBlas(VkMeshGPU& m);
   void refitBlas(VkMeshGPU& m);         // MODE_UPDATE in-place rebuild (dynamic BLAS)
   void buildBoxBlas();                  // shared unit-cube BLAS for LOD box proxies
@@ -492,14 +506,24 @@ class VulkanRenderer final : public Renderer {
   VkDeviceSize highlightLineCap_[kFramesInFlight]{};
   std::vector<HelperVertex> highlightLineCopy_;
   std::vector<uint8_t> meshVisible_;  // per-mesh visibility mask (raster), copied in renderFrame
+  std::vector<uint8_t> rtMeshVisible_;  // persistent user hide/isolate mask for TLAS
 
   // Textures (base color). One combined-image-sampler descriptor per texture,
   // plus a default 1x1 white texture for untextured submeshes.
   VkDescriptorSetLayout texSetLayout_{VK_NULL_HANDLE};
+  // Consolidated raster layouts: set 0 holds all material/IBL samplers; set 1
+  // holds all per-mesh deformation/AOV buffers. Together with frame + material
+  // parameter sets this keeps both mesh pipelines at four bound sets.
+  VkDescriptorSetLayout materialSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool materialPool_{VK_NULL_HANDLE};
+  std::vector<VkDescriptorSet> materialSets_;
+  VkDescriptorSetLayout deformSetLayout_{VK_NULL_HANDLE};
+  VkDescriptorPool deformPool_{VK_NULL_HANDLE};
+  VkDescriptorSet dummyDeformDesc_{VK_NULL_HANDLE};
   VkDescriptorSetLayout skinSetLayout_{VK_NULL_HANDLE};
   VkDescriptorSetLayout influenceSetLayout_{VK_NULL_HANDLE};
-  VkDescriptorSetLayout faceSetLayout_{VK_NULL_HANDLE};  // set 3: source-face-id SSBO
-  // Set 5: global displacement params UBO {scale, maxTessLevel}, read in the
+  VkDescriptorSetLayout faceSetLayout_{VK_NULL_HANDLE};
+  // Raster set 2: global frame/displacement params UBO, read in the
   // vertex + tessellation stages so the UI's displacement-scale and max-tess
   // sliders are live on Vulkan (the push constants are full). One persistently
   // mapped host buffer, written each frame (volume-UBO convention).
@@ -509,7 +533,7 @@ class VulkanRenderer final : public Renderer {
   VkBuffer dispParamsUbo_{VK_NULL_HANDLE};
   VkDeviceMemory dispParamsUboMem_{VK_NULL_HANDLE};
   void* dispParamsMapped_{nullptr};
-  // Set 6: per-material displacement texture scale/bias (2 floats/material, indexed
+  // Raster set 3: per-material texture scale/bias (indexed
   // by pc.matId in the vertex + tess-eval stages). Fixed-capacity host SSBO written
   // per scene; lets the VK viewer center height maps like GL/tusdrender. Push
   // constants are full, so this per-material data needs its own buffer.
@@ -520,7 +544,7 @@ class VulkanRenderer final : public Renderer {
   VkBuffer dispMatSsbo_{VK_NULL_HANDLE};
   VkDeviceMemory dispMatSsboMem_{VK_NULL_HANDLE};
   void* dispMatMapped_{nullptr};
-  // Set 6 of the instanced pipeline: per-draw metadata (meshId + flag bits), one
+  // Set 3 of the instanced pipeline: per-draw metadata (meshId + flag bits), one
   // entry per mesh plus a trailing slot for the shared box proxy. The fragment
   // shader indexes it by (baseDraw + gl_DrawIDARB), so a multi-draw-indirect batch
   // needs no per-draw push. Contents are static per mesh -> (re)built by
@@ -537,7 +561,7 @@ class VulkanRenderer final : public Renderer {
   void ensureDrawMeta();         // rebuild drawMetaBuf_ when meshes_ changes (non-MDI)
   // (Re)create drawMetaBuf_ to hold `meta` and repoint drawMetaSet_ at it. Shared by
   // ensureDrawMeta (per-mesh layout) and buildInstMdi (per-command layout).
-  // Per-draw metadata (set 6), shared by mesh_inst.vert/.frag. `jointAddr` /
+  // Per-draw metadata (set 3), shared by mesh_inst.vert/.frag. `jointAddr` /
   // `weightAddr` are the device addresses of this mesh's per-vertex skin arrays
   // (0 = unskinned): the instanced vertex shader fetches them by gl_VertexIndex
   // rather than through vertex-input state, so the merged multi-draw path needs
@@ -613,7 +637,7 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorPool influencePool_{VK_NULL_HANDLE};
   VkDescriptorPool facePool_{VK_NULL_HANDLE};
   // Shared 1-element dummy face buffer + descriptor, bound when a mesh has no
-  // source-face data (or on pool overflow), so set 3 is always present.
+  // source-face data (or on pool overflow).
   VkBuffer dummyFaceBuf_{VK_NULL_HANDLE};
   VkDeviceMemory dummyFaceMem_{VK_NULL_HANDLE};
   VkDescriptorSet dummyFaceDesc_{VK_NULL_HANDLE};
@@ -648,9 +672,9 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory whiteMem_{VK_NULL_HANDLE};
   VkImageView whiteView_{VK_NULL_HANDLE};
   VkDescriptorSet whiteDesc_{VK_NULL_HANDLE};
-  // Black 1x1 (red=0) bound to set 4 when a submesh has no displacement (or
-  // displacement is globally off): the vertex shader always samples set 4 and
-  // displaces by red, so black = no displacement (no push-constant lane needed).
+  // Black 1x1 (red=0) bound to material binding 16 when a submesh has no
+  // displacement. The vertex shader always samples it, so black means no
+  // displacement (no push-constant lane needed).
   VkImage blackImg_{VK_NULL_HANDLE};
   VkDeviceMemory blackMem_{VK_NULL_HANDLE};
   VkImageView blackView_{VK_NULL_HANDLE};
@@ -668,6 +692,8 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkImageView> texViews_;
   std::vector<VkDescriptorSet> texDescs_;
   std::vector<VkDescriptorSet> texUdimArrayDescs_;
+  std::vector<VkImageView> texSlotViews_;
+  std::vector<VkImageView> texUdimArrayViews_;
   std::vector<uint8_t> texIsUdim_;
   VkImage udimLutAtlasImg_{VK_NULL_HANDLE};
   VkDeviceMemory udimLutAtlasMem_{VK_NULL_HANDLE};
@@ -675,7 +701,8 @@ class VulkanRenderer final : public Renderer {
   VkDescriptorSet udimLutAtlasDesc_{VK_NULL_HANDLE};
   int udimLutAtlasRows_{0};
   std::vector<int> matBaseTex_;  // per material: DrawScene texture index or -1
-  std::vector<int> matMetalRoughTex_;  // per material: DrawScene texture index or -1
+  std::vector<int> matMetallicTex_;    // per material: DrawScene texture index or -1
+  std::vector<int> matRoughnessTex_;
   std::vector<int> matNormalTex_;      // per material: DrawScene texture index or -1
   std::vector<int> matEmissiveTex_;    // per material: DrawScene texture index or -1
   std::vector<int> matOpacityTex_;     // scalar opacity texture index or -1
@@ -708,6 +735,11 @@ class VulkanRenderer final : public Renderer {
   std::vector<float> matColor_;    // 3 vec4 per material: preview subset
   std::vector<float> matLightRt_;  // 14 vec4 per material: LightRT/OpenPBR block
   std::vector<float> lightParams_;  // packed DrawLightCPU params
+  // CPU copies retained for the backend-neutral RT texture-table build. Vulkan
+  // raster uploads images immediately, while ray query consumes decoded RGBA8
+  // texels and semantic material slots from storage buffers.
+  std::vector<DrawMaterialCPU> rtMaterialsCpu_;
+  std::vector<DrawTextureCPU> rtTexturesCpu_;
 
   // Last frame parameters (copied; caller's pointers are transient)
   bool hasParams_{false};
@@ -779,6 +811,14 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory rtMatLightRtMem_{VK_NULL_HANDLE};
   VkBuffer rtLightBuf_{VK_NULL_HANDLE};        // packed DrawLightCPU params
   VkDeviceMemory rtLightMem_{VK_NULL_HANDLE};
+  VkBuffer rtTexelBuf_{VK_NULL_HANDLE};         // packed RGBA8 texels (uint[])
+  VkDeviceMemory rtTexelMem_{VK_NULL_HANDLE};
+  VkBuffer rtTexDescBuf_{VK_NULL_HANDLE};       // HostTextureDesc[]
+  VkDeviceMemory rtTexDescMem_{VK_NULL_HANDLE};
+  VkBuffer rtMatTexBuf_{VK_NULL_HANDLE};        // six texture ids/material
+  VkDeviceMemory rtMatTexMem_{VK_NULL_HANDLE};
+  VkBuffer rtMatTexParamBuf_{VK_NULL_HANDLE};   // 72 floats/material
+  VkDeviceMemory rtMatTexParamMem_{VK_NULL_HANDLE};
   VkDeviceSize rtMatCap_{0};
   VkBuffer instInfoBuf_{VK_NULL_HANDLE};    // per-TLAS-instance {meshId, tint} (binding 4)
   VkDeviceMemory instInfoMem_{VK_NULL_HANDLE};

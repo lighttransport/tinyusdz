@@ -2,6 +2,7 @@
 #include "lightrt_mtlx_bridge.hh"
 #include "rt_scene_build.hh"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -61,7 +62,8 @@ int main() {
   mat.params.push_back(FloatParam("opacity", 0.65f));
   tusdview::BakeLightRtOpenPBR(&mat);
   mat.baseColorSample.uv = {1.0f, 0.1f, 0.2f, 0.9f, 0.3f, 0.4f};
-  mat.metalRoughSample.uv = {0.5f, 0.0f, 0.0f, 0.5f, 0.1f, 0.2f};
+  mat.metallicSample.uv = {0.5f, 0.0f, 0.0f, 0.5f, 0.1f, 0.2f};
+  mat.roughnessSample.uv = mat.metallicSample.uv;
   mat.normalSample.uv = {1.0f, 0.0f, 0.0f, 1.0f, 0.7f, 0.8f};
   mat.emissiveSample.uv = {0.25f, 0.0f, 0.0f, 0.25f, 0.2f, 0.3f};
   mat.displacementUv = {2.0f, 0.0f, 0.0f, 2.0f, -0.5f, 0.5f};
@@ -124,6 +126,48 @@ int main() {
     std::fprintf(stderr, "BuildHostScene failed: %s\n", err.c_str());
     return 1;
   }
+
+  // CUDA and HIP upload HostScene::mat verbatim. Keep a focused assertion that
+  // two GeomSubset-style EBO ranges survive BVH leaf reordering as two distinct
+  // per-triangle material ids.
+  {
+    tusdview::DrawScene subsetScene;
+    subsetScene.materials.resize(2);
+    tusdview::DrawMeshCPU subsetMesh = mesh;
+    subsetMesh.vertices.resize(6);
+    for (size_t i = 0; i < 3; ++i) {
+      subsetMesh.vertices[i + 3] = subsetMesh.vertices[i];
+      subsetMesh.vertices[i + 3].px += 2.0f;
+    }
+    subsetMesh.indices = {0, 1, 2, 3, 4, 5};
+    subsetMesh.vertexAlpha.clear();
+    subsetMesh.submeshes.clear();
+    tusdview::DrawSubmesh left;
+    left.indexCount = 3;
+    left.materialId = 0;
+    subsetMesh.submeshes.push_back(left);
+    tusdview::DrawSubmesh right;
+    right.indexOffset = 3;
+    right.indexCount = 3;
+    right.materialId = 1;
+    subsetMesh.submeshes.push_back(right);
+    subsetScene.meshes.push_back(std::move(subsetMesh));
+
+    tusdview::HostScene subsetHost;
+    std::string subsetErr;
+    if (!tusdview::BuildHostScene(subsetScene, 0, 0, 0.0f, &subsetHost,
+                                  &subsetErr)) {
+      std::fprintf(stderr, "GeomSubset HostScene build failed: %s\n",
+                   subsetErr.c_str());
+      return 1;
+    }
+    std::sort(subsetHost.mat.begin(), subsetHost.mat.end());
+    if (subsetHost.mat != std::vector<int>({0, 1})) {
+      std::fprintf(stderr,
+                   "GeomSubset material ids were not preserved per triangle\n");
+      return 1;
+    }
+  }
   if (host.matLightRt.size() < tusdview::kLightRtOpenPBRFloats) {
     std::fprintf(stderr, "matLightRt was not packed\n");
     return 1;
@@ -156,10 +200,11 @@ int main() {
     }
   }
   if (!Near(directTexPack[0], 1.0f) || !Near(directTexPack[2], 0.3f) ||
-      !Near(directTexPack[5], 0.4f) || !Near(directTexPack[32], 1.0f) ||
-      !Near(directTexPack[33], 2.0f) || !Near(directTexPack[37], -1.0f) ||
-      !Near(directTexPack[48], 0.0f) || !Near(directTexPack[49], 3.0f) ||
-      !Near(directTexPack[50], 0.6f) || !Near(directTexPack[53], 0.15f)) {
+      !Near(directTexPack[5], 0.4f) || !Near(directTexPack[44], 1.0f) ||
+      !Near(directTexPack[45], 2.0f) || !Near(directTexPack[49], -1.0f) ||
+      !Near(directTexPack[60], 0.0f) || !Near(directTexPack[63], 3.0f) ||
+      !Near(directTexPack[61], 0.6f) || !Near(directTexPack[65], 0.15f) ||
+      !Near(directTexPack[66], 2.0f) || !Near(directTexPack[68], 0.1f)) {
     std::fprintf(stderr, "unexpected RT texture-param packing\n");
     return 1;
   }
