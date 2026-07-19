@@ -56,11 +56,14 @@ int main() {
   mat.params.push_back(FloatParam("specular_roughness", 0.35f));
   mat.params.push_back(FloatParam("specular_ior", 1.6f));
   mat.params.push_back(FloatParam("coat_weight", 0.3f));
+  mat.params.push_back(Vec3Param("coat_color", 0.7f, 0.8f, 0.9f));
   mat.params.push_back(FloatParam("coat_roughness", 0.2f));
+  mat.params.push_back(FloatParam("coat_ior", 1.4f));
   mat.params.push_back(FloatParam("emission_luminance", 2.0f));
   mat.params.push_back(Vec3Param("emission_color", 0.1f, 0.2f, 0.3f));
   mat.params.push_back(FloatParam("opacity", 0.65f));
   tusdview::BakeLightRtOpenPBR(&mat);
+  mat.occlusion = 0.65f;
   mat.baseColorSample.uv = {1.0f, 0.1f, 0.2f, 0.9f, 0.3f, 0.4f};
   mat.metallicSample.uv = {0.5f, 0.0f, 0.0f, 0.5f, 0.1f, 0.2f};
   mat.roughnessSample.uv = mat.metallicSample.uv;
@@ -220,7 +223,14 @@ int main() {
       !Near(directRasterTexPack[22 * 4 + 1], 0.8f) ||
       !Near(directRasterTexPack[22 * 4 + 2], 0.1f) ||
       !Near(directRasterTexPack[22 * 4 + 3], 1.0f) ||
-      !Near(directRasterTexPack[24 * 4 + 0], 7.0f)) {
+      !Near(directRasterTexPack[24 * 4 + 0], 7.0f) ||
+      !Near(directRasterTexPack[27 * 4 + 0], 0.3f) ||
+      !Near(directRasterTexPack[27 * 4 + 1], 0.2f) ||
+      !Near(directRasterTexPack[27 * 4 + 2], 1.4f) ||
+      !Near(directRasterTexPack[27 * 4 + 3], 0.65f) ||
+      !Near(directRasterTexPack[28 * 4 + 0], 0.7f) ||
+      !Near(directRasterTexPack[28 * 4 + 1], 0.8f) ||
+      !Near(directRasterTexPack[28 * 4 + 2], 0.9f)) {
     std::fprintf(stderr, "unexpected raster texture-param packing\n");
     return 1;
   }
@@ -718,6 +728,59 @@ int main() {
       !Near(normalGraphMat.lightRtOpenPBR.normal[2], 1.0f)) {
     std::fprintf(stderr,
                  "MaterialX normalmap default was incorrectly constant-baked\n");
+    return 1;
+  }
+
+  // The shared RT texture table must retain complete RGBA mip chains as
+  // consecutive descriptors so Vulkan, CUDA, and HIP use the same trilinear
+  // sampling ABI.
+  tusdview::DrawTextureCPU mipTexture;
+  mipTexture.image.width = 4;
+  mipTexture.image.height = 4;
+  mipTexture.image.channels = 4;
+  mipTexture.image.data.assign(4 * 4 * 4, 255);
+  light3d::Image mip2;
+  mip2.width = 2;
+  mip2.height = 2;
+  mip2.channels = 4;
+  mip2.data.assign(2 * 2 * 4, 128);
+  light3d::Image mip1;
+  mip1.width = 1;
+  mip1.height = 1;
+  mip1.channels = 4;
+  mip1.data.assign(4, 64);
+  mipTexture.mipImages = {mip2, mip1};
+  tusdview::DrawMaterialCPU mipMaterial;
+  mipMaterial.baseColorTex = 0;
+  tusdview::HostTextureTable mipTable;
+  tusdview::BuildHostTextureTable({mipTexture}, {mipMaterial}, &mipTable);
+  if (mipTable.textures.size() != 3 || mipTable.texels.size() != 84 ||
+      mipTable.sourceToTable.size() != 1 || mipTable.sourceToTable[0] != 0 ||
+      mipTable.matTex.empty() || mipTable.matTex[0] != 0 ||
+      mipTable.textures[0].mipCount != 3 ||
+      mipTable.textures[0].firstMip != 1 ||
+      mipTable.textures[1].mipCount != 2 ||
+      mipTable.textures[1].firstMip != 2 ||
+      mipTable.textures[2].mipCount != 1 ||
+      mipTable.textures[2].firstMip != -1) {
+    std::fprintf(stderr, "shared RT mip-chain packing is incorrect\n");
+    return 1;
+  }
+  tusdview::DrawTextureCPU udimTexture;
+  udimTexture.isUdim = true;
+  tusdview::DrawUdimTileCPU tile;
+  tile.udim = 1001;
+  tile.image = mipTexture.image;
+  tile.mipImages = mipTexture.mipImages;
+  udimTexture.udimTiles.push_back(std::move(tile));
+  tusdview::HostTextureTable udimTable;
+  tusdview::BuildHostTextureTable({udimTexture}, {mipMaterial}, &udimTable);
+  if (udimTable.textures.size() != 4 ||
+      udimTable.textures[0].isUdim != 1 ||
+      udimTable.textures[0].udimLayer[0] != 1 ||
+      udimTable.textures[1].mipCount != 3 ||
+      udimTable.textures[1].firstMip != 2) {
+    std::fprintf(stderr, "shared RT UDIM mip-chain packing is incorrect\n");
     return 1;
   }
 

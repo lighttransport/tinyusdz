@@ -984,6 +984,15 @@ def Xform "World"
             color3f inputs:base_color.connect = </World/OpenPBRMat/NG.outputs:out>
             float inputs:base_metalness = 0.8
             float inputs:base_roughness = 0.35
+            float inputs:specular_anisotropy = 0.11
+            float inputs:specular_roughness_anisotropy = 0.12
+            float inputs:transmission_dispersion = 0.13
+            float inputs:transmission_dispersion_scale = 0.14
+            float inputs:coat_anisotropy = 0.15
+            float inputs:coat_roughness_anisotropy = 0.16
+            float inputs:thin_film_weight = 0.17
+            float inputs:thin_film_thickness = 450
+            float inputs:thin_film_ior = 1.7
             float inputs:geometry_opacity.connect = </World/OpenPBRMat/NG.outputs:opacity>
             token outputs:surface
         }
@@ -1109,6 +1118,20 @@ def Xform "World"
   assert(std::abs(openpbr.openpbr->base_color.value.z - 0.9f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_metalness.value.x - 0.8f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_roughness.value.x - 0.35f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->specular_anisotropy.value.x - 0.11f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->specular_roughness_anisotropy.value.x -
+                  0.12f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->transmission_dispersion.value.x - 0.13f) <
+         0.001f);
+  assert(std::abs(openpbr.openpbr->transmission_dispersion_scale.value.x -
+                  0.14f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->coat_anisotropy.value.x - 0.15f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->coat_roughness_anisotropy.value.x - 0.16f) <
+         0.001f);
+  assert(std::abs(openpbr.openpbr->thin_film_weight.value.x - 0.17f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->thin_film_thickness.value.x - 450.0f) <
+         0.001f);
+  assert(std::abs(openpbr.openpbr->thin_film_ior.value.x - 1.7f) < 0.001f);
   assert(openpbr.openpbr->opacity.is_texture());
   assert(openpbr.alpha_mode == RenderMaterial::AlphaMode::Blend);
   const int32_t opacity_texture_id = openpbr.openpbr->opacity.texture_id;
@@ -2442,9 +2465,12 @@ def Xform "World"
         int[] curveVertexCounts = [3, 2]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0),
                             (2, 0, 0), (2, 1, 0)]
-        float[] widths = [0.1, 0.2, 0.3, 0.4, 0.5]
+        float[] widths = [0.1, 0.6]
         color3f[] primvars:displayColor = [(0.25, 0.5, 0.75)] (
             interpolation = "constant"
+        )
+        float[] primvars:displayOpacity = [0.1, 0.3, 0.5, 0.7, 0.9] (
+            interpolation = "vertex"
         )
     }
 
@@ -2626,9 +2652,19 @@ def Xform "World"
   assert(linear.tessellated_vertex_counts ==
          std::vector<uint32_t>({3, 2}));
   assert(linear.tessellated_widths.size() == 5);
+  assert(linear.widths_interp == Interpolation::Uniform);
+  assert(std::fabs(linear.tessellated_widths[0] - 0.1f) < 0.001f);
+  assert(std::fabs(linear.tessellated_widths[2] - 0.1f) < 0.001f);
+  assert(std::fabs(linear.tessellated_widths[3] - 0.6f) < 0.001f);
+  assert(std::fabs(linear.tessellated_widths[4] - 0.6f) < 0.001f);
   assert(linear.colors.size() == 3);
   assert(linear.colors_interp == Interpolation::Constant);
   assert(linear.tessellated_colors.size() == 15);
+  assert(linear.opacities.size() == 5);
+  assert(linear.opacities_interp == Interpolation::Vertex);
+  assert(linear.tessellated_opacities.size() == 5);
+  assert(std::fabs(linear.tessellated_opacities[0] - 0.1f) < 0.001f);
+  assert(std::fabs(linear.tessellated_opacities[4] - 0.9f) < 0.001f);
   assert(linear.has_bbox);
 
   const RenderCurves& bezier = curve("/World/Bezier");
@@ -2767,6 +2803,9 @@ def Xform "Root"
         color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1)] (
             interpolation = "vertex"
         )
+        float[] primvars:displayOpacity = [0.2, 0.6, 1] (
+            interpolation = "vertex"
+        )
     }
     def Volume "Fog" {}
 }
@@ -2877,6 +2916,10 @@ def Xform "Root"
   assert(pts.widths.size() == 3);
   assert(pts.colors.size() == 9);
   assert(pts.colors_interp == Interpolation::Vertex);
+  assert(pts.opacities.size() == 3);
+  assert(pts.opacities_interp == Interpolation::Vertex);
+  assert(std::fabs(pts.opacities[0] - 0.2f) < 0.001f);
+  assert(std::fabs(pts.opacities[2] - 1.0f) < 0.001f);
   assert(pts.has_bbox);
   assert(std::fabs(pts.bbox_min.x + 1.0f) < 0.001f);
   assert(std::fabs(pts.bbox_max.y - 2.0f) < 0.001f);
@@ -3319,6 +3362,10 @@ def Xform "World"
         asset inputs:texture:file = @sky.exr@
         token inputs:texture:format = "latlong"
     }
+    def RectLight "DefaultRect" {}
+    def DiskLight "DefaultDisk" {}
+    def CylinderLight "DefaultCylinder" {}
+    def DistantLight "DefaultDistant" {}
 }
 )";
 
@@ -3348,12 +3395,20 @@ def Xform "World"
   const RenderLight* key = nullptr;
   const RenderLight* fill = nullptr;
   const RenderLight* sky = nullptr;
+  const RenderLight* rect = nullptr;
+  const RenderLight* disk = nullptr;
+  const RenderLight* cylinder = nullptr;
+  const RenderLight* distant = nullptr;
   for (const RenderLight& light : result.scene.lights) {
     if (light.prim_path == "/World/KeyLight") key = &light;
     if (light.prim_path == "/World/FillLight") fill = &light;
     if (light.prim_path == "/World/Sky") sky = &light;
+    if (light.prim_path == "/World/DefaultRect") rect = &light;
+    if (light.prim_path == "/World/DefaultDisk") disk = &light;
+    if (light.prim_path == "/World/DefaultCylinder") cylinder = &light;
+    if (light.prim_path == "/World/DefaultDistant") distant = &light;
   }
-  assert(key && fill && sky);
+  assert(key && fill && sky && rect && disk && cylinder && distant);
 
   // KeyLight: lightLink includes /World/Props subtree minus Barrel.
   assert(!key->light_links_all);
@@ -3372,6 +3427,15 @@ def Xform "World"
   assert(sky->type == LightType::Dome);
   assert(sky->params.dome.texture_format ==
          RenderLight::DomeTextureFormat::Latlong);
+  // Schema defaults must be initialized even when no size attribute is
+  // authored; zero-area defaults break normalize and raster/RT parity.
+  assert(std::fabs(key->params.sphere.radius - 0.5f) < 0.001f);
+  assert(std::fabs(rect->params.rect.width - 1.0f) < 0.001f);
+  assert(std::fabs(rect->params.rect.height - 1.0f) < 0.001f);
+  assert(std::fabs(disk->params.disk.radius - 0.5f) < 0.001f);
+  assert(std::fabs(cylinder->params.cylinder.radius - 0.5f) < 0.001f);
+  assert(std::fabs(cylinder->params.cylinder.length - 1.0f) < 0.001f);
+  assert(std::fabs(distant->params.distant.angle - 0.53f) < 0.001f);
 
   std::cout << "  Light linking + dome texture format: PASSED\n";
 }

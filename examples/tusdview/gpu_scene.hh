@@ -370,6 +370,13 @@ struct DrawMaterialCPU {
   bool useSpecularWorkflow{false};
   float specularColor[3]{0.0f, 0.0f, 0.0f};
   float ior{1.5f};
+  // Real-time PBR core shared by raster and RT. These are populated from the
+  // full LightRT/OpenPBR fallback even when the source is UsdPreviewSurface.
+  float occlusion{1.0f};
+  float coatWeight{0.0f};
+  float coatColor[3]{1.0f, 1.0f, 1.0f};
+  float coatRoughness{0.1f};
+  float coatIor{1.5f};
   // Indices into DrawScene::textures (-1 = no texture)
   int baseColorTex{-1};
   // Keep metallic and roughness independent. They may alias the same packed
@@ -603,8 +610,46 @@ struct DrawLightCPU {
   bool hasSpectralEmission{false};
 };
 
+// Render-ready non-mesh geometry retained from the next-core converter. These
+// carriers deliberately preserve world-space placement and authored/tessellated
+// attributes instead of prematurely expanding them into camera-dependent mesh
+// proxies; raster backends consume them as billboards/ribbons and RT backends
+// build their solid proxy geometry from the same records.
+struct DrawPointsCPU {
+  std::string name;
+  std::string absPath;
+  std::string purpose{"default"};
+  std::vector<float> points;   // local xyz
+  std::vector<float> widths;   // empty, constant, or per-point
+  std::vector<float> colors;   // empty, constant rgb, or per-point rgb
+  std::vector<float> opacities;  // empty, constant, or per-point
+  int colorsInterpolation{0};
+  int opacitiesInterpolation{0};
+  int materialId{-1};
+  float world[16]{};            // column-major local-to-world
+  float aabbMin[3]{0, 0, 0};
+  float aabbMax[3]{0, 0, 0};
+};
+
+struct DrawCurvesCPU {
+  std::string name;
+  std::string absPath;
+  std::string purpose{"default"};
+  std::vector<uint32_t> vertexCounts;  // tessellated polyline counts
+  std::vector<float> points;           // tessellated local xyz
+  std::vector<float> widths;           // empty, constant, or per-point
+  std::vector<float> colors;           // empty or per-point rgb
+  std::vector<float> opacities;        // empty, constant, or per-point
+  int materialId{-1};
+  float world[16]{};                    // column-major local-to-world
+  float aabbMin[3]{0, 0, 0};
+  float aabbMax[3]{0, 0, 0};
+};
+
 struct DrawScene {
   std::vector<DrawMeshCPU> meshes;
+  std::vector<DrawPointsCPU> points;
+  std::vector<DrawCurvesCPU> curves;
   std::vector<DrawMaterialCPU> materials;
   std::vector<DrawTextureCPU> textures;
   std::vector<DrawVolumeCPU> volumes;  // UsdVol volumes (OpenVDB)
@@ -659,7 +704,10 @@ struct DrawScene {
   // partially built to avoid freezing / VRAM thrashing.
   bool truncated{false};
 
-  bool empty() const { return meshes.empty() && volumes.empty() && lights.empty(); }
+  bool empty() const {
+    return meshes.empty() && points.empty() && curves.empty() &&
+           volumes.empty() && lights.empty();
+  }
 };
 
 struct SkinningFrameCPU {

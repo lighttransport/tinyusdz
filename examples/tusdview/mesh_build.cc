@@ -1956,6 +1956,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
     }
     // else: leave default gray.
     BakeLightRtOpenPBR(&dm);
+    DiagnoseUnsupportedRealtimeLobes(dm, out);
     out->materials.push_back(std::move(dm));
   }
 }
@@ -2191,6 +2192,20 @@ void BuildDrawLights(const tydra::RenderScene& rs, DrawScene* out,
     dst.shadowLinkMeshIndices = src.shadow_link_mesh_indices;
     dst.hasSpectralEmission = src.hasSpectralEmission();
     BakeLightDerivedParams(&dst);
+    if (dst.type == DrawLightCPU::Type::Geometry) {
+      out->skipped.push_back(
+          "GeometryLight '" + dst.absPath +
+          "': emissive-mesh light sampling is not implemented");
+    } else if (dst.type == DrawLightCPU::Type::Portal) {
+      out->skipped.push_back(
+          "PortalLight '" + dst.absPath +
+          "': portal-guided environment sampling is not implemented");
+    }
+    if (!dst.shapingIesFile.empty()) {
+      out->skipped.push_back(
+          "Light '" + dst.absPath +
+          "': IES profile evaluation is not implemented");
+    }
     out->lights.push_back(std::move(dst));
   }
 }
@@ -2846,6 +2861,51 @@ bool OverBudget(const DrawScene& out, size_t cumulativeVertexBytes,
 // light's (reversed) direction, else the first finite light's direction from
 // the scene center, else a fixed fallback. Public so the `next` loader (which
 // builds its own DrawScene) can apply the same derivation.
+void DiagnoseUnsupportedRealtimeLobes(const DrawMaterialCPU& material,
+                                      DrawScene* draw) {
+  if (!draw) return;
+  constexpr float kAuthoredEpsilon = 1.0e-6f;
+  std::vector<std::string> lobes;
+  auto add = [&](const char* name) {
+    if (std::find(lobes.begin(), lobes.end(), name) == lobes.end()) {
+      lobes.emplace_back(name);
+    }
+  };
+  if (material.hasLightRtOpenPBR) {
+    const DrawLightRtOpenPBRCPU& p = material.lightRtOpenPBR;
+    if (p.transmission > kAuthoredEpsilon) add("transmission");
+    if (p.subsurface > kAuthoredEpsilon) add("subsurface");
+    if (p.sheenWeight > kAuthoredEpsilon) add("sheen/fuzz");
+    if (p.thinFilmWeight > kAuthoredEpsilon) add("thin-film");
+  }
+  for (const DrawMaterialParamCPU& param : material.params) {
+    const float v = param.value[0];
+    if ((param.name == "specular_anisotropy" ||
+         param.name == "specular_roughness_anisotropy" ||
+         param.name == "coat_anisotropy" ||
+         param.name == "coat_roughness_anisotropy") &&
+        std::fabs(v) > kAuthoredEpsilon) {
+      add("anisotropy");
+    }
+    if ((param.name == "transmission_dispersion" ||
+         param.name == "transmission_dispersion_scale") &&
+        std::fabs(v) > kAuthoredEpsilon) {
+      add("dispersion");
+    }
+  }
+  if (material.hasVolumeOutput) add("volume");
+  if (lobes.empty()) return;
+
+  std::string message = "material '" + material.absPath +
+                        "': unsupported real-time lobes: ";
+  for (size_t i = 0; i < lobes.size(); ++i) {
+    if (i) message += ", ";
+    message += lobes[i];
+  }
+  message += "; supported inputs remain active";
+  draw->skipped.push_back(std::move(message));
+}
+
 LoadDiagnostics CategorizeLoadWarnings(
     const std::string& warn_blob, const std::vector<std::string>& skipped) {
   LoadDiagnostics d;
@@ -2874,6 +2934,8 @@ LoadDiagnostics CategorizeLoadWarnings(
     } else if (contains(l, "Unsupported node type") ||
                contains(l, "unsupported MaterialX node")) {
       bucket = &d.unsupported_mtlx;
+    } else if (contains(l, "unsupported real-time lobes:")) {
+      bucket = &d.unsupported_lobes;
     } else if (contains(l, "failed to load texture") ||
                contains(l, "Failed to load texture") ||
                contains(l, "Failed to load image") ||
@@ -2896,6 +2958,8 @@ LoadDiagnostics CategorizeLoadWarnings(
       ++d.degraded_material;
     } else if (contains(s, "unsupported MaterialX node")) {
       ++d.unsupported_mtlx;
+    } else if (contains(s, "unsupported real-time lobes:")) {
+      ++d.unsupported_lobes;
     } else {
       ++d.skipped;
     }

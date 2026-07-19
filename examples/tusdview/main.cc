@@ -216,6 +216,8 @@ int main(int argc, char** argv) {
   bool showGrid = true;                    // --no-grid: deterministic clean capture
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--next)
+  tusdview::CameraConform cameraConform{tusdview::CameraConform::Fit};
+  bool cameraConformExplicit = false;
   bool viewDirExplicit = false;              // --view-dir: deterministic auto-fit view
   float viewDir[3] = {0.0f, 0.0f, -1.0f};   // normalized eye-to-target direction
   bool noComposition = false;             // --no-composition: root layer only
@@ -361,6 +363,21 @@ int main(int argc, char** argv) {
       camDolly = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
       cameraName = argv[++i];
+    } else if (std::strcmp(argv[i], "--camera-conform") == 0 &&
+               (i + 1) < argc) {
+      cameraConformExplicit = true;
+      const std::string value = argv[++i];
+      if (value == "fit") cameraConform = tusdview::CameraConform::Fit;
+      else if (value == "crop") cameraConform = tusdview::CameraConform::Crop;
+      else if (value == "horizontal")
+        cameraConform = tusdview::CameraConform::Horizontal;
+      else if (value == "vertical")
+        cameraConform = tusdview::CameraConform::Vertical;
+      else if (value == "none") cameraConform = tusdview::CameraConform::None;
+      else {
+        LOGE("--camera-conform must be fit, crop, horizontal, vertical, or none");
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--view-dir") == 0 && (i + 1) < argc) {
       char trailing = '\0';
       const char* value = argv[++i];
@@ -658,6 +675,8 @@ int main(int argc, char** argv) {
           "(0 = auto, 50%%).\n"
           "  --camera NAME Frame a named USD Camera instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
+          "  --camera-conform MODE  Filmback policy: fit, crop, horizontal, "
+          "vertical, or none (default: fit).\n"
           "  --view-dir X,Y,Z  Set the normalized world-space eye-to-target "
           "direction after auto-fit; cannot be combined with --camera.\n"
           "  --select /Prim/Path  Select a prim after loading.\n"
@@ -955,6 +974,17 @@ int main(int argc, char** argv) {
     }
   }
 
+  if (!cameraConformExplicit &&
+      config.status == tusdview::ConfigLoadStatus::Loaded &&
+      config.config.cameraConform) {
+    const std::string& value = *config.config.cameraConform;
+    if (value == "crop") cameraConform = tusdview::CameraConform::Crop;
+    else if (value == "horizontal") cameraConform = tusdview::CameraConform::Horizontal;
+    else if (value == "vertical") cameraConform = tusdview::CameraConform::Vertical;
+    else if (value == "none") cameraConform = tusdview::CameraConform::None;
+    else cameraConform = tusdview::CameraConform::Fit;
+  }
+
   tusdview::App app(backend);
   if (config.status == tusdview::ConfigLoadStatus::Loaded) {
     if (config.config.fontSizePx) app.setFontSize(*config.config.fontSizePx);
@@ -1092,6 +1122,7 @@ int main(int argc, char** argv) {
   app.setLodMaxMemGiB(lodMaxMem);
   app.setLodMaxVramGiB(lodMaxVram);
   app.setCameraName(cameraName);
+  app.setCameraConform(cameraConform);
   if (viewDirExplicit) app.setViewDirection(viewDir[0], viewDir[1], viewDir[2]);
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);

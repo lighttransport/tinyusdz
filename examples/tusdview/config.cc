@@ -163,6 +163,21 @@ bool ParseConfigFile(const fs::path& path, StartupConfig* cfg,
   const json* nav = FindMember(root, {"navigation"});
   const json* navObj = (nav && nav->is_object()) ? nav : &root;
 
+  if (const json* conform =
+          FindMember(root, {"camera_conform", "camera-conform"})) {
+    if (!conform->is_string()) {
+      *err = "camera_conform must be fit, crop, horizontal, vertical, or none";
+      return false;
+    }
+    const std::string value = conform->get<std::string>();
+    if (value != "fit" && value != "crop" && value != "horizontal" &&
+        value != "vertical" && value != "none") {
+      *err = "camera_conform must be fit, crop, horizontal, vertical, or none";
+      return false;
+    }
+    cfg->cameraConform = value;
+  }
+
   if (const json* orbit = FindMember(*navObj, {"orbit_sensitivity", "orbit-sensitivity"})) {
     float v = 0.0f;
     if (!ParsePositiveFloat(*orbit, "orbit_sensitivity", &v, err)) return false;

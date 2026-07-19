@@ -1,0 +1,35 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Material "AdvancedMaterial"
+    {
+        token outputs:surface.connect = </World/AdvancedMaterial/OpenPBR.outputs:surface>
+
+        def Shader "OpenPBR"
+        {
+            uniform token info:id = "OpenPBRSurface"
+            color3f inputs:base_color = (0.3, 0.5, 0.7)
+            float inputs:transmission_weight = 0.2
+            float inputs:subsurface_weight = 0.3
+            float inputs:sheen_weight = 0.4
+            float inputs:thin_film_weight = 0.5
+            float inputs:specular_anisotropy = 0.6
+            float inputs:transmission_dispersion = 0.7
+            token outputs:surface
+        }
+    }
+
+    def Mesh "Panel" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        rel material:binding = </World/AdvancedMaterial>
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1)] (interpolation = "constant")
+        uniform token subdivisionScheme = "none"
+    }
+}

@@ -19,6 +19,8 @@ layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); 0 
 // renderer binds black (red=0) when the submesh has no displacement, so this is an
 // unconditional no-op there -- no push-constant lane is spent on an enable flag.
 layout(set = 0, binding = 16) uniform sampler2D uDisplacementTex;
+struct RasterLight { vec4 positionType; vec4 directionAngle;
+                     vec4 colorDiffuse; vec4 specularShape; };
 // Frame-constant UBO (set 5): disp sliders + camera. The vertex stage derives
 // mvp = viewProj*model and the normal matrix from pc.model, so neither needs a
 // push-constant lane (keeps the push block <= 128 B, the Vulkan minimum).
@@ -30,6 +32,8 @@ layout(set = 2, binding = 0) uniform Frame {
   vec4 sceneExtent;   // .xyz
   vec4 lightDir;
   vec4 lightColor;
+  RasterLight rasterLights[16];
+  uvec4 rasterLightInfo;
   ivec4 mode;         // .x = renderMode
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
@@ -55,6 +59,8 @@ struct MaterialTexParam {
   vec4 udimSlots0;
   vec4 udimSlots1;
   vec4 roughUv0; vec4 roughUv1;
+  vec4 coatParams;
+  vec4 coatColor;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 // Per-vertex displayColor + displayOpacity (set 24): 4 floats per vertex.

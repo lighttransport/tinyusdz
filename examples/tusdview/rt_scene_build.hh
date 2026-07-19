@@ -74,6 +74,8 @@ struct HostTextureDesc {
   int wrapT{0};
   int srgb{0};
   int isUdim{0};
+  int mipCount{1};       // levels including this descriptor's base level
+  int firstMip{-1};      // descriptor id of level 1; consecutive thereafter
   int udimLayer[100]{};  // texture descriptor ids for tiles 1001..1100
 };
 
@@ -85,12 +87,17 @@ struct HostTextureTable {
   std::vector<int> sourceToTable;
 };
 
-// Build the backend-neutral level-zero texture table used by CUDA/HIP and
+// Build the backend-neutral mipmapped texture table used by CUDA/HIP and
 // Vulkan ray query. Handles decoded images, compressed-only inputs, sparse
 // UDIM tiles, semantic material slots, UV transforms, and channel metadata.
 void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
                            const std::vector<DrawMaterialCPU>& materials,
                            HostTextureTable* out);
+
+// Build camera-independent solid approximations for Points and Curves. RT
+// backends consume these; raster backends retain the original carriers and
+// generate camera-facing billboards/ribbons at draw time.
+std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene);
 
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {
@@ -124,7 +131,7 @@ struct HostScene {
   std::vector<uint8_t> texels;
   std::vector<HostTextureDesc> textures;
   int numTextures = 0;
-  // 40 floats/light: type/flags/texture ids, transform basis, derived radiance,
+  // kRtLightParamFloats/light: type/flags/texture ids, transform basis, derived radiance,
   // shape size, shaping, shadow, and dome metadata. This is uploaded by RT
   // backends when full USD light evaluation lands.
   std::vector<float> lightParams;

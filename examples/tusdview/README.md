@@ -111,6 +111,28 @@ displays it with an ImGui docking UI.
   normal, emissive, and separate scalar opacity masks. Opacity honors selected
   channels, scale/bias, UV transforms and UV sets; ordinary and UDIM masks are
   supported. Varying `primvars:displayOpacity` modulates raster and RT output.
+- Advanced OpenPBR/MaterialX lobes that are not yet evaluated in real time
+  remain preserved in the neutral material record and produce one
+  path-qualified load diagnostic per material. The structured load summary
+  reports `unsupported_lobes=N` for transmission, subsurface, sheen/fuzz,
+  anisotropy, thin-film, dispersion, and volume instead of silently treating
+  them as supported.
+- **Authored USD lighting** on both raster backends: up to 16 supported direct
+  lights are evaluated in stage order with diffuse/specular multipliers,
+  shaping cones, and per-mesh `collection:lightLink` masks, alongside
+  DomeLight IBL. DistantLight and finite sphere/point, rect, disk, and cylinder
+  records share the same packed GL/Vulkan interface; finite area shapes are
+  currently represented by their light position. GeometryLight, PortalLight,
+  IES profiles, emissive-mesh sampling, and raster shadow maps remain explicit
+  roadmap items. Native Points/Curves currently receive all packed direct
+  lights because their light-link carrier mapping has not landed yet.
+- **UsdGeomPoints and curves (`--next`)** — Points plus BasisCurves,
+  HermiteCurves, and NurbsCurves retain evaluated widths, displayColor,
+  displayOpacity, material binding, purpose, animation time, and transforms.
+  OpenGL raster draws world-sized camera-facing point discs and tessellated
+  curve ribbons; Vulkan ray query and CUDA/HIP trace width-aware solid
+  octahedron/tube proxies. Vulkan raster drawing and viewport click-picking for
+  these carriers remain roadmap items; mesh picking is unchanged.
 - **Surface displacement** (`UsdPreviewSurface inputs:displacement` — constant or
   a height texture, honoring the `UsdUVTexture` `scale`/`bias`). The **raster**
   paths displace in the vertex shader (coarse, no extra geometry), with an opt-in
@@ -129,17 +151,20 @@ displays it with an ImGui docking UI.
   viewer transparently falls back to Vulkan rasterization. The RT path builds a
   BLAS per mesh + a TLAS, then a compute shader (`vk/shaders/raytrace.comp`)
   traces primary + shadow rays with `rayQueryEXT` into a storage image that is
-  copied into the displayed target. Shading mirrors the raster look (material
-  base color + the same directional light) plus **hard shadows**. Toggle it from
+  copied into the displayed target. Shading evaluates the shared GGX/coat
+  material constants, authored USD lights, DomeLight IBL, and per-light
+  visibility rays. Toggle it from
   **View ▸ Ray tracing (Vulkan)** (greyed out when unsupported) or start in RT
   with `--rt`. RT uses a ray-tracer-friendly conversion (no single-index dedup;
   `build_vertex_indices=false`); displacement is baked into the traced geometry.
   RT samples the six semantic material textures, including separate opacity,
-  UV1/transforms, compressed-only sources, and sparse UDIMs; alpha-mask texels
-  are rejected during traversal. Varying displayOpacity and material constants
-  are also supported, including per-face materials bound through GeomSubsets.
-  Remaining limitations include level-zero texture filtering and no helper-line
-  overlay.
+  UV1/transforms, compressed-only sources, and sparse UDIMs; full ordinary,
+  compressed, and UDIM mip chains use ray-footprint/projected-triangle LOD with
+  trilinear filtering. Alpha-mask texels are rejected during traversal. Varying
+  displayOpacity and material constants are also supported, including per-face
+  materials bound through GeomSubsets.
+  Helper lines, grid/axes, skeletons, volumes, and selection highlights are
+  composited over the traced image without recreating the renderer.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive
@@ -438,7 +463,8 @@ frame construction remain on the main thread.
 
 - Vulkan/CUDA/HIP ray tracing samples base color, metallic, roughness, normal,
   emissive, and opacity images through the shared semantic table. The RT
-  software texture path uses level-zero filtering, without raster anisotropy.
+  software texture path uses trilinear footprint/projected-triangle mip LOD,
+  without raster anisotropy.
 - Vulkan raster uses four bound descriptor sets and runs on low-limit software
   devices as well as desktop GPUs.
 - Alpha-blended ray-traced surfaces use a nearest-layer approximation.

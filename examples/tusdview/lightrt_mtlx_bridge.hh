@@ -15,7 +15,8 @@ constexpr int kRtMaterialTextureParamFloats = 72;
 // Rows 20-24 add opacity sampling and scene-wide UDIM-atlas row selectors;
 // rows 25-26 carry the independent roughness UV transform. Keep
 // in lockstep with MaterialTexParam in every Vulkan mesh shader stage.
-constexpr int kRasterMaterialTextureParamVec4s = 27;
+// Rows 27-28 carry the real-time PBR coat/occlusion constants.
+constexpr int kRasterMaterialTextureParamVec4s = 29;
 constexpr int kRasterMaterialTextureParamFloats =
     kRasterMaterialTextureParamVec4s * 4;
 

@@ -20,6 +20,7 @@ struct StartupConfig {
   std::optional<float> dollySensitivity;
   std::optional<bool> invertYaw;
   std::optional<bool> invertDolly;
+  std::optional<std::string> cameraConform;
   // USD composition: enable arc composition on load; payload policy
   // ("defer" = lazy load on demand, "load" = eager).
   std::optional<bool> composition;

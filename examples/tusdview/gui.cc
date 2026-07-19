@@ -2022,6 +2022,11 @@ void Gui::drawCameraPanel() {
       cam_->setAspectOverride(aspectValue);
     }
     if (!aspectOverride) ImGui::EndDisabled();
+    int conform = static_cast<int>(cam_->conform());
+    const char* conformNames[] = {"Fit", "Crop", "Horizontal", "Vertical", "None"};
+    if (ImGui::Combo("Filmback conform", &conform, conformNames, 5)) {
+      cam_->setConform(static_cast<CameraConform>(conform));
+    }
     bool autoClip = cam_->autoClip();
     if (ImGui::Checkbox("Auto clipping", &autoClip)) {
       cam_->setAutoClip(autoClip);
@@ -2678,6 +2683,13 @@ void Gui::drawStats() {
   ImGui::Separator();
   if (draw_) {
     ImGui::Text("Meshes: %zu", draw_->meshes.size());
+    size_t pointSamples = 0, curveSamples = 0;
+    for (const DrawPointsCPU& p : draw_->points) pointSamples += p.points.size() / 3;
+    for (const DrawCurvesCPU& c : draw_->curves) curveSamples += c.points.size() / 3;
+    ImGui::Text("Points: %zu prims / %zu samples", draw_->points.size(),
+                pointSamples);
+    ImGui::Text("Curves: %zu prims / %zu tessellated samples",
+                draw_->curves.size(), curveSamples);
     // draw_->vertexCount is captured at load (CPU geometry may be freed after
     // upload on the --next path, so summing meshes[].vertices would read 0).
     ImGui::Text("Vertices: %zu", draw_->vertexCount);
@@ -3919,6 +3931,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.cameraPos[0] = eye.x;
   p.cameraPos[1] = eye.y;
   p.cameraPos[2] = eye.z;
+  p.exposure = cam_->exposure();
   p.mode = mode_;
   p.wireMode = wireCycle_;  // 'v' key: 0 off / 1 wire-only / 2 wire+shaded
   p.displacement = displacementEnabled_;
@@ -4010,6 +4023,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   std::memcpy(packet->view, viewM.m, sizeof(packet->view));
   std::memcpy(packet->proj, projM.m, sizeof(packet->proj));
   packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
+  packet->exposure = p.exposure;
   packet->mode = p.mode;
   for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
   for (int i = 0; i < 3; ++i) {

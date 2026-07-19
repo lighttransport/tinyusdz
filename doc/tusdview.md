@@ -44,8 +44,10 @@ cmake --build build_ninja -j16 --target tusdview
   Vulkan, CUDA, and HIP RT consume the same six-slot semantic texture table
   (base color, metallic, roughness, normal, emissive, opacity), including UV1,
   transforms, sRGB decode, compressed-only sources, and sparse UDIMs. Masked
-  texels are rejected during traversal. RT filtering is level zero and does not
-  yet match raster mip/anisotropic sampling.
+  texels are rejected during traversal. Complete ordinary/compressed/UDIM mip
+  chains use trilinear filtering: ray-differential footprint LOD in Vulkan and
+  projected-triangle LOD in CUDA/HIP. Raster-style anisotropy remains future
+  work.
 - **Experimental threaded render path** (a dedicated render thread owns the GL
   context / Vulkan queue so the UI never blocks on the GPU; opt-in `--threaded`)
   is gated behind a default-OFF option:
@@ -242,6 +244,12 @@ tir/texcomp/texpipe/envmap libraries:
   ambient term with it; the VK ray-query and CUDA/HIP RT paths sample the dome
   environment on ray miss. The bake logs its wall time
   (`[tusdview] dome IBL bake ...`), typically ~0.3-0.5 s.
+- GL and Vulkan raster also evaluate the first 16 supported authored direct
+  lights in stage order. Distant and finite sphere/point, rect, disk, and
+  cylinder lights honor diffuse/specular multipliers, shaping, and per-mesh
+  light-link collections; excess supported lights produce a truncation
+  diagnostic. Finite area shapes are presently represented by their light
+  position, and raster shadow maps remain future work.
 
 `tusdrender -ibl envmap` opts the offline renderer into the same envmap-library
 precompute (default stays the built-in reference; measured parity on a dome
@@ -291,8 +299,9 @@ threaded-vs-single parity) with PIL/numpy:
 
 The Vulkan/CUDA/HIP RT shaded modes sample base color, independent metallic and
 roughness, normal, emissive, and opacity images, including sparse UDIM and
-compressed-only inputs decoded into the shared level-zero table. Raster texture
-resize/compression behavior is unchanged.
+compressed-only inputs decoded into the shared mipmapped table. Vulkan uses
+ray-footprint LOD and CUDA/HIP use projected-triangle LOD, both with trilinear
+filtering. Raster texture resize/compression behavior is unchanged.
 
 ```sh
 python3 -c "from PIL import Image; import numpy as np; \

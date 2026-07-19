@@ -17,6 +17,8 @@ layout(location = 5) in vec4 aRow2;
 layout(location = 9) in vec4 aInstColor;  // per-instance color/opacity (instance-rate)
 layout(location = 10) in vec4 aVtxColor;  // displayColor.rgb + displayOpacity
 layout(location = 8) in uvec2 aMorphOffsetCount;  // GPU morph (offset,count); 0=none
+struct RasterLight { vec4 positionType; vec4 directionAngle;
+                     vec4 colorDiffuse; vec4 specularShape; };
 
 // Skeletal skinning of the PROTOTYPE, in prototype-LOCAL space (before the
 // per-instance transform), so all instances of a prototype share one bone block --
@@ -64,6 +66,8 @@ layout(set = 2, binding = 0) uniform Frame {
   vec4 sceneExtent;
   vec4 lightDir;
   vec4 lightColor;
+  RasterLight rasterLights[16];
+  uvec4 rasterLightInfo;
   ivec4 mode;        // .x renderMode
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)

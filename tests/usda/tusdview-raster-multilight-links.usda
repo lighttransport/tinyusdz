@@ -1,0 +1,106 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Scope "Looks"
+    {
+        def Material "GrayLeft"
+        {
+            token outputs:surface.connect = </World/Looks/GrayLeft/P.outputs:surface>
+            def Shader "P"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.55, 0.55, 0.55)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.65
+                token outputs:surface
+            }
+        }
+        def Material "GrayCenter"
+        {
+            token outputs:surface.connect = </World/Looks/GrayCenter/P.outputs:surface>
+            def Shader "P"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.55, 0.55, 0.55)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.65
+                token outputs:surface
+            }
+        }
+        def Material "GrayRight"
+        {
+            token outputs:surface.connect = </World/Looks/GrayRight/P.outputs:surface>
+            def Shader "P"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.55, 0.55, 0.55)
+                float inputs:metallic = 0
+                float inputs:roughness = 0.65
+                token outputs:surface
+            }
+        }
+    }
+
+    def Mesh "Left" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        rel material:binding = </World/Looks/GrayLeft>
+        point3f[] points = [(-2.8, -1, 0), (-1.0, -1, 0), (-1.0, 1, 0), (-2.8, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1)] (interpolation = "constant")
+        uniform token subdivisionScheme = "none"
+    }
+    def Mesh "Center" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        rel material:binding = </World/Looks/GrayCenter>
+        point3f[] points = [(-0.9, -1, 0), (0.9, -1, 0), (0.9, 1, 0), (-0.9, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1)] (interpolation = "constant")
+        uniform token subdivisionScheme = "none"
+    }
+    def Mesh "Right" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        rel material:binding = </World/Looks/GrayRight>
+        point3f[] points = [(1.0, -1, 0), (2.8, -1, 0), (2.8, 1, 0), (1.0, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1)] (interpolation = "constant")
+        uniform token subdivisionScheme = "none"
+    }
+
+    def DistantLight "Red" (prepend apiSchemas = ["CollectionAPI:lightLink"])
+    {
+        color3f inputs:color = (1, 0.02, 0.02)
+        float inputs:intensity = 3
+        float inputs:diffuse = 1
+        float inputs:specular = 0
+        rel collection:lightLink:includes = [</World/Left>, </World/Center>]
+        uniform token collection:lightLink:expansionRule = "expandPrims"
+        uniform bool collection:lightLink:includeRoot = 0
+    }
+    def DistantLight "Blue" (prepend apiSchemas = ["CollectionAPI:lightLink"])
+    {
+        color3f inputs:color = (0.02, 0.02, 1)
+        float inputs:intensity = 3
+        float inputs:diffuse = 1
+        float inputs:specular = 0
+        rel collection:lightLink:includes = [</World/Center>, </World/Right>]
+        uniform token collection:lightLink:expansionRule = "expandPrims"
+        uniform bool collection:lightLink:includeRoot = 0
+    }
+
+    def Camera "Camera"
+    {
+        float focalLength = 50
+        float horizontalAperture = 25
+        float verticalAperture = 12
+        double3 xformOp:translate = (0, 0, 8)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

@@ -353,6 +353,11 @@ uniform float uAlphaCutoff;
 uniform int uUseSpecularWorkflow;
 uniform vec3 uSpecularColor;
 uniform float uIor;
+uniform float uOcclusion;
+uniform float uCoatWeight;
+uniform vec3 uCoatColor;
+uniform float uCoatRoughness;
+uniform float uCoatIor;
 // When set, shade with the geometric (screen-derivative) normal -- used for
 // meshes without authored normals so hard surfaces aren't smeared by smooth
 // (averaged) normals.
@@ -361,11 +366,19 @@ uniform bool uGeometricNormal;
 uniform vec3 uCameraPos;
 uniform vec3 uLightDir;
 uniform vec3 uLightColor;
+const int kMaxRasterLights = 16;
+uniform int uLightCount;
+uniform uint uLightMask;
+uniform vec4 uLightPositionType[kMaxRasterLights];
+uniform vec4 uLightDirectionAngle[kMaxRasterLights];
+uniform vec4 uLightColorDiffuse[kMaxRasterLights];
+uniform vec4 uLightSpecularShape[kMaxRasterLights];
 
 // DomeLight split-sum IBL (precomputed at load; replaces the constant ambient
 // floor when present).
 uniform bool uHasIbl;
 uniform vec3 uIblColor;             // dome effectiveColor (intensity baked in)
+uniform float uExposure;            // authored Camera exposure, in stops
 uniform mat3 uEnvRotation;          // world -> environment direction
 uniform samplerCube uIrradianceMap; // cosine-convolved env, stored E/pi
 uniform samplerCube uPrefilteredMap;// GGX chain, lod = roughness*(lods-1)
@@ -511,6 +524,26 @@ vec3 computeF0(vec3 base, float metallic) {
     float ior = max(1.0, uIor);
     float d = (ior - 1.0) / (ior + 1.0);
     return mix(vec3(d * d), base, clamp(metallic, 0.0, 1.0));
+}
+
+const float kPi = 3.14159265358979323846;
+
+float distributionGGX(float NoH, float roughness) {
+    float a = max(roughness * roughness, 0.002);
+    float a2 = a * a;
+    float d = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / max(kPi * d * d, 1e-6);
+}
+
+float geometrySchlickGGX(float NoX, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) * 0.125;
+    return NoX / max(NoX * (1.0 - k) + k, 1e-6);
+}
+
+vec3 fresnelSchlick(float VoH, vec3 f0) {
+    float f = pow(1.0 - clamp(VoH, 0.0, 1.0), 5.0);
+    return f0 + (vec3(1.0) - f0) * f;
 }
 
 float channelOf(vec4 c, int ch) {
@@ -692,19 +725,86 @@ void main() {
 
     vec3 V = normalize(uCameraPos - vWorldPos);
 
-    // View-facing preview shading. N.V carries most of the contrast so pale,
-    // untextured meshes retain readable form; a small world-space key separates
-    // similarly facing surfaces without introducing a hard terminator.
+    // Real-time Cook-Torrance preview. Face two-sided shading normals toward the
+    // camera, then evaluate an energy-conserving GGX direct lobe. The constant
+    // ambient fallback below keeps scenes without authored lighting readable.
     vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
-    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
-    vec3 L = (dot(uLightDir, uLightDir) > 1e-8)
-                 ? normalize(uLightDir)
-                 : normalize(vec3(0.3, 0.5, 0.8));
-    vec3 lightColor = (dot(uLightColor, uLightColor) > 1e-8)
-                          ? uLightColor
-                          : vec3(1.0);
-    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
-    float shade = 0.8 * facing + 0.2 * key;              // N.V-dominant [0,1]
+    float NoV = max(dot(Nf, V), 1e-4);
+    float rgh = clamp(roughness, 0.02, 1.0);
+    float met = clamp(metallic, 0.0, 1.0);
+    vec3 F0 = computeF0(baseColor, met);
+    float cw = clamp(uCoatWeight, 0.0, 1.0);
+    float cr = clamp(uCoatRoughness, 0.02, 1.0);
+    float ci = max(uCoatIor, 1.0);
+    float cd = (ci - 1.0) / (ci + 1.0);
+    vec3 direct = vec3(0.0);
+    for (int li = 0; li < kMaxRasterLights; ++li) {
+        if (li >= uLightCount) break;
+        if ((uLightMask & (1u << uint(li))) == 0u) continue;
+        vec4 pt = uLightPositionType[li];
+        vec4 da = uLightDirectionAngle[li];
+        vec4 lc = uLightColorDiffuse[li];
+        vec4 ss = uLightSpecularShape[li];
+        int lightType = int(pt.w + 0.5);
+        vec3 L;
+        float attenuation = 1.0;
+        if (lightType == 5) {
+            L = normalize(da.xyz);
+        } else {
+            vec3 toLight = pt.xyz - vWorldPos;
+            float dist2 = max(dot(toLight, toLight), 1e-6);
+            L = toLight * inversesqrt(dist2);
+            attenuation = 1.0 / dist2;
+        }
+        float shape = 1.0;
+        if (ss.w > 0.5 && lightType != 5) {
+            float coneCos = dot(normalize(da.xyz), -L);
+            float outer = cos(radians(clamp(da.w, 0.0, 180.0)));
+            float innerAngle = da.w * (1.0 - clamp(ss.y, 0.0, 1.0));
+            float inner = cos(radians(clamp(innerAngle, 0.0, 180.0)));
+            shape = smoothstep(outer, max(inner, outer + 1e-5), coneCos);
+            shape *= pow(max(coneCos, 0.0), max(ss.z, 0.0));
+        }
+        float NoL = max(dot(Nf, L), 0.0);
+        if (NoL <= 0.0 || shape <= 0.0) continue;
+        vec3 H = normalize(L + V);
+        float NoH = max(dot(Nf, H), 0.0);
+        float VoH = max(dot(V, H), 0.0);
+        vec3 F = fresnelSchlick(VoH, F0);
+        float D = distributionGGX(NoH, rgh);
+        float G = geometrySchlickGGX(NoV, rgh) *
+                  geometrySchlickGGX(NoL, rgh);
+        vec3 specular = D * G * F / max(4.0 * NoV * NoL, 1e-5);
+        vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * baseColor / kPi;
+        vec3 coatF = fresnelSchlick(VoH, vec3(cd * cd));
+        float coatD = distributionGGX(NoH, cr);
+        float coatG = geometrySchlickGGX(NoV, cr) *
+                      geometrySchlickGGX(NoL, cr);
+        vec3 coatSpec = coatD * coatG * coatF /
+                        max(4.0 * NoV * NoL, 1e-5);
+        vec3 brdf = diffuse * lc.w +
+                    (specular * (vec3(1.0) - coatF * cw) +
+                     coatSpec * uCoatColor * cw) * ss.x;
+        direct += brdf * lc.rgb * (attenuation * shape * NoL);
+    }
+    // Scenes without authored direct lights retain the readable preview key.
+    if (uLightCount == 0) {
+        vec3 L = (dot(uLightDir, uLightDir) > 1e-8)
+                     ? normalize(uLightDir)
+                     : normalize(vec3(0.3, 0.5, 0.8));
+        vec3 lightColor = (dot(uLightColor, uLightColor) > 1e-8)
+                              ? uLightColor : vec3(1.0);
+        float NoL = max(dot(Nf, L), 0.0);
+        vec3 H = normalize(L + V);
+        float NoH = max(dot(Nf, H), 0.0), VoH = max(dot(V, H), 0.0);
+        vec3 F = fresnelSchlick(VoH, F0);
+        vec3 specular = distributionGGX(NoH, rgh) *
+                        geometrySchlickGGX(NoV, rgh) *
+                        geometrySchlickGGX(NoL, rgh) * F /
+                        max(4.0 * NoV * NoL, 1e-5);
+        vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * baseColor / kPi;
+        direct = (diffuse + specular) * lightColor * NoL;
+    }
 
     // Ambient: DomeLight split-sum IBL when baked, else a constant floor
     // (keeps unlit faces lifted off black).
@@ -717,31 +817,31 @@ void main() {
         vec3 pref = textureLod(uPrefilteredMap, Re, lod).rgb;
         // Analytic split-sum approximation keeps the GL 3.3 fragment sampler
         // count within the guaranteed 16 after adding independent roughness.
-        float NoV = max(dot(Nf, V), 0.0);
         float rr = clamp(roughness, 0.0, 1.0);
         vec4 r = rr * vec4(-1.0, -0.0275, -0.572, 0.022) +
                  vec4(1.0, 0.0425, 1.04, -0.04);
         float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
         vec2 dfg = vec2(-1.04, 1.04) * a004 + r.zw;
-        vec3 F0 = computeF0(baseColor, metallic);
-        ambient = (baseColor * (1.0 - metallic) * irr +
+        ambient = (baseColor * (1.0 - met) * irr +
                    pref * (F0 * dfg.x + dfg.y)) * uIblColor;
+        vec3 coatPref = textureLod(uPrefilteredMap, Re,
+                                   cr * float(uPrefilteredLods - 1)).rgb;
+        vec4 rc = cr * vec4(-1.0, -0.0275, -0.572, 0.022) +
+                  vec4(1.0, 0.0425, 1.04, -0.04);
+        float ca004 = min(rc.x * rc.x, exp2(-9.28 * NoV)) * rc.x + rc.y;
+        vec2 coatDfg = vec2(-1.04, 1.04) * ca004 + rc.zw;
+        vec3 coatF0 = vec3(cd * cd);
+        vec3 coatIbl = coatPref * (coatF0 * coatDfg.x + coatDfg.y) *
+                       uCoatColor * cw * uIblColor;
+        ambient = ambient * (vec3(1.0) - coatF0 * cw) + coatIbl;
     } else {
         ambient = baseColor * 0.12;
     }
-    ambient *= 0.4 + 0.6 * facing;
-    vec3 diffuse = baseColor * lightColor * (1.0 - metallic) * (0.84 * shade);
-
-    vec3 H = normalize(L + V);
-    float NdotH = max(dot(Nf, H), 0.0);
-    float specPower = mix(16.0, 256.0, 1.0 - roughness);
-    vec3 specColor = computeF0(baseColor, metallic);
-    vec3 specular = specColor * lightColor * pow(NdotH, specPower) * facing;
-
     if (uAlphaMode == 1 && opacity <= 0.0) {
         discard;
     }
-    vec3 color = linearToSrgb(ambient + diffuse + specular + emissive);
+    ambient *= clamp(uOcclusion, 0.0, 1.0);
+    vec3 color = linearToSrgb((ambient + direct + emissive) * exp2(uExposure));
     fragColor = vec4(color, opacity);
 }
 )glsl";

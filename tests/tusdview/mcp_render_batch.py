@@ -8,6 +8,7 @@ environment variables, or startup-only options intentionally use another batch.
 
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import threading
@@ -109,6 +110,17 @@ def check_ppm(path):
         raise RuntimeError(f"flat screenshot: {path}")
 
 
+def rss_kib(pid):
+    """Return current resident memory on Linux, or None when unavailable."""
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except (FileNotFoundError, PermissionError, ValueError):
+        pass
+    return None
+
+
 def main():
     if len(sys.argv) < 4:
         print(f"usage: {sys.argv[0]} tusdview manifest.json output-dir "
@@ -134,8 +146,20 @@ def main():
         pid = client.proc.pid
         lifecycle = (initial.get("window_generation"),
                      initial.get("renderer_generation"))
-        for index, case in enumerate(manifest["cases"]):
-            name = case.get("name", f"case-{index}")
+        baseline_rss = rss_kib(pid)
+        peak_rss = baseline_rss
+        completed = 0
+        captured = {}
+        repeat = int(manifest.get("repeat", 1))
+        if repeat < 1:
+            raise RuntimeError("manifest repeat must be at least 1")
+        iterations = ((iteration, index, case)
+                      for iteration in range(repeat)
+                      for index, case in enumerate(manifest["cases"]))
+        for iteration, index, case in iterations:
+            base_name = case.get("name", f"case-{index}")
+            name = (base_name if repeat == 1 else
+                    f"{base_name}-iteration-{iteration + 1}")
             if "usda" in case:
                 load_args = {"usda": case["usda"]}
             else:
@@ -155,32 +179,75 @@ def main():
                     raise RuntimeError(
                         f"{name}: expected {key}={expected!r}, "
                         f"got {info.get(key)!r}")
+            for pattern in case.get("expect_stderr", []):
+                if re.search(pattern, client.stderr_text()) is None:
+                    raise RuntimeError(
+                        f"{name}: stderr did not match {pattern!r}")
+            settle_seconds = float(case.get("settle_seconds", 0))
+            if settle_seconds > 0:
+                time.sleep(settle_seconds)
 
-            settings = case.get("settings", {})
-            if settings:
-                client.call("render_settings", settings)
-            if case.get("viewport"):
-                client.call("viewport", case["viewport"])
-            elif "viewport" not in case:
-                client.call("viewport", {"op": "fit"})
-
-            shot = output / f"{index:03d}-{name}.ppm"
-            result = client.call("screenshot", {"path": str(shot)})
-            if not result.get("written"):
-                raise RuntimeError(f"{name}: screenshot was not written")
-            check_ppm(shot)
+            captures = case.get("captures")
+            if captures is None:
+                captures = [{"name": "capture",
+                             "settings": case.get("settings", {}),
+                             "viewport": case.get("viewport", {"op": "fit"})}]
+            for capture_index, capture in enumerate(captures):
+                settings = capture.get("settings", {})
+                if settings:
+                    client.call("render_settings", settings)
+                viewport = capture.get("viewport")
+                if viewport:
+                    client.call("viewport", viewport)
+                for action in capture.get("actions", []):
+                    client.call(action["tool"], action.get("arguments", {}),
+                                float(action.get("timeout", 30)))
+                suffix = capture.get("name", f"capture-{capture_index}")
+                shot = output / f"{completed:03d}-{name}-{suffix}.ppm"
+                result = client.call("screenshot", {"path": str(shot)})
+                if not result.get("written"):
+                    raise RuntimeError(f"{name}/{suffix}: screenshot was not written")
+                check_ppm(shot)
+                image_bytes = shot.read_bytes()
+                different_from = capture.get("different_from")
+                if different_from:
+                    reference = captured.get(different_from)
+                    if reference is None:
+                        raise RuntimeError(
+                            f"{name}/{suffix}: unknown capture reference "
+                            f"{different_from!r}")
+                    if image_bytes == reference:
+                        raise RuntimeError(
+                            f"{name}/{suffix}: image did not change from "
+                            f"{different_from}")
+                captured[f"{name}/{suffix}"] = image_bytes
+                captured[suffix] = image_bytes
             if client.proc.pid != pid:
                 raise RuntimeError("viewer PID changed inside a batch")
-            current_lifecycle = (info.get("window_generation"),
-                                 info.get("renderer_generation"))
+            current = client.call("get_scene_info")
+            current_lifecycle = (current.get("window_generation"),
+                                 current.get("renderer_generation"))
             if current_lifecycle != lifecycle:
                 raise RuntimeError(
                     f"{name}: window/renderer recreated: "
                     f"{lifecycle} -> {current_lifecycle}")
+            current_rss = rss_kib(pid)
+            if current_rss is not None:
+                peak_rss = max(peak_rss or current_rss, current_rss)
             print(f"PASS: {name}: generation={info['scene_generation']} "
                   f"triangles={info['triangle_count']} pid={pid} "
-                  f"lifecycle={lifecycle}")
-        print(f"PASS: {len(manifest['cases'])} cases rendered in one tusdview process")
+                  f"lifecycle={lifecycle} rss_kib={current_rss}")
+            completed += 1
+        max_growth_mb = manifest.get("max_rss_growth_mb")
+        if max_growth_mb is not None and baseline_rss is not None:
+            final_rss = rss_kib(pid)
+            growth_kib = (final_rss or baseline_rss) - baseline_rss
+            if growth_kib > float(max_growth_mb) * 1024.0:
+                raise RuntimeError(
+                    f"resident-memory growth {growth_kib / 1024.0:.1f} MiB "
+                    f"exceeds {max_growth_mb} MiB")
+        print(f"PASS: {completed} cases rendered in one tusdview process; "
+              f"baseline_rss_kib={baseline_rss} peak_rss_kib={peak_rss}")
         return 0
     except Exception as exc:
         log = client.stderr_text()

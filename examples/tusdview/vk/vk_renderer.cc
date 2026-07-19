@@ -242,6 +242,8 @@ struct FrameUBO {
   float sceneExtent[4]; // .xyz position-AOV scene bbox size
   float lightDir[4];    // .xyz preview key light direction toward the light
   float lightColor[4];  // .rgb preview key light color/intensity
+  RasterLightGPU rasterLights[kMaxRasterLights];
+  uint32_t rasterLightInfo[4];  // .x direct-light count
   int32_t mode[4];      // .x renderMode
   float envRot[16];     // world -> environment rotation (dome IBL; mat4)
   float iblColor[4];    // .rgb dome effectiveColor, .w = hasIbl (0/1)
@@ -4579,7 +4581,30 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   refreshMaterialDescriptors();
 }
 
-void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights) {
+void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
+                               size_t meshCount) {
+  rasterLights_ = PackRasterLights(lights, meshCount);
+  if (std::getenv("TUSDVIEW_DEBUG_LIGHTS"))
+    {
+      std::fprintf(stderr, "[raster-lights] VK source=%zu direct=%d meshes=%zu\n",
+                   lights.size(), rasterLights_.count, meshCount);
+      for (int i = 0; i < rasterLights_.count; ++i) {
+        const RasterLightGPU& l = rasterLights_.lights[static_cast<size_t>(i)];
+        std::fprintf(stderr,
+                     "[raster-lights] %d type=%.0f dir=(%.3f %.3f %.3f) "
+                     "color=(%.3f %.3f %.3f)\n", i, l.positionType[3],
+                     l.directionAngle[0], l.directionAngle[1],
+                     l.directionAngle[2], l.colorDiffuse[0],
+                     l.colorDiffuse[1], l.colorDiffuse[2]);
+      }
+      for (size_t i = 0; i < rasterLights_.meshMasks.size(); ++i)
+        std::fprintf(stderr, "[raster-lights] mesh %zu mask=0x%x\n", i,
+                     rasterLights_.meshMasks[i]);
+    }
+  if (rasterLights_.truncated > 0) {
+    LOGW("raster lighting: evaluating first %d direct lights; %d additional "
+         "light(s) omitted", kMaxRasterLights, rasterLights_.truncated);
+  }
   lightParams_.assign(lights.size() * kVkRtLightFloats, 0.0f);
   for (size_t i = 0; i < lights.size(); ++i) {
     PackRtLightParams(lights[i], lights[i].envmapTexture,
@@ -5440,6 +5465,24 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   gm.deformDesc = allocDeformDescriptor(gm);
   meshes_.push_back(gm);
+}
+
+void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
+  if (!rtActive_) return;
+  DrawScene carriers;
+  carriers.points.push_back(points);
+  for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
+    appendMesh(proxy);
+  }
+}
+
+void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
+  if (!rtActive_) return;
+  DrawScene carriers;
+  carriers.curves.push_back(curves);
+  for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
+    appendMesh(proxy);
+  }
 }
 
 void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
@@ -6878,6 +6921,7 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.lightDir[0] = lx / ll; pc.lightDir[1] = ly / ll; pc.lightDir[2] = lz / ll;
   pc.lightDir[3] = depthScale_;  // depth AOV normalizer
   for (int i = 0; i < 4; ++i) pc.clearColor[i] = clear_[i];
+  pc.clearColor[3] = exposure_;
   for (int i = 0; i < 3; ++i) { pc.sceneMin[i] = sceneMin_[i]; pc.sceneExtent[i] = sceneExtent_[i]; }
   pc.sceneMin[3] = static_cast<float>(rtAccumFrame_);      // accumulated sample index
   pc.sceneExtent[3] = rtAccumEnabled_ ? 1.0f : 0.0f;        // accumulate enable
@@ -7102,6 +7146,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   if (params.view) std::memcpy(view_, params.view, sizeof(view_));
   if (params.proj) std::memcpy(proj_, params.proj, sizeof(proj_));
   for (int i = 0; i < 3; ++i) cameraPos_[i] = params.cameraPos[i];
+  exposure_ = params.exposure;
   for (int i = 0; i < 3; ++i) lightDir_[i] = params.lightDir[i];
   for (int i = 0; i < 3; ++i) lightColor_[i] = params.lightColor[i];
   for (int i = 0; i < 4; ++i) clear_[i] = params.clearColor[i];
@@ -7256,7 +7301,9 @@ void VulkanRenderer::ensureDrawMeta() {
     meta[mi].ids[0] = static_cast<int32_t>(mi);  // meshId
     meta[mi].ids[1] = (m.geometricNormal ? 1 : 0) | (m.doubleSided ? 2 : 0) |
                       ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
-    meta[mi].ids[2] = meta[mi].ids[3] = 0;
+    meta[mi].ids[2] = static_cast<int32_t>(
+        RasterLightMaskForMesh(rasterLights_, static_cast<int>(mi)));
+    meta[mi].ids[3] = 0;
     meta[mi].jointAddr = m.jointAddr;  // 0 = unskinned
     meta[mi].weightAddr = m.weightAddr;
   }
@@ -7486,7 +7533,9 @@ void VulkanRenderer::buildInstMdi() {
     d.ids[0] = static_cast<int32_t>(mi);
     d.ids[1] = (m.geometricNormal ? 1 : 0) | (m.doubleSided ? 2 : 0) |
                ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
-    d.ids[2] = d.ids[3] = 0;
+    d.ids[2] = static_cast<int32_t>(
+        RasterLightMaskForMesh(rasterLights_, static_cast<int>(mi)));
+    d.ids[3] = 0;
     // MDI draws read a MERGED vertex buffer, so gl_VertexIndex would not index the
     // mesh's own skin arrays: leave those draws unskinned (skinned prototypes are
     // never MDI-eligible, so this only ever zeroes what is already zero).
@@ -7770,6 +7819,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       }
       fr->lightDir[3] = 0.0f;
       fr->lightColor[3] = 0.0f;
+      std::memcpy(fr->rasterLights, rasterLights_.lights.data(),
+                  sizeof(fr->rasterLights));
+      fr->rasterLightInfo[0] = static_cast<uint32_t>(rasterLights_.count);
+      fr->rasterLightInfo[1] = fr->rasterLightInfo[2] =
+          fr->rasterLightInfo[3] = 0u;
       fr->mode[0] = rtMode_;
       std::memcpy(fr->envRot, iblRotation_, sizeof(fr->envRot));
       fr->iblColor[0] = iblColor_[0];
@@ -7777,7 +7831,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       fr->iblColor[2] = iblColor_[2];
       fr->iblColor[3] = iblActive_ ? 1.0f : 0.0f;
       fr->iblParams[0] = static_cast<float>(iblLods_);
-      fr->iblParams[1] = fr->iblParams[2] = fr->iblParams[3] = 0.0f;
+      fr->iblParams[1] = exposure_;
+      fr->iblParams[2] = fr->iblParams[3] = 0.0f;
     }
     // Draw order: back-to-front by world centroid for the translucent pass.
     std::vector<size_t> order(meshes_.size());
@@ -7938,6 +7993,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         if (mesh.vtxColorDesc != VK_NULL_HANDLE) pc.ids[3] |= 32;
         if (opSlot >= 0) pc.ids[3] |= 64;
         if (isUdimSlot(opSlot)) pc.ids[3] |= 128;
+        pc.ids[3] |= static_cast<int32_t>(
+            RasterLightMaskForMesh(rasterLights_, static_cast<int>(mi)) << 16u);
         vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(PushC), &pc);
         // GPU tessellation for displaced meshes in Shaded mode when the slider
         // asks for it: bind the PATCH-list tess pipeline for this draw, then
