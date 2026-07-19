@@ -280,13 +280,24 @@ struct MeshDescGPU {
   uint64_t faceAddr;         // per-triangle source USD face id (uint[]); 0 = none
   uint64_t jointAddr;        // per-vertex 4 joint ids (uint[4]); 0 = unskinned
   uint64_t weightAddr;       // per-vertex 4 skin weights (float[4]); 0 = unskinned
+  uint64_t submeshAddr;      // optional uvec4[firstPrim,count,frontMat,backMat][]
   uint32_t matId;
   uint32_t geometricNormal;  // 1 = no authored normals -> geometric face normal
+  uint32_t submeshCount;
+  uint32_t pad;
   float nrm0[4];             // normal matrix columns (xyz used)
   float nrm1[4];
   float nrm2[4];
 };
-static_assert(sizeof(MeshDescGPU) == 120, "MeshDescGPU must be tightly packed (scalar)");
+static_assert(sizeof(MeshDescGPU) == 136, "MeshDescGPU must be tightly packed (scalar)");
+
+struct RtSubmeshRangeGPU {
+  uint32_t firstPrim;
+  uint32_t primCount;
+  uint32_t frontMaterial;
+  uint32_t backMaterial;
+};
+static_assert(sizeof(RtSubmeshRangeGPU) == 16, "RT submesh range must match uvec4");
 
 // Per-TLAS-instance info, indexed by gl_InstanceID (the instance's position in the
 // TLAS -- full 32-bit range, unlike the 24-bit instanceCustomIndex). Maps a hit
@@ -1321,7 +1332,7 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   stages[1].module = fs;
   stages[1].pName = "main";
 
-  VkVertexInputBindingDescription bind[7]{};
+  VkVertexInputBindingDescription bind[8]{};
   bind[0].binding = 0;
   bind[0].stride = sizeof(DrawVertex);
   bind[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
@@ -1343,7 +1354,10 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   bind[6].binding = 6;  // GPU morph (offset,count)
   bind[6].stride = 2 * sizeof(uint32_t);
   bind[6].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-  VkVertexInputAttributeDescription attrs[9]{};
+  bind[7].binding = 7;  // displayColor.rgb + displayOpacity
+  bind[7].stride = 4 * sizeof(float);
+  bind[7].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription attrs[10]{};
   attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
   attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)};
   attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, 6 * sizeof(float)};
@@ -1353,12 +1367,13 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   attrs[6] = {6, 4, VK_FORMAT_R32G32_SFLOAT, 0};  // aUV1
   attrs[7] = {7, 5, VK_FORMAT_R32_SFLOAT, 0};     // aMorphInfl
   attrs[8] = {8, 6, VK_FORMAT_R32G32_UINT, 0};    // aMorphOffsetCount
+  attrs[9] = {9, 7, VK_FORMAT_R32G32B32A32_SFLOAT, 0};  // aVtxColor
 
   VkPipelineVertexInputStateCreateInfo vin{};
   vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vin.vertexBindingDescriptionCount = 7;
+  vin.vertexBindingDescriptionCount = 8;
   vin.pVertexBindingDescriptions = bind;
-  vin.vertexAttributeDescriptionCount = 9;
+  vin.vertexAttributeDescriptionCount = 10;
   vin.pVertexAttributeDescriptions = attrs;
 
   VkPipelineInputAssemblyStateCreateInfo ia{};
@@ -4133,6 +4148,8 @@ void VulkanRenderer::destroyScene() {
     if (m.vboDispMem) vkFreeMemory(device_, m.vboDispMem, nullptr);
     if (m.vtxColorBuf) vkDestroyBuffer(device_, m.vtxColorBuf, nullptr);
     if (m.vtxColorMem) vkFreeMemory(device_, m.vtxColorMem, nullptr);
+    if (m.rtSubmeshBuf) vkDestroyBuffer(device_, m.rtSubmeshBuf, nullptr);
+    if (m.rtSubmeshMem) vkFreeMemory(device_, m.rtSubmeshMem, nullptr);
     if (m.faceBuf) vkDestroyBuffer(device_, m.faceBuf, nullptr);
     if (m.faceMem) vkFreeMemory(device_, m.faceMem, nullptr);
     if (m.jointVbo) vkDestroyBuffer(device_, m.jointVbo, nullptr);
@@ -4977,7 +4994,9 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       if (hasVtxAlpha) rgba[i * 4 + 3] = sm.vertexAlpha[i];
     }
     if (createHostBuffer(rgba.size() * sizeof(float),
-                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, rgba.data(),
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                         rgba.data(),
                          &gm.vtxColorBuf, &gm.vtxColorMem,
                          /*deviceAddress=*/rtSupported_, pool)) {
       gm.vtxColorDesc = allocMorphDescriptor(
@@ -5007,6 +5026,34 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     }
     gm.eboAddr = bufferDeviceAddress(gm.ebo);
     gm.matId = sm.submeshes.empty() ? -1 : sm.submeshes.front().materialId;
+    bool needsRtSubmeshes = sm.submeshes.size() > 1;
+    for (const DrawSubmesh& sub : sm.submeshes) {
+      needsRtSubmeshes |= sub.backfaceMaterialId >= 0 &&
+                          sub.backfaceMaterialId != sub.materialId;
+    }
+    if (needsRtSubmeshes) {
+      std::vector<RtSubmeshRangeGPU> ranges;
+      ranges.reserve(sm.submeshes.size());
+      for (const DrawSubmesh& sub : sm.submeshes) {
+        RtSubmeshRangeGPU range{};
+        range.firstPrim = sub.indexOffset / 3;
+        range.primCount = sub.indexCount / 3;
+        range.frontMaterial = sub.materialId < 0
+                                  ? 0xffffffffu
+                                  : static_cast<uint32_t>(sub.materialId);
+        range.backMaterial = sub.backfaceMaterialId < 0
+                                 ? range.frontMaterial
+                                 : static_cast<uint32_t>(sub.backfaceMaterialId);
+        ranges.push_back(range);
+      }
+      const VkDeviceSize bytes = ranges.size() * sizeof(RtSubmeshRangeGPU);
+      if (createHostBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                           ranges.data(), &gm.rtSubmeshBuf, &gm.rtSubmeshMem,
+                           /*deviceAddress=*/true, pool)) {
+        gm.rtSubmeshAddr = bufferDeviceAddress(gm.rtSubmeshBuf);
+        gm.rtSubmeshCount = static_cast<uint32_t>(ranges.size());
+      }
+    }
     NormalMatrix3(gm.world, gm.normalMat);
     std::memcpy(gm.flatColor, sm.flatColor, sizeof(gm.flatColor));
     gm.flatOpacity = sm.flatOpacity;
@@ -5882,10 +5929,12 @@ void VulkanRenderer::rebuildTlas() {
     d.faceAddr = m.faceAddr;
     d.jointAddr = m.jointAddr;
     d.weightAddr = m.weightAddr;
+    d.submeshAddr = m.rtSubmeshAddr;
     d.matId = (m.matId < 0) ? 0xffffffffu : static_cast<uint32_t>(m.matId);
     d.geometricNormal = (m.geometricNormal ? 1u : 0u) |
                         ((static_cast<uint32_t>(m.purposeId) & 3u) << 1) |  // bits1-2 purpose
                         ((static_cast<uint32_t>(m.kindId) & 7u) << 3);      // bits3-5 kind
+    d.submeshCount = m.rtSubmeshCount;
     for (int k = 0; k < 3; ++k) {
       d.nrm0[k] = m.normalMat[0 * 3 + k];
       d.nrm1[k] = m.normalMat[1 * 3 + k];
@@ -7456,20 +7505,39 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       if (vtxColD != VK_NULL_HANDLE)
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                                 24, 1, &vtxColD, 0, nullptr);
-      VkDeviceSize offs[7] = {0, 0, 0, 0, 0, 0, 0};
-      VkBuffer bufs[7] = {mesh.vbo,          mesh.jointVbo,   mesh.weightVbo,
+      VkDeviceSize offs[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+      VkBuffer bufs[8] = {mesh.vbo,          mesh.jointVbo,   mesh.weightVbo,
                           mesh.influenceVbo, mesh.uv1Vbo,     mesh.morphInflVbo,
-                          mesh.morphOffsetVbo};
-      vkCmdBindVertexBuffers(cb, 0, 7, bufs, offs);
+                          mesh.morphOffsetVbo,
+                          mesh.vtxColorBuf ? mesh.vtxColorBuf : mesh.vbo};
+      vkCmdBindVertexBuffers(cb, 0, 8, bufs, offs);
       vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
       for (const auto& sub : mesh.submeshes) {
+        const bool splitBack =
+            dynCullSupported_ && sub.backfaceMaterialId >= 0 &&
+            sub.backfaceMaterialId != sub.materialId;
+        const int sideCount = splitBack ? 2 : 1;
+        for (int side = 0; side < sideCount; ++side) {
+        const int materialId = side == 0 ? sub.materialId
+                                         : sub.backfaceMaterialId;
+        if (dynCullSupported_) {
+          const VkCullModeFlags want =
+              splitBack ? (side == 0 ? VK_CULL_MODE_BACK_BIT
+                                     : VK_CULL_MODE_FRONT_BIT)
+                        : (mesh.doubleSided ? VK_CULL_MODE_NONE
+                                            : VK_CULL_MODE_BACK_BIT);
+          if (static_cast<int>(want) != cullState) {
+            vkCmdSetCullMode_(cb, want);
+            cullState = static_cast<int>(want);
+          }
+        }
         // Opaque pass skips Blend submeshes; translucent pass skips the rest.
-        if (apass == 0 && subTranslucent(sub.materialId)) continue;
-        if (apass == 1 && !subTranslucent(sub.materialId)) continue;
+        if (apass == 0 && subTranslucent(materialId)) continue;
+        if (apass == 1 && !subTranslucent(materialId)) continue;
         auto materialTexSlot = [&](const std::vector<int>& slots) -> int {
-          if (sub.materialId >= 0 &&
-              static_cast<size_t>(sub.materialId) < slots.size()) {
-            return slots[static_cast<size_t>(sub.materialId)];
+          if (materialId >= 0 &&
+              static_cast<size_t>(materialId) < slots.size()) {
+            return slots[static_cast<size_t>(materialId)];
           }
           return -1;
         };
@@ -7533,9 +7601,9 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         // sliders reach the shader via the set-5 params UBO.
         bool displaced = false;
         VkDescriptorSet dispDs = blackDesc_;
-        if (displacement_ && sub.materialId >= 0 &&
-            static_cast<size_t>(sub.materialId) < matDispTex_.size()) {
-          const int dt = matDispTex_[static_cast<size_t>(sub.materialId)];
+        if (displacement_ && materialId >= 0 &&
+            static_cast<size_t>(materialId) < matDispTex_.size()) {
+          const int dt = matDispTex_[static_cast<size_t>(materialId)];
           if (dt >= 0 && static_cast<size_t>(dt) < texDescs_.size()) {
             dispDs = texDescs_[static_cast<size_t>(dt)];
             displaced = true;
@@ -7547,11 +7615,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         }
         PushC pc{};
         std::memcpy(pc.model, W.m, sizeof(pc.model));
-        if (sub.materialId >= 0 &&
-            static_cast<size_t>(sub.materialId) * 12 + 10 < matColor_.size()) {
+        if (materialId >= 0 &&
+            static_cast<size_t>(materialId) * 12 + 10 < matColor_.size()) {
           // matColor_ stride 12: [0..2]=baseColor, [3]=alpha, [4]=metallic,
           // [5]=roughness, [6]=alphaMode, [7]=alphaCutoff, [8..10]=emissive.
-          const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 12];
+          const float* mc = &matColor_[static_cast<size_t>(materialId) * 12];
           pc.baseColor[0] = mc[0]; pc.baseColor[1] = mc[1];
           pc.baseColor[2] = mc[2]; pc.baseColor[3] = mc[3];
           pc.matAux[0] = mc[4];          // metallic
@@ -7577,7 +7645,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           flags |= (1 << 7) |
                    (static_cast<int>((sub.indexOffset / 3) & 0xFFFFFFu) << 8);
         }
-        pc.ids[0] = sub.materialId;
+        pc.ids[0] = materialId;
         pc.ids[1] = flags;
         pc.ids[2] = static_cast<int>(mi);
         pc.ids[3] = 0;
@@ -7606,6 +7674,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPl);
         } else {
           vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
+        }
         }
       }
     }

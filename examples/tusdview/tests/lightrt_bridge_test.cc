@@ -185,6 +185,56 @@ int main() {
     return 1;
   }
 
+  // The shared CUDA/HIP host scene keeps a compact optional back-material
+  // stream. Also lock the legacy convention that material index 0 may be a
+  // real authored material; only the next loader's anonymous index-0 record is
+  // suppressed for an unbound instanced prototype.
+  tusdview::DrawScene sidedScene;
+  tusdview::DrawMaterialCPU frontMat;
+  frontMat.name = "AuthoredFrontAtZero";
+  frontMat.baseColor[0] = 0.9f;
+  frontMat.baseColor[1] = 0.1f;
+  frontMat.baseColor[2] = 0.2f;
+  tusdview::DrawMaterialCPU backMat;
+  backMat.name = "AuthoredBack";
+  backMat.baseColor[0] = 0.1f;
+  backMat.baseColor[1] = 0.2f;
+  backMat.baseColor[2] = 0.9f;
+  sidedScene.materials = {frontMat, backMat};
+  tusdview::DrawMeshCPU sidedMesh = mesh;
+  sidedMesh.submeshes[0].backfaceMaterialId = 1;
+  sidedMesh.instanceXforms = {1.0f, 0.0f, 0.0f, 0.0f,
+                              0.0f, 1.0f, 0.0f, 0.0f,
+                              0.0f, 0.0f, 1.0f, 0.0f};
+  sidedScene.meshes.push_back(sidedMesh);
+  tusdview::HostScene sidedHost;
+  if (!tusdview::BuildHostScene(sidedScene, 0, 0, 0.0f, &sidedHost, &err) ||
+      sidedHost.mat.size() != 1 || sidedHost.mat[0] != 0 ||
+      sidedHost.backMat.size() != 1 || sidedHost.backMat[0] != 1 ||
+      sidedHost.matBase.size() != 6 || !Near(sidedHost.matBase[0], 0.9f) ||
+      !Near(sidedHost.matBase[5], 0.9f) || sidedHost.instances.size() != 1 ||
+      !Near(sidedHost.instances[0].tint[0], 1.0f)) {
+    std::fprintf(stderr, "front/back RT material packing changed: %s\n",
+                 err.c_str());
+    return 1;
+  }
+
+  tusdview::DrawScene placeholderScene;
+  placeholderScene.materials.emplace_back();  // anonymous next-loader fallback
+  tusdview::DrawMeshCPU placeholderMesh = sidedMesh;
+  placeholderMesh.submeshes[0].backfaceMaterialId = -1;
+  placeholderScene.meshes.push_back(std::move(placeholderMesh));
+  tusdview::HostScene placeholderHost;
+  if (!tusdview::BuildHostScene(placeholderScene, 0, 0, 0.0f,
+                                &placeholderHost, &err) ||
+      placeholderHost.mat.size() != 1 || placeholderHost.mat[0] != -1 ||
+      !placeholderHost.backMat.empty() || placeholderHost.instances.size() != 1 ||
+      !Near(placeholderHost.instances[0].tint[0], sidedMesh.flatColor[0])) {
+    std::fprintf(stderr, "anonymous RT material fallback changed: %s\n",
+                 err.c_str());
+    return 1;
+  }
+
   tusdview::DrawMaterialCPU defaultMat;
   std::vector<float> defaultPack(tusdview::kLightRtOpenPBRFloats, -1.0f);
   tusdview::PackLightRtOpenPBR(defaultMat, defaultPack.data());
@@ -245,7 +295,7 @@ int main() {
       "           nodename=\"GraphSurface\"/>"
       "  </surfacematerial>"
       "</materialx>";
-  tusdview::DrawLightRtOpenPBRCPU graphEval;
+  tusdview::tydra::LightRtOpenPBRParams graphEval;
   std::string graphErr;
   if (!tusdview::EvaluateMaterialXStringToLightRtOpenPBR(
           graphXml, "GraphMat", &graphEval, &graphErr)) {
@@ -298,7 +348,7 @@ int main() {
       "           nodename=\"StandardSurface\"/>"
       "  </surfacematerial>"
       "</materialx>";
-  tusdview::DrawLightRtOpenPBRCPU standardGraphEval;
+  tusdview::tydra::LightRtOpenPBRParams standardGraphEval;
   if (!tusdview::EvaluateMaterialXStringToLightRtOpenPBR(
           standardGraphXml, "StandardGraphMat", &standardGraphEval,
           &graphErr)) {

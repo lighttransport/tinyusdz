@@ -226,7 +226,14 @@ void main() {
   // Shading normal, with the tangent-space normal map applied up front so the
   // Normals AOV (mode 2) shows the same perturbed normal the lit path uses --
   // matching the GL backend, which also maps before its AOV branch.
-  vec3 N = applyNormalMap(normalize(vNormalW));
+  // Meshes without authored normals carry zero vertex normals and set flags
+  // bit 0. Normalizing that zero vector poisoned the lit path with NaNs, making
+  // non-subdivision displayColor meshes render black. Derive their geometric
+  // normal from screen-space position derivatives, matching the GL path.
+  vec3 Nbase = ((pc.ids.y & 1) != 0)
+                   ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
+                   : normalize(vNormalW);
+  vec3 N = applyNormalMap(Nbase);
   // Debug AOVs.
   if (fr.mode.x != 0) {
     vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));

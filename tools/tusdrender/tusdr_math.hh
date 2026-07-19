@@ -308,6 +308,7 @@ static constexpr uint32_t kPurposeGuideBit = 1u << 3u;
 static constexpr uint32_t kPurposeDefaultMask =
     kPurposeDefaultBit | kPurposeRenderBit | kPurposeProxyBit;
 static constexpr uint32_t kNoOpenPBRMaterial = UINT32_MAX;
+static constexpr uint32_t kNoBackfaceMaterial = UINT32_MAX;
 
 struct TriInfo {
   Vec3 p0;
@@ -412,6 +413,9 @@ struct TriMat {
   float ior{1.5f};
   uint8_t use_specular_workflow{0};
   uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
+  // Optional index into the SAME material table for a ray hitting the authored
+  // back face. Stored once per mesh-job material, not once per triangle.
+  uint32_t backface_id{kNoBackfaceMaterial};
   // This triangle is part of an emissive mesh that is ALSO registered as an
   // analytic mesh light (LightCache::mesh). Its emission is therefore already
   // being delivered by direct lighting, and a BSDF-bounce ray that lands on it
@@ -608,7 +612,8 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
          a.specular_color.z == b.specular_color.z &&
          a.specular_tex_id == b.specular_tex_id && a.ior == b.ior &&
          a.use_specular_workflow == b.use_specular_workflow &&
-         a.openpbr_id == b.openpbr_id && a.area_light == b.area_light;
+         a.openpbr_id == b.openpbr_id &&
+         a.backface_id == b.backface_id && a.area_light == b.area_light;
 }
 
 // A scalar texture binding: texture index + source channel (UsdUVTexture

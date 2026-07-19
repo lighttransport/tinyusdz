@@ -79,7 +79,9 @@ class CudaRayTracer {
   uintptr_t dGeo_{0};        // uint8 geometricNormal flag per tri
   uintptr_t dEmask_{0};      // uint8 wireframe edge mask per tri (orig-polygon edges)
   uintptr_t dMat_{0};        // int material id per tri (material-id viz)
+  uintptr_t dBackMat_{0};    // optional int back-face material id per tri
   uintptr_t dMatPbr_{0};     // float[6] per material: metal,rough,emitRGB,alpha
+  uintptr_t dMatBase_{0};    // float[3] per material: base color
   uintptr_t dMatLightRt_{0};  // float[56] per material: LightRT/OpenPBR params
   uintptr_t dMatTex_{0};     // int[4] per material: base,metalRough,normal,emissive
   uintptr_t dMatTexParam_{0}; // float[56] per material: texture UV/channel params

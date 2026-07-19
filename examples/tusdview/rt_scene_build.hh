@@ -84,10 +84,15 @@ struct HostScene {
   // and skip triangulation diagonals.
   std::vector<uint8_t> emask;
   std::vector<int> mat, face, domj;
+  // Optional back-face material id per triangle. Empty when the scene has no
+  // distinct back binding; entries < 0 fall back to mat. Keeping this sparse at
+  // scene level avoids another 4 B/triangle on ordinary large scenes.
+  std::vector<int> backMat;
   std::vector<Node> blas;       // BLAS nodes, rebased to the global arrays
   std::vector<Node> tlas;       // TLAS nodes (root at 0)
   std::vector<Inst> instances;  // leaf-order (matches the TLAS)
   std::vector<float> matPbr;
+  std::vector<float> matBase;  // 3 floats/material; base color constant
   // 56 floats/material: vec4-friendly LightRT/OpenPBR constant fallback.
   // See lightrt_mtlx_bridge.hh PackLightRtOpenPBR.
   std::vector<float> matLightRt;

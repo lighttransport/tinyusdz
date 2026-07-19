@@ -2288,6 +2288,7 @@ if(TINYUSDZ_BUILD_TESTS)
   # run-alpha-blend-sort-external.sh need external multi-GB asset corpora.
   if(TARGET tusdrender)
     set(TUSDR_SHELL_TESTS
+        backface-material
         camera-modes
         cli-robustness
         cmyk-jpeg-texture
@@ -2738,6 +2739,29 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-material-binding-inheritance
                          PROPERTIES SKIP_RETURN_CODE 77)
 
+    # Unsupported bound surface shaders retain familiar PBR constants in a
+    # per-material degraded PreviewSurface. Geometry must remain renderable and
+    # the structured load summary must report the degradation.
+    add_test(
+      NAME tusdview-degraded-material
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-degraded-material.sh"
+      )
+    set_tests_properties(tusdview-degraded-material
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
+    # Exact material:binding:back resolution and draw-side selection, including
+    # a GeomSubset-specific degraded back material and whole-mesh fallback.
+    add_test(
+      NAME tusdview-backface-material
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backface-material.sh"
+      )
+    set_tests_properties(tusdview-backface-material
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
     # doubleSided (audit T8): a single-sided mesh back-face culls, a doubleSided
     # one does not -- identically on GL and Vulkan. The --next loader used to
     # drop the authored flag entirely, and Vulkan never culled anything.
@@ -2769,6 +2793,17 @@ if(TINYUSDZ_BUILD_TESTS)
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-opacity-material.sh"
       )
     set_tests_properties(tusdview-opacity-material PROPERTIES SKIP_RETURN_CODE 77)
+
+    # Deterministic back-to-front alpha blending on both raster backends.
+    # Keep this registered separately from scalar opacity/cutout coverage: it
+    # catches draw-order regressions with three overlapping translucent layers.
+    add_test(
+      NAME tusdview-transparency
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-transparency.sh"
+      )
+    set_tests_properties(tusdview-transparency PROPERTIES SKIP_RETURN_CODE 77)
 
     # USD `proxy` and `render` are ALTERNATIVES, not two things to draw. Drawing
     # both put the stand-in on top of the geometry it stands in for (intent-vfx's
@@ -2819,13 +2854,26 @@ if(TINYUSDZ_BUILD_TESTS)
       COMMAND ${CMAKE_COMMAND} -E env
               "TUSDVIEW=$<TARGET_FILE:tusdview>"
               "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_GOLDEN"
-              "TUSDVIEW_USD_ASSETS_FAIL_ON=timeout,backend_error,golden_mismatch"
+              "TUSDVIEW_USD_ASSETS_FAIL_ON=timeout,backend_error,golden_mismatch,unexpected_degradation,expectation_mismatch"
               bash "${PROJECT_SOURCE_DIR}/tests/tusdview/run-usd-assets-batch.sh"
                    --golden-kind coverage
                    --golden "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/usd-assets-goldens.tsv"
       )
     set_tests_properties(tusdview-usd-assets-golden
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 5400)
+
+    # Self-contained classification/expectation test for the external-corpus
+    # harness. Uses a generated empty layer and tusdrender CPU, so it verifies
+    # no_renderable plus hard expectation mismatches without usd-assets data.
+    add_test(
+      NAME tusdview-usd-assets-classification
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDRENDER=$<TARGET_FILE:tusdrender>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-no-renderable-tracking.sh"
+      )
+    set_tests_properties(tusdview-usd-assets-classification
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
   endif()
 
   #

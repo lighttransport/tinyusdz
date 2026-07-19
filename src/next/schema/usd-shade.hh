@@ -55,7 +55,9 @@ std::string GetVolumeShader(const Stage& stage, const UsdPrim& material);
 bool GetMaterialBinding(const Stage& stage, const UsdPrim& material,
                         MaterialBinding* out);
 
-/// Find material bound to a prim (via material:binding relationship)
+/// Find the first purpose-preferred binding on a prim whose target resolves to
+/// a Material. Dangling purpose-specific targets fall through to weaker-purpose
+/// bindings on the same prim.
 UsdPrim GetBoundMaterial(const Stage& stage, const UsdPrim& prim);
 
 /// Get bound material path
@@ -63,10 +65,20 @@ std::string GetBoundMaterialPath(const UsdPrim& prim);
 
 /// Resolve the material bound to `prim_path`, honoring UsdShade binding
 /// INHERITANCE (a binding on an ancestor applies to its descendants) on top of
-/// the purpose fallback chain in `GetBoundMaterialPath`. Returns "" if nothing
-/// in the ancestor chain binds a material.
+/// the purpose fallback chain in `GetBoundMaterialPath`. Dangling/non-Material
+/// targets do not shadow valid weaker-purpose or ancestor bindings. Returns ""
+/// if nothing in the ancestor chain binds a material.
 std::string GetInheritedBoundMaterialPath(const Stage& stage,
                                           const std::string& prim_path);
+
+/// Resolve an exact purpose-specific material binding (for example `back`) on
+/// `prim_path` or its ancestors. Unlike the preview/all/full fallback above,
+/// this only considers `material:binding:<purpose>`; callers can fall back to
+/// the ordinary front-face binding when it returns empty. Invalid targets are
+/// skipped and bindMaterialAs strength is honored across the ancestor chain.
+std::string GetInheritedBoundMaterialPathForPurpose(
+    const Stage& stage, const std::string& prim_path,
+    const std::string& purpose);
 
 /// Does this prim's winning binding declare `bindMaterialAs =
 /// "strongerThanDescendants"`? (The default is "weakerThanDescendants", i.e. a

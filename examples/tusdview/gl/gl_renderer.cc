@@ -2447,15 +2447,44 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
 
     glBindVertexArray(mesh.vao);
     for (const auto& sub : mesh.submeshes) {
+      const bool splitBack =
+          !wireframe && sub.backfaceMaterialId >= 0 &&
+          sub.backfaceMaterialId != sub.materialId;
+      const int sideCount = splitBack ? 2 : 1;
+      for (int side = 0; side < sideCount; ++side) {
+      const int materialId = side == 0 ? sub.materialId
+                                       : sub.backfaceMaterialId;
+      if (splitBack) {
+        // A purpose-bound back material turns one logical submesh into two
+        // complementary draws. This also works when doubleSided is false: the
+        // explicit back binding is an authored request to render that side.
+        const int wantSideCull = side == 0 ? 1 : 2;
+        if (wantSideCull != cullState) {
+          glEnable(GL_CULL_FACE);
+          glCullFace(side == 0 ? GL_BACK : GL_FRONT);
+          cullState = wantSideCull;
+        }
+      } else if (wantCull != cullState) {
+        // A preceding split-back submesh may have left GL_FRONT selected.
+        // Restore this mesh's ordinary cull state before drawing an unsplit
+        // submesh in the same mesh.
+        if (wantCull) {
+          glEnable(GL_CULL_FACE);
+          glCullFace(GL_BACK);
+        } else {
+          glDisable(GL_CULL_FACE);
+        }
+        cullState = wantCull;
+      }
       // Alpha-class filtering: the opaque pass skips Blend submeshes, the
       // translucent pass skips the rest. `All` (AOV/wireframe) draws everything.
-      if (alphaPass == AlphaPass::Opaque && matTranslucent(sub.materialId)) continue;
-      if (alphaPass == AlphaPass::Translucent && !matTranslucent(sub.materialId)) continue;
+      if (alphaPass == AlphaPass::Opaque && matTranslucent(materialId)) continue;
+      if (alphaPass == AlphaPass::Translucent && !matTranslucent(materialId)) continue;
       const GLMaterial& mat =
-          (sub.materialId >= 0 && static_cast<size_t>(sub.materialId) < materials_.size())
-              ? materials_[static_cast<size_t>(sub.materialId)]
+          (materialId >= 0 && static_cast<size_t>(materialId) < materials_.size())
+              ? materials_[static_cast<size_t>(materialId)]
               : kDefault;
-      glUniform1i(uMatId_, sub.materialId);
+      glUniform1i(uMatId_, materialId);
       glUniform1i(uFaceBase_, static_cast<int>(sub.indexOffset / 3));
       // Resolve a material texture slot to a GPU texture; white if the slot is out
       // of range or not yet uploaded (lazy texture streaming).
@@ -2479,9 +2508,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       // keep the sampler complete.
       const bool displaced =
           params.displacement &&
-          ((sub.materialId >= 0 &&
-            static_cast<size_t>(sub.materialId) < materials_.size())
-               ? materials_[static_cast<size_t>(sub.materialId)].hasDisplacement()
+          ((materialId >= 0 &&
+            static_cast<size_t>(materialId) < materials_.size())
+               ? materials_[static_cast<size_t>(materialId)].hasDisplacement()
                : false);
       // GPU tessellation detail path: subdivide displaced triangles on the GPU and
       // displace each generated sample. Only in the Shaded view, for non-skinned
@@ -2490,7 +2519,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       if (displaced && tessAvailable_ && !overrideEmissive &&
           params.maxTessLevel > 1 &&
           params.mode == RenderMode::Shaded) {
-        const GLMaterial& dmat = materials_[static_cast<size_t>(sub.materialId)];
+        const GLMaterial& dmat = materials_[static_cast<size_t>(materialId)];
         glUseProgram(tessProgram_);
         glUniformMatrix4fv(tMVP_, 1, GL_FALSE, MVP.m);
         glUniformMatrix4fv(tModel_, 1, GL_FALSE, W.m);
@@ -2553,7 +2582,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glUniform1i(uHasDisplacement_, displaced ? 1 : 0);
       glActiveTexture(GL_TEXTURE7);
       if (displaced) {
-        const GLMaterial& dmat = materials_[static_cast<size_t>(sub.materialId)];
+        const GLMaterial& dmat = materials_[static_cast<size_t>(materialId)];
         glUniform1i(uHasDisplacementTex_, dmat.displacementTex >= 0 ? 1 : 0);
         glUniform1f(uDisplacementConst_, dmat.displacementConst);
         glUniform1f(uDisplacementScale_, params.displacementScale);
@@ -2665,6 +2694,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       }
       glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
                      (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)));
+      }
     }
   }
 

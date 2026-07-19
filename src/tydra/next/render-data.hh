@@ -643,6 +643,10 @@ struct OpenPBRSurfaceShader {
   ShaderParam opacity = {-1, {1, 0, 0, 0}};
   ShaderParam normal = {-1, {0, 0, 1, 0}};
   ShaderParam tangent = {-1, {1, 0, 0, 0}};
+  // Height/displacement output carried by MaterialX standard_surface graphs.
+  // OpenPBR itself does not define surface displacement, but retaining it here
+  // lets render consumers use the same geometry path as UsdPreviewSurface.
+  ShaderParam displacement = {-1, {0, 0, 0, 0}};
 
   // MaterialX node graph as JSON (optional)
   std::string nodegraph_json;
@@ -671,11 +675,11 @@ struct RenderMaterial {
   };
   ShaderType shader_type = ShaderType::None;
 
-  // The material had no convertible surface shader and carries a neutral
-  // default instead of being dropped (see ConvertMaterial). Conversion still
-  // SUCCEEDS in that case, so a caller that only checks the return value cannot
-  // tell a real material from a gray stand-in; consumers that report load
-  // degradation must look here.
+  // The material had no fully convertible surface shader and carries a
+  // degraded PreviewSurface instead of being dropped (see ConvertMaterial).
+  // Recognizable authored constants and texture inputs are retained when
+  // possible. Conversion still SUCCEEDS, so consumers that report load
+  // degradation must look here rather than relying on the return value.
   bool default_fallback = false;
 
   // Shader data (one of these based on shader_type)

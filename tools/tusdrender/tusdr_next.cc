@@ -1399,6 +1399,51 @@ ResolvedMat CaptureResolvedFromJob(const MeshJobNext &job) {
   return r;
 }
 
+TriMat TriMatFromResolved(const ResolvedMat &r) {
+  TriMat m;
+  m.base_color = r.base_color;
+  m.emission = r.emission;
+  m.roughness = r.roughness;
+  m.metallic = r.metallic;
+  m.tex_id = r.tex_id;
+  m.normal_tex_id = r.normal_tex_id;
+  m.rough_tex_id = r.rough_tex.id;
+  m.metal_tex_id = r.metal_tex.id;
+  m.emission_tex_id = r.emission_tex_id;
+  m.occ_tex_id = r.occ_tex.id;
+  m.occlusion = r.occlusion;
+  m.opacity = r.opacity;
+  m.opacity_tex_id = r.opacity_tex.id;
+  m.opacity_threshold = r.opacity_threshold;
+  m.clearcoat = r.clearcoat;
+  m.clearcoat_roughness = r.clearcoat_roughness;
+  m.clearcoat_tex_id = r.clearcoat_tex.id;
+  m.clearcoat_rough_tex_id = r.clearcoat_rough_tex.id;
+  m.rough_ch = r.rough_tex.ch;
+  m.metal_ch = r.metal_tex.ch;
+  m.occ_ch = r.occ_tex.ch;
+  m.opacity_ch = r.opacity_tex.ch;
+  m.clearcoat_ch = r.clearcoat_tex.ch;
+  m.clearcoat_rough_ch = r.clearcoat_rough_tex.ch;
+  m.rough_tex_scale = r.rough_tex.scale;
+  m.rough_tex_bias = r.rough_tex.bias;
+  m.metal_tex_scale = r.metal_tex.scale;
+  m.metal_tex_bias = r.metal_tex.bias;
+  m.occ_tex_scale = r.occ_tex.scale;
+  m.occ_tex_bias = r.occ_tex.bias;
+  m.opacity_tex_scale = r.opacity_tex.scale;
+  m.opacity_tex_bias = r.opacity_tex.bias;
+  m.clearcoat_tex_scale = r.clearcoat_tex.scale;
+  m.clearcoat_tex_bias = r.clearcoat_tex.bias;
+  m.clearcoat_rough_tex_scale = r.clearcoat_rough_tex.scale;
+  m.clearcoat_rough_tex_bias = r.clearcoat_rough_tex.bias;
+  m.specular_color = r.specular_color;
+  m.specular_tex_id = r.specular_tex_id;
+  m.ior = r.ior;
+  m.use_specular_workflow = r.use_specular_workflow;
+  return m;
+}
+
 WrapMode ToTusdrWrap(tinyusdz::tydra::next::WrapMode w) {
   using NextWrap = tinyusdz::tydra::next::WrapMode;
   switch (w) {
@@ -1531,13 +1576,17 @@ void ApplyLightRtOpenPBRParamsToJob(
 bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
                                   const tinyusdz::next::UsdPrim &mesh,
                                   TextureCache &tc, MeshJobNext *job,
-                                  std::string *err) {
+                                  std::string *err, bool *degraded,
+                                  const std::string &binding_override = {}) {
   if (!job) return false;
+  if (degraded) *degraded = false;
   MeshJobNext resolved = *job;
   ApplyDisplayPrimvarsNext(mesh, &resolved);
 
-  const std::string bindPath =
-      tinyusdz::next::GetInheritedBoundMaterialPath(stage, mesh.GetPath().str());
+  const std::string bindPath = binding_override.empty()
+                                   ? tinyusdz::next::GetInheritedBoundMaterialPath(
+                                         stage, mesh.GetPath().str())
+                                   : binding_override;
   if (bindPath.empty()) {
     *job = resolved;
     return true;
@@ -1559,17 +1608,11 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
     if (err) *err = converter.GetLastError();
     return false;
   }
-  // Conversion "succeeds" with a neutral stand-in when the surface shader is
-  // unconvertible (an unknown info:id, an engine sourceAsset surface). That is
-  // deliberate -- the mesh keeps its binding and still renders -- but it is a
-  // degradation, so report it rather than silently shading the mesh gray.
-  if (rm.default_fallback) {
-    if (err) {
-      *err = "material '" + bindPath +
-             "' has no convertible surface shader (default material)";
-    }
-    return false;
-  }
+  // An unknown surface implementation is still a usable per-material degraded
+  // PreviewSurface: the shared converter preserves conventional authored PBR
+  // constants/textures around the unsupported node. Consume it here instead of
+  // discarding those values and switching to the hand-rolled legacy resolver.
+  if (degraded) *degraded = rm.default_fallback;
 
   using NextMat = tinyusdz::tydra::next::RenderMaterial;
   if (rm.shader_type == NextMat::ShaderType::PreviewSurface &&
@@ -1792,17 +1835,19 @@ void ResolveMeshMaterialCached(
   // ancestry (mesh, Xform, ...) -- exact UsdShade semantics for face subsets.
   const tinyusdz::next::UsdPrim &mesh =
       job->bind_prim.IsValid() ? job->bind_prim : mesh_in;
+  const MeshJobNext input_job = *job;
+  job->back_material.reset();
   const std::string key =
       tinyusdz::next::GetInheritedBoundMaterialPath(stage, mesh.GetPath().str());
+  bool front_cached = false;
   if (!key.empty()) {
     auto it = cache.find(key);
     if (it != cache.end()) {
       AssignResolvedToJob(it->second, job);
-      return;
+      front_cached = true;
     }
   }
 
-  const MeshJobNext input_job = *job;
   auto resolve_legacy = [&]() {
     ResolveMeshMaterialNext(stage, mesh, tc, &job->base_color, &job->tex_id,
                             &job->roughness, &job->metallic, &job->normal_tex_id,
@@ -1820,9 +1865,10 @@ void ResolveMeshMaterialCached(
   const Options::MaterialResolver mode =
       tc.options ? tc.options->material_resolver
                  : Options::MaterialResolver::Legacy;
-  if (mode == Options::MaterialResolver::TydraNext) {
+  if (!front_cached && mode == Options::MaterialResolver::TydraNext) {
     std::string err;
-    if (!ResolveMeshMaterialTydraNext(stage, mesh, tc, job, &err)) {
+    bool degraded = false;
+    if (!ResolveMeshMaterialTydraNext(stage, mesh, tc, job, &err, &degraded)) {
       if (tc.degraded_materials) (*tc.degraded_materials)++;
       if (!err.empty()) {
         std::cerr << "materialResolver tydra-next failed for "
@@ -1830,13 +1876,17 @@ void ResolveMeshMaterialCached(
                   << "; using legacy resolver.\n";
       }
       resolve_legacy();
+    } else if (degraded && tc.degraded_materials) {
+      (*tc.degraded_materials)++;
     }
-  } else if (mode == Options::MaterialResolver::Compare) {
+  } else if (!front_cached && mode == Options::MaterialResolver::Compare) {
     resolve_legacy();
     MeshJobNext legacy = *job;
     MeshJobNext tydra = input_job;
     std::string err;
-    if (ResolveMeshMaterialTydraNext(stage, mesh, tc, &tydra, &err)) {
+    bool degraded = false;
+    if (ResolveMeshMaterialTydraNext(stage, mesh, tc, &tydra, &err,
+                                     &degraded)) {
       ReportMaterialResolverDiff(key, legacy, tydra, tc);
     } else if (!err.empty()) {
       std::cerr << "materialResolver compare: "
@@ -1844,13 +1894,44 @@ void ResolveMeshMaterialCached(
                 << " tydra-next failed: " << err << "\n";
     }
     *job = legacy;
-  } else {
+  } else if (!front_cached) {
     resolve_legacy();
   }
 
-  if (!key.empty()) {
+  if (!front_cached && !key.empty()) {
     cache.emplace(key, CaptureResolvedFromJob(*job));
   }
+
+  // Back-face purpose is exact: if absent, the integrator uses the front
+  // material. Resolve it through the shared converter even when the selected
+  // front resolver is legacy, because that converter is what preserves a
+  // degraded UsdPreviewSurface for unsupported shader implementations.
+  const std::string back_key =
+      tinyusdz::next::GetInheritedBoundMaterialPathForPurpose(
+          stage, mesh.GetPath().str(), "back");
+  if (back_key.empty()) return;
+
+  auto back_it = cache.find(back_key);
+  if (back_it != cache.end()) {
+    job->back_material = std::make_shared<ResolvedMat>(back_it->second);
+    return;
+  }
+  MeshJobNext back_job = input_job;
+  back_job.back_material.reset();
+  std::string back_err;
+  bool back_degraded = false;
+  if (!ResolveMeshMaterialTydraNext(stage, mesh, tc, &back_job, &back_err,
+                                    &back_degraded, back_key)) {
+    if (!back_err.empty()) {
+      std::cerr << "materialResolver back-face failed for " << back_key
+                << ": " << back_err << "; using front material.\n";
+    }
+    return;
+  }
+  if (back_degraded && tc.degraded_materials) (*tc.degraded_materials)++;
+  ResolvedMat back = CaptureResolvedFromJob(back_job);
+  cache.emplace(back_key, back);
+  job->back_material = std::make_shared<ResolvedMat>(std::move(back));
 }
 
 // Split each job whose mesh has material-bound face GeomSubsets into one job
@@ -3437,6 +3518,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
     Bounds b;
     RTPreviewStats s;
     TriMat mat;  // this job's single material (slim TriStore path only)
+    TriMat back_mat;
+    bool has_back{false};
     bool has_openpbr{false};
     tinyusdz::tydra::LightRtOpenPBRParams openpbr;
   };
@@ -3516,6 +3599,16 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 job.displacement_tex.bias);
             r.has_openpbr = job.has_openpbr;
             r.openpbr = job.openpbr;
+            if (job.back_material) {
+              r.back_mat = TriMatFromResolved(*job.back_material);
+              r.has_back = true;
+              if constexpr (std::is_same<typename TVec::value_type,
+                                         FlatTri>::value) {
+                // An explicit back-face binding makes that side visible even
+                // when doubleSided was otherwise false.
+                for (FlatTri &ft : r.t) ft.double_sided = 1;
+              }
+            }
           }
         } catch (const std::bad_alloc &) {
           oom.store(true, std::memory_order_relaxed);
@@ -3558,7 +3651,15 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
               out_openpbr_table->push_back(r.openpbr);
             }
             const uint32_t mid = uint32_t(out_mat_table->size());
+            if (r.has_back) {
+              r.mat.backface_id = mid + 1;
+              if (out_openpbr_table && jobs[i].back_material->has_openpbr) {
+                r.back_mat.openpbr_id = uint32_t(out_openpbr_table->size());
+                out_openpbr_table->push_back(jobs[i].back_material->openpbr);
+              }
+            }
             out_mat_table->push_back(r.mat);
+            if (r.has_back) out_mat_table->push_back(r.back_mat);
             for (auto &ts : r.t) ts.mat_id = mid;
           }
         }
@@ -4939,6 +5040,13 @@ void PrintRTStats(const RenderContext &ctx) {
   std::cerr << "rt meshes: " << ctx.stats.meshes << "\n";
   std::cerr << "rt skipped meshes: " << ctx.stats.skipped_meshes << "\n";
   std::cerr << "rt missing textures: " << ctx.stats.missing_textures << "\n";
+  size_t backface_materials = 0;
+  for (const TriMat &m : ctx.flat_mats)
+    backface_materials += m.backface_id < ctx.flat_mats.size();
+  for (const Blas &b : ctx.blas)
+    for (const TriMat &m : b.mat_table)
+      backface_materials += m.backface_id < b.mat_table.size();
+  std::cerr << "rt backface materials: " << backface_materials << "\n";
   std::cerr << "rt purpose default triangles: "
             << ctx.stats.purpose_default_triangles << "\n";
   std::cerr << "rt purpose render triangles: "
@@ -5081,8 +5189,9 @@ std::string SubstituteFrame(const std::string &path, long frame) {
 // `load summary:` line so both tools feed the usd-assets smoke harness the same
 // way. Printed unconditionally (independent of -stats) when there is something
 // actionable to report. unsupported_mtlx is not tracked by the next loader yet;
-// degraded_materials tracks shared-resolver failures that fell back to legacy
-// material resolution, and missing_textures / skipped are real counts.
+// degraded_materials tracks unsupported surfaces rendered through the shared
+// resolver's per-material degraded PreviewSurface; missing_textures / skipped
+// are real counts.
 static void PrintLoadSummaryNext(const RenderContext &ctx) {
   const size_t degraded = ctx.stats.degraded_materials;
   const size_t missing = ctx.stats.missing_textures;

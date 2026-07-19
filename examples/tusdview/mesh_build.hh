@@ -29,7 +29,7 @@ void UpdatePreviewLight(DrawScene* draw);
 // lets the smoke harness distinguish a full material fallback (degraded) from a
 // benign missing normal-map texture.
 struct LoadDiagnostics {
-  int degraded_material = 0;   // material fell back to the default material
+  int degraded_material = 0;   // material rendered through a degraded surface
   int missing_texture = 0;     // a texture/image failed to load or resolve
   int unsupported_mtlx = 0;    // a MaterialX node could not be evaluated
   int skipped = 0;             // draw-side skipped items (UDIM/undecoded/empty)

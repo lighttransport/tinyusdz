@@ -1200,9 +1200,9 @@ def Xform "World"
 
 // Regression: a Material whose only surface is an Unreal `sourceAsset` shader
 // (info:implementationSource = "sourceAsset", no UsdPreviewSurface child) must
-// not be dropped. UE MetaHuman exports bind such materials; the converter emits
-// a neutral default PreviewSurface so the binding survives and the mesh keeps a
-// material slot instead of rendering unmaterialed.
+// not be dropped. Familiar authored PBR constants on the engine shader and its
+// Material interface must survive in a per-material degraded PreviewSurface.
+// Geometry and GeomSubset binding must remain intact through that fallback.
 void TestRenderConverterUnrealSourceAssetFallback() {
   std::cout << "Testing RenderConverter Unreal source-asset default material...\n";
 
@@ -1215,12 +1215,28 @@ def Xform "World"
 {
     def Material "M_Hide"
     {
+        color3f inputs:emissiveColor = (0.03, 0.04, 0.05)
         token outputs:unreal:surface.connect = </World/M_Hide/UnrealShader.outputs:out>
 
         def Shader "UnrealShader"
         {
             uniform token info:implementationSource = "sourceAsset"
             uniform asset info:unreal:sourceAsset = @/Game/Materials/M_Hide.M_Hide@
+            color3f inputs:baseColor = (0.2, 0.4, 0.6)
+            float inputs:metalness = 0.75
+            float inputs:roughness = 0.27
+            float inputs:opacity = 0.4
+            token outputs:out
+        }
+    }
+
+    def Material "M_Subset"
+    {
+        token outputs:surface.connect = </World/M_Subset/Unknown.outputs:out>
+        def Shader "Unknown"
+        {
+            uniform token info:id = "UnsupportedSurface_1"
+            color3f inputs:diffuseColor = (0.8, 0.1, 0.2)
             token outputs:out
         }
     }
@@ -1228,9 +1244,17 @@ def Xform "World"
     def Mesh "M"
     {
         rel material:binding = </World/M_Hide>
-        int[] faceVertexCounts = [3]
-        int[] faceVertexIndices = [0, 1, 2]
-        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+
+        def GeomSubset "UnsupportedLook"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [1]
+            rel material:binding = </World/M_Subset>
+        }
     }
 }
 )";
@@ -1254,11 +1278,51 @@ def Xform "World"
   assert(it != result.scene.material_by_path.end());
   const RenderMaterial& mat = result.scene.materials[it->second];
 
-  // Neutral default PreviewSurface (no convertible shader was found).
+  // Degraded PreviewSurface (no fully convertible shader was found), with
+  // authored constants recovered from the engine shader and Material input.
   assert(mat.shader_type == RenderMaterial::ShaderType::PreviewSurface);
   assert(mat.preview_surface);
+  assert(mat.default_fallback);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.x - 0.2f) < 0.001f);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.y - 0.4f) < 0.001f);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.z - 0.6f) < 0.001f);
+  assert(std::abs(mat.preview_surface->metallic.value.x - 0.75f) < 0.001f);
+  assert(std::abs(mat.preview_surface->roughness.value.x - 0.27f) < 0.001f);
+  assert(std::abs(mat.preview_surface->opacity.value.x - 0.4f) < 0.001f);
+  assert(std::abs(mat.preview_surface->emissive_color.value.x - 0.03f) < 0.001f);
+  assert(mat.alpha_mode == RenderMaterial::AlphaMode::Blend);
 
-  std::cout << "  RenderConverter Unreal source-asset default material: PASSED\n";
+  auto subset_mat_it = result.scene.material_by_path.find("/World/M_Subset");
+  assert(subset_mat_it != result.scene.material_by_path.end());
+  const RenderMaterial& subset_mat =
+      result.scene.materials[static_cast<size_t>(subset_mat_it->second)];
+  assert(subset_mat.default_fallback && subset_mat.preview_surface);
+  assert(std::abs(subset_mat.preview_surface->diffuse_color.value.x - 0.8f) <
+         0.001f);
+
+  // A failed shader implementation must never drop bound geometry. Both
+  // triangles survive, and the second is routed to the degraded subset look.
+  auto mesh_it = result.scene.mesh_by_path.find("/World/M");
+  assert(mesh_it != result.scene.mesh_by_path.end());
+  const RenderMesh& mesh =
+      result.scene.meshes[static_cast<size_t>(mesh_it->second)];
+  assert(mesh.triangulated_indices.size() == 6);
+  assert(mesh.material_id == it->second);
+  assert(mesh.material_subsets.size() == 1);
+  assert(mesh.material_subsets[0].face_start == 1);
+  assert(mesh.material_subsets[0].face_count == 1);
+  assert(mesh.material_subsets[0].material_id == subset_mat_it->second);
+
+  bool reported_degraded = false;
+  for (const std::string& warning : result.warnings) {
+    if (warning.find("using a degraded material") != std::string::npos) {
+      reported_degraded = true;
+      break;
+    }
+  }
+  assert(reported_degraded);
+
+  std::cout << "  RenderConverter degraded material: PASSED\n";
 }
 
 // Regression: UsdSkel binding inheritance. `skel:skeleton` may be authored on
@@ -3329,8 +3393,17 @@ def Xform "World"
         {
             uniform token info:id = "ND_standard_surface_surfaceshader"
             color3f inputs:base_color = (0.8, 0.2, 0.1)
+            float inputs:specular = 0.7
+            color3f inputs:specular_color = (0.2, 0.3, 0.4)
             float inputs:specular_roughness = 0.35
             float inputs:metalness = 0.9
+            float inputs:coat = 0.6
+            float inputs:coat_roughness = 0.15
+            float inputs:emission = 2.0
+            color3f inputs:emission_color = (0.1, 0.4, 0.7)
+            color3f inputs:opacity = (0.8, 0.8, 0.8)
+            vector3f inputs:normal = (0.1, 0.2, 0.97)
+            float inputs:displacement = 0.125
             token outputs:out
         }
     }
@@ -3359,6 +3432,17 @@ def Xform "World"
   assert(std::fabs(mat.openpbr->base_color.value.x - 0.8f) < 0.001f);
   assert(std::fabs(mat.openpbr->base_color.value.y - 0.2f) < 0.001f);
   assert(std::fabs(mat.openpbr->base_color.value.z - 0.1f) < 0.001f);
+  assert(std::fabs(mat.openpbr->specular_weight.value.x - 0.7f) < 0.001f);
+  assert(std::fabs(mat.openpbr->specular_color.value.y - 0.3f) < 0.001f);
+  assert(std::fabs(mat.openpbr->specular_roughness.value.x - 0.35f) < 0.001f);
+  assert(std::fabs(mat.openpbr->base_metalness.value.x - 0.9f) < 0.001f);
+  assert(std::fabs(mat.openpbr->coat_weight.value.x - 0.6f) < 0.001f);
+  assert(std::fabs(mat.openpbr->coat_roughness.value.x - 0.15f) < 0.001f);
+  assert(std::fabs(mat.openpbr->emission_luminance.value.x - 2.0f) < 0.001f);
+  assert(std::fabs(mat.openpbr->emission_color.value.z - 0.7f) < 0.001f);
+  assert(std::fabs(mat.openpbr->opacity.value.x - 0.8f) < 0.001f);
+  assert(std::fabs(mat.openpbr->normal.value.y - 0.2f) < 0.001f);
+  assert(std::fabs(mat.openpbr->displacement.value.x - 0.125f) < 0.001f);
 
   std::cout << "  standard_surface no-recursion: PASSED\n";
 }

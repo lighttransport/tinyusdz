@@ -30,7 +30,7 @@ void BakeLightRtOpenPBR(DrawMaterialCPU* mat);
 // viewer free of another stb_image owner until the full RT texture path lands.
 bool EvaluateMaterialXStringToLightRtOpenPBR(const char* xml,
                                              const char* materialName,
-                                             DrawLightRtOpenPBRCPU* out,
+                                             tydra::LightRtOpenPBRParams* out,
                                              std::string* err);
 
 // Pack DrawLightRtOpenPBRCPU into the vec4-friendly SSBO/kernel layout consumed

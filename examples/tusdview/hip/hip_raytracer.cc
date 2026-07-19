@@ -53,7 +53,8 @@ HipRayTracer::~HipRayTracer() {
 
 void HipRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { hipFree(reinterpret_cast<void*>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dBackMat_);
+  F(dMatPbr_); F(dMatBase_);
   F(dMatLightRt_); F(dMatTex_);
   F(dMatTexParam_); F(dLightParams_);
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
@@ -172,6 +173,9 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.geo.data(), hs.geo.size(), &dGeo_)) return false;
   if (!up(hs.emask.data(), hs.emask.size(), &dEmask_)) return false;
   if (!up(hs.mat.data(), hs.mat.size() * sizeof(int), &dMat_)) return false;
+  if (!hs.backMat.empty() &&
+      !up(hs.backMat.data(), hs.backMat.size() * sizeof(int), &dBackMat_))
+    return false;
   if (!up(hs.face.data(), hs.face.size() * sizeof(int), &dFace_)) return false;
   if (!up(hs.uv.data(), hs.uv.size() * sizeof(float), &dUV_)) return false;
   if (!up(hs.uv1.data(), hs.uv1.size() * sizeof(float), &dUV1_)) return false;
@@ -192,6 +196,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
       return false;
   }
   if (!up(hs.matPbr.data(), hs.matPbr.size() * sizeof(float), &dMatPbr_)) return false;
+  if (!up(hs.matBase.data(), hs.matBase.size() * sizeof(float), &dMatBase_)) return false;
   if (!up(hs.matLightRt.data(), hs.matLightRt.size() * sizeof(float),
           &dMatLightRt_)) return false;
   if (!up(hs.lightParams.data(), hs.lightParams.size() * sizeof(float),
@@ -204,8 +209,10 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
     HostScene& r = *retained_;
     auto drop = [](auto& v) { v.clear(); v.shrink_to_fit(); };
     drop(r.cols); drop(r.uv); drop(r.uv1); drop(r.infl); drop(r.domw);
-    drop(r.geo); drop(r.emask); drop(r.mat); drop(r.face); drop(r.domj);
-    drop(r.matPbr); drop(r.matLightRt); drop(r.matTex); drop(r.matTexParam);
+    drop(r.geo); drop(r.emask); drop(r.mat); drop(r.backMat); drop(r.face);
+    drop(r.domj);
+    drop(r.matPbr); drop(r.matBase); drop(r.matLightRt); drop(r.matTex);
+    drop(r.matTexParam);
     drop(r.texels); drop(r.textures); drop(r.lightParams);
     drop(r.volDens); drop(r.volParams);
   }
@@ -272,7 +279,8 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
   void* dT = reinterpret_cast<void*>(dTris_), *dN = reinterpret_cast<void*>(dNrms_),
         *dC = reinterpret_cast<void*>(dCols_), *dG = reinterpret_cast<void*>(dGeo_),
-        *dM = reinterpret_cast<void*>(dMat_), *dMP = reinterpret_cast<void*>(dMatPbr_),
+        *dM = reinterpret_cast<void*>(dMat_), *dBM = reinterpret_cast<void*>(dBackMat_),
+        *dMP = reinterpret_cast<void*>(dMatPbr_), *dMB = reinterpret_cast<void*>(dMatBase_),
         *dML = reinterpret_cast<void*>(dMatLightRt_),
         *dLP = reinterpret_cast<void*>(dLightParams_),
         *dMT = reinterpret_cast<void*>(dMatTex_), *dTx = reinterpret_cast<void*>(dTexels_),
@@ -293,11 +301,11 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   void* dAcc = (samples > 1) ? reinterpret_cast<void*>(dAccum_) : nullptr;
   int sampleIdx = 0;
   int numSamples = samples;
-  // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,
+  // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,backMats,matPbr,matBase,
   // matLightRt,numMats,lightParams,numLights,matTex,matTexParam,texels,textures,
   // numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
   // volDens,volParams,numVols,emask,accum,sampleIdx,numSamples.
-  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &dML, &numMats, &dLP,
+  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dBM, &dMP, &dMB, &dML, &numMats, &dLP,
                   &numLights, &dMT, &dMTP, &dTx, &dTD, &numTextures, &dU, &dU1,
                   &dIn, &dF,  &dDw,
                   &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,

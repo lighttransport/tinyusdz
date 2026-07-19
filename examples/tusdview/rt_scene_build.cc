@@ -86,7 +86,7 @@ struct MeshBuild {
   bool valid = false;
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
   std::vector<uint8_t> geo, emask;
-  std::vector<int> mat, face, domj;
+  std::vector<int> mat, backMat, face, domj;
   std::vector<Node> blas;  // local node/leaf refs (rebased during assembly)
   std::vector<int> leafOrder;  // output slot i <- original triangle leafOrder[i]
   float lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
@@ -124,6 +124,19 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
         return s.materialId;
     return -1;
   };
+  auto submeshBackMatId = [&](uint32_t triIdx0) -> int {
+    for (const DrawSubmesh& s : m.submeshes)
+      if (triIdx0 >= s.indexOffset && triIdx0 < s.indexOffset + s.indexCount)
+        return s.backfaceMaterialId;
+    return -1;
+  };
+  auto isDefaultPlaceholder = [&](int materialId) -> bool {
+    if (materialId != 0 || scene.materials.empty()) return false;
+    const DrawMaterialCPU& mat = scene.materials.front();
+    return mat.name.empty() && mat.absPath.empty() &&
+           !mat.hasUsdPreviewSurface && !mat.hasOpenPBRSurface &&
+           mat.params.empty();
+  };
 
   // Original-polygon edge set (for the wireframe edge mask). Keys are the same
   // vertex-index pairs used by m.indices, so triangle edges can be tested directly.
@@ -141,18 +154,11 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
 
   std::vector<float> lt, ln, lc, luv, luv1, linfl, ldomw;
   std::vector<uint8_t> lg, le;
-  std::vector<int> lm, lf, ldomj;
+  std::vector<int> lm, lmb, lf, ldomj;
+  bool anyBackMaterial = false;
   for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
     float wp[9], wn[9], wc[12], wuv[6], wuv1[6], winfl[3], wdomw[3];
     int domJoint = -1;
-    float curTint[3] = {0.6f, 0.6f, 0.6f};
-    if (instanced) {
-      curTint[0] = curTint[1] = curTint[2] = 1.0f;
-    } else if (const DrawMaterialCPU* mat = submeshMat(static_cast<uint32_t>(t))) {
-      curTint[0] = mat->baseColor[0];
-      curTint[1] = mat->baseColor[1];
-      curTint[2] = mat->baseColor[2];
-    }
     for (int k = 0; k < 3; ++k) {
       const uint32_t vidx = m.indices[t + k];
       const DrawVertex& vtx = m.vertices[vidx];
@@ -175,9 +181,12 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
         const float* c = &m.vertexColors[vidx * 3];
         dc[0] = c[0]; dc[1] = c[1]; dc[2] = c[2];
       }
-      wc[k * 4 + 0] = curTint[0] * dc[0];
-      wc[k * 4 + 1] = curTint[1] * dc[1];
-      wc[k * 4 + 2] = curTint[2] * dc[2];
+      // Keep only displayColor here. The hit-selected front/back material base
+      // is applied in the kernel from matBase, so changing sides can change the
+      // base constant without a second per-triangle color stream.
+      wc[k * 4 + 0] = dc[0];
+      wc[k * 4 + 1] = dc[1];
+      wc[k * 4 + 2] = dc[2];
       wc[k * 4 + 3] = hasVtxAlpha ? m.vertexAlpha[vidx] : 1.0f;
     }
     if (displacementScale != 0.0f) {
@@ -218,7 +227,18 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     ldomw.insert(ldomw.end(), wdomw, wdomw + 3);
     ldomj.push_back(domJoint);
     lg.push_back(g);
-    lm.push_back(submeshMatId(static_cast<uint32_t>(t)));
+    const int frontMat = submeshMatId(static_cast<uint32_t>(t));
+    // Unbound next-loader instanced prototypes carry their flat/instance tint
+    // in Inst; suppress that loader's anonymous material-0 placeholder to avoid
+    // multiplying by default gray twice. Legacy scenes may use index 0 for a
+    // real authored material, identified by its populated material record.
+    lm.push_back(instanced &&
+                         (frontMat < 0 || isDefaultPlaceholder(frontMat))
+                     ? -1
+                     : frontMat);
+    const int backMat = submeshBackMatId(static_cast<uint32_t>(t));
+    lmb.push_back(backMat);
+    anyBackMaterial |= backMat >= 0 && backMat != lm.back();
     lf.push_back(hasFace ? static_cast<int>(m.sourceFaceId[t / 3]) : -1);
     // Wireframe edge mask: bit0 edge(v1,v2), bit1 edge(v2,v0), bit2 edge(v0,v1).
     // 7 (all edges) when the mesh has no original-polygon data.
@@ -258,6 +278,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   mb.tris.reserve(ltc * 9); mb.nrms.reserve(ltc * 9); mb.cols.reserve(ltc * 12);
   mb.uv.reserve(ltc * 6); mb.uv1.reserve(ltc * 6); mb.infl.reserve(ltc * 3);
   mb.domw.reserve(ltc * 3); mb.geo.reserve(ltc); mb.mat.reserve(ltc);
+  if (anyBackMaterial) mb.backMat.reserve(ltc);
   mb.face.reserve(ltc); mb.domj.reserve(ltc); mb.emask.reserve(ltc);
   for (size_t i = 0; i < ltc; ++i) {
     int s = bidx[i];
@@ -271,6 +292,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     mb.geo.push_back(lg[s]);
     mb.emask.push_back(le[s]);
     mb.mat.push_back(lm[s]);
+    if (anyBackMaterial) mb.backMat.push_back(lmb[s]);
     mb.face.push_back(lf[s]);
     mb.domj.push_back(ldomj[s]);
   }
@@ -281,13 +303,18 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     const size_t ninst = m.instanceCount();
     const bool perColor = m.instanceColors.size() == ninst * 3;
     const bool perOpacity = m.instanceOpacities.size() == ninst;
+    const bool boundMaterial = std::any_of(
+        mb.mat.begin(), mb.mat.end(), [](int materialId) { return materialId >= 0; });
     mb.instO2W.reserve(ninst * 12);
     mb.instTint.reserve(ninst * 4);
     for (size_t k = 0; k < ninst; ++k) {
       mb.instO2W.insert(mb.instO2W.end(), &m.instanceXforms[k * 12], &m.instanceXforms[k * 12] + 12);
-      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 0] : m.flatColor[0]);
-      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 1] : m.flatColor[1]);
-      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 2] : m.flatColor[2]);
+      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 0]
+                                    : (boundMaterial ? 1.0f : m.flatColor[0]));
+      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 1]
+                                    : (boundMaterial ? 1.0f : m.flatColor[1]));
+      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 2]
+                                    : (boundMaterial ? 1.0f : m.flatColor[2]));
       const float opacity = perOpacity ? m.instanceOpacities[k] : m.flatOpacity;
       mb.instTint.push_back(std::max(0.0f, std::min(1.0f, opacity)));
     }
@@ -472,6 +499,12 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     out->geo.insert(out->geo.end(), mb.geo.begin(), mb.geo.end());
     out->emask.insert(out->emask.end(), mb.emask.begin(), mb.emask.end());
     out->mat.insert(out->mat.end(), mb.mat.begin(), mb.mat.end());
+    if (!mb.backMat.empty()) {
+      if (out->backMat.empty()) out->backMat.assign(triOff, -1);
+      out->backMat.insert(out->backMat.end(), mb.backMat.begin(), mb.backMat.end());
+    } else if (!out->backMat.empty()) {
+      out->backMat.insert(out->backMat.end(), mb.mat.size(), -1);
+    }
     out->face.insert(out->face.end(), mb.face.begin(), mb.face.end());
     out->domj.insert(out->domj.end(), mb.domj.begin(), mb.domj.end());
     for (Node nd : mb.blas) {
@@ -575,6 +608,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
 
   out->numMats = static_cast<int>(scene.materials.size());
   out->matPbr.assign(std::max<size_t>(scene.materials.size(), 1) * 6, 0.0f);
+  out->matBase.assign(std::max<size_t>(scene.materials.size(), 1) * 3, 0.6f);
   out->matLightRt.assign(std::max<size_t>(scene.materials.size(), 1) *
                              kLightRtOpenPBRFloats,
                          0.0f);
@@ -616,6 +650,9 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     out->matPbr[i * 6 + 3] = dm.emissive[1];
     out->matPbr[i * 6 + 4] = dm.emissive[2];
     out->matPbr[i * 6 + 5] = dm.alpha;
+    out->matBase[i * 3 + 0] = dm.baseColor[0];
+    out->matBase[i * 3 + 1] = dm.baseColor[1];
+    out->matBase[i * 3 + 2] = dm.baseColor[2];
     PackLightRtOpenPBR(dm, &out->matLightRt[i * kLightRtOpenPBRFloats]);
     out->matTex[i * 4 + 0] = mapTex(dm.baseColorTex);
     out->matTex[i * 4 + 1] = mapTex(dm.metalRoughTex);

@@ -19,6 +19,9 @@
 
 namespace tusdview {
 
+namespace tydra = tinyusdz::tydra;
+using DrawLightRtOpenPBRCPU = tydra::LightRtOpenPBRParams;
+
 // Halton(2,3) sub-pixel jitter offset in [-0.5, 0.5) for supersampled ray-traced
 // screenshots (the CUDA/HIP trace path). Sample 0 is the pixel center (0,0), so
 // spp==1 reproduces the un-jittered image exactly. Shared by both GPU tracers.
@@ -48,6 +51,10 @@ struct DrawSubmesh {
   uint32_t indexOffset{0};  // offset into DrawMeshCPU::indices (in indices)
   uint32_t indexCount{0};
   int materialId{-1};  // index into DrawScene::materials (-1 = default material)
+  // Optional material for triangles viewed from behind. -1 means use
+  // materialId, so ordinary scenes pay only one extra integer per draw range
+  // and every backend has the same explicit fallback rule.
+  int backfaceMaterialId{-1};
 };
 
 // One blendshape target in DrawVertex order (sparse), for per-frame GPU morph.
@@ -334,7 +341,7 @@ struct DrawMaterialParamCPU {
 
 // Baked constant fallback for raster/RT backends. Texture-connected inputs keep
 // their texture ids in DrawMaterialParamCPU and the legacy material slots.
-using DrawLightRtOpenPBRCPU = tinyusdz::tydra::LightRtOpenPBRParams;
+
 
 struct DrawMaterialCPU {
   std::string name;

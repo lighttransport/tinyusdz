@@ -330,7 +330,8 @@ R"CUDA(  float t0=fmaxf(tmin,0.f);
 
 extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* cols, const unsigned char* geo,
-                                 const int* mats, const float* matPbr,
+                                 const int* mats, const int* backMats,
+                                 const float* matPbr, const float* matBase,
                                  const float* matLightRt, int numMats,
                                  const float* lightParams, int numLights,
                                  const int* matTex, const float* matTexParam,
@@ -409,7 +410,9 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     const float* uvh=&uvs[ht*6];
     float uu=uvh[0]*w0+uvh[2]*bu+uvh[4]*bv;
     float vv2=uvh[1]*w0+uvh[3]*bu+uvh[5]*bv;
-    int mid=mats[ht];
+    const bool backHit =
+        dot3(cross3(sub(wp1,wp0),sub(wp2,wp0)), d) > 0.f;
+    int mid=(backHit && backMats && backMats[ht]>=0) ? backMats[ht] : mats[ht];
     int baseTex=-1, mrTex=-1, normalTex=-1, emissiveTex=-1;
     const float* tp = 0;
     if (matTex && mid>=0 && mid<numMats){
@@ -419,6 +422,11 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     }
     const float* lrt = (matLightRt && mid>=0 && mid<numMats &&
                         matLightRt[mid*56+51] > 0.5f) ? &matLightRt[mid*56] : 0;
+    if (mid>=0 && mid<numMats && matBase) {
+      F3 mb=mk(matBase[mid*3],matBase[mid*3+1],matBase[mid*3+2]);
+      if (lrt) mb=mk(lrt[0],lrt[1],lrt[2]);
+      base=mk(base.x*mb.x,base.y*mb.y,base.z*mb.z);
+    }
     float buu=uu,bvv=vv2,muu=uu,mvv=vv2,nuu=uu,nvv=vv2,euu=uu,evv=vv2;
     if (tp) {
       xformUv(tp,0,uu,vv2,&buu,&bvv);
@@ -600,7 +608,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
     } else if (rmode==2){
       outc=mk(N.x*0.5f+0.5f, N.y*0.5f+0.5f, N.z*0.5f+0.5f);
     } else if (rmode==3){
-      outc=idColor(mats[ht]);
+      outc=idColor(mid);
     } else if (rmode==4){
       F3 Ng=norm3(cross3(sub(wp1,wp0),sub(wp2,wp0)));
       if (dot3(Ng,d)>0.f) Ng=scale(Ng,-1.f);

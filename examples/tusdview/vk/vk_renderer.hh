@@ -175,8 +175,8 @@ class VulkanRenderer final : public Renderer {
     VkBuffer vtxColorBuf{VK_NULL_HANDLE};   // displayColor+displayOpacity (vec4[])
     VkDeviceMemory vtxColorMem{VK_NULL_HANDLE};
     VkDeviceAddress vtxColorAddr{0};
-    // Raster per-vertex displayColor: set-24 SSBO the mesh vertex shader fetches
-    // by gl_VertexIndex (dummyMorphDesc_ + a cleared flag bit when absent).
+    // Retained descriptor for RT/compatibility; raster binds vtxColorBuf as an
+    // ordinary vec4 vertex stream to avoid descriptor-dependent color loss.
     VkDescriptorSet vtxColorDesc{VK_NULL_HANDLE};
     VkDeviceAddress uv1Addr{0};              // uv1 SSBO address (RT multi-UV AOV)
     VkDeviceAddress inflAddr{0};             // influence SSBO address (RT influence AOV)
@@ -185,6 +185,12 @@ class VulkanRenderer final : public Renderer {
     VkDeviceAddress faceAddr{0};             // RT source-face-id AOV
     VkDeviceAddress jointAddr{0};            // RT skin-weights AOV (joint ids)
     VkDeviceAddress weightAddr{0};           // RT skin-weights AOV (weights)
+    // Optional compact primitive-range table for RT material lookup. Allocated
+    // only for multi-material or distinct-back-material meshes.
+    VkBuffer rtSubmeshBuf{VK_NULL_HANDLE};
+    VkDeviceMemory rtSubmeshMem{VK_NULL_HANDLE};
+    VkDeviceAddress rtSubmeshAddr{0};
+    uint32_t rtSubmeshCount{0};
     VkDescriptorSet faceDesc{VK_NULL_HANDLE}; // raster source-face-id (set 3); else dummy
     bool geometricNormal{false};            // no authored normals -> geometric face normal
     bool doubleSided{false};                // double-sided AOV flag

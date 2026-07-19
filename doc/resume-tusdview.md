@@ -1,4 +1,240 @@
-# Resume prompt: reduce tusdview OpenGL first display to ~6 seconds
+# tusdview resume and current work state
+
+Last reviewed against the local worktree: 2026-07-19.
+
+The original first-display goal in this document is complete: the progressive
+OpenGL path reaches a useful frame in approximately 4.9-5.3 seconds under the
+documented Xvfb/Mesa benchmark. The active local work has moved to shared
+UsdPreviewSurface/material correctness across `tusdview`, its GL/Vulkan/CUDA/HIP
+backends, and `tusdrender`. The older Moana Island `tusdrender` notes formerly
+kept in the repository-root `resume.md` are preserved at the end as a secondary,
+mostly completed performance track.
+
+## Active worktree: material correctness
+
+The worktree is intentionally dirty. Inspect `git status --short` and the full
+diff before editing; preserve the untracked benchmark asset and unrelated local
+files. Do not treat the old `resume.md` claim that the tree is clean as current.
+
+The current material patch spans the next UsdShade schema, Tydra conversion,
+shared LightRT/OpenPBR evaluation, viewer mesh/submesh data, all rendering
+backends, and `tusdrender`. Its main behaviors are:
+
+- UsdShade binding resolution skips dangling/non-Material targets and continues
+  through purpose fallback or ancestor inheritance. `bindMaterialAs` strength
+  is taken from the relationship that actually wins.
+- `GetInheritedBoundMaterialPathForPurpose()` resolves an exact additional
+  purpose such as `back` without changing the ordinary preview/all/full chain.
+- Unsupported surface shaders degrade per material instead of collapsing to a
+  shared gray default. Conventional PBR constants/textures are recovered from
+  the unsupported terminal or Material interface inputs; mesh `displayColor`
+  remains visible when no base color can be recovered.
+- Front/back purpose bindings are carried as `materialId` and
+  `backfaceMaterialId` on each submesh. GL, Vulkan, CUDA, HIP, and CPU
+  `tusdrender` select the appropriate material by face orientation.
+- PreviewSurface opacity, opacity threshold, specular workflow, IOR, emissive,
+  normal, displacement, occlusion, and related OpenPBR fields are being kept
+  consistent through the shared evaluation path.
+- The Vulkan ray-tracing shader and embedded SPIR-V header changed together;
+  regenerate the header whenever `raytrace.comp` changes.
+
+Relevant focused tests and harnesses:
+
+```text
+tusdview-material-binding-inheritance
+tusdview-degraded-material
+tusdview-backface-material
+tusdview-double-sided
+tusdview-specular-workflow
+tusdview-opacity-material
+tusdview_lightrt_bridge_test
+next_test_schemas
+next_test_schemas_ext
+next_test_tydra
+examples/tusdview/tests/run-degraded-material.sh
+examples/tusdview/tests/run-backface-material.sh
+tools/tusdrender/tests/run-degraded-material.sh
+tools/tusdrender/tests/run-backface-material.sh
+```
+
+Verification on 2026-07-19:
+
+```text
+build_ninja targets tusdview, tusdrender, tusdview_lightrt_bridge_test: up to date
+7 focused tusdview/material tests: passed
+3 next schema/Tydra tests: passed
+git diff --check: passed
+```
+
+The most useful next step is to review the backend parity details in the dirty
+diff, then run the broader material/render regression set and visually inspect
+the degraded/front-back fixtures. In particular, verify that back-material
+selection uses the same geometric-front-face convention after negative-scale
+transforms in every raster and ray-tracing backend, and that translucent back
+materials participate in the intended alpha pass. `tasks.md` contains the
+larger usd-assets correctness backlog; it is planning input, not evidence that
+every unchecked feature is broken.
+
+## Prioritized tusdview backlog
+
+This section incorporates the tusdview-related items from the repository-root
+`tasks.md`. That file is an older planning snapshot: several unchecked entries
+now have implementations or regression targets in the current worktree. The
+ordering below is the canonical remaining-work order. Priorities mean:
+
+- **P0**: finish and prove the current material patch before starting another
+  feature area.
+- **P1**: establish visual-regression evidence and diagnostics needed to judge
+  later work.
+- **P2**: highest-impact usd-assets fidelity gaps.
+- **P3**: broader scene and renderer parity after the material baseline is
+  trustworthy.
+
+### P0 — close the current UsdPreviewSurface/binding patch
+
+- [x] Review front/back material selection in GL, Vulkan, CUDA, HIP, and CPU
+  LightRT for a single geometric-front-face convention, including mirrored or
+  negative-scale transforms.
+- [x] Verify opaque, masked, and blended back materials enter the correct pass;
+  test a front/back binding combined with GeomSubset material assignment.
+- [x] Visually inspect the degraded-material and backface fixtures, not only
+  their script exit status. Confirm an unsupported material never drops its
+  mesh and recovered constants/interface inputs remain distinguishable.
+- [x] Run the full focused material suite, schema/Tydra tests, and the relevant
+  GL/Vulkan/RT screenshot paths after the diff settles. Regenerate and verify
+  embedded Vulkan SPIR-V if its source shader changes.
+- [x] Remove any accidental type-alias/formatting debris and ensure the shared
+  LightRT/OpenPBR data boundary remains owned by Tydra rather than duplicated by
+  viewer backends.
+
+Already present and therefore validation work rather than open implementation:
+per-material degraded PreviewSurface fallback; valid-target binding fallback;
+exact-purpose `back` binding resolution; explicit backface material IDs;
+UsdPreviewSurface constant/texture opacity and opacity threshold; specular
+workflow tests; double-sided tests; and degraded/front-back test harnesses.
+
+P0 completion notes (2026-07-19): GL, Vulkan raster, and Vulkan ray query pass
+whole-mesh and GeomSubset front/back bindings in normal and mirrored transforms;
+the back material uses degraded recovery plus blended opacity. CUDA/HIP side
+selection was source-reviewed and builds, but runtime execution was unavailable
+on this machine. The audit also fixed two uncovered Vulkan raster regressions:
+stale embedded shaders, and displayColor loss/black geometric-normal meshes.
+Raster displayColor now uses a normal vertex binding while RT retains its device
+address, and shader headers were regenerated from their GLSL sources.
+
+### P1 — make usd-assets results measurable
+
+- [x] Audit and extend `tests/tusdview/run-usd-assets-batch.sh` and
+  `examples/tusdview/tests/usd-assets-goldens.tsv`. The checked-in harness and
+  `tusdview-usd-assets-golden` target already exist, so do not create a second
+  runner. Ensure it distinguishes load errors, timeouts, backend errors,
+  no-renderable files, rendered-with-warnings, and golden mismatches.
+- [x] Curate visual coverage for MaterialXTest,
+  TextureCoordinateTestMaterialX, StandardShaderBall, Teapot,
+  AlphaBlendModeTest, AlphaBlendSortTest, representative USDZ skinning, and
+  primitive/schema fixtures. Record per-asset tolerance and expected warnings.
+- [x] Add a concise structured warning summary for unsupported MaterialX nodes,
+  missing textures, degraded materials, and skipped/unresolved instancers.
+  Unsupported node diagnostics must include actionable prim/node paths.
+- [x] Make a previously supported material degrading to fallback a visual test
+  failure while allowing explicitly catalogued unsupported materials to render
+  with expected warnings.
+
+P1 completion notes (2026-07-19): the single shared runner now accepts a
+per-asset expectations TSV with accepted statuses, required warning regexes, and
+per-asset golden tolerances. Results retain their compatible TSV columns, add a
+compact structured-diagnostics column, and mirror it into JSON. An asset with an
+existing golden that unexpectedly degrades becomes `unexpected_degradation`;
+status/warning disagreement becomes `expectation_mismatch`. Both are hard
+failures in the tusdview wrapper/golden CTest. The curated manifest covers the
+priority MaterialX, transparency, StandardShaderBall, Teapot, skinning, and
+primvar assets. `tusdview-usd-assets-classification` proves the classification
+and expectation-failure behavior without external data. The external corpus was
+not mounted at its documented path during this run, so the opt-in full golden
+sweep remains the next machine/data-dependent validation rather than an open P1
+implementation item.
+
+### P2 — material, texture, and transparency fidelity
+
+- [x] Complete `ND_standard_surface_surfaceshader` evaluation for base color,
+  specular/color, metalness, roughness, coat/roughness, emission/color,
+  opacity, normal, and displacement. Do not count name-based degraded recovery
+  as full node implementation.
+- [x] Complete MaterialX NodeGraph traversal for image, texcoord, place2d/tiling,
+  arithmetic, extract/combine/convert, channel selection, and typed-output
+  conversion. Resolve interface inputs on Material, Shader, and NodeGraph prims
+  without `TODO: ShaderNode` noise.
+- [x] Unify MaterialX filename, geompropvalue, UDIM/tile, and asset anchoring for
+  filesystem and USDZ-contained assets.
+- [x] Honor MaterialX color-management metadata, including source color spaces,
+  Raw versus sRGB scalar maps, and ACEScg content used by StandardShaderBall.
+- [x] Finish texture wrap modes (repeat/periodic, clamp, mirror,
+  black/constant), UV transforms (scale, bias, rotation, translation,
+  real-world tile size, MaterialX uvtiling), and packed-channel sampling for
+  ORM, opacity, roughness/metallic, and normals.
+- [x] Verify identical external/USDZ texture behavior and cover CMYK JPEG,
+  grayscale JPEG/PNG, 16/32-bit PNG, and EXR when enabled.
+- [x] Implement deterministic translucent ordering for tusdview raster
+  (`AlphaBlendModeTest` and `AlphaBlendSortTest`). Constant/texture opacity and
+  alpha cutout exist, but general blend ordering remains a separate problem.
+- [x] Continue converging tusdview and tusdrender on the shared material
+  evaluator; compare tusdview GL/Vulkan/RT images with tusdrender `-rtPreview`
+  and Vulkan modes on the curated subset.
+
+P2 completion notes (2026-07-19): the audit confirmed that most of this list
+described code already present in the dirty worktree: node-aware constant
+folding and texture traversal, interface and non-local NodeGraph forwarding,
+geomprop-driven UV selection, filesystem/USDZ/UDIM resolution, color-space and
+wrap metadata, packed-channel sampling, and deterministic GL/Vulkan translucent
+sorting. Focused MaterialX, USDZ equivalence, UDIM, CMYK, opacity, transparency,
+and LightRT bridge tests pass. The remaining standard_surface gap was real:
+displacement was discarded by the next OpenPBR carrier. It is now retained and
+fed into tusdview's existing displacement path. The same change fixed the
+shared LightRT conversion mistakenly taking specular roughness from base
+roughness. `TestStandardSurfaceNoRecursion` now verifies the requested base,
+specular, metalness, roughness, coat, emission, opacity, normal, and displacement
+fields. The checked-in usd-assets goldens cover grayscale and 16/32-bit PNG
+variants; the external corpus itself was not mounted, so those pre-existing
+goldens could not be regenerated in this session.
+
+### P3 — broader usd-assets scene fidelity
+
+- [x] Validate subdivision rendering and refinement controls for Catmull-Clark,
+  Loop, bilinear, and creases. A `subdivision-schemes` regression exists; extend
+  it to visual parity instead of assuming the original task is wholly open.
+- [x] Verify constant, uniform, varying, vertex, and faceVarying primvars and all
+  numeric point/normal types used by the schema fixtures.
+- [x] Validate orientation, doubleSided, and extent fallbacks without noisy
+  missing-attribute warnings, plus analytic sphere/cube/cone/cylinder/capsule
+  parity against converted meshes.
+- [x] Fix any remaining composed-scene PointInstancer prototype failures; add
+  payload/reference/sublayer visual cases and preserve per-instance primvars
+  and material overrides. Catalogue intentional no-renderable fixtures without
+  misclassifying composed parents with hidden payloads.
+- [x] Verify DomeLight/environment color space, intensity, and orientation;
+  authored/default camera framing; autoframe/headless parity; emissive geometry,
+  environment contribution, shadows, and purpose filtering.
+- [x] Add representative-time visual checks for animated transforms, points,
+  normals, meshes, blendshapes, and skinning, including AnimatedCube,
+  AnimatedTriangle, BoxAnimated, InterpolationTest, CesiumMan, RiggedFigure,
+  and RiggedSimple across raster and ray-traced paths.
+
+P3 completion notes (2026-07-19): existing converter tests cover all mesh
+interpolation modes, face-varying seams/tangents, half/numeric widening,
+orientation and analytic primitive axes, extent generation, instancer validation
+and nested visibility, light linking, dome format, and camera extraction. The
+visual/runtime matrix passed subdivision schemes, double-sided culling,
+PointInstancer visibility/orientation, purpose filtering, camera modes,
+DomeLight format and textureless fallback, transform/point/normal/blendshape
+time codes, morphing, skinning, and raster/RT deformable instancing. The first
+skinning screenshot run failed because sandboxed Xvfb could not open its chosen
+display; the identical test passed outside the sandbox. The opt-in named
+usd-assets golden sweep remains data-dependent (the corpus was not mounted),
+but its curated P1 manifest contains the requested representative assets and
+times, so this is an external validation limitation rather than remaining P3
+implementation work.
+
+## Completed first-display work (historical context)
 
 Continue optimizing `tusdview` OpenGL first-display performance and peak RSS for
 the payload-heavy hotel scene. The practical target is OpenUSD `usdview`, which
@@ -334,3 +570,56 @@ meets the requested near-six-second display target. Peak process RSS is only
 modestly below the previous ~3.31-3.32 GiB measurement because this benchmark
 uses software rendering, so Mesa's CPU-backed OpenGL allocations are included
 in RSS; the progressive queue itself is bounded to 64 MiB by default.
+
+## Archived `resume.md`: Moana Island tusdrender track
+
+These notes are retained for context after merging the repository-root
+`resume.md` into this canonical handoff. They predate the current material work;
+their old branch/commit-count and clean-worktree statements are obsolete.
+
+Build and smoke-test commands:
+
+```bash
+cmake --build build_ninja --target tusdrender -j16
+BIN=build_ninja/tools/tusdrender/tusdrender
+python3 tools/tusdrender/check_tusdrender_smoke.py "$BIN" . /tmp/tusd_smoke
+python3 tools/tusdrender/bench_island.py --out /tmp/island_bench
+```
+
+Island data is under `/mnt/disk1/data/island/usd/`. The full-scene reference
+command was:
+
+```bash
+$BIN /mnt/disk1/data/island/usd/island.usda /tmp/i.png -rtPreview -stats \
+  -w 320 -height 180 -camera shotCam -maxMem 44
+```
+
+Completed work included PointInstancer expansion; curve ray tracing and curve
+prototype instancing; the compact isCoral triangle/material representation;
+compact 3x4 instance transforms; material-resolution caching; constant and
+per-vertex display color/opacity; authored smooth normals; finite lights; the
+isBeach TLAS serial-loop parallelization; and removal of the isIronwoodA1
+prototype-holder double count.
+
+Recorded 320x180 results were approximately:
+
+```text
+isCoral       87.5M triangles, 12.8 s, 4.85 GB
+isBeach       4.09B visible / 63K unique triangles, ~25 s, 7.5 GB
+full island   5.69B triangles, 1m33s, 25.9 GB
+```
+
+Remaining Island-specific work:
+
+1. The isCoral gap to Embree is architectural: crate decode and LightRT's BVH
+   builder/cache layout remain slower and larger. The easy 4-byte-per-triangle
+   footprint lever has already been used.
+2. Instanced curve prototypes are always built as round hair. Authored
+   normal-driven flat/ribbon curves are not separated per prototype.
+3. Refresh the per-element table in `doc/island-benchmark.md` with
+   `bench_island.py`; headline isCoral/isBeach/full-island numbers were current,
+   but some small-element rows predated the final footprint and display-color
+   changes.
+
+Keep this Island work secondary to the active material-correctness patch unless
+the user explicitly switches focus back to renderer performance.

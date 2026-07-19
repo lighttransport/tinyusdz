@@ -34,12 +34,14 @@ if [ ! -f "$ASSET" ]; then echo "SKIP: asset missing: $ASSET"; exit "$SKIP"; fi
 echo "scene: $ASSET"
 
 OUT="$(mktemp -d)"
+mkdir -p "$OUT/config"
 trap 'rm -rf "$OUT"' EXIT
 XVFB=""; command -v xvfb-run >/dev/null 2>&1 && XVFB="xvfb-run -a"
 
 LOG="$OUT/render.log"
 # shellcheck disable=SC2086
-$XVFB "$BIN" --headless --frames 4 --screenshot "$OUT/out.ppm" "$ASSET" \
+$XVFB env XDG_CONFIG_HOME="$OUT/config" \
+  "$BIN" --headless --frames 4 --screenshot "$OUT/out.ppm" "$ASSET" \
   >"$LOG" 2>&1
 rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$OUT/out.ppm" ]; then

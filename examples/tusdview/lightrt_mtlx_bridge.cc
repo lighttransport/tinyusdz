@@ -104,7 +104,7 @@ float Luminance(const float rgb[3]) {
   return 0.2126f * rgb[0] + 0.7152f * rgb[1] + 0.0722f * rgb[2];
 }
 
-void ClampLightRtParams(DrawLightRtOpenPBRCPU* p) {
+void ClampLightRtParams(tydra::LightRtOpenPBRParams* p) {
   tinyusdz::tydra::ClampLightRtOpenPBRParams(p);
 }
 
@@ -132,7 +132,7 @@ void StoreUvVec4Rows(const DrawUvXformCPU& uv, float* dst) {
   dst[7] = 0.0f;
 }
 
-void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, DrawLightRtOpenPBRCPU* p) {
+void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
   // Seed from the material's DIRECT fields first. The --next loader
   // (next_scene_loader.cc) sets baseColor/metallic/roughness/specularColor/ior/
   // alpha/emissive directly and does NOT populate mat.params, so the param
@@ -170,7 +170,7 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, DrawLightRtOpenPBRCPU* p)
   }
 }
 
-void BakeOpenPBRSurface(const DrawMaterialCPU& mat, DrawLightRtOpenPBRCPU* p) {
+void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
   FloatParam(mat, {"OpenPBRSurface"}, {"base_weight"}, &p->baseWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"base_color"}, p->baseColor);
   if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"base_color"})) {
