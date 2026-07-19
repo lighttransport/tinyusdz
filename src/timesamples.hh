@@ -724,7 +724,11 @@ struct TimeSamples {
       return false;
     }
 
-    if (count > (std::numeric_limits<uint32_t>::max)()) {
+    // Compare in a type that can represent both operands. On wasm32 size_t and
+    // uint32_t have the same range, so a direct comparison is provably false
+    // and Clang diagnoses it; native 64-bit builds still need this storage cap.
+    if (static_cast<uintmax_t>(count) >
+        static_cast<uintmax_t>((std::numeric_limits<uint32_t>::max)())) {
       if (err) {
         (*err) += "add_array_sample element count exceeds uint32_t storage.\n";
       }
