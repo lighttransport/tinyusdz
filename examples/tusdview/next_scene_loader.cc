@@ -2208,6 +2208,10 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   dm.name = rm.name;
   dm.absPath = rm.prim_path;
   dm.displayName = rm.name;
+  if (rm.default_fallback) {
+    draw->skipped.push_back("material '" + rm.prim_path +
+                            "': using degraded material");
+  }
 
   auto loadOpacity = [&](const tydn::ShaderParam& sp, int baseTextureId) {
     if (sp.texture_id < 0 ||
@@ -2306,7 +2310,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
     opTex = texCount({s.base_color.texture_id, s.normal.texture_id,
                       s.emission_color.texture_id, s.base_metalness.texture_id,
-                      s.base_roughness.texture_id, s.opacity.texture_id});
+                      s.base_roughness.texture_id, s.opacity.texture_id,
+                      s.displacement.texture_id});
   }
   const bool usePreview = rm.preview_surface && (!rm.openpbr || pvTex >= opTex);
 
@@ -2344,6 +2349,19 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     loadOpacity(s.opacity, s.base_color.texture_id);
     loadNormal(s.normal);
     loadMetalRough(s.base_metalness, s.base_roughness);
+    dm.displacementConst = s.displacement.value.x;
+    if (s.displacement.texture_id >= 0 &&
+        static_cast<size_t>(s.displacement.texture_id) < scratch.textures.size()) {
+      const tydn::RenderTexture& dt =
+          scratch.textures[static_cast<size_t>(s.displacement.texture_id)];
+      dm.displacementTex = LoadNextTexture(
+          texCache, draw, scratch, s.displacement.texture_id, false);
+      DrawTexSampleCPU displacementSample;
+      FillNextSample(dt, &displacementSample, uv0Name, uv1Name);
+      dm.displacementUv = displacementSample.uv;
+      dm.displacementTexScale = dt.scale_value.x;
+      dm.displacementTexBias = dt.bias.x;
+    }
   } else {
     return -1;  // no PreviewSurface/OpenPBR -- fall back to default material
   }
@@ -3614,15 +3632,17 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // batch's channel ids and its bound SkelAnimation are unambiguous.
     bool anyMorph = false;
     int matId = 0;
+    int backMatId = -1;
   };
-  // key = (purpose, geometricNormal, doubleSided, materialId, morphId) -> current
+  // key = (purpose, geometricNormal, doubleSided, front/back material, morphId)
+  // -> current
   // batch. Keying by material keeps per-material draws distinct so each batch can
   // reference its own DrawMaterialCPU instead of the single default gray material.
   // doubleSided is per-DrawMeshCPU (it drives back-face culling), so single- and
   // double-sided meshes must not merge. morphId is 0 for ordinary meshes and
   // unique per BLENDSHAPED mesh: morph channel ids and the bound SkelAnimation
   // are per-mesh, so two morphed meshes must not share a batch.
-  std::map<std::tuple<std::string, bool, bool, int, int>, Batch> open;
+  std::map<std::tuple<std::string, bool, bool, int, int, int>, Batch> open;
   int nextMorphBatchId = 0;
 
   // Full UsdShade binding semantics: the purpose fallback chain
@@ -3635,7 +3655,26 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // (material, opacity) pair. Lets a mesh's `displayOpacity` render through the
   // existing material alpha without mutating a material other meshes share.
   std::map<std::pair<int, int>, int> matAlphaVariants;
+  int displayColorFallbackMaterial = -1;
   size_t varyingOpacityMeshes = 0;
+  auto displayColorMaterial = [&]() -> int {
+    if (displayColorFallbackMaterial >= 0) {
+      return displayColorFallbackMaterial;
+    }
+    DrawMaterialCPU pass = draw->materials[0];
+    pass.name = "displayColorFallback";
+    pass.displayName = pass.name;
+    pass.baseColor[0] = pass.baseColor[1] = pass.baseColor[2] = 1.0f;
+    // This is a neutral multiplier, not an authored surface shader. Leaving
+    // hasLightRtOpenPBR false makes every backend use the compact white
+    // material times displayColor; marking it as a full OpenPBR block caused
+    // the raster shaders to take the synthetic evaluator path and turn an
+    // otherwise unlit displayColor mesh black.
+    pass.hasLightRtOpenPBR = false;
+    displayColorFallbackMaterial = static_cast<int>(draw->materials.size());
+    draw->materials.push_back(std::move(pass));
+    return displayColorFallbackMaterial;
+  };
   auto materialWithAlpha = [&](int base, float alpha) -> int {
     if (base < 0 || static_cast<size_t>(base) >= draw->materials.size()) return base;
     // Quantize so near-identical opacities share one variant.
@@ -3667,11 +3706,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // never fills material_subsets, so we read the GeomSubsets off the stage and
   // reconstruct the triangle->face mapping from the original face vertex counts
   // (fan/earcut both emit c-2 triangles per face, in face order).
+  using MaterialPair = std::pair<int, int>;
   auto buildTriMaterials = [&](const tnext::UsdPrim& mp, const tydn::RenderMesh& m,
-                               size_t numTris, int wholeMat,
-                               std::vector<int>* triMat) {
+                               size_t numTris, MaterialPair wholeMat,
+                               std::vector<MaterialPair>* triMat) {
     triMat->clear();
-    struct Sub { std::vector<int32_t> faces; int mat; };
+    struct Sub { std::vector<int32_t> faces; MaterialPair mat; };
     std::vector<Sub> subs;
     for (const tnext::UsdPrim& c : mp.GetChildren()) {
       if (c.GetTypeName() != "GeomSubset") continue;
@@ -3680,15 +3720,24 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         if (const std::string* t = et->as_token())
           isFace = t->empty() || *t == "face";
       if (!isFace) continue;
-      // Purpose chain, but no ancestor walk: a subset that binds nothing itself
-      // must keep falling back to the whole-mesh material.
-      const std::string bind = tnext::GetBoundMaterialPath(c);
-      if (bind.empty()) continue;
+      // Resolve through the subset's ancestry so an absent or invalid subset
+      // purpose falls back to the whole-mesh material.
+      const std::string bind =
+          tnext::GetInheritedBoundMaterialPath(stage, c.GetPath().str());
+      const std::string backBind =
+          tnext::GetInheritedBoundMaterialPathForPurpose(stage, c.GetPath().str(),
+                                                         "back");
+      if (bind.empty() && backBind.empty()) continue;
       std::vector<int32_t> faces = ReadInts(c, "indices", time);
       if (faces.empty()) continue;
-      subs.push_back({std::move(faces),
-                      resolveMaterialPath(bind, m.texcoords_0_name,
-                                          m.texcoords_1_name)});
+      subs.push_back(
+          {std::move(faces),
+           {bind.empty() ? wholeMat.first
+                         : resolveMaterialPath(bind, m.texcoords_0_name,
+                                               m.texcoords_1_name),
+            backBind.empty() ? wholeMat.second
+                             : resolveMaterialPath(backBind, m.texcoords_0_name,
+                                                   m.texcoords_1_name)}});
     }
     if (subs.empty()) return;
 
@@ -3699,7 +3748,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       for (uint32_t k = 2; k < fvc[f]; ++k) triFace.push_back(static_cast<int>(f));
     if (triFace.size() != numTris) return;  // triangulation mismatch -> whole-mesh
 
-    std::vector<int> faceMat(fvc.size(), wholeMat);
+    std::vector<MaterialPair> faceMat(fvc.size(), wholeMat);
     // Authored subset indices use the ORIGINAL face numbering. When
     // SanitizeMeshTopology dropped faces, fvc/faceMat are in the COMPACTED
     // numbering, so route each authored index through sanitize_face_remap
@@ -3721,7 +3770,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
     }
 
-    std::vector<int> tm(numTris);
+    std::vector<MaterialPair> tm(numTris);
     bool split = false;
     for (size_t t = 0; t < numTris; ++t) {
       tm[t] = faceMat[triFace[t]];
@@ -3802,7 +3851,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
     }
     b.dm.submeshes.push_back(
-        DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), b.matId});
+        DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), b.matId,
+                    b.backMatId});
     std::memset(b.dm.world, 0, sizeof(b.dm.world));
     b.dm.world[0] = b.dm.world[5] = b.dm.world[10] = b.dm.world[15] = 1.0f;
     draw->triangleCount += b.dm.indices.size() / 3;
@@ -4183,6 +4233,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     int wholeMat = resolveMaterialPath(meshRecord.materialPath,
                                        m.texcoords_0_name,
                                        m.texcoords_1_name);
+    const std::string backMaterialPath =
+        tnext::GetInheritedBoundMaterialPathForPurpose(stage, mp.GetPath().str(),
+                                                       "back");
+    int wholeBackMat = backMaterialPath.empty()
+                           ? -1
+                           : resolveMaterialPath(backMaterialPath,
+                                                 m.texcoords_0_name,
+                                                 m.texcoords_1_name);
     double mw16[16];
     std::memcpy(mw16, meshRecord.world, sizeof(mw16));
     // Blendshapes, BEFORE skinning: a blendshape deforms the bind-space points and
@@ -4277,6 +4335,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                              le[2] * std::fabs(M[2 * 4 + a]);
       }
     }
+    // With no bound material, displayColor is the authored surface-color
+    // fallback. Use a white material multiplier only for those meshes; changing
+    // the shared gray default would also brighten every uncolored/unbound mesh.
+    if (wholeMat == 0 && !loc.vertexColors.empty()) {
+      wholeMat = displayColorMaterial();
+    }
+
     // USD `primvars:displayOpacity`. When it does not actually vary, fold it
     // into an alpha-adjusted MATERIAL VARIANT (a clone of the bound material,
     // made once per distinct opacity). That renders correctly through the
@@ -4291,7 +4356,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       float lo = loc.vertexAlpha[0], hi = loc.vertexAlpha[0];
       for (float a : loc.vertexAlpha) { lo = std::min(lo, a); hi = std::max(hi, a); }
       if (hi - lo <= 1e-6f) {
-        if (lo < 1.0f - 1e-6f) wholeMat = materialWithAlpha(wholeMat, lo);
+        if (lo < 1.0f - 1e-6f) {
+          wholeMat = materialWithAlpha(wholeMat, lo);
+          if (wholeBackMat >= 0)
+            wholeBackMat = materialWithAlpha(wholeBackMat, lo);
+        }
         loc.vertexAlpha.clear();
         loc.vertexAlpha.shrink_to_fit();
       } else {
@@ -4300,6 +4369,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         // variant exists to move an otherwise-opaque material into the blend
         // pass; the actual modulation remains per vertex.
         wholeMat = materialWithAlpha(wholeMat, 1.0f);
+        if (wholeBackMat >= 0)
+          wholeBackMat = materialWithAlpha(wholeBackMat, 1.0f);
       }
     }
 
@@ -4364,17 +4435,23 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     };
 
     // Per-triangle materials from face GeomSubsets (empty => uniform wholeMat).
-    std::vector<int> triMat;
-    buildTriMaterials(mp, m, loc.indices.size() / 3, wholeMat, &triMat);
+    std::vector<MaterialPair> triMat;
+    buildTriMaterials(mp, m, loc.indices.size() / 3,
+                      {wholeMat, wholeBackMat}, &triMat);
     if (hasAlpha) {
-      for (int& mid : triMat) mid = materialWithAlpha(mid, 1.0f);
+      for (MaterialPair& mid : triMat) {
+        mid.first = materialWithAlpha(mid.first, 1.0f);
+        if (mid.second >= 0)
+          mid.second = materialWithAlpha(mid.second, 1.0f);
+      }
     }
 
     if (triMat.empty()) {
       // --- Single-material fast path: append the whole mesh to one batch. ---
       Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, wholeMat,
-                       morphBatchId}];
+                       wholeBackMat, morphBatchId}];
       b.matId = wholeMat;
+      b.backMatId = wholeBackMat;
       if (!b.dm.vertices.empty() &&
           b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
         flushBatch(b);  // resets b in the map slot
@@ -4449,13 +4526,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       // --- Multi-material (GeomSubset) path: route each triangle to its
       //     material's batch, appending only the vertices that batch references
       //     (compacted per group so batches don't carry unused vertices). ---
-      std::set<int> groups(triMat.begin(), triMat.end());
+      std::set<MaterialPair> groups(triMat.begin(), triMat.end());
       const size_t numTris = loc.indices.size() / 3;
       bool firstGroup = true;
-      for (int gm : groups) {
-        Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, gm,
-                         morphBatchId}];
-        b.matId = gm;
+      for (const MaterialPair& gm : groups) {
+        Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, gm.first,
+                         gm.second, morphBatchId}];
+        b.matId = gm.first;
+        b.backMatId = gm.second;
         if (!b.dm.vertices.empty() &&
             b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
           flushBatch(b);

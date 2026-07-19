@@ -2611,22 +2611,28 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
     sub.indexOffset = 0;
     sub.indexCount = static_cast<uint32_t>(dm.indices.size());
     sub.materialId = mesh.material_id;
+    sub.backfaceMaterialId = mesh.backface_material_id;
     dm.submeshes.push_back(sub);
     dm.sourceFaceId = std::move(triFacePre);  // no reorder
   } else {
-    std::vector<int> triMat(triCount, mesh.material_id);
+    using MaterialPair = std::pair<int, int>;
+    std::vector<MaterialPair> triMat(
+        triCount, {mesh.material_id, mesh.backface_material_id});
     for (const auto& kv : mesh.material_subsetMap) {
       const tydra::MaterialSubset& ss = kv.second;
       for (int triIdx : ss.indices()) {
         if (triIdx >= 0 && static_cast<size_t>(triIdx) < triCount) {
-          triMat[static_cast<size_t>(triIdx)] = ss.material_id;
+          triMat[static_cast<size_t>(triIdx)] =
+              {ss.material_id >= 0 ? ss.material_id : mesh.material_id,
+               ss.backface_material_id >= 0 ? ss.backface_material_id
+                                             : mesh.backface_material_id};
         }
       }
     }
     // Bucket triangles by material id, preserving order within a material. Bucket
     // the source-face id in lockstep so it stays parallel to the grouped tris.
-    std::map<int, std::vector<uint32_t>> buckets;
-    std::map<int, std::vector<uint32_t>> faceBuckets;
+    std::map<MaterialPair, std::vector<uint32_t>> buckets;
+    std::map<MaterialPair, std::vector<uint32_t>> faceBuckets;
     for (size_t t = 0; t < triCount; ++t) {
       auto& bucket = buckets[triMat[t]];
       bucket.push_back(dm.indices[t * 3 + 0]);
@@ -2641,7 +2647,8 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       DrawSubmesh sub;
       sub.indexOffset = static_cast<uint32_t>(grouped.size());
       sub.indexCount = static_cast<uint32_t>(kv.second.size());
-      sub.materialId = kv.first;
+      sub.materialId = kv.first.first;
+      sub.backfaceMaterialId = kv.first.second;
       grouped.insert(grouped.end(), kv.second.begin(), kv.second.end());
       if (!triFacePre.empty()) {
         const auto& fb = faceBuckets[kv.first];
@@ -2865,6 +2872,7 @@ LoadDiagnostics CategorizeLoadWarnings(
     // missing-texture bucket since its message also mentions resolution.
     int* bucket = nullptr;
     if (contains(l, "using default material") ||
+        contains(l, "using degraded material") ||
         contains(l, "Material conversion failed")) {
       bucket = &d.degraded_material;
     } else if (contains(l, "Unsupported node type")) {
@@ -2884,10 +2892,15 @@ LoadDiagnostics CategorizeLoadWarnings(
     if (d.examples.size() < 6 && bucket != &d.other) d.examples.push_back(l);
   }
 
-  d.skipped = static_cast<int>(skipped.size());
   for (const std::string& s : skipped) {
-    if (d.examples.size() >= 6) break;
-    d.examples.push_back("skipped: " + s);
+    if (contains(s, "using default material") ||
+        contains(s, "using degraded material") ||
+        contains(s, "Material conversion failed")) {
+      ++d.degraded_material;
+    } else {
+      ++d.skipped;
+    }
+    if (d.examples.size() < 6) d.examples.push_back(s);
   }
   return d;
 }

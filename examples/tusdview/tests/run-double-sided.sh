@@ -29,10 +29,12 @@ if [ ! -x "$BIN" ]; then echo "SKIP: tusdview not found ($BIN)"; exit "$SKIP"; f
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 missing"; exit $SKIP; }
 
 OUT="$(mktemp -d)"
+mkdir -p "$OUT/config"
 trap 'rm -rf "$OUT"' EXIT
-# Prefer a real display (hardware GL) when one is inherited; Xvfb otherwise.
+# Use an isolated display when available; inherited DISPLAY values are often
+# stale in headless/CI shells and made the nominal GL leg silently unavailable.
 XVFB=""
-if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
+if command -v xvfb-run >/dev/null 2>&1; then
   XVFB="xvfb-run -a"
 fi
 
@@ -77,13 +79,17 @@ PY
 fail=0
 for spec in "gl:--backend gl" "vk:--backend vk"; do
   tag="${spec%%:*}"; args="${spec#*:}"
+  headless_args=(--headless)
+  [ "$tag" = gl ] && headless_args=()
   declare -A red
   ok=1
   for v in ss ds; do
     for c in Front Back; do
       img="$OUT/${tag}_${v}_${c}.ppm"
       # shellcheck disable=SC2086
-      $XVFB "$BIN" --headless $args --frames 2 --camera "$c" \
+      $XVFB env XDG_CONFIG_HOME="$OUT/config" \
+          "$BIN" "${headless_args[@]}" $args --frames 2 --size 1280x720 \
+          --camera "$c" \
           --screenshot "$img" "$OUT/$v.usda" >"$OUT/${tag}_${v}_${c}.log" 2>&1
       if ! grep -q 'render stats' "$OUT/${tag}_${v}_${c}.log"; then
         echo "SKIP: $tag backend unavailable"; ok=0; break 2

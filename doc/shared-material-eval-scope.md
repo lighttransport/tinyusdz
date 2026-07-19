@@ -24,11 +24,11 @@ BRDFs coexist.
 | Struct | Where | Fidelity |
 |---|---|---|
 | `tydra::RenderMaterial` (`surfaceShader` + `openPBRShader` + `nodeGraphJson`) | `src/tydra/render-data-shader.hh:359` | **Richest** — full MaterialX OpenPBR superset |
-| `DrawMaterialCPU` + `DrawLightRtOpenPBRCPU` | `examples/tusdview/gpu_scene.hh:324` / `:285` | Full OpenPBR (the baked block) |
+| `DrawMaterialCPU` + `tydra::LightRtOpenPBRParams` | `examples/tusdview/gpu_scene.hh:324` / `:285` | Full OpenPBR (the baked block) |
 | `TriMat` / `ResolvedMat` / `MeshJobNext` | `tools/tusdrender/tusdr_math.hh:346` | **UsdPreviewSurface-level** — no transmission / subsurface / sheen / thin-film |
 | `OpenPBRParams` (C) | `src/external/lightrt/mtlxrender/mtlx_eval.h:15` | Full OpenPBR — the BSDF's input contract |
 
-`DrawLightRtOpenPBRCPU` is a near 1:1 C++ mirror of the C `OpenPBRParams`. These
+`tydra::LightRtOpenPBRParams` is a near 1:1 C++ mirror of the C `OpenPBRParams`. These
 two are the de-facto OpenPBR interchange format — but only tusdview populates
 them.
 
@@ -79,7 +79,7 @@ share source.
 ```
 USD ──► tydra RenderMaterial (canonical, OpenPBR) ──► Shared OpenPBR param block
                                                         (promote OpenPBRParams /
-                                                         DrawLightRtOpenPBRCPU to
+                                                         tydra::LightRtOpenPBRParams to
                                                          a shared header)
                                                               │
                         ┌─────────────────────────────────────┼───────────────────┐
@@ -96,7 +96,7 @@ backends.
 ## Phased plan (each phase ships + verifies independently)
 
 ### Phase 0 — Promote the shared OpenPBR param block (low risk)
-Move `OpenPBRParams` / `DrawLightRtOpenPBRCPU` into a shared header both tools
+Move `OpenPBRParams` / `tydra::LightRtOpenPBRParams` into a shared header both tools
 include. No behavior change; both tools compile against one struct.
 - Verify: builds (ON + `TEXTOOLS=OFF`), all ctests unchanged.
 

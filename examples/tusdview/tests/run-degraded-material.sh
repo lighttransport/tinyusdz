@@ -2,8 +2,8 @@
 #
 # Regression test for the renderer-parity degraded-material policy: a material
 # that fails to convert (here an unknown shader info:id) must NOT sink the whole
-# load. The geometry should still render with the substituted default material
-# (loadable), and tusdview must emit a structured load summary reporting
+# load. The geometry should still render with the per-material degraded surface
+# (loadable), preserve recognizable authored constants, and emit a load summary
 # degraded_materials>=1 so the smoke harness can fail on it. Guards against
 # either regressing: a silent full-load failure (mesh disappears) or the
 # degraded material going unreported.
@@ -40,6 +40,8 @@ def Xform "World" {
       token outputs:surface.connect = </World/Mats/Broken/S.outputs:surface>
       def Shader "S" {
         uniform token info:id = "SomeUnknownShaderType_xyz"
+        color3f inputs:baseColor = (0.8, 0.1, 0.05)
+        float inputs:roughness = 0.25
         token outputs:surface
       }
     }
@@ -48,11 +50,9 @@ def Xform "World" {
 USDA
 
 RUN=()
-if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
-  RUN=(xvfb-run -a)
-fi
+if command -v xvfb-run >/dev/null 2>&1; then RUN=(xvfb-run -a); fi
 
-log="$("${RUN[@]}" "$TUSDVIEW" --backend "$BACKEND" --frames 2 \
+log="$("${RUN[@]}" "$TUSDVIEW" --headless --backend "$BACKEND" --frames 2 \
        --screenshot "$TMP_DIR/out.ppm" "$ASSET" 2>&1)"
 echo "$log"
 
@@ -73,4 +73,44 @@ if ! echo "$log" | grep -Eq "load summary:.*degraded_materials=[1-9]"; then
   exit 1
 fi
 
-echo "PASS: broken material rendered with default + reported as degraded_material"
+# The recovered baseColor is strongly red. A shared gray/default fallback has
+# no red-dominant surface pixels, so this also verifies that tusdview consumes
+# the degraded material instead of merely keeping the geometry alive.
+python3 - "$TMP_DIR/out.ppm" <<'PY'
+import sys
+
+data = open(sys.argv[1], "rb").read()
+if not data.startswith(b"P6"):
+    print("FAIL: screenshot is not a binary PPM")
+    sys.exit(1)
+i, tokens = 2, []
+while len(tokens) < 3 and i < len(data):
+    if data[i] == 35:
+        while i < len(data) and data[i] not in (10, 13):
+            i += 1
+    elif chr(data[i]).isspace():
+        i += 1
+    else:
+        start = i
+        while i < len(data) and not chr(data[i]).isspace():
+            i += 1
+        tokens.append(int(data[start:i]))
+if len(tokens) != 3:
+    print("FAIL: malformed PPM header")
+    sys.exit(1)
+i += 1
+pixels = data[i:]
+red = 0
+for p in range(0, len(pixels) - 2, 3):
+    r, g, b = pixels[p], pixels[p + 1], pixels[p + 2]
+    if r > 24 and r > 2 * g and r > 2 * b:
+        red += 1
+if red < 20:
+    print(f"FAIL: degraded baseColor was not rendered ({red} red pixels)")
+    sys.exit(1)
+print(f"OK: recovered degraded baseColor rendered ({red} red pixels)")
+PY
+rc=$?
+[ "$rc" -eq 0 ] || exit 1
+
+echo "PASS: degraded material preserved constants, geometry, and diagnostics"

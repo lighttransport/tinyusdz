@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # tusdrender next-loader degraded-material regression. The shared Tydra material
-# resolver is allowed to fall back to the legacy resolver for an unsupported
-# shader, but the fallback must be reported in the structured load summary.
+# resolver must keep the shared converter's per-material degraded surface for an
+# unsupported shader, and the degradation must be reported in the load summary.
 set -uo pipefail
 
 SKIP=77
@@ -38,6 +38,8 @@ def Xform "World" {
       token outputs:surface.connect = </World/Mats/Broken/S.outputs:surface>
       def Shader "S" {
         uniform token info:id = "SomeUnknownShaderType_xyz"
+        color3f inputs:baseColor = (0.8, 0.1, 0.05)
+        float inputs:roughness = 0.25
         token outputs:surface
       }
     }
@@ -66,5 +68,9 @@ if ! grep -Eq 'load summary:.*degraded_materials=[1-9]' "$LOG"; then
   echo "FAIL: degraded material was not reported in the load summary"
   exit 1
 fi
+if grep -q 'using legacy resolver' "$LOG"; then
+  echo "FAIL: degraded shared material was discarded for the legacy resolver"
+  exit 1
+fi
 
-echo "PASS: tusdrender reports shared-resolver material fallback"
+echo "PASS: tusdrender keeps and reports the shared degraded material"

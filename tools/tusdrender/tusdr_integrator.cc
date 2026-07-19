@@ -825,15 +825,7 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   }
   if (size_t(th.prim_id) >= b.tris.size()) return false;
   const TriStore &ts = b.tris[size_t(th.prim_id)];
-  TriInfo lt = CombineTriMat(size_t(ts.mat_id) < b.mat_table.size()
-                                 ? b.mat_table[size_t(ts.mat_id)]
-                                 : TriMat{});
-  if (out_openpbr && size_t(ts.mat_id) < b.mat_table.size()) {
-    const TriMat &mat = b.mat_table[size_t(ts.mat_id)];
-    if (mat.openpbr_id < b.openpbr_table.size()) {
-      *out_openpbr = &b.openpbr_table[mat.openpbr_id];
-    }
-  }
+  TriInfo lt;
   // Per-corner displayColor/displayOpacity (RGBA), barycentrically interpolated.
   // Phase 5: when colors were reordered into leaf-slot order (TUSD_COHCOLOR), the
   // hit indexes by the leaf slot (cache-coherent) instead of prim_id; otherwise
@@ -845,14 +837,6 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
       cc = &b.tri_colors_slot[size_t(slot) * 12];
   } else if (size_t(th.prim_id) * 12 + 11 < b.tri_colors.size()) {
     cc = &b.tri_colors[size_t(th.prim_id) * 12];
-  }
-  if (cc) {
-    const float w1 = th.u, w2 = th.v, w0 = 1.0f - w1 - w2;
-    const float s = 1.0f / 255.0f;
-    lt.base_color = Vec3{(w0 * cc[0] + w1 * cc[4] + w2 * cc[8]) * s,
-                         (w0 * cc[1] + w1 * cc[5] + w2 * cc[9]) * s,
-                         (w0 * cc[2] + w1 * cc[6] + w2 * cc[10]) * s};
-    lt.opacity = (w0 * cc[3] + w1 * cc[7] + w2 * cc[11]) * s;
   }
   // Local-space triangle positions: from the vertex soup when present, else
   // recovered from the BVH leaves (the soup was freed post-build to save
@@ -867,6 +851,29 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   Vec3 wp0 = TransformPointO2W(inst.o2w, Vec3{lv[0], lv[1], lv[2]});
   Vec3 wp1 = TransformPointO2W(inst.o2w, Vec3{lv[3], lv[4], lv[5]});
   Vec3 wp2 = TransformPointO2W(inst.o2w, Vec3{lv[6], lv[7], lv[8]});
+  uint32_t mid = ts.mat_id;
+  if (size_t(mid) < b.mat_table.size() &&
+      Dot(Cross(Sub(wp1, wp0), Sub(wp2, wp0)), ray_dir) > 0.0f) {
+    const uint32_t back = b.mat_table[mid].backface_id;
+    if (size_t(back) < b.mat_table.size()) mid = back;
+  }
+  lt = CombineTriMat(size_t(mid) < b.mat_table.size()
+                         ? b.mat_table[size_t(mid)]
+                         : TriMat{});
+  if (out_openpbr && size_t(mid) < b.mat_table.size()) {
+    const TriMat &mat = b.mat_table[size_t(mid)];
+    if (mat.openpbr_id < b.openpbr_table.size()) {
+      *out_openpbr = &b.openpbr_table[mat.openpbr_id];
+    }
+  }
+  if (cc) {
+    const float w1 = th.u, w2 = th.v, w0 = 1.0f - w1 - w2;
+    const float s = 1.0f / 255.0f;
+    lt.base_color = Vec3{(w0 * cc[0] + w1 * cc[4] + w2 * cc[8]) * s,
+                         (w0 * cc[1] + w1 * cc[5] + w2 * cc[9]) * s,
+                         (w0 * cc[2] + w1 * cc[6] + w2 * cc[10]) * s};
+    lt.opacity = (w0 * cc[3] + w1 * cc[7] + w2 * cc[11]) * s;
+  }
   *out = lt;
   out->p0 = wp0;
   out->p1 = wp1;
@@ -1038,8 +1045,13 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       // its material table entry, exactly the record the flat path stored inline
       // before the material was hoisted into flat_mats.
       const FlatTri &ft = tris[size_t(hit.prim_id)];
-      if (size_t(ft.mat_id) < mats.size()) {
-        const TriMat &mat = mats[ft.mat_id];
+      uint32_t mid = ft.mat_id;
+      if (size_t(mid) < mats.size() && Dot(ft.n, ray_dir) > 0.0f) {
+        const uint32_t back = mats[mid].backface_id;
+        if (size_t(back) < mats.size()) mid = back;
+      }
+      if (size_t(mid) < mats.size()) {
+        const TriMat &mat = mats[mid];
         hit_tri = CombineTriMat(mat);
         if (openpbr_mats && mat.openpbr_id < openpbr_mats->size()) {
           hit_openpbr = &(*openpbr_mats)[mat.openpbr_id];

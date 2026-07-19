@@ -64,7 +64,7 @@ inline bool BuildLightRtOpenPBRParams(
     p.metalness = s.base_metalness.value.x;
     p.specularWeight = s.specular_weight.value.x;
     CopyShaderParam3ToOpenPBR(s.specular_color, p.specularColor);
-    p.specularRoughness = s.base_roughness.value.x;
+    p.specularRoughness = s.specular_roughness.value.x;
     p.specularIor = s.specular_ior.value.x > 0.0f ? s.specular_ior.value.x : 1.5f;
     p.transmission = s.transmission_weight.value.x;
     CopyShaderParam3ToOpenPBR(s.transmission_color, p.transmissionColor);
@@ -91,7 +91,7 @@ inline bool BuildLightRtOpenPBRParams(
         &s.subsurface_radius, &s.coat_weight, &s.coat_color,
         &s.coat_roughness, &s.coat_ior, &s.sheen_weight, &s.sheen_color,
         &s.sheen_roughness, &s.emission_luminance, &s.emission_color,
-        &s.opacity, &s.normal});
+        &s.opacity, &s.normal, &s.displacement});
     p.hasNormalInput = ShaderParamHasTexture(s.normal);
   } else {
     return false;

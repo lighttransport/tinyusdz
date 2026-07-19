@@ -60,6 +60,7 @@ layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p
 // gl_VertexIndex. Bound to a shared dummy for meshes without color; the fetch is
 // gated by pc.ids.w bit 32 so the dummy's contents never matter.
 layout(set = 24, binding = 0, std430) readonly buffer VtxColor { float c[]; } vtxcol;
+layout(location = 9) in vec4 aVtxColor;
 
 // 128-byte per-draw push constant block (matches struct PushC in vk_renderer.cc).
 layout(push_constant) uniform PushConstants {
@@ -117,11 +118,6 @@ void main() {
   // Per-vertex displayColor (USD primvars:displayColor, vertex interp). The GL
   // backend multiplies it into the base color (attrib 9); parity requires the
   // same here. Gated on pc.ids.w bit 32 -- meshes without color see white.
-  vColor = ((pc.ids.w & 32) != 0)
-               ? vec4(vtxcol.c[4 * gl_VertexIndex + 0],
-                      vtxcol.c[4 * gl_VertexIndex + 1],
-                      vtxcol.c[4 * gl_VertexIndex + 2],
-                      vtxcol.c[4 * gl_VertexIndex + 3])
-               : vec4(1.0);
+  vColor = ((pc.ids.w & 32) != 0) ? aVtxColor : vec4(1.0);
   gl_Position = fr.viewProj * pc.model * vec4(pos, 1.0);
 }
