@@ -144,11 +144,15 @@ struct RenderFrameParams {
 
   // Per-mesh visibility mask (index i <-> the i-th appended mesh, same order as
   // highlightMeshIndex). null = all meshes visible. Applies to the raster paths
-  // (GL + VK raster); the VK ray-tracing path traces the whole TLAS (it must
-  // keep off-screen geometry for shadow/AO rays, so this frustum-culled raster
-  // mask cannot drive it) EXCEPT for whole USD purposes, filtered below.
+  // (GL + VK raster). It may include transient view/frustum filtering.
   const uint8_t* meshVisible{nullptr};
   int meshVisibleCount{0};
+
+  // Persistent user hide/isolate mask for Vulkan RT. Unlike meshVisible this
+  // must not contain frustum culling: off-screen geometry still casts shadows.
+  // null or short masks default missing entries to visible.
+  const uint8_t* rtMeshVisible{nullptr};
+  int rtMeshVisibleCount{0};
 
   // Visible USD purposes, bit i = PurposeId i (0 default, 1 render, 2 proxy,
   // 3 guide). The VK ray-tracing path leaves meshes of hidden purposes out of

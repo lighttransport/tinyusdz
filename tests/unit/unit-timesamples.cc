@@ -356,6 +356,32 @@ void timesamples_test(void) {
     }
   }
 
+  // Empty array samples may use vector::data() == nullptr, but a non-empty
+  // sample must provide storage. Rejected input must not add a partial sample.
+  {
+    value::TimeSamples ts;
+    std::string err;
+    TEST_CHECK(ts.add_array_sample<float>(0.0, nullptr, 0, &err));
+    TEST_CHECK(ts.size() == 1);
+
+    err.clear();
+    TEST_CHECK(!ts.add_array_sample<float>(1.0, nullptr, 1, &err));
+    TEST_CHECK(err.find("values is null") != std::string::npos);
+    TEST_CHECK(ts.size() == 1);
+
+    if ((std::numeric_limits<size_t>::max)() >
+        (std::numeric_limits<uint32_t>::max)()) {
+      const size_t excessive_count =
+          static_cast<size_t>((std::numeric_limits<uint32_t>::max)()) + 1;
+      const float dummy = 0.0f;
+      err.clear();
+      TEST_CHECK(!ts.add_array_sample<float>(1.0, &dummy, excessive_count,
+                                             &err));
+      TEST_CHECK(err.find("element count") != std::string::npos);
+      TEST_CHECK(ts.size() == 1);
+    }
+  }
+
   // Unified small-binary storage should keep values aligned with sorted times.
   {
     value::TimeSamples ts;
@@ -450,8 +476,21 @@ void timesamples_test(void) {
 
     TEST_CHECK(ts.add_array_sample<float>(0.0, std::vector<float>{1.0f, 2.0f}, &err));
     TypedArray<float> typed = {3.0f, 4.0f};
-    // TypedArray has a different type_id but the raw data is compatible
-    // The wrapper may set a different type_id, but the inner call reuses _type_id
+    TEST_CHECK(ts.add_array_sample<float>(1.0, typed, &err));
+    TEST_CHECK(ts.size() == 2);
+  }
+
+  // The raw-pointer overload is public too; it must not bypass type checking
+  // and reinterpret a later sample using a new element size.
+  {
+    value::TimeSamples ts;
+    std::string err;
+    const float f = 1.0f;
+    const int32_t i = 2;
+
+    TEST_CHECK(ts.add_array_sample<float>(0.0, &f, 1, &err));
+    TEST_CHECK(!ts.add_array_sample<int32_t>(1.0, &i, 1, &err));
+    TEST_CHECK(!err.empty());
     TEST_CHECK(ts.size() == 1);
   }
 

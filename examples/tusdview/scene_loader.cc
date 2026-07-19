@@ -179,6 +179,11 @@ bool ComposeStage(const LoadOptions& opts, LoadedScene* out,
                   LoadControl* ctrl) {
   tinyusdz::AssetResolutionResolver resolver;
   resolver.set_search_paths(out->comp.searchPaths);
+  if (out->comp.usdzAsset &&
+      !tinyusdz::SetupUSDZAssetResolution(resolver, out->comp.usdzAsset.get())) {
+    out->err += "Failed to configure USDZ composition asset resolution.\n";
+    return false;
+  }
 
   tinyusdz::Layer work = *out->comp.rootLayer;  // compose from a copy
 
@@ -251,13 +256,43 @@ bool LoadStageDirect(const std::string& path, LoadedScene* out) {
   return ok;
 }
 
-// Acquire `out->stage` with composition (non-.usdz). Falls back to plain
-// LayerToStage when the file has no composition arcs. Retains the
-// post-sublayer layer in out->comp for later payload recompose.
+// Acquire `out->stage` with composition. USDZ packages retain their archive
+// backing so internal layers remain resolvable during deferred recomposition.
+// Falls back to plain LayerToStage when the file has no composition arcs and
+// retains the post-sublayer layer in out->comp for later payload recompose.
 bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
                        LoadedScene* out, LoadControl* ctrl) {
   tinyusdz::Layer root;
-  if (!tinyusdz::LoadLayerFromFile(path, &root, &out->warn, &out->err)) {
+  bool rootOk = false;
+  if (HasUsdzExtension(path)) {
+    out->comp.usdzAsset = std::make_shared<tinyusdz::USDZAsset>();
+    constexpr size_t kMiB = 1024u * 1024u;
+    const size_t maxArchiveMb = opts.maxMemoryBytes == 0
+                                    ? 16384u
+                                    : opts.maxMemoryBytes / kMiB +
+                                          (opts.maxMemoryBytes % kMiB != 0);
+    rootOk = tinyusdz::ReadUSDZAssetInfoFromFile(
+        path, out->comp.usdzAsset.get(), &out->warn, &out->err,
+        std::max<size_t>(maxArchiveMb, 1u));
+    if (rootOk) {
+      const auto it = out->comp.usdzAsset->asset_map.find(
+          out->comp.usdzAsset->root_asset_name);
+      if (it == out->comp.usdzAsset->asset_map.end() ||
+          it->second.second < it->second.first ||
+          out->comp.usdzAsset->data.empty()) {
+        out->err += "USDZ root entry is missing or invalid.\n";
+        rootOk = false;
+      } else {
+        const uint8_t* bytes = out->comp.usdzAsset->data.data();
+        rootOk = tinyusdz::LoadLayerFromMemory(
+            bytes + it->second.first, it->second.second - it->second.first,
+            out->comp.usdzAsset->root_asset_name, &root, &out->warn, &out->err);
+      }
+    }
+  } else {
+    rootOk = tinyusdz::LoadLayerFromFile(path, &root, &out->warn, &out->err);
+  }
+  if (!rootOk) {
     if (out->err.empty()) {
       out->err = "Failed to load USD layer: " + path;
     }
@@ -276,6 +311,9 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
     // storage through out->mmap.
     out->warn.clear();
     out->err.clear();
+    // The direct path owns an mmap and can resolve embedded assets from it;
+    // release the copied archive retained only for composition inspection.
+    out->comp.usdzAsset.reset();
     return LoadStageDirect(path, out);
   }
 
@@ -283,6 +321,9 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
 
   tinyusdz::AssetResolutionResolver resolver;
   resolver.set_search_paths(out->comp.searchPaths);
+  if (out->comp.usdzAsset) {
+    tinyusdz::SetupUSDZAssetResolution(resolver, out->comp.usdzAsset.get());
+  }
 
   // Flatten sublayers first, then snapshot: payload recompose restarts from
   // this layer (CompositePayload strips payload metadata even for deferred
@@ -311,6 +352,7 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
 bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
                              const std::string& path,
                              const std::shared_ptr<tinyusdz::io::MMapFileHandle>& mmap,
+                             const std::shared_ptr<tinyusdz::USDZAsset>& retainedUsdzAsset,
                              double timecode, bool rtPath, bool loadTextures,
                              const TextureRuntimeOptions& textureOptions,
                              int subdivisionLevel,
@@ -332,24 +374,27 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   // USDZ assets (textures, audio, ...) live *inside* the .usdz archive. Register
   // the archive's internal asset map with the resolver so embedded textures
   // resolve; without this only assets that happen to exist on disk next to the
-  // .usdz would load. `usdzAsset` must outlive the RenderScene conversion below
-  // (the resolver retains a pointer to it); it is a local here, and conversion
-  // happens before this function returns.
+  // .usdz would load. Composed packages reuse their retained shared backing;
+  // direct loads use a temporary map backed by the live mmap or a local copy.
+  // In every case the asset outlives the synchronous conversion below.
   tinyusdz::USDZAsset usdzAsset;
   if (loadTextures && HasUsdzExtension(path)) {
     std::string uwarn, uerr;
-    bool gotInfo = false;
-    if (mmap) {
+    const tinyusdz::USDZAsset* resolverAsset = retainedUsdzAsset.get();
+    bool gotInfo = resolverAsset != nullptr;
+    if (!gotInfo && mmap) {
       // Zero-copy: reference the mmap (kept alive by the caller through the
       // conversion below).
       gotInfo = tinyusdz::ReadUSDZAssetInfoFromMemory(
           mmap->addr, static_cast<size_t>(mmap->size),
           /*asset_on_memory=*/true, &usdzAsset, &uwarn, &uerr);
-    } else {
+      resolverAsset = gotInfo ? &usdzAsset : nullptr;
+    } else if (!gotInfo) {
       gotInfo = tinyusdz::ReadUSDZAssetInfoFromFile(path, &usdzAsset, &uwarn, &uerr);
+      resolverAsset = gotInfo ? &usdzAsset : nullptr;
     }
     if (gotInfo) {
-      if (!tinyusdz::SetupUSDZAssetResolution(env.asset_resolver, &usdzAsset)) {
+      if (!tinyusdz::SetupUSDZAssetResolution(env.asset_resolver, resolverAsset)) {
         *warn += "Failed to set up USDZ asset resolution; embedded textures "
                  "may not load.\n";
       }
@@ -480,7 +525,8 @@ bool ConvertStageToScene(const std::string& path, double timecode,
   // keeps the streaming path for progressive UI (rest pose; playback deforms
   // via RenderSceneAtTime).
   if (draw && std::isfinite(timecode)) {
-    if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
+    if (!ConvertStageToSceneImpl(out->stage, path, out->mmap,
+                                 out->comp.usdzAsset, timecode, rtPath,
                                  /*loadTextures=*/true, textureOptions,
                                  subdivisionLevel, subdivisionPrimLevels,
                                  out->comp.allowParentRelativePaths,
@@ -495,7 +541,8 @@ bool ConvertStageToScene(const std::string& path, double timecode,
     out->ok = true;
     return true;
   }
-  if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
+  if (!ConvertStageToSceneImpl(out->stage, path, out->mmap,
+                               out->comp.usdzAsset, timecode, rtPath,
                                /*loadTextures=*/true, textureOptions,
                                subdivisionLevel, subdivisionPrimLevels,
                                out->comp.allowParentRelativePaths,
@@ -523,9 +570,7 @@ bool LoadUSD(const std::string& path, const LoadOptions& opts, LoadedScene* out,
     return false;
   }
 
-  // .usdz archives keep the direct (non-composition) path for now: composing
-  // over archive-internal layers needs LoadLayerFromAsset wiring.
-  const bool compose = opts.composition && !HasUsdzExtension(path);
+  const bool compose = opts.composition;
 
   bool ok = false;
   if (compose) {
@@ -569,6 +614,7 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
 
   out->comp.rootLayer = prev.rootLayer;
   out->comp.searchPaths = prev.searchPaths;
+  out->comp.usdzAsset = prev.usdzAsset;
   out->comp.allowParentRelativePaths = opts.allowParentRelativePaths;
 
   if (!ComposeStage(opts, out, ctrl)) {
@@ -604,8 +650,9 @@ bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
   if (cacheHit) {
     scratch = restCache->scene;  // copy rest (cheap vs re-converting the stage)
   } else {
-    if (!ConvertStageToSceneImpl(src.stage, src.filepath, src.mmap, timecode,
-                                 rtPath, /*loadTextures=*/false,
+    if (!ConvertStageToSceneImpl(src.stage, src.filepath, src.mmap,
+                                 src.comp.usdzAsset, timecode, rtPath,
+                                 /*loadTextures=*/false,
                                  TextureRuntimeOptions{}, src.subdivisionLevel,
                                  src.subdivisionPrimLevels,
                                  src.comp.allowParentRelativePaths, &scratch,

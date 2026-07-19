@@ -20,6 +20,7 @@ layout(buffer_reference, scalar) readonly buffer Cols  { float c[]; };
 layout(buffer_reference, scalar) readonly buffer UV1s  { float u[]; };  // vec2 per vertex
 layout(buffer_reference, scalar) readonly buffer Infls { float f[]; };  // float per vertex
 layout(buffer_reference, scalar) readonly buffer Faces { uint  fc[]; }; // face id per triangle
+layout(buffer_reference, scalar) readonly buffer TriMats { uint m[]; }; // material id per triangle
 layout(buffer_reference, scalar) readonly buffer Joints  { uint  j[]; }; // 4 joint ids per vertex
 layout(buffer_reference, scalar) readonly buffer Weights { float w[]; }; // 4 weights per vertex
 layout(buffer_reference, scalar) readonly buffer SubmeshRanges { uvec4 r[]; };
@@ -31,9 +32,10 @@ struct MeshDesc {
   uint64_t uv1Addr;       // per-vertex 2nd texcoord (vec2[]); 0 = none
   uint64_t inflAddr;      // per-vertex blendshape influence (float[]); 0 = none
   uint64_t faceAddr;      // per-triangle source USD face id (uint[]); 0 = none
+  uint64_t triMatAddr;    // per-triangle material id (uint[]); 0 = matId
+  uint64_t submeshAddr;   // uvec4[firstPrim,count,frontMat,backMat][]
   uint64_t jointAddr;     // per-vertex 4 joint ids (uint[4]); 0 = unskinned
   uint64_t weightAddr;    // per-vertex 4 skin weights (float[4]); 0 = unskinned
-  uint64_t submeshAddr;   // uvec4[firstPrim,count,frontMat,backMat][]; 0 = none
   uint     matId;         // index into the materials SSBO (-1 as 0xffffffff -> gray)
   uint     geometricNormal;  // bit0 = no authored normals (geometric face normal);
                              // bits1-2 = USD purpose id (0=def/1=render/2=proxy/3=guide)
@@ -78,6 +80,23 @@ layout(set = 0, binding = 8) uniform samplerCube uEnvCube;
 // GGX-prefiltered cube + split-sum BRDF LUT for surface specular IBL.
 layout(set = 0, binding = 9) uniform samplerCube uPrefilteredCube;
 layout(set = 0, binding = 10) uniform sampler2D uBrdfLut;
+
+struct RtTexDesc {
+  int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim;
+  int udimLayer[100];
+};
+layout(set = 0, binding = 11, scalar) readonly buffer RtTexels {
+  uint texelWords[];
+};
+layout(set = 0, binding = 12, scalar) readonly buffer RtTexDescs {
+  RtTexDesc texDescs[];
+};
+layout(set = 0, binding = 13, scalar) readonly buffer RtMatTexIds {
+  int matTexIds[];
+};
+layout(set = 0, binding = 14, scalar) readonly buffer RtMatTexParams {
+  float matTexParams[];
+};
 
 layout(push_constant) uniform PC {
   mat4 invViewProj;  // inverse(proj * view)
@@ -183,6 +202,120 @@ vec3 srgbToLinear(vec3 c) {
   return mix(lo, hi, greaterThan(c, vec3(0.04045)));
 }
 
+float wrapCoord(float x, int mode) {
+  if (mode == 0 || mode == 3) return clamp(x, 0.0, 1.0);
+  if (mode == 2) {
+    float tile = floor(x), f = x - tile;
+    return (int(tile) & 1) != 0 ? 1.0 - f : f;
+  }
+  return fract(x);
+}
+
+vec4 fetchTexel(RtTexDesc td, int x, int y) {
+  uint word = texelWords[uint(td.offset / 4 + (y * td.width + x))];
+  vec4 c = unpackUnorm4x8(word);
+  if (td.srgb != 0) c.rgb = srgbToLinear(c.rgb);
+  return c;
+}
+
+vec4 sampleRtTexture(int id, vec2 uv, vec4 missing) {
+  if (id < 0 || id >= int(texDescs.length())) return missing;
+  RtTexDesc td = texDescs[id];
+  if (td.isUdim != 0) {
+    ivec2 tile = ivec2(floor(uv));
+    int lut = tile.x + tile.y * 10;
+    if (lut < 0 || lut >= 100) return missing;
+    int tileId = td.udimLayer[lut];
+    if (tileId < 0 || tileId >= int(texDescs.length())) return missing;
+    td = texDescs[tileId];
+    uv = fract(uv);
+  }
+  if (td.width <= 0 || td.height <= 0) return missing;
+  vec2 p = vec2(wrapCoord(uv.x, td.wrapS), wrapCoord(uv.y, td.wrapT)) *
+           vec2(td.width - 1, td.height - 1);
+  ivec2 p0 = ivec2(floor(p));
+  ivec2 p1 = min(p0 + ivec2(1), ivec2(td.width - 1, td.height - 1));
+  vec2 f = fract(p);
+  vec4 a = mix(fetchTexel(td, p0.x, p0.y), fetchTexel(td, p1.x, p0.y), f.x);
+  vec4 b = mix(fetchTexel(td, p0.x, p1.y), fetchTexel(td, p1.x, p1.y), f.x);
+  return mix(a, b, f.y);
+}
+
+float texChannel(vec4 c, int channel) {
+  return channel == 1 ? c.g : channel == 2 ? c.b : channel == 3 ? c.a : c.r;
+}
+
+vec2 materialUv(uint matId, int slot, vec2 uv0, vec2 uv1) {
+  uint base = matId * 72u;
+  int bits = int(matTexParams[base + 69u] + 0.5);
+  vec2 uv = ((bits & (1 << slot)) != 0) ? uv1 : uv0;
+  uint o = base + uint(slot * 6);
+  return vec2(matTexParams[o + 0u] * uv.x + matTexParams[o + 1u] * uv.y +
+                  matTexParams[o + 2u],
+              matTexParams[o + 3u] * uv.x + matTexParams[o + 4u] * uv.y +
+                  matTexParams[o + 5u]);
+}
+
+uint selectedMaterial(MeshDesc md, int prim, bool frontFace) {
+  if (md.submeshAddr != 0ul) {
+    SubmeshRanges ranges = SubmeshRanges(md.submeshAddr);
+    for (uint si = 0u; si < md.submeshCount; ++si) {
+      uvec4 sr = ranges.r[si];
+      if (uint(prim) >= sr.x && uint(prim) < sr.x + sr.y) {
+        return frontFace ? sr.z : sr.w;
+      }
+    }
+  }
+  return md.triMatAddr != 0ul ? TriMats(md.triMatAddr).m[uint(prim)]
+                               : md.matId;
+}
+
+bool materialAllowsHit(uint iid, int prim, vec2 bc, bool frontFace) {
+  InstInfo ii = insts[iid];
+  MeshDesc md = meshes[ii.meshId];
+  uint mid = selectedMaterial(md, prim, frontFace);
+  if (ii.useMaterial == 0u || mid == 0xffffffffu) return true;
+  float alphaMode = mat(mid, 1u).z;
+  if (!(alphaMode > 0.5 && alphaMode < 1.5)) return true;
+  Verts vb = Verts(md.vtxAddr);
+  Idx ib = Idx(md.idxAddr);
+  uint i0 = ib.i[uint(prim) * 3u + 0u];
+  uint i1 = ib.i[uint(prim) * 3u + 1u];
+  uint i2 = ib.i[uint(prim) * 3u + 2u];
+  float w0 = 1.0 - bc.x - bc.y;
+  vec2 uv0 = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x +
+             fetchUV(vb, i2) * bc.y;
+  vec2 uv1 = uv0;
+  if (md.uv1Addr != 0ul) {
+    UV1s ub = UV1s(md.uv1Addr);
+    uv1 = fetchUV1(ub, i0) * w0 + fetchUV1(ub, i1) * bc.x +
+          fetchUV1(ub, i2) * bc.y;
+  }
+  uint tb = mid * 6u;
+  uint pb = mid * 72u;
+  vec4 bt = sampleRtTexture(matTexIds[tb], materialUv(mid, 0, uv0, uv1),
+                            vec4(1.0));
+  bt = bt * vec4(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                 matTexParams[pb + 38u], matTexParams[pb + 39u]) +
+       vec4(matTexParams[pb + 40u], matTexParams[pb + 41u],
+            matTexParams[pb + 42u], matTexParams[pb + 43u]);
+  float alpha = mat(mid, 0u).a * bt.a * ii.tint.a;
+  int opacityTex = matTexIds[tb + 5u];
+  if (opacityTex >= 0) {
+    vec4 ot = sampleRtTexture(opacityTex, materialUv(mid, 5, uv0, uv1),
+                              vec4(1.0));
+    alpha *= texChannel(ot, int(matTexParams[pb + 66u] + 0.5)) *
+                 matTexParams[pb + 67u] +
+             matTexParams[pb + 68u];
+  }
+  if (md.vtxColorAddr != 0ul) {
+    Cols cbuff = Cols(md.vtxColorAddr);
+    alpha *= fetchCol(cbuff, i0).a * w0 + fetchCol(cbuff, i1).a * bc.x +
+             fetchCol(cbuff, i2).a * bc.y;
+  }
+  return alpha >= mat(mid, 1u).w;
+}
+
 void main() {
   ivec2 px = ivec2(gl_GlobalInvocationID.xy);
   ivec2 size = imageSize(outImg);
@@ -222,8 +355,17 @@ void main() {
   vec3 outc = bgc;
 
   rayQueryEXT rq;
-  rayQueryInitializeEXT(rq, TLAS, gl_RayFlagsOpaqueEXT, 0xFF, origin, 1e-3, dir, 1e30);
-  while (rayQueryProceedEXT(rq)) {}
+  rayQueryInitializeEXT(rq, TLAS, 0u, 0xFF, origin, 1e-3, dir, 1e30);
+  while (rayQueryProceedEXT(rq)) {
+    if (rayQueryGetIntersectionTypeEXT(rq, false) ==
+        gl_RayQueryCandidateIntersectionTriangleEXT) {
+      uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(rq, false));
+      int cp = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
+      vec2 cb = rayQueryGetIntersectionBarycentricsEXT(rq, false);
+      bool cf = rayQueryGetIntersectionFrontFaceEXT(rq, false);
+      if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(rq);
+    }
+  }
 
   // Dome env background on miss (shaded mode only): sample the baked env cube
   // scaled by the dome's effectiveColor.
@@ -256,24 +398,22 @@ void main() {
 
     InstInfo ii = insts[iid];
     MeshDesc md = meshes[ii.meshId];
-    uint hitMat = md.matId;
-    if (md.submeshAddr != 0ul) {
-      SubmeshRanges ranges = SubmeshRanges(md.submeshAddr);
-      bool frontHit = rayQueryGetIntersectionFrontFaceEXT(rq, true);
-      for (uint si = 0u; si < md.submeshCount; ++si) {
-        uvec4 sr = ranges.r[si];
-        if (uint(prim) >= sr.x && uint(prim) < sr.x + sr.y) {
-          hitMat = frontHit ? sr.z : sr.w;
-          break;
-        }
-      }
-    }
+    uint mid = selectedMaterial(
+        md, prim, rayQueryGetIntersectionFrontFaceEXT(rq, true));
     Verts vb = Verts(md.vtxAddr);
     Idx ib = Idx(md.idxAddr);
     uint i0 = ib.i[prim * 3u + 0u];
     uint i1 = ib.i[prim * 3u + 1u];
     uint i2 = ib.i[prim * 3u + 2u];
     float w0 = 1.0 - bc.x - bc.y;
+    vec2 uv0h = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x +
+                fetchUV(vb, i2) * bc.y;
+    vec2 uv1h = uv0h;
+    if (md.uv1Addr != 0ul) {
+      UV1s ub = UV1s(md.uv1Addr);
+      uv1h = fetchUV1(ub, i0) * w0 + fetchUV1(ub, i1) * bc.x +
+             fetchUV1(ub, i2) * bc.y;
+    }
 
     // Object->world for this instance (instance transform for instanced meshes,
     // the mesh's world for non-instanced).
@@ -315,22 +455,22 @@ void main() {
     float coatWeight = 0.0;
     float coatRoughness = 0.1;
     if (ii.useMaterial != 0u) {
-      if (hitMat != 0xffffffffu) {
-        base = mat(hitMat, 0u).rgb;
-        alpha = mat(hitMat, 0u).a;
-        metallic = mat(hitMat, 1u).x;
-        roughness = mat(hitMat, 1u).y;
-        alphaMode = mat(hitMat, 1u).z;
-        alphaCutoff = mat(hitMat, 1u).w;
-        emissive = mat(hitMat, 2u).rgb;
-        if (lrt(hitMat, 12u).w > 0.5) {
-          metallic = lrt(hitMat, 10u).x;
-          roughness = lrt(hitMat, 10u).z;
-          alpha = lrt(hitMat, 9u).w;
-          emissive = lrt(hitMat, 8u).rgb * lrt(hitMat, 8u).w;
-          specWeight = lrt(hitMat, 1u).w;
-          coatWeight = lrt(hitMat, 6u).w;
-          coatRoughness = lrt(hitMat, 11u).x;
+      if (mid != 0xffffffffu) {
+        base = mat(mid, 0u).rgb;
+        alpha = mat(mid, 0u).a;
+        metallic = mat(mid, 1u).x;
+        roughness = mat(mid, 1u).y;
+        alphaMode = mat(mid, 1u).z;
+        alphaCutoff = mat(mid, 1u).w;
+        emissive = mat(mid, 2u).rgb;
+        if (lrt(mid, 12u).w > 0.5) {
+          metallic = lrt(mid, 10u).x;
+          roughness = lrt(mid, 10u).z;
+          alpha = lrt(mid, 9u).w;
+          emissive = lrt(mid, 8u).rgb * lrt(mid, 8u).w;
+          specWeight = lrt(mid, 1u).w;
+          coatWeight = lrt(mid, 6u).w;
+          coatRoughness = lrt(mid, 11u).x;
         }
       } else {
         base = vec3(0.6);
@@ -346,6 +486,85 @@ void main() {
                 fetchCol(cb, i2) * bc.y;
       base *= vc.rgb;
       alpha *= vc.a;
+    }
+    if (ii.useMaterial != 0u && mid != 0xffffffffu) {
+      uint tb = mid * 6u;
+      uint pb = mid * 72u;
+      vec4 bt = sampleRtTexture(matTexIds[tb + 0u],
+                                materialUv(mid, 0, uv0h, uv1h), vec4(1.0));
+      bt = bt * vec4(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                     matTexParams[pb + 38u], matTexParams[pb + 39u]) +
+           vec4(matTexParams[pb + 40u], matTexParams[pb + 41u],
+                matTexParams[pb + 42u], matTexParams[pb + 43u]);
+      base *= bt.rgb;
+      alpha *= bt.a * ii.tint.a;
+
+      vec4 mt = sampleRtTexture(matTexIds[tb + 1u],
+                                materialUv(mid, 1, uv0h, uv1h), vec4(1.0));
+      vec4 rt = sampleRtTexture(matTexIds[tb + 2u],
+                                materialUv(mid, 2, uv0h, uv1h), vec4(1.0));
+      metallic = clamp(metallic *
+                           (texChannel(mt, int(matTexParams[pb + 60u] + 0.5)) *
+                                matTexParams[pb + 61u] +
+                            matTexParams[pb + 62u]),
+                       0.0, 1.0);
+      roughness = clamp(roughness *
+                            (texChannel(rt, int(matTexParams[pb + 63u] + 0.5)) *
+                                 matTexParams[pb + 64u] +
+                             matTexParams[pb + 65u]),
+                        0.0, 1.0);
+
+      int opacityTex = matTexIds[tb + 5u];
+      if (opacityTex >= 0) {
+        vec4 ot = sampleRtTexture(opacityTex,
+                                  materialUv(mid, 5, uv0h, uv1h), vec4(1.0));
+        alpha *= texChannel(ot, int(matTexParams[pb + 66u] + 0.5)) *
+                     matTexParams[pb + 67u] +
+                 matTexParams[pb + 68u];
+      }
+
+      int emissiveTex = matTexIds[tb + 4u];
+      if (emissiveTex >= 0) {
+        vec4 et = sampleRtTexture(emissiveTex,
+                                  materialUv(mid, 4, uv0h, uv1h), vec4(1.0));
+        et = et * vec4(matTexParams[pb + 52u], matTexParams[pb + 53u],
+                       matTexParams[pb + 54u], matTexParams[pb + 55u]) +
+             vec4(matTexParams[pb + 56u], matTexParams[pb + 57u],
+                  matTexParams[pb + 58u], matTexParams[pb + 59u]);
+        emissive *= et.rgb;
+      }
+
+      int normalTex = matTexIds[tb + 3u];
+      if (normalTex >= 0) {
+        vec4 nt = sampleRtTexture(normalTex,
+                                  materialUv(mid, 3, uv0h, uv1h),
+                                  vec4(0.5, 0.5, 1.0, 1.0));
+        nt = nt * vec4(matTexParams[pb + 44u], matTexParams[pb + 45u],
+                       matTexParams[pb + 46u], matTexParams[pb + 47u]) +
+             vec4(matTexParams[pb + 48u], matTexParams[pb + 49u],
+                  matTexParams[pb + 50u], matTexParams[pb + 51u]);
+        vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+        vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+        vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+        vec2 nt0 = materialUv(mid, 3, fetchUV(vb, i0),
+                              md.uv1Addr != 0ul ? fetchUV1(UV1s(md.uv1Addr), i0)
+                                                : fetchUV(vb, i0));
+        vec2 nt1 = materialUv(mid, 3, fetchUV(vb, i1),
+                              md.uv1Addr != 0ul ? fetchUV1(UV1s(md.uv1Addr), i1)
+                                                : fetchUV(vb, i1));
+        vec2 nt2 = materialUv(mid, 3, fetchUV(vb, i2),
+                              md.uv1Addr != 0ul ? fetchUV1(UV1s(md.uv1Addr), i2)
+                                                : fetchUV(vb, i2));
+        vec3 e1 = wp1 - wp0, e2 = wp2 - wp0;
+        vec2 d1 = nt1 - nt0, d2 = nt2 - nt0;
+        float det = d1.x * d2.y - d1.y * d2.x;
+        vec3 T = abs(det) > 1e-12
+                     ? normalize((e1 * d2.y - e2 * d1.y) / det)
+                     : normalize(cross(abs(N.z) < 0.999 ? vec3(0, 0, 1)
+                                                        : vec3(0, 1, 0), N));
+        vec3 B = normalize(cross(N, T));
+        N = normalize(T * nt.x + B * nt.y + N * nt.z);
+      }
     }
     float materialOpacity = clamp(alpha, 0.0, 1.0);
     if (alphaMode > 0.5 && alphaMode < 1.5) {
@@ -373,9 +592,18 @@ void main() {
     if (rmode == 0 && diff > 0.0) {
       rayQueryEXT sq;
       rayQueryInitializeEXT(sq, TLAS,
-                            gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                            gl_RayFlagsTerminateOnFirstHitEXT,
                             0xFF, hit + N * 1e-3, 1e-3, L, 1e30);
-      while (rayQueryProceedEXT(sq)) {}
+      while (rayQueryProceedEXT(sq)) {
+        if (rayQueryGetIntersectionTypeEXT(sq, false) ==
+            gl_RayQueryCandidateIntersectionTriangleEXT) {
+          uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(sq, false));
+          int cp = rayQueryGetIntersectionPrimitiveIndexEXT(sq, false);
+          vec2 cb = rayQueryGetIntersectionBarycentricsEXT(sq, false);
+          bool cf = rayQueryGetIntersectionFrontFaceEXT(sq, false);
+          if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(sq);
+        }
+      }
       if (rayQueryGetIntersectionTypeEXT(sq, true) !=
           gl_RayQueryCommittedIntersectionNoneEXT) {
         shadow = 0.0;
@@ -441,7 +669,7 @@ void main() {
     } else if (rmode == 2) {
       outc = N * 0.5 + 0.5;
     } else if (rmode == 3) {
-      outc = idColor(hitMat);
+      outc = idColor(mid);
     } else if (rmode == 4) {
       vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
       vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
@@ -464,13 +692,11 @@ void main() {
       outc = (dot(cross(wp1 - wp0, wp2 - wp0), dir) < 0.0) ? vec3(0.1, 0.7, 0.1)
                                                           : vec3(0.7, 0.1, 0.1);
     } else if (rmode == 9) {  // roughness
-      float r = (ii.useMaterial != 0u && hitMat != 0xffffffffu) ? mat(hitMat, 1u).y : 0.5;
-      outc = vec3(r);
+      outc = vec3(roughness);
     } else if (rmode == 10) {  // metallic
-      float m = (ii.useMaterial != 0u && hitMat != 0xffffffffu) ? mat(hitMat, 1u).x : 0.0;
-      outc = vec3(m);
+      outc = vec3(metallic);
     } else if (rmode == 11) {  // emissive
-      outc = (ii.useMaterial != 0u && hitMat != 0xffffffffu) ? mat(hitMat, 2u).rgb : vec3(0.0);
+      outc = emissive;
     } else if (rmode == 12) {  // opacity
       outc = vec3(materialOpacity);
     } else if (rmode == 13) {  // world position
@@ -584,9 +810,18 @@ void main() {
         vec3 sd = cosHemi(Ng, rnd(seed), rnd(seed));
         rayQueryEXT aq;
         rayQueryInitializeEXT(aq, TLAS,
-                              gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                              gl_RayFlagsTerminateOnFirstHitEXT,
                               0xFF, hit + Ng * (aoRadius * 1e-2), 1e-4, sd, aoRadius);
-        while (rayQueryProceedEXT(aq)) {}
+        while (rayQueryProceedEXT(aq)) {
+          if (rayQueryGetIntersectionTypeEXT(aq, false) ==
+              gl_RayQueryCandidateIntersectionTriangleEXT) {
+            uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(aq, false));
+            int cp = rayQueryGetIntersectionPrimitiveIndexEXT(aq, false);
+            vec2 cb = rayQueryGetIntersectionBarycentricsEXT(aq, false);
+            bool cf = rayQueryGetIntersectionFrontFaceEXT(aq, false);
+            if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(aq);
+          }
+        }
         if (rayQueryGetIntersectionTypeEXT(aq, true) !=
             gl_RayQueryCommittedIntersectionNoneEXT) occ += 1.0;
       }
@@ -602,9 +837,18 @@ void main() {
         vec3 sd = normalize(Lc + tt * (rr * cos(a)) + bb * (rr * sin(a)));
         rayQueryEXT sq;
         rayQueryInitializeEXT(sq, TLAS,
-                              gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                              gl_RayFlagsTerminateOnFirstHitEXT,
                               0xFF, hit + N * 1e-3, 1e-3, sd, 1e30);
-        while (rayQueryProceedEXT(sq)) {}
+        while (rayQueryProceedEXT(sq)) {
+          if (rayQueryGetIntersectionTypeEXT(sq, false) ==
+              gl_RayQueryCandidateIntersectionTriangleEXT) {
+            uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(sq, false));
+            int cp = rayQueryGetIntersectionPrimitiveIndexEXT(sq, false);
+            vec2 cb = rayQueryGetIntersectionBarycentricsEXT(sq, false);
+            bool cf = rayQueryGetIntersectionFrontFaceEXT(sq, false);
+            if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(sq);
+          }
+        }
         if (rayQueryGetIntersectionTypeEXT(sq, true) ==
             gl_RayQueryCommittedIntersectionNoneEXT) vis += 1.0;
       }

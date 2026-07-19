@@ -14,6 +14,7 @@
 
 #include "displacement_bake.hh"  // SampleTextureRed
 #include "lightrt_mtlx_bridge.hh"
+#include "texture_tools.hh"
 
 namespace tusdview {
 
@@ -420,6 +421,97 @@ void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
   }
 }
 
+void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
+                           const std::vector<DrawMaterialCPU>& materials,
+                           HostTextureTable* out) {
+  if (!out) return;
+  *out = HostTextureTable{};
+  out->matTex.assign(std::max<size_t>(materials.size(), 1) * 6, -1);
+  out->matTexParam.assign(std::max<size_t>(materials.size(), 1) *
+                              kRtMaterialTextureParamFloats,
+                          0.0f);
+  out->sourceToTable.assign(sourceTextures.size(), -1);
+  out->textures.reserve(sourceTextures.size());
+
+  auto decodedImage = [](const light3d::Image& src,
+                         const DrawCompressedImageCPU& compressed) {
+    light3d::Image image = src;
+    if ((image.width <= 0 || image.height <= 0 || image.data.empty()) &&
+        compressed.format != DrawCompressedFormat::None &&
+        !compressed.data.empty()) {
+      DrawCompressedImageCPU unused;
+      light3d::Image rgba;
+      TextureCompressCaps noGpuFormats;
+      if (TexToolsAdaptCompressed(compressed.data.data(), compressed.data.size(),
+                                  false, compressed.format,
+                                  static_cast<uint32_t>(compressed.width),
+                                  static_cast<uint32_t>(compressed.height),
+                                  noGpuFormats, &unused, &rgba)) {
+        image = std::move(rgba);
+      }
+    }
+    return image;
+  };
+  auto appendImage = [&](const light3d::Image& image,
+                         const DrawTextureCPU& tex) {
+    if (image.width <= 0 || image.height <= 0 || image.channels != 4 ||
+        image.data.empty()) return -1;
+    HostTextureDesc td;
+    td.offset = static_cast<int>(out->texels.size());
+    td.width = image.width;
+    td.height = image.height;
+    td.wrapS = tex.wrapS;
+    td.wrapT = tex.wrapT;
+    td.srgb = tex.srgb ? 1 : 0;
+    for (int& layer : td.udimLayer) layer = -1;
+    out->texels.insert(out->texels.end(), image.data.begin(), image.data.end());
+    const int id = static_cast<int>(out->textures.size());
+    out->textures.push_back(td);
+    return id;
+  };
+  for (size_t ti = 0; ti < sourceTextures.size(); ++ti) {
+    const DrawTextureCPU& tex = sourceTextures[ti];
+    if (tex.isUdim) {
+      HostTextureDesc virtualTex;
+      virtualTex.wrapS = tex.wrapS;
+      virtualTex.wrapT = tex.wrapT;
+      virtualTex.srgb = tex.srgb ? 1 : 0;
+      virtualTex.isUdim = 1;
+      for (int& layer : virtualTex.udimLayer) layer = -1;
+      const int virtualId = static_cast<int>(out->textures.size());
+      out->textures.push_back(virtualTex);
+      for (const DrawUdimTileCPU& tile : tex.udimTiles) {
+        const light3d::Image image = decodedImage(tile.image, tile.compressed);
+        const int tileId = appendImage(image, tex);
+        const int lut = static_cast<int>(tile.udim) - 1001;
+        if (tileId >= 0 && lut >= 0 && lut < 100) {
+          out->textures[static_cast<size_t>(virtualId)].udimLayer[lut] = tileId;
+        }
+      }
+      out->sourceToTable[ti] = virtualId;
+    } else {
+      const light3d::Image image = decodedImage(tex.image, tex.compressed);
+      out->sourceToTable[ti] = appendImage(image, tex);
+    }
+  }
+  auto mapTex = [&](int t) -> int {
+    return (t >= 0 && static_cast<size_t>(t) < out->sourceToTable.size())
+               ? out->sourceToTable[static_cast<size_t>(t)]
+               : -1;
+  };
+  for (size_t i = 0; i < materials.size(); ++i) {
+    const DrawMaterialCPU& dm = materials[i];
+    out->matTex[i * 6 + 0] = mapTex(dm.baseColorTex);
+    out->matTex[i * 6 + 1] = mapTex(dm.metallicTex);
+    out->matTex[i * 6 + 2] = mapTex(dm.roughnessTex);
+    out->matTex[i * 6 + 3] = mapTex(dm.normalTex);
+    out->matTex[i * 6 + 4] = mapTex(dm.emissiveTex);
+    out->matTex[i * 6 + 5] = mapTex(dm.opacityTex);
+    PackRtMaterialTextureParams(
+        dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
+  }
+}
+
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     float displacementScale, HostScene* out, std::string* err,
                     BuildProgress* progress, RefitMap* refitOut) {
@@ -612,34 +704,17 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   out->matLightRt.assign(std::max<size_t>(scene.materials.size(), 1) *
                              kLightRtOpenPBRFloats,
                          0.0f);
-  out->matTex.assign(std::max<size_t>(scene.materials.size(), 1) * 4, -1);
-  out->matTexParam.assign(std::max<size_t>(scene.materials.size(), 1) *
-                              kRtMaterialTextureParamFloats,
-                          0.0f);
-  out->textures.clear();
-  out->texels.clear();
-  std::vector<int> rtTexMap(scene.textures.size(), -1);
-  out->textures.reserve(scene.textures.size());
-  for (size_t ti = 0; ti < scene.textures.size(); ++ti) {
-    const DrawTextureCPU& tex = scene.textures[ti];
-    HostTextureDesc td;
-    td.offset = static_cast<int>(out->texels.size());
-    td.width = tex.image.width;
-    td.height = tex.image.height;
-    td.wrapS = tex.wrapS;
-    td.wrapT = tex.wrapT;
-    if (tex.image.width > 0 && tex.image.height > 0 && tex.image.channels == 4 &&
-        !tex.image.data.empty()) {
-      out->texels.insert(out->texels.end(), tex.image.data.begin(),
-                         tex.image.data.end());
-      rtTexMap[ti] = static_cast<int>(out->textures.size());
-      out->textures.push_back(td);
-    }
-  }
+  HostTextureTable textureTable;
+  BuildHostTextureTable(scene.textures, scene.materials, &textureTable);
+  out->texels = std::move(textureTable.texels);
+  out->textures = std::move(textureTable.textures);
+  out->matTex = std::move(textureTable.matTex);
+  out->matTexParam = std::move(textureTable.matTexParam);
   out->numTextures = static_cast<int>(out->textures.size());
   auto mapTex = [&](int t) -> int {
-    return (t >= 0 && static_cast<size_t>(t) < rtTexMap.size())
-               ? rtTexMap[static_cast<size_t>(t)]
+    return (t >= 0 &&
+            static_cast<size_t>(t) < textureTable.sourceToTable.size())
+               ? textureTable.sourceToTable[static_cast<size_t>(t)]
                : -1;
   };
   for (size_t i = 0; i < scene.materials.size(); ++i) {
@@ -654,12 +729,6 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     out->matBase[i * 3 + 1] = dm.baseColor[1];
     out->matBase[i * 3 + 2] = dm.baseColor[2];
     PackLightRtOpenPBR(dm, &out->matLightRt[i * kLightRtOpenPBRFloats]);
-    out->matTex[i * 4 + 0] = mapTex(dm.baseColorTex);
-    out->matTex[i * 4 + 1] = mapTex(dm.metalRoughTex);
-    out->matTex[i * 4 + 2] = mapTex(dm.normalTex);
-    out->matTex[i * 4 + 3] = mapTex(dm.emissiveTex);
-    PackRtMaterialTextureParams(
-        dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
   }
 
   out->numLights = static_cast<int>(scene.lights.size());

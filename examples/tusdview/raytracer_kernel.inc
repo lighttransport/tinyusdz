@@ -12,7 +12,7 @@ struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]
 // reconstructs world-space verts for area/normal AOVs. blasRoot = global node
 // index of this prototype's BLAS subtree root.
 struct Inst { float w2o[12]; float o2w[12]; float tint[4]; int blasRoot; int instId; };
-struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; };
+struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim; int udimLayer[100]; };
 
 typedef struct { float x, y, z; } F3;
 typedef struct { float x, y, z, w; } F4;
@@ -35,11 +35,23 @@ __device__ float wrapCoord(float x, int mode){
   if (mode==2){ float t=floorf(x); float f=x-t; return ((int)t&1)?(1.f-f):f; } // mirror
   return x-floorf(x);                                            // repeat
 }
-__device__ F4 sampleTexRGBA(const unsigned char* texels, const TexDesc* tex,
-                            int numTex, int id, float u, float v){
-  if (!texels || !tex || id<0 || id>=numTex) return mk4(1.f,1.f,1.f,1.f);
+__device__ float srgbToLinear(float x){
+  return x<=0.04045f ? x*(1.f/12.92f) : powf((x+0.055f)*(1.f/1.055f),2.4f);
+}
+__device__ F4 sampleTexRGBAFallback(const unsigned char* texels,
+                                    const TexDesc* tex, int numTex, int id,
+                                    float u, float v, F4 missing){
+  if (!texels || !tex || id<0 || id>=numTex) return missing;
   TexDesc td=tex[id];
-  if (td.width<=0 || td.height<=0) return mk4(1.f,1.f,1.f,1.f);
+  if (td.isUdim) {
+    int tileU=(int)floorf(u), tileV=(int)floorf(v);
+    int lut=tileU+tileV*10;
+    if (lut<0 || lut>=100) return missing;
+    int tileId=td.udimLayer[lut];
+    if (tileId<0 || tileId>=numTex) return missing;
+    td=tex[tileId]; u=u-floorf(u); v=v-floorf(v);
+  }
+  if (td.width<=0 || td.height<=0) return missing;
   float su=wrapCoord(u,td.wrapS)*(td.width-1);
   float sv=wrapCoord(v,td.wrapT)*(td.height-1);
   int x0=(int)floorf(su), y0=(int)floorf(sv);
@@ -54,9 +66,20 @@ __device__ F4 sampleTexRGBA(const unsigned char* texels, const TexDesc* tex,
   F4 c10=mk4(p10[0]*(1.f/255.f),p10[1]*(1.f/255.f),p10[2]*(1.f/255.f),p10[3]*(1.f/255.f));
   F4 c01=mk4(p01[0]*(1.f/255.f),p01[1]*(1.f/255.f),p01[2]*(1.f/255.f),p01[3]*(1.f/255.f));
   F4 c11=mk4(p11[0]*(1.f/255.f),p11[1]*(1.f/255.f),p11[2]*(1.f/255.f),p11[3]*(1.f/255.f));
+  if (td.srgb) {
+    c00.x=srgbToLinear(c00.x); c00.y=srgbToLinear(c00.y); c00.z=srgbToLinear(c00.z);
+    c10.x=srgbToLinear(c10.x); c10.y=srgbToLinear(c10.y); c10.z=srgbToLinear(c10.z);
+    c01.x=srgbToLinear(c01.x); c01.y=srgbToLinear(c01.y); c01.z=srgbToLinear(c01.z);
+    c11.x=srgbToLinear(c11.x); c11.y=srgbToLinear(c11.y); c11.z=srgbToLinear(c11.z);
+  }
   F4 a=mk4(c00.x+(c10.x-c00.x)*tx,c00.y+(c10.y-c00.y)*tx,c00.z+(c10.z-c00.z)*tx,c00.w+(c10.w-c00.w)*tx);
   F4 b=mk4(c01.x+(c11.x-c01.x)*tx,c01.y+(c11.y-c01.y)*tx,c01.z+(c11.z-c01.z)*tx,c01.w+(c11.w-c01.w)*tx);
   return mk4(a.x+(b.x-a.x)*ty,a.y+(b.y-a.y)*ty,a.z+(b.z-a.z)*ty,a.w+(b.w-a.w)*ty);
+}
+__device__ F4 sampleTexRGBA(const unsigned char* texels, const TexDesc* tex,
+                            int numTex, int id, float u, float v){
+  return sampleTexRGBAFallback(texels,tex,numTex,id,u,v,
+                               mk4(1.f,1.f,1.f,1.f));
 }
 __device__ F3 sampleTexRGB(const unsigned char* texels, const TexDesc* tex,
                            int numTex, int id, float u, float v){
@@ -328,10 +351,83 @@ R"CUDA(  float t0=fmaxf(tmin,0.f);
   return add(L, scale(bg, T));
 }
 
+// Alpha-mask intersections participate in traversal, not just compositing: a
+// rejected texel must expose the next triangle and must not occlude AO/shadow
+// rays. Blend materials remain intersections and composite after shading.
+__device__ bool cutoutAllowsHit(
+    int ht, float bu, float bv, int hitInst, const float* cols,
+    const int* mats, const float* matPbr, const float* matLightRt, int numMats,
+    const int* matTex, const float* matTexParam, const unsigned char* texels,
+    const TexDesc* textures, int numTextures, const float* uvs,
+    const float* uvs1, const Inst* insts) {
+  int mid=mats[ht];
+  if (mid<0 || mid>=numMats || !matLightRt) return true;
+  const float* lrt=&matLightRt[mid*56];
+  float alphaMode=lrt[54];
+  if (!(alphaMode>0.5f && alphaMode<1.5f)) return true;
+  float w0=1.f-bu-bv;
+  const float* uvh=&uvs[ht*6];
+  float u=uvh[0]*w0+uvh[2]*bu+uvh[4]*bv;
+  float v=uvh[1]*w0+uvh[3]*bu+uvh[5]*bv;
+  float u1=u,v1=v;
+  if (uvs1){
+    const float* uvh1=&uvs1[ht*6];
+    u1=uvh1[0]*w0+uvh1[2]*bu+uvh1[4]*bv;
+    v1=uvh1[1]*w0+uvh1[3]*bu+uvh1[5]*bv;
+  }
+  const float* tp=matTexParam?&matTexParam[mid*72]:0;
+  int uvbits=tp?(int)(tp[69]+0.5f):0;
+  float buu=u,bvv=v,ouu=u,ovv=v;
+  if (tp){
+    xformUv(tp,0,(uvbits&1)?u1:u,(uvbits&1)?v1:v,&buu,&bvv);
+    xformUv(tp,30,(uvbits&32)?u1:u,(uvbits&32)?v1:v,&ouu,&ovv);
+  }
+  int baseTex=matTex?matTex[mid*6+0]:-1;
+  F4 bt=sampleTexRGBA(texels,textures,numTextures,baseTex,buu,bvv);
+  if (tp) bt=mk4(bt.x*tp[36]+tp[40],bt.y*tp[37]+tp[41],
+                 bt.z*tp[38]+tp[42],bt.w*tp[39]+tp[43]);
+  float opacity=(lrt[51]>0.5f)?lrt[39]:matPbr[mid*6+5];
+  opacity*=bt.w;
+  int opacityTex=matTex?matTex[mid*6+5]:-1;
+  if (opacityTex>=0){
+    F4 ot=sampleTexRGBA(texels,textures,numTextures,opacityTex,ouu,ovv);
+    int ch=tp?(int)(tp[66]+0.5f):0;
+    opacity*=channel4(ot,ch)*(tp?tp[67]:1.f)+(tp?tp[68]:0.f);
+  }
+  const float* cv=&cols[ht*12];
+  opacity*=(cv[3]*w0+cv[7]*bu+cv[11]*bv)*insts[hitInst].tint[3];
+  return opacity>=lrt[55];
+}
+
+__device__ float traverseCutout(
+    const Node* tlas, const Inst* insts, const Node* blas, const float* tris,
+    F3 o, F3 d, float tmax, int* ht, float* bu, float* bv, int* hitInst,
+    const float* cols, const int* mats, const float* matPbr,
+    const float* matLightRt, int numMats, const int* matTex,
+    const float* matTexParam, const unsigned char* texels,
+    const TexDesc* textures, int numTextures, const float* uvs,
+    const float* uvs1) {
+  float base=0.f;
+  for (int pass=0; pass<64 && base<tmax; ++pass){
+    F3 ro=add(o,scale(d,base));
+    float t=traverseTLAS(tlas,insts,blas,tris,ro,d,tmax-base,
+                         ht,bu,bv,hitInst,false);
+    if (*ht<0) return tmax;
+    if (cutoutAllowsHit(*ht,*bu,*bv,*hitInst,cols,mats,matPbr,matLightRt,
+                        numMats,matTex,matTexParam,texels,textures,numTextures,
+                        uvs,uvs1,insts)) return base+t;
+    base+=t+1e-4f;
+  }
+  *ht=-1; *hitInst=-1;
+  return tmax;
+}
+)CUDA"
+R"CUDA(
+
 extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* cols, const unsigned char* geo,
                                  const int* mats, const int* backMats,
-                                 const float* matPbr, const float* matBase,
+                                 const float* matPbr,
                                  const float* matLightRt, int numMats,
                                  const float* lightParams, int numLights,
                                  const int* matTex, const float* matTexParam,
@@ -358,7 +454,9 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
 
   F3 outc = mk(cam.clear[0],cam.clear[1],cam.clear[2]);
   int ht, hitInst; float bu,bv;
-  float t=traverseTLAS(tlas,insts,blas,tris,o,d,1e30f,&ht,&bu,&bv,&hitInst,false);
+  float t=traverseCutout(tlas,insts,blas,tris,o,d,1e30f,&ht,&bu,&bv,
+                         &hitInst,cols,mats,matPbr,matLightRt,numMats,matTex,
+                         matTexParam,texels,textures,numTextures,uvs,uvs1);
   int rmodePre=(int)(cam.clear[3]+0.5f);
   // Dome env background on miss (shaded mode only): sample the dome's latlong
   // envmap scaled by its effectiveColor. Packed light record: [0]=type,
@@ -410,39 +508,46 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     const float* uvh=&uvs[ht*6];
     float uu=uvh[0]*w0+uvh[2]*bu+uvh[4]*bv;
     float vv2=uvh[1]*w0+uvh[3]*bu+uvh[5]*bv;
+    float uu1=uu,vv21=vv2;
+    if (uvs1) {
+      const float* uvh1=&uvs1[ht*6];
+      uu1=uvh1[0]*w0+uvh1[2]*bu+uvh1[4]*bv;
+      vv21=uvh1[1]*w0+uvh1[3]*bu+uvh1[5]*bv;
+    }
     const bool backHit =
         dot3(cross3(sub(wp1,wp0),sub(wp2,wp0)), d) > 0.f;
     int mid=(backHit && backMats && backMats[ht]>=0) ? backMats[ht] : mats[ht];
-    int baseTex=-1, mrTex=-1, normalTex=-1, emissiveTex=-1;
+    int baseTex=-1, metallicTex=-1, roughnessTex=-1, normalTex=-1;
+    int emissiveTex=-1, opacityTex=-1;
     const float* tp = 0;
     if (matTex && mid>=0 && mid<numMats){
-      baseTex=matTex[mid*4+0]; mrTex=matTex[mid*4+1];
-      normalTex=matTex[mid*4+2]; emissiveTex=matTex[mid*4+3];
-      if (matTexParam) tp=&matTexParam[mid*56];
+      baseTex=matTex[mid*6+0]; metallicTex=matTex[mid*6+1];
+      roughnessTex=matTex[mid*6+2]; normalTex=matTex[mid*6+3];
+      emissiveTex=matTex[mid*6+4]; opacityTex=matTex[mid*6+5];
+      if (matTexParam) tp=&matTexParam[mid*72];
     }
     const float* lrt = (matLightRt && mid>=0 && mid<numMats &&
                         matLightRt[mid*56+51] > 0.5f) ? &matLightRt[mid*56] : 0;
-    if (mid>=0 && mid<numMats && matBase) {
-      F3 mb=mk(matBase[mid*3],matBase[mid*3+1],matBase[mid*3+2]);
-      if (lrt) mb=mk(lrt[0],lrt[1],lrt[2]);
-      base=mk(base.x*mb.x,base.y*mb.y,base.z*mb.z);
-    }
-    float buu=uu,bvv=vv2,muu=uu,mvv=vv2,nuu=uu,nvv=vv2,euu=uu,evv=vv2;
+    float buu=uu,bvv=vv2,muu=uu,mvv=vv2,ruu=uu,rvv=vv2;
+    float nuu=uu,nvv=vv2,euu=uu,evv=vv2,ouu=uu,ovv=vv2;
     if (tp) {
-      xformUv(tp,0,uu,vv2,&buu,&bvv);
-      xformUv(tp,6,uu,vv2,&muu,&mvv);
-      xformUv(tp,12,uu,vv2,&nuu,&nvv);
-      xformUv(tp,18,uu,vv2,&euu,&evv);
+      int uvbits=(int)(tp[69]+0.5f);
+      xformUv(tp,0,(uvbits&1)?uu1:uu,(uvbits&1)?vv21:vv2,&buu,&bvv);
+      xformUv(tp,6,(uvbits&2)?uu1:uu,(uvbits&2)?vv21:vv2,&muu,&mvv);
+      xformUv(tp,12,(uvbits&4)?uu1:uu,(uvbits&4)?vv21:vv2,&ruu,&rvv);
+      xformUv(tp,18,(uvbits&8)?uu1:uu,(uvbits&8)?vv21:vv2,&nuu,&nvv);
+      xformUv(tp,24,(uvbits&16)?uu1:uu,(uvbits&16)?vv21:vv2,&euu,&evv);
+      xformUv(tp,30,(uvbits&32)?uu1:uu,(uvbits&32)?vv21:vv2,&ouu,&ovv);
     }
     F4 bt4=sampleTexRGBA(texels,textures,numTextures,baseTex,buu,bvv);
-    if (tp) bt4=mk4(bt4.x*tp[24]+tp[28],bt4.y*tp[25]+tp[29],bt4.z*tp[26]+tp[30],bt4.w*tp[27]+tp[31]);
+    if (tp) bt4=mk4(bt4.x*tp[36]+tp[40],bt4.y*tp[37]+tp[41],bt4.z*tp[38]+tp[42],bt4.w*tp[39]+tp[43]);
     F3 bt=mk(bt4.x,bt4.y,bt4.z);
     base=mk(base.x*bt.x,base.y*bt.y,base.z*bt.z);
     float metallic=(mid>=0&&mid<numMats)?matPbr[mid*6+0]:0.f;
     float roughness=(mid>=0&&mid<numMats)?matPbr[mid*6+1]:0.5f;
     float opacity=(mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f;
-    float alphaMode=(mid>=0&&mid<numMats&&lrt)?lrt[54]:0.f;
-    float alphaCutoff=(mid>=0&&mid<numMats&&lrt)?lrt[55]:0.5f;
+    float alphaMode=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*56+54]:0.f;
+    float alphaCutoff=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*56+55]:0.5f;
     float specWeight=1.f, coatWeight=0.f, coatRoughness=0.1f;
     F3 emissionConst=(mid>=0&&mid<numMats)?mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]):mk(0.f,0.f,0.f);
     if (lrt) {
@@ -454,24 +559,53 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       coatRoughness=lrt[44];
       emissionConst=mk(lrt[32]*lrt[35], lrt[33]*lrt[35], lrt[34]*lrt[35]);
     }
-    F4 mrt=sampleTexRGBA(texels,textures,numTextures,mrTex,muu,mvv);
-    int roughCh=tp?(int)(tp[49]+0.5f):1;
-    int metalCh=tp?(int)(tp[48]+0.5f):2;
-    float roughS=tp?tp[52]:1.f, roughB=tp?tp[53]:0.f;
-    float metalS=tp?tp[50]:1.f, metalB=tp?tp[51]:0.f;
-    roughness=fminf(fmaxf(roughness*(channel4(mrt,roughCh)*roughS+roughB),0.f),1.f);
-    metallic=fminf(fmaxf(metallic*(channel4(mrt,metalCh)*metalS+metalB),0.f),1.f);
+    F4 mt=sampleTexRGBA(texels,textures,numTextures,metallicTex,muu,mvv);
+    F4 rt=sampleTexRGBA(texels,textures,numTextures,roughnessTex,ruu,rvv);
+    int metalCh=tp?(int)(tp[60]+0.5f):2;
+    int roughCh=tp?(int)(tp[63]+0.5f):1;
+    float metalS=tp?tp[61]:1.f, metalB=tp?tp[62]:0.f;
+    float roughS=tp?tp[64]:1.f, roughB=tp?tp[65]:0.f;
+    metallic=fminf(fmaxf(metallic*(channel4(mt,metalCh)*metalS+metalB),0.f),1.f);
+    roughness=fminf(fmaxf(roughness*(channel4(rt,roughCh)*roughS+roughB),0.f),1.f);
     opacity=fminf(fmaxf(opacity*bt4.w,0.f),1.f);
+    if (opacityTex>=0) {
+      F4 ot=sampleTexRGBA(texels,textures,numTextures,opacityTex,ouu,ovv);
+      int opacityCh=tp?(int)(tp[66]+0.5f):0;
+      float opacityS=tp?tp[67]:1.f, opacityB=tp?tp[68]:0.f;
+      opacity*=channel4(ot,opacityCh)*opacityS+opacityB;
+    }
     float materialOpacity=fminf(fmaxf(opacity*vertexOpacity*I->tint[3],0.f),1.f);
     if (alphaMode > 0.5f && alphaMode < 1.5f) {
       materialOpacity=(materialOpacity >= alphaCutoff) ? 1.f : 0.f;
     }
     if (I->tint[3] < 1.f && materialOpacity > 0.f) alphaMode=2.f;
     if (normalTex>=0) {
-      F4 nt=sampleTexRGBA(texels,textures,numTextures,normalTex,nuu,nvv);
-      if (tp) nt=mk4(nt.x*tp[32]+tp[36],nt.y*tp[33]+tp[37],nt.z*tp[34]+tp[38],nt.w*tp[35]+tp[39]);
+      F4 nt=sampleTexRGBAFallback(texels,textures,numTextures,normalTex,nuu,nvv,
+                                  mk4(0.5f,0.5f,1.f,1.f));
+      if (tp) nt=mk4(nt.x*tp[44]+tp[48],nt.y*tp[45]+tp[49],nt.z*tp[46]+tp[50],nt.w*tp[47]+tp[51]);
       else nt=mk4(nt.x*2.f-1.f,nt.y*2.f-1.f,nt.z*2.f-1.f,nt.w);
-      N=norm3(add(N,scale(mk(nt.x,nt.y,nt.z),0.1f)));
+      int uvbits=tp?(int)(tp[69]+0.5f):0;
+      const float* nUv=((uvbits&8)&&uvs1)?&uvs1[ht*6]:uvh;
+      float tu0=nUv[0],tv0=nUv[1],tu1=nUv[2],tv1=nUv[3],tu2=nUv[4],tv2=nUv[5];
+      if (tp) {
+        xformUv(tp,18,tu0,tv0,&tu0,&tv0);
+        xformUv(tp,18,tu1,tv1,&tu1,&tv1);
+        xformUv(tp,18,tu2,tv2,&tu2,&tv2);
+      }
+      float du1=tu1-tu0, dv1=tv1-tv0;
+      float du2=tu2-tu0, dv2=tv2-tv0;
+      float det=du1*dv2-du2*dv1;
+      F3 T;
+      if (fabsf(det)>1e-12f) {
+        float invDet=1.f/det;
+        T=norm3(scale(sub(scale(sub(wp1,wp0),dv2),
+                            scale(sub(wp2,wp0),dv1)),invDet));
+      } else {
+        F3 axis=fabsf(N.z)<0.999f?mk(0.f,0.f,1.f):mk(0.f,1.f,0.f);
+        T=norm3(cross3(axis,N));
+      }
+      F3 B=norm3(cross3(N,T));
+      N=norm3(add(add(scale(T,nt.x),scale(B,nt.y)),scale(N,nt.z)));
     }
 
     // Default shaded view: limited LightRT/OpenPBR preview. This is not the full
@@ -554,7 +688,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
     if (mid>=0&&mid<numMats) {
       em=emissionConst;
       F4 et4=sampleTexRGBA(texels,textures,numTextures,emissiveTex,euu,evv);
-      if (tp) et4=mk4(et4.x*tp[40]+tp[44],et4.y*tp[41]+tp[45],et4.z*tp[42]+tp[46],et4.w*tp[43]+tp[47]);
+      if (tp) et4=mk4(et4.x*tp[52]+tp[56],et4.y*tp[53]+tp[57],et4.z*tp[54]+tp[58],et4.w*tp[55]+tp[59]);
       F3 et=mk(et4.x,et4.y,et4.z);
       em=mk(em.x*et.x,em.y*et.y,em.z*et.z);
     }
@@ -608,7 +742,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
     } else if (rmode==2){
       outc=mk(N.x*0.5f+0.5f, N.y*0.5f+0.5f, N.z*0.5f+0.5f);
     } else if (rmode==3){
-      outc=idColor(mid);
+      outc=idColor(mats[ht]);
     } else if (rmode==4){
       F3 Ng=norm3(cross3(sub(wp1,wp0),sub(wp2,wp0)));
       if (dot3(Ng,d)>0.f) Ng=scale(Ng,-1.f);
@@ -708,7 +842,9 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
         F3 sd=cosHemi(Ng,rndf(seed),rndf(seed));
         F3 so=add(hit,scale(Ng,aoR*1e-2f));
         int sht,si; float su,sv;
-        traverseTLAS(tlas,insts,blas,tris,so,sd,aoR,&sht,&su,&sv,&si,true);
+        traverseCutout(tlas,insts,blas,tris,so,sd,aoR,&sht,&su,&sv,&si,
+                       cols,mats,matPbr,matLightRt,numMats,matTex,matTexParam,
+                       texels,textures,numTextures,uvs,uvs1);
         if (sht>=0) occ+=1.f;
       }
       float a=1.f-occ/float(NS); outc=mk(a,a,a);
@@ -723,7 +859,9 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
         F3 sd=norm3(add(Lc,add(scale(tt,rr*cosf(ang)),scale(bb,rr*sinf(ang)))));
         F3 so=add(hit,scale(N,1e-3f));
         int sht,si; float su,sv;
-        traverseTLAS(tlas,insts,blas,tris,so,sd,1e30f,&sht,&su,&sv,&si,true);
+        traverseCutout(tlas,insts,blas,tris,so,sd,1e30f,&sht,&su,&sv,&si,
+                       cols,mats,matPbr,matLightRt,numMats,matTex,matTexParam,
+                       texels,textures,numTextures,uvs,uvs1);
         if (sht<0) vis+=1.f;
       }
       float v=vis/float(NS); outc=mk(v,v,v);

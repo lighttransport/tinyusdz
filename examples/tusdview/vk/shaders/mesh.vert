@@ -18,11 +18,11 @@ layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); 0 
 // Coarse displacement height map (red channel), sampled in the vertex stage. The
 // renderer binds black (red=0) when the submesh has no displacement, so this is an
 // unconditional no-op there -- no push-constant lane is spent on an enable flag.
-layout(set = 4, binding = 0) uniform sampler2D uDisplacementTex;
+layout(set = 0, binding = 16) uniform sampler2D uDisplacementTex;
 // Frame-constant UBO (set 5): disp sliders + camera. The vertex stage derives
 // mvp = viewProj*model and the normal matrix from pc.model, so neither needs a
 // push-constant lane (keeps the push block <= 128 B, the Vulkan minimum).
-layout(set = 5, binding = 0) uniform Frame {
+layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;          // .x = displacement scale, .y = maxTessLevel
   mat4 viewProj;      // P * V
   vec4 camPos;        // .xyz camera, .w depth normalizer
@@ -54,13 +54,13 @@ struct MaterialTexParam {
   vec4 opacityParams;
   vec4 udimSlots0;
   vec4 udimSlots1;
+  vec4 roughUv0; vec4 roughUv1;
 };
-layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
+layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 // Per-vertex displayColor + displayOpacity (set 24): 4 floats per vertex.
 // gl_VertexIndex. Bound to a shared dummy for meshes without color; the fetch is
 // gated by pc.ids.w bit 32 so the dummy's contents never matter.
-layout(set = 24, binding = 0, std430) readonly buffer VtxColor { float c[]; } vtxcol;
-layout(location = 9) in vec4 aVtxColor;
+layout(set = 1, binding = 5, std430) readonly buffer VtxColor { float c[]; } vtxcol;
 
 // 128-byte per-draw push constant block (matches struct PushC in vk_renderer.cc).
 layout(push_constant) uniform PushConstants {
@@ -118,6 +118,11 @@ void main() {
   // Per-vertex displayColor (USD primvars:displayColor, vertex interp). The GL
   // backend multiplies it into the base color (attrib 9); parity requires the
   // same here. Gated on pc.ids.w bit 32 -- meshes without color see white.
-  vColor = ((pc.ids.w & 32) != 0) ? aVtxColor : vec4(1.0);
+  vColor = ((pc.ids.w & 32) != 0)
+               ? vec4(vtxcol.c[4 * gl_VertexIndex + 0],
+                      vtxcol.c[4 * gl_VertexIndex + 1],
+                      vtxcol.c[4 * gl_VertexIndex + 2],
+                      vtxcol.c[4 * gl_VertexIndex + 3])
+               : vec4(1.0);
   gl_Position = fr.viewProj * pc.model * vec4(pos, 1.0);
 }

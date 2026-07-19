@@ -14,10 +14,38 @@ else BIN="$REPO_ROOT/build/tusdview"; fi
 OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"
 mkdir -p "$OUT"
 if [ -z "${TUSDVIEW_TEST_OUT:-}" ]; then trap 'rm -rf "$OUT"' EXIT; fi
+CONFIG="$OUT/config.json"
+cat > "$CONFIG" <<'JSON'
+{"window_size":{"width":256,"height":256}}
+JSON
 XVFB=""
-if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
-  XVFB="xvfb-run -a"
+DISPLAY_OK=0
+if [ -n "${DISPLAY:-}" ]; then
+  DISPLAY_OK=1
+  if command -v xdpyinfo >/dev/null 2>&1 &&
+     ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+    DISPLAY_OK=0
+  fi
 fi
+if [ "$DISPLAY_OK" -eq 0 ] && command -v xvfb-run >/dev/null 2>&1; then
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 10s xvfb-run -a xdpyinfo >/dev/null 2>&1 && DISPLAY_OK=1
+  else
+    xvfb-run -a xdpyinfo >/dev/null 2>&1 && DISPLAY_OK=1
+  fi
+  [ "$DISPLAY_OK" -ne 0 ] && XVFB="xvfb-run -a"
+fi
+
+# A broken graphics stack must not wedge the whole ctest run. Keep the timeout
+# around each viewer process (rather than the script as a whole) so available
+# backends still get exercised after one backend fails to start or shut down.
+run_viewer() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "${TUSDVIEW_RENDER_TIMEOUT:-60s}" "$@"
+  else
+    "$@"
+  fi
+}
 
 # Tiny PPM masks avoid external image-library dependencies. Tile 1001 is fully
 # transparent; 1002 fully opaque.
@@ -241,6 +269,10 @@ PY
 ran=0 mask_ran=0 varying_ran=0 fail=0 vk_software=0
 for spec in "gl:--backend gl" "vk:--backend vk"; do
   tag="${spec%%:*}"; args="${spec#*:}"
+  if [ "$tag" = gl ] && [ "$DISPLAY_OK" -eq 0 ]; then
+    echo "SKIP: GL unavailable (no working X server or Xvfb)"
+    continue
+  fi
   backend_ok=0
   # Run the texture-free varying fixture first; its device log lets the UDIM
   # probe skip known software rasterizers that cannot fetch textured attributes
@@ -256,12 +288,12 @@ for spec in "gl:--backend gl" "vk:--backend vk"; do
       # GL needs a display. Do not pass --headless: that option is Vulkan-only
       # and intentionally forces the Vulkan renderer.
       # shellcheck disable=SC2086
-      $XVFB "$BIN" $args --frames 4 --view-dir 0,0,-1 --size 256x256 \
+      run_viewer $XVFB "$BIN" $args --config "$CONFIG" --frames 4 --view-dir 0,0,-1 \
         --screenshot "$img" "$OUT/$scene.usda" >"$OUT/$scene-$tag.log" 2>&1
     else
       # Windowless Vulkan must not inherit Xvfb's software-Vulkan selection.
       # shellcheck disable=SC2086
-      "$BIN" --headless $args --frames 4 --view-dir 0,0,-1 --size 256x256 \
+      run_viewer "$BIN" --headless $args --config "$CONFIG" --frames 4 --view-dir 0,0,-1 \
         --screenshot "$img" "$OUT/$scene.usda" >"$OUT/$scene-$tag.log" 2>&1
     fi
     if ! grep -q 'render stats' "$OUT/$scene-$tag.log" || [ ! -s "$img" ]; then
@@ -287,12 +319,12 @@ for spec in "gl:--backend gl" "vk:--backend vk"; do
     aov="$OUT/${scene}-${tag}-opacity-aov.ppm"
     if [ "$tag" = gl ]; then
       # shellcheck disable=SC2086
-      $XVFB "$BIN" $args --mode opacity --frames 4 --view-dir 0,0,-1 \
-        --size 256x256 --screenshot "$aov" "$OUT/$scene.usda" \
+      run_viewer $XVFB "$BIN" $args --config "$CONFIG" --mode opacity --frames 4 \
+        --view-dir 0,0,-1 --screenshot "$aov" "$OUT/$scene.usda" \
         >"$OUT/$scene-$tag-opacity-aov.log" 2>&1
     else
-      "$BIN" --headless $args --mode opacity --frames 4 --view-dir 0,0,-1 \
-        --size 256x256 --screenshot "$aov" "$OUT/$scene.usda" \
+      run_viewer "$BIN" --headless $args --config "$CONFIG" --mode opacity \
+        --frames 4 --view-dir 0,0,-1 --screenshot "$aov" "$OUT/$scene.usda" \
         >"$OUT/$scene-$tag-opacity-aov.log" 2>&1
     fi
     if ! grep -q 'render stats' "$OUT/$scene-$tag-opacity-aov.log" ||
@@ -314,12 +346,13 @@ for spec in "gl:--backend gl" "vk:--backend vk"; do
     aov="$OUT/instance-opacity-$tag-opacity-aov.ppm"
     if [ "$tag" = gl ]; then
       # shellcheck disable=SC2086
-      $XVFB "$BIN" $args --mode opacity --frames 4 --view-dir 0,0,-1 \
-        --size 256x256 --screenshot "$aov" "$OUT/instance-opacity.usda" \
+      run_viewer $XVFB "$BIN" $args --config "$CONFIG" --mode opacity --frames 4 \
+        --view-dir 0,0,-1 --screenshot "$aov" "$OUT/instance-opacity.usda" \
         >"$OUT/instance-opacity-$tag-opacity-aov.log" 2>&1
     else
-      "$BIN" --headless $args --mode opacity --frames 4 --view-dir 0,0,-1 \
-        --size 256x256 --screenshot "$aov" "$OUT/instance-opacity.usda" \
+      run_viewer "$BIN" --headless $args --config "$CONFIG" --mode opacity \
+        --frames 4 --view-dir 0,0,-1 --screenshot "$aov" \
+        "$OUT/instance-opacity.usda" \
         >"$OUT/instance-opacity-$tag-opacity-aov.log" 2>&1
     fi
     if ! grep -q 'render stats' "$OUT/instance-opacity-$tag-opacity-aov.log" ||
@@ -334,11 +367,15 @@ for spec in "gl:--backend gl" "vk:--backend vk"; do
   fi
 done
 
-# RT intentionally does not sample the opacity image, but it must interpolate
-# displayOpacity through the shared RGBA stream.
+# RT samples the same opacity/UDIM inputs as raster. A transparent candidate
+# must be rejected during traversal so the red mesh behind it is visible; the
+# displayOpacity fixture separately exercises varying vertex alpha.
+if [ "$vk_software" -ne 0 ]; then
+  echo "SKIP: Vulkan ray query unavailable (software Vulkan only)"
+else
 img="$OUT/display-opacity-vkrt.ppm"
-"$BIN" --headless --backend vk --rt --frames 4 --view-dir 0,0,-1 \
-  --size 256x256 --screenshot "$img" "$OUT/display-opacity.usda" \
+run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" --frames 4 \
+  --view-dir 0,0,-1 --screenshot "$img" "$OUT/display-opacity.usda" \
   >"$OUT/display-opacity-vkrt.log" 2>&1
 if grep -q 'Vulkan ray tracing (ray query) enabled' "$OUT/display-opacity-vkrt.log" && [ -s "$img" ]; then
   ran=$((ran+1)); varying_ran=$((varying_ran+1))
@@ -347,8 +384,8 @@ if grep -q 'Vulkan ray tracing (ray query) enabled' "$OUT/display-opacity-vkrt.l
     echo "FAIL: Vulkan RT clear colour was sRGB-encoded twice"; fail=1;
   }
   aov="$OUT/display-opacity-vkrt-opacity-aov.ppm"
-  "$BIN" --headless --backend vk --rt --mode opacity --frames 4 \
-    --view-dir 0,0,-1 --size 256x256 --screenshot "$aov" \
+  run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" \
+    --mode opacity --frames 4 --view-dir 0,0,-1 --screenshot "$aov" \
     "$OUT/display-opacity.usda" >"$OUT/display-opacity-vkrt-opacity-aov.log" 2>&1
   if grep -q 'Vulkan ray tracing (ray query) enabled' \
        "$OUT/display-opacity-vkrt-opacity-aov.log" && [ -s "$aov" ]; then
@@ -359,22 +396,36 @@ if grep -q 'Vulkan ray tracing (ray query) enabled' "$OUT/display-opacity-vkrt.l
     echo "FAIL: Vulkan ray-query opacity AOV did not render"
     fail=1
   fi
+  mask_img="$OUT/opacity-udim-vkrt.ppm"
+  run_viewer "$BIN" --headless --backend vk --rt --config "$CONFIG" --frames 4 \
+    --view-dir 0,0,-1 --screenshot "$mask_img" "$OUT/opacity-udim.usda" \
+    >"$OUT/opacity-udim-vkrt.log" 2>&1
+  if grep -q 'Vulkan ray tracing (ray query) enabled' \
+       "$OUT/opacity-udim-vkrt.log" && [ -s "$mask_img" ]; then
+    mask_ran=$((mask_ran+1))
+    probe "$mask_img" mask-vkrt || { echo "FAIL: mask-vkrt"; fail=1; }
+  else
+    echo "FAIL: Vulkan ray-query opacity/UDIM scene did not render"
+    fail=1
+  fi
 else
   echo "SKIP: Vulkan ray query unavailable"
+fi
 fi
 
 for rt in cuda hip; do
   img="$OUT/display-opacity-$rt.ppm"
-  "$BIN" --headless --"$rt" --frames 4 --view-dir 0,0,-1 --size 256x256 \
-    --screenshot "$img" "$OUT/display-opacity.usda" \
+  run_viewer "$BIN" --headless --"$rt" --config "$CONFIG" --frames 4 \
+    --view-dir 0,0,-1 --screenshot "$img" "$OUT/display-opacity.usda" \
     >"$OUT/display-opacity-$rt.log" 2>&1
   upper="CUDA"; [ "$rt" = hip ] && upper="HIP"
   if grep -q "$upper RT wrote" "$OUT/display-opacity-$rt.log" && [ -s "$img" ]; then
     ran=$((ran+1)); varying_ran=$((varying_ran+1))
     probe "$img" "vary-$rt" || { echo "FAIL: vary-$rt"; fail=1; }
     aov="$OUT/display-opacity-$rt-opacity-aov.ppm"
-    "$BIN" --headless --"$rt" --mode opacity --frames 4 --view-dir 0,0,-1 \
-      --size 256x256 --screenshot "$aov" "$OUT/display-opacity.usda" \
+    run_viewer "$BIN" --headless --"$rt" --config "$CONFIG" --mode opacity \
+      --frames 4 --view-dir 0,0,-1 --screenshot "$aov" \
+      "$OUT/display-opacity.usda" \
       >"$OUT/display-opacity-$rt-opacity-aov.log" 2>&1
     if grep -q "$upper RT wrote" "$OUT/display-opacity-$rt-opacity-aov.log" &&
        [ -s "$aov" ]; then
@@ -383,6 +434,18 @@ for rt in cuda hip; do
       }
     else
       echo "FAIL: $upper opacity AOV did not render"
+      fail=1
+    fi
+    mask_img="$OUT/opacity-udim-$rt.ppm"
+    run_viewer "$BIN" --headless --"$rt" --config "$CONFIG" --frames 4 \
+      --view-dir 0,0,-1 --screenshot "$mask_img" "$OUT/opacity-udim.usda" \
+      >"$OUT/opacity-udim-$rt.log" 2>&1
+    if grep -q "$upper RT wrote" "$OUT/opacity-udim-$rt.log" &&
+       [ -s "$mask_img" ]; then
+      mask_ran=$((mask_ran+1))
+      probe "$mask_img" "mask-$rt" || { echo "FAIL: mask-$rt"; fail=1; }
+    else
+      echo "FAIL: $upper opacity/UDIM scene did not render"
       fail=1
     fi
   else

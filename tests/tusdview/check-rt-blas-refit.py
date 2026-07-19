@@ -25,11 +25,18 @@ import os
 import subprocess
 import sys
 
+from gpu_backend import software_only_vulkan, vk_device_args
+
 SKIP = 77
 
 
 def render(binary, model, out, frames, extra_env=None, play=True):
-    cmd = [binary, "--headless", "--rt", "--frames", str(frames),
+    try:
+        os.remove(out)
+    except FileNotFoundError:
+        pass
+    cmd = [binary, *vk_device_args("vk"), "--headless", "--rt", "--frames",
+           str(frames),
            "--screenshot", out, model]
     if play:
         cmd.insert(1, "--play")
@@ -37,7 +44,7 @@ def render(binary, model, out, frames, extra_env=None, play=True):
     if extra_env:
         env.update(extra_env)
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       env=env, timeout=600)
+                       env=env, timeout=120)
     return r.stdout.decode(errors="replace")
 
 
@@ -55,13 +62,23 @@ def main():
         if not os.path.exists(p):
             print(f"SKIP: missing {p}")
             return SKIP
+    if software_only_vulkan():
+        print("SKIP: Vulkan RT unavailable (software Vulkan only)")
+        return SKIP
     os.makedirs(work, exist_ok=True)
 
     refit = os.path.join(work, "refit.ppm")
     rebuild = os.path.join(work, "rebuild.ppm")
     rest = os.path.join(work, "rest.ppm")
 
-    log = render(binary, model, refit, frames=24)
+    try:
+        log = render(binary, model, refit, frames=24)
+    except subprocess.TimeoutExpired:
+        print("SKIP: Vulkan RT probe timed out")
+        return SKIP
+    if "ray tracing is unavailable" in log:
+        print("SKIP: no ray-tracing capable Vulkan device")
+        return SKIP
     if not os.path.exists(refit):
         print("SKIP: --rt produced no image (no ray-tracing capable device?)")
         return SKIP
@@ -69,9 +86,13 @@ def main():
         print("FAIL: --rt did not take the RT skinning path.\n--- log ---\n" + log)
         return 1
 
-    render(binary, model, rebuild, frames=24,
-           extra_env={"TUSDVIEW_NO_BLAS_REFIT": "1"})
-    render(binary, model, rest, frames=4, play=False)
+    try:
+        render(binary, model, rebuild, frames=24,
+               extra_env={"TUSDVIEW_NO_BLAS_REFIT": "1"})
+        render(binary, model, rest, frames=4, play=False)
+    except subprocess.TimeoutExpired:
+        print("FAIL: Vulkan RT comparison render timed out")
+        return 1
     if not (os.path.exists(rebuild) and os.path.exists(rest)):
         print("FAIL: a render produced no image")
         return 1

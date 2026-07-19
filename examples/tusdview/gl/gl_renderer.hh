@@ -137,10 +137,12 @@ class GLRenderer final : public Renderer {
     float ior{1.5f};
     // Texture slot indices into textures_ (-1 = none). Resolved at draw time so
     // lazily-uploaded textures appear without re-touching materials.
-    int baseColorTex{-1}, metalRoughTex{-1}, normalTex{-1}, emissiveTex{-1};
+    int baseColorTex{-1}, metallicTex{-1}, roughnessTex{-1};
+    int normalTex{-1}, emissiveTex{-1};
     int opacityTex{-1};
     DrawTexSampleCPU baseColorSample;
-    DrawTexSampleCPU metalRoughSample;
+    DrawTexSampleCPU metallicSample;
+    DrawTexSampleCPU roughnessSample;
     DrawTexSampleCPU normalSample;
     DrawTexSampleCPU emissiveSample;
     DrawTexSampleCPU opacitySample;
@@ -193,16 +195,19 @@ class GLRenderer final : public Renderer {
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
   GLint uUseSpecularWorkflow_{-1}, uSpecularColor_{-1}, uIor_{-1};  // F0 (T12)
-  GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
+  GLint uHasBaseColorTex_{-1}, uHasMetallicTex_{-1}, uHasRoughnessTex_{-1};
+  GLint uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uHasOpacityTex_{-1};
-  GLint uBaseColorTexIsUdim_{-1}, uMetalRoughTexIsUdim_{-1};
+  GLint uBaseColorTexIsUdim_{-1}, uMetallicTexIsUdim_{-1}, uRoughnessTexIsUdim_{-1};
   GLint uNormalTexIsUdim_{-1}, uEmissiveTexIsUdim_{-1}, uOpacityTexIsUdim_{-1};
   GLint uBaseColorUv0_{-1}, uBaseColorUv1_{-1};
-  GLint uMetalRoughUv0_{-1}, uMetalRoughUv1_{-1};
+  GLint uMetallicUv0_{-1}, uMetallicUv1_{-1};
+  GLint uRoughnessUv0_{-1}, uRoughnessUv1_{-1};
   GLint uNormalUv0_{-1}, uNormalUv1_{-1};
   GLint uEmissiveUv0_{-1}, uEmissiveUv1_{-1};
   GLint uOpacityUv0_{-1}, uOpacityUv1_{-1};
-  GLint uUvSet_{-1};  // per-slot UV set (base, metal/rough, normal, emissive)
+  GLint uUvSet_{-1};  // per-slot UV set (base, metallic, normal, emissive)
+  GLint uRoughnessUvSet_{-1};
   GLint uBaseColorTexScale_{-1}, uBaseColorTexBias_{-1};
   GLint uNormalTexScale_{-1}, uNormalTexBias_{-1};
   GLint uEmissiveTexScale_{-1}, uEmissiveTexBias_{-1};
@@ -211,7 +216,7 @@ class GLRenderer final : public Renderer {
   GLint uRoughnessTexScale_{-1}, uRoughnessTexBias_{-1};
   GLint uOpacityUvSet_{-1}, uOpacityChannel_{-1};
   GLint uOpacityTexScale_{-1}, uOpacityTexBias_{-1};
-  GLint uUdimSlots_{-1}, uOpacityUdimSlot_{-1};
+  GLint uUdimSlots_{-1}, uOpacityUdimSlot_{-1}, uRoughnessUdimSlot_{-1};
   GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)
   GLint uDisplacementConst_{-1}, uDisplacementScale_{-1};
   GLint uDisplacementTexScale_{-1}, uDisplacementTexBias_{-1};

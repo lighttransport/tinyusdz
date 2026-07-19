@@ -254,6 +254,91 @@ rendered image.
   use explicit program arguments.
 - Do not commit or push unless the user explicitly requests it.
 
+## Additional local work retained across the pull
+
+Status as of 2026-07-18. The `--next` primvars / texturing / texture-VRAM
+workstream is **done and pushed**, including GPU skinning (raster, both backends,
+instanced prototypes included) and the large-scene verification (numbers in
+[large-scene.md §2.9](large-scene.md)).
+
+Done locally on 2026-07-18: Vulkan/CUDA/HIP ray tracing now consumes the same
+six semantic material slots as raster (base color, metallic, roughness, normal,
+emissive, and opacity). The shared table carries UV-set selection and transforms,
+sRGB decode, compressed-only sources, and sparse UDIMs; alpha-mask texels are
+rejected during traversal. Vulkan normal mapping constructs its TBN from the
+selected, transformed UVs. Per-face GeomSubset bindings resolve the committed
+triangle's material rather than falling back to a mesh-wide first material.
+The ray-query SPIR-V is regenerated with the final `RayQueryKHR` capability;
+the shader generator now runs `spirv-val` when available so an old glslang
+cannot silently emit provisional-capability/final-opcode output again.
+The implementation is covered by bridge/unit tests and the headless opacity and
+RT GeomSubset harnesses for both loaders and all available RT backends.
+
+Also done locally on 2026-07-18: deferred payloads inside USDZ archives retain
+their package backing across the asynchronous viewer recomposition handoff in
+both legacy and next loaders. The legacy and next USDZ readers now enforce the
+first physical entry as the root, recognize neutral `.usd` roots by payload
+magic, reject unsafe or duplicate package paths, compressed entries, and
+truncated trailing local headers, and clear reused output state after failure.
+The legacy validator uses the same exact extension/content classifier. A real
+two-entry stored ZIP test drives the viewer's MCP `load_payload` action through
+defer, load, unload, and reload.
+
+Sanitizer follow-up is also complete locally on 2026-07-18. The no-RTTI build
+now disables UBSan's RTTI-dependent `vptr` check, so the sanitized unit binary
+links while retaining the other undefined-behavior checks. The full 1,004-test
+unit binary exposed and now pins two project-owned zero-length `memcpy` cases:
+empty binary array time samples and an empty reconstructed normals array. The
+time-sample insertion path additionally rejects null non-empty input, counts
+that cannot fit its `uint32_t` bookkeeping, and byte-buffer overflow before it
+adds partial sample state. Its public pointer overload also validates the
+incoming element type, preventing a later sample from changing the element size
+and reinterpreting an existing flat buffer. Vendored codec diagnostics are
+scoped narrowly:
+fpng selects its portable unaligned-I/O path, while only the stb resize/write
+implementation TUs suppress the specific `alignment`/`shift` checks their
+upstream code intentionally triggers. ASan and all other applicable UBSan
+checks stay enabled. Verification:
+
+```bash
+cmake -S . -B build_asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_EXAMPLES=OFF \
+  -DSANITIZE_ADDRESS=ON -DSANITIZE_UNDEFINED=ON
+cmake --build build_asan --target unit-test-tinyusdz -j16
+ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  ./build_asan/unit-test-tinyusdz
+```
+
+This passes all 1,004 tests with no sanitizer diagnostics. Leak detection is
+disabled only because LeakSanitizer cannot run in the ptrace-restricted agent
+sandbox; address checking remains active. The normal `build_ninja` unit CTest
+also passes after the same changes.
+
+The full normal Ninja build and all 174 registered CTests are accounted for and
+green (passes or declared capability skips). `web-validation-parity-test`
+passes when run outside the restricted agent sandbox; inside it, Node receives
+`EPERM` when it tries to spawn the local `tusdcat`, before any parity assertion.
+The Vulkan-RT Python gates now share a `vulkaninfo` preflight that recognizes an
+all-CPU Vulkan installation (llvmpipe here) even when a hardware kernel module
+is loaded. BLAS compaction, RT skinning/refit, blendshape RT, deform RT, and
+legacy deform RT therefore capability-skip promptly instead of paying 6-15
+minute subprocess timeouts. Raster deform/blendshape gates use a test-local
+320x320 config instead of inheriting the interactive saved window size; the
+five shared deform comparisons dropped from roughly two minutes to 45 seconds
+while retaining their image assertions. The affected subprocesses and CTests
+also have explicit upper bounds, so a wedged non-CPU device cannot stall the
+suite indefinitely.
+
+The earlier raster-opacity work remains intact: separate opacity textures,
+including UDIM masks, are sampled by both raster backends after consolidating
+UDIM lookup maps into one scene-wide atlas. Varying `primvars:displayOpacity` is
+preserved through batching and multiplied in raster and RT. The GL and Vulkan
+opacity AOVs report the same composed raster opacity (material/base alpha,
+separate mask, and per-vertex or per-instance `displayOpacity`). Point-instanced
+prototypes retain their per-vertex opacity, and both raster backends classify
+those batches as translucent before drawing.
+
 ## Benchmark asset and commands
 
 Asset:

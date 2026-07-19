@@ -810,6 +810,7 @@ TEST_LIST = {
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
   { "usdz_writer_is_usdz_prefix_detection_test", usdz_writer_is_usdz_prefix_detection_test },
   { "usdz_reader_loads_unaligned_stored_zip_test", usdz_reader_loads_unaligned_stored_zip_test },
+  { "usdz_reader_first_entry_root_test", usdz_reader_first_entry_root_test },
   { "usdz_writer_root_layer_format_test", usdz_writer_root_layer_format_test },
   { "usdz_writer_with_assets_test", usdz_writer_with_assets_test },
   { "usdz_validator_alignment_test", usdz_validator_alignment_test },

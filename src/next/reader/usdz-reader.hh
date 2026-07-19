@@ -40,7 +40,12 @@ public:
   const uint8_t* EntryData(size_t index) const;
   size_t EntrySize(size_t index) const;
 
-  /// Find a .usdc or .usda entry (the first one found).
+  /// Return the USDZ root layer. Per the package specification this must be the
+  /// first archive entry and must contain USDA/USDC data (a .usd extension is
+  /// accepted and content-sniffed). Returns -1 for an invalid package root.
+  int FindRootLayer() const;
+
+  /// Legacy searches retained for callers selecting non-root entries.
   /// Returns -1 if not found.
   int FindUSDCFile() const;
   int FindUSDAFile() const;
