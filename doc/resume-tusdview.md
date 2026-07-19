@@ -104,6 +104,13 @@ differences such as backend, loader, CUDA/HIP/Vulkan RT selection, environment
 toggles, and validation-layer configuration intentionally remain separate
 process launches.
 
+The back-face material regression is the first existing multi-launch suite
+migrated onto this path: its four camera/handedness cases share one process for
+each of GL, Vulkan raster, and Vulkan RT. CUDA/HIP retain isolated launches due
+to process-final screenshot ownership. On the current machine this reduced the
+test from roughly 62 seconds to 40 seconds without weakening its color-class
+assertions.
+
 ## Prioritized tusdview backlog
 
 This section incorporates the tusdview-related items from the repository-root

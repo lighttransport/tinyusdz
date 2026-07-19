@@ -142,6 +142,9 @@ def main():
                 path = Path(case["path"]).resolve()
                 load_args = {"path": str(path)}
 
+            load_settings = case.get("load_settings", {})
+            if load_settings:
+                client.call("render_settings", load_settings)
             before = client.call("get_scene_info").get("scene_generation", 0)
             started = client.call("load_usd", load_args)
             path = Path(started["path"])
@@ -156,9 +159,9 @@ def main():
             settings = case.get("settings", {})
             if settings:
                 client.call("render_settings", settings)
-            if "viewport" in case:
+            if case.get("viewport"):
                 client.call("viewport", case["viewport"])
-            else:
+            elif "viewport" not in case:
                 client.call("viewport", {"op": "fit"})
 
             shot = output / f"{index:03d}-{name}.ppm"

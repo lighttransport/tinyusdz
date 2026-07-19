@@ -115,6 +115,8 @@ json App::mcpSceneInfo(const json&, std::string&) {
               {"scene_generation", sceneGen_},
               {"window_generation", windowGeneration_},
               {"renderer_generation", rendererGeneration_},
+              {"backend", backend_ == Backend::GL ? "gl" : "vk"},
+              {"ray_tracing", rtPath_},
               {"filepath", loaded_.filepath},
               {"mesh_count", draw_.meshes.size()},
               {"triangle_count", draw_.triangleCount},
@@ -237,6 +239,15 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
     }
     gui_.setShowGrid(args["grid"].get<bool>());
   }
+  if (args.contains("camera")) {
+    if (!args["camera"].is_string()) {
+      err = "render_settings: camera must be a string";
+      return json::object();
+    }
+    // Named USD cameras are resolved as part of the next scene load. Batch
+    // manifests set this in load_settings before calling load_usd.
+    cameraName_ = args["camera"].get<std::string>();
+  }
 
   const RenderMode current = gui_.renderMode();
   const char* currentName = "unknown";
@@ -246,7 +257,7 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
       break;
     }
   }
-  return json{{"mode", currentName}};
+  return json{{"mode", currentName}, {"camera", cameraName_}};
 }
 
 json App::mcpLoadPayloads(const json& args, std::string& err) {

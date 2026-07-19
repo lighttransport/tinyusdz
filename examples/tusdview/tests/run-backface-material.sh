@@ -134,31 +134,85 @@ for spec in "gl:--backend gl" "vk:--backend vk" "vkrt:--backend vk --rt" \
     continue
   fi
   ok=1
+  persistent=0
+  if [ "$backend" = gl ] || [ "$backend" = vk ] || [ "$backend" = vkrt ]; then
+    manifest="$OUT/$backend-batch.json"
+    python3 - "$manifest" "$OUT/backface.usda" \
+      "$OUT/backface_mirrored.usda" "$backend" <<'PY'
+import json, sys
+out, normal, mirrored, backend = sys.argv[1:]
+viewer_args = ["--backend", "gl" if backend == "gl" else "vk",
+               "--size", "1280x720"]
+if backend == "vkrt":
+    viewer_args.append("--rt")
+cases = []
+for fixture, path in (("normal", normal), ("mirrored", mirrored)):
+    for camera in ("Front", "Back"):
+        cases.append({
+            "name": f"{fixture}-{camera}", "path": path,
+            "load_settings": {"camera": camera},
+            "settings": {"mode": "shaded", "grid": False},
+            "viewport": None,
+            "expect": {
+                "mesh_count": 2,
+                "triangle_count": 4,
+                "backend": "gl" if backend == "gl" else "vk",
+                "ray_tracing": backend == "vkrt",
+            },
+        })
+json.dump({"viewer_args": viewer_args, "cases": cases}, open(out, "w"))
+PY
+    batch_log="$OUT/$backend-batch.log"
+    batch_cmd=(python3 "$REPO_ROOT/tests/tusdview/mcp_render_batch.py"
+               "$BIN" "$manifest" "$OUT/$backend-batch-images")
+    if [ "$backend" = gl ]; then
+      batch_cmd+=(--windowed --backend gl)
+      "${RUN[@]}" env XDG_CONFIG_HOME="$OUT/config" \
+        "${batch_cmd[@]}" >"$batch_log" 2>&1
+    else
+      env XDG_CONFIG_HOME="$OUT/config" \
+        "${batch_cmd[@]}" >"$batch_log" 2>&1
+    fi
+    batch_rc=$?
+    cat "$batch_log"
+    if [ "$batch_rc" -eq "$SKIP" ]; then
+      echo "SKIP: $backend backend unavailable"
+      ok=0
+    elif [ "$batch_rc" -ne 0 ]; then
+      echo "FAIL: $backend persistent MCP batch failed"
+      exit 1
+    else
+      persistent=1
+    fi
+  fi
+  case_index=0
   for fixture in normal mirrored; do
   asset="$OUT/backface.usda"
   [ "$fixture" = mirrored ] && asset="$OUT/backface_mirrored.usda"
   for camera in Front Back; do
     img="$OUT/${backend}_${fixture}_${camera}.ppm"
     log="$OUT/${backend}_${fixture}_${camera}.log"
-    # shellcheck disable=SC2086
-    "${RUN[@]}" env XDG_CONFIG_HOME="$OUT/config" \
-      "$BIN" "${headless_args[@]}" $backend_args --frames 2 \
-      --size 1280x720 \
-      --camera "$camera" --screenshot "$img" "$asset" >"$log" 2>&1
-    marker='render stats'
-    [ "$backend" = cuda ] && marker='CUDA RT wrote'
-    [ "$backend" = hip ] && marker='HIP RT wrote'
-    if ! grep -q "$marker" "$log" || [ ! -s "$img" ]; then
-      echo "SKIP: $backend backend unavailable"
-      grep -Ei 'CUDA|HIP|ray tracing|ray trace|failed|unavailable' "$log" | tail -8 || true
-      ok=0
-      break
-    fi
-    if [ "$backend" = vkrt ] &&
-       ! grep -q 'Vulkan ray tracing (ray query) enabled' "$log"; then
-      echo "SKIP: Vulkan ray query unavailable"
-      ok=0
-      break
+    if [ "$persistent" -eq 1 ]; then
+      printf -v batch_prefix '%03d' "$case_index"
+      img="$OUT/$backend-batch-images/$batch_prefix-$fixture-$camera.ppm"
+    else
+      if [ "$ok" -eq 0 ]; then break; fi
+      # CUDA/HIP own their screenshots at process shutdown and therefore remain
+      # isolated launches; raster/Vulkan-RT cases use the persistent batch above.
+      # shellcheck disable=SC2086
+      "${RUN[@]}" env XDG_CONFIG_HOME="$OUT/config" \
+        "$BIN" "${headless_args[@]}" $backend_args --frames 2 \
+        --size 1280x720 \
+        --camera "$camera" --screenshot "$img" "$asset" >"$log" 2>&1
+      marker='render stats'
+      [ "$backend" = cuda ] && marker='CUDA RT wrote'
+      [ "$backend" = hip ] && marker='HIP RT wrote'
+      if ! grep -q "$marker" "$log" || [ ! -s "$img" ]; then
+        echo "SKIP: $backend backend unavailable"
+        grep -Ei 'CUDA|HIP|ray tracing|ray trace|failed|unavailable' "$log" | tail -8 || true
+        ok=0
+        break
+      fi
     fi
     read -r red green blue yellow < <(classify "$img") || {
       echo "FAIL: malformed $backend/$camera screenshot"; exit 1; }
@@ -177,6 +231,7 @@ for spec in "gl:--backend gl" "vk:--backend vk" "vkrt:--backend vk --rt" \
       echo "FAIL: $backend back bindings did not render mesh/subset materials"
       exit 1
     fi
+    case_index=$((case_index + 1))
   done
   done
   if [ "$ok" -eq 1 ]; then tested=$((tested + 1)); fi
