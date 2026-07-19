@@ -2473,6 +2473,24 @@ if(TINYUSDZ_BUILD_TESTS)
       )
     set_tests_properties(tusdview-vk-render PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 300)
+
+    add_test(
+      NAME tusdview-raster-multilight
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-raster-multilight.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+    set_tests_properties(tusdview-raster-multilight PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-unsupported-realtime-lobes
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-unsupported-lobes.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+    set_tests_properties(tusdview-unsupported-realtime-lobes PROPERTIES
+                         TIMEOUT 90 LABELS "tusdview")
   endif()
 
   #
@@ -2795,6 +2813,28 @@ if(TINYUSDZ_BUILD_TESTS)
               "$<TARGET_FILE:tusdview>"
       )
 
+    add_test(
+      NAME tusdview-next-nonmesh-extraction
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-next-nonmesh-extraction.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+    set_tests_properties(tusdview-next-nonmesh-extraction
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 75
+                                    LABELS "tusdview")
+
+    if(UNIX AND NOT APPLE)
+      add_test(
+        NAME tusdview-gl-nonmesh-render
+        COMMAND bash
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-gl-nonmesh-render.sh"
+                "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+      set_tests_properties(tusdview-gl-nonmesh-render
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 75
+                                      LABELS "tusdview")
+    endif()
+
     if(TUSDR_PYTHON)
       # Start Vulkan once, then replace the USD scene and capture three cases
       # through MCP. Process-wide backend/loader variants remain separate tests.
@@ -2808,6 +2848,29 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-mcp-render-batch
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+      add_test(
+        NAME tusdview-mcp-material-batch
+        COMMAND ${TUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_render_batch.py"
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-material-batch.json"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-material-batch"
+        )
+      set_tests_properties(tusdview-mcp-material-batch
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+      # The grid/no-grid image assertion also pins the RT compute-to-overlay
+      # composition path without restarting Vulkan or rebuilding the TLAS.
+      add_test(
+        NAME tusdview-mcp-render-batch-vk-rt
+        COMMAND ${TUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_render_batch.py"
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-vk-rt-overlay.json"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-render-batch-vk-rt"
+                --rt
+        )
+      set_tests_properties(tusdview-mcp-render-batch-vk-rt
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
       find_program(TUSDVIEW_XVFB_RUN NAMES xvfb-run)
       if(TUSDVIEW_XVFB_RUN)
         # Same manifest through one real, persistent GLFW/OpenGL window. The
@@ -2823,6 +2886,18 @@ if(TINYUSDZ_BUILD_TESTS)
                   --windowed --backend gl
           )
         set_tests_properties(tusdview-mcp-render-batch-gl-window
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+        add_test(
+          NAME tusdview-mcp-material-batch-gl-window
+          COMMAND "${TUSDVIEW_XVFB_RUN}" -a
+                  ${TUSDR_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_render_batch.py"
+                  "$<TARGET_FILE:tusdview>"
+                  "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-material-batch.json"
+                  "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-material-batch-gl"
+                  --windowed --backend gl
+          )
+        set_tests_properties(tusdview-mcp-material-batch-gl-window
                              PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
       endif()
     endif()

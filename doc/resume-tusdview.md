@@ -111,6 +111,37 @@ to process-final screenshot ownership. On the current machine this reduced the
 test from roughly 62 seconds to 40 seconds without weakening its color-class
 assertions.
 
+Persistent-batch follow-up (2026-07-19): the general MCP runner now supports
+manifest-level repetition, multiple settings/camera/action captures per load,
+image-change assertions, expected structured diagnostics, live post-capture
+PID/lifecycle checks, and a Linux RSS-growth ceiling. The baseline batch performs
+nine replacements while toggling grid overlays, AOVs, and front/back cameras.
+A second material batch performs six replacements spanning degraded shader
+recovery, GeomSubset bindings, blended opacity, and the opacity/material AOVs.
+Both batches pass through one Vulkan/offscreen renderer and one real persistent
+GLFW/OpenGL window under Xvfb without changing their lifecycle generations; RSS
+settles after initial renderer allocation. This also pins the already-present
+Vulkan RT helper overlay path, correcting the older README claim that helper
+lines were unsupported. The subsequent rendering-fidelity work replaced the
+level-zero RT texture table: ordinary, compressed, and sparse-UDIM mip chains
+now use trilinear footprint LOD in Vulkan ray query and projected-triangle LOD
+in the shared CUDA/HIP tracer.
+
+Rendering-fidelity follow-up (2026-07-19): raster and RT material evaluation now
+share Cook-Torrance GGX, coat, and indirect occlusion semantics; authored camera
+filmback, aperture offsets, clipping, orthographic projection, conform policy,
+and exposure reach every backend. The default-next loader retains full shared
+light records and native Points/BasisCurves/HermiteCurves/NurbsCurves carriers.
+OpenGL draws camera-facing point discs and curve ribbons, while Vulkan ray query
+and CUDA/HIP trace width-aware solid proxies. The canonical remaining work is in
+`doc/tusdview-tasks.md`: Vulkan raster non-mesh drawing, click-picking, linked
+raster multi-light evaluation, and raster shadow maps remain open.
+
+The external usd-assets corpus was still unavailable at
+`/mnt/disk1/work/usd-assets`, so no new color goldens were generated. The
+checked-in manifest/expectation implementation remains ready for the next host
+where that public corpus is mounted.
+
 ## Prioritized tusdview backlog
 
 This section incorporates the tusdview-related items from the repository-root

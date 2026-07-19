@@ -27,6 +27,8 @@ expect_failure "three finite comma-separated values" --view-dir 1,2
 expect_failure "three finite comma-separated values" --view-dir nan,0,-1
 expect_failure "--view-dir cannot be combined with --camera" \
   --view-dir 0,0,-1 --camera Cam
+expect_failure "--camera-conform must be fit, crop, horizontal, vertical, or none" \
+  --camera-conform stretch
 
 help="$("$TUSDVIEW" --help 2>&1)" || {
   echo "FAIL: --help returned failure"
@@ -34,6 +36,10 @@ help="$("$TUSDVIEW" --help 2>&1)" || {
 }
 grep -Fq -- "--view-dir X,Y,Z" <<<"$help" || {
   echo "FAIL: --view-dir is missing from help"
+  exit 1
+}
+grep -Fq -- "--camera-conform MODE" <<<"$help" || {
+  echo "FAIL: --camera-conform is missing from help"
   exit 1
 }
 grep -Fq -- "--no-grid" <<<"$help" || {

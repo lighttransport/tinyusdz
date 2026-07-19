@@ -56,7 +56,8 @@ class HipRayTracer {
   // Trace one frame. See CudaRayTracer::trace for the argument contract.
   bool trace(const float invViewProj[16], const float viewProj[16],
              const float camPos[3],
-             const float lightDir[3], const float clearColor[3], int renderMode,
+             const float lightDir[3], const float clearColor[3], float exposure,
+             int renderMode,
              float depthScale, const float sceneMin[3], const float sceneExtent[3],
              int w, int h, std::vector<uint8_t>* rgba, std::string* err,
              int spp = 1);

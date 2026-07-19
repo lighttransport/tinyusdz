@@ -8,6 +8,8 @@ layout(location = 4) in float vDomWeight;
 layout(location = 5) in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
 layout(location = 6) in float vMorphInfl;     // blendshape influence (world units)
 layout(location = 7) in vec4 vColor;          // displayColor.rgb + displayOpacity
+struct RasterLight { vec4 positionType; vec4 directionAngle;
+                     vec4 colorDiffuse; vec4 specularShape; };
 
 // Base-color texture (white 1x1 when the material is untextured).
 layout(set = 0, binding = 0) uniform sampler2D uBaseColorTex;
@@ -41,10 +43,12 @@ layout(set = 2, binding = 0) uniform Frame {
   vec4 sceneExtent;   // .xyz
   vec4 lightDir;      // .xyz preview key light direction toward the light
   vec4 lightColor;    // .rgb preview key light color/intensity
+  RasterLight rasterLights[16];
+  uvec4 rasterLightInfo;
   ivec4 mode;         // .x = renderMode
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
-  vec4 iblParams;     // .x = prefiltered mip count
+  vec4 iblParams;     // .x = prefiltered mip count, .y = exposure stops
 } fr;
 
 struct MaterialTexParam {
@@ -71,6 +75,8 @@ struct MaterialTexParam {
   vec4 udimSlots0;    // base, metal/rough, normal, emissive atlas rows
   vec4 udimSlots1;    // x = opacity atlas row
   vec4 roughUv0; vec4 roughUv1; // roughUv0.w = UV-set selector
+  vec4 coatParams;    // weight, roughness, ior, occlusion
+  vec4 coatColor;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -134,6 +140,26 @@ vec3 computeF0(vec3 base, float metallic) {
   float ior = max(1.0, abs(sp.w));
   float d = (ior - 1.0) / (ior + 1.0);
   return mix(vec3(d * d), base, clamp(metallic, 0.0, 1.0));
+}
+
+const float kPi = 3.14159265358979323846;
+
+float distributionGGX(float NoH, float roughness) {
+  float a = max(roughness * roughness, 0.002);
+  float a2 = a * a;
+  float d = NoH * NoH * (a2 - 1.0) + 1.0;
+  return a2 / max(kPi * d * d, 1e-6);
+}
+
+float geometrySchlickGGX(float NoX, float roughness) {
+  float r = roughness + 1.0;
+  float k = (r * r) * 0.125;
+  return NoX / max(NoX * (1.0 - k) + k, 1e-6);
+}
+
+vec3 fresnelSchlick(float VoH, vec3 f0) {
+  float f = pow(1.0 - clamp(VoH, 0.0, 1.0), 5.0);
+  return f0 + (vec3(1.0) - f0) * f;
 }
 
 MaterialTexParam matTexParam() {
@@ -394,46 +420,107 @@ void main() {
   vec3 emissive = pc.emissive.xyz * sampleEmissive(vUV).rgb;
   vec3 V = normalize(fr.camPos.xyz - vWorldPos);
 
-  // Soft camera-headlight shading, unified with the GL backend
-  // (light3d/material.cpp): face the shading normal toward the camera so
-  // back/grazing faces never read as pure black, then combine a view-aligned
-  // headlight (N.V) with a gentle half-Lambert key and an ambient floor. This
-  // replaces the old hard-Lambert-on-the-key-light term, which collapsed the
-  // shadow side to the ambient floor and diverged visibly from GL.
+  // Real-time Cook-Torrance preview, matching light3d/material.cpp.
   vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
-  float facing = max(dot(Nf, V), 0.0);
-  vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
-               ? normalize(fr.lightDir.xyz)
-               : normalize(vec3(0.3, 0.5, 0.8));
-  vec3 lightColor = (dot(fr.lightColor.rgb, fr.lightColor.rgb) > 1e-8)
-                        ? fr.lightColor.rgb
-                        : vec3(1.0);
-  float key = dot(Nf, L) * 0.5 + 0.5;         // half-Lambert, never 0
-  float shade = 0.6 * facing + 0.4 * key;     // [0,1]
+  float NoV = max(dot(Nf, V), 1e-4);
+  float rgh = clamp(roughness, 0.02, 1.0);
+  float met = clamp(metallic, 0.0, 1.0);
+  vec3 F0 = computeF0(base, met);
+  MaterialTexParam pbr = matTexParam();
+  float coatWeight = clamp(pbr.coatParams.x, 0.0, 1.0);
+  float coatRoughness = clamp(pbr.coatParams.y, 0.02, 1.0);
+  float coatIor = max(pbr.coatParams.z, 1.0);
+  float coatD = (coatIor - 1.0) / (coatIor + 1.0);
+  vec3 direct = vec3(0.0);
+  uint lightMask = uint(pc.ids.w) >> 16u;
+  for (uint li = 0u; li < min(fr.rasterLightInfo.x, 16u); ++li) {
+    if ((lightMask & (1u << li)) == 0u) continue;
+    vec4 pt = fr.rasterLights[li].positionType;
+    vec4 da = fr.rasterLights[li].directionAngle;
+    vec4 lc = fr.rasterLights[li].colorDiffuse;
+    vec4 ss = fr.rasterLights[li].specularShape;
+    int lightType = int(pt.w + 0.5);
+    vec3 L;
+    float attenuation = 1.0;
+    if (lightType == 5) {
+      L = normalize(da.xyz);
+    } else {
+      vec3 toLight = pt.xyz - vWorldPos;
+      float dist2 = max(dot(toLight, toLight), 1e-6);
+      L = toLight * inversesqrt(dist2);
+      attenuation = 1.0 / dist2;
+    }
+    float shape = 1.0;
+    if (ss.w > 0.5 && lightType != 5) {
+      float coneCos = dot(normalize(da.xyz), -L);
+      float outer = cos(radians(clamp(da.w, 0.0, 180.0)));
+      float inner = cos(radians(clamp(da.w * (1.0 - clamp(ss.y, 0.0, 1.0)),
+                                      0.0, 180.0)));
+      shape = smoothstep(outer, max(inner, outer + 1e-5), coneCos) *
+              pow(max(coneCos, 0.0), max(ss.z, 0.0));
+    }
+    float NoL = max(dot(Nf, L), 0.0);
+    if (NoL <= 0.0 || shape <= 0.0) continue;
+    vec3 H = normalize(L + V);
+    float NoH = max(dot(Nf, H), 0.0), VoH = max(dot(V, H), 0.0);
+    vec3 F = fresnelSchlick(VoH, F0);
+    vec3 specular = distributionGGX(NoH, rgh) *
+                    geometrySchlickGGX(NoV, rgh) *
+                    geometrySchlickGGX(NoL, rgh) * F /
+                    max(4.0 * NoV * NoL, 1e-5);
+    vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * base / kPi;
+    vec3 coatF = fresnelSchlick(VoH, vec3(coatD * coatD));
+    vec3 coatSpecular = distributionGGX(NoH, coatRoughness) *
+                        geometrySchlickGGX(NoV, coatRoughness) *
+                        geometrySchlickGGX(NoL, coatRoughness) * coatF /
+                        max(4.0 * NoV * NoL, 1e-5);
+    vec3 brdf = diffuse * lc.w +
+                (specular * (vec3(1.0) - coatF * coatWeight) +
+                 coatSpecular * pbr.coatColor.rgb * coatWeight) * ss.x;
+    direct += brdf * lc.rgb * (attenuation * shape * NoL);
+  }
+  if (fr.rasterLightInfo.x == 0u) {
+    vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
+                 ? normalize(fr.lightDir.xyz)
+                 : normalize(vec3(0.3, 0.5, 0.8));
+    vec3 lightColor = (dot(fr.lightColor.rgb, fr.lightColor.rgb) > 1e-8)
+                          ? fr.lightColor.rgb : vec3(1.0);
+    float NoL = max(dot(Nf, L), 0.0);
+    vec3 H = normalize(L + V);
+    float NoH = max(dot(Nf, H), 0.0), VoH = max(dot(V, H), 0.0);
+    vec3 F = fresnelSchlick(VoH, F0);
+    vec3 specular = distributionGGX(NoH, rgh) *
+                    geometrySchlickGGX(NoV, rgh) *
+                    geometrySchlickGGX(NoL, rgh) * F /
+                    max(4.0 * NoV * NoL, 1e-5);
+    vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * base / kPi;
+    direct = (diffuse + specular) * lightColor * NoL;
+  }
   // Ambient: DomeLight split-sum IBL when baked, else the constant floor
   // (matches the GL raster path in light3d/material.cpp).
   vec3 ambient;
   if (fr.iblColor.w > 0.5) {
-    float rgh = clamp(roughness, 0.0, 1.0);
     vec3 Ne = normalize(mat3(fr.envRot) * Nf);
     vec3 Re = normalize(mat3(fr.envRot) * reflect(-V, Nf));
     vec3 irr = texture(uIrradianceMap, Ne).rgb;
     vec3 pref = textureLod(uPrefilteredMap, Re, rgh * (fr.iblParams.x - 1.0)).rgb;
     vec2 dfg = texture(uBrdfLut, vec2(max(dot(Nf, V), 0.0), rgh)).rg;
-    vec3 F0 = computeF0(base, metallic);
-    ambient = (base * (1.0 - clamp(metallic, 0.0, 1.0)) * irr +
-               pref * (F0 * dfg.x + dfg.y)) * fr.iblColor.rgb;
+    vec3 baseIbl = base * (1.0 - met) * irr +
+                   pref * (F0 * dfg.x + dfg.y);
+    vec3 coatPref = textureLod(uPrefilteredMap, Re,
+        coatRoughness * (fr.iblParams.x - 1.0)).rgb;
+    vec2 coatDfg = texture(uBrdfLut,
+                           vec2(max(dot(Nf, V), 0.0), coatRoughness)).rg;
+    vec3 coatF0 = vec3(coatD * coatD);
+    vec3 coatIbl = coatPref * (coatF0 * coatDfg.x + coatDfg.y) *
+                   pbr.coatColor.rgb * coatWeight;
+    ambient = (baseIbl * (1.0 - coatWeight * coatF0) + coatIbl) *
+              fr.iblColor.rgb;
   } else {
-    ambient = base * 0.25;
+    ambient = base * 0.12;
   }
-  vec3 diffuse = base * lightColor * (1.0 - clamp(metallic, 0.0, 1.0)) *
-                 (0.75 * shade);
-  vec3 H = normalize(L + V);
-  float NdotH = max(dot(Nf, H), 0.0);
-  float specPower = mix(16.0, 256.0, 1.0 - clamp(roughness, 0.0, 1.0));
-  vec3 specColor = computeF0(base, metallic);
-  vec3 specular = specColor * lightColor * pow(NdotH, specPower) * facing;
-  vec3 c = linearToSrgb(ambient + diffuse + specular + emissive);
+  ambient *= clamp(pbr.coatParams.w, 0.0, 1.0);
+  vec3 c = linearToSrgb((ambient + direct + emissive) * exp2(fr.iblParams.y));
   if (pc.matAux.z > 1.5 && opacity < 1.0) {
     c *= opacity;  // pipeline uses premultiplied alpha blending
   }

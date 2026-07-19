@@ -107,6 +107,7 @@ struct RenderFrameParams {
   const float* view{nullptr};  // column-major 4x4 (light3d::Mat4 layout)
   const float* proj{nullptr};  // column-major 4x4 (GL: Z[-1,1]; VK: Z[0,1])
   float cameraPos[3]{0, 0, 0};
+  float exposure{0.0f};  // photographic exposure in stops (linear multiplier 2^x)
   RenderMode mode{RenderMode::Shaded};
   // Wireframe overlay state, cycled with the 'v' key (GL backend):
   //   0 = off (shaded fill only)
@@ -212,9 +213,12 @@ class Renderer {
   // progressive loader. Backends that do not stream may leave this as a no-op.
   virtual void syncSceneResources(
       const std::vector<DrawMaterialCPU>& /*materials*/, int /*textureCount*/) {}
-  virtual void setLights(const std::vector<DrawLightCPU>& /*lights*/) {}
+  virtual void setLights(const std::vector<DrawLightCPU>& /*lights*/,
+                         size_t /*meshCount*/) {}
   // Append one mesh (uploaded immediately). Rendered from the next frame on.
   virtual void appendMesh(const DrawMeshCPU& mesh) = 0;
+  virtual void appendPoints(const DrawPointsCPU& /*points*/) {}
+  virtual void appendCurves(const DrawCurvesCPU& /*curves*/) {}
   // Progressive surface-first upload. The default preserves existing behavior;
   // GL defers wireframe/source-face buffers until uploadMeshAux.
   virtual void appendMeshSurface(const DrawMeshCPU& mesh) { appendMesh(mesh); }
@@ -286,7 +290,7 @@ class Renderer {
   // synchronous path so screenshots are deterministic).
   bool uploadScene(const DrawScene& scene, std::string* /*err*/) {
     beginScene(scene.materials, static_cast<int>(scene.textures.size()));
-    setLights(scene.lights);
+    setLights(scene.lights, scene.meshes.size());
     for (size_t i = 0; i < scene.textures.size(); ++i) {
       uploadTexture(static_cast<int>(i), scene.textures[i]);
     }
@@ -311,6 +315,8 @@ class Renderer {
     } else {
       for (const auto& m : scene.meshes) appendMesh(m);
     }
+    for (const auto& p : scene.points) appendPoints(p);
+    for (const auto& c : scene.curves) appendCurves(c);
     for (const auto& v : scene.volumes) appendVolume(v);
     return true;
   }

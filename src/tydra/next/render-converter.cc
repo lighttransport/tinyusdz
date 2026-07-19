@@ -1551,8 +1551,12 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
       for (const ShaderParam* p :
            {&o.base_weight, &o.base_color, &o.base_roughness,
             &o.base_metalness, &o.specular_weight, &o.specular_color,
-            &o.specular_roughness, &o.specular_ior, &o.transmission_weight,
+            &o.specular_roughness, &o.specular_ior, &o.specular_anisotropy,
+            &o.specular_roughness_anisotropy, &o.transmission_weight,
+            &o.transmission_dispersion, &o.transmission_dispersion_scale,
             &o.coat_weight, &o.coat_color, &o.coat_roughness,
+            &o.coat_anisotropy, &o.coat_roughness_anisotropy,
+            &o.thin_film_weight, &o.thin_film_thickness, &o.thin_film_ior,
             &o.emission_luminance, &o.emission_color, &o.normal,
             &o.opacity, &o.displacement}) {
         add(*p);
@@ -4574,6 +4578,41 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
     }
   }
 
+  ValueArrayRead<float> opacities;
+  if (ReadFloatArray(prim, "primvars:displayOpacity", config_.time_code,
+                     &opacities) &&
+      !opacities.empty()) {
+    std::string interp_tok;
+    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::tinyusdz::next::PropMeta* pm =
+              spec->property_meta("primvars:displayOpacity")) {
+        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+          interp_tok = pm->interpolation;
+        }
+      }
+    }
+    const size_t elems = opacities.view.size;
+    Interpolation interp;
+    if (interp_tok.empty()) {
+      interp = (elems == out->point_count() && elems != 1)
+                   ? Interpolation::Vertex
+                   : Interpolation::Constant;
+    } else {
+      interp = ParsePrimvarInterp(interp_tok);
+    }
+    const size_t expected = (interp == Interpolation::Constant)
+                                ? 1
+                                : out->point_count();
+    if (elems == expected) {
+      out->opacities.append(opacities.view.data, elems);
+      out->opacities_interp = interp;
+    } else {
+      warnings_.push_back(
+          "Points '" + out->prim_path +
+          "': ignoring displayOpacity with mismatched element count");
+    }
+  }
+
   ComputePointBounds(out->points, &out->bbox_min, &out->bbox_max,
                      &out->has_bbox);
   return true;
@@ -4978,6 +5017,9 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     if (m == 1) {
       out->widths.append(widths.view.data, m);
       out->widths_interp = Interpolation::Constant;
+    } else if (m == ncurves) {
+      out->widths.append(widths.view.data, m);
+      out->widths_interp = Interpolation::Uniform;
     } else if (m == total_cp) {
       out->widths.append(widths.view.data, m);
       out->widths_interp = Interpolation::Vertex;
@@ -5036,12 +5078,55 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     }
   }
 
+  // displayOpacity follows the same constant/uniform/vertex/varying rules as
+  // displayColor and is resampled onto the tessellated centerline below.
+  ValueArrayRead<float> opacities;
+  if (ReadFloatArray(prim, "primvars:displayOpacity", config_.time_code,
+                     &opacities) && !opacities.empty()) {
+    std::string interp_tok = "constant";
+    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::tinyusdz::next::PropMeta* pm =
+              spec->property_meta("primvars:displayOpacity")) {
+        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+          interp_tok = pm->interpolation;
+        }
+      }
+    }
+    Interpolation interp = ParsePrimvarInterp(interp_tok);
+    const size_t elems = opacities.view.size;
+    auto expected = [&](Interpolation it) -> size_t {
+      switch (it) {
+        case Interpolation::Constant: return 1;
+        case Interpolation::Uniform: return ncurves;
+        case Interpolation::Varying: return varying_total;
+        case Interpolation::Vertex:
+        default: return total_cp;
+      }
+    };
+    if (elems != expected(interp)) {
+      if (elems == 1) interp = Interpolation::Constant;
+      else if (elems == total_cp) interp = Interpolation::Vertex;
+      else if (elems == ncurves) interp = Interpolation::Uniform;
+      else if (elems == varying_total) interp = Interpolation::Varying;
+    }
+    if (elems == expected(interp)) {
+      out->opacities.append(opacities.view.data, elems);
+      out->opacities_interp = interp;
+    } else {
+      warnings_.push_back(
+          "Curves '" + out->prim_path +
+          "': ignoring displayOpacity with mismatched element count");
+    }
+  }
+
   //
   // Tessellate.
   //
   const bool emit_widths = out->has_widths() &&
                            out->widths_interp != Interpolation::Constant;
   const bool emit_colors = out->has_colors();
+  const bool emit_opacities = !out->opacities.empty() &&
+      out->opacities_interp != Interpolation::Constant;
   size_t cp_offset = 0;
   size_t var_offset = 0;
   std::vector<float> emitted;
@@ -5167,12 +5252,20 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     if (emit_widths) {
       const float* wvals = nullptr;
       size_t wcount = 0;
-      if (out->widths_interp == Interpolation::Vertex) {
-        wvals = widths.view.data + cp_offset;
-        wcount = n;
-      } else {  // Varying
-        wvals = widths.view.data + var_offset;
-        wcount = plan.varying_count;
+      switch (out->widths_interp) {
+        case Interpolation::Uniform:
+          wvals = widths.view.data + ci;
+          wcount = 1;
+          break;
+        case Interpolation::Vertex:
+          wvals = widths.view.data + cp_offset;
+          wcount = n;
+          break;
+        case Interpolation::Varying:
+          wvals = widths.view.data + var_offset;
+          wcount = plan.varying_count;
+          break;
+        default: break;
       }
       for (size_t k = 0; k < emit_count; ++k) {
         const float u01 =
@@ -5217,6 +5310,36 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
             out->tessellated_colors.push_back(SampleChannelLinear(
                 cvals, ccount, u01, plan.periodic, 3, component));
           }
+        }
+      }
+    }
+
+    if (emit_opacities) {
+      const float* ovals = nullptr;
+      size_t ocount = 0;
+      switch (out->opacities_interp) {
+        case Interpolation::Uniform:
+          ovals = opacities.view.data + ci;
+          ocount = 1;
+          break;
+        case Interpolation::Vertex:
+          ovals = opacities.view.data + cp_offset;
+          ocount = n;
+          break;
+        case Interpolation::Varying:
+          ovals = opacities.view.data + var_offset;
+          ocount = plan.varying_count;
+          break;
+        default: break;
+      }
+      if (ovals && ocount > 0) {
+        for (size_t k = 0; k < emit_count; ++k) {
+          const float u01 = emit_count > 1
+                                ? static_cast<float>(k) /
+                                      static_cast<float>(emit_count - 1)
+                                : 0.0f;
+          out->tessellated_opacities.push_back(
+              SampleChannelLinear(ovals, ocount, u01, plan.periodic));
         }
       }
     }
@@ -6049,6 +6172,8 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
                      scene);
   ExtractShaderParam(stage, shader_prim, "specular_anisotropy",
                      &out->specular_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_roughness_anisotropy",
+                     &out->specular_roughness_anisotropy, scene);
   ExtractShaderParam(stage, shader_prim, "specular_rotation",
                      &out->specular_rotation, scene);
 
@@ -6059,6 +6184,10 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
                      &out->transmission_color, scene);
   ExtractShaderParam(stage, shader_prim, "transmission_depth",
                      &out->transmission_depth, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion",
+                     &out->transmission_dispersion, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion_scale",
+                     &out->transmission_dispersion_scale, scene);
 
   // Subsurface
   ExtractShaderParam(stage, shader_prim, "subsurface",
@@ -6121,6 +6250,8 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "specular_ior", &out->specular_ior, scene);
   ExtractShaderParam(stage, shader_prim, "specular_anisotropy",
                      &out->specular_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_roughness_anisotropy",
+                     &out->specular_roughness_anisotropy, scene);
   ExtractShaderParam(stage, shader_prim, "specular_rotation",
                      &out->specular_rotation, scene);
 
@@ -6130,6 +6261,10 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
                      &out->transmission_color, scene);
   ExtractShaderParam(stage, shader_prim, "transmission_depth",
                      &out->transmission_depth, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion",
+                     &out->transmission_dispersion, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion_scale",
+                     &out->transmission_dispersion_scale, scene);
 
   ExtractShaderParam(stage, shader_prim, "subsurface_weight",
                      &out->subsurface_weight, scene);
@@ -6142,10 +6277,20 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "coat_color", &out->coat_color, scene);
   ExtractShaderParam(stage, shader_prim, "coat_roughness", &out->coat_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "coat_ior", &out->coat_ior, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_anisotropy",
+                     &out->coat_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_roughness_anisotropy",
+                     &out->coat_roughness_anisotropy, scene);
 
   ExtractShaderParam(stage, shader_prim, "sheen_weight", &out->sheen_weight, scene);
   ExtractShaderParam(stage, shader_prim, "sheen_color", &out->sheen_color, scene);
   ExtractShaderParam(stage, shader_prim, "sheen_roughness", &out->sheen_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "thin_film_weight",
+                     &out->thin_film_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "thin_film_thickness",
+                     &out->thin_film_thickness, scene);
+  ExtractShaderParam(stage, shader_prim, "thin_film_ior",
+                     &out->thin_film_ior, scene);
 
   ExtractShaderParam(stage, shader_prim, "emission_luminance",
                      &out->emission_luminance, scene);
@@ -6448,6 +6593,7 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   // Type-specific properties
   switch (out->type) {
     case LightType::Sphere: {
+      out->params.sphere.radius = 0.5f;
       GetFloat(prim, "inputs:radius", &out->params.sphere.radius);
       // Cone shaping on a sphere light makes it a spot light.
       float cone_angle = 0.0f;
@@ -6458,17 +6604,23 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
       break;
     }
     case LightType::Rect:
+      out->params.rect.width = 1.0f;
+      out->params.rect.height = 1.0f;
       GetFloat(prim, "inputs:width", &out->params.rect.width);
       GetFloat(prim, "inputs:height", &out->params.rect.height);
       break;
     case LightType::Disk:
+      out->params.disk.radius = 0.5f;
       GetFloat(prim, "inputs:radius", &out->params.disk.radius);
       break;
     case LightType::Cylinder:
+      out->params.cylinder.radius = 0.5f;
+      out->params.cylinder.length = 1.0f;
       GetFloat(prim, "inputs:radius", &out->params.cylinder.radius);
       GetFloat(prim, "inputs:length", &out->params.cylinder.length);
       break;
     case LightType::Directional:
+      out->params.distant.angle = 0.53f;
       GetFloat(prim, "inputs:angle", &out->params.distant.angle);
       break;
     case LightType::Dome: {

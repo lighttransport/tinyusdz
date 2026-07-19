@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gpu_scene.hh"
+#include "raster_lighting.hh"
 #include "renderer.hh"
 
 namespace tusdview {
@@ -23,10 +24,13 @@ class GLRenderer final : public Renderer {
   void syncSceneResources(const std::vector<DrawMaterialCPU>& materials,
                           int textureCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
+  void appendPoints(const DrawPointsCPU& points) override;
+  void appendCurves(const DrawCurvesCPU& curves) override;
   void appendMeshSurface(const DrawMeshCPU& mesh) override;
   void uploadMeshAux(size_t meshIndex, const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
-  void setLights(const std::vector<DrawLightCPU>& lights) override;
+  void setLights(const std::vector<DrawLightCPU>& lights,
+                 size_t meshCount) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
@@ -135,6 +139,11 @@ class GLRenderer final : public Renderer {
     bool useSpecularWorkflow{false};
     float specularColor[3]{0.0f, 0.0f, 0.0f};
     float ior{1.5f};
+    float occlusion{1.0f};
+    float coatWeight{0.0f};
+    float coatColor[3]{1.0f, 1.0f, 1.0f};
+    float coatRoughness{0.1f};
+    float coatIor{1.5f};
     // Texture slot indices into textures_ (-1 = none). Resolved at draw time so
     // lazily-uploaded textures appear without re-touching materials.
     int baseColorTex{-1}, metallicTex{-1}, roughnessTex{-1};
@@ -195,6 +204,9 @@ class GLRenderer final : public Renderer {
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
   GLint uUseSpecularWorkflow_{-1}, uSpecularColor_{-1}, uIor_{-1};  // F0 (T12)
+  GLint uOcclusion_{-1}, uCoatWeight_{-1}, uCoatColor_{-1};
+  GLint uCoatRoughness_{-1}, uCoatIor_{-1};
+  GLint uExposure_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetallicTex_{-1}, uHasRoughnessTex_{-1};
   GLint uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uHasOpacityTex_{-1};
@@ -236,6 +248,7 @@ class GLRenderer final : public Renderer {
   GLint tMVP_{-1}, tModel_{-1}, tNormalMat_{-1}, tCameraPos_{-1};
   GLint tLightDir_{-1}, tLightColor_{-1};
   GLint tHasIbl_{-1}, tIblColor_{-1}, tEnvRotation_{-1};  // dome IBL (diffuse)
+  GLint tExposure_{-1};
   GLint tBaseColor_{-1}, tHasBaseColorTex_{-1};
   GLint tHasDisplacementTex_{-1}, tDisplacementConst_{-1}, tDisplacementScale_{-1};
   GLint tDisplacementTexScale_{-1}, tDisplacementTexBias_{-1};
@@ -256,6 +269,7 @@ class GLRenderer final : public Renderer {
   GLint iUViewProj_{-1}, iCameraPos_{-1};
   GLint iLightDir_{-1}, iLightColor_{-1}, iEmissive_{-1};
   GLint iHasIbl_{-1}, iIblColor_{-1}, iEnvRotation_{-1};  // dome IBL (diffuse)
+  GLint iExposure_{-1};
   // Instanced-program debug-AOV uniforms (mirror the non-instanced material shader).
   GLint iRenderMode_{-1}, iDepthScale_{-1}, iSceneMin_{-1}, iSceneExtent_{-1};
   GLint iMeshId_{-1}, iGeometricNormal_{-1}, iDoubleSided_{-1}, iPurpose_{-1}, iKind_{-1};
@@ -272,6 +286,7 @@ class GLRenderer final : public Renderer {
   // DomeLight split-sum IBL (uploaded from DomeIblCPU by setLights; sampled by
   // the material shader's ambient term on units 19/20/21).
   GLuint iblIrrTex_{0}, iblSpecTex_{0}, iblLutTex_{0};
+  RasterLightSet rasterLights_;
   int iblSpecLods_{0};
   bool iblActive_{false};
   float iblColor_[3]{1.0f, 1.0f, 1.0f};
@@ -323,6 +338,24 @@ class GLRenderer final : public Renderer {
   std::vector<GLTexture> textures_;
   std::vector<GLMaterial> materials_;
   std::vector<GLMesh> meshes_;
+
+  struct GLNonMeshBatch {
+    GLuint vao{0}, vbo{0};
+    GLsizei count{0};
+    int kind{0};       // 0 point billboard, 1 curve ribbon
+    int materialId{-1};
+    int carrierId{-1};
+    int purposeId{0};
+    bool translucent{false};
+  };
+  GLuint nonMeshProgram_{0};
+  GLint nmViewProj_{-1}, nmCameraPos_{-1}, nmCameraRight_{-1}, nmCameraUp_{-1};
+  GLint nmLightDir_{-1}, nmLightColor_{-1}, nmExposure_{-1};
+  GLint nmKind_{-1}, nmMaterialId_{-1}, nmCarrierId_{-1}, nmPurpose_{-1};
+  GLint nmRenderMode_{-1};
+  std::vector<GLNonMeshBatch> nonMeshBatches_;
+  void buildNonMeshProgram();
+  void drawNonMesh(const RenderFrameParams& params);
 
   // Window (back buffer) capture grabbed in present() before swap.
   bool wantWindowCapture_{false};

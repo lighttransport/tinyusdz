@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "mesh_build.hh"
+#include "raster_lighting.hh"
 #include "rt_scene_build.hh"
 #include "texture_tools.hh"
 
@@ -106,6 +107,48 @@ int main() {
       !Near(key.normalizedColor[1], 0.5f) ||
       !Near(key.normalizedColor[2], 1.0f)) {
     std::fprintf(stderr, "derived rect light values are wrong\n");
+    return 1;
+  }
+
+  // Raster light packing is shared by GL/Vulkan. Dome lights are excluded from
+  // direct evaluation, and authored collections become a compact per-mesh mask.
+  const tusdview::RasterLightSet raster =
+      tusdview::PackRasterLights(draw.lights, 7);
+  if (raster.count != 1 || raster.truncated != 0 ||
+      raster.meshMasks.size() != 7 || raster.meshMasks[3] != 1u ||
+      raster.meshMasks[5] != 1u || raster.meshMasks[0] != 0u) {
+    std::fprintf(stderr, "raster light packing/link mask mismatch\n");
+    return 1;
+  }
+  if (!Near(raster.lights[0].positionType[0], key.position[0]) ||
+      !Near(raster.lights[0].colorDiffuse[0], key.normalizedColor[0]) ||
+      !Near(raster.lights[0].colorDiffuse[3], key.diffuse) ||
+      !Near(raster.lights[0].specularShape[0], key.specular) ||
+      raster.lights[0].specularShape[3] != 1.0f) {
+    std::fprintf(stderr, "raster packed light fields mismatch\n");
+    return 1;
+  }
+
+  // Packing is deterministic and bounded. DistantLight stores its authored
+  // emission direction in DrawLightCPU, so the raster record must expose the
+  // opposite surface-to-light vector used by the BRDF.
+  std::vector<tusdview::DrawLightCPU> manyLights;
+  for (int i = 0; i < tusdview::kMaxRasterLights + 2; ++i) {
+    tusdview::DrawLightCPU light;
+    light.type = tusdview::DrawLightCPU::Type::Distant;
+    light.direction[0] = 0.0f;
+    light.direction[1] = -1.0f;
+    light.direction[2] = static_cast<float>(i);
+    manyLights.push_back(light);
+  }
+  const tusdview::RasterLightSet bounded =
+      tusdview::PackRasterLights(manyLights, 1);
+  if (bounded.count != tusdview::kMaxRasterLights || bounded.truncated != 2 ||
+      bounded.meshMasks.size() != 1 || bounded.meshMasks[0] != 0xffffu ||
+      !Near(bounded.lights[0].directionAngle[0], 0.0f) ||
+      !Near(bounded.lights[0].directionAngle[1], 1.0f) ||
+      !Near(bounded.lights[1].directionAngle[2], -1.0f)) {
+    std::fprintf(stderr, "raster light bound/direction mismatch\n");
     return 1;
   }
   if (!key.hasShaping || key.shapingIesFile != "profiles/key.ies" ||
@@ -317,6 +360,49 @@ int main() {
       std::fprintf(stderr, "RT dome SH irradiance rows are all zero\n");
       return 1;
     }
+  }
+
+  // Non-mesh carriers become camera-independent solid RT proxies: an
+  // octahedron per point and a four-sided tube per tessellated curve segment.
+  tusdview::DrawScene carrierScene;
+  carrierScene.materials.push_back(tusdview::DrawMaterialCPU{});
+  tusdview::DrawPointsCPU points;
+  points.name = "point";
+  points.points = {0.0f, 0.0f, 0.0f};
+  points.widths = {2.0f};
+  points.colors = {0.2f, 0.4f, 0.8f};
+  points.opacities = {0.25f};
+  points.materialId = 0;
+  Identity(points.world);
+  carrierScene.points.push_back(points);
+  tusdview::DrawCurvesCPU curves;
+  curves.name = "curve";
+  curves.vertexCounts = {2};
+  curves.points = {0.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f};
+  curves.widths = {0.5f};
+  curves.colors = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+  curves.opacities = {0.2f, 0.6f};
+  curves.materialId = 0;
+  Identity(curves.world);
+  carrierScene.curves.push_back(curves);
+  tusdview::HostScene carrierHost;
+  if (!tusdview::BuildHostScene(carrierScene, 0, 0, 0.0f, &carrierHost,
+                                &err) ||
+      carrierHost.triCount != 16 || carrierHost.instCount != 2) {
+    std::fprintf(stderr, "non-mesh RT proxy build failed: %s (%zu tris, %zu inst)\n",
+                 err.c_str(), carrierHost.triCount, carrierHost.instCount);
+    return 1;
+  }
+  bool foundPointOpacity = false;
+  bool foundCurveOpacity = false;
+  for (size_t i = 3; i < carrierHost.cols.size(); i += 4) {
+    foundPointOpacity |= Near(carrierHost.cols[i], 0.25f);
+    foundCurveOpacity |= Near(carrierHost.cols[i], 0.4f);
+  }
+  if (!foundPointOpacity || !foundCurveOpacity) {
+    std::fprintf(stderr,
+                 "non-mesh displayOpacity was not retained in RT proxies\n");
+    return 1;
   }
 
   return 0;

@@ -980,6 +980,13 @@ void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
     mat->emissive[2] = p.emissionColor[2] * p.emission;
   }
   mat->alpha = p.opacity;
+  mat->coatWeight = p.coatWeight;
+  mat->coatColor[0] = p.coatColor[0];
+  mat->coatColor[1] = p.coatColor[1];
+  mat->coatColor[2] = p.coatColor[2];
+  mat->coatRoughness = p.coatRoughness;
+  mat->coatIor = p.coatIor;
+  FloatParam(*mat, {"UsdPreviewSurface"}, {"occlusion"}, &mat->occlusion);
 }
 
 void PackLightRtOpenPBR(const DrawMaterialCPU& mat, float* dst) {
@@ -1082,6 +1089,13 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   StoreUvVec4Rows(mat.roughnessSample.uv, dst + 25 * 4);
   // roughUv0.w is otherwise padding and carries its UV-set selector.
   dst[25 * 4 + 3] = static_cast<float>(mat.roughnessSample.uvSet);
+  dst[27 * 4 + 0] = mat.coatWeight;
+  dst[27 * 4 + 1] = mat.coatRoughness;
+  dst[27 * 4 + 2] = mat.coatIor;
+  dst[27 * 4 + 3] = mat.occlusion;
+  dst[28 * 4 + 0] = mat.coatColor[0];
+  dst[28 * 4 + 1] = mat.coatColor[1];
+  dst[28 * 4 + 2] = mat.coatColor[2];
 }
 
 }  // namespace tusdview

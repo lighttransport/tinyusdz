@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "gpu_scene.hh"
+#include "raster_lighting.hh"
 #include "renderer.hh"
 
 namespace tusdview {
@@ -44,8 +45,11 @@ class VulkanRenderer final : public Renderer {
   bool resizeHeadless(int w, int h) override;
   bool initImGui(std::string* err) override;
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
-  void setLights(const std::vector<DrawLightCPU>& lights) override;
+  void setLights(const std::vector<DrawLightCPU>& lights,
+                 size_t meshCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
+  void appendPoints(const DrawPointsCPU& points) override;
+  void appendCurves(const DrawCurvesCPU& curves) override;
   void appendVolume(const DrawVolumeCPU& vol) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
@@ -741,6 +745,7 @@ class VulkanRenderer final : public Renderer {
   std::vector<float> matColor_;    // 3 vec4 per material: preview subset
   std::vector<float> matLightRt_;  // 14 vec4 per material: LightRT/OpenPBR block
   std::vector<float> lightParams_;  // packed DrawLightCPU params
+  RasterLightSet rasterLights_;
   // CPU copies retained for the backend-neutral RT texture-table build. Vulkan
   // raster uploads images immediately, while ray query consumes decoded RGBA8
   // texels and semantic material slots from storage buffers.
@@ -752,6 +757,7 @@ class VulkanRenderer final : public Renderer {
   float view_[16];
   float proj_[16];
   float cameraPos_[3]{0, 0, 0};
+  float exposure_{0.0f};
   float lightDir_[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float lightColor_[3]{1.0f, 1.0f, 1.0f};
   float clear_[4]{0.12f, 0.12f, 0.13f, 1.0f};

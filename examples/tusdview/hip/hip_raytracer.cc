@@ -244,6 +244,7 @@ bool HipRayTracer::refit(const DrawScene& scene, std::string* err) {
 bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                           const float camPos[3],
                           const float lightDir[3], const float clearColor[3],
+                          float exposure,
                           int renderMode, float depthScale, const float sceneMin[3],
                           const float sceneExtent[3], int w, int h,
                           std::vector<uint8_t>* rgba, std::string* err, int spp) {
@@ -275,6 +276,7 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     cam.clear[i] = clearColor[i];
   }
   cam.clear[3] = static_cast<float>(renderMode);
+  cam.camPos[3] = exposure;
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
   void* dT = reinterpret_cast<void*>(dTris_), *dN = reinterpret_cast<void*>(dNrms_),

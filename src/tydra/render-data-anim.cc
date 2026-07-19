@@ -3730,27 +3730,73 @@ size_t ResolveLightLinking(const Stage &stage, RenderScene *scene) {
     if (!pret || !pret.value()) {
       continue;
     }
+    const Prim &light_prim = *pret.value();
     const Collection *coll = nullptr;
-    if (!GetCollection(*pret.value(), &coll) || !coll) {
-      continue;  // No collections authored -> links all (defaults).
-    }
+    GetCollection(light_prim, &coll);
 
     // Resolve one link collection instance ("lightLink" / "shadowLink").
     auto resolve_link = [&](const std::string &inst_name, bool *links_all,
                             std::vector<int> *mesh_indices) -> bool {
+      CollectionMembershipQuery q;
       const CollectionInstance *inst = nullptr;
-      if (!coll->get_instance(inst_name, &inst) || !inst) {
-        return false;
+      if (coll && coll->get_instance(inst_name, &inst) && inst) {
+        const bool authored = inst->has_membershipExpression() ||
+                              inst->includes.authored() ||
+                              inst->excludes.authored();
+        if (!authored) return false;
+        q = BuildCollectionMembershipQuery(stage, *inst, light.abs_path);
+      } else {
+        // Older/legacy prim reconstruction may retain multi-apply CollectionAPI
+        // properties as generic properties rather than a typed Collection.
+        // Resolve relationship mode directly so light linking does not depend
+        // on whether `apiSchemas = ["CollectionAPI:<name>"]` was authored.
+        const std::string base = "collection:" + inst_name + ":";
+        Relationship includes_rel;
+        Relationship excludes_rel;
+        std::string includes_err;
+        std::string excludes_err;
+        const bool has_includes = GetRelationship(
+            light_prim, base + "includes", &includes_rel, &includes_err);
+        const bool has_excludes = GetRelationship(
+            light_prim, base + "excludes", &excludes_rel, &excludes_err);
+        if (!has_includes && !has_excludes) return false;
+        q.mode = CollectionMembershipQuery::Mode::Relationship;
+        q.owner_prim_path = light.abs_path;
+        if (has_includes) {
+          if (includes_rel.is_path()) {
+            q.includes.push_back(includes_rel.targetPath);
+          }
+          if (includes_rel.is_pathvector()) {
+            q.includes = includes_rel.targetPathVector;
+          }
+        }
+        if (has_excludes) {
+          if (excludes_rel.is_path()) {
+            q.excludes.push_back(excludes_rel.targetPath);
+          }
+          if (excludes_rel.is_pathvector()) {
+            q.excludes = excludes_rel.targetPathVector;
+          }
+        }
+        Attribute attr;
+        std::string attr_err;
+        if (GetAttribute(light_prim, base + "includeRoot", &attr, &attr_err)) {
+          if (auto value = attr.get_value<bool>()) q.include_root = *value;
+        }
+        attr_err.clear();
+        if (GetAttribute(light_prim, base + "expansionRule", &attr,
+                         &attr_err)) {
+          if (auto value = attr.get_value<std::string>()) {
+            if (*value == "explicitOnly") {
+              q.expansion_rule =
+                  CollectionInstance::ExpansionRule::ExplicitOnly;
+            } else if (*value == "expandPrimsAndProperties") {
+              q.expansion_rule =
+                  CollectionInstance::ExpansionRule::ExpandPrimsAndProperties;
+            }
+          }
+        }
       }
-      const bool authored = inst->has_membershipExpression() ||
-                            inst->includes.authored() ||
-                            inst->excludes.authored();
-      if (!authored) {
-        return false;  // unauthored -> keep default (links all)
-      }
-
-      CollectionMembershipQuery q =
-          BuildCollectionMembershipQuery(stage, *inst, light.abs_path);
 
       *links_all = false;
       mesh_indices->clear();

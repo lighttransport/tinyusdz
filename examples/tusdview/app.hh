@@ -186,6 +186,7 @@ class App
   // --camera <name>: frame the viewer on a named USD Camera (either loader) instead
   // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
   void setCameraName(const std::string& n) { cameraName_ = n; }
+  void setCameraConform(CameraConform conform) { camera_.setConform(conform); }
   void setViewDirection(float x, float y, float z) {
     viewDir_[0] = x; viewDir_[1] = y; viewDir_[2] = z;
     viewDirExplicit_ = true;

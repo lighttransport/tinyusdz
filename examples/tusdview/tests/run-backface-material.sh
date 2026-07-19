@@ -194,7 +194,7 @@ PY
     log="$OUT/${backend}_${fixture}_${camera}.log"
     if [ "$persistent" -eq 1 ]; then
       printf -v batch_prefix '%03d' "$case_index"
-      img="$OUT/$backend-batch-images/$batch_prefix-$fixture-$camera.ppm"
+      img="$OUT/$backend-batch-images/$batch_prefix-$fixture-$camera-capture.ppm"
     else
       if [ "$ok" -eq 0 ]; then break; fi
       # CUDA/HIP own their screenshots at process shutdown and therefore remain

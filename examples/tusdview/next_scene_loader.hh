@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "gpu_scene.hh"      // DrawScene
+#include "camera_nav.hh"     // CameraProjection
 #include "load_control.hh"   // LoadControl
 #include "scene_loader.hh"   // LoadOptions
 #include "skinning.hh"       // RtSkinnedMeshUpload
@@ -45,6 +46,12 @@ struct NextCameraPose {
   float forward[3]{0, 0, -1};
   float up[3]{0, 1, 0};
   float fovYDeg{60.0f};
+  CameraProjection projection{CameraProjection::Perspective};
+  float horizontalAperture{20.955f};
+  float verticalAperture{15.2908f};
+  float horizontalApertureOffset{0.0f};
+  float verticalApertureOffset{0.0f};
+  float exposure{0.0f};
   float zNear{0.1f};   // from the camera's clippingRange (scene units)
   float zFar{1.0e6f};
 };
