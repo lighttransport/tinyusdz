@@ -125,7 +125,8 @@ json MCPServer::buildToolsList() const {
       "render_settings",
       "Query or set resettable per-capture options without restarting tusdview.",
       {{"mode", strProp("shaded | wireframe | normals | material-id | geom-normal | uv | depth | albedo | facing | roughness | metallic | emissive | opacity")},
-       {"grid", {{"type", "boolean"}, {"description", "show the ground grid"}}}}));
+       {"grid", {{"type", "boolean"}, {"description", "show the ground grid"}}},
+       {"camera", strProp("named USD camera to resolve on the next load")}}));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it

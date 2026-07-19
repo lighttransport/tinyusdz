@@ -402,6 +402,10 @@ reference: it replaces three inline scenes and captures three render modes from
 one Vulkan process. `tusdview-mcp-render-batch-gl-window` runs the same cases
 through one real GLFW/OpenGL window under Xvfb. Both record the window and
 renderer generations and fail if either resource is recreated within a batch.
+The back-face material regression uses the same mechanism to keep one window or
+offscreen renderer alive across its four fixture/camera combinations for GL,
+Vulkan raster, and Vulkan RT. CUDA/HIP remain isolated because those backends
+own and write their test screenshot during process shutdown.
 
 ## Architecture
 
