@@ -372,7 +372,10 @@ struct DrawMaterialCPU {
   float ior{1.5f};
   // Indices into DrawScene::textures (-1 = no texture)
   int baseColorTex{-1};
-  int metalRoughTex{-1};
+  // Keep metallic and roughness independent. They may alias the same packed
+  // ORM texture, but USD commonly authors them as separate images/UV streams.
+  int metallicTex{-1};
+  int roughnessTex{-1};
   int normalTex{-1};
   int coatNormalTex{-1};
   int emissiveTex{-1};
@@ -381,7 +384,8 @@ struct DrawMaterialCPU {
   // UsdPreviewSurface inputs:opacity.
   int opacityTex{-1};
   DrawTexSampleCPU baseColorSample;
-  DrawTexSampleCPU metalRoughSample;
+  DrawTexSampleCPU metallicSample;
+  DrawTexSampleCPU roughnessSample;
   DrawTexSampleCPU normalSample;
   DrawTexSampleCPU coatNormalSample;
   DrawTexSampleCPU emissiveSample;
@@ -458,7 +462,7 @@ struct DrawTextureCPU {
   std::string assetIdentifier;  // Tydra TextureImage::asset_identifier, if known
   int renderImageId{-1};        // source RenderScene::images index, or -1
   int renderUdimId{-1};         // source RenderScene::udim_textures index, or -1
-  bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear (normal/metalRough)
+  bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear scalar/normal data
   int wrapS{static_cast<int>(WrapMode::Repeat)};
   int wrapT{static_cast<int>(WrapMode::Repeat)};
   bool requestedCompressed{false};

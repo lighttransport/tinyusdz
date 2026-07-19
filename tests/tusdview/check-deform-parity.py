@@ -32,6 +32,8 @@ import subprocess
 import sys
 import zlib
 
+from gpu_backend import software_only_vulkan
+
 SKIP = 77
 MAX_MEAN_DIFF = 0.5   # GPU deform vs CPU bake: same geometry, bar raster edges
 MIN_POSE_DIFF = 1.0   # rest vs posed: the deform must actually move something
@@ -40,15 +42,29 @@ MAX_LOADER_DIFF = 0.5  # next vs legacy: same deform, same bounds, same frame
 
 def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
            loader="--next"):
+    try:
+        os.remove(out)
+    except FileNotFoundError:
+        pass
     e = dict(os.environ)
     if env:
         e.update(env)
+    config = os.path.join(os.path.dirname(out), "config.json")
+    if not os.path.exists(config):
+        with open(config, "w") as f:
+            f.write('{"window_size":{"width":320,"height":320}}\n')
     cmd = [binary, loader, "--headless", "--mode", "depth", "--camera", camera,
-           "--frames", "3", "--time", str(time), "--screenshot", out,
+           "--frames", "3", "--time", str(time), "--config", config,
+           "--screenshot", out,
            *backend, *extra, scene]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                   env=e, timeout=600)
-    return os.path.exists(out) and os.path.getsize(out) > 0
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           env=e, timeout=120)
+    except subprocess.TimeoutExpired:
+        return False, "render timed out"
+    log = r.stdout.decode(errors="replace")
+    return (r.returncode == 0 and os.path.exists(out) and
+            os.path.getsize(out) > 0), log
 
 
 def read_luma(path):
@@ -119,24 +135,43 @@ def main():
         if not os.path.exists(p):
             print(f"SKIP: missing {p}")
             return SKIP
+    if which == "rt" and software_only_vulkan():
+        print("SKIP: Vulkan RT unavailable (software Vulkan only)")
+        return SKIP
     os.makedirs(work, exist_ok=True)
+
+    def backend_available(log):
+        if which == "rt":
+            return ("Vulkan ray tracing (ray query) enabled" in log and
+                    "ray tracing is unavailable" not in log)
+        if which == "cuda":
+            return "CUDA RT wrote" in log
+        if which == "hip":
+            return "HIP RT wrote" in log
+        return True
 
     tag = f"{os.path.splitext(os.path.basename(scene))[0]}_{which}"
     rest = os.path.join(work, f"{tag}_rest.png")
     gpu = os.path.join(work, f"{tag}_gpu.png")
     cpu = os.path.join(work, f"{tag}_cpu.png")
 
-    if not render(binary, scene, rest, rest_t, camera, backend=backend):
+    rest_ok, rest_log = render(binary, scene, rest, rest_t, camera,
+                               backend=backend)
+    if not rest_ok or not backend_available(rest_log):
         print(f"SKIP: the {which} backend produced no image (unavailable here?)")
         return SKIP
-    if not render(binary, scene, gpu, pose_t, camera, backend=backend):
+    gpu_ok, gpu_log = render(binary, scene, gpu, pose_t, camera,
+                             backend=backend)
+    if not gpu_ok or not backend_available(gpu_log):
         print(f"SKIP: the {which} backend produced no image (unavailable here?)")
         return SKIP
     # The reference: every deform baked on the CPU, in mesh-local space -- through
     # the SAME backend, so this compares deforms and not backends.
-    if not render(binary, scene, cpu, pose_t, camera, backend=backend,
-                  extra=["--skinning", "cpu"],
-                  env={"TUSDVIEW_NEXT_MORPH_BAKE": "1"}):
+    cpu_ok, cpu_log = render(binary, scene, cpu, pose_t, camera,
+                             backend=backend,
+                             extra=["--skinning", "cpu"],
+                             env={"TUSDVIEW_NEXT_MORPH_BAKE": "1"})
+    if not cpu_ok or not backend_available(cpu_log):
         print("SKIP: the CPU-bake reference did not render")
         return SKIP
 
@@ -169,8 +204,11 @@ def main():
     # REST pose). Both are now derived the way the Tydra path derives them: from
     # the posed vertices.
     legacy = os.path.join(work, f"{tag}_legacy.png")
-    if which == "raster" and render(binary, scene, legacy, pose_t, camera,
-                                    loader="--legacy-load"):
+    legacy_ok = False
+    if which == "raster":
+        legacy_ok, _legacy_log = render(binary, scene, legacy, pose_t, camera,
+                                        loader="--legacy-load")
+    if legacy_ok:
         ldiff = mean_diff(gpu, legacy)
         if ldiff > MAX_LOADER_DIFF:
             print(f"FAIL: {tag}: the next and legacy loaders do not render the same "

@@ -123,6 +123,12 @@ def command_prefixes(args):
 
 
 def run_viewer(args, mode, output_path):
+    # Never accept a screenshot left by an earlier run when this launch fails.
+    # CTest reuses the same output directory across invocations.
+    try:
+        output_path.unlink()
+    except FileNotFoundError:
+        pass
     viewer = [args.app]
     if args.headless:
         viewer.append("--headless")
@@ -179,6 +185,12 @@ def run_viewer(args, mode, output_path):
             f"does not fetch the skin vertex attributes, so CPU-vs-GPU skinning "
             f"cannot be compared on it"
         )
+    if proc.returncode != 0 and (
+        "glfwInit failed" in log
+        or "glfwCreateWindow failed" in log
+        or "Failed to open display" in log
+    ):
+        raise SkipTest("no usable X11/GLFW display")
     if proc.returncode != 0:
         if args.skip_unavailable and (
             "Vulkan" in log

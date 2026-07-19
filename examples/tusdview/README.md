@@ -134,9 +134,12 @@ displays it with an ImGui docking UI.
   **View ▸ Ray tracing (Vulkan)** (greyed out when unsupported) or start in RT
   with `--rt`. RT uses a ray-tracer-friendly conversion (no single-index dedup;
   `build_vertex_indices=false`); displacement is baked into the traced geometry.
-  _RT limitations:_ material textures (including separate opacity images) are
-  not sampled; varying displayOpacity and material constants are supported. One
-  material per mesh and no helper-line overlay.
+  RT samples the six semantic material textures, including separate opacity,
+  UV1/transforms, compressed-only sources, and sparse UDIMs; alpha-mask texels
+  are rejected during traversal. Varying displayOpacity and material constants
+  are also supported, including per-face materials bound through GeomSubsets.
+  Remaining limitations include level-zero texture filtering and no helper-line
+  overlay.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive
@@ -408,17 +411,19 @@ camera, GUI, `DrawScene`) is backend-neutral.
 
 ## Threading model
 
-GL contexts, Vulkan command submission, ImGui and GLFW event polling are all
-single-thread-affine, so the render/UI loop stays on the main thread. The
-expensive, freeze-prone work (USD parse + Tydra convert + DrawScene build) runs
-on a worker thread; its result is uploaded to the GPU on the main thread once
-ready. The worker only touches CPU data — no GL/VK calls off-thread.
+By default the render/UI loop stays on the main thread. USD parse, composition,
+Tydra conversion, and DrawScene construction run on a CPU worker. Builds made
+with `TUSDVIEW_ENABLE_GL_THREAD=ON` may opt into `--threaded`, where a dedicated
+render thread owns the GL context or Vulkan queue while GLFW events and ImGui
+frame construction remain on the main thread.
 
 ## Known limitations
 
-- Ray-tracing backends use material constants and varying displayOpacity but do
-  not yet sample material images; texture opacity is raster-only.
-- Single hard-coded directional light (USD lights are not consumed yet).
-- Skeleton display shows the **bind pose** only (no animation/skinning playback).
-- Tangents/normal-mapping, animation, instancing transforms and multi-viewport
-  are out of scope for this pass.
+- Vulkan/CUDA/HIP ray tracing samples base color, metallic, roughness, normal,
+  emissive, and opacity images through the shared semantic table. The RT
+  software texture path uses level-zero filtering, without raster anisotropy.
+- Vulkan raster uses four bound descriptor sets and runs on low-limit software
+  devices as well as desktop GPUs.
+- Alpha-blended ray-traced surfaces use a nearest-layer approximation.
+- MaterialX image nodes beyond the extracted Preview/OpenPBR semantic slots,
+  and multi-viewport UI, remain incomplete.

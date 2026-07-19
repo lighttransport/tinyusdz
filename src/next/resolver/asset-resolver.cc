@@ -102,6 +102,13 @@ std::string FindRecursively(const std::string& root,
 }
 
 std::string NormalizePackageEntryPath(std::string path) {
+  if (path.empty() || path.front() == '/' || path.front() == '\\' ||
+      (path.size() >= 2 &&
+       ((path[0] >= 'A' && path[0] <= 'Z') ||
+        (path[0] >= 'a' && path[0] <= 'z')) &&
+       path[1] == ':')) {
+    return {};
+  }
   for (char& c : path) {
     if (c == '\\') c = '/';
   }
@@ -113,7 +120,8 @@ std::string NormalizePackageEntryPath(std::string path) {
     if (end == std::string::npos) end = path.size();
     std::string part = path.substr(start, end - start);
     if (part == "..") {
-      if (!parts.empty()) parts.pop_back();
+      if (parts.empty()) return {};
+      parts.pop_back();
     } else if (!part.empty() && part != ".") {
       parts.push_back(part);
     }
@@ -419,6 +427,9 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
   if (IsPackagePath(asset_path)) {
     result.is_package = true;
     if (ParsePackagePath(asset_path, &result.package_path, &result.asset_in_package)) {
+      result.asset_in_package =
+          NormalizePackageEntryPath(result.asset_in_package);
+      if (result.asset_in_package.empty()) return result;
       // Resolve the package file itself
       ResolvedAsset pkg = ResolveInternal(result.package_path, anchor_path,
                                           allow_suffix_fallback);
@@ -493,6 +504,7 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
                                 ? asset_path
                                 : JoinPath(entry_dir, asset_path);
         entry = NormalizePackageEntryPath(entry);
+        if (entry.empty()) return result;
         result.is_package = true;
         result.package_path = pkg.resolved_path;
         result.asset_in_package = entry;

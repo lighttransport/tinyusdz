@@ -1168,7 +1168,7 @@ void ClassifyTextureUsage(DrawScene* out) {
   for (const DrawMaterialCPU& m : out->materials) {
     if (DrawTextureCPU* t = texAt(m.normalTex)) t->isNormalMap = true;
     if (DrawTextureCPU* t = texAt(m.coatNormalTex)) t->isNormalMap = true;
-    if (DrawTextureCPU* t = texAt(m.metalRoughTex)) {
+    if (DrawTextureCPU* t = texAt(m.roughnessTex)) {
       // Packed ORM map: the roughness channel minifies variance-aware (reduces
       // specular aliasing); other channels keep the filtered average.
       if (m.roughnessChannel >= 0 && m.roughnessChannel < 4) {
@@ -1708,17 +1708,17 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
           dm.opacityTexBias = ot.bias[dm.opacityChannel];
         }
       }
-      int mrTex = mapTex(s.metallic.texture_id);
-      if (mrTex < 0) mrTex = mapTex(s.roughness.texture_id);
-      dm.metalRoughTex = mrTex;
+      dm.metallicTex = mapTex(s.metallic.texture_id);
+      dm.roughnessTex = mapTex(s.roughness.texture_id);
       dm.displacementTex = mapTex(s.displacement.texture_id);
       CopyTexSample(rs, s.diffuseColor.texture_id, &dm.baseColorSample);
       CopyTexSample(rs, s.emissiveColor.texture_id, &dm.emissiveSample);
       CopyTexSample(rs, s.normal.texture_id, &dm.normalSample);
       if (s.metallic.texture_id >= 0) {
-        CopyTexSample(rs, s.metallic.texture_id, &dm.metalRoughSample);
-      } else {
-        CopyTexSample(rs, s.roughness.texture_id, &dm.metalRoughSample);
+        CopyTexSample(rs, s.metallic.texture_id, &dm.metallicSample);
+      }
+      if (s.roughness.texture_id >= 0) {
+        CopyTexSample(rs, s.roughness.texture_id, &dm.roughnessSample);
       }
       if (s.normal.texture_id >= 0) {
         for (int i = 0; i < 3; ++i) {
@@ -1745,9 +1745,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
         dm.roughnessChannel = TextureChannelIndex(rt.connectedOutputChannel, 1);
         dm.roughnessTexScale = rt.scale[dm.roughnessChannel];
         dm.roughnessTexBias = rt.bias[dm.roughnessChannel];
-        if (s.metallic.texture_id < 0) {
-          CopyTexSample(rt, &dm.metalRoughSample);
-        }
+        CopyTexSample(rt, &dm.roughnessSample);
       }
       dm.displacementUv = MapUvXform(rs, s.displacement.texture_id);
       dm.displacementConst = s.displacement.value;
@@ -1890,17 +1888,17 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
         }
       }
       dm.coatNormalTex = mapTex(s.coat_normal.texture_id);
-      int mrTex = mapTex(s.base_metalness.texture_id);
-      if (mrTex < 0) mrTex = mapTex(s.base_roughness.texture_id);
-      dm.metalRoughTex = mrTex;
+      dm.metallicTex = mapTex(s.base_metalness.texture_id);
+      dm.roughnessTex = mapTex(s.base_roughness.texture_id);
       CopyTexSample(rs, s.base_color.texture_id, &dm.baseColorSample);
       CopyTexSample(rs, s.emission_color.texture_id, &dm.emissiveSample);
       CopyTexSample(rs, s.normal.texture_id, &dm.normalSample);
       CopyTexSample(rs, s.coat_normal.texture_id, &dm.coatNormalSample);
       if (s.base_metalness.texture_id >= 0) {
-        CopyTexSample(rs, s.base_metalness.texture_id, &dm.metalRoughSample);
-      } else {
-        CopyTexSample(rs, s.base_roughness.texture_id, &dm.metalRoughSample);
+        CopyTexSample(rs, s.base_metalness.texture_id, &dm.metallicSample);
+      }
+      if (s.base_roughness.texture_id >= 0) {
+        CopyTexSample(rs, s.base_roughness.texture_id, &dm.roughnessSample);
       }
       if (s.normal.texture_id >= 0) {
         for (int i = 0; i < 3; ++i) {
@@ -1934,9 +1932,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
         dm.roughnessChannel = TextureChannelIndex(rt.connectedOutputChannel, 1);
         dm.roughnessTexScale = rt.scale[dm.roughnessChannel];
         dm.roughnessTexBias = rt.bias[dm.roughnessChannel];
-        if (s.base_metalness.texture_id < 0) {
-          CopyTexSample(rt, &dm.metalRoughSample);
-        }
+        CopyTexSample(rt, &dm.roughnessSample);
       }
       // Raster and current RT preview shaders multiply sampled textures by these
       // factors. Use neutral factors when texture-driven, and keep OpenPBR's

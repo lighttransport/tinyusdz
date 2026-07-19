@@ -12,9 +12,9 @@ layout(location = 0) in vec3 tcPos[];
 layout(location = 1) in vec3 tcNrm[];
 layout(location = 2) in vec2 tcUV[];
 
-layout(set = 4, binding = 0) uniform sampler2D uDisplacementTex;
+layout(set = 0, binding = 16) uniform sampler2D uDisplacementTex;
 // Frame UBO (set 5): .disp.x = displacement scale, viewProj for clip position.
-layout(set = 5, binding = 0) uniform Frame {
+layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;
   vec4 camPos;
@@ -46,8 +46,9 @@ struct MaterialTexParam {
   vec4 opacityParams;
   vec4 udimSlots0;
   vec4 udimSlots1;
+  vec4 roughUv0; vec4 roughUv1;
 };
-layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
+layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
 layout(push_constant) uniform PushConstants {
   mat4 model;

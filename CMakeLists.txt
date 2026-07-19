@@ -841,6 +841,24 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     PROPERTIES COMPILE_OPTIONS "-O3")
 endif()
 
+# Keep sanitizer builds useful without reporting implementation techniques in
+# vendored image codecs as TinyUSDZ failures. fpng has a portable unaligned-I/O
+# path, so select it under UBSan. stb_image_resize2 and stb_image_write embed
+# their implementations in our wrapper TUs and intentionally use unaligned
+# wide copies / signed bit-buffer shifts; disable only those checks for those
+# two TUs while retaining ASan and every other UBSan category.
+if (SANITIZE_UNDEFINED AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  set_property(
+    SOURCE ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "FPNG_USE_UNALIGNED_LOADS=0")
+  set_property(
+    SOURCE ${PROJECT_SOURCE_DIR}/src/image-util.cc
+    APPEND PROPERTY COMPILE_OPTIONS "-fno-sanitize=alignment")
+  set_property(
+    SOURCE ${PROJECT_SOURCE_DIR}/src/image-writer.cc
+    APPEND PROPERTY COMPILE_OPTIONS "-fno-sanitize=shift")
+endif()
+
 # fpnge: fast PNG encoder. Upstream requires SSE4.1 minimum(AVX2 preferred);
 # there is no SSE2/scalar code path, so for sse2/scalar we skip compiling fpnge
 # and let PNG encoding fall back to the portable fpng encoder.
@@ -2444,6 +2462,19 @@ if(TINYUSDZ_BUILD_TESTS)
     endif()
   endif()
 
+  # Windowless Vulkan render regression. This works on both hardware and
+  # software Vulkan devices and self-skips when no Vulkan device is available.
+  if(UNIX AND NOT APPLE AND TARGET tusdview)
+    add_test(
+      NAME tusdview-vk-render
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-render.sh"
+      )
+    set_tests_properties(tusdview-vk-render PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300)
+  endif()
+
   #
   # tusdview CPU/GPU skinning screenshot parity. This is intentionally
   # registered only for Linux GUI builds with xvfb-run available: OpenGL needs a
@@ -2553,7 +2584,8 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${PROJECT_SOURCE_DIR}/models/blastest-instanced-static.usda"
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-blas-compaction"
         )
-      set_tests_properties(tusdview-blas-compaction PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(tusdview-blas-compaction PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 300)
 
       # A texture must sample the UV set its UsdPrimvarReader names. The secondary
       # set used to be hard-coded as <primary>+"1" (so `uvSet1` was never
@@ -2610,7 +2642,8 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-skinning"
         )
-      set_tests_properties(tusdview-rt-skinning PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(tusdview-rt-skinning PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 600)
 
       # A skinned mesh's BLAS is refit in place per pose (MODE_UPDATE) instead
       # of destroyed + fully rebuilt. Refit must trace byte-identically to the
@@ -2623,7 +2656,8 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-blas-refit"
         )
-      set_tests_properties(tusdview-rt-blas-refit PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(tusdview-rt-blas-refit PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 420)
 
       # A non-instanced blendshaped mesh must morph: the static batch path used to
       # build no morph channels at all, so it rendered its rest shape forever.
@@ -2635,7 +2669,8 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${PROJECT_SOURCE_DIR}/models/blendshape-and-animation-test-001.usda"
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-blendshape-morph"
         )
-      set_tests_properties(tusdview-blendshape-morph PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(tusdview-blendshape-morph PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 600)
 
       # GPU deform vs CPU bake, in depth through a fixed camera, over the three
       # deform paths that had no fixture at all. Each of these caught a live bug:
@@ -2717,7 +2752,7 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-legacy-double-deform"
         )
       set_tests_properties(tusdview-legacy-double-deform
-                           PROPERTIES SKIP_RETURN_CODE 77)
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 420)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()
@@ -2792,7 +2827,32 @@ if(TINYUSDZ_BUILD_TESTS)
               "TUSDVIEW=$<TARGET_FILE:tusdview>"
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-opacity-material.sh"
       )
-    set_tests_properties(tusdview-opacity-material PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(tusdview-opacity-material PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 900)
+
+    # A single mesh may bind different materials through materialBind
+    # GeomSubsets. All RT backends must resolve the committed triangle's
+    # submesh material, not the mesh's first material.
+    add_test(
+      NAME tusdview-rt-geomsubset-material
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-rt-geomsubset-material.sh"
+      )
+    set_tests_properties(tusdview-rt-geomsubset-material
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+
+    # Deferred package payloads must survive the async recomposition handoff in
+    # both loaders. Drive the actual MCP action so the test covers the same
+    # lifetime boundary as the interactive "Load payload" UI.
+    add_test(
+      NAME tusdview-usdz-deferred-payload
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usdz-deferred-payload.sh"
+      )
+    set_tests_properties(tusdview-usdz-deferred-payload
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
 
     # Deterministic back-to-front alpha blending on both raster backends.
     # Keep this registered separately from scalar opacity/cutout coverage: it

@@ -21,6 +21,8 @@
 #include "stage.hh"
 #include "tydra/render-data.hh"
 
+namespace tinyusdz { struct USDZAsset; }
+
 namespace tusdview {
 
 // How `payload` composition arcs are handled at load time.
@@ -154,6 +156,8 @@ struct CompositionInfo {
   bool composed{false};
   std::shared_ptr<const tinyusdz::Layer> rootLayer;
   std::vector<std::string> searchPaths;
+  // Retained package backing for composition and later payload recomposition.
+  std::shared_ptr<tinyusdz::USDZAsset> usdzAsset;
   // Mirror of SceneLoaderOptions::allowParentRelativePaths, retained so the
   // RenderScene conversion applies the same '..' policy to texture/light asset
   // resolution that composition used (the tydra asset resolver defaults to
@@ -193,7 +197,8 @@ struct LoadedScene {
 // `opts` controls composition: by default the file's composition arcs are
 // resolved (LIVRPS) with payloads deferred; deferred payloads are listed in
 // `out->comp.deferred` and can be loaded later via RecomposeWithPayloads().
-// .usdz archives always take the non-composition path for now.
+// USDZ composition arcs resolve against the retained archive backing, including
+// deferred package-internal payloads loaded by RecomposeWithPayloads().
 //
 // `ctrl` (optional) enables cancellation, progress reporting, a conversion time
 // budget and a draw-side triangle/vertex budget. Safe to call on a worker

@@ -2164,9 +2164,8 @@ void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp,
 }
 
 // Convert a bound material prim into a DrawMaterialCPU appended to `draw`, and
-// return its index (>=1). Phase 1 baked PBR constants (base color, metallic,
-// roughness, emissive, alpha) + Phase 2 textures (base color, emissive, normal,
-// metal/rough). GeomSubset per-face materials and skinning remain follow-ups.
+// return its index (>=1). Bakes PBR constants and independent base-color,
+// metallic, roughness, emissive, normal, and opacity texture semantics.
 // Reuses tusdview's own BakeLightRtOpenPBR so the --next path shades materials
 // through the same path the legacy loader uses. Returns -1 if the prim has no
 // usable surface shader (caller then keeps the default gray material, index 0).
@@ -2249,9 +2248,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
           dm.normalSample.bias[2] = -1.0f;
     }
   };
-  // Pack metallic/roughness into the single metalRough slot. Roughness wins the
-  // slot; a separate metallic texture is approximated onto the same slot (a
-  // known Phase-2 limitation for non-packed ORM inputs).
+  // Metallic and roughness are independent slots. Packed ORM inputs naturally
+  // alias the same DrawTextureCPU while retaining their channel and UV metadata.
   auto loadMetalRough = [&](const tydn::ShaderParam& metallic,
                             const tydn::ShaderParam& roughness) {
     // Per-channel value scale/bias for a scalar texture: the sampled channel's
@@ -2262,14 +2260,14 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     if (roughness.texture_id >= 0) {
       int t = LoadNextTexture(texCache, draw, scratch, roughness.texture_id, false);
       if (t >= 0) {
-        dm.metalRoughTex = t;
+        dm.roughnessTex = t;
         dm.roughness = 1.0f;
         const tydn::RenderTexture& rt =
             scratch.textures[static_cast<size_t>(roughness.texture_id)];
         dm.roughnessChannel = NextScalarChannel(rt.output_channel);
         channelScaleBias(rt, dm.roughnessChannel, &dm.roughnessTexScale,
                          &dm.roughnessTexBias);
-        FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
+        FillNextSample(rt, &dm.roughnessSample, uv0Name, uv1Name);
       }
     }
     if (metallic.texture_id >= 0) {
@@ -2277,10 +2275,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
       if (t >= 0) {
         const tydn::RenderTexture& rt =
             scratch.textures[static_cast<size_t>(metallic.texture_id)];
-        if (dm.metalRoughTex < 0) {
-          dm.metalRoughTex = t;
-          FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
-        }
+        dm.metallicTex = t;
+        FillNextSample(rt, &dm.metallicSample, uv0Name, uv1Name);
         dm.metallic = 1.0f;
         dm.metallicChannel = NextScalarChannel(rt.output_channel);
         channelScaleBias(rt, dm.metallicChannel, &dm.metallicTexScale,
@@ -3871,6 +3867,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     std::string purpose;
     std::string materialPath;
     double world[16];
+    bool deferredProxy{false};
   };
   std::vector<PendingMeshPrim> meshPrims;
   {
@@ -3885,6 +3882,23 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         std::memcpy(pending.world, rec.world, sizeof(pending.world));
         meshPrims.push_back(std::move(pending));
       }
+    }
+    // Deferred payloads have no composed descendants yet. Emit one bounded
+    // marker per payload root so the first frame communicates that content is
+    // intentionally unloaded (and so an otherwise payload-only stage remains
+    // renderable until the user requests materialization).
+    for (const tnext::Path& deferred : deferredPayloads) {
+      const std::string deferredPath = deferred.str();
+      if (consumed.count(deferredPath)) continue;
+      tnext::UsdPrim prim = stage.GetPrimAtPath(deferred);
+      if (!prim.IsValid()) continue;
+      PendingMeshPrim pending;
+      pending.prim = prim;
+      pending.path = deferredPath;
+      pending.purpose = "proxy";
+      pending.deferredProxy = true;
+      tydn::ComputeWorldTransform(stage, prim, pending.world, time);
+      meshPrims.push_back(std::move(pending));
     }
     // Native-instance and extraction-only records are no longer needed. Drop
     // their backing vectors before geometry conversion starts competing for the
@@ -3910,12 +3924,6 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       ctrl->meshesTotal.store(static_cast<long long>(meshPrims.size()));
       ctrl->meshesDone.store(0);
     }
-    // Do not invent extent boxes for unloaded payloads. Under USD semantics an
-    // unloaded payload contributes no geometry; an asset that wants a cheap
-    // stand-in authors purpose="proxy" geometry outside that payload. The
-    // previous synthetic placeholders turned payload-heavy scenes into cube
-    // clouds and made the purpose controls ineffective because the boxes were
-    // all classified as default-purpose geometry.
   }
   const size_t pendingMeshCount = meshPrims.size();
   const auto collectMeshesAt = std::chrono::steady_clock::now();
@@ -4044,7 +4052,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   convertThreads = std::min<unsigned>(
       convertThreads, static_cast<unsigned>(meshPrims.size()));
   const bool parallelConvert =
-      estimatesFit && convertThreads > 1 && meshPrims.size() >= 16;
+      deferredPayloads.empty() && estimatesFit && convertThreads > 1 &&
+      meshPrims.size() >= 16;
   struct ConvertedMesh {
     tydn::RenderMesh mesh;
     DrawMeshCPU draw;
@@ -4148,7 +4157,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
 
     const size_t geometryBytesForMesh = geometryBytes[meshIndex];
-    const bool overGeometryBudget =
+    const bool overGeometryBudget = !pending.deferredProxy &&
         opts.gpuGeometryBudgetBytes > 0 &&
         (admittedGeometryBytes >= opts.gpuGeometryBudgetBytes ||
          geometryBytesForMesh >
@@ -4212,10 +4221,25 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       vertexToPoint = std::move(converted[meshIndex]->vertexToPoint);
       worldBaked = converted[meshIndex]->worldBaked;
       converted[meshIndex].reset();
-    } else if (!conv.ConvertRenderableMesh(stage, mp, &m)) {
-      releasePendingPrim(&meshRecord.prim);
-      continue;
-    } else if (!FillFlatGeometry(m, &loc, &vertexToPoint)) {
+    } else {
+      bool convertedMesh = false;
+      if (meshRecord.deferredProxy) {
+        convertedMesh = conv.ConvertExtentProxy(mp, &m);
+        if (!convertedMesh) {
+          convertedMesh = conv.ConvertBoundsProxy(
+              mp, tydn::Float3(-1.0f, -1.0f, -1.0f),
+              tydn::Float3(1.0f, 1.0f, 1.0f), &m);
+        }
+        if (convertedMesh) draw->truncated = true;
+      } else {
+        convertedMesh = conv.ConvertRenderableMesh(stage, mp, &m);
+      }
+      if (!convertedMesh || !FillFlatGeometry(m, &loc, &vertexToPoint)) {
+        releasePendingPrim(&meshRecord.prim);
+        continue;
+      }
+    }
+    if (loc.vertices.empty()) {
       releasePendingPrim(&meshRecord.prim);
       continue;
     }
@@ -4788,7 +4812,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
          static_cast<unsigned long long>(dec.downscaled_count()));
   }
 
-  if (streamedMeshCount + draw->meshes.size() == 0 && draw->volumes.empty()) {
+  // A stage whose only renderable content lives below a deferred payload is a
+  // valid initial composition. Keep its session alive so MCP/UI payload loading
+  // can recompose it on demand; only reject truly empty, non-deferred stages.
+  if (streamedMeshCount + draw->meshes.size() == 0 && draw->volumes.empty() &&
+      deferredPayloads.empty()) {
     if (err) *err = "next: no renderable mesh produced";
     if (stream) stream->pushFailed(err ? *err : "next: no renderable mesh produced");
     return false;

@@ -11,27 +11,29 @@ layout(location = 7) in vec4 vColor;          // displayColor.rgb + displayOpaci
 
 // Base-color texture (white 1x1 when the material is untextured).
 layout(set = 0, binding = 0) uniform sampler2D uBaseColorTex;
-layout(set = 10, binding = 0) uniform sampler2D uMetalRoughTex;
-layout(set = 11, binding = 0) uniform sampler2D uEmissiveTex;
-layout(set = 12, binding = 0) uniform sampler2D uNormalTex;
-layout(set = 13, binding = 0) uniform sampler2DArray uBaseColorUdimTex;
-layout(set = 14, binding = 0) uniform sampler2D uUdimLutAtlas;
-layout(set = 15, binding = 0) uniform sampler2DArray uMetalRoughUdimTex;
-layout(set = 16, binding = 0) uniform sampler2DArray uNormalUdimTex;
-layout(set = 17, binding = 0) uniform sampler2DArray uEmissiveUdimTex;
-layout(set = 18, binding = 0) uniform sampler2D uOpacityTex;
-layout(set = 19, binding = 0) uniform sampler2DArray uOpacityUdimTex;
+layout(set = 0, binding = 1) uniform sampler2D uMetallicTex;
+layout(set = 0, binding = 2) uniform sampler2D uEmissiveTex;
+layout(set = 0, binding = 3) uniform sampler2D uNormalTex;
+layout(set = 0, binding = 4) uniform sampler2DArray uBaseColorUdimTex;
+layout(set = 0, binding = 5) uniform sampler2D uUdimLutAtlas;
+layout(set = 0, binding = 6) uniform sampler2DArray uMetallicUdimTex;
+layout(set = 0, binding = 7) uniform sampler2DArray uNormalUdimTex;
+layout(set = 0, binding = 8) uniform sampler2DArray uEmissiveUdimTex;
+layout(set = 0, binding = 9) uniform sampler2D uOpacityTex;
+layout(set = 0, binding = 10) uniform sampler2DArray uOpacityUdimTex;
+layout(set = 0, binding = 11) uniform sampler2D uRoughnessTex;
 // DomeLight split-sum IBL (1x1 black fallbacks when no dome is baked).
-layout(set = 21, binding = 0) uniform samplerCube uIrradianceMap;
-layout(set = 22, binding = 0) uniform samplerCube uPrefilteredMap;
-layout(set = 23, binding = 0) uniform sampler2D uBrdfLut;
+layout(set = 0, binding = 12) uniform samplerCube uIrradianceMap;
+layout(set = 0, binding = 13) uniform samplerCube uPrefilteredMap;
+layout(set = 0, binding = 14) uniform sampler2D uBrdfLut;
+layout(set = 0, binding = 15) uniform sampler2DArray uRoughnessUdimTex;
 // Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
 // first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
-layout(set = 3, binding = 0, std430) readonly buffer Faces { uint faceId[]; };
+layout(set = 1, binding = 6, std430) readonly buffer Faces { uint faceId[]; };
 
 // Frame-constant UBO (set 5): camera + scene bbox + renderMode (shared with the
 // vertex/tess stages). Per-draw material/ids come from the push block below.
-layout(set = 5, binding = 0) uniform Frame {
+layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;
   vec4 camPos;        // .xyz camera, .w depth normalizer
@@ -68,8 +70,9 @@ struct MaterialTexParam {
   vec4 opacityParams; // channel, scale, bias, uvSet
   vec4 udimSlots0;    // base, metal/rough, normal, emissive atlas rows
   vec4 udimSlots1;    // x = opacity atlas row
+  vec4 roughUv0; vec4 roughUv1; // roughUv0.w = UV-set selector
 };
-layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
+layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
 layout(push_constant) uniform PushConstants {
   mat4 model;
@@ -160,14 +163,24 @@ vec4 sampleBaseColor(vec2 uv) {
   return c * m.baseScale + m.baseBias;
 }
 
-vec4 sampleMetalRough(vec2 uv) {
+vec4 sampleMetallic(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.y > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.mrUv0, m.mrUv1);
   return ((pc.ids.w & 2) != 0)
-      ? sampleUdim(uMetalRoughUdimTex, int(m.udimSlots0.y + 0.5), tuv,
+      ? sampleUdim(uMetallicUdimTex, int(m.udimSlots0.y + 0.5), tuv,
                    vec4(1.0, 0.0, 1.0, 1.0))
-      : texture(uMetalRoughTex, tuv);
+      : texture(uMetallicTex, tuv);
+}
+
+vec4 sampleRoughness(vec2 uv) {
+  MaterialTexParam m = matTexParam();
+  vec2 suv = (m.roughUv0.w > 0.5) ? vUV1 : uv;
+  vec2 tuv = xformUv(suv, m.roughUv0, m.roughUv1);
+  return ((pc.ids.w & 512) != 0)
+      ? sampleUdim(uRoughnessUdimTex, int(m.udimSlots1.y + 0.5), tuv,
+                   vec4(1.0))
+      : texture(uRoughnessTex, tuv);
 }
 
 vec4 sampleNormal(vec2 uv) {
@@ -209,10 +222,17 @@ vec3 applyNormalMap(vec3 n) {
     return n;
   }
 
+  // Build the tangent frame from the exact coordinates used for the normal
+  // sample. Using raw vUV here makes UV1-routed or transformed normal maps
+  // fetch the right texel but interpret its tangent-space vector in the wrong
+  // basis (GL and the software RT path already use the transformed UVs).
+  MaterialTexParam m = matTexParam();
+  vec2 sourceUv = (m.uvSets.z > 0.5) ? vUV1 : vUV;
+  vec2 normalUv = xformUv(sourceUv, m.normalUv0, m.normalUv1);
   vec3 dp1 = dFdx(vWorldPos);
   vec3 dp2 = dFdy(vWorldPos);
-  vec2 du1 = dFdx(vUV);
-  vec2 du2 = dFdy(vUV);
+  vec2 du1 = dFdx(normalUv);
+  vec2 du2 = dFdy(normalUv);
   float r = du1.x * du2.y - du2.x * du1.y;
   vec3 t = dp1 * du2.y - dp2 * du1.y;
   t = (abs(r) > 1e-8) ? t / r : dp1;
@@ -256,14 +276,14 @@ void main() {
     }
     if (fr.mode.x == 9) {
       MaterialTexParam m = matTexParam();
-      vec4 mr = sampleMetalRough(vUV);
-      outColor = vec4(vec3(pc.matAux.y * (channelOf(mr, m.scalar0.y) * m.scalar1.x + m.scalar1.y)), 1.0);
+      vec4 rt = sampleRoughness(vUV);
+      outColor = vec4(vec3(pc.matAux.y * (channelOf(rt, m.scalar0.y) * m.scalar1.x + m.scalar1.y)), 1.0);
       return;
     }
     if (fr.mode.x == 10) {
       MaterialTexParam m = matTexParam();
-      vec4 mr = sampleMetalRough(vUV);
-      outColor = vec4(vec3(pc.matAux.x * (channelOf(mr, m.scalar0.x) * m.scalar0.z + m.scalar0.w)), 1.0);
+      vec4 mt = sampleMetallic(vUV);
+      outColor = vec4(vec3(pc.matAux.x * (channelOf(mt, m.scalar0.x) * m.scalar0.z + m.scalar0.w)), 1.0);
       return;
     }
     if (fr.mode.x == 11) {                                                            // emissive
@@ -367,9 +387,10 @@ void main() {
   // vColor does the same in material.cpp). White when the mesh has none.
   vec3 base = pc.baseColor.rgb * vColor.rgb * baseSample.rgb;
   MaterialTexParam m = matTexParam();
-  vec4 mr = sampleMetalRough(vUV);
-  float metallic = pc.matAux.x * (channelOf(mr, m.scalar0.x) * m.scalar0.z + m.scalar0.w);
-  float roughness = pc.matAux.y * (channelOf(mr, m.scalar0.y) * m.scalar1.x + m.scalar1.y);
+  vec4 mt = sampleMetallic(vUV);
+  vec4 rt = sampleRoughness(vUV);
+  float metallic = pc.matAux.x * (channelOf(mt, m.scalar0.x) * m.scalar0.z + m.scalar0.w);
+  float roughness = pc.matAux.y * (channelOf(rt, m.scalar0.y) * m.scalar1.x + m.scalar1.y);
   vec3 emissive = pc.emissive.xyz * sampleEmissive(vUV).rgb;
   vec3 V = normalize(fr.camPos.xyz - vWorldPos);
 

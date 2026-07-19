@@ -1505,6 +1505,9 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
   prev.composed = true;
   prev.rootLayer = loaded_.comp.rootLayer;
   prev.searchPaths = loaded_.comp.searchPaths;
+  // Package-internal payloads resolve through this retained archive. Keep the
+  // shared backing alive across the worker handoff just like rootLayer.
+  prev.usdzAsset = loaded_.comp.usdzAsset;
   LoadOptions opts = loadOpts_;
   opts.gpuSkinning = wantsNextGpuSkinning();
   opts.payloadPolicy = PayloadPolicy::Whitelist;

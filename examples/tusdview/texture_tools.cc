@@ -732,6 +732,19 @@ bool TexToolsCompress(const light3d::Image&, bool, DrawCompressedFormat,
   return false;
 }
 
+bool TexToolsAdaptCompressed(const uint8_t*, size_t, bool,
+                             DrawCompressedFormat, uint32_t, uint32_t,
+                             const TextureCompressCaps&,
+                             DrawCompressedImageCPU*, light3d::Image*) {
+  return false;
+}
+
+bool TexToolsAdaptCompressedLevel(const uint8_t*, size_t, bool,
+                                  DrawCompressedFormat, DrawCompressedFormat,
+                                  uint32_t, uint32_t, std::vector<uint8_t>*) {
+  return false;
+}
+
 bool TexToolsBuildMips(const light3d::Image&, const TexUsage&,
                        std::vector<light3d::Image>*) {
   return false;

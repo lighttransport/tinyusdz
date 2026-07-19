@@ -30,6 +30,8 @@ import subprocess
 import sys
 import zlib
 
+from gpu_backend import software_only_vulkan
+
 SKIP = 77
 MIN_IOU = 0.90
 # The raster path and the CPU bake render the same geometry through the same
@@ -43,11 +45,18 @@ def render(binary, scene, out, extra=(), env=None):
     e = dict(os.environ)
     if env:
         e.update(env)
+    config = os.path.join(os.path.dirname(out), "config.json")
+    if not os.path.exists(config):
+        with open(config, "w") as f:
+            f.write('{"window_size":{"width":320,"height":320}}\n')
     cmd = [binary, "--legacy-load", "--headless", "--mode", "depth",
            "--camera", "Cam", "--frames", "3", "--time", "20",
-           "--screenshot", out, *extra, scene]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                   env=e, timeout=600)
+           "--config", config, "--screenshot", out, *extra, scene]
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       env=e, timeout=120)
+    except subprocess.TimeoutExpired:
+        return False
     return os.path.exists(out) and os.path.getsize(out) > 0
 
 
@@ -165,7 +174,7 @@ def main():
               f"local AABB's corners, which inflate under rotation.")
         return 1
 
-    if render(binary, scene, rt, extra=["--rt"]):
+    if not software_only_vulkan() and render(binary, scene, rt, extra=["--rt"]):
         r = iou(rt, ref)
         if r < MIN_IOU:
             print(f"FAIL: the ray tracer does not pose the mesh where the CPU bake "

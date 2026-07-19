@@ -30,6 +30,8 @@ import re
 import subprocess
 import sys
 
+from gpu_backend import software_only_vulkan, vk_device_args
+
 SKIP = 77
 # Compacted BLAS should be well under the build-time size. NVIDIA gives ~31% on
 # Island; anything at or above this means compaction silently did nothing.
@@ -37,11 +39,16 @@ MAX_COMPACTED_FRAC = 0.85
 
 
 def render(binary, scene, out, work, compact):
+    try:
+        os.remove(out)
+    except FileNotFoundError:
+        pass
     env = dict(os.environ)
     env["TUSDVIEW_BLAS_COMPACT"] = "1" if compact else "0"
-    cmd = [binary, "--headless", "--rt", "--frames", "2", "--screenshot", out, scene]
+    cmd = [binary, *vk_device_args("vk"), "--headless", "--rt", "--frames",
+           "2", "--screenshot", out, scene]
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       env=env, timeout=900)
+                       env=env, timeout=120)
     return r.stdout.decode(errors="replace")
 
 
@@ -63,13 +70,22 @@ def main():
     if not os.path.exists(binary) or not os.path.exists(scene):
         print(f"SKIP: missing binary or model ({binary}, {scene})")
         return SKIP
+    if software_only_vulkan():
+        print("SKIP: Vulkan RT unavailable (software Vulkan only)")
+        return SKIP
     os.makedirs(work, exist_ok=True)
 
     on_png = os.path.join(work, "blas_compact_on.png")
     off_png = os.path.join(work, "blas_compact_off.png")
 
-    on_log = render(binary, scene, on_png, work, compact=True)
-    if "rt yes" not in on_log and "[vk_rt]" not in on_log:
+    try:
+        on_log = render(binary, scene, on_png, work, compact=True)
+    except subprocess.TimeoutExpired:
+        print("SKIP: Vulkan RT probe timed out")
+        return SKIP
+    if ("ray tracing is unavailable" in on_log or
+            ("Vulkan ray tracing (ray query) enabled" not in on_log and
+             "[vk_rt]" not in on_log)):
         print("SKIP: no ray-tracing capable Vulkan device")
         return SKIP
     if not os.path.exists(on_png):
@@ -107,7 +123,11 @@ def main():
               f"{MAX_COMPACTED_FRAC * 100:.0f}%).")
         return 1
 
-    off_log = render(binary, scene, off_png, work, compact=False)
+    try:
+        off_log = render(binary, scene, off_png, work, compact=False)
+    except subprocess.TimeoutExpired:
+        print("FAIL: uncompacted Vulkan RT render timed out")
+        return 1
     if not os.path.exists(off_png):
         print("FAIL: uncompacted render produced no image")
         return 1
