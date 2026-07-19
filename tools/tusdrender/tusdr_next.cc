@@ -1613,6 +1613,21 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
   // constants/textures around the unsupported node. Consume it here instead of
   // discarding those values and switching to the hand-rolled legacy resolver.
   if (degraded) *degraded = rm.default_fallback;
+  for (const auto &diagnostic : rm.diagnostics) {
+    using Kind = tinyusdz::tydra::next::MaterialDiagnosticKind;
+    if (diagnostic.kind == Kind::UnsupportedMaterialXNode &&
+        tc.unsupported_mtlx) {
+      ++(*tc.unsupported_mtlx);
+    }
+    if (tc.material_diagnostic_examples &&
+        tc.material_diagnostic_examples->size() < 8) {
+      std::string example = diagnostic.material_path;
+      if (!diagnostic.node_path.empty()) example += " node=" + diagnostic.node_path;
+      if (!diagnostic.shader_id.empty()) example += " id=" + diagnostic.shader_id;
+      example += " " + diagnostic.message;
+      tc.material_diagnostic_examples->push_back(std::move(example));
+    }
+  }
 
   using NextMat = tinyusdz::tydra::next::RenderMaterial;
   if (rm.shader_type == NextMat::ShaderType::PreviewSurface &&
@@ -3793,6 +3808,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       tc.usdz = usdz_ptr;
       tc.options = &opt;
       tc.degraded_materials = &ctx.stats.degraded_materials;
+      tc.unsupported_mtlx = &ctx.stats.unsupported_mtlx;
+      tc.material_diagnostic_examples = &ctx.stats.material_diagnostic_examples;
       tc.missing_textures = &ctx.stats.missing_textures;
       std::unordered_map<std::string, ResolvedMat> mat_cache;
       // Per-face GeomSubset materials: split subset-bound meshes into one job
@@ -3897,6 +3914,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     tc.usdz = usdz_ptr;
     tc.options = &opt;
     tc.degraded_materials = &ctx.stats.degraded_materials;
+    tc.unsupported_mtlx = &ctx.stats.unsupported_mtlx;
+    tc.material_diagnostic_examples = &ctx.stats.material_diagnostic_examples;
     tc.missing_textures = &ctx.stats.missing_textures;
     std::unordered_map<std::string, ResolvedMat> mat_cache;
     // Per-face GeomSubset materials: split subset-bound meshes (base and
@@ -5188,18 +5207,22 @@ std::string SubstituteFrame(const std::string &path, long frame) {
 // Structured, greppable end-of-load diagnostic summary, mirroring tusdview's
 // `load summary:` line so both tools feed the usd-assets smoke harness the same
 // way. Printed unconditionally (independent of -stats) when there is something
-// actionable to report. unsupported_mtlx is not tracked by the next loader yet;
-// degraded_materials tracks unsupported surfaces rendered through the shared
+// actionable to report. degraded_materials tracks unsupported surfaces rendered through the shared
 // resolver's per-material degraded PreviewSurface; missing_textures / skipped
 // are real counts.
 static void PrintLoadSummaryNext(const RenderContext &ctx) {
   const size_t degraded = ctx.stats.degraded_materials;
+  const size_t unsupported_mtlx = ctx.stats.unsupported_mtlx;
   const size_t missing = ctx.stats.missing_textures;
   const size_t skipped = ctx.stats.skipped_meshes;
-  if (degraded + missing + skipped == 0) return;
+  if (degraded + missing + unsupported_mtlx + skipped == 0) return;
   std::cerr << "load summary: degraded_materials=" << degraded
             << " missing_textures=" << missing
-            << " unsupported_mtlx=0 skipped=" << skipped << " other=0\n";
+            << " unsupported_mtlx=" << unsupported_mtlx
+            << " skipped=" << skipped << " other=0\n";
+  for (const std::string &example : ctx.stats.material_diagnostic_examples) {
+    std::cerr << "material diagnostic: " << example << "\n";
+  }
 }
 
 int RunRTPreviewNext(const Options &opt) {

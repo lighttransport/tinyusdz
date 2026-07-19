@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <map>
@@ -212,8 +213,11 @@ int main(int argc, char** argv) {
   bool threaded = false;      // --threaded: experimental render-thread GL path
   bool useNextLoader = true;              // next-core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
+  bool showGrid = true;                    // --no-grid: deterministic clean capture
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--next)
+  bool viewDirExplicit = false;              // --view-dir: deterministic auto-fit view
+  float viewDir[3] = {0.0f, 0.0f, -1.0f};   // normalized eye-to-target direction
   bool noComposition = false;             // --no-composition: root layer only
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
@@ -351,10 +355,33 @@ int main(int argc, char** argv) {
       useNextExplicit = true;
     } else if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
+    } else if (std::strcmp(argv[i], "--no-grid") == 0) {
+      showGrid = false;
     } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
       camDolly = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
       cameraName = argv[++i];
+    } else if (std::strcmp(argv[i], "--view-dir") == 0 && (i + 1) < argc) {
+      char trailing = '\0';
+      const char* value = argv[++i];
+      if (std::sscanf(value, "%f,%f,%f%c", &viewDir[0], &viewDir[1],
+                      &viewDir[2], &trailing) != 3 ||
+          !std::isfinite(viewDir[0]) || !std::isfinite(viewDir[1]) ||
+          !std::isfinite(viewDir[2])) {
+        LOGE("--view-dir requires three finite comma-separated values: X,Y,Z");
+        return 1;
+      }
+      const float len = std::sqrt(viewDir[0] * viewDir[0] +
+                                  viewDir[1] * viewDir[1] +
+                                  viewDir[2] * viewDir[2]);
+      if (!(len > 1e-6f)) {
+        LOGE("--view-dir must be non-zero");
+        return 1;
+      }
+      viewDir[0] /= len;
+      viewDir[1] /= len;
+      viewDir[2] /= len;
+      viewDirExplicit = true;
     } else if (std::strcmp(argv[i], "--no-composition") == 0) {
       noComposition = true;
     } else if (std::strcmp(argv[i], "--defer-payloads") == 0) {
@@ -631,10 +658,13 @@ int main(int argc, char** argv) {
           "(0 = auto, 50%%).\n"
           "  --camera NAME Frame a named USD Camera instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
+          "  --view-dir X,Y,Z  Set the normalized world-space eye-to-target "
+          "direction after auto-fit; cannot be combined with --camera.\n"
           "  --select /Prim/Path  Select a prim after loading.\n"
           "  --cam-dolly D  Apply a startup dolly offset to the framed camera.\n"
           "  --no-cull / --no-robust-frame  Disable frustum culling or robust "
           "outlier-resistant auto framing.\n"
+          "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
           "  --dome-ibl off|fast|quality  Control DomeLight IBL precomputation.\n"
           "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
           "Vulkan realtime preset for public large scenes. Profiles set existing "
@@ -738,6 +768,11 @@ int main(int argc, char** argv) {
     } else if (argv[i][0] != '-') {
       file = argv[i];
     }
+  }
+
+  if (viewDirExplicit && !cameraName.empty()) {
+    LOGE("--view-dir cannot be combined with --camera");
+    return 1;
   }
 
   if (quitAfterFullUpload && maxFrames >= 0) {
@@ -846,6 +881,11 @@ int main(int argc, char** argv) {
     backendExplicit = true;
   }
   // Windowless rendering is a Vulkan-only path (GL needs a window/context).
+  if (viewDirExplicit && !cameraName.empty()) {
+    LOGE("--view-dir cannot be combined with the selected --camera/profile camera");
+    return 1;
+  }
+
   if (headless) {
     backend = tusdview::Backend::Vulkan;
     backendExplicit = true;
@@ -1027,6 +1067,7 @@ int main(int argc, char** argv) {
   }
   app.setUseNextLoader(useNextLoader);
   app.setCullEnabled(!noCull);
+  app.setShowGrid(showGrid);
   app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
@@ -1051,6 +1092,7 @@ int main(int argc, char** argv) {
   app.setLodMaxMemGiB(lodMaxMem);
   app.setLodMaxVramGiB(lodMaxVram);
   app.setCameraName(cameraName);
+  if (viewDirExplicit) app.setViewDirection(viewDir[0], viewDir[1], viewDir[2]);
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);
   if (wantMode) app.setRenderMode(*wantMode);

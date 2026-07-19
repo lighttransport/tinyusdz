@@ -50,10 +50,10 @@ MCPServer::~MCPServer() { stop(); }
 
 json MCPServer::buildToolsList() const {
   json tools = json::array();
-  tools.push_back(tool("load_usd", "Load a USD file (.usd/.usda/.usdc/.usdz) into "
+  tools.push_back(tool("load_usd", "Load a USD path or inline USDA text into "
                                    "the viewer (async; poll get_scene_info).",
-                       {{"path", strProp("Path to the USD file")}},
-                       json::array({"path"})));
+                       {{"path", strProp("Path to a USD file")},
+                        {"usda", strProp("Inline USDA text (maximum 16 MiB)")}}));
   tools.push_back(tool("get_scene_info",
                        "Get the loaded scene: filepath, mesh/triangle counts, up "
                        "axis, and the world-space bounding box.",
@@ -121,6 +121,11 @@ json MCPServer::buildToolsList() const {
       "skinning",
       "Query or set the viewer skinning mode. Omit mode to query; mode=auto|cpu|gpu.",
       {{"mode", strProp("auto | cpu | gpu")}}));
+  tools.push_back(tool(
+      "render_settings",
+      "Query or set resettable per-capture options without restarting tusdview.",
+      {{"mode", strProp("shaded | wireframe | normals | material-id | geom-normal | uv | depth | albedo | facing | roughness | metallic | emissive | opacity")},
+       {"grid", {{"type", "boolean"}, {"description", "show the ground grid"}}}}));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
@@ -250,6 +255,8 @@ void MCPServer::drain() {
         payload = host_->mcpTimeline(cmd->args, err);
       } else if (t == "skinning") {
         payload = host_->mcpSkinning(cmd->args, err);
+      } else if (t == "render_settings") {
+        payload = host_->mcpRenderSettings(cmd->args, err);
       } else {
         // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.
         payload = host_->mcpCallLibraryTool(t, cmd->args, err);

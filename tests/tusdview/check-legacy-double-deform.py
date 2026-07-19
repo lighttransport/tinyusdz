@@ -14,10 +14,10 @@ joint bend came out as 120 degrees.
 Asserted on a fixture whose SkelRoot is rotated and non-uniformly scaled (the case
 that makes a double deform unmistakable rather than a subtle overshoot): the default
 raster path and the ray tracer must both land where the CPU bake lands. Compared as
-a silhouette of the MESH ITSELF in `--mode depth` through a fixed USD camera --
-depth is geometry-only, the camera removes auto-framing, and masking on the near
-(dark) depths ignores the ground grid, which is drawn from scene bounds and so moves
-on its own.
+a silhouette of the MESH ITSELF in `--mode depth` through a fixed USD camera with
+`--no-grid`: depth is geometry-only, the camera removes auto-framing, and disabling
+the raster grid prevents it from overwriting the composited RT image (the RT pass
+does not populate the raster depth attachment).
 
 Before the fix the cube silhouettes overlapped 0.43 (raster) and 0.42 (RT) against
 the bake; after, 0.96 and 0.92.
@@ -50,7 +50,7 @@ def render(binary, scene, out, extra=(), env=None):
         with open(config, "w") as f:
             f.write('{"window_size":{"width":320,"height":320}}\n')
     cmd = [binary, "--legacy-load", "--headless", "--mode", "depth",
-           "--camera", "Cam", "--frames", "3", "--time", "20",
+           "--camera", "Cam", "--no-grid", "--frames", "3", "--time", "20",
            "--config", config, "--screenshot", out, *extra, scene]
     try:
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

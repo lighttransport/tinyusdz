@@ -5840,6 +5840,15 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
         // newer MaterialX nodes often retain familiar PBR input names even
         // when their full implementation cannot be evaluated.
         degraded_candidates.push_back(child);
+        MaterialDiagnostic diagnostic;
+        diagnostic.kind = shader_id.rfind("ND_", 0) == 0
+                              ? MaterialDiagnosticKind::UnsupportedMaterialXNode
+                              : MaterialDiagnosticKind::UnsupportedShader;
+        diagnostic.material_path = out->prim_path;
+        diagnostic.node_path = child.GetPath().str();
+        diagnostic.shader_id = shader_id;
+        diagnostic.message = "unsupported surface shader";
+        out->diagnostics.push_back(std::move(diagnostic));
       }
     }
   }
@@ -5961,6 +5970,19 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
         "' has no fully convertible surface shader; using a degraded material "
         "with " + std::to_string(recovered_count) +
         " recovered input(s).");
+    MaterialDiagnostic diagnostic;
+    diagnostic.kind = MaterialDiagnosticKind::DegradedMaterial;
+    diagnostic.material_path = out->prim_path;
+    diagnostic.node_path = degraded_candidates.empty()
+                               ? std::string()
+                               : degraded_candidates.front().GetPath().str();
+    if (!degraded_candidates.empty()) {
+      GetToken(degraded_candidates.front(), "info:id", &diagnostic.shader_id);
+    }
+    diagnostic.message = "using degraded material with " +
+                         std::to_string(recovered_count) +
+                         " recovered input(s)";
+    out->diagnostics.push_back(std::move(diagnostic));
     found_shader = true;
   }
 

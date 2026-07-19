@@ -2871,7 +2871,8 @@ LoadDiagnostics CategorizeLoadWarnings(
         contains(l, "using degraded material") ||
         contains(l, "Material conversion failed")) {
       bucket = &d.degraded_material;
-    } else if (contains(l, "Unsupported node type")) {
+    } else if (contains(l, "Unsupported node type") ||
+               contains(l, "unsupported MaterialX node")) {
       bucket = &d.unsupported_mtlx;
     } else if (contains(l, "failed to load texture") ||
                contains(l, "Failed to load texture") ||
@@ -2893,6 +2894,8 @@ LoadDiagnostics CategorizeLoadWarnings(
         contains(s, "using degraded material") ||
         contains(s, "Material conversion failed")) {
       ++d.degraded_material;
+    } else if (contains(s, "unsupported MaterialX node")) {
+      ++d.unsupported_mtlx;
     } else {
       ++d.skipped;
     }

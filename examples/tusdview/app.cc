@@ -349,6 +349,12 @@ App::~App() {
   if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
   if (window_) glfwDestroyWindow(window_);
   glfwTerminate();
+#if defined(TUSDVIEW_HAVE_MCP)
+  for (const std::filesystem::path& path : mcpTempFiles_) {
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+  }
+#endif
 }
 
 void App::autoDetectUiScale() {
@@ -977,6 +983,20 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
         fitMax = robustBoundsMax_;
       }
       camera_.fitToScene(fitMin, fitMax);
+      if (viewDirExplicit_) {
+        // OrbitCamera stores target-to-eye, the opposite of --view-dir's
+        // conventional eye-to-target direction.
+        const float dir[3] = {-viewDir_[0], -viewDir_[1], -viewDir_[2]};
+        float yaw, pitch;
+        if (upAxis == 2) {
+          pitch = std::asin(std::clamp(dir[2], -1.0f, 1.0f));
+          yaw = std::atan2(dir[0], dir[1]);
+        } else {
+          pitch = std::asin(std::clamp(dir[1], -1.0f, 1.0f));
+          yaw = std::atan2(dir[0], dir[2]);
+        }
+        camera_.setOrbit(camera_.target(), yaw, pitch, camera_.distance());
+      }
       // --cam-dolly: scale the fitted distance (<1 zooms in past the framing so
       // peripheral geometry leaves the frustum -- exercises culling headlessly).
       if (camDolly_ > 0.0f && camDolly_ != 1.0f) {
@@ -1375,9 +1395,15 @@ void App::startLoadAsync(const std::string& path) {
     opts.textureOptions.caps.bc5 = rc.supportsBC5;
     opts.textureOptions.caps.bc6h = rc.supportsBC6H;
   }
-  if (std::isfinite(opts.timecode) && skinningRequested_ == SkinningMode::GPU) {
+  const double requestedTime = opts.timecode;
+  const bool gpuRestLoad = std::isfinite(requestedTime) && wantsGpuSkinningLoad();
+  if (gpuRestLoad) {
     opts.timecode = std::numeric_limits<double>::quiet_NaN();
   }
+  const bool rendererGpuSkinning =
+      renderer_ && renderer_->caps().supportsGpuSkinning;
+  const bool rendererExtendedGpuSkinning =
+      renderer_ && renderer_->caps().supportsExtendedGpuSkinning;
   const bool useNext = useNextLoader_;
   bool renderThreadOwnsContext = false;
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
@@ -1427,7 +1453,9 @@ void App::startLoadAsync(const std::string& path) {
       camDolly_,
       std::max(1, autoH)};
   loadThread_ = std::thread([this, path, opts, lp, dp, rt, useNext, stream,
-                             autoSubdivView]() {
+                             autoSubdivView, requestedTime, gpuRestLoad,
+                             rendererGpuSkinning,
+                             rendererExtendedGpuSkinning]() {
     if (useNext) {
       lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_,
                               &pendingNextSession_, stream.get());
@@ -1449,6 +1477,32 @@ void App::startLoadAsync(const std::string& path) {
     } else {
       LoadUsdMaybeAutoSubdivision(path, opts, lp, dp, rt, &loadCtrl_,
                                   autoSubdivView);
+      if (lp->ok && gpuRestLoad) {
+        const bool skeletal = SceneHasSkeletalSkinning(lp->render);
+        const bool morph = SceneHasBlendShapes(lp->render);
+        const int maxInfluences = MaxSkinInfluenceCount(lp->render);
+        const bool gpuEligible =
+            rendererGpuSkinning && (skeletal || morph) &&
+            (!skeletal ||
+             (dp->boneMatrixCount > 0 &&
+              (maxInfluences <= 4 ||
+               (rendererExtendedGpuSkinning &&
+                maxInfluences <= kMaxGpuTextureInfluences))));
+        if (!gpuEligible) {
+          DrawScene cpuDraw;
+          std::string warning, error;
+          if (RenderSceneAtTime(*lp, requestedTime, rt, &cpuDraw, &warning,
+                                &error, &loadCtrl_)) {
+            cpuDraw.materials = dp->materials;
+            cpuDraw.textures = dp->textures;
+            *dp = std::move(cpuDraw);
+          } else {
+            lp->warn += warning;
+            lp->err = error;
+            lp->ok = false;
+          }
+        }
+      }
     }
     loadFinished_.store(true, std::memory_order_release);
   });
@@ -2602,9 +2656,12 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (maxFrames < 0 && streamHttpPort_ <= 0)
       maxFrames = 4;  // windowless runs are bounded by frame count
     // GLFW is never initialized in the headless path (no window, no surface).
-  } else if (!initWindow(&err)) {
-    LOGE("%s", err.c_str());
-    return 1;
+  } else {
+    if (!initWindow(&err)) {
+      LOGE("%s", err.c_str());
+      return 1;
+    }
+    ++windowGeneration_;
   }
 
   if (backend_ == Backend::GL) {
@@ -2619,6 +2676,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     LOGE("no renderer for requested backend");
     return 1;
   }
+  ++rendererGeneration_;
   renderer_->setDevicePreference(devicePreference_);
   if (headless_) renderer_->setHeadlessSize(winW, winH);
 

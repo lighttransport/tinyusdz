@@ -360,14 +360,16 @@ Tools (`tools/list` for schemas):
 
 | tool | does |
 |---|---|
-| `load_usd {path}` | load a USD file (async; poll `get_scene_info`) |
-| `get_scene_info` / `get_scene_bbox` | filepath, mesh/triangle/material counts, up axis, world-space AABB |
+| `load_usd {path}` / `load_usd {usda}` | load a USD path or inline USDA text (async; poll `get_scene_info`) |
+| `get_scene_info` / `get_scene_bbox` | loading state/path, scene generation, filepath, mesh/triangle/material counts, up axis, world-space AABB |
 | `get_focused_prim` | selected prim: path, vertex/triangle counts, bbox, world matrix, material (id/name/base color/metal/rough) |
 | `set_focus {path}` | select a prim by absolute path; returns the same info |
 | `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly`/`forward`/`backward {amount}`, `fit`, `home`, `isometric`, `front`, `back`, `right`, `left`, `top`, `bottom`, `bookmark_save {slot}`, `bookmark_load {slot}`, `set {target,yaw,pitch,distance}`; returns the camera state |
 | `list_prims {max?}` | renderable mesh prim paths |
 | `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
 | `timeline {op, time?}` | animation playback: `op` = `play`/`pause`/`stop`/`seek {time}`; async re-eval, poll `get_scene_info` (reports `has_animation`/`time`/`start_time`/`end_time`/`fps`/`playing`) |
+| `render_settings {mode?, grid?}` | change resettable render mode/grid state between captures without restarting the viewer |
+| `screenshot {path}` | capture the current viewport as PNG or PPM |
 
 Example:
 
@@ -389,6 +391,17 @@ main-thread-only), so they take effect on the next frame. The server is built by
 default (deps — `nlohmann/json` + civetweb — are vendored in `src/external`);
 disable with `-DTUSDVIEW_ENABLE_MCP=OFF`. The HTTP transport is the minimal
 "Streamable HTTP" subset (one JSON response per POST; no SSE).
+
+For render regressions, `tests/tusdview/mcp_render_batch.py` consumes a JSON
+manifest and keeps one tusdview process alive for all compatible cases. Each
+case may supply `path` or inline `usda`, expected scene-info fields,
+`render_settings`, a `viewport` operation, and a screenshot name. Backend,
+loader, RT implementation, startup environment, and other process-wide options
+belong in separate batches. The `tusdview-mcp-render-batch` CTest is the compact
+reference: it replaces three inline scenes and captures three render modes from
+one Vulkan process. `tusdview-mcp-render-batch-gl-window` runs the same cases
+through one real GLFW/OpenGL window under Xvfb. Both record the window and
+renderer generations and fail if either resource is recreated within a batch.
 
 ## Architecture
 

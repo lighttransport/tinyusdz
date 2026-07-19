@@ -68,6 +68,11 @@ if ! grep -Eq 'load summary:.*degraded_materials=[1-9]' "$LOG"; then
   echo "FAIL: degraded material was not reported in the load summary"
   exit 1
 fi
+if ! grep -Fq '/World/Mats/Broken/S' "$LOG" ||
+   ! grep -Fq 'SomeUnknownShaderType_xyz' "$LOG"; then
+  echo "FAIL: degraded-material diagnostic omitted its shader path or ID"
+  exit 1
+fi
 if grep -q 'using legacy resolver' "$LOG"; then
   echo "FAIL: degraded shared material was discarded for the legacy resolver"
   exit 1

@@ -17,9 +17,11 @@
 # --update-golden.
 #
 # Backends:
+#   gl-raster : tusdview --backend gl (X11/Xvfb)
 #   vk-raster : tusdview --headless --backend vk
 #   vk-rt     : tusdview --headless --backend vk --rt
 #   cuda-rt   : tusdview --headless --cuda
+#   hip-rt    : tusdview --headless --hip
 #   tusdr-cpu : tusdrender -rtPreview
 #   tusdr-vk  : tusdrender -vk
 #   tusdr-vkr : tusdrender -vkr
@@ -95,7 +97,7 @@ Options:
   --out DIR        Output dir (default: temporary dir)
   --limit N        Limit discovered USD files (default: all)
   --profile NAME   Asset profile when --files is omitted: all or usd-assets-curated
-  --modes LIST     Comma list: vk-raster,vk-rt,cuda-rt,tusdr-cpu,tusdr-vk,tusdr-vkr
+  --modes LIST     Comma list: gl-raster,vk-raster,vk-rt,cuda-rt,hip-rt,tusdr-cpu,tusdr-vk,tusdr-vkr
   --size WxH       tusdview --size (default: 256x256)
   --frames N       tusdview --frames (default: 4)
   --timeout DUR    Per-render timeout(1) duration (default: 45s)
@@ -366,25 +368,32 @@ run_one() {
 
   local args=()
   local use_vk_env=0
-  local use_xvfb_for_vk=0
-  if [ "$mode" = "vk-raster" ] || [ "$mode" = "vk-rt" ]; then
+  local use_xvfb_for_viewer=0
+  if [ "$mode" = "gl-raster" ] || [ "$mode" = "vk-raster" ] ||
+     [ "$mode" = "vk-rt" ]; then
     if should_use_xvfb; then
-      use_xvfb_for_vk=1
+      use_xvfb_for_viewer=1
     fi
   fi
   case "$mode" in
+    gl-raster)
+      args=(--backend gl)
+      ;;
     vk-raster)
       args=(--backend vk)
-      [ "$use_xvfb_for_vk" -eq 0 ] && args=(--headless "${args[@]}")
+      [ "$use_xvfb_for_viewer" -eq 0 ] && args=(--headless "${args[@]}")
       use_vk_env=1
       ;;
     vk-rt)
       args=(--backend vk --rt)
-      [ "$use_xvfb_for_vk" -eq 0 ] && args=(--headless "${args[@]}")
+      [ "$use_xvfb_for_viewer" -eq 0 ] && args=(--headless "${args[@]}")
       use_vk_env=1
       ;;
     cuda-rt)
       args=(--headless --cuda)
+      ;;
+    hip-rt)
+      args=(--headless --hip)
       ;;
     tusdr-cpu|tusdr-vk|tusdr-vkr)
       if [ ! -x "$TUSDRENDER_BIN" ]; then
@@ -418,7 +427,7 @@ run_one() {
     esac
     args+=(--frames "$FRAMES" --size "$SIZE" --screenshot "$out" "$asset")
 
-    if [ "$use_vk_env" -eq 1 ] && [ "$use_xvfb_for_vk" -eq 1 ] && ! use_external_xvfb; then
+    if [ "$use_xvfb_for_viewer" -eq 1 ] && ! use_external_xvfb; then
       cmd+=(xvfb-run -a env)
     else
       cmd+=(env)
@@ -441,7 +450,7 @@ run_one() {
 
   if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     status="timeout"
-  elif grep -Eiq 'CUDA ray tracing unavailable|CUDA RT failed|no CUDA|NVRTC.*failed|renderer init failed: no Vulkan|no Vulkan physical device|Vulkan backend unavailable|Vulkan unavailable|backend .*unavailable|Failed to create Vulkan|lightrt_vk_engine_create failed' "$log"; then
+  elif grep -Eiq 'CUDA ray tracing unavailable|CUDA RT failed|no CUDA|NVRTC.*failed|HIP ray tracing unavailable|HIP RT failed|no HIP|hiprtc.*failed|renderer init failed: no Vulkan|no Vulkan physical device|Vulkan backend unavailable|Vulkan unavailable|backend .*unavailable|Failed to create Vulkan|lightrt_vk_engine_create failed' "$log"; then
     status="backend_unavailable"
   elif grep -Eiq 'load failed|Failed to load USD|LoadUSDFromFile.*failed|parse error|No such file|cannot open|^ERR .*load|^ERROR .*load' "$log"; then
     status="load_error"
@@ -455,7 +464,10 @@ run_one() {
     status="no_renderable"
   elif [ "$mode" = "cuda-rt" ] && ! grep -q 'CUDA RT wrote' "$log"; then
     status="backend_error"
-  elif [ "$mode" != "cuda-rt" ] && ! grep -q 'render stats' "$log"; then
+  elif [ "$mode" = "hip-rt" ] && ! grep -q 'HIP RT wrote' "$log"; then
+    status="backend_error"
+  elif [ "$mode" != "cuda-rt" ] && [ "$mode" != "hip-rt" ] &&
+       ! grep -q 'render stats' "$log"; then
     status="backend_error"
   elif [ ! -s "$out" ]; then
     status="backend_error"

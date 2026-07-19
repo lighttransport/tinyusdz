@@ -669,7 +669,9 @@ struct RTPreviewStats {
   size_t meshes_with_owned_points{0};
   size_t skipped_meshes{0};
   size_t degraded_materials{0};  // materials rendered through a degraded surface
+  size_t unsupported_mtlx{0};  // unsupported MaterialX surface nodes
   size_t missing_textures{0};  // textures/images that failed to load or resolve
+  std::vector<std::string> material_diagnostic_examples;
   size_t triangles{0};
   uint64_t mmap_deferred_bytes{0};
   uint64_t copied_point_bytes{0};
@@ -854,6 +856,8 @@ struct TextureCache {
   std::shared_ptr<tinyusdz::tydra::next::TextureDecoder> decoder;
   size_t decoded_bytes{0};
   size_t *degraded_materials{nullptr};  // -> RTPreviewStats::degraded_materials
+  size_t *unsupported_mtlx{nullptr};  // -> RTPreviewStats::unsupported_mtlx
+  std::vector<std::string> *material_diagnostic_examples{nullptr};
   size_t *missing_textures{nullptr};  // -> RTPreviewStats::missing_textures
 };
 
