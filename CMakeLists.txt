@@ -2786,6 +2786,47 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-degraded-material
                          PROPERTIES SKIP_RETURN_CODE 77)
 
+    # Deterministic screenshot controls must reject malformed/ambiguous camera
+    # input before renderer initialization, so this remains a headless test.
+    add_test(
+      NAME tusdview-cli-camera-options
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cli-camera-options.sh"
+              "$<TARGET_FILE:tusdview>"
+      )
+
+    if(TUSDR_PYTHON)
+      # Start Vulkan once, then replace the USD scene and capture three cases
+      # through MCP. Process-wide backend/loader variants remain separate tests.
+      add_test(
+        NAME tusdview-mcp-render-batch
+        COMMAND ${TUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_render_batch.py"
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-render-batch.json"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-render-batch"
+        )
+      set_tests_properties(tusdview-mcp-render-batch
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+      find_program(TUSDVIEW_XVFB_RUN NAMES xvfb-run)
+      if(TUSDVIEW_XVFB_RUN)
+        # Same manifest through one real, persistent GLFW/OpenGL window. The
+        # trailing backend overrides the manifest's Vulkan default.
+        add_test(
+          NAME tusdview-mcp-render-batch-gl-window
+          COMMAND "${TUSDVIEW_XVFB_RUN}" -a
+                  ${TUSDR_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/tests/tusdview/mcp_render_batch.py"
+                  "$<TARGET_FILE:tusdview>"
+                  "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-render-batch.json"
+                  "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-render-batch-gl"
+                  --windowed --backend gl
+          )
+        set_tests_properties(tusdview-mcp-render-batch-gl-window
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+      endif()
+    endif()
+
     # Exact material:binding:back resolution and draw-side selection, including
     # a GeomSubset-specific degraded back material and whole-mesh fallback.
     add_test(

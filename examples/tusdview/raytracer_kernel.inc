@@ -356,11 +356,20 @@ R"CUDA(  float t0=fmaxf(tmin,0.f);
 // rays. Blend materials remain intersections and composite after shading.
 __device__ bool cutoutAllowsHit(
     int ht, float bu, float bv, int hitInst, const float* cols,
-    const int* mats, const float* matPbr, const float* matLightRt, int numMats,
+    const float* tris, F3 rayDir, const int* mats, const int* backMats,
+    const float* matPbr, const float* matLightRt, int numMats,
     const int* matTex, const float* matTexParam, const unsigned char* texels,
     const TexDesc* textures, int numTextures, const float* uvs,
     const float* uvs1, const Inst* insts) {
   int mid=mats[ht];
+  if (backMats && backMats[ht]>=0) {
+    const float* tv=&tris[ht*9];
+    const Inst* I=&insts[hitInst];
+    F3 p0=xfPt(I->o2w,mk(tv[0],tv[1],tv[2]));
+    F3 p1=xfPt(I->o2w,mk(tv[3],tv[4],tv[5]));
+    F3 p2=xfPt(I->o2w,mk(tv[6],tv[7],tv[8]));
+    if (dot3(cross3(sub(p1,p0),sub(p2,p0)),rayDir)>0.f) mid=backMats[ht];
+  }
   if (mid<0 || mid>=numMats || !matLightRt) return true;
   const float* lrt=&matLightRt[mid*56];
   float alphaMode=lrt[54];
@@ -402,7 +411,7 @@ __device__ bool cutoutAllowsHit(
 __device__ float traverseCutout(
     const Node* tlas, const Inst* insts, const Node* blas, const float* tris,
     F3 o, F3 d, float tmax, int* ht, float* bu, float* bv, int* hitInst,
-    const float* cols, const int* mats, const float* matPbr,
+    const float* cols, const int* mats, const int* backMats, const float* matPbr,
     const float* matLightRt, int numMats, const int* matTex,
     const float* matTexParam, const unsigned char* texels,
     const TexDesc* textures, int numTextures, const float* uvs,
@@ -413,7 +422,8 @@ __device__ float traverseCutout(
     float t=traverseTLAS(tlas,insts,blas,tris,ro,d,tmax-base,
                          ht,bu,bv,hitInst,false);
     if (*ht<0) return tmax;
-    if (cutoutAllowsHit(*ht,*bu,*bv,*hitInst,cols,mats,matPbr,matLightRt,
+    if (cutoutAllowsHit(*ht,*bu,*bv,*hitInst,cols,tris,d,mats,backMats,
+                        matPbr,matLightRt,
                         numMats,matTex,matTexParam,texels,textures,numTextures,
                         uvs,uvs1,insts)) return base+t;
     base+=t+1e-4f;
@@ -427,7 +437,7 @@ R"CUDA(
 extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* cols, const unsigned char* geo,
                                  const int* mats, const int* backMats,
-                                 const float* matPbr,
+                                 const float* matPbr, const float* matBase,
                                  const float* matLightRt, int numMats,
                                  const float* lightParams, int numLights,
                                  const int* matTex, const float* matTexParam,
@@ -455,7 +465,7 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
   F3 outc = mk(cam.clear[0],cam.clear[1],cam.clear[2]);
   int ht, hitInst; float bu,bv;
   float t=traverseCutout(tlas,insts,blas,tris,o,d,1e30f,&ht,&bu,&bv,
-                         &hitInst,cols,mats,matPbr,matLightRt,numMats,matTex,
+                         &hitInst,cols,mats,backMats,matPbr,matLightRt,numMats,matTex,
                          matTexParam,texels,textures,numTextures,uvs,uvs1);
   int rmodePre=(int)(cam.clear[3]+0.5f);
   // Dome env background on miss (shaded mode only): sample the dome's latlong
@@ -528,6 +538,11 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     }
     const float* lrt = (matLightRt && mid>=0 && mid<numMats &&
                         matLightRt[mid*56+51] > 0.5f) ? &matLightRt[mid*56] : 0;
+    if (mid>=0 && mid<numMats && matBase) {
+      F3 mb=mk(matBase[mid*3],matBase[mid*3+1],matBase[mid*3+2]);
+      if (lrt) mb=mk(lrt[0],lrt[1],lrt[2]);
+      base=mk(base.x*mb.x,base.y*mb.y,base.z*mb.z);
+    }
     float buu=uu,bvv=vv2,muu=uu,mvv=vv2,ruu=uu,rvv=vv2;
     float nuu=uu,nvv=vv2,euu=uu,evv=vv2,ouu=uu,ovv=vv2;
     if (tp) {
@@ -742,7 +757,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
     } else if (rmode==2){
       outc=mk(N.x*0.5f+0.5f, N.y*0.5f+0.5f, N.z*0.5f+0.5f);
     } else if (rmode==3){
-      outc=idColor(mats[ht]);
+      outc=idColor(mid);
     } else if (rmode==4){
       F3 Ng=norm3(cross3(sub(wp1,wp0),sub(wp2,wp0)));
       if (dot3(Ng,d)>0.f) Ng=scale(Ng,-1.f);
@@ -843,7 +858,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
         F3 so=add(hit,scale(Ng,aoR*1e-2f));
         int sht,si; float su,sv;
         traverseCutout(tlas,insts,blas,tris,so,sd,aoR,&sht,&su,&sv,&si,
-                       cols,mats,matPbr,matLightRt,numMats,matTex,matTexParam,
+                       cols,mats,backMats,matPbr,matLightRt,numMats,matTex,matTexParam,
                        texels,textures,numTextures,uvs,uvs1);
         if (sht>=0) occ+=1.f;
       }
@@ -860,7 +875,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
         F3 so=add(hit,scale(N,1e-3f));
         int sht,si; float su,sv;
         traverseCutout(tlas,insts,blas,tris,so,sd,1e30f,&sht,&su,&sv,&si,
-                       cols,mats,matPbr,matLightRt,numMats,matTex,matTexParam,
+                       cols,mats,backMats,matPbr,matLightRt,numMats,matTex,matTexParam,
                        texels,textures,numTextures,uvs,uvs1);
         if (sht<0) vis+=1.f;
       }

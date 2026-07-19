@@ -655,6 +655,20 @@ struct OpenPBRSurfaceShader {
 //
 // RenderMaterial
 //
+enum class MaterialDiagnosticKind : uint8_t {
+  UnsupportedShader = 0,
+  UnsupportedMaterialXNode,
+  DegradedMaterial
+};
+
+struct MaterialDiagnostic {
+  MaterialDiagnosticKind kind = MaterialDiagnosticKind::UnsupportedShader;
+  std::string material_path;
+  std::string node_path;
+  std::string shader_id;
+  std::string message;
+};
+
 struct RenderMaterial {
   std::string name;
   std::string prim_path;
@@ -681,6 +695,7 @@ struct RenderMaterial {
   // possible. Conversion still SUCCEEDS, so consumers that report load
   // degradation must look here rather than relying on the return value.
   bool default_fallback = false;
+  std::vector<MaterialDiagnostic> diagnostics;
 
   // Shader data (one of these based on shader_type)
   std::unique_ptr<PreviewSurfaceShader> preview_surface;

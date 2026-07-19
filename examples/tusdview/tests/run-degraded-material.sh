@@ -72,6 +72,11 @@ if ! echo "$log" | grep -Eq "load summary:.*degraded_materials=[1-9]"; then
   echo "FAIL: degraded material was not reported in the load summary."
   exit 1
 fi
+if ! echo "$log" | grep -Fq "/World/Mats/Broken/S" ||
+   ! echo "$log" | grep -Fq "SomeUnknownShaderType_xyz"; then
+  echo "FAIL: degraded-material diagnostic omitted its shader path or ID."
+  exit 1
+fi
 
 # The recovered baseColor is strongly red. A shared gray/default fallback has
 # no red-dominant surface pixels, so this also verifies that tusdview consumes

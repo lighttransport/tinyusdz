@@ -1,6 +1,6 @@
 # tusdview resume and current work state
 
-Last reviewed against the local worktree: 2026-07-19.
+Last reviewed against merge commit `8ec26dc6c`: 2026-07-19.
 
 The original first-display goal in this document is complete: the progressive
 OpenGL path reaches a useful frame in approximately 4.9-5.3 seconds under the
@@ -10,11 +10,12 @@ backends, and `tusdrender`. The older Moana Island `tusdrender` notes formerly
 kept in the repository-root `resume.md` are preserved at the end as a secondary,
 mostly completed performance track.
 
-## Active worktree: material correctness
+## Current audit: material correctness
 
-The worktree is intentionally dirty. Inspect `git status --short` and the full
-diff before editing; preserve the untracked benchmark asset and unrelated local
-files. Do not treat the old `resume.md` claim that the tree is clean as current.
+The tracked worktree is clean at the reviewed commit. Preserve the untracked
+`data/ball_basketball_realistic.usdz` and `tasks.md`; neither belongs to this
+work. The material work described below is committed in the two parents of the
+merge, not an uncommitted local patch.
 
 The current material patch spans the next UsdShade schema, Tydra conversion,
 shared LightRT/OpenPBR evaluation, viewer mesh/submesh data, all rendering
@@ -57,23 +58,51 @@ tools/tusdrender/tests/run-degraded-material.sh
 tools/tusdrender/tests/run-backface-material.sh
 ```
 
-Verification on 2026-07-19:
+Post-merge verification on 2026-07-19 found and repaired two P0 regressions
+that supersede the earlier parent-commit completion notes:
 
 ```text
-build_ninja targets tusdview, tusdrender, tusdview_lightrt_bridge_test: up to date
-7 focused tusdview/material tests: passed
-3 next schema/Tydra tests: passed
-git diff --check: passed
+next_test_schemas, next_test_schemas_ext, next_test_tydra: passed
+tusdview_lightrt_bridge_test: passed
+tusdview-opacity-material: passed (GL, Vulkan raster/RT, CUDA; HIP unavailable)
+tusdview-rt-geomsubset-material: passed (including CUDA next/legacy)
+12 focused tusdview/tusdrender material tests: passed
+shell syntax and git diff --check: passed
+full native CTest after persistent-window hardening: 183/183 passed; 4 optional tests skipped
+tusdview-legacy-double-deform: passed, plus 15/15 focused deformation/RT tests
+post-hardening diagnostics/CLI regressions: 3/3 passed
+MCP persistent render batch + existing MCP/CLI focused tests: 3/3 passed
 ```
 
-The most useful next step is to review the backend parity details in the dirty
-diff, then run the broader material/render regression set and visually inspect
-the degraded/front-back fixtures. In particular, verify that back-material
-selection uses the same geometric-front-face convention after negative-scale
-transforms in every raster and ray-tracing backend, and that translucent back
-materials participate in the intended alpha pass. `tasks.md` contains the
-larger usd-assets correctness backlog; it is planning input, not evidence that
-every unchecked feature is broken.
+The CUDA/HIP launcher supplied a material-base-color array that the merged
+kernel signature omitted, shifting every later argument and producing black
+CUDA output. The fix restores the ABI and base-color modulation and applies
+front/back material selection to cutout, shadow, and AO traversal. The viewer
+now implements deterministic `--view-dir X,Y,Z`; invalid/zero values and
+`--camera` ambiguity are rejected. The repaired opacity test also found a real
+loader defect: `displayOpacity` had moved to a dedicated tydra-next channel but
+the viewer still queried the old generic primvar bag.
+`tasks.md` contains the larger usd-assets correctness backlog; it is planning
+input, not evidence that every unchecked feature is broken.
+
+The native-suite follow-up fixed the last failure. Interactive asynchronous
+legacy loads now apply the same Auto/GPU rest-pose rule and CPU fallback as the
+synchronous screenshot path. The test itself now uses the new `--no-grid`
+capture option: the raster grid is composited after the RT image without the RT
+depth attachment, so it had overwritten the correctly posed mesh and corrupted
+the silhouette comparison. The optional HIP, external MaterialX, external
+alpha-sort, and usd-assets golden tests still skip when their dependencies/data
+are unavailable.
+
+The follow-up batch harness starts one long-lived tusdview MCP process, accepts
+path-based or inline USDA cases, polls explicit loading/generation state, changes
+resettable render mode/grid/camera-preset parameters, and captures each result
+without renderer reinitialization. It runs both a persistent Vulkan/offscreen
+batch and, under Xvfb, a persistent real GLFW/OpenGL-window batch. Window and
+renderer lifecycle counters are asserted unchanged for every case. Startup-only
+differences such as backend, loader, CUDA/HIP/Vulkan RT selection, environment
+toggles, and validation-layer configuration intentionally remain separate
+process launches.
 
 ## Prioritized tusdview backlog
 
@@ -92,6 +121,13 @@ ordering below is the canonical remaining-work order. Priorities mean:
 
 ### P0 — close the current UsdPreviewSurface/binding patch
 
+- [x] Reconcile the shared CUDA/HIP kernel ABI with both launchers, restore
+  base-color modulation, and use the selected front/back material consistently
+  for primary, cutout, shadow, AO, and material-ID paths.
+- [x] Implement and document deterministic `--view-dir X,Y,Z` camera control;
+  reject invalid vectors and ambiguity with `--camera`.
+- [x] Repair opacity/cutout assertions so raster blend, single-hit RT blend,
+  and masked any-hit behavior each test the behavior they actually implement.
 - [x] Review front/back material selection in GL, Vulkan, CUDA, HIP, and CPU
   LightRT for a single geometric-front-face convention, including mirrored or
   negative-scale transforms.
@@ -113,11 +149,12 @@ exact-purpose `back` binding resolution; explicit backface material IDs;
 UsdPreviewSurface constant/texture opacity and opacity threshold; specular
 workflow tests; double-sided tests; and degraded/front-back test harnesses.
 
-P0 completion notes (2026-07-19): GL, Vulkan raster, and Vulkan ray query pass
+Pre-merge parent result (superseded by the post-merge audit above): GL, Vulkan
+raster, and Vulkan ray query passed
 whole-mesh and GeomSubset front/back bindings in normal and mirrored transforms;
 the back material uses degraded recovery plus blended opacity. CUDA/HIP side
 selection was source-reviewed and builds, but runtime execution was unavailable
-on this machine. The audit also fixed two uncovered Vulkan raster regressions:
+on that run. The parent audit also fixed two uncovered Vulkan raster regressions:
 stale embedded shaders, and displayColor loss/black geometric-normal meshes.
 Raster displayColor now uses a normal vertex binding while RT retains its device
 address, and shader headers were regenerated from their GLSL sources.
@@ -153,6 +190,20 @@ and expectation-failure behavior without external data. The external corpus was
 not mounted at its documented path during this run, so the opt-in full golden
 sweep remains the next machine/data-dependent validation rather than an open P1
 implementation item.
+
+Post-merge follow-up: the shared material carrier now exposes typed diagnostics
+for unsupported shaders, unsupported MaterialX nodes, and degraded materials,
+including material/node paths and shader IDs. `tusdview` and `tusdrender` feed
+those diagnostics into their structured load summaries and bounded examples;
+their degraded-material regressions require the shader path and ID so this
+cannot silently collapse back to a generic warning. A renderer-independent
+`tusdview-cli-camera-options` regression covers malformed, zero, non-finite,
+and authored-camera-conflicting `--view-dir` values, plus help exposure for
+`--view-dir` and `--no-grid`.
+The external runner now accepts `gl-raster` and `hip-rt` in addition to its
+existing modes. No new color baseline was generated because the external
+usd-assets corpus was not mounted; do not treat the checked-in coverage
+fingerprints as newly validated color parity.
 
 ### P2 — material, texture, and transparency fidelity
 

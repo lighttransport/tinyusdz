@@ -144,6 +144,7 @@ class App
   // mesh preview) instead of the default Tydra path. See next_scene_loader.cc.
   void setUseNextLoader(bool on) { useNextLoader_ = on; }
   void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
+  void setShowGrid(bool on) { gui_.setShowGrid(on); }
   void setCamDolly(float f) { camDolly_ = f; }
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // --threaded: run GL rendering on a dedicated thread so the UI loop never blocks
@@ -185,6 +186,10 @@ class App
   // --camera <name>: frame the viewer on a named USD Camera (either loader) instead
   // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
   void setCameraName(const std::string& n) { cameraName_ = n; }
+  void setViewDirection(float x, float y, float z) {
+    viewDir_[0] = x; viewDir_[1] = y; viewDir_[2] = z;
+    viewDirExplicit_ = true;
+  }
   // Recently-opened scenes: the config file path to persist to, and the initial
   // list loaded from it. setRecentScenes also seeds the File > Open Recent menu.
   void setConfigPath(const std::filesystem::path& p) { configPath_ = p; }
@@ -240,6 +245,8 @@ class App
   nlohmann::json mcpLoadPayloads(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpTimeline(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpSkinning(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpRenderSettings(const nlohmann::json& a,
+                                   std::string& e) override;
   nlohmann::json mcpCallLibraryTool(const std::string& name, const nlohmann::json& a,
                                     std::string& e) override;
 #endif
@@ -375,6 +382,8 @@ class App
   bool headless_{false};  // windowless offscreen rendering (Vulkan only)
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   std::string cameraName_;  // --camera: named USD camera to frame (--next path)
+  bool viewDirExplicit_{false};
+  float viewDir_[3]{0.0f, 0.0f, -1.0f};  // normalized eye-to-target direction
   std::filesystem::path configPath_;        // where to persist recent scenes
   std::string imguiIniPath_;                // storage backing ImGuiIO::IniFilename
   std::vector<std::string> recentScenes_;   // newest first; File > Open Recent
@@ -558,6 +567,8 @@ class App
   // MCP server (transports started in run(); commands drained each frame).
   bool mcpStdio_{false};
   int mcpHttpPort_{0};
+  std::uint64_t windowGeneration_{0};
+  std::uint64_t rendererGeneration_{0};
 
   // WebSocket image-streaming server (browser remote view + navigation).
   int streamHttpPort_{0};
@@ -583,6 +594,7 @@ class App
   std::uint64_t sceneGen_{0};
 #if defined(TUSDVIEW_HAVE_MCP)
   std::unique_ptr<MCPServer> mcp_;
+  std::vector<std::filesystem::path> mcpTempFiles_;
   // Context for the tinyusdz library tools; its Stage is a lazy snapshot of
   // loaded_.stage, refreshed when sceneGen_ changes.
   tinyusdz::tydra::mcp::Context mcpCtx_;

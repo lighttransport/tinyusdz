@@ -441,9 +441,14 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     if (elems > 0 && m.colors.size() == elems * 4) colorComps = 4;
   }
   const NextAttr col = MakeNextAttr(m.colors, m.colors_interp, colorComps);
-  // displayOpacity is not a tydra-next builtin: it lands in the generic primvar
-  // bag as a float attribute.
-  const NextAttr opacity = FindNextPrimvar(m, "displayOpacity", 1);
+  // displayOpacity has a dedicated tydra-next channel. Older converter builds
+  // left it in the generic primvar bag, so retain that as a compatibility
+  // fallback instead of silently dropping authored vertex alpha.
+  const NextAttr builtinOpacity =
+      MakeNextAttr(m.opacities, m.opacities_interp, 1);
+  const NextAttr opacity = builtinOpacity
+                               ? builtinOpacity
+                               : FindNextPrimvar(m, "displayOpacity", 1);
   // Tangents are computed only for normal-mapped meshes (see the tangent-aware
   // converter in LoadUSDViaNext); xyzw with w = handedness.
   const NextAttr tan = MakeNextAttr(m.tangents, m.tangents_interp, 4);
@@ -2207,7 +2212,29 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   dm.name = rm.name;
   dm.absPath = rm.prim_path;
   dm.displayName = rm.name;
-  if (rm.default_fallback) {
+  bool reportedDegradedMaterial = false;
+  for (const tydn::MaterialDiagnostic& diagnostic : rm.diagnostics) {
+    if (diagnostic.kind == tydn::MaterialDiagnosticKind::DegradedMaterial) {
+      std::string message = "material '" + diagnostic.material_path +
+                            "': using degraded material";
+      if (!diagnostic.node_path.empty())
+        message += " from node '" + diagnostic.node_path + "'";
+      if (!diagnostic.shader_id.empty())
+        message += " (" + diagnostic.shader_id + ")";
+      if (!diagnostic.message.empty()) message += ": " + diagnostic.message;
+      draw->skipped.push_back(std::move(message));
+      reportedDegradedMaterial = true;
+    } else if (diagnostic.kind ==
+               tydn::MaterialDiagnosticKind::UnsupportedMaterialXNode) {
+      std::string message =
+          "unsupported MaterialX node '" + diagnostic.node_path +
+          "' in material '" + diagnostic.material_path + "'";
+      if (!diagnostic.shader_id.empty())
+        message += " (" + diagnostic.shader_id + ")";
+      draw->skipped.push_back(std::move(message));
+    }
+  }
+  if (rm.default_fallback && !reportedDegradedMaterial) {
     draw->skipped.push_back("material '" + rm.prim_path +
                             "': using degraded material");
   }

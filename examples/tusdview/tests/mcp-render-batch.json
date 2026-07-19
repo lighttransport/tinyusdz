@@ -1,0 +1,26 @@
+{
+  "viewer_args": ["--backend", "vk", "--size", "192x192"],
+  "cases": [
+    {
+      "name": "red-triangle",
+      "usda": "#usda 1.0\n def Mesh \"RedTriangle\" { point3f[] points = [(-1,-1,0),(1,-1,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] uniform token subdivisionScheme = \"none\" color3f[] primvars:displayColor = [(0.8,0.05,0.02)] }\n",
+      "settings": {"mode": "shaded", "grid": false},
+      "viewport": {"op": "front"},
+      "expect": {"mesh_count": 1, "triangle_count": 1}
+    },
+    {
+      "name": "two-triangles",
+      "usda": "#usda 1.0\n def Mesh \"Quad\" { point3f[] points = [(-1,-1,0),(1,-1,0),(1,1,0),(-1,1,0)] int[] faceVertexCounts = [4] int[] faceVertexIndices = [0,1,2,3] uniform token subdivisionScheme = \"none\" color3f[] primvars:displayColor = [(0.05,0.8,0.02)] }\n",
+      "settings": {"mode": "albedo", "grid": false},
+      "viewport": {"op": "front"},
+      "expect": {"mesh_count": 1, "triangle_count": 2}
+    },
+    {
+      "name": "replacement-triangle",
+      "usda": "#usda 1.0\n def Mesh \"BlueTriangle\" { point3f[] points = [(-0.8,-0.8,0),(0.8,-0.8,0),(0,0.8,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] uniform token subdivisionScheme = \"none\" color3f[] primvars:displayColor = [(0.02,0.05,0.8)] }\n",
+      "settings": {"mode": "normals", "grid": false},
+      "viewport": {"op": "front"},
+      "expect": {"mesh_count": 1, "triangle_count": 1}
+    }
+  ]
+}

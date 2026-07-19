@@ -3,6 +3,7 @@
 // (the MCP server marshals tool calls into the render loop), so they freely read
 // the loaded scene / DrawScene and drive the camera and selection.
 #include <cmath>
+#include <fstream>
 #include <memory>
 #include <string>
 
@@ -73,23 +74,55 @@ json focusedPayload(const Gui& gui, const DrawScene& draw) {
 }  // namespace
 
 json App::mcpLoadUsd(const json& args, std::string& err) {
-  if (!args.contains("path") || !args["path"].is_string()) {
-    err = "load_usd requires a string 'path'";
+  const bool hasPath = args.contains("path") && args["path"].is_string();
+  const bool hasUsda = args.contains("usda") && args["usda"].is_string();
+  if (hasPath == hasUsda) {
+    err = "load_usd requires exactly one string 'path' or 'usda'";
     return json::object();
   }
-  const std::string path = args["path"].get<std::string>();
+  std::string path;
+  if (hasPath) {
+    path = args["path"].get<std::string>();
+  } else {
+    const std::string source = args["usda"].get<std::string>();
+    constexpr size_t kMaxInlineUsdaBytes = 16u * 1024u * 1024u;
+    if (source.empty() || source.size() > kMaxInlineUsdaBytes) {
+      err = "load_usd: inline USDA must be 1 byte..16 MiB";
+      return json::object();
+    }
+    static uint64_t serial = 0;
+    const std::filesystem::path temp =
+        std::filesystem::temp_directory_path() /
+        ("tusdview-mcp-" +
+         std::to_string(reinterpret_cast<uintptr_t>(this)) + "-" +
+         std::to_string(++serial) + ".usda");
+    std::ofstream stream(temp, std::ios::binary | std::ios::trunc);
+    stream.write(source.data(), static_cast<std::streamsize>(source.size()));
+    if (!stream) {
+      err = "load_usd: could not materialize inline USDA";
+      return json::object();
+    }
+    path = temp.string();
+    mcpTempFiles_.push_back(temp);
+  }
   startLoadAsync(path);  // async; client polls get_scene_info
-  return json{{"started", true}, {"path", path}};
+  return json{{"started", true}, {"path", path}, {"inline", hasUsda}};
 }
 
 json App::mcpSceneInfo(const json&, std::string&) {
   json out = {{"loaded", loaded_.ok},
+              {"loading", loadActive_},
+              {"scene_generation", sceneGen_},
+              {"window_generation", windowGeneration_},
+              {"renderer_generation", rendererGeneration_},
               {"filepath", loaded_.filepath},
               {"mesh_count", draw_.meshes.size()},
               {"triangle_count", draw_.triangleCount},
               {"material_count", draw_.materials.size()},
               {"upAxis", camera_.upAxis()},
               {"has_bounds", draw_.hasBounds}};
+  if (loadActive_) out["loading_path"] = loadingPath_;
+  if (!loaded_.err.empty()) out["error"] = loaded_.err;
   out["aabb_min"] = arr3(draw_.aabbMin);
   out["aabb_max"] = arr3(draw_.aabbMax);
   out["skinning_requested"] = skinningModeName(skinningRequested_);
@@ -155,6 +188,65 @@ json App::mcpSkinning(const json& args, std::string& err) {
   return json{{"requested", skinningModeName(skinningRequested_)},
               {"effective", skinningModeName(skinningEffective_)},
               {"reason", skinningReason_}};
+}
+
+json App::mcpRenderSettings(const json& args, std::string& err) {
+  struct ModeName {
+    const char* name;
+    RenderMode mode;
+  };
+  static constexpr ModeName kModes[] = {
+      {"shaded", RenderMode::Shaded},
+      {"wireframe", RenderMode::Wireframe},
+      {"normals", RenderMode::Normals},
+      {"material-id", RenderMode::MaterialId},
+      {"geom-normal", RenderMode::GeomNormal},
+      {"uv", RenderMode::Uv},
+      {"depth", RenderMode::Depth},
+      {"albedo", RenderMode::Albedo},
+      {"facing", RenderMode::Facing},
+      {"roughness", RenderMode::Roughness},
+      {"metallic", RenderMode::Metallic},
+      {"emissive", RenderMode::Emissive},
+      {"opacity", RenderMode::Opacity},
+  };
+
+  if (args.contains("mode")) {
+    if (!args["mode"].is_string()) {
+      err = "render_settings: mode must be a string";
+      return json::object();
+    }
+    const std::string requested = args["mode"].get<std::string>();
+    bool found = false;
+    for (const ModeName& entry : kModes) {
+      if (requested == entry.name) {
+        gui_.setRenderMode(entry.mode);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      err = "render_settings: unsupported mode '" + requested + "'";
+      return json::object();
+    }
+  }
+  if (args.contains("grid")) {
+    if (!args["grid"].is_boolean()) {
+      err = "render_settings: grid must be boolean";
+      return json::object();
+    }
+    gui_.setShowGrid(args["grid"].get<bool>());
+  }
+
+  const RenderMode current = gui_.renderMode();
+  const char* currentName = "unknown";
+  for (const ModeName& entry : kModes) {
+    if (current == entry.mode) {
+      currentName = entry.name;
+      break;
+    }
+  }
+  return json{{"mode", currentName}};
 }
 
 json App::mcpLoadPayloads(const json& args, std::string& err) {

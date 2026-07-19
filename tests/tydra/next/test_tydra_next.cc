@@ -1283,6 +1283,20 @@ def Xform "World"
   assert(mat.shader_type == RenderMaterial::ShaderType::PreviewSurface);
   assert(mat.preview_surface);
   assert(mat.default_fallback);
+  assert(!mat.diagnostics.empty());
+  bool saw_unsupported_node = false;
+  bool saw_degraded_diagnostic = false;
+  for (const auto& diagnostic : mat.diagnostics) {
+    if (diagnostic.kind == MaterialDiagnosticKind::UnsupportedMaterialXNode ||
+        diagnostic.kind == MaterialDiagnosticKind::UnsupportedShader) {
+      saw_unsupported_node = !diagnostic.node_path.empty();
+    }
+    if (diagnostic.kind == MaterialDiagnosticKind::DegradedMaterial) {
+      saw_degraded_diagnostic = true;
+    }
+  }
+  assert(saw_unsupported_node);
+  assert(saw_degraded_diagnostic);
   assert(std::abs(mat.preview_surface->diffuse_color.value.x - 0.2f) < 0.001f);
   assert(std::abs(mat.preview_surface->diffuse_color.value.y - 0.4f) < 0.001f);
   assert(std::abs(mat.preview_surface->diffuse_color.value.z - 0.6f) < 0.001f);
