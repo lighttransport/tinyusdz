@@ -2366,6 +2366,8 @@ bool ListUVNames(const RenderMaterial &material,
   fun_float(material.surfaceShader.ior);
   fun_float(material.surfaceShader.displacement);
   fun_float(material.surfaceShader.occlusion);
+  fun_vec3(material.surfaceShader.emissiveColor);
+  fun_vec3(material.surfaceShader.specularColor);
 
   return true;
 }
