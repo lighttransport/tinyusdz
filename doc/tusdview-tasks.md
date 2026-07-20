@@ -109,8 +109,11 @@ silently becoming the default material.
   collection masks, and currently evaluates finite area lights at their
   representative point with authored shaping.
 - [x] Add one deterministic 2048-square raster shadow map (first enabled
-  DistantLight, otherwise first shaped SphereLight, in stage order) with 3x3
-  PCF. Landed in GL and Vulkan raster and pinned by
+  DistantLight, otherwise the first finite light in stage order)
+  with 3x3 PCF. Unshaped finite emitters use a stable scene-fitted
+  representative-direction orthographic approximation; authored shaping cones
+  retain perspective projection.
+  Landed in GL and Vulkan raster and pinned by
   `tusdview-raster-shadow-map`, which requires a *bounded* dark band (lit floor
   on both sides) so a collapsed light-space transform that darkens the whole
   floor cannot pass. Verified discriminating: the same fixture with
@@ -121,7 +124,8 @@ silently becoming the default material.
   cast through a dedicated deformation-aware shadow pipeline. The checked-in
   regression now requires an opaque bounded band, zero rows for constant and
   sparse-UDIM rejected cutouts, and the same bounded band from a PointInstancer
-  prototype. Shadows for the remaining light types stay future work.
+  prototype. Exact omnidirectional Point/Sphere/Cylinder coverage still stays
+  future work.
 - [x] Use per-light visibility rays for shadows in Vulkan ray query and the
   shared CUDA/HIP tracer. RT instances now carry independent direct-light and
   shadow collection masks, so linked meshes receive only the authored lights

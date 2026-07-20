@@ -39,8 +39,8 @@ struct RasterLightSet {
   // that light's shadow collection (and vice versa).
   std::vector<uint32_t> shadowMeshMasks;
   // Direct-light slot selected for the single deterministic raster shadow map.
-  // Prefer the first enabled distant light; otherwise use the first enabled,
-  // shaped sphere light. -1 means no supported shadow caster.
+  // Prefer the first enabled distant light; otherwise use the first enabled
+  // finite light supported by the single-map approximation.
   int shadowLightSlot{-1};
 };
 
@@ -50,10 +50,18 @@ inline bool IsRasterDirectLight(const DrawLightCPU& light) {
          light.type != DrawLightCPU::Type::Portal;
 }
 
+inline bool IsRasterFiniteShadowLight(const DrawLightCPU& light) {
+  return light.hasShaping || light.type == DrawLightCPU::Type::Point ||
+         light.type == DrawLightCPU::Type::Sphere ||
+         light.type == DrawLightCPU::Type::Disk ||
+         light.type == DrawLightCPU::Type::Rect ||
+         light.type == DrawLightCPU::Type::Cylinder;
+}
+
 inline RasterLightSet PackRasterLights(const std::vector<DrawLightCPU>& src,
                                        size_t meshCount) {
   RasterLightSet out;
-  int shapedSphereFallback = -1;
+  int finiteFallback = -1;
   out.meshMasks.assign(meshCount, 0u);
   out.shadowMeshMasks.assign(meshCount, 0u);
   for (const DrawLightCPU& light : src) {
@@ -67,9 +75,8 @@ inline RasterLightSet PackRasterLights(const std::vector<DrawLightCPU>& src,
       if (light.type == DrawLightCPU::Type::Distant &&
           out.shadowLightSlot < 0) {
         out.shadowLightSlot = slot;
-      } else if (light.type == DrawLightCPU::Type::Sphere && light.hasShaping &&
-                 shapedSphereFallback < 0) {
-        shapedSphereFallback = slot;
+      } else if (IsRasterFiniteShadowLight(light) && finiteFallback < 0) {
+        finiteFallback = slot;
       }
     }
     RasterLightGPU& dst = out.lights[static_cast<size_t>(slot)];
@@ -109,7 +116,7 @@ inline RasterLightSet PackRasterLights(const std::vector<DrawLightCPU>& src,
       }
     }
   }
-  if (out.shadowLightSlot < 0) out.shadowLightSlot = shapedSphereFallback;
+  if (out.shadowLightSlot < 0) out.shadowLightSlot = finiteFallback;
   return out;
 }
 
@@ -195,21 +202,52 @@ inline bool BuildRasterShadowCamera(const RasterLightSet& lights,
     farPlane = radius * 3.05f;
     proj = ShadowOrtho(-span, span, -span, span, nearPlane, farPlane,
                        zeroToOne);
-  } else if (type == static_cast<int>(DrawLightCPU::Type::Sphere) &&
-             light.specularShape[3] > 0.5f) {
-    perspective = true;
+  } else if (light.specularShape[3] > 0.5f ||
+             (type >= static_cast<int>(DrawLightCPU::Type::Point) &&
+              type <= static_cast<int>(DrawLightCPU::Type::Cylinder))) {
     const light3d::Vec3 eye{light.positionType[0], light.positionType[1],
                             light.positionType[2]};
-    view = light3d::lookAt(eye, eye + direction, up);
+    const bool unshapedFinite = light.specularShape[3] <= 0.5f;
+    if (unshapedFinite && type != static_cast<int>(DrawLightCPU::Type::Rect) &&
+        type != static_cast<int>(DrawLightCPU::Type::Disk)) {
+      const light3d::Vec3 towardScene = center - eye;
+      if (light3d::length(towardScene) > 1.0e-6f) direction =
+          light3d::normalize(towardScene);
+      else direction = {0.0f, -1.0f, 0.0f};
+    }
+    const light3d::Vec3 shadowUp = std::fabs(direction.y) > 0.99f
+                                       ? light3d::Vec3{1.0f, 0.0f, 0.0f}
+                                       : light3d::Vec3{0.0f, 1.0f, 0.0f};
+    view = light3d::lookAt(eye, eye + direction, shadowUp);
     farPlane = std::max(radius * 4.0f, light3d::length(center - eye) + radius);
-    nearPlane = std::max(0.01f, farPlane * 1.0e-4f);
-    const float halfAngle = std::max(0.5f, std::min(light.directionAngle[3], 89.0f));
-    constexpr float kDegToRad = 0.01745329251994329577f;
-    proj = zeroToOne
-               ? light3d::perspectiveZeroOne(2.0f * halfAngle * kDegToRad,
-                                             1.0f, nearPlane, farPlane)
-               : light3d::perspective(2.0f * halfAngle * kDegToRad, 1.0f,
-                                      nearPlane, farPlane);
+    float nearestForward = farPlane;
+    bool boundsBehindLight = false;
+    for (int corner = 0; corner < 8; ++corner) {
+      const light3d::Vec3 p{
+          sceneMin[0] + ((corner & 1) ? sceneExtent[0] : 0.0f),
+          sceneMin[1] + ((corner & 2) ? sceneExtent[1] : 0.0f),
+          sceneMin[2] + ((corner & 4) ? sceneExtent[2] : 0.0f)};
+      const float forward = light3d::dot(p - eye, direction);
+      if (forward <= 0.0f) boundsBehindLight = true;
+      else nearestForward = std::min(nearestForward, forward);
+    }
+    nearPlane = boundsBehindLight ? 0.01f
+                                  : std::max(0.01f, nearestForward * 0.5f);
+    if (unshapedFinite) {
+      const float span = radius * 1.05f;
+      proj = ShadowOrtho(-span, span, -span, span, nearPlane, farPlane,
+                         zeroToOne);
+    } else {
+      perspective = true;
+      const float halfAngle = std::max(
+          0.5f, std::min(light.directionAngle[3], 89.0f));
+      constexpr float kDegToRad = 0.01745329251994329577f;
+      proj = zeroToOne
+                 ? light3d::perspectiveZeroOne(2.0f * halfAngle * kDegToRad,
+                                               1.0f, nearPlane, farPlane)
+                 : light3d::perspective(2.0f * halfAngle * kDegToRad, 1.0f,
+                                        nearPlane, farPlane);
+    }
   } else {
     return false;
   }

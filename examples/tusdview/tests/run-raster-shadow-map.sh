@@ -101,6 +101,25 @@ def Xform "World" {
 }
 USDA
 
+# One-sided finite area-light variant. It uses the same blocker/floor probe but
+# places a RectLight above the scene; the single perspective shadow map should
+# retain the same bounded-band invariant as the distant-light baseline.
+python3 - "$OUT/shadow.usda" "$OUT/shadow-rect.usda" <<'PY'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+text = text.replace('def DistantLight "Sun"', 'def RectLight "Sun"')
+text = text.replace('float inputs:intensity = 3',
+                    'float inputs:intensity = 30')
+text = text.replace(
+    '    float3 xformOp:rotateXYZ = (-90, 0, 0)\n'
+    '    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]',
+    '    double3 xformOp:translate = (0, 6, 0)\n'
+    '    float3 xformOp:rotateXYZ = (-90, 0, 0)\n'
+    '    uniform token[] xformOpOrder = '
+    '["xformOp:translate", "xformOp:rotateXYZ"]')
+pathlib.Path(sys.argv[2]).write_text(text)
+PY
+
 # Same scene, but the blocker is a fully rejected alpha-mask material. The
 # shadow band must disappear; this catches depth-only shadow shaders that ignore
 # material cutouts while the visible pass correctly discards them.
@@ -165,7 +184,7 @@ USDA
 # Look for a bounded dark band on the gray floor: lit / dark / lit across a row,
 # in any of the rows spanning the floor. Prints "<rows_with_band> <max_contrast>".
 scan_band() {
-python3 - "$1" <<'PY'
+python3 - "$1" "${2:-0.6}" <<'PY'
 import re, sys
 d = open(sys.argv[1], "rb").read()
 m = re.match(rb'P6\s+(?:#[^\n]*\n\s*)*(\d+)\s+(\d+)\s+(\d+)\s', d)
@@ -177,6 +196,7 @@ def lum(x, y):
     o = (y*w + x)*3
     return (px[o]*299 + px[o+1]*587 + px[o+2]*114) // 1000
 
+ratio = float(sys.argv[2]) if len(sys.argv) > 2 else 0.6
 rows, best = 0, 0
 for fy in [i/100 for i in range(50, 96)]:
     y = int(h*fy)
@@ -184,7 +204,7 @@ for fy in [i/100 for i in range(50, 96)]:
     hi = max(vals)
     if hi < 60:            # row isn't on the lit floor at all
         continue
-    dark = [i for i, v in enumerate(vals) if v < hi*0.6]
+    dark = [i for i, v in enumerate(vals) if v < hi*ratio]
     if not dark:
         continue
     lo, hiIdx = dark[0], dark[-1]
@@ -228,6 +248,29 @@ for spec in "gl:--backend gl:" "vk:--backend vk:--headless"; do
     fail=1
   fi
 done
+
+# Exercise the newly supported one-sided finite-light projection on Vulkan.
+rect_img="$OUT/vk-rect.ppm"
+rect_log="$OUT/vk-rect.log"
+$XVFB env XDG_CONFIG_HOME="$OUT/config" \
+    "$BIN" --headless --backend vk --frames 2 --size 640x480 --no-grid \
+    --camera Cam --screenshot "$rect_img" "$OUT/shadow-rect.usda" \
+    >"$rect_log" 2>&1
+if grep -q 'render stats' "$rect_log"; then
+  read -r rows contrast < <(scan_band "$rect_img" 0.75) || {
+    echo "FAIL: vk RectLight shadow PPM parse"; exit 1; }
+  echo "vk: RectLight shadow-band rows=$rows contrast=$contrast"
+  if [ "$rows" -lt 3 ] || [ "$contrast" -lt 30 ]; then
+    echo "FAIL: Vulkan RectLight did not produce a bounded shadow"
+    cp "$rect_img" /tmp/tusdview-vk-rect-shadow-failed.ppm
+    cp "$rect_log" /tmp/tusdview-vk-rect-shadow-failed.log
+    fail=1
+  fi
+elif [ "$vk_ran" -eq 1 ]; then
+  echo "FAIL: Vulkan baseline ran but RectLight shadow fixture did not render"
+  sed -n '1,80p' "$rect_log"
+  fail=1
+fi
 
 for spec in "gl:--backend gl:" "vk:--backend vk:--headless"; do
   tag="${spec%%:*}"; rest="${spec#*:}"; args="${rest%%:*}"; hl="${rest#*:}"
