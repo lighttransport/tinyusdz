@@ -3,7 +3,7 @@
 Single source of truth for in-flight work on the two renderers and the texture
 program. Supersedes the old `doc/tusdview-audit.md` (full audit) and the
 untracked `resume-tex.md` (KTX2 resume) — done history was dropped on merge; it
-lives in git history if needed. Updated 2026-07-19.
+lives in git history if needed. Updated 2026-07-20.
 
 The original two programs documented below -- (A) the **tusdview/tusdrender
 audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
@@ -63,8 +63,12 @@ silently becoming the default material.
   energy-conserving diffuse/specular separation, and a second coat lobe.
 - [x] Apply occlusion only to indirect light and evaluate the same lobes for
   DomeLight IBL; keep AOV and alpha behavior unchanged.
-- [x] Match the evaluated material response in Vulkan ray query and the shared
-  CUDA/HIP tracer after GL/Vulkan raster parity is pinned.
+- [ ] Match the evaluated material response in Vulkan ray query and the shared
+  CUDA/HIP tracer after GL/Vulkan raster parity is pinned. Occlusion and the
+  coat weight/color/roughness, specular-workflow color, and dedicated coat-normal
+  maps now reach every raster and RT backend with independent UV routing and
+  scale/bias (plus channel selection for scalar slots). Full ordinary/UDIM
+  visual parity coverage remains open.
 
 ### P4 -- Geom/Prim support
 
@@ -104,11 +108,26 @@ silently becoming the default material.
   supported lights in stage order, diagnoses truncation, applies per-mesh
   collection masks, and currently evaluates finite area lights at their
   representative point with authored shaping.
-- [ ] Add one deterministic 2048-square raster shadow map (first enabled
+- [x] Add one deterministic 2048-square raster shadow map (first enabled
   DistantLight, otherwise first shaped SphereLight, in stage order) with 3x3
-  PCF.
+  PCF. Landed in GL and Vulkan raster and pinned by
+  `tusdview-raster-shadow-map`, which requires a *bounded* dark band (lit floor
+  on both sides) so a collapsed light-space transform that darkens the whole
+  floor cannot pass. Verified discriminating: the same fixture with
+  `shadow:enable = 0` scores 0 shadow rows on both backends versus 27 (GL) and
+  33 (VK) enabled. Direct and shadow collections now use independent per-mesh
+  masks in GL and Vulkan. Ordinary and UDIM base-alpha/separate-opacity masks
+  cut holes in the GL/Vulkan shadow pass, and Vulkan instanced prototypes now
+  cast through a dedicated deformation-aware shadow pipeline. The checked-in
+  regression now requires an opaque bounded band, zero rows for constant and
+  sparse-UDIM rejected cutouts, and the same bounded band from a PointInstancer
+  prototype. Shadows for the remaining light types stay future work.
 - [x] Use per-light visibility rays for shadows in Vulkan ray query and the
-  shared CUDA/HIP tracer.
+  shared CUDA/HIP tracer. RT instances now carry independent direct-light and
+  shadow collection masks, so linked meshes receive only the authored lights
+  and only authored shadow casters can occlude them. Selective membership is
+  exact for the first 32 stage-order light records; later records retain
+  collection-all behavior.
 - [x] Diagnose rather than silently approximate GeometryLight, PortalLight,
   IES, and emissive-mesh light sampling until dedicated implementations land.
 
@@ -119,8 +138,9 @@ silently becoming the default material.
 - [ ] Checked-in fixtures cover a PBR material grid, packed/UDIM minification,
   Points and all curve families, perspective/orthographic lens shift,
   multi-light linking, and raster shadows. The linked red/blue/magenta raster
-  fixture is checked in and compares GL/Vulkan output; the shadow fixture is
-  still outstanding.
+  fixture is checked in and compares GL/Vulkan output. The generated raster
+  shadow regression covers the current baseline; a checked-in alpha-cutout and
+  instancing fixture is still outstanding.
 - [ ] GL/Vulkan raster images agree within the focused-test tolerances before
   the corresponding Vulkan/CUDA/HIP RT task is closed.
 - [ ] Run the curated external usd-assets golden sweep when the corpus is
@@ -133,7 +153,25 @@ silently becoming the default material.
 
 ## Active-roadmap verification evidence
 
-Latest focused verification on 2026-07-19:
+Latest focused verification on 2026-07-20:
+
+- The resumed material/shadow implementation builds after regenerating Vulkan
+  shaders. `tusdview_lightrt_bridge_test`, `tusdview_openpbr_material_test`,
+  `tusdview_lighting_test`, and `tusdview_texture_pipeline_test` pass. The
+  bridge test pins the expanded raster and RT coat scale/bias ABI.
+- `tusdview-raster-shadow-map` now renders both an opaque blocker and the same
+  blocker rejected by `opacityThreshold`; GL and Vulkan must show a bounded
+  shadow only for the opaque case. `tusdview-vk-render` also passes with the
+  material-aware shadow fragment shader and expanded RT descriptor ABI.
+- Vulkan shader regeneration and `tusdview-vk-render` cover the dedicated
+  instanced shadow pipeline, 25-binding material set, and coat-normal raster/RT
+  layouts. `tusdview_lightrt_bridge_test` pins the 54-vec4 raster and 155-float
+  RT coat-normal descriptor offsets.
+- The expanded `tusdview-raster-shadow-map` oracle reports 27 bounded shadow
+  rows for both ordinary and PointInstancer casters and zero rows for constant
+  and sparse-UDIM rejected masks on Vulkan. Backend-unavailable cases remain
+  skips, but an instanced/UDIM subcase may not silently skip after its baseline
+  backend has rendered.
 
 - Native `tusdview` and `test_tydra_next` build successfully.
 - The twelve focused backend/material/camera/non-mesh CTests pass, including

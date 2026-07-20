@@ -38,6 +38,7 @@ layout(set = 2, binding = 0) uniform Frame {
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
   vec4 iblParams;     // .x = prefiltered mip count
+  mat4 shadowViewProj;
 } fr;
 struct MaterialTexParam {
   vec4 baseUv0; vec4 baseUv1;
@@ -61,6 +62,22 @@ struct MaterialTexParam {
   vec4 roughUv0; vec4 roughUv1;
   vec4 coatParams;
   vec4 coatColor;
+  vec4 occlusionUv0; vec4 occlusionUv1;
+  vec4 occlusionParams;
+  // Padding rows so the std430 array stride stays byte-identical with
+  // mesh.frag, which uses these extra semantic texture slots.
+  vec4 specColorUv0; vec4 specColorUv1;
+  vec4 coatWeightUv0; vec4 coatWeightUv1;
+  vec4 coatColorUv0; vec4 coatColorUv1;
+  vec4 coatRoughUv0; vec4 coatRoughUv1;
+  vec4 coatTexParams;
+  vec4 extraUvSets;
+  vec4 specColorScale; vec4 specColorBias;
+  vec4 coatWeightScale; vec4 coatWeightBias;
+  vec4 coatColorScale; vec4 coatColorBias;
+  vec4 coatRoughScale; vec4 coatRoughBias;
+  vec4 coatNormalUv0; vec4 coatNormalUv1;
+  vec4 coatNormalScale; vec4 coatNormalBias;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 // Per-vertex displayColor + displayOpacity (set 24): 4 floats per vertex.
@@ -130,5 +147,6 @@ void main() {
                       vtxcol.c[4 * gl_VertexIndex + 2],
                       vtxcol.c[4 * gl_VertexIndex + 3])
                : vec4(1.0);
-  gl_Position = fr.viewProj * pc.model * vec4(pos, 1.0);
+  gl_Position = (pc.ids.z == -2 ? fr.shadowViewProj : fr.viewProj) *
+                pc.model * vec4(pos, 1.0);
 }

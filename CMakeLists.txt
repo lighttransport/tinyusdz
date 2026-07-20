@@ -2484,6 +2484,24 @@ if(TINYUSDZ_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "tusdview")
 
     add_test(
+      NAME tusdview-rt-light-links
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-rt-light-links.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+    set_tests_properties(tusdview-rt-light-links PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 150 LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-raster-shadow-map
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-raster-shadow-map.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+    set_tests_properties(tusdview-raster-shadow-map PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview")
+
+    add_test(
       NAME tusdview-unsupported-realtime-lobes
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-unsupported-lobes.sh"

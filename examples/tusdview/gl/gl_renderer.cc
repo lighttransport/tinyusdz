@@ -217,6 +217,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uExposure_ = glGetUniformLocation(program_, "uExposure");
   uEnvRotation_ = glGetUniformLocation(program_, "uEnvRotation");
   uPrefilteredLods_ = glGetUniformLocation(program_, "uPrefilteredLods");
+  uHasShadowMap_ = glGetUniformLocation(program_, "uHasShadowMap");
+  uShadowLightSlot_ = glGetUniformLocation(program_, "uShadowLightSlot");
+  uShadowViewProj_ = glGetUniformLocation(program_, "uShadowViewProj");
   uGeometricNormal_ = glGetUniformLocation(program_, "uGeometricNormal");
   uRenderMode_ = glGetUniformLocation(program_, "uRenderMode");
   uMatId_ = glGetUniformLocation(program_, "uMatId");
@@ -237,6 +240,39 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uSpecularColor_ = glGetUniformLocation(program_, "uSpecularColor");
   uIor_ = glGetUniformLocation(program_, "uIor");
   uOcclusion_ = glGetUniformLocation(program_, "uOcclusion");
+  uHasSpecularColorTex_ = glGetUniformLocation(program_, "uHasSpecularColorTex");
+  uSpecularColorUv0_ = glGetUniformLocation(program_, "uSpecularColorUv0");
+  uSpecularColorUv1_ = glGetUniformLocation(program_, "uSpecularColorUv1");
+  uSpecularColorUvSet_ = glGetUniformLocation(program_, "uSpecularColorUvSet");
+  uSpecularColorScale_ = glGetUniformLocation(program_, "uSpecularColorScale");
+  uSpecularColorBias_ = glGetUniformLocation(program_, "uSpecularColorBias");
+  uHasCoatNormalTex_ = glGetUniformLocation(program_, "uHasCoatNormalTex");
+  uCoatNormalUv0_ = glGetUniformLocation(program_, "uCoatNormalUv0");
+  uCoatNormalUv1_ = glGetUniformLocation(program_, "uCoatNormalUv1");
+  uCoatNormalUvSet_ = glGetUniformLocation(program_, "uCoatNormalUvSet");
+  uCoatNormalScale_ = glGetUniformLocation(program_, "uCoatNormalScale");
+  uCoatNormalBias_ = glGetUniformLocation(program_, "uCoatNormalBias");
+  uHasCoatWeightTex_ = glGetUniformLocation(program_, "uHasCoatWeightTex");
+  uHasCoatColorTex_ = glGetUniformLocation(program_, "uHasCoatColorTex");
+  uHasCoatRoughnessTex_ = glGetUniformLocation(program_, "uHasCoatRoughnessTex");
+  uCoatWeightUv0_ = glGetUniformLocation(program_, "uCoatWeightUv0");
+  uCoatWeightUv1_ = glGetUniformLocation(program_, "uCoatWeightUv1");
+  uCoatColorUv0_ = glGetUniformLocation(program_, "uCoatColorUv0");
+  uCoatColorUv1_ = glGetUniformLocation(program_, "uCoatColorUv1");
+  uCoatRoughnessUv0_ = glGetUniformLocation(program_, "uCoatRoughnessUv0");
+  uCoatRoughnessUv1_ = glGetUniformLocation(program_, "uCoatRoughnessUv1");
+  uCoatWeightUvSet_ = glGetUniformLocation(program_, "uCoatWeightUvSet");
+  uCoatColorUvSet_ = glGetUniformLocation(program_, "uCoatColorUvSet");
+  uCoatRoughnessUvSet_ = glGetUniformLocation(program_, "uCoatRoughnessUvSet");
+  uCoatWeightChannel_ = glGetUniformLocation(program_, "uCoatWeightChannel");
+  uCoatRoughnessChannel_ =
+      glGetUniformLocation(program_, "uCoatRoughnessChannel");
+  uCoatWeightScale_ = glGetUniformLocation(program_, "uCoatWeightScale");
+  uCoatWeightBias_ = glGetUniformLocation(program_, "uCoatWeightBias");
+  uCoatColorScale_ = glGetUniformLocation(program_, "uCoatColorScale");
+  uCoatColorBias_ = glGetUniformLocation(program_, "uCoatColorBias");
+  uCoatRoughnessScale_ = glGetUniformLocation(program_, "uCoatRoughnessScale");
+  uCoatRoughnessBias_ = glGetUniformLocation(program_, "uCoatRoughnessBias");
   uCoatWeight_ = glGetUniformLocation(program_, "uCoatWeight");
   uCoatColor_ = glGetUniformLocation(program_, "uCoatColor");
   uCoatRoughness_ = glGetUniformLocation(program_, "uCoatRoughness");
@@ -251,12 +287,14 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uHasNormalTex_ = glGetUniformLocation(program_, "uHasNormalTex");
   uHasEmissiveTex_ = glGetUniformLocation(program_, "uHasEmissiveTex");
   uHasOpacityTex_ = glGetUniformLocation(program_, "uHasOpacityTex");
+  uHasOcclusionTex_ = glGetUniformLocation(program_, "uHasOcclusionTex");
   uBaseColorTexIsUdim_ = glGetUniformLocation(program_, "uBaseColorTexIsUdim");
   uMetallicTexIsUdim_ = glGetUniformLocation(program_, "uMetallicTexIsUdim");
   uRoughnessTexIsUdim_ = glGetUniformLocation(program_, "uRoughnessTexIsUdim");
   uNormalTexIsUdim_ = glGetUniformLocation(program_, "uNormalTexIsUdim");
   uEmissiveTexIsUdim_ = glGetUniformLocation(program_, "uEmissiveTexIsUdim");
   uOpacityTexIsUdim_ = glGetUniformLocation(program_, "uOpacityTexIsUdim");
+  uOcclusionTexIsUdim_ = glGetUniformLocation(program_, "uOcclusionTexIsUdim");
   uBaseColorUv0_ = glGetUniformLocation(program_, "uBaseColorUv0");
   uBaseColorUv1_ = glGetUniformLocation(program_, "uBaseColorUv1");
   uMetallicUv0_ = glGetUniformLocation(program_, "uMetallicUv0");
@@ -269,6 +307,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uEmissiveUv1_ = glGetUniformLocation(program_, "uEmissiveUv1");
   uOpacityUv0_ = glGetUniformLocation(program_, "uOpacityUv0");
   uOpacityUv1_ = glGetUniformLocation(program_, "uOpacityUv1");
+  uOcclusionUv0_ = glGetUniformLocation(program_, "uOcclusionUv0");
+  uOcclusionUv1_ = glGetUniformLocation(program_, "uOcclusionUv1");
   uUvSet_ = glGetUniformLocation(program_, "uUvSet");
   uRoughnessUvSet_ = glGetUniformLocation(program_, "uRoughnessUvSet");
   uBaseColorTexScale_ = glGetUniformLocation(program_, "uBaseColorTexScale");
@@ -287,8 +327,13 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uOpacityChannel_ = glGetUniformLocation(program_, "uOpacityChannel");
   uOpacityTexScale_ = glGetUniformLocation(program_, "uOpacityTexScale");
   uOpacityTexBias_ = glGetUniformLocation(program_, "uOpacityTexBias");
+  uOcclusionUvSet_ = glGetUniformLocation(program_, "uOcclusionUvSet");
+  uOcclusionChannel_ = glGetUniformLocation(program_, "uOcclusionChannel");
+  uOcclusionTexScale_ = glGetUniformLocation(program_, "uOcclusionTexScale");
+  uOcclusionTexBias_ = glGetUniformLocation(program_, "uOcclusionTexBias");
   uUdimSlots_ = glGetUniformLocation(program_, "uUdimSlots");
   uOpacityUdimSlot_ = glGetUniformLocation(program_, "uOpacityUdimSlot");
+  uOcclusionUdimSlot_ = glGetUniformLocation(program_, "uOcclusionUdimSlot");
   uRoughnessUdimSlot_ = glGetUniformLocation(program_, "uRoughnessUdimSlot");
   uHasDisplacement_ = glGetUniformLocation(program_, "uHasDisplacement");
   uHasDisplacementTex_ = glGetUniformLocation(program_, "uHasDisplacementTex");
@@ -315,6 +360,15 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uNormalUdimTex"), 15);
   glUniform1i(glGetUniformLocation(program_, "uOpacityUdimTex"), 16);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveUdimTex"), 17);
+  glUniform1i(glGetUniformLocation(program_, "uOcclusionTex"), 23);
+  glUniform1i(glGetUniformLocation(program_, "uOcclusionUdimTex"), 24);
+  // Advanced slots are ordinary 2D only for now. Keep every semantic on its own
+  // unit so specular F0 and coat tint can be authored independently.
+  glUniform1i(glGetUniformLocation(program_, "uSpecularColorTex"), 26);
+  glUniform1i(glGetUniformLocation(program_, "uCoatWeightTex"), 27);
+  glUniform1i(glGetUniformLocation(program_, "uCoatColorTex"), 28);
+  glUniform1i(glGetUniformLocation(program_, "uCoatRoughnessTex"), 29);
+  glUniform1i(glGetUniformLocation(program_, "uCoatNormalTex"), 30);
   glUniform1i(glGetUniformLocation(program_, "uBoneTex"), 4);
   glUniform1i(glGetUniformLocation(program_, "uInfluenceTex"), 5);
   glUniform1i(uFaceIdTex_, 6);  // source-face-id texture buffer
@@ -325,10 +379,153 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uIrradianceMap"), 19);  // dome IBL
   glUniform1i(glGetUniformLocation(program_, "uPrefilteredMap"), 20);
   glUniform1i(glGetUniformLocation(program_, "uBrdfLut"), 21);
+  glUniform1i(glGetUniformLocation(program_, "uShadowMap"), 25);
   // Filter across cube-face borders (core since GL 3.2); matters for the
   // low-res prefiltered/irradiance cubes.
   glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
   uHasMorph_ = glGetUniformLocation(program_, "uHasMorph");
+  glUseProgram(0);
+
+  // One deterministic depth map shared by all raster materials.
+  static const char* kShadowFS = R"glsl(#version 330 core
+in vec2 vUV;
+in vec2 vUV1;
+uniform int uAlphaMode;
+uniform float uAlpha;
+uniform float uAlphaCutoff;
+uniform bool uHasBaseAlphaTex;
+uniform bool uHasOpacityTex;
+uniform sampler2D uBaseAlphaTex;
+uniform sampler2D uOpacityTex;
+uniform sampler2DArray uBaseAlphaUdimTex;
+uniform sampler2DArray uOpacityUdimTex;
+uniform isampler2D uUdimLutAtlas;
+uniform bool uBaseAlphaIsUdim;
+uniform bool uOpacityIsUdim;
+uniform int uBaseAlphaUdimSlot;
+uniform int uOpacityUdimSlot;
+uniform vec3 uBaseAlphaUv0;
+uniform vec3 uBaseAlphaUv1;
+uniform int uBaseAlphaUvSet;
+uniform vec4 uBaseAlphaScale;
+uniform vec4 uBaseAlphaBias;
+uniform vec3 uOpacityUv0;
+uniform vec3 uOpacityUv1;
+uniform int uOpacityUvSet;
+uniform int uOpacityChannel;
+uniform float uOpacityScale;
+uniform float uOpacityBias;
+vec2 xf(vec2 uv, vec3 a, vec3 b) {
+  return vec2(a.x * uv.x + a.y * uv.y + a.z,
+              b.x * uv.x + b.y * uv.y + b.z);
+}
+float channelOf(vec4 c, int ch) {
+  return ch == 1 ? c.g : ch == 2 ? c.b : ch == 3 ? c.a : c.r;
+}
+vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
+  ivec2 tile = ivec2(floor(uv));
+  int idx = tile.x + tile.y * 10;
+  if (idx < 0 || idx >= 100) return missing;
+  int layer = texelFetch(uUdimLutAtlas, ivec2(idx, slot), 0).r;
+  return layer < 0 ? missing : texture(tex, vec3(fract(uv), float(layer)));
+}
+void main() {
+  if (uAlphaMode != 1) return;
+  float a = uAlpha;
+  if (uHasBaseAlphaTex) {
+    vec2 uv = uBaseAlphaUvSet == 1 ? vUV1 : vUV;
+    vec2 tuv = xf(uv, uBaseAlphaUv0, uBaseAlphaUv1);
+    vec4 c = uBaseAlphaIsUdim
+        ? sampleUdim(uBaseAlphaUdimTex, uBaseAlphaUdimSlot, tuv, vec4(1.0))
+        : texture(uBaseAlphaTex, tuv);
+    a *= (c * uBaseAlphaScale + uBaseAlphaBias).a;
+  }
+  if (uHasOpacityTex) {
+    vec2 uv = uOpacityUvSet == 1 ? vUV1 : vUV;
+    vec2 tuv = xf(uv, uOpacityUv0, uOpacityUv1);
+    vec4 c = uOpacityIsUdim
+        ? sampleUdim(uOpacityUdimTex, uOpacityUdimSlot, tuv, vec4(1.0))
+        : texture(uOpacityTex, tuv);
+    a *= channelOf(c, uOpacityChannel) * uOpacityScale + uOpacityBias;
+  }
+  if (a < uAlphaCutoff) discard;
+}
+)glsl";
+  std::string shadowErr;
+  shadowProgram_ = glutil::CompileProgram(light3d::getMaterialVertexShaderGL330(),
+                                          kShadowFS, &shadowErr);
+  if (!shadowProgram_) {
+    if (err) *err = "Failed to build GL shadow program: " + shadowErr;
+    return false;
+  }
+  sMVP_ = glGetUniformLocation(shadowProgram_, "uModelViewProj");
+  sModel_ = glGetUniformLocation(shadowProgram_, "uModel");
+  sNormalMat_ = glGetUniformLocation(shadowProgram_, "uNormalMatrix");
+  sSkinningEnabled_ = glGetUniformLocation(shadowProgram_, "uSkinningEnabled");
+  sExtendedSkinningEnabled_ = glGetUniformLocation(shadowProgram_, "uExtendedSkinningEnabled");
+  sBoneTexWidth_ = glGetUniformLocation(shadowProgram_, "uBoneTexWidth");
+  sBoneMatrixCount_ = glGetUniformLocation(shadowProgram_, "uBoneMatrixCount");
+  sInfluenceTexWidth_ = glGetUniformLocation(shadowProgram_, "uInfluenceTexWidth");
+  sHasMorph_ = glGetUniformLocation(shadowProgram_, "uHasMorph");
+  sHasDisplacement_ = glGetUniformLocation(shadowProgram_, "uHasDisplacement");
+  sHasDisplacementTex_ = glGetUniformLocation(shadowProgram_, "uHasDisplacementTex");
+  sDisplacementConst_ = glGetUniformLocation(shadowProgram_, "uDisplacementConst");
+  sDisplacementScale_ = glGetUniformLocation(shadowProgram_, "uDisplacementScale");
+  sDisplacementTexScale_ = glGetUniformLocation(shadowProgram_, "uDisplacementTexScale");
+  sDisplacementTexBias_ = glGetUniformLocation(shadowProgram_, "uDisplacementTexBias");
+  sAlphaMode_ = glGetUniformLocation(shadowProgram_, "uAlphaMode");
+  sAlpha_ = glGetUniformLocation(shadowProgram_, "uAlpha");
+  sAlphaCutoff_ = glGetUniformLocation(shadowProgram_, "uAlphaCutoff");
+  sHasBaseAlphaTex_ = glGetUniformLocation(shadowProgram_, "uHasBaseAlphaTex");
+  sHasOpacityTex_ = glGetUniformLocation(shadowProgram_, "uHasOpacityTex");
+  sBaseAlphaIsUdim_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaIsUdim");
+  sOpacityIsUdim_ = glGetUniformLocation(shadowProgram_, "uOpacityIsUdim");
+  sBaseAlphaUdimSlot_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaUdimSlot");
+  sOpacityUdimSlot_ = glGetUniformLocation(shadowProgram_, "uOpacityUdimSlot");
+  sBaseAlphaUv0_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaUv0");
+  sBaseAlphaUv1_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaUv1");
+  sBaseAlphaUvSet_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaUvSet");
+  sBaseAlphaScale_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaScale");
+  sBaseAlphaBias_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaBias");
+  sOpacityUv0_ = glGetUniformLocation(shadowProgram_, "uOpacityUv0");
+  sOpacityUv1_ = glGetUniformLocation(shadowProgram_, "uOpacityUv1");
+  sOpacityUvSet_ = glGetUniformLocation(shadowProgram_, "uOpacityUvSet");
+  sOpacityChannel_ = glGetUniformLocation(shadowProgram_, "uOpacityChannel");
+  sOpacityScale_ = glGetUniformLocation(shadowProgram_, "uOpacityScale");
+  sOpacityBias_ = glGetUniformLocation(shadowProgram_, "uOpacityBias");
+  glUseProgram(shadowProgram_);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uBoneTex"), 4);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uInfluenceTex"), 5);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uDisplacementTex"), 7);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uMorphDeltaTex"), 8);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uMorphCoeffTex"), 9);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uMorphChanTex"), 10);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uBaseAlphaTex"), 0);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uOpacityTex"), 14);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uBaseAlphaUdimTex"), 11);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uOpacityUdimTex"), 16);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uUdimLutAtlas"), 12);
+  glGenTextures(1, &shadowDepthTex_);
+  glBindTexture(GL_TEXTURE_2D, shadowDepthTex_);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 2048, 2048, 0,
+               GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+  const float border[4] = {1, 1, 1, 1};
+  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+  glGenFramebuffers(1, &shadowFbo_);
+  glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                         shadowDepthTex_, 0);
+  glDrawBuffer(GL_NONE);
+  glReadBuffer(GL_NONE);
+  if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    if (err) *err = "Failed to create GL shadow framebuffer";
+    return false;
+  }
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glUseProgram(0);
 
   // GPU tessellation displacement program (GL >= 4.0 only). Failure to build is
@@ -446,6 +643,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "uniform float uExposure;\n"
       "uniform mat3 uEnvRotation;\n"
       "uniform samplerCube uIrradianceMap;\n"
+      "uniform bool uHasShadowMap; uniform int uShadowLightSlot;\n"
+      "uniform mat4 uShadowViewProj; uniform sampler2D uShadowMap;\n"
       "uniform vec3 uEmissive;\n"  // selection-highlight override (else 0)
       // Debug-AOV uniforms (mirror the non-instanced material shader). Instanced
       // prototypes carry no UVs or material scalars, so UV / roughness / metallic /
@@ -489,6 +688,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "float ggxD(float nh,float r){float a=max(r*r,0.002),a2=a*a,d=nh*nh*(a2-1.0)+1.0;return a2/max(3.14159265*d*d,1e-6);}\n"
       "float ggxG1(float nx,float r){float k=(r+1.0)*(r+1.0)*0.125;return nx/max(nx*(1.0-k)+k,1e-6);}\n"
       "vec3 fresnel(float vh,vec3 f0){return f0+(vec3(1.0)-f0)*pow(1.0-clamp(vh,0.0,1.0),5.0);}\n"
+      "float shadowVis(vec3 wp,vec3 n,vec3 l){if(!uHasShadowMap)return 1.0;vec4 c=uShadowViewProj*vec4(wp,1);vec3 p=c.xyz/c.w;p=p*.5+.5;if(p.z<=0||p.z>=1||any(lessThan(p.xy,vec2(0)))||any(greaterThan(p.xy,vec2(1))))return 1.0;float b=max(.00035,.0015*(1-max(dot(n,l),0))),v=0;vec2 t=1.0/vec2(textureSize(uShadowMap,0));for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x)v+=p.z-b<=texture(uShadowMap,p.xy+vec2(x,y)*t).r?1:0;return v/9;}\n"
       "void main(){\n"
       // Geometric (screen-derivative) normal: instanced prototypes usually ship
       // without authored normals, and faceted shading reads cleanly for them.
@@ -531,7 +731,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "    int lt=int(pt.w+0.5);vec3 L;float att=1.0;if(lt==5)L=normalize(da.xyz);else{vec3 q=pt.xyz-vWorldPos;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1.0/d2;}\n"
       "    float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}\n"
       "    float nl=max(dot(Nf,L),0.0);if(nl<=0.0||shape<=0.0)continue;vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));\n"
-      "    vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1.0)-F)*vColor*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl);}\n"
+      "    vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1.0)-F)*vColor*(1.0/3.14159265);float vis=li==uShadowLightSlot?shadowVis(vWorldPos,Nf,L):1;direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl*vis);}\n"
       "  if(uLightCount==0){vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));vec3 lc=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1);float nl=max(dot(Nf,L),0.0);vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*vColor*(1.0/3.14159265);direct=(diff+spec)*lc*nl;}\n"
       "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.12);\n"
       "  vec3 col = vColor*amb + direct;\n"
@@ -549,6 +749,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   iHasIbl_ = glGetUniformLocation(instProgram_, "uHasIbl");
   iIblColor_ = glGetUniformLocation(instProgram_, "uIblColor");
   iExposure_ = glGetUniformLocation(instProgram_, "uExposure");
+  iHasShadowMap_ = glGetUniformLocation(instProgram_, "uHasShadowMap");
+  iShadowLightSlot_ = glGetUniformLocation(instProgram_, "uShadowLightSlot");
+  iShadowViewProj_ = glGetUniformLocation(instProgram_, "uShadowViewProj");
   iEnvRotation_ = glGetUniformLocation(instProgram_, "uEnvRotation");
   iLightColor_ = glGetUniformLocation(instProgram_, "uLightColor");
   iEmissive_ = glGetUniformLocation(instProgram_, "uEmissive");
@@ -570,6 +773,25 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphCoeffTex"), 9);
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphChanTex"), 10);
   glUniform1i(glGetUniformLocation(instProgram_, "uIrradianceMap"), 19);
+  glUniform1i(glGetUniformLocation(instProgram_, "uShadowMap"), 25);
+  glUseProgram(0);
+
+  static const char* kShadowInstFS = "#version 330 core\nvoid main(){}\n";
+  shadowInstProgram_ = glutil::CompileProgram(kInstancedVS, kShadowInstFS, err);
+  if (!shadowInstProgram_) {
+    if (err && err->empty()) *err = "Failed to build GL instanced shadow program";
+    return false;
+  }
+  glUseProgram(shadowInstProgram_);
+  siViewProj_ = glGetUniformLocation(shadowInstProgram_, "uViewProj");
+  siSkinningEnabled_ = glGetUniformLocation(shadowInstProgram_, "uSkinningEnabled");
+  siBoneTexWidth_ = glGetUniformLocation(shadowInstProgram_, "uBoneTexWidth");
+  siBoneMatrixCount_ = glGetUniformLocation(shadowInstProgram_, "uBoneMatrixCount");
+  siHasMorph_ = glGetUniformLocation(shadowInstProgram_, "uHasMorph");
+  glUniform1i(glGetUniformLocation(shadowInstProgram_, "uBoneTex"), 4);
+  glUniform1i(glGetUniformLocation(shadowInstProgram_, "uMorphDeltaTex"), 8);
+  glUniform1i(glGetUniformLocation(shadowInstProgram_, "uMorphCoeffTex"), 9);
+  glUniform1i(glGetUniformLocation(shadowInstProgram_, "uMorphChanTex"), 10);
   glUseProgram(0);
 
   buildWireProgram();  // flat polygon-edge wireframe (best-effort; non-fatal)
@@ -1221,19 +1443,34 @@ void GLRenderer::appendMaterials(const std::vector<DrawMaterialCPU>& materials,
     gm.coatColor[2] = m.coatColor[2];
     gm.coatRoughness = m.coatRoughness;
     gm.coatIor = m.coatIor;
+    gm.coatWeightTex = m.coatWeightTex;
+    gm.coatColorTex = m.coatColorTex;
+    gm.coatRoughnessTex = m.coatRoughnessTex;
+    gm.coatNormalTex = m.coatNormalTex;
+    gm.specularColorTex = m.specularColorTex;
+    gm.coatWeightSample = m.coatWeightSample;
+    gm.coatColorSample = m.coatColorSample;
+    gm.coatRoughnessSample = m.coatRoughnessSample;
+    gm.coatNormalSample = m.coatNormalSample;
+    gm.specularColorSample = m.specularColorSample;
     gm.baseColorTex = m.baseColorTex;  // slot indices (resolved at draw)
     gm.metallicTex = m.metallicTex;
     gm.roughnessTex = m.roughnessTex;
     gm.normalTex = m.normalTex;
     gm.emissiveTex = m.emissiveTex;
     gm.opacityTex = m.opacityTex;
+    gm.occlusionTex = m.occlusionTex;
     gm.baseColorSample = m.baseColorSample;
     gm.metallicSample = m.metallicSample;
     gm.roughnessSample = m.roughnessSample;
     gm.normalSample = m.normalSample;
     gm.emissiveSample = m.emissiveSample;
     gm.opacitySample = m.opacitySample;
+    gm.occlusionSample = m.occlusionSample;
     gm.opacityChannel = m.opacityChannel;
+    gm.occlusionChannel = m.occlusionChannel;
+    gm.occlusionTexScale = m.occlusionTexScale;
+    gm.occlusionTexBias = m.occlusionTexBias;
     gm.opacityTexScale = m.opacityTexScale;
     gm.opacityTexBias = m.opacityTexBias;
     gm.metallicChannel = m.metallicChannel;
@@ -2884,12 +3121,18 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uHasNormalTex_, 0);
         glUniform1i(uHasEmissiveTex_, 0);
         glUniform1i(uHasOpacityTex_, 0);
+        glUniform1i(uHasOcclusionTex_, 0);
+        glUniform1i(uHasCoatWeightTex_, 0);
+        glUniform1i(uHasCoatColorTex_, 0);
+        glUniform1i(uHasCoatRoughnessTex_, 0);
+        glUniform1i(uHasCoatNormalTex_, 0);
         glUniform1i(uBaseColorTexIsUdim_, 0);
         glUniform1i(uMetallicTexIsUdim_, 0);
         glUniform1i(uRoughnessTexIsUdim_, 0);
         glUniform1i(uNormalTexIsUdim_, 0);
         glUniform1i(uEmissiveTexIsUdim_, 0);
         glUniform1i(uOpacityTexIsUdim_, 0);
+        glUniform1i(uOcclusionTexIsUdim_, 0);
       } else {
         glUniform3fv(uBaseColor_, 1, mat.baseColor);
         glUniform1f(uMetallic_, mat.metallic);
@@ -2912,6 +3155,38 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         SetUvUniform(uNormalUv0_, uNormalUv1_, mat.normalSample.uv);
         SetUvUniform(uEmissiveUv0_, uEmissiveUv1_, mat.emissiveSample.uv);
         SetUvUniform(uOpacityUv0_, uOpacityUv1_, mat.opacitySample.uv);
+        SetUvUniform(uOcclusionUv0_, uOcclusionUv1_, mat.occlusionSample.uv);
+        SetUvUniform(uSpecularColorUv0_, uSpecularColorUv1_,
+                     mat.specularColorSample.uv);
+        SetUvUniform(uCoatWeightUv0_, uCoatWeightUv1_, mat.coatWeightSample.uv);
+        SetUvUniform(uCoatColorUv0_, uCoatColorUv1_, mat.coatColorSample.uv);
+        SetUvUniform(uCoatRoughnessUv0_, uCoatRoughnessUv1_,
+                     mat.coatRoughnessSample.uv);
+        SetUvUniform(uCoatNormalUv0_, uCoatNormalUv1_,
+                     mat.coatNormalSample.uv);
+        glUniform1i(uCoatWeightUvSet_, mat.coatWeightSample.uvSet);
+        glUniform1i(uSpecularColorUvSet_, mat.specularColorSample.uvSet);
+        glUniform1i(uCoatColorUvSet_, mat.coatColorSample.uvSet);
+        glUniform1i(uCoatRoughnessUvSet_, mat.coatRoughnessSample.uvSet);
+        glUniform1i(uCoatNormalUvSet_, mat.coatNormalSample.uvSet);
+        // Sample.channel is -1 for whole-value reads; scalar coat slots default
+        // to R in that case.
+        glUniform1i(uCoatWeightChannel_,
+                    mat.coatWeightSample.channel < 0
+                        ? 0 : mat.coatWeightSample.channel);
+        glUniform1i(uCoatRoughnessChannel_,
+                    mat.coatRoughnessSample.channel < 0
+                        ? 0 : mat.coatRoughnessSample.channel);
+        glUniform4fv(uCoatWeightScale_, 1, mat.coatWeightSample.scale);
+        glUniform4fv(uCoatWeightBias_, 1, mat.coatWeightSample.bias);
+        glUniform4fv(uCoatColorScale_, 1, mat.coatColorSample.scale);
+        glUniform4fv(uCoatColorBias_, 1, mat.coatColorSample.bias);
+        glUniform4fv(uCoatRoughnessScale_, 1, mat.coatRoughnessSample.scale);
+        glUniform4fv(uCoatRoughnessBias_, 1, mat.coatRoughnessSample.bias);
+        glUniform4fv(uSpecularColorScale_, 1, mat.specularColorSample.scale);
+        glUniform4fv(uSpecularColorBias_, 1, mat.specularColorSample.bias);
+        glUniform4fv(uCoatNormalScale_, 1, mat.coatNormalSample.scale);
+        glUniform4fv(uCoatNormalBias_, 1, mat.coatNormalSample.bias);
         {
           const GLint uvSets[4] = {mat.baseColorSample.uvSet,
                                    mat.metallicSample.uvSet,
@@ -2936,11 +3211,16 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uOpacityChannel_, mat.opacityChannel);
         glUniform1f(uOpacityTexScale_, mat.opacityTexScale);
         glUniform1f(uOpacityTexBias_, mat.opacityTexBias);
+        glUniform1i(uOcclusionUvSet_, mat.occlusionSample.uvSet);
+        glUniform1i(uOcclusionChannel_, mat.occlusionChannel);
+        glUniform1f(uOcclusionTexScale_, mat.occlusionTexScale);
+        glUniform1f(uOcclusionTexBias_, mat.occlusionTexBias);
         const GLint udimSlots[4] = {mat.baseColorTex, mat.metallicTex,
                                     mat.normalTex, mat.emissiveTex};
         glUniform4iv(uUdimSlots_, 1, udimSlots);
         glUniform1i(uOpacityUdimSlot_, mat.opacityTex);
         glUniform1i(uRoughnessUdimSlot_, mat.roughnessTex);
+        glUniform1i(uOcclusionUdimSlot_, mat.occlusionTex);
         glActiveTexture(GL_TEXTURE12);
         glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
         auto bindMaterialTexture = [&](int slot, GLenum texUnit2D,
@@ -2974,6 +3254,24 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
                             uEmissiveTexIsUdim_);
         bindMaterialTexture(mat.opacityTex, GL_TEXTURE14, GL_TEXTURE16,
                             uHasOpacityTex_, uOpacityTexIsUdim_);
+        // Coat/specular slots: ordinary 2D only. A UDIM-backed source has no
+        // tex2d, so bind2dOnly reports "no texture" rather than sampling the
+        // wrong image; the constant then applies as before.
+        auto bind2dOnly = [&](int slot, GLenum texUnit2D, GLint hasLoc) {
+          const GLTexture* tex = slotGpuTex(slot);
+          const bool hasTex = tex != nullptr && tex->tex2d != 0;
+          glUniform1i(hasLoc, hasTex ? 1 : 0);
+          glActiveTexture(texUnit2D);
+          glBindTexture(GL_TEXTURE_2D, hasTex ? tex->tex2d : whiteTex_);
+        };
+        bind2dOnly(mat.specularColorTex, GL_TEXTURE26,
+                   uHasSpecularColorTex_);
+        bind2dOnly(mat.coatWeightTex, GL_TEXTURE27, uHasCoatWeightTex_);
+        bind2dOnly(mat.coatColorTex, GL_TEXTURE28, uHasCoatColorTex_);
+        bind2dOnly(mat.coatRoughnessTex, GL_TEXTURE29, uHasCoatRoughnessTex_);
+        bind2dOnly(mat.coatNormalTex, GL_TEXTURE30, uHasCoatNormalTex_);
+        bindMaterialTexture(mat.occlusionTex, GL_TEXTURE23, GL_TEXTURE24,
+                            uHasOcclusionTex_, uOcclusionTexIsUdim_);
         glActiveTexture(GL_TEXTURE0);
       }
       glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
@@ -2997,6 +3295,13 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniformMatrix4fv(iUViewProj_, 1, GL_FALSE, VP.m);
     glUniform3fv(iCameraPos_, 1, params.cameraPos);
     glUniform1f(iExposure_, params.exposure);
+    glUniform1i(iHasShadowMap_, shadowCamera_.lightSlot >= 0 ? 1 : 0);
+    glUniform1i(iShadowLightSlot_, shadowCamera_.lightSlot);
+    glUniformMatrix4fv(iShadowViewProj_, 1, GL_FALSE, shadowCamera_.viewProj.m);
+    if (shadowCamera_.lightSlot >= 0) {
+      glActiveTexture(GL_TEXTURE25);
+      glBindTexture(GL_TEXTURE_2D, shadowDepthTex_);
+    }
     glUniform3fv(iLightDir_, 1, params.lightDir);
     glUniform1i(iHasIbl_, iblActive_ ? 1 : 0);
     if (iblActive_) {
@@ -3178,8 +3483,156 @@ void GLRenderer::drawNonMesh(const RenderFrameParams& params) {
   glUseProgram(program_);
 }
 
+void GLRenderer::renderShadowMap(const RenderFrameParams& params) {
+  shadowCamera_.lightSlot = -1;
+  if (!shadowProgram_ || !shadowFbo_ ||
+      !BuildRasterShadowCamera(rasterLights_, params.sceneMin,
+                               params.sceneExtent, false, &shadowCamera_)) return;
+  glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+  glViewport(0, 0, 2048, 2048);
+  glClear(GL_DEPTH_BUFFER_BIT);
+  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+  glEnable(GL_DEPTH_TEST);
+  glEnable(GL_CULL_FACE);
+  glCullFace(GL_FRONT);
+  glUseProgram(shadowProgram_);
+  glActiveTexture(GL_TEXTURE4);
+  glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+  for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+    if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
+        !params.meshVisible[mi]) continue;
+    if (!RasterShadowIncludesMesh(rasterLights_, static_cast<int>(mi))) continue;
+    const GLMesh& mesh = meshes_[mi];
+    if (mesh.instanceCount > 0) continue;
+    const light3d::Mat4 world = ToMat4(mesh.world);
+    const light3d::Mat4 mvp = shadowCamera_.viewProj * world;
+    float normal[9];
+    NormalMatrix3(mesh.world, normal);
+    glUniformMatrix4fv(sMVP_, 1, GL_FALSE, mvp.m);
+    glUniformMatrix4fv(sModel_, 1, GL_FALSE, world.m);
+    glUniformMatrix3fv(sNormalMat_, 1, GL_FALSE, normal);
+    glUniform1i(sSkinningEnabled_, mesh.skinned && skinningFrameEnabled_);
+    glUniform1i(sExtendedSkinningEnabled_,
+                mesh.extendedSkinned && skinningFrameEnabled_);
+    glUniform1i(sBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+    glUniform1i(sBoneMatrixCount_, skinningFrameEnabled_ ? boneMatrixCount_ : 1);
+    glUniform1i(sInfluenceTexWidth_, mesh.influenceTexWidth);
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, mesh.influenceTex ? mesh.influenceTex : whiteTex_);
+    glUniform1i(sHasMorph_, mesh.hasMorph);
+    if (mesh.hasMorph) {
+      glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
+      glActiveTexture(GL_TEXTURE9); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+      glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
+    }
+    glBindVertexArray(mesh.vao);
+    for (const DrawSubmesh& sub : mesh.submeshes) {
+      static const GLMaterial fallback;
+      const GLMaterial& mat = sub.materialId >= 0 &&
+                                      static_cast<size_t>(sub.materialId) < materials_.size()
+                                  ? materials_[static_cast<size_t>(sub.materialId)]
+                                  : fallback;
+      const bool displaced = params.displacement && mat.hasDisplacement();
+      glUniform1i(sHasDisplacement_, displaced);
+      glUniform1i(sHasDisplacementTex_, displaced && mat.displacementTex >= 0);
+      glUniform1f(sDisplacementConst_, mat.displacementConst);
+      glUniform1f(sDisplacementScale_, params.displacementScale);
+      glUniform1f(sDisplacementTexScale_, mat.displacementTexScale);
+      glUniform1f(sDisplacementTexBias_, mat.displacementTexBias);
+      glActiveTexture(GL_TEXTURE7);
+      GLuint disp = whiteTex_;
+      if (mat.displacementTex >= 0 &&
+          static_cast<size_t>(mat.displacementTex) < textures_.size() &&
+          textures_[static_cast<size_t>(mat.displacementTex)].tex2d)
+        disp = textures_[static_cast<size_t>(mat.displacementTex)].tex2d;
+      glBindTexture(GL_TEXTURE_2D, disp);
+      glUniform1i(sAlphaMode_, mat.alphaMode);
+      glUniform1f(sAlpha_, mat.alpha);
+      glUniform1f(sAlphaCutoff_, mat.alphaCutoff);
+      SetUvUniform(sBaseAlphaUv0_, sBaseAlphaUv1_, mat.baseColorSample.uv);
+      SetUvUniform(sOpacityUv0_, sOpacityUv1_, mat.opacitySample.uv);
+      glUniform1i(sBaseAlphaUvSet_, mat.baseColorSample.uvSet);
+      glUniform1i(sOpacityUvSet_, mat.opacitySample.uvSet);
+      glUniform4fv(sBaseAlphaScale_, 1, mat.baseColorSample.scale);
+      glUniform4fv(sBaseAlphaBias_, 1, mat.baseColorSample.bias);
+      glUniform1i(sOpacityChannel_, mat.opacityChannel);
+      glUniform1f(sOpacityScale_, mat.opacityTexScale);
+      glUniform1f(sOpacityBias_, mat.opacityTexBias);
+      auto shadowTexture = [&](int slot) -> const GLTexture* {
+        if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return nullptr;
+        return &textures_[static_cast<size_t>(slot)];
+      };
+      const GLTexture* baseAlpha = shadowTexture(mat.baseColorTex);
+      const GLTexture* opacity = shadowTexture(mat.opacityTex);
+      const bool baseUdim = baseAlpha && baseAlpha->isUdim && baseAlpha->arrayTex;
+      const bool opacityUdim = opacity && opacity->isUdim && opacity->arrayTex;
+      glUniform1i(sHasBaseAlphaTex_, baseAlpha ? 1 : 0);
+      glUniform1i(sHasOpacityTex_, opacity ? 1 : 0);
+      glUniform1i(sBaseAlphaIsUdim_, baseUdim ? 1 : 0);
+      glUniform1i(sOpacityIsUdim_, opacityUdim ? 1 : 0);
+      glUniform1i(sBaseAlphaUdimSlot_, std::max(mat.baseColorTex, 0));
+      glUniform1i(sOpacityUdimSlot_, std::max(mat.opacityTex, 0));
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D,
+                    baseAlpha && baseAlpha->tex2d ? baseAlpha->tex2d : whiteTex_);
+      glActiveTexture(GL_TEXTURE14);
+      glBindTexture(GL_TEXTURE_2D,
+                    opacity && opacity->tex2d ? opacity->tex2d : whiteTex_);
+      if (baseUdim) {
+        glActiveTexture(GL_TEXTURE11);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, baseAlpha->arrayTex);
+      }
+      if (opacityUdim) {
+        glActiveTexture(GL_TEXTURE16);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, opacity->arrayTex);
+      }
+      glActiveTexture(GL_TEXTURE12);
+      glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
+      glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount),
+                     GL_UNSIGNED_INT,
+                     reinterpret_cast<void*>(static_cast<uintptr_t>(sub.indexOffset) *
+                                             sizeof(uint32_t)));
+    }
+  }
+  if (shadowInstProgram_) {
+    glUseProgram(shadowInstProgram_);
+    glUniformMatrix4fv(siViewProj_, 1, GL_FALSE, shadowCamera_.viewProj.m);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+      if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
+          !params.meshVisible[mi]) continue;
+      if (!RasterShadowIncludesMesh(rasterLights_, static_cast<int>(mi))) continue;
+      const GLMesh& mesh = meshes_[mi];
+      if (mesh.instanceCount <= 0 || mesh.drawInstanceCount <= 0) continue;
+      glUniform1i(siSkinningEnabled_, mesh.skinned && skinningFrameEnabled_);
+      glUniform1i(siBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+      glUniform1i(siBoneMatrixCount_, skinningFrameEnabled_ ? boneMatrixCount_ : 1);
+      glUniform1i(siHasMorph_, mesh.hasMorph);
+      if (mesh.hasMorph) {
+        glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
+        glActiveTexture(GL_TEXTURE9); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+        glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
+      }
+      glBindVertexArray(mesh.vao);
+      for (const DrawSubmesh& sub : mesh.submeshes) {
+        glDrawElementsInstanced(
+            GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
+            reinterpret_cast<void*>(static_cast<uintptr_t>(sub.indexOffset) *
+                                    sizeof(uint32_t)),
+            mesh.drawInstanceCount);
+      }
+    }
+  }
+  glBindVertexArray(0);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glCullFace(GL_BACK);
+  glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+}
+
 void GLRenderer::renderFrame(const RenderFrameParams& params) {
   if (!fbo_ || !program_ || !params.view || !params.proj) return;
+  renderShadowMap(params);
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
   glViewport(0, 0, vpW_, vpH_);
   glClearColor(params.clearColor[0], params.clearColor[1], params.clearColor[2],
@@ -3193,6 +3646,15 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   glUniform3fv(uLightDir_, 1, params.lightDir);
   glUniform3fv(uLightColor_, 1, params.lightColor);
   UploadRasterLightArray(program_, rasterLights_);
+  const bool hasShadow = shadowCamera_.lightSlot >= 0 && shadowDepthTex_ != 0;
+  glUniform1i(uHasShadowMap_, hasShadow ? 1 : 0);
+  glUniform1i(uShadowLightSlot_, shadowCamera_.lightSlot);
+  glUniformMatrix4fv(uShadowViewProj_, 1, GL_FALSE, shadowCamera_.viewProj.m);
+  if (hasShadow) {
+    glActiveTexture(GL_TEXTURE25);
+    glBindTexture(GL_TEXTURE_2D, shadowDepthTex_);
+    glActiveTexture(GL_TEXTURE0);
+  }
   glUniform1i(uHasIbl_, iblActive_ ? 1 : 0);
   if (iblActive_) {
     glUniform3fv(uIblColor_, 1, iblColor_);
@@ -3280,6 +3742,7 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glUniform1i(uHasNormalTex_, 0);
     glUniform1i(uHasEmissiveTex_, 0);
     glUniform1i(uHasOpacityTex_, 0);
+    glUniform1i(uHasOcclusionTex_, 0);
     glDisable(GL_CULL_FACE);
     glBindVertexArray(mesh.vao);
     if (params.highlightIndices && params.highlightIndexCount > 0) {
@@ -3521,6 +3984,10 @@ void GLRenderer::shutdown() {
   if (depthRbo_) { glDeleteRenderbuffers(1, &depthRbo_); depthRbo_ = 0; }
   if (fbo_) { glDeleteFramebuffers(1, &fbo_); fbo_ = 0; }
   if (program_) { glDeleteProgram(program_); program_ = 0; }
+  if (shadowProgram_) { glDeleteProgram(shadowProgram_); shadowProgram_ = 0; }
+  if (shadowInstProgram_) { glDeleteProgram(shadowInstProgram_); shadowInstProgram_ = 0; }
+  if (shadowDepthTex_) { glDeleteTextures(1, &shadowDepthTex_); shadowDepthTex_ = 0; }
+  if (shadowFbo_) { glDeleteFramebuffers(1, &shadowFbo_); shadowFbo_ = 0; }
   if (tessProgram_) { glDeleteProgram(tessProgram_); tessProgram_ = 0; }
   if (instProgram_) { glDeleteProgram(instProgram_); instProgram_ = 0; }
   if (wireProgram_) { glDeleteProgram(wireProgram_); wireProgram_ = 0; }

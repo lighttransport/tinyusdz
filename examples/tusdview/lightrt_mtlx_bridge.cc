@@ -1033,6 +1033,43 @@ void PackRtMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   if (mat.emissiveSample.uvSet == 1) uvSetBits |= 16;
   if (mat.opacitySample.uvSet == 1) uvSetBits |= 32;
   dst[69] = static_cast<float>(uvSetBits);
+  dst[70] = mat.occlusionTexScale;
+  dst[71] = mat.occlusionTexBias;
+  // Extra slots keep the same slot*6 UV-transform convention: 12 = occlusion,
+  // 13 = coat weight, 14 = coat color, 15 = coat roughness.
+  StoreUvCompact(mat.occlusionSample.uv, dst + 72);
+  StoreUvCompact(mat.coatWeightSample.uv, dst + 78);
+  StoreUvCompact(mat.coatColorSample.uv, dst + 84);
+  StoreUvCompact(mat.coatRoughnessSample.uv, dst + 90);
+  // Scalar slots default to channel 0 (R) when nothing was authored.
+  dst[96] = static_cast<float>(mat.occlusionChannel < 0 ? 0
+                                                        : mat.occlusionChannel);
+  dst[97] = static_cast<float>(
+      mat.coatWeightSample.channel < 0 ? 0 : mat.coatWeightSample.channel);
+  dst[98] = static_cast<float>(mat.coatRoughnessSample.channel < 0
+                                   ? 0
+                                   : mat.coatRoughnessSample.channel);
+  int uvSetBits2 = 0;
+  if (mat.occlusionSample.uvSet == 1) uvSetBits2 |= 1;
+  if (mat.coatWeightSample.uvSet == 1) uvSetBits2 |= 2;
+  if (mat.coatColorSample.uvSet == 1) uvSetBits2 |= 4;
+  if (mat.coatRoughnessSample.uvSet == 1) uvSetBits2 |= 8;
+  dst[99] = static_cast<float>(uvSetBits2);
+  Store4(mat.coatWeightSample.scale, dst + 100);
+  Store4(mat.coatWeightSample.bias, dst + 104);
+  Store4(mat.coatColorSample.scale, dst + 108);
+  Store4(mat.coatColorSample.bias, dst + 112);
+  Store4(mat.coatRoughnessSample.scale, dst + 116);
+  Store4(mat.coatRoughnessSample.bias, dst + 120);
+  StoreUvCompact(mat.specularColorSample.uv, dst + 124);
+  dst[130] = static_cast<float>(mat.specularColorSample.uvSet);
+  dst[131] = mat.useSpecularWorkflow ? 1.0f : 0.0f;
+  Store4(mat.specularColorSample.scale, dst + 132);
+  Store4(mat.specularColorSample.bias, dst + 136);
+  StoreUvCompact(mat.coatNormalSample.uv, dst + 140);
+  dst[146] = static_cast<float>(mat.coatNormalSample.uvSet);
+  Store4(mat.coatNormalSample.scale, dst + 147);
+  Store4(mat.coatNormalSample.bias, dst + 151);
 }
 
 void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
@@ -1096,6 +1133,42 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[28 * 4 + 0] = mat.coatColor[0];
   dst[28 * 4 + 1] = mat.coatColor[1];
   dst[28 * 4 + 2] = mat.coatColor[2];
+  StoreUvVec4Rows(mat.occlusionSample.uv, dst + 29 * 4);
+  dst[31 * 4 + 0] = static_cast<float>(mat.occlusionChannel);
+  dst[31 * 4 + 1] = mat.occlusionTexScale;
+  dst[31 * 4 + 2] = mat.occlusionTexBias;
+  dst[31 * 4 + 3] = static_cast<float>(mat.occlusionSample.uvSet);
+  dst[24 * 4 + 2] = static_cast<float>(std::max(mat.occlusionTex, 0));
+  // Extra semantic slots. The loaders neutralize the matching constant to 1.0
+  // when a texture is bound, so the shader always multiplies constant * texel.
+  StoreUvVec4Rows(mat.specularColorSample.uv, dst + 32 * 4);
+  StoreUvVec4Rows(mat.coatWeightSample.uv, dst + 34 * 4);
+  StoreUvVec4Rows(mat.coatColorSample.uv, dst + 36 * 4);
+  StoreUvVec4Rows(mat.coatRoughnessSample.uv, dst + 38 * 4);
+  // A negative channel selector means "whole value"; the scalar coat slots
+  // default that to channel 0 (R).
+  dst[40 * 4 + 0] = static_cast<float>(
+      mat.coatWeightSample.channel < 0 ? 0 : mat.coatWeightSample.channel);
+  dst[40 * 4 + 1] = static_cast<float>(
+      mat.coatRoughnessSample.channel < 0 ? 0
+                                          : mat.coatRoughnessSample.channel);
+  dst[40 * 4 + 2] = static_cast<float>(mat.coatWeightSample.uvSet);
+  dst[40 * 4 + 3] = static_cast<float>(mat.coatRoughnessSample.uvSet);
+  dst[41 * 4 + 0] = static_cast<float>(mat.specularColorSample.uvSet);
+  dst[41 * 4 + 1] = static_cast<float>(mat.coatColorSample.uvSet);
+  Store4(mat.specularColorSample.scale, dst + 42 * 4);
+  Store4(mat.specularColorSample.bias, dst + 43 * 4);
+  Store4(mat.coatWeightSample.scale, dst + 44 * 4);
+  Store4(mat.coatWeightSample.bias, dst + 45 * 4);
+  Store4(mat.coatColorSample.scale, dst + 46 * 4);
+  Store4(mat.coatColorSample.bias, dst + 47 * 4);
+  Store4(mat.coatRoughnessSample.scale, dst + 48 * 4);
+  Store4(mat.coatRoughnessSample.bias, dst + 49 * 4);
+  StoreUvVec4Rows(mat.coatNormalSample.uv, dst + 50 * 4);
+  Store4(mat.coatNormalSample.scale, dst + 52 * 4);
+  Store4(mat.coatNormalSample.bias, dst + 53 * 4);
+  dst[53 * 4 + 3] = static_cast<float>(mat.coatNormalSample.uvSet);
+  dst[52 * 4 + 3] = mat.coatNormalTex >= 0 ? 1.0f : 0.0f;
 }
 
 }  // namespace tusdview

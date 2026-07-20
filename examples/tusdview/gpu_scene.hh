@@ -314,6 +314,26 @@ struct DrawUvXformCPU {
   float ty{0.0f};
 };
 
+// Wrap modes (match light3d / GL semantics).
+enum class WrapMode : int { ClampToEdge = 0, Repeat = 1, Mirror = 2, ClampToBorder = 3 };
+
+// Source color space of a sampled texture. `Auto` defers to the image's own
+// metadata/heuristic, which is what every slot did implicitly before this was
+// carried per-slot.
+enum class DrawColorSpace : int { Auto = 0, Raw = 1, sRGB = 2 };
+
+// One self-contained description of how a material slot samples a texture.
+//
+// This used to hold only the UV transform, so a slot's image id, packed-channel
+// select, wrap modes, and color space lived either as parallel per-slot fields
+// on DrawMaterialCPU or were dropped entirely at the Draw boundary (wrap/color
+// space were recoverable only from the shared DrawTextureCPU, which is wrong
+// for two slots sampling one image with different intent -- e.g. an ORM map
+// read as Raw for roughness). Keeping them here makes every slot uniform and
+// lets a new slot be added without another five parallel arrays.
+//
+// The legacy parallel fields on DrawMaterialCPU are still populated for the
+// slots that had them, so existing backend code keeps working unchanged.
 struct DrawTexSampleCPU {
   DrawUvXformCPU uv;
   float scale[4]{1.0f, 1.0f, 1.0f, 1.0f};
@@ -322,6 +342,14 @@ struct DrawTexSampleCPU {
   // from the texture's UsdPrimvarReader varname against the bound mesh's UV-set
   // names. Meshes with one UV set (the overwhelming majority) always leave it 0.
   int uvSet{0};
+  // DrawScene::textures index, -1 when this slot samples no texture. Mirrors the
+  // per-slot `*Tex` field on DrawMaterialCPU.
+  int tex{-1};
+  // Selected packed channel (0=R..3=A), -1 when the whole value is used.
+  int channel{-1};
+  WrapMode wrapS{WrapMode::Repeat};
+  WrapMode wrapT{WrapMode::Repeat};
+  DrawColorSpace colorSpace{DrawColorSpace::Auto};
 };
 
 enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };
@@ -390,6 +418,16 @@ struct DrawMaterialCPU {
   // DCCs commonly connect an independent grayscale/UDIM mask to
   // UsdPreviewSurface inputs:opacity.
   int opacityTex{-1};
+  // Ambient-occlusion scalar map. It modulates only indirect/ambient light.
+  int occlusionTex{-1};
+  // Specular-workflow F0 map. Only consulted when useSpecularWorkflow is set;
+  // in the metallic workflow F0 comes from ior/baseColor as before.
+  int specularColorTex{-1};
+  // Coat lobe maps. These were constant-only, so an authored coat weight/tint/
+  // roughness texture silently collapsed to its fallback constant.
+  int coatWeightTex{-1};
+  int coatColorTex{-1};
+  int coatRoughnessTex{-1};
   DrawTexSampleCPU baseColorSample;
   DrawTexSampleCPU metallicSample;
   DrawTexSampleCPU roughnessSample;
@@ -397,9 +435,21 @@ struct DrawMaterialCPU {
   DrawTexSampleCPU coatNormalSample;
   DrawTexSampleCPU emissiveSample;
   DrawTexSampleCPU opacitySample;
+  DrawTexSampleCPU occlusionSample;
+  DrawTexSampleCPU specularColorSample;
+  DrawTexSampleCPU coatWeightSample;
+  DrawTexSampleCPU coatColorSample;
+  DrawTexSampleCPU coatRoughnessSample;
+  // Full sample for the displacement map. `displacementUv` below is the older
+  // UV-only form kept for the existing displacement code paths; this carries the
+  // UV set and scale/bias so displacement can use UV set 1 like every other slot.
+  DrawTexSampleCPU displacementSample;
   int opacityChannel{0};
   float opacityTexScale{1.0f};
   float opacityTexBias{0.0f};
+  int occlusionChannel{0};
+  float occlusionTexScale{1.0f};
+  float occlusionTexBias{0.0f};
   int metallicChannel{2};  // glTF ORM default: B
   int roughnessChannel{1}; // glTF ORM default: G
   float metallicTexScale{1.0f};
@@ -420,8 +470,6 @@ struct DrawMaterialCPU {
   bool hasDisplacement() const { return displacementTex >= 0 || displacementConst != 0.0f; }
 };
 
-// Wrap modes (match light3d / GL semantics).
-enum class WrapMode : int { ClampToEdge = 0, Repeat = 1, Mirror = 2, ClampToBorder = 3 };
 enum class DrawCompressedFormat : int {
   None = 0,
   BC1 = 1,

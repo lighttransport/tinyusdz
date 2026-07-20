@@ -429,6 +429,7 @@ class VulkanRenderer final : public Renderer {
 
   // Offscreen target (3D scene)
   VkRenderPass offscreenPass_{VK_NULL_HANDLE};
+  VkRenderPass shadowPass_{VK_NULL_HANDLE};
   VkRenderPass overlayLoadPass_{VK_NULL_HANDLE};  // draw overlays over the RT image
   VkImage colorImg_{VK_NULL_HANDLE};
   VkDeviceMemory colorMem_{VK_NULL_HANDLE};
@@ -436,6 +437,11 @@ class VulkanRenderer final : public Renderer {
   VkImage depthImg_{VK_NULL_HANDLE};
   VkDeviceMemory depthMem_{VK_NULL_HANDLE};
   VkImageView depthView_{VK_NULL_HANDLE};
+  VkImage shadowColorImg_{VK_NULL_HANDLE}, shadowDepthImg_{VK_NULL_HANDLE};
+  VkDeviceMemory shadowColorMem_{VK_NULL_HANDLE}, shadowDepthMem_{VK_NULL_HANDLE};
+  VkImageView shadowColorView_{VK_NULL_HANDLE}, shadowDepthView_{VK_NULL_HANDLE};
+  VkFramebuffer shadowFb_{VK_NULL_HANDLE};
+  RasterShadowCamera shadowCamera_;
   VkFramebuffer offscreenFb_{VK_NULL_HANDLE};
   VkSampler sampler_{VK_NULL_HANDLE};
   VkDescriptorSet offscreenTexId_{VK_NULL_HANDLE};
@@ -446,6 +452,7 @@ class VulkanRenderer final : public Renderer {
   // Pipeline
   VkPipelineLayout pipelineLayout_{VK_NULL_HANDLE};
   VkPipeline pipeline_{VK_NULL_HANDLE};
+  VkPipeline shadowPipeline_{VK_NULL_HANDLE};
   // GPU tessellation displacement pipeline (shares pipelineLayout_; PATCH_LIST
   // topology + tesc/tese). Created only when the device supports the
   // tessellationShader feature; otherwise displaced meshes stay coarse.
@@ -467,6 +474,7 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout instPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline instPipeline_{VK_NULL_HANDLE};
   VkPipeline instTranslucentPipeline_{VK_NULL_HANDLE};
+  VkPipeline instShadowPipeline_{VK_NULL_HANDLE};
 
   // Unlit line pipeline for debug helpers (grid/axes/bbox). Per-frame host
   // buffers (grow on demand) so a frame never writes a buffer still in flight.
@@ -716,6 +724,11 @@ class VulkanRenderer final : public Renderer {
   std::vector<int> matNormalTex_;      // per material: DrawScene texture index or -1
   std::vector<int> matEmissiveTex_;    // per material: DrawScene texture index or -1
   std::vector<int> matOpacityTex_;     // scalar opacity texture index or -1
+  std::vector<int> matOcclusionTex_;   // ambient-occlusion texture index or -1
+  std::vector<int> matSpecularColorTex_;   // inputs:specularColor tex or -1
+  std::vector<int> matCoatWeightTex_;      // coat weight (scalar) tex or -1
+  std::vector<int> matCoatColorTex_;       // coat color (rgb) tex or -1
+  std::vector<int> matCoatRoughnessTex_;   // coat roughness (scalar) tex or -1
   std::vector<int> matDispTex_;  // per material: displacement texture index or -1
   std::vector<float> matDispConst_;  // per material: constant displacement amount
 
@@ -745,6 +758,8 @@ class VulkanRenderer final : public Renderer {
   std::vector<float> matColor_;    // 3 vec4 per material: preview subset
   std::vector<float> matLightRt_;  // 14 vec4 per material: LightRT/OpenPBR block
   std::vector<float> lightParams_;  // packed DrawLightCPU params
+  std::vector<uint32_t> rtDirectLightMasks_;
+  std::vector<uint32_t> rtShadowLightMasks_;
   RasterLightSet rasterLights_;
   // CPU copies retained for the backend-neutral RT texture-table build. Vulkan
   // raster uploads images immediately, while ray query consumes decoded RGBA8
