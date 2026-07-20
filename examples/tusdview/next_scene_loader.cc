@@ -2196,6 +2196,35 @@ void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp,
   smp->scale[2] = rt.scale_value.z; smp->scale[3] = rt.scale_value.w;
   smp->bias[0] = rt.bias.x; smp->bias[1] = rt.bias.y;
   smp->bias[2] = rt.bias.z; smp->bias[3] = rt.bias.w;
+  // Wrap and source color space used to be dropped here and recovered per
+  // backend from the shared DrawTextureCPU. That is wrong when two slots sample
+  // one image with different intent, so carry them per-slot.
+  auto wrap = [](tydn::WrapMode w) {
+    switch (w) {
+      case tydn::WrapMode::Repeat: return WrapMode::Repeat;
+      case tydn::WrapMode::Mirror: return WrapMode::Mirror;
+      case tydn::WrapMode::Black: return WrapMode::ClampToBorder;
+      case tydn::WrapMode::Clamp: default: return WrapMode::ClampToEdge;
+    }
+  };
+  smp->wrapS = wrap(rt.wrap_s);
+  smp->wrapT = wrap(rt.wrap_t);
+  const std::string& cs = rt.source_color_space;
+  smp->colorSpace = (cs == "sRGB" || cs == "srgb")
+                        ? DrawColorSpace::sRGB
+                        : ((cs == "raw" || cs == "Raw" || cs == "linear")
+                               ? DrawColorSpace::Raw
+                               : DrawColorSpace::Auto);
+  // -1 means "use the whole value". NextScalarChannel() collapses RGB/RGBA to 0,
+  // which would wrongly label a color slot as single-channel R, so only record a
+  // channel for genuinely scalar outputs.
+  switch (rt.output_channel) {
+    case tydn::RenderTexture::Channel::R: smp->channel = 0; break;
+    case tydn::RenderTexture::Channel::G: smp->channel = 1; break;
+    case tydn::RenderTexture::Channel::B: smp->channel = 2; break;
+    case tydn::RenderTexture::Channel::A: smp->channel = 3; break;
+    default: smp->channel = -1; break;
+  }
 }
 
 // Convert a bound material prim into a DrawMaterialCPU appended to `draw`, and
@@ -2289,6 +2318,58 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.opacityChannel = channel;
     FillNextSample(rt, &dm.opacitySample, uv0Name, uv1Name);
     channelScaleBias(rt, channel, &dm.opacityTexScale, &dm.opacityTexBias);
+  };
+
+  auto loadOcclusion = [&](const tydn::ShaderParam& sp) {
+    if (sp.texture_id < 0 ||
+        static_cast<size_t>(sp.texture_id) >= scratch.textures.size()) return;
+    const tydn::RenderTexture& rt =
+        scratch.textures[static_cast<size_t>(sp.texture_id)];
+    const int channel = NextScalarChannel(rt.output_channel);
+    const int t = LoadNextTexture(texCache, draw, scratch, sp.texture_id, false);
+    if (t < 0) return;
+    dm.occlusionTex = t;
+    dm.occlusionChannel = channel;
+    FillNextSample(rt, &dm.occlusionSample, uv0Name, uv1Name);
+    channelScaleBias(rt, channel, &dm.occlusionTexScale,
+                     &dm.occlusionTexBias);
+  };
+
+  // Generic scalar slot (coat weight/roughness, specular-workflow-adjacent
+  // scalars). These were constant-only before, so an authored map collapsed
+  // silently to its fallback constant.
+  auto scalarSlot = [&](const tydn::ShaderParam& sp, int* texField,
+                        DrawTexSampleCPU* smp, float* neutralize1) {
+    if (sp.texture_id < 0 ||
+        static_cast<size_t>(sp.texture_id) >= scratch.textures.size()) return;
+    const int t = LoadNextTexture(texCache, draw, scratch, sp.texture_id, false);
+    if (t < 0) return;
+    *texField = t;
+    FillNextSample(scratch.textures[static_cast<size_t>(sp.texture_id)], smp,
+                   uv0Name, uv1Name);
+    smp->tex = t;
+    if (smp->channel < 0) smp->channel = 0;  // scalar slots read one channel
+    if (neutralize1) *neutralize1 = 1.0f;
+  };
+
+  // Displacement as a full sample, so it can use UV set 1 and per-channel
+  // scale/bias like every other slot. displacementUv/Tex{Scale,Bias} are kept in
+  // sync for the existing displacement code paths.
+  auto displacementSlot = [&](const tydn::ShaderParam& sp) {
+    dm.displacementConst = sp.value.x;
+    if (sp.texture_id < 0 ||
+        static_cast<size_t>(sp.texture_id) >= scratch.textures.size()) return;
+    const tydn::RenderTexture& dt =
+        scratch.textures[static_cast<size_t>(sp.texture_id)];
+    const int t = LoadNextTexture(texCache, draw, scratch, sp.texture_id, false);
+    if (t < 0) return;
+    dm.displacementTex = t;
+    FillNextSample(dt, &dm.displacementSample, uv0Name, uv1Name);
+    dm.displacementSample.tex = t;
+    if (dm.displacementSample.channel < 0) dm.displacementSample.channel = 0;
+    dm.displacementUv = dm.displacementSample.uv;
+    dm.displacementTexScale = dt.scale_value.x;
+    dm.displacementTexBias = dt.bias.x;
   };
 
   // Load a normal-map slot (linear; default [0,1]->[-1,1] remap if unauthored).
@@ -2388,8 +2469,21 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     colorSlot(s.diffuse_color, true, &dm.baseColorTex, &dm.baseColorSample, dm.baseColor);
     colorSlot(s.emissive_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
     loadOpacity(s.opacity, s.diffuse_color.texture_id);
+    loadOcclusion(s.occlusion);
     loadNormal(s.normal);
     loadMetalRough(s.metallic, s.roughness);
+    // Specular-workflow F0 map; only consulted when useSpecularWorkflow is set.
+    colorSlot(s.specular_color, true, &dm.specularColorTex,
+              &dm.specularColorSample, dm.specularColor);
+    // PreviewSurface clearcoat -> coat lobe. These had no texture slot at all,
+    // so an authored clearcoat map silently rendered as its constant.
+    scalarSlot(s.clearcoat, &dm.coatWeightTex, &dm.coatWeightSample,
+               &dm.coatWeight);
+    scalarSlot(s.clearcoat_roughness, &dm.coatRoughnessTex,
+               &dm.coatRoughnessSample, &dm.coatRoughness);
+    // PreviewSurface displacement was dropped entirely by this loader; only the
+    // OpenPBR branch below ever read it.
+    displacementSlot(s.displacement);
   } else if (rm.openpbr) {
     const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
     dm.hasOpenPBRSurface = true;
@@ -2406,22 +2500,52 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     loadOpacity(s.opacity, s.base_color.texture_id);
     loadNormal(s.normal);
     loadMetalRough(s.base_metalness, s.base_roughness);
-    dm.displacementConst = s.displacement.value.x;
-    if (s.displacement.texture_id >= 0 &&
-        static_cast<size_t>(s.displacement.texture_id) < scratch.textures.size()) {
-      const tydn::RenderTexture& dt =
-          scratch.textures[static_cast<size_t>(s.displacement.texture_id)];
-      dm.displacementTex = LoadNextTexture(
-          texCache, draw, scratch, s.displacement.texture_id, false);
-      DrawTexSampleCPU displacementSample;
-      FillNextSample(dt, &displacementSample, uv0Name, uv1Name);
-      dm.displacementUv = displacementSample.uv;
-      dm.displacementTexScale = dt.scale_value.x;
-      dm.displacementTexBias = dt.bias.x;
-    }
+    // Coat lobe maps (constant-only before this).
+    scalarSlot(s.coat_weight, &dm.coatWeightTex, &dm.coatWeightSample,
+               &dm.coatWeight);
+    colorSlot(s.coat_color, true, &dm.coatColorTex, &dm.coatColorSample,
+              dm.coatColor);
+    scalarSlot(s.coat_roughness, &dm.coatRoughnessTex, &dm.coatRoughnessSample,
+               &dm.coatRoughness);
+    colorSlot(s.specular_color, true, &dm.specularColorTex,
+              &dm.specularColorSample, dm.specularColor);
+    displacementSlot(s.displacement);
   } else {
     return -1;  // no PreviewSurface/OpenPBR -- fall back to default material
   }
+
+  // tydra-next has no dedicated coat_normal input, so the coat lobe reuses the
+  // surface normal map. mesh_build.cc (legacy) already does this; without it the
+  // --next path was the only loader leaving coatNormalTex unset.
+  if (dm.coatNormalTex < 0 && dm.normalTex >= 0) {
+    dm.coatNormalTex = dm.normalTex;
+    dm.coatNormalSample = dm.normalSample;
+  }
+
+  // Make every descriptor self-contained: mirror the per-slot texture id into
+  // its sample so consumers can read one struct instead of pairing a sample
+  // with the right parallel `*Tex` field.
+  auto syncSampleTex = [](DrawTexSampleCPU* smp, int tex) { smp->tex = tex; };
+  syncSampleTex(&dm.baseColorSample, dm.baseColorTex);
+  syncSampleTex(&dm.metallicSample, dm.metallicTex);
+  syncSampleTex(&dm.roughnessSample, dm.roughnessTex);
+  syncSampleTex(&dm.normalSample, dm.normalTex);
+  syncSampleTex(&dm.coatNormalSample, dm.coatNormalTex);
+  syncSampleTex(&dm.emissiveSample, dm.emissiveTex);
+  syncSampleTex(&dm.opacitySample, dm.opacityTex);
+  syncSampleTex(&dm.occlusionSample, dm.occlusionTex);
+  syncSampleTex(&dm.specularColorSample, dm.specularColorTex);
+  syncSampleTex(&dm.coatWeightSample, dm.coatWeightTex);
+  syncSampleTex(&dm.coatColorSample, dm.coatColorTex);
+  syncSampleTex(&dm.coatRoughnessSample, dm.coatRoughnessTex);
+  syncSampleTex(&dm.displacementSample, dm.displacementTex);
+  // Scalar slots carry their channel on the sample too.
+  if (dm.opacitySample.channel < 0) dm.opacitySample.channel = dm.opacityChannel;
+  if (dm.occlusionSample.channel < 0)
+    dm.occlusionSample.channel = dm.occlusionChannel;
+  if (dm.metallicSample.channel < 0) dm.metallicSample.channel = dm.metallicChannel;
+  if (dm.roughnessSample.channel < 0)
+    dm.roughnessSample.channel = dm.roughnessChannel;
 
   // AlphaMode enums line up 1:1 (Opaque=0, Mask=1, Blend=2).
   dm.alphaMode = static_cast<int>(rm.alpha_mode);
@@ -2448,6 +2572,13 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.coatColor[2] = pbr.coatColor[2];
     dm.coatRoughness = pbr.coatRoughness;
     dm.coatIor = pbr.coatIor;
+    // This rebuild restores the coat CONSTANTS, which would undo the
+    // neutralization the coat texture slots applied above and double-tint the
+    // sampled value. Re-neutralize any slot that resolved to a texture.
+    if (dm.coatWeightTex >= 0) dm.coatWeight = 1.0f;
+    if (dm.coatRoughnessTex >= 0) dm.coatRoughness = 1.0f;
+    if (dm.coatColorTex >= 0)
+      dm.coatColor[0] = dm.coatColor[1] = dm.coatColor[2] = 1.0f;
   }
   if (!usePreview && rm.openpbr) {
     auto retainDiagnosticScalar = [&](const char* name,

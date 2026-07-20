@@ -352,6 +352,20 @@ uniform float uAlphaCutoff;
 // dielectric reflectance from ior. Unified with the Vulkan mesh.frag.
 uniform int uUseSpecularWorkflow;
 uniform vec3 uSpecularColor;
+uniform sampler2D uSpecularColorTex;
+uniform bool uHasSpecularColorTex;
+uniform vec3 uSpecularColorUv0;
+uniform vec3 uSpecularColorUv1;
+uniform int uSpecularColorUvSet;
+uniform vec4 uSpecularColorScale;
+uniform vec4 uSpecularColorBias;
+uniform sampler2D uCoatNormalTex;
+uniform bool uHasCoatNormalTex;
+uniform vec3 uCoatNormalUv0;
+uniform vec3 uCoatNormalUv1;
+uniform int uCoatNormalUvSet;
+uniform vec4 uCoatNormalScale;
+uniform vec4 uCoatNormalBias;
 uniform float uIor;
 uniform float uOcclusion;
 uniform float uCoatWeight;
@@ -383,6 +397,10 @@ uniform mat3 uEnvRotation;          // world -> environment direction
 uniform samplerCube uIrradianceMap; // cosine-convolved env, stored E/pi
 uniform samplerCube uPrefilteredMap;// GGX chain, lod = roughness*(lods-1)
 uniform int uPrefilteredLods;
+uniform bool uHasShadowMap;
+uniform int uShadowLightSlot;
+uniform mat4 uShadowViewProj;
+uniform sampler2D uShadowMap;
 
 // Texture samplers
 uniform sampler2D uBaseColorTex;
@@ -409,6 +427,10 @@ uniform sampler2D uOpacityTex;
 uniform sampler2DArray uOpacityUdimTex;
 uniform bool uHasOpacityTex;
 uniform bool uOpacityTexIsUdim;
+uniform sampler2D uOcclusionTex;
+uniform sampler2DArray uOcclusionUdimTex;
+uniform bool uHasOcclusionTex;
+uniform bool uOcclusionTexIsUdim;
 // One scene-wide 100 x texture-count atlas. Each row maps UDIM 1001..1100 to
 // an array layer; -1 means the tile is absent. Consolidating four independent
 // LUT samplers avoids the GL 3.3 fragment-sampler ceiling.
@@ -416,6 +438,7 @@ uniform isampler2D uUdimLutAtlas;
 uniform ivec4 uUdimSlots;  // base, metallic, normal, emissive texture rows
 uniform int uOpacityUdimSlot;
 uniform int uRoughnessUdimSlot;
+uniform int uOcclusionUdimSlot;
 // Per-slot UV set: 0 = vUV (texcoords_0), 1 = vUV1 (texcoords_1).
 // x = base color, y = metal/rough, z = normal, w = emissive.
 uniform ivec4 uUvSet;
@@ -432,6 +455,8 @@ uniform vec3 uEmissiveUv0;
 uniform vec3 uEmissiveUv1;
 uniform vec3 uOpacityUv0;
 uniform vec3 uOpacityUv1;
+uniform vec3 uOcclusionUv0;
+uniform vec3 uOcclusionUv1;
 uniform vec4 uBaseColorTexScale;
 uniform vec4 uBaseColorTexBias;
 uniform vec4 uNormalTexScale;
@@ -448,6 +473,40 @@ uniform int uOpacityUvSet;
 uniform int uOpacityChannel;
 uniform float uOpacityTexScale;
 uniform float uOpacityTexBias;
+uniform int uOcclusionUvSet;
+uniform int uOcclusionChannel;
+uniform float uOcclusionTexScale;
+uniform float uOcclusionTexBias;
+
+// Coat lobe maps. These slots were constant-only, so an authored clearcoat/coat
+// texture rendered as its fallback constant. UDIM is intentionally not wired for
+// these yet. The specular-workflow F0 map is carried by the loaders but sampled
+// only in Vulkan: GL has no free texture image unit left for it (see
+// gl_renderer.cc), and sharing one with the coat tint would sample the wrong
+// image for a material authoring both.
+uniform sampler2D uCoatWeightTex;
+uniform sampler2D uCoatColorTex;
+uniform sampler2D uCoatRoughnessTex;
+uniform bool uHasCoatWeightTex;
+uniform bool uHasCoatColorTex;
+uniform bool uHasCoatRoughnessTex;
+uniform vec3 uCoatWeightUv0;
+uniform vec3 uCoatWeightUv1;
+uniform vec3 uCoatColorUv0;
+uniform vec3 uCoatColorUv1;
+uniform vec3 uCoatRoughnessUv0;
+uniform vec3 uCoatRoughnessUv1;
+uniform int uCoatWeightUvSet;
+uniform int uCoatColorUvSet;
+uniform int uCoatRoughnessUvSet;
+uniform int uCoatWeightChannel;
+uniform int uCoatRoughnessChannel;
+uniform vec4 uCoatWeightScale;
+uniform vec4 uCoatWeightBias;
+uniform vec4 uCoatColorScale;
+uniform vec4 uCoatColorBias;
+uniform vec4 uCoatRoughnessScale;
+uniform vec4 uCoatRoughnessBias;
 
 out vec4 fragColor;
 
@@ -553,6 +612,52 @@ float channelOf(vec4 c, int ch) {
     return c.r;
 }
 
+float sampleOcclusion() {
+    if (!uHasOcclusionTex) return 1.0;
+    vec2 uv = (uOcclusionUvSet == 1) ? vUV1 : vUV;
+    vec2 tuv = xformUv(uv, uOcclusionUv0, uOcclusionUv1);
+    vec4 c = uOcclusionTexIsUdim
+        ? sampleUdim(uOcclusionUdimTex, uOcclusionUdimSlot, tuv, vec4(1.0))
+        : texture(uOcclusionTex, tuv);
+    return clamp(channelOf(c, uOcclusionChannel) * uOcclusionTexScale +
+                 uOcclusionTexBias, 0.0, 1.0);
+}
+
+// Scalar/color fetches for the coat and specular-workflow slots. The material
+// constant is neutralized to 1 by the loaders whenever a texture is bound, so
+// the caller multiplies the two unconditionally.
+float sampleCoatScalar(sampler2D tex, bool has, vec3 uv0, vec3 uv1,
+                       int uvSet, int ch, vec4 scale, vec4 bias) {
+    if (!has) return 1.0;
+    vec2 uv = (uvSet == 1) ? vUV1 : vUV;
+    vec4 c = texture(tex, xformUv(uv, uv0, uv1)) * scale + bias;
+    return clamp(channelOf(c, ch), 0.0, 1.0);
+}
+
+vec3 sampleCoatColor(sampler2D tex, bool has, vec3 uv0, vec3 uv1, int uvSet,
+                     vec4 scale, vec4 bias) {
+    if (!has) return vec3(1.0);
+    vec2 uv = (uvSet == 1) ? vUV1 : vUV;
+    return (texture(tex, xformUv(uv, uv0, uv1)) * scale + bias).rgb;
+}
+
+float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
+    if (!uHasShadowMap) return 1.0;
+    vec4 clip = uShadowViewProj * vec4(worldPos, 1.0);
+    vec3 p = clip.xyz / clip.w;
+    p = p * 0.5 + 0.5;
+    if (p.z <= 0.0 || p.z >= 1.0 || any(lessThan(p.xy, vec2(0.0))) ||
+        any(greaterThan(p.xy, vec2(1.0)))) return 1.0;
+    float bias = max(0.00035, 0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
+    vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+    float visible = 0.0;
+    for (int y = -1; y <= 1; ++y)
+      for (int x = -1; x <= 1; ++x)
+        visible += p.z - bias <= texture(uShadowMap, p.xy + vec2(x, y) * texel).r
+                       ? 1.0 : 0.0;
+    return visible / 9.0;
+}
+
 void main() {
     vec3 baseColor = uBaseColor * vColor.rgb;  // vColor defaults to white
     float metallic = uMetallic;
@@ -618,6 +723,20 @@ void main() {
         t = normalize(t - N * dot(N, t));
         vec3 b = normalize(cross(N, t)) * (r < 0.0 ? -1.0 : 1.0);
         N = normalize(mat3(t, b, N) * tangentNormal);
+    }
+    vec3 coatN = N;
+    if (uHasCoatNormalTex) {
+        vec2 uv = xformUv(uCoatNormalUvSet == 1 ? vUV1 : vUV,
+                          uCoatNormalUv0, uCoatNormalUv1);
+        vec3 tn = (texture(uCoatNormalTex, uv) * uCoatNormalScale +
+                   uCoatNormalBias).xyz;
+        vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
+        vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+        float rr = du1.x * du2.y - du2.x * du1.y;
+        vec3 t = dp1 * du2.y - dp2 * du1.y;
+        t = normalize((abs(rr) > 1e-8 ? t / rr : dp1) - N * dot(N, t));
+        vec3 b = normalize(cross(N, t)) * (rr < 0.0 ? -1.0 : 1.0);
+        coatN = normalize(mat3(t, b, N) * tn);
     }
     if (uHasOpacityTex) {
         vec2 uv = xformUv(uOpacityUvSet == 1 ? vUV1 : vUV,
@@ -729,12 +848,35 @@ void main() {
     // camera, then evaluate an energy-conserving GGX direct lobe. The constant
     // ambient fallback below keeps scenes without authored lighting readable.
     vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    vec3 coatNf = (dot(coatN, V) < 0.0) ? -coatN : coatN;
     float NoV = max(dot(Nf, V), 1e-4);
     float rgh = clamp(roughness, 0.02, 1.0);
     float met = clamp(metallic, 0.0, 1.0);
     vec3 F0 = computeF0(baseColor, met);
-    float cw = clamp(uCoatWeight, 0.0, 1.0);
-    float cr = clamp(uCoatRoughness, 0.02, 1.0);
+    if (uUseSpecularWorkflow != 0) {
+        F0 *= sampleCoatColor(uSpecularColorTex, uHasSpecularColorTex,
+                              uSpecularColorUv0, uSpecularColorUv1,
+                              uSpecularColorUvSet, uSpecularColorScale,
+                              uSpecularColorBias);
+    }
+    float cw = clamp(uCoatWeight *
+                     sampleCoatScalar(uCoatWeightTex, uHasCoatWeightTex,
+                                      uCoatWeightUv0, uCoatWeightUv1,
+                                      uCoatWeightUvSet, uCoatWeightChannel,
+                                      uCoatWeightScale, uCoatWeightBias),
+                     0.0, 1.0);
+    float cr = clamp(uCoatRoughness *
+                     sampleCoatScalar(uCoatRoughnessTex, uHasCoatRoughnessTex,
+                                      uCoatRoughnessUv0, uCoatRoughnessUv1,
+                                      uCoatRoughnessUvSet,
+                                      uCoatRoughnessChannel,
+                                      uCoatRoughnessScale, uCoatRoughnessBias),
+                     0.02, 1.0);
+    vec3 coatTint = uCoatColor * sampleCoatColor(uCoatColorTex, uHasCoatColorTex,
+                                                 uCoatColorUv0, uCoatColorUv1,
+                                                 uCoatColorUvSet,
+                                                 uCoatColorScale,
+                                                 uCoatColorBias);
     float ci = max(uCoatIor, 1.0);
     float cd = (ci - 1.0) / (ci + 1.0);
     vec3 direct = vec3(0.0);
@@ -776,16 +918,21 @@ void main() {
                   geometrySchlickGGX(NoL, rgh);
         vec3 specular = D * G * F / max(4.0 * NoV * NoL, 1e-5);
         vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * baseColor / kPi;
+        float coatNoL = max(dot(coatNf, L), 0.0);
+        float coatNoV = max(dot(coatNf, V), 1e-4);
+        float coatNoH = max(dot(coatNf, H), 0.0);
         vec3 coatF = fresnelSchlick(VoH, vec3(cd * cd));
-        float coatD = distributionGGX(NoH, cr);
-        float coatG = geometrySchlickGGX(NoV, cr) *
-                      geometrySchlickGGX(NoL, cr);
+        float coatD = distributionGGX(coatNoH, cr);
+        float coatG = geometrySchlickGGX(coatNoV, cr) *
+                      geometrySchlickGGX(coatNoL, cr);
         vec3 coatSpec = coatD * coatG * coatF /
-                        max(4.0 * NoV * NoL, 1e-5);
+                        max(4.0 * coatNoV * coatNoL, 1e-5);
         vec3 brdf = diffuse * lc.w +
                     (specular * (vec3(1.0) - coatF * cw) +
-                     coatSpec * uCoatColor * cw) * ss.x;
-        direct += brdf * lc.rgb * (attenuation * shape * NoL);
+                     coatSpec * coatTint * cw) * ss.x;
+        float visibility = (li == uShadowLightSlot)
+                               ? sampleShadow(vWorldPos, Nf, L) : 1.0;
+        direct += brdf * lc.rgb * (attenuation * shape * NoL * visibility);
     }
     // Scenes without authored direct lights retain the readable preview key.
     if (uLightCount == 0) {
@@ -832,7 +979,7 @@ void main() {
         vec2 coatDfg = vec2(-1.04, 1.04) * ca004 + rc.zw;
         vec3 coatF0 = vec3(cd * cd);
         vec3 coatIbl = coatPref * (coatF0 * coatDfg.x + coatDfg.y) *
-                       uCoatColor * cw * uIblColor;
+                       coatTint * cw * uIblColor;
         ambient = ambient * (vec3(1.0) - coatF0 * cw) + coatIbl;
     } else {
         ambient = baseColor * 0.12;
@@ -840,7 +987,7 @@ void main() {
     if (uAlphaMode == 1 && opacity <= 0.0) {
         discard;
     }
-    ambient *= clamp(uOcclusion, 0.0, 1.0);
+    ambient *= clamp(uOcclusion, 0.0, 1.0) * sampleOcclusion();
     vec3 color = linearToSrgb((ambient + direct + emissive) * exp2(uExposure));
     fragColor = vec4(color, opacity);
 }

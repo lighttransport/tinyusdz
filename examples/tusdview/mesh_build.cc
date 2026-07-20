@@ -375,12 +375,48 @@ void CopyTexSample(const tydra::UVTexture& uv, DrawTexSampleCPU* out) {
     out->scale[i] = uv.scale[i];
     out->bias[i] = uv.bias[i];
   }
+  // Wrap/channel used to be dropped here and recovered per backend from the
+  // shared DrawTextureCPU, which is wrong when two slots sample one image with
+  // different intent (e.g. an ORM map read per-channel).
+  auto wrap = [](tydra::UVTexture::WrapMode w) {
+    switch (w) {
+      case tydra::UVTexture::WrapMode::REPEAT: return WrapMode::Repeat;
+      case tydra::UVTexture::WrapMode::MIRROR: return WrapMode::Mirror;
+      case tydra::UVTexture::WrapMode::CLAMP_TO_BORDER:
+        return WrapMode::ClampToBorder;
+      case tydra::UVTexture::WrapMode::CLAMP_TO_EDGE:
+      default: return WrapMode::ClampToEdge;
+    }
+  };
+  out->wrapS = wrap(uv.wrapS);
+  out->wrapT = wrap(uv.wrapT);
+  // -1 = use the whole value; only genuinely scalar outputs record a channel.
+  switch (uv.connectedOutputChannel) {
+    case tydra::UVTexture::Channel::R: out->channel = 0; break;
+    case tydra::UVTexture::Channel::G: out->channel = 1; break;
+    case tydra::UVTexture::Channel::B: out->channel = 2; break;
+    case tydra::UVTexture::Channel::A: out->channel = 3; break;
+    default: out->channel = -1; break;
+  }
 }
 
 void CopyTexSample(const tydra::RenderScene& rs, int texId,
                    DrawTexSampleCPU* out) {
   if (texId < 0 || static_cast<size_t>(texId) >= rs.textures.size()) return;
-  CopyTexSample(rs.textures[static_cast<size_t>(texId)], out);
+  const tydra::UVTexture& uv = rs.textures[static_cast<size_t>(texId)];
+  CopyTexSample(uv, out);
+  out->tex = texId;
+  if (uv.texture_image_id < 0 ||
+      static_cast<size_t>(uv.texture_image_id) >= rs.images.size()) return;
+  const tydra::ColorSpace cs =
+      rs.images[static_cast<size_t>(uv.texture_image_id)].usdColorSpace;
+  if (cs == tydra::ColorSpace::Raw) {
+    out->colorSpace = DrawColorSpace::Raw;
+  } else if (cs == tydra::ColorSpace::sRGB ||
+             cs == tydra::ColorSpace::sRGB_Texture ||
+             cs == tydra::ColorSpace::sRGB_DisplayP3) {
+    out->colorSpace = DrawColorSpace::sRGB;
+  }
 }
 
 DrawUvXformCPU MapUvXform(const tydra::RenderScene& rs, int texId) {
@@ -1711,6 +1747,16 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       dm.metallicTex = mapTex(s.metallic.texture_id);
       dm.roughnessTex = mapTex(s.roughness.texture_id);
       dm.displacementTex = mapTex(s.displacement.texture_id);
+      dm.occlusionTex = mapTex(s.occlusion.texture_id);
+      dm.occlusionChannel = channelFor(s.occlusion.texture_id, 0);
+      CopyTexSample(rs, s.occlusion.texture_id, &dm.occlusionSample);
+      if (s.occlusion.texture_id >= 0 &&
+          static_cast<size_t>(s.occlusion.texture_id) < rs.textures.size()) {
+        const tydra::UVTexture& ot =
+            rs.textures[static_cast<size_t>(s.occlusion.texture_id)];
+        dm.occlusionTexScale = ot.scale[dm.occlusionChannel];
+        dm.occlusionTexBias = ot.bias[dm.occlusionChannel];
+      }
       CopyTexSample(rs, s.diffuseColor.texture_id, &dm.baseColorSample);
       CopyTexSample(rs, s.emissiveColor.texture_id, &dm.emissiveSample);
       CopyTexSample(rs, s.normal.texture_id, &dm.normalSample);
@@ -1747,7 +1793,25 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
         dm.roughnessTexBias = rt.bias[dm.roughnessChannel];
         CopyTexSample(rt, &dm.roughnessSample);
       }
+      // PreviewSurface clearcoat -> coat lobe, and the specular-workflow F0 map.
+      dm.coatWeightTex = mapTex(s.clearcoat.texture_id);
+      dm.coatRoughnessTex = mapTex(s.clearcoatRoughness.texture_id);
+      dm.specularColorTex = mapTex(s.specularColor.texture_id);
+      CopyTexSample(rs, s.clearcoat.texture_id, &dm.coatWeightSample);
+      CopyTexSample(rs, s.clearcoatRoughness.texture_id, &dm.coatRoughnessSample);
+      CopyTexSample(rs, s.specularColor.texture_id, &dm.specularColorSample);
+      if (dm.coatWeightTex >= 0) dm.coatWeight = 1.0f;
+      if (dm.coatRoughnessTex >= 0) dm.coatRoughness = 1.0f;
+      if (dm.specularColorTex >= 0)
+        dm.specularColor[0] = dm.specularColor[1] = dm.specularColor[2] = 1.0f;
+      // PreviewSurface has no coat_normal input; reuse the surface normal map
+      // for the coat lobe, matching what the OpenPBR branch ends up with.
+      if (dm.coatNormalTex < 0 && dm.normalTex >= 0) {
+        dm.coatNormalTex = dm.normalTex;
+        dm.coatNormalSample = dm.normalSample;
+      }
       dm.displacementUv = MapUvXform(rs, s.displacement.texture_id);
+      CopyTexSample(rs, s.displacement.texture_id, &dm.displacementSample);
       dm.displacementConst = s.displacement.value;
       // Displacement maps connect outputs:r (channel 0); honor that channel's
       // UVTexture scale/bias so the viewer centers the height like tusdrender.
@@ -1888,6 +1952,24 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
         }
       }
       dm.coatNormalTex = mapTex(s.coat_normal.texture_id);
+      // Coat weight/tint/roughness and the specular-workflow F0 map had no
+      // texture slot at all, so an authored map collapsed to its constant.
+      dm.coatWeightTex = mapTex(s.coat_weight.texture_id);
+      dm.coatColorTex = mapTex(s.coat_color.texture_id);
+      dm.coatRoughnessTex = mapTex(s.coat_roughness.texture_id);
+      dm.specularColorTex = mapTex(s.specular_color.texture_id);
+      CopyTexSample(rs, s.coat_weight.texture_id, &dm.coatWeightSample);
+      CopyTexSample(rs, s.coat_color.texture_id, &dm.coatColorSample);
+      CopyTexSample(rs, s.coat_roughness.texture_id, &dm.coatRoughnessSample);
+      CopyTexSample(rs, s.specular_color.texture_id, &dm.specularColorSample);
+      // Neutralize the constant for any slot that resolved to a texture, so the
+      // texel is not multiplied by the fallback as well.
+      if (dm.coatWeightTex >= 0) dm.coatWeight = 1.0f;
+      if (dm.coatRoughnessTex >= 0) dm.coatRoughness = 1.0f;
+      if (dm.coatColorTex >= 0)
+        dm.coatColor[0] = dm.coatColor[1] = dm.coatColor[2] = 1.0f;
+      if (dm.specularColorTex >= 0)
+        dm.specularColor[0] = dm.specularColor[1] = dm.specularColor[2] = 1.0f;
       dm.metallicTex = mapTex(s.base_metalness.texture_id);
       dm.roughnessTex = mapTex(s.base_roughness.texture_id);
       CopyTexSample(rs, s.base_color.texture_id, &dm.baseColorSample);

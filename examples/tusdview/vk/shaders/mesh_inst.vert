@@ -72,6 +72,7 @@ layout(set = 2, binding = 0) uniform Frame {
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
   vec4 iblParams;     // .x = prefiltered mip count
+  mat4 shadowViewProj;
 } fr;
 // Per-draw push constant: the base index of this draw in the DrawMeta SSBO. In
 // the per-mesh loop each draw is separate (gl_DrawIDARB == 0) so baseDraw selects
@@ -129,5 +130,6 @@ void main() {
   vNormal = normalize(n);
   vColor = aInstColor.rgb * aVtxColor.rgb;
   vOpacity = clamp(aInstColor.a * aVtxColor.a, 0.0, 1.0);
-  gl_Position = fr.viewProj * vec4(wp, 1.0);
+  gl_Position = (pc.draw.y != 0 ? fr.shadowViewProj : fr.viewProj) *
+                vec4(wp, 1.0);
 }

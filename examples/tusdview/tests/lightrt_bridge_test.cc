@@ -91,6 +91,30 @@ int main() {
   mat.opacitySample.uvSet = 1;
   mat.opacitySample.uv.m00 = 1.5f;
   mat.opacitySample.uv.tx = 0.25f;
+  mat.occlusionTex = 9;
+  mat.occlusionChannel = 1;
+  mat.occlusionTexScale = 0.75f;
+  mat.occlusionTexBias = 0.125f;
+  mat.occlusionSample.uvSet = 1;
+  mat.occlusionSample.uv.m00 = 0.5f;
+  mat.occlusionSample.uv.ty = 0.375f;
+  mat.specularColorSample.scale[0] = 0.51f;
+  mat.specularColorSample.bias[2] = 0.12f;
+  mat.specularColorSample.uv.m00 = 0.91f;
+  mat.specularColorSample.uv.ty = 0.19f;
+  mat.specularColorSample.uvSet = 1;
+  mat.useSpecularWorkflow = true;
+  mat.coatWeightSample.scale[1] = 0.61f;
+  mat.coatWeightSample.bias[1] = 0.13f;
+  mat.coatColorSample.scale[2] = 0.71f;
+  mat.coatColorSample.bias[0] = 0.14f;
+  mat.coatRoughnessSample.scale[3] = 0.81f;
+  mat.coatRoughnessSample.bias[3] = 0.15f;
+  mat.coatNormalSample.uv.m00 = 0.83f;
+  mat.coatNormalSample.uv.ty = 0.23f;
+  mat.coatNormalSample.uvSet = 1;
+  mat.coatNormalSample.scale[0] = 1.7f;
+  mat.coatNormalSample.bias[1] = -0.4f;
   mat.alphaMode = static_cast<int>(tusdview::AlphaMode::Mask);
   mat.alphaCutoff = 0.42f;
   std::vector<float> directPack(tusdview::kLightRtOpenPBRFloats, -1.0f);
@@ -207,7 +231,16 @@ int main() {
       !Near(directTexPack[45], 2.0f) || !Near(directTexPack[49], -1.0f) ||
       !Near(directTexPack[60], 0.0f) || !Near(directTexPack[63], 3.0f) ||
       !Near(directTexPack[61], 0.6f) || !Near(directTexPack[65], 0.15f) ||
-      !Near(directTexPack[66], 2.0f) || !Near(directTexPack[68], 0.1f)) {
+      !Near(directTexPack[66], 2.0f) || !Near(directTexPack[68], 0.1f) ||
+      !Near(directTexPack[101], 0.61f) || !Near(directTexPack[105], 0.13f) ||
+      !Near(directTexPack[110], 0.71f) || !Near(directTexPack[112], 0.14f) ||
+      !Near(directTexPack[119], 0.81f) || !Near(directTexPack[123], 0.15f) ||
+      !Near(directTexPack[124], 0.91f) || !Near(directTexPack[129], 0.19f) ||
+      !Near(directTexPack[130], 1.0f) || !Near(directTexPack[131], 1.0f) ||
+      !Near(directTexPack[132], 0.51f) || !Near(directTexPack[138], 0.12f) ||
+      !Near(directTexPack[140], 0.83f) || !Near(directTexPack[145], 0.23f) ||
+      !Near(directTexPack[146], 1.0f) || !Near(directTexPack[147], 1.7f) ||
+      !Near(directTexPack[152], -0.4f)) {
     std::fprintf(stderr, "unexpected RT texture-param packing\n");
     return 1;
   }
@@ -230,7 +263,27 @@ int main() {
       !Near(directRasterTexPack[27 * 4 + 3], 0.65f) ||
       !Near(directRasterTexPack[28 * 4 + 0], 0.7f) ||
       !Near(directRasterTexPack[28 * 4 + 1], 0.8f) ||
-      !Near(directRasterTexPack[28 * 4 + 2], 0.9f)) {
+      !Near(directRasterTexPack[28 * 4 + 2], 0.9f) ||
+      !Near(directRasterTexPack[24 * 4 + 2], 9.0f) ||
+      !Near(directRasterTexPack[29 * 4 + 0], 0.5f) ||
+      !Near(directRasterTexPack[30 * 4 + 2], 0.375f) ||
+      !Near(directRasterTexPack[31 * 4 + 0], 1.0f) ||
+      !Near(directRasterTexPack[31 * 4 + 1], 0.75f) ||
+      !Near(directRasterTexPack[31 * 4 + 2], 0.125f) ||
+      !Near(directRasterTexPack[31 * 4 + 3], 1.0f) ||
+      !Near(directRasterTexPack[42 * 4 + 0], 0.51f) ||
+      !Near(directRasterTexPack[43 * 4 + 2], 0.12f) ||
+      !Near(directRasterTexPack[44 * 4 + 1], 0.61f) ||
+      !Near(directRasterTexPack[45 * 4 + 1], 0.13f) ||
+      !Near(directRasterTexPack[46 * 4 + 2], 0.71f) ||
+      !Near(directRasterTexPack[47 * 4 + 0], 0.14f) ||
+      !Near(directRasterTexPack[48 * 4 + 3], 0.81f) ||
+      !Near(directRasterTexPack[49 * 4 + 3], 0.15f) ||
+      !Near(directRasterTexPack[50 * 4 + 0], 0.83f) ||
+      !Near(directRasterTexPack[51 * 4 + 2], 0.23f) ||
+      !Near(directRasterTexPack[52 * 4 + 0], 1.7f) ||
+      !Near(directRasterTexPack[53 * 4 + 1], -0.4f) ||
+      !Near(directRasterTexPack[53 * 4 + 3], 1.0f)) {
     std::fprintf(stderr, "unexpected raster texture-param packing\n");
     return 1;
   }
