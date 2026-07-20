@@ -213,10 +213,9 @@ std::string AssetResolutionResolver::resolve_literal(
 
     auto cache_it = _cached_resolved_paths.find(assetPath);
     if (cache_it != _cached_resolved_paths.end()) {
-      // Return through the NRVO variable (mixed named returns defeat copy
-      // elision and trip clang's -Werror,-Wnrvo).
-      resolvedPath = cache_it->second;
-      return resolvedPath;
+      // Returning the map value directly avoids a non-elided return of the
+      // named local, which Clang 22 diagnoses as -Wnrvo.
+      return cache_it->second;
     }
 
     std::string rpath;

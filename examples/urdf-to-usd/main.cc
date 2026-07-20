@@ -12,6 +12,7 @@
 #include "usda-writer.hh"
 #include "usdc-writer.hh"
 #include "str-util.hh"
+#include "io-util.hh"
 
 #include <algorithm>
 #include <array>
@@ -239,7 +240,8 @@ bool ParseArgs(int argc, char **argv, Options *opts, std::string *err) {
 }
 
 bool ReadFile(const fs::path &filename, std::string *text, std::string *err) {
-  std::ifstream ifs(filename, std::ios::binary);
+  std::ifstream ifs;
+  tinyusdz::io::OpenInputFile(&ifs, filename.string(), std::ios::binary);
   if (!ifs) {
     if (err) *err = "Failed to open: " + filename.string();
     return false;
@@ -252,7 +254,8 @@ bool ReadFile(const fs::path &filename, std::string *text, std::string *err) {
 
 bool WriteFile(const fs::path &filename, const std::vector<uint8_t> &bytes,
                std::string *err) {
-  std::ofstream ofs(filename, std::ios::binary);
+  std::ofstream ofs;
+  tinyusdz::io::OpenOutputFile(&ofs, filename.string(), std::ios::binary);
   if (!ofs) {
     if (err) *err = "Failed to open output: " + filename.string();
     return false;
@@ -704,7 +707,8 @@ float ReadFloatLE(const std::vector<uint8_t> &bytes, size_t offset) {
 }
 
 bool LoadBinarySTL(const fs::path &filename, MeshData *mesh, std::string *err) {
-  std::ifstream ifs(filename, std::ios::binary);
+  std::ifstream ifs;
+  tinyusdz::io::OpenInputFile(&ifs, filename.string(), std::ios::binary);
   if (!ifs) {
     if (err) *err = "Failed to open STL: " + filename.string();
     return false;
@@ -747,7 +751,8 @@ bool LoadBinarySTL(const fs::path &filename, MeshData *mesh, std::string *err) {
 }
 
 bool LoadOBJ(const fs::path &filename, MeshData *mesh, std::string *err) {
-  std::ifstream ifs(filename);
+  std::ifstream ifs;
+  tinyusdz::io::OpenInputFile(&ifs, filename.string());
   if (!ifs) {
     if (err) *err = "Failed to open OBJ: " + filename.string();
     return false;
@@ -2643,7 +2648,8 @@ int main(int argc, char **argv) {
   }
 
   if (!opts.dump_json_filename.empty()) {
-    std::ofstream ofs(opts.dump_json_filename);
+    std::ofstream ofs;
+    tinyusdz::io::OpenOutputFile(&ofs, opts.dump_json_filename);
     ofs << payload.dump(2) << "\n";
   }
 
