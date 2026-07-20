@@ -168,6 +168,18 @@ int main() {
     std::fprintf(stderr, "shaped-sphere shadow fallback selection mismatch\n");
     return 1;
   }
+  std::vector<tusdview::DrawLightCPU> areaFallback(2);
+  areaFallback[0].type = tusdview::DrawLightCPU::Type::Point;
+  areaFallback[0].shadowEnable = false;
+  areaFallback[1].type = tusdview::DrawLightCPU::Type::Rect;
+  areaFallback[1].position[1] = 4.0f;
+  areaFallback[1].direction[1] = -1.0f;
+  const tusdview::RasterLightSet areaLights =
+      tusdview::PackRasterLights(areaFallback, 0);
+  if (areaLights.shadowLightSlot != 1) {
+    std::fprintf(stderr, "one-sided area-light shadow fallback mismatch\n");
+    return 1;
+  }
   std::vector<tusdview::DrawLightCPU> linkedShadow(1);
   linkedShadow[0].type = tusdview::DrawLightCPU::Type::Distant;
   linkedShadow[0].shadowLinksAll = false;
@@ -195,6 +207,19 @@ int main() {
   }
   const float shadowMin[3] = {-2.0f, -1.0f, -3.0f};
   const float shadowExtent[3] = {4.0f, 2.0f, 6.0f};
+  std::vector<tusdview::DrawLightCPU> pointShadow(1);
+  pointShadow[0].type = tusdview::DrawLightCPU::Type::Point;
+  pointShadow[0].position[1] = 4.0f;
+  const tusdview::RasterLightSet pointLights =
+      tusdview::PackRasterLights(pointShadow, 0);
+  tusdview::RasterShadowCamera pointShadowCamera;
+  if (pointLights.shadowLightSlot != 0 ||
+      !tusdview::BuildRasterShadowCamera(pointLights, shadowMin, shadowExtent,
+                                         true, &pointShadowCamera) ||
+      pointShadowCamera.perspective) {
+    std::fprintf(stderr, "point-light shadow approximation mismatch\n");
+    return 1;
+  }
   tusdview::RasterShadowCamera glShadow;
   tusdview::RasterShadowCamera vkShadow;
   if (!tusdview::BuildRasterShadowCamera(bounded, shadowMin, shadowExtent,
@@ -213,6 +238,14 @@ int main() {
       sphereShadow.lightSlot != 1 || !sphereShadow.perspective ||
       !(sphereShadow.farPlane > sphereShadow.nearPlane)) {
     std::fprintf(stderr, "sphere shadow camera fitting mismatch\n");
+    return 1;
+  }
+  tusdview::RasterShadowCamera areaShadow;
+  if (!tusdview::BuildRasterShadowCamera(areaLights, shadowMin, shadowExtent,
+                                         true, &areaShadow) ||
+      areaShadow.lightSlot != 1 || areaShadow.perspective ||
+      !(areaShadow.farPlane > areaShadow.nearPlane)) {
+    std::fprintf(stderr, "area-light shadow camera fitting mismatch\n");
     return 1;
   }
   if (!key.hasShaping || key.shapingIesFile != "profiles/key.ies" ||

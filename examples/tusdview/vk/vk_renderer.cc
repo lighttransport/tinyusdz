@@ -4678,8 +4678,10 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
       for (int i = 0; i < rasterLights_.count; ++i) {
         const RasterLightGPU& l = rasterLights_.lights[static_cast<size_t>(i)];
         std::fprintf(stderr,
-                     "[raster-lights] %d type=%.0f dir=(%.3f %.3f %.3f) "
+                     "[raster-lights] %d type=%.0f pos=(%.3f %.3f %.3f) "
+                     "dir=(%.3f %.3f %.3f) "
                      "color=(%.3f %.3f %.3f)\n", i, l.positionType[3],
+                     l.positionType[0], l.positionType[1], l.positionType[2],
                      l.directionAngle[0], l.directionAngle[1],
                      l.directionAngle[2], l.colorDiffuse[0],
                      l.colorDiffuse[1], l.colorDiffuse[2]);
