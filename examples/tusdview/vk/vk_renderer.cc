@@ -5567,7 +5567,9 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
 }
 
 void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
-  if (!rtActive_) return;
+  // Raster Vulkan uses the same width/color-preserving solid carrier as RT
+  // until the dedicated billboard/ribbon pipeline lands. Keeping this path
+  // active avoids silently dropping native Points in ordinary viewport mode.
   DrawScene carriers;
   carriers.points.push_back(points);
   for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
@@ -5576,7 +5578,6 @@ void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
 }
 
 void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
-  if (!rtActive_) return;
   DrawScene carriers;
   carriers.curves.push_back(curves);
   for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {

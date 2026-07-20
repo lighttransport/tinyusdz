@@ -2851,6 +2851,16 @@ if(TINYUSDZ_BUILD_TESTS)
       set_tests_properties(tusdview-gl-nonmesh-render
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 75
                                       LABELS "tusdview")
+
+      add_test(
+        NAME tusdview-vk-nonmesh-render
+        COMMAND bash
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-nonmesh-render.sh"
+                "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+      set_tests_properties(tusdview-vk-nonmesh-render
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90
+                                      LABELS "tusdview")
     endif()
 
     if(TUSDR_PYTHON)
