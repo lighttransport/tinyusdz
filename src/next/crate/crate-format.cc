@@ -757,11 +757,12 @@ std::vector<uint8_t> EncodeDeltaS32(const int32_t* values, size_t count) {
   std::vector<uint8_t> result;
   if (count == 0) return result;
 
-  // Compute deltas
+  // Compute deltas (promote to int64_t to avoid signed overflow UB)
   std::vector<int32_t> deltas(count);
   int32_t prev = 0;
   for (size_t i = 0; i < count; i++) {
-    deltas[i] = values[i] - prev;
+    deltas[i] = static_cast<int32_t>(
+        static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
     prev = values[i];
   }
 
@@ -842,7 +843,7 @@ bool DecodeDeltaS32(const uint8_t* buffer, size_t buffer_size,
     uint8_t code_byte = buffer[codes_start + i / 4];
     uint8_t code = (code_byte >> ((i % 4) * 2)) & 3;
 
-    int32_t delta;
+    int64_t delta;
     switch (code) {
       case 0:
         delta = common_delta;
@@ -857,7 +858,9 @@ bool DecodeDeltaS32(const uint8_t* buffer, size_t buffer_size,
       }
       case 2: {
         if (vints_pos + sizeof(int32_t) > buffer_size) return false;
-        std::memcpy(&delta, buffer + vints_pos, sizeof(int32_t));
+        int32_t v;
+        std::memcpy(&v, buffer + vints_pos, sizeof(int32_t));
+        delta = v;
         vints_pos += sizeof(int32_t);
         break;
       }
@@ -865,8 +868,7 @@ bool DecodeDeltaS32(const uint8_t* buffer, size_t buffer_size,
         if (vints_pos + sizeof(int64_t) > buffer_size) return false;
         int64_t v;
         std::memcpy(&v, buffer + vints_pos, sizeof(int64_t));
-        if (v < INT32_MIN || v > INT32_MAX) return false;
-        delta = static_cast<int32_t>(v);
+        delta = v;
         vints_pos += sizeof(int64_t);
         break;
       }

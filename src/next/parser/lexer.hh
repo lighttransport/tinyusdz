@@ -85,6 +85,21 @@ public:
   size_t column() const { return column_; }
   size_t position() const { return pos_; }
 
+  /// Reset the lexer to a previously-saved byte position.  The caller must
+  /// ensure `pos` was obtained from `position()` before any tokens were
+  /// consumed past that point; the line/column counters are reset to
+  /// reflect the new position (they are recomputed on the next peek/next).
+  void set_position(size_t pos) {
+    pos_ = pos;
+    has_current_ = false;  // invalidate cached token
+    error_.clear();
+    fatal_ = false;
+    // line_/column_ will be recomputed by the next peek/next scan.  For a
+    // short metadata string (typical caller) the cost is negligible.
+    line_ = 1;
+    column_ = 1;
+  }
+
   /// Peek at current token without consuming
   const Token& peek();
 
