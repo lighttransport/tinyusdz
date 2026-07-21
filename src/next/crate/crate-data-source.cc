@@ -455,7 +455,9 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
   auto read_raw = [&](void* dst, size_t elem_size) -> bool {
     if (count == 0) return true;
     if (!r.has_elements(count, elem_size)) return false;
-    return r.read(dst, static_cast<size_t>(count) * elem_size);
+    size_t byte_count;
+    if (!safe::mul(static_cast<size_t>(count), elem_size, &byte_count)) return false;
+    return r.read(dst, byte_count);
   };
 
   auto read_compressed_floating_n = [&](auto* dst, size_t n) -> bool {

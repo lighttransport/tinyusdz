@@ -126,7 +126,9 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   auto read_raw = [&](void* dst, size_t elem_size) -> bool {
     if (count == 0) return true;
     if (!reader_->has_elements(count, elem_size)) return false;
-    return reader_->read(dst, static_cast<size_t>(count) * elem_size);
+    size_t byte_count;
+    if (!safe::mul(static_cast<size_t>(count), elem_size, &byte_count)) return false;
+    return reader_->read(dst, byte_count);
   };
 
   // Decode a compressed floating-point array (pxrUSD format): [i8 code] then

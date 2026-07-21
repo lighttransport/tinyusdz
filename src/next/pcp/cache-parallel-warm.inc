@@ -217,11 +217,15 @@
     out->build_path_index();
     std::unordered_map<std::string, std::string> fpath;  // proto -> "/Flattened_Prototype_j"
     {
+      std::unordered_set<std::string> used;
+      for (uint32_t i = 0; i < out->prim_count(); ++i) {
+        if (const PrimSpec *p = out->prim(i)) used.insert(p->path().str());
+      }
       size_t n = 1;
       for (const std::string &proto : ordered) {
         std::string p;
         do { p = "/Flattened_Prototype_" + UIntToStr(n++); }
-        while (out->prim_at_path(p) != nullptr);  // skip user-named clashes
+        while (!used.insert(p).second);  // skip user-named clashes
         fpath[proto] = p;
       }
     }
