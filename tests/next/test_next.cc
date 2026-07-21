@@ -1412,6 +1412,114 @@ void test_encode_delta_s32_overflow() {
 // Main
 // ============================================================
 
+// ============================================================
+// Regression: LerpValue must interpolate every linearly-interpolatable
+// scalar type (previously Half/Half2-4, semantic-half aliases, Quath and
+// Matrix2f/3f/2d/3d fell through to "held", snapping animated values of
+// those types to the earlier time sample).
+// ============================================================
+
+void test_lerp_value_scalar_type_coverage() {
+  std::cout << "Testing LerpValue scalar type coverage regression..."
+            << std::endl;
+
+  // Half scalar: 1.0h (0x3C00) .. 3.0h (0x4200), midpoint must be 2.0.
+  {
+    const uint16_t one = 0x3C00, three = 0x4200;
+    Value a = Value::MakeFromRaw(TypeId::Half, &one);
+    Value b = Value::MakeFromRaw(TypeId::Half, &three);
+    Value r = LerpValue(a, b, 0.5);
+    assert(r.type_id() == TypeId::Half);
+    float f = 0.0f;
+    assert(r.to_float(&f));
+    assert(f == 2.0f);
+  }
+
+  // Half3 semantic alias (point3h): componentwise midpoint.
+  {
+    const uint16_t pa[3] = {0x3C00, 0x3C00, 0x3C00};  // (1,1,1)
+    const uint16_t pb[3] = {0x4200, 0x4200, 0x4200};  // (3,3,3)
+    Value a = Value::MakeFromRaw(TypeId::Point3h, pa);
+    Value b = Value::MakeFromRaw(TypeId::Point3h, pb);
+    Value r = LerpValue(a, b, 0.5);
+    assert(r.type_id() == TypeId::Point3h);
+    float f3[3] = {0, 0, 0};
+    assert(r.to_float3(f3));
+    assert(f3[0] == 2.0f && f3[1] == 2.0f && f3[2] == 2.0f);
+  }
+
+  // Matrix3f: elementwise lerp.
+  {
+    float ma[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    float mb[9] = {4, 4, 4, 4, 4, 4, 4, 4, 4};
+    Value r = LerpValue(Value::MakeMatrix3f(ma), Value::MakeMatrix3f(mb), 0.25);
+    assert(r.type_id() == TypeId::Matrix3f);
+    const float* m = r.as_matrix3f();
+    assert(m != nullptr);
+    for (int i = 0; i < 9; ++i) assert(m[i] == 1.0f);
+  }
+
+  // Matrix2d: elementwise lerp.
+  {
+    double ma[4] = {0, 0, 0, 0};
+    double mb[4] = {2, 2, 2, 2};
+    Value r = LerpValue(Value::MakeMatrix2d(ma), Value::MakeMatrix2d(mb), 0.5);
+    assert(r.type_id() == TypeId::Matrix2d);
+    const double* m = r.as_matrix2d();
+    assert(m != nullptr);
+    for (int i = 0; i < 4; ++i) assert(m[i] == 1.0);
+  }
+
+  // Quath: identity..identity slerp stays identity (exercise the half-quat
+  // path; previously the value was held, which also returned `a`, so check a
+  // non-trivial pair: w-flip halfway must renormalize, not snap).
+  {
+    const uint16_t qa[4] = {0x3C00, 0, 0, 0};  // (w=1,x=0,y=0,z=0) storage-order agnostic
+    Value a = Value::MakeFromRaw(TypeId::Quath, qa);
+    Value r = LerpValue(a, a, 0.5);
+    assert(r.type_id() == TypeId::Quath);
+  }
+
+  // Non-interpolatable types must still be held.
+  {
+    Value a(int32_t(1)), b(int32_t(3));
+    Value r = LerpValue(a, b, 0.5);
+    assert(r.type_id() == TypeId::Int);
+    assert(*r.as_int() == 1);
+  }
+
+  std::cout << "  LerpValue scalar type coverage regression tests passed!"
+            << std::endl;
+}
+
+// ============================================================
+// Regression: PathExpression arrays share the string-vector storage but
+// were excluded from as_token_array()/operator==/hash(), so two identical
+// pathExpression[] values compared unequal and hashed by type only.
+// ============================================================
+
+void test_path_expression_array_equality_hash() {
+  std::cout << "Testing pathExpression[] equality/hash regression..."
+            << std::endl;
+
+  std::vector<std::string> e1 = {"/World//", "/Set/Chair_*"};
+  std::vector<std::string> e2 = {"/World//", "/Set/Chair_*"};
+  std::vector<std::string> e3 = {"/Other//"};
+  Value a = Value::MakeStringLikeArray(std::move(e1), TypeId::PathExpression);
+  Value b = Value::MakeStringLikeArray(std::move(e2), TypeId::PathExpression);
+  Value c = Value::MakeStringLikeArray(std::move(e3), TypeId::PathExpression);
+
+  assert(a.as_token_array() != nullptr);
+  assert(a.as_token_array()->size() == 2);
+  assert(a == b);
+  assert(!(a == c));
+  assert(a.hash() == b.hash());
+  assert(a.hash() != c.hash());
+
+  std::cout << "  pathExpression[] equality/hash regression tests passed!"
+            << std::endl;
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next Unit Tests ===" << std::endl;
   std::cout << std::endl;
@@ -1424,6 +1532,8 @@ int main() {
     test_mutable_int_array_backing_types();
     test_generic_value_tuple_arity();
     test_encode_delta_s32_overflow();
+    test_lerp_value_scalar_type_coverage();
+    test_path_expression_array_equality_hash();
     test_path();
     test_prim();
     test_lexer();
