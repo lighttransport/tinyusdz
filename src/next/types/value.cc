@@ -1509,7 +1509,8 @@ uint64_t Value::hash() const {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
                         arr->size() * sizeof(uint8_t));
       }
-    } else if (type_id_ == TypeId::Token) {
+    } else if (type_id_ == TypeId::Token || type_id_ == TypeId::String ||
+               type_id_ == TypeId::AssetPath) {
       const auto* arr = as_token_array();
       if (arr) {
         for (const std::string& s : *arr) {
@@ -1652,17 +1653,23 @@ Value LerpValue(const Value& a, const Value& b, double t) {
       if (pa && pb) return Value(ld(*pa, *pb));
       break;
     }
-    case TypeId::Float2: {
+    case TypeId::Float2:
+    case TypeId::Texcoord2f: {
       const float* pa = a.as_float2();
       const float* pb = b.as_float2();
-      if (pa && pb) return Value::MakeFloat2(lf(pa[0], pb[0]), lf(pa[1], pb[1]));
-      break;
+      if (!pa || !pb) break;
+      {
+        const float u = lf(pa[0], pb[0]), v = lf(pa[1], pb[1]);
+        if (a.type_id() == TypeId::Texcoord2f) return Value::MakeTexcoord2f(u, v);
+        return Value::MakeFloat2(u, v);
+      }
     }
     case TypeId::Float3:
     case TypeId::Point3f:
     case TypeId::Vector3f:
     case TypeId::Normal3f:
-    case TypeId::Color3f: {
+    case TypeId::Color3f:
+    case TypeId::Texcoord3f: {
       const float* pa = a.as_float3();
       const float* pb = b.as_float3();
       if (!pa || !pb) break;
@@ -1672,6 +1679,10 @@ Value LerpValue(const Value& a, const Value& b, double t) {
         case TypeId::Vector3f: return Value::MakeVector3f(x, y, z);
         case TypeId::Normal3f: return Value::MakeNormal3f(x, y, z);
         case TypeId::Color3f: return Value::MakeColor3f(x, y, z);
+        case TypeId::Texcoord3f: {
+          float tc[3] = {x, y, z};
+          return Value::MakeFromRaw(TypeId::Texcoord3f, tc);
+        }
         default: return Value::MakeFloat3(x, y, z);
       }
     }
@@ -1685,16 +1696,26 @@ Value LerpValue(const Value& a, const Value& b, double t) {
       if (a.type_id() == TypeId::Color4f) return Value::MakeColor4f(x, y, z, w);
       return Value::MakeFloat4(x, y, z, w);
     }
-    case TypeId::Double2: {
+    case TypeId::Double2:
+    case TypeId::Texcoord2d: {
       const double* pa = a.as_double2();
       const double* pb = b.as_double2();
-      if (pa && pb) return Value::MakeDouble2(ld(pa[0], pb[0]), ld(pa[1], pb[1]));
-      break;
+      if (!pa || !pb) break;
+      {
+        const double u = ld(pa[0], pb[0]), v = ld(pa[1], pb[1]);
+        if (a.type_id() == TypeId::Texcoord2d) {
+          double tc[2] = {u, v};
+          return Value::MakeFromRaw(TypeId::Texcoord2d, tc);
+        }
+        return Value::MakeDouble2(u, v);
+      }
     }
     case TypeId::Double3:
     case TypeId::Point3d:
     case TypeId::Vector3d:
-    case TypeId::Normal3d: {
+    case TypeId::Normal3d:
+    case TypeId::Color3d:
+    case TypeId::Texcoord3d: {
       const double* pa = a.as_double3();
       const double* pb = b.as_double3();
       if (!pa || !pb) break;
@@ -1703,16 +1724,31 @@ Value LerpValue(const Value& a, const Value& b, double t) {
         case TypeId::Point3d: return Value::MakePoint3d(x, y, z);
         case TypeId::Vector3d: return Value::MakeVector3d(x, y, z);
         case TypeId::Normal3d: return Value::MakeNormal3d(x, y, z);
+        case TypeId::Color3d: {
+          double c[3] = {x, y, z};
+          return Value::MakeFromRaw(TypeId::Color3d, c);
+        }
+        case TypeId::Texcoord3d: {
+          double tc[3] = {x, y, z};
+          return Value::MakeFromRaw(TypeId::Texcoord3d, tc);
+        }
         default: return Value::MakeDouble3(x, y, z);
       }
     }
-    case TypeId::Double4: {
+    case TypeId::Double4:
+    case TypeId::Color4d: {
       const double* pa = a.as_double4();
       const double* pb = b.as_double4();
-      if (pa && pb)
-        return Value::MakeDouble4(ld(pa[0], pb[0]), ld(pa[1], pb[1]),
-                                  ld(pa[2], pb[2]), ld(pa[3], pb[3]));
-      break;
+      if (!pa || !pb) break;
+      {
+        const double x = ld(pa[0], pb[0]), y = ld(pa[1], pb[1]);
+        const double z = ld(pa[2], pb[2]), w = ld(pa[3], pb[3]);
+        if (a.type_id() == TypeId::Color4d) {
+          double c[4] = {x, y, z, w};
+          return Value::MakeFromRaw(TypeId::Color4d, c);
+        }
+        return Value::MakeDouble4(x, y, z, w);
+      }
     }
     case TypeId::Matrix4f: {
       const float* pa = a.as_matrix4f();
@@ -1722,12 +1758,14 @@ Value LerpValue(const Value& a, const Value& b, double t) {
       for (int i = 0; i < 16; ++i) m[i] = lf(pa[i], pb[i]);
       return Value::MakeMatrix4f(m);
     }
-    case TypeId::Matrix4d: {
+    case TypeId::Matrix4d:
+    case TypeId::Frame4d: {
       const double* pa = a.as_matrix4d();
       const double* pb = b.as_matrix4d();
       if (!pa || !pb) break;
       double m[16];
       for (int i = 0; i < 16; ++i) m[i] = ld(pa[i], pb[i]);
+      if (a.type_id() == TypeId::Frame4d) return Value::MakeFromRaw(TypeId::Frame4d, m);
       return Value::MakeMatrix4d(m);
     }
     default:

@@ -350,10 +350,27 @@ struct SrcCache {
  private:
   std::vector<Src> &emplace_at(size_t slot, uint64_t h, const std::string &k,
                                bool was_tomb) {
-    const uint32_t vi = static_cast<uint32_t>(vals_.size());
-    keys_.emplace_back(k);
-    vals_.emplace_back();
-    live_.push_back(1);
+    uint32_t vi;
+    if (was_tomb) {
+      vi = static_cast<uint32_t>(live_.size());
+      for (uint32_t di = 0; di < live_.size(); ++di) {
+        if (!live_[di]) { vi = di; break; }
+      }
+      if (vi < live_.size()) {
+        keys_[vi] = k;
+        vals_[vi].clear();
+        live_[vi] = 1;
+      } else {
+        keys_.emplace_back(k);
+        vals_.emplace_back();
+        live_.push_back(1);
+      }
+    } else {
+      vi = static_cast<uint32_t>(vals_.size());
+      keys_.emplace_back(k);
+      vals_.emplace_back();
+      live_.push_back(1);
+    }
     slots_[slot].hash = h;
     slots_[slot].idx = vi;
     slots_[slot].state = 1;
