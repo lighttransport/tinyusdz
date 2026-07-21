@@ -190,6 +190,12 @@ Linux-first order is:
    binding and atlas-row route now preserve OpenPBR/Standard specular F0 across
    tiles 1001 and 1002. Vulkan raster, Vulkan ray query, and CUDA pass the UDIM
    fixtures through both loaders; HIP remains capability-gated.
+   Coat weight/color/roughness now have equivalent two-tile UDIM probes. Their
+   first paired run caught legacy `ND_image_float` UDIMs being uploaded through
+   an sRGB view; material-usage classification now makes scalar, normal, and
+   displacement textures raw regardless of decoder defaults. Vulkan raster
+   reaches MAD 0.0 across loaders, while Vulkan ray query and CUDA pass both
+   ordinary and UDIM coat probes.
 3. **P3:** complete for point/zero-radius SphereLight emitters: GL and Vulkan
    raster render/sample all six projected-depth cube faces, and the Vulkan
    regression proves the bounded shadow. Keep finite non-zero area sampling as

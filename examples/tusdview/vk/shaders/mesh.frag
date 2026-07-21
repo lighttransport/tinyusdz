@@ -40,6 +40,9 @@ layout(set = 0, binding = 23) uniform sampler2D uCoatRoughnessTex;
 layout(set = 0, binding = 24) uniform sampler2D uCoatNormalTex;
 layout(set = 0, binding = 25) uniform samplerCube uPointShadowMap;
 layout(set = 0, binding = 26) uniform sampler2DArray uSpecularColorUdimTex;
+layout(set = 0, binding = 27) uniform sampler2DArray uCoatWeightUdimTex;
+layout(set = 0, binding = 28) uniform sampler2DArray uCoatColorUdimTex;
+layout(set = 0, binding = 29) uniform sampler2DArray uCoatRoughnessUdimTex;
 // Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
 // first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
 layout(set = 1, binding = 6, std430) readonly buffer Faces { uint faceId[]; };
@@ -110,6 +113,7 @@ struct MaterialTexParam {
   vec4 coatRoughScale; vec4 coatRoughBias;
   vec4 coatNormalUv0; vec4 coatNormalUv1;
   vec4 coatNormalScale; vec4 coatNormalBias;
+  vec4 semanticUdimSlots;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -324,6 +328,31 @@ vec3 sampleColorSlot(sampler2D tex, bool has, vec4 uv0, vec4 uv1, float uvSet,
   if (!has) return vec3(1.0);
   vec2 suv = (uvSet > 0.5) ? vUV1 : vUV;
   return (texture(tex, xformUv(suv, uv0, uv1)) * scale + bias).rgb;
+}
+
+float sampleCoatScalarUdim(sampler2D tex, sampler2DArray udimTex,
+                           bool ordinary, float row, vec4 uv0, vec4 uv1,
+                           float uvSet, float channel, vec4 scale, vec4 bias) {
+  bool udim = !ordinary && row >= 0.0;
+  if (!ordinary && !udim) return 1.0;
+  vec2 suv = uvSet > 0.5 ? vUV1 : vUV;
+  vec2 uv = xformUv(suv, uv0, uv1);
+  vec4 c = udim ? sampleUdim(udimTex, int(row + 0.5), uv, vec4(1.0))
+                : texture(tex, uv);
+  return clamp(channelOf(c * scale + bias, channel < 0.0 ? 0.0 : channel),
+               0.0, 1.0);
+}
+
+vec3 sampleCoatColorUdim(bool ordinary, float row, vec4 uv0, vec4 uv1,
+                         float uvSet, vec4 scale, vec4 bias) {
+  bool udim = !ordinary && row >= 0.0;
+  if (!ordinary && !udim) return vec3(1.0);
+  vec2 suv = uvSet > 0.5 ? vUV1 : vUV;
+  vec2 uv = xformUv(suv, uv0, uv1);
+  vec4 c = udim ? sampleUdim(uCoatColorUdimTex, int(row + 0.5), uv,
+                             vec4(1.0))
+                : texture(uCoatColorTex, uv);
+  return (c * scale + bias).rgb;
 }
 
 float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
@@ -566,8 +595,10 @@ void main() {
     outColor = vec4(vec3(d * d), 1.0); return;
   }
   float coatWeight = clamp(pbr.coatParams.x *
-                               sampleCoatScalar(uCoatWeightTex,
+                               sampleCoatScalarUdim(uCoatWeightTex,
+                                                uCoatWeightUdimTex,
                                                 (pc.ids.w & 8192) != 0,
+                                                pbr.semanticUdimSlots.y,
                                                 pbr.coatWeightUv0,
                                                 pbr.coatWeightUv1,
                                                 pbr.coatTexParams.z,
@@ -576,8 +607,10 @@ void main() {
                                                 pbr.coatWeightBias),
                            0.0, 1.0);
   float coatRoughness = clamp(pbr.coatParams.y *
-                                  sampleCoatScalar(uCoatRoughnessTex,
+                                  sampleCoatScalarUdim(uCoatRoughnessTex,
+                                                   uCoatRoughnessUdimTex,
                                                    (pc.ids.w & 32768) != 0,
+                                                   pbr.semanticUdimSlots.w,
                                                    pbr.coatRoughUv0,
                                                    pbr.coatRoughUv1,
                                                    pbr.coatTexParams.w,
@@ -586,7 +619,8 @@ void main() {
                                                    pbr.coatRoughBias),
                               0.02, 1.0);
   vec3 coatTint = pbr.coatColor.rgb *
-                  sampleColorSlot(uCoatColorTex, (pc.ids.w & 16384) != 0,
+                  sampleCoatColorUdim((pc.ids.w & 16384) != 0,
+                                  pbr.semanticUdimSlots.z,
                                   pbr.coatColorUv0, pbr.coatColorUv1,
                                   pbr.extraUvSets.y, pbr.coatColorScale,
                                   pbr.coatColorBias);

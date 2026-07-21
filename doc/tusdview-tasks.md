@@ -278,6 +278,13 @@ Latest focused verification on 2026-07-20:
   raster, ray query, and CUDA pass ordinary and UDIM F0 through both loaders;
   raster and RT/CUDA loader comparisons are exact apart from the existing
   subpixel Preview RT tolerance.
+- Coat weight, color, and roughness AOVs now also cross two UDIM tiles. Vulkan
+  raster gained array descriptors and atlas-row routing for those three slots.
+  The paired loader test exposed legacy scalar UDIMs inheriting an sRGB decoder
+  default; post-material usage classification now forces scalar, normal, and
+  displacement semantics to raw before mip generation/upload. Vulkan raster
+  gives exact default/legacy coat pixels (MAD 0.0), and Vulkan ray query plus
+  CUDA pass the ordinary/UDIM response fixtures.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by

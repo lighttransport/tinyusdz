@@ -48,7 +48,7 @@ namespace tusdview {
 namespace {
 
 constexpr uint32_t kRasterDescriptorSetCount = 4;
-constexpr uint32_t kMaterialBindingCount = 27;
+constexpr uint32_t kMaterialBindingCount = 30;
 constexpr uint32_t kDeformBindingCount = 7;
 constexpr uint32_t kMaxMaterialSets = 8192;
 constexpr uint32_t kMaxDeformSets = 16384;
@@ -2853,7 +2853,7 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
       material.opacityTex, material.roughnessTex, -1, -1, -1,
       material.roughnessTex, material.displacementTex, material.occlusionTex,
       material.occlusionTex};
-  static_assert(kMaterialBindingCount == 27, "material descriptor table drift");
+  static_assert(kMaterialBindingCount == 30, "material descriptor table drift");
   views[19] = shadowDepthView_ ? shadowDepthView_ : whiteView_;
   // Extra 2D-only material slots. UDIM sources fall back to white (treated as
   // unbound) rather than sampling the wrong image.
@@ -2870,6 +2870,9 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
   views[24] = plain2dView(material.coatNormalTex);
   views[25] = pointShadowDepthView_ ? pointShadowDepthView_ : blackCubeView_;
   views[26] = udimView(material.specularColorTex);
+  views[27] = udimView(material.coatWeightTex);
+  views[28] = udimView(material.coatColorTex);
+  views[29] = udimView(material.coatRoughnessTex);
   textureSlots[19] = -1;
   textureSlots[20] = material.specularColorTex;
   textureSlots[21] = material.coatWeightTex;
@@ -2878,6 +2881,9 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
   textureSlots[24] = material.coatNormalTex;
   textureSlots[25] = -1;
   textureSlots[26] = material.specularColorTex;
+  textureSlots[27] = material.coatWeightTex;
+  textureSlots[28] = material.coatColorTex;
+  textureSlots[29] = material.coatRoughnessTex;
   VkDescriptorImageInfo infos[kMaterialBindingCount]{};
   VkWriteDescriptorSet writes[kMaterialBindingCount]{};
   for (uint32_t i = 0; i < kMaterialBindingCount; ++i) {

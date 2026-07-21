@@ -1202,6 +1202,23 @@ void ClassifyTextureUsage(DrawScene* out) {
     return &out->textures[static_cast<size_t>(idx)];
   };
   for (const DrawMaterialCPU& m : out->materials) {
+    // Semantic intent is authoritative for GPU view format. Some legacy UDIM
+    // readers retain the file decoder's default sRGB tag even for scalar
+    // MaterialX image nodes; sampling those arrays through an SRGB view darkens
+    // weight/roughness/opacity data. Ordinary and UDIM paths must classify the
+    // same way once the material connection is known.
+    auto markRaw = [&](int idx) {
+      if (DrawTextureCPU* t = texAt(idx)) t->srgb = false;
+    };
+    markRaw(m.metallicTex);
+    markRaw(m.roughnessTex);
+    markRaw(m.normalTex);
+    markRaw(m.coatNormalTex);
+    markRaw(m.opacityTex);
+    markRaw(m.occlusionTex);
+    markRaw(m.coatWeightTex);
+    markRaw(m.coatRoughnessTex);
+    markRaw(m.displacementTex);
     if (DrawTextureCPU* t = texAt(m.normalTex)) t->isNormalMap = true;
     if (DrawTextureCPU* t = texAt(m.coatNormalTex)) t->isNormalMap = true;
     if (DrawTextureCPU* t = texAt(m.roughnessTex)) {
