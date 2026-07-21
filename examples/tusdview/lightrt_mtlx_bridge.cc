@@ -1193,6 +1193,9 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[31 * 4 + 2] = mat.occlusionTexBias;
   dst[31 * 4 + 3] = static_cast<float>(mat.occlusionSample.uvSet);
   dst[24 * 4 + 2] = static_cast<float>(std::max(mat.occlusionTex, 0));
+  // The ordinary-binding push flag distinguishes a 2D specular map from a
+  // UDIM map; retain -1 here only when the semantic slot is genuinely absent.
+  dst[24 * 4 + 3] = static_cast<float>(mat.specularColorTex);
   // Extra semantic slots. The loaders neutralize the matching constant to 1.0
   // when a texture is bound, so the shader always multiplies constant * texel.
   StoreUvVec4Rows(mat.specularColorSample.uv, dst + 32 * 4);

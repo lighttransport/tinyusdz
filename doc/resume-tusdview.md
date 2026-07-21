@@ -185,6 +185,11 @@ Linux-first order is:
    `specular_ior`/`specular_IOR`, while PreviewSurface's explicit specular
    workflow treats `specularColor` as F0 directly. All four available backends
    pass both loader paths with exact default/legacy image parity (MAD 0.0).
+   Follow-up two-tile UDIM fixtures found that Vulkan raster still treated the
+   newer specular-color slot as ordinary-2D-only. A dedicated descriptor-array
+   binding and atlas-row route now preserve OpenPBR/Standard specular F0 across
+   tiles 1001 and 1002. Vulkan raster, Vulkan ray query, and CUDA pass the UDIM
+   fixtures through both loaders; HIP remains capability-gated.
 3. **P3:** complete for point/zero-radius SphereLight emitters: GL and Vulkan
    raster render/sample all six projected-depth cube faces, and the Vulkan
    regression proves the bounded shadow. Keep finite non-zero area sampling as
