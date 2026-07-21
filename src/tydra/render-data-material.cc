@@ -3078,6 +3078,22 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     // must use the texture, not the (0.18) fallback (usd-wg TextureTransformTest).
     DCOUT(fmt::format("{} is attribute connection.", param_name));
 
+    // Some USD-authored OpenPBR/standard_surface graphs use a direct
+    // UsdUVTexture connection even though the terminal shader is classified
+    // as MaterialX. Prefer that concrete USD texture node when present; the
+    // MaterialX graph resolver is for ND_image/NodeGraph connections and would
+    // otherwise reject this valid mixed graph and retain only the fallback.
+    if (is_materialx) {
+      const UsdUVTexture *direct_texture{nullptr};
+      const Shader *direct_shader{nullptr};
+      Path direct_path;
+      auto direct_result = GetConnectedUVTexture(
+          env.stage, param, &direct_path, &direct_texture, &direct_shader);
+      if (direct_result && *direct_result && direct_texture && direct_shader) {
+        is_materialx = false;
+      }
+    }
+
     // Check if this is a MaterialX connection to a NodeGraph
     if (is_materialx && param.get_connections().size() == 1) {
       const Path &conn_path = param.get_connections()[0];
@@ -4345,6 +4361,22 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       if (!ConvertOpenPBRSurfaceShader(env, surfacePath, converted_openpbr, &openpbr_shader, /* is_materialx */ true)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to convert MtlxOpenPBRSurface : {}", surfacePath.prim_part()));
+      }
+      // geometry_coat_normal has no field in the compatibility
+      // OpenPBRSurface intermediate. Preserve its direct UsdUVTexture or
+      // MaterialX image connection before the NodeGraph-specific normal-map
+      // extraction below (which may refine/override it).
+      TypedAttributeWithFallback<Animatable<value::normal3f>> coat_normal{
+          value::normal3f{0.0f, 0.0f, 1.0f}};
+      coat_normal.set_connections(
+          mtlx_openpbr->geometry_coat_normal.get_connections());
+      if (!ConvertPreviewSurfaceShaderParam(
+              env, surfacePath, coat_normal,
+              "geometry_coat_normal", openpbr_shader.coat_normal,
+              /*is_materialx=*/true)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to convert OpenPBR coat normal : {}",
+            surfacePath.prim_part()));
       }
 
       // Extract tangent rotation, normal map scale, and normal map texture from NodeGraph connections

@@ -63,6 +63,7 @@ int AddImage(tydra::RenderScene* scene, tydra::ColorSpace colorSpace, int w,
   img.channels = 4;
   img.texelComponentType = tydra::ComponentType::UInt8;
   img.colorSpace = colorSpace;
+  img.usdColorSpace = colorSpace;
   img.asset_identifier =
       "asset_" + std::to_string(scene->images.size()) + ".png";
   const int imageId = static_cast<int>(scene->images.size());
@@ -105,6 +106,7 @@ int AddDecodedImage(tydra::RenderScene* scene, tydra::ColorSpace colorSpace,
   img.channels = channels;
   img.texelComponentType = componentType;
   img.colorSpace = colorSpace;
+  img.usdColorSpace = colorSpace;
   img.asset_identifier = assetIdentifier;
   const int imageId = static_cast<int>(scene->images.size());
   scene->images.push_back(std::move(img));
@@ -269,6 +271,10 @@ void TestPipelineClassification() {
         out.textures[static_cast<size_t>(m.normalTex)];
     CHECK(!bt.isNormalMap);
     CHECK(nt.isNormalMap);
+    CHECK(m.baseColorSample.colorSpace == tusdview::DrawColorSpace::sRGB);
+    CHECK(m.normalSample.colorSpace == tusdview::DrawColorSpace::Raw);
+    CHECK(m.baseColorSample.wrapS == tusdview::WrapMode::Repeat);
+    CHECK(m.normalSample.wrapT == tusdview::WrapMode::Repeat);
     if (!tusdview::TexToolsAvailable()) return;
     CHECK(bt.mipImages.size() == 4);  // 8,4,2,1
     CHECK(nt.mipImages.size() == 4);

@@ -523,6 +523,12 @@ void Gui::drawDockspaceAndMenu() {
         static const AovItem kAovs[] = {
             {"Material ID", RenderMode::MaterialId},
             {"Normals (shading)", RenderMode::Normals},
+            {"Normals (coat)", RenderMode::CoatNormal},
+            {"Coat weight", RenderMode::CoatWeight},
+            {"Coat color", RenderMode::CoatColor},
+            {"Coat roughness", RenderMode::CoatRoughness},
+            {"Specular F0", RenderMode::SpecularF0},
+            {"IOR F0", RenderMode::IorF0},
             {"Normals (geometric)", RenderMode::GeomNormal},
             {"UV", RenderMode::Uv},
             {"UV checker", RenderMode::UvChecker},

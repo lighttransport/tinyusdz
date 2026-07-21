@@ -351,6 +351,7 @@ uniform float uAlphaCutoff;
 // Specular F0 (T12): specular workflow -> specularColor directly; else the
 // dielectric reflectance from ior. Unified with the Vulkan mesh.frag.
 uniform int uUseSpecularWorkflow;
+uniform int uOpenPbrSpecularModel;
 uniform vec3 uSpecularColor;
 uniform sampler2D uSpecularColorTex;
 uniform bool uHasSpecularColorTex;
@@ -401,6 +402,10 @@ uniform bool uHasShadowMap;
 uniform int uShadowLightSlot;
 uniform mat4 uShadowViewProj;
 uniform sampler2D uShadowMap;
+uniform bool uHasPointShadowMap;
+uniform vec3 uPointShadowLightPos;
+uniform mat4 uPointShadowViewProj[6];
+uniform samplerCube uPointShadowMap;
 
 // Texture samplers
 uniform sampler2D uBaseColorTex;
@@ -582,7 +587,9 @@ vec3 computeF0(vec3 base, float metallic) {
     if (uUseSpecularWorkflow != 0) return uSpecularColor;
     float ior = max(1.0, uIor);
     float d = (ior - 1.0) / (ior + 1.0);
-    return mix(vec3(d * d), base, clamp(metallic, 0.0, 1.0));
+    vec3 dielectric = vec3(d * d);
+    if (uOpenPbrSpecularModel != 0) dielectric *= uSpecularColor;
+    return mix(dielectric, base, clamp(metallic, 0.0, 1.0));
 }
 
 const float kPi = 3.14159265358979323846;
@@ -642,6 +649,20 @@ vec3 sampleCoatColor(sampler2D tex, bool has, vec3 uv0, vec3 uv1, int uvSet,
 }
 
 float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
+    if (uHasPointShadowMap) {
+    vec3 d = worldPos - uPointShadowLightPos;
+    vec3 a = abs(d);
+    int face;
+    if (a.x >= a.y && a.x >= a.z) face = d.x >= 0.0 ? 0 : 1;
+    else if (a.y >= a.z) face = d.y >= 0.0 ? 2 : 3;
+    else face = d.z >= 0.0 ? 4 : 5;
+    vec4 clip = uPointShadowViewProj[face] * vec4(worldPos, 1.0);
+    vec3 p = clip.xyz / clip.w;
+    p = p * 0.5 + 0.5;
+    if (p.z <= 0.0 || p.z >= 1.0) return 1.0;
+    float bias = max(0.00035, 0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
+    return (p.z - bias <= texture(uPointShadowMap, normalize(d)).r) ? 1.0 : 0.0;
+    }
     if (!uHasShadowMap) return 1.0;
     vec4 clip = uShadowViewProj * vec4(worldPos, 1.0);
     vec3 p = clip.xyz / clip.w;
@@ -754,9 +775,11 @@ void main() {
     }
 
     // Debug AOVs: override the shaded output with the requested channel.
-    if (uRenderMode != 0) {
+    if (uRenderMode != 0 && uRenderMode != 36 && uRenderMode != 37 &&
+        uRenderMode != 38 && uRenderMode != 39 && uRenderMode != 40) {
         vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
         if (uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1.0); return; }       // shading normal
+        if (uRenderMode == 35) { fragColor = vec4(coatN * 0.5 + 0.5, 1.0); return; } // coat normal
         if (uRenderMode == 3) { fragColor = vec4(idColor(uMatId), 1.0); return; }     // material id
         if (uRenderMode == 4) { fragColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }    // geometric normal
         if (uRenderMode == 6) {                                                       // depth
@@ -853,11 +876,16 @@ void main() {
     float rgh = clamp(roughness, 0.02, 1.0);
     float met = clamp(metallic, 0.0, 1.0);
     vec3 F0 = computeF0(baseColor, met);
-    if (uUseSpecularWorkflow != 0) {
+    if (uUseSpecularWorkflow != 0 || uOpenPbrSpecularModel != 0) {
         F0 *= sampleCoatColor(uSpecularColorTex, uHasSpecularColorTex,
                               uSpecularColorUv0, uSpecularColorUv1,
                               uSpecularColorUvSet, uSpecularColorScale,
                               uSpecularColorBias);
+    }
+    if (uRenderMode == 39) { fragColor = vec4(F0, 1.0); return; }
+    if (uRenderMode == 40) {
+        float d = (max(uIor, 1.0) - 1.0) / (max(uIor, 1.0) + 1.0);
+        fragColor = vec4(vec3(d * d), 1.0); return;
     }
     float cw = clamp(uCoatWeight *
                      sampleCoatScalar(uCoatWeightTex, uHasCoatWeightTex,
@@ -877,6 +905,9 @@ void main() {
                                                  uCoatColorUvSet,
                                                  uCoatColorScale,
                                                  uCoatColorBias);
+    if (uRenderMode == 36) { fragColor = vec4(vec3(cw), 1.0); return; }
+    if (uRenderMode == 37) { fragColor = vec4(coatTint, 1.0); return; }
+    if (uRenderMode == 38) { fragColor = vec4(vec3(cr), 1.0); return; }
     float ci = max(uCoatIor, 1.0);
     float cd = (ci - 1.0) / (ci + 1.0);
     vec3 direct = vec3(0.0);
@@ -927,12 +958,13 @@ void main() {
                       geometrySchlickGGX(coatNoL, cr);
         vec3 coatSpec = coatD * coatG * coatF /
                         max(4.0 * coatNoV * coatNoL, 1e-5);
-        vec3 brdf = diffuse * lc.w +
-                    (specular * (vec3(1.0) - coatF * cw) +
-                     coatSpec * coatTint * cw) * ss.x;
+        vec3 baseBrdf = diffuse * lc.w +
+                        specular * (vec3(1.0) - coatF * cw) * ss.x;
+        vec3 coatBrdf = coatSpec * coatTint * cw * ss.x;
         float visibility = (li == uShadowLightSlot)
                                ? sampleShadow(vWorldPos, Nf, L) : 1.0;
-        direct += brdf * lc.rgb * (attenuation * shape * NoL * visibility);
+        direct += (baseBrdf * NoL + coatBrdf * coatNoL) * lc.rgb *
+                  (attenuation * shape * visibility);
     }
     // Scenes without authored direct lights retain the readable preview key.
     if (uLightCount == 0) {

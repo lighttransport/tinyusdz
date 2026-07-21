@@ -120,6 +120,24 @@ text = text.replace(
 pathlib.Path(sys.argv[2]).write_text(text)
 PY
 
+# UsdLux represents an ideal point emitter as a zero-radius SphereLight. This
+# variant must use the six-face cube shadow path rather than the old one-sided
+# finite-light approximation: the blocker needs to cast a bounded shadow even
+# though the floor surrounds the light directionally.
+python3 - "$OUT/shadow.usda" "$OUT/shadow-point.usda" <<'PY'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+text = text.replace('def DistantLight "Sun"', 'def SphereLight "Sun"')
+text = text.replace('float inputs:intensity = 3',
+                    'float inputs:intensity = 120\n    float inputs:radius = 0')
+text = text.replace(
+    '    float3 xformOp:rotateXYZ = (-90, 0, 0)\n'
+    '    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]',
+    '    double3 xformOp:translate = (0, 6, 0)\n'
+    '    uniform token[] xformOpOrder = ["xformOp:translate"]')
+pathlib.Path(sys.argv[2]).write_text(text)
+PY
+
 # Same scene, but the blocker is a fully rejected alpha-mask material. The
 # shadow band must disappear; this catches depth-only shadow shaders that ignore
 # material cutouts while the visible pass correctly discards them.
@@ -269,6 +287,31 @@ if grep -q 'render stats' "$rect_log"; then
 elif [ "$vk_ran" -eq 1 ]; then
   echo "FAIL: Vulkan baseline ran but RectLight shadow fixture did not render"
   sed -n '1,80p' "$rect_log"
+  fail=1
+fi
+
+# This is intentionally Vulkan-only until an Xvfb GL device is present in the
+# CI/runtime host. A baseline Vulkan render makes an unavailable point variant
+# a failure, avoiding an accidental capability skip of the new cubemap path.
+point_img="$OUT/vk-point.ppm"
+point_log="$OUT/vk-point.log"
+$XVFB env XDG_CONFIG_HOME="$OUT/config" \
+    "$BIN" --headless --backend vk --frames 2 --size 640x480 --no-grid \
+    --camera Cam --screenshot "$point_img" "$OUT/shadow-point.usda" \
+    >"$point_log" 2>&1
+if grep -q 'render stats' "$point_log"; then
+  read -r rows contrast < <(scan_band "$point_img" 0.82) || {
+    echo "FAIL: vk point-shadow PPM parse"; exit 1; }
+  echo "vk: point cube shadow-band rows=$rows contrast=$contrast"
+  if [ "$rows" -lt 3 ] || [ "$contrast" -lt 20 ]; then
+    echo "FAIL: Vulkan point light did not produce a bounded cube shadow"
+    cp "$point_img" /tmp/tusdview-vk-point-shadow-failed.ppm
+    cp "$point_log" /tmp/tusdview-vk-point-shadow-failed.log
+    fail=1
+  fi
+elif [ "$vk_ran" -eq 1 ]; then
+  echo "FAIL: Vulkan baseline ran but point cube-shadow fixture did not render"
+  sed -n '1,80p' "$point_log"
   fail=1
 fi
 

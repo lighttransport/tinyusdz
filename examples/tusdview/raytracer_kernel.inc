@@ -628,18 +628,17 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     float opacity=(mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f;
     float alphaMode=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*56+54]:0.f;
     float alphaCutoff=(mid>=0&&mid<numMats&&matLightRt)?matLightRt[mid*56+55]:0.5f;
-    float specWeight=1.f, coatWeight=0.f, coatRoughness=0.1f;
+    float specWeight=1.f, specIor=1.5f, coatWeight=0.f, coatRoughness=0.1f;
     F3 coatColor=mk(1.f,1.f,1.f);
     F3 emissionConst=(mid>=0&&mid<numMats)?mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]):mk(0.f,0.f,0.f);
     if (lrt) {
-      metallic=lrt[40];
-      roughness=lrt[42];
-      opacity=lrt[39];
+      // `matPbr` is the live texture-neutralized source for base factors.
+      // Keep it authoritative and use LightRT only for extended lobe fields.
       specWeight=lrt[7];
+      specIor=lrt[43];
       coatWeight=lrt[27];
       coatColor=mk(lrt[24],lrt[25],lrt[26]);
       coatRoughness=lrt[44];
-      emissionConst=mk(lrt[32]*lrt[35], lrt[33]*lrt[35], lrt[34]*lrt[35]);
     }
     // Occlusion / coat texture slots (matTex 6..9). Unbound slots sample white,
     // and the loaders neutralize the matching constant to 1 whenever a texture
@@ -661,11 +660,18 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       xformUv(tp,84,(uvbits2&4)?uu1:uu,(uvbits2&4)?vv21:vv2,&ccuu,&ccvv);
       xformUv(tp,90,(uvbits2&8)?uu1:uu,(uvbits2&8)?vv21:vv2,&cruu,&crvv);
     }
-    F3 materialF0=mk(0.04f+(base.x-0.04f)*metallic,
-                     0.04f+(base.y-0.04f)*metallic,
-                     0.04f+(base.z-0.04f)*metallic);
-    if (tp && tp[131]>0.5f) {
-      materialF0=lrt?mk(lrt[4],lrt[5],lrt[6]):mk(1.f,1.f,1.f);
+    float fd=(fmaxf(specIor,1.f)-1.f)/(fmaxf(specIor,1.f)+1.f);
+    F3 materialF0=mk(fd*fd+(base.x-fd*fd)*metallic,
+                     fd*fd+(base.y-fd*fd)*metallic,
+                     fd*fd+(base.z-fd*fd)*metallic);
+    bool previewSpec=tp && tp[131]>0.5f;
+    bool openPbrSpec=tp && tp[139]>0.5f;
+    if (previewSpec || openPbrSpec) {
+      F3 tint=lrt?mk(lrt[4],lrt[5],lrt[6]):mk(1.f,1.f,1.f);
+      materialF0=previewSpec?tint:
+          mk(fd*fd*tint.x+(base.x-fd*fd*tint.x)*metallic,
+             fd*fd*tint.y+(base.y-fd*fd*tint.y)*metallic,
+             fd*fd*tint.z+(base.z-fd*fd*tint.z)*metallic);
       float suu=uu,svv=vv2;
       xformUv(tp,124,tp[130]>0.5f?uu1:uu,tp[130]>0.5f?vv21:vv2,&suu,&svv);
       if (specularColorTex>=0) {
@@ -884,7 +890,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
                               : ((lflags&(1<<5))!=0);
       if (!directLinked) continue;
       F3 Ll; float maxT=1e30f, attenuation=1.f;
-      if (lt==5) Ll=mul(norm3(mk(lp[8],lp[9],lp[10])),-1.0f);
+      if (lt==5) Ll=scale(norm3(mk(lp[8],lp[9],lp[10])),-1.0f);
       else {
         F3 toL=sub(mk(lp[4],lp[5],lp[6]),hit);
         float dist2=fmaxf(dot3(toL,toL),1e-6f);
@@ -926,8 +932,10 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       float cg=ggxD(cnh,coatRoughness)*ggxG1(cnv,coatRoughness)*ggxG1(cnl,coatRoughness)/fmaxf(4.f*cnv*cnl,1e-5f)*fminf(fmaxf(coatWeight,0.f),1.f);
       F3 coatB=mk(cF.x*cg*coatColor.x,cF.y*cg*coatColor.y,cF.z*cg*coatColor.z);
       float ds=lp[29],ss=lp[30];
-      F3 brdf=add(scale(diffB,ds),scale(add(specB,coatB),ss));
-      F3 rad=scale(mk(lp[12],lp[13],lp[14]),attenuation*shape*nl*shadow);
+      F3 baseBrdf=add(scale(diffB,ds),scale(specB,ss));
+      F3 coatBrdf=scale(coatB,ss);
+      F3 brdf=add(scale(baseBrdf,nl),scale(coatBrdf,cnl));
+      F3 rad=scale(mk(lp[12],lp[13],lp[14]),attenuation*shape*shadow);
       direct3=add(direct3,mk(brdf.x*rad.x,brdf.y*rad.y,brdf.z*rad.z));
     }
     if (!hadDirect) {
@@ -982,6 +990,23 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       outc=mk(bg.x+(wireCol.x-bg.x)*cov, bg.y+(wireCol.y-bg.y)*cov, bg.z+(wireCol.z-bg.z)*cov);
     } else if (rmode==2){
       outc=mk(N.x*0.5f+0.5f, N.y*0.5f+0.5f, N.z*0.5f+0.5f);
+    } else if (rmode==35){
+      outc=mk(coatN.x*0.5f+0.5f, coatN.y*0.5f+0.5f, coatN.z*0.5f+0.5f);
+    } else if (rmode==36){
+      float v=fminf(fmaxf(coatWeight,0.f),1.f); outc=mk(v,v,v);
+    } else if (rmode==37){
+      outc=mk(fminf(fmaxf(coatColor.x,0.f),1.f),
+              fminf(fmaxf(coatColor.y,0.f),1.f),
+              fminf(fmaxf(coatColor.z,0.f),1.f));
+    } else if (rmode==38){
+      float v=fminf(fmaxf(coatRoughness,0.f),1.f); outc=mk(v,v,v);
+    } else if (rmode==39){
+      outc=mk(fminf(fmaxf(materialF0.x,0.f),1.f),
+              fminf(fmaxf(materialF0.y,0.f),1.f),
+              fminf(fmaxf(materialF0.z,0.f),1.f));
+    } else if (rmode==40){
+      float ior=fmaxf(specIor,1.f),d=(ior-1.f)/(ior+1.f);
+      outc=mk(d*d,d*d,d*d);
     } else if (rmode==3){
       outc=idColor(mid);
     } else if (rmode==4){

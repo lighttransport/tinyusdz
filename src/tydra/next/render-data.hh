@@ -641,6 +641,10 @@ struct OpenPBRSurfaceShader {
   ShaderParam coat_ior = {-1, {1.5f, 0, 0, 0}};
   ShaderParam coat_anisotropy = {-1, {0, 0, 0, 0}};
   ShaderParam coat_roughness_anisotropy = {-1, {0, 0, 0, 0}};
+  // OpenPBR's independently authored coat-layer normal. Keep this separate
+  // from `normal`: a missing coat normal falls back to the surface normal in
+  // consumers, but an authored map must retain its own image/UV descriptor.
+  ShaderParam coat_normal = {-1, {0, 0, 1, 0}};
 
   // Sheen
   ShaderParam sheen_weight = {-1, {0, 0, 0, 0}};

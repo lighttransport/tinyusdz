@@ -168,6 +168,30 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
   if (Vec3Param(mat, {"UsdPreviewSurface"}, {"emissiveColor"}, p->emissionColor)) {
     p->emission = (Luminance(p->emissionColor) > 0.0f) ? 1.0f : 0.0f;
   }
+
+  // Params retain the authored constant even when Tydra also resolved a live
+  // UVTexture connection. The raster fields above have already neutralized
+  // those constants; do the same for the canonical LightRT block, otherwise
+  // Vulkan ray query/CUDA multiply the texel by the stale fallback (most
+  // visibly metallic=0 and emissiveColor=(0,0,0)).
+  if (mat.baseColorTex >= 0) {
+    p->baseColor[0] = p->baseColor[1] = p->baseColor[2] = 1.0f;
+  }
+  if (mat.metallicTex >= 0) p->metalness = 1.0f;
+  if (mat.roughnessTex >= 0) p->specularRoughness = 1.0f;
+  if (mat.emissiveTex >= 0) {
+    p->emissionColor[0] = p->emissionColor[1] = p->emissionColor[2] = 1.0f;
+    p->emission = 1.0f;
+  }
+  if (mat.opacityTex >= 0) p->opacity = 1.0f;
+  if (mat.specularColorTex >= 0) {
+    p->specularColor[0] = p->specularColor[1] = p->specularColor[2] = 1.0f;
+  }
+  if (mat.coatWeightTex >= 0) p->coatWeight = 1.0f;
+  if (mat.coatColorTex >= 0) {
+    p->coatColor[0] = p->coatColor[1] = p->coatColor[2] = 1.0f;
+  }
+  if (mat.coatRoughnessTex >= 0) p->coatRoughness = 1.0f;
 }
 
 void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
@@ -186,6 +210,9 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"specular_weight"}, &p->specularWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"specular_color"}, p->specularColor);
+  if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"specular_color"})) {
+    p->specularColor[0] = p->specularColor[1] = p->specularColor[2] = 1.0f;
+  }
   FloatParam(mat, {"OpenPBRSurface"}, {"specular_roughness"},
              &p->specularRoughness);
   FloatParam(mat, {"OpenPBRSurface"}, {"base_roughness"},
@@ -224,6 +251,15 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   FloatParam(mat, {"OpenPBRSurface"}, {"coat_weight"}, &p->coatWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"coat_color"}, p->coatColor);
   FloatParam(mat, {"OpenPBRSurface"}, {"coat_roughness"}, &p->coatRoughness);
+  if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"coat_weight"})) {
+    p->coatWeight = 1.0f;
+  }
+  if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"coat_color"})) {
+    p->coatColor[0] = p->coatColor[1] = p->coatColor[2] = 1.0f;
+  }
+  if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"coat_roughness"})) {
+    p->coatRoughness = 1.0f;
+  }
   FloatParam(mat, {"OpenPBRSurface"}, {"coat_ior"}, &p->coatIor);
   FloatParam(mat, {"OpenPBRSurface"}, {"sheen_weight", "fuzz_weight"},
              &p->sheenWeight);
@@ -246,6 +282,10 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"geometry_opacity", "opacity"},
              &p->opacity);
+  if (ParamHasTexture(mat, {"OpenPBRSurface"},
+                      {"geometry_opacity", "opacity"})) {
+    p->opacity = 1.0f;
+  }
   Vec3Param(mat, {"OpenPBRSurface"}, {"geometry_normal", "normal"}, p->normal);
 }
 
@@ -909,7 +949,7 @@ bool EvaluateMaterialXStringToLightRtOpenPBR(const char* xml,
   return true;
 }
 
-void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
+void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
   if (!mat) return;
   DrawLightRtOpenPBRCPU p;
   if (mat->hasOpenPBRSurface) {
@@ -974,6 +1014,12 @@ void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
   if (mat->roughnessTex < 0) {
     mat->roughness = p.specularRoughness;
   }
+  mat->ior = p.specularIor;
+  if (mat->specularColorTex < 0) {
+    mat->specularColor[0] = p.specularColor[0];
+    mat->specularColor[1] = p.specularColor[1];
+    mat->specularColor[2] = p.specularColor[2];
+  }
   if (mat->emissiveTex < 0) {
     mat->emissive[0] = p.emissionColor[0] * p.emission;
     mat->emissive[1] = p.emissionColor[1] * p.emission;
@@ -987,6 +1033,10 @@ void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
   mat->coatRoughness = p.coatRoughness;
   mat->coatIor = p.coatIor;
   FloatParam(*mat, {"UsdPreviewSurface"}, {"occlusion"}, &mat->occlusion);
+}
+
+void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
+  BakeRealtimePbrMaterial(mat);
 }
 
 void PackLightRtOpenPBR(const DrawMaterialCPU& mat, float* dst) {
@@ -1066,6 +1116,7 @@ void PackRtMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[131] = mat.useSpecularWorkflow ? 1.0f : 0.0f;
   Store4(mat.specularColorSample.scale, dst + 132);
   Store4(mat.specularColorSample.bias, dst + 136);
+  dst[139] = mat.openPbrSpecularModel ? 1.0f : 0.0f;
   StoreUvCompact(mat.coatNormalSample.uv, dst + 140);
   dst[146] = static_cast<float>(mat.coatNormalSample.uvSet);
   Store4(mat.coatNormalSample.scale, dst + 147);
@@ -1108,7 +1159,10 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[19 * 4 + 0] = mat.specularColor[0];
   dst[19 * 4 + 1] = mat.specularColor[1];
   dst[19 * 4 + 2] = mat.specularColor[2];
-  dst[19 * 4 + 3] = mat.useSpecularWorkflow ? -mat.ior : mat.ior;
+  dst[19 * 4 + 3] = mat.useSpecularWorkflow
+                         ? -mat.ior
+                         : (mat.openPbrSpecularModel ? mat.ior + 100.0f
+                                                     : mat.ior);
   StoreUvVec4Rows(mat.opacitySample.uv, dst + 20 * 4);
   dst[22 * 4 + 0] = static_cast<float>(mat.opacityChannel);
   dst[22 * 4 + 1] = mat.opacityTexScale;

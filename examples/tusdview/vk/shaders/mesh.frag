@@ -38,6 +38,7 @@ layout(set = 0, binding = 21) uniform sampler2D uCoatWeightTex;
 layout(set = 0, binding = 22) uniform sampler2D uCoatColorTex;
 layout(set = 0, binding = 23) uniform sampler2D uCoatRoughnessTex;
 layout(set = 0, binding = 24) uniform sampler2D uCoatNormalTex;
+layout(set = 0, binding = 25) uniform samplerCube uPointShadowMap;
 // Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
 // first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
 layout(set = 1, binding = 6, std430) readonly buffer Faces { uint faceId[]; };
@@ -59,6 +60,8 @@ layout(set = 2, binding = 0) uniform Frame {
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
   vec4 iblParams;     // .x = prefiltered mip count, .y = exposure stops
   mat4 shadowViewProj;
+  vec4 pointShadowLight; // xyz position, w = point cube shadow enabled
+  mat4 pointShadowViewProj[6];
 } fr;
 
 struct MaterialTexParam {
@@ -166,9 +169,11 @@ vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
 vec3 computeF0(vec3 base, float metallic) {
   vec4 sp = mtp.p[max(pc.ids.x, 0)].specParams;
   if (sp.w < 0.0) return sp.rgb;                 // specular workflow
-  float ior = max(1.0, abs(sp.w));
+  bool openPbr = sp.w > 100.0;
+  float ior = max(1.0, openPbr ? sp.w - 100.0 : sp.w);
   float d = (ior - 1.0) / (ior + 1.0);
-  return mix(vec3(d * d), base, clamp(metallic, 0.0, 1.0));
+  vec3 dielectric = vec3(d * d) * (openPbr ? sp.rgb : vec3(1.0));
+  return mix(dielectric, base, clamp(metallic, 0.0, 1.0));
 }
 
 const float kPi = 3.14159265358979323846;
@@ -321,6 +326,17 @@ vec3 sampleColorSlot(sampler2D tex, bool has, vec4 uv0, vec4 uv1, float uvSet,
 }
 
 float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
+  if (fr.pointShadowLight.w > 0.5) {
+    vec3 d = worldPos - fr.pointShadowLight.xyz;
+    vec3 a = abs(d);
+    int face = a.x >= a.y && a.x >= a.z ? (d.x >= 0.0 ? 0 : 1)
+             : (a.y >= a.z ? (d.y >= 0.0 ? 2 : 3) : (d.z >= 0.0 ? 4 : 5));
+    vec4 clip = fr.pointShadowViewProj[face] * vec4(worldPos, 1.0);
+    vec3 p = clip.xyz / clip.w;
+    if (p.z <= 0.0 || p.z >= 1.0) return 1.0;
+    float bias = max(0.00035, 0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
+    return p.z - bias <= texture(uPointShadowMap, normalize(d)).r ? 1.0 : 0.0;
+  }
   if (fr.iblParams.w < 0.5) return 1.0;
   vec4 clip = fr.shadowViewProj * vec4(worldPos, 1.0);
   vec3 p = clip.xyz / clip.w;
@@ -377,9 +393,11 @@ void main() {
   vec3 N = applyNormalMap(Nbase);
   vec3 coatN = applyCoatNormalMap(N);
   // Debug AOVs.
-  if (fr.mode.x != 0) {
+  if (fr.mode.x != 0 && fr.mode.x != 36 && fr.mode.x != 37 &&
+      fr.mode.x != 38 && fr.mode.x != 39 && fr.mode.x != 40) {
     vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
     if (fr.mode.x == 2) { outColor = vec4(N * 0.5 + 0.5, 1.0); return; }
+    if (fr.mode.x == 35) { outColor = vec4(coatN * 0.5 + 0.5, 1.0); return; }
     if (fr.mode.x == 3) { outColor = vec4(idColor(pc.ids.x), 1.0); return; }
     if (fr.mode.x == 4) { outColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }
     if (fr.mode.x == 6) {
@@ -527,11 +545,18 @@ void main() {
   // inputs:specularColor texture modulates F0, but only in the specular
   // workflow (where F0 *is* specularColor). Vulkan has the sampler budget for
   // this slot; the GL path deliberately omits it.
-  if (pbr.specParams.w < 0.0) {
+  if (pbr.specParams.w < 0.0 || pbr.specParams.w > 100.0) {
     F0 *= sampleColorSlot(uSpecularColorTex, (pc.ids.w & 4096) != 0,
                           pbr.specColorUv0, pbr.specColorUv1,
                           pbr.extraUvSets.x, pbr.specColorScale,
                           pbr.specColorBias);
+  }
+  if (fr.mode.x == 39) { outColor = vec4(F0, 1.0); return; }
+  if (fr.mode.x == 40) {
+    float encodedIor = abs(pbr.specParams.w);
+    float ior = max(encodedIor > 100.0 ? encodedIor - 100.0 : encodedIor, 1.0);
+    float d = (ior - 1.0) / (ior + 1.0);
+    outColor = vec4(vec3(d * d), 1.0); return;
   }
   float coatWeight = clamp(pbr.coatParams.x *
                                sampleCoatScalar(uCoatWeightTex,
@@ -558,6 +583,9 @@ void main() {
                                   pbr.coatColorUv0, pbr.coatColorUv1,
                                   pbr.extraUvSets.y, pbr.coatColorScale,
                                   pbr.coatColorBias);
+  if (fr.mode.x == 36) { outColor = vec4(vec3(coatWeight), 1.0); return; }
+  if (fr.mode.x == 37) { outColor = vec4(coatTint, 1.0); return; }
+  if (fr.mode.x == 38) { outColor = vec4(vec3(coatRoughness), 1.0); return; }
   float coatIor = max(pbr.coatParams.z, 1.0);
   float coatD = (coatIor - 1.0) / (coatIor + 1.0);
   vec3 direct = vec3(0.0);
@@ -606,12 +634,13 @@ void main() {
                         geometrySchlickGGX(coatNoV, coatRoughness) *
                         geometrySchlickGGX(coatNoL, coatRoughness) * coatF /
                         max(4.0 * coatNoV * coatNoL, 1e-5);
-    vec3 brdf = diffuse * lc.w +
-                (specular * (vec3(1.0) - coatF * coatWeight) +
-                 coatSpecular * coatTint * coatWeight) * ss.x;
+    vec3 baseBrdf = diffuse * lc.w +
+                    specular * (vec3(1.0) - coatF * coatWeight) * ss.x;
+    vec3 coatBrdf = coatSpecular * coatTint * coatWeight * ss.x;
     float visibility = (int(li) == int(fr.iblParams.z + 0.5))
                            ? sampleShadow(vWorldPos, Nf, L) : 1.0;
-    direct += brdf * lc.rgb * (attenuation * shape * NoL * visibility);
+    direct += (baseBrdf * NoL + coatBrdf * coatNoL) * lc.rgb *
+              (attenuation * shape * visibility);
   }
   if (fr.rasterLightInfo.x == 0u) {
     vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)

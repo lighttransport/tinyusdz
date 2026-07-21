@@ -533,6 +533,7 @@ void main() {
     float alphaCutoff = 0.5;
     vec3 emissive = vec3(0.0);
     float specWeight = 1.0;
+    float specIor = 1.5;
     float occlusion = 1.0;
     float coatWeight = 0.0;
     float coatRoughness = 0.1;
@@ -552,6 +553,7 @@ void main() {
           alpha = lrt(mid, 9u).w;
           emissive = lrt(mid, 8u).rgb * lrt(mid, 8u).w;
           specWeight = lrt(mid, 1u).w;
+          specIor = lrt(mid, 10u).w;
           coatWeight = lrt(mid, 6u).w;
           coatColor = lrt(mid, 6u).rgb;
           coatRoughness = lrt(mid, 11u).x;
@@ -745,12 +747,17 @@ void main() {
                               0.02, 1.0);
       }
     }
-    vec3 materialF0 = mix(vec3(0.04), base, clamp(metallic, 0.0, 1.0));
+    float fd = (max(specIor, 1.0) - 1.0) / (max(specIor, 1.0) + 1.0);
+    vec3 materialF0 = mix(vec3(fd * fd), base, clamp(metallic, 0.0, 1.0));
     if (ii.useMaterial != 0u && mid != 0xffffffffu) {
       uint tb = mid * 12u;
       uint pb = mid * 155u;
-      if (matTexParams[pb + 131u] > 0.5) {
-        materialF0 = lrt(mid, 1u).rgb;
+      bool previewSpec = matTexParams[pb + 131u] > 0.5;
+      bool openPbrSpec = matTexParams[pb + 139u] > 0.5;
+      if (previewSpec || openPbrSpec) {
+        vec3 specTint = lrt(mid, 1u).rgb;
+        materialF0 = previewSpec ? specTint
+            : mix(vec3(fd * fd) * specTint, base, clamp(metallic, 0.0, 1.0));
         int specTex = matTexIds[tb + 10u];
         if (specTex >= 0) {
           vec2 srcUv = matTexParams[pb + 130u] > 0.5 ? uv1h : uv0h;
@@ -761,12 +768,13 @@ void main() {
                   matTexParams[pb + 128u] * srcUv.y + matTexParams[pb + 129u]);
           vec4 st = sampleRtTextureLod(specTex, specUv,
               rtTextureLod(specTex, specUv, uvFootprint), vec4(1.0));
-          materialF0 *= st.rgb * vec3(matTexParams[pb + 132u],
+          vec3 sampledSpec = st.rgb * vec3(matTexParams[pb + 132u],
                                       matTexParams[pb + 133u],
                                       matTexParams[pb + 134u]) +
                         vec3(matTexParams[pb + 136u],
                              matTexParams[pb + 137u],
                              matTexParams[pb + 138u]);
+          materialF0 *= sampledSpec;
         }
       }
     }
@@ -867,9 +875,10 @@ void main() {
                       max(4.0 * coatNoV * coatNoL, 1e-5) * coatColor *
                       clamp(coatWeight, 0.0, 1.0);
       vec3 radiance = light(li, 3u).rgb * (attenuation * shape);
-      direct += (diffuseBrdf * light(li, 7u).y +
-                 (specularBrdf + coatBrdf) * light(li, 7u).z) *
-                radiance * nl * shadow;
+      vec3 baseBrdf = diffuseBrdf * light(li, 7u).y +
+                      specularBrdf * light(li, 7u).z;
+      vec3 coatOnlyBrdf = coatBrdf * light(li, 7u).z;
+      direct += (baseBrdf * nl + coatOnlyBrdf * coatNoL) * radiance * shadow;
     }
     if (!hadDirectLight) {
       vec3 L = normalize(pc.lightDir.xyz);
@@ -940,6 +949,20 @@ void main() {
       outc = (e > 0.02) ? bgc : wireColor;
     } else if (rmode == 2) {
       outc = N * 0.5 + 0.5;
+    } else if (rmode == 35) {
+      outc = coatN * 0.5 + 0.5;
+    } else if (rmode == 36) {
+      outc = vec3(clamp(coatWeight, 0.0, 1.0));
+    } else if (rmode == 37) {
+      outc = clamp(coatColor, 0.0, 1.0);
+    } else if (rmode == 38) {
+      outc = vec3(clamp(coatRoughness, 0.0, 1.0));
+    } else if (rmode == 39) {
+      outc = clamp(materialF0, 0.0, 1.0);
+    } else if (rmode == 40) {
+      float ior = max(specIor, 1.0);
+      float d = (ior - 1.0) / (ior + 1.0);
+      outc = vec3(d * d);
     } else if (rmode == 3) {
       outc = idColor(mid);
     } else if (rmode == 4) {

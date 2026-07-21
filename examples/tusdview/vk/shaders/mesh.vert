@@ -39,6 +39,8 @@ layout(set = 2, binding = 0) uniform Frame {
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
   vec4 iblParams;     // .x = prefiltered mip count
   mat4 shadowViewProj;
+  vec4 pointShadowLight;
+  mat4 pointShadowViewProj[6];
 } fr;
 struct MaterialTexParam {
   vec4 baseUv0; vec4 baseUv1;
@@ -147,6 +149,7 @@ void main() {
                       vtxcol.c[4 * gl_VertexIndex + 2],
                       vtxcol.c[4 * gl_VertexIndex + 3])
                : vec4(1.0);
-  gl_Position = (pc.ids.z == -2 ? fr.shadowViewProj : fr.viewProj) *
+  gl_Position = (pc.ids.z <= -3 ? fr.pointShadowViewProj[-3 - pc.ids.z]
+                 : (pc.ids.z == -2 ? fr.shadowViewProj : fr.viewProj)) *
                 pc.model * vec4(pos, 1.0);
 }

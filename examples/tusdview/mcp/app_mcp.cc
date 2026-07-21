@@ -211,6 +211,12 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
       {"metallic", RenderMode::Metallic},
       {"emissive", RenderMode::Emissive},
       {"opacity", RenderMode::Opacity},
+      {"coat-normal", RenderMode::CoatNormal},
+      {"coat-weight", RenderMode::CoatWeight},
+      {"coat-color", RenderMode::CoatColor},
+      {"coat-roughness", RenderMode::CoatRoughness},
+      {"specular-f0", RenderMode::SpecularF0},
+      {"ior-f0", RenderMode::IorF0},
   };
 
   if (args.contains("mode")) {
