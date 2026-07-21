@@ -1520,6 +1520,46 @@ void test_path_expression_array_equality_hash() {
             << std::endl;
 }
 
+// Regression (ASan heap-use-after-free): ParsePrimContents cached the
+// current PrimSpec* across a nested child ParsePrim(), which appends to the
+// layer's flat prim vector and can reallocate it. A `reorder` statement
+// AFTER a child prim then dereferenced the freed pointer. Found by the
+// next_usda fuzzer.
+void test_usda_reorder_after_child_prim() {
+  std::cout << "Testing USDA reorder-after-child-prim UAF regression..."
+            << std::endl;
+
+  // Many children force the flat prim vector to reallocate mid-parse; the
+  // trailing `reorder properties` on the parent then touches its meta.
+  const char* input = R"(#usda 1.0
+def Xform "Parent" {
+    def Scope "A" {}
+    def Scope "B" {}
+    def Scope "C" {}
+    def Scope "D" {}
+    def Scope "E" {}
+    def Scope "F" {}
+    def Scope "G" {}
+    def Scope "H" {}
+    reorder nameChildren = ["H", "A"]
+    reorder properties = ["y", "x"]
+    float x = 1.0
+    float y = 2.0
+}
+)";
+
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+  UsdPrim parent = result.stage.GetPrimAtPath("/Parent");
+  assert(parent.IsValid());
+  assert(parent.GetChildren().size() == 8);
+  assert(parent.HasProperty("x"));
+  assert(parent.HasProperty("y"));
+
+  std::cout << "  USDA reorder-after-child-prim UAF regression passed!"
+            << std::endl;
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next Unit Tests ===" << std::endl;
   std::cout << std::endl;
@@ -1540,6 +1580,7 @@ int main() {
     test_value_parser();
     test_ascii_parser();
     test_usda_reader();
+    test_usda_reorder_after_child_prim();
     test_usda_lazy_parse_policies();
     test_arc_listops();
     test_arc_layer_offset_parse();

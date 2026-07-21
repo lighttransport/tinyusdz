@@ -89,8 +89,10 @@ public:
   // Time-varying data
   // ============================================================
 
-  /// Get points at specific time
-  std::vector<float> GetPointsAtTime(double time) const;
+  /// Get points at a timecode: linearly interpolates between bracketing
+  /// time samples (pxr semantics), holds outside the sampled range, and
+  /// falls back to the default value. NaN reads the default value only.
+  std::vector<float> GetPointsAtTimecode(double timecode) const;
 
   /// Check if points are animated
   bool HasAnimatedPoints() const;
