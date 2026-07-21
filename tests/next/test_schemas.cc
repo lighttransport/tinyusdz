@@ -210,6 +210,56 @@ void test_point_instancer_interpolation() {
   PASS();
 }
 
+// Regression: GetPointsAtTimecode / GetTranslationAtTimecode (formerly
+// *AtTime) sampled held-only; they must interpolate between samples.
+void test_mesh_xform_timecode_interpolation() {
+  TEST("MeshXformTimecodeInterpolation");
+  StageBuilder sb;
+  auto& layer = sb.GetLayerBuilder();
+  layer.begin_prim("AnimMesh", "Mesh");
+  layer.add_time_sample("points", 0.0, Value::MakeFloat3Array({0, 0, 0}));
+  layer.add_time_sample("points", 10.0, Value::MakeFloat3Array({4, 2, 0}));
+  layer.end_prim();
+  layer.begin_prim("AnimXf", "Xform");
+  layer.add_property("xformOpOrder",
+                     Value::MakeTokenArray({"xformOp:translate"}));
+  layer.add_time_sample("xformOp:translate", 0.0,
+                        Value::MakeFloat3(0, 0, 0));
+  layer.add_time_sample("xformOp:translate", 10.0,
+                        Value::MakeFloat3(4, 0, 8));
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = sb.Build();
+
+  UsdGeomMesh mesh(stage.GetPrimAtPath("/AnimMesh"));
+  if (!mesh.IsValid()) { FAIL("mesh prim not found"); return; }
+  if (mesh.GetPointsAtTimecode(0.0) != std::vector<float>({0, 0, 0})) {
+    FAIL("points at t=0");
+    return;
+  }
+  if (mesh.GetPointsAtTimecode(5.0) != std::vector<float>({2, 1, 0})) {
+    FAIL("points at t=5 not interpolated");
+    return;
+  }
+  if (mesh.GetPointsAtTimecode(20.0) != std::vector<float>({4, 2, 0})) {
+    FAIL("points past last sample not held");
+    return;
+  }
+
+  UsdGeomXform xf(stage.GetPrimAtPath("/AnimXf"));
+  if (!xf.IsValid()) { FAIL("xform prim not found"); return; }
+  float x = -1, y = -1, z = -1;
+  if (!xf.GetTranslationAtTimecode(5.0, &x, &y, &z)) {
+    FAIL("translation read failed");
+    return;
+  }
+  if (x != 2.0f || y != 0.0f || z != 4.0f) {
+    FAIL("translation at t=5 not interpolated");
+    return;
+  }
+  PASS();
+}
+
 void test_camera_schema() {
   TEST("IsCamera");
   auto stage = MakeTestStage();
@@ -337,6 +387,7 @@ int main() {
   test_mesh_schema();
   test_point_instancer_schema();
   test_point_instancer_interpolation();
+  test_mesh_xform_timecode_interpolation();
   test_xform_schema();
   test_camera_schema();
   test_light_schema();

@@ -436,10 +436,22 @@ bool UsdGeomXform::ComputeLocalTransform(double* matrix) const {
   return true;
 }
 
-bool UsdGeomXform::GetTranslationAtTime(double time, float* x, float* y, float* z) const {
+bool UsdGeomXform::GetTranslationAtTimecode(double timecode, float* x,
+                                            float* y, float* z) const {
   if (!IsValid() || !x || !y || !z) return false;
 
-  const Value* val = prim_.GetValueAtTime("xformOp:translate", time);
+  Value hold;
+  const Value* val = nullptr;
+  if (!std::isnan(timecode)) {
+    Value v = prim_.GetInterpolatedValue("xformOp:translate", timecode);
+    if (!v.is_empty()) {
+      hold = std::move(v);
+      val = &hold;
+    } else {
+      val = prim_.GetValueAtTime("xformOp:translate", timecode);
+    }
+  }
+  if (!val) val = prim_.GetPropertyValue("xformOp:translate");
   if (!val) return false;
 
   const float* f3 = val->as_float3();

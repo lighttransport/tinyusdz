@@ -311,13 +311,19 @@ bool AsciiParser::Impl::ParsePrim() {
 }
 
 bool AsciiParser::Impl::ParsePrimContents() {
-  PrimSpec* prim = builder_->current();
-  if (!prim) return false;
+  if (!builder_->current()) return false;
 
   while (!Check(TokenType::CloseBrace) && !AtEnd()) {
     // pxr accepts `;` as an optional statement separator in prim bodies.
     if (Match(TokenType::Semicolon)) continue;
     const Token& tok = lexer_->peek();
+
+    // Re-fetch each iteration: parsing a nested child prim (below) appends to
+    // the layer's flat prim vector, which can reallocate and invalidate any
+    // PrimSpec* cached across the call. current_index_ is stable, so
+    // current() always resolves to this prim's live storage.
+    PrimSpec* prim = builder_->current();
+    if (!prim) return false;
 
     if (tok.type == TokenType::Def || tok.type == TokenType::Over ||
         tok.type == TokenType::Class) {
