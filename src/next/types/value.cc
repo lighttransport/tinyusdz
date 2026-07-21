@@ -1367,9 +1367,9 @@ const std::vector<uint8_t>* Value::as_bool_array() const {
 }
 const std::vector<std::string>* Value::as_token_array() const {
   ensure_materialized();
-  // Token / String / AssetPath arrays share the string-vector storage.
-  if (!is_array_ || (type_id_ != TypeId::Token && type_id_ != TypeId::String &&
-                     type_id_ != TypeId::AssetPath)) return nullptr;
+  // Token / String / AssetPath / PathExpression arrays share the
+  // string-vector storage.
+  if (!is_array_ || !UsesStringStorage(type_id_)) return nullptr;
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<TokenArrayStorage*>(ptr)->data;
 }
@@ -1402,8 +1402,7 @@ bool Value::operator==(const Value& other) const {
       return *as_uint64_array() == *other.as_uint64_array();
     } else if (type_id_ == TypeId::Bool) {
       return *as_bool_array() == *other.as_bool_array();
-    } else if (type_id_ == TypeId::Token || type_id_ == TypeId::String ||
-               type_id_ == TypeId::AssetPath) {
+    } else if (UsesStringStorage(type_id_)) {
       return *as_token_array() == *other.as_token_array();
     } else if (IsIntBackedArray(type_id_)) {  // Int2/Int3/Int4 arrays
       return *as_int_array() == *other.as_int_array();
@@ -1509,8 +1508,7 @@ uint64_t Value::hash() const {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
                         arr->size() * sizeof(uint8_t));
       }
-    } else if (type_id_ == TypeId::Token || type_id_ == TypeId::String ||
-               type_id_ == TypeId::AssetPath) {
+    } else if (UsesStringStorage(type_id_)) {
       const auto* arr = as_token_array();
       if (arr) {
         for (const std::string& s : *arr) {
@@ -1627,151 +1625,16 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
 Value LerpValue(const Value& a, const Value& b, double t) {
   if (a.type_id() != b.type_id()) return a;  // held on type mismatch
 
-  // Arrays and quaternions: delegate to the full interpolator (per-lane
-  // lerp for float/double/half-backed arrays, per-element slerp for quat
-  // arrays and scalars). This function used to HOLD all of these, so array
-  // timeSamples queried between keys snapped to the earlier sample.
-  if (a.is_array() || a.type_id() == TypeId::Quatf ||
-      a.type_id() == TypeId::Quatd || a.type_id() == TypeId::TimeCode) {
+  // Delegate every interpolatable type to the full interpolator (per-lane
+  // lerp for float/double/half-backed values, slerp for quats). The previous
+  // hand-rolled scalar switch here silently HELD Half/Half2/3/4, the
+  // semantic half aliases, Quath, and Matrix2f/3f/2d/3d, so timeSamples of
+  // those types snapped to the earlier key when queried between samples.
+  if (a.is_array() || TimeInterpolator::IsLinearInterpolatable(a.type_id())) {
     Value r = TimeInterpolator::InterpolateValues(a, b, t);
     return (r.type_id() == TypeId::Invalid) ? a : r;
   }
-  const double s = 1.0 - t;
-  auto lf = [&](float x, float y) { return static_cast<float>(s * x + t * y); };
-  auto ld = [&](double x, double y) { return s * x + t * y; };
-
-  switch (a.type_id()) {
-    case TypeId::Float: {
-      const float* pa = a.as_float();
-      const float* pb = b.as_float();
-      if (pa && pb) return Value(lf(*pa, *pb));
-      break;
-    }
-    case TypeId::Double: {
-      const double* pa = a.as_double();
-      const double* pb = b.as_double();
-      if (pa && pb) return Value(ld(*pa, *pb));
-      break;
-    }
-    case TypeId::Float2:
-    case TypeId::Texcoord2f: {
-      const float* pa = a.as_float2();
-      const float* pb = b.as_float2();
-      if (!pa || !pb) break;
-      {
-        const float u = lf(pa[0], pb[0]), v = lf(pa[1], pb[1]);
-        if (a.type_id() == TypeId::Texcoord2f) return Value::MakeTexcoord2f(u, v);
-        return Value::MakeFloat2(u, v);
-      }
-    }
-    case TypeId::Float3:
-    case TypeId::Point3f:
-    case TypeId::Vector3f:
-    case TypeId::Normal3f:
-    case TypeId::Color3f:
-    case TypeId::Texcoord3f: {
-      const float* pa = a.as_float3();
-      const float* pb = b.as_float3();
-      if (!pa || !pb) break;
-      const float x = lf(pa[0], pb[0]), y = lf(pa[1], pb[1]), z = lf(pa[2], pb[2]);
-      switch (a.type_id()) {
-        case TypeId::Point3f: return Value::MakePoint3f(x, y, z);
-        case TypeId::Vector3f: return Value::MakeVector3f(x, y, z);
-        case TypeId::Normal3f: return Value::MakeNormal3f(x, y, z);
-        case TypeId::Color3f: return Value::MakeColor3f(x, y, z);
-        case TypeId::Texcoord3f: {
-          float tc[3] = {x, y, z};
-          return Value::MakeFromRaw(TypeId::Texcoord3f, tc);
-        }
-        default: return Value::MakeFloat3(x, y, z);
-      }
-    }
-    case TypeId::Float4:
-    case TypeId::Color4f: {
-      const float* pa = a.as_float4();
-      const float* pb = b.as_float4();
-      if (!pa || !pb) break;
-      const float x = lf(pa[0], pb[0]), y = lf(pa[1], pb[1]);
-      const float z = lf(pa[2], pb[2]), w = lf(pa[3], pb[3]);
-      if (a.type_id() == TypeId::Color4f) return Value::MakeColor4f(x, y, z, w);
-      return Value::MakeFloat4(x, y, z, w);
-    }
-    case TypeId::Double2:
-    case TypeId::Texcoord2d: {
-      const double* pa = a.as_double2();
-      const double* pb = b.as_double2();
-      if (!pa || !pb) break;
-      {
-        const double u = ld(pa[0], pb[0]), v = ld(pa[1], pb[1]);
-        if (a.type_id() == TypeId::Texcoord2d) {
-          double tc[2] = {u, v};
-          return Value::MakeFromRaw(TypeId::Texcoord2d, tc);
-        }
-        return Value::MakeDouble2(u, v);
-      }
-    }
-    case TypeId::Double3:
-    case TypeId::Point3d:
-    case TypeId::Vector3d:
-    case TypeId::Normal3d:
-    case TypeId::Color3d:
-    case TypeId::Texcoord3d: {
-      const double* pa = a.as_double3();
-      const double* pb = b.as_double3();
-      if (!pa || !pb) break;
-      const double x = ld(pa[0], pb[0]), y = ld(pa[1], pb[1]), z = ld(pa[2], pb[2]);
-      switch (a.type_id()) {
-        case TypeId::Point3d: return Value::MakePoint3d(x, y, z);
-        case TypeId::Vector3d: return Value::MakeVector3d(x, y, z);
-        case TypeId::Normal3d: return Value::MakeNormal3d(x, y, z);
-        case TypeId::Color3d: {
-          double c[3] = {x, y, z};
-          return Value::MakeFromRaw(TypeId::Color3d, c);
-        }
-        case TypeId::Texcoord3d: {
-          double tc[3] = {x, y, z};
-          return Value::MakeFromRaw(TypeId::Texcoord3d, tc);
-        }
-        default: return Value::MakeDouble3(x, y, z);
-      }
-    }
-    case TypeId::Double4:
-    case TypeId::Color4d: {
-      const double* pa = a.as_double4();
-      const double* pb = b.as_double4();
-      if (!pa || !pb) break;
-      {
-        const double x = ld(pa[0], pb[0]), y = ld(pa[1], pb[1]);
-        const double z = ld(pa[2], pb[2]), w = ld(pa[3], pb[3]);
-        if (a.type_id() == TypeId::Color4d) {
-          double c[4] = {x, y, z, w};
-          return Value::MakeFromRaw(TypeId::Color4d, c);
-        }
-        return Value::MakeDouble4(x, y, z, w);
-      }
-    }
-    case TypeId::Matrix4f: {
-      const float* pa = a.as_matrix4f();
-      const float* pb = b.as_matrix4f();
-      if (!pa || !pb) break;
-      float m[16];
-      for (int i = 0; i < 16; ++i) m[i] = lf(pa[i], pb[i]);
-      return Value::MakeMatrix4f(m);
-    }
-    case TypeId::Matrix4d:
-    case TypeId::Frame4d: {
-      const double* pa = a.as_matrix4d();
-      const double* pb = b.as_matrix4d();
-      if (!pa || !pb) break;
-      double m[16];
-      for (int i = 0; i < 16; ++i) m[i] = ld(pa[i], pb[i]);
-      if (a.type_id() == TypeId::Frame4d) return Value::MakeFromRaw(TypeId::Frame4d, m);
-      return Value::MakeMatrix4d(m);
-    }
-    default:
-      break;  // non-interpolatable (int/bool/string/token/quat/...) -> held
-  }
-  return a;
+  return a;  // non-interpolatable (int/bool/string/token/...) -> held
 }
 
 }  // namespace next
