@@ -1301,7 +1301,7 @@ const std::vector<int32_t>* Value::as_int_array() const {
 std::vector<int32_t>* Value::as_int_array() {
   ensure_materialized();
   dirty_ = true;
-  if (type_id_ != TypeId::Int || !is_array_) return nullptr;
+  if (!is_array_ || !IsIntBackedArray(type_id_)) return nullptr;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<IntArrayStorage*>(ptr)->data;

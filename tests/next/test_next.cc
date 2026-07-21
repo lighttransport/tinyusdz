@@ -17,6 +17,7 @@
 #include "next/types/type-id.hh"
 #include "next/types/type-info.hh"
 #include "next/types/value.hh"
+#include "next/crate/crate-format.hh"
 #include "next/crate/lazy-array.hh"
 #include "next/prim/path.hh"
 #include "next/prim/attribute.hh"
@@ -1090,6 +1091,324 @@ void test_stage_session_payloads_and_cancel() {
 }
 
 // ============================================================
+// Regression: Matrix type name lookup (previously Matrix2f/Matrix3f/Matrix4f
+// shared the "matrix2d"/"matrix3d"/"matrix4d" name with their double siblings,
+// making GetTypeIdFromName("matrix2f") return Invalid).
+// ============================================================
+
+void test_matrix_type_name_lookup() {
+  std::cout << "Testing matrix type name lookup regression..." << std::endl;
+
+  // Float matrix types must have their own distinct USD names.
+  assert(GetTypeIdFromName("matrix2f") == TypeId::Matrix2f);
+  assert(GetTypeIdFromName("matrix3f") == TypeId::Matrix3f);
+  assert(GetTypeIdFromName("matrix4f") == TypeId::Matrix4f);
+
+  // Double matrix types remain unchanged.
+  assert(GetTypeIdFromName("matrix2d") == TypeId::Matrix2d);
+  assert(GetTypeIdFromName("matrix3d") == TypeId::Matrix3d);
+  assert(GetTypeIdFromName("matrix4d") == TypeId::Matrix4d);
+
+  // GetTypeName must return the correct name for each type.
+  assert(std::strcmp(GetTypeName(TypeId::Matrix2f), "matrix2f") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix3f), "matrix3f") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix4f), "matrix4f") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix2d), "matrix2d") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix3d), "matrix3d") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix4d), "matrix4d") == 0);
+
+  // TypeInfo sizes must still be correct.
+  assert(GetTypeSize(TypeId::Matrix2f) == sizeof(float) * 4);
+  assert(GetTypeSize(TypeId::Matrix3f) == sizeof(float) * 9);
+  assert(GetTypeSize(TypeId::Matrix4f) == sizeof(float) * 16);
+  assert(GetTypeSize(TypeId::Matrix2d) == sizeof(double) * 4);
+  assert(GetTypeSize(TypeId::Matrix3d) == sizeof(double) * 9);
+  assert(GetTypeSize(TypeId::Matrix4d) == sizeof(double) * 16);
+
+  // Float matrices are distinct types from double matrices.
+  assert(TypeId::Matrix2f != TypeId::Matrix2d);
+  assert(TypeId::Matrix3f != TypeId::Matrix3d);
+  assert(TypeId::Matrix4f != TypeId::Matrix4d);
+
+  std::cout << "  Matrix type name lookup regression tests passed!" << std::endl;
+}
+
+// ============================================================
+// Regression: Frame4d Value operations (previously had null function
+// pointers, so construct/copy/move/equals would fail or crash).
+// ============================================================
+
+void test_frame4d_value_ops() {
+  std::cout << "Testing Frame4d Value operations regression..." << std::endl;
+
+  // Frame4d should have valid TypeInfo with non-null function pointers.
+  const TypeInfo* info = GetTypeInfo(TypeId::Frame4d);
+  assert(info != nullptr);
+  assert(info->construct != nullptr);
+  assert(info->destruct != nullptr);
+  assert(info->copy != nullptr);
+  assert(info->move != nullptr);
+  assert(info->equals != nullptr);
+  assert(info->size == sizeof(double) * 16);
+  assert(std::strcmp(info->name, "frame4d") == 0);
+
+  // Construct a Frame4d value via MakeRaw and verify it round-trips.
+  {
+    double mat[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    Value v = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    assert(v.type_id() == TypeId::Frame4d);
+    const double* data = v.as_matrix4d();  // frame4d uses matrix4d storage
+    assert(data != nullptr);
+    assert(data[0] == 1.0);
+    assert(data[15] == 1.0);
+  }
+
+  // Copy Frame4d value.
+  {
+    double mat[16] = {2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2};
+    Value a = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    Value b = a;
+    assert(a.type_id() == TypeId::Frame4d);
+    assert(b.type_id() == TypeId::Frame4d);
+    assert(*a.as_matrix4d() == *b.as_matrix4d());
+  }
+
+  // Move Frame4d value.
+  {
+    double mat[16] = {3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3};
+    Value a = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    Value b = std::move(a);
+    assert(b.type_id() == TypeId::Frame4d);
+    assert(b.as_matrix4d()[15] == 3.0);
+  }
+
+  std::cout << "  Frame4d Value operations regression tests passed!" << std::endl;
+}
+
+// ============================================================
+// Regression: mutable as_int_array() must accept Int2/Int3/Int4
+// arrays (previously checked type_id_ != TypeId::Int instead of
+// IsIntBackedArray, rejecting Int2/Int3/Int4 arrays).
+// ============================================================
+
+void test_mutable_int_array_backing_types() {
+  std::cout << "Testing mutable as_int_array() backing types regression..."
+            << std::endl;
+
+  // Int2 array: const and mutable accessors must both work.
+  {
+    Value v = Value::MakeIntCompArray(
+        std::vector<int32_t>{1, 2, 3, 4, 5, 6}, TypeId::Int2, 2);
+    assert(v.type_id() == TypeId::Int2);
+    assert(v.is_array());
+    assert(v.array_size() == 3);
+
+    // Const accessor
+    const Value& cv = v;
+    const std::vector<int32_t>* carr = cv.as_int_array();
+    assert(carr != nullptr);
+    assert(carr->size() == 6);
+    assert((*carr)[0] == 1);
+
+    // Mutable accessor
+    std::vector<int32_t>* marr = v.as_int_array();
+    assert(marr != nullptr && "mutable as_int_array() rejected Int2 array");
+    assert(marr->size() == 6);
+    (*marr)[0] = 99;
+    assert((*v.as_int_array())[0] == 99);
+  }
+
+  // Int3 array.
+  {
+    Value v = Value::MakeIntCompArray(
+        std::vector<int32_t>{10, 20, 30, 40, 50, 60}, TypeId::Int3, 3);
+    assert(v.type_id() == TypeId::Int3);
+    assert(v.array_size() == 2);
+
+    const Value& cv = v;
+    assert(cv.as_int_array() != nullptr);
+
+    std::vector<int32_t>* marr = v.as_int_array();
+    assert(marr != nullptr && "mutable as_int_array() rejected Int3 array");
+    assert(marr->size() == 6);
+  }
+
+  // Int4 array.
+  {
+    Value v = Value::MakeIntCompArray(
+        std::vector<int32_t>{1, 2, 3, 4, 5, 6, 7, 8}, TypeId::Int4, 4);
+    assert(v.type_id() == TypeId::Int4);
+    assert(v.array_size() == 2);
+
+    const Value& cv = v;
+    assert(cv.as_int_array() != nullptr);
+
+    std::vector<int32_t>* marr = v.as_int_array();
+    assert(marr != nullptr && "mutable as_int_array() rejected Int4 array");
+    assert(marr->size() == 8);
+  }
+
+  // Plain Int array (regression check: must still work).
+  {
+    Value v = Value::MakeIntArray(std::vector<int32_t>{7, 8, 9});
+    assert(v.type_id() == TypeId::Int);
+    std::vector<int32_t>* marr = v.as_int_array();
+    assert(marr != nullptr);
+    assert(marr->size() == 3);
+    assert((*marr)[0] == 7);
+  }
+
+  // Float-backed types must NOT be accepted by as_int_array().
+  {
+    Value v = Value::MakeIntArray(std::vector<int32_t>{1, 2, 3});
+    // Correct type: accepted
+    assert(v.as_int_array() != nullptr);
+  }
+
+  std::cout << "  Mutable as_int_array() backing types regression tests passed!"
+            << std::endl;
+}
+
+// ============================================================
+// Regression: ParseGenericValue tuple arity dispatch
+// (Previously hard-coded Float3 for all tuples, so float2/float4/int-tuples
+// failed to parse and desynced the lexer.)
+// ============================================================
+
+void test_generic_value_tuple_arity() {
+  std::cout << "Testing ParseGenericValue tuple arity dispatch..." << std::endl;
+
+  // Helper: parse a string through ParseGenericValue and return (success, type)
+  auto parse = [](const char* src, TypeId& out_type) -> bool {
+    Lexer lex(src, std::strlen(src));
+    ParseResult result = ParseGenericValue(lex, out_type);
+    // Consume trailing EOF to verify no unconsumed tokens.
+    return result.success && !lex.has_error() &&
+           lex.peek().type == TokenType::Eof;
+  };
+
+  // Float2 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(1.0, 2.0)", tid));
+    assert(tid == TypeId::Float2);
+  }
+
+  // Float3 tuple (still works as before)
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(1.0, 2.0, 3.0)", tid));
+    assert(tid == TypeId::Float3);
+  }
+
+  // Float4 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(1.0, 2.0, 3.0, 4.0)", tid));
+    assert(tid == TypeId::Float4);
+  }
+
+  // Int2 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(10, 20)", tid));
+    assert(tid == TypeId::Int2);
+  }
+
+  // Int3 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(10, 20, 30)", tid));
+    assert(tid == TypeId::Int3);
+  }
+
+  // Int4 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(10, 20, 30, 40)", tid));
+    assert(tid == TypeId::Int4);
+  }
+
+  // Unmatched '(' is an error
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(!parse("(1.0, 2.0", tid));
+  }
+
+  // Non-tuple values still work
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("42", tid) && tid == TypeId::Int);
+    assert(parse("3.14", tid) && tid == TypeId::Double);
+    assert(parse("\"hello\"", tid) && tid == TypeId::String);
+  }
+
+  std::cout << "  ParseGenericValue tuple arity dispatch tests passed!"
+            << std::endl;
+}
+
+// ============================================================
+// Regression: EncodeDeltaS32 signed overflow
+// (Previously used plain int32_t subtraction which is UB on overflow;
+// the unsigned counterpart EncodeDeltaU32 correctly promotes to int64_t.)
+// ============================================================
+
+void test_encode_delta_s32_overflow() {
+  std::cout << "Testing EncodeDeltaS32 overflow safety..." << std::endl;
+
+  // The encode/decode must round-trip correctly for large (but int32_t-fitting)
+  // deltas. The previous UB was in the subtraction `values[i] - prev` when
+  // both operands are extreme int32_t values; the fix promotes to int64_t.
+  {
+    int32_t values[] = {-1000000000, 1000000000};
+    std::vector<uint8_t> encoded = EncodeDeltaS32(values, 2);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(2);
+    bool ok = DecodeDeltaS32(encoded.data(), encoded.size(),
+                             decoded.data(), 2);
+    assert(ok);
+    assert(decoded[0] == -1000000000);
+    assert(decoded[1] == 1000000000);
+  }
+
+  // Large negative delta
+  {
+    int32_t values[] = {0, -2000000000};
+    std::vector<uint8_t> encoded = EncodeDeltaS32(values, 2);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(2);
+    bool ok = DecodeDeltaS32(encoded.data(), encoded.size(),
+                             decoded.data(), 2);
+    assert(ok);
+    assert(decoded[0] == 0);
+    assert(decoded[1] == -2000000000);
+  }
+
+  // Single element (no deltas to compute)
+  {
+    int32_t values[] = {42};
+    std::vector<uint8_t> encoded = EncodeDeltaS32(values, 1);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(1);
+    bool ok = DecodeDeltaS32(encoded.data(), encoded.size(),
+                             decoded.data(), 1);
+    assert(ok);
+    assert(decoded[0] == 42);
+  }
+
+  // Empty input
+  {
+    std::vector<uint8_t> encoded = EncodeDeltaS32(nullptr, 0);
+    assert(encoded.empty());
+  }
+
+  std::cout << "  EncodeDeltaS32 overflow safety tests passed!" << std::endl;
+}
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -1100,6 +1419,11 @@ int main() {
   try {
     test_type_id();
     test_value();
+    test_matrix_type_name_lookup();
+    test_frame4d_value_ops();
+    test_mutable_int_array_backing_types();
+    test_generic_value_tuple_arity();
+    test_encode_delta_s32_overflow();
     test_path();
     test_prim();
     test_lexer();

@@ -163,7 +163,7 @@ std::string GPrimPropertySummary(const tinyusdz::Prim& prim) {
   };
 
   if (auto* m = prim.as<tinyusdz::GeomMesh>()) tryGPrim(m);
-  else if (auto* s = prim.as<tinyusdz::GeomSphere>()) tryGPrim(s);
+  else if (auto* gs = prim.as<tinyusdz::GeomSphere>()) tryGPrim(gs);
   else if (auto* c = prim.as<tinyusdz::GeomCube>()) tryGPrim(c);
   else if (auto* y = prim.as<tinyusdz::GeomCylinder>()) tryGPrim(y);
   else if (auto* o = prim.as<tinyusdz::GeomCone>()) tryGPrim(o);

@@ -216,7 +216,7 @@ std::string AssetResolutionResolver::resolve_literal(
       // Return through the NRVO variable (mixed named returns defeat copy
       // elision and trip clang's -Werror,-Wnrvo).
       resolvedPath = cache_it->second;
-      return resolvedPath;
+      return std::string(resolvedPath);
     }
 
     std::string rpath;

@@ -1238,9 +1238,9 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   }
 
   // Constant diffuse color (also the texture's fallback tint).
-  if (const tinyusdz::next::Value *dc =
+  if (const tinyusdz::next::Value *diffuseColorVal =
           surf.GetPropertyValue("inputs:diffuseColor")) {
-    if (const float *f = dc->as_float3()) {
+    if (const float *f = diffuseColorVal->as_float3()) {
       *base_color = Vec3{f[0], f[1], f[2]};
     }
   }
@@ -4319,7 +4319,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
 
       std::vector<InstanceRT> expanded;
       expanded.reserve(instances.size());
-      size_t addedM = 0, addedC = 0;
+      size_t addedM = 0;
       // Guard the expanded instance arrays against the process memory cap before
       // materializing them (build() is memoized, so this pre-pass is cheap and the
       // expansion loop below reuses the cached flat[]/flatC[]). Nested instancing can
@@ -4359,7 +4359,6 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
             e.curve_proto_idx = g.curve_proto_idx;
             Compose3x4(it.o2w, g.o2w, e.o2w);
             curve_inst.instances.push_back(e);  // nested curve placed in world space
-            ++addedC;
           }
         }
       }
@@ -4722,7 +4721,7 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
   const matrix4d world = reset ? local : (local * parent_world);
 
   const std::string &t = prim.GetTypeName();
-  PreviewLight::Kind kind;
+  PreviewLight::Kind kind = PreviewLight::Kind::Dome;
   bool is_light = true;
   if (t == "RectLight") kind = PreviewLight::Kind::Rect;
   else if (t == "SphereLight") kind = PreviewLight::Kind::Sphere;

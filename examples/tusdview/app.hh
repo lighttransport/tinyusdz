@@ -58,7 +58,7 @@ class App
 {
  public:
   explicit App(Backend backend) : backend_(backend) {}
-  ~App();
+  ~App() override;
 
   // Optional render budget (for scripting/testing). maxTris==0 keeps the default.
   void setLoadBudget(std::size_t maxTris, double convertTimeBudgetSec) {
