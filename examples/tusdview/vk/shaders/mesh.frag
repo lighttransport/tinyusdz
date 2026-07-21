@@ -39,6 +39,7 @@ layout(set = 0, binding = 22) uniform sampler2D uCoatColorTex;
 layout(set = 0, binding = 23) uniform sampler2D uCoatRoughnessTex;
 layout(set = 0, binding = 24) uniform sampler2D uCoatNormalTex;
 layout(set = 0, binding = 25) uniform samplerCube uPointShadowMap;
+layout(set = 0, binding = 26) uniform sampler2DArray uSpecularColorUdimTex;
 // Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
 // first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
 layout(set = 1, binding = 6, std430) readonly buffer Faces { uint faceId[]; };
@@ -546,10 +547,16 @@ void main() {
   // workflow (where F0 *is* specularColor). Vulkan has the sampler budget for
   // this slot; the GL path deliberately omits it.
   if (pbr.specParams.w < 0.0 || pbr.specParams.w > 100.0) {
-    F0 *= sampleColorSlot(uSpecularColorTex, (pc.ids.w & 4096) != 0,
-                          pbr.specColorUv0, pbr.specColorUv1,
-                          pbr.extraUvSets.x, pbr.specColorScale,
-                          pbr.specColorBias);
+    vec2 specSrc = pbr.extraUvSets.x > 0.5 ? vUV1 : vUV;
+    vec2 specUv = xformUv(specSrc, pbr.specColorUv0, pbr.specColorUv1);
+    bool ordinarySpec = (pc.ids.w & 4096) != 0;
+    bool udimSpec = !ordinarySpec && pbr.udimSlots1.w >= 0.0;
+    vec4 specSample = udimSpec
+        ? sampleUdim(uSpecularColorUdimTex,
+                     int(pbr.udimSlots1.w + 0.5), specUv, vec4(1.0))
+        : texture(uSpecularColorTex, specUv);
+    bool hasSpec = udimSpec || ordinarySpec;
+    if (hasSpec) F0 *= (specSample * pbr.specColorScale + pbr.specColorBias).rgb;
   }
   if (fr.mode.x == 39) { outColor = vec4(F0, 1.0); return; }
   if (fr.mode.x == 40) {

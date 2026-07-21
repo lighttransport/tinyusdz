@@ -272,6 +272,12 @@ Latest focused verification on 2026-07-20:
   GL, Vulkan raster/ray query, and CUDA pass both diagnostics through the
   default and legacy loaders with exact cross-loader pixels (MAD 0.0); HIP
   remains capability-gated on the NVIDIA test host.
+- OpenPBR and Standard Surface specular-F0 fixtures now cross a two-tile UDIM.
+  This exposed Vulkan raster's former 2D-only treatment of the newer specular
+  slot; it now has a dedicated array binding and atlas-row lookup. Vulkan
+  raster, ray query, and CUDA pass ordinary and UDIM F0 through both loaders;
+  raster and RT/CUDA loader comparisons are exact apart from the existing
+  subpixel Preview RT tolerance.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by

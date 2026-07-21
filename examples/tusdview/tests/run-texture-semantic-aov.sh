@@ -26,6 +26,8 @@ ppm('coat_roughness.ppm',(64,64,64)*4+(224,224,224)*4)
 ppm('coat_color.ppm',(240,32,32)*4+(32,32,240)*4)
 ppm('base.ppm',(240,32,32)*4+(32,32,240)*4)
 ppm('specular.ppm',(240,32,32)*4+(32,32,240)*4)
+ppm('specular_udim.1001.ppm',(240,32,32)*8)
+ppm('specular_udim.1002.ppm',(32,32,240)*8)
 # Packed ORM-style source: R/B rise while G falls. Each scalar connection must
 # retain its own channel even though all three slots share one image.
 ppm('orm.ppm',(32,224,32)*4+(224,32,224)*4)
@@ -41,6 +43,18 @@ quad() {
     int[] faceVertexCounts = [4]
     int[] faceVertexIndices = [0,1,2,3]
     texCoord2f[] primvars:st = [(0,0), (1,0), (1,1), (0,1)] (interpolation = "vertex")
+    rel material:binding = </World/M>
+  }
+USDA
+}
+quad_udim() {
+  cat <<'USDA'
+  def Mesh "Quad" {
+    uniform bool doubleSided = 1
+    point3f[] points = [(-1,-1,0), (1,-1,0), (1,1,0), (-1,1,0)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    texCoord2f[] primvars:st = [(0,0), (2,0), (2,1), (0,1)] (interpolation = "vertex")
     rel material:binding = </World/M>
   }
 USDA
@@ -321,7 +335,7 @@ USDA
 } > "$OUT/opacity-core.usda"
 
 write_specular_material() {
-  local family="$1" file="$2" shader_id spec_name ior_line workflow_line
+  local family="$1" file="$2" texture="${3:-specular.ppm}" shader_id spec_name ior_line workflow_line
   case "$family" in
     preview) shader_id=UsdPreviewSurface; spec_name=specularColor
       ior_line=''; workflow_line='      int inputs:useSpecularWorkflow = 1';;
@@ -333,7 +347,7 @@ write_specular_material() {
   esac
 {
   echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
-  quad
+  if [[ "$texture" == *'<UDIM>'* ]]; then quad_udim; else quad; fi
   cat <<USDA
   def Material "M" {
     token outputs:surface.connect = </World/M/P.outputs:surface>
@@ -352,7 +366,7 @@ $ior_line
     }
     def Shader "S" {
       uniform token info:id = "UsdUVTexture"
-      asset inputs:file = @./specular.ppm@
+      asset inputs:file = @./$texture@
       float2 inputs:st.connect = </World/M/ST.outputs:result>
       token inputs:sourceColorSpace = "sRGB"
       color3f outputs:rgb
@@ -365,6 +379,8 @@ USDA
 write_specular_material preview "$OUT/specular-preview.usda"
 write_specular_material openpbr "$OUT/specular-openpbr.usda"
 write_specular_material standard "$OUT/specular-standard.usda"
+write_specular_material openpbr "$OUT/specular-openpbr-udim.usda" 'specular_udim.<UDIM>.ppm'
+write_specular_material standard "$OUT/specular-standard-udim.usda" 'specular_udim.<UDIM>.ppm'
 
 mkdir -p "$OUT/pkg"; cp "$OUT/normal.usda" "$OUT/normal.ppm" "$OUT/pkg/"
 (cd "$OUT/pkg" && zip -0 -q "$OUT/normal.usdz" normal.usda normal.ppm)
@@ -484,6 +500,9 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
     want_mode coat-roughness && case_run "$tag" "$marker" "$OUT/coat.usda" coat-roughness coat-roughness coat-roughness "${args[@]}"
     for family in preview openpbr standard; do
       want_mode specular-f0 && case_run "$tag" "$marker" "$OUT/specular-$family.usda" specular-f0 specular-f0 "$family-specular-f0" "${args[@]}"
+    done
+    for family in openpbr standard; do
+      want_mode specular-f0 && case_run "$tag" "$marker" "$OUT/specular-$family-udim.usda" specular-f0 specular-f0 "$family-udim-specular-f0" "${args[@]}"
     done
     for family in preview openpbr standard; do
       want_mode ior-f0 && case_run "$tag" "$marker" "$OUT/ior-$family.usda" ior-f0 ior-f0 "$family-ior-f0" "${args[@]}"
