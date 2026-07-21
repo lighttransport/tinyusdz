@@ -1226,6 +1226,10 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   Store4(mat.coatNormalSample.bias, dst + 53 * 4);
   dst[53 * 4 + 3] = static_cast<float>(mat.coatNormalSample.uvSet);
   dst[52 * 4 + 3] = mat.coatNormalTex >= 0 ? 1.0f : 0.0f;
+  dst[54 * 4 + 0] = static_cast<float>(mat.specularColorTex);
+  dst[54 * 4 + 1] = static_cast<float>(mat.coatWeightTex);
+  dst[54 * 4 + 2] = static_cast<float>(mat.coatColorTex);
+  dst[54 * 4 + 3] = static_cast<float>(mat.coatRoughnessTex);
 }
 
 }  // namespace tusdview

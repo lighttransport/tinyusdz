@@ -24,6 +24,12 @@ ppm('occlusion.ppm',(32,32,32)*4+(224,224,224)*4)
 ppm('coat_weight.ppm',(64,64,64)*4+(224,224,224)*4)
 ppm('coat_roughness.ppm',(64,64,64)*4+(224,224,224)*4)
 ppm('coat_color.ppm',(240,32,32)*4+(32,32,240)*4)
+ppm('coat_weight.1001.ppm',(64,64,64)*8)
+ppm('coat_weight.1002.ppm',(224,224,224)*8)
+ppm('coat_roughness.1001.ppm',(64,64,64)*8)
+ppm('coat_roughness.1002.ppm',(224,224,224)*8)
+ppm('coat_color.1001.ppm',(240,32,32)*8)
+ppm('coat_color.1002.ppm',(32,32,240)*8)
 ppm('base.ppm',(240,32,32)*4+(32,32,240)*4)
 ppm('specular.ppm',(240,32,32)*4+(32,32,240)*4)
 ppm('specular_udim.1001.ppm',(240,32,32)*8)
@@ -62,7 +68,7 @@ USDA
 {
   echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
   quad
-  cat <<'USDA'
+  cat <<USDA
   def Material "M" {
     token outputs:surface.connect = </World/M/P.outputs:surface>
     def Shader "P" {
@@ -148,10 +154,15 @@ USDA
 }
 USDA
 } > "$OUT/occlusion.usda"
+write_coat_material() {
+  local file="$1" udim="${2:-0}" weight=coat_weight.ppm color=coat_color.ppm rough=coat_roughness.ppm
+  if [ "$udim" = 1 ]; then
+    weight='coat_weight.<UDIM>.ppm'; color='coat_color.<UDIM>.ppm'; rough='coat_roughness.<UDIM>.ppm'
+  fi
 {
   echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
-  quad
-  cat <<'USDA'
+  if [ "$udim" = 1 ]; then quad_udim; else quad; fi
+  cat <<USDA
   def Material "M" {
     token outputs:surface.connect = </World/M/P.outputs:surface>
     def Shader "P" {
@@ -166,17 +177,17 @@ USDA
     }
     def Shader "W" {
       uniform token info:id = "ND_image_float"
-      asset inputs:file = @./coat_weight.ppm@
+      asset inputs:file = @./$weight@
       float outputs:out
     }
     def Shader "C" {
       uniform token info:id = "ND_image_color3"
-      asset inputs:file = @./coat_color.ppm@
+      asset inputs:file = @./$color@
       color3f outputs:out
     }
     def Shader "R" {
       uniform token info:id = "ND_image_float"
-      asset inputs:file = @./coat_roughness.ppm@
+      asset inputs:file = @./$rough@
       float outputs:out
     }
   }
@@ -187,7 +198,10 @@ USDA
   }
 }
 USDA
-} > "$OUT/coat.usda"
+} > "$file"
+}
+write_coat_material "$OUT/coat.usda"
+write_coat_material "$OUT/coat-udim.usda" 1
 
 write_core_material() {
   local family="$1" file="$2" shader_id base_name metal_name rough_name emit_name emit_enable
@@ -498,6 +512,9 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
     want_mode coat-weight && case_run "$tag" "$marker" "$OUT/coat.usda" coat-weight coat-weight coat-weight "${args[@]}"
     want_mode coat-color && case_run "$tag" "$marker" "$OUT/coat.usda" coat-color coat-color coat-color "${args[@]}"
     want_mode coat-roughness && case_run "$tag" "$marker" "$OUT/coat.usda" coat-roughness coat-roughness coat-roughness "${args[@]}"
+    want_mode coat-weight && case_run "$tag" "$marker" "$OUT/coat-udim.usda" coat-weight coat-weight coat-weight-udim "${args[@]}"
+    want_mode coat-color && case_run "$tag" "$marker" "$OUT/coat-udim.usda" coat-color coat-color coat-color-udim "${args[@]}"
+    want_mode coat-roughness && case_run "$tag" "$marker" "$OUT/coat-udim.usda" coat-roughness coat-roughness coat-roughness-udim "${args[@]}"
     for family in preview openpbr standard; do
       want_mode specular-f0 && case_run "$tag" "$marker" "$OUT/specular-$family.usda" specular-f0 specular-f0 "$family-specular-f0" "${args[@]}"
     done
