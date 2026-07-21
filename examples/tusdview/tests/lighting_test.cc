@@ -220,6 +220,37 @@ int main() {
     std::fprintf(stderr, "point-light shadow approximation mismatch\n");
     return 1;
   }
+  tusdview::RasterPointShadowCameras pointCubeGl;
+  tusdview::RasterPointShadowCameras pointCubeVk;
+  bool oppositeFacesDiffer = false;
+  if (!tusdview::BuildRasterPointShadowCameras(pointLights, shadowMin,
+                                                shadowExtent, false,
+                                                &pointCubeGl) ||
+      !tusdview::BuildRasterPointShadowCameras(pointLights, shadowMin,
+                                                shadowExtent, true,
+                                                &pointCubeVk) ||
+      pointCubeGl.lightSlot != 0 || pointCubeVk.lightSlot != 0 ||
+      !(pointCubeGl.farPlane > pointCubeGl.nearPlane) ||
+      !(pointCubeVk.farPlane > pointCubeVk.nearPlane)) {
+    std::fprintf(stderr, "point-light cube shadow camera mismatch\n");
+    return 1;
+  }
+  for (int i = 0; i < 16; ++i) {
+    if (!Near(pointCubeGl.viewProj[0].m[i], pointCubeGl.viewProj[1].m[i])) {
+      oppositeFacesDiffer = true;
+      break;
+    }
+  }
+  if (!oppositeFacesDiffer) {
+    std::fprintf(stderr, "opposite point-light cube faces are identical\n");
+    return 1;
+  }
+  if (tusdview::BuildRasterPointShadowCameras(bounded, shadowMin,
+                                               shadowExtent, true,
+                                               &pointCubeVk)) {
+    std::fprintf(stderr, "non-point light unexpectedly produced cube shadows\n");
+    return 1;
+  }
   tusdview::RasterShadowCamera glShadow;
   tusdview::RasterShadowCamera vkShadow;
   if (!tusdview::BuildRasterShadowCamera(bounded, shadowMin, shadowExtent,

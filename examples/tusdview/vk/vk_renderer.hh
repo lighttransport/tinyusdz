@@ -442,8 +442,17 @@ class VulkanRenderer final : public Renderer {
   VkImageView shadowColorView_{VK_NULL_HANDLE}, shadowDepthView_{VK_NULL_HANDLE};
   VkFramebuffer shadowFb_{VK_NULL_HANDLE};
   RasterShadowCamera shadowCamera_;
+  VkImage pointShadowDepthImg_{VK_NULL_HANDLE};
+  VkDeviceMemory pointShadowDepthMem_{VK_NULL_HANDLE};
+  VkImageView pointShadowDepthView_{VK_NULL_HANDLE};
+  std::array<VkImageView, 6> pointShadowFaceViews_{};
+  std::array<VkFramebuffer, 6> pointShadowFbs_{};
+  RasterPointShadowCameras pointShadowCameras_;
   VkFramebuffer offscreenFb_{VK_NULL_HANDLE};
   VkSampler sampler_{VK_NULL_HANDLE};
+  // Material samplers are keyed by DrawTextureCPU wrapS/wrapT (4x4). Scene
+  // helpers keep using `sampler_`; material descriptors select from this cache.
+  std::array<VkSampler, 16> materialSamplers_{};
   VkDescriptorSet offscreenTexId_{VK_NULL_HANDLE};
   int vpW_{0}, vpH_{0};
   VkFormat colorFormat_{VK_FORMAT_R8G8B8A8_UNORM};

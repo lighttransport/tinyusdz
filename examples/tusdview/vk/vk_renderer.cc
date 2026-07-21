@@ -48,7 +48,7 @@ namespace tusdview {
 namespace {
 
 constexpr uint32_t kRasterDescriptorSetCount = 4;
-constexpr uint32_t kMaterialBindingCount = 25;
+constexpr uint32_t kMaterialBindingCount = 26;
 constexpr uint32_t kDeformBindingCount = 7;
 constexpr uint32_t kMaxMaterialSets = 8192;
 constexpr uint32_t kMaxDeformSets = 16384;
@@ -251,6 +251,8 @@ struct FrameUBO {
   float iblColor[4];    // .rgb dome effectiveColor, .w = hasIbl (0/1)
   float iblParams[4];   // .x = prefiltered mip count
   float shadowViewProj[16];
+  float pointShadowLight[4];  // xyz position, w = point cube shadow enabled
+  float pointShadowViewProj[6][16];
 };
 
 constexpr uint32_t kVkMatTexParamVec4s =
@@ -2337,6 +2339,26 @@ bool VulkanRenderer::createSampler(std::string* err) {
   ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
   ci.maxLod = VK_LOD_CLAMP_NONE;
   VK_CHECK(vkCreateSampler(device_, &ci, nullptr, &sampler_), "sampler");
+  auto addressMode = [](int wrap) {
+    switch (static_cast<WrapMode>(wrap)) {
+      case WrapMode::Repeat: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      case WrapMode::Mirror: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+      case WrapMode::ClampToBorder: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+      case WrapMode::ClampToEdge:
+      default: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    }
+  };
+  for (int s = 0; s < 4; ++s) {
+    for (int t = 0; t < 4; ++t) {
+      VkSamplerCreateInfo materialCi = ci;
+      materialCi.addressModeU = addressMode(s);
+      materialCi.addressModeV = addressMode(t);
+      materialCi.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+      VK_CHECK(vkCreateSampler(device_, &materialCi, nullptr,
+                               &materialSamplers_[static_cast<size_t>(s * 4 + t)]),
+               "material sampler");
+    }
+  }
   return true;
 }
 
@@ -2358,8 +2380,8 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
 
   // Set 0: all material textures plus the three scene-wide IBL images. Binding
   // 16 is displacement and is deliberately not fragment-visible. Bindings
-  // 20-23 are the 2D-only specular-color / coat-weight / coat-color /
-  // coat-roughness slots.
+  // 20-24 are the 2D-only specular-color / coat-weight / coat-color /
+  // coat-roughness / coat-normal slots; 25 is the scene-wide point shadow cube.
   VkDescriptorSetLayoutBinding materialBindings[kMaterialBindingCount]{};
   for (uint32_t i = 0; i < kMaterialBindingCount; ++i) {
     materialBindings[i].binding = i;
@@ -2823,7 +2845,14 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
       textureView(material.displacementTex, blackView_),
       textureView(material.occlusionTex, whiteView_),
       udimView(material.occlusionTex)};
-  static_assert(kMaterialBindingCount == 25, "material descriptor table drift");
+  int textureSlots[kMaterialBindingCount] = {
+      material.baseColorTex, material.metallicTex, material.emissiveTex,
+      material.normalTex, material.baseColorTex, -1, material.metallicTex,
+      material.normalTex, material.emissiveTex, material.opacityTex,
+      material.opacityTex, material.roughnessTex, -1, -1, -1,
+      material.roughnessTex, material.displacementTex, material.occlusionTex,
+      material.occlusionTex};
+  static_assert(kMaterialBindingCount == 26, "material descriptor table drift");
   views[19] = shadowDepthView_ ? shadowDepthView_ : whiteView_;
   // Extra 2D-only material slots. UDIM sources fall back to white (treated as
   // unbound) rather than sampling the wrong image.
@@ -2838,10 +2867,27 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
   views[22] = plain2dView(material.coatColorTex);
   views[23] = plain2dView(material.coatRoughnessTex);
   views[24] = plain2dView(material.coatNormalTex);
+  views[25] = pointShadowDepthView_ ? pointShadowDepthView_ : blackCubeView_;
+  textureSlots[19] = -1;
+  textureSlots[20] = material.specularColorTex;
+  textureSlots[21] = material.coatWeightTex;
+  textureSlots[22] = material.coatColorTex;
+  textureSlots[23] = material.coatRoughnessTex;
+  textureSlots[24] = material.coatNormalTex;
+  textureSlots[25] = -1;
   VkDescriptorImageInfo infos[kMaterialBindingCount]{};
   VkWriteDescriptorSet writes[kMaterialBindingCount]{};
   for (uint32_t i = 0; i < kMaterialBindingCount; ++i) {
     infos[i].sampler = sampler_;
+    const int slot = textureSlots[i];
+    if (slot >= 0 && static_cast<size_t>(slot) < rtTexturesCpu_.size()) {
+      const DrawTextureCPU& tex = rtTexturesCpu_[static_cast<size_t>(slot)];
+      const int s = std::max(0, std::min(3, tex.wrapS));
+      const int t = std::max(0, std::min(3, tex.wrapT));
+      VkSampler materialSampler =
+          materialSamplers_[static_cast<size_t>(s * 4 + t)];
+      if (materialSampler) infos[i].sampler = materialSampler;
+    }
     infos[i].imageView = views[i];
     infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -7161,9 +7207,23 @@ void VulkanRenderer::resizeViewport(int width, int height) {
   if (shadowDepthImg_) vkDestroyImage(device_, shadowDepthImg_, nullptr);
   if (shadowColorMem_) vkFreeMemory(device_, shadowColorMem_, nullptr);
   if (shadowDepthMem_) vkFreeMemory(device_, shadowDepthMem_, nullptr);
+  for (VkFramebuffer& fb : pointShadowFbs_) {
+    if (fb) vkDestroyFramebuffer(device_, fb, nullptr);
+    fb = VK_NULL_HANDLE;
+  }
+  for (VkImageView& view : pointShadowFaceViews_) {
+    if (view) vkDestroyImageView(device_, view, nullptr);
+    view = VK_NULL_HANDLE;
+  }
+  if (pointShadowDepthView_) vkDestroyImageView(device_, pointShadowDepthView_, nullptr);
+  if (pointShadowDepthImg_) vkDestroyImage(device_, pointShadowDepthImg_, nullptr);
+  if (pointShadowDepthMem_) vkFreeMemory(device_, pointShadowDepthMem_, nullptr);
   shadowColorView_ = shadowDepthView_ = VK_NULL_HANDLE;
   shadowColorImg_ = shadowDepthImg_ = VK_NULL_HANDLE;
   shadowColorMem_ = shadowDepthMem_ = VK_NULL_HANDLE;
+  pointShadowDepthView_ = VK_NULL_HANDLE;
+  pointShadowDepthImg_ = VK_NULL_HANDLE;
+  pointShadowDepthMem_ = VK_NULL_HANDLE;
   vpW_ = width;
   vpH_ = height;
 
@@ -7242,6 +7302,47 @@ void VulkanRenderer::resizeViewport(int width, int height) {
     sfci.pAttachments = shadowAttachments;
     sfci.width = sfci.height = 2048;
     vkCreateFramebuffer(device_, &sfci, nullptr, &shadowFb_);
+    VkImageCreateInfo pointIci{};
+    pointIci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    pointIci.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    pointIci.imageType = VK_IMAGE_TYPE_2D;
+    pointIci.format = depthFormat_;
+    pointIci.extent = {2048, 2048, 1};
+    pointIci.mipLevels = 1;
+    pointIci.arrayLayers = 6;
+    pointIci.samples = VK_SAMPLE_COUNT_1_BIT;
+    pointIci.tiling = VK_IMAGE_TILING_OPTIMAL;
+    pointIci.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                     VK_IMAGE_USAGE_SAMPLED_BIT;
+    pointIci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    vkCreateImage(device_, &pointIci, nullptr, &pointShadowDepthImg_);
+    VkMemoryRequirements pointReq{};
+    vkGetImageMemoryRequirements(device_, pointShadowDepthImg_, &pointReq);
+    VkMemoryAllocateInfo pointAi{};
+    pointAi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    pointAi.allocationSize = pointReq.size;
+    pointAi.memoryTypeIndex = findMemoryType(pointReq.memoryTypeBits,
+                                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkAllocateMemory(device_, &pointAi, nullptr, &pointShadowDepthMem_);
+    vkBindImageMemory(device_, pointShadowDepthImg_, pointShadowDepthMem_, 0);
+    VkImageViewCreateInfo pointView{};
+    pointView.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    pointView.image = pointShadowDepthImg_;
+    pointView.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    pointView.format = depthFormat_;
+    pointView.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    pointView.subresourceRange.levelCount = 1;
+    pointView.subresourceRange.layerCount = 6;
+    vkCreateImageView(device_, &pointView, nullptr, &pointShadowDepthView_);
+    for (uint32_t face = 0; face < 6; ++face) {
+      pointView.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      pointView.subresourceRange.baseArrayLayer = face;
+      pointView.subresourceRange.layerCount = 1;
+      vkCreateImageView(device_, &pointView, nullptr, &pointShadowFaceViews_[face]);
+      VkImageView attachments[2] = {shadowColorView_, pointShadowFaceViews_[face]};
+      sfci.pAttachments = attachments;
+      vkCreateFramebuffer(device_, &sfci, nullptr, &pointShadowFbs_[face]);
+    }
     refreshMaterialDescriptors();
   }
 
@@ -7886,23 +7987,44 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     vkCmdEndRenderPass(cb);
   } else if (offscreenFb_ && hasParams_) {
     shadowCamera_.lightSlot = -1;
-    const bool renderShadow = shadowPass_ && shadowFb_ && shadowPipeline_ &&
-        BuildRasterShadowCamera(rasterLights_, sceneMin_, sceneExtent_, true,
-                                &shadowCamera_);
+    pointShadowCameras_.lightSlot = -1;
+    const bool renderPointShadow = shadowPass_ && shadowPipeline_ &&
+        pointShadowDepthView_ && pointShadowFbs_[0] &&
+        BuildRasterPointShadowCameras(rasterLights_, sceneMin_, sceneExtent_,
+                                      true, &pointShadowCameras_);
+    const bool renderShadow = !renderPointShadow && shadowPass_ && shadowFb_ &&
+        shadowPipeline_ && BuildRasterShadowCamera(rasterLights_, sceneMin_,
+                                                    sceneExtent_, true,
+                                                    &shadowCamera_);
+    const int shadowLightSlot = renderPointShadow ? pointShadowCameras_.lightSlot
+                                                   : shadowCamera_.lightSlot;
     if (dispParamsMapped_) {
       FrameUBO* frame = static_cast<FrameUBO*>(dispParamsMapped_);
-      frame->iblParams[2] = static_cast<float>(shadowCamera_.lightSlot);
+      frame->iblParams[2] = static_cast<float>(shadowLightSlot);
       frame->iblParams[3] = renderShadow ? 1.0f : 0.0f;
       std::memcpy(frame->shadowViewProj, shadowCamera_.viewProj.m,
                   sizeof(frame->shadowViewProj));
+      std::memset(frame->pointShadowLight, 0, sizeof(frame->pointShadowLight));
+      if (renderPointShadow) {
+        const RasterLightGPU& light = rasterLights_.lights[
+            static_cast<size_t>(pointShadowCameras_.lightSlot)];
+        std::memcpy(frame->pointShadowLight, light.positionType,
+                    3 * sizeof(float));
+        frame->pointShadowLight[3] = 1.0f;
+        std::memcpy(frame->pointShadowViewProj, pointShadowCameras_.viewProj.data(),
+                    sizeof(frame->pointShadowViewProj));
+      }
     }
-    if (renderShadow) {
+    if (renderShadow || renderPointShadow) {
+      const int shadowFaces = renderPointShadow ? 6 : 1;
+      for (int shadowFace = 0; shadowFace < shadowFaces; ++shadowFace) {
       VkClearValue shadowClears[2]{};
       shadowClears[1].depthStencil = {1.0f, 0};
       VkRenderPassBeginInfo srp{};
       srp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
       srp.renderPass = shadowPass_;
-      srp.framebuffer = shadowFb_;
+      srp.framebuffer = renderPointShadow
+          ? pointShadowFbs_[static_cast<size_t>(shadowFace)] : shadowFb_;
       srp.renderArea.extent = {2048, 2048};
       srp.clearValueCount = 2;
       srp.pClearValues = shadowClears;
@@ -7947,7 +8069,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           PushC push{};
           std::memcpy(push.model, mesh.world, sizeof(push.model));
           push.ids[0] = sub.materialId;
-          push.ids[2] = -2;  // mesh.vert selects the shared shadow view-projection
+          push.ids[2] = renderPointShadow ? -3 - shadowFace : -2;
           if (sub.materialId >= 0 &&
               static_cast<size_t>(sub.materialId) * 12u + 7u < matColor_.size()) {
             const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 12u];
@@ -8007,7 +8129,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
             continue;
           InstPushC ipc{};
           ipc.draw[0] = static_cast<int>(mdiMeshMetaBase_ + mi);
-          ipc.draw[1] = 1;  // mesh_inst.vert selects shadowViewProj
+          ipc.draw[1] = renderPointShadow ? 2 + shadowFace : 1;
           vkCmdPushConstants(cb, instPipelineLayout_,
                              VK_SHADER_STAGE_VERTEX_BIT |
                                  VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -8030,6 +8152,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         }
       }
       vkCmdEndRenderPass(cb);
+      }
     }
     VkClearValue clears[2];
     clears[0].color = {{clear_[0], clear_[1], clear_[2], clear_[3]}};
@@ -8115,13 +8238,28 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       fr->iblParams[0] = static_cast<float>(iblLods_);
       fr->iblParams[1] = exposure_;
       shadowCamera_.lightSlot = -1;
-      const bool hasShadow = shadowDepthView_ &&
+      pointShadowCameras_.lightSlot = -1;
+      const bool hasPointShadow = pointShadowDepthView_ &&
+          BuildRasterPointShadowCameras(rasterLights_, sceneMin_, sceneExtent_,
+                                        true, &pointShadowCameras_);
+      const bool hasShadow = !hasPointShadow && shadowDepthView_ &&
           BuildRasterShadowCamera(rasterLights_, sceneMin_, sceneExtent_, true,
                                   &shadowCamera_);
-      fr->iblParams[2] = static_cast<float>(shadowCamera_.lightSlot);
+      const int shadowLightSlot = hasPointShadow ? pointShadowCameras_.lightSlot
+                                                 : shadowCamera_.lightSlot;
+      fr->iblParams[2] = static_cast<float>(shadowLightSlot);
       fr->iblParams[3] = hasShadow ? 1.0f : 0.0f;
       std::memcpy(fr->shadowViewProj, shadowCamera_.viewProj.m,
                   sizeof(fr->shadowViewProj));
+      std::memset(fr->pointShadowLight, 0, sizeof(fr->pointShadowLight));
+      if (hasPointShadow) {
+        const RasterLightGPU& light = rasterLights_.lights[
+            static_cast<size_t>(pointShadowCameras_.lightSlot)];
+        std::memcpy(fr->pointShadowLight, light.positionType, 3 * sizeof(float));
+        fr->pointShadowLight[3] = 1.0f;
+        std::memcpy(fr->pointShadowViewProj, pointShadowCameras_.viewProj.data(),
+                    sizeof(fr->pointShadowViewProj));
+      }
     }
     // Draw order: back-to-front by world centroid for the translucent pass.
     std::vector<size_t> order(meshes_.size());
@@ -8740,10 +8878,24 @@ void VulkanRenderer::shutdown() {
   if (shadowDepthImg_) vkDestroyImage(device_, shadowDepthImg_, nullptr);
   if (shadowColorMem_) vkFreeMemory(device_, shadowColorMem_, nullptr);
   if (shadowDepthMem_) vkFreeMemory(device_, shadowDepthMem_, nullptr);
+  for (VkFramebuffer& fb : pointShadowFbs_) {
+    if (fb) vkDestroyFramebuffer(device_, fb, nullptr);
+    fb = VK_NULL_HANDLE;
+  }
+  for (VkImageView& view : pointShadowFaceViews_) {
+    if (view) vkDestroyImageView(device_, view, nullptr);
+    view = VK_NULL_HANDLE;
+  }
+  if (pointShadowDepthView_) vkDestroyImageView(device_, pointShadowDepthView_, nullptr);
+  if (pointShadowDepthImg_) vkDestroyImage(device_, pointShadowDepthImg_, nullptr);
+  if (pointShadowDepthMem_) vkFreeMemory(device_, pointShadowDepthMem_, nullptr);
   shadowFb_ = VK_NULL_HANDLE;
   shadowColorView_ = shadowDepthView_ = VK_NULL_HANDLE;
   shadowColorImg_ = shadowDepthImg_ = VK_NULL_HANDLE;
   shadowColorMem_ = shadowDepthMem_ = VK_NULL_HANDLE;
+  pointShadowDepthView_ = VK_NULL_HANDLE;
+  pointShadowDepthImg_ = VK_NULL_HANDLE;
+  pointShadowDepthMem_ = VK_NULL_HANDLE;
   if (imguiInited_) {
     // The viewport texture descriptor is kept stable across resizes (see
     // destroyOffscreen / resizeViewport), so free it here, once, before the backend
@@ -8809,6 +8961,10 @@ void VulkanRenderer::shutdown() {
   if (influenceSetLayout_) { vkDestroyDescriptorSetLayout(device_, influenceSetLayout_, nullptr); influenceSetLayout_ = VK_NULL_HANDLE; }
   if (faceSetLayout_) { vkDestroyDescriptorSetLayout(device_, faceSetLayout_, nullptr); faceSetLayout_ = VK_NULL_HANDLE; }
   if (sampler_) { vkDestroySampler(device_, sampler_, nullptr); sampler_ = VK_NULL_HANDLE; }
+  for (VkSampler& materialSampler : materialSamplers_) {
+    if (materialSampler) vkDestroySampler(device_, materialSampler, nullptr);
+    materialSampler = VK_NULL_HANDLE;
+  }
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
   if (shadowPipeline_) { vkDestroyPipeline(device_, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
   if (instShadowPipeline_) { vkDestroyPipeline(device_, instShadowPipeline_, nullptr); instShadowPipeline_ = VK_NULL_HANDLE; }

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// Shared OpenPBR parameter block used by tusdview/tusdrender material paths.
+// Backend-neutral real-time PBR material constants shared by Tydra consumers.
+// Texture bindings remain in each renderer's scene representation; this block
+// is the single typed source for the evaluated scalar/color material response.
 #pragma once
 
 #include <algorithm>
@@ -10,7 +12,7 @@ namespace tydra {
 constexpr int kLightRtOpenPBRVec4s = 14;
 constexpr int kLightRtOpenPBRFloats = kLightRtOpenPBRVec4s * 4;
 
-struct LightRtOpenPBRParams {
+struct RealtimePbrMaterial {
   float baseWeight{1.0f};
   float baseColor[3]{0.8f, 0.8f, 0.8f};
   float diffuseRoughness{0.0f};
@@ -46,7 +48,7 @@ struct LightRtOpenPBRParams {
   bool hasNormalInput{false};
 };
 
-inline void ClampLightRtOpenPBRParams(LightRtOpenPBRParams* p) {
+inline void ClampRealtimePbrMaterial(RealtimePbrMaterial* p) {
   if (!p) return;
   auto clamp01 = [](float v) { return std::max(0.0f, std::min(1.0f, v)); };
   p->baseWeight = clamp01(p->baseWeight);
@@ -76,7 +78,7 @@ inline void StoreOpenPBR3(const float src[3], float* dst) {
   dst[2] = src[2];
 }
 
-inline void PackLightRtOpenPBRParams(const LightRtOpenPBRParams& p,
+inline void PackRealtimePbrMaterial(const RealtimePbrMaterial& p,
                                      bool valid, float alpha_mode,
                                      float alpha_cutoff, float* dst) {
   if (!dst) return;
@@ -110,7 +112,20 @@ inline void PackLightRtOpenPBRParams(const LightRtOpenPBRParams& p,
 }
 
 
-using DrawLightRtOpenPBRCPU = LightRtOpenPBRParams;
+// Compatibility aliases retain the LightRT-facing public spelling while new
+// loaders and adapters use the renderer-neutral name above.
+using LightRtOpenPBRParams = RealtimePbrMaterial;
+using DrawLightRtOpenPBRCPU = RealtimePbrMaterial;
+
+inline void ClampLightRtOpenPBRParams(LightRtOpenPBRParams* p) {
+  ClampRealtimePbrMaterial(p);
+}
+
+inline void PackLightRtOpenPBRParams(const LightRtOpenPBRParams& p,
+                                     bool valid, float alpha_mode,
+                                     float alpha_cutoff, float* dst) {
+  PackRealtimePbrMaterial(p, valid, alpha_mode, alpha_cutoff, dst);
+}
 
 }  // namespace tydra
 }  // namespace tinyusdz

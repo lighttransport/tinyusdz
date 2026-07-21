@@ -1,21 +1,21 @@
 # tusdview resume and current work state
 
-Last reviewed against merge commit `8ec26dc6c`: 2026-07-19.
+Last reviewed against `8b922bd03`: 2026-07-20.
 
 The original first-display goal in this document is complete: the progressive
 OpenGL path reaches a useful frame in approximately 4.9-5.3 seconds under the
 documented Xvfb/Mesa benchmark. The active local work has moved to shared
 UsdPreviewSurface/material correctness across `tusdview`, its GL/Vulkan/CUDA/HIP
-backends, and `tusdrender`. The older Moana Island `tusdrender` notes formerly
-kept in the repository-root `resume.md` are preserved at the end as a secondary,
-mostly completed performance track.
+backends, and `tusdrender`. The active roadmap is now
+[`doc/tusdview-tasks.md`](tusdview-tasks.md); this file retains the detailed
+audit and performance history needed to resume that work.
 
 ## Current audit: material correctness
 
-The tracked worktree is clean at the reviewed commit. Preserve the untracked
-`data/ball_basketball_realistic.usdz` and `tasks.md`; neither belongs to this
-work. The material work described below is committed in the two parents of the
-merge, not an uncommitted local patch.
+The reviewed commit had no tracked local edits. Preserve the current untracked
+assets and local MCP manifests; they are not evidence of viewer regressions and
+are outside the rendering-fidelity roadmap. The material work described below
+is committed rather than an uncommitted local patch.
 
 The current material patch spans the next UsdShade schema, Tydra conversion,
 shared LightRT/OpenPBR evaluation, viewer mesh/submesh data, all rendering
@@ -127,27 +127,79 @@ level-zero RT texture table: ordinary, compressed, and sparse-UDIM mip chains
 now use trilinear footprint LOD in Vulkan ray query and projected-triangle LOD
 in the shared CUDA/HIP tracer.
 
-Rendering-fidelity follow-up (2026-07-19): raster and RT material evaluation now
+Rendering-fidelity follow-up (2026-07-20): raster and RT material evaluation now
 share Cook-Torrance GGX, coat, and indirect occlusion semantics; authored camera
 filmback, aperture offsets, clipping, orthographic projection, conform policy,
 and exposure reach every backend. The default-next loader retains full shared
 light records and native Points/BasisCurves/HermiteCurves/NurbsCurves carriers.
 OpenGL draws camera-facing point discs and curve ribbons, while Vulkan ray query
-and CUDA/HIP trace width-aware solid proxies. The canonical remaining work is in
-`doc/tusdview-tasks.md`: Vulkan raster non-mesh drawing, click-picking, linked
-raster multi-light evaluation, and raster shadow maps remain open.
+and CUDA/HIP trace width-aware solid proxies. Linked raster multi-light
+evaluation and the deterministic raster shadow map are now implemented. The
+canonical remaining work is in `doc/tusdview-tasks.md`, led by loader-neutral
+material/texture parity, Linux visual parity, then omnidirectional raster
+shadows for point lights.
 
 The external usd-assets corpus was still unavailable at
 `/mnt/disk1/work/usd-assets`, so no new color goldens were generated. The
 checked-in manifest/expectation implementation remains ready for the next host
 where that public corpus is mounted.
 
-## Prioritized tusdview backlog
+## Active priority — 2026-07-20
 
-This section incorporates the tusdview-related items from the repository-root
-`tasks.md`. That file is an older planning snapshot: several unchecked entries
-now have implementations or regression targets in the current worktree. The
-ordering below is the canonical remaining-work order. Priorities mean:
+`doc/tusdview-tasks.md` is the single source of truth for active work. The
+Linux-first order is:
+
+1. **P0:** create one Tydra-owned real-time PBR material record and prove
+   default `--next`/legacy extraction equivalence. **Implemented locally:** the
+   canonical `RealtimePbrMaterial` packer and a supported-material pixel parity
+   check now cover the common path.
+2. **P1–P2:** finish the semantic texture grid and prove ordinary/UDIM image
+   response through Xvfb OpenGL, Vulkan headless raster, Vulkan RT, and CUDA/HIP
+   where a Linux GPU is available. **Hardware evidence now exists:** an RTX 3070
+   gives exact default/legacy ordinary-texture Vulkan-raster parity and passes
+   isolated UDIM-opacity probes in Vulkan raster, Vulkan RT, and CUDA. Complete
+   the remaining semantic-grid and capability-gated HIP coverage before closing
+   the release gate. The corrected specular-workflow regression now makes a
+   genuine Xvfb GL versus headless Vulkan comparison (rather than selecting
+   Vulkan twice); it reports identical RTX 3070 green-highlight dominance.
+   The semantic harness now includes a vector normal AOV probe, independent
+   OpenPBR coat-normal response, texture-driven occlusion/coat coverage, and
+   external-versus-generated-USDZ normal-map parity. It now also covers base,
+   metalness, roughness, emission, and opacity ramps for PreviewSurface,
+   OpenPBR, and MaterialX standard surface. The default loader passes the
+   tested Vulkan-raster scalar routes, including the newly repaired MaterialX
+   `specular_roughness` route. After making the generated USDA strict-parser
+   compliant and repairing mixed MaterialX/UsdUVTexture plus coat-normal
+   conversion, PreviewSurface, OpenPBR, standard-surface scalar AOVs, and the
+   coat-normal, coat-weight, coat-color, and coat-roughness AOVs agree exactly
+   between default and legacy loaders (MAD 0.0). The dedicated coat channels
+   also pass Xvfb OpenGL, Vulkan ray query, and CUDA; HIP remains
+   capability-gated on this NVIDIA-only host.
+   The same matrix now includes evaluated `specular-f0` and `ior-f0` AOVs. It found that
+   the legacy adapter omitted PreviewSurface's `useSpecularWorkflow` flag;
+   after copying that field into the draw material, GL, Vulkan raster/ray
+   query, and CUDA all give exact default/legacy specular-texture pixels. IOR
+   fixtures now cover PreviewSurface, OpenPBR, and MaterialX Standard Surface
+   at two authored values. OpenPBR/Standard specular-color fixtures also pin
+   their distinct model: the color textures tint dielectric F0 derived from
+   `specular_ior`/`specular_IOR`, while PreviewSurface's explicit specular
+   workflow treats `specularColor` as F0 directly. All four available backends
+   pass both loader paths with exact default/legacy image parity (MAD 0.0).
+3. **P3:** complete for point/zero-radius SphereLight emitters: GL and Vulkan
+   raster render/sample all six projected-depth cube faces, and the Vulkan
+   regression proves the bounded shadow. Keep finite non-zero area sampling as
+   representative-point behavior until a later area-light task.
+4. **P4–P6:** retain evaluated graph inputs for advanced lobes, then address
+   Vulkan non-mesh/picking and broader area-light, camera, and external-corpus
+   work.
+
+Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
+the core material record and its cross-backend image parity are complete.
+
+## Prioritized tusdview backlog — historical 2026-07-19 snapshot
+
+This section preserves the earlier completion record. It is not the current
+backlog; use `doc/tusdview-tasks.md` for prioritization.
 
 - **P0**: finish and prove the current material patch before starting another
   feature area.

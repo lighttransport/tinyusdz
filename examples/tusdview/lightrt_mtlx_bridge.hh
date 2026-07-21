@@ -42,9 +42,12 @@ constexpr int kRasterMaterialTextureParamVec4s = 54;
 constexpr int kRasterMaterialTextureParamFloats =
     kRasterMaterialTextureParamVec4s * 4;
 
-// Bake USD/Tydra shader params into the LightRT/OpenPBR parameter layout. The
-// raster and RT paths use this as their shared constant fallback around live
+// Bake loader-adapted shader params into Tydra's backend-neutral real-time PBR
+// block. Raster and RT consume the same resulting constant fallback around live
 // DrawMaterialCPU semantic texture slots.
+void BakeRealtimePbrMaterial(DrawMaterialCPU* mat);
+
+// Compatibility entry point retained for out-of-tree callers.
 void BakeLightRtOpenPBR(DrawMaterialCPU* mat);
 
 // Evaluate a MaterialX XML document through LightRT's MaterialX graph evaluator

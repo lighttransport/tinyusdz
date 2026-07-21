@@ -2974,6 +2974,19 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-opacity-material PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 900)
 
+    # Texture-driven material factors must survive the complete raster / RT
+    # packing chain. It validates scalar factor ramps plus vector normals,
+    # coat/occlusion response, and external/USDZ texture parity. GL, RT,
+    # CUDA, and HIP entries capability-skip when unavailable.
+    add_test(
+      NAME tusdview-texture-semantic-aov
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
+      )
+    set_tests_properties(tusdview-texture-semantic-aov PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 900)
+
     # A single mesh may bind different materials through materialBind
     # GeomSubsets. All RT backends must resolve the committed triangle's
     # submesh material, not the mesh's first material.

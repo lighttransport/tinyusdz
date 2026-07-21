@@ -1556,6 +1556,7 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
             &o.transmission_dispersion, &o.transmission_dispersion_scale,
             &o.coat_weight, &o.coat_color, &o.coat_roughness,
             &o.coat_anisotropy, &o.coat_roughness_anisotropy,
+            &o.coat_normal,
             &o.thin_film_weight, &o.thin_film_thickness, &o.thin_film_ior,
             &o.emission_luminance, &o.emission_color, &o.normal,
             &o.opacity, &o.displacement}) {
@@ -6211,6 +6212,8 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
   ExtractShaderParam(stage, shader_prim, "coat_roughness",
                      &out->coat_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "coat_IOR", &out->coat_ior, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_normal", &out->coat_normal,
+                     scene);
 
   // Emission
   ExtractShaderParam(stage, shader_prim, "emission", &out->emission_luminance,
@@ -6281,6 +6284,11 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
                      &out->coat_anisotropy, scene);
   ExtractShaderParam(stage, shader_prim, "coat_roughness_anisotropy",
                      &out->coat_roughness_anisotropy, scene);
+  if (!ExtractShaderParam(stage, shader_prim, "geometry_coat_normal",
+                          &out->coat_normal, scene)) {
+    ExtractShaderParam(stage, shader_prim, "coat_normal", &out->coat_normal,
+                       scene);
+  }
 
   ExtractShaderParam(stage, shader_prim, "sheen_weight", &out->sheen_weight, scene);
   ExtractShaderParam(stage, shader_prim, "sheen_color", &out->sheen_color, scene);

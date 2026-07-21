@@ -2373,21 +2373,20 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   };
 
   // Load a normal-map slot (linear; default [0,1]->[-1,1] remap if unauthored).
-  auto loadNormal = [&](const tydn::ShaderParam& sp) {
+  auto loadNormal = [&](const tydn::ShaderParam& sp, int* texField,
+                        DrawTexSampleCPU* sample) {
     if (sp.texture_id < 0) return;
     int t = LoadNextTexture(texCache, draw, scratch, sp.texture_id, false);
     if (t < 0) return;
-    dm.normalTex = t;
+    *texField = t;
     const tydn::RenderTexture& rt = scratch.textures[static_cast<size_t>(sp.texture_id)];
-    FillNextSample(rt, &dm.normalSample, uv0Name, uv1Name);
+    FillNextSample(rt, sample, uv0Name, uv1Name);
     const bool defScale = rt.scale_value.x == 1.0f && rt.scale_value.y == 1.0f &&
                           rt.scale_value.z == 1.0f;
     const bool defBias = rt.bias.x == 0.0f && rt.bias.y == 0.0f && rt.bias.z == 0.0f;
     if (defScale && defBias) {
-      dm.normalSample.scale[0] = dm.normalSample.scale[1] =
-          dm.normalSample.scale[2] = 2.0f;
-      dm.normalSample.bias[0] = dm.normalSample.bias[1] =
-          dm.normalSample.bias[2] = -1.0f;
+      sample->scale[0] = sample->scale[1] = sample->scale[2] = 2.0f;
+      sample->bias[0] = sample->bias[1] = sample->bias[2] = -1.0f;
     }
   };
   // Metallic and roughness are independent slots. Packed ORM inputs naturally
@@ -2442,14 +2441,22 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     const tydn::PreviewSurfaceShader& s = *rm.preview_surface;
     pvTex = texCount({s.diffuse_color.texture_id, s.normal.texture_id,
                       s.emissive_color.texture_id, s.metallic.texture_id,
-                      s.roughness.texture_id, s.opacity.texture_id});
+                      s.roughness.texture_id, s.opacity.texture_id,
+                      s.occlusion.texture_id, s.specular_color.texture_id,
+                      s.clearcoat.texture_id,
+                      s.clearcoat_roughness.texture_id,
+                      s.displacement.texture_id});
   }
   if (rm.openpbr) {
     const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
     opTex = texCount({s.base_color.texture_id, s.normal.texture_id,
                       s.emission_color.texture_id, s.base_metalness.texture_id,
                       s.base_roughness.texture_id, s.opacity.texture_id,
-                      s.displacement.texture_id});
+                      s.displacement.texture_id, s.coat_normal.texture_id,
+                      s.coat_weight.texture_id, s.coat_color.texture_id,
+                      s.coat_roughness.texture_id,
+                      s.specular_color.texture_id,
+                      s.specular_roughness.texture_id});
   }
   const bool usePreview = rm.preview_surface && (!rm.openpbr || pvTex >= opTex);
 
@@ -2470,7 +2477,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     colorSlot(s.emissive_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
     loadOpacity(s.opacity, s.diffuse_color.texture_id);
     loadOcclusion(s.occlusion);
-    loadNormal(s.normal);
+    loadNormal(s.normal, &dm.normalTex, &dm.normalSample);
     loadMetalRough(s.metallic, s.roughness);
     // Specular-workflow F0 map; only consulted when useSpecularWorkflow is set.
     colorSlot(s.specular_color, true, &dm.specularColorTex,
@@ -2487,6 +2494,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   } else if (rm.openpbr) {
     const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
     dm.hasOpenPBRSurface = true;
+    dm.openPbrSpecularModel = true;
     dm.materialXNodeGraphJson = s.nodegraph_json;
     setRGB(dm.baseColor, s.base_color.value, s.base_weight.value.x);
     dm.metallic = s.base_metalness.value.x;
@@ -2498,8 +2506,15 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     colorSlot(s.base_color, true, &dm.baseColorTex, &dm.baseColorSample, dm.baseColor);
     colorSlot(s.emission_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
     loadOpacity(s.opacity, s.base_color.texture_id);
-    loadNormal(s.normal);
-    loadMetalRough(s.base_metalness, s.base_roughness);
+    loadNormal(s.normal, &dm.normalTex, &dm.normalSample);
+    loadNormal(s.coat_normal, &dm.coatNormalTex, &dm.coatNormalSample);
+    // Converted MaterialX standard_surface graphs carry their microfacet map
+    // in specular_roughness; native OpenPBR assets generally use
+    // base_roughness. Both feed the single real-time roughness lane.
+    const tydn::ShaderParam& realtimeRoughness =
+        (s.base_roughness.texture_id >= 0) ? s.base_roughness
+                                          : s.specular_roughness;
+    loadMetalRough(s.base_metalness, realtimeRoughness);
     // Coat lobe maps (constant-only before this).
     scalarSlot(s.coat_weight, &dm.coatWeightTex, &dm.coatWeightSample,
                &dm.coatWeight);
@@ -2551,7 +2566,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   dm.alphaMode = static_cast<int>(rm.alpha_mode);
   dm.alphaCutoff = rm.alpha_cutoff;
 
-  BakeLightRtOpenPBR(&dm);  // derive lightRtOpenPBR from the baked constants
+  BakeRealtimePbrMaterial(&dm);  // derive shared PBR constants from the adapter
 
   // BakeLightRtOpenPBR's generic path consumes DrawMaterialParamCPU, while the
   // default next loader owns the already-typed RenderMaterial above. Rebuild
@@ -2562,10 +2577,60 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   rm.shader_type = usePreview
                        ? tydn::RenderMaterial::ShaderType::PreviewSurface
                        : tydn::RenderMaterial::ShaderType::OpenPBR;
-  DrawLightRtOpenPBRCPU pbr;
-  if (tydn::BuildLightRtOpenPBRParams(rm, &pbr)) {
+  tinyusdz::tydra::RealtimePbrMaterial pbr;
+  if (tydn::BuildRealtimePbrMaterial(rm, &pbr)) {
+    // BuildRealtimePbrMaterial preserves authored constants from the typed
+    // next-core material. Once a live texture slot is resolved those constants
+    // are multiplicative fallbacks, so make them neutral before publishing the
+    // canonical RT block. Without this, Vulkan ray query/CUDA use e.g.
+    // metallic=0 or emission=(0,0,0) from the USD fallback and erase the
+    // sampled texture even though raster uses the correct DrawMaterialCPU lane.
+    if (dm.baseColorTex >= 0) {
+      pbr.baseColor[0] = pbr.baseColor[1] = pbr.baseColor[2] = 1.0f;
+    }
+    if (dm.metallicTex >= 0) pbr.metalness = 1.0f;
+    if (dm.roughnessTex >= 0) pbr.specularRoughness = 1.0f;
+    if (dm.emissiveTex >= 0) {
+      pbr.emissionColor[0] = pbr.emissionColor[1] = pbr.emissionColor[2] =
+          1.0f;
+      pbr.emission = 1.0f;
+    }
+    if (dm.opacityTex >= 0) pbr.opacity = 1.0f;
+    if (dm.specularColorTex >= 0) {
+      pbr.specularColor[0] = pbr.specularColor[1] = pbr.specularColor[2] =
+          1.0f;
+    }
+    if (dm.coatWeightTex >= 0) pbr.coatWeight = 1.0f;
+    if (dm.coatColorTex >= 0) {
+      pbr.coatColor[0] = pbr.coatColor[1] = pbr.coatColor[2] = 1.0f;
+    }
+    if (dm.coatRoughnessTex >= 0) pbr.coatRoughness = 1.0f;
     dm.lightRtOpenPBR = pbr;
     dm.hasLightRtOpenPBR = true;
+    // BakeRealtimePbrMaterial above serves the legacy DrawMaterialParamCPU
+    // adapter. The next loader intentionally avoids that lossy parameter-vector
+    // reconstruction, so its empty parameter list would otherwise bake the
+    // OpenPBR defaults (0.8 gray) back over the typed next-core constants. Keep
+    // the DrawMaterialCPU fallback in lockstep with the canonical Tydra record.
+    if (dm.baseColorTex < 0) {
+      dm.baseColor[0] = pbr.baseColor[0];
+      dm.baseColor[1] = pbr.baseColor[1];
+      dm.baseColor[2] = pbr.baseColor[2];
+    }
+    if (dm.metallicTex < 0) dm.metallic = pbr.metalness;
+    if (dm.roughnessTex < 0) dm.roughness = pbr.specularRoughness;
+    dm.ior = pbr.specularIor;
+    if (dm.specularColorTex < 0) {
+      dm.specularColor[0] = pbr.specularColor[0];
+      dm.specularColor[1] = pbr.specularColor[1];
+      dm.specularColor[2] = pbr.specularColor[2];
+    }
+    if (dm.emissiveTex < 0) {
+      dm.emissive[0] = pbr.emissionColor[0] * pbr.emission;
+      dm.emissive[1] = pbr.emissionColor[1] * pbr.emission;
+      dm.emissive[2] = pbr.emissionColor[2] * pbr.emission;
+    }
+    dm.alpha = pbr.opacity;
     dm.coatWeight = pbr.coatWeight;
     dm.coatColor[0] = pbr.coatColor[0];
     dm.coatColor[1] = pbr.coatColor[1];

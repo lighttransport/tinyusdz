@@ -595,6 +595,12 @@ int main(int argc, char** argv) {
       else if (!std::strcmp(m, "blend-influence")) wantMode = tusdview::RenderMode::BlendInfluence;
       else if (!std::strcmp(m, "texel-density")) wantMode = tusdview::RenderMode::TexelDensity;
       else if (!std::strcmp(m, "source-face-id")) wantMode = tusdview::RenderMode::SourceFaceId;
+      else if (!std::strcmp(m, "coat-normal")) wantMode = tusdview::RenderMode::CoatNormal;
+      else if (!std::strcmp(m, "coat-weight")) wantMode = tusdview::RenderMode::CoatWeight;
+      else if (!std::strcmp(m, "coat-color")) wantMode = tusdview::RenderMode::CoatColor;
+      else if (!std::strcmp(m, "coat-roughness")) wantMode = tusdview::RenderMode::CoatRoughness;
+      else if (!std::strcmp(m, "specular-f0")) wantMode = tusdview::RenderMode::SpecularF0;
+      else if (!std::strcmp(m, "ior-f0")) wantMode = tusdview::RenderMode::IorF0;
       else { LOGE("--mode: unknown '%s'", m); return 1; }
     } else if (std::strcmp(argv[i], "--select") == 0 && (i + 1) < argc) {
       // Select a prim by absolute path once loaded (highlights it; a GeomSubset
@@ -713,7 +719,7 @@ int main(int argc, char** argv) {
           "metallic, emissive, opacity, position, barycentric, prim-id, mesh-id, "
           "purpose, missing-normals, double-sided, skin-weights, tangent, "
           "uv-checker, ao, curvature, instance-id, bvh-heatmap, soft-shadow, "
-          "kind, udim, uv1, blend-influence, texel-density, source-face-id.\n"
+          "kind, udim, uv1, blend-influence, texel-density, source-face-id, coat-normal, coat-weight, coat-color, coat-roughness, specular-f0, ior-f0.\n"
           "  --threaded    Use the optional dedicated GL/Vulkan render thread "
           "when built with TUSDVIEW_ENABLE_GL_THREAD.\n"
           "  --blend NAME=W  Manually set a blendshape weight (repeatable), "

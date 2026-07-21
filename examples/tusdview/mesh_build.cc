@@ -1797,6 +1797,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       dm.coatWeightTex = mapTex(s.clearcoat.texture_id);
       dm.coatRoughnessTex = mapTex(s.clearcoatRoughness.texture_id);
       dm.specularColorTex = mapTex(s.specularColor.texture_id);
+      dm.useSpecularWorkflow = s.useSpecularWorkflow;
       CopyTexSample(rs, s.clearcoat.texture_id, &dm.coatWeightSample);
       CopyTexSample(rs, s.clearcoatRoughness.texture_id, &dm.coatRoughnessSample);
       CopyTexSample(rs, s.specularColor.texture_id, &dm.specularColorSample);
@@ -1833,7 +1834,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       dm.emissive[0] = dm.emissiveTex >= 0 ? 1.0f : s.emissiveColor.value[0];
       dm.emissive[1] = dm.emissiveTex >= 0 ? 1.0f : s.emissiveColor.value[1];
       dm.emissive[2] = dm.emissiveTex >= 0 ? 1.0f : s.emissiveColor.value[2];
-      dm.alpha = s.opacity.value;
+      dm.alpha = dm.opacityTex >= 0 ? 1.0f : s.opacity.value;
       switch (mat.materialTag) {
         case tydra::MaterialTag::Masked:
           dm.alphaMode = static_cast<int>(AlphaMode::Mask);
@@ -1958,6 +1959,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       dm.coatColorTex = mapTex(s.coat_color.texture_id);
       dm.coatRoughnessTex = mapTex(s.coat_roughness.texture_id);
       dm.specularColorTex = mapTex(s.specular_color.texture_id);
+      dm.openPbrSpecularModel = true;
       CopyTexSample(rs, s.coat_weight.texture_id, &dm.coatWeightSample);
       CopyTexSample(rs, s.coat_color.texture_id, &dm.coatColorSample);
       CopyTexSample(rs, s.coat_roughness.texture_id, &dm.coatRoughnessSample);
@@ -1971,7 +1973,15 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       if (dm.specularColorTex >= 0)
         dm.specularColor[0] = dm.specularColor[1] = dm.specularColor[2] = 1.0f;
       dm.metallicTex = mapTex(s.base_metalness.texture_id);
-      dm.roughnessTex = mapTex(s.base_roughness.texture_id);
+      // Native OpenPBR commonly authors base_roughness, while converted
+      // MaterialX standard_surface carries its microfacet map through
+      // specular_roughness.  Both describe the single roughness channel in the
+      // real-time material, so prefer the native slot and fall back to the
+      // converted standard-surface slot.
+      const auto& realtimeRoughness =
+          (s.base_roughness.texture_id >= 0) ? s.base_roughness
+                                            : s.specular_roughness;
+      dm.roughnessTex = mapTex(realtimeRoughness.texture_id);
       CopyTexSample(rs, s.base_color.texture_id, &dm.baseColorSample);
       CopyTexSample(rs, s.emission_color.texture_id, &dm.emissiveSample);
       CopyTexSample(rs, s.normal.texture_id, &dm.normalSample);
@@ -1979,8 +1989,8 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       if (s.base_metalness.texture_id >= 0) {
         CopyTexSample(rs, s.base_metalness.texture_id, &dm.metallicSample);
       }
-      if (s.base_roughness.texture_id >= 0) {
-        CopyTexSample(rs, s.base_roughness.texture_id, &dm.roughnessSample);
+      if (realtimeRoughness.texture_id >= 0) {
+        CopyTexSample(rs, realtimeRoughness.texture_id, &dm.roughnessSample);
       }
       if (s.normal.texture_id >= 0) {
         for (int i = 0; i < 3; ++i) {
@@ -2007,10 +2017,10 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
         dm.metallicTexScale = mt.scale[dm.metallicChannel];
         dm.metallicTexBias = mt.bias[dm.metallicChannel];
       }
-      if (s.base_roughness.texture_id >= 0 &&
-          static_cast<size_t>(s.base_roughness.texture_id) < rs.textures.size()) {
+      if (realtimeRoughness.texture_id >= 0 &&
+          static_cast<size_t>(realtimeRoughness.texture_id) < rs.textures.size()) {
         const tydra::UVTexture& rt =
-            rs.textures[static_cast<size_t>(s.base_roughness.texture_id)];
+            rs.textures[static_cast<size_t>(realtimeRoughness.texture_id)];
         dm.roughnessChannel = TextureChannelIndex(rt.connectedOutputChannel, 1);
         dm.roughnessTexScale = rt.scale[dm.roughnessChannel];
         dm.roughnessTexBias = rt.bias[dm.roughnessChannel];
@@ -2023,7 +2033,9 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       dm.baseColor[1] = dm.baseColorTex >= 0 ? 1.0f : s.base_color.value[1];
       dm.baseColor[2] = dm.baseColorTex >= 0 ? 1.0f : s.base_color.value[2];
       dm.metallic = (s.base_metalness.texture_id >= 0) ? 1.0f : s.base_metalness.value;
-      dm.roughness = (s.base_roughness.texture_id >= 0) ? 1.0f : s.base_roughness.value;
+      dm.roughness = (realtimeRoughness.texture_id >= 0)
+                         ? 1.0f
+                         : s.base_roughness.value;
       const float emissionScale = s.emission_luminance.value;
       dm.emissive[0] =
           (dm.emissiveTex >= 0 ? 1.0f : s.emission_color.value[0]) * emissionScale;
@@ -2036,8 +2048,28 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
                          ? static_cast<int>(AlphaMode::Blend)
                          : static_cast<int>(AlphaMode::Opaque);
     }
+    // Samples are the canonical per-slot texture descriptors. CopyTexSample
+    // initially records the RenderScene texture id, but backends consume the
+    // deduplicated DrawScene texture table; keep every descriptor self-contained
+    // and aligned with its legacy parallel slot after that mapping.
+    auto syncSampleTex = [](DrawTexSampleCPU* sample, int tex) {
+      sample->tex = tex;
+    };
+    syncSampleTex(&dm.baseColorSample, dm.baseColorTex);
+    syncSampleTex(&dm.metallicSample, dm.metallicTex);
+    syncSampleTex(&dm.roughnessSample, dm.roughnessTex);
+    syncSampleTex(&dm.normalSample, dm.normalTex);
+    syncSampleTex(&dm.coatNormalSample, dm.coatNormalTex);
+    syncSampleTex(&dm.emissiveSample, dm.emissiveTex);
+    syncSampleTex(&dm.opacitySample, dm.opacityTex);
+    syncSampleTex(&dm.occlusionSample, dm.occlusionTex);
+    syncSampleTex(&dm.specularColorSample, dm.specularColorTex);
+    syncSampleTex(&dm.coatWeightSample, dm.coatWeightTex);
+    syncSampleTex(&dm.coatColorSample, dm.coatColorTex);
+    syncSampleTex(&dm.coatRoughnessSample, dm.coatRoughnessTex);
+    syncSampleTex(&dm.displacementSample, dm.displacementTex);
     // else: leave default gray.
-    BakeLightRtOpenPBR(&dm);
+    BakeRealtimePbrMaterial(&dm);
     DiagnoseUnsupportedRealtimeLobes(dm, out);
     out->materials.push_back(std::move(dm));
   }

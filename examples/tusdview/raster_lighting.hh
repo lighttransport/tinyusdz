@@ -147,6 +147,17 @@ struct RasterShadowCamera {
   bool perspective{false};
 };
 
+// The six world->clip transforms used for an exact point-light cube shadow.
+// Face order follows the OpenGL/Vulkan cube convention: +X, -X, +Y, -Y, +Z,
+// -Z. Both raster backends consume this shared order so depth rendering and
+// sampling cannot silently disagree about a face's orientation.
+struct RasterPointShadowCameras {
+  std::array<light3d::Mat4, 6> viewProj{};
+  int lightSlot{-1};
+  float nearPlane{0.01f};
+  float farPlane{1.0f};
+};
+
 inline light3d::Mat4 ShadowOrtho(float left, float right, float bottom,
                                  float top, float nearPlane, float farPlane,
                                  bool zeroToOne) {
@@ -160,6 +171,61 @@ inline light3d::Mat4 ShadowOrtho(float left, float right, float bottom,
                       : -(farPlane + nearPlane) / (farPlane - nearPlane);
   p.m[15] = 1.0f;
   return p;
+}
+
+inline bool BuildRasterPointShadowCameras(const RasterLightSet& lights,
+                                          const float sceneMin[3],
+                                          const float sceneExtent[3],
+                                          bool zeroToOne,
+                                          RasterPointShadowCameras* out) {
+  if (!out || lights.shadowLightSlot < 0 ||
+      lights.shadowLightSlot >= lights.count) return false;
+  const RasterLightGPU& light =
+      lights.lights[static_cast<size_t>(lights.shadowLightSlot)];
+  const int type = static_cast<int>(light.positionType[3] + 0.5f);
+  // UsdLux represents a point emitter as a zero-radius SphereLight. The
+  // current raster evaluator already treats finite spheres as their center,
+  // so use the same omnidirectional path for both records. Non-zero area
+  // sampling remains future work, but it must not fall back to a one-sided map.
+  if (type != static_cast<int>(DrawLightCPU::Type::Point) &&
+      type != static_cast<int>(DrawLightCPU::Type::Sphere)) {
+    return false;
+  }
+  const light3d::Vec3 eye{light.positionType[0], light.positionType[1],
+                           light.positionType[2]};
+  float farPlane = 0.01f;
+  for (int corner = 0; corner < 8; ++corner) {
+    const light3d::Vec3 p{
+        sceneMin[0] + ((corner & 1) ? sceneExtent[0] : 0.0f),
+        sceneMin[1] + ((corner & 2) ? sceneExtent[1] : 0.0f),
+        sceneMin[2] + ((corner & 4) ? sceneExtent[2] : 0.0f)};
+    farPlane = std::max(farPlane, light3d::length(p - eye));
+  }
+  // Guard band keeps PCF samples at the scene edge within the depth range.
+  farPlane = std::max(0.02f, farPlane * 1.01f);
+  const float nearPlane = std::max(0.001f, std::min(0.01f, farPlane * 0.01f));
+  constexpr float kQuarterTurn = 1.57079632679489661923f;
+  const light3d::Mat4 proj = zeroToOne
+      ? light3d::perspectiveZeroOne(kQuarterTurn, 1.0f, nearPlane, farPlane)
+      : light3d::perspective(kQuarterTurn, 1.0f, nearPlane, farPlane);
+  const std::array<light3d::Vec3, 6> directions{{
+      { 1.0f,  0.0f,  0.0f}, {-1.0f,  0.0f,  0.0f},
+      { 0.0f,  1.0f,  0.0f}, { 0.0f, -1.0f,  0.0f},
+      { 0.0f,  0.0f,  1.0f}, { 0.0f,  0.0f, -1.0f},
+  }};
+  const std::array<light3d::Vec3, 6> ups{{
+      {0.0f, -1.0f,  0.0f}, {0.0f, -1.0f,  0.0f},
+      {0.0f,  0.0f,  1.0f}, {0.0f,  0.0f, -1.0f},
+      {0.0f, -1.0f,  0.0f}, {0.0f, -1.0f,  0.0f},
+  }};
+  for (size_t face = 0; face < directions.size(); ++face) {
+    out->viewProj[face] = proj * light3d::lookAt(
+        eye, eye + directions[face], ups[face]);
+  }
+  out->lightSlot = lights.shadowLightSlot;
+  out->nearPlane = nearPlane;
+  out->farPlane = farPlane;
+  return true;
 }
 
 // Fit the one supported shadow camera to the scene bounds. `zeroToOne` selects

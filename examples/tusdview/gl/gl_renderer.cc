@@ -220,6 +220,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uHasShadowMap_ = glGetUniformLocation(program_, "uHasShadowMap");
   uShadowLightSlot_ = glGetUniformLocation(program_, "uShadowLightSlot");
   uShadowViewProj_ = glGetUniformLocation(program_, "uShadowViewProj");
+  uHasPointShadowMap_ = glGetUniformLocation(program_, "uHasPointShadowMap");
+  uPointShadowLightPos_ = glGetUniformLocation(program_, "uPointShadowLightPos");
+  uPointShadowViewProj_ = glGetUniformLocation(program_, "uPointShadowViewProj");
   uGeometricNormal_ = glGetUniformLocation(program_, "uGeometricNormal");
   uRenderMode_ = glGetUniformLocation(program_, "uRenderMode");
   uMatId_ = glGetUniformLocation(program_, "uMatId");
@@ -237,6 +240,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
   uUseSpecularWorkflow_ = glGetUniformLocation(program_, "uUseSpecularWorkflow");
+  uOpenPbrSpecularModel_ = glGetUniformLocation(program_, "uOpenPbrSpecularModel");
   uSpecularColor_ = glGetUniformLocation(program_, "uSpecularColor");
   uIor_ = glGetUniformLocation(program_, "uIor");
   uOcclusion_ = glGetUniformLocation(program_, "uOcclusion");
@@ -380,6 +384,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uPrefilteredMap"), 20);
   glUniform1i(glGetUniformLocation(program_, "uBrdfLut"), 21);
   glUniform1i(glGetUniformLocation(program_, "uShadowMap"), 25);
+  glUniform1i(glGetUniformLocation(program_, "uPointShadowMap"), 31);
   // Filter across cube-face borders (core since GL 3.2); matters for the
   // low-res prefiltered/irradiance cubes.
   glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
@@ -515,6 +520,17 @@ void main() {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
   const float border[4] = {1, 1, 1, 1};
   glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+  glGenTextures(1, &pointShadowDepthTex_);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowDepthTex_);
+  for (int face = 0; face < 6; ++face) {
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_DEPTH_COMPONENT24,
+                 2048, 2048, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+  }
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
   glGenFramebuffers(1, &shadowFbo_);
   glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
@@ -645,6 +661,7 @@ void main() {
       "uniform samplerCube uIrradianceMap;\n"
       "uniform bool uHasShadowMap; uniform int uShadowLightSlot;\n"
       "uniform mat4 uShadowViewProj; uniform sampler2D uShadowMap;\n"
+      "uniform bool uHasPointShadowMap; uniform vec3 uPointShadowLightPos; uniform mat4 uPointShadowViewProj[6]; uniform samplerCube uPointShadowMap;\n"
       "uniform vec3 uEmissive;\n"  // selection-highlight override (else 0)
       // Debug-AOV uniforms (mirror the non-instanced material shader). Instanced
       // prototypes carry no UVs or material scalars, so UV / roughness / metallic /
@@ -688,7 +705,7 @@ void main() {
       "float ggxD(float nh,float r){float a=max(r*r,0.002),a2=a*a,d=nh*nh*(a2-1.0)+1.0;return a2/max(3.14159265*d*d,1e-6);}\n"
       "float ggxG1(float nx,float r){float k=(r+1.0)*(r+1.0)*0.125;return nx/max(nx*(1.0-k)+k,1e-6);}\n"
       "vec3 fresnel(float vh,vec3 f0){return f0+(vec3(1.0)-f0)*pow(1.0-clamp(vh,0.0,1.0),5.0);}\n"
-      "float shadowVis(vec3 wp,vec3 n,vec3 l){if(!uHasShadowMap)return 1.0;vec4 c=uShadowViewProj*vec4(wp,1);vec3 p=c.xyz/c.w;p=p*.5+.5;if(p.z<=0||p.z>=1||any(lessThan(p.xy,vec2(0)))||any(greaterThan(p.xy,vec2(1))))return 1.0;float b=max(.00035,.0015*(1-max(dot(n,l),0))),v=0;vec2 t=1.0/vec2(textureSize(uShadowMap,0));for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x)v+=p.z-b<=texture(uShadowMap,p.xy+vec2(x,y)*t).r?1:0;return v/9;}\n"
+      "float shadowVis(vec3 wp,vec3 n,vec3 l){if(uHasPointShadowMap){vec3 d=wp-uPointShadowLightPos,a=abs(d);int f=a.x>=a.y&&a.x>=a.z?(d.x>=0?0:1):(a.y>=a.z?(d.y>=0?2:3):(d.z>=0?4:5));vec4 c=uPointShadowViewProj[f]*vec4(wp,1);vec3 p=c.xyz/c.w;p=p*.5+.5;if(p.z<=0||p.z>=1)return 1.0;float b=max(.00035,.0015*(1-max(dot(n,l),0)));return (p.z-b<=texture(uPointShadowMap,normalize(d)).r)?1.0:0.0;}if(!uHasShadowMap)return 1.0;vec4 c=uShadowViewProj*vec4(wp,1);vec3 p=c.xyz/c.w;p=p*.5+.5;if(p.z<=0||p.z>=1||any(lessThan(p.xy,vec2(0)))||any(greaterThan(p.xy,vec2(1))))return 1.0;float b=max(.00035,.0015*(1-max(dot(n,l),0))),v=0;vec2 t=1.0/vec2(textureSize(uShadowMap,0));for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x)v+=p.z-b<=texture(uShadowMap,p.xy+vec2(x,y)*t).r?1:0;return v/9;}\n"
       "void main(){\n"
       // Geometric (screen-derivative) normal: instanced prototypes usually ship
       // without authored normals, and faceted shading reads cleanly for them.
@@ -752,6 +769,9 @@ void main() {
   iHasShadowMap_ = glGetUniformLocation(instProgram_, "uHasShadowMap");
   iShadowLightSlot_ = glGetUniformLocation(instProgram_, "uShadowLightSlot");
   iShadowViewProj_ = glGetUniformLocation(instProgram_, "uShadowViewProj");
+  iHasPointShadowMap_ = glGetUniformLocation(instProgram_, "uHasPointShadowMap");
+  iPointShadowLightPos_ = glGetUniformLocation(instProgram_, "uPointShadowLightPos");
+  iPointShadowViewProj_ = glGetUniformLocation(instProgram_, "uPointShadowViewProj");
   iEnvRotation_ = glGetUniformLocation(instProgram_, "uEnvRotation");
   iLightColor_ = glGetUniformLocation(instProgram_, "uLightColor");
   iEmissive_ = glGetUniformLocation(instProgram_, "uEmissive");
@@ -774,6 +794,7 @@ void main() {
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphChanTex"), 10);
   glUniform1i(glGetUniformLocation(instProgram_, "uIrradianceMap"), 19);
   glUniform1i(glGetUniformLocation(instProgram_, "uShadowMap"), 25);
+  glUniform1i(glGetUniformLocation(instProgram_, "uPointShadowMap"), 31);
   glUseProgram(0);
 
   static const char* kShadowInstFS = "#version 330 core\nvoid main(){}\n";
@@ -1432,6 +1453,7 @@ void GLRenderer::appendMaterials(const std::vector<DrawMaterialCPU>& materials,
     gm.alphaMode = m.alphaMode;
     gm.alphaCutoff = m.alphaCutoff;
     gm.useSpecularWorkflow = m.useSpecularWorkflow;
+    gm.openPbrSpecularModel = m.openPbrSpecularModel;
     gm.specularColor[0] = m.specularColor[0];
     gm.specularColor[1] = m.specularColor[1];
     gm.specularColor[2] = m.specularColor[2];
@@ -3104,6 +3126,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1f(uMetallic_, 0.f);
         glUniform1f(uRoughness_, 1.f);
         glUniform1i(uUseSpecularWorkflow_, 0);
+        glUniform1i(uOpenPbrSpecularModel_, 0);
         glUniform3f(uSpecularColor_, 0.f, 0.f, 0.f);
         glUniform1f(uIor_, 1.5f);
         glUniform1f(uOcclusion_, 1.0f);
@@ -3138,6 +3161,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1f(uMetallic_, mat.metallic);
         glUniform1f(uRoughness_, mat.roughness);
         glUniform1i(uUseSpecularWorkflow_, mat.useSpecularWorkflow ? 1 : 0);
+        glUniform1i(uOpenPbrSpecularModel_, mat.openPbrSpecularModel ? 1 : 0);
         glUniform3fv(uSpecularColor_, 1, mat.specularColor);
         glUniform1f(uIor_, mat.ior);
         glUniform1f(uOcclusion_, mat.occlusion);
@@ -3295,10 +3319,25 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniformMatrix4fv(iUViewProj_, 1, GL_FALSE, VP.m);
     glUniform3fv(iCameraPos_, 1, params.cameraPos);
     glUniform1f(iExposure_, params.exposure);
-    glUniform1i(iHasShadowMap_, shadowCamera_.lightSlot >= 0 ? 1 : 0);
-    glUniform1i(iShadowLightSlot_, shadowCamera_.lightSlot);
+    const bool hasPointShadow = pointShadowCameras_.lightSlot >= 0 &&
+                                pointShadowDepthTex_ != 0;
+    const bool hasPlanarShadow = shadowCamera_.lightSlot >= 0 && shadowDepthTex_ != 0;
+    const int shadowLightSlot = hasPointShadow ? pointShadowCameras_.lightSlot
+                                                : shadowCamera_.lightSlot;
+    glUniform1i(iHasShadowMap_, hasPlanarShadow ? 1 : 0);
+    glUniform1i(iShadowLightSlot_, shadowLightSlot);
     glUniformMatrix4fv(iShadowViewProj_, 1, GL_FALSE, shadowCamera_.viewProj.m);
-    if (shadowCamera_.lightSlot >= 0) {
+    glUniform1i(iHasPointShadowMap_, hasPointShadow ? 1 : 0);
+    if (hasPointShadow) {
+      const RasterLightGPU& point = rasterLights_.lights[
+          static_cast<size_t>(pointShadowCameras_.lightSlot)];
+      glUniform3fv(iPointShadowLightPos_, 1, point.positionType);
+      glUniformMatrix4fv(iPointShadowViewProj_, 6, GL_FALSE,
+                         pointShadowCameras_.viewProj[0].m);
+      glActiveTexture(GL_TEXTURE31);
+      glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowDepthTex_);
+    }
+    if (hasPlanarShadow) {
       glActiveTexture(GL_TEXTURE25);
       glBindTexture(GL_TEXTURE_2D, shadowDepthTex_);
     }
@@ -3485,27 +3524,43 @@ void GLRenderer::drawNonMesh(const RenderFrameParams& params) {
 
 void GLRenderer::renderShadowMap(const RenderFrameParams& params) {
   shadowCamera_.lightSlot = -1;
-  if (!shadowProgram_ || !shadowFbo_ ||
-      !BuildRasterShadowCamera(rasterLights_, params.sceneMin,
-                               params.sceneExtent, false, &shadowCamera_)) return;
-  glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
-  glViewport(0, 0, 2048, 2048);
-  glClear(GL_DEPTH_BUFFER_BIT);
-  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-  glEnable(GL_DEPTH_TEST);
-  glEnable(GL_CULL_FACE);
-  glCullFace(GL_FRONT);
-  glUseProgram(shadowProgram_);
-  glActiveTexture(GL_TEXTURE4);
-  glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
-  for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+  pointShadowCameras_.lightSlot = -1;
+  if (!shadowProgram_ || !shadowFbo_) return;
+  const bool point = BuildRasterPointShadowCameras(
+      rasterLights_, params.sceneMin, params.sceneExtent, false, &pointShadowCameras_);
+  if (!point && !BuildRasterShadowCamera(rasterLights_, params.sceneMin,
+                                         params.sceneExtent, false, &shadowCamera_)) return;
+  const int faceCount = point ? 6 : 1;
+  for (int face = 0; face < faceCount; ++face) {
+    const light3d::Mat4& shadowViewProj =
+        point ? pointShadowCameras_.viewProj[static_cast<size_t>(face)]
+              : shadowCamera_.viewProj;
+    glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+    if (point) {
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                             GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+                             pointShadowDepthTex_, 0);
+    } else {
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                             shadowDepthTex_, 0);
+    }
+    glViewport(0, 0, 2048, 2048);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+    glUseProgram(shadowProgram_);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
     if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
         !params.meshVisible[mi]) continue;
     if (!RasterShadowIncludesMesh(rasterLights_, static_cast<int>(mi))) continue;
     const GLMesh& mesh = meshes_[mi];
     if (mesh.instanceCount > 0) continue;
     const light3d::Mat4 world = ToMat4(mesh.world);
-    const light3d::Mat4 mvp = shadowCamera_.viewProj * world;
+    const light3d::Mat4 mvp = shadowViewProj * world;
     float normal[9];
     NormalMatrix3(mesh.world, normal);
     glUniformMatrix4fv(sMVP_, 1, GL_FALSE, mvp.m);
@@ -3594,9 +3649,9 @@ void GLRenderer::renderShadowMap(const RenderFrameParams& params) {
                                              sizeof(uint32_t)));
     }
   }
-  if (shadowInstProgram_) {
+    if (shadowInstProgram_) {
     glUseProgram(shadowInstProgram_);
-    glUniformMatrix4fv(siViewProj_, 1, GL_FALSE, shadowCamera_.viewProj.m);
+    glUniformMatrix4fv(siViewProj_, 1, GL_FALSE, shadowViewProj.m);
     glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
     for (size_t mi = 0; mi < meshes_.size(); ++mi) {
@@ -3623,6 +3678,7 @@ void GLRenderer::renderShadowMap(const RenderFrameParams& params) {
             mesh.drawInstanceCount);
       }
     }
+    }
   }
   glBindVertexArray(0);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -3647,9 +3703,23 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   glUniform3fv(uLightColor_, 1, params.lightColor);
   UploadRasterLightArray(program_, rasterLights_);
   const bool hasShadow = shadowCamera_.lightSlot >= 0 && shadowDepthTex_ != 0;
+  const bool hasPointShadow = pointShadowCameras_.lightSlot >= 0 &&
+                              pointShadowDepthTex_ != 0;
+  const int shadowLightSlot = hasPointShadow ? pointShadowCameras_.lightSlot
+                                              : shadowCamera_.lightSlot;
   glUniform1i(uHasShadowMap_, hasShadow ? 1 : 0);
-  glUniform1i(uShadowLightSlot_, shadowCamera_.lightSlot);
+  glUniform1i(uShadowLightSlot_, shadowLightSlot);
   glUniformMatrix4fv(uShadowViewProj_, 1, GL_FALSE, shadowCamera_.viewProj.m);
+  glUniform1i(uHasPointShadowMap_, hasPointShadow ? 1 : 0);
+  if (hasPointShadow) {
+    const RasterLightGPU& point = rasterLights_.lights[
+        static_cast<size_t>(pointShadowCameras_.lightSlot)];
+    glUniform3fv(uPointShadowLightPos_, 1, point.positionType);
+    glUniformMatrix4fv(uPointShadowViewProj_, 6, GL_FALSE,
+                       pointShadowCameras_.viewProj[0].m);
+    glActiveTexture(GL_TEXTURE31);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowDepthTex_);
+  }
   if (hasShadow) {
     glActiveTexture(GL_TEXTURE25);
     glBindTexture(GL_TEXTURE_2D, shadowDepthTex_);
@@ -3987,6 +4057,7 @@ void GLRenderer::shutdown() {
   if (shadowProgram_) { glDeleteProgram(shadowProgram_); shadowProgram_ = 0; }
   if (shadowInstProgram_) { glDeleteProgram(shadowInstProgram_); shadowInstProgram_ = 0; }
   if (shadowDepthTex_) { glDeleteTextures(1, &shadowDepthTex_); shadowDepthTex_ = 0; }
+  if (pointShadowDepthTex_) { glDeleteTextures(1, &pointShadowDepthTex_); pointShadowDepthTex_ = 0; }
   if (shadowFbo_) { glDeleteFramebuffers(1, &shadowFbo_); shadowFbo_ = 0; }
   if (tessProgram_) { glDeleteProgram(tessProgram_); tessProgram_ = 0; }
   if (instProgram_) { glDeleteProgram(instProgram_); instProgram_ = 0; }

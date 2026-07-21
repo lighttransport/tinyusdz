@@ -72,6 +72,12 @@ enum class RenderMode : int {
   BlendInfluence = 32,    // per-vertex blendshape displacement magnitude (raster)
   TexelDensity = 33,      // UV-to-world area ratio (view-independent texel density)
   SourceFaceId = 34,      // original USD face id before triangulation (hashed)
+  CoatNormal = 35,        // independently authored coat-layer shading normal
+  CoatWeight = 36,        // evaluated coat-layer scalar weight
+  CoatColor = 37,         // evaluated coat-layer tint
+  CoatRoughness = 38,     // evaluated coat-layer roughness
+  SpecularF0 = 39,        // evaluated specular-workflow reflectance
+  IorF0 = 40,             // dielectric F0 derived from authored IOR
 };
 enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 

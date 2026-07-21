@@ -396,6 +396,9 @@ struct DrawMaterialCPU {
   // directly; else F0 is the dielectric reflectance from `ior` lerped toward the
   // base color by metalness (ior 1.5 -> the fixed 0.04 the metallic path used).
   bool useSpecularWorkflow{false};
+  // OpenPBR/MaterialX Standard Surface uses specularColor as a tint on the
+  // dielectric IOR-derived F0, rather than Preview Surface's direct-F0 mode.
+  bool openPbrSpecularModel{false};
   float specularColor[3]{0.0f, 0.0f, 0.0f};
   float ior{1.5f};
   // Real-time PBR core shared by raster and RT. These are populated from the

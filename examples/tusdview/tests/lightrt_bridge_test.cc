@@ -62,7 +62,7 @@ int main() {
   mat.params.push_back(FloatParam("emission_luminance", 2.0f));
   mat.params.push_back(Vec3Param("emission_color", 0.1f, 0.2f, 0.3f));
   mat.params.push_back(FloatParam("opacity", 0.65f));
-  tusdview::BakeLightRtOpenPBR(&mat);
+  tusdview::BakeRealtimePbrMaterial(&mat);
   mat.occlusion = 0.65f;
   mat.baseColorSample.uv = {1.0f, 0.1f, 0.2f, 0.9f, 0.3f, 0.4f};
   mat.metallicSample.uv = {0.5f, 0.0f, 0.0f, 0.5f, 0.1f, 0.2f};
@@ -353,12 +353,12 @@ int main() {
     return 1;
   }
   std::vector<float> sharedDefaultPack(tusdview::kLightRtOpenPBRFloats, -2.0f);
-  tinyusdz::tydra::LightRtOpenPBRParams sharedDefault;
-  tinyusdz::tydra::PackLightRtOpenPBRParams(
+  tinyusdz::tydra::RealtimePbrMaterial sharedDefault;
+  tinyusdz::tydra::PackRealtimePbrMaterial(
       sharedDefault, false, 0.0f, 0.5f, sharedDefaultPack.data());
   for (int i = 0; i < tusdview::kLightRtOpenPBRFloats; ++i) {
     if (!Near(defaultPack[size_t(i)], sharedDefaultPack[size_t(i)])) {
-      std::fprintf(stderr, "shared/default LightRT pack mismatch at %d\n", i);
+      std::fprintf(stderr, "shared/default realtime-PBR pack mismatch at %d\n", i);
       return 1;
     }
   }
@@ -784,6 +784,56 @@ int main() {
     return 1;
   }
 
+  // UsdPreviewSurface keeps its authored fallback parameters in `params` even
+  // when the corresponding input is texture-driven. The canonical LightRT
+  // pack must use neutral factors for those lanes, matching the raster fields;
+  // Vulkan RT and CUDA consume this pack directly.
+  tusdview::DrawMaterialCPU previewTextureMat;
+  previewTextureMat.hasUsdPreviewSurface = true;
+  previewTextureMat.baseColorTex = 0;
+  previewTextureMat.metallicTex = 1;
+  previewTextureMat.roughnessTex = 2;
+  previewTextureMat.emissiveTex = 3;
+  previewTextureMat.opacityTex = 4;
+  previewTextureMat.specularColorTex = 5;
+  previewTextureMat.coatWeightTex = 6;
+  previewTextureMat.coatColorTex = 7;
+  previewTextureMat.coatRoughnessTex = 8;
+  previewTextureMat.params.push_back(
+      Vec3Param("diffuseColor", 0.2f, 0.3f, 0.4f));
+  previewTextureMat.params.back().shader = "UsdPreviewSurface";
+  previewTextureMat.params.push_back(FloatParam("metallic", 0.0f));
+  previewTextureMat.params.back().shader = "UsdPreviewSurface";
+  previewTextureMat.params.push_back(FloatParam("roughness", 0.2f));
+  previewTextureMat.params.back().shader = "UsdPreviewSurface";
+  previewTextureMat.params.push_back(
+      Vec3Param("emissiveColor", 0.0f, 0.0f, 0.0f));
+  previewTextureMat.params.back().shader = "UsdPreviewSurface";
+  previewTextureMat.params.push_back(FloatParam("opacity", 0.1f));
+  previewTextureMat.params.back().shader = "UsdPreviewSurface";
+  previewTextureMat.params.push_back(
+      Vec3Param("specularColor", 0.04f, 0.04f, 0.04f));
+  previewTextureMat.params.back().shader = "UsdPreviewSurface";
+  previewTextureMat.params.push_back(FloatParam("clearcoat", 0.0f));
+  previewTextureMat.params.back().shader = "UsdPreviewSurface";
+  previewTextureMat.params.push_back(FloatParam("clearcoatRoughness", 0.1f));
+  previewTextureMat.params.back().shader = "UsdPreviewSurface";
+  tusdview::BakeRealtimePbrMaterial(&previewTextureMat);
+  const auto& previewPbr = previewTextureMat.lightRtOpenPBR;
+  if (!Near(previewPbr.baseColor[0], 1.0f) ||
+      !Near(previewPbr.metalness, 1.0f) ||
+      !Near(previewPbr.specularRoughness, 1.0f) ||
+      !Near(previewPbr.emissionColor[0], 1.0f) ||
+      !Near(previewPbr.emission, 1.0f) || !Near(previewPbr.opacity, 1.0f) ||
+      !Near(previewPbr.specularColor[0], 1.0f) ||
+      !Near(previewPbr.coatWeight, 1.0f) ||
+      !Near(previewPbr.coatColor[0], 1.0f) ||
+      !Near(previewPbr.coatRoughness, 1.0f)) {
+    std::fprintf(stderr,
+                 "UsdPreviewSurface texture factors were not neutralized in LightRT\n");
+    return 1;
+  }
+
   // The shared RT texture table must retain complete RGBA mip chains as
   // consecutive descriptors so Vulkan, CUDA, and HIP use the same trilinear
   // sampling ABI.
@@ -826,13 +876,25 @@ int main() {
   tile.image = mipTexture.image;
   tile.mipImages = mipTexture.mipImages;
   udimTexture.udimTiles.push_back(std::move(tile));
+  // Preserve a sparse UDIM address: tile 1002 is intentionally absent while
+  // 1003 retains a distinct mip chain. A dense remap would make shader lookup
+  // sample the wrong tile for UV (2, 0).
+  tusdview::DrawUdimTileCPU sparseTile;
+  sparseTile.udim = 1003;
+  sparseTile.image = mipTexture.image;
+  sparseTile.mipImages = mipTexture.mipImages;
+  udimTexture.udimTiles.push_back(std::move(sparseTile));
   tusdview::HostTextureTable udimTable;
   tusdview::BuildHostTextureTable({udimTexture}, {mipMaterial}, &udimTable);
-  if (udimTable.textures.size() != 4 ||
+  if (udimTable.textures.size() != 7 ||
       udimTable.textures[0].isUdim != 1 ||
       udimTable.textures[0].udimLayer[0] != 1 ||
+      udimTable.textures[0].udimLayer[1] != -1 ||
+      udimTable.textures[0].udimLayer[2] != 4 ||
       udimTable.textures[1].mipCount != 3 ||
-      udimTable.textures[1].firstMip != 2) {
+      udimTable.textures[1].firstMip != 2 ||
+      udimTable.textures[4].mipCount != 3 ||
+      udimTable.textures[4].firstMip != 5) {
     std::fprintf(stderr, "shared RT UDIM mip-chain packing is incorrect\n");
     return 1;
   }

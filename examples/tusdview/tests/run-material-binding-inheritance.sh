@@ -34,49 +34,49 @@ if [ ! -f "$ASSET" ]; then echo "SKIP: asset missing: $ASSET"; exit "$SKIP"; fi
 echo "scene: $ASSET"
 
 OUT="$(mktemp -d)"
-mkdir -p "$OUT/config"
+mkdir -p "$OUT/config/tusdview"
 trap 'rm -rf "$OUT"' EXIT
-LOG="$OUT/render.log"
-if command -v timeout >/dev/null 2>&1; then
-  timeout --kill-after=5s "${TUSDVIEW_RENDER_TIMEOUT:-60s}" \
-    env XDG_CONFIG_HOME="$OUT/config" \
-    "$BIN" --headless --frames 4 --screenshot "$OUT/out.ppm" "$ASSET" \
-    >"$LOG" 2>&1
-else
-  env XDG_CONFIG_HOME="$OUT/config" \
-    "$BIN" --headless --frames 4 --screenshot "$OUT/out.ppm" "$ASSET" \
-    >"$LOG" 2>&1
-fi
-rc=$?
-if [ "$rc" -ne 0 ] || [ ! -s "$OUT/out.ppm" ]; then
+# Headless Vulkan takes its offscreen extent from the startup config. Keep this
+# texture-sampling regression compact: it checks distinct sampled texels and
+# loader parity, not high-resolution anti-aliasing, and a small extent avoids
+# needlessly long two-loader hardware runs.
+printf '%s\n' '{"window_size":{"width":640,"height":480}}' \
+  >"$OUT/config/tusdview/config.json"
+validate_textured_render() {
+  local tag="$1"
+  local image="$2"
+  local log="$3"
+  local rc="$4"
+
+  if [ "$rc" -ne 0 ] || [ ! -s "$image" ]; then
   # No GPU / no Vulkan device in this environment -> skip rather than fail.
-  if grep -qiE 'no vulkan|failed to (create|find).*(device|instance)|no suitable gpu' "$LOG"; then
-    echo "SKIP: no usable GPU device"; sed -n '1,20p' "$LOG"; exit "$SKIP"
+    if grep -qiE 'no vulkan|failed to (create|find).*(device|instance)|no suitable gpu' "$log"; then
+      echo "SKIP: no usable GPU device"; sed -n '1,20p' "$log"; exit "$SKIP"
+    fi
+    echo "FAIL: $tag render failed (rc=$rc)"; sed -n '1,40p' "$log"; exit 1
   fi
-  echo "FAIL: render failed (rc=$rc)"; sed -n '1,40p' "$LOG"; exit 1
-fi
 
 # Mesa's software Vulkan path on this machine is useful for API/validation
 # smoke tests but does not fetch the viewer's textured vertex attributes
 # reliably. A flat software render therefore cannot distinguish bad asset
 # anchoring from the device limitation; let a hardware backend answer instead.
-if grep -Eqi 'llvmpipe|softpipe|lavapipe|software rasterizer|\(cpu, driver' "$LOG"; then
-  echo "SKIP: software Vulkan cannot validate texture sampling"
-  exit "$SKIP"
-fi
+  if grep -Eqi 'llvmpipe|softpipe|lavapipe|software rasterizer|\(cpu, driver' "$log"; then
+    echo "SKIP: software Vulkan cannot validate texture sampling"
+    exit "$SKIP"
+  fi
 
 # (a) The texture must survive material resolution + path anchoring, and decode.
-if ! grep -qE '[0-9]+ materials, [1-9][0-9]* textures' "$LOG"; then
-  echo "FAIL: no texture resolved -- the material binding was dropped, or the"
-  echo "      texture's asset path was anchored at the stage root instead of at"
-  echo "      the layer that authored it."
-  grep -oE '[0-9]+ materials, [0-9]+ textures' "$LOG" || true
-  exit 1
-fi
+  if ! grep -qE '[0-9]+ materials, [1-9][0-9]* textures' "$log"; then
+    echo "FAIL: $tag resolved no texture -- the material binding was dropped, or the"
+    echo "      texture's asset path was anchored at the stage root instead of at"
+    echo "      the layer that authored it."
+    grep -oE '[0-9]+ materials, [0-9]+ textures' "$log" || true
+    exit 1
+  fi
 
 # (b) The texture must actually be SAMPLED: a flat fallback material renders a
 #     uniform surface, the checkerboard does not.
-python3 - "$OUT/out.ppm" <<'PY'
+  python3 - "$image" <<'PY'
 import sys
 
 data = open(sys.argv[1], "rb").read()
@@ -120,9 +120,59 @@ if len(surface) < 3:
     sys.exit(1)
 print(f"OK: textured render, {len(surface)} dominant surface colors")
 PY
-rc=$?
-[ "$rc" -eq 0 ] || exit 1
+  [ "$?" -eq 0 ] || exit 1
+  grep -oE '[0-9]+ materials, [0-9]+ textures' "$log" || true
+}
 
-echo "PASS: material resolved and its texture is sampled"
-grep -oE '[0-9]+ materials, [0-9]+ textures' "$LOG" || true
+for tag in next legacy; do
+  image="$OUT/$tag.ppm"
+  log="$OUT/$tag.log"
+  loader_args=()
+  if [ "$tag" = legacy ]; then loader_args=(--legacy-load); fi
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "${TUSDVIEW_RENDER_TIMEOUT:-60s}" \
+      env XDG_CONFIG_HOME="$OUT/config" \
+      "$BIN" --headless --frames 4 --screenshot "$image" "${loader_args[@]}" "$ASSET" \
+      >"$log" 2>&1
+  else
+    env XDG_CONFIG_HOME="$OUT/config" \
+    "$BIN" --headless --frames 4 --screenshot "$image" "${loader_args[@]}" "$ASSET" \
+      >"$log" 2>&1
+  fi
+  validate_textured_render "$tag" "$image" "$log" "$?"
+done
+
+python3 - "$OUT/next.ppm" "$OUT/legacy.ppm" <<'PY'
+import sys
+
+def load(path):
+    data = open(path, "rb").read()
+    if not data.startswith(b"P6"):
+        raise ValueError(f"{path}: not P6")
+    i, tok = 2, []
+    while len(tok) < 3 and i < len(data):
+        c = data[i]
+        if c == 35:
+            while i < len(data) and data[i] not in (10, 13): i += 1
+        elif chr(c).isspace(): i += 1
+        else:
+            s = i
+            while i < len(data) and not chr(data[i]).isspace(): i += 1
+            tok.append(int(data[s:i]))
+    return tok[:2], data[i + 1:]
+
+(wa, ha), a = load(sys.argv[1])
+(wb, hb), b = load(sys.argv[2])
+if (wa, ha) != (wb, hb) or len(a) != len(b):
+    print("FAIL: next/legacy screenshot dimensions differ")
+    sys.exit(1)
+mean = sum(abs(x - y) for x, y in zip(a, b)) / len(a)
+if mean > 2.0:
+    print(f"FAIL: next/legacy textured output differs (mean absolute delta={mean:.3f})")
+    sys.exit(1)
+print(f"OK: next/legacy textured output parity (mean absolute delta={mean:.3f})")
+PY
+[ "$?" -eq 0 ] || exit 1
+
+echo "PASS: both loaders resolve, sample, and agree on the material texture"
 exit 0

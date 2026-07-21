@@ -137,6 +137,7 @@ class GLRenderer final : public Renderer {
     float alphaCutoff{0.5f};
     // Specular workflow + IOR for F0 (T12).
     bool useSpecularWorkflow{false};
+    bool openPbrSpecularModel{false};
     float specularColor[3]{0.0f, 0.0f, 0.0f};
     float ior{1.5f};
     float occlusion{1.0f};
@@ -217,7 +218,8 @@ class GLRenderer final : public Renderer {
   GLint uFaceIdTex_{-1}, uFaceBase_{-1}, uHasFaceId_{-1}; // source-face-id AOV
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
-  GLint uUseSpecularWorkflow_{-1}, uSpecularColor_{-1}, uIor_{-1};  // F0 (T12)
+  GLint uUseSpecularWorkflow_{-1}, uOpenPbrSpecularModel_{-1};
+  GLint uSpecularColor_{-1}, uIor_{-1};  // F0 (T12)
   GLint uOcclusion_{-1}, uCoatWeight_{-1}, uCoatColor_{-1};
   GLint uCoatRoughness_{-1}, uCoatIor_{-1};
   GLint uExposure_{-1};
@@ -309,6 +311,7 @@ class GLRenderer final : public Renderer {
   GLint iHasIbl_{-1}, iIblColor_{-1}, iEnvRotation_{-1};  // dome IBL (diffuse)
   GLint iExposure_{-1};
   GLint iHasShadowMap_{-1}, iShadowLightSlot_{-1}, iShadowViewProj_{-1};
+  GLint iHasPointShadowMap_{-1}, iPointShadowLightPos_{-1}, iPointShadowViewProj_{-1};
   // Instanced-program debug-AOV uniforms (mirror the non-instanced material shader).
   GLint iRenderMode_{-1}, iDepthScale_{-1}, iSceneMin_{-1}, iSceneExtent_{-1};
   GLint iMeshId_{-1}, iGeometricNormal_{-1}, iDoubleSided_{-1}, iPurpose_{-1}, iKind_{-1};
@@ -332,7 +335,9 @@ class GLRenderer final : public Renderer {
   float iblRotation_[9]{1, 0, 0, 0, 1, 0, 0, 0, 1};  // world->env, column-major
   GLint uHasIbl_{-1}, uIblColor_{-1}, uEnvRotation_{-1}, uPrefilteredLods_{-1};
   GLint uHasShadowMap_{-1}, uShadowLightSlot_{-1}, uShadowViewProj_{-1};
-  GLuint shadowProgram_{0}, shadowInstProgram_{0}, shadowFbo_{0}, shadowDepthTex_{0};
+  GLint uHasPointShadowMap_{-1}, uPointShadowLightPos_{-1}, uPointShadowViewProj_{-1};
+  GLuint shadowProgram_{0}, shadowInstProgram_{0}, shadowFbo_{0}, shadowDepthTex_{0},
+      pointShadowDepthTex_{0};
   GLint sMVP_{-1}, sModel_{-1}, sNormalMat_{-1};
   GLint sSkinningEnabled_{-1}, sExtendedSkinningEnabled_{-1};
   GLint sBoneTexWidth_{-1}, sBoneMatrixCount_{-1}, sInfluenceTexWidth_{-1};
@@ -350,6 +355,7 @@ class GLRenderer final : public Renderer {
   GLint siViewProj_{-1}, siSkinningEnabled_{-1}, siBoneTexWidth_{-1};
   GLint siBoneMatrixCount_{-1}, siHasMorph_{-1};
   RasterShadowCamera shadowCamera_;
+  RasterPointShadowCameras pointShadowCameras_;
   void destroyIblTextures();
 
   GLuint whiteTex_{0}, boneTex_{0};
