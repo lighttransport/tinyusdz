@@ -158,6 +158,58 @@ void test_point_instancer_schema() {
   PASS();
 }
 
+// Regression: PointInstancer getters previously read time samples HELD
+// (GetValueAtTime only), so animated positions/scales snapped to the
+// earlier key. They must linearly interpolate between samples like the
+// tydra render-extract path.
+void test_point_instancer_interpolation() {
+  TEST("PointInstancerInterpolation");
+  StageBuilder sb;
+  auto& layer = sb.GetLayerBuilder();
+  layer.begin_prim("Proto", "Mesh");
+  layer.end_prim();
+  layer.begin_prim("Anim", "PointInstancer");
+  layer.add_relationship("prototypes", Path("/Proto"));
+  layer.add_property("protoIndices", Value::MakeIntArray({0}));
+  layer.add_time_sample("positions", 0.0,
+                        Value::MakeFloat3Array({0, 0, 0}));
+  layer.add_time_sample("positions", 10.0,
+                        Value::MakeFloat3Array({4, 0, 0}));
+  layer.add_time_sample("scales", 0.0, Value::MakeFloat3Array({1, 1, 1}));
+  layer.add_time_sample("scales", 10.0, Value::MakeFloat3Array({3, 3, 3}));
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = sb.Build();
+  UsdGeomPointInstancer pi(stage.GetPrimAtPath("/Anim"));
+  if (!pi.IsValid()) { FAIL("prim not found"); return; }
+
+  // Exact sample times.
+  if (pi.GetPositions(0.0) != std::vector<float>({0, 0, 0})) {
+    FAIL("positions at t=0");
+    return;
+  }
+  if (pi.GetPositions(10.0) != std::vector<float>({4, 0, 0})) {
+    FAIL("positions at t=10");
+    return;
+  }
+  // Midpoint must interpolate, not snap to the earlier key.
+  if (pi.GetPositions(5.0) != std::vector<float>({2, 0, 0})) {
+    FAIL("positions at t=5 not interpolated");
+    return;
+  }
+  if (pi.GetScales(5.0) != std::vector<float>({2, 2, 2})) {
+    FAIL("scales at t=5 not interpolated");
+    return;
+  }
+  // Interpolated transforms flow through ComputeInstanceTransforms too.
+  std::vector<PointInstancerTransform> xf = pi.ComputeInstanceTransforms(5.0);
+  if (xf.size() != 1 || xf[0].matrix[12] != 2.0 || xf[0].matrix[0] != 2.0) {
+    FAIL("interpolated instance transform");
+    return;
+  }
+  PASS();
+}
+
 void test_camera_schema() {
   TEST("IsCamera");
   auto stage = MakeTestStage();
@@ -284,6 +336,7 @@ int main() {
 
   test_mesh_schema();
   test_point_instancer_schema();
+  test_point_instancer_interpolation();
   test_xform_schema();
   test_camera_schema();
   test_light_schema();
