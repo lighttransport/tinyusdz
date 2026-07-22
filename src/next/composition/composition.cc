@@ -1424,12 +1424,18 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
 
   // Variants (if the reader populated variant content).
   if (options_.resolve_variants) {
-    ApplyVariants(prim, layer, anchor_path, depth);
+    // ApplyVariants only needs to inspect grafts produced while applying this
+    // prim's variants. Scanning older grafts is both irrelevant (their paths
+    // belong to previously resolved prims) and quadratic for scenes with many
+    // referenced variant instances.
+    const size_t pending_begin = pending_graft_.size();
+    ApplyVariants(prim, layer, anchor_path, depth, pending_begin);
   }
 
   // References then payloads — both bring in a target prim's opinions plus
   // its descendant subtree. Arcs deleted by a STRONGER layer are skipped
   // (visible here via pending_arc_deletes_ during sublayer composition).
+  const size_t arc_pending_begin = pending_graft_.size();
   for (const auto& ref_str : prim.meta().references) {
     if (ArcDeletedByStronger(self, ref_str)) continue;
     ResolveRefArc(layer, prim, ParseReference(ref_str), anchor_path, depth);
@@ -1446,7 +1452,7 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   // compose at reference strength, which fill-absent gives us here; sets
   // already applied in the first pass are idempotent (fill-absent no-ops).
   if (options_.resolve_variants) {
-    ApplyVariants(prim, layer, anchor_path, depth);
+    ApplyVariants(prim, layer, anchor_path, depth, arc_pending_begin);
   }
 
   // Specializes (weakest) — same-layer, fill only what is still missing.
@@ -1794,7 +1800,8 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
 }
 
 bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
-                               const std::string& anchor_path, int depth) {
+                               const std::string& anchor_path, int depth,
+                               size_t pending_graft_begin) {
   if (!options_.resolve_variants) return true;
 
   // Apply EACH variant set's selected variant (a prim may select several sets).
@@ -1864,7 +1871,13 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
     // path and is filtered out at append time.
     const std::string holder_alt =
         dst + "{" + vs.name + "=" + chosen + "}";
-    for (auto& pg : pending_graft_) {
+    // Only arcs expanded for this prim can contribute matching variant-holder
+    // paths. Older pending grafts belong to previously resolved prims; walking
+    // them for every instance made large LOD-heavy scenes O(instances*grafts).
+    pending_graft_begin = std::min(pending_graft_begin, pending_graft_.size());
+    for (size_t pending_i = pending_graft_begin;
+         pending_i < pending_graft_.size(); ++pending_i) {
+      auto& pg = pending_graft_[pending_i];
       const std::string& pp = pg.prim.path().str();
       for (const std::string& hp : holders) {
         const std::string hprefix = hp + "/";

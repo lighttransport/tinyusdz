@@ -260,7 +260,8 @@ private:
                     const std::string& src_root, const std::string& dst_root,
                     double t_offset = 0.0, double t_scale = 1.0);
   bool ApplyVariants(PrimSpec& prim, const Layer& layer,
-                     const std::string& anchor_path, int depth);
+                     const std::string& anchor_path, int depth,
+                     size_t pending_graft_begin);
   void ApplyOneVariant(PrimSpec& prim, const Layer& layer,
                        const std::string& anchor_path, int depth,
                        const VariantData& variant);
