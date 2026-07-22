@@ -29,11 +29,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 : "${TUSDVIEW_USD_ASSETS_ALLOW_PARENT:=1}"
 : "${TUSDVIEW_XVFB:=1}"
 : "${TUSDVIEW_USD_ASSETS_TIMEOUT:=60s}"
-# Report unsupported/empty assets, but only fail on crashes/hangs/backend breakage.
-: "${TUSDVIEW_USD_ASSETS_FAIL_ON:=timeout,backend_error}"
+# Curated expectations make known warnings/degradation explicit. Assets outside
+# the manifest remain ordinary smoke coverage.
+: "${TUSDVIEW_USD_ASSETS_EXPECTATIONS:=$REPO_ROOT/examples/tusdview/tests/usd-assets-expectations.tsv}"
+: "${TUSDVIEW_USD_ASSETS_FAIL_ON:=timeout,backend_error,unexpected_degradation,expectation_mismatch}"
 
 export USD_ASSETS_ROOT TUSDVIEW TUSDVIEW_USD_ASSETS_MODES \
   TUSDVIEW_USD_ASSETS_ALLOW_PARENT TUSDVIEW_XVFB TUSDVIEW_USD_ASSETS_TIMEOUT \
-  TUSDVIEW_USD_ASSETS_FAIL_ON
+  TUSDVIEW_USD_ASSETS_FAIL_ON TUSDVIEW_USD_ASSETS_EXPECTATIONS
 
 exec bash "$REPO_ROOT/examples/tusdview/tests/run-usd-assets-render-smoke.sh" "$@"

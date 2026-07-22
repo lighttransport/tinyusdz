@@ -16,6 +16,9 @@ enum class CameraViewPreset {
   Bottom,
 };
 
+enum class CameraProjection { Perspective, Orthographic };
+enum class CameraConform { Fit, Crop, Horizontal, Vertical, None };
+
 class OrbitCamera {
  public:
   // View / projection (column-major, light3d::Mat4 layout).
@@ -27,6 +30,12 @@ class OrbitCamera {
 
   void setAspect(float aspect) { viewportAspect_ = aspect > 1e-4f ? aspect : 1.0f; }
   void setFovYDeg(float deg);
+  void setProjection(CameraProjection projection) { projection_ = projection; }
+  void setOrthographicHeight(float height);
+  // Normalized filmback offsets: 2*apertureOffset/aperture. Zero is centered.
+  void setLensShift(float horizontal, float vertical);
+  void setExposure(float exposure) { exposure_ = exposure; }
+  void setConform(CameraConform conform) { conform_ = conform; }
   void setAspectOverrideEnabled(bool on) { aspectOverrideEnabled_ = on; }
   void setAspectOverride(float aspect);
   void setAutoClip(bool on) { autoClip_ = on; }
@@ -84,6 +93,12 @@ class OrbitCamera {
   float pitch() const { return pitch_; }
   float distance() const { return distance_; }
   float fovYDeg() const { return fovYDeg_; }
+  CameraProjection projection() const { return projection_; }
+  float orthographicHeight() const { return orthographicHeight_; }
+  float lensShiftX() const { return lensShiftX_; }
+  float lensShiftY() const { return lensShiftY_; }
+  float exposure() const { return exposure_; }
+  CameraConform conform() const { return conform_; }
   float aspect() const { return aspectOverrideEnabled_ ? aspectOverride_ : viewportAspect_; }
   bool aspectOverrideEnabled() const { return aspectOverrideEnabled_; }
   float aspectOverride() const { return aspectOverride_; }
@@ -108,6 +123,12 @@ class OrbitCamera {
   float distance_{5.0f};
   int upAxis_{1};         // 1 = +Y, 2 = +Z
   float fovYDeg_{60.0f};
+  CameraProjection projection_{CameraProjection::Perspective};
+  float orthographicHeight_{2.0f};
+  float lensShiftX_{0.0f};
+  float lensShiftY_{0.0f};
+  float exposure_{0.0f};  // authored Camera exposure, in stops
+  CameraConform conform_{CameraConform::Fit};
   float viewportAspect_{1.3333f};
   bool aspectOverrideEnabled_{false};
   float aspectOverride_{1.0f};

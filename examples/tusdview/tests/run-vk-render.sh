@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Run test: the Vulkan backend must come up on a real GPU and render a non-blank
-# frame, both in rasterization (--backend vk) and hardware ray-query (--rt) mode.
+# Run test: the Vulkan backend must come up on a Vulkan device and render a
+# non-blank frame in both rasterization (--backend vk) and ray-query (--rt) mode.
 #
-# This is the cross-platform "the VK path works on this GPU" check. The Vulkan
+# This is the cross-platform "the VK path works on this device" check. The Vulkan
 # GPU backends were historically only exercised on a Windows AMD Radeon RX 570 /
 # amdvlk where they mis-render; this asserts a correct render on the host GPU
 # (verified working on NVIDIA GeForce RTX 5060 Ti / Linux, see doc/tusdrender.md).
@@ -53,6 +53,29 @@ fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+# Keep the regression independent of the user's saved window size and device
+# preferences. A large interactive viewport can make llvmpipe spend longer than
+# the process timeout on the very first frame, incorrectly classifying a usable
+# software Vulkan device as unavailable.
+CONFIG="$TMP/config.json"
+cat > "$CONFIG" <<'JSON'
+{"window_size":{"width":320,"height":320}}
+JSON
+
+# llvmpipe currently advertises ray query but does not complete the offscreen
+# RT capture before the process timeout. Detect an all-CPU Vulkan installation
+# up front so the raster pass can still run and the RT pass can skip promptly.
+VK_SOFTWARE_ONLY=0
+if command -v vulkaninfo >/dev/null 2>&1 &&
+   command -v timeout >/dev/null 2>&1 &&
+   timeout 10s vulkaninfo --summary >"$TMP/vulkaninfo.log" 2>&1; then
+  if grep -q 'PHYSICAL_DEVICE_TYPE_CPU' "$TMP/vulkaninfo.log" &&
+     ! grep -Eq 'PHYSICAL_DEVICE_TYPE_(DISCRETE|INTEGRATED|VIRTUAL)_GPU' \
+       "$TMP/vulkaninfo.log"; then
+    VK_SOFTWARE_ONLY=1
+  fi
+fi
 
 MASK_ASSET="$TMP/vk_mask_opacity.usda"
 cat > "$MASK_ASSET" <<'USD'
@@ -114,9 +137,10 @@ USD
 
 run_tusdview() {
   if command -v timeout >/dev/null 2>&1; then
-    timeout --kill-after=5s "$TUSDVIEW_RENDER_TIMEOUT" "$TUSDVIEW" "$@"
+    timeout --kill-after=5s "$TUSDVIEW_RENDER_TIMEOUT" "$TUSDVIEW" \
+      --config "$CONFIG" "$@"
   else
-    "$TUSDVIEW" "$@"
+    "$TUSDVIEW" --config "$CONFIG" "$@"
   fi
 }
 
@@ -204,6 +228,16 @@ run_asset_pass() {
     echo "SKIP: Vulkan backend unavailable in this environment ($label)"
     return $SKIP
   fi
+  if [ "$label" = rt ] &&
+     ! echo "$log" | grep -Fq "Vulkan ray tracing (ray query) enabled."; then
+    echo "SKIP: Vulkan ray query unavailable; raster fallback is not an RT pass"
+    return $SKIP
+  fi
+  if echo "$log" | grep -q "load failed" ||
+     ! echo "$log" | grep -Eq 'drawn tris [1-9][0-9]*'; then
+    echo "FAIL: $label produced no renderable triangles"
+    return 1
+  fi
   if [ "$label" = "profile" ]; then
     # --max-gpu-mem is DERIVED from the device's VRAM (half of it, floor 8 GiB),
     # so assert that a positive budget was resolved, not a number that only holds
@@ -235,8 +269,12 @@ rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc
 
-# 2) Vulkan hardware ray query (falls back to raster if the GPU/shader lacks RT;
-#    we still assert a non-blank frame either way).
+# 2) Vulkan hardware ray query. Raster fallback is an explicit skip, not proof
+#    that the ray-query pipeline works.
+if [ "$VK_SOFTWARE_ONLY" -ne 0 ]; then
+  echo "SKIP: Vulkan ray query unavailable (software Vulkan only)"
+  exit $SKIP
+fi
 run_pass rt --backend vk --rt
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
@@ -255,12 +293,12 @@ if ! binary_opacity "$TMP/vk_opacity-aov.ppm"; then
 fi
 
 # 4) Generated raster mesh coverage for unsupported-but-renderable schemas.
-run_asset_pass curves-ribbons "$CURVES_ASSET" --backend vk --time 0
+run_asset_pass curves-ribbons "$CURVES_ASSET" --backend vk --legacy-load --time 0
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc
 
-run_asset_pass nurbs-patch "$NURBS_ASSET" --backend vk --time 0
+run_asset_pass nurbs-patch "$NURBS_ASSET" --backend vk --legacy-load --time 0
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc
@@ -273,5 +311,5 @@ rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc
 
-echo "PASS: Vulkan raster + ray-query + large-scene profile render correctly on this GPU"
+echo "PASS: Vulkan raster + ray-query + large-scene profile render correctly on this device"
 exit 0

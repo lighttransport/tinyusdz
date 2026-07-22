@@ -1083,6 +1083,15 @@ bool RenderSceneConverter::BuildSingleNode(
         if (geomCamera->horizontalAperture.get_value().get_scalar(&val_f)) {
           rcam.horizontalAperture = val_f;
         }
+        if (geomCamera->horizontalApertureOffset.get_value().get_scalar(&val_f)) {
+          rcam.horizontalApertureOffset = val_f;
+        }
+        if (geomCamera->verticalApertureOffset.get_value().get_scalar(&val_f)) {
+          rcam.verticalApertureOffset = val_f;
+        }
+        if (geomCamera->exposure.get_value().get_scalar(&val_f)) {
+          rcam.exposure = val_f;
+        }
 
         value::float2 range_val;
         if (geomCamera->clippingRange.get_value().get_scalar(&range_val)) {
@@ -2386,6 +2395,11 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
     return false;
   }
   CallProgressCallback(1.0f);
+
+  // Light-link collections depend on the final RenderScene mesh table. Resolve
+  // them after conversion/merge and before the streaming completion callback,
+  // so both monolithic consumers and sinks observe identical records.
+  ResolveLightLinking(env.stage, scene);
 
   if (!EmitPhase(StreamPhase::Complete)) {
     PushError("Conversion cancelled by user.\n");

@@ -3951,7 +3951,9 @@ bool RenderSceneConverter::ConvertMesh(
     if (!safe::n_to_size<value::normal3f>(normals.size(), &memcpy_size)) {
       return false;
     }
-    memcpy(dst.normals.get_data().data(), normals.data(), memcpy_size);
+    if (memcpy_size > 0) {
+      memcpy(dst.normals.get_data().data(), normals.data(), memcpy_size);
+    }
     dst.normals.elementSize = 1;
     dst.normals.stride = sizeof(value::normal3f);
     dst.normals.format = VertexAttributeFormat::Vec3;

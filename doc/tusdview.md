@@ -30,6 +30,10 @@ cmake --build build_ninja -j16 --target tusdview
   configure log. Force a GL-only build with `-DTUSDVIEW_WITH_VULKAN=OFF`.
   (Regenerate the embedded SPIR-V with `vk/shaders/build-shaders.sh` after a
   shader change — that script is the only thing that needs `glslangValidator`.)
+  The raster descriptor ABI uses four bound sets (material images, per-mesh
+  deformation data, frame data, and material parameters), matching Vulkan's
+  guaranteed `maxBoundDescriptorSets` minimum. This includes software devices
+  such as llvmpipe that expose only eight bound sets.
 - **Vulkan ray tracing** (`--rt`) is compiled in whenever
   `vk/shaders/embedded/raytrace_comp.spv.h` is present (it is, by default) and
   activates at runtime on a GPU exposing `VK_KHR_acceleration_structure` +
@@ -37,6 +41,13 @@ cmake --build build_ninja -j16 --target tusdview
   header is the only step that needs a `GL_EXT_ray_query`-capable glslang (≈
   glslang ≥ 11); build one once with `examples/common/build-glslang.sh` if you
   edit `vk/shaders/raytrace.comp`.
+  Vulkan, CUDA, and HIP RT consume the same six-slot semantic texture table
+  (base color, metallic, roughness, normal, emissive, opacity), including UV1,
+  transforms, sRGB decode, compressed-only sources, and sparse UDIMs. Masked
+  texels are rejected during traversal. Complete ordinary/compressed/UDIM mip
+  chains use trilinear filtering: ray-differential footprint LOD in Vulkan and
+  projected-triangle LOD in CUDA/HIP. Raster-style anisotropy remains future
+  work.
 - **Experimental threaded render path** (a dedicated render thread owns the GL
   context / Vulkan queue so the UI never blocks on the GPU; opt-in `--threaded`)
   is gated behind a default-OFF option:
@@ -233,6 +244,12 @@ tir/texcomp/texpipe/envmap libraries:
   ambient term with it; the VK ray-query and CUDA/HIP RT paths sample the dome
   environment on ray miss. The bake logs its wall time
   (`[tusdview] dome IBL bake ...`), typically ~0.3-0.5 s.
+- GL and Vulkan raster also evaluate the first 16 supported authored direct
+  lights in stage order. Distant and finite sphere/point, rect, disk, and
+  cylinder lights honor diffuse/specular multipliers, shaping, and per-mesh
+  light-link collections; excess supported lights produce a truncation
+  diagnostic. Finite area shapes are presently represented by their light
+  position, and raster shadow maps remain future work.
 
 `tusdrender -ibl envmap` opts the offline renderer into the same envmap-library
 precompute (default stays the built-in reference; measured parity on a dome
@@ -280,12 +297,11 @@ record/submit p95 was 0.3 ms.
 screenshots are deterministic. Pixel-compare two screenshots (e.g. backend or
 threaded-vs-single parity) with PIL/numpy:
 
-The Vulkan RT shaded mode uses material base color, alpha, roughness, metallic,
-and emissive constants plus interpolated `displayOpacity`. Material-image
-sampling remains a separate follow-up: separate opacity images are supported by
-GL/VK raster only (including UDIM masks), while RT receives the vertex alpha but
-does not sample that image. This does not change texture resize or
-compressed-texture behavior.
+The Vulkan/CUDA/HIP RT shaded modes sample base color, independent metallic and
+roughness, normal, emissive, and opacity images, including sparse UDIM and
+compressed-only inputs decoded into the shared mipmapped table. Vulkan uses
+ray-footprint LOD and CUDA/HIP use projected-triangle LOD, both with trilinear
+filtering. Raster texture resize/compression behavior is unchanged.
 
 ```sh
 python3 -c "from PIL import Image; import numpy as np; \
@@ -472,8 +488,8 @@ xvfb-run -a glxinfo | grep "OpenGL renderer"   # -> NVIDIA GeForce ... (was: llv
 ```
 
 - The **Vulkan** backend already selects the discrete GPU on its own — these vars
-  are not needed for `--backend vk` (confirm via `vulkaninfo --summary`, or that
-  `maxBoundDescriptorSets` is 32 rather than llvmpipe/lavapipe's 8).
+  are not needed for `--backend vk` (confirm via `vulkaninfo --summary` or the
+  device name printed by tusdview at startup).
 - **Caveat — wall-clock is misleading here.** PRIME renders on the NVIDIA GPU but
   *presents* through the software xvfb X server, so each frame pays a GPU→X blit
   (~89 ms/frame observed) that has nothing to do with draw cost. **Measure GPU-side,

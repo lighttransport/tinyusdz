@@ -14,6 +14,8 @@ layout(location = 2) in vec2 vcUV[];
 layout(location = 0) out vec3 tcPos[];
 layout(location = 1) out vec3 tcNrm[];
 layout(location = 2) out vec2 tcUV[];
+struct RasterLight { vec4 positionType; vec4 directionAngle;
+                     vec4 colorDiffuse; vec4 specularShape; };
 
 // Must match PushC / mesh.vert exactly (shared push-constant range).
 layout(push_constant) uniform PushConstants {
@@ -25,7 +27,7 @@ layout(push_constant) uniform PushConstants {
 } pc;
 
 // Frame UBO (set 5): .disp.y = max tessellation level, camPos for edge LOD.
-layout(set = 5, binding = 0) uniform Frame {
+layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;
   vec4 camPos;
@@ -33,6 +35,8 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 sceneExtent;
   vec4 lightDir;
   vec4 lightColor;
+  RasterLight rasterLights[16];
+  uvec4 rasterLightInfo;
   ivec4 mode;
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)

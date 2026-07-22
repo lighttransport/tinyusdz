@@ -17,6 +17,8 @@ layout(location = 5) in vec4 aRow2;
 layout(location = 9) in vec4 aInstColor;  // per-instance color/opacity (instance-rate)
 layout(location = 10) in vec4 aVtxColor;  // displayColor.rgb + displayOpacity
 layout(location = 8) in uvec2 aMorphOffsetCount;  // GPU morph (offset,count); 0=none
+struct RasterLight { vec4 positionType; vec4 directionAngle;
+                     vec4 colorDiffuse; vec4 specularShape; };
 
 // Skeletal skinning of the PROTOTYPE, in prototype-LOCAL space (before the
 // per-instance transform), so all instances of a prototype share one bone block --
@@ -35,7 +37,7 @@ layout(buffer_reference, scalar, buffer_reference_align = 16) readonly buffer We
 
 // Per-draw metadata (set 6), shared with mesh_inst.frag -- must match DrawMetaCPU.
 struct DrawMeta { ivec4 ids; uint64_t jointAddr; uint64_t weightAddr; };
-layout(set = 6, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
+layout(set = 3, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
 
 mat4 fetchBone(uint idx) {
   int base = int(idx) * 4;
@@ -47,16 +49,16 @@ mat4 fetchBone(uint idx) {
 // prototype is summed into its local position before the per-instance transform.
 // Non-morphed meshes bind the shared dummy sets and carry count 0, so the loop
 // is skipped. The morph is per-prototype -- shared by all instances of it.
-layout(set = 7, binding = 0, std430) readonly buffer MorphDeltas { uvec2 morphDeltas[]; };
-layout(set = 8, binding = 0, std430) readonly buffer MorphCoeffs { float morphCoeff[]; };
-layout(set = 9, binding = 0, std430) readonly buffer MorphChan { uint morphChanPacked[]; };
+layout(set = 1, binding = 2, std430) readonly buffer MorphDeltas { uvec2 morphDeltas[]; };
+layout(set = 1, binding = 3, std430) readonly buffer MorphCoeffs { float morphCoeff[]; };
+layout(set = 1, binding = 4, std430) readonly buffer MorphChan { uint morphChanPacked[]; };
 uint morphChanId(uint e) {  // entry index -> channelId (low/high 16 of the uint)
   return (morphChanPacked[e >> 1u] >> ((e & 1u) << 4u)) & 0xffffu;
 }
 
 // Frame UBO (set 5): viewProj / camPos / scene bbox / renderMode, frame-constant
 // for the whole instanced pass (shared with the mesh pipeline).
-layout(set = 5, binding = 0) uniform Frame {
+layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;     // P * V
   vec4 camPos;       // xyz camera, w depthScale
@@ -64,6 +66,8 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 sceneExtent;
   vec4 lightDir;
   vec4 lightColor;
+  RasterLight rasterLights[16];
+  uvec4 rasterLightInfo;
   ivec4 mode;        // .x renderMode
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)

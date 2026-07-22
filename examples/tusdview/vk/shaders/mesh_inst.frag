@@ -11,6 +11,8 @@ layout(location = 2) in vec3 vColor;
 layout(location = 3) in float vOpacity;
 layout(location = 4) flat in int vInstanceId;
 layout(location = 5) flat in int vDrawSlot;
+struct RasterLight { vec4 positionType; vec4 directionAngle;
+                     vec4 colorDiffuse; vec4 specularShape; };
 
 // Per-draw metadata (set 6), indexed by the vertex-resolved draw slot. Replaces
 // the old per-draw push constant so a whole multi-draw-indirect batch shares one
@@ -19,15 +21,15 @@ layout(location = 5) flat in int vDrawSlot;
 // Must match DrawMetaCPU / mesh_inst.vert: the skin addresses are unused here but
 // are part of the layout.
 struct DrawMeta { ivec4 ids; uint64_t jointAddr; uint64_t weightAddr; };
-layout(set = 6, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
+layout(set = 3, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
 
 // Frame UBO (set 5): camera / scene bbox / renderMode (frame-constant).
 // DomeLight IBL irradiance (diffuse-only: prototypes carry no material
 // scalars). Set 0 is otherwise unused by the instanced pipeline; a 1x1 black
 // cube is bound when no dome IBL is baked.
-layout(set = 0, binding = 0) uniform samplerCube uIrradianceMap;
+layout(set = 0, binding = 12) uniform samplerCube uIrradianceMap;
 
-layout(set = 5, binding = 0) uniform Frame {
+layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;
   vec4 camPos;       // xyz camera, w depthScale
@@ -35,10 +37,12 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 sceneExtent;
   vec4 lightDir;
   vec4 lightColor;
+  RasterLight rasterLights[16];
+  uvec4 rasterLightInfo;
   ivec4 mode;        // .x renderMode
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
-  vec4 iblParams;     // .x = prefiltered mip count
+  vec4 iblParams;     // .x = prefiltered mip count, .y = exposure stops
 } fr;
 layout(push_constant) uniform InstPushC { ivec4 draw; } pc;  // .x = baseDraw (unused here)
 
@@ -57,6 +61,20 @@ vec3 linearToSrgb(vec3 c) {
   vec3 lo = c * 12.92;
   vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
   return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
+}
+
+float ggxD(float nh, float r) {
+  float a = max(r * r, 0.002), a2 = a * a;
+  float d = nh * nh * (a2 - 1.0) + 1.0;
+  return a2 / max(3.14159265 * d * d, 1e-6);
+}
+float ggxG1(float nx, float r) {
+  float k = (r + 1.0) * (r + 1.0) * 0.125;
+  return nx / max(nx * (1.0 - k) + k, 1e-6);
+}
+vec3 fresnel(float vh, vec3 f0) {
+  return f0 + (vec3(1.0) - f0) *
+                  pow(1.0 - clamp(vh, 0.0, 1.0), 5.0);
 }
 vec3 purposeColor(int p) {
   if (p == 1) return vec3(0.2, 0.8, 0.3);
@@ -121,29 +139,68 @@ void main() {
     outColor = vec4(0.18, 0.18, 0.18, 1.0); return;
   }
   vec3 V = normalize(fr.camPos.xyz - vWorldPos);
-  // Soft camera-headlight shading, matching mesh.frag / the GL backend so an
-  // instanced prototype shades like the same mesh drawn non-instanced. No
-  // material scalars here (flat prototypes): metallic 0, a mid roughness for the
-  // specular tightness.
+  // Fixed dielectric GGX material, matching the GL instanced path.
   vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
-  float facing = max(dot(Nf, V), 0.0);
-  vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
-               ? normalize(fr.lightDir.xyz)
-               : normalize(vec3(0.3, 0.5, 0.8));
-  vec3 lightColor = (dot(fr.lightColor.rgb, fr.lightColor.rgb) > 1e-8)
-                        ? fr.lightColor.rgb
-                        : vec3(1.0);
-  float key = dot(Nf, L) * 0.5 + 0.5;
-  float shade = 0.6 * facing + 0.4 * key;
+  float nv = max(dot(Nf, V), 1e-4);
+  const float r = 0.5;
   vec3 ambient = (fr.iblColor.w > 0.5)
                  ? vColor * texture(uIrradianceMap,
                                     normalize(mat3(fr.envRot) * Nf)).rgb *
                        fr.iblColor.rgb
-                 : vColor * 0.25;
-  vec3 H = normalize(L + V);
-  // Spec matches the GL instanced shader (kInstancedFS) exactly, so instanced
-  // prototypes are GL<->VK identical: a fixed 0.12 * pow(N.H, 32) * facing.
-  float spec = 0.12 * pow(max(dot(Nf, H), 0.0), 32.0) * facing;
-  vec3 col = ambient + vColor * lightColor * (0.75 * shade) + lightColor * spec;
-  outColor = vec4(linearToSrgb(col), vOpacity);  // no selection emissive here
+                 : vColor * 0.12;
+  vec3 direct = vec3(0.0);
+  uint lightMask = uint(meta[vDrawSlot].ids.z);
+  for (uint li = 0u; li < min(fr.rasterLightInfo.x, 16u); ++li) {
+    if ((lightMask & (1u << li)) == 0u) continue;
+    vec4 pt = fr.rasterLights[li].positionType;
+    vec4 da = fr.rasterLights[li].directionAngle;
+    vec4 lc = fr.rasterLights[li].colorDiffuse;
+    vec4 ss = fr.rasterLights[li].specularShape;
+    int lightType = int(pt.w + 0.5);
+    vec3 L;
+    float attenuation = 1.0;
+    if (lightType == 5) L = normalize(da.xyz);
+    else {
+      vec3 toLight = pt.xyz - vWorldPos;
+      float dist2 = max(dot(toLight, toLight), 1e-6);
+      L = toLight * inversesqrt(dist2);
+      attenuation = 1.0 / dist2;
+    }
+    float shape = 1.0;
+    if (ss.w > 0.5 && lightType != 5) {
+      float coneCos = dot(normalize(da.xyz), -L);
+      float outer = cos(radians(clamp(da.w, 0.0, 180.0)));
+      float inner = cos(radians(clamp(da.w * (1.0 - clamp(ss.y, 0.0, 1.0)),
+                                      0.0, 180.0)));
+      shape = smoothstep(outer, max(inner, outer + 1e-5), coneCos) *
+              pow(max(coneCos, 0.0), max(ss.z, 0.0));
+    }
+    float nl = max(dot(Nf, L), 0.0);
+    if (nl <= 0.0 || shape <= 0.0) continue;
+    vec3 H = normalize(L + V);
+    float nh = max(dot(Nf, H), 0.0), vh = max(dot(V, H), 0.0);
+    vec3 F = fresnel(vh, vec3(0.04));
+    vec3 spec = ggxD(nh, r) * ggxG1(nv, r) * ggxG1(nl, r) * F /
+                max(4.0 * nv * nl, 1e-5);
+    vec3 diff = (vec3(1.0) - F) * vColor * (1.0 / 3.14159265);
+    direct += (diff * lc.w + spec * ss.x) * lc.rgb *
+              (attenuation * shape * nl);
+  }
+  if (fr.rasterLightInfo.x == 0u) {
+    vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
+                 ? normalize(fr.lightDir.xyz)
+                 : normalize(vec3(0.3, 0.5, 0.8));
+    vec3 lightColor = (dot(fr.lightColor.rgb, fr.lightColor.rgb) > 1e-8)
+                          ? fr.lightColor.rgb : vec3(1.0);
+    float nl = max(dot(Nf, L), 0.0);
+    vec3 H = normalize(L + V);
+    float nh = max(dot(Nf, H), 0.0), vh = max(dot(V, H), 0.0);
+    vec3 F = fresnel(vh, vec3(0.04));
+    vec3 spec = ggxD(nh, r) * ggxG1(nv, r) * ggxG1(nl, r) * F /
+                max(4.0 * nv * nl, 1e-5);
+    vec3 diff = (vec3(1.0) - F) * vColor * (1.0 / 3.14159265);
+    direct = (diff + spec) * lightColor * nl;
+  }
+  vec3 col = ambient + direct;
+  outColor = vec4(linearToSrgb(col * exp2(fr.iblParams.y)), vOpacity);  // no selection emissive here
 }

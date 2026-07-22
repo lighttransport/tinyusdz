@@ -35,6 +35,10 @@ SKIP = 77
 
 
 def run(xvfb, binary, model, out, frames, extra_env=None):
+    try:
+        os.remove(out)
+    except FileNotFoundError:
+        pass
     cmd = [xvfb, "-a", binary, "--next", "--hip", "--play",
            "--frames", str(frames), "--screenshot", out, model]
     env = dict(os.environ)
@@ -43,7 +47,7 @@ def run(xvfb, binary, model, out, frames, extra_env=None):
         env.update(extra_env)
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        env=env, timeout=900)
-    return r.stdout.decode(errors="replace")
+    return r.stdout.decode(errors="replace"), r.returncode
 
 
 def read(path):
@@ -66,7 +70,12 @@ def main():
     refit_png = os.path.join(work, "refit.ppm")
     rebuild_png = os.path.join(work, "rebuild.ppm")
 
-    log_a = run(xvfb, binary, model, refit_png, frames=90)
+    log_a, rc_a = run(xvfb, binary, model, refit_png, frames=90)
+    if rc_a != 0 and ("glfwInit failed" in log_a or
+                      "glfwCreateWindow failed" in log_a or
+                      "Failed to open display" in log_a):
+        print("SKIP: no usable X11/GLFW display")
+        return SKIP
     if "HIP" in log_a and ("unavailable" in log_a or "no HIP device" in log_a):
         print("SKIP: no HIP device")
         return SKIP
@@ -75,8 +84,13 @@ def main():
               "(no HIP device or no X?)\n--- log tail ---\n" + log_a[-2000:])
         return SKIP
 
-    log_b = run(xvfb, binary, model, rebuild_png, frames=90,
-                extra_env={"TUSDVIEW_NO_BVH_REFIT": "1"})
+    log_b, rc_b = run(xvfb, binary, model, rebuild_png, frames=90,
+                      extra_env={"TUSDVIEW_NO_BVH_REFIT": "1"})
+    if rc_b != 0 and ("glfwInit failed" in log_b or
+                      "glfwCreateWindow failed" in log_b or
+                      "Failed to open display" in log_b):
+        print("SKIP: no usable X11/GLFW display")
+        return SKIP
     if not os.path.exists(rebuild_png):
         print("FAIL: rebuild run produced no screenshot")
         return 1

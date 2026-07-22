@@ -58,12 +58,13 @@ int main() {
 
   const int baseImage = AddImage(&scene, tydra::ColorSpace::sRGB_Texture);
   const int mrImage = AddImage(&scene, tydra::ColorSpace::Raw);
+  const int roughImage = AddImage(&scene, tydra::ColorSpace::Raw);
   const int emissiveImage = AddImage(&scene, tydra::ColorSpace::sRGB_Texture);
   const int normalImage = AddImage(&scene, tydra::ColorSpace::Raw);
 
   const int baseTex = AddTexture(&scene, baseImage, tydra::UVTexture::Channel::RGB);
   const int metalTex = AddTexture(&scene, mrImage, tydra::UVTexture::Channel::B);
-  const int roughTex = AddTexture(&scene, mrImage, tydra::UVTexture::Channel::G);
+  const int roughTex = AddTexture(&scene, roughImage, tydra::UVTexture::Channel::G);
   const int emissiveTex =
       AddTexture(&scene, emissiveImage, tydra::UVTexture::Channel::RGB);
   const int normalTex = AddTexture(&scene, normalImage, tydra::UVTexture::Channel::RGB);
@@ -87,13 +88,24 @@ int main() {
   shader.base_roughness.texture_id = roughTex;
   shader.normal.texture_id = normalTex;
   shader.coat_normal.texture_id = normalTex;
+  shader.coat_weight.value = 0.6f;
+  shader.coat_color.value = {0.7f, 0.8f, 0.9f};
+  shader.coat_roughness.value = 0.2f;
+  shader.coat_ior.value = 1.4f;
   shader.emission_luminance.value = 3.0f;
   shader.emission_color.value = {0.1f, 0.2f, 0.3f};
   shader.emission_color.texture_id = emissiveTex;
   shader.opacity.value = 0.7f;
+  shader.transmission_weight.value = 0.2f;
+  shader.subsurface_weight.value = 0.3f;
+  shader.sheen_weight.value = 0.4f;
+  shader.thin_film_weight.value = 0.5f;
+  shader.specular_anisotropy.value = 0.6f;
+  shader.transmission_dispersion.value = 0.7f;
 
   tydra::RenderMaterial material;
   material.name = "openpbr_textured";
+  material.abs_path = "/World/Looks/OpenPBR";
   material.openPBRShader = shader;
   material.computeMaterialTag();
   scene.materials.push_back(std::move(material));
@@ -151,27 +163,32 @@ int main() {
                  draw.materials.size());
     return 1;
   }
-  if (draw.textures.size() != 4) {
-    std::fprintf(stderr, "expected four deduplicated textures, got %zu\n",
+  if (draw.textures.size() != 5) {
+    std::fprintf(stderr, "expected five independent/deduplicated textures, got %zu\n",
                  draw.textures.size());
     return 1;
   }
   if (draw.textures[0].assetIdentifier != "asset_0.png" ||
       draw.textures[0].renderImageId != baseImage ||
-      draw.textures[3].assetIdentifier != "asset_3.png" ||
-      draw.textures[3].renderImageId != normalImage) {
+      draw.textures[4].assetIdentifier != "asset_4.png" ||
+      draw.textures[4].renderImageId != normalImage) {
     std::fprintf(stderr, "texture source metadata was not preserved\n");
     return 1;
   }
 
   const tusdview::DrawMaterialCPU& mat = draw.materials[0];
-  if (mat.baseColorTex < 0 || mat.metalRoughTex < 0 || mat.normalTex < 0 ||
+  if (mat.baseColorTex < 0 || mat.metallicTex < 0 || mat.roughnessTex < 0 || mat.normalTex < 0 ||
       mat.coatNormalTex < 0 || mat.emissiveTex < 0) {
     std::fprintf(stderr, "OpenPBR texture slots were not populated\n");
     return 1;
   }
-  if (mat.metalRoughTex != mat.baseColorTex + 1) {
-    std::fprintf(stderr, "unexpected metal/rough texture dedup order\n");
+  if (mat.metallicTex != mat.baseColorTex + 1) {
+    std::fprintf(stderr, "unexpected metallic texture order\n");
+    return 1;
+  }
+  if (mat.roughnessTex != mat.baseColorTex + 2 ||
+      mat.roughnessTex == mat.metallicTex) {
+    std::fprintf(stderr, "independent roughness image collapsed into metallic\n");
     return 1;
   }
   if (mat.metallicChannel != 2 || mat.roughnessChannel != 1 ||
@@ -191,6 +208,12 @@ int main() {
   if (!Near(mat.normalSample.scale[0], 2.0f) ||
       !Near(mat.normalSample.bias[0], -1.0f)) {
     std::fprintf(stderr, "OpenPBR normal texture unpack defaults are wrong\n");
+    return 1;
+  }
+  if (!Near(mat.coatWeight, 0.6f) || !Near(mat.coatColor[0], 0.7f) ||
+      !Near(mat.coatColor[1], 0.8f) || !Near(mat.coatColor[2], 0.9f) ||
+      !Near(mat.coatRoughness, 0.2f) || !Near(mat.coatIor, 1.4f)) {
+    std::fprintf(stderr, "OpenPBR realtime coat constants were not preserved\n");
     return 1;
   }
   if (!Near(mat.normalSample.uv.m00, 2.0f) ||
@@ -249,6 +272,25 @@ int main() {
       !Near(mat.lightRtOpenPBR.emissionColor[0], 1.0f) ||
       !Near(mat.lightRtOpenPBR.emission, 3.0f)) {
     std::fprintf(stderr, "LightRT/OpenPBR texture neutral factors are wrong\n");
+    return 1;
+  }
+  if (draw.skipped.size() != 1 ||
+      draw.skipped[0].find("material '/World/Looks/OpenPBR'") ==
+          std::string::npos ||
+      draw.skipped[0].find("transmission") == std::string::npos ||
+      draw.skipped[0].find("subsurface") == std::string::npos ||
+      draw.skipped[0].find("sheen/fuzz") == std::string::npos ||
+      draw.skipped[0].find("thin-film") == std::string::npos ||
+      draw.skipped[0].find("anisotropy") == std::string::npos ||
+      draw.skipped[0].find("dispersion") == std::string::npos) {
+    std::fprintf(stderr, "unsupported real-time lobe diagnostic is incomplete\n");
+    return 1;
+  }
+  const tusdview::LoadDiagnostics diagnostics =
+      tusdview::CategorizeLoadWarnings("", draw.skipped);
+  if (diagnostics.unsupported_lobes != 1 || diagnostics.skipped != 0 ||
+      diagnostics.actionable() != 1) {
+    std::fprintf(stderr, "unsupported lobe summary was not categorized\n");
     return 1;
   }
 

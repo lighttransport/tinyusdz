@@ -54,6 +54,36 @@ std::string FirstUSDZEntryName(const std::vector<uint8_t> &data) {
                      name_len);
 }
 
+void AppendUnalignedStoredZipEntry(std::vector<uint8_t> *data,
+                                   const std::string &name,
+                                   const std::string &bytes) {
+  const size_t base = data->size();
+  data->resize(base + 30, 0);
+  auto put16 = [data, base](size_t offset, uint16_t v) {
+    (*data)[base + offset + 0] = static_cast<uint8_t>(v & 0xffu);
+    (*data)[base + offset + 1] = static_cast<uint8_t>((v >> 8) & 0xffu);
+  };
+  auto put32 = [data, base](size_t offset, uint32_t v) {
+    (*data)[base + offset + 0] = static_cast<uint8_t>(v & 0xffu);
+    (*data)[base + offset + 1] = static_cast<uint8_t>((v >> 8) & 0xffu);
+    (*data)[base + offset + 2] = static_cast<uint8_t>((v >> 16) & 0xffu);
+    (*data)[base + offset + 3] = static_cast<uint8_t>((v >> 24) & 0xffu);
+  };
+
+  (*data)[base + 0] = 0x50;
+  (*data)[base + 1] = 0x4b;
+  (*data)[base + 2] = 0x03;
+  (*data)[base + 3] = 0x04;
+  put16(4, 20);  // version needed
+  put16(8, 0);   // stored
+  put32(18, static_cast<uint32_t>(bytes.size()));
+  put32(22, static_cast<uint32_t>(bytes.size()));
+  put16(26, static_cast<uint16_t>(name.size()));
+  put16(28, 0);
+  data->insert(data->end(), name.begin(), name.end());
+  data->insert(data->end(), bytes.begin(), bytes.end());
+}
+
 std::vector<uint8_t> MakeUnalignedStoredZipWithUSDARoot() {
   const std::string name = "root.usda";
   const std::string usda = "#usda 1.0\n\ndef Xform \"root\"\n{\n}\n";
@@ -84,7 +114,6 @@ std::vector<uint8_t> MakeUnalignedStoredZipWithUSDARoot() {
   data.insert(data.end(), name.begin(), name.end());
   TEST_CHECK((data.size() % 64) != 0);
   data.insert(data.end(), usda.begin(), usda.end());
-  data.resize(128, 0);
   return data;
 }
 
@@ -210,6 +239,117 @@ void usdz_reader_loads_unaligned_stored_zip_test(void) {
   TEST_CHECK(loaded_stage.root_prims().size() == 1);
 }
 
+void usdz_reader_first_entry_root_test(void) {
+  const std::string usda = "#usda 1.0\n\ndef Xform \"root\"\n{\n}\n";
+
+  // A later USD layer must not rescue a package whose first entry is an asset.
+  // The old format-preference search selected late.usda and accepted this.
+  std::vector<uint8_t> invalid;
+  AppendUnalignedStoredZipEntry(&invalid, "textures/first.bin", "not usd");
+  AppendUnalignedStoredZipEntry(&invalid, "late.usda", usda);
+  tinyusdz::Stage stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDZFromMemory(
+      invalid.data(), invalid.size(), "invalid-root.usdz", &stage, &warn, &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("first entry") != std::string::npos);
+
+  // The neutral .usd extension is valid when the first entry's content is USD.
+  // Also retain that ordered root name explicitly: asset_map sorts a.png before
+  // z-root.usd and therefore cannot encode package entry order by itself.
+  std::vector<uint8_t> valid;
+  AppendUnalignedStoredZipEntry(&valid, "z-root.usd", usda);
+  AppendUnalignedStoredZipEntry(&valid, "a.png", "image");
+  tinyusdz::USDZAsset asset;
+  warn.clear();
+  err.clear();
+  ret = tinyusdz::ReadUSDZAssetInfoFromMemory(
+      valid.data(), valid.size(), true, &asset, &warn, &err);
+  TEST_CHECK(ret);
+  TEST_CHECK(asset.root_asset_name == "z-root.usd");
+  TEST_CHECK(!asset.asset_map.empty());
+  TEST_CHECK(asset.asset_map.begin()->first == "a.png");
+
+  tinyusdz::AssetResolutionResolver resolver;
+  TEST_CHECK(tinyusdz::SetupUSDZAssetResolution(resolver, &asset));
+  TEST_CHECK(resolver.has_asset_resolution_handler("usd"));
+  TEST_CHECK(resolver.has_asset_resolution_handler("usda"));
+  TEST_CHECK(resolver.has_asset_resolution_handler("usdc"));
+  TEST_CHECK(resolver.has_asset_resolution_handler("avif"));
+  TEST_CHECK(resolver.has_asset_resolution_handler("m4a"));
+  TEST_CHECK(resolver.has_asset_resolution_handler("mp3"));
+  TEST_CHECK(resolver.has_asset_resolution_handler("wav"));
+
+  std::vector<uint8_t> unsafe;
+  AppendUnalignedStoredZipEntry(&unsafe, "../root.usda", usda);
+  warn.clear();
+  err.clear();
+  ret = tinyusdz::LoadUSDZFromMemory(
+      unsafe.data(), unsafe.size(), "unsafe.usdz", &stage, &warn, &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("Unsafe USDZ entry path") != std::string::npos);
+  warn.clear();
+  err.clear();
+  ret = tinyusdz::ValidateUSDZ(unsafe.data(), unsafe.size(), &warn, &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("unsafe USDZ entry path") != std::string::npos);
+
+  std::vector<uint8_t> duplicate;
+  AppendUnalignedStoredZipEntry(&duplicate, "root.usda", usda);
+  AppendUnalignedStoredZipEntry(&duplicate, "root.usda", usda);
+  warn.clear();
+  err.clear();
+  ret = tinyusdz::LoadUSDZFromMemory(
+      duplicate.data(), duplicate.size(), "duplicate.usdz", &stage, &warn,
+      &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("Duplicate USDZ entry path") != std::string::npos);
+  warn.clear();
+  err.clear();
+  ret = tinyusdz::ValidateUSDZ(duplicate.data(), duplicate.size(), &warn,
+                               &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("duplicate USDZ entry path") != std::string::npos);
+
+  std::vector<uint8_t> truncated_later;
+  AppendUnalignedStoredZipEntry(&truncated_later, "root.usda", usda);
+  truncated_later.push_back(0x50);
+  truncated_later.push_back(0x4b);
+  truncated_later.push_back(0x03);
+  warn.clear();
+  err.clear();
+  ret = tinyusdz::LoadUSDZFromMemory(
+      truncated_later.data(), truncated_later.size(), "truncated.usdz",
+      &stage, &warn, &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("Invalid or truncated data") != std::string::npos);
+
+  // Reusing an output object after a failed read must not expose the previous
+  // archive's map or backing pointer to an asset resolver.
+  std::vector<uint8_t> malformed(128, 0);
+  warn.clear();
+  err.clear();
+  ret = tinyusdz::ReadUSDZAssetInfoFromMemory(
+      malformed.data(), malformed.size(), true, &asset, &warn, &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(asset.root_asset_name.empty());
+  TEST_CHECK(asset.asset_map.empty());
+  TEST_CHECK(asset.data.empty());
+  TEST_CHECK(asset.addr == nullptr);
+  TEST_CHECK(asset.size == 0);
+
+  warn.clear();
+  err.clear();
+  ret = tinyusdz::LoadUSDZFromMemory(valid.data(), valid.size(),
+                                     "neutral-root.usdz", &stage, &warn, &err);
+  TEST_CHECK(ret);
+  if (!ret) {
+    TEST_MSG("LoadUSDZFromMemory .usd root failed: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(stage.root_prims().size() == 1);
+}
+
 void usdz_writer_root_layer_format_test(void) {
   tinyusdz::Stage stage = MakeSimpleUSDZWriterStage();
   std::map<std::string, std::vector<uint8_t>> assets;
@@ -226,6 +366,31 @@ void usdz_writer_root_layer_format_test(void) {
       return;
     }
     TEST_CHECK(FirstUSDZEntryName(usdz_data) == "root.usdc");
+
+    // A USD-like substring is not a root-layer extension, and a recognized
+    // extension must agree with the root payload's magic.
+    std::vector<uint8_t> deceptive_name = usdz_data;
+    const char deceptive[] = "x.usda.zz";
+    static_assert(sizeof(deceptive) - 1 == 9, "replacement must fit");
+    memcpy(deceptive_name.data() + 30, deceptive, sizeof(deceptive) - 1);
+    warn.clear();
+    err.clear();
+    ret = tinyusdz::ValidateUSDZ(deceptive_name.data(), deceptive_name.size(),
+                                 &warn, &err);
+    TEST_CHECK(!ret);
+    TEST_CHECK(err.find("extension matches its content") != std::string::npos);
+
+    std::vector<uint8_t> mismatched_format = usdz_data;
+    const char usda_name[] = "root.usda";
+    static_assert(sizeof(usda_name) - 1 == 9, "replacement must fit");
+    memcpy(mismatched_format.data() + 30, usda_name,
+           sizeof(usda_name) - 1);
+    warn.clear();
+    err.clear();
+    ret = tinyusdz::ValidateUSDZ(mismatched_format.data(),
+                                 mismatched_format.size(), &warn, &err);
+    TEST_CHECK(!ret);
+    TEST_CHECK(err.find("extension matches its content") != std::string::npos);
   }
 
   {
@@ -425,6 +590,25 @@ void usdz_validator_size_consistency_test(void) {
   if (!ret) {
     TEST_MSG("Size consistency check failed: %s", err.c_str());
   }
+
+  std::vector<uint8_t> mismatched_size = usdz_data;
+  TEST_ASSERT(mismatched_size.size() >= 26);
+  mismatched_size[18] ^= 1;
+  warn.clear();
+  err.clear();
+  ret = tinyusdz::ValidateUSDZ(mismatched_size.data(), mismatched_size.size(),
+                               &warn, &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("compressed size") != std::string::npos);
+
+  tinyusdz::Stage loaded_stage;
+  warn.clear();
+  err.clear();
+  ret = tinyusdz::LoadUSDZFromMemory(
+      mismatched_size.data(), mismatched_size.size(), "mismatched-size.usdz",
+      &loaded_stage, &warn, &err);
+  TEST_CHECK(!ret);
+  TEST_CHECK(err.find("mismatched compressed") != std::string::npos);
 }
 
 // Test 6: Validate empty/null input handling

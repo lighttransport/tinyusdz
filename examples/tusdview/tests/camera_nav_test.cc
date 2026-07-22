@@ -18,6 +18,51 @@ int main() {
   const float boundsMax[3] = {1.0f, 1.0f, 1.0f};
   camera.setSceneBounds(boundsMin, boundsMax);
 
+  camera.setAutoClip(false);
+  camera.setClipPlanes(1.0f, 11.0f);
+  camera.setAspect(2.0f);
+  camera.setProjection(tusdview::CameraProjection::Orthographic);
+  camera.setOrthographicHeight(4.0f);
+  camera.setLensShift(0.25f, -0.5f);
+  camera.setExposure(1.25f);
+  if (!Near(camera.exposure(), 1.25f)) {
+    std::fprintf(stderr, "authored camera exposure was not retained\n");
+    return 1;
+  }
+  const light3d::Mat4 orthoGl = camera.proj(false);
+  const light3d::Mat4 orthoVk = camera.proj(true);
+  if (!Near(orthoGl.m[0], 0.25f) || !Near(orthoGl.m[5], 0.5f) ||
+      !Near(orthoGl.m[12], -0.25f) || !Near(orthoGl.m[13], 0.5f) ||
+      !Near(orthoGl.m[10], -0.2f) || !Near(orthoGl.m[14], -1.2f) ||
+      !Near(orthoVk.m[10], -0.1f) || !Near(orthoVk.m[14], -0.1f)) {
+    std::fprintf(stderr, "authored orthographic projection is incorrect\n");
+    return 1;
+  }
+  camera.setProjection(tusdview::CameraProjection::Perspective);
+  const light3d::Mat4 shiftedPerspective = camera.proj(false);
+  if (!Near(shiftedPerspective.m[8], 0.25f) ||
+      !Near(shiftedPerspective.m[9], -0.5f)) {
+    std::fprintf(stderr, "perspective filmback offset is incorrect\n");
+    return 1;
+  }
+  camera.setLensShift(0.0f, 0.0f);
+  camera.setAspect(1.0f);
+  camera.setAspectOverride(2.0f);
+  camera.setAspectOverrideEnabled(true);
+  camera.setConform(tusdview::CameraConform::Fit);
+  const light3d::Mat4 fitProjection = camera.proj(false);
+  camera.setConform(tusdview::CameraConform::Vertical);
+  const light3d::Mat4 verticalProjection = camera.proj(false);
+  camera.setConform(tusdview::CameraConform::None);
+  const light3d::Mat4 noneProjection = camera.proj(false);
+  if (!Near(fitProjection.m[5] * 2.0f, verticalProjection.m[5]) ||
+      !Near(noneProjection.m[0] * 2.0f, noneProjection.m[5])) {
+    std::fprintf(stderr, "filmback conform policy is incorrect\n");
+    return 1;
+  }
+  camera.setAspectOverrideEnabled(false);
+  camera.setAutoClip(true);
+
   // Outside a compact scene, auto-clip should spend depth precision on the
   // occupied range instead of retaining an inspection-scale near plane.
   camera.setOrbit(light3d::Vec3{0.0f, 0.0f, 0.0f}, 0.6f, 0.35f, 100.0f);

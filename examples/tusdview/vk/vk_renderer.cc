@@ -45,6 +45,12 @@ namespace tusdview {
 
 namespace {
 
+constexpr uint32_t kRasterDescriptorSetCount = 4;
+constexpr uint32_t kMaterialBindingCount = 17;
+constexpr uint32_t kDeformBindingCount = 7;
+constexpr uint32_t kMaxMaterialSets = 8192;
+constexpr uint32_t kMaxDeformSets = 16384;
+
 #define VK_CHECK(expr, msg)                                  \
   do {                                                       \
     VkResult _r = (expr);                                    \
@@ -218,16 +224,16 @@ struct PushC {
 static_assert(sizeof(PushC) == 128, "PushC must match mesh shaders and fit maxPushConstantsSize>=128");
 
 // Instanced flat-shaded prototype push constants (must match mesh_inst.vert/.frag).
-// viewProj / camPos / scene bbox / renderMode are frame-constant -> set-5 Frame UBO.
+// viewProj / camPos / scene bbox / renderMode are frame-constant -> set-2 Frame UBO.
 struct InstPushC {
   int32_t draw[4];     // 16  .x = baseDraw: base slot into the DrawMeta SSBO
 };
 static_assert(sizeof(InstPushC) == 16, "InstPushC must match mesh_inst shaders");
-// The per-draw metadata entry (set 6) is VulkanRenderer::DrawMetaCPU {int32_t
+// The per-draw metadata entry (set 3) is VulkanRenderer::DrawMetaCPU {int32_t
 // ids[4]}, matching the shader's std430 DrawMeta{ivec4}: .x meshId, .y flag bits.
 
 // Frame-constant uniforms shared by the mesh, tessellation and instanced
-// pipelines (descriptor set 5). Persistently mapped, written once per frame.
+// pipelines (descriptor set 2). Persistently mapped, written once per frame.
 struct FrameUBO {
   float disp[4];        // .x displacement scale, .y maxTessLevel (UI sliders)
   float viewProj[16];   // P * V (shader derives per-mesh mvp = viewProj*model)
@@ -236,6 +242,8 @@ struct FrameUBO {
   float sceneExtent[4]; // .xyz position-AOV scene bbox size
   float lightDir[4];    // .xyz preview key light direction toward the light
   float lightColor[4];  // .rgb preview key light color/intensity
+  RasterLightGPU rasterLights[kMaxRasterLights];
+  uint32_t rasterLightInfo[4];  // .x direct-light count
   int32_t mode[4];      // .x renderMode
   float envRot[16];     // world -> environment rotation (dome IBL; mat4)
   float iblColor[4];    // .rgb dome effectiveColor, .w = hasIbl (0/1)
@@ -278,15 +286,27 @@ struct MeshDescGPU {
   uint64_t uv1Addr;          // per-vertex 2nd texcoord (vec2[]); 0 = none
   uint64_t inflAddr;         // per-vertex blendshape influence (float[]); 0 = none
   uint64_t faceAddr;         // per-triangle source USD face id (uint[]); 0 = none
+  uint64_t triMatAddr;       // per-triangle material id (uint[]); 0 = matId
+  uint64_t submeshAddr;      // uvec4[firstPrim,count,frontMat,backMat][]
   uint64_t jointAddr;        // per-vertex 4 joint ids (uint[4]); 0 = unskinned
   uint64_t weightAddr;       // per-vertex 4 skin weights (float[4]); 0 = unskinned
   uint32_t matId;
   uint32_t geometricNormal;  // 1 = no authored normals -> geometric face normal
+  uint32_t submeshCount;
+  uint32_t pad;
   float nrm0[4];             // normal matrix columns (xyz used)
   float nrm1[4];
   float nrm2[4];
 };
-static_assert(sizeof(MeshDescGPU) == 120, "MeshDescGPU must be tightly packed (scalar)");
+static_assert(sizeof(MeshDescGPU) == 144, "MeshDescGPU must match the scalar shader layout");
+
+struct RtSubmeshRangeGPU {
+  uint32_t firstPrim;
+  uint32_t primCount;
+  uint32_t frontMaterial;
+  uint32_t backMaterial;
+};
+static_assert(sizeof(RtSubmeshRangeGPU) == 16, "RT submesh range must match uvec4");
 
 // Per-TLAS-instance info, indexed by gl_InstanceID (the instance's position in the
 // TLAS -- full 32-bit range, unlike the 24-bit instanceCustomIndex). Maps a hit
@@ -1258,6 +1278,17 @@ VkShaderModule VulkanRenderer::createShader(const uint32_t* code, size_t bytes) 
 }
 
 bool VulkanRenderer::createPipeline(std::string* err) {
+  VkPhysicalDeviceProperties deviceProps{};
+  vkGetPhysicalDeviceProperties(phys_, &deviceProps);
+  if (deviceProps.limits.maxBoundDescriptorSets < kRasterDescriptorSetCount) {
+    if (err) {
+      *err = "Vulkan device supports only " +
+             std::to_string(deviceProps.limits.maxBoundDescriptorSets) +
+             " bound descriptor sets; tusdview raster requires " +
+             std::to_string(kRasterDescriptorSetCount);
+    }
+    return false;
+  }
   // The tessellation stages (tesc/tese) also read the push constants, so the
   // shared range must declare them when tessellation is available. Every
   // vkCmdPushConstants on this layout pushes with exactly pushStages_.
@@ -1273,31 +1304,13 @@ bool VulkanRenderer::createPipeline(std::string* err) {
 
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  // Set 4: displacement height map, sampled in the VERTEX stage (coarse
-  // displacement). Reuses texSetLayout_ (now VERTEX|FRAGMENT visible).
-  // Set 5: global displacement params UBO (live scale + max-tess sliders).
-  // Set 6: per-material displacement texture scale/bias SSBO.
-  // Sets 7 & 8: per-mesh GPU blendshape morph delta + coefficient SSBOs.
-  // Set 9: per-mesh per-entry channelId SSBO (active-channel skip pre-check).
-  // Sets 10-12: preview-shading metal/roughness, emissive and normal textures.
-  // Sets 13-19: base array, shared UDIM LUT atlas, MR/normal/emissive arrays,
-  // opacity 2D, and opacity array. Set 20 is retained as an ABI-reserved slot.
-  // Sets 21-23: DomeLight IBL (irradiance cube, prefiltered cube, BRDF LUT).
-  // Set 24: per-vertex displayColor SSBO (vertex stage; dummy when absent).
-  VkDescriptorSetLayout setLayouts[25] = {texSetLayout_, skinSetLayout_,
-                                          influenceSetLayout_, faceSetLayout_,
-                                          texSetLayout_, dispParamsSetLayout_,
-                                          dispMatSetLayout_, morphSetLayout_,
-                                          morphSetLayout_, morphSetLayout_,
-                                          texSetLayout_, texSetLayout_,
-                                          texSetLayout_, texSetLayout_,
-                                          texSetLayout_, texSetLayout_,
-                                          texSetLayout_, texSetLayout_,
-                                          texSetLayout_, texSetLayout_,
-                                          texSetLayout_, texSetLayout_,
-                                          texSetLayout_, texSetLayout_,
-                                          morphSetLayout_};
-  plci.setLayoutCount = 25;
+  // Four portable sets: material images, per-mesh deformation buffers, the
+  // frame UBO, and per-material texture parameters. The old ABI used 26 sets,
+  // exceeding Vulkan's guaranteed maxBoundDescriptorSets (4).
+  VkDescriptorSetLayout setLayouts[kRasterDescriptorSetCount] = {
+      materialSetLayout_, deformSetLayout_, dispParamsSetLayout_,
+      dispMatSetLayout_};
+  plci.setLayoutCount = kRasterDescriptorSetCount;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -1607,15 +1620,11 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
   pcr.size = sizeof(InstPushC);
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  // Same 10-set layout as the main pipeline so the instanced shader can bind the
-  // GPU-morph SSBOs (sets 7/8/9) and the Frame UBO (set 5). Sets 0-4 are unused
-  // here; set 6 is the instanced pass's per-draw metadata SSBO (drawMetaSet_).
-  VkDescriptorSetLayout setLayouts[10] = {texSetLayout_, skinSetLayout_,
-                                          influenceSetLayout_, faceSetLayout_,
-                                          texSetLayout_, dispParamsSetLayout_,
-                                          drawMetaSetLayout_, morphSetLayout_,
-                                          morphSetLayout_, morphSetLayout_};
-  plci.setLayoutCount = 10;
+  // Match the four-set raster ABI. Set 3 is draw metadata for this pipeline.
+  VkDescriptorSetLayout setLayouts[kRasterDescriptorSetCount] = {
+      materialSetLayout_, deformSetLayout_, dispParamsSetLayout_,
+      drawMetaSetLayout_};
+  plci.setLayoutCount = kRasterDescriptorSetCount;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -2282,9 +2291,8 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   b.binding = 0;
   b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   b.descriptorCount = 1;
-  // VERTEX too: the same per-texture sets feed the vertex-stage displacement
-  // sampler (set 4) as well as the fragment-stage base color (set 0).
-  // TESS_EVALUATION too when available: the tessellation path samples set 4 there.
+  // Retained for the legacy one-image descriptor users outside the consolidated
+  // raster material set.
   b.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
   if (tessSupported_) b.stageFlags |= VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
   VkDescriptorSetLayoutCreateInfo lci{};
@@ -2293,6 +2301,47 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   lci.pBindings = &b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &texSetLayout_),
            "tex descriptor set layout");
+
+  // Set 0: all material textures plus the three scene-wide IBL images. Binding
+  // 16 is displacement and is deliberately not fragment-visible, keeping the
+  // fragment-stage sampler count at Vulkan's guaranteed minimum of 16.
+  VkDescriptorSetLayoutBinding materialBindings[kMaterialBindingCount]{};
+  for (uint32_t i = 0; i < kMaterialBindingCount; ++i) {
+    materialBindings[i].binding = i;
+    materialBindings[i].descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    materialBindings[i].descriptorCount = 1;
+    materialBindings[i].stageFlags =
+        (i == 16) ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_FRAGMENT_BIT;
+    if (i == 16 && tessSupported_) {
+      materialBindings[i].stageFlags |=
+          VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+    }
+  }
+  VkDescriptorSetLayoutCreateInfo materialLci{};
+  materialLci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  materialLci.bindingCount = kMaterialBindingCount;
+  materialLci.pBindings = materialBindings;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &materialLci, nullptr,
+                                       &materialSetLayout_),
+           "material descriptor set layout");
+
+  // Set 1: scene bones and all per-mesh deformation/AOV storage buffers.
+  VkDescriptorSetLayoutBinding deformBindings[kDeformBindingCount]{};
+  for (uint32_t i = 0; i < kDeformBindingCount; ++i) {
+    deformBindings[i].binding = i;
+    deformBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    deformBindings[i].descriptorCount = 1;
+    deformBindings[i].stageFlags =
+        (i == 6) ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
+  }
+  VkDescriptorSetLayoutCreateInfo deformLci{};
+  deformLci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  deformLci.bindingCount = kDeformBindingCount;
+  deformLci.pBindings = deformBindings;
+  VK_CHECK(vkCreateDescriptorSetLayout(device_, &deformLci, nullptr,
+                                       &deformSetLayout_),
+           "deform descriptor set layout");
 
   VkDescriptorSetLayoutBinding sb{};
   sb.binding = 0;
@@ -2346,6 +2395,29 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   VK_CHECK(vkCreateDescriptorPool(device_, &pci, nullptr, &texPool_),
            "tex descriptor pool");
 
+  VkDescriptorPoolSize materialPs{};
+  materialPs.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  materialPs.descriptorCount = kMaxMaterialSets * kMaterialBindingCount;
+  VkDescriptorPoolCreateInfo materialPci{};
+  materialPci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  materialPci.maxSets = kMaxMaterialSets;
+  materialPci.poolSizeCount = 1;
+  materialPci.pPoolSizes = &materialPs;
+  VK_CHECK(vkCreateDescriptorPool(device_, &materialPci, nullptr,
+                                  &materialPool_),
+           "material descriptor pool");
+
+  VkDescriptorPoolSize deformPs{};
+  deformPs.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  deformPs.descriptorCount = kMaxDeformSets * kDeformBindingCount;
+  VkDescriptorPoolCreateInfo deformPci{};
+  deformPci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  deformPci.maxSets = kMaxDeformSets;
+  deformPci.poolSizeCount = 1;
+  deformPci.pPoolSizes = &deformPs;
+  VK_CHECK(vkCreateDescriptorPool(device_, &deformPci, nullptr, &deformPool_),
+           "deform descriptor pool");
+
   VkDescriptorPoolSize sps{};
   sps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   sps.descriptorCount = 4;
@@ -2390,7 +2462,7 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
     dummyFaceDesc_ = allocFaceDescriptor(dummyFaceBuf_, sizeof(uint32_t));
   }
 
-  // Set 5: global displacement params UBO {scale, maxTessLevel}, so the UI sliders
+  // Raster set 2: global frame/displacement params UBO, so the UI sliders
   // are live on Vulkan. Read in the vertex stage (coarse scale) and, when
   // available, the tessellation stages (TCS max-level clamp, TES scale).
   VkDescriptorSetLayoutBinding db{};
@@ -2450,7 +2522,7 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
     }
   }
 
-  // Set 6: per-material displacement texture scale/bias SSBO (2 floats/material),
+  // Raster set 3: per-material texture scale/bias SSBO,
   // read in the vertex + tess-eval stages, indexed by pc.matId.
   VkDescriptorSetLayoutBinding mb{};
   mb.binding = 0;
@@ -2504,11 +2576,11 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
     }
   }
 
-  // Set 6 of the INSTANCED pipeline: per-draw metadata SSBO (DrawMeta[]), read via
+  // Set 3 of the instanced pipeline: per-draw metadata SSBO (DrawMeta[]), read via
   // (baseDraw + gl_DrawIDARB) in the fragment stage AND -- for the skin joint/weight
   // device addresses -- in the vertex stage. The layout/pool/set are fixed at init;
   // the backing buffer is (re)built by ensureDrawMeta() once meshes exist.
-  // (The main mesh pipeline keeps dispMatSet_ at set 6 -- separate pipeline layout.)
+  // (The main mesh pipeline uses its material-parameter set at the same index.)
   {
     VkDescriptorSetLayoutBinding db{};
     db.binding = 0;
@@ -2569,6 +2641,8 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
   if (createHostBuffer(sizeof(dummyMorph), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                        dummyMorph, &dummyMorphBuf_, &dummyMorphMem_)) {
     dummyMorphDesc_ = allocMorphDescriptor(dummyMorphBuf_, sizeof(dummyMorph));
+    VkMeshGPU dummyMesh;
+    dummyDeformDesc_ = allocDeformDescriptor(dummyMesh);
   }
   return true;
 }
@@ -2594,6 +2668,124 @@ VkDescriptorSet VulkanRenderer::allocMorphDescriptor(VkBuffer buffer,
   w.pBufferInfo = &bi;
   vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
   return set;
+}
+
+VkDescriptorSet VulkanRenderer::allocDeformDescriptor(const VkMeshGPU& mesh) {
+  if (!deformPool_ || !deformSetLayout_ || !dummyMorphBuf_) {
+    return VK_NULL_HANDLE;
+  }
+  VkDescriptorSetAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  ai.descriptorPool = deformPool_;
+  ai.descriptorSetCount = 1;
+  ai.pSetLayouts = &deformSetLayout_;
+  VkDescriptorSet set = VK_NULL_HANDLE;
+  if (vkAllocateDescriptorSets(device_, &ai, &set) != VK_SUCCESS) {
+    return VK_NULL_HANDLE;
+  }
+
+  VkBuffer buffers[kDeformBindingCount] = {
+      boneBuf_ ? boneBuf_ : dummyMorphBuf_,
+      mesh.influenceDataBuf ? mesh.influenceDataBuf : dummyMorphBuf_,
+      mesh.morphDeltaBuf ? mesh.morphDeltaBuf : dummyMorphBuf_,
+      mesh.morphCoeffBuf ? mesh.morphCoeffBuf : dummyMorphBuf_,
+      mesh.morphChanBuf ? mesh.morphChanBuf : dummyMorphBuf_,
+      mesh.vtxColorBuf ? mesh.vtxColorBuf : dummyMorphBuf_,
+      mesh.faceBuf ? mesh.faceBuf
+                   : (dummyFaceBuf_ ? dummyFaceBuf_ : dummyMorphBuf_)};
+  VkDescriptorBufferInfo infos[kDeformBindingCount]{};
+  VkWriteDescriptorSet writes[kDeformBindingCount]{};
+  for (uint32_t i = 0; i < kDeformBindingCount; ++i) {
+    infos[i].buffer = buffers[i];
+    infos[i].range = VK_WHOLE_SIZE;
+    writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[i].dstSet = set;
+    writes[i].dstBinding = i;
+    writes[i].descriptorCount = 1;
+    writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[i].pBufferInfo = &infos[i];
+  }
+  vkUpdateDescriptorSets(device_, kDeformBindingCount, writes, 0, nullptr);
+  return set;
+}
+
+void VulkanRenderer::refreshDeformDescriptors() {
+  const VkBuffer buffer = boneBuf_ ? boneBuf_ : dummyMorphBuf_;
+  if (!buffer) return;
+  VkDescriptorBufferInfo info{};
+  info.buffer = buffer;
+  info.range = VK_WHOLE_SIZE;
+  auto updateBone = [&](VkDescriptorSet set) {
+    if (!set) return;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = set;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &info;
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  };
+  updateBone(dummyDeformDesc_);
+  for (const VkMeshGPU& mesh : meshes_) updateBone(mesh.deformDesc);
+}
+
+void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
+  if (materialId >= materialSets_.size() || !materialSets_[materialId]) return;
+  static const DrawMaterialCPU defaultMaterial{};
+  const DrawMaterialCPU& material =
+      materialId < rtMaterialsCpu_.size() ? rtMaterialsCpu_[materialId]
+                                          : defaultMaterial;
+  auto textureView = [&](int slot, VkImageView fallback) {
+    return slot >= 0 && static_cast<size_t>(slot) < texSlotViews_.size() &&
+                   texSlotViews_[static_cast<size_t>(slot)]
+               ? texSlotViews_[static_cast<size_t>(slot)]
+               : fallback;
+  };
+  auto udimView = [&](int slot) {
+    return slot >= 0 && static_cast<size_t>(slot) < texUdimArrayViews_.size() &&
+                   texUdimArrayViews_[static_cast<size_t>(slot)]
+               ? texUdimArrayViews_[static_cast<size_t>(slot)]
+               : dummyArrayView_;
+  };
+  VkImageView views[kMaterialBindingCount] = {
+      textureView(material.baseColorTex, whiteView_),
+      textureView(material.metallicTex, whiteView_),
+      textureView(material.emissiveTex, whiteView_),
+      textureView(material.normalTex, whiteView_),
+      udimView(material.baseColorTex),
+      udimLutAtlasView_ ? udimLutAtlasView_ : dummyLutView_,
+      udimView(material.metallicTex),
+      udimView(material.normalTex),
+      udimView(material.emissiveTex),
+      textureView(material.opacityTex, whiteView_),
+      udimView(material.opacityTex),
+      textureView(material.roughnessTex, whiteView_),
+      iblIrrView_ ? iblIrrView_ : blackCubeView_,
+      iblSpecView_ ? iblSpecView_ : blackCubeView_,
+      iblLutView_ ? iblLutView_ : blackView_,
+      udimView(material.roughnessTex),
+      textureView(material.displacementTex, blackView_)};
+  VkDescriptorImageInfo infos[kMaterialBindingCount]{};
+  VkWriteDescriptorSet writes[kMaterialBindingCount]{};
+  for (uint32_t i = 0; i < kMaterialBindingCount; ++i) {
+    infos[i].sampler = sampler_;
+    infos[i].imageView = views[i];
+    infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[i].dstSet = materialSets_[materialId];
+    writes[i].dstBinding = i;
+    writes[i].descriptorCount = 1;
+    writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[i].pImageInfo = &infos[i];
+  }
+  vkUpdateDescriptorSets(device_, kMaterialBindingCount, writes, 0, nullptr);
+}
+
+void VulkanRenderer::refreshMaterialDescriptors() {
+  for (size_t i = 0; i < materialSets_.size(); ++i) {
+    updateMaterialDescriptor(i);
+  }
 }
 
 VkCommandBuffer VulkanRenderer::beginOneShot() {
@@ -4135,6 +4327,10 @@ void VulkanRenderer::destroyScene() {
     if (m.vtxColorMem) vkFreeMemory(device_, m.vtxColorMem, nullptr);
     if (m.faceBuf) vkDestroyBuffer(device_, m.faceBuf, nullptr);
     if (m.faceMem) vkFreeMemory(device_, m.faceMem, nullptr);
+    if (m.triMatBuf) vkDestroyBuffer(device_, m.triMatBuf, nullptr);
+    if (m.triMatMem) vkFreeMemory(device_, m.triMatMem, nullptr);
+    if (m.rtSubmeshBuf) vkDestroyBuffer(device_, m.rtSubmeshBuf, nullptr);
+    if (m.rtSubmeshMem) vkFreeMemory(device_, m.rtSubmeshMem, nullptr);
     if (m.jointVbo) vkDestroyBuffer(device_, m.jointVbo, nullptr);
     if (m.jointVboMem) vkFreeMemory(device_, m.jointVboMem, nullptr);
     if (m.weightVbo) vkDestroyBuffer(device_, m.weightVbo, nullptr);
@@ -4199,9 +4395,13 @@ void VulkanRenderer::destroyScene() {
   matLightRt_.clear();
   lightParams_.clear();
   matBaseTex_.clear();
-  matMetalRoughTex_.clear();
+  matMetallicTex_.clear();
+  matRoughnessTex_.clear();
   matNormalTex_.clear();
   matEmissiveTex_.clear();
+  matOpacityTex_.clear();
+  rtMaterialsCpu_.clear();
+  rtTexturesCpu_.clear();
 
   // UsdVol volumes (3D images + UBOs + descriptor sets).
   for (auto& gv : volumes_) {
@@ -4230,6 +4430,14 @@ void VulkanRenderer::destroyScene() {
   if (rtMatLightRtMem_) { vkFreeMemory(device_, rtMatLightRtMem_, nullptr); rtMatLightRtMem_ = VK_NULL_HANDLE; }
   if (rtLightBuf_) { vkDestroyBuffer(device_, rtLightBuf_, nullptr); rtLightBuf_ = VK_NULL_HANDLE; }
   if (rtLightMem_) { vkFreeMemory(device_, rtLightMem_, nullptr); rtLightMem_ = VK_NULL_HANDLE; }
+  if (rtTexelBuf_) { vkDestroyBuffer(device_, rtTexelBuf_, nullptr); rtTexelBuf_ = VK_NULL_HANDLE; }
+  if (rtTexelMem_) { vkFreeMemory(device_, rtTexelMem_, nullptr); rtTexelMem_ = VK_NULL_HANDLE; }
+  if (rtTexDescBuf_) { vkDestroyBuffer(device_, rtTexDescBuf_, nullptr); rtTexDescBuf_ = VK_NULL_HANDLE; }
+  if (rtTexDescMem_) { vkFreeMemory(device_, rtTexDescMem_, nullptr); rtTexDescMem_ = VK_NULL_HANDLE; }
+  if (rtMatTexBuf_) { vkDestroyBuffer(device_, rtMatTexBuf_, nullptr); rtMatTexBuf_ = VK_NULL_HANDLE; }
+  if (rtMatTexMem_) { vkFreeMemory(device_, rtMatTexMem_, nullptr); rtMatTexMem_ = VK_NULL_HANDLE; }
+  if (rtMatTexParamBuf_) { vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr); rtMatTexParamBuf_ = VK_NULL_HANDLE; }
+  if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
   if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
   tlasDirty_ = true;
@@ -4242,6 +4450,8 @@ void VulkanRenderer::destroyScene() {
   texMems_.clear();
   texDescs_.clear();
   texUdimArrayDescs_.clear();
+  texSlotViews_.clear();
+  texUdimArrayViews_.clear();
   texIsUdim_.clear();
   if (udimLutAtlasView_) vkDestroyImageView(device_, udimLutAtlasView_, nullptr);
   if (udimLutAtlasImg_) vkDestroyImage(device_, udimLutAtlasImg_, nullptr);
@@ -4253,6 +4463,8 @@ void VulkanRenderer::destroyScene() {
   udimLutAtlasRows_ = 0;
   // Free all per-texture descriptor sets (incl. whiteDesc_) in one shot.
   if (texPool_) vkResetDescriptorPool(device_, texPool_, 0);
+  materialSets_.clear();
+  if (materialPool_) vkResetDescriptorPool(device_, materialPool_, 0);
   if (influencePool_) vkResetDescriptorPool(device_, influencePool_, 0);
   if (facePool_) {
     vkResetDescriptorPool(device_, facePool_, 0);
@@ -4268,6 +4480,13 @@ void VulkanRenderer::destroyScene() {
                           ? allocMorphDescriptor(dummyMorphBuf_, 4 * sizeof(float))
                           : VK_NULL_HANDLE;
   }
+  if (deformPool_) {
+    vkResetDescriptorPool(device_, deformPool_, 0);
+    VkMeshGPU dummyMesh;
+    dummyDeformDesc_ = (dummyMorphBuf_ != VK_NULL_HANDLE)
+                           ? allocDeformDescriptor(dummyMesh)
+                           : VK_NULL_HANDLE;
+  }
   whiteDesc_ = VK_NULL_HANDLE;
   blackDesc_ = VK_NULL_HANDLE;
   dummyArrayDesc_ = VK_NULL_HANDLE;
@@ -4280,16 +4499,23 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                                 int textureCount) {
   if (device_) vkDeviceWaitIdle(device_);
   destroyScene();  // resets texPool_, clears texDescs_, sets whiteDesc_ = NULL
+  rtMaterialsCpu_ = materials;
+  rtTexturesCpu_.resize(textureCount > 0 ? static_cast<size_t>(textureCount) : 0);
 
   // Default white texture descriptor + one white slot per texture (filled lazily).
   whiteDesc_ = allocTexDescriptor(whiteView_);
-  blackDesc_ = allocTexDescriptor(blackView_);  // set 4 default = no displacement
+  blackDesc_ = allocTexDescriptor(blackView_);
   dummyArrayDesc_ = allocTexDescriptor(dummyArrayView_);
   dummyLutDesc_ = allocTexDescriptor(dummyLutView_);
   blackCubeDesc_ = allocTexDescriptor(blackCubeView_);  // IBL fallback (21/22)
   texDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, whiteDesc_);
   texUdimArrayDescs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
                             dummyArrayDesc_);
+  texSlotViews_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                       whiteView_);
+  texUdimArrayViews_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+      dummyArrayView_);
   texIsUdim_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
   if (createUdimLookupAtlas(textureCount))
     udimLutAtlasDesc_ = allocTexDescriptor(udimLutAtlasView_);
@@ -4302,7 +4528,8 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   matColor_.resize(materials.size() * 12);
   matLightRt_.resize(materials.size() * kVkLightRtOpenPBRFloats);
   matBaseTex_.resize(materials.size());
-  matMetalRoughTex_.resize(materials.size());
+  matMetallicTex_.resize(materials.size());
+  matRoughnessTex_.resize(materials.size());
   matNormalTex_.resize(materials.size());
   matEmissiveTex_.resize(materials.size());
   matOpacityTex_.resize(materials.size());
@@ -4323,22 +4550,61 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     PackLightRtOpenPBR(materials[i],
                        &matLightRt_[i * kVkLightRtOpenPBRFloats]);
     matBaseTex_[i] = materials[i].baseColorTex;
-    matMetalRoughTex_[i] = materials[i].metalRoughTex;
+    matMetallicTex_[i] = materials[i].metallicTex;
+    matRoughnessTex_[i] = materials[i].roughnessTex;
     matNormalTex_[i] = materials[i].normalTex;
     matEmissiveTex_[i] = materials[i].emissiveTex;
     matOpacityTex_[i] = materials[i].opacityTex;
     matDispTex_[i] = materials[i].displacementTex;
     matDispConst_[i] = materials[i].displacementConst;
-    // Per-material texture sampling params -> set 6 SSBO.
+    // Per-material texture sampling params -> raster set 3 SSBO.
     if (dispMatMapped_ && i < kMaxDispMaterials) {
       float* dst = static_cast<float*>(dispMatMapped_) +
                    i * kVkMatTexParamFloats;
       PackRasterMaterialTextureParams(materials[i], dst);
     }
   }
+
+  const uint32_t materialCount = static_cast<uint32_t>(std::min<size_t>(
+      std::max<size_t>(materials.size(), 1), kMaxMaterialSets));
+  std::vector<VkDescriptorSetLayout> layouts(materialCount,
+                                              materialSetLayout_);
+  materialSets_.resize(materialCount, VK_NULL_HANDLE);
+  VkDescriptorSetAllocateInfo ai{};
+  ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  ai.descriptorPool = materialPool_;
+  ai.descriptorSetCount = materialCount;
+  ai.pSetLayouts = layouts.data();
+  if (vkAllocateDescriptorSets(device_, &ai, materialSets_.data()) != VK_SUCCESS) {
+    materialSets_.clear();
+  }
+  refreshMaterialDescriptors();
 }
 
-void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights) {
+void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
+                               size_t meshCount) {
+  rasterLights_ = PackRasterLights(lights, meshCount);
+  if (std::getenv("TUSDVIEW_DEBUG_LIGHTS"))
+    {
+      std::fprintf(stderr, "[raster-lights] VK source=%zu direct=%d meshes=%zu\n",
+                   lights.size(), rasterLights_.count, meshCount);
+      for (int i = 0; i < rasterLights_.count; ++i) {
+        const RasterLightGPU& l = rasterLights_.lights[static_cast<size_t>(i)];
+        std::fprintf(stderr,
+                     "[raster-lights] %d type=%.0f dir=(%.3f %.3f %.3f) "
+                     "color=(%.3f %.3f %.3f)\n", i, l.positionType[3],
+                     l.directionAngle[0], l.directionAngle[1],
+                     l.directionAngle[2], l.colorDiffuse[0],
+                     l.colorDiffuse[1], l.colorDiffuse[2]);
+      }
+      for (size_t i = 0; i < rasterLights_.meshMasks.size(); ++i)
+        std::fprintf(stderr, "[raster-lights] mesh %zu mask=0x%x\n", i,
+                     rasterLights_.meshMasks[i]);
+    }
+  if (rasterLights_.truncated > 0) {
+    LOGW("raster lighting: evaluating first %d direct lights; %d additional "
+         "light(s) omitted", kMaxRasterLights, rasterLights_.truncated);
+  }
   lightParams_.assign(lights.size() * kVkRtLightFloats, 0.0f);
   for (size_t i = 0; i < lights.size(); ++i) {
     PackRtLightParams(lights[i], lights[i].envmapTexture,
@@ -4350,6 +4616,7 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights) {
   if (!device_) return;
   vkDeviceWaitIdle(device_);
   destroyIblImages();
+  refreshMaterialDescriptors();
   const DrawLightCPU* dome = nullptr;
   for (const DrawLightCPU& l : lights) {
     if (l.type == DrawLightCPU::Type::Dome && l.ibl.valid) {
@@ -4367,6 +4634,7 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights) {
       !createIblLutImage(ibl.brdfLut, ibl.lutSize, &iblLutImg_, &iblLutMem_,
                          &iblLutView_)) {
     destroyIblImages();
+    refreshMaterialDescriptors();
     return;
   }
   // Full-res (unclamped) env cube for the RT miss background; best-effort —
@@ -4381,6 +4649,7 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights) {
   iblLutDesc_ = allocTexDescriptor(iblLutView_);
   if (!iblIrrDesc_ || !iblSpecDesc_ || !iblLutDesc_) {
     destroyIblImages();
+    refreshMaterialDescriptors();
     return;
   }
   iblLods_ = static_cast<int>(ibl.specLevels.size());
@@ -4401,10 +4670,12 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights) {
     iblRotation_[2 * 4 + r] = col[2] * inv;
   }
   iblActive_ = true;
+  refreshMaterialDescriptors();
 }
 
 void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (slot < 0 || static_cast<size_t>(slot) >= texDescs_.size()) return;
+  rtTexturesCpu_[static_cast<size_t>(slot)] = t;
   VkImage img = VK_NULL_HANDLE;
   VkDeviceMemory mem = VK_NULL_HANDLE;
   VkImageView view = VK_NULL_HANDLE;
@@ -4421,6 +4692,7 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     texMems_.push_back(mem);
     texViews_.push_back(view);
     texDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(view);
+    texSlotViews_[static_cast<size_t>(slot)] = view;
   }
   if (t.isUdim && static_cast<size_t>(slot) < texUdimArrayDescs_.size()) {
     VkImage arrImg = VK_NULL_HANDLE;
@@ -4432,6 +4704,7 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
       texMems_.push_back(arrMem);
       texViews_.push_back(arrView);
       texUdimArrayDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(arrView);
+      texUdimArrayViews_[static_cast<size_t>(slot)] = arrView;
       texIsUdim_[static_cast<size_t>(slot)] = 1;
     } else {
       if (arrView) vkDestroyImageView(device_, arrView, nullptr);
@@ -4439,6 +4712,7 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
       if (arrMem) vkFreeMemory(device_, arrMem, nullptr);
     }
   }
+  refreshMaterialDescriptors();
 }
 
 void VulkanRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
@@ -4469,10 +4743,12 @@ void VulkanRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
     }
     boneDesc_ = VK_NULL_HANDLE;
     boneBufSize_ = 0;
+    refreshDeformDescriptors();
     if (!createHostBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, src,
                           &boneBuf_, &boneMem_)) {
       return;
     }
+    refreshDeformDescriptors();
     if (vkMapMemory(device_, boneMem_, 0, bytes, 0, &boneMapped_) != VK_SUCCESS) {
       boneMapped_ = nullptr;
       return;
@@ -4732,6 +5008,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   VkMeshGPU gm;
   gm.submeshes = sm.submeshes;
+  gm.matId = sm.submeshes.empty() ? -1 : sm.submeshes.front().materialId;
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
   {
     float lo[3] = {sm.vertices[0].px, sm.vertices[0].py, sm.vertices[0].pz};
@@ -4849,7 +5126,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
                      &gm.morphInflVbo, &gm.morphInflVboMem, rtSupported_, pool);
   }
   // GPU blendshape morph: per-vertex (offset,count) vertex buffer (binding 6, always
-  // created) + a static delta SSBO (set 7) + a per-frame coeff SSBO (set 8,
+  // created) + static delta and per-frame coefficient buffers (set 1 bindings 2/3,
   // persistently mapped). Non-morph meshes keep the shared dummy delta/coeff sets.
   {
     std::vector<uint32_t> oc = sm.morphOffsetCount;
@@ -4959,9 +5236,68 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   if (gm.faceDesc == VK_NULL_HANDLE) gm.faceDesc = dummyFaceDesc_;
 
+  // Vulkan BLAS primitive ids follow EBO triangle order. GeomSubsets are
+  // contiguous EBO ranges, so material lookup only needs one uint per triangle.
+  // Avoid the buffer/address fetch for the common single-material mesh.
+  if (rtSupported_ && sm.indices.size() >= 3) {
+    std::vector<uint32_t> triMats(sm.indices.size() / 3, 0xffffffffu);
+    for (const DrawSubmesh& sub : sm.submeshes) {
+      const size_t first = std::min<size_t>(sub.indexOffset / 3, triMats.size());
+      const size_t count = sub.indexCount / 3;
+      const size_t last = std::min(first + count, triMats.size());
+      const uint32_t id = sub.materialId < 0
+                              ? 0xffffffffu
+                              : static_cast<uint32_t>(sub.materialId);
+      std::fill(triMats.begin() + static_cast<std::ptrdiff_t>(first),
+                triMats.begin() + static_cast<std::ptrdiff_t>(last), id);
+    }
+    if (!triMats.empty() && triMats.front() != 0xffffffffu)
+      gm.matId = static_cast<int>(triMats.front());
+    const uint32_t fallback = gm.matId < 0 ? 0xffffffffu
+                                           : static_cast<uint32_t>(gm.matId);
+    const bool multiple = std::any_of(triMats.begin(), triMats.end(),
+                                      [fallback](uint32_t id) {
+                                        return id != fallback;
+                                      });
+    if (multiple) {
+      createHostBuffer(triMats.size() * sizeof(uint32_t),
+                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, triMats.data(),
+                       &gm.triMatBuf, &gm.triMatMem,
+                       /*deviceAddress=*/true, pool);
+    }
+
+    bool needsRtSubmeshes = sm.submeshes.size() > 1;
+    for (const DrawSubmesh& sub : sm.submeshes) {
+      needsRtSubmeshes |= sub.backfaceMaterialId >= 0 &&
+                          sub.backfaceMaterialId != sub.materialId;
+    }
+    if (needsRtSubmeshes) {
+      std::vector<RtSubmeshRangeGPU> ranges;
+      ranges.reserve(sm.submeshes.size());
+      for (const DrawSubmesh& sub : sm.submeshes) {
+        RtSubmeshRangeGPU range{};
+        range.firstPrim = sub.indexOffset / 3;
+        range.primCount = sub.indexCount / 3;
+        range.frontMaterial = sub.materialId < 0
+                                  ? 0xffffffffu
+                                  : static_cast<uint32_t>(sub.materialId);
+        range.backMaterial = sub.backfaceMaterialId < 0
+                                 ? range.frontMaterial
+                                 : static_cast<uint32_t>(sub.backfaceMaterialId);
+        ranges.push_back(range);
+      }
+      createHostBuffer(ranges.size() * sizeof(RtSubmeshRangeGPU),
+                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, ranges.data(),
+                       &gm.rtSubmeshBuf, &gm.rtSubmeshMem,
+                       /*deviceAddress=*/true, pool);
+      gm.rtSubmeshAddr = bufferDeviceAddress(gm.rtSubmeshBuf);
+      gm.rtSubmeshCount = static_cast<uint32_t>(ranges.size());
+    }
+  }
+
   // Per-vertex displayColor + displayOpacity (packed vec4[]) as an SSBO.
   // aligned (matches the GL attrib-9 path). The RASTER mesh vertex shader
-  // fetches it by gl_VertexIndex through set 24 (vtxColorDesc, flag-gated); the
+  // fetches it by gl_VertexIndex through set 1 binding 5 (flag-gated); the
   // RT path additionally takes its device address below. Created regardless of
   // RT support so vertex-painted meshes color correctly on raster-only devices.
   const bool hasVtxColor = sm.vertexColors.size() == sm.vertices.size() * 3;
@@ -5006,7 +5342,6 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
       gm.vboAddr = bufferDeviceAddress(gm.vbo);
     }
     gm.eboAddr = bufferDeviceAddress(gm.ebo);
-    gm.matId = sm.submeshes.empty() ? -1 : sm.submeshes.front().materialId;
     NormalMatrix3(gm.world, gm.normalMat);
     std::memcpy(gm.flatColor, sm.flatColor, sizeof(gm.flatColor));
     gm.flatOpacity = sm.flatOpacity;
@@ -5016,7 +5351,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     gm.instanceColors = sm.instanceColors;
     gm.instanceOpacities = sm.instanceOpacities;
     // Per-vertex displayColor: the SSBO was created above (shared with raster
-    // set 24); the RT hit shader reads it by device address.
+    // raster buffer); the RT hit shader reads it by device address.
     if (gm.vtxColorBuf) gm.vtxColorAddr = bufferDeviceAddress(gm.vtxColorBuf);
     // Multi-UV + blendshape-influence per-vertex aux buffers (created above with a
     // device address when RT is on) for the uv1 / influence AOVs in raytrace.comp.
@@ -5024,6 +5359,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     if (gm.morphInflVbo) gm.inflAddr = bufferDeviceAddress(gm.morphInflVbo);
     // faceBuf was created above (always); take its device address for the RT path.
     if (gm.faceBuf) gm.faceAddr = bufferDeviceAddress(gm.faceBuf);
+    if (gm.triMatBuf) gm.triMatAddr = bufferDeviceAddress(gm.triMatBuf);
     tlasDirty_ = true;  // BLAS built lazily in rebuildTlas() before the next trace
   }
 
@@ -5127,7 +5463,26 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
                        /*poolable=*/true);
     }
   }
+  gm.deformDesc = allocDeformDescriptor(gm);
   meshes_.push_back(gm);
+}
+
+void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
+  if (!rtActive_) return;
+  DrawScene carriers;
+  carriers.points.push_back(points);
+  for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
+    appendMesh(proxy);
+  }
+}
+
+void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
+  if (!rtActive_) return;
+  DrawScene carriers;
+  carriers.curves.push_back(curves);
+  for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
+    appendMesh(proxy);
+  }
 }
 
 void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
@@ -5237,7 +5592,7 @@ void VulkanRenderer::updateProxyInstances(const float* xforms, const float* tint
 }
 
 // Upload the staged box proxies and draw them as one instanced pass of the shared
-// unit cube. Mirrors the prototype instanced pass (instPipeline_, set 5 Frame UBO,
+// unit cube. Mirrors the prototype instanced pass (instPipeline_, set 2 Frame UBO,
 // dummy morph sets 7-9); meshId=-1 + geometricNormal flag match the GL box draw.
 void VulkanRenderer::drawBoxProxies(VkCommandBuffer cb) {
   if (boxRasterCount_ == 0 || !instPipeline_ || boxRasterVbo_ == VK_NULL_HANDLE)
@@ -5280,22 +5635,23 @@ void VulkanRenderer::drawBoxProxies(VkCommandBuffer cb) {
   vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipeline_);
   // The LOD box proxy is a closed cube: back-face cull it, as GL does.
   if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_BACK_BIT);
-  {
-    // Set 0: dome IBL irradiance cube (black fallback) for the flat ambient.
-    VkDescriptorSet irrDs =
-        iblIrrDesc_ != VK_NULL_HANDLE ? iblIrrDesc_ : blackCubeDesc_;
-    if (irrDs != VK_NULL_HANDLE) {
-      vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              instPipelineLayout_, 0, 1, &irrDs, 0, nullptr);
-    }
+  if (!materialSets_.empty() && materialSets_[0]) {
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            instPipelineLayout_, 0, 1, &materialSets_[0], 0,
+                            nullptr);
+  }
+  if (dummyDeformDesc_) {
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            instPipelineLayout_, 1, 1, &dummyDeformDesc_, 0,
+                            nullptr);
   }
   if (dispParamsSet_ != VK_NULL_HANDLE) {
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipelineLayout_,
-                            5, 1, &dispParamsSet_, 0, nullptr);
+                            2, 1, &dispParamsSet_, 0, nullptr);
   }
   if (drawMetaSet_ != VK_NULL_HANDLE) {
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipelineLayout_,
-                            6, 1, &drawMetaSet_, 0, nullptr);
+                            3, 1, &drawMetaSet_, 0, nullptr);
   }
   // The box proxy's DrawMeta slot (meshId=-1, geometricNormal flag) is the trailing
   // entry ensureDrawMeta() appended after the meshes; gl_DrawIDARB == 0 here.
@@ -5308,9 +5664,6 @@ void VulkanRenderer::drawBoxProxies(VkCommandBuffer cb) {
                       boxRasterVtxColBuf_, boxRasterMorphBuf_};
   VkDeviceSize offs[5] = {0, 0, 0, 0, 0};
   vkCmdBindVertexBuffers(cb, 0, 5, bufs, offs);
-  VkDescriptorSet morphSets[3] = {dummyMorphDesc_, dummyMorphDesc_, dummyMorphDesc_};
-  vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipelineLayout_, 7,
-                          3, morphSets, 0, nullptr);
   vkCmdBindIndexBuffer(cb, boxRasterEbo_, 0, VK_INDEX_TYPE_UINT32);
   vkCmdDrawIndexed(cb, 36, boxRasterCount_, 0, 0, 0);
 }
@@ -5363,13 +5716,33 @@ void VulkanRenderer::destroyBlas(VkMeshGPU& m) {
   m.blasRefitPending = false;  // blasDynamic stays: it describes the mesh
 }
 
+bool VulkanRenderer::meshHasAlphaMask(const VkMeshGPU& m) const {
+  for (const DrawSubmesh& sub : m.submeshes) {
+    if (sub.materialId >= 0 &&
+        static_cast<size_t>(sub.materialId) < rtMaterialsCpu_.size() &&
+        rtMaterialsCpu_[static_cast<size_t>(sub.materialId)].alphaMode ==
+            static_cast<int>(AlphaMode::Mask)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool VulkanRenderer::meshHasBoundMaterial(const VkMeshGPU& m) const {
+  return std::any_of(m.submeshes.begin(), m.submeshes.end(),
+                     [](const DrawSubmesh& sub) { return sub.materialId > 0; });
+}
+
 void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   if (m.blas != VK_NULL_HANDLE || m.indexCount < 3 || !pfnCreateAS_) return;
 
   VkAccelerationStructureGeometryKHR geom{};
   geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
   geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-  geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+  // Only mask materials need candidate traversal. Keeping every other BLAS
+  // opaque preserves the hardware fast path (especially important for AO).
+  const bool alphaMasked = meshHasAlphaMask(m);
+  geom.flags = alphaMasked ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
   auto& tri = geom.geometry.triangles;
   tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
   tri.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
@@ -5465,7 +5838,8 @@ void VulkanRenderer::refitBlas(VkMeshGPU& m) {
   VkAccelerationStructureGeometryKHR geom{};
   geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
   geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-  geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+  const bool alphaMasked = meshHasAlphaMask(m);
+  geom.flags = alphaMasked ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
   auto& tri = geom.geometry.triangles;
   tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
   tri.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
@@ -5591,7 +5965,8 @@ void VulkanRenderer::buildBlasWave(const std::vector<uint32_t>& meshIds) {
       VkAccelerationStructureGeometryKHR geom{};
       geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
       geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-      geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+      const bool alphaMasked = meshHasAlphaMask(m);
+      geom.flags = alphaMasked ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
       auto& tri = geom.geometry.triangles;
       tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
       tri.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
@@ -5842,6 +6217,14 @@ void VulkanRenderer::rebuildTlas() {
   if (rtMatLightRtMem_) { vkFreeMemory(device_, rtMatLightRtMem_, nullptr); rtMatLightRtMem_ = VK_NULL_HANDLE; }
   if (rtLightBuf_) { vkDestroyBuffer(device_, rtLightBuf_, nullptr); rtLightBuf_ = VK_NULL_HANDLE; }
   if (rtLightMem_) { vkFreeMemory(device_, rtLightMem_, nullptr); rtLightMem_ = VK_NULL_HANDLE; }
+  if (rtTexelBuf_) { vkDestroyBuffer(device_, rtTexelBuf_, nullptr); rtTexelBuf_ = VK_NULL_HANDLE; }
+  if (rtTexelMem_) { vkFreeMemory(device_, rtTexelMem_, nullptr); rtTexelMem_ = VK_NULL_HANDLE; }
+  if (rtTexDescBuf_) { vkDestroyBuffer(device_, rtTexDescBuf_, nullptr); rtTexDescBuf_ = VK_NULL_HANDLE; }
+  if (rtTexDescMem_) { vkFreeMemory(device_, rtTexDescMem_, nullptr); rtTexDescMem_ = VK_NULL_HANDLE; }
+  if (rtMatTexBuf_) { vkDestroyBuffer(device_, rtMatTexBuf_, nullptr); rtMatTexBuf_ = VK_NULL_HANDLE; }
+  if (rtMatTexMem_) { vkFreeMemory(device_, rtMatTexMem_, nullptr); rtMatTexMem_ = VK_NULL_HANDLE; }
+  if (rtMatTexParamBuf_) { vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr); rtMatTexParamBuf_ = VK_NULL_HANDLE; }
+  if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
   if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
 
@@ -5880,18 +6263,22 @@ void VulkanRenderer::rebuildTlas() {
     d.uv1Addr = m.uv1Addr;
     d.inflAddr = m.inflAddr;
     d.faceAddr = m.faceAddr;
+    d.triMatAddr = m.triMatAddr;
+    d.submeshAddr = m.rtSubmeshAddr;
     d.jointAddr = m.jointAddr;
     d.weightAddr = m.weightAddr;
     d.matId = (m.matId < 0) ? 0xffffffffu : static_cast<uint32_t>(m.matId);
     d.geometricNormal = (m.geometricNormal ? 1u : 0u) |
                         ((static_cast<uint32_t>(m.purposeId) & 3u) << 1) |  // bits1-2 purpose
                         ((static_cast<uint32_t>(m.kindId) & 7u) << 3);      // bits3-5 kind
+    d.submeshCount = m.rtSubmeshCount;
     for (int k = 0; k < 3; ++k) {
       d.nrm0[k] = m.normalMat[0 * 3 + k];
       d.nrm1[k] = m.normalMat[1 * 3 + k];
       d.nrm2[k] = m.normalMat[2 * 3 + k];
     }
     if (m.indexCount < 3) continue;
+    if (i < rtMeshVisible_.size() && !rtMeshVisible_[i]) continue;
     // Hidden purposes stay out of the TLAS entirely (no BLAS, no instances):
     // matches the raster visibility default and keeps e.g. Caldera's 26M-tri
     // guide breadcrumb planes from engulfing the RT camera.
@@ -6031,7 +6418,8 @@ void VulkanRenderer::rebuildTlas() {
     // a non-instanced mesh. Unmateraled prototypes (matId <= 0) keep the tint.
     const bool instHasMaterial =
         s.instanced && s.level == RtLod::Full &&
-        size_t(s.meshId) < meshes_.size() && meshes_[s.meshId].matId > 0;
+        size_t(s.meshId) < meshes_.size() &&
+        meshHasBoundMaterial(meshes_[s.meshId]);
     info.useMaterial =
         ((s.level == RtLod::Full && !s.instanced) || instHasMaterial) ? 1u : 0u;
     info.tint[0] = s.tint[0];
@@ -6152,12 +6540,42 @@ void VulkanRenderer::rebuildTlas() {
   if (lrtMats.empty()) lrtMats.assign(kVkLightRtOpenPBRFloats, 0.0f);
   std::vector<float> lights = lightParams_;  // packed DrawLightCPU light records
   if (lights.empty()) lights.assign(kVkRtLightFloats, 0.0f);
+  HostTextureTable rtTextures;
+  BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &rtTextures);
+  const uint32_t dummyTexel = 0xffffffffu;
+  HostTextureDesc dummyTexDesc;
+  for (int& layer : dummyTexDesc.udimLayer) layer = -1;
+  if (rtTextures.matTex.empty()) rtTextures.matTex.assign(6, -1);
+  if (rtTextures.matTexParam.empty())
+    rtTextures.matTexParam.assign(kRtMaterialTextureParamFloats, 0.0f);
   createHostBuffer(mats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    mats.data(), &rtMatBuf_, &rtMatMem_);
   createHostBuffer(lrtMats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    lrtMats.data(), &rtMatLightRtBuf_, &rtMatLightRtMem_);
   createHostBuffer(lights.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    lights.data(), &rtLightBuf_, &rtLightMem_);
+  createHostBuffer(rtTextures.texels.empty() ? sizeof(dummyTexel)
+                                              : rtTextures.texels.size(),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   rtTextures.texels.empty()
+                       ? static_cast<const void*>(&dummyTexel)
+                       : static_cast<const void*>(rtTextures.texels.data()),
+                   &rtTexelBuf_, &rtTexelMem_);
+  createHostBuffer(rtTextures.textures.empty()
+                       ? sizeof(dummyTexDesc)
+                       : rtTextures.textures.size() * sizeof(HostTextureDesc),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   rtTextures.textures.empty()
+                       ? static_cast<const void*>(&dummyTexDesc)
+                       : static_cast<const void*>(rtTextures.textures.data()),
+                   &rtTexDescBuf_, &rtTexDescMem_);
+  createHostBuffer(rtTextures.matTex.size() * sizeof(int),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, rtTextures.matTex.data(),
+                   &rtMatTexBuf_, &rtMatTexMem_);
+  createHostBuffer(rtTextures.matTexParam.size() * sizeof(float),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   rtTextures.matTexParam.data(), &rtMatTexParamBuf_,
+                   &rtMatTexParamMem_);
   createHostBuffer(instInfos.size() * sizeof(InstanceInfoGPU),
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, instInfos.data(),
                    &instInfoBuf_, &instInfoMem_);
@@ -6174,7 +6592,11 @@ void VulkanRenderer::rebuildTlas() {
   VkDescriptorBufferInfo instInfo{instInfoBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo lrtMatInfo{rtMatLightRtBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo lightInfo{rtLightBuf_, 0, VK_WHOLE_SIZE};
-  VkWriteDescriptorSet w[9]{};
+  VkDescriptorBufferInfo texelInfo{rtTexelBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo texDescInfo{rtTexDescBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo matTexInfo{rtMatTexBuf_, 0, VK_WHOLE_SIZE};
+  VkDescriptorBufferInfo matTexParamInfo{rtMatTexParamBuf_, 0, VK_WHOLE_SIZE};
+  VkWriteDescriptorSet w[13]{};
   w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   w[0].pNext = &asInfo;
   w[0].dstSet = rtSet_;
@@ -6251,7 +6673,17 @@ void VulkanRenderer::rebuildTlas() {
   w[8].descriptorCount = 1;
   w[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   w[8].pImageInfo = &lutInfo;
-  vkUpdateDescriptorSets(device_, 9, w, 0, nullptr);
+  const VkDescriptorBufferInfo* rtTextureInfos[4] = {
+      &texelInfo, &texDescInfo, &matTexInfo, &matTexParamInfo};
+  for (uint32_t i = 0; i < 4; ++i) {
+    w[9 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w[9 + i].dstSet = rtSet_;
+    w[9 + i].dstBinding = 11 + i;
+    w[9 + i].descriptorCount = 1;
+    w[9 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    w[9 + i].pBufferInfo = rtTextureInfos[i];
+  }
+  vkUpdateDescriptorSets(device_, 13, w, 0, nullptr);
 
   tlasDirty_ = false;
   ++rtAccumGen_;  // geometry changed -> restart progressive accumulation
@@ -6259,7 +6691,7 @@ void VulkanRenderer::rebuildTlas() {
 
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
-  VkDescriptorSetLayoutBinding b[11]{};
+  VkDescriptorSetLayoutBinding b[15]{};
   b[0].binding = 0;
   b[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
   b[0].descriptorCount = 1;
@@ -6289,9 +6721,13 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   b[9].binding = 9;  // GGX-prefiltered cube (surface specular IBL)
   b[10] = b[8];
   b[10].binding = 10;  // split-sum BRDF LUT (RG16F 2D)
+  for (uint32_t i = 11; i < 15; ++i) {
+    b[i] = b[2];
+    b[i].binding = i;  // raw texels, descriptors, semantic ids, sample params
+  }
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 11;
+  lci.bindingCount = 15;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &rtSetLayout_),
            "rt descriptor set layout");
@@ -6299,7 +6735,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   VkDescriptorPoolSize ps[4]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1};
   ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
-  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5};
+  ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 9};
   ps[3] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
   VkDescriptorPoolCreateInfo pci{};
   pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -6485,6 +6921,7 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.lightDir[0] = lx / ll; pc.lightDir[1] = ly / ll; pc.lightDir[2] = lz / ll;
   pc.lightDir[3] = depthScale_;  // depth AOV normalizer
   for (int i = 0; i < 4; ++i) pc.clearColor[i] = clear_[i];
+  pc.clearColor[3] = exposure_;
   for (int i = 0; i < 3; ++i) { pc.sceneMin[i] = sceneMin_[i]; pc.sceneExtent[i] = sceneExtent_[i]; }
   pc.sceneMin[3] = static_cast<float>(rtAccumFrame_);      // accumulated sample index
   pc.sceneExtent[3] = rtAccumEnabled_ ? 1.0f : 0.0f;        // accumulate enable
@@ -6563,6 +7000,14 @@ void VulkanRenderer::destroyRt() {
   if (rtMatLightRtMem_) { vkFreeMemory(device_, rtMatLightRtMem_, nullptr); rtMatLightRtMem_ = VK_NULL_HANDLE; }
   if (rtLightBuf_) { vkDestroyBuffer(device_, rtLightBuf_, nullptr); rtLightBuf_ = VK_NULL_HANDLE; }
   if (rtLightMem_) { vkFreeMemory(device_, rtLightMem_, nullptr); rtLightMem_ = VK_NULL_HANDLE; }
+  if (rtTexelBuf_) { vkDestroyBuffer(device_, rtTexelBuf_, nullptr); rtTexelBuf_ = VK_NULL_HANDLE; }
+  if (rtTexelMem_) { vkFreeMemory(device_, rtTexelMem_, nullptr); rtTexelMem_ = VK_NULL_HANDLE; }
+  if (rtTexDescBuf_) { vkDestroyBuffer(device_, rtTexDescBuf_, nullptr); rtTexDescBuf_ = VK_NULL_HANDLE; }
+  if (rtTexDescMem_) { vkFreeMemory(device_, rtTexDescMem_, nullptr); rtTexDescMem_ = VK_NULL_HANDLE; }
+  if (rtMatTexBuf_) { vkDestroyBuffer(device_, rtMatTexBuf_, nullptr); rtMatTexBuf_ = VK_NULL_HANDLE; }
+  if (rtMatTexMem_) { vkFreeMemory(device_, rtMatTexMem_, nullptr); rtMatTexMem_ = VK_NULL_HANDLE; }
+  if (rtMatTexParamBuf_) { vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr); rtMatTexParamBuf_ = VK_NULL_HANDLE; }
+  if (rtMatTexParamMem_) { vkFreeMemory(device_, rtMatTexParamMem_, nullptr); rtMatTexParamMem_ = VK_NULL_HANDLE; }
   if (instInfoBuf_) { vkDestroyBuffer(device_, instInfoBuf_, nullptr); instInfoBuf_ = VK_NULL_HANDLE; }
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
   if (rtImageView_) { vkDestroyImageView(device_, rtImageView_, nullptr); rtImageView_ = VK_NULL_HANDLE; }
@@ -6701,6 +7146,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   if (params.view) std::memcpy(view_, params.view, sizeof(view_));
   if (params.proj) std::memcpy(proj_, params.proj, sizeof(proj_));
   for (int i = 0; i < 3; ++i) cameraPos_[i] = params.cameraPos[i];
+  exposure_ = params.exposure;
   for (int i = 0; i < 3; ++i) lightDir_[i] = params.lightDir[i];
   for (int i = 0; i < 3; ++i) lightColor_[i] = params.lightColor[i];
   for (int i = 0; i < 4; ++i) clear_[i] = params.clearColor[i];
@@ -6710,7 +7156,7 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   displacement_ = params.displacement;
   displacementScale_ = params.displacementScale;
   maxTessLevel_ = params.maxTessLevel;
-  // Update the global displacement-params UBO (set 5) so the scale + max-tess
+  // Update the global frame/displacement UBO (set 2) so the scale + max-tess
   // sliders are live. Persistently mapped; written each frame (volume-UBO
   // convention). [0]=scale, [1]=maxTessLevel.
   if (dispParamsMapped_) {
@@ -6757,6 +7203,17 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
                         params.meshVisible + params.meshVisibleCount);
   } else {
     meshVisible_.clear();
+  }
+
+  std::vector<uint8_t> nextRtVisible;
+  if (params.rtMeshVisible && params.rtMeshVisibleCount > 0) {
+    nextRtVisible.assign(params.rtMeshVisible,
+                         params.rtMeshVisible + params.rtMeshVisibleCount);
+  }
+  if (nextRtVisible != rtMeshVisible_) {
+    rtMeshVisible_ = std::move(nextRtVisible);
+    tlasDirty_ = true;
+    ++rtAccumGen_;
   }
 
   // Purpose visibility for the RT path: meshes of hidden purposes are left out
@@ -6826,7 +7283,7 @@ bool VulkanRenderer::resizeHeadless(int w, int h) {
   return true;
 }
 
-// (Re)build the instanced-pass per-draw metadata SSBO (set 6). One DrawMeta slot
+// (Re)build the instanced-pass per-draw metadata SSBO (set 3). One DrawMeta slot
 // per mesh (meshId + geomN/dbl/purpose/kind flag bits) plus a trailing slot for the
 // shared box proxy. Contents are static per mesh, so this only does GPU work when
 // the mesh count changed since the last build (scene (re)load). Must be called
@@ -6844,7 +7301,9 @@ void VulkanRenderer::ensureDrawMeta() {
     meta[mi].ids[0] = static_cast<int32_t>(mi);  // meshId
     meta[mi].ids[1] = (m.geometricNormal ? 1 : 0) | (m.doubleSided ? 2 : 0) |
                       ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
-    meta[mi].ids[2] = meta[mi].ids[3] = 0;
+    meta[mi].ids[2] = static_cast<int32_t>(
+        RasterLightMaskForMesh(rasterLights_, static_cast<int>(mi)));
+    meta[mi].ids[3] = 0;
     meta[mi].jointAddr = m.jointAddr;  // 0 = unskinned
     meta[mi].weightAddr = m.weightAddr;
   }
@@ -7074,7 +7533,9 @@ void VulkanRenderer::buildInstMdi() {
     d.ids[0] = static_cast<int32_t>(mi);
     d.ids[1] = (m.geometricNormal ? 1 : 0) | (m.doubleSided ? 2 : 0) |
                ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
-    d.ids[2] = d.ids[3] = 0;
+    d.ids[2] = static_cast<int32_t>(
+        RasterLightMaskForMesh(rasterLights_, static_cast<int>(mi)));
+    d.ids[3] = 0;
     // MDI draws read a MERGED vertex buffer, so gl_VertexIndex would not index the
     // mesh's own skin arrays: leave those draws unskinned (skinned prototypes are
     // never MDI-eligible, so this only ever zeroes what is already zero).
@@ -7325,36 +7786,19 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     const VkPipeline meshPl = (apass == 0) ? pipeline_ : translucentPipeline_;
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPl);
     int cullState = -1;  // -1 unknown; dedup vkCmdSetCullMode across meshes
-    if (boneDesc_ != VK_NULL_HANDLE) {
-      vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                              1, 1, &boneDesc_, 0, nullptr);
-    }
-    // Set 5: global displacement params (frame-constant; shared by the coarse and
-    // tessellation pipelines, which use the same layout). Set 6: per-material
-    // displacement texture scale/bias (indexed by matId in the shaders).
+    // Sets 2 and 3 are frame-constant and shared by the coarse/tess pipelines.
     if (dispParamsSet_ != VK_NULL_HANDLE) {
       vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                              5, 1, &dispParamsSet_, 0, nullptr);
+                              2, 1, &dispParamsSet_, 0, nullptr);
     }
     if (dispMatSet_ != VK_NULL_HANDLE) {
       vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                              6, 1, &dispMatSet_, 0, nullptr);
-    }
-    // Sets 21-23: DomeLight IBL (real bake or the always-valid black fallbacks).
-    {
-      VkDescriptorSet iblSets[3] = {
-          iblIrrDesc_ != VK_NULL_HANDLE ? iblIrrDesc_ : blackCubeDesc_,
-          iblSpecDesc_ != VK_NULL_HANDLE ? iblSpecDesc_ : blackCubeDesc_,
-          iblLutDesc_ != VK_NULL_HANDLE ? iblLutDesc_ : blackDesc_};
-      if (iblSets[0] && iblSets[1] && iblSets[2]) {
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipelineLayout_, 21, 3, iblSets, 0, nullptr);
-      }
+                              3, 1, &dispMatSet_, 0, nullptr);
     }
 
     light3d::Mat4 P = ToMat4(proj_);
     light3d::Mat4 V = ToMat4(view_);
-    // Frame-constant uniforms (set 5) for the mesh + instanced passes: viewProj
+    // Frame-constant uniforms (set 2) for the mesh + instanced passes: viewProj
     // (shaders derive per-mesh mvp = viewProj*model) plus camPos / scene bbox /
     // renderMode for the fragment AOVs. This keeps push constants per-draw-only
     // (<=128 B = the guaranteed maxPushConstantsSize; pushing 256 was UB and
@@ -7375,6 +7819,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       }
       fr->lightDir[3] = 0.0f;
       fr->lightColor[3] = 0.0f;
+      std::memcpy(fr->rasterLights, rasterLights_.lights.data(),
+                  sizeof(fr->rasterLights));
+      fr->rasterLightInfo[0] = static_cast<uint32_t>(rasterLights_.count);
+      fr->rasterLightInfo[1] = fr->rasterLightInfo[2] =
+          fr->rasterLightInfo[3] = 0u;
       fr->mode[0] = rtMode_;
       std::memcpy(fr->envRot, iblRotation_, sizeof(fr->envRot));
       fr->iblColor[0] = iblColor_[0];
@@ -7382,7 +7831,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       fr->iblColor[2] = iblColor_[2];
       fr->iblColor[3] = iblActive_ ? 1.0f : 0.0f;
       fr->iblParams[0] = static_cast<float>(iblLods_);
-      fr->iblParams[1] = fr->iblParams[2] = fr->iblParams[3] = 0.0f;
+      fr->iblParams[1] = exposure_;
+      fr->iblParams[2] = fr->iblParams[3] = 0.0f;
     }
     // Draw order: back-to-front by world centroid for the translucent pass.
     std::vector<size_t> order(meshes_.size());
@@ -7423,39 +7873,13 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       light3d::Mat4 W = ToMat4(mesh.world);
       // mvp = viewProj*model and the normal matrix are derived in the shader from
       // pc.model (frees the push-constant lanes they used).
-      if (mesh.influenceDesc != VK_NULL_HANDLE) {
+      VkDescriptorSet deformDs =
+          mesh.deformDesc ? mesh.deformDesc : dummyDeformDesc_;
+      if (deformDs != VK_NULL_HANDLE) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipelineLayout_, 2, 1, &mesh.influenceDesc, 0,
+                                pipelineLayout_, 1, 1, &deformDs, 0,
                                 nullptr);
       }
-      // Set 3: source-face-id SSBO (real or shared dummy -- always present).
-      VkDescriptorSet faceDs =
-          mesh.faceDesc != VK_NULL_HANDLE ? mesh.faceDesc : dummyFaceDesc_;
-      if (faceDs != VK_NULL_HANDLE) {
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                pipelineLayout_, 3, 1, &faceDs, 0, nullptr);
-      }
-      // Sets 7, 8 & 9: GPU blendshape morph delta + coefficient + channelId SSBOs
-      // (real or dummy).
-      VkDescriptorSet morphD = mesh.morphDeltaDesc ? mesh.morphDeltaDesc : dummyMorphDesc_;
-      VkDescriptorSet morphC = mesh.morphCoeffDesc ? mesh.morphCoeffDesc : dummyMorphDesc_;
-      VkDescriptorSet morphCh = mesh.morphChanDesc ? mesh.morphChanDesc : dummyMorphDesc_;
-      if (morphD != VK_NULL_HANDLE)
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                                7, 1, &morphD, 0, nullptr);
-      if (morphC != VK_NULL_HANDLE)
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                                8, 1, &morphC, 0, nullptr);
-      if (morphCh != VK_NULL_HANDLE)
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                                9, 1, &morphCh, 0, nullptr);
-      // Set 24: per-vertex displayColor SSBO (dummy + a cleared pc flag when the
-      // mesh carries none -- the shader statically references it).
-      VkDescriptorSet vtxColD =
-          mesh.vtxColorDesc ? mesh.vtxColorDesc : dummyMorphDesc_;
-      if (vtxColD != VK_NULL_HANDLE)
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                                24, 1, &vtxColD, 0, nullptr);
       VkDeviceSize offs[7] = {0, 0, 0, 0, 0, 0, 0};
       VkBuffer bufs[7] = {mesh.vbo,          mesh.jointVbo,   mesh.weightVbo,
                           mesh.influenceVbo, mesh.uv1Vbo,     mesh.morphInflVbo,
@@ -7463,95 +7887,72 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       vkCmdBindVertexBuffers(cb, 0, 7, bufs, offs);
       vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
       for (const auto& sub : mesh.submeshes) {
+        const bool splitBack =
+            dynCullSupported_ && sub.backfaceMaterialId >= 0 &&
+            sub.backfaceMaterialId != sub.materialId;
+        const int sideCount = splitBack ? 2 : 1;
+        for (int side = 0; side < sideCount; ++side) {
+        const int materialId = side == 0 ? sub.materialId
+                                         : sub.backfaceMaterialId;
+        if (dynCullSupported_) {
+          const VkCullModeFlags want =
+              splitBack ? (side == 0 ? VK_CULL_MODE_BACK_BIT
+                                     : VK_CULL_MODE_FRONT_BIT)
+                        : (mesh.doubleSided ? VK_CULL_MODE_NONE
+                                            : VK_CULL_MODE_BACK_BIT);
+          if (static_cast<int>(want) != cullState) {
+            vkCmdSetCullMode_(cb, want);
+            cullState = static_cast<int>(want);
+          }
+        }
         // Opaque pass skips Blend submeshes; translucent pass skips the rest.
-        if (apass == 0 && subTranslucent(sub.materialId)) continue;
-        if (apass == 1 && !subTranslucent(sub.materialId)) continue;
+        if (apass == 0 && subTranslucent(materialId)) continue;
+        if (apass == 1 && !subTranslucent(materialId)) continue;
         auto materialTexSlot = [&](const std::vector<int>& slots) -> int {
-          if (sub.materialId >= 0 &&
-              static_cast<size_t>(sub.materialId) < slots.size()) {
-            return slots[static_cast<size_t>(sub.materialId)];
+          if (materialId >= 0 &&
+              static_cast<size_t>(materialId) < slots.size()) {
+            return slots[static_cast<size_t>(materialId)];
           }
           return -1;
-        };
-        auto textureDesc = [&](int slot, VkDescriptorSet fallback) -> VkDescriptorSet {
-          if (slot >= 0 && static_cast<size_t>(slot) < texDescs_.size()) {
-            return texDescs_[static_cast<size_t>(slot)];
-          }
-          return fallback;
-        };
-        auto udimArrayDesc = [&](int slot) -> VkDescriptorSet {
-          if (slot >= 0 && static_cast<size_t>(slot) < texUdimArrayDescs_.size()) {
-            return texUdimArrayDescs_[static_cast<size_t>(slot)];
-          }
-          return dummyArrayDesc_;
         };
         auto isUdimSlot = [&](int slot) -> bool {
           return slot >= 0 && static_cast<size_t>(slot) < texIsUdim_.size() &&
                  texIsUdim_[static_cast<size_t>(slot)] != 0;
         };
         const int baseSlot = materialTexSlot(matBaseTex_);
-        const int mrSlot = materialTexSlot(matMetalRoughTex_);
+        const int metallicSlot = materialTexSlot(matMetallicTex_);
+        const int roughnessSlot = materialTexSlot(matRoughnessTex_);
         const int emSlot = materialTexSlot(matEmissiveTex_);
         const int nmSlot = materialTexSlot(matNormalTex_);
         const int opSlot = materialTexSlot(matOpacityTex_);
 
-        // Bind the submesh's base-color texture (white if untextured).
-        VkDescriptorSet ds = textureDesc(baseSlot, whiteDesc_);
-        if (ds != VK_NULL_HANDLE) {
+        const size_t materialIndex =
+            materialId >= 0 &&
+                    static_cast<size_t>(materialId) < materialSets_.size()
+                ? static_cast<size_t>(materialId)
+                : 0;
+        if (materialIndex < materialSets_.size() && materialSets_[materialIndex]) {
+          VkDescriptorSet materialDs = materialSets_[materialIndex];
           vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                                  0, 1, &ds, 0, nullptr);
+                                  0, 1, &materialDs, 0, nullptr);
         }
-        VkDescriptorSet mrDs = textureDesc(mrSlot, whiteDesc_);
-        VkDescriptorSet emDs = textureDesc(emSlot, whiteDesc_);
-        VkDescriptorSet nmDs = textureDesc(nmSlot, whiteDesc_);
-        if (mrDs != VK_NULL_HANDLE) {
-          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                                  10, 1, &mrDs, 0, nullptr);
-        }
-        if (emDs != VK_NULL_HANDLE) {
-          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                                  11, 1, &emDs, 0, nullptr);
-        }
-        if (nmDs != VK_NULL_HANDLE) {
-          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                                  12, 1, &nmDs, 0, nullptr);
-        }
-        VkDescriptorSet udimSets[7] = {
-            udimArrayDesc(baseSlot), udimLutAtlasDesc_, udimArrayDesc(mrSlot),
-            udimArrayDesc(nmSlot), udimArrayDesc(emSlot),
-            textureDesc(opSlot, whiteDesc_), udimArrayDesc(opSlot)};
-        for (uint32_t si = 0; si < 7; ++si) {
-          if (udimSets[si]) {
-            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    pipelineLayout_, 13 + si, 1, &udimSets[si],
-                                    0, nullptr);
-          }
-        }
-        // Set 4: displacement height map (vertex stage). Black (red=0) when the
-        // material has no displacement or displacement is globally off, so the
-        // shader's unconditional sample is a no-op there. The scale + max-tess
-        // sliders reach the shader via the set-5 params UBO.
+        // The displacement image lives at material binding 16. A black fallback
+        // makes the unconditional vertex/TES sample a no-op.
         bool displaced = false;
-        VkDescriptorSet dispDs = blackDesc_;
-        if (displacement_ && sub.materialId >= 0 &&
-            static_cast<size_t>(sub.materialId) < matDispTex_.size()) {
-          const int dt = matDispTex_[static_cast<size_t>(sub.materialId)];
+        if (displacement_ && materialId >= 0 &&
+            static_cast<size_t>(materialId) < matDispTex_.size()) {
+          const int dt = matDispTex_[static_cast<size_t>(materialId)];
           if (dt >= 0 && static_cast<size_t>(dt) < texDescs_.size()) {
-            dispDs = texDescs_[static_cast<size_t>(dt)];
             displaced = true;
           }
         }
-        if (dispDs != VK_NULL_HANDLE) {
-          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
-                                  4, 1, &dispDs, 0, nullptr);
-        }
         PushC pc{};
         std::memcpy(pc.model, W.m, sizeof(pc.model));
-        if (sub.materialId >= 0 &&
-            static_cast<size_t>(sub.materialId) * 12 + 10 < matColor_.size()) {
+        if (materialId >= 0 &&
+            static_cast<size_t>(materialId) * 12 + 10 < matColor_.size()) {
           // matColor_ stride 12: [0..2]=baseColor, [3]=alpha, [4]=metallic,
           // [5]=roughness, [6]=alphaMode, [7]=alphaCutoff, [8..10]=emissive.
-          const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 12];
+          const float* mc = &matColor_[static_cast<size_t>(materialId) * 12];
           pc.baseColor[0] = mc[0]; pc.baseColor[1] = mc[1];
           pc.baseColor[2] = mc[2]; pc.baseColor[3] = mc[3];
           pc.matAux[0] = mc[4];          // metallic
@@ -7577,19 +7978,23 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           flags |= (1 << 7) |
                    (static_cast<int>((sub.indexOffset / 3) & 0xFFFFFFu) << 8);
         }
-        pc.ids[0] = sub.materialId;
+        pc.ids[0] = materialId;
         pc.ids[1] = flags;
         pc.ids[2] = static_cast<int>(mi);
         pc.ids[3] = 0;
         if (isUdimSlot(baseSlot)) pc.ids[3] |= 1;
-        if (isUdimSlot(mrSlot)) pc.ids[3] |= 2;
+        if (isUdimSlot(metallicSlot)) pc.ids[3] |= 2;
         if (isUdimSlot(nmSlot)) pc.ids[3] |= 4;
         if (isUdimSlot(emSlot)) pc.ids[3] |= 8;
         if (nmSlot >= 0) pc.ids[3] |= 16;
+        if (roughnessSlot >= 0) pc.ids[3] |= 256;
+        if (isUdimSlot(roughnessSlot)) pc.ids[3] |= 512;
         // bit 32: per-vertex displayColor/displayOpacity RGBA stream present.
         if (mesh.vtxColorDesc != VK_NULL_HANDLE) pc.ids[3] |= 32;
         if (opSlot >= 0) pc.ids[3] |= 64;
         if (isUdimSlot(opSlot)) pc.ids[3] |= 128;
+        pc.ids[3] |= static_cast<int32_t>(
+            RasterLightMaskForMesh(rasterLights_, static_cast<int>(mi)) << 16u);
         vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(PushC), &pc);
         // GPU tessellation for displaced meshes in Shaded mode when the slider
         // asks for it: bind the PATCH-list tess pipeline for this draw, then
@@ -7607,6 +8012,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         } else {
           vkCmdDrawIndexed(cb, sub.indexCount, 1, sub.indexOffset, 0, 0);
         }
+        }
       }
     }
     }  // alpha pass loop
@@ -7623,35 +8029,23 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       // behavior). The per-mesh instanced loop below does cull single-sided
       // prototypes; GL culls them in both paths.
       if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_NONE);
-      // Set 1: the scene-wide bone rows, so a skinned prototype poses in the
-      // instanced vertex shader (same buffer the mesh pass binds). Absent when the
-      // scene has no skinning -- every draw then carries jointAddr == 0 and the
-      // shader never touches the binding.
-      if (boneDesc_ != VK_NULL_HANDLE) {
+      if (!materialSets_.empty() && materialSets_[0]) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                instPipelineLayout_, 1, 1, &boneDesc_, 0, nullptr);
+                                instPipelineLayout_, 0, 1, &materialSets_[0], 0,
+                                nullptr);
       }
-      // Set 0: dome IBL irradiance cube (black fallback) for the flat ambient.
-      {
-        VkDescriptorSet irrDs =
-            iblIrrDesc_ != VK_NULL_HANDLE ? iblIrrDesc_ : blackCubeDesc_;
-        if (irrDs != VK_NULL_HANDLE) {
-          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  instPipelineLayout_, 0, 1, &irrDs, 0, nullptr);
-        }
-      }
-      // Set 5: the Frame UBO (viewProj / camPos / scene bbox / renderMode), the
+      // Set 2: the Frame UBO (viewProj / camPos / scene bbox / renderMode), the
       // same one the mesh pass uses. The instanced shaders read viewProj + the
       // AOV data from it, so push constants stay per-draw-only.
       if (dispParamsSet_ != VK_NULL_HANDLE) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                instPipelineLayout_, 5, 1, &dispParamsSet_, 0, nullptr);
+                                instPipelineLayout_, 2, 1, &dispParamsSet_, 0, nullptr);
       }
-      // Set 6: per-draw metadata SSBO (meshId/flags), shared by the whole pass. The
+      // Set 3: per-draw metadata SSBO (meshId/flags), shared by the whole pass. The
       // fragment shader indexes it by (baseDraw + gl_DrawIDARB).
       if (drawMetaSet_ != VK_NULL_HANDLE) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                instPipelineLayout_, 6, 1, &drawMetaSet_, 0, nullptr);
+                                instPipelineLayout_, 3, 1, &drawMetaSet_, 0, nullptr);
       }
       // MDI batch: every eligible (non-morph) prototype drawn as ONE
       // vkCmdDrawIndexedIndirect over the shared buffers, collapsing ~83k per-mesh
@@ -7669,9 +8063,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                             mdiVtxColBuf_, mdiMorphBuf_};
         VkDeviceSize offs[5] = {0, 0, 0, 0, 0};
         vkCmdBindVertexBuffers(cb, 0, 5, bufs, offs);
-        VkDescriptorSet dm[3] = {dummyMorphDesc_, dummyMorphDesc_, dummyMorphDesc_};
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                instPipelineLayout_, 7, 3, dm, 0, nullptr);
+        if (dummyDeformDesc_) {
+          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  instPipelineLayout_, 1, 1,
+                                  &dummyDeformDesc_, 0, nullptr);
+        }
         vkCmdBindIndexBuffer(cb, mdiEbo_, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexedIndirect(cb, mdiIndirectBuf_, 0, mdiDrawCount_,
                                  sizeof(VkDrawIndexedIndirectCommand));
@@ -7716,13 +8112,13 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                               mesh.instVtxColorBuf, mesh.morphOffsetVbo};
           VkDeviceSize offs[5] = {0, 0, 0, 0, 0};
           vkCmdBindVertexBuffers(cb, 0, 5, bufs, offs);
-          // Sets 7/8/9: GPU morph delta/coeff/channelId (dummy sets for non-morph).
-          VkDescriptorSet morphSets[3] = {
-              mesh.morphDeltaDesc ? mesh.morphDeltaDesc : dummyMorphDesc_,
-              mesh.morphCoeffDesc ? mesh.morphCoeffDesc : dummyMorphDesc_,
-              mesh.morphChanDesc ? mesh.morphChanDesc : dummyMorphDesc_};
-          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  instPipelineLayout_, 7, 3, morphSets, 0, nullptr);
+          VkDescriptorSet deformDs =
+              mesh.deformDesc ? mesh.deformDesc : dummyDeformDesc_;
+          if (deformDs) {
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    instPipelineLayout_, 1, 1, &deformDs, 0,
+                                    nullptr);
+          }
           vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
           for (const auto& sub : mesh.submeshes) {
             vkCmdDrawIndexed(cb, sub.indexCount, mesh.drawInstanceCount,
@@ -8071,6 +8467,8 @@ void VulkanRenderer::shutdown() {
   if (boneMem_) { vkFreeMemory(device_, boneMem_, nullptr); boneMem_ = VK_NULL_HANDLE; }
   boneBufSize_ = 0;
   if (texPool_) { vkDestroyDescriptorPool(device_, texPool_, nullptr); texPool_ = VK_NULL_HANDLE; }
+  if (materialPool_) { vkDestroyDescriptorPool(device_, materialPool_, nullptr); materialPool_ = VK_NULL_HANDLE; }
+  if (deformPool_) { vkDestroyDescriptorPool(device_, deformPool_, nullptr); deformPool_ = VK_NULL_HANDLE; }
   if (skinPool_) { vkDestroyDescriptorPool(device_, skinPool_, nullptr); skinPool_ = VK_NULL_HANDLE; }
   if (influencePool_) { vkDestroyDescriptorPool(device_, influencePool_, nullptr); influencePool_ = VK_NULL_HANDLE; }
   if (facePool_) { vkDestroyDescriptorPool(device_, facePool_, nullptr); facePool_ = VK_NULL_HANDLE; }
@@ -8092,6 +8490,8 @@ void VulkanRenderer::shutdown() {
   if (drawMetaBufMem_) { vkFreeMemory(device_, drawMetaBufMem_, nullptr); drawMetaBufMem_ = VK_NULL_HANDLE; }
   if (drawMetaPool_) { vkDestroyDescriptorPool(device_, drawMetaPool_, nullptr); drawMetaPool_ = VK_NULL_HANDLE; }
   if (drawMetaSetLayout_) { vkDestroyDescriptorSetLayout(device_, drawMetaSetLayout_, nullptr); drawMetaSetLayout_ = VK_NULL_HANDLE; }
+  if (materialSetLayout_) { vkDestroyDescriptorSetLayout(device_, materialSetLayout_, nullptr); materialSetLayout_ = VK_NULL_HANDLE; }
+  if (deformSetLayout_) { vkDestroyDescriptorSetLayout(device_, deformSetLayout_, nullptr); deformSetLayout_ = VK_NULL_HANDLE; }
   if (texSetLayout_) { vkDestroyDescriptorSetLayout(device_, texSetLayout_, nullptr); texSetLayout_ = VK_NULL_HANDLE; }
   if (skinSetLayout_) { vkDestroyDescriptorSetLayout(device_, skinSetLayout_, nullptr); skinSetLayout_ = VK_NULL_HANDLE; }
   if (influenceSetLayout_) { vkDestroyDescriptorSetLayout(device_, influenceSetLayout_, nullptr); influenceSetLayout_ = VK_NULL_HANDLE; }

@@ -65,11 +65,45 @@ light3d::Mat4 OrbitCamera::proj(bool zeroToOneDepth) const {
   const float fovY = fovYDeg_ * kDeg2Rad;
   const float znear = nearPlane();
   const float zfar = farPlane();
-  const float projAspect = aspect();
-  if (zeroToOneDepth) {
-    return light3d::perspectiveZeroOne(fovY, projAspect, znear, zfar);
+  float projAspect = aspect();
+  float verticalScale = 1.0f;
+  if (aspectOverrideEnabled_ && conform_ != CameraConform::None) {
+    const float filmbackAspect = aspectOverride_;
+    projAspect = viewportAspect_;
+    const bool preserveHorizontal =
+        conform_ == CameraConform::Horizontal ||
+        (conform_ == CameraConform::Fit && projAspect < filmbackAspect) ||
+        (conform_ == CameraConform::Crop && projAspect > filmbackAspect);
+    if (preserveHorizontal) verticalScale = filmbackAspect / projAspect;
   }
-  return light3d::perspective(fovY, projAspect, znear, zfar);
+  if (projection_ == CameraProjection::Orthographic) {
+    const float halfH =
+        std::max(orthographicHeight_ * 0.5f * verticalScale, 1e-5f);
+    const float halfW = halfH * projAspect;
+    light3d::Mat4 r;
+    r.m[0] = 1.0f / halfW;
+    r.m[5] = 1.0f / halfH;
+    r.m[12] = -lensShiftX_;
+    r.m[13] = -lensShiftY_;
+    if (zeroToOneDepth) {
+      r.m[10] = -1.0f / (zfar - znear);
+      r.m[14] = -znear / (zfar - znear);
+    } else {
+      r.m[10] = -2.0f / (zfar - znear);
+      r.m[14] = -(zfar + znear) / (zfar - znear);
+    }
+    r.m[15] = 1.0f;
+    return r;
+  }
+  const float conformedFovY =
+      2.0f * std::atan(std::tan(0.5f * fovY) * verticalScale);
+  light3d::Mat4 r =
+      zeroToOneDepth
+          ? light3d::perspectiveZeroOne(conformedFovY, projAspect, znear, zfar)
+          : light3d::perspective(conformedFovY, projAspect, znear, zfar);
+  r.m[8] += lensShiftX_;
+  r.m[9] += lensShiftY_;
+  return r;
 }
 
 float OrbitCamera::nearPlane() const {
@@ -107,6 +141,17 @@ float OrbitCamera::farPlane() const {
 void OrbitCamera::setFovYDeg(float deg) {
   if (!std::isfinite(deg)) return;
   fovYDeg_ = std::max(5.0f, std::min(175.0f, deg));
+}
+
+void OrbitCamera::setOrthographicHeight(float height) {
+  if (!std::isfinite(height)) return;
+  orthographicHeight_ = std::max(height, 1e-5f);
+}
+
+void OrbitCamera::setLensShift(float horizontal, float vertical) {
+  if (!std::isfinite(horizontal) || !std::isfinite(vertical)) return;
+  lensShiftX_ = Clamp(horizontal, -10.0f, 10.0f);
+  lensShiftY_ = Clamp(vertical, -10.0f, 10.0f);
 }
 
 void OrbitCamera::setAspectOverride(float aspectValue) {

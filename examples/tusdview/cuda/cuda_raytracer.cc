@@ -52,7 +52,8 @@ CudaRayTracer::~CudaRayTracer() {
 
 void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dBackMat_);
+  F(dMatPbr_); F(dMatBase_);
   F(dMatLightRt_); F(dMatTex_);
   F(dMatTexParam_); F(dLightParams_);
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
@@ -169,6 +170,9 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.geo.data(), hs.geo.size(), &dGeo_)) return false;
   if (!up(hs.emask.data(), hs.emask.size(), &dEmask_)) return false;
   if (!up(hs.mat.data(), hs.mat.size() * sizeof(int), &dMat_)) return false;
+  if (!hs.backMat.empty() &&
+      !up(hs.backMat.data(), hs.backMat.size() * sizeof(int), &dBackMat_))
+    return false;
   if (!up(hs.face.data(), hs.face.size() * sizeof(int), &dFace_)) return false;
   if (!up(hs.uv.data(), hs.uv.size() * sizeof(float), &dUV_)) return false;
   if (!up(hs.uv1.data(), hs.uv1.size() * sizeof(float), &dUV1_)) return false;
@@ -189,6 +193,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
       return false;
   }
   if (!up(hs.matPbr.data(), hs.matPbr.size() * sizeof(float), &dMatPbr_)) return false;
+  if (!up(hs.matBase.data(), hs.matBase.size() * sizeof(float), &dMatBase_)) return false;
   if (!up(hs.matLightRt.data(), hs.matLightRt.size() * sizeof(float),
           &dMatLightRt_)) return false;
   if (!up(hs.lightParams.data(), hs.lightParams.size() * sizeof(float),
@@ -200,6 +205,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
 bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                           const float camPos[3],
                           const float lightDir[3], const float clearColor[3],
+                          float exposure,
                           int renderMode, float depthScale, const float sceneMin[3],
                           const float sceneExtent[3], int w, int h,
                           std::vector<uint8_t>* rgba, std::string* err, int spp) {
@@ -231,10 +237,12 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
     cam.clear[i] = clearColor[i];
   }
   cam.clear[3] = static_cast<float>(renderMode);
+  cam.camPos[3] = exposure;
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
   CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
-              dMP = dMatPbr_, dML = dMatLightRt_, dMT = dMatTex_,
+              dBM = dBackMat_,
+              dMP = dMatPbr_, dMB = dMatBase_, dML = dMatLightRt_, dMT = dMatTex_,
               dTx = dTexels_, dTD = dTextures_,
               dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
               dDw = dDomW_, dDj = dDomJoint_, dBl = dBlasNodes_, dTl = dTlasNodes_,
@@ -250,11 +258,11 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   CUdeviceptr dAcc = (samples > 1) ? dAccum_ : 0;
   int sampleIdx = 0;
   int numSamples = samples;
-  // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,
+  // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,backMats,matPbr,matBase,
   // matLightRt,numMats,lightParams,numLights,matTex,matTexParam,texels,textures,
   // numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
   // volDens,volParams,numVols,emask,accum,sampleIdx,numSamples.
-  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &dML, &numMats, &dLP,
+  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dBM, &dMP, &dMB, &dML, &numMats, &dLP,
                   &numLights, &dMT, &dMTP, &dTx, &dTD, &numTextures, &dU, &dU1,
                   &dIn, &dF,  &dDw,
                   &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,

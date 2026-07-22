@@ -111,6 +111,28 @@ displays it with an ImGui docking UI.
   normal, emissive, and separate scalar opacity masks. Opacity honors selected
   channels, scale/bias, UV transforms and UV sets; ordinary and UDIM masks are
   supported. Varying `primvars:displayOpacity` modulates raster and RT output.
+- Advanced OpenPBR/MaterialX lobes that are not yet evaluated in real time
+  remain preserved in the neutral material record and produce one
+  path-qualified load diagnostic per material. The structured load summary
+  reports `unsupported_lobes=N` for transmission, subsurface, sheen/fuzz,
+  anisotropy, thin-film, dispersion, and volume instead of silently treating
+  them as supported.
+- **Authored USD lighting** on both raster backends: up to 16 supported direct
+  lights are evaluated in stage order with diffuse/specular multipliers,
+  shaping cones, and per-mesh `collection:lightLink` masks, alongside
+  DomeLight IBL. DistantLight and finite sphere/point, rect, disk, and cylinder
+  records share the same packed GL/Vulkan interface; finite area shapes are
+  currently represented by their light position. GeometryLight, PortalLight,
+  IES profiles, emissive-mesh sampling, and raster shadow maps remain explicit
+  roadmap items. Native Points/Curves currently receive all packed direct
+  lights because their light-link carrier mapping has not landed yet.
+- **UsdGeomPoints and curves (`--next`)** — Points plus BasisCurves,
+  HermiteCurves, and NurbsCurves retain evaluated widths, displayColor,
+  displayOpacity, material binding, purpose, animation time, and transforms.
+  OpenGL raster draws world-sized camera-facing point discs and tessellated
+  curve ribbons; Vulkan ray query and CUDA/HIP trace width-aware solid
+  octahedron/tube proxies. Vulkan raster drawing and viewport click-picking for
+  these carriers remain roadmap items; mesh picking is unchanged.
 - **Surface displacement** (`UsdPreviewSurface inputs:displacement` — constant or
   a height texture, honoring the `UsdUVTexture` `scale`/`bias`). The **raster**
   paths displace in the vertex shader (coarse, no extra geometry), with an opt-in
@@ -129,14 +151,20 @@ displays it with an ImGui docking UI.
   viewer transparently falls back to Vulkan rasterization. The RT path builds a
   BLAS per mesh + a TLAS, then a compute shader (`vk/shaders/raytrace.comp`)
   traces primary + shadow rays with `rayQueryEXT` into a storage image that is
-  copied into the displayed target. Shading mirrors the raster look (material
-  base color + the same directional light) plus **hard shadows**. Toggle it from
+  copied into the displayed target. Shading evaluates the shared GGX/coat
+  material constants, authored USD lights, DomeLight IBL, and per-light
+  visibility rays. Toggle it from
   **View ▸ Ray tracing (Vulkan)** (greyed out when unsupported) or start in RT
   with `--rt`. RT uses a ray-tracer-friendly conversion (no single-index dedup;
   `build_vertex_indices=false`); displacement is baked into the traced geometry.
-  _RT limitations:_ material textures (including separate opacity images) are
-  not sampled; varying displayOpacity and material constants are supported. One
-  material per mesh and no helper-line overlay.
+  RT samples the six semantic material textures, including separate opacity,
+  UV1/transforms, compressed-only sources, and sparse UDIMs; full ordinary,
+  compressed, and UDIM mip chains use ray-footprint/projected-triangle LOD with
+  trilinear filtering. Alpha-mask texels are rejected during traversal. Varying
+  displayOpacity and material constants are also supported, including per-face
+  materials bound through GeomSubsets.
+  Helper lines, grid/axes, skeletons, volumes, and selection highlights are
+  composited over the traced image without recreating the renderer.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive
@@ -357,14 +385,16 @@ Tools (`tools/list` for schemas):
 
 | tool | does |
 |---|---|
-| `load_usd {path}` | load a USD file (async; poll `get_scene_info`) |
-| `get_scene_info` / `get_scene_bbox` | filepath, mesh/triangle/material counts, up axis, world-space AABB |
+| `load_usd {path}` / `load_usd {usda}` | load a USD path or inline USDA text (async; poll `get_scene_info`) |
+| `get_scene_info` / `get_scene_bbox` | loading state/path, scene generation, filepath, mesh/triangle/material counts, up axis, world-space AABB |
 | `get_focused_prim` | selected prim: path, vertex/triangle counts, bbox, world matrix, material (id/name/base color/metal/rough) |
 | `set_focus {path}` | select a prim by absolute path; returns the same info |
 | `viewport {op}` | `orbit`/`pan {dx,dy}`, `dolly`/`forward`/`backward {amount}`, `fit`, `home`, `isometric`, `front`, `back`, `right`, `left`, `top`, `bottom`, `bookmark_save {slot}`, `bookmark_load {slot}`, `set {target,yaw,pitch,distance}`; returns the camera state |
 | `list_prims {max?}` | renderable mesh prim paths |
 | `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
 | `timeline {op, time?}` | animation playback: `op` = `play`/`pause`/`stop`/`seek {time}`; async re-eval, poll `get_scene_info` (reports `has_animation`/`time`/`start_time`/`end_time`/`fps`/`playing`) |
+| `render_settings {mode?, grid?}` | change resettable render mode/grid state between captures without restarting the viewer |
+| `screenshot {path}` | capture the current viewport as PNG or PPM |
 
 Example:
 
@@ -387,6 +417,21 @@ default (deps — `nlohmann/json` + civetweb — are vendored in `src/external`)
 disable with `-DTUSDVIEW_ENABLE_MCP=OFF`. The HTTP transport is the minimal
 "Streamable HTTP" subset (one JSON response per POST; no SSE).
 
+For render regressions, `tests/tusdview/mcp_render_batch.py` consumes a JSON
+manifest and keeps one tusdview process alive for all compatible cases. Each
+case may supply `path` or inline `usda`, expected scene-info fields,
+`render_settings`, a `viewport` operation, and a screenshot name. Backend,
+loader, RT implementation, startup environment, and other process-wide options
+belong in separate batches. The `tusdview-mcp-render-batch` CTest is the compact
+reference: it replaces three inline scenes and captures three render modes from
+one Vulkan process. `tusdview-mcp-render-batch-gl-window` runs the same cases
+through one real GLFW/OpenGL window under Xvfb. Both record the window and
+renderer generations and fail if either resource is recreated within a batch.
+The back-face material regression uses the same mechanism to keep one window or
+offscreen renderer alive across its four fixture/camera combinations for GL,
+Vulkan raster, and Vulkan RT. CUDA/HIP remain isolated because those backends
+own and write their test screenshot during process shutdown.
+
 ## Architecture
 
 ```
@@ -408,17 +453,20 @@ camera, GUI, `DrawScene`) is backend-neutral.
 
 ## Threading model
 
-GL contexts, Vulkan command submission, ImGui and GLFW event polling are all
-single-thread-affine, so the render/UI loop stays on the main thread. The
-expensive, freeze-prone work (USD parse + Tydra convert + DrawScene build) runs
-on a worker thread; its result is uploaded to the GPU on the main thread once
-ready. The worker only touches CPU data — no GL/VK calls off-thread.
+By default the render/UI loop stays on the main thread. USD parse, composition,
+Tydra conversion, and DrawScene construction run on a CPU worker. Builds made
+with `TUSDVIEW_ENABLE_GL_THREAD=ON` may opt into `--threaded`, where a dedicated
+render thread owns the GL context or Vulkan queue while GLFW events and ImGui
+frame construction remain on the main thread.
 
 ## Known limitations
 
-- Ray-tracing backends use material constants and varying displayOpacity but do
-  not yet sample material images; texture opacity is raster-only.
-- Single hard-coded directional light (USD lights are not consumed yet).
-- Skeleton display shows the **bind pose** only (no animation/skinning playback).
-- Tangents/normal-mapping, animation, instancing transforms and multi-viewport
-  are out of scope for this pass.
+- Vulkan/CUDA/HIP ray tracing samples base color, metallic, roughness, normal,
+  emissive, and opacity images through the shared semantic table. The RT
+  software texture path uses trilinear footprint/projected-triangle mip LOD,
+  without raster anisotropy.
+- Vulkan raster uses four bound descriptor sets and runs on low-limit software
+  devices as well as desktop GPUs.
+- Alpha-blended ray-traced surfaces use a nearest-layer approximation.
+- MaterialX image nodes beyond the extracted Preview/OpenPBR semantic slots,
+  and multi-viewport UI, remain incomplete.

@@ -1168,7 +1168,7 @@ void ClassifyTextureUsage(DrawScene* out) {
   for (const DrawMaterialCPU& m : out->materials) {
     if (DrawTextureCPU* t = texAt(m.normalTex)) t->isNormalMap = true;
     if (DrawTextureCPU* t = texAt(m.coatNormalTex)) t->isNormalMap = true;
-    if (DrawTextureCPU* t = texAt(m.metalRoughTex)) {
+    if (DrawTextureCPU* t = texAt(m.roughnessTex)) {
       // Packed ORM map: the roughness channel minifies variance-aware (reduces
       // specular aliasing); other channels keep the filtered average.
       if (m.roughnessChannel >= 0 && m.roughnessChannel < 4) {
@@ -1708,17 +1708,17 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
           dm.opacityTexBias = ot.bias[dm.opacityChannel];
         }
       }
-      int mrTex = mapTex(s.metallic.texture_id);
-      if (mrTex < 0) mrTex = mapTex(s.roughness.texture_id);
-      dm.metalRoughTex = mrTex;
+      dm.metallicTex = mapTex(s.metallic.texture_id);
+      dm.roughnessTex = mapTex(s.roughness.texture_id);
       dm.displacementTex = mapTex(s.displacement.texture_id);
       CopyTexSample(rs, s.diffuseColor.texture_id, &dm.baseColorSample);
       CopyTexSample(rs, s.emissiveColor.texture_id, &dm.emissiveSample);
       CopyTexSample(rs, s.normal.texture_id, &dm.normalSample);
       if (s.metallic.texture_id >= 0) {
-        CopyTexSample(rs, s.metallic.texture_id, &dm.metalRoughSample);
-      } else {
-        CopyTexSample(rs, s.roughness.texture_id, &dm.metalRoughSample);
+        CopyTexSample(rs, s.metallic.texture_id, &dm.metallicSample);
+      }
+      if (s.roughness.texture_id >= 0) {
+        CopyTexSample(rs, s.roughness.texture_id, &dm.roughnessSample);
       }
       if (s.normal.texture_id >= 0) {
         for (int i = 0; i < 3; ++i) {
@@ -1745,9 +1745,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
         dm.roughnessChannel = TextureChannelIndex(rt.connectedOutputChannel, 1);
         dm.roughnessTexScale = rt.scale[dm.roughnessChannel];
         dm.roughnessTexBias = rt.bias[dm.roughnessChannel];
-        if (s.metallic.texture_id < 0) {
-          CopyTexSample(rt, &dm.metalRoughSample);
-        }
+        CopyTexSample(rt, &dm.roughnessSample);
       }
       dm.displacementUv = MapUvXform(rs, s.displacement.texture_id);
       dm.displacementConst = s.displacement.value;
@@ -1890,17 +1888,17 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
         }
       }
       dm.coatNormalTex = mapTex(s.coat_normal.texture_id);
-      int mrTex = mapTex(s.base_metalness.texture_id);
-      if (mrTex < 0) mrTex = mapTex(s.base_roughness.texture_id);
-      dm.metalRoughTex = mrTex;
+      dm.metallicTex = mapTex(s.base_metalness.texture_id);
+      dm.roughnessTex = mapTex(s.base_roughness.texture_id);
       CopyTexSample(rs, s.base_color.texture_id, &dm.baseColorSample);
       CopyTexSample(rs, s.emission_color.texture_id, &dm.emissiveSample);
       CopyTexSample(rs, s.normal.texture_id, &dm.normalSample);
       CopyTexSample(rs, s.coat_normal.texture_id, &dm.coatNormalSample);
       if (s.base_metalness.texture_id >= 0) {
-        CopyTexSample(rs, s.base_metalness.texture_id, &dm.metalRoughSample);
-      } else {
-        CopyTexSample(rs, s.base_roughness.texture_id, &dm.metalRoughSample);
+        CopyTexSample(rs, s.base_metalness.texture_id, &dm.metallicSample);
+      }
+      if (s.base_roughness.texture_id >= 0) {
+        CopyTexSample(rs, s.base_roughness.texture_id, &dm.roughnessSample);
       }
       if (s.normal.texture_id >= 0) {
         for (int i = 0; i < 3; ++i) {
@@ -1934,9 +1932,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
         dm.roughnessChannel = TextureChannelIndex(rt.connectedOutputChannel, 1);
         dm.roughnessTexScale = rt.scale[dm.roughnessChannel];
         dm.roughnessTexBias = rt.bias[dm.roughnessChannel];
-        if (s.base_metalness.texture_id < 0) {
-          CopyTexSample(rt, &dm.metalRoughSample);
-        }
+        CopyTexSample(rt, &dm.roughnessSample);
       }
       // Raster and current RT preview shaders multiply sampled textures by these
       // factors. Use neutral factors when texture-driven, and keep OpenPBR's
@@ -1960,6 +1956,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
     }
     // else: leave default gray.
     BakeLightRtOpenPBR(&dm);
+    DiagnoseUnsupportedRealtimeLobes(dm, out);
     out->materials.push_back(std::move(dm));
   }
 }
@@ -2195,6 +2192,20 @@ void BuildDrawLights(const tydra::RenderScene& rs, DrawScene* out,
     dst.shadowLinkMeshIndices = src.shadow_link_mesh_indices;
     dst.hasSpectralEmission = src.hasSpectralEmission();
     BakeLightDerivedParams(&dst);
+    if (dst.type == DrawLightCPU::Type::Geometry) {
+      out->skipped.push_back(
+          "GeometryLight '" + dst.absPath +
+          "': emissive-mesh light sampling is not implemented");
+    } else if (dst.type == DrawLightCPU::Type::Portal) {
+      out->skipped.push_back(
+          "PortalLight '" + dst.absPath +
+          "': portal-guided environment sampling is not implemented");
+    }
+    if (!dst.shapingIesFile.empty()) {
+      out->skipped.push_back(
+          "Light '" + dst.absPath +
+          "': IES profile evaluation is not implemented");
+    }
     out->lights.push_back(std::move(dst));
   }
 }
@@ -2611,22 +2622,28 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
     sub.indexOffset = 0;
     sub.indexCount = static_cast<uint32_t>(dm.indices.size());
     sub.materialId = mesh.material_id;
+    sub.backfaceMaterialId = mesh.backface_material_id;
     dm.submeshes.push_back(sub);
     dm.sourceFaceId = std::move(triFacePre);  // no reorder
   } else {
-    std::vector<int> triMat(triCount, mesh.material_id);
+    using MaterialPair = std::pair<int, int>;
+    std::vector<MaterialPair> triMat(
+        triCount, {mesh.material_id, mesh.backface_material_id});
     for (const auto& kv : mesh.material_subsetMap) {
       const tydra::MaterialSubset& ss = kv.second;
       for (int triIdx : ss.indices()) {
         if (triIdx >= 0 && static_cast<size_t>(triIdx) < triCount) {
-          triMat[static_cast<size_t>(triIdx)] = ss.material_id;
+          triMat[static_cast<size_t>(triIdx)] =
+              {ss.material_id >= 0 ? ss.material_id : mesh.material_id,
+               ss.backface_material_id >= 0 ? ss.backface_material_id
+                                             : mesh.backface_material_id};
         }
       }
     }
     // Bucket triangles by material id, preserving order within a material. Bucket
     // the source-face id in lockstep so it stays parallel to the grouped tris.
-    std::map<int, std::vector<uint32_t>> buckets;
-    std::map<int, std::vector<uint32_t>> faceBuckets;
+    std::map<MaterialPair, std::vector<uint32_t>> buckets;
+    std::map<MaterialPair, std::vector<uint32_t>> faceBuckets;
     for (size_t t = 0; t < triCount; ++t) {
       auto& bucket = buckets[triMat[t]];
       bucket.push_back(dm.indices[t * 3 + 0]);
@@ -2641,7 +2658,8 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       DrawSubmesh sub;
       sub.indexOffset = static_cast<uint32_t>(grouped.size());
       sub.indexCount = static_cast<uint32_t>(kv.second.size());
-      sub.materialId = kv.first;
+      sub.materialId = kv.first.first;
+      sub.backfaceMaterialId = kv.first.second;
       grouped.insert(grouped.end(), kv.second.begin(), kv.second.end());
       if (!triFacePre.empty()) {
         const auto& fb = faceBuckets[kv.first];
@@ -2843,6 +2861,51 @@ bool OverBudget(const DrawScene& out, size_t cumulativeVertexBytes,
 // light's (reversed) direction, else the first finite light's direction from
 // the scene center, else a fixed fallback. Public so the `next` loader (which
 // builds its own DrawScene) can apply the same derivation.
+void DiagnoseUnsupportedRealtimeLobes(const DrawMaterialCPU& material,
+                                      DrawScene* draw) {
+  if (!draw) return;
+  constexpr float kAuthoredEpsilon = 1.0e-6f;
+  std::vector<std::string> lobes;
+  auto add = [&](const char* name) {
+    if (std::find(lobes.begin(), lobes.end(), name) == lobes.end()) {
+      lobes.emplace_back(name);
+    }
+  };
+  if (material.hasLightRtOpenPBR) {
+    const DrawLightRtOpenPBRCPU& p = material.lightRtOpenPBR;
+    if (p.transmission > kAuthoredEpsilon) add("transmission");
+    if (p.subsurface > kAuthoredEpsilon) add("subsurface");
+    if (p.sheenWeight > kAuthoredEpsilon) add("sheen/fuzz");
+    if (p.thinFilmWeight > kAuthoredEpsilon) add("thin-film");
+  }
+  for (const DrawMaterialParamCPU& param : material.params) {
+    const float v = param.value[0];
+    if ((param.name == "specular_anisotropy" ||
+         param.name == "specular_roughness_anisotropy" ||
+         param.name == "coat_anisotropy" ||
+         param.name == "coat_roughness_anisotropy") &&
+        std::fabs(v) > kAuthoredEpsilon) {
+      add("anisotropy");
+    }
+    if ((param.name == "transmission_dispersion" ||
+         param.name == "transmission_dispersion_scale") &&
+        std::fabs(v) > kAuthoredEpsilon) {
+      add("dispersion");
+    }
+  }
+  if (material.hasVolumeOutput) add("volume");
+  if (lobes.empty()) return;
+
+  std::string message = "material '" + material.absPath +
+                        "': unsupported real-time lobes: ";
+  for (size_t i = 0; i < lobes.size(); ++i) {
+    if (i) message += ", ";
+    message += lobes[i];
+  }
+  message += "; supported inputs remain active";
+  draw->skipped.push_back(std::move(message));
+}
+
 LoadDiagnostics CategorizeLoadWarnings(
     const std::string& warn_blob, const std::vector<std::string>& skipped) {
   LoadDiagnostics d;
@@ -2865,10 +2928,14 @@ LoadDiagnostics CategorizeLoadWarnings(
     // missing-texture bucket since its message also mentions resolution.
     int* bucket = nullptr;
     if (contains(l, "using default material") ||
+        contains(l, "using degraded material") ||
         contains(l, "Material conversion failed")) {
       bucket = &d.degraded_material;
-    } else if (contains(l, "Unsupported node type")) {
+    } else if (contains(l, "Unsupported node type") ||
+               contains(l, "unsupported MaterialX node")) {
       bucket = &d.unsupported_mtlx;
+    } else if (contains(l, "unsupported real-time lobes:")) {
+      bucket = &d.unsupported_lobes;
     } else if (contains(l, "failed to load texture") ||
                contains(l, "Failed to load texture") ||
                contains(l, "Failed to load image") ||
@@ -2884,10 +2951,19 @@ LoadDiagnostics CategorizeLoadWarnings(
     if (d.examples.size() < 6 && bucket != &d.other) d.examples.push_back(l);
   }
 
-  d.skipped = static_cast<int>(skipped.size());
   for (const std::string& s : skipped) {
-    if (d.examples.size() >= 6) break;
-    d.examples.push_back("skipped: " + s);
+    if (contains(s, "using default material") ||
+        contains(s, "using degraded material") ||
+        contains(s, "Material conversion failed")) {
+      ++d.degraded_material;
+    } else if (contains(s, "unsupported MaterialX node")) {
+      ++d.unsupported_mtlx;
+    } else if (contains(s, "unsupported real-time lobes:")) {
+      ++d.unsupported_lobes;
+    } else {
+      ++d.skipped;
+    }
+    if (d.examples.size() < 6) d.examples.push_back(s);
   }
   return d;
 }

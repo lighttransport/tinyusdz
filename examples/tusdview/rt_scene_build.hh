@@ -72,7 +72,32 @@ struct HostTextureDesc {
   int height{0};
   int wrapS{0};
   int wrapT{0};
+  int srgb{0};
+  int isUdim{0};
+  int mipCount{1};       // levels including this descriptor's base level
+  int firstMip{-1};      // descriptor id of level 1; consecutive thereafter
+  int udimLayer[100]{};  // texture descriptor ids for tiles 1001..1100
 };
+
+struct HostTextureTable {
+  std::vector<uint8_t> texels;
+  std::vector<HostTextureDesc> textures;
+  std::vector<int> matTex;
+  std::vector<float> matTexParam;
+  std::vector<int> sourceToTable;
+};
+
+// Build the backend-neutral mipmapped texture table used by CUDA/HIP and
+// Vulkan ray query. Handles decoded images, compressed-only inputs, sparse
+// UDIM tiles, semantic material slots, UV transforms, and channel metadata.
+void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
+                           const std::vector<DrawMaterialCPU>& materials,
+                           HostTextureTable* out);
+
+// Build camera-independent solid approximations for Points and Curves. RT
+// backends consume these; raster backends retain the original carriers and
+// generate camera-facing billboards/ribbons at draw time.
+std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene);
 
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {
@@ -84,14 +109,21 @@ struct HostScene {
   // and skip triangulation diagonals.
   std::vector<uint8_t> emask;
   std::vector<int> mat, face, domj;
+  // Optional back-face material id per triangle. Empty when the scene has no
+  // distinct back binding; entries < 0 fall back to mat. Keeping this sparse at
+  // scene level avoids another 4 B/triangle on ordinary large scenes.
+  std::vector<int> backMat;
   std::vector<Node> blas;       // BLAS nodes, rebased to the global arrays
   std::vector<Node> tlas;       // TLAS nodes (root at 0)
   std::vector<Inst> instances;  // leaf-order (matches the TLAS)
   std::vector<float> matPbr;
+  std::vector<float> matBase;  // 3 floats/material; base color constant
   // 56 floats/material: vec4-friendly LightRT/OpenPBR constant fallback.
   // See lightrt_mtlx_bridge.hh PackLightRtOpenPBR.
   std::vector<float> matLightRt;
-  std::vector<int> matTex;  // 4 ints/material: base, metalRough, normal, emissive
+  // Six semantic slots/material: base, metallic, roughness, normal, emissive,
+  // opacity. Packed ORM inputs may map multiple slots to one texture.
+  std::vector<int> matTex;
   // UV affine rows, scale/bias vectors and scalar channel selectors. See
   // lightrt_mtlx_bridge.hh PackRtMaterialTextureParams.
   std::vector<float> matTexParam;
@@ -99,7 +131,7 @@ struct HostScene {
   std::vector<uint8_t> texels;
   std::vector<HostTextureDesc> textures;
   int numTextures = 0;
-  // 40 floats/light: type/flags/texture ids, transform basis, derived radiance,
+  // kRtLightParamFloats/light: type/flags/texture ids, transform basis, derived radiance,
   // shape size, shaping, shadow, and dome metadata. This is uploaded by RT
   // backends when full USD light evaluation lands.
   std::vector<float> lightParams;

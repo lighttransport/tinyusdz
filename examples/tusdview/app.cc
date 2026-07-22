@@ -349,6 +349,12 @@ App::~App() {
   if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
   if (window_) glfwDestroyWindow(window_);
   glfwTerminate();
+#if defined(TUSDVIEW_HAVE_MCP)
+  for (const std::filesystem::path& path : mcpTempFiles_) {
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+  }
+#endif
 }
 
 void App::autoDetectUiScale() {
@@ -816,7 +822,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
          loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
          draw_.truncated ? " [truncated]" : "");
   } else if (ok && alreadyUploaded) {
-    renderer_->setLights(draw_.lights);
+    renderer_->setLights(draw_.lights, draw_.meshes.size());
     LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s; progressive display complete",
          loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
          draw_.truncated ? " [truncated]" : "");
@@ -825,7 +831,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     // the next frames (stepProgressiveUpload) so geometry pops in and the UI
     // stays at frame rate instead of stalling on one big upload.
     renderer_->beginScene(draw_.materials, static_cast<int>(draw_.textures.size()));
-    renderer_->setLights(draw_.lights);
+    renderer_->setLights(draw_.lights, draw_.meshes.size());
     progressiveActive_ = true;
     LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s; streaming to GPU...",
          loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
@@ -867,9 +873,9 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     if (diag.actionable() > 0) {
       LOGW(
           "load summary: degraded_materials=%d missing_textures=%d "
-          "unsupported_mtlx=%d skipped=%d other=%d",
+          "unsupported_mtlx=%d unsupported_lobes=%d skipped=%d other=%d",
           diag.degraded_material, diag.missing_texture, diag.unsupported_mtlx,
-          diag.skipped, diag.other);
+          diag.unsupported_lobes, diag.skipped, diag.other);
       for (const std::string& ex : diag.examples) {
         LOGW("  - %s", ex.c_str());
       }
@@ -933,15 +939,34 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       const light3d::Vec3 target{E[0] + F[0] * d, E[1] + F[1] * d,
                                  E[2] + F[2] * d};
       camera_.setFovYDeg(campose.fovYDeg);
+      camera_.setProjection(campose.projection);
+      camera_.setOrthographicHeight(
+          std::max(campose.verticalAperture * 0.1f, 1e-5f));
+      const float shiftX = 2.0f * campose.horizontalApertureOffset /
+                           std::max(campose.horizontalAperture, 1e-5f);
+      const float shiftY = 2.0f * campose.verticalApertureOffset /
+                           std::max(campose.verticalAperture, 1e-5f);
+      camera_.setLensShift(shiftX, shiftY);
+      camera_.setExposure(campose.exposure);
+      camera_.setAspectOverride(
+          campose.horizontalAperture /
+          std::max(campose.verticalAperture, 1e-5f));
+      camera_.setAspectOverrideEnabled(true);
       // Use the camera's authored clip range, not the auto-clip derived from the
       // (huge) whole-scene radius -- on Caldera the far-flung guide bounds push
       // the auto near plane out past the nearby district, clipping it away.
       camera_.setAutoClip(false);
       camera_.setClipPlanes(campose.zNear, campose.zFar);
       camera_.setOrbit(target, yaw, pitch, d);
-      LOGI("camera: framing USD camera '%s' (fovY %.1f deg, clip %.2f..%.0f)",
-           cameraName_.c_str(), campose.fovYDeg, campose.zNear, campose.zFar);
+      LOGI("camera: framing USD camera '%s' (%s, fovY %.1f deg, clip %.2f..%.0f)",
+           cameraName_.c_str(),
+           campose.projection == CameraProjection::Orthographic ? "orthographic"
+                                                                 : "perspective",
+           campose.fovYDeg, campose.zNear, campose.zFar);
     } else {
+      camera_.setProjection(CameraProjection::Perspective);
+      camera_.setLensShift(0.0f, 0.0f);
+      camera_.setExposure(0.0f);
       if (!cameraName_.empty()) {
         LOGW("camera '%s' not found (no such Camera prim); auto-fitting",
              cameraName_.c_str());
@@ -977,6 +1002,20 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
         fitMax = robustBoundsMax_;
       }
       camera_.fitToScene(fitMin, fitMax);
+      if (viewDirExplicit_) {
+        // OrbitCamera stores target-to-eye, the opposite of --view-dir's
+        // conventional eye-to-target direction.
+        const float dir[3] = {-viewDir_[0], -viewDir_[1], -viewDir_[2]};
+        float yaw, pitch;
+        if (upAxis == 2) {
+          pitch = std::asin(std::clamp(dir[2], -1.0f, 1.0f));
+          yaw = std::atan2(dir[0], dir[1]);
+        } else {
+          pitch = std::asin(std::clamp(dir[1], -1.0f, 1.0f));
+          yaw = std::atan2(dir[0], dir[2]);
+        }
+        camera_.setOrbit(camera_.target(), yaw, pitch, camera_.distance());
+      }
       // --cam-dolly: scale the fitted distance (<1 zooms in past the framing so
       // peripheral geometry leaves the frustum -- exercises culling headlessly).
       if (camDolly_ > 0.0f && camDolly_ != 1.0f) {
@@ -1104,13 +1143,18 @@ void App::drainProgressiveLoad() {
       DrawScene finalScene = std::move(event.scene);
       renderer_->syncSceneResources(finalScene.materials,
                                     static_cast<int>(finalScene.textures.size()));
+      for (const DrawPointsCPU& points : finalScene.points)
+        renderer_->appendPoints(points);
+      for (const DrawCurvesCPU& curves : finalScene.curves)
+        renderer_->appendCurves(curves);
       draw_ = std::move(finalScene);
       draw_.meshes = std::move(streamedMeshes);
       draw_.vertexCount = streamUploadedVertices_;
       nextMesh_ = draw_.meshes.size();
       nextTex_ = 0;
       nextVolume_ = 0;
-      progressiveActive_ = !draw_.meshes.empty() || !draw_.textures.empty() ||
+      progressiveActive_ = !draw_.meshes.empty() || !draw_.points.empty() ||
+                           !draw_.curves.empty() || !draw_.textures.empty() ||
                            !draw_.volumes.empty();
       streamCompleteSeen_ = true;
       if (!streamFullConversionLogged_ && loadOpts_.timing) {
@@ -1375,9 +1419,15 @@ void App::startLoadAsync(const std::string& path) {
     opts.textureOptions.caps.bc5 = rc.supportsBC5;
     opts.textureOptions.caps.bc6h = rc.supportsBC6H;
   }
-  if (std::isfinite(opts.timecode) && skinningRequested_ == SkinningMode::GPU) {
+  const double requestedTime = opts.timecode;
+  const bool gpuRestLoad = std::isfinite(requestedTime) && wantsGpuSkinningLoad();
+  if (gpuRestLoad) {
     opts.timecode = std::numeric_limits<double>::quiet_NaN();
   }
+  const bool rendererGpuSkinning =
+      renderer_ && renderer_->caps().supportsGpuSkinning;
+  const bool rendererExtendedGpuSkinning =
+      renderer_ && renderer_->caps().supportsExtendedGpuSkinning;
   const bool useNext = useNextLoader_;
   bool renderThreadOwnsContext = false;
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
@@ -1427,7 +1477,9 @@ void App::startLoadAsync(const std::string& path) {
       camDolly_,
       std::max(1, autoH)};
   loadThread_ = std::thread([this, path, opts, lp, dp, rt, useNext, stream,
-                             autoSubdivView]() {
+                             autoSubdivView, requestedTime, gpuRestLoad,
+                             rendererGpuSkinning,
+                             rendererExtendedGpuSkinning]() {
     if (useNext) {
       lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_,
                               &pendingNextSession_, stream.get());
@@ -1449,6 +1501,32 @@ void App::startLoadAsync(const std::string& path) {
     } else {
       LoadUsdMaybeAutoSubdivision(path, opts, lp, dp, rt, &loadCtrl_,
                                   autoSubdivView);
+      if (lp->ok && gpuRestLoad) {
+        const bool skeletal = SceneHasSkeletalSkinning(lp->render);
+        const bool morph = SceneHasBlendShapes(lp->render);
+        const int maxInfluences = MaxSkinInfluenceCount(lp->render);
+        const bool gpuEligible =
+            rendererGpuSkinning && (skeletal || morph) &&
+            (!skeletal ||
+             (dp->boneMatrixCount > 0 &&
+              (maxInfluences <= 4 ||
+               (rendererExtendedGpuSkinning &&
+                maxInfluences <= kMaxGpuTextureInfluences))));
+        if (!gpuEligible) {
+          DrawScene cpuDraw;
+          std::string warning, error;
+          if (RenderSceneAtTime(*lp, requestedTime, rt, &cpuDraw, &warning,
+                                &error, &loadCtrl_)) {
+            cpuDraw.materials = dp->materials;
+            cpuDraw.textures = dp->textures;
+            *dp = std::move(cpuDraw);
+          } else {
+            lp->warn += warning;
+            lp->err = error;
+            lp->ok = false;
+          }
+        }
+      }
     }
     loadFinished_.store(true, std::memory_order_release);
   });
@@ -1505,6 +1583,9 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
   prev.composed = true;
   prev.rootLayer = loaded_.comp.rootLayer;
   prev.searchPaths = loaded_.comp.searchPaths;
+  // Package-internal payloads resolve through this retained archive. Keep the
+  // shared backing alive across the worker handoff just like rootLayer.
+  prev.usdzAsset = loaded_.comp.usdzAsset;
   LoadOptions opts = loadOpts_;
   opts.gpuSkinning = wantsNextGpuSkinning();
   opts.payloadPolicy = PayloadPolicy::Whitelist;
@@ -2215,7 +2296,7 @@ bool App::renderHipViewport() {
   // The initial model loads on a worker thread; wait until it has been applied on
   // the main thread (finishLoadIfReady -> applyLoaded) and draw_ holds geometry.
   // Returning true (not false) here keeps hipInteractive_ enabled across the wait.
-  if (loadActive_ || draw_.meshes.empty() || draw_.triangleCount == 0) {
+  if (loadActive_ || draw_.empty()) {
     // Show a clear viewport while loading -- also keeps colorImg_ in a defined,
     // ImGui-sampleable layout (nothing else writes it on the HIP path).
     int vw = 0, vh = 0;
@@ -2360,7 +2441,7 @@ bool App::renderHipViewport() {
   std::vector<uint8_t> rgba;
   std::string cerr;
   // spp=1: single sample for interactive frame rate (no supersampled AA).
-  if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
+  if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                        sceneExtent, w, h, &rgba, &cerr, /*spp=*/1)) {
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
@@ -2599,9 +2680,12 @@ int App::run(const std::string& initialFile, int maxFrames,
     if (maxFrames < 0 && streamHttpPort_ <= 0)
       maxFrames = 4;  // windowless runs are bounded by frame count
     // GLFW is never initialized in the headless path (no window, no surface).
-  } else if (!initWindow(&err)) {
-    LOGE("%s", err.c_str());
-    return 1;
+  } else {
+    if (!initWindow(&err)) {
+      LOGE("%s", err.c_str());
+      return 1;
+    }
+    ++windowGeneration_;
   }
 
   if (backend_ == Backend::GL) {
@@ -2616,6 +2700,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     LOGE("no renderer for requested backend");
     return 1;
   }
+  ++rendererGeneration_;
   renderer_->setDevicePreference(devicePreference_);
   if (headless_) renderer_->setHeadlessSize(winW, winH);
 
@@ -2843,7 +2928,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     // announce frame (rendered just before the blocking build) carries it.
     rtBuildNote_.clear();
     if (hipInteractive_ && !hipInteractiveBuilt_ && !loadActive_ &&
-        !draw_.meshes.empty() && draw_.triangleCount > 0) {
+        !draw_.empty()) {
       if (hipBuildStarted_) {
         const int ph = hipBuildProgress_.phase.load(std::memory_order_relaxed);
         const size_t d = hipBuildProgress_.done.load(std::memory_order_relaxed);
@@ -3222,7 +3307,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         }
       }
       std::vector<uint8_t> rgba;
-      if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
+      if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                             sceneExtent, w, h, &rgba, &cerr, rtSamples_)) {
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
@@ -3292,7 +3377,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         }
       }
       std::vector<uint8_t> rgba;
-      if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, rmode, depthScale, sceneMin,
+      if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                            sceneExtent, w, h, &rgba, &cerr, rtSamples_)) {
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
