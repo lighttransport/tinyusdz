@@ -314,6 +314,11 @@ Latest focused verification on 2026-07-20:
   array, and the coat-normal AOV crosses tiles carrying distinct tangent-space
   directions. Vulkan raster default/legacy images are exact (MAD 0.0), with
   Vulkan ray query and CUDA passing the same ordinary/UDIM fixture.
+  MaterialX Standard Surface now runs that fixture too. Its first legacy pass
+  exposed `inputs:coat_normal` missing from reconstruction and conversion; the
+  schema and both material-terminal paths now preserve authored values and
+  texture connections. Raster loader parity is exact, while Vulkan RT/CUDA
+  pass with maximum loader MAD 0.476.
 - Raster displacement now has a vertex/tessellation-visible UDIM array and LUT
   route instead of silently binding black for UDIM height maps. Semantic raw/
   UDIM classification is packed after texture deduplication and the focused

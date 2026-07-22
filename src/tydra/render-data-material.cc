@@ -4413,6 +4413,24 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to convert MtlxAutodeskStandardSurface : {}", surfacePath.prim_part()));
       }
+      if (mtlx_standard->coat_normal.authored() ||
+          mtlx_standard->coat_normal.has_connections()) {
+        TypedAttributeWithFallback<Animatable<value::normal3f>> coat_normal{
+            value::normal3f{0.0f, 0.0f, 1.0f}};
+        coat_normal.set_connections(
+            mtlx_standard->coat_normal.get_connections());
+        const auto coat_normal_value = mtlx_standard->coat_normal.get_value();
+        if (coat_normal_value) {
+          coat_normal.set_value(*coat_normal_value);
+        }
+        if (!ConvertPreviewSurfaceShaderParam(
+                env, surfacePath, coat_normal, "coat_normal",
+                openpbr_shader.coat_normal, /*is_materialx=*/true)) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Failed to convert Standard Surface coat normal : {}",
+              surfacePath.prim_part()));
+        }
+      }
 
       // Extract normal map and tangent info from NodeGraph connections
       // StandardSurface uses `normal` and `tangent` fields (not geometry_normal/geometry_tangent)
@@ -4651,6 +4669,26 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                   "Failed to convert MtlxAutodeskStandardSurface : {}",
                   mtlxSurfacePath.prim_part()));
             } else {
+              if (mtlx_standard->coat_normal.authored() ||
+                  mtlx_standard->coat_normal.has_connections()) {
+                TypedAttributeWithFallback<Animatable<value::normal3f>>
+                    coat_normal{value::normal3f{0.0f, 0.0f, 1.0f}};
+                coat_normal.set_connections(
+                    mtlx_standard->coat_normal.get_connections());
+                const auto coat_normal_value =
+                    mtlx_standard->coat_normal.get_value();
+                if (coat_normal_value) {
+                  coat_normal.set_value(*coat_normal_value);
+                }
+                if (!ConvertPreviewSurfaceShaderParam(
+                        env, mtlxSurfacePath, coat_normal, "coat_normal",
+                        openpbr_shader.coat_normal,
+                        /*is_materialx=*/true)) {
+                  PUSH_ERROR_AND_RETURN(fmt::format(
+                      "Failed to convert Standard Surface coat normal : {}",
+                      mtlxSurfacePath.prim_part()));
+                }
+              }
               const Prim *material_prim_for_ng = nullptr;
               if (!env.stage.find_prim_at_path(mat_abs_path,
                                                material_prim_for_ng, &err)) {

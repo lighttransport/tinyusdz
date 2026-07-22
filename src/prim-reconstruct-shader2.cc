@@ -174,6 +174,8 @@ bool ReconstructShader<MtlxAutodeskStandardSurface>(
                          surface->normal)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:tangent", MtlxAutodeskStandardSurface,
                          surface->tangent)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_normal", MtlxAutodeskStandardSurface,
+                         surface->coat_normal)
 
     // Output
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:out", MtlxAutodeskStandardSurface,

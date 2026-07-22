@@ -275,6 +275,7 @@ struct MtlxAutodeskStandardSurface : ShaderNode {
   // Normal and tangent
   TypedAttribute<Animatable<value::normal3f>> normal;
   TypedAttribute<Animatable<value::vector3f>> tangent;
+  TypedAttribute<Animatable<value::normal3f>> coat_normal;
 
   // Output
   TypedTerminalAttribute<value::token> out;  // 'out'

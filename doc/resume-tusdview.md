@@ -247,6 +247,12 @@ Standard Surface coat follow-up: weight, color, and roughness now each cross
 ordinary and two-tile UDIM sources. Vulkan raster loader parity is exact;
 Vulkan RT and CUDA pass with maximum loader MAD 0.474.
 
+Standard Surface coat-normal follow-up: ordinary and two-tile UDIM normal maps
+now exercise the dedicated coat-normal AOV. Legacy reconstruction and both
+material-terminal conversion paths preserve `inputs:coat_normal` values and
+connections; raster loader parity is exact, and Vulkan RT/CUDA pass with
+maximum loader MAD 0.476.
+
 Opacity texture follow-up: the semantic grid now covers ordinary and two-tile
 UDIM opacity for Preview, OpenPBR, and Standard Surface. This found legacy
 Standard Surface conversion replacing a graph connection with constant
