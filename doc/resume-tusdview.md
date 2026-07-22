@@ -244,6 +244,13 @@ reconstructs canonical `geometry_normal`/`geometry_tangent` aliases, and legacy
 Standard conversion preserves connected normal/tangent inputs; focused parser
 and Tydra units pin the two boundaries.
 
+Vulkan RT core-grid follow-up: both loaders now pass 36 ordinary/UDIM semantic
+responses covering base, packed metallic/roughness, emission, opacity, and
+primary normals across all three shader families. The first run found texture
+presence detection stopping at Standard Surface's untextured `base_roughness`
+alias before its textured `specular_roughness`; the helper now scans every
+alias, the bridge unit pins it, and loader parity is within MAD 0.082.
+
 Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
 the core material record and its cross-backend image parity are complete.
 

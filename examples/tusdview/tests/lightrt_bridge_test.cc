@@ -837,6 +837,24 @@ int main() {
     return 1;
   }
 
+  tusdview::DrawMaterialCPU standardRoughnessTextureMat;
+  standardRoughnessTextureMat.hasOpenPBRSurface = true;
+  standardRoughnessTextureMat.roughnessTex = 0;
+  auto baseRoughness = FloatParam("base_roughness", 0.0f);
+  baseRoughness.shader = "OpenPBRSurface";
+  standardRoughnessTextureMat.params.push_back(baseRoughness);
+  auto specularRoughness = FloatParam("specular_roughness", 0.5f);
+  specularRoughness.shader = "OpenPBRSurface";
+  specularRoughness.texture = 0;
+  standardRoughnessTextureMat.params.push_back(specularRoughness);
+  tusdview::BakeRealtimePbrMaterial(&standardRoughnessTextureMat);
+  if (!Near(standardRoughnessTextureMat.lightRtOpenPBR.specularRoughness,
+            1.0f)) {
+    std::fprintf(stderr,
+                 "Textured Standard Surface roughness alias was not neutralized\n");
+    return 1;
+  }
+
   // The shared RT texture table must retain complete RGBA mip chains as
   // consecutive descriptors so Vulkan, CUDA, and HIP use the same trilinear
   // sampling ABI.
