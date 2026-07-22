@@ -33,13 +33,19 @@ ppm('coat_roughness.1002.ppm',(224,224,224)*8)
 ppm('coat_color.1001.ppm',(240,32,32)*8)
 ppm('coat_color.1002.ppm',(32,32,240)*8)
 ppm('base.ppm',(240,32,32)*4+(32,32,240)*4)
+ppm('base.1001.ppm',(240,32,32)*8)
+ppm('base.1002.ppm',(32,32,240)*8)
 ppm('specular.ppm',(240,32,32)*4+(32,32,240)*4)
 ppm('specular_udim.1001.ppm',(240,32,32)*8)
 ppm('specular_udim.1002.ppm',(32,32,240)*8)
 # Packed ORM-style source: R/B rise while G falls. Each scalar connection must
 # retain its own channel even though all three slots share one image.
 ppm('orm.ppm',(32,224,32)*4+(224,32,224)*4)
+ppm('orm.1001.ppm',(32,224,32)*8)
+ppm('orm.1002.ppm',(224,32,224)*8)
 ppm('emission.ppm',(24,24,24)*4+(232,232,232)*4)
+ppm('emission.1001.ppm',(24,24,24)*8)
+ppm('emission.1002.ppm',(232,232,232)*8)
 ppm('opacity.ppm',(24,24,24)*4+(232,232,232)*4)
 PY
 
@@ -212,7 +218,12 @@ write_coat_material "$OUT/coat.usda"
 write_coat_material "$OUT/coat-udim.usda" 1
 
 write_core_material() {
-  local family="$1" file="$2" shader_id base_name metal_name rough_name emit_name emit_enable
+  local family="$1" file="$2" udim="${3:-0}" shader_id base_name metal_name rough_name emit_name emit_enable
+  local base_tex=base.ppm orm_tex=orm.ppm emission_tex=emission.ppm
+  if [ "$udim" = 1 ]; then
+    base_tex='base.<UDIM>.ppm'; orm_tex='orm.<UDIM>.ppm'
+    emission_tex='emission.<UDIM>.ppm'
+  fi
   case "$family" in
     preview)
       shader_id=UsdPreviewSurface; base_name=diffuseColor; metal_name=metallic
@@ -229,7 +240,7 @@ write_core_material() {
   esac
   {
     echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
-    quad
+    if [ "$udim" = 1 ]; then quad_udim; else quad; fi
     cat <<USDA
   def Material "M" {
     token outputs:surface.connect = </World/M/P.outputs:surface>
@@ -249,14 +260,14 @@ write_core_material() {
     }
     def Shader "Base" {
       uniform token info:id = "UsdUVTexture"
-      asset inputs:file = @./base.ppm@
+      asset inputs:file = @./$base_tex@
       float2 inputs:st.connect = </World/M/ST.outputs:result>
       token inputs:sourceColorSpace = "sRGB"
       color3f outputs:rgb
     }
     def Shader "ORM" {
       uniform token info:id = "UsdUVTexture"
-      asset inputs:file = @./orm.ppm@
+      asset inputs:file = @./$orm_tex@
       float2 inputs:st.connect = </World/M/ST.outputs:result>
       token inputs:sourceColorSpace = "raw"
       float outputs:r
@@ -265,7 +276,7 @@ write_core_material() {
     }
     def Shader "Emit" {
       uniform token info:id = "UsdUVTexture"
-      asset inputs:file = @./emission.ppm@
+      asset inputs:file = @./$emission_tex@
       float2 inputs:st.connect = </World/M/ST.outputs:result>
       token inputs:sourceColorSpace = "sRGB"
       color3f outputs:rgb
@@ -278,6 +289,9 @@ USDA
 write_core_material preview "$OUT/core-preview.usda"
 write_core_material openpbr "$OUT/core-openpbr.usda"
 write_core_material standard "$OUT/core-standard.usda"
+write_core_material preview "$OUT/core-preview-udim.usda" 1
+write_core_material openpbr "$OUT/core-openpbr-udim.usda" 1
+write_core_material standard "$OUT/core-standard-udim.usda" 1
 
 write_ior_material() {
   local family="$1" file="$2" shader_id ior_name
@@ -538,6 +552,10 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
       want_mode metallic && case_run "$tag" "$marker" "$OUT/core-$family.usda" metallic metallic "$family-metallic" "${args[@]}"
       want_mode roughness && case_run "$tag" "$marker" "$OUT/core-$family.usda" roughness roughness "$family-roughness" "${args[@]}"
       want_mode emissive && case_run "$tag" "$marker" "$OUT/core-$family.usda" emissive emissive "$family-emissive" "${args[@]}"
+      want_mode albedo && case_run "$tag" "$marker" "$OUT/core-$family-udim.usda" albedo albedo "$family-udim-albedo" "${args[@]}"
+      want_mode metallic && case_run "$tag" "$marker" "$OUT/core-$family-udim.usda" metallic metallic "$family-udim-metallic" "${args[@]}"
+      want_mode roughness && case_run "$tag" "$marker" "$OUT/core-$family-udim.usda" roughness roughness "$family-udim-roughness" "${args[@]}"
+      want_mode emissive && case_run "$tag" "$marker" "$OUT/core-$family-udim.usda" emissive emissive "$family-udim-emissive" "${args[@]}"
     done
     # The raster opacity AOV intentionally writes alpha=1, but blended material
     # draws are excluded from that diagnostic pass. Use the controlled shaded

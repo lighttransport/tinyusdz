@@ -222,6 +222,11 @@ the new packed row. The checked-in Vulkan regression now compares flat height
 tiles against a raised second tile at an oblique view; its 2.37 mean absolute
 pixel response closes displaced-silhouette coverage for the next loader.
 
+Core texture follow-up: the Preview, OpenPBR, and Standard Surface semantic
+grid now pairs its ordinary base color, packed metallic/roughness, and emission
+sources with two-tile UDIM variants. Vulkan raster passes all 24 AOV responses;
+emission is pixel-exact between the default and legacy loaders (MAD 0.0).
+
 Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
 the core material record and its cross-backend image parity are complete.
 

@@ -302,6 +302,11 @@ Latest focused verification on 2026-07-20:
   bridge test pins its material ABI. The checked-in Vulkan image regression
   compares flat tiles with a raised second tile at an oblique view and measures
   a 2.37 mean absolute pixel response, closing displaced-silhouette coverage.
+- The three-family core semantic grid now drives base color, packed metallic/
+  roughness channels, and emission through ordinary and two-tile UDIM sources.
+  Vulkan raster passes all 24 AOV responses; the focused default/legacy
+  emission comparison is pixel-exact (MAD 0.0) for Preview, OpenPBR, and
+  Standard Surface.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by
