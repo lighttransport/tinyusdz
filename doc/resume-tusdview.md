@@ -283,12 +283,17 @@ Vulkan RT, and CUDA.
 Occlusion texture follow-up: PreviewSurface's controlled indirect-light probe
 now pairs its ordinary raw scalar map with a two-tile UDIM; Vulkan response and
 default/legacy parity pass exactly (MAD 0.0).
+Its ordinary external and USDZ-packaged forms also match exactly in Vulkan
+raster, Vulkan RT, and CUDA through both loaders.
 
 Surface-normal follow-up: ordinary and two-tile UDIM normal maps now cover all
 three shader families with exact Vulkan loader parity. Native OpenPBR now
 reconstructs canonical `geometry_normal`/`geometry_tangent` aliases, and legacy
 Standard conversion preserves connected normal/tangent inputs; focused parser
 and Tydra units pin the two boundaries.
+All three ordinary normal fixtures now have USDZ forms; combined with the
+occlusion package gate, all 24 external/package comparisons are pixel-exact in
+Vulkan raster/RT and CUDA through both loaders.
 
 Vulkan RT core-grid follow-up: both loaders now pass 36 ordinary/UDIM semantic
 responses covering base, packed metallic/roughness, emission, opacity, and
