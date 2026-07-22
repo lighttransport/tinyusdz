@@ -250,6 +250,9 @@ Vulkan RT and CUDA pass with maximum loader MAD 0.474.
 Standard Surface coat follow-up: weight, color, and roughness now each cross
 ordinary and two-tile UDIM sources. Vulkan raster loader parity is exact;
 Vulkan RT and CUDA pass with maximum loader MAD 0.474.
+Ordinary coat fixtures for Preview, OpenPBR, and Standard Surface are also
+stored as USDZ with their independent maps. All 48 external/package images are
+pixel-exact through both loaders in Vulkan raster, Vulkan RT, and CUDA.
 
 Standard Surface coat-normal follow-up: ordinary and two-tile UDIM normal maps
 now exercise the dedicated coat-normal AOV. Legacy reconstruction and both

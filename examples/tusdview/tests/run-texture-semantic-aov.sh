@@ -535,6 +535,21 @@ for family in preview openpbr standard; do
   write_opacity_material "$family" "$OUT/opacity-$family.usda"
   write_opacity_material "$family" "$OUT/opacity-$family-udim.usda" 1
 done
+mkdir -p "$OUT/pkg-coat-openpbr"
+cp "$OUT/coat.usda" "$OUT/coat_weight.ppm" "$OUT/coat_color.ppm" \
+  "$OUT/coat_roughness.ppm" "$OUT/pkg-coat-openpbr/"
+(cd "$OUT/pkg-coat-openpbr" && zip -0 -q "$OUT/coat.usdz" coat.usda \
+  coat_weight.ppm coat_color.ppm coat_roughness.ppm)
+mkdir -p "$OUT/pkg-coat-preview"
+cp "$OUT/coat-preview.usda" "$OUT/coat_weight.ppm" \
+  "$OUT/coat_roughness.ppm" "$OUT/pkg-coat-preview/"
+(cd "$OUT/pkg-coat-preview" && zip -0 -q "$OUT/coat-preview.usdz" \
+  coat-preview.usda coat_weight.ppm coat_roughness.ppm)
+mkdir -p "$OUT/pkg-coat-standard"
+cp "$OUT/coat-standard.usda" "$OUT/coat_weight.ppm" "$OUT/coat_color.ppm" \
+  "$OUT/coat_roughness.ppm" "$OUT/pkg-coat-standard/"
+(cd "$OUT/pkg-coat-standard" && zip -0 -q "$OUT/coat-standard.usdz" \
+  coat-standard.usda coat_weight.ppm coat_color.ppm coat_roughness.ppm)
 for family in preview openpbr standard; do
   mkdir -p "$OUT/pkg-opacity-$family"
   cp "$OUT/opacity-$family.usda" "$OUT/opacity.ppm" \
@@ -727,6 +742,11 @@ case_run() {
     preview-specular-f0) package="$OUT/specular-preview.usdz";;
     openpbr-specular-f0) package="$OUT/specular-openpbr.usdz";;
     standard-specular-f0) package="$OUT/specular-standard.usdz";;
+    coat-weight|coat-color|coat-roughness) package="$OUT/coat.usdz";;
+    preview-coat-weight|preview-coat-roughness)
+      package="$OUT/coat-preview.usdz";;
+    standard-coat-weight|standard-coat-color|standard-coat-roughness)
+      package="$OUT/coat-standard.usdz";;
   esac
   if [ -n "$package" ]; then
     local packed="$OUT/$tag-$case_id-usdz.ppm"
