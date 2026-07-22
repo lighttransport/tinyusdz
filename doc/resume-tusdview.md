@@ -218,7 +218,9 @@ retained and both loaders agree within numeric tolerance.
 Displacement texture follow-up: Vulkan coarse and tessellated vertex paths now
 sample UDIM height arrays through the shared atlas LUT. The material descriptor
 records displacement UDIM intent after deduplication, and the bridge unit pins
-the new packed row; visual displaced-silhouette coverage is still outstanding.
+the new packed row. The checked-in Vulkan regression now compares flat height
+tiles against a raised second tile at an oblique view; its 2.37 mean absolute
+pixel response closes displaced-silhouette coverage for the next loader.
 
 Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
 the core material record and its cross-backend image parity are complete.
