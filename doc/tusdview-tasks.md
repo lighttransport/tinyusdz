@@ -306,6 +306,9 @@ Latest focused verification on 2026-07-20:
   PreviewSurface clearcoat weight and roughness now have their own ordinary and
   UDIM cases as well; Vulkan raster is exact between loaders, and Vulkan RT/CUDA
   pass with loader MAD at or below 0.474.
+  Standard Surface now independently covers `coat`, `coat_color`, and
+  `coat_roughness` through ordinary and UDIM sources. Vulkan raster is exact
+  between loaders; Vulkan RT/CUDA pass with maximum loader MAD 0.474.
 - Coat normal now uses the same model: a per-sample UDIM classification bit is
   resolved after texture deduplication, Vulkan raster binds a dedicated normal
   array, and the coat-normal AOV crosses tiles carrying distinct tangent-space
