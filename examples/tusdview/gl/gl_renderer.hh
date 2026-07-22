@@ -267,6 +267,10 @@ class GLRenderer final : public Renderer {
   GLint uCoatWeightScale_{-1}, uCoatWeightBias_{-1};
   GLint uCoatColorScale_{-1}, uCoatColorBias_{-1};
   GLint uCoatRoughnessScale_{-1}, uCoatRoughnessBias_{-1};
+  GLint uAdvancedTexIsUdim_{-1}, uAdvancedUdimRoutes_{-1};
+  GLint uAdvancedUdimSlots_{-1};
+  GLint uCoatNormalTexIsUdim_{-1}, uCoatNormalUdimRoute_{-1};
+  GLint uCoatNormalUdimSlot_{-1};
   GLint uUdimSlots_{-1}, uOpacityUdimSlot_{-1}, uRoughnessUdimSlot_{-1};
   GLint uOcclusionUdimSlot_{-1};
   GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)

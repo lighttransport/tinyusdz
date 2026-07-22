@@ -4,6 +4,7 @@ SKIP=77
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 BIN="${TUSDVIEW:-$ROOT/build_ninja/tusdview}"
 [ -x "$BIN" ] || { echo "SKIP: tusdview not found"; exit "$SKIP"; }
+command -v zip >/dev/null || { echo "SKIP: zip missing"; exit "$SKIP"; }
 OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"
 [ -n "${TUSDVIEW_TEST_OUT:-}" ] || trap 'rm -rf "$OUT"' EXIT
 mkdir -p "$OUT"
@@ -98,6 +99,19 @@ USDA
 write_preview_scene "$OUT/preview-flat.usda" flat
 write_preview_scene "$OUT/preview-raised.usda" raised
 
+package_scene() {
+  local name="$1" stem="$2" dir="$OUT/pkg-$1"
+  mkdir -p "$dir"
+  cp "$OUT/$name.usda" "$dir/$name.usda"
+  cp "$OUT/$stem.1001.ppm" "$OUT/$stem.1002.ppm" "$dir/"
+  (cd "$dir" && zip -0 -q "$OUT/$name.usdz" \
+    "$name.usda" "$stem.1001.ppm" "$stem.1002.ppm")
+}
+package_scene standard-flat flat
+package_scene standard-raised raised
+package_scene preview-flat flat
+package_scene preview-raised raised
+
 render() {
   local name="$1" scene="$2"; shift 2
   "$BIN" --headless --backend vk --config "$OUT/config.json" --frames 4 \
@@ -106,14 +120,27 @@ render() {
 }
 render standard-flat "$OUT/standard-flat.usda" || { echo "SKIP: Vulkan raster unavailable"; exit "$SKIP"; }
 render standard-raised "$OUT/standard-raised.usda" || { echo "FAIL: Standard displacement UDIM render"; exit 1; }
+render standard-flat-legacy "$OUT/standard-flat.usda" --legacy-load || { echo "FAIL: legacy Standard flat render"; exit 1; }
+render standard-raised-legacy "$OUT/standard-raised.usda" --legacy-load || { echo "FAIL: legacy Standard displacement render"; exit 1; }
 render preview-flat "$OUT/preview-flat.usda" || { echo "FAIL: Preview flat displacement render"; exit 1; }
 render preview-raised "$OUT/preview-raised.usda" || { echo "FAIL: Preview displacement UDIM render"; exit 1; }
 render preview-flat-legacy "$OUT/preview-flat.usda" --legacy-load || { echo "FAIL: legacy Preview flat render"; exit 1; }
 render preview-raised-legacy "$OUT/preview-raised.usda" --legacy-load || { echo "FAIL: legacy Preview displacement render"; exit 1; }
+for family in standard preview; do
+  for state in flat raised; do
+    render "$family-$state-usdz" "$OUT/$family-$state.usdz" || { echo "FAIL: packaged $family $state render"; exit 1; }
+    render "$family-$state-legacy-usdz" "$OUT/$family-$state.usdz" --legacy-load || { echo "FAIL: legacy packaged $family $state render"; exit 1; }
+  done
+done
 
 python3 - "$OUT/standard-flat.ppm" "$OUT/standard-raised.ppm" \
+  "$OUT/standard-flat-legacy.ppm" "$OUT/standard-raised-legacy.ppm" \
   "$OUT/preview-flat.ppm" "$OUT/preview-raised.ppm" \
-  "$OUT/preview-flat-legacy.ppm" "$OUT/preview-raised-legacy.ppm" <<'PY'
+  "$OUT/preview-flat-legacy.ppm" "$OUT/preview-raised-legacy.ppm" \
+  "$OUT/standard-flat-usdz.ppm" "$OUT/standard-raised-usdz.ppm" \
+  "$OUT/standard-flat-legacy-usdz.ppm" "$OUT/standard-raised-legacy-usdz.ppm" \
+  "$OUT/preview-flat-usdz.ppm" "$OUT/preview-raised-usdz.ppm" \
+  "$OUT/preview-flat-legacy-usdz.ppm" "$OUT/preview-raised-legacy-usdz.ppm" <<'PY'
 import re,sys
 def ppm(path):
  d=open(path,'rb').read(); m=re.match(rb'P6\s+(\d+)\s+(\d+)\s+255\s',d)
@@ -122,13 +149,16 @@ def ppm(path):
 def mad(a,b): return sum(abs(x-y) for x,y in zip(a,b))/len(a)
 imgs=[ppm(p) for p in sys.argv[1:]]
 if len({x[0] for x in imgs}) != 1: raise SystemExit('image size mismatch')
-sf,sr,pf,pr,lf,lr=(x[1] for x in imgs)
+sf,sr,slf,slr,pf,pr,plf,plr,sfu,sru,slfu,slru,pfu,pru,plfu,plru=(x[1] for x in imgs)
 standard=mad(sf,sr); preview=mad(pf,pr)
-parity_flat=mad(pf,lf); parity_raised=mad(pr,lr)
+loader=max(mad(sf,slf),mad(sr,slr),mad(pf,plf),mad(pr,plr))
+package=max(mad(sf,sfu),mad(sr,sru),mad(slf,slfu),mad(slr,slru),
+            mad(pf,pfu),mad(pr,pru),mad(plf,plfu),mad(plr,plru))
 print(f'Standard response MAD={standard:.4f}, Preview response MAD={preview:.4f}, '
-      f'Preview loader MAD flat={parity_flat:.4f} raised={parity_raised:.4f}')
+      f'loader MAD={loader:.4f}, package MAD={package:.4f}')
 if standard < 2.0: raise SystemExit('FAIL: Standard UDIM displacement did not change silhouette')
 if preview < 2.0: raise SystemExit('FAIL: Preview UDIM displacement did not change silhouette')
-if max(parity_flat,parity_raised) > 2.0: raise SystemExit('FAIL: Preview displacement loader parity')
-print('PASS: Standard/Preview displacement UDIM affects geometry with Preview loader parity')
+if loader > 2.0: raise SystemExit('FAIL: displacement loader parity')
+if package > 2.0: raise SystemExit('FAIL: displacement external/USDZ parity')
+print('PASS: Standard/Preview displacement UDIM affects geometry with loader and package parity')
 PY

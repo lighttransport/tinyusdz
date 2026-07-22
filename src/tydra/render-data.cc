@@ -279,6 +279,7 @@ static std::string MaterialSignature(
     TINYUSDZ_APPEND_OPENPBR_PARAM(tangent);
     TINYUSDZ_APPEND_OPENPBR_PARAM(coat_normal);
     TINYUSDZ_APPEND_OPENPBR_PARAM(coat_tangent);
+    TINYUSDZ_APPEND_OPENPBR_PARAM(displacement);
 #undef TINYUSDZ_APPEND_OPENPBR_PARAM
     ss << "tangentRotation=";
     AppendFloat(ss, s.tangent_rotation);
@@ -390,6 +391,7 @@ static void RemapMaterialTextureIds(RenderMaterial &mat,
     TINYUSDZ_REMAP_OPENPBR_PARAM(tangent);
     TINYUSDZ_REMAP_OPENPBR_PARAM(coat_normal);
     TINYUSDZ_REMAP_OPENPBR_PARAM(coat_tangent);
+    TINYUSDZ_REMAP_OPENPBR_PARAM(displacement);
 #undef TINYUSDZ_REMAP_OPENPBR_PARAM
   }
 }

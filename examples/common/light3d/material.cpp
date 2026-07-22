@@ -367,6 +367,16 @@ uniform vec3 uCoatNormalUv1;
 uniform int uCoatNormalUvSet;
 uniform vec4 uCoatNormalScale;
 uniform vec4 uCoatNormalBias;
+// Advanced slots share otherwise-unused core UDIM array units per draw. The
+// route indices select base/metallic/normal/opacity/emissive/roughness/
+// occlusion respectively; -1 degrades to the neutral material constant when a
+// material exhausts all seven routes.
+uniform bvec4 uAdvancedTexIsUdim; // specular, coat weight/color/roughness
+uniform ivec4 uAdvancedUdimRoutes;
+uniform ivec4 uAdvancedUdimSlots;
+uniform bool uCoatNormalTexIsUdim;
+uniform int uCoatNormalUdimRoute;
+uniform int uCoatNormalUdimSlot;
 uniform float uIor;
 uniform float uOcclusion;
 uniform float uCoatWeight;
@@ -483,12 +493,9 @@ uniform int uOcclusionChannel;
 uniform float uOcclusionTexScale;
 uniform float uOcclusionTexBias;
 
-// Coat lobe maps. These slots were constant-only, so an authored clearcoat/coat
-// texture rendered as its fallback constant. UDIM is intentionally not wired for
-// these yet. The specular-workflow F0 map is carried by the loaders but sampled
-// only in Vulkan: GL has no free texture image unit left for it (see
-// gl_renderer.cc), and sharing one with the coat tint would sample the wrong
-// image for a material authoring both.
+// Coat lobe maps. Ordinary images use their dedicated 2D units. UDIM images
+// route through a free core sampler2DArray unit selected per draw, avoiding an
+// increase beyond the GL 3.3 32-fragment-unit floor.
 uniform sampler2D uCoatWeightTex;
 uniform sampler2D uCoatColorTex;
 uniform sampler2D uCoatRoughnessTex;
@@ -565,6 +572,17 @@ vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
     return texture(tex, vec3(fract(uv), float(layer)));
 }
 
+vec4 sampleRoutedUdim(int route, int slot, vec2 uv, vec4 missing) {
+    if (route == 0) return sampleUdim(uBaseColorUdimTex, slot, uv, missing);
+    if (route == 1) return sampleUdim(uMetallicUdimTex, slot, uv, missing);
+    if (route == 2) return sampleUdim(uNormalUdimTex, slot, uv, missing);
+    if (route == 3) return sampleUdim(uOpacityUdimTex, slot, uv, missing);
+    if (route == 4) return sampleUdim(uEmissiveUdimTex, slot, uv, missing);
+    if (route == 5) return sampleUdim(uRoughnessUdimTex, slot, uv, missing);
+    if (route == 6) return sampleUdim(uOcclusionUdimTex, slot, uv, missing);
+    return missing;
+}
+
 vec2 xformUv(vec2 uv, vec3 row0, vec3 row1) {
     return vec2(dot(vec3(uv, 1.0), row0), dot(vec3(uv, 1.0), row1));
 }
@@ -633,19 +651,27 @@ float sampleOcclusion() {
 // Scalar/color fetches for the coat and specular-workflow slots. The material
 // constant is neutralized to 1 by the loaders whenever a texture is bound, so
 // the caller multiplies the two unconditionally.
-float sampleCoatScalar(sampler2D tex, bool has, vec3 uv0, vec3 uv1,
-                       int uvSet, int ch, vec4 scale, vec4 bias) {
+float sampleCoatScalar(sampler2D tex, bool has, bool isUdim, int udimRoute,
+                       int udimSlot, vec3 uv0, vec3 uv1, int uvSet, int ch,
+                       vec4 scale, vec4 bias) {
     if (!has) return 1.0;
     vec2 uv = (uvSet == 1) ? vUV1 : vUV;
-    vec4 c = texture(tex, xformUv(uv, uv0, uv1)) * scale + bias;
+    uv = xformUv(uv, uv0, uv1);
+    vec4 texel = isUdim ? sampleRoutedUdim(udimRoute, udimSlot, uv, vec4(1.0))
+                        : texture(tex, uv);
+    vec4 c = texel * scale + bias;
     return clamp(channelOf(c, ch), 0.0, 1.0);
 }
 
-vec3 sampleCoatColor(sampler2D tex, bool has, vec3 uv0, vec3 uv1, int uvSet,
-                     vec4 scale, vec4 bias) {
+vec3 sampleCoatColor(sampler2D tex, bool has, bool isUdim, int udimRoute,
+                     int udimSlot, vec3 uv0, vec3 uv1, int uvSet, vec4 scale,
+                     vec4 bias) {
     if (!has) return vec3(1.0);
     vec2 uv = (uvSet == 1) ? vUV1 : vUV;
-    return (texture(tex, xformUv(uv, uv0, uv1)) * scale + bias).rgb;
+    uv = xformUv(uv, uv0, uv1);
+    vec4 texel = isUdim ? sampleRoutedUdim(udimRoute, udimSlot, uv, vec4(1.0))
+                        : texture(tex, uv);
+    return (texel * scale + bias).rgb;
 }
 
 float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
@@ -749,7 +775,12 @@ void main() {
     if (uHasCoatNormalTex) {
         vec2 uv = xformUv(uCoatNormalUvSet == 1 ? vUV1 : vUV,
                           uCoatNormalUv0, uCoatNormalUv1);
-        vec3 tn = (texture(uCoatNormalTex, uv) * uCoatNormalScale +
+        vec4 coatTexel = uCoatNormalTexIsUdim
+                             ? sampleRoutedUdim(uCoatNormalUdimRoute,
+                                                uCoatNormalUdimSlot, uv,
+                                                vec4(0.5, 0.5, 1.0, 1.0))
+                             : texture(uCoatNormalTex, uv);
+        vec3 tn = (coatTexel * uCoatNormalScale +
                    uCoatNormalBias).xyz;
         vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
         vec2 du1 = dFdx(uv), du2 = dFdy(uv);
@@ -878,6 +909,8 @@ void main() {
     vec3 F0 = computeF0(baseColor, met);
     if (uUseSpecularWorkflow != 0 || uOpenPbrSpecularModel != 0) {
         F0 *= sampleCoatColor(uSpecularColorTex, uHasSpecularColorTex,
+                              uAdvancedTexIsUdim.x, uAdvancedUdimRoutes.x,
+                              uAdvancedUdimSlots.x,
                               uSpecularColorUv0, uSpecularColorUv1,
                               uSpecularColorUvSet, uSpecularColorScale,
                               uSpecularColorBias);
@@ -889,18 +922,27 @@ void main() {
     }
     float cw = clamp(uCoatWeight *
                      sampleCoatScalar(uCoatWeightTex, uHasCoatWeightTex,
+                                      uAdvancedTexIsUdim.y,
+                                      uAdvancedUdimRoutes.y,
+                                      uAdvancedUdimSlots.y,
                                       uCoatWeightUv0, uCoatWeightUv1,
                                       uCoatWeightUvSet, uCoatWeightChannel,
                                       uCoatWeightScale, uCoatWeightBias),
                      0.0, 1.0);
     float cr = clamp(uCoatRoughness *
                      sampleCoatScalar(uCoatRoughnessTex, uHasCoatRoughnessTex,
+                                      uAdvancedTexIsUdim.w,
+                                      uAdvancedUdimRoutes.w,
+                                      uAdvancedUdimSlots.w,
                                       uCoatRoughnessUv0, uCoatRoughnessUv1,
                                       uCoatRoughnessUvSet,
                                       uCoatRoughnessChannel,
                                       uCoatRoughnessScale, uCoatRoughnessBias),
                      0.02, 1.0);
     vec3 coatTint = uCoatColor * sampleCoatColor(uCoatColorTex, uHasCoatColorTex,
+                                                 uAdvancedTexIsUdim.z,
+                                                 uAdvancedUdimRoutes.z,
+                                                 uAdvancedUdimSlots.z,
                                                  uCoatColorUv0, uCoatColorUv1,
                                                  uCoatColorUvSet,
                                                  uCoatColorScale,

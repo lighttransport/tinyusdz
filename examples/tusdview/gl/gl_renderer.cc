@@ -277,6 +277,15 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uCoatColorBias_ = glGetUniformLocation(program_, "uCoatColorBias");
   uCoatRoughnessScale_ = glGetUniformLocation(program_, "uCoatRoughnessScale");
   uCoatRoughnessBias_ = glGetUniformLocation(program_, "uCoatRoughnessBias");
+  uAdvancedTexIsUdim_ = glGetUniformLocation(program_, "uAdvancedTexIsUdim");
+  uAdvancedUdimRoutes_ = glGetUniformLocation(program_, "uAdvancedUdimRoutes");
+  uAdvancedUdimSlots_ = glGetUniformLocation(program_, "uAdvancedUdimSlots");
+  uCoatNormalTexIsUdim_ =
+      glGetUniformLocation(program_, "uCoatNormalTexIsUdim");
+  uCoatNormalUdimRoute_ =
+      glGetUniformLocation(program_, "uCoatNormalUdimRoute");
+  uCoatNormalUdimSlot_ =
+      glGetUniformLocation(program_, "uCoatNormalUdimSlot");
   uCoatWeight_ = glGetUniformLocation(program_, "uCoatWeight");
   uCoatColor_ = glGetUniformLocation(program_, "uCoatColor");
   uCoatRoughness_ = glGetUniformLocation(program_, "uCoatRoughness");
@@ -366,8 +375,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uEmissiveUdimTex"), 17);
   glUniform1i(glGetUniformLocation(program_, "uOcclusionTex"), 23);
   glUniform1i(glGetUniformLocation(program_, "uOcclusionUdimTex"), 24);
-  // Advanced slots are ordinary 2D only for now. Keep every semantic on its own
-  // unit so specular F0 and coat tint can be authored independently.
+  // Advanced ordinary slots keep independent 2D units. Their UDIM arrays are
+  // routed per draw through currently-unused core array units.
   glUniform1i(glGetUniformLocation(program_, "uSpecularColorTex"), 26);
   glUniform1i(glGetUniformLocation(program_, "uCoatWeightTex"), 27);
   glUniform1i(glGetUniformLocation(program_, "uCoatColorTex"), 28);
@@ -3145,10 +3154,17 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uHasEmissiveTex_, 0);
         glUniform1i(uHasOpacityTex_, 0);
         glUniform1i(uHasOcclusionTex_, 0);
+        glUniform1i(uHasSpecularColorTex_, 0);
         glUniform1i(uHasCoatWeightTex_, 0);
         glUniform1i(uHasCoatColorTex_, 0);
         glUniform1i(uHasCoatRoughnessTex_, 0);
         glUniform1i(uHasCoatNormalTex_, 0);
+        glUniform4i(uAdvancedTexIsUdim_, 0, 0, 0, 0);
+        glUniform4i(uAdvancedUdimRoutes_, -1, -1, -1, -1);
+        glUniform4i(uAdvancedUdimSlots_, -1, -1, -1, -1);
+        glUniform1i(uCoatNormalTexIsUdim_, 0);
+        glUniform1i(uCoatNormalUdimRoute_, -1);
+        glUniform1i(uCoatNormalUdimSlot_, -1);
         glUniform1i(uBaseColorTexIsUdim_, 0);
         glUniform1i(uMetallicTexIsUdim_, 0);
         glUniform1i(uRoughnessTexIsUdim_, 0);
@@ -3278,22 +3294,73 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
                             uEmissiveTexIsUdim_);
         bindMaterialTexture(mat.opacityTex, GL_TEXTURE14, GL_TEXTURE16,
                             uHasOpacityTex_, uOpacityTexIsUdim_);
-        // Coat/specular slots: ordinary 2D only. A UDIM-backed source has no
-        // tex2d, so bind2dOnly reports "no texture" rather than sampling the
-        // wrong image; the constant then applies as before.
-        auto bind2dOnly = [&](int slot, GLenum texUnit2D, GLint hasLoc) {
+        const int coreSlots[7] = {
+            mat.baseColorTex, mat.metallicTex, mat.normalTex, mat.opacityTex,
+            mat.emissiveTex, mat.roughnessTex, mat.occlusionTex};
+        const GLenum routeUnits[7] = {
+            GL_TEXTURE11, GL_TEXTURE13, GL_TEXTURE15, GL_TEXTURE16,
+            GL_TEXTURE17, GL_TEXTURE22, GL_TEXTURE24};
+        int routeSlots[7];
+        for (int route = 0; route < 7; ++route) {
+          const GLTexture* tex = slotGpuTex(coreSlots[route]);
+          routeSlots[route] =
+              (tex && tex->isUdim && tex->arrayTex) ? coreSlots[route] : -1;
+        }
+        auto bindAdvanced = [&](int slot, GLenum texUnit2D, GLint hasLoc,
+                                int* isUdimOut, int* routeOut) {
           const GLTexture* tex = slotGpuTex(slot);
-          const bool hasTex = tex != nullptr && tex->tex2d != 0;
+          bool hasTex = tex != nullptr && tex->tex2d != 0;
+          *isUdimOut = 0;
+          *routeOut = -1;
+          if (tex && tex->isUdim && tex->arrayTex) {
+            int route = -1;
+            for (int i = 0; i < 7; ++i) {
+              if (routeSlots[i] == slot) { route = i; break; }
+            }
+            if (route < 0) {
+              for (int i = 0; i < 7; ++i) {
+                if (routeSlots[i] < 0) { route = i; break; }
+              }
+            }
+            if (route >= 0) {
+              routeSlots[route] = slot;
+              glActiveTexture(routeUnits[route]);
+              glBindTexture(GL_TEXTURE_2D_ARRAY, tex->arrayTex);
+              *isUdimOut = 1;
+              *routeOut = route;
+              hasTex = true;
+            } else {
+              hasTex = false;
+            }
+          }
           glUniform1i(hasLoc, hasTex ? 1 : 0);
           glActiveTexture(texUnit2D);
-          glBindTexture(GL_TEXTURE_2D, hasTex ? tex->tex2d : whiteTex_);
+          glBindTexture(GL_TEXTURE_2D,
+                        (hasTex && !*isUdimOut) ? tex->tex2d : whiteTex_);
         };
-        bind2dOnly(mat.specularColorTex, GL_TEXTURE26,
-                   uHasSpecularColorTex_);
-        bind2dOnly(mat.coatWeightTex, GL_TEXTURE27, uHasCoatWeightTex_);
-        bind2dOnly(mat.coatColorTex, GL_TEXTURE28, uHasCoatColorTex_);
-        bind2dOnly(mat.coatRoughnessTex, GL_TEXTURE29, uHasCoatRoughnessTex_);
-        bind2dOnly(mat.coatNormalTex, GL_TEXTURE30, uHasCoatNormalTex_);
+        int advancedIsUdim[4]{}, advancedRoutes[4]{-1, -1, -1, -1};
+        bindAdvanced(mat.specularColorTex, GL_TEXTURE26,
+                     uHasSpecularColorTex_, &advancedIsUdim[0],
+                     &advancedRoutes[0]);
+        bindAdvanced(mat.coatWeightTex, GL_TEXTURE27, uHasCoatWeightTex_,
+                     &advancedIsUdim[1], &advancedRoutes[1]);
+        bindAdvanced(mat.coatColorTex, GL_TEXTURE28, uHasCoatColorTex_,
+                     &advancedIsUdim[2], &advancedRoutes[2]);
+        bindAdvanced(mat.coatRoughnessTex, GL_TEXTURE29,
+                     uHasCoatRoughnessTex_, &advancedIsUdim[3],
+                     &advancedRoutes[3]);
+        int coatNormalIsUdim = 0, coatNormalRoute = -1;
+        bindAdvanced(mat.coatNormalTex, GL_TEXTURE30, uHasCoatNormalTex_,
+                     &coatNormalIsUdim, &coatNormalRoute);
+        glUniform4iv(uAdvancedTexIsUdim_, 1, advancedIsUdim);
+        glUniform4iv(uAdvancedUdimRoutes_, 1, advancedRoutes);
+        const int advancedSlots[4] = {
+            mat.specularColorTex, mat.coatWeightTex, mat.coatColorTex,
+            mat.coatRoughnessTex};
+        glUniform4iv(uAdvancedUdimSlots_, 1, advancedSlots);
+        glUniform1i(uCoatNormalTexIsUdim_, coatNormalIsUdim);
+        glUniform1i(uCoatNormalUdimRoute_, coatNormalRoute);
+        glUniform1i(uCoatNormalUdimSlot_, mat.coatNormalTex);
         bindMaterialTexture(mat.occlusionTex, GL_TEXTURE23, GL_TEXTURE24,
                             uHasOcclusionTex_, uOcclusionTexIsUdim_);
         glActiveTexture(GL_TEXTURE0);

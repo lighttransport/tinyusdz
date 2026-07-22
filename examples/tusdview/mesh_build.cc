@@ -1957,6 +1957,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       addVec3Param(&dm, "OpenPBRSurface", "tangent", s.tangent);
       addVec3Param(&dm, "OpenPBRSurface", "coat_normal", s.coat_normal);
       addVec3Param(&dm, "OpenPBRSurface", "coat_tangent", s.coat_tangent);
+      addFloatParam(&dm, "OpenPBRSurface", "displacement", s.displacement, 0);
       dm.baseColorTex = mapTex(s.base_color.texture_id);
       dm.emissiveTex = mapTex(s.emission_color.texture_id);
       dm.normalTex = mapTex(s.normal.texture_id);
@@ -1976,6 +1977,17 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
         }
       }
       dm.coatNormalTex = mapTex(s.coat_normal.texture_id);
+      dm.displacementTex = mapTex(s.displacement.texture_id);
+      dm.displacementUv = MapUvXform(rs, s.displacement.texture_id);
+      CopyTexSample(rs, s.displacement.texture_id, &dm.displacementSample);
+      dm.displacementConst = s.displacement.value;
+      if (s.displacement.texture_id >= 0 &&
+          static_cast<size_t>(s.displacement.texture_id) < rs.textures.size()) {
+        const tydra::UVTexture& dt =
+            rs.textures[static_cast<size_t>(s.displacement.texture_id)];
+        dm.displacementTexScale = dt.scale[0];
+        dm.displacementTexBias = dt.bias[0];
+      }
       // Coat weight/tint/roughness and the specular-workflow F0 map had no
       // texture slot at all, so an authored map collapsed to its constant.
       dm.coatWeightTex = mapTex(s.coat_weight.texture_id);
