@@ -21,6 +21,8 @@ ppm('normal.ppm',(255,128,192)*4+(128,128,255)*4) # +X-ish, then +Z
 ppm('coat_normal.1001.ppm',(255,128,192)*8)
 ppm('coat_normal.1002.ppm',(128,128,255)*8)
 ppm('occlusion.ppm',(32,32,32)*4+(224,224,224)*4)
+ppm('occlusion.1001.ppm',(32,32,32)*8)
+ppm('occlusion.1002.ppm',(224,224,224)*8)
 # Keep the low side visibly separated from the viewer clear color so the
 # backend-neutral foreground detector retains both halves of the quad.
 ppm('coat_weight.ppm',(64,64,64)*4+(224,224,224)*4)
@@ -142,10 +144,13 @@ USDA
 }
 write_coat_normal_material "$OUT/coat-normal.usda"
 write_coat_normal_material "$OUT/coat-normal-udim.usda" 1
-{
-  echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
-  quad
-  cat <<'USDA'
+write_occlusion_material() {
+  local file="$1" udim="${2:-0}" texture=occlusion.ppm
+  [ "$udim" = 0 ] || texture='occlusion.<UDIM>.ppm'
+  {
+    echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
+    if [ "$udim" = 1 ]; then quad_udim; else quad; fi
+    cat <<USDA
   def Material "M" {
     token outputs:surface.connect = </World/M/P.outputs:surface>
     def Shader "P" {
@@ -161,7 +166,7 @@ write_coat_normal_material "$OUT/coat-normal-udim.usda" 1
     }
     def Shader "O" {
       uniform token info:id = "UsdUVTexture"
-      asset inputs:file = @./occlusion.ppm@
+      asset inputs:file = @./$texture@
       float2 inputs:st.connect = </World/M/ST.outputs:result>
       token inputs:sourceColorSpace = "raw"
       float outputs:r
@@ -169,7 +174,10 @@ write_coat_normal_material "$OUT/coat-normal-udim.usda" 1
   }
 }
 USDA
-} > "$OUT/occlusion.usda"
+  } > "$file"
+}
+write_occlusion_material "$OUT/occlusion.usda"
+write_occlusion_material "$OUT/occlusion-udim.usda" 1
 write_coat_material() {
   local file="$1" udim="${2:-0}" weight=coat_weight.ppm color=coat_color.ppm rough=coat_roughness.ppm
   if [ "$udim" = 1 ]; then
@@ -556,6 +564,7 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
     want_mode coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal.usda" coat-normal coat-normal coat-normal "${args[@]}"
     want_mode coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal-udim.usda" coat-normal coat-normal coat-normal-udim "${args[@]}"
     want_mode occlusion && case_run "$tag" "$marker" "$OUT/occlusion.usda" shaded occlusion occlusion "${args[@]}"
+    want_mode occlusion && case_run "$tag" "$marker" "$OUT/occlusion-udim.usda" shaded occlusion occlusion-udim "${args[@]}"
     want_mode coat && case_run "$tag" "$marker" "$OUT/coat.usda" shaded coat coat "${args[@]}"
     want_mode coat-weight && case_run "$tag" "$marker" "$OUT/coat.usda" coat-weight coat-weight coat-weight "${args[@]}"
     want_mode coat-color && case_run "$tag" "$marker" "$OUT/coat.usda" coat-color coat-color coat-color "${args[@]}"

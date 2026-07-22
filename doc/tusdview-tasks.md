@@ -312,6 +312,9 @@ Latest focused verification on 2026-07-20:
   collapsing a connected color opacity to constant luminance; connections are
   now preserved, the Tydra unit pins the texture descriptor, and Vulkan
   default/legacy images agree within MAD 0.018.
+- PreviewSurface occlusion now also crosses a two-tile raw scalar UDIM. Its
+  controlled indirect-light response passes and Vulkan default/legacy pixels
+  are exact (MAD 0.0).
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by

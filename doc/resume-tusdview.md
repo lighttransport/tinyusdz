@@ -233,6 +233,10 @@ Standard Surface conversion replacing a graph connection with constant
 luminance; it now preserves the connection, with a focused Tydra unit and
 Vulkan default/legacy parity within MAD 0.018.
 
+Occlusion texture follow-up: PreviewSurface's controlled indirect-light probe
+now pairs its ordinary raw scalar map with a two-tile UDIM; Vulkan response and
+default/legacy parity pass exactly (MAD 0.0).
+
 Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
 the core material record and its cross-backend image parity are complete.
 
