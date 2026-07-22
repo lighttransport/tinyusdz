@@ -3306,6 +3306,12 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
         for (int i = 0; i < 16; ++i) {
           light.transform[i] = static_cast<float>(w16[i]);
         }
+        light.position[0] = static_cast<float>(w16[12]);
+        light.position[1] = static_cast<float>(w16[13]);
+        light.position[2] = static_cast<float>(w16[14]);
+        light.direction[0] = -static_cast<float>(w16[8]);
+        light.direction[1] = -static_cast<float>(w16[9]);
+        light.direction[2] = -static_cast<float>(w16[10]);
       } else {
         for (int i = 0; i < 16; ++i) light.transform[i] = (i % 5 == 0) ? 1.f : 0.f;
       }

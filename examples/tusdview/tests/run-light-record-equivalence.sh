@@ -102,6 +102,16 @@ def Xform "World" {
     double3 xformOp:translate = (0,2,2)
     uniform token[] xformOpOrder = ["xformOp:translate"]
   }
+  def DomeLight "Sky" {
+    color3f inputs:color = (0.3,0.45,0.8)
+    float inputs:intensity = 0.75
+    float inputs:exposure = 1
+    float inputs:diffuse = 0.65
+    float inputs:specular = 0.85
+    token inputs:texture:format = "latlong"
+    float3 xformOp:rotateXYZ = (0,35,0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+  }
 }
 USDA
 
@@ -124,7 +134,7 @@ python3 - "$OUT/next.records" "$OUT/legacy.records" <<'PY'
 import math,sys
 def read(p): return [[float(x) for x in line.split()] for line in open(p) if line.strip()]
 a,b=read(sys.argv[1]),read(sys.argv[2])
-if len(a)!=5 or len(b)!=5 or any(len(x)!=len(y) for x,y in zip(a,b)):
+if len(a)!=6 or len(b)!=6 or any(len(x)!=len(y) for x,y in zip(a,b)):
  print('light record shape mismatch',a,b); raise SystemExit(1)
 for li,(x,y) in enumerate(zip(a,b)):
  # Mesh indices are loader-layout-specific (the next loader batches geometry),
