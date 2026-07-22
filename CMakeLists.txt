@@ -2987,6 +2987,15 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-texture-semantic-aov PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 900)
 
+    add_test(
+      NAME tusdview-light-record-equivalence
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-light-record-equivalence.sh"
+      )
+    set_tests_properties(tusdview-light-record-equivalence PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 120)
+
     # A single mesh may bind different materials through materialBind
     # GeomSubsets. All RT backends must resolve the committed triangle's
     # submesh material, not the mesh's first material.

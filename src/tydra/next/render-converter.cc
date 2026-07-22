@@ -6574,6 +6574,7 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   GetFloat(prim, "inputs:colorTemperature", &out->color_temperature);
   GetFloat(prim, "inputs:diffuse", &out->diffuse);
   GetFloat(prim, "inputs:specular", &out->specular);
+  GetFloat(prim, "inputs:shaping:cone:angle", &out->shaping_cone_angle);
   GetFloat(prim, "inputs:shaping:focus", &out->shaping_focus);
   GetFloat3(prim, "inputs:shaping:focusTint", &out->shaping_focus_tint.x,
             &out->shaping_focus_tint.y, &out->shaping_focus_tint.z);

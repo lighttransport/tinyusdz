@@ -3156,6 +3156,7 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
     dst->intensity = src.intensity; dst->exposure = src.exposure;
     dst->normalize = src.normalize; dst->diffuse = src.diffuse;
     dst->specular = src.specular;
+    dst->shapingConeAngle = src.shaping_cone_angle;
     dst->enableColorTemperature = src.enable_color_temperature;
     dst->colorTemperature = src.color_temperature;
     dst->shapingFocus = src.shaping_focus;
