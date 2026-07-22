@@ -361,11 +361,16 @@ Latest focused verification on 2026-07-20:
 - PreviewSurface occlusion now also crosses a two-tile raw scalar UDIM. Its
   controlled indirect-light response passes and Vulkan default/legacy pixels
   are exact (MAD 0.0).
+  Its ordinary map is now packaged as USDZ as well; package parity is exact in
+  Vulkan raster/RT and CUDA through both loaders.
 - Primary surface-normal coverage now spans ordinary and two-tile UDIM maps for
   Preview, native OpenPBR, and Standard Surface, with exact Vulkan loader parity.
   It exposed native OpenPBR reconstruction ignoring canonical
   `geometry_normal`/`geometry_tangent` aliases and Standard conversion dropping
   connected normal/tangent inputs; focused parser and Tydra units pin both fixes.
+  Ordinary normal fixtures for all three families now have stored USDZ forms.
+  Together with occlusion, all 24 external/package comparisons are exact across
+  both loaders and Vulkan raster/RT plus CUDA.
 - Vulkan ray query now runs the complete 36-case core semantic matrix per
   loader: base, packed metallic/roughness, emission, opacity, and primary normal
   across ordinary/UDIM Preview, OpenPBR, and Standard Surface inputs. This found

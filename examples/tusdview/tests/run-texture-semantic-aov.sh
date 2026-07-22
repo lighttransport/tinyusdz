@@ -616,6 +616,17 @@ done
 
 mkdir -p "$OUT/pkg"; cp "$OUT/normal.usda" "$OUT/normal.ppm" "$OUT/pkg/"
 (cd "$OUT/pkg" && zip -0 -q "$OUT/normal.usdz" normal.usda normal.ppm)
+for family in openpbr standard; do
+  mkdir -p "$OUT/pkg-normal-$family"
+  cp "$OUT/normal-$family.usda" "$OUT/normal.ppm" \
+    "$OUT/pkg-normal-$family/"
+  (cd "$OUT/pkg-normal-$family" && zip -0 -q "$OUT/normal-$family.usdz" \
+    "normal-$family.usda" normal.ppm)
+done
+mkdir -p "$OUT/pkg-occlusion"
+cp "$OUT/occlusion.usda" "$OUT/occlusion.ppm" "$OUT/pkg-occlusion/"
+(cd "$OUT/pkg-occlusion" && zip -0 -q "$OUT/occlusion.usdz" \
+  occlusion.usda occlusion.ppm)
 mkdir -p "$OUT/pkg-coat"; cp "$OUT/coat-normal.usda" "$OUT/normal.ppm" "$OUT/pkg-coat/"
 (cd "$OUT/pkg-coat" && zip -0 -q "$OUT/coat-normal.usdz" coat-normal.usda normal.ppm)
 mkdir -p "$OUT/pkg-standard-coat"
@@ -747,6 +758,9 @@ case_run() {
       package="$OUT/coat-preview.usdz";;
     standard-coat-weight|standard-coat-color|standard-coat-roughness)
       package="$OUT/coat-standard.usdz";;
+    openpbr-vector) package="$OUT/normal-openpbr.usdz";;
+    standard-vector) package="$OUT/normal-standard.usdz";;
+    occlusion) package="$OUT/occlusion.usdz";;
   esac
   if [ -n "$package" ]; then
     local packed="$OUT/$tag-$case_id-usdz.ppm"
