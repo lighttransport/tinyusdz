@@ -832,6 +832,7 @@ struct RenderLight {
   float color_temperature = 6500.0f;
   float diffuse = 1.0f;
   float specular = 1.0f;
+  float shaping_cone_angle = 90.0f;
   float shaping_focus = 0.0f;
   Float3 shaping_focus_tint = {0, 0, 0};  // color3f per UsdLux ShapingAPI
   float shaping_cone_softness = 0.0f;

@@ -208,6 +208,13 @@ Linux-first order is:
    Vulkan non-mesh/picking and broader area-light, camera, and external-corpus
    work.
 
+Lighting extraction follow-up (2026-07-22): a checked-in default/legacy light
+record comparison now covers RectLight and SphereLight shape, normalization,
+diffuse/specular multipliers, shadows, transforms, derived intensity, and
+collection state. Its first run found that the next RenderLight carrier omitted
+generic `inputs:shaping:cone:angle` for non-spot emitters; the field is now
+retained and both loaders agree within numeric tolerance.
+
 Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
 the core material record and its cross-backend image parity are complete.
 
