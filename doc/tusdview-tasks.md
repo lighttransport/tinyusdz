@@ -321,6 +321,10 @@ Latest focused verification on 2026-07-20:
   schema and both material-terminal paths now preserve authored values and
   texture connections. Raster loader parity is exact, while Vulkan RT/CUDA
   pass with maximum loader MAD 0.476.
+  Ordinary OpenPBR and Standard Surface coat-normal fixtures are now repacked
+  into USDZ and compared against their external USDA/PPM renders as part of the
+  same gate. Vulkan raster, Vulkan RT, and CUDA are pixel-exact for package
+  parity through both loaders.
 - Raster displacement now has a vertex/tessellation-visible UDIM array and LUT
   route instead of silently binding black for UDIM height maps. Semantic raw/
   UDIM classification is packed after texture deduplication and the focused
