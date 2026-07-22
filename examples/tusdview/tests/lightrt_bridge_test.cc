@@ -70,6 +70,8 @@ int main() {
   mat.normalSample.uv = {1.0f, 0.0f, 0.0f, 1.0f, 0.7f, 0.8f};
   mat.emissiveSample.uv = {0.25f, 0.0f, 0.0f, 0.25f, 0.2f, 0.3f};
   mat.displacementUv = {2.0f, 0.0f, 0.0f, 2.0f, -0.5f, 0.5f};
+  mat.displacementTex = 11;
+  mat.displacementSample.isUdim = true;
   mat.baseColorSample.scale[0] = 0.25f;
   mat.baseColorSample.bias[0] = 0.10f;
   mat.normalSample.scale[1] = 2.0f;
@@ -283,7 +285,8 @@ int main() {
       !Near(directRasterTexPack[51 * 4 + 2], 0.23f) ||
       !Near(directRasterTexPack[52 * 4 + 0], 1.7f) ||
       !Near(directRasterTexPack[53 * 4 + 1], -0.4f) ||
-      !Near(directRasterTexPack[53 * 4 + 3], 1.0f)) {
+      !Near(directRasterTexPack[53 * 4 + 3], 1.0f) ||
+      !Near(directRasterTexPack[55 * 4 + 1], 11.0f)) {
     std::fprintf(stderr, "unexpected raster texture-param packing\n");
     return 1;
   }

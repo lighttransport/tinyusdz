@@ -48,7 +48,7 @@ namespace tusdview {
 namespace {
 
 constexpr uint32_t kRasterDescriptorSetCount = 4;
-constexpr uint32_t kMaterialBindingCount = 31;
+constexpr uint32_t kMaterialBindingCount = 32;
 constexpr uint32_t kDeformBindingCount = 7;
 constexpr uint32_t kMaxMaterialSets = 8192;
 constexpr uint32_t kMaxDeformSets = 16384;
@@ -2390,8 +2390,10 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     materialBindings[i].descriptorCount = 1;
     materialBindings[i].stageFlags =
-        (i == 16) ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_FRAGMENT_BIT;
-    if (i == 16 && tessSupported_) {
+        (i == 16 || i == 31) ? VK_SHADER_STAGE_VERTEX_BIT
+                             : VK_SHADER_STAGE_FRAGMENT_BIT;
+    if (i == 5) materialBindings[i].stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
+    if ((i == 5 || i == 16 || i == 31) && tessSupported_) {
       materialBindings[i].stageFlags |=
           VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
     }
@@ -2853,7 +2855,7 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
       material.opacityTex, material.roughnessTex, -1, -1, -1,
       material.roughnessTex, material.displacementTex, material.occlusionTex,
       material.occlusionTex};
-  static_assert(kMaterialBindingCount == 31, "material descriptor table drift");
+  static_assert(kMaterialBindingCount == 32, "material descriptor table drift");
   views[19] = shadowDepthView_ ? shadowDepthView_ : whiteView_;
   // Extra 2D-only material slots. UDIM sources fall back to white (treated as
   // unbound) rather than sampling the wrong image.
@@ -2874,6 +2876,7 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
   views[28] = udimView(material.coatColorTex);
   views[29] = udimView(material.coatRoughnessTex);
   views[30] = udimView(material.coatNormalTex);
+  views[31] = udimView(material.displacementTex);
   textureSlots[19] = -1;
   textureSlots[20] = material.specularColorTex;
   textureSlots[21] = material.coatWeightTex;
@@ -2886,6 +2889,7 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
   textureSlots[28] = material.coatColorTex;
   textureSlots[29] = material.coatRoughnessTex;
   textureSlots[30] = material.coatNormalTex;
+  textureSlots[31] = material.displacementTex;
   VkDescriptorImageInfo infos[kMaterialBindingCount]{};
   VkWriteDescriptorSet writes[kMaterialBindingCount]{};
   for (uint32_t i = 0; i < kMaterialBindingCount; ++i) {
