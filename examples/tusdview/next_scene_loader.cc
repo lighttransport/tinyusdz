@@ -281,9 +281,6 @@ std::vector<float> ReadFloats(const tnext::UsdPrim& p, const char* name, double 
 std::vector<int32_t> ReadInts(const tnext::UsdPrim& p, const char* name, double t) {
   return tydn::ReadIntArrayCopy(p, name, t);
 }
-std::vector<int64_t> ReadInt64s(const tnext::UsdPrim& p, const char* name, double t) {
-  return tydn::ReadInt64ArrayCopy(p, name, t);
-}
 
 bool PointInstanceHidden(size_t index, size_t instance_count,
                          const tydn::ValueArrayRead<int64_t>& ids,
@@ -4579,9 +4576,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
   std::unordered_set<std::string> renderModels;
   for (const PendingMeshPrim& pending : meshPrims) {
-    const std::string& path = pending.path;
+    const std::string& pendingPath = pending.path;
     if (pending.purpose != "render") continue;
-    const std::string model = modelRootOf(path);
+    const std::string model = modelRootOf(pendingPath);
     if (!model.empty()) renderModels.insert(model);
   }
   size_t supersededProxyCount = 0;

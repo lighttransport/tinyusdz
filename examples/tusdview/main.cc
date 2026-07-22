@@ -173,7 +173,6 @@ int main(int argc, char** argv) {
   bool rasterLodFullExplicit = false;
   bool rasterLodCullExplicit = false;
   bool useNextExplicit = false;
-  bool lodStreamExplicit = false;
   bool lodMaxMemExplicit = false;
   bool lodMaxVramExplicit = false;
   bool allowParentPathsExplicit = false;
@@ -545,7 +544,6 @@ int main(int argc, char** argv) {
       if (rtSamples < 1) rtSamples = 1;
     } else if (std::strcmp(argv[i], "--lod-stream") == 0) {
       lodStream = true;
-      lodStreamExplicit = true;
     } else if (std::strcmp(argv[i], "--max-mem") == 0 && i + 1 < argc) {
       lodMaxMem = std::atof(argv[++i]);
       lodMaxMemExplicit = true;

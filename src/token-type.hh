@@ -113,6 +113,10 @@ class Token {
     return str_.value().string();
   }
 
+  const char *c_str() const {
+    return str_ ? str_.value().string() : "";
+  }
+
   uint64_t hash() const {
     if (!str_) {
       return 0;
@@ -169,6 +173,8 @@ class Token {
   Token(const char *str, size_t len) : str_(str, len) {}
 
   const std::string &str() const TINYUSDZ_LIFETIMEBOUND { return str_; }
+
+  const char *c_str() const { return str_.c_str(); }
 
   bool valid() const {
     if (str().empty()) {

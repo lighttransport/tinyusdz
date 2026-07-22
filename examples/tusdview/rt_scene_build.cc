@@ -660,7 +660,7 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
         mesh.indices.push_back(base + face[2]);
       }
     }
-    mesh.submeshes[0].indexCount = mesh.indices.size();
+    mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
     if (!mesh.indices.empty()) proxies.push_back(std::move(mesh));
   }
 
@@ -733,7 +733,7 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
       }
       begin = end;
     }
-    mesh.submeshes[0].indexCount = mesh.indices.size();
+    mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
     if (!mesh.indices.empty()) proxies.push_back(std::move(mesh));
   }
   return proxies;

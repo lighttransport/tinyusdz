@@ -907,6 +907,19 @@ static void test_variant_content_legacy() {
   const Value* n = PropOf(*out, "/p", "n");
   CHECK(n && n->as_float() && *n->as_float() == 2.0f,
         "nested variant applied (n=2)");
+
+  CompositionOptions override_options;
+  override_options.variant_overrides["inner"] = "i1";
+  Compositor overridden;
+  overridden.SetOptions(override_options);
+  overridden.SetLayerLoader(loader);
+  auto override_out = overridden.Compose(*root);
+  const Value* overridden_n =
+      override_out ? PropOf(*override_out, "/p", "n") : nullptr;
+  CHECK(overridden_n && overridden_n->as_float() &&
+            *overridden_n->as_float() == 1.0f,
+        "caller override wins over nested authored selection");
+
   const PrimSpec* gone = out->prim_at_path("/gone");
   CHECK(gone && !gone->meta().active,
         "variant active=false deactivates host");

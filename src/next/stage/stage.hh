@@ -382,7 +382,7 @@ void Stage::Traverse(Fn&& callback) const {
 
   std::function<bool(const UsdPrim&)> fn = std::forward<Fn>(callback);
   for (uint32_t idx : root_layer_->root_indices()) {
-    TraverseImpl(idx, root_layer_.get(), fn);
+    if (!TraverseImpl(idx, root_layer_.get(), fn)) break;
   }
 }
 

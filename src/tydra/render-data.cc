@@ -496,7 +496,7 @@ bool RenderSceneConverter::ConvertSphere(
   // Extract sphere radius
   double radius;
   if (!sphere.radius.get_value().get_scalar(&radius)) {
-    radius = 2.0;  // Use default value if not available
+    radius = 1.0;  // UsdGeomSphere schema fallback
   }
 
   // Generate sphere mesh geometry

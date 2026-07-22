@@ -215,11 +215,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   if (!reader.ReadUSDC()) {
     if (warn) {
-      (*warn) = reader.GetWarning();
+      (*warn) += reader.GetWarning();
     }
 
     if (err) {
-      (*err) = reader.GetError();
+      (*err) += reader.GetError();
     }
     return false;
   }
@@ -232,11 +232,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
     if (!reader.ReconstructStage(stage)) {
       DCOUT("Failed to reconstruct Stage from Crate.");
       if (warn) {
-        (*warn) = reader.GetWarning();
+        (*warn) += reader.GetWarning();
       }
 
       if (err) {
-        (*err) = reader.GetError();
+        (*err) += reader.GetError();
       }
       return false;
     }
@@ -248,14 +248,14 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   }
 
   if (warn) {
-    (*warn) = reader.GetWarning();
+    (*warn) += reader.GetWarning();
   }
 
   // Reconstruct OK but may have some error.
   // TODO(syoyo): Return false in strict mode.
   if (err) {
     DCOUT(reader.GetError());
-    (*err) = reader.GetError();
+    (*err) += reader.GetError();
   }
 
   DCOUT("Reconstructed Stage from USDC file.");
@@ -863,7 +863,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
-  std::string base_dir = io::GetBaseDir(_filename);
+  std::string base_dir = io::GetBaseDir(filepath);
 
   if (io::IsMMapSupported()) {
     io::MMapFileHandle handle;
@@ -884,7 +884,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       }
     }
 
-    bool ret = LoadUSDAFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
+    bool ret = LoadUSDAFromMemory(handle.addr, size_t(handle.size), base_dir, stage, warn,
                               err, options);
 
     {
@@ -911,7 +911,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDAFromMemory(data.data(), data.size(), filepath, stage, warn,
+    return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,
                               err, options);
   }
 }
@@ -923,7 +923,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
   PreInternCommonStrings();
 
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
-  std::string base_dir = io::GetBaseDir(_filename);
+  std::string base_dir = io::GetBaseDir(filepath);
 
   if (io::IsMMapSupported()) {
     io::MMapFileHandle handle;
@@ -944,7 +944,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
       }
     }
 
-    bool ret = LoadUSDFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
+    bool ret = LoadUSDFromMemory(handle.addr, size_t(handle.size), base_dir, stage, warn,
                               err, options);
     bool keep_mmap = false;
     if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
@@ -1349,11 +1349,11 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
 
   if (!reader.ReadUSDC()) {
     if (warn) {
-      (*warn) = reader.GetWarning();
+      (*warn) += reader.GetWarning();
     }
 
     if (err) {
-      (*err) = reader.GetError();
+      (*err) += reader.GetError();
     }
     return false;
   }
@@ -1366,11 +1366,11 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
     if (!reader.get_as_layer(layer)) {
       DCOUT("Failed to reconstruct Layer from Crate.");
       if (warn) {
-        (*warn) = reader.GetWarning();
+        (*warn) += reader.GetWarning();
       }
 
       if (err) {
-        (*err) = reader.GetError();
+        (*err) += reader.GetError();
       }
       return false;
     }
@@ -1386,14 +1386,14 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   }
 
   if (warn) {
-    (*warn) = reader.GetWarning();
+    (*warn) += reader.GetWarning();
   }
 
   // Reconstruct OK but may have some error.
   // TODO(syoyo): Return false in strict mode.
   if (err) {
     DCOUT(reader.GetError());
-    (*err) = reader.GetError();
+    (*err) += reader.GetError();
   }
 
   DCOUT("Reconstructed Stage from USDC file.");
@@ -1600,46 +1600,29 @@ bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
 }
 
 
-// Copy assetresolver state to all PrimSpec in the tree.
-static bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
-                                 const std::string &cwp,
-                                 const std::vector<std::string> &search_paths) {
-  if (depth > (1024 * 1024 * 512)) {
-    return false;
-  }
+// Copy asset-resolver state to the complete PrimSpec tree without consuming the
+// process stack on deeply nested or variant-heavy input.
+static void PropagateAssetResolverState(
+    PrimSpec &root, const std::string &cwp,
+    const std::vector<std::string> &search_paths) {
+  DCOUT("current_working_path: " << cwp);
+  DCOUT("search_paths: " << search_paths);
 
-  if (depth == 0) {
-    DCOUT("current_working_path: " << cwp);
-    DCOUT("search_paths: " << search_paths);
-  }
+  std::vector<PrimSpec *> stack;
+  stack.push_back(&root);
+  while (!stack.empty()) {
+    PrimSpec *ps = stack.back();
+    stack.pop_back();
+    ps->set_asset_resolution_state(cwp, search_paths);
 
-  ps.set_asset_resolution_state(cwp, search_paths);
-
-  for (auto &child : ps.children()) {
-    if (!PropagateAssetResolverState(depth + 1, child, cwp, search_paths)) {
-      return false;
-    }
-  }
-
-  // Also stamp prims authored INSIDE variant blocks (and their nested
-  // variantSets). Without this, a prim that only exists in a variant -- e.g.
-  // ALab's `geo_vis` proxy `GEO_PROXY` -- loads with an EMPTY working path; when
-  // that variant is later selected and its payload/reference composed, the empty
-  // cwp falls back to the resolver's stale global working path (the dir of
-  // whatever asset was loaded last, e.g. a sibling `render_high/mesh` payload),
-  // so its relative `@display_high/mesh/...@` payload resolves one dir wrong and
-  // is dropped. Variant content must carry the SAME anchor as the prim that owns
-  // the variantSet.
-  for (auto &variant_set_item : ps.variantSets()) {
-    for (auto &variant_item : variant_set_item.second.variantSet) {
-      if (!PropagateAssetResolverState(depth + 1, variant_item.second, cwp,
-                                       search_paths)) {
-        return false;
+    for (auto &child : ps->children()) stack.push_back(&child);
+    // Variant content carries the same anchor as the owning PrimSpec.
+    for (auto &variant_set_item : ps->variantSets()) {
+      for (auto &variant_item : variant_set_item.second.variantSet) {
+        stack.push_back(&variant_item.second);
       }
     }
   }
-
-  return true;
 }
 
 bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
@@ -1680,7 +1663,7 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
     // Save current working path to each PrimSpec in the layer
     // for the subsequent composition operation.
     for (auto &root_ps : layer->primspecs()) {
-      PropagateAssetResolverState(0, root_ps.second, basedir, search_paths);
+      PropagateAssetResolverState(root_ps.second, basedir, search_paths);
     }
   }
 
@@ -1697,7 +1680,7 @@ bool LoadLayerFromFile(const std::string &_filename, Layer *stage,
 
   // TODO: Use AssetResolutionResolver.
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
-  std::string base_dir = io::GetBaseDir(_filename);
+  std::string base_dir = io::GetBaseDir(filepath);
 
   std::vector<uint8_t> data;
   size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);

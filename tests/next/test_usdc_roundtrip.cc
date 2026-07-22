@@ -2027,6 +2027,49 @@ void test_roundtrip_deferred_items() {
     CrateWriter w;
     assert(w.WriteLayerToMemory(buf, l).success);
     assert(buf.size() > 10 && buf[9] == 9 && "timecode requires crate 0.9");
+
+    // Content-driven requirements belong to one write, not the lifetime of a
+    // reusable CrateWriter instance.
+    Layer plain;
+    LayerBuilder plain_builder(plain);
+    plain_builder.begin_prim("P", "Scope");
+    plain_builder.end_prim();
+    plain_builder.finalize();
+    std::vector<uint8_t> plain_buf;
+    assert(w.WriteLayerToMemory(plain_buf, plain).success);
+    assert(plain_buf.size() > 10 && plain_buf[9] == 8 &&
+           "writer reuse must reset required output version");
+  }
+
+  // Array blocks written here always use the 0.7+ uint64 count header, so an
+  // explicitly older output request must be upgraded. Unsupported major
+  // versions are rejected instead of producing a falsely stamped crate.
+  {
+    Layer l;
+    LayerBuilder b(l);
+    b.begin_prim("A", "Scope");
+    b.current()->add_property("values", Value::MakeIntArray({1, 2, 3}), 0);
+    b.end_prim();
+    b.finalize();
+
+    CrateWriteOptions old_options;
+    old_options.version_minor = 6;
+    CrateWriter old_writer(old_options);
+    std::vector<uint8_t> buf;
+    assert(old_writer.WriteLayerToMemory(buf, l).success);
+    assert(buf.size() > 10 && buf[9] == 7);
+    CrateReader reader;
+    assert(reader.Read(buf.data(), buf.size()).success);
+
+    CrateWriteOptions invalid_options;
+    invalid_options.version_major = 1;
+    invalid_options.version_minor = 0;
+    CrateWriter invalid_writer(invalid_options);
+    std::vector<uint8_t> invalid_buf;
+    CrateWriteResult invalid_result =
+        invalid_writer.WriteLayerToMemory(invalid_buf, l);
+    assert(!invalid_result.success && !invalid_result.error.empty());
+    assert(invalid_buf.empty());
   }
 
   // Layer relocates round-trip and bump the crate to 0.11.

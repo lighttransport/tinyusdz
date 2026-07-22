@@ -1126,12 +1126,16 @@ bool CrateWriter::ConvertSinglePrim(
           if (preview_surface->outputsSurface.authored()) {
             Attribute a;
             a.set_type_name(value::kToken);
-            ConvertAttributeToFields("outputs:surface", a, prim_path, false, err);
+            if (!ConvertAttributeToFields("outputs:surface", a, prim_path, false, err)) {
+              return false;
+            }
           }
           if (preview_surface->outputsDisplacement.authored()) {
             Attribute a;
             a.set_type_name(value::kToken);
-            ConvertAttributeToFields("outputs:displacement", a, prim_path, false, err);
+            if (!ConvertAttributeToFields("outputs:displacement", a, prim_path, false, err)) {
+              return false;
+            }
           }
         }
       } else if (shader->info_id == "UsdUVTexture") {
@@ -1141,18 +1145,18 @@ bool CrateWriter::ConvertSinglePrim(
             return false;
           }
           // Terminal outputs — use actual_type_name if available, else the template type
-          auto add_t = [&](const char *n, const auto &term_attr, const char *default_type) {
-            if (!term_attr.authored()) return;
+          auto add_t = [&](const char *n, const auto &term_attr, const char *default_type) -> bool {
+            if (!term_attr.authored()) return true;
             Attribute attr;
             attr.set_type_name(term_attr.has_actual_type() ? term_attr.get_actual_type_name() : default_type);
-            ConvertAttributeToFields(n, attr, prim_path, false, err);
+            return ConvertAttributeToFields(n, attr, prim_path, false, err);
           };
-          add_t("outputs:r", uv_texture->outputsR, "float");
-          add_t("outputs:g", uv_texture->outputsG, "float");
-          add_t("outputs:b", uv_texture->outputsB, "float");
-          add_t("outputs:a", uv_texture->outputsA, "float");
-          add_t("outputs:rgb", uv_texture->outputsRGB, "float3");
-          add_t("outputs:rgba", uv_texture->outputsRGBA, "float4");
+          if (!add_t("outputs:r", uv_texture->outputsR, "float")) return false;
+          if (!add_t("outputs:g", uv_texture->outputsG, "float")) return false;
+          if (!add_t("outputs:b", uv_texture->outputsB, "float")) return false;
+          if (!add_t("outputs:a", uv_texture->outputsA, "float")) return false;
+          if (!add_t("outputs:rgb", uv_texture->outputsRGB, "float3")) return false;
+          if (!add_t("outputs:rgba", uv_texture->outputsRGBA, "float4")) return false;
         }
       } else if (shader->info_id == "UsdTransform2d") {
         if (auto* transform2d = shader->value.as<UsdTransform2d>()) {
@@ -1165,7 +1169,9 @@ bool CrateWriter::ConvertSinglePrim(
             a.set_type_name(transform2d->result.has_actual_type()
                                 ? transform2d->result.get_actual_type_name()
                                 : "float2");
-            ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
+            if (!ConvertAttributeToFields("outputs:result", a, prim_path, false, err)) {
+              return false;
+            }
           }
         }
       } else if (shader->info_id.find("UsdPrimvarReader_") == 0) {
@@ -1179,22 +1185,21 @@ bool CrateWriter::ConvertSinglePrim(
         // UsdPrimvarReader_float2) and threw away a non-conformant authored one
         // (`token outputs:result`). The authored spelling is kept in
         // actual_type_name, exactly as the UsdUVTexture terminals above use it.
-        auto add_pr_terminal = [&](auto *pr) {
-          if (pr && pr->result.authored()) {
-            Attribute a;
-            std::string tname = pr->result.has_actual_type()
-                                    ? pr->result.get_actual_type_name()
-                                    : pr->result.type_name();
-            a.set_type_name(tname.empty() ? "float2" : tname);
-            ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
-          }
+        auto add_pr_terminal = [&](auto *pr) -> bool {
+          if (!pr || !pr->result.authored()) return true;
+          Attribute a;
+          std::string tname = pr->result.has_actual_type()
+                                  ? pr->result.get_actual_type_name()
+                                  : pr->result.type_name();
+          a.set_type_name(tname.empty() ? "float2" : tname);
+          return ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
         };
-        if (auto *p0 = shader->value.as<UsdPrimvarReader_float2>()) add_pr_terminal(p0);
-        else if (auto *p1 = shader->value.as<UsdPrimvarReader_float>()) add_pr_terminal(p1);
-        else if (auto *p2 = shader->value.as<UsdPrimvarReader_float3>()) add_pr_terminal(p2);
-        else if (auto *p3 = shader->value.as<UsdPrimvarReader_float4>()) add_pr_terminal(p3);
-        else if (auto *p4 = shader->value.as<UsdPrimvarReader_int>()) add_pr_terminal(p4);
-        else if (auto *p5 = shader->value.as<UsdPrimvarReader_string>()) add_pr_terminal(p5);
+        if (auto *p0 = shader->value.as<UsdPrimvarReader_float2>()) { if (!add_pr_terminal(p0)) return false; }
+        else if (auto *p1 = shader->value.as<UsdPrimvarReader_float>()) { if (!add_pr_terminal(p1)) return false; }
+        else if (auto *p2 = shader->value.as<UsdPrimvarReader_float3>()) { if (!add_pr_terminal(p2)) return false; }
+        else if (auto *p3 = shader->value.as<UsdPrimvarReader_float4>()) { if (!add_pr_terminal(p3)) return false; }
+        else if (auto *p4 = shader->value.as<UsdPrimvarReader_int>()) { if (!add_pr_terminal(p4)) return false; }
+        else if (auto *p5 = shader->value.as<UsdPrimvarReader_string>()) { if (!add_pr_terminal(p5)) return false; }
       } else if (auto* mtlx_surface = shader->value.as<MtlxOpenPBRSurface>()) {
         // MaterialX ND_open_pbr_surface_surfaceshader -> typed MtlxOpenPBRSurface
         if (!AddMtlxOpenPBRSurfaceInputSpecs(mtlx_surface, prim_path, err)) {
