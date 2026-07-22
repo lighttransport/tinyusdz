@@ -285,6 +285,11 @@ Latest focused verification on 2026-07-20:
   displacement semantics to raw before mip generation/upload. Vulkan raster
   gives exact default/legacy coat pixels (MAD 0.0), and Vulkan ray query plus
   CUDA pass the ordinary/UDIM response fixtures.
+- Coat normal now uses the same model: a per-sample UDIM classification bit is
+  resolved after texture deduplication, Vulkan raster binds a dedicated normal
+  array, and the coat-normal AOV crosses tiles carrying distinct tangent-space
+  directions. Vulkan raster default/legacy images are exact (MAD 0.0), with
+  Vulkan ray query and CUDA passing the same ordinary/UDIM fixture.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by

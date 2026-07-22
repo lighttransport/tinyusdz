@@ -196,6 +196,10 @@ Linux-first order is:
    displacement textures raw regardless of decoder defaults. Vulkan raster
    reaches MAD 0.0 across loaders, while Vulkan ray query and CUDA pass both
    ordinary and UDIM coat probes.
+   Coat-normal now completes the coat UDIM set: its descriptor records UDIM
+   classification after deduplication, Vulkan raster samples a dedicated array,
+   and a directional two-tile AOV passes with MAD 0.0 across loaders as well as
+   passing Vulkan ray query and CUDA.
 3. **P3:** complete for point/zero-radius SphereLight emitters: GL and Vulkan
    raster render/sample all six projected-depth cube faces, and the Vulkan
    regression proves the bounded shadow. Keep finite non-zero area sampling as
