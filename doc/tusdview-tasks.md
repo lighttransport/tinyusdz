@@ -195,6 +195,16 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   Both orientations are now also stored as USDZ with the latlong environment
   map resolved from the archive. Default and legacy packaged renders match
   their external USDA/PPM counterparts exactly (package MAD 0.0).
+- `tusdview-displacement-udim` now stores its flat and raised two-tile height
+  maps in USDZ and compares all four external/package pairs through both
+  loaders. The same gate now requires Standard Surface loader parity instead
+  of limiting that comparison to PreviewSurface.
+- OpenGL now samples specular F0, coat weight/color/roughness, and coat-normal
+  UDIMs instead of falling back to each texture's representative first tile.
+  The GL 3.3 path assigns those arrays to unused core UDIM sampler routes per
+  draw, staying within the 32-fragment-unit floor. The focused semantic grid
+  passes the ordinary/UDIM cases through both loaders with exact package and
+  loader comparisons.
 - [ ] Checked-in fixtures cover a PBR material grid, packed/UDIM minification,
   Points and all curve families, perspective/orthographic lens shift,
   multi-light linking, and raster shadows. The linked red/blue/magenta raster

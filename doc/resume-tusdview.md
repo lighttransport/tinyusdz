@@ -228,6 +228,13 @@ The same two scenes are now packaged as USDZ with the environment map inside
 the archive; default and legacy packaged images match the external assets
 exactly (package MAD 0.0).
 
+OpenGL advanced-UDIM follow-up: the semantic grid exposed GL sampling the
+representative 1001 image for specular F0, coat weight/color/roughness, and
+coat-normal UDIMs. Those slots now route their array textures through unused
+core UDIM sampler units per draw, preserving independent images without
+exceeding the GL 3.3 32-fragment-unit floor. Ordinary/UDIM response, loader
+parity, and package parity pass for both loaders.
+
 Displacement texture follow-up: Vulkan coarse and tessellated vertex paths now
 sample UDIM height arrays through the shared atlas LUT. The material descriptor
 records displacement UDIM intent after deduplication, and the bridge unit pins
@@ -236,6 +243,9 @@ tiles against a raised second tile at an oblique view; its 2.37 mean absolute
 pixel response closes displaced-silhouette coverage for the next loader.
 PreviewSurface now runs the same flat/raised UDIM geometry oracle, also at 2.37
 MAD, with exact default/legacy pixels for both controls.
+The flat and raised Standard/Preview fixtures are now also packaged as USDZ.
+Both loaders compare their external and packaged displaced geometry, and the
+gate now includes Standard Surface in its loader-parity requirement.
 
 Core texture follow-up: the Preview, OpenPBR, and Standard Surface semantic
 grid now pairs its ordinary base color, packed metallic/roughness, and emission

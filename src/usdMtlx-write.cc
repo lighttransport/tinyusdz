@@ -341,6 +341,9 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
   // Thin walled
   EMIT_ATTRIBUTE("thin_walled", "boolean", shader.thin_walled)
 
+  // Renderer extension shared with USD-authored standard_surface graphs.
+  EMIT_ATTRIBUTE("displacement", "float", shader.displacement)
+
   // Normal and tangent - these are TypedAttribute (not TypedAttributeWithFallback)
   // Skip for now as they require different serialization
   // TODO: Add serialization support for TypedAttribute

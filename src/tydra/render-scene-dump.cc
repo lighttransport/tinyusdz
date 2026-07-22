@@ -1173,6 +1173,7 @@ static void DumpOpenPBRSurfaceYAML(std::stringstream &ss, const OpenPBRSurfaceSh
   // Geometry properties
   dump_param("normal", shader.normal);
   dump_param("tangent", shader.tangent);
+  dump_param("displacement", shader.displacement);
   // Normal/tangent map related scalars
   ss << yaml_indent(indent) << "normal_map_scale: " << shader.normal_map_scale << "\n";
   ss << yaml_indent(indent) << "tangent_rotation: " << shader.tangent_rotation << "\n";

@@ -4431,6 +4431,13 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
               surfacePath.prim_part()));
         }
       }
+      if (!ConvertPreviewSurfaceShaderParam(
+              env, surfacePath, mtlx_standard->displacement, "displacement",
+              openpbr_shader.displacement, /*is_materialx=*/true)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to convert Standard Surface displacement : {}",
+            surfacePath.prim_part()));
+      }
 
       // Extract normal map and tangent info from NodeGraph connections
       // StandardSurface uses `normal` and `tangent` fields (not geometry_normal/geometry_tangent)
@@ -4688,6 +4695,14 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                       "Failed to convert Standard Surface coat normal : {}",
                       mtlxSurfacePath.prim_part()));
                 }
+              }
+              if (!ConvertPreviewSurfaceShaderParam(
+                      env, mtlxSurfacePath, mtlx_standard->displacement,
+                      "displacement", openpbr_shader.displacement,
+                      /*is_materialx=*/true)) {
+                PUSH_ERROR_AND_RETURN(fmt::format(
+                    "Failed to convert Standard Surface displacement : {}",
+                    mtlxSurfacePath.prim_part()));
               }
               const Prim *material_prim_for_ng = nullptr;
               if (!env.stage.find_prim_at_path(mat_abs_path,
