@@ -43,6 +43,17 @@
 
 namespace tinyusdz {
 
+namespace {
+
+void appendHexEscape(unsigned char value, std::string *out) {
+  static constexpr char kHex[] = "0123456789abcdef";
+  *out += "\\x";
+  *out += kHex[(value >> 4) & 0x0f];
+  *out += kHex[value & 0x0f];
+}
+
+}  // namespace
+
 std::string buildEscapedAndQuotedStringForUSDA(const std::string &str) {
   // Rule for triple quote string:
   //
@@ -101,20 +112,15 @@ std::string buildEscapedAndQuotedStringForUSDA(const std::string &str) {
   std::string escaped;
   escaped.reserve(str.size() + 8);
   for (char c : str) {
+    const unsigned char value = static_cast<unsigned char>(c);
     if (c == '\\') {
       escaped += "\\\\";
-    } else if (c == '\a') {
-      escaped += "\\x07";
-    } else if (c == '\b') {
-      escaped += "\\x08";
     } else if (c == '\t') {
       escaped += "\\t";
-    } else if (c == '\v') {
-      escaped += "\\x0b";
-    } else if (c == '\f') {
-      escaped += "\\x0c";
     } else if (c == '\r') {
       escaped += "\\r";
+    } else if ((value < 0x20 && c != '\n') || value == 0x7f) {
+      appendHexEscape(value, &escaped);
     } else if (escape_delimiter && c == delim[0]) {
       escaped += '\\';
       escaped += c;
@@ -128,26 +134,27 @@ std::string buildEscapedAndQuotedStringForUSDA(const std::string &str) {
 
 std::string escapeControlSequence(const std::string &str) {
   std::string s;
+  s.reserve(str.size());
 
   for (size_t i = 0; i < str.size(); i++) {
-    if (str[i] == '\a') {
-      s += "\\x07";
-    } else if (str[i] == '\b') {
-      s += "\\x08";
-    } else if (str[i] == '\t') {
+    const char c = str[i];
+    const unsigned char value = static_cast<unsigned char>(c);
+    if (c == '\t') {
       s += "\\t";
-    } else if (str[i] == '\v') {
-      s += "\\x0b";
-    } else if (str[i] == '\f') {
-      s += "\\x0c";
-    } else if (str[i] == '\\') {
+    } else if (c == '\n') {
+      s += "\\n";
+    } else if (c == '\r') {
+      s += "\\r";
+    } else if (c == '\\') {
       // Escape backslash as \\ always; the following quote (if any) will be
       // handled by its own case below, producing \\\" for a literal \ followed
       // by ".  The old code emitted just \ (un-escaped) before \", which
       // silently lost the backslash on roundtrip.
       s += "\\\\";
+    } else if (value < 0x20 || value == 0x7f) {
+      appendHexEscape(value, &s);
     } else {
-      s += str[i];
+      s += c;
     }
   }
 

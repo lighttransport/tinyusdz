@@ -14,6 +14,8 @@ namespace tinyusdz {
 namespace next {
 namespace {
 
+constexpr size_t kMaxTemplateClipCount = 1000000;
+
 bool ToDouble(const Value* value, double* out) {
   if (!value || !out) return false;
   if (const double* v = value->as_double()) *out = *v;
@@ -47,15 +49,36 @@ std::vector<std::pair<double, double>> PairArray(const Value* value) {
 }
 
 bool ExpandTemplate(const Dict& dict, ValueClipSet* out, std::string* error) {
+  if (!out) return false;
   std::string pattern;
-  if (!ToString(dict.find("templateAssetPath"), &pattern)) return false;
+  if (!ToString(dict.find("templateAssetPath"), &pattern)) {
+    if (error) *error = "Invalid templateAssetPath";
+    return false;
+  }
   double start = 0.0, end = 0.0, stride = 1.0, active_offset = 0.0;
-  ToDouble(dict.find("templateStartTime"), &start);
-  ToDouble(dict.find("templateEndTime"), &end);
-  ToDouble(dict.find("templateStride"), &stride);
-  ToDouble(dict.find("templateActiveOffset"), &active_offset);
-  if (stride <= 0.0 || end < start) {
+  if (!ToDouble(dict.find("templateStartTime"), &start) ||
+      !ToDouble(dict.find("templateEndTime"), &end)) {
+    if (error) *error = "Missing value-clip template time range";
+    return false;
+  }
+  const Value* stride_value = dict.find("templateStride");
+  if (stride_value && !ToDouble(stride_value, &stride)) {
+    if (error) *error = "Invalid templateStride";
+    return false;
+  }
+  const Value* offset_value = dict.find("templateActiveOffset");
+  if (offset_value && !ToDouble(offset_value, &active_offset)) {
+    if (error) *error = "Invalid templateActiveOffset";
+    return false;
+  }
+  if (!std::isfinite(start) || !std::isfinite(end) ||
+      !std::isfinite(stride) || stride <= 0.0 || end < start) {
     if (error) *error = "Invalid value-clip template time range";
+    return false;
+  }
+  if (!std::isfinite(active_offset) ||
+      std::fabs(active_offset) > stride) {
+    if (error) *error = "Invalid templateActiveOffset";
     return false;
   }
   const size_t first = pattern.find('#');
@@ -74,30 +97,124 @@ bool ExpandTemplate(const Dict& dict, ValueClipSet* out, std::string* error) {
     while (fraction_end < pattern.size() && pattern[fraction_end] == '#')
       ++fraction_end;
   }
+  const size_t placeholder_end =
+      fraction == std::string::npos ? integer_end : fraction_end;
+  if (pattern.find('#', placeholder_end) != std::string::npos) {
+    if (error) *error = "templateAssetPath has invalid # placeholders";
+    return false;
+  }
+  const size_t integer_width = integer_end - first;
+  const size_t fractional_width =
+      fraction == std::string::npos ? 0 : fraction_end - fraction;
+  if (integer_width > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+      fractional_width >
+          static_cast<size_t>(std::numeric_limits<int>::max())) {
+    if (error) *error = "templateAssetPath placeholder is too wide";
+    return false;
+  }
   const std::string prefix = pattern.substr(0, first);
   const std::string suffix = fraction == std::string::npos
                                  ? pattern.substr(integer_end)
                                  : pattern.substr(fraction_end);
-  int index = 0;
-  for (double time = start; time <= end + stride * 0.5; time += stride) {
-    const double t = std::min(time, end);
-    double integer_part = 0.0;
-    const double fractional_part = std::modf(t, &integer_part);
-    std::ostringstream path;
-    path << prefix << std::setfill('0')
-         << std::setw(static_cast<int>(integer_end - first))
-         << static_cast<int>(integer_part);
+
+  const long double span =
+      static_cast<long double>(end) - static_cast<long double>(start);
+  const long double step_count = span / static_cast<long double>(stride);
+  const long double rounded_steps = std::round(step_count);
+  const long double tolerance =
+      8.0L * static_cast<long double>(std::numeric_limits<double>::epsilon()) *
+      std::max(1.0L, std::fabs(step_count));
+  const long double normalized_steps =
+      std::fabs(step_count - rounded_steps) <= tolerance
+          ? rounded_steps
+          : std::floor(step_count);
+  if (!std::isfinite(step_count) || normalized_steps < 0.0L ||
+      normalized_steps >= static_cast<long double>(kMaxTemplateClipCount)) {
+    if (error) *error = "Value-clip template exceeds expansion limit";
+    return false;
+  }
+  const long double max_double =
+      static_cast<long double>(std::numeric_limits<double>::max());
+  const long double absolute_offset =
+      std::fabs(static_cast<long double>(active_offset));
+  const long double boundary_start =
+      static_cast<long double>(start) - absolute_offset;
+  const long double boundary_end =
+      static_cast<long double>(end) + absolute_offset;
+  const long double active_start =
+      static_cast<long double>(start) +
+      static_cast<long double>(active_offset);
+  const long double active_end =
+      static_cast<long double>(end) + static_cast<long double>(active_offset);
+  if (!std::isfinite(boundary_start) || !std::isfinite(boundary_end) ||
+      !std::isfinite(active_start) || !std::isfinite(active_end) ||
+      std::fabs(boundary_start) > max_double ||
+      std::fabs(boundary_end) > max_double ||
+      std::fabs(active_start) > max_double || std::fabs(active_end) > max_double) {
+    if (error) *error = "Value-clip template time overflow";
+    return false;
+  }
+  const size_t clip_count = static_cast<size_t>(normalized_steps) + 1;
+  out->asset_paths.clear();
+  out->times.clear();
+  out->active.clear();
+  out->asset_paths.reserve(clip_count);
+  out->times.reserve(clip_count + (active_offset == 0.0 ? 0 : 2));
+  out->active.reserve(clip_count);
+
+  for (size_t index = 0; index < clip_count; ++index) {
+    const long double generated =
+        static_cast<long double>(start) +
+        static_cast<long double>(index) * static_cast<long double>(stride);
+    double t = static_cast<double>(generated);
+    const long double time_tolerance =
+        tolerance * std::fabs(static_cast<long double>(stride));
+    if (t > end &&
+        generated - static_cast<long double>(end) <= time_tolerance) {
+      t = end;
+    }
+    const double integer_part = std::trunc(t);
+    std::string integer_text;
+    std::string fractional_text;
     if (fraction != std::string::npos) {
-      const size_t width = fraction_end - fraction;
-      path << '.' << std::setw(static_cast<int>(width))
-           << static_cast<int>(std::round(std::fabs(fractional_part) *
-                                          std::pow(10.0, width)));
+      std::ostringstream time_digits;
+      time_digits << std::fixed
+                  << std::setprecision(static_cast<int>(fractional_width))
+                  << std::fabs(t);
+      const std::string time_text = time_digits.str();
+      const size_t dot = time_text.find('.');
+      integer_text = time_text.substr(0, dot);
+      fractional_text =
+          dot == std::string::npos ? std::string(fractional_width, '0')
+                                   : time_text.substr(dot + 1);
+    } else {
+      std::ostringstream integer_digits;
+      integer_digits << std::fixed << std::setprecision(0)
+                     << std::fabs(integer_part);
+      integer_text = integer_digits.str();
+    }
+    if (integer_text.size() < integer_width) {
+      integer_text.insert(0, integer_width - integer_text.size(), '0');
+    }
+    std::ostringstream path;
+    path << prefix;
+    const bool negative = fraction == std::string::npos
+                              ? integer_part < 0.0
+                              : std::signbit(t) && t != 0.0;
+    if (negative) path << '-';
+    path << integer_text;
+    if (fraction != std::string::npos) {
+      path << '.' << fractional_text;
     }
     path << suffix;
     out->asset_paths.push_back(path.str());
     out->times.emplace_back(t, t);
-    out->active.emplace_back(t + active_offset, index++);
-    if (t >= end) break;
+    out->active.emplace_back(t + active_offset, static_cast<int>(index));
+  }
+  if (active_offset != 0.0 && !out->times.empty()) {
+    const double offset = std::fabs(active_offset);
+    out->times.insert(out->times.begin(), {start - offset, start - offset});
+    out->times.emplace_back(end + offset, end + offset);
   }
   return !out->asset_paths.empty();
 }

@@ -9,7 +9,9 @@
 //
 #pragma once
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 #include <sstream>
@@ -54,13 +56,27 @@ inline bool ExpandTemplateClipMetadata(
 
   if (!result) return false;
 
-  if (templateStride <= 0.0) {
-    if (err) *err = "templateStride must be positive.";
+  if (!std::isfinite(templateStartTime) ||
+      !std::isfinite(templateEndTime) ||
+      !std::isfinite(templateStride) || templateStride <= 0.0) {
+    if (err) {
+      *err = "Template times and stride must be finite, with a positive "
+             "stride.";
+    }
     return false;
   }
 
   if (templateEndTime < templateStartTime) {
     if (err) *err = "templateEndTime must be >= templateStartTime.";
+    return false;
+  }
+
+  if (!std::isfinite(templateActiveOffset) ||
+      std::abs(templateActiveOffset) > templateStride) {
+    if (err) {
+      *err = "templateActiveOffset must be finite and no greater than "
+             "templateStride.";
+    }
     return false;
   }
 
@@ -110,77 +126,145 @@ inline bool ExpandTemplateClipMetadata(
   } else {
     suffix = templateAssetPath.substr(firstGroupEnd);
   }
+  const size_t placeholderEnd = hasFractional
+                                    ? secondGroupStart + secondGroupLen
+                                    : firstGroupEnd;
+  if (templateAssetPath.find('#', placeholderEnd) != std::string::npos) {
+    if (err) {
+      *err = "templateAssetPath must contain exactly one or two adjacent "
+             "placeholder groups.";
+    }
+    return false;
+  }
+  if (firstGroupLen >
+          static_cast<size_t>(std::numeric_limits<int>::max()) ||
+      secondGroupLen >
+          static_cast<size_t>(std::numeric_limits<int>::max())) {
+    if (err) *err = "templateAssetPath placeholder is too wide.";
+    return false;
+  }
 
   // Generate clips
   result->assetPaths.clear();
   result->times.clear();
   result->active.clear();
 
-  int assetIndex = 0;
+  constexpr size_t kMaxTemplateClipCount = 1000000;
+  const long double span = static_cast<long double>(templateEndTime) -
+                           static_cast<long double>(templateStartTime);
+  const long double stepCount =
+      span / static_cast<long double>(templateStride);
+  const long double roundedSteps = std::round(stepCount);
+  const long double tolerance =
+      8.0L * static_cast<long double>(std::numeric_limits<double>::epsilon()) *
+      (std::max)(1.0L, std::abs(stepCount));
+  const long double normalizedSteps =
+      std::abs(stepCount - roundedSteps) <= tolerance
+          ? roundedSteps
+          : std::floor(stepCount);
+  if (!std::isfinite(stepCount) || normalizedSteps < 0.0L ||
+      normalizedSteps >= static_cast<long double>(kMaxTemplateClipCount)) {
+    if (err) *err = "Value-clip template exceeds expansion limit.";
+    return false;
+  }
+  const long double maxDouble =
+      static_cast<long double>(std::numeric_limits<double>::max());
+  const long double absoluteOffset =
+      std::abs(static_cast<long double>(templateActiveOffset));
+  const long double boundaryStart =
+      static_cast<long double>(templateStartTime) - absoluteOffset;
+  const long double boundaryEnd =
+      static_cast<long double>(templateEndTime) + absoluteOffset;
+  const long double activeStart =
+      static_cast<long double>(templateStartTime) +
+      static_cast<long double>(templateActiveOffset);
+  const long double activeEnd =
+      static_cast<long double>(templateEndTime) +
+      static_cast<long double>(templateActiveOffset);
+  if (!std::isfinite(boundaryStart) || !std::isfinite(boundaryEnd) ||
+      !std::isfinite(activeStart) || !std::isfinite(activeEnd) ||
+      std::abs(boundaryStart) > maxDouble ||
+      std::abs(boundaryEnd) > maxDouble ||
+      std::abs(activeStart) > maxDouble || std::abs(activeEnd) > maxDouble) {
+    if (err) *err = "Value-clip template time overflow.";
+    return false;
+  }
+  const size_t clipCount = static_cast<size_t>(normalizedSteps) + 1;
+  result->assetPaths.reserve(clipCount);
+  result->times.reserve(clipCount + (templateActiveOffset == 0.0 ? 0 : 2));
+  result->active.reserve(clipCount);
 
-  for (double t = templateStartTime; t <= templateEndTime + templateStride * 0.5;
-       t += templateStride) {
-    // Clamp to end
-    // Parenthesize to defeat the MSVC <windows.h> min/max function-like macros
-    // (C2589) when this header is compiled in a TU that pulls in windows.h.
-    double clampedT = (std::min)(t, templateEndTime);
+  for (size_t assetIndex = 0; assetIndex < clipCount; ++assetIndex) {
+    const long double generated =
+        static_cast<long double>(templateStartTime) +
+        static_cast<long double>(assetIndex) *
+            static_cast<long double>(templateStride);
+    double clipTime = static_cast<double>(generated);
+    const long double timeTolerance =
+        tolerance * std::abs(static_cast<long double>(templateStride));
+    if (clipTime > templateEndTime &&
+        generated - static_cast<long double>(templateEndTime) <=
+            timeTolerance) {
+      clipTime = templateEndTime;
+    }
 
     // Format the time value into the placeholder
     std::ostringstream pathss;
     pathss << prefix;
 
+    const double intPart = std::trunc(clipTime);
+    std::string integerText;
+    std::string fractionalText;
     if (hasFractional) {
-      // Two groups: integer.fractional
-      double intPart;
-      double fracPart = std::modf(clampedT, &intPart);
-
-      // Integer part: truncate if fractional start time
-      int intVal = static_cast<int>(intPart);
-      pathss << std::setfill('0') << std::setw(static_cast<int>(firstGroupLen))
-             << intVal;
-      pathss << ".";
-
-      // Fractional part: scale to fit secondGroupLen digits
-      double fracScaled = std::abs(fracPart) * std::pow(10.0, static_cast<double>(secondGroupLen));
-      int fracVal = static_cast<int>(std::round(fracScaled));
-      pathss << std::setfill('0') << std::setw(static_cast<int>(secondGroupLen))
-             << fracVal;
+      std::ostringstream timeDigits;
+      timeDigits << std::fixed
+                 << std::setprecision(static_cast<int>(secondGroupLen))
+                 << std::abs(clipTime);
+      const std::string timeText = timeDigits.str();
+      const size_t dot = timeText.find('.');
+      integerText = timeText.substr(0, dot);
+      fractionalText = dot == std::string::npos
+                           ? std::string(secondGroupLen, '0')
+                           : timeText.substr(dot + 1);
     } else {
-      // Single group: integer only (truncate fractional)
-      int intVal = static_cast<int>(clampedT);
-      pathss << std::setfill('0') << std::setw(static_cast<int>(firstGroupLen))
-             << intVal;
+      std::ostringstream integerDigits;
+      integerDigits << std::fixed << std::setprecision(0)
+                    << std::abs(intPart);
+      integerText = integerDigits.str();
+    }
+    if (integerText.size() < firstGroupLen) {
+      integerText.insert(0, firstGroupLen - integerText.size(), '0');
+    }
+    const bool negative = hasFractional
+                              ? std::signbit(clipTime) && clipTime != 0.0
+                              : intPart < 0.0;
+    if (negative) pathss << '-';
+    pathss << integerText;
+
+    if (hasFractional) {
+      pathss << ".";
+      pathss << fractionalText;
     }
 
     pathss << suffix;
     result->assetPaths.push_back(pathss.str());
 
     // times: (stageTime, clipTime) -- identity mapping for templates
-    result->times.emplace_back(clampedT, clampedT);
+    result->times.emplace_back(clipTime, clipTime);
 
     // active: (stageTime + offset, assetIndex)
-    double activeTime = clampedT + templateActiveOffset;
-    result->active.emplace_back(activeTime, assetIndex);
-
-    assetIndex++;
-
-    if (clampedT >= templateEndTime) break;
+    double activeTime = clipTime + templateActiveOffset;
+    result->active.emplace_back(activeTime, static_cast<int>(assetIndex));
   }
 
   // Per spec 12.3.4.1.3.5: two additional clip time knots at the ends
   // based on the absolute value of templateActiveOffset
   if (std::abs(templateActiveOffset) > 1e-15 && !result->times.empty()) {
-    double startKnot = templateStartTime + templateActiveOffset;
-    double endKnot = templateEndTime + templateActiveOffset;
-
-    // Insert boundary knots if they differ from existing
-    if (startKnot < result->times.front().first) {
-      result->times.insert(result->times.begin(),
-                           {startKnot, startKnot});
-    }
-    if (endKnot > result->times.back().first) {
-      result->times.emplace_back(endKnot, endKnot);
-    }
+    const double offset = std::abs(templateActiveOffset);
+    const double startKnot = templateStartTime - offset;
+    const double endKnot = templateEndTime + offset;
+    result->times.insert(result->times.begin(), {startKnot, startKnot});
+    result->times.emplace_back(endKnot, endKnot);
   }
 
   return true;
