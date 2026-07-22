@@ -112,6 +112,14 @@ def Xform "World" {
     float3 xformOp:rotateXYZ = (0,35,0)
     uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
   }
+  def DomeLight "ProbeMirror" {
+    float inputs:intensity = 0.25
+    token inputs:texture:format = "mirroredBall"
+  }
+  def DomeLight "ProbeAngular" {
+    float inputs:intensity = 0.125
+    token inputs:texture:format = "angular"
+  }
 }
 USDA
 
@@ -134,7 +142,7 @@ python3 - "$OUT/next.records" "$OUT/legacy.records" <<'PY'
 import math,sys
 def read(p): return [[float(x) for x in line.split()] for line in open(p) if line.strip()]
 a,b=read(sys.argv[1]),read(sys.argv[2])
-if len(a)!=6 or len(b)!=6 or any(len(x)!=len(y) for x,y in zip(a,b)):
+if len(a)!=8 or len(b)!=8 or any(len(x)!=len(y) for x,y in zip(a,b)):
  print('light record shape mismatch',a,b); raise SystemExit(1)
 for li,(x,y) in enumerate(zip(a,b)):
  # Mesh indices are loader-layout-specific (the next loader batches geometry),

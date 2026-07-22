@@ -175,14 +175,16 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 - [ ] Shared extraction tests prove `--next`/legacy equivalence for material,
   texture, camera, and light records. Material/texture and light records are now
   pinned; camera remains to be consolidated into the same acceptance gate.
-  `tusdview-light-record-equivalence` compares six authored lights across both
+  `tusdview-light-record-equivalence` compares eight authored lights across both
   loaders, including type, transforms, shape, normalize, diffuse/specular,
   shadow parameters, derived intensity, and collection-all state. It exposed
   and fixed the next carrier dropping generic shaping cone angles on non-spot
   lights. The same gate now covers Rect, Sphere, Distant, Disk, Cylinder, and
   Dome records. Adding Dome exposed the next loader leaving its direction at
   the default despite an authored rotation; position/direction now derive from
-  its computed world transform and match legacy numerically.
+  its computed world transform and match legacy numerically. The dumped record
+  also carries the Dome projection enum, with latlong, mirrored-ball, and
+  angular tokens all pinned.
 - [ ] Checked-in fixtures cover a PBR material grid, packed/UDIM minification,
   Points and all curve families, perspective/orthographic lens shift,
   multi-light linking, and raster shadows. The linked red/blue/magenta raster

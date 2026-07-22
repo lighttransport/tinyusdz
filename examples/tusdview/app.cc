@@ -883,7 +883,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
           "[tusdview-light] %zu %d %.9g %.9g %.9g %.9g %.9g %.9g %.9g "
           "%.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g "
           "%.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g "
-          "%d %d %d %d %d %llu %llu\n",
+          "%d %d %d %d %d %d %llu %llu\n",
           i, static_cast<int>(l.type), l.color[0], l.color[1], l.color[2],
           l.intensity, l.exposure, l.diffuse, l.specular, l.radius, l.width,
           l.height, l.length, l.angle, l.shapingConeAngle,
@@ -894,6 +894,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
           l.effectiveIntensity, l.normalize ? 1 : 0, l.shadowEnable ? 1 : 0,
           l.hasShaping ? 1 : 0, l.lightLinksAll ? 1 : 0,
           l.shadowLinksAll ? 1 : 0,
+          static_cast<int>(l.domeTextureFormat),
           static_cast<unsigned long long>(indexHash(l.lightLinkMeshIndices)),
           static_cast<unsigned long long>(indexHash(l.shadowLinkMeshIndices)));
       }
