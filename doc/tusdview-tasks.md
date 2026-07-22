@@ -298,6 +298,10 @@ Latest focused verification on 2026-07-20:
   raster, ray query, and CUDA pass ordinary and UDIM F0 through both loaders;
   raster and RT/CUDA loader comparisons are exact apart from the existing
   subpixel Preview RT tolerance.
+  Their ordinary specular textures are now also stored in USDZ. All 18
+  external/package comparisons across both loaders and Vulkan raster/RT plus
+  CUDA are pixel-exact, covering both Preview direct-F0 and IOR-tinted
+  OpenPBR/Standard semantics.
 - Coat weight, color, and roughness AOVs now also cross two UDIM tiles. Vulkan
   raster gained array descriptors and atlas-row routing for those three slots.
   The paired loader test exposed legacy scalar UDIMs inheriting an sRGB decoder

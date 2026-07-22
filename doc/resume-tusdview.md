@@ -264,6 +264,9 @@ PreviewSurface specular-workflow follow-up: its `specularColor` source now has
 the same two-tile UDIM specular-F0 oracle as OpenPBR and Standard Surface.
 Raster and CUDA loader parity are exact; Vulkan RT passes with maximum loader
 MAD 0.314.
+Ordinary specular-F0 fixtures for all three families are also packaged as USDZ;
+external/package images match exactly through both loaders in Vulkan raster,
+Vulkan RT, and CUDA.
 
 Opacity texture follow-up: the semantic grid now covers ordinary and two-tile
 UDIM opacity for Preview, OpenPBR, and Standard Surface. This found legacy
