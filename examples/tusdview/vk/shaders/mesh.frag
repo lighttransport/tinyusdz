@@ -43,6 +43,7 @@ layout(set = 0, binding = 26) uniform sampler2DArray uSpecularColorUdimTex;
 layout(set = 0, binding = 27) uniform sampler2DArray uCoatWeightUdimTex;
 layout(set = 0, binding = 28) uniform sampler2DArray uCoatColorUdimTex;
 layout(set = 0, binding = 29) uniform sampler2DArray uCoatRoughnessUdimTex;
+layout(set = 0, binding = 30) uniform sampler2DArray uCoatNormalUdimTex;
 // Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
 // first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
 layout(set = 1, binding = 6, std430) readonly buffer Faces { uint faceId[]; };
@@ -114,6 +115,7 @@ struct MaterialTexParam {
   vec4 coatNormalUv0; vec4 coatNormalUv1;
   vec4 coatNormalScale; vec4 coatNormalBias;
   vec4 semanticUdimSlots;
+  vec4 semanticUdimSlots2;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -275,7 +277,11 @@ vec3 applyCoatNormalMap(vec3 n) {
   if (m.coatNormalScale.w < 0.5) return n;
   vec2 suv = m.coatNormalBias.w > 0.5 ? vUV1 : vUV;
   vec2 uv = xformUv(suv, m.coatNormalUv0, m.coatNormalUv1);
-  vec3 nm = (texture(uCoatNormalTex, uv) * m.coatNormalScale +
+  vec4 sampledNormal = m.semanticUdimSlots2.x >= 0.0
+      ? sampleUdim(uCoatNormalUdimTex, int(m.semanticUdimSlots2.x + 0.5), uv,
+                   vec4(0.5, 0.5, 1.0, 1.0))
+      : texture(uCoatNormalTex, uv);
+  vec3 nm = (sampledNormal * m.coatNormalScale +
              m.coatNormalBias).xyz;
   vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
   vec2 du1 = dFdx(uv), du2 = dFdy(uv);

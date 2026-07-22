@@ -38,6 +38,7 @@ struct MaterialTexParam {
   vec4 coatNormalUv0; vec4 coatNormalUv1;
   vec4 coatNormalScale; vec4 coatNormalBias;
   vec4 semanticUdimSlots;
+  vec4 semanticUdimSlots2;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex {
   MaterialTexParam p[];

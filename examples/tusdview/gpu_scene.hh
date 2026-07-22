@@ -350,6 +350,7 @@ struct DrawTexSampleCPU {
   WrapMode wrapS{WrapMode::Repeat};
   WrapMode wrapT{WrapMode::Repeat};
   DrawColorSpace colorSpace{DrawColorSpace::Auto};
+  bool isUdim{false};
 };
 
 enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };

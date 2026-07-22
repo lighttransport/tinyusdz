@@ -18,6 +18,8 @@ import os,sys
 def ppm(name, p):
  with open(os.path.join(sys.argv[1],name),'wb') as f: f.write(b'P6\n8 1\n255\n'+bytes(p))
 ppm('normal.ppm',(255,128,192)*4+(128,128,255)*4) # +X-ish, then +Z
+ppm('coat_normal.1001.ppm',(255,128,192)*8)
+ppm('coat_normal.1002.ppm',(128,128,255)*8)
 ppm('occlusion.ppm',(32,32,32)*4+(224,224,224)*4)
 # Keep the low side visibly separated from the viewer clear color so the
 # backend-neutral foreground detector retains both halves of the quad.
@@ -95,10 +97,13 @@ USDA
 }
 USDA
 } > "$OUT/normal.usda"
+write_coat_normal_material() {
+  local file="$1" udim="${2:-0}" texture=normal.ppm
+  [ "$udim" = 0 ] || texture='coat_normal.<UDIM>.ppm'
 {
   echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
-  quad
-  cat <<'USDA'
+  if [ "$udim" = 1 ]; then quad_udim; else quad; fi
+  cat <<USDA
   def Material "M" {
     token outputs:surface.connect = </World/M/P.outputs:surface>
     def Shader "P" {
@@ -114,7 +119,7 @@ USDA
     }
     def Shader "N" {
       uniform token info:id = "ND_image_color3"
-      asset inputs:file = @./normal.ppm@
+      asset inputs:file = @./$texture@
       color3f outputs:out
     }
   }
@@ -125,7 +130,10 @@ USDA
   }
 }
 USDA
-} > "$OUT/coat-normal.usda"
+} > "$file"
+}
+write_coat_normal_material "$OUT/coat-normal.usda"
+write_coat_normal_material "$OUT/coat-normal-udim.usda" 1
 {
   echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
   quad
@@ -507,6 +515,7 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
     esac
     want_mode vector && case_run "$tag" "$marker" "$OUT/normal.usda" normals vector vector "${args[@]}"
     want_mode coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal.usda" coat-normal coat-normal coat-normal "${args[@]}"
+    want_mode coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal-udim.usda" coat-normal coat-normal coat-normal-udim "${args[@]}"
     want_mode occlusion && case_run "$tag" "$marker" "$OUT/occlusion.usda" shaded occlusion occlusion "${args[@]}"
     want_mode coat && case_run "$tag" "$marker" "$OUT/coat.usda" shaded coat coat "${args[@]}"
     want_mode coat-weight && case_run "$tag" "$marker" "$OUT/coat.usda" coat-weight coat-weight coat-weight "${args[@]}"
