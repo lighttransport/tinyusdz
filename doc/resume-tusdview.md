@@ -215,6 +215,11 @@ collection state. Its first run found that the next RenderLight carrier omitted
 generic `inputs:shaping:cone:angle` for non-spot emitters; the field is now
 retained and both loaders agree within numeric tolerance.
 
+Displacement texture follow-up: Vulkan coarse and tessellated vertex paths now
+sample UDIM height arrays through the shared atlas LUT. The material descriptor
+records displacement UDIM intent after deduplication, and the bridge unit pins
+the new packed row; visual displaced-silhouette coverage is still outstanding.
+
 Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
 the core material record and its cross-backend image parity are complete.
 

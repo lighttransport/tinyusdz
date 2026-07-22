@@ -1233,6 +1233,9 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[55 * 4 + 0] = mat.coatNormalSample.isUdim
                          ? static_cast<float>(mat.coatNormalTex)
                          : -1.0f;
+  dst[55 * 4 + 1] = mat.displacementSample.isUdim
+                         ? static_cast<float>(mat.displacementTex)
+                         : -1.0f;
 }
 
 }  // namespace tusdview

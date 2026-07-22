@@ -19,6 +19,8 @@ layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); 0 
 // renderer binds black (red=0) when the submesh has no displacement, so this is an
 // unconditional no-op there -- no push-constant lane is spent on an enable flag.
 layout(set = 0, binding = 16) uniform sampler2D uDisplacementTex;
+layout(set = 0, binding = 5) uniform sampler2D uUdimLutAtlas;
+layout(set = 0, binding = 31) uniform sampler2DArray uDisplacementUdimTex;
 struct RasterLight { vec4 positionType; vec4 directionAngle;
                      vec4 colorDiffuse; vec4 specularShape; };
 // Frame-constant UBO (set 5): disp sliders + camera. The vertex stage derives
@@ -98,6 +100,17 @@ layout(push_constant) uniform PushConstants {
   ivec4 ids;        // .x matId, .y flags, .z meshId
 } pc;
 
+vec4 sampleDisplacement(vec2 uv, float row) {
+  int tile = 1001 + int(floor(uv.x)) + 10 * int(floor(uv.y));
+  int idx = tile - 1001;
+  if (idx < 0 || idx >= 100) return vec4(0.0);
+  int layer = int(texelFetch(uUdimLutAtlas, ivec2(idx, int(row + 0.5)), 0).r *
+                  255.0 + 0.5) - 1;
+  if (layer < 0) return vec4(0.0);
+  return textureLod(uDisplacementUdimTex,
+                    vec3(fract(uv), float(layer)), 0.0);
+}
+
 layout(location = 0) out vec3 vNormalW;
 layout(location = 1) out vec2 vUV;
 layout(location = 2) out vec3 vWorldPos;
@@ -120,7 +133,11 @@ void main() {
   vec2 duv = vec2(dot(vec3(aUV, 1.0), mtp.p[mid].dispUv0.xyz),
                   dot(vec3(aUV, 1.0), mtp.p[mid].dispUv1.xyz));
   vec2 dsb = pc.ids.x >= 0 ? mtp.p[mid].scalar1.zw : vec2(1.0, 0.0);
-  float disp = textureLod(uDisplacementTex, duv, 0.0).r * dsb.x + dsb.y;
+  float dispRow = mtp.p[mid].semanticUdimSlots2.y;
+  float height = dispRow >= 0.0
+      ? sampleDisplacement(duv, dispRow).r
+      : textureLod(uDisplacementTex, duv, 0.0).r;
+  float disp = height * dsb.x + dsb.y;
   // Guard normalize(): geometric-normal meshes (e.g. the --next flat preview)
   // store a zero normal, and normalize(vec3(0)) is NaN. With no displacement that
   // NaN still propagates (NaN * 0 == NaN) into pos -> gl_Position, clipping the

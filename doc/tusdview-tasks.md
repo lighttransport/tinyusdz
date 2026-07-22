@@ -296,6 +296,12 @@ Latest focused verification on 2026-07-20:
   array, and the coat-normal AOV crosses tiles carrying distinct tangent-space
   directions. Vulkan raster default/legacy images are exact (MAD 0.0), with
   Vulkan ray query and CUDA passing the same ordinary/UDIM fixture.
+- Raster displacement now has a vertex/tessellation-visible UDIM array and LUT
+  route instead of silently binding black for UDIM height maps. Semantic raw/
+  UDIM classification is packed after texture deduplication and the focused
+  bridge test pins its material ABI. A discriminating displaced-silhouette
+  image fixture remains to be added before counting displacement visual parity
+  as closed.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by

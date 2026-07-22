@@ -1222,6 +1222,9 @@ void ClassifyTextureUsage(DrawScene* out) {
     if (DrawTextureCPU* t = texAt(m.coatNormalTex)) {
       m.coatNormalSample.isUdim = t->isUdim;
     }
+    if (DrawTextureCPU* t = texAt(m.displacementTex)) {
+      m.displacementSample.isUdim = t->isUdim;
+    }
     if (DrawTextureCPU* t = texAt(m.normalTex)) t->isNormalMap = true;
     if (DrawTextureCPU* t = texAt(m.coatNormalTex)) t->isNormalMap = true;
     if (DrawTextureCPU* t = texAt(m.roughnessTex)) {
