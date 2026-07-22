@@ -243,6 +243,10 @@ PreviewSurface clearcoat follow-up: independent weight and roughness maps now
 cross ordinary and two-tile UDIM sources. Vulkan raster loader parity is exact;
 Vulkan RT and CUDA pass with maximum loader MAD 0.474.
 
+Standard Surface coat follow-up: weight, color, and roughness now each cross
+ordinary and two-tile UDIM sources. Vulkan raster loader parity is exact;
+Vulkan RT and CUDA pass with maximum loader MAD 0.474.
+
 Opacity texture follow-up: the semantic grid now covers ordinary and two-tile
 UDIM opacity for Preview, OpenPBR, and Standard Surface. This found legacy
 Standard Surface conversion replacing a graph connection with constant
