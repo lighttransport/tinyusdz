@@ -307,6 +307,11 @@ Latest focused verification on 2026-07-20:
   Vulkan raster passes all 24 AOV responses; the focused default/legacy
   emission comparison is pixel-exact (MAD 0.0) for Preview, OpenPBR, and
   Standard Surface.
+- Opacity now has ordinary and two-tile UDIM response cases for all three
+  shader families. The first legacy run exposed Standard Surface conversion
+  collapsing a connected color opacity to constant luminance; connections are
+  now preserved, the Tydra unit pins the texture descriptor, and Vulkan
+  default/legacy images agree within MAD 0.018.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by
