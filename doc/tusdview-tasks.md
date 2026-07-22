@@ -290,7 +290,9 @@ Latest focused verification on 2026-07-20:
   GL, Vulkan raster/ray query, and CUDA pass both diagnostics through the
   default and legacy loaders with exact cross-loader pixels (MAD 0.0); HIP
   remains capability-gated on the NVIDIA test host.
-- OpenPBR and Standard Surface specular-F0 fixtures now cross a two-tile UDIM.
+- Preview, OpenPBR, and Standard Surface specular-F0 fixtures now cross a
+  two-tile UDIM. Preview's specular-workflow addition is pixel-exact between
+  loaders in raster and CUDA; Vulkan RT passes with maximum loader MAD 0.314.
   This exposed Vulkan raster's former 2D-only treatment of the newer specular
   slot; it now has a dedicated array binding and atlas-row lookup. Vulkan
   raster, ray query, and CUDA pass ordinary and UDIM F0 through both loaders;

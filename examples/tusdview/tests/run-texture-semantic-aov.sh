@@ -581,6 +581,7 @@ USDA
 write_specular_material preview "$OUT/specular-preview.usda"
 write_specular_material openpbr "$OUT/specular-openpbr.usda"
 write_specular_material standard "$OUT/specular-standard.usda"
+write_specular_material preview "$OUT/specular-preview-udim.usda" 'specular_udim.<UDIM>.ppm'
 write_specular_material openpbr "$OUT/specular-openpbr-udim.usda" 'specular_udim.<UDIM>.ppm'
 write_specular_material standard "$OUT/specular-standard-udim.usda" 'specular_udim.<UDIM>.ppm'
 
@@ -740,7 +741,7 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
       want_family "$family" || continue
       want_mode specular-f0 && case_run "$tag" "$marker" "$OUT/specular-$family.usda" specular-f0 specular-f0 "$family-specular-f0" "${args[@]}"
     done
-    for family in openpbr standard; do
+    for family in preview openpbr standard; do
       want_family "$family" || continue
       want_mode specular-f0 && case_run "$tag" "$marker" "$OUT/specular-$family-udim.usda" specular-f0 specular-f0 "$family-udim-specular-f0" "${args[@]}"
     done
