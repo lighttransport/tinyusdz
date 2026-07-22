@@ -231,6 +231,8 @@ records displacement UDIM intent after deduplication, and the bridge unit pins
 the new packed row. The checked-in Vulkan regression now compares flat height
 tiles against a raised second tile at an oblique view; its 2.37 mean absolute
 pixel response closes displaced-silhouette coverage for the next loader.
+PreviewSurface now runs the same flat/raised UDIM geometry oracle, also at 2.37
+MAD, with exact default/legacy pixels for both controls.
 
 Core texture follow-up: the Preview, OpenPBR, and Standard Surface semantic
 grid now pairs its ordinary base color, packed metallic/roughness, and emission

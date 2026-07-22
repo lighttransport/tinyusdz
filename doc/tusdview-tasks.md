@@ -314,6 +314,8 @@ Latest focused verification on 2026-07-20:
   bridge test pins its material ABI. The checked-in Vulkan image regression
   compares flat tiles with a raised second tile at an oblique view and measures
   a 2.37 mean absolute pixel response, closing displaced-silhouette coverage.
+  The same fixture now covers PreviewSurface through both loaders: its response
+  is also 2.37 MAD and flat/raised loader comparisons are exact (MAD 0.0).
 - The three-family core semantic grid now drives base color, packed metallic/
   roughness channels, and emission through ordinary and two-tile UDIM sources.
   Vulkan raster passes all 24 AOV responses; the focused default/legacy
