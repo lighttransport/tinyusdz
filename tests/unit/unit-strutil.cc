@@ -58,6 +58,30 @@ void strutil_test(void) {
   check_usda_string_roundtrip(
       R"usd(both'quotes" and literal \ before \"quote)usd");
   check_usda_string_roundtrip("line one\nline two \\ \" ''' and \"\"\"");
+  {
+    std::string controls;
+    controls.push_back('\0');
+    controls.push_back('\x01');
+    controls.push_back('\x1f');
+    controls.push_back('\x7f');
+    controls += "\t\r\n";
+    check_usda_string_roundtrip(controls);
+
+    const std::string encoded = buildEscapedAndQuotedStringForUSDA(controls);
+    TEST_CHECK(encoded.find("\\x00") != std::string::npos);
+    TEST_CHECK(encoded.find("\\x01") != std::string::npos);
+    TEST_CHECK(encoded.find("\\x1f") != std::string::npos);
+    TEST_CHECK(encoded.find("\\x7f") != std::string::npos);
+    TEST_CHECK(encoded.find('\0') == std::string::npos);
+    TEST_CHECK(encoded.find('\x01') == std::string::npos);
+    TEST_CHECK(encoded.find('\x1f') == std::string::npos);
+    TEST_CHECK(encoded.find('\x7f') == std::string::npos);
+
+    const std::string escaped = escapeControlSequence(controls);
+    TEST_CHECK(escaped.find("\\n") != std::string::npos);
+    TEST_CHECK(escaped.find("\\r") != std::string::npos);
+    TEST_CHECK(unescapeControlSequence(escaped) == controls);
+  }
 
   Token a("alpha");
   Token b("beta");
