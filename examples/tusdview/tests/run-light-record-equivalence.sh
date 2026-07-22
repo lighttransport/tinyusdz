@@ -10,6 +10,16 @@ OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"
 mkdir -p "$OUT"
 printf '%s\n' '{"window_size":{"width":96,"height":96}}' > "$OUT/config.json"
 
+python3 - "$OUT/dome.ppm" <<'PY'
+import sys
+w,h=16,8
+with open(sys.argv[1],'wb') as f:
+ f.write(f'P6\n{w} {h}\n255\n'.encode())
+ for y in range(h):
+  for x in range(w):
+   f.write(bytes((32+x*12,48+y*20,192-x*6)))
+PY
+
 cat > "$OUT/lights.usda" <<'USDA'
 #usda 1.0
 (defaultPrim = "World" upAxis = "Y")
@@ -108,6 +118,7 @@ def Xform "World" {
     float inputs:exposure = 1
     float inputs:diffuse = 0.65
     float inputs:specular = 0.85
+    asset inputs:texture:file = @./dome.ppm@
     token inputs:texture:format = "latlong"
     float3 xformOp:rotateXYZ = (0,35,0)
     uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
