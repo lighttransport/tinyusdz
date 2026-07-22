@@ -338,6 +338,11 @@ Latest focused verification on 2026-07-20:
   Vulkan raster passes all 24 AOV responses; the focused default/legacy
   emission comparison is pixel-exact (MAD 0.0) for Preview, OpenPBR, and
   Standard Surface.
+  Each ordinary core fixture is now also stored as a self-contained USDZ with
+  its base, packed ORM, and emission images. All 72 external/package AOV
+  comparisons (three families, four semantics, two loaders, three GPU
+  backends) pass; package images are exact except the established Vulkan RT
+  Preview sampling variance (maximum MAD 0.314).
 - Opacity now has ordinary and two-tile UDIM response cases for all three
   shader families. The first legacy run exposed Standard Surface conversion
   collapsing a connected color opacity to constant luminance; connections are

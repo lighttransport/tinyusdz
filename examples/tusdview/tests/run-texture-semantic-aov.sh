@@ -592,6 +592,13 @@ mkdir -p "$OUT/pkg-coat"; cp "$OUT/coat-normal.usda" "$OUT/normal.ppm" "$OUT/pkg
 mkdir -p "$OUT/pkg-standard-coat"
 cp "$OUT/coat-normal-standard.usda" "$OUT/normal.ppm" "$OUT/pkg-standard-coat/"
 (cd "$OUT/pkg-standard-coat" && zip -0 -q "$OUT/coat-normal-standard.usdz" coat-normal-standard.usda normal.ppm)
+for family in preview openpbr standard; do
+  mkdir -p "$OUT/pkg-core-$family"
+  cp "$OUT/core-$family.usda" "$OUT/base.ppm" "$OUT/orm.ppm" \
+    "$OUT/emission.ppm" "$OUT/pkg-core-$family/"
+  (cd "$OUT/pkg-core-$family" && zip -0 -q "$OUT/core-$family.usdz" \
+    "core-$family.usda" base.ppm orm.ppm emission.ppm)
+done
 
 probe() {
   python3 - "$1" "$2" <<'PY'
@@ -694,13 +701,19 @@ case_run() {
   case "$case_id" in
     coat-normal) package="$OUT/coat-normal.usdz";;
     standard-coat-normal) package="$OUT/coat-normal-standard.usdz";;
+    preview-albedo|preview-metallic|preview-roughness|preview-emissive)
+      package="$OUT/core-preview.usdz";;
+    openpbr-albedo|openpbr-metallic|openpbr-roughness|openpbr-emissive)
+      package="$OUT/core-openpbr.usdz";;
+    standard-albedo|standard-metallic|standard-roughness|standard-emissive)
+      package="$OUT/core-standard.usdz";;
   esac
   if [ -n "$package" ]; then
     local packed="$OUT/$tag-$case_id-usdz.ppm"
     if [[ "$tag" = gl* ]] && [ -z "${DISPLAY:-}" ]; then
-      run xvfb-run -a "$@" --config "$OUT/config.json" --mode coat-normal --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
+      run xvfb-run -a "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
     else
-      run "$@" --config "$OUT/config.json" --mode coat-normal --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
+      run "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
     fi
     [ -s "$packed" ] && compare "$img" "$packed" || { echo "FAIL: $tag $case_id external/USDZ"; fail=1; }
   fi
