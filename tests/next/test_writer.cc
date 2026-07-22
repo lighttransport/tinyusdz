@@ -318,6 +318,20 @@ void test_array_range_split_parity() {
     assert(!IsChunkableArray(Value::MakeIntArray({1, 2, 3, 4}), trunc));
   }
 
+  // Invalid caller-supplied ranges must fail before indexing or emitting any
+  // text. This covers both scalar and component-backed arrays.
+  {
+    PrintOptions opts;
+    Value ints = Value::MakeIntArray({1, 2, 3});
+    Value points = Value::MakeFloat3Array({0, 1, 2, 3, 4, 5});
+    std::string out;
+    StreamWriter writer(&out);
+    assert(!PrintArrayRangeToStream(writer, ints, opts, 0, 4, true, true));
+    assert(!PrintArrayRangeToStream(writer, ints, opts, 3, 2, true, true));
+    assert(!PrintArrayRangeToStream(writer, points, opts, 1, 3, true, true));
+    assert(out.empty());
+  }
+
   std::cout << "  array range split parity passed!\n\n";
 }
 

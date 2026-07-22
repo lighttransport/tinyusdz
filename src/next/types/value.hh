@@ -198,7 +198,7 @@ public:
   bool is_dictionary() const { return type_id_ == TypeId::Dictionary; }
 
   /// Get array size (0 if not an array)
-  size_t array_size() const { return is_array_ ? array_size_ : 0; }
+  size_t array_size() const;
 
   /// Clear the value (becomes empty)
   void clear();
