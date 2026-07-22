@@ -239,6 +239,10 @@ grid now pairs its ordinary base color, packed metallic/roughness, and emission
 sources with two-tile UDIM variants. Vulkan raster passes all 24 AOV responses;
 emission is pixel-exact between the default and legacy loaders (MAD 0.0).
 
+PreviewSurface clearcoat follow-up: independent weight and roughness maps now
+cross ordinary and two-tile UDIM sources. Vulkan raster loader parity is exact;
+Vulkan RT and CUDA pass with maximum loader MAD 0.474.
+
 Opacity texture follow-up: the semantic grid now covers ordinary and two-tile
 UDIM opacity for Preview, OpenPBR, and Standard Surface. This found legacy
 Standard Surface conversion replacing a graph connection with constant

@@ -246,6 +246,52 @@ USDA
 write_coat_material "$OUT/coat.usda"
 write_coat_material "$OUT/coat-udim.usda" 1
 
+write_preview_coat_material() {
+  local file="$1" udim="${2:-0}" weight=coat_weight.ppm rough=coat_roughness.ppm
+  if [ "$udim" = 1 ]; then
+    weight='coat_weight.<UDIM>.ppm'; rough='coat_roughness.<UDIM>.ppm'
+  fi
+  {
+    echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
+    if [ "$udim" = 1 ]; then quad_udim; else quad; fi
+    cat <<USDA
+  def Material "M" {
+    token outputs:surface.connect = </World/M/P.outputs:surface>
+    def Shader "P" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (0.02,0.02,0.02)
+      float inputs:roughness = 0.2
+      float inputs:clearcoat.connect = </World/M/W.outputs:r>
+      float inputs:clearcoatRoughness.connect = </World/M/R.outputs:r>
+      token outputs:surface
+    }
+    def Shader "ST" {
+      uniform token info:id = "UsdPrimvarReader_float2"
+      token inputs:varname = "st"
+      float2 outputs:result
+    }
+    def Shader "W" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @./$weight@
+      float2 inputs:st.connect = </World/M/ST.outputs:result>
+      token inputs:sourceColorSpace = "raw"
+      float outputs:r
+    }
+    def Shader "R" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @./$rough@
+      float2 inputs:st.connect = </World/M/ST.outputs:result>
+      token inputs:sourceColorSpace = "raw"
+      float outputs:r
+    }
+  }
+}
+USDA
+  } > "$file"
+}
+write_preview_coat_material "$OUT/coat-preview.usda"
+write_preview_coat_material "$OUT/coat-preview-udim.usda" 1
+
 write_core_material() {
   local family="$1" file="$2" udim="${3:-0}" shader_id base_name metal_name rough_name emit_name emit_enable
   local base_tex=base.ppm orm_tex=orm.ppm emission_tex=emission.ppm
@@ -597,6 +643,12 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
     want_mode coat-weight && case_run "$tag" "$marker" "$OUT/coat-udim.usda" coat-weight coat-weight coat-weight-udim "${args[@]}"
     want_mode coat-color && case_run "$tag" "$marker" "$OUT/coat-udim.usda" coat-color coat-color coat-color-udim "${args[@]}"
     want_mode coat-roughness && case_run "$tag" "$marker" "$OUT/coat-udim.usda" coat-roughness coat-roughness coat-roughness-udim "${args[@]}"
+    if want_family preview; then
+      want_mode coat-weight && case_run "$tag" "$marker" "$OUT/coat-preview.usda" coat-weight coat-weight preview-coat-weight "${args[@]}"
+      want_mode coat-roughness && case_run "$tag" "$marker" "$OUT/coat-preview.usda" coat-roughness coat-roughness preview-coat-roughness "${args[@]}"
+      want_mode coat-weight && case_run "$tag" "$marker" "$OUT/coat-preview-udim.usda" coat-weight coat-weight preview-coat-weight-udim "${args[@]}"
+      want_mode coat-roughness && case_run "$tag" "$marker" "$OUT/coat-preview-udim.usda" coat-roughness coat-roughness preview-coat-roughness-udim "${args[@]}"
+    fi
     for family in preview openpbr standard; do
       want_family "$family" || continue
       want_mode specular-f0 && case_run "$tag" "$marker" "$OUT/specular-$family.usda" specular-f0 specular-f0 "$family-specular-f0" "${args[@]}"
