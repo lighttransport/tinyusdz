@@ -119,17 +119,22 @@ double ClipTime(const ValueClipSet& set, double time) {
   // semantics), which the clip's own sample range then clamps.
   if (time < set.times.front().first) return set.times.front().first;
   if (time > set.times.back().first) return set.times.back().first;
-  if (time == set.times.front().first) return set.times.front().second;
-  if (time == set.times.back().first) return set.times.back().second;
-  for (size_t i = 0; i + 1 < set.times.size(); ++i) {
-    const auto& a = set.times[i];
-    const auto& b = set.times[i + 1];
-    if (time < a.first || time > b.first) continue;
-    const double alpha = b.first == a.first ? 0.0 :
-        (time - a.first) / (b.first - a.first);
-    return a.second + (b.second - a.second) * alpha;
+  auto hi = std::lower_bound(
+      set.times.begin(), set.times.end(), time,
+      [](const std::pair<double, double>& p, double t) { return p.first < t; });
+  if (hi != set.times.end() && hi->first == time) {
+    // At a jump, the last authored mapping at the exact stage time wins.
+    auto after = std::upper_bound(
+        hi, set.times.end(), time,
+        [](double t, const std::pair<double, double>& p) { return t < p.first; });
+    return std::prev(after)->second;
   }
-  return time;
+  if (hi == set.times.begin()) return hi->second;
+  if (hi == set.times.end()) return set.times.back().second;
+  const auto& b = *hi;       // first mapping at the next stage time
+  const auto& a = *std::prev(hi);
+  const double alpha = (time - a.first) / (b.first - a.first);
+  return a.second + (b.second - a.second) * alpha;
 }
 
 }  // namespace
@@ -186,18 +191,21 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
     }
     if (set.active.empty() && !set.asset_paths.empty())
       set.active.emplace_back(0.0, 0);
-    std::sort(set.active.begin(), set.active.end());
+    std::stable_sort(set.active.begin(), set.active.end(),
+                     [](const std::pair<double, int>& a,
+                        const std::pair<double, int>& b) {
+                       return a.first < b.first;
+                     });
     // Jump discontinuity: two consecutive authored entries with the SAME
     // stage time mean "clip time approaches the first entry's value up to
-    // (not including) the stage time, then jumps to the second's". Encode
-    // the first entry at stage_time - epsilon BEFORE sorting, so the sort
-    // cannot reorder the pair and destroy the discontinuity.
-    for (size_t i = 0; i + 1 < set.times.size(); ++i) {
-      if (set.times[i].first == set.times[i + 1].first) {
-        set.times[i].first -= 1e-9;
-      }
-    }
-    std::sort(set.times.begin(), set.times.end());
+    // (not including) the stage time, then jumps to the second's". Use a
+    // stable sort on the time key to preserve the original order of equal-
+    // time entries, avoiding mutation of the authored data.
+    std::stable_sort(set.times.begin(), set.times.end(),
+                     [](const std::pair<double, double>& a,
+                        const std::pair<double, double>& b) {
+                       return a.first < b.first;
+                     });
     for (const auto& active : set.active) {
       if (active.second < 0 ||
           static_cast<size_t>(active.second) >= set.asset_paths.size()) {

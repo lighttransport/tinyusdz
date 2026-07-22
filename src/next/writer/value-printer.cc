@@ -337,9 +337,8 @@ bool PrintCompressedIntLazyArrayToStream(StreamWriter& os, const Value& value,
 
   int32_t common_delta = 0;
   std::memcpy(&common_delta, buffer, sizeof(int32_t));
-  const size_t codes_bytes = (static_cast<size_t>(count) * 2 + 7) / 8;
   const size_t codes_start = sizeof(int32_t);
-  const size_t vints_start = codes_start + codes_bytes;
+  const size_t vints_start = code_bytes;
   if (buffer_size < vints_start) return false;
 
   size_t check_vints_pos = vints_start;

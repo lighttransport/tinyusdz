@@ -1287,9 +1287,21 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
   WRITE_VEC_ARRAY(value::int2, 2, "Vec2i")
   WRITE_VEC_ARRAY(value::int3, 3, "Vec3i")
   WRITE_VEC_ARRAY(value::int4, 4, "Vec4i")
-  WRITE_VEC_ARRAY(value::uint2, 2, "Vec2u")
-  WRITE_VEC_ARRAY(value::uint3, 3, "Vec3u")
-  WRITE_VEC_ARRAY(value::uint4, 4, "Vec4u")
+  // uint2/3/4 have no CRATE_DATA_TYPE_VEC2U/3U/4U in the crate format — they
+  // cannot be stored in USDC. Reject with a clear error instead of silently
+  // writing an INVALID-typed ValueRep that readers will reject or skip.
+  else if (value.as<std::vector<value::uint2>>()) {
+    if (err) *err = "uint2 array cannot be stored in USDC (no crate type code)";
+    return -1;
+  }
+  else if (value.as<std::vector<value::uint3>>()) {
+    if (err) *err = "uint3 array cannot be stored in USDC (no crate type code)";
+    return -1;
+  }
+  else if (value.as<std::vector<value::uint4>>()) {
+    if (err) *err = "uint4 array cannot be stored in USDC (no crate type code)";
+    return -1;
+  }
   WRITE_QUATH_ARRAY(value::quath, "Quath")
   WRITE_QUAT_ARRAY(value::quatf, "Quatf")
   WRITE_QUAT_ARRAY(value::quatd, "Quatd")

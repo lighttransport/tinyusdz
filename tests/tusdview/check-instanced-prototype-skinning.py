@@ -107,8 +107,19 @@ def read_png_rgb(path):
 
 
 def render(binary, model, out_png, timecode, backend):
+    # Keep the screenshot independent of the developer's persisted ImGui dock
+    # layout.  ImGui stores imgui.ini beside the selected config file; without
+    # an isolated config a saved, nearly-collapsed Viewport (for example 32 px
+    # wide) produces two identical grid-only captures and masquerades as a
+    # prototype-skinning failure.
+    work = os.path.dirname(out_png)
+    config = os.path.join(work, "tusdview-test-config.json")
+    if not os.path.exists(config):
+        with open(config, "w", encoding="utf-8") as f:
+            f.write("{}\n")
     args = [binary, "--backend", backend, "--frames", "4", "--time", str(timecode),
-            "--skinning", "gpu", "--screenshot", out_png, model]
+            "--skinning", "gpu", "--config", config,
+            "--screenshot", out_png, model]
     args[1:1] = vk_device_args(backend)
     xvfb = shutil.which("xvfb-run")
     # Prefer an inherited DISPLAY (that is where a hardware GL device lives) and
@@ -135,6 +146,12 @@ def render(binary, model, out_png, timecode, backend):
 def instance_count(log):
     """Instances reported by the next loader, e.g. '-> 1 draws (...), 2 instances'."""
     m = re.search(r"(\d+) instances", log)
+    return int(m.group(1)) if m else -1
+
+
+def visible_instance_count(log):
+    """Instances that survived framing/culling, from the final render stats."""
+    m = re.search(r"instances (\d+)/(\d+) visible", log)
     return int(m.group(1)) if m else -1
 
 
@@ -174,10 +191,21 @@ def check_backend(binary, model, work, backend):
               f"2-instance group, the whole scene).")
         return 1
 
+    nvisible = visible_instance_count(log_a)
+    if nvisible != 2:
+        print(f"FAIL [{backend}]: expected both instances to be drawn, render "
+              f"stats reported {nvisible}/2 visible. Check prototype bounds, "
+              f"camera framing, and viewport layout.")
+        return 1
+
     wa, ha, pa = read_png_rgb(a_png)
     wb, hb, pb = read_png_rgb(b_png)
     if pa is None or pb is None or (wa, ha) != (wb, hb):
         print(f"FAIL [{backend}]: could not compare renders ({wa}x{ha} vs {wb}x{hb})")
+        return 1
+    if wa < 256 or ha < 256:
+        print(f"FAIL [{backend}]: viewport capture is unexpectedly small "
+              f"({wa}x{ha}); persisted UI layout leaked into the test")
         return 1
 
     lit = sum(1 for p in pa if sum(p) > BRIGHT_SUM)

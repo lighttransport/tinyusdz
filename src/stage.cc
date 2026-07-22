@@ -396,8 +396,10 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, Prim *&prim,
     return false;
   }
 
-  // remove const
   prim = const_cast<Prim *>(c_prim);
+  // Invalidate caches since the caller may mutate the returned prim.
+  _dirty = true;
+  _prim_id_dirty = true;
 
   return true;
 }
@@ -823,6 +825,7 @@ bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
   }
 
   _dirty = true;
+  _prim_id_dirty = true;
 
   return true;
 }
@@ -832,6 +835,7 @@ namespace {
 // Split an absolute prim path "/A/B/C" into ["A","B","C"].
 bool SplitAbsPrimPath(const Path &path, std::vector<std::string> *out) {
   if (!path.is_valid() || !path.is_absolute_path()) return false;
+  if (!out) return false;
   const std::string s = std::string(path.prim_part());
   if (s.empty() || s[0] != '/') return false;
   out->clear();
@@ -964,13 +968,14 @@ bool Stage::RenamePrim(const Path &path, const std::string &new_name,
 
   if (!parent) _root_node_nameSet.clear();
   if (!compute_absolute_prim_path() && err) {
-    *err = _err;
+    *err = "RenamePrim: compute_absolute_prim_path failed\n" + _err;
     return false;
   }
   _dirty = true;
   _prim_id_dirty = true;
   return true;
 }
+
 
 bool Stage::RemovePrim(const Path &path, std::string *err) {
   std::vector<std::string> comps;
@@ -1142,15 +1147,8 @@ std::string DumpPrimTreeIterative(const std::vector<Prim> &root_prims) {
     stack.emplace_back(&(*it), 0);
   }
 
-  constexpr uint32_t kMaxDepth = 1024 * 1024 * 128;
-
   while (!stack.empty()) {
     StackEntry &entry = stack.back();
-
-    if (entry.depth > kMaxDepth) {
-      stack.pop_back();
-      continue;
-    }
 
     if (entry.child_idx == SIZE_MAX) {
       // First visit: output this node

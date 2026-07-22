@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -269,9 +270,19 @@ bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
       const size_t value_start = reader_->position();
       uint64_t recursive_offset_raw = 0;
       if (!reader_->read_u64(recursive_offset_raw)) return false;
-      const size_t rep_position = static_cast<size_t>(
-          static_cast<int64_t>(value_start) +
-          static_cast<int64_t>(recursive_offset_raw));
+      if (recursive_offset_raw < 8) {
+        AddError("Spline customData recursive offset is too small");
+        return false;
+      }
+      const uint64_t value_start_u64 = static_cast<uint64_t>(value_start);
+      const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+      if (file_size < sizeof(uint64_t) ||
+          recursive_offset_raw > (std::numeric_limits<uint64_t>::max)() - value_start_u64 ||
+          (value_start_u64 + recursive_offset_raw) > (file_size - sizeof(uint64_t))) {
+        AddError("Spline customData recursive ValueRep is outside file");
+        return false;
+      }
+      const size_t rep_position = static_cast<size_t>(value_start_u64 + recursive_offset_raw);
       if (!reader_->seek(rep_position)) return false;
       uint64_t raw = 0;
       if (!reader_->read_u64(raw)) return false;
