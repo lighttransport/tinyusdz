@@ -251,6 +251,13 @@ presence detection stopping at Standard Surface's untextured `base_roughness`
 alias before its textured `specular_roughness`; the helper now scans every
 alias, the bridge unit pins it, and loader parity is within MAD 0.082.
 
+CUDA core-grid follow-up: color, emission, opacity, and normal cases passed on
+the first run, while the packed scalar oracle confused its low value 32 with
+CUDA's clear value 31 despite correct texels in the image. The controlled low
+signal is now 64. Metallic/roughness ordinary and UDIM cases pass across all
+three shader families on CUDA, Vulkan raster, and Vulkan RT, with exact loader
+parity.
+
 Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
 the core material record and its cross-backend image parity are complete.
 

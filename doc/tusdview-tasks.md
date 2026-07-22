@@ -327,6 +327,12 @@ Latest focused verification on 2026-07-20:
   RT texture detection stopping at an untextured `base_roughness` alias before
   the textured Standard `specular_roughness`; all aliases are now scanned, the
   bridge unit pins the mixed case, and loader images agree within MAD 0.082.
+- CUDA now covers the same ordinary/UDIM core grid. Its first packed scalar run
+  exposed a test-oracle collision: the low texel value 32 was indistinguishable
+  from CUDA's clear value 31, although the image contained the correct texels.
+  Raising the controlled low signal to 64 makes the response discriminating;
+  CUDA, Vulkan raster, and Vulkan RT packed metallic/roughness cases now pass
+  every family and loader with exact cross-loader pixels.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by
