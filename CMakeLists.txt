@@ -2987,6 +2987,19 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-texture-semantic-aov PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 900)
 
+    # Keep the RT texture-table path loader-neutral. Each backend capability-
+    # skips independently; the test skips only when none is available.
+    add_test(
+      NAME tusdview-texture-semantic-rt-loader-parity
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_SEMANTIC_BACKENDS=vk-rt cuda hip"
+              "TUSDVIEW_SEMANTIC_LOADERS=default legacy"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-texture-semantic-aov.sh"
+      )
+    set_tests_properties(tusdview-texture-semantic-rt-loader-parity PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 900)
+
     add_test(
       NAME tusdview-light-record-equivalence
       COMMAND ${CMAKE_COMMAND} -E env

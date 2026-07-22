@@ -333,6 +333,10 @@ Latest focused verification on 2026-07-20:
   Raising the controlled low signal to 64 makes the response discriminating;
   CUDA, Vulkan raster, and Vulkan RT packed metallic/roughness cases now pass
   every family and loader with exact cross-loader pixels.
+- `tusdview-texture-semantic-rt-loader-parity` now makes the complete RT matrix
+  a registered gate rather than a manual spot check. It runs both loaders over
+  Vulkan ray query, CUDA, and HIP when available; the NVIDIA host passes the
+  Vulkan/CUDA matrix in 221 seconds with HIP capability-skipped.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by
