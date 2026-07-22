@@ -587,6 +587,11 @@ write_specular_material standard "$OUT/specular-standard-udim.usda" 'specular_ud
 
 mkdir -p "$OUT/pkg"; cp "$OUT/normal.usda" "$OUT/normal.ppm" "$OUT/pkg/"
 (cd "$OUT/pkg" && zip -0 -q "$OUT/normal.usdz" normal.usda normal.ppm)
+mkdir -p "$OUT/pkg-coat"; cp "$OUT/coat-normal.usda" "$OUT/normal.ppm" "$OUT/pkg-coat/"
+(cd "$OUT/pkg-coat" && zip -0 -q "$OUT/coat-normal.usdz" coat-normal.usda normal.ppm)
+mkdir -p "$OUT/pkg-standard-coat"
+cp "$OUT/coat-normal-standard.usda" "$OUT/normal.ppm" "$OUT/pkg-standard-coat/"
+(cd "$OUT/pkg-standard-coat" && zip -0 -q "$OUT/coat-normal-standard.usdz" coat-normal-standard.usda normal.ppm)
 
 probe() {
   python3 - "$1" "$2" <<'PY'
@@ -684,6 +689,20 @@ case_run() {
       run "$@" --config "$OUT/config.json" --mode normals --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$OUT/normal.usdz" >"$OUT/$tag-vector-usdz.log" 2>&1
     fi
     [ -s "$packed" ] && compare "$img" "$packed" || { echo "FAIL: $tag external/USDZ"; fail=1; }
+  fi
+  local package=
+  case "$case_id" in
+    coat-normal) package="$OUT/coat-normal.usdz";;
+    standard-coat-normal) package="$OUT/coat-normal-standard.usdz";;
+  esac
+  if [ -n "$package" ]; then
+    local packed="$OUT/$tag-$case_id-usdz.ppm"
+    if [[ "$tag" = gl* ]] && [ -z "${DISPLAY:-}" ]; then
+      run xvfb-run -a "$@" --config "$OUT/config.json" --mode coat-normal --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
+    else
+      run "$@" --config "$OUT/config.json" --mode coat-normal --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
+    fi
+    [ -s "$packed" ] && compare "$img" "$packed" || { echo "FAIL: $tag $case_id external/USDZ"; fail=1; }
   fi
 }
 for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do

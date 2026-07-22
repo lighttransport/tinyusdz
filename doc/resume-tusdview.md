@@ -252,6 +252,9 @@ now exercise the dedicated coat-normal AOV. Legacy reconstruction and both
 material-terminal conversion paths preserve `inputs:coat_normal` values and
 connections; raster loader parity is exact, and Vulkan RT/CUDA pass with
 maximum loader MAD 0.476.
+The ordinary OpenPBR and Standard fixtures now also run from stored USDZ
+packages; their images match the external USDA/PPM form exactly in Vulkan
+raster, Vulkan RT, and CUDA through both loaders.
 
 PreviewSurface specular-workflow follow-up: its `specularColor` source now has
 the same two-tile UDIM specular-F0 oracle as OpenPBR and Standard Surface.
