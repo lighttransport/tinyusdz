@@ -2996,6 +2996,15 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-light-record-equivalence PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+    add_test(
+      NAME tusdview-displacement-udim
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-displacement-udim.sh"
+      )
+    set_tests_properties(tusdview-displacement-udim PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 180)
+
     # A single mesh may bind different materials through materialBind
     # GeomSubsets. All RT backends must resolve the committed triangle's
     # submesh material, not the mesh's first material.
