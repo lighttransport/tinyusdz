@@ -224,6 +224,9 @@ specular, irradiance, BRDF LUT, and environment cube in both loaders.
 The registered Vulkan orientation image test renders an asymmetric latlong dome
 at 0 and 90 degrees: lighting changes by MAD 4.55 and both loader comparisons
 are exact (MAD 0.0).
+The same two scenes are now packaged as USDZ with the environment map inside
+the archive; default and legacy packaged images match the external assets
+exactly (package MAD 0.0).
 
 Displacement texture follow-up: Vulkan coarse and tessellated vertex paths now
 sample UDIM height arrays through the shared atlas LUT. The material descriptor

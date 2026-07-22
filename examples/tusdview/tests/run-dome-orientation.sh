@@ -4,6 +4,7 @@ SKIP=77
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 BIN="${TUSDVIEW:-$ROOT/build_ninja/tusdview}"
 [ -x "$BIN" ] || { echo "SKIP: tusdview not found"; exit "$SKIP"; }
+command -v zip >/dev/null || { echo "SKIP: zip missing"; exit "$SKIP"; }
 OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"
 [ -n "${TUSDVIEW_TEST_OUT:-}" ] || trap 'rm -rf "$OUT"' EXIT
 mkdir -p "$OUT"
@@ -55,6 +56,12 @@ USDA
 }
 write_scene "$OUT/dome-0.usda" 0
 write_scene "$OUT/dome-90.usda" 90
+for angle in 0 90; do
+  mkdir -p "$OUT/pkg-$angle"
+  cp "$OUT/dome-$angle.usda" "$OUT/env.ppm" "$OUT/pkg-$angle/"
+  (cd "$OUT/pkg-$angle" && zip -0 -q "$OUT/dome-$angle.usdz" \
+    "dome-$angle.usda" env.ppm)
+done
 
 run() {
   if command -v timeout >/dev/null; then
@@ -73,8 +80,14 @@ render next-0 "$OUT/dome-0.usda" || { echo "SKIP: Vulkan unavailable"; exit "$SK
 render next-90 "$OUT/dome-90.usda" || { echo "FAIL: rotated DomeLight render"; exit 1; }
 render legacy-0 "$OUT/dome-0.usda" --legacy-load || { echo "FAIL: legacy DomeLight render"; exit 1; }
 render legacy-90 "$OUT/dome-90.usda" --legacy-load || { echo "FAIL: legacy rotated DomeLight render"; exit 1; }
+render next-usdz-0 "$OUT/dome-0.usdz" || { echo "FAIL: packaged DomeLight render"; exit 1; }
+render next-usdz-90 "$OUT/dome-90.usdz" || { echo "FAIL: packaged rotated DomeLight render"; exit 1; }
+render legacy-usdz-0 "$OUT/dome-0.usdz" --legacy-load || { echo "FAIL: legacy packaged DomeLight render"; exit 1; }
+render legacy-usdz-90 "$OUT/dome-90.usdz" --legacy-load || { echo "FAIL: legacy packaged rotated DomeLight render"; exit 1; }
 
-python3 - "$OUT/next-0.ppm" "$OUT/next-90.ppm" "$OUT/legacy-0.ppm" "$OUT/legacy-90.ppm" <<'PY'
+python3 - "$OUT/next-0.ppm" "$OUT/next-90.ppm" "$OUT/legacy-0.ppm" "$OUT/legacy-90.ppm" \
+  "$OUT/next-usdz-0.ppm" "$OUT/next-usdz-90.ppm" \
+  "$OUT/legacy-usdz-0.ppm" "$OUT/legacy-usdz-90.ppm" <<'PY'
 import re,sys
 def ppm(p):
  d=open(p,'rb').read(); m=re.match(rb'P6\s+(\d+)\s+(\d+)\s+255\s',d)
@@ -83,10 +96,12 @@ def ppm(p):
 def mad(a,b): return sum(abs(x-y) for x,y in zip(a,b))/len(a)
 imgs=[ppm(p) for p in sys.argv[1:]]
 if len({x[0] for x in imgs}) != 1: raise SystemExit('image size mismatch')
-n0,n90,l0,l90=(x[1] for x in imgs)
+n0,n90,l0,l90,nu0,nu90,lu0,lu90=(x[1] for x in imgs)
 response=mad(n0,n90); parity0=mad(n0,l0); parity90=mad(n90,l90)
-print(f'dome rotation MAD={response:.4f}, loader MAD 0={parity0:.4f} 90={parity90:.4f}')
+package=max(mad(n0,nu0),mad(n90,nu90),mad(l0,lu0),mad(l90,lu90))
+print(f'dome rotation MAD={response:.4f}, loader MAD 0={parity0:.4f} 90={parity90:.4f}, package MAD={package:.4f}')
 if response < 2.0: raise SystemExit('FAIL: DomeLight rotation did not change lighting')
 if max(parity0,parity90) > 2.0: raise SystemExit('FAIL: DomeLight loader parity')
-print('PASS: DomeLight orientation changes IBL with loader parity')
+if package > 2.0: raise SystemExit('FAIL: DomeLight external/USDZ parity')
+print('PASS: DomeLight orientation changes IBL with loader and package parity')
 PY
