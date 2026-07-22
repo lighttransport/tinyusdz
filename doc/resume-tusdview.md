@@ -216,7 +216,8 @@ generic `inputs:shaping:cone:angle` for non-spot emitters; the field is now
 retained and both loaders agree within numeric tolerance. The fixture now spans
 Rect, Sphere, Distant, Disk, Cylinder, and Dome light records. Dome coverage
 found the next loader not deriving direction from its authored transform; its
-position and forward direction now match legacy.
+position and forward direction now match legacy. Dome projection format is now
+part of the dumped record, with latlong, mirrored-ball, and angular fixtures.
 
 Displacement texture follow-up: Vulkan coarse and tessellated vertex paths now
 sample UDIM height arrays through the shared atlas LUT. The material descriptor
