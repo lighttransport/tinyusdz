@@ -47,6 +47,8 @@ ppm('emission.ppm',(24,24,24)*4+(232,232,232)*4)
 ppm('emission.1001.ppm',(24,24,24)*8)
 ppm('emission.1002.ppm',(232,232,232)*8)
 ppm('opacity.ppm',(24,24,24)*4+(232,232,232)*4)
+ppm('opacity.1001.ppm',(24,24,24)*8)
+ppm('opacity.1002.ppm',(232,232,232)*8)
 PY
 
 quad() {
@@ -341,16 +343,27 @@ USDA
 write_ior_material preview "$OUT/ior-preview.usda"
 write_ior_material openpbr "$OUT/ior-openpbr.usda"
 write_ior_material standard "$OUT/ior-standard.usda"
-{
-  echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
-  quad
-  cat <<'USDA'
+
+write_opacity_material() {
+  local family="$1" file="$2" udim="${3:-0}" shader_id base_name opacity_name
+  local texture=opacity.ppm
+  [ "$udim" = 0 ] || texture='opacity.<UDIM>.ppm'
+  case "$family" in
+    preview) shader_id=UsdPreviewSurface; base_name=diffuseColor; opacity_name=opacity;;
+    openpbr) shader_id=OpenPBRSurface; base_name=base_color; opacity_name=geometry_opacity;;
+    standard) shader_id=ND_standard_surface_surfaceshader; base_name=base_color; opacity_name=opacity;;
+    *) return 2;;
+  esac
+  {
+    echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
+    if [ "$udim" = 1 ]; then quad_udim; else quad; fi
+    cat <<USDA
   def Material "M" {
     token outputs:surface.connect = </World/M/P.outputs:surface>
     def Shader "P" {
-      uniform token info:id = "UsdPreviewSurface"
-      color3f inputs:diffuseColor = (0.8,0.8,0.8)
-      float inputs:opacity.connect = </World/M/O.outputs:r>
+      uniform token info:id = "$shader_id"
+      color3f inputs:$base_name = (0.8,0.8,0.8)
+      float inputs:$opacity_name.connect = </World/M/O.outputs:r>
       token outputs:surface
     }
     def Shader "ST" {
@@ -360,7 +373,7 @@ write_ior_material standard "$OUT/ior-standard.usda"
     }
     def Shader "O" {
       uniform token info:id = "UsdUVTexture"
-      asset inputs:file = @./opacity.ppm@
+      asset inputs:file = @./$texture@
       float2 inputs:st.connect = </World/M/ST.outputs:result>
       token inputs:sourceColorSpace = "raw"
       float outputs:r
@@ -368,7 +381,12 @@ write_ior_material standard "$OUT/ior-standard.usda"
   }
 }
 USDA
-} > "$OUT/opacity-core.usda"
+  } > "$file"
+}
+for family in preview openpbr standard; do
+  write_opacity_material "$family" "$OUT/opacity-$family.usda"
+  write_opacity_material "$family" "$OUT/opacity-$family-udim.usda" 1
+done
 
 write_specular_material() {
   local family="$1" file="$2" texture="${3:-specular.ppm}" shader_id spec_name ior_line workflow_line
@@ -481,6 +499,13 @@ want_mode() {
   done
   return 1
 }
+want_family() {
+  local needle="$1" item
+  for item in ${TUSDVIEW_SEMANTIC_FAMILIES:-preview openpbr standard}; do
+    [ "$item" = "$needle" ] && return 0
+  done
+  return 1
+}
 case_run() {
   local tag="$1" marker="$2" source="$3" mode="$4" kind="$5" case_id="$6"; shift 6
   local img="$OUT/$tag-$case_id.ppm" log="$OUT/$tag-$case_id.log"
@@ -539,15 +564,19 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
     want_mode coat-color && case_run "$tag" "$marker" "$OUT/coat-udim.usda" coat-color coat-color coat-color-udim "${args[@]}"
     want_mode coat-roughness && case_run "$tag" "$marker" "$OUT/coat-udim.usda" coat-roughness coat-roughness coat-roughness-udim "${args[@]}"
     for family in preview openpbr standard; do
+      want_family "$family" || continue
       want_mode specular-f0 && case_run "$tag" "$marker" "$OUT/specular-$family.usda" specular-f0 specular-f0 "$family-specular-f0" "${args[@]}"
     done
     for family in openpbr standard; do
+      want_family "$family" || continue
       want_mode specular-f0 && case_run "$tag" "$marker" "$OUT/specular-$family-udim.usda" specular-f0 specular-f0 "$family-udim-specular-f0" "${args[@]}"
     done
     for family in preview openpbr standard; do
+      want_family "$family" || continue
       want_mode ior-f0 && case_run "$tag" "$marker" "$OUT/ior-$family.usda" ior-f0 ior-f0 "$family-ior-f0" "${args[@]}"
     done
     for family in preview openpbr standard; do
+      want_family "$family" || continue
       want_mode albedo && case_run "$tag" "$marker" "$OUT/core-$family.usda" albedo albedo "$family-albedo" "${args[@]}"
       want_mode metallic && case_run "$tag" "$marker" "$OUT/core-$family.usda" metallic metallic "$family-metallic" "${args[@]}"
       want_mode roughness && case_run "$tag" "$marker" "$OUT/core-$family.usda" roughness roughness "$family-roughness" "${args[@]}"
@@ -560,7 +589,11 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
     # The raster opacity AOV intentionally writes alpha=1, but blended material
     # draws are excluded from that diagnostic pass. Use the controlled shaded
     # response so the authored alpha ramp is still measured end-to-end.
-    want_mode opacity && case_run "$tag" "$marker" "$OUT/opacity-core.usda" shaded opacity opacity "${args[@]}"
+    for family in preview openpbr standard; do
+      want_family "$family" || continue
+      want_mode opacity && case_run "$tag" "$marker" "$OUT/opacity-$family.usda" shaded opacity "$family-opacity" "${args[@]}"
+      want_mode opacity && case_run "$tag" "$marker" "$OUT/opacity-$family-udim.usda" shaded opacity "$family-udim-opacity" "${args[@]}"
+    done
   done
 done
 [ "$ran" -gt 0 ] || exit "$SKIP"

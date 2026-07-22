@@ -3799,9 +3799,12 @@ static OpenPBRSurface ConvertMtlxStandardSurfaceToOpenPBRSurface(
   dst.emission_luminance = src.emission;
   dst.emission_color = src.emission_color;
 
-  // Opacity: StandardSurface is color3f, OpenPBR is float — take luminance
-  // Using Rec.709 luminance: 0.2126*R + 0.7152*G + 0.0722*B
-  {
+  // Opacity: StandardSurface is color3f, OpenPBR is float. Preserve a graph
+  // connection so ConvertOpenPBRSurfaceShader can resolve its texture; only
+  // reduce an authored constant to Rec.709 luminance.
+  if (src.opacity.has_connections()) {
+    dst.opacity.set_connections(src.opacity.get_connections());
+  } else {
     value::color3f opacity{1.0f, 1.0f, 1.0f};
     src.opacity.get_value().get(value::TimeCode::Default(), &opacity);
     const float alpha = 0.2126f * opacity[0] + 0.7152f * opacity[1] +
