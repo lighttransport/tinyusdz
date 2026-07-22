@@ -535,6 +535,13 @@ for family in preview openpbr standard; do
   write_opacity_material "$family" "$OUT/opacity-$family.usda"
   write_opacity_material "$family" "$OUT/opacity-$family-udim.usda" 1
 done
+for family in preview openpbr standard; do
+  mkdir -p "$OUT/pkg-opacity-$family"
+  cp "$OUT/opacity-$family.usda" "$OUT/opacity.ppm" \
+    "$OUT/pkg-opacity-$family/"
+  (cd "$OUT/pkg-opacity-$family" && zip -0 -q "$OUT/opacity-$family.usdz" \
+    "opacity-$family.usda" opacity.ppm)
+done
 
 write_specular_material() {
   local family="$1" file="$2" texture="${3:-specular.ppm}" shader_id spec_name ior_line workflow_line
@@ -707,6 +714,9 @@ case_run() {
       package="$OUT/core-openpbr.usdz";;
     standard-albedo|standard-metallic|standard-roughness|standard-emissive)
       package="$OUT/core-standard.usdz";;
+    preview-opacity) package="$OUT/opacity-preview.usdz";;
+    openpbr-opacity) package="$OUT/opacity-openpbr.usdz";;
+    standard-opacity) package="$OUT/opacity-standard.usdz";;
   esac
   if [ -n "$package" ]; then
     local packed="$OUT/$tag-$case_id-usdz.ppm"

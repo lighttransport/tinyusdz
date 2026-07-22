@@ -270,6 +270,9 @@ UDIM opacity for Preview, OpenPBR, and Standard Surface. This found legacy
 Standard Surface conversion replacing a graph connection with constant
 luminance; it now preserves the connection, with a focused Tydra unit and
 Vulkan default/legacy parity within MAD 0.018.
+The ordinary opacity fixtures are also packaged as USDZ; external/package
+images match exactly for all three families and both loaders in Vulkan raster,
+Vulkan RT, and CUDA.
 
 Occlusion texture follow-up: PreviewSurface's controlled indirect-light probe
 now pairs its ordinary raw scalar map with a two-tile UDIM; Vulkan response and

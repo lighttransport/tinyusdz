@@ -348,6 +348,9 @@ Latest focused verification on 2026-07-20:
   collapsing a connected color opacity to constant luminance; connections are
   now preserved, the Tydra unit pins the texture descriptor, and Vulkan
   default/legacy images agree within MAD 0.018.
+  The ordinary fixtures are now also stored with their alpha images in USDZ.
+  All 18 external/package comparisons across the three families, two loaders,
+  and Vulkan raster/RT plus CUDA are pixel-exact.
 - PreviewSurface occlusion now also crosses a two-tile raw scalar UDIM. Its
   controlled indirect-light response passes and Vulkan default/legacy pixels
   are exact (MAD 0.0).
