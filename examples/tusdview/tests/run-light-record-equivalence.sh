@@ -75,6 +75,33 @@ def Xform "World" {
     double3 xformOp:translate = (2,3,1)
     uniform token[] xformOpOrder = ["xformOp:translate"]
   }
+  def DistantLight "Sun" {
+    color3f inputs:color = (0.8,0.7,0.6)
+    float inputs:intensity = 1.5
+    float inputs:angle = 0.75
+    float inputs:diffuse = 0.9
+    float inputs:specular = 0.8
+    bool inputs:shadow:enable = 1
+    float3 xformOp:rotateXYZ = (15,25,5)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+  }
+  def DiskLight "Rim" {
+    color3f inputs:color = (0.2,0.4,1)
+    float inputs:intensity = 3
+    float inputs:radius = 1.25
+    bool inputs:normalize = 1
+    double3 xformOp:translate = (-2,2,1)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+  }
+  def CylinderLight "Tube" {
+    color3f inputs:color = (1,0.6,0.2)
+    float inputs:intensity = 2.5
+    float inputs:radius = 0.2
+    float inputs:length = 3
+    bool inputs:normalize = 1
+    double3 xformOp:translate = (0,2,2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+  }
 }
 USDA
 
@@ -97,7 +124,7 @@ python3 - "$OUT/next.records" "$OUT/legacy.records" <<'PY'
 import math,sys
 def read(p): return [[float(x) for x in line.split()] for line in open(p) if line.strip()]
 a,b=read(sys.argv[1]),read(sys.argv[2])
-if len(a)!=2 or len(b)!=2 or any(len(x)!=len(y) for x,y in zip(a,b)):
+if len(a)!=5 or len(b)!=5 or any(len(x)!=len(y) for x,y in zip(a,b)):
  print('light record shape mismatch',a,b); raise SystemExit(1)
 for li,(x,y) in enumerate(zip(a,b)):
  # Mesh indices are loader-layout-specific (the next loader batches geometry),

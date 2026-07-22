@@ -213,7 +213,8 @@ record comparison now covers RectLight and SphereLight shape, normalization,
 diffuse/specular multipliers, shadows, transforms, derived intensity, and
 collection state. Its first run found that the next RenderLight carrier omitted
 generic `inputs:shaping:cone:angle` for non-spot emitters; the field is now
-retained and both loaders agree within numeric tolerance.
+retained and both loaders agree within numeric tolerance. The fixture now spans
+Rect, Sphere, Distant, Disk, and Cylinder light records.
 
 Displacement texture follow-up: Vulkan coarse and tessellated vertex paths now
 sample UDIM height arrays through the shared atlas LUT. The material descriptor
