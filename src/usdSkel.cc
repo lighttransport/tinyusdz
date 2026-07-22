@@ -8,6 +8,7 @@
 
 #include <sstream>
 #include <cstdint>
+#include <limits>
 
 #include "common-macros.inc"
 #include "tiny-format.hh"
@@ -195,6 +196,11 @@ bool BuildSkelTopology(
     return true;
   }
 
+  if (joints.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    if (err) (*err) += "Joint count exceeds the supported int index range.";
+    return false;
+  }
+
   std::vector<Path> paths(joints.size());
   for (size_t i = 0; i < joints.size(); i++) {
     Path p = Path(joints[i].str(), "");
@@ -226,13 +232,13 @@ bool BuildSkelTopology(
   }
 
   // path name <-> index map
-  tinyusdz::HashMap<std::string, int, FNV1StringHash> pathMap;
+  tinyusdz::HashMap<std::string, size_t, FNV1StringHash> pathMap;
   pathMap.reserve(paths.size());
   for (size_t i = 0; i < paths.size(); i++) {
-    pathMap[paths[i].prim_part()] = int(i);
+    pathMap[paths[i].prim_part()] = i;
   }
 
-  auto GetParentIndex = [](const tinyusdz::HashMap<std::string, int, FNV1StringHash> &_pathMap,
+  auto GetParentIndex = [](const tinyusdz::HashMap<std::string, size_t, FNV1StringHash> &_pathMap,
                            const Path &path) -> int {
     if (path.is_root_path()) {
       return -1;
@@ -253,7 +259,7 @@ bool BuildSkelTopology(
 
       auto it = _pathMap.find(parentPath.prim_part());
       if (it != _pathMap.end()) {
-        return it->second;
+        return static_cast<int>(it->second);
       }
 
       parentPath = parentPath.get_parent_prim_path();

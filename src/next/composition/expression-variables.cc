@@ -108,8 +108,8 @@ class ExpressionEvaluator {
     // Save/restore the outer parse state around the nested evaluation.
     const std::string* saved_text = text_;
     size_t saved_pos = pos_;
-    const bool ok =
-        EvalBody(expr_text.substr(1, expr_text.size() - 2), out);
+    const std::string expr = expr_text.substr(1, expr_text.size() - 2);
+    const bool ok = EvalBody(expr, out);
     text_ = saved_text;
     pos_ = saved_pos;
     var_stack_.pop_back();
@@ -538,7 +538,8 @@ ExpressionEvaluation EvaluateAssetPathExpression(const std::string& path,
 
   ExpressionEvaluator evaluator(variables.as_dictionary());
   ExprValue value;
-  if (!evaluator.EvalBody(path.substr(1, path.size() - 2), &value)) {
+  const std::string expr_body = path.substr(1, path.size() - 2);
+  if (!evaluator.EvalBody(expr_body, &value)) {
     result.success = false;
     result.error = evaluator.error() + " in: " + path;
     return result;

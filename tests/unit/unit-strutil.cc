@@ -8,6 +8,7 @@
 #include "unit-strutil.h"
 #include "str-util.hh"
 #include "tiny-string.hh"
+#include "token-type.hh"
 #include "value-types.hh"
 #include <cmath>
 #include <limits>
@@ -41,6 +42,28 @@ void strutil_test(void) {
     TEST_CHECK(!isValidIdentifier(s));
 
   }
+
+  auto check_usda_string_roundtrip = [](const std::string &src) {
+    const std::string encoded = buildEscapedAndQuotedStringForUSDA(src);
+    std::string body;
+    if (encoded.compare(0, 3, "\"\"\"") == 0) {
+      body = unwrap(encoded, "\"\"\"");
+    } else if (encoded.compare(0, 3, "'''") == 0) {
+      body = unwrap(encoded, "'''");
+    } else {
+      body = unwrap(encoded, encoded.substr(0, 1));
+    }
+    TEST_CHECK(unescapeControlSequence(body) == src);
+  };
+  check_usda_string_roundtrip(
+      R"usd(both'quotes" and literal \ before \"quote)usd");
+  check_usda_string_roundtrip("line one\nline two \\ \" ''' and \"\"\"");
+
+  Token a("alpha");
+  Token b("beta");
+  const char *alpha = a.c_str();
+  TEST_CHECK(std::string(b.c_str()) == "beta");
+  TEST_CHECK(alpha && std::string(alpha) == "alpha");
 }
 
 void tinystring_test(void) {

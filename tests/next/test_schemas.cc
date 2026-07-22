@@ -280,6 +280,26 @@ void test_light_schema() {
   if (lt != LightType::SphereLight) { FAIL("expected SphereLight"); return; }
   LightData data;
   if (!GetLightData(stage, prim, &data)) { FAIL("GetLightData"); return; }
+
+  StageBuilder distant_builder;
+  LayerBuilder& layer = distant_builder.GetLayerBuilder();
+  layer.begin_prim("Sun", "DistantLight");
+  layer.end_prim();
+  layer.begin_prim("AuthoredSun", "DistantLight");
+  layer.add_property("inputs:intensity", Value(12.0f));
+  layer.end_prim();
+  Stage distant_stage = distant_builder.Build();
+  const UsdPrim sun = distant_stage.GetPrimAtPath("/Sun");
+  DistantLightData sun_data;
+  if (!GetDistantLightData(distant_stage, sun, &sun_data) ||
+      std::abs(sun_data.intensity - 50000.0f) > 0.01f ||
+      std::abs(GetLightIntensity(distant_stage, sun) - 50000.0f) > 0.01f) {
+    FAIL("DistantLight schema intensity fallback"); return;
+  }
+  const UsdPrim authored = distant_stage.GetPrimAtPath("/AuthoredSun");
+  if (std::abs(GetLightIntensity(distant_stage, authored) - 12.0f) > 0.01f) {
+    FAIL("authored DistantLight intensity override"); return;
+  }
   PASS();
 }
 

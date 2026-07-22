@@ -386,9 +386,15 @@ void test_layer_printer() {
   // Set layer metadata
   layer.meta().defaultPrim = "World";
   layer.meta().upAxis = "Y";
+  layer.meta().doc = "layer \"doc\" with \\ slash";
 
   // Create root prim
   builder.begin_prim("World", "Xform");
+  builder.current()->meta().doc() = "prim \"doc\" with \\ slash";
+  builder.current()->meta().references.push_back(
+      "@asset.usda@</P>?layerOffset=10:2");
+  builder.current()->meta().references.push_back("</Internal>");
+  builder.current()->meta().references.push_back("bare.usda");
   builder.end_prim();
 
   // Create child mesh
@@ -417,6 +423,12 @@ void test_layer_printer() {
   assert(contains(output, "Cube"));
   assert(contains(output, "extent"));
   assert(contains(output, "points"));
+  assert(contains(output, "doc = \"layer \\\"doc\\\" with \\\\ slash\""));
+  assert(contains(output, "@asset.usda@</P> (offset = 10; scale = 2)"));
+  assert(contains(output, "</Internal>"));
+  assert(contains(output, "@bare.usda@"));
+  LoadResult reparsed = LoadUSDAFromString(output.data(), output.size());
+  assert(reparsed.success && "debug layer output must reparse");
 
   std::cout << "  prim-printer tests passed!\n\n";
 }

@@ -1656,7 +1656,8 @@ void Compositor::GraftSubtree(const Layer& src, const std::string& src_anchor,
                                 root->child_indices().end());
     std::vector<uint32_t> order;
     order.reserve(stack.size());
-    std::vector<uint8_t> seen(src.prim_count(), uint8_t{0});
+    const size_t nprims = src.prim_count();
+    std::vector<uint8_t> seen(nprims, uint8_t{0});
     while (!stack.empty()) {
       uint32_t idx = stack.back();
       stack.pop_back();
@@ -1761,12 +1762,30 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
     }
   }
 
-  // Nested variant sets on this option (selection authored in the option's
-  // metadata is stored in the nested set's `selected`).
+  // Nested variant sets on this option. Caller overrides must remain stronger
+  // than the selection authored on the outer option, just as they are for
+  // top-level variant sets in ApplyVariants().
   for (const auto& nvs : variant.variantSets) {
-    if (nvs.selected.empty()) continue;
+    std::string chosen = nvs.selected;
+    auto override_it = options_.variant_overrides.find(
+        prim.path().str() + "{" + nvs.name + "}");
+    if (override_it == options_.variant_overrides.end()) {
+      override_it = options_.variant_overrides.find(nvs.name);
+    }
+    if (override_it != options_.variant_overrides.end()) {
+      chosen = override_it->second;
+    }
+    if (chosen.empty()) {
+      for (const auto& sel : variant.variantSelections) {
+        if (sel.first == nvs.name) {
+          chosen = sel.second;
+          break;
+        }
+      }
+    }
+    if (chosen.empty()) continue;
     for (const auto& nested : nvs.variants) {
-      if (nested.name == nvs.selected) {
+      if (nested.name == chosen) {
         ApplyOneVariant(prim, layer, anchor_path, depth + 1, nested);
         break;
       }

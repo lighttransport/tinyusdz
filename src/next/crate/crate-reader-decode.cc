@@ -200,9 +200,19 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
           const size_t val_start = reader_->position();
           uint64_t rec_off_raw = 0;
           if (!reader_->read_u64(rec_off_raw)) return false;
+          const int64_t rec_off = static_cast<int64_t>(rec_off_raw);
+          const uint64_t val_start_u64 = static_cast<uint64_t>(val_start);
+          const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+          if (rec_off < 8 || file_size < sizeof(uint64_t) ||
+              static_cast<uint64_t>(rec_off) >
+                  (std::numeric_limits<uint64_t>::max)() - val_start_u64 ||
+              val_start_u64 + static_cast<uint64_t>(rec_off) >
+                  file_size - sizeof(uint64_t)) {
+            AddError("Reference customData recursive ValueRep is outside file");
+            return false;
+          }
           const size_t rep_pos = static_cast<size_t>(
-              static_cast<int64_t>(val_start) +
-              static_cast<int64_t>(rec_off_raw));
+              val_start_u64 + static_cast<uint64_t>(rec_off));
           // Skip past this entry's ValueRep; the next entry (or the rest of
           // the reference item) begins right after it.
           if (!reader_->seek(rep_pos + 8)) return false;
@@ -373,9 +383,19 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     const size_t val_start = reader_->position();
     uint64_t rec_off_raw = 0;
     if (!reader_->read_u64(rec_off_raw)) return false;
-    const int64_t rec_off = static_cast<int64_t>(rec_off_raw);
-    const size_t rep_pos =
-        static_cast<size_t>(static_cast<int64_t>(val_start) + rec_off);
+    if (rec_off_raw < 8) {
+      AddError("Dictionary recursive offset is too small");
+      return false;
+    }
+    const uint64_t val_start_u64 = static_cast<uint64_t>(val_start);
+    const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+    if (file_size < sizeof(uint64_t) ||
+        rec_off_raw > (std::numeric_limits<uint64_t>::max)() - val_start_u64 ||
+        (val_start_u64 + rec_off_raw) > (file_size - sizeof(uint64_t))) {
+      AddError("Dictionary recursive ValueRep is outside file");
+      return false;
+    }
+    const size_t rep_pos = static_cast<size_t>(val_start_u64 + rec_off_raw);
     if (!reader_->seek(rep_pos)) return false;
     uint64_t vrep_raw = 0;
     if (!reader_->read_u64(vrep_raw)) return false;
@@ -384,9 +404,10 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     ValueRep vr(vrep_raw);
     Value cv;
     if (vr.type_id() == CrateTypeId::Dictionary) {
-      DecodeDictionary(vr, cv, depth + 1);
-    } else if (vr.type_id() != CrateTypeId::Invalid) {
-      UnpackValue(vr, cv);
+      if (!DecodeDictionary(vr, cv, depth + 1)) return false;
+    } else if (vr.type_id() != CrateTypeId::Invalid &&
+               !UnpackValue(vr, cv)) {
+      return false;
     }
     d->set(std::move(key), std::move(cv));
 

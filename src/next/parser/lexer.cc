@@ -517,7 +517,7 @@ Token Lexer::scan_number() {
         }
       } else {
         // rewind: not an exponent
-        while (pos_ > exp_pos) { pos_--; column_--; }
+        while (pos_ > exp_pos) { pos_--; if (column_ > 0) column_--; }
       }
     }
   }

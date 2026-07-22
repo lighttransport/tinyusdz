@@ -7,6 +7,7 @@
 #include "value-printer.hh"
 #include "stream-writer.hh"
 #include "dtoa.hh"
+#include "usda-format-utils.hh"
 #include "../crate/lazy-array.hh"
 #include "../strfmt.hh"
 #include "../layer/property-index.hh"
@@ -138,59 +139,6 @@ const char* SpecifierKeyword(PrimSpecifier spec) {
 // per prim/property on the hot path. The cache is thread_local so it stays
 // correct under the parallel subtree stitcher (each worker has its own
 // StreamWriter). Byte-identical to emitting `indent` in a loop for any unit.
-// Render a canonical arc string for usda text. Arc strings are stored as
-// "@asset@</prim>" / "</prim>" (internal) / bare asset path, optionally with
-// the internal layer-offset suffix "?layerOffset=offset:scale" — the suffix
-// must be re-emitted in pxr syntax `(offset = N; scale = M)` (pxr rejects the
-// internal form).
-std::string FormatArcRef(const std::string& arc) {
-  std::string body = arc;
-  std::string suffix;
-  size_t q = body.find("?layerOffset=");
-  if (q != std::string::npos) {
-    const char* c = body.c_str() + q + 13;
-    char* endp = nullptr;
-    double off = std::strtod(c, &endp);
-    double scl = (endp && *endp == ':') ? std::strtod(endp + 1, nullptr) : 1.0;
-    body.resize(q);
-    if (off != 0.0 || scl != 1.0) {
-      suffix = " (";
-      if (off != 0.0) {
-        suffix += "offset = " + dtos(off);
-        if (scl != 1.0) suffix += "; ";
-      }
-      if (scl != 1.0) suffix += "scale = " + dtos(scl);
-      suffix += ")";
-    }
-  }
-  std::string out;
-  if (!body.empty() && body[0] == '<') {
-    out = body;  // internal arc
-  } else if (!body.empty() && body[0] == '@') {
-    // Already-delimited asset form (possibly with a <prim> suffix): if the
-    // asset segment contains an inner '@', re-delimit it triple-@.
-    size_t close = body.find('@', 1);
-    std::string asset =
-        (close != std::string::npos) ? body.substr(1, close - 1) : "";
-    std::string rest =
-        (close != std::string::npos) ? body.substr(close + 1) : "";
-    if (asset.find('@') != std::string::npos || rest.find('@') == 0) {
-      // Conservative re-parse: extract asset by the LAST '@' before any '<'.
-      size_t lt = body.find('<');
-      size_t last_at = (lt == std::string::npos ? body : body.substr(0, lt))
-                           .rfind('@');
-      asset = body.substr(1, last_at - 1);
-      rest = body.substr(last_at + 1);
-      out = FormatAssetPathForUsda(asset) + rest;
-    } else {
-      out = body;
-    }
-  } else {
-    out = FormatAssetPathForUsda(body);
-  }
-  return out + suffix;
-}
-
 void WriteIndent(StreamWriter& os, int depth, const std::string& indent) {
   if (depth <= 0 || indent.empty()) return;
   thread_local std::string pad;    // cached repetition of `unit`

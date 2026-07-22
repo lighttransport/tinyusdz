@@ -58,7 +58,10 @@ bool GetLightData(const Stage& stage, const UsdPrim& prim,
   AttributeEval eval(&stage);
   eval.SetTime(time);
 
-  out->intensity = eval.EvalOr(prim, "inputs:intensity", 1.0f);
+  const float default_intensity =
+      GetLightType(prim) == LightType::DistantLight ? 50000.0f : 1.0f;
+  out->intensity =
+      eval.EvalOr(prim, "inputs:intensity", default_intensity);
   out->exposure = eval.EvalOr(prim, "inputs:exposure", 0.0f);
   out->diffuse = eval.EvalOr(prim, "inputs:diffuse", 1.0f);
   out->specular = eval.EvalOr(prim, "inputs:specular", 1.0f);
@@ -90,7 +93,9 @@ bool GetLightData(const Stage& stage, const UsdPrim& prim,
 float GetLightIntensity(const Stage& stage, const UsdPrim& prim, double time) {
   AttributeEval eval(&stage);
   eval.SetTime(time);
-  return eval.EvalOr(prim, "inputs:intensity", 1.0f);
+  const float default_intensity =
+      GetLightType(prim) == LightType::DistantLight ? 50000.0f : 1.0f;
+  return eval.EvalOr(prim, "inputs:intensity", default_intensity);
 }
 
 bool GetLightColor(const Stage& stage, const UsdPrim& prim,
