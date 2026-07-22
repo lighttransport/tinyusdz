@@ -184,7 +184,10 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   the default despite an authored rotation; position/direction now derive from
   its computed world transform and match legacy numerically. The dumped record
   also carries the Dome projection enum, with latlong, mirrored-ball, and
-  angular tokens all pinned.
+  angular tokens all pinned. A generated latlong texture now verifies asset
+  retention and matching baked IBL carriers (specular 64, irradiance 32, BRDF
+  LUT 64, environment cube 256). The legacy-only decoded 2D texture index is
+  deliberately excluded because next consumes the shared HDR cube directly.
 - [ ] Checked-in fixtures cover a PBR material grid, packed/UDIM minification,
   Points and all curve families, perspective/orthographic lens shift,
   multi-light linking, and raster shadows. The linked red/blue/magenta raster

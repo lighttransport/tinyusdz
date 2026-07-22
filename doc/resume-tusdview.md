@@ -218,6 +218,9 @@ Rect, Sphere, Distant, Disk, Cylinder, and Dome light records. Dome coverage
 found the next loader not deriving direction from its authored transform; its
 position and forward direction now match legacy. Dome projection format is now
 part of the dumped record, with latlong, mirrored-ball, and angular fixtures.
+The latlong case now includes a generated environment texture and compares
+asset retention plus the baked IBL carrier dimensions: 64/32/64/256 for
+specular, irradiance, BRDF LUT, and environment cube in both loaders.
 
 Displacement texture follow-up: Vulkan coarse and tessellated vertex paths now
 sample UDIM height arrays through the shared atlas LUT. The material descriptor
