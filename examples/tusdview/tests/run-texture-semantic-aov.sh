@@ -44,9 +44,9 @@ ppm('specular_udim.1001.ppm',(240,32,32)*8)
 ppm('specular_udim.1002.ppm',(32,32,240)*8)
 # Packed ORM-style source: R/B rise while G falls. Each scalar connection must
 # retain its own channel even though all three slots share one image.
-ppm('orm.ppm',(32,224,32)*4+(224,32,224)*4)
-ppm('orm.1001.ppm',(32,224,32)*8)
-ppm('orm.1002.ppm',(224,32,224)*8)
+ppm('orm.ppm',(64,224,64)*4+(224,64,224)*4)
+ppm('orm.1001.ppm',(64,224,64)*8)
+ppm('orm.1002.ppm',(224,64,224)*8)
 ppm('emission.ppm',(24,24,24)*4+(232,232,232)*4)
 ppm('emission.1001.ppm',(24,24,24)*8)
 ppm('emission.1002.ppm',(232,232,232)*8)
