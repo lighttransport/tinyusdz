@@ -321,6 +321,12 @@ Latest focused verification on 2026-07-20:
   It exposed native OpenPBR reconstruction ignoring canonical
   `geometry_normal`/`geometry_tangent` aliases and Standard conversion dropping
   connected normal/tangent inputs; focused parser and Tydra units pin both fixes.
+- Vulkan ray query now runs the complete 36-case core semantic matrix per
+  loader: base, packed metallic/roughness, emission, opacity, and primary normal
+  across ordinary/UDIM Preview, OpenPBR, and Standard Surface inputs. This found
+  RT texture detection stopping at an untextured `base_roughness` alias before
+  the textured Standard `specular_roughness`; all aliases are now scanned, the
+  bridge unit pins the mixed case, and loader images agree within MAD 0.082.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by

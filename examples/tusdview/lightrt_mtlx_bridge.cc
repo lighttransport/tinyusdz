@@ -65,8 +65,13 @@ bool Vec3Param(const DrawMaterialCPU& mat,
 bool ParamHasTexture(const DrawMaterialCPU& mat,
                      std::initializer_list<const char*> shaders,
                      std::initializer_list<const char*> names) {
-  const DrawMaterialParamCPU* p = FindAny(mat, shaders, names);
-  return p && (p->texture >= 0 || p->renderTexture >= 0);
+  for (const char* shader : shaders) {
+    for (const char* name : names) {
+      const DrawMaterialParamCPU* p = FindParam(mat, shader, name);
+      if (p && (p->texture >= 0 || p->renderTexture >= 0)) return true;
+    }
+  }
+  return false;
 }
 
 bool HasTextureInput(const DrawMaterialCPU& mat) {
