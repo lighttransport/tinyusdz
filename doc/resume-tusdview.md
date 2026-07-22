@@ -238,6 +238,10 @@ Core texture follow-up: the Preview, OpenPBR, and Standard Surface semantic
 grid now pairs its ordinary base color, packed metallic/roughness, and emission
 sources with two-tile UDIM variants. Vulkan raster passes all 24 AOV responses;
 emission is pixel-exact between the default and legacy loaders (MAD 0.0).
+The ordinary core fixtures are now also packaged as USDZ with base, packed ORM,
+and emission images. External/package parity passes across Vulkan raster,
+Vulkan RT, and CUDA through both loaders; only Vulkan RT Preview albedo carries
+the established sampling variance (MAD 0.314).
 
 PreviewSurface clearcoat follow-up: independent weight and roughness maps now
 cross ordinary and two-tile UDIM sources. Vulkan raster loader parity is exact;
