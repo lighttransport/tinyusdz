@@ -18,6 +18,8 @@ import os,sys
 def ppm(name, p):
  with open(os.path.join(sys.argv[1],name),'wb') as f: f.write(b'P6\n8 1\n255\n'+bytes(p))
 ppm('normal.ppm',(255,128,192)*4+(128,128,255)*4) # +X-ish, then +Z
+ppm('normal.1001.ppm',(255,128,192)*8)
+ppm('normal.1002.ppm',(128,128,255)*8)
 ppm('coat_normal.1001.ppm',(255,128,192)*8)
 ppm('coat_normal.1002.ppm',(128,128,255)*8)
 ppm('occlusion.ppm',(32,32,32)*4+(224,224,224)*4)
@@ -77,16 +79,26 @@ quad_udim() {
   }
 USDA
 }
-{
-  echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
-  quad
-  cat <<USDA
+write_normal_material() {
+  local family="$1" file="$2" udim="${3:-0}" shader_id base_name normal_name
+  local texture=normal.ppm
+  [ "$udim" = 0 ] || texture='normal.<UDIM>.ppm'
+  case "$family" in
+    preview) shader_id=UsdPreviewSurface; base_name=diffuseColor; normal_name=normal;;
+    openpbr) shader_id=OpenPBRSurface; base_name=base_color; normal_name=geometry_normal;;
+    standard) shader_id=ND_standard_surface_surfaceshader; base_name=base_color; normal_name=normal;;
+    *) return 2;;
+  esac
+  {
+    echo '#usda 1.0'; echo '(defaultPrim = "World" upAxis = "Y")'; echo 'def Xform "World" {'
+    if [ "$udim" = 1 ]; then quad_udim; else quad; fi
+    cat <<USDA
   def Material "M" {
     token outputs:surface.connect = </World/M/P.outputs:surface>
     def Shader "P" {
-      uniform token info:id = "UsdPreviewSurface"
-      color3f inputs:diffuseColor = (0.35,0.35,0.35)
-      normal3f inputs:normal.connect = </World/M/N.outputs:rgb>
+      uniform token info:id = "$shader_id"
+      color3f inputs:$base_name = (0.35,0.35,0.35)
+      normal3f inputs:$normal_name.connect = </World/M/N.outputs:rgb>
       token outputs:surface
     }
     def Shader "ST" {
@@ -96,7 +108,7 @@ USDA
     }
     def Shader "N" {
       uniform token info:id = "UsdUVTexture"
-      asset inputs:file = @./normal.ppm@
+      asset inputs:file = @./$texture@
       float2 inputs:st.connect = </World/M/ST.outputs:result>
       float4 inputs:scale = (2,2,2,1)
       float4 inputs:bias = (-1,-1,-1,0)
@@ -106,7 +118,14 @@ USDA
   }
 }
 USDA
-} > "$OUT/normal.usda"
+  } > "$file"
+}
+write_normal_material preview "$OUT/normal.usda"
+write_normal_material preview "$OUT/normal-preview-udim.usda" 1
+write_normal_material openpbr "$OUT/normal-openpbr.usda"
+write_normal_material openpbr "$OUT/normal-openpbr-udim.usda" 1
+write_normal_material standard "$OUT/normal-standard.usda"
+write_normal_material standard "$OUT/normal-standard-udim.usda" 1
 write_coat_normal_material() {
   local file="$1" udim="${2:-0}" texture=normal.ppm
   [ "$udim" = 0 ] || texture='coat_normal.<UDIM>.ppm'
@@ -535,7 +554,7 @@ case_run() {
       echo "FAIL: $tag $case_id default/legacy parity"; fail=1;
     }
   fi
-  if [ "$kind" = vector ]; then
+  if [ "$case_id" = preview-vector ]; then
     local packed="$OUT/$tag-vector-usdz.ppm"
     if [[ "$tag" = gl* ]] && [ -z "${DISPLAY:-}" ]; then
       run xvfb-run -a "$@" --config "$OUT/config.json" --mode normals --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$OUT/normal.usdz" >"$OUT/$tag-vector-usdz.log" 2>&1
@@ -560,7 +579,13 @@ for loader in ${TUSDVIEW_SEMANTIC_LOADERS:-default}; do
       hip) args=("$BIN" --headless --hip "${loader_args[@]}"); tag=hip$loader_suffix; marker='HIP RT wrote';;
       *) echo "unknown backend: $backend" >&2; exit 2;;
     esac
-    want_mode vector && case_run "$tag" "$marker" "$OUT/normal.usda" normals vector vector "${args[@]}"
+    for family in preview openpbr standard; do
+      want_family "$family" || continue
+      local_normal="$OUT/normal-$family.usda"
+      [ "$family" != preview ] || local_normal="$OUT/normal.usda"
+      want_mode vector && case_run "$tag" "$marker" "$local_normal" normals vector "$family-vector" "${args[@]}"
+      want_mode vector && case_run "$tag" "$marker" "$OUT/normal-$family-udim.usda" normals vector "$family-udim-vector" "${args[@]}"
+    done
     want_mode coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal.usda" coat-normal coat-normal coat-normal "${args[@]}"
     want_mode coat-normal && case_run "$tag" "$marker" "$OUT/coat-normal-udim.usda" coat-normal coat-normal coat-normal-udim "${args[@]}"
     want_mode occlusion && case_run "$tag" "$marker" "$OUT/occlusion.usda" shaded occlusion occlusion "${args[@]}"

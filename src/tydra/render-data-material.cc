@@ -3815,13 +3815,17 @@ static OpenPBRSurface ConvertMtlxStandardSurfaceToOpenPBRSurface(
   // Geometry (normal, tangent)
   // StandardSurface uses TypedAttribute (optional, no fallback),
   // OpenPBR uses TypedAttributeWithFallback. Extract value if authored.
-  if (src.normal.authored()) {
+  if (src.normal.has_connections()) {
+    dst.normal.set_connections(src.normal.get_connections());
+  } else if (src.normal.authored()) {
     auto nval = src.normal.get_value();  // nonstd::optional<Animatable<normal3f>>
     if (nval) {
       dst.normal.set_value(*nval);
     }
   }
-  if (src.tangent.authored()) {
+  if (src.tangent.has_connections()) {
+    dst.tangent.set_connections(src.tangent.get_connections());
+  } else if (src.tangent.authored()) {
     auto tval = src.tangent.get_value();  // nonstd::optional<Animatable<vector3f>>
     if (tval) {
       dst.tangent.set_value(*tval);

@@ -237,6 +237,12 @@ Occlusion texture follow-up: PreviewSurface's controlled indirect-light probe
 now pairs its ordinary raw scalar map with a two-tile UDIM; Vulkan response and
 default/legacy parity pass exactly (MAD 0.0).
 
+Surface-normal follow-up: ordinary and two-tile UDIM normal maps now cover all
+three shader families with exact Vulkan loader parity. Native OpenPBR now
+reconstructs canonical `geometry_normal`/`geometry_tangent` aliases, and legacy
+Standard conversion preserves connected normal/tangent inputs; focused parser
+and Tydra units pin the two boundaries.
+
 Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
 the core material record and its cross-backend image parity are complete.
 

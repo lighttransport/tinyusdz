@@ -1725,6 +1725,8 @@ void tydra_material_binding_validation_test(void) {
     standard_surface.out.set_authored(true);
     standard_surface.opacity.set_connection(
         Path("/MaterialPrim/OpacityTex", "outputs:r"));
+    standard_surface.normal.set_connection(
+        Path("/MaterialPrim/NormalTex", "outputs:rgb"));
 
     Shader standard_shader;
     standard_shader.info_id = kNdStandardSurfaceSurfaceshader;
@@ -1738,9 +1740,18 @@ void tydra_material_binding_validation_test(void) {
     opacity_shader.info_id = kUsdUVTexture;
     opacity_shader.value = opacity_texture;
 
+    UsdUVTexture normal_texture;
+    normal_texture.outputsRGB.set_authored(true);
+    normal_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("normal.png")));
+    Shader normal_shader;
+    normal_shader.info_id = kUsdUVTexture;
+    normal_shader.value = normal_texture;
+
     Prim material_prim("MaterialPrim", material);
     TEST_CHECK(material_prim.add_child(Prim("StandardSurface", standard_shader)));
     TEST_CHECK(material_prim.add_child(Prim("OpacityTex", opacity_shader)));
+    TEST_CHECK(material_prim.add_child(Prim("NormalTex", normal_shader)));
 
     GeomMesh mesh = make_mesh();
     Relationship material_rel;
@@ -1761,6 +1772,7 @@ void tydra_material_binding_validation_test(void) {
       TEST_CHECK(scene.materials[0].openPBRShader.has_value());
       if (scene.materials[0].openPBRShader.has_value()) {
         TEST_CHECK(scene.materials[0].openPBRShader->opacity.texture_id >= 0);
+        TEST_CHECK(scene.materials[0].openPBRShader->normal.texture_id >= 0);
       }
     }
     TEST_CHECK(converter.GetError().empty());
