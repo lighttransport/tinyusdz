@@ -192,6 +192,9 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   environment at 0 and 90 degrees. Rotation produces a 4.55 image MAD, proving
   the transform affects IBL sampling, while both orientations have exact
   default/legacy Vulkan pixels (MAD 0.0).
+  Both orientations are now also stored as USDZ with the latlong environment
+  map resolved from the archive. Default and legacy packaged renders match
+  their external USDA/PPM counterparts exactly (package MAD 0.0).
 - [ ] Checked-in fixtures cover a PBR material grid, packed/UDIM minification,
   Points and all curve families, perspective/orthographic lens shift,
   multi-light linking, and raster shadows. The linked red/blue/magenta raster
