@@ -258,6 +258,11 @@ signal is now 64. Metallic/roughness ordinary and UDIM cases pass across all
 three shader families on CUDA, Vulkan raster, and Vulkan RT, with exact loader
 parity.
 
+The complete RT semantic loader comparison is now registered as
+`tusdview-texture-semantic-rt-loader-parity`, covering Vulkan ray query, CUDA,
+and capability-gated HIP. Vulkan/CUDA pass the full two-loader matrix on the
+NVIDIA host in 221 seconds; HIP remains skipped there.
+
 Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
 the core material record and its cross-backend image parity are complete.
 
