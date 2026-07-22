@@ -89,7 +89,7 @@ barriers. Both copies were therefore spec-invalid → the NVIDIA driver returned
 VK-RT **validation-clean** and is output-identical (`maxdiff 0`) — it was relying on
 UB before. The single-threaded path "worked" only by luck.
 
-**2. Remaining threaded black ⟺ swapchain-recreate sync errors. STILL OPEN.**
+**2. Threaded swapchain-recreate race (resolved).**
 After fix #1, threaded VK-RT is still ~40% black, and the layer shows a *perfect*
 correlation (6/6 runs): the black runs — and only the black runs — emit a cluster of
 per-frame sync errors when a swapchain recreate happens (a window/dock resize during
@@ -100,19 +100,10 @@ warmup):
   `-vkResetCommandBuffer-00045` — `cmd_[frame_]` reused while still in flight.
 - `VUID-VkPresentInfoKHR-pImageIndices-01430` — presenting a stale image index.
 
-So the present/swapchain-recreate path's semaphore + command-buffer + image-index
-lifecycle is incomplete: when the swapchain goes out-of-date mid-run, the recreate
-doesn't fully reset the per-frame sync, and the next frames submit/acquire out of order
-→ the offscreen render is corrupted → black. (The single-threaded path is immune
-because its full main-loop rhythm recreates the swapchain cleanly between frames.)
-Recreating the sync semaphores inside `recreateSwapchain()` was tried and is **not
-sufficient** on its own — the stale image-index and the SUBOPTIMAL-acquire path also
-need handling. A proper, interactively-validated swapchain-recreate rework (per-image
-acquire semaphores or a clean acquire→render→present state machine that bails without
-presenting a stale index) is the remaining task.
-
-Until then `--rt` + `--threaded` keeps the verified single-threaded path (the fallback
-in `app.cc renderThreadActive_`), which is deterministic and correct.
+The acquire/render/present state machine now abandons stale image indices during
+recreation and waits for the relevant in-flight work before reusing per-frame
+objects. The validation and repeated pixel-identity results summarized at the top
+supersede this historical failure analysis.
 
 ## Goal
 
@@ -328,8 +319,5 @@ What the port changed (all in `vk/vk_renderer.{cc,hh}` + a few `app.cc` guards):
   RT/`tlasDirty_` flags are written on the thread that reads them.
 
 Verified byte-identical (`maxdiff 0`) threaded-vs-single on `suzanne.usdc` and
-`suzanne-pbr.usda` for VK **rasterization**. VK **ray tracing** is excluded from the
-threaded path (see the "Known limitation" note at the top): an earlier claim that
-threaded VK-RT was byte-identical turned out to rest on a flaky run — re-testing shows
-a ~40% blank-capture race, so `--rt` now falls back to single-threaded. (No validation
-layer on the dev box; verification is pixel-identity.)
+`suzanne-pbr.usda` for VK rasterization and VK ray tracing. Validation-layer
+stress runs for threaded VK-RT are summarized at the top of this document.

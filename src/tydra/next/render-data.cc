@@ -141,6 +141,7 @@ size_t RenderPoints::memory_usage() const {
   total += points.memory_usage();
   total += widths.memory_usage();
   total += colors.memory_usage();
+  total += opacities.memory_usage();
   return total;
 }
 
@@ -156,10 +157,12 @@ size_t RenderCurves::memory_usage() const {
   total += points.memory_usage();
   total += widths.memory_usage();
   total += colors.memory_usage();
+  total += opacities.memory_usage();
   total += VectorBytes(tessellated_vertex_counts);
   total += tessellated_points.memory_usage();
   total += tessellated_widths.memory_usage();
   total += tessellated_colors.memory_usage();
+  total += tessellated_opacities.memory_usage();
   return total;
 }
 

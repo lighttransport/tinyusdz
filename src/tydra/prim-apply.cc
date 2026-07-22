@@ -117,6 +117,15 @@ bool ApplyToCollection(
   APPLY_FUN(GeomBasisCurves)
   APPLY_FUN(GeomSubset)
   APPLY_FUN(SphereLight)
+  APPLY_FUN(CylinderLight)
+  APPLY_FUN(RectLight)
+  APPLY_FUN(DiskLight)
+  APPLY_FUN(DistantLight)
+  APPLY_FUN(DomeLight)
+  APPLY_FUN(DomeLight_1)
+  APPLY_FUN(GeometryLight)
+  APPLY_FUN(PortalLight)
+  APPLY_FUN(PluginLight)
 
 #undef APPLY_FUN
 

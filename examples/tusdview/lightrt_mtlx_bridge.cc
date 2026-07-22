@@ -104,7 +104,7 @@ float Luminance(const float rgb[3]) {
   return 0.2126f * rgb[0] + 0.7152f * rgb[1] + 0.0722f * rgb[2];
 }
 
-void ClampLightRtParams(DrawLightRtOpenPBRCPU* p) {
+void ClampLightRtParams(tydra::LightRtOpenPBRParams* p) {
   tinyusdz::tydra::ClampLightRtOpenPBRParams(p);
 }
 
@@ -132,7 +132,7 @@ void StoreUvVec4Rows(const DrawUvXformCPU& uv, float* dst) {
   dst[7] = 0.0f;
 }
 
-void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, DrawLightRtOpenPBRCPU* p) {
+void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
   // Seed from the material's DIRECT fields first. The --next loader
   // (next_scene_loader.cc) sets baseColor/metallic/roughness/specularColor/ior/
   // alpha/emissive directly and does NOT populate mat.params, so the param
@@ -170,7 +170,7 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, DrawLightRtOpenPBRCPU* p)
   }
 }
 
-void BakeOpenPBRSurface(const DrawMaterialCPU& mat, DrawLightRtOpenPBRCPU* p) {
+void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
   FloatParam(mat, {"OpenPBRSurface"}, {"base_weight"}, &p->baseWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"base_color"}, p->baseColor);
   if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"base_color"})) {
@@ -968,8 +968,10 @@ void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
   if (mat->baseColorTex < 0) {
     std::memcpy(mat->baseColor, p.baseColor, sizeof(mat->baseColor));
   }
-  if (mat->metalRoughTex < 0) {
+  if (mat->metallicTex < 0) {
     mat->metallic = p.metalness;
+  }
+  if (mat->roughnessTex < 0) {
     mat->roughness = p.specularRoughness;
   }
   if (mat->emissiveTex < 0) {
@@ -978,6 +980,13 @@ void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
     mat->emissive[2] = p.emissionColor[2] * p.emission;
   }
   mat->alpha = p.opacity;
+  mat->coatWeight = p.coatWeight;
+  mat->coatColor[0] = p.coatColor[0];
+  mat->coatColor[1] = p.coatColor[1];
+  mat->coatColor[2] = p.coatColor[2];
+  mat->coatRoughness = p.coatRoughness;
+  mat->coatIor = p.coatIor;
+  FloatParam(*mat, {"UsdPreviewSurface"}, {"occlusion"}, &mat->occlusion);
 }
 
 void PackLightRtOpenPBR(const DrawMaterialCPU& mat, float* dst) {
@@ -994,36 +1003,43 @@ void PackRtMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   if (!dst) return;
   std::fill(dst, dst + kRtMaterialTextureParamFloats, 0.0f);
   StoreUvCompact(mat.baseColorSample.uv, dst + 0);
-  StoreUvCompact(mat.metalRoughSample.uv, dst + 6);
-  StoreUvCompact(mat.normalSample.uv, dst + 12);
-  StoreUvCompact(mat.emissiveSample.uv, dst + 18);
-  Store4(mat.baseColorSample.scale, dst + 24);
-  Store4(mat.baseColorSample.bias, dst + 28);
-  Store4(mat.normalSample.scale, dst + 32);
-  Store4(mat.normalSample.bias, dst + 36);
-  Store4(mat.emissiveSample.scale, dst + 40);
-  Store4(mat.emissiveSample.bias, dst + 44);
-  dst[48] = static_cast<float>(mat.metallicChannel);
-  dst[49] = static_cast<float>(mat.roughnessChannel);
-  dst[50] = mat.metallicTexScale;
-  dst[51] = mat.metallicTexBias;
-  dst[52] = mat.roughnessTexScale;
-  dst[53] = mat.roughnessTexBias;
-  // Per-slot UV set, bit-packed into one free float (the RT layout has exactly
-  // two spare): bit 0 = base color, 1 = metal/rough, 2 = normal, 3 = emissive.
+  StoreUvCompact(mat.metallicSample.uv, dst + 6);
+  StoreUvCompact(mat.roughnessSample.uv, dst + 12);
+  StoreUvCompact(mat.normalSample.uv, dst + 18);
+  StoreUvCompact(mat.emissiveSample.uv, dst + 24);
+  StoreUvCompact(mat.opacitySample.uv, dst + 30);
+  Store4(mat.baseColorSample.scale, dst + 36);
+  Store4(mat.baseColorSample.bias, dst + 40);
+  Store4(mat.normalSample.scale, dst + 44);
+  Store4(mat.normalSample.bias, dst + 48);
+  Store4(mat.emissiveSample.scale, dst + 52);
+  Store4(mat.emissiveSample.bias, dst + 56);
+  dst[60] = static_cast<float>(mat.metallicChannel);
+  dst[61] = mat.metallicTexScale;
+  dst[62] = mat.metallicTexBias;
+  dst[63] = static_cast<float>(mat.roughnessChannel);
+  dst[64] = mat.roughnessTexScale;
+  dst[65] = mat.roughnessTexBias;
+  dst[66] = static_cast<float>(mat.opacityChannel);
+  dst[67] = mat.opacityTexScale;
+  dst[68] = mat.opacityTexBias;
+  // Per-slot UV set, bit-packed: base, metallic, roughness, normal, emissive,
+  // opacity. The float stores a small exact integer.
   int uvSetBits = 0;
   if (mat.baseColorSample.uvSet == 1) uvSetBits |= 1;
-  if (mat.metalRoughSample.uvSet == 1) uvSetBits |= 2;
-  if (mat.normalSample.uvSet == 1) uvSetBits |= 4;
-  if (mat.emissiveSample.uvSet == 1) uvSetBits |= 8;
-  dst[54] = static_cast<float>(uvSetBits);
+  if (mat.metallicSample.uvSet == 1) uvSetBits |= 2;
+  if (mat.roughnessSample.uvSet == 1) uvSetBits |= 4;
+  if (mat.normalSample.uvSet == 1) uvSetBits |= 8;
+  if (mat.emissiveSample.uvSet == 1) uvSetBits |= 16;
+  if (mat.opacitySample.uvSet == 1) uvSetBits |= 32;
+  dst[69] = static_cast<float>(uvSetBits);
 }
 
 void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   if (!dst) return;
   std::fill(dst, dst + kRasterMaterialTextureParamFloats, 0.0f);
   StoreUvVec4Rows(mat.baseColorSample.uv, dst + 0 * 4);
-  StoreUvVec4Rows(mat.metalRoughSample.uv, dst + 2 * 4);
+  StoreUvVec4Rows(mat.metallicSample.uv, dst + 2 * 4);
   StoreUvVec4Rows(mat.normalSample.uv, dst + 4 * 4);
   StoreUvVec4Rows(mat.emissiveSample.uv, dst + 6 * 4);
   StoreUvVec4Rows(mat.displacementUv, dst + 8 * 4);
@@ -1044,7 +1060,7 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   // Per-slot UV set. Displacement stays on uv0: it is sampled in the vertex /
   // tessellation stages, which do not carry the second set.
   dst[18 * 4 + 0] = static_cast<float>(mat.baseColorSample.uvSet);
-  dst[18 * 4 + 1] = static_cast<float>(mat.metalRoughSample.uvSet);
+  dst[18 * 4 + 1] = static_cast<float>(mat.metallicSample.uvSet);
   dst[18 * 4 + 2] = static_cast<float>(mat.normalSample.uvSet);
   dst[18 * 4 + 3] = static_cast<float>(mat.emissiveSample.uvSet);
   // Specular F0 (T12): rgb = inputs:specularColor, w = ior with the specular-
@@ -1065,10 +1081,21 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   // all actual samples, but some software Vulkan compilers speculate both sides
   // of the texture branch and otherwise form a negative image coordinate.
   dst[23 * 4 + 0] = static_cast<float>(std::max(mat.baseColorTex, 0));
-  dst[23 * 4 + 1] = static_cast<float>(std::max(mat.metalRoughTex, 0));
+  dst[23 * 4 + 1] = static_cast<float>(std::max(mat.metallicTex, 0));
   dst[23 * 4 + 2] = static_cast<float>(std::max(mat.normalTex, 0));
   dst[23 * 4 + 3] = static_cast<float>(std::max(mat.emissiveTex, 0));
   dst[24 * 4 + 0] = static_cast<float>(std::max(mat.opacityTex, 0));
+  dst[24 * 4 + 1] = static_cast<float>(std::max(mat.roughnessTex, 0));
+  StoreUvVec4Rows(mat.roughnessSample.uv, dst + 25 * 4);
+  // roughUv0.w is otherwise padding and carries its UV-set selector.
+  dst[25 * 4 + 3] = static_cast<float>(mat.roughnessSample.uvSet);
+  dst[27 * 4 + 0] = mat.coatWeight;
+  dst[27 * 4 + 1] = mat.coatRoughness;
+  dst[27 * 4 + 2] = mat.coatIor;
+  dst[27 * 4 + 3] = mat.occlusion;
+  dst[28 * 4 + 0] = mat.coatColor[0];
+  dst[28 * 4 + 1] = mat.coatColor[1];
+  dst[28 * 4 + 2] = mat.coatColor[2];
 }
 
 }  // namespace tusdview

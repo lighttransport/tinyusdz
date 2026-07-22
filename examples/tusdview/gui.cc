@@ -2022,6 +2022,11 @@ void Gui::drawCameraPanel() {
       cam_->setAspectOverride(aspectValue);
     }
     if (!aspectOverride) ImGui::EndDisabled();
+    int conform = static_cast<int>(cam_->conform());
+    const char* conformNames[] = {"Fit", "Crop", "Horizontal", "Vertical", "None"};
+    if (ImGui::Combo("Filmback conform", &conform, conformNames, 5)) {
+      cam_->setConform(static_cast<CameraConform>(conform));
+    }
     bool autoClip = cam_->autoClip();
     if (ImGui::Checkbox("Auto clipping", &autoClip)) {
       cam_->setAutoClip(autoClip);
@@ -2255,7 +2260,8 @@ void Gui::drawMaterialsPanel() {
                       mat.lightRtOpenPBR.hasNormalInput ? "yes" : "no");
         }
         if (mat.baseColorTex >= 0) ImGui::Text("Base color tex: %d", mat.baseColorTex);
-        if (mat.metalRoughTex >= 0) ImGui::Text("Metallic/roughness tex: %d", mat.metalRoughTex);
+        if (mat.metallicTex >= 0) ImGui::Text("Metallic tex: %d", mat.metallicTex);
+        if (mat.roughnessTex >= 0) ImGui::Text("Roughness tex: %d", mat.roughnessTex);
         if (mat.normalTex >= 0) ImGui::Text("Normal tex: %d", mat.normalTex);
         if (mat.coatNormalTex >= 0) ImGui::Text("Coat normal tex: %d", mat.coatNormalTex);
         if (mat.emissiveTex >= 0) ImGui::Text("Emissive tex: %d", mat.emissiveTex);
@@ -2677,6 +2683,13 @@ void Gui::drawStats() {
   ImGui::Separator();
   if (draw_) {
     ImGui::Text("Meshes: %zu", draw_->meshes.size());
+    size_t pointSamples = 0, curveSamples = 0;
+    for (const DrawPointsCPU& p : draw_->points) pointSamples += p.points.size() / 3;
+    for (const DrawCurvesCPU& c : draw_->curves) curveSamples += c.points.size() / 3;
+    ImGui::Text("Points: %zu prims / %zu samples", draw_->points.size(),
+                pointSamples);
+    ImGui::Text("Curves: %zu prims / %zu tessellated samples",
+                draw_->curves.size(), curveSamples);
     // draw_->vertexCount is captured at load (CPU geometry may be freed after
     // upload on the --next path, so summing meshes[].vertices would read 0).
     ImGui::Text("Vertices: %zu", draw_->vertexCount);
@@ -3918,6 +3931,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.cameraPos[0] = eye.x;
   p.cameraPos[1] = eye.y;
   p.cameraPos[2] = eye.z;
+  p.exposure = cam_->exposure();
   p.mode = mode_;
   p.wireMode = wireCycle_;  // 'v' key: 0 off / 1 wire-only / 2 wire+shaded
   p.displacement = displacementEnabled_;
@@ -3974,6 +3988,10 @@ void Gui::renderViewportScene(FramePacket* packet) {
     p.meshVisible = viewVisible_.data();
     p.meshVisibleCount = static_cast<int>(viewVisible_.size());
   }
+  if (!meshVisible_.empty()) {
+    p.rtMeshVisible = meshVisible_.data();
+    p.rtMeshVisibleCount = static_cast<int>(meshVisible_.size());
+  }
   // Purpose visibility for the RT TLAS (PurposeId bit order: default, render,
   // proxy, guide). Raster gets the same filtering via viewVisible_.
   p.purposeVisibleMask = (showPurposeDefault_ ? 1u : 0u) |
@@ -4005,6 +4023,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   std::memcpy(packet->view, viewM.m, sizeof(packet->view));
   std::memcpy(packet->proj, projM.m, sizeof(packet->proj));
   packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
+  packet->exposure = p.exposure;
   packet->mode = p.mode;
   for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
   for (int i = 0; i < 3; ++i) {
@@ -4024,6 +4043,10 @@ void Gui::renderViewportScene(FramePacket* packet) {
     packet->overlayLines.assign(p.overlayLines, p.overlayLines + p.overlayLineVertexCount);
   if (p.meshVisible)
     packet->meshVisible.assign(p.meshVisible, p.meshVisible + p.meshVisibleCount);
+  if (p.rtMeshVisible)
+    packet->rtMeshVisible.assign(p.rtMeshVisible,
+                                 p.rtMeshVisible + p.rtMeshVisibleCount);
+  packet->purposeVisibleMask = p.purposeVisibleMask;
   packet->viewportW = vpW;
   packet->viewportH = vpH;
   packet->hasParams = true;

@@ -1551,10 +1551,14 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
       for (const ShaderParam* p :
            {&o.base_weight, &o.base_color, &o.base_roughness,
             &o.base_metalness, &o.specular_weight, &o.specular_color,
-            &o.specular_roughness, &o.specular_ior, &o.transmission_weight,
+            &o.specular_roughness, &o.specular_ior, &o.specular_anisotropy,
+            &o.specular_roughness_anisotropy, &o.transmission_weight,
+            &o.transmission_dispersion, &o.transmission_dispersion_scale,
             &o.coat_weight, &o.coat_color, &o.coat_roughness,
+            &o.coat_anisotropy, &o.coat_roughness_anisotropy,
+            &o.thin_film_weight, &o.thin_film_thickness, &o.thin_film_ior,
             &o.emission_luminance, &o.emission_color, &o.normal,
-            &o.opacity}) {
+            &o.opacity, &o.displacement}) {
         add(*p);
       }
     }
@@ -2082,33 +2086,10 @@ std::string FirstValidBoundMaterialPath(const Stage& stage,
 
 std::string FindInheritedMaterialBinding(const Stage& stage,
                                          const std::string& prim_path) {
-  // Same walk as ::tinyusdz::next::GetInheritedBoundMaterialPath, but resolving
-  // each prim's binding with FirstValidBoundMaterialPath: a DANGLING target must
-  // not shadow a weaker-purpose rel on the same prim, nor a valid ancestor
-  // binding (legacy tydra skips unresolvable targets, and the converter has a
-  // Stage to check against).
-  //
-  // Walk leaf-up (descendant wins by default), but an ANCESTOR binding marked
-  // bindMaterialAs="strongerThanDescendants" overrides everything below it —
-  // so track the highest such ancestor.
-  std::string leaf_binding;
-  std::string strongest_ancestor;
-  std::string path = prim_path;
-  while (!path.empty() && path != "/") {
-    UsdPrim prim = stage.GetPrimAtPath(path);
-    if (prim.IsValid()) {
-      const std::string material_path = FirstValidBoundMaterialPath(stage, prim);
-      if (!material_path.empty()) {
-        if (leaf_binding.empty()) leaf_binding = material_path;
-        if (path != prim_path &&
-            ::tinyusdz::next::BindingIsStrongerThanDescendants(prim)) {
-          strongest_ancestor = material_path;  // higher ancestors overwrite
-        }
-      }
-    }
-    path = GetParentPath(path);
-  }
-  return strongest_ancestor.empty() ? leaf_binding : strongest_ancestor;
+  // Core UsdShade resolution now validates targets at every purpose/ancestor
+  // step and associates bindMaterialAs with the relationship that actually
+  // won. Keep one implementation shared by the converter and applications.
+  return ::tinyusdz::next::GetInheritedBoundMaterialPath(stage, prim_path);
 }
 
 }  // namespace
@@ -4597,6 +4578,41 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
     }
   }
 
+  ValueArrayRead<float> opacities;
+  if (ReadFloatArray(prim, "primvars:displayOpacity", config_.time_code,
+                     &opacities) &&
+      !opacities.empty()) {
+    std::string interp_tok;
+    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::tinyusdz::next::PropMeta* pm =
+              spec->property_meta("primvars:displayOpacity")) {
+        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+          interp_tok = pm->interpolation;
+        }
+      }
+    }
+    const size_t elems = opacities.view.size;
+    Interpolation interp;
+    if (interp_tok.empty()) {
+      interp = (elems == out->point_count() && elems != 1)
+                   ? Interpolation::Vertex
+                   : Interpolation::Constant;
+    } else {
+      interp = ParsePrimvarInterp(interp_tok);
+    }
+    const size_t expected = (interp == Interpolation::Constant)
+                                ? 1
+                                : out->point_count();
+    if (elems == expected) {
+      out->opacities.append(opacities.view.data, elems);
+      out->opacities_interp = interp;
+    } else {
+      warnings_.push_back(
+          "Points '" + out->prim_path +
+          "': ignoring displayOpacity with mismatched element count");
+    }
+  }
+
   ComputePointBounds(out->points, &out->bbox_min, &out->bbox_max,
                      &out->has_bbox);
   return true;
@@ -5001,6 +5017,9 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     if (m == 1) {
       out->widths.append(widths.view.data, m);
       out->widths_interp = Interpolation::Constant;
+    } else if (m == ncurves) {
+      out->widths.append(widths.view.data, m);
+      out->widths_interp = Interpolation::Uniform;
     } else if (m == total_cp) {
       out->widths.append(widths.view.data, m);
       out->widths_interp = Interpolation::Vertex;
@@ -5059,12 +5078,55 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     }
   }
 
+  // displayOpacity follows the same constant/uniform/vertex/varying rules as
+  // displayColor and is resampled onto the tessellated centerline below.
+  ValueArrayRead<float> opacities;
+  if (ReadFloatArray(prim, "primvars:displayOpacity", config_.time_code,
+                     &opacities) && !opacities.empty()) {
+    std::string interp_tok = "constant";
+    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::tinyusdz::next::PropMeta* pm =
+              spec->property_meta("primvars:displayOpacity")) {
+        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+          interp_tok = pm->interpolation;
+        }
+      }
+    }
+    Interpolation interp = ParsePrimvarInterp(interp_tok);
+    const size_t elems = opacities.view.size;
+    auto expected = [&](Interpolation it) -> size_t {
+      switch (it) {
+        case Interpolation::Constant: return 1;
+        case Interpolation::Uniform: return ncurves;
+        case Interpolation::Varying: return varying_total;
+        case Interpolation::Vertex:
+        default: return total_cp;
+      }
+    };
+    if (elems != expected(interp)) {
+      if (elems == 1) interp = Interpolation::Constant;
+      else if (elems == total_cp) interp = Interpolation::Vertex;
+      else if (elems == ncurves) interp = Interpolation::Uniform;
+      else if (elems == varying_total) interp = Interpolation::Varying;
+    }
+    if (elems == expected(interp)) {
+      out->opacities.append(opacities.view.data, elems);
+      out->opacities_interp = interp;
+    } else {
+      warnings_.push_back(
+          "Curves '" + out->prim_path +
+          "': ignoring displayOpacity with mismatched element count");
+    }
+  }
+
   //
   // Tessellate.
   //
   const bool emit_widths = out->has_widths() &&
                            out->widths_interp != Interpolation::Constant;
   const bool emit_colors = out->has_colors();
+  const bool emit_opacities = !out->opacities.empty() &&
+      out->opacities_interp != Interpolation::Constant;
   size_t cp_offset = 0;
   size_t var_offset = 0;
   std::vector<float> emitted;
@@ -5190,12 +5252,20 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     if (emit_widths) {
       const float* wvals = nullptr;
       size_t wcount = 0;
-      if (out->widths_interp == Interpolation::Vertex) {
-        wvals = widths.view.data + cp_offset;
-        wcount = n;
-      } else {  // Varying
-        wvals = widths.view.data + var_offset;
-        wcount = plan.varying_count;
+      switch (out->widths_interp) {
+        case Interpolation::Uniform:
+          wvals = widths.view.data + ci;
+          wcount = 1;
+          break;
+        case Interpolation::Vertex:
+          wvals = widths.view.data + cp_offset;
+          wcount = n;
+          break;
+        case Interpolation::Varying:
+          wvals = widths.view.data + var_offset;
+          wcount = plan.varying_count;
+          break;
+        default: break;
       }
       for (size_t k = 0; k < emit_count; ++k) {
         const float u01 =
@@ -5240,6 +5310,36 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
             out->tessellated_colors.push_back(SampleChannelLinear(
                 cvals, ccount, u01, plan.periodic, 3, component));
           }
+        }
+      }
+    }
+
+    if (emit_opacities) {
+      const float* ovals = nullptr;
+      size_t ocount = 0;
+      switch (out->opacities_interp) {
+        case Interpolation::Uniform:
+          ovals = opacities.view.data + ci;
+          ocount = 1;
+          break;
+        case Interpolation::Vertex:
+          ovals = opacities.view.data + cp_offset;
+          ocount = n;
+          break;
+        case Interpolation::Varying:
+          ovals = opacities.view.data + var_offset;
+          ocount = plan.varying_count;
+          break;
+        default: break;
+      }
+      if (ovals && ocount > 0) {
+        for (size_t k = 0; k < emit_count; ++k) {
+          const float u01 = emit_count > 1
+                                ? static_cast<float>(k) /
+                                      static_cast<float>(emit_count - 1)
+                                : 0.0f;
+          out->tessellated_opacities.push_back(
+              SampleChannelLinear(ovals, ocount, u01, plan.periodic));
         }
       }
     }
@@ -5758,6 +5858,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   // names the authoritative surface shader (child iteration order previously
   // decided ties, and shaders living OUTSIDE the material prim never resolved).
   bool found_shader = false;
+  std::vector<UsdPrim> degraded_candidates;
 
   std::vector<UsdPrim> candidates;
   // Materials exported by Blender commonly author both a PreviewSurface
@@ -5856,6 +5957,21 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;
         }
         found_shader = true;
+      } else {
+        // Keep the authoritative unsupported shader (and then any unsupported
+        // child shaders) as degraded-material sources. Engine shaders and
+        // newer MaterialX nodes often retain familiar PBR input names even
+        // when their full implementation cannot be evaluated.
+        degraded_candidates.push_back(child);
+        MaterialDiagnostic diagnostic;
+        diagnostic.kind = shader_id.rfind("ND_", 0) == 0
+                              ? MaterialDiagnosticKind::UnsupportedMaterialXNode
+                              : MaterialDiagnosticKind::UnsupportedShader;
+        diagnostic.material_path = out->prim_path;
+        diagnostic.node_path = child.GetPath().str();
+        diagnostic.shader_id = shader_id;
+        diagnostic.message = "unsupported surface shader";
+        out->diagnostics.push_back(std::move(diagnostic));
       }
     }
   }
@@ -5869,18 +5985,19 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     // the converter must not hand this same material back to us.
     if (mtlx.ConvertUsdMtlxMaterial(stage, prim, &mtlx_out,
                                     /*allow_converter_delegation=*/false)) {
-      if (mtlx_out.preview_surface) {
+      if (mtlx_out.preview_surface && !mtlx_out.default_fallback) {
         out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
         out->preview_surface = std::move(mtlx_out.preview_surface);
         out->alpha_mode = mtlx_out.alpha_mode;
         out->alpha_cutoff = mtlx_out.alpha_cutoff;
-        // The converter also hands back a neutral stand-in for shaders it does
-        // not understand; that is a degradation, not a conversion.
-        out->default_fallback = mtlx_out.default_fallback;
         if (!out->mtlx_config.authored) {
           out->mtlx_config = std::move(mtlx_out.mtlx_config);
         }
         found_shader = true;
+      } else if (!out->mtlx_config.authored && mtlx_out.mtlx_config.authored) {
+        // Retain the MaterialX document metadata even when its surface node is
+        // unsupported and the PBR inputs below have to be salvaged by name.
+        out->mtlx_config = std::move(mtlx_out.mtlx_config);
       }
     }
   }
@@ -5892,15 +6009,103 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     // an `info:implementationSource = "sourceAsset"` shader
     // (`info:unreal:sourceAsset = @...uasset@`), as in MetaHuman face/body
     // materials — or whose surface connection doesn't resolve after
-    // composition. Emit a neutral default material rather than dropping it, so
-    // the mesh keeps its material binding and still renders. Mirrors the
-    // legacy tydra graceful-degradation behavior.
+    // composition. Emit a per-material degraded PreviewSurface rather than
+    // dropping it. Recover conventional PBR input aliases from the unsupported
+    // surface shader first, then from Material interface inputs. This preserves
+    // the useful constants around an unsupported node instead of replacing the
+    // entire material with shared gray.
     out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
     out->preview_surface = std::make_unique<PreviewSurfaceShader>();
     out->default_fallback = true;
+
+    PreviewSurfaceShader* degraded = out->preview_surface.get();
+    // White is the neutral multiplier for a mesh-authored displayColor. If no
+    // recognizable base color can be recovered, this lets displayColor remain
+    // visible instead of being darkened by the PreviewSurface schema fallback.
+    SetParamFloat3(&degraded->diffuse_color, 1.0f, 1.0f, 1.0f);
+
+    size_t recovered_count = 0;
+    auto recover = [&](ShaderParam* dst,
+                       std::initializer_list<const char*> aliases) {
+      // An unsupported terminal appears first in candidates; deduplicate child
+      // traversal so texture/image nodes cannot accidentally override it.
+      std::set<std::string> visited;
+      auto recover_from = [&](const UsdPrim& source) {
+        if (!source.IsValid() ||
+            !visited.insert(source.GetPath().str()).second) {
+          return false;
+        }
+        for (const char* alias : aliases) {
+          ShaderParam value = *dst;
+          if (ExtractShaderParam(stage, source, alias, &value, scene)) {
+            *dst = value;
+            ++recovered_count;
+            return true;
+          }
+        }
+        return false;
+      };
+      for (const UsdPrim& source : degraded_candidates) {
+        if (recover_from(source)) return;
+      }
+      // Material interface inputs are common in MaterialX exports and remain
+      // meaningful even when the connected surface implementation is unknown.
+      recover_from(prim);
+    };
+
+    recover(&degraded->diffuse_color,
+            {"diffuseColor", "baseColor", "base_color", "color"});
+    recover(&degraded->emissive_color,
+            {"emissiveColor", "emissionColor", "emission_color"});
+    recover(&degraded->specular_color,
+            {"specularColor", "specular_color"});
+    recover(&degraded->metallic,
+            {"metallic", "metalness", "base_metalness"});
+    recover(&degraded->roughness,
+            {"roughness", "base_roughness", "specular_roughness"});
+    recover(&degraded->clearcoat,
+            {"clearcoat", "coat", "coat_weight"});
+    recover(&degraded->clearcoat_roughness,
+            {"clearcoatRoughness", "coat_roughness"});
+    recover(&degraded->opacity,
+            {"opacity", "geometry_opacity", "alpha"});
+    recover(&degraded->opacity_threshold,
+            {"opacityThreshold", "alphaCutoff", "alpha_cutoff"});
+    recover(&degraded->ior, {"ior", "specular_ior", "specular_IOR"});
+    recover(&degraded->normal, {"normal", "geometry_normal"});
+    recover(&degraded->displacement, {"displacement"});
+    recover(&degraded->occlusion, {"occlusion"});
+
+    ShaderParam use_spec;
+    recover(&use_spec, {"useSpecularWorkflow", "use_specular_workflow"});
+    degraded->use_specular_workflow = use_spec.value.x >= 0.5f;
+
+    if (degraded->opacity.is_texture() ||
+        degraded->opacity.value.x < 1.0f - kAlphaEpsilon) {
+      out->alpha_mode = RenderMaterial::AlphaMode::Blend;
+    }
+    if (degraded->opacity_threshold.value.x > kAlphaEpsilon) {
+      out->alpha_mode = RenderMaterial::AlphaMode::Mask;
+      out->alpha_cutoff = degraded->opacity_threshold.value.x;
+    }
     warnings_.push_back(
         "Material '" + out->prim_path +
-        "' has no convertible surface shader; using a default material.");
+        "' has no fully convertible surface shader; using a degraded material "
+        "with " + std::to_string(recovered_count) +
+        " recovered input(s).");
+    MaterialDiagnostic diagnostic;
+    diagnostic.kind = MaterialDiagnosticKind::DegradedMaterial;
+    diagnostic.material_path = out->prim_path;
+    diagnostic.node_path = degraded_candidates.empty()
+                               ? std::string()
+                               : degraded_candidates.front().GetPath().str();
+    if (!degraded_candidates.empty()) {
+      GetToken(degraded_candidates.front(), "info:id", &diagnostic.shader_id);
+    }
+    diagnostic.message = "using degraded material with " +
+                         std::to_string(recovered_count) +
+                         " recovered input(s)";
+    out->diagnostics.push_back(std::move(diagnostic));
     found_shader = true;
   }
 
@@ -5967,6 +6172,8 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
                      scene);
   ExtractShaderParam(stage, shader_prim, "specular_anisotropy",
                      &out->specular_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_roughness_anisotropy",
+                     &out->specular_roughness_anisotropy, scene);
   ExtractShaderParam(stage, shader_prim, "specular_rotation",
                      &out->specular_rotation, scene);
 
@@ -5977,6 +6184,10 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
                      &out->transmission_color, scene);
   ExtractShaderParam(stage, shader_prim, "transmission_depth",
                      &out->transmission_depth, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion",
+                     &out->transmission_dispersion, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion_scale",
+                     &out->transmission_dispersion_scale, scene);
 
   // Subsurface
   ExtractShaderParam(stage, shader_prim, "subsurface",
@@ -6010,6 +6221,8 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
   // Geometry
   ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
   ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
+  ExtractShaderParam(stage, shader_prim, "displacement", &out->displacement,
+                     scene);
 
   return true;
 }
@@ -6037,6 +6250,8 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "specular_ior", &out->specular_ior, scene);
   ExtractShaderParam(stage, shader_prim, "specular_anisotropy",
                      &out->specular_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_roughness_anisotropy",
+                     &out->specular_roughness_anisotropy, scene);
   ExtractShaderParam(stage, shader_prim, "specular_rotation",
                      &out->specular_rotation, scene);
 
@@ -6046,6 +6261,10 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
                      &out->transmission_color, scene);
   ExtractShaderParam(stage, shader_prim, "transmission_depth",
                      &out->transmission_depth, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion",
+                     &out->transmission_dispersion, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion_scale",
+                     &out->transmission_dispersion_scale, scene);
 
   ExtractShaderParam(stage, shader_prim, "subsurface_weight",
                      &out->subsurface_weight, scene);
@@ -6058,10 +6277,20 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "coat_color", &out->coat_color, scene);
   ExtractShaderParam(stage, shader_prim, "coat_roughness", &out->coat_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "coat_ior", &out->coat_ior, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_anisotropy",
+                     &out->coat_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_roughness_anisotropy",
+                     &out->coat_roughness_anisotropy, scene);
 
   ExtractShaderParam(stage, shader_prim, "sheen_weight", &out->sheen_weight, scene);
   ExtractShaderParam(stage, shader_prim, "sheen_color", &out->sheen_color, scene);
   ExtractShaderParam(stage, shader_prim, "sheen_roughness", &out->sheen_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "thin_film_weight",
+                     &out->thin_film_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "thin_film_thickness",
+                     &out->thin_film_thickness, scene);
+  ExtractShaderParam(stage, shader_prim, "thin_film_ior",
+                     &out->thin_film_ior, scene);
 
   ExtractShaderParam(stage, shader_prim, "emission_luminance",
                      &out->emission_luminance, scene);
@@ -6090,7 +6319,14 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
                                               const std::string& param_name,
                                               ShaderParam* out,
                                               RenderScene* scene) {
-  if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
+  // Material interface inputs use the same `inputs:*` namespace and value /
+  // connection semantics as Shader inputs. Accept either here so degraded
+  // material recovery can preserve constants authored on the Material prim.
+  if (!out || !shader_prim.IsValid() ||
+      (!::tinyusdz::next::IsShader(shader_prim) &&
+       !::tinyusdz::next::IsMaterial(shader_prim))) {
+    return false;
+  }
 
   const std::string attr_name = "inputs:" + param_name;
   ::tinyusdz::next::AttributeEval eval(&stage);
@@ -6357,6 +6593,7 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   // Type-specific properties
   switch (out->type) {
     case LightType::Sphere: {
+      out->params.sphere.radius = 0.5f;
       GetFloat(prim, "inputs:radius", &out->params.sphere.radius);
       // Cone shaping on a sphere light makes it a spot light.
       float cone_angle = 0.0f;
@@ -6367,17 +6604,23 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
       break;
     }
     case LightType::Rect:
+      out->params.rect.width = 1.0f;
+      out->params.rect.height = 1.0f;
       GetFloat(prim, "inputs:width", &out->params.rect.width);
       GetFloat(prim, "inputs:height", &out->params.rect.height);
       break;
     case LightType::Disk:
+      out->params.disk.radius = 0.5f;
       GetFloat(prim, "inputs:radius", &out->params.disk.radius);
       break;
     case LightType::Cylinder:
+      out->params.cylinder.radius = 0.5f;
+      out->params.cylinder.length = 1.0f;
       GetFloat(prim, "inputs:radius", &out->params.cylinder.radius);
       GetFloat(prim, "inputs:length", &out->params.cylinder.length);
       break;
     case LightType::Directional:
+      out->params.distant.angle = 0.53f;
       GetFloat(prim, "inputs:angle", &out->params.distant.angle);
       break;
     case LightType::Dome: {

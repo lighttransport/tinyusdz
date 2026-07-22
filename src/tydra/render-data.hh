@@ -1586,6 +1586,9 @@ struct RenderCamera {
   float focalLength{50.0f}; // EFL(Effective Focal Length). [mm]
   float verticalAperture{15.2908f}; // [mm]
   float horizontalAperture{20.965f}; // [mm]
+  float horizontalApertureOffset{0.0f}; // [mm]
+  float verticalApertureOffset{0.0f}; // [mm]
+  float exposure{0.0f};
 
   // vertical FOV in radian
   inline float yfov() {

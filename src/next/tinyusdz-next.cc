@@ -190,15 +190,9 @@ bool LoadUSD(const std::string& filename, Stage* stage,
         }
         return false;
       }
-      // Try USDC first, then USDA
-      int idx = usdz.FindUSDCFile();
-      FileFormat inner_fmt = FileFormat::USDC;
+      int idx = usdz.FindRootLayer();
       if (idx < 0) {
-        idx = usdz.FindUSDAFile();
-        inner_fmt = FileFormat::USDA;
-      }
-      if (idx < 0) {
-        if (err) *err = "No .usdc or .usda entry found in USDZ archive";
+        if (err) *err = "USDZ first entry is not a valid USD root layer";
         return false;
       }
       const uint8_t* entry_data = usdz.EntryData(idx);
@@ -208,6 +202,7 @@ bool LoadUSD(const std::string& filename, Stage* stage,
         return false;
       }
 
+      const FileFormat inner_fmt = DetectFormat(entry_data, entry_size);
       // Delegate to USDC or USDA reader
       if (inner_fmt == FileFormat::USDC) {
         USDCLoadResult result =
@@ -454,6 +449,20 @@ bool StageSession::OpenFile(const std::string& filename,
     impl_ = std::move(next);
     return false;
   }
+  // Composition arcs in a package are relative to its root entry, not to the
+  // directory containing the .usdz file. Keep the public root identifier as the
+  // filename, but anchor the composition cache at package.usdz[root.usd].
+  std::string composition_identifier = filename;
+  if (DetectFormatFromExtension(filename) == FileFormat::USDZ) {
+    USDZReader package;
+    if (package.OpenFile(filename, EffectiveUSDZOptions(options.load))) {
+      const int root_index = package.FindRootLayer();
+      if (root_index >= 0) {
+        composition_identifier += "[" +
+            package.EntryName(static_cast<size_t>(root_index)) + "]";
+      }
+    }
+  }
   if (!next->Progress(ProgressPhase::RootLoad, 1.0f, "root layer loaded")) {
     impl_ = std::move(next);
     return false;
@@ -477,7 +486,7 @@ bool StageSession::OpenFile(const std::string& filename,
   composition.usda_parse_options = options.load.usda_options.parse_options;
   std::shared_ptr<Layer> root_layer(root.ReleaseRootLayer());
   auto opened = pcp::Cache::Open(next->resolver, std::move(root_layer),
-                                 filename, composition);
+                                 composition_identifier, composition);
   if (!opened) {
     next->error = opened.error();
     next->RecordMessages(DiagnosticDomain::Compose);
@@ -790,7 +799,17 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   }
   AssetResolver resolver;
   resolver.SetWorkingDirectory(DirOfPath(filename));
-  return ComposeLoadedStage(stage, resolver, filename, load_options, warn, err,
+  std::string anchor = filename;
+  if (DetectFormatFromExtension(filename) == FileFormat::USDZ) {
+    USDZReader package;
+    if (package.OpenFile(filename, EffectiveUSDZOptions(load_options))) {
+      const int root_index = package.FindRootLayer();
+      if (root_index >= 0) {
+        anchor += "[" + package.EntryName(static_cast<size_t>(root_index)) + "]";
+      }
+    }
+  }
+  return ComposeLoadedStage(stage, resolver, anchor, load_options, warn, err,
                             comp_opts);
 }
 
@@ -850,14 +869,9 @@ bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
         }
         return false;
       }
-      int idx = usdz.FindUSDCFile();
-      bool inner_is_usdc = true;
+      int idx = usdz.FindRootLayer();
       if (idx < 0) {
-        idx = usdz.FindUSDAFile();
-        inner_is_usdc = false;
-      }
-      if (idx < 0) {
-        if (err) *err = "No .usdc or .usda entry found in USDZ archive";
+        if (err) *err = "USDZ first entry is not a valid USD root layer";
         return false;
       }
       const uint8_t* entry_data = usdz.EntryData(idx);
@@ -866,7 +880,7 @@ bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
         if (err) *err = "Empty USD entry in USDZ";
         return false;
       }
-      if (inner_is_usdc) {
+      if (DetectFormat(entry_data, entry_size) == FileFormat::USDC) {
         USDCLoadResult result = LoadUSDCFromMemory(entry_data, entry_size,
                                                    EffectiveUSDCOptions(options));
         if (!result.success) {

@@ -2,6 +2,7 @@
 #include "lightrt_mtlx_bridge.hh"
 #include "rt_scene_build.hh"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -55,13 +56,17 @@ int main() {
   mat.params.push_back(FloatParam("specular_roughness", 0.35f));
   mat.params.push_back(FloatParam("specular_ior", 1.6f));
   mat.params.push_back(FloatParam("coat_weight", 0.3f));
+  mat.params.push_back(Vec3Param("coat_color", 0.7f, 0.8f, 0.9f));
   mat.params.push_back(FloatParam("coat_roughness", 0.2f));
+  mat.params.push_back(FloatParam("coat_ior", 1.4f));
   mat.params.push_back(FloatParam("emission_luminance", 2.0f));
   mat.params.push_back(Vec3Param("emission_color", 0.1f, 0.2f, 0.3f));
   mat.params.push_back(FloatParam("opacity", 0.65f));
   tusdview::BakeLightRtOpenPBR(&mat);
+  mat.occlusion = 0.65f;
   mat.baseColorSample.uv = {1.0f, 0.1f, 0.2f, 0.9f, 0.3f, 0.4f};
-  mat.metalRoughSample.uv = {0.5f, 0.0f, 0.0f, 0.5f, 0.1f, 0.2f};
+  mat.metallicSample.uv = {0.5f, 0.0f, 0.0f, 0.5f, 0.1f, 0.2f};
+  mat.roughnessSample.uv = mat.metallicSample.uv;
   mat.normalSample.uv = {1.0f, 0.0f, 0.0f, 1.0f, 0.7f, 0.8f};
   mat.emissiveSample.uv = {0.25f, 0.0f, 0.0f, 0.25f, 0.2f, 0.3f};
   mat.displacementUv = {2.0f, 0.0f, 0.0f, 2.0f, -0.5f, 0.5f};
@@ -124,6 +129,48 @@ int main() {
     std::fprintf(stderr, "BuildHostScene failed: %s\n", err.c_str());
     return 1;
   }
+
+  // CUDA and HIP upload HostScene::mat verbatim. Keep a focused assertion that
+  // two GeomSubset-style EBO ranges survive BVH leaf reordering as two distinct
+  // per-triangle material ids.
+  {
+    tusdview::DrawScene subsetScene;
+    subsetScene.materials.resize(2);
+    tusdview::DrawMeshCPU subsetMesh = mesh;
+    subsetMesh.vertices.resize(6);
+    for (size_t i = 0; i < 3; ++i) {
+      subsetMesh.vertices[i + 3] = subsetMesh.vertices[i];
+      subsetMesh.vertices[i + 3].px += 2.0f;
+    }
+    subsetMesh.indices = {0, 1, 2, 3, 4, 5};
+    subsetMesh.vertexAlpha.clear();
+    subsetMesh.submeshes.clear();
+    tusdview::DrawSubmesh left;
+    left.indexCount = 3;
+    left.materialId = 0;
+    subsetMesh.submeshes.push_back(left);
+    tusdview::DrawSubmesh right;
+    right.indexOffset = 3;
+    right.indexCount = 3;
+    right.materialId = 1;
+    subsetMesh.submeshes.push_back(right);
+    subsetScene.meshes.push_back(std::move(subsetMesh));
+
+    tusdview::HostScene subsetHost;
+    std::string subsetErr;
+    if (!tusdview::BuildHostScene(subsetScene, 0, 0, 0.0f, &subsetHost,
+                                  &subsetErr)) {
+      std::fprintf(stderr, "GeomSubset HostScene build failed: %s\n",
+                   subsetErr.c_str());
+      return 1;
+    }
+    std::sort(subsetHost.mat.begin(), subsetHost.mat.end());
+    if (subsetHost.mat != std::vector<int>({0, 1})) {
+      std::fprintf(stderr,
+                   "GeomSubset material ids were not preserved per triangle\n");
+      return 1;
+    }
+  }
   if (host.matLightRt.size() < tusdview::kLightRtOpenPBRFloats) {
     std::fprintf(stderr, "matLightRt was not packed\n");
     return 1;
@@ -156,10 +203,11 @@ int main() {
     }
   }
   if (!Near(directTexPack[0], 1.0f) || !Near(directTexPack[2], 0.3f) ||
-      !Near(directTexPack[5], 0.4f) || !Near(directTexPack[32], 1.0f) ||
-      !Near(directTexPack[33], 2.0f) || !Near(directTexPack[37], -1.0f) ||
-      !Near(directTexPack[48], 0.0f) || !Near(directTexPack[49], 3.0f) ||
-      !Near(directTexPack[50], 0.6f) || !Near(directTexPack[53], 0.15f)) {
+      !Near(directTexPack[5], 0.4f) || !Near(directTexPack[44], 1.0f) ||
+      !Near(directTexPack[45], 2.0f) || !Near(directTexPack[49], -1.0f) ||
+      !Near(directTexPack[60], 0.0f) || !Near(directTexPack[63], 3.0f) ||
+      !Near(directTexPack[61], 0.6f) || !Near(directTexPack[65], 0.15f) ||
+      !Near(directTexPack[66], 2.0f) || !Near(directTexPack[68], 0.1f)) {
     std::fprintf(stderr, "unexpected RT texture-param packing\n");
     return 1;
   }
@@ -175,13 +223,70 @@ int main() {
       !Near(directRasterTexPack[22 * 4 + 1], 0.8f) ||
       !Near(directRasterTexPack[22 * 4 + 2], 0.1f) ||
       !Near(directRasterTexPack[22 * 4 + 3], 1.0f) ||
-      !Near(directRasterTexPack[24 * 4 + 0], 7.0f)) {
+      !Near(directRasterTexPack[24 * 4 + 0], 7.0f) ||
+      !Near(directRasterTexPack[27 * 4 + 0], 0.3f) ||
+      !Near(directRasterTexPack[27 * 4 + 1], 0.2f) ||
+      !Near(directRasterTexPack[27 * 4 + 2], 1.4f) ||
+      !Near(directRasterTexPack[27 * 4 + 3], 0.65f) ||
+      !Near(directRasterTexPack[28 * 4 + 0], 0.7f) ||
+      !Near(directRasterTexPack[28 * 4 + 1], 0.8f) ||
+      !Near(directRasterTexPack[28 * 4 + 2], 0.9f)) {
     std::fprintf(stderr, "unexpected raster texture-param packing\n");
     return 1;
   }
   if (host.cols.size() != 12 || !Near(host.cols[3], 0.25f) ||
       !Near(host.cols[7], 0.5f) || !Near(host.cols[11], 0.75f)) {
     std::fprintf(stderr, "displayOpacity RGBA packing changed\n");
+    return 1;
+  }
+
+  // The shared CUDA/HIP host scene keeps a compact optional back-material
+  // stream. Also lock the legacy convention that material index 0 may be a
+  // real authored material; only the next loader's anonymous index-0 record is
+  // suppressed for an unbound instanced prototype.
+  tusdview::DrawScene sidedScene;
+  tusdview::DrawMaterialCPU frontMat;
+  frontMat.name = "AuthoredFrontAtZero";
+  frontMat.baseColor[0] = 0.9f;
+  frontMat.baseColor[1] = 0.1f;
+  frontMat.baseColor[2] = 0.2f;
+  tusdview::DrawMaterialCPU backMat;
+  backMat.name = "AuthoredBack";
+  backMat.baseColor[0] = 0.1f;
+  backMat.baseColor[1] = 0.2f;
+  backMat.baseColor[2] = 0.9f;
+  sidedScene.materials = {frontMat, backMat};
+  tusdview::DrawMeshCPU sidedMesh = mesh;
+  sidedMesh.submeshes[0].backfaceMaterialId = 1;
+  sidedMesh.instanceXforms = {1.0f, 0.0f, 0.0f, 0.0f,
+                              0.0f, 1.0f, 0.0f, 0.0f,
+                              0.0f, 0.0f, 1.0f, 0.0f};
+  sidedScene.meshes.push_back(sidedMesh);
+  tusdview::HostScene sidedHost;
+  if (!tusdview::BuildHostScene(sidedScene, 0, 0, 0.0f, &sidedHost, &err) ||
+      sidedHost.mat.size() != 1 || sidedHost.mat[0] != 0 ||
+      sidedHost.backMat.size() != 1 || sidedHost.backMat[0] != 1 ||
+      sidedHost.matBase.size() != 6 || !Near(sidedHost.matBase[0], 0.9f) ||
+      !Near(sidedHost.matBase[5], 0.9f) || sidedHost.instances.size() != 1 ||
+      !Near(sidedHost.instances[0].tint[0], 1.0f)) {
+    std::fprintf(stderr, "front/back RT material packing changed: %s\n",
+                 err.c_str());
+    return 1;
+  }
+
+  tusdview::DrawScene placeholderScene;
+  placeholderScene.materials.emplace_back();  // anonymous next-loader fallback
+  tusdview::DrawMeshCPU placeholderMesh = sidedMesh;
+  placeholderMesh.submeshes[0].backfaceMaterialId = -1;
+  placeholderScene.meshes.push_back(std::move(placeholderMesh));
+  tusdview::HostScene placeholderHost;
+  if (!tusdview::BuildHostScene(placeholderScene, 0, 0, 0.0f,
+                                &placeholderHost, &err) ||
+      placeholderHost.mat.size() != 1 || placeholderHost.mat[0] != -1 ||
+      !placeholderHost.backMat.empty() || placeholderHost.instances.size() != 1 ||
+      !Near(placeholderHost.instances[0].tint[0], sidedMesh.flatColor[0])) {
+    std::fprintf(stderr, "anonymous RT material fallback changed: %s\n",
+                 err.c_str());
     return 1;
   }
 
@@ -245,7 +350,7 @@ int main() {
       "           nodename=\"GraphSurface\"/>"
       "  </surfacematerial>"
       "</materialx>";
-  tusdview::DrawLightRtOpenPBRCPU graphEval;
+  tusdview::tydra::LightRtOpenPBRParams graphEval;
   std::string graphErr;
   if (!tusdview::EvaluateMaterialXStringToLightRtOpenPBR(
           graphXml, "GraphMat", &graphEval, &graphErr)) {
@@ -298,7 +403,7 @@ int main() {
       "           nodename=\"StandardSurface\"/>"
       "  </surfacematerial>"
       "</materialx>";
-  tusdview::DrawLightRtOpenPBRCPU standardGraphEval;
+  tusdview::tydra::LightRtOpenPBRParams standardGraphEval;
   if (!tusdview::EvaluateMaterialXStringToLightRtOpenPBR(
           standardGraphXml, "StandardGraphMat", &standardGraphEval,
           &graphErr)) {
@@ -623,6 +728,59 @@ int main() {
       !Near(normalGraphMat.lightRtOpenPBR.normal[2], 1.0f)) {
     std::fprintf(stderr,
                  "MaterialX normalmap default was incorrectly constant-baked\n");
+    return 1;
+  }
+
+  // The shared RT texture table must retain complete RGBA mip chains as
+  // consecutive descriptors so Vulkan, CUDA, and HIP use the same trilinear
+  // sampling ABI.
+  tusdview::DrawTextureCPU mipTexture;
+  mipTexture.image.width = 4;
+  mipTexture.image.height = 4;
+  mipTexture.image.channels = 4;
+  mipTexture.image.data.assign(4 * 4 * 4, 255);
+  light3d::Image mip2;
+  mip2.width = 2;
+  mip2.height = 2;
+  mip2.channels = 4;
+  mip2.data.assign(2 * 2 * 4, 128);
+  light3d::Image mip1;
+  mip1.width = 1;
+  mip1.height = 1;
+  mip1.channels = 4;
+  mip1.data.assign(4, 64);
+  mipTexture.mipImages = {mip2, mip1};
+  tusdview::DrawMaterialCPU mipMaterial;
+  mipMaterial.baseColorTex = 0;
+  tusdview::HostTextureTable mipTable;
+  tusdview::BuildHostTextureTable({mipTexture}, {mipMaterial}, &mipTable);
+  if (mipTable.textures.size() != 3 || mipTable.texels.size() != 84 ||
+      mipTable.sourceToTable.size() != 1 || mipTable.sourceToTable[0] != 0 ||
+      mipTable.matTex.empty() || mipTable.matTex[0] != 0 ||
+      mipTable.textures[0].mipCount != 3 ||
+      mipTable.textures[0].firstMip != 1 ||
+      mipTable.textures[1].mipCount != 2 ||
+      mipTable.textures[1].firstMip != 2 ||
+      mipTable.textures[2].mipCount != 1 ||
+      mipTable.textures[2].firstMip != -1) {
+    std::fprintf(stderr, "shared RT mip-chain packing is incorrect\n");
+    return 1;
+  }
+  tusdview::DrawTextureCPU udimTexture;
+  udimTexture.isUdim = true;
+  tusdview::DrawUdimTileCPU tile;
+  tile.udim = 1001;
+  tile.image = mipTexture.image;
+  tile.mipImages = mipTexture.mipImages;
+  udimTexture.udimTiles.push_back(std::move(tile));
+  tusdview::HostTextureTable udimTable;
+  tusdview::BuildHostTextureTable({udimTexture}, {mipMaterial}, &udimTable);
+  if (udimTable.textures.size() != 4 ||
+      udimTable.textures[0].isUdim != 1 ||
+      udimTable.textures[0].udimLayer[0] != 1 ||
+      udimTable.textures[1].mipCount != 3 ||
+      udimTable.textures[1].firstMip != 2) {
+    std::fprintf(stderr, "shared RT UDIM mip-chain packing is incorrect\n");
     return 1;
   }
 

@@ -11,10 +11,12 @@ layout(triangles, equal_spacing, ccw) in;
 layout(location = 0) in vec3 tcPos[];
 layout(location = 1) in vec3 tcNrm[];
 layout(location = 2) in vec2 tcUV[];
+struct RasterLight { vec4 positionType; vec4 directionAngle;
+                     vec4 colorDiffuse; vec4 specularShape; };
 
-layout(set = 4, binding = 0) uniform sampler2D uDisplacementTex;
+layout(set = 0, binding = 16) uniform sampler2D uDisplacementTex;
 // Frame UBO (set 5): .disp.x = displacement scale, viewProj for clip position.
-layout(set = 5, binding = 0) uniform Frame {
+layout(set = 2, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;
   vec4 camPos;
@@ -22,6 +24,8 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 sceneExtent;
   vec4 lightDir;
   vec4 lightColor;
+  RasterLight rasterLights[16];
+  uvec4 rasterLightInfo;
   ivec4 mode;
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
@@ -46,8 +50,11 @@ struct MaterialTexParam {
   vec4 opacityParams;
   vec4 udimSlots0;
   vec4 udimSlots1;
+  vec4 roughUv0; vec4 roughUv1;
+  vec4 coatParams;
+  vec4 coatColor;
 };
-layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
+layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
 layout(push_constant) uniform PushConstants {
   mat4 model;

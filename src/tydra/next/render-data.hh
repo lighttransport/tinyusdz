@@ -389,8 +389,10 @@ struct RenderPoints {
 
   FloatChunked points;  // xyz interleaved, size = point_count * 3
   FloatChunked widths;  // optional per-point or constant authored width
-  FloatChunked colors;  // optional rgb/rgba displayColor data
+  FloatChunked colors;  // optional rgb displayColor data
   Interpolation colors_interp = Interpolation::Vertex;
+  FloatChunked opacities;  // optional scalar displayOpacity data
+  Interpolation opacities_interp = Interpolation::Vertex;
 
   int32_t material_id = -1;
 
@@ -401,6 +403,7 @@ struct RenderPoints {
   size_t point_count() const { return points.size() / 3; }
   bool has_widths() const { return !widths.empty(); }
   bool has_colors() const { return !colors.empty(); }
+  bool has_opacities() const { return !opacities.empty(); }
   size_t memory_usage() const;
 };
 
@@ -425,6 +428,8 @@ struct RenderCurves {
   Interpolation widths_interp = Interpolation::Constant;
   FloatChunked colors;   // displayColor, rgb interleaved
   Interpolation colors_interp = Interpolation::Constant;
+  FloatChunked opacities;  // displayOpacity, scalar
+  Interpolation opacities_interp = Interpolation::Constant;
 
   CurveType type = CurveType::Cubic;
   CurveBasis basis = CurveBasis::Bezier;  // cubic BasisCurves only
@@ -444,6 +449,8 @@ struct RenderCurves {
   FloatChunked tessellated_widths;
   // Per-tessellated-point display colors. Empty when displayColor is absent.
   FloatChunked tessellated_colors;
+  // Per-tessellated-point display opacity. Empty when absent or constant.
+  FloatChunked tessellated_opacities;
 
   int32_t material_id = -1;
 
@@ -612,12 +619,15 @@ struct OpenPBRSurfaceShader {
   ShaderParam specular_roughness = {-1, {0.3f, 0, 0, 0}};
   ShaderParam specular_ior = {-1, {1.5f, 0, 0, 0}};
   ShaderParam specular_anisotropy = {-1, {0, 0, 0, 0}};
+  ShaderParam specular_roughness_anisotropy = {-1, {0, 0, 0, 0}};
   ShaderParam specular_rotation = {-1, {0, 0, 0, 0}};
 
   // Transmission
   ShaderParam transmission_weight = {-1, {0, 0, 0, 0}};
   ShaderParam transmission_color = {-1, {1, 1, 1, 1}};
   ShaderParam transmission_depth = {-1, {0, 0, 0, 0}};
+  ShaderParam transmission_dispersion = {-1, {0, 0, 0, 0}};
+  ShaderParam transmission_dispersion_scale = {-1, {0, 0, 0, 0}};
 
   // Subsurface
   ShaderParam subsurface_weight = {-1, {0, 0, 0, 0}};
@@ -629,11 +639,18 @@ struct OpenPBRSurfaceShader {
   ShaderParam coat_color = {-1, {1, 1, 1, 1}};
   ShaderParam coat_roughness = {-1, {0, 0, 0, 0}};
   ShaderParam coat_ior = {-1, {1.5f, 0, 0, 0}};
+  ShaderParam coat_anisotropy = {-1, {0, 0, 0, 0}};
+  ShaderParam coat_roughness_anisotropy = {-1, {0, 0, 0, 0}};
 
   // Sheen
   ShaderParam sheen_weight = {-1, {0, 0, 0, 0}};
   ShaderParam sheen_color = {-1, {1, 1, 1, 1}};
   ShaderParam sheen_roughness = {-1, {0.3f, 0, 0, 0}};
+
+  // Thin-film / iridescence.
+  ShaderParam thin_film_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam thin_film_thickness = {-1, {0, 0, 0, 0}};
+  ShaderParam thin_film_ior = {-1, {1.5f, 0, 0, 0}};
 
   // Emission
   ShaderParam emission_luminance = {-1, {0, 0, 0, 0}};
@@ -643,6 +660,10 @@ struct OpenPBRSurfaceShader {
   ShaderParam opacity = {-1, {1, 0, 0, 0}};
   ShaderParam normal = {-1, {0, 0, 1, 0}};
   ShaderParam tangent = {-1, {1, 0, 0, 0}};
+  // Height/displacement output carried by MaterialX standard_surface graphs.
+  // OpenPBR itself does not define surface displacement, but retaining it here
+  // lets render consumers use the same geometry path as UsdPreviewSurface.
+  ShaderParam displacement = {-1, {0, 0, 0, 0}};
 
   // MaterialX node graph as JSON (optional)
   std::string nodegraph_json;
@@ -651,6 +672,20 @@ struct OpenPBRSurfaceShader {
 //
 // RenderMaterial
 //
+enum class MaterialDiagnosticKind : uint8_t {
+  UnsupportedShader = 0,
+  UnsupportedMaterialXNode,
+  DegradedMaterial
+};
+
+struct MaterialDiagnostic {
+  MaterialDiagnosticKind kind = MaterialDiagnosticKind::UnsupportedShader;
+  std::string material_path;
+  std::string node_path;
+  std::string shader_id;
+  std::string message;
+};
+
 struct RenderMaterial {
   std::string name;
   std::string prim_path;
@@ -671,12 +706,13 @@ struct RenderMaterial {
   };
   ShaderType shader_type = ShaderType::None;
 
-  // The material had no convertible surface shader and carries a neutral
-  // default instead of being dropped (see ConvertMaterial). Conversion still
-  // SUCCEEDS in that case, so a caller that only checks the return value cannot
-  // tell a real material from a gray stand-in; consumers that report load
-  // degradation must look here.
+  // The material had no fully convertible surface shader and carries a
+  // degraded PreviewSurface instead of being dropped (see ConvertMaterial).
+  // Recognizable authored constants and texture inputs are retained when
+  // possible. Conversion still SUCCEEDS, so consumers that report load
+  // degradation must look here rather than relying on the return value.
   bool default_fallback = false;
+  std::vector<MaterialDiagnostic> diagnostics;
 
   // Shader data (one of these based on shader_type)
   std::unique_ptr<PreviewSurfaceShader> preview_surface;

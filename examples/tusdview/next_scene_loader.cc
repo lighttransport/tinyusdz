@@ -38,6 +38,7 @@
 #include "tydra/scene-access.hh"       // SkinPointsLBS / ConcatJointTransforms
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-extract.hh"
+#include "tydra/next/openpbr-params-converter.hh"
 #include "tydra/next/texture-cache.hh"  // shared decode + size cap + byte budget
 #include "tydra/next/scene-access.hh"  // ComputeWorldTransform
 #include "value-types.hh"              // value::matrix4d / quatf / double3
@@ -221,6 +222,19 @@ inline matrix4d Mat4dFromArray(const double d[16]) {
   for (int i = 0; i < 4; ++i)
     for (int j = 0; j < 4; ++j) m.m[i][j] = d[i * 4 + j];
   return m;
+}
+
+inline void RowMatrixToColumnMajor(const double src[16], float dst[16]) {
+  for (int row = 0; row < 4; ++row)
+    for (int col = 0; col < 4; ++col)
+      dst[col * 4 + row] = static_cast<float>(src[row * 4 + col]);
+}
+
+inline void TransformRowPoint(const double m[16], float x, float y, float z,
+                              float out[3]) {
+  out[0] = static_cast<float>(x * m[0] + y * m[4] + z * m[8] + m[12]);
+  out[1] = static_cast<float>(x * m[1] + y * m[5] + z * m[9] + m[13]);
+  out[2] = static_cast<float>(x * m[2] + y * m[6] + z * m[10] + m[14]);
 }
 
 // Row-major matrix multiply matching tinyusdz value::Mult: (a*b).m[j][i] =
@@ -441,9 +455,14 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     if (elems > 0 && m.colors.size() == elems * 4) colorComps = 4;
   }
   const NextAttr col = MakeNextAttr(m.colors, m.colors_interp, colorComps);
-  // displayOpacity is not a tydra-next builtin: it lands in the generic primvar
-  // bag as a float attribute.
-  const NextAttr opacity = FindNextPrimvar(m, "displayOpacity", 1);
+  // displayOpacity has a dedicated tydra-next channel. Older converter builds
+  // left it in the generic primvar bag, so retain that as a compatibility
+  // fallback instead of silently dropping authored vertex alpha.
+  const NextAttr builtinOpacity =
+      MakeNextAttr(m.opacities, m.opacities_interp, 1);
+  const NextAttr opacity = builtinOpacity
+                               ? builtinOpacity
+                               : FindNextPrimvar(m, "displayOpacity", 1);
   // Tangents are computed only for normal-mapped meshes (see the tangent-aware
   // converter in LoadUSDViaNext); xyzw with w = handedness.
   const NextAttr tan = MakeNextAttr(m.tangents, m.tangents_interp, 4);
@@ -1883,7 +1902,23 @@ bool FindNextCameraRec(const tnext::Stage& stage, const tnext::UsdPrim& prim,
           out->forward[k] = fwd[k];
         }
         const float focal = ReadCamFloatN(prim, "focalLength", 50.0f);
-        const float vap = ReadCamFloatN(prim, "verticalAperture", 15.2908f);
+        out->horizontalAperture =
+            ReadCamFloatN(prim, "horizontalAperture", 20.955f);
+        out->verticalAperture =
+            ReadCamFloatN(prim, "verticalAperture", 15.2908f);
+        out->horizontalApertureOffset =
+            ReadCamFloatN(prim, "horizontalApertureOffset", 0.0f);
+        out->verticalApertureOffset =
+            ReadCamFloatN(prim, "verticalApertureOffset", 0.0f);
+        out->exposure = ReadCamFloatN(prim, "exposure", 0.0f);
+        if (const tnext::Value* v = prim.GetPropertyValue("projection")) {
+          if (const std::string* token = v->as_token()) {
+            out->projection = (*token == "orthographic")
+                                  ? CameraProjection::Orthographic
+                                  : CameraProjection::Perspective;
+          }
+        }
+        const float vap = out->verticalAperture;
         out->fovYDeg = 2.0f *
                        std::atan(0.5f * vap / std::max(1.0e-6f, focal)) *
                        (180.0f / 3.14159265358979323846f);
@@ -2164,9 +2199,8 @@ void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp,
 }
 
 // Convert a bound material prim into a DrawMaterialCPU appended to `draw`, and
-// return its index (>=1). Phase 1 baked PBR constants (base color, metallic,
-// roughness, emissive, alpha) + Phase 2 textures (base color, emissive, normal,
-// metal/rough). GeomSubset per-face materials and skinning remain follow-ups.
+// return its index (>=1). Bakes PBR constants and independent base-color,
+// metallic, roughness, emissive, normal, and opacity texture semantics.
 // Reuses tusdview's own BakeLightRtOpenPBR so the --next path shades materials
 // through the same path the legacy loader uses. Returns -1 if the prim has no
 // usable surface shader (caller then keeps the default gray material, index 0).
@@ -2208,6 +2242,36 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   dm.name = rm.name;
   dm.absPath = rm.prim_path;
   dm.displayName = rm.name;
+  dm.hasDisplacementOutput = rm.has_displacement;
+  dm.hasVolumeOutput = rm.has_volume;
+  dm.displacementShaderPath = rm.displacement_shader_path;
+  dm.volumeShaderPath = rm.volume_shader_path;
+  bool reportedDegradedMaterial = false;
+  for (const tydn::MaterialDiagnostic& diagnostic : rm.diagnostics) {
+    if (diagnostic.kind == tydn::MaterialDiagnosticKind::DegradedMaterial) {
+      std::string message = "material '" + diagnostic.material_path +
+                            "': using degraded material";
+      if (!diagnostic.node_path.empty())
+        message += " from node '" + diagnostic.node_path + "'";
+      if (!diagnostic.shader_id.empty())
+        message += " (" + diagnostic.shader_id + ")";
+      if (!diagnostic.message.empty()) message += ": " + diagnostic.message;
+      draw->skipped.push_back(std::move(message));
+      reportedDegradedMaterial = true;
+    } else if (diagnostic.kind ==
+               tydn::MaterialDiagnosticKind::UnsupportedMaterialXNode) {
+      std::string message =
+          "unsupported MaterialX node '" + diagnostic.node_path +
+          "' in material '" + diagnostic.material_path + "'";
+      if (!diagnostic.shader_id.empty())
+        message += " (" + diagnostic.shader_id + ")";
+      draw->skipped.push_back(std::move(message));
+    }
+  }
+  if (rm.default_fallback && !reportedDegradedMaterial) {
+    draw->skipped.push_back("material '" + rm.prim_path +
+                            "': using degraded material");
+  }
 
   auto loadOpacity = [&](const tydn::ShaderParam& sp, int baseTextureId) {
     if (sp.texture_id < 0 ||
@@ -2245,9 +2309,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
           dm.normalSample.bias[2] = -1.0f;
     }
   };
-  // Pack metallic/roughness into the single metalRough slot. Roughness wins the
-  // slot; a separate metallic texture is approximated onto the same slot (a
-  // known Phase-2 limitation for non-packed ORM inputs).
+  // Metallic and roughness are independent slots. Packed ORM inputs naturally
+  // alias the same DrawTextureCPU while retaining their channel and UV metadata.
   auto loadMetalRough = [&](const tydn::ShaderParam& metallic,
                             const tydn::ShaderParam& roughness) {
     // Per-channel value scale/bias for a scalar texture: the sampled channel's
@@ -2258,14 +2321,14 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     if (roughness.texture_id >= 0) {
       int t = LoadNextTexture(texCache, draw, scratch, roughness.texture_id, false);
       if (t >= 0) {
-        dm.metalRoughTex = t;
+        dm.roughnessTex = t;
         dm.roughness = 1.0f;
         const tydn::RenderTexture& rt =
             scratch.textures[static_cast<size_t>(roughness.texture_id)];
         dm.roughnessChannel = NextScalarChannel(rt.output_channel);
         channelScaleBias(rt, dm.roughnessChannel, &dm.roughnessTexScale,
                          &dm.roughnessTexBias);
-        FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
+        FillNextSample(rt, &dm.roughnessSample, uv0Name, uv1Name);
       }
     }
     if (metallic.texture_id >= 0) {
@@ -2273,10 +2336,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
       if (t >= 0) {
         const tydn::RenderTexture& rt =
             scratch.textures[static_cast<size_t>(metallic.texture_id)];
-        if (dm.metalRoughTex < 0) {
-          dm.metalRoughTex = t;
-          FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
-        }
+        dm.metallicTex = t;
+        FillNextSample(rt, &dm.metallicSample, uv0Name, uv1Name);
         dm.metallic = 1.0f;
         dm.metallicChannel = NextScalarChannel(rt.output_channel);
         channelScaleBias(rt, dm.metallicChannel, &dm.metallicTexScale,
@@ -2306,7 +2367,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
     opTex = texCount({s.base_color.texture_id, s.normal.texture_id,
                       s.emission_color.texture_id, s.base_metalness.texture_id,
-                      s.base_roughness.texture_id, s.opacity.texture_id});
+                      s.base_roughness.texture_id, s.opacity.texture_id,
+                      s.displacement.texture_id});
   }
   const bool usePreview = rm.preview_surface && (!rm.openpbr || pvTex >= opTex);
 
@@ -2344,6 +2406,19 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     loadOpacity(s.opacity, s.base_color.texture_id);
     loadNormal(s.normal);
     loadMetalRough(s.base_metalness, s.base_roughness);
+    dm.displacementConst = s.displacement.value.x;
+    if (s.displacement.texture_id >= 0 &&
+        static_cast<size_t>(s.displacement.texture_id) < scratch.textures.size()) {
+      const tydn::RenderTexture& dt =
+          scratch.textures[static_cast<size_t>(s.displacement.texture_id)];
+      dm.displacementTex = LoadNextTexture(
+          texCache, draw, scratch, s.displacement.texture_id, false);
+      DrawTexSampleCPU displacementSample;
+      FillNextSample(dt, &displacementSample, uv0Name, uv1Name);
+      dm.displacementUv = displacementSample.uv;
+      dm.displacementTexScale = dt.scale_value.x;
+      dm.displacementTexBias = dt.bias.x;
+    }
   } else {
     return -1;  // no PreviewSurface/OpenPBR -- fall back to default material
   }
@@ -2354,6 +2429,55 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
 
   BakeLightRtOpenPBR(&dm);  // derive lightRtOpenPBR from the baked constants
 
+  // BakeLightRtOpenPBR's generic path consumes DrawMaterialParamCPU, while the
+  // default next loader owns the already-typed RenderMaterial above. Rebuild
+  // the shared block directly from that authoritative carrier so coat and the
+  // other OpenPBR constants do not fall back to defaults merely because this
+  // adapter intentionally avoids duplicating the neutral parameter vector.
+  const tydn::RenderMaterial::ShaderType originalShaderType = rm.shader_type;
+  rm.shader_type = usePreview
+                       ? tydn::RenderMaterial::ShaderType::PreviewSurface
+                       : tydn::RenderMaterial::ShaderType::OpenPBR;
+  DrawLightRtOpenPBRCPU pbr;
+  if (tydn::BuildLightRtOpenPBRParams(rm, &pbr)) {
+    dm.lightRtOpenPBR = pbr;
+    dm.hasLightRtOpenPBR = true;
+    dm.coatWeight = pbr.coatWeight;
+    dm.coatColor[0] = pbr.coatColor[0];
+    dm.coatColor[1] = pbr.coatColor[1];
+    dm.coatColor[2] = pbr.coatColor[2];
+    dm.coatRoughness = pbr.coatRoughness;
+    dm.coatIor = pbr.coatIor;
+  }
+  if (!usePreview && rm.openpbr) {
+    auto retainDiagnosticScalar = [&](const char* name,
+                                      const tydn::ShaderParam& value) {
+      DrawMaterialParamCPU param;
+      param.shader = "OpenPBRSurface";
+      param.name = name;
+      param.type = DrawMaterialParamType::Float;
+      param.value[0] = value.value.x;
+      param.renderTexture = value.texture_id;
+      dm.params.push_back(std::move(param));
+    };
+    const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
+    retainDiagnosticScalar("specular_anisotropy", s.specular_anisotropy);
+    retainDiagnosticScalar("specular_roughness_anisotropy",
+                           s.specular_roughness_anisotropy);
+    retainDiagnosticScalar("coat_anisotropy", s.coat_anisotropy);
+    retainDiagnosticScalar("coat_roughness_anisotropy",
+                           s.coat_roughness_anisotropy);
+    retainDiagnosticScalar("transmission_dispersion",
+                           s.transmission_dispersion);
+    retainDiagnosticScalar("transmission_dispersion_scale",
+                           s.transmission_dispersion_scale);
+  }
+  rm.shader_type = originalShaderType;
+  if (usePreview) {
+    dm.occlusion = rm.preview_surface->occlusion.value.x;
+  }
+
+  DiagnoseUnsupportedRealtimeLobes(dm, draw);
   draw->materials.push_back(std::move(dm));
   return static_cast<int>(draw->materials.size() - 1);
 }
@@ -2419,6 +2543,15 @@ bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
                      (180.0f / 3.14159265358979323846f);
       out->zNear = std::max(1.0e-4f, cam.znear);
       out->zFar = std::max(out->zNear + 1.0e-3f, cam.zfar);
+      out->projection =
+          cam.projection == tinyusdz::GeomCamera::Projection::Orthographic
+              ? CameraProjection::Orthographic
+              : CameraProjection::Perspective;
+      out->horizontalAperture = cam.horizontalAperture;
+      out->verticalAperture = cam.verticalAperture;
+      out->horizontalApertureOffset = cam.horizontalApertureOffset;
+      out->verticalApertureOffset = cam.verticalApertureOffset;
+      out->exposure = cam.exposure;
     }
     return true;
   }
@@ -2799,17 +2932,177 @@ bool BuildNextRtDeformedVertices(
 // decode the envmap to float RGB (8-bit treated as linear, matching the tydra
 // dome loader), and bake the split-sum IBL so raster ambient / instanced
 // ambient / RT miss backgrounds light up on the large-scene path too.
-void BuildNextLights(const tnext::Stage& stage, const std::string& usdPath,
+void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
+                     const std::string& usdPath,
                      double time, const TextureRuntimeOptions& texOpts,
                      DrawScene* draw) {
   const std::string baseDir = tinyusdz::io::GetBaseDir(usdPath);
 
+  auto fillConverted = [&](const tnext::UsdPrim& p, DrawLightCPU* dst) {
+    tydn::RenderLight src;
+    if (!dst || !conv.ConvertLight(p, &src)) return false;
+    dst->name = src.name;
+    dst->absPath = src.prim_path;
+    switch (src.type) {
+      case tydn::LightType::Directional: dst->type = DrawLightCPU::Type::Distant; break;
+      case tydn::LightType::Rect: dst->type = DrawLightCPU::Type::Rect; break;
+      case tydn::LightType::Disk: dst->type = DrawLightCPU::Type::Disk; break;
+      case tydn::LightType::Dome: dst->type = DrawLightCPU::Type::Dome; break;
+      case tydn::LightType::Sphere: dst->type = DrawLightCPU::Type::Sphere; break;
+      case tydn::LightType::Cylinder: dst->type = DrawLightCPU::Type::Cylinder; break;
+      case tydn::LightType::Geometry: dst->type = DrawLightCPU::Type::Geometry; break;
+      case tydn::LightType::Spot: dst->type = DrawLightCPU::Type::Sphere; break;
+      case tydn::LightType::Point: default: dst->type = DrawLightCPU::Type::Point; break;
+    }
+    if (p.GetTypeName() == "PortalLight") dst->type = DrawLightCPU::Type::Portal;
+    dst->color[0] = src.color.x; dst->color[1] = src.color.y;
+    dst->color[2] = src.color.z;
+    dst->intensity = src.intensity; dst->exposure = src.exposure;
+    dst->normalize = src.normalize; dst->diffuse = src.diffuse;
+    dst->specular = src.specular;
+    dst->enableColorTemperature = src.enable_color_temperature;
+    dst->colorTemperature = src.color_temperature;
+    dst->shapingFocus = src.shaping_focus;
+    dst->shapingFocusTint[0] = src.shaping_focus_tint.x;
+    dst->shapingFocusTint[1] = src.shaping_focus_tint.y;
+    dst->shapingFocusTint[2] = src.shaping_focus_tint.z;
+    dst->shapingConeSoftness = src.shaping_cone_softness;
+    dst->shapingIesFile = src.shaping_ies_file;
+    dst->shapingIesAngleScale = src.shaping_ies_angle_scale;
+    dst->shapingIesNormalize = src.shaping_ies_normalize;
+    dst->shadowEnable = src.enable_shadow;
+    dst->shadowColor[0] = src.shadow_color.x;
+    dst->shadowColor[1] = src.shadow_color.y;
+    dst->shadowColor[2] = src.shadow_color.z;
+    dst->shadowDistance = src.shadow_distance;
+    dst->shadowFalloff = src.shadow_falloff;
+    dst->shadowFalloffGamma = src.shadow_falloff_gamma;
+    switch (src.type) {
+      case tydn::LightType::Directional: dst->angle = src.params.distant.angle; break;
+      case tydn::LightType::Rect:
+        dst->width = src.params.rect.width; dst->height = src.params.rect.height; break;
+      case tydn::LightType::Disk: dst->radius = src.params.disk.radius; break;
+      case tydn::LightType::Sphere: dst->radius = src.params.sphere.radius; break;
+      case tydn::LightType::Spot:
+        dst->shapingConeAngle = src.params.spot.angle * 57.2957795131f; break;
+      case tydn::LightType::Cylinder:
+        dst->radius = src.params.cylinder.radius;
+        dst->length = src.params.cylinder.length; break;
+      default: break;
+    }
+    auto resolveLinks = [&](const char* instanceName,
+                            const std::vector<std::string>& directTargets,
+                            bool* all, std::vector<int>* indices) {
+      const std::string base = std::string("collection:") + instanceName + ":";
+      if (p.HasProperty(base + "membershipExpression")) {
+        *all = true;  // path-expression evaluation is intentionally unsupported
+        return;
+      }
+      const std::vector<tnext::Path>* includes =
+          p.GetRelationship(base + "includes");
+      const std::vector<tnext::Path>* excludes =
+          p.GetRelationship(base + "excludes");
+      const bool authoredCollection = includes || excludes;
+      if (!authoredCollection && directTargets.empty()) { *all = true; return; }
+      bool includeRoot = false;
+      if (const tnext::Value* value = p.GetPropertyValue(base + "includeRoot")) {
+        if (const bool* authored = value->as_bool()) includeRoot = *authored;
+      }
+      std::string expansionRule = "expandPrims";
+      if (const tnext::Value* value =
+              p.GetPropertyValue(base + "expansionRule")) {
+        if (const std::string* token = value->as_token()) expansionRule = *token;
+      }
+      const bool explicitOnly = expansionRule == "explicitOnly";
+      auto under = [](const std::string& path, const std::string& root) {
+        return path == root ||
+               (path.size() > root.size() &&
+                path.compare(0, root.size(), root) == 0 &&
+                path[root.size()] == '/');
+      };
+      *all = false;
+      for (size_t i = 0; i < draw->meshes.size(); ++i) {
+        const std::string& path = draw->meshes[i].absPath;
+        if (std::getenv("TUSDVIEW_DEBUG_LIGHTS"))
+          std::fprintf(stderr, "[light-links] %s mesh %zu path='%s'\n",
+                       instanceName, i, path.c_str());
+        bool excluded = false;
+        if (excludes) {
+          for (const tnext::Path& target : *excludes) {
+            if (under(path, target.str())) { excluded = true; break; }
+          }
+        }
+        if (excluded) continue;
+        bool included = includeRoot && under(path, p.GetPath().str());
+        if (!included && includes) {
+          for (const tnext::Path& target : *includes) {
+            included = explicitOnly ? path == target.str()
+                                    : under(path, target.str());
+            if (included) break;
+          }
+        }
+        if (!authoredCollection && !included) {
+          for (const std::string& target : directTargets) {
+            if (under(path, target)) { included = true; break; }
+          }
+        }
+        if (included) indices->push_back(static_cast<int>(i));
+      }
+    };
+    resolveLinks("lightLink", src.light_link_targets, &dst->lightLinksAll,
+                 &dst->lightLinkMeshIndices);
+    resolveLinks("shadowLink", src.shadow_link_targets, &dst->shadowLinksAll,
+                 &dst->shadowLinkMeshIndices);
+    return true;
+  };
+
+  auto bakeDerived = [](DrawLightCPU* light) {
+    float tint[3] = {1.0f, 1.0f, 1.0f};
+    if (light->enableColorTemperature) {
+      const float t = std::max(1000.0f, std::min(40000.0f,
+                                                 light->colorTemperature)) /
+                      100.0f;
+      tint[0] = t <= 66.0f ? 1.0f : std::max(0.0f, std::min(1.0f,
+          329.698727446f * std::pow(t - 60.0f, -0.1332047592f) / 255.0f));
+      tint[1] = std::max(0.0f, std::min(1.0f,
+          (t <= 66.0f ? 99.4708025861f * std::log(t) - 161.1195681661f
+                      : 288.1221695283f * std::pow(t - 60.0f, -0.0755148492f)) /
+              255.0f));
+      tint[2] = t >= 66.0f ? 1.0f : (t <= 19.0f ? 0.0f :
+          std::max(0.0f, std::min(1.0f,
+              (138.5177312231f * std::log(t - 10.0f) - 305.0447927307f) /
+                  255.0f)));
+    }
+    light->effectiveIntensity = light->intensity * std::pow(2.0f, light->exposure);
+    constexpr float pi = 3.14159265358979323846f;
+    if (light->type == DrawLightCPU::Type::Sphere ||
+        light->type == DrawLightCPU::Type::Point)
+      light->area = 4.0f * pi * light->radius * light->radius;
+    else if (light->type == DrawLightCPU::Type::Disk)
+      light->area = pi * light->radius * light->radius;
+    else if (light->type == DrawLightCPU::Type::Rect ||
+             light->type == DrawLightCPU::Type::Portal)
+      light->area = light->width * light->height;
+    else if (light->type == DrawLightCPU::Type::Cylinder)
+      light->area = 2.0f * pi * light->radius * light->length;
+    light->invArea = light->area > 0.0f ? 1.0f / light->area : 0.0f;
+    for (int c = 0; c < 3; ++c) {
+      light->effectiveColor[c] = light->color[c] * tint[c] *
+                                 light->effectiveIntensity;
+      light->normalizedColor[c] = light->effectiveColor[c] *
+          (light->normalize && light->invArea > 0.0f ? light->invArea : 1.0f);
+    }
+    light->hasShaping = light->shapingConeAngle < 90.0f ||
+        !light->shapingIesFile.empty() || light->shapingFocus != 0.0f ||
+        light->shapingFocusTint[0] != 0.0f ||
+        light->shapingFocusTint[1] != 0.0f ||
+        light->shapingFocusTint[2] != 0.0f;
+  };
+
   std::function<void(const tnext::UsdPrim&)> rec = [&](const tnext::UsdPrim& p) {
     if (p.GetTypeName() == "DomeLight" || p.GetTypeName() == "DomeLight_1") {
       DrawLightCPU light;
-      light.type = DrawLightCPU::Type::Dome;
-      light.name = p.GetName();
-      light.absPath = p.GetPath().str();
+      if (!fillConverted(p, &light)) return;
 
       double w16[16];
       if (tydn::ComputeWorldTransform(stage, p, w16, time)) {
@@ -2819,28 +3112,6 @@ void BuildNextLights(const tnext::Stage& stage, const std::string& usdPath,
       } else {
         for (int i = 0; i < 16; ++i) light.transform[i] = (i % 5 == 0) ? 1.f : 0.f;
       }
-
-      auto readF = [&](const char* name, float fallback) {
-        if (const tnext::Value* v = p.GetPropertyValue(name)) {
-          if (const float* f = v->as_float()) return *f;
-        }
-        return fallback;
-      };
-      light.intensity = readF("inputs:intensity", 1.0f);
-      light.exposure = readF("inputs:exposure", 0.0f);
-      if (const tnext::Value* v = p.GetPropertyValue("inputs:color")) {
-        if (const float* c = v->as_float3()) {
-          light.color[0] = c[0];
-          light.color[1] = c[1];
-          light.color[2] = c[2];
-        }
-      }
-      const float scale = light.intensity * std::pow(2.0f, light.exposure);
-      for (int c = 0; c < 3; ++c) {
-        light.effectiveColor[c] = light.color[c] * scale;
-        light.normalizedColor[c] = light.color[c];
-      }
-      light.effectiveIntensity = scale;
 
       light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::Automatic;
       if (const tnext::Value* v = p.GetPropertyValue("inputs:texture:format")) {
@@ -2947,8 +3218,9 @@ void BuildNextLights(const tnext::Stage& stage, const std::string& usdPath,
                     tpath.c_str());
           }
         }
-      }
-      draw->lights.push_back(std::move(light));
+        }
+        bakeDerived(&light);
+        draw->lights.push_back(std::move(light));
     } else {
       // Non-dome lights: enough for the raster preview key-light derivation
       // (UpdatePreviewLight uses a Distant light's direction, else a finite
@@ -2966,14 +3238,17 @@ void BuildNextLights(const tnext::Stage& stage, const std::string& usdPath,
         lt = DrawLightCPU::Type::Disk;
       else if (ty == "CylinderLight")
         lt = DrawLightCPU::Type::Cylinder;
+      else if (ty == "GeometryLight")
+        lt = DrawLightCPU::Type::Geometry;
+      else if (ty == "PortalLight")
+        lt = DrawLightCPU::Type::Portal;
       else
         isLight = false;
 
       if (isLight) {
         DrawLightCPU light;
+        if (!fillConverted(p, &light)) return;
         light.type = lt;
-        light.name = p.GetName();
-        light.absPath = p.GetPath().str();
 
         double w16[16];
         const bool haveXf = tydn::ComputeWorldTransform(stage, p, w16, time);
@@ -2992,27 +3267,21 @@ void BuildNextLights(const tnext::Stage& stage, const std::string& usdPath,
           light.direction[2] = -static_cast<float>(w16[10]);
         }
 
-        auto readF = [&](const char* name, float fallback) {
-          if (const tnext::Value* v = p.GetPropertyValue(name)) {
-            if (const float* f = v->as_float()) return *f;
-          }
-          return fallback;
-        };
-        light.intensity = readF("inputs:intensity", 1.0f);
-        light.exposure = readF("inputs:exposure", 0.0f);
-        if (const tnext::Value* v = p.GetPropertyValue("inputs:color")) {
-          if (const float* c = v->as_float3()) {
-            light.color[0] = c[0];
-            light.color[1] = c[1];
-            light.color[2] = c[2];
-          }
+        bakeDerived(&light);
+        if (light.type == DrawLightCPU::Type::Geometry) {
+          draw->skipped.push_back(
+              "GeometryLight '" + light.absPath +
+              "': emissive-mesh light sampling is not implemented");
+        } else if (light.type == DrawLightCPU::Type::Portal) {
+          draw->skipped.push_back(
+              "PortalLight '" + light.absPath +
+              "': portal-guided environment sampling is not implemented");
         }
-        const float sc = light.intensity * std::pow(2.0f, light.exposure);
-        for (int c = 0; c < 3; ++c) {
-          light.effectiveColor[c] = light.color[c] * sc;
-          light.normalizedColor[c] = light.color[c];
+        if (!light.shapingIesFile.empty()) {
+          draw->skipped.push_back(
+              "Light '" + light.absPath +
+              "': IES profile evaluation is not implemented");
         }
-        light.effectiveIntensity = sc;
         draw->lights.push_back(std::move(light));
       }
     }
@@ -3238,6 +3507,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   draw->upAxis = (stage.GetUpAxis() == "Z" || stage.GetUpAxis() == "z") ? "Z" : "Y";
 
   draw->meshes.clear();
+  draw->points.clear();
+  draw->curves.clear();
   draw->materials.clear();
   draw->textures.clear();
   draw->skipped.clear();
@@ -3478,9 +3749,129 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   extractOpts.time_code = time;
   extractOpts.stop_at_point_instancers = true;
   extractOpts.stop_at_native_instances = true;
-  extractOpts.collect_records = false;
+  extractOpts.collect_other = true;  // includes UsdGeomPoints in records
+  // Points are represented in the combined record list while curves have their
+  // own list. Retain the lightweight records so both non-mesh families reach
+  // DrawScene through the same inherited transform/material traversal.
+  extractOpts.collect_records = true;
   tydn::RenderExtractResult extracted;
   tydn::CollectRenderPrims(stage, extractOpts, &extracted);
+
+  auto copyChunked = [](const tydn::FloatChunked& src,
+                        std::vector<float>* dst) {
+    dst->resize(src.size());
+    for (size_t i = 0; i < src.size(); ++i) (*dst)[i] = src[i];
+  };
+  auto addCarrierBounds = [&](const double world[16],
+                              const std::vector<float>& points,
+                              const std::vector<float>& widths,
+                              float outMin[3], float outMax[3]) {
+    for (int k = 0; k < 3; ++k) {
+      outMin[k] = std::numeric_limits<float>::infinity();
+      outMax[k] = -std::numeric_limits<float>::infinity();
+    }
+    for (size_t i = 0; i + 2 < points.size(); i += 3) {
+      float p[3];
+      TransformRowPoint(world, points[i], points[i + 1], points[i + 2], p);
+      for (int k = 0; k < 3; ++k) {
+        outMin[k] = std::min(outMin[k], p[k]);
+        outMax[k] = std::max(outMax[k], p[k]);
+      }
+      bounds.add(p);
+    }
+    // USD widths are diameters. Expand centerline bounds by the largest
+    // world-space radius so auto-frame, depth AOV normalization, and culling do
+    // not clip large Points/Curves whose centers have a tiny or zero extent.
+    float maxWidth = widths.empty() ? 1.0f : 0.0f;
+    for (float width : widths) maxWidth = std::max(maxWidth, std::fabs(width));
+    double worldScale = 0.0;
+    for (int basis = 0; basis < 3; ++basis) {
+      const double x = world[basis * 4 + 0];
+      const double y = world[basis * 4 + 1];
+      const double z = world[basis * 4 + 2];
+      worldScale = std::max(worldScale, std::sqrt(x * x + y * y + z * z));
+    }
+    const float radius = 0.5f * maxWidth * static_cast<float>(worldScale);
+    if (std::isfinite(radius) && radius > 0.0f &&
+        std::isfinite(outMin[0]) && std::isfinite(outMax[0])) {
+      for (int k = 0; k < 3; ++k) {
+        outMin[k] -= radius;
+        outMax[k] += radius;
+      }
+      bounds.add(outMin);
+      bounds.add(outMax);
+    }
+  };
+
+  // Preserve next-core Points without re-reading schema attributes. Rendering
+  // backends receive the converter's evaluated widths/colors at `time` plus the
+  // inherited world transform and material binding.
+  for (const tydn::RenderPrimRecord& rec : extracted.records) {
+    if (rec.type_name != "Points") continue;
+    tydn::RenderPoints rp;
+    if (!conv.ConvertPoints(rec.prim, &rp) || rp.point_count() == 0) {
+      draw->skipped.push_back("Points '" + rec.path + "': conversion failed/empty");
+      continue;
+    }
+    DrawPointsCPU dp;
+    dp.name = rp.name;
+    dp.absPath = rec.path;
+    dp.purpose = rec.purpose;
+    dp.materialId = resolveMaterialPath(rec.material_path, std::string(),
+                                        std::string());
+    dp.colorsInterpolation = static_cast<int>(rp.colors_interp);
+    dp.opacitiesInterpolation = static_cast<int>(rp.opacities_interp);
+    copyChunked(rp.points, &dp.points);
+    copyChunked(rp.widths, &dp.widths);
+    copyChunked(rp.colors, &dp.colors);
+    copyChunked(rp.opacities, &dp.opacities);
+    RowMatrixToColumnMajor(rec.world, dp.world);
+    addCarrierBounds(rec.world, dp.points, dp.widths, dp.aabbMin, dp.aabbMax);
+    draw->points.push_back(std::move(dp));
+  }
+
+  // RenderCurves already contains tessellated centerlines for Basis, NURBS and
+  // Hermite schemas. Retain those samples and their interpolated widths/colors;
+  // linear/control data is used only when tessellation produced no samples.
+  for (const tydn::RenderPrimRecord& rec : extracted.curves) {
+    tydn::RenderCurves rc;
+    if (!conv.ConvertCurves(rec.prim, &rc)) {
+      draw->skipped.push_back("Curves '" + rec.path + "': conversion failed");
+      continue;
+    }
+    DrawCurvesCPU dc;
+    dc.name = rc.name;
+    dc.absPath = rec.path;
+    dc.purpose = rec.purpose;
+    dc.materialId = resolveMaterialPath(rec.material_path, std::string(),
+                                        std::string());
+    if (!rc.tessellated_points.empty()) {
+      dc.vertexCounts = rc.tessellated_vertex_counts;
+      copyChunked(rc.tessellated_points, &dc.points);
+      copyChunked(rc.tessellated_widths, &dc.widths);
+      if (dc.widths.empty() && !rc.widths.empty()) {
+        copyChunked(rc.widths, &dc.widths);
+      }
+      copyChunked(rc.tessellated_colors, &dc.colors);
+      copyChunked(rc.tessellated_opacities, &dc.opacities);
+      if (dc.opacities.empty() && !rc.opacities.empty()) {
+        copyChunked(rc.opacities, &dc.opacities);
+      }
+    } else {
+      dc.vertexCounts = rc.curve_vertex_counts;
+      copyChunked(rc.points, &dc.points);
+      copyChunked(rc.widths, &dc.widths);
+      copyChunked(rc.colors, &dc.colors);
+      copyChunked(rc.opacities, &dc.opacities);
+    }
+    if (dc.points.empty()) {
+      draw->skipped.push_back("Curves '" + rec.path + "': empty centerline");
+      continue;
+    }
+    RowMatrixToColumnMajor(rec.world, dc.world);
+    addCarrierBounds(rec.world, dc.points, dc.widths, dc.aabbMin, dc.aabbMax);
+    draw->curves.push_back(std::move(dc));
+  }
 
   // --- 3a-native. Scenegraph (instanceable) instances: prims that share an
   //     instance_prototype are flattened by the converter (one mesh set per
@@ -3586,6 +3977,26 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   //         (one VAO/VBO/EBO per batch) instead of 33k -- far less draw-call + GL
   //         object overhead. Purpose stays per-batch so the GUI toggles still
   //         work; per-mesh pick/hide is not a goal of the flat large-scene path.
+  // Light-link collections are the exception: fragments from two source prims
+  // with different membership cannot share one raster draw. Detect that rare
+  // case up front and add a per-source id to the batch key below. Scenes without
+  // authored links retain the large-scene batching behavior unchanged.
+  bool hasAuthoredLightLinks = false;
+  std::function<void(const tnext::UsdPrim&)> findLightLinks =
+      [&](const tnext::UsdPrim& prim) {
+        if (prim.HasProperty("collection:lightLink:includes") ||
+            prim.HasProperty("collection:lightLink:excludes") ||
+            prim.HasProperty("collection:lightLink:membershipExpression")) {
+          hasAuthoredLightLinks = true;
+          return;
+        }
+        for (const tnext::UsdPrim& child : prim.GetChildren()) {
+          if (!hasAuthoredLightLinks) findLightLinks(child);
+        }
+      };
+  for (const tnext::UsdPrim& root : stage.GetRootPrims()) {
+    if (!hasAuthoredLightLinks) findLightLinks(root);
+  }
   struct Batch {
     DrawMeshCPU dm;
     // Avoid rescanning every previously appended triangle to allocate a
@@ -3614,16 +4025,19 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // batch's channel ids and its bound SkelAnimation are unambiguous.
     bool anyMorph = false;
     int matId = 0;
+    int backMatId = -1;
   };
-  // key = (purpose, geometricNormal, doubleSided, materialId, morphId) -> current
+  // key = (purpose, geometricNormal, doubleSided, front/back material, morphId)
+  // -> current
   // batch. Keying by material keeps per-material draws distinct so each batch can
   // reference its own DrawMaterialCPU instead of the single default gray material.
   // doubleSided is per-DrawMeshCPU (it drives back-face culling), so single- and
   // double-sided meshes must not merge. morphId is 0 for ordinary meshes and
   // unique per BLENDSHAPED mesh: morph channel ids and the bound SkelAnimation
   // are per-mesh, so two morphed meshes must not share a batch.
-  std::map<std::tuple<std::string, bool, bool, int, int>, Batch> open;
+  std::map<std::tuple<std::string, bool, bool, int, int, int, int>, Batch> open;
   int nextMorphBatchId = 0;
+  int nextLightLinkBatchId = 0;
 
   // Full UsdShade binding semantics: the purpose fallback chain
   // (material:binding:preview -> material:binding -> material:binding:full) AND
@@ -3635,7 +4049,26 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // (material, opacity) pair. Lets a mesh's `displayOpacity` render through the
   // existing material alpha without mutating a material other meshes share.
   std::map<std::pair<int, int>, int> matAlphaVariants;
+  int displayColorFallbackMaterial = -1;
   size_t varyingOpacityMeshes = 0;
+  auto displayColorMaterial = [&]() -> int {
+    if (displayColorFallbackMaterial >= 0) {
+      return displayColorFallbackMaterial;
+    }
+    DrawMaterialCPU pass = draw->materials[0];
+    pass.name = "displayColorFallback";
+    pass.displayName = pass.name;
+    pass.baseColor[0] = pass.baseColor[1] = pass.baseColor[2] = 1.0f;
+    // This is a neutral multiplier, not an authored surface shader. Leaving
+    // hasLightRtOpenPBR false makes every backend use the compact white
+    // material times displayColor; marking it as a full OpenPBR block caused
+    // the raster shaders to take the synthetic evaluator path and turn an
+    // otherwise unlit displayColor mesh black.
+    pass.hasLightRtOpenPBR = false;
+    displayColorFallbackMaterial = static_cast<int>(draw->materials.size());
+    draw->materials.push_back(std::move(pass));
+    return displayColorFallbackMaterial;
+  };
   auto materialWithAlpha = [&](int base, float alpha) -> int {
     if (base < 0 || static_cast<size_t>(base) >= draw->materials.size()) return base;
     // Quantize so near-identical opacities share one variant.
@@ -3667,11 +4100,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // never fills material_subsets, so we read the GeomSubsets off the stage and
   // reconstruct the triangle->face mapping from the original face vertex counts
   // (fan/earcut both emit c-2 triangles per face, in face order).
+  using MaterialPair = std::pair<int, int>;
   auto buildTriMaterials = [&](const tnext::UsdPrim& mp, const tydn::RenderMesh& m,
-                               size_t numTris, int wholeMat,
-                               std::vector<int>* triMat) {
+                               size_t numTris, MaterialPair wholeMat,
+                               std::vector<MaterialPair>* triMat) {
     triMat->clear();
-    struct Sub { std::vector<int32_t> faces; int mat; };
+    struct Sub { std::vector<int32_t> faces; MaterialPair mat; };
     std::vector<Sub> subs;
     for (const tnext::UsdPrim& c : mp.GetChildren()) {
       if (c.GetTypeName() != "GeomSubset") continue;
@@ -3680,15 +4114,24 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         if (const std::string* t = et->as_token())
           isFace = t->empty() || *t == "face";
       if (!isFace) continue;
-      // Purpose chain, but no ancestor walk: a subset that binds nothing itself
-      // must keep falling back to the whole-mesh material.
-      const std::string bind = tnext::GetBoundMaterialPath(c);
-      if (bind.empty()) continue;
+      // Resolve through the subset's ancestry so an absent or invalid subset
+      // purpose falls back to the whole-mesh material.
+      const std::string bind =
+          tnext::GetInheritedBoundMaterialPath(stage, c.GetPath().str());
+      const std::string backBind =
+          tnext::GetInheritedBoundMaterialPathForPurpose(stage, c.GetPath().str(),
+                                                         "back");
+      if (bind.empty() && backBind.empty()) continue;
       std::vector<int32_t> faces = ReadInts(c, "indices", time);
       if (faces.empty()) continue;
-      subs.push_back({std::move(faces),
-                      resolveMaterialPath(bind, m.texcoords_0_name,
-                                          m.texcoords_1_name)});
+      subs.push_back(
+          {std::move(faces),
+           {bind.empty() ? wholeMat.first
+                         : resolveMaterialPath(bind, m.texcoords_0_name,
+                                               m.texcoords_1_name),
+            backBind.empty() ? wholeMat.second
+                             : resolveMaterialPath(backBind, m.texcoords_0_name,
+                                                   m.texcoords_1_name)}});
     }
     if (subs.empty()) return;
 
@@ -3699,7 +4142,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       for (uint32_t k = 2; k < fvc[f]; ++k) triFace.push_back(static_cast<int>(f));
     if (triFace.size() != numTris) return;  // triangulation mismatch -> whole-mesh
 
-    std::vector<int> faceMat(fvc.size(), wholeMat);
+    std::vector<MaterialPair> faceMat(fvc.size(), wholeMat);
     // Authored subset indices use the ORIGINAL face numbering. When
     // SanitizeMeshTopology dropped faces, fvc/faceMat are in the COMPACTED
     // numbering, so route each authored index through sanitize_face_remap
@@ -3721,7 +4164,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
     }
 
-    std::vector<int> tm(numTris);
+    std::vector<MaterialPair> tm(numTris);
     bool split = false;
     for (size_t t = 0; t < numTris; ++t) {
       tm[t] = faceMat[triFace[t]];
@@ -3802,7 +4245,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
     }
     b.dm.submeshes.push_back(
-        DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), b.matId});
+        DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), b.matId,
+                    b.backMatId});
     std::memset(b.dm.world, 0, sizeof(b.dm.world));
     b.dm.world[0] = b.dm.world[5] = b.dm.world[10] = b.dm.world[15] = 1.0f;
     draw->triangleCount += b.dm.indices.size() / 3;
@@ -3821,6 +4265,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     std::string purpose;
     std::string materialPath;
     double world[16];
+    bool deferredProxy{false};
   };
   std::vector<PendingMeshPrim> meshPrims;
   {
@@ -3835,6 +4280,23 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         std::memcpy(pending.world, rec.world, sizeof(pending.world));
         meshPrims.push_back(std::move(pending));
       }
+    }
+    // Deferred payloads have no composed descendants yet. Emit one bounded
+    // marker per payload root so the first frame communicates that content is
+    // intentionally unloaded (and so an otherwise payload-only stage remains
+    // renderable until the user requests materialization).
+    for (const tnext::Path& deferred : deferredPayloads) {
+      const std::string deferredPath = deferred.str();
+      if (consumed.count(deferredPath)) continue;
+      tnext::UsdPrim prim = stage.GetPrimAtPath(deferred);
+      if (!prim.IsValid()) continue;
+      PendingMeshPrim pending;
+      pending.prim = prim;
+      pending.path = deferredPath;
+      pending.purpose = "proxy";
+      pending.deferredProxy = true;
+      tydn::ComputeWorldTransform(stage, prim, pending.world, time);
+      meshPrims.push_back(std::move(pending));
     }
     // Native-instance and extraction-only records are no longer needed. Drop
     // their backing vectors before geometry conversion starts competing for the
@@ -3860,12 +4322,6 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       ctrl->meshesTotal.store(static_cast<long long>(meshPrims.size()));
       ctrl->meshesDone.store(0);
     }
-    // Do not invent extent boxes for unloaded payloads. Under USD semantics an
-    // unloaded payload contributes no geometry; an asset that wants a cheap
-    // stand-in authors purpose="proxy" geometry outside that payload. The
-    // previous synthetic placeholders turned payload-heavy scenes into cube
-    // clouds and made the purpose controls ineffective because the boxes were
-    // all classified as default-purpose geometry.
   }
   const size_t pendingMeshCount = meshPrims.size();
   const auto collectMeshesAt = std::chrono::steady_clock::now();
@@ -3994,7 +4450,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   convertThreads = std::min<unsigned>(
       convertThreads, static_cast<unsigned>(meshPrims.size()));
   const bool parallelConvert =
-      estimatesFit && convertThreads > 1 && meshPrims.size() >= 16;
+      deferredPayloads.empty() && estimatesFit && convertThreads > 1 &&
+      meshPrims.size() >= 16;
   struct ConvertedMesh {
     tydn::RenderMesh mesh;
     DrawMeshCPU draw;
@@ -4098,7 +4555,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
 
     const size_t geometryBytesForMesh = geometryBytes[meshIndex];
-    const bool overGeometryBudget =
+    const bool overGeometryBudget = !pending.deferredProxy &&
         opts.gpuGeometryBudgetBytes > 0 &&
         (admittedGeometryBytes >= opts.gpuGeometryBudgetBytes ||
          geometryBytesForMesh >
@@ -4162,10 +4619,25 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       vertexToPoint = std::move(converted[meshIndex]->vertexToPoint);
       worldBaked = converted[meshIndex]->worldBaked;
       converted[meshIndex].reset();
-    } else if (!conv.ConvertRenderableMesh(stage, mp, &m)) {
-      releasePendingPrim(&meshRecord.prim);
-      continue;
-    } else if (!FillFlatGeometry(m, &loc, &vertexToPoint)) {
+    } else {
+      bool convertedMesh = false;
+      if (meshRecord.deferredProxy) {
+        convertedMesh = conv.ConvertExtentProxy(mp, &m);
+        if (!convertedMesh) {
+          convertedMesh = conv.ConvertBoundsProxy(
+              mp, tydn::Float3(-1.0f, -1.0f, -1.0f),
+              tydn::Float3(1.0f, 1.0f, 1.0f), &m);
+        }
+        if (convertedMesh) draw->truncated = true;
+      } else {
+        convertedMesh = conv.ConvertRenderableMesh(stage, mp, &m);
+      }
+      if (!convertedMesh || !FillFlatGeometry(m, &loc, &vertexToPoint)) {
+        releasePendingPrim(&meshRecord.prim);
+        continue;
+      }
+    }
+    if (loc.vertices.empty()) {
       releasePendingPrim(&meshRecord.prim);
       continue;
     }
@@ -4183,6 +4655,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     int wholeMat = resolveMaterialPath(meshRecord.materialPath,
                                        m.texcoords_0_name,
                                        m.texcoords_1_name);
+    const std::string backMaterialPath =
+        tnext::GetInheritedBoundMaterialPathForPurpose(stage, mp.GetPath().str(),
+                                                       "back");
+    int wholeBackMat = backMaterialPath.empty()
+                           ? -1
+                           : resolveMaterialPath(backMaterialPath,
+                                                 m.texcoords_0_name,
+                                                 m.texcoords_1_name);
     double mw16[16];
     std::memcpy(mw16, meshRecord.world, sizeof(mw16));
     // Blendshapes, BEFORE skinning: a blendshape deforms the bind-space points and
@@ -4232,6 +4712,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // and its bound animation are its own. 0 = poolable with other static meshes.
     const int morphBatchId =
         (loc.morphChannelCount > 0) ? ++nextMorphBatchId : 0;
+    const int lightLinkBatchId =
+        hasAuthoredLightLinks ? ++nextLightLinkBatchId : 0;
     float Mf[16];
     for (int k = 0; k < 16; ++k) Mf[k] = static_cast<float>(mw16[k]);
     const float* M = Mf;  // row-major, p*M (same as the converter's node xform)
@@ -4277,6 +4759,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                              le[2] * std::fabs(M[2 * 4 + a]);
       }
     }
+    // With no bound material, displayColor is the authored surface-color
+    // fallback. Use a white material multiplier only for those meshes; changing
+    // the shared gray default would also brighten every uncolored/unbound mesh.
+    if (wholeMat == 0 && !loc.vertexColors.empty()) {
+      wholeMat = displayColorMaterial();
+    }
+
     // USD `primvars:displayOpacity`. When it does not actually vary, fold it
     // into an alpha-adjusted MATERIAL VARIANT (a clone of the bound material,
     // made once per distinct opacity). That renders correctly through the
@@ -4291,7 +4780,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       float lo = loc.vertexAlpha[0], hi = loc.vertexAlpha[0];
       for (float a : loc.vertexAlpha) { lo = std::min(lo, a); hi = std::max(hi, a); }
       if (hi - lo <= 1e-6f) {
-        if (lo < 1.0f - 1e-6f) wholeMat = materialWithAlpha(wholeMat, lo);
+        if (lo < 1.0f - 1e-6f) {
+          wholeMat = materialWithAlpha(wholeMat, lo);
+          if (wholeBackMat >= 0)
+            wholeBackMat = materialWithAlpha(wholeBackMat, lo);
+        }
         loc.vertexAlpha.clear();
         loc.vertexAlpha.shrink_to_fit();
       } else {
@@ -4300,6 +4793,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         // variant exists to move an otherwise-opaque material into the blend
         // pass; the actual modulation remains per vertex.
         wholeMat = materialWithAlpha(wholeMat, 1.0f);
+        if (wholeBackMat >= 0)
+          wholeBackMat = materialWithAlpha(wholeBackMat, 1.0f);
       }
     }
 
@@ -4364,17 +4859,23 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     };
 
     // Per-triangle materials from face GeomSubsets (empty => uniform wholeMat).
-    std::vector<int> triMat;
-    buildTriMaterials(mp, m, loc.indices.size() / 3, wholeMat, &triMat);
+    std::vector<MaterialPair> triMat;
+    buildTriMaterials(mp, m, loc.indices.size() / 3,
+                      {wholeMat, wholeBackMat}, &triMat);
     if (hasAlpha) {
-      for (int& mid : triMat) mid = materialWithAlpha(mid, 1.0f);
+      for (MaterialPair& mid : triMat) {
+        mid.first = materialWithAlpha(mid.first, 1.0f);
+        if (mid.second >= 0)
+          mid.second = materialWithAlpha(mid.second, 1.0f);
+      }
     }
 
     if (triMat.empty()) {
       // --- Single-material fast path: append the whole mesh to one batch. ---
       Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, wholeMat,
-                       morphBatchId}];
+                       wholeBackMat, morphBatchId, lightLinkBatchId}];
       b.matId = wholeMat;
+      b.backMatId = wholeBackMat;
       if (!b.dm.vertices.empty() &&
           b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
         flushBatch(b);  // resets b in the map slot
@@ -4382,6 +4883,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.purpose = purpose;
       b.dm.geometricNormal = loc.geometricNormal;
       b.dm.doubleSided = m.double_sided;
+      if (hasAuthoredLightLinks) b.dm.absPath = loc.absPath;
       // Allocate the batch color buffer only once a mesh actually contributes a
       // color: back-fill white for the vertices already in the batch. No-color
       // batches (e.g. the hotel) then never allocate a 12 B/vertex white buffer.
@@ -4449,13 +4951,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       // --- Multi-material (GeomSubset) path: route each triangle to its
       //     material's batch, appending only the vertices that batch references
       //     (compacted per group so batches don't carry unused vertices). ---
-      std::set<int> groups(triMat.begin(), triMat.end());
+      std::set<MaterialPair> groups(triMat.begin(), triMat.end());
       const size_t numTris = loc.indices.size() / 3;
       bool firstGroup = true;
-      for (int gm : groups) {
-        Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, gm,
-                         morphBatchId}];
-        b.matId = gm;
+      for (const MaterialPair& gm : groups) {
+        Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, gm.first,
+                         gm.second, morphBatchId, lightLinkBatchId}];
+        b.matId = gm.first;
+        b.backMatId = gm.second;
         if (!b.dm.vertices.empty() &&
             b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
           flushBatch(b);
@@ -4463,6 +4966,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.purpose = purpose;
         b.dm.geometricNormal = loc.geometricNormal;
         b.dm.doubleSided = m.double_sided;
+        if (hasAuthoredLightLinks) b.dm.absPath = loc.absPath;
         if (hasC && !b.anyColor) {
           b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
           b.anyColor = true;
@@ -4649,12 +5153,26 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       tight.add(p0);
       tight.add(p1);
     }
+    for (const DrawPointsCPU& points : draw->points) {
+      if (std::isfinite(points.aabbMin[0]) &&
+          std::isfinite(points.aabbMax[0])) {
+        tight.add(points.aabbMin);
+        tight.add(points.aabbMax);
+      }
+    }
+    for (const DrawCurvesCPU& curves : draw->curves) {
+      if (std::isfinite(curves.aabbMin[0]) &&
+          std::isfinite(curves.aabbMax[0])) {
+        tight.add(curves.aabbMin);
+        tight.add(curves.aabbMax);
+      }
+    }
     if (tight.has) bounds = tight;
   }
 
   // UsdVol volumes (OpenVDB): emit DrawVolumeCPU + extend bounds.
   BuildNextVolumes(stage, path, time, draw, &bounds);
-  BuildNextLights(stage, path, time, opts.textureOptions, draw);
+  BuildNextLights(stage, conv, path, time, opts.textureOptions, draw);
 
   if (bounds.has) {
     for (int k = 0; k < 3; ++k) {
@@ -4675,6 +5193,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     else if (dm.purpose == "proxy") ++nProxy;
     else if (dm.purpose == "render") ++nRender;
   }
+  for (const DrawPointsCPU& dp : draw->points) {
+    if (dp.purpose == "guide") ++nGuide;
+    else if (dp.purpose == "proxy") ++nProxy;
+    else if (dp.purpose == "render") ++nRender;
+  }
+  for (const DrawCurvesCPU& dc : draw->curves) {
+    if (dc.purpose == "guide") ++nGuide;
+    else if (dc.purpose == "proxy") ++nProxy;
+    else if (dc.purpose == "render") ++nRender;
+  }
   LOGI("next: '%s' -> %zu draws (%zu guide, %zu proxy, %zu render), %lld instances, "
        "%zu unique tris (%lld effective), %zu materials, %zu textures, "
        "instXform VRAM ~%.2f GB, up=%s%s",
@@ -4683,6 +5211,30 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
        draw->triangleCount, effectiveTris, draw->materials.size(),
        draw->textures.size(), double(instTotal) * 48.0 / 1e9,
        draw->upAxis.c_str(), draw->truncated ? " (truncated)" : "");
+  if (!draw->points.empty() || !draw->curves.empty()) {
+    size_t pointSamples = 0, curveSamples = 0, opacityPrims = 0;
+    size_t constantWidthCurves = 0;
+    for (const DrawPointsCPU& p : draw->points) {
+      pointSamples += p.points.size() / 3;
+      opacityPrims += p.opacities.empty() ? 0 : 1;
+    }
+    for (const DrawCurvesCPU& c : draw->curves) {
+      curveSamples += c.points.size() / 3;
+      opacityPrims += c.opacities.empty() ? 0 : 1;
+      constantWidthCurves += c.widths.size() == 1 ? 1 : 0;
+    }
+    LOGI("next: retained %zu Points prim(s) / %zu samples and %zu Curves "
+         "prim(s) / %zu tessellated samples",
+         draw->points.size(), pointSamples, draw->curves.size(), curveSamples);
+    if (opacityPrims > 0) {
+      LOGI("next: retained displayOpacity for %zu non-mesh prim(s)",
+           opacityPrims);
+    }
+    if (constantWidthCurves > 0) {
+      LOGI("next: retained authored constant width for %zu Curves prim(s)",
+           constantWidthCurves);
+    }
+  }
   if (sourcePoints > 0) {
     LOGI("next: weld %zu vertices from %zu points (%.2fx)", weldedVertices,
          sourcePoints,
@@ -4710,9 +5262,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
          static_cast<unsigned long long>(dec.downscaled_count()));
   }
 
-  if (streamedMeshCount + draw->meshes.size() == 0 && draw->volumes.empty()) {
-    if (err) *err = "next: no renderable mesh produced";
-    if (stream) stream->pushFailed(err ? *err : "next: no renderable mesh produced");
+  // A stage whose only renderable content lives below a deferred payload is a
+  // valid initial composition. Keep its session alive so MCP/UI payload loading
+  // can recompose it on demand; only reject truly empty, non-deferred stages.
+  if (streamedMeshCount + draw->meshes.size() == 0 && draw->points.empty() &&
+      draw->curves.empty() && draw->volumes.empty() && deferredPayloads.empty()) {
+    if (err) *err = "next: no renderable geometry produced";
+    if (stream)
+      stream->pushFailed(err ? *err : "next: no renderable geometry produced");
     return false;
   }
   if (timing) {

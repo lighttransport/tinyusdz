@@ -37,6 +37,35 @@ void SetUvUniform(GLint loc0, GLint loc1, const DrawUvXformCPU& uv) {
   glUniform3f(loc1, uv.m10, uv.m11, uv.ty);
 }
 
+void UploadRasterLightArray(GLuint program, const RasterLightSet& lights) {
+  float positionType[kMaxRasterLights * 4]{};
+  float directionAngle[kMaxRasterLights * 4]{};
+  float colorDiffuse[kMaxRasterLights * 4]{};
+  float specularShape[kMaxRasterLights * 4]{};
+  for (int i = 0; i < lights.count; ++i) {
+    const RasterLightGPU& src = lights.lights[static_cast<size_t>(i)];
+    std::memcpy(positionType + i * 4, src.positionType, 4 * sizeof(float));
+    std::memcpy(directionAngle + i * 4, src.directionAngle, 4 * sizeof(float));
+    std::memcpy(colorDiffuse + i * 4, src.colorDiffuse, 4 * sizeof(float));
+    std::memcpy(specularShape + i * 4, src.specularShape, 4 * sizeof(float));
+  }
+  glUniform1i(glGetUniformLocation(program, "uLightCount"), lights.count);
+  glUniform4fv(glGetUniformLocation(program, "uLightPositionType"), lights.count,
+               positionType);
+  glUniform4fv(glGetUniformLocation(program, "uLightDirectionAngle"), lights.count,
+               directionAngle);
+  glUniform4fv(glGetUniformLocation(program, "uLightColorDiffuse"), lights.count,
+               colorDiffuse);
+  glUniform4fv(glGetUniformLocation(program, "uLightSpecularShape"), lights.count,
+               specularShape);
+}
+
+void UploadRasterLightMask(GLuint program, const RasterLightSet& lights,
+                           int meshIndex) {
+  glUniform1ui(glGetUniformLocation(program, "uLightMask"),
+               RasterLightMaskForMesh(lights, meshIndex));
+}
+
 // Compressed-format enum values that may be absent from older glad headers.
 #ifndef GL_COMPRESSED_RG_RGTC2
 #define GL_COMPRESSED_RG_RGTC2 0x8DBD
@@ -185,6 +214,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uLightColor_ = glGetUniformLocation(program_, "uLightColor");
   uHasIbl_ = glGetUniformLocation(program_, "uHasIbl");
   uIblColor_ = glGetUniformLocation(program_, "uIblColor");
+  uExposure_ = glGetUniformLocation(program_, "uExposure");
   uEnvRotation_ = glGetUniformLocation(program_, "uEnvRotation");
   uPrefilteredLods_ = glGetUniformLocation(program_, "uPrefilteredLods");
   uGeometricNormal_ = glGetUniformLocation(program_, "uGeometricNormal");
@@ -206,24 +236,33 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uUseSpecularWorkflow_ = glGetUniformLocation(program_, "uUseSpecularWorkflow");
   uSpecularColor_ = glGetUniformLocation(program_, "uSpecularColor");
   uIor_ = glGetUniformLocation(program_, "uIor");
+  uOcclusion_ = glGetUniformLocation(program_, "uOcclusion");
+  uCoatWeight_ = glGetUniformLocation(program_, "uCoatWeight");
+  uCoatColor_ = glGetUniformLocation(program_, "uCoatColor");
+  uCoatRoughness_ = glGetUniformLocation(program_, "uCoatRoughness");
+  uCoatIor_ = glGetUniformLocation(program_, "uCoatIor");
   uEmissive_ = glGetUniformLocation(program_, "uEmissive");
   uAlpha_ = glGetUniformLocation(program_, "uAlpha");
   uAlphaMode_ = glGetUniformLocation(program_, "uAlphaMode");
   uAlphaCutoff_ = glGetUniformLocation(program_, "uAlphaCutoff");
   uHasBaseColorTex_ = glGetUniformLocation(program_, "uHasBaseColorTex");
-  uHasMetalRoughTex_ = glGetUniformLocation(program_, "uHasMetalRoughTex");
+  uHasMetallicTex_ = glGetUniformLocation(program_, "uHasMetallicTex");
+  uHasRoughnessTex_ = glGetUniformLocation(program_, "uHasRoughnessTex");
   uHasNormalTex_ = glGetUniformLocation(program_, "uHasNormalTex");
   uHasEmissiveTex_ = glGetUniformLocation(program_, "uHasEmissiveTex");
   uHasOpacityTex_ = glGetUniformLocation(program_, "uHasOpacityTex");
   uBaseColorTexIsUdim_ = glGetUniformLocation(program_, "uBaseColorTexIsUdim");
-  uMetalRoughTexIsUdim_ = glGetUniformLocation(program_, "uMetalRoughTexIsUdim");
+  uMetallicTexIsUdim_ = glGetUniformLocation(program_, "uMetallicTexIsUdim");
+  uRoughnessTexIsUdim_ = glGetUniformLocation(program_, "uRoughnessTexIsUdim");
   uNormalTexIsUdim_ = glGetUniformLocation(program_, "uNormalTexIsUdim");
   uEmissiveTexIsUdim_ = glGetUniformLocation(program_, "uEmissiveTexIsUdim");
   uOpacityTexIsUdim_ = glGetUniformLocation(program_, "uOpacityTexIsUdim");
   uBaseColorUv0_ = glGetUniformLocation(program_, "uBaseColorUv0");
   uBaseColorUv1_ = glGetUniformLocation(program_, "uBaseColorUv1");
-  uMetalRoughUv0_ = glGetUniformLocation(program_, "uMetalRoughUv0");
-  uMetalRoughUv1_ = glGetUniformLocation(program_, "uMetalRoughUv1");
+  uMetallicUv0_ = glGetUniformLocation(program_, "uMetallicUv0");
+  uMetallicUv1_ = glGetUniformLocation(program_, "uMetallicUv1");
+  uRoughnessUv0_ = glGetUniformLocation(program_, "uRoughnessUv0");
+  uRoughnessUv1_ = glGetUniformLocation(program_, "uRoughnessUv1");
   uNormalUv0_ = glGetUniformLocation(program_, "uNormalUv0");
   uNormalUv1_ = glGetUniformLocation(program_, "uNormalUv1");
   uEmissiveUv0_ = glGetUniformLocation(program_, "uEmissiveUv0");
@@ -231,6 +270,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uOpacityUv0_ = glGetUniformLocation(program_, "uOpacityUv0");
   uOpacityUv1_ = glGetUniformLocation(program_, "uOpacityUv1");
   uUvSet_ = glGetUniformLocation(program_, "uUvSet");
+  uRoughnessUvSet_ = glGetUniformLocation(program_, "uRoughnessUvSet");
   uBaseColorTexScale_ = glGetUniformLocation(program_, "uBaseColorTexScale");
   uBaseColorTexBias_ = glGetUniformLocation(program_, "uBaseColorTexBias");
   uNormalTexScale_ = glGetUniformLocation(program_, "uNormalTexScale");
@@ -249,6 +289,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uOpacityTexBias_ = glGetUniformLocation(program_, "uOpacityTexBias");
   uUdimSlots_ = glGetUniformLocation(program_, "uUdimSlots");
   uOpacityUdimSlot_ = glGetUniformLocation(program_, "uOpacityUdimSlot");
+  uRoughnessUdimSlot_ = glGetUniformLocation(program_, "uRoughnessUdimSlot");
   uHasDisplacement_ = glGetUniformLocation(program_, "uHasDisplacement");
   uHasDisplacementTex_ = glGetUniformLocation(program_, "uHasDisplacementTex");
   uDisplacementConst_ = glGetUniformLocation(program_, "uDisplacementConst");
@@ -262,13 +303,15 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uInfluenceTexWidth_ = glGetUniformLocation(program_, "uInfluenceTexWidth");
   // Fixed sampler -> texture-unit bindings.
   glUniform1i(glGetUniformLocation(program_, "uBaseColorTex"), 0);
-  glUniform1i(glGetUniformLocation(program_, "uMetalRoughTex"), 1);
+  glUniform1i(glGetUniformLocation(program_, "uMetallicTex"), 1);
+  glUniform1i(glGetUniformLocation(program_, "uRoughnessTex"), 18);
   glUniform1i(glGetUniformLocation(program_, "uNormalTex"), 2);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveTex"), 3);
   glUniform1i(glGetUniformLocation(program_, "uOpacityTex"), 14);
   glUniform1i(glGetUniformLocation(program_, "uBaseColorUdimTex"), 11);
   glUniform1i(glGetUniformLocation(program_, "uUdimLutAtlas"), 12);
-  glUniform1i(glGetUniformLocation(program_, "uMetalRoughUdimTex"), 13);
+  glUniform1i(glGetUniformLocation(program_, "uMetallicUdimTex"), 13);
+  glUniform1i(glGetUniformLocation(program_, "uRoughnessUdimTex"), 22);
   glUniform1i(glGetUniformLocation(program_, "uNormalUdimTex"), 15);
   glUniform1i(glGetUniformLocation(program_, "uOpacityUdimTex"), 16);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveUdimTex"), 17);
@@ -394,9 +437,13 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "uniform vec3 uCameraPos;\n"
       "uniform vec3 uLightDir;\n"
       "uniform vec3 uLightColor;\n"
+      "uniform int uLightCount; uniform uint uLightMask;\n"
+      "uniform vec4 uLightPositionType[16],uLightDirectionAngle[16];\n"
+      "uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16];\n"
       // DomeLight IBL (diffuse-only here: prototypes carry no material scalars).
       "uniform bool uHasIbl;\n"
       "uniform vec3 uIblColor;\n"
+      "uniform float uExposure;\n"
       "uniform mat3 uEnvRotation;\n"
       "uniform samplerCube uIrradianceMap;\n"
       "uniform vec3 uEmissive;\n"  // selection-highlight override (else 0)
@@ -439,6 +486,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "  vec3 hi = 1.055 * pow(c, vec3(1.0/2.4)) - 0.055;\n"
       "  return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));\n"
       "}\n"
+      "float ggxD(float nh,float r){float a=max(r*r,0.002),a2=a*a,d=nh*nh*(a2-1.0)+1.0;return a2/max(3.14159265*d*d,1e-6);}\n"
+      "float ggxG1(float nx,float r){float k=(r+1.0)*(r+1.0)*0.125;return nx/max(nx*(1.0-k)+k,1e-6);}\n"
+      "vec3 fresnel(float vh,vec3 f0){return f0+(vec3(1.0)-f0)*pow(1.0-clamp(vh,0.0,1.0),5.0);}\n"
       "void main(){\n"
       // Geometric (screen-derivative) normal: instanced prototypes usually ship
       // without authored normals, and faceted shading reads cleanly for them.
@@ -471,22 +521,21 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       // a lit render.
       "    FragColor = vec4(0.18,0.18,0.18,1.0); return;\n"
       "  }\n"
-      // View-facing preview light: N.V carries most of the contrast so pale,
-      // untextured assets remain readable, with a small world-space key to keep
-      // similarly oriented surfaces from collapsing to one value.
+      // Fixed dielectric GGX material for instanced prototypes, which do not
+      // yet carry the full per-material scalar payload.
       "  vec3 V = normalize(uCameraPos - vWorldPos);\n"
       "  vec3 Nf = (dot(N, V) < 0.0) ? -N : N;\n"
-      "  float facing = max(dot(Nf, V), 0.0);\n"
-      "  vec3 L = (dot(uLightDir,uLightDir)>1e-8) ? normalize(uLightDir) : normalize(vec3(0.3,0.5,0.8));\n"
-      "  vec3 lightColor = (dot(uLightColor,uLightColor)>1e-8) ? uLightColor : vec3(1.0);\n"
-      "  float key = dot(Nf, L) * 0.5 + 0.5;\n"
-      "  float shade = 0.8 * facing + 0.2 * key;\n"
-      "  vec3 H = normalize(L + V);\n"
-      "  float NdotH = max(dot(Nf, H), 0.0);\n"
+      "  float nv=max(dot(Nf,V),1e-4),r=0.5; vec3 direct=vec3(0);\n"
+      "  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;\n"
+      "    vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];\n"
+      "    int lt=int(pt.w+0.5);vec3 L;float att=1.0;if(lt==5)L=normalize(da.xyz);else{vec3 q=pt.xyz-vWorldPos;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1.0/d2;}\n"
+      "    float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}\n"
+      "    float nl=max(dot(Nf,L),0.0);if(nl<=0.0||shape<=0.0)continue;vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));\n"
+      "    vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1.0)-F)*vColor*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl);}\n"
+      "  if(uLightCount==0){vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));vec3 lc=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1);float nl=max(dot(Nf,L),0.0);vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*vColor*(1.0/3.14159265);direct=(diff+spec)*lc*nl;}\n"
       "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.12);\n"
-      "  amb *= 0.4 + 0.6 * facing;\n"
-      "  vec3 col = vColor * (amb + lightColor * (0.84 * shade)) + lightColor * 0.10 * pow(NdotH, 32.0) * facing;\n"
-      "  FragColor = vec4(linearToSrgb(col + uEmissive), vOpacity);\n"
+      "  vec3 col = vColor*amb + direct;\n"
+      "  FragColor = vec4(linearToSrgb((col + uEmissive) * exp2(uExposure)), vOpacity);\n"
       "}\n";
   instProgram_ = glutil::CompileProgram(kInstancedVS, kInstancedFS, err);
   if (!instProgram_) {
@@ -499,6 +548,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   iLightDir_ = glGetUniformLocation(instProgram_, "uLightDir");
   iHasIbl_ = glGetUniformLocation(instProgram_, "uHasIbl");
   iIblColor_ = glGetUniformLocation(instProgram_, "uIblColor");
+  iExposure_ = glGetUniformLocation(instProgram_, "uExposure");
   iEnvRotation_ = glGetUniformLocation(instProgram_, "uEnvRotation");
   iLightColor_ = glGetUniformLocation(instProgram_, "uLightColor");
   iEmissive_ = glGetUniformLocation(instProgram_, "uEmissive");
@@ -577,6 +627,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
                           (void*)(3 * sizeof(float)));
     glBindVertexArray(0);
   }
+  buildNonMeshProgram();
 
   // UsdVol volume raymarch program + unit-cube proxy geometry.
   {
@@ -896,10 +947,18 @@ void GLRenderer::buildTessProgram() {
       "in vec3 vWorldPos; in vec3 vNormal; in vec2 vUV;\n"
       "uniform vec3 uCameraPos; uniform vec3 uBaseColor;\n"
       "uniform vec3 uLightDir; uniform vec3 uLightColor;\n"
+      "uniform int uLightCount; uniform uint uLightMask;\n"
+      "uniform vec4 uLightPositionType[16],uLightDirectionAngle[16];\n"
+      "uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16];\n"
       "uniform bool uHasIbl; uniform vec3 uIblColor; uniform mat3 uEnvRotation;\n"
+      "uniform float uExposure;\n"
       "uniform samplerCube uIrradianceMap;\n"
       "uniform sampler2D uBaseColorTex; uniform bool uHasBaseColorTex;\n"
       "out vec4 FragColor;\n"
+      "vec3 linearToSrgb(vec3 c){c=clamp(c,0.0,1.0);vec3 lo=c*12.92;vec3 hi=1.055*pow(c,vec3(1.0/2.4))-0.055;return mix(lo,hi,vec3(greaterThan(c,vec3(0.0031308))));}\n"
+      "float ggxD(float nh,float r){float a=max(r*r,0.002),a2=a*a,d=nh*nh*(a2-1.0)+1.0;return a2/max(3.14159265*d*d,1e-6);}\n"
+      "float ggxG1(float nx,float r){float k=(r+1.0)*(r+1.0)*0.125;return nx/max(nx*(1.0-k)+k,1e-6);}\n"
+      "vec3 fresnel(float vh,vec3 f0){return f0+(vec3(1.0)-f0)*pow(1.0-clamp(vh,0.0,1.0),5.0);}\n"
       "void main(){\n"
       "  vec3 base=uBaseColor;\n"
       "  if(uHasBaseColorTex) base*=texture(uBaseColorTex,vUV).rgb;\n"
@@ -907,19 +966,14 @@ void GLRenderer::buildTessProgram() {
       // height detail actually shades, matching the coarse path's displaced look.
       "  vec3 N=normalize(cross(dFdx(vWorldPos),dFdy(vWorldPos)));\n"
       "  if(!gl_FrontFacing) N=-N;\n"
-      // View-facing preview light (matches the coarse/material path).
       "  vec3 V=normalize(uCameraPos-vWorldPos);\n"
       "  vec3 Nf=(dot(N,V)<0.0)?-N:N;\n"
-      "  float facing=max(dot(Nf,V),0.0);\n"
-      "  vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));\n"
-      "  vec3 lightColor=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1.0);\n"
-      "  float key=dot(Nf,L)*0.5+0.5;\n"
-      "  float shade=0.8*facing+0.2*key;\n"
-      "  vec3 H=normalize(L+V); float NdotH=max(dot(Nf,H),0.0);\n"
+      "  float nv=max(dot(Nf,V),1e-4),r=0.5;vec3 direct=vec3(0);\n"
+      "  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];int lt=int(pt.w+0.5);vec3 L;float att=1.0;if(lt==5)L=normalize(da.xyz);else{vec3 q=pt.xyz-vWorldPos;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1.0/d2;}float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}float nl=max(dot(Nf,L),0.0);if(nl<=0.0||shape<=0.0)continue;vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*base*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl);}\n"
+      "  if(uLightCount==0){vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));vec3 lc=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1);float nl=max(dot(Nf,L),0.0);vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*base*(1.0/3.14159265);direct=(diff+spec)*lc*nl;}\n"
       "  vec3 amb=uHasIbl?texture(uIrradianceMap,normalize(uEnvRotation*Nf)).rgb*uIblColor:vec3(0.12);\n"
-      "  amb*=0.4+0.6*facing;\n"
-      "  vec3 col=base*(amb+lightColor*(0.84*shade))+lightColor*0.10*pow(NdotH,32.0)*facing;\n"
-      "  FragColor=vec4(col,1.0);\n"
+      "  vec3 col=base*amb+direct;\n"
+      "  FragColor=vec4(linearToSrgb(col*exp2(uExposure)),1.0);\n"
       "}\n";
   std::string terr;
   tessProgram_ = glutil::CompileProgramTess(kVS, kTCS, kTES, kFS, &terr);
@@ -938,6 +992,7 @@ void GLRenderer::buildTessProgram() {
   tLightColor_ = glGetUniformLocation(tessProgram_, "uLightColor");
   tHasIbl_ = glGetUniformLocation(tessProgram_, "uHasIbl");
   tIblColor_ = glGetUniformLocation(tessProgram_, "uIblColor");
+  tExposure_ = glGetUniformLocation(tessProgram_, "uExposure");
   tEnvRotation_ = glGetUniformLocation(tessProgram_, "uEnvRotation");
   tBaseColor_ = glGetUniformLocation(tessProgram_, "uBaseColor");
   tHasBaseColorTex_ = glGetUniformLocation(tessProgram_, "uHasBaseColorTex");
@@ -964,6 +1019,99 @@ void GLRenderer::buildTessProgram() {
   glUniform1i(glGetUniformLocation(tessProgram_, "uIrradianceMap"), 19);
   glUseProgram(0);
   tessAvailable_ = true;
+}
+
+void GLRenderer::buildNonMeshProgram() {
+  static const char* kVS = R"GLSL(#version 330 core
+layout(location=0) in vec3 aP0;
+layout(location=1) in vec3 aP1;
+layout(location=2) in float aWidth;
+layout(location=3) in vec4 aColor;
+uniform mat4 uViewProj;
+uniform vec3 uCameraPos, uCameraRight, uCameraUp;
+uniform int uKind;
+out vec2 vLocal;
+out vec4 vColor;
+out vec3 vWorld;
+out vec3 vView;
+flat out int vInstanceId;
+void main(){
+  vec2 corner = gl_VertexID==0 ? vec2(-1,-1) :
+                gl_VertexID==1 ? vec2( 1,-1) :
+                gl_VertexID==2 ? vec2(-1, 1) : vec2(1,1);
+  vec3 p;
+  if(uKind==0){
+    p=aP0+(uCameraRight*corner.x+uCameraUp*corner.y)*(0.5*aWidth);
+    vLocal=corner;
+  }else{
+    float along=corner.y*0.5+0.5;
+    vec3 center=mix(aP0,aP1,along);
+    vec3 tangent=normalize(aP1-aP0);
+    vec3 view=normalize(uCameraPos-center);
+    vec3 side=cross(tangent,view);
+    if(dot(side,side)<1e-10) side=uCameraRight;
+    side=normalize(side);
+    p=center+side*(corner.x*0.5*aWidth);
+    vLocal=vec2(corner.x,along);
+  }
+  vColor=aColor; vWorld=p; vView=normalize(uCameraPos-p);
+  vInstanceId=gl_InstanceID;
+  gl_Position=uViewProj*vec4(p,1.0);
+}
+)GLSL";
+  static const char* kFS = R"GLSL(#version 330 core
+in vec2 vLocal; in vec4 vColor; in vec3 vWorld; in vec3 vView;
+flat in int vInstanceId;
+uniform vec3 uCameraRight,uCameraUp,uLightDir,uLightColor;
+uniform int uLightCount; uniform uint uLightMask;
+uniform vec4 uLightPositionType[16],uLightDirectionAngle[16];
+uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16];
+uniform float uExposure;
+uniform int uKind,uMaterialId,uCarrierId,uPurpose,uRenderMode;
+out vec4 fragColor;
+vec3 idColor(int id){uint h=(uint(max(id,0))+1u)*2654435761u;return vec3(float(h&255u),float((h>>8u)&255u),float((h>>16u)&255u))*(1.0/255.0);}
+vec3 linearToSrgb(vec3 c){c=clamp(c,0.0,1.0);vec3 lo=c*12.92;vec3 hi=1.055*pow(c,vec3(1.0/2.4))-0.055;return mix(lo,hi,vec3(greaterThan(c,vec3(0.0031308))));}
+float D(float nh,float r){float a=max(r*r,.002),a2=a*a,d=nh*nh*(a2-1.0)+1.0;return a2/max(3.14159265*d*d,1e-6);}
+float G(float nx,float r){float k=(r+1.0)*(r+1.0)*.125;return nx/max(nx*(1.0-k)+k,1e-6);}
+vec3 F(float vh,vec3 f0){return f0+(vec3(1)-f0)*pow(1.0-clamp(vh,0.0,1.0),5.0);}
+void main(){
+  vec3 N;
+  if(uKind==0){float rr=dot(vLocal,vLocal);if(rr>1.0)discard;N=normalize(uCameraRight*vLocal.x+uCameraUp*vLocal.y+vView*sqrt(max(0.0,1.0-rr)));}
+  else N=normalize(vView);
+  if(uRenderMode==2){fragColor=vec4(N*.5+.5,1);return;}
+  if(uRenderMode==3){fragColor=vec4(idColor(uMaterialId),1);return;}
+  if(uRenderMode==15){fragColor=vec4(idColor(vInstanceId),1);return;}
+  if(uRenderMode==16){fragColor=vec4(idColor(uCarrierId),1);return;}
+  if(uRenderMode==18){vec3 c=uPurpose==1?vec3(.3,.7,1):uPurpose==2?vec3(1,.6,.2):uPurpose==3?vec3(.8,.3,1):vec3(.7);fragColor=vec4(c,1);return;}
+  if(uRenderMode==7){fragColor=vec4(vColor.rgb,1);return;}
+  if(uRenderMode==12){fragColor=vec4(vec3(vColor.a),1);return;}
+  if(uRenderMode!=0){fragColor=vec4(.18,.18,.18,1);return;}
+  vec3 V=normalize(vView);float nv=max(dot(N,V),1e-4),r=.5;vec3 direct=vec3(0);
+  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];int lt=int(pt.w+.5);vec3 L;float att=1;if(lt==5)L=normalize(da.xyz);else{vec3 q=pt.xyz-vWorld;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1/d2;}float shape=1;if(ss.w>.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0,180))),inn=cos(radians(clamp(da.w*(1-clamp(ss.y,0,1)),0,180)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0),max(ss.z,0));}float nl=max(dot(N,L),0);if(nl<=0||shape<=0)continue;vec3 H=normalize(V+L);float nh=max(dot(N,H),0),vh=max(dot(V,H),0);vec3 ff=F(vh,vec3(.04)),spec=D(nh,r)*G(nv,r)*G(nl,r)*ff/max(4*nv*nl,1e-5),diff=(vec3(1)-ff)*vColor.rgb*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl);}
+  if(uLightCount==0){vec3 L=normalize(uLightDir),H=normalize(V+L);float nl=max(dot(N,L),0),nh=max(dot(N,H),0),vh=max(dot(V,H),0);vec3 ff=F(vh,vec3(.04)),spec=D(nh,r)*G(nv,r)*G(nl,r)*ff/max(4*nv*nl,1e-5),diff=(vec3(1)-ff)*vColor.rgb*(1.0/3.14159265);direct=(diff+spec)*uLightColor*nl;}
+  vec3 col=vColor.rgb*.12+direct;
+  fragColor=vec4(linearToSrgb(col*exp2(uExposure)),vColor.a);
+}
+)GLSL";
+  std::string err;
+  nonMeshProgram_ = glutil::CompileProgram(kVS, kFS, &err);
+  if (!nonMeshProgram_) {
+    std::fprintf(stderr, "[tusdview] non-mesh GL program unavailable: %s\n",
+                 err.c_str());
+    return;
+  }
+  nmViewProj_ = glGetUniformLocation(nonMeshProgram_, "uViewProj");
+  nmCameraPos_ = glGetUniformLocation(nonMeshProgram_, "uCameraPos");
+  nmCameraRight_ = glGetUniformLocation(nonMeshProgram_, "uCameraRight");
+  nmCameraUp_ = glGetUniformLocation(nonMeshProgram_, "uCameraUp");
+  nmLightDir_ = glGetUniformLocation(nonMeshProgram_, "uLightDir");
+  nmLightColor_ = glGetUniformLocation(nonMeshProgram_, "uLightColor");
+  nmExposure_ = glGetUniformLocation(nonMeshProgram_, "uExposure");
+  nmKind_ = glGetUniformLocation(nonMeshProgram_, "uKind");
+  nmMaterialId_ = glGetUniformLocation(nonMeshProgram_, "uMaterialId");
+  nmCarrierId_ = glGetUniformLocation(nonMeshProgram_, "uCarrierId");
+  nmPurpose_ = glGetUniformLocation(nonMeshProgram_, "uPurpose");
+  nmRenderMode_ = glGetUniformLocation(nonMeshProgram_, "uRenderMode");
 }
 
 void GLRenderer::destroyScene() {
@@ -993,6 +1141,11 @@ void GLRenderer::destroyScene() {
     if (m.vao) glDeleteVertexArrays(1, &m.vao);
   }
   meshes_.clear();
+  for (GLNonMeshBatch& b : nonMeshBatches_) {
+    if (b.vbo) glDeleteBuffers(1, &b.vbo);
+    if (b.vao) glDeleteVertexArrays(1, &b.vao);
+  }
+  nonMeshBatches_.clear();
   for (GLVolume& gv : volumes_) {
     if (gv.tex3d) glDeleteTextures(1, &gv.tex3d);
   }
@@ -1061,13 +1214,22 @@ void GLRenderer::appendMaterials(const std::vector<DrawMaterialCPU>& materials,
     gm.specularColor[1] = m.specularColor[1];
     gm.specularColor[2] = m.specularColor[2];
     gm.ior = m.ior;
+    gm.occlusion = m.occlusion;
+    gm.coatWeight = m.coatWeight;
+    gm.coatColor[0] = m.coatColor[0];
+    gm.coatColor[1] = m.coatColor[1];
+    gm.coatColor[2] = m.coatColor[2];
+    gm.coatRoughness = m.coatRoughness;
+    gm.coatIor = m.coatIor;
     gm.baseColorTex = m.baseColorTex;  // slot indices (resolved at draw)
-    gm.metalRoughTex = m.metalRoughTex;
+    gm.metallicTex = m.metallicTex;
+    gm.roughnessTex = m.roughnessTex;
     gm.normalTex = m.normalTex;
     gm.emissiveTex = m.emissiveTex;
     gm.opacityTex = m.opacityTex;
     gm.baseColorSample = m.baseColorSample;
-    gm.metalRoughSample = m.metalRoughSample;
+    gm.metallicSample = m.metallicSample;
+    gm.roughnessSample = m.roughnessSample;
     gm.normalSample = m.normalSample;
     gm.emissiveSample = m.emissiveSample;
     gm.opacitySample = m.opacitySample;
@@ -1315,7 +1477,18 @@ void GLRenderer::destroyIblTextures() {
   iblActive_ = false;
 }
 
-void GLRenderer::setLights(const std::vector<DrawLightCPU>& lights) {
+void GLRenderer::setLights(const std::vector<DrawLightCPU>& lights,
+                           size_t meshCount) {
+  rasterLights_ = PackRasterLights(lights, meshCount);
+  if (std::getenv("TUSDVIEW_DEBUG_LIGHTS"))
+    std::fprintf(stderr, "[raster-lights] GL source=%zu direct=%d meshes=%zu\n",
+                 lights.size(), rasterLights_.count, meshCount);
+  if (rasterLights_.truncated > 0) {
+    std::fprintf(stderr,
+                 "[tusdview] raster lighting: evaluating first %d direct lights; "
+                 "%d additional light(s) omitted\n",
+                 kMaxRasterLights, rasterLights_.truncated);
+  }
   destroyIblTextures();
   const DrawLightCPU* dome = nullptr;
   for (const DrawLightCPU& l : lights) {
@@ -1616,6 +1789,97 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
 
 void GLRenderer::appendMeshSurface(const DrawMeshCPU& sm) {
   appendMeshImpl(sm, false);
+}
+
+void GLRenderer::appendPoints(const DrawPointsCPU& src) {
+  const size_t n = src.points.size() / 3;
+  if (!nonMeshProgram_ || n == 0) return;
+  const GLMaterial* mat =
+      src.materialId >= 0 && static_cast<size_t>(src.materialId) < materials_.size()
+          ? &materials_[static_cast<size_t>(src.materialId)] : nullptr;
+  const float sx = std::sqrt(src.world[0]*src.world[0]+src.world[1]*src.world[1]+src.world[2]*src.world[2]);
+  const float sy = std::sqrt(src.world[4]*src.world[4]+src.world[5]*src.world[5]+src.world[6]*src.world[6]);
+  const float sz = std::sqrt(src.world[8]*src.world[8]+src.world[9]*src.world[9]+src.world[10]*src.world[10]);
+  const float worldScale = std::max(sx, std::max(sy, sz));
+  std::vector<float> data;
+  data.reserve(n * 11);
+  bool translucent = false;
+  for (size_t i = 0; i < n; ++i) {
+    const float x=src.points[i*3],y=src.points[i*3+1],z=src.points[i*3+2];
+    const float p[3] = {
+      src.world[0]*x+src.world[4]*y+src.world[8]*z+src.world[12],
+      src.world[1]*x+src.world[5]*y+src.world[9]*z+src.world[13],
+      src.world[2]*x+src.world[6]*y+src.world[10]*z+src.world[14]};
+    const float width = (src.widths.empty()?1.0f:(src.widths.size()==1?src.widths[0]:src.widths[std::min(i,src.widths.size()-1)]))*worldScale;
+    float c[4] = {mat?mat->baseColor[0]:0.8f,mat?mat->baseColor[1]:0.8f,
+                  mat?mat->baseColor[2]:0.8f,mat?mat->alpha:1.0f};
+    if (src.colors.size() >= 3) {
+      const size_t ci = src.colors.size() >= (i + 1) * 3 ? i * 3 : 0;
+      c[0]*=src.colors[ci]; c[1]*=src.colors[ci+1]; c[2]*=src.colors[ci+2];
+    }
+    if (!src.opacities.empty()) {
+      const size_t oi = src.opacities.size() > i ? i : 0;
+      c[3] *= src.opacities[oi];
+    }
+    translucent |= c[3] < 0.999f;
+    data.insert(data.end(), {p[0],p[1],p[2],p[0],p[1],p[2],
+                             std::max(width,1e-6f),c[0],c[1],c[2],c[3]});
+  }
+  GLNonMeshBatch b;
+  b.count=static_cast<GLsizei>(n); b.kind=0; b.materialId=src.materialId;
+  b.carrierId=static_cast<int>(meshes_.size()+nonMeshBatches_.size());
+  b.purposeId=PurposeId(src.purpose); b.translucent=translucent;
+  glGenVertexArrays(1,&b.vao); glGenBuffers(1,&b.vbo);
+  glBindVertexArray(b.vao); glBindBuffer(GL_ARRAY_BUFFER,b.vbo);
+  glBufferData(GL_ARRAY_BUFFER,static_cast<GLsizeiptr>(data.size()*sizeof(float)),data.data(),GL_STATIC_DRAW);
+  const GLsizei stride=11*sizeof(float);
+  for(int a=0;a<4;++a){glEnableVertexAttribArray(a);glVertexAttribDivisor(a,1);}
+  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,(void*)0);
+  glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,stride,(void*)(3*sizeof(float)));
+  glVertexAttribPointer(2,1,GL_FLOAT,GL_FALSE,stride,(void*)(6*sizeof(float)));
+  glVertexAttribPointer(3,4,GL_FLOAT,GL_FALSE,stride,(void*)(7*sizeof(float)));
+  glBindVertexArray(0); nonMeshBatches_.push_back(b);
+}
+
+void GLRenderer::appendCurves(const DrawCurvesCPU& src) {
+  if (!nonMeshProgram_ || src.points.size() < 6) return;
+  const GLMaterial* mat =
+      src.materialId >= 0 && static_cast<size_t>(src.materialId) < materials_.size()
+          ? &materials_[static_cast<size_t>(src.materialId)] : nullptr;
+  const float sx=std::sqrt(src.world[0]*src.world[0]+src.world[1]*src.world[1]+src.world[2]*src.world[2]);
+  const float sy=std::sqrt(src.world[4]*src.world[4]+src.world[5]*src.world[5]+src.world[6]*src.world[6]);
+  const float sz=std::sqrt(src.world[8]*src.world[8]+src.world[9]*src.world[9]+src.world[10]*src.world[10]);
+  const float worldScale=std::max(sx,std::max(sy,sz));
+  const size_t np=src.points.size()/3;
+  std::vector<float> data;
+  bool translucent=mat&&mat->alpha<0.999f;
+  auto wp=[&](size_t i,float p[3]){float x=src.points[i*3],y=src.points[i*3+1],z=src.points[i*3+2];p[0]=src.world[0]*x+src.world[4]*y+src.world[8]*z+src.world[12];p[1]=src.world[1]*x+src.world[5]*y+src.world[9]*z+src.world[13];p[2]=src.world[2]*x+src.world[6]*y+src.world[10]*z+src.world[14];};
+  size_t base=0;
+  for(uint32_t count:src.vertexCounts){
+    size_t end=std::min(np,base+static_cast<size_t>(count));
+    for(size_t i=base;i+1<end;++i){
+      float p0[3],p1[3];wp(i,p0);wp(i+1,p1);
+      const float dx = p1[0] - p0[0];
+      const float dy = p1[1] - p0[1];
+      const float dz = p1[2] - p0[2];
+      if (dx * dx + dy * dy + dz * dz <= 1.0e-16f) continue;
+      float width=(src.widths.empty()?1.0f:(src.widths.size()==1?src.widths[0]:0.5f*(src.widths[std::min(i,src.widths.size()-1)]+src.widths[std::min(i+1,src.widths.size()-1)])))*worldScale;
+      float c[4]={mat?mat->baseColor[0]:0.8f,mat?mat->baseColor[1]:0.8f,mat?mat->baseColor[2]:0.8f,mat?mat->alpha:1.0f};
+      if(src.colors.size()>=np*3){c[0]*=.5f*(src.colors[i*3]+src.colors[(i+1)*3]);c[1]*=.5f*(src.colors[i*3+1]+src.colors[(i+1)*3+1]);c[2]*=.5f*(src.colors[i*3+2]+src.colors[(i+1)*3+2]);}
+      if (!src.opacities.empty()) {
+        const float o0 = src.opacities[src.opacities.size() > i ? i : 0];
+        const float o1 = src.opacities[src.opacities.size() > i + 1 ? i + 1 : 0];
+        c[3] *= 0.5f * (o0 + o1);
+      }
+      translucent |= c[3] < 0.999f;
+      data.insert(data.end(),{p0[0],p0[1],p0[2],p1[0],p1[1],p1[2],std::max(width,1e-6f),c[0],c[1],c[2],c[3]});
+    }
+    base=end;
+  }
+  if(data.empty())return;
+  GLNonMeshBatch b;b.count=static_cast<GLsizei>(data.size()/11);b.kind=1;b.materialId=src.materialId;b.carrierId=static_cast<int>(meshes_.size()+nonMeshBatches_.size());b.purposeId=PurposeId(src.purpose);b.translucent=translucent;
+  glGenVertexArrays(1,&b.vao);glGenBuffers(1,&b.vbo);glBindVertexArray(b.vao);glBindBuffer(GL_ARRAY_BUFFER,b.vbo);glBufferData(GL_ARRAY_BUFFER,static_cast<GLsizeiptr>(data.size()*sizeof(float)),data.data(),GL_STATIC_DRAW);
+  const GLsizei stride=11*sizeof(float);for(int a=0;a<4;++a){glEnableVertexAttribArray(a);glVertexAttribDivisor(a,1);}glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,(void*)0);glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,stride,(void*)(3*sizeof(float)));glVertexAttribPointer(2,1,GL_FLOAT,GL_FALSE,stride,(void*)(6*sizeof(float)));glVertexAttribPointer(3,4,GL_FLOAT,GL_FALSE,stride,(void*)(7*sizeof(float)));glBindVertexArray(0);nonMeshBatches_.push_back(b);
 }
 
 void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
@@ -2401,6 +2665,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniform3fv(uSceneMin_, 1, params.sceneMin);
     glUniform3fv(uSceneExtent_, 1, params.sceneExtent);
     glUniform1i(uMeshId_, static_cast<int>(mi));
+    UploadRasterLightMask(program_, rasterLights_, static_cast<int>(mi));
     glUniform1i(uDoubleSided_, mesh.doubleSided ? 1 : 0);
     glUniform1i(uPurpose_, mesh.purposeId);
     glUniform1i(uKind_, mesh.kindId);
@@ -2447,15 +2712,44 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
 
     glBindVertexArray(mesh.vao);
     for (const auto& sub : mesh.submeshes) {
+      const bool splitBack =
+          !wireframe && sub.backfaceMaterialId >= 0 &&
+          sub.backfaceMaterialId != sub.materialId;
+      const int sideCount = splitBack ? 2 : 1;
+      for (int side = 0; side < sideCount; ++side) {
+      const int materialId = side == 0 ? sub.materialId
+                                       : sub.backfaceMaterialId;
+      if (splitBack) {
+        // A purpose-bound back material turns one logical submesh into two
+        // complementary draws. This also works when doubleSided is false: the
+        // explicit back binding is an authored request to render that side.
+        const int wantSideCull = side == 0 ? 1 : 2;
+        if (wantSideCull != cullState) {
+          glEnable(GL_CULL_FACE);
+          glCullFace(side == 0 ? GL_BACK : GL_FRONT);
+          cullState = wantSideCull;
+        }
+      } else if (wantCull != cullState) {
+        // A preceding split-back submesh may have left GL_FRONT selected.
+        // Restore this mesh's ordinary cull state before drawing an unsplit
+        // submesh in the same mesh.
+        if (wantCull) {
+          glEnable(GL_CULL_FACE);
+          glCullFace(GL_BACK);
+        } else {
+          glDisable(GL_CULL_FACE);
+        }
+        cullState = wantCull;
+      }
       // Alpha-class filtering: the opaque pass skips Blend submeshes, the
       // translucent pass skips the rest. `All` (AOV/wireframe) draws everything.
-      if (alphaPass == AlphaPass::Opaque && matTranslucent(sub.materialId)) continue;
-      if (alphaPass == AlphaPass::Translucent && !matTranslucent(sub.materialId)) continue;
+      if (alphaPass == AlphaPass::Opaque && matTranslucent(materialId)) continue;
+      if (alphaPass == AlphaPass::Translucent && !matTranslucent(materialId)) continue;
       const GLMaterial& mat =
-          (sub.materialId >= 0 && static_cast<size_t>(sub.materialId) < materials_.size())
-              ? materials_[static_cast<size_t>(sub.materialId)]
+          (materialId >= 0 && static_cast<size_t>(materialId) < materials_.size())
+              ? materials_[static_cast<size_t>(materialId)]
               : kDefault;
-      glUniform1i(uMatId_, sub.materialId);
+      glUniform1i(uMatId_, materialId);
       glUniform1i(uFaceBase_, static_cast<int>(sub.indexOffset / 3));
       // Resolve a material texture slot to a GPU texture; white if the slot is out
       // of range or not yet uploaded (lazy texture streaming).
@@ -2479,9 +2773,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       // keep the sampler complete.
       const bool displaced =
           params.displacement &&
-          ((sub.materialId >= 0 &&
-            static_cast<size_t>(sub.materialId) < materials_.size())
-               ? materials_[static_cast<size_t>(sub.materialId)].hasDisplacement()
+          ((materialId >= 0 &&
+            static_cast<size_t>(materialId) < materials_.size())
+               ? materials_[static_cast<size_t>(materialId)].hasDisplacement()
                : false);
       // GPU tessellation detail path: subdivide displaced triangles on the GPU and
       // displace each generated sample. Only in the Shaded view, for non-skinned
@@ -2490,12 +2784,15 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       if (displaced && tessAvailable_ && !overrideEmissive &&
           params.maxTessLevel > 1 &&
           params.mode == RenderMode::Shaded) {
-        const GLMaterial& dmat = materials_[static_cast<size_t>(sub.materialId)];
+        const GLMaterial& dmat = materials_[static_cast<size_t>(materialId)];
         glUseProgram(tessProgram_);
+        UploadRasterLightArray(tessProgram_, rasterLights_);
+        UploadRasterLightMask(tessProgram_, rasterLights_, static_cast<int>(mi));
         glUniformMatrix4fv(tMVP_, 1, GL_FALSE, MVP.m);
         glUniformMatrix4fv(tModel_, 1, GL_FALSE, W.m);
         glUniformMatrix3fv(tNormalMat_, 1, GL_FALSE, nmat);
         glUniform3fv(tCameraPos_, 1, params.cameraPos);
+        glUniform1f(tExposure_, params.exposure);
         glUniform3fv(tLightDir_, 1, params.lightDir);
         glUniform1i(tHasIbl_, iblActive_ ? 1 : 0);
         if (iblActive_) {
@@ -2553,7 +2850,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glUniform1i(uHasDisplacement_, displaced ? 1 : 0);
       glActiveTexture(GL_TEXTURE7);
       if (displaced) {
-        const GLMaterial& dmat = materials_[static_cast<size_t>(sub.materialId)];
+        const GLMaterial& dmat = materials_[static_cast<size_t>(materialId)];
         glUniform1i(uHasDisplacementTex_, dmat.displacementTex >= 0 ? 1 : 0);
         glUniform1f(uDisplacementConst_, dmat.displacementConst);
         glUniform1f(uDisplacementScale_, params.displacementScale);
@@ -2572,17 +2869,24 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uUseSpecularWorkflow_, 0);
         glUniform3f(uSpecularColor_, 0.f, 0.f, 0.f);
         glUniform1f(uIor_, 1.5f);
+        glUniform1f(uOcclusion_, 1.0f);
+        glUniform1f(uCoatWeight_, 0.0f);
+        glUniform3f(uCoatColor_, 1.0f, 1.0f, 1.0f);
+        glUniform1f(uCoatRoughness_, 0.1f);
+        glUniform1f(uCoatIor_, 1.5f);
         glUniform3fv(uEmissive_, 1, overrideEmissive);
         glUniform1f(uAlpha_, 1.f);
         glUniform1i(uAlphaMode_, 0);
         glUniform1f(uAlphaCutoff_, 0.5f);
         glUniform1i(uHasBaseColorTex_, 0);
-        glUniform1i(uHasMetalRoughTex_, 0);
+        glUniform1i(uHasMetallicTex_, 0);
+        glUniform1i(uHasRoughnessTex_, 0);
         glUniform1i(uHasNormalTex_, 0);
         glUniform1i(uHasEmissiveTex_, 0);
         glUniform1i(uHasOpacityTex_, 0);
         glUniform1i(uBaseColorTexIsUdim_, 0);
-        glUniform1i(uMetalRoughTexIsUdim_, 0);
+        glUniform1i(uMetallicTexIsUdim_, 0);
+        glUniform1i(uRoughnessTexIsUdim_, 0);
         glUniform1i(uNormalTexIsUdim_, 0);
         glUniform1i(uEmissiveTexIsUdim_, 0);
         glUniform1i(uOpacityTexIsUdim_, 0);
@@ -2593,22 +2897,29 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uUseSpecularWorkflow_, mat.useSpecularWorkflow ? 1 : 0);
         glUniform3fv(uSpecularColor_, 1, mat.specularColor);
         glUniform1f(uIor_, mat.ior);
+        glUniform1f(uOcclusion_, mat.occlusion);
+        glUniform1f(uCoatWeight_, mat.coatWeight);
+        glUniform3fv(uCoatColor_, 1, mat.coatColor);
+        glUniform1f(uCoatRoughness_, mat.coatRoughness);
+        glUniform1f(uCoatIor_, mat.coatIor);
         glUniform3fv(uEmissive_, 1, mat.emissive);
         glUniform1f(uAlpha_, mat.alpha);
         glUniform1i(uAlphaMode_, mat.alphaMode);
         glUniform1f(uAlphaCutoff_, mat.alphaCutoff);
         SetUvUniform(uBaseColorUv0_, uBaseColorUv1_, mat.baseColorSample.uv);
-        SetUvUniform(uMetalRoughUv0_, uMetalRoughUv1_, mat.metalRoughSample.uv);
+        SetUvUniform(uMetallicUv0_, uMetallicUv1_, mat.metallicSample.uv);
+        SetUvUniform(uRoughnessUv0_, uRoughnessUv1_, mat.roughnessSample.uv);
         SetUvUniform(uNormalUv0_, uNormalUv1_, mat.normalSample.uv);
         SetUvUniform(uEmissiveUv0_, uEmissiveUv1_, mat.emissiveSample.uv);
         SetUvUniform(uOpacityUv0_, uOpacityUv1_, mat.opacitySample.uv);
         {
           const GLint uvSets[4] = {mat.baseColorSample.uvSet,
-                                   mat.metalRoughSample.uvSet,
+                                   mat.metallicSample.uvSet,
                                    mat.normalSample.uvSet,
                                    mat.emissiveSample.uvSet};
           glUniform4iv(uUvSet_, 1, uvSets);
         }
+        glUniform1i(uRoughnessUvSet_, mat.roughnessSample.uvSet);
         glUniform4fv(uBaseColorTexScale_, 1, mat.baseColorSample.scale);
         glUniform4fv(uBaseColorTexBias_, 1, mat.baseColorSample.bias);
         glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
@@ -2625,10 +2936,11 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uOpacityChannel_, mat.opacityChannel);
         glUniform1f(uOpacityTexScale_, mat.opacityTexScale);
         glUniform1f(uOpacityTexBias_, mat.opacityTexBias);
-        const GLint udimSlots[4] = {mat.baseColorTex, mat.metalRoughTex,
+        const GLint udimSlots[4] = {mat.baseColorTex, mat.metallicTex,
                                     mat.normalTex, mat.emissiveTex};
         glUniform4iv(uUdimSlots_, 1, udimSlots);
         glUniform1i(uOpacityUdimSlot_, mat.opacityTex);
+        glUniform1i(uRoughnessUdimSlot_, mat.roughnessTex);
         glActiveTexture(GL_TEXTURE12);
         glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
         auto bindMaterialTexture = [&](int slot, GLenum texUnit2D,
@@ -2650,9 +2962,10 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         bindMaterialTexture(mat.baseColorTex, GL_TEXTURE0, GL_TEXTURE11,
                             uHasBaseColorTex_,
                             uBaseColorTexIsUdim_);
-        bindMaterialTexture(mat.metalRoughTex, GL_TEXTURE1, GL_TEXTURE13,
-                            uHasMetalRoughTex_,
-                            uMetalRoughTexIsUdim_);
+        bindMaterialTexture(mat.metallicTex, GL_TEXTURE1, GL_TEXTURE13,
+                            uHasMetallicTex_, uMetallicTexIsUdim_);
+        bindMaterialTexture(mat.roughnessTex, GL_TEXTURE18, GL_TEXTURE22,
+                            uHasRoughnessTex_, uRoughnessTexIsUdim_);
         bindMaterialTexture(mat.normalTex, GL_TEXTURE2, GL_TEXTURE15,
                             uHasNormalTex_,
                             uNormalTexIsUdim_);
@@ -2665,6 +2978,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       }
       glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
                      (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)));
+      }
     }
   }
 
@@ -2682,6 +2996,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUseProgram(instProgram_);
     glUniformMatrix4fv(iUViewProj_, 1, GL_FALSE, VP.m);
     glUniform3fv(iCameraPos_, 1, params.cameraPos);
+    glUniform1f(iExposure_, params.exposure);
     glUniform3fv(iLightDir_, 1, params.lightDir);
     glUniform1i(iHasIbl_, iblActive_ ? 1 : 0);
     if (iblActive_) {
@@ -2689,6 +3004,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glUniformMatrix3fv(iEnvRotation_, 1, GL_FALSE, iblRotation_);
     }
     glUniform3fv(iLightColor_, 1, params.lightColor);
+    UploadRasterLightArray(instProgram_, rasterLights_);
     const float black[3] = {0.0f, 0.0f, 0.0f};
     glUniform3fv(iEmissive_, 1, overrideEmissive ? overrideEmissive : black);
     glUniform1i(iRenderMode_, static_cast<int>(params.mode));
@@ -2710,6 +3026,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       if (alphaPass == AlphaPass::Opaque && mesh.hasTranslucentInstances) continue;
       if (alphaPass == AlphaPass::Translucent && !mesh.hasTranslucentInstances) continue;
       glUniform1i(iMeshId_, static_cast<int>(mi));
+      UploadRasterLightMask(instProgram_, rasterLights_, static_cast<int>(mi));
       glUniform1i(iGeometricNormal_, mesh.geometricNormal ? 1 : 0);
       glUniform1i(iDoubleSided_, mesh.doubleSided ? 1 : 0);
       glUniform1i(iPurpose_, mesh.purposeId);
@@ -2768,6 +3085,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     // tint from the per-instance color (attrib 9), white per-vertex color.
     if (boxProxyCount_ > 0 && alphaPass != AlphaPass::Translucent) {
       glUniform1i(iMeshId_, -1);
+      UploadRasterLightMask(instProgram_, rasterLights_, -1);
       glUniform1i(iGeometricNormal_, 1);
       glUniform1i(iDoubleSided_, 0);
       glUniform1i(iPurpose_, 0);
@@ -2826,6 +3144,40 @@ void GLRenderer::appendVolume(const DrawVolumeCPU& v) {
   volumes_.push_back(gv);
 }
 
+void GLRenderer::drawNonMesh(const RenderFrameParams& params) {
+  if (!nonMeshProgram_ || nonMeshBatches_.empty()) return;
+  const light3d::Mat4 vp = ToMat4(params.proj) * ToMat4(params.view);
+  const float right[3] = {params.view[0], params.view[4], params.view[8]};
+  const float up[3] = {params.view[1], params.view[5], params.view[9]};
+  glUseProgram(nonMeshProgram_);
+  glUniformMatrix4fv(nmViewProj_,1,GL_FALSE,vp.m);
+  glUniform3fv(nmCameraPos_,1,params.cameraPos);
+  glUniform3fv(nmCameraRight_,1,right);
+  glUniform3fv(nmCameraUp_,1,up);
+  glUniform3fv(nmLightDir_,1,params.lightDir);
+  glUniform3fv(nmLightColor_,1,params.lightColor);
+  UploadRasterLightArray(nonMeshProgram_, rasterLights_);
+  UploadRasterLightMask(nonMeshProgram_, rasterLights_, -1);
+  glUniform1f(nmExposure_,params.exposure);
+  glUniform1i(nmRenderMode_,static_cast<int>(params.mode));
+  glDisable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);
+  auto pass=[&](bool translucent){
+    for(const GLNonMeshBatch& b:nonMeshBatches_){
+      if(b.translucent!=translucent)continue;
+      if((params.purposeVisibleMask&(1u<<static_cast<unsigned>(b.purposeId)))==0)continue;
+      glUniform1i(nmKind_,b.kind);glUniform1i(nmMaterialId_,b.materialId);
+      glUniform1i(nmCarrierId_,b.carrierId);glUniform1i(nmPurpose_,b.purposeId);
+      glBindVertexArray(b.vao);
+      glDrawArraysInstanced(GL_TRIANGLE_STRIP,0,4,b.count);
+    }
+  };
+  pass(false);
+  if(static_cast<int>(params.mode)==0){glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);glDepthMask(GL_FALSE);pass(true);glDepthMask(GL_TRUE);glDisable(GL_BLEND);}else pass(true);
+  glBindVertexArray(0);
+  glUseProgram(program_);
+}
+
 void GLRenderer::renderFrame(const RenderFrameParams& params) {
   if (!fbo_ || !program_ || !params.view || !params.proj) return;
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
@@ -2837,8 +3189,10 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
 
   glUseProgram(program_);
   glUniform3fv(uCameraPos_, 1, params.cameraPos);
+  glUniform1f(uExposure_, params.exposure);
   glUniform3fv(uLightDir_, 1, params.lightDir);
   glUniform3fv(uLightColor_, 1, params.lightColor);
+  UploadRasterLightArray(program_, rasterLights_);
   glUniform1i(uHasIbl_, iblActive_ ? 1 : 0);
   if (iblActive_) {
     glUniform3fv(uIblColor_, 1, iblColor_);
@@ -2890,6 +3244,7 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     }
     if (wireMode == 2 && haveWire) drawWireframe(params, wireCol);
   }
+  if (wireMode != 1) drawNonMesh(params);
 
   // Highlight overlay (wireframe, emissive orange) on the selected mesh.
   if (params.highlightMeshIndex >= 0 &&
@@ -2920,7 +3275,8 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glUniform1i(uAlphaMode_, 0);
     glUniform1f(uAlphaCutoff_, 0.5f);
     glUniform1i(uHasBaseColorTex_, 0);
-    glUniform1i(uHasMetalRoughTex_, 0);
+    glUniform1i(uHasMetallicTex_, 0);
+    glUniform1i(uHasRoughnessTex_, 0);
     glUniform1i(uHasNormalTex_, 0);
     glUniform1i(uHasEmissiveTex_, 0);
     glUniform1i(uHasOpacityTex_, 0);
@@ -3170,6 +3526,7 @@ void GLRenderer::shutdown() {
   if (wireProgram_) { glDeleteProgram(wireProgram_); wireProgram_ = 0; }
   if (wireInstProgram_) { glDeleteProgram(wireInstProgram_); wireInstProgram_ = 0; }
   if (lineProgram_) { glDeleteProgram(lineProgram_); lineProgram_ = 0; }
+  if (nonMeshProgram_) { glDeleteProgram(nonMeshProgram_); nonMeshProgram_ = 0; }
   if (lineVbo_) { glDeleteBuffers(1, &lineVbo_); lineVbo_ = 0; }
   if (lineVao_) { glDeleteVertexArrays(1, &lineVao_); lineVao_ = 0; }
   for (GLVolume& gv : volumes_) {

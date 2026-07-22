@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <map>
@@ -212,8 +213,13 @@ int main(int argc, char** argv) {
   bool threaded = false;      // --threaded: experimental render-thread GL path
   bool useNextLoader = true;              // next-core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
+  bool showGrid = true;                    // --no-grid: deterministic clean capture
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--next)
+  tusdview::CameraConform cameraConform{tusdview::CameraConform::Fit};
+  bool cameraConformExplicit = false;
+  bool viewDirExplicit = false;              // --view-dir: deterministic auto-fit view
+  float viewDir[3] = {0.0f, 0.0f, -1.0f};   // normalized eye-to-target direction
   bool noComposition = false;             // --no-composition: root layer only
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
@@ -351,10 +357,48 @@ int main(int argc, char** argv) {
       useNextExplicit = true;
     } else if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
+    } else if (std::strcmp(argv[i], "--no-grid") == 0) {
+      showGrid = false;
     } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
       camDolly = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
       cameraName = argv[++i];
+    } else if (std::strcmp(argv[i], "--camera-conform") == 0 &&
+               (i + 1) < argc) {
+      cameraConformExplicit = true;
+      const std::string value = argv[++i];
+      if (value == "fit") cameraConform = tusdview::CameraConform::Fit;
+      else if (value == "crop") cameraConform = tusdview::CameraConform::Crop;
+      else if (value == "horizontal")
+        cameraConform = tusdview::CameraConform::Horizontal;
+      else if (value == "vertical")
+        cameraConform = tusdview::CameraConform::Vertical;
+      else if (value == "none") cameraConform = tusdview::CameraConform::None;
+      else {
+        LOGE("--camera-conform must be fit, crop, horizontal, vertical, or none");
+        return 1;
+      }
+    } else if (std::strcmp(argv[i], "--view-dir") == 0 && (i + 1) < argc) {
+      char trailing = '\0';
+      const char* value = argv[++i];
+      if (std::sscanf(value, "%f,%f,%f%c", &viewDir[0], &viewDir[1],
+                      &viewDir[2], &trailing) != 3 ||
+          !std::isfinite(viewDir[0]) || !std::isfinite(viewDir[1]) ||
+          !std::isfinite(viewDir[2])) {
+        LOGE("--view-dir requires three finite comma-separated values: X,Y,Z");
+        return 1;
+      }
+      const float len = std::sqrt(viewDir[0] * viewDir[0] +
+                                  viewDir[1] * viewDir[1] +
+                                  viewDir[2] * viewDir[2]);
+      if (!(len > 1e-6f)) {
+        LOGE("--view-dir must be non-zero");
+        return 1;
+      }
+      viewDir[0] /= len;
+      viewDir[1] /= len;
+      viewDir[2] /= len;
+      viewDirExplicit = true;
     } else if (std::strcmp(argv[i], "--no-composition") == 0) {
       noComposition = true;
     } else if (std::strcmp(argv[i], "--defer-payloads") == 0) {
@@ -598,7 +642,7 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
           "Usage: tusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
-          "[--screenshot out.ppm]\n"
+          "[--screenshot out.png|out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
           "                [--no-composition] [--defer-payloads | --load-payloads] "
           "[--defer-references] [--time CODE] [--skinning auto|cpu|gpu]\n"
@@ -622,12 +666,25 @@ int main(int argc, char** argv) {
           "  --max-instances N  Cap the --cuda/--hip 2-level-BVH instance count "
           "(default 16M; 0 = unlimited). Bounds the host BVH build for massively "
           "instanced scenes (e.g. Moana Island).\n"
+          "  --max-tris N  Cap triangles in the CUDA/HIP software RT scene.\n"
+          "  --time-budget SECONDS  Stop the headless run after this wall-time budget.\n"
+          "  --ui-scale S  Override the interface scale factor.\n"
           "  --lod-stream  View-dependent district LOD: promote "
           "the camera-nearest districts to full under memory budgets.\n"
           "  --max-mem G / --max-vram G  Host / GPU GiB budgets for --lod-stream "
           "(0 = auto, 50%%).\n"
           "  --camera NAME Frame a named USD Camera instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
+          "  --camera-conform MODE  Filmback policy: fit, crop, horizontal, "
+          "vertical, or none (default: fit).\n"
+          "  --view-dir X,Y,Z  Set the normalized world-space eye-to-target "
+          "direction after auto-fit; cannot be combined with --camera.\n"
+          "  --select /Prim/Path  Select a prim after loading.\n"
+          "  --cam-dolly D  Apply a startup dolly offset to the framed camera.\n"
+          "  --no-cull / --no-robust-frame  Disable frustum culling or robust "
+          "outlier-resistant auto framing.\n"
+          "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
+          "  --dome-ibl off|fast|quality  Control DomeLight IBL precomputation.\n"
           "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
           "Vulkan realtime preset for public large scenes. Profiles set existing "
           "large-scene knobs only; explicit CLI flags win. No texture resize or "
@@ -651,8 +708,14 @@ int main(int argc, char** argv) {
           "backends draw triangle edges only).\n"
           "  --material-id Start in material-id visualization (a distinct flat "
           "color per material; all backends).\n"
-          "  --mode NAME   Start in a render mode: shaded|wireframe|normals|"
-          "material-id|geom-normal|uv|depth (all backends).\n"
+          "  --mode NAME   Start in a render mode: shaded, wireframe, normals, "
+          "material-id, geom-normal, uv, depth, albedo, facing, roughness, "
+          "metallic, emissive, opacity, position, barycentric, prim-id, mesh-id, "
+          "purpose, missing-normals, double-sided, skin-weights, tangent, "
+          "uv-checker, ao, curvature, instance-id, bvh-heatmap, soft-shadow, "
+          "kind, udim, uv1, blend-influence, texel-density, source-face-id.\n"
+          "  --threaded    Use the optional dedicated GL/Vulkan render thread "
+          "when built with TUSDVIEW_ENABLE_GL_THREAD.\n"
           "  --blend NAME=W  Manually set a blendshape weight (repeatable), "
           "overriding the SkelAnimation; honors in-between shapes. Also editable "
           "live in the Inspector's Blend Shapes panel.\n"
@@ -688,6 +751,9 @@ int main(int argc, char** argv) {
           "(default 3, hard cap 10).\n"
           "  --texture-compress off|bc  Request BCn texture compression. Backends "
           "without BCn upload support warn and fall back to resized RGBA8.\n"
+          "  --texture-mips  Generate content-aware texture mip chains.\n"
+          "  --texture-keep-compressed  Preserve supported KTX2 block payloads "
+          "instead of decoding/re-encoding them.\n"
           "  --udim sparse|atlas  UDIM handling mode (default sparse; atlas rebakes "
           "UVs and can consume much more memory on large tile sets).\n"
           "  --time CODE   Evaluate the scene at this USD time code (animated "
@@ -697,6 +763,13 @@ int main(int argc, char** argv) {
           "  --play        Start timeline playback on load. With --frames the "
           "playback clock steps a fixed 1/60 s per frame (deterministic pose at "
           "every frame, so --screenshot captures are pixel-comparable).\n"
+          "  --frame CODE  Alias for --time CODE.\n"
+          "  --screenshot PATH  Save the viewport image after --frames.\n"
+          "  --window-shot PATH  Save the complete window, including UI.\n"
+          "  --raster-lod / --rt-lod  Enable view-dependent raster or Vulkan-RT "
+          "LOD; tune with --*-lod-full-px, --*-lod-cull-px, and --rt-lod-band.\n"
+          "  --max-draw-meshes N / --max-gpu-mem G  Bound raster mesh count or "
+          "geometry memory (GiB).\n"
           "  --mcp-stdio   Run the MCP server over stdio (JSON-RPC on stdin/stdout).\n"
           "  --mcp-http    Run the MCP server over HTTP (default port 8080).\n"
           "  --mcp         Both transports.\n"
@@ -714,6 +787,11 @@ int main(int argc, char** argv) {
     } else if (argv[i][0] != '-') {
       file = argv[i];
     }
+  }
+
+  if (viewDirExplicit && !cameraName.empty()) {
+    LOGE("--view-dir cannot be combined with --camera");
+    return 1;
   }
 
   if (quitAfterFullUpload && maxFrames >= 0) {
@@ -822,6 +900,11 @@ int main(int argc, char** argv) {
     backendExplicit = true;
   }
   // Windowless rendering is a Vulkan-only path (GL needs a window/context).
+  if (viewDirExplicit && !cameraName.empty()) {
+    LOGE("--view-dir cannot be combined with the selected --camera/profile camera");
+    return 1;
+  }
+
   if (headless) {
     backend = tusdview::Backend::Vulkan;
     backendExplicit = true;
@@ -889,6 +972,17 @@ int main(int argc, char** argv) {
     for (const std::string& warning : config.warnings) {
       LOGW("config %s: %s", config.path.string().c_str(), warning.c_str());
     }
+  }
+
+  if (!cameraConformExplicit &&
+      config.status == tusdview::ConfigLoadStatus::Loaded &&
+      config.config.cameraConform) {
+    const std::string& value = *config.config.cameraConform;
+    if (value == "crop") cameraConform = tusdview::CameraConform::Crop;
+    else if (value == "horizontal") cameraConform = tusdview::CameraConform::Horizontal;
+    else if (value == "vertical") cameraConform = tusdview::CameraConform::Vertical;
+    else if (value == "none") cameraConform = tusdview::CameraConform::None;
+    else cameraConform = tusdview::CameraConform::Fit;
   }
 
   tusdview::App app(backend);
@@ -1003,6 +1097,7 @@ int main(int argc, char** argv) {
   }
   app.setUseNextLoader(useNextLoader);
   app.setCullEnabled(!noCull);
+  app.setShowGrid(showGrid);
   app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
@@ -1027,6 +1122,8 @@ int main(int argc, char** argv) {
   app.setLodMaxMemGiB(lodMaxMem);
   app.setLodMaxVramGiB(lodMaxVram);
   app.setCameraName(cameraName);
+  app.setCameraConform(cameraConform);
+  if (viewDirExplicit) app.setViewDirection(viewDir[0], viewDir[1], viewDir[2]);
   if (wantWireframe) app.setRenderMode(tusdview::RenderMode::Wireframe);
   if (wantMaterialId) app.setRenderMode(tusdview::RenderMode::MaterialId);
   if (wantMode) app.setRenderMode(*wantMode);

@@ -984,6 +984,15 @@ def Xform "World"
             color3f inputs:base_color.connect = </World/OpenPBRMat/NG.outputs:out>
             float inputs:base_metalness = 0.8
             float inputs:base_roughness = 0.35
+            float inputs:specular_anisotropy = 0.11
+            float inputs:specular_roughness_anisotropy = 0.12
+            float inputs:transmission_dispersion = 0.13
+            float inputs:transmission_dispersion_scale = 0.14
+            float inputs:coat_anisotropy = 0.15
+            float inputs:coat_roughness_anisotropy = 0.16
+            float inputs:thin_film_weight = 0.17
+            float inputs:thin_film_thickness = 450
+            float inputs:thin_film_ior = 1.7
             float inputs:geometry_opacity.connect = </World/OpenPBRMat/NG.outputs:opacity>
             token outputs:surface
         }
@@ -1109,6 +1118,20 @@ def Xform "World"
   assert(std::abs(openpbr.openpbr->base_color.value.z - 0.9f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_metalness.value.x - 0.8f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_roughness.value.x - 0.35f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->specular_anisotropy.value.x - 0.11f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->specular_roughness_anisotropy.value.x -
+                  0.12f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->transmission_dispersion.value.x - 0.13f) <
+         0.001f);
+  assert(std::abs(openpbr.openpbr->transmission_dispersion_scale.value.x -
+                  0.14f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->coat_anisotropy.value.x - 0.15f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->coat_roughness_anisotropy.value.x - 0.16f) <
+         0.001f);
+  assert(std::abs(openpbr.openpbr->thin_film_weight.value.x - 0.17f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->thin_film_thickness.value.x - 450.0f) <
+         0.001f);
+  assert(std::abs(openpbr.openpbr->thin_film_ior.value.x - 1.7f) < 0.001f);
   assert(openpbr.openpbr->opacity.is_texture());
   assert(openpbr.alpha_mode == RenderMaterial::AlphaMode::Blend);
   const int32_t opacity_texture_id = openpbr.openpbr->opacity.texture_id;
@@ -1200,9 +1223,9 @@ def Xform "World"
 
 // Regression: a Material whose only surface is an Unreal `sourceAsset` shader
 // (info:implementationSource = "sourceAsset", no UsdPreviewSurface child) must
-// not be dropped. UE MetaHuman exports bind such materials; the converter emits
-// a neutral default PreviewSurface so the binding survives and the mesh keeps a
-// material slot instead of rendering unmaterialed.
+// not be dropped. Familiar authored PBR constants on the engine shader and its
+// Material interface must survive in a per-material degraded PreviewSurface.
+// Geometry and GeomSubset binding must remain intact through that fallback.
 void TestRenderConverterUnrealSourceAssetFallback() {
   std::cout << "Testing RenderConverter Unreal source-asset default material...\n";
 
@@ -1215,12 +1238,28 @@ def Xform "World"
 {
     def Material "M_Hide"
     {
+        color3f inputs:emissiveColor = (0.03, 0.04, 0.05)
         token outputs:unreal:surface.connect = </World/M_Hide/UnrealShader.outputs:out>
 
         def Shader "UnrealShader"
         {
             uniform token info:implementationSource = "sourceAsset"
             uniform asset info:unreal:sourceAsset = @/Game/Materials/M_Hide.M_Hide@
+            color3f inputs:baseColor = (0.2, 0.4, 0.6)
+            float inputs:metalness = 0.75
+            float inputs:roughness = 0.27
+            float inputs:opacity = 0.4
+            token outputs:out
+        }
+    }
+
+    def Material "M_Subset"
+    {
+        token outputs:surface.connect = </World/M_Subset/Unknown.outputs:out>
+        def Shader "Unknown"
+        {
+            uniform token info:id = "UnsupportedSurface_1"
+            color3f inputs:diffuseColor = (0.8, 0.1, 0.2)
             token outputs:out
         }
     }
@@ -1228,9 +1267,17 @@ def Xform "World"
     def Mesh "M"
     {
         rel material:binding = </World/M_Hide>
-        int[] faceVertexCounts = [3]
-        int[] faceVertexIndices = [0, 1, 2]
-        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+
+        def GeomSubset "UnsupportedLook"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [1]
+            rel material:binding = </World/M_Subset>
+        }
     }
 }
 )";
@@ -1254,11 +1301,65 @@ def Xform "World"
   assert(it != result.scene.material_by_path.end());
   const RenderMaterial& mat = result.scene.materials[it->second];
 
-  // Neutral default PreviewSurface (no convertible shader was found).
+  // Degraded PreviewSurface (no fully convertible shader was found), with
+  // authored constants recovered from the engine shader and Material input.
   assert(mat.shader_type == RenderMaterial::ShaderType::PreviewSurface);
   assert(mat.preview_surface);
+  assert(mat.default_fallback);
+  assert(!mat.diagnostics.empty());
+  bool saw_unsupported_node = false;
+  bool saw_degraded_diagnostic = false;
+  for (const auto& diagnostic : mat.diagnostics) {
+    if (diagnostic.kind == MaterialDiagnosticKind::UnsupportedMaterialXNode ||
+        diagnostic.kind == MaterialDiagnosticKind::UnsupportedShader) {
+      saw_unsupported_node = !diagnostic.node_path.empty();
+    }
+    if (diagnostic.kind == MaterialDiagnosticKind::DegradedMaterial) {
+      saw_degraded_diagnostic = true;
+    }
+  }
+  assert(saw_unsupported_node);
+  assert(saw_degraded_diagnostic);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.x - 0.2f) < 0.001f);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.y - 0.4f) < 0.001f);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.z - 0.6f) < 0.001f);
+  assert(std::abs(mat.preview_surface->metallic.value.x - 0.75f) < 0.001f);
+  assert(std::abs(mat.preview_surface->roughness.value.x - 0.27f) < 0.001f);
+  assert(std::abs(mat.preview_surface->opacity.value.x - 0.4f) < 0.001f);
+  assert(std::abs(mat.preview_surface->emissive_color.value.x - 0.03f) < 0.001f);
+  assert(mat.alpha_mode == RenderMaterial::AlphaMode::Blend);
 
-  std::cout << "  RenderConverter Unreal source-asset default material: PASSED\n";
+  auto subset_mat_it = result.scene.material_by_path.find("/World/M_Subset");
+  assert(subset_mat_it != result.scene.material_by_path.end());
+  const RenderMaterial& subset_mat =
+      result.scene.materials[static_cast<size_t>(subset_mat_it->second)];
+  assert(subset_mat.default_fallback && subset_mat.preview_surface);
+  assert(std::abs(subset_mat.preview_surface->diffuse_color.value.x - 0.8f) <
+         0.001f);
+
+  // A failed shader implementation must never drop bound geometry. Both
+  // triangles survive, and the second is routed to the degraded subset look.
+  auto mesh_it = result.scene.mesh_by_path.find("/World/M");
+  assert(mesh_it != result.scene.mesh_by_path.end());
+  const RenderMesh& mesh =
+      result.scene.meshes[static_cast<size_t>(mesh_it->second)];
+  assert(mesh.triangulated_indices.size() == 6);
+  assert(mesh.material_id == it->second);
+  assert(mesh.material_subsets.size() == 1);
+  assert(mesh.material_subsets[0].face_start == 1);
+  assert(mesh.material_subsets[0].face_count == 1);
+  assert(mesh.material_subsets[0].material_id == subset_mat_it->second);
+
+  bool reported_degraded = false;
+  for (const std::string& warning : result.warnings) {
+    if (warning.find("using a degraded material") != std::string::npos) {
+      reported_degraded = true;
+      break;
+    }
+  }
+  assert(reported_degraded);
+
+  std::cout << "  RenderConverter degraded material: PASSED\n";
 }
 
 // Regression: UsdSkel binding inheritance. `skel:skeleton` may be authored on
@@ -2364,9 +2465,12 @@ def Xform "World"
         int[] curveVertexCounts = [3, 2]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0),
                             (2, 0, 0), (2, 1, 0)]
-        float[] widths = [0.1, 0.2, 0.3, 0.4, 0.5]
+        float[] widths = [0.1, 0.6]
         color3f[] primvars:displayColor = [(0.25, 0.5, 0.75)] (
             interpolation = "constant"
+        )
+        float[] primvars:displayOpacity = [0.1, 0.3, 0.5, 0.7, 0.9] (
+            interpolation = "vertex"
         )
     }
 
@@ -2548,9 +2652,19 @@ def Xform "World"
   assert(linear.tessellated_vertex_counts ==
          std::vector<uint32_t>({3, 2}));
   assert(linear.tessellated_widths.size() == 5);
+  assert(linear.widths_interp == Interpolation::Uniform);
+  assert(std::fabs(linear.tessellated_widths[0] - 0.1f) < 0.001f);
+  assert(std::fabs(linear.tessellated_widths[2] - 0.1f) < 0.001f);
+  assert(std::fabs(linear.tessellated_widths[3] - 0.6f) < 0.001f);
+  assert(std::fabs(linear.tessellated_widths[4] - 0.6f) < 0.001f);
   assert(linear.colors.size() == 3);
   assert(linear.colors_interp == Interpolation::Constant);
   assert(linear.tessellated_colors.size() == 15);
+  assert(linear.opacities.size() == 5);
+  assert(linear.opacities_interp == Interpolation::Vertex);
+  assert(linear.tessellated_opacities.size() == 5);
+  assert(std::fabs(linear.tessellated_opacities[0] - 0.1f) < 0.001f);
+  assert(std::fabs(linear.tessellated_opacities[4] - 0.9f) < 0.001f);
   assert(linear.has_bbox);
 
   const RenderCurves& bezier = curve("/World/Bezier");
@@ -2689,6 +2803,9 @@ def Xform "Root"
         color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1)] (
             interpolation = "vertex"
         )
+        float[] primvars:displayOpacity = [0.2, 0.6, 1] (
+            interpolation = "vertex"
+        )
     }
     def Volume "Fog" {}
 }
@@ -2799,6 +2916,10 @@ def Xform "Root"
   assert(pts.widths.size() == 3);
   assert(pts.colors.size() == 9);
   assert(pts.colors_interp == Interpolation::Vertex);
+  assert(pts.opacities.size() == 3);
+  assert(pts.opacities_interp == Interpolation::Vertex);
+  assert(std::fabs(pts.opacities[0] - 0.2f) < 0.001f);
+  assert(std::fabs(pts.opacities[2] - 1.0f) < 0.001f);
   assert(pts.has_bbox);
   assert(std::fabs(pts.bbox_min.x + 1.0f) < 0.001f);
   assert(std::fabs(pts.bbox_max.y - 2.0f) < 0.001f);
@@ -3241,6 +3362,10 @@ def Xform "World"
         asset inputs:texture:file = @sky.exr@
         token inputs:texture:format = "latlong"
     }
+    def RectLight "DefaultRect" {}
+    def DiskLight "DefaultDisk" {}
+    def CylinderLight "DefaultCylinder" {}
+    def DistantLight "DefaultDistant" {}
 }
 )";
 
@@ -3270,12 +3395,20 @@ def Xform "World"
   const RenderLight* key = nullptr;
   const RenderLight* fill = nullptr;
   const RenderLight* sky = nullptr;
+  const RenderLight* rect = nullptr;
+  const RenderLight* disk = nullptr;
+  const RenderLight* cylinder = nullptr;
+  const RenderLight* distant = nullptr;
   for (const RenderLight& light : result.scene.lights) {
     if (light.prim_path == "/World/KeyLight") key = &light;
     if (light.prim_path == "/World/FillLight") fill = &light;
     if (light.prim_path == "/World/Sky") sky = &light;
+    if (light.prim_path == "/World/DefaultRect") rect = &light;
+    if (light.prim_path == "/World/DefaultDisk") disk = &light;
+    if (light.prim_path == "/World/DefaultCylinder") cylinder = &light;
+    if (light.prim_path == "/World/DefaultDistant") distant = &light;
   }
-  assert(key && fill && sky);
+  assert(key && fill && sky && rect && disk && cylinder && distant);
 
   // KeyLight: lightLink includes /World/Props subtree minus Barrel.
   assert(!key->light_links_all);
@@ -3294,6 +3427,15 @@ def Xform "World"
   assert(sky->type == LightType::Dome);
   assert(sky->params.dome.texture_format ==
          RenderLight::DomeTextureFormat::Latlong);
+  // Schema defaults must be initialized even when no size attribute is
+  // authored; zero-area defaults break normalize and raster/RT parity.
+  assert(std::fabs(key->params.sphere.radius - 0.5f) < 0.001f);
+  assert(std::fabs(rect->params.rect.width - 1.0f) < 0.001f);
+  assert(std::fabs(rect->params.rect.height - 1.0f) < 0.001f);
+  assert(std::fabs(disk->params.disk.radius - 0.5f) < 0.001f);
+  assert(std::fabs(cylinder->params.cylinder.radius - 0.5f) < 0.001f);
+  assert(std::fabs(cylinder->params.cylinder.length - 1.0f) < 0.001f);
+  assert(std::fabs(distant->params.distant.angle - 0.53f) < 0.001f);
 
   std::cout << "  Light linking + dome texture format: PASSED\n";
 }
@@ -3329,8 +3471,17 @@ def Xform "World"
         {
             uniform token info:id = "ND_standard_surface_surfaceshader"
             color3f inputs:base_color = (0.8, 0.2, 0.1)
+            float inputs:specular = 0.7
+            color3f inputs:specular_color = (0.2, 0.3, 0.4)
             float inputs:specular_roughness = 0.35
             float inputs:metalness = 0.9
+            float inputs:coat = 0.6
+            float inputs:coat_roughness = 0.15
+            float inputs:emission = 2.0
+            color3f inputs:emission_color = (0.1, 0.4, 0.7)
+            color3f inputs:opacity = (0.8, 0.8, 0.8)
+            vector3f inputs:normal = (0.1, 0.2, 0.97)
+            float inputs:displacement = 0.125
             token outputs:out
         }
     }
@@ -3359,6 +3510,17 @@ def Xform "World"
   assert(std::fabs(mat.openpbr->base_color.value.x - 0.8f) < 0.001f);
   assert(std::fabs(mat.openpbr->base_color.value.y - 0.2f) < 0.001f);
   assert(std::fabs(mat.openpbr->base_color.value.z - 0.1f) < 0.001f);
+  assert(std::fabs(mat.openpbr->specular_weight.value.x - 0.7f) < 0.001f);
+  assert(std::fabs(mat.openpbr->specular_color.value.y - 0.3f) < 0.001f);
+  assert(std::fabs(mat.openpbr->specular_roughness.value.x - 0.35f) < 0.001f);
+  assert(std::fabs(mat.openpbr->base_metalness.value.x - 0.9f) < 0.001f);
+  assert(std::fabs(mat.openpbr->coat_weight.value.x - 0.6f) < 0.001f);
+  assert(std::fabs(mat.openpbr->coat_roughness.value.x - 0.15f) < 0.001f);
+  assert(std::fabs(mat.openpbr->emission_luminance.value.x - 2.0f) < 0.001f);
+  assert(std::fabs(mat.openpbr->emission_color.value.z - 0.7f) < 0.001f);
+  assert(std::fabs(mat.openpbr->opacity.value.x - 0.8f) < 0.001f);
+  assert(std::fabs(mat.openpbr->normal.value.y - 0.2f) < 0.001f);
+  assert(std::fabs(mat.openpbr->displacement.value.x - 0.125f) < 0.001f);
 
   std::cout << "  standard_surface no-recursion: PASSED\n";
 }

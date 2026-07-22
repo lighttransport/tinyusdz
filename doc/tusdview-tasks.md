@@ -3,10 +3,182 @@
 Single source of truth for in-flight work on the two renderers and the texture
 program. Supersedes the old `doc/tusdview-audit.md` (full audit) and the
 untracked `resume-tex.md` (KTX2 resume) — done history was dropped on merge; it
-lives in git history if needed. Updated 2026-07-16.
+lives in git history if needed. Updated 2026-07-19.
 
-Two programs run here: (A) the **tusdview/tusdrender audit** and (B) the
-**texture-compression / KTX2** work. Both backlogs are empty.
+The original two programs documented below -- (A) the **tusdview/tusdrender
+audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
+active work is now the USD rendering-fidelity roadmap below.  This file is the
+canonical task list; the repository-root `tasks.md` is historical planning
+input and must not be used as evidence that an unchecked feature is missing.
+
+---
+
+## Active USD rendering-fidelity roadmap
+
+Completion policy: shared schema/Tydra extraction is preferred over viewer-only
+duplication.  Each feature lands in OpenGL and Vulkan raster first, then in
+Vulkan ray query and the shared CUDA/HIP tracer.  Unsupported inputs must
+produce structured diagnostics with their material/prim path rather than
+silently becoming the default material.
+
+| Area | Default `--next` | Legacy | GL/VK raster | VK/CUDA/HIP RT |
+|---|---|---|---|---|
+| PreviewSurface core semantics | supported | supported | supported | supported |
+| OpenPBR/MaterialX advanced lobes | degraded | degraded | unsupported | partial constants |
+| Ordinary/UDIM texture mips | supported | supported | supported | trilinear footprint LOD |
+| Mesh/analytic/subdivision/instancing | supported | supported | supported | supported |
+| Points and Basis/NURBS/Hermite curves | extracted | partial ribbons | GL raster | solid proxies |
+| Authored camera | perspective + orthographic | perspective + orthographic | filmback/offset/exposure | filmback/offset/exposure |
+| USD lights | full shared extraction | full extraction | linked multi-light + dome IBL | multi-light + dome IBL |
+
+### P1 -- Material
+
+- [ ] Add one backend-neutral real-time PBR material block, populated
+  identically by the default `--next` and legacy loaders.
+- [ ] Cover base/diffuse, metalness, specular workflow/IOR, occlusion, coat,
+  emission, opacity/cutout, normal, coat normal, and displacement for
+  UsdPreviewSurface, OpenPBR, and MaterialX standard-surface graphs.
+- [ ] Preserve successfully evaluated inputs when a graph degrades and report
+  unsupported real-time lobes (transmission, subsurface, sheen, anisotropy,
+  thin film, dispersion, volume) explicitly. Structured, path-qualified
+  diagnostics now cover these advanced lobes in both loaders and the default
+  next-core carrier retains the previously missing thin-film, dispersion, and
+  extended anisotropy inputs; full degraded-graph preservation remains open.
+
+### P2 -- Texture
+
+- [ ] Give every PBR texture input the same image/UDIM, channel, color-space,
+  UV-set, transform, scale/bias, and wrap descriptor; add occlusion and coat
+  semantic slots without re-aliasing independent metallic/roughness inputs.
+- [x] Carry complete ordinary/compressed/UDIM mip chains into the RT texture
+  table and use ray-footprint LOD plus trilinear filtering in Vulkan, CUDA, and
+  HIP.
+- [ ] Pin packed-map, sparse-UDIM, scalar-color-space, and external/USDZ parity
+  for every new slot.
+
+### P3 -- Shading
+
+- [x] Replace the raster preview's half-Lambert/Phong approximation with
+  linear-light Cook-Torrance GGX (Smith masking + Schlick Fresnel),
+  energy-conserving diffuse/specular separation, and a second coat lobe.
+- [x] Apply occlusion only to indirect light and evaluate the same lobes for
+  DomeLight IBL; keep AOV and alpha behavior unchanged.
+- [x] Match the evaluated material response in Vulkan ray query and the shared
+  CUDA/HIP tracer after GL/Vulkan raster parity is pinned.
+
+### P4 -- Geom/Prim support
+
+- [x] Feed Tydra `RenderPoints` and `RenderCurves` into the default `--next`
+  DrawScene instead of limiting visible geometry to meshes.
+- [x] Render Points in OpenGL as world-sized camera-facing instanced quads with
+  widths, displayColor/displayOpacity, materials, animation-time evaluation,
+  purpose filtering, and material/prim/mesh/purpose AOV ids.
+- [x] Render Basis/NURBS/Hermite curves in OpenGL as camera-facing ribbons using
+  Tydra's tessellated centerlines and interpolated widths/colors/opacity.
+- [ ] Add the matching Vulkan raster point/ribbon pipeline and GL/Vulkan image
+  parity coverage.
+- [ ] Extend viewport click/region picking, framing, visibility, and selection
+  highlights from mesh-only indices to native Points/Curves carriers.
+- [x] Use width-aware octahedron/tube proxy geometry for Points/Curves in
+  Vulkan ray query and the shared CUDA/HIP tracer, preserving color and
+  opacity.
+
+### P5 -- Camera
+
+- [x] Preserve authored perspective/orthographic projection, full filmback,
+  aperture offsets, clipping range, and exposure in both loaders.
+- [x] Add `--camera-conform fit|crop|horizontal|vertical|none` (default `fit`),
+  with matching config and GUI controls, and use the same projection in all
+  backends and headless rendering.
+- [ ] Keep depth of field, shutter/motion blur, stereo, and arbitrary clipping
+  planes as documented future work.
+
+### P6 -- Lighting
+
+- [x] Make default `--next` light extraction retain the complete shared
+  DrawLightCPU data used by legacy conversion, including normalize, shaping,
+  diffuse/specular multipliers, shadows, and light links.
+- [x] Replace the single derived preview light with linked multi-light direct
+  evaluation for distant, point/sphere, rect, disk, and cylinder lights while
+  preserving DomeLight IBL. Raster evaluation is bounded to the first 16
+  supported lights in stage order, diagnoses truncation, applies per-mesh
+  collection masks, and currently evaluates finite area lights at their
+  representative point with authored shaping.
+- [ ] Add one deterministic 2048-square raster shadow map (first enabled
+  DistantLight, otherwise first shaped SphereLight, in stage order) with 3x3
+  PCF.
+- [x] Use per-light visibility rays for shadows in Vulkan ray query and the
+  shared CUDA/HIP tracer.
+- [x] Diagnose rather than silently approximate GeometryLight, PortalLight,
+  IES, and emissive-mesh light sampling until dedicated implementations land.
+
+### Acceptance gates
+
+- [ ] Shared extraction tests prove `--next`/legacy equivalence for material,
+  texture, camera, and light records.
+- [ ] Checked-in fixtures cover a PBR material grid, packed/UDIM minification,
+  Points and all curve families, perspective/orthographic lens shift,
+  multi-light linking, and raster shadows. The linked red/blue/magenta raster
+  fixture is checked in and compares GL/Vulkan output; the shadow fixture is
+  still outstanding.
+- [ ] GL/Vulkan raster images agree within the focused-test tolerances before
+  the corresponding Vulkan/CUDA/HIP RT task is closed.
+- [ ] Run the curated external usd-assets golden sweep when the corpus is
+  mounted; missing external data remains a skip, not a normal-test failure.
+- [ ] Run focused tusdview tests, full native CTest, and the large-scene
+  first-display/VRAM comparison.  Regenerate embedded SPIR-V with the documented
+  SDK glslang whenever Vulkan shader sources change.
+
+---
+
+## Active-roadmap verification evidence
+
+Latest focused verification on 2026-07-19:
+
+- Native `tusdview` and `test_tydra_next` build successfully.
+- The twelve focused backend/material/camera/non-mesh CTests pass, including
+  Vulkan raster, Vulkan ray query, CUDA deformation, GL carrier image output,
+  opacity, back-face materials, transparency, and camera CLI behavior.
+- All seven registered headless tusdview unit executables pass; the lighting
+  test includes point/curve RT proxy topology and opacity assertions.
+- All eleven tests carrying the `tusdview` CTest label pass. This label now
+  includes the seven headless unit executables plus the checked non-mesh
+  extraction and OpenGL carrier-render regressions, so `ctest -L tusdview`
+  exercises both CPU records and visible Points/Curves output.
+- The complete configured native CTest run covers 190 tests: 185 pass and five
+  external/backend-dependent tests skip, with no failures. The new
+  unsupported-lobe regression passes in the focused, labeled, and complete
+  gates. An earlier complete run's sole reported failure,
+  `tusdview-rt-skinning`, was a comparator false positive: decoded CPU/GPU
+  images differ at one gray pixel by one 8-bit level while the animated poses
+  otherwise agree.  The regression now compares decoded pixels and permits at
+  most that single-pixel/one-LSB floating-point roundoff.  The saved failing
+  pair passes the corrected comparator, and the corrected test passes on the
+  NVIDIA Vulkan RT device. Together with the fresh complete run, this satisfies
+  the full native CTest portion of the acceptance gate.
+- `test_tydra_next` directly covers Points/Curves opacity interpolation, all
+  curve families, light-link collections, and unauthored light shape defaults.
+- The checked `tests/usda/tusdview-nonmesh-points-curves.usda` fixture retains
+  one Points prim and Basis/Hermite/NURBS curves and renders through OpenGL;
+  Vulkan ray query builds four corresponding BLAS carriers.
+- The checked `tests/usda/tusdview-raster-multilight-links.usda` fixture proves
+  additive red/blue/magenta direct-light accumulation, per-mesh light-link
+  masks, focused GL/Vulkan mean-color agreement, and default/legacy Vulkan
+  agreement. The shared packer unit also pins the 16-light stage-order bound
+  and DistantLight direction convention. Legacy streaming now resolves
+  CollectionAPI after its final mesh table exists and dispatches every USD
+  light schema; a DistantLight path-expression unit pins that behavior. Scenes
+  with authored light-link collections retain source-prim batch identity so
+  collection membership cannot be lost to static batching.
+- `tusdview-unsupported-realtime-lobes` loads the same OpenPBR material through
+  default and legacy conversion and requires one structured diagnostic naming
+  transmission, subsurface, sheen/fuzz, thin-film, anisotropy, and dispersion.
+  The neutral next-core record retains these authored inputs instead of
+  discarding them before a future evaluator can consume them.
+- Shell syntax and `git diff --check` pass.
+
+These results do not yet satisfy the unchecked large-scene performance,
+external usd-assets, or GL/Vulkan image-parity gates.
 
 ---
 

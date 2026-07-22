@@ -90,6 +90,7 @@ class Gui {
   void setTimeline(const TimelineInfo& t) { timeline_ = t; }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setBudget(LoadControl* b) { budget_ = b; }
+  void setShowGrid(bool on) { showGrid_ = on; }
 
   void frame(Renderer* renderer, OrbitCamera* camera);
   // Build the viewport render inputs. `packet` null (single-threaded) renders the

@@ -196,6 +196,76 @@ void test_shade_schema() {
   PASS();
 }
 
+void test_material_binding_resolution() {
+  TEST("material binding fallback/inheritance");
+  StageBuilder sb;
+  LayerBuilder& layer = sb.GetLayerBuilder();
+
+  layer.begin_prim("Root", "Xform");
+  layer.add_relationship("material:binding", Path("/ParentMat"));
+  layer.add_relationship("material:binding:back", Path("/ParentBackMat"));
+  {
+    PropMeta& pm =
+        layer.current()->ensure_property_meta("material:binding");
+    pm.authored |= PropMeta::kBindMaterialAs;
+    pm.bindMaterialAs = "strongerThanDescendants";
+  }
+  {
+    PropMeta& pm =
+        layer.current()->ensure_property_meta("material:binding:back");
+    pm.authored |= PropMeta::kBindMaterialAs;
+    pm.bindMaterialAs = "strongerThanDescendants";
+  }
+  layer.begin_prim("Mesh", "Mesh");
+  layer.add_relationship("material:binding:preview", Path("/MissingMat"));
+  layer.add_relationship("material:binding", Path("/LeafMat"));
+  layer.add_relationship("material:binding:back", Path("/LeafBackMat"));
+  layer.end_prim();
+  layer.end_prim();
+
+  layer.begin_prim("LooseMesh", "Mesh");
+  layer.add_relationship("material:binding:preview", Path("/MissingMat"));
+  layer.add_relationship("material:binding", Path("/LeafMat"));
+  layer.add_relationship("material:binding:back", Path("/MissingBackMat"));
+  layer.end_prim();
+  layer.begin_prim("ParentMat", "Material");
+  layer.end_prim();
+  layer.begin_prim("LeafMat", "Material");
+  layer.end_prim();
+  layer.begin_prim("ParentBackMat", "Material");
+  layer.end_prim();
+  layer.begin_prim("LeafBackMat", "Material");
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = sb.Build();
+
+  const UsdPrim mesh = stage.GetPrimAtPath("/Root/Mesh");
+  const UsdPrim direct = GetBoundMaterial(stage, mesh);
+  if (!direct.IsValid() || direct.GetPath().str() != "/LeafMat") {
+    FAIL("dangling preview binding did not fall through");
+    return;
+  }
+  if (GetInheritedBoundMaterialPath(stage, "/Root/Mesh") != "/ParentMat") {
+    FAIL("strong ancestor binding did not override leaf binding");
+    return;
+  }
+  if (GetInheritedBoundMaterialPath(stage, "/LooseMesh") != "/LeafMat") {
+    FAIL("valid same-prim fallback binding was not selected");
+    return;
+  }
+  if (GetInheritedBoundMaterialPathForPurpose(stage, "/Root/Mesh", "back") !=
+      "/ParentBackMat") {
+    FAIL("strong ancestor back-purpose binding did not override leaf binding");
+    return;
+  }
+  if (!GetInheritedBoundMaterialPathForPurpose(stage, "/LooseMesh", "back")
+           .empty()) {
+    FAIL("missing back-purpose binding did not remain empty");
+    return;
+  }
+  PASS();
+}
+
 void test_prim_children() {
   TEST("GetChildren");
   auto stage = MakeTestStage();
@@ -218,6 +288,7 @@ int main() {
   test_camera_schema();
   test_light_schema();
   test_shade_schema();
+  test_material_binding_resolution();
   test_prim_children();
 
   printf("\n%d/%d tests passed\n", pass_count, test_count);

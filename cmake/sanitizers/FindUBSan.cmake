@@ -25,9 +25,19 @@
 option(SANITIZE_UNDEFINED
     "Enable UndefinedBehaviorSanitizer for sanitized targets." Off)
 
-set(FLAG_CANDIDATES
-    "-g -fsanitize=undefined"
-)
+if (DEFINED TINYUSDZ_CXX_RTTI AND NOT TINYUSDZ_CXX_RTTI)
+    # UBSan's vptr instrumentation emits references to C++ typeinfo even when
+    # the target itself is compiled with -fno-rtti. That makes no-RTTI test
+    # executables fail at link time before any sanitizer checks can run.
+    # Retain every other undefined-behavior check and disable only vptr.
+    set(FLAG_CANDIDATES
+        "-g -fsanitize=undefined -fno-sanitize=vptr"
+    )
+else ()
+    set(FLAG_CANDIDATES
+        "-g -fsanitize=undefined"
+    )
+endif ()
 
 
 include(sanitize-helpers)

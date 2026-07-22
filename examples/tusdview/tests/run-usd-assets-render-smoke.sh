@@ -17,9 +17,11 @@
 # --update-golden.
 #
 # Backends:
+#   gl-raster : tusdview --backend gl (X11/Xvfb)
 #   vk-raster : tusdview --headless --backend vk
 #   vk-rt     : tusdview --headless --backend vk --rt
 #   cuda-rt   : tusdview --headless --cuda
+#   hip-rt    : tusdview --headless --hip
 #   tusdr-cpu : tusdrender -rtPreview
 #   tusdr-vk  : tusdrender -vk
 #   tusdr-vkr : tusdrender -vkr
@@ -82,6 +84,7 @@ GOLDEN_UPDATE="${TUSDVIEW_USD_ASSETS_GOLDEN_UPDATE:-0}"
 GOLDEN_KIND="${TUSDVIEW_USD_ASSETS_GOLDEN_KIND:-hash}"
 GOLDEN_TOL="${TUSDVIEW_USD_ASSETS_GOLDEN_TOL:-}"
 FINGERPRINT_PY="$SCRIPT_DIR/asset_fingerprint.py"
+EXPECTATIONS_FILE="${TUSDVIEW_USD_ASSETS_EXPECTATIONS:-}"
 # JSON mirror of results.tsv (default on; set to a path or empty to disable).
 JSON_OUT="${TUSDVIEW_USD_ASSETS_JSON:-auto}"
 
@@ -94,7 +97,7 @@ Options:
   --out DIR        Output dir (default: temporary dir)
   --limit N        Limit discovered USD files (default: all)
   --profile NAME   Asset profile when --files is omitted: all or usd-assets-curated
-  --modes LIST     Comma list: vk-raster,vk-rt,cuda-rt,tusdr-cpu,tusdr-vk,tusdr-vkr
+  --modes LIST     Comma list: gl-raster,vk-raster,vk-rt,cuda-rt,hip-rt,tusdr-cpu,tusdr-vk,tusdr-vkr
   --size WxH       tusdview --size (default: 256x256)
   --frames N       tusdview --frames (default: 4)
   --timeout DUR    Per-render timeout(1) duration (default: 45s)
@@ -105,6 +108,7 @@ Options:
   --golden-kind K  Fingerprint kind: hash or coverage (default: hash)
   --golden-tol N   Max fingerprint distance before golden_mismatch
                   (default: 160 for hash, 8 for coverage)
+  --expectations FILE  Per-asset expected status/warning/tolerance TSV
   --json FILE      Also write results as JSON (default: <out>/results.json)
 
 Environment:
@@ -113,6 +117,7 @@ Environment:
   TUSDVIEW_NVIDIA_OFFLOAD=auto|1|0
   TUSDVIEW_XVFB=auto|1|0|external
   TUSDVIEW_USD_ASSETS_GOLDEN=FILE  TUSDVIEW_USD_ASSETS_GOLDEN_UPDATE=1
+  TUSDVIEW_USD_ASSETS_EXPECTATIONS=FILE
 EOF
 }
 
@@ -132,6 +137,7 @@ while [ "$#" -gt 0 ]; do
     --update-golden) GOLDEN_FILE="$2"; GOLDEN_UPDATE=1; shift 2 ;;
     --golden-kind) GOLDEN_KIND="$2"; shift 2 ;;
     --golden-tol) GOLDEN_TOL="$2"; shift 2 ;;
+    --expectations) EXPECTATIONS_FILE="$2"; shift 2 ;;
     --json) JSON_OUT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR: unknown option: $1" >&2; usage >&2; exit 1 ;;
@@ -190,7 +196,7 @@ trap '[ "$CLEAN_OUT" -eq 1 ] && rm -rf "$OUT_DIR"' EXIT
 
 RESULTS="$OUT_DIR/results.tsv"
 : > "$RESULTS"
-printf 'mode\tstatus\tgolden\tasset\timage\tlog\n' >> "$RESULTS"
+printf 'mode\tstatus\tgolden\tasset\timage\tlog\tdiagnostics\n' >> "$RESULTS"
 
 # Golden baseline handling. In compare mode, load mode+asset -> fingerprint into
 # an associative array. In update mode, freshly computed fingerprints are
@@ -212,6 +218,28 @@ if [ -n "$GOLDEN_FILE" ]; then
       done < "$GOLDEN_FILE"
     fi
   fi
+fi
+
+# Optional expectations TSV:
+#   mode<TAB>asset<TAB>status<TAB>warning-regex<TAB>golden-tolerance
+# `*` mode is a fallback. Empty or `*` status accepts any rendered status.
+# A warning regex must match the render log. A per-entry tolerance overrides
+# --golden-tol. This makes known degradation explicit instead of silently
+# accepting every warning emitted by an external corpus.
+declare -A EXPECT_STATUS EXPECT_WARNING EXPECT_TOL
+if [ -n "$EXPECTATIONS_FILE" ]; then
+  if [ ! -f "$EXPECTATIONS_FILE" ]; then
+    echo "ERROR: expectations file does not exist: $EXPECTATIONS_FILE" >&2
+    exit 1
+  fi
+  while IFS=$'\t' read -r e_mode e_asset e_status e_warning e_tol; do
+    [ -z "$e_mode" ] && continue
+    case "$e_mode" in \#*) continue ;; esac
+    key="$e_mode|$e_asset"
+    EXPECT_STATUS["$key"]="$e_status"
+    EXPECT_WARNING["$key"]="$e_warning"
+    EXPECT_TOL["$key"]="$e_tol"
+  done < "$EXPECTATIONS_FILE"
 fi
 
 has_status() {
@@ -340,29 +368,36 @@ run_one() {
 
   local args=()
   local use_vk_env=0
-  local use_xvfb_for_vk=0
-  if [ "$mode" = "vk-raster" ] || [ "$mode" = "vk-rt" ]; then
+  local use_xvfb_for_viewer=0
+  if [ "$mode" = "gl-raster" ] || [ "$mode" = "vk-raster" ] ||
+     [ "$mode" = "vk-rt" ]; then
     if should_use_xvfb; then
-      use_xvfb_for_vk=1
+      use_xvfb_for_viewer=1
     fi
   fi
   case "$mode" in
+    gl-raster)
+      args=(--backend gl)
+      ;;
     vk-raster)
       args=(--backend vk)
-      [ "$use_xvfb_for_vk" -eq 0 ] && args=(--headless "${args[@]}")
+      [ "$use_xvfb_for_viewer" -eq 0 ] && args=(--headless "${args[@]}")
       use_vk_env=1
       ;;
     vk-rt)
       args=(--backend vk --rt)
-      [ "$use_xvfb_for_vk" -eq 0 ] && args=(--headless "${args[@]}")
+      [ "$use_xvfb_for_viewer" -eq 0 ] && args=(--headless "${args[@]}")
       use_vk_env=1
       ;;
     cuda-rt)
       args=(--headless --cuda)
       ;;
+    hip-rt)
+      args=(--headless --hip)
+      ;;
     tusdr-cpu|tusdr-vk|tusdr-vkr)
       if [ ! -x "$TUSDRENDER_BIN" ]; then
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$mode" "backend_unavailable" "-" "$rel" "" "" >> "$RESULTS"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$mode" "backend_unavailable" "-" "$rel" "" "" "-" >> "$RESULTS"
         printf '%-9s %-22s %-9s %s\n' "$mode" "backend_unavailable" "-" "$rel"
         return 0
       fi
@@ -392,7 +427,7 @@ run_one() {
     esac
     args+=(--frames "$FRAMES" --size "$SIZE" --screenshot "$out" "$asset")
 
-    if [ "$use_vk_env" -eq 1 ] && [ "$use_xvfb_for_vk" -eq 1 ] && ! use_external_xvfb; then
+    if [ "$use_xvfb_for_viewer" -eq 1 ] && ! use_external_xvfb; then
       cmd+=(xvfb-run -a env)
     else
       cmd+=(env)
@@ -415,7 +450,7 @@ run_one() {
 
   if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     status="timeout"
-  elif grep -Eiq 'CUDA ray tracing unavailable|CUDA RT failed|no CUDA|NVRTC.*failed|renderer init failed: no Vulkan|no Vulkan physical device|Vulkan backend unavailable|Vulkan unavailable|backend .*unavailable|Failed to create Vulkan|lightrt_vk_engine_create failed' "$log"; then
+  elif grep -Eiq 'CUDA ray tracing unavailable|CUDA RT failed|no CUDA|NVRTC.*failed|HIP ray tracing unavailable|HIP RT failed|no HIP|hiprtc.*failed|renderer init failed: no Vulkan|no Vulkan physical device|Vulkan backend unavailable|Vulkan unavailable|backend .*unavailable|Failed to create Vulkan|lightrt_vk_engine_create failed' "$log"; then
     status="backend_unavailable"
   elif grep -Eiq 'load failed|Failed to load USD|LoadUSDFromFile.*failed|parse error|No such file|cannot open|^ERR .*load|^ERROR .*load' "$log"; then
     status="load_error"
@@ -429,7 +464,10 @@ run_one() {
     status="no_renderable"
   elif [ "$mode" = "cuda-rt" ] && ! grep -q 'CUDA RT wrote' "$log"; then
     status="backend_error"
-  elif [ "$mode" != "cuda-rt" ] && ! grep -q 'render stats' "$log"; then
+  elif [ "$mode" = "hip-rt" ] && ! grep -q 'HIP RT wrote' "$log"; then
+    status="backend_error"
+  elif [ "$mode" != "cuda-rt" ] && [ "$mode" != "hip-rt" ] &&
+       ! grep -q 'render stats' "$log"; then
     status="backend_error"
   elif [ ! -s "$out" ]; then
     status="backend_error"
@@ -440,6 +478,25 @@ run_one() {
   else
     status="$(classify_rendered "$log")"
   fi
+
+  # Compact the structured renderer diagnostics into the machine-readable row.
+  local diagnostics="-"
+  local summary_line
+  summary_line="$(grep -E 'load summary:' "$log" | tail -1 || true)"
+  if [ -n "$summary_line" ]; then
+    diagnostics="${summary_line#*load summary: }"
+    diagnostics="${diagnostics//$'\t'/ }"
+  fi
+
+  local expect_key="$mode|$rel"
+  local fallback_key="*|$rel"
+  if [ -z "${EXPECT_STATUS[$expect_key]+x}" ] &&
+     [ -n "${EXPECT_STATUS[$fallback_key]+x}" ]; then
+    expect_key="$fallback_key"
+  fi
+  local expected_status="${EXPECT_STATUS[$expect_key]:-}"
+  local expected_warning="${EXPECT_WARNING[$expect_key]:-}"
+  local entry_tol="${EXPECT_TOL[$expect_key]:-$GOLDEN_TOL}"
 
   # Golden-fingerprint check: only meaningful for a real (non-blank) render.
   # A mismatch overrides the status so the existing FAIL_ON path handles it.
@@ -458,7 +515,7 @@ run_one() {
       local expect="${GOLDEN_EXPECT["$mode|$rel"]:-}"
       if [ -z "$expect" ]; then
         golden="missing"
-      elif python3 "$FINGERPRINT_PY" "$GOLDEN_COMPARE_CMD" "$fp" "$expect" "$GOLDEN_TOL" >/dev/null 2>&1; then
+      elif python3 "$FINGERPRINT_PY" "$GOLDEN_COMPARE_CMD" "$fp" "$expect" "$entry_tol" >/dev/null 2>&1; then
         golden="ok"
       else
         golden="mismatch"
@@ -467,7 +524,27 @@ run_one() {
     fi
   fi
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$mode" "$status" "$golden" "$rel" "$out" "$log" >> "$RESULTS"
+  # If a baseline says this asset previously rendered normally, degradation is
+  # a regression unless the expectations manifest explicitly allows it.
+  if [ "$status" = "degraded_material" ] &&
+     [ -n "${GOLDEN_EXPECT["$mode|$rel"]:-}" ] &&
+     [ -z "$expected_status" ]; then
+    status="unexpected_degradation"
+  fi
+
+  if [ -n "$expected_status" ] && [ "$expected_status" != "*" ]; then
+    case ",$expected_status," in
+      *",$status,"*) ;;
+      *) status="expectation_mismatch" ;;
+    esac
+  fi
+  if [ "$status" != "rendered" ] && [ -n "$expected_warning" ] &&
+     [ "$expected_warning" != "-" ] &&
+     ! grep -Eq "$expected_warning" "$log"; then
+    status="expectation_mismatch"
+  fi
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$mode" "$status" "$golden" "$rel" "$out" "$log" "$diagnostics" >> "$RESULTS"
   printf '%-9s %-22s %-9s %s\n' "$mode" "$status" "$golden" "$rel"
 
   if has_status "$FAIL_ON" "$status"; then

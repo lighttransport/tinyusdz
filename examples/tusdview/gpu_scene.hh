@@ -19,6 +19,9 @@
 
 namespace tusdview {
 
+namespace tydra = tinyusdz::tydra;
+using DrawLightRtOpenPBRCPU = tydra::LightRtOpenPBRParams;
+
 // Halton(2,3) sub-pixel jitter offset in [-0.5, 0.5) for supersampled ray-traced
 // screenshots (the CUDA/HIP trace path). Sample 0 is the pixel center (0,0), so
 // spp==1 reproduces the un-jittered image exactly. Shared by both GPU tracers.
@@ -48,6 +51,10 @@ struct DrawSubmesh {
   uint32_t indexOffset{0};  // offset into DrawMeshCPU::indices (in indices)
   uint32_t indexCount{0};
   int materialId{-1};  // index into DrawScene::materials (-1 = default material)
+  // Optional material for triangles viewed from behind. -1 means use
+  // materialId, so ordinary scenes pay only one extra integer per draw range
+  // and every backend has the same explicit fallback rule.
+  int backfaceMaterialId{-1};
 };
 
 // One blendshape target in DrawVertex order (sparse), for per-frame GPU morph.
@@ -334,7 +341,7 @@ struct DrawMaterialParamCPU {
 
 // Baked constant fallback for raster/RT backends. Texture-connected inputs keep
 // their texture ids in DrawMaterialParamCPU and the legacy material slots.
-using DrawLightRtOpenPBRCPU = tinyusdz::tydra::LightRtOpenPBRParams;
+
 
 struct DrawMaterialCPU {
   std::string name;
@@ -363,9 +370,19 @@ struct DrawMaterialCPU {
   bool useSpecularWorkflow{false};
   float specularColor[3]{0.0f, 0.0f, 0.0f};
   float ior{1.5f};
+  // Real-time PBR core shared by raster and RT. These are populated from the
+  // full LightRT/OpenPBR fallback even when the source is UsdPreviewSurface.
+  float occlusion{1.0f};
+  float coatWeight{0.0f};
+  float coatColor[3]{1.0f, 1.0f, 1.0f};
+  float coatRoughness{0.1f};
+  float coatIor{1.5f};
   // Indices into DrawScene::textures (-1 = no texture)
   int baseColorTex{-1};
-  int metalRoughTex{-1};
+  // Keep metallic and roughness independent. They may alias the same packed
+  // ORM texture, but USD commonly authors them as separate images/UV streams.
+  int metallicTex{-1};
+  int roughnessTex{-1};
   int normalTex{-1};
   int coatNormalTex{-1};
   int emissiveTex{-1};
@@ -374,7 +391,8 @@ struct DrawMaterialCPU {
   // UsdPreviewSurface inputs:opacity.
   int opacityTex{-1};
   DrawTexSampleCPU baseColorSample;
-  DrawTexSampleCPU metalRoughSample;
+  DrawTexSampleCPU metallicSample;
+  DrawTexSampleCPU roughnessSample;
   DrawTexSampleCPU normalSample;
   DrawTexSampleCPU coatNormalSample;
   DrawTexSampleCPU emissiveSample;
@@ -451,7 +469,7 @@ struct DrawTextureCPU {
   std::string assetIdentifier;  // Tydra TextureImage::asset_identifier, if known
   int renderImageId{-1};        // source RenderScene::images index, or -1
   int renderUdimId{-1};         // source RenderScene::udim_textures index, or -1
-  bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear (normal/metalRough)
+  bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear scalar/normal data
   int wrapS{static_cast<int>(WrapMode::Repeat)};
   int wrapT{static_cast<int>(WrapMode::Repeat)};
   bool requestedCompressed{false};
@@ -592,8 +610,46 @@ struct DrawLightCPU {
   bool hasSpectralEmission{false};
 };
 
+// Render-ready non-mesh geometry retained from the next-core converter. These
+// carriers deliberately preserve world-space placement and authored/tessellated
+// attributes instead of prematurely expanding them into camera-dependent mesh
+// proxies; raster backends consume them as billboards/ribbons and RT backends
+// build their solid proxy geometry from the same records.
+struct DrawPointsCPU {
+  std::string name;
+  std::string absPath;
+  std::string purpose{"default"};
+  std::vector<float> points;   // local xyz
+  std::vector<float> widths;   // empty, constant, or per-point
+  std::vector<float> colors;   // empty, constant rgb, or per-point rgb
+  std::vector<float> opacities;  // empty, constant, or per-point
+  int colorsInterpolation{0};
+  int opacitiesInterpolation{0};
+  int materialId{-1};
+  float world[16]{};            // column-major local-to-world
+  float aabbMin[3]{0, 0, 0};
+  float aabbMax[3]{0, 0, 0};
+};
+
+struct DrawCurvesCPU {
+  std::string name;
+  std::string absPath;
+  std::string purpose{"default"};
+  std::vector<uint32_t> vertexCounts;  // tessellated polyline counts
+  std::vector<float> points;           // tessellated local xyz
+  std::vector<float> widths;           // empty, constant, or per-point
+  std::vector<float> colors;           // empty or per-point rgb
+  std::vector<float> opacities;        // empty, constant, or per-point
+  int materialId{-1};
+  float world[16]{};                    // column-major local-to-world
+  float aabbMin[3]{0, 0, 0};
+  float aabbMax[3]{0, 0, 0};
+};
+
 struct DrawScene {
   std::vector<DrawMeshCPU> meshes;
+  std::vector<DrawPointsCPU> points;
+  std::vector<DrawCurvesCPU> curves;
   std::vector<DrawMaterialCPU> materials;
   std::vector<DrawTextureCPU> textures;
   std::vector<DrawVolumeCPU> volumes;  // UsdVol volumes (OpenVDB)
@@ -648,7 +704,10 @@ struct DrawScene {
   // partially built to avoid freezing / VRAM thrashing.
   bool truncated{false};
 
-  bool empty() const { return meshes.empty() && volumes.empty() && lights.empty(); }
+  bool empty() const {
+    return meshes.empty() && points.empty() && curves.empty() &&
+           volumes.empty() && lights.empty();
+  }
 };
 
 struct SkinningFrameCPU {

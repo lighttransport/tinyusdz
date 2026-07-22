@@ -14,6 +14,7 @@
 
 #include "displacement_bake.hh"  // SampleTextureRed
 #include "lightrt_mtlx_bridge.hh"
+#include "texture_tools.hh"
 
 namespace tusdview {
 
@@ -86,7 +87,7 @@ struct MeshBuild {
   bool valid = false;
   std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
   std::vector<uint8_t> geo, emask;
-  std::vector<int> mat, face, domj;
+  std::vector<int> mat, backMat, face, domj;
   std::vector<Node> blas;  // local node/leaf refs (rebased during assembly)
   std::vector<int> leafOrder;  // output slot i <- original triangle leafOrder[i]
   float lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
@@ -124,6 +125,19 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
         return s.materialId;
     return -1;
   };
+  auto submeshBackMatId = [&](uint32_t triIdx0) -> int {
+    for (const DrawSubmesh& s : m.submeshes)
+      if (triIdx0 >= s.indexOffset && triIdx0 < s.indexOffset + s.indexCount)
+        return s.backfaceMaterialId;
+    return -1;
+  };
+  auto isDefaultPlaceholder = [&](int materialId) -> bool {
+    if (materialId != 0 || scene.materials.empty()) return false;
+    const DrawMaterialCPU& mat = scene.materials.front();
+    return mat.name.empty() && mat.absPath.empty() &&
+           !mat.hasUsdPreviewSurface && !mat.hasOpenPBRSurface &&
+           mat.params.empty();
+  };
 
   // Original-polygon edge set (for the wireframe edge mask). Keys are the same
   // vertex-index pairs used by m.indices, so triangle edges can be tested directly.
@@ -141,18 +155,11 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
 
   std::vector<float> lt, ln, lc, luv, luv1, linfl, ldomw;
   std::vector<uint8_t> lg, le;
-  std::vector<int> lm, lf, ldomj;
+  std::vector<int> lm, lmb, lf, ldomj;
+  bool anyBackMaterial = false;
   for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
     float wp[9], wn[9], wc[12], wuv[6], wuv1[6], winfl[3], wdomw[3];
     int domJoint = -1;
-    float curTint[3] = {0.6f, 0.6f, 0.6f};
-    if (instanced) {
-      curTint[0] = curTint[1] = curTint[2] = 1.0f;
-    } else if (const DrawMaterialCPU* mat = submeshMat(static_cast<uint32_t>(t))) {
-      curTint[0] = mat->baseColor[0];
-      curTint[1] = mat->baseColor[1];
-      curTint[2] = mat->baseColor[2];
-    }
     for (int k = 0; k < 3; ++k) {
       const uint32_t vidx = m.indices[t + k];
       const DrawVertex& vtx = m.vertices[vidx];
@@ -175,9 +182,12 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
         const float* c = &m.vertexColors[vidx * 3];
         dc[0] = c[0]; dc[1] = c[1]; dc[2] = c[2];
       }
-      wc[k * 4 + 0] = curTint[0] * dc[0];
-      wc[k * 4 + 1] = curTint[1] * dc[1];
-      wc[k * 4 + 2] = curTint[2] * dc[2];
+      // Keep only displayColor here. The hit-selected front/back material base
+      // is applied in the kernel from matBase, so changing sides can change the
+      // base constant without a second per-triangle color stream.
+      wc[k * 4 + 0] = dc[0];
+      wc[k * 4 + 1] = dc[1];
+      wc[k * 4 + 2] = dc[2];
       wc[k * 4 + 3] = hasVtxAlpha ? m.vertexAlpha[vidx] : 1.0f;
     }
     if (displacementScale != 0.0f) {
@@ -218,7 +228,18 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     ldomw.insert(ldomw.end(), wdomw, wdomw + 3);
     ldomj.push_back(domJoint);
     lg.push_back(g);
-    lm.push_back(submeshMatId(static_cast<uint32_t>(t)));
+    const int frontMat = submeshMatId(static_cast<uint32_t>(t));
+    // Unbound next-loader instanced prototypes carry their flat/instance tint
+    // in Inst; suppress that loader's anonymous material-0 placeholder to avoid
+    // multiplying by default gray twice. Legacy scenes may use index 0 for a
+    // real authored material, identified by its populated material record.
+    lm.push_back(instanced &&
+                         (frontMat < 0 || isDefaultPlaceholder(frontMat))
+                     ? -1
+                     : frontMat);
+    const int backMat = submeshBackMatId(static_cast<uint32_t>(t));
+    lmb.push_back(backMat);
+    anyBackMaterial |= backMat >= 0 && backMat != lm.back();
     lf.push_back(hasFace ? static_cast<int>(m.sourceFaceId[t / 3]) : -1);
     // Wireframe edge mask: bit0 edge(v1,v2), bit1 edge(v2,v0), bit2 edge(v0,v1).
     // 7 (all edges) when the mesh has no original-polygon data.
@@ -258,6 +279,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   mb.tris.reserve(ltc * 9); mb.nrms.reserve(ltc * 9); mb.cols.reserve(ltc * 12);
   mb.uv.reserve(ltc * 6); mb.uv1.reserve(ltc * 6); mb.infl.reserve(ltc * 3);
   mb.domw.reserve(ltc * 3); mb.geo.reserve(ltc); mb.mat.reserve(ltc);
+  if (anyBackMaterial) mb.backMat.reserve(ltc);
   mb.face.reserve(ltc); mb.domj.reserve(ltc); mb.emask.reserve(ltc);
   for (size_t i = 0; i < ltc; ++i) {
     int s = bidx[i];
@@ -271,6 +293,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     mb.geo.push_back(lg[s]);
     mb.emask.push_back(le[s]);
     mb.mat.push_back(lm[s]);
+    if (anyBackMaterial) mb.backMat.push_back(lmb[s]);
     mb.face.push_back(lf[s]);
     mb.domj.push_back(ldomj[s]);
   }
@@ -281,13 +304,18 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     const size_t ninst = m.instanceCount();
     const bool perColor = m.instanceColors.size() == ninst * 3;
     const bool perOpacity = m.instanceOpacities.size() == ninst;
+    const bool boundMaterial = std::any_of(
+        mb.mat.begin(), mb.mat.end(), [](int materialId) { return materialId >= 0; });
     mb.instO2W.reserve(ninst * 12);
     mb.instTint.reserve(ninst * 4);
     for (size_t k = 0; k < ninst; ++k) {
       mb.instO2W.insert(mb.instO2W.end(), &m.instanceXforms[k * 12], &m.instanceXforms[k * 12] + 12);
-      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 0] : m.flatColor[0]);
-      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 1] : m.flatColor[1]);
-      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 2] : m.flatColor[2]);
+      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 0]
+                                    : (boundMaterial ? 1.0f : m.flatColor[0]));
+      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 1]
+                                    : (boundMaterial ? 1.0f : m.flatColor[1]));
+      mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 2]
+                                    : (boundMaterial ? 1.0f : m.flatColor[2]));
       const float opacity = perOpacity ? m.instanceOpacities[k] : m.flatOpacity;
       mb.instTint.push_back(std::max(0.0f, std::min(1.0f, opacity)));
     }
@@ -393,6 +421,301 @@ void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
   }
 }
 
+void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
+                           const std::vector<DrawMaterialCPU>& materials,
+                           HostTextureTable* out) {
+  if (!out) return;
+  *out = HostTextureTable{};
+  out->matTex.assign(std::max<size_t>(materials.size(), 1) * 6, -1);
+  out->matTexParam.assign(std::max<size_t>(materials.size(), 1) *
+                              kRtMaterialTextureParamFloats,
+                          0.0f);
+  out->sourceToTable.assign(sourceTextures.size(), -1);
+  out->textures.reserve(sourceTextures.size());
+
+  auto decodedImage = [](const light3d::Image& src,
+                         const DrawCompressedImageCPU& compressed) {
+    light3d::Image image = src;
+    if ((image.width <= 0 || image.height <= 0 || image.data.empty()) &&
+        compressed.format != DrawCompressedFormat::None &&
+        !compressed.data.empty()) {
+      DrawCompressedImageCPU unused;
+      light3d::Image rgba;
+      TextureCompressCaps noGpuFormats;
+      if (TexToolsAdaptCompressed(compressed.data.data(), compressed.data.size(),
+                                  false, compressed.format,
+                                  static_cast<uint32_t>(compressed.width),
+                                  static_cast<uint32_t>(compressed.height),
+                                  noGpuFormats, &unused, &rgba)) {
+        image = std::move(rgba);
+      }
+    }
+    return image;
+  };
+  auto decodedMips = [&](const std::vector<light3d::Image>& sourceMips,
+                         const DrawCompressedImageCPU& compressed) {
+    if (!sourceMips.empty()) return sourceMips;
+    std::vector<light3d::Image> result;
+    result.reserve(compressed.mips.size());
+    for (const DrawCompressedMipCPU& mip : compressed.mips) {
+      DrawCompressedImageCPU level;
+      level.format = compressed.format;
+      level.width = mip.width;
+      level.height = mip.height;
+      level.data = mip.data;
+      light3d::Image decoded = decodedImage(light3d::Image{}, level);
+      if (decoded.width <= 0 || decoded.height <= 0 || decoded.data.empty()) break;
+      result.push_back(std::move(decoded));
+    }
+    return result;
+  };
+  auto appendImage = [&](const light3d::Image& image,
+                         const std::vector<light3d::Image>& sourceMips,
+                         const DrawTextureCPU& tex) {
+    if (image.width <= 0 || image.height <= 0 || image.channels != 4 ||
+        image.data.empty()) return -1;
+    const int id = static_cast<int>(out->textures.size());
+    std::vector<const light3d::Image*> levels{&image};
+    int expectedW = image.width;
+    int expectedH = image.height;
+    for (const light3d::Image& mip : sourceMips) {
+      expectedW = std::max(1, expectedW / 2);
+      expectedH = std::max(1, expectedH / 2);
+      if (mip.width != expectedW || mip.height != expectedH ||
+          mip.channels != 4 || mip.data.empty()) break;
+      levels.push_back(&mip);
+    }
+    for (size_t level = 0; level < levels.size(); ++level) {
+      const light3d::Image& src = *levels[level];
+      HostTextureDesc td;
+      td.offset = static_cast<int>(out->texels.size());
+      td.width = src.width;
+      td.height = src.height;
+      td.wrapS = tex.wrapS;
+      td.wrapT = tex.wrapT;
+      td.srgb = tex.srgb ? 1 : 0;
+      td.mipCount = static_cast<int>(levels.size() - level);
+      td.firstMip = td.mipCount > 1 ? id + static_cast<int>(level) + 1 : -1;
+      for (int& layer : td.udimLayer) layer = -1;
+      out->texels.insert(out->texels.end(), src.data.begin(), src.data.end());
+      out->textures.push_back(td);
+    }
+    return id;
+  };
+  for (size_t ti = 0; ti < sourceTextures.size(); ++ti) {
+    const DrawTextureCPU& tex = sourceTextures[ti];
+    if (tex.isUdim) {
+      HostTextureDesc virtualTex;
+      virtualTex.wrapS = tex.wrapS;
+      virtualTex.wrapT = tex.wrapT;
+      virtualTex.srgb = tex.srgb ? 1 : 0;
+      virtualTex.isUdim = 1;
+      for (int& layer : virtualTex.udimLayer) layer = -1;
+      const int virtualId = static_cast<int>(out->textures.size());
+      out->textures.push_back(virtualTex);
+      for (const DrawUdimTileCPU& tile : tex.udimTiles) {
+        const light3d::Image image = decodedImage(tile.image, tile.compressed);
+        const std::vector<light3d::Image> mips =
+            decodedMips(tile.mipImages, tile.compressed);
+        const int tileId = appendImage(image, mips, tex);
+        const int lut = static_cast<int>(tile.udim) - 1001;
+        if (tileId >= 0 && lut >= 0 && lut < 100) {
+          out->textures[static_cast<size_t>(virtualId)].udimLayer[lut] = tileId;
+        }
+      }
+      out->sourceToTable[ti] = virtualId;
+    } else {
+      const light3d::Image image = decodedImage(tex.image, tex.compressed);
+      const std::vector<light3d::Image> mips =
+          decodedMips(tex.mipImages, tex.compressed);
+      out->sourceToTable[ti] = appendImage(image, mips, tex);
+    }
+  }
+  auto mapTex = [&](int t) -> int {
+    return (t >= 0 && static_cast<size_t>(t) < out->sourceToTable.size())
+               ? out->sourceToTable[static_cast<size_t>(t)]
+               : -1;
+  };
+  for (size_t i = 0; i < materials.size(); ++i) {
+    const DrawMaterialCPU& dm = materials[i];
+    out->matTex[i * 6 + 0] = mapTex(dm.baseColorTex);
+    out->matTex[i * 6 + 1] = mapTex(dm.metallicTex);
+    out->matTex[i * 6 + 2] = mapTex(dm.roughnessTex);
+    out->matTex[i * 6 + 3] = mapTex(dm.normalTex);
+    out->matTex[i * 6 + 4] = mapTex(dm.emissiveTex);
+    out->matTex[i * 6 + 5] = mapTex(dm.opacityTex);
+    PackRtMaterialTextureParams(
+        dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
+  }
+}
+
+namespace {
+
+void CarrierWorldPoint(const float m[16], const float* p, float out[3]) {
+  out[0] = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12];
+  out[1] = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13];
+  out[2] = m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14];
+}
+
+float CarrierWorldScale(const float m[16]) {
+  float scale = 0.0f;
+  for (int c = 0; c < 3; ++c) {
+    const float x = m[c * 4 + 0], y = m[c * 4 + 1], z = m[c * 4 + 2];
+    scale = std::max(scale, std::sqrt(x * x + y * y + z * z));
+  }
+  return scale;
+}
+
+void InitProxyMesh(const std::string& name, const std::string& path,
+                   const std::string& purpose, int materialId,
+                   DrawMeshCPU* mesh) {
+  mesh->name = name;
+  mesh->absPath = path;
+  mesh->purpose = purpose;
+  for (int i = 0; i < 16; ++i) {
+    mesh->world[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+    mesh->skinGeomBind[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+  }
+  mesh->doubleSided = true;
+  DrawSubmesh sub;
+  sub.materialId = materialId;
+  sub.indexOffset = 0;
+  mesh->submeshes.push_back(sub);
+}
+
+void AddProxyVertex(const float p[3], const float n[3], const float color[3],
+                    float opacity, DrawMeshCPU* mesh) {
+  DrawVertex v{};
+  v.px = p[0]; v.py = p[1]; v.pz = p[2];
+  v.nx = n[0]; v.ny = n[1]; v.nz = n[2];
+  mesh->vertices.push_back(v);
+  mesh->vertexColors.insert(mesh->vertexColors.end(), color, color + 3);
+  mesh->vertexAlpha.push_back(opacity);
+}
+
+}  // namespace
+
+std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
+  std::vector<DrawMeshCPU> proxies;
+  proxies.reserve(scene.points.size() + scene.curves.size());
+  for (const DrawPointsCPU& src : scene.points) {
+    DrawMeshCPU mesh;
+    InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
+    const size_t count = src.points.size() / 3;
+    const float scale = CarrierWorldScale(src.world);
+    static const float dirs[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
+                                      {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    static const uint32_t faces[8][3] = {{0, 2, 4}, {2, 1, 4}, {1, 3, 4},
+                                         {3, 0, 4}, {2, 0, 5}, {1, 2, 5},
+                                         {3, 1, 5}, {0, 3, 5}};
+    for (size_t i = 0; i < count; ++i) {
+      float center[3];
+      CarrierWorldPoint(src.world, &src.points[i * 3], center);
+      const float width = (src.widths.empty() ? 1.0f
+                           : src.widths.size() == 1 ? src.widths[0]
+                           : src.widths[std::min(i, src.widths.size() - 1)]) *
+                          scale;
+      float color[3] = {1.0f, 1.0f, 1.0f};
+      if (src.colors.size() >= 3) {
+        const size_t ci = src.colors.size() >= (i + 1) * 3 ? i * 3 : 0;
+        color[0] = src.colors[ci]; color[1] = src.colors[ci + 1];
+        color[2] = src.colors[ci + 2];
+      }
+      const float opacity = src.opacities.empty()
+                                ? 1.0f
+                                : src.opacities[src.opacities.size() > i ? i : 0];
+      const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+      for (const auto& dir : dirs) {
+        const float p[3] = {center[0] + dir[0] * width * 0.5f,
+                            center[1] + dir[1] * width * 0.5f,
+                            center[2] + dir[2] * width * 0.5f};
+        AddProxyVertex(p, dir, color, opacity, &mesh);
+      }
+      for (const auto& face : faces) {
+        mesh.indices.push_back(base + face[0]);
+        mesh.indices.push_back(base + face[1]);
+        mesh.indices.push_back(base + face[2]);
+      }
+    }
+    mesh.submeshes[0].indexCount = mesh.indices.size();
+    if (!mesh.indices.empty()) proxies.push_back(std::move(mesh));
+  }
+
+  for (const DrawCurvesCPU& src : scene.curves) {
+    DrawMeshCPU mesh;
+    InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
+    const size_t pointCount = src.points.size() / 3;
+    const float scale = CarrierWorldScale(src.world);
+    size_t begin = 0;
+    for (uint32_t authoredCount : src.vertexCounts) {
+      const size_t end = std::min(pointCount, begin + authoredCount);
+      for (size_t i = begin; i + 1 < end; ++i) {
+        float p0[3], p1[3];
+        CarrierWorldPoint(src.world, &src.points[i * 3], p0);
+        CarrierWorldPoint(src.world, &src.points[(i + 1) * 3], p1);
+        float axis[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+        const float axisLen = std::sqrt(axis[0] * axis[0] + axis[1] * axis[1] +
+                                        axis[2] * axis[2]);
+        if (axisLen <= 1.0e-8f) continue;
+        for (float& v : axis) v /= axisLen;
+        const float ref[3] = {std::fabs(axis[1]) < 0.9f ? 0.0f : 1.0f,
+                              std::fabs(axis[1]) < 0.9f ? 1.0f : 0.0f, 0.0f};
+        float side[3] = {axis[1] * ref[2] - axis[2] * ref[1],
+                         axis[2] * ref[0] - axis[0] * ref[2],
+                         axis[0] * ref[1] - axis[1] * ref[0]};
+        const float sl = std::sqrt(side[0] * side[0] + side[1] * side[1] +
+                                   side[2] * side[2]);
+        for (float& v : side) v /= sl;
+        const float up[3] = {side[1] * axis[2] - side[2] * axis[1],
+                             side[2] * axis[0] - side[0] * axis[2],
+                             side[0] * axis[1] - side[1] * axis[0]};
+        const float width = (src.widths.empty() ? 1.0f
+            : src.widths.size() == 1 ? src.widths[0]
+            : 0.5f * (src.widths[std::min(i, src.widths.size() - 1)] +
+                      src.widths[std::min(i + 1, src.widths.size() - 1)])) * scale;
+        float color[3] = {1.0f, 1.0f, 1.0f};
+        if (src.colors.size() >= pointCount * 3) {
+          for (int c = 0; c < 3; ++c) {
+            color[c] = 0.5f * (src.colors[i * 3 + c] +
+                               src.colors[(i + 1) * 3 + c]);
+          }
+        }
+        float opacity = 1.0f;
+        if (!src.opacities.empty()) {
+          const float o0 = src.opacities[src.opacities.size() > i ? i : 0];
+          const float o1 =
+              src.opacities[src.opacities.size() > i + 1 ? i + 1 : 0];
+          opacity = 0.5f * (o0 + o1);
+        }
+        const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+        for (int ring = 0; ring < 2; ++ring) {
+          const float* center = ring == 0 ? p0 : p1;
+          for (int k = 0; k < 4; ++k) {
+            const float angle = 1.57079632679f * static_cast<float>(k);
+            const float normal[3] = {side[0] * std::cos(angle) + up[0] * std::sin(angle),
+                                     side[1] * std::cos(angle) + up[1] * std::sin(angle),
+                                     side[2] * std::cos(angle) + up[2] * std::sin(angle)};
+            const float p[3] = {center[0] + normal[0] * width * 0.5f,
+                                center[1] + normal[1] * width * 0.5f,
+                                center[2] + normal[2] * width * 0.5f};
+            AddProxyVertex(p, normal, color, opacity, &mesh);
+          }
+        }
+        for (uint32_t k = 0; k < 4; ++k) {
+          const uint32_t next = (k + 1) & 3u;
+          mesh.indices.insert(mesh.indices.end(),
+                              {base + k, base + 4 + k, base + 4 + next,
+                               base + k, base + 4 + next, base + next});
+        }
+      }
+      begin = end;
+    }
+    mesh.submeshes[0].indexCount = mesh.indices.size();
+    if (!mesh.indices.empty()) proxies.push_back(std::move(mesh));
+  }
+  return proxies;
+}
+
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     float displacementScale, HostScene* out, std::string* err,
                     BuildProgress* progress, RefitMap* refitOut) {
@@ -425,10 +748,15 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
 
   // Phase A: build every mesh's geometry in parallel (the dominant cost on
   // heavily-prototyped scenes). Each writes its own results slot.
-  std::vector<MeshBuild> mbs(scene.meshes.size());
-  setPhase(0, scene.meshes.size());  // geometry
-  ParallelFor(scene.meshes.size(), [&](size_t i) {
-    mbs[i] = BuildOneMesh(scene, scene.meshes[i], displacementScale);
+  std::vector<DrawMeshCPU> nonMeshProxies = BuildNonMeshRtProxyMeshes(scene);
+  std::vector<const DrawMeshCPU*> sourceMeshes;
+  sourceMeshes.reserve(scene.meshes.size() + nonMeshProxies.size());
+  for (const DrawMeshCPU& mesh : scene.meshes) sourceMeshes.push_back(&mesh);
+  for (const DrawMeshCPU& mesh : nonMeshProxies) sourceMeshes.push_back(&mesh);
+  std::vector<MeshBuild> mbs(sourceMeshes.size());
+  setPhase(0, sourceMeshes.size());  // geometry
+  ParallelFor(sourceMeshes.size(), [&](size_t i) {
+    mbs[i] = BuildOneMesh(scene, *sourceMeshes[i], displacementScale);
     tick();
   });
   auto tA = Clock::now();
@@ -453,7 +781,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     if (out->tris.size() / 9 >= cap) { out->truncated = true; break; }
     if (isrc.size() >= instCap) { out->truncated = true; break; }
     const size_t triOff = out->tris.size() / 9;
-    if (recordRefit) {
+    if (recordRefit && mbi < scene.meshes.size()) {
       RefitMeshMap rm;
       rm.sceneMesh = mbi;
       rm.triOffset = triOff;
@@ -472,6 +800,12 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     out->geo.insert(out->geo.end(), mb.geo.begin(), mb.geo.end());
     out->emask.insert(out->emask.end(), mb.emask.begin(), mb.emask.end());
     out->mat.insert(out->mat.end(), mb.mat.begin(), mb.mat.end());
+    if (!mb.backMat.empty()) {
+      if (out->backMat.empty()) out->backMat.assign(triOff, -1);
+      out->backMat.insert(out->backMat.end(), mb.backMat.begin(), mb.backMat.end());
+    } else if (!out->backMat.empty()) {
+      out->backMat.insert(out->backMat.end(), mb.mat.size(), -1);
+    }
     out->face.insert(out->face.end(), mb.face.begin(), mb.face.end());
     out->domj.insert(out->domj.end(), mb.domj.begin(), mb.domj.end());
     for (Node nd : mb.blas) {
@@ -575,37 +909,21 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
 
   out->numMats = static_cast<int>(scene.materials.size());
   out->matPbr.assign(std::max<size_t>(scene.materials.size(), 1) * 6, 0.0f);
+  out->matBase.assign(std::max<size_t>(scene.materials.size(), 1) * 3, 0.6f);
   out->matLightRt.assign(std::max<size_t>(scene.materials.size(), 1) *
                              kLightRtOpenPBRFloats,
                          0.0f);
-  out->matTex.assign(std::max<size_t>(scene.materials.size(), 1) * 4, -1);
-  out->matTexParam.assign(std::max<size_t>(scene.materials.size(), 1) *
-                              kRtMaterialTextureParamFloats,
-                          0.0f);
-  out->textures.clear();
-  out->texels.clear();
-  std::vector<int> rtTexMap(scene.textures.size(), -1);
-  out->textures.reserve(scene.textures.size());
-  for (size_t ti = 0; ti < scene.textures.size(); ++ti) {
-    const DrawTextureCPU& tex = scene.textures[ti];
-    HostTextureDesc td;
-    td.offset = static_cast<int>(out->texels.size());
-    td.width = tex.image.width;
-    td.height = tex.image.height;
-    td.wrapS = tex.wrapS;
-    td.wrapT = tex.wrapT;
-    if (tex.image.width > 0 && tex.image.height > 0 && tex.image.channels == 4 &&
-        !tex.image.data.empty()) {
-      out->texels.insert(out->texels.end(), tex.image.data.begin(),
-                         tex.image.data.end());
-      rtTexMap[ti] = static_cast<int>(out->textures.size());
-      out->textures.push_back(td);
-    }
-  }
+  HostTextureTable textureTable;
+  BuildHostTextureTable(scene.textures, scene.materials, &textureTable);
+  out->texels = std::move(textureTable.texels);
+  out->textures = std::move(textureTable.textures);
+  out->matTex = std::move(textureTable.matTex);
+  out->matTexParam = std::move(textureTable.matTexParam);
   out->numTextures = static_cast<int>(out->textures.size());
   auto mapTex = [&](int t) -> int {
-    return (t >= 0 && static_cast<size_t>(t) < rtTexMap.size())
-               ? rtTexMap[static_cast<size_t>(t)]
+    return (t >= 0 &&
+            static_cast<size_t>(t) < textureTable.sourceToTable.size())
+               ? textureTable.sourceToTable[static_cast<size_t>(t)]
                : -1;
   };
   for (size_t i = 0; i < scene.materials.size(); ++i) {
@@ -616,13 +934,10 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     out->matPbr[i * 6 + 3] = dm.emissive[1];
     out->matPbr[i * 6 + 4] = dm.emissive[2];
     out->matPbr[i * 6 + 5] = dm.alpha;
+    out->matBase[i * 3 + 0] = dm.baseColor[0];
+    out->matBase[i * 3 + 1] = dm.baseColor[1];
+    out->matBase[i * 3 + 2] = dm.baseColor[2];
     PackLightRtOpenPBR(dm, &out->matLightRt[i * kLightRtOpenPBRFloats]);
-    out->matTex[i * 4 + 0] = mapTex(dm.baseColorTex);
-    out->matTex[i * 4 + 1] = mapTex(dm.metalRoughTex);
-    out->matTex[i * 4 + 2] = mapTex(dm.normalTex);
-    out->matTex[i * 4 + 3] = mapTex(dm.emissiveTex);
-    PackRtMaterialTextureParams(
-        dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
   }
 
   out->numLights = static_cast<int>(scene.lights.size());

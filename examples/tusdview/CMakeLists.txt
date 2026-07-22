@@ -142,12 +142,14 @@ if(TINYUSDZ_BUILD_TESTS)
       lightrt_mtlx_bridge.cc
       rt_scene_build.cc
       rt_bvh.cc
+      texture_tools.cc
       displacement_bake.cc
       $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
   target_compile_features(tusdview_lightrt_bridge_test PRIVATE cxx_std_17)
   target_include_directories(tusdview_lightrt_bridge_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   if(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)
@@ -291,6 +293,7 @@ if(TINYUSDZ_WITH_TEXTOOLS)
   set(TUSDVIEW_TEXTOOLS_CONSUMERS ${EXAMPLE_TARGET})
   if(TINYUSDZ_BUILD_TESTS)
     list(APPEND TUSDVIEW_TEXTOOLS_CONSUMERS
+        tusdview_lightrt_bridge_test
         tusdview_openpbr_material_test
         tusdview_lighting_test
         tusdview_geometry_primvar_test
