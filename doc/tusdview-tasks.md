@@ -315,6 +315,9 @@ Latest focused verification on 2026-07-20:
   Standard Surface now independently covers `coat`, `coat_color`, and
   `coat_roughness` through ordinary and UDIM sources. Vulkan raster is exact
   between loaders; Vulkan RT/CUDA pass with maximum loader MAD 0.474.
+  Ordinary Preview, OpenPBR, and Standard coat fixtures are now packaged with
+  their independent weight/color/roughness images. All 48 external/package
+  comparisons across both loaders and Vulkan raster/RT plus CUDA are exact.
 - Coat normal now uses the same model: a per-sample UDIM classification bit is
   resolved after texture deduplication, Vulkan raster binds a dedicated normal
   array, and the coat-normal AOV crosses tiles carrying distinct tangent-space
