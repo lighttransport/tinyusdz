@@ -17,6 +17,8 @@
 #include "next/types/type-id.hh"
 #include "next/types/type-info.hh"
 #include "next/types/value.hh"
+#include "next/crate/crate-data-source.hh"
+#include "next/crate/crate-format.hh"
 #include "next/crate/lazy-array.hh"
 #include "next/prim/path.hh"
 #include "next/prim/attribute.hh"
@@ -178,6 +180,118 @@ void test_value() {
     assert(v.as_float_array() != nullptr);
     assert(v.as_float_array()->size() == 5);
     assert((*v.as_float_array())[2] == 3.0f);
+  }
+
+  // Value's compact array-size field cannot represent more than uint32_t.
+  // Reject an oversized lazy reference instead of silently truncating it.
+  {
+    LazyArrayRef ref;
+    ref.source =
+        CrateDataSource::Adopt(std::string(), CrateVersion{0, 8, 0});
+    ref.value_type = TypeId::Float;
+    ref.element_count =
+        static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)()) + 1;
+    Value v = Value::MakeLazyArray(ref);
+    assert(v.is_empty());
+
+    ref.element_count = 1;
+    ref.source.reset();
+    assert(Value::MakeLazyArray(ref).is_empty());  // source is required
+  }
+
+  // Component-array factories reject partial tuples, mismatched arity, and a
+  // TypeId whose accessor expects a different backing storage class.
+  {
+    assert(Value::MakeFloat2Array(std::vector<float>{1, 2, 3}).is_empty());
+    assert(Value::MakeFloat3Array(std::vector<float>{1, 2, 3, 4}).is_empty());
+    assert(Value::MakeFloatCompArray(std::vector<float>{1, 2, 3},
+                                     TypeId::Float2, 2)
+               .is_empty());
+    assert(Value::MakeFloatCompArray(std::vector<float>{1, 2}, TypeId::Token,
+                                     2)
+               .is_empty());
+    assert(Value::MakeDoubleCompArray(std::vector<double>{1, 2, 3},
+                                      TypeId::Double3, 2)
+               .is_empty());
+    assert(Value::MakeIntCompArray(std::vector<int32_t>{1, 2}, TypeId::Int2,
+                                   3)
+               .is_empty());
+    assert(Value::MakeUIntCompArray(std::vector<uint32_t>{1, 2},
+                                    TypeId::UInt2, 0)
+               .is_empty());
+    assert(Value::MakeStringLikeArray(std::vector<std::string>{"x"},
+                                      TypeId::Float)
+               .is_empty());
+  }
+
+  // Pointer-backed factories reject null input and non-trivial storage types;
+  // constructing a raw Dictionary would otherwise destroy an uninitialized
+  // shared_ptr handle.
+  {
+    const uint32_t raw = 0;
+    assert(Value::MakeMatrix2f(nullptr).is_empty());
+    assert(Value::MakeMatrix4d(nullptr).is_empty());
+    assert(Value::MakeFromRaw(TypeId::Float, nullptr).is_empty());
+    assert(Value::MakeFromRaw(TypeId::Dictionary, &raw).is_empty());
+  }
+
+  // A failed mutable accessor must not mark an unrelated value as edited.
+  {
+    Value v = Value::MakeIntArray(std::vector<int32_t>{1, 2});
+    assert(!v.is_dirty());
+    assert(v.as_double_array() == nullptr);
+    assert(!v.is_dirty());
+  }
+
+  // raw_data() on an array exposes its flat element payload, not the private
+  // polymorphic storage wrapper. Mutable access must preserve copy-on-write.
+  {
+    Value original = Value::MakeIntArray(std::vector<int32_t>{1, 2, 3});
+    const Value& const_original = original;
+    const int32_t* const_raw =
+        static_cast<const int32_t*>(const_original.raw_data());
+    assert(const_raw && const_raw[0] == 1 && const_raw[2] == 3);
+    assert(!original.is_dirty());
+
+    Value edited = original;
+    int32_t* mutable_raw = static_cast<int32_t*>(edited.raw_data());
+    assert(mutable_raw);
+    mutable_raw[0] = 9;
+    assert(edited.is_dirty());
+    assert((*edited.as_int_array())[0] == 9);
+    assert((*original.as_int_array())[0] == 1);
+
+    Value tuples = Value::MakeFloat3Array({0, 1, 2, 3, 4, 5});
+    const Value& const_tuples = tuples;
+    const float* tuple_raw =
+        static_cast<const float*>(const_tuples.raw_data());
+    assert(tuple_raw && tuple_raw[0] == 0 && tuple_raw[5] == 5);
+
+    Value token = Value::MakeToken("raw token");
+    const Value& const_token = token;
+    Value token_copy =
+        Value::MakeFromRaw(TypeId::Token, const_token.raw_data());
+    assert(token_copy.as_token() && *token_copy.as_token() == "raw token");
+
+    Value empty;
+    Value block = Value::MakeBlock();
+    assert(empty.raw_data() == nullptr);
+    assert(block.raw_data() == nullptr);
+  }
+
+  // Materialized array size follows the live mutable backing vector; lazy
+  // arrays continue to use their header count without materializing.
+  {
+    Value scalar = Value::MakeFloatArray(std::vector<float>{1, 2});
+    scalar.as_float_array()->push_back(3);
+    assert(scalar.array_size() == 3);
+
+    Value tuples = Value::MakeFloat3Array(std::vector<float>{1, 2, 3});
+    std::vector<float>* lanes = tuples.as_float_array();
+    lanes->push_back(4);
+    assert(tuples.array_size() == 0);  // partial tuple is not advertised
+    lanes->insert(lanes->end(), {5, 6});
+    assert(tuples.array_size() == 2);
   }
 
   // Copy-on-write: a copy shares the buffer until one side mutates, then the
@@ -1090,8 +1204,530 @@ void test_stage_session_payloads_and_cancel() {
 }
 
 // ============================================================
+// Regression: Matrix type name lookup (previously Matrix2f/Matrix3f/Matrix4f
+// shared the "matrix2d"/"matrix3d"/"matrix4d" name with their double siblings,
+// making GetTypeIdFromName("matrix2f") return Invalid).
+// ============================================================
+
+void test_matrix_type_name_lookup() {
+  std::cout << "Testing matrix type name lookup regression..." << std::endl;
+
+  // Float matrix types must have their own distinct USD names.
+  assert(GetTypeIdFromName("matrix2f") == TypeId::Matrix2f);
+  assert(GetTypeIdFromName("matrix3f") == TypeId::Matrix3f);
+  assert(GetTypeIdFromName("matrix4f") == TypeId::Matrix4f);
+
+  // Double matrix types remain unchanged.
+  assert(GetTypeIdFromName("matrix2d") == TypeId::Matrix2d);
+  assert(GetTypeIdFromName("matrix3d") == TypeId::Matrix3d);
+  assert(GetTypeIdFromName("matrix4d") == TypeId::Matrix4d);
+
+  // GetTypeName must return the correct name for each type.
+  assert(std::strcmp(GetTypeName(TypeId::Matrix2f), "matrix2f") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix3f), "matrix3f") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix4f), "matrix4f") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix2d), "matrix2d") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix3d), "matrix3d") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix4d), "matrix4d") == 0);
+
+  // TypeInfo sizes must still be correct.
+  assert(GetTypeSize(TypeId::Matrix2f) == sizeof(float) * 4);
+  assert(GetTypeSize(TypeId::Matrix3f) == sizeof(float) * 9);
+  assert(GetTypeSize(TypeId::Matrix4f) == sizeof(float) * 16);
+  assert(GetTypeSize(TypeId::Matrix2d) == sizeof(double) * 4);
+  assert(GetTypeSize(TypeId::Matrix3d) == sizeof(double) * 9);
+  assert(GetTypeSize(TypeId::Matrix4d) == sizeof(double) * 16);
+
+  // Float matrices are distinct types from double matrices.
+  assert(TypeId::Matrix2f != TypeId::Matrix2d);
+  assert(TypeId::Matrix3f != TypeId::Matrix3d);
+  assert(TypeId::Matrix4f != TypeId::Matrix4d);
+
+  std::cout << "  Matrix type name lookup regression tests passed!" << std::endl;
+}
+
+// ============================================================
+// Regression: Frame4d Value operations (previously had null function
+// pointers, so construct/copy/move/equals would fail or crash).
+// ============================================================
+
+void test_frame4d_value_ops() {
+  std::cout << "Testing Frame4d Value operations regression..." << std::endl;
+
+  // Frame4d should have valid TypeInfo with non-null function pointers.
+  const TypeInfo* info = GetTypeInfo(TypeId::Frame4d);
+  assert(info != nullptr);
+  assert(info->construct != nullptr);
+  assert(info->destruct != nullptr);
+  assert(info->copy != nullptr);
+  assert(info->move != nullptr);
+  assert(info->equals != nullptr);
+  assert(info->size == sizeof(double) * 16);
+  assert(std::strcmp(info->name, "frame4d") == 0);
+
+  // Construct a Frame4d value via MakeRaw and verify it round-trips.
+  {
+    double mat[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    Value v = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    assert(v.type_id() == TypeId::Frame4d);
+    const double* data = v.as_matrix4d();  // frame4d uses matrix4d storage
+    assert(data != nullptr);
+    assert(data[0] == 1.0);
+    assert(data[15] == 1.0);
+  }
+
+  // Copy Frame4d value.
+  {
+    double mat[16] = {2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2};
+    Value a = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    Value b = a;
+    assert(a.type_id() == TypeId::Frame4d);
+    assert(b.type_id() == TypeId::Frame4d);
+    assert(*a.as_matrix4d() == *b.as_matrix4d());
+  }
+
+  // Move Frame4d value.
+  {
+    double mat[16] = {3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3};
+    Value a = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    Value b = std::move(a);
+    assert(b.type_id() == TypeId::Frame4d);
+    assert(b.as_matrix4d()[15] == 3.0);
+  }
+
+  std::cout << "  Frame4d Value operations regression tests passed!" << std::endl;
+}
+
+// ============================================================
+// Regression: mutable as_int_array() must accept Int2/Int3/Int4
+// arrays (previously checked type_id_ != TypeId::Int instead of
+// IsIntBackedArray, rejecting Int2/Int3/Int4 arrays).
+// ============================================================
+
+void test_mutable_int_array_backing_types() {
+  std::cout << "Testing mutable as_int_array() backing types regression..."
+            << std::endl;
+
+  // Int2 array: const and mutable accessors must both work.
+  {
+    Value v = Value::MakeIntCompArray(
+        std::vector<int32_t>{1, 2, 3, 4, 5, 6}, TypeId::Int2, 2);
+    assert(v.type_id() == TypeId::Int2);
+    assert(v.is_array());
+    assert(v.array_size() == 3);
+
+    // Const accessor
+    const Value& cv = v;
+    const std::vector<int32_t>* carr = cv.as_int_array();
+    assert(carr != nullptr);
+    assert(carr->size() == 6);
+    assert((*carr)[0] == 1);
+
+    // Mutable accessor
+    std::vector<int32_t>* marr = v.as_int_array();
+    assert(marr != nullptr && "mutable as_int_array() rejected Int2 array");
+    assert(marr->size() == 6);
+    (*marr)[0] = 99;
+    assert((*v.as_int_array())[0] == 99);
+  }
+
+  // Int3 array.
+  {
+    Value v = Value::MakeIntCompArray(
+        std::vector<int32_t>{10, 20, 30, 40, 50, 60}, TypeId::Int3, 3);
+    assert(v.type_id() == TypeId::Int3);
+    assert(v.array_size() == 2);
+
+    const Value& cv = v;
+    assert(cv.as_int_array() != nullptr);
+
+    std::vector<int32_t>* marr = v.as_int_array();
+    assert(marr != nullptr && "mutable as_int_array() rejected Int3 array");
+    assert(marr->size() == 6);
+  }
+
+  // Int4 array.
+  {
+    Value v = Value::MakeIntCompArray(
+        std::vector<int32_t>{1, 2, 3, 4, 5, 6, 7, 8}, TypeId::Int4, 4);
+    assert(v.type_id() == TypeId::Int4);
+    assert(v.array_size() == 2);
+
+    const Value& cv = v;
+    assert(cv.as_int_array() != nullptr);
+
+    std::vector<int32_t>* marr = v.as_int_array();
+    assert(marr != nullptr && "mutable as_int_array() rejected Int4 array");
+    assert(marr->size() == 8);
+  }
+
+  // Plain Int array (regression check: must still work).
+  {
+    Value v = Value::MakeIntArray(std::vector<int32_t>{7, 8, 9});
+    assert(v.type_id() == TypeId::Int);
+    std::vector<int32_t>* marr = v.as_int_array();
+    assert(marr != nullptr);
+    assert(marr->size() == 3);
+    assert((*marr)[0] == 7);
+  }
+
+  // Float-backed types must NOT be accepted by as_int_array().
+  {
+    Value v = Value::MakeIntArray(std::vector<int32_t>{1, 2, 3});
+    // Correct type: accepted
+    assert(v.as_int_array() != nullptr);
+  }
+
+  std::cout << "  Mutable as_int_array() backing types regression tests passed!"
+            << std::endl;
+}
+
+// ============================================================
+// Regression: ParseGenericValue tuple arity dispatch
+// (Previously hard-coded Float3 for all tuples, so float2/float4/int-tuples
+// failed to parse and desynced the lexer.)
+// ============================================================
+
+void test_generic_value_tuple_arity() {
+  std::cout << "Testing ParseGenericValue tuple arity dispatch..." << std::endl;
+
+  // Helper: parse a string through ParseGenericValue and return (success, type)
+  auto parse = [](const char* src, TypeId& out_type) -> bool {
+    Lexer lex(src, std::strlen(src));
+    ParseResult result = ParseGenericValue(lex, out_type);
+    // Consume trailing EOF to verify no unconsumed tokens.
+    return result.success && !lex.has_error() &&
+           lex.peek().type == TokenType::Eof;
+  };
+
+  // Float2 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(1.0, 2.0)", tid));
+    assert(tid == TypeId::Float2);
+  }
+
+  // Float3 tuple (still works as before)
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(1.0, 2.0, 3.0)", tid));
+    assert(tid == TypeId::Float3);
+  }
+
+  // Float4 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(1.0, 2.0, 3.0, 4.0)", tid));
+    assert(tid == TypeId::Float4);
+  }
+
+  // Int2 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(10, 20)", tid));
+    assert(tid == TypeId::Int2);
+  }
+
+  // Int3 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(10, 20, 30)", tid));
+    assert(tid == TypeId::Int3);
+  }
+
+  // Int4 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(10, 20, 30, 40)", tid));
+    assert(tid == TypeId::Int4);
+  }
+
+  // Unmatched '(' is an error
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(!parse("(1.0, 2.0", tid));
+  }
+
+  // Non-tuple values still work
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("42", tid) && tid == TypeId::Int);
+    assert(parse("3.14", tid) && tid == TypeId::Double);
+    assert(parse("\"hello\"", tid) && tid == TypeId::String);
+  }
+
+  std::cout << "  ParseGenericValue tuple arity dispatch tests passed!"
+            << std::endl;
+}
+
+// ============================================================
+// Regression: EncodeDeltaS32 signed overflow
+// (Previously used plain int32_t subtraction which is UB on overflow;
+// the unsigned counterpart EncodeDeltaU32 correctly promotes to int64_t.)
+// ============================================================
+
+void test_encode_delta_s32_overflow() {
+  std::cout << "Testing EncodeDeltaS32 overflow safety..." << std::endl;
+
+  // The encode/decode must round-trip correctly for large (but int32_t-fitting)
+  // deltas. The previous UB was in the subtraction `values[i] - prev` when
+  // both operands are extreme int32_t values; the fix promotes to int64_t.
+  {
+    int32_t values[] = {-1000000000, 1000000000};
+    std::vector<uint8_t> encoded = EncodeDeltaS32(values, 2);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(2);
+    bool ok = DecodeDeltaS32(encoded.data(), encoded.size(),
+                             decoded.data(), 2);
+    assert(ok);
+    assert(decoded[0] == -1000000000);
+    assert(decoded[1] == 1000000000);
+  }
+
+  // Large negative delta
+  {
+    int32_t values[] = {0, -2000000000};
+    std::vector<uint8_t> encoded = EncodeDeltaS32(values, 2);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(2);
+    bool ok = DecodeDeltaS32(encoded.data(), encoded.size(),
+                             decoded.data(), 2);
+    assert(ok);
+    assert(decoded[0] == 0);
+    assert(decoded[1] == -2000000000);
+  }
+
+  // The on-disk format's code-3 lane is int64 specifically so transitions
+  // between opposite int32 extremes remain lossless.
+  {
+    const int32_t values[] = {INT32_MIN, INT32_MAX, INT32_MIN};
+    const std::vector<uint8_t> encoded = EncodeDeltaS32(values, 3);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(3);
+    assert(DecodeDeltaS32(encoded.data(), encoded.size(), decoded.data(), 3));
+    assert(decoded == std::vector<int32_t>(values, values + 3));
+  }
+
+  // A hostile code-3 delta must be range-checked before signed addition.
+  {
+    std::vector<uint8_t> encoded(sizeof(int32_t) + 1 + sizeof(int32_t) +
+                                 sizeof(int64_t), 0);
+    encoded[sizeof(int32_t)] = uint8_t{0x0e};  // code 2, then code 3
+    const int32_t first_delta = INT32_MAX;
+    const int64_t overflowing_delta = INT64_MAX;
+    std::memcpy(encoded.data() + sizeof(int32_t) + 1, &first_delta,
+                sizeof(first_delta));
+    std::memcpy(encoded.data() + sizeof(int32_t) + 1 + sizeof(first_delta),
+                &overflowing_delta, sizeof(overflowing_delta));
+    int32_t decoded[2] = {};
+    assert(!DecodeDeltaS32(encoded.data(), encoded.size(), decoded, 2));
+  }
+
+  // The 2-bit code-map calculation must reject hostile counts before it wraps
+  // or indexes beyond the supplied buffer. Non-empty decodes also require an
+  // output destination.
+  {
+    const uint8_t tiny[16] = {};
+    uint32_t u32 = 0;
+    int32_t s32 = 0;
+    uint64_t u64 = 0;
+    const size_t huge = (std::numeric_limits<size_t>::max)();
+    assert(!DecodeDeltaU32(tiny, sizeof(tiny), &u32, huge));
+    assert(!DecodeDeltaS32(tiny, sizeof(tiny), &s32, huge));
+    assert(!DecodeDeltaU64(tiny, sizeof(tiny), &u64, huge));
+    assert(!DecodeDeltaU32(tiny, sizeof(tiny), nullptr, 1));
+    assert(!DecodeDeltaS32(tiny, sizeof(tiny), nullptr, 1));
+    assert(!DecodeDeltaU64(tiny, sizeof(tiny), nullptr, 1));
+  }
+
+  // U64 reconstruction is defined in unsigned arithmetic, including values
+  // above INT64_MAX; no implementation-defined signed round-trip is needed.
+  {
+    std::vector<uint8_t> encoded(sizeof(int64_t) + 1, 0);
+    const int64_t common_delta = -1;
+    std::memcpy(encoded.data(), &common_delta, sizeof(common_delta));
+    uint64_t decoded[2] = {};
+    assert(DecodeDeltaU64(encoded.data(), encoded.size(), decoded, 2));
+    assert(decoded[0] == (std::numeric_limits<uint64_t>::max)());
+    assert(decoded[1] == (std::numeric_limits<uint64_t>::max)() - 1);
+  }
+
+  // Single element (no deltas to compute)
+  {
+    int32_t values[] = {42};
+    std::vector<uint8_t> encoded = EncodeDeltaS32(values, 1);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(1);
+    bool ok = DecodeDeltaS32(encoded.data(), encoded.size(),
+                             decoded.data(), 1);
+    assert(ok);
+    assert(decoded[0] == 42);
+  }
+
+  // Empty input
+  {
+    std::vector<uint8_t> encoded = EncodeDeltaS32(nullptr, 0);
+    assert(encoded.empty());
+  }
+
+  std::cout << "  Delta-code overflow safety tests passed!" << std::endl;
+}
+
+// ============================================================
 // Main
 // ============================================================
+
+// ============================================================
+// Regression: LerpValue must interpolate every linearly-interpolatable
+// scalar type (previously Half/Half2-4, semantic-half aliases, Quath and
+// Matrix2f/3f/2d/3d fell through to "held", snapping animated values of
+// those types to the earlier time sample).
+// ============================================================
+
+void test_lerp_value_scalar_type_coverage() {
+  std::cout << "Testing LerpValue scalar type coverage regression..."
+            << std::endl;
+
+  // Half scalar: 1.0h (0x3C00) .. 3.0h (0x4200), midpoint must be 2.0.
+  {
+    const uint16_t one = 0x3C00, three = 0x4200;
+    Value a = Value::MakeFromRaw(TypeId::Half, &one);
+    Value b = Value::MakeFromRaw(TypeId::Half, &three);
+    Value r = LerpValue(a, b, 0.5);
+    assert(r.type_id() == TypeId::Half);
+    float f = 0.0f;
+    assert(r.to_float(&f));
+    assert(f == 2.0f);
+  }
+
+  // Half3 semantic alias (point3h): componentwise midpoint.
+  {
+    const uint16_t pa[3] = {0x3C00, 0x3C00, 0x3C00};  // (1,1,1)
+    const uint16_t pb[3] = {0x4200, 0x4200, 0x4200};  // (3,3,3)
+    Value a = Value::MakeFromRaw(TypeId::Point3h, pa);
+    Value b = Value::MakeFromRaw(TypeId::Point3h, pb);
+    Value r = LerpValue(a, b, 0.5);
+    assert(r.type_id() == TypeId::Point3h);
+    float f3[3] = {0, 0, 0};
+    assert(r.to_float3(f3));
+    assert(f3[0] == 2.0f && f3[1] == 2.0f && f3[2] == 2.0f);
+  }
+
+  // Matrix3f: elementwise lerp.
+  {
+    float ma[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    float mb[9] = {4, 4, 4, 4, 4, 4, 4, 4, 4};
+    Value r = LerpValue(Value::MakeMatrix3f(ma), Value::MakeMatrix3f(mb), 0.25);
+    assert(r.type_id() == TypeId::Matrix3f);
+    const float* m = r.as_matrix3f();
+    assert(m != nullptr);
+    for (int i = 0; i < 9; ++i) assert(m[i] == 1.0f);
+  }
+
+  // Matrix2d: elementwise lerp.
+  {
+    double ma[4] = {0, 0, 0, 0};
+    double mb[4] = {2, 2, 2, 2};
+    Value r = LerpValue(Value::MakeMatrix2d(ma), Value::MakeMatrix2d(mb), 0.5);
+    assert(r.type_id() == TypeId::Matrix2d);
+    const double* m = r.as_matrix2d();
+    assert(m != nullptr);
+    for (int i = 0; i < 4; ++i) assert(m[i] == 1.0);
+  }
+
+  // Quath: identity..identity slerp stays identity (exercise the half-quat
+  // path; previously the value was held, which also returned `a`, so check a
+  // non-trivial pair: w-flip halfway must renormalize, not snap).
+  {
+    const uint16_t qa[4] = {0x3C00, 0, 0, 0};  // (w=1,x=0,y=0,z=0) storage-order agnostic
+    Value a = Value::MakeFromRaw(TypeId::Quath, qa);
+    Value r = LerpValue(a, a, 0.5);
+    assert(r.type_id() == TypeId::Quath);
+  }
+
+  // Non-interpolatable types must still be held.
+  {
+    Value a(int32_t(1)), b(int32_t(3));
+    Value r = LerpValue(a, b, 0.5);
+    assert(r.type_id() == TypeId::Int);
+    assert(*r.as_int() == 1);
+  }
+
+  std::cout << "  LerpValue scalar type coverage regression tests passed!"
+            << std::endl;
+}
+
+// ============================================================
+// Regression: PathExpression arrays share the string-vector storage but
+// were excluded from as_token_array()/operator==/hash(), so two identical
+// pathExpression[] values compared unequal and hashed by type only.
+// ============================================================
+
+void test_path_expression_array_equality_hash() {
+  std::cout << "Testing pathExpression[] equality/hash regression..."
+            << std::endl;
+
+  std::vector<std::string> e1 = {"/World//", "/Set/Chair_*"};
+  std::vector<std::string> e2 = {"/World//", "/Set/Chair_*"};
+  std::vector<std::string> e3 = {"/Other//"};
+  Value a = Value::MakeStringLikeArray(std::move(e1), TypeId::PathExpression);
+  Value b = Value::MakeStringLikeArray(std::move(e2), TypeId::PathExpression);
+  Value c = Value::MakeStringLikeArray(std::move(e3), TypeId::PathExpression);
+
+  assert(a.as_token_array() != nullptr);
+  assert(a.as_token_array()->size() == 2);
+  assert(a == b);
+  assert(!(a == c));
+  assert(a.hash() == b.hash());
+  assert(a.hash() != c.hash());
+
+  std::cout << "  pathExpression[] equality/hash regression tests passed!"
+            << std::endl;
+}
+
+// Regression (ASan heap-use-after-free): ParsePrimContents cached the
+// current PrimSpec* across a nested child ParsePrim(), which appends to the
+// layer's flat prim vector and can reallocate it. A `reorder` statement
+// AFTER a child prim then dereferenced the freed pointer. Found by the
+// next_usda fuzzer.
+void test_usda_reorder_after_child_prim() {
+  std::cout << "Testing USDA reorder-after-child-prim UAF regression..."
+            << std::endl;
+
+  // Many children force the flat prim vector to reallocate mid-parse; the
+  // trailing `reorder properties` on the parent then touches its meta.
+  const char* input = R"(#usda 1.0
+def Xform "Parent" {
+    def Scope "A" {}
+    def Scope "B" {}
+    def Scope "C" {}
+    def Scope "D" {}
+    def Scope "E" {}
+    def Scope "F" {}
+    def Scope "G" {}
+    def Scope "H" {}
+    reorder nameChildren = ["H", "A"]
+    reorder properties = ["y", "x"]
+    float x = 1.0
+    float y = 2.0
+}
+)";
+
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+  UsdPrim parent = result.stage.GetPrimAtPath("/Parent");
+  assert(parent.IsValid());
+  assert(parent.GetChildren().size() == 8);
+  assert(parent.HasProperty("x"));
+  assert(parent.HasProperty("y"));
+
+  std::cout << "  USDA reorder-after-child-prim UAF regression passed!"
+            << std::endl;
+}
 
 int main() {
   std::cout << "=== TinyUSDZ Next Unit Tests ===" << std::endl;
@@ -1100,12 +1736,20 @@ int main() {
   try {
     test_type_id();
     test_value();
+    test_matrix_type_name_lookup();
+    test_frame4d_value_ops();
+    test_mutable_int_array_backing_types();
+    test_generic_value_tuple_arity();
+    test_encode_delta_s32_overflow();
+    test_lerp_value_scalar_type_coverage();
+    test_path_expression_array_equality_hash();
     test_path();
     test_prim();
     test_lexer();
     test_value_parser();
     test_ascii_parser();
     test_usda_reader();
+    test_usda_reorder_after_child_prim();
     test_usda_lazy_parse_policies();
     test_arc_listops();
     test_arc_layer_offset_parse();

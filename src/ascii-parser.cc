@@ -1449,6 +1449,7 @@ bool AsciiParser::IsSupportedAPISchema(const std::string &ty) {
 }
 
 bool AsciiParser::ReadStringLiteral(std::string *literal) {
+  constexpr size_t kMaxStringLen = 64 * 1024 * 1024; // 64MB, matches MaybeString
   std::string buf;
   buf.reserve(64);
 
@@ -1511,6 +1512,11 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
 
     if ((c == '\n') || (c == '\r')) {
       PUSH_ERROR_AND_RETURN("New line in string literal.");
+    }
+
+    if (buf.size() >= kMaxStringLen) {
+      PushError(fmt::format("String literal too large (> {} bytes).", kMaxStringLen));
+      return false;
     }
 
     if (c == '\\') {
@@ -2061,6 +2067,7 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
 }
 
 bool AsciiParser::ReadUntilNewline(std::string *str) {
+  constexpr size_t kMaxLineLen = 64 * 1024 * 1024; // 64MB
   std::string buf;
   buf.reserve(128);
 
@@ -2068,6 +2075,11 @@ bool AsciiParser::ReadUntilNewline(std::string *str) {
     char c;
     if (!Char1(&c)) {
       // this should not happen.
+      return false;
+    }
+
+    if (buf.size() >= kMaxLineLen) {
+      PushError("Line too long (exceeds 64MB limit).");
       return false;
     }
 

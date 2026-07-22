@@ -620,7 +620,7 @@ bool TexToolsBuildDomeIbl(const float* equirectRgb, int width, int height,
     const int block = srcFs / dstFs;
     ok = EM_OK(em_image_alloc(nullptr, &irrSrc, EM_PROJ_CUBE, dstFs, dstFs, 3));
     if (ok && block >= 1) {
-      const float invN = 1.0f / (static_cast<float>(block) * block);
+      const float invN = 1.0f / (static_cast<float>(block) * static_cast<float>(block));
       for (int f = 0; f < 6; ++f) {
         for (int y = 0; y < dstFs; ++y) {
           for (int x = 0; x < dstFs; ++x) {
@@ -668,8 +668,8 @@ bool TexToolsBuildDomeIbl(const float* equirectRgb, int width, int height,
         for (int x = 0; x < irr.width; ++x) {
           float dir[3];
           em_uv_to_dir(EM_PROJ_CUBE, f,
-                       (static_cast<float>(x) + 0.5f) / irr.width,
-                       (static_cast<float>(y) + 0.5f) / irr.height, dir);
+                       (static_cast<float>(x) + 0.5f) / static_cast<float>(irr.width),
+                       (static_cast<float>(y) + 0.5f) / static_cast<float>(irr.height), dir);
           const float sa =
               em_texel_solid_angle(EM_PROJ_CUBE, irr.width, irr.height, f, x, y);
           const float* t = em_image_texel(&irr, f, x, y);

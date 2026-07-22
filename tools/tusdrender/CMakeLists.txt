@@ -20,6 +20,11 @@ set_target_properties(lightrt_c PROPERTIES
   C_EXTENSIONS OFF
 )
 
+# Vendored external C code: suppress all warnings.
+if(NOT MSVC)
+  target_compile_options(lightrt_c PRIVATE -w)
+endif()
+
 # lightrt's C sources use C11 <stdatomic.h>. MSVC only enables C atomics behind
 # /experimental:c11atomics (VS 2022 17.5+); GCC/Clang have them by default.
 if(MSVC)
@@ -116,6 +121,58 @@ target_include_directories(tusdrender PRIVATE
   ${PROJECT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/src/external/lightrt
 )
+
+# Warning flags (same policy as the core library)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(TUSDRENDER_CXX_FLAGS
+      "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-documentation-unknown-command -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors -Wno-sign-conversion -Wno-float-equal -Wno-old-style-cast -Wno-double-promotion -Wno-missing-prototypes -Wno-covered-switch-default -Wno-zero-as-null-pointer-constant -Wno-nrvo -Wno-weak-vtables -Wno-reserved-macro-identifier -Wno-reserved-identifier -Wno-tautological-unsigned-zero-compare -Wno-unknown-warning-option -Wno-undef -Wno-implicit-int-float-conversion -Wno-implicit-float-conversion -Wno-shorten-64-to-32 -Wno-ms-bitfield-padding -Wno-mismatched-tags"
+  )
+  if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
+    set(TUSDRENDER_CXX_FLAGS "${TUSDRENDER_CXX_FLAGS} -Wno-unsafe-buffer-usage")
+  endif()
+  if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
+    set(TUSDRENDER_CXX_FLAGS "${TUSDRENDER_CXX_FLAGS} -Wno-switch-default")
+  endif()
+  if(NOT TINYUSDZ_NO_WERROR)
+    set(TUSDRENDER_CXX_FLAGS "${TUSDRENDER_CXX_FLAGS} -Werror")
+  endif()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+  set(TUSDRENDER_CXX_FLAGS "-Wall")
+  if(NOT TINYUSDZ_NO_WERROR)
+    set(TUSDRENDER_CXX_FLAGS "${TUSDRENDER_CXX_FLAGS} -Werror")
+  endif()
+endif()
+
+# Project-owned C++ sources
+set(TUSDRENDER_CXX_SOURCES
+  tusdrender.cc
+  tusdr_args.cc
+  tusdr_material.cc
+  tusdr_lighting.cc
+  tusdr_geom.cc
+  tusdr_integrator.cc
+  tusdr_scripting.cc
+  tusdr_stream.cc
+  tusdr_next.cc
+  tusdr_lod.cc
+  tusdr_rt_lod.cc
+  tusdr_legacy.cc
+  tusdr_gpu_common.cc
+  tusdr_vulkan.cc
+  tusdr_d3d.cc
+  tusdr_hip.cc
+)
+set_source_files_properties(${TUSDRENDER_CXX_SOURCES}
+    PROPERTIES COMPILE_FLAGS ${TUSDRENDER_CXX_FLAGS})
+
+# Vendored C third-party code: suppress all warnings.
+set_source_files_properties(
+  ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_vk.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_vkew.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_hip.c
+  ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c
+  PROPERTIES COMPILE_FLAGS "-w")
 
 # When the project is built with QuickJS, enable tusdrender's -js (scripting)
 # and -mcp (MCP stdio control) modes for memory-persistent / interactive

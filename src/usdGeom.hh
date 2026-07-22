@@ -847,7 +847,8 @@ struct GeomSphere : public GPrim {
   //
   // Predefined attribs.
   //
-  TypedAttributeWithFallback<Animatable<double>> radius{2.0};
+  // USD spec says default radius is 1.0 (UsdGeomSphere).
+  TypedAttributeWithFallback<Animatable<double>> radius{1.0};
 };
 
 struct GeomPlane : public GPrim {

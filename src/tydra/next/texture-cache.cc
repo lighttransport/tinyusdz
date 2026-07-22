@@ -11,6 +11,7 @@
 
 #include "image-loader.hh"
 #include "next/reader/usdz-reader.hh"
+#include "safe-arithmetic.hh"
 #include "tydra/texture-util.hh"
 
 namespace tinyusdz {
@@ -99,9 +100,17 @@ bool NarrowTo8Bit(::tinyusdz::Image* img) {
       img->format != ::tinyusdz::Image::PixelFormat::UInt) {
     return true;
   }
-  const size_t samples = size_t(img->width) * size_t(img->height) *
-                         size_t(img->channels);
-  if (img->data.size() < samples * sizeof(uint16_t)) return false;
+  if (img->width <= 0 || img->height <= 0 || img->channels <= 0) return false;
+  size_t pixels = 0;
+  size_t samples = 0;
+  size_t source_bytes = 0;
+  if (!safe::mul(static_cast<size_t>(img->width),
+                 static_cast<size_t>(img->height), &pixels) ||
+      !safe::mul(pixels, static_cast<size_t>(img->channels), &samples) ||
+      !safe::mul(samples, sizeof(uint16_t), &source_bytes) ||
+      img->data.size() < source_bytes) {
+    return false;
+  }
   std::vector<uint8_t> narrowed(samples);
   for (size_t i = 0; i < samples; ++i) {
     uint16_t v = 0;
@@ -124,20 +133,28 @@ bool ToDecoded(const ::tinyusdz::Image& src, bool force_rgba,
   }
   const size_t ch = static_cast<size_t>(src.channels);
   if (ch < 1 || ch > 4) return false;
-  const size_t npix = size_t(src.width) * size_t(src.height);
-  if (src.data.size() < npix * ch) return false;
+  size_t npix = 0;
+  size_t source_bytes = 0;
+  if (!safe::mul(static_cast<size_t>(src.width),
+                 static_cast<size_t>(src.height), &npix) ||
+      !safe::mul(npix, ch, &source_bytes) ||
+      src.data.size() < source_bytes) {
+    return false;
+  }
 
   out->width = static_cast<uint32_t>(src.width);
   out->height = static_cast<uint32_t>(src.height);
 
   if (!force_rgba) {
     out->channels = static_cast<uint8_t>(ch);
-    out->pixels.assign(src.data.begin(), src.data.begin() + npix * ch);
+    out->pixels.assign(src.data.begin(), src.data.begin() + source_bytes);
     return true;
   }
 
+  size_t rgba_bytes = 0;
+  if (!safe::mul(npix, size_t{4}, &rgba_bytes)) return false;
   out->channels = 4;
-  out->pixels.assign(npix * 4, 255);
+  out->pixels.assign(rgba_bytes, 255);
   for (size_t i = 0; i < npix; ++i) {
     const uint8_t* s = src.data.data() + i * ch;
     uint8_t* d = out->pixels.data() + i * 4;

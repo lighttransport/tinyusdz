@@ -1313,8 +1313,8 @@ void Gui::rebuildInspectorCache() {
           } else if (tn == "color3d") {
             if (const auto* c = v.as<tinyusdz::value::color3d>()) {
               row.hasColor = true;
-              row.color[0] = c->r; row.color[1] = c->g;
-              row.color[2] = c->b; row.color[3] = 1.0f;
+              row.color[0] = static_cast<float>(c->r); row.color[1] = static_cast<float>(c->g);
+              row.color[2] = static_cast<float>(c->b); row.color[3] = 1.0f;
             }
           }
         }
@@ -2378,9 +2378,9 @@ void Gui::drawMaterialsPanel() {
               if (off + 3 >= img->data.size()) continue;
               const ImU32 c = IM_COL32(img->data[off + 0], img->data[off + 1],
                                        img->data[off + 2], img->data[off + 3]);
-              dl->AddRectFilled(ImVec2(p.x + x * cell, p.y + y * cell),
-                                ImVec2(p.x + (x + 1) * cell + 0.5f,
-                                       p.y + (y + 1) * cell + 0.5f),
+              dl->AddRectFilled(ImVec2(p.x + static_cast<float>(x) * cell, p.y + static_cast<float>(y) * cell),
+                                ImVec2(p.x + static_cast<float>(x + 1) * cell + 0.5f,
+                                       p.y + static_cast<float>(y + 1) * cell + 0.5f),
                                 c);
             }
           }
@@ -2526,14 +2526,14 @@ void Gui::drawCompositionGraph() {
 
   // Layout arcs below in 2 columns.
   int cols = std::min(static_cast<int>(arcs.size()), 2);
-  float totalWidth = cols * arcBoxW + (cols - 1) * spacing;
+  float totalWidth = static_cast<float>(cols) * arcBoxW + static_cast<float>(cols - 1) * spacing;
   float startX = canvasPos.x + std::max(0.0f, (canvasSize.x - totalWidth) * 0.5f);
 
   for (size_t i = 0; i < arcs.size(); ++i) {
     int col = static_cast<int>(i) % cols;
     int row = static_cast<int>(i) / cols;
-    float ax = startX + col * (arcBoxW + spacing);
-    float ay = primY + primBoxH + 50.0f + row * (arcBoxH + 10.0f);
+    float ax = startX + static_cast<float>(col) * (arcBoxW + spacing);
+    float ay = primY + primBoxH + 50.0f + static_cast<float>(row) * (arcBoxH + 10.0f);
 
     // Connection line from prim bottom to arc top.
     float primMidX = cx;
@@ -2565,7 +2565,7 @@ void Gui::drawCompositionGraph() {
   }
 
   ImGui::Dummy(ImVec2(canvasSize.x, primY + primBoxH + 50.0f +
-                      ((arcs.size() + cols - 1) / cols) * (arcBoxH + 10.0f) +
+                      static_cast<float>((arcs.size() + cols - 1) / cols) * (arcBoxH + 10.0f) +
                       topMargin));
   ImGui::End();
 }
@@ -3284,10 +3284,12 @@ void Gui::cullInstancesSync() {
     bool hc = r.hasColors;
     bool ho = r.hasOpacities;
     std::vector<float> xf = r.xforms, col = r.colors, op = r.opacities;
-    gpu([this, mi, cnt, hc, ho, xf = std::move(xf), col = std::move(col),
-         op = std::move(op)]() mutable {
-      renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr,
-                                          ho ? op.data() : nullptr, cnt);
+    gpu([this, miCap = mi, cntCap = cnt, hcCap = hc, hoCap = ho,
+         xfCap = std::move(xf), colCap = std::move(col),
+         opCap = std::move(op)]() mutable {
+      renderer_->updateInstanceVisibility(miCap, xfCap.data(),
+                                          hcCap ? colCap.data() : nullptr,
+                                          hoCap ? opCap.data() : nullptr, cntCap);
     });
     visInstances += r.count;
     instTris += protoTris * r.count;
@@ -3319,8 +3321,8 @@ void Gui::uploadProxies(CullJobMesh* instProxy) {
   lastProxyColors_ = col;
   lastProxyValid_ = true;
   const uint32_t pc = static_cast<uint32_t>(xf.size() / 12);
-  gpu([this, pc, xf = std::move(xf), col = std::move(col)]() mutable {
-    renderer_->updateProxyInstances(xf.data(), col.data(), pc);
+  gpu([this, pcCap = pc, xfCap = std::move(xf), colCap = std::move(col)]() mutable {
+    renderer_->updateProxyInstances(xfCap.data(), colCap.data(), pcCap);
   });
 }
 
@@ -3350,10 +3352,12 @@ void Gui::cullInstances() {
       bool ho = r.hasOpacities;
       std::vector<float> xf = std::move(r.xforms), col = std::move(r.colors),
                          op = std::move(r.opacities);
-      gpu([this, mi, cnt, hc, ho, xf = std::move(xf), col = std::move(col),
-           op = std::move(op)]() mutable {
-        renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr,
-                                            ho ? op.data() : nullptr, cnt);
+      gpu([this, miCap = mi, cntCap = cnt, hcCap = hc, hoCap = ho,
+           xfCap = std::move(xf), colCap = std::move(col),
+           opCap = std::move(op)]() mutable {
+        renderer_->updateInstanceVisibility(miCap, xfCap.data(),
+                                            hcCap ? colCap.data() : nullptr,
+                                            hoCap ? opCap.data() : nullptr, cntCap);
       });
     }
     // Apply the accumulated box proxies (shared instanced draw).
@@ -3801,7 +3805,7 @@ void Gui::drawViewport() {
           c[r] = vp.m[0*4+r]*x + vp.m[1*4+r]*y + vp.m[2*4+r]*z + vp.m[3*4+r];
         if (std::abs(c[3]) < 1e-10f) return ImVec2(-1e9,-1e9);
         float nx = c[0]/c[3], ny = c[1]/c[3];
-        return ImVec2((nx*0.5f+0.5f)*w, (1.0f-(ny*0.5f+0.5f))*h);
+        return ImVec2((nx*0.5f+0.5f)*static_cast<float>(w), (1.0f-(ny*0.5f+0.5f))*static_cast<float>(h));
       };
       ImVec2 origin2D = project(tx, ty, tz);
       // Axis endpoints in screen space.

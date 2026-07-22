@@ -146,11 +146,13 @@ bool USDZReader::Open(const uint8_t* data, size_t size,
     }
     if (hdr.uncompressed_size != hdr.compressed_size) {
       error_ = "invalid stored USDZ entry size";
+      entries_.clear();
       return false;
     }
     if (options.max_entry_size > 0 &&
         static_cast<size_t>(hdr.uncompressed_size) > options.max_entry_size) {
       error_ = "USDZ entry exceeds maximum memory limit";
+      entries_.clear();
       return false;
     }
 

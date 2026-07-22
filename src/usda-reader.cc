@@ -555,7 +555,7 @@ bool BuildVariantSetsRec(
           }
           return false;
         }
-        if ((vidx >= 0) && (size_t(vidx) <= primspec_nodes.size())) {
+        if ((vidx >= 0) && (size_t(vidx) < primspec_nodes.size())) {
           PrimSpec variantChildPrim;
           if (!ToPrimSpecRec(size_t(vidx), primspec_nodes, variantChildPrim, err)) {
             return false;
@@ -718,7 +718,6 @@ bool ConstructVariantPrimTreeRec(const size_t variantPrimIdx,
 
   std::set<int64_t> variantChildrenIndices; // record variantChildren indices
 
-  std::map<std::string, VariantSet> variantSets;
   VariantSet variantSet;
   for (const auto &item : variantNodeMap) {
 
@@ -747,7 +746,7 @@ bool ConstructVariantPrimTreeRec(const size_t variantPrimIdx,
           return false;
         } else {
           // Add prim to variants
-          if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
+          if ((vidx >= 0) && (size_t(vidx) < prim_nodes.size())) {
 
             Prim variantChildPrim(value::Value(nullptr)); // dummy
             if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {
@@ -871,7 +870,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
           return false;
         } else {
           // Add prim to variants
-          if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
+          if ((vidx >= 0) && (size_t(vidx) < prim_nodes.size())) {
 
             Prim variantChildPrim(value::Value(nullptr)); // dummy
             if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {

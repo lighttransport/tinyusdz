@@ -5,6 +5,8 @@
 
 #include "geom-mesh.hh"
 
+#include <cmath>
+
 namespace tinyusdz {
 namespace next {
 
@@ -190,11 +192,22 @@ bool UsdGeomMesh::IsSubdivisionSurface() const {
   return scheme != "none" && !scheme.empty();
 }
 
-std::vector<float> UsdGeomMesh::GetPointsAtTime(double time) const {
+std::vector<float> UsdGeomMesh::GetPointsAtTimecode(double timecode) const {
   std::vector<float> result;
   if (!IsValid()) return result;
 
-  const Value* val = prim_.GetValueAtTime("points", time);
+  Value hold;
+  const Value* val = nullptr;
+  if (!std::isnan(timecode)) {
+    Value v = prim_.GetInterpolatedValue("points", timecode);
+    if (!v.is_empty()) {
+      hold = std::move(v);
+      val = &hold;
+    } else {
+      val = prim_.GetValueAtTime("points", timecode);
+    }
+  }
+  if (!val) val = prim_.GetPropertyValue("points");
   if (!val) return result;
 
   const std::vector<float>* arr = val->as_float_array();

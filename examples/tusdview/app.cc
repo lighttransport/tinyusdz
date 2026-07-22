@@ -424,7 +424,14 @@ bool App::initWindow(std::string* err) {
 
   if (backend_ == Backend::GL) {
     glfwMakeContextCurrent(window_);
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-function-type"
+#endif
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
       *err = "Failed to load OpenGL via glad";
       return false;
     }
@@ -2146,10 +2153,10 @@ void App::startReconvertAsync(double t) {
   // frame, so it would never hit and the per-frame copy-into-cache would be pure
   // overhead -- skip it then.
   RestSceneCache* cache = animPlaying_ ? nullptr : &reconvRestCache_;
-  reconvThread_ = std::thread([this, t, dp, rt, cache, ovr = std::move(ovr)]() {
+  reconvThread_ = std::thread([this, t, dp, rt, cache, ovrMoved = std::move(ovr)]() {
     std::string w, e;
     const bool ok = RenderSceneAtTime(loaded_, t, rt, dp, &w, &e, &reconvCtrl_,
-                                      ovr.empty() ? nullptr : &ovr, cache);
+                                      ovrMoved.empty() ? nullptr : &ovrMoved, cache);
     reconvOk_.store(ok, std::memory_order_relaxed);
     reconvFinished_.store(true, std::memory_order_release);
   });
@@ -2950,7 +2957,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     ls.payloadsDone = loadCtrl_.payloadsDone.load();
     ls.payloadsTotal = loadCtrl_.payloadsTotal.load();
     ls.stage = loadCtrl_.stage.load();
-    ls.phaseProgress = loadCtrl_.phasePermille.load() / 1000.0f;
+    ls.phaseProgress = static_cast<float>(loadCtrl_.phasePermille.load()) / 1000.0f;
     ls.elapsed = loadActive_ ? std::chrono::duration<float>(
                                    std::chrono::steady_clock::now() - loadStart_)
                                    .count()
@@ -3285,11 +3292,11 @@ int App::run(const std::string& initialFile, int maxFrames,
                   : renderer_->captureViewport(&rgba, &w, &h);
     }
     if (ok && w > 0 && h > 0) {
-      std::string err;
-      if (WriteScreenshotImage(path, rgba, w, h, &err)) {
+      std::string shotErr;
+      if (WriteScreenshotImage(path, rgba, w, h, &shotErr)) {
         LOGI("wrote %s (%dx%d)", path.c_str(), w, h);
       } else {
-        LOGW("failed to write %s: %s", path.c_str(), err.c_str());
+        LOGW("failed to write %s: %s", path.c_str(), shotErr.c_str());
       }
     } else {
       LOGW("capture not supported by this backend");

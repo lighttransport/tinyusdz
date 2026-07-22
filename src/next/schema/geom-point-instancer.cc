@@ -14,9 +14,21 @@ namespace tinyusdz {
 namespace next {
 namespace {
 
-const Value* ValueAtOrDefault(const UsdPrim& prim, const char* name, double time) {
-  const Value* v = prim.GetValueAtTime(name, time);
-  return v ? v : prim.GetPropertyValue(name);
+// Linear interpolation between samples (pxr semantics), held/default
+// fallback. The interpolated value is parked in the caller-owned `hold`
+// slot (the ArrayScratch) so returned views stay valid while other
+// attributes are read.
+const Value* ValueAtOrDefault(const UsdPrim& prim, const char* name,
+                              double time, Value* hold) {
+  if (!std::isnan(time)) {
+    Value v = prim.GetInterpolatedValue(name, time);
+    if (!v.is_empty()) {
+      *hold = std::move(v);
+      return hold;
+    }
+    if (const Value* held = prim.GetValueAtTime(name, time)) return held;
+  }
+  return prim.GetPropertyValue(name);
 }
 
 template <typename T>
@@ -27,19 +39,19 @@ std::vector<T> CopyView(const ArrayView<T>& view) {
 
 bool ReadFloatView(const UsdPrim& prim, const char* name, double time,
                    ArrayScratch<float>* scratch, ArrayView<float>* view) {
-  const Value* v = ValueAtOrDefault(prim, name, time);
+  const Value* v = ValueAtOrDefault(prim, name, time, &scratch->materialized);
   return v && GetFloatArrayView(*v, scratch, view);
 }
 
 bool ReadIntView(const UsdPrim& prim, const char* name, double time,
                  ArrayScratch<int32_t>* scratch, ArrayView<int32_t>* view) {
-  const Value* v = ValueAtOrDefault(prim, name, time);
+  const Value* v = ValueAtOrDefault(prim, name, time, &scratch->materialized);
   return v && GetIntArrayView(*v, scratch, view);
 }
 
 bool ReadInt64View(const UsdPrim& prim, const char* name, double time,
                    ArrayScratch<int64_t>* scratch, ArrayView<int64_t>* view) {
-  const Value* v = ValueAtOrDefault(prim, name, time);
+  const Value* v = ValueAtOrDefault(prim, name, time, &scratch->materialized);
   return v && GetInt64ArrayView(*v, scratch, view);
 }
 

@@ -194,7 +194,17 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
     return false;
   }
 
-  size_t size = static_cast<size_t>(file.tellg());
+  const auto fsize = file.tellg();
+  if (fsize < 0) {
+    AddError("Failed to determine file size");
+    return false;
+  }
+  if (static_cast<uintmax_t>(fsize) >
+      static_cast<uintmax_t>((std::numeric_limits<size_t>::max)())) {
+    AddError("File size exceeds addressable memory");
+    return false;
+  }
+  size_t size = static_cast<size_t>(fsize);
   file.seekg(0, std::ios::beg);
   if (options_.max_file_size > 0 && size > options_.max_file_size) {
     AddError("File size exceeds maximum allowed");
