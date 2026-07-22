@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,6 +31,12 @@ void PutU32(std::vector<uint8_t>* out, uint32_t v) {
 
 void PutU64(std::vector<uint8_t>* out, uint64_t v) {
   for (int i = 0; i < 8; ++i) out->push_back(uint8_t(v >> (i * 8)));
+}
+
+void PutF64(std::vector<uint8_t>* out, double v) {
+  uint64_t bits = 0;
+  std::memcpy(&bits, &v, sizeof(bits));
+  PutU64(out, bits);
 }
 
 void PatchI64(std::vector<uint8_t>* out, size_t pos, int64_t v) {
@@ -250,6 +257,76 @@ std::vector<uint8_t> PathsCompressed(const std::vector<uint32_t>& path_indices,
                               path_indices, element_tokens, jumps);
 }
 
+std::vector<uint8_t> BuildMalformedAttributeFieldCase(
+    const std::string& field_name, CrateTypeId field_type,
+    const std::vector<uint8_t>& payload, bool field_is_array = false,
+    bool field_is_compressed = false) {
+  std::vector<uint8_t> token_raw;
+  auto append_token = [&](const std::string& token) {
+    token_raw.insert(token_raw.end(), token.begin(), token.end());
+    token_raw.push_back('\0');
+  };
+  append_token("");
+  append_token("P");
+  append_token("a");
+  append_token("typeName");
+  append_token(field_name);
+  append_token("double");
+  const std::vector<uint8_t> tokens = TokensFromRaw(6, token_raw);
+  const std::vector<uint8_t> strings = StringsTable({0});
+  const std::vector<uint8_t> fieldsets =
+      FieldsetsCompressed({0xFFFFFFFFu, 0xFFFFFFFFu, 0, 1, 0xFFFFFFFFu});
+  const std::vector<uint8_t> specs = SpecsCompressed(
+      {0, 1, 2}, {0, 1, 2},
+      {static_cast<uint32_t>(SpecType::PseudoRoot),
+       static_cast<uint32_t>(SpecType::Prim),
+       static_cast<uint32_t>(SpecType::Attribute)});
+  const std::vector<uint8_t> paths = PathsCompressed(
+      {0, 1, 2}, {0, 1, 0xFFFFFFFEu},
+      {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFEu});
+  const std::vector<uint8_t> dummy_fields = FieldTableRawReps(
+      {3, 4},
+      {ValueRep::Make(CrateTypeId::Token, 5, false, true),
+       ValueRep::Make(field_type, 0, field_is_array, false,
+                      field_is_compressed)});
+  const size_t section_count = 7;
+  const size_t payload_base =
+      kCrateBootstrapSize + 8 + section_count * (16 + 8 + 8);
+  const size_t samples_offset = payload_base + tokens.size() + strings.size() +
+                                dummy_fields.size() + fieldsets.size() +
+                                specs.size() + paths.size();
+  const std::vector<uint8_t> fields = FieldTableRawReps(
+      {3, 4},
+      {ValueRep::Make(CrateTypeId::Token, 5, false, true),
+       ValueRep::Make(field_type, samples_offset, field_is_array, false,
+                      field_is_compressed)});
+
+  CrateShell c;
+  c.AddSection("TOKENS", tokens);
+  c.AddSection("STRINGS", strings);
+  c.AddSection("FIELDS", fields);
+  c.AddSection("FIELDSETS", fieldsets);
+  c.AddSection("SPECS", specs);
+  c.AddSection("PATHS", paths);
+  c.AddSection("JUNK", payload);
+  return c.Build();
+}
+
+std::vector<uint8_t> BuildMalformedTimeSamplesCase(int64_t first_offset) {
+  std::vector<uint8_t> payload(32, 0);
+  PatchI64(&payload, 0, first_offset);
+  return BuildMalformedAttributeFieldCase(
+      "timeSamples", CrateTypeId::TimeSamples, payload);
+}
+
+std::vector<uint8_t> BuildMalformedConnectionPathsCase(uint32_t path_index) {
+  std::vector<uint8_t> payload;
+  PutU64(&payload, 1);
+  PutU32(&payload, path_index);
+  return BuildMalformedAttributeFieldCase(
+      "connectionPaths", CrateTypeId::PathVector, payload);
+}
+
 std::vector<uint8_t> BuildFieldValuePayloadCase(
     CrateTypeId type, bool is_array, const std::vector<uint8_t>& payload) {
   const std::vector<uint8_t> tokens = TokensFromRaw(1, {'a', '\0'});
@@ -339,6 +416,32 @@ void ExpectReject(const char* name, const std::vector<uint8_t>& bytes,
   assert(!r.success);
   assert(!r.errors.empty() || !r.error_summary.empty());
   std::cout << "  rejected " << name << std::endl;
+}
+
+void ExpectWarningAndStrictReject(const char* name,
+                                  const std::vector<uint8_t>& bytes,
+                                  const std::string& warning_text) {
+  USDCLoadOptions opts = TightOptions();
+  opts.crate_options.max_tokens = 8;
+  opts.crate_options.max_fields = 8;
+  opts.crate_options.max_specs = 8;
+  opts.crate_options.max_paths = 8;
+  USDCLoadResult compatible = LoadUSDCFromMemory(bytes.data(), bytes.size(), opts);
+  assert(compatible.success);
+  assert(std::any_of(compatible.warnings.begin(), compatible.warnings.end(),
+                     [&](const std::string& warning) {
+                       return warning.find(warning_text) != std::string::npos;
+                     }));
+
+  opts.crate_options.strict_aousd_conformance = true;
+  USDCLoadResult strict = LoadUSDCFromMemory(bytes.data(), bytes.size(), opts);
+  if (strict.success) {
+    std::cerr << "Malformed strict case unexpectedly loaded: " << name
+              << std::endl;
+  }
+  assert(!strict.success);
+  assert(!strict.errors.empty() || !strict.error_summary.empty());
+  std::cout << "  warned and strict-rejected " << name << std::endl;
 }
 
 }  // namespace
@@ -565,6 +668,18 @@ int main() {
   {
     std::vector<uint8_t> payload;
     PutU64(&payload, 1);
+    PutU32(&payload, 999);
+    PutU64(&payload, 8);
+    PutU64(&payload,
+           ValueRep::Make(CrateTypeId::Invalid, 0, false, true).raw());
+    ExpectReject("dictionary key string index out of range",
+                 BuildFieldValuePayloadCaseWithStrings(
+                     CrateTypeId::Dictionary, payload));
+  }
+
+  {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 1);
     PutU32(&payload, 0);
     PutU64(&payload, 0);  // recursive ValueRep cannot point into the offset field
     PutU64(&payload, ValueRep::Make(CrateTypeId::Invalid, 0, false, true).raw());
@@ -736,6 +851,102 @@ int main() {
         {1}, {0}, {static_cast<uint32_t>(SpecType::PseudoRoot)}));
     c.AddSection("PATHS", PathsCompressedCount(2, {0}, {0}, {0xFFFFFFFEu}));
     ExpectReject("spec references empty path slot", c.Build());
+  }
+
+  ExpectWarningAndStrictReject(
+      "overflowing timeSamples relative offset",
+      BuildMalformedTimeSamplesCase(INT64_MAX),
+      "Failed to decode timeSamples");
+  ExpectWarningAndStrictReject(
+      "connection path index out of range",
+      BuildMalformedConnectionPathsCase(999),
+      "Failed to decode connection paths");
+  ExpectWarningAndStrictReject(
+      "connection list-op reserved header bit",
+      BuildMalformedAttributeFieldCase("connectionPaths",
+                                       CrateTypeId::PathListOp, {0x80}),
+      "Failed to decode connection paths");
+  {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 1);
+    PutU32(&payload, 999);
+    ExpectWarningAndStrictReject(
+        "default string vector index out of range",
+        BuildMalformedAttributeFieldCase("default", CrateTypeId::StringVector,
+                                         payload),
+        "Failed to decode default value");
+  }
+  {
+    std::vector<uint8_t> payload;
+    PutU32(&payload, 999);
+    ExpectWarningAndStrictReject(
+        "default path expression index out of range",
+        BuildMalformedAttributeFieldCase("default", CrateTypeId::PathExpression,
+                                         payload),
+        "Failed to decode default value");
+  }
+  ExpectWarningAndStrictReject(
+      "attribute typeName token index out of range",
+      BuildMalformedAttributeFieldCase("typeName", CrateTypeId::Token, {0}),
+      "Failed to decode typeName");
+  {
+    std::vector<uint8_t> payload = {0x09};  // explicit + deleted sublist
+    PutU64(&payload, 1);
+    PutU32(&payload, 999);
+    ExpectWarningAndStrictReject(
+        "discarded token list-op index out of range",
+        BuildMalformedAttributeFieldCase("default", CrateTypeId::TokenListOp,
+                                         payload),
+        "Failed to decode default value");
+  }
+  {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 2);  // two floats claimed; no element bytes follow
+    ExpectWarningAndStrictReject(
+        "truncated lazy float array",
+        BuildMalformedAttributeFieldCase("default", CrateTypeId::Float,
+                                         payload, true),
+        "Failed to decode default value");
+  }
+  {
+    std::vector<uint8_t> payload;
+    PutU64(&payload, 1);
+    PutU64(&payload, (std::numeric_limits<uint64_t>::max)());
+    ExpectWarningAndStrictReject(
+        "compressed uint64 blob size out of range",
+        BuildMalformedAttributeFieldCase("default", CrateTypeId::UInt64,
+                                         payload, true, true),
+        "Failed to decode default value");
+  }
+  {
+    std::vector<uint8_t> payload = {0x02};  // explicit reference sublist
+    PutU64(&payload, 1);
+    PutU32(&payload, 0);  // empty asset string
+    PutU32(&payload, 0);  // root path
+    PutF64(&payload, 0.0);
+    PutF64(&payload, 1.0);
+    PutU64(&payload, 1);    // one ignored customData entry
+    PutU32(&payload, 999);  // invalid key string index
+    PutU64(&payload, 8);
+    PutU64(&payload,
+           ValueRep::Make(CrateTypeId::Invalid, 0, false, true).raw());
+    ExpectWarningAndStrictReject(
+        "ignored reference customData key index out of range",
+        BuildMalformedAttributeFieldCase("default",
+                                         CrateTypeId::ReferenceListOp, payload),
+        "Failed to decode default value");
+  }
+  {
+    std::vector<uint8_t> payload;
+    PutU32(&payload, 0);  // empty asset string
+    PutU32(&payload, 0);  // root path
+    PutF64(&payload, (std::numeric_limits<double>::infinity)());
+    PutF64(&payload, 1.0);
+    ExpectWarningAndStrictReject(
+        "non-finite payload layer offset",
+        BuildMalformedAttributeFieldCase("default", CrateTypeId::Payload,
+                                         payload),
+        "Failed to decode default value");
   }
 
   std::cout << "All malformed USDC tests passed!" << std::endl;

@@ -17,6 +17,7 @@
 #include "next/layer/layer.hh"
 #include "next/crate/stream-reader.hh"
 #include "next/reader/usdc-reader.hh"
+#include "next/types/value-view.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
@@ -860,6 +861,18 @@ void test_pre070_array_count() {
     assert(ProbeArrayBlock(src, rep, 1024, &lr));
     assert(lr.element_count == 3);
     assert(lr.block_len == 4 + sizeof(vals));
+
+    // The zero-copy view must skip this version's 4-byte count header. It used
+    // to unconditionally skip 8 bytes, returning values[1..] and potentially
+    // reading past the retained block.
+    Value lazy = Value::MakeLazyArray(lr);
+    assert(CanBorrowLazyFlat(lazy));
+    ArrayScratch<float> scratch;
+    ArrayView<float> view;
+    assert(GetFloatArrayView(lazy, &scratch, &view));
+    assert(view.borrowed && view.size == 3);
+    assert(view.data[0] == 1.5f && view.data[1] == -2.25f &&
+           view.data[2] == 4.0f);
   }
 
   // 0.7+: [u64 count][floats].

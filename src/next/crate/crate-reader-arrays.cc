@@ -29,7 +29,10 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
       CrateArrayTypeCanBeLazy(type_id, rep.is_compressed())) {
     LazyArrayRef lr;
     if (ProbeArrayBlock(source_, rep,
-                        (std::numeric_limits<size_t>::max)(), &lr)) {
+                        (std::numeric_limits<size_t>::max)(), &lr) &&
+        lr.element_count <=
+            static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)()) &&
+        (rep.payload() == 0 || lr.block_len > 0)) {
       out = Value::MakeLazyArray(lr);
       return true;
     }
@@ -85,9 +88,16 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   auto read_compressed_u32_n = [&](uint32_t* dst, size_t n) -> bool {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) return false;
+    if (comp_size >
+            static_cast<uint64_t>((std::numeric_limits<size_t>::max)()) ||
+        static_cast<size_t>(comp_size) > reader_->remaining()) {
+      return false;
+    }
     std::vector<uint8_t> blob;
-    if (!reader_->read(blob, static_cast<size_t>(comp_size))) return false;  // overflow-safe
-    std::vector<uint8_t> with_prefix(8 + blob.size());
+    if (!reader_->read(blob, static_cast<size_t>(comp_size))) return false;
+    size_t prefixed_size = 0;
+    if (!safe::add(size_t{8}, blob.size(), &prefixed_size)) return false;
+    std::vector<uint8_t> with_prefix(prefixed_size);
     std::memcpy(with_prefix.data(), &comp_size, 8);
     if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
     DecompressResult dr = DecompressCompressedU32(
@@ -105,9 +115,16 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   auto read_compressed_u64_n = [&](uint64_t* dst, size_t n) -> bool {
     uint64_t comp_size;
     if (!reader_->read_u64(comp_size)) return false;
+    if (comp_size >
+            static_cast<uint64_t>((std::numeric_limits<size_t>::max)()) ||
+        static_cast<size_t>(comp_size) > reader_->remaining()) {
+      return false;
+    }
     std::vector<uint8_t> blob;
     if (!reader_->read(blob, static_cast<size_t>(comp_size))) return false;
-    std::vector<uint8_t> with_prefix(8 + blob.size());
+    size_t prefixed_size = 0;
+    if (!safe::add(size_t{8}, blob.size(), &prefixed_size)) return false;
+    std::vector<uint8_t> with_prefix(prefixed_size);
     std::memcpy(with_prefix.data(), &comp_size, 8);
     if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
     DecompressResult dr = DecompressCompressedU64(

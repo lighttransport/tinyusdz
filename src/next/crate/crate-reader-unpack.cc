@@ -7,6 +7,7 @@
 #include "../writer/value-printer.hh"
 #include "../types/spline.hh"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -15,6 +16,22 @@
 
 namespace tinyusdz {
 namespace next {
+
+namespace {
+
+bool AddSignedOffset(int64_t base, int64_t offset, int64_t* out) {
+  if (!out) return false;
+  if ((offset > 0 &&
+       base > (std::numeric_limits<int64_t>::max)() - offset) ||
+      (offset < 0 &&
+       base < (std::numeric_limits<int64_t>::min)() - offset)) {
+    return false;
+  }
+  *out = base + offset;
+  return true;
+}
+
+}  // namespace
 
 // ============================================================
 // Type-specific unpackers
@@ -168,6 +185,7 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
 
 bool CrateReader::Impl::DecodeTimeSamples(
     ValueRep rep, std::vector<std::pair<double, Value>>* out) {
+  if (!out || rep.type_id() != CrateTypeId::TimeSamples) return false;
   out->clear();
   if (rep.is_inlined()) return false;  // inlined TimeSamples not produced
 
@@ -177,27 +195,37 @@ bool CrateReader::Impl::DecodeTimeSamples(
   //   at (P+off_t+8)+off_v:[u64 N][ValueRep vals[N]]
   // Each `[i64 off]` is a relative jump: after reading the 8-byte offset at
   // position Q, the target is Q+off (i.e. seek_from_current(off-8)).
-  const int64_t P = static_cast<int64_t>(rep.payload());
-  if (P < 0 || !reader_->seek(static_cast<size_t>(P))) return false;
+  const uint64_t payload = rep.payload();
+  if (payload > static_cast<uint64_t>((std::numeric_limits<int64_t>::max)())) {
+    return false;
+  }
+  const int64_t P = static_cast<int64_t>(payload);
+  if (!reader_->seek(static_cast<size_t>(P))) return false;
 
   int64_t off_t = 0;
   if (!reader_->read(&off_t, 8)) return false;
-  const int64_t times_pos = P + off_t;  // Q=P, target=Q+off_t
+  int64_t times_pos = 0;
+  if (!AddSignedOffset(P, off_t, &times_pos)) return false;
   if (times_pos < 0 || !reader_->seek(static_cast<size_t>(times_pos))) return false;
   uint64_t times_rep_raw = 0;
   if (!reader_->read_u64(times_rep_raw)) return false;
-  const int64_t off_v_field = times_pos + 8;  // the values' recursive-offset field
+  int64_t off_v_field = 0;
+  if (!AddSignedOffset(times_pos, 8, &off_v_field)) return false;
 
   Value times_val;
   if (!UnpackValue(ValueRep(times_rep_raw), times_val)) return false;
   const std::vector<double>* times = times_val.as_double_array();
   if (!times) return false;
+  for (double time : *times) {
+    if (!std::isfinite(time)) return false;
+  }
 
   // Values block: follow the second recursive offset.
   if (!reader_->seek(static_cast<size_t>(off_v_field))) return false;
   int64_t off_v = 0;
   if (!reader_->read(&off_v, 8)) return false;
-  const int64_t vals_pos = off_v_field + off_v;  // Q=off_v_field, target=Q+off_v
+  int64_t vals_pos = 0;
+  if (!AddSignedOffset(off_v_field, off_v, &vals_pos)) return false;
   if (vals_pos < 0 || !reader_->seek(static_cast<size_t>(vals_pos))) return false;
   uint64_t n = 0;
   if (!reader_->read_u64(n)) return false;
@@ -216,11 +244,15 @@ bool CrateReader::Impl::DecodeTimeSamples(
     sample_reps[static_cast<size_t>(i)] = ValueRep(raw);
   }
 
-  const size_t count = std::min<size_t>(times->size(), sample_reps.size());
+  if (times->size() != sample_reps.size()) return false;
+  const size_t count = times->size();
   out->reserve(count);
   for (size_t i = 0; i < count; ++i) {
     Value v;  // a ValueBlock sample (no authored value at this time) stays empty
-    UnpackValue(sample_reps[i], v);
+    if (!UnpackValue(sample_reps[i], v)) {
+      out->clear();
+      return false;
+    }
     out->emplace_back((*times)[i], std::move(v));
   }
   return true;
@@ -257,6 +289,7 @@ bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
     double knot_time = 0.0;
     uint64_t dict_count = 0;
     if (!reader_->read_f64(knot_time) || !reader_->read_u64(dict_count) ||
+        !std::isfinite(knot_time) ||
         dict_count > options_.max_array_elements) {
       return false;
     }
@@ -266,7 +299,7 @@ bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
       uint32_t key_index = 0;
       if (!reader_->read_u32(key_index)) return false;
       std::string key;
-      GetString(key_index, key);
+      if (!GetString(key_index, key)) return false;
       const size_t value_start = reader_->position();
       uint64_t recursive_offset_raw = 0;
       if (!reader_->read_u64(recursive_offset_raw)) return false;

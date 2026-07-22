@@ -8,6 +8,7 @@
 #include "../writer/value-printer.hh"
 #include "safe-arithmetic.hh"
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -365,10 +366,13 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
         if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
           return false;
         }
+        if (!std::isfinite(offset) || !std::isfinite(scale)) return false;
       }
       std::string asset;
-      GetString(asset_idx, asset);
-      std::string prim = (path_idx < paths_.size()) ? paths_[path_idx] : "";
+      if (!GetString(asset_idx, asset) || path_idx >= paths_.size()) {
+        return false;
+      }
+      const std::string& prim = paths_[path_idx];
       // Internal arcs (no asset) render as "</Prim>", matching the usda parser.
       std::string arc;
       if (!asset.empty()) arc = "@" + asset + "@";
@@ -398,7 +402,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       uint32_t sidx = 0;
       if (!reader_->read_u32(sidx)) return false;
       std::string text;
-      GetString(sidx, text);
+      if (!GetString(sidx, text)) return false;
       out = Value::MakeStringLike(text, TypeId::PathExpression);
       return true;
     }

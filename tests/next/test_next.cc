@@ -17,6 +17,7 @@
 #include "next/types/type-id.hh"
 #include "next/types/type-info.hh"
 #include "next/types/value.hh"
+#include "next/crate/crate-data-source.hh"
 #include "next/crate/crate-format.hh"
 #include "next/crate/lazy-array.hh"
 #include "next/prim/path.hh"
@@ -179,6 +180,118 @@ void test_value() {
     assert(v.as_float_array() != nullptr);
     assert(v.as_float_array()->size() == 5);
     assert((*v.as_float_array())[2] == 3.0f);
+  }
+
+  // Value's compact array-size field cannot represent more than uint32_t.
+  // Reject an oversized lazy reference instead of silently truncating it.
+  {
+    LazyArrayRef ref;
+    ref.source =
+        CrateDataSource::Adopt(std::string(), CrateVersion{0, 8, 0});
+    ref.value_type = TypeId::Float;
+    ref.element_count =
+        static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)()) + 1;
+    Value v = Value::MakeLazyArray(ref);
+    assert(v.is_empty());
+
+    ref.element_count = 1;
+    ref.source.reset();
+    assert(Value::MakeLazyArray(ref).is_empty());  // source is required
+  }
+
+  // Component-array factories reject partial tuples, mismatched arity, and a
+  // TypeId whose accessor expects a different backing storage class.
+  {
+    assert(Value::MakeFloat2Array(std::vector<float>{1, 2, 3}).is_empty());
+    assert(Value::MakeFloat3Array(std::vector<float>{1, 2, 3, 4}).is_empty());
+    assert(Value::MakeFloatCompArray(std::vector<float>{1, 2, 3},
+                                     TypeId::Float2, 2)
+               .is_empty());
+    assert(Value::MakeFloatCompArray(std::vector<float>{1, 2}, TypeId::Token,
+                                     2)
+               .is_empty());
+    assert(Value::MakeDoubleCompArray(std::vector<double>{1, 2, 3},
+                                      TypeId::Double3, 2)
+               .is_empty());
+    assert(Value::MakeIntCompArray(std::vector<int32_t>{1, 2}, TypeId::Int2,
+                                   3)
+               .is_empty());
+    assert(Value::MakeUIntCompArray(std::vector<uint32_t>{1, 2},
+                                    TypeId::UInt2, 0)
+               .is_empty());
+    assert(Value::MakeStringLikeArray(std::vector<std::string>{"x"},
+                                      TypeId::Float)
+               .is_empty());
+  }
+
+  // Pointer-backed factories reject null input and non-trivial storage types;
+  // constructing a raw Dictionary would otherwise destroy an uninitialized
+  // shared_ptr handle.
+  {
+    const uint32_t raw = 0;
+    assert(Value::MakeMatrix2f(nullptr).is_empty());
+    assert(Value::MakeMatrix4d(nullptr).is_empty());
+    assert(Value::MakeFromRaw(TypeId::Float, nullptr).is_empty());
+    assert(Value::MakeFromRaw(TypeId::Dictionary, &raw).is_empty());
+  }
+
+  // A failed mutable accessor must not mark an unrelated value as edited.
+  {
+    Value v = Value::MakeIntArray(std::vector<int32_t>{1, 2});
+    assert(!v.is_dirty());
+    assert(v.as_double_array() == nullptr);
+    assert(!v.is_dirty());
+  }
+
+  // raw_data() on an array exposes its flat element payload, not the private
+  // polymorphic storage wrapper. Mutable access must preserve copy-on-write.
+  {
+    Value original = Value::MakeIntArray(std::vector<int32_t>{1, 2, 3});
+    const Value& const_original = original;
+    const int32_t* const_raw =
+        static_cast<const int32_t*>(const_original.raw_data());
+    assert(const_raw && const_raw[0] == 1 && const_raw[2] == 3);
+    assert(!original.is_dirty());
+
+    Value edited = original;
+    int32_t* mutable_raw = static_cast<int32_t*>(edited.raw_data());
+    assert(mutable_raw);
+    mutable_raw[0] = 9;
+    assert(edited.is_dirty());
+    assert((*edited.as_int_array())[0] == 9);
+    assert((*original.as_int_array())[0] == 1);
+
+    Value tuples = Value::MakeFloat3Array({0, 1, 2, 3, 4, 5});
+    const Value& const_tuples = tuples;
+    const float* tuple_raw =
+        static_cast<const float*>(const_tuples.raw_data());
+    assert(tuple_raw && tuple_raw[0] == 0 && tuple_raw[5] == 5);
+
+    Value token = Value::MakeToken("raw token");
+    const Value& const_token = token;
+    Value token_copy =
+        Value::MakeFromRaw(TypeId::Token, const_token.raw_data());
+    assert(token_copy.as_token() && *token_copy.as_token() == "raw token");
+
+    Value empty;
+    Value block = Value::MakeBlock();
+    assert(empty.raw_data() == nullptr);
+    assert(block.raw_data() == nullptr);
+  }
+
+  // Materialized array size follows the live mutable backing vector; lazy
+  // arrays continue to use their header count without materializing.
+  {
+    Value scalar = Value::MakeFloatArray(std::vector<float>{1, 2});
+    scalar.as_float_array()->push_back(3);
+    assert(scalar.array_size() == 3);
+
+    Value tuples = Value::MakeFloat3Array(std::vector<float>{1, 2, 3});
+    std::vector<float>* lanes = tuples.as_float_array();
+    lanes->push_back(4);
+    assert(tuples.array_size() == 0);  // partial tuple is not advertised
+    lanes->insert(lanes->end(), {5, 6});
+    assert(tuples.array_size() == 2);
   }
 
   // Copy-on-write: a copy shares the buffer until one side mutates, then the
@@ -1386,6 +1499,62 @@ void test_encode_delta_s32_overflow() {
     assert(decoded[1] == -2000000000);
   }
 
+  // The on-disk format's code-3 lane is int64 specifically so transitions
+  // between opposite int32 extremes remain lossless.
+  {
+    const int32_t values[] = {INT32_MIN, INT32_MAX, INT32_MIN};
+    const std::vector<uint8_t> encoded = EncodeDeltaS32(values, 3);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(3);
+    assert(DecodeDeltaS32(encoded.data(), encoded.size(), decoded.data(), 3));
+    assert(decoded == std::vector<int32_t>(values, values + 3));
+  }
+
+  // A hostile code-3 delta must be range-checked before signed addition.
+  {
+    std::vector<uint8_t> encoded(sizeof(int32_t) + 1 + sizeof(int32_t) +
+                                 sizeof(int64_t), 0);
+    encoded[sizeof(int32_t)] = uint8_t{0x0e};  // code 2, then code 3
+    const int32_t first_delta = INT32_MAX;
+    const int64_t overflowing_delta = INT64_MAX;
+    std::memcpy(encoded.data() + sizeof(int32_t) + 1, &first_delta,
+                sizeof(first_delta));
+    std::memcpy(encoded.data() + sizeof(int32_t) + 1 + sizeof(first_delta),
+                &overflowing_delta, sizeof(overflowing_delta));
+    int32_t decoded[2] = {};
+    assert(!DecodeDeltaS32(encoded.data(), encoded.size(), decoded, 2));
+  }
+
+  // The 2-bit code-map calculation must reject hostile counts before it wraps
+  // or indexes beyond the supplied buffer. Non-empty decodes also require an
+  // output destination.
+  {
+    const uint8_t tiny[16] = {};
+    uint32_t u32 = 0;
+    int32_t s32 = 0;
+    uint64_t u64 = 0;
+    const size_t huge = (std::numeric_limits<size_t>::max)();
+    assert(!DecodeDeltaU32(tiny, sizeof(tiny), &u32, huge));
+    assert(!DecodeDeltaS32(tiny, sizeof(tiny), &s32, huge));
+    assert(!DecodeDeltaU64(tiny, sizeof(tiny), &u64, huge));
+    assert(!DecodeDeltaU32(tiny, sizeof(tiny), nullptr, 1));
+    assert(!DecodeDeltaS32(tiny, sizeof(tiny), nullptr, 1));
+    assert(!DecodeDeltaU64(tiny, sizeof(tiny), nullptr, 1));
+  }
+
+  // U64 reconstruction is defined in unsigned arithmetic, including values
+  // above INT64_MAX; no implementation-defined signed round-trip is needed.
+  {
+    std::vector<uint8_t> encoded(sizeof(int64_t) + 1, 0);
+    const int64_t common_delta = -1;
+    std::memcpy(encoded.data(), &common_delta, sizeof(common_delta));
+    uint64_t decoded[2] = {};
+    assert(DecodeDeltaU64(encoded.data(), encoded.size(), decoded, 2));
+    assert(decoded[0] == (std::numeric_limits<uint64_t>::max)());
+    assert(decoded[1] == (std::numeric_limits<uint64_t>::max)() - 1);
+  }
+
   // Single element (no deltas to compute)
   {
     int32_t values[] = {42};
@@ -1405,7 +1574,7 @@ void test_encode_delta_s32_overflow() {
     assert(encoded.empty());
   }
 
-  std::cout << "  EncodeDeltaS32 overflow safety tests passed!" << std::endl;
+  std::cout << "  Delta-code overflow safety tests passed!" << std::endl;
 }
 
 // ============================================================
