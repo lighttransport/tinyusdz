@@ -591,6 +591,13 @@ write_specular_material standard "$OUT/specular-standard.usda"
 write_specular_material preview "$OUT/specular-preview-udim.usda" 'specular_udim.<UDIM>.ppm'
 write_specular_material openpbr "$OUT/specular-openpbr-udim.usda" 'specular_udim.<UDIM>.ppm'
 write_specular_material standard "$OUT/specular-standard-udim.usda" 'specular_udim.<UDIM>.ppm'
+for family in preview openpbr standard; do
+  mkdir -p "$OUT/pkg-specular-$family"
+  cp "$OUT/specular-$family.usda" "$OUT/specular.ppm" \
+    "$OUT/pkg-specular-$family/"
+  (cd "$OUT/pkg-specular-$family" && zip -0 -q "$OUT/specular-$family.usdz" \
+    "specular-$family.usda" specular.ppm)
+done
 
 mkdir -p "$OUT/pkg"; cp "$OUT/normal.usda" "$OUT/normal.ppm" "$OUT/pkg/"
 (cd "$OUT/pkg" && zip -0 -q "$OUT/normal.usdz" normal.usda normal.ppm)
@@ -717,6 +724,9 @@ case_run() {
     preview-opacity) package="$OUT/opacity-preview.usdz";;
     openpbr-opacity) package="$OUT/opacity-openpbr.usdz";;
     standard-opacity) package="$OUT/opacity-standard.usdz";;
+    preview-specular-f0) package="$OUT/specular-preview.usdz";;
+    openpbr-specular-f0) package="$OUT/specular-openpbr.usdz";;
+    standard-specular-f0) package="$OUT/specular-standard.usdz";;
   esac
   if [ -n "$package" ]; then
     local packed="$OUT/$tag-$case_id-usdz.ppm"
