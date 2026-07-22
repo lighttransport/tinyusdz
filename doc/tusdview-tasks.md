@@ -188,6 +188,10 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   retention and matching baked IBL carriers (specular 64, irradiance 32, BRDF
   LUT 64, environment cube 256). The legacy-only decoded 2D texture index is
   deliberately excluded because next consumes the shared HDR cube directly.
+- `tusdview-dome-orientation` now renders a sphere under an asymmetric latlong
+  environment at 0 and 90 degrees. Rotation produces a 4.55 image MAD, proving
+  the transform affects IBL sampling, while both orientations have exact
+  default/legacy Vulkan pixels (MAD 0.0).
 - [ ] Checked-in fixtures cover a PBR material grid, packed/UDIM minification,
   Points and all curve families, perspective/orthographic lens shift,
   multi-light linking, and raster shadows. The linked red/blue/magenta raster

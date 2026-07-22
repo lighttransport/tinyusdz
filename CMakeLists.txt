@@ -3010,6 +3010,15 @@ if(TINYUSDZ_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 120)
 
     add_test(
+      NAME tusdview-dome-orientation
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-dome-orientation.sh"
+      )
+    set_tests_properties(tusdview-dome-orientation PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 240)
+
+    add_test(
       NAME tusdview-displacement-udim
       COMMAND ${CMAKE_COMMAND} -E env
               "TUSDVIEW=$<TARGET_FILE:tusdview>"

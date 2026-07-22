@@ -221,6 +221,9 @@ part of the dumped record, with latlong, mirrored-ball, and angular fixtures.
 The latlong case now includes a generated environment texture and compares
 asset retention plus the baked IBL carrier dimensions: 64/32/64/256 for
 specular, irradiance, BRDF LUT, and environment cube in both loaders.
+The registered Vulkan orientation image test renders an asymmetric latlong dome
+at 0 and 90 degrees: lighting changes by MAD 4.55 and both loader comparisons
+are exact (MAD 0.0).
 
 Displacement texture follow-up: Vulkan coarse and tessellated vertex paths now
 sample UDIM height arrays through the shared atlas LUT. The material descriptor
