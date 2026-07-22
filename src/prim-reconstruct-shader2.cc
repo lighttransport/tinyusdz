@@ -357,6 +357,8 @@ bool ReconstructShader<OpenPBRSurface>(
   // regardless of property iteration order; reconcile after the loop and warn if
   // both are authored.
   auto legacy_opacity = surface->opacity;
+  auto legacy_normal = surface->normal;
+  auto legacy_tangent = surface->tangent;
 
   for (auto &prop : properties) {
     // Base layer properties
@@ -482,8 +484,12 @@ bool ReconstructShader<OpenPBRSurface>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_opacity", OpenPBRSurface,
                          surface->opacity)  // OpenPBR standard name, maps to same opacity field
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normal", OpenPBRSurface,
+                         legacy_normal)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_normal", OpenPBRSurface,
                          surface->normal)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:tangent", OpenPBRSurface,
+                         legacy_tangent)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_tangent", OpenPBRSurface,
                          surface->tangent)
 
     // Outputs
@@ -502,6 +508,12 @@ bool ReconstructShader<OpenPBRSurface>(
         "ignoring `inputs:opacity`.");
   } else if (!surface->opacity.authored() && legacy_opacity.authored()) {
     surface->opacity = legacy_opacity;
+  }
+  if (!surface->normal.authored() && legacy_normal.authored()) {
+    surface->normal = legacy_normal;
+  }
+  if (!surface->tangent.authored() && legacy_tangent.authored()) {
+    surface->tangent = legacy_tangent;
   }
 
   return true;

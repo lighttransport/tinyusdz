@@ -315,6 +315,11 @@ Latest focused verification on 2026-07-20:
 - PreviewSurface occlusion now also crosses a two-tile raw scalar UDIM. Its
   controlled indirect-light response passes and Vulkan default/legacy pixels
   are exact (MAD 0.0).
+- Primary surface-normal coverage now spans ordinary and two-tile UDIM maps for
+  Preview, native OpenPBR, and Standard Surface, with exact Vulkan loader parity.
+  It exposed native OpenPBR reconstruction ignoring canonical
+  `geometry_normal`/`geometry_tangent` aliases and Standard conversion dropping
+  connected normal/tangent inputs; focused parser and Tydra units pin both fixes.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by
