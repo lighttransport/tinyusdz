@@ -253,6 +253,11 @@ material-terminal conversion paths preserve `inputs:coat_normal` values and
 connections; raster loader parity is exact, and Vulkan RT/CUDA pass with
 maximum loader MAD 0.476.
 
+PreviewSurface specular-workflow follow-up: its `specularColor` source now has
+the same two-tile UDIM specular-F0 oracle as OpenPBR and Standard Surface.
+Raster and CUDA loader parity are exact; Vulkan RT passes with maximum loader
+MAD 0.314.
+
 Opacity texture follow-up: the semantic grid now covers ordinary and two-tile
 UDIM opacity for Preview, OpenPBR, and Standard Surface. This found legacy
 Standard Surface conversion replacing a graph connection with constant
