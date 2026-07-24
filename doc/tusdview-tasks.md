@@ -10,8 +10,7 @@ audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
 active work is now the USD rendering-fidelity roadmap below.  This file is the
 canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
-Updated 2026-07-24 against `130eff0f5` plus the working changes described
-below.
+Updated 2026-07-25 through `30918e0ac`.
 
 ---
 
@@ -29,26 +28,26 @@ silently becoming the default material.
 | OpenPBR/MaterialX advanced lobes | degraded | degraded | unsupported | partial constants |
 | Ordinary/UDIM texture mips | supported | supported | supported | trilinear footprint LOD |
 | Mesh/analytic/subdivision/instancing | supported | supported | supported | supported |
-| Points and Basis/NURBS/Hermite curves | extracted | partial ribbons | GL raster | solid proxies |
+| Points and Basis/NURBS/Hermite curves | extracted | partial ribbons | GL/VK native carriers | width-aware solid proxies |
 | Authored camera | perspective + orthographic | perspective + orthographic | filmback/offset/exposure | filmback/offset/exposure |
 | USD lights | full shared extraction | full extraction | linked multi-light + dome IBL | multi-light + dome IBL |
 
-### Current implementation order — Linux-first
+### Current implementation status — Linux-first
 
-| Priority | Remaining deliverable | Why it comes here |
+| Priority | Deliverable | Status / remaining scope |
 |---|---|---|
-| **P0** | Tydra-owned real-time PBR record plus `--next`/legacy extraction-equivalence tests | **Implemented locally;** canonical packing and supported-material image parity now prevent the loaders from drifting. |
+| **P0** | Tydra-owned real-time PBR record plus `--next`/legacy extraction-equivalence tests | **Implemented;** canonical packing and supported-material image parity prevent the loaders from drifting. |
 | **P1** | Independent semantic texture descriptors and a checked-in material grid | **Implemented for the supported semantic matrix;** packaging a compact checked-in fixture set remains. |
 | **P2** | Pixel parity for ordinary/UDIM material response in Vulkan RT and CUDA/HIP where available | **Implemented for the covered PreviewSurface/OpenPBR/Standard Surface matrix;** HIP remains capability-gated and the external corpus remains data-dependent. |
 | **P3** | Exact omnidirectional point-light raster shadows | **Implemented and Vulkan-verified:** six depth faces replace the one-sided finite approximation for point/zero-radius SphereLight emitters. |
 | **P4** | Preserve evaluated graph inputs for advanced OpenPBR/MaterialX lobes | **Implemented for degradation:** constants and connected texture descriptors survive while unsupported lobes remain path-qualified diagnostics. |
-| **P5** | Vulkan raster Points/Curves and native-carrier picking | Important viewport parity, but outside the material/lighting critical path. |
+| **P5** | Vulkan raster Points/Curves and native-carrier picking | **Implemented and focused-test verified:** Vulkan uses camera-facing point discs/curve ribbons, shared carrier masks, selection highlights, and picking. A checked-in cross-rasterizer pixel-tolerance fixture remains. |
 | **P6** | Area-light sampling, IES/portal/geometry/emissive lights, DOF/motion/stereo, and external-corpus goldens | Requires broader rendering scope or unavailable data; retain structured diagnostics and capability skips in the meantime. |
 
 P0–P2 are one material-parity release gate. CUDA/HIP checks remain conditional
 on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 
-### Current working changes and verification
+### Latest changes and verification
 
 - The focused `tusdview` label is green at **17/17**. Windowed MCP batch
   captures now request a deterministic 1024x768 window, reject a collapsed
@@ -239,28 +238,31 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   draw, staying within the 32-fragment-unit floor. The focused semantic grid
   passes the ordinary/UDIM cases through both loaders with exact package and
   loader comparisons.
-- [ ] Checked-in fixtures cover a PBR material grid, packed/UDIM minification,
-  Points and all curve families, perspective/orthographic lens shift,
-  multi-light linking, and raster shadows. The linked red/blue/magenta raster
-  fixture is checked in and compares GL/Vulkan output. The generated raster
-  shadow regression covers the current baseline; a checked-in alpha-cutout and
-  instancing fixture is still outstanding.
-- [ ] GL/Vulkan raster images agree within the focused-test tolerances before
-  the corresponding Vulkan/CUDA/HIP RT task is closed.
+- [ ] Package a compact checked-in fixture set for the covered PBR material
+  grid, packed/UDIM minification, Points and all curve families, and raster
+  shadow alpha-cutout/instancing cases. Perspective/orthographic lens shift and
+  linked red/blue/magenta multi-light fixtures are already checked in; generated
+  shadow coverage supplies the current baseline.
+- [ ] Add a checked-in GL/Vulkan pixel-tolerance oracle for native
+  Points/Curves coverage. Both raster smoke gates pass, but software GL and
+  Vulkan do not produce byte-identical edge coverage.
 - [x] Run the curated external usd-assets golden sweep when the corpus is
   mounted; missing external data remains a skip, not a normal-test failure.
   The corrected RTX 3070/NVIDIA 595.84 run covers all 280 files in Vulkan
   raster and ray query, with 510 deterministic `256x256` fingerprints and a
   second 20-file comparison matching 38/38.
-- [ ] Run focused tusdview tests, full native CTest, and the large-scene
-  first-display/VRAM comparison. Regenerate embedded SPIR-V with the documented
-  SDK glslang whenever Vulkan shader sources change.
+- [x] Run the focused tusdview tests after the capture, deformation, and Vulkan
+  RT helper fixes: all 17 labelled tests pass, as do the affected MCP,
+  deformation, GeomSubset, light-link, and native-carrier regressions.
+- [ ] Run a fresh full native CTest and large-scene first-display/VRAM
+  comparison. Regenerate embedded SPIR-V with the documented SDK glslang
+  whenever Vulkan shader sources change.
 
 ---
 
 ## Active-roadmap verification evidence
 
-Latest focused verification on 2026-07-20:
+Latest focused verification on 2026-07-25:
 
 - Offline RTX 3070 verification used the documented `--headless` Vulkan path.
   Vulkan raster and Vulkan ray query both passed the UDIM opacity-cutout probe
