@@ -262,9 +262,10 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   deformation, GeomSubset, light-link, and native-carrier regressions.
 - [x] Run a fresh full native CTest and large-scene first-display/VRAM
   comparison. The serial native gate covered all 201 registered tests with
-  195 passes and six explicit skips (including unavailable external assets and
-  HIP). The large-scene harness was invoked and skipped because Caldera,
-  Island, and ALab roots were not mounted; no stale performance claim is made.
+  194 passes and seven explicit skips (including the unavailable RT loader-
+  parity backend, external assets, and HIP). The available Caldera profile
+  passed on the local Vulkan CPU device; Island and ALab roots were absent.
+  The external usd-assets corpus was not mounted; no corpus claim is made.
   No Vulkan shader sources changed in this fixture-only milestone, so embedded
   SPIR-V was not regenerated.
 
@@ -275,11 +276,15 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 Latest focused verification on 2026-07-25:
 
 - The fixture packaging milestone is green: `ctest -L tusdview` passes 17/17;
-  the serial native CTest reports 195 passes and six documented capability/data
-  skips; and stable `next` tests report 32 passes and one explicit skip when
-  corpus-labelled tests are excluded. The corpus flatten comparator also passes after the checked scene
-  was made self-contained. The large-scene profile command correctly reports a
-  skip when its optional external roots are absent.
+  the serial native CTest reports 194 passes and seven documented
+  capability/data skips; and stable `next` tests report 34 passes and one
+  explicit skip. The complete semantic material gate passes in 287.76 seconds
+  with exact default/legacy AOV comparisons; its HIP cases are capability
+  skipped. The separate RT loader-parity gate is also capability-skipped on
+  this runtime because the requested Vulkan RT/CUDA vector backend is
+  unavailable. The corpus flatten comparator passes after the checked scene
+  was made self-contained. The available Caldera large-scene profile passes;
+  Island, ALab, and the external usd-assets corpus are not mounted.
 
 - Offline RTX 3070 verification used the documented `--headless` Vulkan path.
   Vulkan raster and Vulkan ray query both passed the UDIM opacity-cutout probe
