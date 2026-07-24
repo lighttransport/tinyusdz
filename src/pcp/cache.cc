@@ -13,6 +13,7 @@
 #include <thread>
 #endif
 
+#include "composition-graph.hh"  // ValidateNoDuplicateSiblingNames
 #include "composition.hh"  // CompositeSublayers, LayerToStage
 #include "core/prim-spec.hh"
 #include "namespace-mapping.hh"
@@ -628,6 +629,9 @@ bool Cache::Impl::BuildStage(Stage *stage, std::string *warn,
     composed_layer.add_primspec(composed_ps.name(), composed_ps);
   }
 
+  if (!cg::ValidateNoDuplicateSiblingNames(composed_layer, warn, err)) {
+    return false;
+  }
   return LayerToStage(std::move(composed_layer), stage, warn, err);
 }
 

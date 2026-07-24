@@ -758,6 +758,8 @@ void Gui::pushSelectionHistory(const std::string& absPath) {
 void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordHistory) {
   selPath_ = absPath;
   selMeshIndex_ = meshIndex;
+  selNonMeshKind_ = -1;
+  selNonMeshIndex_ = -1;
   selPrim_ = nullptr;
   revealSelectionInHierarchy_ = !absPath.empty();
   if (loaded_) {
@@ -782,6 +784,24 @@ void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordH
       if (draw_->meshes[i].absPath == absPath) {
         selMeshIndex_ = static_cast<int>(i);
         break;
+      }
+    }
+    if (selMeshIndex_ < 0) {
+      for (size_t i = 0; i < draw_->points.size(); ++i) {
+        if (draw_->points[i].absPath == absPath) {
+          selNonMeshKind_ = 0;
+          selNonMeshIndex_ = static_cast<int>(i);
+          break;
+        }
+      }
+    }
+    if (selMeshIndex_ < 0 && selNonMeshIndex_ < 0) {
+      for (size_t i = 0; i < draw_->curves.size(); ++i) {
+        if (draw_->curves[i].absPath == absPath) {
+          selNonMeshKind_ = 1;
+          selNonMeshIndex_ = static_cast<int>(i);
+          break;
+        }
       }
     }
   }
@@ -854,6 +874,59 @@ void Gui::rebuildSubsetHighlight() {
     mi = selMeshIndex_;
     tri = &draw_->meshes[static_cast<size_t>(mi)].indices;
   }
+  if ((mi < 0 || !tri) && selNonMeshIndex_ >= 0 && draw_) {
+    // Non-mesh prim highlight: orange crosshair at point centroid, or ribbon edges
+    // along curve segments. Carrier world transforms come from the point/curve data.
+    const float orange[3] = {1.0f, 0.55f, 0.1f};
+    auto addLine = [&](const float a[3], const float b[3]) {
+      HelperVertex va{}, vb{};
+      for (int k = 0; k < 3; ++k) { va.pos[k] = a[k]; vb.pos[k] = b[k]; va.col[k] = vb.col[k] = orange[k]; }
+      highlightLinesData_.push_back(va);
+      highlightLinesData_.push_back(vb);
+    };
+    auto wpos = [](const float W[16], const float p[3], float o[3]) {
+      o[0] = W[0] * p[0] + W[4] * p[1] + W[8] * p[2] + W[12];
+      o[1] = W[1] * p[0] + W[5] * p[1] + W[9] * p[2] + W[13];
+      o[2] = W[2] * p[0] + W[6] * p[1] + W[10] * p[2] + W[14];
+    };
+    if (selNonMeshKind_ == 0) {
+      const size_t pi = static_cast<size_t>(selNonMeshIndex_);
+      if (pi < draw_->points.size()) {
+        const DrawPointsCPU& pt = draw_->points[pi];
+        const size_t n = pt.points.size() / 3;
+        const float cross = 0.05f;  // crosshair size in world units
+        for (size_t i = 0; i < n; ++i) {
+          float center[3];
+          wpos(pt.world, &pt.points[i * 3], center);
+          float h[3], v[3];
+          for (int k = 0; k < 3; ++k) {
+            h[k] = center[k] + (k == 0 ? cross : 0);
+            v[k] = center[k] + (k == 1 ? cross : 0);
+          }
+          addLine(center, h);
+          addLine(center, v);
+        }
+      }
+    } else if (selNonMeshKind_ == 1) {
+      const size_t ci = static_cast<size_t>(selNonMeshIndex_);
+      if (ci < draw_->curves.size()) {
+        const DrawCurvesCPU& cv = draw_->curves[ci];
+        const size_t np = cv.points.size() / 3;
+        size_t base = 0;
+        for (uint32_t count : cv.vertexCounts) {
+          const size_t end = std::min(np, base + static_cast<size_t>(count));
+          for (size_t i = base; i + 1 < end; ++i) {
+            float p0[3], p1[3];
+            wpos(cv.world, &cv.points[i * 3], p0);
+            wpos(cv.world, &cv.points[(i + 1) * 3], p1);
+            addLine(p0, p1);
+          }
+          base = end;
+        }
+      }
+    }
+    return;
+  }
   if (mi < 0 || !tri) return;
 
   // World-space orange edge lines (for the Vulkan line-pipeline highlight).
@@ -883,6 +956,8 @@ void Gui::rebuildSubsetHighlight() {
 void Gui::clearSelection() {
   selPath_.clear();
   selMeshIndex_ = -1;
+  selNonMeshKind_ = -1;
+  selNonMeshIndex_ = -1;
   selPrim_ = nullptr;
   selectionList_.clear();
   revealSelectionInHierarchy_ = false;

@@ -2749,6 +2749,23 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
     // this is the dominant CPU copy (~16 B x targets x points). A manual-blend
     // reconvert rebuilds the DrawScene from scratch if a CPU path ever needs it.
     std::vector<MorphTargetCPU>().swap(dm.morphs);
+    // Compute per-axis max displacement across all targets (for per-instance
+    // culling: protoAabb is padded by morphExtent so a morphed instance is not
+    // wrongly frustum-culled. Only built for the raster path; RT backends use
+    // DeformSkinnedMeshes which computes its own per-instance world box from the
+    // morphed vertex positions).
+    for (int k = 0; k < 3; ++k) dm.morphExtent[k] = 0.0f;
+    for (const auto& kv : mesh.targets) {
+      const tydra::ShapeTarget& tgt = kv.second;
+      for (size_t e = 0; e < tgt.pointOffsets.size(); ++e) {
+        dm.morphExtent[0] = std::max(dm.morphExtent[0],
+            std::fabs(tgt.pointOffsets[e][0]));
+        dm.morphExtent[1] = std::max(dm.morphExtent[1],
+            std::fabs(tgt.pointOffsets[e][1]));
+        dm.morphExtent[2] = std::max(dm.morphExtent[2],
+            std::fabs(tgt.pointOffsets[e][2]));
+      }
+    }
   }
 
   // --- Submeshes (group triangles by material) ---
@@ -3605,6 +3622,8 @@ void BuildDrawInstances(const tydra::RenderScene& rs,
   // Local (proto-space) AABB of each draw mesh, captured before we start
   // attaching instances so we can re-derive world bounds afterward.
   std::vector<std::array<float, 6>> localBox(out->meshes.size());
+  // Per-source-draw morphExtent for protoAabb padding (zero when no morph).
+  std::vector<float> localMorphExtent(out->meshes.size() * 3, 0.0f);
   std::vector<size_t> sourceDraw(out->meshes.size());
   std::vector<uint8_t> touched(out->meshes.size(), 0);
   std::vector<uint8_t> suppressStatic(out->meshes.size(), 0);
@@ -3655,6 +3674,9 @@ void BuildDrawInstances(const tydra::RenderScene& rs,
       localBox[baseDi] = {base.aabbMin[0], base.aabbMin[1],
                           base.aabbMin[2], base.aabbMax[0],
                           base.aabbMax[1], base.aabbMax[2]};
+      localMorphExtent[baseDi * 3 + 0] = base.morphExtent[0];
+      localMorphExtent[baseDi * 3 + 1] = base.morphExtent[1];
+      localMorphExtent[baseDi * 3 + 2] = base.morphExtent[2];
       sourceDraw[baseDi] = baseDi;
       touched[baseDi] = 1;
     }
@@ -3678,6 +3700,10 @@ void BuildDrawInstances(const tydra::RenderScene& rs,
         out->meshes.push_back(std::move(clone));
         sourceDraw.push_back(baseDi);
         localBox.push_back(localBox[baseDi]);
+        localMorphExtent.insert(localMorphExtent.end(),
+          {localMorphExtent[baseDi * 3 + 0],
+           localMorphExtent[baseDi * 3 + 1],
+           localMorphExtent[baseDi * 3 + 2]});
         touched.push_back(1);
         suppressStatic.push_back(0);
         overrideDraw.emplace(key, targetDi);
@@ -3721,14 +3747,23 @@ void BuildDrawInstances(const tydra::RenderScene& rs,
     if (!touched[di]) continue;
     DrawMeshCPU& dm = out->meshes[di];
     const std::array<float, 6>& lb = localBox[sourceDraw[di]];
+    const float* me = &localMorphExtent[sourceDraw[di] * 3];
+    // Pad prototype-local AABB by morphExtent so morphed instances are not
+    // wrongly frustum-culled. The padded box is also the protoAabb.
+    const float plo[3] = {lb[0] - me[0], lb[1] - me[1], lb[2] - me[2]};
+    const float phi[3] = {lb[3] + me[0], lb[4] + me[1], lb[5] + me[2]};
+    for (int k = 0; k < 3; ++k) {
+      dm.protoAabbMin[k] = plo[k];
+      dm.protoAabbMax[k] = phi[k];
+    }
     bool first = true;
     const size_t ni = dm.instanceCount();
     for (size_t ii = 0; ii < ni; ++ii) {
       const float* o2w = &dm.instanceXforms[ii * 12];
       for (int corner = 0; corner < 8; ++corner) {
-        const float o[3] = {(corner & 1) ? lb[3] : lb[0],
-                            (corner & 2) ? lb[4] : lb[1],
-                            (corner & 4) ? lb[5] : lb[2]};
+        const float o[3] = {(corner & 1) ? phi[0] : plo[0],
+                            (corner & 2) ? phi[1] : plo[1],
+                            (corner & 4) ? phi[2] : plo[2]};
         float w[3];
         for (int c = 0; c < 3; ++c) {
           w[c] = o2w[c * 4 + 0] * o[0] + o2w[c * 4 + 1] * o[1] +
@@ -3746,6 +3781,67 @@ void BuildDrawInstances(const tydra::RenderScene& rs,
       }
     }
   }
+}
+
+DrawCameraCPU MakeDrawCameraFromTydra(
+    const tinyusdz::value::matrix4d& worldMatrix,
+    const tydra::RenderCamera& cam) {
+  DrawCameraCPU dc;
+  float up[3] = {float(worldMatrix.m[1][0]), float(worldMatrix.m[1][1]),
+                 float(worldMatrix.m[1][2])};
+  float fwd[3] = {-float(worldMatrix.m[2][0]), -float(worldMatrix.m[2][1]),
+                  -float(worldMatrix.m[2][2])};
+  auto norm3 = [](float v[3]) {
+    float l = std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+    if (l > 1e-12f) { v[0]/=l; v[1]/=l; v[2]/=l; }
+  };
+  norm3(up); norm3(fwd);
+  for (int k = 0; k < 3; ++k) {
+    dc.eye[k] = float(worldMatrix.m[3][k]);
+    dc.up[k] = up[k];
+    dc.forward[k] = fwd[k];
+  }
+  dc.focalLength = cam.focalLength;
+  dc.horizontalAperture = cam.horizontalAperture;
+  dc.verticalAperture = cam.verticalAperture;
+  dc.horizontalApertureOffset = cam.horizontalApertureOffset;
+  dc.verticalApertureOffset = cam.verticalApertureOffset;
+  dc.exposure = cam.exposure;
+  dc.zNear = std::max(1.0e-4f, cam.znear);
+  dc.zFar = std::max(dc.zNear + 1.0e-3f, cam.zfar);
+  dc.projection =
+      cam.projection == tinyusdz::GeomCamera::Projection::Orthographic
+          ? DrawCameraCPU::Projection::Orthographic
+          : DrawCameraCPU::Projection::Perspective;
+  dc.fovYDeg = 2.0f *
+      std::atan(0.5f * cam.verticalAperture /
+                std::max(1.0e-6f, cam.focalLength)) *
+      (180.0f / 3.14159265358979323846f);
+  return dc;
+}
+
+// Build camera records from the legacy Tydra RenderScene for loader-equivalence
+// testing: walk the node tree for Camera nodes, extract world pose and lens
+// properties from the parallel RenderCamera, and store in `out->cameras`.
+void BuildDrawCameras(const tydra::RenderScene& rs, DrawScene* out) {
+  if (!out) return;
+  std::function<void(const tydra::Node&)> walk =
+      [&](const tydra::Node& node) {
+    if (node.nodeType == tydra::NodeType::Camera) {
+      if (node.id >= 0 && size_t(node.id) < rs.cameras.size()) {
+        DrawCameraCPU dc = MakeDrawCameraFromTydra(
+            node.global_matrix, rs.cameras[size_t(node.id)]);
+        dc.name = node.prim_name;
+        dc.absPath = node.abs_path;
+        dc.displayName = node.prim_name;
+        out->cameras.push_back(std::move(dc));
+      }
+      // Camera nodes are leaf nodes.
+      return;
+    }
+    for (const tydra::Node& c : node.children) walk(c);
+  };
+  for (const tydra::Node& root : rs.nodes) walk(root);
 }
 
 void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
@@ -3767,6 +3863,7 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
   ApplyTextureCompression(textureOptions, out);
   FinalizeDrawTextures(textureOptions, out);
   BuildDrawLights(rs, out, textureOptions);
+  BuildDrawCameras(rs, out);
 
   size_t cumulativeVertexBytes = 0;
   // rs.meshes index -> out->meshes index (meshes may be skipped when empty).
@@ -3900,6 +3997,7 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
     ApplyTextureCompression(textureOptions, out);
     FinalizeDrawTextures(textureOptions, out);
     BuildDrawLights(scene, out, textureOptions);
+    BuildDrawCameras(scene, out);
     // Any mesh not referenced by a node keeps identity placement (matches
     // BuildDrawScene, which uses identity when no transform is found).
     const matrix4d ident = matrix4d::identity();

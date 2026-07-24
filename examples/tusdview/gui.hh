@@ -295,6 +295,8 @@ class Gui {
   std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};
+  int selNonMeshKind_{-1};  // 0=point, 1=curve; -1=none
+  int selNonMeshIndex_{-1}; // index into draw_->points/curves
   // When the selection is a GeomSubset, the triangle vertex indices of its faces
   // (built via the parent mesh's sourceFaceId) so the highlight outlines just the
   // subset; highlightSubsetMesh_ is that parent mesh's draw index.

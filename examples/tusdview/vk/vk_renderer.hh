@@ -513,6 +513,7 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout volumeLayout_{VK_NULL_HANDLE};
   VkPipeline volumePipeline_{VK_NULL_HANDLE};
   VkPipeline volumePipelineNoDepth_{VK_NULL_HANDLE};  // RT overlay (no depth)
+  VkPipeline nonMeshPipeline_{VK_NULL_HANDLE};
   VkDescriptorSetLayout volumeSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool volumePool_{VK_NULL_HANDLE};
   VkBuffer volumeCubeBuf_{VK_NULL_HANDLE};      // 36-vertex proxy cube
@@ -634,6 +635,16 @@ class VulkanRenderer final : public Renderer {
   // prototype for the per-frame instanceCount patch + visibility gate.
   struct MdiCmd { uint32_t meshIndex; uint32_t reserved; VkDrawIndexedIndirectCommand cmd; };
   std::vector<MdiCmd> mdiCmds_;
+  struct NonMeshBatch {
+    uint32_t count{0};
+    int kind{0};
+    int materialId{-1};
+    int carrierId{-1};
+    int purposeId{0};
+    VkBuffer vbo{VK_NULL_HANDLE};
+    VkDeviceMemory vboMem{VK_NULL_HANDLE};
+  };
+  std::vector<NonMeshBatch> nonMeshBatches_;
   // CPU staging accumulated during appendMesh, uploaded + freed by buildInstMdi().
   std::vector<float> mdiInstXfStage_;      // 12 floats / instance (o2w rows)
   std::vector<float> mdiInstColStage_;     // 4 floats / instance (rgba)

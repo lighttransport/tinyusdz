@@ -2142,7 +2142,42 @@ bool CompositionGraph::BuildStage(Stage *stage, std::string *warn,
   }
 
   // Use existing LayerToStage for the final conversion
+  // Verify no duplicate sibling names in the composed layer (test-gate gap:
+  // every inline child was a duplicate prim on both composition paths, and 171
+  // ctests + the whole roundtrip corpus missed it for the entire life of the
+  // bug because the roundtrip compares flattened output where identical twins
+  // collapse harmlessly, and nothing asserted sibling uniqueness).
+  if (!ValidateNoDuplicateSiblingNames(composed_layer, warn, err)) {
+    return false;
+  }
   return LayerToStage(std::move(composed_layer), stage, warn, err);
+}
+
+bool ValidateNoDuplicateSiblingNames(const Layer &layer, std::string *warn,
+                                     std::string *err) {
+  (void)warn;
+  std::function<bool(const PrimSpec &, const std::string &)> check =
+      [&](const PrimSpec &ps, const std::string &parent_path) -> bool {
+    std::unordered_set<std::string> seen;
+    for (const PrimSpec &child : ps.children()) {
+      if (!seen.insert(child.name()).second) {
+        if (err)
+          *err = "Duplicate sibling prim '" + child.name() + "' under '" +
+                 parent_path + "'";
+        return false;
+      }
+      if (!check(child,
+                 parent_path.empty() ? child.name()
+                                     : parent_path + "/" + child.name())) {
+        return false;
+      }
+    }
+    return true;
+  };
+  for (const auto &prim_pair : layer.primspecs()) {
+    if (!check(prim_pair.second, prim_pair.first)) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------

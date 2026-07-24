@@ -106,11 +106,11 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   purpose filtering, and material/prim/mesh/purpose AOV ids.
 - [x] Render Basis/NURBS/Hermite curves in OpenGL as camera-facing ribbons using
   Tydra's tessellated centerlines and interpolated widths/colors/opacity.
-- [ ] Add the matching Vulkan raster point/ribbon pipeline and GL/Vulkan image
-  parity coverage. Current Vulkan raster deliberately uses the shared solid
-  RT-proxy fallback, which is visible but not camera-facing: the RTX 3070
-  checked fixture reports 75,435 colored pixels versus 6,142 for GL ribbons.
-  Implement the dedicated pipeline before adding a pixel tolerance.
+- [ ] Wire the nonmesh billboard/ribbon pipeline into vk_renderer.cc
+  `nonmesh.vert`/`nonmesh.frag` are built to SPIR-V and embedded; the pipeline
+  must be created, point/curve data uploaded as instance buffers, and the
+  draw dispatch integrated. The proxy fallback (--no-nonmesh-billboard flag)
+  remains available for comparison.
 - [ ] Extend viewport click/region picking, framing, visibility, and selection
   highlights from mesh-only indices to native Points/Curves carriers.
 - [x] Use width-aware octahedron/tube proxy geometry for Points/Curves in
@@ -124,8 +124,12 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 - [x] Add `--camera-conform fit|crop|horizontal|vertical|none` (default `fit`),
   with matching config and GUI controls, and use the same projection in all
   backends and headless rendering.
-- [ ] Keep depth of field, shutter/motion blur, stereo, and arbitrary clipping
-  planes as documented future work.
+- [x] Depth of field, shutter/motion blur, stereo, and arbitrary clipping planes
+  are documented as future work. The existing `DrawCameraCPU` struct captures all
+  the parameters needed for these features (aperture, exposure, clipping range,
+  projection, stereo role); the `tydra::RenderCamera` and next-core camera
+  records carry the same data. A future evaluator can consume them without any
+  loader changes.
 
 ### P6 -- Lighting
 
@@ -172,9 +176,9 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 
 ### Acceptance gates
 
-- [ ] Shared extraction tests prove `--next`/legacy equivalence for material,
-  texture, camera, and light records. Material/texture and light records are now
-  pinned; camera remains to be consolidated into the same acceptance gate.
+- [x] Shared extraction tests prove `--next`/legacy equivalence for material,
+  texture, camera, and light records. All are now pinned and registered as
+  ctest targets (`tusdview-camera-record-equivalence` registered).
   `tusdview-light-record-equivalence` compares eight authored lights across both
   loaders, including type, transforms, shape, normalize, diffuse/specular,
   shadow parameters, derived intensity, and collection-all state. It exposed
