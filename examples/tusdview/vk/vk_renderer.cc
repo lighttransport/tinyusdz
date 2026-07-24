@@ -1879,6 +1879,11 @@ bool VulkanRenderer::createLinePipeline(std::string* err) {
   VkPipelineDepthStencilStateCreateInfo dsNo = ds;
   dsNo.depthTestEnable = VK_FALSE;
   dsNo.depthWriteEnable = VK_FALSE;
+  // nonMeshPipeline_ temporarily changes the shared input-assembly state to
+  // triangles. Restore LINE_LIST before creating the no-depth helper variant;
+  // otherwise grid/axis/skeleton line vertices are consumed three at a time as
+  // giant colored triangles over every Vulkan RT frame.
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
   ci.pDepthStencilState = &dsNo;
   VkResult r2 = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                           &linePipelineNoDepth_);

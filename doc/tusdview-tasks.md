@@ -48,7 +48,7 @@ silently becoming the default material.
 P0–P2 are one material-parity release gate. CUDA/HIP checks remain conditional
 on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 
-### Current working changes and remaining failures
+### Current working changes and verification
 
 - The focused `tusdview` label is green at **17/17**. Windowed MCP batch
   captures now request a deterministic 1024x768 window, reject a collapsed
@@ -62,16 +62,15 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   BLAS is also destroyed at shutdown; GPU-assisted validation had reported the
   proxy VBO, EBO, allocation, and acceleration structure as leaked device
   children.
-- One NVIDIA Vulkan ray-query regression remains:
-  `tusdview-rt-geomsubset-material`. Vulkan produces an oversized first
-  primitive for both loaders (`red=0 green=491 blue=20400`), while CUDA renders
-  the same carrier correctly (`red=3252 green=5002 blue=8280`) and Vulkan
-  raster is visually correct. It reproduces with BLAS compaction off, host
-  pooling off, a tightly packed BLAS position stream, a first-sample-only
-  capture, overlays hidden, and both the local and shared matrix inverse. Matching
-  Khronos GPU-assisted validation reports no shader/descriptor/AS bounds
-  violation. Do not weaken the color oracle; the next useful step is a minimal
-  raw Vulkan indexed-BLAS reproducer or a driver comparison.
+- The NVIDIA Vulkan `tusdview-rt-geomsubset-material` regression is fixed.
+  Ray traversal and per-triangle materials were correct; the renderer created
+  `linePipelineNoDepth_` after temporarily changing the shared input assembly
+  to `TRIANGLE_LIST` for native Points/Curves. RT helper line vertices were
+  therefore consumed three at a time as a giant cyan triangle over the traced
+  image, hiding the red material region. Restoring `LINE_LIST` before creating
+  the no-depth pipeline makes both loaders and Vulkan/CUDA pass the existing
+  strict color oracle. The investigation also ruled out BLAS compaction,
+  suballocation, vertex stride, accumulation history, and matrix inversion.
 
 ### P0--P2 -- Material and texture parity
 
