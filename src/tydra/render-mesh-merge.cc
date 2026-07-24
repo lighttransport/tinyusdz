@@ -22,6 +22,8 @@
 #include "tiny-format.hh"
 #include "value-types.hh"
 
+#include "../safe-arithmetic.hh"
+
 #include "common-macros.inc"
 
 namespace tinyusdz {
@@ -184,7 +186,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       // Append normals
       size_t old_size = dst.normals.data.size();
-      dst.normals.data.resize(old_size + src.normals.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src.normals.data.size(), &new_size)) {
+        return false;
+      }
+      dst.normals.data.resize(new_size);
 
       if (transform_is_identity) {
         memcpy(dst.normals.data.data() + old_size, src.normals.data.data(), src.normals.data.size());
@@ -208,7 +214,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       auto &dst_attr = dst.texcoords[slot];
       size_t old_size = dst_attr.data.size();
-      dst_attr.data.resize(old_size + src_attr.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src_attr.data.size(), &new_size)) {
+        return false;
+      }
+      dst_attr.data.resize(new_size);
       memcpy(dst_attr.data.data() + old_size, src_attr.data.data(), src_attr.data.size());
     }
   }
@@ -227,7 +237,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       size_t old_size = dst.tangents.data.size();
       size_t src_count = src.tangents.vertex_count();
-      dst.tangents.data.resize(old_size + src.tangents.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src.tangents.data.size(), &new_size)) {
+        return false;
+      }
+      dst.tangents.data.resize(new_size);
 
       if (transform_is_identity) {
         memcpy(dst.tangents.data.data() + old_size, src.tangents.data.data(), src.tangents.data.size());
@@ -255,7 +269,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       size_t old_size = dst.binormals.data.size();
       size_t src_count = src.binormals.vertex_count();
-      dst.binormals.data.resize(old_size + src.binormals.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src.binormals.data.size(), &new_size)) {
+        return false;
+      }
+      dst.binormals.data.resize(new_size);
 
       if (transform_is_identity) {
         memcpy(dst.binormals.data.data() + old_size, src.binormals.data.data(), src.binormals.data.size());
@@ -275,7 +293,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       dst.vertex_colors = src.vertex_colors;
     } else {
       size_t old_size = dst.vertex_colors.data.size();
-      dst.vertex_colors.data.resize(old_size + src.vertex_colors.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src.vertex_colors.data.size(), &new_size)) {
+        return false;
+      }
+      dst.vertex_colors.data.resize(new_size);
       memcpy(dst.vertex_colors.data.data() + old_size, src.vertex_colors.data.data(), src.vertex_colors.data.size());
     }
   }
@@ -286,7 +308,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       dst.vertex_opacities = src.vertex_opacities;
     } else {
       size_t old_size = dst.vertex_opacities.data.size();
-      dst.vertex_opacities.data.resize(old_size + src.vertex_opacities.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src.vertex_opacities.data.size(), &new_size)) {
+        return false;
+      }
+      dst.vertex_opacities.data.resize(new_size);
       memcpy(dst.vertex_opacities.data.data() + old_size, src.vertex_opacities.data.data(), src.vertex_opacities.data.size());
     }
   }
