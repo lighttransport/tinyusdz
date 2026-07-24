@@ -2828,6 +2828,8 @@ int App::run(const std::string& initialFile, int maxFrames,
   gui_.setNextStage(nextSession_ ? &nextSession_->GetStage() : nullptr);
   gui_.setDeferredPayloadPaths({});
   gui_.setBudget(&loadCtrl_);
+  gui_.setCaptureViewportOnly(headless_ && maxFrames >= 0 &&
+                              streamHttpPort_ <= 0);
   // Route the GUI's GPU side-effects (viewport resize, instance visibility) to the
   // render thread; runs inline on the single-threaded path.
   gui_.setPostGpu([this](std::function<void()> op) { postGpu(std::move(op)); });

@@ -275,6 +275,10 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
 void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   renderer_ = renderer;
   cam_ = camera;
+  if (captureViewportOnly_) {
+    drawViewport();
+    return;
+  }
   drawDockspaceAndMenu();
   drawHierarchy();
   drawInspector();
@@ -3887,7 +3891,18 @@ void Gui::finishRegionSelection(const ImVec2& imageMin, int vpW, int vpH) {
 
 void Gui::drawViewport() {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-  ImGui::Begin("Viewport");
+  ImGuiWindowFlags flags = ImGuiWindowFlags_None;
+  if (captureViewportOnly_) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos);
+    ImGui::SetNextWindowSize(vp->Size);
+    ImGui::SetNextWindowViewport(vp->ID);
+    flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+  }
+  ImGui::Begin("Viewport", nullptr, flags);
   ImGui::PopStyleVar();
 
   const ImVec2 avail = ImGui::GetContentRegionAvail();

@@ -2832,6 +2832,15 @@ if(TINYUSDZ_BUILD_TESTS)
       )
 
     add_test(
+      NAME tusdview-cli-window-size
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cli-window-size.sh"
+              "$<TARGET_FILE:tusdview>"
+      )
+    set_tests_properties(tusdview-cli-window-size
+                         PROPERTIES SKIP_RETURN_CODE 77 LABELS "tusdview")
+
+    add_test(
       NAME tusdview-camera-record-equivalence
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-record-equivalence.sh"
