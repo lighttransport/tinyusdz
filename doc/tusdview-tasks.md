@@ -40,7 +40,7 @@ silently becoming the default material.
 | **P1** | Independent semantic texture descriptors and a checked-in material grid | **Implemented for the supported semantic matrix;** packaging a compact checked-in fixture set remains. |
 | **P2** | Pixel parity for ordinary/UDIM material response in Vulkan RT and CUDA/HIP where available | **Implemented for the covered PreviewSurface/OpenPBR/Standard Surface matrix;** HIP remains capability-gated and the external corpus remains data-dependent. |
 | **P3** | Exact omnidirectional point-light raster shadows | **Implemented and Vulkan-verified:** six depth faces replace the one-sided finite approximation for point/zero-radius SphereLight emitters. |
-| **P4** | Preserve evaluated graph inputs for advanced OpenPBR/MaterialX lobes | Keep unsupported lobes diagnosed while eliminating needless loss of supported inputs. |
+| **P4** | Preserve evaluated graph inputs for advanced OpenPBR/MaterialX lobes | **Implemented for degradation:** constants and connected texture descriptors survive while unsupported lobes remain path-qualified diagnostics. |
 | **P5** | Vulkan raster Points/Curves and native-carrier picking | Important viewport parity, but outside the material/lighting critical path. |
 | **P6** | Area-light sampling, IES/portal/geometry/emissive lights, DOF/motion/stereo, and external-corpus goldens | Requires broader rendering scope or unavailable data; retain structured diagnostics and capability skips in the meantime. |
 
@@ -60,12 +60,16 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   emission, opacity/cutout, normal, coat normal, and displacement for
   UsdPreviewSurface, OpenPBR, and MaterialX standard-surface graphs, with one
   independent semantic texture descriptor per input.
-- [ ] Preserve successfully evaluated inputs when a graph degrades and report
+- [x] Preserve successfully evaluated inputs when a graph degrades and report
   unsupported real-time lobes (transmission, subsurface, sheen, anisotropy,
   thin film, dispersion, volume) explicitly. Structured, path-qualified
   diagnostics now cover these advanced lobes in both loaders and the default
   next-core carrier retains every evaluatable `inputs:*` value from degraded
-  terminals and material interfaces; broader fixture coverage remains open.
+  terminals and material interfaces. The viewer adapter now maps retained
+  connections into DrawScene textures and keeps their channel, UV transform,
+  scale/bias, wrap, and color-space descriptors. Converter coverage pins
+  constants and a connected scalar; the headless default/legacy fixture covers
+  all seven diagnosed lobe categories while preserving supported image parity.
 
 - [x] Make every copied texture descriptor self-contained after DrawScene
   texture deduplication: its `tex` id now equals the mapped material slot, not
@@ -218,8 +222,11 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   instancing fixture is still outstanding.
 - [ ] GL/Vulkan raster images agree within the focused-test tolerances before
   the corresponding Vulkan/CUDA/HIP RT task is closed.
-- [ ] Run the curated external usd-assets golden sweep when the corpus is
+- [x] Run the curated external usd-assets golden sweep when the corpus is
   mounted; missing external data remains a skip, not a normal-test failure.
+  The corrected RTX 3070/NVIDIA 595.84 run covers all 280 files in Vulkan
+  raster and ray query, with 510 deterministic `256x256` fingerprints and a
+  second 20-file comparison matching 38/38.
 - [ ] Run focused tusdview tests, full native CTest, and the large-scene
   first-display/VRAM comparison. Regenerate embedded SPIR-V with the documented
   SDK glslang whenever Vulkan shader sources change.
@@ -490,9 +497,10 @@ Latest focused verification on 2026-07-20:
   collection membership cannot be lost to static batching.
 - `tusdview-unsupported-realtime-lobes` loads the same OpenPBR material through
   default and legacy conversion and requires one structured diagnostic naming
-  transmission, subsurface, sheen/fuzz, thin-film, anisotropy, and dispersion.
-  The neutral next-core record retains these authored inputs instead of
-  discarding them before a future evaluator can consume them.
+  transmission, subsurface, sheen/fuzz, thin-film, anisotropy, dispersion, and
+  volume. The neutral next-core record retains these authored inputs instead of
+  discarding them before a future evaluator can consume them; connected
+  retained inputs also keep their mapped texture and complete sample descriptor.
 - Shell syntax and `git diff --check` pass.
 
 The focused `tusdview` CTest label passes 16 of 17 registered tests on llvmpipe,

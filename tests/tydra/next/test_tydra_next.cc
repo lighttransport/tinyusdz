@@ -1251,7 +1251,23 @@ def Xform "World"
             float inputs:metalness = 0.75
             float inputs:roughness = 0.27
             float inputs:opacity = 0.4
+            float inputs:transmission_weight.connect = </World/M_Hide/AdvancedTex.outputs:r>
+            color3f inputs:transmission_color = (0.9, 0.8, 0.7)
+            float inputs:subsurface_weight = 0.31
+            color3f inputs:subsurface_color = (0.7, 0.5, 0.3)
+            float inputs:sheen_weight = 0.41
+            float inputs:specular_anisotropy = 0.51
+            float inputs:thin_film_weight = 0.61
+            float inputs:transmission_dispersion = 0.71
             token outputs:out
+        }
+
+        def Shader "AdvancedTex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @missing-advanced.png@
+            token inputs:sourceColorSpace = "raw"
+            float outputs:r
         }
     }
 
@@ -1330,6 +1346,34 @@ def Xform "World"
   assert(std::abs(mat.preview_surface->opacity.value.x - 0.4f) < 0.001f);
   assert(std::abs(mat.preview_surface->emissive_color.value.x - 0.03f) < 0.001f);
   assert(mat.alpha_mode == RenderMaterial::AlphaMode::Blend);
+
+  // Unsupported advanced lobes are not evaluated as PreviewSurface, but every
+  // successfully extracted constant/connection remains available to a future
+  // evaluator. In particular, a texture connection must survive as a texture
+  // id rather than collapsing to its fallback scalar.
+  const auto retained = [&mat](const char* name)
+      -> const RetainedMaterialParam* {
+    for (const RetainedMaterialParam& param : mat.retained_params) {
+      if (param.name == name) return &param;
+    }
+    return nullptr;
+  };
+  const RetainedMaterialParam* transmission =
+      retained("transmission_weight");
+  assert(transmission && transmission->value.texture_id >= 0);
+  assert(static_cast<size_t>(transmission->value.texture_id) <
+         result.scene.textures.size());
+  assert(retained("transmission_color"));
+  assert(std::abs(retained("transmission_color")->value.value.x - 0.9f) <
+         0.001f);
+  assert(retained("subsurface_weight"));
+  assert(std::abs(retained("subsurface_weight")->value.value.x - 0.31f) <
+         0.001f);
+  assert(retained("subsurface_color"));
+  assert(retained("sheen_weight"));
+  assert(retained("specular_anisotropy"));
+  assert(retained("thin_film_weight"));
+  assert(retained("transmission_dispersion"));
 
   auto subset_mat_it = result.scene.material_by_path.find("/World/M_Subset");
   assert(subset_mat_it != result.scene.material_by_path.end());
