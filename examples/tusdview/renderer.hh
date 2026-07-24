@@ -155,6 +155,11 @@ struct RenderFrameParams {
   const uint8_t* meshVisible{nullptr};
   int meshVisibleCount{0};
 
+  // Native carrier visibility mask. Indices are DrawScene::points followed by
+  // DrawScene::curves, matching the upload order in uploadScene().
+  const uint8_t* carrierVisible{nullptr};
+  int carrierVisibleCount{0};
+
   // Persistent user hide/isolate mask for Vulkan RT. Unlike meshVisible this
   // must not contain frustum culling: off-screen geometry still casts shadows.
   // null or short masks default missing entries to visible.

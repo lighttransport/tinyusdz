@@ -490,6 +490,16 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout lineLayout_{VK_NULL_HANDLE};
   VkPipeline linePipeline_{VK_NULL_HANDLE};
   VkPipeline linePipelineNoDepth_{VK_NULL_HANDLE};  // X-ray overlay (skeleton)
+  // Camera-facing native Points/Curves raster carrier.  The CPU expands the
+  // carriers into quads each frame; this deliberately stays independent of the
+  // mesh material descriptor sets.
+  VkPipeline nonMeshPipeline_{VK_NULL_HANDLE};
+  VkBuffer nonMeshBuf_[kFramesInFlight]{};
+  VkDeviceMemory nonMeshMem_[kFramesInFlight]{};
+  VkDeviceSize nonMeshCap_[kFramesInFlight]{};
+  std::vector<HelperVertex> nonMeshCopy_;
+  std::vector<DrawPointsCPU> nativePoints_;
+  std::vector<DrawCurvesCPU> nativeCurves_;
 
   // --- UsdVol volume raymarch (proxy-box, 3D density texture) ---
   struct VkVolumeGPU {

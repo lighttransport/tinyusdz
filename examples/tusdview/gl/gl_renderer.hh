@@ -413,6 +413,7 @@ class GLRenderer final : public Renderer {
     int kind{0};       // 0 point billboard, 1 curve ribbon
     int materialId{-1};
     int carrierId{-1};
+    int carrierIndex{-1};
     int purposeId{0};
     bool translucent{false};
   };

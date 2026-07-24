@@ -406,8 +406,16 @@ static void test_mtlx_reference_composition() {
 
   static const char* kMtlxDoc = R"(<?xml version="1.0"?>
 <materialx version="1.38" colorspace="lin_rec709">
+  <nodegraph name="NG_wood">
+    <image name="albedo" type="color3">
+      <input name="file" type="filename" value="textures/wood.jpg"
+             colorspace="srgb_texture" />
+    </image>
+    <output name="base_color" type="color3" nodename="albedo" />
+  </nodegraph>
   <standard_surface name="SR_wood" type="surfaceshader">
-    <input name="base_color" type="color3" value="0.8, 0.6, 0.4" />
+    <input name="base_color" type="color3"
+           nodegraph="NG_wood" output="base_color" />
     <input name="specular_roughness" type="float" value="0.35" />
   </standard_surface>
   <surfacematerial name="M_wood" type="material">
@@ -485,6 +493,41 @@ def Xform "Scene"
         CHECK(version && version->as_string() &&
                   *version->as_string() == "1.38",
               "config:mtlx:version composed from the document");
+        const std::vector<Path>* surface =
+            mat->relationship("mtlx:surface:source");
+        CHECK(surface && surface->size() == 1 &&
+                  (*surface)[0].str() == "/Scene/WoodMat/SR_wood",
+              "material selects its localized terminal shader");
+      }
+      const PrimSpec* local_shader =
+          l->prim_at_path("/Scene/WoodMat/SR_wood");
+      CHECK(local_shader != nullptr, "localized terminal shader composed");
+      if (local_shader) {
+        const std::vector<Path>* base =
+            local_shader->connection("inputs:base_color");
+        CHECK(base && base->size() == 1 &&
+                  (*base)[0].str() ==
+                      "/Scene/WoodMat/NG_wood.outputs:base_color",
+              "localized shader input targets its NodeGraph output");
+      }
+      const PrimSpec* graph = l->prim_at_path("/Scene/WoodMat/NG_wood");
+      CHECK(graph != nullptr, "localized NodeGraph composed");
+      if (graph) {
+        const std::vector<Path>* base =
+            graph->connection("outputs:base_color");
+        CHECK(base && base->size() == 1 &&
+                  (*base)[0].str() ==
+                      "/Scene/WoodMat/NG_wood/albedo.outputs:out",
+              "NodeGraph output targets its localized image node");
+      }
+      const PrimSpec* image =
+          l->prim_at_path("/Scene/WoodMat/NG_wood/albedo");
+      CHECK(image != nullptr, "localized MaterialX image node composed");
+      if (image) {
+        const Value* file = image->property_value("inputs:file");
+        const std::string* path = file ? file->as_asset_path() : nullptr;
+        CHECK(path && *path == "textures/wood.jpg",
+              "MaterialX image filename remains layer-relative");
       }
       const PrimSpec* shader = l->prim_at_path("/Scene/WoodShader");
       CHECK(shader != nullptr, "mtlx shader prim composed");

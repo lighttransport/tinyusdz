@@ -489,6 +489,20 @@ void LayerBuilder::add_relationship(const std::string& name, const Path& target)
   }
 }
 
+void LayerBuilder::add_connection(const std::string& name, const Path& target) {
+  if (PrimSpec* p = current()) {
+    const PropNameId name_id = GetPropNameTable().intern(name);
+    if (!p->property(name_id)) {
+      // A connection-only attribute still needs a property slot. Without it,
+      // composition and crate serialization never visit the connection map.
+      // Callers with a more specific type may declare the slot first.
+      p->add_property_slot(name_id, TypeId::Token,
+                           PropSlot::kFlagConnection);
+    }
+    p->add_connection(name, target);
+  }
+}
+
 void LayerBuilder::set_active(bool active) {
   if (PrimSpec* p = current()) {
     p->meta().active = active;
