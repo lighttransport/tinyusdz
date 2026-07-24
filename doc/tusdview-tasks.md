@@ -37,11 +37,11 @@ silently becoming the default material.
 | Priority | Deliverable | Status / remaining scope |
 |---|---|---|
 | **P0** | Tydra-owned real-time PBR record plus `--next`/legacy extraction-equivalence tests | **Implemented;** canonical packing and supported-material image parity prevent the loaders from drifting. |
-| **P1** | Independent semantic texture descriptors and a checked-in material grid | **Implemented for the supported semantic matrix;** packaging a compact checked-in fixture set remains. |
+| **P1** | Independent semantic texture descriptors and a checked-in material grid | **Implemented for the supported semantic matrix,** with compact checked-in semantic and shadow source scenes. |
 | **P2** | Pixel parity for ordinary/UDIM material response in Vulkan RT and CUDA/HIP where available | **Implemented for the covered PreviewSurface/OpenPBR/Standard Surface matrix;** HIP remains capability-gated and the external corpus remains data-dependent. |
 | **P3** | Exact omnidirectional point-light raster shadows | **Implemented and Vulkan-verified:** six depth faces replace the one-sided finite approximation for point/zero-radius SphereLight emitters. |
 | **P4** | Preserve evaluated graph inputs for advanced OpenPBR/MaterialX lobes | **Implemented for degradation:** constants and connected texture descriptors survive while unsupported lobes remain path-qualified diagnostics. |
-| **P5** | Vulkan raster Points/Curves and native-carrier picking | **Implemented and focused-test verified:** Vulkan uses camera-facing point discs/curve ribbons, shared carrier masks, selection highlights, and picking. A checked-in cross-rasterizer pixel-tolerance fixture remains. |
+| **P5** | Vulkan raster Points/Curves and native-carrier picking | **Implemented and focused-test verified:** Vulkan uses camera-facing point discs/curve ribbons, shared carrier masks, selection highlights, and picking. The checked-in cross-rasterizer silhouette oracle passes. |
 | **P6** | Area-light sampling, IES/portal/geometry/emissive lights, DOF/motion/stereo, and external-corpus goldens | Requires broader rendering scope or unavailable data; retain structured diagnostics and capability skips in the meantime. |
 
 P0–P2 are one material-parity release gate. CUDA/HIP checks remain conditional
@@ -70,6 +70,10 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   the no-depth pipeline makes both loaders and Vulkan/CUDA pass the existing
   strict color oracle. The investigation also ruled out BLAS compaction,
   suballocation, vertex stride, accumulation history, and matrix inversion.
+- Compact checked-in semantic-grid, raster-shadow, instanced-shadow, and
+  Points/Curves fixtures now back the generated package/tile variants. The
+  shadow harness consumes the checked source scenes while retaining its
+  bounded-band, sparse-UDIM cutout, point-cube, and instancer assertions.
 
 ### P0--P2 -- Material and texture parity
 
@@ -238,14 +242,15 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   draw, staying within the 32-fragment-unit floor. The focused semantic grid
   passes the ordinary/UDIM cases through both loaders with exact package and
   loader comparisons.
-- [ ] Package a compact checked-in fixture set for the covered PBR material
+- [x] Package a compact checked-in fixture set for the covered PBR material
   grid, packed/UDIM minification, Points and all curve families, and raster
-  shadow alpha-cutout/instancing cases. Perspective/orthographic lens shift and
-  linked red/blue/magenta multi-light fixtures are already checked in; generated
-  shadow coverage supplies the current baseline.
-- [ ] Add a checked-in GL/Vulkan pixel-tolerance oracle for native
-  Points/Curves coverage. Both raster smoke gates pass, but software GL and
-  Vulkan do not produce byte-identical edge coverage.
+  shadow alpha-cutout/instancing cases. Package and tile derivatives remain
+  temporary; checked USDA scenes and the existing tiny texture source provide
+  reproducible inputs. Perspective/orthographic lens shift and linked
+  red/blue/magenta multi-light fixtures were already checked in.
+- [x] Add a checked-in GL/Vulkan pixel-tolerance oracle for native
+  Points/Curves coverage. `tusdview-nonmesh-backend-parity` compares coarse
+  colored silhouette masks rather than requiring byte-identical raster edges.
 - [x] Run the curated external usd-assets golden sweep when the corpus is
   mounted; missing external data remains a skip, not a normal-test failure.
   The corrected RTX 3070/NVIDIA 595.84 run covers all 280 files in Vulkan
