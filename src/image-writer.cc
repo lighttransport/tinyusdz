@@ -48,6 +48,7 @@
 
 #include "image-writer.hh"
 #include "io-util.hh"
+#include "safe-arithmetic.hh"
 #include "str-util.hh"
 
 #include <climits>
@@ -434,8 +435,12 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       if (image.width <= 0 || image.height <= 0) {
         return nonstd::make_unexpected("EXR: invalid image dimensions.");
       }
-      const size_t npix =
-          size_t(image.width) * size_t(image.height) * size_t(comps);
+      size_t npix;
+      if (!safe::mul3(size_t(image.width), size_t(image.height), size_t(comps),
+                     &npix)) {
+        return nonstd::make_unexpected(
+            "EXR: image dimensions too large (integer overflow).");
+      }
 
 #if defined(TINYUSDZ_EXR_V3)
       // --- TinyEXR v3 C encode: de-interleave the interleaved samples into
@@ -449,7 +454,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
 #pragma clang diagnostic ignored "-Wold-style-cast"
 #endif
       {
-        const size_t pix = size_t(image.width) * size_t(image.height);
+        size_t pix;
+        if (!safe::mul(size_t(image.width), size_t(image.height), &pix)) {
+          return nonstd::make_unexpected(
+              "EXR: image dimensions too large (integer overflow).");
+        }
         const char *kNames1[1] = {"Y"};
         const char *kNames3[3] = {"R", "G", "B"};
         const char *kNames4[4] = {"R", "G", "B", "A"};
@@ -566,7 +575,8 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
         }
         const uint16_t *hsrc =
             reinterpret_cast<const uint16_t *>(image.data.data());
-        const size_t pix = size_t(image.width) * size_t(image.height);
+        // npix = pix * comps, comps >= 1 (validated above).
+        const size_t pix = npix / size_t(comps);
         std::vector<unsigned short> ch[4];
         for (int c = 0; c < comps; c++) ch[c].resize(pix);
         for (size_t i = 0; i < pix; i++)

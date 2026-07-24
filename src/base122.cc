@@ -28,10 +28,10 @@ inline std::string base122_encode(const std::vector<uint8_t>& data) {
     std::string out;
     size_t i = 0;
     while (i < data.size()) {
-        uint32_t val = 0;
+        uint64_t val = 0;
         int bytes = 0;
         for (; bytes < 7 && i < data.size(); ++bytes, ++i) {
-            val |= static_cast<uint32_t>(data[i]) << (8 * bytes);
+            val |= static_cast<uint64_t>(data[i]) << (8 * bytes);
         }
         int chars = (bytes * 8 + 6) / 7;
         for (int c = 0; c < chars; ++c) {
@@ -49,9 +49,9 @@ inline int base122_decode(const std::string& str, std::vector<uint8_t>& out) {
     out.clear();
     size_t i = 0;
     while (i < str.size()) {
-        uint32_t val = 0;
+        uint64_t val = 0;
         int chars = 0;
-        uint32_t mult = 1;
+        uint64_t mult = 1;
         // Read up to 8 chars (max for 7 bytes)
         for (; chars < 8 && i < str.size(); ++chars, ++i) {
             uint8_t v = base122_decode_map[static_cast<unsigned char>(str[i])];
@@ -59,9 +59,10 @@ inline int base122_decode(const std::string& str, std::vector<uint8_t>& out) {
             val += v * mult;
             mult *= 122;
         }
-        // Output up to 7 bytes
-        for (int b = 0; b < 7; ++b) {
-            if (val == 0 && (i == str.size() || chars < b+1)) break;
+        // Output the expected number of bytes for this chunk.
+        // Each 8 base122 characters encode 7 bytes; fewer chars produce proportionally fewer bytes.
+        int output_bytes = (chars * 7) / 8;
+        for (int b = 0; b < output_bytes; ++b) {
             out.push_back(static_cast<uint8_t>(val & 0xFF));
             val >>= 8;
         }

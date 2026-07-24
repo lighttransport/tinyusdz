@@ -1069,6 +1069,12 @@ bool CrateWriter::CompressData(const char* input, size_t inputSize,
   // For simplicity, we always use single-chunk mode (chunk count = 0)
   // See: pxr/base/tf/fastCompression.cpp in OpenUSD
 
+  // LZ4_compressBound takes int inputSize; reject sizes that overflow int.
+  if (inputSize > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    if (err) *err = "Input size too large for LZ4 compression: " + std::to_string(inputSize);
+    return false;
+  }
+
   // Get maximum compressed size
   int maxCompressedSize = LZ4_compressBound(static_cast<int>(inputSize));
   if (maxCompressedSize <= 0) {
@@ -1889,7 +1895,12 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
   for (size_t i = 0; i < fieldsets_.size(); ++i) {
     fieldset_number_to_offset[i] = current_offset;
     // Each fieldset takes (num_fields + 1) slots (fields + sentinel)
-    current_offset += static_cast<uint32_t>(fieldsets_[i].size() + 1);
+    const uint32_t slot_size = static_cast<uint32_t>(fieldsets_[i].size() + 1);
+      if (current_offset > (std::numeric_limits<uint32_t>::max)() - slot_size) {
+      if (err) *err = "Fieldset offset overflow (>4B entries).";
+      return false;
+    }
+    current_offset += slot_size;
   }
 
   // Separate pathIndexes, fieldSetIndexes, specTypes

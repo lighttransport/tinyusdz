@@ -62,6 +62,9 @@ namespace crate {
 
 #define kTag "[Crate]"
 
+#define CHECK_MEMORY_USAGE(__nbytes) \
+  MEMORY_BUDGET_CHECK((*memory_manager_), (__nbytes), kTag)
+
 #if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
 bool CrateReader::BuildDecompressedPathsImpl(
     BuildDecompressedPathsArg *arg) {
@@ -692,6 +695,13 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 
   auto build_node_hierarchy_from_decoded_paths = [&]() -> bool {
     std::unordered_map<std::string, size_t> path_to_index;
+    {
+      size_t path_to_index_bytes;
+      if (!safe::mul(_paths.size(), sizeof(std::string) + 64, &path_to_index_bytes)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: _paths.size() * (sizeof(std::string) + 64)");
+      }
+      CHECK_MEMORY_USAGE(path_to_index_bytes);
+    }
     path_to_index.reserve(_paths.size());
 
     for (size_t path_idx = 0; path_idx < _paths.size(); ++path_idx) {

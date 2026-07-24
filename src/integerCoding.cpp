@@ -408,6 +408,21 @@ size_t _DecompressIntegers(char const *compressed, size_t compressedSize,
     if (decompSz == 0)
         return 0;
 
+    // The working space must contain at least the common value, codes, and
+    // the worst-case variable-length integer data. _DecodeIntegers reads
+    // from `workingSpace` based on the 2-bit codes; if LZ4 produced fewer
+    // bytes than expected, the decode would read uninitialized memory.
+    {
+      using SInt = typename std::make_signed<Int>::type;
+      size_t minExpected = sizeof(SInt) + (numInts * 2 + 7) / 8;
+      if (decompSz < minExpected) {
+        if (err) {
+          (*err) = "Decompressed integer data too small.";
+        }
+        return 0;
+      }
+    }
+
     return _DecodeIntegers(workingSpace, numInts, ints);
 }
 

@@ -984,6 +984,16 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
   // Phase 1: Write out-of-line value data based on type
   // This handles values that cannot be inlined in the 48-bit payload
 
+  // RAII guard: increments dict_nesting_depth_ at scope entry and decrements
+  // on scope exit (including early returns). Used by the dict and CustomDataType
+  // branches below. Guard checks itself are at the branch sites, not in the ctor,
+  // so each branch can produce its own error message.
+  struct DictDepthGuard {
+    int& depth_;
+    explicit DictDepthGuard(int& d) : depth_(d) { ++depth_; }
+    ~DictDepthGuard() { --depth_; }
+  };
+
   if (const std::string* unregistered = value.GetUnregisteredValueString()) {
     const int64_t wrapper_start = Tell();
 
@@ -1527,6 +1537,13 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
     }
   }
   else if (auto* dict_val = value.as<value::dict>()) {
+    // Bounds-check recursive dictionary nesting before we touch any state.
+    if (dict_nesting_depth_ > 64) {
+      if (err) *err = "Dictionary nesting too deep.";
+      return -1;
+    }
+    DictDepthGuard _dg(dict_nesting_depth_);
+
     uint64_t count = dict_val->size();
 
     // Calculate size of dictionary structure:
@@ -1727,6 +1744,13 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
   // out-of-line values would write to value_data_end_offset_ which still points
   // to the start of the dictionary, corrupting the data.
   else if (auto* custom_data = value.as<CustomDataType>()) {
+    // Bounds-check recursive dictionary nesting before we touch any state.
+    if (dict_nesting_depth_ > 64) {
+      if (err) *err = "CustomData nesting too deep.";
+      return -1;
+    }
+    DictDepthGuard _dg(dict_nesting_depth_);
+
     uint64_t count = custom_data->size();
 
     // Calculate size of dictionary structure:

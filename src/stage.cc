@@ -189,8 +189,60 @@ Stage &Stage::operator=(const Stage &other) {
   return *this;
 }
 
-Stage::Stage(Stage &&) noexcept = default;
-Stage &Stage::operator=(Stage &&) noexcept = default;
+Stage::Stage(Stage &&other) noexcept
+    : _root_nodes(std::move(other._root_nodes)),
+      _root_node_nameSet(std::move(other._root_node_nameSet)),
+      name(std::move(other.name)),
+      default_root_node(std::move(other.default_root_node)),
+      stage_metas(std::move(other.stage_metas)),
+      _err(std::move(other._err)),
+      _warn(std::move(other._warn)),
+      _dirty(true),
+      _prim_id_dirty(true),
+      _mmap_table(std::move(other._mmap_table)),
+      _mmap_source(std::move(other._mmap_source)),
+      _mmap_file_owner(std::move(other._mmap_file_owner)),
+      _mmap_buffer_owner(std::move(other._mmap_buffer_owner)) {
+  // Clear caches: the moved-from Stage's cached const Prim* point into this
+  // Stage's _root_nodes after the vector move. A moved-from Stage is still
+  // valid (C++ contract), so its next lookup must not return stale pointers.
+  _prim_path_cache.clear();
+  _prim_id_cache.clear();
+  _cache_mu = std::make_shared<std::mutex>();
+  other._dirty = true;
+  other._prim_id_dirty = true;
+  other._prim_path_cache.clear();
+  other._prim_id_cache.clear();
+  other._cache_mu = std::make_shared<std::mutex>();
+}
+
+Stage &Stage::operator=(Stage &&other) noexcept {
+  if (this != &other) {
+    _root_nodes = std::move(other._root_nodes);
+    _root_node_nameSet = std::move(other._root_node_nameSet);
+    name = std::move(other.name);
+    default_root_node = std::move(other.default_root_node);
+    stage_metas = std::move(other.stage_metas);
+    _err = std::move(other._err);
+    _warn = std::move(other._warn);
+    _dirty = true;
+    _prim_id_dirty = true;
+    _mmap_table = std::move(other._mmap_table);
+    _mmap_source = std::move(other._mmap_source);
+    _mmap_file_owner = std::move(other._mmap_file_owner);
+    _mmap_buffer_owner = std::move(other._mmap_buffer_owner);
+    _prim_path_cache.clear();
+    _prim_id_cache.clear();
+    _cache_mu = std::make_shared<std::mutex>();
+    // Clear caches in the moved-from Stage too (same rationale as move ctor).
+    other._dirty = true;
+    other._prim_id_dirty = true;
+    other._prim_path_cache.clear();
+    other._prim_id_cache.clear();
+    other._cache_mu = std::make_shared<std::mutex>();
+  }
+  return *this;
+}
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     const Path &path) const {
@@ -315,8 +367,15 @@ static bool FindPrimByPrimIdIterative(uint64_t prim_id,
     }
   }
 
-  // Iterative DFS
+  // Iterative DFS with iteration ceiling to prevent CPU-exhaustion on
+  // maliciously large prim trees.
+  static constexpr size_t kMaxIter = 1024 * 1024;  // 1M
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (++iter > kMaxIter) {
+      return false;
+    }
+
     auto &top = stack.back();
     const Prim *current = top.first;
     size_t &child_idx = top.second;
