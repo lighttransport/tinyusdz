@@ -22,3 +22,6 @@ void security_zstd_max_decompressed_size_test(void);
 void security_findfile_traversal_rejected_test(void);
 void security_common_utils_overflow_test(void);
 void security_merge_path_overflow_test(void);
+void security_safe_mul_add_tests(void);
+void security_unwrap_triple_delim_test(void);
+void security_is_safe_asset_path_test(void);

@@ -6,6 +6,7 @@
 #include "acutest.h"
 
 #include "asset-resolution.hh"
+#include "safe-arithmetic.hh"
 #include "unit-security.h"
 #include "json-to-usd.hh"
 #include "security-policy.hh"
@@ -784,4 +785,133 @@ void security_merge_path_overflow_test(void) {
       tinyusdz::composition_graph::GetMutableNode(index, uint16_t(65535));
   // Must not crash; the sentinel node is safe to reference.
   TEST_CHECK(true);
+}
+
+void security_safe_mul_add_tests(void) {
+  size_t bytes = 0;
+
+  // safe::mul: 10 * 5 = 50
+  {
+    bool ok = safe::mul(10, 5, &bytes);
+    TEST_CHECK(ok);
+    TEST_CHECK(bytes == 50);
+  }
+
+  // safe::mul: SIZE_MAX * 2 must overflow
+  {
+    bool ok = safe::mul(SIZE_MAX, 2, &bytes);
+    TEST_CHECK(!ok);
+  }
+
+  // safe::add: 10 + 5 = 15
+  {
+    bool ok = safe::add(10, 5, &bytes);
+    TEST_CHECK(ok);
+    TEST_CHECK(bytes == 15);
+  }
+
+  // safe::add: SIZE_MAX + 1 must overflow
+  {
+    bool ok = safe::add(SIZE_MAX, 1, &bytes);
+    TEST_CHECK(!ok);
+  }
+
+  // safe::n_to_size<uint32_t>: 10 elements -> 40 bytes
+  {
+    bool ok = safe::n_to_size<uint32_t>(10, &bytes);
+    TEST_CHECK(ok);
+    TEST_CHECK(bytes == 40);
+  }
+
+  // safe::n_to_size<uint32_t>: SIZE_MAX elements must overflow
+  {
+    bool ok = safe::n_to_size<uint32_t>(SIZE_MAX, &bytes);
+    TEST_CHECK(!ok);
+  }
+}
+
+void security_unwrap_triple_delim_test(void) {
+  // Triple-quoted empty content
+  {
+    std::string result = unwrap("\"\"\"\"\"\"", "\"\"\"");
+    TEST_CHECK(result.empty());
+  }
+
+  // Triple-quoted simple content
+  {
+    std::string result = unwrap("\"\"\"hello\"\"\"", "\"\"\"");
+    TEST_CHECK(result == "hello");
+  }
+
+  // Triple-quoted content shorter than the delimiter
+  {
+    std::string result = unwrap("\"\"\"ab\"\"\"", "\"\"\"");
+    TEST_CHECK(result == "ab");
+  }
+
+  // No delimiter match: return unchanged
+  {
+    std::string result = unwrap("plain", "\"\"\"");
+    TEST_CHECK(result == "plain");
+  }
+
+  // Single-quoted content should not match triple delimiter
+  {
+    std::string result = unwrap("\"hello\"", "\"\"\"");
+    TEST_CHECK(result == "\"hello\"");
+  }
+}
+
+void security_is_safe_asset_path_test(void) {
+  // Paths with ".." must be rejected
+  {
+    std::string out;
+    bool ok =
+        tinyusdz::security_policy::ValidateAndNormalizeAssetPath("../foo.usd",
+                                                                  &out);
+    TEST_CHECK(!ok);
+  }
+
+  // Paths with embedded ".." must be rejected
+  {
+    std::string out;
+    bool ok = tinyusdz::security_policy::ValidateAndNormalizeAssetPath(
+        "a/../../b/foo.usd", &out);
+    TEST_CHECK(!ok);
+  }
+
+  // Absolute paths must be rejected
+  {
+    std::string out;
+    bool ok =
+        tinyusdz::security_policy::ValidateAndNormalizeAssetPath("/etc/passwd",
+                                                                  &out);
+    TEST_CHECK(!ok);
+  }
+
+  // Normal relative paths must be accepted
+  {
+    std::string out;
+    bool ok =
+        tinyusdz::security_policy::ValidateAndNormalizeAssetPath(
+            "textures/albedo.png", &out);
+    TEST_CHECK(ok);
+  }
+
+  // Simple filename must be accepted
+  {
+    std::string out;
+    bool ok =
+        tinyusdz::security_policy::ValidateAndNormalizeAssetPath("foo.usd",
+                                                                  &out);
+    TEST_CHECK(ok);
+  }
+
+  // Empty path must be rejected
+  {
+    std::string out;
+    bool ok =
+        tinyusdz::security_policy::ValidateAndNormalizeAssetPath("", &out);
+    TEST_CHECK(!ok);
+  }
 }
