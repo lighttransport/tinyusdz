@@ -19,11 +19,9 @@ if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
   RUN=(xvfb-run -a)
 fi
 
-find "$AOUSD_ROOT" -type f \( -name '*.usda' -o -name '*.usdc' \) \
-  ! -path '*/OpenUSD/*' ! -path '*/dist_minimal/*' ! -path '*/cpp_cmake/*' \
-  ! -path '*/cpp_makefile/*' ! -path '*/build/*' -print0 | while IFS= read -r -d '' f; do
+err=0
+while IFS= read -r -d '' f; do
   base="$(basename "$f")"
-  # Skip the crate writer output (test_data.usdc is a known-off spec example).
   [[ "$base" == "test_output.usdc" ]] && continue
   for loader in next legacy; do
     args=()
@@ -31,18 +29,20 @@ find "$AOUSD_ROOT" -type f \( -name '*.usda' -o -name '*.usdc' \) \
     LOG="$("${RUN[@]}" "$BIN" --headless --backend vk --frames 1 "${args[@]}" "$f" 2>&1)"
     rc=$?
     if [ "$rc" -ne 0 ]; then
-      # Backend unavailable = skip, not fail.
       if grep -Eiq 'no Vulkan|Vulkan.*unavailable|renderer init failed' <<<"$LOG"; then
         echo "SKIP: $loader $f (no Vulkan backend)"
         exit "$SKIP"
       fi
       echo "FAIL: $loader $f (exit $rc)"
       echo "$LOG"
-      exit 1
+      err=1
     fi
   done
-  echo "PASS: $base (both loaders)"
-done
+  [ "$err" -eq 0 ] && echo "PASS: $base (both loaders)"
+done < <(find "$AOUSD_ROOT" -type f \( -name '*.usda' -o -name '*.usdc' \) \
+  ! -path '*/OpenUSD/*' ! -path '*/dist_minimal/*' ! -path '*/cpp_cmake/*' \
+  ! -path '*/cpp_makefile/*' ! -path '*/build/*' -print0)
 
+[ "$err" -eq 0 ] || { echo "FAIL: AOUSD conformance suite — $err test(s) failed"; exit 1; }
 echo "PASS: AOUSD conformance suite"
 exit 0

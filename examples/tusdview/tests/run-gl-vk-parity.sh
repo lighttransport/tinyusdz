@@ -37,7 +37,7 @@ for fixture in "${FIXTURES[@]}"; do
     --screenshot "$gl_out" "$fixture" 2>&1)" && gl_ok=1
   LOG_VK="$("${RUN[@]}" "$BIN" --backend vk --headless --frames 2 \
     --screenshot "$vk_out" "$fixture" 2>&1)" && vk_ok=1
-  [ "$gl_ok" -eq 1 ] && [ "$vk_ok" -eq 1 ] || { any_run=1; continue; }
+  if [ "$gl_ok" -eq 0 ] || [ "$vk_ok" -eq 0 ]; then continue; fi
   any_run=1
   python3 - "$gl_out" "$vk_out" <<'PY'
 import struct, sys
