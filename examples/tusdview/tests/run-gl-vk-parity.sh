@@ -22,8 +22,10 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Fixtures from the focused material test suite.
 FIXTURES=(
-  "$ROOT/tests/usda/tusdview-unsupported-realtime-lobes.usda"
+  "$ROOT/tests/usda/tusdview-nonmesh-points-curves.usda"
+  "$ROOT/tests/usda/tusdview-raster-multilight-links.usda"
   "$ROOT/tests/usda/tusdview-shadow-alpha-inst.usda"
+  "$ROOT/tests/usda/tusdview-unsupported-realtime-lobes.usda"
 )
 
 any_run=0
