@@ -91,6 +91,10 @@ class Gui {
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setBudget(LoadControl* b) { budget_ = b; }
   void setShowGrid(bool on) { showGrid_ = on; }
+  // Fixed-frame headless captures have no interactive UI. Give the render
+  // viewport the full requested extent so saved dock state cannot change the
+  // screenshot dimensions.
+  void setCaptureViewportOnly(bool on) { captureViewportOnly_ = on; }
 
   void frame(Renderer* renderer, OrbitCamera* camera);
   // Build the viewport render inputs. `packet` null (single-threaded) renders the
@@ -455,6 +459,7 @@ class Gui {
   // UsdPreviewSurface displacement (raster preview). enabled = master toggle;
   // scale = global multiplier; maxTessLevel > 1 enables GPU tessellation for
   // adaptive sub-triangle detail (1 = coarse per-vertex displacement only).
+  bool captureViewportOnly_{false};
   bool displacementEnabled_{true};
   float displacementScale_{1.0f};
   int maxTessLevel_{1};

@@ -1,6 +1,6 @@
 # tusdview resume and current work state
 
-Last reviewed against `0e551db24`: 2026-07-23.
+Last reviewed against `026d2a764`: 2026-07-24.
 
 The original first-display goal in this document is complete: the progressive
 OpenGL path reaches a useful frame in approximately 4.9-5.3 seconds under the
@@ -48,10 +48,13 @@ headless renders for perspective, orthographic, and stereo-role cameras. It
 passes with mean pixel delta 0.000 on the available Vulkan device and skips
 when Vulkan is unavailable.
 
-The focused `tusdview` CTest label passes all 16 registered tests on the current
-llvmpipe Vulkan device, including the new camera gate and native non-mesh smoke
-tests and the GL/Vulkan carrier silhouette-parity gate. Vulkan raster native
-carriers now use the dedicated camera-facing path; viewport carrier
+The focused `tusdview` CTest label passes 16 of 17 registered tests on the
+current llvmpipe Vulkan device, including the new camera gate, native non-mesh
+smoke tests, and the GL/Vulkan carrier silhouette-parity gate. The remaining
+Vulkan ray-query linked-light test reaches scene and BLAS setup but exceeds its
+120-second software-device timeout; it requires a hardware Vulkan rerun rather
+than a relaxed correctness assertion. Vulkan raster native carriers now use
+the dedicated camera-facing path; viewport carrier
 selection/visibility/highlighting parity is covered.
 
 The available public large-scene assets were also exercised on 2026-07-23:
@@ -69,8 +72,16 @@ corpus-version or renderer-difference review before being called green.
 The three mismatches are valid NVIDIA renders (CarbonFrameBike and the two
 ElephantWithMonochord entry points), with normal mesh/triangle/texture counts;
 they are coverage-fingerprint differences rather than load or backend errors.
-Do not refresh those baselines until the capture GPU/driver and corpus revision
-used to create them are identified. The follow-up also fixed next-core
+The follow-up found that `--size` was not parsed: the failed run captured a
+saved-layout-dependent `32x530` viewport instead of the requested `256x256`.
+The CLI now validates and honors `--size`, CLI size overrides startup config,
+and fixed-frame headless captures use the full requested viewport independently
+of saved ImGui docking state. A regression pins a `64x48` capture against a
+conflicting `32x530` config. Corrected llvmpipe rerenders are exactly
+`256x256`; as expected, they do not match goldens recorded through the old
+layout-dependent path. Do not refresh those baselines until NVIDIA is restored,
+then regenerate the affected hardware baseline deliberately with the corrected
+capture contract. The follow-up also fixed next-core
 UsdShade NodeGraph surface pass-throughs, removing the Teapot-family degraded
 fallback. OpenChessSet external `.mtlx` references no longer produce
 degraded-material diagnostics: the next MaterialX layer importer now keeps
@@ -82,7 +93,10 @@ normal graphs. On llvmpipe Vulkan the Bishop asset reports 4 textures and the
 complete OpenChessSet reports 40 textures with `degraded_materials=0`,
 `missing_textures=0`, and `unsupported_mtlx=0`. The post-fix NVIDIA corpus rerun
 remains pending because the current host reports an NVML driver/library
-mismatch; the previously verified 280-file NVIDIA counts above are unchanged.
+mismatch: the running kernel module is `595.71.05`, while userspace NVML and
+the installed module are `595.84` (DKMS is built for the running
+`6.8.0-134-generic` kernel). A reboot or coordinated module reload is required;
+the previously verified 280-file NVIDIA counts above are unchanged.
 
 ## Current audit: material correctness
 
