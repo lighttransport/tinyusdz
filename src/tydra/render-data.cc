@@ -1432,23 +1432,25 @@ bool RenderSceneConverter::ResolveBlendShapeAnimationTargets() {
 
   std::vector<MeshNodeRef> mesh_nodes;
   int32_t node_index = 0;
-  std::function<void(const Node &)> collectMeshNodes = [&](const Node &node) {
-    const int32_t current_index = node_index++;
-    if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
-        size_t(node.id) < meshes.size()) {
-      MeshNodeRef ref;
-      ref.node_index = current_index;
-      ref.mesh_id = node.id;
-      ref.abs_path = node.abs_path;
-      mesh_nodes.push_back(std::move(ref));
-    }
-    for (const Node &child : node.children) {
-      collectMeshNodes(child);
-    }
-  };
+  std::function<void(const Node &, int)> collectMeshNodes =
+      [&](const Node &node, int depth) {
+        if (depth > 4096) return;
+        const int32_t current_index = node_index++;
+        if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
+            size_t(node.id) < meshes.size()) {
+          MeshNodeRef ref;
+          ref.node_index = current_index;
+          ref.mesh_id = node.id;
+          ref.abs_path = node.abs_path;
+          mesh_nodes.push_back(std::move(ref));
+        }
+        for (const Node &child : node.children) {
+          collectMeshNodes(child, depth + 1);
+        }
+      };
 
   for (const Node &root : root_nodes) {
-    collectMeshNodes(root);
+    collectMeshNodes(root, /*depth*/ 0);
   }
 
   auto meshMatchesChannel = [&](const RenderMesh &mesh,

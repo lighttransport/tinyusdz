@@ -483,6 +483,12 @@ std::vector<std::string> SimpleGlob(const std::string &pattern,
   std::vector<std::string> results;
   if (max_results == 0) return results;
 
+  // Reject parent-directory references (`..`) to prevent directory traversal.
+  // (The only wildcard chars are '*' and '?', and `..` is never a valid glob.)
+  if (pattern.find("..") != std::string::npos) {
+    return results;
+  }
+
 #if TINYUSDZ_HAVE_GLOB_FS
   namespace fs = ghc::filesystem;
 
