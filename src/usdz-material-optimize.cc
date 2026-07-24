@@ -199,8 +199,12 @@ bool AppendPreviewShaderGraphKey(const std::string &material_path,
                                  const std::string &child_name,
                                  std::set<std::string> *visiting,
                                  std::set<std::string> *emitted,
-                                 std::vector<std::string> *parts) {
+                                 std::vector<std::string> *parts,
+                                 int depth) {
   if (!visiting || !emitted || !parts) {
+    return false;
+  }
+  if (depth > 64) {
     return false;
   }
   if (emitted->count(child_name)) {
@@ -259,7 +263,7 @@ bool AppendPreviewShaderGraphKey(const std::string &material_path,
   for (const std::string &referenced_child : referenced_children) {
     if (!AppendPreviewShaderGraphKey(material_path, surface_name, material,
                                      referenced_child, visiting, emitted,
-                                     parts)) {
+                                     parts, depth + 1)) {
       return false;
     }
   }
@@ -294,7 +298,7 @@ bool MakePreviewMaterialKey(const PrimSpec &material,
   std::set<std::string> emitted;
   if (!AppendPreviewShaderGraphKey(material_path, surface_name, material,
                                    surface_name, &visiting, &emitted,
-                                   &parts)) {
+                                   &parts, /*depth*/ 0)) {
     return false;
   }
 
@@ -311,8 +315,12 @@ bool MakePreviewMaterialKey(const PrimSpec &material,
 void CollectMaterialsRec(PrimSpec *ps, const std::string &path,
                          std::vector<PrimSpec> *siblings, size_t sibling_index,
                          MaterialOptimizationMode mode,
-                         std::vector<MaterialEntry> *out) {
+                         std::vector<MaterialEntry> *out,
+                         int depth) {
   if (!ps || !out) {
+    return;
+  }
+  if (depth > 512) {
     return;
   }
   if (ps->typeName() == "Material") {
@@ -334,7 +342,7 @@ void CollectMaterialsRec(PrimSpec *ps, const std::string &path,
   std::vector<PrimSpec> &children = ps->children();
   for (size_t i = 0; i < children.size(); i++) {
     CollectMaterialsRec(&children[i], JoinPrimPath(path, children[i].name()),
-                        &children, i, mode, out);
+                        &children, i, mode, out, depth + 1);
   }
 
   for (auto &vs : ps->variantSets()) {
@@ -342,7 +350,7 @@ void CollectMaterialsRec(PrimSpec *ps, const std::string &path,
       PrimSpec &vps = variant.second;
       const std::string variant_path =
           path + "{" + vs.first + "=" + variant.first + "}";
-      CollectMaterialsRec(&vps, variant_path, nullptr, 0, mode, out);
+      CollectMaterialsRec(&vps, variant_path, nullptr, 0, mode, out, depth + 1);
     }
   }
 }
@@ -355,7 +363,7 @@ std::vector<MaterialEntry> CollectMaterials(Layer *layer,
   }
   for (auto &kv : layer->primspecs()) {
     CollectMaterialsRec(&kv.second, "/" + kv.second.name(), nullptr, 0, mode,
-                        &entries);
+                        &entries, /*depth*/ 0);
   }
   return entries;
 }
@@ -403,8 +411,12 @@ size_t RewriteMaterialBindingProperty(Property *prop,
 
 size_t RewriteMaterialBindingsRec(PrimSpec *ps,
                                   const std::map<std::string, std::string>
-                                      &material_remap) {
+                                      &material_remap,
+                                  int depth) {
   if (!ps) {
+    return 0;
+  }
+  if (depth > 512) {
     return 0;
   }
   size_t rewritten = 0;
@@ -414,11 +426,12 @@ size_t RewriteMaterialBindingsRec(PrimSpec *ps,
     }
   }
   for (PrimSpec &child : ps->children()) {
-    rewritten += RewriteMaterialBindingsRec(&child, material_remap);
+    rewritten += RewriteMaterialBindingsRec(&child, material_remap, depth + 1);
   }
   for (auto &vs : ps->variantSets()) {
     for (auto &variant : vs.second.variantSet) {
-      rewritten += RewriteMaterialBindingsRec(&variant.second, material_remap);
+      rewritten += RewriteMaterialBindingsRec(&variant.second, material_remap,
+                                              depth + 1);
     }
   }
   return rewritten;
@@ -432,7 +445,7 @@ size_t RewriteMaterialBindings(Layer *layer,
   }
   size_t rewritten = 0;
   for (auto &kv : layer->primspecs()) {
-    rewritten += RewriteMaterialBindingsRec(&kv.second, material_remap);
+    rewritten += RewriteMaterialBindingsRec(&kv.second, material_remap, /*depth*/ 0);
   }
   return rewritten;
 }
