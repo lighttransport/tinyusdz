@@ -9,9 +9,7 @@ BIN="${TUSDVIEW:-$ROOT/build/tusdview}"
 [ -x "$BIN" ] || BIN="$ROOT/build_ninja/tusdview"
 [ -x "$BIN" ] || { echo "SKIP: tusdview not found"; exit "$SKIP"; }
 if [ -z "${DISPLAY:-}" ]; then
-  if [ -z "${DISPLAY:-}" ]; then
   command -v xvfb-run >/dev/null || { echo "SKIP: xvfb-run missing"; exit "$SKIP"; }
-fi
 fi
 OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"
 [ -n "${TUSDVIEW_TEST_OUT:-}" ] || trap 'rm -rf "$OUT"' EXIT
