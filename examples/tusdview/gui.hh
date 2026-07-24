@@ -91,6 +91,7 @@ class Gui {
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setBudget(LoadControl* b) { budget_ = b; }
   void setShowGrid(bool on) { showGrid_ = on; }
+  void setShowSkeleton(bool on) { showSkeleton_ = on; }
   // Fixed-frame headless captures have no interactive UI. Give the render
   // viewport the full requested extent so saved dock state cannot change the
   // screenshot dimensions.

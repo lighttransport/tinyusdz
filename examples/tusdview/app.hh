@@ -145,6 +145,7 @@ class App
   void setUseNextLoader(bool on) { useNextLoader_ = on; }
   void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
   void setShowGrid(bool on) { gui_.setShowGrid(on); }
+  void setShowSkeleton(bool on) { gui_.setShowSkeleton(on); }
   void setCamDolly(float f) { camDolly_ = f; }
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // --threaded: run GL rendering on a dedicated thread so the UI loop never blocks

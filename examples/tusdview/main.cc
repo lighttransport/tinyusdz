@@ -234,6 +234,7 @@ int main(int argc, char** argv) {
   bool useNextLoader = true;              // next-core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
   bool showGrid = true;                    // --no-grid: deterministic clean capture
+  bool showSkeleton = true;                // --no-skeleton: hide skeleton helpers
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--next)
   tusdview::CameraConform cameraConform{tusdview::CameraConform::Fit};
@@ -386,6 +387,8 @@ int main(int argc, char** argv) {
       noCull = true;
     } else if (std::strcmp(argv[i], "--no-grid") == 0) {
       showGrid = false;
+    } else if (std::strcmp(argv[i], "--no-skeleton") == 0) {
+      showSkeleton = false;
     } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
       camDolly = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
@@ -717,6 +720,7 @@ int main(int argc, char** argv) {
           "  --no-cull / --no-robust-frame  Disable frustum culling or robust "
           "outlier-resistant auto framing.\n"
           "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
+          "  --no-skeleton Hide skeleton helper overlays (useful for AOV comparisons).\n"
           "  --dome-ibl off|fast|quality  Control DomeLight IBL precomputation.\n"
           "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
           "Vulkan realtime preset for public large scenes. Profiles set existing "
@@ -1133,6 +1137,7 @@ int main(int argc, char** argv) {
   app.setUseNextLoader(useNextLoader);
   app.setCullEnabled(!noCull);
   app.setShowGrid(showGrid);
+  app.setShowSkeleton(showSkeleton);
   app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);

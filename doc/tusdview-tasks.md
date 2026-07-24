@@ -10,7 +10,8 @@ audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
 active work is now the USD rendering-fidelity roadmap below.  This file is the
 canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
-Updated 2026-07-24 against `026d2a764`.
+Updated 2026-07-24 against `130eff0f5` plus the working changes described
+below.
 
 ---
 
@@ -46,6 +47,31 @@ silently becoming the default material.
 
 P0–P2 are one material-parity release gate. CUDA/HIP checks remain conditional
 on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
+
+### Current working changes and remaining failures
+
+- The focused `tusdview` label is green at **17/17**. Windowed MCP batch
+  captures now request a deterministic 1024x768 window, reject a collapsed
+  1-pixel viewport as not ready, and retry until the viewport is usable.
+- Deterministic deformation comparison now uses `--no-skeleton`. The previous
+  next/legacy delta was the legacy-only cyan skeleton helper, not different
+  posed geometry: both loaders report the same time-20 bounds and the clean
+  carrier images pass.
+- Vulkan RT now has an explicit compute-write to next-frame compute-read/write
+  dependency for its progressive accumulation image. The renderer-wide proxy
+  BLAS is also destroyed at shutdown; GPU-assisted validation had reported the
+  proxy VBO, EBO, allocation, and acceleration structure as leaked device
+  children.
+- One NVIDIA Vulkan ray-query regression remains:
+  `tusdview-rt-geomsubset-material`. Vulkan produces an oversized first
+  primitive for both loaders (`red=0 green=491 blue=20400`), while CUDA renders
+  the same carrier correctly (`red=3252 green=5002 blue=8280`) and Vulkan
+  raster is visually correct. It reproduces with BLAS compaction off, host
+  pooling off, a tightly packed BLAS position stream, a first-sample-only
+  capture, overlays hidden, and both the local and shared matrix inverse. Matching
+  Khronos GPU-assisted validation reports no shader/descriptor/AS bounds
+  violation. Do not weaken the color oracle; the next useful step is a minimal
+  raw Vulkan indexed-BLAS reproducer or a driver comparison.
 
 ### P0--P2 -- Material and texture parity
 
@@ -465,11 +491,11 @@ Latest focused verification on 2026-07-20:
   opacity, back-face materials, transparency, and camera CLI behavior.
 - All seven registered headless tusdview unit executables pass; the lighting
   test includes point/curve RT proxy topology and opacity assertions.
-- All 16 tests carrying the `tusdview` CTest label pass. This label now
+- All 17 tests carrying the `tusdview` CTest label pass. This label now
   includes the seven headless unit executables plus the checked non-mesh
   extraction and OpenGL carrier-render regressions, so `ctest -L tusdview`
   exercises both CPU records and visible Points/Curves output.
-- The latest focused native viewer gate covers all 16 `tusdview`-labelled tests
+- The latest focused native viewer gate covers all 17 `tusdview`-labelled tests
   with no failures. A historical complete configured CTest run covered 190
   tests: 185 pass and five external/backend-dependent tests skip, with no
   failures. The new unsupported-lobe regression passes in the focused, labeled,
@@ -503,11 +529,10 @@ Latest focused verification on 2026-07-20:
   retained inputs also keep their mapped texture and complete sample descriptor.
 - Shell syntax and `git diff --check` pass.
 
-The focused `tusdview` CTest label passes 16 of 17 registered tests on llvmpipe,
-including camera equivalence, native Vulkan non-mesh smoke coverage, and
-GL/Vulkan carrier silhouette parity. The remaining Vulkan ray-query
-linked-light run exceeds its llvmpipe timeout after scene/BLAS setup but passes
-on the RTX 3070 in 0.65 seconds. The
+The focused `tusdview` CTest label passes all 17 registered tests, including
+camera equivalence, native Vulkan non-mesh smoke coverage, and GL/Vulkan
+carrier silhouette parity. Software-only Vulkan capability skips remain
+explicit rather than being treated as parity evidence. The
 available Caldera, Island, and ALab large-scene profile smoke runs pass. After checking
 out `usd-wg/assets` revision `1b91f3c464891af259d51d9ee9ee9e6c357f7079`,
 the corrected complete RTX 3070 / NVIDIA 595.84 sweep passes in both Vulkan

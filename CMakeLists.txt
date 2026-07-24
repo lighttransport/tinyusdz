@@ -2940,7 +2940,7 @@ if(TINYUSDZ_BUILD_TESTS)
                   "$<TARGET_FILE:tusdview>"
                   "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-render-batch.json"
                   "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-render-batch-gl"
-                  --windowed --backend gl
+                  --windowed --backend gl --size 1024x768
           )
         set_tests_properties(tusdview-mcp-render-batch-gl-window
                              PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -2952,7 +2952,7 @@ if(TINYUSDZ_BUILD_TESTS)
                   "$<TARGET_FILE:tusdview>"
                   "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-material-batch.json"
                   "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-material-batch-gl"
-                  --windowed --backend gl
+                  --windowed --backend gl --size 1024x768
           )
         set_tests_properties(tusdview-mcp-material-batch-gl-window
                              PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)

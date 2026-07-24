@@ -325,48 +325,6 @@ struct InstanceInfoGPU {
 };
 static_assert(sizeof(InstanceInfoGPU) == 32, "InstanceInfoGPU scalar layout");
 
-// General column-major 4x4 inverse (for the camera's inverse view-projection).
-bool Mat4Inverse(const float m[16], float out[16]) {
-  float inv[16];
-  inv[0] = m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] +
-           m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
-  inv[4] = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] -
-           m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
-  inv[8] = m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] +
-           m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
-  inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] -
-            m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
-  inv[1] = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] -
-           m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
-  inv[5] = m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] +
-           m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
-  inv[9] = -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] -
-           m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
-  inv[13] = m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] +
-            m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
-  inv[2] = m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15] +
-           m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
-  inv[6] = -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15] -
-           m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
-  inv[10] = m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15] +
-            m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
-  inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14] -
-            m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
-  inv[3] = -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11] -
-           m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
-  inv[7] = m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11] +
-           m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
-  inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11] -
-            m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
-  inv[15] = m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10] +
-            m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
-  float det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
-  if (std::fabs(det) < 1e-20f) return false;
-  det = 1.0f / det;
-  for (int i = 0; i < 16; ++i) out[i] = inv[i] * det;
-  return true;
-}
-
 }  // namespace
 
 uint64_t QueryDeviceLocalVramBytes() {
@@ -7065,9 +7023,8 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
                           &rtSet_, 0, nullptr);
   RtPushC pc{};
   light3d::Mat4 PV = ToMat4(proj_) * ToMat4(view_);
-  if (!Mat4Inverse(PV.m, pc.invViewProj)) {
-    for (int i = 0; i < 16; ++i) pc.invViewProj[i] = (i % 5 == 0) ? 1.0f : 0.0f;
-  }
+  const light3d::Mat4 invPV = PV.inverse();
+  std::memcpy(pc.invViewProj, invPV.m, sizeof(pc.invViewProj));
   // Progressive accumulation bookkeeping: if the camera (proj*view), render mode,
   // or geometry/viewport generation changed since the last traced frame, restart
   // accumulation at sample 0; otherwise advance the sample index so the trace adds
@@ -7121,6 +7078,14 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
     b.dstAccessMask = dstA;
     vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
   };
+  // The next accumulated sample reads the sum written by this dispatch.
+  // Queue submission order alone is only an execution dependency. Make the
+  // stored sum available before the following dispatch reads and extends it.
+  imgBarrier(accumImage_, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+             VK_ACCESS_SHADER_WRITE_BIT,
+             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
   imgBarrier(rtImage_, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
              VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -9016,6 +8981,15 @@ void VulkanRenderer::destroySwapchain() {
 void VulkanRenderer::shutdown() {
   if (device_) vkDeviceWaitIdle(device_);
   destroyScene();
+  // The unit-cube proxy BLAS is renderer-wide rather than part of meshes_, so
+  // destroyScene intentionally retains it across scene reloads. Release it
+  // explicitly before the device is destroyed.
+  destroyBlas(boxMesh_);
+  if (boxMesh_.vbo) vkDestroyBuffer(device_, boxMesh_.vbo, nullptr);
+  if (boxMesh_.vboMem) vkFreeMemory(device_, boxMesh_.vboMem, nullptr);
+  if (boxMesh_.ebo) vkDestroyBuffer(device_, boxMesh_.ebo, nullptr);
+  if (boxMesh_.eboMem) vkFreeMemory(device_, boxMesh_.eboMem, nullptr);
+  boxMesh_ = VkMeshGPU{};
   destroyRt();
   destroyOffscreen();
   if (shadowFb_) vkDestroyFramebuffer(device_, shadowFb_, nullptr);
