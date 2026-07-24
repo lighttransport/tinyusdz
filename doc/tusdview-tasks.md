@@ -10,7 +10,7 @@ audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
 active work is now the USD rendering-fidelity roadmap below.  This file is the
 canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
-Updated 2026-07-25 through `30918e0ac`.
+Updated 2026-07-25 through `17c963b4c`.
 
 ---
 
@@ -245,8 +245,9 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 - [x] Package a compact checked-in fixture set for the covered PBR material
   grid, packed/UDIM minification, Points and all curve families, and raster
   shadow alpha-cutout/instancing cases. Package and tile derivatives remain
-  temporary; checked USDA scenes and the existing tiny texture source provide
-  reproducible inputs. Perspective/orthographic lens shift and linked
+  temporary; checked USDA scenes provide reproducible geometry/material inputs,
+  while the existing semantic harness supplies the texture and tile variants.
+  Perspective/orthographic lens shift and linked
   red/blue/magenta multi-light fixtures were already checked in.
 - [x] Add a checked-in GL/Vulkan pixel-tolerance oracle for native
   Points/Curves coverage. `tusdview-nonmesh-backend-parity` compares coarse
@@ -259,15 +260,26 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 - [x] Run the focused tusdview tests after the capture, deformation, and Vulkan
   RT helper fixes: all 17 labelled tests pass, as do the affected MCP,
   deformation, GeomSubset, light-link, and native-carrier regressions.
-- [ ] Run a fresh full native CTest and large-scene first-display/VRAM
-  comparison. Regenerate embedded SPIR-V with the documented SDK glslang
-  whenever Vulkan shader sources change.
+- [x] Run a fresh full native CTest and large-scene first-display/VRAM
+  comparison. The serial native gate covered all 201 registered tests with
+  195 passes and six explicit skips (including unavailable external assets and
+  HIP). The large-scene harness was invoked and skipped because Caldera,
+  Island, and ALab roots were not mounted; no stale performance claim is made.
+  No Vulkan shader sources changed in this fixture-only milestone, so embedded
+  SPIR-V was not regenerated.
 
 ---
 
 ## Active-roadmap verification evidence
 
 Latest focused verification on 2026-07-25:
+
+- The fixture packaging milestone is green: `ctest -L tusdview` passes 17/17;
+  the serial native CTest reports 195 passes and six documented capability/data
+  skips; and stable `next` tests report 32 passes and one explicit skip when
+  corpus-labelled tests are excluded. The corpus flatten comparator also passes after the checked scene
+  was made self-contained. The large-scene profile command correctly reports a
+  skip when its optional external roots are absent.
 
 - Offline RTX 3070 verification used the documented `--headless` Vulkan path.
   Vulkan raster and Vulkan ray query both passed the UDIM opacity-cutout probe
