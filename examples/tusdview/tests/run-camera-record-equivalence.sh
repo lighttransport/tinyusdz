@@ -8,9 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 BIN="${TUSDVIEW:-$ROOT/build/tusdview}"
 [ -x "$BIN" ] || BIN="$ROOT/build_ninja/tusdview"
 [ -x "$BIN" ] || { echo "SKIP: tusdview not found"; exit "$SKIP"; }
-if [ -z "${DISPLAY:-}" ]; then
-  command -v xvfb-run >/dev/null || { echo "SKIP: xvfb-run missing"; exit "$SKIP"; }
-fi
+command -v xvfb-run >/dev/null || { echo "SKIP: xvfb-run required for deterministic GL headless"; exit "$SKIP"; }
 OUT="${TUSDVIEW_TEST_OUT:-$(mktemp -d)}"
 [ -n "${TUSDVIEW_TEST_OUT:-}" ] || trap 'rm -rf "$OUT"' EXIT
 mkdir -p "$OUT"
@@ -69,11 +67,13 @@ def Xform "World" {
 }
 USDA
 
+RUN_PREFIX=(xvfb-run -a)
+
 run_loader() {
   local name="$1"; shift
   local attempt
   for attempt in 1 2; do
-    TUSDVIEW_DUMP_CAMERA_RECORDS=1 "$BIN" --backend gl \
+    TUSDVIEW_DUMP_CAMERA_RECORDS=1 "${RUN_PREFIX[@]}" "$BIN" --backend gl \
       --config "$OUT/config.json" --frames 1 --no-grid "$@" \
       "$OUT/cameras.usda" >"$OUT/$name.log" 2>&1 && break
     [ "$attempt" = 1 ] || return 1
@@ -81,20 +81,6 @@ run_loader() {
   sed -n 's/^\[tusdview-camera\] //p' "$OUT/$name.log" > "$OUT/$name.records"
   [ -s "$OUT/$name.records" ]
 }
-if [ -z "${DISPLAY:-}" ]; then
-  run_loader() {
-    local name="$1"; shift
-    local attempt
-    for attempt in 1 2; do
-      TUSDVIEW_DUMP_CAMERA_RECORDS=1 xvfb-run -a "$BIN" --backend gl \
-        --config "$OUT/config.json" --frames 1 --no-grid "$@" \
-        "$OUT/cameras.usda" >"$OUT/$name.log" 2>&1 && break
-      [ "$attempt" = 1 ] || return 1
-    done
-    sed -n 's/^\[tusdview-camera\] //p' "$OUT/$name.log" > "$OUT/$name.records"
-    [ -s "$OUT/$name.records" ]
-  }
-fi
 run_loader next || { echo "FAIL: default camera extraction"; exit 1; }
 run_loader legacy --legacy-load || { echo "FAIL: legacy camera extraction"; exit 1; }
 
