@@ -2425,11 +2425,10 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
 
   // A material can author BOTH a UsdPreviewSurface and an OpenPBR/mtlx shader
   // (DCC exports, MaterialX-with-fallback); ConvertMaterial fills both but sets
-  // shader_type to the last child (often OpenPBR). tydra-next resolves *direct*
-  // UsdUVTexture connections into texture_ids but not MaterialX nodegraph image
-  // nodes, so the two shaders can disagree on which textures resolved. Pick the
-  // shader that actually resolved the most textures (tie -> UsdPreviewSurface,
-  // the interop path). Falls back cleanly for single-shader materials.
+  // shader_type to the last child (often OpenPBR). Pick the shader that resolved
+  // the most textures (tie -> UsdPreviewSurface, the interop path); this also
+  // handles partial or unsupported graphs without overriding a more complete
+  // fallback. Falls back cleanly for single-shader materials.
   auto texCount = [](std::initializer_list<int> ids) {
     int n = 0; for (int i : ids) if (i >= 0) ++n; return n;
   };
@@ -2664,6 +2663,18 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
                            s.transmission_dispersion);
     retainDiagnosticScalar("transmission_dispersion_scale",
                            s.transmission_dispersion_scale);
+  }
+  for (const tydn::RetainedMaterialParam& retained : rm.retained_params) {
+    DrawMaterialParamCPU param;
+    param.shader = retained.shader;
+    param.name = retained.name;
+    param.type = DrawMaterialParamType::Vec4;
+    param.value[0] = retained.value.value.x;
+    param.value[1] = retained.value.value.y;
+    param.value[2] = retained.value.value.z;
+    param.value[3] = retained.value.value.w;
+    param.renderTexture = retained.value.texture_id;
+    dm.params.push_back(std::move(param));
   }
   rm.shader_type = originalShaderType;
   if (usePreview) {

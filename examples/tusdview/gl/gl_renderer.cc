@@ -2096,6 +2096,7 @@ void GLRenderer::appendPoints(const DrawPointsCPU& src) {
   GLNonMeshBatch b;
   b.count=static_cast<GLsizei>(n); b.kind=0; b.materialId=src.materialId;
   b.carrierId=static_cast<int>(meshes_.size()+nonMeshBatches_.size());
+  b.carrierIndex = static_cast<int>(nonMeshBatches_.size());
   b.purposeId=PurposeId(src.purpose); b.translucent=translucent;
   glGenVertexArrays(1,&b.vao); glGenBuffers(1,&b.vbo);
   glBindVertexArray(b.vao); glBindBuffer(GL_ARRAY_BUFFER,b.vbo);
@@ -2145,7 +2146,7 @@ void GLRenderer::appendCurves(const DrawCurvesCPU& src) {
     base=end;
   }
   if(data.empty())return;
-  GLNonMeshBatch b;b.count=static_cast<GLsizei>(data.size()/11);b.kind=1;b.materialId=src.materialId;b.carrierId=static_cast<int>(meshes_.size()+nonMeshBatches_.size());b.purposeId=PurposeId(src.purpose);b.translucent=translucent;
+  GLNonMeshBatch b;b.count=static_cast<GLsizei>(data.size()/11);b.kind=1;b.materialId=src.materialId;b.carrierId=static_cast<int>(meshes_.size()+nonMeshBatches_.size());b.carrierIndex=static_cast<int>(nonMeshBatches_.size());b.purposeId=PurposeId(src.purpose);b.translucent=translucent;
   glGenVertexArrays(1,&b.vao);glGenBuffers(1,&b.vbo);glBindVertexArray(b.vao);glBindBuffer(GL_ARRAY_BUFFER,b.vbo);glBufferData(GL_ARRAY_BUFFER,static_cast<GLsizeiptr>(data.size()*sizeof(float)),data.data(),GL_STATIC_DRAW);
   const GLsizei stride=11*sizeof(float);for(int a=0;a<4;++a){glEnableVertexAttribArray(a);glVertexAttribDivisor(a,1);}glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,(void*)0);glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,stride,(void*)(3*sizeof(float)));glVertexAttribPointer(2,1,GL_FLOAT,GL_FALSE,stride,(void*)(6*sizeof(float)));glVertexAttribPointer(3,4,GL_FLOAT,GL_FALSE,stride,(void*)(7*sizeof(float)));glBindVertexArray(0);nonMeshBatches_.push_back(b);
 }
@@ -3577,6 +3578,9 @@ void GLRenderer::drawNonMesh(const RenderFrameParams& params) {
     for(const GLNonMeshBatch& b:nonMeshBatches_){
       if(b.translucent!=translucent)continue;
       if((params.purposeVisibleMask&(1u<<static_cast<unsigned>(b.purposeId)))==0)continue;
+      if (params.carrierVisible && b.carrierIndex >= 0 &&
+          b.carrierIndex < params.carrierVisibleCount &&
+          !params.carrierVisible[b.carrierIndex]) continue;
       glUniform1i(nmKind_,b.kind);glUniform1i(nmMaterialId_,b.materialId);
       glUniform1i(nmCarrierId_,b.carrierId);glUniform1i(nmPurpose_,b.purposeId);
       glBindVertexArray(b.vao);
@@ -3967,6 +3971,25 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     }
     glDisable(GL_CULL_FACE);
     glDrawArrays(GL_LINES, 0, params.helperLineVertexCount);
+    glBindVertexArray(0);
+  }
+
+  // Selection highlight lines are also used for native Points/Curves, which do
+  // not have a mesh polygon-mode overlay.
+  if (params.highlightLines && params.highlightLineVertexCount > 0 && lineProgram_) {
+    glUseProgram(lineProgram_);
+    const light3d::Mat4 VP = ToMat4(params.proj) * ToMat4(params.view);
+    glUniformMatrix4fv(uLineVP_, 1, GL_FALSE, VP.m);
+    glBindVertexArray(lineVao_); glBindBuffer(GL_ARRAY_BUFFER, lineVbo_);
+    const size_t bytes = static_cast<size_t>(params.highlightLineVertexCount) * sizeof(HelperVertex);
+    if (bytes > lineVboCap_) {
+      glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(bytes), params.highlightLines, GL_DYNAMIC_DRAW);
+      lineVboCap_ = bytes;
+    } else {
+      glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(bytes), params.highlightLines);
+    }
+    glDisable(GL_CULL_FACE);
+    glDrawArrays(GL_LINES, 0, params.highlightLineVertexCount);
     glBindVertexArray(0);
   }
 

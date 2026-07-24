@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <unordered_set>
@@ -21,6 +22,7 @@
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/resource-budget.hh"
 #include "tydra/next/urdf-to-usd.hh"
+#include "next/pcp/cache.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/schema/usd-skel.hh"
 
@@ -1879,6 +1881,164 @@ def Xform "World"
          "./textures/albedo.png");
 
   std::cout << "  MaterialX utilities: PASSED\n";
+}
+
+void TestExternalMaterialXImageGraph() {
+  std::cout << "Testing external MaterialX image graph composition...\n";
+
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path fixture =
+      fs::absolute("next_tydra_external_mtlx_test", ec);
+  assert(!ec);
+  fs::remove_all(fixture, ec);
+  ec.clear();
+  const fs::path materials = fixture / "materials";
+  fs::create_directories(materials, ec);
+  assert(!ec);
+
+  const char* root = R"(#usda 1.0
+(
+    defaultPrim = "Scene"
+)
+def Xform "Scene"
+{
+    def "Mat" (
+        references = @materials/test.mtlx@</MaterialX/Materials/M_Test>
+    )
+    {
+    }
+}
+)";
+  const char* mtlx = R"(<?xml version="1.0"?>
+<materialx version="1.38" colorspace="lin_rec709">
+  <nodegraph name="NG_Test">
+    <image name="base_image" type="color3">
+      <input name="file" type="filename" value="tex/base.jpg"
+             colorspace="srgb_texture" />
+    </image>
+    <image name="metal_image" type="float">
+      <input name="file" type="filename" value="tex/metal.jpg" />
+    </image>
+    <image name="rough_image" type="float">
+      <input name="file" type="filename" value="tex/rough.jpg" />
+    </image>
+    <image name="normal_image" type="vector3">
+      <input name="file" type="filename" value="tex/normal.jpg" />
+    </image>
+    <normalmap name="normal_map" type="vector3">
+      <input name="in" type="vector3" nodename="normal_image" />
+    </normalmap>
+    <output name="base" type="color3" nodename="base_image" />
+    <output name="metal" type="float" nodename="metal_image" />
+    <output name="rough" type="float" nodename="rough_image" />
+    <output name="normal" type="vector3" nodename="normal_map" />
+  </nodegraph>
+  <standard_surface name="Test" type="surfaceshader">
+    <input name="base_color" type="color3"
+           nodegraph="NG_Test" output="base" />
+    <input name="metalness" type="float"
+           nodegraph="NG_Test" output="metal" />
+    <input name="specular_roughness" type="float"
+           nodegraph="NG_Test" output="rough" />
+    <input name="normal" type="vector3"
+           nodegraph="NG_Test" output="normal" />
+  </standard_surface>
+  <surfacematerial name="M_Test" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Test" />
+  </surfacematerial>
+</materialx>
+)";
+
+  {
+    std::ofstream ofs(fixture / "root.usda",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << root;
+    assert(ofs.good());
+  }
+  {
+    std::ofstream ofs(materials / "test.mtlx",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << mtlx;
+    assert(ofs.good());
+  }
+
+  Stage stage;
+  AssetResolver resolver;
+  std::string warn;
+  std::string err;
+  assert(pcp::ComposeStageFromFile((fixture / "root.usda").string(), resolver,
+                                   &stage, {}, &warn, &err));
+
+  const UsdPrim material = stage.GetPrimAtPath("/Scene/Mat");
+  assert(material.IsValid());
+  const std::vector<Path>* surface =
+      material.GetRelationship("mtlx:surface:source");
+  assert(surface && surface->size() == 1);
+  assert((*surface)[0].str() == "/Scene/Mat/Test");
+
+  const UsdPrim shader = stage.GetPrimAtPath("/Scene/Mat/Test");
+  assert(shader.IsValid());
+  const std::vector<Path>* base =
+      shader.GetPrimSpec()->connection("inputs:base_color");
+  assert(base && base->size() == 1);
+  assert((*base)[0].str() == "/Scene/Mat/NG_Test.outputs:base");
+
+  const UsdPrim graph = stage.GetPrimAtPath("/Scene/Mat/NG_Test");
+  assert(graph.IsValid());
+  const std::vector<Path>* graph_base =
+      graph.GetPrimSpec()->connection("outputs:base");
+  assert(graph_base && graph_base->size() == 1);
+  assert((*graph_base)[0].str() ==
+         "/Scene/Mat/NG_Test/base_image.outputs:out");
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+  config.asset_base_dir = fixture.string();
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(stage);
+  assert(result.success);
+  assert(result.scene.images.size() == 4);
+  assert(result.scene.textures.size() == 4);
+
+  const auto material_it = result.scene.material_by_path.find("/Scene/Mat");
+  assert(material_it != result.scene.material_by_path.end());
+  const RenderMaterial& render_material =
+      result.scene.materials[static_cast<size_t>(material_it->second)];
+  assert(render_material.shader_type ==
+         RenderMaterial::ShaderType::OpenPBR);
+  assert(render_material.openpbr);
+  assert(render_material.openpbr->base_color.is_texture());
+  assert(render_material.openpbr->base_metalness.is_texture());
+  assert(render_material.openpbr->specular_roughness.is_texture());
+  assert(render_material.openpbr->normal.is_texture());
+  assert(!render_material.default_fallback);
+
+  auto texture_for = [&](const char* asset) -> const RenderTexture& {
+    for (const RenderTexture& texture : result.scene.textures) {
+      if (texture.asset_path == asset) return texture;
+    }
+    assert(false);
+    return result.scene.textures[0];
+  };
+  const RenderTexture& base_texture = texture_for("tex/base.jpg");
+  const RenderTexture& metal_texture = texture_for("tex/metal.jpg");
+  const RenderTexture& rough_texture = texture_for("tex/rough.jpg");
+  const RenderTexture& normal_texture = texture_for("tex/normal.jpg");
+  assert(base_texture.output_channel == RenderTexture::Channel::RGB);
+  assert(metal_texture.output_channel == RenderTexture::Channel::R);
+  assert(rough_texture.output_channel == RenderTexture::Channel::R);
+  assert(normal_texture.output_channel == RenderTexture::Channel::RGB);
+
+  const std::string expected_prefix = (materials / "tex").string() + "/";
+  for (const TextureImage& image : result.scene.images) {
+    assert(image.resolved_path.rfind(expected_prefix, 0) == 0);
+  }
+
+  fs::remove_all(fixture, ec);
+  std::cout << "  External MaterialX image graph: PASSED\n";
 }
 
 //
@@ -4715,6 +4875,7 @@ int main() {
   TestRenderConverterPointInstancerInvalidArrays();
   TestRenderConverterPointInstancerDuplicateMeshMetadata();
   TestMaterialXUtilities();
+  TestExternalMaterialXImageGraph();
   TestAudit2026_07();
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();

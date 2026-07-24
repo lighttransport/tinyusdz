@@ -1909,6 +1909,14 @@ bool VulkanRenderer::createLinePipeline(std::string* err) {
   VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                          &linePipeline_);
 
+  // Native Points/Curves use the same unlit vertex format and push constants,
+  // but are expanded to camera-facing triangles on the CPU.  Keeping a
+  // triangle-list variant here avoids routing them through the mesh material
+  // descriptor machinery (and avoids the old solid proxy geometry).
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  VkResult rnm = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
+                                           &nonMeshPipeline_);
+
   // Second variant with depth testing disabled, for the skeleton X-ray overlay.
   VkPipelineDepthStencilStateCreateInfo dsNo = ds;
   dsNo.depthTestEnable = VK_FALSE;
@@ -1919,7 +1927,7 @@ bool VulkanRenderer::createLinePipeline(std::string* err) {
 
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
-  if (r != VK_SUCCESS || r2 != VK_SUCCESS) {
+  if (r != VK_SUCCESS || rnm != VK_SUCCESS || r2 != VK_SUCCESS) {
     if (err) *err = "vkCreateGraphicsPipelines(line) failed";
     return false;
   }
@@ -4507,6 +4515,16 @@ void VulkanRenderer::destroyScene() {
     if (m.blasScratchMem) vkFreeMemory(device_, m.blasScratchMem, nullptr);
   }
   meshes_.clear();
+  nativePoints_.clear();
+  nativeCurves_.clear();
+  nonMeshCopy_.clear();
+  for (int i = 0; i < kFramesInFlight; ++i) {
+    if (nonMeshBuf_[i]) vkDestroyBuffer(device_, nonMeshBuf_[i], nullptr);
+    if (nonMeshMem_[i]) vkFreeMemory(device_, nonMeshMem_[i], nullptr);
+    nonMeshBuf_[i] = VK_NULL_HANDLE;
+    nonMeshMem_[i] = VK_NULL_HANDLE;
+    nonMeshCap_[i] = 0;
+  }
   // Shared multi-draw-indirect buffers + their CPU staging (the aliases above were
   // skipped for eligible meshes). Reset the MDI state so the next scene rebuilds it.
   destroyMdiBuffers();
@@ -5628,22 +5646,11 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
 }
 
 void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
-  // Raster Vulkan uses the same width/color-preserving solid carrier as RT
-  // until the dedicated billboard/ribbon pipeline lands. Keeping this path
-  // active avoids silently dropping native Points in ordinary viewport mode.
-  DrawScene carriers;
-  carriers.points.push_back(points);
-  for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
-    appendMesh(proxy);
-  }
+  if (!points.points.empty()) nativePoints_.push_back(points);
 }
 
 void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
-  DrawScene carriers;
-  carriers.curves.push_back(curves);
-  for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
-    appendMesh(proxy);
-  }
+  if (curves.points.size() >= 6) nativeCurves_.push_back(curves);
 }
 
 void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
@@ -7408,6 +7415,127 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   displacement_ = params.displacement;
   displacementScale_ = params.displacementScale;
   maxTessLevel_ = params.maxTessLevel;
+
+  // Expand native carriers into camera-facing quads for the raster pass.  This
+  // is intentionally rebuilt per frame: widths are authored in world space and
+  // the ribbon side changes with the camera.  The resulting vertices use the
+  // existing unlit helper format and the dedicated triangle-list pipeline.
+  nonMeshCopy_.clear();
+  if (hasParams_) {
+    const float right[3] = {view_[0], view_[4], view_[8]};
+    const float up[3] = {view_[1], view_[5], view_[9]};
+    const float forward[3] = {-view_[2], -view_[6], -view_[10]};
+    auto dot3 = [](const float a[3], const float b[3]) {
+      return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    };
+    auto cross3 = [](const float a[3], const float b[3], float out[3]) {
+      out[0] = a[1] * b[2] - a[2] * b[1];
+      out[1] = a[2] * b[0] - a[0] * b[2];
+      out[2] = a[0] * b[1] - a[1] * b[0];
+    };
+    auto normalize3 = [&](float v[3]) {
+      const float len = std::sqrt(dot3(v, v));
+      if (len > 1.0e-8f) {
+        v[0] /= len; v[1] /= len; v[2] /= len;
+      }
+    };
+    auto worldPoint = [](const auto& s, size_t i, float out[3]) {
+      const float x = s.points[i * 3], y = s.points[i * 3 + 1],
+                  z = s.points[i * 3 + 2];
+      out[0] = s.world[0] * x + s.world[4] * y + s.world[8] * z + s.world[12];
+      out[1] = s.world[1] * x + s.world[5] * y + s.world[9] * z + s.world[13];
+      out[2] = s.world[2] * x + s.world[6] * y + s.world[10] * z + s.world[14];
+    };
+    auto colorAt = [](const auto& s, size_t i, float c[3]) {
+      c[0] = c[1] = c[2] = 0.8f;
+      if (s.colors.size() >= (i + 1) * 3) {
+        c[0] *= s.colors[i * 3]; c[1] *= s.colors[i * 3 + 1];
+        c[2] *= s.colors[i * 3 + 2];
+      }
+    };
+    auto addQuad = [&](const float p0[3], const float p1[3], const float side[3],
+                       float width, const float c[3]) {
+      const float h = std::max(width, 1.0e-6f) * 0.5f;
+      float a[3] = {p0[0] + side[0] * h, p0[1] + side[1] * h, p0[2] + side[2] * h};
+      float b[3] = {p0[0] - side[0] * h, p0[1] - side[1] * h, p0[2] - side[2] * h};
+      float d[3] = {p1[0] + side[0] * h, p1[1] + side[1] * h, p1[2] + side[2] * h};
+      float e[3] = {p1[0] - side[0] * h, p1[1] - side[1] * h, p1[2] - side[2] * h};
+      const auto v = [&](const float p[3]) {
+        HelperVertex hv{};
+        std::memcpy(hv.pos, p, sizeof(hv.pos));
+        std::memcpy(hv.col, c, sizeof(hv.col));
+        nonMeshCopy_.push_back(hv);
+      };
+      v(a); v(b); v(d); v(d); v(b); v(e);
+    };
+    auto addPoint = [&](const float p[3], float width, const float c[3]) {
+      const float h = std::max(width, 1.0e-6f) * 0.5f;
+      float a[3] = {p[0] + right[0] * h + up[0] * h,
+                    p[1] + right[1] * h + up[1] * h,
+                    p[2] + right[2] * h + up[2] * h};
+      float b[3] = {p[0] - right[0] * h + up[0] * h,
+                    p[1] - right[1] * h + up[1] * h,
+                    p[2] - right[2] * h + up[2] * h};
+      float d[3] = {p[0] + right[0] * h - up[0] * h,
+                    p[1] + right[1] * h - up[1] * h,
+                    p[2] + right[2] * h - up[2] * h};
+      float e[3] = {p[0] - right[0] * h - up[0] * h,
+                    p[1] - right[1] * h - up[1] * h,
+                    p[2] - right[2] * h - up[2] * h};
+      const auto v = [&](const float q[3]) {
+        HelperVertex hv{};
+        std::memcpy(hv.pos, q, sizeof(hv.pos));
+        std::memcpy(hv.col, c, sizeof(hv.col));
+        nonMeshCopy_.push_back(hv);
+      };
+      v(a); v(b); v(d); v(d); v(b); v(e);
+    };
+    size_t carrierIndex = 0;
+    for (const DrawPointsCPU& s : nativePoints_) {
+      if ((params.purposeVisibleMask & (1u << PurposeId(s.purpose))) == 0 ||
+          (params.carrierVisible && carrierIndex < static_cast<size_t>(params.carrierVisibleCount) &&
+           !params.carrierVisible[carrierIndex])) { ++carrierIndex; continue; }
+      const float sx = std::sqrt(s.world[0] * s.world[0] + s.world[1] * s.world[1] + s.world[2] * s.world[2]);
+      const float sy = std::sqrt(s.world[4] * s.world[4] + s.world[5] * s.world[5] + s.world[6] * s.world[6]);
+      const float sz = std::sqrt(s.world[8] * s.world[8] + s.world[9] * s.world[9] + s.world[10] * s.world[10]);
+      const float scale = std::max(sx, std::max(sy, sz));
+      for (size_t i = 0; i < s.points.size() / 3; ++i) {
+        float p[3], c[3]; worldPoint(s, i, p); colorAt(s, i, c);
+        const float width = (s.widths.empty() ? 1.0f :
+          (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)])) * scale;
+        addPoint(p, width, c);
+      }
+      ++carrierIndex;
+    }
+    for (const DrawCurvesCPU& s : nativeCurves_) {
+      if ((params.purposeVisibleMask & (1u << PurposeId(s.purpose))) == 0 ||
+          (params.carrierVisible && carrierIndex < static_cast<size_t>(params.carrierVisibleCount) &&
+           !params.carrierVisible[carrierIndex])) { ++carrierIndex; continue; }
+      const size_t np = s.points.size() / 3;
+      const float sx = std::sqrt(s.world[0] * s.world[0] + s.world[1] * s.world[1] + s.world[2] * s.world[2]);
+      const float sy = std::sqrt(s.world[4] * s.world[4] + s.world[5] * s.world[5] + s.world[6] * s.world[6]);
+      const float sz = std::sqrt(s.world[8] * s.world[8] + s.world[9] * s.world[9] + s.world[10] * s.world[10]);
+      const float scale = std::max(sx, std::max(sy, sz));
+      size_t base = 0;
+      const std::vector<uint32_t> counts = s.vertexCounts.empty()
+          ? std::vector<uint32_t>{static_cast<uint32_t>(np)} : s.vertexCounts;
+      for (uint32_t count : counts) {
+        const size_t end = std::min(np, base + static_cast<size_t>(count));
+        for (size_t i = base; i + 1 < end; ++i) {
+          float p0[3], p1[3], c0[3]; worldPoint(s, i, p0); worldPoint(s, i + 1, p1);
+          float dir[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+          float side[3]; cross3(forward, dir, side); normalize3(side);
+          if (dot3(side, side) < 0.5f) std::memcpy(side, right, sizeof(side));
+          colorAt(s, i, c0);
+          const float w0 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)]);
+          const float w1 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i + 1, s.widths.size() - 1)]);
+          addQuad(p0, p1, side, 0.5f * (w0 + w1) * scale, c0);
+        }
+        base = end;
+      }
+      ++carrierIndex;
+    }
+  }
   // Update the global frame/displacement UBO (set 2) so the scale + max-tess
   // sliders are live. Persistently mapped; written each frame (volume-UBO
   // convention). [0]=scale, [1]=maxTessLevel.
@@ -7941,7 +8069,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // LOAD-preserve the traced image and draw the same line sets on top. There is
     // no RT depth buffer, so everything draws no-depth (x-ray) -- which is what
     // the overlay/highlight lines already do in the raster path anyway.
-    const bool anyOverlay = !helperCopy_.empty() || !overlayCopy_.empty() ||
+    const bool anyOverlay = !nonMeshCopy_.empty() || !helperCopy_.empty() || !overlayCopy_.empty() ||
                             !highlightLineCopy_.empty() || !volumes_.empty();
     if (overlayLoadPass_ && offscreenFb_ && hasParams_ && anyOverlay) {
       VkRenderPassBeginInfo orp{};
@@ -7972,6 +8100,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       recordVolumePass(cb, volumePipelineNoDepth_);
       // All no-depth: the RT image carries no depth, so even grid/axes/bbox draw
       // as x-ray here (a reasonable RT-overlay compromise).
+      drawLineSet(cb, nonMeshCopy_, &nonMeshBuf_[frame_], &nonMeshMem_[frame_],
+                  &nonMeshCap_[frame_], nonMeshPipeline_, VP.m);
       drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
                   &helperCap_[frame_], linePipelineNoDepth_, VP.m);
       drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
@@ -8590,6 +8720,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // Helper lines (grid/axes/bbox), then skeleton X-ray + selection highlight on
     // top (depth-test-disabled pipeline). VP = P * V (column-major light3d).
     const light3d::Mat4 VP = ToMat4(proj_) * ToMat4(view_);
+    drawLineSet(cb, nonMeshCopy_, &nonMeshBuf_[frame_], &nonMeshMem_[frame_],
+                &nonMeshCap_[frame_], nonMeshPipeline_, VP.m);
     drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
                 &helperCap_[frame_], linePipeline_, VP.m);
     drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
@@ -8998,6 +9130,7 @@ void VulkanRenderer::shutdown() {
     if (*m) { vkFreeMemory(device_, *m, nullptr); *m = VK_NULL_HANDLE; }
   if (linePipeline_) { vkDestroyPipeline(device_, linePipeline_, nullptr); linePipeline_ = VK_NULL_HANDLE; }
   if (linePipelineNoDepth_) { vkDestroyPipeline(device_, linePipelineNoDepth_, nullptr); linePipelineNoDepth_ = VK_NULL_HANDLE; }
+  if (nonMeshPipeline_) { vkDestroyPipeline(device_, nonMeshPipeline_, nullptr); nonMeshPipeline_ = VK_NULL_HANDLE; }
   if (lineLayout_) { vkDestroyPipelineLayout(device_, lineLayout_, nullptr); lineLayout_ = VK_NULL_HANDLE; }
   // UsdVol volume resources.
   for (auto& gv : volumes_) {

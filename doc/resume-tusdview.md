@@ -1,14 +1,88 @@
 # tusdview resume and current work state
 
-Last reviewed against `8b922bd03`: 2026-07-20.
+Last reviewed against `0e551db24`: 2026-07-23.
 
 The original first-display goal in this document is complete: the progressive
 OpenGL path reaches a useful frame in approximately 4.9-5.3 seconds under the
-documented Xvfb/Mesa benchmark. The active local work has moved to shared
-UsdPreviewSurface/material correctness across `tusdview`, its GL/Vulkan/CUDA/HIP
-backends, and `tusdrender`. The active roadmap is now
+documented Xvfb/Mesa benchmark. The detailed audit below records the shared
+UsdPreviewSurface/material correctness work across `tusdview`, its
+GL/Vulkan/CUDA/HIP backends, and `tusdrender`. The active roadmap is now
 [`doc/tusdview-tasks.md`](tusdview-tasks.md); this file retains the detailed
 audit and performance history needed to resume that work.
+
+## Current status — 2026-07-23
+
+At `0e551db24`, the checked-in implementation and registered tests cover the
+canonical `RealtimePbrMaterial` path, PreviewSurface/OpenPBR/MaterialX core
+semantic textures, ordinary and UDIM sources, USDZ packaging parity, Vulkan
+ray query, CUDA, and capability-gated HIP coverage. Dome/light extraction,
+linked multi-light raster shading, raster shadow maps, six-face point shadows,
+native non-mesh extraction, GL non-mesh rendering, and progressive first-display
+loading are also implemented.
+
+Remaining implementation work is narrower:
+
+- Preserve all successfully evaluated constants and connections in degraded
+  OpenPBR/MaterialX materials while retaining structured path-qualified
+  diagnostics for unsupported lobes. The next-core neutral record now retains
+  every evaluatable `inputs:*` value; broader fixture coverage remains.
+- Native carrier viewport parity is implemented: Vulkan raster expands Points
+  into camera-facing discs and Curves into ribbons; click/region picking,
+  framing, hide/show/isolate, purpose filtering, and orange selection highlights
+  now cover carriers as well as meshes.
+- Camera extraction is now covered by a shared default/legacy equivalence gate.
+- The checked-in Points/Curves fixture now has a consolidated GL/Vulkan
+  silhouette-parity gate; it passes with backend-normalized coverage comparison.
+- Run the external `usd-assets` goldens and repeat the large-scene benchmark
+  when the documented corpus and required hardware are available.
+
+Depth of field, motion blur, stereo, arbitrary clipping planes, true area-light
+sampling, IES/portal/geometry lights, and emissive-mesh sampling remain
+explicitly deferred features, not current regressions.
+
+The focused GPU-backed headless gates were rerun during this review; external
+corpus and large-scene evidence remains inherited from the dated entries.
+
+The new `tusdview-camera-record-equivalence` gate compares default and legacy
+headless renders for perspective, orthographic, and stereo-role cameras. It
+passes with mean pixel delta 0.000 on the available Vulkan device and skips
+when Vulkan is unavailable.
+
+The focused `tusdview` CTest label passes all 16 registered tests on the current
+llvmpipe Vulkan device, including the new camera gate and native non-mesh smoke
+tests and the GL/Vulkan carrier silhouette-parity gate. Vulkan raster native
+carriers now use the dedicated camera-facing path; viewport carrier
+selection/visibility/highlighting parity is covered.
+
+The available public large-scene assets were also exercised on 2026-07-23:
+Caldera, Island, and ALab all passed the configured Vulkan raster profile smoke
+run, and three Caldera corpus files passed the USD-assets Vulkan smoke harness.
+The public `usd-wg/assets` repository was then shallow-checked out into `/tmp`
+and exercised under the documented NVIDIA/Xvfb offload environment. The corpus
+classification test passes. The complete 280-file Vulkan-raster smoke run also
+passes: 231 rendered, 24 rendered with degraded-material warnings, 25
+no-renderable layers, and zero hard load errors, backend errors, or timeouts. A
+20-file Vulkan-raster
+coverage-golden subset found 16 matches, 3 golden mismatches, 1 load error, and
+no backend errors/timeouts; the golden baseline still needs a deliberate
+corpus-version or renderer-difference review before being called green.
+The three mismatches are valid NVIDIA renders (CarbonFrameBike and the two
+ElephantWithMonochord entry points), with normal mesh/triangle/texture counts;
+they are coverage-fingerprint differences rather than load or backend errors.
+Do not refresh those baselines until the capture GPU/driver and corpus revision
+used to create them are identified. The follow-up also fixed next-core
+UsdShade NodeGraph surface pass-throughs, removing the Teapot-family degraded
+fallback. OpenChessSet external `.mtlx` references no longer produce
+degraded-material diagnostics: the next MaterialX layer importer now keeps
+each terminal shader inside the referenced Material subtree, which is the only
+namespace guaranteed to survive a USD reference. The localized shader inputs
+and NodeGraph outputs now retain their connections to anchored MaterialX image
+nodes. A focused Tydra regression covers base-color, metallic, roughness, and
+normal graphs. On llvmpipe Vulkan the Bishop asset reports 4 textures and the
+complete OpenChessSet reports 40 textures with `degraded_materials=0`,
+`missing_textures=0`, and `unsupported_mtlx=0`. The post-fix NVIDIA corpus rerun
+remains pending because the current host reports an NVML driver/library
+mismatch; the previously verified 280-file NVIDIA counts above are unchanged.
 
 ## Current audit: material correctness
 
@@ -144,7 +218,7 @@ The external usd-assets corpus was still unavailable at
 checked-in manifest/expectation implementation remains ready for the next host
 where that public corpus is mounted.
 
-## Active priority — 2026-07-20
+## Archived priority snapshot — 2026-07-20
 
 `doc/tusdview-tasks.md` is the single source of truth for active work. The
 Linux-first order is:

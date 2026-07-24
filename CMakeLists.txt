@@ -2832,6 +2832,16 @@ if(TINYUSDZ_BUILD_TESTS)
       )
 
     add_test(
+      NAME tusdview-camera-record-equivalence
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-record-equivalence.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(tusdview-camera-record-equivalence
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "tusdview")
+
+    add_test(
       NAME tusdview-next-nonmesh-extraction
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-next-nonmesh-extraction.sh"
@@ -2860,6 +2870,16 @@ if(TINYUSDZ_BUILD_TESTS)
       )
       set_tests_properties(tusdview-vk-nonmesh-render
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90
+                                      LABELS "tusdview")
+
+      add_test(
+        NAME tusdview-nonmesh-backend-parity
+        COMMAND bash
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-nonmesh-backend-parity.sh"
+                "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+      set_tests_properties(tusdview-nonmesh-backend-parity
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 150
                                       LABELS "tusdview")
     endif()
 

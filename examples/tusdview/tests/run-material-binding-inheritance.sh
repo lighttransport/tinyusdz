@@ -29,6 +29,15 @@ elif [ -x "$REPO_ROOT/build_ninja/tusdview" ]; then BIN="$REPO_ROOT/build_ninja/
 else BIN="$REPO_ROOT/build/tusdview"; fi
 if [ ! -x "$BIN" ]; then echo "SKIP: tusdview not found ($BIN)"; exit "$SKIP"; fi
 
+# The assertion is about GPU texture sampling. Preflight the selected Vulkan
+# installation so a mixed/unstable device enumeration cannot run one loader on
+# a software adapter and the other loader on a different adapter.
+if command -v vulkaninfo >/dev/null 2>&1 &&
+   vulkaninfo --summary 2>/dev/null | grep -Eqi 'llvmpipe|lavapipe|softpipe|deviceType.*CPU'; then
+  echo "SKIP: software Vulkan cannot validate texture sampling"
+  exit "$SKIP"
+fi
+
 ASSET="${1:-$REPO_ROOT/models/tusdview-material-binding-inheritance.usda}"
 if [ ! -f "$ASSET" ]; then echo "SKIP: asset missing: $ASSET"; exit "$SKIP"; fi
 echo "scene: $ASSET"
@@ -60,7 +69,7 @@ validate_textured_render() {
 # smoke tests but does not fetch the viewer's textured vertex attributes
 # reliably. A flat software render therefore cannot distinguish bad asset
 # anchoring from the device limitation; let a hardware backend answer instead.
-  if grep -Eqi 'llvmpipe|softpipe|lavapipe|software rasterizer|\(cpu, driver' "$log"; then
+  if grep -Eqi 'llvmpipe|softpipe|lavapipe|software rasterizer|selected a CPU|GPU:.*\(cpu|\(cpu, driver' "$log"; then
     echo "SKIP: software Vulkan cannot validate texture sampling"
     exit "$SKIP"
   fi

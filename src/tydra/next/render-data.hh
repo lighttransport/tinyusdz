@@ -690,6 +690,15 @@ struct MaterialDiagnostic {
   std::string message;
 };
 
+// Authored shader inputs retained when the surface terminal cannot be fully
+// evaluated. These values are intentionally neutral to current real-time
+// shading, but remain available to future evaluators and diagnostics.
+struct RetainedMaterialParam {
+  std::string shader;
+  std::string name;
+  ShaderParam value;
+};
+
 struct RenderMaterial {
   std::string name;
   std::string prim_path;
@@ -717,6 +726,7 @@ struct RenderMaterial {
   // degradation must look here rather than relying on the return value.
   bool default_fallback = false;
   std::vector<MaterialDiagnostic> diagnostics;
+  std::vector<RetainedMaterialParam> retained_params;
 
   // Shader data (one of these based on shader_type)
   std::unique_ptr<PreviewSurfaceShader> preview_surface;

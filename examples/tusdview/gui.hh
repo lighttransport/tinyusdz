@@ -257,10 +257,13 @@ class Gui {
   void buildHelpers();
   bool meshPurposeVisible(const std::string& purpose) const;
   bool meshVisibleForView(size_t meshIndex) const;
+  bool carrierVisibleForView(size_t carrierIndex) const;
+  size_t carrierIndexForPath(const std::string& path) const;
   void buildViewVisibilityMask();
   void rebuildInspectorCache();
   void setSelectionListSingle(const std::string& absPath, int meshIndex);
   void setSelectionListFromMeshes(std::vector<int> meshIndices);
+  void setSelectionListFromPaths(std::vector<std::string> paths);
   void focusSelectionListItem(size_t index);
   void beginRegionSelection(const ImVec2& mouse);
   void updateRegionSelection(const ImVec2& mouse);
@@ -269,6 +272,7 @@ class Gui {
   bool meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
                                 const ImVec2& rectMax, int vpW, int vpH) const;
   int pickMesh(float px, float py, int vpW, int vpH) const;
+  std::string pickCarrierPath(float px, float py, int vpW, int vpH) const;
   void selectAdjacentMesh(int step);
   void applyViewPreset(CameraViewPreset preset);
   void homeView();
@@ -458,6 +462,7 @@ class Gui {
   std::vector<HelperVertex> overlayLines_;
 
   std::vector<uint8_t> meshVisible_;
+  std::vector<uint8_t> carrierVisible_;
   std::vector<uint8_t> viewVisible_;
   bool revealSelectionInHierarchy_{false};
 
