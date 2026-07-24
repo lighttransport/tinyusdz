@@ -495,39 +495,36 @@ Latest focused verification on 2026-07-20:
   discarding them before a future evaluator can consume them.
 - Shell syntax and `git diff --check` pass.
 
-The focused `tusdview` CTest label passes 16 of 17 registered tests on the
-current llvmpipe Vulkan device, including camera equivalence, native Vulkan
-non-mesh smoke coverage, and GL/Vulkan carrier silhouette parity. The one
-remaining Vulkan ray-query linked-light run reaches scene/BLAS setup but exceeds
-its 120-second llvmpipe timeout; retain its hardware-oriented assertion. The
+The focused `tusdview` CTest label passes 16 of 17 registered tests on llvmpipe,
+including camera equivalence, native Vulkan non-mesh smoke coverage, and
+GL/Vulkan carrier silhouette parity. The remaining Vulkan ray-query
+linked-light run exceeds its llvmpipe timeout after scene/BLAS setup but passes
+on the RTX 3070 in 0.65 seconds. The
 available Caldera, Island, and ALab large-scene profile smoke runs pass. After checking
-out `usd-wg/assets` and following the NVIDIA/Xvfb procedure, the complete
-280-file Vulkan-raster smoke passes with 231 rendered, 24 degraded-material
-warnings, 25 no-renderable layers, and zero hard load errors/backend
-errors/timeouts. A bounded 20-file
-coverage-golden subset has 16 matches, 3 mismatches, and one load error, so the
-external golden gate is not green yet.
-The mismatches are valid NVIDIA renders with normal scene counts and are
-coverage-fingerprint differences. Their provenance investigation found an
-invalid capture contract: tusdview silently ignored the harness's
+out `usd-wg/assets` revision `1b91f3c464891af259d51d9ee9ee9e6c357f7079`,
+the corrected complete RTX 3070 / NVIDIA 595.84 sweep passes in both Vulkan
+raster and ray query. Each mode has 252 rendered, 3 expected-warning renders,
+25 no-renderable layers, and zero load errors, backend errors, timeouts, or
+unexpected degradation.
+
+The old golden mismatches came from an invalid capture contract: tusdview
+silently ignored the harness's
 `--size 256x256`, so saved ImGui state produced `32x530` screenshots. `--size`
 is now strictly parsed, overrides configured window dimensions, and gives
 fixed-frame headless captures the full requested viewport, independent of
-docking state. Corrected llvmpipe rerenders are exactly `256x256`; the old
-goldens must be deliberately regenerated on NVIDIA after the driver is repaired,
-not treated as current renderer references. Next-core now follows
+docking state. All 510 rendered corpus fingerprints were regenerated at exactly
+`256x256`. A second independent 20-file raster + ray-query comparison matches
+38/38, including CarbonFrameBike and both ElephantWithMonochord entry points.
+Next-core now follows
 UsdShade NodeGraph surface pass-throughs (fixing the Teapot-family fallback),
 while OpenChessSet external `.mtlx` references now resolve their terminal
 shaders and connected image NodeGraphs inside the referenced Material subtree.
 The complete scene now reports 40 textures with `degraded_materials=0`,
 `missing_textures=0`, and `unsupported_mtlx=0`; the Bishop component reports
 4 textures. Focused composition/Tydra tests pin localized graph connections,
-scalar/RGB channels, and `.mtlx`-relative asset anchoring. The post-fix NVIDIA
-corpus rerun is still pending because the current host has an NVML
-driver/library mismatch. The running module is `595.71.05`; userspace NVML and
-the installed DKMS module for `6.8.0-134-generic` are `595.84`, so a reboot or
-coordinated module reload is required. The previously verified 280-file counts
-remain the latest hardware result.
+scalar/RGB channels, and `.mtlx`-relative asset anchoring. The reboot loaded the
+matching 595.84 kernel/userspace driver and the post-fix hardware corpus rerun
+is complete.
 Supported material semantic parity, native Vulkan carrier rasterization, and
 carrier viewport interaction are no longer active blockers.
 
