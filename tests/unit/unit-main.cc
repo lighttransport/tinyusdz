@@ -806,6 +806,11 @@ TEST_LIST = {
   { "security_resolver_overreported_custom_asset_rejected_test", security_resolver_overreported_custom_asset_rejected_test },
   { "security_nested_zstd_depth_rejected_test", security_nested_zstd_depth_rejected_test },
   { "security_sha256_overflow_rejected_test", security_sha256_overflow_rejected_test },
+  { "security_stage_move_cache_test", security_stage_move_cache_test },
+  { "security_base122_roundtrip_test", security_base122_roundtrip_test },
+  { "security_strutil_unwrap_edge_test", security_strutil_unwrap_edge_test },
+  { "security_zstd_max_decompressed_size_test", security_zstd_max_decompressed_size_test },
+  { "security_findfile_traversal_rejected_test", security_findfile_traversal_rejected_test },
   // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
   { "usdz_writer_is_usdz_prefix_detection_test", usdz_writer_is_usdz_prefix_detection_test },
