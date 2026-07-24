@@ -641,6 +641,7 @@ if [ "$GOLDEN_ENABLED" -eq 1 ] && [ "$GOLDEN_UPDATE" = "1" ]; then
   {
     printf '# tusdview usd-assets render fingerprints (mode<TAB>asset<TAB>fp).\n'
     printf '# kind=%s tol=%s; regenerate with --update-golden.\n' "$GOLDEN_KIND" "$GOLDEN_TOL"
+    printf '# size=%s; fixed-frame headless viewport.\n' "$SIZE"
     sort -t$'\t' -k1,1 -k2,2 "$NEW_GOLDEN"
   } > "$GOLDEN_FILE"
   echo "golden : wrote $(grep -cv '^#' "$GOLDEN_FILE") fingerprints -> $GOLDEN_FILE"

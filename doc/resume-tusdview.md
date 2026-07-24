@@ -48,40 +48,32 @@ headless renders for perspective, orthographic, and stereo-role cameras. It
 passes with mean pixel delta 0.000 on the available Vulkan device and skips
 when Vulkan is unavailable.
 
-The focused `tusdview` CTest label passes 16 of 17 registered tests on the
-current llvmpipe Vulkan device, including the new camera gate, native non-mesh
-smoke tests, and the GL/Vulkan carrier silhouette-parity gate. The remaining
-Vulkan ray-query linked-light test reaches scene and BLAS setup but exceeds its
-120-second software-device timeout; it requires a hardware Vulkan rerun rather
-than a relaxed correctness assertion. Vulkan raster native carriers now use
+The focused `tusdview` CTest label passes 16 of 17 registered tests on llvmpipe,
+including the camera gate, native non-mesh smoke tests, and the GL/Vulkan
+carrier silhouette-parity gate. The remaining Vulkan ray-query linked-light
+test exceeds its 120-second software-device timeout after scene/BLAS setup, but
+passes on the RTX 3070 in 0.65 seconds. Vulkan raster native carriers now use
 the dedicated camera-facing path; viewport carrier
 selection/visibility/highlighting parity is covered.
 
 The available public large-scene assets were also exercised on 2026-07-23:
 Caldera, Island, and ALab all passed the configured Vulkan raster profile smoke
 run, and three Caldera corpus files passed the USD-assets Vulkan smoke harness.
-The public `usd-wg/assets` repository was then shallow-checked out into `/tmp`
-and exercised under the documented NVIDIA/Xvfb offload environment. The corpus
-classification test passes. The complete 280-file Vulkan-raster smoke run also
-passes: 231 rendered, 24 rendered with degraded-material warnings, 25
-no-renderable layers, and zero hard load errors, backend errors, or timeouts. A
-20-file Vulkan-raster
-coverage-golden subset found 16 matches, 3 golden mismatches, 1 load error, and
-no backend errors/timeouts; the golden baseline still needs a deliberate
-corpus-version or renderer-difference review before being called green.
-The three mismatches are valid NVIDIA renders (CarbonFrameBike and the two
-ElephantWithMonochord entry points), with normal mesh/triangle/texture counts;
-they are coverage-fingerprint differences rather than load or backend errors.
+The public `usd-wg/assets` repository at revision
+`1b91f3c464891af259d51d9ee9ee9e6c357f7079` was exercised on the RTX 3070
+with NVIDIA 595.84. The corrected complete 280-file sweep passes in both Vulkan
+raster and ray query. Each mode reports 252 rendered, 3 rendered with expected
+warnings, 25 no-renderable layers, and zero load errors, backend errors,
+timeouts, or unexpected degradation.
 The follow-up found that `--size` was not parsed: the failed run captured a
 saved-layout-dependent `32x530` viewport instead of the requested `256x256`.
 The CLI now validates and honors `--size`, CLI size overrides startup config,
 and fixed-frame headless captures use the full requested viewport independently
 of saved ImGui docking state. A regression pins a `64x48` capture against a
-conflicting `32x530` config. Corrected llvmpipe rerenders are exactly
-`256x256`; as expected, they do not match goldens recorded through the old
-layout-dependent path. Do not refresh those baselines until NVIDIA is restored,
-then regenerate the affected hardware baseline deliberately with the corrected
-capture contract. The follow-up also fixed next-core
+conflicting `32x530` config. All 510 rendered corpus baselines were therefore
+regenerated at exactly `256x256`; a second independent 20-file raster + ray
+query run matches 38/38 fingerprints, including CarbonFrameBike and both
+ElephantWithMonochord entry points. The follow-up also fixed next-core
 UsdShade NodeGraph surface pass-throughs, removing the Teapot-family degraded
 fallback. OpenChessSet external `.mtlx` references no longer produce
 degraded-material diagnostics: the next MaterialX layer importer now keeps
@@ -91,12 +83,9 @@ and NodeGraph outputs now retain their connections to anchored MaterialX image
 nodes. A focused Tydra regression covers base-color, metallic, roughness, and
 normal graphs. On llvmpipe Vulkan the Bishop asset reports 4 textures and the
 complete OpenChessSet reports 40 textures with `degraded_materials=0`,
-`missing_textures=0`, and `unsupported_mtlx=0`. The post-fix NVIDIA corpus rerun
-remains pending because the current host reports an NVML driver/library
-mismatch: the running kernel module is `595.71.05`, while userspace NVML and
-the installed module are `595.84` (DKMS is built for the running
-`6.8.0-134-generic` kernel). A reboot or coordinated module reload is required;
-the previously verified 280-file NVIDIA counts above are unchanged.
+`missing_textures=0`, and `unsupported_mtlx=0`. The reboot loaded the matching
+595.84 kernel/userspace driver and completed the previously blocked hardware
+validation.
 
 ## Current audit: material correctness
 
