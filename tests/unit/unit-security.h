@@ -20,3 +20,5 @@ void security_base122_roundtrip_test(void);
 void security_strutil_unwrap_edge_test(void);
 void security_zstd_max_decompressed_size_test(void);
 void security_findfile_traversal_rejected_test(void);
+void security_common_utils_overflow_test(void);
+void security_merge_path_overflow_test(void);

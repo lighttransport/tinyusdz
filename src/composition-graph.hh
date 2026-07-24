@@ -241,7 +241,11 @@ class PrimIndex {
   const CompNode &GetRootNode() const { return _nodes[0]; }
 
   /// Access a node by index.
-  const CompNode &GetNode(uint16_t idx) const { return _nodes[idx]; }
+  const CompNode &GetNode(uint16_t idx) const {
+    // Caller must ensure idx < _nodes.size() (from GetStrengthOrder etc.).
+    // The mutable accessor (in composition-graph.cc) also bounds-checks.
+    return _nodes[idx];
+  }
 
   /// Number of nodes in the graph.
   uint16_t GetNodeCount() const {

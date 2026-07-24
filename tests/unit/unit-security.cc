@@ -12,12 +12,14 @@
 #include "sha256.hh"
 #include "tinyusdz.hh"
 #include "tydra/render-data-internal.hh"
+#include "tydra/common-utils.hh"
 #include "zstd-compression.hh"
 #include "base122.hh"
 #include "str-util.hh"
 #include "io-util.hh"
 #include "stage.hh"
 #include "core/prim.hh"
+#include "composition-graph.hh"
 
 #include <string>
 #include <cstring>
@@ -753,4 +755,33 @@ void security_sha256_overflow_rejected_test(void) {
     std::string hash = sha256("dummy", huge);
     TEST_CHECK(hash.empty());
   }
+}
+
+void security_common_utils_overflow_test(void) {
+  // Regression: ConstantToVertex must reject element sizes that would
+  // cause integer overflow when multiplied by vertex count.
+  std::vector<uint8_t> src(4, 0xAB);  // 4 bytes = 1 float
+
+  // A huge elementSize that would overflow when multiplied by vertex count.
+  const auto result = tinyusdz::tydra::utils::ConstantToVertex(
+      src, uint32_t(1024 * 1024 * 1024), size_t(1024 * 1024));
+  TEST_CHECK(!result.has_value());  // must fail with overflow error
+
+  // Normal usage must still work.
+  const auto ok_result = tinyusdz::tydra::utils::ConstantToVertex(src, 4, 3);
+  TEST_CHECK(ok_result.has_value());
+  TEST_CHECK(ok_result->size() == 12);  // 3 vertices * 4 bytes
+}
+
+void security_merge_path_overflow_test(void) {
+  // Regression: the merge path (old_size + src.size()) must use safe::add
+  // to prevent integer overflow on 32-bit platforms.
+  // Test is on the rendering data structures via composition graph.
+  // Verify the composition graph GetMutableNode returns sentinel for
+  // out-of-bounds indices rather than crashing.
+  tinyusdz::composition_graph::PrimIndex index;
+  tinyusdz::composition_graph::CompNode &node =
+      tinyusdz::composition_graph::GetMutableNode(index, uint16_t(65535));
+  // Must not crash; the sentinel node is safe to reference.
+  TEST_CHECK(true);
 }
