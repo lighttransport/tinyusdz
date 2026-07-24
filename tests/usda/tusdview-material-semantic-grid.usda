@@ -42,24 +42,10 @@ def Xform "World" {
         token outputs:surface.connect = </World/PreviewMaterial/Surface.outputs:surface>
         def Shader "Surface" {
             uniform token info:id = "UsdPreviewSurface"
-            color3f inputs:diffuseColor.connect = </World/PreviewMaterial/Image.outputs:rgb>
-            float inputs:metallic.connect = </World/PreviewMaterial/Image.outputs:r>
-            float inputs:roughness.connect = </World/PreviewMaterial/Image.outputs:g>
+            color3f inputs:diffuseColor = (0.65, 0.35, 0.2)
+            float inputs:metallic = 0.65
+            float inputs:roughness = 0.35
             token outputs:surface
-        }
-        def Shader "Image" {
-            uniform token info:id = "UsdUVTexture"
-            asset inputs:file = @../../models/textures/parity-quadrants.png@
-            float2 inputs:st.connect = </World/PreviewMaterial/St.outputs:result>
-            token inputs:sourceColorSpace = "sRGB"
-            color3f outputs:rgb
-            float outputs:r
-            float outputs:g
-        }
-        def Shader "St" {
-            uniform token info:id = "UsdPrimvarReader_float2"
-            token inputs:varname = "st"
-            float2 outputs:result
         }
     }
 
@@ -67,15 +53,10 @@ def Xform "World" {
         token outputs:surface.connect = </World/OpenPBRMaterial/Surface.outputs:surface>
         def Shader "Surface" {
             uniform token info:id = "ND_open_pbr_surface_surfaceshader"
-            color3f inputs:base_color.connect = </World/OpenPBRMaterial/Image.outputs:out>
+            color3f inputs:base_color = (0.2, 0.45, 0.7)
             float inputs:base_metalness = 0.45
             float inputs:specular_roughness = 0.3
             token outputs:surface
-        }
-        def Shader "Image" {
-            uniform token info:id = "ND_image_color3"
-            asset inputs:file = @../../models/textures/parity-quadrants.png@
-            color3f outputs:out
         }
     }
 
@@ -83,15 +64,10 @@ def Xform "World" {
         token outputs:surface.connect = </World/StandardMaterial/Surface.outputs:surface>
         def Shader "Surface" {
             uniform token info:id = "ND_standard_surface_surfaceshader"
-            color3f inputs:base_color.connect = </World/StandardMaterial/Image.outputs:out>
+            color3f inputs:base_color = (0.7, 0.45, 0.2)
             float inputs:metalness = 0.8
             float inputs:specular_roughness = 0.65
             token outputs:surface
-        }
-        def Shader "Image" {
-            uniform token info:id = "ND_image_color3"
-            asset inputs:file = @../../models/textures/parity-quadrants.png@
-            color3f outputs:out
         }
     }
 
