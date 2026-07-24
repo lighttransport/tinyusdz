@@ -248,8 +248,12 @@ tir/texcomp/texpipe/envmap libraries:
   lights in stage order. Distant and finite sphere/point, rect, disk, and
   cylinder lights honor diffuse/specular multipliers, shaping, and per-mesh
   light-link collections; excess supported lights produce a truncation
-  diagnostic. Finite area shapes are presently represented by their light
-  position, and raster shadow maps remain future work.
+  diagnostic. They share one deterministic 2048-square shadow map for the first
+  enabled DistantLight, otherwise the first finite light; the pass uses 3x3 PCF,
+  honors direct versus shadow light-link collections, alpha cutouts, and Vulkan
+  instanced prototypes. Finite area shapes still use their representative
+  position, and exact omnidirectional point/sphere/cylinder shadows remain
+  future work.
 
 `tusdrender -ibl envmap` opts the offline renderer into the same envmap-library
 precompute (default stays the built-in reference; measured parity on a dome

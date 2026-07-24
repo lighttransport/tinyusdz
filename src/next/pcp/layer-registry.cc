@@ -391,8 +391,36 @@ const char *MtlxShaderInfoId(const std::string &category) {
   return nullptr;
 }
 
+std::pair<TypeId, const char *> MtlxConnectionType(
+    const std::string &type) {
+  if (type == "boolean") return {TypeId::Bool, "bool"};
+  if (type == "integer") return {TypeId::Int, "int"};
+  if (type == "float") return {TypeId::Float, "float"};
+  if (type == "vector2") return {TypeId::Float2, "float2"};
+  if (type == "vector3") return {TypeId::Vector3f, "vector3f"};
+  if (type == "vector4") return {TypeId::Float4, "float4"};
+  if (type == "color3") return {TypeId::Color3f, "color3f"};
+  if (type == "color4") return {TypeId::Color4f, "color4f"};
+  if (type == "filename") return {TypeId::AssetPath, "asset"};
+  return {TypeId::Token, "token"};
+}
+
+void DeclareMtlxConnectionProperty(LayerBuilder &lb,
+                                   const std::string &name,
+                                   const std::string &mtlx_type) {
+  PrimSpec *prim = lb.current();
+  if (!prim) return;
+  const PropNameId name_id = GetPropNameTable().intern(name);
+  if (prim->property(name_id)) return;
+  const auto mapped = MtlxConnectionType(mtlx_type);
+  prim->add_property_slot(name_id, mapped.first, PropSlot::kFlagConnection);
+  prim->set_property_type_name(name, mapped.second);
+}
+
 void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
-                      const char *forced_info_id) {
+                      const char *forced_info_id,
+                      const std::string &node_prefix = std::string(),
+                      const std::string &nodegraph_prefix = std::string()) {
   lb.begin_prim(node.GetName().empty() ? std::string("node") : node.GetName(),
                 "Shader");
   const char *info_id = forced_info_id ? forced_info_id
@@ -401,13 +429,82 @@ void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
       info_id ? std::string(info_id) : node.GetCategory()));
   for (const mtlx::MtlxInputPtr &input : node.GetInputs()) {
     if (!input) continue;
-    Value value = MtlxValueToNextValue(input->GetValue());
+    Value value =
+        input->GetType() == "filename" &&
+                input->GetValue().type == mtlx::MtlxValue::TYPE_STRING
+            ? Value::MakeAssetPath(input->GetValue().string_val)
+            : MtlxValueToNextValue(input->GetValue());
     if (!value.is_empty()) {
-      lb.add_property("inputs:" + input->GetName(), std::move(value));
+      const std::string property = "inputs:" + input->GetName();
+      lb.add_property(property, std::move(value));
+      if (!input->GetColorSpace().empty()) {
+        if (PrimSpec *prim = lb.current()) {
+          PropMeta &meta = prim->ensure_property_meta(property);
+          meta.colorSpace = input->GetColorSpace();
+          meta.authored |= PropMeta::kColorSpace;
+        }
+      }
+    }
+    {
+      std::string target;
+      if (!node_prefix.empty() && !input->GetNodeName().empty()) {
+        target = node_prefix + "/" + input->GetNodeName();
+      } else if (!nodegraph_prefix.empty() &&
+                 !input->GetNodeGraph().empty()) {
+        target = nodegraph_prefix + "/" + input->GetNodeGraph();
+      }
+      if (!target.empty()) {
+        const std::string &output = input->GetOutput();
+        const std::string property = "inputs:" + input->GetName();
+        DeclareMtlxConnectionProperty(lb, property, input->GetType());
+        lb.add_connection(property,
+                          Path(target + (output.empty()
+                                             ? ".outputs:out"
+                                             : ".outputs:" + output)));
+      }
     }
   }
   if (!node.GetType().empty()) {
     lb.add_property("outputs:out", Value::MakeToken(node.GetType()));
+  }
+  lb.end_prim();
+}
+
+mtlx::MtlxNodePtr FindMtlxNode(const mtlx::MtlxDocument &doc,
+                               const std::string &name) {
+  if (name.empty()) return nullptr;
+  mtlx::MtlxNodePtr node = doc.FindNode(name);
+  if (node) return node;
+  for (const auto &graph : doc.GetNodeGraphs()) {
+    if (!graph) continue;
+    node = graph->GetNode(name);
+    if (node) return node;
+  }
+  return nullptr;
+}
+
+void EmitMtlxNodeGraphPrim(LayerBuilder &lb,
+                           const mtlx::MtlxNodeGraph &graph,
+                           const std::string &graph_path,
+                           const std::string &nodegraph_prefix) {
+  lb.begin_prim(graph.GetName(), "NodeGraph");
+  for (const auto &node : graph.GetNodes()) {
+    if (!node || node->GetName().empty()) continue;
+    EmitMtlxNodePrim(lb, *node, nullptr, graph_path, nodegraph_prefix);
+  }
+  for (const auto &output : graph.GetOutputs()) {
+    if (!output || output->GetName().empty() ||
+        output->GetNodeName().empty()) {
+      continue;
+    }
+    const std::string output_target =
+        graph_path + "/" + output->GetNodeName() +
+        (output->GetOutput().empty()
+             ? ".outputs:out"
+             : ".outputs:" + output->GetOutput());
+    const std::string property = "outputs:" + output->GetName();
+    DeclareMtlxConnectionProperty(lb, property, output->GetType());
+    lb.add_connection(property, Path(output_target));
   }
   lb.end_prim();
 }
@@ -451,20 +548,62 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
     if (!doc.GetColorSpace().empty()) {
       lb.add_property("config:mtlx:colorspace", Value(doc.GetColorSpace()));
     }
+    // A USD reference to /MaterialX/Materials/<name> only brings that
+    // material subtree into the host layer. Keep the terminal surface shader
+    // inside the material as well; the canonical library namespaces below
+    // (/MaterialX/Shaders and /MaterialX/NodeGraphs) are useful for flattened
+    // layers but are outside the reference target and therefore cannot be
+    // relied on by a composed external MaterialX asset.
+    const std::string material_prefix =
+        "/MaterialX/Materials/" + mat->GetName();
+    const mtlx::MtlxNodePtr surface =
+        FindMtlxNode(doc, mat->GetSurfaceShader());
+    const mtlx::MtlxNodePtr displacement =
+        FindMtlxNode(doc, mat->GetDisplacementShader());
+    const mtlx::MtlxNodePtr volume =
+        FindMtlxNode(doc, mat->GetVolumeShader());
+    if (surface || displacement || volume) {
+      if (surface) {
+        EmitMtlxNodePrim(lb, *surface, nullptr, material_prefix,
+                         material_prefix);
+      }
+      if (displacement && displacement != surface) {
+        EmitMtlxNodePrim(lb, *displacement, nullptr, material_prefix,
+                         material_prefix);
+      }
+      if (volume && volume != surface && volume != displacement) {
+        EmitMtlxNodePrim(lb, *volume, nullptr, material_prefix,
+                         material_prefix);
+      }
+      // Keep the graph and its output routing inside the referenced Material
+      // subtree. This preserves image/normal/utility nodes and lets the next
+      // shader evaluator follow the same connections as the source MaterialX
+      // document after USD composition.
+      for (const auto &graph : doc.GetNodeGraphs()) {
+        if (!graph || graph->GetName().empty()) continue;
+        const std::string graph_prefix =
+            material_prefix + "/" + graph->GetName();
+        EmitMtlxNodeGraphPrim(lb, *graph, graph_prefix, material_prefix);
+      }
+    }
     if (!mat->GetSurfaceShader().empty()) {
       lb.add_relationship(
           "mtlx:surface:source",
-          Path("/MaterialX/Shaders/" + mat->GetSurfaceShader()));
+          Path(surface ? material_prefix + "/" + mat->GetSurfaceShader()
+                       : "/MaterialX/Shaders/" + mat->GetSurfaceShader()));
     }
     if (!mat->GetDisplacementShader().empty()) {
       lb.add_relationship(
           "mtlx:displacement:source",
-          Path("/MaterialX/Shaders/" + mat->GetDisplacementShader()));
+          Path(displacement
+                   ? material_prefix + "/" + mat->GetDisplacementShader()
+                   : "/MaterialX/Shaders/" + mat->GetDisplacementShader()));
     }
     if (!mat->GetVolumeShader().empty()) {
-      lb.add_relationship("mtlx:volume:source",
-                          Path("/MaterialX/Shaders/" +
-                               mat->GetVolumeShader()));
+      lb.add_relationship(
+          "mtlx:volume:source",
+          Path(volume ? material_prefix + "/" + mat->GetVolumeShader()
+                      : "/MaterialX/Shaders/" + mat->GetVolumeShader()));
     }
     lb.end_prim();
   }
@@ -475,7 +614,8 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
     if (!node || node->GetName().empty()) continue;
     // surfacematerial nodes are represented under /MaterialX/Materials.
     if (node->GetCategory() == "surfacematerial") continue;
-    EmitMtlxNodePrim(lb, *node, nullptr);
+    EmitMtlxNodePrim(lb, *node, nullptr, "/MaterialX/Shaders",
+                     "/MaterialX/NodeGraphs");
   }
   lb.end_prim();  // Shaders
 
@@ -483,12 +623,10 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
     lb.begin_prim("NodeGraphs", "");
     for (const mtlx::MtlxNodeGraphPtr &graph : doc.GetNodeGraphs()) {
       if (!graph || graph->GetName().empty()) continue;
-      lb.begin_prim(graph->GetName(), "NodeGraph");
-      for (const mtlx::MtlxNodePtr &node : graph->GetNodes()) {
-        if (!node || node->GetName().empty()) continue;
-        EmitMtlxNodePrim(lb, *node, nullptr);
-      }
-      lb.end_prim();
+      const std::string graph_path =
+          "/MaterialX/NodeGraphs/" + graph->GetName();
+      EmitMtlxNodeGraphPrim(lb, *graph, graph_path,
+                            "/MaterialX/NodeGraphs");
     }
     lb.end_prim();  // NodeGraphs
   }

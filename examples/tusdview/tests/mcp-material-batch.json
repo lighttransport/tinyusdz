@@ -1,0 +1,35 @@
+{
+  "viewer_args": ["--backend", "vk", "--size", "256x256"],
+  "repeat": 2,
+  "max_rss_growth_mb": 256,
+  "cases": [
+    {
+      "name": "degraded-material",
+      "usda": "#usda 1.0\n def Xform \"World\" { def Mesh \"M\" { point3f[] points=[(-1,-1,0),(1,-1,0),(1,1,0),(-1,1,0)] int[] faceVertexCounts=[4] int[] faceVertexIndices=[0,1,2,3] uniform token subdivisionScheme=\"none\" rel material:binding=</World/Broken> } def Material \"Broken\" { token outputs:surface.connect=</World/Broken/S.outputs:surface> def Shader \"S\" { uniform token info:id=\"PersistentUnknownShader\" color3f inputs:baseColor=(0.8,0.05,0.02) token outputs:surface } } }\n",
+      "expect": {"mesh_count": 1, "triangle_count": 2, "material_count": 2},
+      "expect_stderr": ["degraded_materials=[1-9]", "PersistentUnknownShader"],
+      "captures": [
+        {"name": "degraded-shaded", "settings": {"mode": "shaded", "grid": false}, "viewport": {"op": "front"}},
+        {"name": "degraded-albedo", "settings": {"mode": "albedo"}, "different_from": "degraded-shaded"}
+      ]
+    },
+    {
+      "name": "geomsubset-materials",
+      "usda": "#usda 1.0\n def Xform \"World\" { def Mesh \"M\" { point3f[] points=[(-1,-1,0),(1,-1,0),(1,1,0),(-1,1,0)] int[] faceVertexCounts=[3,3] int[] faceVertexIndices=[0,1,2,0,2,3] uniform token subdivisionScheme=\"none\" def GeomSubset \"Left\" { uniform token elementType=\"face\" uniform token familyName=\"materialBind\" int[] indices=[0] rel material:binding=</World/Red> } def GeomSubset \"Right\" { uniform token elementType=\"face\" uniform token familyName=\"materialBind\" int[] indices=[1] rel material:binding=</World/Green> } } def Material \"Red\" { token outputs:surface.connect=</World/Red/P.outputs:surface> def Shader \"P\" { uniform token info:id=\"UsdPreviewSurface\" color3f inputs:diffuseColor=(1,0,0) token outputs:surface } } def Material \"Green\" { token outputs:surface.connect=</World/Green/P.outputs:surface> def Shader \"P\" { uniform token info:id=\"UsdPreviewSurface\" color3f inputs:diffuseColor=(0,1,0) token outputs:surface } } }\n",
+      "expect": {"mesh_count": 2, "triangle_count": 2, "material_count": 3},
+      "captures": [
+        {"name": "subset-shaded", "settings": {"mode": "shaded", "grid": false}, "viewport": {"op": "front"}},
+        {"name": "subset-material-id", "settings": {"mode": "material-id"}, "different_from": "subset-shaded"}
+      ]
+    },
+    {
+      "name": "blended-opacity",
+      "usda": "#usda 1.0\n def Xform \"World\" { def Mesh \"Back\" { point3f[] points=[(-1,-1,0),(1,-1,0),(1,1,0),(-1,1,0)] int[] faceVertexCounts=[4] int[] faceVertexIndices=[0,1,2,3] uniform token subdivisionScheme=\"none\" rel material:binding=</World/Red> } def Mesh \"Front\" { point3f[] points=[(-1,-1,0.1),(1,-1,0.1),(1,1,0.1),(-1,1,0.1)] int[] faceVertexCounts=[4] int[] faceVertexIndices=[0,1,2,3] uniform token subdivisionScheme=\"none\" rel material:binding=</World/Green> } def Material \"Red\" { token outputs:surface.connect=</World/Red/P.outputs:surface> def Shader \"P\" { uniform token info:id=\"UsdPreviewSurface\" color3f inputs:diffuseColor=(1,0,0) token outputs:surface } } def Material \"Green\" { token outputs:surface.connect=</World/Green/P.outputs:surface> def Shader \"P\" { uniform token info:id=\"UsdPreviewSurface\" color3f inputs:diffuseColor=(0,1,0) float inputs:opacity=0.5 token outputs:surface } } }\n",
+      "expect": {"mesh_count": 2, "triangle_count": 4, "material_count": 3},
+      "captures": [
+        {"name": "opacity-shaded", "settings": {"mode": "shaded", "grid": false}, "viewport": {"op": "front"}},
+        {"name": "opacity-aov", "settings": {"mode": "opacity"}, "different_from": "opacity-shaded"}
+      ]
+    }
+  ]
+}

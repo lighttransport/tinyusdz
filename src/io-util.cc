@@ -87,6 +87,41 @@
 namespace tinyusdz {
 namespace io {
 
+bool OpenInputFile(std::ifstream *file, const std::string &filepath,
+                   std::ios_base::openmode mode) {
+  if (!file) return false;
+#ifdef _WIN32
+#if defined(__GLIBCXX__)
+  // libstdc++ MinGW needs the UTF-16 Win32 path for non-ASCII filenames.
+  file->open(UTF8ToWchar(filepath).c_str(), mode);
+#elif defined(_MSC_VER) || defined(_LIBCPP_VERSION)
+  // LLVM-MinGW libc++ accepts the wchar_t overload, but not a
+  // ghc::filesystem::path passed directly to std::ifstream.
+  file->open(UTF8ToWchar(filepath).c_str(), mode);
+#else
+  file->open(filepath.c_str(), mode);
+#endif
+#else
+  file->open(filepath.c_str(), mode);
+#endif
+  return static_cast<bool>(*file);
+}
+
+bool OpenOutputFile(std::ofstream *file, const std::string &filepath,
+                    std::ios_base::openmode mode) {
+  if (!file) return false;
+#ifdef _WIN32
+#if defined(__GLIBCXX__) || defined(_MSC_VER) || defined(_LIBCPP_VERSION)
+  file->open(UTF8ToWchar(filepath).c_str(), mode);
+#else
+  file->open(filepath.c_str(), mode);
+#endif
+#else
+  file->open(filepath.c_str(), mode);
+#endif
+  return static_cast<bool>(*file);
+}
+
 #if defined(_WIN32)
 namespace {
 
@@ -430,7 +465,7 @@ namespace {
 // glob expansion — so it is safe on any input (this replaces the useful,
 // deterministic part of the old wordexp() call). Undefined variables expand to
 // empty (matching shell default).
-std::string ExpandEnvAndTilde(const std::string &in) {
+[[maybe_unused]] std::string ExpandEnvAndTilde(const std::string &in) {
   std::string out;
   out.reserve(in.size());
   size_t i = 0;

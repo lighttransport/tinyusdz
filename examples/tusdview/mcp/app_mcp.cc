@@ -211,6 +211,12 @@ json App::mcpRenderSettings(const json& args, std::string& err) {
       {"metallic", RenderMode::Metallic},
       {"emissive", RenderMode::Emissive},
       {"opacity", RenderMode::Opacity},
+      {"coat-normal", RenderMode::CoatNormal},
+      {"coat-weight", RenderMode::CoatWeight},
+      {"coat-color", RenderMode::CoatColor},
+      {"coat-roughness", RenderMode::CoatRoughness},
+      {"specular-f0", RenderMode::SpecularF0},
+      {"ior-f0", RenderMode::IorF0},
   };
 
   if (args.contains("mode")) {
@@ -426,12 +432,28 @@ json App::mcpScreenshot(const json& args, std::string& err) {
     err = "screenshot: viewport capture failed (no rendered frame yet?)";
     return json::object();
   }
+  // During the first few windowed frames (and briefly after a scene reload),
+  // ImGui may report a collapsed viewport while its dock layout settles. Such
+  // captures are technically non-empty -- commonly 1x10 -- but are not useful
+  // screenshots and can make consecutive AOVs appear byte-identical. Report a
+  // retryable not-ready result instead of writing misleading image data.
+  if (w <= 1 || h <= 1) {
+    return json{{"written", false},
+                {"ready", false},
+                {"reason", "viewport layout is not ready"},
+                {"width", w},
+                {"height", h}};
+  }
   std::string werr;
   if (!WriteScreenshotImage(path, rgba, w, h, &werr)) {
     err = "screenshot: write failed: " + werr;
     return json::object();
   }
-  return json{{"written", true}, {"path", path}, {"width", w}, {"height", h}};
+  return json{{"written", true},
+              {"ready", true},
+              {"path", path},
+              {"width", w},
+              {"height", h}};
 }
 
 json App::mcpInput(const json& args, std::string& err) {

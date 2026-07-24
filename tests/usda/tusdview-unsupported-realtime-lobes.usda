@@ -8,6 +8,7 @@ def Xform "World"
     def Material "AdvancedMaterial"
     {
         token outputs:surface.connect = </World/AdvancedMaterial/OpenPBR.outputs:surface>
+        token outputs:volume.connect = </World/AdvancedMaterial/Volume.outputs:volume>
 
         def Shader "OpenPBR"
         {
@@ -20,6 +21,12 @@ def Xform "World"
             float inputs:specular_anisotropy = 0.6
             float inputs:transmission_dispersion = 0.7
             token outputs:surface
+        }
+
+        def Shader "Volume"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            token outputs:volume
         }
     }
 

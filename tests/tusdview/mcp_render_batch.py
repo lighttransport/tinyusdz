@@ -110,6 +110,21 @@ def check_ppm(path):
         raise RuntimeError(f"flat screenshot: {path}")
 
 
+def capture_when_ready(client, path, timeout=10.0):
+    """Capture after a windowed viewport has a non-collapsed layout."""
+    deadline = time.monotonic() + timeout
+    last = {}
+    while time.monotonic() < deadline:
+        last = client.call("screenshot", {"path": str(path)})
+        if last.get("written"):
+            return last
+        if last.get("ready") is not False:
+            break
+        time.sleep(0.02)
+    raise RuntimeError(
+        f"screenshot was not ready before timeout: {last}")
+
+
 def rss_kib(pid):
     """Return current resident memory on Linux, or None when unavailable."""
     try:
@@ -204,9 +219,7 @@ def main():
                                 float(action.get("timeout", 30)))
                 suffix = capture.get("name", f"capture-{capture_index}")
                 shot = output / f"{completed:03d}-{name}-{suffix}.ppm"
-                result = client.call("screenshot", {"path": str(shot)})
-                if not result.get("written"):
-                    raise RuntimeError(f"{name}/{suffix}: screenshot was not written")
+                result = capture_when_ready(client, shot)
                 check_ppm(shot)
                 image_bytes = shot.read_bytes()
                 different_from = capture.get("different_from")

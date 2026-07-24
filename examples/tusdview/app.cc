@@ -875,6 +875,40 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
   // headless runs and the usd-assets smoke harness can distinguish a full
   // material fallback (degraded) from a benign missing normal-map texture.
   if (ok) {
+    if (std::getenv("TUSDVIEW_DUMP_LIGHT_RECORDS")) {
+      auto indexHash = [](const std::vector<int>& values) {
+        uint64_t h = 1469598103934665603ull;
+        for (int v : values) {
+          h ^= static_cast<uint64_t>(static_cast<uint32_t>(v));
+          h *= 1099511628211ull;
+        }
+        return h;
+      };
+      for (size_t i = 0; i < draw_.lights.size(); ++i) {
+        const DrawLightCPU& l = draw_.lights[i];
+        std::fprintf(stderr,
+          "[tusdview-light] %zu %d %.9g %.9g %.9g %.9g %.9g %.9g %.9g "
+          "%.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g "
+          "%.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g "
+          "%d %d %d %d %d %d %d %d %d %d %d %d %llu %llu\n",
+          i, static_cast<int>(l.type), l.color[0], l.color[1], l.color[2],
+          l.intensity, l.exposure, l.diffuse, l.specular, l.radius, l.width,
+          l.height, l.length, l.angle, l.shapingConeAngle,
+          l.shapingConeSoftness, l.shapingFocus, l.shapingIesAngleScale,
+          l.shadowColor[0], l.shadowColor[1], l.shadowColor[2], l.shadowDistance,
+          l.shadowFalloff, l.shadowFalloffGamma, l.position[0], l.position[1],
+          l.position[2], l.direction[0], l.direction[1], l.direction[2],
+          l.effectiveIntensity, l.normalize ? 1 : 0, l.shadowEnable ? 1 : 0,
+          l.hasShaping ? 1 : 0, l.lightLinksAll ? 1 : 0,
+          l.shadowLinksAll ? 1 : 0,
+          static_cast<int>(l.domeTextureFormat),
+          l.textureFile.empty() ? 0 : 1, l.ibl.valid ? 1 : 0,
+          l.ibl.specFaceSize, l.ibl.irrFaceSize,
+          l.ibl.lutSize, l.ibl.envCubeSize,
+          static_cast<unsigned long long>(indexHash(l.lightLinkMeshIndices)),
+          static_cast<unsigned long long>(indexHash(l.shadowLinkMeshIndices)));
+      }
+    }
     const LoadDiagnostics diag =
         CategorizeLoadWarnings(loaded_.warn, draw_.skipped);
     if (diag.actionable() > 0) {
@@ -2794,6 +2828,8 @@ int App::run(const std::string& initialFile, int maxFrames,
   gui_.setNextStage(nextSession_ ? &nextSession_->GetStage() : nullptr);
   gui_.setDeferredPayloadPaths({});
   gui_.setBudget(&loadCtrl_);
+  gui_.setCaptureViewportOnly(headless_ && maxFrames >= 0 &&
+                              streamHttpPort_ <= 0);
   // Route the GUI's GPU side-effects (viewport resize, instance visibility) to the
   // render thread; runs inline on the single-threaded path.
   gui_.setPostGpu([this](std::function<void()> op) { postGpu(std::move(op)); });

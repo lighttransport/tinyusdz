@@ -1719,6 +1719,97 @@ void tydra_material_binding_validation_test(void) {
     Stage stage;
 
     Material material;
+    material.materialXConfig = MaterialXConfigAPI{};
+
+    MtlxAutodeskStandardSurface standard_surface;
+    standard_surface.out.set_authored(true);
+    standard_surface.opacity.set_connection(
+        Path("/MaterialPrim/OpacityTex", "outputs:r"));
+    standard_surface.normal.set_connection(
+        Path("/MaterialPrim/NormalTex", "outputs:rgb"));
+    standard_surface.coat_normal.set_connection(
+        Path("/MaterialPrim/CoatNormalTex", "outputs:rgb"));
+    standard_surface.displacement.set_connection(
+        Path("/MaterialPrim/DisplacementTex", "outputs:r"));
+
+    Shader standard_shader;
+    standard_shader.info_id = kNdStandardSurfaceSurfaceshader;
+    standard_shader.value = standard_surface;
+
+    UsdUVTexture opacity_texture;
+    opacity_texture.outputsR.set_authored(true);
+    opacity_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("opacity.png")));
+    Shader opacity_shader;
+    opacity_shader.info_id = kUsdUVTexture;
+    opacity_shader.value = opacity_texture;
+
+    UsdUVTexture normal_texture;
+    normal_texture.outputsRGB.set_authored(true);
+    normal_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("normal.png")));
+    Shader normal_shader;
+    normal_shader.info_id = kUsdUVTexture;
+    normal_shader.value = normal_texture;
+
+    UsdUVTexture coat_normal_texture;
+    coat_normal_texture.outputsRGB.set_authored(true);
+    coat_normal_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("coat-normal.png")));
+    Shader coat_normal_shader;
+    coat_normal_shader.info_id = kUsdUVTexture;
+    coat_normal_shader.value = coat_normal_texture;
+
+    UsdUVTexture displacement_texture;
+    displacement_texture.outputsR.set_authored(true);
+    displacement_texture.file.set_value(
+        Animatable<value::AssetPath>(value::AssetPath("height.png")));
+    Shader displacement_shader;
+    displacement_shader.info_id = kUsdUVTexture;
+    displacement_shader.value = displacement_texture;
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(material_prim.add_child(Prim("StandardSurface", standard_shader)));
+    TEST_CHECK(material_prim.add_child(Prim("OpacityTex", opacity_shader)));
+    TEST_CHECK(material_prim.add_child(Prim("NormalTex", normal_shader)));
+    TEST_CHECK(material_prim.add_child(
+        Prim("CoatNormalTex", coat_normal_shader)));
+    TEST_CHECK(material_prim.add_child(
+        Prim("DisplacementTex", displacement_shader)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.load_texture_assets = false;
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.materials.size() == 1);
+    if (scene.materials.size() == 1) {
+      TEST_CHECK(scene.materials[0].openPBRShader.has_value());
+      if (scene.materials[0].openPBRShader.has_value()) {
+        TEST_CHECK(scene.materials[0].openPBRShader->opacity.texture_id >= 0);
+        TEST_CHECK(scene.materials[0].openPBRShader->normal.texture_id >= 0);
+        TEST_CHECK(
+            scene.materials[0].openPBRShader->coat_normal.texture_id >= 0);
+        TEST_CHECK(
+            scene.materials[0].openPBRShader->displacement.texture_id >= 0);
+      }
+    }
+    TEST_CHECK(converter.GetError().empty());
+  }
+
+  {
+    Stage stage;
+
+    Material material;
     material.surface.set(Path("/PreviewSurface", "outputs:surface"));
 
     UsdPreviewSurface preview_surface;

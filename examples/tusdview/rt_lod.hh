@@ -77,6 +77,7 @@ struct RtLodInstance {
   float tint[3];
   float opacity{1.0f};
   std::uint32_t meshId;     // Full: real mesh; Proxy: boxMeshId
+  std::uint32_t sourceMeshId;  // original prototype, including for Proxy
   RtLod level;
   bool instanced;          // Full + non-instanced => shader useMaterial=1
 };

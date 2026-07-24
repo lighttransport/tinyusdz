@@ -191,6 +191,8 @@ TEST_LIST = {
   { "usdpreviewsurface_displacement_test", usdpreviewsurface_displacement_test },
   { "usduvtexture_uvset_test", usduvtexture_uvset_test },
   { "openpbr_opacity_precedence_test", openpbr_opacity_precedence_test },
+  { "openpbr_geometry_connection_alias_test",
+    openpbr_geometry_connection_alias_test },
   { "tydra_subdivision_catmullclark_test", tydra_subdivision_catmullclark_test },
   { "tydra_subdivision_loop_test", tydra_subdivision_loop_test },
   { "tydra_subdivision_bilinear_test", tydra_subdivision_bilinear_test },

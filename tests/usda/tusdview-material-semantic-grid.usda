@@ -1,0 +1,79 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World" {
+    def Mesh "Preview" {
+        point3f[] points = [(-3, -1, 0), (-1, -1, 0), (-1, 1, 0), (-3, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        texCoord2f[] primvars:st = [(0, 0), (16, 0), (16, 16), (0, 16)] (
+            interpolation = "vertex"
+        )
+        uniform bool doubleSided = true
+        rel material:binding = </World/PreviewMaterial>
+    }
+
+    def Mesh "OpenPBR" {
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        texCoord2f[] primvars:st = [(0, 0), (16, 0), (16, 16), (0, 16)] (
+            interpolation = "vertex"
+        )
+        uniform bool doubleSided = true
+        rel material:binding = </World/OpenPBRMaterial>
+    }
+
+    def Mesh "StandardSurface" {
+        point3f[] points = [(1, -1, 0), (3, -1, 0), (3, 1, 0), (1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        texCoord2f[] primvars:st = [(0, 0), (16, 0), (16, 16), (0, 16)] (
+            interpolation = "vertex"
+        )
+        uniform bool doubleSided = true
+        rel material:binding = </World/StandardMaterial>
+    }
+
+    def Material "PreviewMaterial" {
+        token outputs:surface.connect = </World/PreviewMaterial/Surface.outputs:surface>
+        def Shader "Surface" {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.65, 0.35, 0.2)
+            float inputs:metallic = 0.65
+            float inputs:roughness = 0.35
+            token outputs:surface
+        }
+    }
+
+    def Material "OpenPBRMaterial" {
+        token outputs:surface.connect = </World/OpenPBRMaterial/Surface.outputs:surface>
+        def Shader "Surface" {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.2, 0.45, 0.7)
+            float inputs:base_metalness = 0.45
+            float inputs:specular_roughness = 0.3
+            token outputs:surface
+        }
+    }
+
+    def Material "StandardMaterial" {
+        token outputs:surface.connect = </World/StandardMaterial/Surface.outputs:surface>
+        def Shader "Surface" {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.7, 0.45, 0.2)
+            float inputs:metalness = 0.8
+            float inputs:specular_roughness = 0.65
+            token outputs:surface
+        }
+    }
+
+    def DistantLight "Key" {
+        float inputs:intensity = 4
+        float3 xformOp:rotateXYZ = (0, 30, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+}
