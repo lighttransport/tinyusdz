@@ -578,7 +578,7 @@ void security_base122_roundtrip_test(void) {
   // data corruption for specific inputs.
   {
     // All zeros: triggered the zero-chunk early-exit bug.
-    std::vector<uint8_t> zeros(7, 0);
+    std::vector<uint8_t> zeros(6, 0);
     std::string encoded = base122_encode(zeros);
     TEST_CHECK(!encoded.empty());
     std::vector<uint8_t> decoded;
@@ -600,7 +600,7 @@ void security_base122_roundtrip_test(void) {
   }
 
   {
-    // 8 bytes (larger than a single 7-byte chunk).
+    // 8 bytes (larger than a single 6-byte chunk).
     std::vector<uint8_t> data = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77};
     std::string encoded = base122_encode(data);
     std::vector<uint8_t> decoded;
@@ -611,8 +611,7 @@ void security_base122_roundtrip_test(void) {
   }
 
   {
-    // 6 bytes of 0xFF: the maximum safe chunk for 8 base122 chars.
-    // (7 arbitrary bytes would need 9 chars; 6 bytes fit exactly.)
+    // 6 bytes of 0xFF: the maximum safe chunk for 7 base122 chars.
     std::vector<uint8_t> data(6, 0xFF);
     std::string encoded = base122_encode(data);
     std::vector<uint8_t> decoded;
@@ -620,6 +619,17 @@ void security_base122_roundtrip_test(void) {
     TEST_CHECK(ret == 0);
     TEST_CHECK(decoded.size() == data.size());
     TEST_CHECK(memcmp(decoded.data(), data.data(), data.size()) == 0);
+  }
+
+  {
+    // Seven high-bit bytes must survive a chunk boundary. This catches the
+    // old 7-byte/8-digit encoding, which silently discarded the top bit.
+    std::vector<uint8_t> data(7, 0xFF);
+    std::string encoded = base122_encode(data);
+    std::vector<uint8_t> decoded;
+    int ret = base122_decode(encoded, decoded);
+    TEST_CHECK(ret == 0);
+    TEST_CHECK(decoded == data);
   }
 }
 
@@ -675,7 +685,11 @@ void security_zstd_max_decompressed_size_test(void) {
 
   std::vector<uint8_t> compressed;
   std::string compress_err;
-  TEST_CHECK(ok);
+  bool compress_ok = ZstdCompression::Compress(
+      reinterpret_cast<const uint8_t *>(input_str.data()), input_str.size(),
+      &compressed, ZstdCompression::kDefaultCompressionLevel, &compress_err);
+  TEST_CHECK(compress_ok);
+  TEST_CHECK(!compressed.empty());
 
   // Decompress with a limit smaller than the data should fail.
   {
