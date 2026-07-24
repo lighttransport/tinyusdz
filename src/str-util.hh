@@ -103,11 +103,11 @@ inline std::string unwrap(const std::string &str,
 
   std::string s = str;
 
-  if (s.substr(0, n) == delim) {
+  if (s.size() >= n && s.substr(0, n) == delim) {
     s.erase(0, n);
   }
 
-  if (s.substr(s.size() - n) == delim) {
+  if (s.size() >= n && s.substr(s.size() - n) == delim) {
     s.erase(s.size() - n);
   }
 

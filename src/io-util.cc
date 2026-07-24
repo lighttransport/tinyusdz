@@ -249,36 +249,27 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
   return true;
 
 #else   // !WIN32
-  // assume posix
-  FILE *fp = fopen(filepath.c_str(), writable ? "rw" : "r");
-  if (!fp) {
+  // POSIX: open with O_NOFOLLOW to reject symlinks (symlink-following
+  // could be used to read sensitive files via crafted USD paths).
+  int fd = ::open(filepath.c_str(),
+                  writable ? (O_RDWR | O_NOFOLLOW) : (O_RDONLY | O_NOFOLLOW));
+  if (fd < 0) {
     if (err) {
-      (*err) += "fopen failed.";
+      (*err) += "open failed.";
     }
     return false;
   }
 
-  int ret = std::fseek(fp, 0, SEEK_END);
-  if (ret != 0) {
-    if (err) {
-      (*err) += "Failed to fseek.";
-    }
-    fclose(fp);
-    return false;
-  }
-
-  size_t size = size_t(std::ftell(fp));
-  std::fseek(fp, 0, SEEK_SET);
+  size_t size = size_t(::lseek(fd, 0, SEEK_END));
+  ::lseek(fd, 0, SEEK_SET);
 
   if (size == 0) {
     if (err) {
       (*err) += "File size is zero.";
     }
-    fclose(fp);
+    ::close(fd);
     return false;
   }
-
-  int fd = fileno(fp);
 
   int flags = MAP_PRIVATE;  // delayed access
   void *addr =
@@ -288,7 +279,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
     if (err) {
       (*err) += "mmap failed.";
     }
-    fclose(fp);
+    ::close(fd);
     return false;
   }
 
@@ -296,8 +287,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
   handle->size = uint64_t(size);
   handle->writable = writable;
   handle->filename = filepath;
-  close(fd);
-  fclose(fp);
+  ::close(fd);
 
   return true;
 #endif  // !WIN32
@@ -1210,6 +1200,12 @@ std::string FindFile(const std::string &filename,
     if (io::FileExists(absPath, /* userdata */ nullptr)) {
       return absPath;
     }
+  }
+
+  // Reject filenames containing parent-directory references to prevent
+  // directory traversal escapes from the search path root.
+  if (filename.find("..") != std::string::npos) {
+    return std::string();
   }
 
   for (size_t i = 0; i < search_paths.size(); i++) {

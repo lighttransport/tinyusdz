@@ -1831,6 +1831,14 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
+        {
+          size_t tc_bytes;
+          if (!safe::n_to_size<value::timecode>(raw.size(), &tc_bytes)) {
+            PUSH_ERROR("Integer overflow in TimeCode vector size computation.");
+            return false;
+          }
+          CHECK_MEMORY_USAGE(tc_bytes);
+        }
         std::vector<value::timecode> v;
         v.reserve(raw.size());
         for (double d : raw) {
@@ -3629,6 +3637,12 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           PUSH_ERROR("Failed to read StringIndex array.");
           return false;
         }
+
+        size_t path_exprs_bytes;
+        if (!safe::n_to_size<value::PathExpression>(n, &path_exprs_bytes)) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: n * sizeof(value::PathExpression)");
+        }
+        CHECK_MEMORY_USAGE(path_exprs_bytes);
 
         std::vector<value::PathExpression> exprs(static_cast<size_t>(n));
         for (size_t i = 0; i < n; i++) {

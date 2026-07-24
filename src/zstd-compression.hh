@@ -49,10 +49,14 @@ class ZstdCompression {
   /// @param[in] compressedSize Size of compressed data in bytes
   /// @param[out] output Vector to store decompressed data
   /// @param[out] err Error message on failure
+  /// @param[in] maxDecompressedSize Maximum allowed decompressed size in bytes.
+  ///             0 means no limit (default). Use GetDecompressedSize() to check
+  ///             the expected size before calling Decompress.
   /// @return true on success, false on failure
   ///
   static bool Decompress(const uint8_t *compressed, size_t compressedSize,
-                         std::vector<uint8_t> *output, std::string *err);
+                         std::vector<uint8_t> *output, std::string *err,
+                         size_t maxDecompressedSize = 0);
 
   ///
   /// Compress data using zstd.
@@ -96,7 +100,7 @@ class ZstdCompression {
     return 0;
   }
   static bool Decompress(const uint8_t *, size_t, std::vector<uint8_t> *,
-                         std::string *err) {
+                         std::string *err, size_t = 0) {
     if (err) *err = "Zstd compression support not enabled";
     return false;
   }

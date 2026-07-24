@@ -30,6 +30,7 @@
 #include "lz4-compression.hh"
 #include "zstd-compression.hh"
 #include "security-policy.hh"
+#include "safe-arithmetic.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "string-pool.hh"
@@ -50,6 +51,17 @@
 namespace tinyusdz {
 
 namespace {
+
+// Compute max bytes from a memory-limit-in-MB setting using uint64_t to avoid
+// overflow on 32-bit platforms (where size_t is 32-bit). Returns SIZE_MAX when
+// the result exceeds the addressable range (clamped rather than wrapped).
+inline size_t MaxMemoryBytes(uint64_t limit_mb) {
+  uint64_t bytes = uint64_t(1024) * uint64_t(1024) * limit_mb;
+  if (bytes > uint64_t((std::numeric_limits<size_t>::max)())) {
+    return (std::numeric_limits<size_t>::max)();
+  }
+  return static_cast<size_t>(bytes);
+}
 
 FILE *ProfileOutput() {
 #if defined(__clang__)
@@ -170,21 +182,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   bool swap_endian = false;  // @FIXME
 
-  size_t max_length;
-
-  // 32bit env
-  if (sizeof(void *) == 4) {
-    if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
-      max_length = (std::numeric_limits<uint32_t>::max)();
-    } else {
-      max_length =
-          size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-    }
-  } else {
-    // TODO: Set hard limit?
-    max_length =
-        size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-  }
+  size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
 
   DCOUT("Max length = " << max_length);
 
@@ -313,7 +311,7 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
 
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       if (err) {
@@ -425,11 +423,15 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     // read in the variable name
     uint16_t name_len;
     memcpy(&name_len, &local_header[26], sizeof(uint16_t));
-    if ((offset + name_len) > length) {
-      if (err) {
-        (*err) += "Invalid ZIP data\n";
+    {
+      size_t next_offset;
+      if (!safe::add(offset, size_t(name_len), &next_offset) ||
+          next_offset > length) {
+        if (err) {
+          (*err) += "Invalid ZIP data\n";
+        }
+        return false;
       }
-      return false;
     }
 
     std::string varname(name_len, ' ');
@@ -448,13 +450,20 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       return false;
     }
 
-    offset += name_len;
+    if (!safe::add(offset, size_t(name_len), &offset)) {
+      if (err) {
+        (*err) += "Integer overflow in ZIP entry name length.\n";
+      }
+      return false;
+    }
 
     // read in the extra field
     uint16_t extra_field_len;
     memcpy(&extra_field_len, &local_header[28], sizeof(uint16_t));
     if (extra_field_len > 0) {
-      if (offset + extra_field_len > length) {
+      size_t next_offset;
+      if (!safe::add(offset, size_t(extra_field_len), &next_offset) ||
+          next_offset > length) {
         if (err) {
           (*err) += "Invalid extra field length in ZIP data\n";
         }
@@ -462,7 +471,12 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       }
     }
 
-    offset += extra_field_len;
+    if (!safe::add(offset, size_t(extra_field_len), &offset)) {
+      if (err) {
+        (*err) += "Integer overflow in ZIP extra field length.\n";
+      }
+      return false;
+    }
 
     // In strict USDZ, data must be aligned at a 64-byte boundary. Keep
     // ValidateUSDZ() strict, but allow the loader to read unaligned stored ZIP
@@ -498,7 +512,7 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       return false;
     }
 
-    if (uncompr_bytes > (length - offset)) {
+    if (offset > length || uncompr_bytes > (length - offset)) {
       if (!assets) {
         // Detection mode (IsUSDZ / IsUSD): only a prefix of the file was read
         // (IsUSDZ reads ~256 bytes), so the first entry's data legitimately
@@ -522,12 +536,26 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       DCOUT("USDZasset[" << assets->size() << "] " << varname << ", byte_begin " << offset << ", length " << uncompr_bytes << "\n");
       info.filename = varname;
       info.byte_begin = offset;
-      info.byte_end = offset + uncompr_bytes;
+      {
+        size_t end_offset;
+        if (!safe::add(offset, size_t(uncompr_bytes), &end_offset)) {
+          if (err) {
+            (*err) += "Integer overflow in ZIP uncompressed size.\n";
+          }
+          return false;
+        }
+        info.byte_end = end_offset;
+      }
 
       assets->push_back(info);
     }
 
-    offset += uncompr_bytes;
+    if (!safe::add(offset, size_t(uncompr_bytes), &offset)) {
+      if (err) {
+        (*err) += "Integer overflow in ZIP uncompressed size.\n";
+      }
+      return false;
+    }
   }
 
   if (assets && offset < length) {
@@ -747,7 +775,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       return false;
@@ -902,7 +930,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       if (err) {
@@ -969,7 +997,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       return false;
@@ -1014,7 +1042,7 @@ static bool LoadUSDFromMemoryImpl(const uint8_t *addr, const size_t length,
     }
 
     // Check against memory budget
-    size_t max_length = size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+    size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (decompressed_size > max_length) {
       if (err) {
         (*err) += "Decompressed USD size (" + std::to_string(decompressed_size) +
@@ -1304,21 +1332,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
 
   bool swap_endian = false;  // @FIXME
 
-  size_t max_length;
-
-  // 32bit env
-  if (sizeof(void *) == 4) {
-    if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
-      max_length = (std::numeric_limits<uint32_t>::max)();
-    } else {
-      max_length =
-          size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-    }
-  } else {
-    // TODO: Set hard limit?
-    max_length =
-        size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-  }
+  size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
 
   DCOUT("Max length = " << max_length);
 
@@ -1683,7 +1697,7 @@ bool LoadLayerFromFile(const std::string &_filename, Layer *stage,
   std::string base_dir = io::GetBaseDir(filepath);
 
   std::vector<uint8_t> data;
-  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+  size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     return false;

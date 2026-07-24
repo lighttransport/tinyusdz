@@ -1390,7 +1390,7 @@ bool CrateWriter::ConvertSinglePrim(
     for (const auto& vs_item : variant_sets) {
       const auto& variantset_name = vs_item.first;
       const auto& variantset_data = vs_item.second;
-      if (!ConvertVariantSetToFields(variantset_name, variantset_data, prim_path, err)) {
+      if (!ConvertVariantSetToFields(variantset_name, variantset_data, prim_path, err, /*depth*/ 0)) {
         if (err) *err = "Failed to convert VariantSet '" + variantset_name + "' for " + abs_path_str + ": " + *err;
         return false;
       }
@@ -3636,7 +3636,12 @@ bool CrateWriter::ConvertVariantSetToFields(
     const std::string& variantset_name,
     const VariantSet& variantset,
     const Path& parent_path,
-    std::string* err) {
+    std::string* err,
+    int depth) {
+  if (depth > 512) {
+    if (err) *err = "VariantSet nesting too deep (>512).";
+    return false;
+  }
 
   // VariantSet path: parent{variantSetName} (e.g., /Chair{materialVariant})
   // pxr's SdfPath has no bare `{set}` form: a VariantSet spec lives at the
@@ -3675,7 +3680,7 @@ bool CrateWriter::ConvertVariantSetToFields(
     const auto& variant_name = variant_item.first;
     const auto& variant_data = variant_item.second;
 
-    if (!ConvertVariantToFields(variant_name, variant_data, parent_path, variantset_name, err)) {
+    if (!ConvertVariantToFields(variant_name, variant_data, parent_path, variantset_name, err, depth + 1)) {
       if (err) *err = "Failed to convert variant '" + variant_name + "': " + *err;
       return false;
     }
@@ -3689,7 +3694,8 @@ bool CrateWriter::ConvertVariantToFields(
     const Variant& variant,
     const Path& parent_prim_path,  // The prim that owns the variantSet (e.g., /Chair)
     const std::string& variantset_name,
-    std::string* err) {
+    std::string* err,
+    int depth) {
 
   // Variant path: parent_prim_path{variantSetName=variant_name}
   // (e.g., /Chair{materialVariant=plastic})
@@ -3779,7 +3785,7 @@ bool CrateWriter::ConvertVariantToFields(
 
   // Process nested variant sets
   for (const auto& vs_item : variant.variantSets()) {
-    if (!ConvertVariantSetToFields(vs_item.first, vs_item.second, v_path, err)) {
+    if (!ConvertVariantSetToFields(vs_item.first, vs_item.second, v_path, err, depth + 1)) {
       if (err) *err = "Failed to convert nested VariantSet '" + vs_item.first
                      + "' in variant " + variant_name + ": " + *err;
       return false;
