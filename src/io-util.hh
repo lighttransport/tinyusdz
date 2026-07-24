@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstddef>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -17,6 +18,15 @@
 
 namespace tinyusdz {
 namespace io {
+
+// Open standard streams from a UTF-8 path.  libc++'s MinGW implementation
+// does not provide the C++17 filesystem-path stream constructors for the
+// vendored ghc::filesystem::path type.  Keep the platform path conversion in
+// one place so callers using that path type can pass path.string() here.
+bool OpenInputFile(std::ifstream *file, const std::string &filepath,
+                   std::ios_base::openmode mode = std::ios_base::in);
+bool OpenOutputFile(std::ofstream *file, const std::string &filepath,
+                    std::ios_base::openmode mode = std::ios_base::out);
 
 // TODO: Move texture-utils.hh or somewhere, not here.
 //

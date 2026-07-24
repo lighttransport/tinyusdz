@@ -421,12 +421,29 @@ void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
   }
 }
 
+uint32_t RtLightCollectionMaskForMesh(
+    const std::vector<DrawLightCPU>& lights, int meshIndex, bool shadow) {
+  uint32_t mask = 0u;
+  const size_t count = std::min(lights.size(),
+                                static_cast<size_t>(kMaxRtLinkedLights));
+  for (size_t i = 0; i < count; ++i) {
+    const DrawLightCPU& light = lights[i];
+    const bool all = shadow ? light.shadowLinksAll : light.lightLinksAll;
+    const std::vector<int>& linked = shadow ? light.shadowLinkMeshIndices
+                                            : light.lightLinkMeshIndices;
+    if (all || std::find(linked.begin(), linked.end(), meshIndex) != linked.end())
+      mask |= uint32_t{1} << static_cast<uint32_t>(i);
+  }
+  return mask;
+}
+
 void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
                            const std::vector<DrawMaterialCPU>& materials,
                            HostTextureTable* out) {
   if (!out) return;
   *out = HostTextureTable{};
-  out->matTex.assign(std::max<size_t>(materials.size(), 1) * 6, -1);
+  out->matTex.assign(
+      std::max<size_t>(materials.size(), 1) * kRtMaterialTexSlots, -1);
   out->matTexParam.assign(std::max<size_t>(materials.size(), 1) *
                               kRtMaterialTextureParamFloats,
                           0.0f);
@@ -538,12 +555,18 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
   };
   for (size_t i = 0; i < materials.size(); ++i) {
     const DrawMaterialCPU& dm = materials[i];
-    out->matTex[i * 6 + 0] = mapTex(dm.baseColorTex);
-    out->matTex[i * 6 + 1] = mapTex(dm.metallicTex);
-    out->matTex[i * 6 + 2] = mapTex(dm.roughnessTex);
-    out->matTex[i * 6 + 3] = mapTex(dm.normalTex);
-    out->matTex[i * 6 + 4] = mapTex(dm.emissiveTex);
-    out->matTex[i * 6 + 5] = mapTex(dm.opacityTex);
+    out->matTex[i * kRtMaterialTexSlots + 0] = mapTex(dm.baseColorTex);
+    out->matTex[i * kRtMaterialTexSlots + 1] = mapTex(dm.metallicTex);
+    out->matTex[i * kRtMaterialTexSlots + 2] = mapTex(dm.roughnessTex);
+    out->matTex[i * kRtMaterialTexSlots + 3] = mapTex(dm.normalTex);
+    out->matTex[i * kRtMaterialTexSlots + 4] = mapTex(dm.emissiveTex);
+    out->matTex[i * kRtMaterialTexSlots + 5] = mapTex(dm.opacityTex);
+    out->matTex[i * kRtMaterialTexSlots + 6] = mapTex(dm.occlusionTex);
+    out->matTex[i * kRtMaterialTexSlots + 7] = mapTex(dm.coatWeightTex);
+    out->matTex[i * kRtMaterialTexSlots + 8] = mapTex(dm.coatColorTex);
+    out->matTex[i * kRtMaterialTexSlots + 9] = mapTex(dm.coatRoughnessTex);
+    out->matTex[i * kRtMaterialTexSlots + 10] = mapTex(dm.specularColorTex);
+    out->matTex[i * kRtMaterialTexSlots + 11] = mapTex(dm.coatNormalTex);
     PackRtMaterialTextureParams(
         dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
   }
@@ -770,6 +793,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     float tint[4];
     int blasRoot;
     int proto;          // index into protoBox
+    int meshIndex;
   };
   std::vector<InstSrc> isrc;
   std::vector<std::array<float, 6>> protoBox;  // {lo.xyz, hi.xyz} per accepted mesh
@@ -825,6 +849,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       s.tint[3] = mb.instTint[k * 4 + 3];
       s.blasRoot = blasRoot;
       s.proto = proto;
+      s.meshIndex = mbi < scene.meshes.size() ? static_cast<int>(mbi) : -1;
       isrc.push_back(s);
     }
     if (np > 0 && isrc.size() >= instCap) out->truncated = true;
@@ -843,6 +868,10 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     I.tint[2] = s.tint[2]; I.tint[3] = s.tint[3];
     I.blasRoot = s.blasRoot;
     I.instId = static_cast<int>(i);
+    I.directLightMask = RtLightCollectionMaskForMesh(
+        scene.lights, s.meshIndex, false);
+    I.shadowLightMask = RtLightCollectionMaskForMesh(
+        scene.lights, s.meshIndex, true);
     const auto& box = protoBox[s.proto];
     float wlo[3], whi[3];
     O2WAabb(s.o2w, box.data(), box.data() + 3, wlo, whi);

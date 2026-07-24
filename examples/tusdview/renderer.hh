@@ -72,6 +72,12 @@ enum class RenderMode : int {
   BlendInfluence = 32,    // per-vertex blendshape displacement magnitude (raster)
   TexelDensity = 33,      // UV-to-world area ratio (view-independent texel density)
   SourceFaceId = 34,      // original USD face id before triangulation (hashed)
+  CoatNormal = 35,        // independently authored coat-layer shading normal
+  CoatWeight = 36,        // evaluated coat-layer scalar weight
+  CoatColor = 37,         // evaluated coat-layer tint
+  CoatRoughness = 38,     // evaluated coat-layer roughness
+  SpecularF0 = 39,        // evaluated specular-workflow reflectance
+  IorF0 = 40,             // dielectric F0 derived from authored IOR
 };
 enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 
@@ -148,6 +154,11 @@ struct RenderFrameParams {
   // (GL + VK raster). It may include transient view/frustum filtering.
   const uint8_t* meshVisible{nullptr};
   int meshVisibleCount{0};
+
+  // Native carrier visibility mask. Indices are DrawScene::points followed by
+  // DrawScene::curves, matching the upload order in uploadScene().
+  const uint8_t* carrierVisible{nullptr};
+  int carrierVisibleCount{0};
 
   // Persistent user hide/isolate mask for Vulkan RT. Unlike meshVisible this
   // must not contain frustum culling: off-screen geometry still casts shadows.

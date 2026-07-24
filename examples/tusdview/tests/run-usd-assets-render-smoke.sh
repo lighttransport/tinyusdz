@@ -452,10 +452,13 @@ run_one() {
     status="timeout"
   elif grep -Eiq 'CUDA ray tracing unavailable|CUDA RT failed|no CUDA|NVRTC.*failed|HIP ray tracing unavailable|HIP RT failed|no HIP|hiprtc.*failed|renderer init failed: no Vulkan|no Vulkan physical device|Vulkan backend unavailable|Vulkan unavailable|backend .*unavailable|Failed to create Vulkan|lightrt_vk_engine_create failed' "$log"; then
     status="backend_unavailable"
+  # The viewer reports empty but valid layers as "load failed: ... no
+  # renderable geometry produced".  Check this before the broad load-failure
+  # matcher so material/camera/look layers do not inflate hard load errors.
+  elif grep -Eqi 'no renderable geometry produced|render stats: meshes 0/0 visible, instances 0/0 visible, drawn tris 0|loaded .*: 0 mesh\(es\), 0 tri\(s\)|rt meshes: 0|triangles: 0|found no renderable Mesh triangles' "$log"; then
+    status="no_renderable"
   elif grep -Eiq 'load failed|Failed to load USD|LoadUSDFromFile.*failed|parse error|No such file|cannot open|^ERR .*load|^ERROR .*load' "$log"; then
     status="load_error"
-  elif grep -Eq 'render stats: meshes 0/0 visible, instances 0/0 visible, drawn tris 0|loaded .*: 0 mesh\(es\), 0 tri\(s\)|rt meshes: 0|triangles: 0|found no renderable Mesh triangles' "$log"; then
-    status="no_renderable"
   elif [[ "$mode" == tusdr-* ]] && [ ! -s "$out" ]; then
     status="backend_error"
   elif [[ "$mode" == tusdr-* ]] && nonblank_file "$out"; then
@@ -638,6 +641,7 @@ if [ "$GOLDEN_ENABLED" -eq 1 ] && [ "$GOLDEN_UPDATE" = "1" ]; then
   {
     printf '# tusdview usd-assets render fingerprints (mode<TAB>asset<TAB>fp).\n'
     printf '# kind=%s tol=%s; regenerate with --update-golden.\n' "$GOLDEN_KIND" "$GOLDEN_TOL"
+    printf '# size=%s; fixed-frame headless viewport.\n' "$SIZE"
     sort -t$'\t' -k1,1 -k2,2 "$NEW_GOLDEN"
   } > "$GOLDEN_FILE"
   echo "golden : wrote $(grep -cv '^#' "$GOLDEN_FILE") fingerprints -> $GOLDEN_FILE"

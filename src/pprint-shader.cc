@@ -354,6 +354,8 @@ static std::string print_shader_params(
   ss << print_typed_attr(shader.thin_walled, "inputs:thin_walled", indent);
   ss << print_typed_attr(shader.normal, "inputs:normal", indent);
   ss << print_typed_attr(shader.tangent, "inputs:tangent", indent);
+  ss << print_typed_attr(shader.coat_normal, "inputs:coat_normal", indent);
+  ss << print_typed_attr(shader.displacement, "inputs:displacement", indent);
   ss << print_typed_terminal_attr(shader.out, "outputs:out", indent);
   ss << print_common_shader_params(shader, indent);
 

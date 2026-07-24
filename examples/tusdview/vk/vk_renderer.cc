@@ -26,6 +26,8 @@
 #include "line_frag.spv.h"
 #include "line_vert.spv.h"
 #include "mesh_frag.spv.h"
+#include "shadow_frag.spv.h"
+#include "shadow_inst_frag.spv.h"
 #include "mesh_inst_frag.spv.h"
 #include "mesh_inst_vert.spv.h"
 #include "mesh_tess_tesc.spv.h"
@@ -46,7 +48,7 @@ namespace tusdview {
 namespace {
 
 constexpr uint32_t kRasterDescriptorSetCount = 4;
-constexpr uint32_t kMaterialBindingCount = 17;
+constexpr uint32_t kMaterialBindingCount = 32;
 constexpr uint32_t kDeformBindingCount = 7;
 constexpr uint32_t kMaxMaterialSets = 8192;
 constexpr uint32_t kMaxDeformSets = 16384;
@@ -248,6 +250,9 @@ struct FrameUBO {
   float envRot[16];     // world -> environment rotation (dome IBL; mat4)
   float iblColor[4];    // .rgb dome effectiveColor, .w = hasIbl (0/1)
   float iblParams[4];   // .x = prefiltered mip count
+  float shadowViewProj[16];
+  float pointShadowLight[4];  // xyz position, w = point cube shadow enabled
+  float pointShadowViewProj[6][16];
 };
 
 constexpr uint32_t kVkMatTexParamVec4s =
@@ -314,52 +319,11 @@ static_assert(sizeof(RtSubmeshRangeGPU) == 16, "RT submesh range must match uvec
 struct InstanceInfoGPU {
   uint32_t meshId;       // index into the MeshDesc SSBO
   uint32_t useMaterial;  // 1 = non-instanced (material base + normalMat); 0 = tint + o2w
-  uint32_t pad0, pad1;
+  uint32_t directLightMask;
+  uint32_t shadowLightMask;
   float tint[4];         // per-instance color/opacity or flatColor/flatOpacity
 };
 static_assert(sizeof(InstanceInfoGPU) == 32, "InstanceInfoGPU scalar layout");
-
-// General column-major 4x4 inverse (for the camera's inverse view-projection).
-bool Mat4Inverse(const float m[16], float out[16]) {
-  float inv[16];
-  inv[0] = m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] +
-           m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
-  inv[4] = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] -
-           m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
-  inv[8] = m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] +
-           m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
-  inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] -
-            m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
-  inv[1] = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] -
-           m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
-  inv[5] = m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] +
-           m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
-  inv[9] = -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] -
-           m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
-  inv[13] = m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] +
-            m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
-  inv[2] = m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15] +
-           m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
-  inv[6] = -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15] -
-           m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
-  inv[10] = m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15] +
-            m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
-  inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14] -
-            m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
-  inv[3] = -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11] -
-           m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
-  inv[7] = m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11] +
-           m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
-  inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11] -
-            m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
-  inv[15] = m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10] +
-            m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
-  float det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
-  if (std::fabs(det) < 1e-20f) return false;
-  det = 1.0f / det;
-  for (int i = 0; i < 16; ++i) out[i] = inv[i] * det;
-  return true;
-}
 
 }  // namespace
 
@@ -1173,6 +1137,14 @@ bool VulkanRenderer::createOffscreenRenderPass(std::string* err) {
   ci.pDependencies = deps;
   VK_CHECK(vkCreateRenderPass(device_, &ci, nullptr, &offscreenPass_),
            "offscreen render pass");
+  atts[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  atts[1].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  deps[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  deps[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  VK_CHECK(vkCreateRenderPass(device_, &ci, nullptr, &shadowPass_),
+           "shadow render pass");
   return true;
 }
 
@@ -1459,6 +1431,25 @@ bool VulkanRenderer::createPipeline(std::string* err) {
                                             nullptr, &translucentPipeline_);
     if (rt != VK_SUCCESS) translucentPipeline_ = VK_NULL_HANDLE;  // opaque-only fallback
   }
+  if (r == VK_SUCCESS) {
+    VkShaderModule shadowFs =
+        createShader(shadow_frag_spv, sizeof(shadow_frag_spv));
+    if (shadowFs) {
+      VkPipelineShaderStageCreateInfo shadowStages[2] = {stages[0], stages[1]};
+      shadowStages[1].module = shadowFs;
+      VkPipelineColorBlendAttachmentState shadowCba = cba;
+      shadowCba.colorWriteMask = 0;
+      VkPipelineColorBlendStateCreateInfo shadowCb = cb;
+      shadowCb.pAttachments = &shadowCba;
+      VkGraphicsPipelineCreateInfo shadowCi = ci;
+      shadowCi.pStages = shadowStages;
+      shadowCi.pColorBlendState = &shadowCb;
+      if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &shadowCi,
+                                    nullptr, &shadowPipeline_) != VK_SUCCESS)
+        shadowPipeline_ = VK_NULL_HANDLE;
+      vkDestroyShaderModule(device_, shadowFs, nullptr);
+    }
+  }
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
   if (r != VK_SUCCESS) {
@@ -1743,6 +1734,29 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
   if (r == VK_SUCCESS) {
     tr = createInstVariant(/*translucent=*/true, &instTranslucentPipeline_);
   }
+  if (r == VK_SUCCESS) {
+    VkShaderModule shadowFs =
+        createShader(shadow_inst_frag_spv, sizeof(shadow_inst_frag_spv));
+    if (shadowFs) {
+      VkPipelineShaderStageCreateInfo shadowStages[2] = {stages[0], stages[1]};
+      shadowStages[1].module = shadowFs;
+      VkPipelineColorBlendAttachmentState shadowCba = cba;
+      shadowCba.blendEnable = VK_FALSE;
+      shadowCba.colorWriteMask = 0;
+      VkPipelineColorBlendStateCreateInfo shadowCb = cb;
+      shadowCb.pAttachments = &shadowCba;
+      VkGraphicsPipelineCreateInfo shadowCi = ci;
+      shadowCi.pStages = shadowStages;
+      shadowCi.pColorBlendState = &shadowCb;
+      shadowCi.renderPass = shadowPass_;
+      ds.depthWriteEnable = VK_TRUE;
+      shadowCi.pDepthStencilState = &ds;
+      if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &shadowCi,
+                                    nullptr, &instShadowPipeline_) != VK_SUCCESS)
+        instShadowPipeline_ = VK_NULL_HANDLE;
+      vkDestroyShaderModule(device_, shadowFs, nullptr);
+    }
+  }
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
   if (r != VK_SUCCESS || tr != VK_SUCCESS) {
@@ -1853,17 +1867,30 @@ bool VulkanRenderer::createLinePipeline(std::string* err) {
   VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                          &linePipeline_);
 
+  // Native Points/Curves use the same unlit vertex format and push constants,
+  // but are expanded to camera-facing triangles on the CPU.  Keeping a
+  // triangle-list variant here avoids routing them through the mesh material
+  // descriptor machinery (and avoids the old solid proxy geometry).
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  VkResult rnm = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
+                                           &nonMeshPipeline_);
+
   // Second variant with depth testing disabled, for the skeleton X-ray overlay.
   VkPipelineDepthStencilStateCreateInfo dsNo = ds;
   dsNo.depthTestEnable = VK_FALSE;
   dsNo.depthWriteEnable = VK_FALSE;
+  // nonMeshPipeline_ temporarily changes the shared input-assembly state to
+  // triangles. Restore LINE_LIST before creating the no-depth helper variant;
+  // otherwise grid/axis/skeleton line vertices are consumed three at a time as
+  // giant colored triangles over every Vulkan RT frame.
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
   ci.pDepthStencilState = &dsNo;
   VkResult r2 = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                           &linePipelineNoDepth_);
 
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
-  if (r != VK_SUCCESS || r2 != VK_SUCCESS) {
+  if (r != VK_SUCCESS || rnm != VK_SUCCESS || r2 != VK_SUCCESS) {
     if (err) *err = "vkCreateGraphicsPipelines(line) failed";
     return false;
   }
@@ -2283,6 +2310,26 @@ bool VulkanRenderer::createSampler(std::string* err) {
   ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
   ci.maxLod = VK_LOD_CLAMP_NONE;
   VK_CHECK(vkCreateSampler(device_, &ci, nullptr, &sampler_), "sampler");
+  auto addressMode = [](int wrap) {
+    switch (static_cast<WrapMode>(wrap)) {
+      case WrapMode::Repeat: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      case WrapMode::Mirror: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+      case WrapMode::ClampToBorder: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+      case WrapMode::ClampToEdge:
+      default: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    }
+  };
+  for (int s = 0; s < 4; ++s) {
+    for (int t = 0; t < 4; ++t) {
+      VkSamplerCreateInfo materialCi = ci;
+      materialCi.addressModeU = addressMode(s);
+      materialCi.addressModeV = addressMode(t);
+      materialCi.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+      VK_CHECK(vkCreateSampler(device_, &materialCi, nullptr,
+                               &materialSamplers_[static_cast<size_t>(s * 4 + t)]),
+               "material sampler");
+    }
+  }
   return true;
 }
 
@@ -2303,8 +2350,10 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
            "tex descriptor set layout");
 
   // Set 0: all material textures plus the three scene-wide IBL images. Binding
-  // 16 is displacement and is deliberately not fragment-visible, keeping the
-  // fragment-stage sampler count at Vulkan's guaranteed minimum of 16.
+  // 16 is displacement and is deliberately not fragment-visible. Bindings
+  // 20-24 are the 2D-only specular-color / coat-weight / coat-color /
+  // coat-roughness / coat-normal slots; 25 is the scene-wide point shadow cube,
+  // and 26 is the specular-color UDIM array.
   VkDescriptorSetLayoutBinding materialBindings[kMaterialBindingCount]{};
   for (uint32_t i = 0; i < kMaterialBindingCount; ++i) {
     materialBindings[i].binding = i;
@@ -2312,8 +2361,10 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     materialBindings[i].descriptorCount = 1;
     materialBindings[i].stageFlags =
-        (i == 16) ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_FRAGMENT_BIT;
-    if (i == 16 && tessSupported_) {
+        (i == 16 || i == 31) ? VK_SHADER_STAGE_VERTEX_BIT
+                             : VK_SHADER_STAGE_FRAGMENT_BIT;
+    if (i == 5) materialBindings[i].stageFlags |= VK_SHADER_STAGE_VERTEX_BIT;
+    if ((i == 5 || i == 16 || i == 31) && tessSupported_) {
       materialBindings[i].stageFlags |=
           VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
     }
@@ -2765,11 +2816,64 @@ void VulkanRenderer::updateMaterialDescriptor(size_t materialId) {
       iblSpecView_ ? iblSpecView_ : blackCubeView_,
       iblLutView_ ? iblLutView_ : blackView_,
       udimView(material.roughnessTex),
-      textureView(material.displacementTex, blackView_)};
+      textureView(material.displacementTex, blackView_),
+      textureView(material.occlusionTex, whiteView_),
+      udimView(material.occlusionTex)};
+  int textureSlots[kMaterialBindingCount] = {
+      material.baseColorTex, material.metallicTex, material.emissiveTex,
+      material.normalTex, material.baseColorTex, -1, material.metallicTex,
+      material.normalTex, material.emissiveTex, material.opacityTex,
+      material.opacityTex, material.roughnessTex, -1, -1, -1,
+      material.roughnessTex, material.displacementTex, material.occlusionTex,
+      material.occlusionTex};
+  static_assert(kMaterialBindingCount == 32, "material descriptor table drift");
+  views[19] = shadowDepthView_ ? shadowDepthView_ : whiteView_;
+  // Extra 2D-only material slots. UDIM sources fall back to white (treated as
+  // unbound) rather than sampling the wrong image.
+  auto plain2dView = [&](int slot) {
+    const bool udim = slot >= 0 &&
+                      static_cast<size_t>(slot) < texIsUdim_.size() &&
+                      texIsUdim_[static_cast<size_t>(slot)] != 0;
+    return udim ? whiteView_ : textureView(slot, whiteView_);
+  };
+  views[20] = plain2dView(material.specularColorTex);
+  views[21] = plain2dView(material.coatWeightTex);
+  views[22] = plain2dView(material.coatColorTex);
+  views[23] = plain2dView(material.coatRoughnessTex);
+  views[24] = plain2dView(material.coatNormalTex);
+  views[25] = pointShadowDepthView_ ? pointShadowDepthView_ : blackCubeView_;
+  views[26] = udimView(material.specularColorTex);
+  views[27] = udimView(material.coatWeightTex);
+  views[28] = udimView(material.coatColorTex);
+  views[29] = udimView(material.coatRoughnessTex);
+  views[30] = udimView(material.coatNormalTex);
+  views[31] = udimView(material.displacementTex);
+  textureSlots[19] = -1;
+  textureSlots[20] = material.specularColorTex;
+  textureSlots[21] = material.coatWeightTex;
+  textureSlots[22] = material.coatColorTex;
+  textureSlots[23] = material.coatRoughnessTex;
+  textureSlots[24] = material.coatNormalTex;
+  textureSlots[25] = -1;
+  textureSlots[26] = material.specularColorTex;
+  textureSlots[27] = material.coatWeightTex;
+  textureSlots[28] = material.coatColorTex;
+  textureSlots[29] = material.coatRoughnessTex;
+  textureSlots[30] = material.coatNormalTex;
+  textureSlots[31] = material.displacementTex;
   VkDescriptorImageInfo infos[kMaterialBindingCount]{};
   VkWriteDescriptorSet writes[kMaterialBindingCount]{};
   for (uint32_t i = 0; i < kMaterialBindingCount; ++i) {
     infos[i].sampler = sampler_;
+    const int slot = textureSlots[i];
+    if (slot >= 0 && static_cast<size_t>(slot) < rtTexturesCpu_.size()) {
+      const DrawTextureCPU& tex = rtTexturesCpu_[static_cast<size_t>(slot)];
+      const int s = std::max(0, std::min(3, tex.wrapS));
+      const int t = std::max(0, std::min(3, tex.wrapT));
+      VkSampler materialSampler =
+          materialSamplers_[static_cast<size_t>(s * 4 + t)];
+      if (materialSampler) infos[i].sampler = materialSampler;
+    }
     infos[i].imageView = views[i];
     infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -4374,6 +4478,16 @@ void VulkanRenderer::destroyScene() {
     if (m.blasScratchMem) vkFreeMemory(device_, m.blasScratchMem, nullptr);
   }
   meshes_.clear();
+  nativePoints_.clear();
+  nativeCurves_.clear();
+  nonMeshCopy_.clear();
+  for (int i = 0; i < kFramesInFlight; ++i) {
+    if (nonMeshBuf_[i]) vkDestroyBuffer(device_, nonMeshBuf_[i], nullptr);
+    if (nonMeshMem_[i]) vkFreeMemory(device_, nonMeshMem_[i], nullptr);
+    nonMeshBuf_[i] = VK_NULL_HANDLE;
+    nonMeshMem_[i] = VK_NULL_HANDLE;
+    nonMeshCap_[i] = 0;
+  }
   // Shared multi-draw-indirect buffers + their CPU staging (the aliases above were
   // skipped for eligible meshes). Reset the MDI state so the next scene rebuilds it.
   destroyMdiBuffers();
@@ -4400,6 +4514,11 @@ void VulkanRenderer::destroyScene() {
   matNormalTex_.clear();
   matEmissiveTex_.clear();
   matOpacityTex_.clear();
+  matOcclusionTex_.clear();
+  matSpecularColorTex_.clear();
+  matCoatWeightTex_.clear();
+  matCoatColorTex_.clear();
+  matCoatRoughnessTex_.clear();
   rtMaterialsCpu_.clear();
   rtTexturesCpu_.clear();
 
@@ -4533,6 +4652,11 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   matNormalTex_.resize(materials.size());
   matEmissiveTex_.resize(materials.size());
   matOpacityTex_.resize(materials.size());
+  matOcclusionTex_.resize(materials.size());
+  matSpecularColorTex_.resize(materials.size());
+  matCoatWeightTex_.resize(materials.size());
+  matCoatColorTex_.resize(materials.size());
+  matCoatRoughnessTex_.resize(materials.size());
   matDispTex_.resize(materials.size());
   matDispConst_.resize(materials.size());
   for (size_t i = 0; i < materials.size(); ++i) {
@@ -4555,6 +4679,11 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     matNormalTex_[i] = materials[i].normalTex;
     matEmissiveTex_[i] = materials[i].emissiveTex;
     matOpacityTex_[i] = materials[i].opacityTex;
+    matOcclusionTex_[i] = materials[i].occlusionTex;
+    matSpecularColorTex_[i] = materials[i].specularColorTex;
+    matCoatWeightTex_[i] = materials[i].coatWeightTex;
+    matCoatColorTex_[i] = materials[i].coatColorTex;
+    matCoatRoughnessTex_[i] = materials[i].coatRoughnessTex;
     matDispTex_[i] = materials[i].displacementTex;
     matDispConst_[i] = materials[i].displacementConst;
     // Per-material texture sampling params -> raster set 3 SSBO.
@@ -4591,8 +4720,10 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
       for (int i = 0; i < rasterLights_.count; ++i) {
         const RasterLightGPU& l = rasterLights_.lights[static_cast<size_t>(i)];
         std::fprintf(stderr,
-                     "[raster-lights] %d type=%.0f dir=(%.3f %.3f %.3f) "
+                     "[raster-lights] %d type=%.0f pos=(%.3f %.3f %.3f) "
+                     "dir=(%.3f %.3f %.3f) "
                      "color=(%.3f %.3f %.3f)\n", i, l.positionType[3],
+                     l.positionType[0], l.positionType[1], l.positionType[2],
                      l.directionAngle[0], l.directionAngle[1],
                      l.directionAngle[2], l.colorDiffuse[0],
                      l.colorDiffuse[1], l.colorDiffuse[2]);
@@ -4609,6 +4740,16 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
   for (size_t i = 0; i < lights.size(); ++i) {
     PackRtLightParams(lights[i], lights[i].envmapTexture,
                       &lightParams_[i * kVkRtLightFloats]);
+  }
+  // Use the declared scene mesh count, not meshes_.size(): progressive upload
+  // calls setLights before it appends the first GPU mesh.
+  rtDirectLightMasks_.resize(meshCount);
+  rtShadowLightMasks_.resize(meshCount);
+  for (size_t i = 0; i < meshCount; ++i) {
+    rtDirectLightMasks_[i] = RtLightCollectionMaskForMesh(
+        lights, static_cast<int>(i), false);
+    rtShadowLightMasks_[i] = RtLightCollectionMaskForMesh(
+        lights, static_cast<int>(i), true);
   }
   tlasDirty_ = true;
 
@@ -5468,21 +5609,11 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
 }
 
 void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
-  if (!rtActive_) return;
-  DrawScene carriers;
-  carriers.points.push_back(points);
-  for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
-    appendMesh(proxy);
-  }
+  if (!points.points.empty()) nativePoints_.push_back(points);
 }
 
 void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
-  if (!rtActive_) return;
-  DrawScene carriers;
-  carriers.curves.push_back(curves);
-  for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
-    appendMesh(proxy);
-  }
+  if (curves.points.size() >= 6) nativeCurves_.push_back(curves);
 }
 
 void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
@@ -6422,6 +6553,12 @@ void VulkanRenderer::rebuildTlas() {
         meshHasBoundMaterial(meshes_[s.meshId]);
     info.useMaterial =
         ((s.level == RtLod::Full && !s.instanced) || instHasMaterial) ? 1u : 0u;
+    info.directLightMask = s.sourceMeshId < rtDirectLightMasks_.size()
+                               ? rtDirectLightMasks_[s.sourceMeshId]
+                               : ~uint32_t{0};
+    info.shadowLightMask = s.sourceMeshId < rtShadowLightMasks_.size()
+                               ? rtShadowLightMasks_[s.sourceMeshId]
+                               : ~uint32_t{0};
     info.tint[0] = s.tint[0];
     info.tint[1] = s.tint[1];
     info.tint[2] = s.tint[2];
@@ -6545,7 +6682,7 @@ void VulkanRenderer::rebuildTlas() {
   const uint32_t dummyTexel = 0xffffffffu;
   HostTextureDesc dummyTexDesc;
   for (int& layer : dummyTexDesc.udimLayer) layer = -1;
-  if (rtTextures.matTex.empty()) rtTextures.matTex.assign(6, -1);
+  if (rtTextures.matTex.empty()) rtTextures.matTex.assign(kRtMaterialTexSlots, -1);
   if (rtTextures.matTexParam.empty())
     rtTextures.matTexParam.assign(kRtMaterialTextureParamFloats, 0.0f);
   createHostBuffer(mats.size() * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -6891,9 +7028,8 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
                           &rtSet_, 0, nullptr);
   RtPushC pc{};
   light3d::Mat4 PV = ToMat4(proj_) * ToMat4(view_);
-  if (!Mat4Inverse(PV.m, pc.invViewProj)) {
-    for (int i = 0; i < 16; ++i) pc.invViewProj[i] = (i % 5 == 0) ? 1.0f : 0.0f;
-  }
+  const light3d::Mat4 invPV = PV.inverse();
+  std::memcpy(pc.invViewProj, invPV.m, sizeof(pc.invViewProj));
   // Progressive accumulation bookkeeping: if the camera (proj*view), render mode,
   // or geometry/viewport generation changed since the last traced frame, restart
   // accumulation at sample 0; otherwise advance the sample index so the trace adds
@@ -6947,6 +7083,14 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
     b.dstAccessMask = dstA;
     vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
   };
+  // The next accumulated sample reads the sum written by this dispatch.
+  // Queue submission order alone is only an execution dependency. Make the
+  // stored sum available before the following dispatch reads and extends it.
+  imgBarrier(accumImage_, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+             VK_ACCESS_SHADER_WRITE_BIT,
+             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
   imgBarrier(rtImage_, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
              VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -7048,16 +7192,41 @@ void VulkanRenderer::resizeViewport(int width, int height) {
   if (!device_) return;
   vkDeviceWaitIdle(device_);
   destroyOffscreen();
+  if (shadowFb_) { vkDestroyFramebuffer(device_, shadowFb_, nullptr); shadowFb_ = VK_NULL_HANDLE; }
+  if (shadowColorView_) vkDestroyImageView(device_, shadowColorView_, nullptr);
+  if (shadowDepthView_) vkDestroyImageView(device_, shadowDepthView_, nullptr);
+  if (shadowColorImg_) vkDestroyImage(device_, shadowColorImg_, nullptr);
+  if (shadowDepthImg_) vkDestroyImage(device_, shadowDepthImg_, nullptr);
+  if (shadowColorMem_) vkFreeMemory(device_, shadowColorMem_, nullptr);
+  if (shadowDepthMem_) vkFreeMemory(device_, shadowDepthMem_, nullptr);
+  for (VkFramebuffer& fb : pointShadowFbs_) {
+    if (fb) vkDestroyFramebuffer(device_, fb, nullptr);
+    fb = VK_NULL_HANDLE;
+  }
+  for (VkImageView& view : pointShadowFaceViews_) {
+    if (view) vkDestroyImageView(device_, view, nullptr);
+    view = VK_NULL_HANDLE;
+  }
+  if (pointShadowDepthView_) vkDestroyImageView(device_, pointShadowDepthView_, nullptr);
+  if (pointShadowDepthImg_) vkDestroyImage(device_, pointShadowDepthImg_, nullptr);
+  if (pointShadowDepthMem_) vkFreeMemory(device_, pointShadowDepthMem_, nullptr);
+  shadowColorView_ = shadowDepthView_ = VK_NULL_HANDLE;
+  shadowColorImg_ = shadowDepthImg_ = VK_NULL_HANDLE;
+  shadowColorMem_ = shadowDepthMem_ = VK_NULL_HANDLE;
+  pointShadowDepthView_ = VK_NULL_HANDLE;
+  pointShadowDepthImg_ = VK_NULL_HANDLE;
+  pointShadowDepthMem_ = VK_NULL_HANDLE;
   vpW_ = width;
   vpH_ = height;
 
-  auto makeImage = [&](VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlags aspect,
+  auto makeImage = [&](uint32_t width, uint32_t height, VkFormat fmt,
+                       VkImageUsageFlags usage, VkImageAspectFlags aspect,
                        VkImage* img, VkDeviceMemory* mem, VkImageView* view) -> bool {
     VkImageCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
     ici.format = fmt;
-    ici.extent = {static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), 1};
+    ici.extent = {width, height, 1};
     ici.mipLevels = 1;
     ici.arrayLayers = 1;
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -7091,11 +7260,12 @@ void VulkanRenderer::resizeViewport(int width, int height) {
   // (TRANSFER_SRC). Without these usage bits both copies are undefined behavior --
   // which surfaced as an intermittent all-black viewport capture on the threaded
   // VK-RT path (the driver returned garbage for the spec-invalid copy/barrier).
-  makeImage(colorFormat_,
+  makeImage(static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), colorFormat_,
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             VK_IMAGE_ASPECT_COLOR_BIT, &colorImg_, &colorMem_, &colorView_);
-  makeImage(depthFormat_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+  makeImage(static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), depthFormat_,
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
             VK_IMAGE_ASPECT_DEPTH_BIT, &depthImg_, &depthMem_, &depthView_);
 
   VkImageView atts[2] = {colorView_, depthView_};
@@ -7108,6 +7278,65 @@ void VulkanRenderer::resizeViewport(int width, int height) {
   fci.height = static_cast<uint32_t>(vpH_);
   fci.layers = 1;
   vkCreateFramebuffer(device_, &fci, nullptr, &offscreenFb_);
+
+  if (!shadowFb_) {
+    makeImage(2048, 2048, colorFormat_, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+              VK_IMAGE_ASPECT_COLOR_BIT, &shadowColorImg_, &shadowColorMem_,
+              &shadowColorView_);
+    makeImage(2048, 2048, depthFormat_,
+              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                  VK_IMAGE_USAGE_SAMPLED_BIT,
+              VK_IMAGE_ASPECT_DEPTH_BIT, &shadowDepthImg_, &shadowDepthMem_,
+              &shadowDepthView_);
+    VkImageView shadowAttachments[2] = {shadowColorView_, shadowDepthView_};
+    VkFramebufferCreateInfo sfci = fci;
+    sfci.renderPass = shadowPass_;
+    sfci.pAttachments = shadowAttachments;
+    sfci.width = sfci.height = 2048;
+    vkCreateFramebuffer(device_, &sfci, nullptr, &shadowFb_);
+    VkImageCreateInfo pointIci{};
+    pointIci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    pointIci.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    pointIci.imageType = VK_IMAGE_TYPE_2D;
+    pointIci.format = depthFormat_;
+    pointIci.extent = {2048, 2048, 1};
+    pointIci.mipLevels = 1;
+    pointIci.arrayLayers = 6;
+    pointIci.samples = VK_SAMPLE_COUNT_1_BIT;
+    pointIci.tiling = VK_IMAGE_TILING_OPTIMAL;
+    pointIci.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                     VK_IMAGE_USAGE_SAMPLED_BIT;
+    pointIci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    vkCreateImage(device_, &pointIci, nullptr, &pointShadowDepthImg_);
+    VkMemoryRequirements pointReq{};
+    vkGetImageMemoryRequirements(device_, pointShadowDepthImg_, &pointReq);
+    VkMemoryAllocateInfo pointAi{};
+    pointAi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    pointAi.allocationSize = pointReq.size;
+    pointAi.memoryTypeIndex = findMemoryType(pointReq.memoryTypeBits,
+                                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkAllocateMemory(device_, &pointAi, nullptr, &pointShadowDepthMem_);
+    vkBindImageMemory(device_, pointShadowDepthImg_, pointShadowDepthMem_, 0);
+    VkImageViewCreateInfo pointView{};
+    pointView.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    pointView.image = pointShadowDepthImg_;
+    pointView.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    pointView.format = depthFormat_;
+    pointView.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    pointView.subresourceRange.levelCount = 1;
+    pointView.subresourceRange.layerCount = 6;
+    vkCreateImageView(device_, &pointView, nullptr, &pointShadowDepthView_);
+    for (uint32_t face = 0; face < 6; ++face) {
+      pointView.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      pointView.subresourceRange.baseArrayLayer = face;
+      pointView.subresourceRange.layerCount = 1;
+      vkCreateImageView(device_, &pointView, nullptr, &pointShadowFaceViews_[face]);
+      VkImageView attachments[2] = {shadowColorView_, pointShadowFaceViews_[face]};
+      sfci.pAttachments = attachments;
+      vkCreateFramebuffer(device_, &sfci, nullptr, &pointShadowFbs_[face]);
+    }
+    refreshMaterialDescriptors();
+  }
 
   if (imguiInited_) {
     if (offscreenTexId_ == VK_NULL_HANDLE) {
@@ -7156,6 +7385,127 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   displacement_ = params.displacement;
   displacementScale_ = params.displacementScale;
   maxTessLevel_ = params.maxTessLevel;
+
+  // Expand native carriers into camera-facing quads for the raster pass.  This
+  // is intentionally rebuilt per frame: widths are authored in world space and
+  // the ribbon side changes with the camera.  The resulting vertices use the
+  // existing unlit helper format and the dedicated triangle-list pipeline.
+  nonMeshCopy_.clear();
+  if (hasParams_) {
+    const float right[3] = {view_[0], view_[4], view_[8]};
+    const float up[3] = {view_[1], view_[5], view_[9]};
+    const float forward[3] = {-view_[2], -view_[6], -view_[10]};
+    auto dot3 = [](const float a[3], const float b[3]) {
+      return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    };
+    auto cross3 = [](const float a[3], const float b[3], float out[3]) {
+      out[0] = a[1] * b[2] - a[2] * b[1];
+      out[1] = a[2] * b[0] - a[0] * b[2];
+      out[2] = a[0] * b[1] - a[1] * b[0];
+    };
+    auto normalize3 = [&](float v[3]) {
+      const float len = std::sqrt(dot3(v, v));
+      if (len > 1.0e-8f) {
+        v[0] /= len; v[1] /= len; v[2] /= len;
+      }
+    };
+    auto worldPoint = [](const auto& s, size_t i, float out[3]) {
+      const float x = s.points[i * 3], y = s.points[i * 3 + 1],
+                  z = s.points[i * 3 + 2];
+      out[0] = s.world[0] * x + s.world[4] * y + s.world[8] * z + s.world[12];
+      out[1] = s.world[1] * x + s.world[5] * y + s.world[9] * z + s.world[13];
+      out[2] = s.world[2] * x + s.world[6] * y + s.world[10] * z + s.world[14];
+    };
+    auto colorAt = [](const auto& s, size_t i, float c[3]) {
+      c[0] = c[1] = c[2] = 0.8f;
+      if (s.colors.size() >= (i + 1) * 3) {
+        c[0] *= s.colors[i * 3]; c[1] *= s.colors[i * 3 + 1];
+        c[2] *= s.colors[i * 3 + 2];
+      }
+    };
+    auto addQuad = [&](const float p0[3], const float p1[3], const float side[3],
+                       float width, const float c[3]) {
+      const float h = std::max(width, 1.0e-6f) * 0.5f;
+      float a[3] = {p0[0] + side[0] * h, p0[1] + side[1] * h, p0[2] + side[2] * h};
+      float b[3] = {p0[0] - side[0] * h, p0[1] - side[1] * h, p0[2] - side[2] * h};
+      float d[3] = {p1[0] + side[0] * h, p1[1] + side[1] * h, p1[2] + side[2] * h};
+      float e[3] = {p1[0] - side[0] * h, p1[1] - side[1] * h, p1[2] - side[2] * h};
+      const auto v = [&](const float p[3]) {
+        HelperVertex hv{};
+        std::memcpy(hv.pos, p, sizeof(hv.pos));
+        std::memcpy(hv.col, c, sizeof(hv.col));
+        nonMeshCopy_.push_back(hv);
+      };
+      v(a); v(b); v(d); v(d); v(b); v(e);
+    };
+    auto addPoint = [&](const float p[3], float width, const float c[3]) {
+      const float h = std::max(width, 1.0e-6f) * 0.5f;
+      float a[3] = {p[0] + right[0] * h + up[0] * h,
+                    p[1] + right[1] * h + up[1] * h,
+                    p[2] + right[2] * h + up[2] * h};
+      float b[3] = {p[0] - right[0] * h + up[0] * h,
+                    p[1] - right[1] * h + up[1] * h,
+                    p[2] - right[2] * h + up[2] * h};
+      float d[3] = {p[0] + right[0] * h - up[0] * h,
+                    p[1] + right[1] * h - up[1] * h,
+                    p[2] + right[2] * h - up[2] * h};
+      float e[3] = {p[0] - right[0] * h - up[0] * h,
+                    p[1] - right[1] * h - up[1] * h,
+                    p[2] - right[2] * h - up[2] * h};
+      const auto v = [&](const float q[3]) {
+        HelperVertex hv{};
+        std::memcpy(hv.pos, q, sizeof(hv.pos));
+        std::memcpy(hv.col, c, sizeof(hv.col));
+        nonMeshCopy_.push_back(hv);
+      };
+      v(a); v(b); v(d); v(d); v(b); v(e);
+    };
+    size_t carrierIndex = 0;
+    for (const DrawPointsCPU& s : nativePoints_) {
+      if ((params.purposeVisibleMask & (1u << PurposeId(s.purpose))) == 0 ||
+          (params.carrierVisible && carrierIndex < static_cast<size_t>(params.carrierVisibleCount) &&
+           !params.carrierVisible[carrierIndex])) { ++carrierIndex; continue; }
+      const float sx = std::sqrt(s.world[0] * s.world[0] + s.world[1] * s.world[1] + s.world[2] * s.world[2]);
+      const float sy = std::sqrt(s.world[4] * s.world[4] + s.world[5] * s.world[5] + s.world[6] * s.world[6]);
+      const float sz = std::sqrt(s.world[8] * s.world[8] + s.world[9] * s.world[9] + s.world[10] * s.world[10]);
+      const float scale = std::max(sx, std::max(sy, sz));
+      for (size_t i = 0; i < s.points.size() / 3; ++i) {
+        float p[3], c[3]; worldPoint(s, i, p); colorAt(s, i, c);
+        const float width = (s.widths.empty() ? 1.0f :
+          (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)])) * scale;
+        addPoint(p, width, c);
+      }
+      ++carrierIndex;
+    }
+    for (const DrawCurvesCPU& s : nativeCurves_) {
+      if ((params.purposeVisibleMask & (1u << PurposeId(s.purpose))) == 0 ||
+          (params.carrierVisible && carrierIndex < static_cast<size_t>(params.carrierVisibleCount) &&
+           !params.carrierVisible[carrierIndex])) { ++carrierIndex; continue; }
+      const size_t np = s.points.size() / 3;
+      const float sx = std::sqrt(s.world[0] * s.world[0] + s.world[1] * s.world[1] + s.world[2] * s.world[2]);
+      const float sy = std::sqrt(s.world[4] * s.world[4] + s.world[5] * s.world[5] + s.world[6] * s.world[6]);
+      const float sz = std::sqrt(s.world[8] * s.world[8] + s.world[9] * s.world[9] + s.world[10] * s.world[10]);
+      const float scale = std::max(sx, std::max(sy, sz));
+      size_t base = 0;
+      const std::vector<uint32_t> counts = s.vertexCounts.empty()
+          ? std::vector<uint32_t>{static_cast<uint32_t>(np)} : s.vertexCounts;
+      for (uint32_t count : counts) {
+        const size_t end = std::min(np, base + static_cast<size_t>(count));
+        for (size_t i = base; i + 1 < end; ++i) {
+          float p0[3], p1[3], c0[3]; worldPoint(s, i, p0); worldPoint(s, i + 1, p1);
+          float dir[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+          float side[3]; cross3(forward, dir, side); normalize3(side);
+          if (dot3(side, side) < 0.5f) std::memcpy(side, right, sizeof(side));
+          colorAt(s, i, c0);
+          const float w0 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)]);
+          const float w1 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i + 1, s.widths.size() - 1)]);
+          addQuad(p0, p1, side, 0.5f * (w0 + w1) * scale, c0);
+        }
+        base = end;
+      }
+      ++carrierIndex;
+    }
+  }
   // Update the global frame/displacement UBO (set 2) so the scale + max-tess
   // sliders are live. Persistently mapped; written each frame (volume-UBO
   // convention). [0]=scale, [1]=maxTessLevel.
@@ -7689,7 +8039,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // LOAD-preserve the traced image and draw the same line sets on top. There is
     // no RT depth buffer, so everything draws no-depth (x-ray) -- which is what
     // the overlay/highlight lines already do in the raster path anyway.
-    const bool anyOverlay = !helperCopy_.empty() || !overlayCopy_.empty() ||
+    const bool anyOverlay = !nonMeshCopy_.empty() || !helperCopy_.empty() || !overlayCopy_.empty() ||
                             !highlightLineCopy_.empty() || !volumes_.empty();
     if (overlayLoadPass_ && offscreenFb_ && hasParams_ && anyOverlay) {
       VkRenderPassBeginInfo orp{};
@@ -7720,6 +8070,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       recordVolumePass(cb, volumePipelineNoDepth_);
       // All no-depth: the RT image carries no depth, so even grid/axes/bbox draw
       // as x-ray here (a reasonable RT-overlay compromise).
+      drawLineSet(cb, nonMeshCopy_, &nonMeshBuf_[frame_], &nonMeshMem_[frame_],
+                  &nonMeshCap_[frame_], nonMeshPipeline_, VP.m);
       drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
                   &helperCap_[frame_], linePipelineNoDepth_, VP.m);
       drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
@@ -7749,6 +8101,174 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdEndRenderPass(cb);
   } else if (offscreenFb_ && hasParams_) {
+    shadowCamera_.lightSlot = -1;
+    pointShadowCameras_.lightSlot = -1;
+    const bool renderPointShadow = shadowPass_ && shadowPipeline_ &&
+        pointShadowDepthView_ && pointShadowFbs_[0] &&
+        BuildRasterPointShadowCameras(rasterLights_, sceneMin_, sceneExtent_,
+                                      true, &pointShadowCameras_);
+    const bool renderShadow = !renderPointShadow && shadowPass_ && shadowFb_ &&
+        shadowPipeline_ && BuildRasterShadowCamera(rasterLights_, sceneMin_,
+                                                    sceneExtent_, true,
+                                                    &shadowCamera_);
+    const int shadowLightSlot = renderPointShadow ? pointShadowCameras_.lightSlot
+                                                   : shadowCamera_.lightSlot;
+    if (dispParamsMapped_) {
+      FrameUBO* frame = static_cast<FrameUBO*>(dispParamsMapped_);
+      frame->iblParams[2] = static_cast<float>(shadowLightSlot);
+      frame->iblParams[3] = renderShadow ? 1.0f : 0.0f;
+      std::memcpy(frame->shadowViewProj, shadowCamera_.viewProj.m,
+                  sizeof(frame->shadowViewProj));
+      std::memset(frame->pointShadowLight, 0, sizeof(frame->pointShadowLight));
+      if (renderPointShadow) {
+        const RasterLightGPU& light = rasterLights_.lights[
+            static_cast<size_t>(pointShadowCameras_.lightSlot)];
+        std::memcpy(frame->pointShadowLight, light.positionType,
+                    3 * sizeof(float));
+        frame->pointShadowLight[3] = 1.0f;
+        std::memcpy(frame->pointShadowViewProj, pointShadowCameras_.viewProj.data(),
+                    sizeof(frame->pointShadowViewProj));
+      }
+    }
+    if (renderShadow || renderPointShadow) {
+      const int shadowFaces = renderPointShadow ? 6 : 1;
+      for (int shadowFace = 0; shadowFace < shadowFaces; ++shadowFace) {
+      VkClearValue shadowClears[2]{};
+      shadowClears[1].depthStencil = {1.0f, 0};
+      VkRenderPassBeginInfo srp{};
+      srp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+      srp.renderPass = shadowPass_;
+      srp.framebuffer = renderPointShadow
+          ? pointShadowFbs_[static_cast<size_t>(shadowFace)] : shadowFb_;
+      srp.renderArea.extent = {2048, 2048};
+      srp.clearValueCount = 2;
+      srp.pClearValues = shadowClears;
+      vkCmdBeginRenderPass(cb, &srp, VK_SUBPASS_CONTENTS_INLINE);
+      VkViewport svp{0.0f, 2048.0f, 2048.0f, -2048.0f, 0.0f, 1.0f};
+      VkRect2D ssc{{0, 0}, {2048, 2048}};
+      vkCmdSetViewport(cb, 0, 1, &svp);
+      vkCmdSetScissor(cb, 0, 1, &ssc);
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+      if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_FRONT_BIT);
+      if (dispParamsSet_)
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout_, 2, 1, &dispParamsSet_, 0, nullptr);
+      if (dispMatSet_)
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout_, 3, 1, &dispMatSet_, 0, nullptr);
+      for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+        if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
+        if (!RasterShadowIncludesMesh(rasterLights_, static_cast<int>(mi)))
+          continue;
+        const VkMeshGPU& mesh = meshes_[mi];
+        if (mesh.instanceCount > 0 || !mesh.vbo || mesh.submeshes.empty()) continue;
+        VkDescriptorSet deform = mesh.deformDesc ? mesh.deformDesc : dummyDeformDesc_;
+        if (deform)
+          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  pipelineLayout_, 1, 1, &deform, 0, nullptr);
+        VkDeviceSize offsets[7]{};
+        VkBuffer buffers[7] = {mesh.vbo, mesh.jointVbo, mesh.weightVbo,
+                               mesh.influenceVbo, mesh.uv1Vbo,
+                               mesh.morphInflVbo, mesh.morphOffsetVbo};
+        vkCmdBindVertexBuffers(cb, 0, 7, buffers, offsets);
+        vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
+        for (const DrawSubmesh& sub : mesh.submeshes) {
+          const size_t materialIndex = sub.materialId >= 0 &&
+                  static_cast<size_t>(sub.materialId) < materialSets_.size()
+              ? static_cast<size_t>(sub.materialId) : 0;
+          if (materialIndex < materialSets_.size() && materialSets_[materialIndex]) {
+            VkDescriptorSet material = materialSets_[materialIndex];
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelineLayout_, 0, 1, &material, 0, nullptr);
+          }
+          PushC push{};
+          std::memcpy(push.model, mesh.world, sizeof(push.model));
+          push.ids[0] = sub.materialId;
+          push.ids[2] = renderPointShadow ? -3 - shadowFace : -2;
+          if (sub.materialId >= 0 &&
+              static_cast<size_t>(sub.materialId) * 12u + 7u < matColor_.size()) {
+            const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 12u];
+            push.baseColor[0] = mc[0]; push.baseColor[1] = mc[1];
+            push.baseColor[2] = mc[2]; push.baseColor[3] = mc[3];
+            push.matAux[2] = mc[6];
+            push.matAux[3] = mc[7];
+          } else {
+            push.baseColor[0] = push.baseColor[1] = push.baseColor[2] = 0.6f;
+            push.baseColor[3] = 1.0f;
+            push.matAux[3] = 0.5f;
+          }
+          if (sub.materialId >= 0 &&
+              static_cast<size_t>(sub.materialId) < matOpacityTex_.size()) {
+            const int slot = matOpacityTex_[static_cast<size_t>(sub.materialId)];
+            const bool udim = slot >= 0 &&
+                static_cast<size_t>(slot) < texIsUdim_.size() &&
+                texIsUdim_[static_cast<size_t>(slot)] != 0;
+            if (slot >= 0) push.ids[3] |= 64;
+            if (udim) push.ids[3] |= 128;
+          }
+          if (sub.materialId >= 0 &&
+              static_cast<size_t>(sub.materialId) < matBaseTex_.size()) {
+            const int slot = matBaseTex_[static_cast<size_t>(sub.materialId)];
+            if (slot >= 0 && static_cast<size_t>(slot) < texIsUdim_.size() &&
+                texIsUdim_[static_cast<size_t>(slot)] != 0)
+              push.ids[3] |= 1;
+          }
+          vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(push),
+                             &push);
+          vkCmdDrawIndexed(cb, static_cast<uint32_t>(sub.indexCount), 1,
+                           static_cast<uint32_t>(sub.indexOffset), 0, 0);
+        }
+      }
+      if (instShadowPipeline_ && instPipelineLayout_ && drawMetaSet_ &&
+          dispParamsSet_ && !materialSets_.empty() && materialSets_[0]) {
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          instShadowPipeline_);
+        if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_FRONT_BIT);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                instPipelineLayout_, 0, 1, &materialSets_[0], 0,
+                                nullptr);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                instPipelineLayout_, 2, 1, &dispParamsSet_, 0,
+                                nullptr);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                instPipelineLayout_, 3, 1, &drawMetaSet_, 0,
+                                nullptr);
+        for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+          if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
+          if (!RasterShadowIncludesMesh(rasterLights_, static_cast<int>(mi)))
+            continue;
+          const VkMeshGPU& mesh = meshes_[mi];
+          if (mesh.instanceCount == 0 || mesh.drawInstanceCount == 0 ||
+              !mesh.vbo || !mesh.ebo || !mesh.instVbo || !mesh.instColorBuf ||
+              !mesh.instVtxColorBuf || !mesh.morphOffsetVbo)
+            continue;
+          InstPushC ipc{};
+          ipc.draw[0] = static_cast<int>(mdiMeshMetaBase_ + mi);
+          ipc.draw[1] = renderPointShadow ? 2 + shadowFace : 1;
+          vkCmdPushConstants(cb, instPipelineLayout_,
+                             VK_SHADER_STAGE_VERTEX_BIT |
+                                 VK_SHADER_STAGE_FRAGMENT_BIT,
+                             0, sizeof(ipc), &ipc);
+          VkBuffer bufs[5] = {mesh.vbo, mesh.instVbo, mesh.instColorBuf,
+                              mesh.instVtxColorBuf, mesh.morphOffsetVbo};
+          VkDeviceSize offs[5]{};
+          vkCmdBindVertexBuffers(cb, 0, 5, bufs, offs);
+          VkDescriptorSet deform =
+              mesh.deformDesc ? mesh.deformDesc : dummyDeformDesc_;
+          if (deform)
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    instPipelineLayout_, 1, 1, &deform, 0,
+                                    nullptr);
+          vkCmdBindIndexBuffer(cb, mesh.ebo, 0, VK_INDEX_TYPE_UINT32);
+          for (const DrawSubmesh& sub : mesh.submeshes)
+            vkCmdDrawIndexed(cb, static_cast<uint32_t>(sub.indexCount),
+                             mesh.drawInstanceCount,
+                             static_cast<uint32_t>(sub.indexOffset), 0, 0);
+        }
+      }
+      vkCmdEndRenderPass(cb);
+      }
+    }
     VkClearValue clears[2];
     clears[0].color = {{clear_[0], clear_[1], clear_[2], clear_[3]}};
     clears[1].depthStencil = {1.0f, 0};
@@ -7832,7 +8352,29 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       fr->iblColor[3] = iblActive_ ? 1.0f : 0.0f;
       fr->iblParams[0] = static_cast<float>(iblLods_);
       fr->iblParams[1] = exposure_;
-      fr->iblParams[2] = fr->iblParams[3] = 0.0f;
+      shadowCamera_.lightSlot = -1;
+      pointShadowCameras_.lightSlot = -1;
+      const bool hasPointShadow = pointShadowDepthView_ &&
+          BuildRasterPointShadowCameras(rasterLights_, sceneMin_, sceneExtent_,
+                                        true, &pointShadowCameras_);
+      const bool hasShadow = !hasPointShadow && shadowDepthView_ &&
+          BuildRasterShadowCamera(rasterLights_, sceneMin_, sceneExtent_, true,
+                                  &shadowCamera_);
+      const int shadowLightSlot = hasPointShadow ? pointShadowCameras_.lightSlot
+                                                 : shadowCamera_.lightSlot;
+      fr->iblParams[2] = static_cast<float>(shadowLightSlot);
+      fr->iblParams[3] = hasShadow ? 1.0f : 0.0f;
+      std::memcpy(fr->shadowViewProj, shadowCamera_.viewProj.m,
+                  sizeof(fr->shadowViewProj));
+      std::memset(fr->pointShadowLight, 0, sizeof(fr->pointShadowLight));
+      if (hasPointShadow) {
+        const RasterLightGPU& light = rasterLights_.lights[
+            static_cast<size_t>(pointShadowCameras_.lightSlot)];
+        std::memcpy(fr->pointShadowLight, light.positionType, 3 * sizeof(float));
+        fr->pointShadowLight[3] = 1.0f;
+        std::memcpy(fr->pointShadowViewProj, pointShadowCameras_.viewProj.data(),
+                    sizeof(fr->pointShadowViewProj));
+      }
     }
     // Draw order: back-to-front by world centroid for the translucent pass.
     std::vector<size_t> order(meshes_.size());
@@ -7925,6 +8467,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         const int emSlot = materialTexSlot(matEmissiveTex_);
         const int nmSlot = materialTexSlot(matNormalTex_);
         const int opSlot = materialTexSlot(matOpacityTex_);
+        const int occSlot = materialTexSlot(matOcclusionTex_);
 
         const size_t materialIndex =
             materialId >= 0 &&
@@ -7993,6 +8536,17 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         if (mesh.vtxColorDesc != VK_NULL_HANDLE) pc.ids[3] |= 32;
         if (opSlot >= 0) pc.ids[3] |= 64;
         if (isUdimSlot(opSlot)) pc.ids[3] |= 128;
+        if (occSlot >= 0) pc.ids[3] |= 1024;
+        if (isUdimSlot(occSlot)) pc.ids[3] |= 2048;
+        // Extra 2D-only slots (bits 12-15). A UDIM source counts as unbound.
+        auto plain2dBound = [&](const std::vector<int>& slots) {
+          const int s = materialTexSlot(slots);
+          return s >= 0 && !isUdimSlot(s);
+        };
+        if (plain2dBound(matSpecularColorTex_)) pc.ids[3] |= 4096;
+        if (plain2dBound(matCoatWeightTex_)) pc.ids[3] |= 8192;
+        if (plain2dBound(matCoatColorTex_)) pc.ids[3] |= 16384;
+        if (plain2dBound(matCoatRoughnessTex_)) pc.ids[3] |= 32768;
         pc.ids[3] |= static_cast<int32_t>(
             RasterLightMaskForMesh(rasterLights_, static_cast<int>(mi)) << 16u);
         vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(PushC), &pc);
@@ -8136,6 +8690,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // Helper lines (grid/axes/bbox), then skeleton X-ray + selection highlight on
     // top (depth-test-disabled pipeline). VP = P * V (column-major light3d).
     const light3d::Mat4 VP = ToMat4(proj_) * ToMat4(view_);
+    drawLineSet(cb, nonMeshCopy_, &nonMeshBuf_[frame_], &nonMeshMem_[frame_],
+                &nonMeshCap_[frame_], nonMeshPipeline_, VP.m);
     drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
                 &helperCap_[frame_], linePipeline_, VP.m);
     drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
@@ -8430,8 +8986,42 @@ void VulkanRenderer::destroySwapchain() {
 void VulkanRenderer::shutdown() {
   if (device_) vkDeviceWaitIdle(device_);
   destroyScene();
+  // The unit-cube proxy BLAS is renderer-wide rather than part of meshes_, so
+  // destroyScene intentionally retains it across scene reloads. Release it
+  // explicitly before the device is destroyed.
+  destroyBlas(boxMesh_);
+  if (boxMesh_.vbo) vkDestroyBuffer(device_, boxMesh_.vbo, nullptr);
+  if (boxMesh_.vboMem) vkFreeMemory(device_, boxMesh_.vboMem, nullptr);
+  if (boxMesh_.ebo) vkDestroyBuffer(device_, boxMesh_.ebo, nullptr);
+  if (boxMesh_.eboMem) vkFreeMemory(device_, boxMesh_.eboMem, nullptr);
+  boxMesh_ = VkMeshGPU{};
   destroyRt();
   destroyOffscreen();
+  if (shadowFb_) vkDestroyFramebuffer(device_, shadowFb_, nullptr);
+  if (shadowColorView_) vkDestroyImageView(device_, shadowColorView_, nullptr);
+  if (shadowDepthView_) vkDestroyImageView(device_, shadowDepthView_, nullptr);
+  if (shadowColorImg_) vkDestroyImage(device_, shadowColorImg_, nullptr);
+  if (shadowDepthImg_) vkDestroyImage(device_, shadowDepthImg_, nullptr);
+  if (shadowColorMem_) vkFreeMemory(device_, shadowColorMem_, nullptr);
+  if (shadowDepthMem_) vkFreeMemory(device_, shadowDepthMem_, nullptr);
+  for (VkFramebuffer& fb : pointShadowFbs_) {
+    if (fb) vkDestroyFramebuffer(device_, fb, nullptr);
+    fb = VK_NULL_HANDLE;
+  }
+  for (VkImageView& view : pointShadowFaceViews_) {
+    if (view) vkDestroyImageView(device_, view, nullptr);
+    view = VK_NULL_HANDLE;
+  }
+  if (pointShadowDepthView_) vkDestroyImageView(device_, pointShadowDepthView_, nullptr);
+  if (pointShadowDepthImg_) vkDestroyImage(device_, pointShadowDepthImg_, nullptr);
+  if (pointShadowDepthMem_) vkFreeMemory(device_, pointShadowDepthMem_, nullptr);
+  shadowFb_ = VK_NULL_HANDLE;
+  shadowColorView_ = shadowDepthView_ = VK_NULL_HANDLE;
+  shadowColorImg_ = shadowDepthImg_ = VK_NULL_HANDLE;
+  shadowColorMem_ = shadowDepthMem_ = VK_NULL_HANDLE;
+  pointShadowDepthView_ = VK_NULL_HANDLE;
+  pointShadowDepthImg_ = VK_NULL_HANDLE;
+  pointShadowDepthMem_ = VK_NULL_HANDLE;
   if (imguiInited_) {
     // The viewport texture descriptor is kept stable across resizes (see
     // destroyOffscreen / resizeViewport), so free it here, once, before the backend
@@ -8497,7 +9087,13 @@ void VulkanRenderer::shutdown() {
   if (influenceSetLayout_) { vkDestroyDescriptorSetLayout(device_, influenceSetLayout_, nullptr); influenceSetLayout_ = VK_NULL_HANDLE; }
   if (faceSetLayout_) { vkDestroyDescriptorSetLayout(device_, faceSetLayout_, nullptr); faceSetLayout_ = VK_NULL_HANDLE; }
   if (sampler_) { vkDestroySampler(device_, sampler_, nullptr); sampler_ = VK_NULL_HANDLE; }
+  for (VkSampler& materialSampler : materialSamplers_) {
+    if (materialSampler) vkDestroySampler(device_, materialSampler, nullptr);
+    materialSampler = VK_NULL_HANDLE;
+  }
   if (pipeline_) { vkDestroyPipeline(device_, pipeline_, nullptr); pipeline_ = VK_NULL_HANDLE; }
+  if (shadowPipeline_) { vkDestroyPipeline(device_, shadowPipeline_, nullptr); shadowPipeline_ = VK_NULL_HANDLE; }
+  if (instShadowPipeline_) { vkDestroyPipeline(device_, instShadowPipeline_, nullptr); instShadowPipeline_ = VK_NULL_HANDLE; }
   if (translucentPipeline_) { vkDestroyPipeline(device_, translucentPipeline_, nullptr); translucentPipeline_ = VK_NULL_HANDLE; }
   if (tessPipeline_) { vkDestroyPipeline(device_, tessPipeline_, nullptr); tessPipeline_ = VK_NULL_HANDLE; }
   if (pipelineLayout_) { vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
@@ -8513,6 +9109,7 @@ void VulkanRenderer::shutdown() {
     if (*m) { vkFreeMemory(device_, *m, nullptr); *m = VK_NULL_HANDLE; }
   if (linePipeline_) { vkDestroyPipeline(device_, linePipeline_, nullptr); linePipeline_ = VK_NULL_HANDLE; }
   if (linePipelineNoDepth_) { vkDestroyPipeline(device_, linePipelineNoDepth_, nullptr); linePipelineNoDepth_ = VK_NULL_HANDLE; }
+  if (nonMeshPipeline_) { vkDestroyPipeline(device_, nonMeshPipeline_, nullptr); nonMeshPipeline_ = VK_NULL_HANDLE; }
   if (lineLayout_) { vkDestroyPipelineLayout(device_, lineLayout_, nullptr); lineLayout_ = VK_NULL_HANDLE; }
   // UsdVol volume resources.
   for (auto& gv : volumes_) {
@@ -8547,6 +9144,7 @@ void VulkanRenderer::shutdown() {
     highlightLineMem_[i] = VK_NULL_HANDLE;
   }
   if (offscreenPass_) { vkDestroyRenderPass(device_, offscreenPass_, nullptr); offscreenPass_ = VK_NULL_HANDLE; }
+  if (shadowPass_) { vkDestroyRenderPass(device_, shadowPass_, nullptr); shadowPass_ = VK_NULL_HANDLE; }
   if (overlayLoadPass_) { vkDestroyRenderPass(device_, overlayLoadPass_, nullptr); overlayLoadPass_ = VK_NULL_HANDLE; }
   for (int i = 0; i < kFramesInFlight; ++i) {
     if (imageAvailable_[i]) vkDestroySemaphore(device_, imageAvailable_[i], nullptr);

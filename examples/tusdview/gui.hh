@@ -91,6 +91,11 @@ class Gui {
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setBudget(LoadControl* b) { budget_ = b; }
   void setShowGrid(bool on) { showGrid_ = on; }
+  void setShowSkeleton(bool on) { showSkeleton_ = on; }
+  // Fixed-frame headless captures have no interactive UI. Give the render
+  // viewport the full requested extent so saved dock state cannot change the
+  // screenshot dimensions.
+  void setCaptureViewportOnly(bool on) { captureViewportOnly_ = on; }
 
   void frame(Renderer* renderer, OrbitCamera* camera);
   // Build the viewport render inputs. `packet` null (single-threaded) renders the
@@ -257,10 +262,13 @@ class Gui {
   void buildHelpers();
   bool meshPurposeVisible(const std::string& purpose) const;
   bool meshVisibleForView(size_t meshIndex) const;
+  bool carrierVisibleForView(size_t carrierIndex) const;
+  size_t carrierIndexForPath(const std::string& path) const;
   void buildViewVisibilityMask();
   void rebuildInspectorCache();
   void setSelectionListSingle(const std::string& absPath, int meshIndex);
   void setSelectionListFromMeshes(std::vector<int> meshIndices);
+  void setSelectionListFromPaths(std::vector<std::string> paths);
   void focusSelectionListItem(size_t index);
   void beginRegionSelection(const ImVec2& mouse);
   void updateRegionSelection(const ImVec2& mouse);
@@ -269,6 +277,7 @@ class Gui {
   bool meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
                                 const ImVec2& rectMax, int vpW, int vpH) const;
   int pickMesh(float px, float py, int vpW, int vpH) const;
+  std::string pickCarrierPath(float px, float py, int vpW, int vpH) const;
   void selectAdjacentMesh(int step);
   void applyViewPreset(CameraViewPreset preset);
   void homeView();
@@ -451,6 +460,7 @@ class Gui {
   // UsdPreviewSurface displacement (raster preview). enabled = master toggle;
   // scale = global multiplier; maxTessLevel > 1 enables GPU tessellation for
   // adaptive sub-triangle detail (1 = coarse per-vertex displacement only).
+  bool captureViewportOnly_{false};
   bool displacementEnabled_{true};
   float displacementScale_{1.0f};
   int maxTessLevel_{1};
@@ -458,6 +468,7 @@ class Gui {
   std::vector<HelperVertex> overlayLines_;
 
   std::vector<uint8_t> meshVisible_;
+  std::vector<uint8_t> carrierVisible_;
   std::vector<uint8_t> viewVisible_;
   bool revealSelectionInHierarchy_{false};
 

@@ -13,6 +13,7 @@
 #include "next/crate/crate-reader.hh"
 #include "next/reader/usda-reader.hh"
 
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -444,6 +445,83 @@ static void test_variant_selection_over_reference() {
                       "(got '") +
               (s ? *s : std::string("<non-string>")) + "')");
   }
+}
+
+// Regression for variant-bearing instance libraries: the selected holder of
+// each external reference lives in pending_graft_ until the arc-expansion pass
+// finishes. ApplyVariants must inspect the grafts produced for that instance,
+// without rescanning every earlier instance's grafts (quadratic on large UE
+// scenes with thousands of LOD-bearing references).
+static void test_many_variant_bearing_references() {
+  std::cout << "[variants: many external references scale linearly]\n";
+  constexpr size_t kInstances = 1024;
+  constexpr size_t kParts = 8;
+
+  Layer root;
+  for (size_t i = 0; i < kInstances; ++i) {
+    PrimSpec instance = MakePrim("/I" + std::to_string(i), "Xform");
+    instance.meta().references.push_back("@model@</Model>");
+    instance.meta().variantSelection = "lod=high";
+    root.add_prim(std::move(instance));
+  }
+  root.finalize();
+
+  auto loader = [](const std::string&,
+                   std::string*) -> std::unique_ptr<Layer> {
+    auto layer = std::make_unique<Layer>();
+    PrimSpec model = MakePrim("/Model", "Xform");
+    VariantSetData lod;
+    lod.name = "lod";
+    lod.selected = "low";  // host's high selection must remain stronger.
+    VariantData low;
+    low.name = "low";
+    VariantData high;
+    high.name = "high";
+    lod.variants.push_back(std::move(low));
+    lod.variants.push_back(std::move(high));
+    model.meta().variantSets().push_back(std::move(lod));
+    layer->add_prim(std::move(model));
+
+    PrimSpec holder = MakePrim("/Model/{lod=high}", "Xform");
+    holder.add_property("quality", Value(int32_t(7)));
+    layer->add_prim(std::move(holder));
+    for (size_t i = 0; i < kParts; ++i) {
+      PrimSpec part = MakePrim("/Model/{lod=high}/Part" + std::to_string(i),
+                               "Mesh");
+      part.add_property("part", Value(int32_t(i)));
+      layer->add_prim(std::move(part));
+    }
+    PrimSpec low_holder = MakePrim("/Model/{lod=low}", "Xform");
+    layer->add_prim(std::move(low_holder));
+    layer->finalize();
+    return layer;
+  };
+
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  const auto begin = std::chrono::steady_clock::now();
+  auto out = comp.Compose(root);
+  const double seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - begin).count();
+  CHECK(out != nullptr, "many variant-bearing references compose");
+  CHECK(seconds < 10.0,
+        "many variant-bearing references avoid quadratic graft scans");
+  if (!out) return;
+
+  bool all_composed = true;
+  for (size_t i = 0; i < kInstances; ++i) {
+    const std::string path = "/I" + std::to_string(i);
+    const Value* quality = PropOf(*out, path, "quality");
+    if (!quality || !quality->as_int() || *quality->as_int() != 7 ||
+        !out->prim_at_path(path + "/Part0") ||
+        !out->prim_at_path(path + "/Part7") ||
+        out->prim_at_path(path + "/{lod=low}")) {
+      all_composed = false;
+      break;
+    }
+  }
+  CHECK(all_composed,
+        "every reference bakes the selected holder and drops unselected LODs");
 }
 
 // Regression: the next backend must resolve the arcs authored on an
@@ -1371,6 +1449,7 @@ int main() {
   test_variant_subprim();
   test_variant_roundtrip();
   test_variant_selection_over_reference();
+  test_many_variant_bearing_references();
   test_variant_ref_payload_chain();
   test_extref_self_contained_subtree();
   test_extref_non_self_contained_fallback();

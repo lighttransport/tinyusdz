@@ -231,6 +231,7 @@ RtLodStats SelectInstanceLOD(const RtLodProto* protos, std::uint32_t protoCount,
       inst.opacity = proto.instanceOpacities ? proto.instanceOpacities[k]
                                              : proto.flatOpacity;
       inst.opacity = std::max(0.0f, std::min(1.0f, inst.opacity));
+      inst.sourceMeshId = proto.meshId;
       if (level == RtLod::Proxy) {
         BoxFitXform(o2w, mn, mx, inst.xform);
         inst.meshId = boxMeshId;
