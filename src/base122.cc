@@ -2,6 +2,8 @@
 
 #include <array>
 
+namespace tinyusdz {
+
 // Base122 uses 122 safe printable ASCII characters
 // Excluding problematic chars like quotes, backslash, DEL, etc.
 static const char base122_alphabet[122] = 
@@ -24,7 +26,7 @@ static const std::array<uint8_t, 256>& base122_decode_map_table() {
 }
 
 // Encode binary data to base122 string
-inline std::string base122_encode(const std::vector<uint8_t>& data) {
+std::string base122_encode(const std::vector<uint8_t>& data) {
     std::string out;
     size_t i = 0;
     while (i < data.size()) {
@@ -44,7 +46,7 @@ inline std::string base122_encode(const std::vector<uint8_t>& data) {
 
 // Decode base122 string to binary data
 // Returns 0 on success, nonzero on error (invalid char or truncated input)
-inline int base122_decode(const std::string& str, std::vector<uint8_t>& out) {
+int base122_decode(const std::string& str, std::vector<uint8_t>& out) {
     const std::array<uint8_t, 256>& base122_decode_map = base122_decode_map_table();
     out.clear();
     size_t i = 0;
@@ -69,3 +71,5 @@ inline int base122_decode(const std::string& str, std::vector<uint8_t>& out) {
     }
     return 0;
 }
+
+} // namespace tinyusdz
