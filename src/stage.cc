@@ -450,17 +450,17 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
 
 bool Stage::find_prim_by_prim_id(const uint64_t prim_id, Prim *&prim,
                                  std::string *err) {
-  const Prim *c_prim{nullptr};
-  if (!find_prim_by_prim_id(prim_id, c_prim, err)) {
-    return false;
+  // Walk the prim tree directly (const version shares the same logic via
+  // FindPrimByPrimIdIterative which operates on _root_nodes). Setting dirty
+  // flags ensures any cache populated by a concurrent const lookup is skipped.
+  const Prim *p{nullptr};
+  if (FindPrimByPrimIdIterative(prim_id, _root_nodes, &p)) {
+    prim = const_cast<Prim *>(p);
+    _dirty = true;
+    _prim_id_dirty = true;
+    return true;
   }
-
-  prim = const_cast<Prim *>(c_prim);
-  // Invalidate caches since the caller may mutate the returned prim.
-  _dirty = true;
-  _prim_id_dirty = true;
-
-  return true;
+  return false;
 }
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(

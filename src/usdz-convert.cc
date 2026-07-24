@@ -497,8 +497,13 @@ void CollectLayerTextureAssetPaths(const Layer &layer,
 
 std::string TexturePathKey(std::string path) {
   std::replace(path.begin(), path.end(), '\\', '/');
-  while (path.rfind("./", 0) == 0) {
-    path = path.substr(2);
+  // Strip leading "./" prefix repetitions in a single pass.
+  size_t skip = 0;
+  while (skip + 1 < path.size() && path[skip] == '.' && path[skip + 1] == '/') {
+    skip += 2;
+  }
+  if (skip > 0) {
+    path = path.substr(skip);
   }
   return io::NormalizePath(path);
 }
