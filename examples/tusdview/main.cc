@@ -356,6 +356,8 @@ int main(int argc, char** argv) {
       useNextExplicit = true;
     } else if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
+    } else if (std::strcmp(argv[i], "--no-nonmesh-billboard") == 0) {
+      setenv("TUSDVIEW_NO_NONMESH_BILLBOARD", "1", 1);
     } else if (std::strcmp(argv[i], "--no-grid") == 0) {
       showGrid = false;
     } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
@@ -688,6 +690,7 @@ int main(int argc, char** argv) {
           "  --no-cull / --no-robust-frame  Disable frustum culling or robust "
           "outlier-resistant auto framing.\n"
           "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
+          "  --no-nonmesh-billboard  Use solid-proxy fallback for Points/Curves (Vulkan).\n"
           "  --dome-ibl off|fast|quality  Control DomeLight IBL precomputation.\n"
           "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
           "Vulkan realtime preset for public large scenes. Profiles set existing "

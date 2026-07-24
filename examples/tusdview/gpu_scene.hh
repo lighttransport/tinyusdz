@@ -698,6 +698,26 @@ struct DrawCurvesCPU {
   float aabbMax[3]{0, 0, 0};
 };
 
+struct DrawCameraCPU {
+  std::string name;
+  std::string absPath;
+  std::string displayName;
+  enum class Projection : int { Perspective = 0, Orthographic = 1 };
+  Projection projection{Projection::Perspective};
+  float eye[3]{0.0f, 0.0f, 0.0f};
+  float up[3]{0.0f, 1.0f, 0.0f};
+  float forward[3]{0.0f, 0.0f, -1.0f};
+  float focalLength{50.0f};
+  float horizontalAperture{20.955f};
+  float verticalAperture{15.2908f};
+  float horizontalApertureOffset{0.0f};
+  float verticalApertureOffset{0.0f};
+  float exposure{0.0f};
+  float zNear{0.1f};
+  float zFar{10000.0f};
+  float fovYDeg{45.0f};
+};
+
 struct DrawScene {
   std::vector<DrawMeshCPU> meshes;
   std::vector<DrawPointsCPU> points;
@@ -706,6 +726,7 @@ struct DrawScene {
   std::vector<DrawTextureCPU> textures;
   std::vector<DrawVolumeCPU> volumes;  // UsdVol volumes (OpenVDB)
   std::vector<DrawLightCPU> lights;    // USD light parameters for later shading
+  std::vector<DrawCameraCPU> cameras;  // USD camera records for loader-equivalence testing
   bool hasPreviewLight{false};
   // A single derived key light used by today's simple preview shaders. Full
   // multi-light evaluation will consume DrawLightCPU directly later.
@@ -758,7 +779,7 @@ struct DrawScene {
 
   bool empty() const {
     return meshes.empty() && points.empty() && curves.empty() &&
-           volumes.empty() && lights.empty();
+           volumes.empty() && lights.empty() && cameras.empty();
   }
 };
 
