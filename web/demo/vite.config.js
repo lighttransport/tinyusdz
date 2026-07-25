@@ -53,6 +53,7 @@ export default defineConfig(({ command, mode }) => {
             usd_physics: path.resolve(__dirname, 'usd-physics.html'),
             material_editor: path.resolve(__dirname, 'material-editor.html'),
             animation_timeline: path.resolve(__dirname, 'animation-timeline.html'),
+            usd_inspector: path.resolve(__dirname, 'usd-inspector.html'),
           },
         },
         minify: false,

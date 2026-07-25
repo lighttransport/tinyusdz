@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>USD Inspector - TinyUSDZ Demo</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<link rel="stylesheet" href="./demos.css">
+		<style>
+			.inspector-panel {
+				display: flex;
+				flex-direction: column;
+				min-width: 0;
+				overflow: hidden;
+				background: var(--panel);
+				border-left: 1px solid var(--line);
+				font-size: .8rem;
+			}
+			.inspector-tabs {
+				display: flex;
+				flex: 0 0 auto;
+				border-bottom: 1px solid var(--line);
+			}
+			.inspector-tab {
+				padding: 8px 14px;
+				cursor: pointer;
+				color: var(--dim);
+				font-size: .78rem;
+				font-weight: 600;
+				text-transform: uppercase;
+				letter-spacing: .03em;
+				border-bottom: 2px solid transparent;
+				transition: color .12s, border-color .12s, background .12s;
+			}
+			.inspector-tab:hover { color: var(--text); background: var(--panel-2); }
+			.inspector-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+			.inspector-content { flex: 1; overflow: auto; padding: 10px 12px; }
+			.inspector-content[hidden] { display: none; }
+
+			.tree-row {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				padding: 3px 4px;
+				border-radius: 3px;
+				cursor: pointer;
+				white-space: nowrap;
+				transition: background .08s;
+			}
+			.tree-row:hover { background: var(--panel-2); }
+			.tree-row.selected { background: rgba(183,148,246,.15); }
+			.tree-row .arrow {
+				flex: 0 0 16px;
+				text-align: center;
+				color: var(--dim);
+				font-size: .7rem;
+				user-select: none;
+			}
+			.tree-row .type-badge {
+				flex: 0 0 auto;
+				padding: 1px 6px;
+				border-radius: 3px;
+				font-size: .65rem;
+				font-weight: 600;
+				text-transform: uppercase;
+				margin-right: 6px;
+			}
+			.badge-xform { background: #2d3748; color: #a0bee8; }
+			.badge-mesh { background: #1a3a2a; color: #5eead4; }
+			.badge-material { background: #3a1a2a; color: #f9a8d4; }
+			.badge-unknown { background: #2d2d2d; color: #999; }
+			.tree-row .prim-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+			.tree-row .prim-path { color: var(--dim); font-size: .7rem; overflow: hidden; text-overflow: ellipsis; }
+			.tree-children { padding-left: 18px; }
+
+			.detail-section { margin-bottom: 14px; }
+			.detail-section h3 {
+				margin: 0 0 6px;
+				color: var(--muted);
+				font-size: .72rem;
+				font-weight: 700;
+				text-transform: uppercase;
+				letter-spacing: .04em;
+			}
+			.detail-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+			.detail-table td { padding: 2px 6px 2px 0; vertical-align: top; }
+			.detail-table td:first-child { color: var(--dim); white-space: nowrap; width: 1%; min-width: 80px; }
+			.detail-table td:last-child { color: var(--text); word-break: break-all; }
+
+			.tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
+			.tag {
+				padding: 1px 7px;
+				border-radius: 10px;
+				font-size: .7rem;
+				font-weight: 600;
+				background: var(--panel-3);
+				color: var(--muted);
+			}
+			.metadata-grid {
+				display: grid;
+				grid-template-columns: auto 1fr;
+				gap: 4px 14px;
+				font-size: .78rem;
+			}
+			.metadata-grid .key { color: var(--dim); }
+			.metadata-grid .val { color: var(--text); font-variant-numeric: tabular-nums; }
+
+			.empty-state {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				min-height: 120px;
+				color: var(--dim);
+				font-size: .85rem;
+				text-align: center;
+			}
+		</style>
+	</head>
+	<body class="demo-view">
+		<div id="demo-root"></div>
+		<script type="module" src="./src/entries/usd-inspector.js"></script>
+	</body>
+</html>

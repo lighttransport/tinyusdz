@@ -135,6 +135,15 @@ export const DEMOS = [
     enableAnimation: true,
     image: './assets/previews/usd-assets.svg',
     href: './animation-timeline.html'
+  },
+  {
+    id: 'usd-inspector',
+    title: 'USD Inspector',
+    subtitle: 'Explore USD scene structure: prim hierarchy tree, stage metadata, mesh properties, and material parameters.',
+    defaultAsset: './assets/suzanne-pbr.usda',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-assets.svg',
+    href: './usd-inspector.html'
   }
 ];
 
