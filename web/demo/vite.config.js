@@ -51,6 +51,7 @@ export default defineConfig(({ command, mode }) => {
             export_demo: path.resolve(__dirname, 'export.html'),
             usd_assets: path.resolve(__dirname, 'usd-assets.html'),
             usd_physics: path.resolve(__dirname, 'usd-physics.html'),
+            material_editor: path.resolve(__dirname, 'material-editor.html'),
           },
         },
         minify: false,

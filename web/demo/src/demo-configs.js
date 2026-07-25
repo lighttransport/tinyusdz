@@ -114,6 +114,15 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     image: './assets/previews/usd-assets.svg',
     href: './usd-physics.html'
+  },
+  {
+    id: 'material-editor',
+    title: 'Material Editor',
+    subtitle: 'Load a USD scene and edit PBR material parameters (color, metalness, roughness, clearcoat, IOR) in real time.',
+    defaultAsset: './assets/suzanne-pbr.usda',
+    preferredMaterialType: 'usdpreviewsurface',
+    image: './assets/previews/usd-assets.svg',
+    href: './material-editor.html'
   }
 ];
 
