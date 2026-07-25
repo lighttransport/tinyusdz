@@ -58,6 +58,7 @@ export default defineConfig(({ command, mode }) => {
             streaming_viz: path.resolve(__dirname, 'streaming-viz.html'),
             viewer_toolkit: path.resolve(__dirname, 'viewer-toolkit.html'),
             animation_blending: path.resolve(__dirname, 'animation-blending.html'),
+            procedural_usd: path.resolve(__dirname, 'procedural-usd.html'),
           },
         },
         minify: false,
