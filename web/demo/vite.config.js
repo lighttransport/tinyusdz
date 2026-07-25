@@ -55,6 +55,7 @@ export default defineConfig(({ command, mode }) => {
             animation_timeline: path.resolve(__dirname, 'animation-timeline.html'),
             usd_inspector: path.resolve(__dirname, 'usd-inspector.html'),
             composition_viz: path.resolve(__dirname, 'composition-viz.html'),
+            streaming_viz: path.resolve(__dirname, 'streaming-viz.html'),
           },
         },
         minify: false,

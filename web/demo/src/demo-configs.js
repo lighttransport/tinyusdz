@@ -154,6 +154,15 @@ export const DEMOS = [
     useComposition: true,
     image: './assets/previews/usd-assets.svg',
     href: './composition-viz.html'
+  },
+  {
+    id: 'streaming-viz',
+    title: 'Streaming Loading Viz',
+    subtitle: 'Visualizes WASM heap timeline, HTTP fetch waterfall, and per-phase memory breakdown during USD asset loading.',
+    defaultAsset: '',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-assets.svg',
+    href: './streaming-viz.html'
   }
 ];
 
