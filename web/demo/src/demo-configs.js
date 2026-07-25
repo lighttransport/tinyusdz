@@ -172,6 +172,18 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     image: './assets/previews/viewer-toolkit.svg',
     href: './viewer-toolkit.html'
+  },
+  {
+    id: 'animation-blending',
+    title: 'Animation Blending',
+    subtitle: 'Crossfade and blend between USD skeletal animation clips with per-clip weights, timeline scrub, and smooth transitions.',
+    defaultAsset: './assets/multi-clip-skeleton.usda',
+    preferredMaterialType: 'auto',
+    enableSkinning: true,
+    showSkeleton: true,
+    enableAnimation: true,
+    image: './assets/previews/animation-blending.svg',
+    href: './animation-blending.html'
   }
 ];
 
