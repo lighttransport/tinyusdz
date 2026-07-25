@@ -37,9 +37,8 @@ layout(push_constant) uniform Push {
   int uCarrierId;
   int uPurpose;
   int uRenderMode;
-  float _pad0;
-  float _pad1;
-  float _pad2;
+  vec3 uCameraRight;   // first row of the view matrix (world-space RIGHT)
+  vec3 uCameraUp;      // second row of the view matrix (world-space UP)
 } pc;
 
 layout(location = 0) out vec2 vLocal;
@@ -49,18 +48,8 @@ layout(location = 3) out vec3 vView;
 layout(location = 4) flat out int vInstanceId;
 
 void main() {
-  // Camera basis: ideally extracted from the view matrix (rows 0 and 1) and
-  // passed as push constants, matching the GL nonmesh path (gl_renderer.cc).
-  // Deriving from viewProj + camPos is an approximation that works for centered
-  // cameras. The GL path passes uCameraRight/uCameraUp from the CPU-side view
-  // matrix. When glslang is available, add the camera basis to the push constant
-  // block and use pc.uCameraRight / pc.uCameraUp here instead.
-  vec3 camRight = vec3(fr.viewProj[0][0], fr.viewProj[1][0], fr.viewProj[2][0]);
-  vec3 camUp = vec3(fr.viewProj[0][1], fr.viewProj[1][1], fr.viewProj[2][1]);
-  // Orthonormalize: derive from camPos and world up.
-  vec3 camFwd = normalize(fr.camPos.xyz);
-  camRight = normalize(cross(camFwd, vec3(0,1,0)));
-  camUp = normalize(cross(camRight, camFwd));
+  vec3 camRight = pc.uCameraRight;
+  vec3 camUp = pc.uCameraUp;
 
   int cornerId = gl_VertexIndex & 3;
   vec2 corner = cornerId == 0 ? vec2(-1,-1) :

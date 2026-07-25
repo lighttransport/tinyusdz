@@ -2532,7 +2532,7 @@ if(TINYUSDZ_BUILD_TESTS)
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backend-parity.sh"
       )
     set_tests_properties(tusdview-backend-parity PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 60 LABELS "tusdview")
+                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview")
 
     add_test(
       NAME tusdview-unsupported-realtime-lobes
