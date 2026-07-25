@@ -17,6 +17,7 @@
     "vite": "^7.3.1"
   },
   "dependencies": {
+    "@lighttransport/mujoco-wasm": "^0.0.10",
     "@modelcontextprotocol/sdk": "^1.15.1",
     "canvas": "^3.0.0-rc3",
     "fzstd": "^0.1.1",
