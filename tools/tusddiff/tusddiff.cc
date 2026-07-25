@@ -260,41 +260,125 @@ bool parse_dbl(const char *p, size_t &i, size_t e, double &v) {
   return true;
 }
 
-bool num_eq(double a, double b, const tinyusdz::tydra::DiffOptions &o) {
+uint64_t ordered_double_bits(double v) {
+  uint64_t bits = 0;
+  std::memcpy(&bits, &v, sizeof(bits));
+  return (bits & (uint64_t(1) << 63)) ? ~bits + 1
+                                      : bits | (uint64_t(1) << 63);
+}
+
+uint32_t ordered_float_bits(float v) {
+  uint32_t bits = 0;
+  std::memcpy(&bits, &v, sizeof(bits));
+  return (bits & (uint32_t(1) << 31)) ? ~bits + 1
+                                      : bits | (uint32_t(1) << 31);
+}
+
+bool has_float_storage(const std::string &text) {
+  const size_t end = text.find('=');
+  std::istringstream stream(text.substr(0, end));
+  std::string token;
+  while (stream >> token) {
+    while (!token.empty() &&
+           (token.back() == '[' || token.back() == ']' ||
+            token.back() == '(')) {
+      token.pop_back();
+    }
+    std::transform(token.begin(), token.end(), token.begin(),
+                   [](unsigned char c) {
+                     return static_cast<char>(std::tolower(c));
+                   });
+    if (token == "float" || token == "float2" || token == "float3" ||
+        token == "float4" || token == "matrix2f" || token == "matrix3f" ||
+        token == "matrix4f" ||
+        (!token.empty() && token.back() == 'f' &&
+         (token.rfind("color", 0) == 0 || token.rfind("normal", 0) == 0 ||
+          token.rfind("point", 0) == 0 || token.rfind("vector", 0) == 0 ||
+          token.rfind("texcoord", 0) == 0 ||
+          token.rfind("quat", 0) == 0))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool num_eq(double a, double b, bool float_storage,
+            const tinyusdz::tydra::DiffOptions &o) {
   if (a == b) return true;
   double d = std::fabs(a - b);
   if (o.absEps >= 0.0 && d <= o.absEps) return true;
-  // Text loses the true float bits, so ULP is applied as ~floatUlps float-ULPs
-  // of RELATIVE tolerance (1 float ULP ~= 1.19e-7).
-  double rel = (o.floatUlps ? static_cast<double>(o.floatUlps) : 0.0) * 1.1920929e-7;
-  if (rel <= 0.0) return false;
-  return d <= rel * std::max(std::fabs(a), std::fabs(b));
+  if (float_storage) {
+    const uint32_t ai = ordered_float_bits(static_cast<float>(a));
+    const uint32_t bi = ordered_float_bits(static_cast<float>(b));
+    const uint32_t distance = ai > bi ? ai - bi : bi - ai;
+    return distance <= o.floatUlps;
+  }
+  const uint64_t ai = ordered_double_bits(a);
+  const uint64_t bi = ordered_double_bits(b);
+  const uint64_t distance = ai > bi ? ai - bi : bi - ai;
+  return distance <= o.floatUlps;
+}
+
+std::string canonicalize_attribute_metadata(const std::string &text) {
+  const size_t open = text.find(" (\n");
+  if (open == std::string::npos) return text;
+  const size_t close = text.rfind('\n');
+  if (close == std::string::npos || close <= open + 3) return text;
+  size_t closing_token = close;
+  while (closing_token < text.size() && is_ws(text[closing_token])) {
+    ++closing_token;
+  }
+  if (closing_token >= text.size() || text[closing_token] != ')') return text;
+
+  std::vector<std::string> fields;
+  size_t cursor = open + 3;
+  while (cursor < close) {
+    size_t end = text.find('\n', cursor);
+    if (end == std::string::npos || end > close) end = close;
+    size_t begin = cursor;
+    while (begin < end && is_ws(text[begin])) ++begin;
+    while (end > begin && is_ws(text[end - 1])) --end;
+    if (begin < end) fields.emplace_back(text.substr(begin, end - begin));
+    cursor = end + 1;
+  }
+  std::sort(fields.begin(), fields.end());
+  std::string result = text.substr(0, open);
+  for (const std::string &field : fields) {
+    result += '\n';
+    result += field;
+  }
+  return result;
 }
 
 // Whitespace/indent-insensitive + ULP-tolerant line equality.
 bool line_sem_equal(const std::string &a, const std::string &b,
                     const tinyusdz::tydra::DiffOptions &o) {
-  size_t i = 0, j = 0, na = a.size(), nb = b.size();
+  const std::string left = canonicalize_attribute_metadata(a);
+  const std::string right = canonicalize_attribute_metadata(b);
+  const bool float_storage =
+      has_float_storage(left) && has_float_storage(right);
+  size_t i = 0, j = 0, na = left.size(), nb = right.size();
   for (;;) {
-    while (i < na && is_ws(a[i])) ++i;
-    while (j < nb && is_ws(b[j])) ++j;
+    while (i < na && is_ws(left[i])) ++i;
+    while (j < nb && is_ws(right[j])) ++j;
     if (i >= na || j >= nb) break;
-    if (is_num_start(a[i]) && is_num_start(b[j])) {
+    if (is_num_start(left[i]) && is_num_start(right[j])) {
       size_t i2 = i, j2 = j;
       double va, vb;
-      if (parse_dbl(a.data(), i2, na, va) && parse_dbl(b.data(), j2, nb, vb)) {
-        if (!num_eq(va, vb, o)) return false;
+      if (parse_dbl(left.data(), i2, na, va) &&
+          parse_dbl(right.data(), j2, nb, vb)) {
+        if (!num_eq(va, vb, float_storage, o)) return false;
         i = i2;
         j = j2;
         continue;
       }
     }
-    if (a[i] != b[j]) return false;
+    if (left[i] != right[j]) return false;
     ++i;
     ++j;
   }
-  while (i < na && is_ws(a[i])) ++i;
-  while (j < nb && is_ws(b[j])) ++j;
+  while (i < na && is_ws(left[i])) ++i;
+  while (j < nb && is_ws(right[j])) ++j;
   return i == na && j == nb;
 }
 
@@ -409,6 +493,10 @@ std::string line_key(const std::string &s) {
   size_t eq = s.find('=', a);
   size_t e = (eq == std::string::npos) ? s.size() : eq;
   while (e > a && is_ws(s[e - 1])) --e;
+  while (e > a && s[e - 1] == '(') {
+    --e;
+    while (e > a && is_ws(s[e - 1])) --e;
+  }
   size_t st = e;
   auto idch = [](char c) {
     return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == ':' ||
@@ -422,8 +510,8 @@ std::string line_key(const std::string &s) {
 int net_brackets(const std::string &L) {
   int d = 0;
   for (char c : L) {
-    if (c == '{' || c == '[') ++d;
-    else if (c == '}' || c == ']') --d;
+    if (c == '{' || c == '[' || c == '(') ++d;
+    else if (c == '}' || c == ']' || c == ')') --d;
   }
   return d;
 }
@@ -451,7 +539,11 @@ void to_units(const std::vector<std::string> &lines, std::string &header,
     if (header.empty() &&
         (t.rfind("def ", 0) == 0 || t.rfind("over ", 0) == 0 ||
          t.rfind("class ", 0) == 0 || t == "def" || t == "over" || t == "class")) {
-      header = L;
+      if (!t.empty() && t.back() == '(') {
+        t.pop_back();
+        while (!t.empty() && is_ws(t.back())) t.pop_back();
+      }
+      header = t;
       continue;
     }
     std::string key = line_key(L);
