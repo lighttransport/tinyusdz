@@ -239,9 +239,10 @@ struct NonMeshPushC {
   int carrierId;
   int purpose;
   int renderMode;
-  float pad[3];
+  float cameraRight[3];
+  float cameraUp[3];
 };
-static_assert(sizeof(NonMeshPushC) == 32, "NonMeshPushC must match nonmesh shaders");
+static_assert(sizeof(NonMeshPushC) == 44, "NonMeshPushC must match nonmesh shaders");
 // The per-draw metadata entry (set 3) is VulkanRenderer::DrawMetaCPU {int32_t
 // ids[4]}, matching the shader's std430 DrawMeta{ivec4}: .x meshId, .y flag bits.
 
@@ -8835,6 +8836,9 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // Non-mesh billboard/ribbon draws (point sprites and camera-facing curve ribbons).
     if (nonMeshPipeline_ && !nonMeshBatches_.empty()) {
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, nonMeshPipeline_);
+      // Camera right/up from the view matrix (matches GL nonmesh path).
+      const float nmRight[3] = {view_[0], view_[4], view_[8]};
+      const float nmUp[3] = {view_[1], view_[5], view_[9]};
       for (const NonMeshBatch& nm : nonMeshBatches_) {
         if (!nm.vbo || nm.count == 0) continue;
         VkDeviceSize nmOff = 0;
@@ -8845,6 +8849,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         pc.carrierId = nm.carrierId;
         pc.purpose = nm.purposeId;
         pc.renderMode = rtMode_;
+        std::memcpy(pc.cameraRight, nmRight, sizeof(nmRight));
+        std::memcpy(pc.cameraUp, nmUp, sizeof(nmUp));
         vkCmdPushConstants(cb, pipelineLayout_,
                            VK_SHADER_STAGE_VERTEX_BIT |
                                VK_SHADER_STAGE_FRAGMENT_BIT,

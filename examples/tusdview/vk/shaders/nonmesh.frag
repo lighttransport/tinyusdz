@@ -37,9 +37,8 @@ layout(push_constant) uniform Push {
   int uCarrierId;
   int uPurpose;
   int uRenderMode;
-  float _pad0;
-  float _pad1;
-  float _pad2;
+  vec3 uCameraRight;
+  vec3 uCameraUp;
 } pc;
 
 layout(location = 0) out vec4 fragColor;
@@ -79,8 +78,8 @@ void main() {
     // Point billboard: circular discard + spherical normal proxy
     float rr = dot(vLocal, vLocal);
     if (rr > 1.0) discard;
-    vec3 camRight = normalize(cross(normalize(fr.camPos.xyz - vWorldPos), vec3(0,1,0)));
-    vec3 camUp = normalize(cross(camRight, normalize(fr.camPos.xyz - vWorldPos)));
+    vec3 camRight = normalize(pc.uCameraRight);
+    vec3 camUp = normalize(pc.uCameraUp);
     N = normalize(camRight * vLocal.x + camUp * vLocal.y +
                   normalize(vView) * sqrt(max(0.0, 1.0 - rr)));
   } else {
