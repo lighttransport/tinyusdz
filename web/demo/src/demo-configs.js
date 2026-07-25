@@ -123,6 +123,18 @@ export const DEMOS = [
     preferredMaterialType: 'usdpreviewsurface',
     image: './assets/previews/usd-assets.svg',
     href: './material-editor.html'
+  },
+  {
+    id: 'animation-timeline',
+    title: 'Animation Timeline',
+    subtitle: 'Scrub through USD skeletal and node animations with play/pause, speed control, clip switching, and looping.',
+    defaultAsset: './assets/multi-clip-skeleton.usda',
+    preferredMaterialType: 'auto',
+    enableSkinning: true,
+    showSkeleton: true,
+    enableAnimation: true,
+    image: './assets/previews/usd-assets.svg',
+    href: './animation-timeline.html'
   }
 ];
 
