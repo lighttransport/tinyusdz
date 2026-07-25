@@ -144,6 +144,16 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     image: './assets/previews/usd-assets.svg',
     href: './usd-inspector.html'
+  },
+  {
+    id: 'composition-viz',
+    title: 'Composition Layer Viz',
+    subtitle: 'Visualizes how USD composition arcs (subLayers, references, payloads, overrides) stack to produce the final scene.',
+    defaultAsset: './assets/usd-composite-sample.usda',
+    preferredMaterialType: 'auto',
+    useComposition: true,
+    image: './assets/previews/usd-assets.svg',
+    href: './composition-viz.html'
   }
 ];
 
