@@ -105,6 +105,15 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     image: './assets/previews/usd-assets.svg',
     href: './usd-assets.html'
+  },
+  {
+    id: 'usd-physics',
+    title: 'USD Physics + MuJoCo',
+    subtitle: 'Simulates a USD physics robotic arm with MuJoCo WASM physics. Interactive joint servo control.',
+    defaultAsset: './assets/physics-robot-arm.usda',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-assets.svg',
+    href: './usd-physics.html'
   }
 ];
 
