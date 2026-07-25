@@ -50,13 +50,14 @@ export default defineConfig(({ command, mode }) => {
             composition: path.resolve(__dirname, 'composition.html'),
             export_demo: path.resolve(__dirname, 'export.html'),
             usd_assets: path.resolve(__dirname, 'usd-assets.html'),
+            usd_physics: path.resolve(__dirname, 'usd-physics.html'),
           },
         },
         minify: false,
         terserOptions: false, // Disable terser completely
     },
     optimizeDeps: {
-        exclude: ['tinyusdz'],
+        exclude: ['tinyusdz', '@lighttransport/mujoco-wasm'],
     },
     // Use only gzip here. Vite will emit the WASM referenced by the npm package.
     plugins: [
