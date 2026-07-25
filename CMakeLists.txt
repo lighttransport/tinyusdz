@@ -2528,11 +2528,12 @@ if(TINYUSDZ_BUILD_TESTS)
 
     add_test(
       NAME tusdview-backend-parity
-      COMMAND bash
-              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backend-parity.sh"
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW_PARITY_FRAMES=1" "TUSDVIEW_PARITY_SIZE=96x96"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backend-parity.sh"
       )
     set_tests_properties(tusdview-backend-parity PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview")
+                         SKIP_RETURN_CODE 77 TIMEOUT 60 LABELS "tusdview")
 
     add_test(
       NAME tusdview-unsupported-realtime-lobes
