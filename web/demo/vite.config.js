@@ -56,6 +56,7 @@ export default defineConfig(({ command, mode }) => {
             usd_inspector: path.resolve(__dirname, 'usd-inspector.html'),
             composition_viz: path.resolve(__dirname, 'composition-viz.html'),
             streaming_viz: path.resolve(__dirname, 'streaming-viz.html'),
+            viewer_toolkit: path.resolve(__dirname, 'viewer-toolkit.html'),
           },
         },
         minify: false,
