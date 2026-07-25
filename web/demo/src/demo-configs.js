@@ -96,6 +96,15 @@ export const DEMOS = [
     enableExport: true,
     image: './assets/previews/export.jpg',
     href: './export.html'
+  },
+  {
+    id: 'usd-assets',
+    title: 'USD Assets Browser',
+    subtitle: 'Browse and preview curated USD assets from the usd-wg/assets corpus over HTTP.',
+    defaultAsset: '',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-assets.svg',
+    href: './usd-assets.html'
   }
 ];
 
