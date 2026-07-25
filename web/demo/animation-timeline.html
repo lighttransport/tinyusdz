@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>Animation Timeline - TinyUSDZ Demo</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<link rel="stylesheet" href="./demos.css">
+		<style>
+			.timeline-bar {
+				position: absolute;
+				left: 0;
+				right: 0;
+				bottom: 0;
+				height: 72px;
+				background: rgba(14, 14, 16, .92);
+				border-top: 1px solid var(--line);
+				display: flex;
+				align-items: center;
+				gap: 12px;
+				padding: 0 16px;
+				z-index: 10;
+			}
+			.timeline-bar button {
+				height: 32px;
+				padding: 0 12px;
+				border: 1px solid var(--line-strong);
+				border-radius: 4px;
+				background: var(--panel-2);
+				color: var(--text);
+				cursor: pointer;
+				font-size: .82rem;
+				white-space: nowrap;
+			}
+			.timeline-bar button:hover { background: var(--panel-3); }
+			.timeline-bar button.active { background: var(--accent); color: #121214; border-color: var(--accent); }
+			.timeline-bar select {
+				height: 32px;
+				padding: 0 8px;
+				border: 1px solid var(--line-strong);
+				border-radius: 4px;
+				background: var(--panel-2);
+				color: var(--text);
+				font-size: .82rem;
+			}
+			.timeline-track {
+				flex: 1;
+				height: 32px;
+				position: relative;
+				cursor: pointer;
+				min-width: 0;
+			}
+			.timeline-bg {
+				position: absolute;
+				inset: 10px 0;
+				background: var(--panel-3);
+				border-radius: 3px;
+				overflow: hidden;
+			}
+			.timeline-fill {
+				height: 100%;
+				background: var(--accent);
+				border-radius: 3px;
+				transition: width 50ms linear;
+				opacity: .7;
+			}
+			.timeline-scrubber {
+				position: absolute;
+				top: 2px;
+				width: 3px;
+				height: 28px;
+				background: var(--accent);
+				border-radius: 2px;
+				pointer-events: none;
+				transition: left 50ms linear;
+			}
+			.timeline-time {
+				color: var(--text);
+				font-size: .82rem;
+				font-variant-numeric: tabular-nums;
+				white-space: nowrap;
+				min-width: 11ch;
+				text-align: center;
+			}
+			.timeline-info {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+			}
+			.timeline-info .label {
+				color: var(--dim);
+				font-size: .74rem;
+				text-transform: uppercase;
+			}
+			.timeline-info .value {
+				color: var(--text);
+				font-size: .82rem;
+				font-variant-numeric: tabular-nums;
+			}
+			@media (max-width:800px) {
+				.timeline-bar { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 8px; }
+				.timeline-track { flex-basis: 100%; order: -1; }
+			}
+		</style>
+	</head>
+	<body class="demo-view">
+		<div id="demo-root"></div>
+		<script type="module" src="./src/entries/animation-timeline.js"></script>
+	</body>
+</html>
