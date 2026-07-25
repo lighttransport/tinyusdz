@@ -320,7 +320,7 @@ bool num_eq(double a, double b, bool float_storage,
 }
 
 std::string canonicalize_attribute_metadata(const std::string &text) {
-  const size_t open = text.find(" (\n");
+  const size_t open = text.find("(\n");
   if (open == std::string::npos) return text;
   const size_t close = text.rfind('\n');
   if (close == std::string::npos || close <= open + 3) return text;
@@ -342,7 +342,11 @@ std::string canonicalize_attribute_metadata(const std::string &text) {
     cursor = end + 1;
   }
   std::sort(fields.begin(), fields.end());
-  std::string result = text.substr(0, open);
+  size_t declaration_end = open;
+  while (declaration_end > 0 && is_ws(text[declaration_end - 1])) {
+    --declaration_end;
+  }
+  std::string result = text.substr(0, declaration_end);
   for (const std::string &field : fields) {
     result += '\n';
     result += field;
