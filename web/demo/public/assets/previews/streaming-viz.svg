@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#18181b"/>
+  <!-- Viewport -->
+  <rect x="24" y="20" width="280" height="320" rx="8" fill="#101013" stroke="#303038" stroke-width="1"/>
+  <rect x="36" y="32" width="256" height="296" rx="4" fill="#0e0e10"/>
+  <!-- Helmet silhouette -->
+  <g opacity="0.06" fill="none" stroke="#f59e0b" stroke-width="1.5">
+    <path d="M164 260 Q164 180 200 160 Q220 150 240 160 Q276 180 276 260Z"/>
+    <rect x="190" y="250" width="60" height="25" rx="8"/>
+    <rect x="200" y="240" width="40" height="12" rx="4"/>
+    <line x1="210" y1="200" x2="210" y2="220"/>
+    <line x1="230" y1="200" x2="230" y2="220"/>
+  </g>
+  <!-- Charts panel -->
+  <rect x="320" y="20" width="296" height="320" rx="8" fill="#202025" stroke="#303038" stroke-width="1"/>
+  <!-- Heap chart -->
+  <rect x="332" y="32" width="272" height="80" rx="4" fill="#0a0a0c"/>
+  <!-- Bars -->
+  <rect x="342" y="92" width="16" height="14" rx="2" fill="#6366f1"/>
+  <rect x="364" y="80" width="16" height="26" rx="2" fill="#6366f1"/>
+  <rect x="386" y="60" width="16" height="46" rx="2" fill="#f59e0b"/>
+  <rect x="408" y="68" width="16" height="38" rx="2" fill="#38bdf8"/>
+  <rect x="430" y="72" width="16" height="34" rx="2" fill="#a78bfa"/>
+  <rect x="452" y="96" width="16" height="10" rx="2" fill="#34d399"/>
+  <text x="452" y="28" text-anchor="middle" fill="#a0a0a8" font-family="system-ui" font-size="8" font-weight="600">WASM HEAP TIMELINE</text>
+  <!-- Fetch waterfall -->
+  <rect x="332" y="122" width="272" height="60" rx="4" fill="#0a0a0c"/>
+  <rect x="340" y="130" width="120" height="8" rx="2" fill="#38bdf8"/>
+  <text x="468" y="137" fill="#71717a" font-family="system-ui" font-size="7">root.usda</text>
+  <rect x="340" y="143" width="80" height="8" rx="2" fill="#38bdf8"/>
+  <text x="428" y="150" fill="#71717a" font-family="system-ui" font-size="7">tex_01.png</text>
+  <rect x="340" y="156" width="60" height="8" rx="2" fill="#38bdf8"/>
+  <text x="408" y="163" fill="#71717a" font-family="system-ui" font-size="7">tex_02.png</text>
+  <rect x="340" y="169" width="45" height="8" rx="2" fill="#34d399"/>
+  <text x="392" y="176" fill="#71717a" font-family="system-ui" font-size="7">tex_03.png</text>
+  <text x="452" y="118" text-anchor="middle" fill="#a0a0a8" font-family="system-ui" font-size="8" font-weight="600">FETCH WATERFALL</text>
+  <!-- Summary grid -->
+  <rect x="332" y="192" width="272" height="136" rx="4" fill="#1c1c20" stroke="#303038" stroke-width=".5"/>
+  <text x="452" y="208" text-anchor="middle" fill="#a0a0a8" font-family="system-ui" font-size="8" font-weight="600">SUMMARY</text>
+  <rect x="344" y="216" width="120" height="36" rx="4" fill="#202025" stroke="#303038" stroke-width=".5"/>
+  <text x="404" y="230" text-anchor="middle" fill="#ededf0" font-family="system-ui" font-size="10" font-weight="700">26.4 MB</text>
+  <text x="404" y="244" text-anchor="middle" fill="#71717a" font-family="system-ui" font-size="7">PEAK HEAP</text>
+  <rect x="472" y="216" width="120" height="36" rx="4" fill="#202025" stroke="#303038" stroke-width=".5"/>
+  <text x="532" y="230" text-anchor="middle" fill="#ededf0" font-family="system-ui" font-size="10" font-weight="700">1.27×</text>
+  <text x="532" y="244" text-anchor="middle" fill="#71717a" font-family="system-ui" font-size="7">HEAP / INPUT</text>
+  <rect x="344" y="260" width="248" height="56" rx="4" fill="#202025" stroke="#303038" stroke-width=".5"/>
+  <text x="468" y="278" text-anchor="middle" fill="#ededf0" font-family="system-ui" font-size="10" font-weight="700">4 HTTP fetches · 8.2 MB</text>
+  <text x="468" y="292" text-anchor="middle" fill="#71717a" font-family="system-ui" font-size="7">731 ms LOAD TIME</text>
+  <!-- Labels -->
+  <text x="32" y="14" fill="#38bdf8" font-family="system-ui" font-size="11" font-weight="600">STREAMING LOADING METRICS</text>
+</svg>

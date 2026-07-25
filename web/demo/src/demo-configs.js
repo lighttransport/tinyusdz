@@ -112,7 +112,7 @@ export const DEMOS = [
     subtitle: 'Simulates a USD physics robotic arm with MuJoCo WASM physics. Interactive joint servo control.',
     defaultAsset: './assets/physics-robot-arm.usda',
     preferredMaterialType: 'auto',
-    image: './assets/previews/usd-assets.svg',
+    image: './assets/previews/usd-physics.svg',
     href: './usd-physics.html'
   },
   {
@@ -121,7 +121,7 @@ export const DEMOS = [
     subtitle: 'Load a USD scene and edit PBR material parameters (color, metalness, roughness, clearcoat, IOR) in real time.',
     defaultAsset: './assets/suzanne-pbr.usda',
     preferredMaterialType: 'usdpreviewsurface',
-    image: './assets/previews/usd-assets.svg',
+    image: './assets/previews/material-editor.svg',
     href: './material-editor.html'
   },
   {
@@ -133,7 +133,7 @@ export const DEMOS = [
     enableSkinning: true,
     showSkeleton: true,
     enableAnimation: true,
-    image: './assets/previews/usd-assets.svg',
+    image: './assets/previews/animation-timeline.svg',
     href: './animation-timeline.html'
   },
   {
@@ -142,7 +142,7 @@ export const DEMOS = [
     subtitle: 'Explore USD scene structure: prim hierarchy tree, stage metadata, mesh properties, and material parameters.',
     defaultAsset: './assets/suzanne-pbr.usda',
     preferredMaterialType: 'auto',
-    image: './assets/previews/usd-assets.svg',
+    image: './assets/previews/usd-inspector.svg',
     href: './usd-inspector.html'
   },
   {
@@ -152,7 +152,7 @@ export const DEMOS = [
     defaultAsset: './assets/usd-composite-sample.usda',
     preferredMaterialType: 'auto',
     useComposition: true,
-    image: './assets/previews/usd-assets.svg',
+    image: './assets/previews/composition-viz.svg',
     href: './composition-viz.html'
   },
   {
@@ -161,7 +161,7 @@ export const DEMOS = [
     subtitle: 'Visualizes WASM heap timeline, HTTP fetch waterfall, and per-phase memory breakdown during USD asset loading.',
     defaultAsset: '',
     preferredMaterialType: 'auto',
-    image: './assets/previews/usd-assets.svg',
+    image: './assets/previews/streaming-viz.svg',
     href: './streaming-viz.html'
   }
 ];
