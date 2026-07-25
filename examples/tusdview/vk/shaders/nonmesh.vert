@@ -49,7 +49,12 @@ layout(location = 3) out vec3 vView;
 layout(location = 4) flat out int vInstanceId;
 
 void main() {
-  // Camera basis from frame UBO.
+  // Camera basis: ideally extracted from the view matrix (rows 0 and 1) and
+  // passed as push constants, matching the GL nonmesh path (gl_renderer.cc).
+  // Deriving from viewProj + camPos is an approximation that works for centered
+  // cameras. The GL path passes uCameraRight/uCameraUp from the CPU-side view
+  // matrix. When glslang is available, add the camera basis to the push constant
+  // block and use pc.uCameraRight / pc.uCameraUp here instead.
   vec3 camRight = vec3(fr.viewProj[0][0], fr.viewProj[1][0], fr.viewProj[2][0]);
   vec3 camUp = vec3(fr.viewProj[0][1], fr.viewProj[1][1], fr.viewProj[2][1]);
   // Orthonormalize: derive from camPos and world up.
