@@ -4587,6 +4587,9 @@ void VulkanRenderer::destroyScene() {
   }
   meshes_.clear();
   nonMeshBatches_.clear();
+  std::vector<uint8_t>().swap(nonMeshStage_);
+  if (nonMeshVbo_) { vkDestroyBuffer(device_, nonMeshVbo_, nullptr); nonMeshVbo_ = VK_NULL_HANDLE; }
+  if (nonMeshVboMem_) { vkFreeMemory(device_, nonMeshVboMem_, nullptr); nonMeshVboMem_ = VK_NULL_HANDLE; }
   // Shared multi-draw-indirect buffers + their CPU staging (the aliases above were
   // skipped for eligible meshes). Reset the MDI state so the next scene rebuilds it.
   destroyMdiBuffers();
@@ -5738,9 +5741,10 @@ void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
                               points.world[10] * points.world[10]);
   const float worldScale = std::max(sx, std::max(sy, sz));
 
+  // Accumulate instance data into the shared staging buffer.
+  const uint32_t baseByte = static_cast<uint32_t>(nonMeshStage_.size());
   struct NonMeshInst { float aP0[3], aP1[3], aWidth, aColor[4]; };
-  std::vector<NonMeshInst> instances;
-  instances.reserve(n);
+  nonMeshStage_.reserve(nonMeshStage_.size() + n * sizeof(NonMeshInst));
   for (size_t i = 0; i < n; ++i) {
     const float x = points.points[i * 3], y = points.points[i * 3 + 1],
                 z = points.points[i * 3 + 2];
@@ -5776,20 +5780,13 @@ void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
     std::memcpy(inst.aP1, p, sizeof(p));
     inst.aWidth = std::max(w, 1e-6f);
     std::memcpy(inst.aColor, c, sizeof(c));
-    instances.push_back(inst);
-  }
-  VkBuffer vbo = VK_NULL_HANDLE;
-  VkDeviceMemory vboMem = VK_NULL_HANDLE;
-  const VkDeviceSize dataSz = instances.size() * sizeof(NonMeshInst);
-  if (dataSz > 0) {
-    createHostBuffer(dataSz, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instances.data(),
-                     &vbo, &vboMem);
+    const uint8_t* raw = reinterpret_cast<const uint8_t*>(&inst);
+    nonMeshStage_.insert(nonMeshStage_.end(), raw, raw + sizeof(NonMeshInst));
   }
   NonMeshBatch b;
   b.count = static_cast<uint32_t>(n);
   b.kind = 0;
-  b.vbo = vbo;
-  b.vboMem = vboMem;
+  b.vboOffset = baseByte;
   b.materialId = points.materialId;
   b.carrierId = static_cast<int>(meshes_.size() + nonMeshBatches_.size());
   b.purposeId = PurposeId(points.purpose);
@@ -5824,8 +5821,8 @@ void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
                               curves.world[9] * curves.world[9] +
                               curves.world[10] * curves.world[10]);
   const float worldScale = std::max(sx, std::max(sy, sz));
+  const uint32_t baseByte = static_cast<uint32_t>(nonMeshStage_.size());
   struct NonMeshInst { float aP0[3], aP1[3], aWidth, aColor[4]; };
-  std::vector<NonMeshInst> instances;
   auto wp = [&](size_t i, float p[3]) {
     float x = curves.points[i * 3], y = curves.points[i * 3 + 1],
           z = curves.points[i * 3 + 2];
@@ -5876,26 +5873,34 @@ void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
       std::memcpy(inst.aP1, p1, sizeof(p1));
       inst.aWidth = std::max(w, 1e-6f);
       std::memcpy(inst.aColor, c, sizeof(c));
-      instances.push_back(inst);
+      const uint8_t* raw = reinterpret_cast<const uint8_t*>(&inst);
+      nonMeshStage_.insert(nonMeshStage_.end(), raw, raw + sizeof(NonMeshInst));
     }
     base = end;
   }
-  VkBuffer vbo = VK_NULL_HANDLE;
-  VkDeviceMemory vboMem = VK_NULL_HANDLE;
-  const VkDeviceSize dataSz = instances.size() * sizeof(NonMeshInst);
-  if (dataSz > 0) {
-    createHostBuffer(dataSz, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instances.data(),
-                     &vbo, &vboMem);
-  }
   NonMeshBatch b;
-  b.count = static_cast<uint32_t>(instances.size());
+  b.count = static_cast<uint32_t>((nonMeshStage_.size() - baseByte) / sizeof(NonMeshInst));
   b.kind = 1;
-  b.vbo = vbo;
-  b.vboMem = vboMem;
+  b.vboOffset = baseByte;
   b.materialId = curves.materialId;
   b.carrierId = static_cast<int>(meshes_.size() + nonMeshBatches_.size());
   b.purposeId = PurposeId(curves.purpose);
   nonMeshBatches_.push_back(b);
+}
+
+void VulkanRenderer::buildNonMesh() {
+  if (nonMeshStage_.empty()) return;
+  if (nonMeshVbo_) {
+    vkDestroyBuffer(device_, nonMeshVbo_, nullptr);
+    nonMeshVbo_ = VK_NULL_HANDLE;
+  }
+  if (nonMeshVboMem_) {
+    vkFreeMemory(device_, nonMeshVboMem_, nullptr);
+    nonMeshVboMem_ = VK_NULL_HANDLE;
+  }
+  createHostBuffer(nonMeshStage_.size(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                   nonMeshStage_.data(), &nonMeshVbo_, &nonMeshVboMem_);
+  std::vector<uint8_t>().swap(nonMeshStage_);
 }
 
 void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
@@ -8421,6 +8426,12 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       vkCmdEndRenderPass(cb);
       }
     }
+    // Upload accumulated nonmesh instance data before the render pass (CPU
+    // operations like vkAllocateMemory are not permitted inside a render pass).
+    if (!nonMeshVbo_ && !nonMeshStage_.empty()) {
+      const_cast<VulkanRenderer*>(this)->buildNonMesh();
+    }
+
     VkClearValue clears[2];
     clears[0].color = {{clear_[0], clear_[1], clear_[2], clear_[3]}};
     clears[1].depthStencil = {1.0f, 0};
@@ -8836,13 +8847,17 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // Non-mesh billboard/ribbon draws (point sprites and camera-facing curve ribbons).
     if (nonMeshPipeline_ && !nonMeshBatches_.empty()) {
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, nonMeshPipeline_);
-      // Camera right/up from the view matrix (matches GL nonmesh path).
+      // Ensure the shared nonmesh VBO is uploaded (lazy: buildNonMesh was deferred).
+      if (!nonMeshVbo_ && !nonMeshStage_.empty()) {
+        const_cast<VulkanRenderer*>(this)->buildNonMesh();
+      }
+      if (!nonMeshVbo_) { /* no buffer — skip */ }
+      else {
       const float nmRight[3] = {view_[0], view_[4], view_[8]};
       const float nmUp[3] = {view_[1], view_[5], view_[9]};
       for (const NonMeshBatch& nm : nonMeshBatches_) {
-        if (!nm.vbo || nm.count == 0) continue;
-        VkDeviceSize nmOff = 0;
-        vkCmdBindVertexBuffers(cb, 0, 1, &nm.vbo, &nmOff);
+        if (nm.count == 0) continue;
+        VkDeviceSize nmOff = static_cast<VkDeviceSize>(nm.vboOffset);
         NonMeshPushC pc{};
         pc.kind = nm.kind;
         pc.materialId = nm.materialId;
@@ -8856,6 +8871,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
                                VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(pc), &pc);
         vkCmdDraw(cb, 4, nm.count, 0, 0);
+      }
       }
     }
     // Raster LOD box proxies (optimization B): distant instances the cull collapsed
@@ -9290,11 +9306,10 @@ void VulkanRenderer::shutdown() {
   if (volumeCubeBuf_) { vkDestroyBuffer(device_, volumeCubeBuf_, nullptr); volumeCubeBuf_ = VK_NULL_HANDLE; }
   if (volumeCubeMem_) { vkFreeMemory(device_, volumeCubeMem_, nullptr); volumeCubeMem_ = VK_NULL_HANDLE; }
   if (nonMeshPipeline_) { vkDestroyPipeline(device_, nonMeshPipeline_, nullptr); nonMeshPipeline_ = VK_NULL_HANDLE; }
-  for (NonMeshBatch& nm : nonMeshBatches_) {
-    if (nm.vbo) vkDestroyBuffer(device_, nm.vbo, nullptr);
-    if (nm.vboMem) vkFreeMemory(device_, nm.vboMem, nullptr);
-  }
+  if (nonMeshVbo_) { vkDestroyBuffer(device_, nonMeshVbo_, nullptr); nonMeshVbo_ = VK_NULL_HANDLE; }
+  if (nonMeshVboMem_) { vkFreeMemory(device_, nonMeshVboMem_, nullptr); nonMeshVboMem_ = VK_NULL_HANDLE; }
   nonMeshBatches_.clear();
+  std::vector<uint8_t>().swap(nonMeshStage_);
   if (volumePipeline_) { vkDestroyPipeline(device_, volumePipeline_, nullptr); volumePipeline_ = VK_NULL_HANDLE; }
   if (volumePipelineNoDepth_) { vkDestroyPipeline(device_, volumePipelineNoDepth_, nullptr); volumePipelineNoDepth_ = VK_NULL_HANDLE; }
   if (volumeLayout_) { vkDestroyPipelineLayout(device_, volumeLayout_, nullptr); volumeLayout_ = VK_NULL_HANDLE; }

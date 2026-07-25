@@ -641,10 +641,15 @@ class VulkanRenderer final : public Renderer {
     int materialId{-1};
     int carrierId{-1};
     int purposeId{0};
-    VkBuffer vbo{VK_NULL_HANDLE};
-    VkDeviceMemory vboMem{VK_NULL_HANDLE};
+    uint32_t vboOffset{0};  // byte offset into nonMeshVbo_
   };
   std::vector<NonMeshBatch> nonMeshBatches_;
+  VkBuffer nonMeshVbo_{VK_NULL_HANDLE};
+  VkDeviceMemory nonMeshVboMem_{VK_NULL_HANDLE};
+  // CPU staging for nonmesh instance data. Accumulated during appendPoints/
+  // appendCurves; uploaded to nonMeshVbo_ by buildNonMesh().
+  std::vector<uint8_t> nonMeshStage_;
+  void buildNonMesh();
   // CPU staging accumulated during appendMesh, uploaded + freed by buildInstMdi().
   std::vector<float> mdiInstXfStage_;      // 12 floats / instance (o2w rows)
   std::vector<float> mdiInstColStage_;     // 4 floats / instance (rgba)
