@@ -163,6 +163,15 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     image: './assets/previews/streaming-viz.svg',
     href: './streaming-viz.html'
+  },
+  {
+    id: 'viewer-toolkit',
+    title: 'Viewer Toolkit',
+    subtitle: 'Full-featured USD viewer with wireframe/flat/shaded/textured modes, exposure control, wireframe overlay, backface culling, and display toggles.',
+    defaultAsset: './assets/suzanne-pbr.usda',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/viewer-toolkit.svg',
+    href: './viewer-toolkit.html'
   }
 ];
 
