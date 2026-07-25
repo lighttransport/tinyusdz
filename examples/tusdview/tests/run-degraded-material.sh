@@ -50,7 +50,7 @@ def Xform "World" {
 USDA
 
 RUN=()
-if command -v xvfb-run >/dev/null 2>&1; then RUN=(xvfb-run -a); fi
+if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then RUN=(xvfb-run -a); fi
 
 log="$("${RUN[@]}" "$TUSDVIEW" --headless --backend "$BACKEND" --frames 2 \
        --screenshot "$TMP_DIR/out.ppm" "$ASSET" 2>&1)"

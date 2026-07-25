@@ -17,7 +17,7 @@ else
   trap 'rm -rf "$OUT"' EXIT
 fi
 RUN=()
-if command -v xvfb-run >/dev/null 2>&1; then
+if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
   RUN=(xvfb-run -a)
 fi
 
