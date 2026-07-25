@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#18181b"/>
+  <rect x="0" y="0" width="640" height="360" fill="url(#grid)" opacity="0.08"/>
+  <defs>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#fff" stroke-width="0.5"/>
+    </pattern>
+  </defs>
+  <rect x="24" y="24" width="200" height="312" rx="8" fill="#202025" stroke="#303038" stroke-width="1"/>
+  <rect x="36" y="36" width="176" height="100" rx="4" fill="#26262c"/>
+  <rect x="36" y="148" width="176" height="12" rx="3" fill="#303038"/>
+  <rect x="36" y="166" width="100" height="10" rx="3" fill="#303038"/>
+  <rect x="36" y="190" width="176" height="100" rx="4" fill="#26262c"/>
+  <rect x="36" y="302" width="176" height="12" rx="3" fill="#303038"/>
+  <rect x="36" y="320" width="100" height="10" rx="3" fill="#303038"/>
+  <rect x="248" y="24" width="368" height="312" rx="8" fill="#101013" stroke="#303038" stroke-width="1"/>
+  <rect x="260" y="36" width="344" height="248" rx="4" fill="#080809"/>
+  <text x="432" y="170" text-anchor="middle" fill="#474751" font-family="system-ui" font-size="14" font-weight="600">USD Asset Preview</text>
+  <rect x="260" y="296" width="344" height="28" rx="4" fill="#1c1c20"/>
+  <text x="432" y="314" fill="#5a5a66" font-family="system-ui" font-size="11">Sphere • 1 mesh, 1 material, 0 textures</text>
+  <circle cx="280" cy="310" r="4" fill="#75d4a5"/>
+  <rect x="260" y="220" width="80" height="10" rx="3" fill="#303038"/>
+  <rect x="260" y="240" width="60" height="8" rx="3" fill="#303038"/>
+</svg>

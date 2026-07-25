@@ -33,6 +33,7 @@ export default defineConfig(({ command, mode }) => {
             { find: 'tinyusdz', replacement: tinyusdzRoot },
             { find: 'fzstd', replacement: path.resolve(__dirname, 'node_modules/fzstd') },
             { find: 'three', replacement: path.resolve(__dirname, 'node_modules/three') },
+            { find: 'tinyusdz-js', replacement: path.resolve(__dirname, '../js') },
         ],
     },
     build: {
@@ -48,6 +49,7 @@ export default defineConfig(({ command, mode }) => {
             asset_resolver: path.resolve(__dirname, 'asset-resolver.html'),
             composition: path.resolve(__dirname, 'composition.html'),
             export_demo: path.resolve(__dirname, 'export.html'),
+            usd_assets: path.resolve(__dirname, 'usd-assets.html'),
           },
         },
         minify: false,

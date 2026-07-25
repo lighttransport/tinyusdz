@@ -7,6 +7,10 @@
     "generate": "node batch-runner.js generate",
     "validate": "node batch-runner.js validate",
     "clean": "node batch-runner.js clean",
+    "previews": "node generate-previews.js",
+    "previews:sphere": "node generate-previews.js --assets sphere",
+    "previews:select": "node generate-previews.js --assets",
+    "previews:skip": "node generate-previews.js --skip-existing",
     "test-webgpu": "xvfb-run -a node test.js"
   },
   "dependencies": {
