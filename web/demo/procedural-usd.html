@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>Procedural USD Builder - TinyUSDZ Demo</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<link rel="stylesheet" href="./demos.css">
+		<style>
+			.builder-main {
+				display: grid;
+				min-height: 0;
+				grid-template-columns: minmax(0, 1fr) minmax(360px, 480px);
+				overflow: hidden;
+			}
+			.editor-panel {
+				display: flex;
+				flex-direction: column;
+				min-width: 0;
+				overflow: hidden;
+				background: var(--panel);
+				border-right: 1px solid var(--line);
+			}
+			.editor-toolbar {
+				flex: 0 0 auto;
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				padding: 8px 12px;
+				border-bottom: 1px solid var(--line);
+				flex-wrap: wrap;
+			}
+			.editor-toolbar button, .editor-toolbar select {
+				padding: 5px 10px;
+				border: 1px solid var(--line-strong);
+				border-radius: 4px;
+				background: var(--panel-2);
+				color: var(--text);
+				cursor: pointer;
+				font-size: .78rem;
+				white-space: nowrap;
+			}
+			.editor-toolbar button:hover { background: var(--panel-3); }
+			.editor-toolbar button.primary { background: var(--accent); color: #121214; border-color: var(--accent); }
+			.editor-toolbar button.primary:hover { opacity: .85; }
+			#scene-json {
+				flex: 1;
+				min-height: 0;
+				padding: 10px 12px;
+				border: none;
+				resize: none;
+				outline: none;
+				background: #0e0e10;
+				color: #d4d4d8;
+				font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+				font-size: .8rem;
+				line-height: 1.5;
+				tab-size: 2;
+				white-space: pre;
+			}
+			#scene-json:focus { background: #101015; }
+			.editor-status {
+				flex: 0 0 auto;
+				padding: 4px 12px;
+				border-top: 1px solid var(--line);
+				font-size: .74rem;
+				color: var(--dim);
+				min-height: 1.5em;
+			}
+			.error-text { color: var(--danger); }
+		</style>
+	</head>
+	<body class="demo-view">
+		<div id="demo-root"></div>
+		<script type="module" src="./src/entries/procedural-usd.js"></script>
+	</body>
+</html>

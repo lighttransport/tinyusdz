@@ -184,6 +184,15 @@ export const DEMOS = [
     enableAnimation: true,
     image: './assets/previews/animation-blending.svg',
     href: './animation-blending.html'
+  },
+  {
+    id: 'procedural-usd',
+    title: 'Procedural USD Builder',
+    subtitle: 'Build USD scenes from JSON with a library of shapes (cube, sphere, cylinder, cone, torus, capsule) and materials.',
+    defaultAsset: '',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/procedural-usd.svg',
+    href: './procedural-usd.html'
   }
 ];
 
