@@ -103,7 +103,12 @@ init();
 
 async function init() {
   renderer = new StreamingUSDRenderer($('asset-canvas'));
-  await renderer.init();
+  showLoader("Loading TinyUSDZ WASM...", document.getElementById("viewport"));
+    try {
+      await renderer.init()
+    } finally {
+      hideLoader();
+    };
 
   startFpsMeter((fps) => { state.fps = fps; updateStats({ fps }); });
 
@@ -409,3 +414,4 @@ function updateStats(values = {}) {
 
 // ── Expose for debugging ──
 window.__usdAssetsBrowser = { state, renderer, ASSETS };
+import { showLoader, hideLoader } from "../tusd-loader.js";

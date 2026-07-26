@@ -997,3 +997,44 @@ button {
         font-size: 0.7rem;
     }
 }
+
+/* ── Loading Spinner ──────────────────────────────── */
+
+.tusd-loader {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: rgba(14, 14, 16, 0.88);
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+
+.tusd-loader.hidden {
+    opacity: 0;
+}
+
+.tusd-loader .spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--panel-3);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: tusd-spin 0.7s linear infinite;
+}
+
+.tusd-loader .loader-text {
+    color: var(--muted);
+    font-size: 0.82rem;
+    text-align: center;
+    max-width: 280px;
+    line-height: 1.4;
+}
+
+@keyframes tusd-spin {
+    to { transform: rotate(360deg); }
+}

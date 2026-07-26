@@ -393,7 +393,12 @@ async function loadSample(index) {
 
 async function init() {
   renderer = new StreamingUSDRenderer($id('comp-canvas'));
-  await renderer.init();
+  showLoader("Loading TinyUSDZ WASM...", document.getElementById("viewport"));
+    try {
+      await renderer.init()
+    } finally {
+      hideLoader();
+    };
   renderer.setClearColor([0.12, 0.12, 0.14, 1.0]);
 
   // Tab-like filter buttons for layer types
@@ -425,3 +430,4 @@ async function init() {
 }
 
 init().catch((e) => { console.error(e); $id('comp-status').textContent = 'Error: ' + e.message; });
+import { showLoader, hideLoader } from "../tusd-loader.js";
