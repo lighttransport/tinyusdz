@@ -2512,7 +2512,9 @@ if(TINYUSDZ_BUILD_TESTS)
 
     add_test(
       NAME tusdview-aousd-conformance
-      COMMAND bash
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-aousd-conformance.sh"
       )
     set_tests_properties(tusdview-aousd-conformance PROPERTIES
@@ -2520,7 +2522,9 @@ if(TINYUSDZ_BUILD_TESTS)
 
     add_test(
       NAME tusdview-gl-vk-parity
-      COMMAND bash
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-gl-vk-parity.sh"
       )
     set_tests_properties(tusdview-gl-vk-parity PROPERTIES
@@ -2529,6 +2533,7 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(
       NAME tusdview-backend-parity
       COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
               "TUSDVIEW_PARITY_FRAMES=1" "TUSDVIEW_PARITY_SIZE=96x96"
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backend-parity.sh"
       )
@@ -3004,7 +3009,7 @@ if(TINYUSDZ_BUILD_TESTS)
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backface-material.sh"
       )
     set_tests_properties(tusdview-backface-material
-                         PROPERTIES SKIP_RETURN_CODE 77)
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 
     # doubleSided (audit T8): a single-sided mesh back-face culls, a doubleSided
     # one does not -- identically on GL and Vulkan. The --next loader used to
