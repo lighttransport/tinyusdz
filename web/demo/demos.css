@@ -936,3 +936,64 @@ button {
         font-size: 0.72rem;
     }
 }
+
+/* ── Global mobile responsive for new custom demos ── */
+
+@media (max-width: 800px) {
+    .builder-main,
+    .assets-main {
+        grid-template-columns: 1fr !important;
+        grid-template-rows: auto minmax(400px, 55vh) !important;
+    }
+
+    .builder-main .editor-panel,
+    .assets-main > .assets-catalog,
+    .assets-main > .viz-panel,
+    .assets-main > .blend-panel,
+    .assets-main > .inspector-panel {
+        max-height: 45vh;
+        border-right: none !important;
+        border-bottom: 1px solid var(--line);
+    }
+
+    .timeline-bar {
+        flex-wrap: wrap;
+        height: auto;
+        padding: 8px 12px;
+        gap: 8px;
+    }
+
+    .timeline-bar .timeline-track {
+        flex-basis: 100%;
+        order: -1;
+    }
+
+    .demo-shell {
+        min-height: 100vh;
+        height: auto;
+    }
+
+    .demo-toolbar {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .demo-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 600px) {
+    .assets-viewer-placeholder p {
+        font-size: 0.82rem;
+    }
+
+    .editor-toolbar {
+        flex-wrap: wrap;
+    }
+
+    #scene-json {
+        font-size: 0.7rem;
+    }
+}
