@@ -47,6 +47,7 @@ struct NextCameraPose {
   float up[3]{0, 1, 0};
   float fovYDeg{60.0f};
   CameraProjection projection{CameraProjection::Perspective};
+  float focalLength{50.0f};
   float horizontalAperture{20.955f};
   float verticalAperture{15.2908f};
   float horizontalApertureOffset{0.0f};

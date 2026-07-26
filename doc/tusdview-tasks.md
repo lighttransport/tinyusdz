@@ -228,11 +228,13 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 - [x] Add `--camera-conform fit|crop|horizontal|vertical|none` (default `fit`),
   with matching config and GUI controls, and use the same projection in all
   backends and headless rendering.
-- [ ] Keep depth of field, shutter/motion blur, stereo, and arbitrary clipping
-  planes as documented future work. Their authored camera records now survive
+- [ ] Finish depth of field, shutter/motion blur, stereo, and arbitrary clipping
+  planes across all backends. Authored thin-lens depth of field is implemented
+  in the shared CUDA/HIP tracer and pinned by a capability-gated CUDA image
+  regression; Vulkan ray query and raster remain open. All camera records survive
   both loader paths (focus distance, f-stop, shutter interval, stereo role, and
   float4 clipping-plane equations), and the camera-equivalence gate pins those
-  carriers. Backend evaluation remains open. This also corrected the legacy
+  carriers. This also corrected the legacy
   `focusDistance` fallback from 0 to the USD fallback value 5.
 
 ### P6 -- Lighting

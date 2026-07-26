@@ -975,6 +975,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     const int upAxis = (draw_.upAxis == "Z") ? 2 : 1;
     camera_.setUpAxis(upAxis);
     NextCameraPose campose;
+    cameraLens_ = RtCameraLens{};
     // Either loader can be framed on a named USD camera. The legacy path reads the
     // camera out of the converted RenderScene (FindLegacyCamera); it used to just
     // warn "need --next" and auto-fit instead, which meant the two loaders could
@@ -1031,6 +1032,11 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       camera_.setAutoClip(false);
       camera_.setClipPlanes(campose.zNear, campose.zFar);
       camera_.setOrbit(target, yaw, pitch, d);
+      // USD camera optics are authored in tenths of a scene unit. The physical
+      // aperture radius is focalLength / (2 * fStop).
+      cameraLens_ = MakeRtCameraLens(
+          campose.focalLength, campose.focusDistance, campose.fStop,
+          campose.projection == CameraProjection::Perspective);
       LOGI("camera: framing USD camera '%s' (%s, fovY %.1f deg, clip %.2f..%.0f)",
            cameraName_.c_str(),
            campose.projection == CameraProjection::Orthographic ? "orthographic"
@@ -2519,7 +2525,8 @@ bool App::renderHipViewport() {
   std::string cerr;
   // spp=1: single sample for interactive frame rate (no supersampled AA).
   if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
-                       sceneExtent, w, h, &rgba, &cerr, /*spp=*/1)) {
+                       sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
+                       &cameraLens_)) {
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
     LOGW("HIP ray trace failed: %s", cerr.c_str());
@@ -3387,7 +3394,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       std::vector<uint8_t> rgba;
       if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
-                            sceneExtent, w, h, &rgba, &cerr, rtSamples_)) {
+                            sceneExtent, w, h, &rgba, &cerr, rtSamples_,
+                            &cameraLens_)) {
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("CUDA RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
@@ -3457,7 +3465,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       std::vector<uint8_t> rgba;
       if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
-                           sceneExtent, w, h, &rgba, &cerr, rtSamples_)) {
+                           sceneExtent, w, h, &rgba, &cerr, rtSamples_,
+                           &cameraLens_)) {
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("HIP RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,

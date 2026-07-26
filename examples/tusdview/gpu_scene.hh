@@ -36,6 +36,7 @@ inline void RtPixelJitter(int s, int spp, float* jx, float* jy) {
   *jy = radical(s, 3) - 0.5f;
 }
 
+
 // Interleaved vertex: matches the GL330 / VK450 shader attribute layout
 //   location 0: vec3 aPosition  (offset 0)
 //   location 1: vec3 aNormal    (offset 12)

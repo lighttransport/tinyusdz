@@ -30,6 +30,7 @@
 #include "load_control.hh"
 #include "parametric_tess.hh"
 #include "renderer.hh"
+#include "rt_camera.hh"
 #include "scene_loader.hh"
 #include "stream/stream_server.hh"
 #if defined(TUSDVIEW_HAVE_MCP)
@@ -453,6 +454,7 @@ class App
   void markStreamActivity();
   HipRayTracer hipTracer_;
   int rtSamples_{1};      // --rt-samples: AA samples for the CUDA/HIP screenshot
+  RtCameraLens cameraLens_;
   size_t rtMaxInstances_{16000000};  // --max-instances: CUDA/HIP instance cap (0=off)
   bool lodStream_{false}; // --lod-stream: view-dependent district LOD pre-pass
   double lodMaxMemGiB_{0.0};   // --max-mem: host budget for --lod-stream (0=auto)

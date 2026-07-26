@@ -1933,6 +1933,7 @@ bool FindNextCameraRec(const tnext::Stage& stage, const tnext::UsdPrim& prim,
           out->forward[k] = fwd[k];
         }
         const float focal = ReadCamFloatN(prim, "focalLength", 50.0f);
+        out->focalLength = focal;
         out->horizontalAperture =
             ReadCamFloatN(prim, "horizontalAperture", 20.955f);
         out->verticalAperture =
@@ -2915,6 +2916,7 @@ bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
               ? CameraProjection::Orthographic
               : CameraProjection::Perspective;
       out->horizontalAperture = cam.horizontalAperture;
+      out->focalLength = cam.focalLength;
       out->verticalAperture = cam.verticalAperture;
       out->horizontalApertureOffset = cam.horizontalApertureOffset;
       out->verticalApertureOffset = cam.verticalApertureOffset;

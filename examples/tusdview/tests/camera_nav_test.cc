@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "camera_nav.hh"
+#include "rt_camera.hh"
 
 #include <cmath>
 #include <cstdio>
@@ -13,6 +14,19 @@ bool Near(float a, float b, float eps = 1.0e-5f) {
 }  // namespace
 
 int main() {
+  const tusdview::RtCameraLens dof =
+      tusdview::MakeRtCameraLens(50.0f, 8.0f, 2.0f, true);
+  if (!dof.enabled() || !Near(dof.focusDistance, 8.0f) ||
+      !Near(dof.apertureRadius, 1.25f)) {
+    std::fprintf(stderr, "thin-lens camera conversion is incorrect\n");
+    return 1;
+  }
+  if (tusdview::MakeRtCameraLens(50.0f, 8.0f, 0.0f, true).enabled() ||
+      tusdview::MakeRtCameraLens(50.0f, 8.0f, 2.0f, false).enabled()) {
+    std::fprintf(stderr, "pinhole/orthographic camera enabled depth of field\n");
+    return 1;
+  }
+
   tusdview::OrbitCamera camera;
   const float boundsMin[3] = {-1.0f, -1.0f, -1.0f};
   const float boundsMax[3] = {1.0f, 1.0f, 1.0f};
