@@ -6,7 +6,7 @@
 // Included inside an anonymous namespace by each backend .cc.
 const char* kKernelSrc = R"CUDA(
 struct Node { float bmin[3]; float bmax[3]; int left; int right; int count; };
-struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; float sceneMin[4]; float sceneExtent[4]; float vp[16]; };
+struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]; float sceneMin[4]; float sceneExtent[4]; float vp[16]; float lens[4]; };
 // Per-instance placement for 2-level traversal. w2o transforms a world ray into
 // the prototype's object space (kept un-normalized so object t == world t). o2w
 // reconstructs world-space verts for area/normal AOVs. blasRoot = global node
@@ -515,6 +515,24 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
   F3 nearW=unproject(cam.invVP,ndcx,ndcy,0.f);
   F3 farW =unproject(cam.invVP,ndcx,ndcy,1.f);
   F3 o=nearW; F3 d=norm3(sub(farW,nearW));
+  if (cam.lens[2] > 0.5f) {
+    F3 eye=mk(cam.camPos[0],cam.camPos[1],cam.camPos[2]);
+    F3 right=norm3(sub(unproject(cam.invVP,1.f,0.f,1.f),
+                       unproject(cam.invVP,-1.f,0.f,1.f)));
+    F3 up=norm3(sub(unproject(cam.invVP,0.f,1.f,1.f),
+                    unproject(cam.invVP,0.f,-1.f,1.f)));
+    unsigned lensSeed=hashU((unsigned)px*1973u+(unsigned)py*9277u+
+                            (unsigned)sampleIdx*26699u+17u);
+    float lensAngle=6.28318530718f*rndf(lensSeed);
+    float lensRadius=cam.lens[1]*sqrtf(rndf(lensSeed));
+    F3 lensOffset=add(scale(right,cosf(lensAngle)*lensRadius),
+                      scale(up,sinf(lensAngle)*lensRadius));
+    F3 cameraForward=norm3(sub(unproject(cam.invVP,0.f,0.f,1.f),eye));
+    float focusT=cam.lens[0]/fmaxf(dot3(d,cameraForward),1.0e-4f);
+    F3 focusPoint=add(eye,scale(d,focusT));
+    o=add(eye,lensOffset);
+    d=norm3(sub(focusPoint,o));
+  }
 
   F3 outc = mk(cam.clear[0],cam.clear[1],cam.clear[2]);
   int ht, hitInst; float bu,bv;

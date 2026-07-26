@@ -2905,8 +2905,18 @@ if(TINYUSDZ_BUILD_TESTS)
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-record-equivalence.sh"
               "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
     )
-    set_tests_properties(tusdview-camera-record-equivalence
+      set_tests_properties(tusdview-camera-record-equivalence
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-camera-dof-cuda
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-dof-cuda.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(tusdview-camera-dof-cuda
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
                                     LABELS "tusdview")
 
     add_test(

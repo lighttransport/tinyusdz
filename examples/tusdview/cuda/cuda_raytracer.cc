@@ -37,6 +37,7 @@ struct Cam {
   float sceneMin[4];   // position AOV bbox
   float sceneExtent[4];
   float vp[16];        // world->clip (wireframe edge projection)
+  float lens[4];       // focus distance, aperture radius, enabled, reserved
 };
 
 // Trace kernel source, shared with the HIP backend (compiled at runtime by
@@ -474,7 +475,8 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                           float exposure,
                           int renderMode, float depthScale, const float sceneMin[3],
                           const float sceneExtent[3], int w, int h,
-                          std::vector<uint8_t>* rgba, std::string* err, int spp) {
+                          std::vector<uint8_t>* rgba, std::string* err, int spp,
+                          const RtCameraLens* lens) {
   if (!ctx_ || !dTris_) { if (err) *err = "CUDA scene not built"; return false; }
   cuCtxSetCurrent(reinterpret_cast<CUcontext>(ctx_));
   const size_t bytes = size_t(w) * h * 4;
@@ -506,6 +508,11 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   cam.camPos[3] = exposure;
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
+  if (lens && lens->enabled()) {
+    cam.lens[0] = lens->focusDistance;
+    cam.lens[1] = lens->apertureRadius;
+    cam.lens[2] = 1.0f;
+  }
   CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
               dBM = dBackMat_,
               dMP = dMatPbr_, dMB = dMatBase_, dML = dMatLightRt_, dMT = dMatTex_,

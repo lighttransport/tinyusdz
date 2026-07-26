@@ -128,6 +128,14 @@ The **`tusdview-cuda-render`** ctest exercises this end-to-end; it SKIPs
 (return 77) when no NVIDIA device / NVRTC is available so non-NVIDIA CI stays
 green.
 
+When `--camera` selects an authored perspective camera with positive
+`focusDistance` and `fStop`, the shared CUDA/HIP kernel uses a deterministic
+thin-lens model. The aperture radius is derived from USD's tenths-of-a-scene-
+unit focal length, rays converge on the authored focus plane, and
+`--rt-samples` accumulates independent lens samples. Orthographic cameras and
+`fStop = 0` retain the exact pinhole path. `tusdview-camera-dof-cuda` compares
+the two modes and capability-skips when CUDA/NVRTC is unavailable.
+
 ## HIP/ROCm ray-tracing run test (verified working on AMD)
 
 `--hip` is the AMD counterpart of `--cuda`: it traces the same scene BVH and runs

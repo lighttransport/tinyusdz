@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "gpu_scene.hh"
+#include "rt_camera.hh"
 
 namespace tusdview {
 
@@ -63,7 +64,7 @@ class CudaRayTracer {
              int renderMode,
              float depthScale, const float sceneMin[3], const float sceneExtent[3],
              int w, int h, std::vector<uint8_t>* rgba, std::string* err,
-             int spp = 1);
+             int spp = 1, const RtCameraLens* lens = nullptr);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 
