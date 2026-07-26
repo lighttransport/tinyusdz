@@ -57,6 +57,23 @@ bool Fail(std::string* err, const char* msg) {
   if (err) *err = msg;
   return false;
 }
+bool PlanarToInterleaved(const std::vector<uint8_t>& planar, uint32_t w,
+                         uint32_t h, uint16_t channels, size_t bpc,
+                         std::vector<uint8_t>* out, std::string* err) {
+  size_t samples = 0;
+  if (!Mul(size_t(w), h, &samples) || !Mul(samples, channels, &samples) ||
+      !Mul(samples, bpc, &samples) || planar.size() != samples)
+    return Fail(err, "Ptex planar face size mismatch");
+  out->resize(samples);
+  const size_t plane = size_t(w) * h * bpc;
+  for (size_t p = 0; p < size_t(w) * h; ++p) {
+    for (uint16_t c = 0; c < channels; ++c) {
+      std::memcpy(out->data() + (p * channels + c) * bpc,
+                  planar.data() + size_t(c) * plane + p * bpc, bpc);
+    }
+  }
+  return true;
+}
 
 }  // namespace
 
@@ -179,9 +196,7 @@ bool Reader::ReadFace(uint32_t face, uint32_t level, size_t max_bytes,
       std::memcpy(out->data.data() + p * info_.channels * bpc, constantData_.data() + src, info_.channels * bpc);
     return true;
   }
-  if (level != 0) return Fail(err, "Ptex reduced levels are not enabled yet");
   const Level& li = levels_[level];
-  if (face >= li.faces) return Fail(err, "Ptex face is absent from mip level");
   if (li.headerSize == 0 || li.headerSize > li.size) return Fail(err, "Ptex level header is invalid");
   const size_t levelBase = static_cast<size_t>(levelDataOffset_ + li.offset);
   if (!Range(levelBase, static_cast<size_t>(li.size), size_)) return Fail(err, "Ptex level block is truncated");
@@ -189,22 +204,108 @@ bool Reader::ReadFace(uint32_t face, uint32_t level, size_t max_bytes,
   std::vector<uint8_t> header;
   if (!Inflate(levelBytes, li.headerSize, size_t(li.faces) * 4, &header, err)) return false;
   size_t payload = li.headerSize;
-  for (uint32_t i = 0; i < face; ++i) {
+  std::vector<uint32_t> order;
+  order.reserve(li.faces);
+  if (level == 0) {
+    for (uint32_t i = 0; i < info_.faces; ++i) order.push_back(i);
+  } else {
+    for (uint32_t i = 0; i < info_.faces; ++i) {
+      if (info_.faceInfo[i].constant()) continue;
+      const uint32_t w0 = info_.faceInfo[i].width();
+      const uint32_t h0 = info_.faceInfo[i].height();
+      if (std::max(1u, w0 >> level) == 0 || std::max(1u, h0 >> level) == 0) continue;
+      order.push_back(i);
+    }
+    std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+      const uint32_t amin = std::min(info_.faceInfo[a].width(), info_.faceInfo[a].height());
+      const uint32_t bmin = std::min(info_.faceInfo[b].width(), info_.faceInfo[b].height());
+      if ((amin >> level) != (bmin >> level)) return (amin >> level) > (bmin >> level);
+      return a < b;
+    });
+  }
+  auto it = std::find(order.begin(), order.end(), face);
+  if (it == order.end() || static_cast<size_t>(it - order.begin()) >= li.faces)
+    return Fail(err, "Ptex face is absent from mip level");
+  const uint32_t ordinal = static_cast<uint32_t>(it - order.begin());
+  for (uint32_t i = 0; i < ordinal; ++i) {
     const uint32_t packed = U32(header.data() + size_t(i) * 4);
     const uint32_t encoding = packed >> 30;
     const size_t n = packed & 0x3fffffffu;
     if (encoding == 0) continue;
     if (!Add(payload, n, &payload) || payload > li.size) return Fail(err, "Ptex face payload overflow");
   }
-  const uint32_t packed = U32(header.data() + size_t(face) * 4);
+  const uint32_t packed = U32(header.data() + size_t(ordinal) * 4);
   const uint32_t encoding = packed >> 30;
   const size_t compressedSize = packed & 0x3fffffffu;
   if (encoding == 0) return Fail(err, "Ptex non-constant face has no payload");
-  if (encoding == 3) return Fail(err, "Ptex tiled face decoding is not enabled yet");
-  if (encoding != 1) return Fail(err, "Ptex differenced face decoding is not enabled yet");
+  if (encoding == 3) {
+    if (compressedSize < 6 || !Range(levelBase + payload, compressedSize, size_))
+      return Fail(err, "Ptex tiled face header is truncated");
+    const uint8_t* q = levelBytes + payload;
+    const uint32_t tw = 1u << q[0], th = 1u << q[1];
+    const uint32_t tileHeaderSize = U32(q + 2);
+    const uint32_t nx = (w + tw - 1) / tw, ny = (h + th - 1) / th;
+    size_t tileCount = 0;
+    if (!Mul(nx, ny, &tileCount) || tileHeaderSize > compressedSize - 6 ||
+        tileCount > (1ull << 28)) return Fail(err, "Ptex tile table is invalid");
+    std::vector<uint8_t> tileHeader;
+    if (!Inflate(q + 6, tileHeaderSize, tileCount * 4, &tileHeader, err)) return false;
+    const size_t bpc = BytesPerComponent(info_.dataType);
+    out->data.assign(bytes, 0);
+    size_t cursor = 6 + tileHeaderSize;
+    for (uint32_t ty = 0; ty < ny; ++ty) {
+      for (uint32_t tx = 0; tx < nx; ++tx) {
+        const uint32_t tp = U32(tileHeader.data() + (size_t(ty) * nx + tx) * 4);
+        const uint32_t te = tp >> 30;
+        const size_t ts = tp & 0x3fffffffu;
+        const uint32_t cw = std::min(tw, w - tx * tw), ch = std::min(th, h - ty * th);
+        size_t tileBytes = 0;
+        if (!Mul(size_t(cw), ch, &tileBytes) || !Mul(tileBytes, info_.channels, &tileBytes) ||
+            !Mul(tileBytes, bpc, &tileBytes) || cursor > compressedSize ||
+            ts > compressedSize - cursor)
+          return Fail(err, "Ptex tile payload overflow");
+        std::vector<uint8_t> tile;
+        if (te == 0) {
+          const size_t valueBytes = size_t(info_.channels) * bpc;
+          if (ts < valueBytes) return Fail(err, "Ptex tile constant is truncated");
+          tile.resize(tileBytes);
+          for (size_t p = 0; p < size_t(cw) * ch; ++p) std::memcpy(tile.data() + p * valueBytes, levelBytes + payload + cursor, valueBytes);
+        } else if (te == 1 || te == 2) {
+          if (!Inflate(levelBytes + payload + cursor, ts, tileBytes, &tile, err)) return false;
+        } else return Fail(err, "unsupported Ptex tile encoding");
+        std::vector<uint8_t> interleaved;
+        if (te != 0 && !PlanarToInterleaved(tile, cw, ch, info_.channels, bpc, &interleaved, err)) return false;
+        if (te != 0) tile.swap(interleaved);
+        for (uint32_t y = 0; y < ch; ++y) {
+          const size_t dst = (size_t(ty * th + y) * w + tx * tw) * info_.channels * bpc;
+          std::memcpy(out->data.data() + dst, tile.data() + size_t(y) * cw * info_.channels * bpc, size_t(cw) * info_.channels * bpc);
+        }
+        cursor += ts;
+      }
+    }
+    return true;
+  }
+  if (encoding != 1 && encoding != 2) return Fail(err, "unsupported Ptex face encoding");
   if (!Range(levelBase + payload, compressedSize, size_)) return Fail(err, "Ptex face payload is truncated");
-  if (!Inflate(levelBytes + payload, compressedSize, bytes, &out->data, err)) return false;
-  return true;
+  std::vector<uint8_t> planar;
+  if (!Inflate(levelBytes + payload, compressedSize, bytes, &planar, err)) return false;
+  if (encoding == 2) {
+    // Ptex differencing is a per-channel prefix sum over typed samples.
+    const size_t bpc = BytesPerComponent(info_.dataType);
+    const size_t count = size_t(w) * h;
+    if (bpc == 1) {
+      for (uint16_t c = 0; c < info_.channels; ++c)
+        for (size_t i = 1; i < count; ++i) planar[size_t(c) * count + i] = uint8_t(planar[size_t(c) * count + i] + planar[size_t(c) * count + i - 1]);
+    } else if (info_.dataType == DataType::UInt16 || info_.dataType == DataType::Half) {
+      if (info_.dataType == DataType::Half) return Fail(err, "differenced Ptex half data is unsupported");
+      for (uint16_t c = 0; c < info_.channels; ++c) for (size_t i = 1; i < count; ++i) {
+        uint16_t a = U16(planar.data() + (size_t(c) * count + i) * 2);
+        uint16_t b = U16(planar.data() + (size_t(c) * count + i - 1) * 2);
+        a = uint16_t(a + b); planar[(size_t(c) * count + i) * 2] = uint8_t(a); planar[(size_t(c) * count + i) * 2 + 1] = uint8_t(a >> 8);
+      }
+    } else return Fail(err, "differenced Ptex float data is unsupported");
+  }
+  return PlanarToInterleaved(planar, w, h, info_.channels, BytesPerComponent(info_.dataType), &out->data, err);
 }
 
 }  // namespace ptx
