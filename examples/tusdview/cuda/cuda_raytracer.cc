@@ -2,15 +2,22 @@
 #include "cuda_raytracer.hh"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
 #include <fstream>
-#include <system_error>
 #include <vector>
+
+#if defined(_WIN32)
+#include <direct.h>
+#include <sys/stat.h>
+#else
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
 
 #include "cuew.h"
 #include "displacement_bake.hh"
@@ -36,26 +43,103 @@ struct Cam {
 // NVRTC here, hiprtc there).
 #include "raytracer_kernel.inc"
 
-namespace fs = std::filesystem;
+char CachePathSeparator() {
+#if defined(_WIN32)
+  return '\\';
+#else
+  return '/';
+#endif
+}
 
-fs::path DefaultCudaCacheDirectory() {
-  auto envPath = [](const char* name) -> fs::path {
+bool IsPathSeparator(char c) { return c == '/' || c == '\\'; }
+
+std::string JoinCachePath(const std::string& base, const std::string& child) {
+  if (base.empty()) return child;
+  if (child.empty()) return base;
+  return IsPathSeparator(base.back()) ? base + child
+                                      : base + CachePathSeparator() + child;
+}
+
+std::string CacheParentPath(const std::string& path) {
+  const size_t separator = path.find_last_of("/\\");
+  return separator == std::string::npos ? std::string() : path.substr(0, separator);
+}
+
+bool CachePathIsDirectory(const std::string& path) {
+#if defined(_WIN32)
+  struct _stat info {};
+  if (_stat(path.c_str(), &info) != 0) return false;
+  return (info.st_mode & _S_IFDIR) != 0;
+#else
+  struct stat info {};
+  if (stat(path.c_str(), &info) != 0) return false;
+  return S_ISDIR(info.st_mode);
+#endif
+}
+
+bool CachePathIsRegularFile(const std::string& path) {
+#if defined(_WIN32)
+  struct _stat info {};
+  if (_stat(path.c_str(), &info) != 0) return false;
+  return (info.st_mode & _S_IFREG) != 0;
+#else
+  struct stat info {};
+  if (stat(path.c_str(), &info) != 0) return false;
+  return S_ISREG(info.st_mode);
+#endif
+}
+
+bool CreateCacheDirectory(const std::string& path) {
+#if defined(_WIN32)
+  const int result = _mkdir(path.c_str());
+#else
+  const int result = mkdir(path.c_str(), 0700);
+#endif
+  return result == 0 || (errno == EEXIST && CachePathIsDirectory(path));
+}
+
+bool CreateCacheDirectories(const std::string& path, std::string* warning) {
+  if (path.empty()) return true;
+  for (size_t i = 0; i <= path.size(); ++i) {
+    if (i != path.size() && !IsPathSeparator(path[i])) continue;
+    const std::string prefix = path.substr(0, i);
+    if (prefix.empty() || prefix.back() == ':') continue;
+    if (!CreateCacheDirectory(prefix)) {
+      *warning = "cannot create " + prefix + ": " + std::strerror(errno);
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string DefaultCudaCacheDirectory() {
+  auto envPath = [](const char* name) -> std::string {
     const char* value = std::getenv(name);
-    return (value && *value) ? fs::path(value) : fs::path();
+    return (value && *value) ? std::string(value) : std::string();
   };
 #if defined(_WIN32)
-  fs::path base = envPath("LOCALAPPDATA");
+  std::string base = envPath("LOCALAPPDATA");
   if (base.empty()) base = envPath("USERPROFILE");
-  return base.empty() ? fs::path() : base / "tusdview" / "cuda";
+  return base.empty() ? std::string()
+                      : JoinCachePath(JoinCachePath(base, "tusdview"), "cuda");
 #elif defined(__APPLE__)
-  const fs::path home = envPath("HOME");
-  return home.empty() ? fs::path()
-                      : home / "Library" / "Caches" / "tusdview" / "cuda";
+  const std::string home = envPath("HOME");
+  return home.empty()
+             ? std::string()
+             : JoinCachePath(
+                   JoinCachePath(
+                       JoinCachePath(JoinCachePath(home, "Library"), "Caches"),
+                       "tusdview"),
+                   "cuda");
 #else
-  fs::path base = envPath("XDG_CACHE_HOME");
-  if (!base.empty()) return base / "tusdview" / "cuda";
-  const fs::path home = envPath("HOME");
-  return home.empty() ? fs::path() : home / ".cache" / "tusdview" / "cuda";
+  std::string base = envPath("XDG_CACHE_HOME");
+  if (!base.empty()) return JoinCachePath(JoinCachePath(base, "tusdview"), "cuda");
+  const std::string home = envPath("HOME");
+  return home.empty()
+             ? std::string()
+             : JoinCachePath(JoinCachePath(JoinCachePath(home, ".cache"),
+                                           "tusdview"),
+                             "cuda");
 #endif
 }
 
@@ -83,48 +167,41 @@ std::string CacheKey(int nvrtcMajor, int nvrtcMinor, int compileArch) {
       "-" + hex + ".ptx";
 }
 
-bool ReadCacheFile(const fs::path& path, std::string* data) {
-  std::error_code ec;
-  const uintmax_t size = fs::file_size(path, ec);
-  if (ec || size == 0 || size > 64 * 1024 * 1024) return false;
+bool ReadCacheFile(const std::string& path, std::string* data) {
   std::ifstream stream(path, std::ios::binary);
   if (!stream) return false;
+  stream.seekg(0, std::ios::end);
+  const std::streamoff size = stream.tellg();
+  if (size <= 0 || size > 64 * 1024 * 1024) return false;
+  stream.seekg(0, std::ios::beg);
   data->resize(static_cast<size_t>(size));
   return static_cast<bool>(stream.read(data->data(),
                                        static_cast<std::streamsize>(size)));
 }
 
-bool WriteCacheFile(const fs::path& path, const std::string& data,
+bool WriteCacheFile(const std::string& path, const std::string& data,
                     std::string* warning) {
-  std::error_code ec;
-  fs::create_directories(path.parent_path(), ec);
-  if (ec) {
-    *warning = "cannot create " + path.parent_path().string() + ": " +
-               ec.message();
-    return false;
-  }
+  if (!CreateCacheDirectories(CacheParentPath(path), warning)) return false;
   const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-  fs::path temporary = path;
-  temporary += ".tmp." + std::to_string(stamp);
+  const std::string temporary = path + ".tmp." + std::to_string(stamp);
   {
     std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
     if (!stream || !stream.write(data.data(),
                                  static_cast<std::streamsize>(data.size()))) {
-      *warning = "cannot write " + temporary.string();
-      fs::remove(temporary, ec);
+      *warning = "cannot write " + temporary;
+      std::remove(temporary.c_str());
       return false;
     }
   }
-  fs::rename(temporary, path, ec);
-  if (ec) {
+  if (std::rename(temporary.c_str(), path.c_str()) != 0) {
+    const int renameError = errno;
     // Another process may have won the same atomic cache population race.
-    std::error_code existsEc;
-    if (!fs::is_regular_file(path, existsEc)) {
-      *warning = "cannot install " + path.string() + ": " + ec.message();
-      fs::remove(temporary, existsEc);
+    if (!CachePathIsRegularFile(path)) {
+      *warning = "cannot install " + path + ": " + std::strerror(renameError);
+      std::remove(temporary.c_str());
       return false;
     }
-    fs::remove(temporary, existsEc);
+    std::remove(temporary.c_str());
   }
   return true;
 }
@@ -238,13 +315,13 @@ bool CudaRayTracer::init(std::string* err) {
     compileArch = 90;
   }
 
-  const fs::path cacheDirectory =
-      cacheDirectory_.empty() ? DefaultCudaCacheDirectory()
-                              : fs::path(cacheDirectory_);
-  const fs::path cachePath =
+  const std::string cacheDirectory =
+      cacheDirectory_.empty() ? DefaultCudaCacheDirectory() : cacheDirectory_;
+  const std::string cachePath =
       cacheDirectory.empty()
-          ? fs::path()
-          : cacheDirectory / CacheKey(nvrtcMajor, nvrtcMinor, compileArch);
+          ? std::string()
+          : JoinCachePath(cacheDirectory,
+                          CacheKey(nvrtcMajor, nvrtcMinor, compileArch));
   auto loadModule = [&](const std::string& ptx) -> bool {
     CUmodule mod = nullptr;
     if (cuModuleLoadData(&mod, ptx.c_str()) != CUDA_SUCCESS) return false;
@@ -260,17 +337,15 @@ bool CudaRayTracer::init(std::string* err) {
   std::string ptx;
   if (!cachePath.empty() && ReadCacheFile(cachePath, &ptx)) {
     if (loadModule(ptx)) {
-      LOGI("CUDA kernel cache hit: %s", cachePath.string().c_str());
+      LOGI("CUDA kernel cache hit: %s", cachePath.c_str());
       return true;
     }
     LOGW("ignoring invalid CUDA kernel cache entry: %s",
-         cachePath.string().c_str());
+         cachePath.c_str());
     ptx.clear();
-    std::error_code removeEc;
-    fs::remove(cachePath, removeEc);
-    if (removeEc) {
+    if (std::remove(cachePath.c_str()) != 0 && errno != ENOENT) {
       LOGW("could not remove invalid CUDA kernel cache entry: %s",
-           removeEc.message().c_str());
+           std::strerror(errno));
     }
   }
 
@@ -312,7 +387,7 @@ bool CudaRayTracer::init(std::string* err) {
   if (!cachePath.empty()) {
     std::string warning;
     if (WriteCacheFile(cachePath, ptx, &warning)) {
-      LOGI("CUDA kernel cached: %s", cachePath.string().c_str());
+      LOGI("CUDA kernel cached: %s", cachePath.c_str());
     } else {
       LOGW("CUDA kernel cache write skipped: %s", warning.c_str());
     }
