@@ -4,6 +4,7 @@ import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { isNextScene, buildNextThreeNode, nextCountsFromScene } from 'tinyusdz-next-demo-utils';
 import { showLoader, hideLoader } from '../tusd-loader.js';
+import { Report } from '../app-report.js';
 
 function escapeHTML(v) { return String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
 function $id(i) { return document.getElementById(i); }
