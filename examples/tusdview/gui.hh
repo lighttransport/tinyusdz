@@ -89,6 +89,7 @@ class Gui {
   void setUploadStatus(const UploadStatus& s) { upload_ = s; }
   void setTimeline(const TimelineInfo& t) { timeline_ = t; }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
+  void setCameraLens(const RtCameraLens& lens) { cameraLens_ = lens; }
   void setBudget(LoadControl* b) { budget_ = b; }
   void setShowGrid(bool on) { showGrid_ = on; }
   void setShowSkeleton(bool on) { showSkeleton_ = on; }
@@ -287,6 +288,7 @@ class Gui {
 
   Renderer* renderer_{nullptr};
   OrbitCamera* cam_{nullptr};
+  RtCameraLens cameraLens_;
   const LoadedScene* loaded_{nullptr};
   const DrawScene* draw_{nullptr};
 

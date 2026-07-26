@@ -281,6 +281,7 @@ struct RtPushC {
   float clearColor[4];
   float sceneMin[4];    // position AOV bbox
   float sceneExtent[4];
+  float lens[4];        // focus distance, aperture radius, enabled, reserved
 };
 
 // Per-mesh descriptor for the RT shader (scalar layout, must match raytrace.comp).
@@ -7061,6 +7062,9 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   for (int i = 0; i < 3; ++i) { pc.sceneMin[i] = sceneMin_[i]; pc.sceneExtent[i] = sceneExtent_[i]; }
   pc.sceneMin[3] = static_cast<float>(rtAccumFrame_);      // accumulated sample index
   pc.sceneExtent[3] = rtAccumEnabled_ ? 1.0f : 0.0f;        // accumulate enable
+  pc.lens[0] = cameraLens_.focusDistance;
+  pc.lens[1] = cameraLens_.apertureRadius;
+  pc.lens[2] = cameraLens_.enabled() ? 1.0f : 0.0f;
   vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
                      &pc);
   vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
@@ -7376,6 +7380,11 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   if (params.proj) std::memcpy(proj_, params.proj, sizeof(proj_));
   for (int i = 0; i < 3; ++i) cameraPos_[i] = params.cameraPos[i];
   exposure_ = params.exposure;
+  if (cameraLens_.focusDistance != params.cameraLens.focusDistance ||
+      cameraLens_.apertureRadius != params.cameraLens.apertureRadius) {
+    cameraLens_ = params.cameraLens;
+    ++rtAccumGen_;
+  }
   for (int i = 0; i < 3; ++i) lightDir_[i] = params.lightDir[i];
   for (int i = 0; i < 3; ++i) lightColor_[i] = params.lightColor[i];
   for (int i = 0; i < 4; ++i) clear_[i] = params.clearColor[i];

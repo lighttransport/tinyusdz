@@ -106,6 +106,7 @@ layout(push_constant) uniform PC {
   vec4 clearColor;   // rgb background for ray misses, w = exposure stops
   vec4 sceneMin;     // xyz = position AOV bbox min, w = accumulated sample index
   vec4 sceneExtent;  // xyz = position AOV bbox size, w = accumulate enable (>0.5)
+  vec4 lens;         // focus distance, aperture radius, enabled, reserved
 } pc;
 
 // Radical-inverse (Halton) low-discrepancy sequence for sub-pixel jitter.
@@ -394,6 +395,31 @@ void main() {
   vec3 farW  = farH.xyz / farH.w;
   vec3 origin = nearW;
   vec3 dir = normalize(farW - nearW);
+  if (pc.lens.z > 0.5) {
+    vec3 eye = pc.camPos.xyz;
+    vec3 right = normalize(
+        (pc.invViewProj * vec4(1.0, 0.0, 1.0, 1.0)).xyz /
+            (pc.invViewProj * vec4(1.0, 0.0, 1.0, 1.0)).w -
+        (pc.invViewProj * vec4(-1.0, 0.0, 1.0, 1.0)).xyz /
+            (pc.invViewProj * vec4(-1.0, 0.0, 1.0, 1.0)).w);
+    vec3 up = normalize(
+        (pc.invViewProj * vec4(0.0, 1.0, 1.0, 1.0)).xyz /
+            (pc.invViewProj * vec4(0.0, 1.0, 1.0, 1.0)).w -
+        (pc.invViewProj * vec4(0.0, -1.0, 1.0, 1.0)).xyz /
+            (pc.invViewProj * vec4(0.0, -1.0, 1.0, 1.0)).w);
+    uint lensSeed = hashU(uint(px.x) * 1973u + uint(px.y) * 9277u +
+                          fi * 26699u + 17u);
+    float lensAngle = 6.28318530718 * rnd(lensSeed);
+    float lensRadius = pc.lens.y * sqrt(rnd(lensSeed));
+    vec3 cameraForward = normalize(
+        (pc.invViewProj * vec4(0.0, 0.0, 1.0, 1.0)).xyz /
+            (pc.invViewProj * vec4(0.0, 0.0, 1.0, 1.0)).w - eye);
+    float focusT = pc.lens.x / max(dot(dir, cameraForward), 1.0e-4);
+    vec3 focusPoint = eye + dir * focusT;
+    origin = eye + right * (cos(lensAngle) * lensRadius) +
+             up * (sin(lensAngle) * lensRadius);
+    dir = normalize(focusPoint - origin);
+  }
 
   // The clear colour is a DISPLAY-space UI constant (0.12 -> 31/255) -- the very
   // value the raster path clears its UNORM target with. Shaded/wireframe output

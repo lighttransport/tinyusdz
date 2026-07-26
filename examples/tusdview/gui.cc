@@ -4147,6 +4147,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.cameraPos[1] = eye.y;
   p.cameraPos[2] = eye.z;
   p.exposure = cam_->exposure();
+  p.cameraLens = cameraLens_;
   p.mode = mode_;
   p.wireMode = wireCycle_;  // 'v' key: 0 off / 1 wire-only / 2 wire+shaded
   p.displacement = displacementEnabled_;
@@ -4243,6 +4244,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   std::memcpy(packet->proj, projM.m, sizeof(packet->proj));
   packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
   packet->exposure = p.exposure;
+  packet->cameraLens = p.cameraLens;
   packet->mode = p.mode;
   for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
   for (int i = 0; i < 3; ++i) {

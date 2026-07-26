@@ -1104,6 +1104,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     }
   }
   gui_.setScene(&loaded_, &draw_);
+  gui_.setCameraLens(cameraLens_);
   gui_.setNextStage(nextStageSnapshot_.get());
   {
     std::vector<std::string> deferred;

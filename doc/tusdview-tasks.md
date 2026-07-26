@@ -230,8 +230,8 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   backends and headless rendering.
 - [ ] Finish depth of field, shutter/motion blur, stereo, and arbitrary clipping
   planes across all backends. Authored thin-lens depth of field is implemented
-  in the shared CUDA/HIP tracer and pinned by a capability-gated CUDA image
-  regression; Vulkan ray query and raster remain open. All camera records survive
+  in Vulkan ray query and the shared CUDA/HIP tracer, with capability-gated
+  Vulkan and CUDA image regressions; raster remains open. All camera records survive
   both loader paths (focus distance, f-stop, shutter interval, stereo role, and
   float4 clipping-plane equations), and the camera-equivalence gate pins those
   carriers. This also corrected the legacy

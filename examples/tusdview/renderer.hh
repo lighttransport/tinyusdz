@@ -17,6 +17,7 @@
 #include <string>
 
 #include "gpu_scene.hh"
+#include "rt_camera.hh"
 #include "rt_lod.hh"  // RtLodCamera (view-dependent RT LOD)
 
 struct GLFWwindow;
@@ -114,6 +115,7 @@ struct RenderFrameParams {
   const float* proj{nullptr};  // column-major 4x4 (GL: Z[-1,1]; VK: Z[0,1])
   float cameraPos[3]{0, 0, 0};
   float exposure{0.0f};  // photographic exposure in stops (linear multiplier 2^x)
+  RtCameraLens cameraLens;
   RenderMode mode{RenderMode::Shaded};
   // Wireframe overlay state, cycled with the 'v' key (GL backend):
   //   0 = off (shaded fill only)
