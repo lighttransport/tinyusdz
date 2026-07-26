@@ -144,8 +144,12 @@ class DemoApp {
           <section class="viewport-wrap">
             <div id="viewport" class="viewport"></div>
             <div id="drop-hint" class="drop-hint">Drop USDA, USDC, USD, or USDZ</div>
-            <div id="status" class="status">Initializing...</div>
-          </section>
+              <div id="status" class="status">Initializing...</div>
+              <div id="tusd-loader" class="tusd-loader hidden">
+                <div class="spinner"></div>
+                <div class="loader-text">Loading TinyUSDZ WASM…</div>
+              </div>
+            </section>
           <aside class="info-panel">
             <h2>Controls</h2>
             <div id="gui-container" class="gui-container"></div>
@@ -301,13 +305,19 @@ class DemoApp {
     if (this.loader) return this.loader;
 
     this.setStatus('Initializing TinyUSDZ WASM...');
+    const loaderEl = document.getElementById('tusd-loader');
+    if (loaderEl) { loaderEl.classList.remove('hidden'); loaderEl.querySelector('.loader-text').textContent = 'Loading TinyUSDZ WASM (' + (window.location.hostname === 'localhost' ? 'dev' : 'prod') + ')…'; }
     this.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
-    await this.loader.init({
-      useZstdCompressedWasm: false,
-      useMemory64: false,
-      backend: this.params.backend,
-      useNextOnlyWasm: this.params.backend === 'next'
-    });
+    try {
+      await this.loader.init({
+        useZstdCompressedWasm: false,
+        useMemory64: false,
+        backend: this.params.backend,
+        useNextOnlyWasm: this.params.backend === 'next'
+      });
+    } finally {
+      if (loaderEl) loaderEl.classList.add('hidden');
+    }
     TinyUSDZLoaderUtils.setTinyUSDZ(this.loader.native_);
     setMaterialXTinyUSDZ(this.loader.native_);
     this.loader.setMaxMemoryLimitMB(512);

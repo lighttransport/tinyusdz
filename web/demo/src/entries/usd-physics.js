@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { showLoader, hideLoader } from "../tusd-loader.js";
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
@@ -469,7 +470,12 @@ async function main() {
 
   setStatus('Initializing TinyUSDZ...');
   const loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 256 });
-  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
+  showLoader("Loading TinyUSDZ WASM...", document.getElementById("viewport"));
+  try {
+    await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'legacy' });
+  } finally {
+    hideLoader();
+  }
   TinyUSDZLoaderUtils.setTinyUSDZ(loader.native_);
 
   await loadUSDScene(loader);

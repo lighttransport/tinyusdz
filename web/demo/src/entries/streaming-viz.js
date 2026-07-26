@@ -269,7 +269,12 @@ async function loadSample(index) {
     const filename = sample.url.split('/').pop() || 'scene.usd';
 
     const renderer = new StreamingUSDRenderer($id('viz-canvas'));
-    await renderer.init();
+    showLoader("Loading TinyUSDZ WASM...", document.getElementById("viewport"));
+    try {
+      await renderer.init()
+    } finally {
+      hideLoader();
+    };
     renderer.setClearColor([0.12, 0.12, 0.14, 1.0]);
     // Reset on subsequent loads
     window.__vizRenderer = renderer;
@@ -314,3 +319,4 @@ $id('load-btn').addEventListener('click', () => {
 const params = new URLSearchParams(location.search);
 const idx = params.has('sample') ? Math.min(Number(params.get('sample')), SAMPLES.length - 1) : 0;
 loadSample(idx).catch((e) => { console.error(e); $id('viz-status').textContent = 'Error: ' + e.message; });
+import { showLoader, hideLoader } from "../tusd-loader.js";
