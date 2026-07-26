@@ -569,8 +569,18 @@ int main(int argc, char** argv) {
       wantRt = true;
     } else if (std::strcmp(argv[i], "--cuda") == 0) {
       wantCuda = true;
-    } else if (std::strcmp(argv[i], "--cuda-cache-dir") == 0 && i + 1 < argc) {
+    } else if (std::strcmp(argv[i], "--cuda-cache-dir") == 0) {
+      if (i + 1 >= argc) {
+        LOGE("--cuda-cache-dir requires a non-empty path");
+        return 1;
+      }
       cudaCacheDir = argv[++i];
+      if (cudaCacheDir.empty()) {
+        LOGE("--cuda-cache-dir requires a non-empty path");
+        return 1;
+      }
+    } else if (std::strncmp(argv[i], "--cuda-cache-dir=", 17) == 0) {
+      cudaCacheDir = argv[i] + 17;
       if (cudaCacheDir.empty()) {
         LOGE("--cuda-cache-dir requires a non-empty path");
         return 1;
