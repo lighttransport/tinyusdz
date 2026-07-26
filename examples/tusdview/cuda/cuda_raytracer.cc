@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 #include "cuew.h"
 #include "displacement_bake.hh"
@@ -101,8 +102,28 @@ bool CudaRayTracer::init(std::string* err) {
     if (err) *err = "nvrtcCreateProgram failed";
     return false;
   }
-  std::string arch = "--gpu-architecture=compute_" + std::to_string(major) +
-                     std::to_string(minor);
+  int compileArch = major * 10 + minor;
+  // The CUDA driver may support a newer GPU than the separately installed
+  // runtime compiler. PTX is forward-compatible, so ask NVRTC for the newest
+  // virtual architecture it actually supports without exceeding the device.
+  // Otherwise a machine with (for example) a new driver/GPU and an older NVRTC
+  // fails compilation even though that compiler can produce valid PTX for it.
+  if (nvrtcGetNumSupportedArchs && nvrtcGetSupportedArchs) {
+    int countArchs = 0;
+    if (nvrtcGetNumSupportedArchs(&countArchs) == NVRTC_SUCCESS &&
+        countArchs > 0) {
+      std::vector<int> supported(static_cast<size_t>(countArchs));
+      if (nvrtcGetSupportedArchs(supported.data()) == NVRTC_SUCCESS) {
+        int compatible = 0;
+        for (int candidate : supported) {
+          if (candidate <= compileArch) compatible = std::max(compatible, candidate);
+        }
+        if (compatible > 0) compileArch = compatible;
+      }
+    }
+  }
+  std::string arch =
+      "--gpu-architecture=compute_" + std::to_string(compileArch);
   const char* opts[] = {arch.c_str(), "--use_fast_math"};
   nvrtcResult nr = nvrtcCompileProgram(prog, 2, opts);
   if (nr != NVRTC_SUCCESS) {
