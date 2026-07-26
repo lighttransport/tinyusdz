@@ -81,7 +81,7 @@ function viewer(container) {
   const kl = new THREE.DirectionalLight(0xffffff, 2); kl.position.set(4, 6, 5); kl.castShadow = true; s.add(kl);
   s.add(new THREE.GridHelper(10, 20, 0x44444a, 0x26262b));
   let fpsF = 0, fpsL = performance.now(), fpsV = 0;
-  return { scene, camera, renderer, controls, world: w, statsEl: null, data: null, 
+  return { scene: s, camera: c, renderer: r, controls: o, world: w, statsEl: null, data: null, 
     fps() { return fpsV; },
     tick(now) { fpsF++; if (now - fpsL >= 500) { fpsV = Math.round((fpsF * 1000) / (now - fpsL)); fpsF = 0; fpsL = now; } },
   };
@@ -89,16 +89,20 @@ function viewer(container) {
 const vLegacy = viewer($id('legacy-vp'));
 const vNext = viewer($id('next-vp'));
 
-// Synchronize next camera with legacy
+// Synchronize cameras with recursion guard
+let syncing = false;
 function syncCameras(source, target) {
+  if (syncing) return;
+  syncing = true;
   target.camera.position.copy(source.camera.position);
   target.camera.quaternion.copy(source.camera.quaternion);
   target.controls.target.copy(source.controls.target);
   target.camera.updateProjectionMatrix();
   target.controls.update();
+  syncing = false;
 }
 vLegacy.controls.addEventListener('change', () => syncCameras(vLegacy, vNext));
-vNext.controls.addEventListener('change', () => syncCameras(vNext, vLegacy)); // allow either direction
+vNext.controls.addEventListener('change', () => syncCameras(vNext, vLegacy));
 
 // ── Loading ──
 let loader = null;

@@ -336,7 +336,8 @@ async function loadSample(index) {
     // Fetch USDA text for parsing
     const resp = await fetch(sample.url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const text = await resp.text();
+    const bytes = await resp.arrayBuffer();
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
     usdaPre.textContent = text;
     desc.textContent = sample.desc;
 
@@ -356,7 +357,7 @@ async function loadSample(index) {
       ? sample.url.slice(0, sample.url.lastIndexOf('/') + 1)
       : urlObj.origin + urlObj.pathname.slice(0, urlObj.pathname.lastIndexOf('/') + 1);
 
-    const rootBytes = new Uint8Array(await resp.arrayBuffer());
+    const rootBytes = new Uint8Array(bytes);
     const filename = sample.url.split('/').pop() || 'scene.usd';
 
     status.textContent = 'Composing scene...';
