@@ -1209,6 +1209,17 @@ void test_stage_session_payloads_and_cancel() {
   }
   StageEditResult reload = session.ReloadLayer(payload_path);
   assert(reload);
+  assert(reload.changes.base_revision == before_reload.revision);
+  assert(reload.changes.new_revision == before_reload.revision + 1);
+  bool reload_classified = false;
+  for (const PrimChange& change : reload.changes.prims) {
+    if ((change.path == Path("/P") || change.path == Path("/Q")) &&
+        std::find(change.properties.begin(), change.properties.end(),
+                  "loadedValue") != change.properties.end()) {
+      reload_classified = true;
+    }
+  }
+  assert(reload_classified);
   loaded = session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue");
   assert(loaded && loaded->as_int() && *loaded->as_int() == 8);
   const Value* old_loaded =
