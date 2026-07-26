@@ -15,6 +15,9 @@
 #include "../strfmt.hh"
 #include "../layer/property-index.hh"
 
+#include <unordered_set>
+#include <vector>
+
 namespace tinyusdz {
 namespace next {
 
@@ -256,17 +259,8 @@ void PrintMetadata(StreamWriter& os, const PrimSpecMeta& meta, int depth,
   os << ")";
 }
 
-// Forward declaration for recursion
-void PrintPrimSpecRecursive(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
-                            int depth, const PrimPrintOptions& opts);
-
-void PrintPrimSpecRecursive(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
-                            int depth, const PrimPrintOptions& opts) {
-  // Check max depth
-  if (opts.max_depth >= 0 && depth > opts.max_depth) {
-    return;
-  }
-
+void PrintPrimSpecStart(StreamWriter& os, const PrimSpec& spec, int depth,
+                        const PrimPrintOptions& opts) {
   // Print prim header
   PrintIndent(os, depth, opts.indent);
   os << GetSpecifierString(spec.specifier());
@@ -310,19 +304,55 @@ void PrintPrimSpecRecursive(StreamWriter& os, const PrimSpec& spec, const Layer&
   if (opts.print_relationships) {
     PrintRelationships(os, spec, content_depth, opts);
   }
+}
 
-  // Print children
-  for (uint32_t child_idx : spec.child_indices()) {
-    const PrimSpec* child = layer.prim(child_idx);
-    if (child) {
-      os << "\n";
-      PrintPrimSpecRecursive(os, *child, layer, content_depth, opts);
-    }
+void PrintPrimSpecHierarchy(StreamWriter& os, const PrimSpec& spec,
+                            const Layer& layer, int depth,
+                            const PrimPrintOptions& opts) {
+  if (opts.max_depth >= 0 && depth > opts.max_depth) {
+    return;
   }
 
-  // Close brace
-  PrintIndent(os, depth, opts.indent);
-  os << "}\n";
+  struct Frame {
+    const PrimSpec* spec{nullptr};
+    int depth{0};
+    size_t next_child{0};
+  };
+
+  std::vector<Frame> stack;
+  std::unordered_set<const PrimSpec*> visited;
+  PrintPrimSpecStart(os, spec, depth, opts);
+  stack.push_back(Frame{&spec, depth, 0});
+  visited.insert(&spec);
+
+  while (!stack.empty()) {
+    Frame& frame = stack.back();
+    const std::vector<uint32_t>& children = frame.spec->child_indices();
+    if (frame.next_child < children.size()) {
+      const uint32_t child_idx = children[frame.next_child++];
+      const PrimSpec* child = layer.prim(child_idx);
+      if (!child) {
+        continue;
+      }
+
+      // Match the recursive printer's blank line before every valid child,
+      // including one suppressed by max_depth.
+      os << "\n";
+      const int child_depth = frame.depth + 1;
+      if ((opts.max_depth >= 0 && child_depth > opts.max_depth) ||
+          !visited.insert(child).second) {
+        continue;
+      }
+
+      PrintPrimSpecStart(os, *child, child_depth, opts);
+      stack.push_back(Frame{child, child_depth, 0});
+      continue;
+    }
+
+    PrintIndent(os, frame.depth, opts.indent);
+    os << "}\n";
+    stack.pop_back();
+  }
 }
 
 // Print layer metadata
@@ -553,7 +583,7 @@ void PrintLayer(StreamWriter& os, const Layer& layer, const PrimPrintOptions& op
   for (uint32_t root_idx : layer.root_indices()) {
     const PrimSpec* root = layer.prim(root_idx);
     if (root) {
-      PrintPrimSpecRecursive(os, *root, layer, 0, opts);
+      PrintPrimSpecHierarchy(os, *root, layer, 0, opts);
       os << "\n";
     }
   }

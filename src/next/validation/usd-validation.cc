@@ -5133,35 +5133,49 @@ void ValidateLayerMetas(const Layer &layer, USDValidationResult *result) {
 // Prim index (path -> type / specifier / skeleton joint count)
 // ---------------------------------------------------------------------------
 
-void BuildPrimIndexRecursive(const Layer &layer, uint32_t prim_index,
-                             const std::string &prim_path,
-                             PrimTypeByPath *prim_types,
-                             PrimSpecifierByPath *prim_specifiers,
-                             SkeletonJointCountByPath *skeleton_joints,
-                             std::unordered_set<uint32_t> *visited) {
-  const PrimSpec *ps = layer.prim(prim_index);
-  if (!ps || !prim_types || !prim_specifiers || !visited ||
-      !visited->insert(prim_index).second) {
+void BuildPrimIndex(const Layer &layer, uint32_t prim_index,
+                    const std::string &prim_path,
+                    PrimTypeByPath *prim_types,
+                    PrimSpecifierByPath *prim_specifiers,
+                    SkeletonJointCountByPath *skeleton_joints,
+                    std::unordered_set<uint32_t> *visited) {
+  if (!prim_types || !prim_specifiers || !visited) {
     return;
   }
 
-  (*prim_types)[prim_path] = ps->type_name();
-  (*prim_specifiers)[prim_path] = ps->specifier();
-  if (skeleton_joints && ps->type_name() == "Skeleton") {
-    std::vector<std::string> joints;
-    if (GetTokenArrayProperty(*ps, "joints", &joints)) {
-      (*skeleton_joints)[prim_path] = joints.size();
-    }
-  }
+  struct WorkItem {
+    uint32_t prim_index{0};
+    std::string prim_path;
+  };
+  std::vector<WorkItem> work;
+  work.push_back(WorkItem{prim_index, prim_path});
 
-  for (uint32_t child_index : ps->child_indices()) {
-    const PrimSpec *child = layer.prim(child_index);
-    if (!child) {
+  while (!work.empty()) {
+    WorkItem item = std::move(work.back());
+    work.pop_back();
+    const PrimSpec *ps = layer.prim(item.prim_index);
+    if (!ps || !visited->insert(item.prim_index).second) {
       continue;
     }
-    BuildPrimIndexRecursive(layer, child_index,
-                            prim_path + "/" + child->name(), prim_types,
-                            prim_specifiers, skeleton_joints, visited);
+
+    (*prim_types)[item.prim_path] = ps->type_name();
+    (*prim_specifiers)[item.prim_path] = ps->specifier();
+    if (skeleton_joints && ps->type_name() == "Skeleton") {
+      std::vector<std::string> joints;
+      if (GetTokenArrayProperty(*ps, "joints", &joints)) {
+        (*skeleton_joints)[item.prim_path] = joints.size();
+      }
+    }
+
+    const std::vector<uint32_t> &children = ps->child_indices();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      const PrimSpec *child = layer.prim(*it);
+      if (!child) {
+        continue;
+      }
+      work.push_back(
+          WorkItem{*it, item.prim_path + "/" + child->name()});
+    }
   }
 }
 
@@ -5636,23 +5650,30 @@ bool IsSelfContainedLayer(const Layer &layer) {
 }
 
 // ---------------------------------------------------------------------------
-// Recursive prim validation
+// Prim validation (explicit work stack; safe for deep hierarchies)
 // ---------------------------------------------------------------------------
 
-void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
-                               const std::string &prim_location,
-                               const ColorSpaceSet &inherited_color_spaces,
-                               const AncestorContext &ancestors,
-                               const ValidationOptions &options,
-                               const PrimTypeByPath &prim_types,
-                               const PrimSpecifierByPath &prim_specifiers,
-                               const SkeletonJointCountByPath &skeleton_joints,
-                               bool layer_self_contained,
-                               std::unordered_set<uint32_t> *visited,
-                               USDValidationResult *result) {
+struct PrimChildValidationState {
+  ColorSpaceSet color_spaces;
+  AncestorContext ancestors;
+};
+
+bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
+                         const std::string &prim_location,
+                         const ColorSpaceSet &inherited_color_spaces,
+                         const AncestorContext &ancestors,
+                         const ValidationOptions &options,
+                         const PrimTypeByPath &prim_types,
+                         const PrimSpecifierByPath &prim_specifiers,
+                         const SkeletonJointCountByPath &skeleton_joints,
+                         bool layer_self_contained,
+                         std::unordered_set<uint32_t> *visited,
+                         USDValidationResult *result,
+                         PrimChildValidationState *child_state) {
   const PrimSpec *psp = layer.prim(prim_index);
-  if (!psp || !visited || !visited->insert(prim_index).second) {
-    return;
+  if (!psp || !visited || !child_state ||
+      !visited->insert(prim_index).second) {
+    return false;
   }
   const PrimSpec &ps = *psp;
   const std::vector<AppliedSchema> applied_schemas = CollectAppliedSchemas(ps);
@@ -6079,16 +6100,59 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
     child_ctx.nearest_gprim_path = ancestors.nearest_gprim_path;
   }
 
-  for (uint32_t child_index : ps.child_indices()) {
-    const PrimSpec *child = layer.prim(child_index);
-    if (!child) {
+  child_state->color_spaces = std::move(visible_color_spaces);
+  child_state->ancestors = std::move(child_ctx);
+  return true;
+}
+
+void ValidatePrimSpecs(const Layer &layer, uint32_t prim_index,
+                       const std::string &prim_location,
+                       const ColorSpaceSet &inherited_color_spaces,
+                       const AncestorContext &ancestors,
+                       const ValidationOptions &options,
+                       const PrimTypeByPath &prim_types,
+                       const PrimSpecifierByPath &prim_specifiers,
+                       const SkeletonJointCountByPath &skeleton_joints,
+                       bool layer_self_contained,
+                       std::unordered_set<uint32_t> *visited,
+                       USDValidationResult *result) {
+  struct WorkItem {
+    uint32_t prim_index{0};
+    std::string prim_location;
+    ColorSpaceSet color_spaces;
+    AncestorContext ancestors;
+  };
+  std::vector<WorkItem> work;
+  work.push_back(
+      WorkItem{prim_index, prim_location, inherited_color_spaces, ancestors});
+
+  while (!work.empty()) {
+    WorkItem item = std::move(work.back());
+    work.pop_back();
+    PrimChildValidationState child_state;
+    if (!ValidateOnePrimSpec(
+            layer, item.prim_index, item.prim_location, item.color_spaces,
+            item.ancestors, options, prim_types, prim_specifiers,
+            skeleton_joints, layer_self_contained, visited, result,
+            &child_state)) {
       continue;
     }
-    ValidatePrimSpecRecursive(layer, child_index,
-                              prim_location + "/" + child->name(),
-                              visible_color_spaces, child_ctx, options,
-                              prim_types, prim_specifiers, skeleton_joints,
-                              layer_self_contained, visited, result);
+
+    const PrimSpec *ps = layer.prim(item.prim_index);
+    if (!ps) {
+      continue;
+    }
+    const std::vector<uint32_t> &children = ps->child_indices();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      const PrimSpec *child = layer.prim(*it);
+      if (!child) {
+        continue;
+      }
+      work.push_back(WorkItem{*it,
+                              item.prim_location + "/" + child->name(),
+                              child_state.color_spaces,
+                              child_state.ancestors});
+    }
   }
 }
 
@@ -6252,18 +6316,9 @@ void ValidateStageMetadataPresence(const Layer &layer,
 
 namespace {
 
-// Layer validation core. `is_root_layer` is false for the synthetic graft
-// layers that hold variant option bodies: those carry no stage metadata of
-// their own, so the layer-scope arkit stage rules must not fire on them.
-USDValidationResult ValidateLayerImpl(const Layer &layer,
-                                      const ValidationOptions &options,
-                                      bool is_root_layer);
-
-std::string VariantIssueLocation(const std::string &owner,
-                                 const std::string &set_name,
-                                 const std::string &variant_name,
-                                 const std::string &nested_location) {
-  std::string base = owner + "{" + set_name + "=" + variant_name + "}";
+std::string MapVariantContentLocation(const std::string &base,
+                                      const std::string &nested_location) {
+  if (base.empty()) return nested_location;
   static const std::string kSelf = "/__self__";
   if (nested_location == kSelf) return base;
   if (StartsWith(nested_location, kSelf + "/")) {
@@ -6275,33 +6330,13 @@ std::string VariantIssueLocation(const std::string &owner,
   return base + ":" + nested_location;
 }
 
-void ValidateVariantSetsRecursive(
-    const std::vector<VariantSetData> &sets, const std::string &owner,
-    const ValidationOptions &options, USDValidationResult *result) {
-  if (!result) return;
-  for (const VariantSetData &set : sets) {
-    for (const VariantData &variant : set.variants) {
-      const std::string variant_owner =
-          owner + "{" + set.name + "=" + variant.name + "}";
-      if (variant.content) {
-        USDValidationResult nested =
-            ValidateLayerImpl(*variant.content, options,
-                              /* is_root_layer */ false);
-        for (USDValidationIssue &issue : nested.issues) {
-          issue.location = VariantIssueLocation(owner, set.name, variant.name,
-                                                issue.location);
-          result->issues.push_back(std::move(issue));
-        }
-      }
-      ValidateVariantSetsRecursive(variant.variantSets, variant_owner, options,
-                                   result);
-    }
-  }
-}
-
-USDValidationResult ValidateLayerImpl(const Layer &layer,
-                                      const ValidationOptions &options,
-                                      bool is_root_layer) {
+// Validate one layer without descending into variant-content layers.
+// `is_root_layer` is false for the synthetic graft layers that hold variant
+// option bodies: those carry no stage metadata of their own, so layer-scope
+// ARKit stage rules must not fire on them.
+USDValidationResult ValidateLayerLocal(const Layer &layer,
+                                       const ValidationOptions &options,
+                                       bool is_root_layer) {
   USDValidationResult result;
   result.checked_groups = options;
   // Container groups need the original package/crate bytes and are run by
@@ -6350,9 +6385,8 @@ USDValidationResult ValidateLayerImpl(const Layer &layer,
       if (!root) {
         continue;
       }
-      BuildPrimIndexRecursive(layer, root_index, "/" + root->name(),
-                              &prim_types, &prim_specifiers, &skeleton_joints,
-                              &visited);
+      BuildPrimIndex(layer, root_index, "/" + root->name(), &prim_types,
+                     &prim_specifiers, &skeleton_joints, &visited);
     }
   }
 
@@ -6362,19 +6396,97 @@ USDValidationResult ValidateLayerImpl(const Layer &layer,
     if (!root) {
       continue;
     }
-    ValidatePrimSpecRecursive(layer, root_index, "/" + root->name(),
-                              ColorSpaceSet(), root_ancestors, options,
-                              prim_types, prim_specifiers, skeleton_joints,
-                              layer_self_contained, &visited, &result);
+    ValidatePrimSpecs(layer, root_index, "/" + root->name(), ColorSpaceSet(),
+                      root_ancestors, options, prim_types, prim_specifiers,
+                      skeleton_joints, layer_self_contained, &visited,
+                      &result);
   }
 
-  // Validate every authored variant option, not only the selected option that
-  // composition materializes. Variant content uses a synthetic /__self__ root;
-  // rewrite that diagnostic namespace to an explicit {set=option} location.
-  for (const PrimSpec &prim : layer.prims()) {
-    if (!prim.meta().variantSets().empty()) {
-      ValidateVariantSetsRecursive(prim.meta().variantSets(), prim.path().str(),
-                                   options, &result);
+  return result;
+}
+
+USDValidationResult ValidateLayerImpl(const Layer &layer,
+                                      const ValidationOptions &options,
+                                      bool is_root_layer) {
+  enum class ActionKind { ValidateLayer, ValidateVariantSets, LeaveLayer };
+  struct Action {
+    ActionKind kind{ActionKind::ValidateLayer};
+    const Layer *layer{nullptr};
+    const std::vector<VariantSetData> *sets{nullptr};
+    bool is_root_layer{false};
+    std::string location;
+  };
+
+  USDValidationResult result;
+  result.checked_groups = options;
+  result.checked_groups.package = false;
+  result.checked_groups.crate = false;
+
+  std::vector<Action> work;
+  std::unordered_set<const Layer *> active_layers;
+  work.push_back(Action{ActionKind::ValidateLayer, &layer, nullptr,
+                        is_root_layer, std::string()});
+
+  while (!work.empty()) {
+    Action action = std::move(work.back());
+    work.pop_back();
+
+    if (action.kind == ActionKind::LeaveLayer) {
+      active_layers.erase(action.layer);
+      continue;
+    }
+
+    if (action.kind == ActionKind::ValidateVariantSets) {
+      if (!action.sets) continue;
+      // Push in reverse so the explicit LIFO work list retains the old
+      // set/option DFS order: content first, then nested variant sets.
+      for (auto set_it = action.sets->rbegin();
+           set_it != action.sets->rend(); ++set_it) {
+        for (auto variant_it = set_it->variants.rbegin();
+             variant_it != set_it->variants.rend(); ++variant_it) {
+          const std::string owner = action.location + "{" + set_it->name +
+                                    "=" + variant_it->name + "}";
+          if (!variant_it->variantSets.empty()) {
+            work.push_back(Action{ActionKind::ValidateVariantSets, nullptr,
+                                  &variant_it->variantSets, false, owner});
+          }
+          if (variant_it->content) {
+            work.push_back(Action{ActionKind::ValidateLayer,
+                                  variant_it->content.get(), nullptr, false,
+                                  owner});
+          }
+        }
+      }
+      continue;
+    }
+
+    if (!action.layer) continue;
+    if (!active_layers.insert(action.layer).second) {
+      AddError(&result, "core.composition.variantCycle", action.location,
+               "variant content contains a cycle to an ancestor layer");
+      continue;
+    }
+
+    USDValidationResult local =
+        ValidateLayerLocal(*action.layer, options, action.is_root_layer);
+    for (USDValidationIssue &issue : local.issues) {
+      issue.location =
+          MapVariantContentLocation(action.location, issue.location);
+      result.issues.push_back(std::move(issue));
+    }
+
+    // Leave only after all content reachable from this layer, allowing the
+    // active set to distinguish cycles from legitimate shared layer bodies.
+    work.push_back(Action{ActionKind::LeaveLayer, action.layer, nullptr, false,
+                          std::string()});
+    const std::vector<PrimSpec> &prims = action.layer->prims();
+    for (auto prim_it = prims.rbegin(); prim_it != prims.rend(); ++prim_it) {
+      const std::vector<VariantSetData> &sets = prim_it->meta().variantSets();
+      if (sets.empty()) continue;
+      const std::string owner = MapVariantContentLocation(
+          action.location, prim_it->path().str());
+      work.push_back(Action{ActionKind::ValidateVariantSets, nullptr, &sets,
+                            false, owner});
     }
   }
 
