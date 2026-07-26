@@ -51,6 +51,7 @@ ptx_count="$(find "$CACHE_DIR" -maxdepth 1 -type f -name '*.ptx' | wc -l)"
   echo "FAIL: expected one PTX entry under $CACHE_DIR, found $ptx_count"
   exit 1
 }
+ptx_file="$(find "$CACHE_DIR" -maxdepth 1 -type f -name '*.ptx' -print -quit)"
 
 warm_img="$OUT/warm.png"
 warm_log="$OUT/warm.log"
@@ -75,4 +76,35 @@ cmp -s "$cold_img" "$warm_img" || {
   exit 1
 }
 
-echo "PASS: default CUDA kernel cache and --cuda-cache-dir reuse exact pixels"
+# A cache file can be truncated by storage failure or modified outside tusdview.
+# It must never be trusted merely because its keyed filename matches.
+printf '%s\n' 'intentionally invalid PTX' >"$ptx_file"
+recovered_img="$OUT/recovered.png"
+recovered_log="$OUT/recovered.log"
+run_viewer env XDG_CONFIG_HOME="$OUT/config-home" \
+  "$BIN" --next --headless --cuda --cuda-cache-dir "$CACHE_DIR" --mode depth \
+  --camera Cam --frames 1 --time 1 --config "$CONFIG" --no-skeleton \
+  --screenshot "$recovered_img" "$SCENE" >"$recovered_log" 2>&1
+recovered_rc=$?
+if [ "$recovered_rc" -ne 0 ] || ! grep -q 'CUDA RT wrote' "$recovered_log" ||
+   [ ! -s "$recovered_img" ]; then
+  echo "FAIL: invalid CUDA cache recovery failed (exit $recovered_rc)"
+  cat "$recovered_log"
+  exit 1
+fi
+grep -q 'ignoring invalid CUDA kernel cache entry:' "$recovered_log" || {
+  echo "FAIL: corrupt PTX was not diagnosed"
+  cat "$recovered_log"
+  exit 1
+}
+grep -q 'CUDA kernel cached:' "$recovered_log" || {
+  echo "FAIL: rejected PTX was not rebuilt"
+  cat "$recovered_log"
+  exit 1
+}
+cmp -s "$cold_img" "$recovered_img" || {
+  echo "FAIL: rebuilt PTX changed CUDA pixels"
+  exit 1
+}
+
+echo "PASS: CUDA kernel cache cold/warm/recovery paths preserve exact pixels"
