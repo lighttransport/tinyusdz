@@ -635,6 +635,20 @@ Stage::~Stage() = default;
 Stage::Stage(Stage&&) noexcept = default;
 Stage& Stage::operator=(Stage&&) noexcept = default;
 
+Stage Stage::Clone() const {
+  Stage out;
+  if (root_layer_) {
+    out.root_layer_.reset(new Layer(root_layer_->Clone()));
+  }
+  out.sub_layers_.reserve(sub_layers_.size());
+  for (const auto& layer : sub_layers_) {
+    out.sub_layers_.emplace_back(
+        layer ? new Layer(layer->Clone()) : nullptr);
+  }
+  out.meta_ = meta_;
+  return out;
+}
+
 void Stage::SetRootLayer(Layer&& layer) {
   root_layer_ = std::make_unique<Layer>(std::move(layer));
   UpdateMetaFromRootLayer();

@@ -40,6 +40,7 @@
 #include "layer/prim-spec.hh"
 #include "layer/layer.hh"
 #include "stage/stage.hh"
+#include "stage/change-set.hh"
 
 // Parsers
 #include "parser/lexer.hh"
@@ -162,6 +163,18 @@ struct StageSessionOptions {
   ProgressCallback progress_callback;
 };
 
+struct StageEditResult {
+  bool success = false;
+  StageSnapshot snapshot;
+  StageChangeSet changes;
+  std::vector<Diagnostic> diagnostics;
+  std::string warning;
+  std::string error;
+
+  // Implicit for source compatibility with the former bool edit API.
+  operator bool() const { return success; }
+};
+
 /// Persistent next-core document. It keeps the resolver and PCP cache alive so
 /// payload and variant edits reuse parsed dependency layers.
 class StageSession {
@@ -176,6 +189,9 @@ class StageSession {
   bool OpenFile(const std::string& filename,
                 const StageSessionOptions& options = {});
 
+  StageSnapshot GetSnapshot() const;
+  /// Compatibility view. The reference is invalidated by the next successful
+  /// edit; new persistent consumers should retain GetSnapshot() instead.
   const Stage& GetStage() const;
   // Transfer the composed Stage out of a one-shot session and release its PCP
   // cache. The session becomes closed; payload/variant edits are no longer
@@ -186,21 +202,25 @@ class StageSession {
   bool IsOpen() const;
   bool IsComposed() const;
 
-  bool Rebuild();
-  bool LoadPayload(const Path& prim_path,
-                   pcp::Cache::LoadPolicy policy =
-                       pcp::Cache::LoadPolicy::WithDescendants);
-  bool UnloadPayload(const Path& prim_path);
-  bool LoadPayloads(const std::vector<Path>& prim_paths,
-                    pcp::Cache::LoadPolicy policy =
-                        pcp::Cache::LoadPolicy::WithDescendants);
-  bool SetVariantSelection(const Path& prim_path,
-                           const std::string& variant_set,
-                           const std::string& selection);
-  bool ClearVariantSelection(const Path& prim_path,
-                             const std::string& variant_set);
-  bool SetVariantSelections(
+  StageEditResult Rebuild();
+  StageEditResult LoadPayload(const Path& prim_path,
+                              pcp::Cache::LoadPolicy policy =
+                                  pcp::Cache::LoadPolicy::WithDescendants);
+  StageEditResult UnloadPayload(const Path& prim_path);
+  StageEditResult LoadPayloads(
+      const std::vector<Path>& prim_paths,
+      pcp::Cache::LoadPolicy policy =
+          pcp::Cache::LoadPolicy::WithDescendants);
+  StageEditResult SetVariantSelection(const Path& prim_path,
+                                      const std::string& variant_set,
+                                      const std::string& selection);
+  StageEditResult ClearVariantSelection(const Path& prim_path,
+                                        const std::string& variant_set);
+  StageEditResult SetVariantSelections(
       const pcp::CompositionOptions::VariantSelectionMap& selections);
+  /// Re-read a dependency layer and transactionally publish the recomposed
+  /// stage. Passing the root identifier performs a full reopen.
+  StageEditResult ReloadLayer(const std::string& resolved_layer_id);
 
   pcp::CompositionOptions::VariantSelectionMap GetVariantSelections() const;
   std::vector<Path> GetDeferredPayloadPaths() const;

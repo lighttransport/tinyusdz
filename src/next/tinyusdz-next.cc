@@ -5,6 +5,7 @@
 
 #include "tinyusdz-next.hh"
 #include "composition/composition.hh"
+#include "diff/layer-diff.hh"
 #include "pcp/cache.hh"
 #include "reader/usdz-reader.hh"
 #include "resolver/asset-resolver.hh"
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <map>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <thread>
 #endif
@@ -258,6 +260,136 @@ std::string DirOfPath(const std::string& path) {
   return path.substr(0, slash);
 }
 
+std::string ChildPath(const std::string& parent, const std::string& child) {
+  if (parent.empty() || parent == "/") return "/" + child;
+  return parent + "/" + child;
+}
+
+StageChangeFlag ClassifyPropertyChange(const Stage& stage,
+                                       const std::string& prim_path,
+                                       const std::string& property,
+                                       const std::vector<std::string>& reasons) {
+  StageChangeFlag flags = StageChangeFlag::None;
+  auto contains = [](const std::string& s, const char* needle) {
+    return s.find(needle) != std::string::npos;
+  };
+
+  if (property == "visibility" || property == "purpose") {
+    flags |= StageChangeFlag::Visibility;
+  }
+  if (contains(property, "xformOp") || property == "xformOpOrder" ||
+      property == "resetXformStack") {
+    flags |= StageChangeFlag::Transform;
+  }
+  if (property == "points" || property == "faceVertexCounts" ||
+      property == "faceVertexIndices" || property == "curveVertexCounts" ||
+      property == "protoIndices" || property == "prototypes") {
+    flags |= StageChangeFlag::Topology;
+  }
+  if (contains(property, "primvars:") || property == "normals" ||
+      property == "widths" || property == "displayColor" ||
+      property == "displayOpacity") {
+    flags |= StageChangeFlag::Primvar;
+  }
+  if (contains(property, "material:") || contains(property, "inputs:") ||
+      contains(property, "outputs:") || contains(property, "surface") ||
+      contains(property, "displacement") || contains(property, "volume")) {
+    flags |= StageChangeFlag::Material;
+  }
+  if (contains(property, "file") || contains(property, "texture") ||
+      contains(property, "sourceColorSpace")) {
+    flags |= StageChangeFlag::Texture;
+  }
+  if (property == "focalLength" || contains(property, "Aperture") ||
+      property == "projection" || property == "clippingRange" ||
+      property == "clippingPlanes" || property == "focusDistance" ||
+      property == "fStop" || contains(property, "shutter:") ||
+      property == "stereoRole") {
+    flags |= StageChangeFlag::Camera;
+  }
+  for (const std::string& reason : reasons) {
+    if (contains(reason, "timeSample")) flags |= StageChangeFlag::Animation;
+    if (contains(reason, "meta:")) flags |= StageChangeFlag::Metadata;
+  }
+
+  const UsdPrim prim = stage.GetPrimAtPath(prim_path);
+  if (prim) {
+    const std::string& type = prim.GetTypeName();
+    if (type == "Camera") flags |= StageChangeFlag::Camera;
+    if (contains(type, "Light") || type == "DomeLight") {
+      flags |= StageChangeFlag::Light;
+    }
+    if (type == "Material" || type == "Shader" || type == "NodeGraph") {
+      flags |= StageChangeFlag::Material;
+    }
+  }
+  if (flags == StageChangeFlag::None) flags = StageChangeFlag::Metadata;
+  return flags;
+}
+
+StageChangeSet BuildStageChangeSet(const Stage* previous, const Stage& next,
+                                   uint64_t base_revision,
+                                   uint64_t new_revision) {
+  StageChangeSet out;
+  out.base_revision = base_revision;
+  out.new_revision = new_revision;
+  if (!previous || !previous->GetRootLayer() || !next.GetRootLayer()) {
+    out.full_resync = true;
+    PrimChange root;
+    root.path = Path("/");
+    root.flags = StageChangeFlag::Resync;
+    out.prims.push_back(std::move(root));
+    return out;
+  }
+
+  std::unordered_map<std::string, PrimSpecDiff> prim_diffs;
+  std::unordered_map<std::string, PropDiff> prop_diffs;
+  LayerMetaDiff meta_diff;
+  Diff(*previous->GetRootLayer(), *next.GetRootLayer(), prim_diffs,
+       prop_diffs, DiffOptions{}, &meta_diff);
+  out.stage_metadata_changed = meta_diff.changed();
+
+  std::map<std::string, PrimChange> changes;
+  auto resync = [&](const std::string& path) {
+    PrimChange& c = changes[path];
+    c.path = Path(path);
+    c.flags |= StageChangeFlag::Resync;
+  };
+  for (const auto& item : prim_diffs) {
+    for (const std::string& name : item.second.addedPS) {
+      resync(ChildPath(item.first, name));
+    }
+    for (const std::string& name : item.second.deletedPS) {
+      resync(ChildPath(item.first, name));
+    }
+    for (const std::string& name : item.second.modifiedPS) {
+      resync(ChildPath(item.first, name));
+    }
+  }
+  for (const auto& item : prop_diffs) {
+    PrimChange& c = changes[item.first];
+    c.path = Path(item.first);
+    auto add_prop = [&](const std::string& name,
+                        const std::vector<std::string>& reasons) {
+      c.properties.push_back(name);
+      c.flags |= ClassifyPropertyChange(next, item.first, name, reasons);
+    };
+    for (const std::string& name : item.second.addedProps) add_prop(name, {});
+    for (const std::string& name : item.second.deletedProps) add_prop(name, {});
+    for (const PropDiff::ModifiedProp& detail :
+         item.second.modifiedPropDetails) {
+      add_prop(detail.name, detail.reasons);
+    }
+    std::sort(c.properties.begin(), c.properties.end());
+    c.properties.erase(
+        std::unique(c.properties.begin(), c.properties.end()),
+        c.properties.end());
+  }
+  out.prims.reserve(changes.size());
+  for (auto& item : changes) out.prims.push_back(std::move(item.second));
+  return out;
+}
+
 }  // namespace
 
 struct StageSession::Impl {
@@ -265,7 +397,9 @@ struct StageSession::Impl {
   std::string root_identifier;
   AssetResolver resolver;
   std::unique_ptr<pcp::Cache> cache;
-  Stage stage;
+  std::shared_ptr<Stage> stage{new Stage()};
+  uint64_t revision = 0;
+  StageChangeSet last_changes;
   std::vector<Diagnostic> diagnostics;
   std::string warning;
   std::string error;
@@ -298,7 +432,7 @@ struct StageSession::Impl {
       next.prim_index_count = cache_stats.prim_index_count;
       next.composed_prim_count = cache_stats.composed_prim_count;
     }
-    next.composed_stage_bytes = stage.GetMemoryUsage();
+    next.composed_stage_bytes = stage ? stage->GetMemoryUsage() : 0;
     next.estimated_total_bytes = next.source_layer_bytes +
                                  next.transient_cache_bytes +
                                  next.composed_stage_bytes;
@@ -320,6 +454,53 @@ struct StageSession::Impl {
     AddDiagnostic(DiagnosticSeverity::Error, domain, "memory_budget", error,
                   root_identifier);
     return false;
+  }
+
+  bool CheckMemoryBudgetFor(const Stage& candidate, DiagnosticDomain domain) {
+    StageSessionMemoryStats projected = memory_stats;
+    if (cache) {
+      const pcp::Cache::MemoryStats cache_stats = cache->GetMemoryStats();
+      projected.source_layer_bytes = cache_stats.source_layer_bytes;
+      projected.transient_cache_bytes = cache_stats.transient_cache_bytes;
+      projected.layer_count = cache_stats.layer_count;
+      projected.prim_index_count = cache_stats.prim_index_count;
+      projected.composed_prim_count = cache_stats.composed_prim_count;
+    }
+    projected.composed_stage_bytes = candidate.GetMemoryUsage();
+    projected.estimated_total_bytes = projected.source_layer_bytes +
+                                      projected.transient_cache_bytes +
+                                      projected.composed_stage_bytes;
+    if (options.max_total_memory == 0 ||
+        projected.estimated_total_bytes <= options.max_total_memory) {
+      return true;
+    }
+    error = "aggregate memory budget exceeded: estimated " +
+            std::to_string(projected.estimated_total_bytes) +
+            " bytes, limit " + std::to_string(options.max_total_memory) +
+            " bytes";
+    AddDiagnostic(DiagnosticSeverity::Error, domain, "memory_budget", error,
+                  root_identifier);
+    return false;
+  }
+
+  void EnsureUniqueStage() {
+    if (!stage) {
+      stage.reset(new Stage());
+    } else if (!stage.unique()) {
+      stage.reset(new Stage(stage->Clone()));
+    }
+  }
+
+  StageEditResult EditResult(bool success) const {
+    StageEditResult result;
+    result.success = success;
+    result.snapshot.revision = revision;
+    result.snapshot.stage = stage;
+    if (success) result.changes = last_changes;
+    result.diagnostics = diagnostics;
+    result.warning = warning;
+    result.error = error;
+    return result;
   }
 
   bool Progress(ProgressPhase phase, float progress,
@@ -413,9 +594,17 @@ struct StageSession::Impl {
       RecordMessages(DiagnosticDomain::Compose);
       return false;
     }
-    stage = std::move(next_stage);
+    if (!CheckMemoryBudgetFor(next_stage, DiagnosticDomain::Compose)) {
+      return false;
+    }
+    const uint64_t next_revision = revision + 1;
+    StageChangeSet changes = BuildStageChangeSet(
+        revision ? stage.get() : nullptr, next_stage, revision, next_revision);
+    stage.reset(new Stage(std::move(next_stage)));
+    revision = next_revision;
+    last_changes = std::move(changes);
     RecordMessages(DiagnosticDomain::Compose);
-    if (!CheckMemoryBudget(DiagnosticDomain::Compose)) return false;
+    UpdateMemoryStats();
     if (options.cache_retention == CacheRetention::LayersOnly) {
       cache->TrimTransientCaches();
       UpdateMemoryStats();
@@ -469,7 +658,15 @@ bool StageSession::OpenFile(const std::string& filename,
   }
 
   if (!options.compose || !StageNeedsComposition(root)) {
-    next->stage = std::move(root);
+    next->stage.reset(new Stage(std::move(root)));
+    next->revision = 1;
+    next->last_changes.base_revision = 0;
+    next->last_changes.new_revision = 1;
+    next->last_changes.full_resync = true;
+    PrimChange root_change;
+    root_change.path = Path("/");
+    root_change.flags = StageChangeFlag::Resync;
+    next->last_changes.prims.push_back(std::move(root_change));
     if (!next->CheckMemoryBudget(DiagnosticDomain::Load)) {
       impl_ = std::move(next);
       return false;
@@ -503,7 +700,14 @@ bool StageSession::OpenFile(const std::string& filename,
   return true;
 }
 
-const Stage& StageSession::GetStage() const { return impl_->stage; }
+StageSnapshot StageSession::GetSnapshot() const {
+  StageSnapshot snapshot;
+  if (!impl_) return snapshot;
+  snapshot.revision = impl_->revision;
+  snapshot.stage = impl_->stage;
+  return snapshot;
+}
+const Stage& StageSession::GetStage() const { return *impl_->stage; }
 Stage StageSession::TakeStage() {
   if (!impl_) return Stage();
   impl_->open = false;
@@ -513,7 +717,16 @@ Stage StageSession::TakeStage() {
   impl_->released_variant_selections.clear();
   impl_->released_deferred_payloads.clear();
   impl_->released_composition_issues.clear();
-  return std::move(impl_->stage);
+  Stage out;
+  if (impl_->stage) {
+    if (impl_->stage.unique()) {
+      out = std::move(*impl_->stage);
+    } else {
+      out = impl_->stage->Clone();
+    }
+    impl_->stage.reset(new Stage());
+  }
+  return out;
 }
 const StageSessionOptions& StageSession::GetOptions() const {
   return impl_->options;
@@ -526,71 +739,124 @@ bool StageSession::IsComposed() const {
   return impl_ && impl_->open &&
          (impl_->cache != nullptr || impl_->composition_cache_released);
 }
-bool StageSession::Rebuild() {
-  if (!impl_ || !impl_->open) return false;
+StageEditResult StageSession::Rebuild() {
+  if (!impl_ || !impl_->open) {
+    return impl_ ? impl_->EditResult(false) : StageEditResult{};
+  }
   if (impl_->composition_cache_released &&
       !impl_->RestoreCompositionCache()) {
-    return false;
+    return impl_->EditResult(false);
   }
-  return impl_->Rebuild(ProgressPhase::Recompose);
+  const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  return impl_->EditResult(success);
 }
 
-bool StageSession::LoadPayload(const Path& prim_path,
-                               pcp::Cache::LoadPolicy policy) {
-  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
+StageEditResult StageSession::LoadPayload(const Path& prim_path,
+                                          pcp::Cache::LoadPolicy policy) {
+  if (!impl_ || !impl_->RestoreCompositionCache()) {
+    return impl_ ? impl_->EditResult(false) : StageEditResult{};
+  }
   impl_->warning.clear();
   impl_->error.clear();
   if (!impl_->cache->LoadPayload(prim_path, policy, &impl_->warning,
                                  &impl_->error)) {
     impl_->RecordMessages(DiagnosticDomain::Compose);
-    return false;
+    return impl_->EditResult(false);
   }
-  return impl_->Rebuild(ProgressPhase::Recompose);
+  const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  return impl_->EditResult(success);
 }
 
-bool StageSession::UnloadPayload(const Path& prim_path) {
+StageEditResult StageSession::UnloadPayload(const Path& prim_path) {
   if (!impl_ || !impl_->RestoreCompositionCache() ||
       !impl_->cache->UnloadPayload(prim_path)) {
-    return false;
+    return impl_ ? impl_->EditResult(false) : StageEditResult{};
   }
-  return impl_->Rebuild(ProgressPhase::Recompose);
+  const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  return impl_->EditResult(success);
 }
 
-bool StageSession::LoadPayloads(
+StageEditResult StageSession::LoadPayloads(
     const std::vector<Path>& prim_paths, pcp::Cache::LoadPolicy policy) {
-  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
-  if (!impl_->cache->LoadPayloads(prim_paths, policy)) return false;
-  return impl_->Rebuild(ProgressPhase::Recompose);
+  if (!impl_ || !impl_->RestoreCompositionCache()) {
+    return impl_ ? impl_->EditResult(false) : StageEditResult{};
+  }
+  if (!impl_->cache->LoadPayloads(prim_paths, policy)) {
+    return impl_->EditResult(false);
+  }
+  const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  return impl_->EditResult(success);
 }
 
-bool StageSession::SetVariantSelection(const Path& prim_path,
-                                       const std::string& variant_set,
-                                       const std::string& selection) {
+StageEditResult StageSession::SetVariantSelection(
+    const Path& prim_path, const std::string& variant_set,
+    const std::string& selection) {
   if (!impl_ || prim_path.empty() || variant_set.empty() || selection.empty() ||
       !impl_->RestoreCompositionCache()) {
-    return false;
+    return impl_ ? impl_->EditResult(false) : StageEditResult{};
   }
   auto selections = impl_->cache->GetVariantSelections();
   selections[prim_path.str()][variant_set] = selection;
   return SetVariantSelections(selections);
 }
 
-bool StageSession::ClearVariantSelection(const Path& prim_path,
-                                         const std::string& variant_set) {
-  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
+StageEditResult StageSession::ClearVariantSelection(
+    const Path& prim_path, const std::string& variant_set) {
+  if (!impl_ || !impl_->RestoreCompositionCache()) {
+    return impl_ ? impl_->EditResult(false) : StageEditResult{};
+  }
   auto selections = impl_->cache->GetVariantSelections();
   auto path_it = selections.find(prim_path.str());
-  if (path_it == selections.end()) return true;
+  if (path_it == selections.end()) {
+    impl_->last_changes = StageChangeSet{};
+    impl_->last_changes.base_revision = impl_->revision;
+    impl_->last_changes.new_revision = impl_->revision;
+    return impl_->EditResult(true);
+  }
   path_it->second.erase(variant_set);
   if (path_it->second.empty()) selections.erase(path_it);
   return SetVariantSelections(selections);
 }
 
-bool StageSession::SetVariantSelections(
+StageEditResult StageSession::SetVariantSelections(
     const pcp::CompositionOptions::VariantSelectionMap& selections) {
-  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
+  if (!impl_ || !impl_->RestoreCompositionCache()) {
+    return impl_ ? impl_->EditResult(false) : StageEditResult{};
+  }
   impl_->cache->SetVariantSelections(selections);
-  return impl_->Rebuild(ProgressPhase::Recompose);
+  const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  return impl_->EditResult(success);
+}
+
+StageEditResult StageSession::ReloadLayer(
+    const std::string& resolved_layer_id) {
+  if (!impl_ || !impl_->open || resolved_layer_id.empty()) {
+    return impl_ ? impl_->EditResult(false) : StageEditResult{};
+  }
+
+  if (resolved_layer_id == impl_->root_identifier) {
+    StageSession replacement;
+    if (!replacement.OpenFile(impl_->root_identifier, impl_->options)) {
+      StageEditResult failed = replacement.impl_->EditResult(false);
+      failed.snapshot = GetSnapshot();
+      return failed;
+    }
+    const uint64_t next_revision = impl_->revision + 1;
+    replacement.impl_->last_changes = BuildStageChangeSet(
+        impl_->stage.get(), *replacement.impl_->stage, impl_->revision,
+        next_revision);
+    replacement.impl_->revision = next_revision;
+    impl_ = std::move(replacement.impl_);
+    return impl_->EditResult(true);
+  }
+
+  if (!impl_->RestoreCompositionCache()) return impl_->EditResult(false);
+  if (!impl_->cache->ReloadLayer(resolved_layer_id, &impl_->warning,
+                                 &impl_->error)) {
+    return impl_->EditResult(false);
+  }
+  const bool success = impl_->Rebuild(ProgressPhase::Recompose);
+  return impl_->EditResult(success);
 }
 
 pcp::CompositionOptions::VariantSelectionMap
@@ -646,8 +912,9 @@ void StageSession::ReleaseCompositionCache() {
 Stage::StaticGeometryReleaseStats StageSession::ReleaseStaticGeometryArrays(
     size_t min_array_elements) {
   if (!impl_ || !IsComposed()) return {};
+  impl_->EnsureUniqueStage();
   Stage::StaticGeometryReleaseStats stats =
-      impl_->stage.ReleaseStaticGeometryArrays(min_array_elements);
+      impl_->stage->ReleaseStaticGeometryArrays(min_array_elements);
   impl_->UpdateMemoryStats();
   return stats;
 }
@@ -655,10 +922,11 @@ Stage::StaticGeometryReleaseStats
 StageSession::ReleaseStaticGeometryArraysForPrim(
     const UsdPrim& prim, size_t min_array_elements) {
   if (!impl_ || !IsComposed()) return {};
+  impl_->EnsureUniqueStage();
   // Do not rescan stage memory here: the streaming converter calls this for
   // every last-use prim while worker threads are active. A final bulk release
   // refreshes aggregate memory stats after the workers join.
-  return impl_->stage.ReleaseStaticGeometryArraysForPrim(
+  return impl_->stage->ReleaseStaticGeometryArraysForPrim(
       prim, min_array_elements);
 }
 const std::string& StageSession::GetWarning() const { return impl_->warning; }

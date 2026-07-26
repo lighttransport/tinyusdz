@@ -973,8 +973,8 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     // never be pointed at the same camera -- and so could not be compared.
     const bool haveCamera =
         !cameraName_.empty() &&
-        (useNextLoader_ && nextSession_
-             ? FindNextCamera(nextSession_->GetStage(), cameraName_, animTime_,
+        (useNextLoader_ && nextStageSnapshot_
+             ? FindNextCamera(*nextStageSnapshot_, cameraName_, animTime_,
                               &campose)
              : (loaded_.ok &&
                 FindLegacyCamera(loaded_.render, cameraName_, &campose)));
@@ -1090,7 +1090,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     }
   }
   gui_.setScene(&loaded_, &draw_);
-  gui_.setNextStage(nextSession_ ? &nextSession_->GetStage() : nullptr);
+  gui_.setNextStage(nextStageSnapshot_.get());
   {
     std::vector<std::string> deferred;
     if (nextSession_) {
@@ -1358,7 +1358,7 @@ void App::loadFileBlocking(const std::string& path) {
     tmp.filepath = path;
     tmp.render.meta.upAxis = drawTmp.upAxis;  // drive camera/grid up-axis
     if (session) {
-      const tinyusdz::next::Stage& stage = session->GetStage();
+      const tinyusdz::next::Stage& stage = *session->GetSnapshot().stage;
       const double s = stage.GetStartTimeCode();
       const double e = stage.GetEndTimeCode();
       const double fps = stage.GetTimeCodesPerSecond();
@@ -1371,6 +1371,8 @@ void App::loadFileBlocking(const std::string& path) {
     loaded_ = std::move(tmp);
     draw_ = ok ? std::move(drawTmp) : DrawScene{};
     nextSession_ = ok ? std::move(session) : nullptr;
+    nextStageSnapshot_ = nextSession_ ? nextSession_->GetSnapshot().stage
+                                      : nullptr;
     applyLoaded(ok, /*progressive=*/false);
     return;
   }
@@ -1681,6 +1683,8 @@ void App::finishLoadIfReady() {
     draw_ = DrawScene{};
   }
   nextSession_ = ok ? std::move(pendingNextSession_) : nullptr;
+  nextStageSnapshot_ = nextSession_ ? nextSession_->GetSnapshot().stage
+                                    : nullptr;
   pendingNextSession_.reset();
   pendingLoaded_.reset();
   pendingDraw_.reset();
@@ -1980,7 +1984,7 @@ void App::updateGpuSkinningFrameIfNeeded() {
 }
 
 void App::updateNextDeformFrameIfNeeded() {
-  if (!useNextLoader_ || !nextSession_ || !loaded_.ok) return;
+  if (!useNextLoader_ || !nextStageSnapshot_ || !loaded_.ok) return;
   if (skinningEffective_ != SkinningMode::GPU) return;
   const bool hasSkin = draw_.boneMatrixCount > 0;
   if (!hasNextMorph_ && !hasSkin) return;
@@ -2003,7 +2007,7 @@ void App::updateNextDeformFrameIfNeeded() {
   // moving rig cannot cull or LOD itself out of the frame.
   {
     float bmin[3], bmax[3];
-    if (BuildNextPosedSceneBounds(nextSession_->GetStage(), draw_, animTime_,
+    if (BuildNextPosedSceneBounds(*nextStageSnapshot_, draw_, animTime_,
                                   gui_.blendOverrides(), bmin, bmax)) {
       for (int k = 0; k < 3; ++k) {
         draw_.aabbMin[k] = bmin[k];
@@ -2022,7 +2026,7 @@ void App::updateNextDeformFrameIfNeeded() {
     static const bool kRtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
     const auto skinT0 = std::chrono::steady_clock::now();
     std::vector<RtSkinnedMeshUpload> uploads;
-    if (BuildNextRtDeformedVertices(nextSession_->GetStage(), draw_, animTime_,
+    if (BuildNextRtDeformedVertices(*nextStageSnapshot_, draw_, animTime_,
                                     gui_.blendOverrides(), &uploads)) {
       if (kRtTiming) {
         size_t verts = 0;
@@ -2049,13 +2053,13 @@ void App::updateNextDeformFrameIfNeeded() {
   // Renderer uploads go through postGpu() so they run on the render thread when
   // it owns the context (threaded path); inline otherwise. See the note in
   // updateGpuSkinningFrameIfNeeded.
-  if (hasSkin && BuildNextSkinningFrame(nextSession_->GetStage(), &draw_,
+  if (hasSkin && BuildNextSkinningFrame(*nextStageSnapshot_, &draw_,
                                         animTime_, &skinFrame_)) {
     postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
   }
   if (hasNextMorph_) {
     std::vector<std::pair<int, std::vector<float>>> coeffs;
-    BuildNextMorphWeights(nextSession_->GetStage(), draw_, animTime_,
+    BuildNextMorphWeights(*nextStageSnapshot_, draw_, animTime_,
                           gui_.blendOverrides(), &coeffs);
     postGpu([this, mc = std::move(coeffs)]() {
       for (const auto& c : mc) renderer_->updateMorphWeights(c.first, c.second);
@@ -2065,7 +2069,7 @@ void App::updateNextDeformFrameIfNeeded() {
 }
 
 bool App::sceneIsNextDeformable() const {
-  return useNextLoader_ && nextSession_ && loaded_.ok &&
+  return useNextLoader_ && nextStageSnapshot_ && loaded_.ok &&
          (hasNextMorph_ || draw_.boneMatrixCount > 0);
 }
 
@@ -2094,7 +2098,7 @@ bool App::poseNextDrawForTracer(double time) {
     if (i < draw_.meshes.size()) draw_.meshes[i].vertices = kv.second;
   }
   std::vector<RtSkinnedMeshUpload> uploads;
-  if (!BuildNextRtDeformedVertices(nextSession_->GetStage(), draw_, time,
+  if (!BuildNextRtDeformedVertices(*nextStageSnapshot_, draw_, time,
                                    gui_.blendOverrides(), &uploads)) {
     return false;
   }
@@ -2849,7 +2853,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
 
   gui_.setScene(&loaded_, &draw_);
-  gui_.setNextStage(nextSession_ ? &nextSession_->GetStage() : nullptr);
+  gui_.setNextStage(nextStageSnapshot_.get());
   gui_.setDeferredPayloadPaths({});
   gui_.setBudget(&loadCtrl_);
   gui_.setCaptureViewportOnly(headless_ && maxFrames >= 0 &&

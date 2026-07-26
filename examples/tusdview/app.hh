@@ -366,6 +366,9 @@ class App
   // Persistent next document: owns the composed stage, resolver, and PCP cache.
   std::shared_ptr<tinyusdz::next::StageSession> nextSession_;
   std::shared_ptr<tinyusdz::next::StageSession> pendingNextSession_;
+  // Immutable published stage used by the render/UI thread while a shared
+  // StageSession recomposes on the loader thread.
+  std::shared_ptr<const tinyusdz::next::Stage> nextStageSnapshot_;
   bool hasNextMorph_{false};   // any --next draw mesh carries GPU morph channels
   float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
   OrbitCamera camera_;
