@@ -145,6 +145,39 @@ int fetchDomJoint(Joints jb, Weights wb, uint vi, out float wOut) {
 // Hash-based per-pixel RNG (PCG-ish) for the ambient-occlusion sampler.
 uint hashU(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
 float rnd(inout uint s) { s = s * 747796405u + 2891336453u; uint r = ((s >> ((s >> 28) + 4u)) ^ s) * 277803737u; return float((r >> 22) ^ r) / 4294967296.0; }
+// Uniformly sample an authored analytic light surface. Degenerate shapes stay
+// at the representative position so PointLight and zero-area behavior match
+// the historical hard-shadow path exactly.
+vec3 sampleLightPosition(uint li, int lightType, inout uint seed) {
+  vec3 center = light(li, 1u).xyz;
+  float radius = max(light(li, 1u).w, 0.0);
+  vec4 dimensions = light(li, 5u);
+  vec3 axisX = normalize(light(li, 10u).xyz);
+  vec3 axisY = normalize(light(li, 11u).xyz);
+  vec3 axisZ = normalize(light(li, 12u).xyz);
+  if (lightType == 1 && radius > 1e-7) {
+    float z = 1.0 - 2.0 * rnd(seed);
+    float a = 6.28318530718 * rnd(seed);
+    float r = sqrt(max(0.0, 1.0 - z * z));
+    return center + radius * vec3(r * cos(a), r * sin(a), z);
+  }
+  if (lightType == 2 && radius > 1e-7) {
+    float a = 6.28318530718 * rnd(seed);
+    float r = radius * sqrt(rnd(seed));
+    return center + axisX * (r * cos(a)) + axisY * (r * sin(a));
+  }
+  if (lightType == 3 && dimensions.x > 1e-7 && dimensions.y > 1e-7) {
+    return center + axisX * ((rnd(seed) - 0.5) * dimensions.x) +
+           axisY * ((rnd(seed) - 0.5) * dimensions.y);
+  }
+  if (lightType == 4 && radius > 1e-7 && dimensions.z > 1e-7) {
+    float a = 6.28318530718 * rnd(seed);
+    return center + axisX * (radius * cos(a)) +
+           axisY * (radius * sin(a)) +
+           axisZ * ((rnd(seed) - 0.5) * dimensions.z);
+  }
+  return center;
+}
 // Cosine-weighted hemisphere direction around normal n.
 vec3 cosHemi(vec3 n, float u1, float u2) {
   float r = sqrt(u1); float phi = 6.2831853 * u2;
@@ -839,7 +872,10 @@ void main() {
         // from the hit toward the infinitely distant source.
         L = -normalize(light(li, 2u).xyz);
       } else {
-        vec3 toLight = light(li, 1u).xyz - hit;
+        uint lightSeed = hashU(uint(px.x) * 1973u + uint(px.y) * 9277u +
+                               fi * 26699u + li * 104729u + 31u);
+        vec3 lightPosition = sampleLightPosition(li, lightType, lightSeed);
+        vec3 toLight = lightPosition - hit;
         float dist2 = max(dot(toLight, toLight), 1e-6);
         maxShadowT = sqrt(dist2);
         L = toLight / maxShadowT;

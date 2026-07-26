@@ -61,7 +61,7 @@ silently becoming the default material.
 | **P3** | Exact omnidirectional point-light raster shadows | **Implemented and Vulkan-verified:** six depth faces replace the one-sided finite approximation for point/zero-radius SphereLight emitters. |
 | **P4** | Preserve evaluated graph inputs for advanced OpenPBR/MaterialX lobes | **Implemented for degradation:** constants and connected texture descriptors survive while unsupported lobes remain path-qualified diagnostics. |
 | **P5** | Vulkan raster Points/Curves and native-carrier picking | **Implemented and focused-test verified:** Vulkan uses camera-facing point discs/curve ribbons, shared carrier masks, selection highlights, and picking. The checked-in cross-rasterizer silhouette oracle passes. |
-| **P6** | Area-light sampling, IES/portal/geometry/emissive lights, DOF/motion/stereo, and external-corpus goldens | Requires broader rendering scope or unavailable data; retain structured diagnostics and capability skips in the meantime. |
+| **P6** | Raster area-light sampling, IES/portal/geometry/emissive lights, camera motion/stereo, and external-corpus goldens | RT sphere/disk/rect/cylinder surface sampling is implemented; the remaining items require broader rendering scope or unavailable data. |
 
 P0–P2 are one material-parity release gate. CUDA/HIP checks remain conditional
 on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
@@ -277,6 +277,13 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   and only authored shadow casters can occlude them. Selective membership is
   exact for the first 32 stage-order light records; later records retain
   collection-all behavior.
+- [x] Sample finite SphereLight, DiskLight, RectLight, and CylinderLight
+  surfaces in Vulkan ray query and the shared CUDA/HIP tracer. Sampling is
+  deterministic per pixel, accumulated sample, and light; zero-radius or
+  otherwise degenerate shapes retain the exact representative-point path.
+  Capability-gated CUDA and Vulkan image regressions compare a finite RectLight
+  penumbra against the zero-radius hard-shadow reference. Raster finite-area
+  sampling remains open.
 - [x] Diagnose rather than silently approximate GeometryLight, PortalLight,
   IES, and emissive-mesh light sampling until dedicated implementations land.
 

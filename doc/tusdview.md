@@ -275,8 +275,11 @@ tir/texcomp/texpipe/envmap libraries:
   enabled DistantLight, otherwise the first finite light; the pass uses 3x3 PCF,
   honors direct versus shadow light-link collections, alpha cutouts, and Vulkan
   instanced prototypes. Finite area shapes still use their representative
-  position, and exact omnidirectional point/sphere/cylinder shadows remain
-  future work.
+  position in raster. Vulkan ray query and the shared CUDA/HIP tracer instead
+  take deterministic surface samples for sphere, disk, rect, and cylinder
+  emitters; progressive samples converge their penumbrae, while zero-sized
+  lights preserve the point-emitter path. Exact omnidirectional finite-light
+  raster shadows remain future work.
 
 `tusdrender -ibl envmap` opts the offline renderer into the same envmap-library
 precompute (default stays the built-in reference; measured parity on a dome

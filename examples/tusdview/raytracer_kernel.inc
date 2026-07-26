@@ -149,6 +149,36 @@ __device__ float xformFootprint(const float* p, int off, float footprint){
 // Hash RNG + cosine-weighted hemisphere sampler for ambient occlusion.
 __device__ unsigned hashU(unsigned x){ x^=x>>16; x*=0x7feb352du; x^=x>>15; x*=0x846ca68bu; x^=x>>16; return x; }
 __device__ float rndf(unsigned& s){ s=s*747796405u+2891336453u; unsigned r=((s>>((s>>28)+4u))^s)*277803737u; return float((r>>22)^r)/4294967296.0f; }
+// Uniformly sample an authored analytic light surface. A zero-sized shape is
+// deliberately left at its representative position, preserving PointLight and
+// legacy degenerate-area behavior exactly.
+__device__ F3 sampleLightPosition(const float* lp, int lt, unsigned& seed){
+  F3 c=mk(lp[4],lp[5],lp[6]);
+  float radius=fmaxf(lp[7],0.f), width=fmaxf(lp[20],0.f);
+  float height=fmaxf(lp[21],0.f), length=fmaxf(lp[22],0.f);
+  F3 ax=norm3(mk(lp[40],lp[41],lp[42]));
+  F3 ay=norm3(mk(lp[44],lp[45],lp[46]));
+  F3 az=norm3(mk(lp[48],lp[49],lp[50]));
+  if (lt==1 && radius>1e-7f) {
+    float z=1.f-2.f*rndf(seed), a=6.28318530718f*rndf(seed);
+    float r=sqrtf(fmaxf(0.f,1.f-z*z));
+    return add(c,scale(mk(r*cosf(a),r*sinf(a),z),radius));
+  }
+  if (lt==2 && radius>1e-7f) {
+    float a=6.28318530718f*rndf(seed), r=radius*sqrtf(rndf(seed));
+    return add(c,add(scale(ax,r*cosf(a)),scale(ay,r*sinf(a))));
+  }
+  if (lt==3 && width>1e-7f && height>1e-7f) {
+    return add(c,add(scale(ax,(rndf(seed)-.5f)*width),
+                     scale(ay,(rndf(seed)-.5f)*height)));
+  }
+  if (lt==4 && radius>1e-7f && length>1e-7f) {
+    float a=6.28318530718f*rndf(seed);
+    return add(c,add(add(scale(ax,radius*cosf(a)),scale(ay,radius*sinf(a))),
+                     scale(az,(rndf(seed)-.5f)*length)));
+  }
+  return c;
+}
 __device__ F3 cosHemi(F3 n, float u1, float u2){
   float r=sqrtf(u1), phi=6.2831853f*u2;
   F3 t=norm3(fabsf(n.x)>0.9f?mk(0.f,1.f,0.f):mk(1.f,0.f,0.f));
@@ -910,7 +940,10 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       F3 Ll; float maxT=1e30f, attenuation=1.f;
       if (lt==5) Ll=scale(norm3(mk(lp[8],lp[9],lp[10])),-1.0f);
       else {
-        F3 toL=sub(mk(lp[4],lp[5],lp[6]),hit);
+        unsigned lightSeed=hashU((unsigned)px*1973u+(unsigned)py*9277u+
+                                 (unsigned)sampleIdx*26699u+(unsigned)li*104729u+31u);
+        F3 lightPos=sampleLightPosition(lp,lt,lightSeed);
+        F3 toL=sub(lightPos,hit);
         float dist2=fmaxf(dot3(toL,toL),1e-6f);
         maxT=sqrtf(dist2); Ll=scale(toL,1.f/maxT); attenuation=1.f/dist2;
       }
