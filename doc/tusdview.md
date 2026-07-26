@@ -110,6 +110,20 @@ GI/visibility tracing.)
 ./build/tusdview --headless --cuda --mode bvh-heatmap --frames 4 --screenshot h.ppm model.usda
 ```
 
+The NVRTC-generated PTX is cached across processes. The default location is the
+platform cache directory under `tusdview/cuda` (`$XDG_CACHE_HOME/tusdview/cuda`
+or `~/.cache/tusdview/cuda` on Linux). Use `--cuda-cache-dir PATH` to select a
+different directory, for example a job-local CI cache. Entries are keyed by the
+kernel source, NVRTC version, virtual architecture, and compiler options, then
+validated by the CUDA driver before use. Invalid entries are discarded and
+rebuilt atomically.
+
+NVRTC 13.x has a severe optimizer-time regression for this kernel when targeting
+virtual architectures 100 and newer. On those compiler/device combinations,
+tusdview emits forward-compatible optimized `compute_90` PTX instead; CUDA 12.x
+and older retain their highest supported architecture. This changes only the
+runtime-compiled CUDA tracer and does not affect Vulkan embedded SPIR-V.
+
 The **`tusdview-cuda-render`** ctest exercises this end-to-end; it SKIPs
 (return 77) when no NVIDIA device / NVRTC is available so non-NVIDIA CI stays
 green.
