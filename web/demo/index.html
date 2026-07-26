@@ -26,6 +26,10 @@
 		</div>
 
 		<main class="container">
+			<div style="margin-bottom:16px">
+				<input id="demo-search" type="text" spellcheck="false" placeholder="Search demos by name or description…" style="width:100%;padding:9px 12px;border:1px solid var(--line-strong);border-radius:6px;background:var(--panel);color:var(--text);font-size:.9rem;outline:none;transition:border-color .12s" onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor=''" />
+				<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap" id="demo-counts"></div>
+			</div>
 			<div class="demo-grid" data-demo-grid></div>
 		</main>
 
