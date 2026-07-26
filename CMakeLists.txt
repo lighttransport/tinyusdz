@@ -2816,6 +2816,16 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-deform-cuda PROPERTIES SKIP_RETURN_CODE 77)
 
+      add_test(
+        NAME tusdview-cuda-kernel-cache
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                bash
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cuda-kernel-cache.sh"
+        )
+      set_tests_properties(tusdview-cuda-kernel-cache
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 210)
+
       # LEGACY loader: an animated --time load must pose the mesh ONCE. It bakes the
       # pose into the geometry at load, and the rest-pose load that keeps the shader
       # from posing it a second time was gated on an EXPLICIT --skinning gpu -- so

@@ -173,6 +173,9 @@ class App
   void setHeadless(bool on) { headless_ = on; }
   // --cuda: trace the screenshot with the CUDA BVH ray tracer (cuew runtime).
   void setCudaRt(bool on) { cudaRt_ = on; }
+  void setCudaCacheDir(const std::string& path) {
+    cudaTracer_.setCacheDirectory(path);
+  }
   // --hip: trace the screenshot with the HIP/ROCm BVH ray tracer (hipew runtime).
   void setHipRt(bool on) { hipRt_ = on; }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
