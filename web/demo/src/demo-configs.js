@@ -211,6 +211,15 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     image: './assets/previews/usd-diff.svg',
     href: './usd-diff.html'
+  },
+  {
+    id: 'backend-compare',
+    title: 'Backend Comparison',
+    subtitle: 'Compare legacy vs next rendering backends side by side with synchronized cameras and per-backend stats.',
+    defaultAsset: './assets/suzanne-pbr.usda',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/backend-compare.svg',
+    href: './backend-compare.html'
   }
 ];
 
