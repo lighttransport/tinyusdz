@@ -86,27 +86,105 @@ bool SplitConnectionPath(const std::string& connection_path,
   return !prim_path->empty() && !prop_name->empty();
 }
 
+bool IsTextureEndpoint(const Stage& stage, const UsdPrim& prim,
+                       double time_code) {
+  if (!prim.IsValid()) return false;
+  std::string id;
+  GetToken(prim, "info:id", &id);
+  if (id == "UsdUVTexture" || id == "image" || id == "tiledimage" ||
+      id.rfind("ND_image_", 0) == 0 ||
+      id.rfind("ND_tiledimage_", 0) == 0) {
+    return true;
+  }
+  ::tinyusdz::next::AttributeEval eval(&stage);
+  eval.SetTime(time_code);
+  return eval.EvalAssetPath(prim, "inputs:file").has_value() ||
+         eval.EvalString(prim, "inputs:file").has_value();
+}
+
+const std::vector<::tinyusdz::next::Path>* PrimaryDataInputConnection(
+    const UsdPrim& prim) {
+  const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
+  if (!spec) return nullptr;
+
+  static const char* kPreferredInputs[] = {
+      "inputs:in", "inputs:in1", "inputs:fg", "inputs:bg"};
+  for (const char* preferred : kPreferredInputs) {
+    const std::vector<::tinyusdz::next::Path>* connections =
+        spec->connection(preferred);
+    if (connections && !connections->empty()) return connections;
+  }
+
+  auto is_factor_input = [](const std::string& name) {
+    return name == "inputs:mix" || name == "inputs:amount" ||
+           name == "inputs:weight" || name == "inputs:factor" ||
+           name == "inputs:alpha" || name == "inputs:mask";
+  };
+  for (const std::string& property : prim.GetPropertyNames()) {
+    if (property.rfind("inputs:", 0) != 0 || is_factor_input(property)) {
+      continue;
+    }
+    const std::vector<::tinyusdz::next::Path>* connections =
+        spec->connection(property);
+    if (connections && !connections->empty()) return connections;
+  }
+  return nullptr;
+}
+
+bool ResolveConnectedEndpoint(const Stage& stage,
+                              const std::string& connection_path,
+                              double time_code,
+                              std::string* endpoint_path) {
+  if (!endpoint_path) return false;
+  std::string current = connection_path;
+  std::set<std::string> visited;
+  for (int depth = 0; depth <= kMaxMtlxConstantDepth; ++depth) {
+    if (!visited.insert(current).second) return false;
+
+    std::string prim_path;
+    std::string prop_name;
+    if (!SplitConnectionPath(current, &prim_path, &prop_name)) return false;
+    UsdPrim prim = stage.GetPrimAtPath(prim_path);
+    if (!prim.IsValid()) return false;
+    if (IsTextureEndpoint(stage, prim, time_code)) {
+      *endpoint_path = current;
+      return true;
+    }
+
+    const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
+    const std::vector<::tinyusdz::next::Path>* connections =
+        spec ? spec->connection(prop_name) : nullptr;
+    if (!connections || connections->empty()) {
+      connections = PrimaryDataInputConnection(prim);
+    }
+    if (!connections || connections->empty()) {
+      *endpoint_path = current;
+      return true;
+    }
+    current = (*connections)[0].str();
+  }
+  return false;
+}
+
 bool ResolveConnectedValue(const Stage& stage,
                            const std::string& connection_path,
                            double time_code,
-                           Value* out,
-                           int depth = 0) {
-  if (!out || depth > 16) return false;
+                           Value* out) {
+  if (!out) return false;
 
+  std::string endpoint;
+  if (!ResolveConnectedEndpoint(stage, connection_path, time_code, &endpoint)) {
+    return false;
+  }
   std::string prim_path;
   std::string prop_name;
-  if (!SplitConnectionPath(connection_path, &prim_path, &prop_name)) return false;
+  if (!SplitConnectionPath(endpoint, &prim_path, &prop_name)) return false;
 
   UsdPrim prim = stage.GetPrimAtPath(prim_path);
   if (!prim.IsValid()) return false;
 
   ::tinyusdz::next::AttributeEval eval(&stage);
   eval.SetTime(time_code);
-  if (eval.HasConnection(prim, prop_name)) {
-    return ResolveConnectedValue(stage, eval.GetConnectionPath(prim, prop_name),
-                                 time_code, out, depth + 1);
-  }
-
   ::tinyusdz::next::EvalOptions opts = eval.GetOptions();
   opts.follow_connections = false;
   ::tinyusdz::next::EvalResult result = eval.EvalWith(prim, prop_name, opts);
@@ -118,7 +196,8 @@ bool ResolveConnectedValue(const Stage& stage,
   return false;
 }
 
-RenderTexture::Channel ChannelFromConnection(const std::string& connection_path) {
+RenderTexture::Channel ChannelFromConnection(
+    const std::string& connection_path, const UsdPrim& texture_prim) {
   size_t pos = connection_path.find(".outputs:");
   if (pos == std::string::npos) {
     return RenderTexture::Channel::RGBA;
@@ -130,6 +209,33 @@ RenderTexture::Channel ChannelFromConnection(const std::string& connection_path)
   if (channel == "b" || channel == "z") return RenderTexture::Channel::B;
   if (channel == "a" || channel == "w") return RenderTexture::Channel::A;
   if (channel == "rgb" || channel == "xyz") return RenderTexture::Channel::RGB;
+
+  // MaterialX image nodes conventionally expose a generic `outputs:out`.
+  // Recover its scalar/vector shape from the synthesized output value/type so
+  // roughness and metallic maps sample R while color/normal maps sample RGB.
+  if (channel == "out" && texture_prim.IsValid()) {
+    std::string type;
+    if (const Value* value = texture_prim.GetPropertyValue("outputs:out")) {
+      if (const std::string* token = value->as_token()) type = *token;
+      else if (const std::string* str = value->as_string()) type = *str;
+    }
+    if (type.empty()) {
+      if (const ::tinyusdz::next::PrimSpec* spec =
+              texture_prim.GetPrimSpec()) {
+        if (const std::string* declared =
+                spec->property_type_name("outputs:out")) {
+          type = *declared;
+        }
+      }
+    }
+    if (type == "float" || type == "integer" || type == "boolean") {
+      return RenderTexture::Channel::R;
+    }
+    if (type == "color3" || type == "color3f" || type == "vector3" ||
+        type == "vector3f") {
+      return RenderTexture::Channel::RGB;
+    }
+  }
   return RenderTexture::Channel::RGBA;
 }
 
@@ -5895,6 +6001,21 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
         if (sp.IsValid()) candidates.push_back(sp);
       }
     }
+    // External MaterialX references are synthesized by the next layer
+    // registry with this relationship instead of outputs:mtlx:surface.
+    if (const std::vector<::tinyusdz::next::Path>* sources =
+            prim.GetRelationship("mtlx:surface:source")) {
+      if (!sources->empty()) {
+        UsdPrim sp = stage.GetPrimAtPath(sources->front().str());
+        if (sp.IsValid() &&
+            std::none_of(candidates.begin(), candidates.end(),
+                         [&sp](const UsdPrim& p) {
+                           return p.GetPath().str() == sp.GetPath().str();
+                         })) {
+          candidates.push_back(sp);
+        }
+      }
+    }
     const std::string surf =
         ::tinyusdz::next::GetSurfaceShader(stage, prim);
     if (!surf.empty()) {
@@ -5910,6 +6031,45 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   }
   for (const auto& child : prim.GetChildren()) {
     candidates.push_back(child);
+  }
+
+  // A common UsdShade authoring pattern puts the terminal shader behind one
+  // or more NodeGraph output pass-throughs.  The graph is the material's
+  // surface target, but the shader is the object that carries the usable
+  // `info:id` and inputs.  Resolve these hops before classifying the material
+  // as degraded.  Keep this local to material discovery so parameter
+  // extraction still follows the original shader connections.
+  {
+    std::set<std::string> visited;
+    std::function<void(const UsdPrim&, int)> append_graph_shader =
+        [&](const UsdPrim& source, int depth) {
+          if (!source.IsValid() || depth > 16 ||
+              !visited.insert(source.GetPath().str()).second) {
+            return;
+          }
+          if (!::tinyusdz::next::IsNodeGraph(source)) return;
+
+          const ::tinyusdz::next::PrimSpec* spec = source.GetPrimSpec();
+          if (!spec) return;
+          static const char* kOutputs[] = {"outputs:surface", "outputs:out"};
+          for (const char* output : kOutputs) {
+            const std::vector<::tinyusdz::next::Path>* connections =
+                spec->connection(output);
+            if (!connections || connections->empty()) continue;
+            UsdPrim target = stage.GetPrimAtPath(
+                SourcePrimPathFromConnection((*connections)[0].str()));
+            if (!target.IsValid()) continue;
+            candidates.push_back(target);
+            if (::tinyusdz::next::IsNodeGraph(target)) {
+              append_graph_shader(target, depth + 1);
+            }
+            return;
+          }
+        };
+    const size_t initial_count = candidates.size();
+    for (size_t i = 0; i < initial_count; ++i) {
+      append_graph_shader(candidates[i], 0);
+    }
   }
 
   for (const auto& child : candidates) {
@@ -6053,6 +6213,34 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
       // meaningful even when the connected surface implementation is unknown.
       recover_from(prim);
     };
+
+    // Preserve every evaluatable authored input from the unsupported terminal
+    // and the material interface, not only the conventional aliases above.
+    // This keeps advanced lobes and future shader inputs available without
+    // making the degraded PreviewSurface pretend to evaluate them.
+    std::set<std::string> retained_names;
+    auto retain_inputs = [&](const UsdPrim& source, const std::string& shader) {
+      if (!source.IsValid()) return;
+      for (const std::string& property : source.GetPropertyNames()) {
+        constexpr const char* kPrefix = "inputs:";
+        if (property.rfind(kPrefix, 0) != 0) continue;
+        const std::string name = property.substr(7);
+        if (name.empty() || !retained_names.insert(name).second) continue;
+        ShaderParam value;
+        if (!ExtractShaderParam(stage, source, name, &value, scene)) continue;
+        RetainedMaterialParam param;
+        param.shader = shader;
+        param.name = name;
+        param.value = value;
+        out->retained_params.push_back(std::move(param));
+      }
+    };
+    for (const UsdPrim& source : degraded_candidates) {
+      std::string shader;
+      GetToken(source, "info:id", &shader);
+      retain_inputs(source, shader);
+    }
+    retain_inputs(prim, "MaterialInterface");
 
     recover(&degraded->diffuse_color,
             {"diffuseColor", "baseColor", "base_color", "color"});
@@ -6357,78 +6545,13 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       }
       return true;
     }
-    // Follow pass-through hops (NodeGraph outputs forwarding to an inner
-    // shader): a texture behind `Material/Graph.outputs:out` was previously
-    // lost because only the FIRST hop was inspected.
-    for (int hop = 0; hop < 16; ++hop) {
-      const std::string hop_prim_path =
-          SourcePrimPathFromConnection(connection_path);
-      UsdPrim hop_prim = stage.GetPrimAtPath(hop_prim_path);
-      if (!hop_prim.IsValid()) break;
-
-      // Stop at the terminal image node. Test BOTH the node id and an
-      // evaluatable `inputs:file`: the id catches an image node whose file is
-      // unauthored (walking on would descend into its texcoord chain and lose
-      // the texture), while the value test catches image-like nodes carrying a
-      // file under an id neither list knows.
-      std::string hop_id;
-      GetToken(hop_prim, "info:id", &hop_id);
-      ::tinyusdz::next::AttributeEval hop_eval(&stage);
-      hop_eval.SetTime(config_.time_code);
-      if (hop_id == "UsdUVTexture" || hop_id.rfind("ND_image_", 0) == 0 ||
-          hop_id.rfind("ND_tiledimage_", 0) == 0 ||
-          hop_eval.EvalAssetPath(hop_prim, "inputs:file").has_value() ||
-          hop_eval.EvalString(hop_prim, "inputs:file").has_value()) {
-        break;
-      }
-
-      std::string pp, prop;
-      if (!SplitConnectionPath(connection_path, &pp, &prop)) break;
-      const ::tinyusdz::next::PrimSpec* spec = hop_prim.GetPrimSpec();
-      const std::vector<::tinyusdz::next::Path>* nc =
-          spec ? spec->connection(prop) : nullptr;
-      if (!nc || nc->empty()) {
-        // Compute/adapter nodes (ND_convert_*, ND_mix_*, color adjust, ...)
-        // carry the upstream connection on an INPUT, not on the referenced
-        // output. Follow the PRIMARY data input — legacy is node-aware
-        // (fg for mix, in/in1 for converts/binary ops); property order is
-        // not a signal (crate flattening alphabetizes, putting `bg` before
-        // `fg`), and factor/mask inputs (mix/amount/weight) must never be
-        // promoted to the surface color.
-        const std::vector<::tinyusdz::next::Path>* input_conn = nullptr;
-        if (spec) {
-          static const char* kPreferredInputs[] = {
-              "inputs:in", "inputs:in1", "inputs:fg", "inputs:bg"};
-          for (const char* pref : kPreferredInputs) {
-            const std::vector<::tinyusdz::next::Path>* c =
-                spec->connection(pref);
-            if (c && !c->empty()) {
-              input_conn = c;
-              break;
-            }
-          }
-          if (!input_conn) {
-            auto is_factor_input = [](const std::string& n) {
-              return n == "inputs:mix" || n == "inputs:amount" ||
-                     n == "inputs:weight" || n == "inputs:factor" ||
-                     n == "inputs:alpha" || n == "inputs:mask";
-            };
-            for (const std::string& prop_name : hop_prim.GetPropertyNames()) {
-              if (prop_name.rfind("inputs:", 0) != 0) continue;
-              if (is_factor_input(prop_name)) continue;
-              const std::vector<::tinyusdz::next::Path>* c =
-                  spec->connection(prop_name);
-              if (c && !c->empty()) {
-                input_conn = c;
-                break;
-              }
-            }
-          }
-        }
-        if (!input_conn) break;
-        nc = input_conn;
-      }
-      connection_path = (*nc)[0].str();
+    // Follow localized NodeGraph outputs and primary utility-node inputs to
+    // the terminal image/value. The shared walker is cycle-safe and is also
+    // used by ResolveConnectedValue below.
+    std::string endpoint;
+    if (ResolveConnectedEndpoint(stage, connection_path, config_.time_code,
+                                 &endpoint)) {
+      connection_path = std::move(endpoint);
     }
     const std::string texture_prim_path = SourcePrimPathFromConnection(connection_path);
     UsdPrim texture_prim = stage.GetPrimAtPath(texture_prim_path);
@@ -6485,7 +6608,8 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
                             tex_data.bias[2], tex_data.bias[3]);
       texture.image_id = image_id;
       texture.source_color_space = tex_data.source_color_space;
-      texture.output_channel = ChannelFromConnection(connection_path);
+      texture.output_channel =
+          ChannelFromConnection(connection_path, texture_prim);
       // UsdTransform2d on the st chain (rotation is authored in degrees;
       // RenderTexture stores radians).
       texture.offset = Float2(tex_data.uv_translation[0],

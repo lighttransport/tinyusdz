@@ -36,8 +36,6 @@
 #include "mesh_vert.spv.h"
 #include "volume_frag.spv.h"
 #include "volume_vert.spv.h"
-#include "nonmesh_vert.spv.h"
-#include "nonmesh_frag.spv.h"
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
 #include "raytrace_comp.spv.h"  // ray-query compute shader (when glslang supports it)
 #endif
@@ -233,16 +231,6 @@ struct InstPushC {
   int32_t draw[4];     // 16  .x = baseDraw: base slot into the DrawMeta SSBO
 };
 static_assert(sizeof(InstPushC) == 16, "InstPushC must match mesh_inst shaders");
-struct NonMeshPushC {
-  int kind;       // 0=point billboard, 1=curve ribbon
-  int materialId;
-  int carrierId;
-  int purpose;
-  int renderMode;
-  float cameraRight[3];
-  float cameraUp[3];
-};
-static_assert(sizeof(NonMeshPushC) == 44, "NonMeshPushC must match nonmesh shaders");
 // The per-draw metadata entry (set 3) is VulkanRenderer::DrawMetaCPU {int32_t
 // ids[4]}, matching the shader's std430 DrawMeta{ivec4}: .x meshId, .y flag bits.
 
@@ -336,48 +324,6 @@ struct InstanceInfoGPU {
   float tint[4];         // per-instance color/opacity or flatColor/flatOpacity
 };
 static_assert(sizeof(InstanceInfoGPU) == 32, "InstanceInfoGPU scalar layout");
-
-// General column-major 4x4 inverse (for the camera's inverse view-projection).
-bool Mat4Inverse(const float m[16], float out[16]) {
-  float inv[16];
-  inv[0] = m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] +
-           m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
-  inv[4] = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] -
-           m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
-  inv[8] = m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] +
-           m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
-  inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] -
-            m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
-  inv[1] = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] -
-           m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
-  inv[5] = m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] +
-           m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
-  inv[9] = -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] -
-           m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
-  inv[13] = m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] +
-            m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
-  inv[2] = m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15] +
-           m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
-  inv[6] = -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15] -
-           m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
-  inv[10] = m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15] +
-            m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
-  inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14] -
-            m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
-  inv[3] = -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11] -
-           m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
-  inv[7] = m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11] +
-           m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
-  inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11] -
-            m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
-  inv[15] = m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10] +
-            m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
-  float det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
-  if (std::fabs(det) < 1e-20f) return false;
-  det = 1.0f / det;
-  for (int i = 0; i < 16; ++i) out[i] = inv[i] * det;
-  return true;
-}
 
 }  // namespace
 
@@ -1921,17 +1867,30 @@ bool VulkanRenderer::createLinePipeline(std::string* err) {
   VkResult r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                          &linePipeline_);
 
+  // Native Points/Curves use the same unlit vertex format and push constants,
+  // but are expanded to camera-facing triangles on the CPU.  Keeping a
+  // triangle-list variant here avoids routing them through the mesh material
+  // descriptor machinery (and avoids the old solid proxy geometry).
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  VkResult rnm = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
+                                           &nonMeshPipeline_);
+
   // Second variant with depth testing disabled, for the skeleton X-ray overlay.
   VkPipelineDepthStencilStateCreateInfo dsNo = ds;
   dsNo.depthTestEnable = VK_FALSE;
   dsNo.depthWriteEnable = VK_FALSE;
+  // nonMeshPipeline_ temporarily changes the shared input-assembly state to
+  // triangles. Restore LINE_LIST before creating the no-depth helper variant;
+  // otherwise grid/axis/skeleton line vertices are consumed three at a time as
+  // giant colored triangles over every Vulkan RT frame.
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
   ci.pDepthStencilState = &dsNo;
   VkResult r2 = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &ci, nullptr,
                                           &linePipelineNoDepth_);
 
   vkDestroyShaderModule(device_, vs, nullptr);
   vkDestroyShaderModule(device_, fs, nullptr);
-  if (r != VK_SUCCESS || r2 != VK_SUCCESS) {
+  if (r != VK_SUCCESS || rnm != VK_SUCCESS || r2 != VK_SUCCESS) {
     if (err) *err = "vkCreateGraphicsPipelines(line) failed";
     return false;
   }
@@ -2096,73 +2055,6 @@ bool VulkanRenderer::createVolumePipeline(std::string* err) {
     if (err) *err = "vkCreateGraphicsPipelines(volume) failed";
     return false;
   }
-
-  // --- Non-mesh (point billboard / curve ribbon) pipeline ---
-  // Shares pipelineLayout_ (push constant range covers our NonMeshPushC).
-  VkShaderModule nmVs = createShader(nonmesh_vert_spv, sizeof(nonmesh_vert_spv));
-  VkShaderModule nmFs = createShader(nonmesh_frag_spv, sizeof(nonmesh_frag_spv));
-  if (nmVs && nmFs) {
-    VkPipelineShaderStageCreateInfo nmStages[2]{};
-    nmStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    nmStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    nmStages[0].module = nmVs;
-    nmStages[0].pName = "main";
-    nmStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    nmStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    nmStages[1].module = nmFs;
-    nmStages[1].pName = "main";
-
-    // Instance-rate attributes only: aP0(vec3), aP1(vec3), aWidth(float),
-    // aColor(vec4). All from one interleaved stream (stride=11 floats).
-    VkVertexInputBindingDescription nmBind{};
-    nmBind.binding = 0;
-    nmBind.stride = 11 * sizeof(float);
-    nmBind.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
-    VkVertexInputAttributeDescription nmAttrs[4]{};
-    nmAttrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
-    nmAttrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)};
-    nmAttrs[2] = {2, 0, VK_FORMAT_R32_SFLOAT, 6 * sizeof(float)};
-    nmAttrs[3] = {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 7 * sizeof(float)};
-
-    VkPipelineVertexInputStateCreateInfo nmVin{};
-    nmVin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    nmVin.vertexBindingDescriptionCount = 1;
-    nmVin.pVertexBindingDescriptions = &nmBind;
-    nmVin.vertexAttributeDescriptionCount = 4;
-    nmVin.pVertexAttributeDescriptions = nmAttrs;
-
-    VkPipelineInputAssemblyStateCreateInfo nmIa{};
-    nmIa.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    nmIa.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-
-    // Billboard quads have mixed winding (triangle-strip). Use no culling so both
-    // faces of the camera-facing quad render regardless of the winding order.
-    VkPipelineRasterizationStateCreateInfo nmRs = rs;
-    nmRs.cullMode = VK_CULL_MODE_NONE;
-    VkGraphicsPipelineCreateInfo nmCi{};
-    nmCi.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    nmCi.stageCount = 2;
-    nmCi.pStages = nmStages;
-    nmCi.pVertexInputState = &nmVin;
-    nmCi.pInputAssemblyState = &nmIa;
-    nmCi.pViewportState = &vp;
-    nmCi.pRasterizationState = &nmRs;
-    nmCi.pMultisampleState = &ms;
-    nmCi.pDepthStencilState = &ds;
-    nmCi.pColorBlendState = &cb;
-    nmCi.pDynamicState = &dynState;
-    nmCi.layout = pipelineLayout_;
-    nmCi.renderPass = offscreenPass_;
-    nmCi.subpass = 0;
-
-    if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &nmCi, nullptr,
-                                  &nonMeshPipeline_) != VK_SUCCESS) {
-      // Non-fatal: fall back to the proxy-mesh path.
-      nonMeshPipeline_ = VK_NULL_HANDLE;
-    }
-  }
-  vkDestroyShaderModule(device_, nmVs, nullptr);
-  vkDestroyShaderModule(device_, nmFs, nullptr);
 
   // 36-vertex unit-cube proxy (CCW-outward); the FS reconstructs the ray.
   static const float kCube[36 * 3] = {
@@ -4586,10 +4478,16 @@ void VulkanRenderer::destroyScene() {
     if (m.blasScratchMem) vkFreeMemory(device_, m.blasScratchMem, nullptr);
   }
   meshes_.clear();
-  nonMeshBatches_.clear();
-  std::vector<uint8_t>().swap(nonMeshStage_);
-  if (nonMeshVbo_) { vkDestroyBuffer(device_, nonMeshVbo_, nullptr); nonMeshVbo_ = VK_NULL_HANDLE; }
-  if (nonMeshVboMem_) { vkFreeMemory(device_, nonMeshVboMem_, nullptr); nonMeshVboMem_ = VK_NULL_HANDLE; }
+  nativePoints_.clear();
+  nativeCurves_.clear();
+  nonMeshCopy_.clear();
+  for (int i = 0; i < kFramesInFlight; ++i) {
+    if (nonMeshBuf_[i]) vkDestroyBuffer(device_, nonMeshBuf_[i], nullptr);
+    if (nonMeshMem_[i]) vkFreeMemory(device_, nonMeshMem_[i], nullptr);
+    nonMeshBuf_[i] = VK_NULL_HANDLE;
+    nonMeshMem_[i] = VK_NULL_HANDLE;
+    nonMeshCap_[i] = 0;
+  }
   // Shared multi-draw-indirect buffers + their CPU staging (the aliases above were
   // skipped for eligible meshes). Reset the MDI state so the next scene rebuilds it.
   destroyMdiBuffers();
@@ -5711,196 +5609,11 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
 }
 
 void VulkanRenderer::appendPoints(const DrawPointsCPU& points) {
-  static const bool kNoBillboard = []() {
-    const char* e = std::getenv("TUSDVIEW_NO_NONMESH_BILLBOARD");
-    return e && e[0] == '1';
-  }();
-  if (kNoBillboard || !nonMeshPipeline_) {
-    // Fall back to the width/color-preserving solid carrier (subdivided
-    // octahedron) for --no-nonmesh-billboard or when the pipeline is absent.
-    DrawScene carriers;
-    carriers.points.push_back(points);
-    for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
-      appendMesh(proxy);
-    }
-    return;
-  }
-  const size_t n = points.points.size() / 3;
-  if (n == 0) return;
-  const float* matColor = (points.materialId >= 0 &&
-        static_cast<size_t>(points.materialId) * 12 + 3 < matColor_.size())
-      ? &matColor_[static_cast<size_t>(points.materialId) * 12] : nullptr;
-  const float sx = std::sqrt(points.world[0] * points.world[0] +
-                              points.world[1] * points.world[1] +
-                              points.world[2] * points.world[2]);
-  const float sy = std::sqrt(points.world[4] * points.world[4] +
-                              points.world[5] * points.world[5] +
-                              points.world[6] * points.world[6]);
-  const float sz = std::sqrt(points.world[8] * points.world[8] +
-                              points.world[9] * points.world[9] +
-                              points.world[10] * points.world[10]);
-  const float worldScale = std::max(sx, std::max(sy, sz));
-
-  // Accumulate instance data into the shared staging buffer.
-  const uint32_t baseByte = static_cast<uint32_t>(nonMeshStage_.size());
-  struct NonMeshInst { float aP0[3], aP1[3], aWidth, aColor[4]; };
-  nonMeshStage_.reserve(nonMeshStage_.size() + n * sizeof(NonMeshInst));
-  for (size_t i = 0; i < n; ++i) {
-    const float x = points.points[i * 3], y = points.points[i * 3 + 1],
-                z = points.points[i * 3 + 2];
-    float p[3] = {points.world[0] * x + points.world[4] * y +
-                      points.world[8] * z + points.world[12],
-                  points.world[1] * x + points.world[5] * y +
-                      points.world[9] * z + points.world[13],
-                  points.world[2] * x + points.world[6] * y +
-                      points.world[10] * z + points.world[14]};
-    const float w = (points.widths.empty()
-                         ? 1.0f
-                         : (points.widths.size() == 1
-                                ? points.widths[0]
-                                : points.widths[std::min(
-                                      i, points.widths.size() - 1)])) *
-                    worldScale;
-    float c[4] = {matColor ? matColor[0] : 0.8f,
-                  matColor ? matColor[1] : 0.8f,
-                  matColor ? matColor[2] : 0.8f,
-                  matColor ? matColor[3] : 1.0f};
-    if (points.colors.size() >= 3) {
-      const size_t ci = points.colors.size() >= (i + 1) * 3 ? i * 3 : 0;
-      c[0] *= points.colors[ci];
-      c[1] *= points.colors[ci + 1];
-      c[2] *= points.colors[ci + 2];
-    }
-    if (!points.opacities.empty()) {
-      const size_t oi = points.opacities.size() > i ? i : 0;
-      c[3] *= points.opacities[oi];
-    }
-    NonMeshInst inst;
-    std::memcpy(inst.aP0, p, sizeof(p));
-    std::memcpy(inst.aP1, p, sizeof(p));
-    inst.aWidth = std::max(w, 1e-6f);
-    std::memcpy(inst.aColor, c, sizeof(c));
-    const uint8_t* raw = reinterpret_cast<const uint8_t*>(&inst);
-    nonMeshStage_.insert(nonMeshStage_.end(), raw, raw + sizeof(NonMeshInst));
-  }
-  NonMeshBatch b;
-  b.count = static_cast<uint32_t>(n);
-  b.kind = 0;
-  b.vboOffset = baseByte;
-  b.materialId = points.materialId;
-  b.carrierId = static_cast<int>(meshes_.size() + nonMeshBatches_.size());
-  b.purposeId = PurposeId(points.purpose);
-  nonMeshBatches_.push_back(b);
+  if (!points.points.empty()) nativePoints_.push_back(points);
 }
 
 void VulkanRenderer::appendCurves(const DrawCurvesCPU& curves) {
-  static const bool kNoBillboard = []() {
-    const char* e = std::getenv("TUSDVIEW_NO_NONMESH_BILLBOARD");
-    return e && e[0] == '1';
-  }();
-  if (kNoBillboard || !nonMeshPipeline_) {
-    // Fall back to the solid-carrier tube proxy.
-    DrawScene carriers;
-    carriers.curves.push_back(curves);
-    for (const DrawMeshCPU& proxy : BuildNonMeshRtProxyMeshes(carriers)) {
-      appendMesh(proxy);
-    }
-    return;
-  }
-  if (curves.points.size() < 6) return;
-  const float* matColor = (curves.materialId >= 0 &&
-        static_cast<size_t>(curves.materialId) * 12 + 3 < matColor_.size())
-      ? &matColor_[static_cast<size_t>(curves.materialId) * 12] : nullptr;
-  const float sx = std::sqrt(curves.world[0] * curves.world[0] +
-                              curves.world[1] * curves.world[1] +
-                              curves.world[2] * curves.world[2]);
-  const float sy = std::sqrt(curves.world[4] * curves.world[4] +
-                              curves.world[5] * curves.world[5] +
-                              curves.world[6] * curves.world[6]);
-  const float sz = std::sqrt(curves.world[8] * curves.world[8] +
-                              curves.world[9] * curves.world[9] +
-                              curves.world[10] * curves.world[10]);
-  const float worldScale = std::max(sx, std::max(sy, sz));
-  const uint32_t baseByte = static_cast<uint32_t>(nonMeshStage_.size());
-  struct NonMeshInst { float aP0[3], aP1[3], aWidth, aColor[4]; };
-  auto wp = [&](size_t i, float p[3]) {
-    float x = curves.points[i * 3], y = curves.points[i * 3 + 1],
-          z = curves.points[i * 3 + 2];
-    p[0] = curves.world[0] * x + curves.world[4] * y + curves.world[8] * z +
-           curves.world[12];
-    p[1] = curves.world[1] * x + curves.world[5] * y + curves.world[9] * z +
-           curves.world[13];
-    p[2] = curves.world[2] * x + curves.world[6] * y + curves.world[10] * z +
-           curves.world[14];
-  };
-  const size_t np = curves.points.size() / 3;
-  size_t base = 0;
-  for (uint32_t count : curves.vertexCounts) {
-    const size_t end = std::min(np, base + static_cast<size_t>(count));
-    for (size_t i = base; i + 1 < end; ++i) {
-      float p0[3], p1[3];
-      wp(i, p0);
-      wp(i + 1, p1);
-      const float dx = p1[0] - p0[0], dy = p1[1] - p0[1], dz = p1[2] - p0[2];
-      if (dx * dx + dy * dy + dz * dz <= 1.0e-16f) continue;
-      const float w = (curves.widths.empty()
-                           ? 1.0f
-                           : (curves.widths.size() == 1
-                                  ? curves.widths[0]
-                                  : 0.5f *
-                                        (curves.widths[std::min(
-                                             i, curves.widths.size() - 1)] +
-                                         curves.widths[std::min(
-                                             i + 1, curves.widths.size() - 1)]))) *
-                      worldScale;
-      float c[4] = {matColor ? matColor[0] : 0.8f,
-                    matColor ? matColor[1] : 0.8f,
-                    matColor ? matColor[2] : 0.8f,
-                    matColor ? matColor[3] : 1.0f};
-      if (curves.colors.size() >= np * 3) {
-        c[0] *= 0.5f * (curves.colors[i * 3] + curves.colors[(i + 1) * 3]);
-        c[1] *= 0.5f * (curves.colors[i * 3 + 1] + curves.colors[(i + 1) * 3 + 1]);
-        c[2] *= 0.5f * (curves.colors[i * 3 + 2] + curves.colors[(i + 1) * 3 + 2]);
-      }
-      if (!curves.opacities.empty()) {
-        const float o0 = curves.opacities[curves.opacities.size() > i ? i : 0];
-        const float o1 =
-            curves.opacities[curves.opacities.size() > i + 1 ? i + 1 : 0];
-        c[3] *= 0.5f * (o0 + o1);
-      }
-      NonMeshInst inst;
-      std::memcpy(inst.aP0, p0, sizeof(p0));
-      std::memcpy(inst.aP1, p1, sizeof(p1));
-      inst.aWidth = std::max(w, 1e-6f);
-      std::memcpy(inst.aColor, c, sizeof(c));
-      const uint8_t* raw = reinterpret_cast<const uint8_t*>(&inst);
-      nonMeshStage_.insert(nonMeshStage_.end(), raw, raw + sizeof(NonMeshInst));
-    }
-    base = end;
-  }
-  NonMeshBatch b;
-  b.count = static_cast<uint32_t>((nonMeshStage_.size() - baseByte) / sizeof(NonMeshInst));
-  b.kind = 1;
-  b.vboOffset = baseByte;
-  b.materialId = curves.materialId;
-  b.carrierId = static_cast<int>(meshes_.size() + nonMeshBatches_.size());
-  b.purposeId = PurposeId(curves.purpose);
-  nonMeshBatches_.push_back(b);
-}
-
-void VulkanRenderer::buildNonMesh() {
-  if (nonMeshStage_.empty()) return;
-  if (nonMeshVbo_) {
-    vkDestroyBuffer(device_, nonMeshVbo_, nullptr);
-    nonMeshVbo_ = VK_NULL_HANDLE;
-  }
-  if (nonMeshVboMem_) {
-    vkFreeMemory(device_, nonMeshVboMem_, nullptr);
-    nonMeshVboMem_ = VK_NULL_HANDLE;
-  }
-  createHostBuffer(nonMeshStage_.size(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                   nonMeshStage_.data(), &nonMeshVbo_, &nonMeshVboMem_);
-  std::vector<uint8_t>().swap(nonMeshStage_);
+  if (curves.points.size() >= 6) nativeCurves_.push_back(curves);
 }
 
 void VulkanRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
@@ -7315,9 +7028,8 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
                           &rtSet_, 0, nullptr);
   RtPushC pc{};
   light3d::Mat4 PV = ToMat4(proj_) * ToMat4(view_);
-  if (!Mat4Inverse(PV.m, pc.invViewProj)) {
-    for (int i = 0; i < 16; ++i) pc.invViewProj[i] = (i % 5 == 0) ? 1.0f : 0.0f;
-  }
+  const light3d::Mat4 invPV = PV.inverse();
+  std::memcpy(pc.invViewProj, invPV.m, sizeof(pc.invViewProj));
   // Progressive accumulation bookkeeping: if the camera (proj*view), render mode,
   // or geometry/viewport generation changed since the last traced frame, restart
   // accumulation at sample 0; otherwise advance the sample index so the trace adds
@@ -7371,6 +7083,14 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
     b.dstAccessMask = dstA;
     vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
   };
+  // The next accumulated sample reads the sum written by this dispatch.
+  // Queue submission order alone is only an execution dependency. Make the
+  // stored sum available before the following dispatch reads and extends it.
+  imgBarrier(accumImage_, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+             VK_ACCESS_SHADER_WRITE_BIT,
+             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
   imgBarrier(rtImage_, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
              VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -7665,6 +7385,127 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   displacement_ = params.displacement;
   displacementScale_ = params.displacementScale;
   maxTessLevel_ = params.maxTessLevel;
+
+  // Expand native carriers into camera-facing quads for the raster pass.  This
+  // is intentionally rebuilt per frame: widths are authored in world space and
+  // the ribbon side changes with the camera.  The resulting vertices use the
+  // existing unlit helper format and the dedicated triangle-list pipeline.
+  nonMeshCopy_.clear();
+  if (hasParams_) {
+    const float right[3] = {view_[0], view_[4], view_[8]};
+    const float up[3] = {view_[1], view_[5], view_[9]};
+    const float forward[3] = {-view_[2], -view_[6], -view_[10]};
+    auto dot3 = [](const float a[3], const float b[3]) {
+      return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    };
+    auto cross3 = [](const float a[3], const float b[3], float out[3]) {
+      out[0] = a[1] * b[2] - a[2] * b[1];
+      out[1] = a[2] * b[0] - a[0] * b[2];
+      out[2] = a[0] * b[1] - a[1] * b[0];
+    };
+    auto normalize3 = [&](float v[3]) {
+      const float len = std::sqrt(dot3(v, v));
+      if (len > 1.0e-8f) {
+        v[0] /= len; v[1] /= len; v[2] /= len;
+      }
+    };
+    auto worldPoint = [](const auto& s, size_t i, float out[3]) {
+      const float x = s.points[i * 3], y = s.points[i * 3 + 1],
+                  z = s.points[i * 3 + 2];
+      out[0] = s.world[0] * x + s.world[4] * y + s.world[8] * z + s.world[12];
+      out[1] = s.world[1] * x + s.world[5] * y + s.world[9] * z + s.world[13];
+      out[2] = s.world[2] * x + s.world[6] * y + s.world[10] * z + s.world[14];
+    };
+    auto colorAt = [](const auto& s, size_t i, float c[3]) {
+      c[0] = c[1] = c[2] = 0.8f;
+      if (s.colors.size() >= (i + 1) * 3) {
+        c[0] *= s.colors[i * 3]; c[1] *= s.colors[i * 3 + 1];
+        c[2] *= s.colors[i * 3 + 2];
+      }
+    };
+    auto addQuad = [&](const float p0[3], const float p1[3], const float side[3],
+                       float width, const float c[3]) {
+      const float h = std::max(width, 1.0e-6f) * 0.5f;
+      float a[3] = {p0[0] + side[0] * h, p0[1] + side[1] * h, p0[2] + side[2] * h};
+      float b[3] = {p0[0] - side[0] * h, p0[1] - side[1] * h, p0[2] - side[2] * h};
+      float d[3] = {p1[0] + side[0] * h, p1[1] + side[1] * h, p1[2] + side[2] * h};
+      float e[3] = {p1[0] - side[0] * h, p1[1] - side[1] * h, p1[2] - side[2] * h};
+      const auto v = [&](const float p[3]) {
+        HelperVertex hv{};
+        std::memcpy(hv.pos, p, sizeof(hv.pos));
+        std::memcpy(hv.col, c, sizeof(hv.col));
+        nonMeshCopy_.push_back(hv);
+      };
+      v(a); v(b); v(d); v(d); v(b); v(e);
+    };
+    auto addPoint = [&](const float p[3], float width, const float c[3]) {
+      const float h = std::max(width, 1.0e-6f) * 0.5f;
+      float a[3] = {p[0] + right[0] * h + up[0] * h,
+                    p[1] + right[1] * h + up[1] * h,
+                    p[2] + right[2] * h + up[2] * h};
+      float b[3] = {p[0] - right[0] * h + up[0] * h,
+                    p[1] - right[1] * h + up[1] * h,
+                    p[2] - right[2] * h + up[2] * h};
+      float d[3] = {p[0] + right[0] * h - up[0] * h,
+                    p[1] + right[1] * h - up[1] * h,
+                    p[2] + right[2] * h - up[2] * h};
+      float e[3] = {p[0] - right[0] * h - up[0] * h,
+                    p[1] - right[1] * h - up[1] * h,
+                    p[2] - right[2] * h - up[2] * h};
+      const auto v = [&](const float q[3]) {
+        HelperVertex hv{};
+        std::memcpy(hv.pos, q, sizeof(hv.pos));
+        std::memcpy(hv.col, c, sizeof(hv.col));
+        nonMeshCopy_.push_back(hv);
+      };
+      v(a); v(b); v(d); v(d); v(b); v(e);
+    };
+    size_t carrierIndex = 0;
+    for (const DrawPointsCPU& s : nativePoints_) {
+      if ((params.purposeVisibleMask & (1u << PurposeId(s.purpose))) == 0 ||
+          (params.carrierVisible && carrierIndex < static_cast<size_t>(params.carrierVisibleCount) &&
+           !params.carrierVisible[carrierIndex])) { ++carrierIndex; continue; }
+      const float sx = std::sqrt(s.world[0] * s.world[0] + s.world[1] * s.world[1] + s.world[2] * s.world[2]);
+      const float sy = std::sqrt(s.world[4] * s.world[4] + s.world[5] * s.world[5] + s.world[6] * s.world[6]);
+      const float sz = std::sqrt(s.world[8] * s.world[8] + s.world[9] * s.world[9] + s.world[10] * s.world[10]);
+      const float scale = std::max(sx, std::max(sy, sz));
+      for (size_t i = 0; i < s.points.size() / 3; ++i) {
+        float p[3], c[3]; worldPoint(s, i, p); colorAt(s, i, c);
+        const float width = (s.widths.empty() ? 1.0f :
+          (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)])) * scale;
+        addPoint(p, width, c);
+      }
+      ++carrierIndex;
+    }
+    for (const DrawCurvesCPU& s : nativeCurves_) {
+      if ((params.purposeVisibleMask & (1u << PurposeId(s.purpose))) == 0 ||
+          (params.carrierVisible && carrierIndex < static_cast<size_t>(params.carrierVisibleCount) &&
+           !params.carrierVisible[carrierIndex])) { ++carrierIndex; continue; }
+      const size_t np = s.points.size() / 3;
+      const float sx = std::sqrt(s.world[0] * s.world[0] + s.world[1] * s.world[1] + s.world[2] * s.world[2]);
+      const float sy = std::sqrt(s.world[4] * s.world[4] + s.world[5] * s.world[5] + s.world[6] * s.world[6]);
+      const float sz = std::sqrt(s.world[8] * s.world[8] + s.world[9] * s.world[9] + s.world[10] * s.world[10]);
+      const float scale = std::max(sx, std::max(sy, sz));
+      size_t base = 0;
+      const std::vector<uint32_t> counts = s.vertexCounts.empty()
+          ? std::vector<uint32_t>{static_cast<uint32_t>(np)} : s.vertexCounts;
+      for (uint32_t count : counts) {
+        const size_t end = std::min(np, base + static_cast<size_t>(count));
+        for (size_t i = base; i + 1 < end; ++i) {
+          float p0[3], p1[3], c0[3]; worldPoint(s, i, p0); worldPoint(s, i + 1, p1);
+          float dir[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+          float side[3]; cross3(forward, dir, side); normalize3(side);
+          if (dot3(side, side) < 0.5f) std::memcpy(side, right, sizeof(side));
+          colorAt(s, i, c0);
+          const float w0 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i, s.widths.size() - 1)]);
+          const float w1 = s.widths.empty() ? 1.0f : (s.widths.size() == 1 ? s.widths[0] : s.widths[std::min(i + 1, s.widths.size() - 1)]);
+          addQuad(p0, p1, side, 0.5f * (w0 + w1) * scale, c0);
+        }
+        base = end;
+      }
+      ++carrierIndex;
+    }
+  }
   // Update the global frame/displacement UBO (set 2) so the scale + max-tess
   // sliders are live. Persistently mapped; written each frame (volume-UBO
   // convention). [0]=scale, [1]=maxTessLevel.
@@ -8198,7 +8039,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // LOAD-preserve the traced image and draw the same line sets on top. There is
     // no RT depth buffer, so everything draws no-depth (x-ray) -- which is what
     // the overlay/highlight lines already do in the raster path anyway.
-    const bool anyOverlay = !helperCopy_.empty() || !overlayCopy_.empty() ||
+    const bool anyOverlay = !nonMeshCopy_.empty() || !helperCopy_.empty() || !overlayCopy_.empty() ||
                             !highlightLineCopy_.empty() || !volumes_.empty();
     if (overlayLoadPass_ && offscreenFb_ && hasParams_ && anyOverlay) {
       VkRenderPassBeginInfo orp{};
@@ -8229,6 +8070,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       recordVolumePass(cb, volumePipelineNoDepth_);
       // All no-depth: the RT image carries no depth, so even grid/axes/bbox draw
       // as x-ray here (a reasonable RT-overlay compromise).
+      drawLineSet(cb, nonMeshCopy_, &nonMeshBuf_[frame_], &nonMeshMem_[frame_],
+                  &nonMeshCap_[frame_], nonMeshPipeline_, VP.m);
       drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
                   &helperCap_[frame_], linePipelineNoDepth_, VP.m);
       drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
@@ -8426,12 +8269,6 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       vkCmdEndRenderPass(cb);
       }
     }
-    // Upload accumulated nonmesh instance data before the render pass (CPU
-    // operations like vkAllocateMemory are not permitted inside a render pass).
-    if (!nonMeshVbo_ && !nonMeshStage_.empty()) {
-      const_cast<VulkanRenderer*>(this)->buildNonMesh();
-    }
-
     VkClearValue clears[2];
     clears[0].color = {{clear_[0], clear_[1], clear_[2], clear_[3]}};
     clears[1].depthStencil = {1.0f, 0};
@@ -8844,36 +8681,6 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         }
       }
     }
-    // Non-mesh billboard/ribbon draws (point sprites and camera-facing curve ribbons).
-    if (nonMeshPipeline_ && !nonMeshBatches_.empty()) {
-      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, nonMeshPipeline_);
-      // Ensure the shared nonmesh VBO is uploaded (lazy: buildNonMesh was deferred).
-      if (!nonMeshVbo_ && !nonMeshStage_.empty()) {
-        const_cast<VulkanRenderer*>(this)->buildNonMesh();
-      }
-      if (!nonMeshVbo_) { /* no buffer — skip */ }
-      else {
-      const float nmRight[3] = {view_[0], view_[4], view_[8]};
-      const float nmUp[3] = {view_[1], view_[5], view_[9]};
-      for (const NonMeshBatch& nm : nonMeshBatches_) {
-        if (nm.count == 0) continue;
-        VkDeviceSize nmOff = static_cast<VkDeviceSize>(nm.vboOffset);
-        NonMeshPushC pc{};
-        pc.kind = nm.kind;
-        pc.materialId = nm.materialId;
-        pc.carrierId = nm.carrierId;
-        pc.purpose = nm.purposeId;
-        pc.renderMode = rtMode_;
-        std::memcpy(pc.cameraRight, nmRight, sizeof(nmRight));
-        std::memcpy(pc.cameraUp, nmUp, sizeof(nmUp));
-        vkCmdPushConstants(cb, pipelineLayout_,
-                           VK_SHADER_STAGE_VERTEX_BIT |
-                               VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(pc), &pc);
-        vkCmdDraw(cb, 4, nm.count, 0, 0);
-      }
-      }
-    }
     // Raster LOD box proxies (optimization B): distant instances the cull collapsed
     // to a shared unit cube, drawn as one instanced pass.
     drawBoxProxies(cb);
@@ -8883,6 +8690,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // Helper lines (grid/axes/bbox), then skeleton X-ray + selection highlight on
     // top (depth-test-disabled pipeline). VP = P * V (column-major light3d).
     const light3d::Mat4 VP = ToMat4(proj_) * ToMat4(view_);
+    drawLineSet(cb, nonMeshCopy_, &nonMeshBuf_[frame_], &nonMeshMem_[frame_],
+                &nonMeshCap_[frame_], nonMeshPipeline_, VP.m);
     drawLineSet(cb, helperCopy_, &helperBuf_[frame_], &helperMem_[frame_],
                 &helperCap_[frame_], linePipeline_, VP.m);
     drawLineSet(cb, overlayCopy_, &overlayBuf_[frame_], &overlayMem_[frame_],
@@ -9177,6 +8986,15 @@ void VulkanRenderer::destroySwapchain() {
 void VulkanRenderer::shutdown() {
   if (device_) vkDeviceWaitIdle(device_);
   destroyScene();
+  // The unit-cube proxy BLAS is renderer-wide rather than part of meshes_, so
+  // destroyScene intentionally retains it across scene reloads. Release it
+  // explicitly before the device is destroyed.
+  destroyBlas(boxMesh_);
+  if (boxMesh_.vbo) vkDestroyBuffer(device_, boxMesh_.vbo, nullptr);
+  if (boxMesh_.vboMem) vkFreeMemory(device_, boxMesh_.vboMem, nullptr);
+  if (boxMesh_.ebo) vkDestroyBuffer(device_, boxMesh_.ebo, nullptr);
+  if (boxMesh_.eboMem) vkFreeMemory(device_, boxMesh_.eboMem, nullptr);
+  boxMesh_ = VkMeshGPU{};
   destroyRt();
   destroyOffscreen();
   if (shadowFb_) vkDestroyFramebuffer(device_, shadowFb_, nullptr);
@@ -9291,6 +9109,7 @@ void VulkanRenderer::shutdown() {
     if (*m) { vkFreeMemory(device_, *m, nullptr); *m = VK_NULL_HANDLE; }
   if (linePipeline_) { vkDestroyPipeline(device_, linePipeline_, nullptr); linePipeline_ = VK_NULL_HANDLE; }
   if (linePipelineNoDepth_) { vkDestroyPipeline(device_, linePipelineNoDepth_, nullptr); linePipelineNoDepth_ = VK_NULL_HANDLE; }
+  if (nonMeshPipeline_) { vkDestroyPipeline(device_, nonMeshPipeline_, nullptr); nonMeshPipeline_ = VK_NULL_HANDLE; }
   if (lineLayout_) { vkDestroyPipelineLayout(device_, lineLayout_, nullptr); lineLayout_ = VK_NULL_HANDLE; }
   // UsdVol volume resources.
   for (auto& gv : volumes_) {
@@ -9305,11 +9124,6 @@ void VulkanRenderer::shutdown() {
   volumes_.clear();
   if (volumeCubeBuf_) { vkDestroyBuffer(device_, volumeCubeBuf_, nullptr); volumeCubeBuf_ = VK_NULL_HANDLE; }
   if (volumeCubeMem_) { vkFreeMemory(device_, volumeCubeMem_, nullptr); volumeCubeMem_ = VK_NULL_HANDLE; }
-  if (nonMeshPipeline_) { vkDestroyPipeline(device_, nonMeshPipeline_, nullptr); nonMeshPipeline_ = VK_NULL_HANDLE; }
-  if (nonMeshVbo_) { vkDestroyBuffer(device_, nonMeshVbo_, nullptr); nonMeshVbo_ = VK_NULL_HANDLE; }
-  if (nonMeshVboMem_) { vkFreeMemory(device_, nonMeshVboMem_, nullptr); nonMeshVboMem_ = VK_NULL_HANDLE; }
-  nonMeshBatches_.clear();
-  std::vector<uint8_t>().swap(nonMeshStage_);
   if (volumePipeline_) { vkDestroyPipeline(device_, volumePipeline_, nullptr); volumePipeline_ = VK_NULL_HANDLE; }
   if (volumePipelineNoDepth_) { vkDestroyPipeline(device_, volumePipelineNoDepth_, nullptr); volumePipelineNoDepth_ = VK_NULL_HANDLE; }
   if (volumeLayout_) { vkDestroyPipelineLayout(device_, volumeLayout_, nullptr); volumeLayout_ = VK_NULL_HANDLE; }

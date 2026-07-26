@@ -1903,6 +1903,24 @@ bool CrateReader::BuildFieldSetBoundaryIndex() {
   _fieldset_end_indices.clear();
   _fieldset_start_indices.clear();
 
+  {
+    size_t end_indices_bytes;
+    if (!safe::n_to_size<uint32_t>(_fieldset_indices.size(), &end_indices_bytes)) {
+      PUSH_ERROR("Integer overflow in fieldset end indices allocation.");
+      return false;
+    }
+    CHECK_MEMORY_USAGE(end_indices_bytes);
+  }
+  {
+    size_t start_indices_bytes;
+    if (!safe::n_to_size<uint32_t>((_fieldset_indices.size() / 2) + 1,
+                                   &start_indices_bytes)) {
+      PUSH_ERROR("Integer overflow in fieldset start indices allocation.");
+      return false;
+    }
+    CHECK_MEMORY_USAGE(start_indices_bytes);
+  }
+
   _fieldset_end_indices.resize(_fieldset_indices.size(), kInvalidFieldSetEnd);
   _fieldset_start_indices.reserve((_fieldset_indices.size() / 2) + 1);
 
@@ -2038,7 +2056,16 @@ bool CrateReader::BuildLiveFieldSets() {
         const uint32_t start_idx = _fieldset_start_indices[fs_pos];
         const uint32_t end_idx = _fieldset_end_indices[start_idx];
         FieldValuePairVector &pairs = decoded[fs_pos];
-        pairs.resize(static_cast<size_t>(end_idx - start_idx));
+        {
+          const size_t range_size = static_cast<size_t>(end_idx - start_idx);
+          size_t pairs_bytes;
+          if (!safe::n_to_size<FieldValuePair>(range_size, &pairs_bytes)) {
+            worker_failed.store(true);
+            return;
+          }
+          MEMORY_BUDGET_CHECK((*memory_manager_), pairs_bytes, kTag);
+          pairs.resize(range_size);
+        }
         for (uint32_t idx = start_idx, i = 0; idx < end_idx; ++idx, ++i) {
           const auto &field = _fields[_fieldset_indices[idx].value];
           pairs[i].first = _tokens[field.token_index.value].str();
@@ -2109,6 +2136,15 @@ bool CrateReader::DecodeFieldSetRange(uint32_t start_idx, uint32_t end_idx,
   if (fs_range_size > _fields.size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("FieldSet range {} exceeds total fields count {}.", fs_range_size, _fields.size()));
   }
+
+  {
+    size_t pairs_bytes;
+    if (!safe::n_to_size<FieldValuePair>(fs_range_size, &pairs_bytes)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in fieldset pairs allocation.");
+    }
+    CHECK_MEMORY_USAGE(pairs_bytes);
+  }
+
   pairs->resize(fs_range_size);
 
   for (uint32_t idx = start_idx, i = 0; idx < end_idx; ++idx, ++i) {

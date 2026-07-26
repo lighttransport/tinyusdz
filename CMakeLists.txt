@@ -2866,6 +2866,25 @@ if(TINYUSDZ_BUILD_TESTS)
       )
 
     add_test(
+      NAME tusdview-cli-window-size
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cli-window-size.sh"
+              "$<TARGET_FILE:tusdview>"
+      )
+    set_tests_properties(tusdview-cli-window-size
+                         PROPERTIES SKIP_RETURN_CODE 77 LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-camera-record-equivalence
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-record-equivalence.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(tusdview-camera-record-equivalence
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "tusdview")
+
+    add_test(
       NAME tusdview-next-nonmesh-extraction
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-next-nonmesh-extraction.sh"
@@ -2894,6 +2913,16 @@ if(TINYUSDZ_BUILD_TESTS)
       )
       set_tests_properties(tusdview-vk-nonmesh-render
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90
+                                      LABELS "tusdview")
+
+      add_test(
+        NAME tusdview-nonmesh-backend-parity
+        COMMAND bash
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-nonmesh-backend-parity.sh"
+                "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+      )
+      set_tests_properties(tusdview-nonmesh-backend-parity
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 150
                                       LABELS "tusdview")
     endif()
 
@@ -2945,7 +2974,7 @@ if(TINYUSDZ_BUILD_TESTS)
                   "$<TARGET_FILE:tusdview>"
                   "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-render-batch.json"
                   "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-render-batch-gl"
-                  --windowed --backend gl
+                  --windowed --backend gl --size 1024x768
           )
         set_tests_properties(tusdview-mcp-render-batch-gl-window
                              PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -2957,7 +2986,7 @@ if(TINYUSDZ_BUILD_TESTS)
                   "$<TARGET_FILE:tusdview>"
                   "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/mcp-material-batch.json"
                   "${CMAKE_BINARY_DIR}/Testing/tusdview-mcp-material-batch-gl"
-                  --windowed --backend gl
+                  --windowed --backend gl --size 1024x768
           )
         set_tests_properties(tusdview-mcp-material-batch-gl-window
                              PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -3068,15 +3097,6 @@ if(TINYUSDZ_BUILD_TESTS)
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-inst-morph-cull.sh"
       )
     set_tests_properties(tusdview-inst-morph-cull PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 120)
-
-    add_test(
-      NAME tusdview-camera-record-equivalence
-      COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-record-equivalence.sh"
-      )
-    set_tests_properties(tusdview-camera-record-equivalence PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 120)
 
     add_test(

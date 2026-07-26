@@ -1,14 +1,91 @@
 # tusdview resume and current work state
 
-Last reviewed against `8b922bd03`: 2026-07-20.
+Last reviewed against `026d2a764`: 2026-07-24.
 
 The original first-display goal in this document is complete: the progressive
 OpenGL path reaches a useful frame in approximately 4.9-5.3 seconds under the
-documented Xvfb/Mesa benchmark. The active local work has moved to shared
-UsdPreviewSurface/material correctness across `tusdview`, its GL/Vulkan/CUDA/HIP
-backends, and `tusdrender`. The active roadmap is now
+documented Xvfb/Mesa benchmark. The detailed audit below records the shared
+UsdPreviewSurface/material correctness work across `tusdview`, its
+GL/Vulkan/CUDA/HIP backends, and `tusdrender`. The active roadmap is now
 [`doc/tusdview-tasks.md`](tusdview-tasks.md); this file retains the detailed
 audit and performance history needed to resume that work.
+
+## Current status — 2026-07-23
+
+At `0e551db24`, the checked-in implementation and registered tests cover the
+canonical `RealtimePbrMaterial` path, PreviewSurface/OpenPBR/MaterialX core
+semantic textures, ordinary and UDIM sources, USDZ packaging parity, Vulkan
+ray query, CUDA, and capability-gated HIP coverage. Dome/light extraction,
+linked multi-light raster shading, raster shadow maps, six-face point shadows,
+native non-mesh extraction, GL non-mesh rendering, and progressive first-display
+loading are also implemented.
+
+Remaining implementation work is narrower:
+
+- Preserve all successfully evaluated constants and connections in degraded
+  OpenPBR/MaterialX materials while retaining structured path-qualified
+  diagnostics for unsupported lobes. The next-core neutral record now retains
+  every evaluatable `inputs:*` value; broader fixture coverage remains.
+- Native carrier viewport parity is implemented: Vulkan raster expands Points
+  into camera-facing discs and Curves into ribbons; click/region picking,
+  framing, hide/show/isolate, purpose filtering, and orange selection highlights
+  now cover carriers as well as meshes.
+- Camera extraction is now covered by a shared default/legacy equivalence gate.
+- The checked-in Points/Curves fixture now has a consolidated GL/Vulkan
+  silhouette-parity gate; it passes with backend-normalized coverage comparison.
+- Run the external `usd-assets` goldens and repeat the large-scene benchmark
+  when the documented corpus and required hardware are available.
+
+Depth of field, motion blur, stereo, arbitrary clipping planes, true area-light
+sampling, IES/portal/geometry lights, and emissive-mesh sampling remain
+explicitly deferred features, not current regressions.
+
+The focused GPU-backed headless gates were rerun during this review; external
+corpus and large-scene evidence remains inherited from the dated entries.
+
+The new `tusdview-camera-record-equivalence` gate compares default and legacy
+headless renders for perspective, orthographic, and stereo-role cameras. It
+passes with mean pixel delta 0.000 on the available Vulkan device and skips
+when Vulkan is unavailable.
+
+The focused `tusdview` CTest label passes 16 of 17 registered tests on llvmpipe,
+including the camera gate, native non-mesh smoke tests, and the GL/Vulkan
+carrier silhouette-parity gate. The remaining Vulkan ray-query linked-light
+test exceeds its 120-second software-device timeout after scene/BLAS setup, but
+passes on the RTX 3070 in 0.65 seconds. Vulkan raster native carriers now use
+the dedicated camera-facing path; viewport carrier
+selection/visibility/highlighting parity is covered.
+
+The available public large-scene assets were also exercised on 2026-07-23:
+Caldera, Island, and ALab all passed the configured Vulkan raster profile smoke
+run, and three Caldera corpus files passed the USD-assets Vulkan smoke harness.
+The public `usd-wg/assets` repository at revision
+`1b91f3c464891af259d51d9ee9ee9e6c357f7079` was exercised on the RTX 3070
+with NVIDIA 595.84. The corrected complete 280-file sweep passes in both Vulkan
+raster and ray query. Each mode reports 252 rendered, 3 rendered with expected
+warnings, 25 no-renderable layers, and zero load errors, backend errors,
+timeouts, or unexpected degradation.
+The follow-up found that `--size` was not parsed: the failed run captured a
+saved-layout-dependent `32x530` viewport instead of the requested `256x256`.
+The CLI now validates and honors `--size`, CLI size overrides startup config,
+and fixed-frame headless captures use the full requested viewport independently
+of saved ImGui docking state. A regression pins a `64x48` capture against a
+conflicting `32x530` config. All 510 rendered corpus baselines were therefore
+regenerated at exactly `256x256`; a second independent 20-file raster + ray
+query run matches 38/38 fingerprints, including CarbonFrameBike and both
+ElephantWithMonochord entry points. The follow-up also fixed next-core
+UsdShade NodeGraph surface pass-throughs, removing the Teapot-family degraded
+fallback. OpenChessSet external `.mtlx` references no longer produce
+degraded-material diagnostics: the next MaterialX layer importer now keeps
+each terminal shader inside the referenced Material subtree, which is the only
+namespace guaranteed to survive a USD reference. The localized shader inputs
+and NodeGraph outputs now retain their connections to anchored MaterialX image
+nodes. A focused Tydra regression covers base-color, metallic, roughness, and
+normal graphs. On llvmpipe Vulkan the Bishop asset reports 4 textures and the
+complete OpenChessSet reports 40 textures with `degraded_materials=0`,
+`missing_textures=0`, and `unsupported_mtlx=0`. The reboot loaded the matching
+595.84 kernel/userspace driver and completed the previously blocked hardware
+validation.
 
 ## Current audit: material correctness
 
@@ -144,7 +221,7 @@ The external usd-assets corpus was still unavailable at
 checked-in manifest/expectation implementation remains ready for the next host
 where that public corpus is mounted.
 
-## Active priority — 2026-07-20
+## Archived priority snapshot — 2026-07-20
 
 `doc/tusdview-tasks.md` is the single source of truth for active work. The
 Linux-first order is:

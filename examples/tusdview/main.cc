@@ -112,6 +112,24 @@ bool ParsePrimLevel(const std::string& text, std::string* prim, int* level) {
   return !prim->empty();
 }
 
+bool ParseWindowSize(const char* text, int* width, int* height) {
+  if (!text || !width || !height) return false;
+  char* widthEnd = nullptr;
+  const long parsedWidth = std::strtol(text, &widthEnd, 10);
+  if (!widthEnd || widthEnd == text || *widthEnd != 'x') return false;
+  char* heightEnd = nullptr;
+  const long parsedHeight = std::strtol(widthEnd + 1, &heightEnd, 10);
+  if (!heightEnd || heightEnd == widthEnd + 1 || *heightEnd != '\0') return false;
+  constexpr long kMaxWindowDimension = 32768;
+  if (parsedWidth <= 0 || parsedWidth > kMaxWindowDimension ||
+      parsedHeight <= 0 || parsedHeight > kMaxWindowDimension) {
+    return false;
+  }
+  *width = static_cast<int>(parsedWidth);
+  *height = static_cast<int>(parsedHeight);
+  return true;
+}
+
 // Host memory the budget tree may plan against: MemAvailable, capped at the
 // 32 GiB the policy targets (planning against a 256 GiB workstation's full RAM
 // would size the stage/geometry limits far past anything sensible). Falls back
@@ -146,6 +164,9 @@ int main(int argc, char** argv) {
   std::string screenshot;
   std::string windowShot;
   int maxFrames = -1;
+  int windowWidth = 0;
+  int windowHeight = 0;
+  bool windowSizeExplicit = false;
   long long maxTris = 0;      // 0 = default budget
   double maxGpuMemGiB = 0.0;  // --max-gpu-mem: raster full-mesh VRAM cap (GiB)
   // --vram-budget: the ONE number the whole budget tree descends from. Left at 0
@@ -213,6 +234,7 @@ int main(int argc, char** argv) {
   bool useNextLoader = true;              // next-core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
   bool showGrid = true;                    // --no-grid: deterministic clean capture
+  bool showSkeleton = true;                // --no-skeleton: hide skeleton helpers
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--next)
   tusdview::CameraConform cameraConform{tusdview::CameraConform::Fit};
@@ -271,6 +293,13 @@ int main(int argc, char** argv) {
       backendExplicit = true;
     } else if (std::strcmp(argv[i], "--frames") == 0 && (i + 1) < argc) {
       maxFrames = std::atoi(argv[++i]);
+    } else if (std::strcmp(argv[i], "--size") == 0) {
+      if ((i + 1) >= argc ||
+          !ParseWindowSize(argv[++i], &windowWidth, &windowHeight)) {
+        LOGE("--size must be WxH with dimensions in the range 1..32768");
+        return 1;
+      }
+      windowSizeExplicit = true;
     } else if (std::strcmp(argv[i], "--screenshot") == 0 && (i + 1) < argc) {
       screenshot = argv[++i];
     } else if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
@@ -356,10 +385,10 @@ int main(int argc, char** argv) {
       useNextExplicit = true;
     } else if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
-    } else if (std::strcmp(argv[i], "--no-nonmesh-billboard") == 0) {
-      setenv("TUSDVIEW_NO_NONMESH_BILLBOARD", "1", 1);
     } else if (std::strcmp(argv[i], "--no-grid") == 0) {
       showGrid = false;
+    } else if (std::strcmp(argv[i], "--no-skeleton") == 0) {
+      showSkeleton = false;
     } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
       camDolly = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
@@ -648,7 +677,7 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
           "Usage: tusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
-          "[--screenshot out.png|out.ppm]\n"
+          "[--size WxH] [--screenshot out.png|out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
           "                [--no-composition] [--defer-payloads | --load-payloads] "
           "[--defer-references] [--time CODE] [--skinning auto|cpu|gpu]\n"
@@ -674,6 +703,7 @@ int main(int argc, char** argv) {
           "instanced scenes (e.g. Moana Island).\n"
           "  --max-tris N  Cap triangles in the CUDA/HIP software RT scene.\n"
           "  --time-budget SECONDS  Stop the headless run after this wall-time budget.\n"
+          "  --size WxH    Set the render/window size. Overrides the startup config.\n"
           "  --ui-scale S  Override the interface scale factor.\n"
           "  --lod-stream  View-dependent district LOD: promote "
           "the camera-nearest districts to full under memory budgets.\n"
@@ -690,7 +720,7 @@ int main(int argc, char** argv) {
           "  --no-cull / --no-robust-frame  Disable frustum culling or robust "
           "outlier-resistant auto framing.\n"
           "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
-          "  --no-nonmesh-billboard  Use solid-proxy fallback for Points/Curves (Vulkan).\n"
+          "  --no-skeleton Hide skeleton helper overlays (useful for AOV comparisons).\n"
           "  --dome-ibl off|fast|quality  Control DomeLight IBL precomputation.\n"
           "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
           "Vulkan realtime preset for public large scenes. Profiles set existing "
@@ -996,7 +1026,8 @@ int main(int argc, char** argv) {
   if (config.status == tusdview::ConfigLoadStatus::Loaded) {
     if (config.config.fontSizePx) app.setFontSize(*config.config.fontSizePx);
     if (config.config.windowScale) app.setWindowScale(*config.config.windowScale);
-    if (config.config.windowWidth && config.config.windowHeight) {
+    if (!windowSizeExplicit && config.config.windowWidth &&
+        config.config.windowHeight) {
       app.setWindowSize(*config.config.windowWidth, *config.config.windowHeight);
     }
     if (config.config.orbitSensitivity) {
@@ -1102,9 +1133,11 @@ int main(int argc, char** argv) {
       LOGW("ignoring invalid --ui-scale %.3f (must be > 0.25)", *uiScale);
     }
   }
+  if (windowSizeExplicit) app.setWindowSize(windowWidth, windowHeight);
   app.setUseNextLoader(useNextLoader);
   app.setCullEnabled(!noCull);
   app.setShowGrid(showGrid);
+  app.setShowSkeleton(showSkeleton);
   app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);

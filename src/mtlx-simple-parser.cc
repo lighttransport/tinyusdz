@@ -62,7 +62,12 @@ bool SimpleXMLParser::Parse(const std::string& xml) {
         }
 
         // If not self-closing, push to stack for processing children
+        // Cap nesting to prevent resource exhaustion on deeply nested input.
         if (!is_self_closing) {
+          if (node_stack.size() > 100000) {
+            error_ = "XML nesting depth exceeds maximum (100000)";
+            return false;
+          }
           node_stack.push(new_node);
         }
         break;

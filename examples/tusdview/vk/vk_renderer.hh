@@ -490,6 +490,16 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout lineLayout_{VK_NULL_HANDLE};
   VkPipeline linePipeline_{VK_NULL_HANDLE};
   VkPipeline linePipelineNoDepth_{VK_NULL_HANDLE};  // X-ray overlay (skeleton)
+  // Camera-facing native Points/Curves raster carrier.  The CPU expands the
+  // carriers into quads each frame; this deliberately stays independent of the
+  // mesh material descriptor sets.
+  VkPipeline nonMeshPipeline_{VK_NULL_HANDLE};
+  VkBuffer nonMeshBuf_[kFramesInFlight]{};
+  VkDeviceMemory nonMeshMem_[kFramesInFlight]{};
+  VkDeviceSize nonMeshCap_[kFramesInFlight]{};
+  std::vector<HelperVertex> nonMeshCopy_;
+  std::vector<DrawPointsCPU> nativePoints_;
+  std::vector<DrawCurvesCPU> nativeCurves_;
 
   // --- UsdVol volume raymarch (proxy-box, 3D density texture) ---
   struct VkVolumeGPU {
@@ -513,7 +523,6 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout volumeLayout_{VK_NULL_HANDLE};
   VkPipeline volumePipeline_{VK_NULL_HANDLE};
   VkPipeline volumePipelineNoDepth_{VK_NULL_HANDLE};  // RT overlay (no depth)
-  VkPipeline nonMeshPipeline_{VK_NULL_HANDLE};
   VkDescriptorSetLayout volumeSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool volumePool_{VK_NULL_HANDLE};
   VkBuffer volumeCubeBuf_{VK_NULL_HANDLE};      // 36-vertex proxy cube
@@ -635,21 +644,6 @@ class VulkanRenderer final : public Renderer {
   // prototype for the per-frame instanceCount patch + visibility gate.
   struct MdiCmd { uint32_t meshIndex; uint32_t reserved; VkDrawIndexedIndirectCommand cmd; };
   std::vector<MdiCmd> mdiCmds_;
-  struct NonMeshBatch {
-    uint32_t count{0};
-    int kind{0};
-    int materialId{-1};
-    int carrierId{-1};
-    int purposeId{0};
-    uint32_t vboOffset{0};  // byte offset into nonMeshVbo_
-  };
-  std::vector<NonMeshBatch> nonMeshBatches_;
-  VkBuffer nonMeshVbo_{VK_NULL_HANDLE};
-  VkDeviceMemory nonMeshVboMem_{VK_NULL_HANDLE};
-  // CPU staging for nonmesh instance data. Accumulated during appendPoints/
-  // appendCurves; uploaded to nonMeshVbo_ by buildNonMesh().
-  std::vector<uint8_t> nonMeshStage_;
-  void buildNonMesh();
   // CPU staging accumulated during appendMesh, uploaded + freed by buildInstMdi().
   std::vector<float> mdiInstXfStage_;      // 12 floats / instance (o2w rows)
   std::vector<float> mdiInstColStage_;     // 4 floats / instance (rgba)

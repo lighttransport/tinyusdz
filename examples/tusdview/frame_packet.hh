@@ -34,6 +34,7 @@ struct FramePacket {
   std::vector<HelperVertex> helperLines;
   std::vector<HelperVertex> overlayLines;
   std::vector<uint8_t> meshVisible;
+  std::vector<uint8_t> carrierVisible;
   std::vector<uint8_t> rtMeshVisible;
   uint32_t purposeVisibleMask{0xBu};
   int viewportW{0};
@@ -73,6 +74,8 @@ struct FramePacket {
     p.overlayLineVertexCount = static_cast<int>(overlayLines.size());
     p.meshVisible = meshVisible.empty() ? nullptr : meshVisible.data();
     p.meshVisibleCount = static_cast<int>(meshVisible.size());
+    p.carrierVisible = carrierVisible.empty() ? nullptr : carrierVisible.data();
+    p.carrierVisibleCount = static_cast<int>(carrierVisible.size());
     p.rtMeshVisible = rtMeshVisible.empty() ? nullptr : rtMeshVisible.data();
     p.rtMeshVisibleCount = static_cast<int>(rtMeshVisible.size());
     p.purposeVisibleMask = purposeVisibleMask;

@@ -41,82 +41,26 @@ trap 'rm -rf "$OUT"' EXIT
 XVFB=""
 command -v xvfb-run >/dev/null 2>&1 && XVFB="xvfb-run -a"
 
-cat > "$OUT/shadow.usda" <<'USDA'
-#usda 1.0
-(defaultPrim = "World" upAxis = "Y")
-def Xform "World" {
-  def Mesh "Floor" {
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(-6,0,-6), (6,0,-6), (6,0,6), (-6,0,6)]
-    normal3f[] normals = [(0,1,0), (0,1,0), (0,1,0), (0,1,0)] (interpolation = "vertex")
-    color3f[] primvars:displayColor = [(0.9, 0.9, 0.9)]
-    uniform bool doubleSided = true
-    uniform token subdivisionScheme = "none"
-  }
-  def Mesh "Blocker" {
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(-1.5,2.5,-1.5), (1.5,2.5,-1.5), (1.5,2.5,1.5), (-1.5,2.5,1.5)]
-    normal3f[] normals = [(0,1,0), (0,1,0), (0,1,0), (0,1,0)] (interpolation = "vertex")
-    texCoord2f[] primvars:st = [(0,0), (1,0), (1,1), (0,1)] (interpolation = "vertex")
-    color3f[] primvars:displayColor = [(0.2, 0.4, 0.9)]
-    uniform bool doubleSided = true
-    uniform token subdivisionScheme = "none"
-    rel material:binding = </World/Cutout>
-  }
-  def Material "Cutout" {
-    token outputs:surface.connect = </World/Cutout/Preview.outputs:surface>
-    def Shader "Preview" {
-      uniform token info:id = "UsdPreviewSurface"
-      color3f inputs:diffuseColor = (0.2, 0.4, 0.9)
-      float inputs:opacity = 1
-      float inputs:opacityThreshold = 0.5
-      token outputs:surface
-    }
-    def Shader "OpacityUv" {
-      uniform token info:id = "UsdUVTexture"
-      asset inputs:file = @opacity.<UDIM>.ppm@
-      token inputs:sourceColorSpace = "raw"
-      float2 inputs:st.connect = </World/Cutout/St.outputs:result>
-      float outputs:r
-    }
-    def Shader "St" {
-      uniform token info:id = "UsdPrimvarReader_float2"
-      token inputs:varname = "st"
-      float2 outputs:result
-    }
-  }
-  def DistantLight "Sun" {
-    float inputs:intensity = 3
-    bool inputs:shadow:enable = 1
-    float3 xformOp:rotateXYZ = (-90, 0, 0)
-    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
-  }
-  def Camera "Cam" {
-    double3 xformOp:translate = (0, 9, 12)
-    float xformOp:rotateX = -35
-    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
-  }
-}
-USDA
+cp "$REPO_ROOT/tests/usda/tusdview-raster-shadow.usda" "$OUT/shadow.usda"
 
 # One-sided finite area-light variant. It uses the same blocker/floor probe but
 # places a RectLight above the scene; the single perspective shadow map should
 # retain the same bounded-band invariant as the distant-light baseline.
 python3 - "$OUT/shadow.usda" "$OUT/shadow-rect.usda" <<'PY'
-import pathlib, sys
+import pathlib, re, sys
 text = pathlib.Path(sys.argv[1]).read_text()
 text = text.replace('def DistantLight "Sun"', 'def RectLight "Sun"')
 text = text.replace('float inputs:intensity = 3',
                     'float inputs:intensity = 30')
-text = text.replace(
-    '    float3 xformOp:rotateXYZ = (-90, 0, 0)\n'
-    '    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]',
-    '    double3 xformOp:translate = (0, 6, 0)\n'
-    '    float3 xformOp:rotateXYZ = (-90, 0, 0)\n'
-    '    uniform token[] xformOpOrder = '
-    '["xformOp:translate", "xformOp:rotateXYZ"]')
+text = re.sub(
+    r'(?m)^(\s*)float3 xformOp:rotateXYZ = \(-90, 0, 0\)\n'
+    r'\1uniform token\[\] xformOpOrder = \["xformOp:rotateXYZ"\]$',
+    lambda match:
+        f'{match.group(1)}double3 xformOp:translate = (0, 6, 0)\n'
+        f'{match.group(1)}float3 xformOp:rotateXYZ = (-90, 0, 0)\n'
+        f'{match.group(1)}uniform token[] xformOpOrder = '
+        '["xformOp:translate", "xformOp:rotateXYZ"]',
+    text)
 pathlib.Path(sys.argv[2]).write_text(text)
 PY
 
@@ -125,16 +69,19 @@ PY
 # finite-light approximation: the blocker needs to cast a bounded shadow even
 # though the floor surrounds the light directionally.
 python3 - "$OUT/shadow.usda" "$OUT/shadow-point.usda" <<'PY'
-import pathlib, sys
+import pathlib, re, sys
 text = pathlib.Path(sys.argv[1]).read_text()
 text = text.replace('def DistantLight "Sun"', 'def SphereLight "Sun"')
 text = text.replace('float inputs:intensity = 3',
                     'float inputs:intensity = 120\n    float inputs:radius = 0')
-text = text.replace(
-    '    float3 xformOp:rotateXYZ = (-90, 0, 0)\n'
-    '    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]',
-    '    double3 xformOp:translate = (0, 6, 0)\n'
-    '    uniform token[] xformOpOrder = ["xformOp:translate"]')
+text = re.sub(
+    r'(?m)^(\s*)float3 xformOp:rotateXYZ = \(-90, 0, 0\)\n'
+    r'\1uniform token\[\] xformOpOrder = \["xformOp:rotateXYZ"\]$',
+    lambda match:
+        f'{match.group(1)}double3 xformOp:translate = (0, 6, 0)\n'
+        f'{match.group(1)}uniform token[] xformOpOrder = '
+        '["xformOp:translate"]',
+    text)
 pathlib.Path(sys.argv[2]).write_text(text)
 PY
 
@@ -156,48 +103,8 @@ for tile, value in ((1001, 0), (1002, 255)):
         b"P5\n4 4\n255\n" + bytes([value]) * 16)
 PY
 
-cat > "$OUT/shadow-instanced.usda" <<'USDA'
-#usda 1.0
-(defaultPrim = "World" upAxis = "Y")
-def Xform "World" {
-  def Mesh "Floor" {
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(-6,0,-6), (6,0,-6), (6,0,6), (-6,0,6)]
-    normal3f[] normals = [(0,1,0), (0,1,0), (0,1,0), (0,1,0)] (interpolation = "vertex")
-    color3f[] primvars:displayColor = [(0.9, 0.9, 0.9)]
-    uniform bool doubleSided = true
-    uniform token subdivisionScheme = "none"
-  }
-  def Scope "Prototypes" {
-    def Mesh "Blocker" {
-      int[] faceVertexCounts = [4]
-      int[] faceVertexIndices = [0, 1, 2, 3]
-      point3f[] points = [(-1.5,0,-1.5), (1.5,0,-1.5), (1.5,0,1.5), (-1.5,0,1.5)]
-      normal3f[] normals = [(0,1,0), (0,1,0), (0,1,0), (0,1,0)] (interpolation = "vertex")
-      color3f[] primvars:displayColor = [(0.2, 0.4, 0.9)]
-      uniform bool doubleSided = true
-      uniform token subdivisionScheme = "none"
-    }
-  }
-  def PointInstancer "Blocks" {
-    rel prototypes = [</World/Prototypes/Blocker>]
-    int[] protoIndices = [0]
-    point3f[] positions = [(0, 2.5, 0)]
-  }
-  def DistantLight "Sun" {
-    float inputs:intensity = 3
-    bool inputs:shadow:enable = 1
-    float3 xformOp:rotateXYZ = (-90, 0, 0)
-    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
-  }
-  def Camera "Cam" {
-    double3 xformOp:translate = (0, 9, 12)
-    float xformOp:rotateX = -35
-    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
-  }
-}
-USDA
+cp "$REPO_ROOT/tests/usda/tusdview-raster-shadow-instanced.usda" \
+  "$OUT/shadow-instanced.usda"
 
 # Look for a bounded dark band on the gray floor: lit / dark / lit across a row,
 # in any of the rows spanning the floor. Prints "<rows_with_band> <max_contrast>".
