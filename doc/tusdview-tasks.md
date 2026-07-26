@@ -24,6 +24,8 @@ Updated 2026-07-26 through `4fd04a430`.
   by the core change set and preserves the renderer-facing incremental ABI.
   Duplicate authored resource keys receive deterministic occurrence suffixes,
   and removal transactions are regression-tested alongside stable mesh upserts.
+  Empty render change sets now advance the transactional sink revision without
+  running the Stage-to-RenderScene converter or emitting resource updates.
 - [x] Make tusdview retain the published immutable stage while its shared
   session recomposes on the loader thread, preventing UI, camera, and animation
   reads from observing an invalidated `GetStage()` reference.

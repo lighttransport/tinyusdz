@@ -5038,6 +5038,22 @@ void TestIncrementalRenderSession() {
   assert(sink.removes >= 1);
   assert(removed.remove_count == sink.removes);
   assert(render_session.revision() == 3);
+
+  StageSnapshot no_op_snapshot;
+  no_op_snapshot.revision = 4;
+  no_op_snapshot.stage = third_snapshot.stage;
+  StageChangeSet no_op;
+  no_op.base_revision = 3;
+  no_op.new_revision = 4;
+  RenderUpdateResult no_op_update =
+      render_session.Apply(no_op_snapshot, no_op, &sink);
+  assert(no_op_update);
+  assert(!sink.full_resync);
+  assert(no_op_update.upsert_count == 0);
+  assert(no_op_update.remove_count == 0);
+  assert(sink.mesh_upserts == 0);
+  assert(sink.removes == 0);
+  assert(render_session.revision() == 4);
   std::cout << "  incremental RenderSession: PASSED\n";
 }
 

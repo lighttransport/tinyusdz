@@ -151,6 +151,23 @@ struct RenderSession::Impl {
       changes.full_resync = true;
     }
 
+    // A transaction may advance the immutable Stage revision without changing
+    // any render-affecting data (for example an edit batch that resolves to the
+    // already-authored value). Preserve the sink's revision protocol without
+    // paying for a complete Stage -> RenderScene conversion.
+    if (revision != 0 && changes.empty()) {
+      if (!sink->BeginUpdate(revision, snapshot.revision, false) ||
+          !sink->UpdateCatalog(scene) || !sink->EndUpdate()) {
+        out.error = "RenderSession: sink rejected no-op update";
+        sink->AbortUpdate();
+        return out;
+      }
+      revision = snapshot.revision;
+      out.revision = revision;
+      out.success = true;
+      return out;
+    }
+
     ConvertResult converted = converter.Convert(*snapshot.stage);
     out.warnings = converted.warnings;
     if (!converted.success) {
