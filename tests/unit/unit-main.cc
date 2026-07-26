@@ -29,6 +29,7 @@
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
 #include "unit-png-stream.h"
+#include "unit-ptx.h"
 #include "unit-imageproc.h"
 #include "unit-tydra.h"
 #include "unit-tydra-subdivision.h"
@@ -89,6 +90,7 @@
 
 
 TEST_LIST = {
+  { "ptx_reader_rejects_invalid_input_test", ptx_reader_rejects_invalid_input_test },
   { "ascii_parse_int64_valid_test", ascii_parse_int64_valid_test },
   { "ascii_parse_int64_excessive_digits_test", ascii_parse_int64_excessive_digits_test },
   { "ascii_parse_uint64_valid_test", ascii_parse_uint64_valid_test },
