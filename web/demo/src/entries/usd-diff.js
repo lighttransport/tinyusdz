@@ -349,10 +349,11 @@ window.addEventListener('resize', onResize);
 // ── Main ──
 
 init();
-ensureLoader();
-// Auto-load initial pair
-Promise.all([
-  loadScene('a', SAMPLES[0].url, SAMPLES[0].label),
-  loadScene('b', SAMPLES[1].url, SAMPLES[1].label),
-]).catch((e) => console.error(e));
+(async () => {
+  await ensureLoader();
+  await Promise.all([
+    loadScene('a', SAMPLES[0].url, SAMPLES[0].label),
+    loadScene('b', SAMPLES[1].url, SAMPLES[1].label),
+  ]);
+})().catch((e) => console.error(e));
 requestAnimationFrame(anim);

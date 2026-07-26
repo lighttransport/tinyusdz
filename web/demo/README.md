@@ -1,110 +1,197 @@
-# TinyUSDZ web demos
+# TinyUSDZ Web Demos
+
+22 interactive browser demos for USD loading, MaterialX, skinning, animation,
+physics simulation, composition, export, and more.
+
+## Quick Start
+
+```bash
+# Production path (no build tools needed)
+npm install
+npx vite build
+npx vite preview          # or serve dist/ with any static server
+
+# Development path (requires Emscripten + CMake)
+npm install
+npm run dev               # builds local WASM + starts Vite dev server
+```
 
 ## Requirements
 
-* Node.js/npm or Bun
-* Vite (installed by the package manager)
-* CMake, Ninja, and Emscripten (`emcmake`) for local development
+| Mode | Tools |
+|------|-------|
+| **Production** (npm package) | Node.js 18+, npm |
+| **Development** (local WASM) | Node.js 18+, npm, CMake, Ninja, Emscripten (`emcmake`) |
 
-## Setup
+## Development Path
 
-`npm install` or `bun install` to install tinyusdz npm package to `node_modules` folder.
-
-## Run locally with the next backend
+The dev server (`npm run dev`) builds TinyUSDZ WASM from source using the
+local Emscripten toolchain, then serves the demo from the local source tree.
 
 ```bash
+# One-time: verify Emscripten + CMake
+emcmake --version && cmake --version && ninja --version
+
+# Install JS dependencies
 npm install
+
+# Start dev server (incrementally builds WASM, then starts Vite)
 npm run dev
+
+# Or run the prepare step manually if you already built WASM
+npm run prepare:local-tinyusdz
+vite --mode development
 ```
 
-`npm run dev` incrementally builds the local legacy and next WASM modules and
-serves JavaScript modules from `../js/src/tinyusdz`. The default backend is
-`next`; use `?backend=legacy` or the Backend control to compare with the legacy
-path. Generated builds live in `../build_ninja` and
-`../build_next_ninja`.
+### How it works
 
-The production `npm run build` path intentionally continues to use the pinned
-`tinyusdz` npm dependency and the legacy backend until a next-capable package is
-selected for GitHub Pages.
+1. `prepare-local-tinyusdz.sh` configures two CMake builds:
+   - `web/build_ninja/` — legacy WASM (`tinyusdz.wasm` + `tinyusdz.js`)
+   - `web/build_next_ninja/` — next WASM (`tinyusdz_next.wasm` + `tinyusdz_next.js`)
+2. Build artifacts are copied to `web/js/src/tinyusdz/`
+3. Vite serves JS modules from `web/js/src/tinyusdz/` via the `tinyusdz` alias
+4. Hot-reload is available for JS changes; WASM changes require re-running
+   `npm run prepare:local-tinyusdz`
 
-## Production build with the TinyUSDZ npm package
+### Bootstrap scripts
 
-For some reason, vite cannot find tinyusdz.wasm file for caching(optimzieDeps).
-Please `exclude` tinyusdz package to `vite.config.ts`(or `vite.config.js`) file as a work around.
+Pre-configured CMake bootstrap scripts in `web/`:
 
-```ts
-import { defineConfig } from 'vite';
+| Script | Description |
+|--------|-------------|
+| `bootstrap-linux-ninja.sh` | Legacy WASM only (fastest) |
+| `bootstrap-linux-next-only.sh` | Next WASM only |
+| `bootstrap-linux-demodev.sh` | Both legacy + next, dev-optimized |
+| `bootstrap-linux-release.sh` | Release build (optimized) |
+| `bootstrap-linux-debug.sh` | Debug build with assertions |
+| `bootstrap-linux-wasm64.sh` | 64-bit WASM build |
+| `bootstrap-macos-wasm64.sh` | macOS 64-bit WASM |
 
-// https://vitejs.dev/config/
-export default defineConfig({
-  server: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
-  },
-  optimizeDeps: {
-    exclude: ['tinyusdz'],
-  },
-});
+```bash
+# Example: full dev build with both backends
+bash web/bootstrap-linux-demodev.sh
 ```
 
-## Deploy
+## Production Path
 
+The production build uses the pre-built `tinyusdz` npm package (no Emscripten
+toolchain needed).
+
+```bash
+# Install everything
+npm install
+
+# Build to dist/
+npm run build
+
+# Preview the build locally
+npm run preview
+
+# Deploy: serve dist/ with any static file server
 ```
-$ bun run build
-(or vite build)
+
+### npm dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `tinyusdz` | Pre-built WASM + JS loader (production) |
+| `three` | 3D rendering (MeshPhysicalMaterial, etc.) |
+| `lil-gui` | GUI controls (sliders, color pickers) |
+| `@lighttransport/mujoco-wasm` | MuJoCo physics WASM |
+| `fzstd` | Zstd decompression for compressed WASM |
+
+### Production build notes
+
+- WASM files are emitted to `dist/assets/` with content hashes
+- The `tinyusdz` package is excluded from Vite's dependency pre-bundling
+  (`optimizeDeps.exclude`) to ensure correct WASM path resolution
+- COOP/COEP headers (`Cross-Origin-Opener-Policy: same-origin`,
+  `Cross-Origin-Embedder-Policy: require-corp`) are required for
+  `SharedArrayBuffer` support (used by WASM threading)
+- `?backend=next` selects the next rendering backend (if available in build)
+
+## QA Testing
+
+```bash
+# Automated smoke test of all 22 demo pages
+node scripts/test-all-demos.mjs
+
+# With xvfb (headless server)
+xvfb-run -a node scripts/test-all-demos.mjs
+
+# Custom Chrome path or timeout
+CHROME_PATH=/opt/chrome/chrome TEST_TIMEOUT=60000 \
+  node scripts/test-all-demos.mjs
 ```
 
-Content will be installed to ../dist
+The test script:
+- Starts a Vite dev server
+- Opens each demo page in headless Chrome
+- Captures console errors and warnings
+- Takes a screenshot for visual inspection
+- Saves results to `dist/qa-report.json`
+- Exits with code 1 if any page fails
 
-## Demo asset info
+## Demo Asset Info
 
-UsdCookie.usdz : Each asset has a license declared in the readme, typically CC0 or something highly permissive
+UsdCookie.usdz : Each asset has a license declared in the readme, typically
+CC0 or something highly permissive.
 
-image is resized to 1024x1024.
+Images are resized to 1024×1024.
 
 ## USD Assets Browser
 
-The interactive USD Assets Browser (`usd-assets.html`) lists 263 USD assets from
-the [usd-wg/assets](https://github.com/usd-wg/assets) corpus, fetched at runtime
-from `raw.githubusercontent.com`. Assets are grouped into 17 categories with
-tag-based filtering.
+The interactive USD Assets Browser (`usd-assets.html`) lists 263 USD assets
+from the [usd-wg/assets](https://github.com/usd-wg/assets) corpus, fetched at
+runtime from `raw.githubusercontent.com`. Assets are grouped into 17 categories
+with tag-based filtering.
 
 ### Asset manifest
 
-The asset catalog is defined in `src/usd-assets-manifest.js`, auto-generated by
-`scripts/generate-asset-manifest.js`.
-
-To regenerate from a local checkout of usd-wg/assets:
+The asset catalog in `src/usd-assets-manifest.js` is auto-generated by
+`scripts/generate-asset-manifest.js`:
 
 ```bash
 USD_ASSETS_DIR=/path/to/usd-wg/assets node scripts/generate-asset-manifest.js
 ```
 
-The generator scans the directory tree for `.usd`/`.usda`/`.usdc`/`.usdz` files,
-classifies them by path prefix and filename patterns, and writes the manifest JS
-module. See the script for category/tag rule definitions.
-
 ### Batch preview generation
 
-A Puppeteer-based batch runner in `../batch-runner/generate-previews.js` renders
-a preview image for every asset in the manifest:
+A Puppeteer-based batch runner in `../batch-runner/generate-previews.js`
+renders preview images for all assets:
 
 ```bash
 cd ../batch-runner
-npm install                    # first time only
+npm install
 xvfb-run -a node generate-previews.js --output ./previews --timeout 180000
 ```
 
 Camera positions and clear colors are controlled by
 `../batch-runner/usd-assets-settings.json`. Resolution defaults to 1280×720.
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--assets` | all | Comma-separated asset IDs to render |
-| `--output` | `./previews` | Output directory |
-| `--skip-existing` | false | Skip assets with existing preview |
-| `--settings` | `usd-assets-settings.json` | Camera/clear overrides |
-| `--swiftshader` | false | Software rendering (no GPU) |
-| `--gpu` | false | Hardware GPU via ANGLE/Vulkan |
+## Demo List
+
+| # | Demo | Key Feature |
+|---|------|-------------|
+| 1 | MaterialX Node Graph | OpenPBR node graph inspector |
+| 2 | MaterialX MeshPhysicalMaterial | USD → Three.js material conversion |
+| 3 | USDLux Lighting | UsdLight / DomeLight rendering |
+| 4 | Skinning | Skeletal animation binding |
+| 5 | Node Xform + SkelAnimation | Combined transform + skeletal animation |
+| 6 | USD Physics | Physics scene viewer |
+| 7 | Asset Resolver Textures | HTTP texture resolution |
+| 8 | USD Composition | Sublayer/reference composition |
+| 9 | USD Export | USDA/USDC/USDZ export |
+| 10 | USD Assets Browser | 263-asset catalog browser |
+| 11 | USD Physics + MuJoCo | MuJoCo WASM physics simulation |
+| 12 | Material Editor | Live PBR parameter editing |
+| 13 | Animation Timeline | Timeline scrubber + speed control |
+| 14 | USD Inspector | Prim hierarchy + metadata tree |
+| 15 | Composition Layer Viz | Composition arc stack diagram |
+| 16 | Streaming Loading Viz | WASM heap + HTTP fetch waterfall |
+| 17 | Viewer Toolkit | Shading modes + exposure + toggles |
+| 18 | Animation Blending | Per-clip weight crossfade |
+| 19 | Procedural USD Builder | JSON → USD scene builder |
+| 20 | USDZ Packager | Export with bundle visualization |
+| 21 | USD Diff | Side-by-side comparison |
+| 22 | Backend Comparison | Legacy vs next rendering comparison |
