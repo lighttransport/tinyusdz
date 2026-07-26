@@ -30,6 +30,9 @@ cmake --build build_ninja -j16 --target tusdview
   configure log. Force a GL-only build with `-DTUSDVIEW_WITH_VULKAN=OFF`.
   (Regenerate the embedded SPIR-V with `vk/shaders/build-shaders.sh` after a
   shader change — that script is the only thing that needs `glslangValidator`.)
+  Common PNG/JPEG/BMP/TGA decoding uses the vendored fuzz-tested nanoimage
+  backend by default (`-DTINYUSDZ_WITH_NANOIMAGE=ON`); TinyEXR v3 remains the
+  default OpenEXR backend and preserves fp16/HDR data for the texture pipeline.
   The raster descriptor ABI uses four bound sets (material images, per-mesh
   deformation data, frame data, and material parameters), matching Vulkan's
   guaranteed `maxBoundDescriptorSets` minimum. This includes software devices
