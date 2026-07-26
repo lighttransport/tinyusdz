@@ -1269,10 +1269,6 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
                                     int base_depth) {
   std::string s;
   s += "{\n";
-  std::string inner;
-  for (int i = 0; i <= base_depth; ++i) inner += opts.indent;
-  std::string closing;
-  for (int i = 0; i < base_depth; ++i) closing += opts.indent;
 
   // Keys that aren't valid identifiers (spaces, punctuation, leading digit,
   // keyword-free requirement does not apply) must be quoted or the output is
@@ -1292,27 +1288,49 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
     return ident(k) ? k : EscapeString(k);
   };
 
-  for (const auto& kv : d.entries) {
-    const std::string& key = kv.first;
-    const Value& val = kv.second;
-    s += inner;
-    if (val.is_dictionary()) {
-      s += "dictionary ";
-      s += key_text(key);
-      s += " = ";
-      s += PrintDictionaryIndented(*val.as_dictionary(), opts, base_depth + 1);
-      s += "\n";
-    } else {
+  struct Frame {
+    const Dict* dict{nullptr};
+    int depth{0};
+    size_t next_entry{0};
+  };
+  std::vector<Frame> stack;
+  stack.push_back(Frame{&d, base_depth, 0});
+
+  while (!stack.empty()) {
+    Frame& frame = stack.back();
+    if (frame.next_entry < frame.dict->entries.size()) {
+      const auto& kv = frame.dict->entries[frame.next_entry++];
+      const std::string& key = kv.first;
+      const Value& val = kv.second;
+      for (int i = 0; i <= frame.depth; ++i) s += opts.indent;
+      if (val.is_dictionary()) {
+        s += "dictionary ";
+        s += key_text(key);
+        s += " = ";
+        const Dict* nested = val.as_dictionary();
+        if (!nested) {
+          s += "{}\n";
+          continue;
+        }
+        s += "{\n";
+        stack.push_back(Frame{nested, frame.depth + 1, 0});
+        continue;
+      }
+
       s += PrintTypeName(val.type_id(), val.is_array());
       s += " ";
       s += key_text(key);
       s += " = ";
       PrintValueInto(s, val, opts);
       s += "\n";
+      continue;
     }
+
+    for (int i = 0; i < frame.depth; ++i) s += opts.indent;
+    s += "}";
+    stack.pop_back();
+    if (!stack.empty()) s += "\n";
   }
-  s += closing;
-  s += "}";
   return s;
 }
 
