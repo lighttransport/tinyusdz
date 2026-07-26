@@ -112,8 +112,13 @@ struct RenderSession::Impl {
                   const ::tinyusdz::next::StageChangeSet& changes,
                   KeyFn key_fn, EmitFn emit,
                   IdMap* next_keys, size_t* upserts) {
+    std::unordered_map<std::string, size_t> occurrences;
     for (size_t i = 0; i < values.size(); ++i) {
-      const std::string key = key_fn(values[i], i);
+      std::string key = key_fn(values[i], i);
+      const size_t occurrence = occurrences[key]++;
+      if (occurrence != 0) {
+        key += "#" + std::to_string(occurrence);
+      }
       const RenderId id = IdFor(kind, key, next_keys);
       if (IsAffected(kind, key, changes)) {
         if (!emit(id, values[i])) return false;

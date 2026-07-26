@@ -4940,10 +4940,12 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
     full_resync = full;
     mesh_upserts = 0;
     removes = 0;
+    mesh_removes = 0;
     return true;
   }
-  bool Remove(const RemovedRenderResource&) override {
+  bool Remove(const RemovedRenderResource& removed) override {
     ++removes;
+    if (removed.kind == RenderResourceKind::Mesh) ++mesh_removes;
     return true;
   }
   bool UpsertMesh(RenderId id, const RenderMesh& mesh) override {
@@ -4959,6 +4961,7 @@ class RecordingSceneUpdateSink final : public SceneUpdateSink {
   bool full_resync = false;
   size_t mesh_upserts = 0;
   size_t removes = 0;
+  size_t mesh_removes = 0;
   float last_mesh_x = 0.0f;
   std::map<std::string, RenderId> mesh_ids;
 };
@@ -5013,6 +5016,28 @@ void TestIncrementalRenderSession() {
   assert(std::fabs(sink.last_mesh_x - 2.0f) < 1.0e-6f);
   assert(sink.removes == 0);
   assert(render_session.revision() == second_snapshot.revision);
+
+  LoadResult third = LoadUSDAFromString("#usda 1.0\n");
+  assert(third.success);
+  StageSnapshot third_snapshot;
+  third_snapshot.revision = 3;
+  third_snapshot.stage.reset(new Stage(std::move(third.stage)));
+  StageChangeSet removal;
+  removal.base_revision = 2;
+  removal.new_revision = 3;
+  PrimChange removed_mesh;
+  removed_mesh.path = Path("/M");
+  removed_mesh.flags = StageChangeFlag::Resync;
+  removal.prims.push_back(std::move(removed_mesh));
+  RenderUpdateResult removed =
+      render_session.Apply(third_snapshot, removal, &sink);
+  assert(removed);
+  assert(!sink.full_resync);
+  assert(sink.mesh_upserts == 0);
+  assert(sink.mesh_removes == 1);
+  assert(sink.removes >= 1);
+  assert(removed.remove_count == sink.removes);
+  assert(render_session.revision() == 3);
   std::cout << "  incremental RenderSession: PASSED\n";
 }
 

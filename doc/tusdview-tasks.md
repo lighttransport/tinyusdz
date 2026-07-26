@@ -22,6 +22,8 @@ Updated 2026-07-26 through `4fd04a430`.
   and transactional typed remove/upsert callbacks. The first implementation
   conservatively reconverts the stage internally, but filters emitted updates
   by the core change set and preserves the renderer-facing incremental ABI.
+  Duplicate authored resource keys receive deterministic occurrence suffixes,
+  and removal transactions are regression-tested alongside stable mesh upserts.
 - [x] Make tusdview retain the published immutable stage while its shared
   session recomposes on the loader thread, preventing UI, camera, and animation
   reads from observing an invalidated `GetStage()` reference.
