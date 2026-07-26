@@ -812,22 +812,74 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
 // contributes only what the inline data lacks.
 void WriteVariantSets(StreamWriter& os,
                       const std::vector<VariantSetData>& sets,
-                      const Layer& layer, const std::string& owner_path,
-                      int depth, const USDAWriteOptions& opts,
+                      const Layer& layer, const std::string& initial_owner_path,
+                      int initial_depth, const USDAWriteOptions& opts,
                       SegmentSink* segsink) {
-  for (const VariantSetData& vs : sets) {
-    // A declaration-only variant set (`prepend variantSets = "v"` with no local
-    // content / options) is emitted only as the `variantSets` declaration, not
-    // as an empty `variantSet "v" = {}` block — matching pxr, which never emits
-    // the empty block.
-    if (vs.variants.empty()) continue;
-    os << "\n";
-    WriteIndent(os, depth, opts.indent);
-    os << "variantSet " << EscapeString(vs.name) << " = {\n";
-    for (const VariantData& var : vs.variants) {
-      const std::string holder_path =
-          owner_path + "/{" + vs.name + "=" + var.name + "}";
-      const PrimSpec* holder = layer.prim_at_path(holder_path);
+  enum class VariantPhase {
+    BeginSet,
+    BeginVariant,
+    AfterInlineNested,
+    AfterHolderNested,
+  };
+  struct VariantFrame {
+    const std::vector<VariantSetData>* sets;
+    size_t owner_path_size;
+    int depth;
+    size_t set_index{0};
+    size_t variant_index{0};
+    VariantPhase phase{VariantPhase::BeginSet};
+    const PrimSpec* holder{nullptr};
+  };
+
+  // Nested variant sets are recursively owned data, but writing them does not
+  // need to consume one C++ stack frame per level. The explicit continuation
+  // phases preserve the exact inline/holder output order of the recursive
+  // implementation. Keep one mutable owner path rather than copying every
+  // ancestor path into every frame (which would retain O(depth^2) bytes).
+  std::string owner_path = initial_owner_path;
+  std::vector<VariantFrame> stack;
+  stack.push_back(VariantFrame{&sets, owner_path.size(), initial_depth});
+  while (!stack.empty()) {
+    VariantFrame& frame = stack.back();
+    if (frame.phase == VariantPhase::BeginSet) {
+      while (frame.set_index < frame.sets->size() &&
+             (*frame.sets)[frame.set_index].variants.empty()) {
+        ++frame.set_index;
+      }
+      if (frame.set_index >= frame.sets->size()) {
+        stack.pop_back();
+        continue;
+      }
+
+      const VariantSetData& vs = (*frame.sets)[frame.set_index];
+      // A declaration-only variant set (`prepend variantSets = "v"` with no
+      // local content / options) is emitted only as the `variantSets`
+      // declaration, not as an empty `variantSet "v" = {}` block — matching
+      // pxr, which never emits the empty block.
+      os << "\n";
+      WriteIndent(os, frame.depth, opts.indent);
+      os << "variantSet " << EscapeString(vs.name) << " = {\n";
+      frame.variant_index = 0;
+      frame.phase = VariantPhase::BeginVariant;
+      continue;
+    }
+
+    const VariantSetData& vs = (*frame.sets)[frame.set_index];
+    if (frame.phase == VariantPhase::BeginVariant) {
+      if (frame.variant_index >= vs.variants.size()) {
+        WriteIndent(os, frame.depth, opts.indent);
+        os << "}\n";
+        ++frame.set_index;
+        frame.phase = VariantPhase::BeginSet;
+        continue;
+      }
+
+      const VariantData& var = vs.variants[frame.variant_index];
+      const int depth = frame.depth;
+      owner_path.resize(frame.owner_path_size);
+      owner_path += "/{" + vs.name + "=" + var.name + "}";
+      frame.holder = layer.prim_at_path(owner_path);
+      const PrimSpec* holder = frame.holder;
 
       WriteIndent(os, depth + 1, opts.indent);
       os << EscapeString(var.name);
@@ -981,11 +1033,21 @@ void WriteVariantSets(StreamWriter& os,
         os << "\n";
       }
 
-      // Nested variant sets authored on this option.
+      // Nested inline sets run before content/holder contributions. Save the
+      // continuation before pushing because vector growth invalidates `frame`.
+      frame.phase = VariantPhase::AfterInlineNested;
       if (!var.variantSets.empty()) {
-        WriteVariantSets(os, var.variantSets, layer, holder_path, depth + 2,
-                         opts, segsink);
+        stack.push_back(
+            VariantFrame{&var.variantSets, owner_path.size(), depth + 2});
       }
+      continue;
+    }
+
+    const VariantData& var = vs.variants[frame.variant_index];
+    const int depth = frame.depth;
+    const PrimSpec* holder = frame.holder;
+
+    if (frame.phase == VariantPhase::AfterInlineNested) {
 
       // Variant CHILD prims + holder extras. Inline content sub-layer first
       // (USDA representation), then holder contributions not already covered
@@ -1041,11 +1103,21 @@ void WriteVariantSets(StreamWriter& os,
           WriteRelationship(os, rel_name, *targets, *holder,
                             htable.find(rel_name), depth + 2, opts);
         }
-        // Holder-side nested sets (crate representation).
+        // Holder-side nested sets (crate representation) run after the
+        // holder's own properties/relationships and before ordinary children.
+        frame.phase = VariantPhase::AfterHolderNested;
         if (var.variantSets.empty() && !holder->meta().variantSets().empty()) {
-          WriteVariantSets(os, holder->meta().variantSets(), layer,
-                           holder_path, depth + 2, opts, segsink);
+          stack.push_back(VariantFrame{&holder->meta().variantSets(),
+                                       owner_path.size(), depth + 2});
+          continue;
         }
+      }
+      frame.phase = VariantPhase::AfterHolderNested;
+      continue;
+    }
+
+    if (frame.phase == VariantPhase::AfterHolderNested) {
+      if (holder) {
         for (uint32_t ci : holder->child_indices()) {
           const PrimSpec* child = layer.prim(ci);
           if (!child) continue;
@@ -1059,9 +1131,12 @@ void WriteVariantSets(StreamWriter& os,
       }
       WriteIndent(os, depth + 1, opts.indent);
       os << "}\n";
+      owner_path.resize(frame.owner_path_size);
+      frame.holder = nullptr;
+      ++frame.variant_index;
+      frame.phase = VariantPhase::BeginVariant;
+      continue;
     }
-    WriteIndent(os, depth, opts.indent);
-    os << "}\n";
   }
 }
 

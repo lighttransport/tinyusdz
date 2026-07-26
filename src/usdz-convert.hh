@@ -117,8 +117,9 @@ struct UsdzConvertOptions {
 
   // Best-effort cap for concurrent texture decode/resize/encode working memory.
   // 0 preserves the historical thread-count behavior. When non-zero, the
-  // worker count is reduced using a conservative per-worker estimate; a
-  // single texture may still exceed the budget on its own.
+  // worker count is reduced using a conservative per-worker estimate and the
+  // producer does not prefetch beyond that worker count. A single texture may
+  // still exceed the budget on its own.
   size_t texture_memory_budget_bytes{0};
 
   // Optional material/shader optimization. Disabled by default to preserve
