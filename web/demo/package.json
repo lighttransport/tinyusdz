@@ -25,7 +25,7 @@
     "three": ">=0.179.0",
     "tinyusdz": "0.9.9-rc1",
     "vite-plugin-compression2": "^2.2.0",
-    "vite-plugin-static-copy": "^3.1.0"
+    "vite-plugin-compression2": "^2.2.0"
   },
   "0module": "index.ts"
 }

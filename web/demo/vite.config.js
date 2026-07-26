@@ -63,8 +63,8 @@ export default defineConfig(({ command, mode }) => {
             usd_diff: path.resolve(__dirname, 'usd-diff.html'),
           },
         },
-        minify: false,
-        terserOptions: false, // Disable terser completely
+        minify: true,
+        cssMinify: true,
     },
     optimizeDeps: {
         exclude: ['tinyusdz', '@lighttransport/mujoco-wasm'],
