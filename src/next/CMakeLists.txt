@@ -147,6 +147,7 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Stage (composed scene)
     stage/stage.hh
+    stage/change-set.hh
 
     # ASCII parser
     parser/lexer.hh
@@ -528,6 +529,7 @@ set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-session.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/texture-cache.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.cc
@@ -540,6 +542,7 @@ set(TYDRA_NEXT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-session.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/urdf-payload.hh

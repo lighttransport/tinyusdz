@@ -1105,6 +1105,13 @@ def Mesh "M" {
   StageSession session;
   assert(session.OpenFile(path));
   assert(session.IsComposed());
+  StageSnapshot initial_snapshot = session.GetSnapshot();
+  assert(initial_snapshot);
+  assert(initial_snapshot.revision == 1);
+  const Value* initial_level =
+      initial_snapshot->GetPrimAtPath("/A").GetPropertyValue("level");
+  assert(initial_level && initial_level->as_int() &&
+         *initial_level->as_int() == 1);
   session.ReleaseCompositionCache();
   assert(session.IsComposed());
   assert(session.GetStage().GetPrimAtPath("/A").IsValid());
@@ -1116,7 +1123,32 @@ def Mesh "M" {
   assert(compact_mesh.HasProperty("points"));
   assert(compact_mesh.GetPropertyValue("points") == nullptr);
   assert(compact_mesh.GetPropertyValue("labels") != nullptr);
-  assert(session.SetVariantSelection(Path("/A"), "model", "high"));
+  // Releasing geometry is copy-on-write: a previously published immutable
+  // snapshot retains its arrays.
+  const Value* snapshot_points =
+      initial_snapshot->GetPrimAtPath("/M").GetPropertyValue("points");
+  assert(snapshot_points && snapshot_points->array_size() == 3);
+
+  StageEditResult edit =
+      session.SetVariantSelection(Path("/A"), "model", "high");
+  assert(edit);
+  assert(edit.snapshot.revision == 2);
+  assert(edit.changes.base_revision == 1);
+  assert(edit.changes.new_revision == 2);
+  bool found_a_change = false;
+  for (const PrimChange& change : edit.changes.prims) {
+    if (change.path == Path("/A")) {
+      found_a_change = true;
+      assert(std::find(change.properties.begin(), change.properties.end(),
+                       "level") != change.properties.end());
+    }
+  }
+  assert(found_a_change);
+  // The old snapshot is still a coherent view of revision 1.
+  initial_level =
+      initial_snapshot->GetPrimAtPath("/A").GetPropertyValue("level");
+  assert(initial_level && initial_level->as_int() &&
+         *initial_level->as_int() == 1);
   const Value* a = session.GetStage().GetPrimAtPath("/A").GetPropertyValue("level");
   const Value* b = session.GetStage().GetPrimAtPath("/B").GetPropertyValue("level");
   assert(a && a->as_int() && *a->as_int() == 2);
@@ -1170,6 +1202,18 @@ void test_stage_session_payloads_and_cancel() {
   assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
   loaded = session.GetStage().GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
   assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
+  StageSnapshot before_reload = session.GetSnapshot();
+  {
+    std::ofstream ofs(payload_path);
+    ofs << "#usda 1.0\ndef Xform \"Payload\" { int loadedValue = 8 }\n";
+  }
+  StageEditResult reload = session.ReloadLayer(payload_path);
+  assert(reload);
+  loaded = session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 8);
+  const Value* old_loaded =
+      before_reload->GetPrimAtPath("/P").GetPropertyValue("loadedValue");
+  assert(old_loaded && old_loaded->as_int() && *old_loaded->as_int() == 7);
   assert(session.GetMemoryStats().prim_index_count == 0);
   assert(session.UnloadPayload(Path("/P")));
   assert(session.GetStage().GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
@@ -1178,7 +1222,7 @@ void test_stage_session_payloads_and_cancel() {
   assert(!session.IsOpen());
   assert(!session.IsComposed());
   loaded = taken.GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
-  assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 8);
 
   StageSessionOptions cancelled_options;
   cancelled_options.progress_callback =

@@ -879,6 +879,10 @@ void Cache::ClearCompositionIssues() {
 
 void Cache::Invalidate(const Path &prim_path) { impl_->Invalidate(prim_path); }
 void Cache::InvalidateLayer(const std::string &id) { impl_->InvalidateLayer(id); }
+bool Cache::ReloadLayer(const std::string &id, std::string *warn,
+                        std::string *err) {
+  return impl_->ReloadLayer(id, warn, err);
+}
 
 bool Cache::HasComputedPrimIndex(const Path &prim_path) const {
   NEXT_PCP_READ_LOCK(impl_->api_mu_);

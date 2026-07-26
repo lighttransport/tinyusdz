@@ -105,6 +105,51 @@
     reg_->Drop(layer_id);
   }
 
+  bool ReloadLayer(const std::string &layer_id, std::string *warn,
+                   std::string *err) {
+    NEXT_PCP_LOCK(api_mu_);
+
+    LayerLoadOptions load_opts;
+    load_opts.max_memory = options.max_layer_memory;
+    load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
+    load_opts.usdc_use_mmap = options.usdc_use_mmap;
+    load_opts.usda_parse_options = options.usda_parse_options;
+    load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
+
+    reg_->Drop(layer_id);
+    std::shared_ptr<Layer> replacement = reg_->GetOrLoad(
+        *resolver, layer_id, std::string(), warn, err, load_opts);
+    if (!replacement) return false;
+
+    if (layer_id == root_identifier) root_layer = replacement;
+
+    // PrimIndex and Src objects retain layer-stack indices and pointers into
+    // layer specs. Rebuild the stack table as a unit so a reload also observes
+    // edits to subLayerPaths, offsets, relocates, and expression variables.
+    index_cache.clear();
+    sources_cache.clear();
+    sources_in_progress.clear();
+    reloc_content_in_progress.clear();
+    site_to_indices.clear();
+    index_to_sites.clear();
+    composed_cache_.clear();
+    composed_children_.clear();
+    spec_cache_by_stack_.clear();
+    arc_target_memo_.clear();
+    deferred_payload_prims.clear();
+    prototype_by_key.clear();
+    instance_key_order.clear();
+    prototype_of.clear();
+    instances_by_prototype.clear();
+    issues_.clear();
+    layer_stacks.clear();
+    stack_by_id.clear();
+
+    const uint32_t root_stack =
+        InternLayerStack(root_layer, root_identifier, warn, err);
+    return root_stack != UINT32_MAX;
+  }
+
   // --- payloads -----------------------------------------------------------
 
   bool LoadPayload(const Path &prim_path, bool with_descendants,

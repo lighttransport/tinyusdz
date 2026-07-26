@@ -11,6 +11,7 @@ set(TYDRA_NEXT_SOURCES
     scene-access.cc
     render-extract.cc
     render-converter.cc
+    render-session.cc
     texture-cache.cc
     urdf-to-usd.cc
     ../../external/mikktspace/mikktspace.c
@@ -22,6 +23,7 @@ set(TYDRA_NEXT_HEADERS
     scene-access.hh
     render-extract.hh
     render-converter.hh
+    render-session.hh
     resource-budget.hh
     texture-cache.hh
     urdf-to-usd.hh

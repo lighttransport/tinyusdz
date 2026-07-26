@@ -230,6 +230,11 @@ class Cache {
   /// layer from the registry.
   void InvalidateLayer(const std::string &resolved_layer_id);
 
+  /// Re-read a resolved layer and invalidate all composition state that may
+  /// retain opinions or pointers from the previous layer object.
+  bool ReloadLayer(const std::string &resolved_layer_id, std::string *warn,
+                   std::string *err);
+
   bool HasComputedPrimIndex(const Path &prim_path) const;
   size_t ComputedPrimIndexCount() const;
   const LayerRegistry &layer_registry() const;

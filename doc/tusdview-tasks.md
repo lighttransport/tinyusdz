@@ -12,6 +12,23 @@ canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
 Updated 2026-07-26 through `4fd04a430`.
 
+### Core-next / Tydra-next live-edit foundation
+
+- [x] Add immutable, revisioned `StageSnapshot` publication and typed
+  `StageChangeSet` results for payload, variant, rebuild, and dependency-layer
+  reload edits. Failed edits retain the previously published stage; old
+  snapshots remain readable and geometry compaction detaches copy-on-write.
+- [x] Add a persistent `tydra::next::RenderSession` with stable resource IDs
+  and transactional typed remove/upsert callbacks. The first implementation
+  conservatively reconverts the stage internally, but filters emitted updates
+  by the core change set and preserves the renderer-facing incremental ABI.
+- [x] Make tusdview retain the published immutable stage while its shared
+  session recomposes on the loader thread, preventing UI, camera, and animation
+  reads from observing an invalidated `GetStage()` reference.
+- [ ] Replace tusdview's post-edit full DrawScene rebuild with a DrawScene/GPU
+  `SceneUpdateSink`; retain the existing streaming converter for initial loads
+  and very large geometry.
+
 ---
 
 ## Active USD rendering-fidelity roadmap

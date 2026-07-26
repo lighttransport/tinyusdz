@@ -89,14 +89,27 @@ options.progress_callback = [](const tinyusdz::next::ProgressEvent& event) {
 };
 
 if (!session.OpenFile("scene.usdc", options)) return 1;
-session.SetVariantSelection("/World/Model", "lod", "high");
-session.LoadPayload("/World/Model");
-const tinyusdz::next::Stage& stage = session.GetStage();
+tinyusdz::next::StageSnapshot old = session.GetSnapshot();
+tinyusdz::next::StageEditResult edit =
+    session.SetVariantSelection("/World/Model", "lod", "high");
+if (!edit) return 1;
+edit = session.LoadPayload("/World/Model");
+if (!edit) return 1;
+tinyusdz::next::StageSnapshot current = edit.snapshot;
 ```
 
 Variant overrides are scoped by prim path, so identically named variant sets on
 different prims do not interfere. Diagnostics and deferred-payload state remain
-available on the session after each rebuild.
+available on the session after each rebuild. Successful edits atomically publish
+a monotonically revisioned, immutable `StageSnapshot` and a typed
+`StageChangeSet`; retained older snapshots remain coherent. `ReloadLayer()`
+re-reads an edited dependency and publishes the resulting stage transactionally.
+Array-backed geometry remains copy-on-write across snapshots.
+
+Persistent render consumers can feed those snapshots and change sets to
+`tydra::next::RenderSession`. Its `SceneUpdateSink` transaction reports stable
+resource IDs plus typed removals/upserts, allowing a renderer to retain GPU
+resources across payload, variant, and layer edits.
 
 ## next-io
 
