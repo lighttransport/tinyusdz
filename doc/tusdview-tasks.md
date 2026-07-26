@@ -10,7 +10,7 @@ audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
 active work is now the USD rendering-fidelity roadmap below.  This file is the
 canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
-Updated 2026-07-26 through `b9a51a75e`.
+Updated 2026-07-26 through `5066d8442`.
 
 ---
 
@@ -67,6 +67,14 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   single-backend skip. Optional CUDA/HIP probes in the backface and semantic
   matrices are bounded; a failed first capability probe is cached so every
   fixture is not forced to repeat the same timeout.
+- CUDA runtime compilation now negotiates the highest virtual compute
+  architecture supported by the dynamically loaded NVRTC without exceeding
+  the physical device. This allows an older toolkit to emit forward-compatible
+  PTX for a newer GPU instead of requesting an architecture the compiler does
+  not recognize. CUDA 11 NVRTC on an RTX 5060 Ti passes the full deformation
+  parity oracle (GPU/CPU depth MAD 0.000), opacity regression, and both-loader
+  GeomSubset RT regression. Deformation capability probes also have a
+  configurable 60-second per-render bound and retain partial logs on timeout.
 - The refreshed focused `tusdview` label is green at **23/23**. The serial
   native gate is green at **208/208 nonfailing**, with seven explicit
   capability/data skips. Stable `next` is green at **35/35 nonfailing**, with
@@ -308,6 +316,15 @@ Latest focused verification on 2026-07-26:
   and ALab environment roots are unset, so no new large-scene claim is made.
   No Vulkan shader source changed in this post-sync repair, so embedded SPIR-V
   was not regenerated.
+
+- After CUDA runtime-compiler architecture negotiation, the focused label
+  remains green at 23/23 (46.53 seconds). With CUDA 11 NVRTC deliberately
+  selected on the RTX 5060 Ti, `tusdview-deform-cuda` passes in full, the
+  opacity material gate passes in 27.25 seconds, and next/legacy GeomSubset RT
+  passes in 15.05 seconds. The default CUDA 13.1 compiler still takes longer
+  than the 60-second capability bound for this shared kernel on the host; that
+  performance issue is kept distinct from the fixed newer-GPU/older-compiler
+  compatibility failure.
 
 - Offline RTX 3070 verification used the documented `--headless` Vulkan path.
   Vulkan raster and Vulkan ray query both passed the UDIM opacity-cutout probe
