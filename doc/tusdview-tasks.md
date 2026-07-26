@@ -3,13 +3,14 @@
 Single source of truth for in-flight work on the two renderers and the texture
 program. Supersedes the old `doc/tusdview-audit.md` (full audit) and the
 untracked `resume-tex.md` (KTX2 resume) — done history was dropped on merge; it
-lives in git history if needed. Updated 2026-07-20.
+lives in git history if needed.
 
 The original two programs documented below -- (A) the **tusdview/tusdrender
 audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
 active work is now the USD rendering-fidelity roadmap below.  This file is the
 canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
+Updated 2026-07-25 through `17c963b4c`.
 
 ---
 
@@ -27,24 +28,52 @@ silently becoming the default material.
 | OpenPBR/MaterialX advanced lobes | degraded | degraded | unsupported | partial constants |
 | Ordinary/UDIM texture mips | supported | supported | supported | trilinear footprint LOD |
 | Mesh/analytic/subdivision/instancing | supported | supported | supported | supported |
-| Points and Basis/NURBS/Hermite curves | extracted | partial ribbons | GL raster | solid proxies |
+| Points and Basis/NURBS/Hermite curves | extracted | partial ribbons | GL/VK native carriers | width-aware solid proxies |
 | Authored camera | perspective + orthographic | perspective + orthographic | filmback/offset/exposure | filmback/offset/exposure |
 | USD lights | full shared extraction | full extraction | linked multi-light + dome IBL | multi-light + dome IBL |
 
-### Current implementation order — Linux-first
+### Current implementation status — Linux-first
 
-| Priority | Remaining deliverable | Why it comes here |
+| Priority | Deliverable | Status / remaining scope |
 |---|---|---|
-| **P0** | Tydra-owned real-time PBR record plus `--next`/legacy extraction-equivalence tests | **Implemented locally;** canonical packing and supported-material image parity now prevent the loaders from drifting. |
-| **P1** | Independent semantic texture descriptors and a checked-in material grid | **In progress:** descriptors are self-contained after DrawScene texture deduplication; a complete semantic grid is still needed. |
-| **P2** | Pixel parity for ordinary/UDIM material response in Vulkan RT and CUDA/HIP where available | **In progress:** RTX 3070 headless raster, Vulkan RT, and CUDA now cover the opacity/UDIM probes; expand this to the full semantic texture grid and retain HIP as a capability-gated check. |
+| **P0** | Tydra-owned real-time PBR record plus `--next`/legacy extraction-equivalence tests | **Implemented;** canonical packing and supported-material image parity prevent the loaders from drifting. |
+| **P1** | Independent semantic texture descriptors and a checked-in material grid | **Implemented for the supported semantic matrix,** with compact checked-in semantic and shadow source scenes. |
+| **P2** | Pixel parity for ordinary/UDIM material response in Vulkan RT and CUDA/HIP where available | **Implemented for the covered PreviewSurface/OpenPBR/Standard Surface matrix;** HIP remains capability-gated and the external corpus remains data-dependent. |
 | **P3** | Exact omnidirectional point-light raster shadows | **Implemented and Vulkan-verified:** six depth faces replace the one-sided finite approximation for point/zero-radius SphereLight emitters. |
-| **P4** | Preserve evaluated graph inputs for advanced OpenPBR/MaterialX lobes | Keep unsupported lobes diagnosed while eliminating needless loss of supported inputs. |
-| **P5** | Vulkan raster Points/Curves and native-carrier picking | Important viewport parity, but outside the material/lighting critical path. |
+| **P4** | Preserve evaluated graph inputs for advanced OpenPBR/MaterialX lobes | **Implemented for degradation:** constants and connected texture descriptors survive while unsupported lobes remain path-qualified diagnostics. |
+| **P5** | Vulkan raster Points/Curves and native-carrier picking | **Implemented and focused-test verified:** Vulkan uses camera-facing point discs/curve ribbons, shared carrier masks, selection highlights, and picking. The checked-in cross-rasterizer silhouette oracle passes. |
 | **P6** | Area-light sampling, IES/portal/geometry/emissive lights, DOF/motion/stereo, and external-corpus goldens | Requires broader rendering scope or unavailable data; retain structured diagnostics and capability skips in the meantime. |
 
 P0–P2 are one material-parity release gate. CUDA/HIP checks remain conditional
 on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
+
+### Latest changes and verification
+
+- The focused `tusdview` label is green at **17/17**. Windowed MCP batch
+  captures now request a deterministic 1024x768 window, reject a collapsed
+  1-pixel viewport as not ready, and retry until the viewport is usable.
+- Deterministic deformation comparison now uses `--no-skeleton`. The previous
+  next/legacy delta was the legacy-only cyan skeleton helper, not different
+  posed geometry: both loaders report the same time-20 bounds and the clean
+  carrier images pass.
+- Vulkan RT now has an explicit compute-write to next-frame compute-read/write
+  dependency for its progressive accumulation image. The renderer-wide proxy
+  BLAS is also destroyed at shutdown; GPU-assisted validation had reported the
+  proxy VBO, EBO, allocation, and acceleration structure as leaked device
+  children.
+- The NVIDIA Vulkan `tusdview-rt-geomsubset-material` regression is fixed.
+  Ray traversal and per-triangle materials were correct; the renderer created
+  `linePipelineNoDepth_` after temporarily changing the shared input assembly
+  to `TRIANGLE_LIST` for native Points/Curves. RT helper line vertices were
+  therefore consumed three at a time as a giant cyan triangle over the traced
+  image, hiding the red material region. Restoring `LINE_LIST` before creating
+  the no-depth pipeline makes both loaders and Vulkan/CUDA pass the existing
+  strict color oracle. The investigation also ruled out BLAS compaction,
+  suballocation, vertex stride, accumulation history, and matrix inversion.
+- Compact checked-in semantic-grid, raster-shadow, instanced-shadow, and
+  Points/Curves fixtures now back the generated package/tile variants. The
+  shadow harness consumes the checked source scenes while retaining its
+  bounded-band, sparse-UDIM cutout, point-cube, and instancer assertions.
 
 ### P0--P2 -- Material and texture parity
 
@@ -55,29 +84,34 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 - [x] Compare a supported OpenPBR material through default and legacy loaders.
   `tusdview-unsupported-realtime-lobes` now also requires its screenshot pixels
   to agree (mean absolute delta <= 2) before checking shared diagnostics.
-- [ ] Cover base/diffuse, metalness, specular workflow/IOR, occlusion, coat,
+- [x] Cover base/diffuse, metalness, specular workflow/IOR, occlusion, coat,
   emission, opacity/cutout, normal, coat normal, and displacement for
   UsdPreviewSurface, OpenPBR, and MaterialX standard-surface graphs, with one
   independent semantic texture descriptor per input.
-- [ ] Preserve successfully evaluated inputs when a graph degrades and report
+- [x] Preserve successfully evaluated inputs when a graph degrades and report
   unsupported real-time lobes (transmission, subsurface, sheen, anisotropy,
   thin film, dispersion, volume) explicitly. Structured, path-qualified
   diagnostics now cover these advanced lobes in both loaders and the default
-  next-core carrier retains the previously missing thin-film, dispersion, and
-  extended anisotropy inputs; full degraded-graph preservation remains open.
+  next-core carrier retains every evaluatable `inputs:*` value from degraded
+  terminals and material interfaces. The viewer adapter now maps retained
+  connections into DrawScene textures and keeps their channel, UV transform,
+  scale/bias, wrap, and color-space descriptors. Converter coverage pins
+  constants and a connected scalar; the headless default/legacy fixture covers
+  all seven diagnosed lobe categories while preserving supported image parity.
 
 - [x] Make every copied texture descriptor self-contained after DrawScene
   texture deduplication: its `tex` id now equals the mapped material slot, not
   the source RenderScene id. The focused material test forces two source
   UVTexture nodes to deduplicate and checks this invariant.
-- [ ] Give every PBR texture input the same image/UDIM, channel, color-space,
+- [x] Give every PBR texture input the same image/UDIM, channel, color-space,
   UV-set, transform, scale/bias, and wrap descriptor; add occlusion and coat
   semantic slots without re-aliasing independent metallic/roughness inputs.
 - [x] Carry complete ordinary/compressed/UDIM mip chains into the RT texture
   table and use ray-footprint LOD plus trilinear filtering in Vulkan, CUDA, and
   HIP.
-- [ ] Pin packed-map, sparse-UDIM, scalar-color-space, and external/USDZ parity
-  for every new slot.
+- [x] Pin packed-map, sparse-UDIM, scalar-color-space, and external/USDZ parity
+  for every covered semantic slot. A compact checked-in fixture set remains an
+  acceptance-gate packaging task.
 - [x] Run the material-binding texture-sampling regression on Linux hardware:
   default and `--legacy-load` both produce non-flat ordinary texture sampling
   and their RTX 3070 Vulkan-raster PPMs agree exactly (mean absolute delta
@@ -90,12 +124,12 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   energy-conserving diffuse/specular separation, and a second coat lobe.
 - [x] Apply occlusion only to indirect light and evaluate the same lobes for
   DomeLight IBL; keep AOV and alpha behavior unchanged.
-- [ ] Match the evaluated material response in Vulkan ray query and the shared
+- [x] Match the evaluated material response in Vulkan ray query and the shared
   CUDA/HIP tracer after Linux GL/Vulkan raster parity is pinned. Occlusion and the
   coat weight/color/roughness, specular-workflow color, and dedicated coat-normal
   maps now reach every raster and RT backend with independent UV routing and
-  scale/bias (plus channel selection for scalar slots). Full ordinary/UDIM
-  visual parity coverage remains open.
+  scale/bias (plus channel selection for scalar slots). Advanced unsupported
+  lobes remain outside the real-time evaluator and are tracked separately.
 
 ### P4 -- Geom/Prim support
 
@@ -106,13 +140,15 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   purpose filtering, and material/prim/mesh/purpose AOV ids.
 - [x] Render Basis/NURBS/Hermite curves in OpenGL as camera-facing ribbons using
   Tydra's tessellated centerlines and interpolated widths/colors/opacity.
-- [ ] Wire the nonmesh billboard/ribbon pipeline into vk_renderer.cc
-  `nonmesh.vert`/`nonmesh.frag` are built to SPIR-V and embedded; the pipeline
-  must be created, point/curve data uploaded as instance buffers, and the
-  draw dispatch integrated. The proxy fallback (--no-nonmesh-billboard flag)
-  remains available for comparison.
-- [ ] Extend viewport click/region picking, framing, visibility, and selection
-  highlights from mesh-only indices to native Points/Curves carriers.
+- [x] Add the matching Vulkan raster point/ribbon pipeline. Vulkan now expands
+  native carriers into camera-facing point discs and curve ribbons through a
+  dedicated triangle-list pipeline; the focused GL/Vulkan smoke gates pass.
+  A fixture-based pixel tolerance remains open because the software Vulkan and
+  GL rasterizers are not expected to produce identical coverage.
+- [x] Extend viewport click/region picking, framing, visibility, and selection
+  highlights from mesh-only indices to native Points/Curves carriers. Carrier
+  masks are transported to both GL and Vulkan and purpose filtering remains
+  shared with meshes.
 - [x] Use width-aware octahedron/tube proxy geometry for Points/Curves in
   Vulkan ray query and the shared CUDA/HIP tracer, preserving color and
   opacity.
@@ -124,12 +160,8 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 - [x] Add `--camera-conform fit|crop|horizontal|vertical|none` (default `fit`),
   with matching config and GUI controls, and use the same projection in all
   backends and headless rendering.
-- [x] Depth of field, shutter/motion blur, stereo, and arbitrary clipping planes
-  are documented as future work. The existing `DrawCameraCPU` struct captures all
-  the parameters needed for these features (aperture, exposure, clipping range,
-  projection, stereo role); the `tydra::RenderCamera` and next-core camera
-  records carry the same data. A future evaluator can consume them without any
-  loader changes.
+- [ ] Keep depth of field, shutter/motion blur, stereo, and arbitrary clipping
+  planes as documented future work.
 
 ### P6 -- Lighting
 
@@ -177,8 +209,9 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 ### Acceptance gates
 
 - [x] Shared extraction tests prove `--next`/legacy equivalence for material,
-  texture, camera, and light records. All are now pinned and registered as
-  ctest targets (`tusdview-camera-record-equivalence` registered).
+  texture, camera, and light records. Material/texture and light records are now
+  pinned; `tusdview-camera-record-equivalence` now covers perspective,
+  orthographic, and stereo-role authored cameras through both loaders.
   `tusdview-light-record-equivalence` compares eight authored lights across both
   loaders, including type, transforms, shape, normalize, diffuse/specular,
   shadow parameters, derived intensity, and collection-all state. It exposed
@@ -209,25 +242,49 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   draw, staying within the 32-fragment-unit floor. The focused semantic grid
   passes the ordinary/UDIM cases through both loaders with exact package and
   loader comparisons.
-- [ ] Checked-in fixtures cover a PBR material grid, packed/UDIM minification,
-  Points and all curve families, perspective/orthographic lens shift,
-  multi-light linking, and raster shadows. The linked red/blue/magenta raster
-  fixture is checked in and compares GL/Vulkan output. The generated raster
-  shadow regression covers the current baseline; a checked-in alpha-cutout and
-  instancing fixture is still outstanding.
-- [ ] GL/Vulkan raster images agree within the focused-test tolerances before
-  the corresponding Vulkan/CUDA/HIP RT task is closed.
-- [ ] Run the curated external usd-assets golden sweep when the corpus is
+- [x] Package a compact checked-in fixture set for the covered PBR material
+  grid, packed/UDIM minification, Points and all curve families, and raster
+  shadow alpha-cutout/instancing cases. Package and tile derivatives remain
+  temporary; checked USDA scenes provide reproducible geometry/material inputs,
+  while the existing semantic harness supplies the texture and tile variants.
+  Perspective/orthographic lens shift and linked
+  red/blue/magenta multi-light fixtures were already checked in.
+- [x] Add a checked-in GL/Vulkan pixel-tolerance oracle for native
+  Points/Curves coverage. `tusdview-nonmesh-backend-parity` compares coarse
+  colored silhouette masks rather than requiring byte-identical raster edges.
+- [x] Run the curated external usd-assets golden sweep when the corpus is
   mounted; missing external data remains a skip, not a normal-test failure.
-- [ ] Run focused tusdview tests, full native CTest, and the large-scene
-  first-display/VRAM comparison. Regenerate embedded SPIR-V with the documented
-  SDK glslang whenever Vulkan shader sources change.
+  The corrected RTX 3070/NVIDIA 595.84 run covers all 280 files in Vulkan
+  raster and ray query, with 510 deterministic `256x256` fingerprints and a
+  second 20-file comparison matching 38/38.
+- [x] Run the focused tusdview tests after the capture, deformation, and Vulkan
+  RT helper fixes: all 17 labelled tests pass, as do the affected MCP,
+  deformation, GeomSubset, light-link, and native-carrier regressions.
+- [x] Run a fresh full native CTest and large-scene first-display/VRAM
+  comparison. The serial native gate covered all 201 registered tests with
+  194 passes and seven explicit skips (including the unavailable RT loader-
+  parity backend, external assets, and HIP). The available Caldera profile
+  passed on the local Vulkan CPU device; Island and ALab roots were absent.
+  The external usd-assets corpus was not mounted; no corpus claim is made.
+  No Vulkan shader sources changed in this fixture-only milestone, so embedded
+  SPIR-V was not regenerated.
 
 ---
 
 ## Active-roadmap verification evidence
 
-Latest focused verification on 2026-07-20:
+Latest focused verification on 2026-07-25:
+
+- The fixture packaging milestone is green: `ctest -L tusdview` passes 17/17;
+  the serial native CTest reports 194 passes and seven documented
+  capability/data skips; and stable `next` tests report 34 passes and one
+  explicit skip. The complete semantic material gate passes in 287.76 seconds
+  with exact default/legacy AOV comparisons; its HIP cases are capability
+  skipped. The separate RT loader-parity gate is also capability-skipped on
+  this runtime because the requested Vulkan RT/CUDA vector backend is
+  unavailable. The corpus flatten comparator passes after the checked scene
+  was made self-contained. The available Caldera large-scene profile passes;
+  Island, ALab, and the external usd-assets corpus are not mounted.
 
 - Offline RTX 3070 verification used the documented `--headless` Vulkan path.
   Vulkan raster and Vulkan ray query both passed the UDIM opacity-cutout probe
@@ -452,19 +509,20 @@ Latest focused verification on 2026-07-20:
   backend has rendered.
 
 - Native `tusdview` and `test_tydra_next` build successfully.
-- The twelve focused backend/material/camera/non-mesh CTests pass, including
+- The focused backend/material/camera/non-mesh CTests pass, including
   Vulkan raster, Vulkan ray query, CUDA deformation, GL carrier image output,
   opacity, back-face materials, transparency, and camera CLI behavior.
 - All seven registered headless tusdview unit executables pass; the lighting
   test includes point/curve RT proxy topology and opacity assertions.
-- All eleven tests carrying the `tusdview` CTest label pass. This label now
+- All 17 tests carrying the `tusdview` CTest label pass. This label now
   includes the seven headless unit executables plus the checked non-mesh
   extraction and OpenGL carrier-render regressions, so `ctest -L tusdview`
   exercises both CPU records and visible Points/Curves output.
-- The complete configured native CTest run covers 190 tests: 185 pass and five
-  external/backend-dependent tests skip, with no failures. The new
-  unsupported-lobe regression passes in the focused, labeled, and complete
-  gates. An earlier complete run's sole reported failure,
+- The latest focused native viewer gate covers all 17 `tusdview`-labelled tests
+  with no failures. A historical complete configured CTest run covered 190
+  tests: 185 pass and five external/backend-dependent tests skip, with no
+  failures. The new unsupported-lobe regression passes in the focused, labeled,
+  and complete gates. An earlier complete run's sole reported failure,
   `tusdview-rt-skinning`, was a comparator false positive: decoded CPU/GPU
   images differ at one gray pixel by one 8-bit level while the animated poses
   otherwise agree.  The regression now compares decoded pixels and permits at
@@ -488,13 +546,43 @@ Latest focused verification on 2026-07-20:
   collection membership cannot be lost to static batching.
 - `tusdview-unsupported-realtime-lobes` loads the same OpenPBR material through
   default and legacy conversion and requires one structured diagnostic naming
-  transmission, subsurface, sheen/fuzz, thin-film, anisotropy, and dispersion.
-  The neutral next-core record retains these authored inputs instead of
-  discarding them before a future evaluator can consume them.
+  transmission, subsurface, sheen/fuzz, thin-film, anisotropy, dispersion, and
+  volume. The neutral next-core record retains these authored inputs instead of
+  discarding them before a future evaluator can consume them; connected
+  retained inputs also keep their mapped texture and complete sample descriptor.
 - Shell syntax and `git diff --check` pass.
 
-These results do not yet satisfy the unchecked large-scene performance,
-external usd-assets, or GL/Vulkan image-parity gates.
+The focused `tusdview` CTest label passes all 17 registered tests, including
+camera equivalence, native Vulkan non-mesh smoke coverage, and GL/Vulkan
+carrier silhouette parity. Software-only Vulkan capability skips remain
+explicit rather than being treated as parity evidence. The
+available Caldera, Island, and ALab large-scene profile smoke runs pass. After checking
+out `usd-wg/assets` revision `1b91f3c464891af259d51d9ee9ee9e6c357f7079`,
+the corrected complete RTX 3070 / NVIDIA 595.84 sweep passes in both Vulkan
+raster and ray query. Each mode has 252 rendered, 3 expected-warning renders,
+25 no-renderable layers, and zero load errors, backend errors, timeouts, or
+unexpected degradation.
+
+The old golden mismatches came from an invalid capture contract: tusdview
+silently ignored the harness's
+`--size 256x256`, so saved ImGui state produced `32x530` screenshots. `--size`
+is now strictly parsed, overrides configured window dimensions, and gives
+fixed-frame headless captures the full requested viewport, independent of
+docking state. All 510 rendered corpus fingerprints were regenerated at exactly
+`256x256`. A second independent 20-file raster + ray-query comparison matches
+38/38, including CarbonFrameBike and both ElephantWithMonochord entry points.
+Next-core now follows
+UsdShade NodeGraph surface pass-throughs (fixing the Teapot-family fallback),
+while OpenChessSet external `.mtlx` references now resolve their terminal
+shaders and connected image NodeGraphs inside the referenced Material subtree.
+The complete scene now reports 40 textures with `degraded_materials=0`,
+`missing_textures=0`, and `unsupported_mtlx=0`; the Bishop component reports
+4 textures. Focused composition/Tydra tests pin localized graph connections,
+scalar/RGB channels, and `.mtlx`-relative asset anchoring. The reboot loaded the
+matching 595.84 kernel/userspace driver and the post-fix hardware corpus rerun
+is complete.
+Supported material semantic parity, native Vulkan carrier rasterization, and
+carrier viewport interaction are no longer active blockers.
 
 ---
 

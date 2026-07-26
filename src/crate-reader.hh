@@ -559,9 +559,6 @@ class CrateReader {
 
   bool ReadVariantSelectionMap(VariantSelectionMap *d);
 
-  // Read 64bit uint with range check
-  bool ReadNum(uint64_t &n, uint64_t maxnum);
-
   template <typename T>
   bool ReadTimeSampleScalarValue(T *value, size_t nbytes,
                                  const char *read_error) {

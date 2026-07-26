@@ -52,6 +52,8 @@
 #include "security-policy.hh"
 #include "shape-to-mesh.hh"
 
+#include "../safe-arithmetic.hh"
+
 //
 #include "common-macros.inc"
 #include "math-util.inc"
@@ -1432,23 +1434,25 @@ bool RenderSceneConverter::ResolveBlendShapeAnimationTargets() {
 
   std::vector<MeshNodeRef> mesh_nodes;
   int32_t node_index = 0;
-  std::function<void(const Node &)> collectMeshNodes = [&](const Node &node) {
-    const int32_t current_index = node_index++;
-    if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
-        size_t(node.id) < meshes.size()) {
-      MeshNodeRef ref;
-      ref.node_index = current_index;
-      ref.mesh_id = node.id;
-      ref.abs_path = node.abs_path;
-      mesh_nodes.push_back(std::move(ref));
-    }
-    for (const Node &child : node.children) {
-      collectMeshNodes(child);
-    }
-  };
+  std::function<void(const Node &, int)> collectMeshNodes =
+      [&](const Node &node, int depth) {
+        if (depth > 4096) return;
+        const int32_t current_index = node_index++;
+        if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
+            size_t(node.id) < meshes.size()) {
+          MeshNodeRef ref;
+          ref.node_index = current_index;
+          ref.mesh_id = node.id;
+          ref.abs_path = node.abs_path;
+          mesh_nodes.push_back(std::move(ref));
+        }
+        for (const Node &child : node.children) {
+          collectMeshNodes(child, depth + 1);
+        }
+      };
 
   for (const Node &root : root_nodes) {
-    collectMeshNodes(root);
+    collectMeshNodes(root, /*depth*/ 0);
   }
 
   auto meshMatchesChannel = [&](const RenderMesh &mesh,
@@ -3600,7 +3604,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       // Format/stride/presence already validated up front.
       // Append normals
       size_t old_size = dst.normals.data.size();
-      dst.normals.data.resize(old_size + src.normals.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src.normals.data.size(), &new_size)) {
+        return false;
+      }
+      dst.normals.data.resize(new_size);
 
       if (transform_is_identity) {
         memcpy(dst.normals.data.data() + old_size, src.normals.data.data(), src.normals.data.size());
@@ -3628,7 +3636,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       auto &dst_attr = dst_tc_it->second;
       // Format/stride/presence already validated up front.
       size_t old_size = dst_attr.data.size();
-      dst_attr.data.resize(old_size + src_attr.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src_attr.data.size(), &new_size)) {
+        return false;
+      }
+      dst_attr.data.resize(new_size);
       memcpy(dst_attr.data.data() + old_size, src_attr.data.data(), src_attr.data.size());
     }
   }
@@ -3650,7 +3662,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       // Format/stride/presence already validated up front.
       size_t old_size = dst.tangents.data.size();
       size_t src_count = src.tangents.vertex_count();
-      dst.tangents.data.resize(old_size + src.tangents.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src.tangents.data.size(), &new_size)) {
+        return false;
+      }
+      dst.tangents.data.resize(new_size);
 
       if (transform_is_identity) {
         memcpy(dst.tangents.data.data() + old_size, src.tangents.data.data(), src.tangents.data.size());
@@ -3683,7 +3699,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
       // Format/stride/presence already validated up front.
       size_t old_size = dst.binormals.data.size();
       size_t src_count = src.binormals.vertex_count();
-      dst.binormals.data.resize(old_size + src.binormals.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src.binormals.data.size(), &new_size)) {
+        return false;
+      }
+      dst.binormals.data.resize(new_size);
 
       if (transform_is_identity) {
         memcpy(dst.binormals.data.data() + old_size, src.binormals.data.data(), src.binormals.data.size());
@@ -3706,7 +3726,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       // Format/stride/presence already validated up front.
       size_t old_size = dst.vertex_colors.data.size();
-      dst.vertex_colors.data.resize(old_size + src.vertex_colors.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src.vertex_colors.data.size(), &new_size)) {
+        return false;
+      }
+      dst.vertex_colors.data.resize(new_size);
       memcpy(dst.vertex_colors.data.data() + old_size, src.vertex_colors.data.data(), src.vertex_colors.data.size());
     }
   }
@@ -3718,7 +3742,11 @@ bool RenderSceneConverter::MergeMeshData(const RenderMesh &src,
     } else {
       // Format/stride/presence already validated up front.
       size_t old_size = dst.vertex_opacities.data.size();
-      dst.vertex_opacities.data.resize(old_size + src.vertex_opacities.data.size());
+      size_t new_size;
+      if (!safe::add(old_size, src.vertex_opacities.data.size(), &new_size)) {
+        return false;
+      }
+      dst.vertex_opacities.data.resize(new_size);
       memcpy(dst.vertex_opacities.data.data() + old_size, src.vertex_opacities.data.data(), src.vertex_opacities.data.size());
     }
   }

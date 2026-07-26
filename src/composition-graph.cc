@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
+#include <limits>
 #include <sstream>
 
 #include "common-macros.inc"
@@ -158,6 +160,13 @@ InstanceKey ComputeInstanceKey(const PrimIndex &index,
 
 CompNode &GetMutableNode(PrimIndex &index TINYUSDZ_LIFETIMEBOUND,
                          uint16_t node_idx) {
+  // node_idx is typically from GetStrengthOrder() or DeferredPayloadInfo.
+  // The latter can be stale if the deferred-payload index is corrupted,
+  // so guard against out-of-bounds access (defense-in-depth).
+  if (node_idx >= index._nodes.size()) {
+    static thread_local CompNode s_sentinel{};
+    return s_sentinel;
+  }
   return index._nodes[node_idx];
 }
 
@@ -200,6 +209,9 @@ uint16_t CompositionContext::AddLayerStack(const Layer *layer,
     }
   }
 
+  if (_layer_stacks.size() >= static_cast<size_t>((std::numeric_limits<uint16_t>::max)())) {
+    return CompNode::kInvalidIndex;
+  }
   uint16_t idx = static_cast<uint16_t>(_layer_stacks.size());
   LayerStackEntry entry;
   entry.layer = layer;
@@ -215,6 +227,9 @@ uint16_t CompositionContext::AddMapExpression(const NamespaceMapping &mapping,
     return CompNode::kInvalidIndex;  // identity mapping
   }
 
+  if (_map_expressions.size() >= static_cast<size_t>((std::numeric_limits<uint16_t>::max)())) {
+    return CompNode::kInvalidIndex;
+  }
   uint16_t idx = static_cast<uint16_t>(_map_expressions.size());
   MapExpr expr;
   expr.mapping = mapping;

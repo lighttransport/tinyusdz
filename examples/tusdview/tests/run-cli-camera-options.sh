@@ -29,6 +29,10 @@ expect_failure "--view-dir cannot be combined with --camera" \
   --view-dir 0,0,-1 --camera Cam
 expect_failure "--camera-conform must be fit, crop, horizontal, vertical, or none" \
   --camera-conform stretch
+expect_failure "--size must be WxH" --size 256
+expect_failure "--size must be WxH" --size 0x256
+expect_failure "--size must be WxH" --size 256x256junk
+expect_failure "--size must be WxH" --size
 
 help="$("$TUSDVIEW" --help 2>&1)" || {
   echo "FAIL: --help returned failure"
@@ -46,5 +50,9 @@ grep -Fq -- "--no-grid" <<<"$help" || {
   echo "FAIL: --no-grid is missing from help"
   exit 1
 }
+grep -Fq -- "--size WxH" <<<"$help" || {
+  echo "FAIL: --size is missing from help"
+  exit 1
+}
 
-echo "PASS: deterministic camera/grid CLI validation"
+echo "PASS: deterministic camera/grid/size CLI validation"

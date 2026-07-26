@@ -2454,11 +2454,10 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
 
   // A material can author BOTH a UsdPreviewSurface and an OpenPBR/mtlx shader
   // (DCC exports, MaterialX-with-fallback); ConvertMaterial fills both but sets
-  // shader_type to the last child (often OpenPBR). tydra-next resolves *direct*
-  // UsdUVTexture connections into texture_ids but not MaterialX nodegraph image
-  // nodes, so the two shaders can disagree on which textures resolved. Pick the
-  // shader that actually resolved the most textures (tie -> UsdPreviewSurface,
-  // the interop path). Falls back cleanly for single-shader materials.
+  // shader_type to the last child (often OpenPBR). Pick the shader that resolved
+  // the most textures (tie -> UsdPreviewSurface, the interop path); this also
+  // handles partial or unsupported graphs without overriding a more complete
+  // fallback. Falls back cleanly for single-shader materials.
   auto texCount = [](std::initializer_list<int> ids) {
     int n = 0; for (int i : ids) if (i >= 0) ++n; return n;
   };
@@ -2671,16 +2670,44 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     if (dm.coatColorTex >= 0)
       dm.coatColor[0] = dm.coatColor[1] = dm.coatColor[2] = 1.0f;
   }
+  // Keep the neutral parameter carrier complete even when the real-time
+  // evaluator degrades an unsupported lobe. A RenderTexture id alone is not
+  // enough for viewer-side consumers: map it to DrawScene, and preserve its
+  // selected channel plus UV/value sampling descriptor.
+  auto retainParam = [&](const std::string& shader, const std::string& name,
+                         DrawMaterialParamType type,
+                         const tydn::ShaderParam& value) {
+    DrawMaterialParamCPU param;
+    param.shader = shader;
+    param.name = name;
+    param.type = type;
+    param.value[0] = value.value.x;
+    param.value[1] = value.value.y;
+    param.value[2] = value.value.z;
+    param.value[3] = value.value.w;
+    param.renderTexture = value.texture_id;
+    if (value.texture_id >= 0 &&
+        static_cast<size_t>(value.texture_id) < scratch.textures.size()) {
+      const tydn::RenderTexture& rt =
+          scratch.textures[static_cast<size_t>(value.texture_id)];
+      const bool srgb = rt.source_color_space == "sRGB" ||
+                        rt.source_color_space == "srgb";
+      param.texture =
+          LoadNextTexture(texCache, draw, scratch, value.texture_id, srgb);
+      FillNextSample(rt, &param.sample, uv0Name, uv1Name);
+      param.sample.tex = param.texture;
+      param.channel = param.sample.channel;
+      if (type == DrawMaterialParamType::Float && param.channel < 0) {
+        param.channel = NextScalarChannel(rt.output_channel);
+        param.sample.channel = param.channel;
+      }
+    }
+    dm.params.push_back(std::move(param));
+  };
   if (!usePreview && rm.openpbr) {
     auto retainDiagnosticScalar = [&](const char* name,
                                       const tydn::ShaderParam& value) {
-      DrawMaterialParamCPU param;
-      param.shader = "OpenPBRSurface";
-      param.name = name;
-      param.type = DrawMaterialParamType::Float;
-      param.value[0] = value.value.x;
-      param.renderTexture = value.texture_id;
-      dm.params.push_back(std::move(param));
+      retainParam("OpenPBRSurface", name, DrawMaterialParamType::Float, value);
     };
     const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
     retainDiagnosticScalar("specular_anisotropy", s.specular_anisotropy);
@@ -2693,6 +2720,10 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
                            s.transmission_dispersion);
     retainDiagnosticScalar("transmission_dispersion_scale",
                            s.transmission_dispersion_scale);
+  }
+  for (const tydn::RetainedMaterialParam& retained : rm.retained_params) {
+    retainParam(retained.shader, retained.name, DrawMaterialParamType::Vec4,
+                retained.value);
   }
   rm.shader_type = originalShaderType;
   if (usePreview) {

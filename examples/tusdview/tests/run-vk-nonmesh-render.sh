@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Verify Vulkan raster keeps native Points/Curves visible through the shared
-# width/color-preserving solid carrier fallback.
+# Verify Vulkan raster keeps native Points/Curves visible through the dedicated
+# camera-facing triangle-list carrier path.
 set -uo pipefail
 TUSDVIEW="${1:?usage: $0 /path/to/tusdview /repo/root}"
 ROOT="${2:?usage: $0 /path/to/tusdview /repo/root}"

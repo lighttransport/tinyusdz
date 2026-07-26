@@ -4,8 +4,8 @@
 # (world pose, lens properties, projection) for authored USD cameras.
 set -uo pipefail
 SKIP=77
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-BIN="${TUSDVIEW:-$ROOT/build/tusdview}"
+ROOT="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+BIN="${1:-${TUSDVIEW:-$ROOT/build/tusdview}}"
 [ -x "$BIN" ] || BIN="$ROOT/build_ninja/tusdview"
 [ -x "$BIN" ] || { echo "SKIP: tusdview not found"; exit "$SKIP"; }
 command -v xvfb-run >/dev/null || { echo "SKIP: xvfb-run required for deterministic GL headless"; exit "$SKIP"; }

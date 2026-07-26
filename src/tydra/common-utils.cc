@@ -7,6 +7,7 @@
 #include <limits>
 #include "../str-util.hh"
 #include "tiny-format.hh"
+#include "../safe-arithmetic.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -154,12 +155,19 @@ nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
                     src.size(), elementSize));
   }
   
-  std::vector<uint8_t> dst(numVertices * elementSize);
-  
+  size_t dstBytes;
+  if (!safe::mul(numVertices, size_t(elementSize), &dstBytes)) {
+    return nonstd::make_unexpected(
+        fmt::format("Integer overflow: {} * {} exceeds size_t range",
+                    numVertices, elementSize));
+  }
+
+  std::vector<uint8_t> dst(dstBytes);
+
   for (size_t i = 0; i < numVertices; i++) {
     std::memcpy(dst.data() + i * elementSize, src.data(), elementSize);
   }
-  
+
   return std::move(dst);
 }
 
@@ -183,8 +191,15 @@ nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     totalFaceVertices += faceVertexCounts[i];
   }
-  
-  std::vector<uint8_t> dst(totalFaceVertices * elementSize);
+
+  size_t dstBytes;
+  if (!safe::mul(totalFaceVertices, size_t(elementSize), &dstBytes)) {
+    return nonstd::make_unexpected(
+        fmt::format("Integer overflow: totalFaceVertices {} * elementSize {}",
+                    totalFaceVertices, elementSize));
+  }
+
+  std::vector<uint8_t> dst(dstBytes);
   
   for (size_t i = 0; i < totalFaceVertices; i++) {
     std::memcpy(dst.data() + i * elementSize, src.data(), elementSize);

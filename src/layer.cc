@@ -182,42 +182,51 @@ nonstd::optional<const PrimSpec *> GetPrimSpecAtPathFromRoot(
   return current;
 }
 
-// Helper function to estimate PrimSpec memory usage
-static size_t EstimatePrimSpecMemory(const PrimSpec& ps);
+// Estimate PrimSpec memory usage using iterative DFS traversal
+static size_t EstimatePrimSpecMemory(const PrimSpec& root) {
+  size_t total = 0;
 
-static size_t EstimateVariantSetSpecMemory(const VariantSetSpec& vs) {
-  size_t total = sizeof(VariantSetSpec);
-  total += vs.name.capacity();
-  // VariantSetSpec maps variant names to PrimSpec
-  for (const auto& v_pair : vs.variantSet) {
-    total += v_pair.first.capacity();
-    total += EstimatePrimSpecMemory(v_pair.second);
-  }
-  return total;
-}
+  StackVector<const PrimSpec *, 4> stack;
+  stack.reserve(64);
 
-static size_t EstimatePrimSpecMemory(const PrimSpec& ps) {
-  size_t total = sizeof(PrimSpec);
+  stack.push_back(&root);
 
-  // String members
-  total += ps.name().capacity();
-  total += ps.typeName().capacity();
+  while (!stack.empty()) {
+    const PrimSpec *current = stack.back();
+    stack.pop_back();
 
-  // Properties map
-  for (const auto& prop_pair : ps.props()) {
-    total += prop_pair.first.capacity(); // key string
-    total += prop_pair.second.estimate_memory_usage();
-  }
+    total += sizeof(PrimSpec);
 
-  // Children vector
-  for (const auto& child : ps.children()) {
-    total += EstimatePrimSpecMemory(child); // Recursive estimation
-  }
+    // String members
+    total += current->name().capacity();
+    total += current->typeName().capacity();
 
-  // VariantSets map
-  for (const auto& vs_pair : ps.variantSets()) {
-    total += vs_pair.first.capacity();
-    total += EstimateVariantSetSpecMemory(vs_pair.second);
+    // Properties map
+    for (const auto& prop_pair : current->props()) {
+      total += prop_pair.first.capacity();
+      total += prop_pair.second.estimate_memory_usage();
+    }
+
+    // Children
+    for (const auto& child : current->children()) {
+      stack.push_back(&child);
+    }
+
+    // VariantSets
+    for (const auto& vs_pair : current->variantSets()) {
+      total += vs_pair.first.capacity();
+      total += sizeof(VariantSetSpec);
+      total += vs_pair.second.name.capacity();
+      for (const auto& v_pair : vs_pair.second.variantSet) {
+        total += v_pair.first.capacity();
+        stack.push_back(&v_pair.second);
+      }
+    }
+
+    // Limit check
+    if (stack.size() > kMaxDefaultTraversalLimit) {
+      break;
+    }
   }
 
   return total;
@@ -601,8 +610,11 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
 #undef PushError
 }
 
-bool Layer::check_unresolved_references(const uint32_t max_depth) const {
-  (void)max_depth;  // Not needed for iterative version
+bool Layer::check_unresolved_references(const uint32_t /*max_depth*/) const {
+  // Parameter is not needed: the iterative traversals below use
+  // kMaxDefaultTraversalLimit (1M) which safely bounds the walk for any
+  // realistic PrimSpec tree. Composition arc depth is enforced separately
+  // by the caller (CompositeReferences etc.).
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
@@ -620,7 +632,7 @@ bool Layer::check_unresolved_references(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
-  (void)max_depth;  // Not needed for iterative version
+  // max_depth is not needed: iterative traversals use kMaxDefaultTraversalLimit
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
@@ -638,7 +650,7 @@ bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
-  (void)max_depth;  // Not needed for iterative version
+  // max_depth is not needed: iterative traversals use kMaxDefaultTraversalLimit
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
@@ -656,7 +668,7 @@ bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
-  (void)max_depth;  // Not needed for iterative version
+  // max_depth is not needed: iterative traversals use kMaxDefaultTraversalLimit
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
@@ -674,7 +686,7 @@ bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
-  (void)max_depth;  // Not needed for iterative version
+  // max_depth is not needed: iterative traversals use kMaxDefaultTraversalLimit
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
@@ -692,7 +704,7 @@ bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
 }
 
 bool Layer::check_over_primspec(const uint32_t max_depth) const {
-  (void)max_depth;  // Not needed for iterative version
+  // max_depth is not needed: iterative traversals use kMaxDefaultTraversalLimit
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {

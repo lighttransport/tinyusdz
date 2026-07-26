@@ -31,7 +31,15 @@ for loader in next legacy; do
     echo "FAIL: $loader did not report one structured unsupported-lobe record"
     exit 1
   fi
-  for lobe in transmission subsurface sheen/fuzz thin-film anisotropy; do
+  if ! grep -Fq \
+      "material '/World/AdvancedMaterial': unsupported real-time lobes:" \
+      <<<"$log"; then
+    echo "$log"
+    echo "FAIL: $loader diagnostic omitted the qualified material path"
+    exit 1
+  fi
+  for lobe in transmission subsurface sheen/fuzz thin-film anisotropy \
+      dispersion volume; do
     if ! grep -Fq "$lobe" <<<"$log"; then
       echo "$log"
       echo "FAIL: $loader diagnostic omitted $lobe"

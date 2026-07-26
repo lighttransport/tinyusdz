@@ -2,6 +2,7 @@
 // Copyright 2024 - Present, Light Transport Entertainment, Inc.
 
 #include "usdz-convert.hh"
+#include "safe-arithmetic.hh"
 
 #include <algorithm>
 #include <chrono>
@@ -496,8 +497,13 @@ void CollectLayerTextureAssetPaths(const Layer &layer,
 
 std::string TexturePathKey(std::string path) {
   std::replace(path.begin(), path.end(), '\\', '/');
-  while (path.rfind("./", 0) == 0) {
-    path = path.substr(2);
+  // Strip leading "./" prefix repetitions in a single pass.
+  size_t skip = 0;
+  while (skip + 1 < path.size() && path[skip] == '.' && path[skip + 1] == '/') {
+    skip += 2;
+  }
+  if (skip > 0) {
+    path = path.substr(skip);
   }
   return io::NormalizePath(path);
 }
@@ -1114,8 +1120,17 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
     wopt.format = image::WriteImageFormat::JPEG;
     // JPEG cannot carry alpha; drop it.
     if (img.channels == 4) {
-      const size_t npix = size_t(img.width) * size_t(img.height);
-      if (img.data.size() < npix * 4) {
+      size_t npix;
+      if (!safe::mul(size_t(img.width), size_t(img.height), &npix)) {
+        if (warn) {
+          (*warn) += "Image dimensions too large for " + uri + ".\n";
+        }
+        *out_bytes = src_bytes;
+        *out_ext = src_ext_lower;
+        return true;
+      }
+      size_t npix4;
+      if (!safe::mul(npix, size_t(4), &npix4) || img.data.size() < npix4) {
         if (warn) {
           (*warn) += "Undersized image buffer for " + uri +
                      " - copying through unchanged.\n";
@@ -1131,7 +1146,16 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
       rgb.bpp = 8;
       rgb.format = img.format;
       rgb.colorspace = img.colorspace;
-      rgb.data.resize(npix * 3);
+      size_t npix3;
+      if (!safe::mul(npix, size_t(3), &npix3)) {
+        if (warn) {
+          (*warn) += "Image dimensions too large for " + uri + ".\n";
+        }
+        *out_bytes = src_bytes;
+        *out_ext = src_ext_lower;
+        return true;
+      }
+      rgb.data.resize(npix3);
       for (size_t i = 0; i < npix; i++) {
         rgb.data[3 * i + 0] = img.data[4 * i + 0];
         rgb.data[3 * i + 1] = img.data[4 * i + 1];
@@ -1662,8 +1686,13 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
     }
 
     std::string unique_name = archive_name;
+    constexpr uint32_t kMaxSuffix = 100000;
     uint32_t suffix = 1;
     while (assets.count(unique_name) && assets[unique_name] != job.out_bytes) {
+      if (suffix >= kMaxSuffix) {
+        unique_name = archive_name;
+        break;
+      }
       unique_name = MakeCollisionArchiveName(archive_name, suffix++);
     }
     archive_name = unique_name;

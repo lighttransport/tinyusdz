@@ -3058,6 +3058,16 @@ void DiagnoseUnsupportedRealtimeLobes(const DrawMaterialCPU& material,
         std::fabs(v) > kAuthoredEpsilon) {
       add("dispersion");
     }
+    if ((param.name == "transmission_weight" ||
+         param.name == "subsurface_weight" ||
+         param.name == "sheen_weight" ||
+         param.name == "thin_film_weight") &&
+        std::fabs(v) > kAuthoredEpsilon) {
+      if (param.name == "transmission_weight") add("transmission");
+      else if (param.name == "subsurface_weight") add("subsurface");
+      else if (param.name == "sheen_weight") add("sheen/fuzz");
+      else add("thin-film");
+    }
   }
   if (material.hasVolumeOutput) add("volume");
   if (lobes.empty()) return;
