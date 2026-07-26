@@ -135,6 +135,9 @@ void TestChunkedArrayAllocFailure() {
   assert(!arr.reserve(impossible));
   float dummy = 0.0f;
   assert(arr.append(&dummy, 0));  // zero-count append is a no-op success
+  assert(!arr.append(&dummy, (std::numeric_limits<size_t>::max)()));
+  assert(arr.size() == 10);
+  assert(!arr.append(nullptr, 1));
 
   // Small growth still works after a failed attempt (failure is latched for
   // inspection but does not poison the array).
@@ -348,6 +351,32 @@ def Xform "World"
   assert(std::abs(focal_length - 50.0f) < 0.001f);
 
   std::cout << "  Scene Access: PASSED\n";
+}
+
+void TestDeepSceneAccess() {
+  std::cout << "Testing deep Scene Access traversal...\n";
+
+  // USDA input is depth-limited, but public builders can create deeper valid
+  // layers. This used to recurse once per prim in GetDescendants and could
+  // exhaust the comparatively small WASM stack.
+  constexpr size_t kDepth = 8192;
+  StageBuilder builder;
+  LayerBuilder& layer = builder.GetLayerBuilder();
+  for (size_t i = 0; i < kDepth; ++i) {
+    layer.begin_prim("P", "Xform");
+  }
+  Stage stage = builder.Build();
+  UsdPrim root = stage.GetRootPrims().front();
+  const std::vector<UsdPrim> descendants = GetDescendants(root);
+  assert(descendants.size() == kDepth - 1);
+
+  size_t traversed = 0;
+  stage.Traverse([&](const UsdPrim&) {
+    ++traversed;
+    return true;
+  });
+  assert(traversed == kDepth);
+  std::cout << "  Deep Scene Access: PASSED\n";
 }
 
 void TestRenderExtract() {
@@ -4904,6 +4933,7 @@ int main() {
 
   // Scene Access tests
   TestSceneAccess();
+  TestDeepSceneAccess();
   TestRenderExtract();
 
   std::cout << "\n";

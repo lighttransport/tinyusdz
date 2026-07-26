@@ -249,7 +249,7 @@ struct StringListOpEdits {
   }
 };
 
-/// Recursively fill a stronger dictionary's missing keys from a weaker one
+/// Fill a stronger dictionary's missing keys from a weaker one
 /// (AOUSD §6.6.2 / §12.2). A key where one side is a dictionary and the other
 /// is not is a TYPE CONFLICT: the stronger opinion correctly wins, but the
 /// weaker subtree is silently shadowed — when `conflicts` is provided, the
@@ -264,19 +264,37 @@ inline void MergeWeakerDictionaryValue(
     *stronger = weaker;
     return;
   }
-  Dict* destination = stronger->as_dictionary();
-  const Dict* source = weaker.as_dictionary();
-  if (!destination || !source) return;
-  for (const auto& entry : source->entries) {
+  // Explicit DFS avoids exhausting the C++ stack for deeply nested
+  // dictionaries created through the API. A frame processes one dictionary at
+  // a time; descending immediately also keeps Value pointers stable while a
+  // parent Dict's entry vector may grow.
+  struct Frame {
+    Value* destination_value;
+    const Value* source_value;
+    size_t next_entry;
+    std::string prefix;
+  };
+  std::vector<Frame> stack;
+  stack.push_back(Frame{stronger, &weaker, 0, key_prefix});
+  while (!stack.empty()) {
+    Frame& frame = stack.back();
+    Dict* destination = frame.destination_value->as_dictionary();
+    const Dict* source = frame.source_value->as_dictionary();
+    if (!destination || !source || frame.next_entry >= source->entries.size()) {
+      stack.pop_back();
+      continue;
+    }
+
+    const auto& entry = source->entries[frame.next_entry++];
     Value* existing = destination->find(entry.first);
     if (!existing) {
       destination->set(entry.first, entry.second);
     } else if (existing->is_dictionary() && entry.second.is_dictionary()) {
-      MergeWeakerDictionaryValue(existing, entry.second, conflicts,
-                                 key_prefix + entry.first + ".");
+      stack.push_back(
+          Frame{existing, &entry.second, 0, frame.prefix + entry.first + "."});
     } else if (conflicts &&
                existing->is_dictionary() != entry.second.is_dictionary()) {
-      conflicts->push_back(key_prefix + entry.first);
+      conflicts->push_back(frame.prefix + entry.first);
     }
   }
 }

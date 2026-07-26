@@ -1065,14 +1065,12 @@ void WriteVariantSets(StreamWriter& os,
   }
 }
 
-void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
-                   int depth, const USDAWriteOptions& opts,
-                   SegmentSink* segsink) {
-  // Composed-stage output: pxr usdcat --flatten DROPS deactivated prims
-  // (and their subtrees) from the flattened layer entirely. The in-memory
-  // stage keeps them (IsActive stays queryable); only the flatten output
-  // prunes.
-  if (opts.composed_stage_output && !spec.meta().active) return;
+// Write one prim's header and body opinions, but not its ordinary children or
+// closing brace. WritePrimSpec owns hierarchy traversal so API-created deep
+// layers do not consume one C++ stack frame per prim.
+void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
+                       const Layer& layer, int depth,
+                       const USDAWriteOptions& opts, SegmentSink* segsink) {
   // Write prim definition line
   WriteIndent(os, depth, opts.indent);
   os << SpecifierKeyword(spec.specifier());
@@ -1449,23 +1447,60 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
   WriteVariantSets(os, spec.meta().variantSets(), layer, spec.path().str(),
                    content_depth, opts, segsink);
 
-  // Write children. When `segsink` is active (the parallel build walk), the same
-  // sink propagates so each child's large array values are offloaded too.
-  // Bracketed variant HOLDER prims ("{set=var}", crate representation) are not
-  // real children: their names/selections are emitted via the variantSets
-  // metadata + bodies above, and printing them as defs would be invalid USDA.
-  for (uint32_t child_idx : spec.child_indices()) {
-    const PrimSpec* child = layer.prim(child_idx);
-    if (child) {
-      const std::string& cn = child->name();
-      if (cn.size() >= 2 && cn.front() == '{' && cn.back() == '}') continue;
-      os << "\n";
-      WritePrimSpec(os, *child, layer, content_depth, opts, segsink);
-    }
-  }
+}
 
-  WriteIndent(os, depth, opts.indent);
-  os << "}\n";
+void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
+                   int depth, const USDAWriteOptions& opts,
+                   SegmentSink* segsink) {
+  // Composed-stage output: pxr usdcat --flatten DROPS deactivated prims
+  // (and their subtrees) from the flattened layer entirely. The in-memory
+  // stage keeps them (IsActive stays queryable); only the flatten output
+  // prunes.
+  if (opts.composed_stage_output && !spec.meta().active) return;
+
+  struct Frame {
+    const PrimSpec* prim;
+    int depth;
+    size_t next_child;
+    bool opened;
+  };
+  std::vector<Frame> stack;
+  stack.push_back(Frame{&spec, depth, 0, false});
+
+  while (!stack.empty()) {
+    Frame& frame = stack.back();
+    if (!frame.opened) {
+      WritePrimSpecOpen(os, *frame.prim, layer, frame.depth, opts, segsink);
+      frame.opened = true;
+    }
+
+    // When `segsink` is active (the parallel build walk), the same sink
+    // propagates so each child's large array values are offloaded too.
+    // Bracketed variant HOLDER prims ("{set=var}", crate representation) are
+    // not real children: their selections are emitted through variantSets.
+    bool descended = false;
+    const auto& children = frame.prim->child_indices();
+    while (frame.next_child < children.size()) {
+      const PrimSpec* child = layer.prim(children[frame.next_child++]);
+      if (!child) continue;
+      const std::string& name = child->name();
+      if (name.size() >= 2 && name.front() == '{' && name.back() == '}') {
+        continue;
+      }
+      if (opts.composed_stage_output && !child->meta().active) continue;
+
+      const int child_depth = frame.depth + 1;
+      os << "\n";
+      stack.push_back(Frame{child, child_depth, 0, false});
+      descended = true;
+      break;
+    }
+    if (descended) continue;
+
+    WriteIndent(os, frame.depth, opts.indent);
+    os << "}\n";
+    stack.pop_back();
+  }
 }
 
 void WriteRootPrimOrder(StreamWriter& os, const LayerMeta& meta) {

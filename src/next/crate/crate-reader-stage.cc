@@ -798,6 +798,11 @@ bool CrateReader::Impl::BuildStage() {
     auto& entry = prim_entries[entry_index];
     // Compute depth of this prim (number of '/' in path)
     size_t depth = std::count(entry.full_path.begin(), entry.full_path.end(), '/');
+    if (depth == 0) {
+      AddWarning("Ignoring malformed non-absolute prim path: " +
+                 entry.full_path);
+      continue;
+    }
 
     // Pop stack until we're at the correct parent level
     while (prim_stack.size() > depth - 1) {

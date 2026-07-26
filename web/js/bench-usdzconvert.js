@@ -5,11 +5,16 @@
 //
 //   bench-usdzconvert.html?manifest=<url>&root=<rel>&resize=1024
 //     &textureFormat=png&codec=browser|wasm&pipeline=memory|stream|stream-next
-//     &wasm64=1&concurrency=8
+//     &wasm64=1&concurrency=8&textureMemoryBudget=1GB
 //
 // Results land in window.__usdzBench = { ready|error, timings, stats, gpu }.
 
-import { convertFolderToUSDZ, convertSourceToUSDZStreaming, loadWasm } from './src/usdzconvert.js';
+import {
+  convertFolderToUSDZ,
+  convertSourceToUSDZStreaming,
+  loadWasm,
+  parseByteSize,
+} from './src/usdzconvert.js';
 import { createBrowserTextureProcessor } from './src/texture-processor-browser.mjs';
 
 const statusEl = document.getElementById('status');
@@ -63,6 +68,7 @@ async function main() {
   const streaming = pipeline === 'stream' || pipeline === 'stream-next';
   const wasm64 = params.get('wasm64') !== '0';
   const concurrency = Number(params.get('concurrency') || 8);
+  const textureMemoryBudget = parseByteSize(params.get('textureMemoryBudget'));
   const jpegQuality = Number(params.get('jpegQuality') || 90);
   const includeUnusedTextures = params.get('includeUnusedTextures') === '1';
   // Raise the conservative default USDC writer caps (0 = keep default). Needed
@@ -103,7 +109,10 @@ async function main() {
   status(`wasm ready (${wasm64 ? 'wasm64' : 'wasm32'}, ${timings.wasmInitMs.toFixed(0)} ms)`);
 
   // 3. Convert (compose/flatten + textures + usdz pack).
-  const tp = codec === 'browser' ? createBrowserTextureProcessor({ concurrency }) : null;
+  const tp = codec === 'browser' ? createBrowserTextureProcessor({
+    concurrency,
+    memoryBudgetBytes: textureMemoryBudget,
+  }) : null;
   const convertOpts = {
     rootPath,
     maxTextureSize: resize,
@@ -189,6 +198,7 @@ async function main() {
     codec,
     pipeline,
     wasm64,
+    textureConcurrency: tp ? tp.concurrency : convertOpts.textureConcurrency,
     sceneFiles: manifest.length,
     sceneBytes,
     usdzBytes,

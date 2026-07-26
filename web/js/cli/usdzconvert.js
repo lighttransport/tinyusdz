@@ -330,7 +330,7 @@ function estimateTextureRssMiB(imageCount, jobs, codec) {
   // conservative rather than trying to predict exact texture dimensions.
   const base = 384 + Math.min(192, count * 0.4);
   if (codec === 'wasm') return base;
-  return base + Math.max(1, jobs | 0) * 175;
+  return base + Math.max(1, jobs | 0) * 192;
 }
 
 function chooseBestTextureJobs(imageCount, budgetBytes) {
@@ -469,7 +469,10 @@ async function runStreamingConvert(native, o) {
   }
   if (selectedTextureCodec.codec === 'js') {
     const { createNodeTextureProcessor } = await import('../src/texture-processor-node.mjs');
-    texturePool = createNodeTextureProcessor({ concurrency: selectedTextureCodec.jobs || 0 });
+    texturePool = createNodeTextureProcessor({
+      concurrency: selectedTextureCodec.jobs || 0,
+      memoryBudgetBytes: o.textureMemoryBudget || 0,
+    });
     log(`texture codec: js (${texturePool.concurrency} worker(s))`);
   }
 
@@ -709,7 +712,10 @@ async function main() {
   }
   if (selectedTextureCodec.codec === 'js') {
     const { createNodeTextureProcessor } = await import('../src/texture-processor-node.mjs');
-    texturePool = createNodeTextureProcessor({ concurrency: selectedTextureCodec.jobs || 0 });
+    texturePool = createNodeTextureProcessor({
+      concurrency: selectedTextureCodec.jobs || 0,
+      memoryBudgetBytes: o.textureMemoryBudget || 0,
+    });
     log(`texture codec: js (${texturePool.concurrency} worker(s))`);
   }
 

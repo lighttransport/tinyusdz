@@ -16,9 +16,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <new>
-#include <vector>
+#include <limits>
 #include <memory>
+#include <new>
+#include <type_traits>
+#include <vector>
 
 namespace tinyusdz {
 namespace tydra {
@@ -50,6 +52,8 @@ class ChunkedArray {
  public:
   static constexpr size_t kElementsPerChunk = ChunkBytes / sizeof(T);
   static_assert(kElementsPerChunk > 0, "Element size too large for chunk");
+  static_assert(std::is_trivially_copyable<T>::value,
+                "ChunkedArray requires a trivially copyable element type");
 
   ChunkedArray() = default;
   ~ChunkedArray() = default;
@@ -73,6 +77,10 @@ class ChunkedArray {
   // Add element, returns index (SIZE_MAX on allocation failure)
   size_t push_back(const T& value) {
     size_t idx = size_;
+    if (size_ == (std::numeric_limits<size_t>::max)()) {
+      alloc_failed_ = true;
+      return static_cast<size_t>(-1);
+    }
     if (!ensure_capacity(size_ + 1)) return static_cast<size_t>(-1);
     (*this)[idx] = value;
     ++size_;
@@ -81,6 +89,10 @@ class ChunkedArray {
 
   size_t push_back(T&& value) {
     size_t idx = size_;
+    if (size_ == (std::numeric_limits<size_t>::max)()) {
+      alloc_failed_ = true;
+      return static_cast<size_t>(-1);
+    }
     if (!ensure_capacity(size_ + 1)) return static_cast<size_t>(-1);
     (*this)[idx] = std::move(value);
     ++size_;
@@ -90,6 +102,10 @@ class ChunkedArray {
   // Add multiple elements from contiguous array
   bool append(const T* data, size_t count) {
     if (count == 0) return true;
+    if (!data || count > (std::numeric_limits<size_t>::max)() - size_) {
+      alloc_failed_ = true;
+      return false;
+    }
     if (!ensure_capacity(size_ + count)) return false;
 
     size_t remaining = count;
@@ -145,7 +161,7 @@ class ChunkedArray {
   // the tail chunk transparently.
   void shrink_to_fit() {
     const size_t needed_chunks =
-        (size_ + kElementsPerChunk - 1) / kElementsPerChunk;
+        size_ / kElementsPerChunk + (size_ % kElementsPerChunk != 0);
     while (chunks_.size() > needed_chunks) {
       chunks_.pop_back();
     }
@@ -178,7 +194,7 @@ class ChunkedArray {
   }
 
   // Bounds-checked access. Built with -fno-exceptions, so an out-of-range index
-    // is a fatal programming error: report and abort immediately.
+  // is a fatal programming error: report and abort immediately.
   T& at(size_t idx) {
     if (idx >= size_) {
       std::fprintf(stderr, "ChunkedArray::at: index %zu out of range (size %zu)\n",
@@ -208,6 +224,11 @@ class ChunkedArray {
   size_t chunk_count() const { return chunks_.size(); }
   size_t capacity() const {
     if (chunks_.empty()) return 0;
+    if ((chunks_.size() - 1) >
+        ((std::numeric_limits<size_t>::max)() - tail_capacity_) /
+            kElementsPerChunk) {
+      return (std::numeric_limits<size_t>::max)();
+    }
     return (chunks_.size() - 1) * kElementsPerChunk + tail_capacity_;
   }
 
@@ -219,8 +240,14 @@ class ChunkedArray {
   // Memory usage in bytes
   size_t memory_usage() const {
     if (chunks_.empty()) return sizeof(*this);
-    return (chunks_.size() - 1) * ChunkBytes + tail_capacity_ * sizeof(T) +
-           sizeof(*this);
+    const size_t max_size = (std::numeric_limits<size_t>::max)();
+    const size_t tail_bytes = tail_capacity_ * sizeof(T);
+    if (tail_bytes > max_size - sizeof(*this)) return max_size;
+    if ((chunks_.size() - 1) >
+        (max_size - tail_bytes - sizeof(*this)) / ChunkBytes) {
+      return max_size;
+    }
+    return (chunks_.size() - 1) * ChunkBytes + tail_bytes + sizeof(*this);
   }
 
   // Get pointer to chunk data (for direct GPU upload)
@@ -238,6 +265,11 @@ class ChunkedArray {
   // chunk off the allocation count made copy_to()/flatten() read (and memcpy
   // into exact-sized destination buffers!) whole 64KB chunks past the end.
   size_t chunk_size(size_t chunk_idx) const {
+    if (chunk_idx >= chunks_.size() ||
+        chunk_idx > (std::numeric_limits<size_t>::max)() /
+                        kElementsPerChunk) {
+      return 0;
+    }
     const size_t begin = chunk_idx * kElementsPerChunk;
     if (begin >= size_) return 0;
     const size_t remaining = size_ - begin;
@@ -340,10 +372,25 @@ class ChunkedArray {
  private:
   bool ensure_capacity(size_t n) {
     if (capacity() >= n) return true;
+    // No single C++ object may exceed PTRDIFF_MAX bytes. Reject before the
+    // allocator probe: ASan and several wasm allocators abort (even for
+    // nothrow new/malloc) when asked to probe an address-space-sized block.
+    const size_t max_elements =
+        static_cast<size_t>((std::numeric_limits<std::ptrdiff_t>::max)()) /
+        sizeof(T);
+    if (n >= max_elements) {
+      alloc_failed_ = true;
+      return false;
+    }
     // Guard the chunk-vector growth too: reserve with a nothrow probe so the
     // push_back below cannot throw-abort under -fno-exceptions.
     const size_t needed_chunks =
-        (n + kElementsPerChunk - 1) / kElementsPerChunk;
+        n / kElementsPerChunk + (n % kElementsPerChunk != 0);
+    if (needed_chunks >
+        (std::numeric_limits<size_t>::max)() / sizeof(chunks_[0]) / 2) {
+      alloc_failed_ = true;
+      return false;
+    }
     if (needed_chunks > chunks_.capacity() &&
         !ProbeAlloc(needed_chunks * sizeof(chunks_[0]) * 2)) {
       alloc_failed_ = true;
