@@ -146,7 +146,7 @@ class DemoApp {
             <div id="drop-hint" class="drop-hint">Drop USDA, USDC, USD, or USDZ</div>
               <div id="status" class="status">Initializing...</div>
               <div id="tusd-loader" class="tusd-loader hidden">
-                <div class="spinner"></div>
+                <div class="loader-progress"><div class="loader-bar" style="width:10%"></div></div>
                 <div class="loader-text">Loading TinyUSDZ WASM…</div>
               </div>
             </section>
@@ -306,7 +306,25 @@ class DemoApp {
 
     this.setStatus('Initializing TinyUSDZ WASM...');
     const loaderEl = document.getElementById('tusd-loader');
-    if (loaderEl) { loaderEl.classList.remove('hidden'); loaderEl.querySelector('.loader-text').textContent = 'Loading TinyUSDZ WASM (' + (window.location.hostname === 'localhost' ? 'dev' : 'prod') + ')…'; }
+    if (loaderEl) {
+      loaderEl.classList.remove('hidden');
+      loaderEl.querySelector('.loader-text').textContent = 'Loading TinyUSDZ WASM…';
+      // Start indeterminate bar animation
+      const bar = loaderEl.querySelector('.loader-bar');
+      if (bar && !bar.dataset.animating) {
+        bar.dataset.animating = '1';
+        let dir = 1, pos = 10;
+        const anim = () => {
+          if (!bar || bar.dataset.animating !== '1') return;
+          pos += dir * 1.2;
+          if (pos >= 95) dir = -1;
+          if (pos <= 5) dir = 1;
+          bar.style.width = pos + '%';
+          requestAnimationFrame(anim);
+        };
+        requestAnimationFrame(anim);
+      }
+    }
     this.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
     try {
       await this.loader.init({
@@ -316,7 +334,11 @@ class DemoApp {
         useNextOnlyWasm: this.params.backend === 'next'
       });
     } finally {
-      if (loaderEl) loaderEl.classList.add('hidden');
+      if (loaderEl) {
+        const bar = loaderEl.querySelector('.loader-bar');
+        if (bar) bar.dataset.animating = '0';
+        loaderEl.classList.add('hidden');
+      }
     }
     TinyUSDZLoaderUtils.setTinyUSDZ(this.loader.native_);
     setMaterialXTinyUSDZ(this.loader.native_);

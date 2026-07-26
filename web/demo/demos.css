@@ -1002,15 +1002,21 @@ button {
 
 .tusd-loader {
     position: absolute;
-    inset: 0;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
     z-index: 50;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 14px;
-    background: rgba(14, 14, 16, 0.88);
-    transition: opacity 0.3s ease;
+    gap: 12px;
+    min-width: 200px;
+    padding: 24px 32px;
+    background: rgba(14, 14, 16, 0.92);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    transition: opacity 0.25s ease;
     pointer-events: none;
 }
 
@@ -1018,23 +1024,27 @@ button {
     opacity: 0;
 }
 
-.tusd-loader .spinner {
-    width: 32px;
-    height: 32px;
-    border: 3px solid var(--panel-3);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: tusd-spin 0.7s linear infinite;
+.loader-progress {
+    width: 100%;
+    height: 6px;
+    background: var(--panel-3);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.loader-bar {
+    width: 10%;
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #c7adfb, var(--accent));
+    background-size: 200% 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
 }
 
 .tusd-loader .loader-text {
     color: var(--muted);
     font-size: 0.82rem;
     text-align: center;
-    max-width: 280px;
-    line-height: 1.4;
-}
-
-@keyframes tusd-spin {
-    to { transform: rotate(360deg); }
+    max-width: 260px;
+    line-height: 1.35;
 }
