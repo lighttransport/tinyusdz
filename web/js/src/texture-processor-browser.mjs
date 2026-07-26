@@ -16,6 +16,8 @@
 //                                            textureConcurrency: tp.concurrency, ... });
 //   tp.stats() -> { processed, decodeMs, rasterMs, encodeMs, inBytes, outBytes }
 
+import { textureConcurrencyForBudget } from './texture-memory-budget.mjs';
+
 function sniffMime(bytes) {
   if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50) return 'image/png';
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
@@ -25,7 +27,8 @@ function sniffMime(bytes) {
 }
 
 export function createBrowserTextureProcessor(opts = {}) {
-  const concurrency = Math.max(1, opts.concurrency || 8);
+  const concurrency = textureConcurrencyForBudget(
+      Math.max(1, opts.concurrency || 8), opts.memoryBudgetBytes || 0);
   const stats = {
     processed: 0, skipped: 0,
     decodeMs: 0, rasterMs: 0, encodeMs: 0,

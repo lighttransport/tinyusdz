@@ -498,6 +498,30 @@ void test_stage_writer() {
   std::cout << "  usda-writer tests passed!\n\n";
 }
 
+void test_deep_stage_writer() {
+  std::cout << "Testing deep stage writer traversal...\n";
+
+  constexpr size_t kDepth = 8192;
+  StageBuilder builder;
+  LayerBuilder& layer = builder.GetLayerBuilder();
+  for (size_t i = 0; i < kDepth; ++i) {
+    layer.begin_prim("P", "Xform");
+  }
+  Stage stage = builder.Build();
+
+  USDAWriteOptions opts;
+  opts.indent.clear();  // Keep the regression output O(depth), not O(depth^2).
+  const std::string text = WriteUSDAToString(stage, opts);
+  assert(!text.empty());
+  size_t definitions = 0;
+  for (size_t pos = 0; (pos = text.find("def Xform", pos)) != std::string::npos;
+       pos += 9) {
+    ++definitions;
+  }
+  assert(definitions == kDepth);
+  std::cout << "  deep stage writer traversal passed!\n\n";
+}
+
 void test_time_samples() {
   std::cout << "Testing time samples...\n";
 
@@ -1211,6 +1235,7 @@ int main() {
     test_default_with_timesamples();
     test_layer_printer();
     test_stage_writer();
+    test_deep_stage_writer();
     test_time_samples();
     test_roundtrip();
     test_parallel_writer_parity();

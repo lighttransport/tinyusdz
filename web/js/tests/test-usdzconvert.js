@@ -303,6 +303,18 @@ await testAsync('node texture processor resizes PNGs across a worker pool and de
   }
 });
 
+await testAsync('node texture processor caps concurrency to its memory budget', async () => {
+  const pool = createNodeTextureProcessor({
+    concurrency: 8,
+    memoryBudgetBytes: 600 * 1024 * 1024,
+  });
+  try {
+    assert.equal(pool.concurrency, 1);
+  } finally {
+    pool.destroy();
+  }
+});
+
 // ============================================================
 console.log('Integration: loadWasm + convertFolderToUSDZ');
 // ============================================================
