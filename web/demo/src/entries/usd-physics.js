@@ -512,4 +512,3 @@ main().catch((err) => {
   console.error(err);
   setStatus(`Error: ${err.message}`);
 });
-import { Report } from "../app-report.js";

@@ -520,4 +520,3 @@ async function main() {
 }
 
 main().catch((e) => { console.error(e); setStatus('Error: ' + e.message); });
-import { Report } from "../app-report.js";

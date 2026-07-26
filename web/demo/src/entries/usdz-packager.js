@@ -385,4 +385,3 @@ function onResize() {
 window.addEventListener('resize', onResize);
 
 main().catch((e) => { console.error(e); setStatus('Error: ' + e.message); });
-import { Report } from "../app-report.js";

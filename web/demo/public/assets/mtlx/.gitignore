@@ -1,5 +1,0 @@
-# Ignore downloaded texture images (use download_textures.sh to fetch them)
-images/
-
-# Allow the download script itself
-!download_textures.sh

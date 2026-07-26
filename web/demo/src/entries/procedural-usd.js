@@ -274,4 +274,3 @@ const firstTemplate = Object.keys(TEMPLATES_MAP)[0];
 loadTemplate(firstTemplate);
 onResize();
 requestAnimationFrame(anim);
-import { Report } from "../app-report.js";
