@@ -246,7 +246,13 @@ int main(int argc, char** argv) {
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
   bool allowParentPaths = true;           // USD layer-relative paths may use '..'.
+  // Bound the interactive viewer's default texture residency. Each of these
+  // defaults remains explicitly disableable by the command-line switches.
   tusdview::TextureRuntimeOptions textureOptions;
+  textureOptions.maxTextureSize = 4096;
+  textureOptions.compression = tusdview::TextureCompressionMode::Auto;
+  textureOptions.keepCompressed = true;
+  textureOptions.generateMips = true;
   bool domeIblExplicit = false;
   bool maxTextureSizeExplicit = false;
   bool textureBudgetExplicit = false;
@@ -792,7 +798,7 @@ int main(int argc, char** argv) {
           "segments are permitted by default because USD anchors them to the "
           "authoring layer.\n"
           "  --texture-max-size N  Downsize decoded textures whose longest edge "
-          "exceeds N texels (0 = keep source size).\n"
+          "exceeds N texels (default 4096; 0 = keep source size).\n"
           "  --texture-budget-mb N  Best-effort decoded texture memory budget "
           "for viewer uploads (0 = unlimited).\n"
           "  --subdivision-level N  Scene-wide conversion-time subdivision "
@@ -805,9 +811,12 @@ int main(int argc, char** argv) {
           "--subdivision-prim overrides win.\n"
           "  --subdivision-auto-max-level N  Clamp --subdivision-auto levels "
           "(default 3, hard cap 10).\n"
-          "  --texture-compress off|bc  Request BCn texture compression. Backends "
-          "without BCn upload support warn and fall back to resized RGBA8.\n"
-          "  --texture-mips  Generate content-aware texture mip chains.\n"
+          "  --texture-compress off|bc|bc7|astc|etc2|auto  Request GPU texture "
+          "compression (default "
+          "auto; selects a supported BC/ASTC/ETC2 format). Backends without "
+          "block upload support fall back to resized RGBA8.\n"
+          "  --texture-mips on|off  Generate content-aware texture mip chains "
+          "(default on).\n"
           "  --texture-keep-compressed  Preserve supported KTX2 block payloads "
           "instead of decoding/re-encoding them.\n"
           "  --udim sparse|atlas  UDIM handling mode (default sparse; atlas rebakes "

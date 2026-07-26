@@ -12,6 +12,11 @@ canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
 Updated 2026-07-26 through `4fd04a430`.
 
+The viewer's default texture residency path now uses a 4096-texel coarse LOD,
+adaptive GPU block compression, KTX2 passthrough, and content-aware mip chains;
+`--texture-max-size 0`, `--texture-compress off`, and `--texture-mips off` are
+explicit opt-outs.
+
 ### Core-next / Tydra-next live-edit foundation
 
 - [x] Add immutable, revisioned `StageSnapshot` publication and typed
