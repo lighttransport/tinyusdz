@@ -254,10 +254,14 @@ With `TINYUSDZ_WITH_TEXTOOLS=ON` (default; see
 tir/texcomp/texpipe/envmap libraries:
 
 - Texture resize (`--texture-max-size`, `--texture-budget-mb`) runs through
-  `tir` (sRGB-aware, premultiplied-alpha filtering) instead of stb.
-- `--texture-compress off|bc|bc7` uses the `texcomp` encoders (`bc` picks
-  BC1/BC3 by alpha; `bc7` needs BPTC support — GL 4.2 ext / VK BC feature).
-- `--texture-mips on` builds content-aware CPU mip chains via `texpipe`
+  `tir` (sRGB-aware, premultiplied-alpha filtering) instead of stb. The viewer
+  defaults to a 4096-texel longest edge; `--texture-max-size 0` restores source
+  size.
+- Adaptive GPU block compression is enabled by default (`--texture-compress
+  auto`), using `texcomp` and selecting a supported BC/ASTC/ETC2 format;
+  `--texture-compress off` disables it. Unsupported formats fall back to
+  resized RGBA8.
+- `--texture-mips on` (default) builds content-aware CPU mip chains via `texpipe`
   (sRGB-correct filtering, alpha-coverage preservation for Mask materials,
   normal-map renormalization, variance-aware roughness-channel minification,
   wrap-mode-aware filter edges). GL uploads the precomputed levels instead of
