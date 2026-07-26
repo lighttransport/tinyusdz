@@ -20,12 +20,18 @@ document.getElementById('demo-root').innerHTML = `
   </header>
   <main style="display:grid;grid-template-rows:auto 1fr;min-height:0;overflow:hidden">
     <div style="display:flex;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap;align-items:center;background:var(--panel)">
-      <span style="color:var(--muted);font-size:.78rem;font-weight:600">Load A:</span>
+      <span style="color:var(--muted);font-size:.78rem;font-weight:600">Compare:</span>
+      <select id="compare-pair" style="padding:5px 8px;border:1px solid var(--line-strong);border-radius:4px;background:var(--panel-2);color:var(--text);font-size:.8rem">
+        <option value="">— manual select —</option>
+      </select>
+      <button id="load-pair-btn" style="padding:5px 12px;border:1px solid var(--line-strong);border-radius:4px;background:var(--accent);color:#121214;cursor:pointer;font-size:.78rem;font-weight:600">Load Pair</button>
+      <span style="width:1px;height:20px;background:var(--line);margin:0 4px"></span>
+      <span style="color:var(--dim);font-size:.74rem;font-weight:600">A:</span>
       <select id="sample-a" style="padding:5px 8px;border:1px solid var(--line-strong);border-radius:4px;background:var(--panel-2);color:var(--text);font-size:.8rem"></select>
-      <button id="load-a-btn" style="padding:5px 12px;border:1px solid var(--line-strong);border-radius:4px;background:var(--panel-2);color:var(--text);cursor:pointer;font-size:.78rem">Load A</button>
-      <span style="color:var(--muted);font-size:.78rem;font-weight:600;margin-left:8px">Load B:</span>
+      <button id="load-a-btn" style="padding:5px 8px;border:1px solid var(--line-strong);border-radius:4px;background:var(--panel-2);color:var(--text);cursor:pointer;font-size:.76rem">A</button>
+      <span style="color:var(--dim);font-size:.74rem;font-weight:600">B:</span>
       <select id="sample-b" style="padding:5px 8px;border:1px solid var(--line-strong);border-radius:4px;background:var(--panel-2);color:var(--text);font-size:.8rem"></select>
-      <button id="load-b-btn" style="padding:5px 12px;border:1px solid var(--line-strong);border-radius:4px;background:var(--panel-2);color:var(--text);cursor:pointer;font-size:.78rem">Load B</button>
+      <button id="load-b-btn" style="padding:5px 8px;border:1px solid var(--line-strong);border-radius:4px;background:var(--panel-2);color:var(--text);cursor:pointer;font-size:.76rem">B</button>
       <span style="flex:1"></span>
       <span id="diff-status" style="color:var(--dim);font-size:.8rem">Load two scenes to compare.</span>
     </div>
@@ -68,6 +74,15 @@ const SAMPLES = [
   { label: 'Damaged Helmet', url: 'https://raw.githubusercontent.com/usd-wg/assets/main/test_assets/USDZ/DamagedHelmet/DamagedHelmet.usdz' },
 ];
 
+const PAIRS = [
+  { label: 'Sphere vs Cube', a: 3, b: 4 },
+  { label: 'Cone vs Sphere', a: 5, b: 3 },
+  { label: 'Suzanne vs Teapot', a: 0, b: 1 },
+  { label: 'Suzanne vs Skeleton', a: 0, b: 2 },
+  { label: 'Robot Arm vs Skeleton', a: 6, b: 2 },
+  { label: 'Cesium Man vs Helmet', a: 7, b: 8 },
+];
+
 function init() {
   const selA = $id('sample-a');
   const selB = $id('sample-b');
@@ -76,6 +91,10 @@ function init() {
   selB.innerHTML = opts;
   selA.value = '0';
   selB.value = '1';
+
+  const pairSel = $id('compare-pair');
+  pairSel.innerHTML = '<option value="">— manual select —</option>' +
+    PAIRS.map((p, i) => `<option value="${i}">${escapeHTML(p.label)}</option>`).join('');
 }
 
 // ── Three.js setup ──
@@ -282,6 +301,24 @@ $id('load-b-btn').addEventListener('click', async () => {
   const idx = Number($id('sample-b').value);
   const s = SAMPLES[idx];
   try { await loadScene('b', s.url, s.label); } catch (e) { $id('stats-b').textContent = 'Error: ' + e.message; }
+});
+$id('load-pair-btn').addEventListener('click', async () => {
+  const idx = Number($id('compare-pair').value);
+  if (isNaN(idx)) return;
+  const pair = PAIRS[idx];
+  if (!pair) return;
+  const sa = SAMPLES[pair.a];
+  const sb = SAMPLES[pair.b];
+  $id('sample-a').value = String(pair.a);
+  $id('sample-b').value = String(pair.b);
+  try {
+    await Promise.all([
+      loadScene('a', sa.url, sa.label),
+      loadScene('b', sb.url, sb.label),
+    ]);
+  } catch (e) {
+    $id('diff-status').textContent = 'Error: ' + e.message;
+  }
 });
 
 // ── Animation loop ──
