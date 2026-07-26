@@ -211,6 +211,7 @@ int main(int argc, char** argv) {
   tusdview::RendererDevicePreference devicePreference;
   bool vkDeviceExplicit = false;
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
+  std::string cudaCacheDir;   // --cuda-cache-dir: override compiled PTX cache
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   int rtSamples = 1;          // --rt-samples: AA supersamples for the CUDA/HIP path
   long long rtMaxInstances = 16000000;  // --max-instances: CUDA/HIP instance cap (0=off)
@@ -568,6 +569,12 @@ int main(int argc, char** argv) {
       wantRt = true;
     } else if (std::strcmp(argv[i], "--cuda") == 0) {
       wantCuda = true;
+    } else if (std::strcmp(argv[i], "--cuda-cache-dir") == 0 && i + 1 < argc) {
+      cudaCacheDir = argv[++i];
+      if (cudaCacheDir.empty()) {
+        LOGE("--cuda-cache-dir requires a non-empty path");
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--hip") == 0) {
       wantHip = true;
     } else if (std::strcmp(argv[i], "--rt-samples") == 0 && i + 1 < argc) {
@@ -694,6 +701,8 @@ int main(int argc, char** argv) {
           "(implies --backend vk).\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
+          "  --cuda-cache-dir PATH  Store compiled CUDA PTX in PATH (default: the "
+          "platform cache directory under tusdview/cuda).\n"
           "  --hip         Ray-trace the screenshot on HIP/ROCm (loaded at runtime "
           "via hipew + hiprtc; falls back if no AMD/ROCm device).\n"
           "  --rt-samples N  Supersampled AA for the --cuda/--hip screenshot "
@@ -1155,6 +1164,7 @@ int main(int argc, char** argv) {
   app.setHeadless(headless);
   app.setThreaded(threaded);
   app.setCudaRt(wantCuda);
+  app.setCudaCacheDir(cudaCacheDir);
   app.setHipRt(wantHip);
   app.setRtSamples(rtSamples);
   app.setRtMaxInstances(static_cast<size_t>(rtMaxInstances));

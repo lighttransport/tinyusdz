@@ -34,6 +34,9 @@ class CudaRayTracer {
   // once; subsequent calls are no-ops returning the cached result.
   bool init(std::string* err);
   bool initialized() const { return ctx_ != nullptr; }
+  // Override the platform tusdview CUDA-kernel cache directory. An empty path
+  // keeps the platform default (for example ~/.cache/tusdview/cuda on Linux).
+  void setCacheDirectory(const std::string& path) { cacheDirectory_ = path; }
 
   // Flatten `scene` into world-space triangles, build a BVH, and upload everything
   // to the device. `maxTris` caps the flattened triangle count (instances are
@@ -118,6 +121,7 @@ class CudaRayTracer {
   size_t nodeCount_{0};
   bool truncated_{false};
   std::string deviceName_;
+  std::string cacheDirectory_;
 };
 
 }  // namespace tusdview

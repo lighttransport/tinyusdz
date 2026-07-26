@@ -2,12 +2,19 @@
 #include "cuda_raytracer.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
 #include <vector>
 
 #include "cuew.h"
 #include "displacement_bake.hh"
+#include "log.hh"
 #include "rt_scene_build.hh"  // Node, Inst, HostScene, BuildHostScene (shared)
 
 namespace tusdview {
@@ -28,6 +35,99 @@ struct Cam {
 // Trace kernel source, shared with the HIP backend (compiled at runtime by
 // NVRTC here, hiprtc there).
 #include "raytracer_kernel.inc"
+
+namespace fs = std::filesystem;
+
+fs::path DefaultCudaCacheDirectory() {
+  auto envPath = [](const char* name) -> fs::path {
+    const char* value = std::getenv(name);
+    return (value && *value) ? fs::path(value) : fs::path();
+  };
+#if defined(_WIN32)
+  fs::path base = envPath("LOCALAPPDATA");
+  if (base.empty()) base = envPath("USERPROFILE");
+  return base.empty() ? fs::path() : base / "tusdview" / "cuda";
+#elif defined(__APPLE__)
+  const fs::path home = envPath("HOME");
+  return home.empty() ? fs::path()
+                      : home / "Library" / "Caches" / "tusdview" / "cuda";
+#else
+  fs::path base = envPath("XDG_CACHE_HOME");
+  if (!base.empty()) return base / "tusdview" / "cuda";
+  const fs::path home = envPath("HOME");
+  return home.empty() ? fs::path() : home / ".cache" / "tusdview" / "cuda";
+#endif
+}
+
+uint64_t HashBytes(uint64_t hash, const void* data, size_t size) {
+  const auto* bytes = static_cast<const uint8_t*>(data);
+  for (size_t i = 0; i < size; ++i) {
+    hash ^= bytes[i];
+    hash *= UINT64_C(1099511628211);
+  }
+  return hash;
+}
+
+std::string CacheKey(int nvrtcMajor, int nvrtcMinor, int compileArch) {
+  uint64_t hash = UINT64_C(14695981039346656037);
+  hash = HashBytes(hash, kKernelSrc, std::strlen(kKernelSrc));
+  const std::string settings = std::to_string(nvrtcMajor) + "." +
+      std::to_string(nvrtcMinor) + ":compute_" + std::to_string(compileArch) +
+      ":--use_fast_math";
+  hash = HashBytes(hash, settings.data(), settings.size());
+  char hex[17] = {};
+  std::snprintf(hex, sizeof(hex), "%016llx",
+                static_cast<unsigned long long>(hash));
+  return "trace-nvrtc" + std::to_string(nvrtcMajor) + "." +
+      std::to_string(nvrtcMinor) + "-compute" + std::to_string(compileArch) +
+      "-" + hex + ".ptx";
+}
+
+bool ReadCacheFile(const fs::path& path, std::string* data) {
+  std::error_code ec;
+  const uintmax_t size = fs::file_size(path, ec);
+  if (ec || size == 0 || size > 64 * 1024 * 1024) return false;
+  std::ifstream stream(path, std::ios::binary);
+  if (!stream) return false;
+  data->resize(static_cast<size_t>(size));
+  return static_cast<bool>(stream.read(data->data(),
+                                       static_cast<std::streamsize>(size)));
+}
+
+bool WriteCacheFile(const fs::path& path, const std::string& data,
+                    std::string* warning) {
+  std::error_code ec;
+  fs::create_directories(path.parent_path(), ec);
+  if (ec) {
+    *warning = "cannot create " + path.parent_path().string() + ": " +
+               ec.message();
+    return false;
+  }
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  fs::path temporary = path;
+  temporary += ".tmp." + std::to_string(stamp);
+  {
+    std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+    if (!stream || !stream.write(data.data(),
+                                 static_cast<std::streamsize>(data.size()))) {
+      *warning = "cannot write " + temporary.string();
+      fs::remove(temporary, ec);
+      return false;
+    }
+  }
+  fs::rename(temporary, path, ec);
+  if (ec) {
+    // Another process may have won the same atomic cache population race.
+    std::error_code existsEc;
+    if (!fs::is_regular_file(path, existsEc)) {
+      *warning = "cannot install " + path.string() + ": " + ec.message();
+      fs::remove(temporary, existsEc);
+      return false;
+    }
+    fs::remove(temporary, existsEc);
+  }
+  return true;
+}
 
 #define CU_OK(call, what)                                          \
   do {                                                             \
@@ -95,35 +195,89 @@ bool CudaRayTracer::init(std::string* err) {
   CU_OK(cuCtxCreate(&ctx, 0, dev), "cuCtxCreate");
   ctx_ = ctx;
 
-  // NVRTC compile the kernel for this device's architecture.
-  nvrtcProgram prog;
-  if (nvrtcCreateProgram(&prog, kKernelSrc, "trace.cu", 0, nullptr, nullptr) !=
-      NVRTC_SUCCESS) {
-    if (err) *err = "nvrtcCreateProgram failed";
-    return false;
-  }
   int compileArch = major * 10 + minor;
+  int nvrtcMajor = 0;
+  int nvrtcMinor = 0;
+  if (nvrtcVersion) nvrtcVersion(&nvrtcMajor, &nvrtcMinor);
   // The CUDA driver may support a newer GPU than the separately installed
   // runtime compiler. PTX is forward-compatible, so ask NVRTC for the newest
   // virtual architecture it actually supports without exceeding the device.
   // Otherwise a machine with (for example) a new driver/GPU and an older NVRTC
   // fails compilation even though that compiler can produce valid PTX for it.
+  std::vector<int> supported;
   if (nvrtcGetNumSupportedArchs && nvrtcGetSupportedArchs) {
     int countArchs = 0;
     if (nvrtcGetNumSupportedArchs(&countArchs) == NVRTC_SUCCESS &&
         countArchs > 0) {
-      std::vector<int> supported(static_cast<size_t>(countArchs));
+      supported.resize(static_cast<size_t>(countArchs));
       if (nvrtcGetSupportedArchs(supported.data()) == NVRTC_SUCCESS) {
         int compatible = 0;
         for (int candidate : supported) {
           if (candidate <= compileArch) compatible = std::max(compatible, candidate);
         }
         if (compatible > 0) compileArch = compatible;
+      } else {
+        supported.clear();
       }
     }
   }
+  // NVRTC 13.x has a severe optimizer regression for virtual architectures
+  // 100 and newer on this kernel (>90 s and >1 GiB versus ~4 s for compute_90).
+  // The kernel uses no architecture-specific features, and PTX is explicitly
+  // forward-compatible, so retain optimized code while this compiler release is
+  // in use by targeting the newest pre-regression architecture it advertises.
+  if (nvrtcMajor == 13 && compileArch >= 100 &&
+      std::find(supported.begin(), supported.end(), 90) != supported.end()) {
+    compileArch = 90;
+  }
+
+  const fs::path cacheDirectory =
+      cacheDirectory_.empty() ? DefaultCudaCacheDirectory()
+                              : fs::path(cacheDirectory_);
+  const fs::path cachePath =
+      cacheDirectory.empty()
+          ? fs::path()
+          : cacheDirectory / CacheKey(nvrtcMajor, nvrtcMinor, compileArch);
+  auto loadModule = [&](const std::string& ptx) -> bool {
+    CUmodule mod = nullptr;
+    if (cuModuleLoadData(&mod, ptx.c_str()) != CUDA_SUCCESS) return false;
+    CUfunction fn = nullptr;
+    if (cuModuleGetFunction(&fn, mod, "trace") != CUDA_SUCCESS) {
+      cuModuleUnload(mod);
+      return false;
+    }
+    module_ = mod;
+    kernel_ = fn;
+    return true;
+  };
+  std::string ptx;
+  if (!cachePath.empty() && ReadCacheFile(cachePath, &ptx)) {
+    if (loadModule(ptx)) {
+      LOGI("CUDA kernel cache hit: %s", cachePath.string().c_str());
+      return true;
+    }
+    LOGW("ignoring invalid CUDA kernel cache entry: %s",
+         cachePath.string().c_str());
+    ptx.clear();
+    std::error_code removeEc;
+    fs::remove(cachePath, removeEc);
+    if (removeEc) {
+      LOGW("could not remove invalid CUDA kernel cache entry: %s",
+           removeEc.message().c_str());
+    }
+  }
+
+  // Compile the kernel only after a validated persistent-cache miss.
+  nvrtcProgram prog;
+  if (nvrtcCreateProgram(&prog, kKernelSrc, "trace.cu", 0, nullptr, nullptr) !=
+      NVRTC_SUCCESS) {
+    if (err) *err = "nvrtcCreateProgram failed";
+    return false;
+  }
   std::string arch =
       "--gpu-architecture=compute_" + std::to_string(compileArch);
+  LOGI("CUDA kernel cache miss; compiling with NVRTC %d.%d for compute_%d",
+       nvrtcMajor, nvrtcMinor, compileArch);
   const char* opts[] = {arch.c_str(), "--use_fast_math"};
   nvrtcResult nr = nvrtcCompileProgram(prog, 2, opts);
   if (nr != NVRTC_SUCCESS) {
@@ -137,16 +291,22 @@ bool CudaRayTracer::init(std::string* err) {
   }
   size_t ptxSize = 0;
   nvrtcGetPTXSize(prog, &ptxSize);
-  std::string ptx(ptxSize, '\0');
+  ptx.resize(ptxSize);
   nvrtcGetPTX(prog, &ptx[0]);
   nvrtcDestroyProgram(&prog);
 
-  CUmodule mod;
-  CU_OK(cuModuleLoadData(&mod, ptx.c_str()), "cuModuleLoadData");
-  module_ = mod;
-  CUfunction fn;
-  CU_OK(cuModuleGetFunction(&fn, mod, "trace"), "cuModuleGetFunction(trace)");
-  kernel_ = fn;
+  if (!loadModule(ptx)) {
+    if (err) *err = "CUDA compiled PTX failed module validation";
+    return false;
+  }
+  if (!cachePath.empty()) {
+    std::string warning;
+    if (WriteCacheFile(cachePath, ptx, &warning)) {
+      LOGI("CUDA kernel cached: %s", cachePath.string().c_str());
+    } else {
+      LOGW("CUDA kernel cache write skipped: %s", warning.c_str());
+    }
+  }
   return true;
 }
 
