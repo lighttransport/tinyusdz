@@ -10,7 +10,7 @@ audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
 active work is now the USD rendering-fidelity roadmap below.  This file is the
 canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
-Updated 2026-07-26 through `801b5aa0e`.
+Updated 2026-07-26 through `5dfb72bf6`.
 
 ---
 
@@ -84,6 +84,12 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   architectures 100+; CUDA 12.9 retains native `compute_120` behavior. A
   capability-gated cold/default-path plus warm/CLI-path regression requires
   exact output pixels.
+- Cache acceptance now also replaces the keyed PTX with invalid contents and
+  requires driver rejection, atomic recompilation, and exact recovered pixels.
+  A GPU-independent CLI test covers separate and `--cuda-cache-dir=PATH` forms
+  plus missing/empty-path diagnostics. Failed NVRTC or module initialization
+  now releases the partial CUDA context/module instead of letting a later
+  `init()` mistake the leftover context for a usable kernel.
 - The refreshed focused `tusdview` label is green at **23/23**. The serial
   native gate is green at **208/208 nonfailing**, with seven explicit
   capability/data skips. Stable `next` is green at **35/35 nonfailing**, with
