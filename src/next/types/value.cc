@@ -13,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace tinyusdz {
@@ -1844,18 +1845,68 @@ uint64_t Value::hash() const {
     return h;
   }
 
-  // Hash dictionary entries recursively (order-sensitive, matching operator==).
+  // Hash dictionary entries in post-order (order-sensitive, matching
+  // operator==) without consuming one C++ stack frame per nesting level.
   if (type_id_ == TypeId::Dictionary) {
-    if (const Dict* d = as_dictionary()) {
-      for (const auto& kv : d->entries) {
-        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(kv.first.data()),
-                        kv.first.size());
-        h *= 1099511628211ULL;
-        h ^= kv.second.hash();
-        h *= 1099511628211ULL;
+    const Dict* root = as_dictionary();
+    if (!root) return h;
+
+    struct HashFrame {
+      const Dict* dict{nullptr};
+      size_t next_entry{0};
+      uint64_t hash{static_cast<uint64_t>(TypeId::Dictionary)};
+    };
+    std::vector<HashFrame> pending;
+    std::unordered_set<const Dict*> active;
+    std::unordered_map<const Dict*, uint64_t> completed;
+    pending.push_back(HashFrame{root, 0,
+                                static_cast<uint64_t>(TypeId::Dictionary)});
+    active.insert(root);
+
+    while (!pending.empty()) {
+      HashFrame& frame = pending.back();
+      if (frame.next_entry == frame.dict->entries.size()) {
+        const uint64_t child_hash = frame.hash;
+        completed[frame.dict] = child_hash;
+        active.erase(frame.dict);
+        pending.pop_back();
+        if (pending.empty()) return child_hash;
+        pending.back().hash ^= child_hash;
+        pending.back().hash *= 1099511628211ULL;
+        continue;
+      }
+
+      const auto& kv = frame.dict->entries[frame.next_entry++];
+      frame.hash ^=
+          fnv1a_hash(reinterpret_cast<const uint8_t*>(kv.first.data()),
+                     kv.first.size());
+      frame.hash *= 1099511628211ULL;
+
+      const Dict* nested =
+          kv.second.is_dictionary() ? kv.second.as_dictionary() : nullptr;
+      if (!nested) {
+        frame.hash ^= kv.second.hash();
+        frame.hash *= 1099511628211ULL;
+        continue;
+      }
+
+      const auto complete_it = completed.find(nested);
+      if (complete_it != completed.end()) {
+        frame.hash ^= complete_it->second;
+        frame.hash *= 1099511628211ULL;
+      } else if (active.find(nested) != active.end()) {
+        // Mutable dictionary access can construct shared_ptr cycles that
+        // cannot appear in parsed USD. Fold a stable dictionary marker rather
+        // than looping forever on such API-created graphs.
+        frame.hash ^= static_cast<uint64_t>(TypeId::Dictionary);
+        frame.hash *= 1099511628211ULL;
+      } else {
+        active.insert(nested);
+        pending.push_back(HashFrame{
+            nested, 0, static_cast<uint64_t>(TypeId::Dictionary)});
       }
     }
-    return h;
+    return h;  // unreachable, retained for defensive compiler flow analysis
   }
 
   // Hash string types
