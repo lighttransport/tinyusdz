@@ -10,7 +10,7 @@ audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
 active work is now the USD rendering-fidelity roadmap below.  This file is the
 canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
-Updated 2026-07-26 through `5066d8442`.
+Updated 2026-07-26 through `801b5aa0e`.
 
 ---
 
@@ -75,6 +75,15 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   parity oracle (GPU/CPU depth MAD 0.000), opacity regression, and both-loader
   GeomSubset RT regression. Deformation capability probes also have a
   configurable 60-second per-render bound and retain partial logs on timeout.
+- NVRTC PTX is now persistent across tusdview processes. The platform default
+  lives under `tusdview/cuda` in the user cache, and `--cuda-cache-dir PATH`
+  selects a job-local/shared location. Cache keys cover source, NVRTC version,
+  virtual architecture, and options; cached modules are driver-validated and
+  writes are atomic. NVRTC 13.x targets `compute_90` for this architecture-
+  independent kernel to avoid its measured optimizer regression at virtual
+  architectures 100+; CUDA 12.9 retains native `compute_120` behavior. A
+  capability-gated cold/default-path plus warm/CLI-path regression requires
+  exact output pixels.
 - The refreshed focused `tusdview` label is green at **23/23**. The serial
   native gate is green at **208/208 nonfailing**, with seven explicit
   capability/data skips. Stable `next` is green at **35/35 nonfailing**, with
@@ -317,14 +326,14 @@ Latest focused verification on 2026-07-26:
   No Vulkan shader source changed in this post-sync repair, so embedded SPIR-V
   was not regenerated.
 
-- After CUDA runtime-compiler architecture negotiation, the focused label
-  remains green at 23/23 (46.53 seconds). With CUDA 11 NVRTC deliberately
-  selected on the RTX 5060 Ti, `tusdview-deform-cuda` passes in full, the
-  opacity material gate passes in 27.25 seconds, and next/legacy GeomSubset RT
-  passes in 15.05 seconds. The default CUDA 13.1 compiler still takes longer
-  than the 60-second capability bound for this shared kernel on the host; that
-  performance issue is kept distinct from the fixed newer-GPU/older-compiler
-  compatibility failure.
+- After CUDA runtime-compiler architecture negotiation and persistent caching,
+  the focused label remains green at 23/23 (52.94 seconds). The dedicated cold
+  default-path/warm CLI-path cache regression passes in 31.54 seconds on NVRTC
+  13.2 and the RTX 5060 Ti. Starting from one empty shared cache, the CUDA
+  deformation, opacity, and next/legacy GeomSubset gates all pass in 51.54
+  seconds total (32.47, 13.85, and 5.21 seconds respectively), versus roughly
+  223 seconds when each process repeatedly paid the pathological native-target
+  compile or its timeout.
 
 - Offline RTX 3070 verification used the documented `--headless` Vulkan path.
   Vulkan raster and Vulkan ray query both passed the UDIM opacity-cutout probe
