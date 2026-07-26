@@ -202,6 +202,15 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     image: './assets/previews/usdz-packager.svg',
     href: './usdz-packager.html'
+  },
+  {
+    id: 'usd-diff',
+    title: 'USD Diff',
+    subtitle: 'Compare two USD files side by side with synchronized camera and detailed metric differences.',
+    defaultAsset: '',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-diff.svg',
+    href: './usd-diff.html'
   }
 ];
 

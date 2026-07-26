@@ -60,6 +60,7 @@ export default defineConfig(({ command, mode }) => {
             animation_blending: path.resolve(__dirname, 'animation-blending.html'),
             procedural_usd: path.resolve(__dirname, 'procedural-usd.html'),
             usdz_packager: path.resolve(__dirname, 'usdz-packager.html'),
+            usd_diff: path.resolve(__dirname, 'usd-diff.html'),
           },
         },
         minify: false,
