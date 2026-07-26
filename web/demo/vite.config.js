@@ -61,6 +61,7 @@ export default defineConfig(({ command, mode }) => {
             procedural_usd: path.resolve(__dirname, 'procedural-usd.html'),
             usdz_packager: path.resolve(__dirname, 'usdz-packager.html'),
             usd_diff: path.resolve(__dirname, 'usd-diff.html'),
+            backend_compare: path.resolve(__dirname, 'backend-compare.html'),
           },
         },
         minify: true,
