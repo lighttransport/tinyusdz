@@ -792,6 +792,7 @@ class VulkanRenderer final : public Renderer {
   float proj_[16];
   float cameraPos_[3]{0, 0, 0};
   float exposure_{0.0f};
+  RtCameraLens cameraLens_;
   float lightDir_[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float lightColor_[3]{1.0f, 1.0f, 1.0f};
   float clear_[4]{0.12f, 0.12f, 0.13f, 1.0f};

@@ -2920,6 +2920,16 @@ if(TINYUSDZ_BUILD_TESTS)
                                     LABELS "tusdview")
 
     add_test(
+      NAME tusdview-camera-dof-vulkan
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-dof-vulkan.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(tusdview-camera-dof-vulkan
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "tusdview")
+
+    add_test(
       NAME tusdview-next-nonmesh-extraction
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-next-nonmesh-extraction.sh"
