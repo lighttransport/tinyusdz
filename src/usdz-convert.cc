@@ -919,10 +919,11 @@ bool ReadAssetBytesWithBase(AssetResolutionResolver &resolver,
 // On success fills `out_bytes` and `out_ext` (lowercase, no dot) and sets the
 // resize/reencode flags. Falls back to passthrough on decode failure.
 // Bounded producer/consumer pool for texture jobs. `produce(job)` runs on the
-// calling thread (asset resolvers are not thread-safe) at most 2*num_threads
-// jobs ahead of the workers' `run(job)`, so peak memory holds a window of
-// in-flight source buffers instead of the whole texture set. Returns false
-// when `produce` reports a hard error (workers are drained first).
+// calling thread (asset resolvers are not thread-safe). Without a memory
+// budget it runs at most 2*num_threads jobs ahead; with a budget it permits at
+// most num_threads jobs in flight so prefetched source buffers do not consume
+// another full worker window. Returns false when `produce` reports a hard
+// error (workers are drained first).
 template <typename Job, typename ProduceFn, typename RunFn>
 bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
                            size_t memory_budget_bytes,
@@ -967,9 +968,11 @@ bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
   }
 
   const size_t window =
-      num_threads > (std::numeric_limits<size_t>::max)() / 2
-          ? (std::numeric_limits<size_t>::max)()
-          : num_threads * 2;
+      memory_budget_bytes > 0
+          ? num_threads
+          : (num_threads > (std::numeric_limits<size_t>::max)() / 2
+                 ? (std::numeric_limits<size_t>::max)()
+                 : num_threads * 2);
   std::mutex mtx;
   std::condition_variable cv;
   size_t produced = 0;   // jobs whose bytes are ready
@@ -1626,12 +1629,13 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
   }
 
   // Phase 2: bounded producer/consumer — the main thread reads asset bytes
-  // Phase 2: bounded producer/consumer — the main thread reads asset bytes
   // (the resolver is not thread-safe), workers decode/resize/encode; at most
-  // 2*num_threads source buffers are in flight.
+  // num_threads source buffers are in flight when a memory budget is set
+  // (2*num_threads otherwise).
   {
     auto run_job = [&options](TextureJob &job) {
       if (job.skipped) {
+        std::vector<uint8_t>().swap(job.src_bytes);
         return;
       }
       job.ok = ProcessTexture(job.src_bytes, job.src_ext, options,
@@ -2280,10 +2284,12 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
   // Phase 2: bounded producer/consumer — the main thread reads asset bytes
   // (the resolver is not thread-safe), workers decode/resize/encode; at most
-  // 2*num_threads source buffers are in flight.
+  // num_threads source buffers are in flight when a memory budget is set
+  // (2*num_threads otherwise).
   {
     auto run_job = [&options](FlattenTextureJob &job) {
       if (!job.needs_process || job.skipped) {
+        std::vector<uint8_t>().swap(job.src_bytes);
         return;  // budget mode prefilled the result, or the read was skipped
       }
       job.ok = ProcessTexture(job.src_bytes, job.src_ext, options, job.orig,

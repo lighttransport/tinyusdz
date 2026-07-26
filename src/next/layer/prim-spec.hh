@@ -115,6 +115,13 @@ struct VariantProperty {
 
 /// Variant data - properties and prims inside a single variant option
 struct VariantData {
+  VariantData();
+  VariantData(const VariantData&);
+  VariantData(VariantData&&) noexcept;
+  VariantData& operator=(const VariantData&);
+  VariantData& operator=(VariantData&&) noexcept;
+  ~VariantData();
+
   std::string name;
   bool active = true;
   bool hidden = false;
