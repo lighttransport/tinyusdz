@@ -69,6 +69,7 @@ class CudaRayTracer {
 
  private:
   void freeScene();
+  void freeRuntime();
 
   // Opaque CUDA handles (void* to avoid leaking cuew/driver types into the header).
   void* ctx_{nullptr};       // CUcontext
