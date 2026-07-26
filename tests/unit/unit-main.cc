@@ -91,6 +91,7 @@
 
 TEST_LIST = {
   { "ptx_reader_rejects_invalid_input_test", ptx_reader_rejects_invalid_input_test },
+  { "ptx_reader_island_fixture_test", ptx_reader_island_fixture_test },
   { "ascii_parse_int64_valid_test", ascii_parse_int64_valid_test },
   { "ascii_parse_int64_excessive_digits_test", ascii_parse_int64_excessive_digits_test },
   { "ascii_parse_uint64_valid_test", ascii_parse_uint64_valid_test },
