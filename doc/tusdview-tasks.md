@@ -10,7 +10,7 @@ audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
 active work is now the USD rendering-fidelity roadmap below.  This file is the
 canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
-Updated 2026-07-25 through `17c963b4c`.
+Updated 2026-07-26 through `b9a51a75e`.
 
 ---
 
@@ -49,7 +49,30 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 
 ### Latest changes and verification
 
-- The focused `tusdview` label is green at **17/17**. Windowed MCP batch
+- Post-sync verification found and fixed double-padding of CPU-baked morph
+  bounds for instanced prototypes. CPU baking had already applied the blend
+  shape before `ComputeMorphExtent` expanded the bounds a second time; the
+  live GPU path correctly expands rest geometry only once. The unchanged
+  strict raster and Vulkan-RT depth-image thresholds now pass, and the
+  four-case morph-culling regression remains green.
+- The GL/Vulkan parity gate now launches a real windowed OpenGL renderer and a
+  headless Vulkan renderer, asserts the selected renderer from each log, uses
+  the current CMake target, and compares matched viewport dimensions. Material,
+  shadow-alpha, and degraded-lobe fixtures pass the existing 5% oracle. Native
+  Points/Curves remain covered by their dedicated silhouette-IoU oracle, whose
+  tolerance models raster-edge differences instead of duplicating the wrong
+  byte-pixel metric.
+- The generic backend parity test once again compares Vulkan raster with
+  Vulkan ray query by default rather than registering an unconditional
+  single-backend skip. Optional CUDA/HIP probes in the backface and semantic
+  matrices are bounded; a failed first capability probe is cached so every
+  fixture is not forced to repeat the same timeout.
+- The refreshed focused `tusdview` label is green at **23/23**. The serial
+  native gate is green at **208/208 nonfailing**, with seven explicit
+  capability/data skips. Stable `next` is green at **35/35 nonfailing**, with
+  its documented AOUSD value-resolution skip. No Caldera, Island, or ALab
+  environment roots were available for a new large-scene measurement.
+- Windowed MCP batch
   captures now request a deterministic 1024x768 window, reject a collapsed
   1-pixel viewport as not ready, and retry until the viewport is usable.
 - Deterministic deformation comparison now uses `--no-skeleton`. The previous
@@ -273,18 +296,18 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 
 ## Active-roadmap verification evidence
 
-Latest focused verification on 2026-07-25:
+Latest focused verification on 2026-07-26:
 
-- The fixture packaging milestone is green: `ctest -L tusdview` passes 17/17;
-  the serial native CTest reports 194 passes and seven documented
-  capability/data skips; and stable `next` tests report 34 passes and one
-  explicit skip. The complete semantic material gate passes in 287.76 seconds
-  with exact default/legacy AOV comparisons; its HIP cases are capability
-  skipped. The separate RT loader-parity gate is also capability-skipped on
-  this runtime because the requested Vulkan RT/CUDA vector backend is
-  unavailable. The corpus flatten comparator passes after the checked scene
-  was made self-contained. The available Caldera large-scene profile passes;
-  Island, ALab, and the external usd-assets corpus are not mounted.
+- `ctest -L tusdview -j1` passes 23/23 in 44.77 seconds. A full serial native
+  run passes all 208 registered tests in 1103.09 seconds with zero failures;
+  seven tests explicitly skip for external fixture, HIP, CUDA, or mounted-
+  corpus availability. The semantic AOV matrix passes in 264.06 seconds and
+  the separate Vulkan-RT loader-parity matrix passes in 215.15 seconds.
+  `build-next-ninja-review` passes all 35 registered tests in 49.68 seconds,
+  with only the documented AOUSD value-resolution skip. The Caldera, Island,
+  and ALab environment roots are unset, so no new large-scene claim is made.
+  No Vulkan shader source changed in this post-sync repair, so embedded SPIR-V
+  was not regenerated.
 
 - Offline RTX 3070 verification used the documented `--headless` Vulkan path.
   Vulkan raster and Vulkan ray query both passed the UDIM opacity-cutout probe
