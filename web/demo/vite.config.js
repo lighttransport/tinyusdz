@@ -59,6 +59,7 @@ export default defineConfig(({ command, mode }) => {
             viewer_toolkit: path.resolve(__dirname, 'viewer-toolkit.html'),
             animation_blending: path.resolve(__dirname, 'animation-blending.html'),
             procedural_usd: path.resolve(__dirname, 'procedural-usd.html'),
+            usdz_packager: path.resolve(__dirname, 'usdz-packager.html'),
           },
         },
         minify: false,

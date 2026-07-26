@@ -193,6 +193,15 @@ export const DEMOS = [
     preferredMaterialType: 'auto',
     image: './assets/previews/procedural-usd.svg',
     href: './procedural-usd.html'
+  },
+  {
+    id: 'usdz-packager',
+    title: 'USDZ Packager',
+    subtitle: 'Load a USD scene, inspect embedded textures and assets, and export as USDA, USDC, or USDZ with size breakdown.',
+    defaultAsset: './assets/suzanne-pbr.usda',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usdz-packager.svg',
+    href: './usdz-packager.html'
   }
 ];
 
