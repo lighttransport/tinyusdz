@@ -2930,6 +2930,26 @@ if(TINYUSDZ_BUILD_TESTS)
                                     LABELS "tusdview")
 
     add_test(
+      NAME tusdview-area-light-cuda
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-area-light-cuda.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(tusdview-area-light-cuda
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-area-light-vulkan
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-area-light-vulkan.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(tusdview-area-light-vulkan
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "tusdview")
+
+    add_test(
       NAME tusdview-next-nonmesh-extraction
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-next-nonmesh-extraction.sh"
