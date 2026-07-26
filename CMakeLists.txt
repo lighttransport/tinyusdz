@@ -299,7 +299,7 @@ option(TINYUSDZ_USE_WUFFS_IMAGE_LOADER
 # When enabled, replaces the stb_image backend for common image formats.
 #
 option(TINYUSDZ_WITH_NANOIMAGE
-       "Use nanoimage to load jpg/png/bmp/tga images (replaces stb_image for these formats)" OFF)
+       "Use nanoimage to load jpg/png/bmp/tga images (replaces stb_image for these formats)" ON)
 # -----------
 
 # Set ON if you use wuffs implementation outside of TinyUSDZ library in your app to avoid multiple symbol def error.

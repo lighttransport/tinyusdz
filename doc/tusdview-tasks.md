@@ -179,6 +179,11 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 - [x] Carry complete ordinary/compressed/UDIM mip chains into the RT texture
   table and use ray-footprint LOD plus trilinear filtering in Vulkan, CUDA, and
   HIP.
+- [x] Make the vendored fuzz-tested nanoimage decoder the default backend for
+  PNG/JPEG/BMP/TGA while retaining TinyEXR v3 as the default OpenEXR backend.
+  Image provenance (`Image::uri`) is preserved uniformly across decoder paths,
+  including USDZ-resolved assets. NVIDIA hardware semantic AOV and RT
+  loader-parity matrices pass with the default nanoimage build.
 - [x] Pin packed-map, sparse-UDIM, scalar-color-space, and external/USDZ parity
   for every covered semantic slot. A compact checked-in fixture set remains an
   acceptance-gate packaging task.
