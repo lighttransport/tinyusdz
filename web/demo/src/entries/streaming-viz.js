@@ -320,3 +320,4 @@ const params = new URLSearchParams(location.search);
 const idx = params.has('sample') ? Math.min(Number(params.get('sample')), SAMPLES.length - 1) : 0;
 loadSample(idx).catch((e) => { console.error(e); $id('viz-status').textContent = 'Error: ' + e.message; });
 import { showLoader, hideLoader } from "../tusd-loader.js";
+import { Report } from "../app-report.js";

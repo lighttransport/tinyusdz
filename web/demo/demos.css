@@ -1048,3 +1048,34 @@ button {
     max-width: 260px;
     line-height: 1.35;
 }
+
+/* ── Error Panel ─────────────────────────────── */
+
+#tusd-error {
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 24px rgba(0,0,0,.4);
+}
+
+#tusd-error button:hover {
+    background: rgba(240,138,138,.15) !important;
+}
+
+/* ── Warning Badge ───────────────────────────── */
+
+#tusd-warn-badge:hover {
+    background: rgba(242,200,121,.2) !important;
+}
+
+#tusd-warn-list {
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 20px rgba(0,0,0,.3);
+}
+
+/* ── Step progress label on loader ──────────── */
+
+.loader-step {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--dim);
+    margin-top: -4px;
+}

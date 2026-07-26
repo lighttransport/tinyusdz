@@ -1,6 +1,7 @@
 import { StreamingUSDRenderer } from 'tinyusdz-js/streaming.js';
 import { renderHttpUSD } from 'tinyusdz-js/http-asset-resolver.js';
 import { ASSETS, CATEGORIES } from '../usd-assets-manifest.js';
+import { Report } from '../app-report.js';
 
 const GITHUB_RAW = 'https://raw.githubusercontent.com/usd-wg/assets/main/';
 
@@ -342,6 +343,7 @@ async function selectAsset(asset) {
     state.selectedId = null;
     document.querySelectorAll('.asset-card').forEach((c) => c.classList.remove('selected'));
     updateStats({});
+    Report.err(e, `Loading ${asset.name}`).action('Dismiss', () => Report.dismiss());
   } finally {
     state.loading = false;
   }
