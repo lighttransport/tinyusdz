@@ -144,11 +144,18 @@ bool WriteCacheFile(const fs::path& path, const std::string& data,
 }  // namespace
 
 CudaRayTracer::~CudaRayTracer() {
+  freeRuntime();
+}
+
+void CudaRayTracer::freeRuntime() {
   if (ctx_) {
     freeScene();
     if (module_) cuModuleUnload(reinterpret_cast<CUmodule>(module_));
     cuCtxDestroy(reinterpret_cast<CUcontext>(ctx_));
   }
+  kernel_ = nullptr;
+  module_ = nullptr;
+  ctx_ = nullptr;
 }
 
 void CudaRayTracer::freeScene() {
@@ -272,6 +279,7 @@ bool CudaRayTracer::init(std::string* err) {
   if (nvrtcCreateProgram(&prog, kKernelSrc, "trace.cu", 0, nullptr, nullptr) !=
       NVRTC_SUCCESS) {
     if (err) *err = "nvrtcCreateProgram failed";
+    freeRuntime();
     return false;
   }
   std::string arch =
@@ -287,6 +295,7 @@ bool CudaRayTracer::init(std::string* err) {
     if (logSize) nvrtcGetProgramLog(prog, &log[0]);
     if (err) *err = "NVRTC compile failed:\n" + log;
     nvrtcDestroyProgram(&prog);
+    freeRuntime();
     return false;
   }
   size_t ptxSize = 0;
@@ -297,6 +306,7 @@ bool CudaRayTracer::init(std::string* err) {
 
   if (!loadModule(ptx)) {
     if (err) *err = "CUDA compiled PTX failed module validation";
+    freeRuntime();
     return false;
   }
   if (!cachePath.empty()) {
