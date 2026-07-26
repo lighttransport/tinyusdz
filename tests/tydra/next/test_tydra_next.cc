@@ -613,6 +613,13 @@ def Xform "World"
     {
         double shutter:open = -0.25
         double shutter:close = 0.25
+        float focusDistance = 12
+        float fStop = 2
+        float exposure = 1.5
+        float horizontalApertureOffset = 0.25
+        float verticalApertureOffset = -0.5
+        uniform token stereoRole = "left"
+        float4[] clippingPlanes = [(1, 0, 0, -3), (0, 1, 0, -4)]
         float focalLength.timeSamples = {
             0: 35,
             1: 50,
@@ -919,6 +926,18 @@ def Xform "World"
   assert(result.scene.cameras.size() == 1);
   assert(std::fabs(result.scene.cameras[0].shutter_open + 0.25) < 0.001);
   assert(std::fabs(result.scene.cameras[0].shutter_close - 0.25) < 0.001);
+  assert(std::fabs(result.scene.cameras[0].focus_distance - 12.0f) < 0.001f);
+  assert(std::fabs(result.scene.cameras[0].fstop - 2.0f) < 0.001f);
+  assert(std::fabs(result.scene.cameras[0].exposure - 1.5f) < 0.001f);
+  assert(std::fabs(result.scene.cameras[0].horizontal_aperture_offset - 0.25f) <
+         0.001f);
+  assert(std::fabs(result.scene.cameras[0].vertical_aperture_offset + 0.5f) <
+         0.001f);
+  assert(result.scene.cameras[0].stereo_role ==
+         RenderCamera::StereoRole::Left);
+  assert(result.scene.cameras[0].clipping_planes.size() == 2);
+  assert(std::fabs(result.scene.cameras[0].clipping_planes[1].w + 4.0f) <
+         0.001f);
 
   assert(result.scene.skeletons.size() == 1);
   assert(result.scene.skeletons[0].joints.size() == 2);

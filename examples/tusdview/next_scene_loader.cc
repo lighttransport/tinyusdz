@@ -1870,6 +1870,35 @@ float ReadCamFloatN(const tnext::UsdPrim& prim, const char* name, float fallback
   return fallback;
 }
 
+double ReadCamDoubleN(const tnext::UsdPrim& prim, const char* name,
+                      double fallback) {
+  if (const tnext::Value* v = prim.GetPropertyValue(name)) {
+    if (const double* d = v->as_double()) return *d;
+    if (const float* f = v->as_float()) return *f;
+  }
+  return fallback;
+}
+
+DrawCameraCPU::StereoRole ReadStereoRoleN(const tnext::UsdPrim& prim) {
+  if (const tnext::Value* v = prim.GetPropertyValue("stereoRole")) {
+    if (const std::string* token = v->as_token()) {
+      if (*token == "left") return DrawCameraCPU::StereoRole::Left;
+      if (*token == "right") return DrawCameraCPU::StereoRole::Right;
+    }
+  }
+  return DrawCameraCPU::StereoRole::Mono;
+}
+
+std::vector<float> ReadClippingPlanesN(const tnext::UsdPrim& prim) {
+  std::vector<float> out;
+  const tnext::Value* v = prim.GetPropertyValue("clippingPlanes");
+  if (!v) return out;
+  const std::vector<float>* planes = v->as_float_array();
+  if (!planes) return out;
+  out.assign(planes->begin(), planes->end());
+  return out;
+}
+
 bool FindNextCameraRec(const tnext::Stage& stage, const tnext::UsdPrim& prim,
                        const std::string& name, double time,
                        NextCameraPose* out) {
@@ -1913,6 +1942,12 @@ bool FindNextCameraRec(const tnext::Stage& stage, const tnext::UsdPrim& prim,
         out->verticalApertureOffset =
             ReadCamFloatN(prim, "verticalApertureOffset", 0.0f);
         out->exposure = ReadCamFloatN(prim, "exposure", 0.0f);
+        out->focusDistance = ReadCamFloatN(prim, "focusDistance", 0.0f);
+        out->fStop = ReadCamFloatN(prim, "fStop", 0.0f);
+        out->shutterOpen = ReadCamDoubleN(prim, "shutter:open", 0.0);
+        out->shutterClose = ReadCamDoubleN(prim, "shutter:close", 0.0);
+        out->stereoRole = ReadStereoRoleN(prim);
+        out->clippingPlanes = ReadClippingPlanesN(prim);
         if (const tnext::Value* v = prim.GetPropertyValue("projection")) {
           if (const std::string* token = v->as_token()) {
             out->projection = (*token == "orthographic")
@@ -2761,6 +2796,12 @@ static void GatherNextCamerasRec(const tnext::Stage& stage,
 
     DrawCameraCPU dc = MakeDrawCameraFromNext(
         worldMatrix, focal, ha, va, hao, vao, expo, proj, zn, zf);
+    dc.focusDistance = ReadCamFloatN(prim, "focusDistance", 0.0f);
+    dc.fStop = ReadCamFloatN(prim, "fStop", 0.0f);
+    dc.shutterOpen = ReadCamDoubleN(prim, "shutter:open", 0.0);
+    dc.shutterClose = ReadCamDoubleN(prim, "shutter:close", 0.0);
+    dc.stereoRole = ReadStereoRoleN(prim);
+    dc.clippingPlanes = ReadClippingPlanesN(prim);
     dc.name = prim.GetName();
     dc.absPath = prim.GetPath().str();
     dc.displayName = dc.name;
@@ -2878,6 +2919,26 @@ bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
       out->horizontalApertureOffset = cam.horizontalApertureOffset;
       out->verticalApertureOffset = cam.verticalApertureOffset;
       out->exposure = cam.exposure;
+      out->focusDistance = cam.focusDistance;
+      out->fStop = cam.fStop;
+      out->shutterOpen = cam.shutterOpen;
+      out->shutterClose = cam.shutterClose;
+      switch (cam.stereoRole) {
+        case tinyusdz::GeomCamera::StereoRole::Left:
+          out->stereoRole = DrawCameraCPU::StereoRole::Left;
+          break;
+        case tinyusdz::GeomCamera::StereoRole::Right:
+          out->stereoRole = DrawCameraCPU::StereoRole::Right;
+          break;
+        default:
+          out->stereoRole = DrawCameraCPU::StereoRole::Mono;
+          break;
+      }
+      out->clippingPlanes.clear();
+      out->clippingPlanes.reserve(cam.clippingPlanes.size() * 4);
+      for (const tinyusdz::value::float4& plane : cam.clippingPlanes) {
+        for (size_t i = 0; i < 4; ++i) out->clippingPlanes.push_back(plane[i]);
+      }
     }
     return true;
   }

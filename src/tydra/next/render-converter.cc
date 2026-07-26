@@ -6816,6 +6816,9 @@ bool RenderSceneConverter::ConvertCamera(const UsdPrim& prim, RenderCamera* out)
   GetFloat(prim, "focalLength", &out->focal_length);
   GetFloat(prim, "horizontalAperture", &out->horizontal_aperture);
   GetFloat(prim, "verticalAperture", &out->vertical_aperture);
+  GetFloat(prim, "horizontalApertureOffset",
+           &out->horizontal_aperture_offset);
+  GetFloat(prim, "verticalApertureOffset", &out->vertical_aperture_offset);
 
   // Clipping
   float clip_range[2] = {0.1f, 10000.0f};
@@ -6833,6 +6836,26 @@ bool RenderSceneConverter::ConvertCamera(const UsdPrim& prim, RenderCamera* out)
   // Depth of field / exposure
   GetFloat(prim, "focusDistance", &out->focus_distance);
   GetFloat(prim, "fStop", &out->fstop);
+  GetFloat(prim, "exposure", &out->exposure);
+
+  std::string stereo_role;
+  if (GetToken(prim, "stereoRole", &stereo_role)) {
+    if (stereo_role == "left") {
+      out->stereo_role = RenderCamera::StereoRole::Left;
+    } else if (stereo_role == "right") {
+      out->stereo_role = RenderCamera::StereoRole::Right;
+    }
+  }
+  if (const Value* planes = GetAttribute(prim, "clippingPlanes")) {
+    if (const std::vector<float>* values = planes->as_float_array()) {
+      out->clipping_planes.reserve(values->size() / 4);
+      for (size_t i = 0; i + 3 < values->size(); i += 4) {
+        out->clipping_planes.emplace_back(
+            (*values)[i], (*values)[i + 1], (*values)[i + 2],
+            (*values)[i + 3]);
+      }
+    }
+  }
 
   // Motion-blur shutter interval
   GetDouble(prim, "shutter:open", &out->shutter_open);
