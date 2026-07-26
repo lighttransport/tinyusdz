@@ -908,6 +908,8 @@ struct RenderCamera {
   float focal_length = 50.0f;        // mm
   float horizontal_aperture = 36.0f; // mm
   float vertical_aperture = 24.0f;   // mm
+  float horizontal_aperture_offset = 0.0f;
+  float vertical_aperture_offset = 0.0f;
 
   // Orthographic params
   float ortho_width = 10.0f;
@@ -917,8 +919,13 @@ struct RenderCamera {
   float far_clip = 10000.0f;
 
   // Depth of field / exposure
-  float focus_distance = 0.0f;  // 0 = no DoF
+  float focus_distance = 5.0f;
   float fstop = 0.0f;           // 0 = no DoF
+  float exposure = 0.0f;
+
+  enum class StereoRole : uint8_t { Mono = 0, Left, Right };
+  StereoRole stereo_role = StereoRole::Mono;
+  std::vector<Float4> clipping_planes;
 
   // Motion-blur shutter interval (UsdGeomCamera shutter:open/close), in
   // time-code offsets relative to the sample time.

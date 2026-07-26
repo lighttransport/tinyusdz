@@ -914,11 +914,16 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     if (std::getenv("TUSDVIEW_DUMP_CAMERA_RECORDS")) {
       for (size_t i = 0; i < draw_.cameras.size(); ++i) {
         const DrawCameraCPU& c = draw_.cameras[i];
+        double clippingChecksum = 0.0;
+        for (size_t p = 0; p < c.clippingPlanes.size(); ++p) {
+          clippingChecksum += double(p + 1) * c.clippingPlanes[p];
+        }
         std::fprintf(stderr,
           "[tusdview-camera] %zu %s %s %d "
           "%.9g %.9g %.9g %.9g %.9g %.9g "
           "%.9g %.9g %.9g %.9g %.9g %.9g "
-          "%.9g %.9g %.9g %.9g %.9g %.9g\n",
+          "%.9g %.9g %.9g %.9g %.9g %.9g "
+          "%.9g %.9g %.17g %.17g %d %zu %.17g\n",
           i,
           c.absPath.c_str(),
           c.projection == DrawCameraCPU::Projection::Orthographic
@@ -930,7 +935,10 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
           double(c.zNear), double(c.zFar), double(c.fovYDeg),
           double(c.eye[0]), double(c.eye[1]), double(c.eye[2]),
           double(c.up[0]), double(c.up[1]), double(c.up[2]),
-          double(c.forward[0]), double(c.forward[1]), double(c.forward[2]));
+          double(c.forward[0]), double(c.forward[1]), double(c.forward[2]),
+          double(c.focusDistance), double(c.fStop), c.shutterOpen,
+          c.shutterClose, static_cast<int>(c.stereoRole),
+          c.clippingPlanes.size() / 4, clippingChecksum);
       }
     }
     const LoadDiagnostics diag =

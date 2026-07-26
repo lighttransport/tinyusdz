@@ -713,6 +713,15 @@ struct DrawCameraCPU {
   float horizontalApertureOffset{0.0f};
   float verticalApertureOffset{0.0f};
   float exposure{0.0f};
+  float focusDistance{0.0f};
+  float fStop{0.0f};
+  double shutterOpen{0.0};
+  double shutterClose{0.0};
+  enum class StereoRole : int { Mono = 0, Left = 1, Right = 2 };
+  StereoRole stereoRole{StereoRole::Mono};
+  // World-space clipping-plane equations (a,b,c,d), retained for backends
+  // that support arbitrary user clipping.
+  std::vector<float> clippingPlanes;
   float zNear{0.1f};
   float zFar{10000.0f};
   float fovYDeg{45.0f};

@@ -52,6 +52,12 @@ struct NextCameraPose {
   float horizontalApertureOffset{0.0f};
   float verticalApertureOffset{0.0f};
   float exposure{0.0f};
+  float focusDistance{0.0f};
+  float fStop{0.0f};
+  double shutterOpen{0.0};
+  double shutterClose{0.0};
+  DrawCameraCPU::StereoRole stereoRole{DrawCameraCPU::StereoRole::Mono};
+  std::vector<float> clippingPlanes;
   float zNear{0.1f};   // from the camera's clippingRange (scene units)
   float zFar{1.0e6f};
 };

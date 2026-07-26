@@ -3817,6 +3817,25 @@ DrawCameraCPU MakeDrawCameraFromTydra(
   dc.horizontalApertureOffset = cam.horizontalApertureOffset;
   dc.verticalApertureOffset = cam.verticalApertureOffset;
   dc.exposure = cam.exposure;
+  dc.focusDistance = cam.focusDistance;
+  dc.fStop = cam.fStop;
+  dc.shutterOpen = cam.shutterOpen;
+  dc.shutterClose = cam.shutterClose;
+  switch (cam.stereoRole) {
+    case tinyusdz::GeomCamera::StereoRole::Left:
+      dc.stereoRole = DrawCameraCPU::StereoRole::Left;
+      break;
+    case tinyusdz::GeomCamera::StereoRole::Right:
+      dc.stereoRole = DrawCameraCPU::StereoRole::Right;
+      break;
+    default:
+      dc.stereoRole = DrawCameraCPU::StereoRole::Mono;
+      break;
+  }
+  dc.clippingPlanes.reserve(cam.clippingPlanes.size() * 4);
+  for (const tinyusdz::value::float4& plane : cam.clippingPlanes) {
+    for (size_t i = 0; i < 4; ++i) dc.clippingPlanes.push_back(plane[i]);
+  }
   dc.zNear = std::max(1.0e-4f, cam.znear);
   dc.zFar = std::max(dc.zNear + 1.0e-3f, cam.zfar);
   dc.projection =
