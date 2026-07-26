@@ -2776,6 +2776,8 @@ if(TINYUSDZ_BUILD_TESTS)
         set_tests_properties(tusdview-deform-${deform_case}
                              PROPERTIES SKIP_RETURN_CODE 77)
       endforeach()
+      set_tests_properties(tusdview-deform-instanced-proto
+                           PROPERTIES LABELS "tusdview")
 
       # An instanced prototype under the RAY TRACER: RT cannot use the raster vertex
       # shader's deform (the BLAS is built from vertex buffers, so the geometry itself
@@ -2792,7 +2794,7 @@ if(TINYUSDZ_BUILD_TESTS)
                 rt
         )
       set_tests_properties(tusdview-deform-instanced-proto-rt
-                           PROPERTIES SKIP_RETURN_CODE 77)
+                           PROPERTIES SKIP_RETURN_CODE 77 LABELS "tusdview")
 
       # The CUDA tracer builds its BVH from draw_ geometry, so it takes the deform
       # through poseNextDrawForTracer instead of the vertex shader. It used to be

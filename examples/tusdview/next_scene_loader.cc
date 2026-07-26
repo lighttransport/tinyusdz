@@ -1544,33 +1544,6 @@ void BuildMorphChannelsNext(const tnext::Stage& stage,
           std::max(sumPos[p * 3 + a], -sumNeg[p * 3 + a]));
 }
 
-// Compute morphExtent from blendshape targets for culling. Must be called when
-// BakeBlendShapes was used instead of BuildMorphChannelsNext (which already
-// computes morphExtent internally). No-op when no blendshapes are present.
-static void ComputeMorphExtent(const tnext::Stage& stage,
-                                const tnext::UsdPrim& meshPrim,
-                                DrawMeshCPU* dm) {
-  const std::vector<tnext::Path>* targets =
-      meshPrim.GetRelationship("skel:blendShapeTargets");
-  if (!targets || targets->empty()) return;
-
-  // Accumulate per-axis displacement across all channels.
-  float extent[3] = {0, 0, 0};
-  for (const tnext::Path& t : *targets) {
-    tnext::UsdPrim bs = stage.GetPrimAtPath(t.str());
-    if (!bs.IsValid()) continue;
-    const std::vector<float> offs = ReadFloats(bs, "offsets", /*time=*/0.0);
-    for (size_t e = 0; e + 2 < offs.size(); e += 3) {
-      extent[0] = std::max(extent[0], std::fabs(offs[e + 0]));
-      extent[1] = std::max(extent[1], std::fabs(offs[e + 1]));
-      extent[2] = std::max(extent[2], std::fabs(offs[e + 2]));
-    }
-  }
-  for (int a = 0; a < 3; ++a) {
-    dm->morphExtent[a] = std::max(dm->morphExtent[a], extent[a] * 1.5f);
-  }
-}
-
 // Build a prototype mesh's local geometry (+ flat displayColor) from the
 // converter, and its mesh-local -> proto-root-local transform `mesh_rel`. Shared
 // by the PointInstancer and native-instance passes. Returns false if the mesh has
@@ -1601,8 +1574,11 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
     return e && e[0] == '1';
   }();
   if (kBakeMorph) {
+    // The baked vertices already contain the sampled morph. Keep their tight
+    // bounds: morphExtent is only for rest geometry that the GPU will deform
+    // later. Padding baked vertices double-counts the displacement and makes
+    // CPU/GPU scene bounds, depth normalization, and the ground grid diverge.
     BakeBlendShapes(stage, mp, time, dm, vertexToPoint, numPoints);
-    ComputeMorphExtent(stage, mp, dm);
   } else {
     BuildMorphChannelsNext(stage, mp, time, dm, vertexToPoint, numPoints);
   }
@@ -5045,8 +5021,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }();
     if (m.has_blend_shapes()) {
       if (kBakeMorphStatic || !opts.gpuSkinning) {
+        // As in BuildProtoMesh, these vertices are already at the sampled
+        // morph pose. Do not add the live-GPU morphExtent padding again.
         BakeBlendShapes(stage, mp, time, &loc, vertexToPoint, m.point_count());
-        ComputeMorphExtent(stage, mp, &loc);
       } else {
         BuildMorphChannelsNext(stage, mp, time, &loc, vertexToPoint,
                                m.point_count());
