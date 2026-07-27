@@ -534,6 +534,10 @@ uniform int uKind;           // kind AOV: 0=none/1=component/2=group/3=assembly/
 uniform usamplerBuffer uFaceIdTex;  // per-triangle source face id (source-face-id AOV)
 uniform int uFaceBase;       // first triangle of this submesh (gl_PrimitiveID is submesh-local)
 uniform bool uHasFaceId;
+// Base-color Ptex is uploaded as a coarse face atlas.  The source-face buffer
+// supplies the atlas tile for the current triangle; UVs remain face-local.
+uniform bool uBasePtex;
+uniform vec2 uBasePtexGrid; // columns, rows
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
@@ -714,6 +718,13 @@ void main() {
 
     if (uHasBaseColorTex) {
         vec2 uv = xformUv(uUvSet.x == 1 ? vUV1 : vUV, uBaseColorUv0, uBaseColorUv1);
+        if (uBasePtex && uHasFaceId) {
+            int face = int(texelFetch(uFaceIdTex, uFaceBase + gl_PrimitiveID).r);
+            float cols = max(uBasePtexGrid.x, 1.0);
+            float rows = max(uBasePtexGrid.y, 1.0);
+            uv = (vec2(mod(float(face), cols), floor(float(face) / cols)) + fract(uv)) /
+                 vec2(cols, rows);
+        }
         vec4 texel = uBaseColorTexIsUdim
                          ? sampleUdim(uBaseColorUdimTex, uUdimSlots.x, uv,
                                       vec4(1.0, 0.0, 1.0, 1.0))
