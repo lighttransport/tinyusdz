@@ -1565,6 +1565,12 @@ class RenderStream {
     emscripten::val r = emscripten::val::object();
     end();
     error_.clear();
+    stats_ = Stats{};
+    stats_.input_copy_ms = pending_input_copy_ms_;
+    stats_.input_bytes = pending_input_bytes_;
+    pending_input_copy_ms_ = 0.0;
+    pending_input_bytes_ = 0;
+    const double stage_load_start_ms = emscripten_get_now();
     if (IsUSDCBytes(crate)) {
       tinyusdz::next::USDCLoadOptions opts;
       opts.crate_options.progress_callback =
@@ -1603,11 +1609,13 @@ class RenderStream {
         return r;
       }
     }
+    stats_.stage_load_ms = emscripten_get_now() - stage_load_start_ms;
     // Record authored variant sets (consumed by composition below), then
     // compose in place when the layer carries composition arcs — variants,
     // internal references, inherits/specializes. External arcs cannot anchor
     // for memory roots and surface as warnings (multi-layer scenes go through
     // NextFlattenSession instead).
+    const double composition_start_ms = emscripten_get_now();
     collectVariantSets_();
     if (tinyusdz::next::StageNeedsComposition(stage_)) {
       tinyusdz::next::pcp::CompositionOptions copts;
@@ -1622,11 +1630,16 @@ class RenderStream {
         return r;
       }
     }
+    stats_.composition_ms = emscripten_get_now() - composition_start_ms;
+    const double mesh_discovery_start_ms = emscripten_get_now();
     meshes_ = tinyusdz::next::GetAllMeshes(stage_);
-    stats_ = Stats{};
+    stats_.mesh_discovery_ms =
+        emscripten_get_now() - mesh_discovery_start_ms;
     stats_.source_mesh_count = meshes_.size();
     if (mesh_merge_) {
+      const double optimize_start_ms = emscripten_get_now();
       buildOptimizedOutputs_();
+      stats_.optimize_ms = emscripten_get_now() - optimize_start_ms;
     }
     if (!mesh_only_) {
       buildRenderScene_();
@@ -1660,6 +1673,7 @@ class RenderStream {
 
   // Begin from a JS Uint8Array (one copy into the WASM heap, then adopted).
   emscripten::val begin(emscripten::val bytes) {
+    const double input_copy_start_ms = emscripten_get_now();
     const size_t size = bytes["byteLength"].as<size_t>();
     constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
     if (size > kMaxLayerBytes) {
@@ -1679,6 +1693,8 @@ class RenderStream {
           size, reinterpret_cast<uint8_t *>(&s[0])));
       heapView.call<void>("set", view);
     }
+    pending_input_copy_ms_ = emscripten_get_now() - input_copy_start_ms;
+    pending_input_bytes_ = size;
     return beginOwned(std::move(s));
   }
 
@@ -2432,6 +2448,16 @@ class RenderStream {
     s.set("meshMerge", mesh_merge_);
     s.set("meshMergeBakeTransform", mesh_merge_bake_transform_);
     s.set("flattenRenderTree", flatten_render_tree_);
+    s.set("nativeStageLoadMs", stats_.stage_load_ms);
+    s.set("nativeInputCopyMs", stats_.input_copy_ms);
+    s.set("nativeInputBytes", static_cast<double>(stats_.input_bytes));
+    s.set("nativeCompositionMs", stats_.composition_ms);
+    s.set("nativeMeshDiscoveryMs", stats_.mesh_discovery_ms);
+    s.set("nativeOptimizeMs", stats_.optimize_ms);
+    s.set("materialIdentityHits",
+          static_cast<int>(stats_.material_identity_hits));
+    s.set("materialIdentityMisses",
+          static_cast<int>(stats_.material_identity_misses));
     size_t provided_asset_bytes = 0;
     for (const auto& asset : clip_assets_) {
       provided_asset_bytes += asset.second.size();
@@ -2560,6 +2586,7 @@ class RenderStream {
     materials_.clear();
     material_key_to_id_.clear();
     material_path_to_id_.clear();
+    material_identity_to_id_.clear();
     local_matrix_cache_.clear();
     world_matrix_cache_.clear();
     source_material_keys_.clear();
@@ -2796,6 +2823,14 @@ class RenderStream {
     size_t merged_mesh_count = 0;
     size_t merge_group_count = 0;
     size_t skipped_merge_count = 0;
+    size_t input_bytes = 0;
+    double input_copy_ms = 0.0;
+    double stage_load_ms = 0.0;
+    double composition_ms = 0.0;
+    double mesh_discovery_ms = 0.0;
+    double optimize_ms = 0.0;
+    size_t material_identity_hits = 0;
+    size_t material_identity_misses = 0;
   };
 
   emscripten::val outputSourceMesh_(int i) {
@@ -3161,16 +3196,16 @@ class RenderStream {
   std::vector<float> matFloat_(const tinyusdz::next::UsdPrim &prim, const char *name) {
     const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    tinyusdz::next::Value tmp = *v;
-    const std::vector<float> *a = tmp.as_float_array();
-    return a ? *a : std::vector<float>{};
+    tinyusdz::next::Value tmp = v->materialized_copy();
+    std::vector<float> *a = tmp.as_float_array();
+    return a ? std::move(*a) : std::vector<float>{};
   }
   std::vector<int32_t> matInt_(const tinyusdz::next::UsdPrim &prim, const char *name) {
     const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    tinyusdz::next::Value tmp = *v;
-    const std::vector<int32_t> *a = tmp.as_int_array();
-    return a ? *a : std::vector<int32_t>{};
+    tinyusdz::next::Value tmp = v->materialized_copy();
+    std::vector<int32_t> *a = tmp.as_int_array();
+    return a ? std::move(*a) : std::vector<int32_t>{};
   }
   static bool matBool_(const tinyusdz::next::UsdPrim &prim, const char *name,
                        bool fallback) {
@@ -3795,6 +3830,124 @@ class RenderStream {
     return surface.IsValid() && !tinyusdz::next::IsPreviewSurface(surface);
   }
 
+  std::string materialSourceIdentity_(
+      const tinyusdz::next::UsdPrim &mat) const {
+    if (!mat.IsValid()) return {};
+
+    // Do not use exporter provenance to bypass an authoritative MaterialX
+    // graph, even when the material also carries a PreviewSurface fallback.
+    if (const tinyusdz::next::PrimSpec *spec = mat.GetPrimSpec()) {
+      const std::vector<tinyusdz::next::Path> *mtlx =
+          spec->connection("outputs:mtlx:surface");
+      if (mtlx && !mtlx->empty()) return {};
+    }
+    if (const std::vector<tinyusdz::next::Path> *mtlx =
+            mat.GetRelationship("outputs:mtlx:surface")) {
+      if (!mtlx->empty()) return {};
+    }
+    if (const std::vector<tinyusdz::next::Path> *source =
+            mat.GetRelationship("mtlx:surface:source")) {
+      if (!source->empty()) return {};
+    }
+
+    bool has_preview_surface = false;
+    std::string source_asset;
+    const std::string material_path = mat.GetPath().str();
+    std::string signature;
+    signature.reserve(512);
+    auto append_text = [&](const std::string &text) {
+      signature.append(text);
+      signature.push_back('\0');
+    };
+    auto append_float = [&](float value) {
+      signature.append(reinterpret_cast<const char *>(&value), sizeof(value));
+    };
+    for (const tinyusdz::next::UsdPrim &child : mat.GetChildren()) {
+      if (tinyusdz::next::IsPreviewSurface(child)) {
+        has_preview_surface = true;
+        const char *scalar_names[] = {
+            "inputs:metallic", "inputs:roughness", "inputs:opacity",
+            "inputs:occlusion", "inputs:opacityThreshold"};
+        for (const char *name : scalar_names) {
+          const tinyusdz::next::Value *scalar_value =
+              child.GetPropertyValue(name);
+          float scalar = 0.0f;
+          append_text(name);
+          if (scalar_value && scalar_value->to_float(&scalar)) {
+            signature.push_back('\1');
+            append_float(scalar);
+          } else {
+            signature.push_back('\0');
+          }
+        }
+        const char *color_names[] = {
+            "inputs:diffuseColor", "inputs:emissiveColor"};
+        for (const char *name : color_names) {
+          const tinyusdz::next::Value *color_value =
+              child.GetPropertyValue(name);
+          float color[3] = {0.0f, 0.0f, 0.0f};
+          append_text(name);
+          if (color_value && color_value->to_float3(color)) {
+            signature.push_back('\1');
+            append_float(color[0]);
+            append_float(color[1]);
+            append_float(color[2]);
+          } else {
+            signature.push_back('\0');
+          }
+        }
+        const char *connection_names[] = {
+            "inputs:diffuseColor", "inputs:normal", "inputs:roughness",
+            "inputs:metallic", "inputs:occlusion", "inputs:emissiveColor",
+            "inputs:opacity"};
+        const tinyusdz::next::PrimSpec *child_spec = child.GetPrimSpec();
+        for (const char *name : connection_names) {
+          append_text(name);
+          const std::vector<tinyusdz::next::Path> *connections =
+              child_spec ? child_spec->connection(name) : nullptr;
+          if (!connections) {
+            signature.push_back('\0');
+            continue;
+          }
+          signature.push_back('\1');
+          for (const tinyusdz::next::Path &connection : *connections) {
+            std::string target = connection.str();
+            if (target.rfind(material_path, 0) == 0) {
+              target.erase(0, material_path.size());
+            }
+            append_text(target);
+          }
+        }
+      }
+      const tinyusdz::next::Value *value =
+          child.GetPropertyValue("info:unreal:sourceAsset");
+      if (value) {
+        if (const std::string *asset = value->as_asset_path()) {
+          source_asset = *asset;
+        } else if (const std::string *text = value->as_string()) {
+          source_asset = *text;
+        }
+      }
+
+      const tinyusdz::next::Value *file =
+          child.GetPropertyValue("inputs:file");
+      if (file) {
+        const std::string *asset = file->as_asset_path();
+        if (!asset) asset = file->as_string();
+        if (asset) {
+          append_text("tex");
+          append_text(child.GetName());
+          append_text(*asset);
+        }
+      }
+    }
+    if (!has_preview_surface || source_asset.empty()) return {};
+    std::string identity = std::string("unreal:") + source_asset;
+    identity.push_back('\0');
+    identity.append(signature);
+    return identity;
+  }
+
   MaterialRecord materialRecordForPrim_(
       const tinyusdz::next::UsdPrim &mat) {
     MaterialRecord rec;
@@ -3985,6 +4138,18 @@ class RenderStream {
     const auto path_it = material_path_to_id_.find(mat_path);
     if (path_it != material_path_to_id_.end()) return path_it->second;
 
+    const std::string source_identity =
+        material_dedup_ ? materialSourceIdentity_(mat) : std::string();
+    const auto identity_it = material_identity_to_id_.find(source_identity);
+    if (!source_identity.empty() &&
+        identity_it != material_identity_to_id_.end()) {
+      stats_.material_identity_hits++;
+      source_material_keys_.insert(mat_path);
+      material_path_to_id_[mat_path] = identity_it->second;
+      return identity_it->second;
+    }
+    if (!source_identity.empty()) stats_.material_identity_misses++;
+
     MaterialRecord rec = materialRecordForPrim_(mat);
     source_material_keys_.insert(mat_path);
     addTextureKey_("color", rec.base_color_texture, &source_texture_keys_);
@@ -4001,6 +4166,9 @@ class RenderStream {
     auto it = material_key_to_id_.find(key);
     if (it != material_key_to_id_.end()) {
       material_path_to_id_[mat_path] = it->second;
+      if (!source_identity.empty()) {
+        material_identity_to_id_[source_identity] = it->second;
+      }
       return it->second;
     }
     rec.id = static_cast<int32_t>(materials_.size());
@@ -4008,6 +4176,9 @@ class RenderStream {
     materials_.push_back(rec);
     material_key_to_id_[key] = rec.id;
     material_path_to_id_[mat_path] = rec.id;
+    if (!source_identity.empty()) {
+      material_identity_to_id_[source_identity] = rec.id;
+    }
     addTextureKey_("color", rec.base_color_texture, &texture_keys_);
     addTextureKey_("data", rec.normal_texture, &texture_keys_);
     addTextureKey_("data", rec.roughness_texture, &texture_keys_);
@@ -4350,9 +4521,9 @@ class RenderStream {
       const tinyusdz::next::UsdPrim &prim, const char *name) {
     const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    tinyusdz::next::Value tmp = *v;
-    const std::vector<int32_t> *a = tmp.as_int_array();
-    return a ? *a : std::vector<int32_t>{};
+    tinyusdz::next::Value tmp = v->materialized_copy();
+    std::vector<int32_t> *a = tmp.as_int_array();
+    return a ? std::move(*a) : std::vector<int32_t>{};
   }
 
   // Area-weighted vertex normals from the triangulated indices.
@@ -4795,6 +4966,7 @@ class RenderStream {
   std::vector<MaterialRecord> materials_;
   std::unordered_map<std::string, int32_t> material_key_to_id_;
   std::unordered_map<std::string, int32_t> material_path_to_id_;
+  std::unordered_map<std::string, int32_t> material_identity_to_id_;
   mutable std::unordered_map<std::string, std::array<double, 16>>
       local_matrix_cache_;
   mutable std::unordered_map<std::string, std::array<double, 16>>
@@ -4849,6 +5021,8 @@ class RenderStream {
   std::map<std::string, std::string> variant_overrides_;
 
   Stats stats_;
+  double pending_input_copy_ms_ = 0.0;
+  size_t pending_input_bytes_ = 0;
   bool loaded_ = false;
   bool material_dedup_ = false;
   bool mesh_merge_ = false;
