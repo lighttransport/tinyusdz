@@ -110,6 +110,17 @@ function materializeAllMeshes(stream) {
   }
 }
 
+await test('combined WASM next RenderStream accepts an in-memory USDA layer', () => {
+  const stream = renderStreamFor(encoder.encode(SIMPLE_TRIANGLE_USDA));
+  try {
+    assert.equal(stream.meshCount(), 1, 'USDA fixture should expose one mesh');
+    materializeAllMeshes(stream);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
 await test('next flatten does not allocate when required remap API is missing', () => {
   let allocations = 0;
   const fakeNative = { HEAPU8: new Uint8Array(16) };
