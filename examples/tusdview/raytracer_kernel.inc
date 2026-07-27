@@ -129,6 +129,16 @@ __device__ F4 samplePtexRGBA(const unsigned char* texels, const TexDesc* tex,
   float av=td.height>1?py/(float)(td.height-1):0.f;
   return sampleTexRGBALod(texels,tex,numTex,id,au,av,0.f);
 }
+__device__ F4 sampleMaterialTexture(const unsigned char* texels,
+                                    const TexDesc* tex, int numTex, int id,
+                                    float u, float v, unsigned int face,
+                                    float lod, F4 missing) {
+  if (tex && id >= 0 && id < numTex && tex[id].isPtex) {
+    return samplePtexRGBA(texels, tex, numTex, id, u, v, face, lod);
+  }
+  return sampleTexRGBAFallbackLod(texels, tex, numTex, id, u, v, lod,
+                                  missing);
+}
 __device__ float textureLod(const TexDesc* tex, int numTex, int id,
                             float u, float v, float uvFootprint){
   if (!tex || id<0 || id>=numTex) return 0.f;
@@ -749,9 +759,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       float suu=uu,svv=vv2;
       xformUv(tp,124,tp[130]>0.5f?uu1:uu,tp[130]>0.5f?vv21:vv2,&suu,&svv);
       if (specularColorTex>=0) {
-        F4 st=sampleTexRGBALod(texels,textures,numTextures,specularColorTex,
+        F4 st=sampleMaterialTexture(texels,textures,numTextures,specularColorTex,
             suu,svv,textureLod(textures,numTextures,specularColorTex,suu,svv,
-                               xformFootprint(tp,124,uvFootprint)));
+                               xformFootprint(tp,124,uvFootprint)), faces[ht],
+            mk4(1.f,1.f,1.f,1.f));
         materialF0=mk(materialF0.x*(st.x*tp[132]+tp[136]),
                       materialF0.y*(st.y*tp[133]+tp[137]),
                       materialF0.z*(st.z*tp[134]+tp[138]));
@@ -759,49 +770,55 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     }
     float occlusion=1.f;
     if (occlusionTex>=0){
-      F4 at=sampleTexRGBALod(texels,textures,numTextures,occlusionTex,
+      F4 at=sampleMaterialTexture(texels,textures,numTextures,occlusionTex,
           occluu,occlvv,
           textureLod(textures,numTextures,occlusionTex,occluu,occlvv,
-                     xformFootprint(tp,72,uvFootprint)));
+                     xformFootprint(tp,72,uvFootprint)), faces[ht],
+          mk4(1.f,1.f,1.f,1.f));
       int ch=tp?(int)(tp[96]+0.5f):0;
       occlusion=fminf(fmaxf(channel4(at,ch)*(tp?tp[70]:1.f)+(tp?tp[71]:0.f),
                             0.f),1.f);
     }
     if (coatWeightTex>=0){
-      F4 ct=sampleTexRGBALod(texels,textures,numTextures,coatWeightTex,
+      F4 ct=sampleMaterialTexture(texels,textures,numTextures,coatWeightTex,
           cwuu,cwvv,
           textureLod(textures,numTextures,coatWeightTex,cwuu,cwvv,
-                     xformFootprint(tp,78,uvFootprint)));
+                     xformFootprint(tp,78,uvFootprint)), faces[ht],
+          mk4(1.f,1.f,1.f,1.f));
       int ch=tp?(int)(tp[97]+0.5f):0;
       float sv=tp?(&tp[100])[ch]:1.f, bv=tp?(&tp[104])[ch]:0.f;
       coatWeight=fminf(fmaxf(coatWeight*(channel4(ct,ch)*sv+bv),
                              0.f),1.f);
     }
     if (coatColorTex>=0){
-      F4 ct=sampleTexRGBALod(texels,textures,numTextures,coatColorTex,
+      F4 ct=sampleMaterialTexture(texels,textures,numTextures,coatColorTex,
           ccuu,ccvv,
           textureLod(textures,numTextures,coatColorTex,ccuu,ccvv,
-                     xformFootprint(tp,84,uvFootprint)));
+                     xformFootprint(tp,84,uvFootprint)), faces[ht],
+          mk4(1.f,1.f,1.f,1.f));
       coatColor=mk(coatColor.x*(ct.x*(tp?tp[108]:1.f)+(tp?tp[112]:0.f)),
                    coatColor.y*(ct.y*(tp?tp[109]:1.f)+(tp?tp[113]:0.f)),
                    coatColor.z*(ct.z*(tp?tp[110]:1.f)+(tp?tp[114]:0.f)));
     }
     if (coatRoughTex>=0){
-      F4 ct=sampleTexRGBALod(texels,textures,numTextures,coatRoughTex,
+      F4 ct=sampleMaterialTexture(texels,textures,numTextures,coatRoughTex,
           cruu,crvv,
           textureLod(textures,numTextures,coatRoughTex,cruu,crvv,
-                     xformFootprint(tp,90,uvFootprint)));
+                     xformFootprint(tp,90,uvFootprint)), faces[ht],
+          mk4(1.f,1.f,1.f,1.f));
       int ch=tp?(int)(tp[98]+0.5f):0;
       float sv=tp?(&tp[116])[ch]:1.f, bv=tp?(&tp[120])[ch]:0.f;
       coatRoughness=fminf(fmaxf(coatRoughness*(channel4(ct,ch)*sv+bv),
                                 0.02f),1.f);
     }
-    F4 mt=sampleTexRGBALod(texels,textures,numTextures,metallicTex,muu,mvv,
+    F4 mt=sampleMaterialTexture(texels,textures,numTextures,metallicTex,muu,mvv,
         textureLod(textures,numTextures,metallicTex,muu,mvv,
-                   xformFootprint(tp,6,uvFootprint)));
-    F4 rt=sampleTexRGBALod(texels,textures,numTextures,roughnessTex,ruu,rvv,
+                   xformFootprint(tp,6,uvFootprint)), faces[ht],
+        mk4(1.f,1.f,1.f,1.f));
+    F4 rt=sampleMaterialTexture(texels,textures,numTextures,roughnessTex,ruu,rvv,
         textureLod(textures,numTextures,roughnessTex,ruu,rvv,
-                   xformFootprint(tp,12,uvFootprint)));
+                   xformFootprint(tp,12,uvFootprint)), faces[ht],
+        mk4(1.f,1.f,1.f,1.f));
     int metalCh=tp?(int)(tp[60]+0.5f):2;
     int roughCh=tp?(int)(tp[63]+0.5f):1;
     float metalS=tp?tp[61]:1.f, metalB=tp?tp[62]:0.f;
@@ -810,9 +827,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     roughness=fminf(fmaxf(roughness*(channel4(rt,roughCh)*roughS+roughB),0.f),1.f);
     opacity=fminf(fmaxf(opacity*bt4.w,0.f),1.f);
     if (opacityTex>=0) {
-      F4 ot=sampleTexRGBALod(texels,textures,numTextures,opacityTex,ouu,ovv,
+      F4 ot=sampleMaterialTexture(texels,textures,numTextures,opacityTex,ouu,ovv,
           textureLod(textures,numTextures,opacityTex,ouu,ovv,
-                     xformFootprint(tp,30,uvFootprint)));
+                     xformFootprint(tp,30,uvFootprint)), faces[ht],
+          mk4(1.f,1.f,1.f,1.f));
       int opacityCh=tp?(int)(tp[66]+0.5f):0;
       float opacityS=tp?tp[67]:1.f, opacityB=tp?tp[68]:0.f;
       opacity*=channel4(ot,opacityCh)*opacityS+opacityB;
@@ -823,10 +841,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     }
     if (I->tint[3] < 1.f && materialOpacity > 0.f) alphaMode=2.f;
     if (normalTex>=0) {
-      F4 nt=sampleTexRGBAFallbackLod(texels,textures,numTextures,normalTex,nuu,nvv,
+      F4 nt=sampleMaterialTexture(texels,textures,numTextures,normalTex,nuu,nvv,
           textureLod(textures,numTextures,normalTex,nuu,nvv,
                      xformFootprint(tp,18,uvFootprint)),
-          mk4(0.5f,0.5f,1.f,1.f));
+          faces[ht], mk4(0.5f,0.5f,1.f,1.f));
       if (tp) nt=mk4(nt.x*tp[44]+tp[48],nt.y*tp[45]+tp[49],nt.z*tp[46]+tp[50],nt.w*tp[47]+tp[51]);
       else nt=mk4(nt.x*2.f-1.f,nt.y*2.f-1.f,nt.z*2.f-1.f,nt.w);
       int uvbits=tp?(int)(tp[69]+0.5f):0;
@@ -858,9 +876,9 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       float cu=cuv[0]*w0+cuv[2]*bu+cuv[4]*bv;
       float cvv=cuv[1]*w0+cuv[3]*bu+cuv[5]*bv;
       xformUv(tp,140,cu,cvv,&cu,&cvv);
-      F4 nt=sampleTexRGBAFallbackLod(texels,textures,numTextures,coatNormalTex,
+      F4 nt=sampleMaterialTexture(texels,textures,numTextures,coatNormalTex,
           cu,cvv,textureLod(textures,numTextures,coatNormalTex,cu,cvv,
-                            xformFootprint(tp,140,uvFootprint)),
+                            xformFootprint(tp,140,uvFootprint)), faces[ht],
           mk4(0.5f,0.5f,1.f,1.f));
       nt=mk4(nt.x*tp[147]+tp[151],nt.y*tp[148]+tp[152],
              nt.z*tp[149]+tp[153],nt.w);
@@ -944,9 +962,10 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
     F3 em=mk(0.f,0.f,0.f);
     if (mid>=0&&mid<numMats) {
       em=emissionConst;
-      F4 et4=sampleTexRGBALod(texels,textures,numTextures,emissiveTex,euu,evv,
+      F4 et4=sampleMaterialTexture(texels,textures,numTextures,emissiveTex,euu,evv,
           textureLod(textures,numTextures,emissiveTex,euu,evv,
-                     xformFootprint(tp,24,uvFootprint)));
+                     xformFootprint(tp,24,uvFootprint)), faces[ht],
+          mk4(1.f,1.f,1.f,1.f));
       if (tp) et4=mk4(et4.x*tp[52]+tp[56],et4.y*tp[53]+tp[57],et4.z*tp[54]+tp[58],et4.w*tp[55]+tp[59]);
       F3 et=mk(et4.x,et4.y,et4.z);
       em=mk(em.x*et.x,em.y*et.y,em.z*et.z);

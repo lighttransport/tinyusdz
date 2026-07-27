@@ -329,6 +329,14 @@ vec4 sampleRtPtexTextureLod(int id, vec2 uv, uint face, float lod,
                             missing);
 }
 
+vec4 sampleRtMaterialTexture(int id, vec2 uv, uint face, float lod,
+                             vec4 missing) {
+  if (id >= 0 && id < int(texDescs.length()) && texDescs[id].isPtex != 0) {
+    return sampleRtPtexTextureLod(id, uv, face, lod, missing);
+  }
+  return sampleRtTextureLod(id, uv, lod, missing);
+}
+
 float rtTextureLod(int id, vec2 uv, float uvFootprint) {
   if (id < 0 || id >= int(texDescs.length())) return 0.0;
   RtTexDesc td = texDescs[id];
@@ -657,14 +665,14 @@ void main() {
       base *= vc.rgb;
       alpha *= vc.a;
     }
+    uint sourceFace = md.faceAddr != 0ul
+                          ? Faces(md.faceAddr).fc[uint(prim)]
+                          : uint(max(prim, 0));
     if (ii.useMaterial != 0u && mid != 0xffffffffu) {
       uint tb = mid * 12u;
       uint pb = mid * 155u;
       vec2 baseUv = materialUv(mid, 0, uv0h, uv1h);
         int baseTexId = matTexIds[tb + 0u];
-        uint sourceFace = md.faceAddr != 0ul
-                              ? Faces(md.faceAddr).fc[uint(prim)]
-                              : uint(max(prim, 0));
         float baseLod = rtTextureLod(baseTexId, baseUv,
                                      materialUvFootprint(mid, 0, uvFootprint));
         vec4 bt = (baseTexId >= 0 &&
@@ -682,10 +690,10 @@ void main() {
 
       vec2 metallicUv = materialUv(mid, 1, uv0h, uv1h);
       vec2 roughnessUv = materialUv(mid, 2, uv0h, uv1h);
-      vec4 mt = sampleRtTextureLod(matTexIds[tb + 1u], metallicUv,
+      vec4 mt = sampleRtMaterialTexture(matTexIds[tb + 1u], metallicUv, sourceFace,
           rtTextureLod(matTexIds[tb + 1u], metallicUv,
                        materialUvFootprint(mid, 1, uvFootprint)), vec4(1.0));
-      vec4 rt = sampleRtTextureLod(matTexIds[tb + 2u], roughnessUv,
+      vec4 rt = sampleRtMaterialTexture(matTexIds[tb + 2u], roughnessUv, sourceFace,
           rtTextureLod(matTexIds[tb + 2u], roughnessUv,
                        materialUvFootprint(mid, 2, uvFootprint)), vec4(1.0));
       metallic = clamp(metallic *
@@ -702,7 +710,7 @@ void main() {
       int opacityTex = matTexIds[tb + 5u];
       if (opacityTex >= 0) {
         vec2 opacityUv = materialUv(mid, 5, uv0h, uv1h);
-        vec4 ot = sampleRtTextureLod(opacityTex, opacityUv,
+        vec4 ot = sampleRtMaterialTexture(opacityTex, opacityUv, sourceFace,
             rtTextureLod(opacityTex, opacityUv,
                          materialUvFootprint(mid, 5, uvFootprint)), vec4(1.0));
         alpha *= texChannel(ot, int(matTexParams[pb + 66u] + 0.5)) *
@@ -713,7 +721,7 @@ void main() {
       int emissiveTex = matTexIds[tb + 4u];
       if (emissiveTex >= 0) {
         vec2 emissiveUv = materialUv(mid, 4, uv0h, uv1h);
-        vec4 et = sampleRtTextureLod(emissiveTex, emissiveUv,
+        vec4 et = sampleRtMaterialTexture(emissiveTex, emissiveUv, sourceFace,
             rtTextureLod(emissiveTex, emissiveUv,
                          materialUvFootprint(mid, 4, uvFootprint)), vec4(1.0));
         et = et * vec4(matTexParams[pb + 52u], matTexParams[pb + 53u],
@@ -726,7 +734,7 @@ void main() {
       int normalTex = matTexIds[tb + 3u];
       if (normalTex >= 0) {
         vec2 normalUv = materialUv(mid, 3, uv0h, uv1h);
-        vec4 nt = sampleRtTextureLod(normalTex, normalUv,
+        vec4 nt = sampleRtMaterialTexture(normalTex, normalUv, sourceFace,
             rtTextureLod(normalTex, normalUv,
                          materialUvFootprint(mid, 3, uvFootprint)),
             vec4(0.5, 0.5, 1.0, 1.0));
@@ -764,7 +772,7 @@ void main() {
                 matTexParams[pb + 142u],
             matTexParams[pb + 143u] * src.x + matTexParams[pb + 144u] * src.y +
                 matTexParams[pb + 145u]);
-        vec4 nt = sampleRtTextureLod(coatNormalTex, cuv,
+        vec4 nt = sampleRtMaterialTexture(coatNormalTex, cuv, sourceFace,
             rtTextureLod(coatNormalTex, cuv, uvFootprint),
             vec4(0.5, 0.5, 1.0, 1.0));
         nt = nt * vec4(matTexParams[pb + 147u], matTexParams[pb + 148u],
@@ -793,7 +801,7 @@ void main() {
       int occlusionTex = matTexIds[tb + 6u];
       if (occlusionTex >= 0) {
         vec2 aoUv = materialUv(mid, 12, uv0h, uv1h);
-        vec4 at = sampleRtTextureLod(occlusionTex, aoUv,
+        vec4 at = sampleRtMaterialTexture(occlusionTex, aoUv, sourceFace,
             rtTextureLod(occlusionTex, aoUv,
                          materialUvFootprint(mid, 12, uvFootprint)), vec4(1.0));
         occlusion = clamp(texChannel(at, int(matTexParams[pb + 96u] + 0.5)) *
@@ -803,7 +811,7 @@ void main() {
       int coatWeightTex = matTexIds[tb + 7u];
       if (coatWeightTex >= 0) {
         vec2 cwUv = materialUv(mid, 13, uv0h, uv1h);
-        vec4 ct = sampleRtTextureLod(coatWeightTex, cwUv,
+        vec4 ct = sampleRtMaterialTexture(coatWeightTex, cwUv, sourceFace,
             rtTextureLod(coatWeightTex, cwUv,
                          materialUvFootprint(mid, 13, uvFootprint)), vec4(1.0));
         int ch = int(matTexParams[pb + 97u] + 0.5);
@@ -815,7 +823,7 @@ void main() {
       int coatColorTex = matTexIds[tb + 8u];
       if (coatColorTex >= 0) {
         vec2 ccUv = materialUv(mid, 14, uv0h, uv1h);
-        vec4 ct = sampleRtTextureLod(coatColorTex, ccUv,
+        vec4 ct = sampleRtMaterialTexture(coatColorTex, ccUv, sourceFace,
             rtTextureLod(coatColorTex, ccUv,
                          materialUvFootprint(mid, 14, uvFootprint)), vec4(1.0));
         coatColor *= ct.rgb * vec3(matTexParams[pb + 108u],
@@ -828,7 +836,7 @@ void main() {
       int coatRoughTex = matTexIds[tb + 9u];
       if (coatRoughTex >= 0) {
         vec2 crUv = materialUv(mid, 15, uv0h, uv1h);
-        vec4 ct = sampleRtTextureLod(coatRoughTex, crUv,
+        vec4 ct = sampleRtMaterialTexture(coatRoughTex, crUv, sourceFace,
             rtTextureLod(coatRoughTex, crUv,
                          materialUvFootprint(mid, 15, uvFootprint)), vec4(1.0));
         int ch = int(matTexParams[pb + 98u] + 0.5);
@@ -857,7 +865,7 @@ void main() {
                   matTexParams[pb + 125u] * srcUv.y + matTexParams[pb + 126u],
               matTexParams[pb + 127u] * srcUv.x +
                   matTexParams[pb + 128u] * srcUv.y + matTexParams[pb + 129u]);
-          vec4 st = sampleRtTextureLod(specTex, specUv,
+          vec4 st = sampleRtMaterialTexture(specTex, specUv, sourceFace,
               rtTextureLod(specTex, specUv, uvFootprint), vec4(1.0));
           vec3 sampledSpec = st.rgb * vec3(matTexParams[pb + 132u],
                                       matTexParams[pb + 133u],
