@@ -241,6 +241,15 @@ class Renderer {
   virtual void appendVolume(const DrawVolumeCPU& /*vol*/) {}
   // Fill texture slot `slot`; materials referencing it switch from white to it.
   virtual void uploadTexture(int slot, const DrawTextureCPU& tex) = 0;
+  // Replace an RGBA8 rectangle in an already-uploaded ordinary 2D texture.
+  // Used by bounded Ptex page streaming; compressed and array textures reject
+  // updates. `rowBytes` permits uploading a sub-rectangle from a larger CPU
+  // image without repacking it (zero means tightly packed width*4).
+  virtual bool updateTextureRegion(int /*slot*/, int /*x*/, int /*y*/, int /*w*/,
+                                   int /*h*/, const uint8_t* /*rgba*/,
+                                   size_t /*rowBytes*/ = 0) {
+    return false;
+  }
   virtual void uploadSkinningFrame(const SkinningFrameCPU& /*skin*/) {}
   // Per-instance frustum culling: replace mesh `meshIndex`'s drawn instance set
   // with `count` visible instances (xforms = 12 floats/instance, 3x4 o2w row-major;

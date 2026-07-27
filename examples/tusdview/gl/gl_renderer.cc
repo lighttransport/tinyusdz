@@ -1742,10 +1742,56 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
   }
+  gpu.width = t.image.width;
+  gpu.height = t.image.height;
+  gpu.regionUpdatable = !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
+                        !t.image.data.empty() &&
+                        !(t.requestedCompressed &&
+                          t.compressed.format != DrawCompressedFormat::None &&
+                          !t.compressed.data.empty());
   GLTexture& old = textures_[static_cast<size_t>(slot)];
   if (old.tex2d) glDeleteTextures(1, &old.tex2d);
   if (old.arrayTex) glDeleteTextures(1, &old.arrayTex);
   old = gpu;
+  if (t.isPtex && t.ptexRectTexelOffset <
+                      static_cast<uint32_t>(t.image.width * t.image.height)) {
+    size_t linear = t.ptexRectTexelOffset;
+    size_t remaining = t.ptexFaceRects.size() * 8u;
+    while (remaining > 0) {
+      const int x = static_cast<int>(linear % size_t(t.image.width));
+      const int y = static_cast<int>(linear / size_t(t.image.width));
+      const int count = static_cast<int>(
+          std::min(remaining, size_t(t.image.width - x)));
+      updateTextureRegion(slot, x, y, count, 1,
+                          t.image.data.data() + linear * 4u);
+      linear += static_cast<size_t>(count);
+      remaining -= static_cast<size_t>(count);
+    }
+  }
+}
+
+bool GLRenderer::updateTextureRegion(int slot, int x, int y, int w, int h,
+                                     const uint8_t* rgba, size_t rowBytes) {
+  if (slot < 0 || static_cast<size_t>(slot) >= textures_.size() || !rgba ||
+      x < 0 || y < 0 || w <= 0 || h <= 0) {
+    return false;
+  }
+  GLTexture& texture = textures_[static_cast<size_t>(slot)];
+  if (!texture.regionUpdatable || !texture.tex2d ||
+      x + w > texture.width || y + h > texture.height) {
+    return false;
+  }
+  const size_t stride = rowBytes ? rowBytes : size_t(w) * 4u;
+  if (stride < size_t(w) * 4u || (stride & 3u) != 0) return false;
+  glBindTexture(GL_TEXTURE_2D, texture.tex2d);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(stride / 4u));
+  glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                  rgba);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return true;
 }
 
 void GLRenderer::destroyIblTextures() {

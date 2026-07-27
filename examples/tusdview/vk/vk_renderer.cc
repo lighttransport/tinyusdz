@@ -4573,6 +4573,10 @@ void VulkanRenderer::destroyScene() {
   texDescs_.clear();
   texUdimArrayDescs_.clear();
   texSlotViews_.clear();
+  texSlotImgs_.clear();
+  texSlotWidths_.clear();
+  texSlotHeights_.clear();
+  texRegionUpdatable_.clear();
   texUdimArrayViews_.clear();
   texIsUdim_.clear();
   if (udimLutAtlasView_) vkDestroyImageView(device_, udimLutAtlasView_, nullptr);
@@ -4635,6 +4639,14 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                             dummyArrayDesc_);
   texSlotViews_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
                        whiteView_);
+  texSlotImgs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                      VK_NULL_HANDLE);
+  texSlotWidths_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                        0);
+  texSlotHeights_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                         0);
+  texRegionUpdatable_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
   texUdimArrayViews_.assign(
       textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
       dummyArrayView_);
@@ -4837,6 +4849,32 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     texViews_.push_back(view);
     texDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(view);
     texSlotViews_[static_cast<size_t>(slot)] = view;
+    texSlotImgs_[static_cast<size_t>(slot)] = img;
+    texSlotWidths_[static_cast<size_t>(slot)] = t.image.width;
+    texSlotHeights_[static_cast<size_t>(slot)] = t.image.height;
+    texRegionUpdatable_[static_cast<size_t>(slot)] =
+        !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
+                !t.image.data.empty() &&
+                !(t.requestedCompressed &&
+                  t.compressed.format != DrawCompressedFormat::None &&
+                  !t.compressed.data.empty())
+            ? 1
+            : 0;
+    if (t.isPtex && t.ptexRectTexelOffset <
+                        static_cast<uint32_t>(t.image.width * t.image.height)) {
+      size_t linear = t.ptexRectTexelOffset;
+      size_t remaining = t.ptexFaceRects.size() * 8u;
+      while (remaining > 0) {
+        const int x = static_cast<int>(linear % size_t(t.image.width));
+        const int y = static_cast<int>(linear / size_t(t.image.width));
+        const int count = static_cast<int>(
+            std::min(remaining, size_t(t.image.width - x)));
+        updateTextureRegion(slot, x, y, count, 1,
+                            t.image.data.data() + linear * 4u);
+        linear += static_cast<size_t>(count);
+        remaining -= static_cast<size_t>(count);
+      }
+    }
   }
   if (t.isUdim && static_cast<size_t>(slot) < texUdimArrayDescs_.size()) {
     VkImage arrImg = VK_NULL_HANDLE;
@@ -4857,6 +4895,66 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     }
   }
   refreshMaterialDescriptors();
+}
+
+bool VulkanRenderer::updateTextureRegion(int slot, int x, int y, int w, int h,
+                                         const uint8_t* rgba,
+                                         size_t rowBytes) {
+  if (!device_ || slot < 0 || static_cast<size_t>(slot) >= texSlotImgs_.size() ||
+      !rgba || x < 0 || y < 0 || w <= 0 || h <= 0) {
+    return false;
+  }
+  const size_t index = static_cast<size_t>(slot);
+  if (!texRegionUpdatable_[index] || !texSlotImgs_[index] ||
+      x + w > texSlotWidths_[index] || y + h > texSlotHeights_[index]) {
+    return false;
+  }
+  const size_t stride = rowBytes ? rowBytes : size_t(w) * 4u;
+  if (stride < size_t(w) * 4u || (stride & 3u) != 0) return false;
+  const VkDeviceSize bytes = static_cast<VkDeviceSize>(stride) * h;
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba,
+                        &staging, &stagingMem)) {
+    return false;
+  }
+
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = texSlotImgs_[index];
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.layerCount = 1;
+  toDst.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
+  VkBufferImageCopy region{};
+  region.bufferRowLength = static_cast<uint32_t>(stride / 4u);
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageOffset = {x, y, 0};
+  region.imageExtent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1};
+  vkCmdCopyBufferToImage(cb, staging, texSlotImgs_[index],
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
+  endOneShot(cb);
+  vkDestroyBuffer(device_, staging, nullptr);
+  vkFreeMemory(device_, stagingMem, nullptr);
+  return true;
 }
 
 void VulkanRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
