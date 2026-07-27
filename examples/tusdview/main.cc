@@ -331,6 +331,9 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "--rt-lod") == 0) {
       rtLod = true;
       rtLodExplicit = true;
+    } else if (std::strcmp(argv[i], "--no-rt-lod") == 0) {
+      rtLod = false;
+      rtLodExplicit = true;
     } else if (std::strcmp(argv[i], "--rt-lod-full-px") == 0 && (i + 1) < argc) {
       rtLodFullPx = static_cast<float>(std::atof(argv[++i]));
       rtLodFullExplicit = true;
@@ -832,6 +835,7 @@ int main(int argc, char** argv) {
           "  --screenshot PATH  Save the viewport image after --frames.\n"
           "  --window-shot PATH  Save the complete window, including UI.\n"
           "  --raster-lod / --rt-lod  Enable view-dependent raster or Vulkan-RT "
+          "LOD (--no-rt-lod disables RT LOD for deterministic full-scene capture); "
           "LOD; tune with --*-lod-full-px, --*-lod-cull-px, and --rt-lod-band.\n"
           "  --max-draw-meshes N / --max-gpu-mem G  Bound raster mesh count or "
           "geometry memory (GiB).\n"
