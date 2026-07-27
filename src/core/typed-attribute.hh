@@ -190,21 +190,6 @@ class TypedAttribute {
     return _actual_type_name;
   }
 
-
-  // The typeName as actually authored in USDA/USDC when it differs from the
-  // schema's spelling -- e.g. `token inputs:varname` (older UsdPrimvarReader
-  // spec) parsed into a string-typed field, or `float3 inputs:diffuseColor`
-  // parsed into a color3f field. OpenUSD preserves the authored typeName on
-  // the Sdf spec; without this the printers/writers re-declare the attribute
-  // with the schema type, silently changing what the author wrote.
-  void set_actual_type_name(const std::string &type_name) {
-    _actual_type_name = type_name;
-  }
-  bool has_actual_type() const { return _actual_type_name.size(); }
-  const std::string &get_actual_type_name() const {
-    return _actual_type_name;
-  }
-
  private:
   AttrMeta _metas;
   bool _value_empty{false};  // applies `_attrib`
@@ -401,21 +386,6 @@ class TypedAttributeWithFallback {
   }
   bool has_actual_type() const { return _actual_type_name.size(); }
   const std::string &get_actual_type_name() const TINYUSDZ_LIFETIMEBOUND {
-    return _actual_type_name;
-  }
-
-
-  // The typeName as actually authored in USDA/USDC when it differs from the
-  // schema's spelling -- e.g. `token inputs:varname` (older UsdPrimvarReader
-  // spec) parsed into a string-typed field, or `float3 inputs:diffuseColor`
-  // parsed into a color3f field. OpenUSD preserves the authored typeName on
-  // the Sdf spec; without this the printers/writers re-declare the attribute
-  // with the schema type, silently changing what the author wrote.
-  void set_actual_type_name(const std::string &type_name) {
-    _actual_type_name = type_name;
-  }
-  bool has_actual_type() const { return _actual_type_name.size(); }
-  const std::string &get_actual_type_name() const {
     return _actual_type_name;
   }
 
