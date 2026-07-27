@@ -216,6 +216,7 @@ class GLRenderer final : public Renderer {
   GLint uPurpose_{-1};                                    // purpose AOV (per-draw)
   GLint uKind_{-1};                                       // kind AOV (per-draw)
   GLint uFaceIdTex_{-1}, uFaceBase_{-1}, uHasFaceId_{-1}; // source-face-id AOV
+  GLint uBasePtex_{-1}, uBasePtexGrid_{-1};              // Ptex atlas sampling
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
   GLint uUseSpecularWorkflow_{-1}, uOpenPbrSpecularModel_{-1};

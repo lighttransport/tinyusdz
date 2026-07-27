@@ -236,6 +236,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uFaceIdTex_ = glGetUniformLocation(program_, "uFaceIdTex");
   uFaceBase_ = glGetUniformLocation(program_, "uFaceBase");
   uHasFaceId_ = glGetUniformLocation(program_, "uHasFaceId");
+  uBasePtex_ = glGetUniformLocation(program_, "uBasePtex");
+  uBasePtexGrid_ = glGetUniformLocation(program_, "uBasePtexGrid");
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
@@ -3149,6 +3151,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uAlphaMode_, 0);
         glUniform1f(uAlphaCutoff_, 0.5f);
         glUniform1i(uHasBaseColorTex_, 0);
+        glUniform1i(uBasePtex_, 0);
+        glUniform2f(uBasePtexGrid_, 1.0f, 1.0f);
         glUniform1i(uHasMetallicTex_, 0);
         glUniform1i(uHasRoughnessTex_, 0);
         glUniform1i(uHasNormalTex_, 0);
@@ -3238,6 +3242,10 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uRoughnessUvSet_, mat.roughnessSample.uvSet);
         glUniform4fv(uBaseColorTexScale_, 1, mat.baseColorSample.scale);
         glUniform4fv(uBaseColorTexBias_, 1, mat.baseColorSample.bias);
+        glUniform1i(uBasePtex_, mat.baseColorSample.isPtex ? 1 : 0);
+        glUniform2f(uBasePtexGrid_,
+                   static_cast<float>(std::max<uint16_t>(1, mat.baseColorSample.ptexAtlasCols)),
+                   static_cast<float>(std::max<uint16_t>(1, mat.baseColorSample.ptexAtlasRows)));
         glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
         glUniform4fv(uNormalTexBias_, 1, mat.normalSample.bias);
         glUniform4fv(uEmissiveTexScale_, 1, mat.emissiveSample.scale);
