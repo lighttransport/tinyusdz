@@ -630,6 +630,8 @@ void VulkanRenderer::detectRtSupport() {
   if (asp.minAccelerationStructureScratchOffsetAlignment > 0) {
     scratchAlign_ = asp.minAccelerationStructureScratchOffsetAlignment;
   }
+  rtMaxInstanceCount_ = asp.maxInstanceCount;
+  LOGI("Vulkan RT limits: maxInstances=%u", rtMaxInstanceCount_);
 
   rtSupported_ = true;  // device-side OK; PFN load in createDevice may still veto
 #endif
@@ -6567,6 +6569,12 @@ void VulkanRenderer::rebuildTlas() {
     instInfos.push_back(info);
   }
   if (insts.empty()) return;
+  if (rtMaxInstanceCount_ > 0 && insts.size() > rtMaxInstanceCount_) {
+    LOGW("[vk_rt] limiting TLAS instances from %zu to Vulkan max %u",
+         insts.size(), rtMaxInstanceCount_);
+    insts.resize(rtMaxInstanceCount_);
+    instInfos.resize(rtMaxInstanceCount_);
+  }
   if (rtTiming) {
     auto tb = std::chrono::steady_clock::now();
     std::fprintf(stderr,

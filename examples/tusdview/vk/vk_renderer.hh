@@ -800,6 +800,7 @@ class VulkanRenderer final : public Renderer {
   // --- Ray tracing (ray query) state ---
   bool rtSupported_{false};   // device + shader available
   bool rtActive_{false};      // RT technique currently selected
+  uint32_t rtMaxInstanceCount_{0};  // VK acceleration-structure limit
   int rtMode_{0};             // RenderMode (wireframe/matId/AOV) for RT + raster
   float depthScale_{1.0f};    // depth-AOV normalizer (scene extent)
   bool displacement_{true};   // apply UsdPreviewSurface displacement (coarse)
