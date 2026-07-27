@@ -748,6 +748,16 @@ function collectWorkerTexturePaths(meshes) {
 function makeWorkerArchiveEntries(sourceBytes, meshes) {
 	const archiveEntries = new Map();
 	if (!sourceBytes) return archiveEntries;
+	const bytes = sourceBytes instanceof Uint8Array
+		? sourceBytes
+		: new Uint8Array(sourceBytes);
+	// returnArchiveEntries means "retain embedded textures if this input is an
+	// archive", not that every input is USDZ. Generated samples and direct
+	// .usda/.usdc loads have no ZIP container and must not reach the EOCD parser.
+	if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b ||
+			bytes[2] !== 0x03 || bytes[3] !== 0x04) {
+		return archiveEntries;
+	}
 	const referenced = collectWorkerTexturePaths(meshes);
 	const isReferenced = (key) => {
 		if (referenced.has(key)) return true;
@@ -756,7 +766,7 @@ function makeWorkerArchiveEntries(sourceBytes, meshes) {
 		}
 		return false;
 	};
-	for (const entry of parseUSDZEntries(sourceBytes)) {
+	for (const entry of parseUSDZEntries(bytes)) {
 		const key = normWorkerTexturePath(entry.name);
 		if (!key || !IMAGE_RE.test(key)) continue;
 		if (isReferenced(key)) {
