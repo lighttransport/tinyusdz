@@ -52,6 +52,9 @@ class VulkanRenderer final : public Renderer {
   void appendCurves(const DrawCurvesCPU& curves) override;
   void appendVolume(const DrawVolumeCPU& vol) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
+  bool updateTextureRegion(int slot, int x, int y, int w, int h,
+                           const uint8_t* rgba,
+                           size_t rowBytes = 0) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
@@ -730,6 +733,10 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkDescriptorSet> texDescs_;
   std::vector<VkDescriptorSet> texUdimArrayDescs_;
   std::vector<VkImageView> texSlotViews_;
+  std::vector<VkImage> texSlotImgs_;
+  std::vector<int> texSlotWidths_;
+  std::vector<int> texSlotHeights_;
+  std::vector<uint8_t> texRegionUpdatable_;
   std::vector<VkImageView> texUdimArrayViews_;
   std::vector<uint8_t> texIsUdim_;
   VkImage udimLutAtlasImg_{VK_NULL_HANDLE};

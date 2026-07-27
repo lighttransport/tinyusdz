@@ -29,6 +29,9 @@ class GLRenderer final : public Renderer {
   void appendMeshSurface(const DrawMeshCPU& mesh) override;
   void uploadMeshAux(size_t meshIndex, const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
+  bool updateTextureRegion(int slot, int x, int y, int w, int h,
+                           const uint8_t* rgba,
+                           size_t rowBytes = 0) override;
   void setLights(const std::vector<DrawLightCPU>& lights,
                  size_t meshCount) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
@@ -408,6 +411,9 @@ class GLRenderer final : public Renderer {
     GLuint tex2d{0};
     GLuint arrayTex{0};
     bool isUdim{false};
+    bool regionUpdatable{false};
+    int width{0};
+    int height{0};
   };
   GLuint udimLutAtlas_{0};
   std::vector<GLTexture> textures_;
