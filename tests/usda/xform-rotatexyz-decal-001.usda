@@ -1,0 +1,52 @@
+#usda 1.0
+(
+    defaultPrim = "Scene"
+    upAxis = "Y"
+)
+
+# The wall is authored directly in the YZ plane at x = 4. The decal starts in
+# its local XY plane; authored-order rotateXYZ maps it onto the wall. Reversing
+# the compound rotation order instead turns the decal perpendicular to it.
+def Xform "Scene"
+{
+    def Xform "Wall"
+    {
+        def Mesh "Surface"
+        {
+            uniform bool doubleSided = 1
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [
+                (4, -1, -1),
+                (4,  1, -1),
+                (4,  1,  1),
+                (4, -1,  1)
+            ]
+        }
+    }
+
+    def Xform "Decal"
+    {
+        float3 xformOp:rotateXYZ = (90, 0, 90)
+        float3 xformOp:scale = (2, 1, 0.25)
+        double3 xformOp:translate = (4, 0, 0)
+        uniform token[] xformOpOrder = [
+            "xformOp:translate",
+            "xformOp:rotateXYZ",
+            "xformOp:scale"
+        ]
+
+        def Mesh "Plane"
+        {
+            uniform bool doubleSided = 1
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [
+                (-0.375, -0.5, 0),
+                ( 0.375, -0.5, 0),
+                ( 0.375,  0.5, 0),
+                (-0.375,  0.5, 0)
+            ]
+        }
+    }
+}

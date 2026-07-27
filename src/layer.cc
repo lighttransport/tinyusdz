@@ -22,7 +22,8 @@ namespace {
 // Generic iterative tree search using explicit stack
 // Returns true if any PrimSpec satisfies the predicate
 template <typename Predicate>
-bool HasPrimSpecWithCondition(const PrimSpec &root, Predicate pred) {
+bool HasPrimSpecWithCondition(const PrimSpec &root, Predicate pred,
+                              const uint32_t max_depth) {
   // Check root first
   if (pred(root)) {
     return true;
@@ -32,7 +33,7 @@ bool HasPrimSpecWithCondition(const PrimSpec &root, Predicate pred) {
   StackVector<std::pair<const PrimSpec *, size_t>, 4> stack;
   stack.reserve(64);
 
-  if (!root.children().empty()) {
+  if ((max_depth > 0) && !root.children().empty()) {
     stack.emplace_back(&root, 0);
   }
 
@@ -57,7 +58,9 @@ bool HasPrimSpecWithCondition(const PrimSpec &root, Predicate pred) {
       return true;
     }
 
-    if (!child.children().empty()) {
+    // The stack size is the child's depth: the root frame is present while
+    // visiting depth-one children. Do not descend beyond the caller's limit.
+    if ((stack.size() < max_depth) && !child.children().empty()) {
       stack.emplace_back(&child, 0);
     }
   }
@@ -66,41 +69,43 @@ bool HasPrimSpecWithCondition(const PrimSpec &root, Predicate pred) {
 }
 
 // Iterative predicates for each Has* function
-bool HasReferencesIterative(const PrimSpec &primspec) {
+bool HasReferencesIterative(const PrimSpec &primspec,
+                            const uint32_t max_depth) {
   return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
     return ps.metas().references.has_value();
-  });
+  }, max_depth);
 }
 
-bool HasPayloadIterative(const PrimSpec &primspec) {
+bool HasPayloadIterative(const PrimSpec &primspec, const uint32_t max_depth) {
   return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
     return ps.metas().payload.has_value();
-  });
+  }, max_depth);
 }
 
-bool HasVariantIterative(const PrimSpec &primspec) {
+bool HasVariantIterative(const PrimSpec &primspec, const uint32_t max_depth) {
   return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
     // TODO: Also check if PrimSpec::variantSets is empty?
     return ps.metas().variants.has_value() && ps.metas().variantSets.has_value();
-  });
+  }, max_depth);
 }
 
-bool HasInheritsIterative(const PrimSpec &primspec) {
+bool HasInheritsIterative(const PrimSpec &primspec, const uint32_t max_depth) {
   return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
     return ps.metas().inherits.has_value();
-  });
+  }, max_depth);
 }
 
-bool HasSpecializesIterative(const PrimSpec &primspec) {
+bool HasSpecializesIterative(const PrimSpec &primspec,
+                             const uint32_t max_depth) {
   return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
     return ps.metas().specializes.has_value();
-  });
+  }, max_depth);
 }
 
-bool HasOverIterative(const PrimSpec &primspec) {
+bool HasOverIterative(const PrimSpec &primspec, const uint32_t max_depth) {
   return HasPrimSpecWithCondition(primspec, [](const PrimSpec &ps) {
     return ps.specifier() == Specifier::Over;
-  });
+  }, max_depth);
 }
 
 // Optimized iterative path lookup starting from a single root PrimSpec
@@ -610,15 +615,11 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
 #undef PushError
 }
 
-bool Layer::check_unresolved_references(const uint32_t /*max_depth*/) const {
-  // Parameter is not needed: the iterative traversals below use
-  // kMaxDefaultTraversalLimit (1M) which safely bounds the walk for any
-  // realistic PrimSpec tree. Composition arc depth is enforced separately
-  // by the caller (CompositeReferences etc.).
+bool Layer::check_unresolved_references(const uint32_t max_depth) const {
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasReferencesIterative(item.second)) {
+    if (HasReferencesIterative(item.second, max_depth)) {
       ret = true;
       break;
     }
@@ -632,11 +633,10 @@ bool Layer::check_unresolved_references(const uint32_t /*max_depth*/) const {
 }
 
 bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
-  // max_depth is not needed: iterative traversals use kMaxDefaultTraversalLimit
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasPayloadIterative(item.second)) {
+    if (HasPayloadIterative(item.second, max_depth)) {
       ret = true;
       break;
     }
@@ -650,11 +650,10 @@ bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
-  // max_depth is not needed: iterative traversals use kMaxDefaultTraversalLimit
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasVariantIterative(item.second)) {
+    if (HasVariantIterative(item.second, max_depth)) {
       ret = true;
       break;
     }
@@ -668,11 +667,10 @@ bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
-  // max_depth is not needed: iterative traversals use kMaxDefaultTraversalLimit
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasInheritsIterative(item.second)) {
+    if (HasInheritsIterative(item.second, max_depth)) {
       ret = true;
       break;
     }
@@ -686,11 +684,10 @@ bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
 }
 
 bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
-  // max_depth is not needed: iterative traversals use kMaxDefaultTraversalLimit
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasSpecializesIterative(item.second)) {
+    if (HasSpecializesIterative(item.second, max_depth)) {
       ret = true;
       break;
     }
@@ -704,11 +701,10 @@ bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
 }
 
 bool Layer::check_over_primspec(const uint32_t max_depth) const {
-  // max_depth is not needed: iterative traversals use kMaxDefaultTraversalLimit
   bool ret = false;
 
   for (const auto &item : _impl->_prim_specs) {
-    if (HasOverIterative(item.second)) {
+    if (HasOverIterative(item.second, max_depth)) {
       ret = true;
       break;
     }

@@ -781,6 +781,9 @@ private:
   crate::ValueRep PackValue(const crate::CrateValue& value, std::string* err);
 
   /// Pack a TokenVector metadata value into ValueRep.
+  /// primChildren / properties / variantSetChildren / variantChildren must be
+  /// the dedicated uncompressed TokenVector crate type (CrateDataTypeId 41):
+  /// as a Token[] array pxr's hierarchy traversal cannot use them.
   crate::ValueRep PackTokenVectorValue(const std::vector<value::token>& tokens,
                                        std::string* err);
 

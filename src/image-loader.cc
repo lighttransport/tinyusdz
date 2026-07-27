@@ -165,11 +165,18 @@ static constexpr size_t kMaxDecodedImageBytes = size_t(2048) * 1024 * 1024;  // 
 // Compute max bytes from a memory-limit-in-MB setting using uint64_t to avoid
 // overflow on 32-bit platforms. Clamps to SIZE_MAX if the result exceeds it.
 inline size_t MaxMemoryBytes(uint64_t limit_mb) {
-  uint64_t bytes = uint64_t(1024) * uint64_t(1024) * limit_mb;
-  if (bytes > uint64_t((std::numeric_limits<size_t>::max)())) {
+  constexpr uint64_t kBytesPerMiB = uint64_t(1024) * uint64_t(1024);
+#if SIZE_MAX < UINT64_MAX
+  constexpr uint64_t kMaxBytes =
+      uint64_t((std::numeric_limits<size_t>::max)());
+#else
+  constexpr uint64_t kMaxBytes =
+      (std::numeric_limits<uint64_t>::max)();
+#endif
+  if (limit_mb > (kMaxBytes / kBytesPerMiB)) {
     return (std::numeric_limits<size_t>::max)();
   }
-  return static_cast<size_t>(bytes);
+  return static_cast<size_t>(limit_mb * kBytesPerMiB);
 }
 
 #if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
