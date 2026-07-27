@@ -153,8 +153,14 @@ await test('next default material matches legacy fallback shading', () => {
 });
 
 await test('next scene binds USD skeleton meshes as SkinnedMesh', async () => {
-  const bytes = new Uint8Array(fs.readFileSync(
-    new URL('../../../models/synthetic-skin-16influences.usda', import.meta.url)));
+  const source = fs.readFileSync(
+    new URL('../../../models/synthetic-skin-16influences.usda', import.meta.url), 'utf8')
+    .replace('def SkelRoot "root"\n{', `def SkelRoot "root"
+{
+    double3 xformOp:scale = (0.01, 0.01, 0.01)
+    float3 xformOp:rotateXYZ = (90, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:rotateXYZ"]`);
+  const bytes = encoder.encode(source);
   const usd = await NextRenderSceneAdapter.create(
     nextNative, bytes, 'synthetic-skin-16influences.usda', { meshOnly: false });
   try {
@@ -179,6 +185,20 @@ await test('next scene binds USD skeleton meshes as SkinnedMesh', async () => {
     assert.equal(result.processedSkinnedCount, 1);
     assert.ok(result.firstSkinnedMesh?.isSkinnedMesh,
       'next backend must bind the mesh instead of rendering undeformed bind geometry');
+    const mesh = result.firstSkinnedMesh;
+    characterGroup.updateMatrixWorld(true);
+    mesh.skeleton.update();
+    const deformedBox = new THREE.Box3();
+    const point = new THREE.Vector3();
+    const positions = mesh.geometry.attributes.position;
+    for (let i = 0; i < positions.count; ++i) {
+      mesh.getVertexPosition(i, point);
+      point.applyMatrix4(mesh.matrixWorld);
+      deformedBox.expandByPoint(point);
+    }
+    const deformedSize = deformedBox.getSize(new THREE.Vector3());
+    assert.ok(Math.max(...deformedSize.toArray()) < 0.2,
+      `scaled/rotated SkelRoot must not inflate in GPU skinning space: ${deformedSize.toArray()}`);
   } finally {
     usd.delete();
   }
