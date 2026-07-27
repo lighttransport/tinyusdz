@@ -123,6 +123,10 @@ struct MaterialTexParam {
   vec4 ptexEmissiveInfo;
   vec4 ptexOpacityInfo;
   vec4 ptexOcclusionInfo;
+  vec4 ptexSpecularInfo;
+  vec4 ptexCoatWeightInfo;
+  vec4 ptexCoatColorInfo;
+  vec4 ptexCoatRoughInfo;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -404,11 +408,13 @@ vec3 sampleColorSlot(sampler2D tex, bool has, vec4 uv0, vec4 uv1, float uvSet,
 
 float sampleCoatScalarUdim(sampler2D tex, sampler2DArray udimTex,
                            bool ordinary, float row, vec4 uv0, vec4 uv1,
-                           float uvSet, float channel, vec4 scale, vec4 bias) {
+                           float uvSet, float channel, vec4 scale, vec4 bias,
+                           vec4 ptexInfo) {
   bool udim = !ordinary && row >= 0.0;
   if (!ordinary && !udim) return 1.0;
   vec2 suv = uvSet > 0.5 ? vUV1 : vUV;
   vec2 uv = xformUv(suv, uv0, uv1);
+  uv = ptexUv(tex, uv, ptexInfo);
   vec4 c = udim ? sampleUdim(udimTex, int(row + 0.5), uv, vec4(1.0))
                 : texture(tex, uv);
   return clamp(channelOf(c * scale + bias, channel < 0.0 ? 0.0 : channel),
@@ -416,11 +422,12 @@ float sampleCoatScalarUdim(sampler2D tex, sampler2DArray udimTex,
 }
 
 vec3 sampleCoatColorUdim(bool ordinary, float row, vec4 uv0, vec4 uv1,
-                         float uvSet, vec4 scale, vec4 bias) {
+                         float uvSet, vec4 scale, vec4 bias, vec4 ptexInfo) {
   bool udim = !ordinary && row >= 0.0;
   if (!ordinary && !udim) return vec3(1.0);
   vec2 suv = uvSet > 0.5 ? vUV1 : vUV;
   vec2 uv = xformUv(suv, uv0, uv1);
+  uv = ptexUv(uCoatColorTex, uv, ptexInfo);
   vec4 c = udim ? sampleUdim(uCoatColorUdimTex, int(row + 0.5), uv,
                              vec4(1.0))
                 : texture(uCoatColorTex, uv);
@@ -650,6 +657,7 @@ void main() {
   if (pbr.specParams.w < 0.0 || pbr.specParams.w > 100.0) {
     vec2 specSrc = pbr.extraUvSets.x > 0.5 ? vUV1 : vUV;
     vec2 specUv = xformUv(specSrc, pbr.specColorUv0, pbr.specColorUv1);
+    specUv = ptexUv(uSpecularColorTex, specUv, pbr.ptexSpecularInfo);
     bool ordinarySpec = (pc.ids.w & 4096) != 0;
     bool udimSpec = !ordinarySpec && pbr.udimSlots1.w >= 0.0;
     vec4 specSample = udimSpec
@@ -676,7 +684,8 @@ void main() {
                                                 pbr.coatTexParams.z,
                                                 pbr.coatTexParams.x,
                                                 pbr.coatWeightScale,
-                                                pbr.coatWeightBias),
+                                                pbr.coatWeightBias,
+                                                pbr.ptexCoatWeightInfo),
                            0.0, 1.0);
   float coatRoughness = clamp(pbr.coatParams.y *
                                   sampleCoatScalarUdim(uCoatRoughnessTex,
@@ -688,14 +697,16 @@ void main() {
                                                    pbr.coatTexParams.w,
                                                    pbr.coatTexParams.y,
                                                    pbr.coatRoughScale,
-                                                   pbr.coatRoughBias),
+                                                   pbr.coatRoughBias,
+                                                   pbr.ptexCoatRoughInfo),
                               0.02, 1.0);
   vec3 coatTint = pbr.coatColor.rgb *
                   sampleCoatColorUdim((pc.ids.w & 16384) != 0,
                                   pbr.semanticUdimSlots.z,
                                   pbr.coatColorUv0, pbr.coatColorUv1,
                                   pbr.extraUvSets.y, pbr.coatColorScale,
-                                  pbr.coatColorBias);
+                                  pbr.coatColorBias,
+                                  pbr.ptexCoatColorInfo);
   if (fr.mode.x == 36) { outColor = vec4(vec3(coatWeight), 1.0); return; }
   if (fr.mode.x == 37) { outColor = vec4(coatTint, 1.0); return; }
   if (fr.mode.x == 38) { outColor = vec4(vec3(coatRoughness), 1.0); return; }
