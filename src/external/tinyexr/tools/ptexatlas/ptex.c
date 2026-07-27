@@ -110,8 +110,12 @@ int tinyexr_ptex_read_memory(const uint8_t *d, size_t z, uint32_t face, uint32_t
   } else if (encoding == 3) {
     if (compressed < 6 || !range(payload + compressed, 0, (size_t)block_size)) { free(face_info); return 0; }
     const uint8_t *q = block + payload; uint32_t tw = 1u << q[0], th = 1u << q[1], tile_header_size = u32(q + 2);
-    uint32_t nx = (w + tw - 1) / tw, ny = (h + th - 1) / th; size_t tile_count = (size_t)nx * ny;
-    uint8_t *tile_headers = 0; if (!inflate_block(q + 6, tile_header_size, tile_count * 4, &tile_headers)) { free(face_info); return 0; }
+    if (!tw || !th || tile_header_size > compressed - 6) { free(face_info); return 0; }
+    uint32_t nx = (w + tw - 1) / tw, ny = (h + th - 1) / th;
+    if ((nx && ny > SIZE_MAX / nx) || (size_t)nx * ny > SIZE_MAX / 4) { free(face_info); return 0; }
+    size_t tile_count = (size_t)nx * ny;
+    uint8_t *tile_headers = 0;
+    if (!inflate_block(q + 6, tile_header_size, tile_count * 4, &tile_headers)) { free(face_info); return 0; }
     out->pixels = (uint8_t *)calloc(1, bytes); if (!out->pixels) { free(tile_headers); free(face_info); return 0; }
     size_t tile_cursor = 6 + tile_header_size;
     for (uint32_t ty = 0; ty < ny; ++ty) for (uint32_t tx = 0; tx < nx; ++tx) {
