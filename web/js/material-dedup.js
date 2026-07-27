@@ -1529,6 +1529,17 @@ async function rebuild({ deriveNextBaseline = false, onConverted = null } = {}) 
 // scene (no native re-conversion). Used when toggling the JS-side options.
 async function reapplyThreePostProcess() {
 	if (!currentUsd || !currentCounts) return;
+	// buildNextThreeNode releases the adapter's copied mesh payload after the
+	// first mount to keep large scenes within the wasm32/browser memory budget.
+	// Such an adapter cannot be mounted a second time: doing so produced an
+	// empty scene when Load Textures or a JS post-process option was toggled.
+	// Reconvert from the retained source bytes so texture archive entries and
+	// mesh/material data match the newly selected options.
+	if (isNextScene(currentUsd) &&
+			(!Array.isArray(currentUsd.meshes) || currentUsd.meshes.length === 0)) {
+		await rebuild();
+		return;
+	}
 	setStatus('Applying three.js post-process…');
 	showProgress('postprocess', 65, 'Applying three.js post-process...');
 	try {
