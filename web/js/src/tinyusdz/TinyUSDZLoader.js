@@ -329,8 +329,9 @@ export class NextRenderSceneAdapter {
     }
 
     static _rootEntry(entries) {
-        return entries.find((entry) => /\.usdc$/i.test(entry.name)) ||
-            entries.find((entry) => this._isUsdName(entry.name));
+        // USDZ defines the first archive entry as its default layer. Do not
+        // prefer a later USDC dependency over an earlier USDA root.
+        return entries.find((entry) => this._isUsdName(entry.name));
     }
 
     static async create(native, bytes, filename = 'scene.usdz', options = {}) {
@@ -407,12 +408,10 @@ export class NextRenderSceneAdapter {
                 throw new Error('TinyUSDZ next backend could not find a USD root layer in the USDZ archive.');
             }
             rootAssetName = this._normTexPathStatic(root.name);
-            // Prefer the owned USDC root path for crate-reader progress and
-            // lower native memory pressure. USDA-root USDZ files are passed as
-            // the full archive so next-core can detect and load them.
-            if (/\.usdc$/i.test(root.name)) {
-                crate = root.data;
-            }
+            // RenderStream consumes a root layer, not the surrounding archive.
+            // Pass either USDA or USDC bytes directly; archive entries remain
+            // available below for textures and dependent USD layers.
+            crate = root.data;
             let copiedEntries = 0;
             for (const entry of entries) {
                 if (!entry.name.endsWith('/')) {
