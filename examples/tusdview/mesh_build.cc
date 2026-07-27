@@ -2105,6 +2105,19 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
     syncSampleTex(&dm.coatColorSample, dm.coatColorTex);
     syncSampleTex(&dm.coatRoughnessSample, dm.coatRoughnessTex);
     syncSampleTex(&dm.displacementSample, dm.displacementTex);
+    auto syncPtex = [&](DrawTexSampleCPU* sample, int tex) {
+      if (!sample || tex < 0 || static_cast<size_t>(tex) >= out->textures.size()) return;
+      const DrawTextureCPU& t = out->textures[static_cast<size_t>(tex)];
+      sample->isPtex = t.isPtex;
+      sample->ptexAtlasCols = t.ptexAtlasCols;
+      sample->ptexAtlasRows = t.ptexAtlasRows;
+      sample->ptexTileEdge = t.ptexTileEdge;
+    };
+    syncPtex(&dm.baseColorSample, dm.baseColorTex);
+    syncPtex(&dm.metallicSample, dm.metallicTex);
+    syncPtex(&dm.roughnessSample, dm.roughnessTex);
+    syncPtex(&dm.normalSample, dm.normalTex);
+    syncPtex(&dm.emissiveSample, dm.emissiveTex);
     // else: leave default gray.
     BakeRealtimePbrMaterial(&dm);
     DiagnoseUnsupportedRealtimeLobes(dm, out);

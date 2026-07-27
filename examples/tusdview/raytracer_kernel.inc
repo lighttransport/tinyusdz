@@ -13,7 +13,7 @@ struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]
 // index of this prototype's BLAS subtree root.
 struct Inst { float w2o[12]; float o2w[12]; float tint[4]; int blasRoot; int instId;
               unsigned int directLightMask; unsigned int shadowLightMask; };
-struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim; int mipCount; int firstMip; int udimLayer[100]; };
+struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim; int isPtex; int ptexCols; int ptexRows; int ptexTileEdge; int mipCount; int firstMip; int udimLayer[100]; };
 
 typedef struct { float x, y, z; } F3;
 typedef struct { float x, y, z, w; } F4;
@@ -103,6 +103,21 @@ __device__ F4 sampleTexRGBA(const unsigned char* texels, const TexDesc* tex,
                             int numTex, int id, float u, float v){
   return sampleTexRGBAFallback(texels,tex,numTex,id,u,v,
                                mk4(1.f,1.f,1.f,1.f));
+}
+__device__ F4 sampleTexRGBALod(const unsigned char* texels, const TexDesc* tex,
+                               int numTex, int id, float u, float v, float lod);
+__device__ F4 samplePtexRGBA(const unsigned char* texels, const TexDesc* tex,
+                             int numTex, int id, float u, float v,
+                             unsigned int face, float lod){
+  if (!tex || id<0 || id>=numTex || !tex[id].isPtex ||
+      tex[id].ptexCols<=0 || tex[id].ptexRows<=0)
+    return sampleTexRGBALod(texels,tex,numTex,id,u,v,lod);
+  const TexDesc td=tex[id];
+  float au=((float)(face%(unsigned int)td.ptexCols)+u-floorf(u)) /
+           (float)td.ptexCols;
+  float av=((float)(face/(unsigned int)td.ptexCols)+v-floorf(v)) /
+           (float)td.ptexRows;
+  return sampleTexRGBALod(texels,tex,numTex,id,au,av,lod);
 }
 __device__ float textureLod(const TexDesc* tex, int numTex, int id,
                             float u, float v, float uvFootprint){
@@ -665,9 +680,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       xformUv(tp,24,(uvbits&16)?uu1:uu,(uvbits&16)?vv21:vv2,&euu,&evv);
       xformUv(tp,30,(uvbits&32)?uu1:uu,(uvbits&32)?vv21:vv2,&ouu,&ovv);
     }
-    F4 bt4=sampleTexRGBALod(texels,textures,numTextures,baseTex,buu,bvv,
-        textureLod(textures,numTextures,baseTex,buu,bvv,
-                   xformFootprint(tp,0,uvFootprint)));
+    float baseLod=textureLod(textures,numTextures,baseTex,buu,bvv,
+                             xformFootprint(tp,0,uvFootprint));
+    F4 bt4=samplePtexRGBA(texels,textures,numTextures,baseTex,buu,bvv,
+                          faces[ht],baseLod);
     if (tp) bt4=mk4(bt4.x*tp[36]+tp[40],bt4.y*tp[37]+tp[41],bt4.z*tp[38]+tp[42],bt4.w*tp[39]+tp[43]);
     F3 bt=mk(bt4.x,bt4.y,bt4.z);
     base=mk(base.x*bt.x,base.y*bt.y,base.z*bt.z);

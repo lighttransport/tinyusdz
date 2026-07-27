@@ -83,6 +83,7 @@ layout(set = 0, binding = 10) uniform sampler2D uBrdfLut;
 
 struct RtTexDesc {
   int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim;
+  int isPtex; int ptexCols; int ptexRows; int ptexTileEdge;
   int mipCount; int firstMip;
   int udimLayer[100];
 };
@@ -302,6 +303,21 @@ vec4 sampleRtTextureLod(int id, vec2 uv, float lod, vec4 missing) {
 
 vec4 sampleRtTexture(int id, vec2 uv, vec4 missing) {
   return sampleRtTextureLod(id, uv, 0.0, missing);
+}
+
+vec2 ptexAtlasUv(RtTexDesc td, vec2 uv, uint face) {
+  if (td.isPtex == 0 || td.ptexCols <= 0 || td.ptexRows <= 0) return uv;
+  uint col = face % uint(td.ptexCols);
+  uint row = face / uint(td.ptexCols);
+  return (vec2(float(col), float(row)) + fract(uv)) /
+         vec2(float(td.ptexCols), float(td.ptexRows));
+}
+
+vec4 sampleRtPtexTextureLod(int id, vec2 uv, uint face, float lod,
+                            vec4 missing) {
+  if (id < 0 || id >= int(texDescs.length())) return missing;
+  return sampleRtTextureLod(id, ptexAtlasUv(texDescs[id], uv, face), lod,
+                            missing);
 }
 
 float rtTextureLod(int id, vec2 uv, float uvFootprint) {
@@ -636,11 +652,18 @@ void main() {
       uint tb = mid * 12u;
       uint pb = mid * 155u;
       vec2 baseUv = materialUv(mid, 0, uv0h, uv1h);
-      vec4 bt = sampleRtTextureLod(matTexIds[tb + 0u], baseUv,
-                                  rtTextureLod(matTexIds[tb + 0u], baseUv,
-                                               materialUvFootprint(mid, 0,
-                                                                   uvFootprint)),
-                                  vec4(1.0));
+        int baseTexId = matTexIds[tb + 0u];
+        uint sourceFace = md.faceAddr != 0ul
+                              ? Faces(md.faceAddr).fc[uint(prim)]
+                              : uint(max(prim, 0));
+        float baseLod = rtTextureLod(baseTexId, baseUv,
+                                     materialUvFootprint(mid, 0, uvFootprint));
+        vec4 bt = (baseTexId >= 0 &&
+                   texDescs[baseTexId].isPtex != 0)
+                      ? sampleRtPtexTextureLod(baseTexId, baseUv, sourceFace,
+                                               baseLod, vec4(1.0))
+                      : sampleRtTextureLod(baseTexId, baseUv, baseLod,
+                                           vec4(1.0));
       bt = bt * vec4(matTexParams[pb + 36u], matTexParams[pb + 37u],
                      matTexParams[pb + 38u], matTexParams[pb + 39u]) +
            vec4(matTexParams[pb + 40u], matTexParams[pb + 41u],

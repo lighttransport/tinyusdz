@@ -116,6 +116,7 @@ struct MaterialTexParam {
   vec4 coatNormalScale; vec4 coatNormalBias;
   vec4 semanticUdimSlots;
   vec4 semanticUdimSlots2;
+  vec4 ptexBaseInfo; // atlas columns, rows, tile edge, enabled
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -219,11 +220,22 @@ float channelOf(vec4 c, float chf) {
   return c.r;
 }
 
+uint sourceFaceForPtex() {
+  if ((pc.ids.y & 0x80) == 0) return 0u;
+  uint base = uint((pc.ids.y >> 8) & 0xFFFFFF);
+  return faceId[base + uint(gl_PrimitiveID)];
+}
+
 vec4 sampleBaseColor(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.x > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.baseUv0, m.baseUv1);
-  vec4 c = ((pc.ids.w & 1) != 0)
+  vec4 c = (m.ptexBaseInfo.w > 0.5 && (pc.ids.y & 0x80) != 0)
+      ? texture(uBaseColorTex,
+                (vec2(float(sourceFaceForPtex() % uint(m.ptexBaseInfo.x)),
+                      float(sourceFaceForPtex() / uint(m.ptexBaseInfo.x))) + fract(tuv)) /
+                    vec2(m.ptexBaseInfo.x, m.ptexBaseInfo.y))
+      : ((pc.ids.w & 1) != 0)
       ? sampleUdim(uBaseColorUdimTex, int(m.udimSlots0.x + 0.5), tuv,
                    vec4(1.0, 0.0, 1.0, 1.0))
       : texture(uBaseColorTex, tuv);

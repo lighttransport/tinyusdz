@@ -511,6 +511,10 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       td.wrapS = tex.wrapS;
       td.wrapT = tex.wrapT;
       td.srgb = tex.srgb ? 1 : 0;
+      td.isPtex = tex.isPtex ? 1 : 0;
+      td.ptexCols = tex.ptexAtlasCols;
+      td.ptexRows = tex.ptexAtlasRows;
+      td.ptexTileEdge = static_cast<int>(tex.ptexTileEdge);
       td.mipCount = static_cast<int>(levels.size() - level);
       td.firstMip = td.mipCount > 1 ? id + static_cast<int>(level) + 1 : -1;
       for (int& layer : td.udimLayer) layer = -1;
