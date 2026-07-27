@@ -24,6 +24,7 @@
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/pcp/cache.hh"
 #include "next/reader/usda-reader.hh"
+#include "next/schema/geom-xform.hh"
 #include "next/schema/usd-skel.hh"
 
 using namespace tinyusdz::tydra::next;
@@ -3376,6 +3377,45 @@ def Xform "World"
   std::cout << "  Half-precision xformOps: PASSED\n";
 }
 
+// Regression: compound Euler rotations must retain USD's authored axis order.
+// Reversing it displaces multi-axis, non-uniformly scaled decal meshes from the
+// surfaces they were authored against.
+void TestCompoundRotationTransformParity() {
+  std::cout << "Testing compound-rotation transform parity...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "Decal" {
+    double3 xformOp:translate = (287.6815490722656, 33.344390869140625, 8.929546356201172)
+    float3 xformOp:rotateXYZ = (89.99446, 7.4118885e-13, -179.99998)
+    float3 xformOp:scale = (3.2136297, 1.6068149, 0.87708235)
+    uniform token[] xformOpOrder = [
+        "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"
+    ]
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+  UsdPrim decal = lr.stage.GetPrimAtPath("/Decal");
+  assert(decal.IsValid());
+
+  double extracted[16];
+  double schema[16];
+  assert(ComputeLocalTransform(decal, extracted, 0.0));
+  assert(UsdGeomXform(decal).ComputeLocalTransform(schema));
+  for (int i = 0; i < 16; ++i) {
+    assert(std::fabs(extracted[i] - schema[i]) < 1.0e-5);
+  }
+  assert(std::fabs(extracted[0] + 3.2136297) < 1.0e-5);
+  assert(std::fabs(extracted[6] - 1.6068149) < 1.0e-5);
+  assert(std::fabs(extracted[9] - 0.87708235) < 1.0e-5);
+  assert(std::fabs(extracted[12] - 287.6815490722656) < 1.0e-9);
+  assert(std::fabs(extracted[13] - 33.344390869140625) < 1.0e-9);
+  assert(std::fabs(extracted[14] - 8.929546356201172) < 1.0e-9);
+
+  std::cout << "  Compound-rotation transform parity: PASSED\n";
+}
+
 // Multi-skeleton joint-order remap: two skeletons whose SkelAnimations
 // author `joints` in an order DIFFERENT from the skeleton's own joint order.
 // Channels must target the right skeleton and joint_remap must map each
@@ -4957,6 +4997,7 @@ int main() {
   TestValueClipBaking();
   TestMeshParityCleanups();
   TestHalfPrecisionXformOps();
+  TestCompoundRotationTransformParity();
   TestMultiSkeletonJointRemap();
   TestLightLinkingAndDomeFormat();
   TestStandardSurfaceNoRecursion();

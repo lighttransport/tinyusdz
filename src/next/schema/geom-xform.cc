@@ -157,7 +157,9 @@ bool BuildRotateABC(const XformOpType type, const double x, const double y,
   Identity(m);
   auto append = [&](const char axis) {
     const double* r = (axis == 'X') ? rx : ((axis == 'Y') ? ry : rz);
-    Multiply(r, m, tmp);
+    // USD uses row-vector matrices. Apply rotateXYZ in authored axis order,
+    // matching tydra::next::ComputeLocalTransform and the legacy evaluator.
+    Multiply(m, r, tmp);
     std::memcpy(m, tmp, sizeof(tmp));
   };
   switch (type) {
