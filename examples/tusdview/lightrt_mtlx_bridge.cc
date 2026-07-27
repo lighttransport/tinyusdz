@@ -1278,6 +1278,10 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   packPtexInfo(60, mat.emissiveSample);
   packPtexInfo(61, mat.opacitySample);
   packPtexInfo(62, mat.occlusionSample);
+  packPtexInfo(63, mat.specularColorSample);
+  packPtexInfo(64, mat.coatWeightSample);
+  packPtexInfo(65, mat.coatColorSample);
+  packPtexInfo(66, mat.coatRoughnessSample);
 }
 
 }  // namespace tusdview

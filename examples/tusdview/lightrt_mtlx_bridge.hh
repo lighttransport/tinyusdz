@@ -38,7 +38,7 @@ constexpr int kRtMaterialTexSlots = 12;
 // coatRoughnessUvSet), row 41 carries the remaining UV-set selectors, and rows
 // 42-49 carry scale/bias for specular color and the three coat slots.
 // Rows 50-53 carry coat-normal UV transform, scale/bias, UV set, and presence.
-constexpr int kRasterMaterialTextureParamVec4s = 63;
+constexpr int kRasterMaterialTextureParamVec4s = 67;
 constexpr int kRasterMaterialTextureParamFloats =
     kRasterMaterialTextureParamVec4s * 4;
 
