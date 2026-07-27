@@ -2,6 +2,7 @@
 // Fixtures are deliberately anonymous: Prim/Mat/Texture names only.
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import * as THREE from 'three';
 
 import {
@@ -16,6 +17,10 @@ import {
 import {
   NextRenderSceneAdapter,
 } from '../src/tinyusdz/TinyUSDZLoader.js';
+import { buildNextThreeNode } from '../src/tinyusdz/NextRenderSceneUtils.js';
+import { extractSkinnedMeshData } from '../src/tinyusdz/USDSceneSkinningData.js';
+import { buildSkeletonDataFromUSD } from '../src/tinyusdz/USDSkeletonData.js';
+import { applyUSDSceneSkinningPipeline } from '../src/tinyusdz/USDSceneSkinningPipeline.js';
 import {
   NextTextureLoadingManager,
   compactMaterialGroups,
@@ -48,6 +53,11 @@ async function test(name, fn) {
 const wasm64 = process.env.TINYUSDZ_WASM64 === '1';
 const glue = wasm64 ? '../src/tinyusdz/tinyusdz_64.js' : '../src/tinyusdz/tinyusdz.js';
 const native = await loadWasm(() => import(new URL(glue, import.meta.url).href));
+const nextGlue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js' : '../src/tinyusdz/tinyusdz_next.js';
+const nextNative = await loadWasm(
+  () => import(new URL(nextGlue, import.meta.url).href),
+  { locateFile: (file) => new URL('../src/tinyusdz/' + file, import.meta.url).pathname }
+);
 
 function makePngTexture() {
   const png = native.repackChannels({
@@ -139,6 +149,38 @@ await test('next default material matches legacy fallback shading', () => {
     assert.equal(material.metalness, 0);
   } finally {
     material.dispose();
+  }
+});
+
+await test('next scene binds USD skeleton meshes as SkinnedMesh', async () => {
+  const bytes = new Uint8Array(fs.readFileSync(
+    new URL('../../../models/synthetic-skin-16influences.usda', import.meta.url)));
+  const usd = await NextRenderSceneAdapter.create(
+    nextNative, bytes, 'synthetic-skin-16influences.usda', { meshOnly: false });
+  try {
+    const skinData = extractSkinnedMeshData(usd, { verbose: false });
+    assert.ok(skinData.hasSkinnedMeshData, 'fixture should expose skin attributes');
+    const skeletonData = buildSkeletonDataFromUSD(usd, {
+      hasSkinnedMeshData: true,
+      logger: { log() {}, warn() {}, error() {} }
+    });
+    assert.equal(skeletonData.skeletonDataArray.length, 1);
+    const built = buildNextThreeNode(usd, { skipTextures: true, releaseBuildData: false });
+    const characterGroup = new THREE.Group();
+    const result = applyUSDSceneSkinningPipeline({
+      threeNode: built.node,
+      characterGroup,
+      skeletonDataArray: skeletonData.skeletonDataArray,
+      allSkinnedMeshUSDData: skinData.allSkinnedMeshUSDData,
+      skinnedMeshDataByName: skinData.skinnedMeshDataByName,
+      usdScene: usd,
+      logger: { log() {}, warn() {}, error() {} }
+    });
+    assert.equal(result.processedSkinnedCount, 1);
+    assert.ok(result.firstSkinnedMesh?.isSkinnedMesh,
+      'next backend must bind the mesh instead of rendering undeformed bind geometry');
+  } finally {
+    usd.delete();
   }
 });
 
