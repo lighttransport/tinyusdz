@@ -520,6 +520,13 @@ struct DrawUdimTileCPU {
 struct DrawTextureCPU {
   light3d::Image image;  // always normalized to RGBA8 (channels == 4) on the CPU side
   std::string assetIdentifier;  // Tydra TextureImage::asset_identifier, if known
+  // Native Ptex source. Pixel pages are decoded lazily by the backend page
+  // cache; `image` intentionally remains empty for these records.
+  bool isPtex{false};
+  uint32_t ptexFaces{0};
+  uint16_t ptexLevels{0};
+  uint16_t ptexChannels{0};
+  uint32_t ptexMaxFaceEdge{0};
   int renderImageId{-1};        // source RenderScene::images index, or -1
   int renderUdimId{-1};         // source RenderScene::udim_textures index, or -1
   bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear scalar/normal data
