@@ -283,9 +283,10 @@ const params = {
 	honorMetersPerUnit: true,
 	upAxisConversion: true,
 
-	// Render every material double-sided (debug aid for spotting inverted
-	// winding / missing backfaces).
-	doubleSided: false,
+	// Match usdview's default: draw back faces, while preserving the USD
+	// doubleSided distinction for back-face normal orientation. Enabling this
+	// option switches to BackUnlessDoubleSided-style culling.
+	cullBackfaces: false,
 
 	// Apply textures, decoded lazily on the JS side (raw bytes are pulled from
 	// the asset on demand by getImageCopy; the scene renders untextured first,
@@ -876,18 +877,78 @@ function applySceneTransform() {
 		(params.upAxisConversion && sceneMeta.upAxis === 'Z') ? -Math.PI / 2 : 0;
 }
 
-// Debug: optionally force every material double-sided; disabling the override
-// restores each mesh's authored/inferred USD sideness.
-function applyDoubleSided() {
+// three.js normally couples DoubleSide with both disabling culling and flipping
+// the shading normal on back faces. Hydra treats these as separate decisions:
+// usdview defaults to CullStyleNothing, but flips back-face normals only when
+// the gprim is effectively double-sided. Keep that distinction in this WebGL
+// demo by undefining Three's DOUBLE_SIDED shader path for effective
+// single-sided meshes while culling is disabled.
+function setSingleSidedBackfaceNormals(material, enabled) {
+	if (!material) return;
+	material.userData ||= {};
+	const patchKey = '__tinyusdzSingleSidedBackfacePatch';
+	const state = material.userData[patchKey];
+	if (enabled) {
+		if (state) return;
+		const originalOnBeforeCompile = material.onBeforeCompile;
+		const originalProgramCacheKey = material.customProgramCacheKey;
+		material.userData[patchKey] = {
+			onBeforeCompile: originalOnBeforeCompile,
+			customProgramCacheKey: originalProgramCacheKey
+		};
+		material.onBeforeCompile = function(shader, activeRenderer) {
+			originalOnBeforeCompile.call(this, shader, activeRenderer);
+			// WebGLProgram adds #define DOUBLE_SIDED before this source. Undefine
+			// it here so rasterization stays unculled but the normal is not
+			// reoriented for gl_FrontFacing.
+			shader.fragmentShader = '#undef DOUBLE_SIDED\n' + shader.fragmentShader;
+		};
+		material.customProgramCacheKey = function() {
+			return `${originalProgramCacheKey.call(this)}|tinyusdz-single-sided-backface-normal`;
+		};
+	} else if (state) {
+		material.onBeforeCompile = state.onBeforeCompile;
+		material.customProgramCacheKey = state.customProgramCacheKey;
+		delete material.userData[patchKey];
+	}
+	material.needsUpdate = true;
+}
+
+// Apply usdview-style CullStyleNothing (default) or
+// BackUnlessDoubleSided (when the UI option is enabled). `doubleSided` here is
+// the renderer-effective value: authored USD opinions win, while the next
+// backend may infer true for an unauthored planar opacity billboard.
+function applyCullBackfaces() {
 	usdSceneRoot.traverse((o) => {
 		if (!o.isMesh || !o.material) return;
-		// The toggle is an override, not the false-side policy. When disabled,
-		// restore the mesh's authored/inferred USD sideness instead of flattening
-		// every material back to FrontSide.
-		const side = (params.doubleSided || o.userData?.usdMesh?.doubleSided)
-			? THREE.DoubleSide : THREE.FrontSide;
 		const mats = Array.isArray(o.material) ? o.material : [o.material];
 		for (const m of mats) {
+			if (!m) continue;
+			m.userData ||= {};
+			// Three renders transparent DoubleSide materials in two passes unless
+			// forceSinglePass is set. CullStyleNothing is one unculled raster pass,
+			// so avoid doubling transparent draw calls while this view policy is
+			// active. Restore the material's original preference when culling is on.
+			const singlePassKey = '__tinyusdzOriginalForceSinglePass';
+			if (!Object.prototype.hasOwnProperty.call(m.userData, singlePassKey)) {
+				m.userData[singlePassKey] = m.forceSinglePass;
+			}
+			m.forceSinglePass = params.cullBackfaces
+				? m.userData[singlePassKey] : true;
+			// BatchedMesh does not retain one top-level usdMesh record. Its
+			// material was already keyed by effective sideness, so remember that
+			// initial state before this view policy changes Material.side.
+			if (m.userData.__tinyusdzEffectiveDoubleSided === undefined) {
+				m.userData.__tinyusdzEffectiveDoubleSided =
+					typeof o.userData?.usdMesh?.doubleSided === 'boolean'
+						? o.userData.usdMesh.doubleSided
+						: m.side === THREE.DoubleSide;
+			}
+			const doubleSided = m.userData.__tinyusdzEffectiveDoubleSided === true;
+			const side = (!params.cullBackfaces || doubleSided)
+				? THREE.DoubleSide : THREE.FrontSide;
+			setSingleSidedBackfaceNormals(
+				m, !params.cullBackfaces && !doubleSided);
 			if (m && m.side !== side) {
 				m.side = side;
 				m.needsUpdate = true;
@@ -1108,7 +1169,7 @@ async function mountScene(usd,
 		}
 		usdSceneRoot.add(built.node);
 		applySceneTransform();
-		applyDoubleSided();
+		applyCullBackfaces();
 		textureManager = built.textureManager;
 		updateDebugHandle();
 		return;
@@ -1143,7 +1204,7 @@ async function mountScene(usd,
 
 	usdSceneRoot.add(threeNode);
 	applySceneTransform();
-	applyDoubleSided();
+	applyCullBackfaces();
 	textureManager = manager;
 	updateDebugHandle();
 }
@@ -1439,6 +1500,7 @@ function describeOptions() {
 	if (params.materialDedup) on.push('material-dedup');
 	if (params.mergeMeshes) on.push(params.mergeMeshesBakeTransform ? 'merge-meshes(bake)' : 'merge-meshes');
 	if (params.flattenRenderTree) on.push('flatten-tree');
+	if (params.cullBackfaces) on.push('cull-backfaces');
 	const scaleNote = params.honorMetersPerUnit && sceneMeta.metersPerUnit !== 1.0
 		? `, scale ×${(params.globalScale * sceneMeta.metersPerUnit).toFixed(3)} (mpu ${sceneMeta.metersPerUnit})`
 		: '';
@@ -1704,7 +1766,11 @@ function buildGui() {
 	// Textures decode lazily on the JS side, so toggling only needs a re-mount
 	// (no native re-conversion).
 	guiControllers.push(sceneFolder.add(params, 'loadTextures').name('Load Textures').onChange(reapplyThreePostProcess));
-	sceneFolder.add(params, 'doubleSided').name('Double-Sided (debug)').onChange(applyDoubleSided);
+	sceneFolder.add(params, 'cullBackfaces').name('Cull Backfaces').onChange(() => {
+		applyCullBackfaces();
+		setStatus(describeOptions());
+		updateDebugHandle();
+	});
 	sceneFolder.open();
 
 	// three.js-side post-process: operates on the built scene graph, no native
@@ -1840,7 +1906,7 @@ async function main() {
 	// (handy for testing
 	// large external models without the file picker). Optional flags configure
 	// the initial state (avoids extra re-conversions when scripting tests):
-	//   textures=1  dedup=0/1  merge=0/1  bake=0/1  flatten=0/1  js=1
+	//   textures=1  dedup=0/1  merge=0/1  bake=0/1  flatten=0/1  cull=0/1  js=1
 	const search = new URLSearchParams(window.location.search);
 	const flag = (key, cur) => {
 		const v = search.get(key);
@@ -1856,6 +1922,7 @@ async function main() {
 	params.mergeMeshes = flag('merge', params.mergeMeshes);
 	params.mergeMeshesBakeTransform = flag('bake', params.mergeMeshesBakeTransform);
 	params.flattenRenderTree = flag('flatten', params.flattenRenderTree);
+	params.cullBackfaces = flag('cull', params.cullBackfaces);
 	if (search.get('js') === '1') {
 		params.jsMaterialDedup = true;
 		params.jsBatchByMaterial = true;
