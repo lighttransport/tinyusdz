@@ -1562,10 +1562,11 @@ void App::stepProgressiveUpload() {
 
 namespace {
 
-bool UpdatePtexFaceTable(Renderer* renderer, int textureSlot,
-                         const DrawTextureCPU& texture, uint32_t face,
-                         const DrawPtexFaceRectCPU& rect) {
-  if (!renderer || face >= texture.ptexFaceRects.size() ||
+bool AppendPtexFaceTableUpdates(
+    const DrawTextureCPU& texture, uint32_t face,
+    const DrawPtexFaceRectCPU& rect,
+    std::vector<Renderer::TextureRegionUpdate>* updates) {
+  if (!updates || face >= texture.ptexFaceRects.size() ||
       texture.image.width <= 0) {
     return false;
   }
@@ -1578,10 +1579,15 @@ bool UpdatePtexFaceTable(Renderer* renderer, int textureSlot,
     const int y = static_cast<int>(linear / size_t(texture.image.width));
     const int count = static_cast<int>(
         std::min<size_t>(8u - consumed, size_t(texture.image.width - x)));
-    if (!renderer->updateTextureRegion(textureSlot, x, y, count, 1,
-                                       texels + consumed * 4u)) {
-      return false;
-    }
+    Renderer::TextureRegionUpdate update;
+    update.x = x;
+    update.y = y;
+    update.width = count;
+    update.height = 1;
+    update.rowBytes = size_t(count) * 4u;
+    update.rgba.assign(texels + consumed * 4u,
+                       texels + (consumed + size_t(count)) * 4u);
+    updates->push_back(std::move(update));
     linear += static_cast<size_t>(count);
     consumed += static_cast<size_t>(count);
   }
@@ -1639,7 +1645,11 @@ bool App::stepPtexResidency(double deadlineMs) {
     // The permanent fallback already has this quality (or better). Physical
     // slots are reserved only for faces forced below the desired mip by the
     // global atlas budget.
-    if (texture.ptexFaceRects[face].mipLevel <= mip) continue;
+    if (!texture.ptexForceResidency &&
+        texture.ptexFaceRects[face].mipLevel <= mip &&
+        texture.ptexFaceRects[face].reserved == 0) {
+      continue;
+    }
 
     light3d::Image page;
     DrawPtexFaceRectCPU residentRect;
@@ -1668,16 +1678,22 @@ bool App::stepPtexResidency(double deadlineMs) {
     residentRect.x += outerX;
     residentRect.y += outerY;
     const int textureSlot = static_cast<int>(nextPtexTexture_);
+    std::vector<Renderer::TextureRegionUpdate> updates;
     if (assignment.evictedFace != ~uint32_t{0}) {
-      UpdatePtexFaceTable(renderer_.get(), textureSlot, texture,
-                          assignment.evictedFace,
-                          texture.ptexFaceRects[assignment.evictedFace]);
+      AppendPtexFaceTableUpdates(
+          texture, assignment.evictedFace,
+          texture.ptexFaceRects[assignment.evictedFace], &updates);
     }
-    if (!renderer_->updateTextureRegion(textureSlot, static_cast<int>(outerX),
-                                        static_cast<int>(outerY), page.width,
-                                        page.height, page.data.data()) ||
-        !UpdatePtexFaceTable(renderer_.get(), textureSlot, texture, face,
-                             residentRect)) {
+    Renderer::TextureRegionUpdate pageUpdate;
+    pageUpdate.x = static_cast<int>(outerX);
+    pageUpdate.y = static_cast<int>(outerY);
+    pageUpdate.width = page.width;
+    pageUpdate.height = page.height;
+    pageUpdate.rowBytes = size_t(page.width) * 4u;
+    pageUpdate.rgba = std::move(page.data);
+    updates.push_back(std::move(pageUpdate));
+    AppendPtexFaceTableUpdates(texture, face, residentRect, &updates);
+    if (!renderer_->updateTextureRegions(textureSlot, updates)) {
       LOGW("Ptex face %u residency upload failed", face);
       continue;
     }

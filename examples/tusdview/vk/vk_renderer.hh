@@ -55,6 +55,8 @@ class VulkanRenderer final : public Renderer {
   bool updateTextureRegion(int slot, int x, int y, int w, int h,
                            const uint8_t* rgba,
                            size_t rowBytes = 0) override;
+  bool updateTextureRegions(
+      int slot, const std::vector<TextureRegionUpdate>& updates) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;

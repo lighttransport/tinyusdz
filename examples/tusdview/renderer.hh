@@ -250,6 +250,22 @@ class Renderer {
                                    size_t /*rowBytes*/ = 0) {
     return false;
   }
+  struct TextureRegionUpdate {
+    int x{0}, y{0}, width{0}, height{0};
+    size_t rowBytes{0};
+    std::vector<uint8_t> rgba;
+  };
+  virtual bool updateTextureRegions(
+      int slot, const std::vector<TextureRegionUpdate>& updates) {
+    for (const TextureRegionUpdate& update : updates) {
+      if (!updateTextureRegion(slot, update.x, update.y, update.width,
+                               update.height, update.rgba.data(),
+                               update.rowBytes)) {
+        return false;
+      }
+    }
+    return true;
+  }
   virtual void uploadSkinningFrame(const SkinningFrameCPU& /*skin*/) {}
   // Per-instance frustum culling: replace mesh `meshIndex`'s drawn instance set
   // with `count` visible instances (xforms = 12 floats/instance, 3x4 o2w row-major;

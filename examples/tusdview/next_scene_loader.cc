@@ -2166,6 +2166,12 @@ struct NextTexCache {
   // per-file cap: production scenes may bind thousands of independent .ptx
   // files. Files beyond the cap retain a representative-face fallback.
   size_t ptexAtlasBudgetBytes = 2ull * 1024ull * 1024ull * 1024ull;
+  // Prevent the first large Ptex file from starving every later binding. The
+  // streaming atlas can trade face resolution for space, so reserve a fair
+  // one-eighth share (with a 1 MiB minimum) for later Ptex textures. The
+  // cumulative cap still governs the aggregate; this ceiling mainly gives
+  // shelf packing enough headroom for differently-shaped face sets.
+  size_t ptexAtlasPerTextureBytes = 256ull * 1024ull * 1024ull;
   size_t ptexAtlasBytes = 0;
   bool ptexBudgetWarned = false;
 };
@@ -2415,8 +2421,8 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
             std::min(atlasOptions.maxFaceEdge,
                      static_cast<uint32_t>(tc.opt->maxTextureSize));
       }
-      const size_t defaultAtlasCap = 256ull * 1024ull * 1024ull;
-      atlasOptions.maxAtlasBytes = std::min(defaultAtlasCap, remaining);
+      atlasOptions.maxAtlasBytes =
+          std::min(tc.ptexAtlasPerTextureBytes, remaining);
       atlasOptions.maxPhysicalCacheBytes =
           std::min<size_t>(32ull * 1024ull * 1024ull,
                            atlasOptions.maxAtlasBytes / 4u);
@@ -2444,6 +2450,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
         if (dt.ptexPhysicalCacheSlots > 0) {
           dt.ptexSourceData = std::move(bytes);
           dt.streamingMutable = true;
+          dt.ptexForceResidency = atlasOptions.forcePhysicalCache;
         }
       }
       built = true;
@@ -4227,6 +4234,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         size_t(opts.textureOptions.textureBudgetMB) * size_t{1024} *
         size_t{1024};
   }
+  texCache.ptexAtlasPerTextureBytes = std::min(
+      texCache.ptexAtlasBudgetBytes,
+      std::max<size_t>(1024ull * 1024ull,
+                       texCache.ptexAtlasBudgetBytes / 8u));
   tydn::TextureDecodeOptions texOpts;
   texOpts.base_dir = tinyusdz::io::GetBaseDir(path);
   texOpts.max_edge = opts.textureOptions.maxTextureSize > 0

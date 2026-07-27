@@ -144,10 +144,43 @@ light3d::Image ConvertFace(const tinyusdz::ptx::FaceImage& face) {
   return out;
 }
 
+light3d::Image ResizeFace(const light3d::Image& src, uint32_t width,
+                          uint32_t height) {
+  if (src.width == static_cast<int>(width) &&
+      src.height == static_cast<int>(height)) {
+    return src;
+  }
+  light3d::Image out;
+  out.width = static_cast<int>(width);
+  out.height = static_cast<int>(height);
+  out.channels = 4;
+  out.data.resize(size_t(width) * height * 4u);
+  // Area-center nearest sampling is sufficient for the permanent coarse
+  // fallback; requested-quality pages always use the native authored mip.
+  for (uint32_t y = 0; y < height; ++y) {
+    const uint32_t sy = std::min<uint32_t>(
+        static_cast<uint32_t>(src.height - 1),
+        static_cast<uint32_t>((uint64_t(y) * src.height + height / 2u) /
+                              height));
+    for (uint32_t x = 0; x < width; ++x) {
+      const uint32_t sx = std::min<uint32_t>(
+          static_cast<uint32_t>(src.width - 1),
+          static_cast<uint32_t>((uint64_t(x) * src.width + width / 2u) /
+                                width));
+      std::memcpy(out.data.data() + (size_t(y) * width + x) * 4u,
+                  src.data.data() + (size_t(sy) * src.width + sx) * 4u, 4u);
+    }
+  }
+  return out;
+}
+
 struct Placement {
   uint32_t face{0};
   uint32_t mip{0};
   uint32_t baseMip{0};
+  uint32_t baseWidth{0};
+  uint32_t baseHeight{0};
+  bool virtualDownsample{false};
   uint32_t width{0};
   uint32_t height{0};
   uint32_t x{0};
@@ -364,7 +397,8 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
     p.width = w;
     p.height = h;
     p.baseMip = p.mip;
-    if (p.mip > 0) ++localStats.downsampledFaces;
+    p.baseWidth = w;
+    p.baseHeight = h;
   }
 
   uint32_t atlasWidth = 0, atlasHeight = 0, imageHeight = 0;
@@ -375,9 +409,12 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
   for (;;) {
     if (Pack(&placements, options.gutter, options.maxAtlasEdge, &atlasWidth,
              &atlasHeight)) {
+      const uint32_t packedAtlasWidth = atlasWidth;
       const bool needsPhysicalCache = options.forcePhysicalCache || std::any_of(
           placements.begin(), placements.end(),
-          [](const Placement& p) { return p.mip > p.baseMip; });
+          [](const Placement& p) {
+            return p.mip > p.baseMip || p.virtualDownsample;
+          });
       const uint64_t requestedSlotEdge =
           uint64_t(options.maxFaceEdge) + uint64_t(options.gutter) * 2u;
       const uint64_t requestedSlotBytes = requestedSlotEdge *
@@ -392,7 +429,7 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
         atlasWidth = std::max(atlasWidth, physicalCacheSlotEdge);
       }
       const uint64_t rectTexels = uint64_t(info.faces) * 8u;
-      const uint64_t rectRows =
+      uint64_t rectRows =
           (rectTexels + uint64_t(atlasWidth) - 1u) / atlasWidth;
       const uint64_t slotBytes = uint64_t(physicalCacheSlotEdge) *
                                  physicalCacheSlotEdge * 4u;
@@ -415,10 +452,22 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
         }
         --selectedSlots;
       }
+      const bool canShrinkFallback = std::any_of(
+          placements.begin(), placements.end(), [](const Placement& p) {
+            return p.width > 1u || p.height > 1u;
+          });
+      const bool retryForCache = needsPhysicalCache && desiredSlots > 0u &&
+                                 selectedSlots == 0u && canShrinkFallback;
+      if (selectedSlots == 0) {
+        cacheRows = 0;
+        physicalCacheSlotEdge = 0;
+        atlasWidth = packedAtlasWidth;
+        rectRows = (rectTexels + uint64_t(atlasWidth) - 1u) / atlasWidth;
+      }
       const uint64_t totalHeight = uint64_t(atlasHeight) +
                                    cacheRows * physicalCacheSlotEdge + rectRows;
       const uint64_t bytes = uint64_t(atlasWidth) * totalHeight * 4u;
-      if (totalHeight <= options.maxAtlasEdge &&
+      if (!retryForCache && totalHeight <= options.maxAtlasEdge &&
           (options.maxAtlasBytes == 0 || bytes <= options.maxAtlasBytes)) {
         imageHeight = static_cast<uint32_t>(totalHeight);
         physicalCacheOffsetY = atlasHeight;
@@ -432,7 +481,7 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
     uint64_t bestArea = 0;
     for (size_t i = 0; i < placements.size(); ++i) {
       const Placement& p = placements[i];
-      if (p.mip + 1u >= info.levels || (p.width == 1 && p.height == 1)) continue;
+      if (p.width == 1 && p.height == 1) continue;
       const uint64_t area = uint64_t(p.width) * p.height;
       if (area > bestArea) { bestArea = area; best = i; }
     }
@@ -441,11 +490,20 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
       return false;
     }
     Placement& p = placements[best];
-    ++p.mip;
+    if (!p.virtualDownsample && p.mip + 1u < info.levels) {
+      ++p.mip;
+    } else {
+      p.virtualDownsample = true;
+    }
     p.width = std::max(1u, p.width >> 1u);
     p.height = std::max(1u, p.height >> 1u);
-    ++localStats.downsampledFaces;
   }
+
+  localStats.downsampledFaces = static_cast<uint32_t>(std::count_if(
+      placements.begin(), placements.end(), [](const Placement& p) {
+        return p.mip > 0 || p.width < p.baseWidth ||
+               p.height < p.baseHeight;
+      }));
 
   image->width = static_cast<int>(atlasWidth);
   image->height = static_cast<int>(imageHeight);
@@ -461,13 +519,14 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
       if (err) *err = "Ptex face " + std::to_string(p.face) + ": " + readErr;
       return false;
     }
-    if (decoded->width != p.width || decoded->height != p.height) {
-      if (err) *err = "Ptex face dimensions do not match selected mip";
+    if (decoded->width < p.width || decoded->height < p.height) {
+      if (err) *err = "Ptex face dimensions are smaller than packed fallback";
       return false;
     }
     localStats.decodedFaces++;
     localStats.decodedBytes += decoded->data.size();
-    const light3d::Image rgba = ConvertFace(*decoded);
+    const light3d::Image rgba =
+        ResizeFace(ConvertFace(*decoded), p.width, p.height);
     CopyWithClampGutter(rgba, p, options.gutter, image);
     DrawPtexFaceRectCPU& rect = (*faceRects)[p.face];
     rect.x = p.x;
@@ -475,6 +534,7 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
     rect.width = p.width;
     rect.height = p.height;
     rect.mipLevel = static_cast<uint16_t>(p.mip);
+    rect.reserved = p.virtualDownsample ? 1u : 0u;
   }
   // Store the rectangle table in alpha-only texels after the color atlas.
   // GL/Vulkan sRGB formats transform RGB reads but never alpha, so this compact

@@ -4907,21 +4907,56 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
 bool VulkanRenderer::updateTextureRegion(int slot, int x, int y, int w, int h,
                                          const uint8_t* rgba,
                                          size_t rowBytes) {
+  if (!rgba || w <= 0 || h <= 0) return false;
+  TextureRegionUpdate update;
+  update.x = x;
+  update.y = y;
+  update.width = w;
+  update.height = h;
+  update.rowBytes = rowBytes ? rowBytes : size_t(w) * 4u;
+  const size_t bytes = update.rowBytes * size_t(h);
+  update.rgba.assign(rgba, rgba + bytes);
+  return updateTextureRegions(slot, {std::move(update)});
+}
+
+bool VulkanRenderer::updateTextureRegions(
+    int slot, const std::vector<TextureRegionUpdate>& updates) {
   if (!device_ || slot < 0 || static_cast<size_t>(slot) >= texSlotImgs_.size() ||
-      !rgba || x < 0 || y < 0 || w <= 0 || h <= 0) {
+      updates.empty()) {
     return false;
   }
   const size_t index = static_cast<size_t>(slot);
-  if (!texRegionUpdatable_[index] || !texSlotImgs_[index] ||
-      x + w > texSlotWidths_[index] || y + h > texSlotHeights_[index]) {
-    return false;
+  if (!texRegionUpdatable_[index] || !texSlotImgs_[index]) return false;
+  size_t totalBytes = 0;
+  for (const TextureRegionUpdate& update : updates) {
+    const size_t stride = update.rowBytes
+                              ? update.rowBytes
+                              : size_t(update.width) * 4u;
+    if (update.x < 0 || update.y < 0 || update.width <= 0 ||
+        update.height <= 0 || update.x + update.width > texSlotWidths_[index] ||
+        update.y + update.height > texSlotHeights_[index] ||
+        stride < size_t(update.width) * 4u || (stride & 3u) != 0 ||
+        update.rgba.size() < stride * size_t(update.height) ||
+        totalBytes > std::numeric_limits<size_t>::max() -
+                         stride * size_t(update.height)) {
+      return false;
+    }
+    totalBytes += stride * size_t(update.height);
   }
-  const size_t stride = rowBytes ? rowBytes : size_t(w) * 4u;
-  if (stride < size_t(w) * 4u || (stride & 3u) != 0) return false;
-  const VkDeviceSize bytes = static_cast<VkDeviceSize>(stride) * h;
+  std::vector<uint8_t> packed;
+  packed.reserve(totalBytes);
+  for (const TextureRegionUpdate& update : updates) {
+    const size_t stride = update.rowBytes
+                              ? update.rowBytes
+                              : size_t(update.width) * 4u;
+    packed.insert(packed.end(), update.rgba.begin(),
+                  update.rgba.begin() +
+                      static_cast<std::ptrdiff_t>(stride * update.height));
+  }
   VkBuffer staging = VK_NULL_HANDLE;
   VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-  if (!createHostBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, rgba,
+  if (!createHostBuffer(static_cast<VkDeviceSize>(packed.size()),
+                        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, packed.data(),
                         &staging, &stagingMem)) {
     return false;
   }
@@ -4942,14 +4977,26 @@ bool VulkanRenderer::updateTextureRegion(int slot, int x, int y, int w, int h,
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                        nullptr, 1, &toDst);
-  VkBufferImageCopy region{};
-  region.bufferRowLength = static_cast<uint32_t>(stride / 4u);
-  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  region.imageSubresource.layerCount = 1;
-  region.imageOffset = {x, y, 0};
-  region.imageExtent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1};
+  std::vector<VkBufferImageCopy> regions(updates.size());
+  VkDeviceSize offset = 0;
+  for (size_t i = 0; i < updates.size(); ++i) {
+    const TextureRegionUpdate& update = updates[i];
+    const size_t stride = update.rowBytes
+                              ? update.rowBytes
+                              : size_t(update.width) * 4u;
+    VkBufferImageCopy& region = regions[i];
+    region.bufferOffset = offset;
+    region.bufferRowLength = static_cast<uint32_t>(stride / 4u);
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {update.x, update.y, 0};
+    region.imageExtent = {static_cast<uint32_t>(update.width),
+                          static_cast<uint32_t>(update.height), 1};
+    offset += static_cast<VkDeviceSize>(stride) * update.height;
+  }
   vkCmdCopyBufferToImage(cb, staging, texSlotImgs_[index],
-                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         static_cast<uint32_t>(regions.size()), regions.data());
   VkImageMemoryBarrier toRead = toDst;
   toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
   toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
