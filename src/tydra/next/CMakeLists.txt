@@ -77,6 +77,17 @@ if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     endif()
 endif()
 
+# The lazy Ptex face decoder is part of the top-level tinyusdz static library
+# when this project is embedded.  Standalone Tydra-next builds need the small
+# reader and bundled deflate implementation locally instead.
+if(TARGET tinyusdz_static)
+    target_link_libraries(tydra_next PUBLIC tinyusdz_static)
+else()
+    target_sources(tydra_next PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../ptx-loader.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../external/miniz.c)
+endif()
+
 # Optional: Build test
 option(TYDRA_NEXT_BUILD_TESTS "Build tests for Tydra Next" OFF)
 
