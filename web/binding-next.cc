@@ -2849,10 +2849,12 @@ class RenderStream {
       return out;
     }
 
+    const int32_t material_id = materialIdForBoundPrim_(prim);
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
     out.set("primPath", prim.GetPath().str());
-    out.set("doubleSided", matBool_(prim, "doubleSided", false));
+    out.set("doubleSided",
+            effectiveDoubleSided_(prim, material_id, s_points_));
     out.set("points", heapF_(s_points_, 3));
     if (!soup && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
     if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
@@ -2978,7 +2980,6 @@ class RenderStream {
     }
     out.set("localMatrix", matArray_(localMatrix_(prim)));
     out.set("worldMatrix", matArray_(worldMatrixForPrim_(prim)));
-    const int32_t material_id = materialIdForBoundPrim_(prim);
     out.set("materialId", material_id);
     out.set("material", materialObject_(material_id));
     addGeomSubsetMaterials_(prim, out);
@@ -3213,6 +3214,88 @@ class RenderStream {
     if (!v) return fallback;
     if (const bool *b = v->as_bool()) return *b;
     return fallback;
+  }
+
+  static bool pointsArePlanar_(const std::vector<float> &points) {
+    const size_t count = points.size() / 3;
+    if (count < 3) return false;
+
+    float lo[3] = {points[0], points[1], points[2]};
+    float hi[3] = {points[0], points[1], points[2]};
+    for (size_t i = 1; i < count; ++i) {
+      for (size_t axis = 0; axis < 3; ++axis) {
+        const float value = points[i * 3 + axis];
+        lo[axis] = (std::min)(lo[axis], value);
+        hi[axis] = (std::max)(hi[axis], value);
+      }
+    }
+    const float scale = (std::max)({hi[0] - lo[0], hi[1] - lo[1],
+                                    hi[2] - lo[2]});
+    if (!(scale > 0.0f)) return false;
+    const float epsilon = (std::max)(scale * 1.0e-5f, 1.0e-7f);
+    const float epsilon_sq = epsilon * epsilon;
+
+    const float p0[3] = {points[0], points[1], points[2]};
+    size_t p1_index = count;
+    for (size_t i = 1; i < count; ++i) {
+      const float x = points[i * 3] - p0[0];
+      const float y = points[i * 3 + 1] - p0[1];
+      const float z = points[i * 3 + 2] - p0[2];
+      if (x * x + y * y + z * z > epsilon_sq) {
+        p1_index = i;
+        break;
+      }
+    }
+    if (p1_index == count) return false;
+    const float edge[3] = {points[p1_index * 3] - p0[0],
+                           points[p1_index * 3 + 1] - p0[1],
+                           points[p1_index * 3 + 2] - p0[2]};
+    float normal[3] = {0.0f, 0.0f, 0.0f};
+    float normal_length = 0.0f;
+    for (size_t i = 1; i < count; ++i) {
+      const float other[3] = {points[i * 3] - p0[0],
+                              points[i * 3 + 1] - p0[1],
+                              points[i * 3 + 2] - p0[2]};
+      normal[0] = edge[1] * other[2] - edge[2] * other[1];
+      normal[1] = edge[2] * other[0] - edge[0] * other[2];
+      normal[2] = edge[0] * other[1] - edge[1] * other[0];
+      normal_length = std::sqrt(normal[0] * normal[0] +
+                                normal[1] * normal[1] +
+                                normal[2] * normal[2]);
+      if (normal_length > epsilon_sq) break;
+    }
+    if (!(normal_length > epsilon_sq)) return false;
+    normal[0] /= normal_length;
+    normal[1] /= normal_length;
+    normal[2] /= normal_length;
+    for (size_t i = 1; i < count; ++i) {
+      const float distance =
+          (points[i * 3] - p0[0]) * normal[0] +
+          (points[i * 3 + 1] - p0[1]) * normal[1] +
+          (points[i * 3 + 2] - p0[2]) * normal[2];
+      if (std::abs(distance) > epsilon) return false;
+    }
+    return true;
+  }
+
+  bool effectiveDoubleSided_(const tinyusdz::next::UsdPrim &prim,
+                             int32_t material_id,
+                             const std::vector<float> &points) const {
+    // An authored USD opinion always wins, including an explicit false.
+    if (prim.HasAuthoredProperty("doubleSided")) {
+      return matBool_(prim, "doubleSided", false);
+    }
+    if (material_id < 0 ||
+        static_cast<size_t>(material_id) >= materials_.size()) {
+      return false;
+    }
+    // Some DCC exporters omit doubleSided on effect cards even though an
+    // opacity-mapped, zero-thickness mesh is semantically a billboard. Infer
+    // two-sided rendering only for that narrow case; opaque and volumetric
+    // geometry retains the USD default of back-face culling.
+    const MaterialRecord &material =
+        materials_[static_cast<size_t>(material_id)];
+    return !material.opacity_texture.empty() && pointsArePlanar_(points);
   }
 
   // Build render geometry for one mesh into the scratch (s_points_/s_normals_/
@@ -4287,6 +4370,7 @@ class RenderStream {
   bool appendToAccumulator_(const tinyusdz::next::UsdPrim &prim,
                             int source_index,
                             int32_t material_id,
+                            bool double_sided,
                             bool soup,
                             MergeAccumulator *acc) {
     if (!acc) return false;
@@ -4305,7 +4389,7 @@ class RenderStream {
       acc->first_source_index = source_index;
       acc->mesh.soup = soup;
       acc->mesh.material_id = material_id;
-      acc->mesh.double_sided = matBool_(prim, "doubleSided", false);
+      acc->mesh.double_sided = double_sided;
       acc->mesh.local_matrix = mesh_merge_bake_transform_ ? identityMatrix_()
                                                           : localMatrix_(prim);
       acc->mesh.world_matrix = mesh_merge_bake_transform_ ? identityMatrix_()
@@ -4377,7 +4461,8 @@ class RenderStream {
       }
       const bool has_normals = !s_normals_.empty();
       const bool has_uv = !s_uv_.empty();
-      const bool double_sided = matBool_(prim, "doubleSided", false);
+      const bool double_sided =
+          effectiveDoubleSided_(prim, material_id, s_points_);
       const std::array<double, 16> world = worldMatrixForPrim_(prim);
       std::ostringstream key;
       key << material_id << "|soup=" << soup << "|n=" << has_normals
@@ -4400,8 +4485,8 @@ class RenderStream {
           (next_vertices > kMaxGroupVertices || next_indices > kMaxGroupIndices)) {
         flushAccumulator_(&acc);
       }
-      if (!appendToAccumulator_(prim, static_cast<int>(i), material_id, soup,
-                                &acc)) {
+      if (!appendToAccumulator_(prim, static_cast<int>(i), material_id,
+                                double_sided, soup, &acc)) {
         // Heap too full to merge: flush the group and emit this mesh unmerged.
         flushAccumulator_(&acc);
         OutputMesh out;

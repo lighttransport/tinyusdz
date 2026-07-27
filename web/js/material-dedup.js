@@ -876,11 +876,16 @@ function applySceneTransform() {
 		(params.upAxisConversion && sceneMeta.upAxis === 'Z') ? -Math.PI / 2 : 0;
 }
 
-// Debug: force every material in the scene to render front-only or double-sided.
+// Debug: optionally force every material double-sided; disabling the override
+// restores each mesh's authored/inferred USD sideness.
 function applyDoubleSided() {
-	const side = params.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
 	usdSceneRoot.traverse((o) => {
 		if (!o.isMesh || !o.material) return;
+		// The toggle is an override, not the false-side policy. When disabled,
+		// restore the mesh's authored/inferred USD sideness instead of flattening
+		// every material back to FrontSide.
+		const side = (params.doubleSided || o.userData?.usdMesh?.doubleSided)
+			? THREE.DoubleSide : THREE.FrontSide;
 		const mats = Array.isArray(o.material) ? o.material : [o.material];
 		for (const m of mats) {
 			if (m && m.side !== side) {
