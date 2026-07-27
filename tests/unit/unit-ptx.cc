@@ -28,4 +28,11 @@ void ptx_reader_island_fixture_test(void) {
   TEST_CHECK(reader.ReadFace(0, 0, 64u * 1024u * 1024u, &image, &err));
   TEST_CHECK(image.width > 0 && image.height > 0);
   TEST_CHECK(!image.data.empty());
+  for (uint32_t level = 1; level < reader.info().levels; ++level) {
+    err.clear();
+    tinyusdz::ptx::FaceImage mip;
+    TEST_CHECK(reader.ReadFace(0, level, 64u * 1024u * 1024u, &mip, &err));
+    TEST_CHECK(mip.width > 0 && mip.height > 0);
+    TEST_CHECK(!mip.data.empty());
+  }
 }
