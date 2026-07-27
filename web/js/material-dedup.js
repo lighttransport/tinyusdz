@@ -1140,35 +1140,6 @@ function applyJsPostProcess(node) {
 	}
 }
 
-// NextRenderScene builds the USD node hierarchy so ordinary meshes retain
-// authored transforms.  Skin matrices, however, are authored in skeleton
-// space while Three.js evaluates them against a SkinnedMesh's local frame.
-// Bake the complete mesh world transform into skinned geometry and move those
-// meshes to the scene root.  This leaves the skeleton's authored parent scale
-// (for example the common 0.01 Mixamo scale) applied exactly once.
-function flattenNextSkinnedMeshes(root, skinData) {
-	if (!root || !skinData?.allSkinnedMeshUSDData?.size) return;
-	const paths = skinData.allSkinnedMeshUSDData;
-	root.updateMatrixWorld(true);
-	const skinned = [];
-	root.traverse((object) => {
-		const path = object.userData?.['primMeta.absPath'];
-		if (object.isMesh && path && paths.has(path)) skinned.push(object);
-	});
-	for (const mesh of skinned) {
-		const world = mesh.matrixWorld.clone();
-		if (mesh.geometry) {
-			mesh.geometry.applyMatrix4(world);
-			mesh.geometry.computeBoundingBox();
-			mesh.geometry.computeBoundingSphere();
-		}
-		root.add(mesh);
-		mesh.matrix.identity();
-		mesh.matrixAutoUpdate = false;
-		mesh.matrixWorld.copy(root.matrixWorld);
-	}
-}
-
 // Build a Three.js node from a native scene and mount it under usdSceneRoot.
 // `postProcess` enables the three.js-side optimization passes (only meaningful
 // for the displayed/current scene, not the transient baseline mount).
@@ -1214,7 +1185,6 @@ async function mountScene(usd,
 		});
 		let mountedNode = built.node;
 		if (skinData.hasSkinnedMeshData && skeletonData?.skeletonDataArray?.length) {
-			flattenNextSkinnedMeshes(built.node, skinData);
 			const characterGroup = new THREE.Group();
 			characterGroup.name = built.node.name || 'next-scene';
 			applyUSDSceneSkinningPipeline({

@@ -317,6 +317,16 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
 
     characterGroup.updateMatrixWorld(true);
 
+    // USD bindTransforms are authored in skeleton space.  Once the bone
+    // hierarchy is parented under its Skeleton prim, calculate inverses from
+    // the resulting world-space bind pose.  This includes the complete
+    // Skeleton ancestor transform (scale/orientation) and matches Three.js's
+    // world-space bind() contract; using raw USD inverses here double-applies
+    // transforms such as Mixamo's 0.01 Armature scale.
+    for (const skeleton of skeletons.values()) {
+      skeleton.calculateInverses();
+    }
+
     for (const mesh of allMeshes) {
       const meshName = mesh.name;
       const meshAbsPath = mesh.userData?.['primMeta.absPath'] || '';
