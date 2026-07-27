@@ -41,6 +41,7 @@
 #include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/reader/usdc-reader.hh"
+#include "next/reader/usda-reader.hh"
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 #include "next/schema/geom-mesh.hh"
@@ -10011,9 +10012,9 @@ emscripten::val convertFloat16ToFloat32Array(const emscripten::val& uint16Data) 
 // ============================================================================
 // RenderStream — incremental, low-memory render-data extraction.
 //
-// Loads ONLY the root USDC crate (the caller extracts it from the .usdz in JS
-// and keeps the texture entries there, off the WASM heap) into the next pipeline
-// with LAZY arrays, so the crate sits in the heap exactly once (~= input size).
+// Loads the root USD layer (the caller extracts it from the .usdz in JS and
+// keeps the texture entries there, off the WASM heap) into the next pipeline
+// with lazy arrays, so the source sits in the heap exactly once (~= input size).
 // getMesh(i) then materializes a SINGLE mesh's geometry on demand into a reused
 // scratch and returns zero-copy descriptors; the next getMesh(i) overwrites the
 // scratch, so at most one mesh's geometry is decoded at a time. Geometry arrays
@@ -10038,28 +10039,44 @@ class RenderStream {
   }
   void setFlattenRenderTree(bool enabled) { flatten_render_tree_ = enabled; }
 
-  // Adopt the root crate bytes by move and load lazily.
-  emscripten::val beginOwned(std::string &&crate) {
+  // Adopt the root USDA or USDC bytes by move and load lazily.
+  emscripten::val beginOwned(std::string &&source) {
     emscripten::val r = emscripten::val::object();
     end();
     error_.clear();
-    tinyusdz::next::USDCLoadOptions opts;
-    opts.crate_options.progress_callback =
-        [](const char *phase, size_t current, size_t total) -> bool {
-      reportNextCrateProgress(
-          phase, static_cast<double>(current), static_cast<double>(total));
-      return true;
-    };
-    tinyusdz::next::USDCLoadResult res =
-        tinyusdz::next::LoadUSDCFromMemoryOwned(std::move(crate), opts);
-    if (!res.success) {
-      error_ = res.error_summary.empty() ? std::string("USDC load failed")
-                                         : res.error_summary;
-      r.set("success", false);
-      r.set("error", error_);
-      return r;
+    if (source.size() >= 8 &&
+        std::memcmp(source.data(), "PXR-USDC", 8) == 0) {
+      tinyusdz::next::USDCLoadOptions opts;
+      opts.crate_options.progress_callback =
+          [](const char *phase, size_t current, size_t total) -> bool {
+        reportNextCrateProgress(
+            phase, static_cast<double>(current), static_cast<double>(total));
+        return true;
+      };
+      tinyusdz::next::USDCLoadResult res =
+          tinyusdz::next::LoadUSDCFromMemoryOwned(std::move(source), opts);
+      if (!res.success) {
+        error_ = res.error_summary.empty() ? std::string("USDC load failed")
+                                           : res.error_summary;
+        r.set("success", false);
+        r.set("error", error_);
+        return r;
+      }
+      stage_ = std::move(res.stage);
+    } else {
+      tinyusdz::next::LoadOptions opts;
+      opts.parse_options.enable_usda_lazy_arrays = true;
+      tinyusdz::next::LoadResult res =
+          tinyusdz::next::LoadUSDAFromStringOwned(std::move(source), opts);
+      if (!res.success) {
+        error_ = res.error_summary.empty() ? std::string("USDA load failed")
+                                           : res.error_summary;
+        r.set("success", false);
+        r.set("error", error_);
+        return r;
+      }
+      stage_ = std::move(res.stage);
     }
-    stage_ = std::move(res.stage);
     meshes_ = tinyusdz::next::GetAllMeshes(stage_);
     stats_ = Stats{};
     stats_.source_mesh_count = meshes_.size();
