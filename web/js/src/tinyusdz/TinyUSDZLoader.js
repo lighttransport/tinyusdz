@@ -153,7 +153,13 @@ function nextHeapView(native, desc) {
 
 function nextAnimationFrame() {
     return new Promise((resolve) => {
-        if (typeof requestAnimationFrame === 'function') {
+        // Dedicated workers may expose requestAnimationFrame, but it can be
+        // throttled to multi-second intervals when the owning page is not
+        // visible (headless/Xvfb and background tabs). Worker conversion only
+        // needs to yield to its task queue; reserve rAF for the window where it
+        // actually synchronizes UI progress with painting.
+        if (typeof document !== 'undefined' &&
+            typeof requestAnimationFrame === 'function') {
             requestAnimationFrame(() => resolve());
         } else {
             setTimeout(resolve, 0);
@@ -362,6 +368,10 @@ export class NextRenderSceneAdapter {
             animationCopyMs: 0,
             entityCopyMs: 0,
             meshCopyMs: 0,
+            nativeMeshGetMs: 0,
+            jsMeshCopyMs: 0,
+            meshUdimMs: 0,
+            meshYieldMs: 0,
             totalMs: 0
         };
         const archiveStart = now();
@@ -730,14 +740,22 @@ export class NextRenderSceneAdapter {
                         50 + Math.min(45, (i / Math.max(1, meshCount)) * 45),
                         `Materializing meshes ${i}/${meshCount}`,
                         { meshCurrent: i, meshTotal: meshCount });
+                    const yieldStart = now();
                     await yieldForProgress();
+                    timings.meshYieldMs += now() - yieldStart;
                 }
+                const meshGetStart = now();
                 const mesh = renderStream.getMesh(i);
+                timings.nativeMeshGetMs += now() - meshGetStart;
                 if (!mesh || mesh.error) {
                     throw new Error(mesh?.error || `RenderStream mesh ${i} failed`);
                 }
+                const meshJsCopyStart = now();
                 const copiedMesh = this._copyMesh(native, mesh, i);
+                timings.jsMeshCopyMs += now() - meshJsCopyStart;
+                const udimStart = now();
                 this._applyUDIMLayout(copiedMesh, archiveEntries);
+                timings.meshUdimMs += now() - udimStart;
                 meshes.push(copiedMesh);
             }
             report('mesh-copy', 95, `Materialized meshes ${meshCount}/${meshCount}`,

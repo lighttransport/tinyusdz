@@ -502,6 +502,62 @@ def Xform "World" {
   }
 });
 
+await testAsync('next reuses equivalent Unreal material copies without merging variants', async () => {
+  const mesh = (name, material, x) => `
+  def Mesh "${name}" {
+    rel material:binding = </World/${material}>
+    point3f[] points = [(${x}, 0, 0), (${x + 1}, 0, 0), (${x}, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }`;
+  const material = (name, roughness) => `
+  def Material "${name}" {
+    token outputs:surface.connect = </World/${name}/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor.connect = </World/${name}/Color.outputs:rgb>
+      float inputs:roughness = ${roughness}
+      token outputs:surface
+    }
+    def Shader "Color" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @shared.png@
+      color3f outputs:rgb
+    }
+    def Shader "Unreal" {
+      uniform asset info:unreal:sourceAsset = @/Game/Materials/MI_Shared.MI_Shared@
+      token outputs:out
+    }
+  }`;
+  const fixture = `#usda 1.0
+def Xform "World" {
+${mesh('First', 'MatA', 0)}
+${mesh('Second', 'MatB', 2)}
+${mesh('Variant', 'MatC', 4)}
+${material('MatA', 0.25)}
+${material('MatB', 0.25)}
+${material('MatC', 0.75)}
+}`;
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    stream.setMaterialDedup(true);
+    stream.setMeshMerge(true);
+    stream.setMeshMergeBakeTransform(true);
+    const result = stream.begin(new TextEncoder().encode(fixture));
+    assert.ok(result?.success, result?.error || stream.error());
+    const stats = stream.getStats();
+    assert.equal(stats.optimizedMaterials, 2,
+      'a scalar variation must remain a distinct material');
+    assert.equal(stats.materialIdentityHits, 1,
+      'the equivalent exported material copy should use the identity cache');
+    assert.equal(stats.materialIdentityMisses, 2);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
 await testAsync('next mesh merge preserves singleton mesh transforms', async () => {
   const fixture = `#usda 1.0
 def Xform "Parent" {
