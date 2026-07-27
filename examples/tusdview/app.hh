@@ -29,6 +29,7 @@
 #include "gui.hh"
 #include "load_control.hh"
 #include "parametric_tess.hh"
+#include "ptex_atlas.hh"
 #include "renderer.hh"
 #include "rt_camera.hh"
 #include "scene_loader.hh"
@@ -289,6 +290,7 @@ class App
   void applyLoaded(bool ok, bool progressive,
                    bool alreadyUploaded = false);  // upload + bind on main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
+  bool stepPtexResidency(double deadlineMs);
   void drainProgressiveLoad();   // consume loader-produced meshes on context thread
   void ensureWireAuxReady();     // make resident wire buffers complete atomically
   // Static shaded previews keep diagnostic topology in a delta-varint stream
@@ -555,6 +557,9 @@ class App
   size_t nextAux_{0};
   size_t nextTex_{0};
   size_t nextVolume_{0};  // UsdVol volumes uploaded so far
+  size_t nextPtexTexture_{0};
+  uint32_t nextPtexFace_{0};
+  std::vector<std::unique_ptr<PtexPhysicalPageCache>> ptexPhysicalCaches_;
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // Experimental threaded rendering. renderThreadActive_ is true only when
