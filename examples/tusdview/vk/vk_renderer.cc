@@ -3026,7 +3026,8 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
                                         VkDeviceMemory* outMem, VkImageView* outView,
                                         const std::vector<light3d::Image>* mips,
                                         bool srgb) {
-  if (img.width <= 0 || img.height <= 0 || img.data.empty()) return false;
+  if (img.width <= 0 || img.height <= 0) return false;
+  const bool allocateOnly = img.data.empty();
   // sRGB color textures (base color / emissive) upload as _SRGB so the sampler
   // linearizes them for the linear-space lighting (T11); normal / metal-rough
   // stay _UNORM. Mirrors the compressed path, which already keyed on srgb.
@@ -3036,7 +3037,7 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   // Precomputed mip chain (FinalizeDrawTextures): validate the level sizes;
   // fall back to a single level when anything looks off.
   uint32_t mipLevels = 1;
-  if (mips && !mips->empty()) {
+  if (!allocateOnly && mips && !mips->empty()) {
     bool valid = true;
     int w = img.width, h = img.height;
     for (const light3d::Image& m : *mips) {
@@ -3071,7 +3072,8 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
 
   VkBuffer staging = VK_NULL_HANDLE;
   VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingSrc,
+  if (!allocateOnly &&
+      !createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingSrc,
                         &staging, &stagingMem)) {
     return false;
   }
@@ -3088,8 +3090,8 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
   ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   if (vkCreateImage(device_, &ici, nullptr, outImg) != VK_SUCCESS) {
-    vkDestroyBuffer(device_, staging, nullptr);
-    vkFreeMemory(device_, stagingMem, nullptr);
+    if (staging) vkDestroyBuffer(device_, staging, nullptr);
+    if (stagingMem) vkFreeMemory(device_, stagingMem, nullptr);
     return false;
   }
   VkMemoryRequirements req;
@@ -3106,8 +3108,8 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
     if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
     vkDestroyImage(device_, *outImg, nullptr);
     *outImg = VK_NULL_HANDLE;
-    vkDestroyBuffer(device_, staging, nullptr);
-    vkFreeMemory(device_, stagingMem, nullptr);
+    if (staging) vkDestroyBuffer(device_, staging, nullptr);
+    if (stagingMem) vkFreeMemory(device_, stagingMem, nullptr);
     return false;
   }
 
@@ -3126,24 +3128,29 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                        &toDst);
-  std::vector<VkBufferImageCopy> regions(mipLevels);
-  VkDeviceSize offset = 0;
-  int lw = img.width, lh = img.height;
-  for (uint32_t l = 0; l < mipLevels; ++l) {
-    VkBufferImageCopy& region = regions[l];
-    region = {};
-    region.bufferOffset = offset;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = l;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {static_cast<uint32_t>(lw), static_cast<uint32_t>(lh), 1};
-    offset += static_cast<VkDeviceSize>(
-        l == 0 ? img.data.size() : (*mips)[l - 1].data.size());
-    lw = std::max(1, lw / 2);
-    lh = std::max(1, lh / 2);
+  if (!allocateOnly) {
+    std::vector<VkBufferImageCopy> regions(mipLevels);
+    VkDeviceSize offset = 0;
+    int lw = img.width, lh = img.height;
+    for (uint32_t l = 0; l < mipLevels; ++l) {
+      VkBufferImageCopy& region = regions[l];
+      region = {};
+      region.bufferOffset = offset;
+      region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      region.imageSubresource.mipLevel = l;
+      region.imageSubresource.layerCount = 1;
+      region.imageExtent = {static_cast<uint32_t>(lw),
+                            static_cast<uint32_t>(lh), 1};
+      offset += static_cast<VkDeviceSize>(
+          l == 0 ? img.data.size() : (*mips)[l - 1].data.size());
+      lw = std::max(1, lw / 2);
+      lh = std::max(1, lh / 2);
+    }
+    vkCmdCopyBufferToImage(cb, staging, *outImg,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           static_cast<uint32_t>(regions.size()),
+                           regions.data());
   }
-  vkCmdCopyBufferToImage(cb, staging, *outImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                         static_cast<uint32_t>(regions.size()), regions.data());
   VkImageMemoryBarrier toRead = toDst;
   toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
   toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -3154,8 +3161,8 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
                        1, &toRead);
   endOneShot(cb);
 
-  vkDestroyBuffer(device_, staging, nullptr);
-  vkFreeMemory(device_, stagingMem, nullptr);
+  if (staging) vkDestroyBuffer(device_, staging, nullptr);
+  if (stagingMem) vkFreeMemory(device_, stagingMem, nullptr);
 
   VkImageViewCreateInfo vci{};
   vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -4854,7 +4861,7 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     texSlotHeights_[static_cast<size_t>(slot)] = t.image.height;
     texRegionUpdatable_[static_cast<size_t>(slot)] =
         !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
-                !t.image.data.empty() &&
+                (!t.image.data.empty() || t.streamingMutable) &&
                 !(t.requestedCompressed &&
                   t.compressed.format != DrawCompressedFormat::None &&
                   !t.compressed.data.empty())

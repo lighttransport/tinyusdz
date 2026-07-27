@@ -8,6 +8,60 @@
 #include <numeric>
 
 namespace tusdview {
+
+PtexPhysicalPageCache::PtexPhysicalPageCache(uint32_t slotCount)
+    : slots_(slotCount) {}
+
+bool PtexPhysicalPageCache::Request(
+    uint32_t face, PtexPhysicalPageAssignment* assignment) {
+  if (!assignment || slots_.empty()) return false;
+  const auto found = byFace_.find(face);
+  if (found != byFace_.end()) {
+    Slot& slot = slots_[found->second];
+    slot.stamp = ++clock_;
+    assignment->slot = found->second;
+    assignment->evictedFace = ~uint32_t{0};
+    assignment->hit = true;
+    ++hits_;
+    return true;
+  }
+
+  ++misses_;
+  uint32_t selected = 0;
+  if (residentCount_ < slots_.size()) {
+    // Slots are populated in index order, which keeps tests and upload traces
+    // reproducible across standard-library implementations.
+    selected = residentCount_++;
+  } else {
+    for (uint32_t i = 1; i < slots_.size(); ++i) {
+      if (slots_[i].stamp < slots_[selected].stamp) selected = i;
+    }
+  }
+
+  Slot& slot = slots_[selected];
+  const uint32_t evicted = slot.face;
+  if (evicted != ~uint32_t{0}) {
+    byFace_.erase(evicted);
+    ++evictions_;
+  }
+  slot.face = face;
+  slot.stamp = ++clock_;
+  byFace_[face] = selected;
+  assignment->slot = selected;
+  assignment->evictedFace = evicted;
+  assignment->hit = false;
+  return true;
+}
+
+void PtexPhysicalPageCache::Clear() {
+  std::fill(slots_.begin(), slots_.end(), Slot{});
+  byFace_.clear();
+  residentCount_ = 0;
+  clock_ = 0;
+  hits_ = 0;
+  misses_ = 0;
+  evictions_ = 0;
+}
 namespace {
 
 float HalfToFloat(uint16_t h) {

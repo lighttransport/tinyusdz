@@ -11,8 +11,29 @@
 #include "external/miniz.h"
 
 namespace {
+
 int failures = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); ++failures; } } while (0)
+
+void TestPhysicalPageCache() {
+  tusdview::PtexPhysicalPageCache cache(2);
+  tusdview::PtexPhysicalPageAssignment a;
+  CHECK(cache.Request(10, &a) && !a.hit && a.slot == 0 &&
+        a.evictedFace == ~uint32_t{0});
+  CHECK(cache.Request(20, &a) && !a.hit && a.slot == 1);
+  CHECK(cache.Request(10, &a) && a.hit && a.slot == 0);
+  CHECK(cache.Request(30, &a) && !a.hit && a.slot == 1 &&
+        a.evictedFace == 20);
+  CHECK(cache.residentCount() == 2);
+  CHECK(cache.hits() == 1 && cache.misses() == 3 && cache.evictions() == 1);
+  cache.Clear();
+  CHECK(cache.residentCount() == 0 && cache.hits() == 0 &&
+        cache.misses() == 0 && cache.evictions() == 0);
+
+  tusdview::PtexPhysicalPageCache empty(0);
+  CHECK(!empty.Request(1, &a));
+  CHECK(!cache.Request(1, nullptr));
+}
 
 void Put16(std::vector<uint8_t>* out, uint16_t v) {
   out->push_back(static_cast<uint8_t>(v));
@@ -383,6 +404,7 @@ void RunMalformedTileTable() {
 }  // namespace
 
 int main() {
+  TestPhysicalPageCache();
   for (uint32_t type = 0; type < 4; ++type) RunType(type);
   RunType(0, 2);
   RunType(0, 3);

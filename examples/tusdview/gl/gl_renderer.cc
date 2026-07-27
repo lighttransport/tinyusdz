@@ -1733,8 +1733,12 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
           useCompressed ? t.compressed.mips.size() : t.mipImages.size();
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,
                       static_cast<GLint>(levels));
-    } else {
+    } else if (!t.streamingMutable) {
       glGenerateMipmap(GL_TEXTURE_2D);
+    } else {
+      // Mutable page atlases update level zero incrementally. Sampling stale
+      // generated levels would expose evicted pages around minification.
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
     }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
@@ -1745,7 +1749,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   gpu.width = t.image.width;
   gpu.height = t.image.height;
   gpu.regionUpdatable = !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
-                        !t.image.data.empty() &&
+                        (!t.image.data.empty() || t.streamingMutable) &&
                         !(t.requestedCompressed &&
                           t.compressed.format != DrawCompressedFormat::None &&
                           !t.compressed.data.empty());
