@@ -99,6 +99,8 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
     if (mesh.rasterDisplacementBaked) ++ptexDisplacedMeshes;
   size_t ptexBase = 0, ptexNormal = 0, ptexRoughness = 0, ptexMetallic = 0;
   size_t ptexOpacity = 0, ptexEmissive = 0, ptexDisplacement = 0;
+  size_t ptexOcclusion = 0, ptexSpecular = 0, ptexCoatWeight = 0;
+  size_t ptexCoatColor = 0, ptexCoatRoughness = 0;
   for (const DrawMaterialCPU& material : draw_.materials) {
     ptexBase += material.baseColorSample.isPtex ? 1u : 0u;
     ptexNormal += material.normalSample.isPtex ? 1u : 0u;
@@ -107,6 +109,11 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
     ptexOpacity += material.opacitySample.isPtex ? 1u : 0u;
     ptexEmissive += material.emissiveSample.isPtex ? 1u : 0u;
     ptexDisplacement += material.displacementSample.isPtex ? 1u : 0u;
+    ptexOcclusion += material.occlusionSample.isPtex ? 1u : 0u;
+    ptexSpecular += material.specularColorSample.isPtex ? 1u : 0u;
+    ptexCoatWeight += material.coatWeightSample.isPtex ? 1u : 0u;
+    ptexCoatColor += material.coatColorSample.isPtex ? 1u : 0u;
+    ptexCoatRoughness += material.coatRoughnessSample.isPtex ? 1u : 0u;
   }
   report["scene_stats"] = {
       {"meshes", draw_.meshes.size()},
@@ -127,7 +134,12 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
         {"metallic", ptexMetallic},
         {"opacity", ptexOpacity},
         {"emissive", ptexEmissive},
-        {"displacement", ptexDisplacement}}}};
+        {"displacement", ptexDisplacement},
+        {"occlusion", ptexOcclusion},
+        {"specular_color", ptexSpecular},
+        {"coat_weight", ptexCoatWeight},
+        {"coat_color", ptexCoatColor},
+        {"coat_roughness", ptexCoatRoughness}}}};
 
   size_t gpuUsed = 0, gpuTotal = 0;
   const bool haveGpuMemory =
@@ -162,12 +174,6 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   if (ptexFallbackTextures > 0) {
     degradationReasons.push_back(
         "Ptex atlas fallback used for one or more textures");
-  }
-  if (ptexNormal + ptexRoughness + ptexMetallic + ptexOpacity +
-          ptexEmissive >
-      0) {
-    degradationReasons.push_back(
-        "non-base Ptex material semantics require backend-specific page sampling");
   }
   report["degradation_reasons"] = std::move(degradationReasons);
 
