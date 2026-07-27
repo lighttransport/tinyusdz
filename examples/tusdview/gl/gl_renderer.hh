@@ -221,6 +221,8 @@ class GLRenderer final : public Renderer {
   GLint uMetallicPtexGrid_{-1}, uRoughnessPtexGrid_{-1};
   GLint uNormalPtexGrid_{-1}, uEmissivePtexGrid_{-1};
   GLint uOpacityPtexGrid_{-1}, uOcclusionPtexGrid_{-1};
+  GLint uSpecularColorPtexGrid_{-1}, uCoatWeightPtexGrid_{-1};
+  GLint uCoatColorPtexGrid_{-1}, uCoatRoughnessPtexGrid_{-1};
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
   GLint uUseSpecularWorkflow_{-1}, uOpenPbrSpecularModel_{-1};
