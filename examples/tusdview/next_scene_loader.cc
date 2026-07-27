@@ -694,7 +694,9 @@ bool MaterialUsesPtex(const DrawScene& draw, int materialId) {
   return m.baseColorSample.isPtex || m.metallicSample.isPtex ||
          m.roughnessSample.isPtex || m.normalSample.isPtex ||
          m.emissiveSample.isPtex || m.opacitySample.isPtex ||
-         m.displacementSample.isPtex;
+         m.occlusionSample.isPtex || m.specularColorSample.isPtex ||
+         m.coatWeightSample.isPtex || m.coatColorSample.isPtex ||
+         m.coatRoughnessSample.isPtex || m.displacementSample.isPtex;
 }
 
 // Expand a Ptex mesh to independent triangle corners and attach intrinsic quad
@@ -2865,6 +2867,11 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   syncPtex(&dm.normalSample, dm.normalTex);
   syncPtex(&dm.emissiveSample, dm.emissiveTex);
   syncPtex(&dm.opacitySample, dm.opacityTex);
+  syncPtex(&dm.occlusionSample, dm.occlusionTex);
+  syncPtex(&dm.specularColorSample, dm.specularColorTex);
+  syncPtex(&dm.coatWeightSample, dm.coatWeightTex);
+  syncPtex(&dm.coatColorSample, dm.coatColorTex);
+  syncPtex(&dm.coatRoughnessSample, dm.coatRoughnessTex);
   syncPtex(&dm.displacementSample, dm.displacementTex);
   // Scalar slots carry their channel on the sample too.
   if (dm.opacitySample.channel < 0) dm.opacitySample.channel = dm.opacityChannel;

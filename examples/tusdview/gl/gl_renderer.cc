@@ -244,6 +244,10 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uEmissivePtexGrid_ = glGetUniformLocation(program_, "uEmissivePtexGrid");
   uOpacityPtexGrid_ = glGetUniformLocation(program_, "uOpacityPtexGrid");
   uOcclusionPtexGrid_ = glGetUniformLocation(program_, "uOcclusionPtexGrid");
+  uSpecularColorPtexGrid_ = glGetUniformLocation(program_, "uSpecularColorPtexGrid");
+  uCoatWeightPtexGrid_ = glGetUniformLocation(program_, "uCoatWeightPtexGrid");
+  uCoatColorPtexGrid_ = glGetUniformLocation(program_, "uCoatColorPtexGrid");
+  uCoatRoughnessPtexGrid_ = glGetUniformLocation(program_, "uCoatRoughnessPtexGrid");
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
@@ -3282,6 +3286,18 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform2f(uOcclusionPtexGrid_,
                     static_cast<float>(mat.occlusionSample.ptexRectTexelOffset),
                     static_cast<float>(mat.occlusionSample.ptexFaceCount));
+        glUniform2f(uSpecularColorPtexGrid_,
+                    static_cast<float>(mat.specularColorSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.specularColorSample.ptexFaceCount));
+        glUniform2f(uCoatWeightPtexGrid_,
+                    static_cast<float>(mat.coatWeightSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.coatWeightSample.ptexFaceCount));
+        glUniform2f(uCoatColorPtexGrid_,
+                    static_cast<float>(mat.coatColorSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.coatColorSample.ptexFaceCount));
+        glUniform2f(uCoatRoughnessPtexGrid_,
+                    static_cast<float>(mat.coatRoughnessSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.coatRoughnessSample.ptexFaceCount));
         glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
         glUniform4fv(uNormalTexBias_, 1, mat.normalSample.bias);
         glUniform4fv(uEmissiveTexScale_, 1, mat.emissiveSample.scale);

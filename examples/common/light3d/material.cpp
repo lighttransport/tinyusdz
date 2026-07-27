@@ -544,6 +544,10 @@ uniform vec2 uNormalPtexGrid;
 uniform vec2 uEmissivePtexGrid;
 uniform vec2 uOpacityPtexGrid;
 uniform vec2 uOcclusionPtexGrid;
+uniform vec2 uSpecularColorPtexGrid;
+uniform vec2 uCoatWeightPtexGrid;
+uniform vec2 uCoatColorPtexGrid;
+uniform vec2 uCoatRoughnessPtexGrid;
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
@@ -686,10 +690,11 @@ float sampleOcclusion() {
 // the caller multiplies the two unconditionally.
 float sampleCoatScalar(sampler2D tex, bool has, bool isUdim, int udimRoute,
                        int udimSlot, vec3 uv0, vec3 uv1, int uvSet, int ch,
-                       vec4 scale, vec4 bias) {
+                       vec4 scale, vec4 bias, vec2 ptexGrid) {
     if (!has) return 1.0;
     vec2 uv = (uvSet == 1) ? vUV1 : vUV;
     uv = xformUv(uv, uv0, uv1);
+    uv = ptexUv(tex, uv, ptexGrid);
     vec4 texel = isUdim ? sampleRoutedUdim(udimRoute, udimSlot, uv, vec4(1.0))
                         : texture(tex, uv);
     vec4 c = texel * scale + bias;
@@ -698,10 +703,11 @@ float sampleCoatScalar(sampler2D tex, bool has, bool isUdim, int udimRoute,
 
 vec3 sampleCoatColor(sampler2D tex, bool has, bool isUdim, int udimRoute,
                      int udimSlot, vec3 uv0, vec3 uv1, int uvSet, vec4 scale,
-                     vec4 bias) {
+                     vec4 bias, vec2 ptexGrid) {
     if (!has) return vec3(1.0);
     vec2 uv = (uvSet == 1) ? vUV1 : vUV;
     uv = xformUv(uv, uv0, uv1);
+    uv = ptexUv(tex, uv, ptexGrid);
     vec4 texel = isUdim ? sampleRoutedUdim(udimRoute, udimSlot, uv, vec4(1.0))
                         : texture(tex, uv);
     return (texel * scale + bias).rgb;
@@ -976,7 +982,7 @@ void main() {
                               uAdvancedUdimSlots.x,
                               uSpecularColorUv0, uSpecularColorUv1,
                               uSpecularColorUvSet, uSpecularColorScale,
-                              uSpecularColorBias);
+                              uSpecularColorBias, uSpecularColorPtexGrid);
     }
     if (uRenderMode == 39) { fragColor = vec4(F0, 1.0); return; }
     if (uRenderMode == 40) {
@@ -990,7 +996,8 @@ void main() {
                                       uAdvancedUdimSlots.y,
                                       uCoatWeightUv0, uCoatWeightUv1,
                                       uCoatWeightUvSet, uCoatWeightChannel,
-                                      uCoatWeightScale, uCoatWeightBias),
+                                      uCoatWeightScale, uCoatWeightBias,
+                                      uCoatWeightPtexGrid),
                      0.0, 1.0);
     float cr = clamp(uCoatRoughness *
                      sampleCoatScalar(uCoatRoughnessTex, uHasCoatRoughnessTex,
@@ -1000,7 +1007,8 @@ void main() {
                                       uCoatRoughnessUv0, uCoatRoughnessUv1,
                                       uCoatRoughnessUvSet,
                                       uCoatRoughnessChannel,
-                                      uCoatRoughnessScale, uCoatRoughnessBias),
+                                      uCoatRoughnessScale, uCoatRoughnessBias,
+                                      uCoatRoughnessPtexGrid),
                      0.02, 1.0);
     vec3 coatTint = uCoatColor * sampleCoatColor(uCoatColorTex, uHasCoatColorTex,
                                                  uAdvancedTexIsUdim.z,
@@ -1009,7 +1017,8 @@ void main() {
                                                  uCoatColorUv0, uCoatColorUv1,
                                                  uCoatColorUvSet,
                                                  uCoatColorScale,
-                                                 uCoatColorBias);
+                                                 uCoatColorBias,
+                                                 uCoatColorPtexGrid);
     if (uRenderMode == 36) { fragColor = vec4(vec3(cw), 1.0); return; }
     if (uRenderMode == 37) { fragColor = vec4(coatTint, 1.0); return; }
     if (uRenderMode == 38) { fragColor = vec4(vec3(cr), 1.0); return; }
