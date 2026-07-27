@@ -2808,8 +2808,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
                &dm.coatWeight);
     scalarSlot(s.clearcoat_roughness, &dm.coatRoughnessTex,
                &dm.coatRoughnessSample, &dm.coatRoughness);
-    // PreviewSurface displacement was dropped entirely by this loader; only the
-    // OpenPBR branch below ever read it.
+    // Preserve PreviewSurface displacement through the same texture/constant
+    // slot path used by OpenPBR so raster and ray-traced backends agree.
     displacementSlot(s.displacement);
   } else if (rm.openpbr) {
     const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
