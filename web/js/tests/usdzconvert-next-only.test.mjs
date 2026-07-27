@@ -4,6 +4,7 @@
 // tinyusdz_next_64.js.
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import * as THREE from 'three';
 
 import { convertFolderToUSDZ, loadWasm, unpackUSDZ } from '../src/usdzconvert.js';
@@ -16,6 +17,9 @@ import {
   NextTextureLoadingManager,
   textureColorRole
 } from '../src/tinyusdz/NextRenderSceneUtils.js';
+
+const COMPOUND_ROTATION_DECAL_BYTES = new Uint8Array(fs.readFileSync(
+  new URL('../../../tests/usda/xform-rotatexyz-decal-001.usda', import.meta.url)));
 
 const SCENE_USDA = `#usda 1.0
 (
@@ -477,6 +481,115 @@ def Xform "Parent" {
   } finally {
     stream.end();
     stream.delete();
+  }
+});
+
+await testAsync('next mesh-only compound rotation keeps a decal on its wall', async () => {
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    const result = stream.begin(COMPOUND_ROTATION_DECAL_BYTES);
+    assert.ok(result?.success, result?.error || stream.error());
+    assert.equal(stream.meshCount(), 2);
+
+    let decal = null;
+    for (let i = 0; i < stream.meshCount(); ++i) {
+      const mesh = stream.getMesh(i);
+      if (mesh.primPath === '/Scene/Decal/Plane') decal = mesh;
+    }
+    assert.ok(decal, 'compound-rotated decal mesh should be present');
+
+    const expected = [
+      0, 2, 0, 0,
+      0, 0, 1, 0,
+      0.25, 0, 0, 0,
+      4, 0, 0, 1,
+    ];
+    assert.equal(decal.worldMatrix.length, expected.length);
+    for (let i = 0; i < expected.length; ++i) {
+      assert.ok(Math.abs(decal.worldMatrix[i] - expected[i]) < 1e-5,
+        `decal worldMatrix[${i}] should be ${expected[i]}, got ${decal.worldMatrix[i]}`);
+    }
+
+    const points = new Float32Array(native.HEAPU8.buffer,
+      Number(decal.points.ptr), Number(decal.points.length));
+    for (let i = 0; i < points.length; i += 3) {
+      const worldX = points[i] * decal.worldMatrix[0] +
+        points[i + 1] * decal.worldMatrix[4] +
+        points[i + 2] * decal.worldMatrix[8] + decal.worldMatrix[12];
+      assert.ok(Math.abs(worldX - 4) < 1e-5,
+        `decal vertex ${i / 3} should remain on wall plane x=4, got ${worldX}`);
+    }
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next merge-bake keeps compound-rotated decal vertices coplanar', async () => {
+  const stream = new native.RenderStream();
+  try {
+    stream.setMaterialDedup(true);
+    stream.setMeshMerge(true);
+    stream.setMeshMergeBakeTransform(true);
+    stream.setMeshOnly(true);
+    const result = stream.begin(COMPOUND_ROTATION_DECAL_BYTES);
+    assert.ok(result?.success, result?.error || stream.error());
+    assert.equal(stream.meshCount(), 1,
+      'anonymous wall and decal meshes should merge into one baked mesh');
+
+    const merged = stream.getMesh(0);
+    const points = new Float32Array(native.HEAPU8.buffer,
+      Number(merged.points.ptr), Number(merged.points.length));
+    assert.ok(points.length >= 24, 'merged wall and decal should retain both quads');
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (let i = 0; i < points.length; i += 3) {
+      minX = Math.min(minX, points[i]);
+      maxX = Math.max(maxX, points[i]);
+    }
+    assert.ok(Math.abs(minX - 4) < 1e-5 && Math.abs(maxX - 4) < 1e-5,
+      `merged wall/decal vertices should stay coplanar at x=4, got [${minX}, ${maxX}]`);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next loader optimization path preserves compound-rotated decal placement', async () => {
+  const loader = new TinyUSDZLoader({ suppressNativeInfoLogs: true });
+  await loader.init({ useMemory64: wasm64, useNextOnlyWasm: true });
+  const adapter = await new Promise((resolve, reject) => {
+    loader.parse(COMPOUND_ROTATION_DECAL_BYTES,
+      'xform-rotatexyz-decal-001.usda', resolve, reject, {
+        backend: 'next',
+        meshOnly: true,
+        materialDedup: true,
+        mergeMeshes: true,
+        mergeMeshesBakeTransform: true,
+        flattenRenderTree: false,
+      });
+  });
+  try {
+    assert.equal(adapter.numMeshes(), 1,
+      'loader optimization path should expose one merged wall/decal mesh');
+    const stats = adapter.getStats();
+    assert.equal(stats.sourceMeshes, 2);
+    assert.equal(stats.optimizedMeshes, 1);
+
+    const merged = adapter.getMeshCopy(0);
+    assert.ok(merged?.points instanceof Float32Array,
+      'loader adapter should copy merged vertices out of WASM memory');
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (let i = 0; i < merged.points.length; i += 3) {
+      minX = Math.min(minX, merged.points[i]);
+      maxX = Math.max(maxX, merged.points[i]);
+    }
+    assert.ok(Math.abs(minX - 4) < 1e-5 && Math.abs(maxX - 4) < 1e-5,
+      `loader wall/decal vertices should stay coplanar at x=4, got [${minX}, ${maxX}]`);
+  } finally {
+    adapter.delete();
   }
 });
 
