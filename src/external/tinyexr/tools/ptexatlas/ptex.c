@@ -36,6 +36,26 @@ static void planar_to_interleaved(uint8_t *dst, const uint8_t *src, size_t sampl
     for (uint32_t c = 0; c < channels; ++c)
       memcpy(dst + (p * channels + c) * bytes, src + (c * samples + p) * bytes, bytes);
 }
+static int undifference(uint8_t *p, size_t samples, uint32_t channels,
+                        tinyexr_ptex_type type) {
+  if (type == TINYEXR_PTEX_UINT8) {
+    for (uint32_t c = 0; c < channels; ++c)
+      for (size_t n = 1; n < samples; ++n)
+        p[(size_t)c * samples + n] =
+            (uint8_t)(p[(size_t)c * samples + n] + p[(size_t)c * samples + n - 1]);
+    return 1;
+  }
+  if (type == TINYEXR_PTEX_UINT16) {
+    for (uint32_t c = 0; c < channels; ++c) for (size_t n = 1; n < samples; ++n) {
+      size_t at = ((size_t)c * samples + n) * 2, prev = at - 2;
+      uint16_t v = (uint16_t)p[at] | (uint16_t)p[at + 1] << 8;
+      uint16_t q = (uint16_t)p[prev] | (uint16_t)p[prev + 1] << 8;
+      v = (uint16_t)(v + q); p[at] = (uint8_t)v; p[at + 1] = (uint8_t)(v >> 8);
+    }
+    return 1;
+  }
+  return 0;
+}
 
 int tinyexr_ptex_read_memory(const uint8_t *d, size_t z, uint32_t face, uint32_t level,
                              size_t max, tinyexr_ptex_face *out) {
@@ -84,20 +104,7 @@ int tinyexr_ptex_read_memory(const uint8_t *d, size_t z, uint32_t face, uint32_t
   free(headers); if (payload > block_size || compressed > block_size - payload) { free(face_info); return 0; }
   if (encoding == 1 || encoding == 2) {
     if (!inflate_block(block + payload, compressed, bytes, &planar)) { free(face_info); return 0; }
-    if (encoding == 2) {
-      size_t samples = (size_t)w * h;
-      if (i.type == TINYEXR_PTEX_UINT8) {
-        for (uint32_t c = 0; c < i.channels; ++c) for (size_t p = 1; p < samples; ++p)
-          planar[(size_t)c * samples + p] = (uint8_t)(planar[(size_t)c * samples + p] + planar[(size_t)c * samples + p - 1]);
-      } else if (i.type == TINYEXR_PTEX_UINT16) {
-        for (uint32_t c = 0; c < i.channels; ++c) for (size_t p = 1; p < samples; ++p) {
-          size_t at = ((size_t)c * samples + p) * 2, prev = at - 2;
-          uint16_t v = (uint16_t)planar[at] | (uint16_t)planar[at + 1] << 8;
-          uint16_t qv = (uint16_t)planar[prev] | (uint16_t)planar[prev + 1] << 8;
-          v = (uint16_t)(v + qv); planar[at] = (uint8_t)v; planar[at + 1] = (uint8_t)(v >> 8);
-        }
-      } else { free(face_info); free(planar); return 0; }
-    }
+    if (encoding == 2 && !undifference(planar, (size_t)w * h, i.channels, i.type)) { free(face_info); free(planar); return 0; }
     out->pixels = (uint8_t *)malloc(bytes); if (!out->pixels) { free(face_info); free(planar); return 0; }
     planar_to_interleaved(out->pixels, planar, (size_t)w * h, i.channels, bytes_per_sample); free(planar);
   } else if (encoding == 3) {
@@ -112,7 +119,13 @@ int tinyexr_ptex_read_memory(const uint8_t *d, size_t z, uint32_t face, uint32_t
       uint32_t cw = tw < w - tx * tw ? tw : w - tx * tw, ch = th < h - ty * th ? th : h - ty * th;
       size_t tile_bytes = (size_t)cw * ch * i.channels * bytes_per_sample; if (tile_cursor > compressed || ts > compressed - tile_cursor) { tinyexr_ptex_free(out); free(tile_headers); free(face_info); return 0; }
       uint8_t *tile = 0; if (te == 0) { size_t value = i.channels * bytes_per_sample; if (ts < value) { tinyexr_ptex_free(out); free(tile_headers); free(face_info); return 0; } tile = (uint8_t *)malloc(tile_bytes); for (size_t p = 0; p < (size_t)cw * ch; ++p) memcpy(tile + p * value, block + payload + tile_cursor, value); }
-      else if ((te == 1 || te == 2) && inflate_block(block + payload + tile_cursor, ts, tile_bytes, &tmp)) { tile = (uint8_t *)malloc(tile_bytes); if (tile) planar_to_interleaved(tile, tmp, (size_t)cw * ch, i.channels, bytes_per_sample); free(tmp); tmp = 0; }
+      else if ((te == 1 || te == 2) && inflate_block(block + payload + tile_cursor, ts, tile_bytes, &tmp)) {
+        tile = (uint8_t *)malloc(tile_bytes);
+        if (tile && (te != 2 || undifference(tmp, (size_t)cw * ch, i.channels, i.type)))
+          planar_to_interleaved(tile, tmp, (size_t)cw * ch, i.channels, bytes_per_sample);
+        else { free(tile); tile = 0; }
+        free(tmp); tmp = 0;
+      }
       if (!tile) { tinyexr_ptex_free(out); free(tile_headers); free(face_info); return 0; }
       size_t pixel_bytes = (size_t)i.channels * bytes_per_sample; for (uint32_t y = 0; y < ch; ++y) memcpy(out->pixels + ((size_t)(ty * th + y) * w + tx * tw) * pixel_bytes, tile + (size_t)y * cw * pixel_bytes, (size_t)cw * pixel_bytes); free(tile); tile_cursor += ts;
     }
