@@ -40,6 +40,7 @@
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/openpbr-params-converter.hh"
 #include "tydra/next/texture-cache.hh"  // shared decode + size cap + byte budget
+#include "ptx-loader.hh"                  // lazy Ptex metadata validation
 #include "tydra/next/scene-access.hh"  // ComputeWorldTransform
 #include "value-types.hh"              // value::matrix4d / quatf / double3
 #include "xform.hh"                    // to_matrix3x3 / to_matrix / inverse
@@ -2000,6 +2001,14 @@ bool EndsWithKtx2(const std::string& s) {
   return e == ".ktx2";
 }
 
+bool EndsWithPtx(const std::string& s) {
+  if (s.size() < 4) return false;
+  return s[s.size() - 4] == '.' &&
+         std::tolower(static_cast<unsigned char>(s[s.size() - 3])) == 'p' &&
+         std::tolower(static_cast<unsigned char>(s[s.size() - 2])) == 't' &&
+         std::tolower(static_cast<unsigned char>(s[s.size() - 1])) == 'x';
+}
+
 // Resolve `rel` (a companion named relative to the same layer as the texture)
 // against an already-resolved sibling asset path.
 std::string ResolveSiblingAsset(const std::string& resolved,
@@ -2173,6 +2182,26 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
 
   DrawTextureCPU dt;
   bool built = false;
+  if (EndsWithPtx(asset) && tc.decoder) {
+    std::vector<uint8_t> bytes;
+    ::tinyusdz::ptx::Reader ptx;
+    std::string ptxErr;
+    if (tc.decoder->ReadAssetBytes(asset, &bytes) &&
+        ::tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &ptx,
+                                            &ptxErr)) {
+      const ::tinyusdz::ptx::Info& pi = ptx.info();
+      dt.isPtex = true;
+      dt.assetIdentifier = asset;
+      dt.ptexFaces = pi.faces;
+      dt.ptexLevels = pi.levels;
+      dt.ptexChannels = pi.channels;
+      for (const ::tinyusdz::ptx::FaceInfo& fi : pi.faceInfo) {
+        dt.ptexMaxFaceEdge = std::max(dt.ptexMaxFaceEdge,
+                                      std::max(fi.width(), fi.height()));
+      }
+      built = true;
+    }
+  }
 #if defined(TUSDVIEW_WITH_TEXTOOLS)
   // Kept-compressed KTX2 passthrough. The compressed companion is named by the
   // `inputs:file` customData `ktx2` hint (RenderTexture::ktx2_hint), or the

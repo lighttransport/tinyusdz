@@ -1102,6 +1102,7 @@ void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
   ClassifyTextureUsage(out);
   size_t n = 0, raw = 0, comp = 0;
   for (DrawTextureCPU& tex : out->textures) {
+    if (tex.isPtex) continue;
     if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
     tex.requestedCompressed = true;
     CompressTexture(&tex, opt.compression, opt.caps, tex.isNormalMap);
@@ -1286,6 +1287,7 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
     return true;
   };
   for (DrawTextureCPU& tex : out->textures) {
+    if (tex.isPtex) continue;
     // Kept-compressed KTX2 passthrough: the compressed payload is final and
     // `image` is empty, so there is nothing to build a mip chain from (the KTX2
     // level 0 is uploaded directly; multi-level KTX2 mips are a follow-up).
