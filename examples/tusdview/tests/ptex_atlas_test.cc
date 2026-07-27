@@ -52,7 +52,9 @@ void PutSample(std::vector<uint8_t>* out, uint32_t type, float value) {
 std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
                                    bool verticalGradient = false,
                                    uint32_t encoding = 1,
-                                   bool constantFace0 = false) {
+                                   bool constantFace0 = false,
+                                   bool constantTiles = false,
+                                   bool malformedTileTable = false) {
   std::vector<uint8_t> faceInfo;
   for (uint32_t face = 0; face < 2; ++face) {
     faceInfo.push_back(face == 0 ? 2 : 1);  // 4x2, then 2x4
@@ -105,8 +107,17 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
       const std::vector<uint8_t> compressed = Deflate(planar);
       if (encoding == 3) {
         std::vector<uint8_t> tileHeader;
-        Put32(&tileHeader,
-              (1u << 30) | static_cast<uint32_t>(compressed.size()));
+        std::vector<uint8_t> tilePayload;
+        if (constantTiles) {
+          for (uint16_t channel = 0; channel < channels; ++channel)
+            PutSample(&tilePayload, dataType,
+                      channel == 0 ? (face == 0 ? 0.25f : 0.75f) : 0.5f);
+          Put32(&tileHeader, static_cast<uint32_t>(tilePayload.size()));
+        } else {
+          tilePayload = compressed;
+          Put32(&tileHeader,
+                (1u << 30) | static_cast<uint32_t>(tilePayload.size()));
+        }
         const std::vector<uint8_t> tileHeaderZ = Deflate(tileHeader);
         std::vector<uint8_t> tiled;
         uint8_t logW = 0, logH = 0;
@@ -114,9 +125,10 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
         while ((1u << logH) < height) ++logH;
         tiled.push_back(logW);
         tiled.push_back(logH);
-        Put32(&tiled, static_cast<uint32_t>(tileHeaderZ.size()));
+        Put32(&tiled, static_cast<uint32_t>(tileHeaderZ.size()) +
+                          (malformedTileTable ? 1024u : 0u));
         tiled.insert(tiled.end(), tileHeaderZ.begin(), tileHeaderZ.end());
-        tiled.insert(tiled.end(), compressed.begin(), compressed.end());
+        tiled.insert(tiled.end(), tilePayload.begin(), tilePayload.end());
         Put32(&headers,
               (3u << 30) | static_cast<uint32_t>(tiled.size()));
         payload.insert(payload.end(), tiled.begin(), tiled.end());
@@ -252,6 +264,15 @@ void RunType(uint32_t type, uint16_t channels = 1) {
     CHECK(tightAtlas.data.size() <= tight.maxAtlasBytes);
     CHECK(tightStats.downsampledFaces > 0);
   }
+  if (type == 0 && channels == 4) {
+    light3d::Image srgbAtlas;
+    std::vector<tusdview::DrawPtexFaceRectCPU> srgbRects;
+    CHECK(tusdview::BuildPtexAtlas(reader, options, true, &srgbAtlas,
+                                   &srgbRects, nullptr, &error));
+    // Atlas construction preserves source samples. Color-space conversion is a
+    // GPU format choice; alpha and the embedded rectangle table stay linear.
+    CHECK(srgbAtlas.data == atlas.data);
+  }
 }
 
 void RunOrientation() {
@@ -323,6 +344,42 @@ void RunConstantFace() {
   CHECK(std::fabs(tusdview::SampleTextureRed(scene, 0, 0.5f, 0.5f, 1) -
                   0.75f) < 0.02f);
 }
+
+void RunConstantTiles() {
+  const std::vector<uint8_t> bytes =
+      SyntheticPtex(0, 3, false, 3, false, true, false);
+  tinyusdz::ptx::Reader reader;
+  std::string error;
+  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+                                          &error));
+  tusdview::PtexAtlasOptions options;
+  options.maxAtlasEdge = 64;
+  light3d::Image atlas;
+  std::vector<tusdview::DrawPtexFaceRectCPU> rects;
+  CHECK(tusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
+                                 nullptr, &error));
+  CHECK(rects.size() == 2);
+  if (rects.empty()) return;
+  const size_t p = (size_t(rects[0].y) * atlas.width + rects[0].x) * 4u;
+  CHECK(std::abs(int(atlas.data[p]) - 64) <= 1);
+  CHECK(std::abs(int(atlas.data[p + 1]) - 128) <= 1);
+}
+
+void RunMalformedTileTable() {
+  const std::vector<uint8_t> bytes =
+      SyntheticPtex(0, 1, false, 3, false, false, true);
+  tinyusdz::ptx::Reader reader;
+  std::string error;
+  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+                                          &error));
+  tusdview::PtexAtlasOptions options;
+  options.maxAtlasEdge = 64;
+  light3d::Image atlas;
+  std::vector<tusdview::DrawPtexFaceRectCPU> rects;
+  CHECK(!tusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
+                                  nullptr, &error));
+  CHECK(error.find("tile") != std::string::npos);
+}
 }  // namespace
 
 int main() {
@@ -334,6 +391,8 @@ int main() {
   RunEncoding(2);
   RunEncoding(3);
   RunConstantFace();
+  RunConstantTiles();
+  RunMalformedTileTable();
   if (failures) return 1;
   std::printf("OK: rectangular UInt8/UInt16/Half/Float Ptex atlases\n");
   return 0;
