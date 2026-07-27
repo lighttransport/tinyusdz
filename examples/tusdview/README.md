@@ -394,7 +394,7 @@ Tools (`tools/list` for schemas):
 | `load_payloads {paths?}` | load deferred USD payloads (and deferred references under `--defer-references`); omit `paths` = all; async, poll `get_scene_info`, which reports `deferred_payloads` (each with an `arc` field) |
 | `timeline {op, time?}` | animation playback: `op` = `play`/`pause`/`stop`/`seek {time}`; async re-eval, poll `get_scene_info` (reports `has_animation`/`time`/`start_time`/`end_time`/`fps`/`playing`) |
 | `render_settings {mode?, grid?}` | change resettable render mode/grid state between captures without restarting the viewer |
-| `screenshot {path}` | capture the current viewport as PNG or PPM |
+| `screenshot {path}` | capture the current viewport as PNG, JPEG, or PPM (selected by extension) |
 
 Example:
 
