@@ -238,6 +238,12 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uHasFaceId_ = glGetUniformLocation(program_, "uHasFaceId");
   uBasePtex_ = glGetUniformLocation(program_, "uBasePtex");
   uBasePtexGrid_ = glGetUniformLocation(program_, "uBasePtexGrid");
+  uMetallicPtexGrid_ = glGetUniformLocation(program_, "uMetallicPtexGrid");
+  uRoughnessPtexGrid_ = glGetUniformLocation(program_, "uRoughnessPtexGrid");
+  uNormalPtexGrid_ = glGetUniformLocation(program_, "uNormalPtexGrid");
+  uEmissivePtexGrid_ = glGetUniformLocation(program_, "uEmissivePtexGrid");
+  uOpacityPtexGrid_ = glGetUniformLocation(program_, "uOpacityPtexGrid");
+  uOcclusionPtexGrid_ = glGetUniformLocation(program_, "uOcclusionPtexGrid");
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
@@ -3258,6 +3264,24 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform2f(uBasePtexGrid_,
                    static_cast<float>(mat.baseColorSample.ptexRectTexelOffset),
                    static_cast<float>(mat.baseColorSample.ptexFaceCount));
+        glUniform2f(uMetallicPtexGrid_,
+                    static_cast<float>(mat.metallicSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.metallicSample.ptexFaceCount));
+        glUniform2f(uRoughnessPtexGrid_,
+                    static_cast<float>(mat.roughnessSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.roughnessSample.ptexFaceCount));
+        glUniform2f(uNormalPtexGrid_,
+                    static_cast<float>(mat.normalSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.normalSample.ptexFaceCount));
+        glUniform2f(uEmissivePtexGrid_,
+                    static_cast<float>(mat.emissiveSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.emissiveSample.ptexFaceCount));
+        glUniform2f(uOpacityPtexGrid_,
+                    static_cast<float>(mat.opacitySample.ptexRectTexelOffset),
+                    static_cast<float>(mat.opacitySample.ptexFaceCount));
+        glUniform2f(uOcclusionPtexGrid_,
+                    static_cast<float>(mat.occlusionSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.occlusionSample.ptexFaceCount));
         glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
         glUniform4fv(uNormalTexBias_, 1, mat.normalSample.bias);
         glUniform4fv(uEmissiveTexScale_, 1, mat.emissiveSample.scale);

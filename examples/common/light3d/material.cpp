@@ -538,6 +538,12 @@ uniform bool uHasFaceId;
 // supplies the record for the current triangle; UVs are intrinsic face-local.
 uniform bool uBasePtex;
 uniform vec2 uBasePtexGrid; // rectangle texel offset, face count
+uniform vec2 uMetallicPtexGrid;
+uniform vec2 uRoughnessPtexGrid;
+uniform vec2 uNormalPtexGrid;
+uniform vec2 uEmissivePtexGrid;
+uniform vec2 uOpacityPtexGrid;
+uniform vec2 uOcclusionPtexGrid;
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
@@ -589,6 +595,28 @@ vec4 sampleRoutedUdim(int route, int slot, vec2 uv, vec4 missing) {
 
 vec2 xformUv(vec2 uv, vec3 row0, vec3 row1) {
     return vec2(dot(vec3(uv, 1.0), row0), dot(vec3(uv, 1.0), row1));
+}
+
+vec2 ptexUv(sampler2D tex, vec2 uv, vec2 grid) {
+    if (grid.y <= 0.5 || !uHasFaceId) return uv;
+    int face = int(texelFetch(uFaceIdTex, uFaceBase + gl_PrimitiveID).r);
+    int count = int(grid.y + 0.5);
+    if (face < 0 || face >= count) return uv;
+    ivec2 size = textureSize(tex, 0);
+    int base = int(grid.x + 0.5) + face * 8;
+    uint value[4];
+    for (int component = 0; component < 4; ++component) {
+        int lo = base + component * 2;
+        ivec2 p0 = ivec2(lo % size.x, lo / size.x);
+        ivec2 p1 = ivec2((lo + 1) % size.x, (lo + 1) / size.x);
+        value[component] = uint(texelFetch(tex, p0, 0).a * 255.0 + 0.5) |
+                           (uint(texelFetch(tex, p1, 0).a * 255.0 + 0.5) << 8u);
+    }
+    if (value[2] == 0u || value[3] == 0u) return uv;
+    vec2 t = clamp(uv, 0.0, 1.0);
+    vec2 px = vec2(value[0], value[1]) +
+              vec2(t.x, 1.0 - t.y) * vec2(value[2] - 1u, value[3] - 1u);
+    return (px + vec2(0.5)) / vec2(size);
 }
 
 // Linear -> sRGB OETF for the final shaded output. sRGB base-color textures are
@@ -645,6 +673,7 @@ float sampleOcclusion() {
     if (!uHasOcclusionTex) return 1.0;
     vec2 uv = (uOcclusionUvSet == 1) ? vUV1 : vUV;
     vec2 tuv = xformUv(uv, uOcclusionUv0, uOcclusionUv1);
+    tuv = ptexUv(uOcclusionTex, tuv, uOcclusionPtexGrid);
     vec4 c = uOcclusionTexIsUdim
         ? sampleUdim(uOcclusionUdimTex, uOcclusionUdimSlot, tuv, vec4(1.0))
         : texture(uOcclusionTex, tuv);
@@ -753,6 +782,7 @@ void main() {
     }
     if (uHasMetallicTex) {
         vec2 uv = xformUv(uUvSet.y == 1 ? vUV1 : vUV, uMetallicUv0, uMetallicUv1);
+        uv = ptexUv(uMetallicTex, uv, uMetallicPtexGrid);
         vec4 texel = uMetallicTexIsUdim
                       ? sampleUdim(uMetallicUdimTex, uUdimSlots.y, uv, vec4(1.0))
                       : texture(uMetallicTex, uv);
@@ -760,6 +790,7 @@ void main() {
     }
     if (uHasRoughnessTex) {
         vec2 uv = xformUv(uRoughnessUvSet == 1 ? vUV1 : vUV, uRoughnessUv0, uRoughnessUv1);
+        uv = ptexUv(uRoughnessTex, uv, uRoughnessPtexGrid);
         vec4 texel = uRoughnessTexIsUdim
                       ? sampleUdim(uRoughnessUdimTex, uRoughnessUdimSlot, uv, vec4(1.0))
                       : texture(uRoughnessTex, uv);
@@ -767,6 +798,7 @@ void main() {
     }
     if (uHasEmissiveTex) {
         vec2 uv = xformUv(uUvSet.w == 1 ? vUV1 : vUV, uEmissiveUv0, uEmissiveUv1);
+        uv = ptexUv(uEmissiveTex, uv, uEmissivePtexGrid);
         vec4 texel = uEmissiveTexIsUdim
                          ? sampleUdim(uEmissiveUdimTex, uUdimSlots.w, uv,
                                       vec4(1.0, 0.0, 1.0, 1.0))
@@ -779,6 +811,7 @@ void main() {
                  : normalize(vNormal);
     if (uHasNormalTex) {
         vec2 uv = xformUv(uUvSet.z == 1 ? vUV1 : vUV, uNormalUv0, uNormalUv1);
+        uv = ptexUv(uNormalTex, uv, uNormalPtexGrid);
         vec3 tangentNormal = ((uNormalTexIsUdim
                                   ? sampleUdim(uNormalUdimTex, uUdimSlots.z, uv,
                                                vec4(0.5, 0.5, 1.0, 1.0))
@@ -822,6 +855,7 @@ void main() {
     if (uHasOpacityTex) {
         vec2 uv = xformUv(uOpacityUvSet == 1 ? vUV1 : vUV,
                           uOpacityUv0, uOpacityUv1);
+        uv = ptexUv(uOpacityTex, uv, uOpacityPtexGrid);
         // Missing opacity UDIM tiles are opaque, not magenta/channel-dependent.
         vec4 ot = uOpacityTexIsUdim
                       ? sampleUdim(uOpacityUdimTex, uOpacityUdimSlot, uv, vec4(1.0))
