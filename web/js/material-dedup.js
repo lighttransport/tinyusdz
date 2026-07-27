@@ -36,6 +36,7 @@ import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { dedupMaterialsByContent, batchByMaterial } from 'tinyusdz/MeshBatching.js';
 import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
+import { parseUSDZEntries } from './src/usdzconvert.js';
 import {
 	buildNextThreeNode,
 	isNextScene,
@@ -79,6 +80,7 @@ let conversionWorker = null;
 let conversionWorkerSeq = 0;
 let conversionWorkerActiveBytes = null;
 const CONVERSION_WORKER_URL = new URL('./material-dedup.worker.js', import.meta.url);
+const IMAGE_RE = /\.(png|jpg|jpeg|webp|gif|bmp|tif|tiff|exr|hdr|avif)$/i;
 let activeProgress = {
 	visible: false,
 	stage: '',
@@ -666,11 +668,54 @@ function resetConversionWorkerCache() {
 	}
 }
 
-function makeWorkerNextScene(payload = {}) {
-	const archiveEntries = new Map(payload.archiveEntries || []);
+function collectWorkerTexturePaths(meshes) {
+	const paths = new Set();
+	const add = (path) => {
+		const key = normWorkerTexturePath(path);
+		if (key) paths.add(key);
+	};
+	for (const mesh of meshes || []) {
+		for (const path of Object.values(mesh.texturePaths || {})) add(path);
+		for (const material of mesh.materials || []) {
+			for (const path of Object.values(material.texturePaths || {})) add(path);
+		}
+	}
+	return paths;
+}
+
+function makeWorkerArchiveEntries(sourceBytes, meshes) {
+	const archiveEntries = new Map();
+	if (!sourceBytes) return archiveEntries;
+	const referenced = collectWorkerTexturePaths(meshes);
+	const isReferenced = (key) => {
+		if (referenced.has(key)) return true;
+		for (const ref of referenced) {
+			if (key.endsWith('/' + ref) || ref.endsWith('/' + key)) return true;
+		}
+		return false;
+	};
+	for (const entry of parseUSDZEntries(sourceBytes)) {
+		const key = normWorkerTexturePath(entry.name);
+		if (!key || !IMAGE_RE.test(key)) continue;
+		if (isReferenced(key)) {
+			// USDZ entries are STORE-only views into sourceBytes. Retaining those
+			// views avoids copying and transferring the full texture payload from
+			// the conversion worker before the first frame can be built.
+			archiveEntries.set(key, entry.data);
+		}
+	}
+	return archiveEntries;
+}
+
+function makeWorkerNextScene(payload = {}, sourceBytes = null,
+		includeArchiveEntries = false) {
+	const meshes = payload.meshes || [];
+	const archiveEntries = includeArchiveEntries
+		? makeWorkerArchiveEntries(sourceBytes, meshes)
+		: new Map();
 	const materialKeys = new Set();
 	const textureKeys = new Set();
-	for (const mesh of payload.meshes || []) {
+	for (const mesh of meshes) {
 		if (mesh.materialKey) materialKeys.add(mesh.materialKey);
 		for (const path of Object.values(mesh.texturePaths || {})) {
 			if (path) textureKeys.add(normWorkerTexturePath(path));
@@ -686,7 +731,7 @@ function makeWorkerNextScene(payload = {}) {
 		__backend: 'next',
 		__workerConverted: true,
 		filename: payload.filename || '',
-		meshes: payload.meshes || [],
+		meshes,
 		stats: payload.stats || {},
 		sceneMetadata: {
 			upAxis: payload.sceneMetadata?.upAxis || 'Y',
@@ -784,7 +829,8 @@ function parseNextInWorker(bytes, name, options, progressOptions, report) {
 				report(msg.info || {});
 			} else if (msg.type === 'result') {
 				cleanup();
-				resolve(makeWorkerNextScene(msg.payload));
+				resolve(makeWorkerNextScene(msg.payload, bytes,
+					!!options.returnArchiveEntries));
 			} else if (msg.type === 'error') {
 				cleanup();
 				const error = new Error(msg.error || 'worker conversion failed');
