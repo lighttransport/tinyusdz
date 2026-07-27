@@ -1148,14 +1148,15 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[16 * 4 + 3] = mat.metallicTexBias;
   dst[17 * 4 + 0] = mat.roughnessTexScale;
   dst[17 * 4 + 1] = mat.roughnessTexBias;
-  // Ptex displacement is baked with a texture-local face id before raster
-  // upload. Disable the vertex-stage sample so the baked surface is not moved a
-  // second time (the vertex stage has no primitive id with which to select a
-  // Ptex face).
-  dst[17 * 4 + 2] = mat.displacementSample.isPtex
+  // Ptex and UDIM displacement are baked before raster upload. Disable the
+  // vertex-stage sample so the baked surface is not moved a second time (the
+  // vertex stage cannot select a Ptex face and the CPU bake handles both paths).
+  dst[17 * 4 + 2] = (mat.displacementSample.isPtex ||
+                     mat.displacementSample.isUdim)
                          ? 0.0f
                          : mat.displacementTexScale;
-  dst[17 * 4 + 3] = mat.displacementSample.isPtex
+  dst[17 * 4 + 3] = (mat.displacementSample.isPtex ||
+                     mat.displacementSample.isUdim)
                          ? 0.0f
                          : mat.displacementTexBias;
   // Per-slot UV set. Displacement stays on uv0: it is sampled in the vertex /
