@@ -28,15 +28,19 @@ int tinyexr_atlas_pack_rgba8(const tinyexr_atlas_image *tiles, size_t count,
   for (size_t i = 0; i < count; ++i) {
     const tinyexr_atlas_image *t = &tiles[i];
     uint32_t ox = (uint32_t)(i % c) * edge, oy = (uint32_t)(i / c) * edge;
-    if (!t->pixels || t->channels != 4 || !t->width || !t->height) { tinyexr_atlas_free(atlas); return 0; }
+    if (!t->pixels || t->channels < 1 || t->channels > 4 || !t->width || !t->height) { tinyexr_atlas_free(atlas); return 0; }
     for (uint32_t y = 0; y < edge; ++y) {
       uint32_t sy = (uint32_t)(((uint64_t)y * t->height) / edge);
       if (sy >= t->height) sy = t->height - 1;
       for (uint32_t x = 0; x < edge; ++x) {
         uint32_t sx = (uint32_t)(((uint64_t)x * t->width) / edge);
         if (sx >= t->width) sx = t->width - 1;
-        memcpy(atlas->pixels + ((size_t)(oy+y)*atlas->width + ox+x)*4,
-               t->pixels + ((size_t)sy*t->width + sx)*4, 4);
+        const uint8_t *src = t->pixels + ((size_t)sy*t->width + sx)*t->channels;
+        uint8_t *dst = atlas->pixels + ((size_t)(oy+y)*atlas->width + ox+x)*4;
+        dst[0] = src[0];
+        dst[1] = t->channels > 1 ? src[1] : src[0];
+        dst[2] = t->channels > 2 ? src[2] : src[0];
+        dst[3] = t->channels > 3 ? src[3] : 255;
       }
     }
   }
