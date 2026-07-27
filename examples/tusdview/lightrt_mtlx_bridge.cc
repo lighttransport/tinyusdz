@@ -1241,6 +1241,19 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[55 * 4 + 1] = mat.displacementSample.isUdim
                          ? static_cast<float>(mat.displacementTex)
                          : -1.0f;
+  // Ptex base-color atlas: (columns, rows, tile edge, enabled). The face id
+  // itself is fetched from the per-triangle source-face SSBO in the fragment
+  // shader, so no per-vertex duplication is needed.
+  dst[56 * 4 + 0] = mat.baseColorSample.isPtex
+                         ? static_cast<float>(mat.baseColorSample.ptexAtlasCols)
+                         : 0.0f;
+  dst[56 * 4 + 1] = mat.baseColorSample.isPtex
+                         ? static_cast<float>(mat.baseColorSample.ptexAtlasRows)
+                         : 0.0f;
+  dst[56 * 4 + 2] = mat.baseColorSample.isPtex
+                         ? static_cast<float>(mat.baseColorSample.ptexTileEdge)
+                         : 0.0f;
+  dst[56 * 4 + 3] = mat.baseColorSample.isPtex ? 1.0f : 0.0f;
 }
 
 }  // namespace tusdview

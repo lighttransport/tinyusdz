@@ -2049,6 +2049,61 @@ bool DecodeNextPtexFallback(NextTexCache& tc, const std::string& asset,
   return true;
 }
 
+bool NextResizeImage(light3d::Image* img, int w, int h, bool srgb);
+
+bool BuildPtexAtlas(const ::tinyusdz::ptx::Reader& reader, uint32_t tileEdge,
+                    light3d::Image* out, uint16_t* colsOut,
+                    uint16_t* rowsOut) {
+  const auto& pi = reader.info();
+  if (!out || !colsOut || !rowsOut || pi.faces == 0 || tileEdge == 0 ||
+      pi.dataType != ::tinyusdz::ptx::DataType::UInt8 || pi.channels == 0 ||
+      pi.channels > 4) return false;
+  const uint32_t cols = std::max(1u, static_cast<uint32_t>(std::ceil(std::sqrt(
+      static_cast<double>(pi.faces)))));
+  const uint32_t rows = (pi.faces + cols - 1u) / cols;
+  if (cols > 255u || rows > 255u) return false;
+  const size_t width = size_t(cols) * tileEdge;
+  const size_t height = size_t(rows) * tileEdge;
+  if (width > 16384 || height > 16384) return false;
+  out->width = static_cast<int>(width);
+  out->height = static_cast<int>(height);
+  out->channels = 4;
+  out->data.assign(width * height * 4, 255);
+  for (uint32_t face = 0; face < pi.faces; ++face) {
+    ::tinyusdz::ptx::FaceImage fi;
+    std::string err;
+    if (!reader.ReadFace(face, 0, 64ull * 1024ull * 1024ull, &fi, &err)) return false;
+    light3d::Image page;
+    page.width = static_cast<int>(fi.width);
+    page.height = static_cast<int>(fi.height);
+    page.channels = 4;
+    const size_t np = size_t(fi.width) * fi.height;
+    page.data.assign(np * 4, 255);
+    for (size_t i = 0; i < np; ++i) {
+      const uint8_t* s = fi.data.data() + i * fi.channels;
+      uint8_t* d = page.data.data() + i * 4;
+      d[0] = s[0];
+      d[1] = fi.channels > 1 ? s[1] : s[0];
+      d[2] = fi.channels > 2 ? s[2] : s[0];
+      d[3] = fi.channels > 3 ? s[3] : 255;
+    }
+    if ((page.width != static_cast<int>(tileEdge) ||
+         page.height != static_cast<int>(tileEdge)) &&
+        !NextResizeImage(&page, static_cast<int>(tileEdge),
+                         static_cast<int>(tileEdge), false)) return false;
+    const uint32_t ox = (face % cols) * tileEdge;
+    const uint32_t oy = (face / cols) * tileEdge;
+    for (uint32_t y = 0; y < tileEdge; ++y) {
+      std::memcpy(out->data.data() + (size_t(oy + y) * width + ox) * 4,
+                  page.data.data() + size_t(y) * tileEdge * 4,
+                  size_t(tileEdge) * 4);
+    }
+  }
+  *colsOut = static_cast<uint16_t>(cols);
+  *rowsOut = static_cast<uint16_t>(rows);
+  return true;
+}
+
 int NextWrapToDraw(tydn::WrapMode w) {
   switch (w) {
     case tydn::WrapMode::Clamp: return static_cast<int>(WrapMode::ClampToEdge);
@@ -2215,7 +2270,13 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
         dt.ptexMaxFaceEdge = std::max(dt.ptexMaxFaceEdge,
                                       std::max(fi.width(), fi.height()));
       }
-      DecodeNextPtexFallback(tc, asset, srgb, &dt.image);
+      const uint32_t tileEdge = std::min(dt.ptexMaxFaceEdge, 512u);
+      if (!BuildPtexAtlas(ptx, tileEdge, &dt.image, &dt.ptexAtlasCols,
+                          &dt.ptexAtlasRows)) {
+        DecodeNextPtexFallback(tc, asset, srgb, &dt.image);
+      } else {
+        dt.ptexTileEdge = tileEdge;
+      }
       built = true;
     }
   }

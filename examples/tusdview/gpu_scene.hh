@@ -352,6 +352,12 @@ struct DrawTexSampleCPU {
   WrapMode wrapT{WrapMode::Repeat};
   DrawColorSpace colorSpace{DrawColorSpace::Auto};
   bool isUdim{false};
+  // Native Ptex atlas sampling metadata (base-color path). A zero column count
+  // means the slot is not Ptex-backed.
+  bool isPtex{false};
+  uint16_t ptexAtlasCols{0};
+  uint16_t ptexAtlasRows{0};
+  uint32_t ptexTileEdge{0};
 };
 
 enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };
@@ -527,6 +533,9 @@ struct DrawTextureCPU {
   uint16_t ptexLevels{0};
   uint16_t ptexChannels{0};
   uint32_t ptexMaxFaceEdge{0};
+  uint16_t ptexAtlasCols{0};
+  uint16_t ptexAtlasRows{0};
+  uint32_t ptexTileEdge{0};
   int renderImageId{-1};        // source RenderScene::images index, or -1
   int renderUdimId{-1};         // source RenderScene::udim_textures index, or -1
   bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear scalar/normal data
