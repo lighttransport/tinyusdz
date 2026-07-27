@@ -1,0 +1,14 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
+#include "ptex.h"
+#include <stdlib.h>
+#include <string.h>
+#include "miniz.h"
+static uint16_t u16(const uint8_t *p){return (uint16_t)p[0]|(uint16_t)p[1]<<8;}
+static uint32_t u32(const uint8_t *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
+static uint64_t u64(const uint8_t *p){return (uint64_t)u32(p)|(uint64_t)u32(p+4)<<32;}
+static int range(size_t o,size_t n,size_t z){return o<=z&&n<=z-o;}
+static int inflate_block(const uint8_t*s,size_t n,size_t outn,uint8_t**out){mz_ulong z=(mz_ulong)outn;*out=(uint8_t*)malloc(outn?outn:1);if(!*out)return 0; if(mz_uncompress(*out,&z,s,(mz_ulong)n)!=MZ_OK||z!=outn){free(*out);*out=0;return 0;}return 1;}
+static int header(const uint8_t*d,size_t z,tinyexr_ptex_info*i,size_t*off,uint32_t*ext,uint32_t*fs,uint32_t*cs,uint32_t*lis,uint64_t*lds){if(!d||z<64||memcmp(d,"Ptex",4)||u32(d+4)!=1)return 0;i->channels=u16(d+20);i->levels=u16(d+22);i->faces=u32(d+24);*ext=u32(d+28);*fs=u32(d+32);*cs=u32(d+36);*lis=u32(d+40);*lds=u64(d+48);*off=64;return i->channels&&i->levels&&i->faces&&*lis==16u*i->levels;}
+int tinyexr_ptex_info_memory(const uint8_t*d,size_t z,tinyexr_ptex_info*i){size_t o;uint32_t e,f,c,l;uint64_t s;return header(d,z,i,&o,&e,&f,&c,&l,&s);}
+void tinyexr_ptex_free(tinyexr_ptex_face*f){if(f){free(f->pixels);memset(f,0,sizeof(*f));}}
+int tinyexr_ptex_read_memory(const uint8_t*d,size_t z,uint32_t face,uint32_t level,size_t max,tinyexr_ptex_face*out){tinyexr_ptex_info i;size_t o;uint32_t e,fs,cs,lis;uint64_t lds,cur=0;uint8_t*fi=0; if(!out||!header(d,z,&i,&o,&e,&fs,&cs,&lis,&lds)||face>=i.faces||level>=i.levels||i.channels!=4)return 0; if(!range(o,e,z)||!range(o+e,fs,z)||!inflate_block(d+o+e,fs,i.faces*20,&fi))return 0; o=64+e+fs; if(!range(o,cs+lis,z)||!range(o+cs+lis,(size_t)lds,z)){free(fi);return 0;} for(uint32_t n=0;n<level;n++){uint64_t sz=u64(d+o+cs+n*16);if(sz>lds-cur){free(fi);return 0;}cur+=sz;} uint64_t blocksz=u64(d+o+cs+level*16);uint32_t hsz=u32(d+o+cs+level*16+8),faces=u32(d+o+cs+level*16+12); if(faces<i.faces||hsz>blocksz||cur>lds||blocksz>lds-cur){free(fi);return 0;} uint32_t w=1u<<fi[face*20],h=1u<<fi[face*20+1]; w>>=level;h>>=level;if(!w)w=1;if(!h)h=1;size_t bytes=(size_t)w*h*4;if(bytes>max){free(fi);return 0;} const uint8_t*b=d+o+cs+lis+cur;uint8_t*hh=0;if(!inflate_block(b,hsz,(size_t)faces*4,&hh)){free(fi);return 0;}size_t pay=hsz;uint32_t ord=face;for(uint32_t n=0;n<ord;n++){uint32_t q=u32(hh+n*4);pay+=q&0x3fffffffu;}uint32_t q=u32(hh+ord*4),enc=q>>30,n=q&0x3fffffffu;free(hh);if(enc!=1||pay>blocksz||n>blocksz-pay||!inflate_block(b+pay,n,bytes,&out->pixels)){free(fi);return 0;}free(fi);out->width=w;out->height=h;out->channels=4; /* payload is planar */ uint8_t*tmp=(uint8_t*)malloc(bytes);if(!tmp){tinyexr_ptex_free(out);return 0;}memcpy(tmp,out->pixels,bytes);for(size_t p=0;p<(size_t)w*h;p++)for(int c=0;c<4;c++)out->pixels[p*4+c]=tmp[c*(size_t)w*h+p];free(tmp);return 1;}
