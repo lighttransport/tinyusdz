@@ -556,6 +556,11 @@ struct DrawTextureCPU {
   uint16_t ptexChannels{0};
   uint32_t ptexMaxFaceEdge{0};
   uint32_t ptexDownsampledFaces{0};
+  uint64_t ptexPageCacheHits{0};
+  uint64_t ptexPageCacheMisses{0};
+  uint64_t ptexPageCacheEvictions{0};
+  uint64_t ptexPageCachePeakBytes{0};
+  uint64_t ptexPageDecodedBytes{0};
   uint16_t ptexAtlasCols{0};
   uint16_t ptexAtlasRows{0};
   uint32_t ptexTileEdge{0};
