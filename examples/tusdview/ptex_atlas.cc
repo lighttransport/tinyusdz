@@ -147,6 +147,7 @@ light3d::Image ConvertFace(const tinyusdz::ptx::FaceImage& face) {
 struct Placement {
   uint32_t face{0};
   uint32_t mip{0};
+  uint32_t baseMip{0};
   uint32_t width{0};
   uint32_t height{0};
   uint32_t x{0};
@@ -278,6 +279,60 @@ void PtexFacePageCache::Clear() {
   stats_.residentBytes = 0;
 }
 
+bool BuildPtexPage(const tinyusdz::ptx::Reader& reader, uint32_t face,
+                   uint32_t mip, uint32_t gutter,
+                   size_t maxDecodedFaceBytes, light3d::Image* page,
+                   DrawPtexFaceRectCPU* inner, std::string* err) {
+  if (!page || !inner) {
+    if (err) *err = "Ptex page output is null";
+    return false;
+  }
+  PtexFacePageCache decodedCache(0);
+  const tinyusdz::ptx::FaceImage* decoded = decodedCache.Fetch(
+      reader, face, mip, maxDecodedFaceBytes, err);
+  if (!decoded) return false;
+  const uint64_t outerWidth = uint64_t(decoded->width) + gutter * 2u;
+  const uint64_t outerHeight = uint64_t(decoded->height) + gutter * 2u;
+  if (outerWidth > uint64_t(std::numeric_limits<int>::max()) ||
+      outerHeight > uint64_t(std::numeric_limits<int>::max()) ||
+      outerWidth * outerHeight >
+          uint64_t(std::numeric_limits<size_t>::max()) / 4u) {
+    if (err) *err = "Ptex page dimensions overflow";
+    return false;
+  }
+  page->width = static_cast<int>(outerWidth);
+  page->height = static_cast<int>(outerHeight);
+  page->channels = 4;
+  page->data.assign(size_t(outerWidth * outerHeight) * 4u, 0);
+  Placement placement;
+  placement.face = face;
+  placement.mip = mip;
+  placement.width = decoded->width;
+  placement.height = decoded->height;
+  placement.x = gutter;
+  placement.y = gutter;
+  CopyWithClampGutter(ConvertFace(*decoded), placement, gutter, page);
+  inner->x = gutter;
+  inner->y = gutter;
+  inner->width = decoded->width;
+  inner->height = decoded->height;
+  inner->mipLevel = static_cast<uint16_t>(mip);
+  return true;
+}
+
+void EncodePtexFaceRectTexels(const DrawPtexFaceRectCPU& rect,
+                              uint8_t texels[8u * 4u]) {
+  if (!texels) return;
+  std::fill(texels, texels + 8u * 4u, uint8_t{0});
+  const uint16_t values[4] = {
+      static_cast<uint16_t>(rect.x), static_cast<uint16_t>(rect.y),
+      static_cast<uint16_t>(rect.width), static_cast<uint16_t>(rect.height)};
+  for (uint32_t byte = 0; byte < 8; ++byte) {
+    texels[byte * 4u + 3u] = static_cast<uint8_t>(
+        (values[byte / 2u] >> ((byte & 1u) * 8u)) & 0xffu);
+  }
+}
+
 bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
                     const PtexAtlasOptions& options, bool /*srgb*/,
                     light3d::Image* image,
@@ -308,23 +363,68 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
     }
     p.width = w;
     p.height = h;
+    p.baseMip = p.mip;
     if (p.mip > 0) ++localStats.downsampledFaces;
   }
 
   uint32_t atlasWidth = 0, atlasHeight = 0, imageHeight = 0;
   uint32_t rectTexelOffset = 0;
+  uint32_t physicalCacheOffsetY = 0;
+  uint32_t physicalCacheSlotEdge = 0;
+  uint32_t physicalCacheSlots = 0;
   for (;;) {
     if (Pack(&placements, options.gutter, options.maxAtlasEdge, &atlasWidth,
              &atlasHeight)) {
+      const bool needsPhysicalCache = options.forcePhysicalCache || std::any_of(
+          placements.begin(), placements.end(),
+          [](const Placement& p) { return p.mip > p.baseMip; });
+      const uint64_t requestedSlotEdge =
+          uint64_t(options.maxFaceEdge) + uint64_t(options.gutter) * 2u;
+      const uint64_t requestedSlotBytes = requestedSlotEdge *
+                                          requestedSlotEdge * 4u;
+      physicalCacheSlotEdge =
+          needsPhysicalCache && requestedSlotEdge <= options.maxAtlasEdge &&
+                  requestedSlotEdge <= std::numeric_limits<uint32_t>::max() &&
+                  requestedSlotBytes <= options.maxPhysicalCacheBytes
+              ? static_cast<uint32_t>(requestedSlotEdge)
+              : 0u;
+      if (physicalCacheSlotEdge > 0) {
+        atlasWidth = std::max(atlasWidth, physicalCacheSlotEdge);
+      }
       const uint64_t rectTexels = uint64_t(info.faces) * 8u;
       const uint64_t rectRows =
           (rectTexels + uint64_t(atlasWidth) - 1u) / atlasWidth;
-      const uint64_t totalHeight = uint64_t(atlasHeight) + rectRows;
+      const uint64_t slotBytes = uint64_t(physicalCacheSlotEdge) *
+                                 physicalCacheSlotEdge * 4u;
+      const uint64_t desiredSlots = slotBytes > 0
+                                        ? options.maxPhysicalCacheBytes / slotBytes
+                                        : 0u;
+      const uint64_t slotsPerRow = physicalCacheSlotEdge > 0
+                                       ? atlasWidth / physicalCacheSlotEdge
+                                       : 0u;
+      uint64_t selectedSlots = desiredSlots;
+      uint64_t cacheRows = 0;
+      while (selectedSlots > 0) {
+        cacheRows = (selectedSlots + slotsPerRow - 1u) / slotsPerRow;
+        const uint64_t candidateHeight =
+            uint64_t(atlasHeight) + cacheRows * physicalCacheSlotEdge + rectRows;
+        const uint64_t candidateBytes = uint64_t(atlasWidth) * candidateHeight * 4u;
+        if (candidateHeight <= options.maxAtlasEdge &&
+            (options.maxAtlasBytes == 0 || candidateBytes <= options.maxAtlasBytes)) {
+          break;
+        }
+        --selectedSlots;
+      }
+      const uint64_t totalHeight = uint64_t(atlasHeight) +
+                                   cacheRows * physicalCacheSlotEdge + rectRows;
       const uint64_t bytes = uint64_t(atlasWidth) * totalHeight * 4u;
       if (totalHeight <= options.maxAtlasEdge &&
           (options.maxAtlasBytes == 0 || bytes <= options.maxAtlasBytes)) {
         imageHeight = static_cast<uint32_t>(totalHeight);
-        rectTexelOffset = atlasWidth * atlasHeight;
+        physicalCacheOffsetY = atlasHeight;
+        physicalCacheSlots = static_cast<uint32_t>(selectedSlots);
+        rectTexelOffset = atlasWidth * static_cast<uint32_t>(
+            uint64_t(atlasHeight) + cacheRows * physicalCacheSlotEdge);
         break;
       }
     }
@@ -381,17 +481,17 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
   // table can be decoded by every backend from the same sampled image.
   for (uint32_t face = 0; face < info.faces; ++face) {
     const DrawPtexFaceRectCPU& rect = (*faceRects)[face];
-    const uint16_t values[4] = {
-        static_cast<uint16_t>(rect.x), static_cast<uint16_t>(rect.y),
-        static_cast<uint16_t>(rect.width), static_cast<uint16_t>(rect.height)};
+    uint8_t texels[8u * 4u];
+    EncodePtexFaceRectTexels(rect, texels);
     for (uint32_t byte = 0; byte < 8; ++byte) {
       const uint32_t linear = rectTexelOffset + face * 8u + byte;
-      const uint8_t value = static_cast<uint8_t>(
-          (values[byte / 2u] >> ((byte & 1u) * 8u)) & 0xffu);
-      image->data[size_t(linear) * 4u + 3u] = value;
+      image->data[size_t(linear) * 4u + 3u] = texels[byte * 4u + 3u];
     }
   }
   localStats.rectTexelOffset = rectTexelOffset;
+  localStats.physicalCacheOffsetY = physicalCacheOffsetY;
+  localStats.physicalCacheSlotEdge = physicalCacheSlotEdge;
+  localStats.physicalCacheSlots = physicalCacheSlots;
   localStats.atlasBytes = image->data.size();
   localStats.pageCache = pageCache.stats();
   if (stats) *stats = localStats;

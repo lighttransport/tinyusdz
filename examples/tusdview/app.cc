@@ -89,11 +89,15 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   uint64_t ptexCacheHits = 0, ptexCacheMisses = 0, ptexCacheEvictions = 0;
   uint64_t ptexCachePeakBytes = 0;
   uint64_t ptexPageDecodedBytes = 0;
+  uint64_t ptexPhysicalSlots = 0, ptexGpuUploads = 0, ptexGpuHits = 0;
+  uint64_t ptexGpuMisses = 0, ptexGpuEvictions = 0;
   for (const DrawTextureCPU& texture : draw_.textures) {
     if (!texture.isPtex) continue;
     ++ptexTextures;
     ptexFaces += texture.ptexFaceRects.size();
-    ptexAtlasBytes += texture.image.data.size();
+    ptexAtlasBytes += texture.ptexAtlasBytes > 0
+                          ? texture.ptexAtlasBytes
+                          : texture.image.data.size();
     ptexDownsampledFaces += texture.ptexDownsampledFaces;
     ptexCacheHits += texture.ptexPageCacheHits;
     ptexCacheMisses += texture.ptexPageCacheMisses;
@@ -101,6 +105,11 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
     ptexCachePeakBytes =
         std::max(ptexCachePeakBytes, texture.ptexPageCachePeakBytes);
     ptexPageDecodedBytes += texture.ptexPageDecodedBytes;
+    ptexPhysicalSlots += texture.ptexPhysicalCacheSlots;
+    ptexGpuUploads += texture.ptexGpuPageUploads;
+    ptexGpuHits += texture.ptexGpuPageHits;
+    ptexGpuMisses += texture.ptexGpuPageMisses;
+    ptexGpuEvictions += texture.ptexGpuPageEvictions;
     if (texture.ptexFaceRects.empty()) ++ptexFallbackTextures;
   }
   size_t ptexDisplacedMeshes = 0;
@@ -140,6 +149,11 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"ptex_page_cache_evictions", ptexCacheEvictions},
       {"ptex_page_cache_peak_bytes", ptexCachePeakBytes},
       {"ptex_page_decoded_bytes", ptexPageDecodedBytes},
+      {"ptex_gpu_physical_slots", ptexPhysicalSlots},
+      {"ptex_gpu_page_uploads", ptexGpuUploads},
+      {"ptex_gpu_page_hits", ptexGpuHits},
+      {"ptex_gpu_page_misses", ptexGpuMisses},
+      {"ptex_gpu_page_evictions", ptexGpuEvictions},
       {"ptex_displaced_meshes", ptexDisplacedMeshes},
       {"ptex_slots",
        {{"base_color", ptexBase},
@@ -918,6 +932,9 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     nextAux_ = 0;
     nextTex_ = 0;
     nextVolume_ = 0;
+    nextPtexTexture_ = 0;
+    nextPtexFace_ = 0;
+    ptexPhysicalCaches_.clear();
   }
 
   if (ok) {
@@ -1019,6 +1036,27 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
           for (DrawMeshCPU& m : draw_.meshes)
             if (!MeshIsDeformable(m)) FreeMeshGeometryCPU(m);
       });
+      // Headless/non-threaded one-shot uploads can still refine Ptex pages over
+      // subsequent frames. Mark the ordinary scene stages complete and retain
+      // only compact native sources after the fallback atlas reaches the GPU.
+      if (ok && !renderThreadActive_) {
+        bool havePtexPages = false;
+        for (DrawTextureCPU& texture : draw_.textures) {
+          if (!texture.ptexSourceData.empty() &&
+              texture.ptexPhysicalCacheSlots > 0) {
+            havePtexPages = true;
+            if (!cudaRt_ && !hipRt_) {
+              texture.image.data.clear();
+              texture.image.data.shrink_to_fit();
+            }
+          }
+        }
+        nextMesh_ = draw_.meshes.size();
+        nextAux_ = draw_.meshes.size();
+        nextTex_ = draw_.textures.size();
+        nextVolume_ = draw_.volumes.size();
+        progressiveActive_ = havePtexPages;
+      }
     }
     if (ok) {
       LOGI("loaded %s: %zu mesh(es), %zu tri(s), %zu materials, %zu textures%s",
@@ -1392,6 +1430,9 @@ void App::drainProgressiveLoad() {
       nextMesh_ = draw_.meshes.size();
       nextTex_ = 0;
       nextVolume_ = 0;
+      nextPtexTexture_ = 0;
+      nextPtexFace_ = 0;
+      ptexPhysicalCaches_.clear();
       progressiveActive_ = !draw_.meshes.empty() || !draw_.points.empty() ||
                            !draw_.curves.empty() || !draw_.textures.empty() ||
                            !draw_.volumes.empty();
@@ -1484,6 +1525,13 @@ void App::stepProgressiveUpload() {
   if (nextMesh_ >= draw_.meshes.size() && auxReady) {
     while (nextTex_ < draw_.textures.size()) {
       renderer_->uploadTexture(static_cast<int>(nextTex_), draw_.textures[nextTex_]);
+      if (!cudaRt_ && !hipRt_ && draw_.textures[nextTex_].isPtex &&
+          !draw_.textures[nextTex_].ptexSourceData.empty()) {
+        // Fallback pixels are now device-resident. Keep only compact native
+        // Ptex bytes for on-demand page decode.
+        draw_.textures[nextTex_].image.data.clear();
+        draw_.textures[nextTex_].image.data.shrink_to_fit();
+      }
       ++nextTex_;
       if (elapsedMs() > tailBudgetMs) break;
     }
@@ -1491,6 +1539,13 @@ void App::stepProgressiveUpload() {
   // UsdVol volumes (OpenVDB) after meshes + textures.
   if (nextMesh_ >= draw_.meshes.size() && auxReady &&
       nextTex_ >= draw_.textures.size()) {
+    while (!stepPtexResidency(tailBudgetMs - elapsedMs())) {
+      if (elapsedMs() > tailBudgetMs) break;
+    }
+  }
+  const bool ptexReady = nextPtexTexture_ >= draw_.textures.size();
+  if (nextMesh_ >= draw_.meshes.size() && auxReady &&
+      nextTex_ >= draw_.textures.size() && ptexReady) {
     while (nextVolume_ < draw_.volumes.size()) {
       renderer_->appendVolume(draw_.volumes[nextVolume_]);
       ++nextVolume_;
@@ -1499,9 +1554,137 @@ void App::stepProgressiveUpload() {
   }
   if (nextMesh_ >= draw_.meshes.size() && auxReady &&
       nextTex_ >= draw_.textures.size() &&
+      ptexReady &&
       nextVolume_ >= draw_.volumes.size()) {
     progressiveActive_ = false;
   }
+}
+
+namespace {
+
+bool UpdatePtexFaceTable(Renderer* renderer, int textureSlot,
+                         const DrawTextureCPU& texture, uint32_t face,
+                         const DrawPtexFaceRectCPU& rect) {
+  if (!renderer || face >= texture.ptexFaceRects.size() ||
+      texture.image.width <= 0) {
+    return false;
+  }
+  uint8_t texels[8u * 4u];
+  EncodePtexFaceRectTexels(rect, texels);
+  size_t linear = size_t(texture.ptexRectTexelOffset) + size_t(face) * 8u;
+  size_t consumed = 0;
+  while (consumed < 8u) {
+    const int x = static_cast<int>(linear % size_t(texture.image.width));
+    const int y = static_cast<int>(linear / size_t(texture.image.width));
+    const int count = static_cast<int>(
+        std::min<size_t>(8u - consumed, size_t(texture.image.width - x)));
+    if (!renderer->updateTextureRegion(textureSlot, x, y, count, 1,
+                                       texels + consumed * 4u)) {
+      return false;
+    }
+    linear += static_cast<size_t>(count);
+    consumed += static_cast<size_t>(count);
+  }
+  return true;
+}
+
+}  // namespace
+
+bool App::stepPtexResidency(double deadlineMs) {
+  if (nextPtexTexture_ >= draw_.textures.size()) return true;
+  if (deadlineMs <= 0.0) return false;
+  if (ptexPhysicalCaches_.size() != draw_.textures.size()) {
+    ptexPhysicalCaches_.resize(draw_.textures.size());
+  }
+  while (nextPtexTexture_ < draw_.textures.size()) {
+    DrawTextureCPU& texture = draw_.textures[nextPtexTexture_];
+    if (texture.ptexPhysicalCacheSlots == 0 ||
+        texture.ptexSourceData.empty() || texture.ptexFaceRects.empty()) {
+      ++nextPtexTexture_;
+      nextPtexFace_ = 0;
+      continue;
+    }
+    if (!ptexPhysicalCaches_[nextPtexTexture_]) {
+      ptexPhysicalCaches_[nextPtexTexture_] =
+          std::make_unique<PtexPhysicalPageCache>(
+              texture.ptexPhysicalCacheSlots);
+    }
+    if (nextPtexFace_ >= texture.ptexFaceRects.size()) {
+      ++nextPtexTexture_;
+      nextPtexFace_ = 0;
+      continue;
+    }
+
+    tinyusdz::ptx::Reader reader;
+    std::string error;
+    if (!tinyusdz::ptx::Reader::OpenMemory(texture.ptexSourceData.data(),
+                                           texture.ptexSourceData.size(),
+                                           &reader, &error)) {
+      LOGW("Ptex residency source reopen failed: %s", error.c_str());
+      ++nextPtexTexture_;
+      nextPtexFace_ = 0;
+      continue;
+    }
+    const uint32_t face = nextPtexFace_++;
+    const tinyusdz::ptx::FaceInfo& info = reader.info().faceInfo[face];
+    uint32_t mip = 0;
+    uint32_t width = info.width(), height = info.height();
+    while (mip + 1u < reader.info().levels && texture.ptexTileEdge > 0 &&
+           std::max(width, height) > texture.ptexTileEdge) {
+      ++mip;
+      width = std::max(1u, width >> 1u);
+      height = std::max(1u, height >> 1u);
+    }
+
+    // The permanent fallback already has this quality (or better). Physical
+    // slots are reserved only for faces forced below the desired mip by the
+    // global atlas budget.
+    if (texture.ptexFaceRects[face].mipLevel <= mip) continue;
+
+    light3d::Image page;
+    DrawPtexFaceRectCPU residentRect;
+    if (!BuildPtexPage(reader, face, mip, texture.ptexGutter,
+                       64ull * 1024ull * 1024ull, &page, &residentRect,
+                       &error)) {
+      LOGW("Ptex face %u residency decode failed: %s", face, error.c_str());
+      continue;
+    }
+
+    PtexPhysicalPageAssignment assignment;
+    PtexPhysicalPageCache& cache = *ptexPhysicalCaches_[nextPtexTexture_];
+    if (!cache.Request(face, &assignment)) continue;
+    texture.ptexGpuPageHits = cache.hits();
+    texture.ptexGpuPageMisses = cache.misses();
+    texture.ptexGpuPageEvictions = cache.evictions();
+    if (assignment.hit) return false;
+
+    const uint32_t slotEdge = texture.ptexPhysicalCacheSlotEdge;
+    const uint32_t slotsPerRow =
+        static_cast<uint32_t>(texture.image.width) / slotEdge;
+    if (slotEdge == 0 || slotsPerRow == 0) continue;
+    const uint32_t outerX = (assignment.slot % slotsPerRow) * slotEdge;
+    const uint32_t outerY = texture.ptexPhysicalCacheOffsetY +
+                            (assignment.slot / slotsPerRow) * slotEdge;
+    residentRect.x += outerX;
+    residentRect.y += outerY;
+    const int textureSlot = static_cast<int>(nextPtexTexture_);
+    if (assignment.evictedFace != ~uint32_t{0}) {
+      UpdatePtexFaceTable(renderer_.get(), textureSlot, texture,
+                          assignment.evictedFace,
+                          texture.ptexFaceRects[assignment.evictedFace]);
+    }
+    if (!renderer_->updateTextureRegion(textureSlot, static_cast<int>(outerX),
+                                        static_cast<int>(outerY), page.width,
+                                        page.height, page.data.data()) ||
+        !UpdatePtexFaceTable(renderer_.get(), textureSlot, texture, face,
+                             residentRect)) {
+      LOGW("Ptex face %u residency upload failed", face);
+      continue;
+    }
+    ++texture.ptexGpuPageUploads;
+    return false;
+  }
+  return true;
 }
 
 void App::loadFileBlocking(const std::string& path) {

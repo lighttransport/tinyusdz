@@ -23,6 +23,13 @@ struct PtexAtlasOptions {
   // retention while preserving the same bounded one-page-at-a-time behavior.
   size_t maxDecodedCacheBytes{0};
   size_t maxAtlasBytes{0};  // 0 = derive only from maxAtlasEdge.
+  // Optional fixed physical page cache appended after the always-resident
+  // fallback faces. The total image, including this cache and the face table,
+  // still obeys maxAtlasBytes/maxAtlasEdge.
+  size_t maxPhysicalCacheBytes{0};
+  // Test/diagnostic override. Normal builds reserve slots only when the atlas
+  // budget forced at least one face below its requested mip.
+  bool forcePhysicalCache{false};
 };
 
 struct PtexPageCacheStats {
@@ -107,6 +114,9 @@ struct PtexAtlasBuildStats {
   uint64_t atlasBytes{0};
   uint32_t downsampledFaces{0};
   uint32_t rectTexelOffset{0};
+  uint32_t physicalCacheOffsetY{0};
+  uint32_t physicalCacheSlotEdge{0};
+  uint32_t physicalCacheSlots{0};
   PtexPageCacheStats pageCache;
 };
 
@@ -119,5 +129,18 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
                     light3d::Image* image,
                     std::vector<DrawPtexFaceRectCPU>* faceRects,
                     PtexAtlasBuildStats* stats, std::string* err);
+
+// Decode one face/mip into an independently uploadable RGBA8 rectangle with
+// clamp gutters. The returned pixel rows use the same convention as atlas
+// level zero, so the image can be passed directly to updateTextureRegion.
+bool BuildPtexPage(const tinyusdz::ptx::Reader& reader, uint32_t face,
+                   uint32_t mip, uint32_t gutter, size_t maxDecodedFaceBytes,
+                   light3d::Image* page, DrawPtexFaceRectCPU* inner,
+                   std::string* err);
+
+// Encode one face-table entry as eight RGBA texels (payload in alpha), matching
+// the shader's two-byte little-endian x/y/width/height representation.
+void EncodePtexFaceRectTexels(const DrawPtexFaceRectCPU& rect,
+                              uint8_t texels[8u * 4u]);
 
 }  // namespace tusdview

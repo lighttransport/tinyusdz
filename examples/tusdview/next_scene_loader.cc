@@ -2417,12 +2417,18 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
       }
       const size_t defaultAtlasCap = 256ull * 1024ull * 1024ull;
       atlasOptions.maxAtlasBytes = std::min(defaultAtlasCap, remaining);
+      atlasOptions.maxPhysicalCacheBytes =
+          std::min<size_t>(32ull * 1024ull * 1024ull,
+                           atlasOptions.maxAtlasBytes / 4u);
+      atlasOptions.forcePhysicalCache =
+          std::getenv("TUSDVIEW_PTEX_FORCE_RESIDENCY") != nullptr;
       PtexAtlasBuildStats atlasStats;
       if (!BuildPtexAtlas(ptx, atlasOptions, srgb, &dt.image,
                           &dt.ptexFaceRects, &atlasStats, &ptxErr)) {
         DecodeNextPtexFallback(tc, asset, srgb, &dt.image);
       } else {
         tc.ptexAtlasBytes += dt.image.data.size();
+        dt.ptexAtlasBytes = dt.image.data.size();
         dt.ptexDownsampledFaces = atlasStats.downsampledFaces;
         dt.ptexPageCacheHits = atlasStats.pageCache.hits;
         dt.ptexPageCacheMisses = atlasStats.pageCache.misses;
@@ -2432,6 +2438,13 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
         dt.ptexGutter = atlasOptions.gutter;
         dt.ptexTileEdge = atlasOptions.maxFaceEdge;
         dt.ptexRectTexelOffset = atlasStats.rectTexelOffset;
+        dt.ptexPhysicalCacheOffsetY = atlasStats.physicalCacheOffsetY;
+        dt.ptexPhysicalCacheSlotEdge = atlasStats.physicalCacheSlotEdge;
+        dt.ptexPhysicalCacheSlots = atlasStats.physicalCacheSlots;
+        if (dt.ptexPhysicalCacheSlots > 0) {
+          dt.ptexSourceData = std::move(bytes);
+          dt.streamingMutable = true;
+        }
       }
       built = true;
     }

@@ -560,17 +560,29 @@ struct DrawTextureCPU {
   uint16_t ptexChannels{0};
   uint32_t ptexMaxFaceEdge{0};
   uint32_t ptexDownsampledFaces{0};
+  uint64_t ptexAtlasBytes{0};
   uint64_t ptexPageCacheHits{0};
   uint64_t ptexPageCacheMisses{0};
   uint64_t ptexPageCacheEvictions{0};
   uint64_t ptexPageCachePeakBytes{0};
   uint64_t ptexPageDecodedBytes{0};
+  uint64_t ptexGpuPageUploads{0};
+  uint64_t ptexGpuPageHits{0};
+  uint64_t ptexGpuPageMisses{0};
+  uint64_t ptexGpuPageEvictions{0};
   uint16_t ptexAtlasCols{0};
   uint16_t ptexAtlasRows{0};
   uint32_t ptexTileEdge{0};
   uint32_t ptexGutter{0};
   uint32_t ptexRectTexelOffset{0};
+  uint32_t ptexPhysicalCacheOffsetY{0};
+  uint32_t ptexPhysicalCacheSlotEdge{0};
+  uint32_t ptexPhysicalCacheSlots{0};
   std::vector<DrawPtexFaceRectCPU> ptexFaceRects;
+  // Compressed native source retained only when physical cache slots exist;
+  // pages are decoded on demand and the much larger full-resolution atlas is
+  // never materialized.
+  std::vector<uint8_t> ptexSourceData;
   int renderImageId{-1};        // source RenderScene::images index, or -1
   int renderUdimId{-1};         // source RenderScene::udim_textures index, or -1
   bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear scalar/normal data

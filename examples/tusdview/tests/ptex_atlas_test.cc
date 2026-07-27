@@ -401,6 +401,54 @@ void RunMalformedTileTable() {
                                   nullptr, &error));
   CHECK(error.find("tile") != std::string::npos);
 }
+
+void RunPhysicalCacheReservation() {
+  const std::vector<uint8_t> bytes = SyntheticPtex(0, 1, false, 1);
+  tinyusdz::ptx::Reader reader;
+  std::string error;
+  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+                                          &error));
+  tusdview::PtexAtlasOptions options;
+  options.maxFaceEdge = 8;
+  options.maxAtlasEdge = 64;
+  options.maxAtlasBytes = 64u * 64u * 4u;
+  const uint32_t slotEdge = options.maxFaceEdge + options.gutter * 2u;
+  options.maxPhysicalCacheBytes = size_t(slotEdge) * slotEdge * 4u * 2u;
+  options.forcePhysicalCache = true;
+  light3d::Image atlas;
+  std::vector<tusdview::DrawPtexFaceRectCPU> rects;
+  tusdview::PtexAtlasBuildStats stats;
+  CHECK(tusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
+                                 &stats, &error));
+  CHECK(stats.physicalCacheSlotEdge == slotEdge);
+  CHECK(stats.physicalCacheSlots == 2);
+  CHECK(stats.physicalCacheOffsetY > 0);
+  CHECK(stats.rectTexelOffset >=
+        uint32_t(atlas.width) *
+            (stats.physicalCacheOffsetY + stats.physicalCacheSlotEdge));
+  CHECK(atlas.data.size() <= options.maxAtlasBytes);
+  light3d::Image page;
+  tusdview::DrawPtexFaceRectCPU inner;
+  CHECK(tusdview::BuildPtexPage(reader, 0, 0, options.gutter,
+                                1024u * 1024u, &page, &inner, &error));
+  CHECK(page.width == int(inner.width + options.gutter * 2u));
+  CHECK(page.height == int(inner.height + options.gutter * 2u));
+  tusdview::DrawPtexFaceRectCPU encoded;
+  encoded.x = 0x1234u;
+  encoded.y = 0x5678u;
+  encoded.width = 0x9abcu;
+  encoded.height = 0xdef0u;
+  uint8_t texels[8u * 4u];
+  tusdview::EncodePtexFaceRectTexels(encoded, texels);
+  const uint8_t expected[8] = {0x34u, 0x12u, 0x78u, 0x56u,
+                               0xbcu, 0x9au, 0xf0u, 0xdeu};
+  for (size_t i = 0; i < 8; ++i) {
+    CHECK(texels[i * 4u + 0u] == 0u);
+    CHECK(texels[i * 4u + 1u] == 0u);
+    CHECK(texels[i * 4u + 2u] == 0u);
+    CHECK(texels[i * 4u + 3u] == expected[i]);
+  }
+}
 }  // namespace
 
 int main() {
@@ -415,6 +463,7 @@ int main() {
   RunConstantFace();
   RunConstantTiles();
   RunMalformedTileTable();
+  RunPhysicalCacheReservation();
   if (failures) return 1;
   std::printf("OK: rectangular UInt8/UInt16/Half/Float Ptex atlases\n");
   return 0;

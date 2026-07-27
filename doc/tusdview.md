@@ -628,3 +628,25 @@ root-caused — see the "Validation-layer findings" section of
 [`threading-stage2.md`](../examples/tusdview/doc/threading-stage2.md) for the full
 worked example (a missing `ImDrawData::Textures` clone left the ImGui font
 descriptor empty → device loss).
+
+### Bounded native Ptex residency
+
+The `--next` texture path keeps a coarse face-complete Ptex atlas inside
+`--texture-budget-mb`. If fitting all requested face mips would exceed that
+budget, it also reserves a fixed physical page cache (up to 32 MiB per texture,
+and always inside the same total budget). Requested-quality faces are decoded
+from the retained compressed `.ptx` source and uploaded over subsequent frames;
+the alpha-only face table is patched after each upload. Reusing a slot first
+redirects its old face to the permanent coarse fallback, so every face remains
+valid during streaming and eviction.
+
+OpenGL raster, Vulkan raster, and Vulkan ray query share this mutable atlas
+path. Mutable GL atlases sample level zero only, avoiding stale generated mips;
+Vulkan uses partial transfer updates with explicit layout transitions. Atlases
+that already fit at requested quality reserve no page-cache memory.
+
+Render reports expose `ptex_gpu_physical_slots`, `ptex_gpu_page_uploads`,
+`ptex_gpu_page_misses`, and `ptex_gpu_page_evictions`. For a small diagnostic
+scene that would not naturally need paging, set
+`TUSDVIEW_PTEX_FORCE_RESIDENCY=1` together with a low
+`--texture-budget-mb` value to exercise replacement deterministically.
