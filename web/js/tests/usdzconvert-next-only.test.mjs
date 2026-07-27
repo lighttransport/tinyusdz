@@ -219,6 +219,47 @@ def Xform "World"
         point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
     }
 
+    def Mesh "AlphaBillboard"
+    {
+        rel material:binding = </World/Mat>
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Mesh "AlphaBillboardCopy"
+    {
+        rel material:binding = </World/Mat>
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 2, 0), (1, 2, 0), (1, 3, 0), (0, 3, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Mesh "ExplicitFrontAlphaCard"
+    {
+        rel material:binding = </World/Mat>
+        uniform bool doubleSided = false
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Mesh "OpaqueCard"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4, 0, 0), (5, 0, 0), (5, 1, 0), (4, 1, 0)]
+    }
+
     def Mesh "Concave"
     {
         int[] faceVertexCounts = [5]
@@ -791,6 +832,33 @@ await testAsync('next mesh-only path uses robust concave triangulation', async (
   }
 });
 
+await testAsync('next merge keeps inferred alpha billboards double-sided', async () => {
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    stream.setMaterialDedup(true);
+    stream.setMeshMerge(true);
+    stream.setMeshMergeBakeTransform(true);
+    const result = stream.begin(new TextEncoder().encode(ENTITY_SCENE_USDA));
+    assert.ok(result?.success, result?.error || stream.error());
+    let mergedAlpha = null;
+    for (let i = 0; i < stream.meshCount(); ++i) {
+      const candidate = stream.getMesh(i);
+      if (candidate?.primPath?.startsWith('/__tinyusdz_next_merged/') &&
+          candidate?.material?.textureMetadata?.opacity?.path) {
+        mergedAlpha = candidate;
+        break;
+      }
+    }
+    assert.ok(mergedAlpha, 'alpha cards should participate in a merged output');
+    assert.equal(mergedAlpha.doubleSided, true,
+      'the merged alpha billboard output must preserve inferred sideness');
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
 function assertReloadsWithRenderStream(usdz, label) {
   const stream = new native.RenderStream();
   try {
@@ -971,13 +1039,27 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
 
     let concave = null;
     let concaveFaceVarying = null;
+    let alphaBillboard = null;
+    let explicitFrontAlphaCard = null;
+    let opaqueCard = null;
     for (let i = 0; i < adapter.numMeshes(); ++i) {
       const candidate = adapter.getMeshCopy(i);
       if (candidate?.primPath === '/World/Concave') concave = candidate;
       if (candidate?.primPath === '/World/ConcaveFaceVarying') {
         concaveFaceVarying = candidate;
       }
+      if (candidate?.primPath === '/World/AlphaBillboard') alphaBillboard = candidate;
+      if (candidate?.primPath === '/World/ExplicitFrontAlphaCard') {
+        explicitFrontAlphaCard = candidate;
+      }
+      if (candidate?.primPath === '/World/OpaqueCard') opaqueCard = candidate;
     }
+    assert.equal(alphaBillboard?.doubleSided, true,
+      `${label}: an unauthored planar alpha card should infer billboard sideness`);
+    assert.equal(explicitFrontAlphaCard?.doubleSided, false,
+      `${label}: an authored false doubleSided opinion must override inference`);
+    assert.equal(opaqueCard?.doubleSided, false,
+      `${label}: an opaque planar mesh must retain the USD front-side default`);
     assert.ok(concave?.indices?.length === 9,
       `${label}: concave pentagon should produce three triangles`);
     let triangleArea = 0;
@@ -1063,6 +1145,12 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       return materials.every((material) => material.side === THREE.DoubleSide);
     }), `${label}: authored doubleSided should select Three.DoubleSide`);
+    const builtAlphaBillboard = built.node.getObjectByName('/World/AlphaBillboard');
+    const builtFrontAlphaCard = built.node.getObjectByName('/World/ExplicitFrontAlphaCard');
+    assert.equal(builtAlphaBillboard?.material?.side, THREE.DoubleSide,
+      `${label}: inferred billboard sideness should reach Three.js`);
+    assert.equal(builtFrontAlphaCard?.material?.side, THREE.FrontSide,
+      `${label}: explicit front-side alpha cards should remain culled`);
 
     const pruned = buildNextThreeNode(adapter, {
       skipTextures: true,
