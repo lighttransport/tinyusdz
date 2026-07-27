@@ -44,13 +44,14 @@ cmake --build build_ninja -j16 --target tusdview
   header is the only step that needs a `GL_EXT_ray_query`-capable glslang (≈
   glslang ≥ 11); build one once with `examples/common/build-glslang.sh` if you
   edit `vk/shaders/raytrace.comp`.
-  Vulkan, CUDA, and HIP RT consume the same six-slot semantic texture table
-  (base color, metallic, roughness, normal, emissive, opacity), including UV1,
-  transforms, sRGB decode, compressed-only sources, and sparse UDIMs. Masked
-  texels are rejected during traversal. Complete ordinary/compressed/UDIM mip
-  chains use trilinear filtering: ray-differential footprint LOD in Vulkan and
-  projected-triangle LOD in CUDA/HIP. Raster-style anisotropy remains future
-  work.
+  Vulkan, CUDA, and HIP RT consume the same semantic texture table (base color,
+  metallic, roughness, normal, emissive, opacity, occlusion, specular color,
+  and coat weight/color/roughness), including UV1, transforms, sRGB decode,
+  compressed-only sources, sparse UDIMs, and native Ptex face-local sampling.
+  Masked texels are rejected during traversal. Complete ordinary/compressed/
+  UDIM mip chains use trilinear filtering: ray-differential footprint LOD in
+  Vulkan and projected-triangle LOD in CUDA/HIP. Raster-style anisotropy
+  remains future work.
 - **Experimental threaded render path** (a dedicated render thread owns the GL
   context / Vulkan queue so the UI never blocks on the GPU; opt-in `--threaded`)
   is gated behind a default-OFF option:
