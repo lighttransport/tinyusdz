@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <cctype>
 #include <utility>
 
 #include "image-loader.hh"
@@ -204,6 +205,14 @@ bool ResizeDecoded(DecodedImage* img, uint32_t w, uint32_t h, bool srgb) {
   return true;
 }
 
+bool HasPtxExtension(const std::string& asset) {
+  if (asset.size() < 4) return false;
+  const size_t p = asset.size() - 3;
+  return std::tolower(static_cast<unsigned char>(asset[p])) == 'p' &&
+         std::tolower(static_cast<unsigned char>(asset[p + 1])) == 't' &&
+         std::tolower(static_cast<unsigned char>(asset[p + 2])) == 'x';
+}
+
 // Scale both edges by `ratio`, never below 1 texel.
 void ScaledExtent(const DecodedImage& img, double ratio, uint32_t* w,
                   uint32_t* h) {
@@ -267,18 +276,24 @@ bool TextureDecoder::Decode(const std::string& asset, bool srgb,
 
 bool TextureDecoder::DecodePtexFace(const std::string& asset, uint32_t face,
                                     uint32_t level, bool srgb, DecodedImage* out) {
-  if (!out || asset.size() < 4 ||
-      asset.substr(asset.size() - 4) != ".ptx")
-    return false;
-  std::string path = asset;
-  if (path[0] != '/' && !options_.base_dir.empty()) path = options_.base_dir + "/" + path;
+  if (!out || !HasPtxExtension(asset)) return false;
+  const std::string key = asset + "#" + std::to_string(face) + ":" +
+                          std::to_string(level) + (srgb ? ":s" : ":l");
+  auto cached = ptex_cache_.find(key);
+  if (cached != ptex_cache_.end()) {
+    ptex_lru_.splice(ptex_lru_.end(), ptex_lru_, cached->second.lru);
+    *out = cached->second.image;
+    return true;
+  }
+
+  std::vector<uint8_t> source;
+  if (!ReadAssetBytes(asset, &source)) return false;
   ::tinyusdz::ptx::Reader reader;
   std::string err;
-  if (!::tinyusdz::ptx::Reader::OpenFile(path, &reader, &err)) return false;
+  if (!::tinyusdz::ptx::Reader::OpenMemory(source.data(), source.size(),
+                                           &reader, &err)) return false;
   ::tinyusdz::ptx::FaceImage faceImage;
-  const size_t budget = options_.budget_bytes > 0
-                            ? static_cast<size_t>(options_.budget_bytes)
-                            : (256ull * 1024ull * 1024ull);
+  const size_t budget = 256ull * 1024ull * 1024ull;
   if (!reader.ReadFace(face, level, budget, &faceImage, &err) ||
       faceImage.dataType != ::tinyusdz::ptx::DataType::UInt8 ||
       faceImage.channels == 0 || faceImage.channels > 4)
@@ -305,6 +320,29 @@ bool TextureDecoder::DecodePtexFace(const std::string& asset, uint32_t face,
     ++downscaled_;
   }
   decoded_bytes_ += out->byte_size();
+
+  // Keep a bounded LRU of decoded face pages. The source PTX bytes and the
+  // temporary planar decode are released before returning, so RSS is bounded
+  // by the page cache rather than by the complete texture set.
+  const uint64_t cap = options_.budget_bytes > 0
+                           ? std::min<uint64_t>(options_.budget_bytes,
+                                               128ull * 1024ull * 1024ull)
+                           : 64ull * 1024ull * 1024ull;
+  if (cap > 0 && out->byte_size() <= cap) {
+    while (!ptex_lru_.empty() && ptex_cache_bytes_ + out->byte_size() > cap) {
+      const std::string& old = ptex_lru_.front();
+      auto it = ptex_cache_.find(old);
+      if (it != ptex_cache_.end()) {
+        ptex_cache_bytes_ -= it->second.image.byte_size();
+        ptex_cache_.erase(it);
+      }
+      ptex_lru_.pop_front();
+    }
+    ptex_lru_.push_back(key);
+    auto pos = std::prev(ptex_lru_.end());
+    ptex_cache_bytes_ += out->byte_size();
+    ptex_cache_.emplace(key, PtexCacheEntry{*out, pos});
+  }
   return true;
 }
 
