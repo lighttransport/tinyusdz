@@ -2687,6 +2687,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.displacementTex = t;
     FillNextSample(dt, &dm.displacementSample, uv0Name, uv1Name);
     dm.displacementSample.tex = t;
+    dm.displacementSample.isUdim = draw->textures[static_cast<size_t>(t)].isUdim;
     if (dm.displacementSample.channel < 0) dm.displacementSample.channel = 0;
     dm.displacementUv = dm.displacementSample.uv;
     dm.displacementTexScale = dt.scale_value.x;

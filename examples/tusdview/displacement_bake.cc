@@ -37,6 +37,34 @@ float SampleTextureRed(const DrawScene& scene, int texIndex, float u, float v,
     return 0.0f;
   }
   const DrawTextureCPU& tex = scene.textures[static_cast<size_t>(texIndex)];
+  if (tex.isUdim && !tex.udimTiles.empty()) {
+    const int tileU = static_cast<int>(std::floor(u));
+    const int tileV = static_cast<int>(std::floor(v));
+    if (tileU < 0 || tileV < 0 || tileU >= 10 || tileV >= 10) return 0.0f;
+    const int lut = tileV * 10 + tileU;
+    if (lut < 0 || static_cast<size_t>(lut) >= tex.udimLayer.size()) return 0.0f;
+    const int layer = tex.udimLayer[static_cast<size_t>(lut)];
+    if (layer < 0 || static_cast<size_t>(layer) >= tex.udimTiles.size()) return 0.0f;
+    const light3d::Image& tile = tex.udimTiles[static_cast<size_t>(layer)].image;
+    const int W = tile.width, H = tile.height, C = tile.channels;
+    if (W <= 0 || H <= 0 || C <= 0 || tile.data.empty()) return 0.0f;
+    const float fu = u - std::floor(u), fv = v - std::floor(v);
+    const float fx = fu * static_cast<float>(W) - 0.5f;
+    const float fy = (1.0f - fv) * static_cast<float>(H) - 0.5f;
+    const int x0 = static_cast<int>(std::floor(fx));
+    const int y0 = static_cast<int>(std::floor(fy));
+    const float tx = fx - static_cast<float>(x0), ty = fy - static_cast<float>(y0);
+    auto red = [&](int x, int y) -> float {
+      const int xx = WrapCoord(x, W, tex.wrapS);
+      const int yy = WrapCoord(y, H, tex.wrapT);
+      return static_cast<float>(tile.data[(static_cast<size_t>(yy) * W + xx) * C]) /
+             255.0f;
+    };
+    const float c00 = red(x0, y0), c10 = red(x0 + 1, y0);
+    const float c01 = red(x0, y0 + 1), c11 = red(x0 + 1, y0 + 1);
+    const float a = c00 + (c10 - c00) * tx, b = c01 + (c11 - c01) * tx;
+    return a + (b - a) * ty;
+  }
   const light3d::Image& img = tex.image;
   const int W = img.width, H = img.height, C = img.channels;
   if (W <= 0 || H <= 0 || C <= 0 || img.data.empty()) return 0.0f;
@@ -192,7 +220,8 @@ void BakeRTDisplacement(DrawScene* scene) {
         const DrawMaterialCPU& mat = scene->materials[sub.materialId];
         if (mat.displacementTex >= 0 &&
             static_cast<size_t>(mat.displacementTex) < scene->textures.size() &&
-            scene->textures[mat.displacementTex].isPtex) {
+            (scene->textures[mat.displacementTex].isPtex ||
+             scene->textures[mat.displacementTex].isUdim)) {
           mesh.rasterDisplacementBaked = true;
           break;
         }

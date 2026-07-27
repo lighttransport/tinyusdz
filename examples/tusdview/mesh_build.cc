@@ -390,6 +390,7 @@ void CopyTexSample(const tydra::UVTexture& uv, DrawTexSampleCPU* out) {
   };
   out->wrapS = wrap(uv.wrapS);
   out->wrapT = wrap(uv.wrapT);
+  out->isUdim = uv.is_udim;
   // -1 = use the whole value; only genuinely scalar outputs record a channel.
   switch (uv.connectedOutputChannel) {
     case tydra::UVTexture::Channel::R: out->channel = 0; break;
