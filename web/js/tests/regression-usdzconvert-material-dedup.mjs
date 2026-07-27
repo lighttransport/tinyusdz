@@ -127,6 +127,21 @@ await test('combined WASM next RenderStream accepts an in-memory USDA layer', ()
   }
 });
 
+await test('next default material matches legacy fallback shading', () => {
+  const material = createNextMaterial({
+    material: { primPath: '__default', baseColor: [0.8, 0.8, 0.8] },
+    texturePaths: {}
+  }, null, null, true);
+  try {
+    assert.equal(material.type, 'MeshStandardMaterial');
+    assert.equal(material.color.getHex(), 0x888888);
+    assert.equal(material.roughness, 0.6);
+    assert.equal(material.metalness, 0);
+  } finally {
+    material.dispose();
+  }
+});
+
 await test('combined WASM next RenderStream preserves xformOp:orient', () => {
   const stream = renderStreamFor(encoder.encode(ORIENTED_TRIANGLE_USDA));
   try {
