@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { convertFolderToUSDZ, loadWasm, unpackUSDZ } from '../src/usdzconvert.js';
 import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
 import {
+  applyMaterialXPixelOps,
   buildNextThreeNode,
   createNextMaterial,
   materialXTextureSpecForParam,
@@ -79,6 +80,34 @@ def Xform "World"
     }
 }
 `;
+
+const OPENPBR_NODEGRAPH_MESH_ONLY_USDA = OPENPBR_NODEGRAPH_SPHERE_USDA
+  .replace(`    def Sphere "Ball"
+    {
+        rel material:binding = </World/Mat>
+    }`, `    def Mesh "Ball"
+    {
+        rel material:binding = </World/Mat>
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }`)
+  .replace('            color3f inputs:diffuseColor = (1, 1, 1)',
+    `            color3f inputs:diffuseColor = (1, 1, 1)
+            float inputs:opacityThreshold = 0.5`)
+  .replace('            color3f inputs:base_color.connect = </World/Mat/Graph.outputs:result>',
+    `            color3f inputs:base_color.connect = </World/Mat/Graph.outputs:result>
+            float inputs:emission_luminance = 1
+            color3f inputs:emission_color.connect = </World/Mat/Graph.outputs:emission>`)
+  .replace('            color3f outputs:result.connect = </World/Mat/Graph/invert.outputs:out>',
+    `            color3f outputs:result.connect = </World/Mat/Graph/invert.outputs:out>
+            color3f outputs:emission.connect = </World/Mat/Graph/emissionImage.outputs:out>
+            def Shader "emissionImage"
+            {
+                uniform token info:id = "ND_image_color3"
+                asset inputs:file = @./decal.png@
+                color3f outputs:out
+            }`);
 
 const ENTITY_SCENE_USDA = `#usda 1.0
 (
@@ -266,7 +295,51 @@ await testAsync('next texture graph preserves image power operations', async () 
   assert.equal(spec.filename, './checker.png');
   assert.equal(spec.colorspace, 'lin_rec709');
   assert.deepEqual(spec.ops.map((op) => op.category), ['power']);
+  assert.equal(spec.ops[0].sourceInput, 'in1');
   assert.deepEqual(spec.ops[0].node.inputs[1].value, [0.4545, 0.4545, 0.4545]);
+});
+
+await testAsync('next texture graph preserves conditional decal masks', async () => {
+  const graph = {
+    nodegraph: {
+      nodes: [
+        { name: 'image', category: 'image_vector4', inputs: [
+          { name: 'file', value: './opacity.png' }
+        ] },
+        { name: 'extract', category: 'extract_color3', inputs: [
+          { name: 'in', nodename: 'image' }, { name: 'index', value: 0 }
+        ] },
+        { name: 'threshold', category: 'ifgreatereq_float', inputs: [
+          { name: 'in1', value: 0 }, { name: 'in2', value: 1 },
+          { name: 'value1', nodename: 'extract' }, { name: 'value2', value: 0.5 }
+        ] },
+        { name: 'oneMinus', category: 'subtract_float', inputs: [
+          { name: 'in1', value: 1 }, { name: 'in2', nodename: 'threshold' }
+        ] }
+      ],
+      outputs: [{ name: 'opacity', nodename: 'oneMinus' }]
+    },
+    connections: [{ input: 'geometry_opacity', output: 'opacity' }]
+  };
+  const spec = materialXTextureSpecForParam(graph, 'geometry_opacity');
+  assert.equal(spec.filename, './opacity.png');
+  assert.deepEqual(spec.ops.map((op) => op.category),
+    ['subtract', 'ifgreatereq', 'extract']);
+  assert.deepEqual(spec.ops.map((op) => op.sourceInput),
+    ['in2', 'value1', 'in']);
+  const pixels = new Uint8ClampedArray([
+    0, 10, 20, 255,
+    127, 10, 20, 255,
+    128, 10, 20, 255,
+    255, 10, 20, 255
+  ]);
+  applyMaterialXPixelOps(pixels, spec.ops);
+  assert.deepEqual(Array.from(pixels), [
+    0, 0, 0, 255,
+    0, 0, 0, 255,
+    255, 255, 255, 255,
+    255, 255, 255, 255
+  ]);
 });
 
 await testAsync('next queues graph-derived opacity from a shared color image', async () => {
@@ -345,6 +418,32 @@ await testAsync('next RenderStream exposes analytic geometry and MaterialX node 
     assert.deepEqual(graph.connections, [{
       input: 'base_color', nodegraph: 'Graph', output: 'result'
     }]);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next mesh-only RenderStream retains authoritative MaterialX data', async () => {
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    const bytes = new TextEncoder().encode(OPENPBR_NODEGRAPH_MESH_ONLY_USDA);
+    const result = stream.begin(bytes);
+    assert.ok(result?.success, result?.error || stream.error());
+    assert.equal(result.meshCount, 1);
+    const mesh = stream.getMesh(0);
+    assert.equal(mesh.material?.shaderType, 'OpenPBR',
+      'mesh-only mode must prefer outputs:mtlx:surface over the preview fallback');
+    assert.equal(mesh.material?.opacityThreshold, 0.5,
+      'mesh-only mode must retain the preview fallback alpha cutoff');
+    assert.equal(mesh.material?.emissiveTexture, './decal.png');
+    assert.deepEqual(mesh.material?.emissive, [1, 1, 1],
+      'mesh-only mode must retain the textured OpenPBR emission multiplier');
+    const graph = JSON.parse(mesh.material?.openPBRNodeGraphJson || 'null');
+    assert.equal(graph?.nodegraph?.name, 'Graph');
+    assert.deepEqual(graph?.connections?.map((connection) => connection.input),
+      ['base_color', 'emission_color']);
   } finally {
     stream.end();
     stream.delete();

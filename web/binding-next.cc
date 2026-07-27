@@ -3734,6 +3734,37 @@ class RenderStream {
     *ss << "|opacitytex=" << normTexKey_(m.opacity_texture);
   }
 
+  bool ensureRenderMaterial_(const tinyusdz::next::UsdPrim &mat) {
+    if (!mat.IsValid()) return false;
+    const std::string path = mat.GetPath().str();
+    if (render_scene_.material_by_path.find(path) !=
+        render_scene_.material_by_path.end()) {
+      return true;
+    }
+
+    // meshOnly intentionally skips the full RenderScene hierarchy and geometry
+    // catalog. Material conversion is still required: otherwise getMesh()
+    // falls back to the universal PreviewSurface terminal and loses an
+    // authoritative outputs:mtlx:surface graph. Convert just this bound
+    // material into the otherwise-empty scene so worker conversion retains
+    // MaterialX values, node graphs, and texture metadata without rebuilding
+    // the potentially very large node hierarchy.
+    tr::ConverterConfig config;
+    config.time_code = 0.0;
+    config.material.load_textures = false;
+    config.material.allow_missing_textures = true;
+    tr::RenderSceneConverter converter(config);
+    tr::RenderMaterial material;
+    if (!converter.ConvertMaterial(stage_, mat, &material, &render_scene_)) {
+      return false;
+    }
+    const int32_t id = static_cast<int32_t>(render_scene_.materials.size());
+    render_scene_.material_by_path[material.prim_path] = id;
+    render_scene_.materials.push_back(std::move(material));
+    render_scene_valid_ = true;
+    return true;
+  }
+
   MaterialRecord materialRecordForPrim_(
       const tinyusdz::next::UsdPrim &mat) {
     MaterialRecord rec;
@@ -3745,6 +3776,7 @@ class RenderStream {
       return rec;
     }
     rec.prim_path = mat.GetPath().str();
+    (void)ensureRenderMaterial_(mat);
     bool populated_from_render_scene = false;
     if (render_scene_valid_) {
       const auto material_it = render_scene_.material_by_path.find(rec.prim_path);
@@ -3865,6 +3897,17 @@ class RenderStream {
         rec.occlusion_texture = rec.occlusion_meta.path;
         rec.emissive_texture = rec.emissive_meta.path;
         rec.opacity_texture = rec.opacity_meta.path;
+      }
+    }
+    // A dual-terminal material commonly carries its alpha cutoff only on the
+    // PreviewSurface fallback while MaterialX supplies the actual shading
+    // graph. Preserve that cutoff even when the render catalog correctly chose
+    // outputs:mtlx:surface above.
+    if (rec.opacity_threshold <= 0.0f && shader.IsValid()) {
+      tinyusdz::next::PreviewSurfaceData ps;
+      if (tinyusdz::next::GetPreviewSurfaceData(stage_, shader, &ps) &&
+          ps.opacity_threshold > 0.0f) {
+        rec.opacity_threshold = ps.opacity_threshold;
       }
     }
     // The schema helper above intentionally models PreviewSurface only.
