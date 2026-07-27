@@ -148,6 +148,51 @@ bool ReadMatrix(const Value& value, double* m) {
   return false;
 }
 
+bool ReadQuat(const Value& value, double* w, double* x, double* y, double* z) {
+  // USD quaternions are stored in real-first (w, x, y, z) order. The Value
+  // accessors retain that order for both float and double quaternion values.
+  if (const float* f = value.as_float4()) {
+    *w = static_cast<double>(f[0]);
+    *x = static_cast<double>(f[1]);
+    *y = static_cast<double>(f[2]);
+    *z = static_cast<double>(f[3]);
+    return true;
+  }
+  if (const double* d = value.as_double4()) {
+    *w = d[0];
+    *x = d[1];
+    *y = d[2];
+    *z = d[3];
+    return true;
+  }
+  return false;
+}
+
+void Orient(double w, double x, double y, double z, double* m) {
+  // Matrices in the next transform evaluator use USD's row-vector layout.
+  // Normalize authored quaternions so slightly non-unit values cannot scale
+  // the mesh while converting the orientation to a 3x3 rotation.
+  const double length = std::sqrt(w * w + x * x + y * y + z * z);
+  if (length == 0.0) {
+    Identity(m);
+    return;
+  }
+  w /= length;
+  x /= length;
+  y /= length;
+  z /= length;
+  Identity(m);
+  m[0] = 1.0 - 2.0 * (y * y + z * z);
+  m[1] = 2.0 * (x * y + w * z);
+  m[2] = 2.0 * (x * z - w * y);
+  m[4] = 2.0 * (x * y - w * z);
+  m[5] = 1.0 - 2.0 * (x * x + z * z);
+  m[6] = 2.0 * (y * z + w * x);
+  m[8] = 2.0 * (x * z + w * y);
+  m[9] = 2.0 * (y * z - w * x);
+  m[10] = 1.0 - 2.0 * (x * x + y * y);
+}
+
 bool BuildRotateABC(const XformOpType type, const double x, const double y,
                     const double z, double* m) {
   double rx[16], ry[16], rz[16], tmp[16];
@@ -427,7 +472,19 @@ bool UsdGeomXform::ComputeLocalTransform(double* matrix) const {
         if (op.is_inverse) return false;
         break;
       }
-      case XformOpType::Orient:
+      case XformOpType::Orient: {
+        double w = 1.0, x = 0.0, y = 0.0, z = 0.0;
+        if (!ReadQuat(op.value, &w, &x, &y, &z)) return false;
+        if (op.is_inverse) {
+          // Unit-quaternion inverse is its conjugate. Orient() normalizes,
+          // so conjugating here also handles authored non-unit quaternions.
+          x = -x;
+          y = -y;
+          z = -z;
+        }
+        Orient(w, x, y, z, m);
+        break;
+      }
       case XformOpType::Unknown:
         break;
     }

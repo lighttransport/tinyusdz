@@ -24,6 +24,7 @@ import {
 } from '../src/tinyusdz/NextRenderSceneUtils.js';
 import {
   INVALID_FACE_INDEX_USDA,
+  ORIENTED_TRIANGLE_USDA,
   SIMPLE_TRIANGLE_USDA,
   TEXTURED_TWO_MATERIAL_USDA,
 } from './fixtures/regression-fixtures.mjs';
@@ -120,6 +121,23 @@ await test('combined WASM next RenderStream accepts an in-memory USDA layer', ()
   try {
     assert.equal(stream.meshCount(), 1, 'USDA fixture should expose one mesh');
     materializeAllMeshes(stream);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await test('combined WASM next RenderStream preserves xformOp:orient', () => {
+  const stream = renderStreamFor(encoder.encode(ORIENTED_TRIANGLE_USDA));
+  try {
+    const mesh = stream.getMesh(0);
+    assert.ok(mesh && !mesh.error, `oriented mesh should materialize: ${mesh?.error || ''}`);
+    assert.ok(Array.isArray(mesh.worldMatrix) && mesh.worldMatrix.length === 16,
+      'oriented mesh should expose a world matrix');
+    assert.ok(Math.abs(mesh.worldMatrix[6] + 1) < 1e-4,
+      'xformOp:orient should rotate the row-major world matrix');
+    assert.ok(Math.abs(mesh.worldMatrix[9] - 1) < 1e-4,
+      'xformOp:orient should preserve the expected inverse-axis term');
   } finally {
     stream.end();
     stream.delete();
