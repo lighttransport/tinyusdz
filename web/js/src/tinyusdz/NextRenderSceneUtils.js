@@ -701,16 +701,23 @@ export function normalizeNextMaterialData(materialRecord = {}, texturePaths = {}
 
 export function createNextMaterial(entry, adapter, textureManager, skipTextures) {
   const src = entry.material || {};
+  // Keep unbound geometry consistent with the legacy loader.  The legacy
+  // path uses a neutral MeshStandardMaterial(0x888888, roughness 0.6), while
+  // treating the synthetic .8 linear baseColor emitted by RenderStream as an
+  // authored PreviewSurface makes these scenes visibly too bright.
+  const isDefaultMaterial = src.primPath === '__default';
   const paths = entry.texturePaths || {};
   const hasOpacityMap = !!paths.opacity && !skipTextures;
   const authoredAlphaTest = (src.opacityThreshold ?? -1) > 0 ? src.opacityThreshold : 0;
-  const material = new THREE.MeshPhysicalMaterial({
+  const MaterialType = isDefaultMaterial ? THREE.MeshStandardMaterial : THREE.MeshPhysicalMaterial;
+  const material = new MaterialType({
     // A connected shader input replaces its fallback value; it is not a tint.
-    color: paths.baseColor && !skipTextures ? new THREE.Color(1, 1, 1) :
+    color: isDefaultMaterial ? new THREE.Color(0x888888) :
+      (paths.baseColor && !skipTextures ? new THREE.Color(1, 1, 1) :
       new THREE.Color(src.baseColor?.[0] ?? 0.8, src.baseColor?.[1] ?? 0.8,
-        src.baseColor?.[2] ?? 0.8),
+        src.baseColor?.[2] ?? 0.8)),
     metalness: src.metallic ?? 0,
-    roughness: src.roughness ?? 0.5,
+    roughness: isDefaultMaterial ? 0.6 : (src.roughness ?? 0.5),
     emissive: new THREE.Color(src.emissive?.[0] ?? 0, src.emissive?.[1] ?? 0, src.emissive?.[2] ?? 0),
     transparent: (src.opacity ?? 1) < 1 || hasOpacityMap,
     opacity: src.opacity ?? 1,
