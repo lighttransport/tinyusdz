@@ -34,6 +34,43 @@ struct PtexPageCacheStats {
   uint64_t peakResidentBytes{0};
 };
 
+struct PtexPhysicalPageAssignment {
+  uint32_t slot{0};
+  uint32_t evictedFace{~uint32_t{0}};
+  bool hit{false};
+};
+
+// Deterministic LRU ownership for a fixed number of GPU atlas slots. Pixel
+// upload and face-table updates stay backend-specific; this class guarantees
+// that a face has at most one slot and identifies the old face that must be
+// redirected to fallback before a slot is overwritten.
+class PtexPhysicalPageCache {
+ public:
+  explicit PtexPhysicalPageCache(uint32_t slotCount);
+
+  bool Request(uint32_t face, PtexPhysicalPageAssignment* assignment);
+  void Clear();
+
+  uint32_t slotCount() const { return static_cast<uint32_t>(slots_.size()); }
+  uint32_t residentCount() const { return residentCount_; }
+  uint64_t hits() const { return hits_; }
+  uint64_t misses() const { return misses_; }
+  uint64_t evictions() const { return evictions_; }
+
+ private:
+  struct Slot {
+    uint32_t face{~uint32_t{0}};
+    uint64_t stamp{0};
+  };
+  std::vector<Slot> slots_;
+  std::unordered_map<uint32_t, uint32_t> byFace_;
+  uint32_t residentCount_{0};
+  uint64_t clock_{0};
+  uint64_t hits_{0};
+  uint64_t misses_{0};
+  uint64_t evictions_{0};
+};
+
 // Byte-bounded decoded-face cache. One cache belongs to one Reader/source;
 // entries are keyed by (face,mip), promoted on access, and evicted least-
 // recently-used. Oversized pages are returned through a transient slot and are

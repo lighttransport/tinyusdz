@@ -551,6 +551,10 @@ struct DrawTextureCPU {
   // Native Ptex source. `image` is a bounded face atlas when residency permits,
   // or a representative-face fallback after the cumulative budget is spent.
   bool isPtex{false};
+  // Allocate mutable RGBA8 storage even when `image.data` is empty. Streaming
+  // Ptex caches use this to reserve only their fixed physical atlas without a
+  // same-sized zero-filled CPU upload.
+  bool streamingMutable{false};
   uint32_t ptexFaces{0};
   uint16_t ptexLevels{0};
   uint16_t ptexChannels{0};
