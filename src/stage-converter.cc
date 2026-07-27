@@ -16,6 +16,14 @@
 #include <unordered_set>
 #include "layer.hh"
 #include "common-macros.inc"
+
+#include <cstdlib>
+#include <iostream>
+#include <atomic>
+#include <functional>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#endif
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 #include "pprint-enum.hh"  // For to_string(APISchemas::APIName)
 #include "value-pprint.hh"  // For string payloads of unregistered Crate values
@@ -37,6 +45,15 @@
 
 namespace tinyusdz {
 namespace experimental {
+
+// Per-thread spec sink for the parallel stage->specs conversion (see
+// crate-writer.hh). Function-local thread_local so the private nested
+// SpecData type stays private.
+std::vector<CrateWriter::SpecData>*& CrateWriter::tls_spec_sink() {
+  static thread_local std::vector<SpecData>* s_sink = nullptr;
+  return s_sink;
+}
+
 
 namespace {
 
@@ -435,7 +452,6 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     v.SetUnregisteredValueString(kv.second);
     root_fields.push_back({kv.first, v});
   }
-
   // kilogramsPerUnit (UsdPhysics) and the two USDZ playback metas were written by
   // the Layer path (sconv-layer.cc) but not by this one, so they vanished on a
   // Stage write. (The timecode family above is already handled -- do not add it
@@ -524,10 +540,30 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     }
   }
 
-  if (!AddSpec(root_path, SpecType::PseudoRoot, root_fields, err)) {
+  if (!AddSpec(root_path, SpecType::PseudoRoot, std::move(root_fields), err)) {
     if (err) *err = "Failed to add root spec: " + *err;
     return false;
   }
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Large stages: convert prim subtrees on worker threads (byte-identical to
+  // the serial DFS — specs assembled in DFS order, field-name tokens replayed
+  // serially afterwards). Small stages stay serial (thread setup dominates).
+  {
+    // Sample three levels — deep single-root scenes (/Root/Group/Actor...)
+    // have all their fan-out below level 1.
+    size_t approx_prims = 0;
+    for (const auto& prim : stage.root_prims()) {
+      approx_prims += 1;
+      for (const auto& c1 : prim.children()) {
+        approx_prims += 1 + c1.children().size();
+      }
+    }
+    if ((std::thread::hardware_concurrency() > 1) && (approx_prims > 64)) {
+      return ConvertRootPrimsParallel(stage, err);
+    }
+  }
+#endif
 
   // Convert all root prims
   for (const auto& prim : stage.root_prims()) {
@@ -540,6 +576,152 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
 
   return true;
 }
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+bool CrateWriter::ConvertRootPrimsParallel(const Stage& stage,
+                                           std::string* err) {
+  // Work unit: either a single prim's own specs (shell — its children are
+  // separate units, assembled after it in child order) or a whole subtree
+  // (converted with the normal DFS ConvertPrimIterative). Shells exist so
+  // wide-but-shallow-rooted scenes (e.g. everything under one /Root) still
+  // fan out.
+  struct ConvUnit {
+    const Prim* prim = nullptr;
+    Path parent_path;
+    bool whole_subtree = true;
+    uint32_t depth = 0;
+    std::vector<SpecData> specs;
+    std::vector<size_t> children;  // unit indices, in child order (shells only)
+    std::string unit_err;
+    bool ok = true;
+  };
+
+  std::vector<ConvUnit> units;
+  units.reserve(1024);
+
+  // Split shells down to this depth; subtrees below become parallel jobs.
+  // Depth 2 fans out single-root scenes (root shell -> level-1 shells ->
+  // level-2 subtree jobs) without creating one unit per prim.
+  constexpr uint32_t kShellDepth = 3;
+
+  std::vector<size_t> roots;
+  std::function<size_t(const Prim&, const Path&, uint32_t)> plan =
+      [&](const Prim& prim, const Path& parent_path, uint32_t depth) -> size_t {
+    const size_t idx = units.size();
+    units.push_back(ConvUnit());
+    ConvUnit& u = units.back();
+    u.prim = &prim;
+    u.parent_path = parent_path;
+    u.depth = depth;
+    if (depth < kShellDepth && !prim.children().empty()) {
+      u.whole_subtree = false;
+      // Build this prim's absolute path for its children (mirrors
+      // ConvertPrimIterative).
+      std::string parent_str = parent_path.prim_part();
+      std::string abs_path_str;
+      if (parent_str == "/") {
+        abs_path_str = "/" + prim.element_name();
+      } else {
+        abs_path_str = parent_str + "/" + prim.element_name();
+      }
+      Path prim_path(abs_path_str, "");
+      std::vector<size_t> child_ids;
+      child_ids.reserve(prim.children().size());
+      for (const auto& child : prim.children()) {
+        child_ids.push_back(plan(child, prim_path, depth + 1));
+      }
+      units[idx].children = std::move(child_ids);
+    }
+    return idx;
+  };
+
+  {
+    Path root_parent("/", "");
+    for (const auto& prim : stage.root_prims()) {
+      roots.push_back(plan(prim, root_parent, 0));
+    }
+  }
+
+  if (const char* e = ::getenv("TINYUSDZ_FLATTEN_TIMING")) {
+    if (e[0] == '1') {
+      std::cerr << "[tinyusdz] parallel stage->specs: " << units.size()
+                << " units\n";
+    }
+  }
+
+  // Run units on workers. Each worker redirects AddSpec into the unit's own
+  // spec buffer via the per-thread sink; token pre-registration is skipped
+  // in AddSpec while a sink is active.
+  {
+    const uint32_t hw = std::thread::hardware_concurrency();
+    const uint32_t nworkers = static_cast<uint32_t>(
+        (std::min)(size_t(hw > 0 ? hw : 4), units.size()));
+    std::atomic<size_t> next_unit{0};
+    auto worker = [&]() {
+      for (;;) {
+        const size_t i = next_unit.fetch_add(1);
+        if (i >= units.size()) break;
+        ConvUnit& u = units[i];
+        tls_spec_sink() = &u.specs;
+        if (u.whole_subtree) {
+          u.ok = ConvertPrimIterative(*u.prim, u.parent_path, &u.unit_err);
+        } else {
+          if (u.depth > kMaxPrimNestingDepth) {
+            u.unit_err = "Prim nesting too deep";
+            u.ok = false;
+          } else {
+            u.ok = ConvertSinglePrim(*u.prim, u.parent_path, &u.unit_err);
+          }
+        }
+        tls_spec_sink() = nullptr;
+      }
+    };
+    std::vector<std::thread> workers;
+    workers.reserve(nworkers);
+    for (uint32_t t = 1; t < nworkers; t++) {
+      workers.emplace_back(worker);
+    }
+    worker();
+    for (auto& th : workers) th.join();
+  }
+
+  // Assemble in DFS order (unit specs, then child units) — identical spec
+  // order to the serial ConvertPrimIterative walk.
+  std::function<bool(size_t)> assemble = [&](size_t idx) -> bool {
+    ConvUnit& u = units[idx];
+    if (!u.ok) {
+      if (err) *err = "Failed to convert prim: " + u.unit_err;
+      return false;
+    }
+    for (auto& sd : u.specs) {
+      spec_data_.push_back(std::move(sd));
+    }
+    u.specs.clear();
+    u.specs.shrink_to_fit();
+    for (size_t c : u.children) {
+      if (!assemble(c)) return false;
+    }
+    return true;
+  };
+  const size_t replay_begin = spec_data_.size();
+  for (size_t r : roots) {
+    if (!assemble(r)) return false;
+  }
+
+  // Serial token replay in DFS spec order: reproduces the serial writer's
+  // first-seen token numbering exactly. Only the AddSpec-time field prefix —
+  // post-appended fields (`properties`) were never pre-registered serially.
+  for (size_t i = replay_begin; i < spec_data_.size(); i++) {
+    const auto& sd = spec_data_[i];
+    const size_t n = (std::min)(size_t(sd.fields_at_addspec), sd.fields.size());
+    for (size_t f = 0; f < n; f++) {
+      GetOrCreateToken(sd.fields[f].first);
+    }
+  }
+
+  return true;
+}
+#endif  // TINYUSDZ_ENABLE_THREAD
 
 // ============================================================================
 // Per-Prim Conversion (no recursion into children)
@@ -590,7 +772,8 @@ bool CrateWriter::ConvertSinglePrim(
   // specs instead of all accumulated specs — the prior all-specs scan made
   // ConvertSinglePrim O(prims x total_specs), which dominated write time for
   // spec-dense scenes (e.g. a scene with ~5000 shaders -> ~57 s write).
-  const size_t my_specs_begin = spec_data_.size();
+  std::vector<SpecData>& out_specs = active_spec_buffer();
+  const size_t my_specs_begin = out_specs.size();
 
   DCOUT("ConvertSinglePrim: name=" << prim_name << " abs=" << abs_path_str << " type=" << type_name);
 
@@ -809,7 +992,7 @@ bool CrateWriter::ConvertSinglePrim(
   }
 
   // Add spec for this prim (prim-level fields only; "properties" added later)
-  if (!AddSpec(prim_path, SpecType::Prim, prim_fields, err)) {
+  if (!AddSpec(prim_path, SpecType::Prim, std::move(prim_fields), err)) {
     if (err) *err = "Failed to add spec for: " + abs_path_str + ": " + *err;
     return false;
   }
@@ -907,7 +1090,7 @@ bool CrateWriter::ConvertSinglePrim(
     }
 
     if (!attr_fields.empty()) {
-      if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
+      if (!AddSpec(attr_path, SpecType::Attribute, std::move(attr_fields), err)) {
         DCOUT("WARNING: Failed to add attribute spec for: " << pe.name);
       }
     }
@@ -943,12 +1126,16 @@ bool CrateWriter::ConvertSinglePrim(
           if (preview_surface->outputsSurface.authored()) {
             Attribute a;
             a.set_type_name(value::kToken);
-            ConvertAttributeToFields("outputs:surface", a, prim_path, false, err);
+            if (!ConvertAttributeToFields("outputs:surface", a, prim_path, false, err)) {
+              return false;
+            }
           }
           if (preview_surface->outputsDisplacement.authored()) {
             Attribute a;
             a.set_type_name(value::kToken);
-            ConvertAttributeToFields("outputs:displacement", a, prim_path, false, err);
+            if (!ConvertAttributeToFields("outputs:displacement", a, prim_path, false, err)) {
+              return false;
+            }
           }
         }
       } else if (shader->info_id == "UsdUVTexture") {
@@ -958,18 +1145,18 @@ bool CrateWriter::ConvertSinglePrim(
             return false;
           }
           // Terminal outputs — use actual_type_name if available, else the template type
-          auto add_t = [&](const char *n, const auto &term_attr, const char *default_type) {
-            if (!term_attr.authored()) return;
+          auto add_t = [&](const char *n, const auto &term_attr, const char *default_type) -> bool {
+            if (!term_attr.authored()) return true;
             Attribute attr;
             attr.set_type_name(term_attr.has_actual_type() ? term_attr.get_actual_type_name() : default_type);
-            ConvertAttributeToFields(n, attr, prim_path, false, err);
+            return ConvertAttributeToFields(n, attr, prim_path, false, err);
           };
-          add_t("outputs:r", uv_texture->outputsR, "float");
-          add_t("outputs:g", uv_texture->outputsG, "float");
-          add_t("outputs:b", uv_texture->outputsB, "float");
-          add_t("outputs:a", uv_texture->outputsA, "float");
-          add_t("outputs:rgb", uv_texture->outputsRGB, "float3");
-          add_t("outputs:rgba", uv_texture->outputsRGBA, "float4");
+          if (!add_t("outputs:r", uv_texture->outputsR, "float")) return false;
+          if (!add_t("outputs:g", uv_texture->outputsG, "float")) return false;
+          if (!add_t("outputs:b", uv_texture->outputsB, "float")) return false;
+          if (!add_t("outputs:a", uv_texture->outputsA, "float")) return false;
+          if (!add_t("outputs:rgb", uv_texture->outputsRGB, "float3")) return false;
+          if (!add_t("outputs:rgba", uv_texture->outputsRGBA, "float4")) return false;
         }
       } else if (shader->info_id == "UsdTransform2d") {
         if (auto* transform2d = shader->value.as<UsdTransform2d>()) {
@@ -982,7 +1169,9 @@ bool CrateWriter::ConvertSinglePrim(
             a.set_type_name(transform2d->result.has_actual_type()
                                 ? transform2d->result.get_actual_type_name()
                                 : "float2");
-            ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
+            if (!ConvertAttributeToFields("outputs:result", a, prim_path, false, err)) {
+              return false;
+            }
           }
         }
       } else if (shader->info_id.find("UsdPrimvarReader_") == 0) {
@@ -996,22 +1185,21 @@ bool CrateWriter::ConvertSinglePrim(
         // UsdPrimvarReader_float2) and threw away a non-conformant authored one
         // (`token outputs:result`). The authored spelling is kept in
         // actual_type_name, exactly as the UsdUVTexture terminals above use it.
-        auto add_pr_terminal = [&](auto *pr) {
-          if (pr && pr->result.authored()) {
-            Attribute a;
-            std::string tname = pr->result.has_actual_type()
-                                    ? pr->result.get_actual_type_name()
-                                    : pr->result.type_name();
-            a.set_type_name(tname.empty() ? "float2" : tname);
-            ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
-          }
+        auto add_pr_terminal = [&](auto *pr) -> bool {
+          if (!pr || !pr->result.authored()) return true;
+          Attribute a;
+          std::string tname = pr->result.has_actual_type()
+                                  ? pr->result.get_actual_type_name()
+                                  : pr->result.type_name();
+          a.set_type_name(tname.empty() ? "float2" : tname);
+          return ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
         };
-        if (auto *p0 = shader->value.as<UsdPrimvarReader_float2>()) add_pr_terminal(p0);
-        else if (auto *p1 = shader->value.as<UsdPrimvarReader_float>()) add_pr_terminal(p1);
-        else if (auto *p2 = shader->value.as<UsdPrimvarReader_float3>()) add_pr_terminal(p2);
-        else if (auto *p3 = shader->value.as<UsdPrimvarReader_float4>()) add_pr_terminal(p3);
-        else if (auto *p4 = shader->value.as<UsdPrimvarReader_int>()) add_pr_terminal(p4);
-        else if (auto *p5 = shader->value.as<UsdPrimvarReader_string>()) add_pr_terminal(p5);
+        if (auto *p0 = shader->value.as<UsdPrimvarReader_float2>()) { if (!add_pr_terminal(p0)) return false; }
+        else if (auto *p1 = shader->value.as<UsdPrimvarReader_float>()) { if (!add_pr_terminal(p1)) return false; }
+        else if (auto *p2 = shader->value.as<UsdPrimvarReader_float3>()) { if (!add_pr_terminal(p2)) return false; }
+        else if (auto *p3 = shader->value.as<UsdPrimvarReader_float4>()) { if (!add_pr_terminal(p3)) return false; }
+        else if (auto *p4 = shader->value.as<UsdPrimvarReader_int>()) { if (!add_pr_terminal(p4)) return false; }
+        else if (auto *p5 = shader->value.as<UsdPrimvarReader_string>()) { if (!add_pr_terminal(p5)) return false; }
       } else if (auto* mtlx_surface = shader->value.as<MtlxOpenPBRSurface>()) {
         // MaterialX ND_open_pbr_surface_surfaceshader -> typed MtlxOpenPBRSurface
         if (!AddMtlxOpenPBRSurfaceInputSpecs(mtlx_surface, prim_path, err)) {
@@ -1202,7 +1390,7 @@ bool CrateWriter::ConvertSinglePrim(
     for (const auto& vs_item : variant_sets) {
       const auto& variantset_name = vs_item.first;
       const auto& variantset_data = vs_item.second;
-      if (!ConvertVariantSetToFields(variantset_name, variantset_data, prim_path, err)) {
+      if (!ConvertVariantSetToFields(variantset_name, variantset_data, prim_path, err, /*depth*/ 0)) {
         if (err) *err = "Failed to convert VariantSet '" + variantset_name + "' for " + abs_path_str + ": " + *err;
         return false;
       }
@@ -1219,8 +1407,8 @@ bool CrateWriter::ConvertSinglePrim(
     // Scan only the specs this prim added (see my_specs_begin), not all of
     // spec_data_ — direct-child Attribute/Relationship specs are always among
     // this prim's own specs.
-    for (size_t _i = my_specs_begin; _i < spec_data_.size(); ++_i) {
-      const auto &sd = spec_data_[_i];
+    for (size_t _i = my_specs_begin; _i < out_specs.size(); ++_i) {
+      const auto &sd = out_specs[_i];
       if (sd.spec_type == SpecType::Attribute ||
           sd.spec_type == SpecType::Relationship) {
         const std::string &fp = sd.path.full_path_name();
@@ -1240,8 +1428,8 @@ bool CrateWriter::ConvertSinglePrim(
     if (!property_names.empty()) {
       // Append "properties" field to this prim's Prim spec (also within the
       // [my_specs_begin, end) range this call appended).
-      for (size_t _i = my_specs_begin; _i < spec_data_.size(); ++_i) {
-        auto &sd = spec_data_[_i];
+      for (size_t _i = my_specs_begin; _i < out_specs.size(); ++_i) {
+        auto &sd = out_specs[_i];
         if (sd.spec_type == SpecType::Prim &&
             sd.path.full_path_name() == abs_path_str) {
           crate::CrateValue props_value;
@@ -1575,7 +1763,9 @@ void CrateWriter::ExtractPrimMeta(
     }
   }
 
-  const std::unordered_set<std::string> emitted_prim_meta_names = {
+  // static: built from literals once, not per call (this sits on the
+  // per-prim hot path of ConvertStageToSpecs).
+  static const std::unordered_set<std::string> emitted_prim_meta_names = {
       "active",
       "apiSchemas",
       "assetInfo",
@@ -3086,13 +3276,11 @@ bool CrateWriter::ConvertAttributeToFields(
     v.Set(static_cast<float>(metas.get_weight()));
     attr_fields.push_back({"weight", v});
   }
-  // A bare string in an attribute's metadata block (`double x = 1 ( """m""" )`)
-  // IS the comment in USD -- the two ASCII spellings are one Sdf field, and only
-  // the ASCII parser knows which was used: it parks the bare form in
-  // AttrMeta::stringData and the `comment = ...` form in AttrMeta::comment. Only
-  // the latter was ever written, so a bare string was DROPPED on usdc write.
-  //
-  // Emit exactly ONE `comment` field: two would corrupt the fieldset encoding.
+  // A bare string in an attribute's metadata block IS the comment in USD -- the
+  // two ASCII spellings are one Sdf field, and only the ASCII parser knows which
+  // was used (it parks the bare form in AttrMeta::stringData). Both go out as
+  // the STANDARD `comment` field rather than a private one pxr could not read.
+  // Emit exactly ONE: two `comment` fields would corrupt the fieldset encoding.
   if (metas.has_comment() || !metas.stringData.empty()) {
     std::string comment_str;
     if (metas.has_comment()) {
@@ -3138,7 +3326,8 @@ bool CrateWriter::ConvertAttributeToFields(
     attr_fields.push_back({"unauthoredValuesIndex", v});
   }
 
-  const std::unordered_set<std::string> emitted_meta_names = {
+  // static: built from literals once, not per call (per-attribute hot path).
+  static const std::unordered_set<std::string> emitted_meta_names = {
       "allowedTokens",
       "bindMaterialAs",
       "colorSpace",
@@ -3191,7 +3380,7 @@ bool CrateWriter::ConvertAttributeToFields(
   }
 
   // Create the attribute spec
-  if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
+  if (!AddSpec(attr_path, SpecType::Attribute, std::move(attr_fields), err)) {
     if (err) *err = "Failed to add attribute spec: " + attr_path.full_path_name() + ": " + *err;
     return false;
   }
@@ -3366,7 +3555,7 @@ bool CrateWriter::ConvertRelationshipToFields(
   }
 
   // Create the relationship spec
-  if (!AddSpec(rel_path, SpecType::Relationship, rel_fields, err)) {
+  if (!AddSpec(rel_path, SpecType::Relationship, std::move(rel_fields), err)) {
     if (err) *err = "Failed to add relationship spec: " + rel_path.full_path_name() + ": " + *err;
     return false;
   }
@@ -3428,7 +3617,7 @@ bool CrateWriter::ConvertConnectionToFields(
   }
 
   // 3. Create the connection spec
-  if (!AddSpec(conn_path, SpecType::Connection, conn_fields, err)) {
+  if (!AddSpec(conn_path, SpecType::Connection, std::move(conn_fields), err)) {
     if (err) *err = "Failed to add connection spec: " + conn_path.full_path_name() + ": " + *err;
     return false;
   }
@@ -3447,7 +3636,12 @@ bool CrateWriter::ConvertVariantSetToFields(
     const std::string& variantset_name,
     const VariantSet& variantset,
     const Path& parent_path,
-    std::string* err) {
+    std::string* err,
+    int depth) {
+  if (depth > 512) {
+    if (err) *err = "VariantSet nesting too deep (>512).";
+    return false;
+  }
 
   // VariantSet path: parent{variantSetName} (e.g., /Chair{materialVariant})
   // pxr's SdfPath has no bare `{set}` form: a VariantSet spec lives at the
@@ -3471,7 +3665,7 @@ bool CrateWriter::ConvertVariantSetToFields(
   variant_children_value.Set(variant_tokens);
   vs_fields.push_back({"variantChildren", variant_children_value});
 
-  if (!AddSpec(vs_path, SpecType::VariantSet, vs_fields, err)) {
+  if (!AddSpec(vs_path, SpecType::VariantSet, std::move(vs_fields), err)) {
     if (err) *err = "Failed to add VariantSet spec: " + vs_path.full_path_name() + ": " + *err;
     return false;
   }
@@ -3486,7 +3680,7 @@ bool CrateWriter::ConvertVariantSetToFields(
     const auto& variant_name = variant_item.first;
     const auto& variant_data = variant_item.second;
 
-    if (!ConvertVariantToFields(variant_name, variant_data, parent_path, variantset_name, err)) {
+    if (!ConvertVariantToFields(variant_name, variant_data, parent_path, variantset_name, err, depth + 1)) {
       if (err) *err = "Failed to convert variant '" + variant_name + "': " + *err;
       return false;
     }
@@ -3500,7 +3694,8 @@ bool CrateWriter::ConvertVariantToFields(
     const Variant& variant,
     const Path& parent_prim_path,  // The prim that owns the variantSet (e.g., /Chair)
     const std::string& variantset_name,
-    std::string* err) {
+    std::string* err,
+    int depth) {
 
   // Variant path: parent_prim_path{variantSetName=variant_name}
   // (e.g., /Chair{materialVariant=plastic})
@@ -3565,7 +3760,7 @@ bool CrateWriter::ConvertVariantToFields(
 
   // IMPORTANT: Create the variant spec BEFORE adding child prims
   // The parent spec must exist before children in the spec list
-  if (!AddSpec(v_path, SpecType::Variant, v_fields, err)) {
+  if (!AddSpec(v_path, SpecType::Variant, std::move(v_fields), err)) {
     if (err) *err = "Failed to add Variant spec: " + v_path.full_path_name() + ": " + *err;
     return false;
   }
@@ -3590,7 +3785,7 @@ bool CrateWriter::ConvertVariantToFields(
 
   // Process nested variant sets
   for (const auto& vs_item : variant.variantSets()) {
-    if (!ConvertVariantSetToFields(vs_item.first, vs_item.second, v_path, err)) {
+    if (!ConvertVariantSetToFields(vs_item.first, vs_item.second, v_path, err, depth + 1)) {
       if (err) *err = "Failed to convert nested VariantSet '" + vs_item.first
                      + "' in variant " + variant_name + ": " + *err;
       return false;

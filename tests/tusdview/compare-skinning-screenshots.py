@@ -7,11 +7,20 @@
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gpu_backend import (  # noqa: E402
+    detect_gpu,
+    device_name,
+    gpu_offload_env,
+    is_software_renderer,
+)
 
 
 def parse_args():
@@ -22,6 +31,27 @@ def parse_args():
     parser.add_argument("--model", required=True, help="USD model with skeletal animation.")
     parser.add_argument("--out-dir", required=True, help="Directory for screenshots/report.")
     parser.add_argument("--backend", default="gl", choices=("gl", "vk", "vulkan"))
+    parser.add_argument("--rt", action="store_true", help="Enable Vulkan ray-query RT.")
+    parser.add_argument("--mode", default=None, help="Forward --mode NAME to tusdview.")
+    parser.add_argument("--vk-device", default=None, help="Forward --vk-device INDEX|NAME to tusdview.")
+    parser.add_argument("--headless", action="store_true", help="Use tusdview's Vulkan headless path.")
+    parser.add_argument(
+        "--skip-unavailable",
+        action="store_true",
+        help="Return 77 when the requested backend/RT/GPU skinning path is unavailable.",
+    )
+    parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="Environment variable to set for tusdview; may be repeated.",
+    )
+    parser.add_argument(
+        "--nvidia-offload",
+        action="store_true",
+        help="Set common PRIME render-offload environment variables for NVIDIA.",
+    )
     parser.add_argument("--frames", type=int, default=4)
     parser.add_argument("--time", type=float, default=12.0)
     parser.add_argument("--width", type=int, default=1280)
@@ -34,24 +64,81 @@ def parse_args():
     return parser.parse_args()
 
 
+class SkipTest(RuntimeError):
+    pass
+
+
 def fail(message):
     print(f"ERROR: {message}", file=sys.stderr)
     return 1
 
 
-def command_prefix(args):
+def skip(message):
+    print(f"SKIP: {message}")
+    return 77
+
+
+def child_env(args):
+    env = os.environ.copy()
+    if args.nvidia_offload:
+        env.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")
+        env.setdefault("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
+        env.setdefault(
+            "__EGL_VENDOR_LIBRARY_FILENAMES",
+            "/usr/share/glvnd/egl_vendor.d/10_nvidia.json",
+        )
+    for item in args.env:
+        if "=" not in item:
+            raise ValueError(f"--env expects NAME=VALUE, got {item!r}")
+        name, value = item.split("=", 1)
+        if not name:
+            raise ValueError("--env variable name must not be empty")
+        env[name] = value
+    return env
+
+
+def command_prefixes(args):
+    """Launch prefixes to try, in order.
+
+    An inherited DISPLAY comes first: that is where a HARDWARE GL device lives,
+    and GPU skinning only works on one (Xvfb has no DRI, so Mesa falls back to
+    llvmpipe, which fetches no skin attributes -- see gpu_backend.py). Xvfb is
+    the fallback, both when there is no DISPLAY and when the inherited one turns
+    out to be unusable (a stale forwarded X11 socket).
+    """
+    if args.headless:
+        return [[]]
     if args.no_xvfb or platform.system() != "Linux":
-        return []
+        return [[]]
+    prefixes = []
+    if os.environ.get("DISPLAY"):
+        prefixes.append([])
     xvfb_run = args.xvfb_run or shutil.which("xvfb-run")
-    if not xvfb_run:
+    if xvfb_run:
+        screen = f"-screen 0 {args.width}x{args.height}x24"
+        prefixes.append([xvfb_run, "-a", "-s", screen])
+    if not prefixes:
         raise RuntimeError("xvfb-run was not found; install it or pass --no-xvfb")
-    screen = f"-screen 0 {args.width}x{args.height}x24"
-    return [xvfb_run, "-a", "-s", screen]
+    return prefixes
 
 
 def run_viewer(args, mode, output_path):
-    cmd = command_prefix(args) + [
-        args.app,
+    # Never accept a screenshot left by an earlier run when this launch fails.
+    # CTest reuses the same output directory across invocations.
+    try:
+        output_path.unlink()
+    except FileNotFoundError:
+        pass
+    viewer = [args.app]
+    if args.headless:
+        viewer.append("--headless")
+    if args.rt:
+        viewer.append("--rt")
+    if args.vk_device:
+        viewer += ["--vk-device", args.vk_device]
+    if args.mode:
+        viewer += ["--mode", args.mode]
+    viewer += [
         "--backend",
         args.backend,
         "--frames",
@@ -64,17 +151,79 @@ def run_viewer(args, mode, output_path):
         str(output_path),
         args.model,
     ]
-    proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
-    log = (proc.stdout or "") + (proc.stderr or "")
+    prefixes = command_prefixes(args)
+    for i, prefix in enumerate(prefixes):
+        cmd = prefix + viewer
+        env = child_env(args)
+        if prefix:
+            # Xvfb prefix: without DRI Mesa gives llvmpipe, so route GL to the
+            # hardware GPU when one is present -- see gpu_backend.py.
+            env = gpu_offload_env(env)
+        proc = subprocess.run(
+            cmd, text=True, capture_output=True, check=False, env=env
+        )
+        log = (proc.stdout or "") + (proc.stderr or "")
+        # An inherited DISPLAY that is unusable is not a failure -- fall through
+        # to the Xvfb prefix. A stale forwarded X11 socket fails glfwInit; a
+        # live forwarded display can open but still refuse a GL context
+        # (GLX BadValue), which surfaces as glfwCreateWindow failing.
+        if (
+            proc.returncode != 0
+            and i + 1 < len(prefixes)
+            and ("glfwInit failed" in log or "glfwCreateWindow failed" in log)
+        ):
+            continue
+        break
+    # A software rasterizer (Xvfb / forwarded X11 give Mesa llvmpipe, which has
+    # no DRI) fetches only aPosition: the skin joint/weight attributes read back
+    # as zero, so the GPU-skinned render is the rest pose no matter what the
+    # skinning code does, and CPU-vs-GPU always differs -- see gpu_backend.py.
+    # The comparison is meaningless there, so skip rather than fail.
+    if is_software_renderer(log):
+        raise SkipTest(
+            f"{args.backend} is a software renderer ({device_name(log)}); it "
+            f"does not fetch the skin vertex attributes, so CPU-vs-GPU skinning "
+            f"cannot be compared on it"
+        )
+    if proc.returncode != 0 and (
+        "glfwInit failed" in log
+        or "glfwCreateWindow failed" in log
+        or "Failed to open display" in log
+    ):
+        raise SkipTest("no usable X11/GLFW display")
     if proc.returncode != 0:
+        if args.skip_unavailable and (
+            "Vulkan" in log
+            or "GLFW" in log
+            or "ray tracing is unavailable" in log
+            or "GPU skinning unsupported" in log
+        ):
+            raise SkipTest(
+                f"{mode} render unavailable with exit code {proc.returncode}"
+            )
         raise RuntimeError(
             f"{mode} render failed with exit code {proc.returncode}\n"
             f"command: {' '.join(cmd)}\n"
             f"stdout:\n{proc.stdout}\n"
             f"stderr:\n{proc.stderr}"
         )
+    if args.rt and "ray tracing is unavailable" in log:
+        if args.skip_unavailable:
+            raise SkipTest("Vulkan ray tracing unavailable")
+        raise RuntimeError(
+            f"{mode} render requested --rt, but ray tracing was unavailable\n"
+            f"command: {' '.join(cmd)}\n"
+            f"stdout:\n{proc.stdout}\n"
+            f"stderr:\n{proc.stderr}"
+        )
     expected = f"skinning: {mode.upper()}"
     if expected not in log:
+        if args.skip_unavailable and (
+            "GPU skinning unsupported" in log
+            or "requested GPU, using CPU" in log
+            or "ray tracing is unavailable" in log
+        ):
+            raise SkipTest(f"{mode} render did not use requested GPU skinning path")
         raise RuntimeError(
             f"{mode} render did not report '{expected}'\n"
             f"command: {' '.join(cmd)}\n"
@@ -180,6 +329,10 @@ def compare_ppm(cpu_path, gpu_path):
 
 def main():
     args = parse_args()
+    if args.backend in ("vk", "vulkan") and not args.vk_device:
+        # Inside Xvfb/sandboxed sessions the default Vulkan device can be
+        # lavapipe even though the hardware ICD enumerates -- see gpu_backend.py.
+        args.vk_device = detect_gpu()
     app = Path(args.app)
     model = Path(args.model)
     if not app.is_file():
@@ -199,6 +352,8 @@ def main():
         cpu_run = run_viewer(args, "cpu", cpu_path)
         gpu_run = run_viewer(args, "gpu", gpu_path)
         metrics = compare_ppm(cpu_path, gpu_path)
+    except SkipTest as exc:
+        return skip(str(exc))
     except Exception as exc:
         return fail(str(exc))
 
@@ -206,6 +361,10 @@ def main():
         "app": str(app),
         "model": str(model),
         "backend": args.backend,
+        "rt": args.rt,
+        "mode": args.mode,
+        "vk_device": args.vk_device,
+        "headless": args.headless,
         "frames": args.frames,
         "time": args.time,
         "thresholds": {

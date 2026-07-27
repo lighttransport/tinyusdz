@@ -7,6 +7,8 @@
 #include "next/eval/value-clip.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "materialx.hh"
+#include "next/layer/asset-anchor.hh"
+#include "next/resolver/asset-resolver.hh"
 #include "next/schema/usdPhysics.hh"
 #include "next/schema/usd-shade.hh"
 #include "next/schema/usd-skel.hh"
@@ -14,6 +16,7 @@
 #include "tydra/fast-mikktspace.hh"
 #include "tydra/mikktspace-tangent.hh"
 #include "tydra/shape-to-mesh.hh"
+#include "tydra/tangent-quantize.hh"
 #include "external/mapbox/earcut/earcut.hpp"
 #include <cmath>
 #include <algorithm>
@@ -83,27 +86,105 @@ bool SplitConnectionPath(const std::string& connection_path,
   return !prim_path->empty() && !prop_name->empty();
 }
 
+bool IsTextureEndpoint(const Stage& stage, const UsdPrim& prim,
+                       double time_code) {
+  if (!prim.IsValid()) return false;
+  std::string id;
+  GetToken(prim, "info:id", &id);
+  if (id == "UsdUVTexture" || id == "image" || id == "tiledimage" ||
+      id.rfind("ND_image_", 0) == 0 ||
+      id.rfind("ND_tiledimage_", 0) == 0) {
+    return true;
+  }
+  ::tinyusdz::next::AttributeEval eval(&stage);
+  eval.SetTime(time_code);
+  return eval.EvalAssetPath(prim, "inputs:file").has_value() ||
+         eval.EvalString(prim, "inputs:file").has_value();
+}
+
+const std::vector<::tinyusdz::next::Path>* PrimaryDataInputConnection(
+    const UsdPrim& prim) {
+  const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
+  if (!spec) return nullptr;
+
+  static const char* kPreferredInputs[] = {
+      "inputs:in", "inputs:in1", "inputs:fg", "inputs:bg"};
+  for (const char* preferred : kPreferredInputs) {
+    const std::vector<::tinyusdz::next::Path>* connections =
+        spec->connection(preferred);
+    if (connections && !connections->empty()) return connections;
+  }
+
+  auto is_factor_input = [](const std::string& name) {
+    return name == "inputs:mix" || name == "inputs:amount" ||
+           name == "inputs:weight" || name == "inputs:factor" ||
+           name == "inputs:alpha" || name == "inputs:mask";
+  };
+  for (const std::string& property : prim.GetPropertyNames()) {
+    if (property.rfind("inputs:", 0) != 0 || is_factor_input(property)) {
+      continue;
+    }
+    const std::vector<::tinyusdz::next::Path>* connections =
+        spec->connection(property);
+    if (connections && !connections->empty()) return connections;
+  }
+  return nullptr;
+}
+
+bool ResolveConnectedEndpoint(const Stage& stage,
+                              const std::string& connection_path,
+                              double time_code,
+                              std::string* endpoint_path) {
+  if (!endpoint_path) return false;
+  std::string current = connection_path;
+  std::set<std::string> visited;
+  for (int depth = 0; depth <= kMaxMtlxConstantDepth; ++depth) {
+    if (!visited.insert(current).second) return false;
+
+    std::string prim_path;
+    std::string prop_name;
+    if (!SplitConnectionPath(current, &prim_path, &prop_name)) return false;
+    UsdPrim prim = stage.GetPrimAtPath(prim_path);
+    if (!prim.IsValid()) return false;
+    if (IsTextureEndpoint(stage, prim, time_code)) {
+      *endpoint_path = current;
+      return true;
+    }
+
+    const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
+    const std::vector<::tinyusdz::next::Path>* connections =
+        spec ? spec->connection(prop_name) : nullptr;
+    if (!connections || connections->empty()) {
+      connections = PrimaryDataInputConnection(prim);
+    }
+    if (!connections || connections->empty()) {
+      *endpoint_path = current;
+      return true;
+    }
+    current = (*connections)[0].str();
+  }
+  return false;
+}
+
 bool ResolveConnectedValue(const Stage& stage,
                            const std::string& connection_path,
                            double time_code,
-                           Value* out,
-                           int depth = 0) {
-  if (!out || depth > 16) return false;
+                           Value* out) {
+  if (!out) return false;
 
+  std::string endpoint;
+  if (!ResolveConnectedEndpoint(stage, connection_path, time_code, &endpoint)) {
+    return false;
+  }
   std::string prim_path;
   std::string prop_name;
-  if (!SplitConnectionPath(connection_path, &prim_path, &prop_name)) return false;
+  if (!SplitConnectionPath(endpoint, &prim_path, &prop_name)) return false;
 
   UsdPrim prim = stage.GetPrimAtPath(prim_path);
   if (!prim.IsValid()) return false;
 
   ::tinyusdz::next::AttributeEval eval(&stage);
   eval.SetTime(time_code);
-  if (eval.HasConnection(prim, prop_name)) {
-    return ResolveConnectedValue(stage, eval.GetConnectionPath(prim, prop_name),
-                                 time_code, out, depth + 1);
-  }
-
   ::tinyusdz::next::EvalOptions opts = eval.GetOptions();
   opts.follow_connections = false;
   ::tinyusdz::next::EvalResult result = eval.EvalWith(prim, prop_name, opts);
@@ -115,7 +196,8 @@ bool ResolveConnectedValue(const Stage& stage,
   return false;
 }
 
-RenderTexture::Channel ChannelFromConnection(const std::string& connection_path) {
+RenderTexture::Channel ChannelFromConnection(
+    const std::string& connection_path, const UsdPrim& texture_prim) {
   size_t pos = connection_path.find(".outputs:");
   if (pos == std::string::npos) {
     return RenderTexture::Channel::RGBA;
@@ -127,6 +209,33 @@ RenderTexture::Channel ChannelFromConnection(const std::string& connection_path)
   if (channel == "b" || channel == "z") return RenderTexture::Channel::B;
   if (channel == "a" || channel == "w") return RenderTexture::Channel::A;
   if (channel == "rgb" || channel == "xyz") return RenderTexture::Channel::RGB;
+
+  // MaterialX image nodes conventionally expose a generic `outputs:out`.
+  // Recover its scalar/vector shape from the synthesized output value/type so
+  // roughness and metallic maps sample R while color/normal maps sample RGB.
+  if (channel == "out" && texture_prim.IsValid()) {
+    std::string type;
+    if (const Value* value = texture_prim.GetPropertyValue("outputs:out")) {
+      if (const std::string* token = value->as_token()) type = *token;
+      else if (const std::string* str = value->as_string()) type = *str;
+    }
+    if (type.empty()) {
+      if (const ::tinyusdz::next::PrimSpec* spec =
+              texture_prim.GetPrimSpec()) {
+        if (const std::string* declared =
+                spec->property_type_name("outputs:out")) {
+          type = *declared;
+        }
+      }
+    }
+    if (type == "float" || type == "integer" || type == "boolean") {
+      return RenderTexture::Channel::R;
+    }
+    if (type == "color3" || type == "color3f" || type == "vector3" ||
+        type == "vector3f") {
+      return RenderTexture::Channel::RGB;
+    }
+  }
   return RenderTexture::Channel::RGBA;
 }
 
@@ -776,6 +885,54 @@ std::vector<uint8_t> BuildInstanceVisibility(
   return visible;
 }
 
+uint32_t PackSnorm8Quaternion(const float* q) {
+  const float identity[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+  if (!q) q = identity;
+  uint32_t packed = 0;
+  for (uint32_t i = 0; i < 4; ++i) {
+    const float component = std::max(-1.0f, std::min(1.0f, q[i]));
+    const int32_t quantized = static_cast<int32_t>(std::lround(component * 127.0f));
+    packed |= (static_cast<uint32_t>(static_cast<uint8_t>(quantized))
+               << (i * 8));
+  }
+  return packed;
+}
+
+void BuildCompactInstances(
+    const PointInstancerData& data, const std::vector<uint8_t>& visible,
+    std::vector<RenderPointInstancer::CompactInstance>* out) {
+  if (!out) return;
+  out->clear();
+  out->reserve(data.proto_indices.size());
+  for (size_t i = 0; i < data.proto_indices.size(); ++i) {
+    RenderPointInstancer::CompactInstance instance{};
+    const size_t position_offset = i * 3;
+    if (position_offset + 3 <= data.positions.size()) {
+      for (size_t j = 0; j < 3; ++j) {
+        instance.position[j] = data.positions[position_offset + j];
+      }
+    }
+    const size_t orientation_offset = i * 4;
+    const float* orientation =
+        orientation_offset + 4 <= data.orientations.size()
+            ? data.orientations.data() + orientation_offset
+            : nullptr;
+    instance.packed_orientation = PackSnorm8Quaternion(orientation);
+    const size_t scale_offset = i * 3;
+    for (size_t j = 0; j < 3; ++j) {
+      const float scale = scale_offset + j < data.scales.size()
+                              ? data.scales[scale_offset + j]
+                              : 1.0f;
+      instance.scale[j] = tangent_quantize::float_to_half(scale);
+    }
+    instance.flags =
+        (i >= visible.size() || visible[i] != 0) ? uint16_t{1} : uint16_t{0};
+    instance.prototype_index = data.proto_indices[i];
+    instance.source_index = static_cast<uint32_t>(i);
+    out->push_back(instance);
+  }
+}
+
 template <typename Chunked>
 void CopyChunkedArray(const Chunked& src, Chunked* dst) {
   if (!dst) return;
@@ -1114,6 +1271,9 @@ std::vector<double> ValueClipSampleTimes(
 
 struct TextureNodeData {
   std::string file;
+  // `inputs:file` customData { asset ktx2 = @...@ } — the legacy-safe compressed
+  // companion hint (doc/texcomp.md). Empty when unauthored.
+  std::string ktx2_hint;
   std::string wrap_s = "useMetadata";
   std::string wrap_t = "useMetadata";
   float scale[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -1242,6 +1402,24 @@ bool ExtractTextureNodeData(const Stage& stage,
                             TextureNodeData* out) {
   if (!out || !texture_prim.IsValid()) return false;
 
+  // Legacy-safe compressed-companion hint, read straight off the attribute's
+  // metadata so BOTH extraction paths below pick it up:
+  //   asset inputs:file = @t.png@ ( customData = { asset ktx2 = @t.ktx2@ } )
+  // `inputs:file` keeps pointing at the plain image (unaware consumers are
+  // unaffected); a GPU consumer loads the .ktx2 blocks instead.
+  if (const ::tinyusdz::next::PropMeta* pm =
+          texture_prim.GetPropertyMeta("inputs:file")) {
+    if (const ::tinyusdz::next::Dict* cd = pm->customData.as_dictionary()) {
+      if (const ::tinyusdz::next::Value* v = cd->find("ktx2")) {
+        if (const std::string* s = v->as_asset_path()) {
+          out->ktx2_hint = *s;
+        } else if (const std::string* t = v->as_string()) {
+          out->ktx2_hint = *t;
+        }
+      }
+    }
+  }
+
   // colorSpace asset metadata on inputs:file takes precedence over the
   // sourceColorSpace attribute (legacy tydra resolution order). Applied on
   // BOTH extraction branches — the UsdUVTexture fast path below returns
@@ -1313,28 +1491,6 @@ bool IsOpenPBRShaderId(const std::string& id) {
   return id == "ND_open_pbr_surface_surfaceshader" ||
          id == "open_pbr_surface" ||
          id == "OpenPBRSurface";
-}
-
-// Does this prim's binding declare `bindMaterialAs = "strongerThanDescendants"`?
-bool BindingIsStrongerThanDescendants(const UsdPrim& prim) {
-  static const char* kBindingOrder[] = {"material:binding:preview",
-                                        "material:binding",
-                                        "material:binding:full"};
-  const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
-  if (!spec) return false;
-  for (const char* rel : kBindingOrder) {
-    const std::vector<::tinyusdz::next::Path>* targets =
-        prim.GetRelationship(rel);
-    if (!targets || targets->empty()) continue;
-    if (const ::tinyusdz::next::PropMeta* pm = spec->property_meta(rel)) {
-      if ((pm->authored & ::tinyusdz::next::PropMeta::kBindMaterialAs) &&
-          pm->bindMaterialAs == "strongerThanDescendants") {
-        return true;
-      }
-    }
-    return false;  // binding found; default weakerThanDescendants
-  }
-  return false;
 }
 
 bool IsPhysicsExtensionPropertyName(const std::string& name) {
@@ -1462,13 +1618,13 @@ bool JointTokenMatches(const SkeletonJoint& joint, const std::string& token) {
   return false;
 }
 
-// Material-driven UV primvar promotion: UsdPrimvarReader varnames other than
-// the default "st" only survive as generic mesh.primvars entries, which no
-// texture consumer samples. After materials are bound, promote the primvar
-// each bound material's textures actually reference into texcoords_0/1
-// (legacy selects UV sets from the shader network the same way).
+// Material-driven UV primvar promotion: a UsdPrimvarReader varname that the
+// mesh's own UV-set selection (MeshConfig::uv_primvar_names) did not pick only
+// survives as a generic mesh.primvars entry, which no texture consumer samples.
+// After materials are bound, promote the primvar each bound material's textures
+// actually reference into texcoords_0/1 (legacy selects UV sets from the shader
+// network the same way).
 void PromoteMaterialUVPrimvars(RenderScene* scene,
-                               const std::string& default_uv,
                                std::vector<std::string>* warnings) {
   if (!scene) return;
 
@@ -1501,10 +1657,15 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
       for (const ShaderParam* p :
            {&o.base_weight, &o.base_color, &o.base_roughness,
             &o.base_metalness, &o.specular_weight, &o.specular_color,
-            &o.specular_roughness, &o.specular_ior, &o.transmission_weight,
+            &o.specular_roughness, &o.specular_ior, &o.specular_anisotropy,
+            &o.specular_roughness_anisotropy, &o.transmission_weight,
+            &o.transmission_dispersion, &o.transmission_dispersion_scale,
             &o.coat_weight, &o.coat_color, &o.coat_roughness,
+            &o.coat_anisotropy, &o.coat_roughness_anisotropy,
+            &o.coat_normal,
+            &o.thin_film_weight, &o.thin_film_thickness, &o.thin_film_ior,
             &o.emission_luminance, &o.emission_color, &o.normal,
-            &o.opacity}) {
+            &o.opacity, &o.displacement}) {
         add(*p);
       }
     }
@@ -1523,22 +1684,15 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
       if (static_cast<size_t>(mid) >= scene->materials.size()) continue;
       texture_uv_names(scene->materials[static_cast<size_t>(mid)], &wanted);
     }
-    // Names equal to the defaults are already in texcoords_0/1.
-    wanted.erase(std::remove_if(wanted.begin(), wanted.end(),
-                                [&default_uv](const std::string& n) {
-                                  return n == default_uv ||
-                                         n == default_uv + "1";
-                                }),
-                 wanted.end());
     if (wanted.empty()) continue;
 
-    auto promote = [&mesh, warnings](const std::string& name,
-                                     FloatChunked* dst,
-                                     Interpolation* dst_interp) -> bool {
+    auto take_primvar = [&mesh, warnings](const std::string& name,
+                                         FloatChunked* value,
+                                         Interpolation* interp) -> bool {
       for (size_t ai = 0; ai < mesh.primvars.size(); ++ai) {
         VertexAttribute& attr = mesh.primvars[ai];
         if (attr.name != name || attr.format != VertexFormat::Vec2) continue;
-        dst->clear();
+        FloatChunked promoted;
         if (attr.has_indices()) {
           const size_t elems = attr.float_data.size() / 2;
           for (size_t k = 0; k < attr.indices.size(); ++k) {
@@ -1546,18 +1700,23 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
             if (idx >= elems) {
               warnings->push_back("Mesh '" + mesh.prim_path + "': UV primvar '" +
                                   name + "' has out-of-range indices; not promoted");
-              dst->clear();
               return false;
             }
-            dst->push_back(attr.float_data[idx * 2 + 0]);
-            dst->push_back(attr.float_data[idx * 2 + 1]);
+            promoted.push_back(attr.float_data[idx * 2 + 0]);
+            promoted.push_back(attr.float_data[idx * 2 + 1]);
           }
         } else {
           for (size_t k = 0; k < attr.float_data.size(); ++k) {
-            dst->push_back(attr.float_data[k]);
+            promoted.push_back(attr.float_data[k]);
           }
         }
-        *dst_interp = attr.interpolation;
+        if (promoted.alloc_failed()) {
+          warnings->push_back("Mesh '" + mesh.prim_path + "': UV primvar '" +
+                              name + "' allocation failed; not promoted");
+          return false;
+        }
+        *value = std::move(promoted);
+        *interp = attr.interpolation;
         mesh.primvars.erase(mesh.primvars.begin() +
                             static_cast<std::ptrdiff_t>(ai));
         return true;
@@ -1565,12 +1724,49 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
       return false;
     };
 
-    // The material-referenced UV set takes the primary slot (matching
-    // legacy's shader-network-driven selection); a second distinct name
-    // fills the secondary slot when free.
-    if (promote(wanted[0], &mesh.texcoords_0, &mesh.texcoords_0_interp)) {
-      if (wanted.size() > 1 && mesh.texcoords_1.empty()) {
-        promote(wanted[1], &mesh.texcoords_1, &mesh.texcoords_1_interp);
+    auto swap_uv_slots = [&mesh]() {
+      std::swap(mesh.texcoords_0, mesh.texcoords_1);
+      std::swap(mesh.texcoords_0_interp, mesh.texcoords_1_interp);
+      std::swap(mesh.texcoords_0_name, mesh.texcoords_1_name);
+    };
+
+    // The first material-referenced UV set must occupy the primary slot
+    // (matching legacy's shader-network-driven selection). Mesh extraction may
+    // already have selected it as texcoords_1; normalize that case instead of
+    // treating either occupied slot as equivalent. If a second referenced set
+    // currently occupies slot 0, preserve it by swapping before slot 0 is
+    // overwritten by a promoted generic primvar.
+    bool primary_ready = false;
+    if (mesh.texcoords_0_name == wanted[0]) {
+      primary_ready = true;
+    } else if (mesh.texcoords_1_name == wanted[0]) {
+      swap_uv_slots();
+      primary_ready = true;
+    } else {
+      FloatChunked primary;
+      Interpolation primary_interp = Interpolation::Vertex;
+      if (take_primvar(wanted[0], &primary, &primary_interp)) {
+        if (wanted.size() > 1 && mesh.texcoords_0_name == wanted[1]) {
+          swap_uv_slots();
+        }
+        mesh.texcoords_0 = std::move(primary);
+        mesh.texcoords_0_interp = primary_interp;
+        mesh.texcoords_0_name = wanted[0];
+        primary_ready = true;
+      }
+    }
+
+    // Keep the second distinct material-referenced UV set in slot 1. It may
+    // already be there after the normalization above or may still be a generic
+    // primvar that needs promotion.
+    if (primary_ready && wanted.size() > 1 &&
+        mesh.texcoords_1_name != wanted[1]) {
+      FloatChunked secondary;
+      Interpolation secondary_interp = Interpolation::Vertex;
+      if (take_primvar(wanted[1], &secondary, &secondary_interp)) {
+        mesh.texcoords_1 = std::move(secondary);
+        mesh.texcoords_1_interp = secondary_interp;
+        mesh.texcoords_1_name = wanted[1];
       }
     }
   }
@@ -1798,6 +1994,7 @@ void FillGeneratedMesh(const UsdPrim& prim,
   if (GetToken(prim, "orientation", &orientation)) {
     out->left_handed = (orientation == "leftHanded");
   }
+  GetBool(prim, "doubleSided", &out->double_sided);
   if (!points.empty()) {
     out->bbox_min = Float3(1e30f, 1e30f, 1e30f);
     out->bbox_max = Float3(-1e30f, -1e30f, -1e30f);
@@ -1811,6 +2008,106 @@ void FillGeneratedMesh(const UsdPrim& prim,
     }
     out->has_bbox = true;
   }
+}
+
+size_t SaturatingAdd(size_t a, size_t b) {
+  if (b > std::numeric_limits<size_t>::max() - a) {
+    return std::numeric_limits<size_t>::max();
+  }
+  return a + b;
+}
+
+size_t SaturatingMul(size_t a, size_t b) {
+  if (a != 0 && b > std::numeric_limits<size_t>::max() / a) {
+    return std::numeric_limits<size_t>::max();
+  }
+  return a * b;
+}
+
+size_t AuthoredArraySize(const UsdPrim& prim, const char* name) {
+  const Value* value = GetAttribute(prim, name);
+  return value && value->is_array() ? value->array_size() : 0;
+}
+
+bool HasAuthoredExtent(const UsdPrim& prim) {
+  return AuthoredArraySize(prim, "extent") >= 2;
+}
+
+GeometryInfo BuildGeometryInfo(const UsdPrim& prim, GeometryKind kind,
+                               int32_t id) {
+  GeometryInfo info;
+  info.kind = kind;
+  info.id = id;
+  info.prim_path = prim.GetPath().str();
+  info.type_name = prim.GetTypeName();
+  info.point_count = AuthoredArraySize(prim, "points");
+  info.has_authored_extent = HasAuthoredExtent(prim);
+
+  size_t estimate = 0;
+  if (kind == GeometryKind::Mesh) {
+    info.index_count = AuthoredArraySize(prim, "faceVertexIndices");
+    // Account for decoded source arrays, render arrays, triangulation, and
+    // face-varying remaps. This intentionally errs high for residency policy.
+    estimate = SaturatingMul(info.point_count, 24);
+    estimate = SaturatingAdd(estimate,
+                             SaturatingMul(info.index_count, 16));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, "faceVertexCounts"), 8));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, "normals"), 24));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, "primvars:st"), 16));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, "primvars:displayColor"), 24));
+  } else if (kind == GeometryKind::Points) {
+    estimate = SaturatingMul(info.point_count, 48);
+  } else {
+    estimate = SaturatingMul(info.point_count, 40);
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, "curveVertexCounts"), 8));
+  }
+  info.estimated_resident_bytes = estimate;
+  return info;
+}
+
+bool ReadExtent(const UsdPrim& prim, double time, value::float3* minimum,
+                value::float3* maximum) {
+  if (!minimum || !maximum) return false;
+  ValueArrayRead<float> extent;
+  if (!ReadFloatArray(prim, "extent", time, &extent) || extent.size() < 6) {
+    return false;
+  }
+  *minimum = value::float3{extent[0], extent[1], extent[2]};
+  *maximum = value::float3{extent[3], extent[4], extent[5]};
+  return true;
+}
+
+bool FillBoundsProxyMesh(const UsdPrim& prim, const value::float3& mn,
+                         const value::float3& mx, RenderMesh* out) {
+  if (!out) return false;
+  const std::vector<value::float3> points = {
+      {mn[0], mn[1], mn[2]}, {mx[0], mn[1], mn[2]},
+      {mx[0], mx[1], mn[2]}, {mn[0], mx[1], mn[2]},
+      {mn[0], mn[1], mx[2]}, {mx[0], mn[1], mx[2]},
+      {mx[0], mx[1], mx[2]}, {mn[0], mx[1], mx[2]}};
+  const std::vector<int> counts(6, 4);
+  const std::vector<int> indices = {
+      0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4,
+      3, 7, 6, 2, 0, 4, 7, 3, 1, 2, 6, 5};
+  FillGeneratedMesh(prim, points, counts, indices, {}, {}, out);
+  out->is_proxy = true;
+  return true;
+}
+
+bool FillExtentProxyMesh(const UsdPrim& prim, double time, RenderMesh* out) {
+  value::float3 mn;
+  value::float3 mx;
+  if (!ReadExtent(prim, time, &mn, &mx)) return false;
+  return FillBoundsProxyMesh(prim, mn, mx, out);
 }
 
 void ExtractMaterialXConfig(const UsdPrim& prim,
@@ -1896,29 +2193,10 @@ std::string FirstValidBoundMaterialPath(const Stage& stage,
 
 std::string FindInheritedMaterialBinding(const Stage& stage,
                                          const std::string& prim_path) {
-  // Walk leaf-up (descendant wins by default), but an ANCESTOR binding marked
-  // bindMaterialAs="strongerThanDescendants" overrides everything below it —
-  // so track the highest such ancestor.
-  std::string leaf_binding;
-  std::string strongest_ancestor;
-  std::string path = prim_path;
-  while (!path.empty() && path != "/") {
-    UsdPrim prim = stage.GetPrimAtPath(path);
-    if (prim.IsValid()) {
-      // Per-purpose validation: a dangling target must not shadow either a
-      // weaker-purpose rel on the same prim or a valid ancestor binding
-      // (legacy skips unresolvable targets).
-      const std::string material_path = FirstValidBoundMaterialPath(stage, prim);
-      if (!material_path.empty()) {
-        if (leaf_binding.empty()) leaf_binding = material_path;
-        if (path != prim_path && BindingIsStrongerThanDescendants(prim)) {
-          strongest_ancestor = material_path;  // higher ancestors overwrite
-        }
-      }
-    }
-    path = GetParentPath(path);
-  }
-  return strongest_ancestor.empty() ? leaf_binding : strongest_ancestor;
+  // Core UsdShade resolution now validates targets at every purpose/ancestor
+  // step and associates bindMaterialAs with the relationship that actually
+  // won. Keep one implementation shared by the converter and applications.
+  return ::tinyusdz::next::GetInheritedBoundMaterialPath(stage, prim_path);
 }
 
 }  // namespace
@@ -1931,6 +2209,40 @@ RenderSceneConverter::RenderSceneConverter(const ConverterConfig& config)
     : config_(config) {}
 
 RenderSceneConverter::~RenderSceneConverter() = default;
+
+GeometryInfo RenderSceneConverter::GetGeometryInfo(const UsdPrim& prim,
+                                                    GeometryKind kind,
+                                                    int32_t id) const {
+  return BuildGeometryInfo(prim, kind, id);
+}
+
+bool RenderSceneConverter::ConvertExtentProxy(const UsdPrim& prim,
+                                              RenderMesh* out) {
+  if (!FillExtentProxyMesh(prim, config_.time_code, out)) return false;
+  if (config_.mesh.triangulate && !TriangulateMesh(out)) return false;
+  if (config_.mesh.compute_normals && !out->has_normals() &&
+      !ComputeVertexNormals(out)) {
+    return false;
+  }
+  out->compact();
+  return !out->has_alloc_failure();
+}
+
+bool RenderSceneConverter::ConvertBoundsProxy(const UsdPrim& prim,
+                                              const Float3& minimum,
+                                              const Float3& maximum,
+                                              RenderMesh* out) {
+  const value::float3 mn = {minimum.x, minimum.y, minimum.z};
+  const value::float3 mx = {maximum.x, maximum.y, maximum.z};
+  if (!FillBoundsProxyMesh(prim, mn, mx, out)) return false;
+  if (config_.mesh.triangulate && !TriangulateMesh(out)) return false;
+  if (config_.mesh.compute_normals && !out->has_normals() &&
+      !ComputeVertexNormals(out)) {
+    return false;
+  }
+  out->compact();
+  return !out->has_alloc_failure();
+}
 
 namespace {
 
@@ -2046,10 +2358,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
 
       RenderMesh mesh;
-      const bool converted =
-          mesh_prim.GetTypeName() == "Mesh"
-              ? ConvertMesh(stage, mesh_prim, &mesh)
-              : ConvertGeomPrimitive(mesh_prim, &mesh);
+      const bool converted = ConvertRenderableMesh(stage, mesh_prim, &mesh);
       if (converted && mesh.has_alloc_failure()) {
         // ConvertGeomPrimitive does not run ConvertMesh's alloc check.
         warnings_.push_back("Out of memory converting prim '" +
@@ -2145,7 +2454,10 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
                                 instancer.prototype_paths[proto_i]);
           }
         }
-        AppendPointInstanceDraws(instancer_id, &instancer, &result.scene);
+        if (config_.point_instancer.build_instance_draws ||
+            config_.point_instancer.duplicate_meshes) {
+          AppendPointInstanceDraws(instancer_id, &instancer, &result.scene);
+        }
         result.scene.point_instancers.push_back(std::move(instancer));
         AssignNodeDataId(&result.scene, rec.path, instancer_id);
       } else {
@@ -2177,8 +2489,10 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
 
     AssignMaterialBindings(stage, &result.scene);
-    PromoteMaterialUVPrimvars(&result.scene, config_.mesh.default_uv_primvar,
-                              &warnings_);
+    // 2-arg on purpose: promotion compares against the mesh's ACTUAL
+    // texcoords_0/1 names now (53415635e), which supersedes the old
+    // `default_uv` / `default_uv + "1"` heuristic and its config field.
+    PromoteMaterialUVPrimvars(&result.scene, &warnings_);
     if (!config_.mesh.retain_geometry) {
       for (RenderMesh& mesh : result.scene.meshes) {
         const UsdPrim source = stage.GetPrimAtPath(mesh.prim_path);
@@ -2211,8 +2525,8 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
             else if (const std::string* t = fv->as_token()) tex = *t;
           }
           if (!tex.empty()) {
-            light.params.dome.texture_id =
-                ResolveImageId(&result.scene, tex, ColorSpace::Linear);
+            light.params.dome.texture_id = ResolveImageId(
+                &result.scene, tex, ColorSpace::Linear, AssetAnchorOf(rec.prim));
           }
         }
         int32_t light_id = static_cast<int32_t>(result.scene.lights.size());
@@ -2326,6 +2640,320 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     result.warnings = std::move(warnings_);
   }
 
+  return result;
+}
+
+StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
+                                                        SceneSink* sink) {
+  StreamConvertResult result;
+  warnings_.clear();
+  if (!sink) {
+    result.error = "ConvertToSink: null scene sink";
+    return result;
+  }
+  const auto cancellation_requested = [&]() {
+    return config_.cancel_callback && config_.cancel_callback();
+  };
+  if (cancellation_requested()) {
+    result.cancelled = true;
+    result.error = "conversion cancelled";
+    return result;
+  }
+
+  RenderScene catalog;
+  const auto meta = stage.GetMeta();
+  catalog.name = meta.defaultPrim;
+  catalog.default_prim = meta.defaultPrim;
+  catalog.meters_per_unit = static_cast<float>(meta.metersPerUnit);
+  catalog.up_axis = meta.upAxis == "Z" ? RenderScene::UpAxis::Z
+                                        : RenderScene::UpAxis::Y;
+  catalog.start_time = meta.startTimeCode;
+  catalog.end_time = meta.endTimeCode;
+  catalog.frames_per_second = meta.timeCodesPerSecond;
+
+  RenderExtractOptions xopts;
+  xopts.time_code = config_.time_code;
+  xopts.collect_other = true;
+  RenderExtractResult extracted;
+  CollectRenderPrims(stage, xopts, &extracted);
+  if (cancellation_requested()) {
+    result.cancelled = true;
+    result.error = "conversion cancelled";
+    return result;
+  }
+  BuildNodeHierarchy(extracted, &catalog);
+  ExtractPhysicsAnnotations(stage, &catalog);
+
+  for (const RenderPrimRecord& rec : extracted.records) {
+    if (rec.type_name != "Points" &&
+        IsUnsupportedRenderableTypeName(rec.type_name)) {
+      UnsupportedRenderable unsupported;
+      unsupported.prim_path = rec.path;
+      unsupported.type_name = rec.type_name;
+      unsupported.reason = "recognized but not converted to render geometry";
+      catalog.unsupported_renderables.push_back(std::move(unsupported));
+      warnings_.push_back("Unsupported renderable prim '" + rec.path +
+                          "' of type '" + rec.type_name + "'");
+    }
+
+    AnimationClip clip;
+    if (ConvertAnimation(stage, rec.prim, &clip)) {
+      const auto node = catalog.node_by_path.find(rec.path);
+      if (node != catalog.node_by_path.end()) {
+        for (AnimationChannel& channel : clip.channels) {
+          channel.target_node = node->second;
+        }
+      }
+      catalog.animations.push_back(std::move(clip));
+    }
+  }
+
+  // Materials and their image/texture descriptors are a small catalog and
+  // must be assigned before geometry is emitted.
+  for (const RenderPrimRecord& rec : extracted.materials) {
+    RenderMaterial material;
+    if (ConvertMaterial(stage, rec.prim, &material, &catalog)) {
+      const int32_t id = static_cast<int32_t>(catalog.materials.size());
+      catalog.material_by_path[material.prim_path] = id;
+      catalog.materials.push_back(std::move(material));
+    } else {
+      warnings_.push_back("Failed to convert material: " + rec.path);
+    }
+  }
+
+  for (const RenderPrimRecord& rec : extracted.skeletons) {
+    Skeleton skeleton;
+    if (ConvertSkeleton(rec.prim, &skeleton)) {
+      const int32_t id = static_cast<int32_t>(catalog.skeletons.size());
+      catalog.skeletons.push_back(std::move(skeleton));
+      AssignNodeDataId(&catalog, rec.path, id);
+    }
+  }
+  ResolveSkeletalAnimationTargets(&catalog);
+
+  for (const RenderPrimRecord& rec : extracted.lights) {
+    RenderLight light;
+    if (!ConvertLight(rec.prim, &light)) continue;
+    for (int i = 0; i < 16; ++i) light.transform.m[i] = float(rec.world[i]);
+    if (light.type == LightType::Dome) {
+      std::string texture;
+      if (const Value* value = GetAttribute(rec.prim, "inputs:texture:file")) {
+        if (const std::string* p = value->as_asset_path()) texture = *p;
+        else if (const std::string* p = value->as_string()) texture = *p;
+        else if (const std::string* p = value->as_token()) texture = *p;
+      }
+      light.params.dome.texture_id =
+          texture.empty() ? -1
+                          : ResolveImageId(&catalog, texture, ColorSpace::Linear,
+                                           AssetAnchorOf(rec.prim));
+    }
+    const int32_t id = static_cast<int32_t>(catalog.lights.size());
+    catalog.lights.push_back(std::move(light));
+    AssignNodeDataId(&catalog, rec.path, id);
+  }
+  for (const RenderPrimRecord& rec : extracted.cameras) {
+    RenderCamera camera;
+    if (!ConvertCamera(rec.prim, &camera)) continue;
+    for (int i = 0; i < 16; ++i) camera.transform.m[i] = float(rec.world[i]);
+    const int32_t id = static_cast<int32_t>(catalog.cameras.size());
+    catalog.cameras.push_back(std::move(camera));
+    AssignNodeDataId(&catalog, rec.path, id);
+  }
+
+  // Reserve stable geometry IDs with lightweight placeholders. This is enough
+  // for native/PointInstancer prototype binding without retaining geometry.
+  catalog.meshes.resize(extracted.meshes.size());
+  for (size_t i = 0; i < extracted.meshes.size(); ++i) {
+    RenderMesh& placeholder = catalog.meshes[i];
+    placeholder.name = extracted.meshes[i].prim.GetName();
+    placeholder.prim_path = extracted.meshes[i].path;
+    catalog.mesh_by_path[placeholder.prim_path] = static_cast<int32_t>(i);
+    AssignMeshMaterialBinding(stage, catalog, &placeholder);
+    AssignNodeDataId(&catalog, placeholder.prim_path, static_cast<int32_t>(i));
+  }
+  catalog.points.reserve(extracted.records.size());
+  for (const RenderPrimRecord& rec : extracted.records) {
+    if (rec.type_name != "Points") continue;
+    const int32_t id = static_cast<int32_t>(catalog.points.size());
+    RenderPoints placeholder;
+    placeholder.name = rec.prim.GetName();
+    placeholder.prim_path = rec.path;
+    catalog.points_by_path[rec.path] = id;
+    catalog.points.push_back(std::move(placeholder));
+    AssignNodeDataId(&catalog, rec.path, id);
+  }
+  catalog.curves.resize(extracted.curves.size());
+  for (size_t i = 0; i < extracted.curves.size(); ++i) {
+    RenderCurves& placeholder = catalog.curves[i];
+    placeholder.name = extracted.curves[i].prim.GetName();
+    placeholder.prim_path = extracted.curves[i].path;
+    const std::string material =
+        FindInheritedMaterialBinding(stage, placeholder.prim_path);
+    const auto found = catalog.material_by_path.find(material);
+    if (found != catalog.material_by_path.end()) {
+      placeholder.material_id = found->second;
+    }
+    catalog.curves_by_path[placeholder.prim_path] = static_cast<int32_t>(i);
+    AssignNodeDataId(&catalog, placeholder.prim_path, static_cast<int32_t>(i));
+  }
+
+  for (const RenderPrimRecord& rec : extracted.point_instancers) {
+    RenderPointInstancer instancer;
+    if (!ConvertPointInstancer(rec.prim, &instancer)) {
+      warnings_.push_back("Failed to convert PointInstancer: " + rec.path);
+      continue;
+    }
+    const int32_t id = static_cast<int32_t>(catalog.point_instancers.size());
+    catalog.point_instancer_by_path[instancer.prim_path] = id;
+    ResolvePointInstancerPrototypeBindings(&catalog, &instancer);
+    if (config_.point_instancer.build_instance_draws ||
+        config_.point_instancer.duplicate_meshes) {
+      AppendPointInstanceDraws(id, &instancer, &catalog);
+    }
+    catalog.point_instancers.push_back(std::move(instancer));
+    AssignNodeDataId(&catalog, rec.path, id);
+  }
+  AssignPointInstanceDrawMaterials(&catalog);
+
+  RenderScene binding_catalog;
+  binding_catalog.material_by_path = catalog.material_by_path;
+  std::unordered_map<std::string, int32_t> skeleton_by_path;
+  for (size_t i = 0; i < catalog.skeletons.size(); ++i) {
+    skeleton_by_path[catalog.skeletons[i].prim_path] = static_cast<int32_t>(i);
+  }
+
+  if (!sink->BeginScene(std::move(catalog))) {
+    result.error = "scene sink rejected catalog";
+    return result;
+  }
+
+  const auto abort = [&](const std::string& error, bool cancelled) {
+    sink->AbortScene();
+    result.cancelled = cancelled;
+    result.error = error;
+    result.warnings = std::move(warnings_);
+  };
+
+  for (size_t i = 0; i < extracted.meshes.size(); ++i) {
+    const UsdPrim& prim = extracted.meshes[i].prim;
+    if (cancellation_requested()) {
+      abort("conversion cancelled", true);
+      return result;
+    }
+    const GeometryInfo info =
+        GetGeometryInfo(prim, GeometryKind::Mesh, static_cast<int32_t>(i));
+    const GeometryDisposition disposition = sink->SelectGeometry(info);
+    if (disposition == GeometryDisposition::Cancel) {
+      abort("conversion cancelled by scene sink", true);
+      return result;
+    }
+    if (disposition == GeometryDisposition::Skip) continue;
+
+    RenderMesh mesh;
+    bool converted = false;
+    if (disposition == GeometryDisposition::Proxy) {
+      converted = ConvertExtentProxy(prim, &mesh);
+      if (!converted) {
+        warnings_.push_back("Skipping proxy without a valid extent: " +
+                            prim.GetPath().str());
+        continue;
+      }
+    } else {
+      converted = ConvertRenderableMesh(stage, prim, &mesh);
+    }
+    if (!converted || mesh.has_alloc_failure()) {
+      warnings_.push_back("Failed to convert renderable mesh prim: " +
+                          prim.GetPath().str());
+      continue;
+    }
+    AssignMeshMaterialBinding(stage, binding_catalog, &mesh);
+    if (mesh.skin) {
+      const auto skeleton = skeleton_by_path.find(mesh.skin->skeleton_path);
+      if (skeleton != skeleton_by_path.end()) {
+        mesh.skin->skeleton_id = skeleton->second;
+      }
+    }
+    mesh.compact();
+    if (!sink->AddMesh(static_cast<int32_t>(i), std::move(mesh))) {
+      abort("scene sink rejected mesh", false);
+      return result;
+    }
+    ++result.mesh_count;
+  }
+
+  int32_t points_id = 0;
+  for (const RenderPrimRecord& rec : extracted.records) {
+    if (rec.type_name != "Points") continue;
+    if (cancellation_requested()) {
+      abort("conversion cancelled", true);
+      return result;
+    }
+    const GeometryInfo info =
+        GetGeometryInfo(rec.prim, GeometryKind::Points, points_id);
+    const GeometryDisposition disposition = sink->SelectGeometry(info);
+    if (disposition == GeometryDisposition::Cancel) {
+      abort("conversion cancelled by scene sink", true);
+      return result;
+    }
+    if (disposition != GeometryDisposition::Full) {
+      if (disposition == GeometryDisposition::Proxy) {
+        warnings_.push_back("Skipping Points proxy without mesh expansion: " +
+                            rec.path);
+      }
+      ++points_id;
+      continue;
+    }
+    RenderPoints points;
+    if (ConvertPoints(rec.prim, &points)) {
+      if (!sink->AddPoints(points_id, std::move(points))) {
+        abort("scene sink rejected points", false);
+        return result;
+      }
+      ++result.point_count;
+    }
+    ++points_id;
+  }
+  for (size_t i = 0; i < extracted.curves.size(); ++i) {
+    if (cancellation_requested()) {
+      abort("conversion cancelled", true);
+      return result;
+    }
+    const GeometryInfo info = GetGeometryInfo(
+        extracted.curves[i].prim, GeometryKind::Curves,
+        static_cast<int32_t>(i));
+    const GeometryDisposition disposition = sink->SelectGeometry(info);
+    if (disposition == GeometryDisposition::Cancel) {
+      abort("conversion cancelled by scene sink", true);
+      return result;
+    }
+    if (disposition != GeometryDisposition::Full) {
+      if (disposition == GeometryDisposition::Proxy) {
+        warnings_.push_back("Skipping Curves proxy without mesh expansion: " +
+                            extracted.curves[i].path);
+      }
+      continue;
+    }
+    RenderCurves curves;
+    if (!ConvertCurves(extracted.curves[i].prim, &curves)) continue;
+    const std::string material =
+        FindInheritedMaterialBinding(stage, curves.prim_path);
+    const auto found = binding_catalog.material_by_path.find(material);
+    if (found != binding_catalog.material_by_path.end()) {
+      curves.material_id = found->second;
+    }
+    if (!sink->AddCurves(static_cast<int32_t>(i), std::move(curves))) {
+      abort("scene sink rejected curves", false);
+      return result;
+    }
+    ++result.curve_count;
+  }
+
+  if (!sink->EndScene()) {
+    abort("scene sink failed to finalize", false);
+    return result;
+  }
+  result.success = true;
+  result.warnings = std::move(warnings_);
   return result;
 }
 
@@ -2522,7 +3150,8 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
     const std::string& type = rec.type_name;
     if (IsMeshRenderableTypeName(type)) node.type = NodeType::Mesh;
     else if (type == "Points") node.type = NodeType::Points;
-    else if (type == "BasisCurves" || type == "NurbsCurves") node.type = NodeType::Curves;
+    else if (type == "BasisCurves" || type == "NurbsCurves" ||
+             type == "HermiteCurves") node.type = NodeType::Curves;
     else if (type == "PointInstancer") node.type = NodeType::PointInstancer;
     else if (type == "Xform") node.type = NodeType::Xform;
     else if (type == "Camera") node.type = NodeType::Camera;
@@ -2589,91 +3218,7 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
     }
   }
   for (RenderMesh& mesh : scene->meshes) {
-    const std::string material_path =
-        FindInheritedMaterialBinding(stage, mesh.prim_path);
-    if (!material_path.empty()) {
-      const auto it = scene->material_by_path.find(material_path);
-      if (it != scene->material_by_path.end()) mesh.material_id = it->second;
-    }
-
-    // GeomSubset material bindings (familyName == materialBind): USD subsets
-    // are arbitrary face-index sets; the range-based MaterialSubset model
-    // stores one entry per CONSECUTIVE run of face indices.
-    UsdPrim mesh_prim = stage.GetPrimAtPath(mesh.prim_path);
-    if (!mesh_prim.IsValid()) continue;
-    for (const GeomSubset& sub : GetGeomSubsets(mesh_prim)) {
-      if (!sub.family_name.empty() && sub.family_name != "materialBind") {
-        continue;
-      }
-      std::string sub_mat = sub.material_path;
-      if (sub_mat.empty()) {
-        UsdPrim sub_prim = stage.GetPrimAtPath(sub.path);
-        if (sub_prim.IsValid()) {
-          sub_mat = FirstValidBoundMaterialPath(stage, sub_prim);
-        }
-      }
-      if (sub_mat.empty()) continue;
-      const auto mit = scene->material_by_path.find(sub_mat);
-      if (mit == scene->material_by_path.end()) continue;
-      const uint32_t nfaces = static_cast<uint32_t>(mesh.face_count());
-      // Sort + split into consecutive runs, dropping out-of-range faces.
-      // Authored subset indices use the ORIGINAL face numbering; when
-      // sanitization dropped faces, route them through the old->new remap
-      // first so the surviving faces keep their bindings.
-      std::vector<uint32_t> faces;
-      faces.reserve(sub.indices.size());
-      for (int32_t fi : sub.indices) {
-        if (fi < 0) continue;
-        uint32_t face = static_cast<uint32_t>(fi);
-        if (mesh.sanitize_dropped_faces > 0) {
-          if (face >= mesh.sanitize_face_remap.size()) continue;
-          const int32_t remapped = mesh.sanitize_face_remap[face];
-          if (remapped < 0) continue;  // face was dropped by sanitize
-          face = static_cast<uint32_t>(remapped);
-        }
-        if (face < nfaces) {
-          faces.push_back(face);
-        }
-      }
-      std::sort(faces.begin(), faces.end());
-      faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
-      size_t run_start = 0;
-      for (size_t i = 1; i <= faces.size(); ++i) {
-        if (i == faces.size() || faces[i] != faces[i - 1] + 1) {
-          RenderMesh::MaterialSubset ms;
-          ms.face_start = faces[run_start];
-          ms.face_count = static_cast<uint32_t>(i - run_start);
-          ms.material_id = mit->second;
-          mesh.material_subsets.push_back(ms);
-          run_start = i;
-        }
-      }
-    }
-
-    // Remap subset runs from polygon-face space into TRIANGLE space using
-    // the triangulation prefix sums (an N-gon becomes N-2 triangles;
-    // holes/degenerate faces contribute 0). Subset indices were already
-    // remapped into the post-sanitize face numbering above, so this holds
-    // even when sanitization dropped faces.
-    if (!mesh.material_subsets.empty() &&
-        !mesh.face_triangle_offsets.empty()) {
-      const std::vector<uint32_t>& offs = mesh.face_triangle_offsets;
-      const uint32_t nfaces_tri =
-          static_cast<uint32_t>(offs.size() > 0 ? offs.size() - 1 : 0);
-      std::vector<RenderMesh::MaterialSubset> remapped;
-      remapped.reserve(mesh.material_subsets.size());
-      for (const RenderMesh::MaterialSubset& ms : mesh.material_subsets) {
-        if (ms.face_start >= nfaces_tri) continue;
-        const uint32_t face_end =
-            std::min(ms.face_start + ms.face_count, nfaces_tri);
-        const uint32_t tri_start = offs[ms.face_start];
-        const uint32_t tri_count = offs[face_end] - tri_start;
-        if (tri_count == 0) continue;
-        remapped.push_back(
-            RenderMesh::MaterialSubset{tri_start, tri_count, ms.material_id});
-      }
-      mesh.material_subsets = std::move(remapped);
-    }
+    AssignMeshMaterialBinding(stage, *scene, &mesh);
   }
 
   // Optional default material for unbound geometry (legacy
@@ -2689,6 +3234,95 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
         curves.material_id = GetOrCreateDefaultMaterial(scene);
       }
     }
+  }
+}
+
+void RenderSceneConverter::AssignMeshMaterialBinding(const Stage& stage,
+                                                     const RenderScene& scene,
+                                                     RenderMesh* mesh) {
+  if (!mesh) return;
+  const std::string material_path =
+      FindInheritedMaterialBinding(stage, mesh->prim_path);
+  if (!material_path.empty()) {
+    const auto it = scene.material_by_path.find(material_path);
+    if (it != scene.material_by_path.end()) mesh->material_id = it->second;
+  }
+
+  // GeomSubset material bindings (familyName == materialBind): USD subsets
+  // are arbitrary face-index sets; the range-based MaterialSubset model
+  // stores one entry per CONSECUTIVE run of face indices.
+  UsdPrim mesh_prim = stage.GetPrimAtPath(mesh->prim_path);
+  if (!mesh_prim.IsValid()) return;
+  for (const GeomSubset& sub : GetGeomSubsets(mesh_prim)) {
+    if (!sub.family_name.empty() && sub.family_name != "materialBind") continue;
+    std::string sub_mat = sub.material_path;
+    if (sub_mat.empty()) {
+      UsdPrim sub_prim = stage.GetPrimAtPath(sub.path);
+      if (sub_prim.IsValid()) {
+        sub_mat = FirstValidBoundMaterialPath(stage, sub_prim);
+      }
+    }
+    if (sub_mat.empty()) continue;
+    const auto mit = scene.material_by_path.find(sub_mat);
+    if (mit == scene.material_by_path.end()) continue;
+    const uint32_t nfaces = static_cast<uint32_t>(mesh->face_count());
+    // Sort + split into consecutive runs, dropping out-of-range faces.
+    // Authored subset indices use the ORIGINAL face numbering; when
+    // sanitization dropped faces, route them through the old->new remap
+    // first so the surviving faces keep their bindings.
+    std::vector<uint32_t> faces;
+    faces.reserve(sub.indices.size());
+    for (int32_t fi : sub.indices) {
+      if (fi < 0) continue;
+      uint32_t face = static_cast<uint32_t>(fi);
+      if (mesh->sanitize_dropped_faces > 0) {
+        if (face >= mesh->sanitize_face_remap.size()) continue;
+        const int32_t remapped = mesh->sanitize_face_remap[face];
+        if (remapped < 0) continue;  // face was dropped by sanitize
+        face = static_cast<uint32_t>(remapped);
+      }
+      if (face < nfaces) {
+        faces.push_back(face);
+      }
+    }
+    std::sort(faces.begin(), faces.end());
+    faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
+    size_t run_start = 0;
+    for (size_t i = 1; i <= faces.size(); ++i) {
+      if (i == faces.size() || faces[i] != faces[i - 1] + 1) {
+        RenderMesh::MaterialSubset ms;
+        ms.face_start = faces[run_start];
+        ms.face_count = static_cast<uint32_t>(i - run_start);
+        ms.material_id = mit->second;
+        mesh->material_subsets.push_back(ms);
+        run_start = i;
+      }
+    }
+  }
+
+  // Remap subset runs from polygon-face space into TRIANGLE space using
+  // the triangulation prefix sums (an N-gon becomes N-2 triangles;
+  // holes/degenerate faces contribute 0). Subset indices were already
+  // remapped into the post-sanitize face numbering above, so this holds
+  // even when sanitization dropped faces.
+  if (!mesh->material_subsets.empty() &&
+      !mesh->face_triangle_offsets.empty()) {
+    const std::vector<uint32_t>& offs = mesh->face_triangle_offsets;
+    const uint32_t nfaces_tri =
+        static_cast<uint32_t>(offs.size() > 0 ? offs.size() - 1 : 0);
+    std::vector<RenderMesh::MaterialSubset> remapped;
+    remapped.reserve(mesh->material_subsets.size());
+    for (const RenderMesh::MaterialSubset& ms : mesh->material_subsets) {
+      if (ms.face_start >= nfaces_tri) continue;
+      const uint32_t face_end =
+          std::min(ms.face_start + ms.face_count, nfaces_tri);
+      const uint32_t tri_start = offs[ms.face_start];
+      const uint32_t tri_count = offs[face_end] - tri_start;
+      if (tri_count == 0) continue;
+      remapped.push_back(
+          RenderMesh::MaterialSubset{tri_start, tri_count, ms.material_id});
+    }
+    mesh->material_subsets = std::move(remapped);
   }
 }
 
@@ -2748,10 +3382,23 @@ void RenderSceneConverter::DuplicatePointInstanceMeshes(RenderScene* scene) {
 // Mesh conversion
 //
 
+bool RenderSceneConverter::ConvertRenderableMesh(const Stage& stage,
+                                                 const UsdPrim& prim,
+                                                 RenderMesh* out) {
+  if (!prim.IsValid() || !IsMeshRenderableTypeName(prim.GetTypeName())) {
+    last_error_ = "Invalid renderable mesh prim";
+    return false;
+  }
+  return prim.GetTypeName() == "Mesh" ? ConvertMesh(stage, prim, out)
+                                      : ConvertGeomPrimitive(prim, out);
+}
+
 bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
                                                 RenderMesh* out) {
-  if (!out || !prim.IsValid() || !IsAnalyticGeomTypeName(prim.GetTypeName())) {
-    last_error_ = "Invalid analytic geom prim";
+  if (!out || !prim.IsValid() ||
+      (!IsAnalyticGeomTypeName(prim.GetTypeName()) &&
+       prim.GetTypeName() != "TetMesh")) {
+    last_error_ = "Invalid generated geom prim";
     return false;
   }
 
@@ -2762,13 +3409,89 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
   std::vector<value::float2> uvs;
 
   const std::string type = prim.GetTypeName();
-  if (type == "Cube") {
+  if (type == "TetMesh") {
+    ValueArrayRead<float> authored_points;
+    ValueArrayRead<int32_t> authored_tets;
+    if (!ReadFloatArray(prim, "points", config_.time_code, &authored_points) ||
+        authored_points.empty() || (authored_points.view.size % 3) != 0 ||
+        !ReadIntArray(prim, "tetVertexIndices", config_.time_code,
+                      &authored_tets) ||
+        authored_tets.empty() || (authored_tets.view.size % 4) != 0) {
+      last_error_ = "Invalid TetMesh points or tetVertexIndices";
+      return false;
+    }
+
+    const size_t point_count = authored_points.view.size / 3;
+    points.reserve(point_count);
+    for (size_t i = 0; i < point_count; ++i) {
+      points.push_back(value::float3{authored_points.view.data[i * 3 + 0],
+                                     authored_points.view.data[i * 3 + 1],
+                                     authored_points.view.data[i * 3 + 2]});
+    }
+
+    using FaceKey = std::array<int32_t, 3>;
+    struct BoundaryFace {
+      FaceKey key{};
+      FaceKey oriented{};
+    };
+    const size_t tet_count = authored_tets.view.size / 4;
+    if (tet_count > (kMaxTempAllocBytes / (4 * sizeof(BoundaryFace)))) {
+      last_error_ = "TetMesh boundary extraction exceeds temporary-memory cap";
+      return false;
+    }
+    std::vector<BoundaryFace> faces;
+    faces.reserve(tet_count * 4);
+    for (size_t tet = 0; tet < tet_count; ++tet) {
+      const int32_t* v = authored_tets.view.data + tet * 4;
+      bool valid = true;
+      for (size_t corner = 0; corner < 4; ++corner) {
+        if (v[corner] < 0 || static_cast<size_t>(v[corner]) >= point_count) {
+          valid = false;
+        }
+      }
+      if (!valid || v[0] == v[1] || v[0] == v[2] || v[0] == v[3] ||
+          v[1] == v[2] || v[1] == v[3] || v[2] == v[3]) {
+        warnings_.push_back("TetMesh '" + prim.GetPath().str() +
+                            "': skipped malformed tetrahedron " +
+                            std::to_string(tet));
+        continue;
+      }
+      const FaceKey oriented[4] = {{v[0], v[2], v[1]}, {v[0], v[1], v[3]},
+                                   {v[0], v[3], v[2]}, {v[1], v[2], v[3]}};
+      for (const FaceKey& face : oriented) {
+        FaceKey key = face;
+        std::sort(key.begin(), key.end());
+        faces.push_back(BoundaryFace{key, face});
+      }
+    }
+    std::sort(faces.begin(), faces.end(),
+              [](const BoundaryFace& a, const BoundaryFace& b) {
+                return a.key < b.key;
+              });
+    for (size_t begin = 0; begin < faces.size();) {
+      size_t end = begin + 1;
+      while (end < faces.size() && faces[end].key == faces[begin].key) ++end;
+      if (end == begin + 1) {
+        face_counts.push_back(3);
+        face_indices.insert(face_indices.end(),
+                            faces[begin].oriented.begin(),
+                            faces[begin].oriented.end());
+      }
+      begin = end;
+    }
+    if (face_counts.empty()) {
+      last_error_ = "TetMesh has no valid boundary faces";
+      return false;
+    }
+  } else if (type == "Cube") {
     ::tinyusdz::tydra::GenerateCubeMesh(
         ReadDoubleProperty(prim, "size", 2.0), points, face_counts,
         face_indices, normals, uvs);
   } else if (type == "Sphere") {
     ::tinyusdz::tydra::GenerateIcosphereMesh(
-        ReadDoubleProperty(prim, "radius", 2.0),
+        // USD's Sphere.radius default is 1 (Cube.size is 2). Normally the
+        // schema registry supplies it and this fallback never fires.
+        ReadDoubleProperty(prim, "radius", 1.0),
         std::max(0, std::min(config_.mesh.sphere_subdivisions, 6)), points,
         face_counts,
         face_indices, normals, uvs);
@@ -2860,10 +3583,12 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
     }
   }
 
-  std::string axis = "Z";
-  GetToken(prim, "axis", &axis);
-  if (type == "Cube" || type == "Sphere") axis = "Y";
-  ApplyAxis(&points, &normals, axis);
+  if (type != "TetMesh") {
+    std::string axis = "Z";
+    GetToken(prim, "axis", &axis);
+    if (type == "Cube" || type == "Sphere") axis = "Y";
+    ApplyAxis(&points, &normals, axis);
+  }
   FillGeneratedMesh(prim, points, face_counts, face_indices, normals, uvs, out);
   SanitizeMeshTopology(out);
   if (config_.mesh.triangulate && !out->is_triangulated) {
@@ -3549,6 +4274,8 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
     mesh->left_handed = (orientation == "leftHanded");
   }
 
+  GetBool(prim, "doubleSided", &mesh->double_sided);
+
   // holeIndices: face indices excluded from rendering.
   {
     ValueArrayRead<int32_t> holes;
@@ -3634,7 +4361,70 @@ uint32_t PrimvarToFloats(const Value& v, std::vector<float>* out) {
 }  // namespace
 
 bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* mesh) {
-  const std::string uv_base = config_.mesh.default_uv_primvar;
+  std::vector<Primvar> primvars = GetPrimvars(prim);
+
+  // The primary UV set is the first configured name this mesh actually authors.
+  // Without the fallback, a Blender-exported "UVMap" mesh reads as having no UVs
+  // at all.
+  std::string uv_base;
+  for (const std::string& candidate : config_.mesh.uv_primvar_names) {
+    for (const Primvar& pv : primvars) {
+      if (pv.name == candidate) {
+        uv_base = candidate;
+        break;
+      }
+    }
+    if (!uv_base.empty()) break;
+  }
+  if (uv_base.empty()) {
+    uv_base = config_.mesh.uv_primvar_names.empty()
+                  ? std::string("st")
+                  : config_.mesh.uv_primvar_names.front();
+  }
+
+  // The SECONDARY UV set. This used to be hard-coded to `uv_base + "1"`, so only
+  // st1 / UVMap1 / uv1 were ever extracted -- a texture whose UsdPrimvarReader
+  // names `uvSet1`, `map2` or `UVMap.001` (all common) referenced a set the
+  // converter never built, and RenderTexture::uv_primvar pointed at nothing.
+  //
+  // Take any second 2-component primvar instead, preferring the conventional
+  // names so existing assets keep their slot assignment: uv_base + "1" first,
+  // then the other configured UV names, then any remaining float2 primvar (in
+  // name order, so the choice is deterministic rather than dependent on authoring
+  // order). Skinning primvars are consumed by the skin binding, not here.
+  auto two_component = [&](const std::string& name) -> bool {
+    for (const Primvar& pv : primvars) {
+      if (pv.name != name || !pv.value || !pv.value->is_array()) continue;
+      return GetComponentCount(pv.value->type_id()) == 2;
+    }
+    return false;
+  };
+  std::string uv_second;
+  if (two_component(uv_base + "1")) {
+    uv_second = uv_base + "1";
+  }
+  if (uv_second.empty()) {
+    for (const std::string& candidate : config_.mesh.uv_primvar_names) {
+      if (candidate != uv_base && two_component(candidate)) {
+        uv_second = candidate;
+        break;
+      }
+    }
+  }
+  if (uv_second.empty()) {
+    std::vector<std::string> others;
+    for (const Primvar& pv : primvars) {
+      if (pv.name == uv_base || !pv.value || !pv.value->is_array()) continue;
+      if (GetComponentCount(pv.value->type_id()) != 2) continue;
+      if (pv.name.rfind("skel:", 0) == 0) continue;
+      others.push_back(pv.name);
+    }
+    if (!others.empty()) {
+      std::sort(others.begin(), others.end());
+      uv_second = others.front();
+    }
+  }
+
   const size_t npoints = mesh->point_count();
   const size_t nfaces = mesh->face_count();
   const size_t ncorners = mesh->face_vertex_indices.size();
@@ -3694,12 +4484,12 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     }
   }
 
-  for (Primvar& pv : GetPrimvars(prim)) {
+  for (Primvar& pv : primvars) {
     if (!pv.value) continue;
     std::vector<float> data;
     const uint32_t comps = PrimvarToFloats(*pv.value, &data);
     const bool is_uv0 = (pv.name == uv_base);
-    const bool is_uv1 = (pv.name == uv_base + "1");
+    const bool is_uv1 = (!uv_second.empty() && pv.name == uv_second);
     const bool is_color = (pv.name == "displayColor");
     const bool is_opacity = (pv.name == "displayOpacity");
     const bool is_normals = (pv.name == "normals");
@@ -3776,9 +4566,11 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       if (is_uv0 && comps == 2) {
         mesh->texcoords_0.append(data.data(), data.size());
         mesh->texcoords_0_interp = interp;
+        mesh->texcoords_0_name = pv.name;
       } else if (is_uv1 && comps == 2) {
         mesh->texcoords_1.append(data.data(), data.size());
         mesh->texcoords_1_interp = interp;
+        mesh->texcoords_1_name = pv.name;
       } else if (is_color && (comps == 3 || comps == 4)) {
         mesh->colors.append(data.data(), data.size());
         mesh->colors_interp = interp;
@@ -3893,13 +4685,48 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
     }
   }
 
+  ValueArrayRead<float> opacities;
+  if (ReadFloatArray(prim, "primvars:displayOpacity", config_.time_code,
+                     &opacities) &&
+      !opacities.empty()) {
+    std::string interp_tok;
+    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::tinyusdz::next::PropMeta* pm =
+              spec->property_meta("primvars:displayOpacity")) {
+        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+          interp_tok = pm->interpolation;
+        }
+      }
+    }
+    const size_t elems = opacities.view.size;
+    Interpolation interp;
+    if (interp_tok.empty()) {
+      interp = (elems == out->point_count() && elems != 1)
+                   ? Interpolation::Vertex
+                   : Interpolation::Constant;
+    } else {
+      interp = ParsePrimvarInterp(interp_tok);
+    }
+    const size_t expected = (interp == Interpolation::Constant)
+                                ? 1
+                                : out->point_count();
+    if (elems == expected) {
+      out->opacities.append(opacities.view.data, elems);
+      out->opacities_interp = interp;
+    } else {
+      warnings_.push_back(
+          "Points '" + out->prim_path +
+          "': ignoring displayOpacity with mismatched element count");
+    }
+  }
+
   ComputePointBounds(out->points, &out->bbox_min, &out->bbox_max,
                      &out->has_bbox);
   return true;
 }
 
 //
-// Curves conversion (BasisCurves / NurbsCurves)
+// Curves conversion (BasisCurves / NurbsCurves / HermiteCurves)
 //
 
 namespace {
@@ -4049,11 +4876,13 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
                                          RenderCurves* out) {
   const std::string type_name =
       prim.IsValid() ? prim.GetTypeName() : std::string();
-  if (!out || (type_name != "BasisCurves" && type_name != "NurbsCurves")) {
+  if (!out || (type_name != "BasisCurves" && type_name != "NurbsCurves" &&
+               type_name != "HermiteCurves")) {
     last_error_ = "Invalid curves prim";
     return false;
   }
   out->is_nurbs = (type_name == "NurbsCurves");
+  out->is_hermite = (type_name == "HermiteCurves");
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
 
@@ -4120,6 +4949,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
   std::vector<int32_t> nurbs_order;
   std::vector<float> nurbs_knots;
   std::vector<float> nurbs_ranges;  // 2 floats per curve, optional
+  std::vector<float> hermite_tangents;
   bool nurbs_data_ok = true;
   if (out->is_nurbs) {
     nurbs_order = ReadIntArrayCopy(prim, "order", config_.time_code);
@@ -4130,6 +4960,15 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       nurbs_data_ok = false;
     }
     ReadFloatsFlexible(prim, "ranges", config_.time_code, &nurbs_ranges);
+  } else if (out->is_hermite) {
+    if (!ReadFloatsFlexible(prim, "tangents", config_.time_code,
+                            &hermite_tangents) ||
+        hermite_tangents.size() != points.view.size) {
+      warnings_.push_back("HermiteCurves '" + out->prim_path +
+                          "': tangents must match points; using control-polygon "
+                          "passthrough");
+      hermite_tangents.clear();
+    }
   }
 
   const uint32_t segs = std::max(1u, config_.curves.tessellation_segments);
@@ -4217,6 +5056,17 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       continue;
     }
 
+    if (out->is_hermite) {
+      if (n < 2 || hermite_tangents.empty()) {
+        fall_back_linear(n < 2 ? "too few Hermite control points"
+                               : "missing or mismatched Hermite tangents");
+        continue;
+      }
+      plan.nsegs = n - 1;
+      plan.varying_count = n;
+      continue;
+    }
+
     // BasisCurves.
     if (out->type == CurveType::Linear) {
       plan.linear = true;
@@ -4274,6 +5124,9 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     if (m == 1) {
       out->widths.append(widths.view.data, m);
       out->widths_interp = Interpolation::Constant;
+    } else if (m == ncurves) {
+      out->widths.append(widths.view.data, m);
+      out->widths_interp = Interpolation::Uniform;
     } else if (m == total_cp) {
       out->widths.append(widths.view.data, m);
       out->widths_interp = Interpolation::Vertex;
@@ -4332,12 +5185,55 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     }
   }
 
+  // displayOpacity follows the same constant/uniform/vertex/varying rules as
+  // displayColor and is resampled onto the tessellated centerline below.
+  ValueArrayRead<float> opacities;
+  if (ReadFloatArray(prim, "primvars:displayOpacity", config_.time_code,
+                     &opacities) && !opacities.empty()) {
+    std::string interp_tok = "constant";
+    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::tinyusdz::next::PropMeta* pm =
+              spec->property_meta("primvars:displayOpacity")) {
+        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+          interp_tok = pm->interpolation;
+        }
+      }
+    }
+    Interpolation interp = ParsePrimvarInterp(interp_tok);
+    const size_t elems = opacities.view.size;
+    auto expected = [&](Interpolation it) -> size_t {
+      switch (it) {
+        case Interpolation::Constant: return 1;
+        case Interpolation::Uniform: return ncurves;
+        case Interpolation::Varying: return varying_total;
+        case Interpolation::Vertex:
+        default: return total_cp;
+      }
+    };
+    if (elems != expected(interp)) {
+      if (elems == 1) interp = Interpolation::Constant;
+      else if (elems == total_cp) interp = Interpolation::Vertex;
+      else if (elems == ncurves) interp = Interpolation::Uniform;
+      else if (elems == varying_total) interp = Interpolation::Varying;
+    }
+    if (elems == expected(interp)) {
+      out->opacities.append(opacities.view.data, elems);
+      out->opacities_interp = interp;
+    } else {
+      warnings_.push_back(
+          "Curves '" + out->prim_path +
+          "': ignoring displayOpacity with mismatched element count");
+    }
+  }
+
   //
   // Tessellate.
   //
   const bool emit_widths = out->has_widths() &&
                            out->widths_interp != Interpolation::Constant;
   const bool emit_colors = out->has_colors();
+  const bool emit_opacities = !out->opacities.empty() &&
+      out->opacities_interp != Interpolation::Constant;
   size_t cp_offset = 0;
   size_t var_offset = 0;
   std::vector<float> emitted;
@@ -4355,6 +5251,35 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
         emitted.push_back(cv[1]);
         emitted.push_back(cv[2]);
       }
+    } else if (out->is_hermite) {
+      const float* tangent = hermite_tangents.data() + cp_offset * 3;
+      emitted.reserve((static_cast<size_t>(plan.nsegs) * segs + 1) * 3);
+      auto eval_hermite = [&](uint32_t span, float t, float p[3]) {
+        const float t2 = t * t;
+        const float t3 = t2 * t;
+        const float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+        const float h10 = t3 - 2.0f * t2 + t;
+        const float h01 = -2.0f * t3 + 3.0f * t2;
+        const float h11 = t3 - t2;
+        for (size_t component = 0; component < 3; ++component) {
+          p[component] = h00 * cv[span * 3 + component] +
+                         h10 * tangent[span * 3 + component] +
+                         h01 * cv[(span + 1) * 3 + component] +
+                         h11 * tangent[(span + 1) * 3 + component];
+        }
+      };
+      for (uint32_t span = 0; span < plan.nsegs; ++span) {
+        for (uint32_t sample = 0; sample < segs; ++sample) {
+          float p[3];
+          eval_hermite(span,
+                       static_cast<float>(sample) / static_cast<float>(segs),
+                       p);
+          emitted.insert(emitted.end(), p, p + 3);
+        }
+      }
+      float p[3];
+      eval_hermite(plan.nsegs - 1, 1.0f, p);
+      emitted.insert(emitted.end(), p, p + 3);
     } else if (out->is_nurbs) {
       const float* kn = nurbs_knots.data() + plan.knot_offset;
       const uint32_t nsamples = plan.nsegs * segs + 1;
@@ -4434,12 +5359,20 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
     if (emit_widths) {
       const float* wvals = nullptr;
       size_t wcount = 0;
-      if (out->widths_interp == Interpolation::Vertex) {
-        wvals = widths.view.data + cp_offset;
-        wcount = n;
-      } else {  // Varying
-        wvals = widths.view.data + var_offset;
-        wcount = plan.varying_count;
+      switch (out->widths_interp) {
+        case Interpolation::Uniform:
+          wvals = widths.view.data + ci;
+          wcount = 1;
+          break;
+        case Interpolation::Vertex:
+          wvals = widths.view.data + cp_offset;
+          wcount = n;
+          break;
+        case Interpolation::Varying:
+          wvals = widths.view.data + var_offset;
+          wcount = plan.varying_count;
+          break;
+        default: break;
       }
       for (size_t k = 0; k < emit_count; ++k) {
         const float u01 =
@@ -4488,6 +5421,36 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
       }
     }
 
+    if (emit_opacities) {
+      const float* ovals = nullptr;
+      size_t ocount = 0;
+      switch (out->opacities_interp) {
+        case Interpolation::Uniform:
+          ovals = opacities.view.data + ci;
+          ocount = 1;
+          break;
+        case Interpolation::Vertex:
+          ovals = opacities.view.data + cp_offset;
+          ocount = n;
+          break;
+        case Interpolation::Varying:
+          ovals = opacities.view.data + var_offset;
+          ocount = plan.varying_count;
+          break;
+        default: break;
+      }
+      if (ovals && ocount > 0) {
+        for (size_t k = 0; k < emit_count; ++k) {
+          const float u01 = emit_count > 1
+                                ? static_cast<float>(k) /
+                                      static_cast<float>(emit_count - 1)
+                                : 0.0f;
+          out->tessellated_opacities.push_back(
+              SampleChannelLinear(ovals, ocount, u01, plan.periodic));
+        }
+      }
+    }
+
     cp_offset += n;
     var_offset += plan.varying_count;
   }
@@ -4505,7 +5468,12 @@ bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
   }
 
   PointInstancerData data;
-  if (!ReadPointInstancerData(prim, config_.time_code, &data)) {
+  const bool build_draws = config_.point_instancer.build_instance_draws ||
+                           config_.point_instancer.duplicate_meshes;
+  const bool build_transforms =
+      config_.point_instancer.build_instance_transforms || build_draws;
+  if (!ReadPointInstancerData(prim, config_.time_code, &data,
+                             build_transforms)) {
     last_error_ = data.validation_error.empty()
                       ? "Failed to read PointInstancer data"
                       : data.validation_error;
@@ -4518,22 +5486,32 @@ bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
   for (const ::tinyusdz::next::Path& path : data.prototypes) {
     out->prototype_paths.push_back(path.str());
   }
-  out->proto_indices = std::move(data.proto_indices);
-  out->positions = std::move(data.positions);
-  out->orientations = std::move(data.orientations);
-  out->scales = std::move(data.scales);
-  out->velocities = std::move(data.velocities);
-  out->angular_velocities = std::move(data.angular_velocities);
-  out->ids = std::move(data.ids);
-  out->invisible_ids = std::move(data.invisible_ids);
-  out->inactive_ids = std::move(data.inactive_ids);
+  std::vector<uint8_t> visibility = BuildInstanceVisibility(
+      data.proto_indices.size(), data.ids, data.invisible_ids,
+      data.inactive_ids);
+  if (config_.point_instancer.compact_instances) {
+    BuildCompactInstances(data, visibility, &out->compact_instances);
+  }
+  const bool retain_source_arrays =
+      config_.point_instancer.retain_source_arrays || build_draws ||
+      !config_.point_instancer.compact_instances;
+  if (retain_source_arrays) {
+    out->proto_indices = std::move(data.proto_indices);
+    out->positions = std::move(data.positions);
+    out->orientations = std::move(data.orientations);
+    out->scales = std::move(data.scales);
+    out->velocities = std::move(data.velocities);
+    out->angular_velocities = std::move(data.angular_velocities);
+    out->ids = std::move(data.ids);
+    out->invisible_ids = std::move(data.invisible_ids);
+    out->inactive_ids = std::move(data.inactive_ids);
+    out->instance_visible = std::move(visibility);
+  }
   out->transforms.reserve(data.transforms.size());
   for (const ::tinyusdz::next::PointInstancerTransform& transform :
        data.transforms) {
     out->transforms.push_back(MatrixFromPointInstancerTransform(transform));
   }
-  out->instance_visible = BuildInstanceVisibility(
-      out->instance_count(), out->ids, out->invisible_ids, out->inactive_ids);
   out->valid = data.valid;
   out->validation_error = std::move(data.validation_error);
   return true;
@@ -4884,36 +5862,53 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
 // Material conversion
 //
 
-std::string RenderSceneConverter::ResolveAssetPath(
-    const std::string& file) const {
-  if (file.empty()) return file;
-  // A configured AssetResolver owns resolution (anchor/search paths +
-  // suffix fallback); asset_base_dir doubles as the anchor directory.
+std::string RenderSceneConverter::ResolveAssetPath(const std::string& file,
+                                                   uint32_t asset_anchor_id) const {
+  if (file.empty() || file[0] == '/' ||
+      file.find("://") != std::string::npos) {
+    return file;
+  }
+
+  // A relative asset path anchors to the LAYER THAT AUTHORED IT, not to the
+  // stage's root layer. `asset_anchor_id` carries that layer's directory through
+  // composition (see asset-anchor.hh); production look layers sit several dirs
+  // below the root and reach their textures with `../..`, so anchoring at the
+  // root yields a nonexistent path. Fall back to the stage base dir for prims
+  // with no anchor (the root layer itself, and USDZ package entries).
+  const std::string& anchor =
+      ::tinyusdz::next::AssetAnchorPath(asset_anchor_id);
+  const std::string& base = anchor.empty() ? config_.asset_base_dir : anchor;
+
+  // A configured AssetResolver owns resolution (anchor/search paths + suffix
+  // fallback). Anchor it at the AUTHORING layer's directory, same as above.
   if (config_.asset_resolver) {
-    const std::string anchor = config_.asset_base_dir.empty()
-                                   ? std::string()
-                                   : config_.asset_base_dir + "/";
-    ::tinyusdz::next::ResolvedAsset resolved =
-        config_.asset_resolver->Resolve(file, anchor);
+    ::tinyusdz::next::ResolvedAsset resolved = config_.asset_resolver->Resolve(
+        file, base.empty() ? std::string() : base + "/");
     if (resolved.exists && !resolved.resolved_path.empty()) {
       return resolved.resolved_path;
     }
     return file;
   }
-  if (config_.asset_base_dir.empty() || file[0] == '/' ||
-      file.find("://") != std::string::npos) {
-    return file;
-  }
-  std::string rel = file;
-  if (rel.rfind("./", 0) == 0) rel = rel.substr(2);
-  return config_.asset_base_dir + "/" + rel;
+
+  if (base.empty()) return file;
+
+  // Normalize: the join commonly yields `look/binding/../../texture/x.png`, and
+  // an un-collapsed path would also defeat the `resolved_path` image dedup below.
+  return ::tinyusdz::next::AssetResolver::NormalizePath(
+      ::tinyusdz::next::AssetResolver::JoinPath(base, file));
+}
+
+uint32_t RenderSceneConverter::AssetAnchorOf(const UsdPrim& prim) {
+  const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
+  return spec ? spec->asset_anchor_id() : 0u;
 }
 
 int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
                                              const std::string& file,
-                                             ColorSpace color_space) {
+                                             ColorSpace color_space,
+                                             uint32_t asset_anchor_id) {
   if (!scene || file.empty()) return -1;
-  const std::string resolved = ResolveAssetPath(file);
+  const std::string resolved = ResolveAssetPath(file, asset_anchor_id);
   const ColorSpace csp =
       color_space == ColorSpace::Unknown ? ColorSpace::sRGB : color_space;
   for (size_t i = 0; i < scene->images.size(); ++i) {
@@ -4970,6 +5965,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   // names the authoritative surface shader (child iteration order previously
   // decided ties, and shaders living OUTSIDE the material prim never resolved).
   bool found_shader = false;
+  std::vector<UsdPrim> degraded_candidates;
 
   std::vector<UsdPrim> candidates;
   // Materials exported by Blender commonly author both a PreviewSurface
@@ -5005,6 +6001,21 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
         if (sp.IsValid()) candidates.push_back(sp);
       }
     }
+    // External MaterialX references are synthesized by the next layer
+    // registry with this relationship instead of outputs:mtlx:surface.
+    if (const std::vector<::tinyusdz::next::Path>* sources =
+            prim.GetRelationship("mtlx:surface:source")) {
+      if (!sources->empty()) {
+        UsdPrim sp = stage.GetPrimAtPath(sources->front().str());
+        if (sp.IsValid() &&
+            std::none_of(candidates.begin(), candidates.end(),
+                         [&sp](const UsdPrim& p) {
+                           return p.GetPath().str() == sp.GetPath().str();
+                         })) {
+          candidates.push_back(sp);
+        }
+      }
+    }
     const std::string surf =
         ::tinyusdz::next::GetSurfaceShader(stage, prim);
     if (!surf.empty()) {
@@ -5020,6 +6031,45 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   }
   for (const auto& child : prim.GetChildren()) {
     candidates.push_back(child);
+  }
+
+  // A common UsdShade authoring pattern puts the terminal shader behind one
+  // or more NodeGraph output pass-throughs.  The graph is the material's
+  // surface target, but the shader is the object that carries the usable
+  // `info:id` and inputs.  Resolve these hops before classifying the material
+  // as degraded.  Keep this local to material discovery so parameter
+  // extraction still follows the original shader connections.
+  {
+    std::set<std::string> visited;
+    std::function<void(const UsdPrim&, int)> append_graph_shader =
+        [&](const UsdPrim& source, int depth) {
+          if (!source.IsValid() || depth > 16 ||
+              !visited.insert(source.GetPath().str()).second) {
+            return;
+          }
+          if (!::tinyusdz::next::IsNodeGraph(source)) return;
+
+          const ::tinyusdz::next::PrimSpec* spec = source.GetPrimSpec();
+          if (!spec) return;
+          static const char* kOutputs[] = {"outputs:surface", "outputs:out"};
+          for (const char* output : kOutputs) {
+            const std::vector<::tinyusdz::next::Path>* connections =
+                spec->connection(output);
+            if (!connections || connections->empty()) continue;
+            UsdPrim target = stage.GetPrimAtPath(
+                SourcePrimPathFromConnection((*connections)[0].str()));
+            if (!target.IsValid()) continue;
+            candidates.push_back(target);
+            if (::tinyusdz::next::IsNodeGraph(target)) {
+              append_graph_shader(target, depth + 1);
+            }
+            return;
+          }
+        };
+    const size_t initial_count = candidates.size();
+    for (size_t i = 0; i < initial_count; ++i) {
+      append_graph_shader(candidates[i], 0);
+    }
   }
 
   for (const auto& child : candidates) {
@@ -5068,6 +6118,21 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;
         }
         found_shader = true;
+      } else {
+        // Keep the authoritative unsupported shader (and then any unsupported
+        // child shaders) as degraded-material sources. Engine shaders and
+        // newer MaterialX nodes often retain familiar PBR input names even
+        // when their full implementation cannot be evaluated.
+        degraded_candidates.push_back(child);
+        MaterialDiagnostic diagnostic;
+        diagnostic.kind = shader_id.rfind("ND_", 0) == 0
+                              ? MaterialDiagnosticKind::UnsupportedMaterialXNode
+                              : MaterialDiagnosticKind::UnsupportedShader;
+        diagnostic.material_path = out->prim_path;
+        diagnostic.node_path = child.GetPath().str();
+        diagnostic.shader_id = shader_id;
+        diagnostic.message = "unsupported surface shader";
+        out->diagnostics.push_back(std::move(diagnostic));
       }
     }
   }
@@ -5077,9 +6142,11 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     // convert through the MaterialX -> PreviewSurface mapping.
     MtlxConverter mtlx;
     RenderMaterial mtlx_out;
+    // We are the fallback path: we already failed to find a shader we know, so
+    // the converter must not hand this same material back to us.
     if (mtlx.ConvertUsdMtlxMaterial(stage, prim, &mtlx_out,
                                     /*allow_converter_delegation=*/false)) {
-      if (mtlx_out.preview_surface) {
+      if (mtlx_out.preview_surface && !mtlx_out.default_fallback) {
         out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
         out->preview_surface = std::move(mtlx_out.preview_surface);
         out->alpha_mode = mtlx_out.alpha_mode;
@@ -5088,6 +6155,10 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
           out->mtlx_config = std::move(mtlx_out.mtlx_config);
         }
         found_shader = true;
+      } else if (!out->mtlx_config.authored && mtlx_out.mtlx_config.authored) {
+        // Retain the MaterialX document metadata even when its surface node is
+        // unsupported and the PBR inputs below have to be salvaged by name.
+        out->mtlx_config = std::move(mtlx_out.mtlx_config);
       }
     }
   }
@@ -5099,14 +6170,131 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     // an `info:implementationSource = "sourceAsset"` shader
     // (`info:unreal:sourceAsset = @...uasset@`), as in MetaHuman face/body
     // materials — or whose surface connection doesn't resolve after
-    // composition. Emit a neutral default material rather than dropping it, so
-    // the mesh keeps its material binding and still renders. Mirrors the
-    // legacy tydra graceful-degradation behavior.
+    // composition. Emit a per-material degraded PreviewSurface rather than
+    // dropping it. Recover conventional PBR input aliases from the unsupported
+    // surface shader first, then from Material interface inputs. This preserves
+    // the useful constants around an unsupported node instead of replacing the
+    // entire material with shared gray.
     out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
     out->preview_surface = std::make_unique<PreviewSurfaceShader>();
+    out->default_fallback = true;
+
+    PreviewSurfaceShader* degraded = out->preview_surface.get();
+    // White is the neutral multiplier for a mesh-authored displayColor. If no
+    // recognizable base color can be recovered, this lets displayColor remain
+    // visible instead of being darkened by the PreviewSurface schema fallback.
+    SetParamFloat3(&degraded->diffuse_color, 1.0f, 1.0f, 1.0f);
+
+    size_t recovered_count = 0;
+    auto recover = [&](ShaderParam* dst,
+                       std::initializer_list<const char*> aliases) {
+      // An unsupported terminal appears first in candidates; deduplicate child
+      // traversal so texture/image nodes cannot accidentally override it.
+      std::set<std::string> visited;
+      auto recover_from = [&](const UsdPrim& source) {
+        if (!source.IsValid() ||
+            !visited.insert(source.GetPath().str()).second) {
+          return false;
+        }
+        for (const char* alias : aliases) {
+          ShaderParam value = *dst;
+          if (ExtractShaderParam(stage, source, alias, &value, scene)) {
+            *dst = value;
+            ++recovered_count;
+            return true;
+          }
+        }
+        return false;
+      };
+      for (const UsdPrim& source : degraded_candidates) {
+        if (recover_from(source)) return;
+      }
+      // Material interface inputs are common in MaterialX exports and remain
+      // meaningful even when the connected surface implementation is unknown.
+      recover_from(prim);
+    };
+
+    // Preserve every evaluatable authored input from the unsupported terminal
+    // and the material interface, not only the conventional aliases above.
+    // This keeps advanced lobes and future shader inputs available without
+    // making the degraded PreviewSurface pretend to evaluate them.
+    std::set<std::string> retained_names;
+    auto retain_inputs = [&](const UsdPrim& source, const std::string& shader) {
+      if (!source.IsValid()) return;
+      for (const std::string& property : source.GetPropertyNames()) {
+        constexpr const char* kPrefix = "inputs:";
+        if (property.rfind(kPrefix, 0) != 0) continue;
+        const std::string name = property.substr(7);
+        if (name.empty() || !retained_names.insert(name).second) continue;
+        ShaderParam value;
+        if (!ExtractShaderParam(stage, source, name, &value, scene)) continue;
+        RetainedMaterialParam param;
+        param.shader = shader;
+        param.name = name;
+        param.value = value;
+        out->retained_params.push_back(std::move(param));
+      }
+    };
+    for (const UsdPrim& source : degraded_candidates) {
+      std::string shader;
+      GetToken(source, "info:id", &shader);
+      retain_inputs(source, shader);
+    }
+    retain_inputs(prim, "MaterialInterface");
+
+    recover(&degraded->diffuse_color,
+            {"diffuseColor", "baseColor", "base_color", "color"});
+    recover(&degraded->emissive_color,
+            {"emissiveColor", "emissionColor", "emission_color"});
+    recover(&degraded->specular_color,
+            {"specularColor", "specular_color"});
+    recover(&degraded->metallic,
+            {"metallic", "metalness", "base_metalness"});
+    recover(&degraded->roughness,
+            {"roughness", "base_roughness", "specular_roughness"});
+    recover(&degraded->clearcoat,
+            {"clearcoat", "coat", "coat_weight"});
+    recover(&degraded->clearcoat_roughness,
+            {"clearcoatRoughness", "coat_roughness"});
+    recover(&degraded->opacity,
+            {"opacity", "geometry_opacity", "alpha"});
+    recover(&degraded->opacity_threshold,
+            {"opacityThreshold", "alphaCutoff", "alpha_cutoff"});
+    recover(&degraded->ior, {"ior", "specular_ior", "specular_IOR"});
+    recover(&degraded->normal, {"normal", "geometry_normal"});
+    recover(&degraded->displacement, {"displacement"});
+    recover(&degraded->occlusion, {"occlusion"});
+
+    ShaderParam use_spec;
+    recover(&use_spec, {"useSpecularWorkflow", "use_specular_workflow"});
+    degraded->use_specular_workflow = use_spec.value.x >= 0.5f;
+
+    if (degraded->opacity.is_texture() ||
+        degraded->opacity.value.x < 1.0f - kAlphaEpsilon) {
+      out->alpha_mode = RenderMaterial::AlphaMode::Blend;
+    }
+    if (degraded->opacity_threshold.value.x > kAlphaEpsilon) {
+      out->alpha_mode = RenderMaterial::AlphaMode::Mask;
+      out->alpha_cutoff = degraded->opacity_threshold.value.x;
+    }
     warnings_.push_back(
         "Material '" + out->prim_path +
-        "' has no convertible surface shader; using a default material.");
+        "' has no fully convertible surface shader; using a degraded material "
+        "with " + std::to_string(recovered_count) +
+        " recovered input(s).");
+    MaterialDiagnostic diagnostic;
+    diagnostic.kind = MaterialDiagnosticKind::DegradedMaterial;
+    diagnostic.material_path = out->prim_path;
+    diagnostic.node_path = degraded_candidates.empty()
+                               ? std::string()
+                               : degraded_candidates.front().GetPath().str();
+    if (!degraded_candidates.empty()) {
+      GetToken(degraded_candidates.front(), "info:id", &diagnostic.shader_id);
+    }
+    diagnostic.message = "using degraded material with " +
+                         std::to_string(recovered_count) +
+                         " recovered input(s)";
+    out->diagnostics.push_back(std::move(diagnostic));
     found_shader = true;
   }
 
@@ -5173,6 +6361,8 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
                      scene);
   ExtractShaderParam(stage, shader_prim, "specular_anisotropy",
                      &out->specular_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_roughness_anisotropy",
+                     &out->specular_roughness_anisotropy, scene);
   ExtractShaderParam(stage, shader_prim, "specular_rotation",
                      &out->specular_rotation, scene);
 
@@ -5183,6 +6373,10 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
                      &out->transmission_color, scene);
   ExtractShaderParam(stage, shader_prim, "transmission_depth",
                      &out->transmission_depth, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion",
+                     &out->transmission_dispersion, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion_scale",
+                     &out->transmission_dispersion_scale, scene);
 
   // Subsurface
   ExtractShaderParam(stage, shader_prim, "subsurface",
@@ -5206,6 +6400,8 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
   ExtractShaderParam(stage, shader_prim, "coat_roughness",
                      &out->coat_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "coat_IOR", &out->coat_ior, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_normal", &out->coat_normal,
+                     scene);
 
   // Emission
   ExtractShaderParam(stage, shader_prim, "emission", &out->emission_luminance,
@@ -5216,6 +6412,8 @@ bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
   // Geometry
   ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
   ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
+  ExtractShaderParam(stage, shader_prim, "displacement", &out->displacement,
+                     scene);
 
   return true;
 }
@@ -5243,6 +6441,8 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "specular_ior", &out->specular_ior, scene);
   ExtractShaderParam(stage, shader_prim, "specular_anisotropy",
                      &out->specular_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_roughness_anisotropy",
+                     &out->specular_roughness_anisotropy, scene);
   ExtractShaderParam(stage, shader_prim, "specular_rotation",
                      &out->specular_rotation, scene);
 
@@ -5252,6 +6452,10 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
                      &out->transmission_color, scene);
   ExtractShaderParam(stage, shader_prim, "transmission_depth",
                      &out->transmission_depth, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion",
+                     &out->transmission_dispersion, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_dispersion_scale",
+                     &out->transmission_dispersion_scale, scene);
 
   ExtractShaderParam(stage, shader_prim, "subsurface_weight",
                      &out->subsurface_weight, scene);
@@ -5264,10 +6468,25 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "coat_color", &out->coat_color, scene);
   ExtractShaderParam(stage, shader_prim, "coat_roughness", &out->coat_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "coat_ior", &out->coat_ior, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_anisotropy",
+                     &out->coat_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_roughness_anisotropy",
+                     &out->coat_roughness_anisotropy, scene);
+  if (!ExtractShaderParam(stage, shader_prim, "geometry_coat_normal",
+                          &out->coat_normal, scene)) {
+    ExtractShaderParam(stage, shader_prim, "coat_normal", &out->coat_normal,
+                       scene);
+  }
 
   ExtractShaderParam(stage, shader_prim, "sheen_weight", &out->sheen_weight, scene);
   ExtractShaderParam(stage, shader_prim, "sheen_color", &out->sheen_color, scene);
   ExtractShaderParam(stage, shader_prim, "sheen_roughness", &out->sheen_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "thin_film_weight",
+                     &out->thin_film_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "thin_film_thickness",
+                     &out->thin_film_thickness, scene);
+  ExtractShaderParam(stage, shader_prim, "thin_film_ior",
+                     &out->thin_film_ior, scene);
 
   ExtractShaderParam(stage, shader_prim, "emission_luminance",
                      &out->emission_luminance, scene);
@@ -5296,7 +6515,14 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
                                               const std::string& param_name,
                                               ShaderParam* out,
                                               RenderScene* scene) {
-  if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
+  // Material interface inputs use the same `inputs:*` namespace and value /
+  // connection semantics as Shader inputs. Accept either here so degraded
+  // material recovery can preserve constants authored on the Material prim.
+  if (!out || !shader_prim.IsValid() ||
+      (!::tinyusdz::next::IsShader(shader_prim) &&
+       !::tinyusdz::next::IsMaterial(shader_prim))) {
+    return false;
+  }
 
   const std::string attr_name = "inputs:" + param_name;
   ::tinyusdz::next::AttributeEval eval(&stage);
@@ -5319,72 +6545,13 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       }
       return true;
     }
-    // Follow pass-through hops (NodeGraph outputs forwarding to an inner
-    // shader): a texture behind `Material/Graph.outputs:out` was previously
-    // lost because only the FIRST hop was inspected.
-    for (int hop = 0; hop < 8; ++hop) {
-      const std::string hop_prim_path =
-          SourcePrimPathFromConnection(connection_path);
-      UsdPrim hop_prim = stage.GetPrimAtPath(hop_prim_path);
-      if (!hop_prim.IsValid()) break;
-      std::string hop_id;
-      GetToken(hop_prim, "info:id", &hop_id);
-      // Both USD PreviewSurface and MaterialX graphs terminate at an image
-      // node. ND_image_* carries inputs:file directly; following one of its
-      // other inputs would incorrectly walk into the texcoord chain and lose
-      // the texture.
-      if (hop_id == "UsdUVTexture" || hop_id.rfind("ND_image_", 0) == 0 ||
-          hop_id.rfind("ND_tiledimage_", 0) == 0 ||
-          hop_prim.GetPropertyValue("inputs:file")) {
-        break;
-      }
-      std::string pp, prop;
-      if (!SplitConnectionPath(connection_path, &pp, &prop)) break;
-      const ::tinyusdz::next::PrimSpec* spec = hop_prim.GetPrimSpec();
-      const std::vector<::tinyusdz::next::Path>* nc =
-          spec ? spec->connection(prop) : nullptr;
-      if (!nc || nc->empty()) {
-        // Compute/adapter nodes (ND_convert_*, ND_mix_*, color adjust, ...)
-        // carry the upstream connection on an INPUT, not on the referenced
-        // output. Follow the PRIMARY data input — legacy is node-aware
-        // (fg for mix, in/in1 for converts/binary ops); property order is
-        // not a signal (crate flattening alphabetizes, putting `bg` before
-        // `fg`), and factor/mask inputs (mix/amount/weight) must never be
-        // promoted to the surface color.
-        const std::vector<::tinyusdz::next::Path>* input_conn = nullptr;
-        if (spec) {
-          static const char* kPreferredInputs[] = {
-              "inputs:in", "inputs:in1", "inputs:fg", "inputs:bg"};
-          for (const char* pref : kPreferredInputs) {
-            const std::vector<::tinyusdz::next::Path>* c =
-                spec->connection(pref);
-            if (c && !c->empty()) {
-              input_conn = c;
-              break;
-            }
-          }
-          if (!input_conn) {
-            auto is_factor_input = [](const std::string& n) {
-              return n == "inputs:mix" || n == "inputs:amount" ||
-                     n == "inputs:weight" || n == "inputs:factor" ||
-                     n == "inputs:alpha" || n == "inputs:mask";
-            };
-            for (const std::string& prop_name : hop_prim.GetPropertyNames()) {
-              if (prop_name.rfind("inputs:", 0) != 0) continue;
-              if (is_factor_input(prop_name)) continue;
-              const std::vector<::tinyusdz::next::Path>* c =
-                  spec->connection(prop_name);
-              if (c && !c->empty()) {
-                input_conn = c;
-                break;
-              }
-            }
-          }
-        }
-        if (!input_conn) break;
-        nc = input_conn;
-      }
-      connection_path = (*nc)[0].str();
+    // Follow localized NodeGraph outputs and primary utility-node inputs to
+    // the terminal image/value. The shared walker is cycle-safe and is also
+    // used by ResolveConnectedValue below.
+    std::string endpoint;
+    if (ResolveConnectedEndpoint(stage, connection_path, config_.time_code,
+                                 &endpoint)) {
+      connection_path = std::move(endpoint);
     }
     const std::string texture_prim_path = SourcePrimPathFromConnection(connection_path);
     UsdPrim texture_prim = stage.GetPrimAtPath(texture_prim_path);
@@ -5394,7 +6561,8 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       const ColorSpace cs = ParseColorSpace(tex_data.source_color_space);
       const ColorSpace image_color_space =
           cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
-      const std::string resolved = ResolveAssetPath(tex_data.file);
+      const std::string resolved =
+          ResolveAssetPath(tex_data.file, AssetAnchorOf(texture_prim));
       int32_t image_id = -1;
       for (size_t i = 0; i < scene->images.size(); ++i) {
         if (scene->images[i].resolved_path == resolved &&
@@ -5431,6 +6599,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       texture.name = texture_prim.IsValid() ? texture_prim.GetName() : param_name;
       texture.prim_path = texture_prim_path;
       texture.asset_path = tex_data.file;
+      texture.ktx2_hint = tex_data.ktx2_hint;
       texture.wrap_s = ParseWrapMode(tex_data.wrap_s);
       texture.wrap_t = ParseWrapMode(tex_data.wrap_t);
       texture.scale_value = Float4(tex_data.scale[0], tex_data.scale[1],
@@ -5439,7 +6608,8 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
                             tex_data.bias[2], tex_data.bias[3]);
       texture.image_id = image_id;
       texture.source_color_space = tex_data.source_color_space;
-      texture.output_channel = ChannelFromConnection(connection_path);
+      texture.output_channel =
+          ChannelFromConnection(connection_path, texture_prim);
       // UsdTransform2d on the st chain (rotation is authored in degrees;
       // RenderTexture stores radians).
       texture.offset = Float2(tex_data.uv_translation[0],
@@ -5528,6 +6698,7 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   GetFloat(prim, "inputs:colorTemperature", &out->color_temperature);
   GetFloat(prim, "inputs:diffuse", &out->diffuse);
   GetFloat(prim, "inputs:specular", &out->specular);
+  GetFloat(prim, "inputs:shaping:cone:angle", &out->shaping_cone_angle);
   GetFloat(prim, "inputs:shaping:focus", &out->shaping_focus);
   GetFloat3(prim, "inputs:shaping:focusTint", &out->shaping_focus_tint.x,
             &out->shaping_focus_tint.y, &out->shaping_focus_tint.z);
@@ -5555,6 +6726,7 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   // Type-specific properties
   switch (out->type) {
     case LightType::Sphere: {
+      out->params.sphere.radius = 0.5f;
       GetFloat(prim, "inputs:radius", &out->params.sphere.radius);
       // Cone shaping on a sphere light makes it a spot light.
       float cone_angle = 0.0f;
@@ -5565,17 +6737,23 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
       break;
     }
     case LightType::Rect:
+      out->params.rect.width = 1.0f;
+      out->params.rect.height = 1.0f;
       GetFloat(prim, "inputs:width", &out->params.rect.width);
       GetFloat(prim, "inputs:height", &out->params.rect.height);
       break;
     case LightType::Disk:
+      out->params.disk.radius = 0.5f;
       GetFloat(prim, "inputs:radius", &out->params.disk.radius);
       break;
     case LightType::Cylinder:
+      out->params.cylinder.radius = 0.5f;
+      out->params.cylinder.length = 1.0f;
       GetFloat(prim, "inputs:radius", &out->params.cylinder.radius);
       GetFloat(prim, "inputs:length", &out->params.cylinder.length);
       break;
     case LightType::Directional:
+      out->params.distant.angle = 0.53f;
       GetFloat(prim, "inputs:angle", &out->params.distant.angle);
       break;
     case LightType::Dome: {
@@ -5989,6 +7167,22 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
           warnings_.push_back("Skipping inconsistent SkelAnimation sample for " +
                               prim.GetPath().str() + "." + prop_name);
           continue;
+        }
+
+        // next-core keeps quats REAL-FIRST (w, x, y, z); an AnimationChannel is
+        // the GPU-facing form and its rotation values are xyzw (what a
+        // three.js QuaternionKeyframeTrack expects). Swizzle here, at the
+        // boundary -- SkelAnimationData itself stays real-first.
+        std::vector<float> swizzled;
+        if (target_path == AnimationChannel::TargetPath::Rotation) {
+          swizzled.resize(values->size());
+          for (size_t i = 0; i + 3 < values->size(); i += 4) {
+            swizzled[i + 0] = (*values)[i + 1];  // x
+            swizzled[i + 1] = (*values)[i + 2];  // y
+            swizzled[i + 2] = (*values)[i + 3];  // z
+            swizzled[i + 3] = (*values)[i + 0];  // w (real)
+          }
+          values = &swizzled;
         }
 
         Float4 preview;

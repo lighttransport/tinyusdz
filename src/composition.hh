@@ -72,6 +72,7 @@ struct SublayersCompositionOptions {
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
   size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
+  size_t max_asset_bytes{0};              // 0 = security_policy default
 
   // Allow parent-directory ('..') segments in asset paths. Resolution of the
   // surviving '..' is delegated to the asset resolver, so only enable this when
@@ -96,6 +97,7 @@ struct ReferencesCompositionOptions {
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
   size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
+  size_t max_asset_bytes{0};              // 0 = security_policy default
 
   // Allow parent-directory ('..') segments in asset paths (resolution delegated
   // to the asset resolver). See security_policy::ValidateAndNormalizeAssetPath.
@@ -148,6 +150,7 @@ struct PayloadCompositionOptions {
   // Memory optimization options
   bool enable_inplace_composition{false};  // Enable in-place memory management
   size_t max_memory_limit_mb{16384};      // Maximum memory limit in MB
+  size_t max_asset_bytes{0};              // 0 = security_policy default
 
   // Allow parent-directory ('..') segments in asset paths (resolution delegated
   // to the asset resolver). See security_policy::ValidateAndNormalizeAssetPath.
@@ -355,6 +358,15 @@ bool CompositeVariant(
     Layer *composited_layer, std::string *warn, std::string *err);
 
 ///
+/// In-place version of CompositeVariant: consumes `layer` instead of
+/// deep-copying it (variant selection needs no pristine-layer lookups, so the
+/// copy the const-ref API makes is pure overhead on large scenes).
+///
+bool CompositeVariantInPlace(std::unique_ptr<Layer> layer,
+                             Layer *composited_layer, std::string *warn,
+                             std::string *err);
+
+///
 /// Resolve `specializes` for each PrimSpec, and return composited(flattened) Layer
 /// to `composited_layer` in `layer`.
 ///
@@ -392,6 +404,14 @@ bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
 bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
                      std::string *err);
 
+///
+/// Move-in variant: identical result, but `src` is consumed (valid-but-
+/// unspecified afterwards). Removes one PrimSpec-subtree deep copy when the
+/// caller passes a discardable prepared arc source.
+///
+bool InheritPrimSpec(PrimSpec &dst, PrimSpec &&src, std::string *warn,
+                     std::string *err);
+
 
 ///
 /// Apply `layerRelocates` to the composed layer.
@@ -419,6 +439,21 @@ bool CompositeRelocates(const Layer &in_layer,
 bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
                       Layer *composited_layer, std::string *warn,
                       std::string *err);
+
+///
+/// Options for CompositeAllArcs: per-arc-type composition options for the
+/// R and P phases (parent-relative path policy, asset size caps, the shared
+/// parsed-layer cache, ...). The option-less overload uses defaults.
+///
+struct AllArcsCompositionOptions {
+  ReferencesCompositionOptions references;
+  PayloadCompositionOptions payload;
+};
+
+bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err,
+                      const AllArcsCompositionOptions &options);
 
 ///
 /// Build USD Stage from Layer
@@ -488,6 +523,17 @@ bool ListVariantSelectionMaps(const Layer &layer, VariantSelectorMap &m);
 /// @return true upon success. false when error. No error when any of variant info in `variant_selection` does not exist in `src` PrimSpec.
 ///
 bool VariantSelectPrimSpec(PrimSpec &dst, const PrimSpec &src,
+                           const std::map<std::string, std::string> &variant_selection, std::string *warn,
+                           std::string *err);
+
+///
+/// Move-in variant of VariantSelectPrimSpec: identical result, but `src` is
+/// consumed (left in a valid-but-unspecified state). Prefer this when the
+/// caller immediately replaces `src` with `dst` — it removes one full
+/// PrimSpec-subtree deep copy per variant prim and all copies for prims
+/// without variants.
+///
+bool VariantSelectPrimSpec(PrimSpec &dst, PrimSpec &&src,
                            const std::map<std::string, std::string> &variant_selection, std::string *warn,
                            std::string *err);
 

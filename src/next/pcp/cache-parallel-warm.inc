@@ -16,6 +16,7 @@
     prototype_by_key.clear();
     prototype_of.clear();
     instances_by_prototype.clear();
+    instance_key_order.clear();
 
     const Layer *root = layer_stacks[0].layers[0].get();
     // Root (pseudo-root child) names compose WEAK->STRONG too, like nested
@@ -43,6 +44,17 @@
       }
     }
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    // Resolve independent namespace subtrees concurrently before the serial
+    // structure walk. ParallelWarmSources was previously implemented but never
+    // invoked, leaving num_threads effective only for the much cheaper opinion
+    // fill pass.
+    int warm_threads = options.num_threads;
+    if (warm_threads < 0)
+      warm_threads = static_cast<int>(std::thread::hardware_concurrency());
+    if (warm_threads > 1)
+      ParallelWarmSources(root_names, warm_threads, warn, err);
+#endif
     // Structure pass (serial): walk every root, fixing each prim's slot/parent/
     // child-order/instancing and recording its (slot, sources) for opinion fill.
     fill_.clear();
@@ -79,14 +91,11 @@
 
     out->finalize();
     out->meta() = root->meta();
-    // Stage metadata resolves through the whole root layer stack: fields the
-    // root leaves unauthored fill from the strongest sublayer that authors
-    // them (upAxis/metersPerUnit/... — pxr's UsdStage semantics).
-    for (size_t li = 1; li < layer_stacks[0].layers.size(); ++li) {
-      if (layer_stacks[0].layers[li]) {
-        out->meta().FillAbsentStageMetaFrom(layer_stacks[0].layers[li]->meta());
-      }
-    }
+    // Stage metadata comes from the ROOT layer only. pxr does NOT fall back
+    // to sublayer-authored stage fields (verified against the 26.05 oracle:
+    // a sublayer-only upAxis leaves the stage at the fallback "Y" and
+    // usdcat --flatten omits it) — the old fill-from-sublayers pass here was
+    // nonconformant.
     // Sublayer opinions are baked into the flattened output; keeping the
     // subLayers list would re-apply (now stale) layers when the exported
     // layer is read back. Relocates are likewise already APPLIED by the
@@ -174,13 +183,30 @@
       if (numbering == PrototypeNumbering::Deterministic) {
         ordered = std::move(protos);
       } else {
-        // UsdcatCompatible: label groups `__Prototype_{rank+1}` in front-order,
-        // then re-sort by label STRING (pxr GetPrototypes() lexicographic sort;
-        // differs from numeric at >9 groups: _1,_10,_2,...).
+        // UsdcatCompatible: pxr labels prototypes `__Prototype_{rank+1}` in
+        // REVERSE discovery order (the LAST instance key to first appear during
+        // the stage walk becomes __Prototype_1) — pxr registers prototypes on a
+        // stack, so the numbering is last-in-first-numbered. GetPrototypes()
+        // then re-sorts by label STRING (differs from numeric at >9 groups:
+        // _1,_10,_2...). Verified against usdcat: instances referencing A,B,C
+        // discovered in that order number A=_3, B=_2, C=_1.
+        std::vector<std::string> front;
+        front.reserve(protos.size());
+        {
+          std::set<std::string> remaining(protos.begin(), protos.end());
+          for (size_t r = instance_key_order.size(); r-- > 0;) {
+            auto kit = prototype_by_key.find(instance_key_order[r]);
+            if (kit == prototype_by_key.end()) continue;
+            if (remaining.erase(kit->second)) front.push_back(kit->second);
+          }
+          for (const std::string &pp : protos) {  // defensive leftovers
+            if (remaining.count(pp)) front.push_back(pp);
+          }
+        }
         std::vector<std::pair<std::string, std::string>> labelled;
-        labelled.reserve(protos.size());
-        for (size_t i = 0; i < protos.size(); ++i)
-          labelled.emplace_back("__Prototype_" + UIntToStr(i + 1), protos[i]);
+        labelled.reserve(front.size());
+        for (size_t i = 0; i < front.size(); ++i)
+          labelled.emplace_back("__Prototype_" + UIntToStr(i + 1), front[i]);
         std::sort(labelled.begin(), labelled.end(),
                   [](const auto &a, const auto &b) { return a.first < b.first; });
         ordered.reserve(labelled.size());
@@ -191,11 +217,15 @@
     out->build_path_index();
     std::unordered_map<std::string, std::string> fpath;  // proto -> "/Flattened_Prototype_j"
     {
+      std::unordered_set<std::string> used;
+      for (uint32_t i = 0; i < out->prim_count(); ++i) {
+        if (const PrimSpec *p = out->prim(i)) used.insert(p->path().str());
+      }
       size_t n = 1;
       for (const std::string &proto : ordered) {
         std::string p;
         do { p = "/Flattened_Prototype_" + UIntToStr(n++); }
-        while (out->prim_at_path(p) != nullptr);  // skip user-named clashes
+        while (!used.insert(p).second);  // skip user-named clashes
         fpath[proto] = p;
       }
     }
@@ -271,6 +301,12 @@
           clone.meta().instance_prototype().clear();
           clone.meta().references.clear();
           clone.meta().references.push_back("<" + *ref + ">");
+          // pxr flatten spells the prototype arc `add references = </FP_N>`.
+          ArcEdit &redit = clone.meta().ensure_arc_edits().references;
+          redit = ArcEdit();
+          redit.authored = true;
+          redit.is_explicit = false;
+          redit.added.push_back("<" + *ref + ">");
         }
         uint32_t new_idx = out->add_prim(std::move(clone));  // invalidates ptrs
         out->set_parent(new_idx, cw.dst_parent_idx);
@@ -296,6 +332,12 @@
         auto &refs = mp->meta().references;
         if (std::find(refs.begin(), refs.end(), ref) == refs.end())
           refs.push_back(ref);
+        // pxr flatten spells the prototype arc `add references = </FP_N>`.
+        ArcEdit &redit = mp->meta().ensure_arc_edits().references;
+        redit = ArcEdit();
+        redit.authored = true;
+        redit.is_explicit = false;
+        redit.added.push_back(ref);
       }
     }
   }
@@ -534,6 +576,8 @@
             std::string w, e;
             LayerLoadOptions load_opts;
             load_opts.max_memory = options.max_layer_memory;
+            load_opts.usdc_lazy_arrays = options.usdc_lazy_arrays;
+            load_opts.usdc_use_mmap = options.usdc_use_mmap;
             load_opts.usda_parse_options = options.usda_parse_options;
             load_opts.strict_aousd_conformance =
                 options.strict_aousd_conformance;

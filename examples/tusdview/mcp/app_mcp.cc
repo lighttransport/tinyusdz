@@ -3,11 +3,13 @@
 // (the MCP server marshals tool calls into the render loop), so they freely read
 // the loaded scene / DrawScene and drive the camera and selection.
 #include <cmath>
+#include <fstream>
 #include <memory>
 #include <string>
 
 #include "app.hh"
 #include "light3d/math.h"
+#include "next/tinyusdz-next.hh"
 #include "tydra/mcp-tools.hh"  // tinyusdz::tydra::mcp::CallTool
 
 namespace tusdview {
@@ -17,6 +19,22 @@ using nlohmann::json;
 namespace {
 json arr3(const float a[3]) { return json::array({a[0], a[1], a[2]}); }
 json vec3json(const light3d::Vec3& v) { return json::array({v.x, v.y, v.z}); }
+
+json nextValueJson(const tinyusdz::next::Value& value) {
+  if (value.is_array()) {
+    return json{{"type", tinyusdz::next::GetTypeName(value.type_id())},
+                {"count", value.array_size()}};
+  }
+  if (const bool* v = value.as_bool()) return *v;
+  if (const int32_t* v = value.as_int()) return *v;
+  if (const int64_t* v = value.as_int64()) return *v;
+  if (const float* v = value.as_float()) return *v;
+  if (const double* v = value.as_double()) return *v;
+  if (const std::string* v = value.as_string()) return *v;
+  if (const std::string* v = value.as_token()) return *v;
+  if (const std::string* v = value.as_asset_path()) return *v;
+  return json{{"type", tinyusdz::next::GetTypeName(value.type_id())}};
+}
 
 // Build the focused-prim payload from the current selection + DrawScene.
 json focusedPayload(const Gui& gui, const DrawScene& draw) {
@@ -56,23 +74,57 @@ json focusedPayload(const Gui& gui, const DrawScene& draw) {
 }  // namespace
 
 json App::mcpLoadUsd(const json& args, std::string& err) {
-  if (!args.contains("path") || !args["path"].is_string()) {
-    err = "load_usd requires a string 'path'";
+  const bool hasPath = args.contains("path") && args["path"].is_string();
+  const bool hasUsda = args.contains("usda") && args["usda"].is_string();
+  if (hasPath == hasUsda) {
+    err = "load_usd requires exactly one string 'path' or 'usda'";
     return json::object();
   }
-  const std::string path = args["path"].get<std::string>();
+  std::string path;
+  if (hasPath) {
+    path = args["path"].get<std::string>();
+  } else {
+    const std::string source = args["usda"].get<std::string>();
+    constexpr size_t kMaxInlineUsdaBytes = 16u * 1024u * 1024u;
+    if (source.empty() || source.size() > kMaxInlineUsdaBytes) {
+      err = "load_usd: inline USDA must be 1 byte..16 MiB";
+      return json::object();
+    }
+    static uint64_t serial = 0;
+    const std::filesystem::path temp =
+        std::filesystem::temp_directory_path() /
+        ("tusdview-mcp-" +
+         std::to_string(reinterpret_cast<uintptr_t>(this)) + "-" +
+         std::to_string(++serial) + ".usda");
+    std::ofstream stream(temp, std::ios::binary | std::ios::trunc);
+    stream.write(source.data(), static_cast<std::streamsize>(source.size()));
+    if (!stream) {
+      err = "load_usd: could not materialize inline USDA";
+      return json::object();
+    }
+    path = temp.string();
+    mcpTempFiles_.push_back(temp);
+  }
   startLoadAsync(path);  // async; client polls get_scene_info
-  return json{{"started", true}, {"path", path}};
+  return json{{"started", true}, {"path", path}, {"inline", hasUsda}};
 }
 
 json App::mcpSceneInfo(const json&, std::string&) {
   json out = {{"loaded", loaded_.ok},
+              {"loading", loadActive_},
+              {"scene_generation", sceneGen_},
+              {"window_generation", windowGeneration_},
+              {"renderer_generation", rendererGeneration_},
+              {"backend", backend_ == Backend::GL ? "gl" : "vk"},
+              {"ray_tracing", rtPath_},
               {"filepath", loaded_.filepath},
               {"mesh_count", draw_.meshes.size()},
               {"triangle_count", draw_.triangleCount},
               {"material_count", draw_.materials.size()},
               {"upAxis", camera_.upAxis()},
               {"has_bounds", draw_.hasBounds}};
+  if (loadActive_) out["loading_path"] = loadingPath_;
+  if (!loaded_.err.empty()) out["error"] = loaded_.err;
   out["aabb_min"] = arr3(draw_.aabbMin);
   out["aabb_max"] = arr3(draw_.aabbMax);
   out["skinning_requested"] = skinningModeName(skinningRequested_);
@@ -96,6 +148,16 @@ json App::mcpSceneInfo(const json&, std::string&) {
           json{{"prim", d.primPath}, {"asset", d.assetPath}, {"arc", d.arc}});
     }
     out["deferred_payloads"] = deferred;
+  } else if (nextSession_) {
+    out["composed"] = nextSession_->IsComposed();
+    const std::vector<tinyusdz::next::Path> deferred =
+        nextSession_->GetDeferredPayloadPaths();
+    out["deferred_payload_count"] = deferred.size();
+    json paths = json::array();
+    for (const tinyusdz::next::Path& path : deferred) {
+      paths.push_back(json{{"prim", path.str()}, {"arc", "payload"}});
+    }
+    out["deferred_payloads"] = std::move(paths);
   }
   return out;
 }
@@ -130,8 +192,82 @@ json App::mcpSkinning(const json& args, std::string& err) {
               {"reason", skinningReason_}};
 }
 
+json App::mcpRenderSettings(const json& args, std::string& err) {
+  struct ModeName {
+    const char* name;
+    RenderMode mode;
+  };
+  static constexpr ModeName kModes[] = {
+      {"shaded", RenderMode::Shaded},
+      {"wireframe", RenderMode::Wireframe},
+      {"normals", RenderMode::Normals},
+      {"material-id", RenderMode::MaterialId},
+      {"geom-normal", RenderMode::GeomNormal},
+      {"uv", RenderMode::Uv},
+      {"depth", RenderMode::Depth},
+      {"albedo", RenderMode::Albedo},
+      {"facing", RenderMode::Facing},
+      {"roughness", RenderMode::Roughness},
+      {"metallic", RenderMode::Metallic},
+      {"emissive", RenderMode::Emissive},
+      {"opacity", RenderMode::Opacity},
+      {"coat-normal", RenderMode::CoatNormal},
+      {"coat-weight", RenderMode::CoatWeight},
+      {"coat-color", RenderMode::CoatColor},
+      {"coat-roughness", RenderMode::CoatRoughness},
+      {"specular-f0", RenderMode::SpecularF0},
+      {"ior-f0", RenderMode::IorF0},
+  };
+
+  if (args.contains("mode")) {
+    if (!args["mode"].is_string()) {
+      err = "render_settings: mode must be a string";
+      return json::object();
+    }
+    const std::string requested = args["mode"].get<std::string>();
+    bool found = false;
+    for (const ModeName& entry : kModes) {
+      if (requested == entry.name) {
+        gui_.setRenderMode(entry.mode);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      err = "render_settings: unsupported mode '" + requested + "'";
+      return json::object();
+    }
+  }
+  if (args.contains("grid")) {
+    if (!args["grid"].is_boolean()) {
+      err = "render_settings: grid must be boolean";
+      return json::object();
+    }
+    gui_.setShowGrid(args["grid"].get<bool>());
+  }
+  if (args.contains("camera")) {
+    if (!args["camera"].is_string()) {
+      err = "render_settings: camera must be a string";
+      return json::object();
+    }
+    // Named USD cameras are resolved as part of the next scene load. Batch
+    // manifests set this in load_settings before calling load_usd.
+    cameraName_ = args["camera"].get<std::string>();
+  }
+
+  const RenderMode current = gui_.renderMode();
+  const char* currentName = "unknown";
+  for (const ModeName& entry : kModes) {
+    if (current == entry.mode) {
+      currentName = entry.name;
+      break;
+    }
+  }
+  return json{{"mode", currentName}, {"camera", cameraName_}};
+}
+
 json App::mcpLoadPayloads(const json& args, std::string& err) {
-  if (!loaded_.comp.composed) {
+  if (!loaded_.comp.composed && !nextSession_) {
     err = "load_payloads: scene was not composed (no deferred payloads)";
     return json::object();
   }
@@ -141,7 +277,14 @@ json App::mcpLoadPayloads(const json& args, std::string& err) {
       if (p.is_string()) add.insert(p.get<std::string>());
     }
   } else {
-    for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
+    if (nextSession_) {
+      for (const tinyusdz::next::Path& path :
+           nextSession_->GetDeferredPayloadPaths()) {
+        add.insert(path.str());
+      }
+    } else {
+      for (const auto& d : loaded_.comp.deferred) add.insert(d.primPath);
+    }
   }
   if (add.empty()) {
     return json{{"started", false}, {"reason", "no deferred payloads"}};
@@ -200,6 +343,10 @@ json App::mcpViewport(const json& args, std::string& err) {
     camera_.pan(args.value("dx", 0.0f), args.value("dy", 0.0f));
   } else if (op == "dolly") {
     camera_.dolly(args.value("amount", 0.0f));
+  } else if (op == "forward") {
+    camera_.moveForward(std::abs(args.value("amount", 1.0f)));
+  } else if (op == "backward") {
+    camera_.moveForward(-std::abs(args.value("amount", 1.0f)));
   } else if (op == "fit") {
     if (draw_.hasBounds) {
       camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
@@ -253,7 +400,7 @@ json App::mcpViewport(const json& args, std::string& err) {
                      args.value("distance", camera_.distance()));
   } else {
     err = "viewport: unknown op '" + op +
-          "' (orbit|pan|dolly|fit|home|isometric|front|back|right|left|top|bottom|bookmark_save|bookmark_load|set)";
+          "' (orbit|pan|dolly|forward|backward|fit|home|isometric|front|back|right|left|top|bottom|bookmark_save|bookmark_load|set)";
     return json::object();
   }
   // Return the resulting camera state.
@@ -261,7 +408,93 @@ json App::mcpViewport(const json& args, std::string& err) {
               {"yaw", camera_.yaw()},
               {"pitch", camera_.pitch()},
               {"distance", camera_.distance()},
-              {"eye", vec3json(camera_.eye())}};
+              {"eye", vec3json(camera_.eye())},
+              {"near", camera_.nearPlane()},
+              {"far", camera_.farPlane()}};
+}
+
+json App::mcpScreenshot(const json& args, std::string& err) {
+  const std::string path = args.value("path", std::string());
+  if (path.empty()) {
+    err = "screenshot: 'path' is required";
+    return json::object();
+  }
+  if (!renderer_) {
+    err = "screenshot: no renderer";
+    return json::object();
+  }
+  // Capture the offscreen viewport (the last rendered frame). Camera ops issued
+  // via the 'viewport' tool take effect on the next frame, so a typical debug
+  // loop is: viewport(orbit ...) -> screenshot (separate calls = separate frames).
+  std::vector<uint8_t> rgba;
+  int w = 0, h = 0;
+  if (!renderer_->captureViewport(&rgba, &w, &h)) {
+    err = "screenshot: viewport capture failed (no rendered frame yet?)";
+    return json::object();
+  }
+  // During the first few windowed frames (and briefly after a scene reload),
+  // ImGui may report a collapsed viewport while its dock layout settles. Such
+  // captures are technically non-empty -- commonly 1x10 -- but are not useful
+  // screenshots and can make consecutive AOVs appear byte-identical. Report a
+  // retryable not-ready result instead of writing misleading image data.
+  if (w <= 1 || h <= 1) {
+    return json{{"written", false},
+                {"ready", false},
+                {"reason", "viewport layout is not ready"},
+                {"width", w},
+                {"height", h}};
+  }
+  std::string werr;
+  if (!WriteScreenshotImage(path, rgba, w, h, &werr)) {
+    err = "screenshot: write failed: " + werr;
+    return json::object();
+  }
+  return json{{"written", true},
+              {"ready", true},
+              {"path", path},
+              {"width", w},
+              {"height", h}};
+}
+
+json App::mcpInput(const json& args, std::string& err) {
+  const std::string key = args.value("key", std::string());
+  if (key.empty()) {
+    err = "input: 'key' is required (e.g. v|w|s|f|a|0|1|3|5|7)";
+    return json::object();
+  }
+  std::string action;
+  if (key == "v") {
+    action = "wireframe=" + std::to_string(gui_.cycleWireframe());
+  } else if (key == "w") {
+    camera_.moveForward(1.0f);
+    action = "forward";
+  } else if (key == "s") {
+    camera_.moveForward(-1.0f);
+    action = "backward";
+  } else if (key == "f" || key == "a") {
+    if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+    action = "frame_all";
+  } else if (key == "0") {
+    camera_.setPreset(CameraViewPreset::Isometric);
+    if (draw_.hasBounds) camera_.fitToScene(draw_.aabbMin, draw_.aabbMax);
+    action = "home";
+  } else if (key == "5") {
+    camera_.setPreset(CameraViewPreset::Isometric);
+    action = "isometric";
+  } else if (key == "1") {
+    camera_.setPreset(CameraViewPreset::Front);
+    action = "front";
+  } else if (key == "3") {
+    camera_.setPreset(CameraViewPreset::Right);
+    action = "right";
+  } else if (key == "7") {
+    camera_.setPreset(CameraViewPreset::Top);
+    action = "top";
+  } else {
+    err = "input: unhandled key '" + key + "' (v|w|s|f|a|0|1|3|5|7)";
+    return json::object();
+  }
+  return json{{"key", key}, {"action", action}, {"wireframe", gui_.wireframeMode()}};
 }
 
 json App::mcpListPrims(const json& args, std::string&) {
@@ -271,15 +504,150 @@ json App::mcpListPrims(const json& args, std::string&) {
     if (m > 0) cap = static_cast<size_t>(m);
   }
   json paths = json::array();
-  for (const auto& m : draw_.meshes) {
-    if (paths.size() >= cap) break;
-    paths.push_back(m.absPath);
+  if (nextSession_) {
+    nextSession_->GetStage().Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+      if (paths.size() >= cap) return false;
+      paths.push_back(prim.GetPath().str());
+      return true;
+    });
+  } else {
+    for (const auto& m : draw_.meshes) {
+      if (paths.size() >= cap) break;
+      paths.push_back(m.absPath);
+    }
   }
   return json{{"count", paths.size()}, {"paths", paths}};
 }
 
 json App::mcpCallLibraryTool(const std::string& name, const json& args,
                              std::string& err) {
+  if (nextSession_) {
+    const tinyusdz::next::Stage& stage = nextSession_->GetStage();
+    if (name == "stage_info") {
+      const tinyusdz::next::StageMeta& meta = stage.GetMeta();
+      return json{{"loaded", true},
+                  {"defaultPrim", meta.defaultPrim},
+                  {"upAxis", meta.upAxis},
+                  {"metersPerUnit", meta.metersPerUnit},
+                  {"startTimeCode", meta.startTimeCode},
+                  {"endTimeCode", meta.endTimeCode},
+                  {"timeCodesPerSecond", meta.timeCodesPerSecond},
+                  {"primCount", stage.GetPrimCount()}};
+    }
+
+    if (name == "prim_list" || name == "query_prims_by_type" ||
+        name == "search") {
+      const std::string root = args.value("path", std::string("/"));
+      const std::string type = args.value("type", std::string());
+      const std::string query = args.value("query", std::string());
+      json prims = json::array();
+      stage.Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+        const std::string path = prim.GetPath().str();
+        if (root != "/" && path != root &&
+            path.compare(0, root.size() + 1, root + "/") != 0) {
+          return true;
+        }
+        if (!type.empty() && prim.GetTypeName() != type) return true;
+        if (!query.empty() && path.find(query) == std::string::npos &&
+            prim.GetName().find(query) == std::string::npos) {
+          return true;
+        }
+        prims.push_back(json{{"path", path},
+                             {"name", prim.GetName()},
+                             {"type", prim.GetTypeName()},
+                             {"active", prim.IsActive()}});
+        return true;
+      });
+      return json{{"path", root}, {"prims", prims}, {"count", prims.size()}};
+    }
+
+    if (!args.contains("path") || !args["path"].is_string()) {
+      err = "Missing 'path' argument";
+      return json::object();
+    }
+    const std::string path = args["path"].get<std::string>();
+    const tinyusdz::next::UsdPrim prim = stage.GetPrimAtPath(path);
+    if (!prim.IsValid()) {
+      err = "Prim not found: " + path;
+      return json::object();
+    }
+
+    if (name == "prim_get") {
+      return json{{"path", path},
+                  {"name", prim.GetName()},
+                  {"type", prim.GetTypeName()},
+                  {"active", prim.IsActive()},
+                  {"propertyCount", prim.GetPropertyNames().size()},
+                  {"childCount", prim.GetChildCount()}};
+    }
+    if (name == "attr_list") {
+      json attributes = json::array();
+      for (const std::string& attr : prim.GetPropertyNames()) {
+        const tinyusdz::next::Value* value = prim.GetPropertyValue(attr);
+        attributes.push_back(
+            json{{"name", attr},
+                 {"type", value ? tinyusdz::next::GetTypeName(value->type_id())
+                                : "unknown"},
+                 {"hasValue", value != nullptr}});
+      }
+      return json{{"path", path},
+                  {"attributes", attributes},
+                  {"count", attributes.size()}};
+    }
+    if (name == "attr_get") {
+      const std::string attr = args.value("attr_name", std::string());
+      if (attr.empty()) {
+        err = "Missing 'attr_name' argument";
+        return json::object();
+      }
+      const tinyusdz::next::Value* value = prim.GetPropertyValue(attr);
+      if (!value) {
+        err = "Attribute not found: " + attr;
+        return json::object();
+      }
+      return json{{"path", path},
+                  {"attr_name", attr},
+                  {"value", nextValueJson(*value)}};
+    }
+    if (name == "variant_list_sets" || name == "variant_get_selection") {
+      json sets = json::object();
+      for (const tinyusdz::next::VariantSetData& set :
+           prim.GetMeta().variantSets()) {
+        json variants = json::array();
+        for (const tinyusdz::next::VariantData& variant : set.variants) {
+          variants.push_back(variant.name);
+        }
+        sets[set.name] = json{{"selection", set.selected},
+                              {"variants", variants}};
+      }
+      if (name == "variant_get_selection") {
+        const std::string set = args.value("variant_set", std::string());
+        return json{{"path", path},
+                    {"variant_set", set},
+                    {"selection", sets.contains(set)
+                                      ? sets[set].value("selection", "")
+                                      : ""}};
+      }
+      return json{{"path", path},
+                  {"variantSets", sets},
+                  {"count", sets.size()}};
+    }
+    if (name == "variant_set_selection") {
+      const std::string set = args.value("variant_set", std::string());
+      const std::string variant = args.value("variant", std::string());
+      if (set.empty() || variant.empty()) {
+        err = "variant_set_selection requires variant_set and variant";
+        return json::object();
+      }
+      loadOpts_.variantOverrides[path][set] = variant;
+      startRecomposeAsync(std::set<std::string>());
+      return json{{"success", true}, {"started", true}, {"path", path}};
+    }
+
+    err = "Tool is not available on the read-only next document: " + name;
+    return json::object();
+  }
+
   // Lazily snapshot the loaded Stage into the library-tool Context (copied at
   // most once per loaded scene; the viewer's Stage is never disturbed).
   if (loaded_.ok) {

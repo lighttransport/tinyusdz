@@ -93,6 +93,9 @@
 #include "tydra/shader-network.hh"
 
 #include "tydra/render-data-mesh-internal.hh"
+
+#include <cstdint>
+
 namespace tinyusdz {
 
 namespace tydra {
@@ -102,7 +105,7 @@ namespace {
 #define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
 
 bool SizeToU32(size_t n, uint32_t *out) {
-#if !defined(__EMSCRIPTEN__) || defined(__wasm64__)
+#if SIZE_MAX > UINT32_MAX
   if (n > size_t((std::numeric_limits<uint32_t>::max)())) {
     return false;
   }
@@ -2845,8 +2848,14 @@ bool RenderSceneConverter::ConvertMesh(
   // Base-face id per refined face when subdivision is applied (used to
   // remap GeomSubset face indices).
   std::vector<uint32_t> subdiv_face_source;
+  int32_t subdivision_level = env.mesh_config.subdivision_level;
+  if (auto sit = env.mesh_config.subdivision_prim_levels.find(
+          abs_prim_path.full_path_name());
+      sit != env.mesh_config.subdivision_prim_levels.end() && sit->second >= 0) {
+    subdivision_level = sit->second;
+  }
   const bool want_subdivision =
-      (env.mesh_config.subdivision_level > 0) &&
+      (subdivision_level > 0) &&
       (mesh.subdivisionScheme.get_value() !=
        GeomMesh::SubdivisionScheme::SubdivisionSchemeNone);
 
@@ -3569,7 +3578,7 @@ bool RenderSceneConverter::ConvertMesh(
       PUSH_ERROR_AND_RETURN("Subdivision primvar channel count exceeds 32-bit index space.");
     }
     if (!tsd::RefineGeomMesh(
-            mesh, env.mesh_config.subdivision_level, control_points,
+            mesh, subdivision_level, control_points,
             dst.usdFaceVertexCounts, dst.usdFaceVertexIndices,
             fvar_channels.empty() ? nullptr : fvar_channels.data(),
             subdiv_fvar_count,
@@ -3833,6 +3842,7 @@ bool RenderSceneConverter::ConvertMesh(
     if ((vcolor.elementSize == 1) && (vcolor.vertex_count() == 1) &&
         (vcolor.stride_bytes() == 3 * 4)) {
       memcpy(&dst.displayColor, vcolor.data.data(), vcolor.stride_bytes());
+      dst.has_authored_displayColor = true;  // authored constant, not the default
     } else {
       dst.vertex_colors = vcolor;
     }
@@ -3941,7 +3951,9 @@ bool RenderSceneConverter::ConvertMesh(
     if (!safe::n_to_size<value::normal3f>(normals.size(), &memcpy_size)) {
       return false;
     }
-    memcpy(dst.normals.get_data().data(), normals.data(), memcpy_size);
+    if (memcpy_size > 0) {
+      memcpy(dst.normals.get_data().data(), normals.data(), memcpy_size);
+    }
     dst.normals.elementSize = 1;
     dst.normals.stride = sizeof(value::normal3f);
     dst.normals.format = VertexAttributeFormat::Vec3;
@@ -4384,90 +4396,115 @@ bool RenderSceneConverter::ConvertMesh(
   if (mesh.has_primvar("skel:jointIndices") &&
       mesh.has_primvar("skel:jointWeights")) {
     DCOUT("Convert skin weights");
-    GeomPrimvar jointIndices;
-    GeomPrimvar jointWeights;
+    auto clearInvalidSkinning = [&](const std::string &reason) {
+      PUSH_WARN(fmt::format(
+          "Ignoring invalid skinning data on mesh {} and rendering it "
+          "as a static mesh. {}",
+          abs_prim_path.full_path_name(), reason));
+      dst.skel_id = -1;
+      dst.joint_and_weights.jointIndices.clear();
+      dst.joint_and_weights.jointWeights.clear();
+      dst.joint_and_weights.elementSize = 0;
+      dst.joint_and_weights.hasGeomBindTransform = false;
+      dst.joint_and_weights.geomBindTransform = value::matrix4d::identity();
+      _err.clear();
+    };
+
+    auto convertSkinning = [&]() -> bool {
+      GeomPrimvar jointIndices;
+      GeomPrimvar jointWeights;
 
     if (!GetGeomPrimvar(env.stage, &mesh, "skel:jointIndices", &jointIndices,
                         &_err)) {
+      clearInvalidSkinning("Could not read primvars:skel:jointIndices: " + GetError());
       return false;
     }
 
     if (!GetGeomPrimvar(env.stage, &mesh, "skel:jointWeights", &jointWeights,
                         &_err)) {
+      clearInvalidSkinning("Could not read primvars:skel:jointWeights: " + GetError());
       return false;
     }
 
     // interpolation must be 'vertex'
     if (!jointIndices.has_interpolation()) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("`skel:jointIndices` primvar must author `interpolation` "
-                      "metadata(and set it to `vertex`)"));
+      clearInvalidSkinning(
+          "`skel:jointIndices` primvar must author `interpolation` metadata.");
+      return false;
     }
 
     // TODO: Disallow Varying?
     if ((jointIndices.get_interpolation() != Interpolation::Vertex) &&
         (jointIndices.get_interpolation() != Interpolation::Varying)) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("`skel:jointIndices` primvar must use `vertex` for "
-                      "`interpolation` metadata, but got `{}`.",
-                      to_string(jointIndices.get_interpolation())));
+      clearInvalidSkinning(fmt::format(
+          "`skel:jointIndices` primvar must use `vertex` or `varying` "
+          "interpolation, but got `{}`.",
+          to_string(jointIndices.get_interpolation())));
+      return false;
     }
 
     if (!jointWeights.has_interpolation()) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("`skel:jointWeights` primvar must author `interpolation` "
-                      "metadata(and set it to `vertex`)"));
+      clearInvalidSkinning(
+          "`skel:jointWeights` primvar must author `interpolation` metadata.");
+      return false;
     }
 
     // TODO: Disallow Varying?
     if ((jointWeights.get_interpolation() != Interpolation::Vertex) &&
         (jointWeights.get_interpolation() != Interpolation::Varying)) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("`skel:jointWeights` primvar must use `vertex` for "
-                      "`interpolation` metadata, but got `{}`.",
-                      to_string(jointWeights.get_interpolation())));
+      clearInvalidSkinning(fmt::format(
+          "`skel:jointWeights` primvar must use `vertex` or `varying` "
+          "interpolation, but got `{}`.",
+          to_string(jointWeights.get_interpolation())));
+      return false;
     }
 
     uint32_t jointIndicesElementSize = jointIndices.get_elementSize();
     uint32_t jointWeightsElementSize = jointWeights.get_elementSize();
 
     if (jointIndicesElementSize == 0) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "`elementSize` metadata of `skel:jointIndices` is zero."));
+      clearInvalidSkinning(
+          "`elementSize` metadata of `skel:jointIndices` is zero.");
+      return false;
     }
 
     if (jointWeightsElementSize == 0) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "`elementSize` metadata of `skel:jointWeights` is zero."));
+      clearInvalidSkinning(
+          "`elementSize` metadata of `skel:jointWeights` is zero.");
+      return false;
     }
 
     if (jointIndicesElementSize > env.mesh_config.max_skin_elementSize) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
+      clearInvalidSkinning(fmt::format(
           "`elementSize` {} of `skel:jointIndices` too large. Max allowed is "
           "set to {}",
           jointIndicesElementSize, env.mesh_config.max_skin_elementSize));
+      return false;
     }
 
     if (jointWeightsElementSize > env.mesh_config.max_skin_elementSize) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
+      clearInvalidSkinning(fmt::format(
           "`elementSize` {} of `skel:jointWeights` too large. Max allowed is "
           "set to {}",
           jointWeightsElementSize, env.mesh_config.max_skin_elementSize));
+      return false;
     }
 
     if (jointIndicesElementSize != jointWeightsElementSize) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("`elementSize` {} of `skel:jointIndices` must equal to "
-                      "`elementSize` {} of `skel:jointWeights`",
-                      jointIndicesElementSize, jointWeightsElementSize));
+      clearInvalidSkinning(fmt::format(
+          "`elementSize` {} of `skel:jointIndices` must equal "
+          "`elementSize` {} of `skel:jointWeights`.",
+          jointIndicesElementSize, jointWeightsElementSize));
+      return false;
     }
 
     std::vector<int> jointIndicesArray;
     if (!jointIndices.flatten_with_indices(env.timecode, &jointIndicesArray,
                                            env.tinterp)) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Failed to flatten Indexed Primvar `skel:jointIndices`. "
-                      "Ensure `skel:jointIndices` is type `int[]`"));
+      clearInvalidSkinning(
+          "Failed to flatten Indexed Primvar `skel:jointIndices`. Ensure it "
+          "is type `int[]`.");
+      return false;
     }
 
     std::vector<float> jointWeightsArray;
@@ -4485,21 +4522,24 @@ bool RenderSceneConverter::ConvertMesh(
     if (!got_jw) {
       if (!jointWeights.flatten_with_indices(env.timecode, &jointWeightsArray,
                                              env.tinterp)) {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("Failed to flatten Indexed Primvar `skel:jointWeights`. "
-                        "Ensure `skel:jointWeights` is type `float[]`"));
+        clearInvalidSkinning(
+            "Failed to flatten Indexed Primvar `skel:jointWeights`. Ensure it "
+            "is type `float[]`.");
+        return false;
       }
     }
 
     if (jointIndicesArray.size() != jointWeightsArray.size()) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("`skel:jointIndices` nitems {} must be equal to "
-                      "`skel:jointWeights` ntems {}",
-                      jointIndicesArray.size(), jointWeightsArray.size()));
+      clearInvalidSkinning(fmt::format(
+          "`skel:jointIndices` nitems {} must equal `skel:jointWeights` "
+          "nitems {}.",
+          jointIndicesArray.size(), jointWeightsArray.size()));
+      return false;
     }
 
     if (jointIndicesArray.empty()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("`skel:jointIndices` is empty array."));
+      clearInvalidSkinning("`skel:jointIndices` is empty array.");
+      return false;
     }
 
     // TODO: Validate jointIndex.
@@ -4545,14 +4585,16 @@ bool RenderSceneConverter::ConvertMesh(
             skelPath = mesh.skeleton.value().targetPathVector[0];
             hasSkelPath = true;
           } else {
-            PUSH_ERROR_AND_RETURN(fmt::format(
+            PushError(fmt::format(
                 "`skel:skeleton` must have exactly one target for {}, but got {}.",
                 abs_prim_path.full_path_name(), target_count));
+            return false;
           }
         } else {
-          PUSH_ERROR_AND_RETURN(fmt::format(
+          PushError(fmt::format(
               "`skel:skeleton` has invalid definition for {}.",
               abs_prim_path.full_path_name()));
+          return false;
         }
       }
 
@@ -4591,6 +4633,7 @@ bool RenderSceneConverter::ConvertMesh(
 
           // Use ConvertSkeletonFromPtr if we have the skeleton pointer from discovery,
           // otherwise use ConvertSkeletonImplWithPath for explicit relationship case
+          std::string skel_err;
           if (discoveredSkelPtr) {
             // Extract prim name from path (last component)
             std::string primName = skelPath.prim_part();
@@ -4599,20 +4642,28 @@ bool RenderSceneConverter::ConvertMesh(
               primName = primName.substr(lastSlash + 1);
             }
             if (!ConvertSkeletonFromPtr(env, skelPath, *discoveredSkelPtr, primName, &skel)) {
-              return false;
+              skel_err = GetError();
             }
           } else {
             if (!ConvertSkeletonImplWithPath(env, skelPath, &skel)) {
-              return false;
+              skel_err = GetError();
             }
           }
-          DCOUT("Converted skeleton attached to : " << abs_prim_path);
 
-          _skelPathToIndex[skelPathStr] = skel_id;
-          skeletons.emplace_back(std::move(skel));
-          DCOUT("add skeleton\n");
+          if (!skel_err.empty()) {
+            clearInvalidSkinning(fmt::format(
+                "Skeleton {} could not be converted: {}",
+                skelPathStr, skel_err));
+            return false;
+          } else {
+            DCOUT("Converted skeleton attached to : " << abs_prim_path);
 
-          dst.skel_id = skel_id;
+            _skelPathToIndex[skelPathStr] = skel_id;
+            skeletons.emplace_back(std::move(skel));
+            DCOUT("add skeleton\n");
+
+            dst.skel_id = skel_id;
+          }
         }
 
       }
@@ -4726,7 +4777,10 @@ bool RenderSceneConverter::ConvertMesh(
 
           auto nit = name_to_index_map.find(joint_name);
           if (nit == name_to_index_map.end()) {
-            PUSH_ERROR_AND_RETURN(fmt::format("joint_name {} not found in Skeleton", joint_name));
+            clearInvalidSkinning(fmt::format(
+                "Joint `{}` from skel:joints was not found in the bound "
+                "Skeleton.", joint_name));
+            return false;
           }
 
           index_remap[i] = nit->second;
@@ -4749,14 +4803,17 @@ bool RenderSceneConverter::ConvertMesh(
 
       if (!GetGeomPrimvar(env.stage, &mesh, "skel:geomBindTransform",
                           &bindTransformPvar, &_err)) {
+        clearInvalidSkinning("Could not read primvars:skel:geomBindTransform: " +
+                             GetError());
         return false;
       }
 
       value::matrix4d bindTransform;
       if (!bindTransformPvar.get_value(&bindTransform)) {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("Failed to get `skel:geomBindTransform` attribute. "
-                        "Ensure `skel:geomBindTransform` is type `matrix4d`"));
+        clearInvalidSkinning(
+            "Failed to get `skel:geomBindTransform` attribute. Ensure it is "
+            "type `matrix4d`.");
+        return false;
       }
 
       dst.joint_and_weights.geomBindTransform = bindTransform;
@@ -4765,6 +4822,11 @@ bool RenderSceneConverter::ConvertMesh(
       // geomBindTransform not authored - use identity (already set by default)
       // Flag remains false to indicate fallback was used
       DCOUT("skel:geomBindTransform not authored, using identity matrix");
+    }
+    return true;
+    };
+    if (!convertSkinning() && !GetError().empty()) {
+      return false;
     }
   }
 

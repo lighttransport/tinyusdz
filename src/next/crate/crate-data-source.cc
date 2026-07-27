@@ -439,9 +439,15 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
   auto read_compressed_u64_n = [&](uint64_t* dst, size_t n) -> bool {
     uint64_t comp_size;
     if (!r.read_u64(comp_size)) return false;
+    if (comp_size > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+      return false;
+    }
+    if (static_cast<size_t>(comp_size) > r.remaining()) return false;
     std::vector<uint8_t> blob;
     if (!r.read(blob, static_cast<size_t>(comp_size))) return false;
-    std::vector<uint8_t> with_prefix(8 + blob.size());
+    size_t prefixed_size = 0;
+    if (!safe::add(size_t{8}, blob.size(), &prefixed_size)) return false;
+    std::vector<uint8_t> with_prefix(prefixed_size);
     std::memcpy(with_prefix.data(), &comp_size, 8);
     if (!blob.empty()) std::memcpy(with_prefix.data() + 8, blob.data(), blob.size());
     DecompressResult dr = DecompressCompressedU64(
@@ -455,7 +461,9 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
   auto read_raw = [&](void* dst, size_t elem_size) -> bool {
     if (count == 0) return true;
     if (!r.has_elements(count, elem_size)) return false;
-    return r.read(dst, static_cast<size_t>(count) * elem_size);
+    size_t byte_count;
+    if (!safe::mul(static_cast<size_t>(count), elem_size, &byte_count)) return false;
+    return r.read(dst, byte_count);
   };
 
   auto read_compressed_floating_n = [&](auto* dst, size_t n) -> bool {

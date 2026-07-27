@@ -1,0 +1,6 @@
+#usda 1.0
+def "Root" (
+    references = @./refd.usda@</R> (offset = 5; scale = 0.5)
+)
+{
+}

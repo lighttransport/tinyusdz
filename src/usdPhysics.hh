@@ -155,9 +155,9 @@ struct PhysicsScene {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const { return name; }
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   // Standard UsdPhysics attributes (varying — no uniform required)
   TypedAttribute<value::vector3f> gravityDirection;  // physics:gravityDirection (vector3f per USD spec)
@@ -177,13 +177,13 @@ struct PhysicsScene {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() { return meta; }
-  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -228,9 +228,9 @@ struct PhysicsJoint : PhysicsJointBase {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const { return name; }
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
@@ -238,13 +238,13 @@ struct PhysicsJoint : PhysicsJointBase {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() { return meta; }
-  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -257,9 +257,9 @@ struct PhysicsRevoluteJoint : PhysicsJointBase {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const { return name; }
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<value::token> axis;   // physics:axis
   TypedAttribute<float> lowerLimit;    // physics:lowerLimit
@@ -271,13 +271,13 @@ struct PhysicsRevoluteJoint : PhysicsJointBase {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() { return meta; }
-  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -290,9 +290,9 @@ struct PhysicsPrismaticJoint : PhysicsJointBase {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const { return name; }
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<value::token> axis;   // physics:axis
   TypedAttribute<float> lowerLimit;
@@ -304,13 +304,13 @@ struct PhysicsPrismaticJoint : PhysicsJointBase {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() { return meta; }
-  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -323,9 +323,9 @@ struct PhysicsSphericalJoint : PhysicsJointBase {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const { return name; }
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<value::token> axis;            // physics:axis
   TypedAttribute<float> coneAngle0Limit;       // physics:coneAngle0Limit
@@ -337,13 +337,13 @@ struct PhysicsSphericalJoint : PhysicsJointBase {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() { return meta; }
-  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -356,9 +356,9 @@ struct PhysicsFixedJoint : PhysicsJointBase {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const { return name; }
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
@@ -366,13 +366,13 @@ struct PhysicsFixedJoint : PhysicsJointBase {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() { return meta; }
-  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -385,9 +385,9 @@ struct PhysicsDistanceJoint : PhysicsJointBase {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const { return name; }
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<float> minDistance;  // physics:minDistance
   TypedAttribute<float> maxDistance;  // physics:maxDistance
@@ -398,13 +398,13 @@ struct PhysicsDistanceJoint : PhysicsJointBase {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() { return meta; }
-  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;
@@ -418,9 +418,9 @@ struct PhysicsCollisionGroup {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const { return name; }
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<value::token> mergeGroup;             // physics:mergeGroup
   TypedAttributeWithFallback<bool> invertFilteredGroups{false}; // physics:invertFilteredGroups
@@ -432,13 +432,13 @@ struct PhysicsCollisionGroup {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() { return meta; }
-  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;

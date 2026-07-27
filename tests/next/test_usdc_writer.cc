@@ -456,7 +456,7 @@ void test_usdc_bool_array_roundtrip() {
 
   const std::string usda = WriteUSDAToString(read_result.stage);
   assert(contains(usda, "bool[] boolArray"));
-  assert(contains(usda, "bool singleBool = true"));
+  assert(contains(usda, "bool singleBool = 1"));  // pxr spells VALUE bools 1/0
 
   std::cout << "  USDC bool array roundtrip test passed!\n\n";
 }

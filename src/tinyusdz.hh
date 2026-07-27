@@ -312,6 +312,10 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
 
 struct USDZAsset
 {
+  // USDZ root is the first archive entry. Retain its ordered name separately
+  // because asset_map is sorted by key.
+  std::string root_asset_name;
+
   // key: asset name(USD, Image, Audio, ...), value = byte begin/end in USDZ data.
   std::map<std::string, std::pair<size_t, size_t>> asset_map;
 
@@ -330,7 +334,9 @@ struct USDZAsset
 /// Read USDZ(zip) asset info from a file.
 ///
 /// Whole file content(USDZ) is copied into USDZAsset::data.
-/// If you want to save memory to load USDZ with assets, first read USDZ conent into memory(or Use io-util.hh::MMapFile() to mmap file), then use `ReadUSDZAssetInfoFromMemory with `assert_on_memory` true.
+/// To avoid copying USDZ asset data, keep the source buffer (or an
+/// io-util.hh::MMapFile mapping) alive and call ReadUSDZAssetInfoFromMemory()
+/// with asset_on_memory set to true.
 ///
 /// @param[in] filename USDZ filename(UTF-8)
 /// @param[out] asset USDZ asset info.

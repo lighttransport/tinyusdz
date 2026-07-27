@@ -6,6 +6,7 @@
 #include "crate-reader-internal.hh"
 #include "safe-arithmetic.hh"
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -80,6 +81,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
 bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
                                           std::vector<std::string>& out,
                                           bool with_markers) {
+  out.clear();
   // Reads one or more [u64 count][u32 path_index * count] runs of path indices
   // (uncompressed, per pxrUSD). PathVector has a single run; PathListOp is
   // prefixed by a 1-byte ListOpHeader selecting which sublists are present. We
@@ -99,22 +101,21 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
     for (uint64_t i = 0; i < n; ++i) {
       uint32_t idx = 0;
       if (!reader_->read_u32(idx)) return false;
-      if (idx < paths_.size()) {
-        // paths_ renders a property path as ".<primpath>/<prop>"; convert to the
-        // canonical USD form "<primpath>.<prop>" so targets re-intern correctly
-        // (and survive repeated round-trips). Prim targets pass through as-is.
-        const std::string& p = paths_[idx];
-        if (!p.empty() && p[0] == '.') {
-          std::string body = p.substr(1);          // "/a/b/prop"
-          size_t slash = body.rfind('/');
-          if (slash != std::string::npos) {
-            out.push_back(body.substr(0, slash) + "." + body.substr(slash + 1));
-          } else {
-            out.push_back(body);
-          }
+      if (idx >= paths_.size()) return false;
+      // paths_ renders a property path as ".<primpath>/<prop>"; convert to the
+      // canonical USD form "<primpath>.<prop>" so targets re-intern correctly
+      // (and survive repeated round-trips). Prim targets pass through as-is.
+      const std::string& p = paths_[idx];
+      if (!p.empty() && p[0] == '.') {
+        std::string body = p.substr(1);          // "/a/b/prop"
+        size_t slash = body.rfind('/');
+        if (slash != std::string::npos) {
+          out.push_back(body.substr(0, slash) + "." + body.substr(slash + 1));
         } else {
-          out.push_back(p);                        // prim path "/a/b"
+          out.push_back(body);
         }
+      } else {
+        out.push_back(p);                        // prim path "/a/b"
       }
     }
     return true;
@@ -133,6 +134,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   // reconstruct the authored list-op edits.
   uint8_t bits = 0;
   if (!reader_->read_u8(bits)) return false;
+  if ((bits & uint8_t{0x80}) != 0) return false;
   // 0x01 is pxr's SEMANTIC explicit flag (set with no sublist for
   // explicit-empty); 0x02 flags the explicit-items sublist.
   const uint8_t kIsExplicit = 0x01, kHasExplicit = 0x02, kHasAdded = 0x04,
@@ -160,6 +162,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
 
 bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
                                               std::vector<std::string>& out) {
+  out.clear();
   const CrateTypeId tid = rep.type_id();
   if (tid != CrateTypeId::ReferenceListOp && tid != CrateTypeId::PayloadListOp) {
     return false;
@@ -177,11 +180,15 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     if (!reader_->read_u32(asset_idx) || !reader_->read_u32(path_idx)) {
       return false;
     }
+    if (asset_idx >= string_indices_.size() || path_idx >= paths_.size()) {
+      return false;
+    }
     double offset = 0.0, scale = 1.0;
     if (payload_has_offset) {
       if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
         return false;
       }
+      if (!std::isfinite(offset) || !std::isfinite(scale)) return false;
     }
     if (!is_payload) {
       // customData dict: pxr WriteMap layout — u64 count, then per entry
@@ -197,12 +204,24 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
         for (uint64_t d = 0; d < dict_count; ++d) {
           uint32_t key_idx = 0;
           if (!reader_->read_u32(key_idx)) return false;
+          std::string key;
+          if (!GetString(key_idx, key)) return false;
           const size_t val_start = reader_->position();
           uint64_t rec_off_raw = 0;
           if (!reader_->read_u64(rec_off_raw)) return false;
+          const int64_t rec_off = static_cast<int64_t>(rec_off_raw);
+          const uint64_t val_start_u64 = static_cast<uint64_t>(val_start);
+          const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+          if (rec_off < 8 || file_size < sizeof(uint64_t) ||
+              static_cast<uint64_t>(rec_off) >
+                  (std::numeric_limits<uint64_t>::max)() - val_start_u64 ||
+              val_start_u64 + static_cast<uint64_t>(rec_off) >
+                  file_size - sizeof(uint64_t)) {
+            AddError("Reference customData recursive ValueRep is outside file");
+            return false;
+          }
           const size_t rep_pos = static_cast<size_t>(
-              static_cast<int64_t>(val_start) +
-              static_cast<int64_t>(rec_off_raw));
+              val_start_u64 + static_cast<uint64_t>(rec_off));
           // Skip past this entry's ValueRep; the next entry (or the rest of
           // the reference item) begins right after it.
           if (!reader_->seek(rep_pos + 8)) return false;
@@ -212,8 +231,8 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     if (!keep) return true;
 
     std::string asset;
-    GetString(asset_idx, asset);
-    std::string prim = (path_idx < paths_.size()) ? paths_[path_idx] : "";
+    if (!GetString(asset_idx, asset)) return false;
+    const std::string& prim = paths_[path_idx];
     // Internal arcs (no asset) render as "</Prim>", matching the usda parser.
     std::string arc;
     if (!asset.empty()) arc = "@" + asset + "@";
@@ -241,6 +260,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
   // reconstruct the authored list-op edits.
   uint8_t bits = 0;
   if (!reader_->read_u8(bits)) return false;
+  if ((bits & uint8_t{0x80}) != 0) return false;
   // pxr ListOpHeader: 0x01 is the SEMANTIC explicit flag; 0x02 says an
   // explicit-items sublist is present. Explicit-empty (`references = []` /
   // `= None`) authors 0x01 alone — keying "non-explicit" off 0x02 read that
@@ -270,6 +290,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
 
 bool CrateReader::Impl::DecodeVariantSelectionMap(
     ValueRep rep, std::vector<std::pair<std::string, std::string>>& out) {
+  out.clear();
   if (rep.type_id() != CrateTypeId::VariantSelectionMap) return false;
   if (rep.payload() == 0) return true;  // empty map
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
@@ -280,8 +301,7 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
     uint32_t k = 0, v = 0;
     if (!reader_->read_u32(k) || !reader_->read_u32(v)) return false;
     std::string key, val;
-    GetString(k, key);
-    GetString(v, val);
+    if (!GetString(k, key) || !GetString(v, val)) return false;
     out.emplace_back(std::move(key), std::move(val));
   }
   return true;
@@ -289,6 +309,7 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
 
 bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
                                           std::vector<std::string>& out) {
+  out.clear();
   const CrateTypeId tid = rep.type_id();
   if (tid != CrateTypeId::TokenListOp && tid != CrateTypeId::StringListOp) {
     return false;
@@ -305,14 +326,16 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
     for (uint64_t i = 0; i < n; ++i) {
       uint32_t idx = 0;
       if (!reader_->read_u32(idx)) return false;
-      if (!keep) continue;
       std::string s;
       if (is_token) {
         if (idx >= tokens_.size()) return false;
-        s = tokens_.str(idx);
+        if (keep) s = tokens_.str(idx);
       } else {
-        GetString(idx, s);
+        std::string decoded;
+        if (!GetString(idx, decoded)) return false;
+        if (keep) s = std::move(decoded);
       }
+      if (!keep) continue;
       out.push_back(std::move(s));
     }
     return true;
@@ -324,6 +347,7 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
   // `delete apiSchemas` — deleted/ordered items used to be dropped).
   uint8_t bits = 0;
   if (!reader_->read_u8(bits)) return false;
+  if ((bits & uint8_t{0x80}) != 0) return false;
   const uint8_t kIsExplicit = 0x01, kHasExplicit = 0x02, kHasAdded = 0x04,
                 kHasDeleted = 0x08, kHasOrdered = 0x10, kHasPrepended = 0x20,
                 kHasAppended = 0x40;
@@ -368,14 +392,24 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     uint32_t kidx = 0;
     if (!reader_->read_u32(kidx)) return false;
     std::string key;
-    GetString(kidx, key);
+    if (!GetString(kidx, key)) return false;
 
     const size_t val_start = reader_->position();
     uint64_t rec_off_raw = 0;
     if (!reader_->read_u64(rec_off_raw)) return false;
-    const int64_t rec_off = static_cast<int64_t>(rec_off_raw);
-    const size_t rep_pos =
-        static_cast<size_t>(static_cast<int64_t>(val_start) + rec_off);
+    if (rec_off_raw < 8) {
+      AddError("Dictionary recursive offset is too small");
+      return false;
+    }
+    const uint64_t val_start_u64 = static_cast<uint64_t>(val_start);
+    const uint64_t file_size = static_cast<uint64_t>(reader_->size());
+    if (file_size < sizeof(uint64_t) ||
+        rec_off_raw > (std::numeric_limits<uint64_t>::max)() - val_start_u64 ||
+        (val_start_u64 + rec_off_raw) > (file_size - sizeof(uint64_t))) {
+      AddError("Dictionary recursive ValueRep is outside file");
+      return false;
+    }
+    const size_t rep_pos = static_cast<size_t>(val_start_u64 + rec_off_raw);
     if (!reader_->seek(rep_pos)) return false;
     uint64_t vrep_raw = 0;
     if (!reader_->read_u64(vrep_raw)) return false;
@@ -384,9 +418,10 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     ValueRep vr(vrep_raw);
     Value cv;
     if (vr.type_id() == CrateTypeId::Dictionary) {
-      DecodeDictionary(vr, cv, depth + 1);
-    } else if (vr.type_id() != CrateTypeId::Invalid) {
-      UnpackValue(vr, cv);
+      if (!DecodeDictionary(vr, cv, depth + 1)) return false;
+    } else if (vr.type_id() != CrateTypeId::Invalid &&
+               !UnpackValue(vr, cv)) {
+      return false;
     }
     d->set(std::move(key), std::move(cv));
 

@@ -443,7 +443,7 @@ typedef enum {
 /* Node specific type within a category — matches tydra::NodeType:
  *   0 Xform, 1 Mesh, 2 Camera, 3 SkelRoot, 4 Skeleton, 5 PointLight,
  *   6 DirectionalLight, 7 EnvmapLight, 8 RectLight, 9 DiskLight,
- *   10 CylinderLight, 11 GeometryLight
+ *   10 CylinderLight, 11 GeometryLight, 12 Volume
  */
 
 C_TINYUSD_EXPORT uint64_t

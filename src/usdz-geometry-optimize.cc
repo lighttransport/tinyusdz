@@ -610,8 +610,12 @@ void CollectMeshesRec(PrimSpec *ps, const std::string &path,
                       TraverseState state,
                       const UsdzConvertOptions &options,
                       std::vector<MeshFragment> *out,
-                      GeometryOptimizationStats *stats) {
+                      GeometryOptimizationStats *stats,
+                      int depth) {
   if (!ps || !out) {
+    return;
+  }
+  if (depth > 512) {
     return;
   }
   const bool active = !ps->metas().has_active() || ps->metas().get_active();
@@ -657,7 +661,7 @@ void CollectMeshesRec(PrimSpec *ps, const std::string &path,
   std::vector<PrimSpec> &children = ps->children();
   for (size_t i = 0; i < children.size(); i++) {
     CollectMeshesRec(&children[i], JoinPrimPath(path, children[i].name()),
-                     &children, i, state, options, out, stats);
+                     &children, i, state, options, out, stats, depth + 1);
   }
 }
 
@@ -671,7 +675,7 @@ std::vector<MeshFragment> CollectMeshes(Layer *layer,
   for (auto &kv : layer->primspecs()) {
     TraverseState state;
     CollectMeshesRec(&kv.second, "/" + kv.second.name(), nullptr, 0, state,
-                     options, &out, stats);
+                     options, &out, stats, /*depth*/ 0);
   }
   return out;
 }
@@ -789,6 +793,9 @@ bool AppendAggregateMesh(const std::vector<const MeshFragment *> &group,
   if (point_count > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
     return false;
   }
+  if (face_count > static_cast<size_t>((std::numeric_limits<size_t>::max)() / 3)) {
+    return false;
+  }
   points.reserve(point_count);
   counts.reserve(face_count);
   indices.reserve(face_count * 3);
@@ -902,14 +909,17 @@ void DeactivateMergedMeshes(const std::vector<MeshSource> &sources) {
   }
 }
 
-size_t CountMeshesRec(const PrimSpec &ps) {
+size_t CountMeshesRec(const PrimSpec &ps, int depth) {
+  if (depth > 512) {
+    return 0;
+  }
   const bool active = !ps.metas().has_active() || ps.metas().get_active();
   size_t count = (active && ps.typeName() == "Mesh" &&
                   ps.props().find("faceVertexCounts") != ps.props().end())
                      ? 1
                      : 0;
   for (const PrimSpec &child : ps.children()) {
-    count += CountMeshesRec(child);
+    count += CountMeshesRec(child, depth + 1);
   }
   return count;
 }
@@ -917,7 +927,7 @@ size_t CountMeshesRec(const PrimSpec &ps) {
 size_t CountMeshes(const Layer &layer) {
   size_t count = 0;
   for (const auto &kv : layer.primspecs()) {
-    count += CountMeshesRec(kv.second);
+    count += CountMeshesRec(kv.second, /*depth*/ 0);
   }
   return count;
 }

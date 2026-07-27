@@ -17,6 +17,7 @@
 #include "next/layer/layer.hh"
 #include "next/crate/stream-reader.hh"
 #include "next/reader/usdc-reader.hh"
+#include "next/types/value-view.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
@@ -479,12 +480,17 @@ void test_crate_reader_audit_cluster() {
         field(root->meta().unknownFields, "extensionLayerProbe");
     assert(layer_probe && layer_probe->unregistered &&
            layer_probe->unregistered_source == "\"kept-by-openusd\"");
+    // The raw source keeps the authored quotes; the typed value must be the
+    // parsed string so USDA output quotes once (no "\"...\"" double-quoting).
+    assert(layer_probe->value.as_string() &&
+           *layer_probe->value.as_string() == "kept-by-openusd");
     UsdPrim p = compat.stage.GetPrimAtPath("/P");
     assert(p.IsValid() && !p.HasProperty("extensionPrimProbe") &&
            "unknown Prim metadata must not become a phantom property");
     const TypedExtensionField* prim_probe =
         field(p.GetMeta().unknownFields(), "extensionPrimProbe");
     assert(prim_probe && prim_probe->unregistered_source == "17");
+    assert(prim_probe->value.as_int() && *prim_probe->value.as_int() == 17);
     const PropMeta* attr_meta = p.GetPrimSpec()->property_meta("v");
     const PropMeta* rel_meta = p.GetPrimSpec()->property_meta("r");
     const TypedExtensionField* attr_probe =
@@ -855,6 +861,18 @@ void test_pre070_array_count() {
     assert(ProbeArrayBlock(src, rep, 1024, &lr));
     assert(lr.element_count == 3);
     assert(lr.block_len == 4 + sizeof(vals));
+
+    // The zero-copy view must skip this version's 4-byte count header. It used
+    // to unconditionally skip 8 bytes, returning values[1..] and potentially
+    // reading past the retained block.
+    Value lazy = Value::MakeLazyArray(lr);
+    assert(CanBorrowLazyFlat(lazy));
+    ArrayScratch<float> scratch;
+    ArrayView<float> view;
+    assert(GetFloatArrayView(lazy, &scratch, &view));
+    assert(view.borrowed && view.size == 3);
+    assert(view.data[0] == 1.5f && view.data[1] == -2.25f &&
+           view.data[2] == 4.0f);
   }
 
   // 0.7+: [u64 count][floats].

@@ -141,55 +141,55 @@ inline __ty operator/(const __ty &a, const __basety b) { \
 }
 
 #define ARITH_ASSIGN_OP_2(__ty, __basety) \
-inline __ty &operator+=(__ty &a, const __ty &b) { \
+inline __ty &operator+=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] += b[0]; a[1] += b[1]; \
   return a; \
 } \
-inline __ty &operator-=(__ty &a, const __ty &b) { \
+inline __ty &operator-=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] -= b[0]; a[1] -= b[1]; \
   return a; \
 } \
-inline __ty &operator*=(__ty &a, const __ty &b) { \
+inline __ty &operator*=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] *= b[0]; a[1] *= b[1]; \
   return a; \
 } \
-inline __ty &operator/=(__ty &a, const __ty &b) { \
+inline __ty &operator/=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] /= b[0]; a[1] /= b[1]; \
   return a; \
 } \
 
 #define ARITH_ASSIGN_OP_3(__ty, __basety) \
-inline __ty &operator+=(__ty &a, const __ty &b) { \
+inline __ty &operator+=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] += b[0]; a[1] += b[1]; a[2] += b[2]; \
   return a; \
 } \
-inline __ty &operator-=(__ty &a, const __ty &b) { \
+inline __ty &operator-=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] -= b[0]; a[1] -= b[1]; a[2] -= b[2]; \
   return a; \
 } \
-inline __ty &operator*=(__ty &a, const __ty &b) { \
+inline __ty &operator*=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] *= b[0]; a[1] *= b[1]; a[2] *= b[2]; \
   return a; \
 } \
-inline __ty &operator/=(__ty &a, const __ty &b) { \
+inline __ty &operator/=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] /= b[0]; a[1] /= b[1]; a[2] /= b[2]; \
   return a; \
 } \
 
 #define ARITH_ASSIGN_OP_4(__ty, __basety) \
-inline __ty &operator+=(__ty &a, const __ty &b) { \
+inline __ty &operator+=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] += b[0]; a[1] += b[1]; a[2] += b[2]; a[3] += b[3]; \
   return a; \
 } \
-inline __ty &operator-=(__ty &a, const __ty &b) { \
+inline __ty &operator-=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] -= b[0]; a[1] -= b[1]; a[2] -= b[2]; a[3] -= b[3]; \
   return a; \
 } \
-inline __ty &operator*=(__ty &a, const __ty &b) { \
+inline __ty &operator*=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] *= b[0]; a[1] *= b[1]; a[2] *= b[2]; a[3] *= b[3]; \
   return a; \
 } \
-inline __ty &operator/=(__ty &a, const __ty &b) { \
+inline __ty &operator/=(__ty &a TINYUSDZ_LIFETIMEBOUND, const __ty &b) { \
   a[0] /= b[0]; a[1] /= b[1]; a[2] /= b[2]; a[3] /= b[3]; \
   return a; \
 } \

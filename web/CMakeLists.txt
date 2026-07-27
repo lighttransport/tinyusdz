@@ -89,9 +89,16 @@ endif()
 if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
     NOT TINYUSDZ_WASM_NEXT_ONLY AND NOT TINYUSDZ_WASM_LEGACY_ONLY)
   find_program(TINYUSDZ_NODE_EXECUTABLE NAMES node nodejs)
+  find_program(TINYUSDZ_CHROME_EXECUTABLE
+               NAMES google-chrome-stable google-chrome chromium chromium-browser)
   set(TINYUSDZ_OPENPBR_VISUAL_DIFF
       "${PROJECT_SOURCE_DIR}/js/cli/openpbr-visual-diff.mjs")
-  if (TINYUSDZ_NODE_EXECUTABLE AND EXISTS "${TINYUSDZ_OPENPBR_VISUAL_DIFF}")
+  set(TINYUSDZ_NEXT_WASM_JS
+      "${PROJECT_SOURCE_DIR}/js/src/tinyusdz/tinyusdz_next.js")
+  set(TINYUSDZ_NEXT_WASM_BINARY
+      "${PROJECT_SOURCE_DIR}/js/src/tinyusdz/tinyusdz_next.wasm")
+  if (TINYUSDZ_NODE_EXECUTABLE AND EXISTS "${TINYUSDZ_OPENPBR_VISUAL_DIFF}" AND
+      EXISTS "${TINYUSDZ_NEXT_WASM_JS}" AND EXISTS "${TINYUSDZ_NEXT_WASM_BINARY}")
     add_test(
       NAME wasm-regression-openpbr-visual-diff
       COMMAND "${TINYUSDZ_NODE_EXECUTABLE}" "${TINYUSDZ_OPENPBR_VISUAL_DIFF}"
@@ -104,10 +111,56 @@ if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
         TIMEOUT 300
         RUN_SERIAL TRUE
         LABELS "wasm;browser;regression")
+    if (TINYUSDZ_CHROME_EXECUTABLE)
+      # npm installs used by CI may intentionally skip Puppeteer's browser
+      # download. Prefer an installed browser when one is available so a plain
+      # `ctest` invocation remains self-contained.
+      set_tests_properties(
+        wasm-regression-openpbr-visual-diff
+        PROPERTIES
+          ENVIRONMENT
+            "PUPPETEER_EXECUTABLE_PATH=${TINYUSDZ_CHROME_EXECUTABLE}")
+    endif()
   else()
     message(STATUS
       "TinyUSDZ WASM: skipping OpenPBR browser regression registration "
-      "(Node or visual-diff CLI not found)")
+      "(Node, visual-diff CLI, or prebuilt next-only WASM module not found)")
+  endif()
+
+  if (TINYUSDZ_NODE_EXECUTABLE)
+    add_test(
+      NAME wasm-js-loader-texture-compression
+      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/js/tests/loader-utils-texture-compression.mjs")
+    add_test(
+      NAME wasm-texture-compression-abi
+      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/js/tests/texture-compression-wasm.mjs")
+    add_test(
+      NAME wasm-js-loader-basis-ktx2
+      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/js/tests/loader-utils-basis-ktx2.mjs")
+    if (TINYUSDZ_CHROME_EXECUTABLE)
+      add_test(
+        NAME wasm-texture-compression-three-ktx2
+        COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/js/tests/texture-compression-three-ktx2.mjs")
+      set_tests_properties(
+        wasm-texture-compression-three-ktx2
+        PROPERTIES
+          ENVIRONMENT
+            "PUPPETEER_EXECUTABLE_PATH=${TINYUSDZ_CHROME_EXECUTABLE}"
+          WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/js"
+          TIMEOUT 90
+          LABELS "wasm;texture;browser;regression")
+    endif()
+    set_tests_properties(
+      wasm-js-loader-texture-compression wasm-texture-compression-abi
+      wasm-js-loader-basis-ktx2
+      PROPERTIES
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/js"
+        TIMEOUT 60
+        LABELS "wasm;texture;regression")
   endif()
 endif()
 
@@ -270,6 +323,7 @@ list(
   ${TINYUSDZ_NEXT_DIR}/prim/path.cc
   ${TINYUSDZ_NEXT_DIR}/prim/attribute.cc
   ${TINYUSDZ_NEXT_DIR}/prim/prim.cc
+  ${TINYUSDZ_NEXT_DIR}/layer/array-edit.cc
   ${TINYUSDZ_NEXT_DIR}/layer/property-index.cc
   ${TINYUSDZ_NEXT_DIR}/layer/prim-spec.cc
   ${TINYUSDZ_NEXT_DIR}/layer/layer.cc
@@ -363,6 +417,14 @@ target_include_directories(${BUILD_TARGET}
 
 target_link_libraries(${BUILD_TARGET} PRIVATE tinyusdz::tinyusdz_static
                                               ${EXT_LIBRARIES} PUBLIC ${CMAKE_DL_LIBS})
+
+# The main WASM module exposes the same Basis-free `uni` scene-texture path as
+# the standalone texcomp demo. Referencing textools directly keeps its public
+# headers visible to binding.cc and prevents the transcoders from being stripped.
+if (TINYUSDZ_WITH_TEXTOOLS)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WITH_TEXTOOLS=1)
+  target_link_libraries(${BUILD_TARGET} PRIVATE tinyusdz_textools)
+endif()
 
 source_group("Source Files" FILES ${SOURCES})
 

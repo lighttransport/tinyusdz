@@ -473,21 +473,23 @@ class CrateValue {
     return value_.type_id();
   }
 
-  const value::Value &get_raw() const {
+  const value::Value &get_raw() const TINYUSDZ_LIFETIMEBOUND {
     return value_;
   }
 
-  value::Value &get_raw() {
+  value::Value &get_raw() TINYUSDZ_LIFETIMEBOUND {
     return value_;
   }
 
-  const value::Value *get_raw_ptr() const {
+  const value::Value *get_raw_ptr() const TINYUSDZ_LIFETIMEBOUND {
     return &value_;
   }
 
   // mmap zero-copy: set when value was described but not materialized
   bool has_mmap_ref() const { return _has_mmap_ref; }
-  const MMapArrayRef &mmap_ref() const { return _mmap_ref; }
+  const MMapArrayRef &mmap_ref() const TINYUSDZ_LIFETIMEBOUND {
+    return _mmap_ref;
+  }
   void set_mmap_ref(const MMapArrayRef &ref) {
     _mmap_ref = ref;
     _has_mmap_ref = true;

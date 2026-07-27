@@ -24,6 +24,10 @@
 
 namespace tinyusdz {
 class Prim;
+namespace next {
+class Stage;
+class UsdPrim;
+}
 namespace tydra {
 struct Node;
 }
@@ -40,7 +44,21 @@ class Gui {
     std::string path;
     long long meshesDone{0};
     long long meshesTotal{0};
+    long long payloadsDone{0};
+    long long payloadsTotal{0};
+    int stage{0};
+    float phaseProgress{0.0f};
     float elapsed{0.0f};
+  };
+
+  // GPU-side progress shown as a non-modal viewport overlay: raster geometry/
+  // texture streaming (progressive upload) and the ray-tracing scene build.
+  struct UploadStatus {
+    bool active{false};                 // progressive raster upload in flight
+    size_t meshesDone{0}, meshesTotal{0};
+    size_t texDone{0}, texTotal{0};
+    size_t volDone{0}, volTotal{0};
+    std::string note;                   // e.g. "Building ray-tracing scene…"
   };
 
   struct TimelineInfo {
@@ -61,10 +79,23 @@ class Gui {
   };
 
   void setScene(const LoadedScene* loaded, const DrawScene* draw);
+  void setNextStage(const tinyusdz::next::Stage* stage) { nextStage_ = stage; }
+  // StageSession owns the authoritative deferred set. The composed next Stage
+  // may no longer expose payload metadata for arcs deliberately left unloaded.
+  void setDeferredPayloadPaths(std::vector<std::string> paths) {
+    deferredPayloadPaths_ = std::move(paths);
+  }
   void setLoadStatus(const LoadStatus& s) { loadStatus_ = s; }
+  void setUploadStatus(const UploadStatus& s) { upload_ = s; }
   void setTimeline(const TimelineInfo& t) { timeline_ = t; }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
   void setBudget(LoadControl* b) { budget_ = b; }
+  void setShowGrid(bool on) { showGrid_ = on; }
+  void setShowSkeleton(bool on) { showSkeleton_ = on; }
+  // Fixed-frame headless captures have no interactive UI. Give the render
+  // viewport the full requested extent so saved dock state cannot change the
+  // screenshot dimensions.
+  void setCaptureViewportOnly(bool on) { captureViewportOnly_ = on; }
 
   void frame(Renderer* renderer, OrbitCamera* camera);
   // Build the viewport render inputs. `packet` null (single-threaded) renders the
@@ -72,13 +103,28 @@ class Gui {
   // into the packet and routes GPU side-effects (resize, instance visibility)
   // through postGpu_ for the render thread (renderFrame is NOT called here).
   void renderViewportScene(FramePacket* packet = nullptr);
+  // Current viewport panel size in pixels (0 until the first frame lays it out).
+  // Used by the interactive HIP/CUDA path to size its GPU trace to the viewport.
+  void viewportPixelSize(int* w, int* h) const {
+    if (w) *w = viewportW_;
+    if (h) *h = viewportH_;
+  }
   // Route a GPU op to the render thread (threaded); runs inline if unset.
   void setPostGpu(std::function<void(std::function<void()>)> fn) {
     postGpu_ = std::move(fn);
   }
 
   bool wantOpen() const { return wantOpen_; }
+  // File > Open Recent: the menu populated from setRecentScenes(); when an entry
+  // is clicked wantOpenRecent() is set and recentToOpen() holds its path.
+  void setRecentScenes(const std::vector<std::string>& v) { recentScenes_ = v; }
+  bool wantOpenRecent() const { return wantOpenRecent_; }
+  const std::string& recentToOpen() const { return recentToOpen_; }
   bool wantReload() const { return wantReload_; }
+  // True if the 3D viewport image was hovered last frame (used by the WebSocket
+  // stream server to decide whether a browser drag navigates the camera or is an
+  // ImGui widget interaction).
+  bool viewportHovered() const { return vpHovered_; }
   bool wantQuit() const { return wantQuit_; }
   bool wantCancelLoad() const { return wantCancelLoad_; }
   bool wantLoadAllPayloads() const { return wantLoadAllPayloads_; }
@@ -127,6 +173,10 @@ class Gui {
   void setTransformMode(TransformMode m) { xformMode_ = m; }
   void setRenderMode(RenderMode m) { mode_ = m; }
   RenderMode renderMode() const { return mode_; }
+  // Advance the 'v'-key wireframe cycle (0 off / 1 wire / 2 wire+shade); returns
+  // the new state. Used by the MCP input tool.
+  int cycleWireframe() { wireCycle_ = (wireCycle_ + 1) % 3; return wireCycle_; }
+  int wireframeMode() const { return wireCycle_; }
   void setCullEnabled(bool on) { cullEnabled_ = on; }
   // Offload per-instance culling to a worker thread (interactive responsiveness).
   // Disabled in headless so screenshots stay synchronous/deterministic.
@@ -135,6 +185,7 @@ class Gui {
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {
     wantOpen_ = wantReload_ = wantQuit_ = wantCancelLoad_ = false;
+    wantOpenRecent_ = false;
     wantLoadAllPayloads_ = false;
     payloadLoadRequests_.clear();
     wantVariantSwitch_ = false;
@@ -185,6 +236,8 @@ class Gui {
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
   bool drawPrimTree(const tinyusdz::Prim& prim);
+  bool drawNextPrimTree(const tinyusdz::next::UsdPrim& prim);
+  void drawNextInspector();
   bool drawNodeTree(const tinyusdz::tydra::Node& node);
   void drawInspector();
   // Maya-like blendshape weight editor for the selected prim (shown when the
@@ -200,6 +253,7 @@ class Gui {
   void drawViewport();
   void drawAboutModal();
   void drawLoadingModal();
+  void drawProgressOverlay();  // non-modal GPU upload / RT-build progress
   void drawStageMeta();
   void drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax);
   void drawSelectionBreadcrumbs(const char* idSuffix);
@@ -208,10 +262,13 @@ class Gui {
   void buildHelpers();
   bool meshPurposeVisible(const std::string& purpose) const;
   bool meshVisibleForView(size_t meshIndex) const;
+  bool carrierVisibleForView(size_t carrierIndex) const;
+  size_t carrierIndexForPath(const std::string& path) const;
   void buildViewVisibilityMask();
   void rebuildInspectorCache();
   void setSelectionListSingle(const std::string& absPath, int meshIndex);
   void setSelectionListFromMeshes(std::vector<int> meshIndices);
+  void setSelectionListFromPaths(std::vector<std::string> paths);
   void focusSelectionListItem(size_t index);
   void beginRegionSelection(const ImVec2& mouse);
   void updateRegionSelection(const ImVec2& mouse);
@@ -220,6 +277,7 @@ class Gui {
   bool meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
                                 const ImVec2& rectMax, int vpW, int vpH) const;
   int pickMesh(float px, float py, int vpW, int vpH) const;
+  std::string pickCarrierPath(float px, float py, int vpW, int vpH) const;
   void selectAdjacentMesh(int step);
   void applyViewPreset(CameraViewPreset preset);
   void homeView();
@@ -242,6 +300,8 @@ class Gui {
   };
 
   const tinyusdz::Prim* selPrim_{nullptr};
+  const tinyusdz::next::Stage* nextStage_{nullptr};
+  std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};
   // When the selection is a GeomSubset, the triangle vertex indices of its faces
@@ -265,6 +325,8 @@ class Gui {
   int selectionHistoryIndex_{-1};
 
   RenderMode mode_{RenderMode::Shaded};
+  // Wireframe overlay state cycled by the 'v' key: 0 off / 1 wire-only / 2 wire+shaded.
+  int wireCycle_{0};
   // Transform manipulator mode.
   TransformMode xformMode_{TransformMode::None};
   int gizmoAxis_{-1};         // -1 = none, 0=X, 1=Y, 2=Z
@@ -292,7 +354,7 @@ class Gui {
   bool showPurposeRender_{true};
   bool showPurposeProxy_{true};
   bool showPurposeGuide_{false};
-  bool showNavHelp_{true};
+  bool showNavHelp_{false};
   bool showAbout_{false};
   bool cullEnabled_{true};  // per-mesh + per-instance frustum culling (View menu)
   // Per-frame render stats (computed in buildViewVisibilityMask + the per-instance
@@ -322,19 +384,67 @@ class Gui {
   float lastCullVP_[16]{};
   bool lastCullValid_{false};
   bool lastCullEnabled_{false};
+  bool lastCullRasterLod_{false};
+  bool lastCullWireMode_{false};
   const DrawScene* lastCullDraw_{nullptr};
   // One mesh's compacted visible instances, produced by the worker, applied on main.
   struct CullJobMesh {
     size_t meshIndex{0};
     std::vector<float> xforms;   // 12 floats/visible-instance
     std::vector<float> colors;   // 3 floats/visible-instance (empty when none)
+    std::vector<float> opacities;  // 1 float/visible-instance (empty when none)
     uint32_t count{0};
     bool hasColors{false};
+    bool hasOpacities{false};
   };
   // Frustum-test + compact one instanced mesh's visible instances into `out`
-  // (shared by the sync + worker paths). cullEnabled=false -> the full set.
+  // (shared by the sync + worker paths). cullEnabled=false -> the full set. When
+  // `grid` is non-null (a coarse per-prototype instance grid), whole off-screen
+  // cells are rejected and fully-inside cells accepted without per-instance tests
+  // -- so cull cost scales with the visible cell set, not the total instance count.
+  // When lodCam.lodEnabled, instances are also size-classified: sub-pixel ones are
+  // dropped and (with proxyOut + lodCam.proxyEnabled) small ones become box proxies
+  // appended to proxyOut (accumulated across prototypes by the caller).
   static void compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
-                                   bool cullEnabled, CullJobMesh* out);
+                                   bool cullEnabled, const RtLodGrid* grid,
+                                   const RtLodCamera& lodCam, CullJobMesh* out,
+                                   CullJobMesh* proxyOut);
+  // Raster view-dependent LOD (optimization B): drop sub-pixel instances + collapse
+  // small ones to shared box proxies, cutting both the uploaded instance count and
+  // the rasterised geometry. Off by default (exact parity). proxyEnabled is gated on
+  // the renderer supporting the box-proxy draw (GL); else cull-only.
+  bool rasterLodEnabled_{false};
+  float rasterLodFullPx_{48.0f};
+  float rasterLodCullPx_{1.5f};
+  CullJobMesh proxyResult_;        // accumulated box proxies (sync path / applied)
+  RtLodCamera cullJobLodCam_;      // snapshot for the worker
+  CullJobMesh cullJobProxy_;       // worker-accumulated box proxies
+  // Box proxies for NON-instanced meshes. Built on the main thread in
+  // buildViewVisibilityMask (the instance cull never sees these meshes), and
+  // prepended to whichever proxy set cullInstances uploads.
+  CullJobMesh nonInstProxy_;
+  // Merge nonInstProxy_ with the instance-cull's proxies (consumed) and upload the
+  // union as the one shared box-proxy draw. Skips the upload when unchanged, since
+  // the non-instanced set is rebuilt every frame while the instance cull is gated.
+  void uploadProxies(CullJobMesh* instProxy);
+  std::vector<float> lastProxyXforms_, lastProxyColors_;
+  bool lastProxyValid_{false};
+ public:
+  void setRasterLod(bool on, float fullPx, float cullPx) {
+    rasterLodEnabled_ = on;
+    if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
+    if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
+  }
+ private:
+  // Build the LOD camera (thresholds + projection focal length) for this cull.
+  RtLodCamera buildRasterLodCam() const;
+  // Coarse instance grids (one per mesh; empty/invalid for non-instanced or small
+  // prototypes), built once per scene for compactMeshInstances cell rejection.
+  // Read-only after build, so the cull worker shares them via cullJobGrids_.
+  std::vector<RtLodGrid> instGrids_;
+  const DrawScene* instGridsFor_{nullptr};
+  void ensureInstanceGrids();  // (re)build instGrids_ when draw_ changes
+  const std::vector<RtLodGrid>* cullJobGrids_{nullptr};
   std::thread cullThread_;
   std::atomic<bool> cullRunning_{false};
   std::atomic<bool> cullDone_{false};
@@ -350,6 +460,7 @@ class Gui {
   // UsdPreviewSurface displacement (raster preview). enabled = master toggle;
   // scale = global multiplier; maxTessLevel > 1 enables GPU tessellation for
   // adaptive sub-triangle detail (1 = coarse per-vertex displacement only).
+  bool captureViewportOnly_{false};
   bool displacementEnabled_{true};
   float displacementScale_{1.0f};
   int maxTessLevel_{1};
@@ -357,6 +468,7 @@ class Gui {
   std::vector<HelperVertex> overlayLines_;
 
   std::vector<uint8_t> meshVisible_;
+  std::vector<uint8_t> carrierVisible_;
   std::vector<uint8_t> viewVisible_;
   bool revealSelectionInHierarchy_{false};
 
@@ -386,6 +498,9 @@ class Gui {
   ImVec2 regionEnd_{0.0f, 0.0f};
 
   bool wantOpen_{false};
+  bool wantOpenRecent_{false};
+  std::string recentToOpen_;
+  std::vector<std::string> recentScenes_;  // newest first (from App config)
   bool wantReload_{false};
   bool wantQuit_{false};
   bool wantCancelLoad_{false};
@@ -409,6 +524,7 @@ class Gui {
   float clearColor_[4]{0.12f, 0.12f, 0.13f, 1.0f};
 
   LoadStatus loadStatus_;
+  UploadStatus upload_;
   LoadControl* budget_{nullptr};
 };
 

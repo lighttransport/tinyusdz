@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "next/schema/geom-point-instancer.hh"
+#include "next/schema/usd-shade.hh"
 #include "scene-access.hh"
 
 namespace tinyusdz {
@@ -45,7 +46,8 @@ bool IsLightType(const std::string& t) {
 }
 
 bool IsCurveType(const std::string& t) {
-  return t == "BasisCurves" || t == "NurbsCurves";
+  return t == "BasisCurves" || t == "NurbsCurves" ||
+         t == "HermiteCurves";
 }
 
 RenderPrimKind Classify(const ::tinyusdz::next::UsdPrim& prim,
@@ -84,8 +86,9 @@ std::string PurposeForPrim(const ::tinyusdz::next::UsdPrim& prim,
   return inherited.empty() ? std::string("default") : inherited;
 }
 
-void PushRecord(const RenderPrimRecord& rec, RenderExtractResult* out) {
-  out->records.push_back(rec);
+void PushRecord(const RenderPrimRecord& rec, bool collect_records,
+                RenderExtractResult* out) {
+  if (collect_records) out->records.push_back(rec);
   switch (rec.kind) {
     case RenderPrimKind::Mesh: out->meshes.push_back(rec); break;
     case RenderPrimKind::PointInstancer: out->point_instancers.push_back(rec); break;
@@ -108,6 +111,8 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
                 const RenderExtractOptions& options,
                 const double parent_world[16],
                 const std::string& inherited_purpose,
+                const std::string& inherited_material,
+                const std::string& inherited_strong_material,
                 RenderExtractResult* out) {
   if (!prim.IsActive() && !options.include_inactive) return;
 
@@ -116,6 +121,17 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
   rec.path = prim.GetPath().str();
   rec.type_name = prim.GetTypeName();
   rec.purpose = PurposeForPrim(prim, inherited_purpose);
+  const std::string local_material =
+      ::tinyusdz::next::GetBoundMaterialPath(prim);
+  const std::string nearest_material =
+      local_material.empty() ? inherited_material : local_material;
+  std::string strong_material = inherited_strong_material;
+  if (strong_material.empty() && !local_material.empty() &&
+      ::tinyusdz::next::BindingIsStrongerThanDescendants(prim)) {
+    strong_material = local_material;
+  }
+  rec.material_path = strong_material.empty() ? nearest_material
+                                               : strong_material;
   ComputeLocalTransform(prim, rec.local, options.time_code);
   if (HasResetXformStack(prim)) {
     std::memcpy(rec.world, rec.local, sizeof(rec.world));
@@ -124,7 +140,7 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
   }
   rec.kind = Classify(prim, rec.type_name, &rec.native_prototype);
   if (rec.kind != RenderPrimKind::Other || options.collect_other) {
-    PushRecord(rec, out);
+    PushRecord(rec, options.collect_records, out);
   }
 
   if (rec.kind == RenderPrimKind::PointInstancer &&
@@ -136,21 +152,25 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
     return;
   }
   for (const ::tinyusdz::next::UsdPrim& child : prim.GetChildren()) {
-    CollectRec(child, options, rec.world, rec.purpose, out);
+    CollectRec(child, options, rec.world, rec.purpose, nearest_material,
+               strong_material, out);
   }
 }
 
 const ::tinyusdz::next::Value* ValueAtOrDefault(
-    const ::tinyusdz::next::UsdPrim& prim, const char* name, double time) {
+    const ::tinyusdz::next::UsdPrim& prim, const char* name, double time,
+    ::tinyusdz::next::Value* hold) {
   if (!std::isnan(time)) {
-    // Linear interpolation between samples (pxr semantics). The scratch slot
-    // is per-thread and callers consume the pointer before requesting the
-    // next value (single-live-pointer pattern throughout this TU).
-    static thread_local ::tinyusdz::next::Value scratch;
+    // Linear interpolation between samples (pxr semantics). The interpolated
+    // value is parked in the caller-owned `hold` slot (the ValueArrayRead's
+    // scratch) so the returned view stays valid while other attributes are
+    // read. A shared thread_local slot here previously dangled the first
+    // view whenever a caller read two animated attributes before consuming
+    // the first (e.g. TetMesh points + tetVertexIndices).
     ::tinyusdz::next::Value v = prim.GetInterpolatedValue(name, time);
     if (!v.is_empty()) {
-      scratch = std::move(v);
-      return &scratch;
+      *hold = std::move(v);
+      return hold;
     }
     if (const ::tinyusdz::next::Value* held = prim.GetValueAtTime(name, time)) {
       return held;
@@ -169,13 +189,12 @@ bool IsAnalyticGeomTypeName(const std::string& type_name) {
 }
 
 bool IsMeshRenderableTypeName(const std::string& type_name) {
-  return type_name == "Mesh" || IsAnalyticGeomTypeName(type_name);
+  return type_name == "Mesh" || type_name == "TetMesh" ||
+         IsAnalyticGeomTypeName(type_name);
 }
 
 bool IsUnsupportedRenderableTypeName(const std::string& type_name) {
-  // BasisCurves/NurbsCurves are converted (RenderCurves); HermiteCurves is not.
-  return type_name == "Points" || type_name == "HermiteCurves" ||
-         type_name == "Volume" || type_name == "TetMesh" ||
+  return type_name == "Points" || type_name == "Volume" ||
          type_name == "NurbsPatch";
 }
 
@@ -187,14 +206,16 @@ bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
   double identity[16];
   Identity(identity);
   for (const ::tinyusdz::next::UsdPrim& root : stage.GetRootPrims()) {
-    CollectRec(root, options, identity, "default", out);
+    CollectRec(root, options, identity, "default", std::string(),
+               std::string(), out);
   }
   return true;
 }
 
 bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
                             double time_code,
-                            PointInstancerData* out) {
+                            PointInstancerData* out,
+                            bool compute_transforms) {
   if (!out) return false;
   *out = PointInstancerData();
   ::tinyusdz::next::UsdGeomPointInstancer pi(prim);
@@ -216,7 +237,9 @@ bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
   out->ids = pi.GetIds(time_code);
   out->invisible_ids = pi.GetInvisibleIds(time_code);
   out->inactive_ids = pi.GetInactiveIds();
-  out->transforms = pi.ComputeInstanceTransforms(time_code);
+  if (compute_transforms) {
+    out->transforms = pi.ComputeInstanceTransforms(time_code);
+  }
   out->valid = pi.HasValidInstanceArrays(time_code, &out->validation_error);
   return true;
 }
@@ -236,6 +259,7 @@ void CollectPrototypePaths(const ::tinyusdz::next::Stage& stage,
   RenderExtractOptions options;
   options.stop_at_point_instancers = true;
   options.stop_at_native_instances = true;
+  options.collect_records = false;
   RenderExtractResult result;
   if (!CollectRenderPrims(stage, options, &result)) return;
   out->insert(result.native_prototype_holders.begin(),
@@ -245,7 +269,7 @@ void CollectPrototypePaths(const ::tinyusdz::next::Stage& stage,
 bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<float>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetFloatArrayView(*v, &out->scratch, &out->view);
 }
@@ -253,7 +277,7 @@ bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                   double time, ValueArrayRead<int32_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetIntArrayView(*v, &out->scratch, &out->view);
 }
@@ -261,7 +285,7 @@ bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<int64_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetInt64ArrayView(*v, &out->scratch, &out->view);
 }
@@ -269,7 +293,7 @@ bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                    double time, ValueArrayRead<uint32_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetUIntArrayView(*v, &out->scratch, &out->view);
 }
@@ -277,7 +301,7 @@ bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                      double time, ValueArrayRead<uint64_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetUInt64ArrayView(*v, &out->scratch, &out->view);
 }

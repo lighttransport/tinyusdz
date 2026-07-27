@@ -212,6 +212,14 @@ PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR = NULL;
 PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR = NULL;
 PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR = NULL;
 
+// Query pool (core 1.0) + AS compaction (VK_KHR_acceleration_structure).
+PFN_vkCreateQueryPool vkCreateQueryPool = NULL;
+PFN_vkDestroyQueryPool vkDestroyQueryPool = NULL;
+PFN_vkGetQueryPoolResults vkGetQueryPoolResults = NULL;
+PFN_vkCmdResetQueryPool vkCmdResetQueryPool = NULL;
+PFN_vkCmdWriteAccelerationStructuresPropertiesKHR vkCmdWriteAccelerationStructuresPropertiesKHR = NULL;
+PFN_vkCmdCopyAccelerationStructureKHR vkCmdCopyAccelerationStructureKHR = NULL;
+
 //------------------------------------------------------------------------------
 // Helper macro for loading functions
 //------------------------------------------------------------------------------
@@ -347,6 +355,12 @@ void vkewShutdown(void) {
     vkDestroyAccelerationStructureKHR = NULL;
     vkCmdBuildAccelerationStructuresKHR = NULL;
     vkGetAccelerationStructureDeviceAddressKHR = NULL;
+    vkCreateQueryPool = NULL;
+    vkDestroyQueryPool = NULL;
+    vkGetQueryPoolResults = NULL;
+    vkCmdResetQueryPool = NULL;
+    vkCmdWriteAccelerationStructuresPropertiesKHR = NULL;
+    vkCmdCopyAccelerationStructureKHR = NULL;
 
     vkewUnloadLibrary();
     g_initialized = false;
@@ -475,6 +489,16 @@ bool vkewLoadDevice(VkDevice device) {
     VKEW_LOAD_DEVICE_OPT(vkDestroyAccelerationStructureKHR);
     VKEW_LOAD_DEVICE_OPT(vkCmdBuildAccelerationStructuresKHR);
     VKEW_LOAD_DEVICE_OPT(vkGetAccelerationStructureDeviceAddressKHR);
+
+    // Query pool (core 1.0; loaded as optional only for uniformity with the RT
+    // block -- callers null-check) + the AS compaction entry points, which stay
+    // NULL when VK_KHR_acceleration_structure was not enabled.
+    VKEW_LOAD_DEVICE_OPT(vkCreateQueryPool);
+    VKEW_LOAD_DEVICE_OPT(vkDestroyQueryPool);
+    VKEW_LOAD_DEVICE_OPT(vkGetQueryPoolResults);
+    VKEW_LOAD_DEVICE_OPT(vkCmdResetQueryPool);
+    VKEW_LOAD_DEVICE_OPT(vkCmdWriteAccelerationStructuresPropertiesKHR);
+    VKEW_LOAD_DEVICE_OPT(vkCmdCopyAccelerationStructureKHR);
 
     return true;
 }

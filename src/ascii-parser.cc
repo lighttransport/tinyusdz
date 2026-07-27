@@ -88,6 +88,15 @@ namespace ascii {
 
 constexpr auto kAscii = "[ASCII]";
 
+// Maximum length for identifiers (prim names, property names, etc.)
+constexpr size_t kMaxIdentifierLen = 64 * 1024;  // 64KB
+
+// Maximum length for asset path strings (including single and triple-delimited)
+constexpr size_t kMaxAssetPathLen = 64 * 1024 * 1024;  // 64MB
+
+// Maximum number of entries in a dictionary or variant map parsed from USDA
+constexpr size_t kMaxDictEntries = 1024 * 1024;  // 1M entries
+
 // Register functions moved to ascii-parser-entry.cc
 
 
@@ -1188,6 +1197,11 @@ bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
 
       DCOUT("Add to dict: " << key);
       (*out_dict)[key] = var;
+
+      if (out_dict->size() > kMaxDictEntries) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+            fmt::format("Dictionary too large (max {} entries).", kMaxDictEntries));
+      }
     }
   }
 
@@ -1289,6 +1303,11 @@ bool AsciiParser::ParseVariants(VariantSelectionMap *out_map) {
 
       DCOUT("Add to variants: " << key);
       (*out_map)[key] = var;
+
+      if (out_map->size() > kMaxDictEntries) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+            fmt::format("Variants map too large (max {} entries).", kMaxDictEntries));
+      }
     }
   }
 
@@ -1449,6 +1468,7 @@ bool AsciiParser::IsSupportedAPISchema(const std::string &ty) {
 }
 
 bool AsciiParser::ReadStringLiteral(std::string *literal) {
+  constexpr size_t kMaxStringLen = 64 * 1024 * 1024; // 64MB, matches MaybeString
   std::string buf;
   buf.reserve(64);
 
@@ -1511,6 +1531,11 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
 
     if ((c == '\n') || (c == '\r')) {
       PUSH_ERROR_AND_RETURN("New line in string literal.");
+    }
+
+    if (buf.size() >= kMaxStringLen) {
+      PushError(fmt::format("String literal too large (> {} bytes).", kMaxStringLen));
+      return false;
     }
 
     if (c == '\\') {
@@ -1913,6 +1938,12 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     }
 
     buf += c;
+
+    if (buf.size() > kMaxIdentifierLen) {
+      calculate_cursor_from_stream_pos();
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          fmt::format("PrimAttr identifier too long (max {} bytes).", kMaxIdentifierLen));
+    }
   }
 
   {
@@ -2011,6 +2042,11 @@ bool AsciiParser::ReadIdentifier(std::string *token) {
     _curr_cursor.col++;
 
     buf += c;
+
+    if (buf.size() > kMaxIdentifierLen) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          fmt::format("Identifier too long (max {} bytes).", kMaxIdentifierLen));
+    }
   }
 
   (*token) = std::move(buf);
@@ -2048,6 +2084,11 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
 
     // TODO: Check if character is valid for path identifier
     buf += c;
+
+    if (buf.size() > kMaxIdentifierLen) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          fmt::format("Path identifier too long (max {} bytes).", kMaxIdentifierLen));
+    }
   }
 
   if (!ok) {
@@ -2061,6 +2102,7 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
 }
 
 bool AsciiParser::ReadUntilNewline(std::string *str) {
+  constexpr size_t kMaxLineLen = 64 * 1024 * 1024; // 64MB
   std::string buf;
   buf.reserve(128);
 
@@ -2068,6 +2110,11 @@ bool AsciiParser::ReadUntilNewline(std::string *str) {
     char c;
     if (!Char1(&c)) {
       // this should not happen.
+      return false;
+    }
+
+    if (buf.size() >= kMaxLineLen) {
+      PushError("Line too long (exceeds 64MB limit).");
       return false;
     }
 
@@ -2108,6 +2155,11 @@ bool AsciiParser::ReadUntilNewline(std::string *str) {
 }
 
 bool AsciiParser::SkipUntilNewline() {
+  // Cap the number of bytes skipped to the file size (already bounded by the
+  // memory budget) plus a safety limit of 64MB for a single line.
+  constexpr size_t kMaxSkipBytes = 64 * 1024 * 1024;  // 64MB
+  size_t skipped = 0;
+
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -2141,6 +2193,11 @@ bool AsciiParser::SkipUntilNewline() {
 
     } else {
       // continue
+    }
+
+    if (++skipped > kMaxSkipBytes) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          fmt::format("Line too long while skipping (max {} bytes).", kMaxSkipBytes));
     }
   }
 
@@ -2320,6 +2377,11 @@ bool AsciiParser::ParseStageMetaOpt() {
 
       _stage_metas.relocates.emplace_back(
           Path(src_path_str, ""), Path(tgt_path_str, ""));
+
+      if (_stage_metas.relocates.size() > kMaxDictEntries) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+            fmt::format("Relocates map too large (max {} entries).", kMaxDictEntries));
+      }
 
       if (!SkipCommentAndWhitespaceAndNewline()) { return false; }
 
@@ -3015,6 +3077,11 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
       }
 
       tok += c;
+
+      if (tok.size() > kMaxAssetPathLen) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+            fmt::format("Asset path too long (max {} bytes).", kMaxAssetPathLen));
+      }
     }
 
     if (found_delimiter) {
@@ -3053,6 +3120,11 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
       }
 
       tok += c;
+
+      if (tok.size() > kMaxAssetPathLen) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+            fmt::format("Asset path too long (max {} bytes).", kMaxAssetPathLen));
+      }
 
       if (at_cnt == 3) {
         if (escape_sequence) {

@@ -30,6 +30,7 @@
 #include "lz4-compression.hh"
 #include "zstd-compression.hh"
 #include "security-policy.hh"
+#include "safe-arithmetic.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "string-pool.hh"
@@ -50,6 +51,30 @@
 namespace tinyusdz {
 
 namespace {
+
+// Compute max bytes from a memory-limit-in-MB setting using uint64_t to avoid
+// overflow on 32-bit platforms (where size_t is 32-bit). Returns SIZE_MAX when
+// the result exceeds the addressable range (clamped rather than wrapped).
+inline size_t MaxMemoryBytes(uint64_t limit_mb) {
+  uint64_t bytes = uint64_t(1024) * uint64_t(1024) * limit_mb;
+  if (bytes > uint64_t((std::numeric_limits<size_t>::max)())) {
+    return (std::numeric_limits<size_t>::max)();
+  }
+  return static_cast<size_t>(bytes);
+}
+
+FILE *ProfileOutput() {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdisabled-macro-expansion"
+#endif
+  FILE *output = stderr;
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  return output;
+}
+
 constexpr uint32_t kMaxZstdNestingDepth = 2;
 
 std::string GetLayerBaseDirForAssetName(const std::string &asset_name) {
@@ -157,21 +182,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   bool swap_endian = false;  // @FIXME
 
-  size_t max_length;
-
-  // 32bit env
-  if (sizeof(void *) == 4) {
-    if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
-      max_length = (std::numeric_limits<uint32_t>::max)();
-    } else {
-      max_length =
-          size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-    }
-  } else {
-    // TODO: Set hard limit?
-    max_length =
-        size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-  }
+  size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
 
   DCOUT("Max length = " << max_length);
 
@@ -202,11 +213,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   if (!reader.ReadUSDC()) {
     if (warn) {
-      (*warn) = reader.GetWarning();
+      (*warn) += reader.GetWarning();
     }
 
     if (err) {
-      (*err) = reader.GetError();
+      (*err) += reader.GetError();
     }
     return false;
   }
@@ -219,11 +230,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
     if (!reader.ReconstructStage(stage)) {
       DCOUT("Failed to reconstruct Stage from Crate.");
       if (warn) {
-        (*warn) = reader.GetWarning();
+        (*warn) += reader.GetWarning();
       }
 
       if (err) {
-        (*err) = reader.GetError();
+        (*err) += reader.GetError();
       }
       return false;
     }
@@ -235,14 +246,14 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   }
 
   if (warn) {
-    (*warn) = reader.GetWarning();
+    (*warn) += reader.GetWarning();
   }
 
   // Reconstruct OK but may have some error.
   // TODO(syoyo): Return false in strict mode.
   if (err) {
     DCOUT(reader.GetError());
-    (*err) = reader.GetError();
+    (*err) += reader.GetError();
   }
 
   DCOUT("Reconstructed Stage from USDC file.");
@@ -300,7 +311,7 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
 
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       if (err) {
@@ -369,8 +380,7 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     return false;
   }
 
-  if (length < (11 * 8) + 30) {  // 88 for USDC header, 30 for ZIP header
-    // ???
+  if (length < 30) {  // minimum ZIP local-file header
     if (err) {
       (*err) += "File size too short. Looks like this file is not a USDZ\n";
     }
@@ -378,7 +388,8 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
   }
 
   size_t offset = 0;
-  while ((offset + 30) < length) {
+  std::unordered_set<std::string> entry_names;
+  while ((offset + 30) <= length) {
     //
     // PK zip format:
     // https://users.cs.jmu.edu/buchhofp/forensics/formats/pkzip.html
@@ -412,23 +423,47 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     // read in the variable name
     uint16_t name_len;
     memcpy(&name_len, &local_header[26], sizeof(uint16_t));
-    if ((offset + name_len) > length) {
-      if (err) {
-        (*err) += "Invalid ZIP data\n";
+    {
+      size_t next_offset;
+      if (!safe::add(offset, size_t(name_len), &next_offset) ||
+          next_offset > length) {
+        if (err) {
+          (*err) += "Invalid ZIP data\n";
+        }
+        return false;
       }
-      return false;
     }
 
     std::string varname(name_len, ' ');
     memcpy(&varname[0], addr + offset, name_len);
 
-    offset += name_len;
+    if (!IsSafeUSDZAssetPath(varname)) {
+      if (err) {
+        (*err) += "Unsafe USDZ entry path: `" + varname + "`\n";
+      }
+      return false;
+    }
+    if (!entry_names.insert(varname).second) {
+      if (err) {
+        (*err) += "Duplicate USDZ entry path: `" + varname + "`\n";
+      }
+      return false;
+    }
+
+    if (!safe::add(offset, size_t(name_len), &offset)) {
+      if (err) {
+        (*err) += "Integer overflow in ZIP entry name length.\n";
+      }
+      return false;
+    }
 
     // read in the extra field
     uint16_t extra_field_len;
     memcpy(&extra_field_len, &local_header[28], sizeof(uint16_t));
     if (extra_field_len > 0) {
-      if (offset + extra_field_len > length) {
+      size_t next_offset;
+      if (!safe::add(offset, size_t(extra_field_len), &next_offset) ||
+          next_offset > length) {
         if (err) {
           (*err) += "Invalid extra field length in ZIP data\n";
         }
@@ -436,20 +471,29 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       }
     }
 
-    offset += extra_field_len;
-
-    // In usdz, data must be aligned at 64bytes boundary.
-    if ((offset % 64) != 0) {
+    if (!safe::add(offset, size_t(extra_field_len), &offset)) {
       if (err) {
-        (*err) += "Data offset must be mulitple of 64bytes for USDZ, but got " +
-                  std::to_string(offset) + ".\n";
+        (*err) += "Integer overflow in ZIP extra field length.\n";
       }
       return false;
     }
 
+    // In strict USDZ, data must be aligned at a 64-byte boundary. Keep
+    // ValidateUSDZ() strict, but allow the loader to read unaligned stored ZIP
+    // packages in the wild; byte ranges into the mmapped/archive buffer do not
+    // require alignment for parsing.
+    if ((offset % 64) != 0) {
+      if (warn) {
+        (*warn) += "USDZ entry '" + varname +
+                   "' data offset is not 64-byte aligned: " +
+                   std::to_string(offset) + ".\n";
+      }
+    }
+
     uint16_t compr_method;
     memcpy(&compr_method, &local_header[8], sizeof(compr_method));
-    // uint32_t compr_bytes = *reinterpret_cast<uint32_t*>(&local_header[0]+18);
+    uint32_t compr_bytes;
+    memcpy(&compr_bytes, &local_header[18], sizeof(compr_bytes));
     uint32_t uncompr_bytes;
     memcpy(&uncompr_bytes, &local_header[22], sizeof(uncompr_bytes));
 
@@ -460,8 +504,15 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       }
       return false;
     }
+    if (compr_bytes != uncompr_bytes) {
+      if (err) {
+        (*err) += "Stored USDZ entry has mismatched compressed and "
+                  "uncompressed sizes\n";
+      }
+      return false;
+    }
 
-    if (uncompr_bytes > (length - offset)) {
+    if (offset > length || uncompr_bytes > (length - offset)) {
       if (!assets) {
         // Detection mode (IsUSDZ / IsUSD): only a prefix of the file was read
         // (IsUSDZ reads ~256 bytes), so the first entry's data legitimately
@@ -485,15 +536,75 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       DCOUT("USDZasset[" << assets->size() << "] " << varname << ", byte_begin " << offset << ", length " << uncompr_bytes << "\n");
       info.filename = varname;
       info.byte_begin = offset;
-      info.byte_end = offset + uncompr_bytes;
+      {
+        size_t end_offset;
+        if (!safe::add(offset, size_t(uncompr_bytes), &end_offset)) {
+          if (err) {
+            (*err) += "Integer overflow in ZIP uncompressed size.\n";
+          }
+          return false;
+        }
+        info.byte_end = end_offset;
+      }
 
       assets->push_back(info);
     }
 
-    offset += uncompr_bytes;
+    if (!safe::add(offset, size_t(uncompr_bytes), &offset)) {
+      if (err) {
+        (*err) += "Integer overflow in ZIP uncompressed size.\n";
+      }
+      return false;
+    }
+  }
+
+  if (assets && offset < length) {
+    uint32_t signature = 0;
+    if (length - offset >= sizeof(signature)) {
+      memcpy(&signature, addr + offset, sizeof(signature));
+    }
+    constexpr uint32_t kCentralDirectoryHeader = 0x02014b50u;
+    constexpr uint32_t kEndOfCentralDirectory = 0x06054b50u;
+    if (signature != kCentralDirectoryHeader &&
+        signature != kEndOfCentralDirectory) {
+      if (err) {
+        (*err) += "Invalid or truncated data after USDZ entries\n";
+      }
+      return false;
+    }
   }
 
   return true;
+}
+
+enum class USDZRootFormat { Invalid, USDA, USDC };
+
+USDZRootFormat GetUSDZRootFormat(const std::string &filename,
+                                 const uint8_t *data, size_t size) {
+  const std::string ext = str_tolower(GetFileExtension(filename));
+  const bool is_usdc = size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0;
+  const bool is_usda = size >= 5 && std::memcmp(data, "#usda", 5) == 0;
+  if ((ext == "usdc" || ext == "usd") && is_usdc) {
+    return USDZRootFormat::USDC;
+  }
+  if ((ext == "usda" || ext == "usd") && is_usda) {
+    return USDZRootFormat::USDA;
+  }
+  return USDZRootFormat::Invalid;
+}
+
+USDZRootFormat GetUSDZRootFormat(const uint8_t *addr, size_t length,
+                                 const std::vector<USDZAssetInfo> &assets) {
+  if (assets.empty()) return USDZRootFormat::Invalid;
+
+  const USDZAssetInfo &root = assets.front();
+  if (root.byte_begin > root.byte_end || root.byte_end > length) {
+    return USDZRootFormat::Invalid;
+  }
+
+  const uint8_t *root_data = addr + root.byte_begin;
+  const size_t root_size = root.byte_end - root.byte_begin;
+  return GetUSDZRootFormat(root.filename, root_data, root_size);
 }
 
 }  // namespace
@@ -514,55 +625,18 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
   }
 #endif
 
-  int32_t usdc_index = -1;
-  int32_t usda_index = -1;
-  {
-    bool warned = false;  // to report single warning message.
-    for (size_t i = 0; i < assets.size(); i++) {
-      std::string ext = str_tolower(GetFileExtension(assets[i].filename));
-      if (ext.compare("usdc") == 0) {
-        if ((usdc_index > -1) && (!warned)) {
-          if (warn) {
-            (*warn) +=
-                "Multiple USDC files were found in USDZ. Use the first found "
-                "one: " +
-                assets[size_t(usdc_index)].filename + "]\n";
-          }
-          warned = true;
-        }
-
-        if (usdc_index == -1) {
-          usdc_index = int32_t(i);
-        }
-      } else if (ext.compare("usda") == 0) {
-        if ((usda_index > -1) && (!warned)) {
-          if (warn) {
-            (*warn) +=
-                "Multiple USDA files were found in USDZ. Use the first found "
-                "one: " +
-                assets[size_t(usda_index)].filename + "]\n";
-          }
-          warned = true;
-        }
-        if (usda_index == -1) {
-          usda_index = int32_t(i);
-        }
-      }
-    }
-  }
+  // USDZ root-layer selection is positional: the first archive entry is the
+  // root. Do not prefer a later USDC merely because it is binary. Accept the
+  // neutral .usd suffix by sniffing its payload.
+  const USDZRootFormat root_format = GetUSDZRootFormat(addr, length, assets);
+  const int32_t usdc_index = root_format == USDZRootFormat::USDC ? 0 : -1;
+  const int32_t usda_index = root_format == USDZRootFormat::USDA ? 0 : -1;
 
   if ((usdc_index == -1) && (usda_index == -1)) {
     if (err) {
-      (*err) += "Neither USDC nor USDA file found in USDZ\n";
+      (*err) += "USDZ first entry is not a valid USD root layer\n";
     }
     return false;
-  }
-
-  if ((usdc_index >= 0) && (usda_index >= 0)) {
-    if (warn) {
-      (*warn) += "Both USDA and USDC file found. Use USDC file [" +
-                 assets[size_t(usdc_index)].filename + "]\n";
-    }
   }
 
   if (usdc_index >= 0) {
@@ -701,7 +775,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       return false;
@@ -817,7 +891,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
-  std::string base_dir = io::GetBaseDir(_filename);
+  std::string base_dir = io::GetBaseDir(filepath);
 
   if (io::IsMMapSupported()) {
     io::MMapFileHandle handle;
@@ -838,7 +912,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       }
     }
 
-    bool ret = LoadUSDAFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
+    bool ret = LoadUSDAFromMemory(handle.addr, size_t(handle.size), base_dir, stage, warn,
                               err, options);
 
     {
@@ -856,7 +930,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       if (err) {
@@ -865,7 +939,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDAFromMemory(data.data(), data.size(), filepath, stage, warn,
+    return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,
                               err, options);
   }
 }
@@ -877,7 +951,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
   PreInternCommonStrings();
 
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
-  std::string base_dir = io::GetBaseDir(_filename);
+  std::string base_dir = io::GetBaseDir(filepath);
 
   if (io::IsMMapSupported()) {
     io::MMapFileHandle handle;
@@ -898,7 +972,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
       }
     }
 
-    bool ret = LoadUSDFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
+    bool ret = LoadUSDFromMemory(handle.addr, size_t(handle.size), base_dir, stage, warn,
                               err, options);
     bool keep_mmap = false;
     if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
@@ -923,7 +997,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       return false;
@@ -968,7 +1042,7 @@ static bool LoadUSDFromMemoryImpl(const uint8_t *addr, const size_t length,
     }
 
     // Check against memory budget
-    size_t max_length = size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+    size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (decompressed_size > max_length) {
       if (err) {
         (*err) += "Decompressed USD size (" + std::to_string(decompressed_size) +
@@ -1041,6 +1115,11 @@ bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const
   if (!asset) {
     return false;
   }
+  asset->asset_map.clear();
+  asset->root_asset_name.clear();
+  asset->data.clear();
+  asset->addr = nullptr;
+  asset->size = 0;
 
   std::vector<USDZAssetInfo> assetInfos;
   if (!ParseUSDZHeader(addr, length, &assetInfos, warn, err)) {
@@ -1070,6 +1149,7 @@ bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const
     // Assume same filename does not exist.
     asset->asset_map[assetInfos[i].filename] =
         std::make_pair(assetInfos[i].byte_begin, assetInfos[i].byte_end);
+    if (i == 0) asset->root_asset_name = assetInfos[i].filename;
   }
 
   if (asset_on_memory) {
@@ -1252,21 +1332,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
 
   bool swap_endian = false;  // @FIXME
 
-  size_t max_length;
-
-  // 32bit env
-  if (sizeof(void *) == 4) {
-    if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
-      max_length = (std::numeric_limits<uint32_t>::max)();
-    } else {
-      max_length =
-          size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-    }
-  } else {
-    // TODO: Set hard limit?
-    max_length =
-        size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-  }
+  size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
 
   DCOUT("Max length = " << max_length);
 
@@ -1290,42 +1356,58 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   config.allow_unknown_apiSchemas = !options.strict_apiSchema_check;
   usdc::USDCReader reader(&sr, config);
 
+  // TINYUSDZ_CRATE_PROFILE=1: split the layer load into crate parse vs
+  // PrimSpec reconstruction (stderr; complements the tusdcat phase marks).
+  const bool profile_load = (std::getenv("TINYUSDZ_CRATE_PROFILE") != nullptr);
+  const auto load_t0 = std::chrono::steady_clock::now();
+
   if (!reader.ReadUSDC()) {
     if (warn) {
-      (*warn) = reader.GetWarning();
+      (*warn) += reader.GetWarning();
     }
 
     if (err) {
-      (*err) = reader.GetError();
+      (*err) += reader.GetError();
     }
     return false;
   }
 
   DCOUT("Loaded USDC file.");
 
+  const auto load_t1 = std::chrono::steady_clock::now();
+
   {
     if (!reader.get_as_layer(layer)) {
       DCOUT("Failed to reconstruct Layer from Crate.");
       if (warn) {
-        (*warn) = reader.GetWarning();
+        (*warn) += reader.GetWarning();
       }
 
       if (err) {
-        (*err) = reader.GetError();
+        (*err) += reader.GetError();
       }
       return false;
     }
   }
 
+  if (profile_load) {
+    const auto load_t2 = std::chrono::steady_clock::now();
+    fprintf(ProfileOutput(),
+            "[usdc-layer profile] %s: ReadUSDC %.1fms | ToLayer %.1fms\n",
+        filename.c_str(),
+        std::chrono::duration<double, std::milli>(load_t1 - load_t0).count(),
+        std::chrono::duration<double, std::milli>(load_t2 - load_t1).count());
+  }
+
   if (warn) {
-    (*warn) = reader.GetWarning();
+    (*warn) += reader.GetWarning();
   }
 
   // Reconstruct OK but may have some error.
   // TODO(syoyo): Return false in strict mode.
   if (err) {
     DCOUT(reader.GetError());
-    (*err) = reader.GetError();
+    (*err) += reader.GetError();
   }
 
   DCOUT("Reconstructed Stage from USDC file.");
@@ -1437,55 +1519,16 @@ bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
   }
 #endif
 
-  int32_t usdc_index = -1;
-  int32_t usda_index = -1;
-  {
-    bool warned = false;  // to report single warning message.
-    for (size_t i = 0; i < assets.size(); i++) {
-      std::string ext = str_tolower(GetFileExtension(assets[i].filename));
-      if (ext.compare("usdc") == 0) {
-        if ((usdc_index > -1) && (!warned)) {
-          if (warn) {
-            (*warn) +=
-                "Multiple USDC files were found in USDZ. Use the first found "
-                "one: " +
-                assets[size_t(usdc_index)].filename + "]\n";
-          }
-          warned = true;
-        }
-
-        if (usdc_index == -1) {
-          usdc_index = int32_t(i);
-        }
-      } else if (ext.compare("usda") == 0) {
-        if ((usda_index > -1) && (!warned)) {
-          if (warn) {
-            (*warn) +=
-                "Multiple USDA files were found in USDZ. Use the first found "
-                "one: " +
-                assets[size_t(usda_index)].filename + "]\n";
-          }
-          warned = true;
-        }
-        if (usda_index == -1) {
-          usda_index = int32_t(i);
-        }
-      }
-    }
-  }
+  // Layer loading follows the same USDZ first-entry root rule as Stage loading.
+  const USDZRootFormat root_format = GetUSDZRootFormat(addr, length, assets);
+  const int32_t usdc_index = root_format == USDZRootFormat::USDC ? 0 : -1;
+  const int32_t usda_index = root_format == USDZRootFormat::USDA ? 0 : -1;
 
   if ((usdc_index == -1) && (usda_index == -1)) {
     if (err) {
-      (*err) += "Neither USDC nor USDA file found in USDZ\n";
+      (*err) += "USDZ first entry is not a valid USD root layer\n";
     }
     return false;
-  }
-
-  if ((usdc_index >= 0) && (usda_index >= 0)) {
-    if (warn) {
-      (*warn) += "Both USDA and USDC file found. Use USDC file [" +
-                 assets[size_t(usdc_index)].filename + "]\n";
-    }
   }
 
   if (usdc_index >= 0) {
@@ -1571,28 +1614,29 @@ bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
 }
 
 
-// Copy assetresolver state to all PrimSpec in the tree.
-static bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
-                                 const std::string &cwp,
-                                 const std::vector<std::string> &search_paths) {
-  if (depth > (1024 * 1024 * 512)) {
-    return false;
-  }
+// Copy asset-resolver state to the complete PrimSpec tree without consuming the
+// process stack on deeply nested or variant-heavy input.
+static void PropagateAssetResolverState(
+    PrimSpec &root, const std::string &cwp,
+    const std::vector<std::string> &search_paths) {
+  DCOUT("current_working_path: " << cwp);
+  DCOUT("search_paths: " << search_paths);
 
-  if (depth == 0) {
-    DCOUT("current_working_path: " << cwp);
-    DCOUT("search_paths: " << search_paths);
-  }
+  std::vector<PrimSpec *> stack;
+  stack.push_back(&root);
+  while (!stack.empty()) {
+    PrimSpec *ps = stack.back();
+    stack.pop_back();
+    ps->set_asset_resolution_state(cwp, search_paths);
 
-  ps.set_asset_resolution_state(cwp, search_paths);
-
-  for (auto &child : ps.children()) {
-    if (!PropagateAssetResolverState(depth + 1, child, cwp, search_paths)) {
-      return false;
+    for (auto &child : ps->children()) stack.push_back(&child);
+    // Variant content carries the same anchor as the owning PrimSpec.
+    for (auto &variant_set_item : ps->variantSets()) {
+      for (auto &variant_item : variant_set_item.second.variantSet) {
+        stack.push_back(&variant_item.second);
+      }
     }
   }
-
-    return true;
 }
 
 bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
@@ -1633,7 +1677,7 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
     // Save current working path to each PrimSpec in the layer
     // for the subsequent composition operation.
     for (auto &root_ps : layer->primspecs()) {
-      PropagateAssetResolverState(0, root_ps.second, basedir, search_paths);
+      PropagateAssetResolverState(root_ps.second, basedir, search_paths);
     }
   }
 
@@ -1650,10 +1694,10 @@ bool LoadLayerFromFile(const std::string &_filename, Layer *stage,
 
   // TODO: Use AssetResolutionResolver.
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
-  std::string base_dir = io::GetBaseDir(_filename);
+  std::string base_dir = io::GetBaseDir(filepath);
 
   std::vector<uint8_t> data;
-  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+  size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     return false;
@@ -1870,11 +1914,6 @@ bool SetupUSDZAssetResolution(
   const USDZAsset *pusdzAsset)
 {
   // https://openusd.org/release/spec_usdz.html
-  //
-  // TODO(LTE):
-  //
-  // [ ] USD: usda, usdc, usd
-  // [ ] Audio: m4a, mp3, wav
 
   if (!pusdzAsset) {
     return false;
@@ -1899,6 +1938,20 @@ bool SetupUSDZAssetResolution(
   // HDR (Radiance HDR format) - commonly used for environment maps
   resolver.register_asset_resolution_handler("hdr", handler);
   resolver.register_asset_resolution_handler("HDR", handler);
+  resolver.register_asset_resolution_handler("avif", handler);
+  resolver.register_asset_resolution_handler("AVIF", handler);
+  resolver.register_asset_resolution_handler("m4a", handler);
+  resolver.register_asset_resolution_handler("M4A", handler);
+  resolver.register_asset_resolution_handler("mp3", handler);
+  resolver.register_asset_resolution_handler("MP3", handler);
+  resolver.register_asset_resolution_handler("wav", handler);
+  resolver.register_asset_resolution_handler("WAV", handler);
+  resolver.register_asset_resolution_handler("usd", handler);
+  resolver.register_asset_resolution_handler("USD", handler);
+  resolver.register_asset_resolution_handler("usda", handler);
+  resolver.register_asset_resolution_handler("USDA", handler);
+  resolver.register_asset_resolution_handler("usdc", handler);
+  resolver.register_asset_resolution_handler("USDC", handler);
 
   return true;
 }
@@ -2491,6 +2544,7 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
   size_t offset = 0;
   size_t entry_index = 0;
   bool found_usd_root = false;
+  std::unordered_set<std::string> entry_names;
 
   while ((offset + kZipLocalHeaderSize) <= length) {
     // Check for local file header signature
@@ -2563,6 +2617,19 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
     std::string name(reinterpret_cast<const char *>(addr + offset), name_len);
     offset += name_len;
 
+    if (!IsSafeUSDZAssetPath(name)) {
+      if (err) {
+        (*err) += "Entry '" + name + "': unsafe USDZ entry path.\n";
+      }
+      valid = false;
+    }
+    if (!entry_names.insert(name).second) {
+      if (err) {
+        (*err) += "Entry '" + name + "': duplicate USDZ entry path.\n";
+      }
+      valid = false;
+    }
+
     // Extra field
     uint16_t extra_len;
     memcpy(&extra_len, &local_header[28], 2);
@@ -2589,20 +2656,18 @@ bool ValidateUSDZ(const uint8_t *addr, size_t length,
       }
     }
 
-    // First entry must be a USD file (root layer)
+    // The first entry must have an exact USD extension and matching file
+    // magic. In particular, do not accept names such as root.usda.exe or a
+    // USDC payload renamed to .usda.
     if (entry_index == 0) {
-      std::string lower_name;
-      for (char c : name) {
-        lower_name += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-      }
-      if (lower_name.find(".usdc") != std::string::npos ||
-          lower_name.find(".usda") != std::string::npos ||
-          lower_name.find(".usd") != std::string::npos) {
+      if (uncompr_size_hdr <= length - offset &&
+          GetUSDZRootFormat(name, addr + offset, uncompr_size_hdr) !=
+              USDZRootFormat::Invalid) {
         found_usd_root = true;
       } else {
         if (err) {
-          (*err) += "First entry must be a USD file (root layer), got '" +
-                    name + "'.\n";
+          (*err) += "First entry must be a USD root layer whose extension "
+                    "matches its content, got '" + name + "'.\n";
         }
         valid = false;
       }

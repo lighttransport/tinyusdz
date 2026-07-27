@@ -50,8 +50,15 @@ struct MeshConfig {
   };
   TangentComputationMethod tangent_method = TangentComputationMethod::Hybrid;
 
-  // UV handling
-  std::string default_uv_primvar = "st";
+  // UV handling. The primary UV set is the first of these names the mesh
+  // actually authors; the secondary set is that name + "1". USD does not
+  // mandate a name and exporters disagree (Maya/USD "st", Blender "UVMap"), so
+  // a bare "st" lookup silently loses the UVs of a lot of real content. The
+  // name that won is reported back on RenderMesh::texcoords_0_name, so a
+  // consumer can match it against a UsdPrimvarReader varname
+  // (RenderTexture::uv_primvar).
+  std::vector<std::string> uv_primvar_names = {"st", "UVMap", "uv", "st0",
+                                               "map1"};
 
   // Index optimization
   bool build_vertex_indices = true;
@@ -112,6 +119,13 @@ struct PointInstancerConfig {
   // Keep the default as lightweight draw references. Enable this only for
   // consumers that require ordinary mesh payloads for each visible instance.
   bool duplicate_meshes = false;
+
+  // Large-scene mode can retain one GPU-oriented 32-byte record per instance
+  // and omit the much larger parallel CPU arrays/matrices/draw expansion.
+  bool compact_instances = false;
+  bool retain_source_arrays = true;
+  bool build_instance_transforms = true;
+  bool build_instance_draws = true;
 };
 
 struct AnimationConfig {
@@ -152,6 +166,11 @@ struct ConverterConfig {
   // Progress callback
   using ProgressCallback = std::function<void(float progress, const std::string& message)>;
   ProgressCallback progress_callback;
+
+  // Checked between catalog and geometry conversion steps. Returning true
+  // stops conversion before the next large attribute is materialized.
+  using CancelCallback = std::function<bool()>;
+  CancelCallback cancel_callback;
 };
 
 //
@@ -164,6 +183,49 @@ struct ConvertResult {
   std::vector<std::string> warnings;
 
   RenderScene scene;
+};
+
+enum class ConversionProfile : uint8_t { Streaming, Retained };
+
+enum class GeometryKind : uint8_t { Mesh, Points, Curves };
+enum class GeometryDisposition : uint8_t { Full, Proxy, Skip, Cancel };
+
+struct GeometryInfo {
+  GeometryKind kind = GeometryKind::Mesh;
+  int32_t id = -1;
+  std::string prim_path;
+  std::string type_name;
+  size_t point_count = 0;
+  size_t index_count = 0;
+  size_t estimated_resident_bytes = 0;
+  bool has_authored_extent = false;
+};
+
+struct StreamConvertResult {
+  bool success = false;
+  bool cancelled = false;
+  std::string error;
+  std::vector<std::string> warnings;
+  size_t mesh_count = 0;
+  size_t point_count = 0;
+  size_t curve_count = 0;
+};
+
+/// Receives a lightweight scene catalog followed by one converted geometry
+/// prim at a time. The catalog contains stable node/material/prototype IDs and
+/// placeholder geometry entries, but no large geometry arrays.
+class SceneSink {
+ public:
+  virtual ~SceneSink() = default;
+  virtual bool BeginScene(RenderScene&& catalog) = 0;
+  virtual GeometryDisposition SelectGeometry(const GeometryInfo&) {
+    return GeometryDisposition::Full;
+  }
+  virtual bool AddMesh(int32_t id, RenderMesh&& mesh) = 0;
+  virtual bool AddPoints(int32_t id, RenderPoints&& points) = 0;
+  virtual bool AddCurves(int32_t id, RenderCurves&& curves) = 0;
+  virtual bool EndScene() = 0;
+  virtual void AbortScene() {}
 };
 
 //
@@ -182,12 +244,30 @@ class RenderSceneConverter {
   // Main conversion entry point
   ConvertResult Convert(const ::tinyusdz::next::Stage& stage);
 
+  // Low-memory conversion entry point. Only one converted geometry prim is
+  // live outside the destination sink at a time.
+  StreamConvertResult ConvertToSink(const ::tinyusdz::next::Stage& stage,
+                                    SceneSink* sink);
+
+  // Cheap preflight and extent-only conversion for application-managed
+  // streaming pipelines. Neither method decodes the authored mesh payload.
+  GeometryInfo GetGeometryInfo(const UsdPrim& prim, GeometryKind kind,
+                               int32_t id = -1) const;
+  bool ConvertExtentProxy(const UsdPrim& prim, RenderMesh* out);
+  bool ConvertBoundsProxy(const UsdPrim& prim, const Float3& minimum,
+                          const Float3& maximum, RenderMesh* out);
+
   // Individual conversion methods (for custom pipelines)
+  bool ConvertRenderableMesh(const Stage& stage, const UsdPrim& prim,
+                             RenderMesh* out);
   bool ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out);
   bool ConvertPoints(const UsdPrim& prim, RenderPoints* out);
   bool ConvertCurves(const UsdPrim& prim, RenderCurves* out);
   bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
   bool ConvertMaterial(const ::tinyusdz::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
+  bool ConvertMaterial(const ::tinyusdz::next::Stage& stage,
+                       const UsdPrim& prim, RenderMaterial* out,
+                       RenderScene* scene);
   bool ConvertLight(const UsdPrim& prim, RenderLight* out);
   bool ConvertCamera(const UsdPrim& prim, RenderCamera* out);
   bool ConvertSkeleton(const UsdPrim& prim, Skeleton* out);
@@ -212,6 +292,10 @@ class RenderSceneConverter {
                                  RenderScene* scene);
   void AssignMaterialBindings(const ::tinyusdz::next::Stage& stage,
                               RenderScene* scene);
+  void AssignMeshMaterialBinding(const ::tinyusdz::next::Stage& stage,
+                                 const RenderScene& scene,
+                                 RenderMesh* mesh);
+
   /// Lazily create the shared default material (MaterialConfig::
   /// assign_default_material); returns its id.
   int32_t GetOrCreateDefaultMaterial(RenderScene* scene);
@@ -239,17 +323,20 @@ class RenderSceneConverter {
   /// tangents when seams/mirrors require per-corner data.
   bool ComputeVertexTangents(RenderMesh* mesh);
 
-  /// Resolve an authored asset path against the source layer directory.
-  std::string ResolveAssetPath(const std::string& file) const;
+  /// Resolve an authored asset path against the directory of the LAYER THAT
+  /// AUTHORED IT (`asset_anchor_id`, carried through composition -- see
+  /// next/layer/asset-anchor.hh), falling back to `config_.asset_base_dir` when
+  /// the prim has no anchor. Anchoring at the stage root instead would break any
+  /// scene whose look layers reach their textures with `../..`.
+  std::string ResolveAssetPath(const std::string& file,
+                               uint32_t asset_anchor_id = 0) const;
+  /// The anchor stamped on `prim`'s spec (0 when it has none).
+  static uint32_t AssetAnchorOf(const ::tinyusdz::next::UsdPrim& prim);
   /// Find-or-create an image record for `file`; returns its id (-1 on empty).
   int32_t ResolveImageId(RenderScene* scene, const std::string& file,
-                         ColorSpace color_space);
+                         ColorSpace color_space, uint32_t asset_anchor_id = 0);
 
   // Material extraction
-  bool ConvertMaterial(const ::tinyusdz::next::Stage& stage,
-                       const UsdPrim& prim,
-                       RenderMaterial* out,
-                       RenderScene* scene);
   bool ExtractPreviewSurface(const ::tinyusdz::next::Stage& stage,
                              const UsdPrim& shader_prim,
                              PreviewSurfaceShader* out,

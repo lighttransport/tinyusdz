@@ -13,6 +13,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,19 @@ struct LargeSceneLoadOptions {
 
   // Byte budget (MB) of payload asset file sizes for PayloadMode::Budget.
   size_t payload_budget_mb{12288};
+
+  // Optional authored-extent coverage cap for PayloadMode::Budget. Zero keeps
+  // the legacy byte-only policy. A positive value caps the cumulative
+  // view-independent projected AABB area derived from each owner's
+  // `extentsHint` (max of XY/XZ/YZ, in squared stage units). Payloads without a
+  // valid hint retain byte-only behavior. Both limits must admit a payload.
+  double payload_extent_budget{0.0};
+
+  // Keep uncompressed USDC arrays mmap-backed through composition. Fully
+  // supported by the next::pcp backend, whose LazyArrayRef owns a shared
+  // per-layer CrateDataSource. The legacy backend uses copy mode because its
+  // Stage mmap table represents only one source file.
+  bool mmap_zero_copy{true};
 
   // Allow '..'-relative reference/payload asset paths (required for scenes such
   // as Caldera). Resolution of the surviving '..' is delegated to the resolver.
@@ -86,11 +100,18 @@ class LargeSceneLoader {
             std::string *warn, std::string *err);
 
 #if !defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
-  Stage &stage() { return _stage; }
-  const Stage &stage() const { return _stage; }
+  Stage &stage() { return *_stage; }
+  const Stage &stage() const { return *_stage; }
+
+  // Thread-safe immutable snapshot. A background load/unload builds a new
+  // Stage and atomically publishes it under the loader mutex; existing
+  // snapshots remain valid until their last reader releases them. Prefer this
+  // over stage() when payload streaming can run concurrently.
+  std::shared_ptr<const Stage> stage_snapshot() const;
 #else
-  next::Stage &stage() { return _stage; }
-  const next::Stage &stage() const { return _stage; }
+  next::Stage &stage() { return *_stage; }
+  const next::Stage &stage() const { return *_stage; }
+  std::shared_ptr<const next::Stage> stage_snapshot() const;
 #endif
 
   // -- Deferred (unloaded) payload streaming --
@@ -99,8 +120,11 @@ class LargeSceneLoader {
   std::vector<Path> deferred_payload_paths() const;
   size_t deferred_count() const;
 
-  // Load / unload a single deferred payload, then call rebuild_stage() to
-  // reflect the change in stage().
+  // Load / unload a single deferred payload and publish a rebuilt Stage. These
+  // operations are serialized and may safely be called from a worker thread.
+  // Concurrent readers should hold stage_snapshot(), not a bare stage()
+  // reference. Explicit rebuild_stage() remains available but is not required
+  // after these calls.
   bool load_payload(const Path &prim_path, std::string *warn, std::string *err);
   bool unload_payload(const Path &prim_path, std::string *warn,
                       std::string *err);
@@ -120,11 +144,15 @@ class LargeSceneLoader {
 
  private:
 #if !defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
-  Stage _stage;
+  std::shared_ptr<Stage> _stage{std::make_shared<Stage>()};
 #else
-  next::Stage _stage;
+  std::shared_ptr<next::Stage> _stage{std::make_shared<next::Stage>()};
 #endif
   bool _loaded{false};
+  mutable std::mutex _mutex;
+
+  // Caller must hold _mutex.
+  bool RebuildStageLocked(std::string *warn, std::string *err);
 
 #if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
   std::unique_ptr<next::AssetResolver> _resolver;

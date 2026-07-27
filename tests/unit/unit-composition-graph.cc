@@ -30,6 +30,7 @@
 #include "layer.hh"
 #include "stage.hh"
 #include "tinyusdz.hh"
+#include "usdGeom.hh"
 
 using namespace tinyusdz;
 using namespace tinyusdz::composition_graph;
@@ -1049,6 +1050,83 @@ def Xform "Root"
   TEST_CHECK_(dag_stage.root_prims().size() == iter_stage.root_prims().size(),
               "DAG stage has %zu roots, iterative has %zu",
               dag_stage.root_prims().size(), iter_stage.root_prims().size());
+}
+
+// ---------------------------------------------------------------------------
+// compgraph_build_stage_no_duplicate_children_test
+// Regression: ComposePrimSpecFromIndex initializes its output by copying the
+// strongest PrimSpec wholesale, which also carries that layer's inline children.
+// BuildStage then composes each child from its own PrimIndex and appends it, so
+// every child used to be emitted TWICE -- the uncomposed copy first.
+//
+// GetPrimAtPath takes the first name match, so the uncomposed copy won it and
+// the child's own arcs were silently ignored: here /Root/Child is declared as an
+// empty `def Xform "Child" {}` carrying a payload, and the lookup returned that
+// empty declaration instead of the payload-backed composition.
+// ---------------------------------------------------------------------------
+
+void compgraph_build_stage_no_duplicate_children_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "PayloadSource"
+{
+    custom int payloadAttr = 42
+}
+
+def Xform "Root"
+{
+    def Xform "Child" (
+        payload = </PayloadSource>
+    )
+    {
+    }
+    def Scope "Plain"
+    {
+        custom float plainVal = 1.5
+    }
+}
+)";
+
+  std::string warn, err;
+
+  CompositionGraph graph;
+  TEST_CHECK(compose_via_graph(usda, graph, warn, err));
+  if (!err.empty()) { TEST_MSG("graph err: %s", err.c_str()); return; }
+
+  Stage dag_stage;
+  TEST_CHECK(graph.BuildStage(&dag_stage, &warn, &err));
+  if (!err.empty()) { TEST_MSG("BuildStage err: %s", err.c_str()); return; }
+
+  auto root_result = dag_stage.GetPrimAtPath(Path("/Root", ""));
+  TEST_CHECK(root_result.has_value());
+  if (!root_result.has_value()) return;
+  const Prim *root = root_result.value();
+
+  // Each child must appear exactly once.
+  TEST_CHECK_(root->children().size() == 2,
+              "/Root should have exactly 2 children, has %zu",
+              root->children().size());
+  for (const char *nm : {"Child", "Plain"}) {
+    size_t n = 0;
+    for (const auto &c : root->children()) {
+      if (c.element_name() == nm) n++;
+    }
+    TEST_CHECK_(n == 1, "/Root/%s should appear exactly once, appears %zu times",
+                nm, n);
+  }
+
+  // The prim reachable at /Root/Child must be the COMPOSED one (payload pulled
+  // in), not the empty declaration that the raw copy would have shadowed it with.
+  auto child_result = dag_stage.GetPrimAtPath(Path("/Root/Child", ""));
+  TEST_CHECK(child_result.has_value());
+  if (!child_result.has_value()) return;
+
+  const Xform *xf = child_result.value()->as<Xform>();
+  TEST_CHECK(xf != nullptr);
+  if (xf) {
+    TEST_CHECK_(xf->props.count("payloadAttr") == 1,
+                "/Root/Child must resolve to the payload-composed prim "
+                "(payloadAttr present), not the empty declaration");
+  }
 }
 
 // ---------------------------------------------------------------------------

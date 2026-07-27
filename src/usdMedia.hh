@@ -26,9 +26,9 @@ struct SpatialAudio {
   int64_t parent_id{-1};
 
   void set_name(const std::string &name_) { name = name_; }
-  const std::string &get_name() const { return name; }
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return name; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<value::AssetPath> filePath;  // asset filePath
   // "spatial", "nonSpatial"
@@ -47,13 +47,13 @@ struct SpatialAudio {
   std::map<std::string, Property> props;
 
   PrimMeta meta;
-  PrimMeta &metas() { return meta; }
-  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;

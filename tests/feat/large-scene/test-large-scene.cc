@@ -15,6 +15,7 @@
 
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "large-scene-loader.hh"
@@ -87,6 +88,75 @@ int main(int argc, char **argv) {
   CHECK(loader.layer_parse_count() >= 1,
         "cross-directory reference ./leaf.usda resolved (leaf.usda parsed)");
   std::cout << "  layer_parse_count = " << loader.layer_parse_count() << "\n";
+
+  // --- Authored-extent payload budget. The byte budget admits all three tiny
+  // payload files. The optional extent cap admits Small (coverage 1), rejects
+  // Large (coverage 16 > remaining 1), and preserves byte-only fallback for
+  // NoHint so adding the option does not silently discard unannotated assets.
+  {
+    const char *extent_root =
+        "tests/feat/large-scene/fixture/extent-budget/root.usda";
+    LargeSceneLoadOptions extent_opts;
+    extent_opts.payload_mode = LargeSceneLoadOptions::PayloadMode::Budget;
+    extent_opts.payload_budget_mb = 1;
+    extent_opts.payload_extent_budget = 2.0;
+    LargeSceneLoader extent_loader;
+    std::string extent_warn, extent_err;
+    if (!extent_loader.Load(extent_root, extent_opts, &extent_warn,
+                            &extent_err)) {
+      std::cerr << "extent-budget load failed: " << extent_err << "\n";
+      ++g_failures;
+    } else {
+      const std::vector<Path> extent_deferred =
+          extent_loader.deferred_payload_paths();
+      CHECK(extent_deferred.size() == 1,
+            "only the over-coverage payload is deferred");
+      if (extent_deferred.size() == 1) {
+        CHECK(extent_deferred.front() == Path("/Root/Large", ""),
+              "large extentsHint payload is the deferred payload");
+      }
+      CHECK(extent_loader.layer_parse_count() >= 2,
+            "small and no-hint payloads admitted and parsed");
+    }
+  }
+
+  // --- Cross-layer payload-author anchoring under the Budget policy. The
+  // payload arc on /World/P is authored in sub/weak.usda (the WEAKER sublayer)
+  // with a relative asset path, while the STRONGEST spec for /World/P is the
+  // root layer's `over`. The budget policy must stat ./pay.usda against the
+  // AUTHORING layer's directory (sub/); if the policy owner regressed to the
+  // strongest spec, the stat would anchor to the root fixture dir, find no
+  // file, and defer the payload.
+  {
+    const char *anchor_root =
+        "tests/feat/large-scene/fixture/payload-owner-anchor/root.usda";
+    LargeSceneLoadOptions aopts;
+    aopts.payload_mode = LargeSceneLoadOptions::PayloadMode::Budget;
+    aopts.payload_budget_mb = 1;  // ample for the tiny payload
+    LargeSceneLoader aloader;
+    std::string awarn, aerr;
+    if (!aloader.Load(anchor_root, aopts, &awarn, &aerr)) {
+      std::cerr << "payload-owner-anchor load failed: " << aerr << "\n";
+      ++g_failures;
+    } else {
+      CHECK(aloader.deferred_count() == 0,
+            "weaker-layer payload admitted (stat anchored to authoring layer)");
+      // The payload layer is the only arc routed through the parse-once
+      // registry here, so a non-zero count proves pay.usda actually loaded.
+      CHECK(aloader.layer_parse_count() >= 1,
+            "payload asset parsed via the authoring layer's anchor");
+      const auto snapshot = aloader.stage_snapshot();
+      CHECK(bool(snapshot), "stage_snapshot is valid after budget load");
+#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
+      // (legacy BuildStage has a known duplicate same-name prim quirk with
+      // nested payloads, so content presence is pinned on the next backend.)
+      if (snapshot) {
+        CHECK(HasPrim(*snapshot, "/World/P/M"),
+              "payload content composed and visible via snapshot");
+      }
+#endif
+    }
+  }
 
   // The referenced prim's descendants must be reconstructed into the namespace:
   // /P references </Leaf>, and Leaf has a child Mesh M, so /P/M must exist.
@@ -280,6 +350,34 @@ int main(int argc, char **argv) {
           CHECK(HasPrim(l6.stage(), "/P/Nested/M"),
                 "/P/Nested/M appears after streamed payload follows nested ./leaf.usda");
         }
+      }
+    }
+
+    // The same stream operation may run on a worker. Readers retain an
+    // immutable pre-stream Stage while the loader publishes a distinct rebuilt
+    // snapshot after the graph mutation completes.
+    LargeSceneLoader l6t;
+    std::string w6t, e6t;
+    if (!l6t.Load(nfix, o6, &w6t, &e6t)) {
+      std::cerr << "threaded deferred-nested load failed: " << e6t << "\n";
+      ++g_failures;
+    } else {
+      const std::shared_ptr<const Stage> before = l6t.stage_snapshot();
+      bool streamed = false;
+      std::string twarn, terr;
+      std::thread worker([&]() {
+        streamed = l6t.load_payload(Path("/P", ""), &twarn, &terr);
+      });
+      worker.join();
+      const std::shared_ptr<const Stage> after = l6t.stage_snapshot();
+      CHECK(streamed, "worker-thread payload load succeeds");
+      CHECK(before && after && before.get() != after.get(),
+            "worker publishes a distinct immutable Stage snapshot");
+      if (before && after) {
+        CHECK(!HasPrim(*before, "/P/Nested/M"),
+              "held pre-stream snapshot remains unchanged");
+        CHECK(HasPrim(*after, "/P/Nested/M"),
+              "published snapshot contains streamed payload");
       }
     }
   }

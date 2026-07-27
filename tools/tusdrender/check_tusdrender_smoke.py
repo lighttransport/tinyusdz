@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Smoke-test tusdrender output without third-party Python packages."""
 
+import re
 import struct
 import subprocess
 import sys
@@ -534,12 +535,14 @@ def Xform "World"
 def Xform "root"
 {
     def Mesh "back_red" {
+        uniform bool doubleSided = 1
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         point3f[] points = [(-2, -2, 2), (2, -2, 2), (2, 2, 2), (-2, 2, 2)]
         color3f[] primvars:displayColor = [(1, 0, 0)] (interpolation = "constant")
     }
     def Mesh "front_green_glass" {
+        uniform bool doubleSided = 1
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         point3f[] points = [(-1.5, -1.5, -2), (1.5, -1.5, -2), (1.5, 1.5, -2), (-1.5, 1.5, -2)]
@@ -574,6 +577,7 @@ def Xform "root"
 )
 def Mesh "root"
 {
+    uniform bool doubleSided = 1
     int[] faceVertexCounts = [4]
     int[] faceVertexIndices = [0, 1, 2, 3]
     point3f[] points = [(-2, -2, 0), (2, -2, 0), (2, 2, 0), (-2, 2, 0)]
@@ -885,7 +889,102 @@ def Xform "World"
     pixels = [rgba[i:i + 4] for i in range(0, len(rgba), 4)]
     if len(set(pixels)) <= 1:
         raise RuntimeError("direct primitive render appears blank")
+
+    check_vulkan(exe, srcdir, outdir)
     return 0
+
+
+def _tri_count(log):
+    """Parse 'triangles: N' from tusdrender's stderr, or None."""
+    for ln in log.splitlines():
+        m = re.search(r"triangles:\s*(\d+)", ln)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def check_vulkan(exe, srcdir, outdir):
+    """Vulkan GPU backend (-vk / -vkr) run + correctness test.
+
+    The -vk (compute trace) and -vkr (hardware ray-query) backends traverse the
+    same geometry as the CPU -rtPreview path, so a correct GPU render must:
+      * report the SAME triangle count as the CPU path (regression guard for the
+        polygon-triangulation fix -- quads must be split, else Suzanne renders
+        with holes at 656 of its 968 triangles);
+      * be non-blank (regression guard for the ray-query BLAS, which was fed the
+        wrong vertex array and rendered fully blank);
+      * agree with each other almost exactly (compute vs hardware-RT cross-check);
+      * share the CPU path's framing/dimensions.
+    It does not require a pixel match to the CPU image -- the GPU path flat-shades
+    with geometric normals, so it is darker -- but the above pin down a correct
+    render. See doc/tusdrender.md.
+
+    SKIPs gracefully (prints a note, returns) when no Vulkan device/driver is
+    available -- tusdrender then fails to create the engine and exits nonzero --
+    so the smoke test still passes on headless machines without Vulkan.
+    """
+    scene = srcdir / "tests/usda/suzanne.usda"
+    if not scene.exists():
+        print("vulkan: SKIP (suzanne.usda not found)")
+        return
+
+    # 64x64 autoframe keeps the GPU trace quick; -autoframe makes the GPU path use
+    # the same record camera as -rtPreview, so dimensions/framing line up.
+    size = ["-w", "64", "-height", "64", "-autoframe", "-ambient", "0.1"]
+    ref_out = outdir / "tusdrender-vk-ref.png"
+    ref = subprocess.run([exe, str(scene), str(ref_out), *size, "-rtPreview"],
+                         check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True)
+    ref_tris = _tri_count(ref.stdout + ref.stderr)
+    rw, rh, _ = read_png_rgba(ref_out)
+
+    vk_rgba = {}
+    for flag, name in (("-vk", "compute trace"), ("-vkr", "ray query")):
+        out = outdir / f"tusdrender{flag}.png"
+        run = subprocess.run([exe, str(scene), str(out), *size, flag],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        log = run.stdout + run.stderr
+        if run.returncode != 0 or not out.exists():
+            # No Vulkan device / driver in this environment -> not a failure.
+            print(f"vulkan {flag}: SKIP (no Vulkan device; rc={run.returncode})")
+            continue
+        if "backend: LightRT VK" not in log:
+            raise RuntimeError(f"{flag}: expected 'backend: LightRT VK' in output:\n{log}")
+        w, h, rgba = read_png_rgba(out)
+        if (w, h) != (rw, rh):
+            raise RuntimeError(
+                f"{flag}: dimensions {(w, h)} != CPU reference {(rw, rh)} "
+                f"(camera/framing mismatch)")
+        if len({rgba[i:i + 4] for i in range(0, len(rgba), 4)}) <= 1:
+            raise RuntimeError(f"{flag}: Vulkan render is blank (no hits)")
+        tris = _tri_count(log)
+        if ref_tris is not None and tris is not None and tris != ref_tris:
+            raise RuntimeError(
+                f"{flag}: triangle count {tris} != CPU reference {ref_tris} "
+                f"(polygons not triangulated -> holey render)")
+        device = next((ln for ln in log.splitlines() if "Vulkan device:" in ln), "").strip()
+        print(f"vulkan {flag} ({name}): PASS ({w}x{h}, {tris} tris; {device})")
+        vk_rgba[flag] = rgba
+
+    # Compute trace and hardware ray-query are independent paths over the same
+    # geometry; they must agree almost exactly.
+    if "-vk" in vk_rgba and "-vkr" in vk_rgba:
+        diff = _mean_abs_diff_rgb(vk_rgba["-vk"], vk_rgba["-vkr"])
+        if diff > 3.0:
+            raise RuntimeError(
+                f"-vk vs -vkr mean abs diff {diff:.1f} > 3.0 "
+                f"(compute trace and ray query disagree)")
+        print(f"vulkan: -vk vs -vkr agree (mean abs diff {diff:.2f})")
+
+
+def _mean_abs_diff_rgb(a_rgba, b_rgba):
+    """Mean absolute per-channel difference (RGB only) of two equal-size RGBA buffers."""
+    n = min(len(a_rgba), len(b_rgba))
+    total = 0
+    for i in range(0, n, 4):
+        for c in range(3):
+            total += abs(a_rgba[i + c] - b_rgba[i + c])
+    return total / (n // 4 * 3) if n else 0.0
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "asset-resolution.hh"
+#include "composition.hh"
 #include "image-loader.hh"
 #include "mmap-array-ref.hh"
 #include "tsd/tinysubdiv.hh"
@@ -19,6 +20,164 @@
 #include "tusdr_context.hh"
 
 namespace tusdr {
+
+// ===========================================================================
+// Legacy stage load WITH composition.
+//
+// `tinyusdz::LoadUSDFromFile` parses a single layer; it does NOT expand
+// composition arcs. The legacy path used it directly, so every prim contributed
+// by a reference / payload / sublayer / inherit / variant simply did not exist:
+// a Material referenced from a look layer was missing (the mesh fell back to the
+// default gray, dropping its textures) and payload-gated geometry rendered as
+// "no renderable geometry". Compose to a fixed point first, mirroring the
+// viewer's loader (examples/tusdview/scene_loader.cc ComposeToFixedPoint).
+// ===========================================================================
+
+namespace {
+
+bool LayerHasCompositionArcs(const tinyusdz::Layer &layer) {
+  return !layer.metas().subLayers.empty() ||
+         layer.check_unresolved_references() ||
+         layer.check_unresolved_payload() ||
+         layer.check_unresolved_inherits() ||
+         layer.check_unresolved_variant() ||
+         layer.check_unresolved_specializes();
+}
+
+// LIVRPS to a fixed point. tusdrender's legacy path is eager: every payload and
+// reference loads (no deferred-arc policy — that lives on the `next` path).
+bool ComposeToFixedPoint(tinyusdz::AssetResolutionResolver &resolver,
+                         tinyusdz::Layer &&src, tinyusdz::Layer *composed,
+                         std::string *warn, std::string *err) {
+  tinyusdz::Layer work = std::move(src);
+
+  // A layer-relative asset path may climb with '..' — real layer stacks reach
+  // sibling asset directories that way (ALab's looks live several levels up), and
+  // rejecting them fails composition outright. Matches tusdview's default and the
+  // `next` resolver's `allow_parent_paths`.
+  tinyusdz::ReferencesCompositionOptions ref_opts;
+  ref_opts.allow_parent_relative_paths = true;
+  tinyusdz::PayloadCompositionOptions pl_opts;
+  pl_opts.allow_parent_relative_paths = true;
+
+  constexpr int kMaxIteration = 64;
+  for (int i = 0; i < kMaxIteration; i++) {
+    bool has_unresolved = false;
+
+    if (work.check_unresolved_references()) {
+      has_unresolved = true;
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositeReferences(resolver, work, &tmp, warn, err,
+                                         ref_opts)) {
+        return false;
+      }
+      work = std::move(tmp);
+    }
+
+    if (work.check_unresolved_payload()) {
+      has_unresolved = true;
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositePayload(resolver, work, &tmp, warn, err,
+                                      pl_opts)) {
+        return false;
+      }
+      work = std::move(tmp);
+    }
+
+    if (work.check_unresolved_inherits()) {
+      has_unresolved = true;
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositeInherits(work, &tmp, warn, err)) return false;
+      work = std::move(tmp);
+    }
+
+    if (work.check_unresolved_variant()) {
+      has_unresolved = true;
+      // Resolve variants only once references + payloads have settled (AOUSD
+      // Core Spec 10.3.2.5): a variant's CONTENT often arrives THROUGH an arc,
+      // so selecting early picks an empty option and the geometry is lost.
+      const bool arcs_settled = !work.check_unresolved_references() &&
+                                !work.check_unresolved_payload();
+      if (arcs_settled) {
+        tinyusdz::Layer tmp;
+        if (!tinyusdz::CompositeVariant(work, &tmp, warn, err)) return false;
+        work = std::move(tmp);
+      }
+    }
+
+    if (work.check_unresolved_specializes()) {
+      has_unresolved = true;
+      tinyusdz::Layer tmp;
+      if (!tinyusdz::CompositeSpecializes(work, &tmp, warn, err)) return false;
+      work = std::move(tmp);
+    }
+
+    if (!has_unresolved) {
+      *composed = std::move(work);
+      return true;
+    }
+  }
+
+  if (err) *err += "Composition did not converge before the iteration limit.\n";
+  return false;
+}
+
+}  // namespace
+
+bool LoadStageComposedLegacy(const std::string &path,
+                             const tinyusdz::USDLoadOptions &load_options,
+                             tinyusdz::Stage *stage, std::string *warn,
+                             std::string *err) {
+  if (!stage) return false;
+
+  // .usdz keeps the direct parser path (its arcs resolve inside the archive, and
+  // the zero-copy/asset handling here is the loader's own).
+  std::string lower = path;
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return char(std::tolower(c)); });
+  const bool is_usdz =
+      lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".usdz") == 0;
+  if (is_usdz) {
+    return tinyusdz::LoadUSDFromFile(path, stage, warn, err, load_options);
+  }
+
+  tinyusdz::Layer root;
+  std::string lwarn, lerr;
+  if (!tinyusdz::LoadLayerFromFile(path, &root, &lwarn, &lerr)) {
+    // Not layer-loadable (or an unsupported flavor) — fall back to the direct
+    // parser rather than failing the render outright.
+    return tinyusdz::LoadUSDFromFile(path, stage, warn, err, load_options);
+  }
+
+  if (!LayerHasCompositionArcs(root)) {
+    // No arcs: keep the direct parser path. LayerToStage drops some less-common
+    // concrete schemas (e.g. NurbsPatch) and the direct load retains zero-copy
+    // USDC storage, so composing here would only lose things.
+    return tinyusdz::LoadUSDFromFile(path, stage, warn, err, load_options);
+  }
+
+  if (warn) *warn += lwarn;
+
+  tinyusdz::AssetResolutionResolver resolver;
+  resolver.set_search_paths({DirName(path)});
+
+  if (!root.metas().subLayers.empty()) {
+    tinyusdz::SublayersCompositionOptions sl_opts;
+    sl_opts.allow_parent_relative_paths = true;
+    tinyusdz::Layer tmp;
+    if (!tinyusdz::CompositeSublayers(resolver, root, &tmp, warn, err,
+                                      sl_opts)) {
+      return false;
+    }
+    root = std::move(tmp);
+  }
+
+  tinyusdz::Layer composed;
+  if (!ComposeToFixedPoint(resolver, std::move(root), &composed, warn, err)) {
+    return false;
+  }
+  return tinyusdz::LayerToStage(std::move(composed), stage, warn, err);
+}
 
 
 using tinyusdz::value::color3f;
@@ -48,11 +207,194 @@ using tinyusdz::tydra::RenderScene;
 //      RSS past the cap (covers the triangle stream precisely, mid-flight).
 // ===========================================================================
 
-// Decoded RGB(A) texture (8-bit) sampled by the diffuse texture pipeline.
-// UsdUVTexture wrap mode (inputs:wrapS / inputs:wrapT).
+// ===========================================================================
+// Legacy texture bridge.
+//
+// tydra's eager converter already RESOLVES and DECODES every UsdUVTexture into
+// RenderScene::{textures,images,buffers} — this path simply never consumed it:
+// materials were flattened to a constant `base_color` and every `tex_id` stayed
+// -1, so any .usda/.usdz (which does not route to the `next` path) rendered
+// untextured. Convert tydra's decoded images into the renderer's `Texture` and
+// bind them per material, exactly as the `next` path does.
+// ===========================================================================
 
+namespace {
 
+WrapMode ToTusdrWrapLegacy(tinyusdz::tydra::UVTexture::WrapMode m) {
+  using W = tinyusdz::tydra::UVTexture::WrapMode;
+  switch (m) {
+    case W::REPEAT: return WrapMode::Repeat;
+    case W::MIRROR: return WrapMode::Mirror;
+    case W::CLAMP_TO_BORDER: return WrapMode::Black;
+    case W::CLAMP_TO_EDGE: break;
+  }
+  return WrapMode::Clamp;
+}
 
+// Source channel of a scalar (roughness/metallic/occlusion/opacity) texture:
+// 0=r, 1=g, 2=b, 3=a — matching TriInfo::{rough,metal,occ,opacity}_ch.
+uint8_t ScalarChannel(const tinyusdz::tydra::UVTexture &tex) {
+  using C = tinyusdz::tydra::UVTexture::Channel;
+  switch (tex.connectedOutputChannel) {
+    case C::G: return 1;
+    case C::B: return 2;
+    case C::A: return 3;
+    case C::R:
+    case C::RGB:
+    case C::RGBA: break;
+  }
+  return 0;
+}
+
+// Decode a tydra TextureImage's buffer to RGBA8. Mirrors the viewer's decoder
+// (examples/tusdview/mesh_build.cc DecodeToRGBA8): tydra may hand back UInt8,
+// UInt16, Half or Float texels depending on the source image.
+bool DecodeLegacyImageRGBA8(const RenderScene &scene,
+                            const tinyusdz::tydra::TextureImage &img,
+                            Texture *out) {
+  if (img.buffer_id < 0 || size_t(img.buffer_id) >= scene.buffers.size()) {
+    return false;
+  }
+  if (!img.decoded || img.width <= 0 || img.height <= 0 || img.channels <= 0) {
+    return false;
+  }
+  const tinyusdz::tydra::BufferData &buf =
+      scene.buffers[size_t(img.buffer_id)];
+  const size_t w = size_t(img.width);
+  const size_t h = size_t(img.height);
+  const size_t ch = size_t(img.channels);
+  const size_t npix = w * h;
+  if (npix == 0) return false;
+
+  out->width = img.width;
+  out->height = img.height;
+  out->channels = 4;
+  out->pixels.assign(npix * 4, 255);
+
+  auto clamp8 = [](float v) -> uint8_t {
+    if (v < 0.0f) v = 0.0f;
+    if (v > 255.0f) v = 255.0f;
+    return uint8_t(v + 0.5f);
+  };
+  // Replicate a 1-channel source across RGB (gray), and treat a 2-channel one as
+  // gray+alpha — the same expansion the viewer does.
+  auto store = [&](size_t i, float c0, float c1, float c2, float c3) {
+    if (ch == 1) { c1 = c0; c2 = c0; c3 = 255.0f; }
+    else if (ch == 2) { c3 = c1; c1 = c0; c2 = c0; }
+    out->pixels[i * 4 + 0] = clamp8(c0);
+    out->pixels[i * 4 + 1] = clamp8(c1);
+    out->pixels[i * 4 + 2] = clamp8(c2);
+    out->pixels[i * 4 + 3] = clamp8(c3);
+  };
+  auto at = [&](const auto *p, size_t i, size_t c, float scale) -> float {
+    return c < ch ? float(p[i * ch + c]) * scale : 0.0f;
+  };
+
+  using CT = tinyusdz::tydra::ComponentType;
+  switch (img.texelComponentType) {
+    case CT::UInt8: {
+      if (buf.data.size() < npix * ch) return false;
+      const uint8_t *p = buf.data.data();
+      for (size_t i = 0; i < npix; ++i) {
+        store(i, at(p, i, 0, 1.0f), at(p, i, 1, 1.0f), at(p, i, 2, 1.0f),
+              ch > 3 ? at(p, i, 3, 1.0f) : 255.0f);
+      }
+      return true;
+    }
+    case CT::UInt16: {
+      if (buf.data.size() < npix * ch * sizeof(uint16_t)) return false;
+      const uint16_t *p =
+          reinterpret_cast<const uint16_t *>(buf.data.data());
+      constexpr float k = 255.0f / 65535.0f;
+      for (size_t i = 0; i < npix; ++i) {
+        store(i, at(p, i, 0, k), at(p, i, 1, k), at(p, i, 2, k),
+              ch > 3 ? at(p, i, 3, k) : 255.0f);
+      }
+      return true;
+    }
+    case CT::Float: {
+      if (buf.data.size() < npix * ch * sizeof(float)) return false;
+      const float *p = reinterpret_cast<const float *>(buf.data.data());
+      for (size_t i = 0; i < npix; ++i) {
+        store(i, at(p, i, 0, 255.0f), at(p, i, 1, 255.0f), at(p, i, 2, 255.0f),
+              ch > 3 ? at(p, i, 3, 255.0f) : 255.0f);
+      }
+      return true;
+    }
+    default:
+      // Half and the integer signed types are not produced by tydra's decoder
+      // for texture images today; skip rather than misread the buffer.
+      return false;
+  }
+}
+
+}  // namespace
+
+std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
+                                                   std::vector<Texture> *out) {
+  std::vector<LegacyMaterialTex> bindings(scene.materials.size());
+  if (!out) return bindings;
+
+  // tydra texture index -> renderer texture index (-1 = undecodable). Cached so
+  // a texture shared by several materials is decoded once.
+  std::vector<int32_t> by_tydra_id(scene.textures.size(), -2);
+
+  auto resolve = [&](int32_t tydra_id) -> int32_t {
+    if (tydra_id < 0 || size_t(tydra_id) >= scene.textures.size()) return -1;
+    int32_t &slot = by_tydra_id[size_t(tydra_id)];
+    if (slot != -2) return slot;  // decoded (or already known-bad)
+    slot = -1;
+
+    const tinyusdz::tydra::UVTexture &tex = scene.textures[size_t(tydra_id)];
+    if (tex.texture_image_id < 0 ||
+        size_t(tex.texture_image_id) >= scene.images.size()) {
+      return slot;
+    }
+    Texture t;
+    if (!DecodeLegacyImageRGBA8(scene, scene.images[size_t(tex.texture_image_id)],
+                                &t)) {
+      return slot;
+    }
+    t.wrap_s = ToTusdrWrapLegacy(tex.wrapS);
+    t.wrap_t = ToTusdrWrapLegacy(tex.wrapT);
+    t.srgb = scene.images[size_t(tex.texture_image_id)].colorSpace ==
+             tinyusdz::tydra::ColorSpace::sRGB;
+    // UsdUVTexture inputs:scale / inputs:bias (e.g. (2,2,2)/(-1,-1,-1) to unpack
+    // a normal map); the integrator applies them post-sample.
+    t.scale = Vec3{tex.scale[0], tex.scale[1], tex.scale[2]};
+    t.bias = Vec3{tex.bias[0], tex.bias[1], tex.bias[2]};
+    t.build_mips();
+
+    slot = int32_t(out->size());
+    out->push_back(std::move(t));
+    return slot;
+  };
+
+  for (size_t i = 0; i < scene.materials.size(); ++i) {
+    const tinyusdz::tydra::RenderMaterial &mat = scene.materials[i];
+    if (!mat.surfaceShader.has_value()) continue;
+    const tinyusdz::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
+    LegacyMaterialTex &b = bindings[i];
+
+    b.diffuse = resolve(s.diffuseColor.texture_id);
+    b.emissive = resolve(s.emissiveColor.texture_id);
+    b.normal = resolve(s.normal.texture_id);
+    b.roughness = resolve(s.roughness.texture_id);
+    b.metallic = resolve(s.metallic.texture_id);
+    b.occlusion = resolve(s.occlusion.texture_id);
+    b.opacity = resolve(s.opacity.texture_id);
+
+    auto chan = [&](int32_t tydra_id) -> uint8_t {
+      if (tydra_id < 0 || size_t(tydra_id) >= scene.textures.size()) return 0;
+      return ScalarChannel(scene.textures[size_t(tydra_id)]);
+    };
+    b.roughness_ch = chan(s.roughness.texture_id);
+    b.metallic_ch = chan(s.metallic.texture_id);
+    b.occlusion_ch = chan(s.occlusion.texture_id);
+    b.opacity_ch = chan(s.opacity.texture_id);
+  }
+  return bindings;
+}
 
 
 std::vector<int> FaceMaterialIds(const RenderMesh &mesh) {
@@ -73,11 +415,50 @@ std::vector<int> FaceMaterialIds(const RenderMesh &mesh) {
 void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
                       const matrix4d &world, std::vector<float> *vertices,
                       std::vector<TriInfo> *tris, Bounds *bounds,
-                      LightCache *lights) {
+                      LightCache *lights, std::vector<float> *tri_uvs,
+                      const std::vector<LegacyMaterialTex> *mat_tex,
+                      const PurposeVisibilityMap *pv) {
+  // Resolved purpose/visibility (BuildLegacyPurposeVisibility): value 0 means an
+  // ancestor (or the mesh) authored visibility=invisible -- emit nothing. Any
+  // other value is the inherited purpose bit for every triangle of this mesh.
+  // No map / no entry keeps the old behavior (default purpose, visible).
+  uint32_t purpose_bit = kPurposeDefaultBit;
+  if (pv) {
+    auto it = pv->find(mesh.abs_path);
+    if (it != pv->end()) {
+      if (it->second == 0u) return;  // invisible
+      purpose_bit = it->second;
+    }
+  }
   if (!vertices || !tris || !bounds) return;
   const std::vector<uint32_t> &indices = mesh.faceVertexIndices();
   const std::vector<uint32_t> &counts = mesh.faceVertexCounts();
   std::vector<int> material_ids = FaceMaterialIds(mesh);
+
+  // Primary UV set. tydra converts texcoords to FACEVARYING (one per face
+  // corner), but a vertex-varying set is still possible, so index accordingly.
+  const tinyusdz::tydra::VertexAttribute *uv_attr = nullptr;
+  if (tri_uvs) {
+    auto it = mesh.texcoords.find(0);
+    if (it != mesh.texcoords.end()) uv_attr = &it->second;
+    else if (!mesh.texcoords.empty()) uv_attr = &mesh.texcoords.begin()->second;
+    if (uv_attr && uv_attr->empty()) uv_attr = nullptr;
+  }
+  const bool uv_facevarying = uv_attr && uv_attr->is_facevarying();
+  // `fv` is the face-corner ordinal, `pi` the point index; pick whichever the
+  // attribute is indexed by. Returns raw USD UVs — Texture::sample() does the
+  // v-flip, so do not pre-flip here (matches the `next` path).
+  auto uv_at = [&](size_t fv, uint32_t pi) -> std::pair<float, float> {
+    if (!uv_attr) return {0.0f, 0.0f};
+    const size_t i = uv_facevarying ? fv : size_t(pi);
+    if (i >= uv_attr->vertex_count()) return {0.0f, 0.0f};
+    const size_t esz = uv_attr->format_size();
+    const std::vector<uint8_t> &d = uv_attr->get_data();
+    if ((i + 1) * esz > d.size() || esz < 2 * sizeof(float)) return {0.0f, 0.0f};
+    float uv[2];
+    std::memcpy(uv, d.data() + i * esz, sizeof(uv));
+    return {uv[0], uv[1]};
+  };
   float mesh_area = 0.0f;
   if (mesh.is_area_light) {
     size_t area_cursor = 0;
@@ -126,16 +507,53 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
         n = Mul(n, -1.0f);
       }
       TriInfo tri;
+      tri.purpose_bit = purpose_bit;
       tri.p0 = p0;
       tri.p1 = p1;
       tri.p2 = p2;
       tri.n = n;
+      // Authored doubleSided (RenderMesh default false = single-sided): drives
+      // back-face culling in the flat integrator, matching the raster backends.
+      tri.double_sided = mesh.doubleSided ? 1 : 0;
       tri.base_color = MaterialColor(scene, mesh, mat_id);
       tri.emission = MaterialEmission(scene, mat_id);
       tri.roughness = MaterialRoughness(scene, mat_id);
       tri.metallic = MaterialMetallic(scene, mat_id);
+      tri.opacity = MaterialOpacity(scene, mesh, mat_id);
+      tri.opacity_threshold = MaterialOpacityThreshold(scene, mat_id);
       if (mesh.is_area_light) {
         tri.emission = MeshLightEmission(scene, mesh, mat_id, mesh_area);
+      }
+      // Bind this material's textures. The integrator MULTIPLIES the sampled
+      // texel by the constant, so a textured channel's constant becomes white —
+      // otherwise the UsdPreviewSurface fallback (0.18 gray) would darken it.
+      if (mat_tex && mat_id >= 0 && size_t(mat_id) < mat_tex->size()) {
+        const LegacyMaterialTex &mt = (*mat_tex)[size_t(mat_id)];
+        if (mt.diffuse >= 0) {
+          tri.tex_id = mt.diffuse;
+          tri.base_color = Vec3{1.0f, 1.0f, 1.0f};
+        }
+        if (mt.emissive >= 0 && !mesh.is_area_light) {
+          tri.emission_tex_id = mt.emissive;
+          tri.emission = Vec3{1.0f, 1.0f, 1.0f};
+        }
+        tri.normal_tex_id = mt.normal;
+        tri.rough_tex_id = mt.roughness;
+        tri.rough_ch = mt.roughness_ch;
+        tri.metal_tex_id = mt.metallic;
+        tri.metal_ch = mt.metallic_ch;
+        tri.occ_tex_id = mt.occlusion;
+        tri.occ_ch = mt.occlusion_ch;
+        tri.opacity_tex_id = mt.opacity;
+        tri.opacity_ch = mt.opacity_ch;
+      }
+      if (tri_uvs) {
+        // 6 floats/tri, parallel to *tris, in the same fan order as i0/i1/i2.
+        const auto uv0 = uv_at(cursor + 0, i0);
+        const auto uv1 = uv_at(cursor + size_t(k), i1);
+        const auto uv2 = uv_at(cursor + size_t(k) + 1, i2);
+        tri_uvs->insert(tri_uvs->end(), {uv0.first, uv0.second, uv1.first,
+                                         uv1.second, uv2.first, uv2.second});
       }
       vertices->push_back(p0.x);
       vertices->push_back(p0.y);
@@ -151,6 +569,10 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
       if (lights && mesh.is_area_light && Luminance(tri.emission) > 1.0e-6f) {
         float area = TriangleArea(p0, p1, p2);
         if (area > 1.0e-10f) {
+          // Mark the triangle as an analytic light so a BSDF-bounce ray landing
+          // on it does not add its emission on top of the direct-lighting term
+          // that already delivers it.
+          (*tris)[size_t(tri_id)].area_light = 1;
           PreviewLight ml;
           ml.kind = PreviewLight::Kind::Mesh;
           ml.position = Mul(Add(Add(p0, p1), p2), 1.0f / 3.0f);
@@ -175,36 +597,43 @@ void CollectGeometry(const RenderScene &scene, const Node &node,
                      std::vector<float> *vertices, std::vector<TriInfo> *tris,
                      Bounds *bounds,
                      const std::unordered_set<std::string> *skip_paths,
-                     LightCache *lights) {
+                     LightCache *lights, std::vector<float> *tri_uvs,
+                     const std::vector<LegacyMaterialTex> *mat_tex,
+                     const PurposeVisibilityMap *pv) {
   if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
       size_t(node.id) < scene.meshes.size()) {
     const RenderMesh &mesh = scene.meshes[size_t(node.id)];
     if (!skip_paths || !skip_paths->count(mesh.abs_path)) {
       AddMeshTriangles(scene, mesh, node.global_matrix, vertices, tris, bounds,
-                       lights);
+                       lights, tri_uvs, mat_tex, pv);
     }
   }
   for (const Node &child : node.children) {
-    CollectGeometry(scene, child, vertices, tris, bounds, skip_paths, lights);
+    CollectGeometry(scene, child, vertices, tris, bounds, skip_paths, lights,
+                    tri_uvs, mat_tex, pv);
   }
 }
 
 void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
                         std::vector<TriInfo> *tris, Bounds *bounds,
                         const std::unordered_set<std::string> *skip_paths,
-                        LightCache *lights) {
+                        LightCache *lights, std::vector<float> *tri_uvs,
+                        const std::vector<LegacyMaterialTex> *mat_tex,
+                        const PurposeVisibilityMap *pv) {
   for (const Node &root : scene.nodes) {
-    CollectGeometry(scene, root, vertices, tris, bounds, skip_paths, lights);
+    CollectGeometry(scene, root, vertices, tris, bounds, skip_paths, lights,
+                    tri_uvs, mat_tex, pv);
   }
   for (const tinyusdz::tydra::RenderInstance &inst : scene.instances) {
     if (inst.mesh_id >= 0 && size_t(inst.mesh_id) < scene.meshes.size() &&
         inst.visible) {
       const RenderMesh &mesh = scene.meshes[size_t(inst.mesh_id)];
       AddMeshTriangles(scene, mesh, inst.global_matrix, vertices, tris, bounds,
-                       lights);
+                       lights, tri_uvs, mat_tex, pv);
     }
   }
 }
+
 
 
 template <typename T>
@@ -226,9 +655,18 @@ bool BorrowMMapArray(const tinyusdz::Stage &stage, const std::string &prim_path,
   if (reinterpret_cast<uintptr_t>(bytes) % alignof(T) == 0) {
     ptr = reinterpret_cast<const T *>(bytes);
   }
+  // On 64-bit hosts this is always false (size_t == uint64_t), but the guard
+  // is needed for 32-bit targets where size_t < uint64_t.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wtautological-type-limit-compare"
+#endif
   if (ref->element_count > uint64_t((std::numeric_limits<size_t>::max)())) {
     return false;
   }
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
   out->data = ptr;
   out->bytes = bytes;
   out->count = static_cast<size_t>(ref->element_count);
@@ -368,6 +806,38 @@ tinyusdz::Purpose ResolvePurpose(const tinyusdz::Prim &prim,
 bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask) {
   return (purpose_bit & purpose_mask) != 0;
 }
+
+// Resolve inherited purpose + visibility for every prim of the (legacy) Stage,
+// keyed by absolute prim path. Value = the purpose bit the subtree inherits, or
+// 0 when an ancestor (or the prim itself) authored visibility="invisible". The
+// tydra RenderScene carries neither, so without this the legacy shaded path
+// drew guide/proxy geometry unconditionally (-purpose/-hideProxy/... were
+// no-ops) and rendered invisible prims.
+void BuildLegacyPurposeVisibility(const tinyusdz::Stage &stage,
+                                  PurposeVisibilityMap *out) {
+  if (!out) return;
+  std::function<void(const tinyusdz::Prim &, tinyusdz::Purpose, bool)> walk =
+      [&](const tinyusdz::Prim &prim, tinyusdz::Purpose inherited,
+          bool invisible) {
+        if (const tinyusdz::GPrim *gp = AsPreviewGPrim(prim)) {
+          tinyusdz::Visibility vis = tinyusdz::Visibility::Inherited;
+          if (gp->visibility.get_value().get_default(&vis) &&
+              vis == tinyusdz::Visibility::Invisible) {
+            invisible = true;
+          }
+        }
+        inherited = ResolvePurpose(prim, inherited);
+        const std::string path = prim.absolute_path().full_path_name();
+        (*out)[path] = invisible ? 0u : PurposeBit(inherited);
+        for (const tinyusdz::Prim &child : prim.children()) {
+          walk(child, inherited, invisible);
+        }
+      };
+  for (const tinyusdz::Prim &root : stage.root_prims()) {
+    walk(root, tinyusdz::Purpose::Default, false);
+  }
+}
+
 
 bool AddRTPreviewMesh(const tinyusdz::Stage &stage, const std::string &prim_path,
                       const tinyusdz::GeomMesh &mesh, const matrix4d &world,
@@ -1145,13 +1615,13 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
       }
       direct->direct_paths.insert(path);
     }
-  } else if (const tinyusdz::GeomNurbsCurves *curves = prim.as<tinyusdz::GeomNurbsCurves>()) {
+  } else if (const tinyusdz::GeomNurbsCurves *nurbsCurves = prim.as<tinyusdz::GeomNurbsCurves>()) {
     std::vector<tinyusdz::value::point3f> points;
     std::vector<int> counts;
     std::vector<float> widths;
-    if (EvalAnim(stage, curves->points, "points", time, &points) &&
-        EvalAnim(stage, curves->curveVertexCounts, "curveVertexCounts", time, &counts)) {
-      EvalAnim(stage, curves->widths, "widths", time, &widths);
+    if (EvalAnim(stage, nurbsCurves->points, "points", time, &points) &&
+        EvalAnim(stage, nurbsCurves->curveVertexCounts, "curveVertexCounts", time, &counts)) {
+      EvalAnim(stage, nurbsCurves->widths, "widths", time, &widths);
       AppendLinearCurveStrands(points, counts, widths, world, round_points,
                                round_radii, round_first, round_count,
                                &direct->round_curve_info, bounds);
@@ -1160,15 +1630,15 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
   } else if (const tinyusdz::GeomNurbsPatch *patch = prim.as<tinyusdz::GeomNurbsPatch>()) {
     AddNurbsPatchTriangles(stage, *patch, world, time, vertices, tris, bounds);
     direct->direct_paths.insert(path);
-  } else if (const tinyusdz::GeomHermiteCurves *curves = prim.as<tinyusdz::GeomHermiteCurves>()) {
+  } else if (const tinyusdz::GeomHermiteCurves *hermiteCurves = prim.as<tinyusdz::GeomHermiteCurves>()) {
     std::vector<tinyusdz::value::point3f> points;
     std::vector<tinyusdz::value::vector3f> tangents;
     std::vector<int> counts;
     std::vector<float> widths;
-    if (EvalAnim(stage, curves->points, "points", time, &points) &&
-        EvalAnim(stage, curves->curveVertexCounts, "curveVertexCounts", time, &counts) &&
-        EvalAnim(stage, curves->tangents, "tangents", time, &tangents)) {
-      EvalAnim(stage, curves->widths, "widths", time, &widths);
+    if (EvalAnim(stage, hermiteCurves->points, "points", time, &points) &&
+        EvalAnim(stage, hermiteCurves->curveVertexCounts, "curveVertexCounts", time, &counts) &&
+        EvalAnim(stage, hermiteCurves->tangents, "tangents", time, &tangents)) {
+      EvalAnim(stage, hermiteCurves->widths, "widths", time, &widths);
       size_t cursor = 0;
       for (int c : counts) {
         if (c < 2 || cursor + size_t(c) > points.size() ||

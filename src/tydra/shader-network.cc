@@ -346,7 +346,19 @@ bool GetBoundMaterial(
 
   std::vector<value::token> purposes;
   if (materialPurpose.empty()) {
-    purposes.push_back(value::token("")); // all-purpose
+    // No purpose requested: this is a preview/realtime consumer, so use the same
+    // fallback chain as the `next` resolver (tinyusdz::next::GetBoundMaterialPath)
+    // -- `material:binding:preview`, then the all-purpose `material:binding`, then
+    // `material:binding:full`.
+    //
+    // Trying ONLY the all-purpose binding (the previous behavior) silently loses
+    // the material on every scene that binds purpose-scoped and never authors a
+    // plain `material:binding` -- which is how production assets (e.g. ALab) bind.
+    // The material, and with it every texture, was dropped and the prim fell back
+    // to the default gray.
+    purposes.push_back(value::token("preview"));
+    purposes.push_back(value::token(""));  // all-purpose
+    purposes.push_back(value::token("full"));
   } else {
     purposes.push_back(value::token(materialPurpose));
     purposes.push_back(value::token("")); // all-purpose

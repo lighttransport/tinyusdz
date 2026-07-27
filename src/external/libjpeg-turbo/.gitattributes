@@ -1,0 +1,5 @@
+/appveyor.yml export-ignore
+/.gitattributes export-ignore
+/.github export-ignore
+*.ppm binary
+/ChangeLog.md conflict-marker-size=8

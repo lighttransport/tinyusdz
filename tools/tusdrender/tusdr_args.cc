@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <string>
 
 #include "asset-resolution.hh"
@@ -66,6 +67,29 @@ bool ParseColor(const std::string &s, Vec3 *out) {
   return true;
 }
 
+bool ParseLargeSceneProfile(const std::string &s,
+                            Options::LargeSceneProfile *out) {
+  if (!out) return false;
+  std::string v = s;
+  for (char &c : v) {
+    c = char(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (v == "off") {
+    *out = Options::LargeSceneProfile::Off;
+  } else if (v == "auto") {
+    *out = Options::LargeSceneProfile::Auto;
+  } else if (v == "caldera") {
+    *out = Options::LargeSceneProfile::Caldera;
+  } else if (v == "island") {
+    *out = Options::LargeSceneProfile::Island;
+  } else if (v == "alab") {
+    *out = Options::LargeSceneProfile::ALab;
+  } else {
+    return false;
+  }
+  return true;
+}
+
 void PrintUsage(const char *prog) {
   std::cout
       << "tusdrender - CPU preview raytrace renderer for USD\n\n"
@@ -90,6 +114,8 @@ void PrintUsage(const char *prog) {
       << "  -noShadows             Disable hard shadow rays.\n"
       << "  -smooth                Interpolate authored normals (smooth shading)\n"
       << "                         instead of per-face geometric normals.\n"
+      << "  -ibl <default|envmap>  DomeLight IBL precompute backend: the built-in\n"
+      << "                         reference, or the vendored envmap library.\n"
       << "  -noDisplace            Disable UsdPreviewSurface displacement.\n"
       << "  -displaceScale <f>     Global displacement multiplier (default 1.0).\n"
       << "  -rtPreview             Use mmap zero-copy mesh preview path for large USDC.\n"
@@ -111,7 +137,42 @@ void PrintUsage(const char *prog) {
       << "  -mask <PATH[,PATH...]> Restrict rendering to these prim subtrees.\n"
       << "  -variant <SET=SEL>     Override variant selection (e.g.\n"
       << "                         --variant districtLod=full). Repeatable.\n"
+      << "  -rtLod                 Per-instance view-dependent LOD: distant meshes\n"
+      << "                         -> box proxy, sub-pixel placements dropped (CPU\n"
+      << "                         -rtPreview two-level TLAS, and -vk/-vkr/-d3d/-hip\n"
+      << "                         flatten-side; parity with viewer --rt-lod).\n"
+      << "  -rtLodFullPx <px>      Promote to full mesh at/above this projected\n"
+      << "                         radius (default 64).\n"
+      << "  -rtLodCullPx <px>      Drop placements below this projected radius (def 2).\n"
+      << "  -rtLodNoProxy          Full-or-Cull only (no box proxies).\n"
+      << "  -rtLodFrustumCull      Also drop off-screen instances (FASTER but changes\n"
+      << "                         shadows/reflections/GI; off by default).\n"
+      << "  -lodStream             View-dependent district LOD: a proxy pass picks\n"
+      << "                         the nearest districts to the camera and promotes\n"
+      << "                         them to districtLod=full under a memory budget\n"
+      << "                         (the rest stay proxy). Implies -rtPreview/next.\n"
+      << "  -maxVram <GiB>         GPU VRAM budget for -lodStream (0 = 0.5*device).\n"
+      << "  -lodDistrictMem <GiB>  Est. host RSS charged per promoted district\n"
+      << "                         (cost-model calibration; default 10).\n"
+      << "  -lodDistrictVram <GiB> Est. VRAM charged per promoted district (def 3).\n"
+      << "  -lodMinVerts <N>       Skip container children below N proxy verts\n"
+      << "                         (trigger/volume prims; default 1000).\n"
+      << "  -lodMaxVerts <N>       Skip children above N proxy verts (sprawling\n"
+      << "                         non-district overlays; 0=off, default 2000000).\n"
+      << "  -lodContainer <name>   Namespace prim whose children are LOD districts\n"
+      << "                         (default mp_wz_island_geo, the Caldera layout).\n"
+      << "  -largeSceneProfile off|auto|caldera|island|alab\n"
+      << "                         Resolve a Vulkan large-scene preset over existing\n"
+      << "                         backend/LOD/memory knobs. Explicit CLI flags win;\n"
+      << "                         texture resize/compression flags are unchanged.\n"
       << "  -legacyLoad            Use the legacy eager loader (next is default).\n"
+      << "  -materialResolver legacy|tydra-next|compare\n"
+      << "                         Next-loader material resolver. tydra-next is\n"
+      << "                         the default; legacy is the compatibility path;\n"
+      << "                         compare renders legacy and reports differences.\n"
+      << "  -materialShading legacy|lightrt-bsdf\n"
+      << "                         CPU material shading path. lightrt-bsdf is an\n"
+      << "                         experimental opt-in direct-light BSDF path.\n"
 #ifdef TINYUSDZ_WITH_QJS
       << "  -js <file.js>          Drive rendering from a JavaScript script.\n"
       << "                         Scene + BVH stay resident across renders\n"
@@ -123,8 +184,32 @@ void PrintUsage(const char *prog) {
       << "                         resident scene (tools: eval,set_camera,orbit,\n"
       << "                         set_resolution,render,bounds,stats).\n"
 #endif
+      << "  -streamHttp <port>     Serve a WebSocket browser viewer that streams\n"
+      << "                         rendered frames; orbit/pan/dolly from the browser\n"
+      << "                         re-render on the resident scene (no output needed).\n"
+      << "  -streamCodec <c>       Idle-refine codec when the view is stable: png\n"
+      << "                         (default) or qoi (lossless).\n"
+      << "  -streamMotionRes <px>  Long-edge cap for low-quality frames while moving\n"
+      << "                         (default 1280; rendered small for speed).\n"
+      << "  -streamMotionQuality <n>  Motion JPEG quality 1-100 (default 45).\n"
+      << "  -streamIdleMs <ms>     Input-quiet time before the lossless refine\n"
+      << "                         frame is rendered (default 320).\n"
       << "  -vk                   Use the Vulkan rasterizer backend.\n"
       << "  -vkr                  Use the Vulkan ray-tracing backend.\n"
+      << "  -vkInstanced          -vkr + a true two-level GPU TLAS (one BLAS per\n"
+      << "                        prototype, shared across instances; saves VRAM on\n"
+      << "                        instanced scenes). Falls back to flat if no shares.\n"
+      << "  -gpuShade cpu|preview GPU backend shading mode. cpu preserves the current\n"
+      << "                        reference CPU shade-after-hit path; preview reserves\n"
+      << "                        the fast GPU-preview shader path and currently falls\n"
+      << "                        back to cpu until that shader path is enabled.\n"
+      << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
+      << "  -hip                  Use the HIP/ROCm GPU-compute backend (AMD).\n"
+      << "  -texMaxSize <N>       Downsize loaded textures whose longest edge exceeds N.\n"
+      << "  -texBudgetMb <N>      Best-effort decoded texture budget in MiB.\n"
+      << "  -texCompress off|bc   Request BCn compression; currently falls back to\n"
+      << "                        resized 8-bit textures where a backend lacks BCn.\n"
+      << "  -udim sparse|atlas    UDIM handling mode (default sparse).\n"
       << "  -noDirectPrims         Tessellate USD shapes/curves/NURBS instead of\n"
       << "                         using tusdrender direct primitive paths.\n"
       << "  -stats                 Print scene/BVH stats.\n"
@@ -152,24 +237,34 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       std::exit(EXIT_SUCCESS);
     } else if (a == "-w" || a == "-width" || a == "--width") {
       const char *v = need_value(a.c_str());
-      if (!v || !ParseIntStrict(v, &opt->width) || opt->width <= 0) {
-        std::cerr << "Invalid width.\n";
+      // Capped: the framebuffer is width*height*4 floats with no other guard, so
+      // an absurd size is an OOM, not a render. 32k is far above real use.
+      if (!v || !ParseIntStrict(v, &opt->width) || opt->width <= 0 ||
+          opt->width > 32768) {
+        std::cerr << "Invalid width (1..32768).\n";
         return false;
       }
     } else if (a == "-height" || a == "--height") {
       const char *v = need_value(a.c_str());
-      if (!v || !ParseIntStrict(v, &opt->height) || opt->height <= 0) {
-        std::cerr << "Invalid height.\n";
+      if (!v || !ParseIntStrict(v, &opt->height) || opt->height <= 0 ||
+          opt->height > 32768) {
+        std::cerr << "Invalid height (1..32768).\n";
         return false;
       }
     } else if (a == "-camera" || a == "--camera") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       opt->camera = v;
+      opt->camera_explicit = true;
     } else if (a == "-fitScale" || a == "--fitScale") {
       const char *v = need_value(a.c_str());
-      if (!v) return false;
-      opt->fit_scale = std::max(0.05f, std::stof(v));
+      // std::stof threw (uncaught -> SIGABRT) on non-numeric/out-of-range input.
+      float fs = 0.0f;
+      if (!v || !ParseFloatStrict(v, &fs)) {
+        std::cerr << "Invalid fitScale.\n";
+        return false;
+      }
+      opt->fit_scale = std::max(0.05f, fs);
     } else if (a == "-viewDir" || a == "--viewDir") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseColor(v, &opt->view_dir) || Length(opt->view_dir) < 1.0e-6f) {
@@ -220,8 +315,10 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
     } else if (a == "-samples" || a == "--samples") {
       const char *v = need_value(a.c_str());
-      if (!v || !ParseIntStrict(v, &opt->samples) || opt->samples <= 0) {
-        std::cerr << "Invalid samples.\n";
+      // Capped: samples multiplies the whole render time with no other guard.
+      if (!v || !ParseIntStrict(v, &opt->samples) || opt->samples <= 0 ||
+          opt->samples > 65536) {
+        std::cerr << "Invalid samples (1..65536).\n";
         return false;
       }
     } else if (a == "-bg" || a == "--bg") {
@@ -238,8 +335,57 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
     } else if (a == "-smooth" || a == "--smooth") {
       opt->smooth = true;
+    } else if (a == "-ibl" || a == "--ibl") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      if (std::string(v) == "default") {
+        opt->ibl_envmap = false;
+      } else if (std::string(v) == "envmap") {
+        opt->ibl_envmap = true;
+      } else {
+        std::cerr << "-ibl must be default or envmap.\n";
+        return false;
+      }
     } else if (a == "-noDisplace" || a == "--noDisplace") {
       opt->displace = false;
+    } else if (a == "-texMaxSize" || a == "--texMaxSize") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->texture_max_size) ||
+          opt->texture_max_size < 0) {
+        std::cerr << "Invalid texture max size.\n";
+        return false;
+      }
+    } else if (a == "-texBudgetMb" || a == "--texBudgetMb") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->texture_budget_mb) ||
+          opt->texture_budget_mb < 0) {
+        std::cerr << "Invalid texture budget.\n";
+        return false;
+      }
+    } else if (a == "-texCompress" || a == "--texCompress") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      std::string mode(v);
+      if (mode == "off") {
+        opt->texture_compress = Options::TextureCompress::Off;
+      } else if (mode == "bc") {
+        opt->texture_compress = Options::TextureCompress::BCn;
+      } else {
+        std::cerr << "Invalid texture compression mode.\n";
+        return false;
+      }
+    } else if (a == "-udim" || a == "--udim") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      std::string mode(v);
+      if (mode == "sparse") {
+        opt->udim_mode = Options::UdimMode::Sparse;
+      } else if (mode == "atlas") {
+        opt->udim_mode = Options::UdimMode::Atlas;
+      } else {
+        std::cerr << "Invalid UDIM mode.\n";
+        return false;
+      }
     } else if (a == "-displaceScale" || a == "--displaceScale") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseFloatStrict(v, &opt->displace_scale)) {
@@ -252,8 +398,35 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
                a == "-mmapRt" || a == "--mmapRt") {
       opt->rt_preview = true;
       opt->direct_prims = false;
+      opt->backend_explicit = true;
     } else if (a == "-legacyLoad" || a == "--legacyLoad") {
       opt->legacy_load = true;
+    } else if (a == "-materialResolver" || a == "--materialResolver") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      std::string mode = v;
+      if (mode == "legacy") {
+        opt->material_resolver = Options::MaterialResolver::Legacy;
+      } else if (mode == "tydra-next") {
+        opt->material_resolver = Options::MaterialResolver::TydraNext;
+      } else if (mode == "compare") {
+        opt->material_resolver = Options::MaterialResolver::Compare;
+      } else {
+        std::cerr << "Invalid material resolver. Expected legacy, tydra-next, or compare.\n";
+        return false;
+      }
+    } else if (a == "-materialShading" || a == "--materialShading") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      std::string mode = v;
+      if (mode == "legacy") {
+        opt->material_shading = Options::MaterialShading::Legacy;
+      } else if (mode == "lightrt-bsdf") {
+        opt->material_shading = Options::MaterialShading::LightRtBsdf;
+      } else {
+        std::cerr << "Invalid material shading. Expected legacy or lightrt-bsdf.\n";
+        return false;
+      }
     } else if (a == "-progress" || a == "--progress") {
       opt->progress = true;
     } else if (a == "-quality" || a == "--quality") {
@@ -285,6 +458,90 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->max_mem_gib = g;
+      opt->max_mem_explicit = true;
+    } else if (a == "-lodStream" || a == "--lodStream") {
+      opt->lod_stream = true;
+      opt->lod_stream_explicit = true;
+    } else if (a == "-maxVram" || a == "--maxVram") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g < 0.0) {
+        std::cerr << "Invalid -maxVram (expected GiB, e.g. -maxVram 8).\n";
+        return false;
+      }
+      opt->max_vram_gib = g;
+      opt->max_vram_explicit = true;
+    } else if (a == "-rtLod" || a == "--rtLod") {
+      opt->rt_lod = true;
+      opt->rt_lod_explicit = true;
+    } else if (a == "-rtLodNoProxy" || a == "--rtLodNoProxy") {
+      opt->rt_lod_proxy = false;
+    } else if (a == "-rtLodFrustumCull" || a == "--rtLodFrustumCull") {
+      opt->rt_lod_frustum_cull = true;
+    } else if (a == "-rtLodFullPx" || a == "--rtLodFullPx") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g <= 0.0) {
+        std::cerr << "Invalid -rtLodFullPx (expected pixels > 0).\n";
+        return false;
+      }
+      opt->rt_lod_full_px = float(g);
+      opt->rt_lod_full_px_explicit = true;
+    } else if (a == "-rtLodCullPx" || a == "--rtLodCullPx") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g < 0.0) {
+        std::cerr << "Invalid -rtLodCullPx (expected pixels >= 0).\n";
+        return false;
+      }
+      opt->rt_lod_cull_px = float(g);
+      opt->rt_lod_cull_px_explicit = true;
+    } else if (a == "-lodDistrictMem" || a == "--lodDistrictMem") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g <= 0.0) {
+        std::cerr << "Invalid -lodDistrictMem (expected GiB > 0).\n";
+        return false;
+      }
+      opt->lod_district_mem_gib = g;
+    } else if (a == "-lodDistrictVram" || a == "--lodDistrictVram") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g <= 0.0) {
+        std::cerr << "Invalid -lodDistrictVram (expected GiB > 0).\n";
+        return false;
+      }
+      opt->lod_district_vram_gib = g;
+    } else if (a == "-lodMinVerts" || a == "--lodMinVerts") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g < 0.0) {
+        std::cerr << "Invalid -lodMinVerts (expected a count >= 0).\n";
+        return false;
+      }
+      opt->lod_min_verts = g;
+    } else if (a == "-lodMaxVerts" || a == "--lodMaxVerts") {
+      const char *v = need_value(a.c_str());
+      char *end = nullptr;
+      double g = v ? std::strtod(v, &end) : 0.0;
+      if (!v || end == v || g < 0.0) {
+        std::cerr << "Invalid -lodMaxVerts (expected a count >= 0).\n";
+        return false;
+      }
+      opt->lod_max_verts = g;
+    } else if (a == "-lodContainer" || a == "--lodContainer") {
+      const char *v = need_value(a.c_str());
+      if (!v) {
+        std::cerr << "Invalid -lodContainer (expected a prim name).\n";
+        return false;
+      }
+      opt->lod_container = v;
     } else if (a == "-env" || a == "--env") {
       const char *v = need_value(a.c_str());
       if (!v) {
@@ -358,11 +615,53 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->variant_overrides[s.substr(0, eq)] = s.substr(eq + 1);
+    } else if (a == "-largeSceneProfile" || a == "--largeSceneProfile" ||
+               a == "-large-scene-profile" || a == "--large-scene-profile") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseLargeSceneProfile(v, &opt->large_scene_profile)) {
+        std::cerr << "-largeSceneProfile must be off, auto, caldera, island, or alab.\n";
+        return false;
+      }
+    } else if (a.rfind("--largeSceneProfile=", 0) == 0) {
+      if (!ParseLargeSceneProfile(a.substr(20), &opt->large_scene_profile)) {
+        std::cerr << "-largeSceneProfile must be off, auto, caldera, island, or alab.\n";
+        return false;
+      }
+    } else if (a.rfind("--large-scene-profile=", 0) == 0) {
+      if (!ParseLargeSceneProfile(a.substr(22), &opt->large_scene_profile)) {
+        std::cerr << "-largeSceneProfile must be off, auto, caldera, island, or alab.\n";
+        return false;
+      }
     } else if (a == "-vk" || a == "--vk") {
       opt->vulkan = true;
+      opt->backend_explicit = true;
     } else if (a == "-vkr" || a == "--vkr") {
       opt->vulkan = true;
       opt->vulkan_rt = true;
+      opt->backend_explicit = true;
+    } else if (a == "-vkInstanced" || a == "--vkInstanced") {
+      opt->vulkan = true;
+      opt->vulkan_rt = true;
+      opt->vulkan_instanced = true;
+      opt->backend_explicit = true;
+    } else if (a == "-gpuShade" || a == "--gpuShade") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      std::string mode = v;
+      if (mode == "cpu") {
+        opt->gpu_shade = Options::GpuShadeMode::Cpu;
+      } else if (mode == "preview") {
+        opt->gpu_shade = Options::GpuShadeMode::Preview;
+      } else {
+        std::cerr << "-gpuShade must be cpu or preview.\n";
+        return false;
+      }
+    } else if (a == "-d3d" || a == "--d3d" || a == "-dx" || a == "--dx") {
+      opt->use_d3d = true;
+      opt->backend_explicit = true;
+    } else if (a == "-hip" || a == "--hip") {
+      opt->hip = true;
+      opt->backend_explicit = true;
     } else if (a == "-js" || a == "--js") {
       const char *v = need_value(a.c_str());
       if (!v) {
@@ -376,6 +675,43 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->mcp = true;
       opt->rt_preview = true;
       opt->direct_prims = false;
+    } else if (a == "-streamHttp" || a == "--streamHttp") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->stream_http) ||
+          opt->stream_http <= 0 || opt->stream_http > 65535) {
+        std::cerr << "-streamHttp requires a port (1-65535).\n";
+        return false;
+      }
+      opt->rt_preview = true;
+      opt->direct_prims = false;
+    } else if (a == "-streamCodec" || a == "--streamCodec") {
+      const char *v = need_value(a.c_str());
+      if (!v) {
+        std::cerr << "-streamCodec requires png|qoi.\n";
+        return false;
+      }
+      opt->stream_codec = v;
+    } else if (a == "-streamMotionRes" || a == "--streamMotionRes") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->stream_motion_res) ||
+          opt->stream_motion_res <= 0) {
+        std::cerr << "-streamMotionRes requires a positive pixel size.\n";
+        return false;
+      }
+    } else if (a == "-streamMotionQuality" || a == "--streamMotionQuality") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->stream_motion_quality) ||
+          opt->stream_motion_quality < 1 || opt->stream_motion_quality > 100) {
+        std::cerr << "-streamMotionQuality requires 1-100.\n";
+        return false;
+      }
+    } else if (a == "-streamIdleMs" || a == "--streamIdleMs") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseIntStrict(v, &opt->stream_idle_ms) ||
+          opt->stream_idle_ms < 0) {
+        std::cerr << "-streamIdleMs requires a non-negative millisecond value.\n";
+        return false;
+      }
     } else if (a == "-noDirectPrims" || a == "--noDirectPrims") {
       opt->direct_prims = false;
     } else if (a == "-stats" || a == "--stats") {
@@ -391,7 +727,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
   }
   // -js / -mcp drive output paths from the script / MCP calls, so only the
   // input is required there; an output positional is optional.
-  const bool output_optional = opt->mcp || !opt->js_script.empty();
+  const bool output_optional =
+      opt->mcp || !opt->js_script.empty() || opt->stream_http > 0;
   if (positional.empty() || positional.size() > 2 ||
       (!output_optional && positional.size() != 2)) {
     PrintUsage(argv[0]);

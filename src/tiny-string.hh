@@ -229,7 +229,7 @@ struct tstring_view {
   // operations (==, <, starts_with, ...). Do not hand c_str() to length-
   // agnostic C functions (strlen, printf("%s"), std::string(const char*));
   // build an owned copy with tinyusdz::to_string(view) instead.
-  const char *data() const {
+  const char *data() const TINYUSDZ_LIFETIMEBOUND {
     return _s;
   }
 
@@ -424,7 +424,7 @@ class tostringstream
     tstring tstr() const;
 
     
-    const char *data() const { return binary_.data(); }
+    const char *data() const TINYUSDZ_LIFETIMEBOUND { return binary_.data(); }
 
  private:
   const std::vector<char> binary_;

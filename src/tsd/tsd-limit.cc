@@ -198,8 +198,8 @@ bool OrderRing(const Topology &topo, const uint32_t *fvi, uint32_t v,
   };
   // The face for which edge e is the outgoing edge at v.
   auto face_with_outgoing = [&](uint32_t e) -> uint32_t {
-    for (int i = 0; i < 2; i++) {
-      const uint32_t f = topo.edge_faces[2 * e + uint32_t(i)];
+    for (uint32_t i = 0; i < 2; i++) {
+      const uint32_t f = topo.edge_faces[2 * e + i];
       if (f != kInvalidIndex && outgoing_edge(f) == e) {
         return f;
       }

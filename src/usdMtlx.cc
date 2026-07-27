@@ -1564,6 +1564,7 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_SHADER_PARAM(name, typeName, "thin_walled", "boolean", bool, valueStr, surface.thin_walled)
       GET_SHADER_PARAM(name, typeName, "normal", "vector3", value::normal3f, valueStr, surface.normal)
       GET_SHADER_PARAM(name, typeName, "tangent", "vector3", value::vector3f, valueStr, surface.tangent)
+      GET_SHADER_PARAM(name, typeName, "displacement", "float", float, valueStr, surface.displacement)
       {
         PUSH_WARN(fmt::format("Unknown/unsupported standard_surface input `{}`", name));
       }

@@ -2,8 +2,13 @@
 // tusdview - load a USD file into a Stage and convert it to a Tydra RenderScene.
 #pragma once
 
+#include <atomic>
 #include <limits>
+#include <map>
 #include <memory>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -16,6 +21,8 @@
 #include "stage.hh"
 #include "tydra/render-data.hh"
 
+namespace tinyusdz { struct USDZAsset; }
+
 namespace tusdview {
 
 // How `payload` composition arcs are handled at load time.
@@ -26,6 +33,19 @@ enum class PayloadPolicy {
 };
 
 struct LoadOptions {
+  // Aggregate host/GPU limits for the next large-scene path. Zero preserves
+  // legacy behavior. The loader applies these before geometry materialization.
+  size_t maxMemoryBytes{0};
+  size_t gpuGeometryBudgetBytes{0};
+  size_t uploadStagingBytes{0};
+  // Maximum CPU geometry held between the next-loader producer and the GPU
+  // context thread. Zero selects 64 MiB for interactive streaming.
+  size_t streamBufferBytes{0};
+  // Explicit performance controls. Zero selects the hardware-derived default.
+  unsigned compositionThreads{0};
+  unsigned conversionThreads{0};
+  bool timing{false};
+
   // Compose USD composition arcs (subLayers/references/payload/inherits/
   // variants) on load. When false, only the root layer is loaded (legacy
   // behavior, keeps the mmap zero-copy fast path).
@@ -46,10 +66,79 @@ struct LoadOptions {
   // screenshot at a specific frame); interactive playback re-evaluates via
   // RenderSceneAtTime().
   double timecode{std::numeric_limits<double>::quiet_NaN()};
+  // Conversion-time subdivision surface refinement. subdivisionLevel is the
+  // scene-wide fallback; subdivisionPrimLevels overrides individual mesh prims.
+  // subdivisionAuto is handled by tusdview before conversion by filling
+  // subdivisionPrimLevels from projected mesh screen coverage.
+  int subdivisionLevel{0};
+  bool subdivisionAuto{false};
+  int subdivisionAutoMaxLevel{3};
+  std::map<std::string, int> subdivisionPrimLevels;
   // Variant selection overrides: key = prim full path, value = map of
   // variantSet name -> variant name. Applied before composition so variant
   // arcs resolve with the user's choices instead of the layer defaults.
   std::map<std::string, std::map<std::string, std::string>> variantOverrides;
+  // Allow parent-directory ('..') segments in composition asset paths
+  // (--allow-parent-paths). Off by default (tinyusdz rejects '..' traversal as
+  // unsafe). Some production scenes (e.g. Animal Logic ALab's lighting overrides
+  // referenced as `../lightingrenderovers/...`) need it; resolution of the
+  // surviving '..' is delegated to the asset resolver, anchored at searchPaths.
+  bool allowParentRelativePaths{false};
+  // Emit per-vertex GPU skinning attributes (joint indices/weights + a bone
+  // matrix layout) instead of baking a static skinned pose into the geometry at
+  // load. Only the `next` loader reads this: the Tydra path always emits the
+  // attributes and decides afterwards. Off = load-time CPU bake (the pose at
+  // `timecode`), which is what the CPU-skinning and CPU-tracer paths need.
+  bool gpuSkinning{false};
+  TextureRuntimeOptions textureOptions;
+};
+
+// Move-only messages produced by the next loader and consumed by App on the
+// render/context thread. A complete event contains scene-wide metadata and
+// resources; streamed meshes have already been removed from its DrawScene.
+struct ProgressiveSceneEvent {
+  enum class Type { Resources, Mesh, Complete, Failed };
+  Type type{Type::Failed};
+  std::vector<DrawMaterialCPU> materials;
+  int textureCount{0};
+  std::string upAxis{"Y"};
+  DrawMeshCPU mesh;
+  DrawScene scene;
+  std::string error;
+};
+
+// Bounded producer/consumer handoff. Byte accounting applies to mesh payloads;
+// resource and terminal messages are small/one-shot and never block completion.
+class ProgressiveSceneStream {
+ public:
+  explicit ProgressiveSceneStream(size_t maxBytes);
+  ~ProgressiveSceneStream();
+
+  ProgressiveSceneStream(const ProgressiveSceneStream&) = delete;
+  ProgressiveSceneStream& operator=(const ProgressiveSceneStream&) = delete;
+
+  bool pushResources(const std::vector<DrawMaterialCPU>& materials,
+                     int textureCount, const std::string& upAxis);
+  bool pushMesh(DrawMeshCPU&& mesh, const std::atomic<bool>* cancelled = nullptr);
+  void pushComplete(DrawScene&& scene);
+  void pushFailed(std::string error);
+  bool tryPop(ProgressiveSceneEvent* event);
+  void cancel();
+  bool cancelled() const;
+  size_t queuedBytes() const;
+
+ private:
+  struct QueuedEvent {
+    ProgressiveSceneEvent event;
+    size_t bytes{0};
+  };
+  size_t maxBytes_{0};
+  size_t queuedBytes_{0};
+  bool cancelled_{false};
+  mutable std::mutex mutex_;
+  std::condition_variable ready_;
+  std::condition_variable space_;
+  std::deque<QueuedEvent> queue_;
 };
 
 // A payload/reference arc that was skipped during composition.
@@ -67,6 +156,13 @@ struct CompositionInfo {
   bool composed{false};
   std::shared_ptr<const tinyusdz::Layer> rootLayer;
   std::vector<std::string> searchPaths;
+  // Retained package backing for composition and later payload recomposition.
+  std::shared_ptr<tinyusdz::USDZAsset> usdzAsset;
+  // Mirror of SceneLoaderOptions::allowParentRelativePaths, retained so the
+  // RenderScene conversion applies the same '..' policy to texture/light asset
+  // resolution that composition used (the tydra asset resolver defaults to
+  // rejecting parent-relative paths).
+  bool allowParentRelativePaths{false};
   std::vector<DeferredArc> deferred;         // still-unloaded payload/reference arcs
   std::set<std::string> loadedPayloads;      // whitelist accumulated so far
 };
@@ -80,6 +176,8 @@ struct LoadedScene {
   std::string warn;
   std::string err;
   bool ok{false};
+  int subdivisionLevel{0};
+  std::map<std::string, int> subdivisionPrimLevels;
   // Memory-mapped file handle kept alive for the Stage's lifetime (zero-copy
   // USDC arrays reference this mapping). Unmapped when this LoadedScene dies.
   // Null on the composition path (composition copies specs, so zero-copy
@@ -99,7 +197,8 @@ struct LoadedScene {
 // `opts` controls composition: by default the file's composition arcs are
 // resolved (LIVRPS) with payloads deferred; deferred payloads are listed in
 // `out->comp.deferred` and can be loaded later via RecomposeWithPayloads().
-// .usdz archives always take the non-composition path for now.
+// USDZ composition arcs resolve against the retained archive backing, including
+// deferred package-internal payloads loaded by RecomposeWithPayloads().
 //
 // `ctrl` (optional) enables cancellation, progress reporting, a conversion time
 // budget and a draw-side triangle/vertex budget. Safe to call on a worker

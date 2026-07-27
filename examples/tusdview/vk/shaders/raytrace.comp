@@ -15,13 +15,15 @@ layout(local_size_x = 8, local_size_y = 8) in;
 // Vertex buffer = interleaved DrawVertex (8 floats: pos.xyz, nrm.xyz, uv.xy).
 layout(buffer_reference, scalar) readonly buffer Verts { float v[]; };
 layout(buffer_reference, scalar) readonly buffer Idx   { uint  i[]; };
-// Optional per-vertex displayColor (vec3 packed as 3 floats / vertex).
+// Optional displayColor.rgb + displayOpacity (vec4 packed per vertex).
 layout(buffer_reference, scalar) readonly buffer Cols  { float c[]; };
 layout(buffer_reference, scalar) readonly buffer UV1s  { float u[]; };  // vec2 per vertex
 layout(buffer_reference, scalar) readonly buffer Infls { float f[]; };  // float per vertex
 layout(buffer_reference, scalar) readonly buffer Faces { uint  fc[]; }; // face id per triangle
+layout(buffer_reference, scalar) readonly buffer TriMats { uint m[]; }; // material id per triangle
 layout(buffer_reference, scalar) readonly buffer Joints  { uint  j[]; }; // 4 joint ids per vertex
 layout(buffer_reference, scalar) readonly buffer Weights { float w[]; }; // 4 weights per vertex
+layout(buffer_reference, scalar) readonly buffer SubmeshRanges { uvec4 r[]; };
 
 struct MeshDesc {
   uint64_t vtxAddr;       // device address of the vertex buffer (DrawVertex[])
@@ -30,11 +32,15 @@ struct MeshDesc {
   uint64_t uv1Addr;       // per-vertex 2nd texcoord (vec2[]); 0 = none
   uint64_t inflAddr;      // per-vertex blendshape influence (float[]); 0 = none
   uint64_t faceAddr;      // per-triangle source USD face id (uint[]); 0 = none
+  uint64_t triMatAddr;    // per-triangle material id (uint[]); 0 = matId
+  uint64_t submeshAddr;   // uvec4[firstPrim,count,frontMat,backMat][]
   uint64_t jointAddr;     // per-vertex 4 joint ids (uint[4]); 0 = unskinned
   uint64_t weightAddr;    // per-vertex 4 skin weights (float[4]); 0 = unskinned
   uint     matId;         // index into the materials SSBO (-1 as 0xffffffff -> gray)
   uint     geometricNormal;  // bit0 = no authored normals (geometric face normal);
                              // bits1-2 = USD purpose id (0=def/1=render/2=proxy/3=guide)
+  uint     submeshCount;
+  uint     pad;
   vec4     nrm0;          // normal matrix columns (xyz used)
   vec4     nrm1;
   vec4     nrm2;
@@ -44,28 +50,70 @@ struct MeshDesc {
 struct InstInfo {
   uint meshId;       // index into meshes[]
   uint useMaterial;  // 1 = non-instanced (material + normalMat); 0 = tint + o2w normal
-  uint pad0;
-  uint pad1;
-  vec4 tint;         // per-instance color or flatColor (xyz used)
+  uint directLightMask;
+  uint shadowLightMask;
+  vec4 tint;         // per-instance color/opacity or flatColor/flatOpacity
 };
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT TLAS;
 layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outImg;
 layout(set = 0, binding = 2, scalar) readonly buffer Meshes { MeshDesc meshes[]; };
-// 3 vec4 per material: [0]=baseColor.rgb + alpha, [1]=(metallic,roughness,0,0),
-// [2]=emissive.rgb + 0. mat(id,k) indexes row k of material id.
+// 3 vec4 per material: [0]=baseColor.rgb + alpha,
+// [1]=(metallic,roughness,alphaMode,alphaCutoff), [2]=emissive.rgb + 0.
+// mat(id,k) indexes row k of material id.
 layout(set = 0, binding = 3, scalar) readonly buffer Mats   { vec4 matRows[]; };
 #define mat(id, k) matRows[(id) * 3u + (k)]
 layout(set = 0, binding = 4, scalar) readonly buffer Insts  { InstInfo insts[]; };
+// Progressive accumulation buffer (radiance sum). Read+write rgba32f.
+layout(set = 0, binding = 5, rgba32f) uniform image2D accumImg;
+// 14 vec4 per material: LightRT/OpenPBR constant fallback. lrt(id,12).w is 1
+// when populated.
+layout(set = 0, binding = 6, scalar) readonly buffer LrtMats { vec4 lrtRows[]; };
+#define lrt(id, k) lrtRows[(id) * 14u + (k)]
+// 10 vec4 per light: packed DrawLightCPU params. light(0,0).y holds validity flags.
+layout(set = 0, binding = 7, scalar) readonly buffer RtLights { vec4 lightRows[]; };
+#define RT_LIGHT_ROWS 20u
+#define light(id, k) lightRows[(id) * RT_LIGHT_ROWS + (k)]
+// Dome environment cube for ray misses (sharp IBL prefilter level 0; a 1x1
+// black cube when no dome is baked).
+layout(set = 0, binding = 8) uniform samplerCube uEnvCube;
+// GGX-prefiltered cube + split-sum BRDF LUT for surface specular IBL.
+layout(set = 0, binding = 9) uniform samplerCube uPrefilteredCube;
+layout(set = 0, binding = 10) uniform sampler2D uBrdfLut;
+
+struct RtTexDesc {
+  int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim;
+  int mipCount; int firstMip;
+  int udimLayer[100];
+};
+layout(set = 0, binding = 11, scalar) readonly buffer RtTexels {
+  uint texelWords[];
+};
+layout(set = 0, binding = 12, scalar) readonly buffer RtTexDescs {
+  RtTexDesc texDescs[];
+};
+layout(set = 0, binding = 13, scalar) readonly buffer RtMatTexIds {
+  int matTexIds[];
+};
+layout(set = 0, binding = 14, scalar) readonly buffer RtMatTexParams {
+  float matTexParams[];
+};
 
 layout(push_constant) uniform PC {
   mat4 invViewProj;  // inverse(proj * view)
   vec4 camPos;       // xyz = camera world position, w = RenderMode
   vec4 lightDir;     // xyz = unit direction *towards* the light, w = depthScale
-  vec4 clearColor;   // rgb background for ray misses
-  vec4 sceneMin;     // position AOV bbox min
-  vec4 sceneExtent;  // position AOV bbox size
+  vec4 clearColor;   // rgb background for ray misses, w = exposure stops
+  vec4 sceneMin;     // xyz = position AOV bbox min, w = accumulated sample index
+  vec4 sceneExtent;  // xyz = position AOV bbox size, w = accumulate enable (>0.5)
 } pc;
+
+// Radical-inverse (Halton) low-discrepancy sequence for sub-pixel jitter.
+float halton(uint i, uint b) {
+  float f = 1.0, r = 0.0;
+  while (i > 0u) { f /= float(b); r += f * float(i % b); i /= b; }
+  return r;
+}
 
 vec3 fetchPos(Verts vb, uint vi) {
   return vec3(vb.v[vi * 8u + 0u], vb.v[vi * 8u + 1u], vb.v[vi * 8u + 2u]);
@@ -73,8 +121,9 @@ vec3 fetchPos(Verts vb, uint vi) {
 vec3 fetchNrm(Verts vb, uint vi) {
   return vec3(vb.v[vi * 8u + 3u], vb.v[vi * 8u + 4u], vb.v[vi * 8u + 5u]);
 }
-vec3 fetchCol(Cols cb, uint vi) {
-  return vec3(cb.c[vi * 3u + 0u], cb.c[vi * 3u + 1u], cb.c[vi * 3u + 2u]);
+vec4 fetchCol(Cols cb, uint vi) {
+  return vec4(cb.c[vi * 4u + 0u], cb.c[vi * 4u + 1u],
+              cb.c[vi * 4u + 2u], cb.c[vi * 4u + 3u]);
 }
 vec2 fetchUV(Verts vb, uint vi) {
   return vec2(vb.v[vi * 8u + 6u], vb.v[vi * 8u + 7u]);
@@ -104,10 +153,221 @@ vec3 cosHemi(vec3 n, float u1, float u2) {
 }
 
 // Stable distinct color per material id (-1 / 0xffffffff -> neutral gray).
+// Order-2 SH irradiance eval (basis matches the bake in texture_tools.cc).
+// `li` = light index, rows 13-19 hold 27 coeff-major RGB floats.
+float shCoef(uint li, uint i) {
+  vec4 r = light(li, 13u + i / 4u);
+  return r[i % 4u];
+}
+vec3 shIrradiance(uint li, vec3 n) {
+  float b[9];
+  b[0] = 0.282095;
+  b[1] = 0.488603 * n.y;
+  b[2] = 0.488603 * n.z;
+  b[3] = 0.488603 * n.x;
+  b[4] = 1.092548 * n.x * n.y;
+  b[5] = 1.092548 * n.y * n.z;
+  b[6] = 0.315392 * (3.0 * n.z * n.z - 1.0);
+  b[7] = 1.092548 * n.x * n.z;
+  b[8] = 0.546274 * (n.x * n.x - n.y * n.y);
+  vec3 e = vec3(0.0);
+  for (uint k = 0u; k < 9u; ++k) {
+    e += b[k] * vec3(shCoef(li, k * 3u + 0u), shCoef(li, k * 3u + 1u),
+                     shCoef(li, k * 3u + 2u));
+  }
+  return max(e, vec3(0.0));
+}
+
 vec3 idColor(uint id) {
   if (id == 0xffffffffu) return vec3(0.45);
   uint h = (id + 1u) * 2654435761u;
   return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
+// Linear -> sRGB OETF for the final shaded image, matching the raster path
+// (mesh.frag). The tracer lights in linear space and the target image is UNORM,
+// so shaded/wireframe output is encoded here; debug AOVs are left raw.
+vec3 linearToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+  return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
+}
+
+// Inverse of the above (sRGB -> linear), for values authored in DISPLAY space
+// that must survive the encode below.
+vec3 srgbToLinear(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c * (1.0 / 12.92);
+  vec3 hi = pow((c + 0.055) * (1.0 / 1.055), vec3(2.4));
+  return mix(lo, hi, greaterThan(c, vec3(0.04045)));
+}
+
+float ggxD(float nh, float roughness) {
+  float a = max(roughness * roughness, 0.002);
+  float a2 = a * a;
+  float d = nh * nh * (a2 - 1.0) + 1.0;
+  return a2 / max(3.14159265 * d * d, 1e-6);
+}
+float ggxG1(float nx, float roughness) {
+  float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
+  return nx / max(nx * (1.0 - k) + k, 1e-6);
+}
+vec3 fresnelSchlick(float vh, vec3 f0) {
+  return f0 + (vec3(1.0) - f0) * pow(1.0 - clamp(vh, 0.0, 1.0), 5.0);
+}
+
+float wrapCoord(float x, int mode) {
+  if (mode == 0 || mode == 3) return clamp(x, 0.0, 1.0);
+  if (mode == 2) {
+    float tile = floor(x), f = x - tile;
+    return (int(tile) & 1) != 0 ? 1.0 - f : f;
+  }
+  return fract(x);
+}
+
+vec4 fetchTexel(RtTexDesc td, int x, int y) {
+  uint word = texelWords[uint(td.offset / 4 + (y * td.width + x))];
+  vec4 c = unpackUnorm4x8(word);
+  if (td.srgb != 0) c.rgb = srgbToLinear(c.rgb);
+  return c;
+}
+
+vec4 sampleRtTextureLevel(RtTexDesc td, vec2 uv) {
+  vec2 p = vec2(wrapCoord(uv.x, td.wrapS), wrapCoord(uv.y, td.wrapT)) *
+           vec2(td.width - 1, td.height - 1);
+  ivec2 p0 = ivec2(floor(p));
+  ivec2 p1 = min(p0 + ivec2(1), ivec2(td.width - 1, td.height - 1));
+  vec2 f = fract(p);
+  vec4 a = mix(fetchTexel(td, p0.x, p0.y), fetchTexel(td, p1.x, p0.y), f.x);
+  vec4 b = mix(fetchTexel(td, p0.x, p1.y), fetchTexel(td, p1.x, p1.y), f.x);
+  return mix(a, b, f.y);
+}
+
+vec4 sampleRtTextureLod(int id, vec2 uv, float lod, vec4 missing) {
+  if (id < 0 || id >= int(texDescs.length())) return missing;
+  RtTexDesc td = texDescs[id];
+  if (td.isUdim != 0) {
+    ivec2 tile = ivec2(floor(uv));
+    int lut = tile.x + tile.y * 10;
+    if (lut < 0 || lut >= 100) return missing;
+    int tileId = td.udimLayer[lut];
+    if (tileId < 0 || tileId >= int(texDescs.length())) return missing;
+    td = texDescs[tileId];
+    uv = fract(uv);
+  }
+  if (td.width <= 0 || td.height <= 0) return missing;
+  float clampedLod = clamp(lod, 0.0, float(max(td.mipCount - 1, 0)));
+  int l0 = int(floor(clampedLod));
+  int l1 = min(l0 + 1, td.mipCount - 1);
+  RtTexDesc td0 = l0 == 0 ? td : texDescs[td.firstMip + l0 - 1];
+  RtTexDesc td1 = l1 == 0 ? td : texDescs[td.firstMip + l1 - 1];
+  return mix(sampleRtTextureLevel(td0, uv), sampleRtTextureLevel(td1, uv),
+             fract(clampedLod));
+}
+
+vec4 sampleRtTexture(int id, vec2 uv, vec4 missing) {
+  return sampleRtTextureLod(id, uv, 0.0, missing);
+}
+
+float rtTextureLod(int id, vec2 uv, float uvFootprint) {
+  if (id < 0 || id >= int(texDescs.length())) return 0.0;
+  RtTexDesc td = texDescs[id];
+  if (td.isUdim != 0) {
+    ivec2 tile = ivec2(floor(uv));
+    int lut = tile.x + tile.y * 10;
+    if (lut < 0 || lut >= 100) return 0.0;
+    int tileId = td.udimLayer[lut];
+    if (tileId < 0 || tileId >= int(texDescs.length())) return 0.0;
+    td = texDescs[tileId];
+  }
+  return clamp(log2(max(uvFootprint * float(max(td.width, td.height)), 1.0)),
+               0.0, float(max(td.mipCount - 1, 0)));
+}
+
+float texChannel(vec4 c, int channel) {
+  return channel == 1 ? c.g : channel == 2 ? c.b : channel == 3 ? c.a : c.r;
+}
+
+vec2 materialUv(uint matId, int slot, vec2 uv0, vec2 uv1) {
+  uint base = matId * 155u;
+  // Slots 0-5 use the row-69 bitmask; the added slots 12-15 (occlusion, coat
+  // weight, coat color, coat roughness) use row 99 bits 0-3.
+  int bits = slot < 12 ? int(matTexParams[base + 69u] + 0.5)
+                       : (int(matTexParams[base + 99u] + 0.5) << 12);
+  vec2 uv = ((bits & (1 << slot)) != 0) ? uv1 : uv0;
+  uint o = base + uint(slot * 6);
+  return vec2(matTexParams[o + 0u] * uv.x + matTexParams[o + 1u] * uv.y +
+                  matTexParams[o + 2u],
+              matTexParams[o + 3u] * uv.x + matTexParams[o + 4u] * uv.y +
+                  matTexParams[o + 5u]);
+}
+
+float materialUvFootprint(uint matId, int slot, float footprint) {
+  uint o = matId * 155u + uint(slot * 6);
+  float sx = length(vec2(matTexParams[o + 0u], matTexParams[o + 3u]));
+  float sy = length(vec2(matTexParams[o + 1u], matTexParams[o + 4u]));
+  return footprint * max(sx, sy);
+}
+
+uint selectedMaterial(MeshDesc md, int prim, bool frontFace) {
+  if (md.submeshAddr != 0ul) {
+    SubmeshRanges ranges = SubmeshRanges(md.submeshAddr);
+    for (uint si = 0u; si < md.submeshCount; ++si) {
+      uvec4 sr = ranges.r[si];
+      if (uint(prim) >= sr.x && uint(prim) < sr.x + sr.y) {
+        return frontFace ? sr.z : sr.w;
+      }
+    }
+  }
+  return md.triMatAddr != 0ul ? TriMats(md.triMatAddr).m[uint(prim)]
+                               : md.matId;
+}
+
+bool materialAllowsHit(uint iid, int prim, vec2 bc, bool frontFace) {
+  InstInfo ii = insts[iid];
+  MeshDesc md = meshes[ii.meshId];
+  uint mid = selectedMaterial(md, prim, frontFace);
+  if (ii.useMaterial == 0u || mid == 0xffffffffu) return true;
+  float alphaMode = mat(mid, 1u).z;
+  if (!(alphaMode > 0.5 && alphaMode < 1.5)) return true;
+  Verts vb = Verts(md.vtxAddr);
+  Idx ib = Idx(md.idxAddr);
+  uint i0 = ib.i[uint(prim) * 3u + 0u];
+  uint i1 = ib.i[uint(prim) * 3u + 1u];
+  uint i2 = ib.i[uint(prim) * 3u + 2u];
+  float w0 = 1.0 - bc.x - bc.y;
+  vec2 uv0 = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x +
+             fetchUV(vb, i2) * bc.y;
+  vec2 uv1 = uv0;
+  if (md.uv1Addr != 0ul) {
+    UV1s ub = UV1s(md.uv1Addr);
+    uv1 = fetchUV1(ub, i0) * w0 + fetchUV1(ub, i1) * bc.x +
+          fetchUV1(ub, i2) * bc.y;
+  }
+  uint tb = mid * 12u;
+  uint pb = mid * 155u;
+  vec4 bt = sampleRtTexture(matTexIds[tb], materialUv(mid, 0, uv0, uv1),
+                            vec4(1.0));
+  bt = bt * vec4(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                 matTexParams[pb + 38u], matTexParams[pb + 39u]) +
+       vec4(matTexParams[pb + 40u], matTexParams[pb + 41u],
+            matTexParams[pb + 42u], matTexParams[pb + 43u]);
+  float alpha = mat(mid, 0u).a * bt.a * ii.tint.a;
+  int opacityTex = matTexIds[tb + 5u];
+  if (opacityTex >= 0) {
+    vec4 ot = sampleRtTexture(opacityTex, materialUv(mid, 5, uv0, uv1),
+                              vec4(1.0));
+    alpha *= texChannel(ot, int(matTexParams[pb + 66u] + 0.5)) *
+                 matTexParams[pb + 67u] +
+             matTexParams[pb + 68u];
+  }
+  if (md.vtxColorAddr != 0ul) {
+    Cols cbuff = Cols(md.vtxColorAddr);
+    alpha *= fetchCol(cbuff, i0).a * w0 + fetchCol(cbuff, i1).a * bc.x +
+             fetchCol(cbuff, i2).a * bc.y;
+  }
+  return alpha >= mat(mid, 1u).w;
 }
 
 void main() {
@@ -115,10 +375,18 @@ void main() {
   ivec2 size = imageSize(outImg);
   if (px.x >= size.x || px.y >= size.y) return;
 
+  // Progressive sample index (0 = first sample after a reset). Drives both the
+  // sub-pixel jitter (anti-aliasing) and the stochastic-AOV RNG so they converge.
+  uint fi = uint(pc.sceneMin.w + 0.5);
+  bool accumulate = pc.sceneExtent.w > 0.5;
+
   // Pixel -> NDC -> world ray via the inverse view-projection. Flip Y so image
   // row 0 maps to ndc.y=+1 (scene top), matching the raster path's negative-
-  // height viewport; otherwise the traced image is vertically inverted.
-  vec2 uv = (vec2(px) + 0.5) / vec2(size);
+  // height viewport; otherwise the traced image is vertically inverted. Jitter the
+  // sample point inside the pixel by a Halton(2,3) offset for anti-aliasing.
+  vec2 jit = accumulate ? (vec2(halton(fi + 1u, 2u), halton(fi + 1u, 3u)) - 0.5)
+                        : vec2(0.0);
+  vec2 uv = (vec2(px) + 0.5 + jit) / vec2(size);
   vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
   vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);
   vec4 farH  = pc.invViewProj * vec4(ndc, 1.0, 1.0);
@@ -127,11 +395,52 @@ void main() {
   vec3 origin = nearW;
   vec3 dir = normalize(farW - nearW);
 
-  vec3 outc = pc.clearColor.rgb;
+  // The clear colour is a DISPLAY-space UI constant (0.12 -> 31/255) -- the very
+  // value the raster path clears its UNORM target with. Shaded/wireframe output
+  // is sRGB-encoded on the way out (see the tail of main), so those modes must
+  // start from a LINEARIZED background: it then round-trips to the authored
+  // value and matches raster byte-for-byte, and transparent surfaces composite
+  // against it in linear space. Encoding the display value instead washed the
+  // background out to 97/255 (T11). Raw AOV modes are NOT encoded, so they keep
+  // the display value as-is.
+  int bgMode = int(pc.camPos.w + 0.5);
+  vec3 bgc = (bgMode == 0 || bgMode == 1) ? srgbToLinear(pc.clearColor.rgb)
+                                          : pc.clearColor.rgb;
+  vec3 outc = bgc;
 
   rayQueryEXT rq;
-  rayQueryInitializeEXT(rq, TLAS, gl_RayFlagsOpaqueEXT, 0xFF, origin, 1e-3, dir, 1e30);
-  while (rayQueryProceedEXT(rq)) {}
+  rayQueryInitializeEXT(rq, TLAS, 0u, 0xFF, origin, 1e-3, dir, 1e30);
+  while (rayQueryProceedEXT(rq)) {
+    if (rayQueryGetIntersectionTypeEXT(rq, false) ==
+        gl_RayQueryCandidateIntersectionTriangleEXT) {
+      uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(rq, false));
+      int cp = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
+      vec2 cb = rayQueryGetIntersectionBarycentricsEXT(rq, false);
+      bool cf = rayQueryGetIntersectionFrontFaceEXT(rq, false);
+      if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(rq);
+    }
+  }
+
+  // Dome env background on miss (shaded mode only): sample the baked env cube
+  // scaled by the dome's effectiveColor.
+  if (int(pc.camPos.w + 0.5) == 0 &&
+      rayQueryGetIntersectionTypeEXT(rq, true) !=
+          gl_RayQueryCommittedIntersectionTriangleEXT) {
+    uint numL = uint(lightRows.length()) / RT_LIGHT_ROWS;
+    for (uint li = 0u; li < numL; ++li) {
+      vec4 l0 = light(li, 0u);  // .x type, .y flags, .z mapped envmap tex
+      if (int(l0.x + 0.5) != 6) continue;             // DomeLight
+      // Bit 4: 8-bit envmap texture mapped; bit 7: baked IBL env cube bound.
+      if ((int(l0.y + 0.5) & (16 | 128)) == 0) continue;
+      vec4 l4 = light(li, 4u);                        // effectiveColor.rgb
+      // Rows 10-12: world -> environment rotation (dome orientation).
+      vec3 de = vec3(dot(light(li, 10u).xyz, dir),
+                     dot(light(li, 11u).xyz, dir),
+                     dot(light(li, 12u).xyz, dir));
+      outc = textureLod(uEnvCube, de, 0.0).rgb * l4.xyz;
+      break;
+    }
+  }
 
   if (rayQueryGetIntersectionTypeEXT(rq, true) ==
       gl_RayQueryCommittedIntersectionTriangleEXT) {
@@ -143,25 +452,35 @@ void main() {
 
     InstInfo ii = insts[iid];
     MeshDesc md = meshes[ii.meshId];
+    uint mid = selectedMaterial(
+        md, prim, rayQueryGetIntersectionFrontFaceEXT(rq, true));
     Verts vb = Verts(md.vtxAddr);
     Idx ib = Idx(md.idxAddr);
     uint i0 = ib.i[prim * 3u + 0u];
     uint i1 = ib.i[prim * 3u + 1u];
     uint i2 = ib.i[prim * 3u + 2u];
     float w0 = 1.0 - bc.x - bc.y;
+    vec2 uv0h = fetchUV(vb, i0) * w0 + fetchUV(vb, i1) * bc.x +
+                fetchUV(vb, i2) * bc.y;
+    vec2 uv1h = uv0h;
+    if (md.uv1Addr != 0ul) {
+      UV1s ub = UV1s(md.uv1Addr);
+      uv1h = fetchUV1(ub, i0) * w0 + fetchUV1(ub, i1) * bc.x +
+             fetchUV1(ub, i2) * bc.y;
+    }
 
     // Object->world for this instance (instance transform for instanced meshes,
     // the mesh's world for non-instanced).
     mat4x3 o2w = rayQueryGetIntersectionObjectToWorldEXT(rq, true);
+    vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+    vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+    vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
 
     // Normal: geometric (face) when there are no authored normals, else the
     // interpolated vertex normal transformed by the normal matrix (non-instanced)
     // or the instance's object->world 3x3 (instanced).
     vec3 N;
     if ((md.geometricNormal & 1u) != 0u) {
-      vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
-      vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
-      vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
       N = normalize(cross(wp1 - wp0, wp2 - wp0));
     } else {
       vec3 nObj = fetchNrm(vb, i0) * w0 + fetchNrm(vb, i1) * bc.x + fetchNrm(vb, i2) * bc.y;
@@ -176,49 +495,476 @@ void main() {
     // left as-authored (matches the material shader, which does not flip them).
     bool authoredNonInstanced = (ii.useMaterial != 0u) && ((md.geometricNormal & 1u) == 0u);
     if (!authoredNonInstanced && dot(N, dir) > 0.0) N = -N;
+    vec3 coatN = N;
+
+    // Primary-ray differential footprint on the hit plane, converted from
+    // world units to UV units by the triangle's area ratio. This remains valid
+    // for perspective and orthographic authored cameras.
+    vec2 ndcDx = ndc + vec2(2.0 / float(size.x), 0.0);
+    vec2 ndcDy = ndc + vec2(0.0, -2.0 / float(size.y));
+    vec4 nxh = pc.invViewProj * vec4(ndcDx, 0.0, 1.0);
+    vec4 fxh = pc.invViewProj * vec4(ndcDx, 1.0, 1.0);
+    vec4 nyh = pc.invViewProj * vec4(ndcDy, 0.0, 1.0);
+    vec4 fyh = pc.invViewProj * vec4(ndcDy, 1.0, 1.0);
+    vec3 ox = nxh.xyz / nxh.w, oy = nyh.xyz / nyh.w;
+    vec3 dx = normalize(fxh.xyz / fxh.w - ox);
+    vec3 dy = normalize(fyh.xyz / fyh.w - oy);
+    float denX = dot(dx, N), denY = dot(dy, N);
+    denX = abs(denX) < 1e-6 ? (denX < 0.0 ? -1e-6 : 1e-6) : denX;
+    denY = abs(denY) < 1e-6 ? (denY < 0.0 ? -1e-6 : 1e-6) : denY;
+    float tx = dot(hit - ox, N) / denX;
+    float ty = dot(hit - oy, N) / denY;
+    vec3 hx = ox + dx * tx, hy = oy + dy * ty;
+    float worldFootprint = max(length(hx - hit), length(hy - hit));
+    vec2 tuv0 = fetchUV(vb, i0), tuv1 = fetchUV(vb, i1), tuv2 = fetchUV(vb, i2);
+    float worldArea2 = length(cross(wp1 - wp0, wp2 - wp0));
+    vec2 tue1 = tuv1 - tuv0, tue2 = tuv2 - tuv0;
+    float uvArea2 = abs(tue1.x * tue2.y - tue1.y * tue2.x);
+    float uvFootprint = worldFootprint *
+                        sqrt(uvArea2 / max(worldArea2, 1e-12));
 
     // Base color: material (non-instanced) or per-instance tint (instanced), times
     // the interpolated per-vertex displayColor when present.
     vec3 base;
+    float alpha = 1.0;
+    float metallic = 0.0;
+    float roughness = 0.5;
+    float alphaMode = 0.0;
+    float alphaCutoff = 0.5;
+    vec3 emissive = vec3(0.0);
+    float specWeight = 1.0;
+    float specIor = 1.5;
+    float occlusion = 1.0;
+    float coatWeight = 0.0;
+    float coatRoughness = 0.1;
+    vec3 coatColor = vec3(1.0);
     if (ii.useMaterial != 0u) {
-      base = (md.matId != 0xffffffffu) ? mat(md.matId, 0u).rgb : vec3(0.6);
+      if (mid != 0xffffffffu) {
+        base = mat(mid, 0u).rgb;
+        alpha = mat(mid, 0u).a;
+        metallic = mat(mid, 1u).x;
+        roughness = mat(mid, 1u).y;
+        alphaMode = mat(mid, 1u).z;
+        alphaCutoff = mat(mid, 1u).w;
+        emissive = mat(mid, 2u).rgb;
+        if (lrt(mid, 12u).w > 0.5) {
+          metallic = lrt(mid, 10u).x;
+          roughness = lrt(mid, 10u).z;
+          alpha = lrt(mid, 9u).w;
+          emissive = lrt(mid, 8u).rgb * lrt(mid, 8u).w;
+          specWeight = lrt(mid, 1u).w;
+          specIor = lrt(mid, 10u).w;
+          coatWeight = lrt(mid, 6u).w;
+          coatColor = lrt(mid, 6u).rgb;
+          coatRoughness = lrt(mid, 11u).x;
+        }
+      } else {
+        base = vec3(0.6);
+      }
     } else {
       base = ii.tint.rgb;  // per-instance color or the prototype's flatColor
+      alpha = clamp(ii.tint.a, 0.0, 1.0);
+      alphaMode = (alpha < 1.0) ? 2.0 : 0.0;  // approximate Blend like material RT
     }
     if (md.vtxColorAddr != 0ul) {
       Cols cb = Cols(md.vtxColorAddr);
-      base *= fetchCol(cb, i0) * w0 + fetchCol(cb, i1) * bc.x + fetchCol(cb, i2) * bc.y;
+      vec4 vc = fetchCol(cb, i0) * w0 + fetchCol(cb, i1) * bc.x +
+                fetchCol(cb, i2) * bc.y;
+      base *= vc.rgb;
+      alpha *= vc.a;
     }
+    if (ii.useMaterial != 0u && mid != 0xffffffffu) {
+      uint tb = mid * 12u;
+      uint pb = mid * 155u;
+      vec2 baseUv = materialUv(mid, 0, uv0h, uv1h);
+      vec4 bt = sampleRtTextureLod(matTexIds[tb + 0u], baseUv,
+                                  rtTextureLod(matTexIds[tb + 0u], baseUv,
+                                               materialUvFootprint(mid, 0,
+                                                                   uvFootprint)),
+                                  vec4(1.0));
+      bt = bt * vec4(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                     matTexParams[pb + 38u], matTexParams[pb + 39u]) +
+           vec4(matTexParams[pb + 40u], matTexParams[pb + 41u],
+                matTexParams[pb + 42u], matTexParams[pb + 43u]);
+      base *= bt.rgb;
+      alpha *= bt.a * ii.tint.a;
 
-    vec3 L = normalize(pc.lightDir.xyz);
-    float diff = max(dot(N, L), 0.0);
+      vec2 metallicUv = materialUv(mid, 1, uv0h, uv1h);
+      vec2 roughnessUv = materialUv(mid, 2, uv0h, uv1h);
+      vec4 mt = sampleRtTextureLod(matTexIds[tb + 1u], metallicUv,
+          rtTextureLod(matTexIds[tb + 1u], metallicUv,
+                       materialUvFootprint(mid, 1, uvFootprint)), vec4(1.0));
+      vec4 rt = sampleRtTextureLod(matTexIds[tb + 2u], roughnessUv,
+          rtTextureLod(matTexIds[tb + 2u], roughnessUv,
+                       materialUvFootprint(mid, 2, uvFootprint)), vec4(1.0));
+      metallic = clamp(metallic *
+                           (texChannel(mt, int(matTexParams[pb + 60u] + 0.5)) *
+                                matTexParams[pb + 61u] +
+                            matTexParams[pb + 62u]),
+                       0.0, 1.0);
+      roughness = clamp(roughness *
+                            (texChannel(rt, int(matTexParams[pb + 63u] + 0.5)) *
+                                 matTexParams[pb + 64u] +
+                             matTexParams[pb + 65u]),
+                        0.0, 1.0);
 
-    // Shadow ray towards the light (hard shadows).
-    float shadow = 1.0;
-    if (diff > 0.0) {
-      rayQueryEXT sq;
-      rayQueryInitializeEXT(sq, TLAS,
-                            gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
-                            0xFF, hit + N * 1e-3, 1e-3, L, 1e30);
-      while (rayQueryProceedEXT(sq)) {}
-      if (rayQueryGetIntersectionTypeEXT(sq, true) !=
-          gl_RayQueryCommittedIntersectionNoneEXT) {
-        shadow = 0.0;
+      int opacityTex = matTexIds[tb + 5u];
+      if (opacityTex >= 0) {
+        vec2 opacityUv = materialUv(mid, 5, uv0h, uv1h);
+        vec4 ot = sampleRtTextureLod(opacityTex, opacityUv,
+            rtTextureLod(opacityTex, opacityUv,
+                         materialUvFootprint(mid, 5, uvFootprint)), vec4(1.0));
+        alpha *= texChannel(ot, int(matTexParams[pb + 66u] + 0.5)) *
+                     matTexParams[pb + 67u] +
+                 matTexParams[pb + 68u];
+      }
+
+      int emissiveTex = matTexIds[tb + 4u];
+      if (emissiveTex >= 0) {
+        vec2 emissiveUv = materialUv(mid, 4, uv0h, uv1h);
+        vec4 et = sampleRtTextureLod(emissiveTex, emissiveUv,
+            rtTextureLod(emissiveTex, emissiveUv,
+                         materialUvFootprint(mid, 4, uvFootprint)), vec4(1.0));
+        et = et * vec4(matTexParams[pb + 52u], matTexParams[pb + 53u],
+                       matTexParams[pb + 54u], matTexParams[pb + 55u]) +
+             vec4(matTexParams[pb + 56u], matTexParams[pb + 57u],
+                  matTexParams[pb + 58u], matTexParams[pb + 59u]);
+        emissive *= et.rgb;
+      }
+
+      int normalTex = matTexIds[tb + 3u];
+      if (normalTex >= 0) {
+        vec2 normalUv = materialUv(mid, 3, uv0h, uv1h);
+        vec4 nt = sampleRtTextureLod(normalTex, normalUv,
+            rtTextureLod(normalTex, normalUv,
+                         materialUvFootprint(mid, 3, uvFootprint)),
+            vec4(0.5, 0.5, 1.0, 1.0));
+        nt = nt * vec4(matTexParams[pb + 44u], matTexParams[pb + 45u],
+                       matTexParams[pb + 46u], matTexParams[pb + 47u]) +
+             vec4(matTexParams[pb + 48u], matTexParams[pb + 49u],
+                  matTexParams[pb + 50u], matTexParams[pb + 51u]);
+        vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
+        vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
+        vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
+        vec2 nt0 = materialUv(mid, 3, fetchUV(vb, i0),
+                              md.uv1Addr != 0ul ? fetchUV1(UV1s(md.uv1Addr), i0)
+                                                : fetchUV(vb, i0));
+        vec2 nt1 = materialUv(mid, 3, fetchUV(vb, i1),
+                              md.uv1Addr != 0ul ? fetchUV1(UV1s(md.uv1Addr), i1)
+                                                : fetchUV(vb, i1));
+        vec2 nt2 = materialUv(mid, 3, fetchUV(vb, i2),
+                              md.uv1Addr != 0ul ? fetchUV1(UV1s(md.uv1Addr), i2)
+                                                : fetchUV(vb, i2));
+        vec3 e1 = wp1 - wp0, e2 = wp2 - wp0;
+        vec2 d1 = nt1 - nt0, d2 = nt2 - nt0;
+        float det = d1.x * d2.y - d1.y * d2.x;
+        vec3 T = abs(det) > 1e-12
+                     ? normalize((e1 * d2.y - e2 * d1.y) / det)
+                     : normalize(cross(abs(N.z) < 0.999 ? vec3(0, 0, 1)
+                                                        : vec3(0, 1, 0), N));
+        vec3 B = normalize(cross(N, T));
+        N = normalize(T * nt.x + B * nt.y + N * nt.z);
+      }
+      int coatNormalTex = matTexIds[tb + 11u];
+      if (coatNormalTex >= 0) {
+        vec2 src = matTexParams[pb + 146u] > 0.5 ? uv1h : uv0h;
+        vec2 cuv = vec2(
+            matTexParams[pb + 140u] * src.x + matTexParams[pb + 141u] * src.y +
+                matTexParams[pb + 142u],
+            matTexParams[pb + 143u] * src.x + matTexParams[pb + 144u] * src.y +
+                matTexParams[pb + 145u]);
+        vec4 nt = sampleRtTextureLod(coatNormalTex, cuv,
+            rtTextureLod(coatNormalTex, cuv, uvFootprint),
+            vec4(0.5, 0.5, 1.0, 1.0));
+        nt = nt * vec4(matTexParams[pb + 147u], matTexParams[pb + 148u],
+                       matTexParams[pb + 149u], matTexParams[pb + 150u]) +
+             vec4(matTexParams[pb + 151u], matTexParams[pb + 152u],
+                  matTexParams[pb + 153u], matTexParams[pb + 154u]);
+        vec3 e1 = wp1 - wp0, e2 = wp2 - wp0;
+        vec2 t0 = matTexParams[pb + 146u] > 0.5 && md.uv1Addr != 0ul
+                      ? fetchUV1(UV1s(md.uv1Addr), i0) : fetchUV(vb, i0);
+        vec2 t1 = matTexParams[pb + 146u] > 0.5 && md.uv1Addr != 0ul
+                      ? fetchUV1(UV1s(md.uv1Addr), i1) : fetchUV(vb, i1);
+        vec2 t2 = matTexParams[pb + 146u] > 0.5 && md.uv1Addr != 0ul
+                      ? fetchUV1(UV1s(md.uv1Addr), i2) : fetchUV(vb, i2);
+        vec2 d1 = t1 - t0, d2 = t2 - t0;
+        float det = d1.x * d2.y - d1.y * d2.x;
+        vec3 T = abs(det) > 1e-12
+            ? normalize((e1 * d2.y - e2 * d1.y) / det)
+            : normalize(cross(abs(N.z) < 0.999 ? vec3(0,0,1) : vec3(0,1,0), N));
+        vec3 B = normalize(cross(N, T));
+        coatN = normalize(T * nt.x + B * nt.y + N * nt.z);
+      }
+
+      // Occlusion / coat texture slots (matTexIds 6..9, UV rows in slots
+      // 12..15). Unbound slots sample white and the loaders neutralize the
+      // matching constant to 1, so constant*texel is always correct.
+      int occlusionTex = matTexIds[tb + 6u];
+      if (occlusionTex >= 0) {
+        vec2 aoUv = materialUv(mid, 12, uv0h, uv1h);
+        vec4 at = sampleRtTextureLod(occlusionTex, aoUv,
+            rtTextureLod(occlusionTex, aoUv,
+                         materialUvFootprint(mid, 12, uvFootprint)), vec4(1.0));
+        occlusion = clamp(texChannel(at, int(matTexParams[pb + 96u] + 0.5)) *
+                              matTexParams[pb + 70u] + matTexParams[pb + 71u],
+                          0.0, 1.0);
+      }
+      int coatWeightTex = matTexIds[tb + 7u];
+      if (coatWeightTex >= 0) {
+        vec2 cwUv = materialUv(mid, 13, uv0h, uv1h);
+        vec4 ct = sampleRtTextureLod(coatWeightTex, cwUv,
+            rtTextureLod(coatWeightTex, cwUv,
+                         materialUvFootprint(mid, 13, uvFootprint)), vec4(1.0));
+        int ch = int(matTexParams[pb + 97u] + 0.5);
+        coatWeight = clamp(coatWeight *
+                           (texChannel(ct, ch) * matTexParams[pb + 100u + uint(ch)] +
+                            matTexParams[pb + 104u + uint(ch)]),
+                           0.0, 1.0);
+      }
+      int coatColorTex = matTexIds[tb + 8u];
+      if (coatColorTex >= 0) {
+        vec2 ccUv = materialUv(mid, 14, uv0h, uv1h);
+        vec4 ct = sampleRtTextureLod(coatColorTex, ccUv,
+            rtTextureLod(coatColorTex, ccUv,
+                         materialUvFootprint(mid, 14, uvFootprint)), vec4(1.0));
+        coatColor *= ct.rgb * vec3(matTexParams[pb + 108u],
+                                   matTexParams[pb + 109u],
+                                   matTexParams[pb + 110u]) +
+                     vec3(matTexParams[pb + 112u],
+                          matTexParams[pb + 113u],
+                          matTexParams[pb + 114u]);
+      }
+      int coatRoughTex = matTexIds[tb + 9u];
+      if (coatRoughTex >= 0) {
+        vec2 crUv = materialUv(mid, 15, uv0h, uv1h);
+        vec4 ct = sampleRtTextureLod(coatRoughTex, crUv,
+            rtTextureLod(coatRoughTex, crUv,
+                         materialUvFootprint(mid, 15, uvFootprint)), vec4(1.0));
+        int ch = int(matTexParams[pb + 98u] + 0.5);
+        coatRoughness = clamp(coatRoughness *
+                              (texChannel(ct, ch) * matTexParams[pb + 116u + uint(ch)] +
+                               matTexParams[pb + 120u + uint(ch)]),
+                              0.02, 1.0);
       }
     }
-    outc = base * (0.25 + 0.85 * diff * shadow);
+    float fd = (max(specIor, 1.0) - 1.0) / (max(specIor, 1.0) + 1.0);
+    vec3 materialF0 = mix(vec3(fd * fd), base, clamp(metallic, 0.0, 1.0));
+    if (ii.useMaterial != 0u && mid != 0xffffffffu) {
+      uint tb = mid * 12u;
+      uint pb = mid * 155u;
+      bool previewSpec = matTexParams[pb + 131u] > 0.5;
+      bool openPbrSpec = matTexParams[pb + 139u] > 0.5;
+      if (previewSpec || openPbrSpec) {
+        vec3 specTint = lrt(mid, 1u).rgb;
+        materialF0 = previewSpec ? specTint
+            : mix(vec3(fd * fd) * specTint, base, clamp(metallic, 0.0, 1.0));
+        int specTex = matTexIds[tb + 10u];
+        if (specTex >= 0) {
+          vec2 srcUv = matTexParams[pb + 130u] > 0.5 ? uv1h : uv0h;
+          vec2 specUv = vec2(
+              matTexParams[pb + 124u] * srcUv.x +
+                  matTexParams[pb + 125u] * srcUv.y + matTexParams[pb + 126u],
+              matTexParams[pb + 127u] * srcUv.x +
+                  matTexParams[pb + 128u] * srcUv.y + matTexParams[pb + 129u]);
+          vec4 st = sampleRtTextureLod(specTex, specUv,
+              rtTextureLod(specTex, specUv, uvFootprint), vec4(1.0));
+          vec3 sampledSpec = st.rgb * vec3(matTexParams[pb + 132u],
+                                      matTexParams[pb + 133u],
+                                      matTexParams[pb + 134u]) +
+                        vec3(matTexParams[pb + 136u],
+                             matTexParams[pb + 137u],
+                             matTexParams[pb + 138u]);
+          materialF0 *= sampledSpec;
+        }
+      }
+    }
+    float materialOpacity = clamp(alpha, 0.0, 1.0);
+    if (alphaMode > 0.5 && alphaMode < 1.5) {
+      materialOpacity = (materialOpacity >= alphaCutoff) ? 1.0 : 0.0;
+    }
+
+    // Render mode (RenderMode in camPos.w). Only shaded mode needs the default
+    // hard shadow below; wireframe uses a fixed diagnostic color and debug AOVs
+    // overwrite outc, so those modes should avoid this
+    // extra ray query on large RT scenes. AO/soft-shadow modes issue their own
+    // ray queries in their AOV branches.
+    int rmode = int(pc.camPos.w + 0.5);
+    vec3 V = normalize(pc.camPos.xyz - hit);
+    vec3 coatNs = dot(coatN, V) < 0.0 ? -coatN : coatN;
+    float nv = max(dot(N, V), 1e-4);
+    vec3 direct = vec3(0.0);
+    bool hadDirectLight = false;
+    uint directLightCount = uint(lightRows.length()) / RT_LIGHT_ROWS;
+    for (uint li = 0u; li < directLightCount; ++li) {
+      int lightType = int(light(li, 0u).x + 0.5);
+      if (lightType == 6 || lightType == 8) continue;  // dome / portal
+      if (light(li, 0u).y <= 0.5) continue;
+      hadDirectLight = true;
+      int flags = int(light(li, 0u).y + 0.5);
+      bool directLinked = li < 32u
+          ? (ii.directLightMask & (1u << li)) != 0u
+          : (flags & (1 << 5)) != 0;
+      if (!directLinked) continue;
+      vec3 L;
+      float maxShadowT = 1e30;
+      float attenuation = 1.0;
+      if (lightType == 5) {
+        // DrawLightCPU stores the emission direction; shading needs the vector
+        // from the hit toward the infinitely distant source.
+        L = -normalize(light(li, 2u).xyz);
+      } else {
+        vec3 toLight = light(li, 1u).xyz - hit;
+        float dist2 = max(dot(toLight, toLight), 1e-6);
+        maxShadowT = sqrt(dist2);
+        L = toLight / maxShadowT;
+        attenuation = 1.0 / dist2;
+      }
+      float shape = 1.0;
+      if ((flags & 4) != 0 && lightType != 5) {
+        float coneCos = dot(normalize(light(li, 2u).xyz), -L);
+        float angle = clamp(light(li, 6u).x, 0.0, 180.0);
+        float softness = clamp(light(li, 6u).y, 0.0, 1.0);
+        float outer = cos(radians(angle));
+        float inner = cos(radians(angle * (1.0 - softness)));
+        shape = smoothstep(outer, max(inner, outer + 1e-5), coneCos) *
+                pow(max(coneCos, 0.0), max(light(li, 6u).z, 0.0));
+      }
+      float nl = max(dot(N, L), 0.0);
+      if (nl <= 0.0 || shape <= 0.0) continue;
+      float shadow = 1.0;
+      if (rmode == 0 && (flags & 2) != 0) {
+        rayQueryEXT sq;
+        rayQueryInitializeEXT(sq, TLAS, gl_RayFlagsTerminateOnFirstHitEXT,
+                              0xFF, hit + N * 1e-3, 1e-3, L,
+                              max(maxShadowT - 2e-3, 1e-3));
+        while (rayQueryProceedEXT(sq)) {
+          if (rayQueryGetIntersectionTypeEXT(sq, false) ==
+              gl_RayQueryCandidateIntersectionTriangleEXT) {
+            uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(sq, false));
+            int cp = rayQueryGetIntersectionPrimitiveIndexEXT(sq, false);
+            vec2 cb = rayQueryGetIntersectionBarycentricsEXT(sq, false);
+            bool cf = rayQueryGetIntersectionFrontFaceEXT(sq, false);
+            bool linked = li < 32u
+                ? (insts[ci].shadowLightMask & (1u << li)) != 0u
+                : (flags & (1 << 6)) != 0;
+            if (linked && materialAllowsHit(ci, cp, cb, cf))
+              rayQueryConfirmIntersectionEXT(sq);
+          }
+        }
+        if (rayQueryGetIntersectionTypeEXT(sq, true) !=
+            gl_RayQueryCommittedIntersectionNoneEXT) shadow = 0.0;
+      }
+      vec3 H = normalize(L + V);
+      float nh = max(dot(N, H), 0.0);
+      float vh = max(dot(V, H), 0.0);
+      vec3 f0 = materialF0;
+      vec3 F = fresnelSchlick(vh, f0);
+      vec3 specularBrdf = ggxD(nh, roughness) * ggxG1(nv, roughness) *
+                          ggxG1(nl, roughness) * F /
+                          max(4.0 * nv * nl, 1e-5) * max(specWeight, 0.0);
+      vec3 diffuseBrdf = (vec3(1.0) - F) * (1.0 - metallic) * base *
+                         (1.0 / 3.14159265);
+      float coatNoL = max(dot(coatNs, L), 0.0);
+      float coatNoV = max(dot(coatNs, V), 1e-4);
+      float coatNoH = max(dot(coatNs, H), 0.0);
+      float coatF0 = 0.04;
+      vec3 coatF = fresnelSchlick(vh, vec3(coatF0));
+      vec3 coatBrdf = ggxD(coatNoH, coatRoughness) *
+                      ggxG1(coatNoV, coatRoughness) *
+                      ggxG1(coatNoL, coatRoughness) * coatF /
+                      max(4.0 * coatNoV * coatNoL, 1e-5) * coatColor *
+                      clamp(coatWeight, 0.0, 1.0);
+      vec3 radiance = light(li, 3u).rgb * (attenuation * shape);
+      vec3 baseBrdf = diffuseBrdf * light(li, 7u).y +
+                      specularBrdf * light(li, 7u).z;
+      vec3 coatOnlyBrdf = coatBrdf * light(li, 7u).z;
+      direct += (baseBrdf * nl + coatOnlyBrdf * coatNoL) * radiance * shadow;
+    }
+    if (!hadDirectLight) {
+      vec3 L = normalize(pc.lightDir.xyz);
+      float nl = max(dot(N, L), 0.0);
+      vec3 H = normalize(L + V);
+      float nh = max(dot(N, H), 0.0), vh = max(dot(V, H), 0.0);
+      vec3 F = fresnelSchlick(vh, materialF0);
+      vec3 specularBrdf = ggxD(nh, roughness) * ggxG1(nv, roughness) *
+                          ggxG1(nl, roughness) * F /
+                          max(4.0 * nv * nl, 1e-5) * max(specWeight, 0.0);
+      vec3 diffuseBrdf = (vec3(1.0) - F) * (1.0 - metallic) * base *
+                         (1.0 / 3.14159265);
+      direct = (diffuseBrdf + specularBrdf) * nl;
+    }
+    // Ambient: dome split-sum IBL when baked (matches the raster IBL: SH
+    // irradiance diffuse + GGX-prefiltered specular), else the constant floor.
+    vec3 ambient = vec3(0.25);
+    vec3 specIBL = vec3(0.0);
+    {
+      uint numL2 = uint(lightRows.length()) / RT_LIGHT_ROWS;
+      for (uint li = 0u; li < numL2; ++li) {
+        vec4 l0 = light(li, 0u);
+        if (int(l0.x + 0.5) != 6) continue;         // DomeLight
+        if ((int(l0.y + 0.5) & 128) == 0) continue; // baked IBL present
+        vec3 envColor = light(li, 4u).xyz;
+        vec3 Ne = normalize(vec3(dot(light(li, 10u).xyz, N),
+                                 dot(light(li, 11u).xyz, N),
+                                 dot(light(li, 12u).xyz, N)));
+        ambient = shIrradiance(li, Ne) * envColor;
+        // Specular: prefiltered env along the (env-rotated) reflection vector,
+        // weighted by the split-sum DFG term. F0 = mix(0.04, base, metallic).
+        vec3 Rw = reflect(-V, N);
+        vec3 Re = normalize(vec3(dot(light(li, 10u).xyz, Rw),
+                                 dot(light(li, 11u).xyz, Rw),
+                                 dot(light(li, 12u).xyz, Rw)));
+        float rgh = clamp(roughness, 0.0, 1.0);
+        float maxLod = float(textureQueryLevels(uPrefilteredCube) - 1);
+        vec3 pref = textureLod(uPrefilteredCube, Re, rgh * maxLod).rgb;
+        vec2 dfg = texture(uBrdfLut, vec2(max(dot(N, V), 0.0), rgh)).rg;
+        vec3 F0 = materialF0;
+        specIBL = pref * (F0 * dfg.x + dfg.y) * envColor * max(specWeight, 0.0);
+        if (coatWeight > 0.0) {
+          float cr = clamp(coatRoughness, 0.0, 1.0);
+          vec3 coatPref = textureLod(uPrefilteredCube, Re, cr * maxLod).rgb;
+          vec2 coatDfg = texture(uBrdfLut, vec2(max(dot(N, V), 0.0), cr)).rg;
+          specIBL += coatPref * (vec3(0.04) * coatDfg.x + coatDfg.y) *
+                     coatColor * clamp(coatWeight, 0.0, 1.0) * envColor;
+        }
+        break;
+      }
+    }
+    // Occlusion modulates indirect/ambient only, never direct (matches raster).
+    outc = base * ambient * occlusion + specIBL * occlusion + direct + emissive;
 
     // Render mode (RenderMode in camPos.w): 1=wireframe (edges only), 2=shading
     // normal, 3=material-id, 4=geometric normal, 5=uv set 0, 6=depth (t /
     // depthScale in lightDir.w).
-    int rmode = int(pc.camPos.w + 0.5);
+    if (rmode == 0) {
+      if (alphaMode > 0.5 && alphaMode < 1.5 && materialOpacity <= 0.0) {
+        outc = bgc;
+      } else if (alphaMode > 1.5 && materialOpacity < 1.0) {
+        outc = mix(bgc, outc, materialOpacity);
+      }
+    }
     if (rmode == 1) {
       float e = min(w0, min(bc.x, bc.y));
-      if (e > 0.02) outc = pc.clearColor.rgb;
+      const vec3 wireColor = vec3(0.04, 0.24, 0.10);
+      outc = (e > 0.02) ? bgc : wireColor;
     } else if (rmode == 2) {
       outc = N * 0.5 + 0.5;
+    } else if (rmode == 35) {
+      outc = coatN * 0.5 + 0.5;
+    } else if (rmode == 36) {
+      outc = vec3(clamp(coatWeight, 0.0, 1.0));
+    } else if (rmode == 37) {
+      outc = clamp(coatColor, 0.0, 1.0);
+    } else if (rmode == 38) {
+      outc = vec3(clamp(coatRoughness, 0.0, 1.0));
+    } else if (rmode == 39) {
+      outc = clamp(materialF0, 0.0, 1.0);
+    } else if (rmode == 40) {
+      float ior = max(specIor, 1.0);
+      float d = (ior - 1.0) / (ior + 1.0);
+      outc = vec3(d * d);
     } else if (rmode == 3) {
-      outc = idColor(md.matId);
+      outc = idColor(mid);
     } else if (rmode == 4) {
       vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
       vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
@@ -241,16 +987,13 @@ void main() {
       outc = (dot(cross(wp1 - wp0, wp2 - wp0), dir) < 0.0) ? vec3(0.1, 0.7, 0.1)
                                                           : vec3(0.7, 0.1, 0.1);
     } else if (rmode == 9) {  // roughness
-      float r = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 1u).y : 0.5;
-      outc = vec3(r);
+      outc = vec3(roughness);
     } else if (rmode == 10) {  // metallic
-      float m = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 1u).x : 0.0;
-      outc = vec3(m);
+      outc = vec3(metallic);
     } else if (rmode == 11) {  // emissive
-      outc = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 2u).rgb : vec3(0.0);
+      outc = emissive;
     } else if (rmode == 12) {  // opacity
-      float a = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 0u).a : 1.0;
-      outc = vec3(a);
+      outc = vec3(materialOpacity);
     } else if (rmode == 13) {  // world position
       outc = clamp((hit - pc.sceneMin.xyz) / pc.sceneExtent.xyz, 0.0, 1.0);
     } else if (rmode == 23) {  // uv checker
@@ -355,16 +1098,25 @@ void main() {
       vec3 Ng = normalize(cross(wp1 - wp0, wp2 - wp0));
       if (dot(Ng, dir) > 0.0) Ng = -Ng;
       float aoRadius = max(pc.lightDir.w, 1e-3) * 0.15;  // 15% of scene extent
-      uint seed = hashU(uint(px.x) * 1973u + uint(px.y) * 9277u + 1u);
+      uint seed = hashU(uint(px.x) * 1973u + uint(px.y) * 9277u + fi * 26699u + 1u);
       const int NS = 24;
       float occ = 0.0;
       for (int s = 0; s < NS; ++s) {
         vec3 sd = cosHemi(Ng, rnd(seed), rnd(seed));
         rayQueryEXT aq;
         rayQueryInitializeEXT(aq, TLAS,
-                              gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                              gl_RayFlagsTerminateOnFirstHitEXT,
                               0xFF, hit + Ng * (aoRadius * 1e-2), 1e-4, sd, aoRadius);
-        while (rayQueryProceedEXT(aq)) {}
+        while (rayQueryProceedEXT(aq)) {
+          if (rayQueryGetIntersectionTypeEXT(aq, false) ==
+              gl_RayQueryCandidateIntersectionTriangleEXT) {
+            uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(aq, false));
+            int cp = rayQueryGetIntersectionPrimitiveIndexEXT(aq, false);
+            vec2 cb = rayQueryGetIntersectionBarycentricsEXT(aq, false);
+            bool cf = rayQueryGetIntersectionFrontFaceEXT(aq, false);
+            if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(aq);
+          }
+        }
         if (rayQueryGetIntersectionTypeEXT(aq, true) !=
             gl_RayQueryCommittedIntersectionNoneEXT) occ += 1.0;
       }
@@ -373,16 +1125,25 @@ void main() {
       vec3 Lc = normalize(pc.lightDir.xyz);
       vec3 tt = normalize(abs(Lc.x) > 0.9 ? vec3(0,1,0) : vec3(1,0,0));
       vec3 bb = normalize(cross(Lc, tt)); tt = cross(bb, Lc);
-      uint seed = hashU(uint(px.x) * 2719u + uint(px.y) * 5051u + 7u);
+      uint seed = hashU(uint(px.x) * 2719u + uint(px.y) * 5051u + fi * 40503u + 7u);
       const int NS = 16; float vis = 0.0; const float coneR = 0.08;
       for (int s = 0; s < NS; ++s) {
         float a = rnd(seed) * 6.2831853, rr = sqrt(rnd(seed)) * coneR;
         vec3 sd = normalize(Lc + tt * (rr * cos(a)) + bb * (rr * sin(a)));
         rayQueryEXT sq;
         rayQueryInitializeEXT(sq, TLAS,
-                              gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                              gl_RayFlagsTerminateOnFirstHitEXT,
                               0xFF, hit + N * 1e-3, 1e-3, sd, 1e30);
-        while (rayQueryProceedEXT(sq)) {}
+        while (rayQueryProceedEXT(sq)) {
+          if (rayQueryGetIntersectionTypeEXT(sq, false) ==
+              gl_RayQueryCandidateIntersectionTriangleEXT) {
+            uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(sq, false));
+            int cp = rayQueryGetIntersectionPrimitiveIndexEXT(sq, false);
+            vec2 cb = rayQueryGetIntersectionBarycentricsEXT(sq, false);
+            bool cf = rayQueryGetIntersectionFrontFaceEXT(sq, false);
+            if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(sq);
+          }
+        }
         if (rayQueryGetIntersectionTypeEXT(sq, true) ==
             gl_RayQueryCommittedIntersectionNoneEXT) vis += 1.0;
       }
@@ -390,5 +1151,19 @@ void main() {
     }
   }
 
+  // Progressive accumulation: add this sample's radiance to the running sum and
+  // display the average. fi==0 (or accumulation off) overwrites, so a stale or
+  // uninitialised accum buffer never bleeds into a fresh trace.
+  if (accumulate) {
+    vec3 sum = (fi == 0u) ? outc : (imageLoad(accumImg, px).rgb + outc);
+    imageStore(accumImg, px, vec4(sum, 1.0));
+    outc = sum / float(fi + 1u);
+  }
+  // Encode the shaded/wireframe image for display (linear -> sRGB), consistent
+  // with the raster backends' output (T11). Debug AOVs stay raw. Accumulation
+  // stays linear above, so only the displayed average is encoded.
+  int outMode = int(pc.camPos.w + 0.5);
+  if (outMode == 0) outc *= exp2(pc.clearColor.w);
+  if (outMode == 0 || outMode == 1) outc = linearToSrgb(outc);
   imageStore(outImg, px, vec4(outc, 1.0));
 }

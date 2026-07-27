@@ -5,9 +5,13 @@
 #include "crate-writer.hh"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <set>
 #include <sstream>
+#include <thread>
 #include <unordered_map>
 
 // XXH3 hash (header-only mode, namespaced to avoid collision with zstd's copy)
@@ -52,6 +56,7 @@ namespace pathlib = ::crate;
 // - sign-conversion: safe narrowing in serialization code
 // - old-style-cast: debug print formatting
 // - unused-parameter: some functions have consistent API signatures
+// - nrvo: several helpers return one of multiple local ValueRep candidates
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wshadow"
@@ -60,16 +65,31 @@ namespace pathlib = ::crate;
 #pragma clang diagnostic ignored "-Wshorten-64-to-32"
 #pragma clang diagnostic ignored "-Wexceptions"
 #pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wnrvo"
 #endif
 
 namespace tinyusdz {
 namespace experimental {
+
+CrateWriter::InternSink::~InternSink() = default;
 
 // Out-of-line virtual destructors to anchor vtables in this TU.
 IOutputStream::~IOutputStream() = default;
 MemoryOutputStream::~MemoryOutputStream() = default;
 
 namespace {
+
+FILE *ProfileOutput() {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdisabled-macro-expansion"
+#endif
+  FILE *output = stderr;
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+  return output;
+}
 
 // Magic identifier for USDC files
 constexpr char kMagicIdent[] = "PXR-USDC";
@@ -282,7 +302,7 @@ bool CrateWriter::Open(std::string* err) {
 
 bool CrateWriter::AddSpec(const Path& path,
                            SpecType spec_type,
-                           const crate::FieldValuePairVector& fields,
+                           crate::FieldValuePairVector fields,
                            std::string* err) {
   if (!is_open_) {
     if (err) *err = "File not open";
@@ -294,25 +314,21 @@ bool CrateWriter::AddSpec(const Path& path,
     return false;
   }
 
-  // Check for duplicate specs with same path (USD Crate requires each path to
-  // appear only once). O(1) via spec_path_set_ — a prior implementation did an
-  // O(n^2) linear scan of spec_data_, each step allocating two full_path_name()
-  // strings, which dominated write time for spec-dense scenes.
-  if (spec_path_set_.count(path)) {
-    return true;  // Silently skip duplicate (not an error)
-  }
-
-  // Create spec data
-  SpecData spec_data;
-  spec_data.path = path;
-  spec_data.spec_type = spec_type;  // Store the spec type
-  spec_data.fields = fields;
+  // NOTE: duplicate-spec-path detection (USD Crate requires each path to
+  // appear only once; first AddSpec wins, silently) happens in Finalize's
+  // sorted rebuild: the spec sort tiebreaks equal paths on insertion order,
+  // making duplicates adjacent with the first-added spec first, so dedup is
+  // a free adjacent compare there. A prior implementation kept a
+  // Path-keyed hash set here — one Path hash + equality per AddSpec, which
+  // was a top-5 profile entry on spec-dense scenes.
 
   // Estimate memory usage for this spec
   // Path + field names + approximate field value sizes
-  int64_t estimated_memory = path.full_path_name().size();  // Path string
+  // (prim+prop part sizes; avoids allocating a full_path_name() string)
+  int64_t estimated_memory =
+      int64_t(path.prim_part().size() + path.prop_part().size() + 1);
   for (const auto& field : fields) {
-    estimated_memory += field.first.size();  // Field name
+    estimated_memory += int64_t(field.first.size());  // Field name
     estimated_memory += 64;  // Approximate field value overhead
   }
 
@@ -321,27 +337,210 @@ bool CrateWriter::AddSpec(const Path& path,
     if (err) {
       *err = "Adding spec would exceed memory limit of " +
              std::to_string(options_.max_memory_bytes / (1024*1024)) + " MB. " +
-             "Current usage: " + std::to_string(memory_used_estimate_ / (1024*1024)) + " MB";
+             "Current usage: " +
+             std::to_string(memory_used_estimate_.load(std::memory_order_relaxed) /
+                            (1024 * 1024)) +
+             " MB";
     }
     return false;
   }
 
-  // We'll fill in the actual crate::Spec later during Finalize
-  // For now, just accumulate the data
-  spec_data_.push_back(spec_data);
-  spec_path_set_.emplace(path, 1u);
+  // Create spec data. We'll fill in the actual crate::Spec later during
+  // Finalize; for now, just accumulate the data (moved, not copied — field
+  // values can carry large arrays).
+  SpecData spec_data;
+  spec_data.path = path;
+  spec_data.spec_type = spec_type;  // Store the spec type
+  spec_data.fields = std::move(fields);
+
+  // Pre-register tokens from field names (token indices are assigned in
+  // first-seen order, so this must stay before Finalize). Under a per-thread
+  // spec sink (parallel stage->specs conversion) registration is skipped
+  // here and replayed serially in DFS spec order after assembly — same
+  // first-seen order, byte-identical token numbering.
+  spec_data.fields_at_addspec = static_cast<uint32_t>(spec_data.fields.size());
+  if (!tls_spec_sink()) {
+    for (const auto& field : spec_data.fields) {
+      GetOrCreateToken(field.first);
+    }
+  }
+
+  active_spec_buffer().push_back(std::move(spec_data));
   memory_used_estimate_ += estimated_memory;
 
-  // Pre-register the path for deduplication
-  GetOrCreatePath(path);
-
-  // Pre-register tokens from field names
-  for (const auto& field : fields) {
-    GetOrCreateToken(field.first);
-  }
+  // NOTE: no GetOrCreatePath(path) here — Finalize() clears and rebuilds the
+  // path table from the sorted specs, so pre-registering paths was pure
+  // wasted work (hash + ancestor walk per spec).
 
   return true;
 }
+
+namespace {
+
+// Flattened crate-path sort key; plain byte comparison of two keys reproduces
+// pathlib::CompareParsedPaths ordering (see the sort in Finalize).
+std::string BuildCratePathSortKey(const tinyusdz::Path& path) {
+  const std::string& prim = path.prim_part();
+  const std::string& prop = path.prop_part();
+  std::string key;
+  key.reserve(prim.size() + prop.size() + 2);
+  const bool is_abs = !prim.empty() && (prim[0] == '/');
+  key.push_back(is_abs ? '\x01' : '\x7e');
+  // Join prim elements with '\x02', skipping empty segments (mirrors
+  // ParsePath). Root "/" contributes a single empty element, i.e. nothing
+  // beyond the marker — which sorts before every non-root absolute path.
+  size_t start = is_abs ? 1 : 0;
+  bool first = true;
+  while (start < prim.size()) {
+    size_t end = prim.find('/', start);
+    if (end == std::string::npos) {
+      end = prim.size();
+    }
+    if (end > start) {
+      if (!first) {
+        key.push_back('\x02');
+      }
+      key.append(prim, start, end - start);
+      first = false;
+    }
+    start = end + 1;
+  }
+  if (!prop.empty()) {
+    key.push_back('\x01');
+    key.append(prop);
+  }
+  return key;
+}
+
+// Round-13: byte-identical parallel sort of a Schwartzian `order` index array
+// by precomputed `keys`, tiebreaking on original index. Total order (the
+// tiebreak makes every pair strictly comparable), so any correct sort yields
+// the exact same result as the serial std::sort it replaces. P sorted chunks
+// (parallel) + pairwise double-buffered merge rounds. Falls back to std::sort
+// when threads are unavailable or n is small.
+inline void SortOrderByKeys(std::vector<uint32_t>& order,
+                            const std::vector<std::string>& keys,
+                            size_t nthreads) {
+  auto less = [&keys](uint32_t a, uint32_t b) {
+    const int c = keys[a].compare(keys[b]);
+    return c != 0 ? c < 0 : a < b;
+  };
+  const size_t n = order.size();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Round P down to a power of two so the pairwise tree merge consumes runs
+  // cleanly; need enough work per chunk to pay for the threads.
+  size_t P = 1;
+  while (P * 2 <= nthreads && P * 2 <= (n / 8192 + 1)) P *= 2;
+  if (P >= 2) {
+    std::vector<size_t> bnd(P + 1);
+    const size_t chunk = (n + P - 1) / P;
+    for (size_t t = 0; t <= P; t++) bnd[t] = std::min(n, t * chunk);
+    // Parallel per-chunk sort.
+    {
+      std::vector<std::thread> ths;
+      ths.reserve(P - 1);
+      auto sort_chunk = [&](size_t t) {
+        std::sort(order.begin() + std::ptrdiff_t(bnd[t]),
+                  order.begin() + std::ptrdiff_t(bnd[t + 1]), less);
+      };
+      for (size_t t = 1; t < P; t++) ths.emplace_back(sort_chunk, t);
+      sort_chunk(0);
+      for (auto& th : ths) th.join();
+    }
+    // Pairwise tree merge with double buffering. `bnd` holds current run
+    // boundaries; each round halves the run count.
+    std::vector<uint32_t> scratch(n);
+    uint32_t* src = order.data();
+    uint32_t* dst = scratch.data();
+    size_t runs = P;
+    while (runs > 1) {
+      const size_t pairs = runs / 2;
+      std::vector<std::thread> ths;
+      ths.reserve(pairs - 1);
+      auto merge_pair = [&](size_t p) {
+        const size_t lo = bnd[2 * p], mid = bnd[2 * p + 1], hi = bnd[2 * p + 2];
+        std::merge(src + lo, src + mid, src + mid, src + hi, dst + lo, less);
+      };
+      for (size_t p = 1; p < pairs; p++) ths.emplace_back(merge_pair, p);
+      if (pairs > 0) merge_pair(0);
+      for (auto& th : ths) th.join();
+      // Odd trailing run: copy straight through.
+      if (runs & 1) {
+        const size_t lo = bnd[runs - 1], hi = bnd[runs];
+        std::copy(src + lo, src + hi, dst + lo);
+      }
+      std::vector<size_t> nb(pairs + (runs & 1) + 1);
+      for (size_t p = 0; p <= pairs; p++) nb[p] = bnd[2 * p];
+      if (runs & 1) nb[pairs] = bnd[runs - 1];
+      nb.back() = n;
+      bnd = std::move(nb);
+      runs = bnd.size() - 1;
+      std::swap(src, dst);
+    }
+    if (src != order.data()) std::copy(src, src + n, order.data());
+    return;
+  }
+#endif
+  (void)nthreads;
+  (void)n;
+  std::sort(order.begin(), order.end(), less);
+}
+
+}  // namespace
+
+// Scoped ns accumulator for the TINYUSDZ_CRATE_PROFILE Finalize report.
+// Zero-cost (one branch) when disabled.
+namespace {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+// Writer worker-thread budget (same cap as the two-pass field packing).
+size_t WriterParallelThreads() {
+  const unsigned hw = std::thread::hardware_concurrency();
+  return (std::max<size_t>)(
+      1, (std::min<size_t>)(static_cast<size_t>(hw ? hw : 1), size_t(16)));
+}
+
+// Blocking parallel-for over [0, n) in static contiguous ranges;
+// fn(begin, end) must only write disjoint slots.
+template <typename Fn>
+void ParallelForRanges(size_t n, size_t nthreads, Fn&& fn) {
+  if (n == 0) return;
+  const size_t nt = (std::min)(nthreads, n);
+  if (nt <= 1) {
+    fn(size_t(0), n);
+    return;
+  }
+  std::vector<std::thread> ths;
+  const size_t chunk = (n + nt - 1) / nt;
+  ths.reserve(nt);
+  for (size_t t = 0; t < nt; t++) {
+    const size_t b = t * chunk;
+    const size_t e = (std::min)(n, b + chunk);
+    if (b >= e) break;
+    ths.emplace_back([&fn, b, e]() { fn(b, e); });
+  }
+  for (auto& th : ths) {
+    th.join();
+  }
+}
+#endif  // TINYUSDZ_ENABLE_THREAD
+
+struct ProfScope {
+  bool on;
+  uint64_t* acc;
+  std::chrono::steady_clock::time_point t0;
+  ProfScope(bool enabled, uint64_t* accumulator) : on(enabled), acc(accumulator) {
+    if (on) t0 = std::chrono::steady_clock::now();
+  }
+  ~ProfScope() {
+    if (on) {
+      *acc += static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - t0)
+              .count());
+    }
+  }
+};
+}  // namespace
 
 bool CrateWriter::Finalize(std::string* err) {
   if (!is_open_) {
@@ -353,6 +552,20 @@ bool CrateWriter::Finalize(std::string* err) {
     if (err) *err = "File already finalized";
     return false;
   }
+
+  // Finalize phase profiling (TINYUSDZ_CRATE_PROFILE=1): stderr report of the
+  // sort / path-rebuild / field-pack split, with PackValue further split into
+  // inline/dedup/write/other. Timer overhead inflates the profiled run; use
+  // the shares, not the absolute wall.
+  profile_finalize_ = (std::getenv("TINYUSDZ_CRATE_PROFILE") != nullptr);
+  const auto prof_now = []() { return std::chrono::steady_clock::now(); };
+  const auto prof_ns = [](std::chrono::steady_clock::time_point a,
+                          std::chrono::steady_clock::time_point b) -> uint64_t {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(b - a).count());
+  };
+  const auto prof_t0 = prof_now();
+  auto prof_t_sort = prof_t0, prof_t_paths = prof_t0, prof_t_fields = prof_t0;
 
   // ========================================================================
   // Step 1: Process all specs and build internal tables
@@ -374,13 +587,70 @@ bool CrateWriter::Finalize(std::string* err) {
   // This ensures path indices assigned here match the path tree encoding.
   //
   // PseudoRoot ("/") MUST be first (required by USD spec)
-  std::sort(spec_data_.begin(), spec_data_.end(),
-    [](const SpecData& a, const SpecData& b) {
-      // Use the same path comparison as pathlib::SortSimplePaths
-      pathlib::SimplePath a_path(a.path.prim_part(), a.path.prop_part());
-      pathlib::SimplePath b_path(b.path.prim_part(), b.path.prop_part());
-      return pathlib::ComparePaths(a_path, b_path) < 0;
-    });
+  //
+  // Schwartzian transform with FLATTENED string keys: the crate path order
+  // (absolute-first, element-wise lexicographic with shorter-prefix-first,
+  // properties before children, property names bytewise) is encoded into a
+  // single byte string per path — '\x01' marks absolute (relative gets
+  // '\x7e' so it sorts after every absolute path), elements join with
+  // '\x02' and the property appends after '\x01' ('\x01' < '\x02' puts
+  // /A.prop before /A/B). Plain std::string comparison then reproduces
+  // pathlib::CompareParsedPaths exactly, without re-parsing per comparison.
+  {
+    const size_t n = spec_data_.size();
+    // Thread budget for the parallel key-build + merge sort (round 13). The
+    // serial path is byte-identical (same total order); both fall back to
+    // serial when nthreads==1 or n is small.
+    size_t nthreads = 1;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    {
+      const unsigned hw = std::thread::hardware_concurrency();
+      nthreads = (std::max<size_t>)(1, (std::min<size_t>)(hw ? hw : 1, 16));
+    }
+#endif
+    std::vector<std::string> keys(n);
+    // Parallel Schwartzian key build (BuildCratePathSortKey is pure; keys[i]
+    // slots are written disjointly).
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (nthreads > 1 && n >= 8192) {
+      const size_t chunk = (n + nthreads - 1) / nthreads;
+      std::vector<std::thread> ths;
+      ths.reserve(nthreads - 1);
+      auto build = [&](size_t b, size_t e) {
+        for (size_t i = b; i < e; i++)
+          keys[i] = BuildCratePathSortKey(spec_data_[i].path);
+      };
+      for (size_t t = 1; t < nthreads; t++) {
+        const size_t b = t * chunk, e = (std::min)(b + chunk, n);
+        if (b >= e) break;
+        ths.emplace_back(build, b, e);
+      }
+      build(0, (std::min)(chunk, n));
+      for (auto& th : ths) th.join();
+    } else
+#endif
+    {
+      for (size_t i = 0; i < n; i++)
+        keys[i] = BuildCratePathSortKey(spec_data_[i].path);
+    }
+    std::vector<uint32_t> order(n);
+    for (size_t i = 0; i < n; i++) {
+      order[i] = uint32_t(i);
+    }
+    // Tiebreak equal keys on insertion order: keeps first-AddSpec-wins
+    // duplicate handling exact (dedup happens in the rebuild below) and
+    // makes the order among equal-key paths (e.g. variant-bearing specs,
+    // whose key ignores the variant part) deterministic and stable.
+    // Byte-identical parallel merge sort (serial std::sort fallback inside).
+    SortOrderByKeys(order, keys, nthreads);
+    std::vector<SpecData> sorted_specs;
+    sorted_specs.reserve(n);
+    for (size_t i = 0; i < n; i++) {
+      sorted_specs.push_back(std::move(spec_data_[order[i]]));
+    }
+    spec_data_ = std::move(sorted_specs);
+  }
+  if (profile_finalize_) prof_t_sort = prof_now();
 
   // Verify that the first spec is PseudoRoot (required by USD spec)
   if (!spec_data_.empty()) {
@@ -399,26 +669,77 @@ bool CrateWriter::Finalize(std::string* err) {
   }
 
   // CRITICAL: Rebuild path deduplication table to match sorted order
-  // Path indices must correspond to the sorted spec order
-  path_to_index_.clear();
+  // Path indices must correspond to the sorted spec order.
+  // Specs are sorted, so duplicate paths (if any) are adjacent — dedup by
+  // comparing with the previous path and assign each spec's path index here
+  // (one hash-map insert per unique path; the old flow did a find+insert per
+  // spec plus a separate GetOrCreatePath lookup per spec below).
+  path_slots_.clear();
+  path_slots_used_ = 0;
+  GrowPathSlots(spec_data_.size() + 16);
   paths_.clear();
-  for (const auto& spec_data : spec_data_) {
-    if (path_to_index_.find(spec_data.path) == path_to_index_.end()) {
-      crate::PathIndex idx;
-      idx.value = static_cast<uint32_t>(paths_.size());
-      path_to_index_[spec_data.path] = idx;
-      paths_.push_back(spec_data.path);
+  {
+    const crate::PathHasher hasher;
+    // Path hashing is a pure function of the (immutable here) spec paths —
+    // precompute it in parallel and keep only the order-dependent slot
+    // insertion serial.
+    std::vector<uint32_t> spec_path_hashes(spec_data_.size());
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    ParallelForRanges(spec_data_.size(), WriterParallelThreads(),
+                      [&](size_t b, size_t e) {
+                        for (size_t i = b; i < e; i++) {
+                          spec_path_hashes[i] =
+                              static_cast<uint32_t>(hasher(spec_data_[i].path));
+                        }
+                      });
+#else
+    for (size_t i = 0; i < spec_data_.size(); i++) {
+      spec_path_hashes[i] = static_cast<uint32_t>(hasher(spec_data_[i].path));
     }
+#endif
+    paths_.reserve(spec_data_.size());
+    size_t w = 0;
+    for (size_t r = 0; r < spec_data_.size(); r++) {
+      SpecData& spec_data = spec_data_[r];
+      if (!paths_.empty() && paths_.back() == spec_data.path) {
+        // Duplicate spec path: keep the first-added spec (the sort above
+        // tiebreaks on insertion order), silently drop this one — same
+        // behavior as the old AddSpec-time hash-set dedup.
+        continue;
+      }
+      const uint32_t idx = static_cast<uint32_t>(paths_.size());
+      // MOVE the path into paths_: nothing reads spec_data.path after this
+      // rebuild (the sort keys and the hash precompute above were the last
+      // readers), and the duplicate check compares against the moved-in
+      // paths_.back(). Saves one Path (two-string) copy per unique spec.
+      paths_.push_back(std::move(spec_data.path));
+      InsertPathSlot(spec_path_hashes[r], idx);
+      spec_data.spec.path_index.value = idx;
+      if (w != r) spec_data_[w] = std::move(spec_data);
+      w++;
+    }
+    spec_data_.resize(w);
   }
+  if (profile_finalize_) prof_t_paths = prof_now();
 
-  // Build field and fieldset tables
-  for (auto& spec_data : spec_data_) {
+  // Build field and fieldset tables.
+  //
+  // Pass B / serial body: identical shared-state effect sequence either way —
+  // field-name intern, TokenVector special case, value pack (from a pass-A
+  // plan when one exists, plain PackValue otherwise), field/fieldset dedup.
+  auto pack_spec_fields = [&](SpecData& spec_data,
+                              std::vector<PackPlan>* plans_for_spec) -> bool {
     std::vector<crate::FieldIndex> field_indices;
 
-    for (const auto& field_pair : spec_data.fields) {
+    for (size_t fi = 0; fi < spec_data.fields.size(); fi++) {
+      const auto& field_pair = spec_data.fields[fi];
       // Create field
       crate::Field field;
+      const auto prof_f0 = profile_finalize_
+                               ? prof_now()
+                               : std::chrono::steady_clock::time_point{};
       field.token_index = GetOrCreateToken(field_pair.first);
+      if (profile_finalize_) prof_field_dedup_ns_ += prof_ns(prof_f0, prof_now());
 
       // USD metadata fields `primChildren` and `properties` store a list of
       // child/property names. On the wire, pxrusd expects these as the
@@ -435,13 +756,18 @@ bool CrateWriter::Finalize(std::string* err) {
       } else if (fname == "subLayers" &&
                  field_pair.second.as<std::vector<std::string>>()) {
         // Must be the dedicated StringVector type or pxr ignores the
-        // sublayers entirely (see PackStringVectorValue).
+        // sublayers entirely (see PackStringVectorValue). Intercepts BEFORE
+        // the pass-A plan (like the TokenVector special case above) — a plan
+        // for this field is ignored.
         field.value_rep = PackStringVectorValue(
             *field_pair.second.as<std::vector<std::string>>(), err);
       } else if (fname == "subLayerOffsets" &&
                  field_pair.second.as<std::vector<LayerOffset>>()) {
         field.value_rep = PackLayerOffsetVectorValue(
             *field_pair.second.as<std::vector<LayerOffset>>(), err);
+      } else if (plans_for_spec) {
+        field.value_rep =
+            PackValueFromPlan(field_pair.second, (*plans_for_spec)[fi], err);
       } else {
         field.value_rep = PackValue(field_pair.second, err);
       }
@@ -449,20 +775,128 @@ bool CrateWriter::Finalize(std::string* err) {
         return false;
       }
 
-
       // Get or create field index
+      const auto prof_f1 = profile_finalize_
+                               ? prof_now()
+                               : std::chrono::steady_clock::time_point{};
       crate::FieldIndex field_idx = GetOrCreateField(field);
+      if (profile_finalize_) prof_field_dedup_ns_ += prof_ns(prof_f1, prof_now());
       field_indices.push_back(field_idx);
     }
 
     // Get or create fieldset
+    const auto prof_f2 = profile_finalize_
+                             ? prof_now()
+                             : std::chrono::steady_clock::time_point{};
     crate::FieldSetIndex fieldset_idx = GetOrCreateFieldSet(field_indices);
+    if (profile_finalize_) prof_field_dedup_ns_ += prof_ns(prof_f2, prof_now());
 
-    // Temporarily assign path_index (will be updated after sorting)
-    crate::PathIndex path_idx = GetOrCreatePath(spec_data.path);
-    spec_data.spec.path_index = path_idx;
+    // (spec.path_index was assigned in the sorted-rebuild loop above.)
     spec_data.spec.fieldset_index = fieldset_idx;
     spec_data.spec.spec_type = spec_data.spec_type;  // Use the stored spec type
+    return true;
+  };
+
+  // Deferred-interning two-pass (round 14), gated on TINYUSDZ_ENABLE_THREAD:
+  // pass A precomputes pure per-field work in parallel (see BuildPackPlan),
+  // pass B replays shared-state effects in exact serial order. Windowed so
+  // the prebuilt out-of-line buffers never hold more than a slice of the
+  // VALUE section at once.
+  bool two_pass_pack = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  size_t pack_nthreads = 1;
+  {
+    const unsigned hw = std::thread::hardware_concurrency();
+    pack_nthreads = (std::max<size_t>)(
+        1, (std::min<size_t>)(static_cast<size_t>(hw ? hw : 1), size_t(16)));
+  }
+  two_pass_pack = (pack_nthreads > 1) && (spec_data_.size() >= 1024);
+#endif
+
+  if (!two_pass_pack) {
+    for (auto& spec_data : spec_data_) {
+      if (!pack_spec_fields(spec_data, nullptr)) {
+        return false;
+      }
+    }
+  }
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  else {
+    const size_t kWindowSpecs = 65536;
+    const size_t total = spec_data_.size();
+    std::vector<std::vector<PackPlan>> window_plans;
+    for (size_t w0 = 0; w0 < total; w0 += kWindowSpecs) {
+      const size_t w1 = (std::min)(total, w0 + kWindowSpecs);
+      window_plans.assign(w1 - w0, std::vector<PackPlan>());
+
+      // Pass A: fill plans concurrently. Dynamic chunking — value sizes are
+      // heavily skewed (giant mesh arrays next to one-field specs).
+      {
+        ProfScope prof_pa(profile_finalize_, &prof_passa_ns_);
+        PackPlanContext ctx;
+        std::atomic<size_t> cursor{w0};
+        const size_t kChunk = 64;
+        auto worker = [&]() {
+          for (;;) {
+            const size_t begin = cursor.fetch_add(kChunk);
+            if (begin >= w1) break;
+            const size_t end = (std::min)(w1, begin + kChunk);
+            for (size_t i = begin; i < end; i++) {
+              SpecData& sd = spec_data_[i];
+              std::vector<PackPlan>& plans = window_plans[i - w0];
+              plans.resize(sd.fields.size());
+              for (size_t fi = 0; fi < sd.fields.size(); fi++) {
+                BuildPackPlan(sd.fields[fi].second, &plans[fi], &ctx);
+              }
+            }
+          }
+        };
+        std::vector<std::thread> ths;
+        ths.reserve(pack_nthreads);
+        for (size_t t = 0; t < pack_nthreads; t++) {
+          ths.emplace_back(worker);
+        }
+        for (auto& th : ths) {
+          th.join();
+        }
+      }
+
+      // Pass B: serial replay in exact order.
+      {
+        ProfScope prof_pb(profile_finalize_, &prof_passb_ns_);
+        for (size_t i = w0; i < w1; i++) {
+          if (!pack_spec_fields(spec_data_[i], &window_plans[i - w0])) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+#endif
+  if (profile_finalize_) {
+    prof_t_fields = prof_now();
+    const double ms = 1e-6;
+    fprintf(ProfileOutput(),
+            "[crate-writer profile] Finalize: sort %.1fms | path-rebuild %.1fms "
+            "| field-pack %.1fms (PackValue: inline %.1fms, dedup %.1fms, "
+            "write %.1fms, other %.1fms; field/fieldset dedup %.1fms)\n",
+            double(prof_ns(prof_t0, prof_t_sort)) * ms,
+            double(prof_ns(prof_t_sort, prof_t_paths)) * ms,
+            double(prof_ns(prof_t_paths, prof_t_fields)) * ms,
+            double(prof_pack_inline_ns_) * ms, double(prof_pack_dedup_ns_) * ms,
+            double(prof_pack_write_ns_) * ms,
+            double(prof_pack_total_ns_ -
+                   (std::min)(prof_pack_total_ns_,
+                              prof_pack_inline_ns_ + prof_pack_dedup_ns_ +
+                                  prof_pack_write_ns_)) *
+                ms,
+            double(prof_field_dedup_ns_) * ms);
+    if (prof_passa_ns_ || prof_passb_ns_) {
+      fprintf(ProfileOutput(),
+              "[crate-writer profile]   two-pass: pass A %.1fms (parallel) | "
+              "pass B %.1fms (serial replay)\n",
+              double(prof_passa_ns_) * ms, double(prof_passb_ns_) * ms);
+    }
   }
 
   // ========================================================================
@@ -527,12 +961,47 @@ bool CrateWriter::Finalize(std::string* err) {
   }
 
   // Write sections in order
+  auto prof_t_sec = prof_now();
+  const auto prof_section = [&](const char* name) {
+    if (!profile_finalize_) return;
+    const auto now = prof_now();
+    fprintf(ProfileOutput(),
+            "[crate-writer profile]   section %s: %.1fms\n", name,
+            double(prof_ns(prof_t_sec, now)) * 1e-6);
+    prof_t_sec = now;
+  };
   if (!WriteTokensSection(err)) return false;
+  prof_section("TOKENS");
   if (!WriteStringsSection(err)) return false;
+  prof_section("STRINGS");
   if (!WriteFieldsSection(err)) return false;
+  prof_section("FIELDS");
   if (!WriteFieldSetsSection(err)) return false;
+  prof_section("FIELDSETS");
   if (!WritePathsSection(err)) return false;
+  prof_section("PATHS");
   if (!WriteSpecsSection(err)) return false;
+  prof_section("SPECS");
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    // All sections that consume spec data are written — release the heavy
+    // per-spec payload (fields hold the CrateValues, i.e. the attribute
+    // arrays) in parallel now instead of serially in the writer destructor.
+    // Element cleanup is independent; the destructor then frees only empty
+    // shells. Not byte-observable (nothing reads spec fields/paths after
+    // SPECS), but it moves ~all of the teardown wall onto worker threads.
+    ParallelForRanges(spec_data_.size(), WriterParallelThreads(),
+                      [&](size_t b, size_t e) {
+                        for (size_t i = b; i < e; i++) {
+                          crate::FieldValuePairVector().swap(
+                              spec_data_[i].fields);
+                          spec_data_[i].path = Path();
+                        }
+                      });
+    prof_section("spec-data release");
+  }
+#endif
 
   // ========================================================================
   // Step 3: Write Table of Contents
@@ -599,6 +1068,12 @@ bool CrateWriter::CompressData(const char* input, size_t inputSize,
   //
   // For simplicity, we always use single-chunk mode (chunk count = 0)
   // See: pxr/base/tf/fastCompression.cpp in OpenUSD
+
+  // LZ4_compressBound takes int inputSize; reject sizes that overflow int.
+  if (inputSize > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    if (err) *err = "Input size too large for LZ4 compression: " + std::to_string(inputSize);
+    return false;
+  }
 
   // Get maximum compressed size
   int maxCompressedSize = LZ4_compressBound(static_cast<int>(inputSize));
@@ -909,29 +1384,214 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   //
   // See: pxr/usd/sdf/crateFile.cpp _WriteCompressedPathData()
 
-  // Build sorted paths with pre-assigned PathIndex values.
-  // This matches OpenUSD's approach: each path has a pre-assigned index into
-  // the _paths vector. The tree encoding references these indices directly.
-  std::vector<std::pair<Path, crate::PathIndex>> sorted_paths;
-  for (const auto& kv : path_to_index_) {
-    const Path& path = kv.first;
+  // Gather encodable paths in paths_ order — the vector position IS the
+  // pre-assigned PathIndex (Finalize's rebuild and GetOrCreatePath both keep
+  // that invariant), so no hash-map iteration and no Path copies here.
+  //
+  // "Simple" paths (valid + absolute, no variant part, and every name char
+  // sorting after the separators '.' 0x2E and '/' 0x2F — true for all valid
+  // USD identifiers/namespaced names: alnum, '_', ':') get a fast tree build:
+  // for them, USD path order equals plain byte order of the full path names,
+  // subtrees are contiguous byte-order ranges, and parent/child tests reduce
+  // to prefix-length compares. Anything exotic falls back to the legacy
+  // Path-based ordering and probing.
+  std::vector<uint32_t> ids;
+  ids.reserve(paths_.size());
+  bool all_simple = true;
+  for (size_t i = 0; i < paths_.size(); i++) {
+    const Path& p = paths_[i];
     // Skip empty/invalid paths
-    if (path.prim_part().empty() && path.prop_part().empty()) continue;
-    sorted_paths.emplace_back(path, kv.second);
+    if (p.prim_part().empty() && p.prop_part().empty()) continue;
+    ids.push_back(static_cast<uint32_t>(i));
+    if (all_simple) {
+      if (!p.is_valid() || !p.is_absolute_path() ||
+          !p.variant_part_raw().empty() ||
+          !p.variant_selection_raw().empty()) {
+        all_simple = false;
+      } else {
+        const tinyusdz::tstring_view prim = p.prim_part();
+        const char* pd = prim.c_str();
+        for (size_t ci = 0; ci < prim.size(); ci++) {
+          const char c = pd[ci];
+          // Variant-selection elements are embedded in prim_part as
+          // `{set=sel}` (variant_part_raw() is EMPTY for them — the guard
+          // above does not catch this spelling). '{' passes the > '/' name
+          // test, but the fast tree build derives parents via
+          // find_last_of('/'), which is WRONG for `/Host{v=a}` (its parent
+          // is /Host, not /). Classify as non-simple so variant paths take
+          // the legacy Path-based ordering, which handles them correctly.
+          if ((c != '/' && static_cast<unsigned char>(c) <= '/') ||
+              c == '{') {
+            all_simple = false;
+            break;
+          }
+        }
+        if (all_simple) {
+          const tinyusdz::tstring_view prop = p.prop_part();
+          const char* qd = prop.c_str();
+          for (size_t ci = 0; ci < prop.size(); ci++) {
+            if (static_cast<unsigned char>(qd[ci]) <= '/') {
+              all_simple = false;
+              break;
+            }
+          }
+        }
+      }
+    }
   }
 
-  // Sort using Path::operator< (lexicographic USD path comparison)
-  std::sort(sorted_paths.begin(), sorted_paths.end(),
-    [](const std::pair<Path, crate::PathIndex>& a,
-       const std::pair<Path, crate::PathIndex>& b) {
-      return a.first < b.first;
-    });
-
-  size_t num_encoded_paths = sorted_paths.size();
+  const size_t num_encoded_paths = ids.size();
   if (num_encoded_paths == 0) {
     if (err) *err = "No paths to encode";
     return false;
   }
+
+  // Full path names in ids order (both modes need them). Pure per-slot
+  // string builds — parallel.
+  std::vector<std::string> fulls(num_encoded_paths);
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  ParallelForRanges(num_encoded_paths, WriterParallelThreads(),
+                    [&](size_t b, size_t e) {
+                      for (size_t k = b; k < e; k++) {
+                        fulls[k] = paths_[ids[k]].full_path_name();
+                      }
+                    });
+#else
+  for (size_t k = 0; k < num_encoded_paths; k++) {
+    fulls[k] = paths_[ids[k]].full_path_name();
+  }
+#endif
+
+  if (all_simple) {
+    // Tree encoding needs sorted USD path order == byte order of full names.
+    // Finalize() already built paths_ in that order (specs sorted by the
+    // flattened crate sort key, whose ordering matches byte order of the
+    // full names; only value-data paths GetOrCreatePath()d during packing
+    // can break it) — verify in O(N) and skip the N-log-N string sort in
+    // the common case.
+    bool presorted = true;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (num_encoded_paths > 1) {
+      std::atomic<bool> sorted_flag{true};
+      ParallelForRanges(num_encoded_paths - 1, WriterParallelThreads(),
+                        [&](size_t b, size_t e) {
+                          for (size_t k = b; k < e; k++) {
+                            if (!(fulls[k] < fulls[k + 1])) {
+                              sorted_flag.store(false, std::memory_order_relaxed);
+                              return;
+                            }
+                          }
+                        });
+      presorted = sorted_flag.load();
+    }
+#else
+    for (size_t k = 1; k < num_encoded_paths; k++) {
+      if (!(fulls[k - 1] < fulls[k])) {
+        presorted = false;
+        break;
+      }
+    }
+#endif
+    if (!presorted) {
+      std::vector<uint32_t> order(num_encoded_paths);
+      for (size_t k = 0; k < num_encoded_paths; k++) order[k] = static_cast<uint32_t>(k);
+      std::sort(order.begin(), order.end(), [&fulls](uint32_t a, uint32_t b) {
+        return fulls[a] < fulls[b];
+      });
+      std::vector<uint32_t> ids2(num_encoded_paths);
+      std::vector<std::string> fulls2(num_encoded_paths);
+      for (size_t k = 0; k < num_encoded_paths; k++) {
+        ids2[k] = ids[order[k]];
+        fulls2[k] = std::move(fulls[order[k]]);
+      }
+      ids = std::move(ids2);
+      fulls = std::move(fulls2);
+    }
+  } else {
+    // Legacy ordering: Path::operator< (USD path comparison).
+    std::vector<uint32_t> order(num_encoded_paths);
+    for (size_t k = 0; k < num_encoded_paths; k++) order[k] = static_cast<uint32_t>(k);
+    std::sort(order.begin(), order.end(), [this, &ids](uint32_t a, uint32_t b) {
+      return paths_[ids[a]] < paths_[ids[b]];
+    });
+    std::vector<uint32_t> ids2(num_encoded_paths);
+    std::vector<std::string> fulls2(num_encoded_paths);
+    for (size_t k = 0; k < num_encoded_paths; k++) {
+      ids2[k] = ids[order[k]];
+      fulls2[k] = std::move(fulls[order[k]]);
+    }
+    ids = std::move(ids2);
+    fulls = std::move(fulls2);
+  }
+
+  // Per-node parent info.
+  // Fast mode: parent full name == fulls[k].substr(0, parent_len[k]) — no
+  // string allocation (0 marks the root node itself).
+  // Legacy mode: materialized parent full-name strings via get_parent_path()
+  // (variant-aware), as before.
+  std::vector<uint32_t> parent_len;
+  std::vector<std::string> parent_fulls;
+  if (all_simple) {
+    parent_len.resize(num_encoded_paths);
+    for (size_t k = 0; k < num_encoded_paths; k++) {
+      const Path& p = paths_[ids[k]];
+      if (!p.prop_part().empty()) {
+        // "/A/B.prop" -> "/A/B"
+        parent_len[k] =
+            static_cast<uint32_t>(fulls[k].size() - p.prop_part().size() - 1);
+      } else if (fulls[k].size() == 1) {
+        parent_len[k] = 0;  // root "/"
+      } else {
+        const size_t pos = fulls[k].find_last_of('/');
+        parent_len[k] = static_cast<uint32_t>(pos == 0 ? 1 : pos);
+      }
+    }
+  } else {
+    parent_fulls.resize(num_encoded_paths);
+    for (size_t k = 0; k < num_encoded_paths; k++) {
+      parent_fulls[k] = paths_[ids[k]].get_parent_path().full_path_name();
+    }
+  }
+
+  // Per-node signed element token indices, precomputed in parallel: Finalize
+  // pre-registers every path element name / prop part / "" before the TOKENS
+  // section is serialized, so these are read-only lookups. If anything is
+  // unexpectedly missing, fall back to interning inside the tree recursion
+  // (the historical behavior — interning order must be the DFS build order).
+  std::vector<int32_t> node_elem_tokens(num_encoded_paths);
+  bool elem_tokens_ok = true;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    std::atomic<bool> all_found{true};
+    ParallelForRanges(
+        num_encoded_paths, WriterParallelThreads(), [&](size_t b, size_t e) {
+          for (size_t k = b; k < e; k++) {
+            const Path& p = paths_[ids[k]];
+            const bool is_prop = p.is_prim_property_path();
+            std::string elem = is_prop ? p.prop_part() : p.element_name();
+            if (elem == "/") elem.clear();
+            // Same variant-selection stripping as the serial tree build and
+            // the pre-registration loop (pxr rejects unstripped elements).
+            if (!is_prop && !elem.empty() && elem.back() == '}') {
+              size_t open = elem.find_last_of('{');
+              if (open != std::string::npos) {
+                elem = elem.substr(open);
+              }
+            }
+            auto it = token_to_index_.find(elem);
+            if (it == token_to_index_.end()) {
+              all_found.store(false, std::memory_order_relaxed);
+              return;
+            }
+            const int32_t tok = static_cast<int32_t>(it->second.value);
+            node_elem_tokens[k] = is_prop ? -tok : tok;
+          }
+        });
+    elem_tokens_ok = all_found.load();
+  }
+#else
+  elem_tokens_ok = false;
+#endif
 
   // Build the three compressed arrays directly from sorted paths
   // (matches OpenUSD's _BuildCompressedPathDataRecursive)
@@ -942,17 +1602,69 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Fill with invalid sentinel
   for (auto& idx : encoded_path_indices) idx = crate::PathIndex().value;
 
-  // Recursive tree builder (matches OpenUSD's algorithm)
-  // Build path tree recursively with depth guard.
-  // Matches OpenUSD's _BuildCompressedPathDataRecursive algorithm.
-  auto getNextSubtree = [&](uint32_t sidx, uint32_t eidx) -> uint32_t {
-    if (sidx >= eidx) return eidx;
-    for (uint32_t i = sidx; i < eidx; i++) {
-      if (!sorted_paths[i].first.has_prefix(sorted_paths[sidx].first))
-        return i;
-    }
-    return eidx;
-  };
+  // Mode-specific tree probes. All take positions into ids/fulls.
+  std::function<bool(uint32_t)> isRootNode;
+  // End (exclusive) of the subtree rooted at sidx, scanning within
+  // [sidx, eidx).
+  std::function<uint32_t(uint32_t, uint32_t)> getNextSubtree;
+  // Is node c a DIRECT child of node p?
+  std::function<bool(uint32_t, uint32_t)> isDirectChildOf;
+  // Do nodes a and b share the same parent?
+  std::function<bool(uint32_t, uint32_t)> haveSameParent;
+
+  if (all_simple) {
+    isRootNode = [&parent_len](uint32_t k) { return parent_len[k] == 0; };
+    // Byte-sorted simple paths make every subtree a contiguous range whose
+    // members extend the root's full name with '.' or '/' (the two smallest
+    // chars that can follow, given the name-char restriction checked above),
+    // so the end is found by binary search instead of a linear has_prefix
+    // scan per node.
+    getNextSubtree = [&fulls](uint32_t sidx, uint32_t eidx) -> uint32_t {
+      if (sidx >= eidx) return eidx;
+      const std::string& p = fulls[sidx];
+      if (p.size() == 1) return eidx;  // root: everything below is in-tree
+      uint32_t lo = sidx + 1, hi = eidx;
+      while (lo < hi) {
+        const uint32_t mid = lo + (hi - lo) / 2;
+        const std::string& c = fulls[mid];
+        const bool in_subtree =
+            c.size() > p.size() &&
+            memcmp(c.data(), p.data(), p.size()) == 0 &&
+            (c[p.size()] == '/' || c[p.size()] == '.');
+        if (in_subtree) {
+          lo = mid + 1;
+        } else {
+          hi = mid;
+        }
+      }
+      return lo;
+    };
+    isDirectChildOf = [&fulls, &parent_len](uint32_t c, uint32_t p) {
+      return parent_len[c] == fulls[p].size() &&
+             memcmp(fulls[c].data(), fulls[p].data(), parent_len[c]) == 0;
+    };
+    haveSameParent = [&fulls, &parent_len](uint32_t a, uint32_t b) {
+      return parent_len[a] == parent_len[b] &&
+             memcmp(fulls[a].data(), fulls[b].data(), parent_len[a]) == 0;
+    };
+  } else {
+    isRootNode = [this, &ids](uint32_t k) {
+      return paths_[ids[k]].is_root_path();
+    };
+    getNextSubtree = [this, &ids](uint32_t sidx, uint32_t eidx) -> uint32_t {
+      if (sidx >= eidx) return eidx;
+      for (uint32_t i = sidx; i < eidx; i++) {
+        if (!paths_[ids[i]].has_prefix(paths_[ids[sidx]])) return i;
+      }
+      return eidx;
+    };
+    isDirectChildOf = [&fulls, &parent_fulls](uint32_t c, uint32_t p) {
+      return parent_fulls[c] == fulls[p];
+    };
+    haveSameParent = [&parent_fulls](uint32_t a, uint32_t b) {
+      return parent_fulls[a] == parent_fulls[b];
+    };
+  }
 
   // Stack-overflow backstop for the recursive builder. ConvertPrimIterative is
   // the authoritative depth gate (rejects prim nesting > kMaxPrimNestingDepth
@@ -978,49 +1690,43 @@ bool CrateWriter::WritePathsSection(std::string* err) {
       bool has_sibling = false;
 
       if (nextIdx != nextSubtreeIdx && nextIdx < num_encoded_paths) {
-        if (sorted_paths[pIdx].first.is_root_path()) {
+        if (isRootNode(pIdx)) {
           has_child = true;
-        } else if (sorted_paths[nextIdx].first.get_parent_path().full_path_name() ==
-                   sorted_paths[pIdx].first.full_path_name()) {
+        } else if (isDirectChildOf(nextIdx, pIdx)) {
           has_child = true;
         }
       }
 
       if (nextSubtreeIdx != endIdx && nextSubtreeIdx < num_encoded_paths) {
-        if (!sorted_paths[pIdx].first.is_root_path() &&
-            sorted_paths[nextSubtreeIdx].first.get_parent_path().full_path_name() ==
-            sorted_paths[pIdx].first.get_parent_path().full_path_name()) {
+        if (!isRootNode(pIdx) && haveSameParent(nextSubtreeIdx, pIdx)) {
           has_sibling = true;
         }
       }
 
-      const auto& p = sorted_paths[pIdx];
-      bool is_prop = p.first.is_prim_property_path();
-      std::string elem = is_prop ? p.first.prop_part() : p.first.element_name();
-      if (elem == "/") elem.clear();
-
-      // A variant selection is its OWN path element on the crate wire: the
-      // node for /Implicits{shapeVariant=Capsule} carries the element token
-      // `{shapeVariant=Capsule}` (its tree parent is the /Implicits node).
-      // element_name() returns the last '/'-segment, so it hands back
-      // `Implicits{shapeVariant=Capsule}` -- which OpenUSD's reader rejects
-      // ("Invalid prim name") and then cascades into empty/repeated specs,
-      // refusing the whole file. Strip to the last `{...}` group; a multi-group
-      // tail (`/A{v1=x}{v2=y}`, nested variantSets) peels one group per tree
-      // level because get_parent_path() strips exactly one group too.
-      if (!is_prop && !elem.empty() && elem.back() == '}') {
-        size_t open = elem.find_last_of('{');
-        if (open != std::string::npos) {
-          elem = elem.substr(open);
-        }
-      }
-
       uint32_t thisIdx = currentIdx++;
-      encoded_path_indices[thisIdx] = p.second.value;
-      element_token_indices[thisIdx] =
-          static_cast<int32_t>(GetOrCreateToken(elem).value);
-      if (is_prop) {
-        element_token_indices[thisIdx] = -element_token_indices[thisIdx];
+      encoded_path_indices[thisIdx] = ids[pIdx];
+      if (elem_tokens_ok) {
+        element_token_indices[thisIdx] = node_elem_tokens[pIdx];
+      } else {
+        const Path& p = paths_[ids[pIdx]];
+        const bool is_prop = p.is_prim_property_path();
+        std::string elem = is_prop ? p.prop_part() : p.element_name();
+        if (elem == "/") elem.clear();
+        // A variant selection is its OWN path element on the crate wire:
+        // strip `Prim{set=sel}` to the bare `{set=sel}` group or OpenUSD's
+        // reader rejects the file ("Invalid prim name"). Keep in lockstep
+        // with the pre-registration loop and the pass-A precompute.
+        if (!is_prop && !elem.empty() && elem.back() == '}') {
+          size_t open = elem.find_last_of('{');
+          if (open != std::string::npos) {
+            elem = elem.substr(open);
+          }
+        }
+        element_token_indices[thisIdx] =
+            static_cast<int32_t>(GetOrCreateToken(elem).value);
+        if (is_prop) {
+          element_token_indices[thisIdx] = -element_token_indices[thisIdx];
+        }
       }
 
       if (has_child) {
@@ -1064,9 +1770,9 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     if (encoded_path_indices[i] == crate::PathIndex().value) {
       // Dump sorted paths for debugging
       std::string dbg = "path index " + std::to_string(i) + " not filled. Sorted paths:\n";
-      for (size_t j = 0; j < sorted_paths.size(); j++) {
-        dbg += "  [" + std::to_string(j) + "] " + sorted_paths[j].first.full_path_name()
-             + " idx=" + std::to_string(sorted_paths[j].second.value)
+      for (size_t j = 0; j < num_encoded_paths; j++) {
+        dbg += "  [" + std::to_string(j) + "] " + fulls[j]
+             + " idx=" + std::to_string(ids[j])
              + (j == i ? " <-- UNFILLED" : "") + "\n";
       }
       if (err) *err = "Internal error: " + dbg;
@@ -1089,57 +1795,59 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     return false;
   }
 
-  // 3. Compressed pathIndexes
+  // 3-5. Compressed pathIndexes / elementTokenIndexes / jumps. The three
+  // compressions are independent pure computations — run them concurrently,
+  // then write the (order-sensitive) size+bytes pairs sequentially.
   {
-    size_t buf_size = Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
-    std::vector<char> comp(buf_size);
-    std::string cerr;
-    size_t csz = Usd_IntegerCompression::CompressToBuffer(
-        encoded_path_indices.data(), num_encoded_paths, comp.data(), &cerr);
-    if (csz == 0) {
-      if (err) *err = "Compress pathIndexes failed: " + cerr;
-      return false;
+    struct PathsComp {
+      const char* name;
+      // Exactly one is set: the int32 and uint32 CompressToBuffer overloads
+      // encode DIFFERENTLY, so the original per-array overload must be kept.
+      const uint32_t* u32 = nullptr;
+      const int32_t* i32 = nullptr;
+      std::vector<char> comp;
+      size_t csz = 0;
+      std::string cerr;
+    };
+    PathsComp comps[3];
+    comps[0].name = "pathIndexes";
+    comps[0].u32 = encoded_path_indices.data();
+    comps[1].name = "elementTokenIndexes";
+    comps[1].i32 = element_token_indices.data();
+    comps[2].name = "jumps";
+    comps[2].i32 = jump_indices.data();
+    auto compress_one = [&](PathsComp& c) {
+      const size_t buf_size =
+          Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
+      c.comp.resize(buf_size);
+      c.csz = c.u32 ? Usd_IntegerCompression::CompressToBuffer(
+                          c.u32, num_encoded_paths, c.comp.data(), &c.cerr)
+                    : Usd_IntegerCompression::CompressToBuffer(
+                          c.i32, num_encoded_paths, c.comp.data(), &c.cerr);
+    };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    {
+      std::thread t1([&]() { compress_one(comps[1]); });
+      std::thread t2([&]() { compress_one(comps[2]); });
+      compress_one(comps[0]);
+      t1.join();
+      t2.join();
     }
-    uint64_t sz = static_cast<uint64_t>(csz);
-    if (!Write(sz) || !WriteBytes(comp.data(), csz)) {
-      if (err) *err = "Failed to write pathIndexes";
-      return false;
+#else
+    for (auto& c : comps) {
+      compress_one(c);
     }
-  }
-
-  // 4. Compressed elementTokenIndexes
-  {
-    size_t buf_size = Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
-    std::vector<char> comp(buf_size);
-    std::string cerr;
-    size_t csz = Usd_IntegerCompression::CompressToBuffer(
-        element_token_indices.data(), num_encoded_paths, comp.data(), &cerr);
-    if (csz == 0) {
-      if (err) *err = "Compress elementTokenIndexes failed: " + cerr;
-      return false;
-    }
-    uint64_t sz = static_cast<uint64_t>(csz);
-    if (!Write(sz) || !WriteBytes(comp.data(), csz)) {
-      if (err) *err = "Failed to write elementTokenIndexes";
-      return false;
-    }
-  }
-
-  // 5. Compressed jumps
-  {
-    size_t buf_size = Usd_IntegerCompression::GetCompressedBufferSize(num_encoded_paths);
-    std::vector<char> comp(buf_size);
-    std::string cerr;
-    size_t csz = Usd_IntegerCompression::CompressToBuffer(
-        jump_indices.data(), num_encoded_paths, comp.data(), &cerr);
-    if (csz == 0) {
-      if (err) *err = "Compress jumps failed: " + cerr;
-      return false;
-    }
-    uint64_t sz = static_cast<uint64_t>(csz);
-    if (!Write(sz) || !WriteBytes(comp.data(), csz)) {
-      if (err) *err = "Failed to write jumps";
-      return false;
+#endif
+    for (auto& c : comps) {
+      if (c.csz == 0) {
+        if (err) *err = std::string("Compress ") + c.name + " failed: " + c.cerr;
+        return false;
+      }
+      const uint64_t sz = static_cast<uint64_t>(c.csz);
+      if (!Write(sz) || !WriteBytes(c.comp.data(), c.csz)) {
+        if (err) *err = std::string("Failed to write ") + c.name;
+        return false;
+      }
     }
   }
 
@@ -1187,7 +1895,12 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
   for (size_t i = 0; i < fieldsets_.size(); ++i) {
     fieldset_number_to_offset[i] = current_offset;
     // Each fieldset takes (num_fields + 1) slots (fields + sentinel)
-    current_offset += static_cast<uint32_t>(fieldsets_[i].size() + 1);
+    const uint32_t slot_size = static_cast<uint32_t>(fieldsets_[i].size() + 1);
+      if (current_offset > (std::numeric_limits<uint32_t>::max)() - slot_size) {
+      if (err) *err = "Fieldset offset overflow (>4B entries).";
+      return false;
+    }
+    current_offset += slot_size;
   }
 
   // Separate pathIndexes, fieldSetIndexes, specTypes
@@ -1211,50 +1924,55 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
     spec_types.push_back(static_cast<uint32_t>(spec_data.spec.spec_type));
   }
 
-  // Helper to compress and write an integer array
-  auto writeCompressedIntArray = [this, err](const std::vector<uint32_t>& data,
-                                              const char* array_name) -> bool {
-    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(data.size());
-    std::vector<char> compressed(buffer_size);
-
-    std::string compress_err;
-    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
-        data.data(), data.size(), compressed.data(), &compress_err);
-
-    if (compressed_size == 0) {
-      if (err) *err = std::string("Failed to compress ") + array_name + ": " + compress_err;
-      return false;
-    }
-
-    // Write compressed size
-    uint64_t size = static_cast<uint64_t>(compressed_size);
-    if (!Write(size)) {
-      if (err) *err = std::string("Failed to write ") + array_name + " size";
-      return false;
-    }
-
-    // Write compressed data
-    if (!WriteBytes(compressed.data(), compressed_size)) {
-      if (err) *err = std::string("Failed to write compressed ") + array_name;
-      return false;
-    }
-
-    return true;
+  // The three column compressions are independent pure computations — run
+  // them concurrently, then write the (order-sensitive) size+bytes pairs
+  // sequentially.
+  struct SpecsComp {
+    const char* name;
+    const std::vector<uint32_t>* data;
+    std::vector<char> comp;
+    size_t csz = 0;
+    std::string cerr;
   };
-
-  // Compress and write pathIndexes
-  if (!writeCompressedIntArray(path_indexes, "pathIndexes")) {
-    return false;
+  SpecsComp comps[3] = {
+      {"pathIndexes", &path_indexes, {}, 0, {}},
+      {"fieldSetIndexes", &fieldset_indexes, {}, 0, {}},
+      {"specTypes", &spec_types, {}, 0, {}},
+  };
+  auto compress_one = [](SpecsComp& c) {
+    const size_t buffer_size =
+        Usd_IntegerCompression::GetCompressedBufferSize(c.data->size());
+    c.comp.resize(buffer_size);
+    c.csz = Usd_IntegerCompression::CompressToBuffer(
+        c.data->data(), c.data->size(), c.comp.data(), &c.cerr);
+  };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    std::thread t1([&]() { compress_one(comps[1]); });
+    std::thread t2([&]() { compress_one(comps[2]); });
+    compress_one(comps[0]);
+    t1.join();
+    t2.join();
   }
-
-  // Compress and write fieldSetIndexes
-  if (!writeCompressedIntArray(fieldset_indexes, "fieldSetIndexes")) {
-    return false;
+#else
+  for (auto& c : comps) {
+    compress_one(c);
   }
-
-  // Compress and write specTypes
-  if (!writeCompressedIntArray(spec_types, "specTypes")) {
-    return false;
+#endif
+  for (auto& c : comps) {
+    if (c.csz == 0) {
+      if (err) *err = std::string("Failed to compress ") + c.name + ": " + c.cerr;
+      return false;
+    }
+    const uint64_t size = static_cast<uint64_t>(c.csz);
+    if (!Write(size)) {
+      if (err) *err = std::string("Failed to write ") + c.name + " size";
+      return false;
+    }
+    if (!WriteBytes(c.comp.data(), c.csz)) {
+      if (err) *err = std::string("Failed to write compressed ") + c.name;
+      return false;
+    }
   }
 
   int64_t section_end = Tell();
@@ -1362,6 +2080,7 @@ bool CrateWriter::WriteBootStrap(std::string* /* err */) {
 // ============================================================================
 
 crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::string* err) {
+  ProfScope prof_total(profile_finalize_, &prof_pack_total_ns_);
   crate::ValueRep rep;
 
   // VtArrayEdit (crate >= 0.14.0): a ValueRep with the IsArrayEdit bit set, the
@@ -1400,8 +2119,11 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   }
 
   // Try to inline the value
-  if (!value.IsUnregisteredValue() && TryInlineValue(value, &rep)) {
-    return crate::ValueRep(rep.GetData());
+  {
+    ProfScope prof_inline(profile_finalize_, &prof_pack_inline_ns_);
+    if (!value.IsUnregisteredValue() && TryInlineValue(value, &rep)) {
+      return crate::ValueRep(rep.GetData());
+    }
   }
 
   bool dedup_candidate = false;
@@ -1411,29 +2133,57 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   uint32_t dedup_wire_tag = 0;
   size_t dedup_hash = 0;
 
-  if (options_.enable_deduplication &&
-      ComputeValueDedupDescriptor(value, &dedup_bytes, &dedup_element_size,
-                                  &dedup_is_float, &dedup_wire_tag)) {
-    dedup_hash = NanAwareHash::combine(
-        NanAwareHash::hash_buffer(dedup_bytes.data(), dedup_bytes.size(),
-                                  dedup_element_size, dedup_is_float),
-        dedup_wire_tag);
-    if (LookupDeduplicatedValue(dedup_bytes, dedup_element_size,
-                                dedup_is_float, dedup_wire_tag, &rep)) {
-      return crate::ValueRep(rep.GetData());
+  {
+    ProfScope prof_dedup(profile_finalize_, &prof_pack_dedup_ns_);
+    if (options_.enable_deduplication &&
+        ComputeValueDedupDescriptor(value, &dedup_bytes, &dedup_element_size,
+                                    &dedup_is_float, &dedup_wire_tag)) {
+      dedup_hash = NanAwareHash::combine(
+          NanAwareHash::hash_buffer(dedup_bytes.data(), dedup_bytes.size(),
+                                    dedup_element_size, dedup_is_float),
+          dedup_wire_tag);
+      if (LookupDeduplicatedValue(dedup_bytes, dedup_element_size,
+                                  dedup_is_float, dedup_wire_tag, &rep)) {
+        return crate::ValueRep(rep.GetData());
+      }
+      dedup_candidate = true;
     }
-    dedup_candidate = true;
   }
 
   // Value cannot be inlined, write to value data section
   bool is_compressed = false;
-  int64_t offset = WriteValueData(value, &is_compressed, err);
+  int64_t offset;
+  {
+    ProfScope prof_write(profile_finalize_, &prof_pack_write_ns_);
+    offset = WriteValueData(value, &is_compressed, err);
+  }
   if (offset < 0 || (err && !err->empty())) {
     return crate::ValueRep();
   }
 
   // Create ValueRep with offset and proper type
-  // Determine the type for out-of-line values
+  SetOutOfLineRepType(value, &rep);
+
+  rep.SetPayload(static_cast<uint64_t>(offset));
+  if (is_compressed) {
+    rep.SetIsCompressed();
+  }
+
+  if (dedup_candidate) {
+    RetainDeduplicatedValue(dedup_hash, std::move(dedup_bytes),
+                            dedup_element_size, dedup_is_float,
+                            dedup_wire_tag, rep);
+  }
+
+  return rep;
+}
+
+// Determine the ValueRep type/flags for out-of-line values (shared by
+// PackValue and the two-pass BuildPackPlan; see the header note about the
+// version-bumping branches).
+void CrateWriter::SetOutOfLineRepType(const crate::CrateValue& value,
+                                      crate::ValueRep* rep_out) {
+  crate::ValueRep& rep = *rep_out;
 
   // Macro to reduce repetitive scalar type dispatch
 #define PACK_SCALAR_TYPE(CppType, CrateTypeId) \
@@ -1584,19 +2334,183 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   else {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID));
   }
+}
 
-  rep.SetPayload(static_cast<uint64_t>(offset));
-  if (is_compressed) {
-    rep.SetIsCompressed();
+void CrateWriter::BuildPackPlan(const crate::CrateValue& value, PackPlan* plan,
+                                PackPlanContext* ctx) {
+  plan->kind = PackPlan::kSerial;
+  // Mirror PackValue's pre-inline special cases: standalone Reference (error
+  // path), VtArrayEdit (version bump + last_array_edit_elem_type_) and
+  // unregistered values (recursive wrapper) all stay serial.
+  if (value.as<Reference>() || value.as<value::ArrayEdit>() ||
+      value.IsUnregisteredValue()) {
+    return;
   }
 
-  if (dedup_candidate) {
-    RetainDeduplicatedValue(dedup_hash, std::move(dedup_bytes),
-                            dedup_element_size, dedup_is_float,
-                            dedup_wire_tag, rep);
+  // Inline classification: same decision procedure as the serial writer, but
+  // interning is only OBSERVED, never performed.
+  struct RecordingSink final : public InternSink {
+    bool interned = false;
+    uint32_t InternToken(const std::string&) override {
+      interned = true;
+      return 0;
+    }
+    uint32_t InternString(const std::string&) override {
+      interned = true;
+      return 0;
+    }
+  } sink;
+  crate::ValueRep inline_rep;
+  if (TryInlineValue(value, &inline_rep, sink)) {
+    if (sink.interned) {
+      // Payload is an intern index: pass B re-runs TryInlineValue with the
+      // direct sink (first-branch hit + one intern — the mandatory serial
+      // part), avoiding any captured-string lifetime concerns.
+      plan->kind = PackPlan::kInlineIntern;
+    } else {
+      plan->kind = PackPlan::kInlinePure;
+      plan->rep = inline_rep;
+    }
+    return;
   }
 
-  return crate::ValueRep(rep.GetData());
+  if (!IsPureValueData(value)) {
+    return;  // index-embedding / seeking encodings stay serial
+  }
+
+  // Dedup descriptor + hash first (parallel; pass B's lookup consumes them).
+  if (options_.enable_deduplication &&
+      ComputeValueDedupDescriptor(value, &plan->dedup_bytes,
+                                  &plan->dedup_element_size,
+                                  &plan->dedup_is_float,
+                                  &plan->dedup_wire_tag)) {
+    plan->dedup_hash = NanAwareHash::combine(
+        NanAwareHash::hash_buffer(plan->dedup_bytes.data(),
+                                  plan->dedup_bytes.size(),
+                                  plan->dedup_element_size,
+                                  plan->dedup_is_float),
+        plan->dedup_wire_tag);
+    plan->dedup_candidate = true;
+  }
+
+  // Prebuild only values that will actually need encoding. Instanced scenes
+  // are dominated by dedup HITS, whose serial path never encodes at all —
+  // blindly prebuilding every duplicate costs more than the parallelism buys
+  // (measured on a 4317-mesh scene with 177 unique assets). Skip when the
+  // value is already retained (frozen-table probe) and claim within-window
+  // firsts so each new unique value is encoded by exactly one thread; the
+  // other duplicates dedup-hit in pass B once the first is retained. A plan
+  // that skips prebuild keeps `bytes` empty — pass B falls back to the serial
+  // WriteValueData on a genuine miss, so hash collisions and dedup-budget
+  // refusals stay correct.
+  bool prebuild = true;
+  if (plan->dedup_candidate) {
+    crate::ValueRep probe;
+    if (LookupDeduplicatedValueWithHash(
+            plan->dedup_hash, plan->dedup_bytes, plan->dedup_element_size,
+            plan->dedup_is_float, plan->dedup_wire_tag, &probe)) {
+      // Certain, FINAL hit: the table only grows (one entry per unique
+      // descriptor, added on miss, never mutated), so pass B would resolve to
+      // this same rep — resolve it here and skip the serial lookup entirely.
+      plan->rep = probe;
+      plan->kind = PackPlan::kOolDedupHit;
+      return;
+    } else if (ctx) {
+      std::lock_guard<std::mutex> lock(ctx->mu);
+      prebuild = ctx->claimed.insert(plan->dedup_hash).second;
+    }
+  }
+
+  if (prebuild) {
+    // Prebuild the out-of-line byte image with the REAL encoder, captured
+    // into the plan buffer (see tls_value_capture).
+    plan->bytes.clear();
+    bool is_compressed = false;
+    std::string local_err;
+    tls_value_capture() = &plan->bytes;
+    const int64_t body_result =
+        WriteValueBody(value, &is_compressed, &local_err);
+    tls_value_capture() = nullptr;
+    if (body_result < 0) {
+      // Shouldn't happen for pure values (capture writes cannot fail); let
+      // the serial pass reproduce whatever the error is.
+      plan->bytes.clear();
+      plan->kind = PackPlan::kSerial;
+      return;
+    }
+    plan->is_compressed = is_compressed;
+  }
+
+  SetOutOfLineRepType(value, &plan->rep);
+  plan->kind = PackPlan::kOolPure;
+}
+
+crate::ValueRep CrateWriter::PackValueFromPlan(const crate::CrateValue& value,
+                                               PackPlan& plan,
+                                               std::string* err) {
+  switch (plan.kind) {
+    case PackPlan::kInlinePure:
+    case PackPlan::kOolDedupHit:
+      return plan.rep;
+    case PackPlan::kInlineIntern: {
+      crate::ValueRep rep;
+      if (TryInlineValue(value, &rep)) {
+        return rep;
+      }
+      return PackValue(value, err);  // defensive; classification is deterministic
+    }
+    case PackPlan::kOolPure: {
+      crate::ValueRep rep = plan.rep;  // type + array flag preset
+      if (plan.dedup_candidate &&
+          LookupDeduplicatedValueWithHash(
+              plan.dedup_hash, plan.dedup_bytes, plan.dedup_element_size,
+              plan.dedup_is_float, plan.dedup_wire_tag, &rep)) {
+        return rep;
+      }
+      int64_t value_offset;
+      bool is_compressed = plan.is_compressed;
+      if (plan.bytes.empty()) {
+        // Prebuild was skipped (pass A expected a dedup hit that didn't
+        // materialize — hash collision or dedup-budget refusal): encode
+        // serially, exactly as PackValue would.
+        value_offset = WriteValueData(value, &is_compressed, err);
+        if (value_offset < 0 || (err && !err->empty())) {
+          return crate::ValueRep();
+        }
+      } else {
+        // Append the prebuilt bytes exactly where WriteValueData would have
+        // written them (same prologue/epilogue bookkeeping).
+        const int64_t current_pos = Tell();
+        if (!Seek(value_data_end_offset_)) {
+          if (err) *err = "Failed to seek to value data section";
+          return crate::ValueRep();
+        }
+        value_offset = Tell();
+        if (!WriteBytes(plan.bytes.data(), plan.bytes.size())) {
+          if (err) *err = "Failed to write prebuilt value data";
+          return crate::ValueRep();
+        }
+        value_data_end_offset_ = Tell();
+        if (!Seek(current_pos)) {
+          if (err) *err = "Failed to seek back after writing value";
+          return crate::ValueRep();
+        }
+      }
+      rep.SetPayload(static_cast<uint64_t>(value_offset));
+      if (is_compressed) {
+        rep.SetIsCompressed();
+      }
+      if (plan.dedup_candidate) {
+        RetainDeduplicatedValue(plan.dedup_hash, std::move(plan.dedup_bytes),
+                                plan.dedup_element_size, plan.dedup_is_float,
+                                plan.dedup_wire_tag, rep);
+      }
+      return rep;
+    }
+    case PackPlan::kSerial:
+      return PackValue(value, err);
+  }
+  return PackValue(value, err);
 }
 
 
@@ -1624,10 +2538,51 @@ crate::StringIndex CrateWriter::GetOrCreateString(const std::string& str) {
   return idx;
 }
 
+int64_t CrateWriter::FindPathSlot(const Path& path, uint32_t hash) const {
+  if (path_slots_.empty()) return -1;
+  const size_t mask = path_slots_.size() - 1;
+  const crate::PathKeyEqual eq;
+  for (size_t i = hash & mask;; i = (i + 1) & mask) {
+    const auto& slot = path_slots_[i];
+    if (slot.second == 0) return -1;
+    if (slot.first == hash && eq(paths_[slot.second - 1], path)) {
+      return int64_t(slot.second - 1);
+    }
+  }
+}
+
+void CrateWriter::InsertPathSlot(uint32_t hash, uint32_t path_index) {
+  if ((path_slots_used_ + 1) * 2 >= path_slots_.size()) {
+    GrowPathSlots(path_slots_.size() * 2 + 16);
+  }
+  const size_t mask = path_slots_.size() - 1;
+  size_t i = hash & mask;
+  while (path_slots_[i].second != 0) i = (i + 1) & mask;
+  path_slots_[i] = {hash, path_index + 1};
+  path_slots_used_++;
+}
+
+void CrateWriter::GrowPathSlots(size_t want) {
+  size_t cap = 32;
+  while (cap < want * 2) cap <<= 1;
+  std::vector<std::pair<uint32_t, uint32_t>> old = std::move(path_slots_);
+  path_slots_.assign(cap, {0u, 0u});
+  const size_t mask = cap - 1;
+  for (const auto& slot : old) {
+    if (slot.second == 0) continue;
+    size_t i = slot.first & mask;
+    while (path_slots_[i].second != 0) i = (i + 1) & mask;
+    path_slots_[i] = slot;
+  }
+}
+
 crate::PathIndex CrateWriter::GetOrCreatePath(const Path& path) {
-  auto it = path_to_index_.find(path);
-  if (it != path_to_index_.end()) {
-    return it->second;
+  const uint32_t hash = static_cast<uint32_t>(crate::PathHasher()(path));
+  {
+    const int64_t found = FindPathSlot(path, hash);
+    if (found >= 0) {
+      return crate::PathIndex(static_cast<uint32_t>(found));
+    }
   }
 
   // IMPORTANT: Ensure all parent paths exist first
@@ -1661,7 +2616,7 @@ crate::PathIndex CrateWriter::GetOrCreatePath(const Path& path) {
   // Create new path
   crate::PathIndex idx(static_cast<uint32_t>(paths_.size()));
   paths_.push_back(path);
-  path_to_index_[path] = idx;
+  InsertPathSlot(hash, idx.value);
 
   // Also register path tokens
   if (!path.prim_part().empty()) {
@@ -1983,7 +2938,22 @@ bool CrateWriter::Seek(int64_t pos) {
   return stream_->Seek(pos);
 }
 
+std::vector<char>*& CrateWriter::tls_value_capture() {
+  static thread_local std::vector<char>* sink = nullptr;
+  return sink;
+}
+
 bool CrateWriter::WriteBytes(const void* data, size_t size) {
+  // Value-encoding capture (two-pass Finalize pass A): append to the
+  // per-thread buffer instead of the stream. No file-size accounting here —
+  // the serial replay appends these bytes through the normal path below,
+  // which enforces the limit.
+  if (std::vector<char>* capture = tls_value_capture()) {
+    const char* p = static_cast<const char*>(data);
+    capture->insert(capture->end(), p, p + size);
+    return true;
+  }
+
   // Check file size limit before writing
   if (WouldExceedFileSizeLimit(static_cast<int64_t>(size))) {
     std::cerr << "ERROR: Writing " << size << " bytes would exceed file size limit of "

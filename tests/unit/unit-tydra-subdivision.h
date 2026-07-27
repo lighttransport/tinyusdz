@@ -9,6 +9,7 @@ void tydra_subdivision_level2_subset_remap_test(void);
 void tydra_subdivision_loop_subset_remap_test(void);
 void tydra_subdivision_bilinear_mixed_topology_subset_test(void);
 void tydra_subdivision_level_zero_keeps_base_mesh_test(void);
+void tydra_subdivision_per_prim_override_test(void);
 void tydra_subdivision_scheme_none_ignores_requested_level_test(void);
 void tydra_subdivision_subset_with_multiple_source_faces_test(void);
 void tydra_subdivision_incomplete_partition_warns_but_converts_test(void);

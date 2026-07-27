@@ -194,7 +194,17 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
     return false;
   }
 
-  size_t size = static_cast<size_t>(file.tellg());
+  const auto fsize = file.tellg();
+  if (fsize < 0) {
+    AddError("Failed to determine file size");
+    return false;
+  }
+  if (static_cast<uintmax_t>(fsize) >
+      static_cast<uintmax_t>((std::numeric_limits<size_t>::max)())) {
+    AddError("File size exceeds addressable memory");
+    return false;
+  }
+  size_t size = static_cast<size_t>(fsize);
   file.seekg(0, std::ios::beg);
   if (options_.max_file_size > 0 && size > options_.max_file_size) {
     AddError("File size exceeds maximum allowed");
@@ -444,13 +454,14 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
 
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
     if (Match(TokenType::Semicolon)) continue;
-    // A bare (often triple-quoted) string is the prim documentation —
-    // USD shorthand for `doc = "..."`.
+    // A bare (often triple-quoted) string is the prim COMMENT — pxr's only
+    // accepted spelling (26.x rejects `comment = "..."` as a non-metadata
+    // field; the bare string maps to `comment`, not `doc`).
     if (Check(TokenType::String)) {
       std::string d;
       lexer_->expect(TokenType::String, d);
-      prim->meta().doc() = d;
-      prim->meta().set_doc_authored();
+      prim->meta().comment() = d;
+      prim->meta().set_comment_authored();
       continue;
     }
     // Optional list-op qualifier keyword (prepend/append/delete/reorder)
@@ -496,6 +507,12 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           cur->meta().hidden_authored = true;
         }
       }
+    } else if (key == "permission") {
+      // Unquoted token (`permission = private`).
+      std::string v;
+      if (Check(TokenType::Identifier)) lexer_->expect(TokenType::Identifier, v);
+      else lexer_->expect(TokenType::String, v);
+      if (!v.empty()) prim->meta().permission() = v;
     } else if (key == "doc" || key == "documentation") {
       std::string doc;
       if (lexer_->expect(TokenType::String, doc)) {

@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
+#include <limits>
 #include <sstream>
 
 #include "common-macros.inc"
@@ -156,7 +158,15 @@ InstanceKey ComputeInstanceKey(const PrimIndex &index,
 // PrimIndex incremental-mutation helpers (friends of PrimIndex)
 // ---------------------------------------------------------------------------
 
-CompNode &GetMutableNode(PrimIndex &index, uint16_t node_idx) {
+CompNode &GetMutableNode(PrimIndex &index TINYUSDZ_LIFETIMEBOUND,
+                         uint16_t node_idx) {
+  // node_idx is typically from GetStrengthOrder() or DeferredPayloadInfo.
+  // The latter can be stale if the deferred-payload index is corrupted,
+  // so guard against out-of-bounds access (defense-in-depth).
+  if (node_idx >= index._nodes.size()) {
+    static thread_local CompNode s_sentinel{};
+    return s_sentinel;
+  }
   return index._nodes[node_idx];
 }
 
@@ -199,6 +209,9 @@ uint16_t CompositionContext::AddLayerStack(const Layer *layer,
     }
   }
 
+  if (_layer_stacks.size() >= static_cast<size_t>((std::numeric_limits<uint16_t>::max)())) {
+    return CompNode::kInvalidIndex;
+  }
   uint16_t idx = static_cast<uint16_t>(_layer_stacks.size());
   LayerStackEntry entry;
   entry.layer = layer;
@@ -214,6 +227,9 @@ uint16_t CompositionContext::AddMapExpression(const NamespaceMapping &mapping,
     return CompNode::kInvalidIndex;  // identity mapping
   }
 
+  if (_map_expressions.size() >= static_cast<size_t>((std::numeric_limits<uint16_t>::max)())) {
+    return CompNode::kInvalidIndex;
+  }
   uint16_t idx = static_cast<uint16_t>(_map_expressions.size());
   MapExpr expr;
   expr.mapping = mapping;
@@ -419,11 +435,11 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
     Asset asset;
     if (ctx->_resolver->open_asset(resolved_path, asset_path, &asset, warn,
                                    err)) {
-      if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+      if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
         if (err) {
           *err = fmt::format("Resolved asset exceeds max bytes ({} > {}).",
                              asset.size(),
-                             security_policy::kResolverMaxAssetReadBytes);
+                             security_policy::GetMaxAssetReadBytes());
         }
       } else {
         Layer layer;
@@ -434,8 +450,8 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
         if (LoadLayerFromMemory(asset.data(), asset.size(), resolved_path, &layer,
                                 warn, err)) {
           auto layer_ptr = std::make_unique<Layer>(std::move(layer));
-          result = layer_ptr.get();
           ctx->_loaded_layers.push_back(std::move(layer_ptr));
+          result = ctx->_loaded_layers.back().get();
         }
       }
     }
@@ -1038,7 +1054,10 @@ bool PrimIndexBuilder::EvalPayloads(uint16_t node_idx, std::string *err) {
 
       // Check load policy
       bool should_load = true;
-      if (_ctx->_options.payload_policy) {
+      if (_ctx->_options.payload_policy_with_prim) {
+        should_load = _ctx->_options.payload_policy_with_prim(
+            _result._prim_path, pl, *ps);
+      } else if (_ctx->_options.payload_policy) {
         should_load =
             _ctx->_options.payload_policy(_result._prim_path, pl);
       }
@@ -2039,6 +2058,16 @@ bool ComposePrimSpecFromIndex(const std::vector<LayerStackEntry> &layer_stacks,
     return false;
   }
 
+  // Children are NOT this function's output: callers compose each child from
+  // its own PrimIndex (which resolves the child's arcs) and append it. The
+  // strongest opinion was copied wholesale above, so it carried that layer's
+  // inline children along uncomposed -- leaving them would emit every child
+  // twice, the uncomposed copy first. GetPrimAtPath takes the first name match,
+  // so it would return the copy and silently ignore the child's own
+  // references/payloads/variants -- e.g. an empty `def Xform "Foo" {}` shadowing
+  // the payload-backed composition of /Foo.
+  out->children().clear();
+
   // Set the correct name
   std::string path_str = index.GetPath().prim_part();
   size_t last_slash = path_str.rfind('/');
@@ -2236,11 +2265,11 @@ nonstd::expected<bool, std::string> CompositionGraph::LoadPayload(
     return nonstd::make_unexpected("Failed to open payload asset: " + load_err);
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     if (!old_cwp.empty()) resolver.set_current_working_path(old_cwp);
     return nonstd::make_unexpected(
         fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                    asset.size(), security_policy::kResolverMaxAssetReadBytes));
+                    asset.size(), security_policy::GetMaxAssetReadBytes()));
   }
 
   if (!LoadLayerFromMemory(asset.data(), asset.size(), resolved_path,

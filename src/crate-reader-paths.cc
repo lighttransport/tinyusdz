@@ -62,6 +62,9 @@ namespace crate {
 
 #define kTag "[Crate]"
 
+#define CHECK_MEMORY_USAGE(__nbytes) \
+  MEMORY_BUDGET_CHECK((*memory_manager_), (__nbytes), kTag)
+
 #if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
 bool CrateReader::BuildDecompressedPathsImpl(
     BuildDecompressedPathsArg *arg) {
@@ -469,7 +472,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 
   // Read number of encoded paths.
   uint64_t numEncodedPaths;
-  if (!_sr->read8(&numEncodedPaths)) {
+  if (!sr()->read8(&numEncodedPaths)) {
     _err += "Failed to read the number of encoded paths.\n";
     return false;
   }
@@ -508,13 +511,13 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     return false;
   }
   // Create references for compatibility with existing code
-  std::vector<char> &compBuffer = _decomp_comp_buffer;
-  std::vector<char> &workingSpace = _decomp_working_buffer;
+  std::vector<char> &compBuffer = decomp_comp_buffer();
+  std::vector<char> &workingSpace = decomp_working_buffer();
 
   // pathIndexes.
   {
     uint64_t compPathIndexesSize;
-    if (!_sr->read8(&compPathIndexesSize)) {
+    if (!sr()->read8(&compPathIndexesSize)) {
       _err += "Failed to read pathIndexesSize.\n";
       return false;
     }
@@ -524,7 +527,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     }
 
     if (compPathIndexesSize !=
-        _sr->read(size_t(compPathIndexesSize), size_t(compPathIndexesSize),
+        sr()->read(size_t(compPathIndexesSize), size_t(compPathIndexesSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
       _err += "Failed to read compressed pathIndexes data.\n";
       return false;
@@ -546,7 +549,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   // elementTokenIndexes.
   {
     uint64_t compElementTokenIndexesSize;
-    if (!_sr->read8(&compElementTokenIndexesSize)) {
+    if (!sr()->read8(&compElementTokenIndexesSize)) {
       _err += "Failed to read elementTokenIndexesSize.\n";
       return false;
     }
@@ -556,7 +559,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     }
 
     if (compElementTokenIndexesSize !=
-        _sr->read(size_t(compElementTokenIndexesSize),
+        sr()->read(size_t(compElementTokenIndexesSize),
                   size_t(compElementTokenIndexesSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
       PUSH_ERROR("Failed to read elementTokenIndexes data.");
@@ -578,7 +581,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   // jumps.
   {
     uint64_t compJumpsSize;
-    if (!_sr->read8(&compJumpsSize)) {
+    if (!sr()->read8(&compJumpsSize)) {
       PUSH_ERROR("Failed to read compressed jumpsSize.");
       return false;
     }
@@ -588,7 +591,7 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
     }
 
     if (compJumpsSize !=
-        _sr->read(size_t(compJumpsSize), size_t(compJumpsSize),
+        sr()->read(size_t(compJumpsSize), size_t(compJumpsSize),
                   reinterpret_cast<uint8_t *>(compBuffer.data()))) {
       PUSH_ERROR("Failed to read compressed jumps data.");
       return false;
@@ -692,6 +695,13 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
 
   auto build_node_hierarchy_from_decoded_paths = [&]() -> bool {
     std::unordered_map<std::string, size_t> path_to_index;
+    {
+      size_t path_to_index_bytes;
+      if (!safe::mul(_paths.size(), sizeof(std::string) + 64, &path_to_index_bytes)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: _paths.size() * (sizeof(std::string) + 64)");
+      }
+      CHECK_MEMORY_USAGE(path_to_index_bytes);
+    }
     path_to_index.reserve(_paths.size());
 
     for (size_t path_idx = 0; path_idx < _paths.size(); ++path_idx) {

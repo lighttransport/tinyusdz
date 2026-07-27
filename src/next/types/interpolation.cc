@@ -16,6 +16,7 @@ bool TimeInterpolator::IsLinearInterpolatable(TypeId type) {
   switch (type) {
     case TypeId::Half: case TypeId::Float: case TypeId::Double:
     case TypeId::TimeCode:
+    case TypeId::Matrix2f: case TypeId::Matrix3f: case TypeId::Matrix4f:
     case TypeId::Matrix2d: case TypeId::Matrix3d: case TypeId::Matrix4d:
     case TypeId::Frame4d:
     case TypeId::Half2: case TypeId::Float2: case TypeId::Double2:
@@ -171,9 +172,10 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
 
   // Handle array interpolation
   if (a.is_array()) {
-    // Array sizes must match
+    // Size-mismatched arrays cannot lerp; HOLD the earlier sample (pxr
+    // behavior — changing topology must not drop the value entirely).
     if (a.array_size() != b.array_size()) {
-      return Value();
+      return a;
     }
 
     const size_t comps = GetComponentCount(type);
@@ -445,6 +447,18 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       break;
     }
 
+    // Matrix2f
+    case TypeId::Matrix2f: {
+      const float* va = a.as_matrix2f();
+      const float* vb = b.as_matrix2f();
+      if (va && vb) {
+        float result[4];
+        LerpFloatN(result, va, vb, tf, 4);
+        return Value::MakeMatrix2f(result);
+      }
+      break;
+    }
+
     case TypeId::Matrix2d: {
       const double* va = a.as_matrix2d();
       const double* vb = b.as_matrix2d();
@@ -564,6 +578,10 @@ SampleResult TimeInterpolator::Interpolate(
 
   // Single sample
   if (samples.size() == 1) {
+    if (samples[0].second.is_block()) {
+      result.blocked = true;
+      return result;
+    }
     result.value = samples[0].second;
     result.success = true;
     result.interpolated = false;
@@ -576,6 +594,10 @@ SampleResult TimeInterpolator::Interpolate(
 
   // Before first
   if (time <= samples.front().first) {
+    if (samples.front().second.is_block()) {
+      result.blocked = true;
+      return result;
+    }
     result.value = samples.front().second;
     result.success = true;
     result.interpolated = false;
@@ -584,6 +606,10 @@ SampleResult TimeInterpolator::Interpolate(
 
   // After last
   if (time >= samples.back().first) {
+    if (samples.back().second.is_block()) {
+      result.blocked = true;
+      return result;
+    }
     result.value = samples.back().second;
     result.success = true;
     result.interpolated = false;
@@ -594,6 +620,10 @@ SampleResult TimeInterpolator::Interpolate(
   while (low < high - 1) {
     size_t mid = (low + high) / 2;
     if (time == samples[mid].first) {
+      if (samples[mid].second.is_block()) {
+        result.blocked = true;
+        return result;
+      }
       result.value = samples[mid].second;
       result.success = true;
       result.interpolated = false;
@@ -607,6 +637,10 @@ SampleResult TimeInterpolator::Interpolate(
 
   // Held interpolation
   if (mode == TimeInterpolation::Held) {
+    if (samples[low].second.is_block()) {
+      result.blocked = true;
+      return result;
+    }
     result.value = samples[low].second;
     result.success = true;
     result.interpolated = false;
@@ -614,6 +648,10 @@ SampleResult TimeInterpolator::Interpolate(
   }
 
   // Linear interpolation
+  if (samples[low].second.is_block() || samples[high].second.is_block()) {
+    result.blocked = true;
+    return result;
+  }
   double t_low = samples[low].first;
   double t_high = samples[high].first;
   double t = (time - t_low) / (t_high - t_low);

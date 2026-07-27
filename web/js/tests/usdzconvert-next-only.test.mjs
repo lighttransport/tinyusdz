@@ -519,8 +519,8 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
     assert.ok(stream.numCameras() >= 1, `${label}: expected next camera extraction`);
     assert.ok(stream.numPoints() >= 1, `${label}: expected next Points extraction`);
     assert.ok(stream.numSkeletons() >= 1, `${label}: expected next Skeleton extraction`);
-    assert.ok(stream.numUnsupportedRenderables() >= 1,
-      `${label}: expected unsupported renderable diagnostics`);
+    assert.equal(stream.numUnsupportedRenderables(), 0,
+      `${label}: all renderable fixture prims should convert`);
 
     const node = stream.getNode(0);
     assert.equal(typeof node.primPath, 'string', `${label}: node should expose primPath`);
@@ -572,13 +572,16 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
 
     const unsupported = stream.getUnsupportedRenderables();
     assert.ok(Array.isArray(unsupported), `${label}: unsupported renderables should be an array`);
-    // BasisCurves converts now; HermiteCurves stays reported-unsupported.
-    assert.ok(unsupported.some((item) => item.type === 'HermiteCurves' || /HermiteCurves/i.test(item.reason || '')),
-      `${label}: unsupported diagnostics should include HermiteCurves`);
-    assert.ok(!unsupported.some((item) => item.type === 'BasisCurves'),
-      `${label}: BasisCurves should no longer be reported unsupported`);
+    assert.equal(unsupported.length, 0,
+      `${label}: BasisCurves and HermiteCurves should no longer be reported unsupported`);
     if (typeof stream.numCurves === 'function') {
-      assert.ok(stream.numCurves() >= 1, `${label}: BasisCurves should convert to render curves`);
+      assert.ok(stream.numCurves() >= 2,
+        `${label}: BasisCurves and HermiteCurves should convert to render curves`);
+      const curves = Array.from({ length: stream.numCurves() }, (_, i) => stream.getCurves(i));
+      assert.ok(curves.some((item) => item?.primPath === '/World/Curve'),
+        `${label}: BasisCurves should be present in converted curves`);
+      assert.ok(curves.some((item) => item?.primPath === '/World/Hermite'),
+        `${label}: HermiteCurves should be present in converted curves`);
     }
 
     const animationCount = stream.numAnimations();
@@ -720,8 +723,8 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
     assert.equal(adapter.getLight(0).type, 'sphere', `${label}: adapter should expose light data`);
     assert.ok(adapter.numCameras() >= 1, `${label}: adapter should expose camera count`);
     assert.equal(adapter.getCamera(0).type, 'perspective', `${label}: adapter should expose camera data`);
-    assert.ok(adapter.numUnsupportedRenderables() >= 1,
-      `${label}: adapter should expose unsupported renderable count`);
+    assert.equal(adapter.numUnsupportedRenderables(), 0,
+      `${label}: adapter should report all fixture renderables converted`);
     assert.ok(Array.isArray(adapter.getUnsupportedRenderables()),
       `${label}: adapter should expose unsupported renderable list`);
     const built = buildNextThreeNode(adapter, {

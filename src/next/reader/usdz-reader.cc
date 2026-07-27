@@ -1,14 +1,18 @@
 #include "usdz-reader.hh"
 #include <cstring>
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <limits>
+#include <unordered_set>
 
 namespace tinyusdz {
 namespace next {
 
 // ZIP local file header signature
 static const uint32_t kLocalFileHeaderSig = 0x04034b50;
+static const uint32_t kCentralDirectoryHeaderSig = 0x02014b50;
+static const uint32_t kEndOfCentralDirectorySig = 0x06054b50;
 
 #pragma pack(push, 1)
 struct LocalFileHeader {
@@ -34,11 +38,39 @@ bool CheckedAdd(size_t a, size_t b, size_t* out) {
   return true;
 }
 
+bool IsSafeEntryName(const std::string& name) {
+  if (name.empty() || name.front() == '/' || name.front() == '\\' ||
+      name.find('\\') != std::string::npos ||
+      name.find('\0') != std::string::npos) {
+    return false;
+  }
+  if (name.size() >= 2 &&
+      ((name[0] >= 'A' && name[0] <= 'Z') ||
+       (name[0] >= 'a' && name[0] <= 'z')) &&
+      name[1] == ':') {
+    return false;
+  }
+  size_t start = 0;
+  while (start < name.size()) {
+    const size_t slash = name.find('/', start);
+    const size_t end = slash == std::string::npos ? name.size() : slash;
+    const std::string part = name.substr(start, end - start);
+    if (part.empty() || part == "." || part == "..") return false;
+    if (slash == std::string::npos) return true;
+    start = slash + 1;
+  }
+  return false;  // trailing slash / directory entry
+}
+
 }  // namespace
 
 bool USDZReader::OpenFile(const std::string& filename,
                           const USDZReadOptions& options) {
   error_.clear();
+  entries_.clear();
+  data_ = nullptr;
+  data_size_ = 0;
+  file_data_.clear();
   std::ifstream ifs(filename, std::ios::binary | std::ios::ate);
   if (!ifs) {
     error_ = "failed to open USDZ file: " + filename;
@@ -83,6 +115,7 @@ bool USDZReader::Open(const uint8_t* data, size_t size,
   }
 
   size_t pos = 0;
+  std::unordered_set<std::string> entry_names;
   while (pos + sizeof(LocalFileHeader) <= size) {
     LocalFileHeader hdr;
     std::memcpy(&hdr, data + pos, sizeof(hdr));
@@ -99,28 +132,42 @@ bool USDZReader::Open(const uint8_t* data, size_t size,
         !CheckedAdd(data_pos, static_cast<size_t>(hdr.compressed_size), &next_pos) ||
         next_pos > size) {
       error_ = "truncated USDZ local file header";
-      break;
+      entries_.clear();
+      return false;
     }
 
-    // Check for 0xA serial number in extra field (64-byte alignment marker)
-    // USDZ requires stored (uncompressed) entries
+    // USDZ requires every entry to be stored. Skipping a compressed entry would
+    // also corrupt positional root semantics by making a later stored layer look
+    // like entries_[0].
     if (hdr.compression != 0) {
-      // Skip compressed entries (only stored entries supported)
-      pos = next_pos;
-      continue;
+      error_ = "compressed ZIP entry is not allowed in USDZ";
+      entries_.clear();
+      return false;
     }
     if (hdr.uncompressed_size != hdr.compressed_size) {
       error_ = "invalid stored USDZ entry size";
+      entries_.clear();
       return false;
     }
     if (options.max_entry_size > 0 &&
         static_cast<size_t>(hdr.uncompressed_size) > options.max_entry_size) {
       error_ = "USDZ entry exceeds maximum memory limit";
+      entries_.clear();
       return false;
     }
 
     std::string name(reinterpret_cast<const char*>(data + name_pos),
                      hdr.filename_length);
+    if (!IsSafeEntryName(name)) {
+      error_ = "unsafe USDZ entry path: " + name;
+      entries_.clear();
+      return false;
+    }
+    if (!entry_names.insert(name).second) {
+      error_ = "duplicate USDZ entry path: " + name;
+      entries_.clear();
+      return false;
+    }
 
     Entry entry;
     entry.name = name;
@@ -129,6 +176,23 @@ bool USDZReader::Open(const uint8_t* data, size_t size,
     entries_.push_back(entry);
 
     pos = next_pos;
+  }
+
+  // Stored-entry-only test fixtures may end exactly after their local records.
+  // Real ZIP/USDZ files continue with a central directory. Anything else means
+  // a truncated next header or unrecognized trailing payload and must not be
+  // hidden merely because an earlier valid entry was already collected.
+  if (pos < size) {
+    uint32_t trailing_sig = 0;
+    if (size - pos >= sizeof(trailing_sig)) {
+      std::memcpy(&trailing_sig, data + pos, sizeof(trailing_sig));
+    }
+    if (trailing_sig != kCentralDirectoryHeaderSig &&
+        trailing_sig != kEndOfCentralDirectorySig) {
+      error_ = "invalid or truncated data after USDZ entries";
+      entries_.clear();
+      return false;
+    }
   }
 
   if (entries_.empty()) {
@@ -151,6 +215,28 @@ const uint8_t* USDZReader::EntryData(size_t index) const {
 size_t USDZReader::EntrySize(size_t index) const {
   if (index >= entries_.size()) return 0;
   return entries_[index].size;
+}
+
+int USDZReader::FindRootLayer() const {
+  if (entries_.empty()) return -1;
+  const Entry& root = entries_[0];
+  auto endsWithNoCase = [](const std::string& s, const char* suffix) {
+    const size_t n = std::strlen(suffix);
+    if (s.size() < n) return false;
+    for (size_t i = 0; i < n; ++i) {
+      const unsigned char a = static_cast<unsigned char>(s[s.size() - n + i]);
+      const unsigned char b = static_cast<unsigned char>(suffix[i]);
+      if (std::tolower(a) != std::tolower(b)) return false;
+    }
+    return true;
+  };
+  const uint8_t* p = EntryData(0);
+  const bool usdc = p && root.size >= 8 && std::memcmp(p, "PXR-USDC", 8) == 0;
+  const bool usda = p && root.size >= 5 && std::memcmp(p, "#usda", 5) == 0;
+  if (endsWithNoCase(root.name, ".usdc")) return usdc ? 0 : -1;
+  if (endsWithNoCase(root.name, ".usda")) return usda ? 0 : -1;
+  if (endsWithNoCase(root.name, ".usd")) return (usdc || usda) ? 0 : -1;
+  return -1;
 }
 
 int USDZReader::FindUSDCFile() const {

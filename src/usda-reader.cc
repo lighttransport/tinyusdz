@@ -529,6 +529,68 @@ inline bool hasOutputs(const std::string &str) {
 
 namespace {
 
+// Forward decl (mutually recursive with BuildVariantSetsRec for nested variantSets).
+bool ToPrimSpecRec(const size_t primSpecIdx,
+                        std::vector<PrimSpecNode> &primspec_nodes, PrimSpec &parent, std::string *err);
+
+// Convert a variantNodeMap (variantSetName -> variantName -> VariantNode) into
+// VariantSetSpecs. Recurses into each variant block's OWN nested variantSets
+// (VariantNode::variantSets) so layer-mode load preserves them -- e.g. ALab's
+// `render_high` geo variant holds a `geo_vis` variantSet supplying the proxy
+// mesh. Without this recursion the Layer parser silently drops nested variant
+// content (the Stage path in ConstructVariantPrimTreeRec already recurses).
+bool BuildVariantSetsRec(
+    const std::map<std::string, std::map<std::string, VariantNode>> &variantNodeMap,
+    std::vector<PrimSpecNode> &primspec_nodes,
+    std::set<int64_t> &variantChildrenIndices,
+    std::map<std::string, VariantSetSpec> &out, std::string *err) {
+  for (const auto &variantNodes : variantNodeMap) {
+    VariantSetSpec variantSet;
+    for (const auto &item : variantNodes.second) {
+      PrimSpec variant;  // variantNode can be represented as PrimSpec.
+      for (const int64_t vidx : item.second.primChildren) {
+        if (variantChildrenIndices.count(vidx)) {
+          if (err) {
+            (*err) = fmt::format("variant primIdx {} is referenced multiple times.\n", vidx);
+          }
+          return false;
+        }
+        if ((vidx >= 0) && (size_t(vidx) < primspec_nodes.size())) {
+          PrimSpec variantChildPrim;
+          if (!ToPrimSpecRec(size_t(vidx), primspec_nodes, variantChildPrim, err)) {
+            return false;
+          }
+          variant.children().emplace_back(variantChildPrim);
+        } else {
+          if (err) {
+            (*err) = "primIndex exceeds prim_nodes.size()\n";
+          }
+          return false;
+        }
+        variantChildrenIndices.insert(vidx);
+      }
+
+      variant.metas() = item.second.metas;
+      variant.props() = item.second.props;
+
+      // Recurse into this variant block's own nested variantSets.
+      if (!item.second.variantSets.empty()) {
+        std::map<std::string, VariantSetSpec> nested;
+        if (!BuildVariantSetsRec(item.second.variantSets, primspec_nodes,
+                                 variantChildrenIndices, nested, err)) {
+          return false;
+        }
+        variant.variantSets() = std::move(nested);
+      }
+
+      variantSet.name = variantNodes.first;
+      variantSet.variantSet.emplace(item.first, std::move(variant));
+    }
+    out.emplace(variantNodes.first, std::move(variantSet));
+  }
+  return true;
+}
+
 // bottom up conversion.
 bool ToPrimSpecRec(const size_t primSpecIdx,
                         std::vector<PrimSpecNode> &primspec_nodes, PrimSpec &parent, std::string *err) {
@@ -547,51 +609,10 @@ bool ToPrimSpecRec(const size_t primSpecIdx,
   // Firstly process variants.
   std::set<int64_t> variantChildrenIndices; // record variantChildren indices
   {
-
     std::map<std::string, VariantSetSpec> variantSets;
-    for (const auto &variantNodes : node.variantNodeMap) {
-      DCOUT("variantSet " << variantNodes.first);
-      VariantSetSpec variantSet;
-      for (const auto &item : variantNodes.second) {
-        DCOUT("variant " << item.first);
-        PrimSpec variant; // variantNode can be represented as PrimSpec.
-        for (const int64_t vidx : item.second.primChildren) {
-          if (variantChildrenIndices.count(vidx)) {
-            // Duplicated variant childrenIndices
-            if (err) {
-              (*err) = fmt::format("variant primIdx {} is referenced multiple times.\n", vidx);
-            }
-            return false;
-          } else {
-            // Add prim to variants
-            if ((vidx >= 0) && (size_t(vidx) <= primspec_nodes.size())) {
-
-              PrimSpec variantChildPrim; // dummy
-              if (!ToPrimSpecRec(size_t(vidx), primspec_nodes, variantChildPrim, err)) {
-                return false;
-              }
-
-              DCOUT(fmt::format("Added prim {} to variantSet {} : variant {}", variantChildPrim.name(), variantNodes.first, item.first));
-              variant.children().emplace_back(variantChildPrim);
-            } else {
-              if (err) {
-                (*err) = "primIndex exceeds prim_nodes.size()\n";
-              }
-              return false;
-            }
-
-            variantChildrenIndices.insert(vidx);
-          }
-        }
-
-        variant.metas() = std::move(item.second.metas);
-        variant.props() = std::move(item.second.props);
-
-        variantSet.name = variantNodes.first;
-        variantSet.variantSet.emplace(item.first, std::move(variant));
-      }
-      DCOUT(fmt::format("Add {} to variantSet", variantNodes.first));
-      variantSets.emplace(variantNodes.first, std::move(variantSet));
+    if (!BuildVariantSetsRec(node.variantNodeMap, primspec_nodes,
+                             variantChildrenIndices, variantSets, err)) {
+      return false;
     }
     primspec.variantSets() = std::move(variantSets);
   }
@@ -697,7 +718,6 @@ bool ConstructVariantPrimTreeRec(const size_t variantPrimIdx,
 
   std::set<int64_t> variantChildrenIndices; // record variantChildren indices
 
-  std::map<std::string, VariantSet> variantSets;
   VariantSet variantSet;
   for (const auto &item : variantNodeMap) {
 
@@ -726,7 +746,7 @@ bool ConstructVariantPrimTreeRec(const size_t variantPrimIdx,
           return false;
         } else {
           // Add prim to variants
-          if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
+          if ((vidx >= 0) && (size_t(vidx) < prim_nodes.size())) {
 
             Prim variantChildPrim(value::Value(nullptr)); // dummy
             if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {
@@ -850,7 +870,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
           return false;
         } else {
           // Add prim to variants
-          if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
+          if ((vidx >= 0) && (size_t(vidx) < prim_nodes.size())) {
 
             Prim variantChildPrim(value::Value(nullptr)); // dummy
             if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {

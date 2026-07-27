@@ -55,6 +55,10 @@ set(TUSDVIEW_SOURCES
     scene_loader.cc
     next_scene_loader.cc
     mesh_build.cc
+    texture_tools.cc
+    lightrt_mtlx_bridge.cc
+    gpu_budget_lod.cc
+    rt_lod.cc
     displacement_bake.cc
     gizmo_build.cc
     parametric_tess.cc
@@ -66,10 +70,15 @@ set(TUSDVIEW_SOURCES
     gui_style.cc
     gl/gl_util.cc
     gl/gl_renderer.cc
-    cuda/cuda_raytracer.cc)
+    rt_bvh.cc
+    rt_scene_build.cc
+    cuda/cuda_raytracer.cc
+    hip/hip_raytracer.cc
+    lod_stream.cc)
 
 set(TUSDVIEW_COMMON_SOURCES
     ${COMMON_DIR}/cuew/cuew.c
+    ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c
     ${COMMON_DIR}/glad/src/glad.c
     ${COMMON_DIR}/imgui/imgui.cpp
     ${COMMON_DIR}/imgui/imgui_draw.cpp
@@ -82,7 +91,267 @@ set(TUSDVIEW_COMMON_SOURCES
     ${COMMON_DIR}/light3d/material.cpp
     ${COMMON_DIR}/light3d/texture.cpp)
 
-add_executable(${EXAMPLE_TARGET} ${TUSDVIEW_SOURCES} ${TUSDVIEW_COMMON_SOURCES})
+# Compile-check the vendored LightRT MaterialX/OpenPBR evaluator core. The
+# objects are intentionally not linked into tusdview yet because texture loading
+# still needs a single owning stb implementation in tinyusdz. `third_party_impl.c`
+# is compiled here to keep the vendor import portable, but remains unlinked.
+# `material_bind.c` stays vendored but is excluded because it is glTF-specific
+# rather than USD-facing.
+set(TUSDVIEW_LIGHTRT_MTLX_DIR ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
+add_library(tusdview_lightrt_mtlx OBJECT
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/color.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/env.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/texture.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/third_party_impl.c)
+target_include_directories(tusdview_lightrt_mtlx PRIVATE
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}
+    ${PROJECT_SOURCE_DIR}/src/external
+    ${PROJECT_SOURCE_DIR}/src/external/tinyexr/include)
+target_compile_features(tusdview_lightrt_mtlx PRIVATE c_std_11)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(tusdview_lightrt_mtlx PRIVATE -w)
+endif()
+
+add_library(tusdview_lightrt_mtlx_const OBJECT
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/color.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
+    lightrt_mtlx_texture_stub.c)
+target_include_directories(tusdview_lightrt_mtlx_const PRIVATE
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}
+    ${PROJECT_SOURCE_DIR}/src/external)
+target_compile_features(tusdview_lightrt_mtlx_const PRIVATE c_std_11)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(tusdview_lightrt_mtlx_const PRIVATE -w)
+endif()
+
+add_executable(${EXAMPLE_TARGET}
+    ${TUSDVIEW_SOURCES}
+    ${TUSDVIEW_COMMON_SOURCES}
+    $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+add_dependencies(${EXAMPLE_TARGET} tusdview_lightrt_mtlx)
+
+# Helper: apply -Weverything (Clang) / -Wall (GCC) to a C++ target's CXX sources.
+function(tusdview_set_warning_flags target)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(_flags_list
+        -Weverything -Wno-poison-system-directories -Wno-padded
+        -Wno-c++98-compat -Wno-c++98-compat-pedantic
+        -Wno-documentation -Wno-documentation-unknown-command
+        -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors
+        -Wno-sign-conversion -Wno-float-equal -Wno-old-style-cast
+        -Wno-double-promotion -Wno-missing-prototypes
+        -Wno-covered-switch-default -Wno-zero-as-null-pointer-constant
+        -Wno-nrvo -Wno-weak-vtables
+        -Wno-reserved-macro-identifier -Wno-reserved-identifier
+        -Wno-tautological-unsigned-zero-compare -Wno-unknown-warning-option
+        -Wno-undef -Wno-implicit-int-float-conversion
+        -Wno-implicit-float-conversion -Wno-shorten-64-to-32
+        -Wno-ms-bitfield-padding -Wno-mismatched-tags)
+    if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
+      list(APPEND _flags_list -Wno-unsafe-buffer-usage)
+    endif()
+    if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
+      list(APPEND _flags_list -Wno-switch-default)
+    endif()
+    if(NOT TINYUSDZ_NO_WERROR)
+      list(APPEND _flags_list -Werror)
+    endif()
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    set(_flags_list -Wall)
+    if(NOT TINYUSDZ_NO_WERROR)
+      list(APPEND _flags_list -Werror)
+    endif()
+  endif()
+  target_compile_options(${target} PRIVATE
+      $<$<COMPILE_LANGUAGE:CXX>:${_flags_list}>)
+endfunction()
+
+if(TINYUSDZ_BUILD_TESTS)
+  add_executable(tusdview_lightrt_bridge_test
+      tests/lightrt_bridge_test.cc
+      lightrt_mtlx_bridge.cc
+      rt_scene_build.cc
+      rt_bvh.cc
+      texture_tools.cc
+      displacement_bake.cc
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_lightrt_bridge_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_lightrt_bridge_test)
+  target_include_directories(tusdview_lightrt_bridge_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  if(UNIX AND NOT APPLE)
+    find_package(Threads REQUIRED)
+    target_link_libraries(tusdview_lightrt_bridge_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_openpbr_material_test
+      tests/openpbr_material_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_openpbr_material_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_openpbr_material_test)
+  target_include_directories(tusdview_openpbr_material_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_openpbr_material_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_openpbr_material_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_lighting_test
+      tests/lighting_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      rt_scene_build.cc
+      rt_bvh.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_lighting_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_lighting_test)
+  target_include_directories(tusdview_lighting_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_lighting_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_lighting_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_geometry_primvar_test
+      tests/geometry_primvar_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_geometry_primvar_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_geometry_primvar_test)
+  target_include_directories(tusdview_geometry_primvar_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_geometry_primvar_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_geometry_primvar_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_texture_pipeline_test
+      tests/texture_pipeline_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_texture_pipeline_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_texture_pipeline_test)
+  target_include_directories(tusdview_texture_pipeline_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_texture_pipeline_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_texture_pipeline_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_lightrt_mtlx_eval_test
+      tests/lightrt_mtlx_eval_test.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/color.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/texture.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/third_party_impl.c)
+  target_compile_features(tusdview_lightrt_mtlx_eval_test PRIVATE c_std_11)
+  target_include_directories(tusdview_lightrt_mtlx_eval_test PRIVATE
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}
+      ${PROJECT_SOURCE_DIR}/src/external)
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_lightrt_mtlx_eval_test PRIVATE m)
+  endif()
+
+  add_executable(tusdview_camera_nav_test
+      tests/camera_nav_test.cc
+      camera_nav.cc
+      ${COMMON_DIR}/light3d/math.cpp)
+  target_compile_features(tusdview_camera_nav_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_camera_nav_test)
+  target_include_directories(tusdview_camera_nav_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${COMMON_DIR})
+
+  # Register the tusdview unit tests with ctest. They were built here but never
+  # registered (this file had no add_test at all), so a regression in any of
+  # them went unnoticed. Works because the top-level CMakeLists.txt calls
+  # enable_testing() before this subdirectory is added. All are self-contained
+  # (no GPU/display) and take no arguments; non-zero exit == failure.
+  foreach(tv_test
+      tusdview_lightrt_bridge_test
+      tusdview_openpbr_material_test
+      tusdview_lighting_test
+      tusdview_geometry_primvar_test
+      tusdview_texture_pipeline_test
+      tusdview_lightrt_mtlx_eval_test
+      tusdview_camera_nav_test)
+    add_test(NAME ${tv_test} COMMAND ${tv_test})
+    set_tests_properties(${tv_test} PROPERTIES LABELS "tusdview")
+  endforeach()
+endif()
+
+# Vendored texture tools (tir/texcomp/texpipe/envmap). All calls are routed
+# through texture_tools.cc and guarded by TUSDVIEW_WITH_TEXTOOLS, so the app
+# builds unchanged when TINYUSDZ_WITH_TEXTOOLS=OFF. Applied to every target
+# that compiles mesh_build.cc / texture_tools.cc.
+if(TINYUSDZ_WITH_TEXTOOLS)
+  set(TUSDVIEW_TEXTOOLS_CONSUMERS ${EXAMPLE_TARGET})
+  if(TINYUSDZ_BUILD_TESTS)
+    list(APPEND TUSDVIEW_TEXTOOLS_CONSUMERS
+        tusdview_lightrt_bridge_test
+        tusdview_openpbr_material_test
+        tusdview_lighting_test
+        tusdview_geometry_primvar_test
+        tusdview_texture_pipeline_test)
+  endif()
+  foreach(tt_consumer IN LISTS TUSDVIEW_TEXTOOLS_CONSUMERS)
+    target_link_libraries(${tt_consumer} PRIVATE tinyusdz_textools)
+    target_compile_definitions(${tt_consumer} PRIVATE TUSDVIEW_WITH_TEXTOOLS=1)
+    # Zstd-supercompressed KTX2 (scheme 2) is what usd-texcomp writes by default;
+    # the core lib defines this PRIVATEly, so mesh_build.cc needs its own copy.
+    # ZSTD_decompress itself comes from tinyusdz_static (src/external/zstd.c).
+    if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+      target_compile_definitions(${tt_consumer} PRIVATE TINYUSDZ_WITH_ZSTD_COMPRESSION)
+    endif()
+  endforeach()
+endif()
 
 if(COMMAND add_sanitizers)
   add_sanitizers(${EXAMPLE_TARGET})
@@ -119,6 +388,7 @@ target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/src/external
     ${COMMON_DIR}
     ${COMMON_DIR}/cuew
+    ${PROJECT_SOURCE_DIR}/src/external/hipew
     ${COMMON_DIR}/glad/include
     ${COMMON_DIR}/imgui)
 
@@ -194,20 +464,38 @@ endif()
 # Dependencies (nlohmann/json + civetweb) are vendored in tinyusdz/src/external,
 # so this defaults ON (no system packages needed).
 # ---------------------------------------------------------------------------
+# civetweb HTTP/WebSocket server. Shared by the WebSocket image-stream server
+# (always built) and the optional MCP server. Built with websockets ENABLED.
+target_sources(${EXAMPLE_TARGET} PRIVATE
+    stream/stream_server.cc
+    ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
+target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
+    NO_SSL NO_CGI USE_WEBSOCKET=1)  # civetweb: no OpenSSL/CGI; websockets on
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
+if(UNIX)
+  target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
+elseif(WIN32)
+  target_link_libraries(${EXAMPLE_TARGET} PRIVATE ws2_32)  # civetweb Winsock
+  if(MINGW)
+    target_link_libraries(${EXAMPLE_TARGET} PRIVATE winpthread)
+  endif()
+endif()
+# stream_server.cc uses nlohmann/json (needs exceptions when built -fno-exceptions).
+if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+  set_source_files_properties(stream/stream_server.cc
+                              PROPERTIES COMPILE_OPTIONS "-fexceptions")
+elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+  set_source_files_properties(stream/stream_server.cc
+                              PROPERTIES COMPILE_OPTIONS "/EHsc")
+endif()
+
 option(TUSDVIEW_ENABLE_MCP "Build the embedded MCP server (stdio + HTTP)" ON)
 if(TUSDVIEW_ENABLE_MCP)
   target_sources(${EXAMPLE_TARGET} PRIVATE
-      mcp/mcp_server.cc
-      mcp/mcp_http.cc
-      mcp/mcp_stdio.cc
-      mcp/app_mcp.cc
-      ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
-  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
-      TUSDVIEW_HAVE_MCP=1
-      NO_SSL NO_CGI USE_WEBSOCKET=0)  # civetweb: no OpenSSL / CGI / websockets
-  # The MCP server uses try/catch around JSON-RPC handling, so it needs C++
-  # exceptions even when the rest of tusdview is built -fno-exceptions. The
-  # per-source flag is appended after the target option and therefore wins.
+      mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc)
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE TUSDVIEW_HAVE_MCP=1)
+  # The MCP server uses try/catch around JSON-RPC; it needs C++ exceptions even
+  # when the rest of tusdview is built -fno-exceptions.
   if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
     set_source_files_properties(
         mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
@@ -216,19 +504,6 @@ if(TUSDVIEW_ENABLE_MCP)
     set_source_files_properties(
         mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
         PROPERTIES COMPILE_OPTIONS "/EHsc")
-  endif()
-  target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
-  if(UNIX)
-    target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
-  elseif(WIN32)
-    # civetweb's HTTP transport uses Winsock (socket/bind/listen/WSAStartup),
-    # and its clock_gettime() comes from winpthread under mingw. winpthread is
-    # a MinGW-only import lib; MSVC has neither the library nor the need for
-    # it (no clock_gettime() call in this build).
-    target_link_libraries(${EXAMPLE_TARGET} PRIVATE ws2_32)
-    if(MINGW)
-      target_link_libraries(${EXAMPLE_TARGET} PRIVATE winpthread)
-    endif()
   endif()
   message(STATUS "tusdview: embedded MCP server ENABLED (stdio + HTTP)")
 else()
@@ -251,6 +526,40 @@ if(TUSDVIEW_ENABLE_GL_THREAD)
   endif()
   message(STATUS "tusdview: experimental threaded GL/Vulkan render path ENABLED (--threaded)")
 endif()
+
+# ---------------------------------------------------------------------------
+# Warning flags (same policy as the core library)
+# ---------------------------------------------------------------------------
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(TUSDVIEW_CXX_FLAGS
+      "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-documentation-unknown-command -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors -Wno-sign-conversion -Wno-float-equal -Wno-old-style-cast -Wno-double-promotion -Wno-missing-prototypes -Wno-covered-switch-default -Wno-zero-as-null-pointer-constant -Wno-nrvo -Wno-weak-vtables -Wno-reserved-macro-identifier -Wno-reserved-identifier -Wno-tautological-unsigned-zero-compare -Wno-unknown-warning-option -Wno-undef -Wno-implicit-int-float-conversion -Wno-implicit-float-conversion -Wno-shorten-64-to-32 -Wno-ms-bitfield-padding -Wno-mismatched-tags"
+  )
+  if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
+    set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Wno-unsafe-buffer-usage")
+  endif()
+  if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
+    set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Wno-switch-default")
+  endif()
+  if(NOT TINYUSDZ_NO_WERROR)
+    set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Werror")
+  endif()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+  set(TUSDVIEW_CXX_FLAGS "-Wall")
+  if(NOT TINYUSDZ_NO_WERROR)
+    set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Werror")
+  endif()
+endif()
+
+# Apply -Weverything only to project-owned C++ sources in tusdview.
+set_source_files_properties(${TUSDVIEW_SOURCES}
+    PROPERTIES COMPILE_FLAGS ${TUSDVIEW_CXX_FLAGS})
+
+# Vendored C/C++ third-party code: suppress all warnings.
+set_source_files_properties(
+    ${TUSDVIEW_COMMON_SOURCES}
+    ${COMMON_DIR}/imgui/imgui_impl_vulkan.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c
+    PROPERTIES COMPILE_FLAGS "-w")
 
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

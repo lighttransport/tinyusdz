@@ -6,6 +6,7 @@
 
 #include "tsd-tinyusdz.hh"
 
+#include <cstdint>
 #include <limits>
 
 #include "usdGeom.hh"
@@ -16,7 +17,7 @@ namespace tsd {
 namespace {
 
 bool ToU32(size_t n, uint32_t *out) {
-#if !defined(__EMSCRIPTEN__) || defined(__wasm64__)
+#if SIZE_MAX > UINT32_MAX
   if (n > size_t((std::numeric_limits<uint32_t>::max)())) {
     return false;
   }

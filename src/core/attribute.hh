@@ -133,9 +133,9 @@ class Attribute {
     set_connections(vs);
   }
 
-  const std::string &name() const { return _name; }
+  const std::string &name() const TINYUSDZ_LIFETIMEBOUND { return _name; }
 
-  std::string &name() { return _name; }
+  std::string &name() TINYUSDZ_LIFETIMEBOUND { return _name; }
 
   void set_name(const std::string &name) { _name = name; }
 
@@ -344,11 +344,13 @@ class Attribute {
   }
 
 
-  const AttrMeta &metas() const { return _metas; }
-  AttrMeta &metas() { return _metas; }
+  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
 
-  const primvar::PrimVar &get_var() const { return _var; }
-  primvar::PrimVar &get_var() { return _var; }
+  const primvar::PrimVar &get_var() const TINYUSDZ_LIFETIMEBOUND {
+    return _var;
+  }
+  primvar::PrimVar &get_var() TINYUSDZ_LIFETIMEBOUND { return _var; }
 
   void set_blocked(bool onoff) { _var.set_blocked(onoff); }
 
@@ -361,7 +363,7 @@ class Attribute {
   }
   bool has_blocked() const { return _var.is_blocked(); }
 
-  Variability &variability() { return _variability; }
+  Variability &variability() TINYUSDZ_LIFETIMEBOUND { return _variability; }
   Variability variability() const { return _variability; }
 
   bool is_uniform() const { return _variability == Variability::Uniform; }
@@ -424,8 +426,10 @@ class Attribute {
     return nonstd::nullopt;
   }
 
-  const std::vector<Path> &connections() const { return _paths; }
-  std::vector<Path> &connections() { return _paths; }
+  const std::vector<Path> &connections() const TINYUSDZ_LIFETIMEBOUND {
+    return _paths;
+  }
+  std::vector<Path> &connections() TINYUSDZ_LIFETIMEBOUND { return _paths; }
 
   ///
   /// Estimate memory usage of this Attribute in bytes

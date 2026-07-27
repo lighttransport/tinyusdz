@@ -7,14 +7,15 @@
 # array to vkCreateShaderModule. Run this only after editing a .comp; it needs
 # glslangValidator (Vulkan SDK) or, as a fallback, glslc (shaderc).
 #
-# Usage:  scripts/compile_shaders.sh
-#         GLSLANG=/path/to/glslangValidator scripts/compile_shaders.sh
+# Usage:  src/external/lightrt/vk/shaders/compile_shaders.sh
+#         GLSLANG=/path/to/glslangValidator vk/shaders/compile_shaders.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SH="${SCRIPT_DIR}/../vk/shaders"
+# The .comp sources and committed .spv.h headers live alongside this script.
+SH="${SCRIPT_DIR}"
 
 # Prefer the locally built glslang (scripts/setup-and-build-glslang.sh): the
 # trace_ray_query shader needs GL_EXT_ray_query, which older system glslang
@@ -33,16 +34,21 @@ if ! command -v "${GLSLANG}" >/dev/null 2>&1; then
     exit 1
 fi
 
-# gen <basename> <symbol-name>
+# gen <out-basename> <symbol-name> <src-basename> [glslang-args...]
 gen() {
-    local base="$1" sym="$2"
-    "${GLSLANG}" -V --target-env vulkan1.2 --vn "${sym}" \
-        -o "${SH}/${base}.spv.h" "${SH}/${base}.comp"
-    echo "generated ${SH}/${base}.spv.h  (${sym})"
+    local out="$1" sym="$2" src="$3"
+    shift 3
+    "${GLSLANG}" -V --target-env vulkan1.2 --vn "${sym}" "$@" \
+        -o "${SH}/${out}.spv.h" "${SH}/${src}.comp"
+    echo "generated ${SH}/${out}.spv.h  (${sym})"
 }
 
-gen trace_bvh        trace_bvh_spv
-gen build_morton     build_morton_spv
-gen trace_ray_query  trace_ray_query_spv  # needs VK_KHR_ray_query (SPIR-V 1.4)
+gen trace_bvh        trace_bvh_spv        trace_bvh
+gen build_morton     build_morton_spv     build_morton
+gen trace_ray_query  trace_ray_query_spv  trace_ray_query  # needs VK_KHR_ray_query (SPIR-V 1.4)
+# Wide-id variant of the ray-query trace: 5 words/hit with instanceId + prim index
+# stored separately, so instanced scenes past the 32-bit prim_id product still trace.
+gen trace_ray_query_wide trace_ray_query_wide_spv trace_ray_query -DLRT_WIDE_ID
+gen shade_analytic   shade_analytic_spv   shade_analytic   # analytic sphere/box forward shading
 
 echo "done."

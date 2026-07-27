@@ -39,22 +39,27 @@ namespace pcp {
 /// relocate authored in a referenced layer renames prims inside the referenced
 /// namespace, and the rename then maps through the arc into root space.
 ///
-/// Keys are PRE-relocation ("raw") spec paths, because that is what a composed
-/// prim's source site is: a relocate whose paths are expressed in a namespace
-/// already renamed by an ancestral relocate (`/A -> /W`, then `/W/B -> /W/X`)
-/// is normalized back to the raw namespace (`/A/B -> X`) when this is built.
+/// Tables are keyed for their consumer (BuildStackRelocates splits by keying):
+///   * `src_to_dst` uses the RAW (pre-ancestral-relocation) source, so
+///     WithStackRelocates' single-pass relationship/connection target remap
+///     pre-chains ancestral relocates (raw target -> FINAL dst).
+///   * `departed` / `arrivals` use the COMPOSED (as-authored) path, so
+///     SourcesForRelocateSource resolves a source through the composed
+///     namespace (its ancestors exist there as arrivals, carrying relocated
+///     content AND post-relocation `over` opinions) and ComposeChildNames
+///     removes a composed prim's departed children by their composed parent.
 struct StackRelocates {
-  /// raw source path -> authored destination path.
+  /// RAW source path -> authored destination path (WithStackRelocates remap).
   std::map<std::string, std::string> src_to_dst;
-  /// raw parent path -> child names that moved away ("prohibited child names").
+  /// COMPOSED parent path -> child names that moved away ("prohibited names").
   std::map<std::string, std::set<std::string>> departed;
   /// One prim arriving under a parent through a relocate.
   struct Arrival {
     std::string name;        // composed child name (last component of `dst`)
-    std::string src_site;    // raw source path the content comes from
+    std::string src_site;    // COMPOSED source path the content comes from
     std::string dst_site;    // authored destination path (may carry opinions)
   };
-  /// raw destination-parent path -> prims relocated into it.
+  /// COMPOSED destination-parent path -> prims relocated into it.
   std::map<std::string, std::vector<Arrival>> arrivals;
 
   bool empty() const { return src_to_dst.empty(); }
@@ -148,6 +153,9 @@ enum class PrototypeNumbering { Deterministic, UsdcatCompatible };
 
 /// Composition options.
 struct CompositionOptions {
+  using VariantSelectionMap =
+      std::map<std::string, std::map<std::string, std::string>>;
+
   /// Opt into fail-closed AOUSD parsing/resolution policy. Compatibility mode
   /// remains the default for legacy assets.
   bool strict_aousd_conformance = false;
@@ -196,6 +204,12 @@ struct CompositionOptions {
   // (sublayers, references, payloads). 0 = no limit.
   size_t max_layer_memory = 0;
 
+  // USDC backing policy for every file-backed layer loaded by PCP. With both
+  // enabled, lazy array Values retain shared mmap-backed CrateDataSources as
+  // they are copied into composed PrimSpecs and the rebuilt Stage.
+  bool usdc_lazy_arrays = true;
+  bool usdc_use_mmap = true;
+
   // USDA parser options for external USDA layers loaded by this compose path.
   // Keep defaults aligned with next's parser defaults (non-lazy unless the
   // caller enables it in LoadUSDOptions).
@@ -213,14 +227,22 @@ struct CompositionOptions {
   /// Must be thread-safe when PrewarmPrimIndices runs with num_threads != 1.
   std::function<bool(const Path &, const std::string &)> payload_policy;
 
+  /// Extended payload policy with the authoring PrimSpec. Takes precedence
+  /// over `payload_policy` when set; the two-argument form remains for source
+  /// compatibility and simple path/asset filters.
+  std::function<bool(const Path &, const std::string &, const PrimSpec &)>
+      payload_policy_with_prim;
+  /// Called when composition elects to resolve a payload arc. Used for live
+  /// progress only; must be thread-safe when parallel composition is enabled.
+  std::function<void(const Path &)> payload_load_callback;
+
   /// Fallback variant selections, consulted ONLY when no selection is authored
   /// anywhere for that set (pxr's PcpVariantFallbackMap / UsdStage global
   /// variant fallbacks). Candidates are tried in order; the first one the set
-  /// actually defines is selected. Defaults to USD's registered `standin`
-  /// fallbacks, so an asset whose standin set is left unselected still composes
-  /// its render standin, as pxr does.
-  std::map<std::string, std::vector<std::string>> variant_fallbacks{
-      {"standin", {"render", "proxy"}}};
+  /// actually defines is selected. EMPTY by default: stock OpenUSD registers
+  /// no fallbacks (the classic `standin -> render` map is a Presto plugin
+  /// registration) — pass {"standin", {"render", "proxy"}} to opt in.
+  std::map<std::string, std::vector<std::string>> variant_fallbacks;
 
   /// Variant selection overrides: map of variantSet -> variantName. Overrides
   /// any authored variantSelection on the same set (stronger than authored).
@@ -228,6 +250,11 @@ struct CompositionOptions {
   ///   {{"districtLod", "full"}} selects the "full" variant on every prim that
   ///   defines a "districtLod" variantSet.
   std::map<std::string, std::string> variant_overrides;
+
+  /// Path-scoped variant overrides. The outer key is an absolute prim path;
+  /// the inner map is variantSet -> selection. An exact path-scoped override
+  /// wins over the global variant_overrides entry for the same set.
+  VariantSelectionMap variant_overrides_by_path;
 };
 
 /// The composed graph for a single prim. Borrows its layer-stack table from the

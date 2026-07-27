@@ -62,8 +62,8 @@ struct BlendShape {
     return name;
   }
 
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<std::vector<value::vector3f>>
       offsets;  // uniform vector3f[]. required property
@@ -87,10 +87,10 @@ struct BlendShape {
   ///
   bool add_inbetweenBlendShape(double weight, Attribute &&attr);
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
   PrimMeta meta;
 
@@ -121,8 +121,8 @@ struct Skeleton : Xformable {
     return name;
   }
 
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
 
   TypedAttribute<std::vector<value::matrix4d>>
@@ -196,10 +196,10 @@ struct Skeleton : Xformable {
     return true;
   }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
   private:
   std::vector<value::token> _primChildren;
@@ -220,8 +220,8 @@ struct SkelRoot : Xformable {
     return name;
   }
 
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
 
   TypedAttribute<Animatable<Extent>>
@@ -247,10 +247,10 @@ struct SkelRoot : Xformable {
   std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
   PrimMeta meta;
 
@@ -282,8 +282,8 @@ struct SkelAnimation {
     return name;
   }
 
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   TypedAttribute<std::vector<value::token>> blendShapes;  // uniform token[]
   TypedAttribute<Animatable<std::vector<float>>> blendShapeWeights;  // float[]
@@ -320,10 +320,10 @@ struct SkelAnimation {
   std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
   PrimMeta meta;
 

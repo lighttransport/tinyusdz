@@ -101,7 +101,15 @@ std::string ChannelToString(int channel_value);
 /// Normalizes `path` to forward slashes and collapses `.` / `..` segments
 /// against preceding components. Returns an empty string if the path
 /// attempts to escape the root (more `..` than prior segments).
-std::string SanitizeAssetPath(const std::string& path);
+/// Normalize + guard an asset path against path traversal.
+///
+/// Collapses `.` and `<seg>/..` segments. A `..` that would escape the
+/// anchoring root (no real preceding segment to pop) is rejected (returns
+/// empty) unless `allow_parent_refs` is true, in which case the leading `..`
+/// is preserved for the asset resolver to rebase. Callers typically pass
+/// `assetResolver.get_allow_parent_relative_paths()`.
+std::string SanitizeAssetPath(const std::string& path,
+                              bool allow_parent_refs = false);
 
 }  // namespace utils
 }  // namespace tydra  

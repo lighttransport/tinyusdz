@@ -69,21 +69,32 @@
       map_remap.emplace(wm, m);
       return m;
     };
-    for (auto &kv : w.sources_cache) {
+    w.sources_cache.for_each([&](const std::string &key,
+                                 std::vector<Src> &val) {
       // Only the composed (root-namespace) entries are adopted. Stack-qualified
       // intermediate keys ("@N:/path" / "!N:/path", built by SourcesForSite /
       // SourcesForRelocateSource) embed the WORKER's layer-stack index N, which
       // means something else in the main table -- copying them verbatim would
       // reinterpret them against the wrong stack. They are cheap to recompute
       // (the serial BuildStage repopulates any it needs), so skip them.
-      if (!kv.first.empty() && (kv.first[0] == '@' || kv.first[0] == '!')) {
-        continue;
+      if (!key.empty() && (key[0] == '@' || key[0] == '!')) {
+        return;
       }
-      if (sources_cache.count(kv.first)) continue;
-      std::vector<Src> srcs = kv.second;
+      if (sources_cache.contains(key)) return;
+      // The worker Impl is discarded right after this merge and warms subtrees
+      // disjoint from the other workers (shared seeded keys are skipped above),
+      // so steal its Src vector instead of copying it. NOTE: a vector move is a
+      // buffer steal — the elements' SpecsMemo self-reset never runs — so any
+      // worker-set specs_ (pointing into the discarded worker's spec cache)
+      // must be dropped explicitly below.
+      std::vector<Src> srcs = std::move(val);
       for (Src &s : srcs) {
         s.stack_idx = remap(s.stack_idx);
         s.map_idx = remap_map(s.map_idx);
+        s.specs_.p = nullptr;  // worker cache pointer; main re-resolves
+        if (s.implied_anchor != UINT32_MAX) {
+          s.implied_anchor = remap(s.implied_anchor);
+        }
         // The implied-class arc chain also indexes the worker's tables.
         if (s.arc_chain && !s.arc_chain->empty()) {
           ArcChain remapped;
@@ -94,6 +105,6 @@
           s.arc_chain = std::make_shared<const ArcChain>(std::move(remapped));
         }
       }
-      sources_cache.emplace(kv.first, std::move(srcs));
-    }
+      sources_cache.emplace_if_absent(key, std::move(srcs));
+    });
   }

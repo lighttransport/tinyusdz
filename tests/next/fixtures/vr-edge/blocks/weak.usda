@@ -1,0 +1,6 @@
+#usda 1.0
+def "Root"
+{
+    double blocked = 42
+    double sample_blocked = 5
+}

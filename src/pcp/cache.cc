@@ -47,6 +47,7 @@ std::vector<std::string> GatherComposedChildNames(
     }
     const cg::LayerStackEntry &ls = ctx._layer_stacks[n.layer_stack_idx];
     if (!ls.layer) continue;
+    if (n.site_path_idx >= ctx._path_table.size()) continue;
     const std::string &site = ctx._path_table[n.site_path_idx];
     const PrimSpec *ps = nullptr;
     std::string fe;
@@ -276,7 +277,9 @@ void Cache::Impl::RegisterDependencies(const std::string &prim_path,
 
     Site s;
     s.layer_id = entry.ctx._layer_stacks[n.layer_stack_idx].identifier;
-    s.prim_path = entry.ctx._path_table[n.site_path_idx];
+    if (n.site_path_idx < entry.ctx._path_table.size()) {
+      s.prim_path = entry.ctx._path_table[n.site_path_idx];
+    }
     site_to_indices[s].insert(prim_path);
     index_to_sites[prim_path].push_back(s);
   }

@@ -70,6 +70,24 @@ GLuint CompileProgram(const char* vsSrc, const char* fsSrc, std::string* err) {
   return LinkProgram(shaders, 2, err);
 }
 
+GLuint CompileProgramGeom(const char* vsSrc, const char* gsSrc, const char* fsSrc,
+                          std::string* err) {
+#if defined(GL_GEOMETRY_SHADER)
+  GLuint vs = CompileShader(GL_VERTEX_SHADER, vsSrc, err);
+  if (!vs) return 0;
+  GLuint gs = CompileShader(GL_GEOMETRY_SHADER, gsSrc, err);
+  if (!gs) { glDeleteShader(vs); return 0; }
+  GLuint fs = CompileShader(GL_FRAGMENT_SHADER, fsSrc, err);
+  if (!fs) { glDeleteShader(vs); glDeleteShader(gs); return 0; }
+  GLuint shaders[3] = {vs, gs, fs};
+  return LinkProgram(shaders, 3, err);
+#else
+  (void)vsSrc; (void)gsSrc; (void)fsSrc;
+  if (err) *err += "geometry shaders unsupported by this GL header\n";
+  return 0;
+#endif
+}
+
 GLuint CompileProgramTess(const char* vsSrc, const char* tcsSrc, const char* tesSrc,
                           const char* fsSrc, std::string* err) {
 #if defined(GL_TESS_CONTROL_SHADER) && defined(GL_TESS_EVALUATION_SHADER)

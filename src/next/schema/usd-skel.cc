@@ -35,6 +35,37 @@ bool IsBlendShape(const UsdPrim& prim) {
 // Skeleton data
 // ============================================================
 
+namespace {
+
+// A Skeleton's bind/rest transforms: `matrix4d[]`, i.e. a flat DOUBLE array of
+// 16 scalars per joint. Two traps this centralizes:
+//   - UsdSkel authors them PLAIN on the Skeleton (`bindTransforms`), not under
+//     the `primvars:skel:` prefix -- that prefix belongs on the skinned MESH.
+//     Reading only the prefixed name left every skeleton with an identity bind
+//     pose, which silently skews every skinning matrix.
+//   - they are doubles; asking for a float array yields nothing.
+// The prefixed name is still accepted as a fallback for scenes that author it.
+void ReadMatrix4dArray(const UsdPrim& prim, const char* name,
+                       std::vector<double>* out) {
+  const Value* val = prim.GetPropertyValue(name);
+  if (!val) {
+    val = prim.GetPropertyValue(std::string("primvars:skel:") + name);
+  }
+  if (!val || !val->is_array()) return;
+  if (const std::vector<double>* darray = val->as_double_array()) {
+    *out = *darray;
+    return;
+  }
+  if (const std::vector<float>* farray = val->as_float_array()) {
+    out->resize(farray->size());
+    for (size_t i = 0; i < farray->size(); ++i) {
+      (*out)[i] = static_cast<double>((*farray)[i]);
+    }
+  }
+}
+
+}  // namespace
+
 bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
                      SkeletonData* out) {
   if (!IsSkeleton(prim) || !out) return false;
@@ -64,32 +95,23 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // bindTransforms (uniform matrix4d[]). Authored directly on the Skeleton
-  // prim (NOT primvar-namespaced — only mesh-side skel data like
-  // primvars:skel:jointIndices uses the primvars: prefix). matrix4d[] holds
-  // doubles; accept a float-backed Value as a fallback.
+  // bindTransforms (uniform matrix4d[]).
   {
-    const Value* val = prim.GetPropertyValue("bindTransforms");
-    if (!val) val = prim.GetPropertyValue("primvars:skel:bindTransforms");
-    if (val && val->is_array()) {
-      if (const std::vector<double>* darray = val->as_double_array()) {
-        out->bindTransforms = *darray;
-      } else if (const std::vector<float>* farray = val->as_float_array()) {
-        out->bindTransforms.assign(farray->begin(), farray->end());
-      }
-    }
+    ReadMatrix4dArray(prim, "bindTransforms", &out->bindTransforms);
   }
 
-  // jointNames (uniform token[])
-  {
+  // primvars:skel:jointNames fallback: only consulted when the plain
+  // `jointNames` above yielded nothing (appending to an already-read list
+  // duplicated names). Array authoring is the common form and was
+  // previously dropped — only scalar string/token was accepted.
+  if (out->jointNames.empty()) {
     const Value* val = prim.GetPropertyValue("primvars:skel:jointNames");
     if (val) {
-      const std::string* s = val->as_string();
-      if (s) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->jointNames = *toks;
+      } else if (const std::string* s = val->as_string()) {
         out->jointNames.push_back(*s);
-      }
-      const std::string* tok = val->as_token();
-      if (tok) {
+      } else if (const std::string* tok = val->as_token()) {
         out->jointNames.push_back(*tok);
       }
     }
@@ -97,15 +119,7 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
 
   // restTransforms (uniform matrix4d[]) — same addressing as bindTransforms.
   {
-    const Value* val = prim.GetPropertyValue("restTransforms");
-    if (!val) val = prim.GetPropertyValue("primvars:skel:restTransforms");
-    if (val && val->is_array()) {
-      if (const std::vector<double>* darray = val->as_double_array()) {
-        out->restTransforms = *darray;
-      } else if (const std::vector<float>* farray = val->as_float_array()) {
-        out->restTransforms.assign(farray->begin(), farray->end());
-      }
-    }
+    ReadMatrix4dArray(prim, "restTransforms", &out->restTransforms);
   }
 
   // animationSource (rel skel:animationSource)
@@ -139,20 +153,18 @@ bool ReadFloat3Array(const Value* val, std::vector<float>* out) {
 
 bool ReadQuatArray(const Value* val, std::vector<float>* out) {
   if (!val || !out) return false;
-  // next-core Values keep quats REAL-FIRST (w, x, y, z): the crate reader
-  // swizzles GfQuat's imaginary-first layout on read, and USDA text authors
-  // quats real-first. SkelAnimationData's contract is xyzw (GPU / three.js
-  // quaternion order), so swizzle each element here.
+  // quatf[] is stored as a flat float4[] in REAL-FIRST order (w, x, y, z) --
+  // next's canonical quat layout, which the crate reader swizzles disk's
+  // imaginary-first order into (CrateReader::Impl::UnpackQuatf), and which USDA
+  // text authors directly. SkelAnimationData keeps that layout; consumers that
+  // need xyzw (GPU / three.js quaternion order) swizzle at their own boundary
+  // -- tydra-next's AnimationChannel does, for one.
   const std::vector<float>* arr = val->as_float_array();
-  if (!arr || (arr->size() % 4) != 0) return false;
-  out->resize(arr->size());
-  for (size_t i = 0; i < arr->size(); i += 4) {
-    (*out)[i + 0] = (*arr)[i + 1];  // x
-    (*out)[i + 1] = (*arr)[i + 2];  // y
-    (*out)[i + 2] = (*arr)[i + 3];  // z
-    (*out)[i + 3] = (*arr)[i + 0];  // w (real)
+  if (arr) {
+    *out = *arr;
+    return true;
   }
-  return true;
+  return false;
 }
 
 } // namespace
@@ -190,7 +202,10 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // joints (uniform token[]; accept scalar string/token authoring too)
+  // joints (uniform token[]). An ARRAY -- reading it with only the scalar token
+  // accessors leaves it empty, which silently drops the whole animation (every
+  // joint keeps its rest transform). Scalar string/token authoring is accepted
+  // as a fallback.
   {
     const Value* val = prim.GetPropertyValue("joints");
     if (val) {

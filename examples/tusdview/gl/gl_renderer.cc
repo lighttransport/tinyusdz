@@ -4,10 +4,15 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <unordered_map>
+#include <vector>
 
 #include "gl/gl_util.hh"
+#include "lod_math.hh"  // UnitCubeCorner, kBoxIndices (LOD box proxies)
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -24,6 +29,98 @@ GLint GLWrap(int w) {
     case 2: return GL_MIRRORED_REPEAT;
     case 3: return GL_CLAMP_TO_BORDER;
     default: return GL_CLAMP_TO_EDGE;
+  }
+}
+
+void SetUvUniform(GLint loc0, GLint loc1, const DrawUvXformCPU& uv) {
+  glUniform3f(loc0, uv.m00, uv.m01, uv.tx);
+  glUniform3f(loc1, uv.m10, uv.m11, uv.ty);
+}
+
+void UploadRasterLightArray(GLuint program, const RasterLightSet& lights) {
+  float positionType[kMaxRasterLights * 4]{};
+  float directionAngle[kMaxRasterLights * 4]{};
+  float colorDiffuse[kMaxRasterLights * 4]{};
+  float specularShape[kMaxRasterLights * 4]{};
+  for (int i = 0; i < lights.count; ++i) {
+    const RasterLightGPU& src = lights.lights[static_cast<size_t>(i)];
+    std::memcpy(positionType + i * 4, src.positionType, 4 * sizeof(float));
+    std::memcpy(directionAngle + i * 4, src.directionAngle, 4 * sizeof(float));
+    std::memcpy(colorDiffuse + i * 4, src.colorDiffuse, 4 * sizeof(float));
+    std::memcpy(specularShape + i * 4, src.specularShape, 4 * sizeof(float));
+  }
+  glUniform1i(glGetUniformLocation(program, "uLightCount"), lights.count);
+  glUniform4fv(glGetUniformLocation(program, "uLightPositionType"), lights.count,
+               positionType);
+  glUniform4fv(glGetUniformLocation(program, "uLightDirectionAngle"), lights.count,
+               directionAngle);
+  glUniform4fv(glGetUniformLocation(program, "uLightColorDiffuse"), lights.count,
+               colorDiffuse);
+  glUniform4fv(glGetUniformLocation(program, "uLightSpecularShape"), lights.count,
+               specularShape);
+}
+
+void UploadRasterLightMask(GLuint program, const RasterLightSet& lights,
+                           int meshIndex) {
+  glUniform1ui(glGetUniformLocation(program, "uLightMask"),
+               RasterLightMaskForMesh(lights, meshIndex));
+}
+
+// Compressed-format enum values that may be absent from older glad headers.
+#ifndef GL_COMPRESSED_RG_RGTC2
+#define GL_COMPRESSED_RG_RGTC2 0x8DBD
+#endif
+#ifndef GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT
+#define GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT 0x8E8F
+#endif
+#ifndef GL_COMPRESSED_RGB8_ETC2
+#define GL_COMPRESSED_RGB8_ETC2 0x9274
+#endif
+#ifndef GL_COMPRESSED_SRGB8_ETC2
+#define GL_COMPRESSED_SRGB8_ETC2 0x9275
+#endif
+#ifndef GL_COMPRESSED_RGBA8_ETC2_EAC
+#define GL_COMPRESSED_RGBA8_ETC2_EAC 0x9278
+#endif
+#ifndef GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC
+#define GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC 0x9279
+#endif
+#ifndef GL_COMPRESSED_RGBA_ASTC_4x4_KHR
+#define GL_COMPRESSED_RGBA_ASTC_4x4_KHR 0x93B0
+#endif
+#ifndef GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR
+#define GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR 0x93D0
+#endif
+
+GLenum GLCompressedFormat(DrawCompressedFormat format, bool srgb) {
+  switch (format) {
+    case DrawCompressedFormat::BC1:
+      return srgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT
+                  : GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
+    case DrawCompressedFormat::BC3:
+      return srgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
+                  : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+    case DrawCompressedFormat::BC5:
+      // GL_ARB_texture_compression_rgtc (core since GL 3.0). No sRGB variant.
+      return GL_COMPRESSED_RG_RGTC2;
+    case DrawCompressedFormat::BC6H:
+      // GL_ARB_texture_compression_bptc float (HDR). No sRGB variant.
+      return GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT;
+    case DrawCompressedFormat::BC7:
+      // GL_ARB_texture_compression_bptc (core since GL 4.2).
+      return srgb ? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM
+                  : GL_COMPRESSED_RGBA_BPTC_UNORM;
+    case DrawCompressedFormat::ETC2_RGB:
+      return srgb ? GL_COMPRESSED_SRGB8_ETC2 : GL_COMPRESSED_RGB8_ETC2;
+    case DrawCompressedFormat::ETC2_RGBA:
+      return srgb ? GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC
+                  : GL_COMPRESSED_RGBA8_ETC2_EAC;
+    case DrawCompressedFormat::ASTC_4x4:
+      return srgb ? GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR
+                  : GL_COMPRESSED_RGBA_ASTC_4x4_KHR;
+    case DrawCompressedFormat::None:
+    default:
+      return 0;
   }
 }
 
@@ -83,6 +180,25 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   caps_.api_info = version ? reinterpret_cast<const char*>(version) : "OpenGL";
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize_);
 
+  // Compressed-texture format support (extension strings + core versions).
+  {
+    std::string exts;
+    GLint next = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &next);
+    exts.reserve(static_cast<size_t>(next) * 24);
+    for (GLint i = 0; i < next; ++i) {
+      const GLubyte* e = glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i));
+      if (e) { exts += reinterpret_cast<const char*>(e); exts += ' '; }
+    }
+    auto has = [&](const char* s) { return exts.find(s) != std::string::npos; };
+    const bool bptc = has("texture_compression_bptc") || GLAD_GL_VERSION_4_2;
+    caps_.supportsBC = has("GL_EXT_texture_compression_s3tc") || bptc;  // BC1/3/7
+    caps_.supportsBC5 = has("texture_compression_rgtc") || GLAD_GL_VERSION_3_0;
+    caps_.supportsBC6H = bptc;
+    caps_.supportsASTC = has("GL_KHR_texture_compression_astc_ldr");
+    caps_.supportsETC2 = has("GL_ARB_ES3_compatibility") || GLAD_GL_VERSION_4_3;
+  }
+
   program_ = glutil::CompileProgram(light3d::getMaterialVertexShaderGL330(),
                                     light3d::getMaterialFragmentShaderGL330(), err);
   if (!program_) {
@@ -94,6 +210,19 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uModel_ = glGetUniformLocation(program_, "uModel");
   uNormalMat_ = glGetUniformLocation(program_, "uNormalMatrix");
   uCameraPos_ = glGetUniformLocation(program_, "uCameraPos");
+  uLightDir_ = glGetUniformLocation(program_, "uLightDir");
+  uLightColor_ = glGetUniformLocation(program_, "uLightColor");
+  uHasIbl_ = glGetUniformLocation(program_, "uHasIbl");
+  uIblColor_ = glGetUniformLocation(program_, "uIblColor");
+  uExposure_ = glGetUniformLocation(program_, "uExposure");
+  uEnvRotation_ = glGetUniformLocation(program_, "uEnvRotation");
+  uPrefilteredLods_ = glGetUniformLocation(program_, "uPrefilteredLods");
+  uHasShadowMap_ = glGetUniformLocation(program_, "uHasShadowMap");
+  uShadowLightSlot_ = glGetUniformLocation(program_, "uShadowLightSlot");
+  uShadowViewProj_ = glGetUniformLocation(program_, "uShadowViewProj");
+  uHasPointShadowMap_ = glGetUniformLocation(program_, "uHasPointShadowMap");
+  uPointShadowLightPos_ = glGetUniformLocation(program_, "uPointShadowLightPos");
+  uPointShadowViewProj_ = glGetUniformLocation(program_, "uPointShadowViewProj");
   uGeometricNormal_ = glGetUniformLocation(program_, "uGeometricNormal");
   uRenderMode_ = glGetUniformLocation(program_, "uRenderMode");
   uMatId_ = glGetUniformLocation(program_, "uMatId");
@@ -110,12 +239,115 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
+  uUseSpecularWorkflow_ = glGetUniformLocation(program_, "uUseSpecularWorkflow");
+  uOpenPbrSpecularModel_ = glGetUniformLocation(program_, "uOpenPbrSpecularModel");
+  uSpecularColor_ = glGetUniformLocation(program_, "uSpecularColor");
+  uIor_ = glGetUniformLocation(program_, "uIor");
+  uOcclusion_ = glGetUniformLocation(program_, "uOcclusion");
+  uHasSpecularColorTex_ = glGetUniformLocation(program_, "uHasSpecularColorTex");
+  uSpecularColorUv0_ = glGetUniformLocation(program_, "uSpecularColorUv0");
+  uSpecularColorUv1_ = glGetUniformLocation(program_, "uSpecularColorUv1");
+  uSpecularColorUvSet_ = glGetUniformLocation(program_, "uSpecularColorUvSet");
+  uSpecularColorScale_ = glGetUniformLocation(program_, "uSpecularColorScale");
+  uSpecularColorBias_ = glGetUniformLocation(program_, "uSpecularColorBias");
+  uHasCoatNormalTex_ = glGetUniformLocation(program_, "uHasCoatNormalTex");
+  uCoatNormalUv0_ = glGetUniformLocation(program_, "uCoatNormalUv0");
+  uCoatNormalUv1_ = glGetUniformLocation(program_, "uCoatNormalUv1");
+  uCoatNormalUvSet_ = glGetUniformLocation(program_, "uCoatNormalUvSet");
+  uCoatNormalScale_ = glGetUniformLocation(program_, "uCoatNormalScale");
+  uCoatNormalBias_ = glGetUniformLocation(program_, "uCoatNormalBias");
+  uHasCoatWeightTex_ = glGetUniformLocation(program_, "uHasCoatWeightTex");
+  uHasCoatColorTex_ = glGetUniformLocation(program_, "uHasCoatColorTex");
+  uHasCoatRoughnessTex_ = glGetUniformLocation(program_, "uHasCoatRoughnessTex");
+  uCoatWeightUv0_ = glGetUniformLocation(program_, "uCoatWeightUv0");
+  uCoatWeightUv1_ = glGetUniformLocation(program_, "uCoatWeightUv1");
+  uCoatColorUv0_ = glGetUniformLocation(program_, "uCoatColorUv0");
+  uCoatColorUv1_ = glGetUniformLocation(program_, "uCoatColorUv1");
+  uCoatRoughnessUv0_ = glGetUniformLocation(program_, "uCoatRoughnessUv0");
+  uCoatRoughnessUv1_ = glGetUniformLocation(program_, "uCoatRoughnessUv1");
+  uCoatWeightUvSet_ = glGetUniformLocation(program_, "uCoatWeightUvSet");
+  uCoatColorUvSet_ = glGetUniformLocation(program_, "uCoatColorUvSet");
+  uCoatRoughnessUvSet_ = glGetUniformLocation(program_, "uCoatRoughnessUvSet");
+  uCoatWeightChannel_ = glGetUniformLocation(program_, "uCoatWeightChannel");
+  uCoatRoughnessChannel_ =
+      glGetUniformLocation(program_, "uCoatRoughnessChannel");
+  uCoatWeightScale_ = glGetUniformLocation(program_, "uCoatWeightScale");
+  uCoatWeightBias_ = glGetUniformLocation(program_, "uCoatWeightBias");
+  uCoatColorScale_ = glGetUniformLocation(program_, "uCoatColorScale");
+  uCoatColorBias_ = glGetUniformLocation(program_, "uCoatColorBias");
+  uCoatRoughnessScale_ = glGetUniformLocation(program_, "uCoatRoughnessScale");
+  uCoatRoughnessBias_ = glGetUniformLocation(program_, "uCoatRoughnessBias");
+  uAdvancedTexIsUdim_ = glGetUniformLocation(program_, "uAdvancedTexIsUdim");
+  uAdvancedUdimRoutes_ = glGetUniformLocation(program_, "uAdvancedUdimRoutes");
+  uAdvancedUdimSlots_ = glGetUniformLocation(program_, "uAdvancedUdimSlots");
+  uCoatNormalTexIsUdim_ =
+      glGetUniformLocation(program_, "uCoatNormalTexIsUdim");
+  uCoatNormalUdimRoute_ =
+      glGetUniformLocation(program_, "uCoatNormalUdimRoute");
+  uCoatNormalUdimSlot_ =
+      glGetUniformLocation(program_, "uCoatNormalUdimSlot");
+  uCoatWeight_ = glGetUniformLocation(program_, "uCoatWeight");
+  uCoatColor_ = glGetUniformLocation(program_, "uCoatColor");
+  uCoatRoughness_ = glGetUniformLocation(program_, "uCoatRoughness");
+  uCoatIor_ = glGetUniformLocation(program_, "uCoatIor");
   uEmissive_ = glGetUniformLocation(program_, "uEmissive");
   uAlpha_ = glGetUniformLocation(program_, "uAlpha");
+  uAlphaMode_ = glGetUniformLocation(program_, "uAlphaMode");
+  uAlphaCutoff_ = glGetUniformLocation(program_, "uAlphaCutoff");
   uHasBaseColorTex_ = glGetUniformLocation(program_, "uHasBaseColorTex");
-  uHasMetalRoughTex_ = glGetUniformLocation(program_, "uHasMetalRoughTex");
+  uHasMetallicTex_ = glGetUniformLocation(program_, "uHasMetallicTex");
+  uHasRoughnessTex_ = glGetUniformLocation(program_, "uHasRoughnessTex");
   uHasNormalTex_ = glGetUniformLocation(program_, "uHasNormalTex");
   uHasEmissiveTex_ = glGetUniformLocation(program_, "uHasEmissiveTex");
+  uHasOpacityTex_ = glGetUniformLocation(program_, "uHasOpacityTex");
+  uHasOcclusionTex_ = glGetUniformLocation(program_, "uHasOcclusionTex");
+  uBaseColorTexIsUdim_ = glGetUniformLocation(program_, "uBaseColorTexIsUdim");
+  uMetallicTexIsUdim_ = glGetUniformLocation(program_, "uMetallicTexIsUdim");
+  uRoughnessTexIsUdim_ = glGetUniformLocation(program_, "uRoughnessTexIsUdim");
+  uNormalTexIsUdim_ = glGetUniformLocation(program_, "uNormalTexIsUdim");
+  uEmissiveTexIsUdim_ = glGetUniformLocation(program_, "uEmissiveTexIsUdim");
+  uOpacityTexIsUdim_ = glGetUniformLocation(program_, "uOpacityTexIsUdim");
+  uOcclusionTexIsUdim_ = glGetUniformLocation(program_, "uOcclusionTexIsUdim");
+  uBaseColorUv0_ = glGetUniformLocation(program_, "uBaseColorUv0");
+  uBaseColorUv1_ = glGetUniformLocation(program_, "uBaseColorUv1");
+  uMetallicUv0_ = glGetUniformLocation(program_, "uMetallicUv0");
+  uMetallicUv1_ = glGetUniformLocation(program_, "uMetallicUv1");
+  uRoughnessUv0_ = glGetUniformLocation(program_, "uRoughnessUv0");
+  uRoughnessUv1_ = glGetUniformLocation(program_, "uRoughnessUv1");
+  uNormalUv0_ = glGetUniformLocation(program_, "uNormalUv0");
+  uNormalUv1_ = glGetUniformLocation(program_, "uNormalUv1");
+  uEmissiveUv0_ = glGetUniformLocation(program_, "uEmissiveUv0");
+  uEmissiveUv1_ = glGetUniformLocation(program_, "uEmissiveUv1");
+  uOpacityUv0_ = glGetUniformLocation(program_, "uOpacityUv0");
+  uOpacityUv1_ = glGetUniformLocation(program_, "uOpacityUv1");
+  uOcclusionUv0_ = glGetUniformLocation(program_, "uOcclusionUv0");
+  uOcclusionUv1_ = glGetUniformLocation(program_, "uOcclusionUv1");
+  uUvSet_ = glGetUniformLocation(program_, "uUvSet");
+  uRoughnessUvSet_ = glGetUniformLocation(program_, "uRoughnessUvSet");
+  uBaseColorTexScale_ = glGetUniformLocation(program_, "uBaseColorTexScale");
+  uBaseColorTexBias_ = glGetUniformLocation(program_, "uBaseColorTexBias");
+  uNormalTexScale_ = glGetUniformLocation(program_, "uNormalTexScale");
+  uNormalTexBias_ = glGetUniformLocation(program_, "uNormalTexBias");
+  uEmissiveTexScale_ = glGetUniformLocation(program_, "uEmissiveTexScale");
+  uEmissiveTexBias_ = glGetUniformLocation(program_, "uEmissiveTexBias");
+  uMetallicChannel_ = glGetUniformLocation(program_, "uMetallicChannel");
+  uRoughnessChannel_ = glGetUniformLocation(program_, "uRoughnessChannel");
+  uMetallicTexScale_ = glGetUniformLocation(program_, "uMetallicTexScale");
+  uMetallicTexBias_ = glGetUniformLocation(program_, "uMetallicTexBias");
+  uRoughnessTexScale_ = glGetUniformLocation(program_, "uRoughnessTexScale");
+  uRoughnessTexBias_ = glGetUniformLocation(program_, "uRoughnessTexBias");
+  uOpacityUvSet_ = glGetUniformLocation(program_, "uOpacityUvSet");
+  uOpacityChannel_ = glGetUniformLocation(program_, "uOpacityChannel");
+  uOpacityTexScale_ = glGetUniformLocation(program_, "uOpacityTexScale");
+  uOpacityTexBias_ = glGetUniformLocation(program_, "uOpacityTexBias");
+  uOcclusionUvSet_ = glGetUniformLocation(program_, "uOcclusionUvSet");
+  uOcclusionChannel_ = glGetUniformLocation(program_, "uOcclusionChannel");
+  uOcclusionTexScale_ = glGetUniformLocation(program_, "uOcclusionTexScale");
+  uOcclusionTexBias_ = glGetUniformLocation(program_, "uOcclusionTexBias");
+  uUdimSlots_ = glGetUniformLocation(program_, "uUdimSlots");
+  uOpacityUdimSlot_ = glGetUniformLocation(program_, "uOpacityUdimSlot");
+  uOcclusionUdimSlot_ = glGetUniformLocation(program_, "uOcclusionUdimSlot");
+  uRoughnessUdimSlot_ = glGetUniformLocation(program_, "uRoughnessUdimSlot");
   uHasDisplacement_ = glGetUniformLocation(program_, "uHasDisplacement");
   uHasDisplacementTex_ = glGetUniformLocation(program_, "uHasDisplacementTex");
   uDisplacementConst_ = glGetUniformLocation(program_, "uDisplacementConst");
@@ -129,9 +361,27 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uInfluenceTexWidth_ = glGetUniformLocation(program_, "uInfluenceTexWidth");
   // Fixed sampler -> texture-unit bindings.
   glUniform1i(glGetUniformLocation(program_, "uBaseColorTex"), 0);
-  glUniform1i(glGetUniformLocation(program_, "uMetalRoughTex"), 1);
+  glUniform1i(glGetUniformLocation(program_, "uMetallicTex"), 1);
+  glUniform1i(glGetUniformLocation(program_, "uRoughnessTex"), 18);
   glUniform1i(glGetUniformLocation(program_, "uNormalTex"), 2);
   glUniform1i(glGetUniformLocation(program_, "uEmissiveTex"), 3);
+  glUniform1i(glGetUniformLocation(program_, "uOpacityTex"), 14);
+  glUniform1i(glGetUniformLocation(program_, "uBaseColorUdimTex"), 11);
+  glUniform1i(glGetUniformLocation(program_, "uUdimLutAtlas"), 12);
+  glUniform1i(glGetUniformLocation(program_, "uMetallicUdimTex"), 13);
+  glUniform1i(glGetUniformLocation(program_, "uRoughnessUdimTex"), 22);
+  glUniform1i(glGetUniformLocation(program_, "uNormalUdimTex"), 15);
+  glUniform1i(glGetUniformLocation(program_, "uOpacityUdimTex"), 16);
+  glUniform1i(glGetUniformLocation(program_, "uEmissiveUdimTex"), 17);
+  glUniform1i(glGetUniformLocation(program_, "uOcclusionTex"), 23);
+  glUniform1i(glGetUniformLocation(program_, "uOcclusionUdimTex"), 24);
+  // Advanced ordinary slots keep independent 2D units. Their UDIM arrays are
+  // routed per draw through currently-unused core array units.
+  glUniform1i(glGetUniformLocation(program_, "uSpecularColorTex"), 26);
+  glUniform1i(glGetUniformLocation(program_, "uCoatWeightTex"), 27);
+  glUniform1i(glGetUniformLocation(program_, "uCoatColorTex"), 28);
+  glUniform1i(glGetUniformLocation(program_, "uCoatRoughnessTex"), 29);
+  glUniform1i(glGetUniformLocation(program_, "uCoatNormalTex"), 30);
   glUniform1i(glGetUniformLocation(program_, "uBoneTex"), 4);
   glUniform1i(glGetUniformLocation(program_, "uInfluenceTex"), 5);
   glUniform1i(uFaceIdTex_, 6);  // source-face-id texture buffer
@@ -139,7 +389,168 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uMorphDeltaTex"), 8);  // GPU morph
   glUniform1i(glGetUniformLocation(program_, "uMorphCoeffTex"), 9);
   glUniform1i(glGetUniformLocation(program_, "uMorphChanTex"), 10);  // skip pre-check
+  glUniform1i(glGetUniformLocation(program_, "uIrradianceMap"), 19);  // dome IBL
+  glUniform1i(glGetUniformLocation(program_, "uPrefilteredMap"), 20);
+  glUniform1i(glGetUniformLocation(program_, "uBrdfLut"), 21);
+  glUniform1i(glGetUniformLocation(program_, "uShadowMap"), 25);
+  glUniform1i(glGetUniformLocation(program_, "uPointShadowMap"), 31);
+  // Filter across cube-face borders (core since GL 3.2); matters for the
+  // low-res prefiltered/irradiance cubes.
+  glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
   uHasMorph_ = glGetUniformLocation(program_, "uHasMorph");
+  glUseProgram(0);
+
+  // One deterministic depth map shared by all raster materials.
+  static const char* kShadowFS = R"glsl(#version 330 core
+in vec2 vUV;
+in vec2 vUV1;
+uniform int uAlphaMode;
+uniform float uAlpha;
+uniform float uAlphaCutoff;
+uniform bool uHasBaseAlphaTex;
+uniform bool uHasOpacityTex;
+uniform sampler2D uBaseAlphaTex;
+uniform sampler2D uOpacityTex;
+uniform sampler2DArray uBaseAlphaUdimTex;
+uniform sampler2DArray uOpacityUdimTex;
+uniform isampler2D uUdimLutAtlas;
+uniform bool uBaseAlphaIsUdim;
+uniform bool uOpacityIsUdim;
+uniform int uBaseAlphaUdimSlot;
+uniform int uOpacityUdimSlot;
+uniform vec3 uBaseAlphaUv0;
+uniform vec3 uBaseAlphaUv1;
+uniform int uBaseAlphaUvSet;
+uniform vec4 uBaseAlphaScale;
+uniform vec4 uBaseAlphaBias;
+uniform vec3 uOpacityUv0;
+uniform vec3 uOpacityUv1;
+uniform int uOpacityUvSet;
+uniform int uOpacityChannel;
+uniform float uOpacityScale;
+uniform float uOpacityBias;
+vec2 xf(vec2 uv, vec3 a, vec3 b) {
+  return vec2(a.x * uv.x + a.y * uv.y + a.z,
+              b.x * uv.x + b.y * uv.y + b.z);
+}
+float channelOf(vec4 c, int ch) {
+  return ch == 1 ? c.g : ch == 2 ? c.b : ch == 3 ? c.a : c.r;
+}
+vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
+  ivec2 tile = ivec2(floor(uv));
+  int idx = tile.x + tile.y * 10;
+  if (idx < 0 || idx >= 100) return missing;
+  int layer = texelFetch(uUdimLutAtlas, ivec2(idx, slot), 0).r;
+  return layer < 0 ? missing : texture(tex, vec3(fract(uv), float(layer)));
+}
+void main() {
+  if (uAlphaMode != 1) return;
+  float a = uAlpha;
+  if (uHasBaseAlphaTex) {
+    vec2 uv = uBaseAlphaUvSet == 1 ? vUV1 : vUV;
+    vec2 tuv = xf(uv, uBaseAlphaUv0, uBaseAlphaUv1);
+    vec4 c = uBaseAlphaIsUdim
+        ? sampleUdim(uBaseAlphaUdimTex, uBaseAlphaUdimSlot, tuv, vec4(1.0))
+        : texture(uBaseAlphaTex, tuv);
+    a *= (c * uBaseAlphaScale + uBaseAlphaBias).a;
+  }
+  if (uHasOpacityTex) {
+    vec2 uv = uOpacityUvSet == 1 ? vUV1 : vUV;
+    vec2 tuv = xf(uv, uOpacityUv0, uOpacityUv1);
+    vec4 c = uOpacityIsUdim
+        ? sampleUdim(uOpacityUdimTex, uOpacityUdimSlot, tuv, vec4(1.0))
+        : texture(uOpacityTex, tuv);
+    a *= channelOf(c, uOpacityChannel) * uOpacityScale + uOpacityBias;
+  }
+  if (a < uAlphaCutoff) discard;
+}
+)glsl";
+  std::string shadowErr;
+  shadowProgram_ = glutil::CompileProgram(light3d::getMaterialVertexShaderGL330(),
+                                          kShadowFS, &shadowErr);
+  if (!shadowProgram_) {
+    if (err) *err = "Failed to build GL shadow program: " + shadowErr;
+    return false;
+  }
+  sMVP_ = glGetUniformLocation(shadowProgram_, "uModelViewProj");
+  sModel_ = glGetUniformLocation(shadowProgram_, "uModel");
+  sNormalMat_ = glGetUniformLocation(shadowProgram_, "uNormalMatrix");
+  sSkinningEnabled_ = glGetUniformLocation(shadowProgram_, "uSkinningEnabled");
+  sExtendedSkinningEnabled_ = glGetUniformLocation(shadowProgram_, "uExtendedSkinningEnabled");
+  sBoneTexWidth_ = glGetUniformLocation(shadowProgram_, "uBoneTexWidth");
+  sBoneMatrixCount_ = glGetUniformLocation(shadowProgram_, "uBoneMatrixCount");
+  sInfluenceTexWidth_ = glGetUniformLocation(shadowProgram_, "uInfluenceTexWidth");
+  sHasMorph_ = glGetUniformLocation(shadowProgram_, "uHasMorph");
+  sHasDisplacement_ = glGetUniformLocation(shadowProgram_, "uHasDisplacement");
+  sHasDisplacementTex_ = glGetUniformLocation(shadowProgram_, "uHasDisplacementTex");
+  sDisplacementConst_ = glGetUniformLocation(shadowProgram_, "uDisplacementConst");
+  sDisplacementScale_ = glGetUniformLocation(shadowProgram_, "uDisplacementScale");
+  sDisplacementTexScale_ = glGetUniformLocation(shadowProgram_, "uDisplacementTexScale");
+  sDisplacementTexBias_ = glGetUniformLocation(shadowProgram_, "uDisplacementTexBias");
+  sAlphaMode_ = glGetUniformLocation(shadowProgram_, "uAlphaMode");
+  sAlpha_ = glGetUniformLocation(shadowProgram_, "uAlpha");
+  sAlphaCutoff_ = glGetUniformLocation(shadowProgram_, "uAlphaCutoff");
+  sHasBaseAlphaTex_ = glGetUniformLocation(shadowProgram_, "uHasBaseAlphaTex");
+  sHasOpacityTex_ = glGetUniformLocation(shadowProgram_, "uHasOpacityTex");
+  sBaseAlphaIsUdim_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaIsUdim");
+  sOpacityIsUdim_ = glGetUniformLocation(shadowProgram_, "uOpacityIsUdim");
+  sBaseAlphaUdimSlot_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaUdimSlot");
+  sOpacityUdimSlot_ = glGetUniformLocation(shadowProgram_, "uOpacityUdimSlot");
+  sBaseAlphaUv0_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaUv0");
+  sBaseAlphaUv1_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaUv1");
+  sBaseAlphaUvSet_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaUvSet");
+  sBaseAlphaScale_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaScale");
+  sBaseAlphaBias_ = glGetUniformLocation(shadowProgram_, "uBaseAlphaBias");
+  sOpacityUv0_ = glGetUniformLocation(shadowProgram_, "uOpacityUv0");
+  sOpacityUv1_ = glGetUniformLocation(shadowProgram_, "uOpacityUv1");
+  sOpacityUvSet_ = glGetUniformLocation(shadowProgram_, "uOpacityUvSet");
+  sOpacityChannel_ = glGetUniformLocation(shadowProgram_, "uOpacityChannel");
+  sOpacityScale_ = glGetUniformLocation(shadowProgram_, "uOpacityScale");
+  sOpacityBias_ = glGetUniformLocation(shadowProgram_, "uOpacityBias");
+  glUseProgram(shadowProgram_);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uBoneTex"), 4);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uInfluenceTex"), 5);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uDisplacementTex"), 7);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uMorphDeltaTex"), 8);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uMorphCoeffTex"), 9);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uMorphChanTex"), 10);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uBaseAlphaTex"), 0);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uOpacityTex"), 14);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uBaseAlphaUdimTex"), 11);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uOpacityUdimTex"), 16);
+  glUniform1i(glGetUniformLocation(shadowProgram_, "uUdimLutAtlas"), 12);
+  glGenTextures(1, &shadowDepthTex_);
+  glBindTexture(GL_TEXTURE_2D, shadowDepthTex_);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 2048, 2048, 0,
+               GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+  const float border[4] = {1, 1, 1, 1};
+  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+  glGenTextures(1, &pointShadowDepthTex_);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowDepthTex_);
+  for (int face = 0; face < 6; ++face) {
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_DEPTH_COMPONENT24,
+                 2048, 2048, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+  }
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glGenFramebuffers(1, &shadowFbo_);
+  glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                         shadowDepthTex_, 0);
+  glDrawBuffer(GL_NONE);
+  glReadBuffer(GL_NONE);
+  if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    if (err) *err = "Failed to create GL shadow framebuffer";
+    return false;
+  }
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glUseProgram(0);
 
   // GPU tessellation displacement program (GL >= 4.0 only). Failure to build is
@@ -159,26 +570,83 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "layout(location=1) in vec3 aNormal;\n"
       // Per-instance 3x4 object-to-world (row-major o2w; rows = output x/y/z):
       // worldP.c = dot(vec4(pos,1), aRow[c]).  48 B/instance vs a full mat4's 64.
-      "layout(location=6) in vec4 aRow0;\n"
-      "layout(location=7) in vec4 aRow1;\n"
-      "layout(location=8) in vec4 aRow2;\n"
+      // The non-instanced program's skin slots (3/4) are taken by these rows, so
+      // instanced skinning carries its joints/weights at 6/7 instead (attrib 8 is
+      // the morph CSR). All instances of a prototype share ONE bone block: USD
+      // instancing requires identical composed contents, hence one skeleton+pose.
+      "layout(location=3) in vec4 aRow0;\n"
+      "layout(location=4) in vec4 aRow1;\n"
+      "layout(location=5) in vec4 aRow2;\n"
+      "layout(location=6) in uvec4 aJoint;\n"
+      "layout(location=7) in vec4 aWeight;\n"
       "layout(location=9) in vec3 aColor;\n"     // per-instance color or constant
-      "layout(location=10) in vec3 aVtxColor;\n"  // per-vertex prototype color (or 1)
+      "layout(location=10) in vec4 aVtxColor;\n"  // displayColor.rgb + displayOpacity
+      "layout(location=11) in float aOpacity;\n"  // per-instance opacity or constant
+      // GPU blendshape morph (shared by instanced prototypes): per-vertex CSR
+      // (offset,count) + delta/coeff/channelId texture-buffers, summed into the
+      // local position before the per-instance transform. Same scheme + units
+      // (8/9/10) as the non-instanced material shader.
+      "layout(location=8) in uvec2 aMorphOffsetCount;\n"
       "uniform mat4 uViewProj;\n"
+      "uniform bool uHasMorph;\n"
+      "uniform samplerBuffer uMorphDeltaTex;\n"
+      "uniform samplerBuffer uMorphCoeffTex;\n"
+      "uniform usamplerBuffer uMorphChanTex;\n"
+      // Skeletal skinning, shared with the non-instanced program: the same 4xN
+      // RGBA32F bone texture (unit 4), absolute joint rows. Skinning happens in
+      // PROTOTYPE-LOCAL space, before the per-instance transform.
+      "uniform bool uSkinningEnabled;\n"
+      "uniform sampler2D uBoneTex;\n"
+      "uniform int uBoneTexWidth;\n"
+      "uniform int uBoneMatrixCount;\n"
+      "mat4 fetchBone(uint idx){\n"
+      "  int base=int(idx)*4;\n"
+      "  return mat4(\n"
+      "    texelFetch(uBoneTex,ivec2((base+0)%uBoneTexWidth,(base+0)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+1)%uBoneTexWidth,(base+1)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+2)%uBoneTexWidth,(base+2)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+3)%uBoneTexWidth,(base+3)/uBoneTexWidth),0));\n"
+      "}\n"
       "out vec3 vWorldPos;\n"
       "out vec3 vNormal;\n"
       "out vec3 vColor;\n"
+      "out float vOpacity;\n"
       "flat out int vInstanceId;\n"
       "void main(){\n"
       "  vInstanceId = gl_InstanceID;\n"
-      "  vec4 p = vec4(aPosition, 1.0);\n"
+      "  vec3 pos = aPosition;\n"
+      "  if (uHasMorph && aMorphOffsetCount.y > 0u) {\n"
+      "    int mbase = int(aMorphOffsetCount.x);\n"
+      "    int mcount = min(int(aMorphOffsetCount.y), 256);\n"
+      "    for (int i = 0; i < 256; ++i) {\n"
+      "      if (i >= mcount) break;\n"
+      "      int ch = int(texelFetch(uMorphChanTex, mbase + i).r);\n"
+      "      float c = texelFetch(uMorphCoeffTex, ch).r;\n"
+      "      if (abs(c) < 1e-6) continue;\n"
+      "      pos += c * texelFetch(uMorphDeltaTex, mbase + i).yzw;\n"
+      "    }\n"
+      "  }\n"
+      // Linear-blend skinning (prototype-local). Vertices of an unskinned mesh --
+      // or of an unskinned vertex in a skinned one -- carry zero weights and pass
+      // through untouched, exactly as in the non-instanced program.
+      "  vec3 nrm = aNormal;\n"
+      "  float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;\n"
+      "  uint maxJoint = max(max(aJoint.x, aJoint.y), max(aJoint.z, aJoint.w));\n"
+      "  if (uSkinningEnabled && wsum > 0.0 && int(maxJoint) < uBoneMatrixCount) {\n"
+      "    mat4 skin = fetchBone(aJoint.x) * aWeight.x + fetchBone(aJoint.y) * aWeight.y\n"
+      "              + fetchBone(aJoint.z) * aWeight.z + fetchBone(aJoint.w) * aWeight.w;\n"
+      "    pos = (skin * vec4(pos, 1.0)).xyz;\n"
+      "    nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);\n"
+      "  }\n"
+      "  vec4 p = vec4(pos, 1.0);\n"
       "  vec3 wp = vec3(dot(p, aRow0), dot(p, aRow1), dot(p, aRow2));\n"
-      "  vec3 n = vec3(dot(aNormal, aRow0.xyz), dot(aNormal, aRow1.xyz),\n"
-      "                dot(aNormal, aRow2.xyz));\n"
+      "  vec3 n = vec3(dot(nrm, aRow0.xyz), dot(nrm, aRow1.xyz),\n"
+      "                dot(nrm, aRow2.xyz));\n"
       "  vWorldPos = wp;\n"
       "  vNormal = normalize(n);\n"
       // Prototype per-vertex displayColor x per-instance color (both default 1).
-      "  vColor = aColor * aVtxColor;\n"
+      "  vColor = aColor * aVtxColor.rgb;\n"
+      "  vOpacity = clamp(aOpacity * aVtxColor.a, 0.0, 1.0);\n"
       "  gl_Position = uViewProj * vec4(wp, 1.0);\n"
       "}\n";
   static const char* kInstancedFS =
@@ -186,12 +654,27 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "in vec3 vWorldPos;\n"
       "in vec3 vNormal;\n"
       "in vec3 vColor;\n"
+      "in float vOpacity;\n"
       "flat in int vInstanceId;\n"
       "uniform vec3 uCameraPos;\n"
+      "uniform vec3 uLightDir;\n"
+      "uniform vec3 uLightColor;\n"
+      "uniform int uLightCount; uniform uint uLightMask;\n"
+      "uniform vec4 uLightPositionType[16],uLightDirectionAngle[16];\n"
+      "uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16];\n"
+      // DomeLight IBL (diffuse-only here: prototypes carry no material scalars).
+      "uniform bool uHasIbl;\n"
+      "uniform vec3 uIblColor;\n"
+      "uniform float uExposure;\n"
+      "uniform mat3 uEnvRotation;\n"
+      "uniform samplerCube uIrradianceMap;\n"
+      "uniform bool uHasShadowMap; uniform int uShadowLightSlot;\n"
+      "uniform mat4 uShadowViewProj; uniform sampler2D uShadowMap;\n"
+      "uniform bool uHasPointShadowMap; uniform vec3 uPointShadowLightPos; uniform mat4 uPointShadowViewProj[6]; uniform samplerCube uPointShadowMap;\n"
       "uniform vec3 uEmissive;\n"  // selection-highlight override (else 0)
       // Debug-AOV uniforms (mirror the non-instanced material shader). Instanced
       // prototypes carry no UVs or material scalars, so UV / roughness / metallic /
-      // emissive / opacity modes fall through to a neutral gray here.
+      // emissive modes fall through to neutral gray; opacity is carried explicitly.
       "uniform int uRenderMode;\n"
       "uniform float uDepthScale;\n"
       "uniform vec3 uSceneMin;\n"
@@ -220,6 +703,18 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "  if (k==4) return vec3(0.5,0.85,0.4);\n"
       "  return vec3(0.35);\n"
       "}\n"
+      // Linear -> sRGB OETF for the final shaded output (see material.cpp):
+      // scene lit in linear, FBO is RGBA8. Lit path only.
+      "vec3 linearToSrgb(vec3 c){\n"
+      "  c = clamp(c, 0.0, 1.0);\n"
+      "  vec3 lo = c * 12.92;\n"
+      "  vec3 hi = 1.055 * pow(c, vec3(1.0/2.4)) - 0.055;\n"
+      "  return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));\n"
+      "}\n"
+      "float ggxD(float nh,float r){float a=max(r*r,0.002),a2=a*a,d=nh*nh*(a2-1.0)+1.0;return a2/max(3.14159265*d*d,1e-6);}\n"
+      "float ggxG1(float nx,float r){float k=(r+1.0)*(r+1.0)*0.125;return nx/max(nx*(1.0-k)+k,1e-6);}\n"
+      "vec3 fresnel(float vh,vec3 f0){return f0+(vec3(1.0)-f0)*pow(1.0-clamp(vh,0.0,1.0),5.0);}\n"
+      "float shadowVis(vec3 wp,vec3 n,vec3 l){if(uHasPointShadowMap){vec3 d=wp-uPointShadowLightPos,a=abs(d);int f=a.x>=a.y&&a.x>=a.z?(d.x>=0?0:1):(a.y>=a.z?(d.y>=0?2:3):(d.z>=0?4:5));vec4 c=uPointShadowViewProj[f]*vec4(wp,1);vec3 p=c.xyz/c.w;p=p*.5+.5;if(p.z<=0||p.z>=1)return 1.0;float b=max(.00035,.0015*(1-max(dot(n,l),0)));return (p.z-b<=texture(uPointShadowMap,normalize(d)).r)?1.0:0.0;}if(!uHasShadowMap)return 1.0;vec4 c=uShadowViewProj*vec4(wp,1);vec3 p=c.xyz/c.w;p=p*.5+.5;if(p.z<=0||p.z>=1||any(lessThan(p.xy,vec2(0)))||any(greaterThan(p.xy,vec2(1))))return 1.0;float b=max(.00035,.0015*(1-max(dot(n,l),0))),v=0;vec2 t=1.0/vec2(textureSize(uShadowMap,0));for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x)v+=p.z-b<=texture(uShadowMap,p.xy+vec2(x,y)*t).r?1:0;return v/9;}\n"
       "void main(){\n"
       // Geometric (screen-derivative) normal: instanced prototypes usually ship
       // without authored normals, and faceted shading reads cleanly for them.
@@ -243,21 +738,30 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "    if (uRenderMode == 18) { FragColor = vec4(purposeColor(uPurpose), 1.0); return; }\n"
       "    if (uRenderMode == 29) { FragColor = vec4(kindColor(uKind), 1.0); return; }\n"  // kind
       "    if (uRenderMode == 26) { FragColor = vec4(idColor(vInstanceId), 1.0); return; }\n"  // instance id
+      "    if (uRenderMode == 12) { FragColor = vec4(vec3(vOpacity), 1.0); return; }\n"
       "    if (uRenderMode == 25) {\n"  // curvature (screen-space geometric normal variation)
       "      vec3 n = Ngeo; float c = clamp((length(dFdx(n))+length(dFdy(n)))*8.0, 0.0, 1.0);\n"
       "      FragColor = vec4(c, 1.0-abs(c-0.5)*2.0, 1.0-c, 1.0); return; }\n"
-      // Modes instanced geometry cannot supply (UV/material scalars): neutral gray
+      // Modes instanced geometry cannot supply (UV/other material scalars): neutral gray
       // so it is visually obvious the channel has no data here, vs masquerading as
       // a lit render.
       "    FragColor = vec4(0.18,0.18,0.18,1.0); return;\n"
       "  }\n"
+      // Fixed dielectric GGX material for instanced prototypes, which do not
+      // yet carry the full per-material scalar payload.
       "  vec3 V = normalize(uCameraPos - vWorldPos);\n"
-      "  vec3 L = normalize(vec3(1.0, 1.0, 1.0));\n"
-      "  float NdotL = max(dot(N, L), 0.0);\n"
-      "  vec3 H = normalize(L + V);\n"
-      "  float NdotH = max(dot(N, H), 0.0);\n"
-      "  vec3 col = vColor * (0.05 + NdotL) + vec3(0.15) * pow(NdotH, 32.0);\n"
-      "  FragColor = vec4(col + uEmissive, 1.0);\n"
+      "  vec3 Nf = (dot(N, V) < 0.0) ? -N : N;\n"
+      "  float nv=max(dot(Nf,V),1e-4),r=0.5; vec3 direct=vec3(0);\n"
+      "  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;\n"
+      "    vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];\n"
+      "    int lt=int(pt.w+0.5);vec3 L;float att=1.0;if(lt==5)L=normalize(da.xyz);else{vec3 q=pt.xyz-vWorldPos;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1.0/d2;}\n"
+      "    float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}\n"
+      "    float nl=max(dot(Nf,L),0.0);if(nl<=0.0||shape<=0.0)continue;vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));\n"
+      "    vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1.0)-F)*vColor*(1.0/3.14159265);float vis=li==uShadowLightSlot?shadowVis(vWorldPos,Nf,L):1;direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl*vis);}\n"
+      "  if(uLightCount==0){vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));vec3 lc=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1);float nl=max(dot(Nf,L),0.0);vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*vColor*(1.0/3.14159265);direct=(diff+spec)*lc*nl;}\n"
+      "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.12);\n"
+      "  vec3 col = vColor*amb + direct;\n"
+      "  FragColor = vec4(linearToSrgb((col + uEmissive) * exp2(uExposure)), vOpacity);\n"
       "}\n";
   instProgram_ = glutil::CompileProgram(kInstancedVS, kInstancedFS, err);
   if (!instProgram_) {
@@ -267,6 +771,18 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUseProgram(instProgram_);
   iUViewProj_ = glGetUniformLocation(instProgram_, "uViewProj");
   iCameraPos_ = glGetUniformLocation(instProgram_, "uCameraPos");
+  iLightDir_ = glGetUniformLocation(instProgram_, "uLightDir");
+  iHasIbl_ = glGetUniformLocation(instProgram_, "uHasIbl");
+  iIblColor_ = glGetUniformLocation(instProgram_, "uIblColor");
+  iExposure_ = glGetUniformLocation(instProgram_, "uExposure");
+  iHasShadowMap_ = glGetUniformLocation(instProgram_, "uHasShadowMap");
+  iShadowLightSlot_ = glGetUniformLocation(instProgram_, "uShadowLightSlot");
+  iShadowViewProj_ = glGetUniformLocation(instProgram_, "uShadowViewProj");
+  iHasPointShadowMap_ = glGetUniformLocation(instProgram_, "uHasPointShadowMap");
+  iPointShadowLightPos_ = glGetUniformLocation(instProgram_, "uPointShadowLightPos");
+  iPointShadowViewProj_ = glGetUniformLocation(instProgram_, "uPointShadowViewProj");
+  iEnvRotation_ = glGetUniformLocation(instProgram_, "uEnvRotation");
+  iLightColor_ = glGetUniformLocation(instProgram_, "uLightColor");
   iEmissive_ = glGetUniformLocation(instProgram_, "uEmissive");
   iRenderMode_ = glGetUniformLocation(instProgram_, "uRenderMode");
   iDepthScale_ = glGetUniformLocation(instProgram_, "uDepthScale");
@@ -277,7 +793,38 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   iDoubleSided_ = glGetUniformLocation(instProgram_, "uDoubleSided");
   iPurpose_ = glGetUniformLocation(instProgram_, "uPurpose");
   iKind_ = glGetUniformLocation(instProgram_, "uKind");
+  iHasMorph_ = glGetUniformLocation(instProgram_, "uHasMorph");
+  iSkinningEnabled_ = glGetUniformLocation(instProgram_, "uSkinningEnabled");
+  iBoneTexWidth_ = glGetUniformLocation(instProgram_, "uBoneTexWidth");
+  iBoneMatrixCount_ = glGetUniformLocation(instProgram_, "uBoneMatrixCount");
+  glUniform1i(glGetUniformLocation(instProgram_, "uBoneTex"), 4);  // same unit as mesh
+  glUniform1i(glGetUniformLocation(instProgram_, "uMorphDeltaTex"), 8);
+  glUniform1i(glGetUniformLocation(instProgram_, "uMorphCoeffTex"), 9);
+  glUniform1i(glGetUniformLocation(instProgram_, "uMorphChanTex"), 10);
+  glUniform1i(glGetUniformLocation(instProgram_, "uIrradianceMap"), 19);
+  glUniform1i(glGetUniformLocation(instProgram_, "uShadowMap"), 25);
+  glUniform1i(glGetUniformLocation(instProgram_, "uPointShadowMap"), 31);
   glUseProgram(0);
+
+  static const char* kShadowInstFS = "#version 330 core\nvoid main(){}\n";
+  shadowInstProgram_ = glutil::CompileProgram(kInstancedVS, kShadowInstFS, err);
+  if (!shadowInstProgram_) {
+    if (err && err->empty()) *err = "Failed to build GL instanced shadow program";
+    return false;
+  }
+  glUseProgram(shadowInstProgram_);
+  siViewProj_ = glGetUniformLocation(shadowInstProgram_, "uViewProj");
+  siSkinningEnabled_ = glGetUniformLocation(shadowInstProgram_, "uSkinningEnabled");
+  siBoneTexWidth_ = glGetUniformLocation(shadowInstProgram_, "uBoneTexWidth");
+  siBoneMatrixCount_ = glGetUniformLocation(shadowInstProgram_, "uBoneMatrixCount");
+  siHasMorph_ = glGetUniformLocation(shadowInstProgram_, "uHasMorph");
+  glUniform1i(glGetUniformLocation(shadowInstProgram_, "uBoneTex"), 4);
+  glUniform1i(glGetUniformLocation(shadowInstProgram_, "uMorphDeltaTex"), 8);
+  glUniform1i(glGetUniformLocation(shadowInstProgram_, "uMorphCoeffTex"), 9);
+  glUniform1i(glGetUniformLocation(shadowInstProgram_, "uMorphChanTex"), 10);
+  glUseProgram(0);
+
+  buildWireProgram();  // flat polygon-edge wireframe (best-effort; non-fatal)
 
   // 1x1 white default texture (bound to unused sampler units).
   glGenTextures(1, &whiteTex_);
@@ -332,6 +879,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
                           (void*)(3 * sizeof(float)));
     glBindVertexArray(0);
   }
+  buildNonMeshProgram();
 
   // UsdVol volume raymarch program + unit-cube proxy geometry.
   {
@@ -432,7 +980,65 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
                           (void*)0);
     glBindVertexArray(0);
   }
+  initBoxProxy();
   return true;
+}
+
+// Shared unit-cube proxy mesh drawn with the instanced program (raster LOD). Static
+// geometry (8 verts / 36 indices) + dynamic per-instance box-fit o2w (attribs 3-5)
+// and tint (attrib 9), filled each frame by updateProxyInstances.
+void GLRenderer::initBoxProxy() {
+  float verts[8 * 3];
+  for (int c = 0; c < 8; ++c) UnitCubeCorner(c, &verts[c * 3]);
+  glGenVertexArrays(1, &boxProxyVao_);
+  glBindVertexArray(boxProxyVao_);
+  glGenBuffers(1, &boxProxyVbo_);
+  glBindBuffer(GL_ARRAY_BUFFER, boxProxyVbo_);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+  glVertexAttribDivisor(0, 0);
+  glGenBuffers(1, &boxProxyEbo_);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, boxProxyEbo_);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kBoxIndices), kBoxIndices,
+               GL_STATIC_DRAW);
+  // Per-instance box-fit o2w rows (3-5, divisor 1) -- dynamic.
+  glGenBuffers(1, &boxProxyInstVbo_);
+  glBindBuffer(GL_ARRAY_BUFFER, boxProxyInstVbo_);
+  const GLsizei mstride = 12 * sizeof(float);
+  for (int r = 0; r < 3; ++r) {
+    const GLuint loc = 3 + r;
+    glEnableVertexAttribArray(loc);
+    glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, mstride,
+                          (void*)(static_cast<uintptr_t>(r * 4 * sizeof(float))));
+    glVertexAttribDivisor(loc, 1);
+  }
+  // Per-instance tint (9, divisor 1) -- dynamic.
+  glGenBuffers(1, &boxProxyColorVbo_);
+  glBindBuffer(GL_ARRAY_BUFFER, boxProxyColorVbo_);
+  glEnableVertexAttribArray(9);
+  glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+  glVertexAttribDivisor(9, 1);
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+}
+
+void GLRenderer::updateProxyInstances(const float* xforms, const float* tints,
+                                      uint32_t count) {
+  boxProxyCount_ = count;
+  if (count == 0) return;
+  const size_t xb = static_cast<size_t>(count) * 12 * sizeof(float);
+  const size_t cb = static_cast<size_t>(count) * 3 * sizeof(float);
+  const bool grow = static_cast<size_t>(count) > boxProxyInstCap_;
+  glBindBuffer(GL_ARRAY_BUFFER, boxProxyInstVbo_);
+  if (grow) glBufferData(GL_ARRAY_BUFFER, xb, xforms, GL_DYNAMIC_DRAW);
+  else glBufferSubData(GL_ARRAY_BUFFER, 0, xb, xforms);
+  glBindBuffer(GL_ARRAY_BUFFER, boxProxyColorVbo_);
+  if (grow) glBufferData(GL_ARRAY_BUFFER, cb, tints, GL_DYNAMIC_DRAW);
+  else glBufferSubData(GL_ARRAY_BUFFER, 0, cb, tints);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  if (grow) boxProxyInstCap_ = count;
 }
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
@@ -592,8 +1198,19 @@ void GLRenderer::buildTessProgram() {
       "#version 410 core\n"
       "in vec3 vWorldPos; in vec3 vNormal; in vec2 vUV;\n"
       "uniform vec3 uCameraPos; uniform vec3 uBaseColor;\n"
+      "uniform vec3 uLightDir; uniform vec3 uLightColor;\n"
+      "uniform int uLightCount; uniform uint uLightMask;\n"
+      "uniform vec4 uLightPositionType[16],uLightDirectionAngle[16];\n"
+      "uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16];\n"
+      "uniform bool uHasIbl; uniform vec3 uIblColor; uniform mat3 uEnvRotation;\n"
+      "uniform float uExposure;\n"
+      "uniform samplerCube uIrradianceMap;\n"
       "uniform sampler2D uBaseColorTex; uniform bool uHasBaseColorTex;\n"
       "out vec4 FragColor;\n"
+      "vec3 linearToSrgb(vec3 c){c=clamp(c,0.0,1.0);vec3 lo=c*12.92;vec3 hi=1.055*pow(c,vec3(1.0/2.4))-0.055;return mix(lo,hi,vec3(greaterThan(c,vec3(0.0031308))));}\n"
+      "float ggxD(float nh,float r){float a=max(r*r,0.002),a2=a*a,d=nh*nh*(a2-1.0)+1.0;return a2/max(3.14159265*d*d,1e-6);}\n"
+      "float ggxG1(float nx,float r){float k=(r+1.0)*(r+1.0)*0.125;return nx/max(nx*(1.0-k)+k,1e-6);}\n"
+      "vec3 fresnel(float vh,vec3 f0){return f0+(vec3(1.0)-f0)*pow(1.0-clamp(vh,0.0,1.0),5.0);}\n"
       "void main(){\n"
       "  vec3 base=uBaseColor;\n"
       "  if(uHasBaseColorTex) base*=texture(uBaseColorTex,vUV).rgb;\n"
@@ -602,11 +1219,13 @@ void GLRenderer::buildTessProgram() {
       "  vec3 N=normalize(cross(dFdx(vWorldPos),dFdy(vWorldPos)));\n"
       "  if(!gl_FrontFacing) N=-N;\n"
       "  vec3 V=normalize(uCameraPos-vWorldPos);\n"
-      "  vec3 L=normalize(vec3(1.0,1.0,1.0));\n"
-      "  float NdotL=max(dot(N,L),0.0);\n"
-      "  vec3 H=normalize(L+V); float NdotH=max(dot(N,H),0.0);\n"
-      "  vec3 col=base*(0.05+NdotL)+vec3(0.15)*pow(NdotH,32.0);\n"
-      "  FragColor=vec4(col,1.0);\n"
+      "  vec3 Nf=(dot(N,V)<0.0)?-N:N;\n"
+      "  float nv=max(dot(Nf,V),1e-4),r=0.5;vec3 direct=vec3(0);\n"
+      "  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];int lt=int(pt.w+0.5);vec3 L;float att=1.0;if(lt==5)L=normalize(da.xyz);else{vec3 q=pt.xyz-vWorldPos;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1.0/d2;}float shape=1.0;if(ss.w>0.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0.0,180.0))),inn=cos(radians(clamp(da.w*(1.0-clamp(ss.y,0.0,1.0)),0.0,180.0)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0.0),max(ss.z,0.0));}float nl=max(dot(Nf,L),0.0);if(nl<=0.0||shape<=0.0)continue;vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*base*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl);}\n"
+      "  if(uLightCount==0){vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));vec3 lc=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1);float nl=max(dot(Nf,L),0.0);vec3 H=normalize(L+V);float nh=max(dot(Nf,H),0.0),vh=max(dot(V,H),0.0);vec3 F=fresnel(vh,vec3(0.04));vec3 spec=ggxD(nh,r)*ggxG1(nv,r)*ggxG1(nl,r)*F/max(4.0*nv*nl,1e-5),diff=(vec3(1)-F)*base*(1.0/3.14159265);direct=(diff+spec)*lc*nl;}\n"
+      "  vec3 amb=uHasIbl?texture(uIrradianceMap,normalize(uEnvRotation*Nf)).rgb*uIblColor:vec3(0.12);\n"
+      "  vec3 col=base*amb+direct;\n"
+      "  FragColor=vec4(linearToSrgb(col*exp2(uExposure)),1.0);\n"
       "}\n";
   std::string terr;
   tessProgram_ = glutil::CompileProgramTess(kVS, kTCS, kTES, kFS, &terr);
@@ -621,6 +1240,12 @@ void GLRenderer::buildTessProgram() {
   tModel_ = glGetUniformLocation(tessProgram_, "uModel");
   tNormalMat_ = glGetUniformLocation(tessProgram_, "uNormalMatrix");
   tCameraPos_ = glGetUniformLocation(tessProgram_, "uCameraPos");
+  tLightDir_ = glGetUniformLocation(tessProgram_, "uLightDir");
+  tLightColor_ = glGetUniformLocation(tessProgram_, "uLightColor");
+  tHasIbl_ = glGetUniformLocation(tessProgram_, "uHasIbl");
+  tIblColor_ = glGetUniformLocation(tessProgram_, "uIblColor");
+  tExposure_ = glGetUniformLocation(tessProgram_, "uExposure");
+  tEnvRotation_ = glGetUniformLocation(tessProgram_, "uEnvRotation");
   tBaseColor_ = glGetUniformLocation(tessProgram_, "uBaseColor");
   tHasBaseColorTex_ = glGetUniformLocation(tessProgram_, "uHasBaseColorTex");
   tHasDisplacementTex_ = glGetUniformLocation(tessProgram_, "uHasDisplacementTex");
@@ -643,8 +1268,102 @@ void GLRenderer::buildTessProgram() {
   glUniform1i(glGetUniformLocation(tessProgram_, "uMorphChanTex"), 10);
   glUniform1i(glGetUniformLocation(tessProgram_, "uBoneTex"), 4);
   glUniform1i(glGetUniformLocation(tessProgram_, "uInfluenceTex"), 5);
+  glUniform1i(glGetUniformLocation(tessProgram_, "uIrradianceMap"), 19);
   glUseProgram(0);
   tessAvailable_ = true;
+}
+
+void GLRenderer::buildNonMeshProgram() {
+  static const char* kVS = R"GLSL(#version 330 core
+layout(location=0) in vec3 aP0;
+layout(location=1) in vec3 aP1;
+layout(location=2) in float aWidth;
+layout(location=3) in vec4 aColor;
+uniform mat4 uViewProj;
+uniform vec3 uCameraPos, uCameraRight, uCameraUp;
+uniform int uKind;
+out vec2 vLocal;
+out vec4 vColor;
+out vec3 vWorld;
+out vec3 vView;
+flat out int vInstanceId;
+void main(){
+  vec2 corner = gl_VertexID==0 ? vec2(-1,-1) :
+                gl_VertexID==1 ? vec2( 1,-1) :
+                gl_VertexID==2 ? vec2(-1, 1) : vec2(1,1);
+  vec3 p;
+  if(uKind==0){
+    p=aP0+(uCameraRight*corner.x+uCameraUp*corner.y)*(0.5*aWidth);
+    vLocal=corner;
+  }else{
+    float along=corner.y*0.5+0.5;
+    vec3 center=mix(aP0,aP1,along);
+    vec3 tangent=normalize(aP1-aP0);
+    vec3 view=normalize(uCameraPos-center);
+    vec3 side=cross(tangent,view);
+    if(dot(side,side)<1e-10) side=uCameraRight;
+    side=normalize(side);
+    p=center+side*(corner.x*0.5*aWidth);
+    vLocal=vec2(corner.x,along);
+  }
+  vColor=aColor; vWorld=p; vView=normalize(uCameraPos-p);
+  vInstanceId=gl_InstanceID;
+  gl_Position=uViewProj*vec4(p,1.0);
+}
+)GLSL";
+  static const char* kFS = R"GLSL(#version 330 core
+in vec2 vLocal; in vec4 vColor; in vec3 vWorld; in vec3 vView;
+flat in int vInstanceId;
+uniform vec3 uCameraRight,uCameraUp,uLightDir,uLightColor;
+uniform int uLightCount; uniform uint uLightMask;
+uniform vec4 uLightPositionType[16],uLightDirectionAngle[16];
+uniform vec4 uLightColorDiffuse[16],uLightSpecularShape[16];
+uniform float uExposure;
+uniform int uKind,uMaterialId,uCarrierId,uPurpose,uRenderMode;
+out vec4 fragColor;
+vec3 idColor(int id){uint h=(uint(max(id,0))+1u)*2654435761u;return vec3(float(h&255u),float((h>>8u)&255u),float((h>>16u)&255u))*(1.0/255.0);}
+vec3 linearToSrgb(vec3 c){c=clamp(c,0.0,1.0);vec3 lo=c*12.92;vec3 hi=1.055*pow(c,vec3(1.0/2.4))-0.055;return mix(lo,hi,vec3(greaterThan(c,vec3(0.0031308))));}
+float D(float nh,float r){float a=max(r*r,.002),a2=a*a,d=nh*nh*(a2-1.0)+1.0;return a2/max(3.14159265*d*d,1e-6);}
+float G(float nx,float r){float k=(r+1.0)*(r+1.0)*.125;return nx/max(nx*(1.0-k)+k,1e-6);}
+vec3 F(float vh,vec3 f0){return f0+(vec3(1)-f0)*pow(1.0-clamp(vh,0.0,1.0),5.0);}
+void main(){
+  vec3 N;
+  if(uKind==0){float rr=dot(vLocal,vLocal);if(rr>1.0)discard;N=normalize(uCameraRight*vLocal.x+uCameraUp*vLocal.y+vView*sqrt(max(0.0,1.0-rr)));}
+  else N=normalize(vView);
+  if(uRenderMode==2){fragColor=vec4(N*.5+.5,1);return;}
+  if(uRenderMode==3){fragColor=vec4(idColor(uMaterialId),1);return;}
+  if(uRenderMode==15){fragColor=vec4(idColor(vInstanceId),1);return;}
+  if(uRenderMode==16){fragColor=vec4(idColor(uCarrierId),1);return;}
+  if(uRenderMode==18){vec3 c=uPurpose==1?vec3(.3,.7,1):uPurpose==2?vec3(1,.6,.2):uPurpose==3?vec3(.8,.3,1):vec3(.7);fragColor=vec4(c,1);return;}
+  if(uRenderMode==7){fragColor=vec4(vColor.rgb,1);return;}
+  if(uRenderMode==12){fragColor=vec4(vec3(vColor.a),1);return;}
+  if(uRenderMode!=0){fragColor=vec4(.18,.18,.18,1);return;}
+  vec3 V=normalize(vView);float nv=max(dot(N,V),1e-4),r=.5;vec3 direct=vec3(0);
+  for(int li=0;li<16;++li){if(li>=uLightCount)break;if((uLightMask&(1u<<uint(li)))==0u)continue;vec4 pt=uLightPositionType[li],da=uLightDirectionAngle[li],lc=uLightColorDiffuse[li],ss=uLightSpecularShape[li];int lt=int(pt.w+.5);vec3 L;float att=1;if(lt==5)L=normalize(da.xyz);else{vec3 q=pt.xyz-vWorld;float d2=max(dot(q,q),1e-6);L=q*inversesqrt(d2);att=1/d2;}float shape=1;if(ss.w>.5&&lt!=5){float cc=dot(normalize(da.xyz),-L),o=cos(radians(clamp(da.w,0,180))),inn=cos(radians(clamp(da.w*(1-clamp(ss.y,0,1)),0,180)));shape=smoothstep(o,max(inn,o+1e-5),cc)*pow(max(cc,0),max(ss.z,0));}float nl=max(dot(N,L),0);if(nl<=0||shape<=0)continue;vec3 H=normalize(V+L);float nh=max(dot(N,H),0),vh=max(dot(V,H),0);vec3 ff=F(vh,vec3(.04)),spec=D(nh,r)*G(nv,r)*G(nl,r)*ff/max(4*nv*nl,1e-5),diff=(vec3(1)-ff)*vColor.rgb*(1.0/3.14159265);direct+=(diff*lc.w+spec*ss.x)*lc.rgb*(att*shape*nl);}
+  if(uLightCount==0){vec3 L=normalize(uLightDir),H=normalize(V+L);float nl=max(dot(N,L),0),nh=max(dot(N,H),0),vh=max(dot(V,H),0);vec3 ff=F(vh,vec3(.04)),spec=D(nh,r)*G(nv,r)*G(nl,r)*ff/max(4*nv*nl,1e-5),diff=(vec3(1)-ff)*vColor.rgb*(1.0/3.14159265);direct=(diff+spec)*uLightColor*nl;}
+  vec3 col=vColor.rgb*.12+direct;
+  fragColor=vec4(linearToSrgb(col*exp2(uExposure)),vColor.a);
+}
+)GLSL";
+  std::string err;
+  nonMeshProgram_ = glutil::CompileProgram(kVS, kFS, &err);
+  if (!nonMeshProgram_) {
+    std::fprintf(stderr, "[tusdview] non-mesh GL program unavailable: %s\n",
+                 err.c_str());
+    return;
+  }
+  nmViewProj_ = glGetUniformLocation(nonMeshProgram_, "uViewProj");
+  nmCameraPos_ = glGetUniformLocation(nonMeshProgram_, "uCameraPos");
+  nmCameraRight_ = glGetUniformLocation(nonMeshProgram_, "uCameraRight");
+  nmCameraUp_ = glGetUniformLocation(nonMeshProgram_, "uCameraUp");
+  nmLightDir_ = glGetUniformLocation(nonMeshProgram_, "uLightDir");
+  nmLightColor_ = glGetUniformLocation(nonMeshProgram_, "uLightColor");
+  nmExposure_ = glGetUniformLocation(nonMeshProgram_, "uExposure");
+  nmKind_ = glGetUniformLocation(nonMeshProgram_, "uKind");
+  nmMaterialId_ = glGetUniformLocation(nonMeshProgram_, "uMaterialId");
+  nmCarrierId_ = glGetUniformLocation(nonMeshProgram_, "uCarrierId");
+  nmPurpose_ = glGetUniformLocation(nonMeshProgram_, "uPurpose");
+  nmRenderMode_ = glGetUniformLocation(nonMeshProgram_, "uRenderMode");
 }
 
 void GLRenderer::destroyScene() {
@@ -656,6 +1375,7 @@ void GLRenderer::destroyScene() {
     if (m.jointVbo) glDeleteBuffers(1, &m.jointVbo);
     if (m.instanceVbo) glDeleteBuffers(1, &m.instanceVbo);
     if (m.instanceColorVbo) glDeleteBuffers(1, &m.instanceColorVbo);
+    if (m.instanceOpacityVbo) glDeleteBuffers(1, &m.instanceOpacityVbo);
     if (m.vertexColorVbo) glDeleteBuffers(1, &m.vertexColorVbo);
     if (m.uv1Vbo) glDeleteBuffers(1, &m.uv1Vbo);
     if (m.morphInflVbo) glDeleteBuffers(1, &m.morphInflVbo);
@@ -668,28 +1388,67 @@ void GLRenderer::destroyScene() {
     if (m.morphChanBuf) glDeleteBuffers(1, &m.morphChanBuf);
     if (m.faceIdTex) glDeleteTextures(1, &m.faceIdTex);
     if (m.faceIdBuf) glDeleteBuffers(1, &m.faceIdBuf);
+    if (m.wireEbo) glDeleteBuffers(1, &m.wireEbo);
     if (m.vbo) glDeleteBuffers(1, &m.vbo);
     if (m.vao) glDeleteVertexArrays(1, &m.vao);
   }
   meshes_.clear();
+  for (GLNonMeshBatch& b : nonMeshBatches_) {
+    if (b.vbo) glDeleteBuffers(1, &b.vbo);
+    if (b.vao) glDeleteVertexArrays(1, &b.vao);
+  }
+  nonMeshBatches_.clear();
   for (GLVolume& gv : volumes_) {
     if (gv.tex3d) glDeleteTextures(1, &gv.tex3d);
   }
   volumes_.clear();
-  if (!textures_.empty()) {
-    glDeleteTextures(static_cast<GLsizei>(textures_.size()), textures_.data());
+  for (GLTexture& tex : textures_) {
+    if (tex.tex2d) glDeleteTextures(1, &tex.tex2d);
+    if (tex.arrayTex) glDeleteTextures(1, &tex.arrayTex);
   }
+  if (udimLutAtlas_) glDeleteTextures(1, &udimLutAtlas_);
+  udimLutAtlas_ = 0;
   textures_.clear();
   materials_.clear();
+  destroyIblTextures();
 }
 
 void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                             int textureCount) {
   destroyScene();
-  // Reserve texture slots (0 = not yet uploaded -> resolved to white at draw).
-  textures_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
+  resizeTextureSlots(textureCount);
   materials_.reserve(materials.size());
-  for (const auto& m : materials) {
+  appendMaterials(materials, 0);
+}
+
+void GLRenderer::resizeTextureSlots(int textureCount) {
+  const size_t requested = textureCount > 0 ? static_cast<size_t>(textureCount) : 0;
+  if (requested <= textures_.size() && udimLutAtlas_) return;
+  textures_.resize(requested);
+  // Reserve texture slots (0 = not yet uploaded -> resolved to white at draw).
+  // Texture pixels are published only after geometry finalization, so rebuilding
+  // the empty UDIM lookup while slots grow cannot discard a live lookup table.
+  if (udimLutAtlas_) glDeleteTextures(1, &udimLutAtlas_);
+  udimLutAtlas_ = 0;
+  const int atlasRows = std::max(textureCount, 1);
+  std::vector<int16_t> emptyLut(static_cast<size_t>(atlasRows) * 100, -1);
+  glGenTextures(1, &udimLutAtlas_);
+  glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_R16I, 100, atlasRows, 0,
+               GL_RED_INTEGER, GL_SHORT, emptyLut.data());
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void GLRenderer::appendMaterials(const std::vector<DrawMaterialCPU>& materials,
+                                 size_t first) {
+  if (first >= materials.size()) return;
+  materials_.reserve(materials.size());
+  for (size_t i = first; i < materials.size(); ++i) {
+    const DrawMaterialCPU& m = materials[i];
     GLMaterial gm;
     gm.baseColor[0] = m.baseColor[0];
     gm.baseColor[1] = m.baseColor[1];
@@ -700,11 +1459,59 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     gm.emissive[1] = m.emissive[1];
     gm.emissive[2] = m.emissive[2];
     gm.alpha = m.alpha;
+    gm.alphaMode = m.alphaMode;
+    gm.alphaCutoff = m.alphaCutoff;
+    gm.useSpecularWorkflow = m.useSpecularWorkflow;
+    gm.openPbrSpecularModel = m.openPbrSpecularModel;
+    gm.specularColor[0] = m.specularColor[0];
+    gm.specularColor[1] = m.specularColor[1];
+    gm.specularColor[2] = m.specularColor[2];
+    gm.ior = m.ior;
+    gm.occlusion = m.occlusion;
+    gm.coatWeight = m.coatWeight;
+    gm.coatColor[0] = m.coatColor[0];
+    gm.coatColor[1] = m.coatColor[1];
+    gm.coatColor[2] = m.coatColor[2];
+    gm.coatRoughness = m.coatRoughness;
+    gm.coatIor = m.coatIor;
+    gm.coatWeightTex = m.coatWeightTex;
+    gm.coatColorTex = m.coatColorTex;
+    gm.coatRoughnessTex = m.coatRoughnessTex;
+    gm.coatNormalTex = m.coatNormalTex;
+    gm.specularColorTex = m.specularColorTex;
+    gm.coatWeightSample = m.coatWeightSample;
+    gm.coatColorSample = m.coatColorSample;
+    gm.coatRoughnessSample = m.coatRoughnessSample;
+    gm.coatNormalSample = m.coatNormalSample;
+    gm.specularColorSample = m.specularColorSample;
     gm.baseColorTex = m.baseColorTex;  // slot indices (resolved at draw)
-    gm.metalRoughTex = m.metalRoughTex;
+    gm.metallicTex = m.metallicTex;
+    gm.roughnessTex = m.roughnessTex;
     gm.normalTex = m.normalTex;
     gm.emissiveTex = m.emissiveTex;
+    gm.opacityTex = m.opacityTex;
+    gm.occlusionTex = m.occlusionTex;
+    gm.baseColorSample = m.baseColorSample;
+    gm.metallicSample = m.metallicSample;
+    gm.roughnessSample = m.roughnessSample;
+    gm.normalSample = m.normalSample;
+    gm.emissiveSample = m.emissiveSample;
+    gm.opacitySample = m.opacitySample;
+    gm.occlusionSample = m.occlusionSample;
+    gm.opacityChannel = m.opacityChannel;
+    gm.occlusionChannel = m.occlusionChannel;
+    gm.occlusionTexScale = m.occlusionTexScale;
+    gm.occlusionTexBias = m.occlusionTexBias;
+    gm.opacityTexScale = m.opacityTexScale;
+    gm.opacityTexBias = m.opacityTexBias;
+    gm.metallicChannel = m.metallicChannel;
+    gm.roughnessChannel = m.roughnessChannel;
+    gm.metallicTexScale = m.metallicTexScale;
+    gm.metallicTexBias = m.metallicTexBias;
+    gm.roughnessTexScale = m.roughnessTexScale;
+    gm.roughnessTexBias = m.roughnessTexBias;
     gm.displacementTex = m.displacementTex;
+    gm.displacementUv = m.displacementUv;
     gm.displacementConst = m.displacementConst;
     gm.displacementTexScale = m.displacementTexScale;
     gm.displacementTexBias = m.displacementTexBias;
@@ -712,25 +1519,322 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   }
 }
 
+void GLRenderer::syncSceneResources(
+    const std::vector<DrawMaterialCPU>& materials, int textureCount) {
+  resizeTextureSlots(textureCount);
+  // Existing materials are immutable in the next loader; alpha variants and
+  // newly discovered bound materials append stable indices.
+  appendMaterials(materials, materials_.size());
+}
+
 void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return;
-  GLuint tex = 0;
-  glGenTextures(1, &tex);
-  glBindTexture(GL_TEXTURE_2D, tex);
-  // Upload as plain RGBA8 (texels used as-is; see note: the simple shader and
-  // linear RGBA8 target don't re-encode gamma).
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.image.width, t.image.height, 0, GL_RGBA,
-               GL_UNSIGNED_BYTE, t.image.data.empty() ? nullptr : t.image.data.data());
-  glGenerateMipmap(GL_TEXTURE_2D);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glBindTexture(GL_TEXTURE_2D, 0);
-  if (textures_[static_cast<size_t>(slot)]) {
-    glDeleteTextures(1, &textures_[static_cast<size_t>(slot)]);
+  GLTexture gpu;
+  // sRGB color textures (base color / emissive) upload as GL_SRGB8_ALPHA8 so the
+  // sampler linearizes them for the linear-space lighting (T11); normal /
+  // metal-rough stay GL_RGBA8. Same rule the compressed path already applies.
+  const GLenum uncompFmt = t.srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
+  if (t.isUdim && !t.udimTiles.empty() && t.udimTileWidth > 0 &&
+      t.udimTileHeight > 0) {
+    glGenTextures(1, &gpu.arrayTex);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, gpu.arrayTex);
+    bool compressedArray = t.requestedCompressed;
+    DrawCompressedFormat arrayFormat = DrawCompressedFormat::None;
+    size_t layerBytes = 0;
+    for (const DrawUdimTileCPU& tile : t.udimTiles) {
+      if (tile.compressed.format == DrawCompressedFormat::None ||
+          tile.compressed.data.empty()) {
+        compressedArray = false;
+        break;
+      }
+      if (arrayFormat == DrawCompressedFormat::None) {
+        arrayFormat = tile.compressed.format;
+        layerBytes = tile.compressed.data.size();
+      } else if (arrayFormat != tile.compressed.format ||
+                 layerBytes != tile.compressed.data.size()) {
+        compressedArray = false;
+        break;
+      }
+    }
+    const GLenum compressedFmt = compressedArray
+                                     ? GLCompressedFormat(arrayFormat, t.srgb)
+                                     : 0;
+    // Precomputed per-tile mip chains (FinalizeDrawTextures): usable for the
+    // array only when every tile carries the same level count (+ equal
+    // per-level payload sizes on the compressed path).
+    size_t arrayMips = t.udimTiles.empty() ? 0 : t.udimTiles[0].mipImages.size();
+    for (const DrawUdimTileCPU& tile : t.udimTiles) {
+      if (tile.mipImages.size() != arrayMips) { arrayMips = 0; break; }
+      if (compressedFmt != 0 &&
+          tile.compressed.mips.size() != arrayMips) { arrayMips = 0; break; }
+    }
+    if (compressedFmt != 0 && arrayMips > 0) {
+      for (size_t l = 1; l <= arrayMips && arrayMips > 0; ++l) {
+        const DrawCompressedMipCPU& ref = t.udimTiles[0].compressed.mips[l - 1];
+        for (const DrawUdimTileCPU& tile : t.udimTiles) {
+          if (tile.compressed.mips[l - 1].data.size() != ref.data.size()) {
+            arrayMips = 0;
+            break;
+          }
+        }
+      }
+    }
+    if (compressedFmt != 0) {
+      std::vector<uint8_t> layers;
+      layers.reserve(layerBytes * t.udimTiles.size());
+      for (const DrawUdimTileCPU& tile : t.udimTiles) {
+        layers.insert(layers.end(), tile.compressed.data.begin(),
+                      tile.compressed.data.end());
+      }
+      glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, 0, compressedFmt,
+                             t.udimTileWidth, t.udimTileHeight,
+                             static_cast<GLsizei>(t.udimTiles.size()), 0,
+                             static_cast<GLsizei>(layers.size()), layers.data());
+      for (size_t l = 1; l <= arrayMips; ++l) {
+        const DrawCompressedMipCPU& ref = t.udimTiles[0].compressed.mips[l - 1];
+        std::vector<uint8_t> lvl;
+        lvl.reserve(ref.data.size() * t.udimTiles.size());
+        for (const DrawUdimTileCPU& tile : t.udimTiles) {
+          const DrawCompressedMipCPU& m = tile.compressed.mips[l - 1];
+          lvl.insert(lvl.end(), m.data.begin(), m.data.end());
+        }
+        glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(l),
+                               compressedFmt, ref.width, ref.height,
+                               static_cast<GLsizei>(t.udimTiles.size()), 0,
+                               static_cast<GLsizei>(lvl.size()), lvl.data());
+      }
+    } else {
+      glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, uncompFmt, t.udimTileWidth,
+                   t.udimTileHeight, static_cast<GLsizei>(t.udimTiles.size()), 0,
+                   GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+      for (size_t layer = 0; layer < t.udimTiles.size(); ++layer) {
+        const light3d::Image& img = t.udimTiles[layer].image;
+        if (img.width != t.udimTileWidth || img.height != t.udimTileHeight ||
+            img.data.empty()) {
+          continue;
+        }
+        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0,
+                        static_cast<GLint>(layer), t.udimTileWidth,
+                        t.udimTileHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                        img.data.data());
+      }
+      for (size_t l = 1; l <= arrayMips; ++l) {
+        const light3d::Image& ref = t.udimTiles[0].mipImages[l - 1];
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(l), uncompFmt,
+                     ref.width, ref.height,
+                     static_cast<GLsizei>(t.udimTiles.size()), 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, nullptr);
+        for (size_t layer = 0; layer < t.udimTiles.size(); ++layer) {
+          const light3d::Image& img = t.udimTiles[layer].mipImages[l - 1];
+          if (img.width != ref.width || img.height != ref.height ||
+              img.data.empty()) {
+            continue;
+          }
+          glTexSubImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(l), 0, 0,
+                          static_cast<GLint>(layer), img.width, img.height, 1,
+                          GL_RGBA, GL_UNSIGNED_BYTE, img.data.data());
+        }
+      }
+    }
+    if (arrayMips > 0) {
+      glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,
+                      static_cast<GLint>(arrayMips));
+    } else {
+      glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    }
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER,
+                    GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+
+    std::array<int16_t, 100> lut{};
+    lut.fill(-1);
+    for (size_t i = 0; i < t.udimLayer.size(); ++i) {
+      lut[i] = static_cast<int16_t>(t.udimLayer[i]);
+    }
+    glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, slot, 100, 1, GL_RED_INTEGER,
+                    GL_SHORT, lut.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
+    gpu.isUdim = true;
+
+    glGenTextures(1, &gpu.tex2d);
+    glBindTexture(GL_TEXTURE_2D, gpu.tex2d);
+    const GLenum fmt = GLCompressedFormat(t.compressed.format, t.srgb);
+    if (t.requestedCompressed && fmt != 0 && !t.compressed.data.empty()) {
+      glCompressedTexImage2D(GL_TEXTURE_2D, 0, fmt, t.compressed.width,
+                             t.compressed.height, 0,
+                             static_cast<GLsizei>(t.compressed.data.size()),
+                             t.compressed.data.data());
+    } else {
+      glTexImage2D(GL_TEXTURE_2D, 0, uncompFmt, t.image.width, t.image.height, 0,
+                   GL_RGBA, GL_UNSIGNED_BYTE,
+                   t.image.data.empty() ? nullptr : t.image.data.data());
+    }
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+  } else {
+    glGenTextures(1, &gpu.tex2d);
+    glBindTexture(GL_TEXTURE_2D, gpu.tex2d);
+    // Upload as plain RGBA8 (texels used as-is; see note: the simple shader and
+    // linear RGBA8 target don't re-encode gamma).
+    const GLenum fmt = GLCompressedFormat(t.compressed.format, t.srgb);
+    const bool useCompressed =
+        t.requestedCompressed && fmt != 0 && !t.compressed.data.empty();
+    // Precomputed content-aware mips (sRGB/alpha-coverage/normal-aware,
+    // FinalizeDrawTextures) replace glGenerateMipmap when present. This also
+    // gives compressed textures real mips (glGenerateMipmap is typically a
+    // no-op on BC-compressed textures).
+    const bool precomputedMips =
+        useCompressed ? !t.compressed.mips.empty() : !t.mipImages.empty();
+    if (useCompressed) {
+      glCompressedTexImage2D(GL_TEXTURE_2D, 0, fmt, t.compressed.width,
+                             t.compressed.height, 0,
+                             static_cast<GLsizei>(t.compressed.data.size()),
+                             t.compressed.data.data());
+      for (size_t l = 0; l < t.compressed.mips.size(); ++l) {
+        const DrawCompressedMipCPU& mip = t.compressed.mips[l];
+        glCompressedTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(l + 1), fmt,
+                               mip.width, mip.height, 0,
+                               static_cast<GLsizei>(mip.data.size()),
+                               mip.data.data());
+      }
+    } else {
+      glTexImage2D(GL_TEXTURE_2D, 0, uncompFmt, t.image.width, t.image.height, 0,
+                   GL_RGBA, GL_UNSIGNED_BYTE,
+                   t.image.data.empty() ? nullptr : t.image.data.data());
+      for (size_t l = 0; l < t.mipImages.size(); ++l) {
+        const light3d::Image& mip = t.mipImages[l];
+        glTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(l + 1), uncompFmt,
+                     mip.width, mip.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     mip.data.empty() ? nullptr : mip.data.data());
+      }
+    }
+    if (precomputedMips) {
+      const size_t levels =
+          useCompressed ? t.compressed.mips.size() : t.mipImages.size();
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,
+                      static_cast<GLint>(levels));
+    } else {
+      glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
   }
-  textures_[static_cast<size_t>(slot)] = tex;
+  GLTexture& old = textures_[static_cast<size_t>(slot)];
+  if (old.tex2d) glDeleteTextures(1, &old.tex2d);
+  if (old.arrayTex) glDeleteTextures(1, &old.arrayTex);
+  old = gpu;
+}
+
+void GLRenderer::destroyIblTextures() {
+  if (iblIrrTex_) glDeleteTextures(1, &iblIrrTex_);
+  if (iblSpecTex_) glDeleteTextures(1, &iblSpecTex_);
+  if (iblLutTex_) glDeleteTextures(1, &iblLutTex_);
+  iblIrrTex_ = iblSpecTex_ = iblLutTex_ = 0;
+  iblSpecLods_ = 0;
+  iblActive_ = false;
+}
+
+void GLRenderer::setLights(const std::vector<DrawLightCPU>& lights,
+                           size_t meshCount) {
+  rasterLights_ = PackRasterLights(lights, meshCount);
+  if (std::getenv("TUSDVIEW_DEBUG_LIGHTS"))
+    std::fprintf(stderr, "[raster-lights] GL source=%zu direct=%d meshes=%zu\n",
+                 lights.size(), rasterLights_.count, meshCount);
+  if (rasterLights_.truncated > 0) {
+    std::fprintf(stderr,
+                 "[tusdview] raster lighting: evaluating first %d direct lights; "
+                 "%d additional light(s) omitted\n",
+                 kMaxRasterLights, rasterLights_.truncated);
+  }
+  destroyIblTextures();
+  const DrawLightCPU* dome = nullptr;
+  for (const DrawLightCPU& l : lights) {
+    if (l.type == DrawLightCPU::Type::Dome && l.ibl.valid) {
+      dome = &l;
+      break;
+    }
+  }
+  if (!dome) return;
+  const DomeIblCPU& ibl = dome->ibl;
+
+  // GGX-prefiltered specular chain: one cube level per roughness step.
+  glGenTextures(1, &iblSpecTex_);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, iblSpecTex_);
+  for (size_t l = 0; l < ibl.specLevels.size(); ++l) {
+    const int fs = std::max(1, ibl.specFaceSize >> l);
+    const float* data = ibl.specLevels[l].data();
+    for (int f = 0; f < 6; ++f) {
+      glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + static_cast<GLenum>(f),
+                   static_cast<GLint>(l), GL_RGB16F, fs, fs, 0, GL_RGB,
+                   GL_FLOAT, data + static_cast<size_t>(f) * fs * fs * 3);
+    }
+  }
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER,
+                  GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_LEVEL,
+                  static_cast<GLint>(ibl.specLevels.size()) - 1);
+
+  // Diffuse irradiance cube (single level).
+  glGenTextures(1, &iblIrrTex_);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, iblIrrTex_);
+  for (int f = 0; f < 6; ++f) {
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + static_cast<GLenum>(f), 0,
+                 GL_RGB16F, ibl.irrFaceSize, ibl.irrFaceSize, 0, GL_RGB,
+                 GL_FLOAT,
+                 ibl.irradiance.data() +
+                     static_cast<size_t>(f) * ibl.irrFaceSize * ibl.irrFaceSize * 3);
+  }
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+
+  // Split-sum BRDF LUT (scale, bias).
+  glGenTextures(1, &iblLutTex_);
+  glBindTexture(GL_TEXTURE_2D, iblLutTex_);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, ibl.lutSize, ibl.lutSize, 0, GL_RG,
+               GL_FLOAT, ibl.brdfLut.data());
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  iblSpecLods_ = static_cast<int>(ibl.specLevels.size());
+  iblColor_[0] = dome->effectiveColor[0];
+  iblColor_[1] = dome->effectiveColor[1];
+  iblColor_[2] = dome->effectiveColor[2];
+  // World -> environment: transpose of the dome transform's normalized
+  // rotation block (column-major 4x4 -> column-major 3x3).
+  for (int c = 0; c < 3; ++c) {
+    float col[3] = {dome->transform[c * 4 + 0], dome->transform[c * 4 + 1],
+                    dome->transform[c * 4 + 2]};
+    const float len =
+        std::sqrt(col[0] * col[0] + col[1] * col[1] + col[2] * col[2]);
+    const float inv = (len > 1e-12f) ? 1.0f / len : 1.0f;
+    // Row c of the inverse rotation = normalized column c of the transform.
+    iblRotation_[0 * 3 + c] = col[0] * inv;
+    iblRotation_[1 * 3 + c] = col[1] * inv;
+    iblRotation_[2 * 3 + c] = col[2] * inv;
+  }
+  iblActive_ = true;
 }
 
 void GLRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
@@ -818,6 +1922,10 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   if (gm.vao) glDeleteVertexArrays(1, &gm.vao);
   if (gm.vbo) glDeleteBuffers(1, &gm.vbo);
   if (gm.ebo) glDeleteBuffers(1, &gm.ebo);
+  if (gm.wireEbo) glDeleteBuffers(1, &gm.wireEbo);
+  if (gm.instanceVbo) glDeleteBuffers(1, &gm.instanceVbo);
+  if (gm.instanceColorVbo) glDeleteBuffers(1, &gm.instanceColorVbo);
+  if (gm.instanceOpacityVbo) glDeleteBuffers(1, &gm.instanceOpacityVbo);
   if (gm.jointVbo) glDeleteBuffers(1, &gm.jointVbo);
   if (gm.weightVbo) glDeleteBuffers(1, &gm.weightVbo);
   if (gm.influenceVbo) glDeleteBuffers(1, &gm.influenceVbo);
@@ -838,6 +1946,20 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
       sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
   gm.influenceTexWidth = sm.influenceTexWidth;
   gm.vertexCount = sm.vertices.size();
+  gm.indexCount = sm.indices.size();
+  // Mesh-space bbox center for the translucency back-to-front sort.
+  if (!sm.vertices.empty()) {
+    float lo[3] = {sm.vertices[0].px, sm.vertices[0].py, sm.vertices[0].pz};
+    float hi[3] = {lo[0], lo[1], lo[2]};
+    for (const DrawVertex& v : sm.vertices) {
+      lo[0] = std::min(lo[0], v.px); hi[0] = std::max(hi[0], v.px);
+      lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
+      lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
+    }
+    gm.localCentroid[0] = 0.5f * (lo[0] + hi[0]);
+    gm.localCentroid[1] = 0.5f * (lo[1] + hi[1]);
+    gm.localCentroid[2] = 0.5f * (lo[2] + hi[2]);
+  }
 
   glGenVertexArrays(1, &gm.vao);
   glBindVertexArray(gm.vao);
@@ -858,21 +1980,34 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+  // Skin attribute locations differ by program: the mesh program takes joints at 3
+  // and weights at 4, but in the INSTANCED program those slots (and 5) carry the
+  // per-instance o2w rows, so a skinned prototype binds 6/7 instead. The extended
+  // (>4 influence) stream needs attrib 5 and therefore has no instanced form --
+  // instanced prototypes use the 4-influence path only.
+  const bool skinInstanced = !sm.instanceXforms.empty();
+  const GLuint jointLoc = skinInstanced ? 6u : 3u;
+  const GLuint weightLoc = skinInstanced ? 7u : 4u;
+  if (skinInstanced) gm.extendedSkinned = false;
   if (gm.skinned) {
     glGenBuffers(1, &gm.jointVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.jointVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointIdx.size() * sizeof(uint32_t)),
                  sm.jointIdx.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(3);
-    glVertexAttribIPointer(3, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t), (void*)0);
+    glEnableVertexAttribArray(jointLoc);
+    glVertexAttribIPointer(jointLoc, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t),
+                           (void*)0);
+    glVertexAttribDivisor(jointLoc, 0);
     glGenBuffers(1, &gm.weightVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.weightVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointWt.size() * sizeof(float)),
                  sm.jointWt.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(4);
-    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(weightLoc);
+    glVertexAttribPointer(weightLoc, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          (void*)0);
+    glVertexAttribDivisor(weightLoc, 0);
     if (gm.extendedSkinned) {
       glGenBuffers(1, &gm.influenceVbo);
       glBindBuffer(GL_ARRAY_BUFFER, gm.influenceVbo);
@@ -895,6 +2030,14 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
       glDisableVertexAttribArray(5);
       glVertexAttribI2ui(5, 0, 0);
     }
+  } else if (skinInstanced) {
+    // Unskinned prototype: constant zero weights, so the instanced shader passes
+    // every vertex through. Slots 3/4/5 belong to the instance rows here and are
+    // set up below -- do NOT touch them.
+    glDisableVertexAttribArray(6);
+    glDisableVertexAttribArray(7);
+    glVertexAttribI4ui(6, 0, 0, 0, 0);
+    glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
   } else {
     glDisableVertexAttribArray(3);
     glDisableVertexAttribArray(4);
@@ -909,6 +2052,106 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
 }
 
 void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
+  appendMeshImpl(sm, true);
+}
+
+void GLRenderer::appendMeshSurface(const DrawMeshCPU& sm) {
+  appendMeshImpl(sm, false);
+}
+
+void GLRenderer::appendPoints(const DrawPointsCPU& src) {
+  const size_t n = src.points.size() / 3;
+  if (!nonMeshProgram_ || n == 0) return;
+  const GLMaterial* mat =
+      src.materialId >= 0 && static_cast<size_t>(src.materialId) < materials_.size()
+          ? &materials_[static_cast<size_t>(src.materialId)] : nullptr;
+  const float sx = std::sqrt(src.world[0]*src.world[0]+src.world[1]*src.world[1]+src.world[2]*src.world[2]);
+  const float sy = std::sqrt(src.world[4]*src.world[4]+src.world[5]*src.world[5]+src.world[6]*src.world[6]);
+  const float sz = std::sqrt(src.world[8]*src.world[8]+src.world[9]*src.world[9]+src.world[10]*src.world[10]);
+  const float worldScale = std::max(sx, std::max(sy, sz));
+  std::vector<float> data;
+  data.reserve(n * 11);
+  bool translucent = false;
+  for (size_t i = 0; i < n; ++i) {
+    const float x=src.points[i*3],y=src.points[i*3+1],z=src.points[i*3+2];
+    const float p[3] = {
+      src.world[0]*x+src.world[4]*y+src.world[8]*z+src.world[12],
+      src.world[1]*x+src.world[5]*y+src.world[9]*z+src.world[13],
+      src.world[2]*x+src.world[6]*y+src.world[10]*z+src.world[14]};
+    const float width = (src.widths.empty()?1.0f:(src.widths.size()==1?src.widths[0]:src.widths[std::min(i,src.widths.size()-1)]))*worldScale;
+    float c[4] = {mat?mat->baseColor[0]:0.8f,mat?mat->baseColor[1]:0.8f,
+                  mat?mat->baseColor[2]:0.8f,mat?mat->alpha:1.0f};
+    if (src.colors.size() >= 3) {
+      const size_t ci = src.colors.size() >= (i + 1) * 3 ? i * 3 : 0;
+      c[0]*=src.colors[ci]; c[1]*=src.colors[ci+1]; c[2]*=src.colors[ci+2];
+    }
+    if (!src.opacities.empty()) {
+      const size_t oi = src.opacities.size() > i ? i : 0;
+      c[3] *= src.opacities[oi];
+    }
+    translucent |= c[3] < 0.999f;
+    data.insert(data.end(), {p[0],p[1],p[2],p[0],p[1],p[2],
+                             std::max(width,1e-6f),c[0],c[1],c[2],c[3]});
+  }
+  GLNonMeshBatch b;
+  b.count=static_cast<GLsizei>(n); b.kind=0; b.materialId=src.materialId;
+  b.carrierId=static_cast<int>(meshes_.size()+nonMeshBatches_.size());
+  b.carrierIndex = static_cast<int>(nonMeshBatches_.size());
+  b.purposeId=PurposeId(src.purpose); b.translucent=translucent;
+  glGenVertexArrays(1,&b.vao); glGenBuffers(1,&b.vbo);
+  glBindVertexArray(b.vao); glBindBuffer(GL_ARRAY_BUFFER,b.vbo);
+  glBufferData(GL_ARRAY_BUFFER,static_cast<GLsizeiptr>(data.size()*sizeof(float)),data.data(),GL_STATIC_DRAW);
+  const GLsizei stride=11*sizeof(float);
+  for(int a=0;a<4;++a){glEnableVertexAttribArray(a);glVertexAttribDivisor(a,1);}
+  glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,(void*)0);
+  glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,stride,(void*)(3*sizeof(float)));
+  glVertexAttribPointer(2,1,GL_FLOAT,GL_FALSE,stride,(void*)(6*sizeof(float)));
+  glVertexAttribPointer(3,4,GL_FLOAT,GL_FALSE,stride,(void*)(7*sizeof(float)));
+  glBindVertexArray(0); nonMeshBatches_.push_back(b);
+}
+
+void GLRenderer::appendCurves(const DrawCurvesCPU& src) {
+  if (!nonMeshProgram_ || src.points.size() < 6) return;
+  const GLMaterial* mat =
+      src.materialId >= 0 && static_cast<size_t>(src.materialId) < materials_.size()
+          ? &materials_[static_cast<size_t>(src.materialId)] : nullptr;
+  const float sx=std::sqrt(src.world[0]*src.world[0]+src.world[1]*src.world[1]+src.world[2]*src.world[2]);
+  const float sy=std::sqrt(src.world[4]*src.world[4]+src.world[5]*src.world[5]+src.world[6]*src.world[6]);
+  const float sz=std::sqrt(src.world[8]*src.world[8]+src.world[9]*src.world[9]+src.world[10]*src.world[10]);
+  const float worldScale=std::max(sx,std::max(sy,sz));
+  const size_t np=src.points.size()/3;
+  std::vector<float> data;
+  bool translucent=mat&&mat->alpha<0.999f;
+  auto wp=[&](size_t i,float p[3]){float x=src.points[i*3],y=src.points[i*3+1],z=src.points[i*3+2];p[0]=src.world[0]*x+src.world[4]*y+src.world[8]*z+src.world[12];p[1]=src.world[1]*x+src.world[5]*y+src.world[9]*z+src.world[13];p[2]=src.world[2]*x+src.world[6]*y+src.world[10]*z+src.world[14];};
+  size_t base=0;
+  for(uint32_t count:src.vertexCounts){
+    size_t end=std::min(np,base+static_cast<size_t>(count));
+    for(size_t i=base;i+1<end;++i){
+      float p0[3],p1[3];wp(i,p0);wp(i+1,p1);
+      const float dx = p1[0] - p0[0];
+      const float dy = p1[1] - p0[1];
+      const float dz = p1[2] - p0[2];
+      if (dx * dx + dy * dy + dz * dz <= 1.0e-16f) continue;
+      float width=(src.widths.empty()?1.0f:(src.widths.size()==1?src.widths[0]:0.5f*(src.widths[std::min(i,src.widths.size()-1)]+src.widths[std::min(i+1,src.widths.size()-1)])))*worldScale;
+      float c[4]={mat?mat->baseColor[0]:0.8f,mat?mat->baseColor[1]:0.8f,mat?mat->baseColor[2]:0.8f,mat?mat->alpha:1.0f};
+      if(src.colors.size()>=np*3){c[0]*=.5f*(src.colors[i*3]+src.colors[(i+1)*3]);c[1]*=.5f*(src.colors[i*3+1]+src.colors[(i+1)*3+1]);c[2]*=.5f*(src.colors[i*3+2]+src.colors[(i+1)*3+2]);}
+      if (!src.opacities.empty()) {
+        const float o0 = src.opacities[src.opacities.size() > i ? i : 0];
+        const float o1 = src.opacities[src.opacities.size() > i + 1 ? i + 1 : 0];
+        c[3] *= 0.5f * (o0 + o1);
+      }
+      translucent |= c[3] < 0.999f;
+      data.insert(data.end(),{p0[0],p0[1],p0[2],p1[0],p1[1],p1[2],std::max(width,1e-6f),c[0],c[1],c[2],c[3]});
+    }
+    base=end;
+  }
+  if(data.empty())return;
+  GLNonMeshBatch b;b.count=static_cast<GLsizei>(data.size()/11);b.kind=1;b.materialId=src.materialId;b.carrierId=static_cast<int>(meshes_.size()+nonMeshBatches_.size());b.carrierIndex=static_cast<int>(nonMeshBatches_.size());b.purposeId=PurposeId(src.purpose);b.translucent=translucent;
+  glGenVertexArrays(1,&b.vao);glGenBuffers(1,&b.vbo);glBindVertexArray(b.vao);glBindBuffer(GL_ARRAY_BUFFER,b.vbo);glBufferData(GL_ARRAY_BUFFER,static_cast<GLsizeiptr>(data.size()*sizeof(float)),data.data(),GL_STATIC_DRAW);
+  const GLsizei stride=11*sizeof(float);for(int a=0;a<4;++a){glEnableVertexAttribArray(a);glVertexAttribDivisor(a,1);}glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,(void*)0);glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,stride,(void*)(3*sizeof(float)));glVertexAttribPointer(2,1,GL_FLOAT,GL_FALSE,stride,(void*)(6*sizeof(float)));glVertexAttribPointer(3,4,GL_FLOAT,GL_FALSE,stride,(void*)(7*sizeof(float)));glBindVertexArray(0);nonMeshBatches_.push_back(b);
+}
+
+void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
   GLMesh gm;
   gm.submeshes = sm.submeshes;
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
@@ -923,6 +2166,20 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
   gm.influenceTexWidth = sm.influenceTexWidth;
   gm.vertexCount = sm.vertices.size();
+  gm.indexCount = sm.indices.size();
+  // Mesh-space bbox center for the translucency back-to-front sort.
+  if (!sm.vertices.empty()) {
+    float lo[3] = {sm.vertices[0].px, sm.vertices[0].py, sm.vertices[0].pz};
+    float hi[3] = {lo[0], lo[1], lo[2]};
+    for (const DrawVertex& v : sm.vertices) {
+      lo[0] = std::min(lo[0], v.px); hi[0] = std::max(hi[0], v.px);
+      lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
+      lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
+    }
+    gm.localCentroid[0] = 0.5f * (lo[0] + hi[0]);
+    gm.localCentroid[1] = 0.5f * (lo[1] + hi[1]);
+    gm.localCentroid[2] = 0.5f * (lo[2] + hi[2]);
+  }
 
   glGenVertexArrays(1, &gm.vao);
   glBindVertexArray(gm.vao);
@@ -943,21 +2200,34 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+  // Skin attribute locations differ by program: the mesh program takes joints at 3
+  // and weights at 4, but in the INSTANCED program those slots (and 5) carry the
+  // per-instance o2w rows, so a skinned prototype binds 6/7 instead. The extended
+  // (>4 influence) stream needs attrib 5 and therefore has no instanced form --
+  // instanced prototypes use the 4-influence path only.
+  const bool skinInstanced = !sm.instanceXforms.empty();
+  const GLuint jointLoc = skinInstanced ? 6u : 3u;
+  const GLuint weightLoc = skinInstanced ? 7u : 4u;
+  if (skinInstanced) gm.extendedSkinned = false;
   if (gm.skinned) {
     glGenBuffers(1, &gm.jointVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.jointVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointIdx.size() * sizeof(uint32_t)),
                  sm.jointIdx.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(3);
-    glVertexAttribIPointer(3, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t), (void*)0);
+    glEnableVertexAttribArray(jointLoc);
+    glVertexAttribIPointer(jointLoc, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t),
+                           (void*)0);
+    glVertexAttribDivisor(jointLoc, 0);
     glGenBuffers(1, &gm.weightVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.weightVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointWt.size() * sizeof(float)),
                  sm.jointWt.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(4);
-    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(weightLoc);
+    glVertexAttribPointer(weightLoc, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          (void*)0);
+    glVertexAttribDivisor(weightLoc, 0);
     if (gm.extendedSkinned) {
       glGenBuffers(1, &gm.influenceVbo);
       glBindBuffer(GL_ARRAY_BUFFER, gm.influenceVbo);
@@ -981,6 +2251,14 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glDisableVertexAttribArray(5);
       glVertexAttribI2ui(5, 0, 0);
     }
+  } else if (skinInstanced) {
+    // Unskinned prototype: constant zero weights, so the instanced shader passes
+    // every vertex through. Slots 3/4/5 belong to the instance rows here and are
+    // set up below -- do NOT touch them.
+    glDisableVertexAttribArray(6);
+    glDisableVertexAttribArray(7);
+    glVertexAttribI4ui(6, 0, 0, 0, 0);
+    glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
   } else {
     glDisableVertexAttribArray(3);
     glDisableVertexAttribArray(4);
@@ -1000,14 +2278,33 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   // when absent so the base color is unmodulated.
   const bool gmInstanced = !sm.instanceXforms.empty();
   const GLuint vtxColorAttrib = gmInstanced ? 10u : 9u;
-  if (sm.vertexColors.size() == sm.vertices.size() * 3 && !sm.vertexColors.empty()) {
+  const bool hasVtxColor = sm.vertexColors.size() == sm.vertices.size() * 3;
+  const bool hasVtxAlpha = sm.vertexAlpha.size() == sm.vertices.size();
+  if (gmInstanced && hasVtxAlpha) {
+    for (float opacity : sm.vertexAlpha) {
+      if (opacity < 1.0f - 1.0e-6f) {
+        gm.hasTranslucentInstances = true;
+        break;
+      }
+    }
+  }
+  if ((hasVtxColor || hasVtxAlpha) && !sm.vertices.empty()) {
+    std::vector<float> rgba(sm.vertices.size() * 4, 1.0f);
+    for (size_t i = 0; i < sm.vertices.size(); ++i) {
+      if (hasVtxColor) {
+        rgba[i * 4 + 0] = sm.vertexColors[i * 3 + 0];
+        rgba[i * 4 + 1] = sm.vertexColors[i * 3 + 1];
+        rgba[i * 4 + 2] = sm.vertexColors[i * 3 + 2];
+      }
+      if (hasVtxAlpha) rgba[i * 4 + 3] = sm.vertexAlpha[i];
+    }
     glGenBuffers(1, &gm.vertexColorVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.vertexColorVbo);
     glBufferData(GL_ARRAY_BUFFER,
-                 static_cast<GLsizeiptr>(sm.vertexColors.size() * sizeof(float)),
-                 sm.vertexColors.data(), GL_STATIC_DRAW);
+                 static_cast<GLsizeiptr>(rgba.size() * sizeof(float)),
+                 rgba.data(), GL_STATIC_DRAW);
     glEnableVertexAttribArray(vtxColorAttrib);
-    glVertexAttribPointer(vtxColorAttrib, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float),
+    glVertexAttribPointer(vtxColorAttrib, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
                           (void*)0);
     glVertexAttribDivisor(vtxColorAttrib, 0);
   } else {
@@ -1046,7 +2343,8 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
     }
     // Per-triangle source face id as a texture buffer (source-face-id AOV),
     // fetched in the FS by gl_PrimitiveID + the submesh's first-triangle offset.
-    if (sm.sourceFaceId.size() == sm.indices.size() / 3 && !sm.sourceFaceId.empty()) {
+    if (includeAux && sm.sourceFaceId.size() == sm.indices.size() / 3 &&
+        !sm.sourceFaceId.empty()) {
       glGenBuffers(1, &gm.faceIdBuf);
       glBindBuffer(GL_TEXTURE_BUFFER, gm.faceIdBuf);
       glBufferData(GL_TEXTURE_BUFFER,
@@ -1058,10 +2356,13 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glBindBuffer(GL_TEXTURE_BUFFER, 0);
       glBindTexture(GL_TEXTURE_BUFFER, 0);
     }
-    // GPU blendshape morph: per-vertex (offset,count) attr 8 + a static delta
-    // texture-buffer (RGBA16F: channelId,dx,dy,dz half-precision) + a per-frame
-    // coefficient texture-buffer (R32F). The vertex shader sums coeff*delta
-    // before skinning; texelFetch returns the f16 deltas auto-converted to f32.
+  }  // end !gmInstanced (uv1 / morphInfl / faceId)
+
+  // GPU blendshape morph: per-vertex (offset,count) attr 8 + a static delta
+  // texture-buffer (RGBA16F: channelId,dx,dy,dz half-precision) + a per-frame
+  // coefficient texture-buffer (R32F). The vertex shader sums coeff*delta before
+  // the per-instance transform. Shared by non-instanced AND instanced meshes:
+  // instance rows live at locations 3/4/5, leaving attr 8 free for the morph CSR.
     if (sm.morphChannelCount > 0 &&
         sm.morphOffsetCount.size() == sm.vertices.size() * 2 &&
         !sm.morphDeltaHalf.empty()) {
@@ -1112,11 +2413,10 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glDisableVertexAttribArray(8);
       glVertexAttribI2ui(8, 0u, 0u);
     }
-  }
 
   // GPU instancing: upload per-instance 3x4 object-to-world matrices (3 vec4
-  // rows = 48 B/instance) into a second VBO; bind as instanced attribs 6-8
-  // (divisor 1).
+  // rows = 48 B/instance) into a second VBO; bind as instanced attribs 3-5
+  // (divisor 1) -- off the morph/uv slots so an instanced prototype can morph.
   if (!sm.instanceXforms.empty()) {
     gm.instanceCount = static_cast<int>(sm.instanceXforms.size() / 12);
     gm.drawInstanceCount = gm.instanceCount;
@@ -1128,15 +2428,16 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
                  sm.instanceXforms.data(), GL_DYNAMIC_DRAW);
     const GLsizei mstride = 12 * sizeof(float);
     for (int r = 0; r < 3; ++r) {
-      const GLuint loc = 6 + r;
+      const GLuint loc = 3 + r;
       glEnableVertexAttribArray(loc);
       glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, mstride,
                             (void*)(static_cast<uintptr_t>(r * 4 * sizeof(float))));
       glVertexAttribDivisor(loc, 1);
     }
-    // Per-instance displayColor (attrib 9, divisor 1) when present; otherwise a
-    // per-draw constant set at draw time (see flatColor in the instanced pass).
+    // Per-instance displayColor/displayOpacity (attribs 9/11, divisor 1) when
+    // present; otherwise per-draw constants are set at draw time.
     std::memcpy(gm.flatColor, sm.flatColor, sizeof(gm.flatColor));
+    gm.flatOpacity = sm.flatOpacity;
     if (sm.instanceColors.size() == sm.instanceXforms.size() / 12 * 3 &&
         !sm.instanceColors.empty()) {
       gm.hasInstanceColors = true;
@@ -1151,16 +2452,182 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
     } else {
       glDisableVertexAttribArray(9);  // constant color set per draw
     }
+    if (sm.instanceOpacities.size() == sm.instanceXforms.size() / 12 &&
+        !sm.instanceOpacities.empty()) {
+      gm.hasInstanceOpacities = true;
+      for (float opacity : sm.instanceOpacities) {
+        if (opacity < 1.0f - 1.0e-6f) {
+          gm.hasTranslucentInstances = true;
+          break;
+        }
+      }
+      glGenBuffers(1, &gm.instanceOpacityVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, gm.instanceOpacityVbo);
+      glBufferData(GL_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(sm.instanceOpacities.size() * sizeof(float)),
+                   sm.instanceOpacities.data(), GL_DYNAMIC_DRAW);
+      glEnableVertexAttribArray(11);
+      glVertexAttribPointer(11, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
+      glVertexAttribDivisor(11, 1);
+    } else {
+      gm.hasTranslucentInstances = gm.hasTranslucentInstances ||
+                                   gm.flatOpacity < 1.0f - 1.0e-6f;
+      glDisableVertexAttribArray(11);  // constant opacity set per draw
+    }
   }
 
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+  // Wireframe edges. Prefer the loader-provided original-polygon perimeter edges
+  // (sm.wireframeIndices: quads/ngons, correct for double-sided meshes). Fall
+  // back to deriving edges from triangles + source face ids (drop triangulation
+  // diagonals). Without authored face ids, retain only the mesh boundary instead
+  // of exposing every generated triangle. Always use the base (coarse) indices,
+  // so wireframe shows the pre-tessellation mesh.
+  if (!includeAux) {
+    // Surface-critical data is resident. Wire/source-face data is uploaded by
+    // uploadMeshAux after the first useful frame.
+  } else if (!sm.wireframeIndices.empty()) {
+    glGenBuffers(1, &gm.wireEbo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.wireEbo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(sm.wireframeIndices.size() * sizeof(uint32_t)),
+                 sm.wireframeIndices.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    gm.wireCount = static_cast<GLsizei>(sm.wireframeIndices.size());
+  } else {
+    const size_t triCount = sm.indices.size() / 3;
+    const bool haveFaceIds =
+        sm.sourceFaceId.size() == triCount && !sm.sourceFaceId.empty();
+    // edge key -> (first face id seen, keep?)
+    std::unordered_map<uint64_t, std::pair<uint32_t, bool>> edges;
+    edges.reserve(triCount * 3);
+    auto key = [](uint32_t a, uint32_t b) -> uint64_t {
+      if (a > b) { uint32_t t = a; a = b; b = t; }
+      return (static_cast<uint64_t>(a) << 32) | b;
+    };
+    for (size_t t = 0; t < triCount; ++t) {
+      const uint32_t v[3] = {sm.indices[t * 3], sm.indices[t * 3 + 1],
+                             sm.indices[t * 3 + 2]};
+      const uint32_t f = haveFaceIds ? sm.sourceFaceId[t] : 0u;
+      const uint32_t e[3][2] = {{v[0], v[1]}, {v[1], v[2]}, {v[2], v[0]}};
+      for (int k = 0; k < 3; ++k) {
+        const uint64_t ek = key(e[k][0], e[k][1]);
+        auto it = edges.find(ek);
+        if (it == edges.end()) {
+          edges.emplace(ek, std::make_pair(f, true));  // boundary until proven interior
+        } else {
+          // With authored ids, an edge shared by different faces is a real cage
+          // edge; sharing within one face means a triangulation diagonal. With
+          // no ids, only an unshared mesh-boundary edge is knowably authored.
+          it->second.second = haveFaceIds && it->second.first != f;
+        }
+      }
+    }
+    std::vector<uint32_t> wire;
+    wire.reserve(edges.size() * 2);
+    for (const auto& kv : edges) {
+      if (!kv.second.second) continue;
+      wire.push_back(static_cast<uint32_t>(kv.first >> 32));
+      wire.push_back(static_cast<uint32_t>(kv.first & 0xffffffffu));
+    }
+    if (!wire.empty()) {
+      glGenBuffers(1, &gm.wireEbo);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.wireEbo);  // no VAO bound: not VAO state
+      glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(wire.size() * sizeof(uint32_t)),
+                   wire.data(), GL_STATIC_DRAW);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+      gm.wireCount = static_cast<GLsizei>(wire.size());
+    }
+  }
+
   meshes_.push_back(gm);
 }
 
+void GLRenderer::uploadMeshAux(size_t meshIndex, const DrawMeshCPU& sm) {
+  if (meshIndex >= meshes_.size()) return;
+  GLMesh& gm = meshes_[meshIndex];
+  if (gm.instanceCount == 0 && !gm.faceIdTex &&
+      sm.sourceFaceId.size() == gm.indexCount / 3 &&
+      !sm.sourceFaceId.empty()) {
+    glGenBuffers(1, &gm.faceIdBuf);
+    glBindBuffer(GL_TEXTURE_BUFFER, gm.faceIdBuf);
+    glBufferData(GL_TEXTURE_BUFFER,
+                 static_cast<GLsizeiptr>(sm.sourceFaceId.size() *
+                                        sizeof(uint32_t)),
+                 sm.sourceFaceId.data(), GL_STATIC_DRAW);
+    glGenTextures(1, &gm.faceIdTex);
+    glBindTexture(GL_TEXTURE_BUFFER, gm.faceIdTex);
+    glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, gm.faceIdBuf);
+    glBindBuffer(GL_TEXTURE_BUFFER, 0);
+    glBindTexture(GL_TEXTURE_BUFFER, 0);
+  }
+
+  // Instanced prototypes use the same authored/local edge index buffer and a
+  // dedicated instanced wire vertex shader. Skipping them here made payload
+  // foliage and other progressively loaded instances permanently wireless.
+  if (gm.wireEbo) return;
+  if (!sm.wireframeIndices.empty()) {
+    glGenBuffers(1, &gm.wireEbo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.wireEbo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(sm.wireframeIndices.size() *
+                                        sizeof(uint32_t)),
+                 sm.wireframeIndices.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    gm.wireCount = static_cast<GLsizei>(sm.wireframeIndices.size());
+    return;
+  }
+  std::vector<uint32_t> wire;
+  {
+    const size_t triCount = sm.indices.size() / 3;
+    const bool haveFaceIds =
+        sm.sourceFaceId.size() == triCount && !sm.sourceFaceId.empty();
+    std::unordered_map<uint64_t, std::pair<uint32_t, bool>> edges;
+    edges.reserve(triCount * 3);
+    auto key = [](uint32_t a, uint32_t b) -> uint64_t {
+      if (a > b) std::swap(a, b);
+      return (static_cast<uint64_t>(a) << 32) | b;
+    };
+    for (size_t t = 0; t < triCount; ++t) {
+      const uint32_t v[3] = {sm.indices[t * 3], sm.indices[t * 3 + 1],
+                             sm.indices[t * 3 + 2]};
+      const uint32_t f = haveFaceIds ? sm.sourceFaceId[t] : 0u;
+      const uint32_t e[3][2] = {{v[0], v[1]}, {v[1], v[2]}, {v[2], v[0]}};
+      for (int k = 0; k < 3; ++k) {
+        const uint64_t ek = key(e[k][0], e[k][1]);
+        auto it = edges.find(ek);
+        if (it == edges.end()) {
+          edges.emplace(ek, std::make_pair(f, true));
+        } else {
+          it->second.second = haveFaceIds && it->second.first != f;
+        }
+      }
+    }
+    wire.reserve(edges.size() * 2);
+    for (const auto& edge : edges) {
+      if (!edge.second.second) continue;
+      wire.push_back(static_cast<uint32_t>(edge.first >> 32));
+      wire.push_back(static_cast<uint32_t>(edge.first & 0xffffffffu));
+    }
+  }
+  if (wire.empty()) return;
+  glGenBuffers(1, &gm.wireEbo);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.wireEbo);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+               static_cast<GLsizeiptr>(wire.size() * sizeof(uint32_t)),
+               wire.data(), GL_STATIC_DRAW);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+  gm.wireCount = static_cast<GLsizei>(wire.size());
+}
+
 void GLRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
-                                          const float* colors, uint32_t count) {
+                                          const float* colors,
+                                          const float* opacities,
+                                          uint32_t count) {
   if (meshIndex >= meshes_.size()) return;
   GLMesh& m = meshes_[meshIndex];
   if (m.instanceCount <= 0) return;
@@ -1178,6 +2645,11 @@ void GLRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
     glBindBuffer(GL_ARRAY_BUFFER, m.instanceColorVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0,
                     static_cast<GLsizeiptr>(count) * 3 * sizeof(float), colors);
+  }
+  if (m.instanceOpacityVbo && opacities) {
+    glBindBuffer(GL_ARRAY_BUFFER, m.instanceOpacityVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0,
+                    static_cast<GLsizeiptr>(count) * sizeof(float), opacities);
   }
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
@@ -1214,13 +2686,233 @@ void GLRenderer::resizeViewport(int width, int height) { ensureFbo(width, height
 
 void GLRenderer::newFrame() { ImGui_ImplOpenGL3_NewFrame(); }
 
+void GLRenderer::buildWireProgram() {
+  // Anti-aliased thin wireframe: the VS transforms an edge endpoint to clip space
+  // without changing its depth; the GS expands each edge into a screen-space quad
+  // uHalfWidth pixels to each side; the FS applies an
+  // analytic distance-to-center falloff for a crisp ~1 px AA line (usdview look,
+  // resolution-independent -- the same edge-distance idea the RT path can use).
+  static const char* kWireFS =
+      "#version 330 core\n"
+      "in float vDist;\n"            // signed pixel distance from the line center
+      "flat in float vEdgeAlpha;\n"  // projected-length density fade
+      "out vec4 FragColor;\n"
+      "uniform vec3 uWireColor;\n"
+      "uniform float uHalfWidth;\n"  // pixels: half the expanded quad width
+      "void main(){\n"
+      "  float d = abs(vDist);\n"
+      // 1 px-wide analytic AA: opaque core, feather to 0 over the last pixel.
+      "  float a = vEdgeAlpha * (1.0 - smoothstep(uHalfWidth - 1.0, uHalfWidth, d));\n"
+      "  if (a <= 0.0) discard;\n"
+      "  FragColor = vec4(uWireColor, a);\n"
+      "}\n";
+  // Geometry shader (shared): line -> screen-space quad. Endpoints come in clip
+  // space; convert to pixels, offset along the screen-space normal by uHalfWidth,
+  // convert back to clip (scaling by w for perspective). vDist feathers the edge.
+  static const char* kWireGS =
+      "#version 330 core\n"
+      "layout(lines) in;\n"
+      "layout(triangle_strip, max_vertices=4) out;\n"
+      "uniform vec2 uViewport;\n"     // pixels
+      "uniform float uHalfWidth;\n"   // pixels
+      "out float vDist;\n"
+      "flat out float vEdgeAlpha;\n"
+      "void main(){\n"
+      "  vec4 c0 = gl_in[0].gl_Position;\n"
+      "  vec4 c1 = gl_in[1].gl_Position;\n"
+      // Clip the segment against the GL near plane in homogeneous space before
+      // dividing by w. Dropping the whole primitive when either endpoint moved
+      // behind the eye made long authored edges pop during dolly.
+      "  float d0 = c0.z + c0.w;\n"
+      "  float d1 = c1.z + c1.w;\n"
+      "  if (d0 < 0.0 && d1 < 0.0) return;\n"
+      "  if (d0 < 0.0) { float t=d0/(d0-d1); c0=mix(c0,c1,t); }\n"
+      "  if (d1 < 0.0) { float t=d1/(d1-d0); c1=mix(c1,c0,t); }\n"
+      "  if (c0.w <= 1e-6 || c1.w <= 1e-6) return;\n"
+      "  vec2 s0 = (c0.xy / c0.w) * 0.5 * uViewport;\n"
+      "  vec2 s1 = (c1.xy / c1.w) * 0.5 * uViewport;\n"
+      "  vec2 dir = s1 - s0;\n"
+      "  float len = length(dir);\n"
+      // Suppress sub-pixel topology and fade short edges over a broad range.
+      // Without this, every distant authored edge expands to a full-width quad,
+      // turning detailed buildings/foliage into a solid green mass and popping
+      // abruptly as projected length crosses a pixel.
+      "  vEdgeAlpha = smoothstep(1.0, 7.0, len);\n"
+      "  if (vEdgeAlpha <= 0.001) return;\n"
+      "  dir = len > 1e-5 ? dir / len : vec2(1.0, 0.0);\n"
+      "  vec2 nrm = vec2(-dir.y, dir.x);\n"
+      "  vec2 off = nrm / (0.5 * uViewport) * uHalfWidth;\n"  // pixels -> NDC
+      "  vec4 e0 = c0; vec4 e1 = c1;\n"
+      "  gl_Position = vec4(e0.xy + off * e0.w, e0.zw); vDist =  uHalfWidth; EmitVertex();\n"
+      "  gl_Position = vec4(e0.xy - off * e0.w, e0.zw); vDist = -uHalfWidth; EmitVertex();\n"
+      "  gl_Position = vec4(e1.xy + off * e1.w, e1.zw); vDist =  uHalfWidth; EmitVertex();\n"
+      "  gl_Position = vec4(e1.xy - off * e1.w, e1.zw); vDist = -uHalfWidth; EmitVertex();\n"
+      "  EndPrimitive();\n"
+      "}\n";
+  static const char* kWireVS =
+      "#version 330 core\n"
+      "layout(location=0) in vec3 aPosition;\n"
+      "uniform mat4 uModelViewProj;\n"
+      "uniform float uDepthBias;\n"
+      "void main(){\n"
+      "  vec4 p = uModelViewProj * vec4(aPosition, 1.0);\n"
+      "  p.z -= uDepthBias * p.w;\n"
+      "  gl_Position = p;\n"
+      "}\n";
+  static const char* kWireInstVS =
+      "#version 330 core\n"
+      "layout(location=0) in vec3 aPosition;\n"
+      "layout(location=3) in vec4 aRow0;\n"
+      "layout(location=4) in vec4 aRow1;\n"
+      "layout(location=5) in vec4 aRow2;\n"
+      "uniform mat4 uViewProj;\n"
+      "uniform float uDepthBias;\n"
+      "void main(){\n"
+      "  vec4 lp = vec4(aPosition, 1.0);\n"
+      "  vec3 wp = vec3(dot(lp, aRow0), dot(lp, aRow1), dot(lp, aRow2));\n"
+      "  vec4 p = uViewProj * vec4(wp, 1.0);\n"
+      "  p.z -= uDepthBias * p.w;\n"
+      "  gl_Position = p;\n"
+      "}\n";
+  std::string werr;
+  wireProgram_ = glutil::CompileProgramGeom(kWireVS, kWireGS, kWireFS, &werr);
+  if (wireProgram_) {
+    wMVP_ = glGetUniformLocation(wireProgram_, "uModelViewProj");
+    wWireColor_ = glGetUniformLocation(wireProgram_, "uWireColor");
+    wDepthBias_ = glGetUniformLocation(wireProgram_, "uDepthBias");
+    wViewport_ = glGetUniformLocation(wireProgram_, "uViewport");
+    wHalfWidth_ = glGetUniformLocation(wireProgram_, "uHalfWidth");
+  } else if (!werr.empty()) {
+    fprintf(stderr, "[tusdview] wire program: %s\n", werr.c_str());
+  }
+  werr.clear();
+  wireInstProgram_ = glutil::CompileProgramGeom(kWireInstVS, kWireGS, kWireFS, &werr);
+  if (wireInstProgram_) {
+    wiViewProj_ = glGetUniformLocation(wireInstProgram_, "uViewProj");
+    wiWireColor_ = glGetUniformLocation(wireInstProgram_, "uWireColor");
+    wiDepthBias_ = glGetUniformLocation(wireInstProgram_, "uDepthBias");
+    wiViewport_ = glGetUniformLocation(wireInstProgram_, "uViewport");
+    wiHalfWidth_ = glGetUniformLocation(wireInstProgram_, "uHalfWidth");
+  } else if (!werr.empty()) {
+    fprintf(stderr, "[tusdview] wire inst program: %s\n", werr.c_str());
+  }
+}
+
+void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wireColor[3]) {
+  if (!wireProgram_ && !wireInstProgram_) return;
+  // Do not apply a constant NDC lift: under perspective it can represent meters
+  // of world-space pull at interior-scene distances and expose edges through
+  // foreground walls. LEQUAL resolves exact surface matches against the unbiased
+  // wire-only depth prepass.
+  const float kBias = 0.0f;
+  light3d::Mat4 P = ToMat4(params.proj);
+  light3d::Mat4 V = ToMat4(params.view);
+  glDisable(GL_CULL_FACE);
+  // The GS expands each edge into a thin screen-space quad and the FS feathers it
+  // analytically, so we get sub-pixel-thin AA lines (no GL_LINE_SMOOTH). Alpha
+  // blend for the feathered edge; LEQUAL accepts the edge's exact surface depth,
+  // while depth writes stay off so overlapping edges don't fight.
+  glDisable(GL_LINE_SMOOTH);
+  glDepthFunc(GL_LEQUAL);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glDepthMask(GL_FALSE);
+  const float vpx = static_cast<float>(vpW_), vpy = static_cast<float>(vpH_);
+  const float kHalfWidth = 1.3f;  // pixels: ~1 px visible line with a 1 px AA edge
+
+  // Non-instanced meshes: per-mesh MVP.
+  if (wireProgram_) {
+    glUseProgram(wireProgram_);
+    glUniform3fv(wWireColor_, 1, wireColor);
+    glUniform1f(wDepthBias_, kBias);
+    glUniform2f(wViewport_, vpx, vpy);
+    glUniform1f(wHalfWidth_, kHalfWidth);
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+      const GLMesh& mesh = meshes_[mi];
+      if (mesh.instanceCount > 0 || mesh.wireEbo == 0 || mesh.wireCount == 0) continue;
+      if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
+          !params.meshVisible[mi]) {
+        continue;
+      }
+      light3d::Mat4 MVP = P * V * ToMat4(mesh.world);
+      glUniformMatrix4fv(wMVP_, 1, GL_FALSE, MVP.m);
+      glBindVertexArray(mesh.vao);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.wireEbo);  // override the VAO's tri EBO
+      glDrawElements(GL_LINES, mesh.wireCount, GL_UNSIGNED_INT, nullptr);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.ebo);      // restore the VAO state
+    }
+  }
+
+  // Instanced prototypes: per-instance 3x4 rows (attribs 3/4/5) + view-proj.
+  if (wireInstProgram_) {
+    light3d::Mat4 VP = P * V;
+    glUseProgram(wireInstProgram_);
+    glUniformMatrix4fv(wiViewProj_, 1, GL_FALSE, VP.m);
+    glUniform3fv(wiWireColor_, 1, wireColor);
+    glUniform1f(wiDepthBias_, kBias);
+    glUniform2f(wiViewport_, vpx, vpy);
+    glUniform1f(wiHalfWidth_, kHalfWidth);
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+      const GLMesh& mesh = meshes_[mi];
+      if (mesh.instanceCount <= 0 || mesh.drawInstanceCount <= 0) continue;
+      if (mesh.wireEbo == 0 || mesh.wireCount == 0) continue;
+      if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
+          !params.meshVisible[mi]) {
+        continue;
+      }
+      glBindVertexArray(mesh.vao);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.wireEbo);
+      glDrawElementsInstanced(GL_LINES, mesh.wireCount, GL_UNSIGNED_INT, nullptr,
+                              mesh.drawInstanceCount);
+      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.ebo);
+    }
+  }
+  glBindVertexArray(0);
+  // Restore default state for the rest of the frame (ImGui / next passes).
+  glDepthMask(GL_TRUE);
+  glDepthFunc(GL_LESS);
+  glDisable(GL_BLEND);
+  glDisable(GL_LINE_SMOOTH);
+  glUseProgram(program_);  // restore for callers that assume program_ is bound
+}
+
 void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
-                            const float* overrideEmissive) {
+                            const float* overrideEmissive, AlphaPass alphaPass) {
   static const GLMaterial kDefault;
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
 
-  for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+  auto matTranslucent = [&](int materialId) -> bool {
+    if (materialId < 0 || static_cast<size_t>(materialId) >= materials_.size())
+      return false;
+    return materials_[static_cast<size_t>(materialId)].alphaMode == 2;  // Blend
+  };
+
+  // Draw order. For the translucent pass, sort meshes back-to-front by world
+  // centroid distance to the camera so alpha "over" composites correctly.
+  std::vector<size_t> order(meshes_.size());
+  for (size_t i = 0; i < meshes_.size(); ++i) order[i] = i;
+  if (alphaPass == AlphaPass::Translucent) {
+    std::vector<float> dist(meshes_.size(), 0.0f);
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+      const GLMesh& m = meshes_[mi];
+      const float* c = m.localCentroid;
+      // world * centroid (column-major world[16]).
+      const float wx = m.world[0]*c[0] + m.world[4]*c[1] + m.world[8]*c[2] + m.world[12];
+      const float wy = m.world[1]*c[0] + m.world[5]*c[1] + m.world[9]*c[2] + m.world[13];
+      const float wz = m.world[2]*c[0] + m.world[6]*c[1] + m.world[10]*c[2] + m.world[14];
+      const float dx = wx - params.cameraPos[0];
+      const float dy = wy - params.cameraPos[1];
+      const float dz = wz - params.cameraPos[2];
+      dist[mi] = dx*dx + dy*dy + dz*dz;
+    }
+    std::sort(order.begin(), order.end(),
+              [&](size_t a, size_t b) { return dist[a] > dist[b]; });
+  }
+
+  int cullState = -1;  // -1 unknown; dedup glEnable/glDisable(GL_CULL_FACE)
+  for (size_t oi = 0; oi < order.size(); ++oi) {
+    const size_t mi = order[oi];
     if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
         !params.meshVisible[mi]) {
       continue;  // hidden by the viewer's per-mesh visibility mask
@@ -1242,6 +2934,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniform3fv(uSceneMin_, 1, params.sceneMin);
     glUniform3fv(uSceneExtent_, 1, params.sceneExtent);
     glUniform1i(uMeshId_, static_cast<int>(mi));
+    UploadRasterLightMask(program_, rasterLights_, static_cast<int>(mi));
     glUniform1i(uDoubleSided_, mesh.doubleSided ? 1 : 0);
     glUniform1i(uPurpose_, mesh.purposeId);
     glUniform1i(uKind_, mesh.kindId);
@@ -1253,7 +2946,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     }
     // Default per-vertex color to white when the mesh has none (so uBaseColor is
     // unmodulated); the VAO supplies the array when vertexColorVbo is set.
-    if (!mesh.vertexColorVbo) glVertexAttrib3f(9, 1.0f, 1.0f, 1.0f);
+    if (!mesh.vertexColorVbo) glVertexAttrib4f(9, 1.0f, 1.0f, 1.0f, 1.0f);
     const bool skinOn = mesh.skinned && skinningFrameEnabled_;
     glUniform1i(uSkinningEnabled_, skinOn ? 1 : 0);
     glUniform1i(uExtendedSkinningEnabled_,
@@ -1279,29 +2972,69 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glActiveTexture(GL_TEXTURE0);
     }
 
-    if (mesh.doubleSided || wireframe) {
-      glDisable(GL_CULL_FACE);
-    } else {
-      glEnable(GL_CULL_FACE);
-      glCullFace(GL_BACK);
+    const int wantCull = (mesh.doubleSided || wireframe) ? 0 : 1;
+    if (wantCull != cullState) {
+      if (wantCull) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
+      else glDisable(GL_CULL_FACE);
+      cullState = wantCull;
     }
 
     glBindVertexArray(mesh.vao);
     for (const auto& sub : mesh.submeshes) {
+      const bool splitBack =
+          !wireframe && sub.backfaceMaterialId >= 0 &&
+          sub.backfaceMaterialId != sub.materialId;
+      const int sideCount = splitBack ? 2 : 1;
+      for (int side = 0; side < sideCount; ++side) {
+      const int materialId = side == 0 ? sub.materialId
+                                       : sub.backfaceMaterialId;
+      if (splitBack) {
+        // A purpose-bound back material turns one logical submesh into two
+        // complementary draws. This also works when doubleSided is false: the
+        // explicit back binding is an authored request to render that side.
+        const int wantSideCull = side == 0 ? 1 : 2;
+        if (wantSideCull != cullState) {
+          glEnable(GL_CULL_FACE);
+          glCullFace(side == 0 ? GL_BACK : GL_FRONT);
+          cullState = wantSideCull;
+        }
+      } else if (wantCull != cullState) {
+        // A preceding split-back submesh may have left GL_FRONT selected.
+        // Restore this mesh's ordinary cull state before drawing an unsplit
+        // submesh in the same mesh.
+        if (wantCull) {
+          glEnable(GL_CULL_FACE);
+          glCullFace(GL_BACK);
+        } else {
+          glDisable(GL_CULL_FACE);
+        }
+        cullState = wantCull;
+      }
+      // Alpha-class filtering: the opaque pass skips Blend submeshes, the
+      // translucent pass skips the rest. `All` (AOV/wireframe) draws everything.
+      if (alphaPass == AlphaPass::Opaque && matTranslucent(materialId)) continue;
+      if (alphaPass == AlphaPass::Translucent && !matTranslucent(materialId)) continue;
       const GLMaterial& mat =
-          (sub.materialId >= 0 && static_cast<size_t>(sub.materialId) < materials_.size())
-              ? materials_[static_cast<size_t>(sub.materialId)]
+          (materialId >= 0 && static_cast<size_t>(materialId) < materials_.size())
+              ? materials_[static_cast<size_t>(materialId)]
               : kDefault;
-      glUniform1i(uMatId_, sub.materialId);
+      glUniform1i(uMatId_, materialId);
       glUniform1i(uFaceBase_, static_cast<int>(sub.indexOffset / 3));
       // Resolve a material texture slot to a GPU texture; white if the slot is out
       // of range or not yet uploaded (lazy texture streaming).
       auto slotTex = [&](int slot) -> GLuint {
         if (slot >= 0 && static_cast<size_t>(slot) < textures_.size() &&
-            textures_[static_cast<size_t>(slot)]) {
-          return textures_[static_cast<size_t>(slot)];
+            textures_[static_cast<size_t>(slot)].tex2d) {
+          return textures_[static_cast<size_t>(slot)].tex2d;
         }
         return whiteTex_;
+      };
+      auto slotGpuTex = [&](int slot) -> const GLTexture* {
+        if (slot >= 0 && static_cast<size_t>(slot) < textures_.size()) {
+          const GLTexture& tex = textures_[static_cast<size_t>(slot)];
+          if (tex.tex2d || (tex.isUdim && tex.arrayTex)) return &tex;
+        }
+        return nullptr;
       };
       // Coarse displacement: applied identically in the normal and highlight passes
       // (the deformed positions must match) and forces geometric normals so shading
@@ -1309,9 +3042,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       // keep the sampler complete.
       const bool displaced =
           params.displacement &&
-          ((sub.materialId >= 0 &&
-            static_cast<size_t>(sub.materialId) < materials_.size())
-               ? materials_[static_cast<size_t>(sub.materialId)].hasDisplacement()
+          ((materialId >= 0 &&
+            static_cast<size_t>(materialId) < materials_.size())
+               ? materials_[static_cast<size_t>(materialId)].hasDisplacement()
                : false);
       // GPU tessellation detail path: subdivide displaced triangles on the GPU and
       // displace each generated sample. Only in the Shaded view, for non-skinned
@@ -1320,12 +3053,22 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       if (displaced && tessAvailable_ && !overrideEmissive &&
           params.maxTessLevel > 1 &&
           params.mode == RenderMode::Shaded) {
-        const GLMaterial& dmat = materials_[static_cast<size_t>(sub.materialId)];
+        const GLMaterial& dmat = materials_[static_cast<size_t>(materialId)];
         glUseProgram(tessProgram_);
+        UploadRasterLightArray(tessProgram_, rasterLights_);
+        UploadRasterLightMask(tessProgram_, rasterLights_, static_cast<int>(mi));
         glUniformMatrix4fv(tMVP_, 1, GL_FALSE, MVP.m);
         glUniformMatrix4fv(tModel_, 1, GL_FALSE, W.m);
         glUniformMatrix3fv(tNormalMat_, 1, GL_FALSE, nmat);
         glUniform3fv(tCameraPos_, 1, params.cameraPos);
+        glUniform1f(tExposure_, params.exposure);
+        glUniform3fv(tLightDir_, 1, params.lightDir);
+        glUniform1i(tHasIbl_, iblActive_ ? 1 : 0);
+        if (iblActive_) {
+          glUniform3fv(tIblColor_, 1, iblColor_);
+          glUniformMatrix3fv(tEnvRotation_, 1, GL_FALSE, iblRotation_);
+        }
+        glUniform3fv(tLightColor_, 1, params.lightColor);
         glUniform3fv(tBaseColor_, 1, dmat.baseColor);
         glUniform1i(tHasBaseColorTex_, dmat.baseColorTex >= 0 ? 1 : 0);
         glUniform1i(tHasDisplacementTex_, dmat.displacementTex >= 0 ? 1 : 0);
@@ -1376,7 +3119,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glUniform1i(uHasDisplacement_, displaced ? 1 : 0);
       glActiveTexture(GL_TEXTURE7);
       if (displaced) {
-        const GLMaterial& dmat = materials_[static_cast<size_t>(sub.materialId)];
+        const GLMaterial& dmat = materials_[static_cast<size_t>(materialId)];
         glUniform1i(uHasDisplacementTex_, dmat.displacementTex >= 0 ? 1 : 0);
         glUniform1f(uDisplacementConst_, dmat.displacementConst);
         glUniform1f(uDisplacementScale_, params.displacementScale);
@@ -1392,39 +3135,248 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3f(uBaseColor_, 0.f, 0.f, 0.f);
         glUniform1f(uMetallic_, 0.f);
         glUniform1f(uRoughness_, 1.f);
+        glUniform1i(uUseSpecularWorkflow_, 0);
+        glUniform1i(uOpenPbrSpecularModel_, 0);
+        glUniform3f(uSpecularColor_, 0.f, 0.f, 0.f);
+        glUniform1f(uIor_, 1.5f);
+        glUniform1f(uOcclusion_, 1.0f);
+        glUniform1f(uCoatWeight_, 0.0f);
+        glUniform3f(uCoatColor_, 1.0f, 1.0f, 1.0f);
+        glUniform1f(uCoatRoughness_, 0.1f);
+        glUniform1f(uCoatIor_, 1.5f);
         glUniform3fv(uEmissive_, 1, overrideEmissive);
         glUniform1f(uAlpha_, 1.f);
+        glUniform1i(uAlphaMode_, 0);
+        glUniform1f(uAlphaCutoff_, 0.5f);
         glUniform1i(uHasBaseColorTex_, 0);
-        glUniform1i(uHasMetalRoughTex_, 0);
+        glUniform1i(uHasMetallicTex_, 0);
+        glUniform1i(uHasRoughnessTex_, 0);
         glUniform1i(uHasNormalTex_, 0);
         glUniform1i(uHasEmissiveTex_, 0);
+        glUniform1i(uHasOpacityTex_, 0);
+        glUniform1i(uHasOcclusionTex_, 0);
+        glUniform1i(uHasSpecularColorTex_, 0);
+        glUniform1i(uHasCoatWeightTex_, 0);
+        glUniform1i(uHasCoatColorTex_, 0);
+        glUniform1i(uHasCoatRoughnessTex_, 0);
+        glUniform1i(uHasCoatNormalTex_, 0);
+        glUniform4i(uAdvancedTexIsUdim_, 0, 0, 0, 0);
+        glUniform4i(uAdvancedUdimRoutes_, -1, -1, -1, -1);
+        glUniform4i(uAdvancedUdimSlots_, -1, -1, -1, -1);
+        glUniform1i(uCoatNormalTexIsUdim_, 0);
+        glUniform1i(uCoatNormalUdimRoute_, -1);
+        glUniform1i(uCoatNormalUdimSlot_, -1);
+        glUniform1i(uBaseColorTexIsUdim_, 0);
+        glUniform1i(uMetallicTexIsUdim_, 0);
+        glUniform1i(uRoughnessTexIsUdim_, 0);
+        glUniform1i(uNormalTexIsUdim_, 0);
+        glUniform1i(uEmissiveTexIsUdim_, 0);
+        glUniform1i(uOpacityTexIsUdim_, 0);
+        glUniform1i(uOcclusionTexIsUdim_, 0);
       } else {
         glUniform3fv(uBaseColor_, 1, mat.baseColor);
         glUniform1f(uMetallic_, mat.metallic);
         glUniform1f(uRoughness_, mat.roughness);
+        glUniform1i(uUseSpecularWorkflow_, mat.useSpecularWorkflow ? 1 : 0);
+        glUniform1i(uOpenPbrSpecularModel_, mat.openPbrSpecularModel ? 1 : 0);
+        glUniform3fv(uSpecularColor_, 1, mat.specularColor);
+        glUniform1f(uIor_, mat.ior);
+        glUniform1f(uOcclusion_, mat.occlusion);
+        glUniform1f(uCoatWeight_, mat.coatWeight);
+        glUniform3fv(uCoatColor_, 1, mat.coatColor);
+        glUniform1f(uCoatRoughness_, mat.coatRoughness);
+        glUniform1f(uCoatIor_, mat.coatIor);
         glUniform3fv(uEmissive_, 1, mat.emissive);
         glUniform1f(uAlpha_, mat.alpha);
+        glUniform1i(uAlphaMode_, mat.alphaMode);
+        glUniform1f(uAlphaCutoff_, mat.alphaCutoff);
+        SetUvUniform(uBaseColorUv0_, uBaseColorUv1_, mat.baseColorSample.uv);
+        SetUvUniform(uMetallicUv0_, uMetallicUv1_, mat.metallicSample.uv);
+        SetUvUniform(uRoughnessUv0_, uRoughnessUv1_, mat.roughnessSample.uv);
+        SetUvUniform(uNormalUv0_, uNormalUv1_, mat.normalSample.uv);
+        SetUvUniform(uEmissiveUv0_, uEmissiveUv1_, mat.emissiveSample.uv);
+        SetUvUniform(uOpacityUv0_, uOpacityUv1_, mat.opacitySample.uv);
+        SetUvUniform(uOcclusionUv0_, uOcclusionUv1_, mat.occlusionSample.uv);
+        SetUvUniform(uSpecularColorUv0_, uSpecularColorUv1_,
+                     mat.specularColorSample.uv);
+        SetUvUniform(uCoatWeightUv0_, uCoatWeightUv1_, mat.coatWeightSample.uv);
+        SetUvUniform(uCoatColorUv0_, uCoatColorUv1_, mat.coatColorSample.uv);
+        SetUvUniform(uCoatRoughnessUv0_, uCoatRoughnessUv1_,
+                     mat.coatRoughnessSample.uv);
+        SetUvUniform(uCoatNormalUv0_, uCoatNormalUv1_,
+                     mat.coatNormalSample.uv);
+        glUniform1i(uCoatWeightUvSet_, mat.coatWeightSample.uvSet);
+        glUniform1i(uSpecularColorUvSet_, mat.specularColorSample.uvSet);
+        glUniform1i(uCoatColorUvSet_, mat.coatColorSample.uvSet);
+        glUniform1i(uCoatRoughnessUvSet_, mat.coatRoughnessSample.uvSet);
+        glUniform1i(uCoatNormalUvSet_, mat.coatNormalSample.uvSet);
+        // Sample.channel is -1 for whole-value reads; scalar coat slots default
+        // to R in that case.
+        glUniform1i(uCoatWeightChannel_,
+                    mat.coatWeightSample.channel < 0
+                        ? 0 : mat.coatWeightSample.channel);
+        glUniform1i(uCoatRoughnessChannel_,
+                    mat.coatRoughnessSample.channel < 0
+                        ? 0 : mat.coatRoughnessSample.channel);
+        glUniform4fv(uCoatWeightScale_, 1, mat.coatWeightSample.scale);
+        glUniform4fv(uCoatWeightBias_, 1, mat.coatWeightSample.bias);
+        glUniform4fv(uCoatColorScale_, 1, mat.coatColorSample.scale);
+        glUniform4fv(uCoatColorBias_, 1, mat.coatColorSample.bias);
+        glUniform4fv(uCoatRoughnessScale_, 1, mat.coatRoughnessSample.scale);
+        glUniform4fv(uCoatRoughnessBias_, 1, mat.coatRoughnessSample.bias);
+        glUniform4fv(uSpecularColorScale_, 1, mat.specularColorSample.scale);
+        glUniform4fv(uSpecularColorBias_, 1, mat.specularColorSample.bias);
+        glUniform4fv(uCoatNormalScale_, 1, mat.coatNormalSample.scale);
+        glUniform4fv(uCoatNormalBias_, 1, mat.coatNormalSample.bias);
+        {
+          const GLint uvSets[4] = {mat.baseColorSample.uvSet,
+                                   mat.metallicSample.uvSet,
+                                   mat.normalSample.uvSet,
+                                   mat.emissiveSample.uvSet};
+          glUniform4iv(uUvSet_, 1, uvSets);
+        }
+        glUniform1i(uRoughnessUvSet_, mat.roughnessSample.uvSet);
+        glUniform4fv(uBaseColorTexScale_, 1, mat.baseColorSample.scale);
+        glUniform4fv(uBaseColorTexBias_, 1, mat.baseColorSample.bias);
+        glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
+        glUniform4fv(uNormalTexBias_, 1, mat.normalSample.bias);
+        glUniform4fv(uEmissiveTexScale_, 1, mat.emissiveSample.scale);
+        glUniform4fv(uEmissiveTexBias_, 1, mat.emissiveSample.bias);
+        glUniform1i(uMetallicChannel_, mat.metallicChannel);
+        glUniform1i(uRoughnessChannel_, mat.roughnessChannel);
+        glUniform1f(uMetallicTexScale_, mat.metallicTexScale);
+        glUniform1f(uMetallicTexBias_, mat.metallicTexBias);
+        glUniform1f(uRoughnessTexScale_, mat.roughnessTexScale);
+        glUniform1f(uRoughnessTexBias_, mat.roughnessTexBias);
+        glUniform1i(uOpacityUvSet_, mat.opacitySample.uvSet);
+        glUniform1i(uOpacityChannel_, mat.opacityChannel);
+        glUniform1f(uOpacityTexScale_, mat.opacityTexScale);
+        glUniform1f(uOpacityTexBias_, mat.opacityTexBias);
+        glUniform1i(uOcclusionUvSet_, mat.occlusionSample.uvSet);
+        glUniform1i(uOcclusionChannel_, mat.occlusionChannel);
+        glUniform1f(uOcclusionTexScale_, mat.occlusionTexScale);
+        glUniform1f(uOcclusionTexBias_, mat.occlusionTexBias);
+        const GLint udimSlots[4] = {mat.baseColorTex, mat.metallicTex,
+                                    mat.normalTex, mat.emissiveTex};
+        glUniform4iv(uUdimSlots_, 1, udimSlots);
+        glUniform1i(uOpacityUdimSlot_, mat.opacityTex);
+        glUniform1i(uRoughnessUdimSlot_, mat.roughnessTex);
+        glUniform1i(uOcclusionUdimSlot_, mat.occlusionTex);
+        glActiveTexture(GL_TEXTURE12);
+        glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
+        auto bindMaterialTexture = [&](int slot, GLenum texUnit2D,
+                                       GLenum texUnitArray,
+                                       GLint hasLoc, GLint isUdimLoc) {
+          const GLTexture* tex = slotGpuTex(slot);
+          const bool hasTex = tex != nullptr;
+          const bool isUdim = hasTex && tex->isUdim && tex->arrayTex;
+          glUniform1i(hasLoc, hasTex ? 1 : 0);
+          glUniform1i(isUdimLoc, isUdim ? 1 : 0);
+          glActiveTexture(texUnit2D);
+          glBindTexture(GL_TEXTURE_2D,
+                        (hasTex && tex->tex2d) ? tex->tex2d : whiteTex_);
+          if (isUdim) {
+            glActiveTexture(texUnitArray);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, tex->arrayTex);
+          }
+        };
+        bindMaterialTexture(mat.baseColorTex, GL_TEXTURE0, GL_TEXTURE11,
+                            uHasBaseColorTex_,
+                            uBaseColorTexIsUdim_);
+        bindMaterialTexture(mat.metallicTex, GL_TEXTURE1, GL_TEXTURE13,
+                            uHasMetallicTex_, uMetallicTexIsUdim_);
+        bindMaterialTexture(mat.roughnessTex, GL_TEXTURE18, GL_TEXTURE22,
+                            uHasRoughnessTex_, uRoughnessTexIsUdim_);
+        bindMaterialTexture(mat.normalTex, GL_TEXTURE2, GL_TEXTURE15,
+                            uHasNormalTex_,
+                            uNormalTexIsUdim_);
+        bindMaterialTexture(mat.emissiveTex, GL_TEXTURE3, GL_TEXTURE17,
+                            uHasEmissiveTex_,
+                            uEmissiveTexIsUdim_);
+        bindMaterialTexture(mat.opacityTex, GL_TEXTURE14, GL_TEXTURE16,
+                            uHasOpacityTex_, uOpacityTexIsUdim_);
+        const int coreSlots[7] = {
+            mat.baseColorTex, mat.metallicTex, mat.normalTex, mat.opacityTex,
+            mat.emissiveTex, mat.roughnessTex, mat.occlusionTex};
+        const GLenum routeUnits[7] = {
+            GL_TEXTURE11, GL_TEXTURE13, GL_TEXTURE15, GL_TEXTURE16,
+            GL_TEXTURE17, GL_TEXTURE22, GL_TEXTURE24};
+        int routeSlots[7];
+        for (int route = 0; route < 7; ++route) {
+          const GLTexture* tex = slotGpuTex(coreSlots[route]);
+          routeSlots[route] =
+              (tex && tex->isUdim && tex->arrayTex) ? coreSlots[route] : -1;
+        }
+        auto bindAdvanced = [&](int slot, GLenum texUnit2D, GLint hasLoc,
+                                int* isUdimOut, int* routeOut) {
+          const GLTexture* tex = slotGpuTex(slot);
+          bool hasTex = tex != nullptr && tex->tex2d != 0;
+          *isUdimOut = 0;
+          *routeOut = -1;
+          if (tex && tex->isUdim && tex->arrayTex) {
+            int route = -1;
+            for (int i = 0; i < 7; ++i) {
+              if (routeSlots[i] == slot) { route = i; break; }
+            }
+            if (route < 0) {
+              for (int i = 0; i < 7; ++i) {
+                if (routeSlots[i] < 0) { route = i; break; }
+              }
+            }
+            if (route >= 0) {
+              routeSlots[route] = slot;
+              glActiveTexture(routeUnits[route]);
+              glBindTexture(GL_TEXTURE_2D_ARRAY, tex->arrayTex);
+              *isUdimOut = 1;
+              *routeOut = route;
+              hasTex = true;
+            } else {
+              hasTex = false;
+            }
+          }
+          glUniform1i(hasLoc, hasTex ? 1 : 0);
+          glActiveTexture(texUnit2D);
+          glBindTexture(GL_TEXTURE_2D,
+                        (hasTex && !*isUdimOut) ? tex->tex2d : whiteTex_);
+        };
+        int advancedIsUdim[4]{}, advancedRoutes[4]{-1, -1, -1, -1};
+        bindAdvanced(mat.specularColorTex, GL_TEXTURE26,
+                     uHasSpecularColorTex_, &advancedIsUdim[0],
+                     &advancedRoutes[0]);
+        bindAdvanced(mat.coatWeightTex, GL_TEXTURE27, uHasCoatWeightTex_,
+                     &advancedIsUdim[1], &advancedRoutes[1]);
+        bindAdvanced(mat.coatColorTex, GL_TEXTURE28, uHasCoatColorTex_,
+                     &advancedIsUdim[2], &advancedRoutes[2]);
+        bindAdvanced(mat.coatRoughnessTex, GL_TEXTURE29,
+                     uHasCoatRoughnessTex_, &advancedIsUdim[3],
+                     &advancedRoutes[3]);
+        int coatNormalIsUdim = 0, coatNormalRoute = -1;
+        bindAdvanced(mat.coatNormalTex, GL_TEXTURE30, uHasCoatNormalTex_,
+                     &coatNormalIsUdim, &coatNormalRoute);
+        glUniform4iv(uAdvancedTexIsUdim_, 1, advancedIsUdim);
+        glUniform4iv(uAdvancedUdimRoutes_, 1, advancedRoutes);
+        const int advancedSlots[4] = {
+            mat.specularColorTex, mat.coatWeightTex, mat.coatColorTex,
+            mat.coatRoughnessTex};
+        glUniform4iv(uAdvancedUdimSlots_, 1, advancedSlots);
+        glUniform1i(uCoatNormalTexIsUdim_, coatNormalIsUdim);
+        glUniform1i(uCoatNormalUdimRoute_, coatNormalRoute);
+        glUniform1i(uCoatNormalUdimSlot_, mat.coatNormalTex);
+        bindMaterialTexture(mat.occlusionTex, GL_TEXTURE23, GL_TEXTURE24,
+                            uHasOcclusionTex_, uOcclusionTexIsUdim_);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, slotTex(mat.baseColorTex));
-        glUniform1i(uHasBaseColorTex_, mat.baseColorTex >= 0 ? 1 : 0);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, slotTex(mat.metalRoughTex));
-        glUniform1i(uHasMetalRoughTex_, mat.metalRoughTex >= 0 ? 1 : 0);
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, slotTex(mat.normalTex));
-        glUniform1i(uHasNormalTex_, mat.normalTex >= 0 ? 1 : 0);
-        glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, slotTex(mat.emissiveTex));
-        glUniform1i(uHasEmissiveTex_, mat.emissiveTex >= 0 ? 1 : 0);
       }
       glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
                      (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)));
+      }
     }
   }
 
   // Instanced pass: PointInstancer prototypes drawn with glDrawElementsInstanced.
   // Flat-shaded (default gray material, hardcoded headlight in the fragment
-  // shader); each instance's model matrix comes from vertex attribs 6-9.
+  // shader); each instance's model matrix comes from vertex attribs 3-5, color
+  // from attrib 9, opacity from attrib 11. Batches with any instance opacity < 1
+  // draw in the translucent pass; the rest draw in opaque/All.
   bool anyInstanced = false;
   for (const GLMesh& m : meshes_) {
     if (m.instanceCount > 0) { anyInstanced = true; break; }
@@ -1434,12 +3386,48 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUseProgram(instProgram_);
     glUniformMatrix4fv(iUViewProj_, 1, GL_FALSE, VP.m);
     glUniform3fv(iCameraPos_, 1, params.cameraPos);
+    glUniform1f(iExposure_, params.exposure);
+    const bool hasPointShadow = pointShadowCameras_.lightSlot >= 0 &&
+                                pointShadowDepthTex_ != 0;
+    const bool hasPlanarShadow = shadowCamera_.lightSlot >= 0 && shadowDepthTex_ != 0;
+    const int shadowLightSlot = hasPointShadow ? pointShadowCameras_.lightSlot
+                                                : shadowCamera_.lightSlot;
+    glUniform1i(iHasShadowMap_, hasPlanarShadow ? 1 : 0);
+    glUniform1i(iShadowLightSlot_, shadowLightSlot);
+    glUniformMatrix4fv(iShadowViewProj_, 1, GL_FALSE, shadowCamera_.viewProj.m);
+    glUniform1i(iHasPointShadowMap_, hasPointShadow ? 1 : 0);
+    if (hasPointShadow) {
+      const RasterLightGPU& point = rasterLights_.lights[
+          static_cast<size_t>(pointShadowCameras_.lightSlot)];
+      glUniform3fv(iPointShadowLightPos_, 1, point.positionType);
+      glUniformMatrix4fv(iPointShadowViewProj_, 6, GL_FALSE,
+                         pointShadowCameras_.viewProj[0].m);
+      glActiveTexture(GL_TEXTURE31);
+      glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowDepthTex_);
+    }
+    if (hasPlanarShadow) {
+      glActiveTexture(GL_TEXTURE25);
+      glBindTexture(GL_TEXTURE_2D, shadowDepthTex_);
+    }
+    glUniform3fv(iLightDir_, 1, params.lightDir);
+    glUniform1i(iHasIbl_, iblActive_ ? 1 : 0);
+    if (iblActive_) {
+      glUniform3fv(iIblColor_, 1, iblColor_);
+      glUniformMatrix3fv(iEnvRotation_, 1, GL_FALSE, iblRotation_);
+    }
+    glUniform3fv(iLightColor_, 1, params.lightColor);
+    UploadRasterLightArray(instProgram_, rasterLights_);
     const float black[3] = {0.0f, 0.0f, 0.0f};
     glUniform3fv(iEmissive_, 1, overrideEmissive ? overrideEmissive : black);
     glUniform1i(iRenderMode_, static_cast<int>(params.mode));
     glUniform1f(iDepthScale_, params.depthScale > 1e-4f ? params.depthScale : 1.0f);
     glUniform3fv(iSceneMin_, 1, params.sceneMin);
     glUniform3fv(iSceneExtent_, 1, params.sceneExtent);
+    // Scene-wide bone texture (unit 4), shared with the mesh program.
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+    glActiveTexture(GL_TEXTURE0);
+    cullState = -1;  // reset across the program switch; dedup within this pass
     for (size_t mi = 0; mi < meshes_.size(); ++mi) {
       if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
           !params.meshVisible[mi]) {
@@ -1447,30 +3435,86 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       }
       const GLMesh& mesh = meshes_[mi];
       if (mesh.instanceCount <= 0 || mesh.drawInstanceCount <= 0) continue;
+      if (alphaPass == AlphaPass::Opaque && mesh.hasTranslucentInstances) continue;
+      if (alphaPass == AlphaPass::Translucent && !mesh.hasTranslucentInstances) continue;
       glUniform1i(iMeshId_, static_cast<int>(mi));
+      UploadRasterLightMask(instProgram_, rasterLights_, static_cast<int>(mi));
       glUniform1i(iGeometricNormal_, mesh.geometricNormal ? 1 : 0);
       glUniform1i(iDoubleSided_, mesh.doubleSided ? 1 : 0);
       glUniform1i(iPurpose_, mesh.purposeId);
       glUniform1i(iKind_, mesh.kindId);
-      if (mesh.doubleSided || wireframe) {
-        glDisable(GL_CULL_FACE);
-      } else {
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
+      // Skeletal skinning of the PROTOTYPE (all its instances share one pose).
+      // The bone texture is scene-wide and stays bound for the whole pass; only
+      // the enable flag is per-draw. Unskinned prototypes carry zero weights, so
+      // the shader would pass them through even without this, but skip the fetch.
+      const bool instSkinOn = mesh.skinned && skinningFrameEnabled_;
+      glUniform1i(iSkinningEnabled_, instSkinOn ? 1 : 0);
+      glUniform1i(iBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+      glUniform1i(iBoneMatrixCount_, boneMatrixCount_);
+      if (!mesh.jointVbo) {  // no skin attrs: constant zero weights
+        glVertexAttribI4ui(6, 0, 0, 0, 0);
+        glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
+      }
+      // Only touch cull state on a transition: across tens of thousands of
+      // prototypes the back-face cull flag almost never changes, so the per-draw
+      // glEnable/glDisable/glCullFace was pure redundant driver traffic.
+      const int wantCull = (mesh.doubleSided || wireframe) ? 0 : 1;
+      if (wantCull != cullState) {
+        if (wantCull) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
+        else glDisable(GL_CULL_FACE);
+        cullState = wantCull;
       }
       glBindVertexArray(mesh.vao);
       // Constant per-draw color when there is no per-instance color array (the
       // generic vertex-attribute value feeds aColor for every instance).
       if (!mesh.hasInstanceColors) glVertexAttrib3fv(9, mesh.flatColor);
+      if (!mesh.hasInstanceOpacities) glVertexAttrib1f(11, mesh.flatOpacity);
       // Default per-vertex color to white when the prototype has none (the VAO
       // supplies attrib 10 from vertexColorVbo otherwise).
-      if (!mesh.vertexColorVbo) glVertexAttrib3f(10, 1.0f, 1.0f, 1.0f);
+      if (!mesh.vertexColorVbo) glVertexAttrib4f(10, 1.0f, 1.0f, 1.0f, 1.0f);
+      // GPU blendshape morph for a morphed prototype: bind its delta/coeff/chan
+      // texture-buffers (units 8/9/10, matching the instanced program's samplers)
+      // and enable the in-shader morph. Same as the non-instanced material pass.
+      glUniform1i(iHasMorph_, mesh.hasMorph ? 1 : 0);
+      if (mesh.hasMorph) {
+        glActiveTexture(GL_TEXTURE8);
+        glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
+        glActiveTexture(GL_TEXTURE9);
+        glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+        glActiveTexture(GL_TEXTURE10);
+        glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
+        glActiveTexture(GL_TEXTURE0);
+      }
       for (const auto& sub : mesh.submeshes) {
         glDrawElementsInstanced(
             GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
             (void*)(static_cast<uintptr_t>(sub.indexOffset) * sizeof(uint32_t)),
             mesh.drawInstanceCount);
       }
+    }
+    // LOD box proxies (optimization B): one instanced draw of the shared unit cube
+    // for every distant instance the cull collapsed. Flat geometric-normal shading;
+    // tint from the per-instance color (attrib 9), white per-vertex color.
+    if (boxProxyCount_ > 0 && alphaPass != AlphaPass::Translucent) {
+      glUniform1i(iMeshId_, -1);
+      UploadRasterLightMask(instProgram_, rasterLights_, -1);
+      glUniform1i(iGeometricNormal_, 1);
+      glUniform1i(iDoubleSided_, 0);
+      glUniform1i(iPurpose_, 0);
+      glUniform1i(iKind_, 0);
+      glUniform1i(iHasMorph_, 0);
+      if (cullState != 1) {
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        cullState = 1;
+      }
+      glBindVertexArray(boxProxyVao_);
+      glVertexAttrib3f(1, 0.0f, 1.0f, 0.0f);    // constant normal (FS uses geometric)
+      glVertexAttribI2ui(8, 0u, 0u);            // no morph
+      glVertexAttrib3f(10, 1.0f, 1.0f, 1.0f);   // white per-vertex color (tint=attr 9)
+      glVertexAttrib1f(11, 1.0f);               // box proxies are opaque
+      glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr,
+                              static_cast<GLsizei>(boxProxyCount_));
     }
     glUseProgram(program_);  // restore for any caller that assumes program_
   }
@@ -1512,8 +3556,210 @@ void GLRenderer::appendVolume(const DrawVolumeCPU& v) {
   volumes_.push_back(gv);
 }
 
+void GLRenderer::drawNonMesh(const RenderFrameParams& params) {
+  if (!nonMeshProgram_ || nonMeshBatches_.empty()) return;
+  const light3d::Mat4 vp = ToMat4(params.proj) * ToMat4(params.view);
+  const float right[3] = {params.view[0], params.view[4], params.view[8]};
+  const float up[3] = {params.view[1], params.view[5], params.view[9]};
+  glUseProgram(nonMeshProgram_);
+  glUniformMatrix4fv(nmViewProj_,1,GL_FALSE,vp.m);
+  glUniform3fv(nmCameraPos_,1,params.cameraPos);
+  glUniform3fv(nmCameraRight_,1,right);
+  glUniform3fv(nmCameraUp_,1,up);
+  glUniform3fv(nmLightDir_,1,params.lightDir);
+  glUniform3fv(nmLightColor_,1,params.lightColor);
+  UploadRasterLightArray(nonMeshProgram_, rasterLights_);
+  UploadRasterLightMask(nonMeshProgram_, rasterLights_, -1);
+  glUniform1f(nmExposure_,params.exposure);
+  glUniform1i(nmRenderMode_,static_cast<int>(params.mode));
+  glDisable(GL_CULL_FACE);
+  glEnable(GL_DEPTH_TEST);
+  auto pass=[&](bool translucent){
+    for(const GLNonMeshBatch& b:nonMeshBatches_){
+      if(b.translucent!=translucent)continue;
+      if((params.purposeVisibleMask&(1u<<static_cast<unsigned>(b.purposeId)))==0)continue;
+      if (params.carrierVisible && b.carrierIndex >= 0 &&
+          b.carrierIndex < params.carrierVisibleCount &&
+          !params.carrierVisible[b.carrierIndex]) continue;
+      glUniform1i(nmKind_,b.kind);glUniform1i(nmMaterialId_,b.materialId);
+      glUniform1i(nmCarrierId_,b.carrierId);glUniform1i(nmPurpose_,b.purposeId);
+      glBindVertexArray(b.vao);
+      glDrawArraysInstanced(GL_TRIANGLE_STRIP,0,4,b.count);
+    }
+  };
+  pass(false);
+  if(static_cast<int>(params.mode)==0){glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);glDepthMask(GL_FALSE);pass(true);glDepthMask(GL_TRUE);glDisable(GL_BLEND);}else pass(true);
+  glBindVertexArray(0);
+  glUseProgram(program_);
+}
+
+void GLRenderer::renderShadowMap(const RenderFrameParams& params) {
+  shadowCamera_.lightSlot = -1;
+  pointShadowCameras_.lightSlot = -1;
+  if (!shadowProgram_ || !shadowFbo_) return;
+  const bool point = BuildRasterPointShadowCameras(
+      rasterLights_, params.sceneMin, params.sceneExtent, false, &pointShadowCameras_);
+  if (!point && !BuildRasterShadowCamera(rasterLights_, params.sceneMin,
+                                         params.sceneExtent, false, &shadowCamera_)) return;
+  const int faceCount = point ? 6 : 1;
+  for (int face = 0; face < faceCount; ++face) {
+    const light3d::Mat4& shadowViewProj =
+        point ? pointShadowCameras_.viewProj[static_cast<size_t>(face)]
+              : shadowCamera_.viewProj;
+    glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+    if (point) {
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                             GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+                             pointShadowDepthTex_, 0);
+    } else {
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                             shadowDepthTex_, 0);
+    }
+    glViewport(0, 0, 2048, 2048);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+    glUseProgram(shadowProgram_);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+    if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
+        !params.meshVisible[mi]) continue;
+    if (!RasterShadowIncludesMesh(rasterLights_, static_cast<int>(mi))) continue;
+    const GLMesh& mesh = meshes_[mi];
+    if (mesh.instanceCount > 0) continue;
+    const light3d::Mat4 world = ToMat4(mesh.world);
+    const light3d::Mat4 mvp = shadowViewProj * world;
+    float normal[9];
+    NormalMatrix3(mesh.world, normal);
+    glUniformMatrix4fv(sMVP_, 1, GL_FALSE, mvp.m);
+    glUniformMatrix4fv(sModel_, 1, GL_FALSE, world.m);
+    glUniformMatrix3fv(sNormalMat_, 1, GL_FALSE, normal);
+    glUniform1i(sSkinningEnabled_, mesh.skinned && skinningFrameEnabled_);
+    glUniform1i(sExtendedSkinningEnabled_,
+                mesh.extendedSkinned && skinningFrameEnabled_);
+    glUniform1i(sBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+    glUniform1i(sBoneMatrixCount_, skinningFrameEnabled_ ? boneMatrixCount_ : 1);
+    glUniform1i(sInfluenceTexWidth_, mesh.influenceTexWidth);
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, mesh.influenceTex ? mesh.influenceTex : whiteTex_);
+    glUniform1i(sHasMorph_, mesh.hasMorph);
+    if (mesh.hasMorph) {
+      glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
+      glActiveTexture(GL_TEXTURE9); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+      glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
+    }
+    glBindVertexArray(mesh.vao);
+    for (const DrawSubmesh& sub : mesh.submeshes) {
+      static const GLMaterial fallback;
+      const GLMaterial& mat = sub.materialId >= 0 &&
+                                      static_cast<size_t>(sub.materialId) < materials_.size()
+                                  ? materials_[static_cast<size_t>(sub.materialId)]
+                                  : fallback;
+      const bool displaced = params.displacement && mat.hasDisplacement();
+      glUniform1i(sHasDisplacement_, displaced);
+      glUniform1i(sHasDisplacementTex_, displaced && mat.displacementTex >= 0);
+      glUniform1f(sDisplacementConst_, mat.displacementConst);
+      glUniform1f(sDisplacementScale_, params.displacementScale);
+      glUniform1f(sDisplacementTexScale_, mat.displacementTexScale);
+      glUniform1f(sDisplacementTexBias_, mat.displacementTexBias);
+      glActiveTexture(GL_TEXTURE7);
+      GLuint disp = whiteTex_;
+      if (mat.displacementTex >= 0 &&
+          static_cast<size_t>(mat.displacementTex) < textures_.size() &&
+          textures_[static_cast<size_t>(mat.displacementTex)].tex2d)
+        disp = textures_[static_cast<size_t>(mat.displacementTex)].tex2d;
+      glBindTexture(GL_TEXTURE_2D, disp);
+      glUniform1i(sAlphaMode_, mat.alphaMode);
+      glUniform1f(sAlpha_, mat.alpha);
+      glUniform1f(sAlphaCutoff_, mat.alphaCutoff);
+      SetUvUniform(sBaseAlphaUv0_, sBaseAlphaUv1_, mat.baseColorSample.uv);
+      SetUvUniform(sOpacityUv0_, sOpacityUv1_, mat.opacitySample.uv);
+      glUniform1i(sBaseAlphaUvSet_, mat.baseColorSample.uvSet);
+      glUniform1i(sOpacityUvSet_, mat.opacitySample.uvSet);
+      glUniform4fv(sBaseAlphaScale_, 1, mat.baseColorSample.scale);
+      glUniform4fv(sBaseAlphaBias_, 1, mat.baseColorSample.bias);
+      glUniform1i(sOpacityChannel_, mat.opacityChannel);
+      glUniform1f(sOpacityScale_, mat.opacityTexScale);
+      glUniform1f(sOpacityBias_, mat.opacityTexBias);
+      auto shadowTexture = [&](int slot) -> const GLTexture* {
+        if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return nullptr;
+        return &textures_[static_cast<size_t>(slot)];
+      };
+      const GLTexture* baseAlpha = shadowTexture(mat.baseColorTex);
+      const GLTexture* opacity = shadowTexture(mat.opacityTex);
+      const bool baseUdim = baseAlpha && baseAlpha->isUdim && baseAlpha->arrayTex;
+      const bool opacityUdim = opacity && opacity->isUdim && opacity->arrayTex;
+      glUniform1i(sHasBaseAlphaTex_, baseAlpha ? 1 : 0);
+      glUniform1i(sHasOpacityTex_, opacity ? 1 : 0);
+      glUniform1i(sBaseAlphaIsUdim_, baseUdim ? 1 : 0);
+      glUniform1i(sOpacityIsUdim_, opacityUdim ? 1 : 0);
+      glUniform1i(sBaseAlphaUdimSlot_, std::max(mat.baseColorTex, 0));
+      glUniform1i(sOpacityUdimSlot_, std::max(mat.opacityTex, 0));
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D,
+                    baseAlpha && baseAlpha->tex2d ? baseAlpha->tex2d : whiteTex_);
+      glActiveTexture(GL_TEXTURE14);
+      glBindTexture(GL_TEXTURE_2D,
+                    opacity && opacity->tex2d ? opacity->tex2d : whiteTex_);
+      if (baseUdim) {
+        glActiveTexture(GL_TEXTURE11);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, baseAlpha->arrayTex);
+      }
+      if (opacityUdim) {
+        glActiveTexture(GL_TEXTURE16);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, opacity->arrayTex);
+      }
+      glActiveTexture(GL_TEXTURE12);
+      glBindTexture(GL_TEXTURE_2D, udimLutAtlas_);
+      glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount),
+                     GL_UNSIGNED_INT,
+                     reinterpret_cast<void*>(static_cast<uintptr_t>(sub.indexOffset) *
+                                             sizeof(uint32_t)));
+    }
+  }
+    if (shadowInstProgram_) {
+    glUseProgram(shadowInstProgram_);
+    glUniformMatrix4fv(siViewProj_, 1, GL_FALSE, shadowViewProj.m);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+      if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
+          !params.meshVisible[mi]) continue;
+      if (!RasterShadowIncludesMesh(rasterLights_, static_cast<int>(mi))) continue;
+      const GLMesh& mesh = meshes_[mi];
+      if (mesh.instanceCount <= 0 || mesh.drawInstanceCount <= 0) continue;
+      glUniform1i(siSkinningEnabled_, mesh.skinned && skinningFrameEnabled_);
+      glUniform1i(siBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+      glUniform1i(siBoneMatrixCount_, skinningFrameEnabled_ ? boneMatrixCount_ : 1);
+      glUniform1i(siHasMorph_, mesh.hasMorph);
+      if (mesh.hasMorph) {
+        glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphDeltaTex);
+        glActiveTexture(GL_TEXTURE9); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphCoeffTex);
+        glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_BUFFER, mesh.morphChanTex);
+      }
+      glBindVertexArray(mesh.vao);
+      for (const DrawSubmesh& sub : mesh.submeshes) {
+        glDrawElementsInstanced(
+            GL_TRIANGLES, static_cast<GLsizei>(sub.indexCount), GL_UNSIGNED_INT,
+            reinterpret_cast<void*>(static_cast<uintptr_t>(sub.indexOffset) *
+                                    sizeof(uint32_t)),
+            mesh.drawInstanceCount);
+      }
+    }
+    }
+  }
+  glBindVertexArray(0);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glCullFace(GL_BACK);
+  glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+}
+
 void GLRenderer::renderFrame(const RenderFrameParams& params) {
   if (!fbo_ || !program_ || !params.view || !params.proj) return;
+  renderShadowMap(params);
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
   glViewport(0, 0, vpW_, vpH_);
   glClearColor(params.clearColor[0], params.clearColor[1], params.clearColor[2],
@@ -1523,10 +3769,85 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
 
   glUseProgram(program_);
   glUniform3fv(uCameraPos_, 1, params.cameraPos);
+  glUniform1f(uExposure_, params.exposure);
+  glUniform3fv(uLightDir_, 1, params.lightDir);
+  glUniform3fv(uLightColor_, 1, params.lightColor);
+  UploadRasterLightArray(program_, rasterLights_);
+  const bool hasShadow = shadowCamera_.lightSlot >= 0 && shadowDepthTex_ != 0;
+  const bool hasPointShadow = pointShadowCameras_.lightSlot >= 0 &&
+                              pointShadowDepthTex_ != 0;
+  const int shadowLightSlot = hasPointShadow ? pointShadowCameras_.lightSlot
+                                              : shadowCamera_.lightSlot;
+  glUniform1i(uHasShadowMap_, hasShadow ? 1 : 0);
+  glUniform1i(uShadowLightSlot_, shadowLightSlot);
+  glUniformMatrix4fv(uShadowViewProj_, 1, GL_FALSE, shadowCamera_.viewProj.m);
+  glUniform1i(uHasPointShadowMap_, hasPointShadow ? 1 : 0);
+  if (hasPointShadow) {
+    const RasterLightGPU& point = rasterLights_.lights[
+        static_cast<size_t>(pointShadowCameras_.lightSlot)];
+    glUniform3fv(uPointShadowLightPos_, 1, point.positionType);
+    glUniformMatrix4fv(uPointShadowViewProj_, 6, GL_FALSE,
+                       pointShadowCameras_.viewProj[0].m);
+    glActiveTexture(GL_TEXTURE31);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, pointShadowDepthTex_);
+  }
+  if (hasShadow) {
+    glActiveTexture(GL_TEXTURE25);
+    glBindTexture(GL_TEXTURE_2D, shadowDepthTex_);
+    glActiveTexture(GL_TEXTURE0);
+  }
+  glUniform1i(uHasIbl_, iblActive_ ? 1 : 0);
+  if (iblActive_) {
+    glUniform3fv(uIblColor_, 1, iblColor_);
+    glUniformMatrix3fv(uEnvRotation_, 1, GL_FALSE, iblRotation_);
+    glUniform1i(uPrefilteredLods_, iblSpecLods_);
+    glActiveTexture(GL_TEXTURE19);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, iblIrrTex_);
+    glActiveTexture(GL_TEXTURE20);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, iblSpecTex_);
+    glActiveTexture(GL_TEXTURE21);
+    glBindTexture(GL_TEXTURE_2D, iblLutTex_);
+    glActiveTexture(GL_TEXTURE0);
+  }
 
-  const bool wire = (params.mode == RenderMode::Wireframe);
-  glPolygonMode(GL_FRONT_AND_BACK, wire ? GL_LINE : GL_FILL);
-  drawMeshes(params, wire, nullptr);
+  // Resolve the wireframe state: explicit params.wireMode wins; the legacy
+  // RenderMode::Wireframe maps to "wireframe only".
+  int wireMode = params.wireMode;
+  if (wireMode == 0 && params.mode == RenderMode::Wireframe) wireMode = 1;
+  const bool haveWire = (wireProgram_ != 0 || wireInstProgram_ != 0);
+  const bool wire = (wireMode != 0);  // disables back-face cull in fill passes
+  // Wireframe is a diagnostic overlay, independent of the preview light and
+  // material colors. Keep it legible against both the light and dark themes.
+  const float wireCol[3] = {0.04f, 0.24f, 0.10f};  // dark green
+
+  if (wireMode == 1 && haveWire) {
+    // Wireframe only (hidden-line removed): render the fill into DEPTH ONLY so
+    // occluded edges are hidden, then draw the polygon edges over the background.
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    drawMeshes(params, /*wireframe=*/false, nullptr);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    drawWireframe(params, wireCol);
+  } else {
+    // Shaded fill. In the lit mode (RenderMode 0), draw opaque geometry first,
+    // then translucent (Blend) materials in a separate back-to-front, blended,
+    // depth-write-off pass so transparency composites over what's behind it.
+    // AOV / debug modes draw everything in one unblended pass (blending would
+    // corrupt the encoded AOV values).
+    const bool shaded = (static_cast<int>(params.mode) == 0);
+    if (shaded) {
+      drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::Opaque);
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glDepthMask(GL_FALSE);
+      drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::Translucent);
+      glDepthMask(GL_TRUE);
+      glDisable(GL_BLEND);
+    } else {
+      drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::All);
+    }
+    if (wireMode == 2 && haveWire) drawWireframe(params, wireCol);
+  }
+  if (wireMode != 1) drawNonMesh(params);
 
   // Highlight overlay (wireframe, emissive orange) on the selected mesh.
   if (params.highlightMeshIndex >= 0 &&
@@ -1554,10 +3875,15 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glUniform3f(uBaseColor_, 0, 0, 0);
     glUniform3fv(uEmissive_, 1, orange);
     glUniform1f(uAlpha_, 1.f);
+    glUniform1i(uAlphaMode_, 0);
+    glUniform1f(uAlphaCutoff_, 0.5f);
     glUniform1i(uHasBaseColorTex_, 0);
-    glUniform1i(uHasMetalRoughTex_, 0);
+    glUniform1i(uHasMetallicTex_, 0);
+    glUniform1i(uHasRoughnessTex_, 0);
     glUniform1i(uHasNormalTex_, 0);
     glUniform1i(uHasEmissiveTex_, 0);
+    glUniform1i(uHasOpacityTex_, 0);
+    glUniform1i(uHasOcclusionTex_, 0);
     glDisable(GL_CULL_FACE);
     glBindVertexArray(mesh.vao);
     if (params.highlightIndices && params.highlightIndexCount > 0) {
@@ -1645,6 +3971,25 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     }
     glDisable(GL_CULL_FACE);
     glDrawArrays(GL_LINES, 0, params.helperLineVertexCount);
+    glBindVertexArray(0);
+  }
+
+  // Selection highlight lines are also used for native Points/Curves, which do
+  // not have a mesh polygon-mode overlay.
+  if (params.highlightLines && params.highlightLineVertexCount > 0 && lineProgram_) {
+    glUseProgram(lineProgram_);
+    const light3d::Mat4 VP = ToMat4(params.proj) * ToMat4(params.view);
+    glUniformMatrix4fv(uLineVP_, 1, GL_FALSE, VP.m);
+    glBindVertexArray(lineVao_); glBindBuffer(GL_ARRAY_BUFFER, lineVbo_);
+    const size_t bytes = static_cast<size_t>(params.highlightLineVertexCount) * sizeof(HelperVertex);
+    if (bytes > lineVboCap_) {
+      glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(bytes), params.highlightLines, GL_DYNAMIC_DRAW);
+      lineVboCap_ = bytes;
+    } else {
+      glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(bytes), params.highlightLines);
+    }
+    glDisable(GL_CULL_FACE);
+    glDrawArrays(GL_LINES, 0, params.highlightLineVertexCount);
     glBindVertexArray(0);
   }
 
@@ -1739,6 +4084,24 @@ void GLRenderer::present() {
 }
 #endif
 
+bool GLRenderer::gpuMemoryMB(size_t* usedMB, size_t* totalMB) const {
+  // GL_NVX_gpu_memory_info (NVIDIA, and exposed by Mesa for AMD/Intel): total
+  // dedicated VRAM + currently-available; used = total - available.
+  constexpr GLenum kDedicated = 0x9047;  // GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX
+  constexpr GLenum kAvailable = 0x9049;  // GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX
+  GLint totalKB = 0, availKB = 0;
+  while (glGetError() != GL_NO_ERROR) {}  // clear prior errors
+  glGetIntegerv(kDedicated, &totalKB);
+  glGetIntegerv(kAvailable, &availKB);
+  if (glGetError() != GL_NO_ERROR || totalKB <= 0) return false;
+  if (totalMB) *totalMB = static_cast<size_t>(totalKB) / 1024u;
+  if (usedMB) {
+    const GLint usedKB = totalKB > availKB ? (totalKB - availKB) : 0;
+    *usedMB = static_cast<size_t>(usedKB) / 1024u;
+  }
+  return true;
+}
+
 bool GLRenderer::captureViewport(std::vector<uint8_t>* rgba, int* w, int* h) {
   if (!fbo_ || vpW_ < 1 || vpH_ < 1) return false;
   *w = vpW_;
@@ -1781,9 +4144,17 @@ void GLRenderer::shutdown() {
   if (depthRbo_) { glDeleteRenderbuffers(1, &depthRbo_); depthRbo_ = 0; }
   if (fbo_) { glDeleteFramebuffers(1, &fbo_); fbo_ = 0; }
   if (program_) { glDeleteProgram(program_); program_ = 0; }
+  if (shadowProgram_) { glDeleteProgram(shadowProgram_); shadowProgram_ = 0; }
+  if (shadowInstProgram_) { glDeleteProgram(shadowInstProgram_); shadowInstProgram_ = 0; }
+  if (shadowDepthTex_) { glDeleteTextures(1, &shadowDepthTex_); shadowDepthTex_ = 0; }
+  if (pointShadowDepthTex_) { glDeleteTextures(1, &pointShadowDepthTex_); pointShadowDepthTex_ = 0; }
+  if (shadowFbo_) { glDeleteFramebuffers(1, &shadowFbo_); shadowFbo_ = 0; }
   if (tessProgram_) { glDeleteProgram(tessProgram_); tessProgram_ = 0; }
   if (instProgram_) { glDeleteProgram(instProgram_); instProgram_ = 0; }
+  if (wireProgram_) { glDeleteProgram(wireProgram_); wireProgram_ = 0; }
+  if (wireInstProgram_) { glDeleteProgram(wireInstProgram_); wireInstProgram_ = 0; }
   if (lineProgram_) { glDeleteProgram(lineProgram_); lineProgram_ = 0; }
+  if (nonMeshProgram_) { glDeleteProgram(nonMeshProgram_); nonMeshProgram_ = 0; }
   if (lineVbo_) { glDeleteBuffers(1, &lineVbo_); lineVbo_ = 0; }
   if (lineVao_) { glDeleteVertexArrays(1, &lineVao_); lineVao_ = 0; }
   for (GLVolume& gv : volumes_) {

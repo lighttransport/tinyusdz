@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "next/eval/attribute-eval.hh"
+#include "next/layer/asset-anchor.hh"
 #include "next/layer/layer.hh"
 #include "next/tinyusdz-next.hh"
 #include "next/writer/usda-writer.hh"
@@ -26,6 +27,19 @@
 #include "next/stage/stage.hh"
 
 using namespace tinyusdz::next;
+
+// Always-on check: this file's build type is Release for the ctest gate, where
+// assert() is compiled out (-DNDEBUG). New assertions that must genuinely gate
+// use PCP_CHECK, which records a failure and is honored by main()'s exit code.
+static int g_pcp_check_failures = 0;
+#define PCP_CHECK(cond, msg)                                              \
+  do {                                                                    \
+    if (!(cond)) {                                                        \
+      std::cerr << "PCP_CHECK FAILED: " << (msg) << " @ " << __FILE__     \
+                << ":" << __LINE__ << std::endl;                          \
+      ++g_pcp_check_failures;                                             \
+    }                                                                     \
+  } while (0)
 
 // Build an in-memory root layer:
 //   /World (Xform)
@@ -137,10 +151,14 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.current()->meta().references.push_back("</Lib/RefModel>");
   lb.current()->meta().instanceable = true;
   lb.end_prim();
-  // Relocate /World/Old -> /World/New (authored on World).
-  lb.current()->meta().relocates().push_back({"/World/Old", "/World/New"});
-  lb.begin_prim("Old", "Scope");
-  lb.end_prim();  // Old (relocated to New)
+  // Relocate an ARC-INTRODUCED prim (pxr only relocates prims delivered
+  // across a composition arc on an ANCESTOR): RigHost references /Lib/Model,
+  // whose child Inner (Sphere) is relocated to /World/New.
+  lb.current()->meta().relocates().push_back(
+      {"/World/RigHost/Inner", "/World/New"});
+  lb.begin_prim("RigHost", "");
+  lb.current()->meta().references.push_back("</Lib/Model>");
+  lb.end_prim();  // RigHost
   lb.end_prim();  // World
 
   lb.begin_prim("Lib", "Scope");
@@ -1385,6 +1403,44 @@ static void test_variant_inline_property_flags() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_variant_option_authored_state() {
+  std::cout << "test_variant_option_authored_state..." << std::endl;
+  const std::string root = "/tmp/next_pcp_var_authored_state.usda";
+  {
+    std::ofstream f(root);
+    // Authored `hidden = 0` on the SELECTED option is a real opinion and must
+    // land on the composed prim (pxr flatten emits `hidden = false`); the
+    // unselected option's `hidden = 1` must not leak.
+    f << "#usda 1.0\n"
+         "def Xform \"P\" (\n"
+         "    variants = { string v = \"a\" }\n"
+         "    prepend variantSets = \"v\"\n"
+         ")\n"
+         "{\n"
+         "    variantSet \"v\" = {\n"
+         "        \"a\" ( hidden = 0 ) {\n"
+         "            float inA = 1\n"
+         "        }\n"
+         "        \"b\" ( hidden = 1 ) {\n"
+         "            float inB = 2\n"
+         "        }\n"
+         "    }\n"
+         "}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  const std::string usda = WriteUSDAToString(stage);
+  assert(usda.find("hidden = false") != std::string::npos &&
+         "authored hidden=0 on the selected variant option must compose");
+  assert(usda.find("hidden = true") == std::string::npos &&
+         "unselected option's hidden=1 must not leak");
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_variants() {
   std::cout << "test_variants..." << std::endl;
   AssetResolver resolver;
@@ -1568,6 +1624,154 @@ static void test_instancing() {
   std::cout << "  OK" << std::endl;
 }
 
+// Nested-instancing fixture:
+//   /World (Xform)
+//     /CA (instanceable) -> </Lib/Cluster>
+//     /CB (instanceable) -> </Lib/Cluster>
+//   /Lib (Scope)
+//     /Cluster (Xform) { /L1 (instanceable -> </Lib/Leaf>),
+//                        /L2 (instanceable -> </Lib/Leaf>) }
+//     /Leaf (Mesh) { /Tip (Sphere) }
+static std::shared_ptr<Layer> BuildNestedInstanceLayer() {
+  Layer layer;
+  LayerBuilder lb(layer);
+  lb.begin_prim("World", "Xform");
+  lb.begin_prim("CA", "");
+  lb.current()->meta().references.push_back("</Lib/Cluster>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
+  lb.begin_prim("CB", "");
+  lb.current()->meta().references.push_back("</Lib/Cluster>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
+  lb.end_prim();  // World
+
+  lb.begin_prim("Lib", "Scope");
+  lb.begin_prim("Cluster", "Xform");
+  lb.begin_prim("L1", "");
+  lb.current()->meta().references.push_back("</Lib/Leaf>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
+  lb.begin_prim("L2", "");
+  lb.current()->meta().references.push_back("</Lib/Leaf>");
+  lb.current()->meta().instanceable = true;
+  lb.end_prim();
+  lb.end_prim();  // Cluster
+  lb.begin_prim("Leaf", "Mesh");
+  lb.begin_prim("Tip", "Sphere");
+  lb.end_prim();  // Tip
+  lb.end_prim();  // Leaf
+  lb.end_prim();  // Lib
+
+  lb.finalize();
+  return std::make_shared<Layer>(std::move(layer));
+}
+
+// I3: instance<->prototype path translation API.
+static void test_path_translation() {
+  std::cout << "test_path_translation..." << std::endl;
+  AssetResolver resolver;
+  auto root = BuildRootLayer();
+  auto opened = pcp::Cache::Open(resolver, root);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  std::string warn, err;
+  std::vector<Path> paths{Path("/World/Inst1"), Path("/World/Inst2"),
+                          Path("/World/Inst3")};
+  assert(cache.PrewarmPrimIndices(paths, &warn, &err));
+
+  // Identify which of Inst1/Inst2 is the (non-prototype) instance and its shared
+  // prototype root.
+  const Path proto = cache.GetPrototype(Path("/World/Inst1"));
+  PCP_CHECK(!proto.empty(), "Inst1 should have a prototype");
+  const Path inst = cache.IsInstance(Path("/World/Inst1"))
+                        ? Path("/World/Inst1")
+                        : Path("/World/Inst2");
+  PCP_CHECK(cache.IsInstance(inst), "picked path must be an instance");
+
+  // Instance root -> prototype root.
+  PCP_CHECK(cache.TranslatePathToPrototype(inst) == proto,
+            "instance root should translate to its prototype root");
+  // Descendant of the instance -> matching descendant of the prototype (the
+  // referenced /Lib/Model has child Inner).
+  const Path inst_inner = Path(inst.str() + "/Inner");
+  const Path proto_inner = Path(proto.str() + "/Inner");
+  PCP_CHECK(cache.TranslatePathToPrototype(inst_inner) == proto_inner,
+            "instance descendant should translate into prototype space");
+  // A path under no instance yields an empty translation.
+  PCP_CHECK(cache.TranslatePathToPrototype(Path("/World")).empty(),
+            "non-instance path should translate to empty");
+  PCP_CHECK(cache.TranslatePathToPrototype(Path("/Lib/Model")).empty(),
+            "prototype-space/library path should translate to empty");
+
+  // Inverse translation + round-trip onto the specific instance.
+  PCP_CHECK(cache.TranslatePathFromPrototype(proto, inst) == inst,
+            "prototype root should map back to the instance root");
+  PCP_CHECK(cache.TranslatePathFromPrototype(proto_inner, inst) == inst_inner,
+            "prototype descendant should map back onto the instance");
+  PCP_CHECK(cache.TranslatePathFromPrototype(
+                cache.TranslatePathToPrototype(inst_inner), inst) == inst_inner,
+            "to/from prototype should round-trip");
+  // FromPrototype requires an instance root and an enclosing prototype.
+  PCP_CHECK(
+      cache.TranslatePathFromPrototype(proto_inner, Path("/World")).empty(),
+      "FromPrototype on a non-instance root should be empty");
+  PCP_CHECK(
+      cache.TranslatePathFromPrototype(Path("/Lib/Other"), inst).empty(),
+      "FromPrototype of a path outside the prototype should be empty");
+
+  // --- Nested instancing: an instance inside a prototype. ---
+  {
+    auto nroot = BuildNestedInstanceLayer();
+    auto nopened = pcp::Cache::Open(resolver, nroot);
+    assert(nopened);
+    pcp::Cache ncache = std::move(*nopened);
+    Stage stage;
+    // BuildStage discovers the full nested prototype grouping in one pass.
+    assert(ncache.BuildStage(&stage, &warn, &err));
+
+    // Two prototype groups: the Cluster group ({CA,CB}) and the nested Leaf
+    // group ({L1,L2}) living inside the Cluster prototype holder.
+    PCP_CHECK(ncache.PrototypeCount() == 2,
+              "nested scene should have two prototype groups");
+    const Path proto_cluster = ncache.GetPrototype(Path("/World/CB"));
+    const Path proto_leaf = ncache.GetPrototype(Path("/World/CA/L2"));
+    PCP_CHECK(!proto_cluster.empty() && !proto_leaf.empty(),
+              "nested prototypes should resolve");
+
+    // Single level: a Cluster instance -> the Cluster prototype root.
+    PCP_CHECK(ncache.TranslatePathToPrototype(Path("/World/CB")) == proto_cluster,
+              "Cluster instance should translate to the Cluster prototype");
+    // Nested instance living inside the prototype holder -> the Leaf prototype.
+    PCP_CHECK(ncache.TranslatePathToPrototype(Path("/World/CA/L2")) == proto_leaf,
+              "nested instance inside a prototype should translate to Leaf proto");
+    // Two-level: a leaf descendant reached through the outer instance AND the
+    // nested instance rewrites through both prototype roots.
+    const Path leaf_tip = Path(proto_leaf.str() + "/Tip");
+    PCP_CHECK(ncache.TranslatePathToPrototype(Path("/World/CB/L2/Tip")) == leaf_tip,
+              "two-level nested descendant should rewrite through both prototypes");
+    PCP_CHECK(ncache.TranslatePathToPrototype(Path("/World/CB/L1")) ==
+                  proto_leaf,
+              "outer-instance nested child should translate to the Leaf proto");
+
+    // Inverse round-trips at the outer level.
+    PCP_CHECK(
+        ncache.TranslatePathFromPrototype(proto_cluster, Path("/World/CB")) ==
+            Path("/World/CB"),
+        "Cluster prototype root should map back to the CB instance");
+
+    // Identity consistency: a fresh recompose yields the same grouping.
+    pcp::Cache ncache2 = std::move(*pcp::Cache::Open(resolver, nroot));
+    Stage stage2;
+    assert(ncache2.BuildStage(&stage2, &warn, &err));
+    PCP_CHECK(ncache2.GetPrototype(Path("/World/CB")) == proto_cluster &&
+                  ncache2.GetPrototype(Path("/World/CA/L2")) == proto_leaf,
+              "prototype grouping must be identical across recompose");
+  }
+  std::cout << "  OK" << std::endl;
+}
+
 // FU1: relocates rename a prim in the composed namespace.
 static void test_relocates() {
   std::cout << "test_relocates..." << std::endl;
@@ -1582,8 +1786,10 @@ static void test_relocates() {
   assert(cache.BuildStage(&stage, &warn, &err));
 
   assert(stage.GetPrimAtPath("/World/New").IsValid() && "relocate target missing");
-  assert(!stage.GetPrimAtPath("/World/Old").IsValid() && "relocate source leaked");
-  assert(stage.GetPrimAtPath("/World/New").GetTypeName() == "Scope");
+  assert(!stage.GetPrimAtPath("/World/RigHost/Inner").IsValid() &&
+         "relocate source leaked");
+  // Content is the arc-delivered Sphere child of the referenced Model.
+  assert(stage.GetPrimAtPath("/World/New").GetTypeName() == "Sphere");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1635,7 +1841,10 @@ static void test_implied_inherit() {
 
   UsdPrim q = stage.GetPrimAtPath("/World/Q");
   assert(q.IsValid());
-  assert(q.GetTypeName() == "Mesh" && "cross-file reference type missing");
+  // Oracle-verified (pxr 26.05): the root-stack IMPLIED class is stronger
+  // than the whole reference subtree, so its authored type (Scope) wins over
+  // the referenced Mesh (usdcat --flatten composes `def Scope`).
+  assert(q.GetTypeName() == "Scope" && "implied-class type must win");
   assert(q.GetPropertyValue("libClassProp") != nullptr &&
          "direct (referenced-stack) inherit missing");
   assert(q.GetPropertyValue("rootClassProp") != nullptr &&
@@ -1820,37 +2029,41 @@ static void test_cross_source_variant() {
 static void test_implied_intermediate() {
   std::cout << "test_implied_intermediate..." << std::endl;
 
+  // ROOT-level untyped classes: pxr REJECTS a prim inheriting its own child
+  // class through a reference chain ("Cycle detected ... CANNOT inherit
+  // from"), so the classes live at each layer's root (oracle-verified shape:
+  // T composes Mesh + fooB/fooA/fooRoot).
   auto B = std::make_shared<Layer>();
   {
     LayerBuilder bb(*B);
-    bb.begin_prim("B", "Mesh");
-    bb.current()->meta().inherits.push_back("</B/_class_Foo>");
-    bb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    bb.begin_prim("_class_Foo", "", PrimSpecifier::Class);
     bb.add_property("fooB", Value::MakeFloat3(1, 0, 0));
     bb.end_prim();
+    bb.begin_prim("B", "Mesh");
+    bb.current()->meta().inherits.push_back("</_class_Foo>");
     bb.end_prim();
     bb.finalize();
   }
   auto A = std::make_shared<Layer>();
   {
     LayerBuilder ab(*A);
-    ab.begin_prim("A", "");
-    ab.current()->meta().references.push_back("@assetB@</B>");
-    ab.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    ab.begin_prim("_class_Foo", "", PrimSpecifier::Class);
     ab.add_property("fooA", Value::MakeFloat3(0, 1, 0));
     ab.end_prim();
+    ab.begin_prim("A", "");
+    ab.current()->meta().references.push_back("@assetB@</B>");
     ab.end_prim();
     ab.finalize();
   }
   auto rootL = std::make_shared<Layer>();
   {
     LayerBuilder rb(*rootL);
+    rb.begin_prim("_class_Foo", "", PrimSpecifier::Class);
+    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
+    rb.end_prim();
     rb.begin_prim("World", "Xform");
     rb.begin_prim("T", "");
     rb.current()->meta().references.push_back("@assetA@</A>");
-    rb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
-    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
-    rb.end_prim();
     rb.end_prim();
     rb.end_prim();
     rb.finalize();
@@ -1914,16 +2127,19 @@ static void test_writer_listop_fidelity() {
 
   std::string out = WriteLayerToString(layer, USDAWriteOptions());
   // The edit's qualifiers are preserved (old writer always emitted `prepend`
-  // and never `delete`).
-  assert(out.find("prepend references = [") != std::string::npos);
-  assert(out.find("delete references = [") != std::string::npos);
+  // and never `delete`). Single arc targets print WITHOUT list brackets
+  // (pxr spelling).
+  assert(out.find("prepend references = ") != std::string::npos &&
+         out.find("prepend references = [") == std::string::npos);
+  assert(out.find("delete references = ") != std::string::npos &&
+         out.find("delete references = [") == std::string::npos);
   // The bare prim emits an unqualified (explicit) list. It is the only prim
-  // whose `references = [` is not preceded by a qualifier word.
-  assert(out.find("\n        references = [") != std::string::npos ||
-         out.find("\n    references = [") != std::string::npos);
-  assert(out.find("inherits = [") != std::string::npos &&
+  // whose `references =` is not preceded by a qualifier word.
+  assert(out.find("\n        references = ") != std::string::npos ||
+         out.find("\n    references = ") != std::string::npos);
+  assert(out.find("inherits = </_class_Base>") != std::string::npos &&
          "USDA writer must emit inherits arcs");
-  assert(out.find("specializes = [") != std::string::npos &&
+  assert(out.find("specializes = </_class_Fallback>") != std::string::npos &&
          "USDA writer must emit specializes arcs");
   std::cout << "  OK" << std::endl;
 }
@@ -2218,6 +2434,75 @@ static void test_sublayer_authored_reference_anchor() {
   std::cout << "  OK" << std::endl;
 }
 
+// payload_policy_with_prim must receive the payload's AUTHORING PrimSpec after
+// list-op merging across the layer stack, not the strongest spec. The root
+// layer holds the strongest spec (an `over`); the payload arc lives on the
+// weaker sublayer in a DIFFERENT directory, and only the authoring spec's
+// asset anchor lets a policy stat the relative payload path correctly.
+static void test_payload_policy_owner_anchor() {
+  std::cout << "test_payload_policy_owner_anchor..." << std::endl;
+  // /tmp/ppoa/root.usda      (strongest: over /World/P, no payload)
+  // /tmp/ppoa/sub/weak.usda  (def /World/P, prepend payload = @./pay.usda@)
+  // /tmp/ppoa/sub/pay.usda   (def Mesh "Pay" -- relative to sub/)
+  ::system("mkdir -p /tmp/ppoa/sub");
+  { std::ofstream f("/tmp/ppoa/sub/pay.usda");
+    f << "#usda 1.0\ndef Mesh \"Pay\" { custom int marker = 42 }\n"; }
+  { std::ofstream f("/tmp/ppoa/sub/weak.usda");
+    f << "#usda 1.0\n"
+         "def Xform \"World\"\n{\n"
+         "    def \"P\" (\n"
+         "        prepend payload = @./pay.usda@</Pay>\n"
+         "    )\n    {\n    }\n}\n"; }
+  { std::ofstream f("/tmp/ppoa/root.usda");
+    f << "#usda 1.0\n(\n    subLayers = [@sub/weak.usda@]\n)\n"
+         "over \"World\"\n{\n"
+         "    over \"P\"\n    {\n"
+         "        custom int strongOpinion = 1\n"
+         "    }\n}\n"; }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp/ppoa");
+
+  // Mimic LargeSceneLoader's budget policy: stat the relative asset against
+  // the OWNER's anchor and admit only if the file exists there.
+  std::vector<std::string> seen_anchors;
+  pcp::CompositionOptions opts;
+  opts.payload_policy_with_prim = [&seen_anchors](
+      const Path &, const std::string &asset, const PrimSpec &owner) -> bool {
+    const std::string &anchor = AssetAnchorPath(owner.asset_anchor_id());
+    seen_anchors.push_back(anchor);
+    if (anchor.empty()) return false;
+    std::ifstream probe(anchor + "/" + asset);
+    return probe.good();
+  };
+
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile("/tmp/ppoa/root.usda", resolver, &stage,
+                                   opts, &warn, &err));
+
+  // The policy saw the AUTHORING layer's anchor (sub/), not the root's.
+  assert(!seen_anchors.empty() && "payload policy was never consulted");
+  for (const std::string &anchor : seen_anchors) {
+    assert(anchor.find("/ppoa/sub") != std::string::npos &&
+           "policy owner is not the payload's authoring spec (wrong anchor)");
+  }
+
+  // And therefore the payload was admitted and composed.
+  UsdPrim p = stage.GetPrimAtPath("/World/P");
+  assert(p.IsValid() && p.GetTypeName() == "Mesh" &&
+         "cross-layer payload was deferred (policy stat used wrong anchor)");
+  assert(p.GetPropertyValue("marker") != nullptr &&
+         "payload content missing after owner-anchored admission");
+  assert(p.GetPropertyValue("strongOpinion") != nullptr &&
+         "root layer's stronger over lost during list-op merge");
+
+  std::remove("/tmp/ppoa/root.usda");
+  std::remove("/tmp/ppoa/sub/weak.usda");
+  std::remove("/tmp/ppoa/sub/pay.usda");
+  std::cout << "  OK" << std::endl;
+}
+
 // Sublayers: weaker layer-stack opinions fill stronger root opinions; roots,
 // child prims, and arcs authored only in a sublayer must still compose.
 static void test_sublayer_stack_composition() {
@@ -2455,6 +2740,80 @@ static void test_usdz_package_layers() {
                       sibling_usda);
 
     {
+      AssetResolver package_resolver;
+      const ResolvedAsset escaped = package_resolver.Resolve(
+          "../../sibling.usda",
+          "/tmp/next_pcp_multi_pkg.usdz[root.usda]",
+          /*allow_suffix_fallback=*/false);
+      assert(!escaped.exists &&
+             "package-relative parent traversal escaped above archive root");
+      const ResolvedAsset explicit_escaped = package_resolver.Resolve(
+          "/tmp/next_pcp_multi_pkg.usdz[../sibling.usda]", "",
+          /*allow_suffix_fallback=*/false);
+      assert(!explicit_escaped.exists &&
+             "explicit package path accepted parent traversal");
+    }
+
+    {
+      Stage direct_stage;
+      std::string direct_warn, direct_err;
+      bool direct_ok = LoadUSDComposed("/tmp/next_pcp_multi_pkg.usdz",
+                                       &direct_stage, &direct_warn, &direct_err);
+      if (!direct_ok) std::cout << "  [diag] err=" << direct_err << std::endl;
+      assert(direct_ok && "direct-root USDZ composition failed");
+      UsdPrim direct_p = direct_stage.GetPrimAtPath("/World/P");
+      assert(direct_p.IsValid());
+      assert(direct_p.GetPropertyValue("siblingVal") != nullptr &&
+             "direct-root USDZ did not anchor sibling reference in package");
+    }
+
+    {
+      const std::string payload_root_usda =
+          "#usda 1.0\n"
+          "def Xform \"World\"\n"
+          "{\n"
+          "    def Xform \"P\" (\n"
+          "        prepend payload = @sibling.usda@</Asset>\n"
+          "    )\n"
+          "    {\n"
+          "    }\n"
+          "}\n";
+      WriteTwoEntryUSDZ("/tmp/next_pcp_payload_pkg.usdz",
+                        payload_root_usda, sibling_usda);
+
+      StageSessionOptions session_options;
+      session_options.composition.load_payloads = false;
+      StageSession session;
+      assert(session.OpenFile("/tmp/next_pcp_payload_pkg.usdz",
+                              session_options) &&
+             "StageSession failed to open deferred package payload");
+      assert(session.IsComposed());
+      assert(session.GetDeferredPayloadPaths().size() == 1);
+      assert(session.GetDeferredPayloadPaths()[0] == Path("/World/P"));
+      UsdPrim deferred = session.GetStage().GetPrimAtPath("/World/P");
+      assert(deferred.IsValid());
+      assert(deferred.GetPropertyValue("siblingVal") == nullptr &&
+             "deferred package payload was composed eagerly");
+
+      assert(session.LoadPayload(Path("/World/P")) &&
+             "package-internal deferred payload failed to load");
+      UsdPrim loaded = session.GetStage().GetPrimAtPath("/World/P");
+      assert(loaded.IsValid());
+      assert(loaded.GetPropertyValue("siblingVal") != nullptr &&
+             "loaded package payload opinion is missing");
+      assert(session.GetDeferredPayloadPaths().empty());
+
+      assert(session.UnloadPayload(Path("/World/P")) &&
+             "package-internal payload failed to unload");
+      assert(session.GetDeferredPayloadPaths().size() == 1);
+      assert(session.LoadPayload(Path("/World/P")) &&
+             "cached package payload failed to reload");
+      assert(session.GetStage()
+                 .GetPrimAtPath("/World/P")
+                 .GetPropertyValue("siblingVal") != nullptr);
+    }
+
+    {
       std::ofstream f("/tmp/next_pcp_usdz_pkg_anchor_root.usda");
       f << "#usda 1.0\n"
            "(\n"
@@ -2479,6 +2838,7 @@ static void test_usdz_package_layers() {
   std::remove("/tmp/next_pcp_ref_pkg.usdz");
   std::remove("/tmp/next_pcp_usdz_ref_root.usda");
   std::remove("/tmp/next_pcp_multi_pkg.usdz");
+  std::remove("/tmp/next_pcp_payload_pkg.usdz");
   std::remove("/tmp/next_pcp_usdz_pkg_anchor_root.usda");
   std::cout << "  OK" << std::endl;
 }
@@ -3495,12 +3855,17 @@ static void test_relocates_in_referenced_layer_stack() {
 static void test_relocate_to_new_root_prim() {
   std::cout << "test_relocate_to_new_root_prim..." << std::endl;
 
+  // The relocate source must be ARC-INTRODUCED (pxr): the reference sits on
+  // the ANCESTOR /Group, delivering the Model child (museum
+  // TrickyInheritsAndRelocatesToNewRootPrim shape).
   auto model = std::make_shared<Layer>();
   {
     LayerBuilder mb(*model);
+    mb.begin_prim("GroupSrc", "Xform");
     mb.begin_prim("Model", "Xform");
     mb.begin_prim("Scope", "Xform");
     mb.add_property("v", Value(int32_t(3)));
+    mb.end_prim();
     mb.end_prim();
     mb.end_prim();
     mb.finalize();
@@ -3510,9 +3875,7 @@ static void test_relocate_to_new_root_prim() {
     rootL->meta().relocates.emplace_back("/Group/Model", "/Model_Renamed");
     LayerBuilder rb(*rootL);
     rb.begin_prim("Group", "Xform");
-    rb.begin_prim("Model", "Xform");
-    rb.current()->meta().references.push_back("@mem_model@</Model>");
-    rb.end_prim();
+    rb.current()->meta().references.push_back("@mem_model@</GroupSrc>");
     rb.end_prim();
     // An `over` at the new root name: authored at the relocate TARGET.
     rb.begin_prim("Model_Renamed", "");
@@ -4131,9 +4494,11 @@ int main() {
   test_inherits_specializes();
   test_variants();
   test_variant_inline_property_flags();
+  test_variant_option_authored_state();
   test_variant_content_key_stable();
   test_variants_v2();
   test_instancing();
+  test_path_translation();
   test_flatten_instances();
   test_relocates();
   test_implied_inherit();
@@ -4160,6 +4525,7 @@ int main() {
   test_compose_from_file();
   test_nested_relative_reference();
   test_sublayer_authored_reference_anchor();
+  test_payload_policy_owner_anchor();
   test_sublayer_stack_composition();
   test_usdz_package_layers();
   test_sublayer_cycle_and_depth();
@@ -4173,6 +4539,10 @@ int main() {
   test_variant_content_cycle();
   test_deep_hierarchy();
   test_reference_chain_at_max_depth();
+  if (g_pcp_check_failures != 0) {
+    std::cerr << g_pcp_check_failures << " PCP_CHECK failure(s)." << std::endl;
+    return 1;
+  }
   std::cout << "All next/pcp tests passed." << std::endl;
   return 0;
 }

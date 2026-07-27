@@ -4,7 +4,11 @@
 // TinyUSDZ Next - USDC Crate Reader Implementation
 
 #include "crate-reader-internal.hh"
+#include "../layer/array-edit.hh"
+#include "../writer/value-printer.hh"
+#include "safe-arithmetic.hh"
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -17,12 +21,171 @@ namespace next {
 // Main value unpacker using switch statement
 // ============================================================
 
+// VtArrayEdit (crate >= 0.14.0). Layout at the rep's payload offset:
+//   ValueRep valuesRep   (8 bytes)  -- packed VtArray<T> of literal elements
+//   ValueRep indexesRep  (8 bytes)  -- packed VtInt64Array (op stream)
+//   bool     isDense     (1 byte)   -- legacy, discarded
+// payload == 0 is the identity (empty) edit. The op stream uses OpenUSD's
+// Vt_ArrayEditOps encoding: a packed [count:56 | op:8] word followed by
+// `arity(op) * count` int64 operands.
+bool CrateReader::Impl::UnpackArrayEditData(ValueRep rep, ArrayEditData* out) {
+  if (!out) return false;
+  out->ops.clear();
+  if (rep.payload() == 0) {
+    return true;  // identity edit
+  }
+  if (!reader_->seek(static_cast<size_t>(rep.payload()))) {
+    AddWarning("Invalid offset for array-edit value");
+    return false;
+  }
+  uint64_t values_raw = 0, indexes_raw = 0;
+  uint8_t is_dense = 0;
+  if (!reader_->read_u64(values_raw) || !reader_->read_u64(indexes_raw) ||
+      !reader_->read_u8(is_dense)) {
+    AddWarning("Truncated array-edit tuple");
+    return false;
+  }
+  (void)is_dense;  // legacy field
+
+  const ValueRep values_rep(values_raw);
+  const ValueRep indexes_rep(indexes_raw);
+  if (values_rep.is_array_edit() || indexes_rep.is_array_edit()) {
+    AddWarning("Nested array-edit reps are not supported");
+    return false;
+  }
+
+  // Literal elements -> canonical usda element texts.
+  std::vector<std::string> literal_texts;
+  {
+    Value literals;
+    if (!UnpackValue(values_rep, literals)) {
+      AddWarning("Failed to decode array-edit literals");
+      return false;
+    }
+    if (literals.is_array() && literals.array_size() > 0) {
+      PrintOptions popts;
+      popts.compact = true;
+      if (!SplitPrintedArrayElements(PrintValue(literals, popts),
+                                     &literal_texts)) {
+        AddWarning("Failed to decompose array-edit literals");
+        return false;
+      }
+    }
+  }
+
+  // Op instruction stream (int64[]).
+  std::vector<int64_t> ins;
+  {
+    Value idx_val;
+    if (!UnpackValue(indexes_rep, idx_val)) {
+      AddWarning("Failed to decode array-edit op stream");
+      return false;
+    }
+    if (const std::vector<int64_t>* v = idx_val.as_int64_array()) {
+      ins = *v;
+    }
+  }
+
+  auto lit = [&](int64_t i, std::string* txt) -> bool {
+    if (i < 0 || static_cast<size_t>(i) >= literal_texts.size()) return false;
+    *txt = literal_texts[static_cast<size_t>(i)];
+    return true;
+  };
+
+  size_t pos = 0;
+  while (pos < ins.size()) {
+    const uint64_t word = static_cast<uint64_t>(ins[pos++]);
+    const uint8_t opcode = static_cast<uint8_t>((word >> 56) & 0xffu);
+    int64_t count =
+        static_cast<int64_t>(word & 0x00FFFFFFFFFFFFFFull);
+    // pxr op codes (Vt_ArrayEditOps::Op): 0 WriteLiteral, 1 WriteRef,
+    // 2 InsertLiteral, 3 InsertRef, 4 EraseRef, 5 MinSize, 6 MinSizeFill,
+    // 7 SetSize, 8 SetSizeFill, 9 MaxSize.
+    const bool two_args = (opcode == 0 || opcode == 1 || opcode == 2 ||
+                           opcode == 3 || opcode == 6 || opcode == 8);
+    if (opcode > 9) {
+      AddWarning("Unknown array-edit op code " + std::to_string(opcode));
+      return false;
+    }
+    for (; count > 0; --count) {
+      const size_t arity = two_args ? 2u : 1u;
+      if (pos + arity > ins.size()) {
+        AddWarning("Truncated array-edit op stream");
+        return false;
+      }
+      const int64_t a1 = ins[pos];
+      const int64_t a2 = two_args ? ins[pos + 1] : 0;
+      pos += arity;
+      ArrayEditOpRec rec;
+      bool ok = true;
+      switch (opcode) {
+        case 0:  // WriteLiteral: a1 literal idx, a2 dst
+          rec.kind = ArrayEditOpRec::WriteLiteral;
+          rec.a2 = a2;
+          ok = lit(a1, &rec.literal);
+          break;
+        case 1:  // WriteRef
+          rec.kind = ArrayEditOpRec::WriteRef;
+          rec.a1 = a1;
+          rec.a2 = a2;
+          break;
+        case 2:  // InsertLiteral: a1 literal idx, a2 dst
+          rec.kind = ArrayEditOpRec::InsertLiteral;
+          rec.a2 = a2;
+          ok = lit(a1, &rec.literal);
+          break;
+        case 3:  // InsertRef
+          rec.kind = ArrayEditOpRec::InsertRef;
+          rec.a1 = a1;
+          rec.a2 = a2;
+          break;
+        case 4:  // EraseRef
+          rec.kind = ArrayEditOpRec::Erase;
+          rec.a1 = a1;
+          break;
+        case 5:  // MinSize
+          rec.kind = ArrayEditOpRec::MinSize;
+          rec.a1 = a1;
+          break;
+        case 6:  // MinSizeFill: a1 size, a2 literal idx
+          rec.kind = ArrayEditOpRec::MinSize;
+          rec.a1 = a1;
+          rec.has_fill = true;
+          ok = lit(a2, &rec.literal);
+          break;
+        case 7:  // SetSize
+          rec.kind = ArrayEditOpRec::SetSize;
+          rec.a1 = a1;
+          break;
+        case 8:  // SetSizeFill
+          rec.kind = ArrayEditOpRec::SetSize;
+          rec.a1 = a1;
+          rec.has_fill = true;
+          ok = lit(a2, &rec.literal);
+          break;
+        default:  // 9 MaxSize
+          rec.kind = ArrayEditOpRec::MaxSize;
+          rec.a1 = a1;
+          break;
+      }
+      if (!ok) {
+        AddWarning("Array-edit literal index out of range");
+        return false;
+      }
+      out->ops.push_back(std::move(rec));
+    }
+  }
+  return true;
+}
+
 bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
-  // VtArrayEdit reps (crate 0.14): not supported — without this check the
-  // rep masquerades as a scalar of the element type and reads the edit
-  // tuple header as the value (silent corruption).
+  // VtArrayEdit reps (crate 0.14) are not VALUES: the attribute-spec decode
+  // intercepts them (UnpackArrayEditData) and stores the structured edit on
+  // the PrimSpec. Reaching here means an edit rep appeared in a context that
+  // has no edit storage (timeSamples, dict entry, ...) — drop it rather than
+  // let it masquerade as a scalar whose payload is the edit tuple header.
   if (rep.is_array_edit()) {
-    AddWarning("VtArrayEdit values are not supported; value dropped");
+    AddWarning("VtArrayEdit value in an unsupported context; value dropped");
     return false;
   }
 
@@ -64,6 +227,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::Matrix3d: return UnpackMatrix3d(rep, out);
     case CrateTypeId::Matrix4d: return UnpackMatrix4d(rep, out);
     case CrateTypeId::Specifier: return UnpackSpecifier(rep, out);
+    case CrateTypeId::Permission: return UnpackPermission(rep, out);
     case CrateTypeId::Variability: return UnpackVariability(rep, out);
     case CrateTypeId::TimeCode: {
       // Decode like a double but preserve the TimeCode type identity
@@ -152,8 +316,17 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       if (!reader_->read_u64(n)) return false;
       if (n > options_.max_array_elements) return false;
       if (!reader_->has_elements(static_cast<size_t>(n), 16)) return false;
-      std::vector<double> vals(static_cast<size_t>(n) * 2);
-      if (n && !reader_->read(vals.data(), vals.size() * sizeof(double))) return false;
+      if (n > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+        return false;
+      }
+      size_t scalar_count = 0;
+      size_t byte_count = 0;
+      if (!safe::mul(static_cast<size_t>(n), size_t{2}, &scalar_count) ||
+          !safe::mul(scalar_count, sizeof(double), &byte_count)) {
+        return false;
+      }
+      std::vector<double> vals(scalar_count);
+      if (n && !reader_->read(vals.data(), byte_count)) return false;
       out = Value::MakeDoubleArray(std::move(vals));
       return true;
     }
@@ -193,10 +366,13 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
         if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
           return false;
         }
+        if (!std::isfinite(offset) || !std::isfinite(scale)) return false;
       }
       std::string asset;
-      GetString(asset_idx, asset);
-      std::string prim = (path_idx < paths_.size()) ? paths_[path_idx] : "";
+      if (!GetString(asset_idx, asset) || path_idx >= paths_.size()) {
+        return false;
+      }
+      const std::string& prim = paths_[path_idx];
       // Internal arcs (no asset) render as "</Prim>", matching the usda parser.
       std::string arc;
       if (!asset.empty()) arc = "@" + asset + "@";
@@ -226,7 +402,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       uint32_t sidx = 0;
       if (!reader_->read_u32(sidx)) return false;
       std::string text;
-      GetString(sidx, text);
+      if (!GetString(sidx, text)) return false;
       out = Value::MakeStringLike(text, TypeId::PathExpression);
       return true;
     }
@@ -245,8 +421,16 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       uint64_t n = 0;
       if (!reader_->read_u64(n)) return false;
       if (n > options_.max_array_elements) return false;
+      if (n > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+        return false;
+      }
+      size_t pair_count = 0;
+      if (!safe::mul(static_cast<size_t>(n), size_t{2}, &pair_count) ||
+          !reader_->has_elements(static_cast<size_t>(n), size_t{8})) {
+        return false;
+      }
       std::vector<std::string> pairs;
-      pairs.reserve(static_cast<size_t>(n) * 2);
+      pairs.reserve(pair_count);
       for (uint64_t i = 0; i < n; ++i) {
         uint32_t src = 0, dst = 0;
         if (!reader_->read_u32(src) || !reader_->read_u32(dst)) return false;

@@ -368,7 +368,9 @@ void path_expression_light_linking_test(void) {
   const std::string usda =
       "#usda 1.0\n"
       "\n"
-      "def SphereLight \"Linked\"\n"
+      // Non-sphere light schemas must expose their inherited CollectionAPI;
+      // ApplyToCollection historically dispatched SphereLight only.
+      "def DistantLight \"Linked\"\n"
       "{\n"
       "    uniform pathExpression collection:lightLink:membershipExpression = \"/World/Geom/Lit*\"\n"
       "}\n"

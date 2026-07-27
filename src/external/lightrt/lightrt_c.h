@@ -39,7 +39,8 @@ typedef enum lrt_result {
     LRT_RESULT_NOT_BUILT = 4,
     LRT_RESULT_TRAVERSAL_OVERFLOW = 5,
     LRT_RESULT_INVALID_BOUNDS = 6,
-    LRT_RESULT_BUILD_LIMIT = 7
+    LRT_RESULT_BUILD_LIMIT = 7,
+    LRT_RESULT_UNSUPPORTED = 8 /* operation valid but data/feature unavailable */
 } lrt_result;
 
 /* Axis-aligned bounding box in world (fp64) coordinates. */

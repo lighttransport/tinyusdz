@@ -9,7 +9,18 @@
 // read directly. Writes the same lrt_hit layout (t,u,v,prim_id) as the software
 // trace shader: t is in units of |dir|, (u,v) are the hit barycentrics (which
 // coincide with Moller-Trumbore u,v), prim_id = triangle index (single geometry,
-// no index buffer => primitive index == build order == caller index).
+// no index buffer => primitive index == build order == caller index). The
+// geometry is split across multiple chunk BLASes (one TLAS instance each, in
+// chunk order), so the global triangle id is recovered as
+// instanceId*tri_chunk + primitiveIndex.
+//
+// Two variants are compiled from this one source:
+//   - default (narrow): 4 words/hit {t,u,v, prim_id=instanceId*tri_chunk+prim}.
+//     prim_id must fit 32 bits, so ninsts*tri_chunk < 2^32.
+//   - LRT_WIDE_ID (wide): 5 words/hit {t,u,v, instanceId, primitiveIndex} stored
+//     SEPARATELY -- no stride multiply, so there is no 32-bit product to overflow.
+//     Used for instanced scenes whose ninsts*maxPrototypeTris exceeds 32 bits
+//     (e.g. Moana island); the only remaining ceiling is the TLAS maxInstanceCount.
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -17,10 +28,15 @@ layout(local_size_x = 64) in;
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
 layout(std430, binding = 1) readonly  buffer Rays { uint rays[]; }; // 8 words / ray
+#ifdef LRT_WIDE_ID
+layout(std430, binding = 2) writeonly buffer Hits { uint hits[]; }; // 5 words / hit
+#else
 layout(std430, binding = 2) writeonly buffer Hits { uint hits[]; }; // 4 words / hit
+#endif
 
 layout(push_constant) uniform PC {
     uint ray_count;
+    uint tri_chunk;   // triangles per BLAS chunk; global prim_id = instanceId*tri_chunk + primIndex
 } pc;
 
 const uint NO_HIT = 0xFFFFFFFFu;
@@ -38,15 +54,46 @@ void main() {
     float tmax = fu(rays[rb + 7u]);
 
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsOpaqueEXT, 0xFFu, org, tmin, dir, tmax);
+    // Primary visibility: closest-hit. All geometry is opaque, so the hardware
+    // commits the nearest intersection during traversal and we read it after the
+    // proceed loop. Do NOT set TerminateOnFirstHit here — that commits the first
+    // triangle traversal happens to find, not the closest (correct only for
+    // shadow/occlusion rays). Cull mask must be 0xFF to match the TLAS instance
+    // mask (0xFF); a 0x0 mask AND-culls every instance and returns no hits.
+    rayQueryInitializeEXT(rq, tlas,
+                         gl_RayFlagsOpaqueEXT,
+                         0xFFu, org, tmin, dir, tmax);
     while (rayQueryProceedEXT(rq)) {}
 
+#ifdef LRT_WIDE_ID
+    uint hb = gid * 5u;
+    if (rayQueryGetIntersectionTypeEXT(rq, true) ==
+        gl_RayQueryCommittedIntersectionTriangleEXT) {
+        float t   = rayQueryGetIntersectionTEXT(rq, true);
+        vec2  bc  = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+        uint  prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true));
+        uint  inst = uint(rayQueryGetIntersectionInstanceIdEXT(rq, true));
+        hits[hb + 0u] = floatBitsToUint(t);
+        hits[hb + 1u] = floatBitsToUint(bc.x);
+        hits[hb + 2u] = floatBitsToUint(bc.y);
+        hits[hb + 3u] = inst;   // TLAS instance (placement) id, 0..ninsts-1
+        hits[hb + 4u] = prim;   // prototype-local triangle index
+    } else {
+        hits[hb + 0u] = floatBitsToUint(0.0);
+        hits[hb + 1u] = 0u;
+        hits[hb + 2u] = 0u;
+        hits[hb + 3u] = NO_HIT;
+        hits[hb + 4u] = 0u;
+    }
+#else
     uint hb = gid * 4u;
     if (rayQueryGetIntersectionTypeEXT(rq, true) ==
         gl_RayQueryCommittedIntersectionTriangleEXT) {
         float t   = rayQueryGetIntersectionTEXT(rq, true);
         vec2  bc  = rayQueryGetIntersectionBarycentricsEXT(rq, true);
-        uint  pid = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true));
+        uint  prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true));
+        uint  inst = uint(rayQueryGetIntersectionInstanceIdEXT(rq, true));
+        uint  pid = inst * pc.tri_chunk + prim;
         hits[hb + 0u] = floatBitsToUint(t);
         hits[hb + 1u] = floatBitsToUint(bc.x);
         hits[hb + 2u] = floatBitsToUint(bc.y);
@@ -57,4 +104,5 @@ void main() {
         hits[hb + 2u] = 0u;
         hits[hb + 3u] = NO_HIT;
     }
+#endif
 }

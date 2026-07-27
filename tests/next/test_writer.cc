@@ -65,7 +65,7 @@ void test_value_printer() {
   {
     Value v = Value(true);
     std::string s = PrintValue(v);
-    assert(s == "true");
+    assert(s == "1");  // pxr spells VALUE bools 1/0
     std::cout << "  Bool: " << s << "\n";
   }
 
@@ -318,6 +318,20 @@ void test_array_range_split_parity() {
     assert(!IsChunkableArray(Value::MakeIntArray({1, 2, 3, 4}), trunc));
   }
 
+  // Invalid caller-supplied ranges must fail before indexing or emitting any
+  // text. This covers both scalar and component-backed arrays.
+  {
+    PrintOptions opts;
+    Value ints = Value::MakeIntArray({1, 2, 3});
+    Value points = Value::MakeFloat3Array({0, 1, 2, 3, 4, 5});
+    std::string out;
+    StreamWriter writer(&out);
+    assert(!PrintArrayRangeToStream(writer, ints, opts, 0, 4, true, true));
+    assert(!PrintArrayRangeToStream(writer, ints, opts, 3, 2, true, true));
+    assert(!PrintArrayRangeToStream(writer, points, opts, 1, 3, true, true));
+    assert(out.empty());
+  }
+
   std::cout << "  array range split parity passed!\n\n";
 }
 
@@ -386,9 +400,15 @@ void test_layer_printer() {
   // Set layer metadata
   layer.meta().defaultPrim = "World";
   layer.meta().upAxis = "Y";
+  layer.meta().doc = "layer \"doc\" with \\ slash";
 
   // Create root prim
   builder.begin_prim("World", "Xform");
+  builder.current()->meta().doc() = "prim \"doc\" with \\ slash";
+  builder.current()->meta().references.push_back(
+      "@asset.usda@</P>?layerOffset=10:2");
+  builder.current()->meta().references.push_back("</Internal>");
+  builder.current()->meta().references.push_back("bare.usda");
   builder.end_prim();
 
   // Create child mesh
@@ -417,6 +437,12 @@ void test_layer_printer() {
   assert(contains(output, "Cube"));
   assert(contains(output, "extent"));
   assert(contains(output, "points"));
+  assert(contains(output, "doc = \"layer \\\"doc\\\" with \\\\ slash\""));
+  assert(contains(output, "@asset.usda@</P> (offset = 10; scale = 2)"));
+  assert(contains(output, "</Internal>"));
+  assert(contains(output, "@bare.usda@"));
+  LoadResult reparsed = LoadUSDAFromString(output.data(), output.size());
+  assert(reparsed.success && "debug layer output must reparse");
 
   std::cout << "  prim-printer tests passed!\n\n";
 }
@@ -1137,9 +1163,10 @@ def Scope "V"
     // half-role array float-backed.
     const Value* p3h = v->property_value("p3h");
     assert(p3h && p3h->as_float_array() && p3h->as_float_array()->size() == 3);
-    // Property doc shorthand captured.
+    // Property bare-string shorthand = COMMENT (pxr mapping).
     const PropMeta* xm = v->property_meta("x");
-    assert(xm && (xm->authored & PropMeta::kDoc) && xm->doc == "property doc string");
+    assert(xm && (xm->authored & PropMeta::kComment) &&
+           xm->comment == "property doc string");
   }
 
   // Strict scalar integers: overflow-ish garbage must be a parse error now.

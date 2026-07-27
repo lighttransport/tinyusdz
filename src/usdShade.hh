@@ -78,8 +78,8 @@ struct UsdShadePrim {
 
   PrimMeta meta;
 
-  const PrimMeta &metas() const { return meta; }
-  PrimMeta &metas() { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
 
   // Check if `key` exists in `sdrMetadata` metadatum.
   // Return false when `key` is not found in `sdrMetadata`, or corrensponding item is not a string type.
@@ -102,10 +102,10 @@ struct UsdShadePrim {
   // Custom properties
   std::map<std::string, Property> props;
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;

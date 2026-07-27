@@ -1,0 +1,9 @@
+#usda 1.0
+(
+    timeCodesPerSecond = 24
+)
+def "Root"
+{
+    double v.timeSamples = { 0: 0, 100: 100 }
+    double neg.timeSamples = { -10: -10, 100: 100 }
+}

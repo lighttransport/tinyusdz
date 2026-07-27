@@ -257,6 +257,41 @@ if(TINYUSDZ_BUILD_TESTS)
   set_tests_properties(tusdchecker_parity_dump_rules PROPERTIES
     PASS_REGULAR_EXPRESSION "\\[core:core.layer.defaultPrim.missing\\]")
 
+  # --- sparse array edits (VtArrayEdit, usda 1.2 / crate 0.14) --------------
+  # Composition EVALUATES edits like pxr's flatten: the fixture's edit
+  # resolves to faceVertexIndices = [0, 1, 99], and index 99 is only
+  # detectable if the edit was actually applied.
+  add_test(NAME tusdchecker_array_edit_resolved
+    COMMAND tusdchecker --composed
+            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/array-edit-resolve-invalid.usda)
+  set_tests_properties(tusdchecker_array_edit_resolved PROPERTIES
+    PASS_REGULAR_EXPRESSION "geom.mesh.topology.index")
+  # Without --composed the layer keeps the authored edit unevaluated.
+  add_test(NAME tusdchecker_array_edit_authored
+    COMMAND tusdchecker
+            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/array-edit-resolve-invalid.usda)
+  set_tests_properties(tusdchecker_array_edit_authored PROPERTIES
+    PASS_REGULAR_EXPRESSION "Result: PASSED"
+    FAIL_REGULAR_EXPRESSION "geom.mesh.topology.index")
+  add_test(NAME tusdchecker_array_edit_resolved_valid
+    COMMAND tusdchecker --composed
+            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/array-edit-resolve-valid.usda)
+  set_tests_properties(tusdchecker_array_edit_resolved_valid PROPERTIES
+    PASS_REGULAR_EXPRESSION "Result: PASSED - no issues found")
+  # Crate rep round-trip: the same edit read from a next-written .usdc
+  # (pxr-readable), decoded and resolved during composition.
+  add_test(NAME tusdchecker_array_edit_usdc
+    COMMAND tusdchecker --composed
+            ${CMAKE_CURRENT_SOURCE_DIR}/testdata/array-edit-resolve-invalid.usdc)
+  set_tests_properties(tusdchecker_array_edit_usdc PROPERTIES
+    PASS_REGULAR_EXPRESSION "geom.mesh.topology.index")
+  # Edits across a reference arc: WriteRef/insert/maxsize over the referenced
+  # base, edit-over-edit stacking, from-end negative indices.
+  add_test(NAME tusdchecker_array_edit_compose_arc
+    COMMAND tusdchecker --composed
+            ${PROJECT_SOURCE_DIR}/tests/usda/array-edit-compose-001.usda)
+  set_tests_properties(tusdchecker_array_edit_compose_arc PROPERTIES
+    PASS_REGULAR_EXPRESSION "Result: PASSED")
   # next-parser leniency parity with pxr's usda parser: sparse array edits
   # (preserved as raw text), float->int literal coercion, quoted-string asset
   # paths. Each fixture previously failed to parse (exit 2).

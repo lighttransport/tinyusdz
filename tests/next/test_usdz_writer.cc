@@ -20,6 +20,36 @@ static int pass_count = 0;
 #define PASS() do { pass_count++; printf("PASS\n"); } while(0)
 #define FAIL(msg) do { printf("FAIL: %s\n", msg); } while(0)
 
+static void AppendU16LE(std::vector<uint8_t>* out, uint16_t v) {
+  out->push_back(static_cast<uint8_t>(v & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 8) & 0xffu));
+}
+
+static void AppendU32LE(std::vector<uint8_t>* out, uint32_t v) {
+  out->push_back(static_cast<uint8_t>(v & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 8) & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 16) & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 24) & 0xffu));
+}
+
+static void AppendStoredEntry(std::vector<uint8_t>* out,
+                              const std::string& name,
+                              const std::string& bytes) {
+  AppendU32LE(out, 0x04034b50u);
+  AppendU16LE(out, 20);
+  AppendU16LE(out, 0);  // flags
+  AppendU16LE(out, 0);  // stored
+  AppendU16LE(out, 0);  // time
+  AppendU16LE(out, 0);  // date
+  AppendU32LE(out, 0);  // CRC is not consumed by USDZReader
+  AppendU32LE(out, static_cast<uint32_t>(bytes.size()));
+  AppendU32LE(out, static_cast<uint32_t>(bytes.size()));
+  AppendU16LE(out, static_cast<uint16_t>(name.size()));
+  AppendU16LE(out, 0);  // extra field
+  out->insert(out->end(), name.begin(), name.end());
+  out->insert(out->end(), bytes.begin(), bytes.end());
+}
+
 static Stage MakeTestStage() {
   StageBuilder sb;
   sb.SetDefaultPrim("World");
@@ -97,7 +127,7 @@ void test_read_usdz_with_reader() {
   if (reader.NumEntries() < 1) { FAIL("no entries found"); return; }
 
   // Find USDC entry
-  int idx = reader.FindUSDCFile();
+  int idx = reader.FindRootLayer();
   if (idx < 0) { FAIL("no .usdc entry found"); return; }
 
   // Verify entry name
@@ -129,6 +159,91 @@ void test_read_usdz_stage() {
   auto cube = loaded_stage.GetPrimAtPath("/Cube");
   if (!cube.IsValid()) { FAIL("Cube not found"); return; }
 
+  PASS();
+}
+
+void test_usdz_root_is_first_entry() {
+  TEST("USDZ root is first entry");
+  const std::string usda = "#usda 1.0\n\ndef Xform \"World\"\n{\n}\n";
+
+  std::vector<uint8_t> invalid;
+  AppendStoredEntry(&invalid, "textures/first.bin", "not usd");
+  AppendStoredEntry(&invalid, "late.usda", usda);
+  USDZReader reader;
+  if (!reader.Open(invalid.data(), invalid.size())) {
+    FAIL("failed to parse stored-entry fixture"); return;
+  }
+  if (reader.FindRootLayer() >= 0) {
+    FAIL("later USDA entry was selected as package root"); return;
+  }
+  if (reader.FindUSDAFile() != 1) {
+    FAIL("legacy non-root USDA search changed unexpectedly"); return;
+  }
+
+  std::vector<uint8_t> valid;
+  AppendStoredEntry(&valid, "ROOT.USD", usda);
+  AppendStoredEntry(&valid, "a.png", "image");
+  if (!reader.Open(valid.data(), valid.size()) || reader.FindRootLayer() != 0) {
+    FAIL("content-sniffed uppercase .USD root was rejected"); return;
+  }
+
+  std::vector<uint8_t> unsafe;
+  AppendStoredEntry(&unsafe, "../root.usda", usda);
+  if (reader.Open(unsafe.data(), unsafe.size()) ||
+      reader.Error().find("unsafe USDZ entry path") == std::string::npos) {
+    FAIL("parent-traversal entry name was accepted"); return;
+  }
+
+  std::vector<uint8_t> duplicate;
+  AppendStoredEntry(&duplicate, "root.usda", usda);
+  AppendStoredEntry(&duplicate, "root.usda", usda);
+  if (reader.Open(duplicate.data(), duplicate.size()) ||
+      reader.Error().find("duplicate USDZ entry path") == std::string::npos) {
+    FAIL("duplicate entry name was accepted"); return;
+  }
+
+  std::vector<uint8_t> compressed_first;
+  AppendStoredEntry(&compressed_first, "first.bin", "compressed placeholder");
+  // Local-header compression method field (8 = deflate). The payload itself is
+  // irrelevant: USDZ must reject the method before considering a later root.
+  compressed_first[8] = 8;
+  compressed_first[9] = 0;
+  AppendStoredEntry(&compressed_first, "late.usda", usda);
+  if (reader.Open(compressed_first.data(), compressed_first.size()) ||
+      reader.Error().find("compressed ZIP entry") == std::string::npos) {
+    FAIL("compressed first entry was skipped in favor of a later USD layer");
+    return;
+  }
+
+  std::vector<uint8_t> truncated_later;
+  AppendStoredEntry(&truncated_later, "root.usda", usda);
+  truncated_later.push_back(0x50);
+  truncated_later.push_back(0x4b);
+  truncated_later.push_back(0x03);
+  if (reader.Open(truncated_later.data(), truncated_later.size()) ||
+      reader.Error().find("invalid or truncated data") == std::string::npos) {
+    FAIL("truncated later local header was hidden by the valid root entry");
+    return;
+  }
+
+  if (!reader.Open(valid.data(), valid.size())) {
+    FAIL("failed to reopen valid fixture before state-reset check"); return;
+  }
+  if (reader.OpenFile("/tmp/tinyusdz-next-definitely-missing.usdz") ||
+      reader.NumEntries() != 0 || reader.EntryData(0) != nullptr) {
+    FAIL("failed OpenFile retained entries from the previous archive"); return;
+  }
+
+  Stage stage;
+  std::string warn, err;
+  if (!LoadUSDFromMemory(valid.data(), valid.size(), &stage, LoadUSDOptions{},
+                         &warn, &err)) {
+    FAIL(err.empty() ? "failed to load neutral .USD package root" : err.c_str());
+    return;
+  }
+  if (!stage.GetPrimAtPath("/World").IsValid()) {
+    FAIL("neutral .USD root did not produce its stage"); return;
+  }
   PASS();
 }
 
@@ -225,6 +340,19 @@ void test_write_from_usdc() {
   PASS();
 }
 
+void test_write_failure() {
+  TEST("Report file write failure");
+#if defined(__linux__)
+  auto stage = MakeTestStage();
+  auto result = WriteUSDZToFile("/dev/full", stage);
+  if (result.success || result.error.empty() ||
+      result.bytes_written > (size_t{1} << 30)) {
+    FAIL("/dev/full write was not reported safely"); return;
+  }
+#endif
+  PASS();
+}
+
 int main() {
   printf("USDZ Writer Tests\n");
   printf("=================\n\n");
@@ -233,9 +361,11 @@ int main() {
   test_write_usdz_to_file();
   test_read_usdz_with_reader();
   test_read_usdz_stage();
+  test_usdz_root_is_first_entry();
   test_usdz_memory_caps();
   test_usdc_from_usdz();
   test_write_from_usdc();
+  test_write_failure();
 
   printf("\n%d/%d tests passed\n", pass_count, test_count);
   return pass_count == test_count ? 0 : 1;

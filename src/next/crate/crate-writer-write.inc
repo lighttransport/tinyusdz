@@ -11,6 +11,16 @@
 
   CrateWriteResult Write(const Layer& layer, const CrateWriteSink* sink = nullptr) {
     result_ = CrateWriteResult();
+    required_version_minor_ = 0;
+
+    const CrateVersion requested_version{options_.version_major,
+                                         options_.version_minor,
+                                         options_.version_patch};
+    if (!requested_version.is_valid()) {
+      result_.error = "Unsupported Crate output version " +
+                      requested_version.to_string();
+      return result_;
+    }
     buffer_.clear();
 
     // Clear all accumulated table state from previous writes

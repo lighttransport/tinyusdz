@@ -12,6 +12,8 @@
 #include "../types/interpolation.hh"
 #include "../prim/path.hh"
 #include <algorithm>
+#include <climits>
+#include <cstdint>
 #include <list>
 #include <string>
 #include <vector>
@@ -116,7 +118,14 @@ struct VariantData {
   std::string name;
   bool active = true;
   bool hidden = false;
+  // Authored-state bits: `active = true` / `hidden = false` authored on the
+  // option are real opinions (they must compose over weaker sources and
+  // round-trip) — distinguishable from the unauthored defaults only via
+  // these flags.
+  bool active_authored = false;
+  bool hidden_authored = false;
   std::string doc;
+  std::string kind;  // option-authored `kind` composes onto the host
   std::vector<VariantProperty> properties;
   std::unordered_map<std::string, std::vector<Path>> relationships;
   std::unordered_map<std::string, uint16_t> relationshipFlags;
@@ -146,6 +155,38 @@ struct VariantData {
   // whose descendants become the host prim's children when this variant is
   // selected. (Composed reference-style, so it supports child prims.)
   std::shared_ptr<Layer> content;
+};
+
+/// One op of a sparse array edit (VtArrayEdit, usda 1.2 / crate 0.14).
+/// Literal element values are carried as canonical usda element TEXT --
+/// evaluation reprints/reparses through the usda codec, which keeps the op
+/// list element-type-agnostic (see layer/array-edit.hh).
+struct ArrayEditOpRec {
+  enum Kind : uint8_t {
+    WriteLiteral,  // write <literal> to [a2]
+    WriteRef,      // write [a1] to [a2]
+    InsertLiteral, // insert <literal> at [a2] (append/prepend sugar included)
+    InsertRef,     // insert [a1] at [a2]
+    Erase,         // erase [a1]
+    MinSize,       // minsize a1 (fill <literal> when has_fill)
+    SetSize,       // resize a1 (fill <literal> when has_fill)
+    MaxSize,       // maxsize a1
+  };
+  Kind kind = WriteLiteral;
+  int64_t a1 = 0;         // source/ref index or size argument
+  int64_t a2 = 0;         // destination index (write/insert)
+  bool has_fill = false;  // minsize/resize carries a fill literal
+  std::string literal;    // canonical element text (literal ops and fills)
+};
+
+/// Insert-at-end sentinel (`append`): mirrors Vt_ArrayEditOps::EndIndex.
+constexpr int64_t kArrayEditEnd = INT64_MIN;
+
+/// A property's authored sparse array edit: the ordered op list. Weaker-over-
+/// stronger composition concatenates op lists (weaker first), like pxr's
+/// VtArrayEdit::ComposeOver.
+struct ArrayEditData {
+  std::vector<ArrayEditOpRec> ops;
 };
 
 /// Variant set - a named set of variant options
@@ -355,6 +396,7 @@ struct PrimSpecMetaExt {
   bool kind_authored = false;
   std::string displayName;  // UI display name
   bool display_name_authored = false;
+  std::string permission;   // "public"/"private" (pxr SdfPermission)
   std::vector<std::string> displayGroupOrder;
   bool displayGroupOrderAuthored = false;
   // When non-empty (set by composition), this prim is an instance whose
@@ -415,6 +457,7 @@ struct PrimSpecMetaExt {
         kind_authored(o.kind_authored),
         displayName(o.displayName),
         display_name_authored(o.display_name_authored),
+        permission(o.permission),
         displayGroupOrder(o.displayGroupOrder),
         displayGroupOrderAuthored(o.displayGroupOrderAuthored),
         instance_prototype(o.instance_prototype),
@@ -563,6 +606,14 @@ struct PrimSpecMeta {
   void setKindAuthored(bool authored = true) {
     ensure_ext();
     ext_->kind_authored = authored;
+  }
+  const std::string &permission() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->permission : kEmpty;
+  }
+  std::string &permission() {
+    ensure_ext();
+    return ext_->permission;
   }
   const std::string &displayName() const {
     static const std::string kEmpty;
@@ -818,6 +869,7 @@ struct PropMeta {
     kAllowedTokens  = 1u << 14, kCustomData    = 1u << 15,
     kAssetInfo      = 1u << 16, kSdrMetadata   = 1u << 17,
     kUnknownMeta    = 1u << 18, kComment = 1u << 19,
+    kPermission     = 1u << 20,
   };
   // token / string fields
   std::string interpolation;   // constant/uniform/varying/vertex/faceVarying
@@ -831,6 +883,7 @@ struct PropMeta {
   std::string displayGroup;
   std::string doc;
   std::string comment;
+  std::string permission;  // "public"/"private" (pxr SdfPermission)
   // scalar fields
   int32_t elementSize = 1;
   int32_t unauthoredValuesIndex = -1;
@@ -1019,6 +1072,14 @@ public:
   const Path& path() const { return path_; }
   void set_path(const Path& path) { path_ = path; }
 
+  /// Directory this prim's RELATIVE asset paths anchor to, as an id interned in
+  /// asset-anchor.hh (0 = none -> the consumer falls back to the stage's base
+  /// dir). Stamped from the resolved layer path when the layer is loaded, and
+  /// carried through composition so a flattened prim still knows which layer
+  /// authored it. See asset-anchor.hh.
+  uint32_t asset_anchor_id() const { return asset_anchor_id_; }
+  void set_asset_anchor_id(uint32_t id) { asset_anchor_id_ = id; }
+
   // ============================================================
   // Properties (O(1) lookup for common names)
   // ============================================================
@@ -1077,6 +1138,15 @@ public:
   /// unreferenced entry; storage is append-only.)
   bool remove_property(PropNameId name_id);
   bool remove_property(const std::string& name);
+
+  /// Release a static array default while retaining its property slot, declared
+  /// type and metadata. Time-sampled properties are never changed. This is a
+  /// deliberately lossy residency operation for reconstructable composed
+  /// stages; a subsequent composition rebuild restores the authored value.
+  /// Returns the approximate payload bytes released (zero when ineligible).
+  size_t release_static_array_value(PropNameId name_id,
+                                    size_t min_array_elements,
+                                    size_t* released_elements = nullptr);
 
   /// Get property index (for iteration)
   const PropIndex& properties() const { return props_; }
@@ -1147,6 +1217,19 @@ public:
   void set_raw_default_source(const std::string& prop_name,
                               std::string source);
   const std::string* raw_default_source(PropNameId name_id) const;
+  void clear_raw_default_source(PropNameId name_id);
+
+  /// Sparse array edit authored as this property's default (`= edit [...]`).
+  /// The canonical `edit [...]` text lives in raw_default_source (the usda
+  /// writer re-emits it); this is the structured op list composition uses to
+  /// stack and resolve edits (see layer/array-edit.hh).
+  void set_array_edit(const std::string& prop_name, ArrayEditData edit);
+  const ArrayEditData* array_edit(PropNameId name_id) const;
+  void clear_array_edit(PropNameId name_id);
+  const std::unordered_map<uint32_t, ArrayEditData>& array_edits() const {
+    static const std::unordered_map<uint32_t, ArrayEditData> kEmpty;
+    return cold_data_ ? cold_data_->array_edits : kEmpty;
+  }
 
   // ============================================================
   // Relationships
@@ -1177,7 +1260,7 @@ public:
   /// name. Empty map = no relationship carries qualifiers.
   const std::unordered_map<std::string, ArcEdit>& relationship_edits() const {
     static const std::unordered_map<std::string, ArcEdit> kEmpty;
-    return rel_edits_ ? *rel_edits_ : kEmpty;
+    return cold_data_ ? cold_data_->rel_edits : kEmpty;
   }
   ArcEdit& ensure_relationship_edit(const std::string& name);
 
@@ -1311,6 +1394,9 @@ private:
   std::string name_;
   TypeNameId type_id_;
   PrimSpecifier specifier_ = PrimSpecifier::Def;
+  // Interned dir this prim's relative asset paths anchor to (0 = none).
+  // Sits in the padding after `specifier_`, so it costs nothing per prim.
+  uint32_t asset_anchor_id_ = 0;
   Path path_;
 
   PropIndex props_;
@@ -1321,24 +1407,31 @@ private:
 
   // Relationships: name -> targets
   std::unordered_map<std::string, std::vector<Path>> relationships_;
-  // Lazily allocated (rare): authored rel list-op edits + qualifier flags.
-  std::unique_ptr<std::unordered_map<std::string, ArcEdit>> rel_edits_;
-  std::unordered_map<std::string, std::vector<RelationshipOpinion>>
-      rel_opinion_stacks_;
-  std::unordered_map<std::string, uint16_t> rel_flags_;
 
   // Attribute connections: interned property-name id -> connection targets.
   // (Keyed by PropNameId.id rather than a string to avoid a key string per
   // connected property on shader-heavy scenes.)
   std::unordered_map<uint32_t, std::vector<Path>> connections_;
-  std::unique_ptr<std::unordered_map<uint32_t, ArcEdit>> connection_edits_;
-  std::unordered_map<uint32_t, std::vector<RelationshipOpinion>>
-      connection_opinion_stacks_;
 
-  // Raw USDA `.spline` values keyed by property id. Kept separate from Value
-  // because spline is a specialized sampled field, not an attribute default.
-  std::unordered_map<uint32_t, std::string> spline_sources_;
-  std::unordered_map<uint32_t, std::string> raw_default_sources_;
+  // Rare authored fields share one lazy block. Keeping these eight hash-map
+  // objects inline cost hundreds of bytes on every prim even though ordinary
+  // geometry/xform prims use none of them.
+  struct ColdData {
+    std::unordered_map<std::string, ArcEdit> rel_edits;
+    std::unordered_map<std::string, std::vector<RelationshipOpinion>>
+        rel_opinion_stacks;
+    std::unordered_map<std::string, uint16_t> rel_flags;
+    std::unordered_map<uint32_t, ArcEdit> connection_edits;
+    std::unordered_map<uint32_t, std::vector<RelationshipOpinion>>
+        connection_opinion_stacks;
+    // Raw USDA `.spline` values and unsupported defaults are keyed by property
+    // id. Sparse array edits keep a structured twin of the raw default text.
+    std::unordered_map<uint32_t, std::string> spline_sources;
+    std::unordered_map<uint32_t, std::string> raw_default_sources;
+    std::unordered_map<uint32_t, ArrayEditData> array_edits;
+  };
+  ColdData& ensure_cold_data();
+  std::unique_ptr<ColdData> cold_data_;
 
   // Declared USD type names: interned property-name id -> interned typeName id
   // (both interned in the global PropNameTable). Lets the writer re-emit the

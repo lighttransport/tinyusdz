@@ -19,6 +19,8 @@
 
 namespace tusdview {
 
+struct BuildProgress;  // rt_scene_build.hh (background-build progress)
+
 class CudaRayTracer {
  public:
   CudaRayTracer() = default;
@@ -40,8 +42,9 @@ class CudaRayTracer {
   // displacementScale > 0 bakes coarse UsdPreviewSurface displacement into the
   // traced geometry (ray tracers intersect real triangles, so displacement can't
   // be a shader effect here). 0 = no displacement.
-  bool build(const DrawScene& scene, size_t maxTris, std::string* err,
-             float displacementScale = 0.0f);
+  bool build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
+             std::string* err, float displacementScale = 0.0f,
+             BuildProgress* progress = nullptr);
   size_t triangleCount() const { return triCount_; }
   bool truncated() const { return truncated_; }
 
@@ -51,10 +54,13 @@ class CudaRayTracer {
   // image (row 0 = top) of size w*h*4 into *rgba. Returns false on launch failure.
   // renderMode mirrors RenderMode (0=shaded, 1=wireframe, 2=normals, 3=material-id,
   // 4=geom normal, 5=uv, 6=depth). depthScale normalizes the depth AOV.
-  bool trace(const float invViewProj[16], const float camPos[3],
-             const float lightDir[3], const float clearColor[3], int renderMode,
+  bool trace(const float invViewProj[16], const float viewProj[16],
+             const float camPos[3],
+             const float lightDir[3], const float clearColor[3], float exposure,
+             int renderMode,
              float depthScale, const float sceneMin[3], const float sceneExtent[3],
-             int w, int h, std::vector<uint8_t>* rgba, std::string* err);
+             int w, int h, std::vector<uint8_t>* rgba, std::string* err,
+             int spp = 1);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 
@@ -72,9 +78,20 @@ class CudaRayTracer {
   uintptr_t dNrms_{0};       // float[9] vertex normals per tri
   uintptr_t dCols_{0};       // float[9] per-vertex color per tri (base*displayColor)
   uintptr_t dGeo_{0};        // uint8 geometricNormal flag per tri
-  uintptr_t dMat_{0};        // int material id per tri (material-id viz)
+  uintptr_t dEmask_{0};      // uint8 wireframe edge mask per tri (orig-polygon edges)
+  uintptr_t dMat_{0};        // material id per tri (GeomSubset shading + AOV)
+  uintptr_t dBackMat_{0};    // optional back-face material id per triangle
   uintptr_t dMatPbr_{0};     // float[6] per material: metal,rough,emitRGB,alpha
+  uintptr_t dMatBase_{0};    // float[3] per material: base color
+  uintptr_t dMatLightRt_{0};  // float[56] per material: LightRT/OpenPBR params
+  uintptr_t dMatTex_{0};     // int[6]: base,metal,rough,normal,emissive,opacity
+  uintptr_t dMatTexParam_{0}; // float[56] per material: texture UV/channel params
   int numMats_{0};           // material count (matPbr index bound)
+  uintptr_t dLightParams_{0}; // float[32] per light: packed DrawLightCPU params
+  int numLights_{0};
+  uintptr_t dTexels_{0};     // RGBA8 texture texels
+  uintptr_t dTextures_{0};   // HostTextureDesc[]
+  int numTextures_{0};
   uintptr_t dUV_{0};         // float[6] per-vertex uv per tri (uv viz)
   uintptr_t dUV1_{0};        // float[6] per-vertex uv set 1 per tri (multi-UV AOV)
   uintptr_t dInfl_{0};       // float[3] per-vertex blendshape influence per tri
@@ -91,6 +108,8 @@ class CudaRayTracer {
   int numVols_{0};           // UsdVol: volume count
   uintptr_t dOut_{0};        // RGBA8 output image
   size_t outCap_{0};         // bytes currently allocated for dOut_
+  uintptr_t dAccum_{0};      // float RGBA supersample accumulator (spp > 1)
+  size_t accumCap_{0};       // bytes currently allocated for dAccum_
 
   size_t triCount_{0};       // unique prototype triangles (geometry stored once)
   size_t instCount_{0};      // total instances (TLAS leaves)

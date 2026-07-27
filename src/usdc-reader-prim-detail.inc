@@ -23,6 +23,8 @@
 namespace tinyusdz {
 namespace prim {
 
+// Placeholder schema prim types (UsdVol / UsdRender / UsdProc): defined in
+// prim-reconstruct.cc, explicitly instantiated in usdc-reader-prim-reconstruct-1.cc.
 EXTERN_RECONSTRUCT_PRIM(GeomPlane);
 EXTERN_RECONSTRUCT_PRIM(GeomCylinder_1);
 EXTERN_RECONSTRUCT_PRIM(Volume);
@@ -86,7 +88,16 @@ bool USDCReader::Impl::ReconstructPrim(const Specifier &spec, const crate::Crate
   reconstruct_options.strict_allowedToken_check = _config.strict_allowedToken_check;
   reconstruct_options.strict_shader_type_check = _config.strict_shader_type_check;
 
-  if (!prim::ReconstructPrim<T>(spec, properties, refs, prim, &_warn, &_err, reconstruct_options)) {
+  // Per-call diagnostic buffers, merged under lock: this runs on worker
+  // threads during parallel prim reconstruction.
+  std::string local_warn;
+  std::string local_err;
+  const bool reconstruct_ok = prim::ReconstructPrim<T>(
+      spec, properties, refs, prim, &local_warn, &local_err,
+      reconstruct_options);
+  AppendWarnRaw(local_warn);
+  AppendErrorRaw(local_err);
+  if (!reconstruct_ok) {
     return false;
   }
 
@@ -152,6 +163,13 @@ USDC_EXTERN_RECONSTRUCT_PRIM(GeomSphere);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomSubset);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomBasisCurves);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomNurbsCurves);
+USDC_EXTERN_RECONSTRUCT_PRIM(Volume);
+USDC_EXTERN_RECONSTRUCT_PRIM(OpenVDBAsset);
+USDC_EXTERN_RECONSTRUCT_PRIM(Field3DAsset);
+USDC_EXTERN_RECONSTRUCT_PRIM(RenderSettings);
+USDC_EXTERN_RECONSTRUCT_PRIM(RenderProduct);
+USDC_EXTERN_RECONSTRUCT_PRIM(RenderVar);
+USDC_EXTERN_RECONSTRUCT_PRIM(GenerativeProcedural);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomPlane);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomCylinder_1);
 USDC_EXTERN_RECONSTRUCT_PRIM(GeomCapsule_1);

@@ -900,7 +900,13 @@ bool CrateWriter::LookupDeduplicatedValue(const std::vector<char>& bytes,
       NanAwareHash::hash_buffer(bytes.data(), bytes.size(), element_size,
                                 is_float),
       wire_tag);
+  return LookupDeduplicatedValueWithHash(h, bytes, element_size, is_float,
+                                         wire_tag, rep);
+}
 
+bool CrateWriter::LookupDeduplicatedValueWithHash(
+    size_t h, const std::vector<char>& bytes, size_t element_size,
+    bool is_float, uint32_t wire_tag, crate::ValueRep* rep) const {
   auto range = value_dedup_map_.equal_range(h);
   for (auto it = range.first; it != range.second; ++it) {
     const auto& entry = it->second;
@@ -956,8 +962,37 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
 
   int64_t value_offset = Tell();
 
+  if (WriteValueBody(value, is_compressed, err) < 0) {
+    return -1;
+  }
+
+  // Update value data end offset
+  value_data_end_offset_ = Tell();
+
+  // Seek back to where we were
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing value";
+    return -1;
+  }
+
+  return value_offset;
+}
+
+int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
+                                    bool* is_compressed,
+                                    std::string* err) {
   // Phase 1: Write out-of-line value data based on type
   // This handles values that cannot be inlined in the 48-bit payload
+
+  // RAII guard: increments dict_nesting_depth_ at scope entry and decrements
+  // on scope exit (including early returns). Used by the dict and CustomDataType
+  // branches below. Guard checks itself are at the branch sites, not in the ctor,
+  // so each branch can produce its own error message.
+  struct DictDepthGuard {
+    int& depth_;
+    explicit DictDepthGuard(int& d) : depth_(d) { ++depth_; }
+    ~DictDepthGuard() { --depth_; }
+  };
 
   if (const std::string* unregistered = value.GetUnregisteredValueString()) {
     const int64_t wrapper_start = Tell();
@@ -1262,9 +1297,21 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   WRITE_VEC_ARRAY(value::int2, 2, "Vec2i")
   WRITE_VEC_ARRAY(value::int3, 3, "Vec3i")
   WRITE_VEC_ARRAY(value::int4, 4, "Vec4i")
-  WRITE_VEC_ARRAY(value::uint2, 2, "Vec2u")
-  WRITE_VEC_ARRAY(value::uint3, 3, "Vec3u")
-  WRITE_VEC_ARRAY(value::uint4, 4, "Vec4u")
+  // uint2/3/4 have no CRATE_DATA_TYPE_VEC2U/3U/4U in the crate format — they
+  // cannot be stored in USDC. Reject with a clear error instead of silently
+  // writing an INVALID-typed ValueRep that readers will reject or skip.
+  else if (value.as<std::vector<value::uint2>>()) {
+    if (err) *err = "uint2 array cannot be stored in USDC (no crate type code)";
+    return -1;
+  }
+  else if (value.as<std::vector<value::uint3>>()) {
+    if (err) *err = "uint3 array cannot be stored in USDC (no crate type code)";
+    return -1;
+  }
+  else if (value.as<std::vector<value::uint4>>()) {
+    if (err) *err = "uint4 array cannot be stored in USDC (no crate type code)";
+    return -1;
+  }
   WRITE_QUATH_ARRAY(value::quath, "Quath")
   WRITE_QUAT_ARRAY(value::quatf, "Quatf")
   WRITE_QUAT_ARRAY(value::quatd, "Quatd")
@@ -1490,6 +1537,13 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     }
   }
   else if (auto* dict_val = value.as<value::dict>()) {
+    // Bounds-check recursive dictionary nesting before we touch any state.
+    if (dict_nesting_depth_ > 64) {
+      if (err) *err = "Dictionary nesting too deep.";
+      return -1;
+    }
+    DictDepthGuard _dg(dict_nesting_depth_);
+
     uint64_t count = dict_val->size();
 
     // Calculate size of dictionary structure:
@@ -1690,6 +1744,13 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   // out-of-line values would write to value_data_end_offset_ which still points
   // to the start of the dictionary, corrupting the data.
   else if (auto* custom_data = value.as<CustomDataType>()) {
+    // Bounds-check recursive dictionary nesting before we touch any state.
+    if (dict_nesting_depth_ > 64) {
+      if (err) *err = "CustomData nesting too deep.";
+      return -1;
+    }
+    DictDepthGuard _dg(dict_nesting_depth_);
+
     uint64_t count = custom_data->size();
 
     // Calculate size of dictionary structure:
@@ -2347,16 +2408,173 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     return -1;
   }
 
-  // Update value data end offset
-  value_data_end_offset_ = Tell();
+  return 0;
+}
 
-  // Seek back to where we were
-  if (!Seek(current_pos)) {
-    if (err) *err = "Failed to seek back after writing value";
-    return -1;
+// Keep in lockstep with the WriteValueBody chain above: exactly the branches
+// that route every byte through Write/WriteBytes with no interning, no
+// Tell/Seek, no value_data_end_offset_ bookkeeping and no crate version bump.
+// (WriteCompressedArray32/64 and WriteCompressedFloat/Double arrays qualify:
+// pure compression into a local buffer, then Write/WriteBytes.)
+bool CrateWriter::IsPureValueData(const crate::CrateValue& value) {
+  if (value.GetUnregisteredValueString()) {
+    return false;  // wrapper branch seeks + recursively packs
+  }
+  // Scalars (out-of-line forms of numeric types)
+  if (value.as<value::timecode>() || value.as<double>() ||
+      value.as<int64_t>() || value.as<uint64_t>() ||
+      value.as<value::float2>() || value.as<value::double2>() ||
+      value.as<value::int2>() || value.as<value::float3>() ||
+      value.as<value::double3>() || value.as<value::int3>() ||
+      value.as<value::half2>() || value.as<value::half3>() ||
+      value.as<value::half4>() || value.as<value::float4>() ||
+      value.as<value::double4>() || value.as<value::int4>() ||
+      value.as<value::matrix2d>() || value.as<value::matrix3d>() ||
+      value.as<value::matrix4d>() || value.as<value::quath>() ||
+      value.as<value::quatf>() || value.as<value::quatd>()) {
+    return true;
+  }
+  // Numeric arrays (incl. integer/float compression — pure)
+  if (value.as<std::vector<bool>>() || value.as<std::vector<uint8_t>>() ||
+      value.as<std::vector<int32_t>>() || value.as<std::vector<uint32_t>>() ||
+      value.as<std::vector<int64_t>>() || value.as<std::vector<uint64_t>>() ||
+      value.as<std::vector<value::half>>() ||
+      value.as<std::vector<float>>() || value.as<std::vector<double>>() ||
+      value.as<std::vector<value::timecode>>() ||
+      value.as<std::vector<value::float2>>() ||
+      value.as<std::vector<value::float3>>() ||
+      value.as<std::vector<value::float4>>() ||
+      value.as<std::vector<value::double2>>() ||
+      value.as<std::vector<value::double3>>() ||
+      value.as<std::vector<value::double4>>() ||
+      value.as<std::vector<value::int2>>() ||
+      value.as<std::vector<value::int3>>() ||
+      value.as<std::vector<value::int4>>() ||
+      value.as<std::vector<value::uint2>>() ||
+      value.as<std::vector<value::uint3>>() ||
+      value.as<std::vector<value::uint4>>() ||
+      value.as<std::vector<value::quath>>() ||
+      value.as<std::vector<value::quatf>>() ||
+      value.as<std::vector<value::quatd>>() ||
+      value.as<std::vector<value::half2>>() ||
+      value.as<std::vector<value::half3>>() ||
+      value.as<std::vector<value::half4>>() ||
+      value.as<std::vector<value::matrix2d>>() ||
+      value.as<std::vector<value::matrix3d>>() ||
+      value.as<std::vector<value::matrix4d>>()) {
+    return true;
+  }
+  return false;
+}
+
+crate::ValueRep CrateWriter::PackTokenVectorValue(
+    const std::vector<value::token>& tokens, std::string* err) {
+  const int64_t current_pos = Tell();
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to value data section for TokenVector";
+    return crate::ValueRep();
   }
 
-  return value_offset;
+  const int64_t value_offset = Tell();
+  const uint64_t count = static_cast<uint64_t>(tokens.size());
+  if (!Write(count)) {
+    if (err) *err = "Failed to write TokenVector count";
+    return crate::ValueRep();
+  }
+
+  for (const auto& tok : tokens) {
+    const uint32_t token_index = GetOrCreateToken(tok.str()).value;
+    if (!Write(token_index)) {
+      if (err) *err = "Failed to write TokenVector token index";
+      return crate::ValueRep();
+    }
+  }
+
+  value_data_end_offset_ = Tell();
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing TokenVector";
+    return crate::ValueRep();
+  }
+
+  return crate::ValueRep(
+      static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR),
+      false, false, static_cast<uint64_t>(value_offset));
+}
+
+// `subLayers` must be the dedicated StringVector crate type (uint64 count +
+// uint32 STRING indices), like pxr writes it. A VtArray<string> encoding is
+// readable but has the wrong value type, so SdfLayer never recognises the
+// entries as sublayers -- pxr silently composed nothing from them.
+crate::ValueRep CrateWriter::PackStringVectorValue(
+    const std::vector<std::string>& strs, std::string* err) {
+  const int64_t current_pos = Tell();
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to value data section for StringVector";
+    return crate::ValueRep();
+  }
+
+  const int64_t value_offset = Tell();
+  const uint64_t count = static_cast<uint64_t>(strs.size());
+  if (!Write(count)) {
+    if (err) *err = "Failed to write StringVector count";
+    return crate::ValueRep();
+  }
+
+  for (const auto& str : strs) {
+    const uint32_t string_index = GetOrCreateString(str).value;
+    if (!Write(string_index)) {
+      if (err) *err = "Failed to write StringVector string index";
+      return crate::ValueRep();
+    }
+  }
+
+  value_data_end_offset_ = Tell();
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing StringVector";
+    return crate::ValueRep();
+  }
+
+  return crate::ValueRep(
+      static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR),
+      false, false, static_cast<uint64_t>(value_offset));
+}
+
+// `subLayerOffsets` is the LayerOffsetVector crate type: uint64 count + raw
+// (double offset, double scale) pairs.
+crate::ValueRep CrateWriter::PackLayerOffsetVectorValue(
+    const std::vector<LayerOffset>& offsets, std::string* err) {
+  const int64_t current_pos = Tell();
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to value data section for LayerOffsetVector";
+    return crate::ValueRep();
+  }
+
+  const int64_t value_offset = Tell();
+  const uint64_t count = static_cast<uint64_t>(offsets.size());
+  if (!Write(count)) {
+    if (err) *err = "Failed to write LayerOffsetVector count";
+    return crate::ValueRep();
+  }
+
+  for (const auto& lo : offsets) {
+    if (!Write(lo._offset) || !Write(lo._scale)) {
+      if (err) *err = "Failed to write LayerOffsetVector element";
+      return crate::ValueRep();
+    }
+  }
+
+  value_data_end_offset_ = Tell();
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing LayerOffsetVector";
+    return crate::ValueRep();
+  }
+
+  return crate::ValueRep(
+      static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR),
+      false, false, static_cast<uint64_t>(value_offset));
 }
 
 crate::ValueRep CrateWriter::PackTokenVectorValue(
