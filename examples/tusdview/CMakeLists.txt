@@ -54,6 +54,7 @@ set(TUSDVIEW_SOURCES
     config.cc
     scene_loader.cc
     next_scene_loader.cc
+    ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
     mesh_build.cc
     texture_tools.cc
     lightrt_mtlx_bridge.cc

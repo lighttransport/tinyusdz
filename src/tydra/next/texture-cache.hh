@@ -75,6 +75,12 @@ class TextureDecoder {
   /// cannot be resolved or decoded; `out` is left untouched.
   bool Decode(const std::string& asset, bool srgb, DecodedImage* out);
 
+  // Decode one Ptex face/mip lazily to RGBA8. This never expands the complete
+  // Ptex file; the caller controls the destination budget. Non-Ptex assets
+  // return false.
+  bool DecodePtexFace(const std::string& asset, uint32_t face,
+                      uint32_t level, bool srgb, DecodedImage* out);
+
   /// Read `asset`'s raw bytes, resolving it exactly like Decode does (a .usdz
   /// entry when one is set, else `base_dir`-relative on disk). For assets a
   /// consumer must interpret itself rather than have decoded to pixels -- e.g. a
