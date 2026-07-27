@@ -98,6 +98,28 @@ const PrimMeta *GetPrimMeta(const value::Value &v) {
   GET_PRIM_META(MjcKeyframe)
   GET_PRIM_META(MjcSensor)
 
+  GET_PRIM_META(NodeGraph)
+  GET_PRIM_META(GeomPointInstancer)
+  GET_PRIM_META(GeomNurbsCurves)
+  GET_PRIM_META(GeomNurbsPatch)
+  GET_PRIM_META(GeomHermiteCurves)
+  GET_PRIM_META(GeomTetMesh)
+  GET_PRIM_META(GeomCapsule_1)
+  GET_PRIM_META(GeomCylinder_1)
+  GET_PRIM_META(DomeLight_1)
+  GET_PRIM_META(GeometryLight)
+  GET_PRIM_META(PortalLight)
+  GET_PRIM_META(LightFilter)
+  GET_PRIM_META(PluginLightFilter)
+  GET_PRIM_META(SpatialAudio)
+  GET_PRIM_META(Preliminary_Action)
+  GET_PRIM_META(Preliminary_Behavior)
+  GET_PRIM_META(Preliminary_InfiniteColliderPlane)
+  GET_PRIM_META(Preliminary_PhysicsGravitationalForce)
+  GET_PRIM_META(Preliminary_ReferenceImage)
+  GET_PRIM_META(Preliminary_Text)
+  GET_PRIM_META(Preliminary_Trigger)
+
 #undef GET_PRIM_META
 
   return nullptr;
@@ -169,6 +191,28 @@ PrimMeta *GetPrimMeta(value::Value &v) {
   GET_PRIM_META(MjcTendon)
   GET_PRIM_META(MjcKeyframe)
   GET_PRIM_META(MjcSensor)
+
+  GET_PRIM_META(NodeGraph)
+  GET_PRIM_META(GeomPointInstancer)
+  GET_PRIM_META(GeomNurbsCurves)
+  GET_PRIM_META(GeomNurbsPatch)
+  GET_PRIM_META(GeomHermiteCurves)
+  GET_PRIM_META(GeomTetMesh)
+  GET_PRIM_META(GeomCapsule_1)
+  GET_PRIM_META(GeomCylinder_1)
+  GET_PRIM_META(DomeLight_1)
+  GET_PRIM_META(GeometryLight)
+  GET_PRIM_META(PortalLight)
+  GET_PRIM_META(LightFilter)
+  GET_PRIM_META(PluginLightFilter)
+  GET_PRIM_META(SpatialAudio)
+  GET_PRIM_META(Preliminary_Action)
+  GET_PRIM_META(Preliminary_Behavior)
+  GET_PRIM_META(Preliminary_InfiniteColliderPlane)
+  GET_PRIM_META(Preliminary_PhysicsGravitationalForce)
+  GET_PRIM_META(Preliminary_ReferenceImage)
+  GET_PRIM_META(Preliminary_Text)
+  GET_PRIM_META(Preliminary_Trigger)
 
 #undef GET_PRIM_META
 

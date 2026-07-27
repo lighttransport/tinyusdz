@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <unordered_set>
@@ -19,7 +20,9 @@
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
+#include "tydra/next/resource-budget.hh"
 #include "tydra/next/urdf-to-usd.hh"
+#include "next/pcp/cache.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/schema/usd-skel.hh"
 
@@ -436,8 +439,61 @@ def Xform "World"
 // Converter Tests
 //
 
+class RetainedStreamSink : public SceneSink {
+ public:
+  bool BeginScene(RenderScene&& catalog) override {
+    scene = std::move(catalog);
+    return true;
+  }
+  bool AddMesh(int32_t id, RenderMesh&& mesh) override {
+    if (id < 0 || static_cast<size_t>(id) >= scene.meshes.size()) return false;
+    scene.meshes[static_cast<size_t>(id)] = std::move(mesh);
+    return true;
+  }
+  bool AddPoints(int32_t id, RenderPoints&& points) override {
+    if (id < 0 || static_cast<size_t>(id) >= scene.points.size()) return false;
+    scene.points[static_cast<size_t>(id)] = std::move(points);
+    return true;
+  }
+  bool AddCurves(int32_t id, RenderCurves&& curves) override {
+    if (id < 0 || static_cast<size_t>(id) >= scene.curves.size()) return false;
+    scene.curves[static_cast<size_t>(id)] = std::move(curves);
+    return true;
+  }
+  bool EndScene() override { return true; }
+
+  RenderScene scene;
+};
+
+class SelectiveStreamSink : public RetainedStreamSink {
+ public:
+  GeometryDisposition SelectGeometry(const GeometryInfo& info) override {
+    inspected.push_back(info);
+    if (cancel_on_first) return GeometryDisposition::Cancel;
+    if (info.prim_path == "/World/Plane") {
+      return GeometryDisposition::Proxy;
+    }
+    return GeometryDisposition::Skip;
+  }
+  void AbortScene() override { aborted = true; }
+
+  bool cancel_on_first = false;
+  bool aborted = false;
+  std::vector<GeometryInfo> inspected;
+};
+
 void TestRenderConverter() {
   std::cout << "Testing RenderConverter...\n";
+
+  const ResourceBudget target_budget =
+      ComputeResourceBudget(GiB(32), GiB(16));
+  assert(target_budget.host_limit == GiB(30));
+  assert(target_budget.vram_limit == GiB(8));
+  assert(target_budget.upload_staging_limit == MiB(512));
+  assert(target_budget.gpu_geometry_limit > target_budget.gpu_texture_limit);
+  assert(ComputeVramLimit(GiB(8)) == GiB(6));
+  assert(ComputeVramLimit(GiB(10)) == GiB(8));
+  assert(ComputeVramLimit(GiB(24)) == GiB(12));
 
   const char* usda = R"(#usda 1.0
 (
@@ -481,6 +537,7 @@ def Xform "World"
     def Mesh "Plane"
     {
         rel material:binding = </World/AnimatedMaterial>
+        float3[] extent = [(-1, 0, -1), (1, 0, 1)]
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
@@ -572,6 +629,52 @@ def Xform "World"
     std::cout << "  FAILED: " << result.error << "\n";
     return;
   }
+
+  RenderSceneConverter stream_converter(config);
+  RetainedStreamSink stream_sink;
+  StreamConvertResult streamed =
+      stream_converter.ConvertToSink(load_result.stage, &stream_sink);
+  assert(streamed.success);
+  assert(stream_sink.scene.meshes.size() == result.scene.meshes.size());
+  assert(stream_sink.scene.materials.size() == result.scene.materials.size());
+  assert(stream_sink.scene.point_instancers.size() ==
+         result.scene.point_instancers.size());
+  assert(streamed.mesh_count == result.scene.meshes.size());
+
+  RenderSceneConverter selective_converter(config);
+  SelectiveStreamSink selective_sink;
+  StreamConvertResult selected =
+      selective_converter.ConvertToSink(load_result.stage, &selective_sink);
+  assert(selected.success);
+  assert(selected.mesh_count == 1);
+  assert(!selective_sink.aborted);
+  assert(!selective_sink.inspected.empty());
+  const auto selected_info = std::find_if(
+      selective_sink.inspected.begin(), selective_sink.inspected.end(),
+      [](const GeometryInfo& info) {
+        return info.prim_path == "/World/Plane";
+      });
+  assert(selected_info != selective_sink.inspected.end());
+  assert(selected_info->point_count == 4);
+  assert(selected_info->index_count == 4);
+  assert(selected_info->estimated_resident_bytes > 0);
+  const int32_t selected_plane_id =
+      selective_sink.scene.mesh_by_path.at("/World/Plane");
+  const RenderMesh& selected_plane =
+      selective_sink.scene.meshes[static_cast<size_t>(selected_plane_id)];
+  assert(selected_plane.is_proxy);
+  assert(selected_plane.point_count() == 8);
+  assert(selected_plane.triangulated_indices.size() == 36);
+
+  RenderSceneConverter cancelled_converter(config);
+  SelectiveStreamSink cancelled_sink;
+  cancelled_sink.cancel_on_first = true;
+  StreamConvertResult cancelled =
+      cancelled_converter.ConvertToSink(load_result.stage, &cancelled_sink);
+  assert(!cancelled.success);
+  assert(cancelled.cancelled);
+  assert(cancelled_sink.aborted);
+  assert(cancelled.mesh_count == 0);
 
   assert(result.scene.meshes.size() == 3);
   assert(result.scene.point_instancers.size() == 1);
@@ -683,6 +786,29 @@ def Xform "World"
   assert(result.scene.point_instance_draws[0].material_id ==
          result.scene.point_instance_draws[1].material_id);
   assert(std::abs(result.scene.point_instance_draws[1].transform.m[12] - 4.5f) < 0.001f);
+
+  ConverterConfig compact_config = config;
+  compact_config.point_instancer.compact_instances = true;
+  compact_config.point_instancer.retain_source_arrays = false;
+  compact_config.point_instancer.build_instance_transforms = false;
+  compact_config.point_instancer.build_instance_draws = false;
+  RenderSceneConverter compact_converter(compact_config);
+  ConvertResult compact_result = compact_converter.Convert(load_result.stage);
+  assert(compact_result.success);
+  assert(compact_result.scene.point_instancers.size() == 1);
+  const RenderPointInstancer& compact_instancer =
+      compact_result.scene.point_instancers[0];
+  assert(compact_instancer.compact_instances.size() == 3);
+  assert(compact_instancer.instance_count() == 3);
+  assert(compact_instancer.visible_instance_count() == 2);
+  assert(compact_instancer.proto_indices.empty());
+  assert(compact_instancer.positions.empty());
+  assert(compact_instancer.transforms.empty());
+  assert(compact_instancer.instance_visible.empty());
+  assert(compact_result.scene.point_instance_draws.empty());
+  assert(compact_instancer.compact_instances[1].prototype_index == 1);
+  assert(compact_instancer.compact_instances[2].flags == 0);
+  assert(compact_instancer.memory_usage() < instancer.memory_usage());
 
   ConverterConfig duplicate_config = config;
   duplicate_config.point_instancer.duplicate_meshes = true;
@@ -860,6 +986,15 @@ def Xform "World"
             color3f inputs:base_color.connect = </World/OpenPBRMat/NG.outputs:out>
             float inputs:base_metalness = 0.8
             float inputs:base_roughness = 0.35
+            float inputs:specular_anisotropy = 0.11
+            float inputs:specular_roughness_anisotropy = 0.12
+            float inputs:transmission_dispersion = 0.13
+            float inputs:transmission_dispersion_scale = 0.14
+            float inputs:coat_anisotropy = 0.15
+            float inputs:coat_roughness_anisotropy = 0.16
+            float inputs:thin_film_weight = 0.17
+            float inputs:thin_film_thickness = 450
+            float inputs:thin_film_ior = 1.7
             float inputs:geometry_opacity.connect = </World/OpenPBRMat/NG.outputs:opacity>
             token outputs:surface
         }
@@ -985,6 +1120,20 @@ def Xform "World"
   assert(std::abs(openpbr.openpbr->base_color.value.z - 0.9f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_metalness.value.x - 0.8f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_roughness.value.x - 0.35f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->specular_anisotropy.value.x - 0.11f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->specular_roughness_anisotropy.value.x -
+                  0.12f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->transmission_dispersion.value.x - 0.13f) <
+         0.001f);
+  assert(std::abs(openpbr.openpbr->transmission_dispersion_scale.value.x -
+                  0.14f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->coat_anisotropy.value.x - 0.15f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->coat_roughness_anisotropy.value.x - 0.16f) <
+         0.001f);
+  assert(std::abs(openpbr.openpbr->thin_film_weight.value.x - 0.17f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->thin_film_thickness.value.x - 450.0f) <
+         0.001f);
+  assert(std::abs(openpbr.openpbr->thin_film_ior.value.x - 1.7f) < 0.001f);
   assert(openpbr.openpbr->opacity.is_texture());
   assert(openpbr.alpha_mode == RenderMaterial::AlphaMode::Blend);
   const int32_t opacity_texture_id = openpbr.openpbr->opacity.texture_id;
@@ -1076,9 +1225,9 @@ def Xform "World"
 
 // Regression: a Material whose only surface is an Unreal `sourceAsset` shader
 // (info:implementationSource = "sourceAsset", no UsdPreviewSurface child) must
-// not be dropped. UE MetaHuman exports bind such materials; the converter emits
-// a neutral default PreviewSurface so the binding survives and the mesh keeps a
-// material slot instead of rendering unmaterialed.
+// not be dropped. Familiar authored PBR constants on the engine shader and its
+// Material interface must survive in a per-material degraded PreviewSurface.
+// Geometry and GeomSubset binding must remain intact through that fallback.
 void TestRenderConverterUnrealSourceAssetFallback() {
   std::cout << "Testing RenderConverter Unreal source-asset default material...\n";
 
@@ -1091,12 +1240,44 @@ def Xform "World"
 {
     def Material "M_Hide"
     {
+        color3f inputs:emissiveColor = (0.03, 0.04, 0.05)
         token outputs:unreal:surface.connect = </World/M_Hide/UnrealShader.outputs:out>
 
         def Shader "UnrealShader"
         {
             uniform token info:implementationSource = "sourceAsset"
             uniform asset info:unreal:sourceAsset = @/Game/Materials/M_Hide.M_Hide@
+            color3f inputs:baseColor = (0.2, 0.4, 0.6)
+            float inputs:metalness = 0.75
+            float inputs:roughness = 0.27
+            float inputs:opacity = 0.4
+            float inputs:transmission_weight.connect = </World/M_Hide/AdvancedTex.outputs:r>
+            color3f inputs:transmission_color = (0.9, 0.8, 0.7)
+            float inputs:subsurface_weight = 0.31
+            color3f inputs:subsurface_color = (0.7, 0.5, 0.3)
+            float inputs:sheen_weight = 0.41
+            float inputs:specular_anisotropy = 0.51
+            float inputs:thin_film_weight = 0.61
+            float inputs:transmission_dispersion = 0.71
+            token outputs:out
+        }
+
+        def Shader "AdvancedTex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @missing-advanced.png@
+            token inputs:sourceColorSpace = "raw"
+            float outputs:r
+        }
+    }
+
+    def Material "M_Subset"
+    {
+        token outputs:surface.connect = </World/M_Subset/Unknown.outputs:out>
+        def Shader "Unknown"
+        {
+            uniform token info:id = "UnsupportedSurface_1"
+            color3f inputs:diffuseColor = (0.8, 0.1, 0.2)
             token outputs:out
         }
     }
@@ -1104,9 +1285,17 @@ def Xform "World"
     def Mesh "M"
     {
         rel material:binding = </World/M_Hide>
-        int[] faceVertexCounts = [3]
-        int[] faceVertexIndices = [0, 1, 2]
-        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+
+        def GeomSubset "UnsupportedLook"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [1]
+            rel material:binding = </World/M_Subset>
+        }
     }
 }
 )";
@@ -1130,11 +1319,93 @@ def Xform "World"
   assert(it != result.scene.material_by_path.end());
   const RenderMaterial& mat = result.scene.materials[it->second];
 
-  // Neutral default PreviewSurface (no convertible shader was found).
+  // Degraded PreviewSurface (no fully convertible shader was found), with
+  // authored constants recovered from the engine shader and Material input.
   assert(mat.shader_type == RenderMaterial::ShaderType::PreviewSurface);
   assert(mat.preview_surface);
+  assert(mat.default_fallback);
+  assert(!mat.diagnostics.empty());
+  bool saw_unsupported_node = false;
+  bool saw_degraded_diagnostic = false;
+  for (const auto& diagnostic : mat.diagnostics) {
+    if (diagnostic.kind == MaterialDiagnosticKind::UnsupportedMaterialXNode ||
+        diagnostic.kind == MaterialDiagnosticKind::UnsupportedShader) {
+      saw_unsupported_node = !diagnostic.node_path.empty();
+    }
+    if (diagnostic.kind == MaterialDiagnosticKind::DegradedMaterial) {
+      saw_degraded_diagnostic = true;
+    }
+  }
+  assert(saw_unsupported_node);
+  assert(saw_degraded_diagnostic);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.x - 0.2f) < 0.001f);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.y - 0.4f) < 0.001f);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.z - 0.6f) < 0.001f);
+  assert(std::abs(mat.preview_surface->metallic.value.x - 0.75f) < 0.001f);
+  assert(std::abs(mat.preview_surface->roughness.value.x - 0.27f) < 0.001f);
+  assert(std::abs(mat.preview_surface->opacity.value.x - 0.4f) < 0.001f);
+  assert(std::abs(mat.preview_surface->emissive_color.value.x - 0.03f) < 0.001f);
+  assert(mat.alpha_mode == RenderMaterial::AlphaMode::Blend);
 
-  std::cout << "  RenderConverter Unreal source-asset default material: PASSED\n";
+  // Unsupported advanced lobes are not evaluated as PreviewSurface, but every
+  // successfully extracted constant/connection remains available to a future
+  // evaluator. In particular, a texture connection must survive as a texture
+  // id rather than collapsing to its fallback scalar.
+  const auto retained = [&mat](const char* name)
+      -> const RetainedMaterialParam* {
+    for (const RetainedMaterialParam& param : mat.retained_params) {
+      if (param.name == name) return &param;
+    }
+    return nullptr;
+  };
+  const RetainedMaterialParam* transmission =
+      retained("transmission_weight");
+  assert(transmission && transmission->value.texture_id >= 0);
+  assert(static_cast<size_t>(transmission->value.texture_id) <
+         result.scene.textures.size());
+  assert(retained("transmission_color"));
+  assert(std::abs(retained("transmission_color")->value.value.x - 0.9f) <
+         0.001f);
+  assert(retained("subsurface_weight"));
+  assert(std::abs(retained("subsurface_weight")->value.value.x - 0.31f) <
+         0.001f);
+  assert(retained("subsurface_color"));
+  assert(retained("sheen_weight"));
+  assert(retained("specular_anisotropy"));
+  assert(retained("thin_film_weight"));
+  assert(retained("transmission_dispersion"));
+
+  auto subset_mat_it = result.scene.material_by_path.find("/World/M_Subset");
+  assert(subset_mat_it != result.scene.material_by_path.end());
+  const RenderMaterial& subset_mat =
+      result.scene.materials[static_cast<size_t>(subset_mat_it->second)];
+  assert(subset_mat.default_fallback && subset_mat.preview_surface);
+  assert(std::abs(subset_mat.preview_surface->diffuse_color.value.x - 0.8f) <
+         0.001f);
+
+  // A failed shader implementation must never drop bound geometry. Both
+  // triangles survive, and the second is routed to the degraded subset look.
+  auto mesh_it = result.scene.mesh_by_path.find("/World/M");
+  assert(mesh_it != result.scene.mesh_by_path.end());
+  const RenderMesh& mesh =
+      result.scene.meshes[static_cast<size_t>(mesh_it->second)];
+  assert(mesh.triangulated_indices.size() == 6);
+  assert(mesh.material_id == it->second);
+  assert(mesh.material_subsets.size() == 1);
+  assert(mesh.material_subsets[0].face_start == 1);
+  assert(mesh.material_subsets[0].face_count == 1);
+  assert(mesh.material_subsets[0].material_id == subset_mat_it->second);
+
+  bool reported_degraded = false;
+  for (const std::string& warning : result.warnings) {
+    if (warning.find("using a degraded material") != std::string::npos) {
+      reported_degraded = true;
+      break;
+    }
+  }
+  assert(reported_degraded);
+
+  std::cout << "  RenderConverter degraded material: PASSED\n";
 }
 
 // Regression: UsdSkel binding inheritance. `skel:skeleton` may be authored on
@@ -1654,6 +1925,164 @@ def Xform "World"
          "./textures/albedo.png");
 
   std::cout << "  MaterialX utilities: PASSED\n";
+}
+
+void TestExternalMaterialXImageGraph() {
+  std::cout << "Testing external MaterialX image graph composition...\n";
+
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path fixture =
+      fs::absolute("next_tydra_external_mtlx_test", ec);
+  assert(!ec);
+  fs::remove_all(fixture, ec);
+  ec.clear();
+  const fs::path materials = fixture / "materials";
+  fs::create_directories(materials, ec);
+  assert(!ec);
+
+  const char* root = R"(#usda 1.0
+(
+    defaultPrim = "Scene"
+)
+def Xform "Scene"
+{
+    def "Mat" (
+        references = @materials/test.mtlx@</MaterialX/Materials/M_Test>
+    )
+    {
+    }
+}
+)";
+  const char* mtlx = R"(<?xml version="1.0"?>
+<materialx version="1.38" colorspace="lin_rec709">
+  <nodegraph name="NG_Test">
+    <image name="base_image" type="color3">
+      <input name="file" type="filename" value="tex/base.jpg"
+             colorspace="srgb_texture" />
+    </image>
+    <image name="metal_image" type="float">
+      <input name="file" type="filename" value="tex/metal.jpg" />
+    </image>
+    <image name="rough_image" type="float">
+      <input name="file" type="filename" value="tex/rough.jpg" />
+    </image>
+    <image name="normal_image" type="vector3">
+      <input name="file" type="filename" value="tex/normal.jpg" />
+    </image>
+    <normalmap name="normal_map" type="vector3">
+      <input name="in" type="vector3" nodename="normal_image" />
+    </normalmap>
+    <output name="base" type="color3" nodename="base_image" />
+    <output name="metal" type="float" nodename="metal_image" />
+    <output name="rough" type="float" nodename="rough_image" />
+    <output name="normal" type="vector3" nodename="normal_map" />
+  </nodegraph>
+  <standard_surface name="Test" type="surfaceshader">
+    <input name="base_color" type="color3"
+           nodegraph="NG_Test" output="base" />
+    <input name="metalness" type="float"
+           nodegraph="NG_Test" output="metal" />
+    <input name="specular_roughness" type="float"
+           nodegraph="NG_Test" output="rough" />
+    <input name="normal" type="vector3"
+           nodegraph="NG_Test" output="normal" />
+  </standard_surface>
+  <surfacematerial name="M_Test" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Test" />
+  </surfacematerial>
+</materialx>
+)";
+
+  {
+    std::ofstream ofs(fixture / "root.usda",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << root;
+    assert(ofs.good());
+  }
+  {
+    std::ofstream ofs(materials / "test.mtlx",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << mtlx;
+    assert(ofs.good());
+  }
+
+  Stage stage;
+  AssetResolver resolver;
+  std::string warn;
+  std::string err;
+  assert(pcp::ComposeStageFromFile((fixture / "root.usda").string(), resolver,
+                                   &stage, {}, &warn, &err));
+
+  const UsdPrim material = stage.GetPrimAtPath("/Scene/Mat");
+  assert(material.IsValid());
+  const std::vector<Path>* surface =
+      material.GetRelationship("mtlx:surface:source");
+  assert(surface && surface->size() == 1);
+  assert((*surface)[0].str() == "/Scene/Mat/Test");
+
+  const UsdPrim shader = stage.GetPrimAtPath("/Scene/Mat/Test");
+  assert(shader.IsValid());
+  const std::vector<Path>* base =
+      shader.GetPrimSpec()->connection("inputs:base_color");
+  assert(base && base->size() == 1);
+  assert((*base)[0].str() == "/Scene/Mat/NG_Test.outputs:base");
+
+  const UsdPrim graph = stage.GetPrimAtPath("/Scene/Mat/NG_Test");
+  assert(graph.IsValid());
+  const std::vector<Path>* graph_base =
+      graph.GetPrimSpec()->connection("outputs:base");
+  assert(graph_base && graph_base->size() == 1);
+  assert((*graph_base)[0].str() ==
+         "/Scene/Mat/NG_Test/base_image.outputs:out");
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+  config.asset_base_dir = fixture.string();
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(stage);
+  assert(result.success);
+  assert(result.scene.images.size() == 4);
+  assert(result.scene.textures.size() == 4);
+
+  const auto material_it = result.scene.material_by_path.find("/Scene/Mat");
+  assert(material_it != result.scene.material_by_path.end());
+  const RenderMaterial& render_material =
+      result.scene.materials[static_cast<size_t>(material_it->second)];
+  assert(render_material.shader_type ==
+         RenderMaterial::ShaderType::OpenPBR);
+  assert(render_material.openpbr);
+  assert(render_material.openpbr->base_color.is_texture());
+  assert(render_material.openpbr->base_metalness.is_texture());
+  assert(render_material.openpbr->specular_roughness.is_texture());
+  assert(render_material.openpbr->normal.is_texture());
+  assert(!render_material.default_fallback);
+
+  auto texture_for = [&](const char* asset) -> const RenderTexture& {
+    for (const RenderTexture& texture : result.scene.textures) {
+      if (texture.asset_path == asset) return texture;
+    }
+    assert(false);
+    return result.scene.textures[0];
+  };
+  const RenderTexture& base_texture = texture_for("tex/base.jpg");
+  const RenderTexture& metal_texture = texture_for("tex/metal.jpg");
+  const RenderTexture& rough_texture = texture_for("tex/rough.jpg");
+  const RenderTexture& normal_texture = texture_for("tex/normal.jpg");
+  assert(base_texture.output_channel == RenderTexture::Channel::RGB);
+  assert(metal_texture.output_channel == RenderTexture::Channel::R);
+  assert(rough_texture.output_channel == RenderTexture::Channel::R);
+  assert(normal_texture.output_channel == RenderTexture::Channel::RGB);
+
+  const std::string expected_prefix = (materials / "tex").string() + "/";
+  for (const TextureImage& image : result.scene.images) {
+    assert(image.resolved_path.rfind(expected_prefix, 0) == 0);
+  }
+
+  fs::remove_all(fixture, ec);
+  std::cout << "  External MaterialX image graph: PASSED\n";
 }
 
 //
@@ -2240,9 +2669,12 @@ def Xform "World"
         int[] curveVertexCounts = [3, 2]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0),
                             (2, 0, 0), (2, 1, 0)]
-        float[] widths = [0.1, 0.2, 0.3, 0.4, 0.5]
+        float[] widths = [0.1, 0.6]
         color3f[] primvars:displayColor = [(0.25, 0.5, 0.75)] (
             interpolation = "constant"
+        )
+        float[] primvars:displayOpacity = [0.1, 0.3, 0.5, 0.7, 0.9] (
+            interpolation = "vertex"
         )
     }
 
@@ -2253,6 +2685,13 @@ def Xform "World"
         uniform token wrap = "nonperiodic"
         int[] curveVertexCounts = [4]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0)]
+    }
+
+    def HermiteCurves "Hermite"
+    {
+        int[] curveVertexCounts = [2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0)]
+        vector3f[] tangents = [(1, 2, 0), (1, -2, 0)]
     }
 
     def BasisCurves "PeriodicCatmullRom"
@@ -2399,9 +2838,9 @@ def Xform "World"
   RenderSceneConverter converter(cfg);
   ConvertResult result = converter.Convert(lr.stage);
   assert(result.success);
-  assert(result.scene.curves.size() == 5);
-  assert(result.scene.get_stats().curves_count == 5);
-  assert(result.scene.get_stats().curve_count == 6);
+  assert(result.scene.curves.size() == 6);
+  assert(result.scene.get_stats().curves_count == 6);
+  assert(result.scene.get_stats().curve_count == 7);
 
   auto curve = [&](const char* path) -> const RenderCurves& {
     auto it = result.scene.curves_by_path.find(path);
@@ -2417,9 +2856,19 @@ def Xform "World"
   assert(linear.tessellated_vertex_counts ==
          std::vector<uint32_t>({3, 2}));
   assert(linear.tessellated_widths.size() == 5);
+  assert(linear.widths_interp == Interpolation::Uniform);
+  assert(std::fabs(linear.tessellated_widths[0] - 0.1f) < 0.001f);
+  assert(std::fabs(linear.tessellated_widths[2] - 0.1f) < 0.001f);
+  assert(std::fabs(linear.tessellated_widths[3] - 0.6f) < 0.001f);
+  assert(std::fabs(linear.tessellated_widths[4] - 0.6f) < 0.001f);
   assert(linear.colors.size() == 3);
   assert(linear.colors_interp == Interpolation::Constant);
   assert(linear.tessellated_colors.size() == 15);
+  assert(linear.opacities.size() == 5);
+  assert(linear.opacities_interp == Interpolation::Vertex);
+  assert(linear.tessellated_opacities.size() == 5);
+  assert(std::fabs(linear.tessellated_opacities[0] - 0.1f) < 0.001f);
+  assert(std::fabs(linear.tessellated_opacities[4] - 0.9f) < 0.001f);
   assert(linear.has_bbox);
 
   const RenderCurves& bezier = curve("/World/Bezier");
@@ -2430,6 +2879,15 @@ def Xform "World"
   assert(std::fabs(bezier.tessellated_points[8] - 0.0f) < 0.001f);
   assert(std::fabs(bezier.tessellated_points[6] - 2.0f) < 0.001f);
   assert(std::fabs(bezier.tessellated_points[7] - 1.0f) < 0.001f);
+
+  const RenderCurves& hermite = curve("/World/Hermite");
+  assert(hermite.is_hermite);
+  assert(hermite.tessellated_vertex_counts == std::vector<uint32_t>({3}));
+  assert(std::fabs(hermite.tessellated_points[0]) < 0.001f);
+  assert(std::fabs(hermite.tessellated_points[3] - 0.5f) < 0.001f);
+  assert(std::fabs(hermite.tessellated_points[4] - 0.5f) < 0.001f);
+  assert(std::fabs(hermite.tessellated_points[6] - 1.0f) < 0.001f);
+  assert(std::fabs(hermite.tessellated_points[7]) < 0.001f);
 
   const RenderCurves& periodic = curve("/World/PeriodicCatmullRom");
   assert(periodic.wrap == CurveWrap::Periodic);
@@ -2536,11 +2994,20 @@ def Xform "Root"
     def LightFilter "Filter" {}
 
     def BasisCurves "Curve" {}
+    def TetMesh "Tets"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0),
+                            (0, 0, 1), (0, 0, -1)]
+        int4[] tetVertexIndices = [(0, 1, 2, 3), (0, 2, 1, 4)]
+    }
     def Points "Pts"
     {
         point3f[] points = [(0, 0, 0), (1, 2, 3), (-1, 0, 2)]
         float[] widths = [0.1, 0.2, 0.3]
         color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        float[] primvars:displayOpacity = [0.2, 0.6, 1] (
             interpolation = "vertex"
         )
     }
@@ -2555,7 +3022,7 @@ def Xform "Root"
   opts.collect_other = true;
   RenderExtractResult er;
   assert(CollectRenderPrims(lr.stage, opts, &er));
-  assert(er.meshes.size() == 4);
+  assert(er.meshes.size() == 5);
   assert(er.lights.size() == 4);
   assert(er.curves.size() == 1);
   assert(er.volumes.size() == 1);
@@ -2582,6 +3049,16 @@ def Xform "Root"
   assert(pipe.has_bbox);
   assert(std::fabs(pipe.bbox_min.z + 1.5f) < 0.001f);
   assert(std::fabs(pipe.bbox_max.z - 1.5f) < 0.001f);
+
+  auto tet_it = scene.mesh_by_path.find("/Root/Tets");
+  assert(tet_it != scene.mesh_by_path.end());
+  const RenderMesh& tets = scene.meshes[static_cast<size_t>(tet_it->second)];
+  assert(tets.point_count() == 5);
+  assert(tets.face_count() == 6);  // shared face is removed
+  assert(tets.triangulated_indices.size() == 18);
+  assert(tets.has_bbox);
+  assert(std::fabs(tets.bbox_min.z + 1.0f) < 0.001f);
+  assert(std::fabs(tets.bbox_max.z - 1.0f) < 0.001f);
 
   auto mat_it = scene.material_by_path.find("/Root/Mat");
   assert(mat_it != scene.material_by_path.end());
@@ -2643,6 +3120,10 @@ def Xform "Root"
   assert(pts.widths.size() == 3);
   assert(pts.colors.size() == 9);
   assert(pts.colors_interp == Interpolation::Vertex);
+  assert(pts.opacities.size() == 3);
+  assert(pts.opacities_interp == Interpolation::Vertex);
+  assert(std::fabs(pts.opacities[0] - 0.2f) < 0.001f);
+  assert(std::fabs(pts.opacities[2] - 1.0f) < 0.001f);
   assert(pts.has_bbox);
   assert(std::fabs(pts.bbox_min.x + 1.0f) < 0.001f);
   assert(std::fabs(pts.bbox_max.y - 2.0f) < 0.001f);
@@ -3085,6 +3566,10 @@ def Xform "World"
         asset inputs:texture:file = @sky.exr@
         token inputs:texture:format = "latlong"
     }
+    def RectLight "DefaultRect" {}
+    def DiskLight "DefaultDisk" {}
+    def CylinderLight "DefaultCylinder" {}
+    def DistantLight "DefaultDistant" {}
 }
 )";
 
@@ -3114,12 +3599,20 @@ def Xform "World"
   const RenderLight* key = nullptr;
   const RenderLight* fill = nullptr;
   const RenderLight* sky = nullptr;
+  const RenderLight* rect = nullptr;
+  const RenderLight* disk = nullptr;
+  const RenderLight* cylinder = nullptr;
+  const RenderLight* distant = nullptr;
   for (const RenderLight& light : result.scene.lights) {
     if (light.prim_path == "/World/KeyLight") key = &light;
     if (light.prim_path == "/World/FillLight") fill = &light;
     if (light.prim_path == "/World/Sky") sky = &light;
+    if (light.prim_path == "/World/DefaultRect") rect = &light;
+    if (light.prim_path == "/World/DefaultDisk") disk = &light;
+    if (light.prim_path == "/World/DefaultCylinder") cylinder = &light;
+    if (light.prim_path == "/World/DefaultDistant") distant = &light;
   }
-  assert(key && fill && sky);
+  assert(key && fill && sky && rect && disk && cylinder && distant);
 
   // KeyLight: lightLink includes /World/Props subtree minus Barrel.
   assert(!key->light_links_all);
@@ -3138,6 +3631,15 @@ def Xform "World"
   assert(sky->type == LightType::Dome);
   assert(sky->params.dome.texture_format ==
          RenderLight::DomeTextureFormat::Latlong);
+  // Schema defaults must be initialized even when no size attribute is
+  // authored; zero-area defaults break normalize and raster/RT parity.
+  assert(std::fabs(key->params.sphere.radius - 0.5f) < 0.001f);
+  assert(std::fabs(rect->params.rect.width - 1.0f) < 0.001f);
+  assert(std::fabs(rect->params.rect.height - 1.0f) < 0.001f);
+  assert(std::fabs(disk->params.disk.radius - 0.5f) < 0.001f);
+  assert(std::fabs(cylinder->params.cylinder.radius - 0.5f) < 0.001f);
+  assert(std::fabs(cylinder->params.cylinder.length - 1.0f) < 0.001f);
+  assert(std::fabs(distant->params.distant.angle - 0.53f) < 0.001f);
 
   std::cout << "  Light linking + dome texture format: PASSED\n";
 }
@@ -3173,8 +3675,17 @@ def Xform "World"
         {
             uniform token info:id = "ND_standard_surface_surfaceshader"
             color3f inputs:base_color = (0.8, 0.2, 0.1)
+            float inputs:specular = 0.7
+            color3f inputs:specular_color = (0.2, 0.3, 0.4)
             float inputs:specular_roughness = 0.35
             float inputs:metalness = 0.9
+            float inputs:coat = 0.6
+            float inputs:coat_roughness = 0.15
+            float inputs:emission = 2.0
+            color3f inputs:emission_color = (0.1, 0.4, 0.7)
+            color3f inputs:opacity = (0.8, 0.8, 0.8)
+            vector3f inputs:normal = (0.1, 0.2, 0.97)
+            float inputs:displacement = 0.125
             token outputs:out
         }
     }
@@ -3203,6 +3714,17 @@ def Xform "World"
   assert(std::fabs(mat.openpbr->base_color.value.x - 0.8f) < 0.001f);
   assert(std::fabs(mat.openpbr->base_color.value.y - 0.2f) < 0.001f);
   assert(std::fabs(mat.openpbr->base_color.value.z - 0.1f) < 0.001f);
+  assert(std::fabs(mat.openpbr->specular_weight.value.x - 0.7f) < 0.001f);
+  assert(std::fabs(mat.openpbr->specular_color.value.y - 0.3f) < 0.001f);
+  assert(std::fabs(mat.openpbr->specular_roughness.value.x - 0.35f) < 0.001f);
+  assert(std::fabs(mat.openpbr->base_metalness.value.x - 0.9f) < 0.001f);
+  assert(std::fabs(mat.openpbr->coat_weight.value.x - 0.6f) < 0.001f);
+  assert(std::fabs(mat.openpbr->coat_roughness.value.x - 0.15f) < 0.001f);
+  assert(std::fabs(mat.openpbr->emission_luminance.value.x - 2.0f) < 0.001f);
+  assert(std::fabs(mat.openpbr->emission_color.value.z - 0.7f) < 0.001f);
+  assert(std::fabs(mat.openpbr->opacity.value.x - 0.8f) < 0.001f);
+  assert(std::fabs(mat.openpbr->normal.value.y - 0.2f) < 0.001f);
+  assert(std::fabs(mat.openpbr->displacement.value.x - 0.125f) < 0.001f);
 
   std::cout << "  standard_surface no-recursion: PASSED\n";
 }
@@ -3541,6 +4063,9 @@ def Xform "World"
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (0.5, 0), (0.5, 0.5), (0, 0.5)] (
+            interpolation = "vertex"
+        )
         texCoord2f[] primvars:customUV = [(0, 0), (1, 0), (1, 1), (0, 1)] (
             interpolation = "vertex"
         )
@@ -3643,6 +4168,10 @@ def Xform "World"
 
   // ...and the customUV primvar is promoted into texcoords_0.
   assert(quad_mesh.texcoords_0.size() == 8);
+  assert(quad_mesh.texcoords_0_name == "customUV");
+  // The displaced conventional set remains available as the secondary UVs.
+  assert(quad_mesh.texcoords_1.size() == 8);
+  assert(quad_mesh.texcoords_1_name == "st");
 
   // Transmissive OpenPBR takes the blend path.
   const RenderMesh& glass_mesh = result.scene.meshes[static_cast<size_t>(glass)];
@@ -4390,6 +4919,7 @@ int main() {
   TestRenderConverterPointInstancerInvalidArrays();
   TestRenderConverterPointInstancerDuplicateMeshMetadata();
   TestMaterialXUtilities();
+  TestExternalMaterialXImageGraph();
   TestAudit2026_07();
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();

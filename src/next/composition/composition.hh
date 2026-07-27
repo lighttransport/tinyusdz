@@ -260,10 +260,31 @@ private:
                     const std::string& src_root, const std::string& dst_root,
                     double t_offset = 0.0, double t_scale = 1.0);
   bool ApplyVariants(PrimSpec& prim, const Layer& layer,
-                     const std::string& anchor_path, int depth);
+                     const std::string& anchor_path, int depth,
+                     size_t pending_graft_begin);
   void ApplyOneVariant(PrimSpec& prim, const Layer& layer,
                        const std::string& anchor_path, int depth,
                        const VariantData& variant);
+
+  // Resolve every remaining sparse array edit in the fully composed layer
+  // against its (absent -> empty) base array, like pxr's flatten. Runs only
+  // at the TOP-LEVEL Compose (compose_depth_ == 1): a nested compose result
+  // (sublayer / referenced layer) is one opinion among many, and its edits
+  // must survive to stack against the arcs still to come.
+  void ResolveArrayEditsInLayer(Layer& layer);
+  int compose_depth_ = 0;
+
+ public:
+  // Per-prim terminal resolution of stacked sparse array edits: apply each
+  // remaining edit over the prim's own base value (or an empty array when no
+  // weaker opinion supplied one) and clear the edit. Static so the pcp cache
+  // compose -- whose ComposeOpinions sees every source of a prim exactly once
+  // -- can resolve at the same "nothing weaker can arrive" point the serial
+  // compositor's depth-1 hook represents. Returns false (first message in
+  // *err) if any edit failed to apply; failed edits stay authored-as-text.
+  static bool ResolveArrayEditsOnPrim(PrimSpec* p, std::string* err);
+
+ private:
 
   // Helper methods
   void AddError(const std::string& msg, const std::string& prim_path,

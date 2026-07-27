@@ -87,8 +87,12 @@ public:
   bool ComputeLocalTransform(float* matrix) const;
   bool ComputeLocalTransform(double* matrix) const;
 
-  /// Get translation at specific time
-  bool GetTranslationAtTime(double time, float* x, float* y, float* z) const;
+  /// Get translation at a timecode: linearly interpolates between
+  /// bracketing time samples (pxr semantics), holds outside the sampled
+  /// range, and falls back to the default value. NaN reads the default
+  /// value only.
+  bool GetTranslationAtTimecode(double timecode, float* x, float* y,
+                                float* z) const;
 
 private:
   UsdPrim prim_;

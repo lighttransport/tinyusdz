@@ -133,6 +133,25 @@ endif()
 
 set_target_properties(${TEST_TARGET_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
+#
+# `next` schema unit tests (UsdSkel readers). A SEPARATE executable on purpose:
+# linking tinyusdz_next into unit-test-tinyusdz alongside tinyusdz_static makes
+# that binary's concurrency tests flaky (overlapping objects in the two static
+# libs), so these are isolated rather than destabilizing the 997 tests there.
+#
+if(TARGET tinyusdz_next)
+  set(NEXT_TEST_TARGET unit-test-next)
+  add_executable(${NEXT_TEST_TARGET} unit-next-main.cc unit-next-usdskel.cc)
+  target_link_libraries(${NEXT_TEST_TARGET} PRIVATE tinyusdz_next ${CMAKE_DL_LIBS})
+  target_include_directories(${NEXT_TEST_TARGET}
+                             PRIVATE ${PROJECT_SOURCE_DIR}/src
+                                     ${CMAKE_CURRENT_SOURCE_DIR})
+  set_target_properties(${NEXT_TEST_TARGET} PROPERTIES
+                        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+  add_test(NAME ${NEXT_TEST_TARGET} COMMAND ${NEXT_TEST_TARGET}
+           WORKING_DIRECTORY $<TARGET_FILE_DIR:${NEXT_TEST_TARGET}>)
+endif()
+
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
   target_compile_definitions(${TEST_TARGET_NAME} PRIVATE "TINYUSDZ_WITH_PXR_COMPAT_API")
 

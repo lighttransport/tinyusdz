@@ -1,0 +1,35 @@
+{
+  "viewer_args": ["--backend", "vk", "--size", "192x192"],
+  "repeat": 3,
+  "max_rss_growth_mb": 256,
+  "cases": [
+    {
+      "name": "red-triangle",
+      "usda": "#usda 1.0\n def Mesh \"RedTriangle\" { point3f[] points = [(-1,-1,0),(1,-1,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] uniform token subdivisionScheme = \"none\" color3f[] primvars:displayColor = [(0.8,0.05,0.02)] }\n",
+      "captures": [
+        {"name": "shaded-no-grid", "settings": {"mode": "shaded", "grid": false}, "viewport": {"op": "front"}},
+        {"name": "shaded-grid", "settings": {"mode": "shaded", "grid": true}, "different_from": "shaded-no-grid"}
+      ],
+      "expect": {"mesh_count": 1, "triangle_count": 1}
+    },
+    {
+      "name": "two-triangles",
+      "usda": "#usda 1.0\n def Mesh \"Quad\" { point3f[] points = [(-1,-1,0),(1,-1,0),(1,1,0),(-1,1,0)] int[] faceVertexCounts = [4] int[] faceVertexIndices = [0,1,2,3] uniform token subdivisionScheme = \"none\" color3f[] primvars:displayColor = [(0.05,0.8,0.02)] }\n",
+      "captures": [
+        {"name": "albedo", "settings": {"mode": "albedo", "grid": false}, "viewport": {"op": "front"}},
+        {"name": "normals", "settings": {"mode": "normals"}, "different_from": "albedo"},
+        {"name": "material-id", "settings": {"mode": "material-id"}, "different_from": "normals"}
+      ],
+      "expect": {"mesh_count": 1, "triangle_count": 2}
+    },
+    {
+      "name": "replacement-triangle",
+      "usda": "#usda 1.0\n def Mesh \"BlueTriangle\" { point3f[] points = [(-0.8,-0.8,0),(0.8,-0.8,0),(0,0.8,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] uniform token subdivisionScheme = \"none\" color3f[] primvars:displayColor = [(0.02,0.05,0.8)] }\n",
+      "captures": [
+        {"name": "front", "settings": {"mode": "facing", "grid": false}, "viewport": {"op": "front"}},
+        {"name": "back", "viewport": {"op": "back"}, "different_from": "front"}
+      ],
+      "expect": {"mesh_count": 1, "triangle_count": 1}
+    }
+  ]
+}

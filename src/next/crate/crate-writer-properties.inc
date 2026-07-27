@@ -632,6 +632,8 @@
     if (pm.authored & PropMeta::kBindMaterialAs)
       tok_field("bindMaterialAs", pm.bindMaterialAs);
     if (pm.authored & PropMeta::kKind) tok_field("kind", pm.kind);
+    if (pm.authored & PropMeta::kPermission)
+      tok_field("permission", pm.permission);
     if (pm.authored & PropMeta::kDisplayName)
       str_field("displayName", pm.displayName);
     if (pm.authored & PropMeta::kDisplayGroup)
@@ -727,6 +729,15 @@
         // An unencodable value must not become a `default` field with type
         // enum 0 — pxr fails the whole layer on it. The typeName field above
         // still records the declared type.
+        if (df.value_rep.type_id() != CrateTypeId::Invalid) {
+          flds.push_back(df);
+        }
+      } else if (const ArrayEditData* aedit = prim.array_edit(slot.name_id)) {
+        // Sparse array-edit default (VtArrayEdit, crate 0.14).
+        CrateField df;
+        df.token_index.value = InternToken("default");
+        df.value_rep = EncodeArrayEdit(
+            *aedit, static_cast<TypeId>(slot.value_type));
         if (df.value_rep.type_id() != CrateTypeId::Invalid) {
           flds.push_back(df);
         }

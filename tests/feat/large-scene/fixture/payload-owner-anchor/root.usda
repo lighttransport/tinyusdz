@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    subLayers = [@sub/weak.usda@]
+)
+
+over "World"
+{
+    over "P"
+    {
+        custom int strongOpinion = 1
+    }
+}

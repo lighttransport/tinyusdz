@@ -4,6 +4,8 @@
 
 void usdz_writer_basic_roundtrip_test(void);
 void usdz_writer_is_usdz_prefix_detection_test(void);
+void usdz_reader_loads_unaligned_stored_zip_test(void);
+void usdz_reader_first_entry_root_test(void);
 void usdz_writer_root_layer_format_test(void);
 void usdz_writer_with_assets_test(void);
 void usdz_validator_alignment_test(void);

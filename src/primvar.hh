@@ -291,7 +291,7 @@ struct PrimVar {
     return 0;
   }
 
-  const value::TimeSamples &ts_raw() const {
+  const value::TimeSamples &ts_raw() const TINYUSDZ_LIFETIMEBOUND {
     if (_extras) {
       return _extras->ts;
     }
@@ -299,16 +299,16 @@ struct PrimVar {
     return s_empty_ts;
   }
 
-  value::Value &value_raw() {
+  value::Value &value_raw() TINYUSDZ_LIFETIMEBOUND {
     return _value;
   }
 
-  const value::Value &value_raw() const {
+  const value::Value &value_raw() const TINYUSDZ_LIFETIMEBOUND {
     return _value;
   }
 
   // Mutable access lazily allocates the extension block.
-  value::TimeSamples &ts_raw() {
+  value::TimeSamples &ts_raw() TINYUSDZ_LIFETIMEBOUND {
     return extras().ts;
   }
 
@@ -375,7 +375,7 @@ struct PrimVar {
 
   bool has_spline() const { return _extras && !_extras->spline.knots.empty(); }
 
-  const SplineData &spline_data() const {
+  const SplineData &spline_data() const TINYUSDZ_LIFETIMEBOUND {
     if (_extras) {
       return _extras->spline;
     }
@@ -383,7 +383,7 @@ struct PrimVar {
     return s_empty_spline;
   }
   // Mutable access lazily allocates the extension block.
-  SplineData &spline_data() { return extras().spline; }
+  SplineData &spline_data() TINYUSDZ_LIFETIMEBOUND { return extras().spline; }
 
   void set_spline(const SplineData &spline) { extras().spline = spline; }
   void set_spline(SplineData &&spline) { extras().spline = std::move(spline); }
@@ -395,7 +395,7 @@ struct PrimVar {
   };
 
  private:
-  ExtrasBlock &extras() {
+  ExtrasBlock &extras() TINYUSDZ_LIFETIMEBOUND {
     if (!_extras) {
       _extras.reset(new ExtrasBlock());
     }

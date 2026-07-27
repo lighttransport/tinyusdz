@@ -13,6 +13,7 @@
 #include "next/crate/crate-reader.hh"
 #include "next/reader/usda-reader.hh"
 
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -446,6 +447,83 @@ static void test_variant_selection_over_reference() {
   }
 }
 
+// Regression for variant-bearing instance libraries: the selected holder of
+// each external reference lives in pending_graft_ until the arc-expansion pass
+// finishes. ApplyVariants must inspect the grafts produced for that instance,
+// without rescanning every earlier instance's grafts (quadratic on large UE
+// scenes with thousands of LOD-bearing references).
+static void test_many_variant_bearing_references() {
+  std::cout << "[variants: many external references scale linearly]\n";
+  constexpr size_t kInstances = 1024;
+  constexpr size_t kParts = 8;
+
+  Layer root;
+  for (size_t i = 0; i < kInstances; ++i) {
+    PrimSpec instance = MakePrim("/I" + std::to_string(i), "Xform");
+    instance.meta().references.push_back("@model@</Model>");
+    instance.meta().variantSelection = "lod=high";
+    root.add_prim(std::move(instance));
+  }
+  root.finalize();
+
+  auto loader = [](const std::string&,
+                   std::string*) -> std::unique_ptr<Layer> {
+    auto layer = std::make_unique<Layer>();
+    PrimSpec model = MakePrim("/Model", "Xform");
+    VariantSetData lod;
+    lod.name = "lod";
+    lod.selected = "low";  // host's high selection must remain stronger.
+    VariantData low;
+    low.name = "low";
+    VariantData high;
+    high.name = "high";
+    lod.variants.push_back(std::move(low));
+    lod.variants.push_back(std::move(high));
+    model.meta().variantSets().push_back(std::move(lod));
+    layer->add_prim(std::move(model));
+
+    PrimSpec holder = MakePrim("/Model/{lod=high}", "Xform");
+    holder.add_property("quality", Value(int32_t(7)));
+    layer->add_prim(std::move(holder));
+    for (size_t i = 0; i < kParts; ++i) {
+      PrimSpec part = MakePrim("/Model/{lod=high}/Part" + std::to_string(i),
+                               "Mesh");
+      part.add_property("part", Value(int32_t(i)));
+      layer->add_prim(std::move(part));
+    }
+    PrimSpec low_holder = MakePrim("/Model/{lod=low}", "Xform");
+    layer->add_prim(std::move(low_holder));
+    layer->finalize();
+    return layer;
+  };
+
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  const auto begin = std::chrono::steady_clock::now();
+  auto out = comp.Compose(root);
+  const double seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - begin).count();
+  CHECK(out != nullptr, "many variant-bearing references compose");
+  CHECK(seconds < 10.0,
+        "many variant-bearing references avoid quadratic graft scans");
+  if (!out) return;
+
+  bool all_composed = true;
+  for (size_t i = 0; i < kInstances; ++i) {
+    const std::string path = "/I" + std::to_string(i);
+    const Value* quality = PropOf(*out, path, "quality");
+    if (!quality || !quality->as_int() || *quality->as_int() != 7 ||
+        !out->prim_at_path(path + "/Part0") ||
+        !out->prim_at_path(path + "/Part7") ||
+        out->prim_at_path(path + "/{lod=low}")) {
+      all_composed = false;
+      break;
+    }
+  }
+  CHECK(all_composed,
+        "every reference bakes the selected holder and drops unselected LODs");
+}
+
 // Regression: the next backend must resolve the arcs authored on an
 // EXTERNALLY-referenced target (its payload / nested references), not just the
 // arcs on the prim itself. The exact Pixar Kitchen_set Chair.usd shape:
@@ -735,7 +813,8 @@ static void test_sublayer_merge() {
   }
   CHECK(!kid_is_root, "sublayer child not leaked to stage root");
   CHECK(out->meta().subLayers.empty(), "baked subLayers cleared from output");
-  CHECK(out->meta().defaultPrim == "p", "defaultPrim filled from sublayer");
+  CHECK(out->meta().defaultPrim.empty(),
+        "sublayer defaultPrim does NOT fill (root-layer-only, pxr parity)");
 }
 
 // LIVRPS strength: inherits > variants > references; specializes weakest.
@@ -906,6 +985,19 @@ static void test_variant_content_legacy() {
   const Value* n = PropOf(*out, "/p", "n");
   CHECK(n && n->as_float() && *n->as_float() == 2.0f,
         "nested variant applied (n=2)");
+
+  CompositionOptions override_options;
+  override_options.variant_overrides["inner"] = "i1";
+  Compositor overridden;
+  overridden.SetOptions(override_options);
+  overridden.SetLayerLoader(loader);
+  auto override_out = overridden.Compose(*root);
+  const Value* overridden_n =
+      override_out ? PropOf(*override_out, "/p", "n") : nullptr;
+  CHECK(overridden_n && overridden_n->as_float() &&
+            *overridden_n->as_float() == 1.0f,
+        "caller override wins over nested authored selection");
+
   const PrimSpec* gone = out->prim_at_path("/gone");
   CHECK(gone && !gone->meta().active,
         "variant active=false deactivates host");
@@ -1129,7 +1221,8 @@ static void test_audit_stage_meta_and_variant_overrides() {
       "\"s2\" { int v = 2 } }\n"
       "}\n");
 
-  // Root-authored upAxis wins; sublayer fills mPU/tCPS. Prim-scoped
+  // Root-authored upAxis wins; sublayer-authored stage metadata is IGNORED
+  // (pxr parity: stage fields resolve from the root layer only). Prim-scoped
   // override flips only /B to s2.
   CompositionOptions opts;
   opts.variant_overrides["/B{shape}"] = "s2";
@@ -1140,10 +1233,10 @@ static void test_audit_stage_meta_and_variant_overrides() {
   CHECK(out != nullptr, "compose succeeds");
   CHECK(out->meta().upAxis == "Y" && out->meta().upAxis_set,
         "root upAxis wins over sublayer");
-  CHECK(out->meta().timeCodesPerSecond == 30.0 &&
-            out->meta().timeCodesPerSecond_set,
-        "sublayer tCPS gap-fills");
-  CHECK(out->meta().metersPerUnit_set, "sublayer mPU gap-fills");
+  CHECK(!out->meta().timeCodesPerSecond_set,
+        "sublayer tCPS does NOT gap-fill (root-layer-only, pxr parity)");
+  CHECK(!out->meta().metersPerUnit_set,
+        "sublayer mPU does NOT gap-fill (root-layer-only, pxr parity)");
   const Value* va = PropOf(*out, "/A", "v");
   CHECK(va && va->as_int() && *va->as_int() == 1,
         "/A keeps authored selection (s1)");
@@ -1356,6 +1449,7 @@ int main() {
   test_variant_subprim();
   test_variant_roundtrip();
   test_variant_selection_over_reference();
+  test_many_variant_bearing_references();
   test_variant_ref_payload_chain();
   test_extref_self_contained_subtree();
   test_extref_non_self_contained_fallback();

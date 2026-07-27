@@ -253,7 +253,11 @@ export async function decodeEXRAsync(data, options = {}) {
 
   // Load TinyUSDZ dynamically for fallback
   try {
-    const createTinyUSDZ = (await import('./tinyusdz.js')).default;
+    // The WASM glue is a generated, optional artifact. Keep Vite from trying to
+    // resolve it while transforming demos that only use the Three.js decoder.
+    // The browser resolves this URL only if the fallback is actually needed.
+    const tinyusdzModuleUrl = './tinyusdz.js';
+    const createTinyUSDZ = (await import(/* @vite-ignore */ tinyusdzModuleUrl)).default;
     const tinyusdz = await createTinyUSDZ();
     return decodeEXR(data, tinyusdz, options);
   } catch (err) {

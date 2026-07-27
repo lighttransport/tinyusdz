@@ -22,7 +22,20 @@ constexpr size_t kJSONMaxBase64InputChars = 96 * 1024 * 1024;
 constexpr size_t kJSONMaxDecodedBytes = 64 * 1024 * 1024;
 
 // Raw asset reads through resolver paths (render/material/texture conversions).
+// This is the *default*; the effective cap is runtime-settable (see below) so
+// trusted local workflows can load legitimately-large single crates without a
+// recompile, while the default security posture stays at 512MB.
 constexpr size_t kResolverMaxAssetReadBytes = 512 * 1024 * 1024;
+
+// Runtime-settable effective cap. Backed by a function-local static in an inline
+// function, so there is a single instance across translation units. Defaults to
+// kResolverMaxAssetReadBytes. Set via SetMaxAssetReadBytes (e.g. from a CLI arg).
+inline size_t &MaxAssetReadBytesRef() {
+  static size_t v = kResolverMaxAssetReadBytes;
+  return v;
+}
+inline size_t GetMaxAssetReadBytes() { return MaxAssetReadBytesRef(); }
+inline void SetMaxAssetReadBytes(size_t n) { MaxAssetReadBytesRef() = n; }
 
 inline bool EstimateBase64DecodedSize(const std::string &data,
                                       size_t *decoded_size) {

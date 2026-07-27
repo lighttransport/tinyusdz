@@ -12,6 +12,65 @@
 namespace tinyusdz {
 namespace next {
 
+namespace {
+
+bool IsStaticGeometryArray(const std::string& type,
+                           const std::string& property) {
+  const bool primvar = property.compare(0, 9, "primvars:") == 0;
+  if (type == "Mesh") {
+    if (primvar) return true;
+    static const char* names[] = {
+        "points",          "normals",           "velocities",
+        "accelerations",  "faceVertexCounts",  "faceVertexIndices",
+        "holeIndices",    "cornerIndices",     "cornerSharpnesses",
+        "creaseIndices",  "creaseLengths",     "creaseSharpnesses"};
+    for (const char* name : names)
+      if (property == name) return true;
+    return false;
+  }
+  if (type == "PointInstancer") {
+    if (primvar) return true;
+    static const char* names[] = {
+        "protoIndices", "positions", "orientations", "scales",
+        "velocities", "angularVelocities", "accelerations", "ids",
+        "invisibleIds"};
+    for (const char* name : names)
+      if (property == name) return true;
+    return false;
+  }
+  if (type == "BasisCurves" || type == "Points") {
+    if (primvar) return true;
+    static const char* names[] = {"points", "normals", "widths",
+                                  "velocities", "accelerations", "ids",
+                                  "curveVertexCounts"};
+    for (const char* name : names)
+      if (property == name) return true;
+    return false;
+  }
+  return type == "GeomSubset" && property == "indices";
+}
+
+Stage::StaticGeometryReleaseStats ReleasePrimStaticGeometryArrays(
+    PrimSpec* prim, size_t min_array_elements) {
+  Stage::StaticGeometryReleaseStats stats;
+  if (!prim) return stats;
+  PropNameTable& names = GetPropNameTable();
+  for (const PropSlot& slot : prim->properties().slots()) {
+    const PropNameId id = slot.name_id;
+    if (!IsStaticGeometryArray(prim->type_name(), names.get(id))) continue;
+    // release_static_array_value changes only the slot's offset and its Value;
+    // PropIndex storage/order is stable, so this iteration does not invalidate.
+    const size_t bytes = prim->release_static_array_value(
+        id, min_array_elements, &stats.element_count);
+    if (bytes == 0) continue;
+    ++stats.property_count;
+    stats.estimated_payload_bytes += bytes;
+  }
+  return stats;
+}
+
+}  // namespace
+
 // ============================================================
 // UsdPrim
 // ============================================================
@@ -361,36 +420,46 @@ bool UsdPrim::GetForwardedRelationshipTargets(
   std::unordered_set<std::string> visited_relationships;
   std::unordered_set<std::string> unique_targets;
 
-  std::function<void(const PrimSpec&, const std::string&)> forward;
-  forward = [&](const PrimSpec& owner, const std::string& relationship_name) {
-    const std::vector<Path>* raw = owner.relationship(relationship_name);
-    if (!raw) return;
+  struct ForwardFrame {
+    const PrimSpec* owner;
+    std::string rel_name;
+    size_t target_pos;
+  };
+  std::vector<ForwardFrame> fwd_stack;
+  fwd_stack.push_back({root_owner, name, 0});
+  visited_relationships.insert(root_owner->path().append_property(name).str());
 
-    for (const Path& target : *raw) {
-      const std::string lookup_string =
-          map_prefix(target.str(), instance_root, prototype_root);
-      const std::string output_string =
-          map_prefix(target.str(), prototype_root, instance_root);
-      const Path lookup_target(lookup_string);
-      if (target.has_property()) {
-        const PrimSpec* target_prim =
-            layer_->prim_at_path(lookup_target.prim_path());
-        if (target_prim &&
-            target_prim->relationship(lookup_target.property_name()) != nullptr) {
-          if (visited_relationships.insert(lookup_string).second) {
-            forward(*target_prim, lookup_target.property_name());
-          }
-          continue;
+  while (!fwd_stack.empty()) {
+    ForwardFrame& f = fwd_stack.back();
+    const std::vector<Path>* raw = f.owner->relationship(f.rel_name);
+    if (!raw) { fwd_stack.pop_back(); continue; }
+
+    if (f.target_pos >= raw->size()) {
+      fwd_stack.pop_back();
+      continue;
+    }
+
+    const Path& target = (*raw)[f.target_pos++];
+    const std::string lookup_string =
+        map_prefix(target.str(), instance_root, prototype_root);
+    const std::string output_string =
+        map_prefix(target.str(), prototype_root, instance_root);
+    const Path lookup_target(lookup_string);
+    if (target.has_property()) {
+      const PrimSpec* target_prim =
+          layer_->prim_at_path(lookup_target.prim_path());
+      if (target_prim &&
+          target_prim->relationship(lookup_target.property_name()) != nullptr) {
+        if (visited_relationships.insert(lookup_string).second) {
+          fwd_stack.push_back({target_prim, lookup_target.property_name(), 0});
         }
-      }
-      if (unique_targets.insert(output_string).second) {
-        targets->push_back(Path(output_string));
+        continue;
       }
     }
-  };
-
-  visited_relationships.insert(root_owner->path().append_property(name).str());
-  forward(*root_owner, name);
+    if (unique_targets.insert(output_string).second) {
+      targets->push_back(Path(output_string));
+    }
+  }
   return true;
 }
 
@@ -695,19 +764,40 @@ bool Stage::HasPrimAtPath(const std::string& path) const {
 
 bool Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
                           const std::function<bool(const UsdPrim&)>& callback) const {
+  // Iterative DFS with explicit stack to avoid stack overflow on deep scenes.
+  struct Frame {
+    uint32_t idx;
+    size_t child_pos;
+  };
+  std::vector<Frame> stack;
+
   const PrimSpec* spec = layer->prim(prim_index);
   if (!spec) return true;
 
   UsdPrim prim(spec, layer, prim_index);
-
-  // Call callback, stop if returns false
   if (!callback(prim)) return false;
 
-  // Recurse to children, propagate stop signal
-  for (uint32_t child_idx : spec->child_indices()) {
-    if (!TraverseImpl(child_idx, layer, callback)) {
-      return false;
+  stack.push_back({prim_index, 0});
+
+  while (!stack.empty()) {
+    Frame& f = stack.back();
+    const PrimSpec* parent = layer->prim(f.idx);
+    if (!parent) { stack.pop_back(); continue; }
+
+    const auto& children = parent->child_indices();
+    if (f.child_pos >= children.size()) {
+      stack.pop_back();
+      continue;
     }
+
+    uint32_t child_idx = children[f.child_pos++];
+    const PrimSpec* child_spec = layer->prim(child_idx);
+    if (!child_spec) continue;
+
+    UsdPrim child_prim(child_spec, layer, child_idx);
+    if (!callback(child_prim)) return false;
+
+    stack.push_back({child_idx, 0});
   }
   return true;
 }
@@ -753,15 +843,13 @@ double Stage::GetTimeCodesPerSecond() const {
 }
 
 bool Stage::HasTimeSamples() const {
-  // Check if any prim has time samples
   bool has_samples = false;
   Traverse([&](const UsdPrim& prim) {
-    (void)prim;
-    // Check all properties for time samples
-    // Simplified: just check if endTimeCode > startTimeCode
-    if (meta_.endTimeCode > meta_.startTimeCode) {
-      has_samples = true;
-      return false;  // Stop traversal
+    for (const std::string& prop_name : prim.GetPropertyNames()) {
+      if (prim.HasTimeSamples(prop_name)) {
+        has_samples = true;
+        return false;
+      }
     }
     return true;
   });
@@ -806,6 +894,38 @@ Stage::Stats Stage::GetStats() const {
 
   s.memory_bytes = GetMemoryUsage();
   return s;
+}
+
+Stage::StaticGeometryReleaseStats Stage::ReleaseStaticGeometryArrays(
+    size_t min_array_elements) {
+  StaticGeometryReleaseStats stats;
+  stats.stage_bytes_before = GetMemoryUsage();
+  if (!root_layer_) {
+    stats.stage_bytes_after = stats.stage_bytes_before;
+    return stats;
+  }
+
+  for (size_t i = 0; i < root_layer_->prim_count(); ++i) {
+    PrimSpec* prim = root_layer_->prim_mutable(static_cast<uint32_t>(i));
+    if (!prim) continue;
+    const StaticGeometryReleaseStats one =
+        ReleasePrimStaticGeometryArrays(prim, min_array_elements);
+    stats.property_count += one.property_count;
+    stats.element_count += one.element_count;
+    stats.estimated_payload_bytes += one.estimated_payload_bytes;
+  }
+  stats.stage_bytes_after = GetMemoryUsage();
+  return stats;
+}
+
+Stage::StaticGeometryReleaseStats Stage::ReleaseStaticGeometryArraysForPrim(
+    const UsdPrim& prim, size_t min_array_elements) {
+  if (!root_layer_ || !prim.IsValid() || prim.GetLayer() != root_layer_.get()) {
+    return {};
+  }
+  PrimSpec* mutable_prim = root_layer_->prim_mutable(prim.GetIndex());
+  if (!mutable_prim || mutable_prim != prim.GetPrimSpec()) return {};
+  return ReleasePrimStaticGeometryArrays(mutable_prim, min_array_elements);
 }
 
 // ============================================================

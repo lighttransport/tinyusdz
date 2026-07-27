@@ -51,6 +51,7 @@ int AxisIndex(tinyusdz::Axis axis) {
     case tinyusdz::Axis::X: return 0;
     case tinyusdz::Axis::Y: return 1;
     case tinyusdz::Axis::Z: return 2;
+    case tinyusdz::Axis::Invalid: break;
   }
   return 2;
 }
@@ -60,6 +61,7 @@ Vec3 AxisVec(tinyusdz::Axis axis) {
     case tinyusdz::Axis::X: return Vec3{1.0f, 0.0f, 0.0f};
     case tinyusdz::Axis::Y: return Vec3{0.0f, 1.0f, 0.0f};
     case tinyusdz::Axis::Z: return Vec3{0.0f, 0.0f, 1.0f};
+    case tinyusdz::Axis::Invalid: break;
   }
   return Vec3{0.0f, 0.0f, 1.0f};
 }

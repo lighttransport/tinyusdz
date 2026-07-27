@@ -1,0 +1,34 @@
+#usda 1.0
+(
+    doc = """Two NATIVE-INSTANCED copies of one STATIC prototype. Regression fixture
+for the RT BLAS wave builder: the compaction gate (check-blas-compaction.py)
+needs a scene whose BLAS is compactable -- a skinned prototype's BLAS is
+deliberately built refit-able (ALLOW_UPDATE) and skips compaction, so the
+skinned instancing fixture (skintest-instanced.usda) can no longer assert the
+shrink. Dedup still holds here: two instances of one prototype must build
+exactly one BLAS."""
+    defaultPrim = "world"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "world"
+{
+    def Xform "InstanceA" (
+        instanceable = true
+        prepend references = @blastest-proto-sphere.usda@</root>
+    )
+    {
+        double3 xformOp:translate = (-1.5, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "InstanceB" (
+        instanceable = true
+        prepend references = @blastest-proto-sphere.usda@</root>
+    )
+    {
+        double3 xformOp:translate = (1.5, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

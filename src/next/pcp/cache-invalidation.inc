@@ -56,15 +56,10 @@
     // paths, so IsPathAtOrUnder never matches them; drop them all (they are
     // cheap to recompute and a stale relocate-source / arc-target expansion
     // under the invalidated subtree would otherwise survive).
-    for (auto it = sources_cache.begin(); it != sources_cache.end();) {
-      const bool qualified =
-          !it->first.empty() && (it->first[0] == '@' || it->first[0] == '!');
-      if (qualified || IsPathAtOrUnder(it->first, base)) {
-        it = sources_cache.erase(it);
-      } else {
-        ++it;
-      }
-    }
+    sources_cache.erase_if([&](const std::string &k) {
+      const bool qualified = !k.empty() && (k[0] == '@' || k[0] == '!');
+      return qualified || IsPathAtOrUnder(k, base);
+    });
     for (auto it = deferred_payload_prims.begin();
          it != deferred_payload_prims.end();) {
       if (IsPathAtOrUnder(*it, base)) it = deferred_payload_prims.erase(it);
@@ -94,9 +89,12 @@
       }
     }
     for (const std::string &k : to_drop) DropIndex(k);
-    // spec_cache_ keys are (stack_idx, site), not prim paths; layer contents
-    // changed so clear it entirely.
-    spec_cache_.clear();
+    // spec cache keys are (stack_idx, site), not prim paths; layer contents
+    // changed so clear it entirely. (Src::specs_ memo pointers into it live
+    // only in sources_cache entries, cleared just below.) The arc-target memo
+    // caches resolved layers, so a dropped/re-parsed layer must re-resolve.
+    spec_cache_by_stack_.clear();
+    arc_target_memo_.clear();
     // Sources and lazy composed specs can be populated without a PrimIndex, so
     // site_to_indices is not a complete dependency map for them. Be conservative
     // until lazy composition records its own layer-site dependencies.
@@ -119,6 +117,27 @@
     }
     Invalidate_locked(prim_path);
     ComputePrimIndex_locked(prim_path, warn, err);  // recompose now.
+    return true;
+  }
+
+  bool LoadPayloads(const std::vector<Path> &prim_paths,
+                    bool with_descendants) {
+    NEXT_PCP_LOCK(api_mu_);
+    Path common;
+    for (const Path &path : prim_paths) {
+      if (path.empty()) continue;
+      if (with_descendants) load_rules_.LoadWithDescendants(path.str());
+      else load_rules_.LoadWithoutDescendants(path.str());
+      if (common.empty()) {
+        common = path;
+      } else {
+        while (!common.empty() &&
+               !IsPathAtOrUnder(path.str(), common.str())) {
+          common = common.parent();
+        }
+      }
+    }
+    if (!common.empty()) Invalidate_locked(common);
     return true;
   }
 
@@ -150,4 +169,25 @@
     composed_cache_.clear();  // Phase 10
     composed_children_.clear();
     issues_.clear();  // fresh diagnostics for the recomposition.
+  }
+
+  void SetVariantSelections(
+      const CompositionOptions::VariantSelectionMap &selections) {
+    NEXT_PCP_LOCK(api_mu_);
+    std::set<std::string> changed;
+    for (const auto &entry : options.variant_overrides_by_path) {
+      const auto it = selections.find(entry.first);
+      if (it == selections.end() || it->second != entry.second) {
+        changed.insert(entry.first);
+      }
+    }
+    for (const auto &entry : selections) {
+      const auto it = options.variant_overrides_by_path.find(entry.first);
+      if (it == options.variant_overrides_by_path.end() ||
+          it->second != entry.second) {
+        changed.insert(entry.first);
+      }
+    }
+    options.variant_overrides_by_path = selections;
+    for (const std::string &path : changed) Invalidate_locked(Path(path));
   }

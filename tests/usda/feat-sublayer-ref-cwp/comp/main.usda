@@ -1,0 +1,11 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+    subLayers = [
+        @sub/surf.usda@,
+        @second.usda@
+    ]
+)
+def "root"
+{
+}

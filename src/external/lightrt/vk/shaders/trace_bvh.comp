@@ -1,0 +1,179 @@
+#version 460
+//
+// trace_bvh.comp — Vulkan compute traversal of a LightRT wide BVH.
+//
+// One invocation = one ray. Mirrors the scalar CPU kernel tri_intersect_scalar
+// (lightrt_c_tri.c) byte-for-byte over the SAME node/leaf memory image the C
+// builder produces (serialized LRTS node + block regions, uploaded verbatim):
+//   - stack of {ref, tnear} with deferred culling (pop, skip if tnear>=best_t),
+//   - leaf: blocks x lanes Moller-Trumbore (det window +/-1e-12),
+//   - interior: slab test all children, insertion-sort ascending tnear, push
+//     far-to-near so the nearest child is popped first.
+//
+// Buffers are bound as raw uint[] and indexed by hand (uintBitsToFloat) so the
+// GPU sees exactly the bytes of lrt_bvh{4,8}_node / lrt_tri{4,8}, independent of
+// std430 struct-padding rules. A single SPIR-V serves BVH4 and BVH8 via the
+// spec constant W (per-array SoA stride): node stride = 8*W words, block stride
+// = 10*W words, prim_id array at word 9*W.
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+layout(local_size_x = 64) in;
+
+layout(constant_id = 0) const uint W = 8u;     // SoA lane width: 4 (BVH4) or 8 (BVH8)
+layout(constant_id = 1) const uint STACK = 96u; // per-invocation traversal stack depth
+
+layout(std430, binding = 0) readonly buffer Nodes  { uint nodes[]; };
+layout(std430, binding = 1) readonly buffer Blocks { uint blocks[]; };
+layout(std430, binding = 2) readonly buffer Rays   { uint rays[]; };  // 8 words / ray
+layout(std430, binding = 3) writeonly buffer Hits  { uint hits[]; };  // 4 words / hit
+
+layout(push_constant) uniform PC {
+    uint root;        // root child-ref
+    uint node_count;  // (unused by traversal; kept for diagnostics)
+    uint block_count; // (unused)
+    uint ray_count;   // dispatch tail bound
+} pc;
+
+const uint LEAF_BIT = 0x80000000u;
+const uint NO_HIT   = 0xFFFFFFFFu;
+const float INVD_MAX = 1e18;       // mirrors TRI_INVD_MAX
+
+float fu(uint i) { return uintBitsToFloat(i); }
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= pc.ray_count) return;
+
+    uint rb = gid * 8u;
+    vec3  org  = vec3(fu(rays[rb + 0u]), fu(rays[rb + 1u]), fu(rays[rb + 2u]));
+    float tmin = fu(rays[rb + 3u]);
+    vec3  dir  = vec3(fu(rays[rb + 4u]), fu(rays[rb + 5u]), fu(rays[rb + 6u]));
+    float tmax = fu(rays[rb + 7u]);
+
+    // invd with the exact clamp from tri_ray_setup: a non-finite 1/d becomes
+    // copysign(1e18, d==0 ? +1 : d).
+    vec3 invd;
+    for (int k = 0; k < 3; k++) {
+        float d = dir[k];
+        float inv = 1.0 / d;
+        if (!(inv >= -INVD_MAX && inv <= INVD_MAX)) {
+            float s = (d == 0.0) ? 1.0 : d;
+            inv = (s < 0.0) ? -INVD_MAX : INVD_MAX;
+        }
+        invd[k] = inv;
+    }
+
+    float best_t = tmax;
+    float best_u = 0.0, best_v = 0.0;
+    uint  best_prim = NO_HIT;
+
+    uint  node_stride  = 8u * W;   // words per wide node
+    uint  block_stride = 10u * W;  // words per leaf block
+    uint  prim_off     = 9u * W;   // prim_id[] offset within a block
+
+    uint  stk_ref[STACK];
+    float stk_tn[STACK];
+    int sp = 0;
+    stk_ref[0] = pc.root;
+    stk_tn[0]  = tmin;
+    sp = 1;
+
+    while (sp > 0) {
+        sp--;
+        uint  ref     = stk_ref[sp];
+        float tnear_e = stk_tn[sp];
+        if (tnear_e >= best_t) continue;
+
+        if ((ref & LEAF_BIT) != 0u) {
+            uint blk0 = (ref & 0x7FFFFFFFu) >> 4u;
+            uint nblk = ref & 0xFu;
+            for (uint b = 0u; b < nblk; b++) {
+                uint bb = (blk0 + b) * block_stride;
+                for (uint lane = 0u; lane < W; lane++) {
+                    uint prim = blocks[bb + prim_off + lane];
+                    if (prim == NO_HIT) continue;
+                    float v0x = fu(blocks[bb + 0u * W + lane]);
+                    float v0y = fu(blocks[bb + 1u * W + lane]);
+                    float v0z = fu(blocks[bb + 2u * W + lane]);
+                    float e1x = fu(blocks[bb + 3u * W + lane]);
+                    float e1y = fu(blocks[bb + 4u * W + lane]);
+                    float e1z = fu(blocks[bb + 5u * W + lane]);
+                    float e2x = fu(blocks[bb + 6u * W + lane]);
+                    float e2y = fu(blocks[bb + 7u * W + lane]);
+                    float e2z = fu(blocks[bb + 8u * W + lane]);
+                    // Moller-Trumbore (same op order as tri_isect_lane).
+                    float px = dir.y * e2z - dir.z * e2y;
+                    float py = dir.z * e2x - dir.x * e2z;
+                    float pz = dir.x * e2y - dir.y * e2x;
+                    float det = e1x * px + e1y * py + e1z * pz;
+                    if (det > -1e-12 && det < 1e-12) continue;
+                    float inv_det = 1.0 / det;
+                    float tvx = org.x - v0x;
+                    float tvy = org.y - v0y;
+                    float tvz = org.z - v0z;
+                    float uu = (tvx * px + tvy * py + tvz * pz) * inv_det;
+                    if (uu < 0.0 || uu > 1.0) continue;
+                    float qx = tvy * e1z - tvz * e1y;
+                    float qy = tvz * e1x - tvx * e1z;
+                    float qz = tvx * e1y - tvy * e1x;
+                    float vv = (dir.x * qx + dir.y * qy + dir.z * qz) * inv_det;
+                    if (vv < 0.0 || uu + vv > 1.0) continue;
+                    float tt = (e2x * qx + e2y * qy + e2z * qz) * inv_det;
+                    if (tt < tmin || tt >= best_t) continue;
+                    best_t = tt; best_u = uu; best_v = vv; best_prim = prim;
+                }
+            }
+            continue;
+        }
+
+        // Interior node.
+        uint nb = (ref & 0x7FFFFFFFu) * node_stride;
+        uint nchildren = nodes[nb + 7u * W];
+
+        uint  hit_ref[8];
+        float hit_tn[8];
+        int nhit = 0;
+        for (uint i = 0u; i < nchildren; i++) {
+            float lo_x = fu(nodes[nb + 0u * W + i]);
+            float lo_y = fu(nodes[nb + 1u * W + i]);
+            float lo_z = fu(nodes[nb + 2u * W + i]);
+            float hi_x = fu(nodes[nb + 3u * W + i]);
+            float hi_y = fu(nodes[nb + 4u * W + i]);
+            float hi_z = fu(nodes[nb + 5u * W + i]);
+            float tlx = (lo_x - org.x) * invd.x;
+            float thx = (hi_x - org.x) * invd.x;
+            float tly = (lo_y - org.y) * invd.y;
+            float thy = (hi_y - org.y) * invd.y;
+            float tlz = (lo_z - org.z) * invd.z;
+            float thz = (hi_z - org.z) * invd.z;
+            float tnx = min(tlx, thx), tfx = max(tlx, thx);
+            float tny = min(tly, thy), tfy = max(tly, thy);
+            float tnz = min(tlz, thz), tfz = max(tlz, thz);
+            float tnear = max(max(tnx, tny), max(tnz, tmin));
+            float tfar  = min(min(tfx, tfy), min(tfz, best_t));
+            if (tnear <= tfar) {
+                int j = nhit++;
+                while (j > 0 && hit_tn[j - 1] > tnear) {
+                    hit_tn[j]  = hit_tn[j - 1];
+                    hit_ref[j] = hit_ref[j - 1];
+                    j--;
+                }
+                hit_tn[j]  = tnear;
+                hit_ref[j] = nodes[nb + 6u * W + i];
+            }
+        }
+        if (uint(sp) + uint(nhit) > STACK) { best_prim = NO_HIT; break; } // depth-capped: never hit
+        for (int i = nhit - 1; i >= 0; i--) {
+            stk_ref[sp] = hit_ref[i];
+            stk_tn[sp]  = hit_tn[i];
+            sp++;
+        }
+    }
+
+    uint hb = gid * 4u;
+    hits[hb + 0u] = floatBitsToUint(best_prim != NO_HIT ? best_t : 0.0);
+    hits[hb + 1u] = floatBitsToUint(best_u);
+    hits[hb + 2u] = floatBitsToUint(best_v);
+    hits[hb + 3u] = best_prim;
+}

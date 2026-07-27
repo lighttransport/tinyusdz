@@ -1,0 +1,27 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+)
+
+def Xform "Root"
+{
+    def Xform "Small" (
+        prepend payload = @small.usda@</Payload>
+    )
+    {
+        uniform float3[] extentsHint = [(0, 0, 0), (1, 1, 1)]
+    }
+
+    def Xform "Large" (
+        prepend payload = @large.usda@</Payload>
+    )
+    {
+        uniform float3[] extentsHint = [(0, 0, 0), (4, 4, 4)]
+    }
+
+    def Xform "NoHint" (
+        prepend payload = @no-hint.usda@</Payload>
+    )
+    {
+    }
+}

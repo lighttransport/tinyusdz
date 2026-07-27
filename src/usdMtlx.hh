@@ -275,6 +275,10 @@ struct MtlxAutodeskStandardSurface : ShaderNode {
   // Normal and tangent
   TypedAttribute<Animatable<value::normal3f>> normal;
   TypedAttribute<Animatable<value::vector3f>> tangent;
+  TypedAttribute<Animatable<value::normal3f>> coat_normal;
+  // Height input retained for renderer parity with the next MaterialX carrier.
+  // It is consumed as a real-time geometry modifier, not as an OpenPBR lobe.
+  TypedAttributeWithFallback<Animatable<float>> displacement{0.0f};
 
   // Output
   TypedTerminalAttribute<value::token> out;  // 'out'

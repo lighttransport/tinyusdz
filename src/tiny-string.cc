@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "tiny-string.hh"
+#include <cmath>
 #include "value-types.hh"  // For complete matrix type definitions
 
 #if defined(TINYUSDZ_USE_THREAD)
@@ -470,11 +471,49 @@ bool parse_double_array(const tstring_view &sv, std::vector<double> *result) {
     });
 }
 
+// pxrUSD coerces float literals to integer types in usda text, truncating
+// toward zero (`int[] a = [1.5]` -> [1]); out of range AFTER truncation is a
+// parse error and NaN/inf fail the range comparisons. `hi_excl` is exclusive
+// so the bound is an exactly-representable power of two.
+static bool coerce_float_to_i64(const tstring_view &sv, double lo,
+                                double hi_excl, int64_t *out) {
+  double d = 0.0;
+  if (!parse_double(sv, &d)) {
+    return false;
+  }
+  d = std::trunc(d);
+  if (!(d >= lo && d < hi_excl)) {
+    return false;
+  }
+  *out = static_cast<int64_t>(d);
+  return true;
+}
+
+static bool coerce_float_to_u64(const tstring_view &sv, double hi_excl,
+                                uint64_t *out) {
+  double d = 0.0;
+  if (!parse_double(sv, &d)) {
+    return false;
+  }
+  d = std::trunc(d);
+  if (!(d >= 0.0 && d < hi_excl)) {
+    return false;
+  }
+  *out = static_cast<uint64_t>(d);
+  return true;
+}
+
 bool parse_int_array(const tstring_view &sv, std::vector<int32_t> *result) {
   return parse_scalar_array_impl<int32_t>(sv, result,
     [](const char *start, const char *end, int32_t *val) -> bool {
       tstring_view num_view(start, size_t(end - start));
-      return parse_int(num_view, val);
+      if (parse_int(num_view, val)) return true;
+      int64_t wide = 0;
+      if (!coerce_float_to_i64(num_view, -2147483648.0, 2147483648.0, &wide)) {
+        return false;
+      }
+      *val = static_cast<int32_t>(wide);
+      return true;
     });
 }
 
@@ -482,7 +521,13 @@ bool parse_uint_array(const tstring_view &sv, std::vector<uint32_t> *result) {
   return parse_scalar_array_impl<uint32_t>(sv, result,
     [](const char *start, const char *end, uint32_t *val) -> bool {
       tstring_view num_view(start, size_t(end - start));
-      return parse_uint(num_view, val);
+      if (parse_uint(num_view, val)) return true;
+      uint64_t wide = 0;
+      if (!coerce_float_to_u64(num_view, 4294967296.0, &wide)) {
+        return false;
+      }
+      *val = static_cast<uint32_t>(wide);
+      return true;
     });
 }
 
@@ -490,7 +535,9 @@ bool parse_int64_array(const tstring_view &sv, std::vector<int64_t> *result) {
   return parse_scalar_array_impl<int64_t>(sv, result,
     [](const char *start, const char *end, int64_t *val) -> bool {
       tstring_view num_view(start, size_t(end - start));
-      return parse_int64(num_view, val);
+      if (parse_int64(num_view, val)) return true;
+      return coerce_float_to_i64(num_view, -9223372036854775808.0,
+                                 9223372036854775808.0, val);
     });
 }
 
@@ -498,7 +545,8 @@ bool parse_uint64_array(const tstring_view &sv, std::vector<uint64_t> *result) {
   return parse_scalar_array_impl<uint64_t>(sv, result,
     [](const char *start, const char *end, uint64_t *val) -> bool {
       tstring_view num_view(start, size_t(end - start));
-      return parse_uint64(num_view, val);
+      if (parse_uint64(num_view, val)) return true;
+      return coerce_float_to_u64(num_view, 18446744073709551616.0, val);
     });
 }
 

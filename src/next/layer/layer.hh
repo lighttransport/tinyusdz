@@ -39,6 +39,8 @@ struct LayerMeta {
   // opinions.
   double framesPerSecond = 24.0;
   bool framesPerSecond_set = false;
+  bool hasOwnedSubLayers = false;
+  bool hasOwnedSubLayers_set = false;
   double kilogramsPerUnit = 1.0;
   bool kilogramsPerUnit_set = false;
   std::string colorConfiguration;   // asset path
@@ -276,6 +278,16 @@ public:
   const LayerMeta& meta() const { return meta_; }
   LayerMeta& meta() { return meta_; }
 
+  /// Effective timeCodesPerSecond with pxr SdfLayer fallback order:
+  /// authored timeCodesPerSecond, else authored framesPerSecond, else 24.
+  /// Used for the automatic time scaling between layers authored at
+  /// different rates (sublayer/reference arcs).
+  double effective_timeCodesPerSecond() const {
+    if (meta_.timeCodesPerSecond_set) return meta_.timeCodesPerSecond;
+    if (meta_.framesPerSecond_set) return meta_.framesPerSecond;
+    return 24.0;
+  }
+
   // ============================================================
   // Memory
   // ============================================================
@@ -325,6 +337,9 @@ public:
 
   /// Add relationship to current prim
   void add_relationship(const std::string& name, const Path& target);
+
+  /// Add an attribute connection to current prim
+  void add_connection(const std::string& name, const Path& target);
 
   /// Set metadata on current prim
   void set_active(bool active);

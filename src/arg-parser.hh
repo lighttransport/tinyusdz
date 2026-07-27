@@ -40,7 +40,7 @@ public:
     bool get(const std::string& name, double& value) const;
 
     // Get positional arguments (non-option arguments)
-    const std::vector<std::string>& positional() const;
+    const std::vector<std::string>& positional() const TINYUSDZ_LIFETIMEBOUND;
 
     // Print help for all options
     void print_help() const;

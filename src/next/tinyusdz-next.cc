@@ -190,15 +190,9 @@ bool LoadUSD(const std::string& filename, Stage* stage,
         }
         return false;
       }
-      // Try USDC first, then USDA
-      int idx = usdz.FindUSDCFile();
-      FileFormat inner_fmt = FileFormat::USDC;
+      int idx = usdz.FindRootLayer();
       if (idx < 0) {
-        idx = usdz.FindUSDAFile();
-        inner_fmt = FileFormat::USDA;
-      }
-      if (idx < 0) {
-        if (err) *err = "No .usdc or .usda entry found in USDZ archive";
+        if (err) *err = "USDZ first entry is not a valid USD root layer";
         return false;
       }
       const uint8_t* entry_data = usdz.EntryData(idx);
@@ -208,6 +202,7 @@ bool LoadUSD(const std::string& filename, Stage* stage,
         return false;
       }
 
+      const FileFormat inner_fmt = DetectFormat(entry_data, entry_size);
       // Delegate to USDC or USDA reader
       if (inner_fmt == FileFormat::USDC) {
         USDCLoadResult result =
@@ -265,6 +260,410 @@ std::string DirOfPath(const std::string& path) {
 
 }  // namespace
 
+struct StageSession::Impl {
+  StageSessionOptions options;
+  std::string root_identifier;
+  AssetResolver resolver;
+  std::unique_ptr<pcp::Cache> cache;
+  Stage stage;
+  std::vector<Diagnostic> diagnostics;
+  std::string warning;
+  std::string error;
+  StageSessionMemoryStats memory_stats;
+  pcp::LoadRules released_load_rules;
+  pcp::CompositionOptions::VariantSelectionMap released_variant_selections;
+  std::vector<Path> released_deferred_payloads;
+  std::vector<pcp::Cache::CompositionIssue> released_composition_issues;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::thread retiring_cache_thread;
+#endif
+  bool composition_cache_released = false;
+  bool open = false;
+
+  ~Impl() { WaitForRetiringCache(); }
+
+  void WaitForRetiringCache() {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (retiring_cache_thread.joinable()) retiring_cache_thread.join();
+#endif
+  }
+
+  void UpdateMemoryStats() {
+    StageSessionMemoryStats next;
+    if (cache) {
+      const pcp::Cache::MemoryStats cache_stats = cache->GetMemoryStats();
+      next.source_layer_bytes = cache_stats.source_layer_bytes;
+      next.transient_cache_bytes = cache_stats.transient_cache_bytes;
+      next.layer_count = cache_stats.layer_count;
+      next.prim_index_count = cache_stats.prim_index_count;
+      next.composed_prim_count = cache_stats.composed_prim_count;
+    }
+    next.composed_stage_bytes = stage.GetMemoryUsage();
+    next.estimated_total_bytes = next.source_layer_bytes +
+                                 next.transient_cache_bytes +
+                                 next.composed_stage_bytes;
+    next.peak_estimated_total_bytes = std::max(
+        memory_stats.peak_estimated_total_bytes, next.estimated_total_bytes);
+    memory_stats = next;
+  }
+
+  bool CheckMemoryBudget(DiagnosticDomain domain) {
+    UpdateMemoryStats();
+    if (options.max_total_memory == 0 ||
+        memory_stats.estimated_total_bytes <= options.max_total_memory) {
+      return true;
+    }
+    error = "aggregate memory budget exceeded: estimated " +
+            std::to_string(memory_stats.estimated_total_bytes) +
+            " bytes, limit " + std::to_string(options.max_total_memory) +
+            " bytes";
+    AddDiagnostic(DiagnosticSeverity::Error, domain, "memory_budget", error,
+                  root_identifier);
+    return false;
+  }
+
+  bool Progress(ProgressPhase phase, float progress,
+                const std::string& message) {
+    if (!options.progress_callback) return true;
+    ProgressEvent event;
+    event.phase = phase;
+    event.progress = progress;
+    event.message = message;
+    event.estimated_resident_bytes = memory_stats.estimated_total_bytes;
+    if (options.progress_callback(event)) return true;
+    error = "operation cancelled";
+    AddDiagnostic(DiagnosticSeverity::Error, DiagnosticDomain::Load,
+                  "cancelled", error, root_identifier);
+    return false;
+  }
+
+  bool RestoreCompositionCache() {
+    if (cache) return true;
+    if (!composition_cache_released || root_identifier.empty()) return false;
+    // Do not overlap a reparse with destruction of the previous layer set. A
+    // normal viewer edit happens well after this has completed; an immediate
+    // edit waits here rather than doubling the source-layer memory peak.
+    WaitForRetiringCache();
+
+    warning.clear();
+    error.clear();
+    Stage root;
+    if (!LoadUSD(root_identifier, &root, options.load, &warning, &error)) {
+      RecordMessages(DiagnosticDomain::Load);
+      return false;
+    }
+    if (!options.compose || !StageNeedsComposition(root)) {
+      error = "composition cache cannot be restored for an uncomposed stage";
+      RecordMessages(DiagnosticDomain::Compose);
+      return false;
+    }
+
+    pcp::CompositionOptions composition = options.composition;
+    composition.max_layer_memory =
+        MinNonZero(composition.max_layer_memory, options.load.max_memory);
+    composition.usda_parse_options = options.load.usda_options.parse_options;
+    std::shared_ptr<Layer> root_layer(root.ReleaseRootLayer());
+    auto restored = pcp::Cache::Open(resolver, std::move(root_layer),
+                                     root_identifier, composition);
+    if (!restored) {
+      error = restored.error();
+      RecordMessages(DiagnosticDomain::Compose);
+      return false;
+    }
+    std::unique_ptr<pcp::Cache> next_cache(
+        new pcp::Cache(std::move(*restored)));
+    next_cache->SetLoadRules(released_load_rules);
+    next_cache->SetVariantSelections(released_variant_selections);
+    cache = std::move(next_cache);
+    composition_cache_released = false;
+    UpdateMemoryStats();
+    return true;
+  }
+
+  void AddDiagnostic(DiagnosticSeverity severity, DiagnosticDomain domain,
+                     const std::string& code, const std::string& message,
+                     const std::string& path = std::string()) {
+    Diagnostic d;
+    d.severity = severity;
+    d.domain = domain;
+    d.code = code;
+    d.message = message;
+    d.path = path;
+    diagnostics.push_back(std::move(d));
+  }
+
+  void RecordMessages(DiagnosticDomain domain) {
+    if (!warning.empty()) {
+      AddDiagnostic(DiagnosticSeverity::Warning, domain, "warning", warning,
+                    root_identifier);
+    }
+    if (!error.empty()) {
+      AddDiagnostic(DiagnosticSeverity::Error, domain, "error", error,
+                    root_identifier);
+    }
+  }
+
+  bool Rebuild(ProgressPhase phase) {
+    if (!cache) return open;
+    warning.clear();
+    error.clear();
+    if (!Progress(phase, 0.0f, "composing stage")) return false;
+    Stage next_stage;
+    if (!cache->BuildStage(&next_stage, &warning, &error)) {
+      RecordMessages(DiagnosticDomain::Compose);
+      return false;
+    }
+    stage = std::move(next_stage);
+    RecordMessages(DiagnosticDomain::Compose);
+    if (!CheckMemoryBudget(DiagnosticDomain::Compose)) return false;
+    if (options.cache_retention == CacheRetention::LayersOnly) {
+      cache->TrimTransientCaches();
+      UpdateMemoryStats();
+    }
+    return Progress(phase, 1.0f, "stage ready");
+  }
+};
+
+StageSession::StageSession() : impl_(new Impl()) {}
+StageSession::~StageSession() = default;
+StageSession::StageSession(StageSession&&) noexcept = default;
+StageSession& StageSession::operator=(StageSession&&) noexcept = default;
+
+bool StageSession::OpenFile(const std::string& filename,
+                            const StageSessionOptions& options) {
+  std::unique_ptr<Impl> next(new Impl());
+  next->options = options;
+  next->root_identifier = filename;
+  next->resolver.SetConfig(options.resolver);
+  if (next->resolver.GetWorkingDirectory().empty()) {
+    next->resolver.SetWorkingDirectory(DirOfPath(filename));
+  }
+  if (!next->Progress(ProgressPhase::RootLoad, 0.0f, "loading root layer")) {
+    impl_ = std::move(next);
+    return false;
+  }
+
+  Stage root;
+  if (!LoadUSD(filename, &root, options.load, &next->warning, &next->error)) {
+    next->RecordMessages(DiagnosticDomain::Load);
+    impl_ = std::move(next);
+    return false;
+  }
+  // Composition arcs in a package are relative to its root entry, not to the
+  // directory containing the .usdz file. Keep the public root identifier as the
+  // filename, but anchor the composition cache at package.usdz[root.usd].
+  std::string composition_identifier = filename;
+  if (DetectFormatFromExtension(filename) == FileFormat::USDZ) {
+    USDZReader package;
+    if (package.OpenFile(filename, EffectiveUSDZOptions(options.load))) {
+      const int root_index = package.FindRootLayer();
+      if (root_index >= 0) {
+        composition_identifier += "[" +
+            package.EntryName(static_cast<size_t>(root_index)) + "]";
+      }
+    }
+  }
+  if (!next->Progress(ProgressPhase::RootLoad, 1.0f, "root layer loaded")) {
+    impl_ = std::move(next);
+    return false;
+  }
+
+  if (!options.compose || !StageNeedsComposition(root)) {
+    next->stage = std::move(root);
+    if (!next->CheckMemoryBudget(DiagnosticDomain::Load)) {
+      impl_ = std::move(next);
+      return false;
+    }
+    next->open = true;
+    next->RecordMessages(DiagnosticDomain::Load);
+    impl_ = std::move(next);
+    return true;
+  }
+
+  pcp::CompositionOptions composition = options.composition;
+  composition.max_layer_memory =
+      MinNonZero(composition.max_layer_memory, options.load.max_memory);
+  composition.usda_parse_options = options.load.usda_options.parse_options;
+  std::shared_ptr<Layer> root_layer(root.ReleaseRootLayer());
+  auto opened = pcp::Cache::Open(next->resolver, std::move(root_layer),
+                                 composition_identifier, composition);
+  if (!opened) {
+    next->error = opened.error();
+    next->RecordMessages(DiagnosticDomain::Compose);
+    impl_ = std::move(next);
+    return false;
+  }
+  next->cache.reset(new pcp::Cache(std::move(*opened)));
+  if (!next->Rebuild(ProgressPhase::Compose)) {
+    impl_ = std::move(next);
+    return false;
+  }
+  next->open = true;
+  impl_ = std::move(next);
+  return true;
+}
+
+const Stage& StageSession::GetStage() const { return impl_->stage; }
+Stage StageSession::TakeStage() {
+  if (!impl_) return Stage();
+  impl_->open = false;
+  impl_->cache.reset();
+  impl_->composition_cache_released = false;
+  impl_->released_load_rules.Clear();
+  impl_->released_variant_selections.clear();
+  impl_->released_deferred_payloads.clear();
+  impl_->released_composition_issues.clear();
+  return std::move(impl_->stage);
+}
+const StageSessionOptions& StageSession::GetOptions() const {
+  return impl_->options;
+}
+const std::string& StageSession::GetRootIdentifier() const {
+  return impl_->root_identifier;
+}
+bool StageSession::IsOpen() const { return impl_ && impl_->open; }
+bool StageSession::IsComposed() const {
+  return impl_ && impl_->open &&
+         (impl_->cache != nullptr || impl_->composition_cache_released);
+}
+bool StageSession::Rebuild() {
+  if (!impl_ || !impl_->open) return false;
+  if (impl_->composition_cache_released &&
+      !impl_->RestoreCompositionCache()) {
+    return false;
+  }
+  return impl_->Rebuild(ProgressPhase::Recompose);
+}
+
+bool StageSession::LoadPayload(const Path& prim_path,
+                               pcp::Cache::LoadPolicy policy) {
+  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
+  impl_->warning.clear();
+  impl_->error.clear();
+  if (!impl_->cache->LoadPayload(prim_path, policy, &impl_->warning,
+                                 &impl_->error)) {
+    impl_->RecordMessages(DiagnosticDomain::Compose);
+    return false;
+  }
+  return impl_->Rebuild(ProgressPhase::Recompose);
+}
+
+bool StageSession::UnloadPayload(const Path& prim_path) {
+  if (!impl_ || !impl_->RestoreCompositionCache() ||
+      !impl_->cache->UnloadPayload(prim_path)) {
+    return false;
+  }
+  return impl_->Rebuild(ProgressPhase::Recompose);
+}
+
+bool StageSession::LoadPayloads(
+    const std::vector<Path>& prim_paths, pcp::Cache::LoadPolicy policy) {
+  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
+  if (!impl_->cache->LoadPayloads(prim_paths, policy)) return false;
+  return impl_->Rebuild(ProgressPhase::Recompose);
+}
+
+bool StageSession::SetVariantSelection(const Path& prim_path,
+                                       const std::string& variant_set,
+                                       const std::string& selection) {
+  if (!impl_ || prim_path.empty() || variant_set.empty() || selection.empty() ||
+      !impl_->RestoreCompositionCache()) {
+    return false;
+  }
+  auto selections = impl_->cache->GetVariantSelections();
+  selections[prim_path.str()][variant_set] = selection;
+  return SetVariantSelections(selections);
+}
+
+bool StageSession::ClearVariantSelection(const Path& prim_path,
+                                         const std::string& variant_set) {
+  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
+  auto selections = impl_->cache->GetVariantSelections();
+  auto path_it = selections.find(prim_path.str());
+  if (path_it == selections.end()) return true;
+  path_it->second.erase(variant_set);
+  if (path_it->second.empty()) selections.erase(path_it);
+  return SetVariantSelections(selections);
+}
+
+bool StageSession::SetVariantSelections(
+    const pcp::CompositionOptions::VariantSelectionMap& selections) {
+  if (!impl_ || !impl_->RestoreCompositionCache()) return false;
+  impl_->cache->SetVariantSelections(selections);
+  return impl_->Rebuild(ProgressPhase::Recompose);
+}
+
+pcp::CompositionOptions::VariantSelectionMap
+StageSession::GetVariantSelections() const {
+  return impl_ && impl_->cache
+             ? impl_->cache->GetVariantSelections()
+             : (impl_ ? impl_->released_variant_selections
+                      : pcp::CompositionOptions::VariantSelectionMap());
+}
+std::vector<Path> StageSession::GetDeferredPayloadPaths() const {
+  return impl_ && impl_->cache
+             ? impl_->cache->GetDeferredPayloadPaths()
+             : (impl_ ? impl_->released_deferred_payloads
+                      : std::vector<Path>());
+}
+std::vector<pcp::Cache::CompositionIssue>
+StageSession::GetCompositionIssues() const {
+  return impl_ && impl_->cache
+             ? impl_->cache->GetCompositionIssues()
+             : (impl_ ? impl_->released_composition_issues
+                      : std::vector<pcp::Cache::CompositionIssue>());
+}
+const std::vector<Diagnostic>& StageSession::GetDiagnostics() const {
+  return impl_->diagnostics;
+}
+StageSessionMemoryStats StageSession::GetMemoryStats() const {
+  if (!impl_) return {};
+  impl_->UpdateMemoryStats();
+  return impl_->memory_stats;
+}
+void StageSession::TrimCaches() {
+  if (!impl_ || !impl_->cache) return;
+  impl_->cache->TrimTransientCaches();
+  impl_->UpdateMemoryStats();
+}
+void StageSession::ReleaseCompositionCache() {
+  if (!impl_ || !impl_->cache) return;
+  impl_->WaitForRetiringCache();
+  impl_->released_load_rules = impl_->cache->GetLoadRules();
+  impl_->released_variant_selections = impl_->cache->GetVariantSelections();
+  impl_->released_deferred_payloads = impl_->cache->GetDeferredPayloadPaths();
+  impl_->released_composition_issues = impl_->cache->GetCompositionIssues();
+  std::unique_ptr<pcp::Cache> retiring = std::move(impl_->cache);
+  impl_->composition_cache_released = true;
+  impl_->UpdateMemoryStats();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  impl_->retiring_cache_thread = std::thread(
+      [retiring = std::move(retiring)]() mutable { retiring.reset(); });
+#else
+  retiring.reset();
+#endif
+}
+Stage::StaticGeometryReleaseStats StageSession::ReleaseStaticGeometryArrays(
+    size_t min_array_elements) {
+  if (!impl_ || !IsComposed()) return {};
+  Stage::StaticGeometryReleaseStats stats =
+      impl_->stage.ReleaseStaticGeometryArrays(min_array_elements);
+  impl_->UpdateMemoryStats();
+  return stats;
+}
+Stage::StaticGeometryReleaseStats
+StageSession::ReleaseStaticGeometryArraysForPrim(
+    const UsdPrim& prim, size_t min_array_elements) {
+  if (!impl_ || !IsComposed()) return {};
+  // Do not rescan stage memory here: the streaming converter calls this for
+  // every last-use prim while worker threads are active. A final bulk release
+  // refreshes aggregate memory stats after the workers join.
+  return impl_->stage.ReleaseStaticGeometryArraysForPrim(
+      prim, min_array_elements);
+}
+const std::string& StageSession::GetWarning() const { return impl_->warning; }
+const std::string& StageSession::GetError() const { return impl_->error; }
+
 bool LoadUSDComposed(const std::string& filename, Stage* stage,
                      std::string* warn, std::string* err,
                      const pcp::CompositionOptions* comp_opts) {
@@ -310,9 +709,8 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
   // stage and OOMs on large scenes like Caldera beachhead/capital.)
   pcp::CompositionOptions copts;
   copts.load_payloads = true;
-  // Diagnostics: TINYUSDZ_NEXT_TIMING emits [next_build]/[next_compose] phase
-  // timings; TUSDRENDER_COMPOSE_THREADS=N opts into parallel source pre-warming.
-  if (std::getenv("TINYUSDZ_NEXT_TIMING")) copts.enable_timing = true;
+  // Diagnostics and worker counts are explicit CompositionOptions. Keeping
+  // these out of process environment makes callers and benchmarks reproducible.
   // Parallel composition is opt-in via TINYUSDZ_ENABLE_THREAD so wasm builds do
   // not require Emscripten pthreads / SharedArrayBuffer by default.
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -324,14 +722,6 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
   copts.max_layer_memory = load_options.max_memory;
   copts.strict_aousd_conformance = load_options.strict_aousd_conformance;
   copts.usda_parse_options = load_options.usda_options.parse_options;
-  if (const char *ct = std::getenv("TUSDRENDER_COMPOSE_THREADS")) {
-    int n = std::atoi(ct);
-#if defined(TINYUSDZ_ENABLE_THREAD)
-    if (n >= 1) copts.num_threads = static_cast<unsigned>(n);
-#else
-    (void)n;
-#endif
-  }
   // Merge caller-supplied composition options (e.g. variant_overrides) into our
   // defaults. Caller-populated fields take precedence.
   if (comp_opts) {
@@ -350,11 +740,19 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
     if (comp_opts->num_threads >= 1) copts.num_threads = comp_opts->num_threads;
     copts.enable_timing = comp_opts->enable_timing || copts.enable_timing;
     if (comp_opts->payload_policy) copts.payload_policy = comp_opts->payload_policy;
+    if (comp_opts->payload_policy_with_prim) {
+      copts.payload_policy_with_prim = comp_opts->payload_policy_with_prim;
+    }
     if (!comp_opts->variant_overrides.empty())
       copts.variant_overrides = comp_opts->variant_overrides;
+    if (!comp_opts->variant_overrides_by_path.empty()) {
+      copts.variant_overrides_by_path = comp_opts->variant_overrides_by_path;
+    }
     copts.usda_parse_options = comp_opts->usda_parse_options;
     copts.max_layer_memory =
         MinNonZero(copts.max_layer_memory, comp_opts->max_layer_memory);
+    copts.usdc_lazy_arrays = comp_opts->usdc_lazy_arrays;
+    copts.usdc_use_mmap = comp_opts->usdc_use_mmap;
   }
 
   Stage composed;
@@ -401,7 +799,17 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   }
   AssetResolver resolver;
   resolver.SetWorkingDirectory(DirOfPath(filename));
-  return ComposeLoadedStage(stage, resolver, filename, load_options, warn, err,
+  std::string anchor = filename;
+  if (DetectFormatFromExtension(filename) == FileFormat::USDZ) {
+    USDZReader package;
+    if (package.OpenFile(filename, EffectiveUSDZOptions(load_options))) {
+      const int root_index = package.FindRootLayer();
+      if (root_index >= 0) {
+        anchor += "[" + package.EntryName(static_cast<size_t>(root_index)) + "]";
+      }
+    }
+  }
+  return ComposeLoadedStage(stage, resolver, anchor, load_options, warn, err,
                             comp_opts);
 }
 
@@ -461,14 +869,9 @@ bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
         }
         return false;
       }
-      int idx = usdz.FindUSDCFile();
-      bool inner_is_usdc = true;
+      int idx = usdz.FindRootLayer();
       if (idx < 0) {
-        idx = usdz.FindUSDAFile();
-        inner_is_usdc = false;
-      }
-      if (idx < 0) {
-        if (err) *err = "No .usdc or .usda entry found in USDZ archive";
+        if (err) *err = "USDZ first entry is not a valid USD root layer";
         return false;
       }
       const uint8_t* entry_data = usdz.EntryData(idx);
@@ -477,7 +880,7 @@ bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
         if (err) *err = "Empty USD entry in USDZ";
         return false;
       }
-      if (inner_is_usdc) {
+      if (DetectFormat(entry_data, entry_size) == FileFormat::USDC) {
         USDCLoadResult result = LoadUSDCFromMemory(entry_data, entry_size,
                                                    EffectiveUSDCOptions(options));
         if (!result.success) {

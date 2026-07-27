@@ -92,26 +92,26 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // read) would require a callback-based TimeSamples container, which is not
   // yet implemented.
 
-  DCOUT("ReadTimeSamples: offt before tell = " << _sr->tell());
+  DCOUT("ReadTimeSamples: offt before tell = " << sr()->tell());
 
   // 8byte for the offset for recursive value. See RecursiveRead() in
   // https://github.com/PixarAnimationStudios/USD/blob/release/pxr/usd/usd/crateFile.cpp
   // for details.
   int64_t offset{0};
-  if (!_sr->read8(&offset)) {
+  if (!sr()->read8(&offset)) {
     PUSH_ERROR_AND_RETURN_TAG(
         kTag, "Failed to read the offset for value in Dictionary.");
     return false;
   }
 
   DCOUT("TimeSample times value offset = " << offset);
-  DCOUT("TimeSample tell = " << _sr->tell());
+  DCOUT("TimeSample tell = " << sr()->tell());
 
   // -8 to compensate sizeof(offset). Guard against int64 underflow.
   if (offset < (std::numeric_limits<int64_t>::min)() + 8) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "TimeSample times offset would underflow int64.");
   }
-  if (!_sr->seek_from_current(offset - 8)) {
+  if (!sr()->seek_from_current(offset - 8)) {
     PUSH_ERROR_AND_RETURN_TAG(
         kTag, "Failed to seek to TimeSample times. Invalid offset value: " +
                   std::to_string(offset));
@@ -124,7 +124,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   }
 
   // Save offset
-  auto values_offset = _sr->tell();
+  auto values_offset = sr()->tell();
 
   // Validate that times ValueRep is double[] or DoubleVector
   {
@@ -145,18 +145,35 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   // Deduplicate times arrays: if another TimeSamples already read the same
   // file offset, share the parsed result instead of re-reading.
+  // The cache is accessed from worker threads during parallel prim
+  // reconstruction; lookups/inserts run under a lock (the unpack itself is
+  // outside the lock — a duplicate unpack on a race is harmless).
   std::vector<double> times;
   uint64_t times_payload = times_rep.GetPayload();
-  auto cache_it = _shared_times_cache.find(times_payload);
-  if (cache_it != _shared_times_cache.end()) {
-    times = *(cache_it->second);
-    DCOUT("TimeSamples times: reused cached array for payload offset "
-          << times_payload << " (" << times.size() << " samples)");
-  } else {
+  bool cache_hit = false;
+  {
+    ScopedSpinLock<SpinMutex> lk(_times_cache_mutex);
+    auto cache_it = _shared_times_cache.find(times_payload);
+    if (cache_it != _shared_times_cache.end()) {
+      times = *(cache_it->second);
+      cache_hit = true;
+      DCOUT("TimeSamples times: reused cached array for payload offset "
+            << times_payload << " (" << times.size() << " samples)");
+    }
+  }
+  if (!cache_hit) {
     if (!UnpackTimeSampleTimes(times_rep, times)) {
       PUSH_ERROR_AND_RETURN_TAG(
           kTag, "Failed to unpack value of TimeSample's `times` element.");
     }
+    {
+      size_t times_cache_bytes;
+      if (!safe::mul(times.size(), sizeof(double), &times_cache_bytes)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: times.size() * sizeof(double)");
+      }
+      CHECK_MEMORY_USAGE(times_cache_bytes);
+    }
+    ScopedSpinLock<SpinMutex> lk(_times_cache_mutex);
     _shared_times_cache[times_payload] =
         std::make_shared<std::vector<double>>(times);
   }
@@ -167,33 +184,33 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   //
 
   // seek position will be changed in `_UnpackValueRep`, so revert it.
-  if (!_sr->seek_set(values_offset)) {
+  if (!sr()->seek_set(values_offset)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to TimeSamples values.");
   }
 
   // 8byte for the offset for recursive value. See RecursiveRead() in
   // crateFile.cpp for details.
-  if (!_sr->read8(&offset)) {
+  if (!sr()->read8(&offset)) {
     PUSH_ERROR_AND_RETURN_TAG(
         kTag, "Failed to read the offset for value in TimeSamples.");
     return false;
   }
 
   DCOUT("TimeSample value offset = " << offset);
-  DCOUT("TimeSample tell = " << _sr->tell());
+  DCOUT("TimeSample tell = " << sr()->tell());
 
   // -8 to compensate sizeof(offset). Guard against int64 underflow.
   if (offset < (std::numeric_limits<int64_t>::min)() + 8) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "TimeSample values offset would underflow int64.");
   }
-  if (!_sr->seek_from_current(offset - 8)) {
+  if (!sr()->seek_from_current(offset - 8)) {
     PUSH_ERROR_AND_RETURN_TAG(
         kTag, "Failed to seek to TimeSample values. Invalid offset value: " +
                   std::to_string(offset));
   }
 
   uint64_t num_values{0};
-  if (!_sr->read8(&num_values)) {
+  if (!sr()->read8(&num_values)) {
     PUSH_ERROR_AND_RETURN_TAG(
         kTag, "Failed to read the number of values from TimeSamples.");
     return false;
@@ -239,6 +256,13 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // This avoids an additional pre-scan pass here.
 
   // Pre-allocate for the known number of samples to avoid repeated reallocation
+  {
+    size_t times_samples_bytes;
+    if (!safe::mul(times.size(), sizeof(double) * 2, &times_samples_bytes)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: times.size() * sizeof(double) * 2");
+    }
+    CHECK_MEMORY_USAGE(times_samples_bytes);
+  }
   d->reserve(times.size());
 
   if (!UnpackValueRepsToTimeSamples(times, value_reps, d)) {
@@ -252,8 +276,8 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   // Move to next location.
   // sizeof(uint64) = sizeof(ValueRep)
-  _sr->seek_set(values_offset);
-  if (!_sr->seek_from_current(int64_t(sizeof(uint64_t) * num_values))) {
+  sr()->seek_set(values_offset);
+  if (!sr()->seek_from_current(int64_t(sizeof(uint64_t) * num_values))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag,
                               "Failed to seek over TimeSamples's values.");
   }
@@ -268,7 +292,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 bool CrateReader::UnpackTimeSampleTimes(const crate::ValueRep &rep,
                                         std::vector<double> &dst) {
   uint64_t offset = rep.GetPayload();
-  if (!_sr->seek_set(offset)) {
+  if (!sr()->seek_set(offset)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid offset.");
   }
 
@@ -748,7 +772,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
                                 "Compressed quatf not supported for TimeSamples.");
     }
 
-    if (!_sr->seek_set(rep.GetPayload())) {
+    if (!sr()->seek_set(rep.GetPayload())) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to scalar quatf value.");
     }
     // Crate wire layout is [x, y, z, w] = (imag, real); see
@@ -756,7 +780,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
     // Crate layout, so memcpy reads the bytes directly. (Note: USDA
     // uses the opposite [w, x, y, z] order at the textual layer.)
     value::quatf val;
-    if (!_sr->read(sizeof(val), sizeof(val),
+    if (!sr()->read(sizeof(val), sizeof(val),
                    reinterpret_cast<uint8_t *>(&val))) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read scalar quatf value.");
     }
@@ -909,7 +933,7 @@ bool CrateReader::UnpackTimeSampleValue_STRING(
       // String is stored as StringIndex in the stream
       uint32_t index_data;
       CHECK_MEMORY_USAGE(sizeof(uint32_t));
-      if (!_sr->read(sizeof(uint32_t), sizeof(uint32_t),
+      if (!sr()->read(sizeof(uint32_t), sizeof(uint32_t),
                      reinterpret_cast<uint8_t *>(&index_data))) {
         PUSH_ERROR_AND_RETURN("Failed to read string index");
       }
@@ -1013,7 +1037,7 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
       // Token is stored as token index in the stream
       uint32_t index_data;
       CHECK_MEMORY_USAGE(sizeof(uint32_t));
-      if (!_sr->read(sizeof(uint32_t), sizeof(uint32_t),
+      if (!sr()->read(sizeof(uint32_t), sizeof(uint32_t),
                      reinterpret_cast<uint8_t *>(&index_data))) {
         PUSH_ERROR_AND_RETURN("Failed to read token index");
       }
@@ -1266,12 +1290,12 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
   } else {                                                                     \
     /* Scalar (non-inlined, non-array) matrix in TimeSamples. */               \
     /* Layout: NDIAG*NDIAG doubles starting at rep.GetPayload(). */            \
-    if (!_sr->seek_set(rep.GetPayload())) {                                    \
+    if (!sr()->seek_set(rep.GetPayload())) {                                    \
       PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
           "Failed to seek to scalar " #FUNC_SUFFIX " in TimeSamples.");        \
     }                                                                          \
     CPP_TYPE val;                                                              \
-    if (!_sr->read(sizeof(double) * NDIAG * NDIAG,                             \
+    if (!sr()->read(sizeof(double) * NDIAG * NDIAG,                             \
                    sizeof(double) * NDIAG * NDIAG,                             \
                    reinterpret_cast<uint8_t *>(&val))) {                       \
       PUSH_ERROR_AND_RETURN_TAG(kTag,                                          \
@@ -1369,17 +1393,29 @@ bool CrateReader::UnpackTimeSampleValue_##FUNC_SUFFIX(                         \
   return true;                                                                 \
 }
 
-/* Decode 48-bit inline payload into the target int type.
- * INT64: sign-extend bit 47 to int64_t. UINT64: zero-extend.
+/* Decode inline ValueRep payload (already masked to 48 bits) into the target
+ * int type. Must match the scalar decoder in crate-reader-values.cc: OpenUSD
+ * (and TinyUSDZ's own writer) inline an int64 as an exact int32 payload, so the
+ * common case is a 32-bit value that needs sign-extension from bit 31 — NOT
+ * bit 47. Older TinyUSDZ files used the full 48-bit payload; keep that as a
+ * fallback when bits 32-47 are non-zero.
  */
 static inline int64_t int64_inline_decode_INT64(uint64_t p) {
+  if ((p >> 32) == 0) {
+    /* OpenUSD/TinyUSDZ inline int64 as an exact int32 representation. */
+    int32_t rep32 = 0;
+    uint32_t payload32 = static_cast<uint32_t>(p);
+    memcpy(&rep32, &payload32, sizeof(rep32));
+    return static_cast<int64_t>(rep32);
+  }
   if (p & (1ull << 47)) {
+    /* Legacy TinyUSDZ inline payload: sign-extend from bit 47. */
     return static_cast<int64_t>(p | (~((1ull << 48) - 1)));
   }
   return static_cast<int64_t>(p);
 }
 static inline uint64_t int64_inline_decode_UINT64(uint64_t p) {
-  return p;  /* already masked to 48 bits */
+  return p;  /* already masked to 48 bits; OpenUSD's 32-bit form is a subset */
 }
 #define INT64_INLINE_DECODE_INT64(p)  int64_inline_decode_INT64(p)
 #define INT64_INLINE_DECODE_UINT64(p) int64_inline_decode_UINT64(p)
@@ -1669,7 +1705,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
     }
 
     if (!rep.IsInlined()) {
-      _sr->seek_set(rep.GetPayload());
+      sr()->seek_set(rep.GetPayload());
     }
 
     // Pass expected_total_samples only on the first sample (i == 0) for

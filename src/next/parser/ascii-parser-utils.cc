@@ -144,15 +144,15 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
   PrimSpec* prim = builder_->current();
 
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
-    // Bare string = doc shorthand (`float x = 1 ( "doc" )`), same as the
-    // prim/layer metadata blocks.
+    // Bare string = property COMMENT (`float x = 1 ( "note" )`) — pxr's only
+    // accepted spelling, same mapping as the prim/layer metadata blocks.
     if (Check(TokenType::String)) {
-      std::string doc;
-      lexer_->expect(TokenType::String, doc);
+      std::string note;
+      lexer_->expect(TokenType::String, note);
       if (prim) {
         PropMeta& dm = prim->ensure_property_meta(prop_name);
-        dm.doc = std::move(doc);
-        dm.authored |= PropMeta::kDoc;
+        dm.comment = std::move(note);
+        dm.authored |= PropMeta::kComment;
       }
       Match(TokenType::Comma);
       continue;
@@ -170,6 +170,18 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
       continue;
     }
     if (!Match(TokenType::Equals)) break;
+    if (key == "permission" && qualifier.empty()) {
+      // Unquoted token (`permission = private`).
+      std::string v;
+      if (Check(TokenType::Identifier)) lexer_->expect(TokenType::Identifier, v);
+      else if (Check(TokenType::String)) lexer_->expect(TokenType::String, v);
+      if (prim && !v.empty()) {
+        PropMeta& dm = prim->ensure_property_meta(prop_name);
+        dm.permission = v;
+        dm.authored |= PropMeta::kPermission;
+      }
+      continue;
+    }
     if (!prim) {  // no current prim: consume the value and continue
       SkipValueLike();
       continue;

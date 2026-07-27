@@ -114,6 +114,57 @@ static std::string MtlxValueToJsonValue(const mtlx::MtlxValue &value) {
   return "null";
 }
 
+static void EmitMtlxDomInputJson(std::stringstream &ss,
+                                 const mtlx::MtlxInput &input,
+                                 const std::string &indent) {
+  ss << indent << "{\n";
+  ss << indent << "  \"name\": \"" << EscapeJsonString(input.GetName())
+     << "\",\n";
+  ss << indent << "  \"type\": \"" << EscapeJsonString(input.GetType())
+     << "\"";
+
+  if (!input.GetNodeName().empty()) {
+    ss << ",\n";
+    ss << indent << "  \"nodename\": \""
+       << EscapeJsonString(input.GetNodeName()) << "\"";
+    if (!input.GetOutput().empty()) {
+      ss << ",\n";
+      ss << indent << "  \"output\": \""
+         << EscapeJsonString(input.GetOutput()) << "\"";
+    }
+  } else if (!input.GetNodeGraph().empty()) {
+    ss << ",\n";
+    ss << indent << "  \"nodegraph\": \""
+       << EscapeJsonString(input.GetNodeGraph()) << "\"";
+    if (!input.GetOutput().empty()) {
+      ss << ",\n";
+      ss << indent << "  \"output\": \""
+         << EscapeJsonString(input.GetOutput()) << "\"";
+    }
+  } else if (!input.GetInterfaceName().empty()) {
+    ss << ",\n";
+    ss << indent << "  \"interfacename\": \""
+       << EscapeJsonString(input.GetInterfaceName()) << "\"";
+  } else if (input.GetValue().type != mtlx::MtlxValue::TYPE_NONE) {
+    ss << ",\n";
+    ss << indent << "  \"value\": " << MtlxValueToJsonValue(input.GetValue());
+  }
+
+  const std::string colorspace = input.GetColorSpace();
+  if (!colorspace.empty() && colorspace != colorspace::kLinRec709Scene) {
+    ss << ",\n";
+    ss << indent << "  \"colorspace\": \"" << EscapeJsonString(colorspace)
+       << "\"";
+  }
+  if (!input.GetChannels().empty()) {
+    ss << ",\n";
+    ss << indent << "  \"channels\": \""
+       << EscapeJsonString(input.GetChannels()) << "\"";
+  }
+
+  ss << "\n" << indent << "}";
+}
+
 // Convert MaterialX DOM NodeGraph to JSON
 bool ConvertMtlxNodeGraphToJson(
     const mtlx::MtlxNodeGraph &nodegraph,
@@ -130,6 +181,15 @@ bool ConvertMtlxNodeGraphToJson(
   ss << "  \"version\": \"1.39\",\n"; // MaterialX version (Blender 4.5+ compatible)
   ss << "  \"nodegraph\": {\n";
   ss << "    \"name\": \"" << EscapeJsonString(nodegraph.GetName()) << "\",\n";
+
+  // Serialize nodegraph interface inputs.
+  ss << "    \"inputs\": [\n";
+  const auto &graph_inputs = nodegraph.GetInputs();
+  for (size_t i = 0; i < graph_inputs.size(); i++) {
+    if (i > 0) ss << ",\n";
+    EmitMtlxDomInputJson(ss, *graph_inputs[i], "      ");
+  }
+  ss << "\n    ],\n";
 
   // Serialize nodes
   ss << "    \"nodes\": [\n";
@@ -149,30 +209,7 @@ bool ConvertMtlxNodeGraphToJson(
     for (size_t j = 0; j < inputs.size(); j++) {
       const auto &input = inputs[j];
       if (j > 0) ss << ",\n";
-
-      ss << "          {\n";
-      ss << "            \"name\": \"" << EscapeJsonString(input->GetName()) << "\",\n";
-      ss << "            \"type\": \"" << EscapeJsonString(input->GetType()) << "\"";
-
-      // Check for connection
-      if (!input->GetNodeName().empty()) {
-        ss << ",\n";
-        ss << "            \"nodename\": \"" << EscapeJsonString(input->GetNodeName()) << "\",\n";
-        ss << "            \"output\": \"" << EscapeJsonString(input->GetOutput()) << "\"";
-      } else if (input->GetValue().type != mtlx::MtlxValue::TYPE_NONE) {
-        // Direct value
-        ss << ",\n";
-        ss << "            \"value\": " << MtlxValueToJsonValue(input->GetValue());
-      }
-
-      // Add colorspace if present and not default (lin_rec709_scene)
-      std::string colorspace = input->GetColorSpace();
-      if (!colorspace.empty() && colorspace != colorspace::kLinRec709Scene) {
-        ss << ",\n";
-        ss << "            \"colorspace\": \"" << EscapeJsonString(colorspace) << "\"";
-      }
-
-      ss << "\n          }";
+      EmitMtlxDomInputJson(ss, *input, "          ");
     }
     ss << "\n        ]";
 
@@ -285,13 +322,98 @@ bool ConvertShaderWithNodeGraphToJson(
     *json_str = "";
     return true;
   }
+  const std::string ng_elem_name = nodegraph_prim->element_name();
 
   // Build JSON from the NodeGraph structure
   std::stringstream ss;
   ss << "{\n";
   ss << "  \"version\": \"1.39\",\n";
   ss << "  \"nodegraph\": {\n";
-  ss << "    \"name\": \"" << EscapeJsonString(nodegraph_prim->element_name()) << "\",\n";
+  ss << "    \"name\": \"" << EscapeJsonString(ng_elem_name) << "\",\n";
+
+  // Serialize NodeGraph interface inputs. MaterialX node inputs can reference
+  // these via `interfacename`, and lightrt's XML loader resolves them directly.
+  ss << "    \"inputs\": [\n";
+  bool first_ng_input = true;
+  for (const auto &prop_pair : nodegraph->props) {
+    const std::string &prop_name = prop_pair.first;
+    if (prop_name.find("inputs:") != 0) continue;
+    if (!prop_pair.second.is_attribute()) continue;
+
+    if (!first_ng_input) ss << ",\n";
+    first_ng_input = false;
+
+    const std::string input_name = prop_name.substr(7);
+    const Attribute &attr = prop_pair.second.get_attribute();
+    ss << "      {\n";
+    ss << "        \"name\": \"" << EscapeJsonString(input_name) << "\",\n";
+    ss << "        \"type\": \"" << attr.type_name() << "\"";
+
+    if (attr.has_connections()) {
+      const auto &conns = attr.connections();
+      if (!conns.empty()) {
+        const std::string conn_path = conns[0].full_path_name();
+        const size_t dot_pos = conn_path.rfind('.');
+        const size_t last_slash_pos = conn_path.rfind('/');
+        if (dot_pos != std::string::npos &&
+            last_slash_pos != std::string::npos) {
+          std::string nodename =
+              conn_path.substr(last_slash_pos + 1,
+                               dot_pos - last_slash_pos - 1);
+          std::string output = conn_path.substr(dot_pos + 1);
+          if (output.find("outputs:") == 0) {
+            output = output.substr(8);
+          }
+          ss << ",\n        \"nodename\": \""
+             << EscapeJsonString(nodename) << "\"";
+          ss << ",\n        \"output\": \"" << EscapeJsonString(output)
+             << "\"";
+        }
+      }
+    } else {
+      if (auto vf = attr.get_value<float>()) {
+        ss << ",\n        \"value\": " << vf.value();
+      } else if (auto vi = attr.get_value<int>()) {
+        ss << ",\n        \"value\": " << vi.value();
+      } else if (auto vb = attr.get_value<bool>()) {
+        ss << ",\n        \"value\": " << (vb.value() ? "true" : "false");
+      } else if (auto vs = attr.get_value<std::string>()) {
+        ss << ",\n        \"value\": \"" << EscapeJsonString(vs.value())
+           << "\"";
+      } else if (auto vf2 = attr.get_value<value::float2>()) {
+        ss << ",\n        \"value\": [" << vf2.value()[0] << ", "
+           << vf2.value()[1] << "]";
+      } else if (auto vf3 = attr.get_value<value::float3>()) {
+        ss << ",\n        \"value\": [" << vf3.value()[0] << ", "
+           << vf3.value()[1] << ", " << vf3.value()[2] << "]";
+      } else if (auto vf4 = attr.get_value<value::float4>()) {
+        ss << ",\n        \"value\": [" << vf4.value()[0] << ", "
+           << vf4.value()[1] << ", " << vf4.value()[2] << ", "
+           << vf4.value()[3] << "]";
+      } else if (auto vc3 = attr.get_value<value::color3f>()) {
+        ss << ",\n        \"value\": [" << vc3.value()[0] << ", "
+           << vc3.value()[1] << ", " << vc3.value()[2] << "]";
+      } else if (auto vc4 = attr.get_value<value::color4f>()) {
+        ss << ",\n        \"value\": [" << vc4.value()[0] << ", "
+           << vc4.value()[1] << ", " << vc4.value()[2] << ", "
+           << vc4.value()[3] << "]";
+      } else if (auto va = attr.get_value<value::AssetPath>()) {
+        ss << ",\n        \"value\": \""
+           << EscapeJsonString(va.value().GetAssetPath()) << "\"";
+      }
+    }
+
+    if (attr.metas().has_colorSpace()) {
+      value::token cs_token = attr.metas().get_colorSpace();
+      if (!cs_token.str().empty()) {
+        ss << ",\n        \"colorspace\": \""
+           << EscapeJsonString(cs_token.str()) << "\"";
+      }
+    }
+
+    ss << "\n      }";
+  }
+  ss << "\n    ],\n";
 
   // Collect all shader nodes in the NodeGraph
   ss << "    \"nodes\": [\n";
@@ -361,11 +483,17 @@ bool ConvertShaderWithNodeGraphToJson(
             if (dot_pos != std::string::npos && last_slash_pos != std::string::npos) {
               std::string nodename = conn_path.substr(last_slash_pos + 1, dot_pos - last_slash_pos - 1);
               std::string output = conn_path.substr(dot_pos + 1);
-              if (output.find("outputs:") == 0) {
+              if (nodename == ng_elem_name && output.find("inputs:") == 0) {
+                ss << ",\n            \"interfacename\": \""
+                   << EscapeJsonString(output.substr(7)) << "\"";
+              } else if (output.find("outputs:") == 0) {
                 output = output.substr(8);
+                ss << ",\n            \"nodename\": \"" << EscapeJsonString(nodename) << "\"";
+                ss << ",\n            \"output\": \"" << EscapeJsonString(output) << "\"";
+              } else {
+                ss << ",\n            \"nodename\": \"" << EscapeJsonString(nodename) << "\"";
+                ss << ",\n            \"output\": \"" << EscapeJsonString(output) << "\"";
               }
-              ss << ",\n            \"nodename\": \"" << EscapeJsonString(nodename) << "\"";
-              ss << ",\n            \"output\": \"" << EscapeJsonString(output) << "\"";
             }
           }
         } else {
@@ -461,7 +589,6 @@ bool ConvertShaderWithNodeGraphToJson(
   bool first_conn = true;
 
   // Helper: emit a connection entry from a connection path
-  std::string ng_elem_name = nodegraph_prim->element_name();
   auto emitConnection = [&](const std::string &input_name, const std::string &conn_path) {
     // Check if connection points to our NodeGraph
     if (conn_path.find(ng_elem_name) == std::string::npos) return;

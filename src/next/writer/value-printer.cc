@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Value Printer Implementation
 
 #include "value-printer.hh"
+#include "../crate/crate-data-source.hh"
 #include "../crate/crate-format.hh"  // HalfToFloat
 #include "../crate/lazy-array.hh"
 #include "../../safe-arithmetic.hh"
@@ -254,7 +255,9 @@ void DiscardLazyArrayRangePages(const Value& value, size_t elem_lo,
       ref->crate_type == CrateTypeId::Invalid || ref->src_elem_stride == 0) {
     return;
   }
-  const uint64_t data_begin = ref->block_offset + 8u;
+  const uint64_t header_bytes =
+      CrateArrayCountHeaderBytes(ref->source->version());
+  const uint64_t data_begin = ref->block_offset + header_bytes;
   if (data_begin < ref->block_offset) return;
   const uint64_t stride = uint64_t(ref->src_elem_stride);
   if (uint64_t(elem_lo) > ((std::numeric_limits<uint64_t>::max)() - data_begin) /
@@ -276,9 +279,14 @@ bool PrintCompressedIntLazyArrayToStream(StreamWriter& os, const Value& value,
   if (!value.is_lazy() || value.type_id() != TypeId::Int) return false;
   const LazyArrayRef* ref = value.lazy_ref();
   if (!ref || !ref->source || !ref->is_compressed ||
-      ref->crate_type != CrateTypeId::Int || ref->block_len < 16) {
+      ref->crate_type != CrateTypeId::Int) {
     return false;
   }
+
+  const uint64_t header_bytes =
+      CrateArrayCountHeaderBytes(ref->source->version());
+  const uint64_t metadata_bytes = header_bytes + sizeof(uint64_t);
+  if (ref->block_len < metadata_bytes) return false;
 
   const uint64_t count = ref->element_count;
   if (count > uint64_t((std::numeric_limits<size_t>::max)())) return false;
@@ -293,15 +301,19 @@ bool PrintCompressedIntLazyArrayToStream(StreamWriter& os, const Value& value,
   if (!base) return false;
 
   uint64_t stored_count = 0;
-  std::memcpy(&stored_count, base + block_begin, sizeof(uint64_t));
-  const uint64_t count_hi = stored_count >> 32;
-  const uint64_t count_lo = stored_count & 0xffffffffull;
-  stored_count = (count_hi != 0 && count_lo != 0) ? count_lo : stored_count;
+  if (header_bytes == sizeof(uint32_t)) {
+    uint32_t stored_count32 = 0;
+    std::memcpy(&stored_count32, base + block_begin, sizeof(stored_count32));
+    stored_count = stored_count32;
+  } else {
+    std::memcpy(&stored_count, base + block_begin, sizeof(stored_count));
+  }
   if (stored_count != count) return false;
 
   uint64_t comp_size = 0;
-  std::memcpy(&comp_size, base + block_begin + 8, sizeof(uint64_t));
-  if (comp_size == 0 || comp_size > ref->block_len - 16 ||
+  std::memcpy(&comp_size, base + block_begin + header_bytes,
+              sizeof(comp_size));
+  if (comp_size == 0 || comp_size > ref->block_len - metadata_bytes ||
       comp_size > uint64_t((std::numeric_limits<size_t>::max)())) {
     return false;
   }
@@ -324,8 +336,8 @@ bool PrintCompressedIntLazyArrayToStream(StreamWriter& os, const Value& value,
   initial_delta_size = std::min(initial_delta_size, max_delta_size);
 
   DecompressResult dr = DecompressCrateBlobWithCapacityHint(
-      base + block_begin + 16, static_cast<size_t>(comp_size), max_delta_size,
-      initial_delta_size);
+      base + block_begin + metadata_bytes, static_cast<size_t>(comp_size),
+      max_delta_size, initial_delta_size);
   if (!dr.success) return false;
   const uint8_t* buffer = dr.data.data();
   const size_t buffer_size = dr.data.size();
@@ -337,9 +349,8 @@ bool PrintCompressedIntLazyArrayToStream(StreamWriter& os, const Value& value,
 
   int32_t common_delta = 0;
   std::memcpy(&common_delta, buffer, sizeof(int32_t));
-  const size_t codes_bytes = (static_cast<size_t>(count) * 2 + 7) / 8;
   const size_t codes_start = sizeof(int32_t);
-  const size_t vints_start = codes_start + codes_bytes;
+  const size_t vints_start = code_bytes;
   if (buffer_size < vints_start) return false;
 
   size_t check_vints_pos = vints_start;
@@ -483,7 +494,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
       size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
       for (size_t i = 0; i < limit; ++i) {
         if (i) out.append(", ");
-        out.append((*a)[i] ? "true" : "false");
+        out.append((*a)[i] ? "1" : "0");  // pxr spells VALUE bools 1/0
       }
       if (limit < a->size()) out.append(", ...");
       out.append(']');
@@ -686,7 +697,7 @@ void PrintValueInto(std::string& out, const Value& value,
       case TypeId::Bool: {
         if (const auto* a = value.as_bool_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
-          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; out += ((*a)[i] ? "true" : "false"); }
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; out += ((*a)[i] ? "1" : "0"); }  // pxr: 1/0
           if (limit < a->size()) out += ", ...";
         }
         break;
@@ -775,7 +786,7 @@ void PrintValueInto(std::string& out, const Value& value,
   switch (type_id) {
     case TypeId::Bool: {
       const bool* v = value.as_bool();
-      out += v ? (*v ? "true" : "false") : "None";
+      out += v ? (*v ? "1" : "0") : "None";  // pxr spells VALUE bools 1/0
       return;
     }
 
@@ -1184,6 +1195,8 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
   // unused here but kept for signature symmetry with the full printer.
   (void)opts;
   if (!value.is_array()) return false;
+  const size_t element_count = value.array_size();
+  if (elem_lo > elem_hi || elem_hi > element_count) return false;
   ChunkedStream out(os);
   auto done = [&]() {
     DiscardLazyArrayRangePages(value, elem_lo, elem_hi);

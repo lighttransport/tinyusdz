@@ -1938,7 +1938,7 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     }
 
     // Create the Attribute spec
-    if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
+    if (!AddSpec(attr_path, SpecType::Attribute, std::move(attr_fields), err)) {
       DCOUT("WARNING: Failed to add spec for xformOp: " << op_name);
     }
   }
@@ -1971,7 +1971,7 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     order_fields.push_back({"default", default_value});
 
     // Create the Attribute spec
-    if (!AddSpec(order_path, SpecType::Attribute, order_fields, err)) {
+    if (!AddSpec(order_path, SpecType::Attribute, std::move(order_fields), err)) {
       DCOUT("WARNING: Failed to add spec for xformOpOrder");
     }
   }

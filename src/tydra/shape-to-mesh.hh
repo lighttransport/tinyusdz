@@ -438,9 +438,16 @@ inline void GenerateCylinderMesh(
     points.push_back({r * std::cos(angle1), h, r * std::sin(angle1)});
     normals.push_back({0.0f, 1.0f, 0.0f});
     uvs.push_back({0.5f + 0.5f * std::cos(angle1), 0.5f + 0.5f * std::sin(angle1)});
+    // (center, v1, v0): rim angle INCREASES from v0 to v1, and x=cos/z=sin, so
+    // (center, v0, v1) winds the fan -Y -- inward, contradicting the +Y normal
+    // authored just above. The side faces are outward, so the mixed mesh nets a
+    // POSITIVE volume and the converter's all-or-nothing winding normalizer
+    // (render-converter.cc, fires only on a negative total) neither detects nor
+    // could fix it. Back-face culling then drops the caps and you see into the
+    // cylinder.
     faceVertexIndices.push_back(topCenter);
-    faceVertexIndices.push_back(v0);
     faceVertexIndices.push_back(v1);
+    faceVertexIndices.push_back(v0);
     faceVertexCounts.push_back(3);
   }
 
@@ -462,9 +469,11 @@ inline void GenerateCylinderMesh(
     points.push_back({r * std::cos(angle1), -h, r * std::sin(angle1)});
     normals.push_back({0.0f, -1.0f, 0.0f});
     uvs.push_back({0.5f + 0.5f * std::cos(angle1), 0.5f + 0.5f * std::sin(angle1)});
+    // (center, v0, v1): mirror of the top cap -- this fan must wind -Y to match
+    // the -Y normal authored above.
     faceVertexIndices.push_back(botCenter);
-    faceVertexIndices.push_back(v1);
     faceVertexIndices.push_back(v0);
+    faceVertexIndices.push_back(v1);
     faceVertexCounts.push_back(3);
   }
 

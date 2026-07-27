@@ -117,6 +117,14 @@ RECONSTRUCT_PRIM_DECL(GeomPointInstancer);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
 RECONSTRUCT_PRIM_DECL(NodeGraph);
+// Placeholder schema prim types (UsdVol / UsdRender / UsdProc)
+RECONSTRUCT_PRIM_DECL(Volume);
+RECONSTRUCT_PRIM_DECL(OpenVDBAsset);
+RECONSTRUCT_PRIM_DECL(Field3DAsset);
+RECONSTRUCT_PRIM_DECL(RenderSettings);
+RECONSTRUCT_PRIM_DECL(RenderProduct);
+RECONSTRUCT_PRIM_DECL(RenderVar);
+RECONSTRUCT_PRIM_DECL(GenerativeProcedural);
 // UsdPhysics + mjcPhysics
 RECONSTRUCT_PRIM_DECL(PhysicsJoint);
 RECONSTRUCT_PRIM_DECL(PhysicsScene);
@@ -434,6 +442,52 @@ class USDAReader::Impl {
   template <typename T>
   bool RegisterReconstructCallback();
 
+  // Convert a parser-side VariantSetList (variantSetName -> VariantSetContent)
+  // into the reader-side variantNodeMap (variantSetName -> variantName ->
+  // VariantNode), recursing into each variant block's OWN nested variantSets so
+  // they survive layer-mode load. Without this recursion the PrimSpec/Layer
+  // path silently drops nested variant content (e.g. ALab's `render_high` geo
+  // variant holding a `geo_vis` variantSet that supplies the proxy mesh).
+  nonstd::expected<bool, std::string> ConvertVariantSetList(
+      const ascii::AsciiParser::VariantSetList &in_variants,
+      std::map<std::string, std::map<std::string, VariantNode>> &out) {
+    for (const auto &variantContext : in_variants) {
+      const std::string variant_name = variantContext.first;
+
+      std::map<std::string, VariantNode> variantNodes;
+      for (const auto &item : variantContext.second.variantSets) {
+        VariantNode variant;
+        if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
+          return nonstd::make_unexpected(fmt::format("Failed to process Prim metadataum in variantSet {} item {} ", variant_name, item.first));
+        }
+        variant.props = item.second.props;
+
+        // child Prim should be already reconstructed.
+        for (const auto &childPrimIdx : item.second.primIndices) {
+          if (childPrimIdx < 0) {
+            return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet."));
+          }
+          if (size_t(childPrimIdx) >= _primspec_nodes.size()) {
+            return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet. variantChildPrimIdsx {} Exceeds _prim_nodes.size() {}", childPrimIdx, _primspec_nodes.size()));
+          }
+          variant.primChildren.push_back(childPrimIdx);
+        }
+
+        // Recurse into nested variantSets authored inside this variant block.
+        if (!item.second.variantSets.empty()) {
+          auto nret = ConvertVariantSetList(item.second.variantSets, variant.variantSets);
+          if (!nret) {
+            return nret;
+          }
+        }
+
+        variantNodes.emplace(item.first, std::move(variant));
+      }
+      out.emplace(variant_name, std::move(variantNodes));
+    }
+    return true;
+  }
+
   void RegisterPrimSpecHandler() {
     _parser.RegisterPrimSpecFunction(
          [&](const Path &full_path, const Specifier spec, const std::string &typeName, const Path &prim_name, const int64_t primIdx,
@@ -489,38 +543,11 @@ class USDAReader::Impl {
           // NOTE: variantChildren setup is delayed. It will be processed ConstructPrimTreeRec()
           //
           std::map<std::string, std::map<std::string, VariantNode>> variantSets;
-          for (const auto &variantContext : in_variants) {
-            const std::string variant_name = variantContext.first;
-
-            // Convert VariantContent -> VariantNode
-            std::map<std::string, VariantNode> variantNodes;
-            for (const auto &item : variantContext.second.variantSets) {
-              VariantNode variant;
-              if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
-                return nonstd::make_unexpected(fmt::format("Failed to process Prim metadataum in variantSet {} item {} ", variant_name, item.first));
-              }
-              variant.props = item.second.props;
-
-              // child Prim should be already reconstructed.
-              for (const auto &childPrimIdx : item.second.primIndices) {
-                if (childPrimIdx < 0) {
-                  return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet."));
-                }
-
-                if (size_t(childPrimIdx) >= _primspec_nodes.size()) {
-                  return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet. variantChildPrimIdsx {} Exceeds _prim_nodes.size() {}", childPrimIdx, _primspec_nodes.size()));
-                }
-
-                variant.primChildren.push_back(childPrimIdx);
-
-                //_primspec_nodes[size_t(childPrimIdx)].parent_is_variant = true;
-              }
-              DCOUT("Add variant: " << item.first);
-              variantNodes.emplace(item.first, std::move(variant));
+          {
+            auto vret = ConvertVariantSetList(in_variants, variantSets);
+            if (!vret) {
+              return vret;
             }
-
-            DCOUT("Add variantSet: " << variant_name);
-            variantSets.emplace(variant_name, std::move(variantNodes));
           }
 
 
@@ -541,10 +568,13 @@ class USDAReader::Impl {
 
           if (parentPrimIdx == -1) {
             _toplevel_primspecs.push_back(size_t(primIdx));
-          } else {
+          } else if (size_t(parentPrimIdx) < _primspec_nodes.size()) {
             _primspec_nodes[size_t(parentPrimIdx)].children.push_back(
                 size_t(primIdx));
             return true;
+          } else {
+            DCOUT("Invalid parentPrimIdx: " << parentPrimIdx);
+            return false;
           }
 
           return true;
@@ -1400,9 +1430,6 @@ namespace prim {
   extern template bool ReconstructPrim<__T>( \
       const Specifier &, PropertyMap &, const ReferenceList &, \
       __T *, std::string *, std::string *, const PrimReconstructOptions &);
-USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(Volume)
-USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(OpenVDBAsset)
-USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(Field3DAsset)
 USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderSettings)
 USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderProduct)
 USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderVar)
@@ -1447,9 +1474,6 @@ USDA_EXTERN_REGISTER_RECONSTRUCT(Material)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Shader)
 USDA_EXTERN_REGISTER_RECONSTRUCT(NodeGraph)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Scope)
-USDA_EXTERN_REGISTER_RECONSTRUCT(Volume)
-USDA_EXTERN_REGISTER_RECONSTRUCT(OpenVDBAsset)
-USDA_EXTERN_REGISTER_RECONSTRUCT(Field3DAsset)
 USDA_EXTERN_REGISTER_RECONSTRUCT(RenderSettings)
 USDA_EXTERN_REGISTER_RECONSTRUCT(RenderProduct)
 USDA_EXTERN_REGISTER_RECONSTRUCT(RenderVar)

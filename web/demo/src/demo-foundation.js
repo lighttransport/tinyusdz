@@ -20,6 +20,12 @@ import { applyUSDSceneSkinningPipeline } from 'tinyusdz/USDSceneSkinningPipeline
 import { getUSDSceneMetadata } from 'tinyusdz/USDSceneMetadata.js';
 import { buildNodeIndexMap } from 'tinyusdz/USDAnimationConverter.js';
 import { extractUSDSceneAnimations } from 'tinyusdz/USDSceneAnimationPipeline.js';
+import {
+  buildNextThreeNode,
+  isNextScene,
+  nextCountsFromScene,
+  readNextSceneMeta
+} from 'tinyusdz-next-demo-utils';
 
 RectAreaLightUniformsLib.init();
 
@@ -49,6 +55,24 @@ function escapeHTML(value) {
     .replaceAll('"', '&quot;');
 }
 
+const BACKEND_CHOICES = ['next', 'legacy', 'auto'];
+
+function selectedBackend() {
+  if (!__TINYUSDZ_LOCAL_DEV__) return 'legacy';
+  const value = new URLSearchParams(window.location.search).get('backend');
+  return BACKEND_CHOICES.includes(value) ? value : 'next';
+}
+
+function setBackendAndReload(backend) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('backend', BACKEND_CHOICES.includes(backend) ? backend : 'next');
+  window.location.href = url.toString();
+}
+
+function normalizedAssetKey(value) {
+  return String(value || '').replaceAll('\\', '/').replace(/^\.\//, '').replace(/^\//, '');
+}
+
 export async function initDemo(config) {
   const root = document.getElementById('demo-root') || document.body;
   const app = new DemoApp(config, root);
@@ -69,6 +93,9 @@ class DemoApp {
     this.loader = null;
     this.currentUsd = null;
     this.currentLabel = '';
+    this.currentSourceBytes = null;
+    this.currentSourceName = '';
+    this.currentSourceUrl = '';
     this.envMap = null;
     this.mixer = null;
     this.actions = [];
@@ -85,6 +112,7 @@ class DemoApp {
       speed: 1.0,
       showSkeleton: !!this.config.showSkeleton
     };
+    this.params.backend = selectedBackend();
   }
 
   async start() {
@@ -230,6 +258,9 @@ class DemoApp {
     this.gui.add({ open: () => this.fileInput.click() }, 'open').name('Open USD');
     this.gui.add({ sample: () => this.loadDefaultAsset() }, 'sample').name('Load sample');
     this.gui.add({ fit: () => this.fitScene() }, 'fit').name('Fit scene (F)');
+    if (__TINYUSDZ_LOCAL_DEV__) {
+      this.gui.add(this.params, 'backend', BACKEND_CHOICES).name('Backend').onChange(setBackendAndReload);
+    }
     this.gui.add(this.params, 'grid').name('Grid').onChange((value) => {
       this.grid.visible = value;
     });
@@ -271,7 +302,12 @@ class DemoApp {
 
     this.setStatus('Initializing TinyUSDZ WASM...');
     this.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
-    await this.loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+    await this.loader.init({
+      useZstdCompressedWasm: false,
+      useMemory64: false,
+      backend: this.params.backend,
+      useNextOnlyWasm: this.params.backend === 'next'
+    });
     TinyUSDZLoaderUtils.setTinyUSDZ(this.loader.native_);
     setMaterialXTinyUSDZ(this.loader.native_);
     this.loader.setMaxMemoryLimitMB(512);
@@ -302,18 +338,19 @@ class DemoApp {
     await this.ensureLoader();
     this.setStatus(`Loading ${label}...`);
     try {
+      const data = await this.fetchBytes(url, label);
+      this.currentSourceBytes = new Uint8Array(data);
+      this.currentSourceName = url.split(/[?#]/)[0].split('/').pop() || 'scene.usd';
+      this.currentSourceUrl = url;
       let usd;
       if (this.config.useComposition) {
-        usd = await this.loadComposedLayer(url);
-      } else if (this.config.useLayerExport) {
+        usd = this.params.backend === 'legacy'
+          ? await this.loadComposedLayer(url)
+          : await this.loadComposedNext(data, url);
+      } else if (this.config.useLayerExport && this.params.backend === 'legacy') {
         usd = await this.loadLayerForExport(url);
       } else {
-        usd = await this.loader.loadAsync(url, {
-          onFetchProgress: (loaded, total) => {
-            const suffix = total ? `${bytesLabel(loaded)} / ${bytesLabel(total)}` : bytesLabel(loaded);
-            this.setStatus(`Downloading ${label}: ${suffix}`);
-          }
-        });
+        usd = await this.parseUSD(data, this.currentSourceName);
       }
       await this.displayUSD(usd, label);
     } catch (error) {
@@ -327,16 +364,60 @@ class DemoApp {
     this.setStatus(`Reading ${file.name} (${bytesLabel(file.size)})...`);
     try {
       const data = new Uint8Array(await file.arrayBuffer());
-      const usd = this.config.useLayerExport
+      this.currentSourceBytes = new Uint8Array(data);
+      this.currentSourceName = file.name;
+      this.currentSourceUrl = '';
+      const usd = this.config.useLayerExport && this.params.backend === 'legacy'
         ? this.parseLayerForExport(data, file.name)
-        : await new Promise((resolve, reject) => {
-          this.loader.parse(data, file.name, resolve, reject, { maxMemoryLimitMB: 512 });
-        });
+        : await this.parseUSD(data, file.name);
       await this.displayUSD(usd, file.name);
     } catch (error) {
       console.error(error);
       this.setStatus(`Failed: ${error.message}`);
     }
+  }
+
+  async fetchBytes(url, label = url) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status} loading ${label}`);
+    const total = Number(response.headers.get('content-length')) || 0;
+    if (!response.body) return new Uint8Array(await response.arrayBuffer());
+    const reader = response.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.length;
+      const suffix = total ? `${bytesLabel(loaded)} / ${bytesLabel(total)}` : bytesLabel(loaded);
+      this.setStatus(`Downloading ${label}: ${suffix}`);
+    }
+    const bytes = new Uint8Array(loaded);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return bytes;
+  }
+
+  nextParseOptions(extra = {}) {
+    return {
+      backend: this.params.backend,
+      maxMemoryLimitMB: 512,
+      materialDedup: false,
+      mergeMeshes: false,
+      mergeMeshesBakeTransform: false,
+      flattenRenderTree: false,
+      ...extra
+    };
+  }
+
+  parseUSD(data, filename, extra = {}) {
+    return new Promise((resolve, reject) => {
+      this.loader.parse(data, filename, resolve, reject, this.nextParseOptions(extra));
+    });
   }
 
   async loadComposedLayer(url) {
@@ -350,6 +431,58 @@ class DemoApp {
     const composed = composer.getLayer();
     composed.layerToRenderScene();
     return composed;
+  }
+
+  async loadComposedNext(rootBytes, rootUrl) {
+    const Session = this.loader.native_?.NextFlattenSession;
+    if (typeof Session !== 'function') {
+      throw new Error('NextFlattenSession is unavailable in this WASM build.');
+    }
+    const session = new Session();
+    const rootName = rootUrl.split(/[?#]/)[0].split('/').pop() || 'root.usda';
+    const begin = session.begin(rootBytes, rootName, true);
+    if (!begin?.success) {
+      session.delete?.();
+      throw new Error(begin?.error || 'Failed to start next composition.');
+    }
+    try {
+      for (let iteration = 0; iteration < 64; iteration++) {
+        const step = session.step(null);
+        if (!step?.success) throw new Error(step?.error || 'Next composition failed.');
+        if (step.status === 'need-layer') {
+          const dependency = await this.fetchDependencyLayer(step.key, rootUrl);
+          const provided = session.provideLayer(step.key, dependency);
+          if (!provided?.success) {
+            throw new Error(provided?.error || `Failed to provide ${step.key}.`);
+          }
+          continue;
+        }
+        if (step.status === 'done' && step.data) {
+          return this.parseUSD(new Uint8Array(step.data), `${rootName}.flattened.usdc`);
+        }
+        throw new Error(`Unexpected next composition status: ${step.status}`);
+      }
+      throw new Error('Next composition exceeded the dependency-layer limit.');
+    } finally {
+      session.end();
+      session.delete?.();
+    }
+  }
+
+  async fetchDependencyLayer(key, rootUrl) {
+    const candidates = [
+      new URL(String(key), document.baseURI).href,
+      new URL(String(key), new URL(rootUrl, document.baseURI)).href
+    ];
+    let lastError = null;
+    for (const url of [...new Set(candidates)]) {
+      try {
+        return await this.fetchBytes(url, key);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error(`Could not resolve dependency layer ${key}.`);
   }
 
   async loadLayerForExport(url) {
@@ -371,9 +504,9 @@ class DemoApp {
   }
 
   async displayUSD(usd, label) {
+    this.clearSceneObjects();
     this.currentUsd = usd;
     this.currentLabel = label;
-    this.clearSceneObjects();
     this.applySceneUpAxis(usd);
 
     if (this.config.useUsdLux) {
@@ -382,20 +515,26 @@ class DemoApp {
       this.scene.environment = this.envMap;
     }
 
-    const sceneRoot = await this.buildThreeRoot(usd);
+    if (isNextScene(usd)) await this.hydrateNextExternalAssets(usd);
+    const builtScene = await this.buildThreeRoot(usd);
+    const sceneRoot = builtScene.node;
 
     if (this.config.materialBackend === 'nodegraph') {
       this.applyNodeGraphMaterials(sceneRoot);
     }
 
     if (this.config.enableSkinning || this.config.enableAnimation) {
-      await this.applySkinningAndAnimation(usd, sceneRoot);
+      await this.applySkinningAndAnimation(usd, sceneRoot, builtScene.nodeIndexMap);
     } else {
       this.world.add(sceneRoot);
     }
 
     if (this.config.useUsdLux) {
       this.addUSDLights(usd);
+    }
+
+    if (isNextScene(usd) && typeof usd.releaseBuildData === 'function') {
+      usd.releaseBuildData();
     }
 
     this.applyEnvironmentToMaterials();
@@ -410,6 +549,23 @@ class DemoApp {
   }
 
   async buildThreeRoot(usd) {
+    if (isNextScene(usd)) {
+      const built = buildNextThreeNode(usd, {
+        skipTextures: false,
+        lazyTextures: true,
+        releaseBuildData: false,
+        onProgress: (info) => this.setStatus(info.message || 'Building next scene...')
+      });
+      if (built.textureManager) {
+        await built.textureManager.startLoading({
+          concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
+          yieldInterval: 16,
+          onProgress: (info) => this.setStatus(
+            `Loading textures ${info.loaded + info.failed}/${info.total}`)
+        });
+      }
+      return built;
+    }
     const root = new THREE.Group();
     root.name = 'USD Scene';
     const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
@@ -429,10 +585,35 @@ class DemoApp {
       const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdNode, defaultMaterial, usd, options);
       root.add(threeNode);
     }
-    return root;
+    return { node: root, nodeIndexMap: null };
+  }
+
+  async hydrateNextExternalAssets(usd) {
+    if (!this.currentSourceUrl || !usd?.archiveEntries) return;
+    const records = Array.isArray(usd.textures) ? usd.textures : [];
+    for (const record of records) {
+      const assetPath = record?.assetPath || record?.uri;
+      const key = normalizedAssetKey(assetPath);
+      if (!key || usd.archiveEntries.has(key)) continue;
+      const candidates = [
+        new URL(assetPath, new URL(this.currentSourceUrl, document.baseURI)).href,
+        new URL(assetPath, document.baseURI).href
+      ];
+      for (const url of [...new Set(candidates)]) {
+        try {
+          const response = await fetch(url);
+          if (!response.ok) continue;
+          usd.archiveEntries.set(key, new Uint8Array(await response.arrayBuffer()));
+          break;
+        } catch {
+          // Try the next resolver candidate.
+        }
+      }
+    }
   }
 
   getSceneUpAxis(usd) {
+    if (isNextScene(usd)) return String(readNextSceneMeta(usd).upAxis || 'Y').toUpperCase();
     try {
       const metadata = getUSDSceneMetadata(usd);
       const axis = metadata.fileUpAxis || metadata.upAxis || (usd?.getUpAxis ? usd.getUpAxis() : 'Y');
@@ -461,7 +642,7 @@ class DemoApp {
       const originalMaterials = Array.isArray(object.material) ? object.material : [object.material];
       const nextMaterials = originalMaterials.map((material) => {
         inspected++;
-        const materialData = material.userData?.openPBRData;
+        const materialData = material.userData?.openPBRData || material.userData?.rawData;
         const openPBR = materialData?.openPBR || materialData?.openPBRShader || materialData;
         const nodeGraph = openPBR?.nodeGraph || materialData?.nodeGraph;
         if (!nodeGraph?.nodegraph) return material;
@@ -530,7 +711,7 @@ class DemoApp {
     targetMaterial.needsUpdate = true;
   }
 
-  async applySkinningAndAnimation(usd, threeNode) {
+  async applySkinningAndAnimation(usd, threeNode, nextNodeIndexMap = null) {
     const metadata = getUSDSceneMetadata(usd);
     const skinningData = extractSkinnedMeshData(usd, { logger: console, verbose: false });
     const skeletonData = buildSkeletonDataFromUSD(usd, {
@@ -538,7 +719,7 @@ class DemoApp {
       hasSkinnedMeshData: skinningData.hasSkinnedMeshData
     });
 
-    const nodeIndexMap = buildNodeIndexMap(threeNode);
+    const nodeIndexMap = nextNodeIndexMap || buildNodeIndexMap(threeNode);
     const skinningResult = applyUSDSceneSkinningPipeline({
       threeNode,
       characterGroup: this.world,
@@ -631,7 +812,7 @@ class DemoApp {
         } else {
           light = new THREE.PointLight(color, intensity);
         }
-      } else if (type === 'distant') {
+      } else if (type === 'distant' || type === 'directional') {
         light = new THREE.DirectionalLight(color, intensity);
         light.position.copy((lightData.direction ? new THREE.Vector3(...lightData.direction) : new THREE.Vector3(0, -1, 0)).multiplyScalar(-5));
       } else if (type === 'rect' || type === 'disk') {
@@ -640,7 +821,7 @@ class DemoApp {
 
       if (!light) continue;
       light.name = lightData.name || `USDLight_${i}`;
-      if (type !== 'distant') {
+      if (type !== 'distant' && type !== 'directional') {
         light.position.copy(position);
         light.quaternion.copy(quaternion);
       }
@@ -700,6 +881,10 @@ class DemoApp {
       return;
     }
     try {
+      if (isNextScene(this.currentUsd)) {
+        this.exportCurrentNext(kind);
+        return;
+      }
       if (kind === 'usda') {
         const data = typeof this.currentUsd.exportAsUSDA === 'function'
           ? this.currentUsd.exportAsUSDA()
@@ -728,10 +913,40 @@ class DemoApp {
     }
   }
 
+  exportCurrentNext(kind) {
+    const Exporter = this.loader.native_?.NextUSDZConverterNative;
+    if (typeof Exporter !== 'function' || !this.currentSourceBytes) {
+      throw new Error('The next exporter or original USD bytes are unavailable.');
+    }
+    const exporter = new Exporter();
+    try {
+      if (!exporter.loadFromBinary(this.currentSourceBytes, this.currentSourceName || 'scene.usd')) {
+        throw new Error(exporter.error?.() || 'Next exporter could not load the scene.');
+      }
+      if (kind === 'usda') {
+        const data = exporter.exportAsUSDA();
+        if (!data) throw new Error(exporter.error?.() || 'USDA export failed.');
+        downloadBlob(new Blob([data], { type: 'text/plain' }), 'tinyusdz-export.usda');
+      } else {
+        const method = kind === 'usdc' ? 'exportAsUSDC' : 'exportAsUSDZ';
+        const bytes = new Uint8Array(exporter[method]());
+        if (!bytes.length) throw new Error(exporter.error?.() || `${kind.toUpperCase()} export failed.`);
+        const type = kind === 'usdz' ? 'model/vnd.usdz+zip' : 'application/octet-stream';
+        downloadBlob(new Blob([bytes], { type }), `tinyusdz-export.${kind}`);
+      }
+      this.setStatus(`Exported ${kind.toUpperCase()}.`);
+    } finally {
+      exporter.delete?.();
+    }
+  }
+
   showExportNotes(usd) {
-    const hasUSDA = typeof usd.exportAsUSDA === 'function' || typeof usd.layerToString === 'function';
-    const hasUSDC = typeof usd.exportAsUSDC === 'function';
-    const hasUSDZ = typeof usd.exportAsUSDZ === 'function';
+    const hasNextExporter = isNextScene(usd) &&
+      typeof this.loader.native_?.NextUSDZConverterNative === 'function' &&
+      !!this.currentSourceBytes;
+    const hasUSDA = hasNextExporter || typeof usd.exportAsUSDA === 'function' || typeof usd.layerToString === 'function';
+    const hasUSDC = hasNextExporter || typeof usd.exportAsUSDC === 'function';
+    const hasUSDZ = hasNextExporter || typeof usd.exportAsUSDZ === 'function';
     this.setNotes([
       hasUSDA ? 'USDA export is available for the loaded layer.' : 'USDA export is not available for the loaded scene.',
       hasUSDC && hasUSDZ
@@ -753,6 +968,9 @@ class DemoApp {
   }
 
   clearSceneObjects() {
+    if (this.currentUsd && typeof this.currentUsd.releaseBuildData === 'function') {
+      this.currentUsd.releaseBuildData();
+    }
     this.world.clear();
     this.world.rotation.set(0, 0, 0);
     for (const light of this.usdLights) {
@@ -772,6 +990,7 @@ class DemoApp {
   }
 
   updateStats(usd, label) {
+    const nextCounts = isNextScene(usd) ? nextCountsFromScene(usd) : null;
     const countValue = (getter) => {
       if (typeof getter !== 'function') {
         return Number.isFinite(getter) ? getter : 0;
@@ -813,18 +1032,19 @@ class DemoApp {
 
     const stats = {
       Source: label,
+      Backend: isNextScene(usd) ? 'next' : 'legacy',
       'Up axis': this.currentUpAxis || this.getSceneUpAxis(usd),
-      Meshes: countNumber(usd?.numMeshes && usd.numMeshes.bind(usd)),
-      Materials: countNumber(usd?.numMaterials && usd.numMaterials.bind(usd)),
-      Textures: countNumber(usd?.numTextures && usd.numTextures.bind(usd)),
+      Meshes: nextCounts?.meshes ?? countNumber(usd?.numMeshes && usd.numMeshes.bind(usd)),
+      Materials: nextCounts?.materials ?? countNumber(usd?.numMaterials && usd.numMaterials.bind(usd)),
+      Textures: nextCounts?.textures ?? countNumber(usd?.numTextures && usd.numTextures.bind(usd)),
       Images: countNumber(usd?.numImages && usd.numImages.bind(usd)),
-      Lights: countNumber(usd?.numLights && usd.numLights.bind(usd)),
-      Cameras: countNumber(usd?.numCameras && usd.numCameras.bind(usd)),
-      Nodes: countNumber(usd?.numNodes && usd.numNodes.bind(usd)),
-      PointInstancers: countNumber(usd?.numPointInstancers && usd.numPointInstancers.bind(usd)),
-      PointInstanceDraws: countNumber(usd?.numPointInstanceDraws && usd.numPointInstanceDraws.bind(usd)),
-      Skeletons: countNumber(usd?.numSkeletons && usd.numSkeletons.bind(usd)),
-      Animations: countNumber(usd?.numAnimations && usd.numAnimations.bind(usd)),
+      Lights: nextCounts?.lights ?? countNumber(usd?.numLights && usd.numLights.bind(usd)),
+      Cameras: nextCounts?.cameras ?? countNumber(usd?.numCameras && usd.numCameras.bind(usd)),
+      Nodes: nextCounts?.nodes ?? countNumber(usd?.numNodes && usd.numNodes.bind(usd)),
+      PointInstancers: nextCounts?.pointInstancers ?? countNumber(usd?.numPointInstancers && usd.numPointInstancers.bind(usd)),
+      PointInstanceDraws: nextCounts?.pointInstanceDraws ?? countNumber(usd?.numPointInstanceDraws && usd.numPointInstanceDraws.bind(usd)),
+      Skeletons: nextCounts?.skeletons ?? countNumber(usd?.numSkeletons && usd.numSkeletons.bind(usd)),
+      Animations: nextCounts?.animations ?? countNumber(usd?.numAnimations && usd.numAnimations.bind(usd)),
       UnsupportedRenderables: unsupportedRenderables
     };
     this.statsEl.innerHTML = Object.entries(stats)

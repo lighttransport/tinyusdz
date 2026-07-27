@@ -240,7 +240,7 @@ int AdaptiveTessellator::computeTessLevel(const ParametricPrim& prim,
   else segments = 32;
 
   // Apply user quality scale
-  segments = std::max(3, static_cast<int>(segments * qualityScale));
+  segments = std::max(3, static_cast<int>(static_cast<float>(segments) * qualityScale));
   segments = std::min(segments, 64);  // cap at 64
 
   // Ensure minimum for different primitive types

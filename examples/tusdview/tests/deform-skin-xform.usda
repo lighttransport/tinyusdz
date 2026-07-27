@@ -1,0 +1,92 @@
+#usda 1.0
+(
+    doc = """Skeletal skinning under a ROTATED + non-uniformly SCALED SkelRoot.
+
+    The GPU path keeps the REST vertices and poses them in the shader; but the
+    static batch path world-bakes those vertices, so the bone rows have to undo
+    the world bake, skin in bind space, and re-apply it (invW * (G*sm*invG) * W).
+    The CPU path bakes the pose into mesh-local geometry BEFORE the world bake, so
+    it is independent of all that -- which is exactly what makes it a usable
+    reference. Every skinning fixture in models/ sits at the identity, where a
+    wrong-space bone row is indistinguishable from a right one.
+
+    A bend, not a rigid rotation: the bottom ring is bound to the root joint and
+    the top ring to a child that swings 60 degrees, so a botched space shows up as
+    a differently-shaped mesh, not just a differently-placed one."""
+    defaultPrim = "root"
+    endTimeCode = 20
+    startTimeCode = 1
+    upAxis = "Y"
+)
+
+def Xform "root"
+{
+    def Camera "Cam"
+    {
+        float2 clippingRange = (0.1, 1000)
+        float focalLength = 24
+        float horizontalAperture = 20.955
+        float verticalAperture = 15.2908
+        double3 xformOp:translate = (0, 2, 16)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def SphereLight "Key"
+    {
+        float inputs:intensity = 900
+        float inputs:radius = 0.5
+        double3 xformOp:translate = (6, 8, 10)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def SkelRoot "Rig" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        double3 xformOp:rotateXYZ = (0, 0, 35)
+        double3 xformOp:scale = (2, 1, 1.5)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Mesh "Bar" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 4, 6, 7, 5, 0, 4, 5, 1, 2, 3, 7, 6, 0, 2, 6, 4, 1, 5, 7, 3]
+            point3f[] points = [(-1, 0, 1), (1, 0, 1), (-1, 0, -1), (1, 0, -1), (-1, 3, 1), (1, 3, 1), (-1, 3, -1), (1, 3, -1)]
+            color3f[] primvars:displayColor = [(0.85, 0.85, 0.85)]
+            int[] primvars:skel:jointIndices = [0, 0, 0, 0, 1, 1, 1, 1] (
+                elementSize = 1
+                interpolation = "vertex"
+            )
+            float[] primvars:skel:jointWeights = [1, 1, 1, 1, 1, 1, 1, 1] (
+                elementSize = 1
+                interpolation = "vertex"
+            )
+            prepend rel skel:skeleton = </root/Rig/Skel>
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Skeleton "Skel" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform matrix4d[] bindTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ), ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1.5, 0, 1) )]
+            uniform token[] joints = ["joint1", "joint1/joint2"]
+            uniform matrix4d[] restTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) ), ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 1.5, 0, 1) )]
+            prepend rel skel:animationSource = </root/Rig/Skel/Anim>
+
+            def SkelAnimation "Anim"
+            {
+                uniform token[] joints = ["joint1", "joint1/joint2"]
+                quatf[] rotations.timeSamples = {
+                    1: [(1, 0, 0, 0), (1, 0, 0, 0)],
+                    20: [(1, 0, 0, 0), (0.8660254, 0, 0, 0.5)],
+                }
+                half3[] scales = [(1, 1, 1), (1, 1, 1)]
+                float3[] translations = [(0, 0, 0), (0, 1.5, 0)]
+            }
+        }
+    }
+}

@@ -5,6 +5,7 @@
 // Full support: references, payloads, inherits, specializes, variants, layer offsets
 
 #include "composition.hh"
+#include "../layer/array-edit.hh"
 #include "../layer/listop-field-table.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 #include <algorithm>
@@ -125,6 +126,7 @@ void MergeWeakerPropMeta(PropMeta* stronger, const PropMeta& weaker) {
   fill(PropMeta::kBindMaterialAs, &stronger->bindMaterialAs,
        weaker.bindMaterialAs);
   fill(PropMeta::kKind, &stronger->kind, weaker.kind);
+  fill(PropMeta::kPermission, &stronger->permission, weaker.permission);
   fill(PropMeta::kWeight, &stronger->weight, weaker.weight);
   fill(PropMeta::kUnauthoredIdx, &stronger->unauthoredValuesIndex,
        weaker.unauthoredValuesIndex);
@@ -262,6 +264,14 @@ Compositor::~Compositor() = default;
 
 std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
                                             const std::string& anchor_path) {
+  // Track re-entrancy (sublayer / external-layer composes share this
+  // instance): array edits resolve only at depth 1 (see
+  // ResolveArrayEditsInLayer).
+  struct DepthGuard {
+    int& d;
+    explicit DepthGuard(int& x) : d(x) { ++d; }
+    ~DepthGuard() { --d; }
+  } depth_guard(compose_depth_);
   errors_.clear();
   composition_stack_.clear();
   arc_resolved_.clear();
@@ -353,31 +363,23 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   graft_paths_.clear();
 
   // The flattened output has all sublayer opinions baked in: keeping the
-  // subLayers list would re-apply (now stale) layers on re-read. Fill stage
-  // metadata gaps from sublayers first (defaultPrim authored only in a
-  // sublayer must survive), then drop the list.
-  if (!result->meta().subLayers.empty()) {
-    // Stage metadata resolves through the whole root layer STACK (root
-    // wins, then sublayers in strength order); gap-fill before dropping
-    // the list — this flatten output IS the stage for downstream
-    // consumers.
-    for (const std::string& sl : result->meta().subLayers) {
-      std::string resolved = sl;
-      if (resolver_) {
-        resolved = resolver_->ResolvePath(
-            sl, anchor_path, !options_.strict_aousd_conformance);
-      }
-      if (const Layer* sub = GetCachedLayer(resolved)) {
-        result->meta().FillAbsentStageMetaFrom(sub->meta());
-      }
-    }
-    result->meta().subLayers.clear();
-  }
+  // subLayers list would re-apply (now stale) layers on re-read. Stage
+  // metadata comes from the ROOT layer only — pxr does not fall back to
+  // sublayer-authored stage fields (verified against the 26.05 oracle) —
+  // so the consumed list is dropped without any gap-fill.
+  result->meta().subLayers.clear();
 
   // The crate writer's compressed-paths encoding requires ancestors before
   // descendants with contiguous subtrees; grafted prims were appended at the
   // end, so restore hierarchical order first.
   result->sort_prims_by_path();
+
+  // Resolve remaining sparse array edits (over an empty base when no weaker
+  // opinion supplied one), so the composed layer carries concrete arrays like
+  // a pxr flattened stage.
+  if (compose_depth_ == 1) {
+    ResolveArrayEditsInLayer(*result);
+  }
 
   // Finalize the composed layer
   result->finalize();
@@ -407,6 +409,48 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   }
 
   return result;
+}
+
+bool Compositor::ResolveArrayEditsOnPrim(PrimSpec* p, std::string* err) {
+  if (!p || p->array_edits().empty()) return true;
+  bool ok = true;
+  std::vector<uint32_t> ids;
+  ids.reserve(p->array_edits().size());
+  for (const auto& kv : p->array_edits()) ids.push_back(kv.first);
+  for (uint32_t raw_id : ids) {
+    PropNameId nid;
+    nid.id = raw_id;
+    const ArrayEditData* edit = p->array_edit(nid);
+    const PropSlot* slot = p->property(nid);
+    if (!edit || !slot) continue;
+    Value resolved;
+    std::string apply_err;
+    if (!ApplyArrayEdit(*edit, p->property_value(nid),
+                        static_cast<TypeId>(slot->value_type), &resolved,
+                        &apply_err)) {
+      if (ok && err) *err = apply_err;
+      ok = false;
+      continue;
+    }
+    if (!p->fill_property_value_if_absent(nid, resolved)) {
+      p->set_property_value(nid, std::move(resolved));
+    }
+    p->clear_array_edit(nid);
+    p->clear_raw_default_source(nid);
+  }
+  return ok;
+}
+
+void Compositor::ResolveArrayEditsInLayer(Layer& layer) {
+  const size_t n = layer.prim_count();
+  for (size_t i = 0; i < n; ++i) {
+    PrimSpec* p = layer.prim_mutable(static_cast<uint32_t>(i));
+    if (!p) continue;
+    std::string apply_err;
+    if (!ResolveArrayEditsOnPrim(p, &apply_err)) {
+      AddError(apply_err, p->path().str(), "", ArcType::Local);
+    }
+  }
 }
 
 std::unique_ptr<Layer> Compositor::ComposeSublayers(const Layer& root_layer,
@@ -786,6 +830,51 @@ void Compositor::CopyLocalOpinions(
           }
         }
       }
+      // Sparse array edits (VtArrayEdit) compose BEFORE the fill-absent
+      // value logic below: a stronger edit is not an opinion that blocks the
+      // weaker default -- it TRANSFORMS it (pxr VtArrayEdit::ComposeOver).
+      const ArrayEditData* target_edit = target.array_edit(slot.name_id);
+      const ArrayEditData* source_edit = source.array_edit(slot.name_id);
+      if (target_edit) {
+        if (source_edit) {
+          // Edit over edit: concatenate op lists, weaker first. Stays an
+          // edit (a still-weaker arc may yet supply the base array).
+          ArrayEditData stacked = *source_edit;
+          stacked.ops.insert(stacked.ops.end(), target_edit->ops.begin(),
+                             target_edit->ops.end());
+          target.set_raw_default_source(pname, BuildArrayEditText(stacked));
+          target.set_array_edit(pname, std::move(stacked));
+        } else if (const Value* weaker_value =
+                       source.property_value(slot.name_id)) {
+          // Weaker plain array: resolve the edit against it now.
+          Value resolved;
+          std::string apply_err;
+          if (ApplyArrayEdit(*target_edit, weaker_value,
+                             static_cast<TypeId>(tgt_slot->value_type),
+                             &resolved, &apply_err)) {
+            target.clear_array_edit(slot.name_id);
+            target.clear_raw_default_source(slot.name_id);
+            if (!target.fill_property_value_if_absent(slot.name_id,
+                                                      resolved)) {
+              target.set_property_value(slot.name_id, std::move(resolved));
+            }
+            default_filled_from_source.insert(slot.name_id);
+          }
+        }
+        // Weaker has neither: the edit rides along and resolves later.
+      } else if (source_edit && tgt_slot->value_offset == UINT32_MAX &&
+                 !target.raw_default_source(slot.name_id)) {
+        // Target slot carries no default opinion at all (declared-only /
+        // connection-only): the weaker edit is the strongest default seen.
+        target.set_array_edit(pname, *source_edit);
+        if (const std::string* sraw =
+                source.raw_default_source(slot.name_id)) {
+          target.set_raw_default_source(pname, *sraw);
+        } else {
+          target.set_raw_default_source(pname,
+                                        BuildArrayEditText(*source_edit));
+        }
+      }
       // Field-level fill-absent: pxr composes a property's default VALUE and its
       // CONNECTIONS as INDEPENDENT fields. A stronger source may author only one
       // of them; fill the other from this weaker source rather than dropping it.
@@ -828,12 +917,20 @@ void Compositor::CopyLocalOpinions(
           target.set_spline_source(pname, *spline);
         }
       }
-      if (!target.raw_default_source(slot.name_id)) {
+      if (!target.raw_default_source(slot.name_id) && !source_edit) {
         if (const std::string* raw = source.raw_default_source(slot.name_id)) {
           target.set_raw_default_source(pname, *raw);
         }
       }
       continue;  // target opinion otherwise wins (incl. time-sampled merge)
+    }
+    // Mirror of the rel-vs-attr form conflict below: a weaker ATTRIBUTE under
+    // an existing stronger relationship of the same name is ignored (pxr
+    // keeps the defining spec's form and drops the conflicting spec).
+    if (!slot.is_relationship() &&
+        (target.relationship(pname) ||
+         target.relationship_opinion_stack(pname))) {
+      continue;
     }
     const Value* src_val = source.property_value(slot.name_id);
     if (src_val) {
@@ -858,6 +955,9 @@ void Compositor::CopyLocalOpinions(
     if (const std::string* raw = source.raw_default_source(slot.name_id)) {
       target.set_raw_default_source(pname, *raw);
     }
+    if (const ArrayEditData* new_edit = source.array_edit(slot.name_id)) {
+      target.set_array_edit(pname, *new_edit);
+    }
   }
 
   // Relationship target list ops compose over the weaker target list. A
@@ -865,6 +965,23 @@ void Compositor::CopyLocalOpinions(
   // is applied to the weaker effective list (the old skip-on-existing path
   // lost `</A>` from weak A + strong prepend B).
   for (const auto& rel_name : source.relationship_names()) {
+    // pxr: property specs whose FORM conflicts with the defining (strongest)
+    // spec are ignored. A weaker RELATIONSHIP under an existing attribute
+    // slot of the same name contributes no targets — but a relationship
+    // spec's intrinsic `uniform` variability is an authored field and still
+    // fills the composed attribute (usdcat prints `uniform double x`).
+    {
+      const PropNameId aid = GetPropNameTable().find(rel_name);
+      if (aid.is_valid()) {
+        const PropSlot* aslot = target.property(aid);
+        if (aslot && !aslot->is_relationship()) {
+          if (PropSlot* ms = target.property_mutable(aid)) {
+            ms->flags |= PropSlot::kFlagUniform;
+          }
+          continue;
+        }
+      }
+    }
     std::vector<PrimSpec::RelationshipOpinion> opinions;
     if (const auto* existing = target.relationship_opinion_stack(rel_name)) {
       opinions = *existing;
@@ -877,10 +994,24 @@ void Compositor::CopyLocalOpinions(
         opinion.edit = it->second;
         opinion.qualified = !it->second.is_explicit;
       }
-      opinions.push_back(std::move(opinion));
+      // A DECLARED-ONLY relationship (no targets, no authored edit) carries
+      // no target opinion — pushing an empty explicit one here BLOCKED
+      // weaker list-edited targets (BasicListEditing).
+      if (!opinion.items.empty() || opinion.edit.authored) {
+        opinions.push_back(std::move(opinion));
+      }
     }
 
+    // Track opinions whose every target was DROPPED as unmappable across the
+    // arc: pxr keeps the relationship SPEC but no target opinion (a bare
+    // `rel name` on flatten), NOT an authored-explicit empty list (`= None`).
+    size_t src_opinions = 0;
+    size_t src_vacated = 0;
+    const size_t prior_opinions = opinions.size();
     auto remap_opinion = [&](PrimSpec::RelationshipOpinion opinion) {
+      ++src_opinions;
+      const bool had_items = !opinion.items.empty() ||
+                             opinion.edit.has_authored_opinion();
       std::vector<Path> mapped_items;
       for (const Path& item : opinion.items) {
         if (target_mappable(item)) mapped_items.push_back(map_target(item));
@@ -900,6 +1031,10 @@ void Compositor::CopyLocalOpinions(
       remap_edit_items(&opinion.edit.appended);
       remap_edit_items(&opinion.edit.deleted);
       remap_edit_items(&opinion.edit.ordered);
+      if (had_items && opinion.items.empty() &&
+          !opinion.edit.has_authored_opinion()) {
+        ++src_vacated;
+      }
       opinions.push_back(std::move(opinion));
     };
 
@@ -916,7 +1051,10 @@ void Compositor::CopyLocalOpinions(
         opinion.edit = it->second;
         opinion.qualified = !it->second.is_explicit;
       }
-      remap_opinion(std::move(opinion));
+      // Declared-only source rel: no target opinion (see above).
+      if (!opinion.items.empty() || opinion.edit.authored) {
+        remap_opinion(std::move(opinion));
+      }
     }
 
     std::vector<Path> effective;
@@ -927,12 +1065,18 @@ void Compositor::CopyLocalOpinions(
         ApplyRelationshipEdit(&effective, it->edit);
       }
     }
+    // Every contributed opinion lost all its targets to arc mapping and there
+    // was no prior opinion: the composed relationship exists but carries NO
+    // target opinion (bare `rel name`, pxr parity) — an authored-explicit
+    // empty list here would wrongly serialize as `= None`.
+    const bool vacated = prior_opinions == 0 && src_opinions > 0 &&
+                         src_vacated == src_opinions && effective.empty();
     target.set_relationship_targets(rel_name, std::move(effective));
     target.set_relationship_opinion_stack(rel_name, std::move(opinions));
     ArcEdit& resolved = target.ensure_relationship_edit(rel_name);
     resolved = ArcEdit();
-    resolved.authored = true;
-    resolved.is_explicit = true;
+    resolved.authored = !vacated;
+    resolved.is_explicit = !vacated;
     target.set_relationship_flags(
         rel_name, static_cast<uint16_t>(target.relationship_flags(rel_name) |
                                         source.relationship_flags(rel_name)));
@@ -971,11 +1115,22 @@ void Compositor::CopyLocalOpinions(
       }
       // Copy time samples from source to target, remapping the sample time by
       // the layer offset (t -> time_offset + time_scale*t).
+      //
+      // A DEGENERATE offset (scale == 0) maps every sample onto `time_offset`.
+      // It is reachable: the tcps auto-scale divides parent/sublayer rates, so
+      // a root authoring `timeCodesPerSecond = 0` scales its sublayers by 0.
+      // add_time_sample overwrites an equal key ("last opinion wins"), so
+      // copying them all would freeze the layer at its LAST sample. pxr freezes
+      // it at the FIRST instead (its inverse offset is non-finite, so the
+      // layer-time lookup lands on the earliest sample), verified against the
+      // 26.05 oracle. Samples are stored ascending, so stop after the first.
+      const bool collapsed = (time_scale == 0.0);
       for (const auto& [time, val_offset] : *samples) {
         const Value* val = source.time_sample_value(val_offset);
         if (val) {
           target.add_time_sample(ts_prop_id, time_offset + time_scale * time,
                                  *val);
+          if (collapsed) break;
         }
       }
     }
@@ -1016,6 +1171,10 @@ void Compositor::CopyLocalOpinions(
       !target.meta().kindAuthored() && target.meta().kind().empty()) {
     target.meta().kind() = source.meta().kind();
     target.meta().setKindAuthored();
+  }
+  if (!source.meta().permission().empty() &&
+      target.meta().permission().empty()) {
+    target.meta().permission() = source.meta().permission();
   }
   if ((source.meta().displayNameAuthored() ||
        !source.meta().displayName().empty()) &&
@@ -1265,12 +1424,18 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
 
   // Variants (if the reader populated variant content).
   if (options_.resolve_variants) {
-    ApplyVariants(prim, layer, anchor_path, depth);
+    // ApplyVariants only needs to inspect grafts produced while applying this
+    // prim's variants. Scanning older grafts is both irrelevant (their paths
+    // belong to previously resolved prims) and quadratic for scenes with many
+    // referenced variant instances.
+    const size_t pending_begin = pending_graft_.size();
+    ApplyVariants(prim, layer, anchor_path, depth, pending_begin);
   }
 
   // References then payloads — both bring in a target prim's opinions plus
   // its descendant subtree. Arcs deleted by a STRONGER layer are skipped
   // (visible here via pending_arc_deletes_ during sublayer composition).
+  const size_t arc_pending_begin = pending_graft_.size();
   for (const auto& ref_str : prim.meta().references) {
     if (ArcDeletedByStronger(self, ref_str)) continue;
     ResolveRefArc(layer, prim, ParseReference(ref_str), anchor_path, depth);
@@ -1287,7 +1452,7 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   // compose at reference strength, which fill-absent gives us here; sets
   // already applied in the first pass are idempotent (fill-absent no-ops).
   if (options_.resolve_variants) {
-    ApplyVariants(prim, layer, anchor_path, depth);
+    ApplyVariants(prim, layer, anchor_path, depth, arc_pending_begin);
   }
 
   // Specializes (weakest) — same-layer, fill only what is still missing.
@@ -1497,7 +1662,8 @@ void Compositor::GraftSubtree(const Layer& src, const std::string& src_anchor,
                                 root->child_indices().end());
     std::vector<uint32_t> order;
     order.reserve(stack.size());
-    std::vector<uint8_t> seen(src.prim_count(), uint8_t{0});
+    const size_t nprims = src.prim_count();
+    std::vector<uint8_t> seen(nprims, uint8_t{0});
     while (!stack.empty()) {
       uint32_t idx = stack.back();
       stack.pop_back();
@@ -1565,6 +1731,11 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
   if (!variant.doc.empty() && prim.meta().doc().empty()) {
     prim.meta().doc() = variant.doc;
   }
+  if (!variant.kind.empty() && !prim.meta().kindAuthored() &&
+      prim.meta().kind().empty()) {
+    prim.meta().kind() = variant.kind;
+    prim.meta().setKindAuthored();
+  }
   if (!variant.active) {
     prim.meta().active = false;
     prim.meta().active_authored = true;
@@ -1597,12 +1768,30 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
     }
   }
 
-  // Nested variant sets on this option (selection authored in the option's
-  // metadata is stored in the nested set's `selected`).
+  // Nested variant sets on this option. Caller overrides must remain stronger
+  // than the selection authored on the outer option, just as they are for
+  // top-level variant sets in ApplyVariants().
   for (const auto& nvs : variant.variantSets) {
-    if (nvs.selected.empty()) continue;
+    std::string chosen = nvs.selected;
+    auto override_it = options_.variant_overrides.find(
+        prim.path().str() + "{" + nvs.name + "}");
+    if (override_it == options_.variant_overrides.end()) {
+      override_it = options_.variant_overrides.find(nvs.name);
+    }
+    if (override_it != options_.variant_overrides.end()) {
+      chosen = override_it->second;
+    }
+    if (chosen.empty()) {
+      for (const auto& sel : variant.variantSelections) {
+        if (sel.first == nvs.name) {
+          chosen = sel.second;
+          break;
+        }
+      }
+    }
+    if (chosen.empty()) continue;
     for (const auto& nested : nvs.variants) {
-      if (nested.name == nvs.selected) {
+      if (nested.name == chosen) {
         ApplyOneVariant(prim, layer, anchor_path, depth + 1, nested);
         break;
       }
@@ -1611,7 +1800,8 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
 }
 
 bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
-                               const std::string& anchor_path, int depth) {
+                               const std::string& anchor_path, int depth,
+                               size_t pending_graft_begin) {
   if (!options_.resolve_variants) return true;
 
   // Apply EACH variant set's selected variant (a prim may select several sets).
@@ -1681,7 +1871,13 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
     // path and is filtered out at append time.
     const std::string holder_alt =
         dst + "{" + vs.name + "=" + chosen + "}";
-    for (auto& pg : pending_graft_) {
+    // Only arcs expanded for this prim can contribute matching variant-holder
+    // paths. Older pending grafts belong to previously resolved prims; walking
+    // them for every instance made large LOD-heavy scenes O(instances*grafts).
+    pending_graft_begin = std::min(pending_graft_begin, pending_graft_.size());
+    for (size_t pending_i = pending_graft_begin;
+         pending_i < pending_graft_.size(); ++pending_i) {
+      auto& pg = pending_graft_[pending_i];
       const std::string& pp = pg.prim.path().str();
       for (const std::string& hp : holders) {
         const std::string hprefix = hp + "/";

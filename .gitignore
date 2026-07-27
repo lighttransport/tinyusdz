@@ -27,6 +27,10 @@ web/site/dist/
 web/build_ninja/
 web/cmake-build/
 web/cmake-build64/
+web/cmake-build-next/
+web/cmake-build-next64/
+web/cmake-build*-configure.log
+web/cmake-build*-build.log
 web/npm/dist/
 web/npm/.tmp-package-smoke/
 web/npm/.nodejs/
@@ -390,14 +394,27 @@ CMakeUserPresets.json
 !tests/usda/spec/*.usda
 !tests/unit/fixtures/*.usda
 !tests/next/fixtures/*.usda
+!tests/next/fixtures/vr-edge/**/*.usda
 !tests/usda/validation/valid/*.usda
+!models/concave_ngon.usda
 !tests/usdc/aousd-unknown-property-metadata.usdc
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
 # top-level usdcat round-trip compare which globs only tests/usda/*.usda).
 !tests/usda/composition/listop-xlayer-*.usda
+# tusdview material regression fixtures (tusdview-material-binding-inheritance /
+# tusdview-asset-path-anchoring). Listed explicitly rather than un-ignoring all of
+# models/*.usda, which would also catch scratch scenes dropped in that directory.
+!models/tusdview-material-binding-inheritance.usda
+!models/skintest-instanced.usda
+!models/multi-uv-quad.usda
+!models/nested-look-texture/root.usda
+!models/nested-look-texture/look/look.usda
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda
+!models/tusdview-curves-ribbons.usda
+!models/tusdview-nurbs-patch.usda
+!models/tusdview-transparency.usda
 !tests/usdc/dedup-global-001.usdc
 !aousd/validation_*.usda
 # Test-generated runtime artifacts (roundtrip/runtime tests)
@@ -472,6 +489,8 @@ python/tinyusdz/_version.py
 # Private notes / scratch docs (may reference proprietary asset names) — never commit
 priv/
 resume.md
+# Root-level scratch notes only -- doc/resume-tusdview.md is tracked.
+/resume-tusdview.md
 gpu-task.md
 python/tinyusdz.egg-info/
 python/tinyusdz/_core.*.so
@@ -486,3 +505,8 @@ python/tinyusdz/_core.*.so
 # tusdchecker ARKit profile fixtures
 !tools/tusdchecker/testdata/arkit-clean.usda
 !tools/tusdchecker/testdata/arkit-violations.usda
+.xmake/
+
+# Local per-machine work notes (resume hub); intentionally untracked --
+# each machine keeps its own copy and it conflicted in every cross-merge.
+task.md

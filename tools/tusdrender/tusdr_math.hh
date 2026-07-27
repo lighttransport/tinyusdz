@@ -20,9 +20,20 @@
 #if defined(__linux__)
 #include <malloc.h>
 #include <unistd.h>
+#elif defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
 #endif
 
 #include "value-types.hh"
+#include "tydra/openpbr-params.hh"
+#include "tydra/next/resource-budget.hh"
 #include "xform.hh"
 
 namespace tusdr {
@@ -40,14 +51,18 @@ class MemBudget {
     return inst;
   }
 
-  // cap_override_gib <= 0 -> auto: min(32 GiB, 0.5 * MemAvailable).
+  // cap_override_gib <= 0 -> the shared 32 GiB-target host policy.
   void Init(double cap_override_gib) {
     if (cap_override_gib > 0.0) {
       cap_ = size_t(cap_override_gib * double(size_t(1) << 30));
     } else {
       size_t avail = AvailableSystemMemory();
-      size_t half = avail ? avail / 2 : 0;
-      cap_ = half ? std::min(kDefaultCapBytes, half) : kDefaultCapBytes;
+      const uint64_t target_capacity =
+          avail ? std::min<uint64_t>(avail, tinyusdz::tydra::next::GiB(32))
+                : tinyusdz::tydra::next::GiB(32);
+      cap_ = static_cast<size_t>(
+          tinyusdz::tydra::next::ComputeResourceBudget(target_capacity, 0)
+              .host_limit);
     }
     base_.store(0);
     tracked_.store(0);
@@ -104,8 +119,16 @@ class MemBudget {
     return true;
   }
 
-  // Linux RSS via /proc/self/statm (pages); 0 if unavailable.
+  // Process RSS in bytes; 0 if unavailable. Linux: /proc/self/statm (pages).
+  // Windows: working set via GetProcessMemoryInfo.
   static size_t ProcessRSS() {
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+      return size_t(pmc.WorkingSetSize);
+    }
+    return 0;
+#else
     std::ifstream f("/proc/self/statm");
     if (!f) return 0;
     size_t total_pages = 0, rss_pages = 0;
@@ -113,10 +136,20 @@ class MemBudget {
     if (!f) return 0;
     long pg = sysconf(_SC_PAGESIZE);
     return rss_pages * size_t(pg > 0 ? pg : 4096);
+#endif
   }
 
-  // Linux MemAvailable via /proc/meminfo (bytes); 0 if unavailable.
+  // Available system memory in bytes; 0 if unavailable. Linux: /proc/meminfo
+  // MemAvailable. Windows: GlobalMemoryStatusEx ullAvailPhys.
   static size_t AvailableSystemMemory() {
+#if defined(_WIN32)
+    MEMORYSTATUSEX st;
+    st.dwLength = sizeof(st);
+    if (GlobalMemoryStatusEx(&st)) {
+      return size_t(st.ullAvailPhys);
+    }
+    return 0;
+#else
     std::ifstream f("/proc/meminfo");
     if (!f) return 0;
     std::string key;
@@ -130,6 +163,7 @@ class MemBudget {
       std::getline(f, rest);
     }
     return 0;
+#endif
   }
 
   static std::string GiB(size_t bytes) {
@@ -273,12 +307,16 @@ static constexpr uint32_t kPurposeProxyBit = 1u << 2u;
 static constexpr uint32_t kPurposeGuideBit = 1u << 3u;
 static constexpr uint32_t kPurposeDefaultMask =
     kPurposeDefaultBit | kPurposeRenderBit | kPurposeProxyBit;
+static constexpr uint32_t kNoOpenPBRMaterial = UINT32_MAX;
+static constexpr uint32_t kNoBackfaceMaterial = UINT32_MAX;
 
 struct TriInfo {
   Vec3 p0;
   Vec3 p1;
   Vec3 p2;
   Vec3 n;
+  // USD doubleSided (default 1 = pre-cull behavior; see FlatTri::double_sided).
+  uint8_t double_sided{1};
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
   float roughness{0.55f};
@@ -294,9 +332,17 @@ struct TriInfo {
   uint8_t rough_ch{0};          // source channel (0=r,1=g,2=b,3=a)
   uint8_t metal_ch{0};
   uint8_t occ_ch{0};
+  float rough_tex_scale{1.0f};
+  float rough_tex_bias{0.0f};
+  float metal_tex_scale{1.0f};
+  float metal_tex_bias{0.0f};
+  float occ_tex_scale{1.0f};
+  float occ_tex_bias{0.0f};
   float opacity{1.0f};          // displayOpacity / UsdPreviewSurface opacity; <1 = blend
   int32_t opacity_tex_id{-1};   // UsdPreviewSurface inputs:opacity texture, or -1
   uint8_t opacity_ch{0};        // opacity texture source channel (often 'a')
+  float opacity_tex_scale{1.0f};
+  float opacity_tex_bias{0.0f};
   float opacity_threshold{0.0f}; // inputs:opacityThreshold; >0 = alpha cutout (mask)
   float clearcoat{0.0f};        // inputs:clearcoat weight (2nd specular lobe)
   float clearcoat_roughness{0.01f}; // inputs:clearcoatRoughness
@@ -304,10 +350,20 @@ struct TriInfo {
   int32_t clearcoat_rough_tex_id{-1}; // clearcoat-roughness texture, or -1
   uint8_t clearcoat_ch{0};
   uint8_t clearcoat_rough_ch{0};
+  float clearcoat_tex_scale{1.0f};
+  float clearcoat_tex_bias{0.0f};
+  float clearcoat_rough_tex_scale{1.0f};
+  float clearcoat_rough_tex_bias{0.0f};
   Vec3 specular_color{0.0f, 0.0f, 0.0f}; // inputs:specularColor (specular workflow F0)
   int32_t specular_tex_id{-1};       // specularColor texture, or -1
   float ior{1.5f};                   // inputs:ior; dielectric F0 = ((ior-1)/(ior+1))^2
   uint8_t use_specular_workflow{0};  // inputs:useSpecularWorkflow
+  uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
+  // This triangle is part of an emissive mesh that is ALSO registered as an
+  // analytic mesh light (LightCache::mesh). Its emission is therefore already
+  // being delivered by direct lighting, and a BSDF-bounce ray that lands on it
+  // must not add it a second time -- see the `indirect` argument of Shade.
+  uint8_t area_light{0};
 };
 
 // Per-material shading parameters, factored out of the per-triangle record. A
@@ -340,10 +396,31 @@ struct TriMat {
   uint8_t opacity_ch{0};
   uint8_t clearcoat_ch{0};
   uint8_t clearcoat_rough_ch{0};
+  float rough_tex_scale{1.0f};
+  float rough_tex_bias{0.0f};
+  float metal_tex_scale{1.0f};
+  float metal_tex_bias{0.0f};
+  float occ_tex_scale{1.0f};
+  float occ_tex_bias{0.0f};
+  float opacity_tex_scale{1.0f};
+  float opacity_tex_bias{0.0f};
+  float clearcoat_tex_scale{1.0f};
+  float clearcoat_tex_bias{0.0f};
+  float clearcoat_rough_tex_scale{1.0f};
+  float clearcoat_rough_tex_bias{0.0f};
   Vec3 specular_color{0.0f, 0.0f, 0.0f}; // inputs:specularColor (specular workflow)
   int32_t specular_tex_id{-1};
   float ior{1.5f};
   uint8_t use_specular_workflow{0};
+  uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
+  // Optional index into the SAME material table for a ray hitting the authored
+  // back face. Stored once per mesh-job material, not once per triangle.
+  uint32_t backface_id{kNoBackfaceMaterial};
+  // This triangle is part of an emissive mesh that is ALSO registered as an
+  // analytic mesh light (LightCache::mesh). Its emission is therefore already
+  // being delivered by direct lighting, and a BSDF-bounce ray that lands on it
+  // must not add it a second time -- see the `indirect` argument of Shade.
+  uint8_t area_light{0};
 };
 
 // Slim per-triangle record for instanced BLAS storage: just a material id into
@@ -366,9 +443,13 @@ struct FlatTri {
   Vec3 p0;
   Vec3 p1;
   Vec3 p2;
-  Vec3 n;
+  Vec3 n;  // geometric (winding) normal: the front face points along +n
   uint32_t purpose_bit{kPurposeDefaultBit};
   uint32_t mat_id{0};
+  // USD doubleSided (default 1 here = the pre-cull behavior, so any unstamped
+  // flat tri keeps rendering from both sides). Stamped from the authored value
+  // at every mesh creation site; 0 = single-sided -> back-face culled.
+  uint8_t double_sided{1};
 };
 
 // Build a full TriInfo from a material record (positions/normal are filled by the
@@ -399,10 +480,24 @@ inline TriInfo CombineTriMat(const TriMat &m) {
   t.opacity_ch = m.opacity_ch;
   t.clearcoat_ch = m.clearcoat_ch;
   t.clearcoat_rough_ch = m.clearcoat_rough_ch;
+  t.rough_tex_scale = m.rough_tex_scale;
+  t.rough_tex_bias = m.rough_tex_bias;
+  t.metal_tex_scale = m.metal_tex_scale;
+  t.metal_tex_bias = m.metal_tex_bias;
+  t.occ_tex_scale = m.occ_tex_scale;
+  t.occ_tex_bias = m.occ_tex_bias;
+  t.opacity_tex_scale = m.opacity_tex_scale;
+  t.opacity_tex_bias = m.opacity_tex_bias;
+  t.clearcoat_tex_scale = m.clearcoat_tex_scale;
+  t.clearcoat_tex_bias = m.clearcoat_tex_bias;
+  t.clearcoat_rough_tex_scale = m.clearcoat_rough_tex_scale;
+  t.clearcoat_rough_tex_bias = m.clearcoat_rough_tex_bias;
   t.specular_color = m.specular_color;
   t.specular_tex_id = m.specular_tex_id;
   t.ior = m.ior;
   t.use_specular_workflow = m.use_specular_workflow;
+  t.openpbr_id = m.openpbr_id;
+  t.area_light = m.area_light;
   return t;
 }
 
@@ -436,10 +531,24 @@ inline TriMat ExtractTriMat(const TriInfo &t) {
   m.opacity_ch = t.opacity_ch;
   m.clearcoat_ch = t.clearcoat_ch;
   m.clearcoat_rough_ch = t.clearcoat_rough_ch;
+  m.rough_tex_scale = t.rough_tex_scale;
+  m.rough_tex_bias = t.rough_tex_bias;
+  m.metal_tex_scale = t.metal_tex_scale;
+  m.metal_tex_bias = t.metal_tex_bias;
+  m.occ_tex_scale = t.occ_tex_scale;
+  m.occ_tex_bias = t.occ_tex_bias;
+  m.opacity_tex_scale = t.opacity_tex_scale;
+  m.opacity_tex_bias = t.opacity_tex_bias;
+  m.clearcoat_tex_scale = t.clearcoat_tex_scale;
+  m.clearcoat_tex_bias = t.clearcoat_tex_bias;
+  m.clearcoat_rough_tex_scale = t.clearcoat_rough_tex_scale;
+  m.clearcoat_rough_tex_bias = t.clearcoat_rough_tex_bias;
   m.specular_color = t.specular_color;
   m.specular_tex_id = t.specular_tex_id;
   m.ior = t.ior;
   m.use_specular_workflow = t.use_specular_workflow;
+  m.openpbr_id = t.openpbr_id;
+  m.area_light = t.area_light;
   return m;
 }
 
@@ -462,6 +571,7 @@ inline void SplitTriInfos(const std::vector<TriInfo> &tris,
     ft.n = t.n;
     ft.purpose_bit = t.purpose_bit;
     ft.mat_id = uint32_t(i);
+    ft.double_sided = t.double_sided;
     (*out_mats)[i] = ExtractTriMat(t);
   }
 }
@@ -485,11 +595,25 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
          a.occ_ch == b.occ_ch && a.opacity_ch == b.opacity_ch &&
          a.clearcoat_ch == b.clearcoat_ch &&
          a.clearcoat_rough_ch == b.clearcoat_rough_ch &&
+         a.rough_tex_scale == b.rough_tex_scale &&
+         a.rough_tex_bias == b.rough_tex_bias &&
+         a.metal_tex_scale == b.metal_tex_scale &&
+         a.metal_tex_bias == b.metal_tex_bias &&
+         a.occ_tex_scale == b.occ_tex_scale &&
+         a.occ_tex_bias == b.occ_tex_bias &&
+         a.opacity_tex_scale == b.opacity_tex_scale &&
+         a.opacity_tex_bias == b.opacity_tex_bias &&
+         a.clearcoat_tex_scale == b.clearcoat_tex_scale &&
+         a.clearcoat_tex_bias == b.clearcoat_tex_bias &&
+         a.clearcoat_rough_tex_scale == b.clearcoat_rough_tex_scale &&
+         a.clearcoat_rough_tex_bias == b.clearcoat_rough_tex_bias &&
          a.specular_color.x == b.specular_color.x &&
          a.specular_color.y == b.specular_color.y &&
          a.specular_color.z == b.specular_color.z &&
          a.specular_tex_id == b.specular_tex_id && a.ior == b.ior &&
-         a.use_specular_workflow == b.use_specular_workflow;
+         a.use_specular_workflow == b.use_specular_workflow &&
+         a.openpbr_id == b.openpbr_id &&
+         a.backface_id == b.backface_id && a.area_light == b.area_light;
 }
 
 // A scalar texture binding: texture index + source channel (UsdUVTexture
@@ -497,10 +621,9 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
 struct ScalarTex {
   int32_t id{-1};
   uint8_t ch{0};
-  // UsdUVTexture inputs:scale/inputs:bias for the sampled channel (out = raw*scale
-  // + bias). Resolved for all scalar inputs but currently only applied to
-  // displacement (so roughness/metallic/etc. stay byte-identical); displacement
-  // commonly uses bias to center a [0,1] height map (e.g. scale 1, bias -0.5).
+  // UsdUVTexture inputs:scale/inputs:bias for the sampled channel (out =
+  // raw*scale + bias). Displacement applies this at mesh-build time; other
+  // scalar inputs apply it at hit time.
   float scale{1.0f};
   float bias{0.0f};
 };
@@ -558,6 +681,15 @@ inline Vec3 Normalize(const Vec3 &v) {
     return Vec3{0.0f, 0.0f, 0.0f};
   }
   return Mul(v, 1.0f / len);
+}
+
+// Any two unit vectors perpendicular to `w` and to each other. Gives a shaped
+// light a sampling basis when its world matrix carries no usable axes.
+inline void OrthonormalBasis(const Vec3 &w, Vec3 *u, Vec3 *v) {
+  const Vec3 a = (std::fabs(w.x) > 0.9f) ? Vec3{0.0f, 1.0f, 0.0f}
+                                         : Vec3{1.0f, 0.0f, 0.0f};
+  *u = Normalize(Cross(a, w));
+  *v = Cross(w, *u);
 }
 
 inline Vec3 Clamp01(const Vec3 &v) {
@@ -686,5 +818,32 @@ inline void Compose3x4(const float outer[12], const float inner[12],
 // which give the same constant gradient across the face. `N` is the geometric
 // normal; `Nt` is the tangent-space normal already unpacked to [-1,1]. Returns
 // the perturbed world normal, or `N` if the UV parameterization is degenerate.
+
+// Van der Corput radical inverse in `base` — the building block of the Halton
+// low-discrepancy sequence. Deterministic in `i`, so multi-sample anti-aliasing
+// stays reproducible regardless of thread scheduling.
+inline float RadicalInverse(uint32_t i, uint32_t base) {
+  float inv = 1.0f / float(base), f = 1.0f, r = 0.0f;
+  while (i > 0u) {
+    f *= inv;
+    r += f * float(i % base);
+    i /= base;
+  }
+  return r;
+}
+
+// Sub-pixel sample offset in [0,1)^2 for anti-aliasing sample `s` of `spp`. A
+// single sample is pixel-centered (0.5,0.5) so -samples 1 is unchanged; multiple
+// samples follow the Halton(2,3) sequence for an even, grid-free distribution
+// that actually supersamples every requested sample.
+inline void PixelJitter(int s, int spp, float *jx, float *jy) {
+  if (spp <= 1) {
+    *jx = 0.5f;
+    *jy = 0.5f;
+  } else {
+    *jx = RadicalInverse(uint32_t(s) + 1u, 2u);
+    *jy = RadicalInverse(uint32_t(s) + 1u, 3u);
+  }
+}
 
 }  // namespace tusdr

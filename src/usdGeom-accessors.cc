@@ -489,6 +489,10 @@ bool GeomMesh::ValidateTopology(std::string *err, double time) const {
       }
       return false;
     }
+    if (totalVerts > (std::numeric_limits<size_t>::max)() - static_cast<size_t>(fvc[i])) {
+      if (err) { (*err) += "faceVertexCounts sum overflow.\n"; }
+      return false;
+    }
     totalVerts += static_cast<size_t>(fvc[i]);
   }
 
@@ -812,20 +816,20 @@ bool GeomSubset::ValidateSubsets(
     valid = false;
   }
 
-  // Ensure that the indices are in the range [0, faceCount)
-  size_t maxIndex = static_cast<size_t>(*indicesInFamily.rbegin());
-  int minIndex = *indicesInFamily.begin();
+  // Ensure that non-empty indices are in the range [0, faceCount).
+  if (!indicesInFamily.empty()) {
+    size_t maxIndex = static_cast<size_t>(*indicesInFamily.rbegin());
+    int minIndex = *indicesInFamily.begin();
 
-  if (maxIndex >= elementCount) {
-    ss << fmt::format("ValidateSubsets: All indices must be in range [0, elementSize {}), but one or more indices are greater than elementSize. Maximum = {}\n", elementCount, maxIndex);
+    if (maxIndex >= elementCount) {
+      ss << fmt::format("ValidateSubsets: All indices must be in range [0, elementSize {}), but one or more indices are greater than elementSize. Maximum = {}\n", elementCount, maxIndex);
+      valid = false;
+    }
 
-    valid = false;
-  }
-
-  if (minIndex < 0) {
-    ss << fmt::format("ValidateSubsets: Found one or more indices that are less than 0. Minumum = {}\n", minIndex);
-
-    valid = false;
+    if (minIndex < 0) {
+      ss << fmt::format("ValidateSubsets: Found one or more indices that are less than 0. Minumum = {}\n", minIndex);
+      valid = false;
+    }
   }
 
   if (!valid) {

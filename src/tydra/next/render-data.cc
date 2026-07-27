@@ -141,6 +141,7 @@ size_t RenderPoints::memory_usage() const {
   total += points.memory_usage();
   total += widths.memory_usage();
   total += colors.memory_usage();
+  total += opacities.memory_usage();
   return total;
 }
 
@@ -156,10 +157,12 @@ size_t RenderCurves::memory_usage() const {
   total += points.memory_usage();
   total += widths.memory_usage();
   total += colors.memory_usage();
+  total += opacities.memory_usage();
   total += VectorBytes(tessellated_vertex_counts);
   total += tessellated_points.memory_usage();
   total += tessellated_widths.memory_usage();
   total += tessellated_colors.memory_usage();
+  total += tessellated_opacities.memory_usage();
   return total;
 }
 
@@ -185,6 +188,7 @@ size_t RenderPointInstancer::memory_usage() const {
   total += VectorBytes(inactive_ids);
   total += VectorBytes(transforms);
   total += VectorBytes(instance_visible);
+  total += VectorBytes(compact_instances);
   total += name.capacity();
   total += prim_path.capacity();
   total += validation_error.capacity();
@@ -211,6 +215,13 @@ bool RenderPointInstancer::has_valid_prototype_mesh_bindings() const {
 }
 
 size_t RenderPointInstancer::visible_instance_count() const {
+  if (instance_visible.empty() && !compact_instances.empty()) {
+    size_t total = 0;
+    for (const CompactInstance& instance : compact_instances) {
+      if ((instance.flags & 1u) != 0) ++total;
+    }
+    return total;
+  }
   if (instance_visible.empty()) return instance_count();
   size_t total = 0;
   for (uint8_t visible : instance_visible) {

@@ -295,7 +295,7 @@ bool GetPhysicsSphericalJointData(const Stage& stage, const UsdPrim& prim,
 
   if (!GetPhysicsJointData(stage, prim, out, time)) return false;
 
-  // coneAngle0Limit
+  // coneAngle0Limit (schema name). Also sets the legacy alias for backward compat.
   {
     const Value* val = prim.GetPropertyValue("physics:coneAngle0Limit");
     if (val) {
@@ -307,7 +307,7 @@ bool GetPhysicsSphericalJointData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // coneAngle1Limit
+  // coneAngle1Limit (schema name). Also sets the legacy alias.
   {
     const Value* val = prim.GetPropertyValue("physics:coneAngle1Limit");
     if (val) {
@@ -319,8 +319,9 @@ bool GetPhysicsSphericalJointData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // Legacy non-schema aliases kept for older test fixtures and consumers.
-  {
+  // Legacy non-schema aliases: only apply when the schema property is absent,
+  // so the schema name always takes priority when both are authored.
+  if (!prim.GetPropertyValue("physics:coneAngle0Limit")) {
     const Value* val = prim.GetPropertyValue("physics:coneAngleLimit");
     if (val) {
       const float* f = val->as_float();
@@ -331,7 +332,7 @@ bool GetPhysicsSphericalJointData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  {
+  if (!prim.GetPropertyValue("physics:coneAngle1Limit")) {
     const Value* val = prim.GetPropertyValue("physics:coneAngleLimitY");
     if (val) {
       const float* f = val->as_float();

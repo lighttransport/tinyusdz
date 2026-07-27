@@ -198,11 +198,13 @@ class GeomPrimvar {
   ///
   std::vector<int32_t> get_indices(const double t = value::TimeCode::Default()) const;
   
-  const std::vector<int32_t> &get_default_indices() const {
+  const std::vector<int32_t> &get_default_indices() const
+      TINYUSDZ_LIFETIMEBOUND {
     return _indices;
   }
 
-  const value::TimeSamples &get_timesampled_indices() const {
+  const value::TimeSamples &get_timesampled_indices() const
+      TINYUSDZ_LIFETIMEBOUND {
     return _ts_indices;
   }
 
@@ -305,7 +307,7 @@ class GeomPrimvar {
     _ts_indices = indices;
   }
 
-  const Attribute &get_attribute() const {
+  const Attribute &get_attribute() const TINYUSDZ_LIFETIMEBOUND {
     return _attr;
   }
 
@@ -349,12 +351,12 @@ struct GPrim : Xformable, MaterialBinding, Collection {
     name = name_;
   }
 
-  const std::string &get_name() const {
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND {
     return name;
   }
 
-  Specifier &specifier() { return spec; }
-  const Specifier &specifier() const { return spec; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return spec; }
+  const Specifier &specifier() const TINYUSDZ_LIFETIMEBOUND { return spec; }
 
   // Gprim
 
@@ -435,38 +437,40 @@ struct GPrim : Xformable, MaterialBinding, Collection {
   ///
   /// Aux infos
   ///
-  std::vector<value::token> &primChildrenNames() {
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND {
     return _primChildrenNames;
   }
 
-  std::vector<value::token> &propertyNames() {
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND {
     return _propertyNames;
   }
 
-  const std::vector<value::token> &primChildrenNames() const {
+  const std::vector<value::token> &primChildrenNames() const
+      TINYUSDZ_LIFETIMEBOUND {
     return _primChildrenNames;
   }
 
-  const std::vector<value::token> &propertyNames() const {
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND {
     return _propertyNames;
   }
 
-  const std::map<std::string, VariantSet> &variantSetList() const {
+  const std::map<std::string, VariantSet> &variantSetList() const
+      TINYUSDZ_LIFETIMEBOUND {
     return _variantSetMap;
   }
 
-  std::map<std::string, VariantSet> &variantSetList() {
+  std::map<std::string, VariantSet> &variantSetList() TINYUSDZ_LIFETIMEBOUND {
     return _variantSetMap;
   }
 
   // Prim metadataum.
   PrimMeta meta; // TODO: Move to private
 
-  const PrimMeta &metas() const {
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND {
     return meta;
   }
 
-  PrimMeta &metas() {
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND {
     return meta;
   }
 
@@ -532,19 +536,20 @@ struct GeomSubset : public MaterialBinding, Collection {
   std::map<std::string, Property> props;  // custom Properties
   PrimMeta meta;
 
-  std::vector<value::token> &primChildrenNames() {
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND {
     return _primChildrenNames;
   }
 
-  std::vector<value::token> &propertyNames() {
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND {
     return _propertyNames;
   }
 
-  const std::vector<value::token> &primChildrenNames() const {
+  const std::vector<value::token> &primChildrenNames() const
+      TINYUSDZ_LIFETIMEBOUND {
     return _primChildrenNames;
   }
 
-  const std::vector<value::token> &propertyNames() const {
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND {
     return _propertyNames;
   }
 
@@ -842,7 +847,8 @@ struct GeomSphere : public GPrim {
   //
   // Predefined attribs.
   //
-  TypedAttributeWithFallback<Animatable<double>> radius{2.0};
+  // USD spec says default radius is 1.0 (UsdGeomSphere).
+  TypedAttributeWithFallback<Animatable<double>> radius{1.0};
 };
 
 struct GeomPlane : public GPrim {

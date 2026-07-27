@@ -2506,6 +2506,7 @@ async function initLoader() {
 
 async function loadUSDFile(file) {
     window.renderComplete = false;
+    window.renderError = null;
     showLoading(true);
     updateStatus(`Loading ${file.name}...`);
     const stats = beginLoadStats(null, file.name);
@@ -2551,6 +2552,8 @@ async function loadUSDFile(file) {
         console.error('Load error:', error);
         updateStatus(`Error: ${error.message}`);
         showToast(`Failed: ${error.message}`);
+        window.renderError = error.message || String(error);
+        window.renderComplete = true;
     } finally {
         showLoading(false);
     }
@@ -2559,6 +2562,7 @@ async function loadUSDFile(file) {
 async function loadUSDFromURI(uri) {
     const displayName = getDisplayNameFromURI(uri);
     window.renderComplete = false;
+    window.renderError = null;
     showLoading(true);
     updateStatus(`Loading ${displayName}...`);
     const stats = beginLoadStats(null, displayName);
@@ -2606,6 +2610,8 @@ async function loadUSDFromURI(uri) {
         console.error(`Load error (${uri}):`, error);
         updateStatus(`Error: ${error.message}`);
         showToast(`Failed: ${error.message}`);
+        window.renderError = error.message || String(error);
+        window.renderComplete = true;
     } finally {
         showLoading(false);
     }

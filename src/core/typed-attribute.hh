@@ -68,7 +68,7 @@ class TypedAttribute {
   }
 
   /// Get const reference to the internal optional value (no copy)
-  const nonstd::optional<T> &get_value_ref() const {
+  const nonstd::optional<T> &get_value_ref() const TINYUSDZ_LIFETIMEBOUND {
     return _attrib;
   }
 
@@ -96,8 +96,12 @@ class TypedAttribute {
 
   void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
-  const std::vector<Path> &get_connections() const { return _paths; }
-  const std::vector<Path> &connections() const { return _paths; }
+  const std::vector<Path> &get_connections() const TINYUSDZ_LIFETIMEBOUND {
+    return _paths;
+  }
+  const std::vector<Path> &connections() const TINYUSDZ_LIFETIMEBOUND {
+    return _paths;
+  }
 
   const nonstd::optional<Path> get_connection() const {
     if (_paths.size()) {
@@ -168,8 +172,23 @@ class TypedAttribute {
     _value_empty = true;
   }
 
-  const AttrMeta &metas() const { return _metas; }
-  AttrMeta &metas() { return _metas; }
+  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
+
+
+  // The typeName as actually authored in USDA/USDC when it differs from the
+  // schema's spelling -- e.g. `token inputs:varname` (older UsdPrimvarReader
+  // spec) parsed into a string-typed field, or `float3 inputs:diffuseColor`
+  // parsed into a color3f field. OpenUSD preserves the authored typeName on
+  // the Sdf spec; without this the printers/writers re-declare the attribute
+  // with the schema type, silently changing what the author wrote.
+  void set_actual_type_name(const std::string &type_name) {
+    _actual_type_name = type_name;
+  }
+  bool has_actual_type() const { return _actual_type_name.size(); }
+  const std::string &get_actual_type_name() const TINYUSDZ_LIFETIMEBOUND {
+    return _actual_type_name;
+  }
 
 
   // The typeName as actually authored in USDA/USDC when it differs from the
@@ -225,10 +244,12 @@ class TypedTerminalAttribute {
 
   bool has_actual_type() const { return _actual_type_name.size(); }
 
-  const std::string &get_actual_type_name() const { return _actual_type_name; }
+  const std::string &get_actual_type_name() const TINYUSDZ_LIFETIMEBOUND {
+    return _actual_type_name;
+  }
 
-  const AttrMeta &metas() const { return _metas; }
-  AttrMeta &metas() { return _metas; }
+  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
 
  private:
   AttrMeta _metas;
@@ -310,7 +331,7 @@ class TypedAttributeWithFallback {
     return true;
   }
 
-  const T &get_value() const {
+  const T &get_value() const TINYUSDZ_LIFETIMEBOUND {
     if (_attrib) {
       return _attrib.value();
     }
@@ -331,8 +352,12 @@ class TypedAttributeWithFallback {
 
   void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
-  const std::vector<Path> &get_connections() const { return _paths; }
-  const std::vector<Path> &connections() const { return _paths; }
+  const std::vector<Path> &get_connections() const TINYUSDZ_LIFETIMEBOUND {
+    return _paths;
+  }
+  const std::vector<Path> &connections() const TINYUSDZ_LIFETIMEBOUND {
+    return _paths;
+  }
 
   const nonstd::optional<Path> get_connection() const {
     if (_paths.size()) {
@@ -361,8 +386,23 @@ class TypedAttributeWithFallback {
     return false;
   }
 
-  const AttrMeta &metas() const { return _metas; }
-  AttrMeta &metas() { return _metas; }
+  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
+
+
+  // The typeName as actually authored in USDA/USDC when it differs from the
+  // schema's spelling -- e.g. `token inputs:varname` (older UsdPrimvarReader
+  // spec) parsed into a string-typed field, or `float3 inputs:diffuseColor`
+  // parsed into a color3f field. OpenUSD preserves the authored typeName on
+  // the Sdf spec; without this the printers/writers re-declare the attribute
+  // with the schema type, silently changing what the author wrote.
+  void set_actual_type_name(const std::string &type_name) {
+    _actual_type_name = type_name;
+  }
+  bool has_actual_type() const { return _actual_type_name.size(); }
+  const std::string &get_actual_type_name() const TINYUSDZ_LIFETIMEBOUND {
+    return _actual_type_name;
+  }
 
 
   // The typeName as actually authored in USDA/USDC when it differs from the

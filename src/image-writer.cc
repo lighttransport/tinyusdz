@@ -30,12 +30,25 @@
 #include "external/fpnge/fpnge.h"
 #endif
 
+#if defined(TINYUSDZ_HAVE_QOI)
+#define QOI_IMPLEMENTATION
+#define QOI_NO_STDIO  // memory-only; we don't use qoi_read/qoi_write file helpers
+#include "external/qoi/qoi.h"
+#endif
+
+#if defined(TINYUSDZ_HAVE_TURBOJPEG)
+#include "turbojpeg.h"
+#endif
+
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
 
+#include <cstdlib>  // free (qoi_encode / turbojpeg buffers)
+
 #include "image-writer.hh"
 #include "io-util.hh"
+#include "safe-arithmetic.hh"
 #include "str-util.hh"
 
 #include <climits>
@@ -66,6 +79,9 @@ bool DetectFileFormatFromExtension(const std::string &_ext, tinyusdz::image::Wri
     return true;
   } else if (ext == "exr") {
     format = tinyusdz::image::WriteImageFormat::EXR;
+    return true;
+  } else if (ext == "qoi") {
+    format = tinyusdz::image::WriteImageFormat::QOI;
     return true;
   }
 
@@ -270,6 +286,75 @@ bool EncodePNG(const Image &image, PngEncoder encoder,
   return false;
 }
 
+#if defined(TINYUSDZ_HAVE_QOI)
+bool EncodeQOI(const Image &image, std::vector<uint8_t> *out, std::string *err) {
+  // QOI is 8-bit, 3(RGB) or 4(RGBA) channels only.
+  if (image.bpp != 8) {
+    if (err) (*err) = "qoi: only 8-bit per channel is supported.";
+    return false;
+  }
+  if (image.channels != 3 && image.channels != 4) {
+    if (err) (*err) = "qoi: only 3(RGB) or 4(RGBA) channels are supported.";
+    return false;
+  }
+  qoi_desc desc;
+  desc.width = static_cast<unsigned int>(image.width);
+  desc.height = static_cast<unsigned int>(image.height);
+  desc.channels = static_cast<unsigned char>(image.channels);
+  desc.colorspace = QOI_SRGB;
+  int len = 0;
+  void *enc = qoi_encode(image.data.data(), &desc, &len);
+  if (!enc || len <= 0) {
+    if (err) (*err) = "qoi: encode failed.";
+    if (enc) std::free(enc);
+    return false;
+  }
+  const uint8_t *p = static_cast<const uint8_t *>(enc);
+  out->assign(p, p + static_cast<size_t>(len));
+  std::free(enc);
+  return true;
+}
+#endif  // TINYUSDZ_HAVE_QOI
+
+#if defined(TINYUSDZ_HAVE_TURBOJPEG)
+bool EncodeJPEG_turbo(const Image &image, int quality, std::vector<uint8_t> *out,
+                      std::string *err) {
+  // libjpeg-turbo: 8-bit, 1/3/4 channels. RGBA is downsampled to RGB (alpha
+  // dropped) since JPEG has no alpha.
+  int pf;
+  switch (image.channels) {
+    case 1: pf = TJPF_GRAY; break;
+    case 3: pf = TJPF_RGB; break;
+    case 4: pf = TJPF_RGBA; break;
+    default:
+      if (err) (*err) = "turbojpeg: only 1/3/4 channels supported.";
+      return false;
+  }
+  tjhandle h = tjInitCompress();
+  if (!h) {
+    if (err) (*err) = "turbojpeg: tjInitCompress failed.";
+    return false;
+  }
+  unsigned char *jpegBuf = nullptr;
+  unsigned long jpegSize = 0;
+  const int subsamp = (image.channels == 1) ? TJSAMP_GRAY : TJSAMP_420;
+  int rc = tjCompress2(h, image.data.data(), image.width, /*pitch=*/0,
+                       image.height, pf, &jpegBuf, &jpegSize, subsamp, quality,
+                       TJFLAG_FASTDCT);
+  if (rc != 0) {
+    std::string e = tjGetErrorStr2(h);
+    tjDestroy(h);
+    if (jpegBuf) tjFree(jpegBuf);
+    if (err) (*err) = "turbojpeg: " + e;
+    return false;
+  }
+  out->assign(jpegBuf, jpegBuf + jpegSize);
+  tjFree(jpegBuf);
+  tjDestroy(h);
+  return true;
+}
+#endif  // TINYUSDZ_HAVE_TURBOJPEG
+
 }  // namespace
 
 nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
@@ -308,6 +393,14 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       if (q < 1) q = 1;
       if (q > 100) q = 100;
       out.clear();
+#if defined(TINYUSDZ_HAVE_TURBOJPEG)
+      // Fast SIMD JPEG (also handles RGBA by dropping alpha). Fall back to stb on
+      // failure (e.g. an unusual channel count).
+      if (EncodeJPEG_turbo(image, q, &out, &err)) {
+        return out;
+      }
+      out.clear();
+#endif
       int ret = stbi_write_jpg_to_func(AppendToVector, &out, image.width,
                                        image.height, image.channels,
                                        image.data.data(), q);
@@ -342,8 +435,12 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       if (image.width <= 0 || image.height <= 0) {
         return nonstd::make_unexpected("EXR: invalid image dimensions.");
       }
-      const size_t npix =
-          size_t(image.width) * size_t(image.height) * size_t(comps);
+      size_t npix;
+      if (!safe::mul3(size_t(image.width), size_t(image.height), size_t(comps),
+                     &npix)) {
+        return nonstd::make_unexpected(
+            "EXR: image dimensions too large (integer overflow).");
+      }
 
 #if defined(TINYUSDZ_EXR_V3)
       // --- TinyEXR v3 C encode: de-interleave the interleaved samples into
@@ -357,7 +454,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
 #pragma clang diagnostic ignored "-Wold-style-cast"
 #endif
       {
-        const size_t pix = size_t(image.width) * size_t(image.height);
+        size_t pix;
+        if (!safe::mul(size_t(image.width), size_t(image.height), &pix)) {
+          return nonstd::make_unexpected(
+              "EXR: image dimensions too large (integer overflow).");
+        }
         const char *kNames1[1] = {"Y"};
         const char *kNames3[3] = {"R", "G", "B"};
         const char *kNames4[4] = {"R", "G", "B", "A"};
@@ -474,7 +575,8 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
         }
         const uint16_t *hsrc =
             reinterpret_cast<const uint16_t *>(image.data.data());
-        const size_t pix = size_t(image.width) * size_t(image.height);
+        // npix = pix * comps, comps >= 1 (validated above).
+        const size_t pix = npix / size_t(comps);
         std::vector<unsigned short> ch[4];
         for (int c = 0; c < comps; c++) ch[c].resize(pix);
         for (size_t i = 0; i < pix; i++)
@@ -582,6 +684,17 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
 #else
       return nonstd::make_unexpected(
           "EXR output requires building with TINYUSDZ_WITH_EXR.");
+#endif
+    }
+    case tinyusdz::image::WriteImageFormat::QOI: {
+#if defined(TINYUSDZ_HAVE_QOI)
+      if (!EncodeQOI(image, &out, &err)) {
+        return nonstd::make_unexpected(err);
+      }
+      return out;
+#else
+      return nonstd::make_unexpected(
+          "QOI output requires building with TINYUSDZ_WITH_QOI.");
 #endif
     }
     case tinyusdz::image::WriteImageFormat::TIFF:

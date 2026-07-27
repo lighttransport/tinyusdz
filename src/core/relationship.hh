@@ -85,8 +85,8 @@ class Relationship {
 
   bool is_varying_authored() const { return _varying_authored; }
 
-  const AttrMeta &metas() const { return _metas; }
-  AttrMeta &metas() { return _metas; }
+  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
 
   size_t estimate_memory_usage() const;
 
@@ -184,16 +184,20 @@ class RelationshipProperty {
   }
 
   // TODO: Deprecate this direct access API to Relationship value?
-  const Relationship &relationship() const { return _relationship; }
+  const Relationship &relationship() const TINYUSDZ_LIFETIMEBOUND {
+    return _relationship;
+  }
 
-  Relationship &relationship() { return _relationship; }
+  Relationship &relationship() TINYUSDZ_LIFETIMEBOUND { return _relationship; }
 
   bool has_value() const { return _relationship.has_value(); }
 
   bool is_blocked() const { return _relationship.is_blocked(); }
 
-  const AttrMeta &metas() const { return _relationship.metas(); }
-  AttrMeta &metas() { return _relationship.metas(); }
+  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND {
+    return _relationship.metas();
+  }
+  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _relationship.metas(); }
 
  private:
   bool _authored{false};
@@ -245,7 +249,9 @@ class TypedConnection {
     _authored = true;
   }
 
-  const std::vector<Path> &get_connections() const { return _targetPaths; }
+  const std::vector<Path> &get_connections() const TINYUSDZ_LIFETIMEBOUND {
+    return _targetPaths;
+  }
 
   bool authored() const { return _authored; }
 
@@ -253,8 +259,8 @@ class TypedConnection {
 
   bool is_blocked() const { return _blocked; }
 
-  const AttrMeta &metas() const { return _metas; }
-  AttrMeta &metas() { return _metas; }
+  const AttrMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return _metas; }
+  AttrMeta &metas() TINYUSDZ_LIFETIMEBOUND { return _metas; }
 
  private:
   std::vector<Path> _targetPaths;

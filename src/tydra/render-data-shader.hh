@@ -304,6 +304,9 @@ class OpenPBRSurfaceShader {
   // Coat normal and tangent for separate coat layer normal mapping
   ShaderParam<vec3> coat_normal{{0.0f, 0.0f, 1.0f}};
   ShaderParam<vec3> coat_tangent{{1.0f, 0.0f, 0.0f}};
+  // MaterialX standard_surface height input. OpenPBR has no corresponding
+  // lobe, but render consumers share this geometry path with PreviewSurface.
+  ShaderParam<float> displacement{0.0f};
   float coat_tangent_rotation{0.0f};
   float coat_normal_map_scale{1.0f};
 
@@ -397,7 +400,8 @@ struct RenderMaterial {
     // Prefer OpenPBR if available (MaterialX path)
     if (openPBRShader.has_value()) {
       const auto &s = *openPBRShader;
-      if (s.transmission_weight.value > 0.0f || s.opacity.value < 1.0f) {
+      if (s.transmission_weight.value > 0.0f || s.opacity.value < 1.0f ||
+          s.opacity.is_texture()) {
         materialTag = MaterialTag::Translucent;
       } else {
         materialTag = MaterialTag::Opaque;
@@ -409,7 +413,7 @@ struct RenderMaterial {
       const auto &s = *surfaceShader;
       if (s.opacityThreshold.value > 0.0f) {
         materialTag = MaterialTag::Masked;
-      } else if (s.opacity.value < 1.0f) {
+      } else if (s.opacity.value < 1.0f || s.opacity.is_texture()) {
         materialTag = MaterialTag::Translucent;
       } else {
         materialTag = MaterialTag::Opaque;

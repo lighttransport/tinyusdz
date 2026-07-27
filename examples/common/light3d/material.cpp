@@ -192,7 +192,7 @@ layout(location = 5) in uvec2 aInfluence;
 layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV; default 0)
 layout(location = 7) in float aMorphInfl; // blendshape influence magnitude (default 0)
 layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); default 0
-layout(location = 9) in vec3 aColor;  // per-vertex displayColor (default white)
+layout(location = 9) in vec4 aColor;  // displayColor.rgb + displayOpacity (default 1)
 
 uniform mat4 uModelViewProj;
 uniform mat4 uModel;
@@ -229,7 +229,7 @@ uniform usamplerBuffer uMorphChanTex;
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
-out vec3 vColor;
+out vec4 vColor;
 flat out int vDomJoint;    // dominant skin joint (SkinWeights AOV); -1 = unskinned
 out float vDomWeight;      // its weight
 out vec2 vUV1;             // 2nd texcoord set (multi-UV AOV)
@@ -334,7 +334,7 @@ const char* getMaterialFragmentShaderGL330() {
 in vec3 vWorldPos;
 in vec3 vNormal;
 in vec2 vUV;
-in vec3 vColor;
+in vec4 vColor;
 flat in int vDomJoint;   // dominant skin joint (SkinWeights AOV)
 in float vDomWeight;
 in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
@@ -346,22 +346,179 @@ uniform float uMetallic;
 uniform float uRoughness;
 uniform vec3 uEmissive;
 uniform float uAlpha;
+uniform int uAlphaMode;       // 0=opaque, 1=mask, 2=blend
+uniform float uAlphaCutoff;
+// Specular F0 (T12): specular workflow -> specularColor directly; else the
+// dielectric reflectance from ior. Unified with the Vulkan mesh.frag.
+uniform int uUseSpecularWorkflow;
+uniform int uOpenPbrSpecularModel;
+uniform vec3 uSpecularColor;
+uniform sampler2D uSpecularColorTex;
+uniform bool uHasSpecularColorTex;
+uniform vec3 uSpecularColorUv0;
+uniform vec3 uSpecularColorUv1;
+uniform int uSpecularColorUvSet;
+uniform vec4 uSpecularColorScale;
+uniform vec4 uSpecularColorBias;
+uniform sampler2D uCoatNormalTex;
+uniform bool uHasCoatNormalTex;
+uniform vec3 uCoatNormalUv0;
+uniform vec3 uCoatNormalUv1;
+uniform int uCoatNormalUvSet;
+uniform vec4 uCoatNormalScale;
+uniform vec4 uCoatNormalBias;
+// Advanced slots share otherwise-unused core UDIM array units per draw. The
+// route indices select base/metallic/normal/opacity/emissive/roughness/
+// occlusion respectively; -1 degrades to the neutral material constant when a
+// material exhausts all seven routes.
+uniform bvec4 uAdvancedTexIsUdim; // specular, coat weight/color/roughness
+uniform ivec4 uAdvancedUdimRoutes;
+uniform ivec4 uAdvancedUdimSlots;
+uniform bool uCoatNormalTexIsUdim;
+uniform int uCoatNormalUdimRoute;
+uniform int uCoatNormalUdimSlot;
+uniform float uIor;
+uniform float uOcclusion;
+uniform float uCoatWeight;
+uniform vec3 uCoatColor;
+uniform float uCoatRoughness;
+uniform float uCoatIor;
 // When set, shade with the geometric (screen-derivative) normal -- used for
 // meshes without authored normals so hard surfaces aren't smeared by smooth
 // (averaged) normals.
 uniform bool uGeometricNormal;
 
 uniform vec3 uCameraPos;
+uniform vec3 uLightDir;
+uniform vec3 uLightColor;
+const int kMaxRasterLights = 16;
+uniform int uLightCount;
+uniform uint uLightMask;
+uniform vec4 uLightPositionType[kMaxRasterLights];
+uniform vec4 uLightDirectionAngle[kMaxRasterLights];
+uniform vec4 uLightColorDiffuse[kMaxRasterLights];
+uniform vec4 uLightSpecularShape[kMaxRasterLights];
+
+// DomeLight split-sum IBL (precomputed at load; replaces the constant ambient
+// floor when present).
+uniform bool uHasIbl;
+uniform vec3 uIblColor;             // dome effectiveColor (intensity baked in)
+uniform float uExposure;            // authored Camera exposure, in stops
+uniform mat3 uEnvRotation;          // world -> environment direction
+uniform samplerCube uIrradianceMap; // cosine-convolved env, stored E/pi
+uniform samplerCube uPrefilteredMap;// GGX chain, lod = roughness*(lods-1)
+uniform int uPrefilteredLods;
+uniform bool uHasShadowMap;
+uniform int uShadowLightSlot;
+uniform mat4 uShadowViewProj;
+uniform sampler2D uShadowMap;
+uniform bool uHasPointShadowMap;
+uniform vec3 uPointShadowLightPos;
+uniform mat4 uPointShadowViewProj[6];
+uniform samplerCube uPointShadowMap;
 
 // Texture samplers
 uniform sampler2D uBaseColorTex;
+uniform sampler2DArray uBaseColorUdimTex;
 uniform bool uHasBaseColorTex;
-uniform sampler2D uMetalRoughTex;
-uniform bool uHasMetalRoughTex;
+uniform bool uBaseColorTexIsUdim;
+uniform sampler2D uMetallicTex;
+uniform sampler2DArray uMetallicUdimTex;
+uniform bool uHasMetallicTex;
+uniform bool uMetallicTexIsUdim;
+uniform sampler2D uRoughnessTex;
+uniform sampler2DArray uRoughnessUdimTex;
+uniform bool uHasRoughnessTex;
+uniform bool uRoughnessTexIsUdim;
 uniform sampler2D uNormalTex;
+uniform sampler2DArray uNormalUdimTex;
 uniform bool uHasNormalTex;
+uniform bool uNormalTexIsUdim;
 uniform sampler2D uEmissiveTex;
+uniform sampler2DArray uEmissiveUdimTex;
 uniform bool uHasEmissiveTex;
+uniform bool uEmissiveTexIsUdim;
+uniform sampler2D uOpacityTex;
+uniform sampler2DArray uOpacityUdimTex;
+uniform bool uHasOpacityTex;
+uniform bool uOpacityTexIsUdim;
+uniform sampler2D uOcclusionTex;
+uniform sampler2DArray uOcclusionUdimTex;
+uniform bool uHasOcclusionTex;
+uniform bool uOcclusionTexIsUdim;
+// One scene-wide 100 x texture-count atlas. Each row maps UDIM 1001..1100 to
+// an array layer; -1 means the tile is absent. Consolidating four independent
+// LUT samplers avoids the GL 3.3 fragment-sampler ceiling.
+uniform isampler2D uUdimLutAtlas;
+uniform ivec4 uUdimSlots;  // base, metallic, normal, emissive texture rows
+uniform int uOpacityUdimSlot;
+uniform int uRoughnessUdimSlot;
+uniform int uOcclusionUdimSlot;
+// Per-slot UV set: 0 = vUV (texcoords_0), 1 = vUV1 (texcoords_1).
+// x = base color, y = metal/rough, z = normal, w = emissive.
+uniform ivec4 uUvSet;
+uniform int uRoughnessUvSet;
+uniform vec3 uBaseColorUv0;   // m00,m01,tx
+uniform vec3 uBaseColorUv1;   // m10,m11,ty
+uniform vec3 uMetallicUv0;
+uniform vec3 uMetallicUv1;
+uniform vec3 uRoughnessUv0;
+uniform vec3 uRoughnessUv1;
+uniform vec3 uNormalUv0;
+uniform vec3 uNormalUv1;
+uniform vec3 uEmissiveUv0;
+uniform vec3 uEmissiveUv1;
+uniform vec3 uOpacityUv0;
+uniform vec3 uOpacityUv1;
+uniform vec3 uOcclusionUv0;
+uniform vec3 uOcclusionUv1;
+uniform vec4 uBaseColorTexScale;
+uniform vec4 uBaseColorTexBias;
+uniform vec4 uNormalTexScale;
+uniform vec4 uNormalTexBias;
+uniform vec4 uEmissiveTexScale;
+uniform vec4 uEmissiveTexBias;
+uniform int uMetallicChannel;
+uniform int uRoughnessChannel;
+uniform float uMetallicTexScale;
+uniform float uMetallicTexBias;
+uniform float uRoughnessTexScale;
+uniform float uRoughnessTexBias;
+uniform int uOpacityUvSet;
+uniform int uOpacityChannel;
+uniform float uOpacityTexScale;
+uniform float uOpacityTexBias;
+uniform int uOcclusionUvSet;
+uniform int uOcclusionChannel;
+uniform float uOcclusionTexScale;
+uniform float uOcclusionTexBias;
+
+// Coat lobe maps. Ordinary images use their dedicated 2D units. UDIM images
+// route through a free core sampler2DArray unit selected per draw, avoiding an
+// increase beyond the GL 3.3 32-fragment-unit floor.
+uniform sampler2D uCoatWeightTex;
+uniform sampler2D uCoatColorTex;
+uniform sampler2D uCoatRoughnessTex;
+uniform bool uHasCoatWeightTex;
+uniform bool uHasCoatColorTex;
+uniform bool uHasCoatRoughnessTex;
+uniform vec3 uCoatWeightUv0;
+uniform vec3 uCoatWeightUv1;
+uniform vec3 uCoatColorUv0;
+uniform vec3 uCoatColorUv1;
+uniform vec3 uCoatRoughnessUv0;
+uniform vec3 uCoatRoughnessUv1;
+uniform int uCoatWeightUvSet;
+uniform int uCoatColorUvSet;
+uniform int uCoatRoughnessUvSet;
+uniform int uCoatWeightChannel;
+uniform int uCoatRoughnessChannel;
+uniform vec4 uCoatWeightScale;
+uniform vec4 uCoatWeightBias;
+uniform vec4 uCoatColorScale;
+uniform vec4 uCoatColorBias;
+uniform vec4 uCoatRoughnessScale;
+uniform vec4 uCoatRoughnessBias;
 
 out vec4 fragColor;
 
@@ -402,36 +559,258 @@ vec3 kindColor(int k) {
     return vec3(0.35);                         // no kind: dark gray
 }
 
+vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
+    ivec2 tile = ivec2(floor(uv));
+    int idx = tile.x + tile.y * 10;
+    if (idx < 0 || idx >= 100) {
+        return missing;
+    }
+    int layer = texelFetch(uUdimLutAtlas, ivec2(idx, slot), 0).r;
+    if (layer < 0) {
+        return missing;
+    }
+    return texture(tex, vec3(fract(uv), float(layer)));
+}
+
+vec4 sampleRoutedUdim(int route, int slot, vec2 uv, vec4 missing) {
+    if (route == 0) return sampleUdim(uBaseColorUdimTex, slot, uv, missing);
+    if (route == 1) return sampleUdim(uMetallicUdimTex, slot, uv, missing);
+    if (route == 2) return sampleUdim(uNormalUdimTex, slot, uv, missing);
+    if (route == 3) return sampleUdim(uOpacityUdimTex, slot, uv, missing);
+    if (route == 4) return sampleUdim(uEmissiveUdimTex, slot, uv, missing);
+    if (route == 5) return sampleUdim(uRoughnessUdimTex, slot, uv, missing);
+    if (route == 6) return sampleUdim(uOcclusionUdimTex, slot, uv, missing);
+    return missing;
+}
+
+vec2 xformUv(vec2 uv, vec3 row0, vec3 row1) {
+    return vec2(dot(vec3(uv, 1.0), row0), dot(vec3(uv, 1.0), row1));
+}
+
+// Linear -> sRGB OETF for the final shaded output. sRGB base-color textures are
+// uploaded as GL_SRGB8_ALPHA8 (linearized on sample) and the scene is lit in
+// linear space, so the encode happens here (the FBO is plain RGBA8). Lit path
+// only -- AOVs stay raw. Matches the Vulkan mesh.frag.
+vec3 linearToSrgb(vec3 c) {
+    c = clamp(c, 0.0, 1.0);
+    vec3 lo = c * 12.92;
+    vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+    return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));
+}
+
+// Specular F0 (T12), matching the Vulkan mesh.frag: specular workflow ->
+// specularColor; else the dielectric reflectance from ior lerped to base by
+// metalness. ior 1.5 (the default) gives exactly 0.04.
+vec3 computeF0(vec3 base, float metallic) {
+    if (uUseSpecularWorkflow != 0) return uSpecularColor;
+    float ior = max(1.0, uIor);
+    float d = (ior - 1.0) / (ior + 1.0);
+    vec3 dielectric = vec3(d * d);
+    if (uOpenPbrSpecularModel != 0) dielectric *= uSpecularColor;
+    return mix(dielectric, base, clamp(metallic, 0.0, 1.0));
+}
+
+const float kPi = 3.14159265358979323846;
+
+float distributionGGX(float NoH, float roughness) {
+    float a = max(roughness * roughness, 0.002);
+    float a2 = a * a;
+    float d = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / max(kPi * d * d, 1e-6);
+}
+
+float geometrySchlickGGX(float NoX, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) * 0.125;
+    return NoX / max(NoX * (1.0 - k) + k, 1e-6);
+}
+
+vec3 fresnelSchlick(float VoH, vec3 f0) {
+    float f = pow(1.0 - clamp(VoH, 0.0, 1.0), 5.0);
+    return f0 + (vec3(1.0) - f0) * f;
+}
+
+float channelOf(vec4 c, int ch) {
+    if (ch == 1) return c.g;
+    if (ch == 2) return c.b;
+    if (ch == 3) return c.a;
+    return c.r;
+}
+
+float sampleOcclusion() {
+    if (!uHasOcclusionTex) return 1.0;
+    vec2 uv = (uOcclusionUvSet == 1) ? vUV1 : vUV;
+    vec2 tuv = xformUv(uv, uOcclusionUv0, uOcclusionUv1);
+    vec4 c = uOcclusionTexIsUdim
+        ? sampleUdim(uOcclusionUdimTex, uOcclusionUdimSlot, tuv, vec4(1.0))
+        : texture(uOcclusionTex, tuv);
+    return clamp(channelOf(c, uOcclusionChannel) * uOcclusionTexScale +
+                 uOcclusionTexBias, 0.0, 1.0);
+}
+
+// Scalar/color fetches for the coat and specular-workflow slots. The material
+// constant is neutralized to 1 by the loaders whenever a texture is bound, so
+// the caller multiplies the two unconditionally.
+float sampleCoatScalar(sampler2D tex, bool has, bool isUdim, int udimRoute,
+                       int udimSlot, vec3 uv0, vec3 uv1, int uvSet, int ch,
+                       vec4 scale, vec4 bias) {
+    if (!has) return 1.0;
+    vec2 uv = (uvSet == 1) ? vUV1 : vUV;
+    uv = xformUv(uv, uv0, uv1);
+    vec4 texel = isUdim ? sampleRoutedUdim(udimRoute, udimSlot, uv, vec4(1.0))
+                        : texture(tex, uv);
+    vec4 c = texel * scale + bias;
+    return clamp(channelOf(c, ch), 0.0, 1.0);
+}
+
+vec3 sampleCoatColor(sampler2D tex, bool has, bool isUdim, int udimRoute,
+                     int udimSlot, vec3 uv0, vec3 uv1, int uvSet, vec4 scale,
+                     vec4 bias) {
+    if (!has) return vec3(1.0);
+    vec2 uv = (uvSet == 1) ? vUV1 : vUV;
+    uv = xformUv(uv, uv0, uv1);
+    vec4 texel = isUdim ? sampleRoutedUdim(udimRoute, udimSlot, uv, vec4(1.0))
+                        : texture(tex, uv);
+    return (texel * scale + bias).rgb;
+}
+
+float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
+    if (uHasPointShadowMap) {
+    vec3 d = worldPos - uPointShadowLightPos;
+    vec3 a = abs(d);
+    int face;
+    if (a.x >= a.y && a.x >= a.z) face = d.x >= 0.0 ? 0 : 1;
+    else if (a.y >= a.z) face = d.y >= 0.0 ? 2 : 3;
+    else face = d.z >= 0.0 ? 4 : 5;
+    vec4 clip = uPointShadowViewProj[face] * vec4(worldPos, 1.0);
+    vec3 p = clip.xyz / clip.w;
+    p = p * 0.5 + 0.5;
+    if (p.z <= 0.0 || p.z >= 1.0) return 1.0;
+    float bias = max(0.00035, 0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
+    return (p.z - bias <= texture(uPointShadowMap, normalize(d)).r) ? 1.0 : 0.0;
+    }
+    if (!uHasShadowMap) return 1.0;
+    vec4 clip = uShadowViewProj * vec4(worldPos, 1.0);
+    vec3 p = clip.xyz / clip.w;
+    p = p * 0.5 + 0.5;
+    if (p.z <= 0.0 || p.z >= 1.0 || any(lessThan(p.xy, vec2(0.0))) ||
+        any(greaterThan(p.xy, vec2(1.0)))) return 1.0;
+    float bias = max(0.00035, 0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
+    vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+    float visible = 0.0;
+    for (int y = -1; y <= 1; ++y)
+      for (int x = -1; x <= 1; ++x)
+        visible += p.z - bias <= texture(uShadowMap, p.xy + vec2(x, y) * texel).r
+                       ? 1.0 : 0.0;
+    return visible / 9.0;
+}
+
 void main() {
-    vec3 baseColor = uBaseColor * vColor;  // vColor defaults to white
+    vec3 baseColor = uBaseColor * vColor.rgb;  // vColor defaults to white
     float metallic = uMetallic;
     float roughness = uRoughness;
     vec3 emissive = uEmissive;
+    float opacity = clamp(uAlpha * vColor.a, 0.0, 1.0);
 
     if (uHasBaseColorTex) {
-        baseColor *= texture(uBaseColorTex, vUV).rgb;
+        vec2 uv = xformUv(uUvSet.x == 1 ? vUV1 : vUV, uBaseColorUv0, uBaseColorUv1);
+        vec4 texel = uBaseColorTexIsUdim
+                         ? sampleUdim(uBaseColorUdimTex, uUdimSlots.x, uv,
+                                      vec4(1.0, 0.0, 1.0, 1.0))
+                         : texture(uBaseColorTex, uv);
+        vec4 sample = texel * uBaseColorTexScale + uBaseColorTexBias;
+        baseColor *= sample.rgb;
+        opacity *= clamp(sample.a, 0.0, 1.0);
     }
-    if (uHasMetalRoughTex) {
-        vec4 mr = texture(uMetalRoughTex, vUV);
-        roughness *= mr.g;
-        metallic *= mr.b;
+    if (uHasMetallicTex) {
+        vec2 uv = xformUv(uUvSet.y == 1 ? vUV1 : vUV, uMetallicUv0, uMetallicUv1);
+        vec4 texel = uMetallicTexIsUdim
+                      ? sampleUdim(uMetallicUdimTex, uUdimSlots.y, uv, vec4(1.0))
+                      : texture(uMetallicTex, uv);
+        metallic *= channelOf(texel, uMetallicChannel) * uMetallicTexScale + uMetallicTexBias;
+    }
+    if (uHasRoughnessTex) {
+        vec2 uv = xformUv(uRoughnessUvSet == 1 ? vUV1 : vUV, uRoughnessUv0, uRoughnessUv1);
+        vec4 texel = uRoughnessTexIsUdim
+                      ? sampleUdim(uRoughnessUdimTex, uRoughnessUdimSlot, uv, vec4(1.0))
+                      : texture(uRoughnessTex, uv);
+        roughness *= channelOf(texel, uRoughnessChannel) * uRoughnessTexScale + uRoughnessTexBias;
     }
     if (uHasEmissiveTex) {
-        emissive *= texture(uEmissiveTex, vUV).rgb;
+        vec2 uv = xformUv(uUvSet.w == 1 ? vUV1 : vUV, uEmissiveUv0, uEmissiveUv1);
+        vec4 texel = uEmissiveTexIsUdim
+                         ? sampleUdim(uEmissiveUdimTex, uUdimSlots.w, uv,
+                                      vec4(1.0, 0.0, 1.0, 1.0))
+                         : texture(uEmissiveTex, uv);
+        emissive *= (texel * uEmissiveTexScale + uEmissiveTexBias).rgb;
     }
 
     vec3 N = uGeometricNormal
                  ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
                  : normalize(vNormal);
     if (uHasNormalTex) {
-        vec3 tangentNormal = texture(uNormalTex, vUV).xyz * 2.0 - 1.0;
-        N = normalize(N + tangentNormal * 0.1);
+        vec2 uv = xformUv(uUvSet.z == 1 ? vUV1 : vUV, uNormalUv0, uNormalUv1);
+        vec3 tangentNormal = ((uNormalTexIsUdim
+                                  ? sampleUdim(uNormalUdimTex, uUdimSlots.z, uv,
+                                               vec4(0.5, 0.5, 1.0, 1.0))
+                                  : texture(uNormalTex, uv)) * uNormalTexScale +
+                              uNormalTexBias).xyz;
+        // Full derivative TBN (unified with the Vulkan backend). The old
+        // `normalize(N + tangentNormal*0.1)` was a weak non-TBN perturbation
+        // that made relief nearly flat on GL and pronounced on VK; build the
+        // tangent frame from the screen-space position/UV gradients so the
+        // tangent-space sample perturbs N at full strength in the right basis.
+        vec3 dp1 = dFdx(vWorldPos);
+        vec3 dp2 = dFdy(vWorldPos);
+        vec2 du1 = dFdx(uv);
+        vec2 du2 = dFdy(uv);
+        float r = du1.x * du2.y - du2.x * du1.y;
+        vec3 t = dp1 * du2.y - dp2 * du1.y;
+        t = (abs(r) > 1e-8) ? t / r : dp1;
+        t = normalize(t - N * dot(N, t));
+        vec3 b = normalize(cross(N, t)) * (r < 0.0 ? -1.0 : 1.0);
+        N = normalize(mat3(t, b, N) * tangentNormal);
+    }
+    vec3 coatN = N;
+    if (uHasCoatNormalTex) {
+        vec2 uv = xformUv(uCoatNormalUvSet == 1 ? vUV1 : vUV,
+                          uCoatNormalUv0, uCoatNormalUv1);
+        vec4 coatTexel = uCoatNormalTexIsUdim
+                             ? sampleRoutedUdim(uCoatNormalUdimRoute,
+                                                uCoatNormalUdimSlot, uv,
+                                                vec4(0.5, 0.5, 1.0, 1.0))
+                             : texture(uCoatNormalTex, uv);
+        vec3 tn = (coatTexel * uCoatNormalScale +
+                   uCoatNormalBias).xyz;
+        vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
+        vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+        float rr = du1.x * du2.y - du2.x * du1.y;
+        vec3 t = dp1 * du2.y - dp2 * du1.y;
+        t = normalize((abs(rr) > 1e-8 ? t / rr : dp1) - N * dot(N, t));
+        vec3 b = normalize(cross(N, t)) * (rr < 0.0 ? -1.0 : 1.0);
+        coatN = normalize(mat3(t, b, N) * tn);
+    }
+    if (uHasOpacityTex) {
+        vec2 uv = xformUv(uOpacityUvSet == 1 ? vUV1 : vUV,
+                          uOpacityUv0, uOpacityUv1);
+        // Missing opacity UDIM tiles are opaque, not magenta/channel-dependent.
+        vec4 ot = uOpacityTexIsUdim
+                      ? sampleUdim(uOpacityUdimTex, uOpacityUdimSlot, uv, vec4(1.0))
+                      : texture(uOpacityTex, uv);
+        opacity *= clamp(channelOf(ot, uOpacityChannel) * uOpacityTexScale +
+                         uOpacityTexBias, 0.0, 1.0);
+    }
+    opacity = clamp(opacity, 0.0, 1.0);
+    if (uAlphaMode == 1) {
+        opacity = (opacity >= uAlphaCutoff) ? 1.0 : 0.0;
     }
 
     // Debug AOVs: override the shaded output with the requested channel.
-    if (uRenderMode != 0) {
+    if (uRenderMode != 0 && uRenderMode != 36 && uRenderMode != 37 &&
+        uRenderMode != 38 && uRenderMode != 39 && uRenderMode != 40) {
         vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
         if (uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1.0); return; }       // shading normal
+        if (uRenderMode == 35) { fragColor = vec4(coatN * 0.5 + 0.5, 1.0); return; } // coat normal
         if (uRenderMode == 3) { fragColor = vec4(idColor(uMatId), 1.0); return; }     // material id
         if (uRenderMode == 4) { fragColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }    // geometric normal
         if (uRenderMode == 6) {                                                       // depth
@@ -448,7 +827,7 @@ void main() {
         if (uRenderMode == 9)  { fragColor = vec4(vec3(roughness), 1.0); return; }     // roughness
         if (uRenderMode == 10) { fragColor = vec4(vec3(metallic), 1.0); return; }      // metallic
         if (uRenderMode == 11) { fragColor = vec4(emissive, 1.0); return; }            // emissive
-        if (uRenderMode == 12) { fragColor = vec4(vec3(uAlpha), 1.0); return; }        // opacity
+        if (uRenderMode == 12) { fragColor = vec4(vec3(opacity), 1.0); return; }       // opacity
         if (uRenderMode == 13) {                                                       // world position
             fragColor = vec4(clamp((vWorldPos - uSceneMin) / uSceneExtent, 0.0, 1.0), 1.0);
             return;
@@ -519,24 +898,172 @@ void main() {
 
     vec3 V = normalize(uCameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Real-time Cook-Torrance preview. Face two-sided shading normals toward the
+    // camera, then evaluate an energy-conserving GGX direct lobe. The constant
+    // ambient fallback below keeps scenes without authored lighting readable.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    vec3 coatNf = (dot(coatN, V) < 0.0) ? -coatN : coatN;
+    float NoV = max(dot(Nf, V), 1e-4);
+    float rgh = clamp(roughness, 0.02, 1.0);
+    float met = clamp(metallic, 0.0, 1.0);
+    vec3 F0 = computeF0(baseColor, met);
+    if (uUseSpecularWorkflow != 0 || uOpenPbrSpecularModel != 0) {
+        F0 *= sampleCoatColor(uSpecularColorTex, uHasSpecularColorTex,
+                              uAdvancedTexIsUdim.x, uAdvancedUdimRoutes.x,
+                              uAdvancedUdimSlots.x,
+                              uSpecularColorUv0, uSpecularColorUv1,
+                              uSpecularColorUvSet, uSpecularColorScale,
+                              uSpecularColorBias);
+    }
+    if (uRenderMode == 39) { fragColor = vec4(F0, 1.0); return; }
+    if (uRenderMode == 40) {
+        float d = (max(uIor, 1.0) - 1.0) / (max(uIor, 1.0) + 1.0);
+        fragColor = vec4(vec3(d * d), 1.0); return;
+    }
+    float cw = clamp(uCoatWeight *
+                     sampleCoatScalar(uCoatWeightTex, uHasCoatWeightTex,
+                                      uAdvancedTexIsUdim.y,
+                                      uAdvancedUdimRoutes.y,
+                                      uAdvancedUdimSlots.y,
+                                      uCoatWeightUv0, uCoatWeightUv1,
+                                      uCoatWeightUvSet, uCoatWeightChannel,
+                                      uCoatWeightScale, uCoatWeightBias),
+                     0.0, 1.0);
+    float cr = clamp(uCoatRoughness *
+                     sampleCoatScalar(uCoatRoughnessTex, uHasCoatRoughnessTex,
+                                      uAdvancedTexIsUdim.w,
+                                      uAdvancedUdimRoutes.w,
+                                      uAdvancedUdimSlots.w,
+                                      uCoatRoughnessUv0, uCoatRoughnessUv1,
+                                      uCoatRoughnessUvSet,
+                                      uCoatRoughnessChannel,
+                                      uCoatRoughnessScale, uCoatRoughnessBias),
+                     0.02, 1.0);
+    vec3 coatTint = uCoatColor * sampleCoatColor(uCoatColorTex, uHasCoatColorTex,
+                                                 uAdvancedTexIsUdim.z,
+                                                 uAdvancedUdimRoutes.z,
+                                                 uAdvancedUdimSlots.z,
+                                                 uCoatColorUv0, uCoatColorUv1,
+                                                 uCoatColorUvSet,
+                                                 uCoatColorScale,
+                                                 uCoatColorBias);
+    if (uRenderMode == 36) { fragColor = vec4(vec3(cw), 1.0); return; }
+    if (uRenderMode == 37) { fragColor = vec4(coatTint, 1.0); return; }
+    if (uRenderMode == 38) { fragColor = vec4(vec3(cr), 1.0); return; }
+    float ci = max(uCoatIor, 1.0);
+    float cd = (ci - 1.0) / (ci + 1.0);
+    vec3 direct = vec3(0.0);
+    for (int li = 0; li < kMaxRasterLights; ++li) {
+        if (li >= uLightCount) break;
+        if ((uLightMask & (1u << uint(li))) == 0u) continue;
+        vec4 pt = uLightPositionType[li];
+        vec4 da = uLightDirectionAngle[li];
+        vec4 lc = uLightColorDiffuse[li];
+        vec4 ss = uLightSpecularShape[li];
+        int lightType = int(pt.w + 0.5);
+        vec3 L;
+        float attenuation = 1.0;
+        if (lightType == 5) {
+            L = normalize(da.xyz);
+        } else {
+            vec3 toLight = pt.xyz - vWorldPos;
+            float dist2 = max(dot(toLight, toLight), 1e-6);
+            L = toLight * inversesqrt(dist2);
+            attenuation = 1.0 / dist2;
+        }
+        float shape = 1.0;
+        if (ss.w > 0.5 && lightType != 5) {
+            float coneCos = dot(normalize(da.xyz), -L);
+            float outer = cos(radians(clamp(da.w, 0.0, 180.0)));
+            float innerAngle = da.w * (1.0 - clamp(ss.y, 0.0, 1.0));
+            float inner = cos(radians(clamp(innerAngle, 0.0, 180.0)));
+            shape = smoothstep(outer, max(inner, outer + 1e-5), coneCos);
+            shape *= pow(max(coneCos, 0.0), max(ss.z, 0.0));
+        }
+        float NoL = max(dot(Nf, L), 0.0);
+        if (NoL <= 0.0 || shape <= 0.0) continue;
+        vec3 H = normalize(L + V);
+        float NoH = max(dot(Nf, H), 0.0);
+        float VoH = max(dot(V, H), 0.0);
+        vec3 F = fresnelSchlick(VoH, F0);
+        float D = distributionGGX(NoH, rgh);
+        float G = geometrySchlickGGX(NoV, rgh) *
+                  geometrySchlickGGX(NoL, rgh);
+        vec3 specular = D * G * F / max(4.0 * NoV * NoL, 1e-5);
+        vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * baseColor / kPi;
+        float coatNoL = max(dot(coatNf, L), 0.0);
+        float coatNoV = max(dot(coatNf, V), 1e-4);
+        float coatNoH = max(dot(coatNf, H), 0.0);
+        vec3 coatF = fresnelSchlick(VoH, vec3(cd * cd));
+        float coatD = distributionGGX(coatNoH, cr);
+        float coatG = geometrySchlickGGX(coatNoV, cr) *
+                      geometrySchlickGGX(coatNoL, cr);
+        vec3 coatSpec = coatD * coatG * coatF /
+                        max(4.0 * coatNoV * coatNoL, 1e-5);
+        vec3 baseBrdf = diffuse * lc.w +
+                        specular * (vec3(1.0) - coatF * cw) * ss.x;
+        vec3 coatBrdf = coatSpec * coatTint * cw * ss.x;
+        float visibility = (li == uShadowLightSlot)
+                               ? sampleShadow(vWorldPos, Nf, L) : 1.0;
+        direct += (baseBrdf * NoL + coatBrdf * coatNoL) * lc.rgb *
+                  (attenuation * shape * visibility);
+    }
+    // Scenes without authored direct lights retain the readable preview key.
+    if (uLightCount == 0) {
+        vec3 L = (dot(uLightDir, uLightDir) > 1e-8)
+                     ? normalize(uLightDir)
+                     : normalize(vec3(0.3, 0.5, 0.8));
+        vec3 lightColor = (dot(uLightColor, uLightColor) > 1e-8)
+                              ? uLightColor : vec3(1.0);
+        float NoL = max(dot(Nf, L), 0.0);
+        vec3 H = normalize(L + V);
+        float NoH = max(dot(Nf, H), 0.0), VoH = max(dot(V, H), 0.0);
+        vec3 F = fresnelSchlick(VoH, F0);
+        vec3 specular = distributionGGX(NoH, rgh) *
+                        geometrySchlickGGX(NoV, rgh) *
+                        geometrySchlickGGX(NoL, rgh) * F /
+                        max(4.0 * NoV * NoL, 1e-5);
+        vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * baseColor / kPi;
+        direct = (diffuse + specular) * lightColor * NoL;
+    }
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
-
-    vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
-    float specPower = mix(16.0, 256.0, 1.0 - roughness);
-    vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
-
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
-
-    vec3 color = ambient + diffuse + specular + emissive;
-    fragColor = vec4(color, uAlpha);
+    // Ambient: DomeLight split-sum IBL when baked, else a constant floor
+    // (keeps unlit faces lifted off black).
+    vec3 ambient;
+    if (uHasIbl) {
+        vec3 Ne = normalize(uEnvRotation * Nf);
+        vec3 Re = normalize(uEnvRotation * reflect(-V, Nf));
+        vec3 irr = texture(uIrradianceMap, Ne).rgb;
+        float lod = clamp(roughness, 0.0, 1.0) * float(uPrefilteredLods - 1);
+        vec3 pref = textureLod(uPrefilteredMap, Re, lod).rgb;
+        // Analytic split-sum approximation keeps the GL 3.3 fragment sampler
+        // count within the guaranteed 16 after adding independent roughness.
+        float rr = clamp(roughness, 0.0, 1.0);
+        vec4 r = rr * vec4(-1.0, -0.0275, -0.572, 0.022) +
+                 vec4(1.0, 0.0425, 1.04, -0.04);
+        float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
+        vec2 dfg = vec2(-1.04, 1.04) * a004 + r.zw;
+        ambient = (baseColor * (1.0 - met) * irr +
+                   pref * (F0 * dfg.x + dfg.y)) * uIblColor;
+        vec3 coatPref = textureLod(uPrefilteredMap, Re,
+                                   cr * float(uPrefilteredLods - 1)).rgb;
+        vec4 rc = cr * vec4(-1.0, -0.0275, -0.572, 0.022) +
+                  vec4(1.0, 0.0425, 1.04, -0.04);
+        float ca004 = min(rc.x * rc.x, exp2(-9.28 * NoV)) * rc.x + rc.y;
+        vec2 coatDfg = vec2(-1.04, 1.04) * ca004 + rc.zw;
+        vec3 coatF0 = vec3(cd * cd);
+        vec3 coatIbl = coatPref * (coatF0 * coatDfg.x + coatDfg.y) *
+                       coatTint * cw * uIblColor;
+        ambient = ambient * (vec3(1.0) - coatF0 * cw) + coatIbl;
+    } else {
+        ambient = baseColor * 0.12;
+    }
+    if (uAlphaMode == 1 && opacity <= 0.0) {
+        discard;
+    }
+    ambient *= clamp(uOcclusion, 0.0, 1.0) * sampleOcclusion();
+    vec3 color = linearToSrgb((ambient + direct + emissive) * exp2(uExposure));
+    fragColor = vec4(color, opacity);
 }
 )glsl";
 }
@@ -632,21 +1159,25 @@ void main() {
 
     vec3 V = normalize(uCameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = normalize(vec3(0.3, 0.5, 0.8));
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient floor + view-driven diffuse (keeps unlit faces lifted off black).
+    vec3 ambient = baseColor * 0.25;
+    vec3 diffuse = baseColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
     vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
-
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
+    vec3 specular = specColor * pow(NdotH, specPower) * facing;
 
     vec3 color = ambient + diffuse + specular + emissive;
     fragColor = vec4(color, alpha);
@@ -749,21 +1280,25 @@ void main() {
 
     vec3 V = normalize(cameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = normalize(vec3(0.3, 0.5, 0.8));
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient floor + view-driven diffuse (keeps unlit faces lifted off black).
+    vec3 ambient = baseColor * 0.25;
+    vec3 diffuse = baseColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
     vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
-
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
+    vec3 specular = specColor * pow(NdotH, specPower) * facing;
 
     vec3 color = ambient + diffuse + specular + emissive;
     fragColor = vec4(color, alpha);

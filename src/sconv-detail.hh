@@ -33,11 +33,13 @@ inline void EmitAttrMetas(const std::string &name, const AttrMeta &metas,
   }
 
   // A bare string in an attribute's metadata block (`double x = 1 ( """m""" )`)
-  // IS the comment in USD -- the two ASCII spellings are one Sdf field, and only
-  // the ASCII parser knows which was used: it parks the bare form in
-  // AttrMeta::stringData and the `comment = ...` form in AttrMeta::comment.
+  // IS the comment in USD -- the two spellings are the same Sdf field, and only
+  // the ASCII parser knows which was used (it parks the bare form in
+  // AttrMeta::stringData). So both go out as the STANDARD `comment` field; a
+  // private crate field would be unreadable to pxr. The ASCII spelling is not
+  // preserved across a crate round-trip -- pxr does not preserve it either.
   //
-  // Emit exactly ONE `comment` field: two would corrupt the fieldset encoding.
+  // Emit ONE comment field: two would corrupt the fieldset encoding.
   if (metas.has_comment() || !metas.stringData.empty()) {
     std::string comment_str;
     if (metas.has_comment()) {

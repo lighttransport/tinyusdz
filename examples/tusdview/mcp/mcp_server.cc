@@ -50,10 +50,10 @@ MCPServer::~MCPServer() { stop(); }
 
 json MCPServer::buildToolsList() const {
   json tools = json::array();
-  tools.push_back(tool("load_usd", "Load a USD file (.usd/.usda/.usdc/.usdz) into "
+  tools.push_back(tool("load_usd", "Load a USD path or inline USDA text into "
                                    "the viewer (async; poll get_scene_info).",
-                       {{"path", strProp("Path to the USD file")}},
-                       json::array({"path"})));
+                       {{"path", strProp("Path to a USD file")},
+                        {"usda", strProp("Inline USDA text (maximum 16 MiB)")}}));
   tools.push_back(tool("get_scene_info",
                        "Get the loaded scene: filepath, mesh/triangle counts, up "
                        "axis, and the world-space bounding box.",
@@ -71,10 +71,11 @@ json MCPServer::buildToolsList() const {
                        json::array({"path"})));
   tools.push_back(tool(
       "viewport",
-      "Manipulate the camera. op=orbit|pan {dx,dy pixels} | dolly {amount} | fit "
+      "Manipulate the camera. op=orbit|pan {dx,dy pixels} | dolly|forward|backward "
+      "{amount} | fit "
       "{frame the scene} | home | isometric | front | back | right | left | top | bottom "
       "| bookmark_save {slot} | bookmark_load {slot} | set {absolute target[3],yaw,pitch,distance}.",
-      {{"op", strProp("orbit | pan | dolly | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | set")},
+      {{"op", strProp("orbit | pan | dolly | forward | backward | fit | home | isometric | front | back | right | left | top | bottom | bookmark_save | bookmark_load | set")},
        {"dx", numProp("pixels (orbit/pan)")},
        {"dy", numProp("pixels (orbit/pan)")},
        {"amount", numProp("dolly amount (+ zooms in)")},
@@ -84,6 +85,21 @@ json MCPServer::buildToolsList() const {
        {"pitch", numProp("elevation radians (set)")},
        {"distance", numProp("distance to target (set)")}},
       json::array({"op"})));
+  tools.push_back(tool(
+      "screenshot",
+      "Capture the current viewport to an image file (PNG/PPM by extension) for "
+      "visual debugging. Camera moves from the 'viewport' tool apply on the next "
+      "frame, so orbit/pan/dolly then call screenshot as a separate request.",
+      {{"path", strProp("output image path (.png or .ppm)")}},
+      json::array({"path"})));
+  tools.push_back(tool(
+      "input",
+      "Synthesize a keyboard key as if pressed in the viewport. "
+      "key=v (cycle wireframe: off/wire/wire+shade) | w/s (forward/backward) | "
+      "f or a (frame all) | "
+      "0 (home) | 5 (isometric) | 1 (front) | 3 (right) | 7 (top).",
+      {{"key", strProp("v | w | s | f | a | 0 | 1 | 3 | 5 | 7")}},
+      json::array({"key"})));
   tools.push_back(tool("list_prims", "List renderable mesh prim paths in the scene.",
                        {{"max", {{"type", "integer"}, {"description", "cap (default 1000)"}}}}));
   tools.push_back(tool(
@@ -105,6 +121,12 @@ json MCPServer::buildToolsList() const {
       "skinning",
       "Query or set the viewer skinning mode. Omit mode to query; mode=auto|cpu|gpu.",
       {{"mode", strProp("auto | cpu | gpu")}}));
+  tools.push_back(tool(
+      "render_settings",
+      "Query or set resettable per-capture options without restarting tusdview.",
+      {{"mode", strProp("shaded | wireframe | normals | material-id | geom-normal | uv | depth | albedo | facing | roughness | metallic | emissive | opacity")},
+       {"grid", {{"type", "boolean"}, {"description", "show the ground grid"}}},
+       {"camera", strProp("named USD camera to resolve on the next load")}}));
 
   // Append the tinyusdz library's USD tools (stage/prim/attr query, composition,
   // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
@@ -222,6 +244,10 @@ void MCPServer::drain() {
         payload = host_->mcpSetFocus(cmd->args, err);
       } else if (t == "viewport") {
         payload = host_->mcpViewport(cmd->args, err);
+      } else if (t == "screenshot") {
+        payload = host_->mcpScreenshot(cmd->args, err);
+      } else if (t == "input") {
+        payload = host_->mcpInput(cmd->args, err);
       } else if (t == "list_prims") {
         payload = host_->mcpListPrims(cmd->args, err);
       } else if (t == "load_payloads") {
@@ -230,6 +256,8 @@ void MCPServer::drain() {
         payload = host_->mcpTimeline(cmd->args, err);
       } else if (t == "skinning") {
         payload = host_->mcpSkinning(cmd->args, err);
+      } else if (t == "render_settings") {
+        payload = host_->mcpRenderSettings(cmd->args, err);
       } else {
         // Not a viewer tool -> forward to the tinyusdz library tool dispatcher.
         payload = host_->mcpCallLibraryTool(t, cmd->args, err);

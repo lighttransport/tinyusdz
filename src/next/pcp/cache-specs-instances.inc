@@ -5,46 +5,48 @@
 // Included inside Cache::Impl.
 
   // --- spec lookup --------------------------------------------------------
-
-  struct SpecRef {
-    const PrimSpec *spec = nullptr;
-    const Layer *layer = nullptr;
-    std::string layer_id;
-    // Time offset of the owning layer within its stack (sublayer offsets),
-    // relative to the stack root. Identity for the root layer.
-    LayerOffset layer_offset;
-  };
+  // SpecRef is defined at file scope (see cache.cc) so Src can cache a pointer
+  // to a Specs() result.
 
   // Memoized spec resolution. The same (stack, site) is resolved 3-5x per
   // composed prim (ExpandArcs, AnyAuthors, ComposeInto, ComputePrimIndex,
-  // instance-key); each call walked every layer and parsed the site Path. The
-  // cache keys by (stack_idx, site) and returns a stable reference (unordered_map
-  // keeps element addresses valid across rehash, so a recursive insert during
-  // expansion never dangles the outer reference). Results depend only on layer
-  // contents, which change solely on InvalidateLayer -> spec_cache_ is cleared
-  // there (Invalidate(prim) leaves layer stacks intact, so it stays valid).
-  struct SpecCacheKey {
-    uint32_t stack;
-    std::string site;
-    bool operator==(const SpecCacheKey &o) const {
-      return stack == o.stack && site == o.site;
-    }
-  };
-  struct SpecCacheKeyHash {
-    size_t operator()(const SpecCacheKey &k) const {
-      return std::hash<std::string>()(k.site) * 1000003u + k.stack;
-    }
-  };
-  mutable std::unordered_map<SpecCacheKey, std::vector<SpecRef>, SpecCacheKeyHash>
-      spec_cache_;
+  // instance-key); each call walked every layer and parsed the site Path.
+  //
+  // Keyed per-stack (outer index = stack_idx) then by the `site` string via an
+  // open-addressed StackSpecCache, so a lookup keys by the CALLER's existing
+  // `site` string BY REFERENCE with no per-call key allocation. (The old
+  // (stack_idx, site) struct key deep-copied the site string into the key on
+  // every call — hits included.) Stable element addresses: the per-stack caches
+  // live in a deque (growing it never relocates an in-use cache) and
+  // StackSpecCache stores its values in a deque (append never moves), so a
+  // recursive insert during expansion never dangles an outer reference.
+  // Results depend only on layer contents, which change solely on
+  // InvalidateLayer -> the cache is cleared there (Invalidate(prim) leaves
+  // layer stacks intact, so it stays valid).
+  mutable std::deque<StackSpecCache> spec_cache_by_stack_;
 
   const std::vector<SpecRef> &Specs(uint32_t stack_idx,
                                     const std::string &site) const {
-    SpecCacheKey key{stack_idx, site};
-    auto it = spec_cache_.find(key);
-    if (it != spec_cache_.end()) return it->second;
+    if (stack_idx >= spec_cache_by_stack_.size())
+      spec_cache_by_stack_.resize(stack_idx + 1);
+    auto &m = spec_cache_by_stack_[stack_idx];
+    const uint64_t h = StackSpecCache::HashSite(site.data(), site.size());
+    if (std::vector<SpecRef> *v = m.find(site, h)) return *v;
     std::vector<SpecRef> refs = FindSpecs(layer_stacks[stack_idx], site);
-    return spec_cache_.emplace(std::move(key), std::move(refs)).first->second;
+    return m.insert(site, h, std::move(refs));
+  }
+
+  // Specs() with a per-Src memo: the 2-3 read-side spec lookups per composed prim
+  // (ComposeChildNames, IsInstanceable, instance-key, ComposeOpinions) all key on
+  // the SAME (stack_idx, site) -> cache the resolved vector pointer in the Src so
+  // only the first pays the site-string hash. The memo self-resets on any Src
+  // copy/move (see SpecsMemo in cache.cc), so child-build/worker-seed/merge
+  // copies can never carry a stale or cross-Impl pointer.
+  const std::vector<SpecRef> &SpecsFor(const Src &s) const {
+    if (s.specs_.p) return *s.specs_.p;
+    const std::vector<SpecRef> &r = Specs(s.stack_idx, s.site);
+    s.specs_.p = &r;
+    return r;
   }
   std::vector<SpecRef> FindSpecs(const LayerStack &st,
                                  const std::string &site) const {
@@ -76,7 +78,7 @@
 
   bool AnyAuthors(const std::vector<Src> &srcs) const {
     for (const Src &s : srcs) {
-      if (!Specs(s.stack_idx, s.site).empty()) return true;
+      if (!SpecsFor(s).empty()) return true;
     }
     return false;
   }
@@ -84,22 +86,33 @@
   // --- payload policy -----------------------------------------------------
 
   bool ShouldLoadPayload(const std::string &root_prim_path,
-                         const std::string &asset) {
+                         const std::string &asset,
+                         const PrimSpec &owner) {
+    auto selected = [&](bool load) {
+      if (load && options.payload_load_callback) {
+        options.payload_load_callback(Path(root_prim_path));
+      }
+      return load;
+    };
     // Explicit load rules win; a path with no governing rule falls back to the
     // base policy (payload_policy callback, else the load_payloads flag).
     switch (load_rules_.GetEffect(root_prim_path)) {
       case LoadRules::Effect::All:
       case LoadRules::Effect::Only:
-        return true;
+        return selected(true);
       case LoadRules::Effect::None:
         return false;
       case LoadRules::Effect::Default:
         break;
     }
-    if (options.payload_policy) {
-      return options.payload_policy(Path(root_prim_path), asset);
+    if (options.payload_policy_with_prim) {
+      return selected(options.payload_policy_with_prim(
+          Path(root_prim_path), asset, owner));
     }
-    return options.load_payloads;
+    if (options.payload_policy) {
+      return selected(options.payload_policy(Path(root_prim_path), asset));
+    }
+    return selected(options.load_payloads);
   }
 
   // --- variant selection --------------------------------------------------
@@ -204,13 +217,24 @@
 
   // --- instancing ---------------------------------------------------------
 
-  // Instanceable iff some contributing spec set instanceable=true AND the prim
+  // Instanceable iff the COMPOSED `instanceable` value is true AND the prim
   // actually has a composition arc (more than just its own root opinions).
+  // `instanceable` is ordinary boolean metadata: the STRONGEST authored opinion
+  // wins (srcs are strong-first), so a local `instanceable = false` override on
+  // a prim that references an instanceable=true prototype de-instances it
+  // (instancing-001 ModifiedTree).
   bool IsInstanceableSources(const std::vector<Src> &srcs) const {
     if (srcs.size() <= 1) return false;
     for (const Src &s : srcs) {
-      for (const SpecRef &sr : Specs(s.stack_idx, s.site)) {
-        if (sr.spec->meta().instanceable) return true;
+      for (const SpecRef &sr : SpecsFor(s)) {
+        const PrimSpecMeta &m = sr.spec->meta();
+        // `instanceable = true` is always an authored opinion (the field
+        // defaults to false), so it counts even when the authoring path did
+        // not stamp instanceable_authored (hand-built layers). Only an
+        // explicit `instanceable = false` needs the flag to distinguish it
+        // from the unset default.
+        if (m.instanceable) return true;
+        if (m.instanceable_authored) return false;  // explicit false override
       }
     }
     return false;
@@ -234,7 +258,7 @@
     std::string key;
     for (const Src &s : srcs) {
       bool found_type = false;
-      for (const SpecRef &sr : Specs(s.stack_idx, s.site)) {
+      for (const SpecRef &sr : SpecsFor(s)) {
         if (!sr.spec->type_name().empty()) {
           key += "T:" + sr.spec->type_name() + ";";
           found_type = true;
@@ -283,6 +307,7 @@
       prototype_by_key[ik] = prim_path;  // first of its key seeds the prototype
       prototype_of[prim_path] = prim_path;
       instances_by_prototype[prim_path].push_back(prim_path);
+      instance_key_order.push_back(ik);
       return;
     }
     const std::string old_proto = pit->second;

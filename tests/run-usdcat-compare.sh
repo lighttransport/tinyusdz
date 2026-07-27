@@ -187,8 +187,14 @@ run_usdchecker_pass() {
   # parity instead of comparing as an empty set.
   checker_rules() {
     local out
-    out=$("$USDCHECKER_PATH" --noAssetChecks -s "$1" 2>&1)
-    { echo "$out" | grep -oE '\((usd|sdf|ar)[A-Za-z]*[Vv]alidators?:[A-Za-z0-9_.]+\)';
+    # usdchecker exits nonzero for ordinary validation findings. Those are the
+    # data this differential pass compares, not a shell-level failure.
+    if ! out=$("$USDCHECKER_PATH" --noAssetChecks -s "$1" 2>&1); then
+      :
+    fi
+    # A source-open failure has no validator token. Keep errexit from stopping
+    # the group before the explicit FAILED_TO_OPEN sentinel is emitted.
+    { echo "$out" | grep -oE '\((usd|sdf|ar)[A-Za-z]*[Vv]alidators?:[A-Za-z0-9_.]+\)' || true;
       echo "$out" | grep -cF "Failed to open stage." | grep -v '^0$' | sed 's/^/FAILED_TO_OPEN x/'; } \
       | sort | uniq -c | sed 's/^ *//'
   }
@@ -199,12 +205,14 @@ run_usdchecker_pass() {
 
     if ! "$TUSDCAT_PATH" --output-format usdc -o "$tmpdir/$base.usdc" "$f" >/dev/null 2>&1; then
       skipped=$((skipped+1))   # fixture tusdcat cannot write standalone
+      echo -e "${YELLOW}- usdchecker skip: $base (tusdcat cannot write standalone)${NC}"
       continue
     fi
 
     checker_rules "$f" > "$tmpdir/a.rules"
     if grep -q FAILED_TO_OPEN "$tmpdir/a.rules"; then
       skipped=$((skipped+1))   # pxr cannot open the SOURCE usda; nothing to compare
+      echo -e "${YELLOW}- usdchecker skip: $base (OpenUSD cannot open source USDA)${NC}"
       continue
     fi
     checker_rules "$tmpdir/$base.usdc" > "$tmpdir/b.rules"

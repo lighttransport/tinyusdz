@@ -4512,12 +4512,15 @@ void ValidateClipSetMetadata(const std::string &clip_set_name,
     double start_time = 0.0;
     double end_time = 0.0;
     double stride = 1.0;
+    double active_offset = 0.0;
     const bool have_start =
         GetMetaDouble(clip_set, "templateStartTime", &start_time);
     const bool have_end =
         GetMetaDouble(clip_set, "templateEndTime", &end_time);
     const bool have_stride =
         GetMetaDouble(clip_set, "templateStride", &stride);
+    const bool have_active_offset =
+        GetMetaDouble(clip_set, "templateActiveOffset", &active_offset);
     if (!have_start || !have_end) {
       AddError(result, "core.clips.template", location,
                "template clip sets must author templateStartTime and "
@@ -4536,6 +4539,14 @@ void ValidateClipSetMetadata(const std::string &clip_set_name,
     if (have_stride && (!std::isfinite(stride) || stride <= 0.0)) {
       AddError(result, "core.clips.template", location + ".templateStride",
                "templateStride must be positive and finite");
+    }
+    if (have_active_offset &&
+        (!std::isfinite(active_offset) || !std::isfinite(stride) ||
+         stride <= 0.0 || std::fabs(active_offset) > stride)) {
+      AddError(result, "core.clips.template",
+               location + ".templateActiveOffset",
+               "templateActiveOffset must be finite and no greater than "
+               "templateStride");
     }
   }
 

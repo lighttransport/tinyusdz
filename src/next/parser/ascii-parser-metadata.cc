@@ -23,12 +23,16 @@ bool AsciiParser::Impl::ParseStageMetadata() {
 
     // Parse metadata key-value pairs
     while (!Check(TokenType::CloseParen) && !AtEnd()) {
-      // A bare (often triple-quoted) string is the layer documentation --
-      // USD shorthand for `doc = "..."`.
+      // pxr accepts `;` as an optional statement separator.
+      if (Match(TokenType::Semicolon)) continue;
+      // A bare (often triple-quoted) string is the layer COMMENT — pxr's
+      // only accepted spelling (26.x rejects `comment = "..."`; the bare
+      // string maps to `comment`, not `doc`).
       if (Check(TokenType::String)) {
         std::string d;
         lexer_->expect(TokenType::String, d);
-        layer_->meta().doc = d;
+        layer_->meta().comment = d;
+        layer_->meta().comment_set = true;
         continue;
       }
       std::string key;
@@ -130,6 +134,12 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         if (lexer_->expect(TokenType::String, value)) {
           layer_->meta().comment = value;
           layer_->meta().comment_set = true;
+        }
+      } else if (key == "hasOwnedSubLayers") {
+        ParseResult r = ParseValue(*lexer_, TypeId::Bool);
+        if (r.success && r.value.as_bool()) {
+          layer_->meta().hasOwnedSubLayers = *r.value.as_bool();
+          layer_->meta().hasOwnedSubLayers_set = true;
         }
       } else if (key == "owner") {
         std::string value;

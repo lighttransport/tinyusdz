@@ -2845,6 +2845,16 @@ static bool ExtractCommonLightProperties(
     }
   }
 
+  if (light.spectralEmission.authored() &&
+      !light.spectralEmission.is_blocked()) {
+    std::vector<value::float2> samples;
+    if (light.spectralEmission.get_value(&samples) && !samples.empty()) {
+      SpectralEmission spd;
+      spd.samples = std::move(samples);
+      rlight->spd_emission = std::move(spd);
+    }
+  }
+
   return true;
 }
 
@@ -2882,6 +2892,33 @@ static bool ExtractShapingProperties(
     float val;
     if (light.shapingConeSoftness.get_value().get(env.timecode, &val)) {
       rlight->shapingConeSoftness = val;
+    }
+  }
+
+  if (light.shapingIesFile.authored() && !light.shapingIesFile.is_blocked()) {
+    value::AssetPath asset;
+    std::string eval_err;
+    if (EvaluateTypedAnimatableAttribute(
+            env.stage, light.shapingIesFile,
+            "inputs:shaping:ies:file", &asset, &eval_err, env.timecode,
+            env.tinterp)) {
+      rlight->shapingIesFile = asset.GetAssetPath();
+    }
+  }
+
+  if (light.shapingIesAngleScale.authored() &&
+      !light.shapingIesAngleScale.is_blocked()) {
+    float val;
+    if (light.shapingIesAngleScale.get_value().get(env.timecode, &val)) {
+      rlight->shapingIesAngleScale = val;
+    }
+  }
+
+  if (light.shapingIesNormalize.authored() &&
+      !light.shapingIesNormalize.is_blocked()) {
+    bool val;
+    if (light.shapingIesNormalize.get_value().get(env.timecode, &val)) {
+      rlight->shapingIesNormalize = val;
     }
   }
 
@@ -2945,6 +2982,10 @@ bool RenderSceneConverter::ConvertDistantLight(
     return false;
   }
 
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
   // Extract angle (angular diameter in degrees)
   if (light.angle.authored() && !light.angle.is_blocked()) {
     float val;
@@ -2974,6 +3015,10 @@ bool RenderSceneConverter::ConvertDomeLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -3237,6 +3282,10 @@ bool RenderSceneConverter::ConvertDiskLight(
     return false;
   }
 
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
   // Extract radius
   if (light.radius.authored() && !light.radius.is_blocked()) {
     float val;
@@ -3266,6 +3315,10 @@ bool RenderSceneConverter::ConvertCylinderLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -3306,6 +3359,10 @@ bool RenderSceneConverter::ConvertGeometryLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -3622,10 +3679,11 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
       AnimationClip anim;
 
       if (!ConvertSkelAnimation(env, animPath, *panimPtr, skeleton_id, &anim)) {
-        PushError(fmt::format(
-            "Failed to convert SkelAnimation: {} for skeleton {}\n",
-            animPathStr, skeleton_id));
-        return false;
+        PushWarn(fmt::format(
+            "Skipping invalid SkelAnimation {} for skeleton {}: {}\n",
+            animPathStr, skeleton_id, GetError()));
+        _err.clear();
+        continue;
       }
 
       DCOUT("Converted SkelAnimation " << animPathStr << " for skeleton " << skeleton_id);
@@ -3672,27 +3730,73 @@ size_t ResolveLightLinking(const Stage &stage, RenderScene *scene) {
     if (!pret || !pret.value()) {
       continue;
     }
+    const Prim &light_prim = *pret.value();
     const Collection *coll = nullptr;
-    if (!GetCollection(*pret.value(), &coll) || !coll) {
-      continue;  // No collections authored -> links all (defaults).
-    }
+    GetCollection(light_prim, &coll);
 
     // Resolve one link collection instance ("lightLink" / "shadowLink").
     auto resolve_link = [&](const std::string &inst_name, bool *links_all,
                             std::vector<int> *mesh_indices) -> bool {
+      CollectionMembershipQuery q;
       const CollectionInstance *inst = nullptr;
-      if (!coll->get_instance(inst_name, &inst) || !inst) {
-        return false;
+      if (coll && coll->get_instance(inst_name, &inst) && inst) {
+        const bool authored = inst->has_membershipExpression() ||
+                              inst->includes.authored() ||
+                              inst->excludes.authored();
+        if (!authored) return false;
+        q = BuildCollectionMembershipQuery(stage, *inst, light.abs_path);
+      } else {
+        // Older/legacy prim reconstruction may retain multi-apply CollectionAPI
+        // properties as generic properties rather than a typed Collection.
+        // Resolve relationship mode directly so light linking does not depend
+        // on whether `apiSchemas = ["CollectionAPI:<name>"]` was authored.
+        const std::string base = "collection:" + inst_name + ":";
+        Relationship includes_rel;
+        Relationship excludes_rel;
+        std::string includes_err;
+        std::string excludes_err;
+        const bool has_includes = GetRelationship(
+            light_prim, base + "includes", &includes_rel, &includes_err);
+        const bool has_excludes = GetRelationship(
+            light_prim, base + "excludes", &excludes_rel, &excludes_err);
+        if (!has_includes && !has_excludes) return false;
+        q.mode = CollectionMembershipQuery::Mode::Relationship;
+        q.owner_prim_path = light.abs_path;
+        if (has_includes) {
+          if (includes_rel.is_path()) {
+            q.includes.push_back(includes_rel.targetPath);
+          }
+          if (includes_rel.is_pathvector()) {
+            q.includes = includes_rel.targetPathVector;
+          }
+        }
+        if (has_excludes) {
+          if (excludes_rel.is_path()) {
+            q.excludes.push_back(excludes_rel.targetPath);
+          }
+          if (excludes_rel.is_pathvector()) {
+            q.excludes = excludes_rel.targetPathVector;
+          }
+        }
+        Attribute attr;
+        std::string attr_err;
+        if (GetAttribute(light_prim, base + "includeRoot", &attr, &attr_err)) {
+          if (auto value = attr.get_value<bool>()) q.include_root = *value;
+        }
+        attr_err.clear();
+        if (GetAttribute(light_prim, base + "expansionRule", &attr,
+                         &attr_err)) {
+          if (auto value = attr.get_value<std::string>()) {
+            if (*value == "explicitOnly") {
+              q.expansion_rule =
+                  CollectionInstance::ExpansionRule::ExplicitOnly;
+            } else if (*value == "expandPrimsAndProperties") {
+              q.expansion_rule =
+                  CollectionInstance::ExpansionRule::ExpandPrimsAndProperties;
+            }
+          }
+        }
       }
-      const bool authored = inst->has_membershipExpression() ||
-                            inst->includes.authored() ||
-                            inst->excludes.authored();
-      if (!authored) {
-        return false;  // unauthored -> keep default (links all)
-      }
-
-      CollectionMembershipQuery q =
-          BuildCollectionMembershipQuery(stage, *inst, light.abs_path);
 
       *links_all = false;
       mesh_indices->clear();

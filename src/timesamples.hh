@@ -55,6 +55,14 @@ struct TimeSamples {
     double t;
     value::Value value;
     bool blocked{false};
+
+    // Value-identity group for generic (boxed) storage: samples added via
+    // duplicate_sample() share the group id of their source, so consumers
+    // can detect read-side-deduplicated duplicates in O(1) instead of
+    // comparing contents (the analog of shared _data_offsets in binary
+    // storage). 0 = unknown (content compare required). Ids are only
+    // comparable within one TimeSamples object.
+    uint64_t value_group{0};
   };
 
   // Sentinel value for blocked samples in _data_offsets
@@ -133,6 +141,12 @@ struct TimeSamples {
       s.t = new_time;
       s.value = _samples[src_idx].value;
       s.blocked = _samples[src_idx].blocked;
+      // Share the source's value-identity group (assign one if the source
+      // doesn't have any yet) so consumers can detect the duplicate in O(1).
+      if (_samples[src_idx].value_group == 0) {
+        _samples[src_idx].value_group = ++_value_group_counter;
+      }
+      s.value_group = _samples[src_idx].value_group;
       _samples.push_back(std::move(s));
       _dirty = true;
       return true;
@@ -703,8 +717,41 @@ struct TimeSamples {
     static_assert(value::uses_binary_timesample_array_storage_v<T>,
                   "add_array_sample requires binary-serializable element types except bool");
 
-    if (!validate_type_or_init(_type_id != 0 ? _type_id : value::TypeTraits<std::vector<T>>::type_id(),
-                                 err, "add_array_sample")) {
+    if ((count > 0) && (values == nullptr)) {
+      if (err) {
+        (*err) += "add_array_sample values is null for a non-empty array.\n";
+      }
+      return false;
+    }
+
+    // Compare in a type that can represent both operands. On wasm32 size_t and
+    // uint32_t have the same range, so a direct comparison is provably false
+    // and Clang diagnoses it; native 64-bit builds still need this storage cap.
+    if (static_cast<uintmax_t>(count) >
+        static_cast<uintmax_t>((std::numeric_limits<uint32_t>::max)())) {
+      if (err) {
+        (*err) += "add_array_sample element count exceeds uint32_t storage.\n";
+      }
+      return false;
+    }
+
+    if (count > ((std::numeric_limits<size_t>::max)() / sizeof(T))) {
+      if (err) {
+        (*err) += "add_array_sample byte size overflow.\n";
+      }
+      return false;
+    }
+
+    const size_t data_size = sizeof(T) * count;
+    if (data_size > (_data.max_size() - _data.size())) {
+      if (err) {
+        (*err) += "add_array_sample data buffer size overflow.\n";
+      }
+      return false;
+    }
+
+    if (!validate_type_or_init(value::TypeTraits<std::vector<T>>::type_id(),
+                               err, "add_array_sample")) {
       return false;
     }
 
@@ -715,10 +762,11 @@ struct TimeSamples {
     _blocked.push_back(0);
 
     // Append array data to flat buffer
-    size_t byte_offset = _data.size();
-    size_t data_size = sizeof(T) * count;
+    const size_t byte_offset = _data.size();
     _data.resize(_data.size() + data_size);
-    std::memcpy(_data.data() + byte_offset, values, data_size);
+    if (data_size > 0) {
+      std::memcpy(_data.data() + byte_offset, values, data_size);
+    }
 
     _data_offsets.push_back(byte_offset);
     _array_counts.push_back(static_cast<uint32_t>(count));
@@ -807,10 +855,8 @@ struct TimeSamples {
                   "add_array_blocked_sample requires binary-serializable array "
                   "element types");
 
-    if (!validate_type_or_init(
-            _type_id != 0 ? _type_id
-                          : value::TypeTraits<std::vector<T>>::type_id(),
-            err, "add_array_blocked_sample")) {
+    if (!validate_type_or_init(value::TypeTraits<std::vector<T>>::type_id(),
+                               err, "add_array_blocked_sample")) {
       return false;
     }
 
@@ -941,22 +987,22 @@ struct TimeSamples {
   // Accessor methods for binary storage
   //
 
-  const std::vector<double>& get_times() const {
+  const std::vector<double>& get_times() const TINYUSDZ_LIFETIMEBOUND {
     if (_dirty) { update(); }
     return _times;
   }
 
-  const Buffer<16>& get_blocked() const {
+  const Buffer<16>& get_blocked() const TINYUSDZ_LIFETIMEBOUND {
     if (_dirty) { update(); }
     return _blocked;
   }
 
-  const std::vector<uint8_t>& get_data() const {
+  const std::vector<uint8_t>& get_data() const TINYUSDZ_LIFETIMEBOUND {
     if (_dirty) { update(); }
     return _data;
   }
 
-  const std::vector<size_t>& get_data_offsets() const {
+  const std::vector<size_t>& get_data_offsets() const TINYUSDZ_LIFETIMEBOUND {
     if (_dirty) { update(); }
     return _data_offsets;
   }
@@ -968,7 +1014,7 @@ struct TimeSamples {
     return _array_counts[idx];
   }
 
-  const std::vector<uint32_t>& get_array_counts() const {
+  const std::vector<uint32_t>& get_array_counts() const TINYUSDZ_LIFETIMEBOUND {
     return _array_counts;
   }
 
@@ -994,6 +1040,9 @@ struct TimeSamples {
 
   // Generic path storage (for non-binary Value types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
+
+  // Monotonic source for Sample::value_group ids (generic storage only).
+  mutable uint64_t _value_group_counter{0};
 
   // Flat binary storage (for trivially-copyable POD types)
   mutable std::vector<double> _times;

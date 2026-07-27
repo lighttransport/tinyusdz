@@ -16,3 +16,4 @@ void nodegraph_reconstruct_from_layer_test(void);
 void usdpreviewsurface_displacement_test(void);
 void usduvtexture_uvset_test(void);
 void openpbr_opacity_precedence_test(void);
+void openpbr_geometry_connection_alias_test(void);

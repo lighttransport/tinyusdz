@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
+import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 
 import { LoaderUtils } from "three"
 import { convertOpenPBRToMeshPhysicalMaterialLoaded } from './TinyUSDZMaterialX.js';
@@ -163,7 +164,8 @@ class TextureLoadingManager {
                     TinyUSDZLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty, this.textureSignatureCache);
                 let promise = this.promiseCache.get(cacheKey);
                 if (!promise) {
-                    promise = TinyUSDZLoaderUtils.getTextureFromUSD(usdScene, textureId);
+                    promise = TinyUSDZLoaderUtils.getTextureFromUSD(
+                        usdScene, textureId, mapProperty);
                     this.promiseCache.set(cacheKey, promise);
                 }
                 const texture = await promise;
@@ -274,6 +276,20 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     // Static reference to TinyUSDZ WASM module for EXR fallback
     static _tinyusdz = null;
 
+    // Lazily detected WebGL block-compression target. undefined = not probed,
+    // null = no supported target. Tests may temporarily replace the detector.
+    static _textureCompressionTarget = undefined;
+    static sceneTextureCompressionEnabled = true;
+
+    // Basis Universal KTX2 support is lazy so applications that only use the
+    // built-in Basis-free uni path never initialize the transcoder.
+    // undefined = not probed, null = unavailable/disabled, object = KTX2Loader.
+    static _ktx2Loader = undefined;
+    static _ownsKTX2Loader = false;
+    static _ktx2TranscoderPath = import.meta.env?.DEV
+        ? '/node_modules/three/examples/jsm/libs/basis/'
+        : '';
+
     // Yield interval for UI updates (ms)
     static YIELD_INTERVAL_MS = 250;
 
@@ -345,6 +361,240 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return TinyUSDZLoaderUtils._tinyusdz;
     }
 
+    static setSceneTextureCompressionEnabled(enabled) {
+        TinyUSDZLoaderUtils.sceneTextureCompressionEnabled = !!enabled;
+    }
+
+    static setKTX2TranscoderPath(path) {
+        TinyUSDZLoaderUtils._ktx2TranscoderPath = String(path || '');
+        if (TinyUSDZLoaderUtils._ktx2Loader) {
+            TinyUSDZLoaderUtils._ktx2Loader.setTranscoderPath(
+                TinyUSDZLoaderUtils._ktx2TranscoderPath);
+        }
+    }
+
+    // Applications may supply a renderer-configured Three.js KTX2Loader. When
+    // omitted, getKTX2Loader creates one from a short-lived WebGL capability
+    // probe, matching the automatic uni target selection below.
+    static setKTX2Loader(loader) {
+        if (TinyUSDZLoaderUtils._ownsKTX2Loader &&
+            TinyUSDZLoaderUtils._ktx2Loader !== loader) {
+            TinyUSDZLoaderUtils._ktx2Loader?.dispose?.();
+        }
+        TinyUSDZLoaderUtils._ktx2Loader = loader || null;
+        TinyUSDZLoaderUtils._ownsKTX2Loader = false;
+    }
+
+    static getKTX2Loader() {
+        if (TinyUSDZLoaderUtils._ktx2Loader !== undefined) {
+            return TinyUSDZLoaderUtils._ktx2Loader;
+        }
+
+        TinyUSDZLoaderUtils._ktx2Loader = null;
+        let canvas = null;
+        let gl = null;
+        try {
+            if (typeof document !== 'undefined' && document.createElement) {
+                canvas = document.createElement('canvas');
+            } else if (typeof OffscreenCanvas !== 'undefined') {
+                canvas = new OffscreenCanvas(1, 1);
+            }
+            if (!canvas?.getContext) return null;
+            gl = canvas.getContext('webgl2', { alpha: false }) ||
+                canvas.getContext('webgl', { alpha: false });
+            if (!gl) return null;
+
+            const extensions = new Map();
+            const getExtension = (name) => {
+                if (!extensions.has(name)) extensions.set(name, gl.getExtension(name));
+                return extensions.get(name);
+            };
+            const loader = new KTX2Loader();
+            loader.setTranscoderPath(TinyUSDZLoaderUtils._ktx2TranscoderPath);
+            loader.detectSupport({
+                extensions: {
+                    has: (name) => !!getExtension(name),
+                    get: (name) => getExtension(name)
+                }
+            });
+            TinyUSDZLoaderUtils._ktx2Loader = loader;
+            TinyUSDZLoaderUtils._ownsKTX2Loader = true;
+        } catch (error) {
+            console.warn('TinyUSDZ Basis KTX2 support is unavailable:', error);
+            TinyUSDZLoaderUtils._ktx2Loader = null;
+        } finally {
+            gl?.getExtension('WEBGL_lose_context')?.loseContext();
+        }
+        return TinyUSDZLoaderUtils._ktx2Loader;
+    }
+
+    static disposeKTX2Loader() {
+        if (TinyUSDZLoaderUtils._ownsKTX2Loader) {
+            TinyUSDZLoaderUtils._ktx2Loader?.dispose?.();
+        }
+        TinyUSDZLoaderUtils._ktx2Loader = undefined;
+        TinyUSDZLoaderUtils._ownsKTX2Loader = false;
+    }
+
+    // Pick the highest-quality RGBA block format available to this browser.
+    // A short-lived probe context keeps getTextureFromUSD independent of a
+    // particular THREE.WebGLRenderer; the result is cached for the page.
+    static detectTextureCompressionTarget() {
+        if (this._textureCompressionTarget !== undefined) {
+            return this._textureCompressionTarget;
+        }
+        this._textureCompressionTarget = null;
+        if (typeof document === 'undefined' || !document.createElement) {
+            return null;
+        }
+
+        let gl = null;
+        let isWebGL2 = false;
+        try {
+            const canvas = document.createElement('canvas');
+            gl = canvas.getContext('webgl2', { alpha: false });
+            isWebGL2 = !!gl;
+            if (!gl) gl = canvas.getContext('webgl', { alpha: false });
+            if (!gl) return null;
+
+            if (gl.getExtension('EXT_texture_compression_bptc')) {
+                this._textureCompressionTarget = {
+                    target: 'bc7',
+                    linearFormat: THREE.RGBA_BPTC_Format,
+                    srgbFormat: 0x8e8d,
+                    name: 'BC7'
+                };
+            } else if (gl.getExtension('WEBGL_compressed_texture_astc')) {
+                this._textureCompressionTarget = {
+                    target: 'astc4x4',
+                    linearFormat: THREE.RGBA_ASTC_4x4_Format,
+                    srgbFormat: 0x93d0,
+                    name: 'ASTC 4x4'
+                };
+            } else if (isWebGL2 || gl.getExtension('WEBGL_compressed_texture_etc')) {
+                this._textureCompressionTarget = {
+                    target: 'etc2rgba',
+                    linearFormat: THREE.RGBA_ETC2_EAC_Format,
+                    srgbFormat: 0x9279,
+                    name: 'ETC2 RGBA'
+                };
+            }
+        } catch (_) {
+            this._textureCompressionTarget = null;
+        } finally {
+            if (gl) gl.getExtension('WEBGL_lose_context')?.loseContext();
+        }
+        return this._textureCompressionTarget;
+    }
+
+    // Compress one native-decoded RGBA8 scene image through the universal uni
+    // intermediate and upload device-native blocks. Returns null when the ABI
+    // or a suitable WebGL format is unavailable, preserving the DataTexture
+    // fallback below.
+    static createCompressedSceneTexture(texImage, mapProperty = '') {
+        if (!this.sceneTextureCompressionEnabled || !texImage?.decoded ||
+            texImage.channels !== 4 || texImage.width <= 0 || texImage.height <= 0 ||
+            !texImage.data) {
+            return null;
+        }
+        const tinyusdz = this._tinyusdz;
+        if (!tinyusdz || typeof tinyusdz.compressTextureToUni !== 'function' ||
+            typeof tinyusdz.transcodeTextureUni !== 'function') {
+            return null;
+        }
+        const pick = this.detectTextureCompressionTarget();
+        if (!pick) return null;
+
+        const rgba = texImage.data instanceof Uint8Array
+            ? texImage.data
+            : new Uint8Array(texImage.data);
+        if (rgba.byteLength !== texImage.width * texImage.height * 4) return null;
+
+        try {
+            // DataTexture.flipY cannot be applied by compressedTexImage2D, so
+            // perform the scene loader's usual Y flip before block encoding.
+            const uni = tinyusdz.compressTextureToUni(
+                rgba, texImage.width, texImage.height, true);
+            if (!uni?.success || !uni.data) return null;
+            const blocks = tinyusdz.transcodeTextureUni(
+                uni.data, texImage.width, texImage.height, pick.target);
+            if (!blocks?.success || !blocks.data) return null;
+
+            const data = blocks.data instanceof Uint8Array
+                ? blocks.data
+                : new Uint8Array(blocks.data);
+            const isColor = this.textureColorRole(mapProperty) === 'color';
+            const texture = new THREE.CompressedTexture(
+                [{ data, width: texImage.width, height: texImage.height }],
+                texImage.width,
+                texImage.height,
+                // Three.js accepts its base compressed-format constants here
+                // and selects the linear/sRGB GL internal format from
+                // texture.colorSpace. Raw COMPRESSED_SRGB_* enums are not
+                // recognized as THREE.Texture.format values.
+                pick.linearFormat,
+                THREE.UnsignedByteType
+            );
+            texture.colorSpace = isColor
+                ? THREE.SRGBColorSpace
+                : THREE.NoColorSpace;
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.generateMipmaps = false;
+            texture.flipY = false;
+            texture.userData.tinyusdzCompression = {
+                format: pick.name,
+                rgbaBytes: rgba.byteLength,
+                uniBytes: Number(uni.byteLength) || uni.data.byteLength,
+                gpuBytes: Number(blocks.byteLength) || data.byteLength,
+                linearFormat: pick.linearFormat,
+                srgbFormat: pick.srgbFormat
+            };
+            texture.needsUpdate = true;
+            return texture;
+        } catch (error) {
+            console.warn('TinyUSDZ scene texture compression failed; using RGBA8:', error);
+            return null;
+        }
+    }
+
+    // Browser-decoded PNG/JPEG/WebP path. Read the HTML image back once, then
+    // use the same uni route as native-decoded USDZ images. Cross-origin or
+    // non-DOM images simply keep their original THREE.Texture.
+    static compressBrowserSceneTexture(texture, mapProperty = '') {
+        const image = texture?.image;
+        if (!image || typeof document === 'undefined' || !document.createElement) {
+            return null;
+        }
+        const width = image.naturalWidth || image.videoWidth || image.width;
+        const height = image.naturalHeight || image.videoHeight || image.height;
+        if (!Number.isFinite(width) || !Number.isFinite(height) ||
+            width <= 0 || height <= 0) {
+            return null;
+        }
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext('2d', { willReadFrequently: true });
+            if (!context) return null;
+            context.drawImage(image, 0, 0, width, height);
+            const rgba = context.getImageData(0, 0, width, height).data;
+            const compressed = this.createCompressedSceneTexture({
+                decoded: true,
+                width,
+                height,
+                channels: 4,
+                data: rgba
+            }, mapProperty);
+            if (compressed) texture.dispose();
+            return compressed;
+        } catch (_) {
+            // A cross-origin image without CORS permission taints the canvas.
+            return null;
+        }
+    }
+
     // Extract file extension from URI/path
     static getFileExtension(uri) {
         if (!uri || typeof uri !== 'string') return '';
@@ -375,6 +625,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             'tif': 'image/tiff',
             'svg': 'image/svg+xml',
             'ico': 'image/x-icon',
+            'ktx2': 'image/ktx2',
 
             // HDR/EXR formats
             'hdr': 'image/vnd.radiance',
@@ -402,9 +653,87 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             'psd',
             'tga',
             'dds',
-            'ktx',
-            'ktx2'
+            'ktx'
         ]).has(String(extension || '').toLowerCase());
+    }
+
+    static classifyKTX2Image(texImage) {
+        const uriKTX2 = this.getFileExtension(texImage?.uri || '') === 'ktx2';
+        if (!texImage?.data) return uriKTX2 ? { kind: 'unknown' } : null;
+        const data = texImage.data instanceof Uint8Array
+            ? texImage.data
+            : new Uint8Array(texImage.data);
+        const identifier = [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32,
+            0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a];
+        if (data.byteLength < identifier.length ||
+            !identifier.every((value, index) => data[index] === value)) {
+            return uriKTX2 ? { kind: 'unknown' } : null;
+        }
+        if (data.byteLength < 80) return { kind: 'unknown' };
+
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const vkFormat = view.getUint32(12, true);
+        const supercompression = view.getUint32(44, true);
+        const dfdOffset = view.getUint32(48, true);
+        const dfdLength = view.getUint32(52, true);
+        if (vkFormat !== 0) {
+            return { kind: 'standard', vkFormat, supercompression };
+        }
+        if (dfdLength >= 44 && dfdOffset >= 80 &&
+            dfdOffset + dfdLength <= data.byteLength) {
+            const colorModel = data[dfdOffset + 12];
+            // TinyEXR's corrected private carrier deliberately uses the
+            // UNSPECIFIED model. Basis ETC1S/UASTC use Khronos models 163/166.
+            if (colorModel === 0) {
+                return { kind: 'private-uni', vkFormat, supercompression };
+            }
+            if (colorModel === 163 || colorModel === 166 ||
+                supercompression === 1) {
+                return { kind: 'basis', vkFormat, supercompression, colorModel };
+            }
+            return { kind: 'undefined-format', vkFormat, supercompression,
+                colorModel };
+        }
+        return { kind: 'unknown', vkFormat, supercompression };
+    }
+
+    static isKTX2Image(texImage) {
+        return this.classifyKTX2Image(texImage) !== null;
+    }
+
+    static unsupportedKTX2Error(textureId, uri) {
+        const err = new Error(
+            `KTX2 texture requires WebGL and Three.js KTX2Loader support: ${uri || `texture ${textureId}`}`);
+        err.name = 'UnsupportedTextureFormatError';
+        err.textureId = textureId;
+        err.textureAssetPath = uri || undefined;
+        err.extension = 'ktx2';
+        return err;
+    }
+
+    static privateUniKTX2Error(textureId, uri) {
+        const err = new Error(
+            `TinyEXR private uni KTX2 must be decoded by tinyusdz/textools, not Three.js KTX2Loader: ${uri || `texture ${textureId}`}`);
+        err.name = 'UnsupportedTextureFormatError';
+        err.textureId = textureId;
+        err.textureAssetPath = uri || undefined;
+        err.extension = 'ktx2';
+        err.ktx2Kind = 'private-uni';
+        return err;
+    }
+
+    static loadKTX2Texture(source, textureId, uri) {
+        const loader = this.getKTX2Loader();
+        if (!loader) return Promise.reject(this.unsupportedKTX2Error(textureId, uri));
+        if (typeof source === 'string') return loader.loadAsync(source);
+
+        const bytes = source instanceof Uint8Array
+            ? source
+            : new Uint8Array(source);
+        // KTX2Loader transfers the buffer to a worker. Give it an exact owned
+        // copy so an Embind heap view cannot be detached or include neighbors.
+        const buffer = bytes.slice().buffer;
+        return new Promise((resolve, reject) => loader.parse(buffer, resolve, reject));
     }
 
     // Helper method to determine MIME type
@@ -446,7 +775,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return 'image/png';
     }
 
-    static async getTextureFromUSD(usdScene, textureId) {
+    static async getTextureFromUSD(usdScene, textureId, mapProperty = '') {
         if (textureId === undefined) return Promise.reject(new Error("textureId undefined"));
 
 
@@ -464,7 +793,15 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             return Promise.reject(err);
         }
         const extension = this.getFileExtension(uri);
-        if (this.isUnsupportedBrowserTextureExtension(extension)) {
+        const ktx2Info = this.classifyKTX2Image(texImage);
+        const isKTX2 = ktx2Info !== null;
+        if (!texImage.decoded && ktx2Info?.kind === 'private-uni') {
+            return Promise.reject(this.privateUniKTX2Error(textureId, uri));
+        }
+        if (!texImage.decoded && isKTX2 && !this.getKTX2Loader()) {
+            return Promise.reject(this.unsupportedKTX2Error(textureId, uri));
+        }
+        if (!texImage.decoded && this.isUnsupportedBrowserTextureExtension(extension)) {
             const err = new Error(`Texture format ".${extension}" is not supported by this browser demo: ${uri || `texture ${textureId}`}`);
             err.name = 'UnsupportedTextureFormatError';
             err.textureId = textureId;
@@ -482,7 +819,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // Case 1: URI only
             const lowerUri = uri.toLowerCase();
 
-            if (lowerUri.endsWith('.exr')) {
+            if (isKTX2) {
+                return this.loadKTX2Texture(uri, textureId, uri)
+                    .then((texture) => this.applyTextureSampler(texture, tex));
+            } else if (lowerUri.endsWith('.exr')) {
                 // EXR: Use EXRLoader
                 return new EXRLoader().loadAsync(uri)
                     .then((texture) => this.applyTextureSampler(texture, tex));
@@ -493,12 +833,20 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             } else {
                 // Standard image
                 return new THREE.TextureLoader().loadAsync(uri)
+                    .then((texture) =>
+                        this.compressBrowserSceneTexture(texture, mapProperty) || texture)
                     .then((texture) => this.applyTextureSampler(texture, tex));
             }
 
         } else if (texImage.bufferId >= 0 && texImage.data) {
 
             if (texImage.decoded) {
+
+                const compressed = this.createCompressedSceneTexture(
+                    texImage, mapProperty);
+                if (compressed) {
+                    return Promise.resolve(this.applyTextureSampler(compressed, tex));
+                }
 
                 const image8Array = new Uint8ClampedArray(texImage.data);
                 const texture = new THREE.DataTexture(image8Array, texImage.width, texImage.height);
@@ -522,6 +870,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             } else {
                 // Case 2: Embedded but not decoded - check format
                 try {
+                    if (isKTX2) {
+                        return this.loadKTX2Texture(texImage.data, textureId, uri)
+                            .then((texture) => this.applyTextureSampler(texture, tex));
+                    }
                     const mimeType = this.getMimeType(texImage);
 
                     // Check if HDR/EXR format - use specialized decoders
@@ -573,6 +925,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                         const blobUrl = URL.createObjectURL(blob);
                         const loader = new THREE.TextureLoader();
                         return loader.loadAsync(blobUrl)
+                            .then((texture) =>
+                                this.compressBrowserSceneTexture(texture, mapProperty) || texture)
                             .then((texture) => this.applyTextureSampler(texture, tex))
                             .finally(() => URL.revokeObjectURL(blobUrl));
                     }
@@ -649,9 +1003,16 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
     static applyTextureMapDefaults(texture, mapProperty) {
         if (!texture) return texture;
-        texture.colorSpace = this.textureColorRole(mapProperty) === 'color'
+        const isColor = this.textureColorRole(mapProperty) === 'color';
+        texture.colorSpace = isColor
             ? THREE.SRGBColorSpace
             : THREE.NoColorSpace;
+        const compression = texture.userData?.tinyusdzCompression;
+        if (texture.isCompressedTexture && compression) {
+            // Keep Three's base format constant; colorSpace controls which GPU
+            // compressed internal format WebGLUtils chooses.
+            texture.format = compression.linearFormat;
+        }
         texture.needsUpdate = true;
         return texture;
     }
@@ -905,7 +1266,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 if (materialName) {
                     textureInfo.materialName = materialName;
                 }
-                this.getTextureFromUSD(usdScene, textureId).then((texture) => {
+                this.getTextureFromUSD(usdScene, textureId, mapProperty).then((texture) => {
                     this.applyTextureMapDefaults(texture, mapProperty);
                     material[mapProperty] = texture;
                     material.needsUpdate = true;

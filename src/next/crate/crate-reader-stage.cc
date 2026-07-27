@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDC Crate Reader stage reconstruction
 
 #include "crate-reader-internal.hh"
+#include "../layer/array-edit.hh"
 #include "../layer/layer.hh"
 #include "../parser/lexer.hh"          // dict-as-USDA-text decode
 #include "../parser/value-parser.hh"  // ParseDict
@@ -39,7 +40,24 @@ static TypedExtensionField MakeTypedExtensionField(std::string name,
   if (const std::string* source = extension.value.as_string()) {
     extension.unregistered_source = *source;
     Value dictionary = ParseDictText(*source);
-    if (dictionary.is_dictionary()) extension.value = std::move(dictionary);
+    if (dictionary.is_dictionary()) {
+      extension.value = std::move(dictionary);
+    } else {
+      // The raw text is the authored USDA spelling (quotes included for
+      // strings). Reduce it to a typed value when it parses cleanly so the
+      // USDA writer's PrintValue quotes once instead of re-quoting the raw
+      // text; unparseable text (e.g. "$Side") keeps the string as-is.
+      // unregistered_source stays verbatim — the crate rewrite contract.
+      Lexer value_lexer(extension.unregistered_source.data(),
+                        extension.unregistered_source.size());
+      TypeId inferred = TypeId::Invalid;
+      ParseResult parsed = ParseGenericValue(value_lexer, inferred);
+      if (parsed.success && inferred != TypeId::Invalid &&
+          !value_lexer.has_error() && !value_lexer.has_fatal_error() &&
+          value_lexer.peek().type == TokenType::Eof) {
+        extension.value = std::move(parsed.value);
+      }
+    }
   }
   return extension;
 }
@@ -77,6 +95,9 @@ bool CrateReader::Impl::DecodePropMetaField(const std::string& name,
   if (name == "outputName") return tok_or_str(pm.outputName, PropMeta::kOutputName);
   if (name == "bindMaterialAs") return tok_or_str(pm.bindMaterialAs, PropMeta::kBindMaterialAs);
   if (name == "kind") return tok_or_str(pm.kind, PropMeta::kKind);
+  if (name == "permission") {
+    return tok_or_str(pm.permission, PropMeta::kPermission);
+  }
   if (name == "displayName") return tok_or_str(pm.displayName, PropMeta::kDisplayName);
   if (name == "displayGroup") return tok_or_str(pm.displayGroup, PropMeta::kDisplayGroup);
   if (name == "comment") return tok_or_str(pm.comment, PropMeta::kComment);
@@ -194,6 +215,11 @@ bool CrateReader::Impl::BuildStage() {
         if (d) {
           layer.meta().metersPerUnit = *d;
           layer.meta().metersPerUnit_set = true;
+        }
+      } else if (field.first == "hasOwnedSubLayers") {
+        if (const bool* b = field.second.as_bool()) {
+          layer.meta().hasOwnedSubLayers = *b;
+          layer.meta().hasOwnedSubLayers_set = true;
         }
       } else if (field.first == "timeCodesPerSecond") {
         const double* d = field.second.as_double();
@@ -448,13 +474,21 @@ bool CrateReader::Impl::BuildStage() {
     // referenced prim (a forced "Xform" default would mask e.g. a referenced
     // Mesh definition; the writer already skips empty type names).
     entry.type_name.clear();
-    entry.specifier = PrimSpecifier::Def;
+    // A crate spec with NO `specifier` field composes as `over` in pxr —
+    // for variant holder specs (which never carry one) AND for prim specs
+    // (prim-with-no-specifier-001; pxr writes the field for every def, so
+    // real crates are unaffected). A Def default here wrongly promoted
+    // specifier-less specs to def during composition.
+    entry.specifier = PrimSpecifier::Over;
     for (auto& f : value_field_scratch) {
       if (f.first == "typeName") {
         if (const std::string* s = f.second.as_token()) entry.type_name = *s;
+        // Legacy "no prim type" spelling (pxr composes it as untyped).
+        if (entry.type_name == "__AnyType__") entry.type_name.clear();
       } else if (f.first == "specifier") {
         if (const std::string* s = f.second.as_token()) {
-          if (*s == "over") entry.specifier = PrimSpecifier::Over;
+          if (*s == "def") entry.specifier = PrimSpecifier::Def;
+          else if (*s == "over") entry.specifier = PrimSpecifier::Over;
           else if (*s == "class") entry.specifier = PrimSpecifier::Class;
         }
       }
@@ -477,6 +511,8 @@ bool CrateReader::Impl::BuildStage() {
     std::string type_name;
     bool has_default = false;
     Value default_value;
+    bool has_array_edit = false;
+    ArrayEditData array_edit;  // VtArrayEdit default (crate 0.14)
     bool is_connection = false;
     std::vector<std::string> connection_targets;
     ArcEdit connection_edit;
@@ -545,7 +581,11 @@ bool CrateReader::Impl::BuildStage() {
       for (auto& f : property_raw_field_scratch) {
         if (f.first == "targetPaths") {
           std::vector<std::string> raw;
-          DecodePathTargets(f.second, raw, /*with_markers=*/true);
+          if (!DecodePathTargets(f.second, raw, /*with_markers=*/true)) {
+            AddWarning("Failed to decode relationship targets on " +
+                       prim_path + "." + ri.name);
+            continue;
+          }
           if (raw.size() == 1 && (raw[0] == "\x01" "E" || raw[0] == "\x01E")) {
             // Authored explicit-clear (`rel r = None`): a declared,
             // target-less relationship with an authored (explicit) edit.
@@ -580,6 +620,9 @@ bool CrateReader::Impl::BuildStage() {
           Value v;
           if (UnpackValue(f.second, v)) {
             if (const bool* b = v.as_bool()) ri.custom = *b;
+          } else {
+            AddWarning("Failed to decode relationship custom flag on " +
+                       prim_path + "." + ri.name);
           }
         } else if (f.first == "variability") {
           Value v;
@@ -589,6 +632,9 @@ bool CrateReader::Impl::BuildStage() {
               ri.uniform = (*s == "uniform");
               ri.varying = (*s == "varying");
             }
+          } else {
+            AddWarning("Failed to decode relationship variability on " +
+                       prim_path + "." + ri.name);
           }
         } else if (!DecodePropMetaField(f.first, f.second, ri.meta)) {
           Value value;
@@ -614,18 +660,37 @@ bool CrateReader::Impl::BuildStage() {
         Value v;
         if (UnpackValue(f.second, v)) {
           if (const std::string* s = v.as_token()) ai.type_name = *s;
+        } else {
+          AddWarning("Failed to decode typeName on " + prim_path + "." +
+                     ai.name);
         }
       } else if (f.first == "default") {
-        Value v;
-        if (UnpackValue(f.second, v)) {
-          ai.default_value = std::move(v);
-          ai.has_default = true;
+        if (f.second.is_array_edit()) {
+          // Sparse VtArrayEdit default: structured edit, not a Value.
+          if (UnpackArrayEditData(f.second, &ai.array_edit)) {
+            ai.has_array_edit = true;
+          }
+        } else {
+          Value v;
+          if (UnpackValue(f.second, v)) {
+            ai.default_value = std::move(v);
+            ai.has_default = true;
+          } else {
+            AddWarning("Failed to decode default value on " + prim_path +
+                       "." + ai.name);
+          }
         }
       } else if (f.first == "timeSamples") {
-        DecodeTimeSamples(f.second, &ai.time_samples);
+        if (!DecodeTimeSamples(f.second, &ai.time_samples)) {
+          AddWarning("Failed to decode timeSamples on " + prim_path + "." +
+                     ai.name);
+        }
       } else if (f.first == "spline") {
         // Crate type-59 spline: decode to USDA text (PrimSpec's storage form).
-        DecodeSplineToText(f.second, &ai.spline_text);
+        if (!DecodeSplineToText(f.second, &ai.spline_text)) {
+          AddWarning("Failed to decode spline on " + prim_path + "." +
+                     ai.name);
+        }
       } else if (f.first == "connectionPaths") {
         std::vector<std::string> raw;
         if (DecodePathTargets(f.second, raw, /*with_markers=*/true)) {
@@ -660,11 +725,17 @@ bool CrateReader::Impl::BuildStage() {
             ai.connection_edit.is_explicit = true;
             ai.connection_targets = std::move(raw);
           }
+        } else {
+          AddWarning("Failed to decode connection paths on " + prim_path +
+                     "." + ai.name);
         }
       } else if (f.first == "variability") {
         Value v;
         if (UnpackValue(f.second, v)) {
           if (const std::string* s = v.as_token()) ai.uniform = (*s == "uniform");
+        } else {
+          AddWarning("Failed to decode variability on " + prim_path + "." +
+                     ai.name);
         }
       } else if (f.first == "custom") {
         // The legacy `custom` qualifier (pxr stores a bool field). Preserved on
@@ -672,6 +743,9 @@ bool CrateReader::Impl::BuildStage() {
         Value v;
         if (UnpackValue(f.second, v)) {
           if (const bool* b = v.as_bool()) ai.custom = *b;
+        } else {
+          AddWarning("Failed to decode custom flag on " + prim_path + "." +
+                     ai.name);
         }
       } else if (!DecodePropMetaField(f.first, f.second, ai.meta)) {
         Value value;
@@ -1014,6 +1088,13 @@ bool CrateReader::Impl::BuildStage() {
           ps->meta().setKindAuthored();
           continue;
         }
+        if (field.first == "permission") {
+          if (const std::string* s = field.second.as_token())
+            ps->meta().permission() = *s;
+          else if (const std::string* s = field.second.as_string())
+            ps->meta().permission() = *s;
+          continue;
+        }
         if (field.first == "displayName") {
           if (const std::string* s = field.second.as_string())
             ps->meta().displayName() = *s;
@@ -1282,6 +1363,21 @@ bool CrateReader::Impl::BuildStage() {
             ai.type_name.compare(ai.type_name.size() - 2, 2, "[]") == 0;
         if (ai.has_default) {
           ps->add_property(ai.name, std::move(ai.default_value), flags);
+        } else if (ai.has_array_edit) {
+          // Sparse array-edit default: a typed slot with the structured edit
+          // and its canonical `edit [...]` text (usda writer re-emits it;
+          // composition stacks/resolves it).
+          uint16_t edit_flags = flags;
+          if (is_array) edit_flags |= PropSlot::kFlagArray;
+          std::string base_tn = is_array
+              ? ai.type_name.substr(0, ai.type_name.size() - 2)
+              : ai.type_name;
+          ps->add_property_slot(GetPropNameTable().intern(ai.name),
+                                GetTypeIdFromName(base_tn.c_str()),
+                                edit_flags);
+          ps->set_raw_default_source(ai.name,
+                                     BuildArrayEditText(ai.array_edit));
+          ps->set_array_edit(ai.name, std::move(ai.array_edit));
         } else {
           // Connection-only / declared-only / timeSamples-only attribute:
           // register a typed slot with no authored default so it round-trips.

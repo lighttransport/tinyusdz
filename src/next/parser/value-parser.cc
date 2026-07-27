@@ -140,10 +140,77 @@ ParseResult ParseGenericValue(Lexer& lexer, TypeId& out_type) {
   }
 
   if (tok.type == TokenType::OpenParen) {
-    // Could be a tuple - peek ahead to determine size
-    // For now, assume float3 as default
-    out_type = TypeId::Float3;
-    return ParseFloat3(lexer);
+    // Count elements in the tuple to determine arity before parsing.
+    // Save byte position of '(' so we can reset the lexer after the scan pass.
+    size_t saved_pos = lexer.token_start();
+    lexer.next();  // consume '('
+    size_t count = 1;
+    size_t depth = 1;
+    bool all_int = true;
+    while (depth > 0) {
+      const Token& t = lexer.peek();
+      if (t.type == TokenType::Eof) break;
+      if (t.type == TokenType::OpenParen) {
+        depth++;
+      } else if (t.type == TokenType::CloseParen) {
+        depth--;
+        if (depth == 0) break;
+      } else if (t.type == TokenType::Comma && depth == 1) {
+        count++;
+      } else if (IsNumberToken(t)) {
+        if (t.value.find('.') != std::string::npos ||
+            t.value.find('e') != std::string::npos ||
+            t.value.find('E') != std::string::npos) {
+          all_int = false;
+        }
+      }
+      lexer.next();
+    }
+    if (depth != 0) {
+      return ParseResult::Error("Unmatched '(' in tuple");
+    }
+
+    // Reset lexer to saved_pos and re-parse with the correct arity.
+    lexer.set_position(saved_pos);
+
+    if (!all_int) {
+      switch (count) {
+        case 2: {
+          out_type = TypeId::Float2;
+          return ParseFloat2(lexer);
+        }
+        case 3: {
+          out_type = TypeId::Float3;
+          return ParseFloat3(lexer);
+        }
+        case 4: {
+          out_type = TypeId::Float4;
+          return ParseFloat4(lexer);
+        }
+        default:
+          break;
+      }
+    } else {
+      switch (count) {
+        case 2: {
+          out_type = TypeId::Int2;
+          return ParseInt2(lexer);
+        }
+        case 3: {
+          out_type = TypeId::Int3;
+          return ParseInt3(lexer);
+        }
+        case 4: {
+          out_type = TypeId::Int4;
+          return ParseInt4(lexer);
+        }
+        default:
+          break;
+      }
+    }
+
+    out_type = TypeId::Invalid;
+    return ParseResult::Error("Unsupported tuple arity " + std::to_string(count));
   }
 
   if (tok.type == TokenType::None) {

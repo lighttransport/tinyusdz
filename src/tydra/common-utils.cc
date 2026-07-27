@@ -7,6 +7,7 @@
 #include <limits>
 #include "../str-util.hh"
 #include "tiny-format.hh"
+#include "../safe-arithmetic.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -154,12 +155,19 @@ nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
                     src.size(), elementSize));
   }
   
-  std::vector<uint8_t> dst(numVertices * elementSize);
-  
+  size_t dstBytes;
+  if (!safe::mul(numVertices, size_t(elementSize), &dstBytes)) {
+    return nonstd::make_unexpected(
+        fmt::format("Integer overflow: {} * {} exceeds size_t range",
+                    numVertices, elementSize));
+  }
+
+  std::vector<uint8_t> dst(dstBytes);
+
   for (size_t i = 0; i < numVertices; i++) {
     std::memcpy(dst.data() + i * elementSize, src.data(), elementSize);
   }
-  
+
   return std::move(dst);
 }
 
@@ -183,8 +191,15 @@ nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     totalFaceVertices += faceVertexCounts[i];
   }
-  
-  std::vector<uint8_t> dst(totalFaceVertices * elementSize);
+
+  size_t dstBytes;
+  if (!safe::mul(totalFaceVertices, size_t(elementSize), &dstBytes)) {
+    return nonstd::make_unexpected(
+        fmt::format("Integer overflow: totalFaceVertices {} * elementSize {}",
+                    totalFaceVertices, elementSize));
+  }
+
+  std::vector<uint8_t> dst(dstBytes);
   
   for (size_t i = 0; i < totalFaceVertices; i++) {
     std::memcpy(dst.data() + i * elementSize, src.data(), elementSize);
@@ -248,13 +263,24 @@ std::string ChannelToString(int channel_value) {
   }
 }
 
-std::string SanitizeAssetPath(const std::string& path) {
+std::string SanitizeAssetPath(const std::string& path, bool allow_parent_refs) {
   if (path.empty()) {
     return {};
   }
 
   std::string normalized = path;
   std::replace(normalized.begin(), normalized.end(), '\\', '/');
+
+  // Remember the leading slash(es): the split/rejoin below works on path
+  // SEGMENTS and would otherwise turn an absolute "/a/b" into a relative "a/b"
+  // (and a UNC "//host/share" into "host/share"), which then resolves against
+  // the wrong base — or not at all.
+  std::string root;
+  if (normalized.size() >= 2 && normalized[0] == '/' && normalized[1] == '/') {
+    root = "//";  // UNC
+  } else if (!normalized.empty() && normalized[0] == '/') {
+    root = "/";
+  }
 
   std::vector<std::string> parts;
   parts.reserve(16);
@@ -266,10 +292,19 @@ std::string SanitizeAssetPath(const std::string& path) {
 
     if (!part.empty() && part != ".") {
       if (part == "..") {
-        if (parts.empty()) {
+        // Collapse "<seg>/.." lexically. A ".." that cannot pop a real
+        // preceding segment escapes the anchoring root: reject it as a
+        // path-traversal guard, unless the caller opted into parent-relative
+        // paths, in which case preserve the leading ".." so the resolver
+        // rebases it against its base dir / search paths (mirrors
+        // security_policy::ValidateAndNormalizeAssetPath).
+        if (!parts.empty() && parts.back() != "..") {
+          parts.pop_back();
+        } else if (allow_parent_refs) {
+          parts.push_back("..");
+        } else {
           return {};
         }
-        parts.pop_back();
       } else {
         parts.push_back(std::move(part));
       }
@@ -281,7 +316,7 @@ std::string SanitizeAssetPath(const std::string& path) {
     begin = end + 1;
   }
 
-  std::string result;
+  std::string result = root;
   for (size_t i = 0; i < parts.size(); i++) {
     if (i > 0) {
       result.push_back('/');

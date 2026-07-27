@@ -20,6 +20,43 @@ bool IsNodeGraph(const UsdPrim& prim) {
   return prim.IsValid() && prim.GetTypeName() == "NodeGraph";
 }
 
+namespace {
+
+// First purpose-preferred binding whose target resolves to a Material. A
+// dangling preview-purpose target must not hide a valid all-purpose/full target
+// on the same prim. Optionally reports the strength metadata of the relationship
+// that actually won (rather than the first authored, possibly dangling one).
+std::string GetValidBoundMaterialPath(const Stage& stage, const UsdPrim& prim,
+                                      bool* stronger = nullptr,
+                                      const std::string& purpose = "") {
+  if (stronger) *stronger = false;
+  if (!prim.IsValid()) return "";
+  static const char* kBindingOrder[] = {"material:binding:preview",
+                                        "material:binding",
+                                        "material:binding:full"};
+  const PrimSpec* spec = prim.GetPrimSpec();
+  const std::string purpose_rel =
+      purpose.empty() ? std::string() : "material:binding:" + purpose;
+  const size_t count = purpose.empty() ? size_t{3} : size_t{1};
+  for (size_t i = 0; i < count; ++i) {
+    const char* rel = purpose.empty() ? kBindingOrder[i] : purpose_rel.c_str();
+    const std::vector<Path>* targets = prim.GetRelationship(rel);
+    if (!targets || targets->empty()) continue;
+    const std::string path = (*targets)[0].str();
+    if (!IsMaterial(stage.GetPrimAtPath(path))) continue;
+    if (stronger && spec) {
+      if (const PropMeta* pm = spec->property_meta(rel)) {
+        *stronger = (pm->authored & PropMeta::kBindMaterialAs) &&
+                    pm->bindMaterialAs == "strongerThanDescendants";
+      }
+    }
+    return path;
+  }
+  return "";
+}
+
+}  // namespace
+
 // ============================================================
 // Material API Implementation
 // ============================================================
@@ -81,7 +118,7 @@ bool GetMaterialBinding(const Stage& stage, const UsdPrim& material,
 }
 
 UsdPrim GetBoundMaterial(const Stage& stage, const UsdPrim& prim) {
-  std::string path = GetBoundMaterialPath(prim);
+  std::string path = GetValidBoundMaterialPath(stage, prim);
   if (path.empty()) return UsdPrim();
 
   return stage.GetPrimAtPath(path);
@@ -104,6 +141,91 @@ std::string GetBoundMaterialPath(const UsdPrim& prim) {
     }
   }
   return "";
+}
+
+namespace {
+
+std::string ParentPathOf(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  if (slash == std::string::npos || slash == 0) return "";
+  return path.substr(0, slash);
+}
+
+}  // namespace
+
+bool BindingIsStrongerThanDescendants(const UsdPrim& prim) {
+  static const char* kBindingOrder[] = {"material:binding:preview",
+                                        "material:binding",
+                                        "material:binding:full"};
+  const PrimSpec* spec = prim.GetPrimSpec();
+  if (!spec) return false;
+  for (const char* rel : kBindingOrder) {
+    const std::vector<Path>* targets = prim.GetRelationship(rel);
+    if (!targets || targets->empty()) continue;
+    if (const PropMeta* pm = spec->property_meta(rel)) {
+      if ((pm->authored & PropMeta::kBindMaterialAs) &&
+          pm->bindMaterialAs == "strongerThanDescendants") {
+        return true;
+      }
+    }
+    return false;  // binding found; default weakerThanDescendants
+  }
+  return false;
+}
+
+std::string GetInheritedBoundMaterialPath(const Stage& stage,
+                                          const std::string& prim_path) {
+  // UsdShade binding INHERITANCE: a binding authored on an ancestor applies to
+  // every descendant. Walk leaf->root; the nearest binding wins by default, but
+  // an ancestor marked `bindMaterialAs="strongerThanDescendants"` overrides
+  // everything below it, so keep the highest such ancestor.
+  std::string leaf_binding;
+  std::string strongest_ancestor;
+  std::string path = prim_path;
+  while (!path.empty() && path != "/") {
+    UsdPrim prim = stage.GetPrimAtPath(path);
+    if (prim.IsValid()) {
+      bool stronger = false;
+      const std::string material_path =
+          GetValidBoundMaterialPath(stage, prim, &stronger);
+      if (!material_path.empty()) {
+        if (leaf_binding.empty()) leaf_binding = material_path;
+        if (path != prim_path && stronger) {
+          strongest_ancestor = material_path;  // higher ancestors overwrite
+        }
+      }
+    }
+    path = ParentPathOf(path);
+  }
+  return strongest_ancestor.empty() ? leaf_binding : strongest_ancestor;
+}
+
+std::string GetInheritedBoundMaterialPathForPurpose(
+    const Stage& stage, const std::string& prim_path,
+    const std::string& purpose) {
+  if (purpose.empty()) return GetInheritedBoundMaterialPath(stage, prim_path);
+
+  std::string path = prim_path;
+  std::string leaf_binding;
+  std::string strongest_ancestor;
+  while (!path.empty() && path != "/") {
+    const UsdPrim prim = stage.GetPrimAtPath(path);
+    if (prim.IsValid()) {
+      bool stronger = false;
+      const std::string material_path =
+          GetValidBoundMaterialPath(stage, prim, &stronger, purpose);
+      if (!material_path.empty()) {
+        if (leaf_binding.empty()) leaf_binding = material_path;
+        if (path != prim_path && stronger) {
+          strongest_ancestor = material_path;
+        }
+      }
+    }
+    const size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos || slash == 0) break;
+    path.resize(slash);
+  }
+  return strongest_ancestor.empty() ? leaf_binding : strongest_ancestor;
 }
 
 // ============================================================

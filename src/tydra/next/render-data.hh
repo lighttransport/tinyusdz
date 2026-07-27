@@ -232,6 +232,9 @@ struct VertexAttribute {
 struct RenderMesh {
   std::string name;
   std::string prim_path;
+  // True for an extent-derived low-cost stand-in emitted by a streaming sink
+  // policy instead of the authored geometry payload.
+  bool is_proxy = false;
 
   // Topology
   UInt32Chunked face_vertex_counts;   // Number of verts per face
@@ -247,6 +250,13 @@ struct RenderMesh {
   FloatChunked texcoords_1;       // Secondary UV
   FloatChunked colors;            // Vertex colors (rgb or rgba)
   FloatChunked opacities;         // displayOpacity (1 float per element)
+
+  // Authored primvar names of the two UV sets (e.g. "st", "UVMap"). Empty when
+  // the set is absent. A texture names the set it samples via
+  // RenderTexture::uv_primvar, so a consumer matches that against these to pick
+  // the slot.
+  std::string texcoords_0_name;
+  std::string texcoords_1_name;
 
   // Interpolation modes for attributes
   Interpolation normals_interp = Interpolation::Vertex;
@@ -339,6 +349,9 @@ struct RenderMesh {
   // triangulated_indices as CCW uniformly; computed normals follow.
   bool left_handed = false;
 
+  // Authored `doubleSided`. false (the USD default) = back-face cull.
+  bool double_sided = false;
+
   // Triangulated data (computed on demand)
   UInt32Chunked triangulated_indices;
   // Per triangulated CORNER, the original face-vertex (corner) index into the
@@ -376,8 +389,10 @@ struct RenderPoints {
 
   FloatChunked points;  // xyz interleaved, size = point_count * 3
   FloatChunked widths;  // optional per-point or constant authored width
-  FloatChunked colors;  // optional rgb/rgba displayColor data
+  FloatChunked colors;  // optional rgb displayColor data
   Interpolation colors_interp = Interpolation::Vertex;
+  FloatChunked opacities;  // optional scalar displayOpacity data
+  Interpolation opacities_interp = Interpolation::Vertex;
 
   int32_t material_id = -1;
 
@@ -388,11 +403,12 @@ struct RenderPoints {
   size_t point_count() const { return points.size() / 3; }
   bool has_widths() const { return !widths.empty(); }
   bool has_colors() const { return !colors.empty(); }
+  bool has_opacities() const { return !opacities.empty(); }
   size_t memory_usage() const;
 };
 
 //
-// RenderCurves - curve prim data for UsdGeomBasisCurves / UsdGeomNurbsCurves.
+// RenderCurves - curve prim data for BasisCurves, NurbsCurves and HermiteCurves.
 //
 // Carries both the authored CONTROL data (control points, widths, colors,
 // topology) and a render-ready TESSELLATED polyline representation produced
@@ -412,11 +428,14 @@ struct RenderCurves {
   Interpolation widths_interp = Interpolation::Constant;
   FloatChunked colors;   // displayColor, rgb interleaved
   Interpolation colors_interp = Interpolation::Constant;
+  FloatChunked opacities;  // displayOpacity, scalar
+  Interpolation opacities_interp = Interpolation::Constant;
 
   CurveType type = CurveType::Cubic;
   CurveBasis basis = CurveBasis::Bezier;  // cubic BasisCurves only
   CurveWrap wrap = CurveWrap::Nonperiodic;
   bool is_nurbs = false;  // true = NurbsCurves (order/knots evaluated)
+  bool is_hermite = false;  // true = HermiteCurves (point/tangent pairs)
 
   //
   // Tessellated polylines (render-ready output)
@@ -430,6 +449,8 @@ struct RenderCurves {
   FloatChunked tessellated_widths;
   // Per-tessellated-point display colors. Empty when displayColor is absent.
   FloatChunked tessellated_colors;
+  // Per-tessellated-point display opacity. Empty when absent or constant.
+  FloatChunked tessellated_opacities;
 
   int32_t material_id = -1;
 
@@ -451,6 +472,17 @@ struct RenderCurves {
 // RenderPointInstancer - render-ready instance arrays for UsdGeomPointInstancer
 //
 struct RenderPointInstancer {
+  struct CompactInstance {
+    float position[3];
+    uint32_t packed_orientation;  // four signed normalized 8-bit components
+    uint16_t scale[3];            // IEEE 754 binary16
+    uint16_t flags;               // bit 0: visible and active
+    int32_t prototype_index;
+    uint32_t source_index;
+  };
+  static_assert(sizeof(CompactInstance) == 32,
+                "Compact PointInstancer record must remain 32 bytes");
+
   std::string name;
   std::string prim_path;
 
@@ -470,13 +502,17 @@ struct RenderPointInstancer {
   std::vector<int64_t> inactive_ids;
   std::vector<Matrix4> transforms;
   std::vector<uint8_t> instance_visible;  // 1 = visible/active, 0 = hidden
+  std::vector<CompactInstance> compact_instances;
   uint32_t draw_start = 0;
   uint32_t draw_count = 0;
 
   bool valid = false;
   std::string validation_error;
 
-  size_t instance_count() const { return proto_indices.size(); }
+  size_t instance_count() const {
+    return proto_indices.empty() ? compact_instances.size()
+                                 : proto_indices.size();
+  }
   size_t visible_instance_count() const;
   bool has_valid_draw_range(size_t total_draw_count) const;
   bool has_orientations() const { return !orientations.empty(); }
@@ -583,12 +619,15 @@ struct OpenPBRSurfaceShader {
   ShaderParam specular_roughness = {-1, {0.3f, 0, 0, 0}};
   ShaderParam specular_ior = {-1, {1.5f, 0, 0, 0}};
   ShaderParam specular_anisotropy = {-1, {0, 0, 0, 0}};
+  ShaderParam specular_roughness_anisotropy = {-1, {0, 0, 0, 0}};
   ShaderParam specular_rotation = {-1, {0, 0, 0, 0}};
 
   // Transmission
   ShaderParam transmission_weight = {-1, {0, 0, 0, 0}};
   ShaderParam transmission_color = {-1, {1, 1, 1, 1}};
   ShaderParam transmission_depth = {-1, {0, 0, 0, 0}};
+  ShaderParam transmission_dispersion = {-1, {0, 0, 0, 0}};
+  ShaderParam transmission_dispersion_scale = {-1, {0, 0, 0, 0}};
 
   // Subsurface
   ShaderParam subsurface_weight = {-1, {0, 0, 0, 0}};
@@ -600,11 +639,22 @@ struct OpenPBRSurfaceShader {
   ShaderParam coat_color = {-1, {1, 1, 1, 1}};
   ShaderParam coat_roughness = {-1, {0, 0, 0, 0}};
   ShaderParam coat_ior = {-1, {1.5f, 0, 0, 0}};
+  ShaderParam coat_anisotropy = {-1, {0, 0, 0, 0}};
+  ShaderParam coat_roughness_anisotropy = {-1, {0, 0, 0, 0}};
+  // OpenPBR's independently authored coat-layer normal. Keep this separate
+  // from `normal`: a missing coat normal falls back to the surface normal in
+  // consumers, but an authored map must retain its own image/UV descriptor.
+  ShaderParam coat_normal = {-1, {0, 0, 1, 0}};
 
   // Sheen
   ShaderParam sheen_weight = {-1, {0, 0, 0, 0}};
   ShaderParam sheen_color = {-1, {1, 1, 1, 1}};
   ShaderParam sheen_roughness = {-1, {0.3f, 0, 0, 0}};
+
+  // Thin-film / iridescence.
+  ShaderParam thin_film_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam thin_film_thickness = {-1, {0, 0, 0, 0}};
+  ShaderParam thin_film_ior = {-1, {1.5f, 0, 0, 0}};
 
   // Emission
   ShaderParam emission_luminance = {-1, {0, 0, 0, 0}};
@@ -614,6 +664,10 @@ struct OpenPBRSurfaceShader {
   ShaderParam opacity = {-1, {1, 0, 0, 0}};
   ShaderParam normal = {-1, {0, 0, 1, 0}};
   ShaderParam tangent = {-1, {1, 0, 0, 0}};
+  // Height/displacement output carried by MaterialX standard_surface graphs.
+  // OpenPBR itself does not define surface displacement, but retaining it here
+  // lets render consumers use the same geometry path as UsdPreviewSurface.
+  ShaderParam displacement = {-1, {0, 0, 0, 0}};
 
   // MaterialX node graph as JSON (optional)
   std::string nodegraph_json;
@@ -622,6 +676,29 @@ struct OpenPBRSurfaceShader {
 //
 // RenderMaterial
 //
+enum class MaterialDiagnosticKind : uint8_t {
+  UnsupportedShader = 0,
+  UnsupportedMaterialXNode,
+  DegradedMaterial
+};
+
+struct MaterialDiagnostic {
+  MaterialDiagnosticKind kind = MaterialDiagnosticKind::UnsupportedShader;
+  std::string material_path;
+  std::string node_path;
+  std::string shader_id;
+  std::string message;
+};
+
+// Authored shader inputs retained when the surface terminal cannot be fully
+// evaluated. These values are intentionally neutral to current real-time
+// shading, but remain available to future evaluators and diagnostics.
+struct RetainedMaterialParam {
+  std::string shader;
+  std::string name;
+  ShaderParam value;
+};
+
 struct RenderMaterial {
   std::string name;
   std::string prim_path;
@@ -641,6 +718,15 @@ struct RenderMaterial {
     OpenPBR
   };
   ShaderType shader_type = ShaderType::None;
+
+  // The material had no fully convertible surface shader and carries a
+  // degraded PreviewSurface instead of being dropped (see ConvertMaterial).
+  // Recognizable authored constants and texture inputs are retained when
+  // possible. Conversion still SUCCEEDS, so consumers that report load
+  // degradation must look here rather than relying on the return value.
+  bool default_fallback = false;
+  std::vector<MaterialDiagnostic> diagnostics;
+  std::vector<RetainedMaterialParam> retained_params;
 
   // Shader data (one of these based on shader_type)
   std::unique_ptr<PreviewSurfaceShader> preview_surface;
@@ -677,6 +763,13 @@ struct RenderTexture {
   std::string name;
   std::string prim_path;
   std::string asset_path;  // Original USD asset path
+
+  // Legacy-safe GPU-compressed companion named by the `inputs:file` attribute's
+  // `customData = { asset ktx2 = @foo.ktx2@ }` hint (see doc/texcomp.md). Empty
+  // when unauthored. `asset_path` still points at the plain image, so unaware
+  // consumers are unaffected; a consumer that can upload GPU blocks loads this
+  // instead.
+  std::string ktx2_hint;
 
   // UV transform
   Float2 offset = {0, 0};
@@ -749,6 +842,7 @@ struct RenderLight {
   float color_temperature = 6500.0f;
   float diffuse = 1.0f;
   float specular = 1.0f;
+  float shaping_cone_angle = 90.0f;
   float shaping_focus = 0.0f;
   Float3 shaping_focus_tint = {0, 0, 0};  // color3f per UsdLux ShapingAPI
   float shaping_cone_softness = 0.0f;

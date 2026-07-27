@@ -1,14 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gui.hh"
+#include "next/tinyusdz-next.hh"
+#include "tydra/next/scene-access.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 
+#ifndef _WIN32
+#include <unistd.h>  // sysconf (RSS page size)
+#endif
+
 #include "core/prim.hh"
 #include "gizmo_build.hh"
+#include "lod_math.hh"  // BoxFitXform (raster LOD box proxies)
 #include "light3d/camera.h"  // light3d::Frustum (per-mesh frustum culling)
 #include "gui_stringify.hh"
 #include "imgui.h"
@@ -42,6 +54,35 @@ const char* NodeTypeName(tydra::NodeType t) {
     case tydra::NodeType::GeometryLight: return "GeometryLight";
     default: return "Node";
   }
+}
+
+const char* MaterialParamTypeName(DrawMaterialParamType t) {
+  switch (t) {
+    case DrawMaterialParamType::Float: return "float";
+    case DrawMaterialParamType::Vec2: return "vec2";
+    case DrawMaterialParamType::Vec3: return "vec3";
+    case DrawMaterialParamType::Vec4: return "vec4";
+    default: return "value";
+  }
+}
+
+const char* MaterialParamChannelName(int channel) {
+  switch (channel) {
+    case 0: return "R";
+    case 1: return "G";
+    case 2: return "B";
+    case 3: return "A";
+    default: return "-";
+  }
+}
+
+bool HasNonIdentityUvXform(const DrawUvXformCPU& uv) {
+  return std::fabs(uv.m00 - 1.0f) > 1.0e-6f ||
+         std::fabs(uv.m01) > 1.0e-6f ||
+         std::fabs(uv.m10) > 1.0e-6f ||
+         std::fabs(uv.m11 - 1.0f) > 1.0e-6f ||
+         std::fabs(uv.tx) > 1.0e-6f ||
+         std::fabs(uv.ty) > 1.0e-6f;
 }
 
 // Greyed, word-wrapped hint text (TextDisabled does not wrap and would clip in
@@ -224,6 +265,8 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   inspectorCacheRows_.clear();
   // Reset per-mesh visibility to all-visible for the new scene.
   meshVisible_.assign(draw_ ? draw_->meshes.size() : 0, uint8_t{1});
+  carrierVisible_.assign(draw_ ? draw_->points.size() + draw_->curves.size() : 0,
+                         uint8_t{1});
   viewVisible_.clear();
   revealSelectionInHierarchy_ = false;
   // Start with nothing selected; the user selects via the viewport or hierarchy.
@@ -232,6 +275,10 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
 void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   renderer_ = renderer;
   cam_ = camera;
+  if (captureViewportOnly_) {
+    drawViewport();
+    return;
+  }
   drawDockspaceAndMenu();
   drawHierarchy();
   drawInspector();
@@ -246,6 +293,7 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawTimeline();
   drawAboutModal();
   drawLoadingModal();
+  drawProgressOverlay();
 }
 
 void Gui::drawAboutModal() {
@@ -314,13 +362,25 @@ void Gui::drawLoadingModal() {
     ImGui::TextDisabled("%s", loadStatus_.path.c_str());
     ImGui::Separator();
     if (loadStatus_.meshesTotal > 0) {
-      const float frac = static_cast<float>(loadStatus_.meshesDone) /
-                         static_cast<float>(loadStatus_.meshesTotal);
-      ImGui::ProgressBar(frac, ImVec2(300, 0));
+      const float meshFrac = static_cast<float>(loadStatus_.meshesDone) /
+                             static_cast<float>(loadStatus_.meshesTotal);
+      const float frac = loadStatus_.payloadsTotal > 0
+                             ? 0.2f + 0.8f * meshFrac
+                             : meshFrac;
+      ImGui::ProgressBar(std::clamp(frac, 0.0f, 1.0f), ImVec2(300, 0));
       ImGui::Text("Converting meshes: %lld / %lld", loadStatus_.meshesDone,
                   loadStatus_.meshesTotal);
+    } else if (loadStatus_.payloadsTotal > 0) {
+      const float payloadFrac = static_cast<float>(loadStatus_.payloadsDone) /
+                                static_cast<float>(loadStatus_.payloadsTotal);
+      ImGui::ProgressBar(std::clamp(0.2f * payloadFrac, 0.0f, 0.2f),
+                         ImVec2(300, 0));
+      ImGui::Text("Resolving payloads: %lld / %lld",
+                  loadStatus_.payloadsDone, loadStatus_.payloadsTotal);
     } else {
-      ImGui::Text("Parsing / converting...");
+      ImGui::ProgressBar(std::clamp(loadStatus_.phaseProgress, 0.0f, 1.0f),
+                         ImVec2(300, 0));
+      ImGui::Text("Parsing / composing...");
     }
     ImGui::Text("Elapsed: %.1f s", loadStatus_.elapsed);
     ImGui::Spacing();
@@ -332,6 +392,42 @@ void Gui::drawLoadingModal() {
     }
     ImGui::EndPopup();
   }
+}
+
+void Gui::drawProgressOverlay() {
+  // Non-modal: the partial scene stays visible/interactive while geometry streams
+  // to the GPU (raster) or the ray-tracing acceleration structure builds.
+  const bool show = upload_.active || !upload_.note.empty();
+  if (!show) return;
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                 vp->WorkPos.y + 12.0f),
+                          ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+  ImGui::SetNextWindowBgAlpha(0.85f);
+  const ImGuiWindowFlags flags =
+      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize |
+      ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings;
+  if (ImGui::Begin("##progress_overlay", nullptr, flags)) {
+    auto bar = [](const char* label, size_t done, size_t total) {
+      if (total == 0) return;
+      const float frac = static_cast<float>(done) / static_cast<float>(total);
+      char ov[64];
+      std::snprintf(ov, sizeof(ov), "%s %zu / %zu", label, done, total);
+      ImGui::ProgressBar(frac, ImVec2(260, 0), ov);
+    };
+    if (upload_.active) {
+      ImGui::TextUnformatted("Streaming scene to GPU\xE2\x80\xA6");
+      bar("meshes", upload_.meshesDone, upload_.meshesTotal);
+      if (upload_.meshesDone >= upload_.meshesTotal && upload_.texTotal > 0)
+        bar("textures", upload_.texDone, upload_.texTotal);
+      if (upload_.volTotal > 0) bar("volumes", upload_.volDone, upload_.volTotal);
+    }
+    if (!upload_.note.empty()) {
+      ImGui::TextColored(ImVec4(0.95f, 0.8f, 0.2f, 1.0f), "%s", upload_.note.c_str());
+    }
+  }
+  ImGui::End();
 }
 
 void Gui::buildDefaultLayout(unsigned int dockId) {
@@ -382,16 +478,38 @@ void Gui::drawDockspaceAndMenu() {
   const ImGuiID dockId = ImGui::GetID("TusdviewDockspace");
   ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
   if (!dockBuilt_) {
-    buildDefaultLayout(dockId);
+    bool hasSavedIni = false;
+    if (const char* ini = ImGui::GetIO().IniFilename) {
+      std::error_code ec;
+      hasSavedIni = std::filesystem::is_regular_file(std::filesystem::path(ini), ec);
+    }
+    if (!hasSavedIni) {
+      buildDefaultLayout(dockId);
+    }
     dockBuilt_ = true;
   }
 
   if (ImGui::BeginMenuBar()) {
     if (ImGui::BeginMenu("File")) {
       if (ImGui::MenuItem("Open...", "Ctrl+O")) wantOpen_ = true;
+      if (ImGui::BeginMenu("Open Recent", !recentScenes_.empty())) {
+        for (const std::string& p : recentScenes_) {
+          // Label with the file name; full path in a tooltip (paths are long).
+          std::string label = std::filesystem::path(p).filename().string();
+          if (label.empty()) label = p;
+          if (ImGui::MenuItem(label.c_str())) {
+            recentToOpen_ = p;
+            wantOpenRecent_ = true;
+          }
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.c_str());
+        }
+        ImGui::EndMenu();
+      }
       if (ImGui::MenuItem("Reload", "Ctrl+R", false, loaded_ != nullptr)) wantReload_ = true;
       {
-        const bool haveDeferred = loaded_ && !loaded_->comp.deferred.empty();
+        const bool haveDeferred =
+            !deferredPayloadPaths_.empty() ||
+            (loaded_ && !loaded_->comp.deferred.empty());
         if (ImGui::MenuItem("Load All Payloads", nullptr, false, haveDeferred)) {
           wantLoadAllPayloads_ = true;
         }
@@ -411,6 +529,12 @@ void Gui::drawDockspaceAndMenu() {
         static const AovItem kAovs[] = {
             {"Material ID", RenderMode::MaterialId},
             {"Normals (shading)", RenderMode::Normals},
+            {"Normals (coat)", RenderMode::CoatNormal},
+            {"Coat weight", RenderMode::CoatWeight},
+            {"Coat color", RenderMode::CoatColor},
+            {"Coat roughness", RenderMode::CoatRoughness},
+            {"Specular F0", RenderMode::SpecularF0},
+            {"IOR F0", RenderMode::IorF0},
             {"Normals (geometric)", RenderMode::GeomNormal},
             {"UV", RenderMode::Uv},
             {"UV checker", RenderMode::UvChecker},
@@ -591,8 +715,10 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::Separator();
       ImGui::TextDisabled("Viewport");
       ImGui::TextUnformatted("Alt+LMB  Orbit");
-      ImGui::TextUnformatted("Alt+MMB  Pan");
+      ImGui::TextUnformatted("Alt+MMB / Shift+Alt+LMB  Pan");
       ImGui::TextUnformatted("Alt+RMB / Wheel  Dolly");
+      ImGui::TextUnformatted("W / S  Move forward / backward (Shift = fast)");
+      ImGui::TextUnformatted("V  Cycle wireframe (off / wire / wire+shade)");
       ImGui::Separator();
       ImGui::TextDisabled("Selection");
       ImGui::TextUnformatted("[ / ]  Previous / Next visible selection");
@@ -734,7 +860,38 @@ void Gui::rebuildSubsetHighlight() {
     mi = selMeshIndex_;
     tri = &draw_->meshes[static_cast<size_t>(mi)].indices;
   }
-  if (mi < 0 || !tri) return;
+  if (mi < 0 || !tri) {
+    const float orange[3] = {1.0f, 0.55f, 0.1f};
+    auto addLine = [&](const float a[3], const float b[3]) {
+      HelperVertex va{}, vb{};
+      std::copy(a, a + 3, va.pos); std::copy(b, b + 3, vb.pos);
+      std::copy(orange, orange + 3, va.col); std::copy(orange, orange + 3, vb.col);
+      highlightLinesData_.push_back(va); highlightLinesData_.push_back(vb);
+    };
+    auto wp = [](const auto& c, size_t i, float p[3]) {
+      const float x = c.points[i*3], y = c.points[i*3+1], z = c.points[i*3+2];
+      p[0] = c.world[0]*x + c.world[4]*y + c.world[8]*z + c.world[12];
+      p[1] = c.world[1]*x + c.world[5]*y + c.world[9]*z + c.world[13];
+      p[2] = c.world[2]*x + c.world[6]*y + c.world[10]*z + c.world[14];
+    };
+    for (const DrawPointsCPU& p : draw_->points) if (p.absPath == selPath_) {
+      for (size_t i = 0; i < p.points.size()/3; ++i) {
+        float q[3]; wp(p, i, q);
+        const float w = p.widths.empty() ? 1.0f : p.widths.size() == 1 ? p.widths[0] : p.widths[std::min(i, p.widths.size()-1)];
+        float x[3] = {q[0] + w, q[1], q[2]}, y[3] = {q[0], q[1] + w, q[2]};
+        float xm[3] = {q[0] - w, q[1], q[2]}, ym[3] = {q[0], q[1] - w, q[2]};
+        addLine(xm, x); addLine(ym, y);
+      }
+      return;
+    }
+    for (const DrawCurvesCPU& c : draw_->curves) if (c.absPath == selPath_) {
+      for (size_t i = 0; i + 1 < c.points.size()/3; ++i) {
+        float a[3], b[3]; wp(c, i, a); wp(c, i + 1, b); addLine(a, b);
+      }
+      return;
+    }
+    return;
+  }
 
   // World-space orange edge lines (for the Vulkan line-pipeline highlight).
   const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
@@ -793,6 +950,15 @@ void Gui::setSelectionListFromMeshes(std::vector<int> meshIndices) {
   } else {
     clearSelection();
   }
+}
+
+void Gui::setSelectionListFromPaths(std::vector<std::string> paths) {
+  selectionList_.clear();
+  for (const std::string& path : paths) {
+    if (!path.empty()) selectionList_.push_back({path, -1});
+  }
+  if (!selectionList_.empty()) focusSelectionListItem(0);
+  else clearSelection();
 }
 
 void Gui::focusSelectionListItem(size_t index) {
@@ -1193,8 +1359,8 @@ void Gui::rebuildInspectorCache() {
           } else if (tn == "color3d") {
             if (const auto* c = v.as<tinyusdz::value::color3d>()) {
               row.hasColor = true;
-              row.color[0] = c->r; row.color[1] = c->g;
-              row.color[2] = c->b; row.color[3] = 1.0f;
+              row.color[0] = static_cast<float>(c->r); row.color[1] = static_cast<float>(c->g);
+              row.color[2] = static_cast<float>(c->b); row.color[3] = 1.0f;
             }
           }
         }
@@ -1205,6 +1371,190 @@ void Gui::rebuildInspectorCache() {
       row.value = perr.empty() ? "<error>" : perr;
     }
     inspectorCacheRows_.push_back(std::move(row));
+  }
+}
+
+bool Gui::drawNextPrimTree(const tinyusdz::next::UsdPrim& prim) {
+  if (!prim.IsValid()) return false;
+  const std::string path = prim.GetPath().str();
+  const std::string label = prim.GetName() + "  " + prim.GetTypeName();
+  const bool matches = hierFilter_.PassFilter(label.c_str()) ||
+                       hierFilter_.PassFilter(path.c_str());
+  bool descendant_matches = false;
+  for (size_t i = 0; i < prim.GetChildCount() && !descendant_matches; ++i) {
+    const tinyusdz::next::UsdPrim child = prim.GetChildAt(i);
+    const std::string child_label =
+        child.GetName() + "  " + child.GetTypeName() + "  " +
+        child.GetPath().str();
+    descendant_matches = hierFilter_.PassFilter(child_label.c_str());
+  }
+  if (!matches && !descendant_matches && hierFilter_.IsActive()) return false;
+
+  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth |
+                             ImGuiTreeNodeFlags_OpenOnArrow;
+  if (prim.GetChildCount() == 0) flags |= ImGuiTreeNodeFlags_Leaf;
+  if (path == selPath_) flags |= ImGuiTreeNodeFlags_Selected;
+  if (revealSelectionInHierarchy_ && !selPath_.empty() &&
+      selPath_.compare(0, path.size(), path) == 0) {
+    ImGui::SetNextItemOpen(true);
+  }
+  ImGui::PushID(path.c_str());
+  const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+  if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+    selectByPath(path, -1);
+  }
+  if (!prim.IsActive()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("inactive");
+  } else if (!prim.GetMeta().payloads.empty()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("payload");
+  }
+  if (ImGui::BeginPopupContextItem("next_prim_context")) {
+    if (!prim.GetMeta().payloads.empty() && ImGui::MenuItem("Load payload")) {
+      payloadLoadRequests_.push_back(path);
+    }
+    if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(path.c_str());
+    ImGui::EndPopup();
+  }
+  if (open) {
+    for (size_t i = 0; i < prim.GetChildCount(); ++i) {
+      drawNextPrimTree(prim.GetChildAt(i));
+    }
+    ImGui::TreePop();
+  }
+  ImGui::PopID();
+  return matches || descendant_matches;
+}
+
+namespace {
+
+std::string NextValueSummary(const tinyusdz::next::Value& value) {
+  if (value.is_array()) {
+    const char* type = tinyusdz::next::GetTypeName(value.type_id());
+    return std::string(type ? type : "value") + "[" +
+           std::to_string(value.array_size()) + "]";
+  }
+  if (const bool* v = value.as_bool()) return *v ? "true" : "false";
+  if (const int32_t* v = value.as_int()) return std::to_string(*v);
+  if (const int64_t* v = value.as_int64()) return std::to_string(*v);
+  if (const float* v = value.as_float()) return std::to_string(*v);
+  if (const double* v = value.as_double()) return std::to_string(*v);
+  if (const std::string* v = value.as_string()) return *v;
+  if (const std::string* v = value.as_token()) return *v;
+  if (const std::string* v = value.as_asset_path()) return "@" + *v + "@";
+  const char* type = tinyusdz::next::GetTypeName(value.type_id());
+  return type ? type : "value";
+}
+
+}  // namespace
+
+void Gui::drawNextInspector() {
+  if (!nextStage_ || selPath_.empty()) {
+    HintWrapped("Select a prim to inspect it.");
+    return;
+  }
+  const tinyusdz::next::UsdPrim prim = nextStage_->GetPrimAtPath(selPath_);
+  if (!prim.IsValid()) {
+    HintWrapped("The selected prim is not present in the composed stage.");
+    return;
+  }
+
+  drawSelectionBreadcrumbs("##next-inspector-breadcrumbs");
+  ImGui::TextWrapped("%s", selPath_.c_str());
+  if (ImGui::SmallButton("Copy path")) ImGui::SetClipboardText(selPath_.c_str());
+  ImGui::TextDisabled("Type: %s", prim.GetTypeName().c_str());
+  ImGui::Text("Specifier: %s", prim.GetSpecifier() == tinyusdz::next::PrimSpecifier::Def
+                                   ? "def"
+                                   : prim.GetSpecifier() ==
+                                             tinyusdz::next::PrimSpecifier::Over
+                                         ? "over"
+                                         : "class");
+  ImGui::Text("Active: %s", prim.IsActive() ? "true" : "false");
+
+  const tinyusdz::next::PrimSpecMeta& meta = prim.GetMeta();
+  if (!meta.variantSets().empty() &&
+      ImGui::CollapsingHeader("Variant sets", ImGuiTreeNodeFlags_DefaultOpen)) {
+    for (const tinyusdz::next::VariantSetData& set : meta.variantSets()) {
+      std::string selected = set.selected;
+      for (const auto& authored : meta.variantSelections()) {
+        if (authored.first == set.name) selected = authored.second;
+      }
+      if (selected.empty()) selected = "(default)";
+      const std::string id = set.name + "##next_variant";
+      if (ImGui::BeginCombo(id.c_str(), selected.c_str())) {
+        for (const tinyusdz::next::VariantData& variant : set.variants) {
+          const bool current = variant.name == selected;
+          if (ImGui::Selectable(variant.name.c_str(), current) && !current) {
+            std::map<std::string, std::string> selections;
+            for (const auto& authored : meta.variantSelections()) {
+              selections[authored.first] = authored.second;
+            }
+            selections[set.name] = variant.name;
+            requestVariantSwitch(selPath_, selections);
+          }
+          if (current) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+    }
+  }
+
+  if ((!meta.references.empty() || !meta.payloads.empty() ||
+       !meta.inherits.empty() || !meta.specializes.empty()) &&
+      ImGui::CollapsingHeader("Composition arcs",
+                              ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Text("References: %zu", meta.references.size());
+    ImGui::Text("Payloads: %zu", meta.payloads.size());
+    ImGui::Text("Inherits: %zu", meta.inherits.size());
+    ImGui::Text("Specializes: %zu", meta.specializes.size());
+    if (!meta.payloads.empty() && ImGui::SmallButton("Load payload")) {
+      payloadLoadRequests_.push_back(selPath_);
+    }
+  }
+
+  const std::string material = tinyusdz::tydra::next::GetBoundMaterial(prim);
+  if (!material.empty() &&
+      ImGui::CollapsingHeader("Material binding",
+                              ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::SmallButton(material.c_str())) selectByPath(material, -1);
+  }
+
+  if (ImGui::CollapsingHeader("Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::BeginTable("##next_properties", 3,
+                          ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_BordersInnerV |
+                              ImGuiTableFlags_Resizable)) {
+      ImGui::TableSetupColumn("Name");
+      ImGui::TableSetupColumn("Type");
+      ImGui::TableSetupColumn("Value");
+      ImGui::TableHeadersRow();
+      for (const std::string& name : prim.GetPropertyNames()) {
+        const tinyusdz::next::Value* value = prim.GetPropertyValue(name);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(name.c_str());
+        ImGui::TableNextColumn();
+        const char* type = value ? tinyusdz::next::GetTypeName(value->type_id())
+                                 : "relationship";
+        ImGui::TextUnformatted(type ? type : "value");
+        ImGui::TableNextColumn();
+        const std::string summary = value ? NextValueSummary(*value) : "";
+        ImGui::TextUnformatted(summary.c_str());
+      }
+      for (const std::string& name : prim.GetRelationshipNames()) {
+        const std::vector<tinyusdz::next::Path>* targets =
+            prim.GetRelationship(name);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(name.c_str());
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("relationship");
+        ImGui::TableNextColumn();
+        ImGui::Text("%zu target(s)", targets ? targets->size() : 0);
+      }
+      ImGui::EndTable();
+    }
   }
 }
 
@@ -1254,6 +1604,10 @@ void Gui::drawHierarchy() {
     ImGui::Separator();
     if (showRenderNodes_) {
       for (const auto& n : loaded_->render.nodes) drawNodeTree(n);
+    } else if (nextStage_) {
+      for (const tinyusdz::next::UsdPrim& root : nextStage_->GetRootPrims()) {
+        drawNextPrimTree(root);
+      }
     } else {
       for (const auto& root : loaded_->stage.root_prims()) drawPrimTree(root);
     }
@@ -1266,6 +1620,11 @@ void Gui::drawHierarchy() {
 
 void Gui::drawInspector() {
   ImGui::Begin("Inspector");
+  if (nextStage_) {
+    drawNextInspector();
+    ImGui::End();
+    return;
+  }
   if (selPrim_) {
     rebuildInspectorCache();
     drawSelectionBreadcrumbs("##inspector-breadcrumbs");
@@ -1715,6 +2074,11 @@ void Gui::drawCameraPanel() {
       cam_->setAspectOverride(aspectValue);
     }
     if (!aspectOverride) ImGui::EndDisabled();
+    int conform = static_cast<int>(cam_->conform());
+    const char* conformNames[] = {"Fit", "Crop", "Horizontal", "Vertical", "None"};
+    if (ImGui::Combo("Filmback conform", &conform, conformNames, 5)) {
+      cam_->setConform(static_cast<CameraConform>(conform));
+    }
     bool autoClip = cam_->autoClip();
     if (ImGui::Checkbox("Auto clipping", &autoClip)) {
       cam_->setAutoClip(autoClip);
@@ -1779,6 +2143,10 @@ void Gui::drawCameraPanel() {
     if (ImGui::SliderFloat("Dolly sensitivity", &dolly, 0.1f, 4.0f, "%.2f")) {
       cam_->setDollySensitivity(dolly);
     }
+    bool legacyYaw = !cam_->invertYaw();
+    if (ImGui::Checkbox("Legacy yaw direction", &legacyYaw)) {
+      cam_->setInvertYaw(!legacyYaw);
+    }
     bool invert = cam_->invertDolly();
     if (ImGui::Checkbox("Invert dolly", &invert)) {
       cam_->setInvertDolly(invert);
@@ -1787,6 +2155,7 @@ void Gui::drawCameraPanel() {
       cam_->setOrbitSensitivity(1.0f);
       cam_->setPanSensitivity(1.0f);
       cam_->setDollySensitivity(1.0f);
+      cam_->setInvertYaw(true);
       cam_->setInvertDolly(false);
     }
     ImGui::SameLine();
@@ -1799,6 +2168,55 @@ void Gui::drawCameraPanel() {
 
 void Gui::drawPayloads() {
   ImGui::Begin("Payloads");
+  if (nextStage_) {
+    std::unordered_map<std::string, std::string> authoredAssets;
+    nextStage_->Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+      for (const std::string& payload : prim.GetMeta().payloads) {
+        authoredAssets.emplace(prim.GetPath().str(), payload);
+      }
+      return true;
+    });
+    if (deferredPayloadPaths_.empty()) {
+      ImGui::TextDisabled(authoredAssets.empty() ? "No deferred payloads."
+                                                 : "All payloads loaded.");
+      ImGui::End();
+      return;
+    }
+    ImGui::Text("Deferred payloads: %zu", deferredPayloadPaths_.size());
+    if (ImGui::Button("Load All") && !loadStatus_.active) {
+      wantLoadAllPayloads_ = true;
+    }
+    ImGui::Separator();
+    if (ImGui::BeginTable("##next_payloads", 3,
+                          ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_BordersInnerV |
+                              ImGuiTableFlags_Resizable)) {
+      ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+      ImGui::TableSetupColumn("Prim");
+      ImGui::TableSetupColumn("Asset");
+      ImGui::TableHeadersRow();
+      for (size_t i = 0; i < deferredPayloadPaths_.size(); ++i) {
+        const std::string& primPath = deferredPayloadPaths_[i];
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::SmallButton("Load") && !loadStatus_.active) {
+          payloadLoadRequests_.push_back(primPath);
+        }
+        ImGui::PopID();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(primPath.c_str());
+        ImGui::TableNextColumn();
+        const auto asset = authoredAssets.find(primPath);
+        ImGui::TextUnformatted(asset == authoredAssets.end()
+                                   ? "(deferred)"
+                                   : asset->second.c_str());
+      }
+      ImGui::EndTable();
+    }
+    ImGui::End();
+    return;
+  }
   if (!loaded_ || !loaded_->comp.composed) {
     ImGui::TextDisabled(loaded_ && loaded_->ok
                             ? "Scene has no composition arcs."
@@ -1883,12 +2301,177 @@ void Gui::drawMaterialsPanel() {
         if (mat.alphaMode == static_cast<int>(AlphaMode::Mask)) {
           ImGui::Text("Alpha cutoff: %.3f", mat.alphaCutoff);
         }
+        if (mat.hasOpenPBRSurface) ImGui::TextUnformatted("Shader: OpenPBRSurface");
+        else if (mat.hasUsdPreviewSurface) ImGui::TextUnformatted("Shader: UsdPreviewSurface");
+        if (!mat.params.empty()) {
+          ImGui::Text("Shader inputs: %zu", mat.params.size());
+        }
+        if (mat.hasLightRtOpenPBR) {
+          ImGui::Text("LightRT flags: textures=%s normals=%s",
+                      mat.lightRtOpenPBR.hasTextureInputs ? "yes" : "no",
+                      mat.lightRtOpenPBR.hasNormalInput ? "yes" : "no");
+        }
         if (mat.baseColorTex >= 0) ImGui::Text("Base color tex: %d", mat.baseColorTex);
-        if (mat.metalRoughTex >= 0) ImGui::Text("Metallic/roughness tex: %d", mat.metalRoughTex);
+        if (mat.metallicTex >= 0) ImGui::Text("Metallic tex: %d", mat.metallicTex);
+        if (mat.roughnessTex >= 0) ImGui::Text("Roughness tex: %d", mat.roughnessTex);
         if (mat.normalTex >= 0) ImGui::Text("Normal tex: %d", mat.normalTex);
+        if (mat.coatNormalTex >= 0) ImGui::Text("Coat normal tex: %d", mat.coatNormalTex);
         if (mat.emissiveTex >= 0) ImGui::Text("Emissive tex: %d", mat.emissiveTex);
+        if (!mat.params.empty() && ImGui::TreeNode("Shader inputs")) {
+          if (ImGui::BeginTable("##shader_inputs", 8,
+                                ImGuiTableFlags_BordersInnerV |
+                                    ImGuiTableFlags_RowBg |
+                                    ImGuiTableFlags_Resizable |
+                                    ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Shader");
+            ImGui::TableSetupColumn("Input");
+            ImGui::TableSetupColumn("Type");
+            ImGui::TableSetupColumn("Value");
+            ImGui::TableSetupColumn("Texture");
+            ImGui::TableSetupColumn("Channel");
+            ImGui::TableSetupColumn("Scale/Bias");
+            ImGui::TableSetupColumn("UV");
+            ImGui::TableHeadersRow();
+            for (const DrawMaterialParamCPU& param : mat.params) {
+              ImGui::TableNextRow();
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(param.shader.c_str());
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(param.name.c_str());
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(MaterialParamTypeName(param.type));
+              ImGui::TableNextColumn();
+              if (param.type == DrawMaterialParamType::Float) {
+                ImGui::Text("%.3f", param.value[0]);
+              } else if (param.type == DrawMaterialParamType::Vec2) {
+                ImGui::Text("%.3f %.3f", param.value[0], param.value[1]);
+              } else {
+                ImGui::Text("%.3f %.3f %.3f", param.value[0], param.value[1],
+                            param.value[2]);
+              }
+              ImGui::TableNextColumn();
+              if (param.texture >= 0) ImGui::Text("%d", param.texture);
+              else if (param.renderTexture >= 0) ImGui::Text("render:%d", param.renderTexture);
+              else ImGui::TextUnformatted("-");
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(MaterialParamChannelName(param.channel));
+              ImGui::TableNextColumn();
+              const bool hasScaleBias =
+                  std::fabs(param.sample.scale[0] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.scale[1] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.scale[2] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.scale[3] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[0]) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[1]) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[2]) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[3]) > 1.0e-6f;
+              if (hasScaleBias) {
+                ImGui::Text("%.2f %.2f %.2f %.2f / %.2f %.2f %.2f %.2f",
+                            param.sample.scale[0], param.sample.scale[1],
+                            param.sample.scale[2], param.sample.scale[3],
+                            param.sample.bias[0], param.sample.bias[1],
+                            param.sample.bias[2], param.sample.bias[3]);
+              } else {
+                ImGui::TextUnformatted("-");
+              }
+              ImGui::TableNextColumn();
+              if (HasNonIdentityUvXform(param.sample.uv)) {
+                ImGui::Text("%.2f %.2f %.2f / %.2f %.2f %.2f",
+                            param.sample.uv.m00, param.sample.uv.m01,
+                            param.sample.uv.tx, param.sample.uv.m10,
+                            param.sample.uv.m11, param.sample.uv.ty);
+              } else {
+                ImGui::TextUnformatted("-");
+              }
+            }
+            ImGui::EndTable();
+          }
+          ImGui::TreePop();
+        }
       }
       ImGui::PopID();
+    }
+    if (!draw_->textures.empty() &&
+        ImGui::CollapsingHeader("Texture Preview", ImGuiTreeNodeFlags_DefaultOpen)) {
+      const float thumb = 96.0f;
+      const float gap = ImGui::GetStyle().ItemSpacing.x;
+      const float avail = ImGui::GetContentRegionAvail().x;
+      int cols = static_cast<int>((avail + gap) / (thumb + gap));
+      if (cols < 1) cols = 1;
+      for (size_t ti = 0; ti < draw_->textures.size(); ++ti) {
+        if (ti > 0 && (static_cast<int>(ti) % cols) != 0) ImGui::SameLine();
+        ImGui::PushID(static_cast<int>(ti));
+        ImGui::BeginGroup();
+        const DrawTextureCPU& tex = draw_->textures[ti];
+        const light3d::Image* img = &tex.image;
+        if (tex.isUdim && !tex.udimTiles.empty()) img = &tex.udimTiles[0].image;
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, ImVec2(p.x + thumb, p.y + thumb),
+                          IM_COL32(30, 30, 30, 255));
+        if (img && img->width > 0 && img->height > 0 && img->channels >= 4 &&
+            !img->data.empty()) {
+          const int cells = 32;
+          const float cell = thumb / static_cast<float>(cells);
+          for (int y = 0; y < cells; ++y) {
+            const int sy = (y * img->height) / cells;
+            for (int x = 0; x < cells; ++x) {
+              const int sx = (x * img->width) / cells;
+              const size_t off =
+                  (static_cast<size_t>(sy) * static_cast<size_t>(img->width) +
+                   static_cast<size_t>(sx)) *
+                  4u;
+              if (off + 3 >= img->data.size()) continue;
+              const ImU32 c = IM_COL32(img->data[off + 0], img->data[off + 1],
+                                       img->data[off + 2], img->data[off + 3]);
+              dl->AddRectFilled(ImVec2(p.x + static_cast<float>(x) * cell, p.y + static_cast<float>(y) * cell),
+                                ImVec2(p.x + static_cast<float>(x + 1) * cell + 0.5f,
+                                       p.y + static_cast<float>(y + 1) * cell + 0.5f),
+                                c);
+            }
+          }
+        }
+        dl->AddRect(p, ImVec2(p.x + thumb, p.y + thumb),
+                    IM_COL32(90, 90, 90, 255));
+        ImGui::Dummy(ImVec2(thumb, thumb));
+        ImGui::Text("#%zu %dx%d%s", ti, img ? img->width : 0, img ? img->height : 0,
+                    tex.isUdim ? " UDIM" : "");
+        if (tex.isUdim) {
+          ImGui::Text("tiles %zu", tex.udimTiles.size());
+        }
+        if (tex.renderUdimId >= 0) ImGui::Text("udim image set %d", tex.renderUdimId);
+        else if (tex.renderImageId >= 0) ImGui::Text("image %d", tex.renderImageId);
+        ImGui::Text("wrap %d/%d%s", tex.wrapS, tex.wrapT,
+                    tex.srgb ? " sRGB" : " raw");
+        if (!tex.assetIdentifier.empty()) {
+          std::string label = std::filesystem::path(tex.assetIdentifier).filename().string();
+          if (label.empty()) label = tex.assetIdentifier;
+          ImGui::TextWrapped("%s", label.c_str());
+          if (ImGui::IsItemHovered()) {
+            std::string tip = tex.assetIdentifier;
+            if (tex.isUdim && !tex.udimTiles.empty()) {
+              tip += "\n";
+              const size_t n = std::min<size_t>(tex.udimTiles.size(), 8);
+              for (size_t ui = 0; ui < n; ++ui) {
+                const DrawUdimTileCPU& tile = tex.udimTiles[ui];
+                tip += std::to_string(tile.udim) + " image " +
+                       std::to_string(tile.renderImageId);
+                if (!tile.assetIdentifier.empty()) {
+                  tip += " ";
+                  tip += tile.assetIdentifier;
+                }
+                tip += "\n";
+              }
+              if (tex.udimTiles.size() > n) {
+                tip += "...";
+              }
+            }
+            ImGui::SetTooltip("%s", tip.c_str());
+          }
+        }
+        ImGui::EndGroup();
+        ImGui::PopID();
+      }
     }
   } else {
     ImGui::TextDisabled("No materials loaded.");
@@ -1989,14 +2572,14 @@ void Gui::drawCompositionGraph() {
 
   // Layout arcs below in 2 columns.
   int cols = std::min(static_cast<int>(arcs.size()), 2);
-  float totalWidth = cols * arcBoxW + (cols - 1) * spacing;
+  float totalWidth = static_cast<float>(cols) * arcBoxW + static_cast<float>(cols - 1) * spacing;
   float startX = canvasPos.x + std::max(0.0f, (canvasSize.x - totalWidth) * 0.5f);
 
   for (size_t i = 0; i < arcs.size(); ++i) {
     int col = static_cast<int>(i) % cols;
     int row = static_cast<int>(i) / cols;
-    float ax = startX + col * (arcBoxW + spacing);
-    float ay = primY + primBoxH + 50.0f + row * (arcBoxH + 10.0f);
+    float ax = startX + static_cast<float>(col) * (arcBoxW + spacing);
+    float ay = primY + primBoxH + 50.0f + static_cast<float>(row) * (arcBoxH + 10.0f);
 
     // Connection line from prim bottom to arc top.
     float primMidX = cx;
@@ -2028,7 +2611,7 @@ void Gui::drawCompositionGraph() {
   }
 
   ImGui::Dummy(ImVec2(canvasSize.x, primY + primBoxH + 50.0f +
-                      ((arcs.size() + cols - 1) / cols) * (arcBoxH + 10.0f) +
+                      static_cast<float>((arcs.size() + cols - 1) / cols) * (arcBoxH + 10.0f) +
                       topMargin));
   ImGui::End();
 }
@@ -2083,11 +2666,68 @@ void Gui::drawTimeline() {
   ImGui::End();
 }
 
+// Process resident set size (RSS) in MB, from /proc (Linux). 0 if unavailable.
+static size_t ReadProcessRssMB() {
+#ifdef _WIN32
+  return 0;  // /proc/self/statm doesn't exist on Windows
+#else
+  FILE* f = std::fopen("/proc/self/statm", "r");
+  if (!f) return 0;
+  long pages = 0, resident = 0;
+  if (std::fscanf(f, "%ld %ld", &pages, &resident) != 2) resident = 0;
+  std::fclose(f);
+  const long pageSz = sysconf(_SC_PAGESIZE);
+  return static_cast<size_t>((static_cast<long long>(resident) * pageSz) / (1024 * 1024));
+#endif
+}
+
+// amdgpu VRAM (used,total) in MB via sysfs; fallback when the renderer can't
+// report GPU memory (e.g. the Vulkan backend). 0 if unavailable.
+static bool ReadAmdgpuVramMB(size_t* usedMB, size_t* totalMB) {
+  const char* cards[] = {"/sys/class/drm/card0/device/mem_info_vram_",
+                         "/sys/class/drm/card1/device/mem_info_vram_"};
+  for (const char* base : cards) {
+    auto readVal = [](const std::string& path) -> long long {
+      FILE* f = std::fopen(path.c_str(), "r");
+      if (!f) return -1;
+      long long v = -1;
+      if (std::fscanf(f, "%lld", &v) != 1) v = -1;
+      std::fclose(f);
+      return v;
+    };
+    const long long tot = readVal(std::string(base) + "total");
+    const long long use = readVal(std::string(base) + "used");
+    if (tot > 0 && use >= 0) {
+      if (totalMB) *totalMB = static_cast<size_t>(tot / (1024 * 1024));
+      if (usedMB) *usedMB = static_cast<size_t>(use / (1024 * 1024));
+      return true;
+    }
+  }
+  return false;
+}
+
 void Gui::drawStats() {
   ImGui::Begin("Stats");
   ImGui::Text("FPS: %.1f (%.2f ms)", ImGui::GetIO().Framerate,
               1000.0f / ImGui::GetIO().Framerate);
   ImGui::Text("Backend: %s", renderer_ ? renderer_->caps().backend_name : "?");
+  // CPU RSS + GPU VRAM, refreshed a few times a second (the queries touch /proc
+  // and the driver, so they are throttled rather than run every frame).
+  static size_t cpuMB = 0, vramUsedMB = 0, vramTotalMB = 0;
+  static bool haveVram = false;
+  static double lastPoll = -1.0;
+  const double now = ImGui::GetTime();
+  if (lastPoll < 0.0 || now - lastPoll > 0.5) {
+    lastPoll = now;
+    cpuMB = ReadProcessRssMB();
+    haveVram = renderer_ && renderer_->gpuMemoryMB(&vramUsedMB, &vramTotalMB);
+    if (!haveVram) haveVram = ReadAmdgpuVramMB(&vramUsedMB, &vramTotalMB);
+  }
+  if (cpuMB > 0) ImGui::Text("CPU mem (RSS): %zu MB", cpuMB);
+  if (haveVram) {
+    ImGui::Text("GPU VRAM: %zu / %zu MB (%.0f%%)", vramUsedMB, vramTotalMB,
+                vramTotalMB ? 100.0 * double(vramUsedMB) / double(vramTotalMB) : 0.0);
+  }
   ImGui::Text("Skinning: %s requested, %s effective",
               SkinningModeLabel(skinning_.requested),
               SkinningModeLabel(skinning_.effective));
@@ -2095,11 +2735,16 @@ void Gui::drawStats() {
   ImGui::Separator();
   if (draw_) {
     ImGui::Text("Meshes: %zu", draw_->meshes.size());
-    {
-      size_t totalVerts = 0;
-      for (const auto& m : draw_->meshes) totalVerts += m.vertices.size();
-      ImGui::Text("Vertices: %zu", totalVerts);
-    }
+    size_t pointSamples = 0, curveSamples = 0;
+    for (const DrawPointsCPU& p : draw_->points) pointSamples += p.points.size() / 3;
+    for (const DrawCurvesCPU& c : draw_->curves) curveSamples += c.points.size() / 3;
+    ImGui::Text("Points: %zu prims / %zu samples", draw_->points.size(),
+                pointSamples);
+    ImGui::Text("Curves: %zu prims / %zu tessellated samples",
+                draw_->curves.size(), curveSamples);
+    // draw_->vertexCount is captured at load (CPU geometry may be freed after
+    // upload on the --next path, so summing meshes[].vertices would read 0).
+    ImGui::Text("Vertices: %zu", draw_->vertexCount);
     ImGui::Text("Triangles: %zu", draw_->triangleCount);
     // Frustum-cull stats (this frame). "visible" reflects per-mesh + per-instance
     // culling; with culling disabled these equal the totals.
@@ -2179,7 +2824,10 @@ void Gui::handleNavigation() {
   }
 
   if (navMode_ == 0 && vpHovered_ && alt) {
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) navMode_ = 1;
+    // Shift+Alt+LMB pans (an alternative to Alt+MMB for trackpads / keypads with
+    // no middle button); plain Alt+LMB orbits. navMode_ latches until release, so
+    // the modifier state at press time selects the mode for the whole drag.
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) navMode_ = io.KeyShift ? 2 : 1;
     else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) navMode_ = 2;
     else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) navMode_ = 3;
   }
@@ -2198,6 +2846,24 @@ void Gui::handleNavigation() {
 
   // Maya-style hotkeys (viewport hovered, no text field focused).
   if (vpHovered_ && !io.WantTextInput) {
+    // Keep wireframe on V so the left-hand W/S pair remains available for
+    // forward/backward movement with a right-handed mouse.
+    if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V)) {
+      wireCycle_ = (wireCycle_ + 1) % 3;
+    }
+    // Walk/fly without changing the orbit relationship: both camera eye and
+    // pivot translate, so repeated movement passes cleanly through world origin.
+    if (!io.KeyAlt && !io.KeyCtrl) {
+      const float step = io.KeyShift ? 3.0f : 1.0f;
+      if (ImGui::IsKeyPressed(ImGuiKey_W) ||
+          ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+        cam_->moveForward(step);
+      }
+      if (ImGui::IsKeyPressed(ImGuiKey_S) ||
+          ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+        cam_->moveForward(-step);
+      }
+    }
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) goSelectionBack();
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) goSelectionForward();
     if (ImGui::IsKeyPressed(ImGuiKey_0)) homeView();
@@ -2237,20 +2903,32 @@ void Gui::handleNavigation() {
       const int sel = selMeshIndex_;
       const bool haveSel =
           sel >= 0 && static_cast<size_t>(sel) < meshVisible_.size();
+      const size_t carrier = carrierIndexForPath(selPath_);
+      const bool haveCarrier = carrier != static_cast<size_t>(-1) &&
+                               carrier < carrierVisible_.size();
       if (io.KeyAlt) {
         // Alt+H: isolate the selection (hide everything else).
         if (haveSel) {
           for (size_t i = 0; i < meshVisible_.size(); ++i)
             meshVisible_[i] = (static_cast<int>(i) == sel) ? 1 : 0;
+          for (auto& v : carrierVisible_) v = 0;
+        } else if (haveCarrier) {
+          for (auto& v : meshVisible_) v = 0;
+          for (size_t i = 0; i < carrierVisible_.size(); ++i)
+            carrierVisible_[i] = i == carrier ? 1 : 0;
         }
       } else if (io.KeyCtrl) {
         if (haveSel) meshVisible_[static_cast<size_t>(sel)] = 0;  // hide selection
+        else if (haveCarrier) carrierVisible_[carrier] = 0;
       } else if (io.KeyShift) {
         if (haveSel) meshVisible_[static_cast<size_t>(sel)] = 1;  // show selection
+        else if (haveCarrier) carrierVisible_[carrier] = 1;
       } else if (haveSel) {
         // Plain H: toggle the selection's visibility.
         meshVisible_[static_cast<size_t>(sel)] =
             meshVisible_[static_cast<size_t>(sel)] ? 0 : 1;
+      } else if (haveCarrier) {
+        carrierVisible_[carrier] = carrierVisible_[carrier] ? 0 : 1;
       }
     }
   }
@@ -2274,7 +2952,21 @@ void Gui::frameSelected() {
   if (sel >= 0 && static_cast<size_t>(sel) < draw_->meshes.size()) {
     const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(sel)];
     cam_->fitToScene(m.aabbMin, m.aabbMax);
-  } else if (draw_->hasBounds) {
+    return;
+  }
+  for (const DrawPointsCPU& p : draw_->points) {
+    if (p.absPath == selPath_) {
+      cam_->fitToScene(p.aabbMin, p.aabbMax);
+      return;
+    }
+  }
+  for (const DrawCurvesCPU& c : draw_->curves) {
+    if (c.absPath == selPath_) {
+      cam_->fitToScene(c.aabbMin, c.aabbMax);
+      return;
+    }
+  }
+  if (draw_->hasBounds) {
     cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
   }
 }
@@ -2287,6 +2979,7 @@ void Gui::frameAll() {
 
 void Gui::unhideAll() {
   for (auto& v : meshVisible_) v = 1;
+  for (auto& v : carrierVisible_) v = 1;
 }
 
 bool Gui::meshPurposeVisible(const std::string& purpose) const {
@@ -2300,6 +2993,26 @@ bool Gui::meshVisibleForView(size_t meshIndex) const {
   if (!draw_ || meshIndex >= draw_->meshes.size()) return false;
   if (meshIndex < meshVisible_.size() && !meshVisible_[meshIndex]) return false;
   return meshPurposeVisible(draw_->meshes[meshIndex].purpose);
+}
+
+size_t Gui::carrierIndexForPath(const std::string& path) const {
+  if (!draw_) return static_cast<size_t>(-1);
+  for (size_t i = 0; i < draw_->points.size(); ++i)
+    if (draw_->points[i].absPath == path) return i;
+  for (size_t i = 0; i < draw_->curves.size(); ++i)
+    if (draw_->curves[i].absPath == path) return draw_->points.size() + i;
+  return static_cast<size_t>(-1);
+}
+
+bool Gui::carrierVisibleForView(size_t carrierIndex) const {
+  if (!draw_) return false;
+  const size_t total = draw_->points.size() + draw_->curves.size();
+  if (carrierIndex >= total) return false;
+  if (carrierIndex < carrierVisible_.size() && !carrierVisible_[carrierIndex]) return false;
+  const std::string& purpose = carrierIndex < draw_->points.size()
+      ? draw_->points[carrierIndex].purpose
+      : draw_->curves[carrierIndex - draw_->points.size()].purpose;
+  return meshPurposeVisible(purpose);
 }
 
 void Gui::buildViewVisibilityMask() {
@@ -2319,6 +3032,23 @@ void Gui::buildViewVisibilityMask() {
     const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
     fr = light3d::Frustum::fromViewProjection(vp);
   }
+  // Non-instanced raster LOD: needs the same projected-size metric the instance
+  // cull uses, and the shared box-proxy draw to collapse into.
+  nonInstProxy_.xforms.clear();
+  nonInstProxy_.colors.clear();
+  nonInstProxy_.opacities.clear();
+  nonInstProxy_.count = 0;
+  const bool wireActive = wireCycle_ != 0 || mode_ == RenderMode::Wireframe;
+  // Wire density is controlled continuously per projected edge in the shader.
+  // Hard mesh/instance size culls make whole edge sets pop during dolly, so keep
+  // only ordinary frustum culling while a wire mode is active.
+  const bool lodOn = rasterLodEnabled_ && !wireActive && cam_ && renderer_;
+  RtLodCamera lodCam;
+  if (lodOn) lodCam = buildRasterLodCam();
+  // Backends without the shared box-proxy draw (VK) still size-cull; they just
+  // cannot substitute a box, so a small mesh keeps drawing at full resolution.
+  const bool lodProxy = lodOn && lodCam.proxyEnabled;
+
   // Per-mesh stats here; per-instance stats (visible instances + instanced tris)
   // are owned by cullInstances (dirty-gated, so not recomputed every frame).
   statVisibleMeshes_ = 0;
@@ -2336,6 +3066,44 @@ void Gui::buildViewVisibilityMask() {
       if (fr.testAABB(mn, mx) == light3d::CullResult::Outside) vis = false;
     }
     viewVisible_[i] = vis ? uint8_t{1} : uint8_t{0};
+    // Raster LOD for NON-INSTANCED meshes. The instance cull only ever looked at
+    // meshes with instanceCount() > 0, so unique geometry got no LOD at all: its
+    // only filter was this all-or-nothing frustum test. That is the whole of
+    // Island's residual raster cost -- 55 M drawn tris of unique geometry against
+    // 63 visible instances -- because the instanced side is already solved.
+    //
+    // Classify each one exactly like an instance: sub-pixel -> cull, small ->
+    // collapse to the shared box proxy, else draw it. A decimated LOD for a big
+    // unique mesh is a different (much larger) project; the box is the cheap 80%.
+    if (vis && ninst == 0 && lodOn) {
+      const float* lo = m.aabbMin;
+      const float* hi = m.aabbMax;
+      const bool degenerate = !(hi[0] > lo[0] || hi[1] > lo[1] || hi[2] > lo[2]);
+      if (!degenerate) {
+        const float center[3] = {0.5f * (lo[0] + hi[0]), 0.5f * (lo[1] + hi[1]),
+                                 0.5f * (lo[2] + hi[2])};
+        const float ext[3] = {0.5f * (hi[0] - lo[0]), 0.5f * (hi[1] - lo[1]),
+                              0.5f * (hi[2] - lo[2])};
+        const float radius =
+            std::sqrt(ext[0] * ext[0] + ext[1] * ext[1] + ext[2] * ext[2]);
+        const float px = ProjectedRadiusPx(center, radius, lodCam);
+        if (px < lodCam.cullPx) {
+          vis = false;  // sub-pixel
+        } else if (lodProxy && px < lodCam.fullPx) {
+          // Non-instanced geometry is world-baked, so its AABB is already in world
+          // space: the box proxy's object->world is the identity.
+          static const float kIdentity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+          float bx[12];
+          BoxFitXform(kIdentity, lo, hi, bx);
+          nonInstProxy_.xforms.insert(nonInstProxy_.xforms.end(), bx, bx + 12);
+          const float* tint = m.flatColor;
+          nonInstProxy_.colors.insert(nonInstProxy_.colors.end(), tint, tint + 3);
+          vis = false;  // drawn as a box instead
+        }
+      }
+      viewVisible_[i] = vis ? uint8_t{1} : uint8_t{0};
+    }
+
     if (!vis) continue;
     ++statVisibleMeshes_;
     if (ninst > 0) {
@@ -2347,6 +3115,9 @@ void Gui::buildViewVisibilityMask() {
       statDrawCalls_ += m.submeshes.size();
     }
   }
+  nonInstProxy_.count =
+      static_cast<uint32_t>(nonInstProxy_.xforms.size() / 12);
+  nonInstProxy_.hasColors = true;
 }
 
 Gui::~Gui() { joinCullWorker(); }
@@ -2357,56 +3128,189 @@ void Gui::joinCullWorker() {
   cullDone_.store(false);
 }
 
+namespace {
+// Below this instance count the flat per-instance cull is already cheap, so the
+// grid (build cost + memory) is not worth it. Matches the RT path's threshold.
+constexpr std::uint32_t kInstGridMinInstances = 4096;
+}  // namespace
+
+// (Re)build instGrids_ -- one coarse spatial grid per instanced prototype -- when
+// the scene changes. Read-only afterwards, so the cull worker can share them.
+void Gui::ensureInstanceGrids() {
+  if (instGridsFor_ == draw_) return;
+  instGrids_.clear();
+  instGridsFor_ = draw_;
+  if (!draw_) return;
+  instGrids_.resize(draw_->meshes.size());
+  for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw_->meshes[mi];
+    if (m.instanceCount() < kInstGridMinInstances) continue;
+    RtLodProto p;
+    p.instanceXforms = m.instanceXforms.data();
+    p.instanceCount = static_cast<std::uint32_t>(m.instanceCount());
+    p.protoAabbMin = m.protoAabbMin;
+    p.protoAabbMax = m.protoAabbMax;
+    p.meshId = static_cast<std::uint32_t>(mi);
+    BuildRtLodGrid(p, kInstGridMinInstances, &instGrids_[mi]);
+  }
+}
+
 // Frustum-test one instanced mesh; append visible instances' 12-float o2w (+ 3-float
-// color) to `out`. cullEnabled=false restores the full set. Static + snapshot-only,
-// so it is safe to run on the worker thread.
+// color) to `out`. cullEnabled=false restores the full set. When lodCam.lodEnabled,
+// also size-classify: sub-pixel (<cullPx) instances are dropped, and (when proxyOut
+// is non-null + lodCam.proxyEnabled) small (<fullPx) instances become shared box
+// proxies -- their box-fit o2w + tint are *appended* to proxyOut (never cleared
+// here; the caller accumulates proxies across all prototypes). Static +
+// snapshot-only, so it is safe to run on the worker thread.
 void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
-                               bool cullEnabled, CullJobMesh* out) {
+                               bool cullEnabled, const RtLodGrid* grid,
+                               const RtLodCamera& lodCam, CullJobMesh* out,
+                               CullJobMesh* proxyOut) {
   const size_t ninst = m.instanceCount();
   out->hasColors = m.instanceColors.size() == ninst * 3;
+  out->hasOpacities = m.instanceOpacities.size() == ninst;
   out->xforms.clear();
   out->colors.clear();
+  out->opacities.clear();
   if (!cullEnabled) {
     out->xforms = m.instanceXforms;  // full set (a prior cull may have compacted)
     if (out->hasColors) out->colors = m.instanceColors;
+    if (out->hasOpacities) out->opacities = m.instanceOpacities;
     out->count = static_cast<uint32_t>(ninst);
     return;
   }
   const float* lo = m.protoAabbMin;
   const float* hi = m.protoAabbMax;
-  for (size_t k = 0; k < ninst; ++k) {
+  const bool hc = out->hasColors;
+  const bool ho = out->hasOpacities;
+  const bool lod = lodCam.lodEnabled;
+  // Degenerate (unset) prototype AABB carries no size -> never size-cull/proxy it.
+  const bool degenerate = !(hi[0] > lo[0] || hi[1] > lo[1] || hi[2] > lo[2]);
+  const bool doProxy = proxyOut && lodCam.proxyEnabled && !degenerate;
+  // Classify + append instance k. Frustum-tests its world AABB unless `assumeInside`
+  // (its whole cell already tested Inside); when LOD is on the AABB is always built
+  // (its projected size drives Full / Proxy / Cull).
+  auto emit = [&](std::uint32_t k, bool assumeInside) {
     const float* o2w = &m.instanceXforms[k * 12];
-    // Transform the 8 prototype-local AABB corners to world; take min/max.
-    float wmn[3] = {1e30f, 1e30f, 1e30f}, wmx[3] = {-1e30f, -1e30f, -1e30f};
-    for (int c = 0; c < 8; ++c) {
-      const float px = (c & 1) ? hi[0] : lo[0];
-      const float py = (c & 2) ? hi[1] : lo[1];
-      const float pz = (c & 4) ? hi[2] : lo[2];
-      for (int r = 0; r < 3; ++r) {
-        const float w = o2w[r * 4 + 0] * px + o2w[r * 4 + 1] * py +
-                        o2w[r * 4 + 2] * pz + o2w[r * 4 + 3];
-        wmn[r] = std::min(wmn[r], w);
-        wmx[r] = std::max(wmx[r], w);
+    float center[3], radius = 0.0f;
+    if (!assumeInside || (lod && !degenerate)) {
+      float wmn[3] = {1e30f, 1e30f, 1e30f}, wmx[3] = {-1e30f, -1e30f, -1e30f};
+      for (int c = 0; c < 8; ++c) {
+        const float px = (c & 1) ? hi[0] : lo[0];
+        const float py = (c & 2) ? hi[1] : lo[1];
+        const float pz = (c & 4) ? hi[2] : lo[2];
+        for (int r = 0; r < 3; ++r) {
+          const float w = o2w[r * 4 + 0] * px + o2w[r * 4 + 1] * py +
+                          o2w[r * 4 + 2] * pz + o2w[r * 4 + 3];
+          wmn[r] = std::min(wmn[r], w);
+          wmx[r] = std::max(wmx[r], w);
+        }
+      }
+      if (!assumeInside &&
+          fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
+              light3d::CullResult::Outside)
+        return;
+      for (int r = 0; r < 3; ++r) center[r] = 0.5f * (wmn[r] + wmx[r]);
+      const float dx = wmx[0] - wmn[0], dy = wmx[1] - wmn[1], dz = wmx[2] - wmn[2];
+      radius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    if (lod && !degenerate) {
+      const float px = ProjectedRadiusPx(center, radius, lodCam);
+      if (px < lodCam.cullPx) return;  // sub-pixel: drop entirely
+      if (doProxy && px < lodCam.fullPx) {
+        float bx[12];
+        BoxFitXform(o2w, lo, hi, bx);  // unit box -> this instance's world AABB
+        proxyOut->xforms.insert(proxyOut->xforms.end(), bx, bx + 12);
+        const float* tint = hc ? &m.instanceColors[k * 3] : m.flatColor;
+        proxyOut->colors.insert(proxyOut->colors.end(), tint, tint + 3);
+        return;
       }
     }
-    if (fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
-        light3d::CullResult::Outside) {
-      continue;
-    }
     out->xforms.insert(out->xforms.end(), o2w, o2w + 12);
-    if (out->hasColors)
+    if (hc)
       out->colors.insert(out->colors.end(), &m.instanceColors[k * 3],
                          &m.instanceColors[k * 3] + 3);
+    if (ho) out->opacities.push_back(m.instanceOpacities[k]);
+  };
+
+  if (grid && grid->valid) {
+    // Cell-rejection path: skip whole off-screen cells, accept whole inside cells
+    // without per-instance tests, and only per-instance test boundary cells. The
+    // emitted set is identical to the flat loop (order differs, irrelevant for
+    // instancing). Reserve from the non-rejected cells to avoid regrowth.
+    std::uint32_t upper = 0;
+    for (const RtLodGridCell& cell : grid->cells) {
+      if (fr.testAABB({cell.wmn[0], cell.wmn[1], cell.wmn[2]},
+                      {cell.wmx[0], cell.wmx[1], cell.wmx[2]}) ==
+          light3d::CullResult::Outside)
+        continue;
+      upper += cell.count;
+    }
+    out->xforms.reserve(static_cast<size_t>(upper) * 12);
+    if (hc) out->colors.reserve(static_cast<size_t>(upper) * 3);
+    if (ho) out->opacities.reserve(static_cast<size_t>(upper));
+    for (const RtLodGridCell& cell : grid->cells) {
+      const light3d::CullResult cr =
+          fr.testAABB({cell.wmn[0], cell.wmn[1], cell.wmn[2]},
+                      {cell.wmx[0], cell.wmx[1], cell.wmx[2]});
+      if (cr == light3d::CullResult::Outside) continue;
+      const bool inside = (cr == light3d::CullResult::Inside);
+      for (std::uint32_t i = cell.begin; i < cell.begin + cell.count; ++i)
+        emit(grid->order[i], inside);
+    }
+  } else {
+    for (std::uint32_t k = 0; k < ninst; ++k) emit(k, /*assumeInside=*/false);
   }
   out->count = static_cast<uint32_t>(out->xforms.size() / 12);
+  if (proxyOut) {
+    proxyOut->hasColors = true;  // every box proxy carries a tint
+    proxyOut->count = static_cast<uint32_t>(proxyOut->xforms.size() / 12);
+  }
+}
+
+// Build the LOD camera (thresholds + focal length) for the raster instance cull.
+RtLodCamera Gui::buildRasterLodCam() const {
+  RtLodCamera c;
+  const bool wireActive = wireCycle_ != 0 || mode_ == RenderMode::Wireframe;
+  c.lodEnabled = rasterLodEnabled_ && !wireActive;
+  // Box proxies have no authored wire topology. Wire modes disable size LOD
+  // altogether above; the shader's projected-edge fade controls density without
+  // hard full/proxy/cull transitions during dolly.
+  c.proxyEnabled =
+      rasterLodEnabled_ && !wireActive && renderer_ &&
+      renderer_->supportsProxyDraw();
+  c.frustumCull = true;
+  c.fullPx = rasterLodFullPx_;
+  c.cullPx = rasterLodCullPx_;
+  c.bandFrac = 0.0f;
+  const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+  std::memcpy(c.viewProj.m, vp.m, sizeof(c.viewProj.m));
+  const light3d::Vec3 eye = cam_->eye();
+  c.eye = eye;
+  c.forward = light3d::normalize(cam_->target() - eye);
+  c.nearPlane = cam_->nearPlane();
+  // focalPx = (viewportH * 0.5) / tan(fovY/2) = 0.5 * H * proj[1][1]. Matches the
+  // RT path's vpH_ * proj_[5] derivation.
+  const light3d::Mat4 proj = cam_->proj(/*zeroToOneDepth=*/false);
+  c.focalPx = 0.5f * static_cast<float>(viewportH_) *
+              (proj.m[5] != 0.0f ? proj.m[5] : 1.0f);
+  return c;
 }
 
 // Worker thread: compact every visible instanced mesh into cullJobResult_ from the
 // main-thread snapshots (cullJob*). No GPU calls, no live Gui/camera reads.
 void Gui::cullWorkerMain() {
   const DrawScene* d = cullJobDraw_;
+  // Build the instance grids here (off the main thread) so the one-time build cost
+  // on a huge scene -- O(instances) over the mega-prototypes -- never freezes the
+  // UI; the first worker run is slower, later runs reap the cell-rejection speedup.
+  ensureInstanceGrids();
   const light3d::Frustum fr = light3d::Frustum::fromViewProjection(cullJobVP_);
   cullJobResult_.clear();
+  cullJobProxy_.xforms.clear();
+  cullJobProxy_.colors.clear();
+  cullJobProxy_.opacities.clear();
+  cullJobProxy_.count = 0;
   size_t visInstances = 0, instTris = 0;
   for (size_t mi = 0; mi < d->meshes.size(); ++mi) {
     const DrawMeshCPU& m = d->meshes[mi];
@@ -2418,7 +3322,10 @@ void Gui::cullWorkerMain() {
     for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
     CullJobMesh r;
     r.meshIndex = mi;
-    compactMeshInstances(m, fr, cullJobEnabled_, &r);
+    const RtLodGrid* grid =
+        (cullJobGrids_ && mi < cullJobGrids_->size()) ? &(*cullJobGrids_)[mi] : nullptr;
+    compactMeshInstances(m, fr, cullJobEnabled_, grid, cullJobLodCam_, &r,
+                         &cullJobProxy_);
     visInstances += r.count;
     instTris += protoTris * r.count;
     cullJobResult_.push_back(std::move(r));
@@ -2433,7 +3340,9 @@ void Gui::cullWorkerMain() {
 void Gui::cullInstancesSync() {
   const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
   bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
-                 draw_ != lastCullDraw_;
+                 draw_ != lastCullDraw_ || rasterLodEnabled_ != lastCullRasterLod_ ||
+                 (wireCycle_ != 0 || mode_ == RenderMode::Wireframe) !=
+                     lastCullWireMode_;
   if (!changed)
     for (int i = 0; i < 16; ++i)
       if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
@@ -2442,6 +3351,14 @@ void Gui::cullInstancesSync() {
   lastCullValid_ = true;
   lastCullEnabled_ = cullEnabled_;
   lastCullDraw_ = draw_;
+  lastCullRasterLod_ = rasterLodEnabled_;
+  lastCullWireMode_ = wireCycle_ != 0 || mode_ == RenderMode::Wireframe;
+  ensureInstanceGrids();
+  const RtLodCamera lodCam = buildRasterLodCam();
+  proxyResult_.xforms.clear();
+  proxyResult_.colors.clear();
+  proxyResult_.opacities.clear();
+  proxyResult_.count = 0;
 
   const light3d::Frustum fr = light3d::Frustum::fromViewProjection(vp);
   size_t visInstances = 0, instTris = 0;
@@ -2453,29 +3370,66 @@ void Gui::cullInstancesSync() {
     if (!meshVisible) continue;
     size_t protoTris = 0;
     for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
-    compactMeshInstances(m, fr, cullEnabled_, &r);
+    const RtLodGrid* grid = mi < instGrids_.size() ? &instGrids_[mi] : nullptr;
+    compactMeshInstances(m, fr, cullEnabled_, grid, lodCam, &r, &proxyResult_);
     // Route the GPU upload to the render thread when threaded (else inline).
     uint32_t cnt = r.count;
     bool hc = r.hasColors;
-    std::vector<float> xf = r.xforms, col = r.colors;
-    gpu([this, mi, cnt, hc, xf = std::move(xf), col = std::move(col)]() mutable {
-      renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr, cnt);
+    bool ho = r.hasOpacities;
+    std::vector<float> xf = r.xforms, col = r.colors, op = r.opacities;
+    gpu([this, miCap = mi, cntCap = cnt, hcCap = hc, hoCap = ho,
+         xfCap = std::move(xf), colCap = std::move(col),
+         opCap = std::move(op)]() mutable {
+      renderer_->updateInstanceVisibility(miCap, xfCap.data(),
+                                          hcCap ? colCap.data() : nullptr,
+                                          hoCap ? opCap.data() : nullptr, cntCap);
     });
     visInstances += r.count;
     instTris += protoTris * r.count;
   }
+  // Upload the accumulated box proxies (one shared instanced draw). Always called
+  // (count 0 when LOD off) so a previous frame's proxies are cleared.
+  uploadProxies(&proxyResult_);
   statVisibleInstances_ = visInstances;
   statInstTris_ = instTris;
 }
 
+// Union of the non-instanced proxies (rebuilt every frame by
+// buildViewVisibilityMask) and the instance cull's proxies (dirty-gated, so they
+// arrive only on the frames the cull actually reran). Both feed the single shared
+// box-proxy instanced draw, so they have to be uploaded together; the content
+// compare keeps the steady state free.
+void Gui::uploadProxies(CullJobMesh* instProxy) {
+  std::vector<float> xf = nonInstProxy_.xforms;
+  std::vector<float> col = nonInstProxy_.colors;
+  if (instProxy) {
+    xf.insert(xf.end(), instProxy->xforms.begin(), instProxy->xforms.end());
+    col.insert(col.end(), instProxy->colors.begin(), instProxy->colors.end());
+    instProxy->xforms.clear();
+    instProxy->colors.clear();
+    instProxy->count = 0;
+  }
+  if (lastProxyValid_ && xf == lastProxyXforms_ && col == lastProxyColors_) return;
+  lastProxyXforms_ = xf;
+  lastProxyColors_ = col;
+  lastProxyValid_ = true;
+  const uint32_t pc = static_cast<uint32_t>(xf.size() / 12);
+  gpu([this, pcCap = pc, xfCap = std::move(xf), colCap = std::move(col)]() mutable {
+    renderer_->updateProxyInstances(xfCap.data(), colCap.data(), pcCap);
+  });
+}
+
 void Gui::cullInstances() {
   if (!draw_ || !renderer_ || !cam_) return;
-  // Only instanced prototypes carry instanceXforms; nothing to do otherwise.
+  // Only instanced prototypes carry instanceXforms; nothing to do otherwise --
+  // except the box proxies raster LOD substituted for small NON-instanced meshes,
+  // which still need their upload (a scene can be entirely non-instanced).
   bool anyInstanced = false;
   for (const auto& m : draw_->meshes) {
     if (m.instanceCount() > 0) { anyInstanced = true; break; }
   }
   if (!anyInstanced) {
+    uploadProxies(nullptr);
     if (!cullRunning_.load()) { statVisibleInstances_ = 0; statInstTris_ = 0; }
     return;
   }
@@ -2488,11 +3442,19 @@ void Gui::cullInstances() {
       size_t mi = r.meshIndex;
       uint32_t cnt = r.count;
       bool hc = r.hasColors;
-      std::vector<float> xf = std::move(r.xforms), col = std::move(r.colors);
-      gpu([this, mi, cnt, hc, xf = std::move(xf), col = std::move(col)]() mutable {
-        renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr, cnt);
+      bool ho = r.hasOpacities;
+      std::vector<float> xf = std::move(r.xforms), col = std::move(r.colors),
+                         op = std::move(r.opacities);
+      gpu([this, miCap = mi, cntCap = cnt, hcCap = hc, hoCap = ho,
+           xfCap = std::move(xf), colCap = std::move(col),
+           opCap = std::move(op)]() mutable {
+        renderer_->updateInstanceVisibility(miCap, xfCap.data(),
+                                            hcCap ? colCap.data() : nullptr,
+                                            hoCap ? opCap.data() : nullptr, cntCap);
       });
     }
+    // Apply the accumulated box proxies (shared instanced draw).
+    uploadProxies(&cullJobProxy_);
     statVisibleInstances_ = cullJobVisInstances_;
     statInstTris_ = cullJobInstTris_;
     cullDone_.store(false);
@@ -2503,21 +3465,30 @@ void Gui::cullInstances() {
   // worker runs the renderer keeps the previous visible set, so the UI never blocks.
   const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
   bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
-                 draw_ != lastCullDraw_;
+                 draw_ != lastCullDraw_ || rasterLodEnabled_ != lastCullRasterLod_ ||
+                 (wireCycle_ != 0 || mode_ == RenderMode::Wireframe) !=
+                     lastCullWireMode_;
   if (!changed)
     for (int i = 0; i < 16; ++i)
       if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
   if (!changed || cullRunning_.load()) return;  // up to date, or worker busy
+  lastCullRasterLod_ = rasterLodEnabled_;
+  lastCullWireMode_ = wireCycle_ != 0 || mode_ == RenderMode::Wireframe;
   std::memcpy(lastCullVP_, vp.m, sizeof(lastCullVP_));
   lastCullValid_ = true;
   lastCullEnabled_ = cullEnabled_;
   lastCullDraw_ = draw_;
   // Snapshot worker inputs: instanceXforms/protoAabb are static after load,
   // viewVisible_ is copied, so the worker races nothing the main thread mutates.
+  // instGrids_ is built by the worker (cullWorkerMain) on its first run and is
+  // read-only thereafter, so sharing it by pointer is race-free; building there
+  // keeps the one-time O(instances) cost off the main thread.
   cullJobVP_ = vp;
   cullJobViewVisible_ = viewVisible_;
   cullJobEnabled_ = cullEnabled_;
   cullJobDraw_ = draw_;
+  cullJobGrids_ = &instGrids_;
+  cullJobLodCam_ = buildRasterLodCam();  // camera read on main, used by the worker
   cullRunning_.store(true);
   cullDone_.store(false);
   cullThread_ = std::thread(&Gui::cullWorkerMain, this);
@@ -2529,8 +3500,9 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
   const char* title = "Viewport navigation";
   const std::string modeLine = std::string("Mode: ") + NavModeLabel(navMode_);
   const char* lineOrbit = "Alt+LMB Orbit";
-  const char* linePan = "Alt+MMB Pan";
+  const char* linePan = "Alt+MMB / Shift+Alt+LMB Pan";
   const char* lineDolly = "Alt+RMB / Wheel Dolly";
+  const char* lineWalk = "W / S Move eye + pivot (Up/Down aliases, Shift = fast)";
   const char* lineSelect = "[ / ] Prev/Next selection";
   const char* lineHistory = "Alt+Left / Alt+Right Selection back/forward";
   const char* lineFrame = "F Frame selected   A Frame all   0 Home";
@@ -2544,6 +3516,7 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineOrbit).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(linePan).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineDolly).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineWalk).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineSelect).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineHistory).x);
     maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineFrame).x);
@@ -2554,7 +3527,7 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
 
   const float pad = ImGui::GetStyle().FramePadding.x * 1.2f;
   const float lineH = ImGui::GetTextLineHeightWithSpacing();
-  const int lines = showNavHelp_ ? 10 : 2;
+  const int lines = showNavHelp_ ? 11 : 2;
   const ImVec2 pos(imageMin.x + 12.0f, imageMin.y + 12.0f);
   const ImVec2 boxSize(maxWidth + pad * 2.0f, lineH * static_cast<float>(lines) + pad * 2.0f);
 
@@ -2579,6 +3552,8 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), linePan);
     y += lineH;
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineDolly);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineWalk);
     y += lineH;
     dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineSelect);
     y += lineH;
@@ -2712,6 +3687,67 @@ int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
   return best;
 }
 
+std::string Gui::pickCarrierPath(float px, float py, int vpW, int vpH) const {
+  if (!draw_ || !cam_ || !renderer_ || vpW <= 0 || vpH <= 0) return {};
+  const int mesh = pickMesh(px, py, vpW, vpH);
+  if (mesh >= 0 && static_cast<size_t>(mesh) < draw_->meshes.size()) {
+    return draw_->meshes[static_cast<size_t>(mesh)].absPath;
+  }
+
+  const bool z01 = renderer_->caps().usesZeroToOneDepth;
+  const light3d::Mat4 invVP =
+      (cam_->proj(z01) * cam_->view()).inverse();
+  const float ndcx = 2.0f * px / static_cast<float>(vpW) - 1.0f;
+  const float ndcy = 1.0f - 2.0f * py / static_cast<float>(vpH);
+  auto unproject = [&](float nz) {
+    const float* m = invVP.m;
+    const float x = m[0] * ndcx + m[4] * ndcy + m[8] * nz + m[12];
+    const float y = m[1] * ndcx + m[5] * ndcy + m[9] * nz + m[13];
+    const float z = m[2] * ndcx + m[6] * ndcy + m[10] * nz + m[14];
+    const float w = m[3] * ndcx + m[7] * ndcy + m[11] * nz + m[15];
+    const float inv = w != 0.0f ? 1.0f / w : 1.0f;
+    return light3d::Vec3{x * inv, y * inv, z * inv};
+  };
+  const light3d::Vec3 ro = cam_->eye();
+  const light3d::Vec3 rd = light3d::normalize(
+      unproject(1.0f) - unproject(z01 ? 0.0f : -1.0f));
+  const float inv[3] = {
+      rd.x != 0.0f ? 1.0f / rd.x : 1.0e30f,
+      rd.y != 0.0f ? 1.0f / rd.y : 1.0e30f,
+      rd.z != 0.0f ? 1.0f / rd.z : 1.0e30f};
+  auto hit = [&](const float mn[3], const float mx[3], float* tOut) {
+    float t0 = -1.0e30f, t1 = 1.0e30f;
+    const float o[3] = {ro.x, ro.y, ro.z};
+    const float d[3] = {inv[0], inv[1], inv[2]};
+    for (int k = 0; k < 3; ++k) {
+      float a = (mn[k] - o[k]) * d[k];
+      float b = (mx[k] - o[k]) * d[k];
+      if (a > b) std::swap(a, b);
+      t0 = std::max(t0, a);
+      t1 = std::min(t1, b);
+    }
+    if (t1 < std::max(t0, 0.0f)) return false;
+    *tOut = std::max(t0, 0.0f);
+    return true;
+  };
+  std::string bestPath;
+  float bestT = 1.0e30f;
+  auto consider = [&](const std::string& path, const std::string& purpose,
+                      const float mn[3], const float mx[3]) {
+    if (path.empty() || !meshPurposeVisible(purpose)) return;
+    float t = 0.0f;
+    if (hit(mn, mx, &t) && t < bestT) {
+      bestT = t;
+      bestPath = path;
+    }
+  };
+  for (const DrawPointsCPU& p : draw_->points)
+    consider(p.absPath, p.purpose, p.aabbMin, p.aabbMax);
+  for (const DrawCurvesCPU& c : draw_->curves)
+    consider(c.absPath, c.purpose, c.aabbMin, c.aabbMax);
+  return bestPath;
+}
+
 void Gui::beginRegionSelection(const ImVec2& mouse) {
   regionSelecting_ = true;
   regionSelectionMoved_ = false;
@@ -2798,16 +3834,56 @@ void Gui::finishRegionSelection(const ImVec2& imageMin, int vpW, int vpH) {
   regionSelectionMoved_ = false;
 
   if (wasDrag) {
-    setSelectionListFromMeshes(regionPickMeshes(imageMin, vpW, vpH));
+    if (!draw_) return;
+    const std::vector<int> meshHits = regionPickMeshes(imageMin, vpW, vpH);
+    std::vector<std::string> paths;
+    for (int mi : meshHits) {
+      if (mi >= 0 && static_cast<size_t>(mi) < draw_->meshes.size())
+        paths.push_back(draw_->meshes[static_cast<size_t>(mi)].absPath);
+    }
+    const ImVec2 r0(std::max(0.0f, std::min(std::min(regionStart_.x, regionEnd_.x) - imageMin.x,
+                                           static_cast<float>(vpW))),
+                    std::max(0.0f, std::min(std::min(regionStart_.y, regionEnd_.y) - imageMin.y,
+                                           static_cast<float>(vpH))));
+    const ImVec2 r1(std::max(0.0f, std::min(std::max(regionStart_.x, regionEnd_.x) - imageMin.x,
+                                           static_cast<float>(vpW))),
+                    std::max(0.0f, std::min(std::max(regionStart_.y, regionEnd_.y) - imageMin.y,
+                                           static_cast<float>(vpH))));
+    const light3d::Mat4 VP = cam_->proj(renderer_->caps().usesZeroToOneDepth) * cam_->view();
+    auto intersects = [&](const auto& carrier) {
+      const float xs[2] = {carrier.aabbMin[0], carrier.aabbMax[0]};
+      const float ys[2] = {carrier.aabbMin[1], carrier.aabbMax[1]};
+      const float zs[2] = {carrier.aabbMin[2], carrier.aabbMax[2]};
+      ImVec2 mn(1e30f, 1e30f), mx(-1e30f, -1e30f); bool any = false;
+      for (float x : xs) for (float y : ys) for (float z : zs) {
+        const float* m = VP.m;
+        const float cx = m[0]*x + m[4]*y + m[8]*z + m[12];
+        const float cy = m[1]*x + m[5]*y + m[9]*z + m[13];
+        const float cw = m[3]*x + m[7]*y + m[11]*z + m[15];
+        if (cw <= 1e-6f) continue;
+        const float iw = 1.0f / cw;
+        const float sx = (cx*iw*0.5f + 0.5f) * vpW;
+        const float sy = (1.0f - (cy*iw*0.5f + 0.5f)) * vpH;
+        mn.x = std::min(mn.x, sx); mn.y = std::min(mn.y, sy);
+        mx.x = std::max(mx.x, sx); mx.y = std::max(mx.y, sy); any = true;
+      }
+      return any && mx.x >= r0.x && mn.x <= r1.x && mx.y >= r0.y && mn.y <= r1.y;
+    };
+    for (size_t i = 0; i < draw_->points.size(); ++i)
+      if (carrierVisibleForView(i) && intersects(draw_->points[i])) paths.push_back(draw_->points[i].absPath);
+    for (size_t i = 0; i < draw_->curves.size(); ++i)
+      if (carrierVisibleForView(draw_->points.size() + i) && intersects(draw_->curves[i])) paths.push_back(draw_->curves[i].absPath);
+    setSelectionListFromPaths(std::move(paths));
     return;
   }
 
   if (!draw_) return;
   const float px = regionEnd_.x - imageMin.x;
   const float py = regionEnd_.y - imageMin.y;
-  const int hit = pickMesh(px, py, vpW, vpH);
-  if (hit >= 0 && static_cast<size_t>(hit) < draw_->meshes.size()) {
-    selectByPath(draw_->meshes[static_cast<size_t>(hit)].absPath, hit);
+  const std::string path = pickCarrierPath(px, py, vpW, vpH);
+  if (!path.empty()) {
+    const int hit = pickMesh(px, py, vpW, vpH);
+    selectByPath(path, hit >= 0 ? hit : -1);
   } else {
     clearSelection();
   }
@@ -2815,7 +3891,18 @@ void Gui::finishRegionSelection(const ImVec2& imageMin, int vpW, int vpH) {
 
 void Gui::drawViewport() {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-  ImGui::Begin("Viewport");
+  ImGuiWindowFlags flags = ImGuiWindowFlags_None;
+  if (captureViewportOnly_) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos);
+    ImGui::SetNextWindowSize(vp->Size);
+    ImGui::SetNextWindowViewport(vp->ID);
+    flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+  }
+  ImGui::Begin("Viewport", nullptr, flags);
   ImGui::PopStyleVar();
 
   const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -2843,10 +3930,32 @@ void Gui::drawViewport() {
     // samples out-of-bounds -> GPU fault / device loss (VK). Skip it until it's ready.
     if (tex) ImGui::Image(tex, avail, uv0, uv1);
     else ImGui::Dummy(avail);
-    vpHovered_ = ImGui::IsItemHovered();
-    handleNavigation();
+    const bool imageHovered = ImGui::IsItemHovered();
     const ImVec2 imageMin = ImGui::GetItemRectMin();
     const ImVec2 imageMax = ImGui::GetItemRectMax();
+    bool navButtonHovered = false;
+    {
+      const float buttonSize = ImGui::GetFrameHeight();
+      ImGui::SetCursorScreenPos(ImVec2(imageMax.x - buttonSize - 8.0f,
+                                       imageMin.y + 8.0f));
+      ImGui::PushID("viewport_nav_help");
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+      ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(18, 20, 24, 180));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(42, 48, 58, 220));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(64, 72, 86, 240));
+      if (ImGui::Button("?", ImVec2(buttonSize, buttonSize))) {
+        showNavHelp_ = !showNavHelp_;
+      }
+      navButtonHovered = ImGui::IsItemHovered();
+      if (navButtonHovered) {
+        ImGui::SetTooltip("Viewport navigation");
+      }
+      ImGui::PopStyleColor(3);
+      ImGui::PopStyleVar();
+      ImGui::PopID();
+    }
+    vpHovered_ = imageHovered && !navButtonHovered;
+    handleNavigation();
     drawNavigationOverlay(imageMin, imageMax);
 
     // Prim path labels overlay
@@ -2901,7 +4010,7 @@ void Gui::drawViewport() {
           c[r] = vp.m[0*4+r]*x + vp.m[1*4+r]*y + vp.m[2*4+r]*z + vp.m[3*4+r];
         if (std::abs(c[3]) < 1e-10f) return ImVec2(-1e9,-1e9);
         float nx = c[0]/c[3], ny = c[1]/c[3];
-        return ImVec2((nx*0.5f+0.5f)*w, (1.0f-(ny*0.5f+0.5f))*h);
+        return ImVec2((nx*0.5f+0.5f)*static_cast<float>(w), (1.0f-(ny*0.5f+0.5f))*static_cast<float>(h));
       };
       ImVec2 origin2D = project(tx, ty, tz);
       // Axis endpoints in screen space.
@@ -3037,7 +4146,9 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.cameraPos[0] = eye.x;
   p.cameraPos[1] = eye.y;
   p.cameraPos[2] = eye.z;
+  p.exposure = cam_->exposure();
   p.mode = mode_;
+  p.wireMode = wireCycle_;  // 'v' key: 0 off / 1 wire-only / 2 wire+shaded
   p.displacement = displacementEnabled_;
   p.displacementScale = displacementScale_;
   p.maxTessLevel = maxTessLevel_;
@@ -3055,7 +4166,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
     p.highlightIndexCount = static_cast<int>(highlightSubsetIndices_.size());
   }
   // Vulkan highlight: world-space edge lines (whole mesh or subset).
-  if (p.highlightMeshIndex >= 0 && !highlightLinesData_.empty()) {
+  if (!highlightLinesData_.empty()) {
     p.highlightLines = highlightLinesData_.data();
     p.highlightLineVertexCount = static_cast<int>(highlightLinesData_.size());
   }
@@ -3071,12 +4182,41 @@ void Gui::renderViewportScene(FramePacket* packet) {
       p.sceneExtent[i] = std::max(1e-4f, draw_->aabbMax[i] - draw_->aabbMin[i]);
     }
   }
+  if (draw_ && draw_->hasPreviewLight) {
+    for (int i = 0; i < 3; ++i) {
+      p.lightDir[i] = draw_->previewLightDir[i];
+      p.lightColor[i] = draw_->previewLightColor[i];
+    }
+  }
+  // Per-phase frame timing (TUSDVIEW_TIME_FRAME): isolates where a heavy scene
+  // spends its frame -- instance cull/upload (CPU + GPU upload) vs renderFrame
+  // (GPU draw submission). The GPU rasterisation itself lands largely in present()
+  // (timed in app.cc), since GL/VK only flush there.
+  static const bool timeFrame = std::getenv("TUSDVIEW_TIME_FRAME") != nullptr;
+  using Clock = std::chrono::steady_clock;
+  auto t0 = timeFrame ? Clock::now() : Clock::time_point{};
   buildViewVisibilityMask();
+  auto t1 = timeFrame ? Clock::now() : Clock::time_point{};
   cullInstances();  // per-instance frustum cull (updates renderer instance buffers)
+  auto t2 = timeFrame ? Clock::now() : Clock::time_point{};
   if (!viewVisible_.empty()) {
     p.meshVisible = viewVisible_.data();
     p.meshVisibleCount = static_cast<int>(viewVisible_.size());
   }
+  if (!meshVisible_.empty()) {
+    p.rtMeshVisible = meshVisible_.data();
+    p.rtMeshVisibleCount = static_cast<int>(meshVisible_.size());
+  }
+  if (!carrierVisible_.empty()) {
+    p.carrierVisible = carrierVisible_.data();
+    p.carrierVisibleCount = static_cast<int>(carrierVisible_.size());
+  }
+  // Purpose visibility for the RT TLAS (PurposeId bit order: default, render,
+  // proxy, guide). Raster gets the same filtering via viewVisible_.
+  p.purposeVisibleMask = (showPurposeDefault_ ? 1u : 0u) |
+                         (showPurposeRender_ ? 2u : 0u) |
+                         (showPurposeProxy_ ? 4u : 0u) |
+                         (showPurposeGuide_ ? 8u : 0u);
   buildHelpers();
   p.helperLines = helperLines_.empty() ? nullptr : helperLines_.data();
   p.helperLineVertexCount = static_cast<int>(helperLines_.size());
@@ -3085,14 +4225,30 @@ void Gui::renderViewportScene(FramePacket* packet) {
 
   if (!packet) {
     renderer_->renderFrame(p);  // single-threaded: render inline
+    if (timeFrame) {
+      auto t3 = Clock::now();
+      auto ms = [](auto a, auto b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+      };
+      std::fprintf(stderr,
+                   "[frame] viewmask=%.1fms cull+upload=%.1fms renderFrame=%.1fms "
+                   "(vis inst=%zu, inst tris=%zu)\n",
+                   ms(t0, t1), ms(t1, t2), ms(t2, t3), statVisibleInstances_,
+                   statInstTris_);
+    }
     return;
   }
   // Threaded: copy everything the render thread needs into the owned packet.
   std::memcpy(packet->view, viewM.m, sizeof(packet->view));
   std::memcpy(packet->proj, projM.m, sizeof(packet->proj));
   packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
+  packet->exposure = p.exposure;
   packet->mode = p.mode;
   for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
+  for (int i = 0; i < 3; ++i) {
+    packet->lightDir[i] = p.lightDir[i];
+    packet->lightColor[i] = p.lightColor[i];
+  }
   packet->depthScale = p.depthScale;
   for (int i = 0; i < 3; ++i) { packet->sceneMin[i] = p.sceneMin[i]; packet->sceneExtent[i] = p.sceneExtent[i]; }
   packet->highlightMeshIndex = p.highlightMeshIndex;
@@ -3106,6 +4262,13 @@ void Gui::renderViewportScene(FramePacket* packet) {
     packet->overlayLines.assign(p.overlayLines, p.overlayLines + p.overlayLineVertexCount);
   if (p.meshVisible)
     packet->meshVisible.assign(p.meshVisible, p.meshVisible + p.meshVisibleCount);
+  if (p.carrierVisible)
+    packet->carrierVisible.assign(p.carrierVisible,
+                                  p.carrierVisible + p.carrierVisibleCount);
+  if (p.rtMeshVisible)
+    packet->rtMeshVisible.assign(p.rtMeshVisible,
+                                 p.rtMeshVisible + p.rtMeshVisibleCount);
+  packet->purposeVisibleMask = p.purposeVisibleMask;
   packet->viewportW = vpW;
   packet->viewportH = vpH;
   packet->hasParams = true;
@@ -3377,7 +4540,6 @@ void Gui::drawStageMeta() {
   ImGui::Begin("Stage");
   if (loaded_ && loaded_->ok) {
     const auto& meta = loaded_->render.meta;
-    const auto& smeta = loaded_->stage.metas();
     metaFilter_.Draw("Search##meta", -1.0f);  // key / value
     if (ImGui::BeginTable("##stagemeta", 2,
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
@@ -3397,33 +4559,44 @@ void Gui::drawStageMeta() {
         ImGui::TableSetColumnIndex(1);
         ImGui::TextWrapped("%s", v.c_str());
       };
-      row("upAxis", meta.upAxis);
-      row("metersPerUnit", std::to_string(meta.metersPerUnit));
-      row("framesPerSecond", std::to_string(meta.framesPerSecond));
-      row("timeCodesPerSecond", std::to_string(meta.timeCodesPerSecond));
-      if (meta.startTimeCode.has_value())
-        row("startTimeCode", std::to_string(*meta.startTimeCode));
-      if (meta.endTimeCode.has_value())
-        row("endTimeCode", std::to_string(*meta.endTimeCode));
-      if (!smeta.defaultPrim.str().empty()) row("defaultPrim", smeta.defaultPrim.str());
-      if (!meta.copyright.empty()) row("copyright", meta.copyright);
-      if (!meta.comment.empty()) row("comment", meta.comment);
-      if (!smeta.doc.value.empty()) row("documentation", smeta.doc.value);
-      if (!smeta.subLayers.empty()) {
-        std::string s;
-        for (const auto& sl : smeta.subLayers) {
-          if (!s.empty()) s += "\n";
-          s += sl.assetPath.GetAssetPath();
+      if (nextStage_) {
+        const tinyusdz::next::StageMeta& next_meta = nextStage_->GetMeta();
+        row("upAxis", next_meta.upAxis);
+        row("metersPerUnit", std::to_string(next_meta.metersPerUnit));
+        row("framesPerSecond", std::to_string(next_meta.framesPerSecond));
+        row("timeCodesPerSecond",
+            std::to_string(next_meta.timeCodesPerSecond));
+        if (next_meta.startTimeCode_set)
+          row("startTimeCode", std::to_string(next_meta.startTimeCode));
+        if (next_meta.endTimeCode_set)
+          row("endTimeCode", std::to_string(next_meta.endTimeCode));
+        if (!next_meta.defaultPrim.empty()) row("defaultPrim", next_meta.defaultPrim);
+        if (!next_meta.comment.empty()) row("comment", next_meta.comment);
+        if (!next_meta.doc.empty()) row("documentation", next_meta.doc);
+        const tinyusdz::next::Layer* layer = nextStage_->GetRootLayer();
+        if (layer && !layer->meta().subLayers.empty()) {
+          std::string sublayers;
+          for (const std::string& sublayer : layer->meta().subLayers) {
+            if (!sublayers.empty()) sublayers += "\n";
+            sublayers += sublayer;
+          }
+          row("subLayers", sublayers);
         }
-        row("subLayers", s);
-      }
-      if (!smeta.customLayerData.empty()) {
-        std::string s;
-        for (const auto& kv : smeta.customLayerData) {
-          if (!s.empty()) s += ", ";
-          s += kv.first;
-        }
-        row("customLayerData", s);
+      } else {
+        const auto& smeta = loaded_->stage.metas();
+        row("upAxis", meta.upAxis);
+        row("metersPerUnit", std::to_string(meta.metersPerUnit));
+        row("framesPerSecond", std::to_string(meta.framesPerSecond));
+        row("timeCodesPerSecond", std::to_string(meta.timeCodesPerSecond));
+        if (meta.startTimeCode.has_value())
+          row("startTimeCode", std::to_string(*meta.startTimeCode));
+        if (meta.endTimeCode.has_value())
+          row("endTimeCode", std::to_string(*meta.endTimeCode));
+        if (!smeta.defaultPrim.str().empty())
+          row("defaultPrim", smeta.defaultPrim.str());
+        if (!meta.copyright.empty()) row("copyright", meta.copyright);
+        if (!meta.comment.empty()) row("comment", meta.comment);
+        if (!smeta.doc.value.empty()) row("documentation", smeta.doc.value);
       }
       ImGui::EndTable();
     }

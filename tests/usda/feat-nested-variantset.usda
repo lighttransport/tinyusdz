@@ -1,0 +1,58 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+# Regression: a SELECTED variant block may author its OWN nested variantSet.
+# Here `geo = "hi"` selects a block that both overrides GEO (adds Mesh "M") and
+# declares a nested `geo_vis` variantSet whose selected `preview` option supplies
+# a proxy-purpose mesh (GEO_PROXY/mesh). Mirrors ALab's render_high -> geo_vis.
+def Xform "root" (
+    variants = {
+        string geo = "hi"
+    }
+    prepend variantSets = "geo"
+)
+{
+    def Xform "GEO"
+    {
+    }
+    variantSet "geo" = {
+        "hi" (
+            variants = {
+                string geo_vis = "preview"
+            }
+            prepend variantSets = "geo_vis"
+        ) {
+            over "GEO"
+            {
+                def Mesh "M"
+                {
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                }
+            }
+            variantSet "geo_vis" = {
+                "preview" {
+                    over "GEO"
+                    {
+                        uniform token purpose = "render"
+                    }
+
+                    def Xform "GEO_PROXY"
+                    {
+                        uniform token purpose = "proxy"
+
+                        def Mesh "mesh"
+                        {
+                            int[] faceVertexCounts = [3]
+                            int[] faceVertexIndices = [0, 1, 2]
+                            point3f[] points = [(0, 0, 0), (2, 0, 0), (0, 2, 0)]
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

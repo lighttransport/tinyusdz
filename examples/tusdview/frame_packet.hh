@@ -20,8 +20,11 @@ struct FramePacket {
   float view[16]{};
   float proj[16]{};
   float cameraPos[3]{0, 0, 0};
+  float exposure{0.0f};
   RenderMode mode{RenderMode::Shaded};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
+  float lightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
+  float lightColor[3]{1.0f, 1.0f, 1.0f};
   float depthScale{1.0f};
   float sceneMin[3]{0, 0, 0};
   float sceneExtent[3]{1, 1, 1};
@@ -31,6 +34,9 @@ struct FramePacket {
   std::vector<HelperVertex> helperLines;
   std::vector<HelperVertex> overlayLines;
   std::vector<uint8_t> meshVisible;
+  std::vector<uint8_t> carrierVisible;
+  std::vector<uint8_t> rtMeshVisible;
+  uint32_t purposeVisibleMask{0xBu};
   int viewportW{0};
   int viewportH{0};
   int fbW{0};
@@ -48,8 +54,13 @@ struct FramePacket {
     p.cameraPos[0] = cameraPos[0];
     p.cameraPos[1] = cameraPos[1];
     p.cameraPos[2] = cameraPos[2];
+    p.exposure = exposure;
     p.mode = mode;
     for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor[i];
+    for (int i = 0; i < 3; ++i) {
+      p.lightDir[i] = lightDir[i];
+      p.lightColor[i] = lightColor[i];
+    }
     p.depthScale = depthScale;
     for (int i = 0; i < 3; ++i) { p.sceneMin[i] = sceneMin[i]; p.sceneExtent[i] = sceneExtent[i]; }
     p.highlightMeshIndex = highlightMeshIndex;
@@ -63,6 +74,11 @@ struct FramePacket {
     p.overlayLineVertexCount = static_cast<int>(overlayLines.size());
     p.meshVisible = meshVisible.empty() ? nullptr : meshVisible.data();
     p.meshVisibleCount = static_cast<int>(meshVisible.size());
+    p.carrierVisible = carrierVisible.empty() ? nullptr : carrierVisible.data();
+    p.carrierVisibleCount = static_cast<int>(carrierVisible.size());
+    p.rtMeshVisible = rtMeshVisible.empty() ? nullptr : rtMeshVisible.data();
+    p.rtMeshVisibleCount = static_cast<int>(rtMeshVisible.size());
+    p.purposeVisibleMask = purposeVisibleMask;
     return p;
   }
 };

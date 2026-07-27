@@ -48,8 +48,8 @@ bool DefaultTextureImageLoaderFunction(
   (void)userdata;
   (void)warn;
 
-  std::string sanitized_path =
-      utils::SanitizeAssetPath(assetPath.GetAssetPath());
+  std::string sanitized_path = utils::SanitizeAssetPath(
+      assetPath.GetAssetPath(), assetResolver.get_allow_parent_relative_paths());
   if (sanitized_path.empty()) {
     if (err) {
       (*err) += fmt::format("Unsafe asset path: {}\n", assetPath.GetAssetPath());
@@ -77,10 +77,10 @@ bool DefaultTextureImageLoaderFunction(
     return false;
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     if (err) {
       (*err) += fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                            asset.size(), security_policy::kResolverMaxAssetReadBytes);
+                            asset.size(), security_policy::GetMaxAssetReadBytes());
     }
     return false;
   }
@@ -145,6 +145,12 @@ bool DefaultTextureImageLoaderFunction(
   texImage.channels = result.value().image.channels;
   texImage.width = result.value().image.width;
   texImage.height = result.value().image.height;
+
+  // `imageData` receives the decoder output as-is, so the buffer's texel type
+  // equals the asset's texel type (HDR/EXR = Float32, 16-bit PNG = UInt16,
+  // ...). Without this, float buffers were tagged UInt8 and every consumer
+  // read the raw float bytes as 8-bit texels (garbage for HDR envmaps).
+  texImage.texelComponentType = texImage.assetTexelComponentType;
 
   (*texImageOut) = texImage;
 

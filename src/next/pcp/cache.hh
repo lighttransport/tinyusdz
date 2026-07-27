@@ -32,6 +32,18 @@ namespace pcp {
 
 class Cache {
  public:
+  struct MemoryStats {
+    size_t source_layer_bytes = 0;
+    size_t transient_cache_bytes = 0;
+    size_t layer_count = 0;
+    size_t prim_index_count = 0;
+    size_t composed_prim_count = 0;
+
+    size_t total_bytes() const {
+      return source_layer_bytes + transient_cache_bytes;
+    }
+  };
+
   Cache();
   ~Cache();
   Cache(Cache &&) noexcept;
@@ -103,6 +115,14 @@ class Cache {
   /// Materialize the fully-composed scene into `stage` (a fresh root Layer).
   bool BuildStage(Stage *stage, std::string *warn, std::string *err);
 
+  /// Approximate logical residency owned by the composition cache. Source
+  /// layers are counted once even when several layer stacks reference them.
+  MemoryStats GetMemoryStats() const;
+
+  /// Drop recomputable PrimIndex/source/opinion caches while retaining parsed
+  /// layers, load rules, deferred-payload state and variant selections.
+  void TrimTransientCaches();
+
   // --- lazy per-prim composition (Phase 10) -------------------------------
 
   /// Compose (and cache) just the prim at `prim_path` on first access, reusing
@@ -140,6 +160,21 @@ class Cache {
   /// All instances (including the prototype) sharing a prototype.
   std::vector<Path> GetInstancesForPrototype(const Path &prototype) const;
 
+  /// Translate an instance-space path into prototype space: given a path that is
+  /// an instance root or any descendant of one, rewrite the nearest enclosing
+  /// instance prefix to its prototype root, recursing for nested instances
+  /// (a prim inside a prototype that is itself an instance). Returns an empty
+  /// Path when `path` lies under no instance (mirrors OpenUSD's
+  /// `UsdPrim::GetPathInPrototypeForPath` returning an empty path).
+  Path TranslatePathToPrototype(const Path &path) const;
+
+  /// Inverse of the above for a single, caller-named instance: rewrite a
+  /// prototype-space path (which must lie at/under `instance_root`'s prototype)
+  /// onto `instance_root`. Returns an empty Path when `instance_root` is not an
+  /// instance or `proto_path` is not within its prototype.
+  Path TranslatePathFromPrototype(const Path &proto_path,
+                                  const Path &instance_root) const;
+
   /// Number of distinct prototypes (instance groups).
   size_t PrototypeCount() const;
 
@@ -159,6 +194,11 @@ class Cache {
   bool LoadPayload(const Path &prim_path, LoadPolicy policy, std::string *warn,
                    std::string *err);
 
+  /// Apply several payload load rules at once and invalidate their common
+  /// affected subtree once. Unlike SetLoadRules, parsed layers and unrelated
+  /// composition caches are retained.
+  bool LoadPayloads(const std::vector<Path> &prim_paths, LoadPolicy policy);
+
   /// Unload (defer) the payload on `prim_path` and its descendants, then
   /// recompose so HasDeferredPayload is immediately accurate.
   bool UnloadPayload(const Path &prim_path);
@@ -169,6 +209,12 @@ class Cache {
 
   /// A snapshot of the current payload load rules.
   LoadRules GetLoadRules() const;
+
+  /// Replace path-scoped variant selections and invalidate only paths whose
+  /// selections changed (plus dependent indices). Parsed layers stay cached.
+  void SetVariantSelections(
+      const CompositionOptions::VariantSelectionMap &selections);
+  CompositionOptions::VariantSelectionMap GetVariantSelections() const;
 
   /// Whether `prim_path` has an unloaded (deferred) payload.
   bool HasDeferredPayload(const Path &prim_path) const;

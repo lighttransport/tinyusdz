@@ -6,6 +6,9 @@
 // fieldsets, specs, VALUE data section, time samples, metadata.
 
 #include "crate-writer.hh"
+#include "../layer/array-edit.hh"
+#include "../parser/lexer.hh"
+#include "../parser/value-parser.hh"
 #include "crate-data-source.hh"
 #include "variant-holders.hh"
 #include "crate-writer-types.hh"
@@ -53,7 +56,11 @@ bool ValidateStrictCrateFields(const Layer& layer, std::string* error) {
           return false;
         }
       }
-      if (prim.raw_default_source(slot.name_id)) {
+      if (prim.raw_default_source(slot.name_id) &&
+          !prim.array_edit(slot.name_id)) {
+        // A sparse array edit also carries its canonical text as a raw
+        // default source, but it has a real crate encoding (VtArrayEdit rep,
+        // crate 0.14) -- only raw text WITHOUT a structured twin is lossy.
         if (error) *error =
             "Strict AOUSD USDC write cannot encode raw unsupported value " +
             prim.path().str() + "." + name;

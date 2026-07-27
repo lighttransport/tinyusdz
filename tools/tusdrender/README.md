@@ -15,14 +15,19 @@ Common flags:
 | flag | meaning |
 |------|---------|
 | `-rtPreview` | ray-traced preview (the `next` loader; default for USDC) |
+| `-vk` / `-vkr` / `-d3d` | GPU backends — Vulkan compute / Vulkan ray query / Direct3D 11 compute — see [`doc/tusdrender.md`](../../doc/tusdrender.md) for status + testing |
+| `-largeSceneProfile caldera\|island\|alab` | Vulkan large-scene preset over backend/LOD/shared memory policy; explicit flags win |
 | `-w N -height N` | image size (`-height` omitted → from camera aspect) |
 | `-autoframe` | usdrecord-style auto camera framing |
 | `-camera <path>` | render through a named `UsdGeomCamera` |
 | `-mask <prim,...>` | restrict to these prim subtrees |
 | `-complexity low\|med\|high\|veryhigh` | subdivision preset |
 | `-smooth` | interpolate authored normals (smooth shading) |
+| `-threads N` | cap build and CPU shade-after-hit worker threads (`0` = auto) |
 | `-displaceScale <f>` | `UsdPreviewSurface` displacement multiplier (default 1.0; `-noDisplace` disables) |
-| `-maxMem <GiB>` | memory cap override (default `min(32, 0.5·MemAvailable)`) |
+| `-materialResolver legacy\|tydra-next\|compare` | next-loader material resolver. `tydra-next` is the default shared path; `legacy` keeps the hand-rolled compatibility path; `compare` renders legacy and reports resolver field differences. |
+| `-materialShading legacy\|lightrt-bsdf` | CPU shading path. `lightrt-bsdf` is experimental and evaluates direct-light/headlight response through the shared LightRT OpenPBR BSDF; `legacy` remains the default. |
+| `-maxMem <GiB>` | memory cap override (automatic policy reserves 2 GiB on the 32 GiB target) |
 | `-stats` | print mesh/triangle/memory/timing stats |
 
 ## Composition, instancing, memory
@@ -35,6 +40,26 @@ Common flags:
 * **Two-level (instanced) BVH** — native instances are placed by a LightRT TLAS
   with each prototype's geometry built once (BLAS), so a scene with millions of
   *visible* triangles only stores the *unique* prototype geometry.
+* **Per-instance view-dependent LOD (`-rtLod`)** — at TLAS build time each mesh
+  placement is classified from the resolved camera: distant prototypes collapse to
+  a shared unit-box BLAS (box-fit onto the prototype AABB), sub-pixel placements are
+  dropped, near ones keep the real BLAS. Parity with the interactive viewer's
+  `--rt-lod` (`tusdr_rt_lod.{hh,cc}`). Tunables: `-rtLodFullPx` (promote-to-full
+  radius, def 64), `-rtLodCullPx` (drop radius, def 2), `-rtLodNoProxy` (Full-or-Cull
+  only). Off by default. **Offline caveat:** a path tracer needs off-screen geometry
+  for shadows/reflections/GI, so frustum culling is a separate opt-in
+  (`-rtLodFrustumCull`, faster but changes lighting); proxy/sub-pixel are softer
+  approximations. Works on the CPU two-level TLAS path (`-rtPreview`) **and** the
+  `-vk`/`-vkr`/`-d3d`/`-hip` GPU backends — the latter apply it *flatten-side*
+  (classify the world-space placements once, Cull→drop, Proxy→box, Full→keep, before
+  building the flat BLAS). The GPU collector now expands both `PointInstancer` and
+  scenegraph (`instanceable`) native instances in place (world-space placements),
+  so instanced geometry renders and LODs on `-vk`/`-vkr` too (flattened: a
+  prototype's geometry is duplicated per instance). For instanced scenes,
+  **`-vkInstanced`** (implies `-vkr`) builds a true two-level GPU TLAS — one BLAS
+  per prototype shared across all instances — storing instanced geometry once
+  (e.g. 800 tris vs 160 000 for a 200× scatter), pixel-identical to the flat path.
+  See `doc/tusdrender.md`.
 * **Shading** — bound `UsdPreviewSurface` (diffuse/normal/roughness/metallic/
   emissive/occlusion textures); for unmaterialed geometry, `primvars:displayColor`
   / `displayOpacity` are honored — constant (per-mesh) and per-vertex/faceVarying/
@@ -43,18 +68,36 @@ Common flags:
   glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair. `-smooth`
   interpolates authored `normals` for smooth shading (default is per-face
   geometric normals, which keeps the lean 4 B/triangle instanced footprint).
+  The default `-materialResolver tydra-next` path uses the shared material
+  converter. The legacy and compare modes remain migration aids for the
+  shared material-eval layer; measure coverage on usd-assets with:
+  `USD_ASSETS_ROOT=/path/to/usd-assets TUSDR_RUN_MATERIAL_RESOLVER=1 ctest --test-dir build -R tool-tusdrender-material-resolver --output-on-failure`.
+  Add `TUSDR_MATERIAL_SHADING=lightrt-bsdf` to smoke the experimental BSDF
+  shading mode through the same curated loop.
+  `-materialShading lightrt-bsdf` is the next experimental step: with
+  `-materialResolver tydra-next`, tusdrender carries the shared OpenPBR block in
+  per-material side tables, then evaluates direct-light and headlight response
+  through LightRT's OpenPBR BSDF. The diffuse irradiance and prefiltered
+  reflection IBL terms also use `bsdf_eval` in this mode, and opaque hits trace
+  a bounded `bsdf_sample` continuation bounce for indirect reflection/
+  transmission. Legacy material resolution still falls back to the slim material
+  fields.
 * **Displacement** — `UsdPreviewSurface inputs:displacement` (constant or a
   height texture, honoring the `UsdUVTexture` `scale`/`bias`) offsets each vertex
   along its normal before the BVH build — coarse (no extra geometry), so it works
-  on the CPU path tracer and the `-vk`/`-vkr` backends. `-displaceScale <f>` tunes
+  on the CPU path tracer and the `-vk`/`-vkr`/`-vkInstanced` backends (the latter
+  displaces once per prototype in object space). `-displaceScale <f>` tunes
   the amount; `-noDisplace` turns it off (byte-identical to before).
 * **Lighting** — UsdLux finite lights (Rect/Sphere/Disk/Cylinder/Distant) are
   collected from the composed stage and shaded with soft area falloff; DomeLight
   is image-based lighting (`--env` overrides it). Scenes with no lights fall back
   to a camera headlight. This lights interiors a dome can't reach (e.g. ALab's
   shot lighting rig, which renders the full lit shot directly from `entry.usda`).
-* **Memory cap** — a process budget of `min(32 GiB, 0.5 × system MemAvailable)`
-  (override with `-maxMem`). When a scene would exceed it, tusdrender aborts
+* **Memory cap** — the shared automatic host policy caps the target at 32 GiB
+  and reserves 2 GiB for the OS/driver (30 GiB process cap; override with
+  `-maxMem`). StageSession composition receives 55% of that cap, leaving room
+  for streamed geometry and BVH construction. When a scene would exceed it,
+  tusdrender aborts
   cleanly with an actionable message (raise `-maxMem`, narrow with `-mask`, or
   lower `-complexity`) instead of being OOM-killed.
 

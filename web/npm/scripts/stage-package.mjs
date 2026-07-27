@@ -24,7 +24,11 @@ const REQUIRED_SOURCE_FILES = [
   'tinyusdz.js',
   'tinyusdz.wasm',
   'tinyusdz_64.js',
-  'tinyusdz_64.wasm'
+  'tinyusdz_64.wasm',
+  'tinyusdz_next.js',
+  'tinyusdz_next.wasm',
+  'tinyusdz_next_64.js',
+  'tinyusdz_next_64.wasm'
 ];
 
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-.]+)?(?:\+[0-9A-Za-z-.]+)?$/;
@@ -143,7 +147,6 @@ function main() {
       fs.writeFileSync(stagedPath, rewritten, 'utf8');
     }
   }
-
   fs.copyFileSync(rootEntrypoint, path.join(distDir, 'index.js'));
   fs.copyFileSync(readmePath, path.join(distDir, 'README.md'));
   fs.copyFileSync(licensePath, path.join(distDir, 'LICENSE'));
