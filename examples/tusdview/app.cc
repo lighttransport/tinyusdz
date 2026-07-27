@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <string>
@@ -22,6 +23,7 @@
 #include <utility>
 
 #ifndef _WIN32
+#include <sys/resource.h>
 #include <unistd.h>  // sysconf (RSS page size for the post-RT-build free log)
 #endif
 
@@ -32,6 +34,7 @@
 #include "gui_style.hh"
 #include "image-writer.hh"
 #include "external/stb_image_resize2.h"  // stbir_resize (impl lives in the lib)
+#include "external/jsonhpp/nlohmann/json.hpp"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "log.hh"
@@ -50,6 +53,142 @@ namespace {
 void GlfwErrorCallback(int code, const char* desc) {
   LOGE("glfw error %d: %s", code, desc);
 }
+
+}  // anonymous namespace
+
+void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
+  if (renderReportPath_.empty()) return;
+  using json = nlohmann::json;
+  json report = json::object();
+  report["schema_version"] = 1;
+  report["status"] = exitCode == 0 ? (draw_.empty() ? "no_scene" : "ok")
+                                    : "error";
+  report["exit_code"] = exitCode;
+  report["scene"] = scenePath;
+  report["backend"] = json::object();
+  if (renderer_) {
+    const RendererCaps& caps = renderer_->caps();
+    report["backend"]["name"] = cudaRt_ ? "CUDA" : (hipRt_ ? "HIP" : caps.backend_name);
+    const std::string rtDevice =
+        cudaRt_ ? cudaTracer_.deviceName()
+                : (hipRt_ ? hipTracer_.deviceName() : std::string());
+    report["backend"]["device"] = rtDevice.empty() ? caps.gpu_name : rtDevice;
+    report["backend"]["api"] = caps.api_info;
+  }
+  int width = 0, height = 0;
+  if (reportCaptureWidth_ > 0 && reportCaptureHeight_ > 0) {
+    width = reportCaptureWidth_;
+    height = reportCaptureHeight_;
+  } else if (renderer_) {
+    renderer_->viewportSize(&width, &height);
+  }
+  report["resolution"] = {{"width", width}, {"height", height}};
+
+  size_t ptexTextures = 0, ptexFaces = 0, ptexAtlasBytes = 0;
+  size_t ptexDownsampledFaces = 0, ptexFallbackTextures = 0;
+  for (const DrawTextureCPU& texture : draw_.textures) {
+    if (!texture.isPtex) continue;
+    ++ptexTextures;
+    ptexFaces += texture.ptexFaceRects.size();
+    ptexAtlasBytes += texture.image.data.size();
+    ptexDownsampledFaces += texture.ptexDownsampledFaces;
+    if (texture.ptexFaceRects.empty()) ++ptexFallbackTextures;
+  }
+  size_t ptexDisplacedMeshes = 0;
+  for (const DrawMeshCPU& mesh : draw_.meshes)
+    if (mesh.rasterDisplacementBaked) ++ptexDisplacedMeshes;
+  size_t ptexBase = 0, ptexNormal = 0, ptexRoughness = 0, ptexMetallic = 0;
+  size_t ptexOpacity = 0, ptexEmissive = 0, ptexDisplacement = 0;
+  for (const DrawMaterialCPU& material : draw_.materials) {
+    ptexBase += material.baseColorSample.isPtex ? 1u : 0u;
+    ptexNormal += material.normalSample.isPtex ? 1u : 0u;
+    ptexRoughness += material.roughnessSample.isPtex ? 1u : 0u;
+    ptexMetallic += material.metallicSample.isPtex ? 1u : 0u;
+    ptexOpacity += material.opacitySample.isPtex ? 1u : 0u;
+    ptexEmissive += material.emissiveSample.isPtex ? 1u : 0u;
+    ptexDisplacement += material.displacementSample.isPtex ? 1u : 0u;
+  }
+  report["scene_stats"] = {
+      {"meshes", draw_.meshes.size()},
+      {"vertices", draw_.vertexCount},
+      {"triangles", draw_.triangleCount},
+      {"materials", draw_.materials.size()},
+      {"textures", draw_.textures.size()},
+      {"ptex_textures", ptexTextures},
+      {"ptex_faces", ptexFaces},
+      {"ptex_atlas_bytes", ptexAtlasBytes},
+      {"ptex_downsampled_faces", ptexDownsampledFaces},
+      {"ptex_fallback_textures", ptexFallbackTextures},
+      {"ptex_displaced_meshes", ptexDisplacedMeshes},
+      {"ptex_slots",
+       {{"base_color", ptexBase},
+        {"normal", ptexNormal},
+        {"roughness", ptexRoughness},
+        {"metallic", ptexMetallic},
+        {"opacity", ptexOpacity},
+        {"emissive", ptexEmissive},
+        {"displacement", ptexDisplacement}}}};
+
+  size_t gpuUsed = 0, gpuTotal = 0;
+  const bool haveGpuMemory =
+      renderer_ && renderer_->gpuMemoryMB(&gpuUsed, &gpuTotal);
+  size_t peakRssMiB = 0;
+#if defined(__linux__)
+  struct rusage usage {};
+  if (::getrusage(RUSAGE_SELF, &usage) == 0)
+    peakRssMiB = static_cast<size_t>(usage.ru_maxrss) / 1024u;
+#endif
+  report["memory"] = {
+      {"host_peak_rss_mib", peakRssMiB},
+      {"gpu_memory_available", haveGpuMemory},
+      {"gpu_used_mib", gpuUsed},
+      {"gpu_total_mib", gpuTotal}};
+  report["render"] = {
+      {"samples", rtSamples_},
+      {"elapsed_seconds",
+       std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                     runStart_)
+           .count()},
+      {"truncated", draw_.truncated}};
+  std::vector<std::string> degradationReasons = draw_.skipped;
+  if (draw_.truncated) {
+    degradationReasons.push_back(
+        "scene truncated or proxied by configured render budgets");
+  }
+  if (ptexDownsampledFaces > 0) {
+    degradationReasons.push_back(
+        "Ptex faces downsampled to fit atlas edge/residency limits");
+  }
+  if (ptexFallbackTextures > 0) {
+    degradationReasons.push_back(
+        "Ptex atlas fallback used for one or more textures");
+  }
+  if (ptexNormal + ptexRoughness + ptexMetallic + ptexOpacity +
+          ptexEmissive >
+      0) {
+    degradationReasons.push_back(
+        "non-base Ptex material semantics require backend-specific page sampling");
+  }
+  report["degradation_reasons"] = std::move(degradationReasons);
+
+  std::error_code ec;
+  const std::filesystem::path path(renderReportPath_);
+  if (!path.parent_path().empty())
+    std::filesystem::create_directories(path.parent_path(), ec);
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  if (!output) {
+    LOGW("failed to write render report '%s'", renderReportPath_.c_str());
+    return;
+  }
+  output << report.dump(2) << '\n';
+  if (!output) {
+    LOGW("failed to finish render report '%s'", renderReportPath_.c_str());
+  } else {
+    LOGI("wrote render report %s", renderReportPath_.c_str());
+  }
+}
+
+namespace {
 
 // --next blendshape capability: the next loader emits GPU morph channels rather
 // than the RenderScene targets SceneHasBlendShapes() looks for.
@@ -2729,6 +2868,10 @@ void App::applyNavCommand(const StreamNav& c) {
 int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
   runStart_ = std::chrono::steady_clock::now();
+  auto finishRun = [&](int code) {
+    writeRenderReport(initialFile, code);
+    return code;
+  };
   std::string err;
   // Headless composite size (no monitor to clamp to); used for the windowless
   // ImGui DisplaySize and the offscreen composite image.
@@ -2759,7 +2902,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   if (headless_) {
     if (backend_ != Backend::Vulkan) {
       LOGE("--headless requires the Vulkan backend (pass --backend vk)");
-      return 1;
+      return finishRun(1);
     }
     // A streaming server runs an open-ended loop (no one-shot screenshot bound).
     if (maxFrames < 0 && streamHttpPort_ <= 0)
@@ -2768,7 +2911,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   } else {
     if (!initWindow(&err)) {
       LOGE("%s", err.c_str());
-      return 1;
+      return finishRun(1);
     }
     ++windowGeneration_;
   }
@@ -2783,7 +2926,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 #endif
   if (!renderer_) {
     LOGE("no renderer for requested backend");
-    return 1;
+    return finishRun(1);
   }
   ++rendererGeneration_;
   renderer_->setDevicePreference(devicePreference_);
@@ -2798,12 +2941,12 @@ int App::run(const std::string& initialFile, int maxFrames,
     // until the render thread finishes init.
     if (!initImGui(&err)) {
       LOGE("ImGui init failed: %s", err.c_str());
-      return 1;
+      return finishRun(1);
     }
     if (backend_ == Backend::GL) glfwMakeContextCurrent(nullptr);
     if (!startRenderThread()) {
       LOGE("render thread init failed: %s", err.c_str());
-      return 1;
+      return finishRun(1);
     }
     // Vulkan ray tracing: rayTracingAvailable() reads device support set by init()
     // (already finished — startRenderThread joined on it). setRayTracing() only flips
@@ -2831,11 +2974,11 @@ int App::run(const std::string& initialFile, int maxFrames,
         renderer_ = CreateGLRenderer();
         if (!renderer_ || !renderer_->init(window_, &err)) {
           LOGE("renderer init failed: %s", err.c_str());
-          return 1;
+          return finishRun(1);
         }
       } else {
         LOGE("renderer init failed: %s", err.c_str());
-        return 1;
+        return finishRun(1);
       }
     }
 
@@ -2854,7 +2997,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 
     if (!initImGui(&err)) {
       LOGE("ImGui init failed: %s", err.c_str());
-      return 1;
+      return finishRun(1);
     }
   }
 
@@ -3338,6 +3481,8 @@ int App::run(const std::string& initialFile, int maxFrames,
                   : renderer_->captureViewport(&rgba, &w, &h);
     }
     if (ok && w > 0 && h > 0) {
+      reportCaptureWidth_ = w;
+      reportCaptureHeight_ = h;
       std::string shotErr;
       if (WriteScreenshotImage(path, rgba, w, h, &shotErr)) {
         LOGI("wrote %s (%dx%d)", path.c_str(), w, h);
@@ -3397,6 +3542,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                             sceneExtent, w, h, &rgba, &cerr, rtSamples_,
                             &cameraLens_)) {
+        reportCaptureWidth_ = w;
+        reportCaptureHeight_ = h;
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("CUDA RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
@@ -3409,7 +3556,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         LOGW("CUDA ray trace failed: %s", cerr.c_str());
       }
     }
-    return 0;  // CUDA path owns the screenshot; skip the rasterized capture.
+    return finishRun(0);  // CUDA owns the screenshot.
   }
 
   // HIP/ROCm ray tracing: AMD counterpart of the CUDA path above (HIP runtime +
@@ -3468,6 +3615,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
                            sceneExtent, w, h, &rgba, &cerr, rtSamples_,
                            &cameraLens_)) {
+        reportCaptureWidth_ = w;
+        reportCaptureHeight_ = h;
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("HIP RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
@@ -3480,12 +3629,12 @@ int App::run(const std::string& initialFile, int maxFrames,
         LOGW("HIP ray trace failed: %s", cerr.c_str());
       }
     }
-    return 0;  // HIP path owns the screenshot; skip the rasterized capture.
+    return finishRun(0);  // HIP owns the screenshot.
   }
 
   shot(screenshot, /*window=*/false);
   shot(windowShot_, /*window=*/true);
-  return 0;
+  return finishRun(0);
 }
 
 }  // namespace tusdview

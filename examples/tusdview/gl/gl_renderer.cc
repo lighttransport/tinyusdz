@@ -1940,6 +1940,7 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   gm.doubleSided = sm.doubleSided;
   gm.purposeId = PurposeId(sm.purpose);
   gm.kindId = sm.kindId;
+  gm.rasterDisplacementBaked = sm.rasterDisplacementBaked;
   gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
                sm.jointWt.size() == sm.vertices.size() * 4;
   gm.extendedSkinned =
@@ -1967,9 +1968,14 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   glBindVertexArray(gm.vao);
   glGenBuffers(1, &gm.vbo);
   glBindBuffer(GL_ARRAY_BUFFER, gm.vbo);
+  const std::vector<DrawVertex>& rasterVertices =
+      sm.rasterDisplacementBaked &&
+              sm.rtDisplacedVertices.size() == sm.vertices.size()
+          ? sm.rtDisplacedVertices
+          : sm.vertices;
   glBufferData(GL_ARRAY_BUFFER,
-               static_cast<GLsizeiptr>(sm.vertices.size() * sizeof(DrawVertex)),
-               sm.vertices.data(), GL_STATIC_DRAW);
+               static_cast<GLsizeiptr>(rasterVertices.size() * sizeof(DrawVertex)),
+               rasterVertices.data(), GL_STATIC_DRAW);
   glGenBuffers(1, &gm.ebo);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.ebo);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER,
@@ -2187,9 +2193,14 @@ void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
   glBindVertexArray(gm.vao);
   glGenBuffers(1, &gm.vbo);
   glBindBuffer(GL_ARRAY_BUFFER, gm.vbo);
+  const std::vector<DrawVertex>& rasterVertices =
+      sm.rasterDisplacementBaked &&
+              sm.rtDisplacedVertices.size() == sm.vertices.size()
+          ? sm.rtDisplacedVertices
+          : sm.vertices;
   glBufferData(GL_ARRAY_BUFFER,
-               static_cast<GLsizeiptr>(sm.vertices.size() * sizeof(DrawVertex)),
-               sm.vertices.data(), GL_STATIC_DRAW);
+               static_cast<GLsizeiptr>(rasterVertices.size() * sizeof(DrawVertex)),
+               rasterVertices.data(), GL_STATIC_DRAW);
   glGenBuffers(1, &gm.ebo);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.ebo);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER,
@@ -2271,6 +2282,7 @@ void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
   }
 
   gm.geometricNormal = sm.geometricNormal;
+  gm.rasterDisplacementBaked = sm.rasterDisplacementBaked;
   gm.purposeId = PurposeId(sm.purpose);
   gm.kindId = sm.kindId;
   // Per-vertex displayColor (divisor 0). Non-instanced meshes bind it at attrib 9
@@ -3043,7 +3055,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       // follows the displaced surface. Unit 7 always bound (white when disabled) to
       // keep the sampler complete.
       const bool displaced =
-          params.displacement &&
+          params.displacement && !mesh.rasterDisplacementBaked &&
           ((materialId >= 0 &&
             static_cast<size_t>(materialId) < materials_.size())
                ? materials_[static_cast<size_t>(materialId)].hasDisplacement()
@@ -3244,8 +3256,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform4fv(uBaseColorTexBias_, 1, mat.baseColorSample.bias);
         glUniform1i(uBasePtex_, mat.baseColorSample.isPtex ? 1 : 0);
         glUniform2f(uBasePtexGrid_,
-                   static_cast<float>(std::max<uint16_t>(1, mat.baseColorSample.ptexAtlasCols)),
-                   static_cast<float>(std::max<uint16_t>(1, mat.baseColorSample.ptexAtlasRows)));
+                   static_cast<float>(mat.baseColorSample.ptexRectTexelOffset),
+                   static_cast<float>(mat.baseColorSample.ptexFaceCount));
         glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
         glUniform4fv(uNormalTexBias_, 1, mat.normalSample.bias);
         glUniform4fv(uEmissiveTexScale_, 1, mat.emissiveSample.scale);
@@ -3666,7 +3678,9 @@ void GLRenderer::renderShadowMap(const RenderFrameParams& params) {
                                       static_cast<size_t>(sub.materialId) < materials_.size()
                                   ? materials_[static_cast<size_t>(sub.materialId)]
                                   : fallback;
-      const bool displaced = params.displacement && mat.hasDisplacement();
+      const bool displaced = params.displacement &&
+                             !mesh.rasterDisplacementBaked &&
+                             mat.hasDisplacement();
       glUniform1i(sHasDisplacement_, displaced);
       glUniform1i(sHasDisplacementTex_, displaced && mat.displacementTex >= 0);
       glUniform1f(sDisplacementConst_, mat.displacementConst);

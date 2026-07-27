@@ -41,6 +41,7 @@
 #include "tydra/next/openpbr-params-converter.hh"
 #include "tydra/next/texture-cache.hh"  // shared decode + size cap + byte budget
 #include "ptx-loader.hh"                  // lazy Ptex metadata validation
+#include "ptex_atlas.hh"                  // bounded rectangular face atlas
 #include "tydra/next/scene-access.hh"  // ComputeWorldTransform
 #include "value-types.hh"              // value::matrix4d / quatf / double3
 #include "xform.hh"                    // to_matrix3x3 / to_matrix / inverse
@@ -48,6 +49,7 @@
 #include "tydra/texture-util.hh"       // tydra::ResizeImage (UDIM tile normalize)
 #include "image-loader.hh"             // DomeLight envmap decode (IBL bake)
 #include "mesh_build.hh"               // UpdatePreviewLight
+#include "displacement_bake.hh"        // Ptex-aware coarse geometry bake
 #include "lightrt_mtlx_bridge.hh"      // BakeLightRtOpenPBR (next material bake)
 #include "texture_tools.hh"            // TexToolsBuildDomeIbl / ProbeToEquirect
 #include "usdVol.hh"                   // OpenVDB (.vdb) loader
@@ -682,6 +684,164 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
       if (!ok) wire.clear();
     }
   }
+  return true;
+}
+
+bool MaterialUsesPtex(const DrawScene& draw, int materialId) {
+  if (materialId < 0 || static_cast<size_t>(materialId) >= draw.materials.size())
+    return false;
+  const DrawMaterialCPU& m = draw.materials[static_cast<size_t>(materialId)];
+  return m.baseColorSample.isPtex || m.metallicSample.isPtex ||
+         m.roughnessSample.isPtex || m.normalSample.isPtex ||
+         m.emissiveSample.isPtex || m.opacitySample.isPtex ||
+         m.displacementSample.isPtex;
+}
+
+// Expand a Ptex mesh to independent triangle corners and attach intrinsic quad
+// coordinates. Ptex face ids are texture-local and therefore deliberately do
+// not receive the source-face AOV's batching offset.
+bool ExpandPtexCorners(const tydn::RenderMesh& source, DrawMeshCPU* mesh) {
+  if (!mesh || mesh->indices.empty() ||
+      source.triangulated_face_vertex_indices.size() != mesh->indices.size() ||
+      mesh->sourceFaceId.size() != mesh->indices.size() / 3) {
+    return false;
+  }
+  const std::vector<uint32_t> counts = source.face_vertex_counts.flatten();
+  size_t authoredCorners = 0;
+  for (uint32_t count : counts) authoredCorners += count;
+  std::vector<uint8_t> cornerOrdinal(authoredCorners, 0);
+  std::vector<uint32_t> cornerFace(authoredCorners, 0);
+  size_t corner = 0;
+  for (size_t face = 0; face < counts.size(); ++face) {
+    if (counts[face] != 4) return false;
+    for (uint32_t ordinal = 0; ordinal < counts[face]; ++ordinal, ++corner) {
+      cornerOrdinal[corner] = static_cast<uint8_t>(ordinal);
+      cornerFace[corner] = static_cast<uint32_t>(face);
+    }
+  }
+  if (corner != authoredCorners) return false;
+
+  const size_t oldVertexCount = mesh->vertices.size();
+  const bool hasColor = mesh->vertexColors.size() == oldVertexCount * 3;
+  const bool hasAlpha = mesh->vertexAlpha.size() == oldVertexCount;
+  const bool hasTangent = mesh->tangents.size() == oldVertexCount * 3;
+  const bool hasBinormal = mesh->binormals.size() == oldVertexCount * 3;
+  const bool hasUv1 = mesh->uv1.size() == oldVertexCount * 2;
+  const bool hasInfluence = mesh->morphInfluence.size() == oldVertexCount;
+  const bool hasJoint = mesh->jointIdx.size() == oldVertexCount * 4 &&
+                        mesh->jointWt.size() == oldVertexCount * 4;
+  const bool hasExtended =
+      mesh->influenceOffsetCount.size() == oldVertexCount * 2;
+  const bool hasMorph = mesh->morphOffsetCount.size() == oldVertexCount * 2;
+
+  DrawMeshCPU expanded = *mesh;
+  expanded.vertices.clear();
+  expanded.indices.clear();
+  expanded.vertexColors.clear();
+  expanded.vertexAlpha.clear();
+  expanded.tangents.clear();
+  expanded.binormals.clear();
+  expanded.uv1.clear();
+  expanded.morphInfluence.clear();
+  expanded.jointIdx.clear();
+  expanded.jointWt.clear();
+  expanded.influenceOffsetCount.clear();
+  expanded.morphOffsetCount.clear();
+  expanded.wireframeIndices.clear();
+  expanded.rtDisplacedVertices.clear();
+  const size_t corners = mesh->indices.size();
+  expanded.vertices.reserve(corners);
+  expanded.indices.reserve(corners);
+
+  const float intrinsic[4][2] = {
+      {0.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f}};
+  std::vector<uint32_t> newToOld;
+  newToOld.reserve(corners);
+  for (size_t i = 0; i < corners; ++i) {
+    const uint32_t old = mesh->indices[i];
+    if (old >= oldVertexCount) return false;
+    const uint32_t authored = source.triangulated_face_vertex_indices[i];
+    if (authored >= cornerOrdinal.size()) return false;
+    const uint8_t ordinal = cornerOrdinal[authored];
+    const uint32_t face = cornerFace[authored];
+    if (i / 3 >= mesh->sourceFaceId.size() ||
+        face != mesh->sourceFaceId[i / 3]) {
+      return false;
+    }
+    expanded.indices.push_back(static_cast<uint32_t>(i));
+    expanded.vertices.push_back(mesh->vertices[old]);
+    // Ptex materials use intrinsic face coordinates, not an authored primvar.
+    // Isolated Ptex batches therefore carry these in the ordinary UV0 lane so
+    // every existing raster and RT interpolation path sees the same values.
+    expanded.vertices.back().u = intrinsic[ordinal][0];
+    expanded.vertices.back().v = intrinsic[ordinal][1];
+    newToOld.push_back(old);
+    if (hasColor) {
+      for (size_t k = 0; k < 3; ++k)
+        expanded.vertexColors.push_back(mesh->vertexColors[size_t(old) * 3 + k]);
+    }
+    if (hasAlpha) expanded.vertexAlpha.push_back(mesh->vertexAlpha[old]);
+    if (hasTangent) {
+      for (size_t k = 0; k < 3; ++k)
+        expanded.tangents.push_back(mesh->tangents[size_t(old) * 3 + k]);
+    }
+    if (hasBinormal) {
+      for (size_t k = 0; k < 3; ++k)
+        expanded.binormals.push_back(mesh->binormals[size_t(old) * 3 + k]);
+    }
+    if (hasUv1) {
+      expanded.uv1.push_back(mesh->uv1[size_t(old) * 2]);
+      expanded.uv1.push_back(mesh->uv1[size_t(old) * 2 + 1]);
+    }
+    if (hasInfluence)
+      expanded.morphInfluence.push_back(mesh->morphInfluence[old]);
+    if (hasJoint) {
+      for (size_t k = 0; k < 4; ++k) {
+        expanded.jointIdx.push_back(mesh->jointIdx[size_t(old) * 4 + k]);
+        expanded.jointWt.push_back(mesh->jointWt[size_t(old) * 4 + k]);
+      }
+    }
+    if (hasExtended) {
+      expanded.influenceOffsetCount.push_back(
+          mesh->influenceOffsetCount[size_t(old) * 2]);
+      expanded.influenceOffsetCount.push_back(
+          mesh->influenceOffsetCount[size_t(old) * 2 + 1]);
+    }
+    if (hasMorph) {
+      expanded.morphOffsetCount.push_back(
+          mesh->morphOffsetCount[size_t(old) * 2]);
+      expanded.morphOffsetCount.push_back(
+          mesh->morphOffsetCount[size_t(old) * 2 + 1]);
+    }
+  }
+
+  // Remap the optional CPU morph targets to the expanded vertex order.
+  for (MorphTargetCPU& target : expanded.morphs) {
+    std::unordered_map<uint32_t, size_t> oldEntry;
+    for (size_t i = 0; i < target.vtx.size(); ++i) oldEntry[target.vtx[i]] = i;
+    MorphTargetCPU remapped;
+    remapped.name = target.name;
+    remapped.inbetweens.resize(target.inbetweens.size());
+    for (size_t s = 0; s < target.inbetweens.size(); ++s) {
+      remapped.inbetweens[s].weight = target.inbetweens[s].weight;
+    }
+    for (size_t vertex = 0; vertex < newToOld.size(); ++vertex) {
+      const auto it = oldEntry.find(newToOld[vertex]);
+      if (it == oldEntry.end()) continue;
+      const size_t entry = it->second;
+      remapped.vtx.push_back(static_cast<uint32_t>(vertex));
+      for (size_t k = 0; k < 3; ++k)
+        remapped.dpos.push_back(target.dpos[entry * 3 + k]);
+      for (size_t s = 0; s < target.inbetweens.size(); ++s) {
+        for (size_t k = 0; k < 3; ++k) {
+          remapped.inbetweens[s].dpos.push_back(
+              target.inbetweens[s].dpos[entry * 3 + k]);
+        }
+      }
+    }
+    target = std::move(remapped);
+  }
+  *mesh = std::move(expanded);
   return true;
 }
 
@@ -1553,7 +1713,7 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
                     const tnext::UsdPrim& mp, const matrix4d& inv_protoroot,
                     double time, DrawMeshCPU* dm, matrix4d* mesh_rel,
                     std::vector<uint32_t>* out_vertexToPoint,
-                    size_t* out_numPoints) {
+                    size_t* out_numPoints, tydn::RenderMesh* outRenderMesh) {
   // Convert just this mesh on demand (streaming) -- avoids holding the whole
   // RenderScene in RAM.
   tydn::RenderMesh rm;
@@ -1595,6 +1755,7 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
   tydn::ComputeWorldTransform(stage, mp, mw16, time);
   *mesh_rel = Mul4(Mat4dFromArray(mw16), inv_protoroot);
   if (out_vertexToPoint) *out_vertexToPoint = std::move(vertexToPoint);
+  if (outRenderMesh) *outRenderMesh = std::move(rm);
   return true;
 }
 
@@ -1679,8 +1840,9 @@ void EmitInstancedProto(const tnext::Stage& stage,
     matrix4d mesh_rel;
     std::vector<uint32_t> vertexToPoint;
     size_t numPoints = 0;
+    tydn::RenderMesh renderMesh;
     if (!BuildProtoMesh(stage, conv, mp, inv_proto, time, &dm, &mesh_rel,
-                        &vertexToPoint, &numPoints)) {
+                        &vertexToPoint, &numPoints, &renderMesh)) {
       continue;
     }
 
@@ -1710,6 +1872,12 @@ void EmitInstancedProto(const tnext::Stage& stage,
         const int protoMat = (*resolveMat)(bind);
         if (protoMat > 0) {
           for (DrawSubmesh& sub : dm.submeshes) sub.materialId = protoMat;
+          if (MaterialUsesPtex(*draw, protoMat) &&
+              !ExpandPtexCorners(renderMesh, &dm)) {
+            LOGW("Ptex material on '%s' requires unsupported non-quad or "
+                 "mismatched topology; using texture fallback",
+                 mp.GetPath().str().c_str());
+          }
         }
       }
     }
@@ -1991,6 +2159,13 @@ struct NextTexCache {
   // Texture runtime options (keepCompressed + device caps) for the kept-
   // compressed KTX2 passthrough. Null = plain decode.
   const TextureRuntimeOptions* opt = nullptr;
+  // Ptex atlases bypass TextureDecoder's decoded-byte accounting, so keep a
+  // cumulative cap here. This is deliberately a residency cap, not merely a
+  // per-file cap: production scenes may bind thousands of independent .ptx
+  // files. Files beyond the cap retain a representative-face fallback.
+  size_t ptexAtlasBudgetBytes = 2ull * 1024ull * 1024ull * 1024ull;
+  size_t ptexAtlasBytes = 0;
+  bool ptexBudgetWarned = false;
 };
 
 // ".ktx2" suffix (case-insensitive).
@@ -2050,59 +2225,6 @@ bool DecodeNextPtexFallback(NextTexCache& tc, const std::string& asset,
 }
 
 bool NextResizeImage(light3d::Image* img, int w, int h, bool srgb);
-
-bool BuildPtexAtlas(const ::tinyusdz::ptx::Reader& reader, uint32_t tileEdge,
-                    light3d::Image* out, uint16_t* colsOut,
-                    uint16_t* rowsOut) {
-  const auto& pi = reader.info();
-  if (!out || !colsOut || !rowsOut || pi.faces == 0 || tileEdge == 0 ||
-      pi.dataType != ::tinyusdz::ptx::DataType::UInt8 || pi.channels == 0 ||
-      pi.channels > 4) return false;
-  const uint32_t cols = std::max(1u, static_cast<uint32_t>(std::ceil(std::sqrt(
-      static_cast<double>(pi.faces)))));
-  const uint32_t rows = (pi.faces + cols - 1u) / cols;
-  if (cols > 255u || rows > 255u) return false;
-  const size_t width = size_t(cols) * tileEdge;
-  const size_t height = size_t(rows) * tileEdge;
-  if (width > 16384 || height > 16384) return false;
-  out->width = static_cast<int>(width);
-  out->height = static_cast<int>(height);
-  out->channels = 4;
-  out->data.assign(width * height * 4, 255);
-  for (uint32_t face = 0; face < pi.faces; ++face) {
-    ::tinyusdz::ptx::FaceImage fi;
-    std::string err;
-    if (!reader.ReadFace(face, 0, 64ull * 1024ull * 1024ull, &fi, &err)) return false;
-    light3d::Image page;
-    page.width = static_cast<int>(fi.width);
-    page.height = static_cast<int>(fi.height);
-    page.channels = 4;
-    const size_t np = size_t(fi.width) * fi.height;
-    page.data.assign(np * 4, 255);
-    for (size_t i = 0; i < np; ++i) {
-      const uint8_t* s = fi.data.data() + i * fi.channels;
-      uint8_t* d = page.data.data() + i * 4;
-      d[0] = s[0];
-      d[1] = fi.channels > 1 ? s[1] : s[0];
-      d[2] = fi.channels > 2 ? s[2] : s[0];
-      d[3] = fi.channels > 3 ? s[3] : 255;
-    }
-    if ((page.width != static_cast<int>(tileEdge) ||
-         page.height != static_cast<int>(tileEdge)) &&
-        !NextResizeImage(&page, static_cast<int>(tileEdge),
-                         static_cast<int>(tileEdge), false)) return false;
-    const uint32_t ox = (face % cols) * tileEdge;
-    const uint32_t oy = (face / cols) * tileEdge;
-    for (uint32_t y = 0; y < tileEdge; ++y) {
-      std::memcpy(out->data.data() + (size_t(oy + y) * width + ox) * 4,
-                  page.data.data() + size_t(y) * tileEdge * 4,
-                  size_t(tileEdge) * 4);
-    }
-  }
-  *colsOut = static_cast<uint16_t>(cols);
-  *rowsOut = static_cast<uint16_t>(rows);
-  return true;
-}
 
 int NextWrapToDraw(tydn::WrapMode w) {
   switch (w) {
@@ -2254,15 +2376,29 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   DrawTextureCPU dt;
   bool built = false;
   if (EndsWithPtx(asset) && tc.decoder) {
+    dt.isPtex = true;
+    dt.assetIdentifier = asset;
+    const size_t remaining =
+        tc.ptexAtlasBytes < tc.ptexAtlasBudgetBytes
+            ? tc.ptexAtlasBudgetBytes - tc.ptexAtlasBytes
+            : 0;
+    if (remaining == 0) {
+      DecodeNextPtexFallback(tc, asset, srgb, &dt.image);
+      if (!tc.ptexBudgetWarned) {
+        draw->skipped.push_back(
+            "Ptex atlas residency budget exhausted; using representative "
+            "face fallbacks for subsequent textures");
+        tc.ptexBudgetWarned = true;
+      }
+      built = true;
+    }
     std::vector<uint8_t> bytes;
     ::tinyusdz::ptx::Reader ptx;
     std::string ptxErr;
-    if (tc.decoder->ReadAssetBytes(asset, &bytes) &&
+    if (!built && tc.decoder->ReadAssetBytes(asset, &bytes) &&
         ::tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &ptx,
                                             &ptxErr)) {
       const ::tinyusdz::ptx::Info& pi = ptx.info();
-      dt.isPtex = true;
-      dt.assetIdentifier = asset;
       dt.ptexFaces = pi.faces;
       dt.ptexLevels = pi.levels;
       dt.ptexChannels = pi.channels;
@@ -2270,12 +2406,25 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
         dt.ptexMaxFaceEdge = std::max(dt.ptexMaxFaceEdge,
                                       std::max(fi.width(), fi.height()));
       }
-      const uint32_t tileEdge = std::min(dt.ptexMaxFaceEdge, 512u);
-      if (!BuildPtexAtlas(ptx, tileEdge, &dt.image, &dt.ptexAtlasCols,
-                          &dt.ptexAtlasRows)) {
+      PtexAtlasOptions atlasOptions;
+      atlasOptions.maxFaceEdge = std::min(dt.ptexMaxFaceEdge, 512u);
+      if (tc.opt && tc.opt->maxTextureSize > 0) {
+        atlasOptions.maxFaceEdge =
+            std::min(atlasOptions.maxFaceEdge,
+                     static_cast<uint32_t>(tc.opt->maxTextureSize));
+      }
+      const size_t defaultAtlasCap = 256ull * 1024ull * 1024ull;
+      atlasOptions.maxAtlasBytes = std::min(defaultAtlasCap, remaining);
+      PtexAtlasBuildStats atlasStats;
+      if (!BuildPtexAtlas(ptx, atlasOptions, srgb, &dt.image,
+                          &dt.ptexFaceRects, &atlasStats, &ptxErr)) {
         DecodeNextPtexFallback(tc, asset, srgb, &dt.image);
       } else {
-        dt.ptexTileEdge = tileEdge;
+        tc.ptexAtlasBytes += dt.image.data.size();
+        dt.ptexDownsampledFaces = atlasStats.downsampledFaces;
+        dt.ptexGutter = atlasOptions.gutter;
+        dt.ptexTileEdge = atlasOptions.maxFaceEdge;
+        dt.ptexRectTexelOffset = atlasStats.rectTexelOffset;
       }
       built = true;
     }
@@ -2698,6 +2847,25 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   syncSampleTex(&dm.coatColorSample, dm.coatColorTex);
   syncSampleTex(&dm.coatRoughnessSample, dm.coatRoughnessTex);
   syncSampleTex(&dm.displacementSample, dm.displacementTex);
+  auto syncPtex = [&](DrawTexSampleCPU* sample, int tex) {
+    if (!sample || tex < 0 || static_cast<size_t>(tex) >= draw->textures.size())
+      return;
+    const DrawTextureCPU& texture = draw->textures[static_cast<size_t>(tex)];
+    sample->isPtex = texture.isPtex;
+    sample->ptexAtlasCols = texture.ptexAtlasCols;
+    sample->ptexAtlasRows = texture.ptexAtlasRows;
+    sample->ptexTileEdge = texture.ptexTileEdge;
+    sample->ptexRectTexelOffset = texture.ptexRectTexelOffset;
+    sample->ptexFaceCount =
+        static_cast<uint32_t>(texture.ptexFaceRects.size());
+  };
+  syncPtex(&dm.baseColorSample, dm.baseColorTex);
+  syncPtex(&dm.metallicSample, dm.metallicTex);
+  syncPtex(&dm.roughnessSample, dm.roughnessTex);
+  syncPtex(&dm.normalSample, dm.normalTex);
+  syncPtex(&dm.emissiveSample, dm.emissiveTex);
+  syncPtex(&dm.opacitySample, dm.opacityTex);
+  syncPtex(&dm.displacementSample, dm.displacementTex);
   // Scalar slots carry their channel on the sample too.
   if (dm.opacitySample.channel < 0) dm.opacitySample.channel = dm.opacityChannel;
   if (dm.occlusionSample.channel < 0)
@@ -4029,6 +4197,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // materializes every texture at full resolution.
   NextTexCache texCache;
   texCache.opt = &opts.textureOptions;  // kept-compressed KTX2 passthrough
+  if (opts.textureOptions.textureBudgetMB > 0) {
+    texCache.ptexAtlasBudgetBytes =
+        size_t(opts.textureOptions.textureBudgetMB) * size_t{1024} *
+        size_t{1024};
+  }
   tydn::TextureDecodeOptions texOpts;
   texOpts.base_dir = tinyusdz::io::GetBaseDir(path);
   texOpts.max_edge = opts.textureOptions.maxTextureSize > 0
@@ -5303,6 +5476,29 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
     }
 
+    // Per-triangle materials from face GeomSubsets (empty => uniform wholeMat).
+    std::vector<MaterialPair> triMat;
+    buildTriMaterials(mp, m, loc.indices.size() / 3,
+                      {wholeMat, wholeBackMat}, &triMat);
+    if (!loc.vertexAlpha.empty()) {
+      for (MaterialPair& mid : triMat) {
+        mid.first = materialWithAlpha(mid.first, 1.0f);
+        if (mid.second >= 0)
+          mid.second = materialWithAlpha(mid.second, 1.0f);
+      }
+    }
+    bool needsPtex = MaterialUsesPtex(*draw, wholeMat) ||
+                     MaterialUsesPtex(*draw, wholeBackMat);
+    for (const MaterialPair& mid : triMat) {
+      needsPtex = needsPtex || MaterialUsesPtex(*draw, mid.first) ||
+                  MaterialUsesPtex(*draw, mid.second);
+    }
+    if (needsPtex && !ExpandPtexCorners(m, &loc)) {
+      LOGW("Ptex material on '%s' requires unsupported non-quad or mismatched "
+           "topology; using texture fallback",
+           mp.GetPath().str().c_str());
+    }
+
     const bool hasC = !loc.vertexColors.empty();
     const bool hasAlpha = loc.vertexAlpha.size() == loc.vertices.size();
     const bool hasUv1 = loc.uv1.size() == loc.vertices.size() * 2;
@@ -5326,7 +5522,6 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.jointWt.push_back(hasSkin ? loc.jointWt[i * 4 + k] : 0.0f);
       }
     };
-
     // GPU morph. The channel metadata is per MESH, and a morphed mesh owns its
     // batch (see the key), so the batch simply inherits it; the per-vertex delta
     // lists are re-indexed as vertices are appended, since a GeomSubset split
@@ -5363,22 +5558,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.morphOffsetCount.push_back(cnt);
     };
 
-    // Per-triangle materials from face GeomSubsets (empty => uniform wholeMat).
-    std::vector<MaterialPair> triMat;
-    buildTriMaterials(mp, m, loc.indices.size() / 3,
-                      {wholeMat, wholeBackMat}, &triMat);
-    if (hasAlpha) {
-      for (MaterialPair& mid : triMat) {
-        mid.first = materialWithAlpha(mid.first, 1.0f);
-        if (mid.second >= 0)
-          mid.second = materialWithAlpha(mid.second, 1.0f);
-      }
-    }
-
     if (triMat.empty()) {
       // --- Single-material fast path: append the whole mesh to one batch. ---
+      // A Ptex file's face ids are local to one source mesh. Isolate that mesh
+      // from ordinary static batching so face ids are never rebased into a
+      // different texture's namespace.
+      const int batchIsolationId =
+          morphBatchId != 0 ? morphBatchId
+                            : (needsPtex ? ++nextMorphBatchId : 0);
       Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, wholeMat,
-                       wholeBackMat, morphBatchId, lightLinkBatchId}];
+                       wholeBackMat, batchIsolationId, lightLinkBatchId}];
       b.matId = wholeMat;
       b.backMatId = wholeBackMat;
       if (!b.dm.vertices.empty() &&
@@ -5452,10 +5641,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         }
       }
       for (uint32_t idx : loc.indices) b.dm.indices.push_back(vbase + idx);
-      const uint32_t faceBase = b.nextFaceId;
+      const uint32_t faceBase = needsPtex ? 0u : b.nextFaceId;
       for (uint32_t face : loc.sourceFaceId)
         b.dm.sourceFaceId.push_back(faceBase + face);
-      b.nextFaceId += static_cast<uint32_t>(m.face_count());
+      if (!needsPtex)
+        b.nextFaceId += static_cast<uint32_t>(m.face_count());
       for (uint32_t widx : loc.wireframeIndices)
         b.dm.wireframeIndices.push_back(vbase + widx);
     } else {
@@ -5466,8 +5656,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       const size_t numTris = loc.indices.size() / 3;
       bool firstGroup = true;
       for (const MaterialPair& gm : groups) {
+        const int batchIsolationId =
+            morphBatchId != 0 ? morphBatchId
+                              : (needsPtex ? ++nextMorphBatchId : 0);
         Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, gm.first,
-                         gm.second, morphBatchId, lightLinkBatchId}];
+                         gm.second, batchIsolationId, lightLinkBatchId}];
         b.matId = gm.first;
         b.backMatId = gm.second;
         if (!b.dm.vertices.empty() &&
@@ -5492,7 +5685,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         }
         openSkin(b);
         openMorph(b);
-        const uint32_t faceBase = b.nextFaceId;
+        const uint32_t faceBase = needsPtex ? 0u : b.nextFaceId;
         std::vector<int> remap(loc.vertices.size(), -1);
         auto vtx = [&](uint32_t vi) -> uint32_t {
           if (remap[vi] < 0) {
@@ -5537,7 +5730,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             b.dm.wireframeIndices.push_back(vtx(widx));
           firstGroup = false;
         }
-        b.nextFaceId += static_cast<uint32_t>(m.face_count());
+        if (!needsPtex)
+          b.nextFaceId += static_cast<uint32_t>(m.face_count());
       }
     }
 
@@ -5766,6 +5960,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // going through mesh_build's BuildDrawTextures.
   ApplyTextureCompression(opts.textureOptions, draw);
   FinalizeDrawTextures(opts.textureOptions, draw);
+  BakeRTDisplacement(draw);
 
   if (texCache.decoder && !draw->textures.empty()) {
     const tydn::TextureDecoder& dec = *texCache.decoder;

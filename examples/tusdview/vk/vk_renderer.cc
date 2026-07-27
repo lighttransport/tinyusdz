@@ -5196,8 +5196,14 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     vboUsage |= rtExtra;
     eboUsage |= rtExtra;
   }
-  if (!createHostBuffer(sm.vertices.size() * sizeof(DrawVertex), vboUsage,
-                        sm.vertices.data(), &gm.vbo, &gm.vboMem, rtSupported_, pool)) {
+  const std::vector<DrawVertex>& rasterVertices =
+      sm.rasterDisplacementBaked &&
+              sm.rtDisplacedVertices.size() == sm.vertices.size()
+          ? sm.rtDisplacedVertices
+          : sm.vertices;
+  if (!createHostBuffer(rasterVertices.size() * sizeof(DrawVertex), vboUsage,
+                        rasterVertices.data(), &gm.vbo, &gm.vboMem,
+                        rtSupported_, pool)) {
     return;
   }
   std::vector<uint32_t> zeroJoints;

@@ -84,6 +84,7 @@ layout(set = 0, binding = 10) uniform sampler2D uBrdfLut;
 struct RtTexDesc {
   int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim;
   int isPtex; int ptexCols; int ptexRows; int ptexTileEdge;
+  int ptexRectTexelOffset; int ptexFaceCount;
   int mipCount; int firstMip;
   int udimLayer[100];
 };
@@ -306,11 +307,19 @@ vec4 sampleRtTexture(int id, vec2 uv, vec4 missing) {
 }
 
 vec2 ptexAtlasUv(RtTexDesc td, vec2 uv, uint face) {
-  if (td.isPtex == 0 || td.ptexCols <= 0 || td.ptexRows <= 0) return uv;
-  uint col = face % uint(td.ptexCols);
-  uint row = face / uint(td.ptexCols);
-  return (vec2(float(col), float(row)) + fract(uv)) /
-         vec2(float(td.ptexCols), float(td.ptexRows));
+  if (td.isPtex == 0 || face >= uint(td.ptexFaceCount)) return uv;
+  uint values[4];
+  for (uint c = 0u; c < 4u; ++c) {
+    uint lo = uint(td.ptexRectTexelOffset) + face * 8u + c * 2u;
+    uint a = (texelWords[uint(td.offset / 4) + lo] >> 24u) & 255u;
+    uint b = (texelWords[uint(td.offset / 4) + lo + 1u] >> 24u) & 255u;
+    values[c] = a | (b << 8u);
+  }
+  if (values[2] == 0u || values[3] == 0u) return uv;
+  vec2 px = vec2(float(values[0]), float(values[1])) +
+            vec2(clamp(uv.x, 0.0, 1.0), 1.0 - clamp(uv.y, 0.0, 1.0)) *
+            vec2(float(values[2] - 1u), float(values[3] - 1u));
+  return px / vec2(max(td.width - 1, 1), max(td.height - 1, 1));
 }
 
 vec4 sampleRtPtexTextureLod(int id, vec2 uv, uint face, float lod,

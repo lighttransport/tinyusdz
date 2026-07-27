@@ -195,8 +195,10 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
       if (dmat && dmat->hasDisplacement()) {
         for (int k = 0; k < 3; ++k) {
           float h = dmat->displacementTex >= 0
-                        ? SampleTextureRed(scene, dmat->displacementTex,
-                                           wuv[k * 2], wuv[k * 2 + 1]) *
+                        ? SampleTextureRed(
+                              scene, dmat->displacementTex, wuv[k * 2],
+                              wuv[k * 2 + 1],
+                              hasFace ? m.sourceFaceId[t / 3] : UINT32_MAX) *
                                   dmat->displacementTexScale +
                               dmat->displacementTexBias
                         : dmat->displacementConst;
@@ -496,6 +498,7 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
     int expectedW = image.width;
     int expectedH = image.height;
     for (const light3d::Image& mip : sourceMips) {
+      if (tex.isPtex) break;  // face rectangles describe the base atlas only
       expectedW = std::max(1, expectedW / 2);
       expectedH = std::max(1, expectedH / 2);
       if (mip.width != expectedW || mip.height != expectedH ||
@@ -515,6 +518,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       td.ptexCols = tex.ptexAtlasCols;
       td.ptexRows = tex.ptexAtlasRows;
       td.ptexTileEdge = static_cast<int>(tex.ptexTileEdge);
+      td.ptexRectTexelOffset = static_cast<int>(tex.ptexRectTexelOffset);
+      td.ptexFaceCount = static_cast<int>(tex.ptexFaceRects.size());
       td.mipCount = static_cast<int>(levels.size() - level);
       td.firstMip = td.mipCount > 1 ? id + static_cast<int>(level) + 1 : -1;
       for (int& layer : td.udimLayer) layer = -1;

@@ -238,6 +238,10 @@ struct DrawMeshCPU {
   // displaced material. The raster path keeps using `vertices` (shader displacement
   // with live sliders); the VK ray-query BLAS/hit reads these instead.
   std::vector<DrawVertex> rtDisplacedVertices;
+  // True when rtDisplacedVertices contains Ptex displacement that raster
+  // backends must upload as the base geometry (their vertex stages cannot
+  // identify a polygon face before primitive assembly).
+  bool rasterDisplacementBaked{false};
 };
 
 // USD purpose token -> compact id used by the Purpose debug AOV (consistent across
@@ -352,12 +356,18 @@ struct DrawTexSampleCPU {
   WrapMode wrapT{WrapMode::Repeat};
   DrawColorSpace colorSpace{DrawColorSpace::Auto};
   bool isUdim{false};
-  // Native Ptex atlas sampling metadata (base-color path). A zero column count
-  // means the slot is not Ptex-backed.
+  // Native Ptex atlas sampling metadata. `isPtex` distinguishes the slot;
+  // ptexFaceCount may be zero when the residency budget selected the
+  // representative-face fallback.
   bool isPtex{false};
   uint16_t ptexAtlasCols{0};
   uint16_t ptexAtlasRows{0};
   uint32_t ptexTileEdge{0};
+  // Linear texel offset of the embedded Ptex face-rectangle table and the
+  // number of records. Each record occupies eight alpha texels (little-endian
+  // uint16 x/y/width/height), so it survives sRGB texture uploads unchanged.
+  uint32_t ptexRectTexelOffset{0};
+  uint32_t ptexFaceCount{0};
 };
 
 enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };
@@ -509,6 +519,18 @@ struct DrawCompressedImageCPU {
   std::vector<DrawCompressedMipCPU> mips;
 };
 
+// Inner texel rectangle for one Ptex face in DrawTextureCPU::image. The atlas
+// may contain padding around this rectangle; sampling maps intrinsic face UVs
+// between the first and last inner texel centers.
+struct DrawPtexFaceRectCPU {
+  uint32_t x{0};
+  uint32_t y{0};
+  uint32_t width{0};
+  uint32_t height{0};
+  uint16_t mipLevel{0};
+  uint16_t reserved{0};
+};
+
 struct DrawUdimTileCPU {
   uint32_t udim{1001};
   uint32_t u{0};
@@ -526,16 +548,20 @@ struct DrawUdimTileCPU {
 struct DrawTextureCPU {
   light3d::Image image;  // always normalized to RGBA8 (channels == 4) on the CPU side
   std::string assetIdentifier;  // Tydra TextureImage::asset_identifier, if known
-  // Native Ptex source. Pixel pages are decoded lazily by the backend page
-  // cache; `image` intentionally remains empty for these records.
+  // Native Ptex source. `image` is a bounded face atlas when residency permits,
+  // or a representative-face fallback after the cumulative budget is spent.
   bool isPtex{false};
   uint32_t ptexFaces{0};
   uint16_t ptexLevels{0};
   uint16_t ptexChannels{0};
   uint32_t ptexMaxFaceEdge{0};
+  uint32_t ptexDownsampledFaces{0};
   uint16_t ptexAtlasCols{0};
   uint16_t ptexAtlasRows{0};
   uint32_t ptexTileEdge{0};
+  uint32_t ptexGutter{0};
+  uint32_t ptexRectTexelOffset{0};
+  std::vector<DrawPtexFaceRectCPU> ptexFaceRects;
   int renderImageId{-1};        // source RenderScene::images index, or -1
   int renderUdimId{-1};         // source RenderScene::udim_textures index, or -1
   bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear scalar/normal data

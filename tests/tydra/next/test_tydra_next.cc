@@ -5057,6 +5057,52 @@ void TestIncrementalRenderSession() {
   std::cout << "  incremental RenderSession: PASSED\n";
 }
 
+void TestPtexMaterialInterfaceAsset() {
+  std::cout << "Testing Ptex material-interface asset forwarding...\n";
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Material "Mat"
+    {
+        asset inputs:surfaceMap = @maps/surface.ptx@
+        token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/Mat/Ptex.outputs:resultRGB>
+            token outputs:surface
+        }
+        def Shader "Ptex"
+        {
+            uniform token info:id = "HwPtexTexture"
+            asset inputs:file.connect = </World/Mat.inputs:surfaceMap>
+            color3f outputs:resultRGB
+        }
+    }
+    def Mesh "Quad"
+    {
+        point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0,1,2,3]
+        rel material:binding = </World/Mat>
+    }
+}
+)";
+
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  ConverterConfig config;
+  config.material.load_textures = false;
+  RenderSceneConverter converter(config);
+  ConvertResult converted = converter.Convert(loaded.stage);
+  assert(converted.success);
+  assert(converted.scene.textures.size() == 1);
+  assert(converted.scene.textures[0].asset_path == "maps/surface.ptx");
+  assert(converted.scene.images.size() == 1);
+  assert(converted.scene.images[0].resolved_path == "maps/surface.ptx");
+  std::cout << "  Ptex material-interface asset forwarding: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -5113,6 +5159,7 @@ int main() {
   TestP2AuditFixes();
   TestLegacyParityExtraction();
   TestIncrementalRenderSession();
+  TestPtexMaterialInterfaceAsset();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

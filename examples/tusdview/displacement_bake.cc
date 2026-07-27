@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "displacement_bake.hh"
 
+#include <algorithm>
 #include <cmath>
 
 namespace tusdview {
@@ -30,7 +31,8 @@ inline int WrapCoord(int x, int n, int mode) {
 
 }  // namespace
 
-float SampleTextureRed(const DrawScene& scene, int texIndex, float u, float v) {
+float SampleTextureRed(const DrawScene& scene, int texIndex, float u, float v,
+                       uint32_t ptexFace) {
   if (texIndex < 0 || static_cast<size_t>(texIndex) >= scene.textures.size()) {
     return 0.0f;
   }
@@ -38,16 +40,38 @@ float SampleTextureRed(const DrawScene& scene, int texIndex, float u, float v) {
   const light3d::Image& img = tex.image;
   const int W = img.width, H = img.height, C = img.channels;
   if (W <= 0 || H <= 0 || C <= 0 || img.data.empty()) return 0.0f;
-  // Bilinear with half-texel centers (matches GL/VK linear filtering).
-  const float fx = u * static_cast<float>(W) - 0.5f;
-  const float fy = v * static_cast<float>(H) - 0.5f;
+  // Ptex atlas rectangles map the intrinsic [0,1]^2 domain exactly between
+  // their first and last texel centers. Clamp within the inner rectangle so a
+  // bilinear footprint cannot bleed into another face; the atlas gutter keeps
+  // the corresponding GPU filtering path safe as well.
+  int minX = 0, minY = 0, maxX = W - 1, maxY = H - 1;
+  float fx = u * static_cast<float>(W) - 0.5f;
+  float fy = v * static_cast<float>(H) - 0.5f;
+  if (tex.isPtex && ptexFace < tex.ptexFaceRects.size()) {
+    const DrawPtexFaceRectCPU& rect = tex.ptexFaceRects[ptexFace];
+    if (rect.width == 0 || rect.height == 0) return 0.0f;
+    minX = static_cast<int>(rect.x);
+    minY = static_cast<int>(rect.y);
+    maxX = minX + static_cast<int>(rect.width) - 1;
+    maxY = minY + static_cast<int>(rect.height) - 1;
+    const float pu = std::max(0.0f, std::min(1.0f, u));
+    const float pv = std::max(0.0f, std::min(1.0f, v));
+    fx = static_cast<float>(minX) +
+         pu * static_cast<float>(std::max(0, maxX - minX));
+    fy = static_cast<float>(minY) +
+         (1.0f - pv) * static_cast<float>(std::max(0, maxY - minY));
+  }
   const int x0 = static_cast<int>(std::floor(fx));
   const int y0 = static_cast<int>(std::floor(fy));
   const float tx = fx - static_cast<float>(x0);
   const float ty = fy - static_cast<float>(y0);
   auto red = [&](int x, int y) -> float {
-    const int xx = WrapCoord(x, W, tex.wrapS);
-    const int yy = WrapCoord(y, H, tex.wrapT);
+    const int xx = tex.isPtex && ptexFace < tex.ptexFaceRects.size()
+                       ? std::max(minX, std::min(maxX, x))
+                       : WrapCoord(x, W, tex.wrapS);
+    const int yy = tex.isPtex && ptexFace < tex.ptexFaceRects.size()
+                       ? std::max(minY, std::min(maxY, y))
+                       : WrapCoord(y, H, tex.wrapT);
     return static_cast<float>(img.data[(static_cast<size_t>(yy) * W + xx) * C]) /
            255.0f;
   };
@@ -80,11 +104,16 @@ bool BakeDisplacedVertices(const DrawScene& scene, const DrawMeshCPU& mesh,
   const size_t nv = mesh.vertices.size();
   // Per-vertex material (first referencing triangle wins). -1 = none.
   std::vector<int> vtxMat(nv, -1);
+  std::vector<uint32_t> vtxFace(nv, UINT32_MAX);
   for (const DrawSubmesh& s : mesh.submeshes) {
     const uint32_t end = s.indexOffset + s.indexCount;
     for (uint32_t i = s.indexOffset; i < end && i < mesh.indices.size(); ++i) {
       const uint32_t vi = mesh.indices[i];
-      if (vi < nv && vtxMat[vi] < 0) vtxMat[vi] = s.materialId;
+      if (vi < nv && vtxMat[vi] < 0) {
+        vtxMat[vi] = s.materialId;
+        const size_t tri = i / 3u;
+        if (tri < mesh.sourceFaceId.size()) vtxFace[vi] = mesh.sourceFaceId[tri];
+      }
     }
   }
 
@@ -98,7 +127,8 @@ bool BakeDisplacedVertices(const DrawScene& scene, const DrawMeshCPU& mesh,
     const DrawVertex& src = mesh.vertices[v];
     float h = mat.displacementConst;
     if (mat.displacementTex >= 0) {
-      h = SampleTextureRed(scene, mat.displacementTex, src.u, src.v) *
+      h = SampleTextureRed(scene, mat.displacementTex, src.u, src.v,
+                           vtxFace[v]) *
               mat.displacementTexScale +
           mat.displacementTexBias;
     }
@@ -153,8 +183,21 @@ bool BakeDisplacedVertices(const DrawScene& scene, const DrawMeshCPU& mesh,
 void BakeRTDisplacement(DrawScene* scene) {
   if (!scene) return;
   for (DrawMeshCPU& mesh : scene->meshes) {
-    BakeDisplacedVertices(*scene, mesh, /*globalScale=*/1.0f,
-                          &mesh.rtDisplacedVertices);
+    if (BakeDisplacedVertices(*scene, mesh, /*globalScale=*/1.0f,
+                              &mesh.rtDisplacedVertices)) {
+      for (const DrawSubmesh& sub : mesh.submeshes) {
+        if (sub.materialId < 0 ||
+            static_cast<size_t>(sub.materialId) >= scene->materials.size())
+          continue;
+        const DrawMaterialCPU& mat = scene->materials[sub.materialId];
+        if (mat.displacementTex >= 0 &&
+            static_cast<size_t>(mat.displacementTex) < scene->textures.size() &&
+            scene->textures[mat.displacementTex].isPtex) {
+          mesh.rasterDisplacementBaked = true;
+          break;
+        }
+      }
+    }
   }
 }
 

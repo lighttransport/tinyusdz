@@ -13,7 +13,7 @@ struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]
 // index of this prototype's BLAS subtree root.
 struct Inst { float w2o[12]; float o2w[12]; float tint[4]; int blasRoot; int instId;
               unsigned int directLightMask; unsigned int shadowLightMask; };
-struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim; int isPtex; int ptexCols; int ptexRows; int ptexTileEdge; int mipCount; int firstMip; int udimLayer[100]; };
+struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim; int isPtex; int ptexCols; int ptexRows; int ptexTileEdge; int ptexRectTexelOffset; int ptexFaceCount; int mipCount; int firstMip; int udimLayer[100]; };
 
 typedef struct { float x, y, z; } F3;
 typedef struct { float x, y, z, w; } F4;
@@ -110,14 +110,24 @@ __device__ F4 samplePtexRGBA(const unsigned char* texels, const TexDesc* tex,
                              int numTex, int id, float u, float v,
                              unsigned int face, float lod){
   if (!tex || id<0 || id>=numTex || !tex[id].isPtex ||
-      tex[id].ptexCols<=0 || tex[id].ptexRows<=0)
+      face>=(unsigned int)tex[id].ptexFaceCount)
     return sampleTexRGBALod(texels,tex,numTex,id,u,v,lod);
   const TexDesc td=tex[id];
-  float au=((float)(face%(unsigned int)td.ptexCols)+u-floorf(u)) /
-           (float)td.ptexCols;
-  float av=((float)(face/(unsigned int)td.ptexCols)+v-floorf(v)) /
-           (float)td.ptexRows;
-  return sampleTexRGBALod(texels,tex,numTex,id,au,av,lod);
+  unsigned int val[4];
+  #pragma unroll
+  for (int c=0;c<4;++c) {
+    int lo=td.ptexRectTexelOffset+(int)face*8+c*2;
+    const unsigned char* a=texels+td.offset+lo*4;
+    const unsigned char* b=a+4;
+    val[c]=(unsigned int)a[3]|((unsigned int)b[3]<<8);
+  }
+  if (val[2]==0u || val[3]==0u) return mk4(1.f,1.f,1.f,1.f);
+  float pu=fminf(fmaxf(u,0.f),1.f), pv=fminf(fmaxf(v,0.f),1.f);
+  float px=(float)val[0]+pu*(float)(val[2]-1u);
+  float py=(float)val[1]+(1.f-pv)*(float)(val[3]-1u);
+  float au=td.width>1?px/(float)(td.width-1):0.f;
+  float av=td.height>1?py/(float)(td.height-1):0.f;
+  return sampleTexRGBALod(texels,tex,numTex,id,au,av,0.f);
 }
 __device__ float textureLod(const TexDesc* tex, int numTex, int id,
                             float u, float v, float uvFootprint){
