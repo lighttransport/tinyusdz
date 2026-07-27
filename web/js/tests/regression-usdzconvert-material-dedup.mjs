@@ -5,12 +5,17 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
 import {
+  buildUSDZWithNewRoot,
   ZipStreamWriter,
   convertFolderToUSDZ,
   loadWasm,
   nextFlattenViaStreaming,
+  parseUSDZEntries,
   unpackUSDZ,
 } from '../src/usdzconvert.js';
+import {
+  NextRenderSceneAdapter,
+} from '../src/tinyusdz/TinyUSDZLoader.js';
 import {
   NextTextureLoadingManager,
   compactMaterialGroups,
@@ -118,6 +123,27 @@ await test('combined WASM next RenderStream accepts an in-memory USDA layer', ()
   } finally {
     stream.end();
     stream.delete();
+  }
+});
+
+await test('combined WASM next adapter extracts a USDA root from USDZ', async () => {
+  const dependencyPackage = await makeUsdz(TEXTURED_TWO_MATERIAL_USDA);
+  const dependency = parseUSDZEntries(dependencyPackage.usdz)
+    .find((entry) => /\.usdc$/i.test(entry.name));
+  assert.ok(dependency, 'fixture should contain a USDC dependency layer');
+  const packaged = buildUSDZWithNewRoot(
+    'root.usda', encoder.encode(SIMPLE_TRIANGLE_USDA), [{
+      ...dependency,
+      name: 'dependency.usdc',
+    }]);
+  const scene = await NextRenderSceneAdapter.create(
+    native, packaged, 'fixture.usdz', { meshOnly: true });
+  try {
+    assert.equal(scene.numMeshes(), 1, 'USDA-root USDZ should expose one mesh');
+    const mesh = scene.getMeshCopy(0);
+    assert.ok(mesh && !mesh.error, `USDA-root mesh should materialize: ${mesh?.error || ''}`);
+  } finally {
+    scene.delete();
   }
 });
 
