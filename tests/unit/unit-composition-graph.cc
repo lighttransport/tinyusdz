@@ -1130,6 +1130,50 @@ def Xform "Root"
 }
 
 // ---------------------------------------------------------------------------
+// compgraph_validate_no_duplicate_sibling_names_test
+// Direct test of ValidateNoDuplicateSiblingNames: a Layer with duplicate
+// sibling names must be rejected.
+// ---------------------------------------------------------------------------
+
+void compgraph_validate_no_duplicate_sibling_names_test(void) {
+  // Build a minimal layer with duplicate children.
+  tinyusdz::Layer layer;
+  tinyusdz::PrimSpec root(tinyusdz::Specifier::Def, "root");
+
+  tinyusdz::PrimSpec child_a(tinyusdz::Specifier::Def, "ChildA");
+  root.children().push_back(child_a);
+
+  tinyusdz::PrimSpec child_b(tinyusdz::Specifier::Def, "ChildB");
+  root.children().push_back(child_b);
+
+  // First duplicate.
+  tinyusdz::PrimSpec child_a_dup(tinyusdz::Specifier::Def, "ChildA");
+  root.children().push_back(child_a_dup);
+
+  TEST_CHECK(layer.add_primspec("root", root));
+
+  std::string warn, err;
+  bool valid = tinyusdz::composition_graph::ValidateNoDuplicateSiblingNames(
+      layer, &warn, &err);
+  TEST_CHECK_(!valid, "ValidateNoDuplicateSiblingNames must reject duplicate "
+              "sibling names");
+  TEST_CHECK_(!err.empty(), "ValidateNoDuplicateSiblingNames must set err on "
+              "duplicate");
+
+  // Now test a valid layer (no duplicates) must pass.
+  tinyusdz::Layer clean_layer;
+  root.children().resize(2);  // Remove the duplicate ChildA.
+  root.children()[0] = child_a;
+  root.children()[1] = child_b;
+  clean_layer.add_primspec("root", root);
+  std::string cwarn, cerr;
+  bool valid2 = tinyusdz::composition_graph::ValidateNoDuplicateSiblingNames(
+      clean_layer, &cwarn, &cerr);
+  TEST_CHECK_(valid2, "ValidateNoDuplicateSiblingNames must accept valid "
+              "layers without duplicates");
+}
+
+// ---------------------------------------------------------------------------
 // compgraph_build_stage_wide_deep_test
 // Regression for the BuildStage child-composition rewrite: a wide + deep
 // hierarchy must reconstruct fully. BuildStage formerly scanned all of

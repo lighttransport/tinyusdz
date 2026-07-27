@@ -1544,6 +1544,33 @@ void BuildMorphChannelsNext(const tnext::Stage& stage,
           std::max(sumPos[p * 3 + a], -sumNeg[p * 3 + a]));
 }
 
+// Compute morphExtent from blendshape targets for culling. Must be called when
+// BakeBlendShapes was used instead of BuildMorphChannelsNext (which already
+// computes morphExtent internally). No-op when no blendshapes are present.
+static void ComputeMorphExtent(const tnext::Stage& stage,
+                                const tnext::UsdPrim& meshPrim,
+                                DrawMeshCPU* dm) {
+  const std::vector<tnext::Path>* targets =
+      meshPrim.GetRelationship("skel:blendShapeTargets");
+  if (!targets || targets->empty()) return;
+
+  // Accumulate per-axis displacement across all channels.
+  float extent[3] = {0, 0, 0};
+  for (const tnext::Path& t : *targets) {
+    tnext::UsdPrim bs = stage.GetPrimAtPath(t.str());
+    if (!bs.IsValid()) continue;
+    const std::vector<float> offs = ReadFloats(bs, "offsets", /*time=*/0.0);
+    for (size_t e = 0; e + 2 < offs.size(); e += 3) {
+      extent[0] = std::max(extent[0], std::fabs(offs[e + 0]));
+      extent[1] = std::max(extent[1], std::fabs(offs[e + 1]));
+      extent[2] = std::max(extent[2], std::fabs(offs[e + 2]));
+    }
+  }
+  for (int a = 0; a < 3; ++a) {
+    dm->morphExtent[a] = std::max(dm->morphExtent[a], extent[a] * 1.5f);
+  }
+}
+
 // Build a prototype mesh's local geometry (+ flat displayColor) from the
 // converter, and its mesh-local -> proto-root-local transform `mesh_rel`. Shared
 // by the PointInstancer and native-instance passes. Returns false if the mesh has
@@ -1573,10 +1600,12 @@ bool BuildProtoMesh(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
     const char* e = std::getenv("TUSDVIEW_NEXT_MORPH_BAKE");
     return e && e[0] == '1';
   }();
-  if (kBakeMorph)
+  if (kBakeMorph) {
     BakeBlendShapes(stage, mp, time, dm, vertexToPoint, numPoints);
-  else
+    ComputeMorphExtent(stage, mp, dm);
+  } else {
     BuildMorphChannelsNext(stage, mp, time, dm, vertexToPoint, numPoints);
+  }
   dm->purpose = ResolveNextPurpose(stage, mp.GetPath().str());
   // Prototype displayColor is carried PER-VERTEX (FillFlatGeometry filled
   // dm->vertexColors -- uploaded to GL attrib 10 for instanced draws, shared by all
@@ -2714,6 +2743,103 @@ bool FindNextCamera(const tnext::Stage& stage, const std::string& name,
     if (FindNextCameraRec(stage, root, name, time, out)) return true;
   }
   return false;
+}
+
+static DrawCameraCPU MakeDrawCameraFromNext(
+    const tinyusdz::value::matrix4d& worldMatrix,
+    float focalLength, float horizontalAperture, float verticalAperture,
+    float horizontalApertureOffset, float verticalApertureOffset,
+    float exposure, int projection,
+    float zNear, float zFar);
+
+static void GatherNextCamerasRec(const tnext::Stage& stage,
+                                  const tnext::UsdPrim& prim, double time,
+                                  std::vector<DrawCameraCPU>* out) {
+  if (prim.GetTypeName() == "Camera") {
+    double mw[16];
+    matrix4d worldMatrix = matrix4d::identity();
+    if (tydn::ComputeWorldTransform(stage, prim, mw, time)) {
+      worldMatrix = Mat4dFromArray(mw);
+    }
+
+    const float focal = ReadCamFloatN(prim, "focalLength", 50.0f);
+    const float ha = ReadCamFloatN(prim, "horizontalAperture", 20.955f);
+    const float va = ReadCamFloatN(prim, "verticalAperture", 15.2908f);
+    const float hao = ReadCamFloatN(prim, "horizontalApertureOffset", 0.0f);
+    const float vao = ReadCamFloatN(prim, "verticalApertureOffset", 0.0f);
+    const float expo = ReadCamFloatN(prim, "exposure", 0.0f);
+
+    int proj = 0;
+    if (const tnext::Value* v = prim.GetPropertyValue("projection")) {
+      if (const std::string* token = v->as_token()) {
+        proj = (*token == "orthographic") ? 1 : 0;
+      }
+    }
+
+    float zn = 0.1f, zf = 10000.0f;
+    if (const tnext::Value* v = prim.GetPropertyValue("clippingRange")) {
+      if (const float* f = v->as_float2()) {
+        zn = f[0]; zf = f[1];
+      }
+    }
+
+    DrawCameraCPU dc = MakeDrawCameraFromNext(
+        worldMatrix, focal, ha, va, hao, vao, expo, proj, zn, zf);
+    dc.name = prim.GetName();
+    dc.absPath = prim.GetPath().str();
+    dc.displayName = dc.name;
+    out->push_back(std::move(dc));
+    // Camera prims are leaf nodes (no meaningful children to iterate).
+    return;
+  }
+  for (const tnext::UsdPrim& child : prim.GetChildren()) {
+    GatherNextCamerasRec(stage, child, time, out);
+  }
+}
+
+static DrawCameraCPU MakeDrawCameraFromNext(
+    const tinyusdz::value::matrix4d& worldMatrix,
+    float focalLength, float horizontalAperture, float verticalAperture,
+    float horizontalApertureOffset, float verticalApertureOffset,
+    float exposure, int projection,
+    float zNear, float zFar) {
+  DrawCameraCPU dc;
+  float up[3] = {float(worldMatrix.m[1][0]), float(worldMatrix.m[1][1]),
+                 float(worldMatrix.m[1][2])};
+  float fwd[3] = {-float(worldMatrix.m[2][0]), -float(worldMatrix.m[2][1]),
+                  -float(worldMatrix.m[2][2])};
+  auto norm3 = [](float v[3]) {
+    float l = std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+    if (l > 1e-12f) { v[0]/=l; v[1]/=l; v[2]/=l; }
+  };
+  norm3(up); norm3(fwd);
+  for (int k = 0; k < 3; ++k) {
+    dc.eye[k] = float(worldMatrix.m[3][k]);
+    dc.up[k] = up[k];
+    dc.forward[k] = fwd[k];
+  }
+  dc.focalLength = focalLength;
+  dc.horizontalAperture = horizontalAperture;
+  dc.verticalAperture = verticalAperture;
+  dc.horizontalApertureOffset = horizontalApertureOffset;
+  dc.verticalApertureOffset = verticalApertureOffset;
+  dc.exposure = exposure;
+  dc.projection = projection ? DrawCameraCPU::Projection::Orthographic
+                             : DrawCameraCPU::Projection::Perspective;
+  dc.zNear = std::max(1.0e-4f, zNear);
+  dc.zFar = std::max(dc.zNear + 1.0e-3f, zFar);
+  dc.fovYDeg = 2.0f * std::atan(0.5f * verticalAperture /
+                  std::max(1.0e-6f, focalLength)) *
+                  (180.0f / 3.14159265358979323846f);
+  return dc;
+}
+
+void GatherNextCameras(const tnext::Stage& stage, double time,
+                       std::vector<DrawCameraCPU>* out) {
+  if (!out) return;
+  for (const tnext::UsdPrim& root : stage.GetRootPrims()) {
+    GatherNextCamerasRec(stage, root, time, out);
+  }
 }
 
 // The legacy loader has no next Stage, only the converted RenderScene -- so
@@ -4920,6 +5046,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     if (m.has_blend_shapes()) {
       if (kBakeMorphStatic || !opts.gpuSkinning) {
         BakeBlendShapes(stage, mp, time, &loc, vertexToPoint, m.point_count());
+        ComputeMorphExtent(stage, mp, &loc);
       } else {
         BuildMorphChannelsNext(stage, mp, time, &loc, vertexToPoint,
                                m.point_count());
@@ -5115,6 +5242,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.geometricNormal = loc.geometricNormal;
       b.dm.doubleSided = m.double_sided;
       if (hasAuthoredLightLinks) b.dm.absPath = loc.absPath;
+      if (loc.instanceCount() > 0) {
+        for (int k = 0; k < 3; ++k) {
+          b.dm.protoAabbMin[k] = loc.protoAabbMin[k];
+          b.dm.protoAabbMax[k] = loc.protoAabbMax[k];
+        }
+      }
       // Allocate the batch color buffer only once a mesh actually contributes a
       // color: back-fill white for the vertices already in the batch. No-color
       // batches (e.g. the hotel) then never allocate a 12 B/vertex white buffer.
@@ -5434,13 +5567,18 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     else if (dc.purpose == "proxy") ++nProxy;
     else if (dc.purpose == "render") ++nRender;
   }
+  // Gather camera records for loader-equivalence testing (must run before the
+  // early-exit checks below, since the stage may still be valid).
+  GatherNextCameras(stage, time, &draw->cameras);
+
   LOGI("next: '%s' -> %zu draws (%zu guide, %zu proxy, %zu render), %lld instances, "
        "%zu unique tris (%lld effective), %zu materials, %zu textures, "
-       "instXform VRAM ~%.2f GB, up=%s%s",
+       "%zu cameras, instXform VRAM ~%.2f GB, up=%s%s",
        path.c_str(), streamedMeshCount + draw->meshes.size(), nGuide, nProxy,
        nRender, instTotal,
        draw->triangleCount, effectiveTris, draw->materials.size(),
-       draw->textures.size(), double(instTotal) * 48.0 / 1e9,
+       draw->textures.size(), draw->cameras.size(),
+       double(instTotal) * 48.0 / 1e9,
        draw->upAxis.c_str(), draw->truncated ? " (truncated)" : "");
   if (!draw->points.empty() || !draw->curves.empty()) {
     size_t pointSamples = 0, curveSamples = 0, opacityPrims = 0;

@@ -2040,6 +2040,7 @@ bool CrateReader::BuildLiveFieldSets() {
     std::vector<FieldValuePairVector> decoded(_fieldset_start_indices.size());
     std::atomic<size_t> next_position{0};
     std::atomic<bool> worker_failed{false};
+    std::atomic<bool> memory_budget_failed{false};
 
     const size_t nthreads = (std::min)(
         thread_safe_positions.size(), size_t((std::max)(1, _config.numThreads)));
@@ -2048,6 +2049,9 @@ bool CrateReader::BuildLiveFieldSets() {
 
     auto decode_thread_safe_fieldsets = [&]() {
       for (;;) {
+        if (worker_failed.load()) {
+          return;
+        }
         const size_t task_pos = next_position.fetch_add(1);
         if (task_pos >= thread_safe_positions.size()) {
           break;
@@ -2063,7 +2067,14 @@ bool CrateReader::BuildLiveFieldSets() {
             worker_failed.store(true);
             return;
           }
-          MEMORY_BUDGET_CHECK((*memory_manager_), pairs_bytes, kTag);
+          // Do not use MEMORY_BUDGET_CHECK here: it returns `false`, while this
+          // worker lambda deliberately returns void. Error strings are also
+          // owned by the reader and must only be mutated after the join.
+          if (!memory_manager_->Reserve(pairs_bytes)) {
+            memory_budget_failed.store(true);
+            worker_failed.store(true);
+            return;
+          }
           pairs.resize(range_size);
         }
         for (uint32_t idx = start_idx, i = 0; idx < end_idx; ++idx, ++i) {
@@ -2084,7 +2095,11 @@ bool CrateReader::BuildLiveFieldSets() {
       worker.join();
     }
     if (worker_failed.load()) {
-      PUSH_ERROR("Parallel inlined fieldset decode failed unexpectedly.");
+      if (memory_budget_failed.load()) {
+        PUSH_ERROR("Parallel inlined fieldset decode reached maximum memory budget.");
+      } else {
+        PUSH_ERROR("Parallel inlined fieldset decode failed unexpectedly.");
+      }
       return false;
     }
 

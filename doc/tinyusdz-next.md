@@ -308,7 +308,9 @@ node cli/usdzconvert.js ./scene_folder \
 ```
 
 The stream path preloads USD layers for composition, then processes textures
-through a bounded fetch/process/zip loop.
+through a bounded fetch/process/zip loop. Texture concurrency is capped at 64
+even for malformed or extreme API inputs; `--texture-memory-budget` normally
+selects a much smaller count from the conservative per-worker estimate.
 
 ### 4. Streaming folder conversion with next flatten
 

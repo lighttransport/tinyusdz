@@ -309,6 +309,11 @@ bool ComposePrimSpecFromIndex(const std::vector<LayerStackEntry> &layer_stacks,
                               const PrimIndex &index, PrimSpec *out,
                               std::string *warn, std::string *err);
 
+// Recursively check that no PrimSpec has two children with the same name.
+// Returns true on success. Only called in debug builds.
+bool ValidateNoDuplicateSiblingNames(const Layer &layer, std::string *warn,
+                                     std::string *err);
+
 // ---------------------------------------------------------------------------
 // InstanceKey -- for instancing deduplication
 // ---------------------------------------------------------------------------

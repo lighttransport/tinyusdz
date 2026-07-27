@@ -7,6 +7,8 @@
 // its USD-relative name -> exportAsUSDZ() (which flattens the stage and packs
 // the cached image assets).
 
+import { normalizeTextureConcurrency } from './texture-memory-budget.mjs';
+
 const USD_RE = /\.(usd|usda|usdc|usdz)$/i;
 const IMG_RE = /\.(png|jpg|jpeg|exr|avif)$/i;
 // Audio formats referenced by UsdMediaSpatialAudio (filePath asset). USD itself
@@ -1780,7 +1782,8 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
     // sequential (single instance), as do the setAsset calls.
     const processedByPath = new Map();
     if (typeof opts.textureProcessor === 'function' && images.length) {
-      const limit = Math.max(1, Math.min(opts.textureConcurrency || 1, images.length));
+      const limit = Math.min(
+        normalizeTextureConcurrency(opts.textureConcurrency, 1), images.length);
       let nextImage = 0;
       let processedImages = 0;
       const runOne = async () => {
@@ -2344,7 +2347,7 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
 
     // Bounded prefetch pipeline: fetch/process up to `width` textures ahead,
     // append to the zip in order so at most `width` outputs are in memory.
-    const width = Math.max(1, opts.textureConcurrency || 4);
+    const width = normalizeTextureConcurrency(opts.textureConcurrency, 4);
     const includeUnusedTextures = opts.includeUnusedTextures === true;
     const texturePlans = referencedAssetNames && !includeUnusedTextures
       ? plans.filter((plan) =>
