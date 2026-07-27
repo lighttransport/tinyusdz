@@ -50,19 +50,22 @@ void PutSample(std::vector<uint8_t>* out, uint32_t type, float value) {
 }
 
 std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
-                                   bool verticalGradient = false) {
-  const uint32_t bytesPerComponent[] = {1, 2, 2, 4};
+                                   bool verticalGradient = false,
+                                   uint32_t encoding = 1,
+                                   bool constantFace0 = false) {
   std::vector<uint8_t> faceInfo;
   for (uint32_t face = 0; face < 2; ++face) {
     faceInfo.push_back(face == 0 ? 2 : 1);  // 4x2, then 2x4
     faceInfo.push_back(face == 0 ? 1 : 2);
     faceInfo.push_back(0);
-    faceInfo.push_back(0);
+    faceInfo.push_back(face == 0 && constantFace0 ? 1 : 0);
     for (int edge = 0; edge < 4; ++edge) Put32(&faceInfo, 0xffffffffu);
   }
   const std::vector<uint8_t> faceInfoZ = Deflate(faceInfo);
-  const std::vector<uint8_t> constants(
-      2u * channels * bytesPerComponent[dataType], 0);
+  std::vector<uint8_t> constants;
+  for (uint32_t face = 0; face < 2; ++face)
+    for (uint16_t channel = 0; channel < channels; ++channel)
+      PutSample(&constants, dataType, face == 0 ? 0.25f : 0.75f);
   const std::vector<uint8_t> constantsZ = Deflate(constants);
 
   std::vector<std::vector<uint8_t>> blocks;
@@ -70,7 +73,13 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
   uint64_t levelDataSize = 0;
   for (uint32_t level = 0; level < 2; ++level) {
     std::vector<uint8_t> headers, payload;
-    for (uint32_t face = 0; face < 2; ++face) {
+    const uint32_t firstFace = level > 0 && constantFace0 ? 1u : 0u;
+    const uint32_t levelFaces = 2u - firstFace;
+    for (uint32_t face = firstFace; face < 2; ++face) {
+      if (constantFace0 && face == 0) {
+        Put32(&headers, 0);
+        continue;
+      }
       const uint32_t width = std::max(1u, (face == 0 ? 4u : 2u) >> level);
       const uint32_t height = std::max(1u, (face == 0 ? 2u : 4u) >> level);
       std::vector<uint8_t> planar;
@@ -85,21 +94,51 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
           PutSample(&planar, dataType, values[channel]);
         }
       }
+      if (encoding == 2 && dataType == 0) {
+        const size_t pixels = size_t(width) * height;
+        for (uint16_t channel = 0; channel < channels; ++channel) {
+          uint8_t* plane = planar.data() + size_t(channel) * pixels;
+          for (size_t pixel = pixels; pixel-- > 1;)
+            plane[pixel] = uint8_t(plane[pixel] - plane[pixel - 1]);
+        }
+      }
       const std::vector<uint8_t> compressed = Deflate(planar);
-      Put32(&headers, (1u << 30) | static_cast<uint32_t>(compressed.size()));
-      payload.insert(payload.end(), compressed.begin(), compressed.end());
+      if (encoding == 3) {
+        std::vector<uint8_t> tileHeader;
+        Put32(&tileHeader,
+              (1u << 30) | static_cast<uint32_t>(compressed.size()));
+        const std::vector<uint8_t> tileHeaderZ = Deflate(tileHeader);
+        std::vector<uint8_t> tiled;
+        uint8_t logW = 0, logH = 0;
+        while ((1u << logW) < width) ++logW;
+        while ((1u << logH) < height) ++logH;
+        tiled.push_back(logW);
+        tiled.push_back(logH);
+        Put32(&tiled, static_cast<uint32_t>(tileHeaderZ.size()));
+        tiled.insert(tiled.end(), tileHeaderZ.begin(), tileHeaderZ.end());
+        tiled.insert(tiled.end(), compressed.begin(), compressed.end());
+        Put32(&headers,
+              (3u << 30) | static_cast<uint32_t>(tiled.size()));
+        payload.insert(payload.end(), tiled.begin(), tiled.end());
+      } else {
+        Put32(&headers, (encoding << 30) |
+                            static_cast<uint32_t>(compressed.size()));
+        payload.insert(payload.end(), compressed.begin(), compressed.end());
+      }
     }
     const std::vector<uint8_t> headersZ = Deflate(headers);
     headerSizes.push_back(static_cast<uint32_t>(headersZ.size()));
     blocks.push_back(headersZ);
     blocks.back().insert(blocks.back().end(), payload.begin(), payload.end());
     levelDataSize += blocks.back().size();
+    (void)levelFaces;
   }
   std::vector<uint8_t> levelInfo;
   for (size_t level = 0; level < blocks.size(); ++level) {
     Put64(&levelInfo, blocks[level].size());
     Put32(&levelInfo, headerSizes[level]);
-    Put32(&levelInfo, 2);
+    Put32(&levelInfo,
+          static_cast<uint32_t>(level == 0 ? 2 : (constantFace0 ? 1 : 2)));
   }
 
   std::vector<uint8_t> out;
@@ -237,6 +276,53 @@ void RunOrientation() {
   CHECK(std::abs(int(red(rects[0].x, rects[0].y)) - 223) <= 1);
   CHECK(std::abs(int(red(rects[0].x, rects[0].y + 1u)) - 32) <= 1);
 }
+
+void RunEncoding(uint32_t encoding) {
+  const std::vector<uint8_t> bytes =
+      SyntheticPtex(0, 1, true, encoding, false);
+  tinyusdz::ptx::Reader reader;
+  std::string error;
+  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+                                          &error));
+  tusdview::PtexAtlasOptions options;
+  options.maxAtlasEdge = 64;
+  options.gutter = 1;
+  light3d::Image atlas;
+  std::vector<tusdview::DrawPtexFaceRectCPU> rects;
+  CHECK(tusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
+                                 nullptr, &error));
+  CHECK(rects.size() == 2);
+  if (rects.empty()) return;
+  const auto red = [&](uint32_t x, uint32_t y) {
+    return atlas.data[(size_t(y) * atlas.width + x) * 4u];
+  };
+  CHECK(std::abs(int(red(rects[0].x, rects[0].y)) - 223) <= 1);
+  CHECK(std::abs(int(red(rects[0].x, rects[0].y + 1u)) - 32) <= 1);
+}
+
+void RunConstantFace() {
+  const std::vector<uint8_t> bytes = SyntheticPtex(0, 1, false, 1, true);
+  tinyusdz::ptx::Reader reader;
+  std::string error;
+  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+                                          &error));
+  tusdview::PtexAtlasOptions options;
+  options.maxAtlasEdge = 64;
+  light3d::Image atlas;
+  std::vector<tusdview::DrawPtexFaceRectCPU> rects;
+  CHECK(tusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
+                                 nullptr, &error));
+  tusdview::DrawScene scene;
+  tusdview::DrawTextureCPU texture;
+  texture.image = atlas;
+  texture.isPtex = true;
+  texture.ptexFaceRects = rects;
+  scene.textures.push_back(std::move(texture));
+  CHECK(std::fabs(tusdview::SampleTextureRed(scene, 0, 0.5f, 0.5f, 0) -
+                  0.25f) < 0.02f);
+  CHECK(std::fabs(tusdview::SampleTextureRed(scene, 0, 0.5f, 0.5f, 1) -
+                  0.75f) < 0.02f);
+}
 }  // namespace
 
 int main() {
@@ -245,6 +331,9 @@ int main() {
   RunType(0, 3);
   RunType(0, 4);
   RunOrientation();
+  RunEncoding(2);
+  RunEncoding(3);
+  RunConstantFace();
   if (failures) return 1;
   std::printf("OK: rectangular UInt8/UInt16/Half/Float Ptex atlases\n");
   return 0;
