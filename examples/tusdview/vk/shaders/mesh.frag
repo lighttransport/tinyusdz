@@ -117,6 +117,12 @@ struct MaterialTexParam {
   vec4 semanticUdimSlots;
   vec4 semanticUdimSlots2;
   vec4 ptexBaseInfo; // rect texel offset, face count, enabled, reserved
+  vec4 ptexMetalInfo;
+  vec4 ptexRoughInfo;
+  vec4 ptexNormalInfo;
+  vec4 ptexEmissiveInfo;
+  vec4 ptexOpacityInfo;
+  vec4 ptexOcclusionInfo;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -226,6 +232,28 @@ uint sourceFaceForPtex() {
   return faceId[base + uint(gl_PrimitiveID)];
 }
 
+vec2 ptexUv(sampler2D tex, vec2 uv, vec4 info) {
+  if (info.z <= 0.5 || (pc.ids.y & 0x80) == 0) return uv;
+  uint face = sourceFaceForPtex();
+  if (face >= uint(info.y)) return uv;
+  ivec2 size = textureSize(tex, 0);
+  int base = int(info.x + 0.5) + int(face) * 8;
+  uint value[4];
+  for (int component = 0; component < 4; ++component) {
+    int lo = base + component * 2;
+    float a = texelFetch(tex, ivec2(lo % size.x, lo / size.x), 0).a;
+    float b = texelFetch(tex, ivec2((lo + 1) % size.x,
+                                    (lo + 1) / size.x), 0).a;
+    value[component] = uint(a * 255.0 + 0.5) |
+                       (uint(b * 255.0 + 0.5) << 8u);
+  }
+  if (value[2] == 0u || value[3] == 0u) return uv;
+  vec2 px = vec2(float(value[0]), float(value[1])) +
+            vec2(clamp(uv.x, 0.0, 1.0), 1.0 - clamp(uv.y, 0.0, 1.0)) *
+            vec2(float(value[2] - 1u), float(value[3] - 1u));
+  return (px + vec2(0.5)) / vec2(size);
+}
+
 vec4 sampleBaseColor(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.x > 0.5) ? vUV1 : uv;
@@ -267,6 +295,7 @@ vec4 sampleMetallic(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.y > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.mrUv0, m.mrUv1);
+  tuv = ptexUv(uMetallicTex, tuv, m.ptexMetalInfo);
   return ((pc.ids.w & 2) != 0)
       ? sampleUdim(uMetallicUdimTex, int(m.udimSlots0.y + 0.5), tuv,
                    vec4(1.0, 0.0, 1.0, 1.0))
@@ -277,6 +306,7 @@ vec4 sampleRoughness(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.roughUv0.w > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.roughUv0, m.roughUv1);
+  tuv = ptexUv(uRoughnessTex, tuv, m.ptexRoughInfo);
   return ((pc.ids.w & 512) != 0)
       ? sampleUdim(uRoughnessUdimTex, int(m.udimSlots1.y + 0.5), tuv,
                    vec4(1.0))
@@ -287,6 +317,7 @@ vec4 sampleNormal(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.z > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.normalUv0, m.normalUv1);
+  tuv = ptexUv(uNormalTex, tuv, m.ptexNormalInfo);
   vec4 c = ((pc.ids.w & 4) != 0)
       ? sampleUdim(uNormalUdimTex, int(m.udimSlots0.z + 0.5), tuv,
                    vec4(0.5, 0.5, 1.0, 1.0))
@@ -298,6 +329,7 @@ vec4 sampleEmissive(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.w > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.emissiveUv0, m.emissiveUv1);
+  tuv = ptexUv(uEmissiveTex, tuv, m.ptexEmissiveInfo);
   vec4 c = ((pc.ids.w & 8) != 0)
       ? sampleUdim(uEmissiveUdimTex, int(m.udimSlots0.w + 0.5), tuv,
                    vec4(1.0, 0.0, 1.0, 1.0))
@@ -331,6 +363,7 @@ float sampleOpacity(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.opacityParams.w > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.opacityUv0, m.opacityUv1);
+  tuv = ptexUv(uOpacityTex, tuv, m.ptexOpacityInfo);
   vec4 c = ((pc.ids.w & 128) != 0)
       ? sampleUdim(uOpacityUdimTex, int(m.udimSlots1.x + 0.5), tuv, vec4(1.0))
       : texture(uOpacityTex, tuv);
