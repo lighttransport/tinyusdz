@@ -555,6 +555,7 @@ struct DrawTextureCPU {
   // Ptex caches use this to reserve only their fixed physical atlas without a
   // same-sized zero-filled CPU upload.
   bool streamingMutable{false};
+  bool ptexForceResidency{false};  // diagnostic: stream even fitting faces
   uint32_t ptexFaces{0};
   uint16_t ptexLevels{0};
   uint16_t ptexChannels{0};

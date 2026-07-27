@@ -449,6 +449,55 @@ void RunPhysicalCacheReservation() {
     CHECK(texels[i * 4u + 3u] == expected[i]);
   }
 }
+
+void RunPhysicalCacheCannotStarveFallback() {
+  const std::vector<uint8_t> bytes = SyntheticPtex(0, 1, false, 1);
+  tinyusdz::ptx::Reader reader;
+  std::string error;
+  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+                                          &error));
+  tusdview::PtexAtlasOptions baseline;
+  baseline.maxFaceEdge = 8;
+  baseline.maxAtlasEdge = 64;
+  light3d::Image plain;
+  std::vector<tusdview::DrawPtexFaceRectCPU> plainRects;
+  CHECK(tusdview::BuildPtexAtlas(reader, baseline, false, &plain, &plainRects,
+                                 nullptr, &error));
+
+  tusdview::PtexAtlasOptions constrained = baseline;
+  constrained.maxAtlasBytes = plain.data.size();
+  constrained.maxPhysicalCacheBytes = 1024u * 1024u;
+  constrained.forcePhysicalCache = true;
+  light3d::Image atlas;
+  std::vector<tusdview::DrawPtexFaceRectCPU> rects;
+  tusdview::PtexAtlasBuildStats stats;
+  CHECK(tusdview::BuildPtexAtlas(reader, constrained, false, &atlas, &rects,
+                                 &stats, &error));
+  CHECK(stats.physicalCacheSlots == 0);
+  CHECK(rects.size() == plainRects.size());
+  CHECK(atlas.data.size() <= constrained.maxAtlasBytes);
+}
+
+void RunVirtualFallbackDownsample() {
+  const std::vector<uint8_t> bytes = SyntheticPtex(0, 1, false, 1);
+  tinyusdz::ptx::Reader reader;
+  std::string error;
+  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+                                          &error));
+  tusdview::PtexAtlasOptions options;
+  options.maxFaceEdge = 4;
+  options.maxAtlasEdge = 64;
+  options.gutter = 0;
+  options.maxAtlasBytes = 80;
+  light3d::Image atlas;
+  std::vector<tusdview::DrawPtexFaceRectCPU> rects;
+  tusdview::PtexAtlasBuildStats stats;
+  CHECK(tusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
+                                 &stats, &error));
+  CHECK(rects.size() == 2);
+  CHECK(rects[0].reserved == 1 || rects[1].reserved == 1);
+  CHECK(atlas.data.size() <= options.maxAtlasBytes);
+}
 }  // namespace
 
 int main() {
@@ -464,6 +513,8 @@ int main() {
   RunConstantTiles();
   RunMalformedTileTable();
   RunPhysicalCacheReservation();
+  RunPhysicalCacheCannotStarveFallback();
+  RunVirtualFallbackDownsample();
   if (failures) return 1;
   std::printf("OK: rectangular UInt8/UInt16/Half/Float Ptex atlases\n");
   return 0;

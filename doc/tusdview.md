@@ -648,5 +648,8 @@ that already fit at requested quality reserve no page-cache memory.
 Render reports expose `ptex_gpu_physical_slots`, `ptex_gpu_page_uploads`,
 `ptex_gpu_page_misses`, and `ptex_gpu_page_evictions`. For a small diagnostic
 scene that would not naturally need paging, set
-`TUSDVIEW_PTEX_FORCE_RESIDENCY=1` together with a low
-`--texture-budget-mb` value to exercise replacement deterministically.
+`TUSDVIEW_PTEX_FORCE_RESIDENCY=1` together with a constrained (for example,
+64 MiB) `--texture-budget-mb` value to exercise replacement deterministically.
+When authored mip levels are insufficient to keep every face represented, the
+fallback builder performs an additional bounded coarse resample; native source
+data remains available for requested-quality page upgrades.
