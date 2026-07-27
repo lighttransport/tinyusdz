@@ -56,7 +56,18 @@ int tinyexr_ptex_read_memory(const uint8_t *d, size_t z, uint32_t face, uint32_t
   block = d + info_base + level_info_size + cursor;
   if (!inflate_block(block, header_size, (size_t)block_faces * 4, &headers)) { free(face_info); return 0; }
   uint32_t ordinal = face;
-  if (level > 0) { ordinal = 0; for (uint32_t n = 0; n < face; ++n) if (!(face_info[n * 20 + 3] & 1u)) ++ordinal; }
+  if (level > 0) {
+    ordinal = 0;
+    const uint32_t face_min = (1u << face_info[face * 20]) < (1u << face_info[face * 20 + 1])
+                                  ? (1u << face_info[face * 20]) : (1u << face_info[face * 20 + 1]);
+    for (uint32_t n = 0; n < i.faces; ++n) {
+      if (face_info[n * 20 + 3] & 1u) continue;
+      const uint32_t nmin = (1u << face_info[n * 20]) < (1u << face_info[n * 20 + 1])
+                                ? (1u << face_info[n * 20]) : (1u << face_info[n * 20 + 1]);
+      if ((nmin >> level) > (face_min >> level) ||
+          ((nmin >> level) == (face_min >> level) && n < face)) ++ordinal;
+    }
+  }
   if (ordinal >= block_faces) { free(face_info); free(headers); return 0; }
   size_t payload = header_size; for (uint32_t n = 0; n < ordinal; ++n) payload += u32(headers + n * 4) & 0x3fffffffu;
   uint32_t packed = u32(headers + ordinal * 4), encoding = packed >> 30, compressed = packed & 0x3fffffffu;
