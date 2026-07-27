@@ -111,6 +111,13 @@ displays it with an ImGui docking UI.
   normal, emissive, and separate scalar opacity masks. Opacity honors selected
   channels, scale/bias, UV transforms and UV sets; ordinary and UDIM masks are
   supported. Varying `primvars:displayOpacity` modulates raster and RT output.
+- **Native Ptex materials** — rectangular, bounded atlases preserve texture-
+  local face IDs and intrinsic face UVs. Base color, metal/rough, normal,
+  emissive, opacity, occlusion, specular color, and coat weight/color/roughness
+  are sampled on OpenGL, Vulkan raster, Vulkan ray-query, and CUDA/HIP paths;
+  displacement is baked once into the traced/raster geometry. Atlas residency
+  is capped by the configured GPU budget, with representative-face fallback
+  and render-report counters for downsampling, truncation, and degradation.
 - Advanced OpenPBR/MaterialX lobes that are not yet evaluated in real time
   remain preserved in the neutral material record and produce one
   path-qualified load diagnostic per material. The structured load summary
