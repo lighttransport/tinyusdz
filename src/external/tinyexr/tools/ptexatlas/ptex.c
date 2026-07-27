@@ -53,6 +53,16 @@ int tinyexr_ptex_read_memory(const uint8_t *d, size_t z, uint32_t face, uint32_t
   uint32_t w = 1u << face_info[face * 20], h = 1u << face_info[face * 20 + 1]; w >>= level; h >>= level; if (!w) w = 1; if (!h) h = 1;
   const size_t bytes_per_sample = bpc(i.type), bytes = (size_t)w * h * i.channels * bytes_per_sample;
   if (bytes > max) { free(face_info); return 0; }
+  if (face_info[face * 20 + 3] & 1u) {
+    uint8_t *constants = 0;
+    const size_t constant_bytes = (size_t)i.faces * i.channels * bytes_per_sample;
+    if (!inflate_block(d + 64 + ext + face_size, const_size, constant_bytes, &constants)) { free(face_info); return 0; }
+    out->pixels = (uint8_t *)malloc(bytes);
+    if (!out->pixels) { free(constants); free(face_info); return 0; }
+    const uint8_t *value = constants + (size_t)face * i.channels * bytes_per_sample;
+    for (size_t p = 0; p < (size_t)w * h; ++p) memcpy(out->pixels + p * i.channels * bytes_per_sample, value, i.channels * bytes_per_sample);
+    free(constants); free(face_info); out->width = w; out->height = h; out->channels = i.channels; out->bytes_per_channel = (uint32_t)bytes_per_sample; return 1;
+  }
   block = d + info_base + level_info_size + cursor;
   if (!inflate_block(block, header_size, (size_t)block_faces * 4, &headers)) { free(face_info); return 0; }
   uint32_t ordinal = face;
