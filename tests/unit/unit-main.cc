@@ -677,6 +677,7 @@ TEST_LIST = {
   { "compgraph_payload_deferred_test", compgraph_payload_deferred_test },
   { "compgraph_build_stage_simple_test", compgraph_build_stage_simple_test },
   { "compgraph_build_stage_no_duplicate_children_test", compgraph_build_stage_no_duplicate_children_test },
+  { "compgraph_validate_no_duplicate_sibling_names_test", compgraph_validate_no_duplicate_sibling_names_test },
   { "compgraph_build_stage_wide_deep_test", compgraph_build_stage_wide_deep_test },
   { "compgraph_build_stage_inherits_test", compgraph_build_stage_inherits_test },
   { "compgraph_random_flat_prims_test", compgraph_random_flat_prims_test },

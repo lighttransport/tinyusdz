@@ -90,6 +90,9 @@ void PrintUsage(const char *prog) {
       "  -pngEncoder <fpnge|fpng>  PNG encoder backend (default: fpnge when available).\n"
       "  -jpegQuality <1-100>      JPEG quality when (re-)encoding (default: 90).\n"
       "  -numThreads <N>           Texture worker threads (default 0 = all cores; 1 = sequential).\n"
+      "  --texture-memory-budget <size>\n"
+      "                            Best-effort texture worker-memory budget (e.g. 1GB).\n"
+      "                            Reduces worker count; unset preserves defaults.\n"
       "  -noReencode               Copy unmodified textures through byte-for-byte.\n"
       "  -includeUnusedTextures    Also convert/package image files in the input layer\n"
       "                            directories that are not referenced by UsdUVTexture.\n"
@@ -517,6 +520,8 @@ int main(int argc, char **argv) {
   parser.add_option("-pngEncoder", true, "fpnge|fpng");
   parser.add_option("-jpegQuality", true, "1-100");
   parser.add_option("-numThreads", true, "Texture worker threads (0 = auto)");
+  parser.add_option("--texture-memory-budget", true,
+                    "Best-effort texture worker-memory budget");
   parser.add_option("-noReencode", false, "Passthrough unmodified textures");
   parser.add_option("-includeUnusedTextures", false,
                     "Package unreferenced image files from input directories");
@@ -698,6 +703,16 @@ int main(int argc, char **argv) {
     if (!ParseIntStrict(n, &opts.num_threads) || opts.num_threads < 0) {
       std::cerr << "ERROR: -numThreads must be a non-negative integer (got '"
                 << n << "').\n";
+      return 1;
+    }
+  }
+  if (parser.is_set("--texture-memory-budget")) {
+    std::string size;
+    parser.get("--texture-memory-budget", size);
+    opts.texture_memory_budget_bytes = ParseByteSize(size);
+    if (opts.texture_memory_budget_bytes == 0) {
+      std::cerr << "ERROR: could not parse --texture-memory-budget '" << size
+                << "' as a positive byte size.\n";
       return 1;
     }
   }

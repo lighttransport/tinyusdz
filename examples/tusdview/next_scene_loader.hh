@@ -56,6 +56,12 @@ struct NextCameraPose {
   float zFar{1.0e6f};
 };
 
+// Gather all Camera prims from `stage` and populate `*out` with their world
+// pose and lens properties at `time`. Used to populate the camera record summary
+// for loader-equivalence testing.
+void GatherNextCameras(const tinyusdz::next::Stage& stage, double time,
+                       std::vector<DrawCameraCPU>* out);
+
 // Find the Camera prim named (or path-suffixed by) `name` in `stage` and fill
 // `*out` with its world-space pose at `time`. Returns false if no such camera
 // exists. Used to drive the viewer's orbit camera from a scene camera (the

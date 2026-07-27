@@ -2502,6 +2502,40 @@ if(TINYUSDZ_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "tusdview")
 
     add_test(
+      NAME tusdview-shadow-alpha-inst
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-shadow-alpha-inst.sh"
+      )
+    set_tests_properties(tusdview-shadow-alpha-inst PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 60 LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-aousd-conformance
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-aousd-conformance.sh"
+      )
+    set_tests_properties(tusdview-aousd-conformance PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-gl-vk-parity
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-gl-vk-parity.sh"
+      )
+    set_tests_properties(tusdview-gl-vk-parity PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-backend-parity
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW_PARITY_FRAMES=1" "TUSDVIEW_PARITY_SIZE=96x96"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backend-parity.sh"
+      )
+    set_tests_properties(tusdview-backend-parity PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 60 LABELS "tusdview")
+
+    add_test(
       NAME tusdview-unsupported-realtime-lobes
       COMMAND bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-unsupported-lobes.sh"
@@ -3039,6 +3073,33 @@ if(TINYUSDZ_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 120)
 
     add_test(
+      NAME tusdview-instancer-invisible-ids
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-instancer-invisible-ids.sh"
+      )
+    set_tests_properties(tusdview-instancer-invisible-ids PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    add_test(
+      NAME tusdview-tydra-pointinstancer
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-tydra-pointinstancer.sh"
+      )
+    set_tests_properties(tusdview-tydra-pointinstancer PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    add_test(
+      NAME tusdview-inst-morph-cull
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-inst-morph-cull.sh"
+      )
+    set_tests_properties(tusdview-inst-morph-cull PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    add_test(
       NAME tusdview-dome-orientation
       COMMAND ${CMAKE_COMMAND} -E env
               "TUSDVIEW=$<TARGET_FILE:tusdview>"
@@ -3151,15 +3212,17 @@ if(TINYUSDZ_BUILD_TESTS)
     # Self-contained classification/expectation test for the external-corpus
     # harness. Uses a generated empty layer and tusdrender CPU, so it verifies
     # no_renderable plus hard expectation mismatches without usd-assets data.
-    add_test(
-      NAME tusdview-usd-assets-classification
-      COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              "TUSDRENDER=$<TARGET_FILE:tusdrender>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-no-renderable-tracking.sh"
-      )
-    set_tests_properties(tusdview-usd-assets-classification
-                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    if(TARGET tusdrender)
+      add_test(
+        NAME tusdview-usd-assets-classification
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                "TUSDRENDER=$<TARGET_FILE:tusdrender>"
+                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-no-renderable-tracking.sh"
+        )
+      set_tests_properties(tusdview-usd-assets-classification
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endif()
   endif()
 
   #

@@ -90,9 +90,14 @@ int main() {
   mat.opacityChannel = 2;
   mat.opacityTexScale = 0.8f;
   mat.opacityTexBias = 0.1f;
+  mat.baseColorSample.uvSet = 1;
+  mat.metallicSample.uvSet = 1;
+  mat.normalSample.uvSet = 1;
+  mat.emissiveSample.uvSet = 1;
   mat.opacitySample.uvSet = 1;
   mat.opacitySample.uv.m00 = 1.5f;
   mat.opacitySample.uv.tx = 0.25f;
+  mat.roughnessSample.uvSet = 1;
   mat.occlusionTex = 9;
   mat.occlusionChannel = 1;
   mat.occlusionTexScale = 0.75f;
@@ -108,10 +113,13 @@ int main() {
   mat.useSpecularWorkflow = true;
   mat.coatWeightSample.scale[1] = 0.61f;
   mat.coatWeightSample.bias[1] = 0.13f;
+  mat.coatWeightSample.uvSet = 1;
   mat.coatColorSample.scale[2] = 0.71f;
   mat.coatColorSample.bias[0] = 0.14f;
+  mat.coatColorSample.uvSet = 1;
   mat.coatRoughnessSample.scale[3] = 0.81f;
   mat.coatRoughnessSample.bias[3] = 0.15f;
+  mat.coatRoughnessSample.uvSet = 1;
   mat.coatNormalSample.uv.m00 = 0.83f;
   mat.coatNormalSample.uv.ty = 0.23f;
   mat.coatNormalSample.uvSet = 1;
@@ -252,12 +260,16 @@ int main() {
       !Near(directRasterTexPack[16 * 4 + 1], 3.0f) ||
       !Near(directRasterTexPack[17 * 4 + 2], 1.25f) ||
       !Near(directRasterTexPack[17 * 4 + 3], -0.25f) ||
+      !Near(directRasterTexPack[18 * 4 + 0], 1.0f) ||
+      !Near(directRasterTexPack[18 * 4 + 1], 1.0f) ||
+      !Near(directRasterTexPack[18 * 4 + 2], 1.0f) ||
+      !Near(directRasterTexPack[18 * 4 + 3], 1.0f) ||
       !Near(directRasterTexPack[20 * 4 + 0], 1.5f) ||
       !Near(directRasterTexPack[20 * 4 + 2], 0.25f) ||
       !Near(directRasterTexPack[22 * 4 + 0], 2.0f) ||
       !Near(directRasterTexPack[22 * 4 + 1], 0.8f) ||
       !Near(directRasterTexPack[22 * 4 + 2], 0.1f) ||
-      !Near(directRasterTexPack[22 * 4 + 3], 1.0f) ||
+      !Near(directRasterTexPack[22 * 4 + 3], 1.0f) ||  // opacity
       !Near(directRasterTexPack[24 * 4 + 0], 7.0f) ||
       !Near(directRasterTexPack[27 * 4 + 0], 0.3f) ||
       !Near(directRasterTexPack[27 * 4 + 1], 0.2f) ||
@@ -267,12 +279,17 @@ int main() {
       !Near(directRasterTexPack[28 * 4 + 1], 0.8f) ||
       !Near(directRasterTexPack[28 * 4 + 2], 0.9f) ||
       !Near(directRasterTexPack[24 * 4 + 2], 9.0f) ||
+      !Near(directRasterTexPack[25 * 4 + 3], 1.0f) ||  // roughness uvSet
       !Near(directRasterTexPack[29 * 4 + 0], 0.5f) ||
       !Near(directRasterTexPack[30 * 4 + 2], 0.375f) ||
       !Near(directRasterTexPack[31 * 4 + 0], 1.0f) ||
       !Near(directRasterTexPack[31 * 4 + 1], 0.75f) ||
       !Near(directRasterTexPack[31 * 4 + 2], 0.125f) ||
-      !Near(directRasterTexPack[31 * 4 + 3], 1.0f) ||
+      !Near(directRasterTexPack[31 * 4 + 3], 1.0f) ||  // occlusion uvSet
+      !Near(directRasterTexPack[40 * 4 + 2], 1.0f) ||  // coatWeight uvSet
+      !Near(directRasterTexPack[40 * 4 + 3], 1.0f) ||  // coatRoughness uvSet
+      !Near(directRasterTexPack[41 * 4 + 0], 1.0f) ||  // specularColor uvSet
+      !Near(directRasterTexPack[41 * 4 + 1], 1.0f) ||  // coatColor uvSet
       !Near(directRasterTexPack[42 * 4 + 0], 0.51f) ||
       !Near(directRasterTexPack[43 * 4 + 2], 0.12f) ||
       !Near(directRasterTexPack[44 * 4 + 1], 0.61f) ||

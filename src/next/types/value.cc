@@ -13,6 +13,8 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace tinyusdz {
 namespace next {
@@ -969,7 +971,41 @@ void Value::destroy() {
     // owner — the copy-on-write release).
     ArraySlot(storage_)->~ArrayHandle();
   } else if (type_id_ == TypeId::Dictionary) {
+    // Releasing the last handle through shared_ptr's normal destructor makes
+    // Dict -> Value -> Dict teardown recurse once per nesting level. Move
+    // uniquely-owned child handles out before destroying each Dict so even
+    // API-constructed deep dictionaries use an explicit heap work stack.
+    DictHandle root = std::move(*DictSlot(storage_));
     DictSlot(storage_)->~DictHandle();
+    std::vector<DictHandle> pending;
+    pending.push_back(std::move(root));
+    while (!pending.empty()) {
+      DictHandle current = std::move(pending.back());
+      pending.pop_back();
+      if (!current || current.use_count() != 1) {
+        // Another Value still owns it. Dropping this reference cannot destroy
+        // the Dict, and the eventual final owner will perform this traversal.
+        continue;
+      }
+
+      for (auto &entry : current->entries) {
+        Value &child = entry.second;
+        if (child.type_id_ != TypeId::Dictionary || child.is_array_ ||
+            child.is_lazy_) {
+          continue;
+        }
+        DictHandle nested = std::move(*DictSlot(child.storage_));
+        DictSlot(child.storage_)->~DictHandle();
+        child.type_id_ = TypeId::Invalid;
+        child.is_array_ = false;
+        child.is_lazy_ = false;
+        child.dirty_ = false;
+        child.is_block_ = false;
+        child.array_size_ = 0;
+        pending.push_back(std::move(nested));
+      }
+      current.reset();
+    }
   } else if (UsesStringStorage(type_id_)) {
     reinterpret_cast<StringStorage*>(storage_)->~StringStorage();
   }
@@ -1623,61 +1659,105 @@ const std::vector<std::string>* Value::as_token_array() const {
 // ============================================================
 
 bool Value::operator==(const Value& other) const {
-  ensure_materialized();
-  other.ensure_materialized();
-  if (type_id_ != other.type_id_) return false;
-  if (is_array_ != other.is_array_) return false;
-  if (is_block_ != other.is_block_) return false;  // block != declared-only/empty
-  if (is_array_ && array_size() != other.array_size()) return false;
-  if (type_id_ == TypeId::Invalid) return true;
-
-  if (is_array_) {
-    if (IsFloatBackedArray(type_id_)) {
-      return *as_float_array() == *other.as_float_array();
-    } else if (IsDoubleBackedArray(type_id_)) {
-      return *as_double_array() == *other.as_double_array();
-    } else if (type_id_ == TypeId::Int) {
-      return *as_int_array() == *other.as_int_array();
-    } else if (type_id_ == TypeId::Int64) {
-      return *as_int64_array() == *other.as_int64_array();
-    } else if (IsUIntBackedArray(type_id_)) {
-      return *as_uint_array() == *other.as_uint_array();
-    } else if (type_id_ == TypeId::UInt64) {
-      return *as_uint64_array() == *other.as_uint64_array();
-    } else if (type_id_ == TypeId::Bool) {
-      return *as_bool_array() == *other.as_bool_array();
-    } else if (UsesStringStorage(type_id_)) {
-      return *as_token_array() == *other.as_token_array();
-    } else if (IsIntBackedArray(type_id_)) {  // Int2/Int3/Int4 arrays
-      return *as_int_array() == *other.as_int_array();
+  struct ValuePair {
+    const Value* lhs{nullptr};
+    const Value* rhs{nullptr};
+  };
+  struct DictPair {
+    const Dict* lhs{nullptr};
+    const Dict* rhs{nullptr};
+    bool operator==(const DictPair& other_pair) const {
+      return lhs == other_pair.lhs && rhs == other_pair.rhs;
     }
-    return false;
-  }
-
-  if (type_id_ == TypeId::Dictionary) {
-    const Dict* a = as_dictionary();
-    const Dict* b = other.as_dictionary();
-    if (!a || !b) return a == b;
-    if (a == b) return true;  // same shared buffer
-    if (a->entries.size() != b->entries.size()) return false;
-    for (size_t i = 0; i < a->entries.size(); ++i) {
-      if (a->entries[i].first != b->entries[i].first) return false;
-      if (!(a->entries[i].second == b->entries[i].second)) return false;
+  };
+  struct DictPairHash {
+    size_t operator()(const DictPair& pair) const {
+      const size_t lhs_hash = std::hash<const Dict*>()(pair.lhs);
+      const size_t rhs_hash = std::hash<const Dict*>()(pair.rhs);
+      return lhs_hash ^ (rhs_hash + size_t(0x9e3779b9U) +
+                         (lhs_hash << 6U) + (lhs_hash >> 2U));
     }
-    return true;
+  };
+
+  std::vector<ValuePair> pending;
+  std::unordered_set<DictPair, DictPairHash> compared_dicts;
+  pending.push_back(ValuePair{this, &other});
+
+  while (!pending.empty()) {
+    const ValuePair pair = pending.back();
+    pending.pop_back();
+    const Value& lhs = *pair.lhs;
+    const Value& rhs = *pair.rhs;
+    lhs.ensure_materialized();
+    rhs.ensure_materialized();
+    if (lhs.type_id_ != rhs.type_id_) return false;
+    if (lhs.is_array_ != rhs.is_array_) return false;
+    // A value block differs from both declared-only and empty values.
+    if (lhs.is_block_ != rhs.is_block_) return false;
+    if (lhs.is_array_ && lhs.array_size() != rhs.array_size()) return false;
+    if (lhs.type_id_ == TypeId::Invalid) continue;
+
+    if (lhs.is_array_) {
+      bool equal = false;
+      if (IsFloatBackedArray(lhs.type_id_)) {
+        equal = *lhs.as_float_array() == *rhs.as_float_array();
+      } else if (IsDoubleBackedArray(lhs.type_id_)) {
+        equal = *lhs.as_double_array() == *rhs.as_double_array();
+      } else if (lhs.type_id_ == TypeId::Int) {
+        equal = *lhs.as_int_array() == *rhs.as_int_array();
+      } else if (lhs.type_id_ == TypeId::Int64) {
+        equal = *lhs.as_int64_array() == *rhs.as_int64_array();
+      } else if (IsUIntBackedArray(lhs.type_id_)) {
+        equal = *lhs.as_uint_array() == *rhs.as_uint_array();
+      } else if (lhs.type_id_ == TypeId::UInt64) {
+        equal = *lhs.as_uint64_array() == *rhs.as_uint64_array();
+      } else if (lhs.type_id_ == TypeId::Bool) {
+        equal = *lhs.as_bool_array() == *rhs.as_bool_array();
+      } else if (UsesStringStorage(lhs.type_id_)) {
+        equal = *lhs.as_token_array() == *rhs.as_token_array();
+      } else if (IsIntBackedArray(lhs.type_id_)) {
+        equal = *lhs.as_int_array() == *rhs.as_int_array();
+      }
+      if (!equal) return false;
+      continue;
+    }
+
+    if (lhs.type_id_ == TypeId::Dictionary) {
+      const Dict* a = lhs.as_dictionary();
+      const Dict* b = rhs.as_dictionary();
+      if (!a || !b) {
+        if (a != b) return false;
+        continue;
+      }
+      if (a == b) continue;
+      if (!compared_dicts.insert(DictPair{a, b}).second) continue;
+      if (a->entries.size() != b->entries.size()) return false;
+      for (size_t i = a->entries.size(); i > 0; --i) {
+        const auto& lhs_entry = a->entries[i - 1];
+        const auto& rhs_entry = b->entries[i - 1];
+        if (lhs_entry.first != rhs_entry.first) return false;
+        pending.push_back(
+            ValuePair{&lhs_entry.second, &rhs_entry.second});
+      }
+      continue;
+    }
+
+    if (UsesStringStorage(lhs.type_id_)) {
+      if (reinterpret_cast<const StringStorage*>(lhs.storage_)->value !=
+          reinterpret_cast<const StringStorage*>(rhs.storage_)->value) {
+        return false;
+      }
+      continue;
+    }
+
+    const size_t size = GetTypeSize(lhs.type_id_);
+    if (size == 0) return false;
+    if (std::memcmp(lhs.storage_, rhs.storage_, size) != 0) {
+      return false;
+    }
   }
 
-  if (UsesStringStorage(type_id_)) {
-    return reinterpret_cast<const StringStorage*>(storage_)->value ==
-           reinterpret_cast<const StringStorage*>(other.storage_)->value;
-  }
-
-  size_t size = GetTypeSize(type_id_);
-  if (size > 0) {
-    return std::memcmp(storage_, other.storage_, size) == 0;
-  }
-
-  return false;
+  return true;
 }
 
 // ============================================================
@@ -1765,18 +1845,68 @@ uint64_t Value::hash() const {
     return h;
   }
 
-  // Hash dictionary entries recursively (order-sensitive, matching operator==).
+  // Hash dictionary entries in post-order (order-sensitive, matching
+  // operator==) without consuming one C++ stack frame per nesting level.
   if (type_id_ == TypeId::Dictionary) {
-    if (const Dict* d = as_dictionary()) {
-      for (const auto& kv : d->entries) {
-        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(kv.first.data()),
-                        kv.first.size());
-        h *= 1099511628211ULL;
-        h ^= kv.second.hash();
-        h *= 1099511628211ULL;
+    const Dict* root = as_dictionary();
+    if (!root) return h;
+
+    struct HashFrame {
+      const Dict* dict{nullptr};
+      size_t next_entry{0};
+      uint64_t hash{static_cast<uint64_t>(TypeId::Dictionary)};
+    };
+    std::vector<HashFrame> pending;
+    std::unordered_set<const Dict*> active;
+    std::unordered_map<const Dict*, uint64_t> completed;
+    pending.push_back(HashFrame{root, 0,
+                                static_cast<uint64_t>(TypeId::Dictionary)});
+    active.insert(root);
+
+    while (!pending.empty()) {
+      HashFrame& frame = pending.back();
+      if (frame.next_entry == frame.dict->entries.size()) {
+        const uint64_t child_hash = frame.hash;
+        completed[frame.dict] = child_hash;
+        active.erase(frame.dict);
+        pending.pop_back();
+        if (pending.empty()) return child_hash;
+        pending.back().hash ^= child_hash;
+        pending.back().hash *= 1099511628211ULL;
+        continue;
+      }
+
+      const auto& kv = frame.dict->entries[frame.next_entry++];
+      frame.hash ^=
+          fnv1a_hash(reinterpret_cast<const uint8_t*>(kv.first.data()),
+                     kv.first.size());
+      frame.hash *= 1099511628211ULL;
+
+      const Dict* nested =
+          kv.second.is_dictionary() ? kv.second.as_dictionary() : nullptr;
+      if (!nested) {
+        frame.hash ^= kv.second.hash();
+        frame.hash *= 1099511628211ULL;
+        continue;
+      }
+
+      const auto complete_it = completed.find(nested);
+      if (complete_it != completed.end()) {
+        frame.hash ^= complete_it->second;
+        frame.hash *= 1099511628211ULL;
+      } else if (active.find(nested) != active.end()) {
+        // Mutable dictionary access can construct shared_ptr cycles that
+        // cannot appear in parsed USD. Fold a stable dictionary marker rather
+        // than looping forever on such API-created graphs.
+        frame.hash ^= static_cast<uint64_t>(TypeId::Dictionary);
+        frame.hash *= 1099511628211ULL;
+      } else {
+        active.insert(nested);
+        pending.push_back(HashFrame{
+            nested, 0, static_cast<uint64_t>(TypeId::Dictionary)});
       }
     }
-    return h;
+    return h;  // unreachable, retained for defensive compiler flow analysis
   }
 
   // Hash string types

@@ -59,6 +59,7 @@ omitted the output is `<input>.usdz`.
 | `-jpegQuality <1-100>` | JPEG quality when (re-)encoding (default `90`). |
 | `-noReencode` | Copy unmodified textures through byte-for-byte. |
 | `-includeUnusedTextures` | Also convert/package image files in the input layer directories that are not referenced by `UsdUVTexture`. |
+| `--texture-memory-budget <size>` | Best-effort texture worker-memory budget (for example `1GB`). It reduces worker concurrency and disables the extra source-buffer prefetch window; one unusually large texture can still exceed the estimate. |
 
 ## Material optimization
 
