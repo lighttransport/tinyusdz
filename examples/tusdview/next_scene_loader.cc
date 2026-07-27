@@ -2033,6 +2033,22 @@ bool DecodeNextImage(NextTexCache& tc, const std::string& asset,
   return true;
 }
 
+// Ptex remains a native face source, but a representative page is useful to
+// fixed-function backends that do not yet expose a page-table sampler. It is
+// deliberately only a fallback; the metadata above is retained for the
+// face-local renderer and the page cache supplies the real lookup path.
+bool DecodeNextPtexFallback(NextTexCache& tc, const std::string& asset,
+                            bool srgb, light3d::Image* out) {
+  if (!tc.decoder) return false;
+  tydn::DecodedImage img;
+  if (!tc.decoder->DecodePtexFace(asset, 0, 0, srgb, &img)) return false;
+  out->width = static_cast<int>(img.width);
+  out->height = static_cast<int>(img.height);
+  out->channels = 4;
+  out->data = std::move(img.pixels);
+  return true;
+}
+
 int NextWrapToDraw(tydn::WrapMode w) {
   switch (w) {
     case tydn::WrapMode::Clamp: return static_cast<int>(WrapMode::ClampToEdge);
@@ -2199,6 +2215,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
         dt.ptexMaxFaceEdge = std::max(dt.ptexMaxFaceEdge,
                                       std::max(fi.width(), fi.height()));
       }
+      DecodeNextPtexFallback(tc, asset, srgb, &dt.image);
       built = true;
     }
   }

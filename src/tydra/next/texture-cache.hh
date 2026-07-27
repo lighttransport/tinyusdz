@@ -21,7 +21,9 @@
 #pragma once
 
 #include <cstdint>
+#include <list>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace tinyusdz {
@@ -96,9 +98,16 @@ class TextureDecoder {
   const TextureDecodeOptions& options() const { return options_; }
 
  private:
+  struct PtexCacheEntry {
+    DecodedImage image;
+    std::list<std::string>::iterator lru;
+  };
   TextureDecodeOptions options_;
   uint64_t decoded_bytes_ = 0;
   uint64_t downscaled_ = 0;
+  std::unordered_map<std::string, PtexCacheEntry> ptex_cache_;
+  std::list<std::string> ptex_lru_;
+  uint64_t ptex_cache_bytes_ = 0;
 };
 
 /// Substitute the literal `<UDIM>` token in an asset path with a tile id.
