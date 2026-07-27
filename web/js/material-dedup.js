@@ -51,6 +51,7 @@ import {
 let renderer, scene, camera, controls, gui;
 let usdSceneRoot; // group that holds the converted USD scene (scaled/oriented)
 let loader = null; // reused TinyUSDZLoader instance
+let loaderModuleBackend = null; // 'legacy' combined module or 'next' next-only module
 let currentUsd = null; // current native scene (embind object)
 let raycaster, pointerNdc;
 let pickedObject = null;
@@ -489,10 +490,18 @@ function animate() {
 // Conversion + scene build
 // ---------------------------------------------------------------------------
 
-async function ensureLoader() {
-	if (loader) return loader;
+async function ensureLoader(backend = 'legacy') {
+	const moduleBackend = backend === 'next' ? 'next' : 'legacy';
+	if (loader && loaderModuleBackend === moduleBackend) return loader;
 	loader = new TinyUSDZLoader();
-	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+	await loader.init({
+		useZstdCompressedWasm: false,
+		useMemory64: false,
+		backend: moduleBackend,
+		useNextOnlyWasm: moduleBackend === 'next'
+	});
+	loaderModuleBackend = moduleBackend;
+	legacyAsyncSupport = null;
 	return loader;
 }
 
@@ -1096,9 +1105,9 @@ function releaseCurrentUSDResources({ clearRawBytes = false } = {}) {
 // Convert `bytes` with the given optimization options and return the native
 // scene + counts. Does NOT mount it into the Three.js scene.
 async function convertScene(bytes, name, opts) {
-	await ensureLoader();
 	const requestedBackend = opts.backend || params.backend || 'legacy';
 	const backend = requestedBackend;
+	await ensureLoader(backend);
 	const usd = await parseWithOptions(bytes, name, {
 		backend,
 		materialDedup: !!opts.materialDedup,

@@ -1732,8 +1732,13 @@ class TinyUSDZLoader extends Loader {
             // RenderStream is a reduced legacy shim). `wasm=` stays the
             // explicit override in both directions.
             const wasmParam = getParam("wasm");
-            const backendWantsNext = options.backend === 'next' ||
-                getParam("backend") === "next";
+            // An explicit caller selection must win over the page query. This
+            // lets demos switch backends at runtime without a stale
+            // `backend=next` URL forcing every newly-created loader to use the
+            // next-only module.
+            const backendWantsNext = options.backend !== undefined
+                ? options.backend === 'next'
+                : getParam("backend") === "next";
             const use_next_only_wasm = wasmParam === "legacy"
                 ? false
                 : (options.useNextOnlyWasm === true ||
