@@ -179,6 +179,51 @@ void CopyWithClampGutter(const light3d::Image& face, const Placement& p,
 
 }  // namespace
 
+const tinyusdz::ptx::FaceImage* PtexFacePageCache::Fetch(
+    const tinyusdz::ptx::Reader& reader, uint32_t face, uint32_t mip,
+    size_t maxDecodedFaceBytes, std::string* err) {
+  const uint64_t key = (uint64_t(face) << 32u) | uint64_t(mip);
+  const auto found = byKey_.find(key);
+  if (found != byKey_.end()) {
+    ++stats_.hits;
+    entries_.splice(entries_.begin(), entries_, found->second);
+    return &entries_.front().image;
+  }
+
+  ++stats_.misses;
+  tinyusdz::ptx::FaceImage decoded;
+  if (!reader.ReadFace(face, mip, maxDecodedFaceBytes, &decoded, err)) {
+    return nullptr;
+  }
+  stats_.decodedBytes += decoded.data.size();
+  const size_t bytes = decoded.data.size();
+  if (maxBytes_ == 0 || bytes > maxBytes_) {
+    transient_ = std::move(decoded);
+    return &transient_;
+  }
+
+  while (!entries_.empty() && stats_.residentBytes + bytes > maxBytes_) {
+    auto last = std::prev(entries_.end());
+    stats_.residentBytes -= last->image.data.size();
+    byKey_.erase(last->key);
+    entries_.erase(last);
+    ++stats_.evictions;
+  }
+  entries_.push_front(Entry{key, std::move(decoded)});
+  byKey_[key] = entries_.begin();
+  stats_.residentBytes += bytes;
+  stats_.peakResidentBytes =
+      std::max(stats_.peakResidentBytes, stats_.residentBytes);
+  return &entries_.front().image;
+}
+
+void PtexFacePageCache::Clear() {
+  entries_.clear();
+  byKey_.clear();
+  transient_ = tinyusdz::ptx::FaceImage{};
+  stats_.residentBytes = 0;
+}
+
 bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
                     const PtexAtlasOptions& options, bool /*srgb*/,
                     light3d::Image* image,
@@ -253,21 +298,22 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
   image->channels = 4;
   image->data.assign(size_t(atlasWidth) * imageHeight * 4, 0);
   faceRects->assign(info.faces, DrawPtexFaceRectCPU{});
+  PtexFacePageCache pageCache(options.maxDecodedCacheBytes);
   for (const Placement& p : placements) {
-    tinyusdz::ptx::FaceImage decoded;
     std::string readErr;
-    if (!reader.ReadFace(p.face, p.mip, options.maxDecodedFaceBytes, &decoded,
-                         &readErr)) {
+    const tinyusdz::ptx::FaceImage* decoded = pageCache.Fetch(
+        reader, p.face, p.mip, options.maxDecodedFaceBytes, &readErr);
+    if (!decoded) {
       if (err) *err = "Ptex face " + std::to_string(p.face) + ": " + readErr;
       return false;
     }
-    if (decoded.width != p.width || decoded.height != p.height) {
+    if (decoded->width != p.width || decoded->height != p.height) {
       if (err) *err = "Ptex face dimensions do not match selected mip";
       return false;
     }
     localStats.decodedFaces++;
-    localStats.decodedBytes += decoded.data.size();
-    const light3d::Image rgba = ConvertFace(decoded);
+    localStats.decodedBytes += decoded->data.size();
+    const light3d::Image rgba = ConvertFace(*decoded);
     CopyWithClampGutter(rgba, p, options.gutter, image);
     DrawPtexFaceRectCPU& rect = (*faceRects)[p.face];
     rect.x = p.x;
@@ -293,6 +339,7 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
   }
   localStats.rectTexelOffset = rectTexelOffset;
   localStats.atlasBytes = image->data.size();
+  localStats.pageCache = pageCache.stats();
   if (stats) *stats = localStats;
   return true;
 }

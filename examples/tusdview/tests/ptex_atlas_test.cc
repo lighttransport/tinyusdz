@@ -49,7 +49,8 @@ void PutSample(std::vector<uint8_t>* out, uint32_t type, float value) {
   }
 }
 
-std::vector<uint8_t> SyntheticPtex(uint32_t dataType) {
+std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
+                                   bool verticalGradient = false) {
   const uint32_t bytesPerComponent[] = {1, 2, 2, 4};
   std::vector<uint8_t> faceInfo;
   for (uint32_t face = 0; face < 2; ++face) {
@@ -60,7 +61,8 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType) {
     for (int edge = 0; edge < 4; ++edge) Put32(&faceInfo, 0xffffffffu);
   }
   const std::vector<uint8_t> faceInfoZ = Deflate(faceInfo);
-  const std::vector<uint8_t> constants(2u * bytesPerComponent[dataType], 0);
+  const std::vector<uint8_t> constants(
+      2u * channels * bytesPerComponent[dataType], 0);
   const std::vector<uint8_t> constantsZ = Deflate(constants);
 
   std::vector<std::vector<uint8_t>> blocks;
@@ -72,8 +74,17 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType) {
       const uint32_t width = std::max(1u, (face == 0 ? 4u : 2u) >> level);
       const uint32_t height = std::max(1u, (face == 0 ? 2u : 4u) >> level);
       std::vector<uint8_t> planar;
-      for (uint32_t pixel = 0; pixel < width * height; ++pixel)
-        PutSample(&planar, dataType, face == 0 ? 0.25f : 0.75f);
+      for (uint16_t channel = 0; channel < channels; ++channel) {
+        for (uint32_t pixel = 0; pixel < width * height; ++pixel) {
+          const uint32_t row = pixel / width;
+          const float faceValue = verticalGradient
+                                      ? (row == 0 ? 0.125f : 0.875f)
+                                      : (face == 0 ? 0.25f : 0.75f);
+          const float values[4] = {faceValue, 0.5f,
+                                   0.625f, 0.875f};
+          PutSample(&planar, dataType, values[channel]);
+        }
+      }
       const std::vector<uint8_t> compressed = Deflate(planar);
       Put32(&headers, (1u << 30) | static_cast<uint32_t>(compressed.size()));
       payload.insert(payload.end(), compressed.begin(), compressed.end());
@@ -94,7 +105,7 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType) {
   std::vector<uint8_t> out;
   out.push_back('P'); out.push_back('t'); out.push_back('e'); out.push_back('x');
   Put32(&out, 1); Put32(&out, 1); Put32(&out, dataType);
-  Put32(&out, 0xffffffffu); Put16(&out, 1); Put16(&out, 2); Put32(&out, 2);
+  Put32(&out, 0xffffffffu); Put16(&out, channels); Put16(&out, 2); Put32(&out, 2);
   Put32(&out, 0); Put32(&out, faceInfoZ.size()); Put32(&out, constantsZ.size());
   Put32(&out, levelInfo.size()); Put32(&out, 0); Put64(&out, levelDataSize);
   Put32(&out, 0); Put32(&out, 0);
@@ -105,8 +116,8 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType) {
   return out;
 }
 
-void RunType(uint32_t type) {
-  const std::vector<uint8_t> bytes = SyntheticPtex(type);
+void RunType(uint32_t type, uint16_t channels = 1) {
+  const std::vector<uint8_t> bytes = SyntheticPtex(type, channels);
   tinyusdz::ptx::Reader reader;
   std::string error;
   CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
@@ -120,6 +131,8 @@ void RunType(uint32_t type) {
   tusdview::PtexAtlasBuildStats stats;
   CHECK(tusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
                                  &stats, &error));
+  CHECK(stats.pageCache.misses == 2);
+  CHECK(stats.pageCache.peakResidentBytes <= options.maxDecodedCacheBytes);
   CHECK(rects.size() == 2);
   if (rects.size() != 2) return;
   CHECK(rects[0].width == 4 && rects[0].height == 2);
@@ -135,6 +148,16 @@ void RunType(uint32_t type) {
     };
     CHECK(value(0) == rects[face].x && value(1) == rects[face].y);
     CHECK(value(2) == rects[face].width && value(3) == rects[face].height);
+    const auto pixel = [&](uint32_t x, uint32_t y, uint32_t channel) {
+      return atlas.data[(size_t(y) * atlas.width + x) * 4u + channel];
+    };
+    // One-texel clamp gutters reproduce edge texels, including corners.
+    CHECK(pixel(rects[face].x - 1u, rects[face].y, 0) ==
+          pixel(rects[face].x, rects[face].y, 0));
+    CHECK(pixel(rects[face].x, rects[face].y - 1u, 0) ==
+          pixel(rects[face].x, rects[face].y, 0));
+    CHECK(pixel(rects[face].x - 1u, rects[face].y - 1u, 0) ==
+          pixel(rects[face].x, rects[face].y, 0));
   }
   tusdview::DrawScene scene;
   tusdview::DrawTextureCPU texture;
@@ -146,11 +169,82 @@ void RunType(uint32_t type) {
                   0.25f) < 0.02f);
   CHECK(std::fabs(tusdview::SampleTextureRed(scene, 0, 0.37f, 0.61f, 1) -
                   0.75f) < 0.02f);
+
+  const auto& r0 = rects[0];
+  const size_t rgba = (size_t(r0.y) * atlas.width + r0.x) * 4u;
+  CHECK(std::abs(int(atlas.data[rgba + 1]) - (channels > 2 ? 128 : 64)) <= 1);
+  CHECK(std::abs(int(atlas.data[rgba + 2]) - (channels > 2 ? 159 : 64)) <= 1);
+  const int expectedAlpha = channels == 2 ? 128 : (channels == 4 ? 223 : 255);
+  CHECK(std::abs(int(atlas.data[rgba + 3]) - expectedAlpha) <= 1);
+
+  if (type == 0 && channels == 1) {
+    tusdview::PtexFacePageCache cache(8);
+    const auto* face0 = cache.Fetch(reader, 0, 0, 64, &error);
+    CHECK(face0 && face0->data.size() == 8);
+    CHECK(cache.stats().misses == 1 && cache.stats().hits == 0);
+    CHECK(cache.stats().residentBytes == 8);
+    const auto* face1 = cache.Fetch(reader, 1, 0, 64, &error);
+    CHECK(face1 && face1->data.size() == 8);
+    CHECK(cache.stats().evictions == 1 && cache.size() == 1);
+    CHECK(cache.Fetch(reader, 1, 0, 64, &error) != nullptr);
+    CHECK(cache.stats().hits == 1);
+    CHECK(cache.Fetch(reader, 0, 0, 64, &error) != nullptr);
+    CHECK(cache.stats().misses == 3 && cache.stats().evictions == 2);
+    CHECK(cache.stats().residentBytes <= 8);
+    cache.Clear();
+    CHECK(cache.size() == 0 && cache.stats().residentBytes == 0);
+
+    tusdview::PtexFacePageCache transientCache(4);
+    CHECK(transientCache.Fetch(reader, 0, 0, 64, &error) != nullptr);
+    CHECK(transientCache.size() == 0 &&
+          transientCache.stats().residentBytes == 0);
+    CHECK(transientCache.Fetch(reader, 0, 0, 64, &error) != nullptr);
+    CHECK(transientCache.stats().misses == 2 &&
+          transientCache.stats().hits == 0);
+    CHECK(transientCache.Fetch(reader, 0, 0, 4, &error) == nullptr);
+
+    tusdview::PtexAtlasOptions tight = options;
+    tight.maxAtlasBytes = 220;
+    light3d::Image tightAtlas;
+    std::vector<tusdview::DrawPtexFaceRectCPU> tightRects;
+    tusdview::PtexAtlasBuildStats tightStats;
+    CHECK(tusdview::BuildPtexAtlas(reader, tight, false, &tightAtlas,
+                                   &tightRects, &tightStats, &error));
+    CHECK(tightAtlas.data.size() <= tight.maxAtlasBytes);
+    CHECK(tightStats.downsampledFaces > 0);
+  }
+}
+
+void RunOrientation() {
+  const std::vector<uint8_t> bytes = SyntheticPtex(0, 1, true);
+  tinyusdz::ptx::Reader reader;
+  std::string error;
+  CHECK(tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &reader,
+                                          &error));
+  tusdview::PtexAtlasOptions options;
+  options.maxAtlasEdge = 64;
+  options.gutter = 1;
+  light3d::Image atlas;
+  std::vector<tusdview::DrawPtexFaceRectCPU> rects;
+  CHECK(tusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
+                                 nullptr, &error));
+  CHECK(rects.size() == 2);
+  if (rects.empty()) return;
+  const auto red = [&](uint32_t x, uint32_t y) {
+    return atlas.data[(size_t(y) * atlas.width + x) * 4u];
+  };
+  // Ptex row zero is the bottom row; atlas images are top-row-first.
+  CHECK(std::abs(int(red(rects[0].x, rects[0].y)) - 223) <= 1);
+  CHECK(std::abs(int(red(rects[0].x, rects[0].y + 1u)) - 32) <= 1);
 }
 }  // namespace
 
 int main() {
   for (uint32_t type = 0; type < 4; ++type) RunType(type);
+  RunType(0, 2);
+  RunType(0, 3);
+  RunType(0, 4);
+  RunOrientation();
   if (failures) return 1;
   std::printf("OK: rectangular UInt8/UInt16/Half/Float Ptex atlases\n");
   return 0;

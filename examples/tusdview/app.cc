@@ -86,12 +86,21 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
 
   size_t ptexTextures = 0, ptexFaces = 0, ptexAtlasBytes = 0;
   size_t ptexDownsampledFaces = 0, ptexFallbackTextures = 0;
+  uint64_t ptexCacheHits = 0, ptexCacheMisses = 0, ptexCacheEvictions = 0;
+  uint64_t ptexCachePeakBytes = 0;
+  uint64_t ptexPageDecodedBytes = 0;
   for (const DrawTextureCPU& texture : draw_.textures) {
     if (!texture.isPtex) continue;
     ++ptexTextures;
     ptexFaces += texture.ptexFaceRects.size();
     ptexAtlasBytes += texture.image.data.size();
     ptexDownsampledFaces += texture.ptexDownsampledFaces;
+    ptexCacheHits += texture.ptexPageCacheHits;
+    ptexCacheMisses += texture.ptexPageCacheMisses;
+    ptexCacheEvictions += texture.ptexPageCacheEvictions;
+    ptexCachePeakBytes =
+        std::max(ptexCachePeakBytes, texture.ptexPageCachePeakBytes);
+    ptexPageDecodedBytes += texture.ptexPageDecodedBytes;
     if (texture.ptexFaceRects.empty()) ++ptexFallbackTextures;
   }
   size_t ptexDisplacedMeshes = 0;
@@ -126,6 +135,11 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"ptex_atlas_bytes", ptexAtlasBytes},
       {"ptex_downsampled_faces", ptexDownsampledFaces},
       {"ptex_fallback_textures", ptexFallbackTextures},
+      {"ptex_page_cache_hits", ptexCacheHits},
+      {"ptex_page_cache_misses", ptexCacheMisses},
+      {"ptex_page_cache_evictions", ptexCacheEvictions},
+      {"ptex_page_cache_peak_bytes", ptexCachePeakBytes},
+      {"ptex_page_decoded_bytes", ptexPageDecodedBytes},
       {"ptex_displaced_meshes", ptexDisplacedMeshes},
       {"ptex_slots",
        {{"base_color", ptexBase},

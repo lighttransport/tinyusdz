@@ -2424,6 +2424,11 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
       } else {
         tc.ptexAtlasBytes += dt.image.data.size();
         dt.ptexDownsampledFaces = atlasStats.downsampledFaces;
+        dt.ptexPageCacheHits = atlasStats.pageCache.hits;
+        dt.ptexPageCacheMisses = atlasStats.pageCache.misses;
+        dt.ptexPageCacheEvictions = atlasStats.pageCache.evictions;
+        dt.ptexPageCachePeakBytes = atlasStats.pageCache.peakResidentBytes;
+        dt.ptexPageDecodedBytes = atlasStats.pageCache.decodedBytes;
         dt.ptexGutter = atlasOptions.gutter;
         dt.ptexTileEdge = atlasOptions.maxFaceEdge;
         dt.ptexRectTexelOffset = atlasStats.rectTexelOffset;
