@@ -94,7 +94,9 @@ const MAX_PROGRESS_HISTORY = 8192;
 const textureCache = new Map();
 const frameState = {
 	lastFpsUpdateMs: performance.now(),
-	frameCount: 0
+	lastFrameMs: performance.now(),
+	frameCount: 0,
+	movementKeys: new Set()
 };
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
@@ -475,6 +477,9 @@ function animate() {
 	requestAnimationFrame(animate);
 	frameState.frameCount++;
 	const now = performance.now();
+	const deltaSeconds = Math.min(0.1, Math.max(0, (now - frameState.lastFrameMs) / 1000));
+	frameState.lastFrameMs = now;
+	updateCameraPivotMovement(deltaSeconds);
 	if (now - frameState.lastFpsUpdateMs >= 500) {
 		const fps = frameState.frameCount * 1000 / (now - frameState.lastFpsUpdateMs);
 		const fpsEl = document.getElementById('fpsValue');
@@ -484,6 +489,53 @@ function animate() {
 	}
 	controls.update();
 	renderer.render(scene, camera);
+}
+
+function isEditableKeyboardTarget(target) {
+	if (!target) return false;
+	const tag = target.tagName?.toLowerCase();
+	return target.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select';
+}
+
+function updateCameraPivotMovement(deltaSeconds) {
+	if (!camera || !controls || frameState.movementKeys.size === 0 || deltaSeconds <= 0) return;
+	const forwardAmount = (frameState.movementKeys.has('KeyW') ? 1 : 0) -
+		(frameState.movementKeys.has('KeyS') ? 1 : 0);
+	const rightAmount = (frameState.movementKeys.has('KeyD') ? 1 : 0) -
+		(frameState.movementKeys.has('KeyA') ? 1 : 0);
+	if (forwardAmount === 0 && rightAmount === 0) return;
+
+	// Translate camera and OrbitControls target together. Movement stays on the
+	// scene's Y-up ground plane, independent of camera pitch.
+	const forward = new THREE.Vector3();
+	camera.getWorldDirection(forward);
+	forward.y = 0;
+	if (forward.lengthSq() < 1e-8) forward.set(0, 0, -1);
+	forward.normalize();
+	const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+	const motion = forward.multiplyScalar(forwardAmount).addScaledVector(right, rightAmount);
+	if (motion.lengthSq() > 1) motion.normalize();
+	const orbitDistance = Math.max(0.25, camera.position.distanceTo(controls.target));
+	const fast = frameState.movementKeys.has('ShiftLeft') ||
+		frameState.movementKeys.has('ShiftRight');
+	const speed = Math.max(0.25, orbitDistance * 0.8) * (fast ? 3 : 1);
+	motion.multiplyScalar(speed * deltaSeconds);
+	camera.position.add(motion);
+	controls.target.add(motion);
+}
+
+function setupCameraMovementKeys() {
+	const movementCodes = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight']);
+	window.addEventListener('keydown', (event) => {
+		if (isEditableKeyboardTarget(event.target) || !movementCodes.has(event.code)) return;
+		frameState.movementKeys.add(event.code);
+		event.preventDefault();
+	});
+	window.addEventListener('keyup', (event) => {
+		if (!movementCodes.has(event.code)) return;
+		frameState.movementKeys.delete(event.code);
+	});
+	window.addEventListener('blur', () => frameState.movementKeys.clear());
 }
 
 // ---------------------------------------------------------------------------
@@ -1546,6 +1598,8 @@ function setStatus(msg) {
 function updateDebugHandle() {
 	window.__materialDedupDebug = {
 		scene,
+		camera,
+		controls,
 		root: usdSceneRoot,
 		textureManager,
 		textureCache,
@@ -1907,6 +1961,7 @@ function setupDragAndDrop() {
 
 async function main() {
 	initThree();
+	setupCameraMovementKeys();
 	buildGui();
 	setupFileInput();
 	setupDragAndDrop();
