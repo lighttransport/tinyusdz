@@ -174,6 +174,13 @@ bool UsdPrim::HasProperty(const std::string& name) const {
          GetSchemaRegistry().FindProperty(*source, name) != nullptr;
 }
 
+bool UsdPrim::HasAuthoredProperty(const std::string& name) const {
+  if (!spec_) return false;
+  const PrimSpec* source = ChildSourceSpec();
+  return spec_->property(name) != nullptr ||
+         (source != spec_ && source->property(name) != nullptr);
+}
+
 const Value* UsdPrim::GetPropertyValue(const std::string& name) const {
   if (!spec_) return nullptr;
   if (const Value* value = spec_->property_value(name)) {

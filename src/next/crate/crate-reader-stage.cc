@@ -165,7 +165,11 @@ bool CrateReader::Impl::BuildStage() {
   // Create layer and builder
   Layer layer;
   LayerBuilder builder(layer);
-  constexpr size_t kReportInterval = 512;
+  // Large production scenes can contain hundreds of thousands of specs. In
+  // WASM every progress report crosses into JavaScript, where the worker also
+  // checks its UI throttle. A coarser interval remains comfortably responsive
+  // while avoiding thousands of otherwise-no-op JS/WASM transitions.
+  constexpr size_t kReportInterval = 8192;
   auto report_stage = [&](const char* phase, size_t current,
                           size_t total) -> bool {
     if (current == 0 || current == total ||

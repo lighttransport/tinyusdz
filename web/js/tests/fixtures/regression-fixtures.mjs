@@ -13,6 +13,26 @@ def Xform "World"
 }
 `;
 
+export const ORIENTED_TRIANGLE_USDA = `#usda 1.0
+(
+    defaultPrim = "World"
+)
+def Xform "World"
+{
+    def Xform "Rotated"
+    {
+        quatf xformOp:orient = (0.70710677, -0.70710677, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:orient"]
+        def Mesh "Prim"
+        {
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        }
+    }
+}
+`;
+
 export const TEXTURED_TWO_MATERIAL_USDA = `#usda 1.0
 (
     defaultPrim = "World"

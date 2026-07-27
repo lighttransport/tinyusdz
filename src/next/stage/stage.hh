@@ -103,6 +103,10 @@ public:
   /// Check if prim has a property
   bool HasProperty(const std::string& name) const;
 
+  /// Check if a property is authored on the prim (or its instance-proxy
+  /// source), excluding schema fallback declarations.
+  bool HasAuthoredProperty(const std::string& name) const;
+
   /// Resolve at USD DefaultTime: authored default, then schema fallback.
   /// Time samples are never consulted.
   const Value* GetPropertyValue(const std::string& name) const;

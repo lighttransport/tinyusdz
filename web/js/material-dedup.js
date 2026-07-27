@@ -36,6 +36,7 @@ import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { dedupMaterialsByContent, batchByMaterial } from 'tinyusdz/MeshBatching.js';
 import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
+import { parseUSDZEntries } from './src/usdzconvert.js';
 import {
 	buildNextThreeNode,
 	isNextScene,
@@ -50,6 +51,7 @@ import {
 let renderer, scene, camera, controls, gui;
 let usdSceneRoot; // group that holds the converted USD scene (scaled/oriented)
 let loader = null; // reused TinyUSDZLoader instance
+let loaderModuleBackend = null; // 'legacy' combined module or 'next' next-only module
 let currentUsd = null; // current native scene (embind object)
 let raycaster, pointerNdc;
 let pickedObject = null;
@@ -79,6 +81,7 @@ let conversionWorker = null;
 let conversionWorkerSeq = 0;
 let conversionWorkerActiveBytes = null;
 const CONVERSION_WORKER_URL = new URL('./material-dedup.worker.js', import.meta.url);
+const IMAGE_RE = /\.(png|jpg|jpeg|webp|gif|bmp|tif|tiff|exr|hdr|avif)$/i;
 let activeProgress = {
 	visible: false,
 	stage: '',
@@ -91,7 +94,9 @@ const MAX_PROGRESS_HISTORY = 8192;
 const textureCache = new Map();
 const frameState = {
 	lastFpsUpdateMs: performance.now(),
-	frameCount: 0
+	lastFrameMs: performance.now(),
+	frameCount: 0,
+	movementKeys: new Set()
 };
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
@@ -281,9 +286,10 @@ const params = {
 	honorMetersPerUnit: true,
 	upAxisConversion: true,
 
-	// Render every material double-sided (debug aid for spotting inverted
-	// winding / missing backfaces).
-	doubleSided: false,
+	// Match usdview's default: draw back faces, while preserving the USD
+	// doubleSided distinction for back-face normal orientation. Enabling this
+	// option switches to BackUnlessDoubleSided-style culling.
+	cullBackfaces: false,
 
 	// Apply textures, decoded lazily on the JS side (raw bytes are pulled from
 	// the asset on demand by getImageCopy; the scene renders untextured first,
@@ -471,6 +477,9 @@ function animate() {
 	requestAnimationFrame(animate);
 	frameState.frameCount++;
 	const now = performance.now();
+	const deltaSeconds = Math.min(0.1, Math.max(0, (now - frameState.lastFrameMs) / 1000));
+	frameState.lastFrameMs = now;
+	updateCameraPivotMovement(deltaSeconds);
 	if (now - frameState.lastFpsUpdateMs >= 500) {
 		const fps = frameState.frameCount * 1000 / (now - frameState.lastFpsUpdateMs);
 		const fpsEl = document.getElementById('fpsValue');
@@ -482,14 +491,69 @@ function animate() {
 	renderer.render(scene, camera);
 }
 
+function isEditableKeyboardTarget(target) {
+	if (!target) return false;
+	const tag = target.tagName?.toLowerCase();
+	return target.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select';
+}
+
+function updateCameraPivotMovement(deltaSeconds) {
+	if (!camera || !controls || frameState.movementKeys.size === 0 || deltaSeconds <= 0) return;
+	const forwardAmount = (frameState.movementKeys.has('KeyW') ? 1 : 0) -
+		(frameState.movementKeys.has('KeyS') ? 1 : 0);
+	const rightAmount = (frameState.movementKeys.has('KeyD') ? 1 : 0) -
+		(frameState.movementKeys.has('KeyA') ? 1 : 0);
+	if (forwardAmount === 0 && rightAmount === 0) return;
+
+	// Translate camera and OrbitControls target together. Movement stays on the
+	// scene's Y-up ground plane, independent of camera pitch.
+	const forward = new THREE.Vector3();
+	camera.getWorldDirection(forward);
+	forward.y = 0;
+	if (forward.lengthSq() < 1e-8) forward.set(0, 0, -1);
+	forward.normalize();
+	const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+	const motion = forward.multiplyScalar(forwardAmount).addScaledVector(right, rightAmount);
+	if (motion.lengthSq() > 1) motion.normalize();
+	const orbitDistance = Math.max(0.25, camera.position.distanceTo(controls.target));
+	const fast = frameState.movementKeys.has('ShiftLeft') ||
+		frameState.movementKeys.has('ShiftRight');
+	const speed = Math.max(0.25, orbitDistance * 0.8) * (fast ? 3 : 1);
+	motion.multiplyScalar(speed * deltaSeconds);
+	camera.position.add(motion);
+	controls.target.add(motion);
+}
+
+function setupCameraMovementKeys() {
+	const movementCodes = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight']);
+	window.addEventListener('keydown', (event) => {
+		if (isEditableKeyboardTarget(event.target) || !movementCodes.has(event.code)) return;
+		frameState.movementKeys.add(event.code);
+		event.preventDefault();
+	});
+	window.addEventListener('keyup', (event) => {
+		if (!movementCodes.has(event.code)) return;
+		frameState.movementKeys.delete(event.code);
+	});
+	window.addEventListener('blur', () => frameState.movementKeys.clear());
+}
+
 // ---------------------------------------------------------------------------
 // Conversion + scene build
 // ---------------------------------------------------------------------------
 
-async function ensureLoader() {
-	if (loader) return loader;
+async function ensureLoader(backend = 'legacy') {
+	const moduleBackend = backend === 'next' ? 'next' : 'legacy';
+	if (loader && loaderModuleBackend === moduleBackend) return loader;
 	loader = new TinyUSDZLoader();
-	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+	await loader.init({
+		useZstdCompressedWasm: false,
+		useMemory64: false,
+		backend: moduleBackend,
+		useNextOnlyWasm: moduleBackend === 'next'
+	});
+	loaderModuleBackend = moduleBackend;
+	legacyAsyncSupport = null;
 	return loader;
 }
 
@@ -666,11 +730,64 @@ function resetConversionWorkerCache() {
 	}
 }
 
-function makeWorkerNextScene(payload = {}) {
-	const archiveEntries = new Map(payload.archiveEntries || []);
+function collectWorkerTexturePaths(meshes) {
+	const paths = new Set();
+	const add = (path) => {
+		const key = normWorkerTexturePath(path);
+		if (key) paths.add(key);
+	};
+	for (const mesh of meshes || []) {
+		for (const path of Object.values(mesh.texturePaths || {})) add(path);
+		for (const material of mesh.materials || []) {
+			for (const path of Object.values(material.texturePaths || {})) add(path);
+		}
+	}
+	return paths;
+}
+
+function makeWorkerArchiveEntries(sourceBytes, meshes) {
+	const archiveEntries = new Map();
+	if (!sourceBytes) return archiveEntries;
+	const bytes = sourceBytes instanceof Uint8Array
+		? sourceBytes
+		: new Uint8Array(sourceBytes);
+	// returnArchiveEntries means "retain embedded textures if this input is an
+	// archive", not that every input is USDZ. Generated samples and direct
+	// .usda/.usdc loads have no ZIP container and must not reach the EOCD parser.
+	if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b ||
+			bytes[2] !== 0x03 || bytes[3] !== 0x04) {
+		return archiveEntries;
+	}
+	const referenced = collectWorkerTexturePaths(meshes);
+	const isReferenced = (key) => {
+		if (referenced.has(key)) return true;
+		for (const ref of referenced) {
+			if (key.endsWith('/' + ref) || ref.endsWith('/' + key)) return true;
+		}
+		return false;
+	};
+	for (const entry of parseUSDZEntries(bytes)) {
+		const key = normWorkerTexturePath(entry.name);
+		if (!key || !IMAGE_RE.test(key)) continue;
+		if (isReferenced(key)) {
+			// USDZ entries are STORE-only views into sourceBytes. Retaining those
+			// views avoids copying and transferring the full texture payload from
+			// the conversion worker before the first frame can be built.
+			archiveEntries.set(key, entry.data);
+		}
+	}
+	return archiveEntries;
+}
+
+function makeWorkerNextScene(payload = {}, sourceBytes = null,
+		includeArchiveEntries = false) {
+	const meshes = payload.meshes || [];
+	const archiveEntries = includeArchiveEntries
+		? makeWorkerArchiveEntries(sourceBytes, meshes)
+		: new Map();
 	const materialKeys = new Set();
 	const textureKeys = new Set();
-	for (const mesh of payload.meshes || []) {
+	for (const mesh of meshes) {
 		if (mesh.materialKey) materialKeys.add(mesh.materialKey);
 		for (const path of Object.values(mesh.texturePaths || {})) {
 			if (path) textureKeys.add(normWorkerTexturePath(path));
@@ -686,7 +803,7 @@ function makeWorkerNextScene(payload = {}) {
 		__backend: 'next',
 		__workerConverted: true,
 		filename: payload.filename || '',
-		meshes: payload.meshes || [],
+		meshes,
 		stats: payload.stats || {},
 		sceneMetadata: {
 			upAxis: payload.sceneMetadata?.upAxis || 'Y',
@@ -784,7 +901,8 @@ function parseNextInWorker(bytes, name, options, progressOptions, report) {
 				report(msg.info || {});
 			} else if (msg.type === 'result') {
 				cleanup();
-				resolve(makeWorkerNextScene(msg.payload));
+				resolve(makeWorkerNextScene(msg.payload, bytes,
+					!!options.returnArchiveEntries));
 			} else if (msg.type === 'error') {
 				cleanup();
 				const error = new Error(msg.error || 'worker conversion failed');
@@ -830,13 +948,78 @@ function applySceneTransform() {
 		(params.upAxisConversion && sceneMeta.upAxis === 'Z') ? -Math.PI / 2 : 0;
 }
 
-// Debug: force every material in the scene to render front-only or double-sided.
-function applyDoubleSided() {
-	const side = params.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+// three.js normally couples DoubleSide with both disabling culling and flipping
+// the shading normal on back faces. Hydra treats these as separate decisions:
+// usdview defaults to CullStyleNothing, but flips back-face normals only when
+// the gprim is effectively double-sided. Keep that distinction in this WebGL
+// demo by undefining Three's DOUBLE_SIDED shader path for effective
+// single-sided meshes while culling is disabled.
+function setSingleSidedBackfaceNormals(material, enabled) {
+	if (!material) return;
+	material.userData ||= {};
+	const patchKey = '__tinyusdzSingleSidedBackfacePatch';
+	const state = material.userData[patchKey];
+	if (enabled) {
+		if (state) return;
+		const originalOnBeforeCompile = material.onBeforeCompile;
+		const originalProgramCacheKey = material.customProgramCacheKey;
+		material.userData[patchKey] = {
+			onBeforeCompile: originalOnBeforeCompile,
+			customProgramCacheKey: originalProgramCacheKey
+		};
+		material.onBeforeCompile = function(shader, activeRenderer) {
+			originalOnBeforeCompile.call(this, shader, activeRenderer);
+			// WebGLProgram adds #define DOUBLE_SIDED before this source. Undefine
+			// it here so rasterization stays unculled but the normal is not
+			// reoriented for gl_FrontFacing.
+			shader.fragmentShader = '#undef DOUBLE_SIDED\n' + shader.fragmentShader;
+		};
+		material.customProgramCacheKey = function() {
+			return `${originalProgramCacheKey.call(this)}|tinyusdz-single-sided-backface-normal`;
+		};
+	} else if (state) {
+		material.onBeforeCompile = state.onBeforeCompile;
+		material.customProgramCacheKey = state.customProgramCacheKey;
+		delete material.userData[patchKey];
+	}
+	material.needsUpdate = true;
+}
+
+// Apply usdview-style CullStyleNothing (default) or
+// BackUnlessDoubleSided (when the UI option is enabled). `doubleSided` here is
+// the renderer-effective value: authored USD opinions win, while the next
+// backend may infer true for an unauthored planar opacity billboard.
+function applyCullBackfaces() {
 	usdSceneRoot.traverse((o) => {
 		if (!o.isMesh || !o.material) return;
 		const mats = Array.isArray(o.material) ? o.material : [o.material];
 		for (const m of mats) {
+			if (!m) continue;
+			m.userData ||= {};
+			// Three renders transparent DoubleSide materials in two passes unless
+			// forceSinglePass is set. CullStyleNothing is one unculled raster pass,
+			// so avoid doubling transparent draw calls while this view policy is
+			// active. Restore the material's original preference when culling is on.
+			const singlePassKey = '__tinyusdzOriginalForceSinglePass';
+			if (!Object.prototype.hasOwnProperty.call(m.userData, singlePassKey)) {
+				m.userData[singlePassKey] = m.forceSinglePass;
+			}
+			m.forceSinglePass = params.cullBackfaces
+				? m.userData[singlePassKey] : true;
+			// BatchedMesh does not retain one top-level usdMesh record. Its
+			// material was already keyed by effective sideness, so remember that
+			// initial state before this view policy changes Material.side.
+			if (m.userData.__tinyusdzEffectiveDoubleSided === undefined) {
+				m.userData.__tinyusdzEffectiveDoubleSided =
+					typeof o.userData?.usdMesh?.doubleSided === 'boolean'
+						? o.userData.usdMesh.doubleSided
+						: m.side === THREE.DoubleSide;
+			}
+			const doubleSided = m.userData.__tinyusdzEffectiveDoubleSided === true;
+			const side = (!params.cullBackfaces || doubleSided)
+				? THREE.DoubleSide : THREE.FrontSide;
+			setSingleSidedBackfaceNormals(
+				m, !params.cullBackfaces && !doubleSided);
 			if (m && m.side !== side) {
 				m.side = side;
 				m.needsUpdate = true;
@@ -984,9 +1167,9 @@ function releaseCurrentUSDResources({ clearRawBytes = false } = {}) {
 // Convert `bytes` with the given optimization options and return the native
 // scene + counts. Does NOT mount it into the Three.js scene.
 async function convertScene(bytes, name, opts) {
-	await ensureLoader();
 	const requestedBackend = opts.backend || params.backend || 'legacy';
 	const backend = requestedBackend;
+	await ensureLoader(backend);
 	const usd = await parseWithOptions(bytes, name, {
 		backend,
 		materialDedup: !!opts.materialDedup,
@@ -1057,7 +1240,7 @@ async function mountScene(usd,
 		}
 		usdSceneRoot.add(built.node);
 		applySceneTransform();
-		applyDoubleSided();
+		applyCullBackfaces();
 		textureManager = built.textureManager;
 		updateDebugHandle();
 		return;
@@ -1092,7 +1275,7 @@ async function mountScene(usd,
 
 	usdSceneRoot.add(threeNode);
 	applySceneTransform();
-	applyDoubleSided();
+	applyCullBackfaces();
 	textureManager = manager;
 	updateDebugHandle();
 }
@@ -1206,12 +1389,13 @@ async function loadModel(bytes, name, stats = null) {
 	let baseResult = null;
 	try {
 		const parseStart = performance.now();
-		// The next worker's optimized result already carries exact source mesh,
-		// material and texture counts. Mesh merging preserves triangles, and its
-		// merged/group counters give the exact draw-call reduction. Avoid a
-		// second full conversion used only to populate the baseline column.
-		if (params.backend === 'next' && params.useWorker &&
-				!params.jsBatchByMaterial && typeof Worker !== 'undefined') {
+		// Every next-backend result carries exact source mesh, material and
+		// texture counts. Mesh merging preserves triangles, and its merged/group
+		// counters give the exact draw-call reduction. Avoid a second full
+		// conversion used only to populate the baseline column. This applies to
+		// both main-thread and worker conversion; limiting it to workers made
+		// large main-thread loads take almost exactly twice as long.
+		if (params.backend === 'next' && !params.jsBatchByMaterial) {
 			let convertedAt = null;
 			const built = await rebuild({
 				deriveNextBaseline: true,
@@ -1355,6 +1539,17 @@ async function rebuild({ deriveNextBaseline = false, onConverted = null } = {}) 
 // scene (no native re-conversion). Used when toggling the JS-side options.
 async function reapplyThreePostProcess() {
 	if (!currentUsd || !currentCounts) return;
+	// buildNextThreeNode releases the adapter's copied mesh payload after the
+	// first mount to keep large scenes within the wasm32/browser memory budget.
+	// Such an adapter cannot be mounted a second time: doing so produced an
+	// empty scene when Load Textures or a JS post-process option was toggled.
+	// Reconvert from the retained source bytes so texture archive entries and
+	// mesh/material data match the newly selected options.
+	if (isNextScene(currentUsd) &&
+			(!Array.isArray(currentUsd.meshes) || currentUsd.meshes.length === 0)) {
+		await rebuild();
+		return;
+	}
 	setStatus('Applying three.js post-process…');
 	showProgress('postprocess', 65, 'Applying three.js post-process...');
 	try {
@@ -1388,6 +1583,7 @@ function describeOptions() {
 	if (params.materialDedup) on.push('material-dedup');
 	if (params.mergeMeshes) on.push(params.mergeMeshesBakeTransform ? 'merge-meshes(bake)' : 'merge-meshes');
 	if (params.flattenRenderTree) on.push('flatten-tree');
+	if (params.cullBackfaces) on.push('cull-backfaces');
 	const scaleNote = params.honorMetersPerUnit && sceneMeta.metersPerUnit !== 1.0
 		? `, scale ×${(params.globalScale * sceneMeta.metersPerUnit).toFixed(3)} (mpu ${sceneMeta.metersPerUnit})`
 		: '';
@@ -1424,6 +1620,8 @@ function setStatus(msg) {
 function updateDebugHandle() {
 	window.__materialDedupDebug = {
 		scene,
+		camera,
+		controls,
 		root: usdSceneRoot,
 		textureManager,
 		textureCache,
@@ -1653,7 +1851,11 @@ function buildGui() {
 	// Textures decode lazily on the JS side, so toggling only needs a re-mount
 	// (no native re-conversion).
 	guiControllers.push(sceneFolder.add(params, 'loadTextures').name('Load Textures').onChange(reapplyThreePostProcess));
-	sceneFolder.add(params, 'doubleSided').name('Double-Sided (debug)').onChange(applyDoubleSided);
+	sceneFolder.add(params, 'cullBackfaces').name('Cull Backfaces').onChange(() => {
+		applyCullBackfaces();
+		setStatus(describeOptions());
+		updateDebugHandle();
+	});
 	sceneFolder.open();
 
 	// three.js-side post-process: operates on the built scene graph, no native
@@ -1781,6 +1983,7 @@ function setupDragAndDrop() {
 
 async function main() {
 	initThree();
+	setupCameraMovementKeys();
 	buildGui();
 	setupFileInput();
 	setupDragAndDrop();
@@ -1789,7 +1992,7 @@ async function main() {
 	// (handy for testing
 	// large external models without the file picker). Optional flags configure
 	// the initial state (avoids extra re-conversions when scripting tests):
-	//   textures=1  dedup=0/1  merge=0/1  bake=0/1  flatten=0/1  js=1
+	//   textures=1  dedup=0/1  merge=0/1  bake=0/1  flatten=0/1  cull=0/1  js=1
 	const search = new URLSearchParams(window.location.search);
 	const flag = (key, cur) => {
 		const v = search.get(key);
@@ -1805,6 +2008,7 @@ async function main() {
 	params.mergeMeshes = flag('merge', params.mergeMeshes);
 	params.mergeMeshesBakeTransform = flag('bake', params.mergeMeshesBakeTransform);
 	params.flattenRenderTree = flag('flatten', params.flattenRenderTree);
+	params.cullBackfaces = flag('cull', params.cullBackfaces);
 	if (search.get('js') === '1') {
 		params.jsMaterialDedup = true;
 		params.jsBatchByMaterial = true;
