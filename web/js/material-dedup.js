@@ -1379,12 +1379,13 @@ async function loadModel(bytes, name, stats = null) {
 	let baseResult = null;
 	try {
 		const parseStart = performance.now();
-		// The next worker's optimized result already carries exact source mesh,
-		// material and texture counts. Mesh merging preserves triangles, and its
-		// merged/group counters give the exact draw-call reduction. Avoid a
-		// second full conversion used only to populate the baseline column.
-		if (params.backend === 'next' && params.useWorker &&
-				!params.jsBatchByMaterial && typeof Worker !== 'undefined') {
+		// Every next-backend result carries exact source mesh, material and
+		// texture counts. Mesh merging preserves triangles, and its merged/group
+		// counters give the exact draw-call reduction. Avoid a second full
+		// conversion used only to populate the baseline column. This applies to
+		// both main-thread and worker conversion; limiting it to workers made
+		// large main-thread loads take almost exactly twice as long.
+		if (params.backend === 'next' && !params.jsBatchByMaterial) {
 			let convertedAt = null;
 			const built = await rebuild({
 				deriveNextBaseline: true,
