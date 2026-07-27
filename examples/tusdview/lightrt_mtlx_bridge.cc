@@ -1262,6 +1262,22 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
                          ? 1.0f
                          : 0.0f;
   dst[56 * 4 + 3] = 0.0f;
+  auto packPtexInfo = [dst](int slot, const DrawTexSampleCPU& sample) {
+    dst[slot * 4 + 0] = sample.isPtex
+                             ? static_cast<float>(sample.ptexRectTexelOffset)
+                             : 0.0f;
+    dst[slot * 4 + 1] = sample.isPtex
+                             ? static_cast<float>(sample.ptexFaceCount)
+                             : 0.0f;
+    dst[slot * 4 + 2] = sample.isPtex ? 1.0f : 0.0f;
+    dst[slot * 4 + 3] = 0.0f;
+  };
+  packPtexInfo(57, mat.metallicSample);
+  packPtexInfo(58, mat.roughnessSample);
+  packPtexInfo(59, mat.normalSample);
+  packPtexInfo(60, mat.emissiveSample);
+  packPtexInfo(61, mat.opacitySample);
+  packPtexInfo(62, mat.occlusionSample);
 }
 
 }  // namespace tusdview
