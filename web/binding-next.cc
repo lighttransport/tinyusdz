@@ -2560,6 +2560,8 @@ class RenderStream {
     materials_.clear();
     material_key_to_id_.clear();
     material_path_to_id_.clear();
+    local_matrix_cache_.clear();
+    world_matrix_cache_.clear();
     source_material_keys_.clear();
     source_texture_keys_.clear();
     texture_keys_.clear();
@@ -3765,6 +3767,34 @@ class RenderStream {
     return true;
   }
 
+  bool requiresRenderMaterial_(const tinyusdz::next::UsdPrim &mat) const {
+    if (!mat.IsValid()) return false;
+
+    // PreviewSurface is decoded directly below and does not need the much
+    // heavier RenderSceneConverter. Keep that converter for MaterialX and
+    // other non-Preview terminals whose graph evaluation is authoritative.
+    if (const tinyusdz::next::PrimSpec *spec = mat.GetPrimSpec()) {
+      const std::vector<tinyusdz::next::Path> *mtlx =
+          spec->connection("outputs:mtlx:surface");
+      if (mtlx && !mtlx->empty()) return true;
+    }
+    if (const std::vector<tinyusdz::next::Path> *mtlx =
+            mat.GetRelationship("outputs:mtlx:surface")) {
+      if (!mtlx->empty()) return true;
+    }
+    if (const std::vector<tinyusdz::next::Path> *source =
+            mat.GetRelationship("mtlx:surface:source")) {
+      if (!source->empty()) return true;
+    }
+
+    const std::string surface_path =
+        tinyusdz::next::GetSurfaceShader(stage_, mat);
+    if (surface_path.empty()) return false;
+    const tinyusdz::next::UsdPrim surface =
+        stage_.GetPrimAtPath(surface_path);
+    return surface.IsValid() && !tinyusdz::next::IsPreviewSurface(surface);
+  }
+
   MaterialRecord materialRecordForPrim_(
       const tinyusdz::next::UsdPrim &mat) {
     MaterialRecord rec;
@@ -3776,7 +3806,9 @@ class RenderStream {
       return rec;
     }
     rec.prim_path = mat.GetPath().str();
-    (void)ensureRenderMaterial_(mat);
+    if (requiresRenderMaterial_(mat)) {
+      (void)ensureRenderMaterial_(mat);
+    }
     bool populated_from_render_scene = false;
     if (render_scene_valid_) {
       const auto material_it = render_scene_.material_by_path.find(rec.prim_path);
@@ -3950,6 +3982,9 @@ class RenderStream {
   int32_t registerMaterial_(const tinyusdz::next::UsdPrim &mat) {
     const std::string mat_path = mat.IsValid() ? mat.GetPath().str()
                                                : std::string("__default");
+    const auto path_it = material_path_to_id_.find(mat_path);
+    if (path_it != material_path_to_id_.end()) return path_it->second;
+
     MaterialRecord rec = materialRecordForPrim_(mat);
     source_material_keys_.insert(mat_path);
     addTextureKey_("color", rec.base_color_texture, &source_texture_keys_);
@@ -3964,7 +3999,10 @@ class RenderStream {
 
     const std::string key = material_dedup_ ? rec.key : mat_path;
     auto it = material_key_to_id_.find(key);
-    if (it != material_key_to_id_.end()) return it->second;
+    if (it != material_key_to_id_.end()) {
+      material_path_to_id_[mat_path] = it->second;
+      return it->second;
+    }
     rec.id = static_cast<int32_t>(materials_.size());
     rec.key = key;
     materials_.push_back(rec);
@@ -4403,25 +4441,37 @@ class RenderStream {
     }
     return r;
   }
-  static std::array<double, 16> localMatrix_(
-      const tinyusdz::next::UsdPrim &prim) {
+  std::array<double, 16> localMatrix_(
+      const tinyusdz::next::UsdPrim &prim) const {
+    const std::string path = prim.GetPath().str();
+    const auto cached = local_matrix_cache_.find(path);
+    if (cached != local_matrix_cache_.end()) return cached->second;
     std::array<double, 16> m = identityMatrix_();
     tinyusdz::next::UsdGeomXform xform(prim);
     double raw[16];
-    if (!xform.ComputeLocalTransform(raw)) return m;
-    for (int i = 0; i < 16; ++i) m[static_cast<size_t>(i)] = raw[i];
+    if (xform.ComputeLocalTransform(raw)) {
+      for (int i = 0; i < 16; ++i) m[static_cast<size_t>(i)] = raw[i];
+    }
+    local_matrix_cache_.emplace(path, m);
     return m;
   }
-  static std::array<double, 16> worldMatrix_(
-      const tinyusdz::next::UsdPrim &prim) {
+
+  std::array<double, 16> worldMatrix_(
+      const tinyusdz::next::UsdPrim &prim) const {
     std::vector<tinyusdz::next::UsdPrim> chain;
+    std::array<double, 16> world = identityMatrix_();
     for (tinyusdz::next::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
+      const auto cached = world_matrix_cache_.find(p.GetPath().str());
+      if (cached != world_matrix_cache_.end()) {
+        world = cached->second;
+        break;
+      }
       chain.push_back(p);
     }
-    std::array<double, 16> world = identityMatrix_();
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
       const std::array<double, 16> local = localMatrix_(*it);
       world = multiplyMatrix_(local, world);
+      world_matrix_cache_[it->GetPath().str()] = world;
     }
     return world;
   }
@@ -4745,6 +4795,10 @@ class RenderStream {
   std::vector<MaterialRecord> materials_;
   std::unordered_map<std::string, int32_t> material_key_to_id_;
   std::unordered_map<std::string, int32_t> material_path_to_id_;
+  mutable std::unordered_map<std::string, std::array<double, 16>>
+      local_matrix_cache_;
+  mutable std::unordered_map<std::string, std::array<double, 16>>
+      world_matrix_cache_;
   std::set<std::string> source_material_keys_;
   std::set<std::string> source_texture_keys_;
   std::set<std::string> texture_keys_;

@@ -448,6 +448,54 @@ await testAsync('next mesh-only RenderStream retains authoritative MaterialX dat
     assert.equal(graph?.nodegraph?.name, 'Graph');
     assert.deepEqual(graph?.connections?.map((connection) => connection.input),
       ['base_color', 'emission_color']);
+    assert.equal(stream.getStats().renderSceneMaterials, 1,
+      'mesh-only mode should run graph conversion for the MaterialX terminal');
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next mesh-only PreviewSurface uses the lightweight material path', async () => {
+  const fixture = `#usda 1.0
+def Xform "World" {
+  def Mesh "First" {
+    rel material:binding = </World/Mat>
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }
+  def Mesh "Second" {
+    rel material:binding = </World/Mat>
+    point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }
+  def Material "Mat" {
+    token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (0.2, 0.4, 0.8)
+      token outputs:surface
+    }
+  }
+}`;
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    const result = stream.begin(new TextEncoder().encode(fixture));
+    assert.ok(result?.success, result?.error || stream.error());
+    assert.equal(stream.meshCount(), 2);
+    for (let i = 0; i < 2; ++i) {
+      const color = stream.getMesh(i).material?.baseColor;
+      assert.ok(color?.every((value, channel) =>
+        Math.abs(value - [0.2, 0.4, 0.8][channel]) < 1e-6));
+    }
+    const stats = stream.getStats();
+    assert.equal(stats.optimizedMaterials, 1,
+      'repeated bindings should reuse the cached material record');
+    assert.equal(stats.renderSceneMaterials, 0,
+      'plain PreviewSurface must not invoke full render-material conversion');
   } finally {
     stream.end();
     stream.delete();
