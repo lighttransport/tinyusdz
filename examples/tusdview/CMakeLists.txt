@@ -55,6 +55,7 @@ set(TUSDVIEW_SOURCES
     scene_loader.cc
     next_scene_loader.cc
     ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+    ptex_atlas.cc
     mesh_build.cc
     texture_tools.cc
     lightrt_mtlx_bridge.cc
@@ -174,6 +175,20 @@ function(tusdview_set_warning_flags target)
 endfunction()
 
 if(TINYUSDZ_BUILD_TESTS)
+  add_executable(tusdview_ptex_atlas_test
+      tests/ptex_atlas_test.cc
+      ptex_atlas.cc
+      displacement_bake.cc)
+  target_compile_features(tusdview_ptex_atlas_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_ptex_atlas_test)
+  target_include_directories(tusdview_ptex_atlas_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_ptex_atlas_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+
   add_executable(tusdview_lightrt_bridge_test
       tests/lightrt_bridge_test.cc
       lightrt_mtlx_bridge.cc
@@ -316,6 +331,7 @@ if(TINYUSDZ_BUILD_TESTS)
   # enable_testing() before this subdirectory is added. All are self-contained
   # (no GPU/display) and take no arguments; non-zero exit == failure.
   foreach(tv_test
+      tusdview_ptex_atlas_test
       tusdview_lightrt_bridge_test
       tusdview_openpbr_material_test
       tusdview_lighting_test

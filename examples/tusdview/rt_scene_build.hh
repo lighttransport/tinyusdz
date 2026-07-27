@@ -83,6 +83,8 @@ struct HostTextureDesc {
   int ptexCols{0};
   int ptexRows{0};
   int ptexTileEdge{0};
+  int ptexRectTexelOffset{0};
+  int ptexFaceCount{0};
   int mipCount{1};       // levels including this descriptor's base level
   int firstMip{-1};      // descriptor id of level 1; consecutive thereafter
   int udimLayer[100]{};  // texture descriptor ids for tiles 1001..1100

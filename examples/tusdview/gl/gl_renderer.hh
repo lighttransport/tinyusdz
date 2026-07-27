@@ -112,6 +112,7 @@ class GLRenderer final : public Renderer {
     bool hasMorph{false};
     size_t indexCount{0};  // base surface indices; CPU copy may be released
     bool geometricNormal{false};     // shade with screen-derivative normal
+    bool rasterDisplacementBaked{false};
     int purposeId{0};                // USD purpose AOV: 0=default/1=render/2=proxy/3=guide
     int kindId{0};                   // USD kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
     std::vector<DrawSubmesh> submeshes;

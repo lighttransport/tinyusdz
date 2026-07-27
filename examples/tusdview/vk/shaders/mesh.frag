@@ -116,7 +116,7 @@ struct MaterialTexParam {
   vec4 coatNormalScale; vec4 coatNormalBias;
   vec4 semanticUdimSlots;
   vec4 semanticUdimSlots2;
-  vec4 ptexBaseInfo; // atlas columns, rows, tile edge, enabled
+  vec4 ptexBaseInfo; // rect texel offset, face count, enabled, reserved
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -230,11 +230,32 @@ vec4 sampleBaseColor(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.x > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.baseUv0, m.baseUv1);
-  vec4 c = (m.ptexBaseInfo.w > 0.5 && (pc.ids.y & 0x80) != 0)
-      ? texture(uBaseColorTex,
-                (vec2(float(sourceFaceForPtex() % uint(m.ptexBaseInfo.x)),
-                      float(sourceFaceForPtex() / uint(m.ptexBaseInfo.x))) + fract(tuv)) /
-                    vec2(m.ptexBaseInfo.x, m.ptexBaseInfo.y))
+  uint ptexFace = sourceFaceForPtex();
+  vec2 ptexUv = tuv;
+  bool validPtex = m.ptexBaseInfo.z > 0.5 && (pc.ids.y & 0x80) != 0 &&
+                   ptexFace < uint(m.ptexBaseInfo.y);
+  if (validPtex) {
+    uint values[4];
+    int base = int(m.ptexBaseInfo.x + 0.5) + int(ptexFace) * 8;
+    ivec2 size = textureSize(uBaseColorTex, 0);
+    for (int component = 0; component < 4; ++component) {
+      int lo = base + component * 2;
+      float a = texelFetch(uBaseColorTex,
+                           ivec2(lo % size.x, lo / size.x), 0).a;
+      float b = texelFetch(uBaseColorTex,
+                           ivec2((lo + 1) % size.x, (lo + 1) / size.x), 0).a;
+      values[component] = uint(a * 255.0 + 0.5) |
+                          (uint(b * 255.0 + 0.5) << 8u);
+    }
+    vec2 px = vec2(float(values[0]), float(values[1])) +
+              vec2(clamp(tuv.x, 0.0, 1.0),
+                   1.0 - clamp(tuv.y, 0.0, 1.0)) *
+              vec2(float(max(values[2], 1u) - 1u),
+                   float(max(values[3], 1u) - 1u));
+    ptexUv = (px + vec2(0.5)) / vec2(size);
+  }
+  vec4 c = validPtex
+      ? texture(uBaseColorTex, ptexUv)
       : ((pc.ids.w & 1) != 0)
       ? sampleUdim(uBaseColorUdimTex, int(m.udimSlots0.x + 0.5), tuv,
                    vec4(1.0, 0.0, 1.0, 1.0))

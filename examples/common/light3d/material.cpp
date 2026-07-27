@@ -534,10 +534,10 @@ uniform int uKind;           // kind AOV: 0=none/1=component/2=group/3=assembly/
 uniform usamplerBuffer uFaceIdTex;  // per-triangle source face id (source-face-id AOV)
 uniform int uFaceBase;       // first triangle of this submesh (gl_PrimitiveID is submesh-local)
 uniform bool uHasFaceId;
-// Base-color Ptex is uploaded as a coarse face atlas.  The source-face buffer
-// supplies the atlas tile for the current triangle; UVs remain face-local.
+// Base-color Ptex uses an embedded face-rectangle table. The source-face buffer
+// supplies the record for the current triangle; UVs are intrinsic face-local.
 uniform bool uBasePtex;
-uniform vec2 uBasePtexGrid; // columns, rows
+uniform vec2 uBasePtexGrid; // rectangle texel offset, face count
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
@@ -720,10 +720,28 @@ void main() {
         vec2 uv = xformUv(uUvSet.x == 1 ? vUV1 : vUV, uBaseColorUv0, uBaseColorUv1);
         if (uBasePtex && uHasFaceId) {
             int face = int(texelFetch(uFaceIdTex, uFaceBase + gl_PrimitiveID).r);
-            float cols = max(uBasePtexGrid.x, 1.0);
-            float rows = max(uBasePtexGrid.y, 1.0);
-            uv = (vec2(mod(float(face), cols), floor(float(face) / cols)) + fract(uv)) /
-                 vec2(cols, rows);
+            int count = int(uBasePtexGrid.y + 0.5);
+            if (face >= 0 && face < count) {
+                ivec2 size = textureSize(uBaseColorTex, 0);
+                int base = int(uBasePtexGrid.x + 0.5) + face * 8;
+                uint value[4];
+                for (int component = 0; component < 4; ++component) {
+                    int lo = base + component * 2;
+                    float a = texelFetch(uBaseColorTex,
+                                        ivec2(lo % size.x, lo / size.x), 0).a;
+                    float b = texelFetch(uBaseColorTex,
+                                        ivec2((lo + 1) % size.x,
+                                              (lo + 1) / size.x), 0).a;
+                    value[component] = uint(a * 255.0 + 0.5) |
+                                       (uint(b * 255.0 + 0.5) << 8u);
+                }
+                vec2 px = vec2(float(value[0]), float(value[1])) +
+                          vec2(clamp(uv.x, 0.0, 1.0),
+                               1.0 - clamp(uv.y, 0.0, 1.0)) *
+                          vec2(float(max(value[2], 1u) - 1u),
+                               float(max(value[3], 1u) - 1u));
+                uv = (px + vec2(0.5)) / vec2(size);
+            }
         }
         vec4 texel = uBaseColorTexIsUdim
                          ? sampleUdim(uBaseColorUdimTex, uUdimSlots.x, uv,

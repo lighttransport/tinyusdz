@@ -181,6 +181,8 @@ class App
   void setHipRt(bool on) { hipRt_ = on; }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
+  // Write a stable machine-readable summary when run() exits.
+  void setRenderReport(const std::string& path) { renderReportPath_ = path; }
   // --max-instances N: cap the CUDA/HIP 2-level-BVH instance count (0 = no cap).
   void setRtMaxInstances(size_t n) { rtMaxInstances_ = n; }
   // --lod-stream: view-dependent district LOD pre-pass (needs --next). Promotes
@@ -270,6 +272,7 @@ class App
   bool initImGui(std::string* err);
   void getRequestedWindowSize(int* width, int* height) const;
   void openFileDialog();
+  void writeRenderReport(const std::string& scenePath, int exitCode) const;
 
   // Synchronous load (used for headless --frames runs so screenshots are
   // deterministic) and the async path (keeps the UI responsive).
@@ -388,6 +391,9 @@ class App
   int windowWidth_{0};
   int windowHeight_{0};
   std::string windowShot_;
+  std::string renderReportPath_;
+  int reportCaptureWidth_{0};
+  int reportCaptureHeight_{0};
   bool headless_{false};  // windowless offscreen rendering (Vulkan only)
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   std::string cameraName_;  // --camera: named USD camera to frame (--next path)

@@ -162,6 +162,7 @@ int main(int argc, char** argv) {
   std::optional<std::string> configPath;
   std::string file;
   std::string screenshot;
+  std::string renderReport;
   std::string windowShot;
   int maxFrames = -1;
   int windowWidth = 0;
@@ -309,6 +310,9 @@ int main(int argc, char** argv) {
       windowSizeExplicit = true;
     } else if (std::strcmp(argv[i], "--screenshot") == 0 && (i + 1) < argc) {
       screenshot = argv[++i];
+    } else if (std::strcmp(argv[i], "--render-report") == 0 &&
+               (i + 1) < argc) {
+      renderReport = argv[++i];
     } else if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
       maxTris = std::atoll(argv[++i]);
       maxTrisExplicit = true;
@@ -833,6 +837,7 @@ int main(int argc, char** argv) {
           "every frame, so --screenshot captures are pixel-comparable).\n"
           "  --frame CODE  Alias for --time CODE.\n"
           "  --screenshot PATH  Save the viewport image after --frames.\n"
+          "  --render-report PATH  Write a schema-versioned JSON render report.\n"
           "  --window-shot PATH  Save the complete window, including UI.\n"
           "  --raster-lod / --rt-lod  Enable view-dependent raster or Vulkan-RT "
           "LOD (--no-rt-lod disables RT LOD for deterministic full-scene capture); "
@@ -1190,6 +1195,7 @@ int main(int argc, char** argv) {
   app.setCudaCacheDir(cudaCacheDir);
   app.setHipRt(wantHip);
   app.setRtSamples(rtSamples);
+  app.setRenderReport(renderReport);
   app.setRtMaxInstances(static_cast<size_t>(rtMaxInstances));
   app.setLodStream(lodStream);
   app.setLodMaxMemGiB(lodMaxMem);

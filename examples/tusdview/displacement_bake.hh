@@ -17,7 +17,8 @@ namespace tusdview {
 // Bilinear sample of a DrawScene texture's red channel at (u, v) with the texture's
 // wrap modes (matches the GPU's displacement sampling). Returns 0 when the index is
 // invalid or the image is empty.
-float SampleTextureRed(const DrawScene& scene, int texIndex, float u, float v);
+float SampleTextureRed(const DrawScene& scene, int texIndex, float u, float v,
+                       uint32_t ptexFace = UINT32_MAX);
 
 // True if any of `mesh`'s submesh materials carry displacement.
 bool MeshHasDisplacement(const DrawScene& scene, const DrawMeshCPU& mesh);

@@ -1148,8 +1148,16 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[16 * 4 + 3] = mat.metallicTexBias;
   dst[17 * 4 + 0] = mat.roughnessTexScale;
   dst[17 * 4 + 1] = mat.roughnessTexBias;
-  dst[17 * 4 + 2] = mat.displacementTexScale;
-  dst[17 * 4 + 3] = mat.displacementTexBias;
+  // Ptex displacement is baked with a texture-local face id before raster
+  // upload. Disable the vertex-stage sample so the baked surface is not moved a
+  // second time (the vertex stage has no primitive id with which to select a
+  // Ptex face).
+  dst[17 * 4 + 2] = mat.displacementSample.isPtex
+                         ? 0.0f
+                         : mat.displacementTexScale;
+  dst[17 * 4 + 3] = mat.displacementSample.isPtex
+                         ? 0.0f
+                         : mat.displacementTexBias;
   // Per-slot UV set. Displacement stays on uv0: it is sampled in the vertex /
   // tessellation stages, which do not carry the second set.
   dst[18 * 4 + 0] = static_cast<float>(mat.baseColorSample.uvSet);
@@ -1241,19 +1249,19 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[55 * 4 + 1] = mat.displacementSample.isUdim
                          ? static_cast<float>(mat.displacementTex)
                          : -1.0f;
-  // Ptex base-color atlas: (columns, rows, tile edge, enabled). The face id
-  // itself is fetched from the per-triangle source-face SSBO in the fragment
-  // shader, so no per-vertex duplication is needed.
+  // Ptex base-color atlas: (rect texel offset, face count, enabled, reserved).
+  // The face id itself is fetched from the per-triangle source-face SSBO.
   dst[56 * 4 + 0] = mat.baseColorSample.isPtex
-                         ? static_cast<float>(mat.baseColorSample.ptexAtlasCols)
+                         ? static_cast<float>(
+                               mat.baseColorSample.ptexRectTexelOffset)
                          : 0.0f;
   dst[56 * 4 + 1] = mat.baseColorSample.isPtex
-                         ? static_cast<float>(mat.baseColorSample.ptexAtlasRows)
+                         ? static_cast<float>(mat.baseColorSample.ptexFaceCount)
                          : 0.0f;
   dst[56 * 4 + 2] = mat.baseColorSample.isPtex
-                         ? static_cast<float>(mat.baseColorSample.ptexTileEdge)
+                         ? 1.0f
                          : 0.0f;
-  dst[56 * 4 + 3] = mat.baseColorSample.isPtex ? 1.0f : 0.0f;
+  dst[56 * 4 + 3] = 0.0f;
 }
 
 }  // namespace tusdview
