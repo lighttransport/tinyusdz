@@ -703,7 +703,7 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
           "Usage: tusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
-          "[--size WxH] [--screenshot out.png|out.ppm]\n"
+          "[--size WxH] [--screenshot out.png|out.jpg|out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
           "                [--no-composition] [--defer-payloads | --load-payloads] "
           "[--defer-references] [--time CODE] [--skinning auto|cpu|gpu]\n"
