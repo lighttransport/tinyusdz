@@ -43,9 +43,6 @@ import {
 	nextCountsFromScene,
 	readNextSceneMeta
 } from 'tinyusdz/NextRenderSceneUtils.js';
-import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
-import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
-import { applyUSDSceneSkinningPipeline } from 'tinyusdz/USDSceneSkinningPipeline.js';
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -1160,61 +1157,20 @@ async function mountScene(usd,
 	};
 
 	if (isNextScene(usd)) {
-		// Build the skinning inputs before buildNextThreeNode releases the native
-		// RenderScene buffers.  NextRenderScene already exposes joint indices,
-		// weights, bind matrices and Skeleton prims; the missing step used to be
-		// binding those attributes to Three.js SkinnedMesh objects.
-		const hasSkeletons = typeof usd.numSkeletons === 'function' && usd.numSkeletons() > 0;
-		const skinData = hasSkeletons
-			? extractSkinnedMeshData(usd, {
-				verbose: false,
-				logger: { log() {}, warn() {}, error() {} }
-			})
-			: { hasSkinnedMeshData: false };
-		const skeletonData = skinData.hasSkinnedMeshData
-			? buildSkeletonDataFromUSD(usd, {
-				hasSkinnedMeshData: true,
-				logger: { log() {}, warn() {}, error() {} }
-			})
-			: null;
 		const built = buildNextThreeNode(usd, {
 			skipTextures,
 			lazyTextures,
-			onProgress: reportBuildProgress,
-			releaseBuildData: false
+			onProgress: reportBuildProgress
 		});
-		let mountedNode = built.node;
-		if (skinData.hasSkinnedMeshData && skeletonData?.skeletonDataArray?.length) {
-			const characterGroup = new THREE.Group();
-			characterGroup.name = built.node.name || 'next-scene';
-			applyUSDSceneSkinningPipeline({
-				threeNode: built.node,
-				characterGroup,
-				helperScene: null,
-				skeletonDataArray: skeletonData.skeletonDataArray,
-				allSkinnedMeshUSDData: skinData.allSkinnedMeshUSDData,
-				skinnedMeshDataByName: skinData.skinnedMeshDataByName,
-				usdScene: usd,
-				showMesh: true,
-				enableShadows: true,
-				showSkeleton: false,
-				useWASMBoneTexture: false,
-				logger: { log() {}, warn() {}, error: console.error }
-			});
-			mountedNode = characterGroup;
-		}
 		if (postProcess) {
-			applyJsPostProcess(mountedNode);
+			applyJsPostProcess(built.node);
 		} else {
 			jsPostStats = null;
 		}
-		usdSceneRoot.add(mountedNode);
+		usdSceneRoot.add(built.node);
 		applySceneTransform();
 		applyCullBackfaces();
 		textureManager = built.textureManager;
-		if (typeof usd.releaseBuildData === 'function') {
-			usd.releaseBuildData();
-		}
 		updateDebugHandle();
 		return;
 	}
