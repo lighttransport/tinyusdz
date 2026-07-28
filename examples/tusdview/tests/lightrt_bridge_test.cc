@@ -278,8 +278,10 @@ int main() {
       !Near(directRasterTexPack[8 * 4 + 6], 0.5f) ||
       !Near(directRasterTexPack[16 * 4 + 0], 0.0f) ||
       !Near(directRasterTexPack[16 * 4 + 1], 3.0f) ||
-      !Near(directRasterTexPack[17 * 4 + 2], 1.25f) ||
-      !Near(directRasterTexPack[17 * 4 + 3], -0.25f) ||
+      // UDIM displacement is baked into CPU geometry before raster upload;
+      // the vertex-stage scale/bias must therefore remain disabled.
+      !Near(directRasterTexPack[17 * 4 + 2], 0.0f) ||
+      !Near(directRasterTexPack[17 * 4 + 3], 0.0f) ||
       !Near(directRasterTexPack[18 * 4 + 0], 1.0f) ||
       !Near(directRasterTexPack[18 * 4 + 1], 1.0f) ||
       !Near(directRasterTexPack[18 * 4 + 2], 1.0f) ||
