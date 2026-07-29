@@ -51,6 +51,11 @@
 namespace tusdview {
 
 namespace {
+bool AppendPtexFaceTableUpdates(
+    const DrawTextureCPU& texture, uint32_t face,
+    const DrawPtexFaceRectCPU& rect,
+    std::vector<Renderer::TextureRegionUpdate>* updates);
+
 void GlfwErrorCallback(int code, const char* desc) {
   LOGE("glfw error %d: %s", code, desc);
 }
@@ -551,6 +556,8 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"ptex_requested_faces", ptexRequestedFaces},
       {"ptex_considered_meshes", ptexConsideredMeshes},
       {"ptex_requested_meshes", ptexRequestedMeshes},
+      {"ptex_async_jobs_launched", ptexAsyncJobsLaunched_},
+      {"ptex_async_jobs_completed", ptexAsyncJobsCompleted_},
       {"ptex_displaced_meshes", ptexDisplacedMeshes},
       {"ptex_slots",
        {{"base_color", ptexBase},
@@ -1375,6 +1382,73 @@ void App::updatePtexResidency() {
   }
 }
 
+bool App::finishPtexDecode(bool wait, bool discard) {
+  if (!ptexDecodeActive_) return true;
+  if (!wait && ptexDecodeFuture_.wait_for(std::chrono::seconds(0)) !=
+                   std::future_status::ready)
+    return false;
+  PtexDecodeResult decoded = ptexDecodeFuture_.get();
+  ptexDecodeActive_ = false;
+  ++ptexAsyncJobsCompleted_;
+  if (discard || !decoded.ok) {
+    if (!discard && !decoded.error.empty())
+      LOGW("Ptex face %u residency decode failed: %s", decoded.face,
+           decoded.error.c_str());
+    return true;
+  }
+  if (decoded.texture >= draw_.textures.size() ||
+      decoded.texture >= ptexPhysicalCaches_.size() ||
+      !ptexPhysicalCaches_[decoded.texture])
+    return true;
+
+  DrawTextureCPU& texture = draw_.textures[decoded.texture];
+  PtexPhysicalPageAssignment assignment;
+  PtexPhysicalPageCache& cache = *ptexPhysicalCaches_[decoded.texture];
+  if (!cache.Request(decoded.face, &assignment)) return true;
+  texture.ptexGpuPageHits = cache.hits();
+  texture.ptexGpuPageMisses = cache.misses();
+  texture.ptexGpuPageEvictions = cache.evictions();
+  if (assignment.hit) return true;
+
+  const uint32_t slotEdge = texture.ptexPhysicalCacheSlotEdge;
+  if (slotEdge == 0) return true;
+  const uint32_t slotsPerRow =
+      static_cast<uint32_t>(texture.image.width) / slotEdge;
+  if (slotsPerRow == 0) return true;
+  const uint32_t outerX = (assignment.slot % slotsPerRow) * slotEdge;
+  const uint32_t outerY = texture.ptexPhysicalCacheOffsetY +
+                          (assignment.slot / slotsPerRow) * slotEdge;
+  decoded.rect.x += outerX;
+  decoded.rect.y += outerY;
+  std::vector<Renderer::TextureRegionUpdate> updates;
+  if (assignment.evictedFace != ~uint32_t{0}) {
+    AppendPtexFaceTableUpdates(texture, assignment.evictedFace,
+                               texture.ptexFaceRects[assignment.evictedFace],
+                               &updates);
+  }
+  Renderer::TextureRegionUpdate pageUpdate;
+  pageUpdate.x = static_cast<int>(outerX);
+  pageUpdate.y = static_cast<int>(outerY);
+  pageUpdate.width = decoded.page.width;
+  pageUpdate.height = decoded.page.height;
+  pageUpdate.rowBytes = size_t(decoded.page.width) * 4u;
+  pageUpdate.rgba = std::move(decoded.page.data);
+  updates.push_back(std::move(pageUpdate));
+  AppendPtexFaceTableUpdates(texture, decoded.face, decoded.rect, &updates);
+  if (!renderer_->updateTextureRegions(static_cast<int>(decoded.texture),
+                                       updates)) {
+    LOGW("Ptex face %u residency upload failed", decoded.face);
+    return true;
+  }
+  ++texture.ptexGpuPageUploads;
+  return true;
+}
+
+void App::clearPtexDecode() {
+  finishPtexDecode(/*wait=*/true, /*discard=*/true);
+  ptexReaders_.clear();
+}
+
 bool App::restoreDeferredMeshAux(size_t meshIndex) {
   if (meshIndex >= deferredMeshAux_.size()) return true;
   DeferredMeshAux& aux = deferredMeshAux_[meshIndex];
@@ -1485,6 +1559,8 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     ptexRequestCursors_.clear();
     ptexMeshRequested_.clear();
     ptexMeshDemanded_.clear();
+    ptexAsyncJobsLaunched_ = 0;
+    ptexAsyncJobsCompleted_ = 0;
   }
 
   if (ok) {
@@ -1950,6 +2026,7 @@ void App::drainProgressiveLoad() {
              draw_.meshes.empty() ? 0 : draw_.meshes[0].instanceCount());
       }
     } else if (event.type == ProgressiveSceneEvent::Type::Reset) {
+      clearPtexDecode();
       renderer_->beginScene({}, 0);
       draw_ = DrawScene{};
       deferredMeshAux_.clear();
@@ -2048,6 +2125,7 @@ void App::drainProgressiveLoad() {
              draw_.textures[slot].compressed.data.empty() ? "no" : "yes");
       }
     } else if (event.type == ProgressiveSceneEvent::Type::Complete) {
+      clearPtexDecode();
       std::vector<DrawMeshCPU> streamedMeshes = std::move(draw_.meshes);
       std::vector<DrawTextureCPU> streamedTextures = std::move(draw_.textures);
       DrawScene finalScene = std::move(event.scene);
@@ -2264,6 +2342,11 @@ bool AppendPtexFaceTableUpdates(
 }  // namespace
 
 bool App::stepPtexResidency(double deadlineMs) {
+  if (ptexDecodeActive_) {
+    if (!finishPtexDecode(/*wait=*/false, /*discard=*/false)) return false;
+    // Limit context-thread work to one completed page upload per call.
+    return false;
+  }
   if (nextPtexTexture_ >= draw_.textures.size()) return true;
   if (deadlineMs <= 0.0) return false;
   if (ptexPhysicalCaches_.size() != draw_.textures.size()) {
@@ -2301,7 +2384,7 @@ bool App::stepPtexResidency(double deadlineMs) {
 
     std::string error;
     if (!ptexReaders_[nextPtexTexture_]) {
-      auto reader = std::make_unique<tinyusdz::ptx::Reader>();
+      auto reader = std::make_shared<tinyusdz::ptx::Reader>();
       if (!tinyusdz::ptx::Reader::OpenMemory(texture.ptexSourceData.data(),
                                              texture.ptexSourceData.size(),
                                              reader.get(), &error)) {
@@ -2311,19 +2394,20 @@ bool App::stepPtexResidency(double deadlineMs) {
       }
       ptexReaders_[nextPtexTexture_] = std::move(reader);
     }
-    const tinyusdz::ptx::Reader& reader = *ptexReaders_[nextPtexTexture_];
+    const std::shared_ptr<tinyusdz::ptx::Reader> reader =
+        ptexReaders_[nextPtexTexture_];
     const uint32_t face = demandDriven
                               ? ptexRequestedFaces_[nextPtexTexture_][cursor++]
                               : static_cast<uint32_t>(cursor++);
     if (face >= texture.ptexFaceRects.size() ||
-        face >= reader.info().faceInfo.size()) {
+        face >= reader->info().faceInfo.size()) {
       LOGW("Ptex face request %u is out of range", face);
       continue;
     }
-    const tinyusdz::ptx::FaceInfo& info = reader.info().faceInfo[face];
+    const tinyusdz::ptx::FaceInfo& info = reader->info().faceInfo[face];
     uint32_t mip = 0;
     uint32_t width = info.width(), height = info.height();
-    while (mip + 1u < reader.info().levels && texture.ptexTileEdge > 0 &&
+    while (mip + 1u < reader->info().levels && texture.ptexTileEdge > 0 &&
            std::max(width, height) > texture.ptexTileEdge) {
       ++mip;
       width = std::max(1u, width >> 1u);
@@ -2339,59 +2423,28 @@ bool App::stepPtexResidency(double deadlineMs) {
       continue;
     }
 
-    light3d::Image page;
-    DrawPtexFaceRectCPU residentRect;
-    if (!BuildPtexPage(reader, face, mip, texture.ptexGutter,
-                       64ull * 1024ull * 1024ull, &page, &residentRect,
-                       &error)) {
-      LOGW("Ptex face %u residency decode failed: %s", face, error.c_str());
-      continue;
-    }
-
-    PtexPhysicalPageAssignment assignment;
-    PtexPhysicalPageCache& cache = *ptexPhysicalCaches_[nextPtexTexture_];
-    if (!cache.Request(face, &assignment)) continue;
-    texture.ptexGpuPageHits = cache.hits();
-    texture.ptexGpuPageMisses = cache.misses();
-    texture.ptexGpuPageEvictions = cache.evictions();
-    if (assignment.hit) return false;
-
-    const uint32_t slotEdge = texture.ptexPhysicalCacheSlotEdge;
-    const uint32_t slotsPerRow =
-        static_cast<uint32_t>(texture.image.width) / slotEdge;
-    if (slotEdge == 0 || slotsPerRow == 0) continue;
-    const uint32_t outerX = (assignment.slot % slotsPerRow) * slotEdge;
-    const uint32_t outerY = texture.ptexPhysicalCacheOffsetY +
-                            (assignment.slot / slotsPerRow) * slotEdge;
-    residentRect.x += outerX;
-    residentRect.y += outerY;
-    const int textureSlot = static_cast<int>(nextPtexTexture_);
-    std::vector<Renderer::TextureRegionUpdate> updates;
-    if (assignment.evictedFace != ~uint32_t{0}) {
-      AppendPtexFaceTableUpdates(
-          texture, assignment.evictedFace,
-          texture.ptexFaceRects[assignment.evictedFace], &updates);
-    }
-    Renderer::TextureRegionUpdate pageUpdate;
-    pageUpdate.x = static_cast<int>(outerX);
-    pageUpdate.y = static_cast<int>(outerY);
-    pageUpdate.width = page.width;
-    pageUpdate.height = page.height;
-    pageUpdate.rowBytes = size_t(page.width) * 4u;
-    pageUpdate.rgba = std::move(page.data);
-    updates.push_back(std::move(pageUpdate));
-    AppendPtexFaceTableUpdates(texture, face, residentRect, &updates);
-    if (!renderer_->updateTextureRegions(textureSlot, updates)) {
-      LOGW("Ptex face %u residency upload failed", face);
-      continue;
-    }
-    ++texture.ptexGpuPageUploads;
+    const size_t textureIndex = nextPtexTexture_;
+    const uint32_t gutter = texture.ptexGutter;
+    ptexDecodeFuture_ = std::async(
+        std::launch::async,
+        [reader, textureIndex, face, mip, gutter]() {
+          PtexDecodeResult result;
+          result.texture = textureIndex;
+          result.face = face;
+          result.ok = BuildPtexPage(*reader, face, mip, gutter,
+                                    64ull * 1024ull * 1024ull, &result.page,
+                                    &result.rect, &result.error);
+          return result;
+        });
+    ptexDecodeActive_ = true;
+    ++ptexAsyncJobsLaunched_;
     return false;
   }
   return true;
 }
 
 void App::loadFileBlocking(const std::string& path) {
+  clearPtexDecode();
   loadCtrl_.resetProgress();
   LoadedScene tmp;
   DrawScene drawTmp;
@@ -2735,6 +2788,7 @@ void App::finishLoadIfReady() {
   if (!loadFinished_.load(std::memory_order_acquire)) return;
   if (streamLoadActive_ && !streamCompleteSeen_) return;
   if (loadThread_.joinable()) loadThread_.join();  // sync point: worker fully done
+  clearPtexDecode();  // readers point into the outgoing draw_'s source bytes
   loaded_ = std::move(*pendingLoaded_);
   const bool ok = loaded_.ok;
   const bool alreadyUploaded = streamLoadActive_ && ok;
@@ -2760,6 +2814,7 @@ void App::finishLoadIfReady() {
 void App::cancelAndJoinLoad() {
   // A pending file load supersedes any in-flight playback re-evaluation (which
   // reads loaded_ on a worker thread): stop it before loaded_ is replaced.
+  clearPtexDecode();
   cancelAndJoinReconvert();
   if (loadStream_) loadStream_->cancel();
   if (loadThread_.joinable()) {

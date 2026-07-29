@@ -57,7 +57,8 @@ def Mesh "Far" (prepend apiSchemas = ["MaterialBindingAPI"]) {
 EOF
 
 log="$out/run.log"
-if ! timeout 60s "$viewer" --headless --backend vk --next \
+if ! env TUSDVIEW_PTEX_FORCE_RESIDENCY=1 timeout 60s \
+    "$viewer" --headless --backend vk --next \
     --large-scene-profile island --frames 4 --size 192x128 --camera /Camera \
     --screenshot "$out/result.png" --render-report "$out/report.json" \
     "$out/scene.usda" >"$log" 2>&1; then
@@ -78,6 +79,9 @@ r = report["render_stats"]
 assert s["ptex_considered_meshes"] == 1, s
 assert s["ptex_requested_meshes"] == 1, s
 assert s["ptex_requested_faces"] == 1, s
+assert s["ptex_async_jobs_launched"] >= 1, s
+assert s["ptex_async_jobs_completed"] == s["ptex_async_jobs_launched"], s
+assert s["ptex_gpu_page_uploads"] >= 1, s
 assert r["visible_meshes"] == 1 and r["total_meshes"] == 2, r
 PY
 

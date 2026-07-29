@@ -77,9 +77,10 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
                                    uint32_t encoding = 1,
                                    bool constantFace0 = false,
                                    bool constantTiles = false,
-                                   bool malformedTileTable = false) {
+                                   bool malformedTileTable = false,
+                                   uint32_t faceCount = 2) {
   std::vector<uint8_t> faceInfo;
-  for (uint32_t face = 0; face < 2; ++face) {
+  for (uint32_t face = 0; face < faceCount; ++face) {
     faceInfo.push_back(face == 0 ? 2 : 1);  // 4x2, then 2x4
     faceInfo.push_back(face == 0 ? 1 : 2);
     faceInfo.push_back(0);
@@ -88,7 +89,7 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
   }
   const std::vector<uint8_t> faceInfoZ = Deflate(faceInfo);
   std::vector<uint8_t> constants;
-  for (uint32_t face = 0; face < 2; ++face)
+  for (uint32_t face = 0; face < faceCount; ++face)
     for (uint16_t channel = 0; channel < channels; ++channel)
       PutSample(&constants, dataType, face == 0 ? 0.25f : 0.75f);
   const std::vector<uint8_t> constantsZ = Deflate(constants);
@@ -99,8 +100,8 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
   for (uint32_t level = 0; level < 2; ++level) {
     std::vector<uint8_t> headers, payload;
     const uint32_t firstFace = level > 0 && constantFace0 ? 1u : 0u;
-    const uint32_t levelFaces = 2u - firstFace;
-    for (uint32_t face = firstFace; face < 2; ++face) {
+    const uint32_t levelFaces = faceCount - firstFace;
+    for (uint32_t face = firstFace; face < faceCount; ++face) {
       if (constantFace0 && face == 0) {
         Put32(&headers, 0);
         continue;
@@ -173,13 +174,17 @@ std::vector<uint8_t> SyntheticPtex(uint32_t dataType, uint16_t channels = 1,
     Put64(&levelInfo, blocks[level].size());
     Put32(&levelInfo, headerSizes[level]);
     Put32(&levelInfo,
-          static_cast<uint32_t>(level == 0 ? 2 : (constantFace0 ? 1 : 2)));
+          static_cast<uint32_t>(level == 0
+                                    ? faceCount
+                                    : (constantFace0 ? faceCount - 1u
+                                                     : faceCount)));
   }
 
   std::vector<uint8_t> out;
   out.push_back('P'); out.push_back('t'); out.push_back('e'); out.push_back('x');
   Put32(&out, 1); Put32(&out, 1); Put32(&out, dataType);
-  Put32(&out, 0xffffffffu); Put16(&out, channels); Put16(&out, 2); Put32(&out, 2);
+  Put32(&out, 0xffffffffu); Put16(&out, channels); Put16(&out, 2);
+  Put32(&out, faceCount);
   Put32(&out, 0); Put32(&out, faceInfoZ.size()); Put32(&out, constantsZ.size());
   Put32(&out, levelInfo.size()); Put32(&out, 0); Put64(&out, levelDataSize);
   Put32(&out, 0); Put32(&out, 0);
@@ -524,7 +529,8 @@ int main(int argc, char** argv) {
   // but must not commit a binary fixture. Reuse this writer so CTest generates
   // the two-face source in its temporary directory.
   if (argc == 3 && std::string(argv[1]) == "--write-synthetic") {
-    const std::vector<uint8_t> bytes = SyntheticPtex(0, 3);
+    const std::vector<uint8_t> bytes =
+        SyntheticPtex(0, 3, false, 1, false, false, false, 32);
     std::ofstream out(argv[2], std::ios::binary);
     out.write(reinterpret_cast<const char*>(bytes.data()),
               static_cast<std::streamsize>(bytes.size()));
