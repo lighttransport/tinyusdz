@@ -40,6 +40,16 @@ struct MaterialTexParam {
   vec4 semanticUdimSlots;
   vec4 semanticUdimSlots2;
   vec4 ptexBaseInfo;
+  vec4 ptexMetalInfo;
+  vec4 ptexRoughInfo;
+  vec4 ptexNormalInfo;
+  vec4 ptexEmissiveInfo;
+  vec4 ptexOpacityInfo;
+  vec4 ptexOcclusionInfo;
+  vec4 ptexSpecularInfo;
+  vec4 ptexCoatWeightInfo;
+  vec4 ptexCoatColorInfo;
+  vec4 ptexCoatRoughInfo;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex {
   MaterialTexParam p[];

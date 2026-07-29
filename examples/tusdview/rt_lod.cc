@@ -58,6 +58,38 @@ float ProjectedRadiusPx(const float c[3], float r, const RtLodCamera& cam) {
   return cam.focalPx * r / depth;
 }
 
+bool IsSubpixelAggregateCell(const RtLodGridCell& cell,
+                             const RtLodCamera& cam) {
+  if (cell.maxInstanceRadius <= 0.0f) return false;
+  float nearDepth = 1e30f;
+  for (int ci = 0; ci < 8; ++ci) {
+    const float corner[3] = {
+        (ci & 1) ? cell.wmx[0] : cell.wmn[0],
+        (ci & 2) ? cell.wmx[1] : cell.wmn[1],
+        (ci & 4) ? cell.wmx[2] : cell.wmn[2]};
+    const float depth = (corner[0] - cam.eye.x) * cam.forward.x +
+                        (corner[1] - cam.eye.y) * cam.forward.y +
+                        (corner[2] - cam.eye.z) * cam.forward.z;
+    nearDepth = std::min(nearDepth, depth);
+  }
+  const float maxInstancePx = cam.focalPx * cell.maxInstanceRadius /
+                              std::max(nearDepth, cam.nearPlane);
+  const float center[3] = {0.5f * (cell.wmn[0] + cell.wmx[0]),
+                           0.5f * (cell.wmn[1] + cell.wmx[1]),
+                           0.5f * (cell.wmn[2] + cell.wmx[2])};
+  const float dx = cell.wmx[0] - cell.wmn[0];
+  const float dy = cell.wmx[1] - cell.wmn[1];
+  const float dz = cell.wmx[2] - cell.wmn[2];
+  const float cellRadius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
+  const float cellPx = ProjectedRadiusPx(center, cellRadius, cam);
+  // A population proxy is a density hint, not a replacement for a visibly
+  // large district. Cap it at eight pixels to avoid foreground megaboxes even
+  // when the ordinary per-instance proxy threshold is intentionally generous.
+  const float aggregatePx = std::max(cam.cullPx,
+                                     std::min(cam.fullPx, 8.0f));
+  return maxInstancePx < cam.cullPx && cellPx < aggregatePx;
+}
+
 void BuildRtLodGrid(const RtLodProto& proto, std::uint32_t minInstances,
                     RtLodGrid* grid) {
   grid->order.clear();
@@ -137,11 +169,13 @@ void BuildRtLodGrid(const RtLodProto& proto, std::uint32_t minInstances,
     RtLodGridCell cell;
     cell.begin = b;
     cell.count = e - b;
+    cell.maxInstanceRadius = 0.0f;
     for (int r = 0; r < 3; ++r) { cell.wmn[r] = 1e30f; cell.wmx[r] = -1e30f; }
     for (std::uint32_t i = b; i < e; ++i) {
       const std::uint32_t k = grid->order[i];
       float center[3], radius, wmn[3], wmx[3];
       ProtoWorldBounds(&proto.instanceXforms[k * 12], mn, mx, center, &radius, wmn, wmx);
+      cell.maxInstanceRadius = std::max(cell.maxInstanceRadius, radius);
       for (int r = 0; r < 3; ++r) {
         cell.wmn[r] = std::min(cell.wmn[r], wmn[r]);
         cell.wmx[r] = std::max(cell.wmx[r], wmx[r]);
