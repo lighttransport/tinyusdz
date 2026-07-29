@@ -437,6 +437,24 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     root_fields.push_back({"comment", comment_value});
   }
 
+  if (metas.colorConfiguration) {
+    crate::CrateValue value;
+    value.Set(metas.colorConfiguration.value());
+    root_fields.push_back({"colorConfiguration", value});
+  }
+
+  if (metas.colorManagementSystem) {
+    crate::CrateValue value;
+    value.Set(metas.colorManagementSystem.value());
+    root_fields.push_back({"colorManagementSystem", value});
+  }
+
+  if (metas.renderSettingsPrimPath) {
+    crate::CrateValue value;
+    value.Set(metas.renderSettingsPrimPath.value());
+    root_fields.push_back({"renderSettingsPrimPath", value});
+  }
+
   // Add customLayerData. An AUTHORED-but-empty `customLayerData = {}` is an
   // opinion too, so consult customLayerDataAuthored rather than just !empty().
   if (metas.customLayerDataAuthored || !metas.customLayerData.empty()) {

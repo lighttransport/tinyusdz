@@ -664,6 +664,11 @@ struct OpenPBRSurfaceShader {
   ShaderParam opacity = {-1, {1, 0, 0, 0}};
   ShaderParam normal = {-1, {0, 0, 1, 0}};
   ShaderParam tangent = {-1, {1, 0, 0, 0}};
+  // Scalar metadata carried by common MaterialX utility nodes feeding the
+  // geometry inputs. Renderers without a programmable MaterialX path can
+  // still reproduce normal-map strength and retain tangent-frame intent.
+  float normal_map_scale = 1.0f;
+  float tangent_rotation = 0.0f;
   // Height/displacement output carried by MaterialX standard_surface graphs.
   // OpenPBR itself does not define surface displacement, but retaining it here
   // lets render consumers use the same geometry path as UsdPreviewSurface.
@@ -797,6 +802,24 @@ struct RenderTexture {
   // present, else inputs:sourceColorSpace ("auto"/"sRGB"/"raw"/...). Web
   // consumers decode in the browser and need the authored intent.
   std::string source_color_space = "auto";
+
+  // Canonical working space selected from RenderSettings. Texture consumers
+  // can use this with source_color_space to perform the decode/gamut step
+  // before shading. Data/raw textures intentionally leave this as "data".
+  std::string target_color_space = "lin_rec709_scene";
+
+  // Resolved source -> display-linear Rec.709 transform. Unlike the token
+  // alone, this preserves custom ColorSpaceDefinitionAPI chromaticities for
+  // native and Web texture consumers after the Stage has gone away.
+  bool color_transform_valid = false;
+  bool color_transform_bypass = true;
+  bool source_color_is_data = false;
+  float source_gamma = 1.0f;
+  float source_linear_bias = 0.0f;
+  float source_to_display_linear[9] = {
+      1.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f,
+      0.0f, 0.0f, 1.0f};
 
   // Which channel to use (for single-channel textures)
   enum class Channel : uint8_t { R = 0, G, B, A, RGB, RGBA };
@@ -1169,6 +1192,16 @@ class RenderScene {
   std::string default_prim;
   float meters_per_unit = 1.0f;
   enum class UpAxis : uint8_t { Y = 0, Z } up_axis = UpAxis::Y;
+
+  // OpenUSD color-management state. Shader color constants in this scene are
+  // expressed in working_color_space. The row-major matrix maps linear values
+  // from that space into Three.js/native display-linear Rec.709.
+  std::string render_settings_path;
+  std::string working_color_space = "lin_rec709_scene";
+  float working_to_display_linear[9] = {
+      1.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f,
+      0.0f, 0.0f, 1.0f};
 
   // Time range
   double start_time = 0.0;

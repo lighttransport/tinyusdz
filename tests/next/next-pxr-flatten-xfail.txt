@@ -17,16 +17,12 @@ supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr
 tests/usda/instancing-001.usda ORACLE-NONDETERMINISTIC: pxr usdcat --flatten assigns Flattened_Prototype_N by internal TfHashMap order — observed ~40/60 flip of Tree/Rock between _1 and _2 across repeated runs; next's numbering (reverse discovery, matching pxr's stack registration) is stable and matches pxr's majority output, but the case cannot be a deterministic gate input
 tests/usda/aousd-unknown-property-metadata.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
 tests/usda/clips-primmeta-001.usda INTENTIONAL: value-clips metadata preserved on flatten (lossless clip indirection); pxr flatten bakes clips into dense samples
-tests/usda/layer-metadata-001.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
 tests/usda/materialx-001.usda INTENTIONAL: the fixture references a .mtlx file; pxr's usdMtlx plugin translates the MaterialX doc its way (ND_* shader ids, Material-level inputs, shader relocated under the Material, mtlx:version bumped to 1.39, config:mtlx:colorspace dropped) while tinyusdz's own MaterialX importer produces a UsdPreviewSurface-style network — two different .mtlx->USD translations, ~35 structural diffs, not comparable field-by-field (retagged 2026-07-16; the old reason named only the colorspace attribute and mis-described the divergence)
 tests/usda/purpose-hierarchy-001.usda INTENTIONAL: `purpose` authored as PRIM metadata is unregistered (purpose is an attribute); tinyusdz preserves it losslessly, pxr drops it
 tests/usda/sceneLibrary-001.usda INTENTIONAL: Apple sceneLibrary extension metadata (sceneName) preserved losslessly; pxr 26.05 drops it
-tests/usda/shader-nonconformant-types.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
-tests/usda/texture-colorspace-as-meta-000.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
 tests/usda/uint2-array-001.usda INTENTIONAL: tinyusdz supports uint2/3/4 attribute types; pxr has no such Sdf types and silently DROPS the data
 tests/usda/uint2-type-001.usda INTENTIONAL: tinyusdz supports uint2/3/4 attribute types; pxr has no such Sdf types and silently DROPS the data
 tests/usda/unregistered-prim-meta-001.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
-tests/usda/usdlux_advanced_features.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
 tests/usda/usdz-schema-autoplay-001.usda INTENTIONAL: Apple usdz preliminary schema metadata (autoPlay) preserved losslessly; pxr 26.05 drops it
 tests/usda/usdz-schema-playbackmode-001.usda INTENTIONAL: Apple usdz preliminary schema metadata (playbackMode) preserved losslessly; pxr 26.05 drops it
 tests/usdc/aousd-unknown-property-metadata.usdc INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields

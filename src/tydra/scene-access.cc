@@ -15,6 +15,7 @@
 #include "usdLux.hh"
 #include "usdPhysics.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"
 #include "usdSkel.hh"
 #include "value-pprint.hh"
 #include "xform.hh"  // For matrix inverse
@@ -1889,6 +1890,39 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     return true;
   }
 
+  // API-schema and other non-node-definition properties are retained in the
+  // concrete ShaderNode's custom property map. Consult those maps before the
+  // typed node dispatch so properties such as ColorSpaceAPI's
+  // `colorSpace:name` remain visible through the generic Prim access API.
+  const auto copy_custom_property = [&](const auto *node) {
+    if (!node) return false;
+    const auto it = node->props.find(prop_name);
+    if (it == node->props.end()) return false;
+    *out_prop = it->second;
+    return true;
+  };
+  if (copy_custom_property(&shader) ||
+      copy_custom_property(shader.value.as<ShaderNode>()) ||
+      copy_custom_property(shader.value.as<UsdPrimvarReader_float>()) ||
+      copy_custom_property(shader.value.as<UsdPrimvarReader_float2>()) ||
+      copy_custom_property(shader.value.as<UsdPrimvarReader_float3>()) ||
+      copy_custom_property(shader.value.as<UsdPrimvarReader_float4>()) ||
+      copy_custom_property(shader.value.as<UsdPrimvarReader_int>()) ||
+      copy_custom_property(shader.value.as<UsdPrimvarReader_string>()) ||
+      copy_custom_property(shader.value.as<UsdPrimvarReader_vector>()) ||
+      copy_custom_property(shader.value.as<UsdPrimvarReader_normal>()) ||
+      copy_custom_property(shader.value.as<UsdPrimvarReader_point>()) ||
+      copy_custom_property(shader.value.as<UsdPrimvarReader_matrix>()) ||
+      copy_custom_property(shader.value.as<UsdTransform2d>()) ||
+      copy_custom_property(shader.value.as<UsdUVTexture>()) ||
+      copy_custom_property(shader.value.as<UsdPreviewSurface>()) ||
+      copy_custom_property(shader.value.as<OpenPBRSurface>()) ||
+      copy_custom_property(shader.value.as<MtlxOpenPBRSurface>()) ||
+      copy_custom_property(
+          shader.value.as<MtlxAutodeskStandardSurface>())) {
+    return true;
+  }
+
   if (const auto preader_f = shader.value.as<UsdPrimvarReader_float>()) {
     return GetPrimProperty(*preader_f, prop_name, out_prop);
   } else if (const auto preader_f2 =
@@ -1923,6 +1957,11 @@ nonstd::expected<bool, std::string> GetPrimProperty(
     return GetPrimProperty(*ptex, prop_name, out_prop);
   } else if (const auto psurf = shader.value.as<UsdPreviewSurface>()) {
     return GetPrimProperty(*psurf, prop_name, out_prop);
+  } else if (shader.value.as<ShaderNode>() ||
+             shader.value.as<OpenPBRSurface>() ||
+             shader.value.as<MtlxOpenPBRSurface>() ||
+             shader.value.as<MtlxAutodeskStandardSurface>()) {
+    return false;
   } else {
     return nonstd::make_unexpected("TODO: " + shader.value.type_name());
   }

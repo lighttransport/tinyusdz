@@ -2380,11 +2380,20 @@ void tydra_material_colorspace_token_test(void) {
 
   expect_colorspace("acescg", tydra::ColorSpace::Lin_ACEScg);
   expect_colorspace("lin_ap1", tydra::ColorSpace::Lin_ACEScg);
+  expect_colorspace("lin_ap1_scene", tydra::ColorSpace::Lin_ACEScg);
   expect_colorspace("ACES - ACEScg", tydra::ColorSpace::Lin_ACEScg);
   expect_colorspace("aces2065-1", tydra::ColorSpace::ACES2065_1);
+  expect_colorspace("lin_ap0_scene", tydra::ColorSpace::ACES2065_1);
   expect_colorspace("lin_rec2020", tydra::ColorSpace::Lin_Rec2020);
+  expect_colorspace("lin_rec2020_scene", tydra::ColorSpace::Lin_Rec2020);
+  expect_colorspace("srgb_rec709_scene", tydra::ColorSpace::sRGB);
+  expect_colorspace("lin_rec709_scene", tydra::ColorSpace::Lin_Rec709);
+  expect_colorspace("g22_rec709_scene", tydra::ColorSpace::g22_Rec709);
+  expect_colorspace("g18_rec709_scene", tydra::ColorSpace::g18_Rec709);
   expect_colorspace("lin_displayp3", tydra::ColorSpace::Lin_DisplayP3);
+  expect_colorspace("lin_p3d65_scene", tydra::ColorSpace::Lin_DisplayP3);
   expect_colorspace("srgb_displayp3", tydra::ColorSpace::sRGB_DisplayP3);
+  expect_colorspace("srgb_p3d65_scene", tydra::ColorSpace::sRGB_DisplayP3);
   expect_colorspace("Input - Texture - sRGB - Display P3",
                     tydra::ColorSpace::sRGB_DisplayP3);
 

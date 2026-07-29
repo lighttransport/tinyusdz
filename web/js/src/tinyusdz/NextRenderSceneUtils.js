@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import {
+  installTextureColorTransform,
+  textureColorTransform
+} from './ColorSpaceUtils.js';
 
 export function defaultTextureConcurrency() {
   const cores = (typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency))
@@ -15,6 +19,7 @@ export class NextTextureLoadingManager {
     this.total = 0;
     this.loaded = 0;
     this.failed = 0;
+    this.warnedFailures = new Set();
     this.aborted = false;
     this.isLoading = false;
     this.pendingReleaseAdapters = new Set();
@@ -22,18 +27,19 @@ export class NextTextureLoadingManager {
 
   queueTexture(
     material, mapProperty, adapter, assetPath, colorRole = 'data', sampler = null,
-    materialXOps = null) {
+    materialXOps = null, colorTransform = null) {
     if (!assetPath) return;
     const role = colorRole === 'color' ? 'color' : 'data';
     const wrapS = nextTextureWrapMode(sampler?.wrapS);
     const wrapT = nextTextureWrapMode(sampler?.wrapT);
     const opsKey = materialXTextureOpsKey(materialXOps);
-    const key = `${role}:${wrapS}:${wrapT}:${assetPath}:${opsKey}`;
+    const transformKey = colorTransform?.canonical || '';
+    const key = `${role}:${wrapS}:${wrapT}:${assetPath}:${opsKey}:${transformKey}`;
     let task = this.taskMap.get(key);
     if (!task) {
       task = {
         adapter, assetPath, colorRole: role, wrapS, wrapT,
-        materialXOps: materialXOps || [], bindings: []
+        materialXOps: materialXOps || [], colorTransform, bindings: []
       };
       this.taskMap.set(key, task);
       this.tasks.push(task);
@@ -55,6 +61,7 @@ export class NextTextureLoadingManager {
     this.total = 0;
     this.loaded = 0;
     this.failed = 0;
+    this.warnedFailures.clear();
     this.aborted = true;
     this.releaseAdapters(adapters);
   }
@@ -113,6 +120,8 @@ export class NextTextureLoadingManager {
           if (texture && !this.aborted) {
             for (const binding of task.bindings) {
               binding.material[binding.mapProperty] = texture;
+              installTextureColorTransform(binding.material,
+                binding.mapProperty, task.colorTransform);
               binding.material.needsUpdate = true;
               if (onTextureLoaded) onTextureLoaded(binding.material, texture, task);
             }
@@ -121,12 +130,16 @@ export class NextTextureLoadingManager {
         } catch (error) {
           this.failed++;
           const unsupported = error?.name === 'UnsupportedTextureFormatError';
-          console.warn(unsupported ? '[next-render] unsupported texture format' : '[next-render] texture load failed', JSON.stringify({
-            assetPath: task.assetPath,
-            mapProperty: task.bindings?.map((b) => b.mapProperty).join(',') || '',
-            error: error?.message || String(error),
-            errorName: error?.name || undefined
-          }));
+          const warningKey = `${task.assetPath}:${error?.name || ''}:${error?.message || error}`;
+          if (!this.warnedFailures.has(warningKey)) {
+            this.warnedFailures.add(warningKey);
+            console.warn(unsupported ? '[next-render] unsupported texture format' : '[next-render] texture load failed', JSON.stringify({
+              assetPath: task.assetPath,
+              mapProperty: task.bindings?.map((b) => b.mapProperty).join(',') || '',
+              error: error?.message || String(error),
+              errorName: error?.name || undefined
+            }));
+          }
         }
         if (onProgress) {
           onProgress({
@@ -218,6 +231,8 @@ export function nextTextureWrapMode(wrap) {
 /// default; "auto"/unknown keeps the role-based heuristic (equivalent to
 /// the UsdPreviewSurface auto rule for typical 8-bit web textures).
 export function textureColorRole(mapProperty, authoredColorSpace) {
+  const transform = textureColorTransform(authoredColorSpace);
+  if (transform) return transform.colorRole;
   const authored = String(authoredColorSpace || '').toLowerCase();
   if (authored === 'srgb' || authored === 'srgb_texture' || authored === 'srgb_displayp3') {
     return 'color';
@@ -229,6 +244,42 @@ export function textureColorRole(mapProperty, authoredColorSpace) {
     return 'data';
   }
   return textureColorRoleForMap(mapProperty);
+}
+
+export function applyColorMatrix(rgb, matrix) {
+  if (!Array.isArray(rgb) || !Array.isArray(matrix) || matrix.length !== 9) {
+    return Array.isArray(rgb) ? [...rgb] : rgb;
+  }
+  const r = Number(rgb[0] ?? 0);
+  const g = Number(rgb[1] ?? r);
+  const b = Number(rgb[2] ?? r);
+  return [
+    matrix[0] * r + matrix[1] * g + matrix[2] * b,
+    matrix[3] * r + matrix[4] * g + matrix[5] * b,
+    matrix[6] * r + matrix[7] * g + matrix[8] * b,
+    ...(rgb.length > 3 ? [rgb[3]] : [])
+  ];
+}
+
+function convertMaterialColorsToDisplay(material, matrix) {
+  if (!Array.isArray(matrix) || matrix.length !== 9 || !material) return;
+  const colorNames = new Set([
+    'base_color', 'specular_color', 'transmission_color', 'subsurface_color',
+    'coat_color', 'sheen_color', 'emission_color'
+  ]);
+  const converted = new Set();
+  for (const name of colorNames) {
+    const param = material.openPBR?.[name];
+    if (!param || converted.has(param) || !Array.isArray(param.value)) continue;
+    param.value = applyColorMatrix(param.value, matrix);
+    converted.add(param);
+  }
+  for (const name of ['diffuseColor', 'emissiveColor', 'specularColor']) {
+    const param = material.surfaceShader?.[name];
+    if (!param || converted.has(param) || !Array.isArray(param.value)) continue;
+    param.value = applyColorMatrix(param.value, matrix);
+    converted.add(param);
+  }
 }
 
 function materialXCategory(node) {
@@ -447,6 +498,44 @@ function browserTextureMimeType(assetPath) {
   return '';
 }
 
+function nextArchiveTexturePath(path) {
+  return String(path || '').replace(/^[./]+/, '');
+}
+
+export function findNextArchiveEntry(entries, path) {
+  const key = nextArchiveTexturePath(path);
+  if (entries?.has(key)) return { path: key, bytes: entries.get(key) };
+  for (const [candidate, bytes] of entries || []) {
+    if (candidate.endsWith('/' + key) || key.endsWith('/' + candidate)) {
+      return { path: candidate, bytes };
+    }
+  }
+  return null;
+}
+
+export function nextArchiveUDIMLayout(entries, pattern) {
+  if (!/<UDIM>|%04d|%\(UDIM\)d/.test(String(pattern || ''))) return null;
+  const tilePath = (id) => String(pattern)
+    .replace('<UDIM>', String(id))
+    .replace('%04d', String(id))
+    .replace('%(UDIM)d', String(id));
+  const tiles = [];
+  let maxU = 0;
+  let maxV = 0;
+  for (let id = 1001; id <= 1100; ++id) {
+    const found = findNextArchiveEntry(entries, tilePath(id));
+    if (!found) continue;
+    const u = (id - 1001) % 10;
+    const v = Math.floor((id - 1001) / 10);
+    maxU = Math.max(maxU, u);
+    maxV = Math.max(maxV, v);
+    tiles.push({ id, u, v, path: found.path, bytes: found.bytes });
+  }
+  return tiles.length
+    ? { pattern, tiles, columns: maxU + 1, rows: maxV + 1 }
+    : null;
+}
+
 export async function loadNextArchiveTexture(adapter, assetPath, role = 'data', sampler = null) {
   if (isUnsupportedBrowserTexturePath(assetPath)) {
     const error = new Error(`texture format is not supported by this browser demo: ${assetPath}`);
@@ -492,6 +581,20 @@ export async function loadNextArchiveTexture(adapter, assetPath, role = 'data', 
     return texture;
   }
 
+  const prefetchedImage = typeof adapter?.getPrefetchedArchiveImage === 'function'
+    ? await adapter.getPrefetchedArchiveImage(assetPath)
+    : null;
+  if (prefetchedImage) {
+    const image = prefetchedImage.image || prefetchedImage;
+    const texture = new THREE.Texture(image);
+    texture.name = assetPath;
+    texture.colorSpace = role === 'color' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    texture.wrapS = nextTextureWrapMode(sampler?.wrapS);
+    texture.wrapT = nextTextureWrapMode(sampler?.wrapT);
+    texture.flipY = prefetchedImage.flipY !== undefined ? prefetchedImage.flipY : true;
+    texture.needsUpdate = true;
+    return texture;
+  }
   const bytes = adapter.getArchiveTextureBytes(assetPath);
   if (!bytes) {
     throw new Error(`texture asset not found in archive: ${assetPath}`);
@@ -632,6 +735,42 @@ export function normalizeNextMaterialData(materialRecord = {}, texturePaths = {}
     firstParam(parsedOpenPBR, ['specular_weight', 'specularWeight'], 1.0));
   attachOpenPBRParam(openPBR, 'specular', 'specular_color',
     firstParam(parsedOpenPBR, ['specular_color', 'specularColor'], [1.0, 1.0, 1.0]));
+  attachOpenPBRParam(openPBR, 'specular', 'specular_ior',
+    firstParam(parsedOpenPBR, ['specular_ior', 'specularIor'], 1.5));
+  attachOpenPBRParam(openPBR, 'specular', 'specular_anisotropy',
+    firstParam(parsedOpenPBR, ['specular_anisotropy', 'specularAnisotropy'], 0.0));
+  attachOpenPBRParam(openPBR, 'specular', 'specular_rotation',
+    firstParam(parsedOpenPBR, ['specular_rotation', 'specularRotation'], 0.0));
+  attachOpenPBRParam(openPBR, 'transmission', 'transmission_weight',
+    firstParam(parsedOpenPBR, ['transmission_weight', 'transmissionWeight'], 0.0));
+  attachOpenPBRParam(openPBR, 'transmission', 'transmission_color',
+    firstParam(parsedOpenPBR, ['transmission_color', 'transmissionColor'], [1.0, 1.0, 1.0]));
+  attachOpenPBRParam(openPBR, 'transmission', 'transmission_depth',
+    firstParam(parsedOpenPBR, ['transmission_depth', 'transmissionDepth'], 0.0));
+  attachOpenPBRParam(openPBR, 'subsurface', 'subsurface_weight',
+    firstParam(parsedOpenPBR, ['subsurface_weight', 'subsurfaceWeight'], 0.0));
+  attachOpenPBRParam(openPBR, 'subsurface', 'subsurface_color',
+    firstParam(parsedOpenPBR, ['subsurface_color', 'subsurfaceColor'], [0.8, 0.8, 0.8]));
+  attachOpenPBRParam(openPBR, 'coat', 'coat_weight',
+    firstParam(parsedOpenPBR, ['coat_weight', 'coatWeight'], 0.0));
+  attachOpenPBRParam(openPBR, 'coat', 'coat_color',
+    firstParam(parsedOpenPBR, ['coat_color', 'coatColor'], [1.0, 1.0, 1.0]));
+  attachOpenPBRParam(openPBR, 'coat', 'coat_roughness',
+    firstParam(parsedOpenPBR, ['coat_roughness', 'coatRoughness'], 0.0));
+  attachOpenPBRParam(openPBR, 'coat', 'coat_ior',
+    firstParam(parsedOpenPBR, ['coat_ior', 'coatIor'], 1.5));
+  attachOpenPBRParam(openPBR, 'sheen', 'sheen_weight',
+    firstParam(parsedOpenPBR, ['sheen_weight', 'sheenWeight'], 0.0));
+  attachOpenPBRParam(openPBR, 'sheen', 'sheen_color',
+    firstParam(parsedOpenPBR, ['sheen_color', 'sheenColor'], [1.0, 1.0, 1.0]));
+  attachOpenPBRParam(openPBR, 'sheen', 'sheen_roughness',
+    firstParam(parsedOpenPBR, ['sheen_roughness', 'sheenRoughness'], 0.3));
+  attachOpenPBRParam(openPBR, 'thin_film', 'thin_film_weight',
+    firstParam(parsedOpenPBR, ['thin_film_weight', 'thinFilmWeight'], 0.0));
+  attachOpenPBRParam(openPBR, 'thin_film', 'thin_film_thickness',
+    firstParam(parsedOpenPBR, ['thin_film_thickness', 'thinFilmThickness'], 0.0));
+  attachOpenPBRParam(openPBR, 'thin_film', 'thin_film_ior',
+    firstParam(parsedOpenPBR, ['thin_film_ior', 'thinFilmIor'], 1.5));
   attachOpenPBRParam(openPBR, 'emission', 'emission_color',
     firstParam(parsedOpenPBR, ['emission_color', 'emissionColor'], emissive));
   attachOpenPBRParam(openPBR, 'emission', 'emission_luminance',
@@ -641,6 +780,10 @@ export function normalizeNextMaterialData(materialRecord = {}, texturePaths = {}
   attachOpenPBRParam(openPBR, 'geometry', 'normal',
     firstParam(parsedOpenPBR, ['normal', 'geometry_normal'], undefined));
   attachOpenPBRParam(openPBR, 'geometry', 'geometry_normal', openPBR.normal);
+  attachOpenPBRParam(openPBR, 'geometry', 'normal_map_scale',
+    firstParam(parsedOpenPBR, ['normal_map_scale', 'normalMapScale'], 1.0));
+  attachOpenPBRParam(openPBR, 'geometry', 'tangent_rotation',
+    firstParam(parsedOpenPBR, ['tangent_rotation', 'tangentRotation'], 0.0));
 
   if (texturePaths.baseColor) {
     openPBR.base_color.texturePath = texturePaths.baseColor;
@@ -695,6 +838,10 @@ export function normalizeNextMaterialData(materialRecord = {}, texturePaths = {}
     textureMetadata: materialRecord.textureMetadata || {},
     materialXJson: materialRecord.materialXJson || '',
     openPBRNodeGraphJson: materialRecord.openPBRNodeGraphJson || '',
+    workingColorSpace: materialRecord.workingColorSpace ||
+      parsed.workingColorSpace || 'lin_rec709_scene',
+    workingToDisplayLinear: materialRecord.workingToDisplayLinear ||
+      parsed.workingToDisplayLinear || [1, 0, 0, 0, 1, 0, 0, 0, 1],
     __nextMaterial: true
   };
 }
@@ -707,6 +854,12 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
   // authored PreviewSurface makes these scenes visibly too bright.
   const isDefaultMaterial = src.primPath === '__default';
   const paths = entry.texturePaths || {};
+  const rawData = normalizeNextMaterialData(src, paths);
+  convertMaterialColorsToDisplay(rawData, rawData.workingToDisplayLinear);
+  const displayBaseColor = paramValue(rawData.openPBR?.base_color,
+    src.baseColor || [0.8, 0.8, 0.8]);
+  const displayEmissive = paramValue(rawData.openPBR?.emission_color,
+    src.emissive || [0, 0, 0]);
   const hasOpacityMap = !!paths.opacity && !skipTextures;
   const authoredAlphaTest = (src.opacityThreshold ?? -1) > 0 ? src.opacityThreshold : 0;
   const MaterialType = isDefaultMaterial ? THREE.MeshStandardMaterial : THREE.MeshPhysicalMaterial;
@@ -714,11 +867,12 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     // A connected shader input replaces its fallback value; it is not a tint.
     color: isDefaultMaterial ? new THREE.Color(0x888888) :
       (paths.baseColor && !skipTextures ? new THREE.Color(1, 1, 1) :
-      new THREE.Color(src.baseColor?.[0] ?? 0.8, src.baseColor?.[1] ?? 0.8,
-        src.baseColor?.[2] ?? 0.8)),
+      new THREE.Color(displayBaseColor?.[0] ?? 0.8,
+        displayBaseColor?.[1] ?? 0.8, displayBaseColor?.[2] ?? 0.8)),
     metalness: src.metallic ?? 0,
     roughness: isDefaultMaterial ? 0.6 : (src.roughness ?? 0.5),
-    emissive: new THREE.Color(src.emissive?.[0] ?? 0, src.emissive?.[1] ?? 0, src.emissive?.[2] ?? 0),
+    emissive: new THREE.Color(displayEmissive?.[0] ?? 0,
+      displayEmissive?.[1] ?? 0, displayEmissive?.[2] ?? 0),
     transparent: (src.opacity ?? 1) < 1 || hasOpacityMap,
     opacity: src.opacity ?? 1,
     // Discard effectively-zero opacity before PBR lighting. Large VFX cards
@@ -726,6 +880,54 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     // time even though their final composited contribution is zero.
     alphaTest: authoredAlphaTest || (hasOpacityMap ? 1 / 255 : 0)
   });
+  if (!isDefaultMaterial) {
+    const openPBR = rawData.openPBR || {};
+    const scalar = (name, fallback) => {
+      const raw = paramValue(openPBR[name], fallback);
+      const value = Number(Array.isArray(raw) ? raw[0] : raw);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    const color = (name, fallback) => {
+      const value = paramValue(openPBR[name], fallback);
+      return Array.isArray(value) ? value : fallback;
+    };
+    material.ior = Math.max(1.0, scalar('specular_ior', 1.5));
+    material.specularIntensity = Math.max(0, scalar('specular_weight', 1.0));
+    const specularColor = color('specular_color', [1, 1, 1]);
+    material.specularColor.setRGB(specularColor[0] ?? 1, specularColor[1] ?? 1,
+      specularColor[2] ?? 1);
+    material.clearcoat = Math.max(0, scalar('coat_weight', 0));
+    material.clearcoatRoughness = Math.max(0, scalar('coat_roughness', 0));
+    material.sheen = Math.max(0, scalar('sheen_weight', 0));
+    material.sheenRoughness = Math.max(0, scalar('sheen_roughness', 0.3));
+    const sheenColor = color('sheen_color', [1, 1, 1]);
+    material.sheenColor.setRGB(sheenColor[0] ?? 1, sheenColor[1] ?? 1,
+      sheenColor[2] ?? 1);
+    material.transmission = Math.max(0, scalar('transmission_weight', 0));
+    material.thickness = Math.max(0, scalar('transmission_depth', 0));
+    const transmissionColor = color('transmission_color', [1, 1, 1]);
+    material.attenuationColor.setRGB(transmissionColor[0] ?? 1,
+      transmissionColor[1] ?? 1, transmissionColor[2] ?? 1);
+    if (material.thickness > 0) material.attenuationDistance = material.thickness;
+    material.iridescence = Math.max(0, scalar('thin_film_weight', 0));
+    material.iridescenceIOR = Math.max(1, scalar('thin_film_ior', 1.5));
+    const filmThickness = Math.max(0, scalar('thin_film_thickness', 0));
+    material.iridescenceThicknessRange = [filmThickness, filmThickness];
+    material.anisotropy = Math.max(0, scalar('specular_anisotropy', 0));
+    material.anisotropyRotation = scalar('specular_rotation', 0) * Math.PI * 2;
+    const normalScale = scalar('normal_map_scale', 1.0);
+    material.normalScale.set(normalScale, normalScale);
+    // OpenPBR's emission color fallback is white, while its luminance fallback
+    // is zero. Three.js defaults emissiveIntensity to one, so omitting this
+    // mapping makes every unlit OpenPBR material appear white. PreviewSurface
+    // has no separate luminance control and keeps the Three.js unit intensity.
+    material.emissiveIntensity = rawData.hasOpenPBR
+      ? Math.max(0, scalar('emission_luminance', 0.0))
+      : 1.0;
+    // MeshPhysicalMaterial has no equivalent for rotating an authored tangent
+    // frame independently of UVs. Retain it for diagnostics/custom shaders.
+    material.userData.nextTangentRotation = scalar('tangent_rotation', 0.0);
+  }
   material.userData.nextTexturePaths = paths;
   material.userData.nextTextureMetadata = src.textureMetadata || entry.textureMetadata || {};
   material.userData.nextMaterialXJson = src.materialXJson || '';
@@ -739,7 +941,6 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     roughness: src.roughness ?? null,
     opacity: src.opacity ?? null
   };
-  const rawData = normalizeNextMaterialData(src, paths);
   material.userData.rawData = rawData;
   material.userData.typeInfo = {
     hasOpenPBR: !!rawData.hasOpenPBR,
@@ -782,9 +983,13 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     // retains that colorspace, so consult it before PreviewSurface metadata.
     const authored = graphSpec?.colorspace || openPBRParam?.colorspace ||
       meta?.sourceColorSpace || meta?.colorspace || '';
+    const colorTransform = textureColorTransform(
+      authored, 'lin_rec709_scene', meta);
     textureManager.queueTexture(
       material, mapProperty, adapter, assetPath,
-      textureColorRole(mapProperty, authored), meta, graphSpec?.ops);
+      colorTransform?.colorRole || textureColorRole(mapProperty, authored),
+      meta, graphSpec?.ops,
+      colorTransform);
   };
   queue('map', paths.baseColor);
   queue('normalMap', paths.normal);
@@ -1349,7 +1554,11 @@ export function readNextSceneMeta(usd) {
   return {
     upAxis: md.upAxis || 'Y',
     metersPerUnit: (typeof md.metersPerUnit === 'number' && md.metersPerUnit > 0)
-      ? md.metersPerUnit : 1.0
+      ? md.metersPerUnit : 1.0,
+    renderSettingsPrimPath: md.renderSettingsPrimPath || '',
+    workingColorSpace: md.workingColorSpace || 'lin_rec709_scene',
+    workingToDisplayLinear: Array.isArray(md.workingToDisplayLinear)
+      ? md.workingToDisplayLinear : [1, 0, 0, 0, 1, 0, 0, 0, 1]
   };
 }
 

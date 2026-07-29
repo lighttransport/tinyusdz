@@ -6,6 +6,10 @@ import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { LoaderUtils } from "three"
 import { convertOpenPBRToMeshPhysicalMaterialLoaded } from './TinyUSDZMaterialX.js';
 import { decodeEXR as decodeEXRWithFallback } from './EXRDecoder.js';
+import {
+    installTextureColorTransform,
+    textureColorTransform
+} from './ColorSpaceUtils.js';
 
 /**
  * TextureLoadingManager - Manages delayed/progressive texture loading.
@@ -171,10 +175,18 @@ class TextureLoadingManager {
                 const texture = await promise;
 
                 if (texture && !this.aborted) {
-                    TinyUSDZLoaderUtils.applyTextureMapDefaults(texture, mapProperty);
+                    const colorMetadata = TinyUSDZLoaderUtils.textureColorMetadata(
+                        textureId, usdScene);
+                    const authoredColorSpace = TinyUSDZLoaderUtils.textureSourceColorSpace(
+                        textureId, usdScene, colorMetadata);
+                    TinyUSDZLoaderUtils.applyTextureMapDefaults(
+                        texture, mapProperty, authoredColorSpace, colorMetadata);
                     for (const binding of task.bindings) {
                         const { material, options: bindingOptions } = binding;
                         material[mapProperty] = texture;
+                        installTextureColorTransform(material, mapProperty,
+                            textureColorTransform(authoredColorSpace,
+                                'lin_rec709_scene', colorMetadata));
 
                         // Apply special options (e.g., normal map scale)
                         if (bindingOptions.normalScale !== undefined && mapProperty === 'normalMap' && material.normalScale) {
@@ -1001,9 +1013,14 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return `${role}:${JSON.stringify(signature)}`;
     }
 
-    static applyTextureMapDefaults(texture, mapProperty) {
+    static applyTextureMapDefaults(texture, mapProperty, authoredColorSpace = '',
+        colorMetadata = null) {
         if (!texture) return texture;
-        const isColor = this.textureColorRole(mapProperty) === 'color';
+        const transform = textureColorTransform(
+            authoredColorSpace, 'lin_rec709_scene', colorMetadata);
+        const isColor = transform
+            ? transform.colorRole === 'color'
+            : this.textureColorRole(mapProperty) === 'color';
         texture.colorSpace = isColor
             ? THREE.SRGBColorSpace
             : THREE.NoColorSpace;
@@ -1017,6 +1034,26 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return texture;
     }
 
+    static textureColorMetadata(textureId, usdScene) {
+        if (textureId === undefined || textureId === null || textureId < 0 ||
+            !usdScene || typeof usdScene.getTexture !== 'function') return null;
+        try {
+            const texture = usdScene.getTexture(textureId);
+            if (!texture || texture.textureImageId === undefined ||
+                typeof usdScene.getImageCopy !== 'function') return null;
+            return usdScene.getImageCopy(texture.textureImageId) || null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    static textureSourceColorSpace(textureId, usdScene, image = null) {
+        image = image || this.textureColorMetadata(textureId, usdScene);
+        const resolved = image?.sourceColorSpaceName;
+        if (resolved && resolved !== 'auto') return resolved;
+        return image?.usdColorSpace || image?.colorSpace || '';
+    }
+
     static createDefaultMaterial() {
         return new THREE.MeshPhysicalMaterial({
             color: new THREE.Color(0.18, 0.18, 0.18),
@@ -1027,6 +1064,17 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             depthTest: true,
             side: THREE.FrontSide
         });
+    }
+
+    static workingColorToDisplayLinear(rgb, usdScene) {
+        if (!Array.isArray(rgb)) return rgb;
+        const metadata = usdScene && typeof usdScene.getSceneMetadata === 'function'
+            ? usdScene.getSceneMetadata() : null;
+        const m = metadata?.workingToDisplayLinear;
+        if (!m || m.length !== 9) return rgb;
+        return [m[0] * rgb[0] + m[1] * rgb[1] + m[2] * rgb[2],
+            m[3] * rgb[0] + m[4] * rgb[1] + m[5] * rgb[2],
+            m[6] * rgb[0] + m[7] * rgb[1] + m[8] * rgb[2]];
     }
 
     static textureSignature(textureId, usdScene, textureSignatureCache = null) {
@@ -1267,8 +1315,16 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     textureInfo.materialName = materialName;
                 }
                 this.getTextureFromUSD(usdScene, textureId, mapProperty).then((texture) => {
-                    this.applyTextureMapDefaults(texture, mapProperty);
+                    const colorMetadata = this.textureColorMetadata(
+                        textureId, usdScene);
+                    const authoredColorSpace = this.textureSourceColorSpace(
+                        textureId, usdScene, colorMetadata);
+                    this.applyTextureMapDefaults(texture, mapProperty,
+                        authoredColorSpace, colorMetadata);
                     material[mapProperty] = texture;
+                    installTextureColorTransform(material, mapProperty,
+                        textureColorTransform(authoredColorSpace,
+                            'lin_rec709_scene', colorMetadata));
                     material.needsUpdate = true;
                 }).catch((err) => {
                     // Deduplicate: scenes can reference the same missing/failing
@@ -1305,7 +1361,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Diffuse color and texture
         material.color = new THREE.Color(0.18, 0.18, 0.18);
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'diffuseColor')) {
-            const color = usdMaterial.diffuseColor;
+            const color = this.workingColorToDisplayLinear(
+                usdMaterial.diffuseColor, usdScene);
             material.color = new THREE.Color(color[0], color[1], color[2]);
         }
 
@@ -1340,7 +1397,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         if (material.useSpecularWorkflow) {
             material.specularColor = new THREE.Color(0.0, 0.0, 0.0);
             if (Object.prototype.hasOwnProperty.call(usdMaterial, 'specularColor')) {
-                const color = usdMaterial.specularColor;
+                const color = this.workingColorToDisplayLinear(
+                    usdMaterial.specularColor, usdScene);
                 material.specularColor = new THREE.Color(color[0], color[1], color[2]);
             }
             if (Object.prototype.hasOwnProperty.call(usdMaterial, 'specularColorTextureId')) {
@@ -1367,7 +1425,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Emissive
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'emissiveColor')) {
-            const color = usdMaterial.emissiveColor;
+            const color = this.workingColorToDisplayLinear(
+                usdMaterial.emissiveColor, usdScene);
             material.emissive = new THREE.Color(color[0], color[1], color[2]);
         }
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'emissiveColorTextureId')) {

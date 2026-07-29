@@ -36,7 +36,7 @@
         1
       ],
       "displacement": 0,
-      "occlusion": 0
+      "occlusion": 1
     },
     "openPBR": {
       "type": "OpenPBRSurfaceShader",
@@ -350,6 +350,7 @@
         "version": "1.39",
         "nodegraph": {
           "name": "NodeGraphs",
+          "inputs": [],
           "nodes": [
             {
               "name": "node",

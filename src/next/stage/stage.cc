@@ -680,6 +680,8 @@ void Stage::UpdateMetaFromRootLayer() {
   meta_.colorManagementSystem = lm.colorManagementSystem;
   meta_.colorConfiguration_set = lm.colorConfiguration_set;
   meta_.colorManagementSystem_set = lm.colorManagementSystem_set;
+  meta_.renderSettingsPrimPath = lm.renderSettingsPrimPath;
+  meta_.renderSettingsPrimPath_set = lm.renderSettingsPrimPath_set;
   meta_.doc = lm.doc;
   meta_.comment = lm.comment;
   meta_.owner = lm.owner;

@@ -11,6 +11,46 @@ assert.equal(TinyUSDZLoaderUtils.calculateDomeLightIntensity({ intensity: 1 }), 
 assert.equal(TinyUSDZLoaderUtils.calculateDomeLightIntensity({ intensity: 1, exposure: 0 }), 1);
 assert.equal(TinyUSDZLoaderUtils.calculateDomeLightIntensity({ intensity: 1, exposure: 2 }), 4);
 
+{
+  const texture = new THREE.Texture();
+  TinyUSDZLoaderUtils.applyTextureMapDefaults(texture, 'map', 'lin_ap1_scene');
+  assert.equal(texture.colorSpace, THREE.NoColorSpace);
+  TinyUSDZLoaderUtils.applyTextureMapDefaults(texture, 'map',
+    'srgb_p3d65_scene');
+  assert.equal(texture.colorSpace, THREE.SRGBColorSpace);
+  const scene = {
+    getTexture: () => ({ textureImageId: 7 }),
+    getImageCopy: () => ({ usdColorSpace: 'lin_acescg', colorSpace: 'lin_srgb' })
+  };
+  assert.equal(TinyUSDZLoaderUtils.textureSourceColorSpace(0, scene),
+    'lin_acescg');
+  const customMetadata = {
+    sourceColorSpaceName: 'studio_ap0',
+    usdColorSpace: 'custom',
+    colorTransformValid: true,
+    colorTransformApplied: false,
+    colorTransformBypass: false,
+    sourceColorIsData: false,
+    sourceGamma: 1,
+    sourceLinearBias: 0,
+    sourceToDisplayLinear: [
+      2.521686, -1.134130, -0.387556,
+      -0.276480, 1.372719, -0.096239,
+      -0.015378, -0.152975, 1.168353
+    ]
+  };
+  const customScene = {
+    getTexture: () => ({ textureImageId: 8 }),
+    getImageCopy: () => customMetadata
+  };
+  assert.equal(TinyUSDZLoaderUtils.textureSourceColorSpace(0, customScene),
+    'studio_ap0');
+  TinyUSDZLoaderUtils.applyTextureMapDefaults(
+    texture, 'map', 'studio_ap0', customMetadata);
+  assert.equal(texture.colorSpace, THREE.NoColorSpace);
+  texture.dispose();
+}
+
 function makeMesh(materialId) {
   return {
     primName: `Mesh_${materialId}`,

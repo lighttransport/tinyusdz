@@ -39,7 +39,9 @@ import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
 import { parseUSDZEntries } from './src/usdzconvert.js';
 import {
 	buildNextThreeNode,
+	findNextArchiveEntry,
 	isNextScene,
+	nextArchiveUDIMLayout,
 	nextCountsFromScene,
 	readNextSceneMeta
 } from 'tinyusdz/NextRenderSceneUtils.js';
@@ -82,6 +84,9 @@ let conversionWorkerSeq = 0;
 let conversionWorkerActiveBytes = null;
 const CONVERSION_WORKER_URL = new URL('./material-dedup.worker.js', import.meta.url);
 const IMAGE_RE = /\.(png|jpg|jpeg|webp|gif|bmp|tif|tiff|exr|hdr|avif)$/i;
+const WORKER_PREFETCH_IMAGE_RE = /\.(png|jpg|jpeg|webp|gif)$/i;
+const MAX_WORKER_PREFETCH_IMAGES = 128;
+const MAX_WORKER_PREFETCH_BYTES = 256 * 1024 * 1024;
 let activeProgress = {
 	visible: false,
 	stage: '',
@@ -745,6 +750,92 @@ function collectWorkerTexturePaths(meshes) {
 	return paths;
 }
 
+function isWorkerUDIMPath(path) {
+	return /<UDIM>|%04d|%\(UDIM\)d/.test(String(path || ''));
+}
+
+function workerUDIMTilePath(pattern, id) {
+	return String(pattern || '')
+		.replace('<UDIM>', String(id))
+		.replace('%04d', String(id))
+		.replace('%(UDIM)d', String(id));
+}
+
+function workerTextureMimeType(path) {
+	const lower = String(path || '').toLowerCase();
+	if (/\.jpe?g$/.test(lower)) return 'image/jpeg';
+	if (/\.png$/.test(lower)) return 'image/png';
+	if (/\.webp$/.test(lower)) return 'image/webp';
+	if (/\.gif$/.test(lower)) return 'image/gif';
+	return '';
+}
+
+function startWorkerTexturePrefetch(sourceBytes) {
+	const prefetched = new Map();
+	const state = { aborted: false };
+	const jobs = [];
+	prefetched.abort = () => {
+		state.aborted = true;
+		for (const job of jobs) job.resolveImage(null);
+		prefetched.clear();
+	};
+	const source = sourceBytes instanceof Uint8Array
+		? sourceBytes
+		: new Uint8Array(sourceBytes);
+	if (source.length < 4 || source[0] !== 0x50 || source[1] !== 0x4b ||
+			source[2] !== 0x03 || source[3] !== 0x04) {
+		return prefetched;
+	}
+
+	let images;
+	try {
+		images = parseUSDZEntries(source).filter((entry) =>
+			WORKER_PREFETCH_IMAGE_RE.test(entry.name));
+	} catch (_) {
+		return prefetched;
+	}
+	const totalBytes = images.reduce((sum, entry) => sum + entry.data.byteLength, 0);
+	// Bound speculative work for texture-heavy production scenes. Those keep
+	// the established demand-driven loader; medium archives can overlap image
+	// decode with the otherwise independent WASM conversion worker.
+	if (images.length === 0 || images.length > MAX_WORKER_PREFETCH_IMAGES ||
+			totalBytes > MAX_WORKER_PREFETCH_BYTES) {
+		return prefetched;
+	}
+
+	for (const entry of images) {
+		const key = normWorkerTexturePath(entry.name);
+		let resolveImage;
+		const promise = new Promise((resolve) => { resolveImage = resolve; });
+		prefetched.set(key, promise);
+		jobs.push({ entry, resolveImage });
+	}
+	let nextJob = 0;
+	const loadOne = async () => {
+		while (!state.aborted && nextJob < jobs.length) {
+			const { entry, resolveImage } = jobs[nextJob++];
+			const mimeType = workerTextureMimeType(entry.name);
+			const blob = new Blob([entry.data], mimeType ? { type: mimeType } : undefined);
+			const url = URL.createObjectURL(blob);
+			try {
+				const image = await new THREE.ImageLoader().loadAsync(url);
+				resolveImage(state.aborted ? null : { image, flipY: true });
+			} catch (_) {
+				// Demand loading below remains the authoritative error path.
+				resolveImage(null);
+			} finally {
+				URL.revokeObjectURL(url);
+			}
+		}
+	};
+	const cores = Number.isFinite(navigator.hardwareConcurrency)
+		? navigator.hardwareConcurrency
+		: 8;
+	const concurrency = Math.max(4, Math.min(16, cores || 8, jobs.length));
+	void Promise.all(Array.from({ length: concurrency }, loadOne));
+	return prefetched;
+}
+
 function makeWorkerArchiveEntries(sourceBytes, meshes) {
 	const archiveEntries = new Map();
 	if (!sourceBytes) return archiveEntries;
@@ -763,6 +854,14 @@ function makeWorkerArchiveEntries(sourceBytes, meshes) {
 		if (referenced.has(key)) return true;
 		for (const ref of referenced) {
 			if (key.endsWith('/' + ref) || ref.endsWith('/' + key)) return true;
+			if (isWorkerUDIMPath(ref)) {
+				for (let id = 1001; id <= 1100; ++id) {
+					const tile = normWorkerTexturePath(workerUDIMTilePath(ref, id));
+					if (key === tile || key.endsWith('/' + tile) || tile.endsWith('/' + key)) {
+						return true;
+					}
+				}
+			}
 		}
 		return false;
 	};
@@ -780,7 +879,7 @@ function makeWorkerArchiveEntries(sourceBytes, meshes) {
 }
 
 function makeWorkerNextScene(payload = {}, sourceBytes = null,
-		includeArchiveEntries = false) {
+		includeArchiveEntries = false, prefetchedImages = null) {
 	const meshes = payload.meshes || [];
 	const archiveEntries = includeArchiveEntries
 		? makeWorkerArchiveEntries(sourceBytes, meshes)
@@ -816,17 +915,25 @@ function makeWorkerNextScene(payload = {}, sourceBytes = null,
 		materialKeys,
 		textureKeys,
 		getArchiveTextureBytes(path) {
+			return findNextArchiveEntry(archiveEntries, path)?.bytes || null;
+		},
+		getArchiveUDIMTiles(path) {
+			return nextArchiveUDIMLayout(archiveEntries, path);
+		},
+		getPrefetchedArchiveImage(path) {
 			const key = normWorkerTexturePath(path);
-			if (archiveEntries.has(key)) return archiveEntries.get(key);
-			for (const [candidate, bytes] of archiveEntries) {
+			if (!prefetchedImages) return null;
+			if (prefetchedImages.has(key)) return prefetchedImages.get(key);
+			for (const [candidate, image] of prefetchedImages) {
 				if (candidate.endsWith('/' + key) || key.endsWith('/' + candidate)) {
-					return bytes;
+					return image;
 				}
 			}
 			return null;
 		},
 		releaseArchiveTextureBytes() {
 			archiveEntries.clear();
+			if (prefetchedImages) prefetchedImages.abort();
 		},
 		releaseBuildData() {
 			this.meshes = [];
@@ -854,6 +961,7 @@ function makeWorkerNextScene(payload = {}, sourceBytes = null,
 		end() {
 			this.meshes = [];
 			archiveEntries.clear();
+			if (prefetchedImages) prefetchedImages.abort();
 			materialKeys.clear();
 			textureKeys.clear();
 		}
@@ -864,9 +972,35 @@ function normWorkerTexturePath(path) {
 	return String(path || '').replace(/^[./]+/, '');
 }
 
+function workerConversionInput(bytes, name) {
+	const source = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+	if (source.length < 4 || source[0] !== 0x50 || source[1] !== 0x4b ||
+			source[2] !== 0x03 || source[3] !== 0x04) {
+		return { bytes: source, name };
+	}
+
+	try {
+		const entries = parseUSDZEntries(source);
+		const layers = entries.filter((entry) => /\.(usd|usda|usdc)$/i.test(entry.name));
+		// A self-contained USDZ does not need its image payload in the conversion
+		// worker. Transfer only the root layer; the original archive remains on
+		// the main thread for lazy texture loading. Multi-layer packages may use
+		// references/value clips, so retain the full archive for those.
+		if (layers.length === 1) {
+			return { bytes: layers[0].data, name: layers[0].name };
+		}
+	} catch (_) {
+		// Let TinyUSDZLoader produce the authoritative malformed-archive error.
+	}
+	return { bytes: source, name };
+}
+
 function parseNextInWorker(bytes, name, options, progressOptions, report) {
 	const worker = getConversionWorker();
 	const id = ++conversionWorkerSeq;
+	const prefetchedImages = options.returnArchiveEntries
+		? startWorkerTexturePrefetch(bytes)
+		: null;
 	const transfer = [];
 	const message = {
 		type: 'convert',
@@ -877,7 +1011,9 @@ function parseNextInWorker(bytes, name, options, progressOptions, report) {
 		progressRange: Number.isFinite(progressOptions.range) ? progressOptions.range : 100
 	};
 	if (conversionWorkerActiveBytes !== bytes) {
-		const copy = bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes).slice();
+		const input = workerConversionInput(bytes, name);
+		const copy = input.bytes.slice();
+		message.name = input.name;
 		message.bytes = copy.buffer;
 		transfer.push(copy.buffer);
 		conversionWorkerActiveBytes = bytes;
@@ -889,6 +1025,7 @@ function parseNextInWorker(bytes, name, options, progressOptions, report) {
 		};
 		const onError = (event) => {
 			cleanup();
+			if (prefetchedImages) prefetchedImages.abort();
 			conversionWorkerActiveBytes = null;
 			const error = new Error(event.message || 'conversion worker failed');
 			error.workerStartupError = true;
@@ -902,9 +1039,10 @@ function parseNextInWorker(bytes, name, options, progressOptions, report) {
 			} else if (msg.type === 'result') {
 				cleanup();
 				resolve(makeWorkerNextScene(msg.payload, bytes,
-					!!options.returnArchiveEntries));
+					!!options.returnArchiveEntries, prefetchedImages));
 			} else if (msg.type === 'error') {
 				cleanup();
+				if (prefetchedImages) prefetchedImages.abort();
 				const error = new Error(msg.error || 'worker conversion failed');
 				error.workerConversionError = true;
 				reject(error);

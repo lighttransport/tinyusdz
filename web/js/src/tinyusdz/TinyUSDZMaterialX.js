@@ -151,9 +151,17 @@ function getTextureId(param) {
 /**
  * Create THREE.Color from RGB array with optional color space handling
  */
-function createColor(rgb, colorSpace = 'srgb') {
+function createColor(rgb, colorSpace = 'srgb', usdScene = null) {
     if (!rgb || !Array.isArray(rgb)) return new THREE.Color(1, 1, 1);
-    const color = new THREE.Color(rgb[0], rgb[1], rgb[2]);
+    const metadata = usdScene && typeof usdScene.getSceneMetadata === 'function'
+        ? usdScene.getSceneMetadata() : null;
+    const m = metadata?.workingToDisplayLinear;
+    const converted = m && m.length === 9
+        ? [m[0] * rgb[0] + m[1] * rgb[1] + m[2] * rgb[2],
+            m[3] * rgb[0] + m[4] * rgb[1] + m[5] * rgb[2],
+            m[6] * rgb[0] + m[7] * rgb[1] + m[8] * rgb[2]]
+        : rgb;
+    const color = new THREE.Color(converted[0], converted[1], converted[2]);
     return color;
 }
 
@@ -664,7 +672,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
 
         // Apply scalar or color value
         if (mapping.type === 'color' && Array.isArray(value)) {
-            material[mapping.property] = createColor(value);
+            material[mapping.property] = createColor(value, 'linear', usdScene);
         } else if (mapping.type === 'scalar' && typeof value === 'number') {
             material[mapping.property] = value;
         }
@@ -745,7 +753,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
         if (flat.emission_color !== undefined) {
             const emissionColor = extractValue(flat.emission_color);
             if (emissionColor && Array.isArray(emissionColor)) {
-                material.emissive = createColor(emissionColor);
+                material.emissive = createColor(emissionColor, 'linear', usdScene);
             }
             // Load emission texture
             if (!skipTextures && usdScene && hasTexture(flat.emission_color)) {
@@ -851,7 +859,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
         if (pbr.emission) {
             const emissionColor = extractValue(pbr.emission.emission_color);
             if (emissionColor && Array.isArray(emissionColor)) {
-                material.emissive = createColor(emissionColor);
+                material.emissive = createColor(emissionColor, 'linear', usdScene);
             }
             if (!skipTextures && usdScene && hasTexture(pbr.emission.emission_color)) {
                 const textureId = getTextureId(pbr.emission.emission_color);
@@ -971,7 +979,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
 
         // Apply scalar or color value immediately
         if (mapping.type === 'color' && Array.isArray(value)) {
-            material[mapping.property] = createColor(value);
+            material[mapping.property] = createColor(value, 'linear', usdScene);
         } else if (mapping.type === 'scalar' && typeof value === 'number') {
             material[mapping.property] = value;
         }
@@ -1047,7 +1055,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
         if (flat.emission_color !== undefined) {
             const emissionColor = extractValue(flat.emission_color);
             if (emissionColor && Array.isArray(emissionColor)) {
-                material.emissive = createColor(emissionColor);
+                material.emissive = createColor(emissionColor, 'linear', usdScene);
             }
             // Load emission texture (fire-and-forget)
             if (!skipTextures && usdScene && hasTexture(flat.emission_color)) {
@@ -1150,7 +1158,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
         if (pbr.emission) {
             const emissionColor = extractValue(pbr.emission.emission_color);
             if (emissionColor && Array.isArray(emissionColor)) {
-                material.emissive = createColor(emissionColor);
+                material.emissive = createColor(emissionColor, 'linear', usdScene);
             }
             if (!skipTextures && usdScene && hasTexture(pbr.emission.emission_color)) {
                 loadTextureFromUSD(usdScene, getTextureId(pbr.emission.emission_color), textureCache).then((texture) => {

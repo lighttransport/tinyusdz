@@ -358,6 +358,14 @@ enum class MaterialTag {
   Masked,       // Alpha cutout (opacityThreshold > 0, UsdPreviewSurface only)
 };
 
+struct RenderMaterialXConfig {
+  bool authored{false};
+  std::string version{"1.38"};
+  std::string name_space;
+  std::string colorspace{"lin_rec709"};
+  std::string source_uri;
+};
+
 // Material + Shader
 // Supports dual material representation: UsdPreviewSurface and/or MaterialX OpenPBR
 struct RenderMaterial {
@@ -370,6 +378,7 @@ struct RenderMaterial {
   // Use nonstd::optional to allow either/both/none
   nonstd::optional<PreviewSurfaceShader> surfaceShader;  // UsdPreviewSurface
   nonstd::optional<OpenPBRSurfaceShader> openPBRShader;  // MaterialX OpenPBR
+  RenderMaterialXConfig materialXConfig;
 
   // Displacement shader output.
   // For UsdPreviewSurface, displacement is part of surfaceShader.
