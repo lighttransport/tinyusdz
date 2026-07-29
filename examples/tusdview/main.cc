@@ -268,6 +268,8 @@ int main(int argc, char** argv) {
   bool textureBudgetExplicit = false;
   bool textureCompressionExplicit = false;
   bool mipsExplicit = false;
+  std::optional<size_t> ptexInitialFaces;
+  std::optional<size_t> ptexCacheMB;
   std::optional<int> subdivisionLevel;
   bool subdivisionAuto = false;
   bool asyncTextureDecode = false;
@@ -520,6 +522,14 @@ int main(int argc, char** argv) {
       textureBudgetExplicit = true;
     } else if (std::strcmp(argv[i], "--async-texture-decode") == 0) {
       asyncTextureDecode = true;
+    } else if (std::strcmp(argv[i], "--ptex-initial-faces") == 0 &&
+               (i + 1) < argc) {
+      ptexInitialFaces = static_cast<size_t>(
+          std::max(0, std::atoi(argv[++i])));
+    } else if (std::strcmp(argv[i], "--ptex-cache-mb") == 0 &&
+               (i + 1) < argc) {
+      ptexCacheMB = static_cast<size_t>(
+          std::clamp(std::atoi(argv[++i]), 1, 4096));
     } else if (std::strcmp(argv[i], "--subdivision-level") == 0 && (i + 1) < argc) {
       subdivisionLevel = std::max(0, std::atoi(argv[++i]));
     } else if (std::strncmp(argv[i], "--subdivision-level=", 20) == 0) {
@@ -878,6 +888,10 @@ int main(int argc, char** argv) {
           "for viewer uploads (0 = unlimited).\n"
           "  --async-texture-decode  Decode ordinary filesystem textures from "
           "camera-prioritized background workers.\n"
+          "  --ptex-initial-faces N  Decode only the first N Ptex faces for the "
+          "startup atlas (0 = all), then refine visible meshes.\n"
+          "  --ptex-cache-mb N  Mutable physical page cache per Ptex texture "
+          "(1..4096 MiB).\n"
           "  --curve-preview-prims N  Convert at most N Curves prims (0 = all; "
           "interactive ALab default 64).\n"
           "  --curve-preview-strands N  Retain at most N complete curve strands "
@@ -1228,6 +1242,9 @@ int main(int argc, char** argv) {
       lo.maxCurveStrands = 100000;
       lo.asyncTextureDecode = true;
     }
+    if (ptexInitialFaces) lo.ptexInitialFaces = *ptexInitialFaces;
+    if (ptexCacheMB)
+      lo.ptexPhysicalCacheBytes = *ptexCacheMB * 1024ull * 1024ull;
     if (asyncTextureDecode) lo.asyncTextureDecode = true;
     if (curvePreviewPrims) lo.maxCurvePrims = *curvePreviewPrims;
     if (curvePreviewStrands) lo.maxCurveStrands = *curvePreviewStrands;

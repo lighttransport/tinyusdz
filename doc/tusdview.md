@@ -703,6 +703,11 @@ the alpha-only face table is patched after each upload. Reusing a slot first
 redirects its old face to the permanent coarse fallback, so every face remains
 valid during streaming and eviction.
 
+Use `--ptex-initial-faces N` to control startup work (`0` restores eager/all
+faces) and `--ptex-cache-mb N` to set the per-texture physical cache. Explicit
+values override large-scene profile defaults, making production captures and
+memory-limit rehearsals reproducible.
+
 Raster demand is camera-driven at mesh granularity. A mesh contributes its
 source-face ids only after its world bounds enter the current view; off-camera
 meshes retain their delta-varint-compressed ids and cause no Ptex decode. A
