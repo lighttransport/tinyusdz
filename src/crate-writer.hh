@@ -748,7 +748,8 @@ private:
   /// Creates specs with SpecType::VariantSet for variant selection metadata
   bool ConvertVariantSetToFields(const std::string& variantset_name,
                                  const VariantSet& variantset,
-                                 const Path& parent_path, std::string* err);
+                                 const Path& parent_path, std::string* err,
+                                 int depth = 0);
 
   /// Convert a VariantSetSpec to separate specs (Layer/PrimSpec variant data)
   bool ConvertVariantSetSpecToFields(const std::string& variantset_name,
@@ -760,7 +761,9 @@ private:
   bool ConvertVariantToFields(const std::string& variant_name,
                               const Variant& variant,
                               const Path& variantset_path,
-                              const std::string& variantset_name, std::string* err);
+                              const std::string& variantset_name,
+                              std::string* err,
+                              int depth = 0);
 
   /// Convert a Variant PrimSpec to separate spec (Layer/PrimSpec variant data)
   bool ConvertVariantSpecToFields(const std::string& variant_name,
@@ -778,6 +781,9 @@ private:
   crate::ValueRep PackValue(const crate::CrateValue& value, std::string* err);
 
   /// Pack a TokenVector metadata value into ValueRep.
+  /// primChildren / properties / variantSetChildren / variantChildren must be
+  /// the dedicated uncompressed TokenVector crate type (CrateDataTypeId 41):
+  /// as a Token[] array pxr's hierarchy traversal cannot use them.
   crate::ValueRep PackTokenVectorValue(const std::vector<value::token>& tokens,
                                        std::string* err);
 
@@ -918,6 +924,12 @@ private:
   IndexType GetOrCreateImpl(const KeyType& key, MapType& map, VecType& vec) {
     auto it = map.find(key);
     if (it != map.end()) return it->second;
+    // Guard against uint32_t index overflow: the writer's memory budget
+    // (~32GB) effectively prevents reaching 4B entries, but check explicitly
+    // for defense-in-depth.
+    if (vec.size() >= static_cast<size_t>((std::numeric_limits<uint32_t>::max)())) {
+      return IndexType(~0u);  // sentinel: caller should treat as error
+    }
     IndexType idx(static_cast<uint32_t>(vec.size()));
     vec.push_back(key);
     map[key] = idx;
@@ -1093,6 +1105,11 @@ private:
   // ValueRep adopt the element type from the packed literals rather than a
   // separately-tracked id (robust even for ref-only edits with empty literals).
   int32_t last_array_edit_elem_type_ = 0;
+
+  // Recursion depth guard for nested dictionary/CustomDataType serialization.
+  // Incremented at entry to WriteValueBody's dict/CustomDataType branches,
+  // decremented via RAII scope guard. Fails with an error when exceeding 64.
+  int dict_nesting_depth_ = 0;
 
   // Phase 5: Value deduplication with NaN-aware hashing.
   // Follows OpenUSD TfHash pattern: +0.0 and -0.0 hash identically;

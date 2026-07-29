@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <unordered_set>
@@ -19,9 +20,12 @@
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
+#include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
 #include "tydra/next/urdf-to-usd.hh"
+#include "next/pcp/cache.hh"
 #include "next/reader/usda-reader.hh"
+#include "next/schema/geom-xform.hh"
 #include "next/schema/usd-skel.hh"
 
 using namespace tinyusdz::tydra::next;
@@ -133,6 +137,9 @@ void TestChunkedArrayAllocFailure() {
   assert(!arr.reserve(impossible));
   float dummy = 0.0f;
   assert(arr.append(&dummy, 0));  // zero-count append is a no-op success
+  assert(!arr.append(&dummy, (std::numeric_limits<size_t>::max)()));
+  assert(arr.size() == 10);
+  assert(!arr.append(nullptr, 1));
 
   // Small growth still works after a failed attempt (failure is latched for
   // inspection but does not poison the array).
@@ -346,6 +353,32 @@ def Xform "World"
   assert(std::abs(focal_length - 50.0f) < 0.001f);
 
   std::cout << "  Scene Access: PASSED\n";
+}
+
+void TestDeepSceneAccess() {
+  std::cout << "Testing deep Scene Access traversal...\n";
+
+  // USDA input is depth-limited, but public builders can create deeper valid
+  // layers. This used to recurse once per prim in GetDescendants and could
+  // exhaust the comparatively small WASM stack.
+  constexpr size_t kDepth = 8192;
+  StageBuilder builder;
+  LayerBuilder& layer = builder.GetLayerBuilder();
+  for (size_t i = 0; i < kDepth; ++i) {
+    layer.begin_prim("P", "Xform");
+  }
+  Stage stage = builder.Build();
+  UsdPrim root = stage.GetRootPrims().front();
+  const std::vector<UsdPrim> descendants = GetDescendants(root);
+  assert(descendants.size() == kDepth - 1);
+
+  size_t traversed = 0;
+  stage.Traverse([&](const UsdPrim&) {
+    ++traversed;
+    return true;
+  });
+  assert(traversed == kDepth);
+  std::cout << "  Deep Scene Access: PASSED\n";
 }
 
 void TestRenderExtract() {
@@ -581,6 +614,13 @@ def Xform "World"
     {
         double shutter:open = -0.25
         double shutter:close = 0.25
+        float focusDistance = 12
+        float fStop = 2
+        float exposure = 1.5
+        float horizontalApertureOffset = 0.25
+        float verticalApertureOffset = -0.5
+        uniform token stereoRole = "left"
+        float4[] clippingPlanes = [(1, 0, 0, -3), (0, 1, 0, -4)]
         float focalLength.timeSamples = {
             0: 35,
             1: 50,
@@ -887,6 +927,18 @@ def Xform "World"
   assert(result.scene.cameras.size() == 1);
   assert(std::fabs(result.scene.cameras[0].shutter_open + 0.25) < 0.001);
   assert(std::fabs(result.scene.cameras[0].shutter_close - 0.25) < 0.001);
+  assert(std::fabs(result.scene.cameras[0].focus_distance - 12.0f) < 0.001f);
+  assert(std::fabs(result.scene.cameras[0].fstop - 2.0f) < 0.001f);
+  assert(std::fabs(result.scene.cameras[0].exposure - 1.5f) < 0.001f);
+  assert(std::fabs(result.scene.cameras[0].horizontal_aperture_offset - 0.25f) <
+         0.001f);
+  assert(std::fabs(result.scene.cameras[0].vertical_aperture_offset + 0.5f) <
+         0.001f);
+  assert(result.scene.cameras[0].stereo_role ==
+         RenderCamera::StereoRole::Left);
+  assert(result.scene.cameras[0].clipping_planes.size() == 2);
+  assert(std::fabs(result.scene.cameras[0].clipping_planes[1].w + 4.0f) <
+         0.001f);
 
   assert(result.scene.skeletons.size() == 1);
   assert(result.scene.skeletons[0].joints.size() == 2);
@@ -1249,7 +1301,23 @@ def Xform "World"
             float inputs:metalness = 0.75
             float inputs:roughness = 0.27
             float inputs:opacity = 0.4
+            float inputs:transmission_weight.connect = </World/M_Hide/AdvancedTex.outputs:r>
+            color3f inputs:transmission_color = (0.9, 0.8, 0.7)
+            float inputs:subsurface_weight = 0.31
+            color3f inputs:subsurface_color = (0.7, 0.5, 0.3)
+            float inputs:sheen_weight = 0.41
+            float inputs:specular_anisotropy = 0.51
+            float inputs:thin_film_weight = 0.61
+            float inputs:transmission_dispersion = 0.71
             token outputs:out
+        }
+
+        def Shader "AdvancedTex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @missing-advanced.png@
+            token inputs:sourceColorSpace = "raw"
+            float outputs:r
         }
     }
 
@@ -1328,6 +1396,34 @@ def Xform "World"
   assert(std::abs(mat.preview_surface->opacity.value.x - 0.4f) < 0.001f);
   assert(std::abs(mat.preview_surface->emissive_color.value.x - 0.03f) < 0.001f);
   assert(mat.alpha_mode == RenderMaterial::AlphaMode::Blend);
+
+  // Unsupported advanced lobes are not evaluated as PreviewSurface, but every
+  // successfully extracted constant/connection remains available to a future
+  // evaluator. In particular, a texture connection must survive as a texture
+  // id rather than collapsing to its fallback scalar.
+  const auto retained = [&mat](const char* name)
+      -> const RetainedMaterialParam* {
+    for (const RetainedMaterialParam& param : mat.retained_params) {
+      if (param.name == name) return &param;
+    }
+    return nullptr;
+  };
+  const RetainedMaterialParam* transmission =
+      retained("transmission_weight");
+  assert(transmission && transmission->value.texture_id >= 0);
+  assert(static_cast<size_t>(transmission->value.texture_id) <
+         result.scene.textures.size());
+  assert(retained("transmission_color"));
+  assert(std::abs(retained("transmission_color")->value.value.x - 0.9f) <
+         0.001f);
+  assert(retained("subsurface_weight"));
+  assert(std::abs(retained("subsurface_weight")->value.value.x - 0.31f) <
+         0.001f);
+  assert(retained("subsurface_color"));
+  assert(retained("sheen_weight"));
+  assert(retained("specular_anisotropy"));
+  assert(retained("thin_film_weight"));
+  assert(retained("transmission_dispersion"));
 
   auto subset_mat_it = result.scene.material_by_path.find("/World/M_Subset");
   assert(subset_mat_it != result.scene.material_by_path.end());
@@ -1879,6 +1975,164 @@ def Xform "World"
          "./textures/albedo.png");
 
   std::cout << "  MaterialX utilities: PASSED\n";
+}
+
+void TestExternalMaterialXImageGraph() {
+  std::cout << "Testing external MaterialX image graph composition...\n";
+
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path fixture =
+      fs::absolute("next_tydra_external_mtlx_test", ec);
+  assert(!ec);
+  fs::remove_all(fixture, ec);
+  ec.clear();
+  const fs::path materials = fixture / "materials";
+  fs::create_directories(materials, ec);
+  assert(!ec);
+
+  const char* root = R"(#usda 1.0
+(
+    defaultPrim = "Scene"
+)
+def Xform "Scene"
+{
+    def "Mat" (
+        references = @materials/test.mtlx@</MaterialX/Materials/M_Test>
+    )
+    {
+    }
+}
+)";
+  const char* mtlx = R"(<?xml version="1.0"?>
+<materialx version="1.38" colorspace="lin_rec709">
+  <nodegraph name="NG_Test">
+    <image name="base_image" type="color3">
+      <input name="file" type="filename" value="tex/base.jpg"
+             colorspace="srgb_texture" />
+    </image>
+    <image name="metal_image" type="float">
+      <input name="file" type="filename" value="tex/metal.jpg" />
+    </image>
+    <image name="rough_image" type="float">
+      <input name="file" type="filename" value="tex/rough.jpg" />
+    </image>
+    <image name="normal_image" type="vector3">
+      <input name="file" type="filename" value="tex/normal.jpg" />
+    </image>
+    <normalmap name="normal_map" type="vector3">
+      <input name="in" type="vector3" nodename="normal_image" />
+    </normalmap>
+    <output name="base" type="color3" nodename="base_image" />
+    <output name="metal" type="float" nodename="metal_image" />
+    <output name="rough" type="float" nodename="rough_image" />
+    <output name="normal" type="vector3" nodename="normal_map" />
+  </nodegraph>
+  <standard_surface name="Test" type="surfaceshader">
+    <input name="base_color" type="color3"
+           nodegraph="NG_Test" output="base" />
+    <input name="metalness" type="float"
+           nodegraph="NG_Test" output="metal" />
+    <input name="specular_roughness" type="float"
+           nodegraph="NG_Test" output="rough" />
+    <input name="normal" type="vector3"
+           nodegraph="NG_Test" output="normal" />
+  </standard_surface>
+  <surfacematerial name="M_Test" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Test" />
+  </surfacematerial>
+</materialx>
+)";
+
+  {
+    std::ofstream ofs(fixture / "root.usda",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << root;
+    assert(ofs.good());
+  }
+  {
+    std::ofstream ofs(materials / "test.mtlx",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << mtlx;
+    assert(ofs.good());
+  }
+
+  Stage stage;
+  AssetResolver resolver;
+  std::string warn;
+  std::string err;
+  assert(pcp::ComposeStageFromFile((fixture / "root.usda").string(), resolver,
+                                   &stage, {}, &warn, &err));
+
+  const UsdPrim material = stage.GetPrimAtPath("/Scene/Mat");
+  assert(material.IsValid());
+  const std::vector<Path>* surface =
+      material.GetRelationship("mtlx:surface:source");
+  assert(surface && surface->size() == 1);
+  assert((*surface)[0].str() == "/Scene/Mat/Test");
+
+  const UsdPrim shader = stage.GetPrimAtPath("/Scene/Mat/Test");
+  assert(shader.IsValid());
+  const std::vector<Path>* base =
+      shader.GetPrimSpec()->connection("inputs:base_color");
+  assert(base && base->size() == 1);
+  assert((*base)[0].str() == "/Scene/Mat/NG_Test.outputs:base");
+
+  const UsdPrim graph = stage.GetPrimAtPath("/Scene/Mat/NG_Test");
+  assert(graph.IsValid());
+  const std::vector<Path>* graph_base =
+      graph.GetPrimSpec()->connection("outputs:base");
+  assert(graph_base && graph_base->size() == 1);
+  assert((*graph_base)[0].str() ==
+         "/Scene/Mat/NG_Test/base_image.outputs:out");
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+  config.asset_base_dir = fixture.string();
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(stage);
+  assert(result.success);
+  assert(result.scene.images.size() == 4);
+  assert(result.scene.textures.size() == 4);
+
+  const auto material_it = result.scene.material_by_path.find("/Scene/Mat");
+  assert(material_it != result.scene.material_by_path.end());
+  const RenderMaterial& render_material =
+      result.scene.materials[static_cast<size_t>(material_it->second)];
+  assert(render_material.shader_type ==
+         RenderMaterial::ShaderType::OpenPBR);
+  assert(render_material.openpbr);
+  assert(render_material.openpbr->base_color.is_texture());
+  assert(render_material.openpbr->base_metalness.is_texture());
+  assert(render_material.openpbr->specular_roughness.is_texture());
+  assert(render_material.openpbr->normal.is_texture());
+  assert(!render_material.default_fallback);
+
+  auto texture_for = [&](const char* asset) -> const RenderTexture& {
+    for (const RenderTexture& texture : result.scene.textures) {
+      if (texture.asset_path == asset) return texture;
+    }
+    assert(false);
+    return result.scene.textures[0];
+  };
+  const RenderTexture& base_texture = texture_for("tex/base.jpg");
+  const RenderTexture& metal_texture = texture_for("tex/metal.jpg");
+  const RenderTexture& rough_texture = texture_for("tex/rough.jpg");
+  const RenderTexture& normal_texture = texture_for("tex/normal.jpg");
+  assert(base_texture.output_channel == RenderTexture::Channel::RGB);
+  assert(metal_texture.output_channel == RenderTexture::Channel::R);
+  assert(rough_texture.output_channel == RenderTexture::Channel::R);
+  assert(normal_texture.output_channel == RenderTexture::Channel::RGB);
+
+  const std::string expected_prefix = (materials / "tex").string() + "/";
+  for (const TextureImage& image : result.scene.images) {
+    assert(image.resolved_path.rfind(expected_prefix, 0) == 0);
+  }
+
+  fs::remove_all(fixture, ec);
+  std::cout << "  External MaterialX image graph: PASSED\n";
 }
 
 //
@@ -3141,6 +3395,45 @@ def Xform "World"
   assert(std::fabs(m[10] - 1.0) < 0.001);
 
   std::cout << "  Half-precision xformOps: PASSED\n";
+}
+
+// Regression: compound Euler rotations must retain USD's authored axis order.
+// Reversing it displaces multi-axis, non-uniformly scaled decal meshes from the
+// surfaces they were authored against.
+void TestCompoundRotationTransformParity() {
+  std::cout << "Testing compound-rotation transform parity...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "Decal" {
+    double3 xformOp:translate = (287.6815490722656, 33.344390869140625, 8.929546356201172)
+    float3 xformOp:rotateXYZ = (89.99446, 7.4118885e-13, -179.99998)
+    float3 xformOp:scale = (3.2136297, 1.6068149, 0.87708235)
+    uniform token[] xformOpOrder = [
+        "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"
+    ]
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+  UsdPrim decal = lr.stage.GetPrimAtPath("/Decal");
+  assert(decal.IsValid());
+
+  double extracted[16];
+  double schema[16];
+  assert(ComputeLocalTransform(decal, extracted, 0.0));
+  assert(UsdGeomXform(decal).ComputeLocalTransform(schema));
+  for (int i = 0; i < 16; ++i) {
+    assert(std::fabs(extracted[i] - schema[i]) < 1.0e-5);
+  }
+  assert(std::fabs(extracted[0] + 3.2136297) < 1.0e-5);
+  assert(std::fabs(extracted[6] - 1.6068149) < 1.0e-5);
+  assert(std::fabs(extracted[9] - 0.87708235) < 1.0e-5);
+  assert(std::fabs(extracted[12] - 287.6815490722656) < 1.0e-9);
+  assert(std::fabs(extracted[13] - 33.344390869140625) < 1.0e-9);
+  assert(std::fabs(extracted[14] - 8.929546356201172) < 1.0e-9);
+
+  std::cout << "  Compound-rotation transform parity: PASSED\n";
 }
 
 // Multi-skeleton joint-order remap: two skeletons whose SkelAnimations
@@ -4679,6 +4972,177 @@ def Xform "World"
   std::cout << "  P2 audit fixes: PASSED\n";
 }
 
+class RecordingSceneUpdateSink final : public SceneUpdateSink {
+ public:
+  bool BeginUpdate(uint64_t base, uint64_t next, bool full) override {
+    base_revision = base;
+    new_revision = next;
+    full_resync = full;
+    mesh_upserts = 0;
+    removes = 0;
+    mesh_removes = 0;
+    return true;
+  }
+  bool Remove(const RemovedRenderResource& removed) override {
+    ++removes;
+    if (removed.kind == RenderResourceKind::Mesh) ++mesh_removes;
+    return true;
+  }
+  bool UpsertMesh(RenderId id, const RenderMesh& mesh) override {
+    ++mesh_upserts;
+    mesh_ids[mesh.prim_path] = id;
+    if (!mesh.points.empty()) last_mesh_x = mesh.points[0];
+    return true;
+  }
+  bool EndUpdate() override { return true; }
+
+  uint64_t base_revision = 0;
+  uint64_t new_revision = 0;
+  bool full_resync = false;
+  size_t mesh_upserts = 0;
+  size_t removes = 0;
+  size_t mesh_removes = 0;
+  float last_mesh_x = 0.0f;
+  std::map<std::string, RenderId> mesh_ids;
+};
+
+void TestIncrementalRenderSession() {
+  std::cout << "Testing incremental RenderSession...\n";
+  auto source = [](float x) {
+    std::string text = "#usda 1.0\ndef Mesh \"M\" {\n";
+    text += "    int[] faceVertexCounts = [3]\n";
+    text += "    int[] faceVertexIndices = [0, 1, 2]\n";
+    text += "    point3f[] points = [(" + std::to_string(x);
+    text += ", 0, 0), (1, 0, 0), (0, 1, 0)]\n}\n";
+    return text;
+  };
+
+  LoadResult first = LoadUSDAFromString(source(0.0f));
+  assert(first.success);
+  StageSnapshot first_snapshot;
+  first_snapshot.revision = 1;
+  first_snapshot.stage.reset(new Stage(std::move(first.stage)));
+
+  RecordingSceneUpdateSink sink;
+  RenderSession render_session;
+  RenderUpdateResult initial =
+      render_session.Initialize(first_snapshot, &sink);
+  if (!initial) std::cerr << "RenderSession init failed: " << initial.error << "\n";
+  assert(initial);
+  assert(sink.full_resync);
+  assert(sink.mesh_upserts == 1);
+  const RenderId mesh_id = sink.mesh_ids.at("/M");
+  assert(std::fabs(sink.last_mesh_x) < 1.0e-6f);
+
+  LoadResult second = LoadUSDAFromString(source(2.0f));
+  assert(second.success);
+  StageSnapshot second_snapshot;
+  second_snapshot.revision = 2;
+  second_snapshot.stage.reset(new Stage(std::move(second.stage)));
+  StageChangeSet changes;
+  changes.base_revision = 1;
+  changes.new_revision = 2;
+  PrimChange mesh_change;
+  mesh_change.path = Path("/M");
+  mesh_change.flags = StageChangeFlag::Topology;
+  mesh_change.properties.push_back("points");
+  changes.prims.push_back(std::move(mesh_change));
+  RenderUpdateResult update =
+      render_session.Apply(second_snapshot, changes, &sink);
+  assert(update);
+  assert(!sink.full_resync);
+  assert(sink.mesh_upserts == 1);
+  assert(sink.mesh_ids.at("/M") == mesh_id);
+  assert(std::fabs(sink.last_mesh_x - 2.0f) < 1.0e-6f);
+  assert(sink.removes == 0);
+  assert(render_session.revision() == second_snapshot.revision);
+
+  LoadResult third = LoadUSDAFromString("#usda 1.0\n");
+  assert(third.success);
+  StageSnapshot third_snapshot;
+  third_snapshot.revision = 3;
+  third_snapshot.stage.reset(new Stage(std::move(third.stage)));
+  StageChangeSet removal;
+  removal.base_revision = 2;
+  removal.new_revision = 3;
+  PrimChange removed_mesh;
+  removed_mesh.path = Path("/M");
+  removed_mesh.flags = StageChangeFlag::Resync;
+  removal.prims.push_back(std::move(removed_mesh));
+  RenderUpdateResult removed =
+      render_session.Apply(third_snapshot, removal, &sink);
+  assert(removed);
+  assert(!sink.full_resync);
+  assert(sink.mesh_upserts == 0);
+  assert(sink.mesh_removes == 1);
+  assert(sink.removes >= 1);
+  assert(removed.remove_count == sink.removes);
+  assert(render_session.revision() == 3);
+
+  StageSnapshot no_op_snapshot;
+  no_op_snapshot.revision = 4;
+  no_op_snapshot.stage = third_snapshot.stage;
+  StageChangeSet no_op;
+  no_op.base_revision = 3;
+  no_op.new_revision = 4;
+  RenderUpdateResult no_op_update =
+      render_session.Apply(no_op_snapshot, no_op, &sink);
+  assert(no_op_update);
+  assert(!sink.full_resync);
+  assert(no_op_update.upsert_count == 0);
+  assert(no_op_update.remove_count == 0);
+  assert(sink.mesh_upserts == 0);
+  assert(sink.removes == 0);
+  assert(render_session.revision() == 4);
+  std::cout << "  incremental RenderSession: PASSED\n";
+}
+
+void TestPtexMaterialInterfaceAsset() {
+  std::cout << "Testing Ptex material-interface asset forwarding...\n";
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Material "Mat"
+    {
+        asset inputs:surfaceMap = @maps/surface.ptx@
+        token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/Mat/Ptex.outputs:resultRGB>
+            token outputs:surface
+        }
+        def Shader "Ptex"
+        {
+            uniform token info:id = "HwPtexTexture"
+            asset inputs:file.connect = </World/Mat.inputs:surfaceMap>
+            color3f outputs:resultRGB
+        }
+    }
+    def Mesh "Quad"
+    {
+        point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0,1,2,3]
+        rel material:binding = </World/Mat>
+    }
+}
+)";
+
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  ConverterConfig config;
+  config.material.load_textures = false;
+  RenderSceneConverter converter(config);
+  ConvertResult converted = converter.Convert(loaded.stage);
+  assert(converted.success);
+  assert(converted.scene.textures.size() == 1);
+  assert(converted.scene.textures[0].asset_path == "maps/surface.ptx");
+  assert(converted.scene.images.size() == 1);
+  assert(converted.scene.images[0].resolved_path == "maps/surface.ptx");
+  std::cout << "  Ptex material-interface asset forwarding: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -4700,6 +5164,7 @@ int main() {
 
   // Scene Access tests
   TestSceneAccess();
+  TestDeepSceneAccess();
   TestRenderExtract();
 
   std::cout << "\n";
@@ -4715,6 +5180,7 @@ int main() {
   TestRenderConverterPointInstancerInvalidArrays();
   TestRenderConverterPointInstancerDuplicateMeshMetadata();
   TestMaterialXUtilities();
+  TestExternalMaterialXImageGraph();
   TestAudit2026_07();
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();
@@ -4722,6 +5188,7 @@ int main() {
   TestValueClipBaking();
   TestMeshParityCleanups();
   TestHalfPrecisionXformOps();
+  TestCompoundRotationTransformParity();
   TestMultiSkeletonJointRemap();
   TestLightLinkingAndDomeFormat();
   TestStandardSurfaceNoRecursion();
@@ -4732,6 +5199,8 @@ int main() {
   TestAuditReviewFixes();
   TestP2AuditFixes();
   TestLegacyParityExtraction();
+  TestIncrementalRenderSession();
+  TestPtexMaterialInterfaceAsset();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

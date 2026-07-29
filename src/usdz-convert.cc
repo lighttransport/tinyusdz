@@ -2,6 +2,7 @@
 // Copyright 2024 - Present, Light Transport Entertainment, Inc.
 
 #include "usdz-convert.hh"
+#include "safe-arithmetic.hh"
 
 #include <algorithm>
 #include <chrono>
@@ -496,8 +497,13 @@ void CollectLayerTextureAssetPaths(const Layer &layer,
 
 std::string TexturePathKey(std::string path) {
   std::replace(path.begin(), path.end(), '\\', '/');
-  while (path.rfind("./", 0) == 0) {
-    path = path.substr(2);
+  // Strip leading "./" prefix repetitions in a single pass.
+  size_t skip = 0;
+  while (skip + 1 < path.size() && path[skip] == '.' && path[skip + 1] == '/') {
+    skip += 2;
+  }
+  if (skip > 0) {
+    path = path.substr(skip);
   }
   return io::NormalizePath(path);
 }
@@ -879,7 +885,9 @@ bool ReadAssetBytes(AssetResolutionResolver &resolver, const std::string &assetP
     }
     return false;
   }
-  out->assign(asset.data(), asset.data() + asset.size());
+  // The resolver has already materialized the asset in a vector. Move it into
+  // the job instead of copying it and briefly holding two full texture buffers.
+  *out = asset.release_buffer();
   return true;
 }
 
@@ -911,15 +919,18 @@ bool ReadAssetBytesWithBase(AssetResolutionResolver &resolver,
 // On success fills `out_bytes` and `out_ext` (lowercase, no dot) and sets the
 // resize/reencode flags. Falls back to passthrough on decode failure.
 // Bounded producer/consumer pool for texture jobs. `produce(job)` runs on the
-// calling thread (asset resolvers are not thread-safe) at most 2*num_threads
-// jobs ahead of the workers' `run(job)`, so peak memory holds a window of
-// in-flight source buffers instead of the whole texture set. Returns false
-// when `produce` reports a hard error (workers are drained first).
+// calling thread (asset resolvers are not thread-safe). Without a memory
+// budget it runs at most 2*num_threads jobs ahead; with a budget it permits at
+// most num_threads jobs in flight so prefetched source buffers do not consume
+// another full worker window. Returns false when `produce` reports a hard
+// error (workers are drained first).
 template <typename Job, typename ProduceFn, typename RunFn>
 bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
+                           size_t memory_budget_bytes,
                            const ProduceFn &produce, const RunFn &run) {
 #if !defined(TINYUSDZ_ENABLE_THREAD)
   (void)num_threads_option;
+  (void)memory_budget_bytes;
   for (Job &job : jobs) {
     if (!produce(job)) {
       return false;
@@ -934,6 +945,18 @@ bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
           : size_t((std::max)(1u, std::thread::hardware_concurrency()));
   num_threads = (std::min)(num_threads, jobs.size());
 
+  // Decoded RGBA pixels, resize scratch, encoder state, source bytes and output
+  // can coexist in a worker. Exact dimensions are intentionally unknown until
+  // decode, so use the same kind of conservative best-effort worker budgeting
+  // as the WASM/JS CLI. The default budget is zero and changes no behavior.
+  if (memory_budget_bytes > 0) {
+    constexpr size_t kEstimatedBytesPerWorker =
+        size_t(192) * 1024 * 1024;
+    const size_t budget_threads =
+        (std::max)(size_t{1}, memory_budget_bytes / kEstimatedBytesPerWorker);
+    num_threads = (std::min)(num_threads, budget_threads);
+  }
+
   if (num_threads <= 1) {
     for (Job &job : jobs) {
       if (!produce(job)) {
@@ -944,7 +967,12 @@ bool RunBoundedTextureJobs(std::vector<Job> &jobs, int num_threads_option,
     return true;
   }
 
-  const size_t window = num_threads * 2;
+  const size_t window =
+      memory_budget_bytes > 0
+          ? num_threads
+          : (num_threads > (std::numeric_limits<size_t>::max)() / 2
+                 ? (std::numeric_limits<size_t>::max)()
+                 : num_threads * 2);
   std::mutex mtx;
   std::condition_variable cv;
   size_t produced = 0;   // jobs whose bytes are ready
@@ -1114,8 +1142,17 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
     wopt.format = image::WriteImageFormat::JPEG;
     // JPEG cannot carry alpha; drop it.
     if (img.channels == 4) {
-      const size_t npix = size_t(img.width) * size_t(img.height);
-      if (img.data.size() < npix * 4) {
+      size_t npix;
+      if (!safe::mul(size_t(img.width), size_t(img.height), &npix)) {
+        if (warn) {
+          (*warn) += "Image dimensions too large for " + uri + ".\n";
+        }
+        *out_bytes = src_bytes;
+        *out_ext = src_ext_lower;
+        return true;
+      }
+      size_t npix4;
+      if (!safe::mul(npix, size_t(4), &npix4) || img.data.size() < npix4) {
         if (warn) {
           (*warn) += "Undersized image buffer for " + uri +
                      " - copying through unchanged.\n";
@@ -1131,7 +1168,16 @@ bool ProcessTexture(const std::vector<uint8_t> &src_bytes,
       rgb.bpp = 8;
       rgb.format = img.format;
       rgb.colorspace = img.colorspace;
-      rgb.data.resize(npix * 3);
+      size_t npix3;
+      if (!safe::mul(npix, size_t(3), &npix3)) {
+        if (warn) {
+          (*warn) += "Image dimensions too large for " + uri + ".\n";
+        }
+        *out_bytes = src_bytes;
+        *out_ext = src_ext_lower;
+        return true;
+      }
+      rgb.data.resize(npix3);
       for (size_t i = 0; i < npix; i++) {
         rgb.data[3 * i + 0] = img.data[4 * i + 0];
         rgb.data[3 * i + 1] = img.data[4 * i + 1];
@@ -1583,12 +1629,13 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
   }
 
   // Phase 2: bounded producer/consumer — the main thread reads asset bytes
-  // Phase 2: bounded producer/consumer — the main thread reads asset bytes
   // (the resolver is not thread-safe), workers decode/resize/encode; at most
-  // 2*num_threads source buffers are in flight.
+  // num_threads source buffers are in flight when a memory budget is set
+  // (2*num_threads otherwise).
   {
     auto run_job = [&options](TextureJob &job) {
       if (job.skipped) {
+        std::vector<uint8_t>().swap(job.src_bytes);
         return;
       }
       job.ok = ProcessTexture(job.src_bytes, job.src_ext, options,
@@ -1623,8 +1670,9 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
       return true;
     };
 
-    if (!RunBoundedTextureJobs(jobs, options.num_threads, produce_job,
-                               run_job)) {
+    if (!RunBoundedTextureJobs(jobs, options.num_threads,
+                               options.texture_memory_budget_bytes,
+                               produce_job, run_job)) {
       return false;
     }
   }
@@ -1662,8 +1710,13 @@ bool ConvertNonFlattenUSDZ(const UsdzConvertOptions &options,
     }
 
     std::string unique_name = archive_name;
+    constexpr uint32_t kMaxSuffix = 100000;
     uint32_t suffix = 1;
     while (assets.count(unique_name) && assets[unique_name] != job.out_bytes) {
+      if (suffix >= kMaxSuffix) {
+        unique_name = archive_name;
+        break;
+      }
       unique_name = MakeCollisionArchiveName(archive_name, suffix++);
     }
     archive_name = unique_name;
@@ -2231,10 +2284,12 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
 
   // Phase 2: bounded producer/consumer — the main thread reads asset bytes
   // (the resolver is not thread-safe), workers decode/resize/encode; at most
-  // 2*num_threads source buffers are in flight.
+  // num_threads source buffers are in flight when a memory budget is set
+  // (2*num_threads otherwise).
   {
     auto run_job = [&options](FlattenTextureJob &job) {
       if (!job.needs_process || job.skipped) {
+        std::vector<uint8_t>().swap(job.src_bytes);
         return;  // budget mode prefilled the result, or the read was skipped
       }
       job.ok = ProcessTexture(job.src_bytes, job.src_ext, options, job.orig,
@@ -2269,8 +2324,9 @@ bool Convert(const UsdzConvertOptions &options, UsdzConvertStats *stats,
       return true;
     };
 
-    if (!RunBoundedTextureJobs(texture_jobs, options.num_threads, produce_job,
-                               run_job)) {
+    if (!RunBoundedTextureJobs(texture_jobs, options.num_threads,
+                               options.texture_memory_budget_bytes,
+                               produce_job, run_job)) {
       return false;
     }
   }

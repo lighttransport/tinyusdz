@@ -217,6 +217,13 @@
     CrateTypeId crate_type = ToCrateTypeId(type_id);
     bool is_array = val.is_array();
 
+    // This writer emits the uint64 count-header array layout introduced in
+    // Crate 0.7. Upgrade an older requested version rather than stamping a
+    // pre-0.7 bootstrap onto incompatible array bytes.
+    if (is_array && required_version_minor_ < 7) {
+      required_version_minor_ = 7;
+    }
+
     // pxr-style write-version upgrade: timecode values require crate 0.9.
     if (type_id == TypeId::TimeCode && required_version_minor_ < 9) {
       required_version_minor_ = 9;

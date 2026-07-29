@@ -191,6 +191,8 @@ void test_stage_traversal() {
       lb.end_prim();
     lb.end_prim();
   lb.end_prim();
+  lb.begin_prim("G", "Xform");
+  lb.end_prim();
 
   Stage stage = builder.Build();
 
@@ -200,7 +202,7 @@ void test_stage_traversal() {
     count++;
     return true;
   });
-  assert(count == 6 && "should traverse 6 prims");
+  assert(count == 7 && "should traverse 7 prims");
 
   // Collect prim names in order
   std::vector<std::string> names;
@@ -208,7 +210,7 @@ void test_stage_traversal() {
     names.push_back(prim.GetName());
     return true;
   });
-  assert(names.size() == 6 && "should have 6 names");
+  assert(names.size() == 7 && "should have 7 names");
   assert(names[0] == "A" && "first should be A");
   assert(names[1] == "B" && "second should be B");
   assert(names[2] == "C" && "third should be C");
@@ -226,7 +228,7 @@ void test_stage_traversal() {
   assert(meshes.size() == 3 && "should have 3 meshes");
 
   auto xforms = stage.GetPrimsOfType("Xform");
-  assert(xforms.size() == 3 && "should have 3 xforms");
+  assert(xforms.size() == 4 && "should have 4 xforms");
 
   std::cout << "  Stage traversal: PASSED" << std::endl;
 }

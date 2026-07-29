@@ -831,6 +831,32 @@ def Shader "S"
   }
 }
 
+void openpbr_geometry_connection_alias_test(void) {
+  const std::string usda = R"(#usda 1.0
+def Shader "S"
+{
+    uniform token info:id = "OpenPBRSurface"
+    normal3f inputs:geometry_normal.connect = </N.outputs:rgb>
+    vector3f inputs:geometry_tangent.connect = </T.outputs:rgb>
+    token outputs:surface
+}
+)";
+  Stage stage;
+  std::string warn, err;
+  TEST_CHECK(LoadUSDAFromMemory((const uint8_t *)usda.c_str(), usda.length(),
+                                "", &stage, &warn, &err));
+  const Prim *p = nullptr;
+  TEST_CHECK(stage.find_prim_at_path(Path("/S", ""), p, &err));
+  const Shader *shader = p ? p->data().as<Shader>() : nullptr;
+  const OpenPBRSurface *surface =
+      shader ? shader->value.as<OpenPBRSurface>() : nullptr;
+  TEST_CHECK(surface != nullptr);
+  if (surface) {
+    TEST_CHECK(surface->normal.get_connections().size() == 1);
+    TEST_CHECK(surface->tangent.get_connections().size() == 1);
+  }
+}
+
 // Main test runner
 void materialx_tests(void) {
   materialx_config_api_struct_test();

@@ -4,10 +4,12 @@
 #pragma once
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -17,6 +19,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "frame_packet.hh"
@@ -29,7 +32,9 @@
 #include "gui.hh"
 #include "load_control.hh"
 #include "parametric_tess.hh"
+#include "ptex_atlas.hh"
 #include "renderer.hh"
+#include "rt_camera.hh"
 #include "scene_loader.hh"
 #include "stream/stream_server.hh"
 #if defined(TUSDVIEW_HAVE_MCP)
@@ -58,7 +63,7 @@ class App
 {
  public:
   explicit App(Backend backend) : backend_(backend) {}
-  ~App();
+  ~App() override;
 
   // Optional render budget (for scripting/testing). maxTris==0 keeps the default.
   void setLoadBudget(std::size_t maxTris, double convertTimeBudgetSec) {
@@ -145,6 +150,7 @@ class App
   void setUseNextLoader(bool on) { useNextLoader_ = on; }
   void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
   void setShowGrid(bool on) { gui_.setShowGrid(on); }
+  void setShowSkeleton(bool on) { gui_.setShowSkeleton(on); }
   void setCamDolly(float f) { camDolly_ = f; }
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // --threaded: run GL rendering on a dedicated thread so the UI loop never blocks
@@ -172,10 +178,24 @@ class App
   void setHeadless(bool on) { headless_ = on; }
   // --cuda: trace the screenshot with the CUDA BVH ray tracer (cuew runtime).
   void setCudaRt(bool on) { cudaRt_ = on; }
+  void setCudaCacheDir(const std::string& path) {
+    cudaTracer_.setCacheDirectory(path);
+  }
   // --hip: trace the screenshot with the HIP/ROCm BVH ray tracer (hipew runtime).
   void setHipRt(bool on) { hipRt_ = on; }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
+  // Write a stable machine-readable summary when run() exits.
+  void setRenderReport(const std::string& path) { renderReportPath_ = path; }
+  void setCheckpointOutput(int every, const std::string& pattern) {
+    checkpointEvery_ = every > 0 ? every : 0;
+    checkpointPattern_ = pattern;
+  }
+  // Name of the resolved large-scene production profile (off/auto/island/etc.).
+  // Kept in the report so captures are reproducible without parsing logs.
+  void setLargeSceneProfile(const std::string& profile) {
+    largeSceneProfile_ = profile;
+  }
   // --max-instances N: cap the CUDA/HIP 2-level-BVH instance count (0 = no cap).
   void setRtMaxInstances(size_t n) { rtMaxInstances_ = n; }
   // --lod-stream: view-dependent district LOD pre-pass (needs --next). Promotes
@@ -185,7 +205,10 @@ class App
   void setLodMaxVramGiB(double g) { lodMaxVramGiB_ = g; }
   // --camera <name>: frame the viewer on a named USD Camera (either loader) instead
   // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
-  void setCameraName(const std::string& n) { cameraName_ = n; }
+  void setCameraName(const std::string& n) {
+    cameraName_ = n;
+    loadOpts_.viewCamera = n;
+  }
   void setCameraConform(CameraConform conform) { camera_.setConform(conform); }
   void setViewDirection(float x, float y, float z) {
     viewDir_[0] = x; viewDir_[1] = y; viewDir_[2] = z;
@@ -265,11 +288,15 @@ class App
   bool initImGui(std::string* err);
   void getRequestedWindowSize(int* width, int* height) const;
   void openFileDialog();
+  void writeRenderReport(const std::string& scenePath, int exitCode) const;
 
   // Synchronous load (used for headless --frames runs so screenshots are
   // deterministic) and the async path (keeps the UI responsive).
   void loadFileBlocking(const std::string& path);
   void startLoadAsync(const std::string& path);
+  void resetTextureResidency();
+  void updateTextureResidency();
+  std::vector<int> selectedTextureSlots() const;
   // Record a successfully-opened scene at the front of the recent list (dedup,
   // capped), refresh the menu, and persist to the config path.
   void addRecentScene(const std::string& path);
@@ -281,6 +308,21 @@ class App
   void applyLoaded(bool ok, bool progressive,
                    bool alreadyUploaded = false);  // upload + bind on main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
+  bool stepPtexResidency(double deadlineMs);
+  struct PtexDecodeResult {
+    size_t texture{0};
+    uint32_t face{0};
+    light3d::Image page;
+    DrawPtexFaceRectCPU rect;
+    std::string error;
+    bool ok{false};
+  };
+  bool finishPtexDecode(bool wait, bool discard);
+  void clearPtexDecode();
+  bool collectPtexRequests(
+      const DrawMeshCPU& mesh,
+      const std::vector<uint32_t>* sourceFaces = nullptr);
+  void updatePtexResidency();
   void drainProgressiveLoad();   // consume loader-produced meshes on context thread
   void ensureWireAuxReady();     // make resident wire buffers complete atomically
   // Static shaded previews keep diagnostic topology in a delta-varint stream
@@ -362,6 +404,9 @@ class App
   // Persistent next document: owns the composed stage, resolver, and PCP cache.
   std::shared_ptr<tinyusdz::next::StageSession> nextSession_;
   std::shared_ptr<tinyusdz::next::StageSession> pendingNextSession_;
+  // Immutable published stage used by the render/UI thread while a shared
+  // StageSession recomposes on the loader thread.
+  std::shared_ptr<const tinyusdz::next::Stage> nextStageSnapshot_;
   bool hasNextMorph_{false};   // any --next draw mesh carries GPU morph channels
   float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
   OrbitCamera camera_;
@@ -380,6 +425,13 @@ class App
   int windowWidth_{0};
   int windowHeight_{0};
   std::string windowShot_;
+  std::string renderReportPath_;
+  int checkpointEvery_{0};
+  std::string checkpointPattern_;
+  size_t checkpointCount_{0};
+  std::string largeSceneProfile_ = "off";
+  int reportCaptureWidth_{0};
+  int reportCaptureHeight_{0};
   bool headless_{false};  // windowless offscreen rendering (Vulkan only)
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   std::string cameraName_;  // --camera: named USD camera to frame (--next path)
@@ -446,6 +498,7 @@ class App
   void markStreamActivity();
   HipRayTracer hipTracer_;
   int rtSamples_{1};      // --rt-samples: AA samples for the CUDA/HIP screenshot
+  RtCameraLens cameraLens_;
   size_t rtMaxInstances_{16000000};  // --max-instances: CUDA/HIP instance cap (0=off)
   bool lodStream_{false}; // --lod-stream: view-dependent district LOD pre-pass
   double lodMaxMemGiB_{0.0};   // --max-mem: host budget for --lod-stream (0=auto)
@@ -469,6 +522,44 @@ class App
   bool warnedMeshIndexMismatch_{false};
 
   // Async loading
+  enum class TextureResidencyState : uint8_t {
+    Unloaded,
+    Decoding,
+    CoarseResident,
+    FullResident,
+    Failed,
+  };
+  struct TextureResidencySlot {
+    TextureResidencyState state{TextureResidencyState::Unloaded};
+    std::chrono::steady_clock::time_point lastWanted{};
+    size_t residentBytes{0};
+    bool forceFull{false};
+    uint64_t generation{0};
+  };
+  struct TextureDecodeResult {
+    size_t slot{0};
+    bool full{false};
+    bool ok{false};
+    uint64_t generation{0};
+    DrawTextureCPU texture;
+  };
+  std::vector<TextureResidencySlot> textureResidency_;
+  // Compact scene-stable adjacency used by the per-frame camera policy. Avoids
+  // repeatedly expanding every DrawMaterialCPU texture field for every mesh.
+  std::vector<std::vector<int>> textureSlotsByMesh_;
+  std::vector<uint8_t> textureMarginVisible_;
+  std::array<float, 15> textureCameraSignature_{};
+  bool textureCameraSignatureValid_{false};
+  std::vector<std::future<TextureDecodeResult>> textureDecodeJobs_;
+  bool backgroundTextureRefinement_{true};
+  uint64_t textureDecodeRawBytes_{0};
+  uint64_t textureDecodeGpuBytes_{0};
+  uint64_t texturePeakResidentBytes_{0};
+  uint64_t textureCoarseUploads_{0};
+  uint64_t textureFullUploads_{0};
+  uint64_t textureDecodeFailures_{0};
+  uint64_t textureEvictions_{0};
+
   std::thread loadThread_;
   LoadControl loadCtrl_;
   std::atomic<bool> loadFinished_{false};
@@ -478,6 +569,7 @@ class App
   std::shared_ptr<ProgressiveSceneStream> loadStream_;
   bool streamLoadActive_{false};
   bool streamRendererBegun_{false};
+  bool streamPreviewActive_{false};
   bool streamCompleteSeen_{false};
   bool streamCameraFramed_{false};
   bool streamFirstUploadLogged_{false};
@@ -540,6 +632,24 @@ class App
   size_t nextAux_{0};
   size_t nextTex_{0};
   size_t nextVolume_{0};  // UsdVol volumes uploaded so far
+  size_t nextPtexTexture_{0};
+  std::vector<std::unique_ptr<PtexPhysicalPageCache>> ptexPhysicalCaches_;
+  // Parsed Ptex metadata is immutable and can be reused for every page. Keeping
+  // one reader per texture avoids reparsing large face/level tables for each
+  // 2 ms refinement slice.
+  std::vector<std::shared_ptr<tinyusdz::ptx::Reader>> ptexReaders_;
+  std::future<PtexDecodeResult> ptexDecodeFuture_;
+  bool ptexDecodeActive_{false};
+  uint64_t ptexAsyncJobsLaunched_{0};
+  uint64_t ptexAsyncJobsCompleted_{0};
+  std::vector<std::vector<uint32_t>> ptexRequestedFaces_;
+  std::vector<std::unordered_set<uint32_t>> ptexRequestedFaceSets_;
+  std::vector<size_t> ptexRequestCursors_;
+  // A raster mesh contributes Ptex pages only after its world bounds enter the
+  // current camera frustum. This remains false for off-camera meshes, avoiding
+  // the old full-scene request burst at admission time.
+  std::vector<uint8_t> ptexMeshRequested_;
+  std::vector<uint8_t> ptexMeshDemanded_;
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // Experimental threaded rendering. renderThreadActive_ is true only when

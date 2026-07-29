@@ -67,6 +67,49 @@ int main() {
               << std::endl;
   }
 
+  // Pre-0.7 compressed arrays use a 4-byte count header. The direct lazy-int
+  // stream printer must locate the following compressed-size and blob fields
+  // from the source version instead of assuming the modern 8-byte header.
+  {
+    const std::vector<int32_t> values = {4, -9, 17, 17, 1024, -2048};
+    std::vector<uint32_t> unsigned_values(values.size());
+    for (size_t i = 0; i < values.size(); ++i) {
+      unsigned_values[i] = static_cast<uint32_t>(values[i]);
+    }
+    const std::vector<uint8_t> delta =
+        EncodeDeltaU32(unsigned_values.data(), unsigned_values.size());
+    const CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
+    assert(cr.success && !cr.data.empty());
+
+    constexpr size_t kOffset = 16;
+    std::string bytes(kOffset, '\0');
+    const uint32_t count = static_cast<uint32_t>(values.size());
+    const uint64_t compressed_size = cr.data.size();
+    bytes.append(reinterpret_cast<const char*>(&count), sizeof(count));
+    bytes.append(reinterpret_cast<const char*>(&compressed_size),
+                 sizeof(compressed_size));
+    bytes.append(reinterpret_cast<const char*>(cr.data.data()), cr.data.size());
+
+    const ValueRep rep = ValueRep::Make(CrateTypeId::Int, kOffset,
+                                        /*is_array=*/true,
+                                        /*is_inlined=*/false,
+                                        /*is_compressed=*/true);
+    auto source =
+        CrateDataSource::Adopt(std::move(bytes), CrateVersion{0, 6, 0});
+    LazyArrayRef ref;
+    assert(ProbeArrayBlock(source, rep, 1024, &ref));
+    Value lazy = Value::MakeLazyArray(ref);
+    assert(lazy.is_lazy());
+
+    std::string actual;
+    StreamWriter writer(&actual);
+    PrintValue(writer, lazy);
+    assert(actual == PrintValue(Value::MakeIntArray(values)));
+    assert(lazy.is_lazy() && !lazy.is_dirty());
+    std::cout << "  pre-0.7 compressed lazy int stream prints correctly"
+              << std::endl;
+  }
+
   // ---- Build a stage with numeric POD arrays --------------------------------
   std::vector<float> points;        // 128 vec3f
   for (int i = 0; i < 128 * 3; i++) points.push_back(static_cast<float>(i) * 0.5f);
@@ -100,7 +143,8 @@ int main() {
   sb.SetDefaultPrim("Mesh1");
   LayerBuilder& lb = sb.GetLayerBuilder();
   lb.begin_prim("Mesh1", "Mesh");
-  lb.add_property("points", Value::MakeFloat3Array(points));
+  lb.add_property("points", Value::MakeFloatCompArray(
+                                std::vector<float>(points), TypeId::Point3f, 3));
   lb.add_property("faceVertexIndices", Value::MakeIntArray(indices));
   lb.add_property("primvars:ids", Value::MakeUIntArray(uids));
   lb.add_property("primvars:hashes", Value::MakeUInt64Array(hashes));
@@ -175,11 +219,13 @@ int main() {
   assert(v1_arr && *v1_arr == velocities1);
   std::cout << "  time-sampled array values came back lazy" << std::endl;
 
-  // ---- points: lazy Vec3f -> Float3 ----------------------------------------
+  // ---- points: lazy Vec3f -> declared Point3f role -------------------------
   const Value* pv = ps->property_value("points");
   assert(pv);
   assert(pv->is_array());
   assert(pv->is_lazy());                          // lazy BEFORE any access
+  assert(pv->type_id() == TypeId::Point3f);
+  assert(pv->lazy_ref() && pv->lazy_ref()->value_type == TypeId::Point3f);
   assert(!pv->is_dirty());
   assert(pv->array_size() == points.size() / 3);  // count without materializing
   std::cout << "  points came back lazy (count=" << pv->array_size() << ")" << std::endl;
@@ -359,6 +405,7 @@ int main() {
   // Materialize the original via accessor; verify contents byte-for-byte.
   const std::vector<float>* arr = pv->as_float_array();
   assert(arr);
+  assert(pv->type_id() == TypeId::Point3f);
   assert(arr->size() == points.size());
   for (size_t i = 0; i < points.size(); i++) assert((*arr)[i] == points[i]);
   assert(!pv->is_lazy());  // materialized after access

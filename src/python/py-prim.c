@@ -654,8 +654,13 @@ static PyObject* Attr_set_metadata(PyObject* self, PyObject* args) {
     status = tusd_attr_set_metadata(stage, prim_path_cstr(prim), name, key,
                                     TUSD_TYPE_BOOL, &b, 1);
   } else if (PyLong_Check(value)) {
-    int32_t i = (int32_t)PyLong_AsLong(value);
+    long v = PyLong_AsLong(value);
     if (PyErr_Occurred()) return NULL;
+    if (v < INT32_MIN || v > INT32_MAX) {
+      PyErr_SetString(PyExc_OverflowError, "value exceeds int32 range for metadata");
+      return NULL;
+    }
+    int32_t i = (int32_t)v;
     status = tusd_attr_set_metadata(stage, prim_path_cstr(prim), name, key,
                                     TUSD_TYPE_INT, &i, 1);
   } else if (PyFloat_Check(value)) {

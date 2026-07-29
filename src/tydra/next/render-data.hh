@@ -641,6 +641,10 @@ struct OpenPBRSurfaceShader {
   ShaderParam coat_ior = {-1, {1.5f, 0, 0, 0}};
   ShaderParam coat_anisotropy = {-1, {0, 0, 0, 0}};
   ShaderParam coat_roughness_anisotropy = {-1, {0, 0, 0, 0}};
+  // OpenPBR's independently authored coat-layer normal. Keep this separate
+  // from `normal`: a missing coat normal falls back to the surface normal in
+  // consumers, but an authored map must retain its own image/UV descriptor.
+  ShaderParam coat_normal = {-1, {0, 0, 1, 0}};
 
   // Sheen
   ShaderParam sheen_weight = {-1, {0, 0, 0, 0}};
@@ -686,6 +690,15 @@ struct MaterialDiagnostic {
   std::string message;
 };
 
+// Authored shader inputs retained when the surface terminal cannot be fully
+// evaluated. These values are intentionally neutral to current real-time
+// shading, but remain available to future evaluators and diagnostics.
+struct RetainedMaterialParam {
+  std::string shader;
+  std::string name;
+  ShaderParam value;
+};
+
 struct RenderMaterial {
   std::string name;
   std::string prim_path;
@@ -713,6 +726,7 @@ struct RenderMaterial {
   // degradation must look here rather than relying on the return value.
   bool default_fallback = false;
   std::vector<MaterialDiagnostic> diagnostics;
+  std::vector<RetainedMaterialParam> retained_params;
 
   // Shader data (one of these based on shader_type)
   std::unique_ptr<PreviewSurfaceShader> preview_surface;
@@ -828,6 +842,7 @@ struct RenderLight {
   float color_temperature = 6500.0f;
   float diffuse = 1.0f;
   float specular = 1.0f;
+  float shaping_cone_angle = 90.0f;
   float shaping_focus = 0.0f;
   Float3 shaping_focus_tint = {0, 0, 0};  // color3f per UsdLux ShapingAPI
   float shaping_cone_softness = 0.0f;
@@ -893,6 +908,8 @@ struct RenderCamera {
   float focal_length = 50.0f;        // mm
   float horizontal_aperture = 36.0f; // mm
   float vertical_aperture = 24.0f;   // mm
+  float horizontal_aperture_offset = 0.0f;
+  float vertical_aperture_offset = 0.0f;
 
   // Orthographic params
   float ortho_width = 10.0f;
@@ -902,8 +919,13 @@ struct RenderCamera {
   float far_clip = 10000.0f;
 
   // Depth of field / exposure
-  float focus_distance = 0.0f;  // 0 = no DoF
+  float focus_distance = 5.0f;
   float fstop = 0.0f;           // 0 = no DoF
+  float exposure = 0.0f;
+
+  enum class StereoRole : uint8_t { Mono = 0, Left, Right };
+  StereoRole stereo_role = StereoRole::Mono;
+  std::vector<Float4> clipping_planes;
 
   // Motion-blur shutter interval (UsdGeomCamera shutter:open/close), in
   // time-code offsets relative to the sample time.

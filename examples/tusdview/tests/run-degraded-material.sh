@@ -42,6 +42,7 @@ def Xform "World" {
         uniform token info:id = "SomeUnknownShaderType_xyz"
         color3f inputs:baseColor = (0.8, 0.1, 0.05)
         float inputs:roughness = 0.25
+        float inputs:transmission_weight = 0.2
         token outputs:surface
       }
     }
@@ -50,7 +51,7 @@ def Xform "World" {
 USDA
 
 RUN=()
-if command -v xvfb-run >/dev/null 2>&1; then RUN=(xvfb-run -a); fi
+if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then RUN=(xvfb-run -a); fi
 
 log="$("${RUN[@]}" "$TUSDVIEW" --headless --backend "$BACKEND" --frames 2 \
        --screenshot "$TMP_DIR/out.ppm" "$ASSET" 2>&1)"
@@ -70,6 +71,10 @@ fi
 # The degraded material must be reported in the structured load summary.
 if ! echo "$log" | grep -Eq "load summary:.*degraded_materials=[1-9]"; then
   echo "FAIL: degraded material was not reported in the load summary."
+  exit 1
+fi
+if ! echo "$log" | grep -Eq "recovered input\(s\)"; then
+  echo "FAIL: degraded-material recovery count was not reported."
   exit 1
 fi
 if ! echo "$log" | grep -Fq "/World/Mats/Broken/S" ||

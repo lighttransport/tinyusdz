@@ -112,6 +112,24 @@ bool ParsePrimLevel(const std::string& text, std::string* prim, int* level) {
   return !prim->empty();
 }
 
+bool ParseWindowSize(const char* text, int* width, int* height) {
+  if (!text || !width || !height) return false;
+  char* widthEnd = nullptr;
+  const long parsedWidth = std::strtol(text, &widthEnd, 10);
+  if (!widthEnd || widthEnd == text || *widthEnd != 'x') return false;
+  char* heightEnd = nullptr;
+  const long parsedHeight = std::strtol(widthEnd + 1, &heightEnd, 10);
+  if (!heightEnd || heightEnd == widthEnd + 1 || *heightEnd != '\0') return false;
+  constexpr long kMaxWindowDimension = 32768;
+  if (parsedWidth <= 0 || parsedWidth > kMaxWindowDimension ||
+      parsedHeight <= 0 || parsedHeight > kMaxWindowDimension) {
+    return false;
+  }
+  *width = static_cast<int>(parsedWidth);
+  *height = static_cast<int>(parsedHeight);
+  return true;
+}
+
 // Host memory the budget tree may plan against: MemAvailable, capped at the
 // 32 GiB the policy targets (planning against a 256 GiB workstation's full RAM
 // would size the stage/geometry limits far past anything sensible). Falls back
@@ -144,8 +162,14 @@ int main(int argc, char** argv) {
   std::optional<std::string> configPath;
   std::string file;
   std::string screenshot;
+  std::string renderReport;
+  int checkpointEvery = 0;
+  std::string checkpointPattern;
   std::string windowShot;
   int maxFrames = -1;
+  int windowWidth = 0;
+  int windowHeight = 0;
+  bool windowSizeExplicit = false;
   long long maxTris = 0;      // 0 = default budget
   double maxGpuMemGiB = 0.0;  // --max-gpu-mem: raster full-mesh VRAM cap (GiB)
   // --vram-budget: the ONE number the whole budget tree descends from. Left at 0
@@ -162,6 +186,11 @@ int main(int argc, char** argv) {
   float rasterLodFullPx = 0.0f; // 0 => keep App default
   float rasterLodCullPx = -1.0f;// <0 => keep App default
   LargeSceneProfile largeSceneProfile = LargeSceneProfile::Off;
+  tusdview::PreviewCacheMode previewCacheMode =
+      tusdview::PreviewCacheMode::Auto;
+  bool previewCacheExplicit = false;
+  std::string previewCacheDir;
+  double previewCacheMaxGiB = 8.0;
   bool maxTrisExplicit = false;
   bool maxGpuMemExplicit = false;
   bool maxDrawMeshesExplicit = false;
@@ -173,7 +202,6 @@ int main(int argc, char** argv) {
   bool rasterLodFullExplicit = false;
   bool rasterLodCullExplicit = false;
   bool useNextExplicit = false;
-  bool lodStreamExplicit = false;
   bool lodMaxMemExplicit = false;
   bool lodMaxVramExplicit = false;
   bool allowParentPathsExplicit = false;
@@ -191,12 +219,15 @@ int main(int argc, char** argv) {
   tusdview::RendererDevicePreference devicePreference;
   bool vkDeviceExplicit = false;
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
+  std::string cudaCacheDir;   // --cuda-cache-dir: override compiled PTX cache
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   int rtSamples = 1;          // --rt-samples: AA supersamples for the CUDA/HIP path
   long long rtMaxInstances = 16000000;  // --max-instances: CUDA/HIP instance cap (0=off)
   bool lodStream = false;     // --lod-stream: view-dependent district LOD (needs --next)
   double lodMaxMem = 0.0;     // --max-mem GiB: host budget for --lod-stream (0=auto)
   double lodMaxVram = 0.0;    // --max-vram GiB: GPU budget for --lod-stream (0=auto)
+  std::optional<size_t> curvePreviewPrims;
+  std::optional<size_t> curvePreviewStrands;
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
   bool wantMaterialId = false; // --material-id: start in material-id viz mode
   std::optional<tusdview::RenderMode> wantMode;  // --mode <name>: any render mode
@@ -214,6 +245,7 @@ int main(int argc, char** argv) {
   bool useNextLoader = true;              // next-core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
   bool showGrid = true;                    // --no-grid: deterministic clean capture
+  bool showSkeleton = true;                // --no-skeleton: hide skeleton helpers
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--next)
   tusdview::CameraConform cameraConform{tusdview::CameraConform::Fit};
@@ -224,12 +256,23 @@ int main(int argc, char** argv) {
   std::optional<bool> deferPayloads;      // --defer-payloads / --load-payloads
   bool deferReferences = false;           // --defer-references (explicit opt-in)
   bool allowParentPaths = true;           // USD layer-relative paths may use '..'.
+  // Bound the interactive viewer's default texture residency. Each of these
+  // defaults remains explicitly disableable by the command-line switches.
   tusdview::TextureRuntimeOptions textureOptions;
+  textureOptions.maxTextureSize = 4096;
+  textureOptions.compression = tusdview::TextureCompressionMode::Auto;
+  textureOptions.keepCompressed = true;
+  textureOptions.generateMips = true;
   bool domeIblExplicit = false;
   bool maxTextureSizeExplicit = false;
   bool textureBudgetExplicit = false;
+  bool textureCompressionExplicit = false;
+  bool mipsExplicit = false;
+  std::optional<size_t> ptexInitialFaces;
+  std::optional<size_t> ptexCacheMB;
   std::optional<int> subdivisionLevel;
   bool subdivisionAuto = false;
+  bool asyncTextureDecode = false;
   bool subdivisionAutoExplicit = false;
   int subdivisionAutoMaxLevel = 3;
   bool subdivisionAutoMaxExplicit = false;
@@ -272,8 +315,28 @@ int main(int argc, char** argv) {
       backendExplicit = true;
     } else if (std::strcmp(argv[i], "--frames") == 0 && (i + 1) < argc) {
       maxFrames = std::atoi(argv[++i]);
+    } else if (std::strcmp(argv[i], "--size") == 0) {
+      if ((i + 1) >= argc ||
+          !ParseWindowSize(argv[++i], &windowWidth, &windowHeight)) {
+        LOGE("--size must be WxH with dimensions in the range 1..32768");
+        return 1;
+      }
+      windowSizeExplicit = true;
     } else if (std::strcmp(argv[i], "--screenshot") == 0 && (i + 1) < argc) {
       screenshot = argv[++i];
+    } else if (std::strcmp(argv[i], "--render-report") == 0 &&
+               (i + 1) < argc) {
+      renderReport = argv[++i];
+    } else if (std::strcmp(argv[i], "--checkpoint-every") == 0 &&
+               (i + 1) < argc) {
+      checkpointEvery = std::atoi(argv[++i]);
+      if (checkpointEvery < 1) {
+        LOGE("--checkpoint-every must be at least 1");
+        return 1;
+      }
+    } else if (std::strcmp(argv[i], "--checkpoint-pattern") == 0 &&
+               (i + 1) < argc) {
+      checkpointPattern = argv[++i];
     } else if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
       maxTris = std::atoll(argv[++i]);
       maxTrisExplicit = true;
@@ -295,6 +358,9 @@ int main(int argc, char** argv) {
       robustFrame = false;
     } else if (std::strcmp(argv[i], "--rt-lod") == 0) {
       rtLod = true;
+      rtLodExplicit = true;
+    } else if (std::strcmp(argv[i], "--no-rt-lod") == 0) {
+      rtLod = false;
       rtLodExplicit = true;
     } else if (std::strcmp(argv[i], "--rt-lod-full-px") == 0 && (i + 1) < argc) {
       rtLodFullPx = static_cast<float>(std::atof(argv[++i]));
@@ -324,6 +390,36 @@ int main(int argc, char** argv) {
         LOGE("--large-scene-profile must be off, auto, caldera, island, or alab");
         return 1;
       }
+    } else if (std::strcmp(argv[i], "--preview-cache") == 0) {
+      if ((i + 1) >= argc) {
+        LOGE("--preview-cache requires auto, off, or refresh");
+        return 1;
+      }
+      const std::string mode = argv[++i];
+      if (mode == "auto") previewCacheMode = tusdview::PreviewCacheMode::Auto;
+      else if (mode == "off") previewCacheMode = tusdview::PreviewCacheMode::Off;
+      else if (mode == "refresh") previewCacheMode = tusdview::PreviewCacheMode::Refresh;
+      else { LOGE("--preview-cache must be auto, off, or refresh"); return 1; }
+      previewCacheExplicit = true;
+    } else if (std::strncmp(argv[i], "--preview-cache=", 16) == 0) {
+      const std::string mode = argv[i] + 16;
+      if (mode == "auto") previewCacheMode = tusdview::PreviewCacheMode::Auto;
+      else if (mode == "off") previewCacheMode = tusdview::PreviewCacheMode::Off;
+      else if (mode == "refresh") previewCacheMode = tusdview::PreviewCacheMode::Refresh;
+      else { LOGE("--preview-cache must be auto, off, or refresh"); return 1; }
+      previewCacheExplicit = true;
+    } else if (std::strcmp(argv[i], "--preview-cache-dir") == 0) {
+      if ((i + 1) >= argc || argv[i + 1][0] == '\0') {
+        LOGE("--preview-cache-dir requires a non-empty path");
+        return 1;
+      }
+      previewCacheDir = argv[++i];
+    } else if (std::strcmp(argv[i], "--preview-cache-max-gb") == 0) {
+      if ((i + 1) >= argc) {
+        LOGE("--preview-cache-max-gb requires a number");
+        return 1;
+      }
+      previewCacheMaxGiB = std::max(0.0, std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--compose-threads") == 0 && (i + 1) < argc) {
@@ -359,6 +455,8 @@ int main(int argc, char** argv) {
       noCull = true;
     } else if (std::strcmp(argv[i], "--no-grid") == 0) {
       showGrid = false;
+    } else if (std::strcmp(argv[i], "--no-skeleton") == 0) {
+      showSkeleton = false;
     } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
       camDolly = static_cast<float>(std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--camera") == 0 && (i + 1) < argc) {
@@ -422,6 +520,16 @@ int main(int argc, char** argv) {
         textureOptions.textureBudgetMB = 0;
       }
       textureBudgetExplicit = true;
+    } else if (std::strcmp(argv[i], "--async-texture-decode") == 0) {
+      asyncTextureDecode = true;
+    } else if (std::strcmp(argv[i], "--ptex-initial-faces") == 0 &&
+               (i + 1) < argc) {
+      ptexInitialFaces = static_cast<size_t>(
+          std::max(0, std::atoi(argv[++i])));
+    } else if (std::strcmp(argv[i], "--ptex-cache-mb") == 0 &&
+               (i + 1) < argc) {
+      ptexCacheMB = static_cast<size_t>(
+          std::clamp(std::atoi(argv[++i]), 1, 4096));
     } else if (std::strcmp(argv[i], "--subdivision-level") == 0 && (i + 1) < argc) {
       subdivisionLevel = std::max(0, std::atoi(argv[++i]));
     } else if (std::strncmp(argv[i], "--subdivision-level=", 20) == 0) {
@@ -455,6 +563,7 @@ int main(int argc, char** argv) {
       }
       subdivisionPrimLevels[prim] = level;
     } else if (std::strcmp(argv[i], "--texture-compress") == 0 && (i + 1) < argc) {
+      textureCompressionExplicit = true;
       const char* mode = argv[++i];
       if (std::strcmp(mode, "off") == 0) {
         textureOptions.compression = tusdview::TextureCompressionMode::Off;
@@ -484,6 +593,7 @@ int main(int argc, char** argv) {
         return 1;
       }
     } else if (std::strcmp(argv[i], "--texture-mips") == 0 && (i + 1) < argc) {
+      mipsExplicit = true;
       const char* mode = argv[++i];
       if (std::strcmp(mode, "off") == 0) {
         textureOptions.generateMips = false;
@@ -538,6 +648,22 @@ int main(int argc, char** argv) {
       wantRt = true;
     } else if (std::strcmp(argv[i], "--cuda") == 0) {
       wantCuda = true;
+    } else if (std::strcmp(argv[i], "--cuda-cache-dir") == 0) {
+      if (i + 1 >= argc) {
+        LOGE("--cuda-cache-dir requires a non-empty path");
+        return 1;
+      }
+      cudaCacheDir = argv[++i];
+      if (cudaCacheDir.empty()) {
+        LOGE("--cuda-cache-dir requires a non-empty path");
+        return 1;
+      }
+    } else if (std::strncmp(argv[i], "--cuda-cache-dir=", 17) == 0) {
+      cudaCacheDir = argv[i] + 17;
+      if (cudaCacheDir.empty()) {
+        LOGE("--cuda-cache-dir requires a non-empty path");
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--hip") == 0) {
       wantHip = true;
     } else if (std::strcmp(argv[i], "--rt-samples") == 0 && i + 1 < argc) {
@@ -545,7 +671,13 @@ int main(int argc, char** argv) {
       if (rtSamples < 1) rtSamples = 1;
     } else if (std::strcmp(argv[i], "--lod-stream") == 0) {
       lodStream = true;
-      lodStreamExplicit = true;
+    } else if (std::strcmp(argv[i], "--curve-preview-prims") == 0 &&
+               i + 1 < argc) {
+      curvePreviewPrims = static_cast<size_t>(std::strtoull(argv[++i], nullptr, 10));
+    } else if (std::strcmp(argv[i], "--curve-preview-strands") == 0 &&
+               i + 1 < argc) {
+      curvePreviewStrands =
+          static_cast<size_t>(std::strtoull(argv[++i], nullptr, 10));
     } else if (std::strcmp(argv[i], "--max-mem") == 0 && i + 1 < argc) {
       lodMaxMem = std::atof(argv[++i]);
       lodMaxMemExplicit = true;
@@ -595,6 +727,12 @@ int main(int argc, char** argv) {
       else if (!std::strcmp(m, "blend-influence")) wantMode = tusdview::RenderMode::BlendInfluence;
       else if (!std::strcmp(m, "texel-density")) wantMode = tusdview::RenderMode::TexelDensity;
       else if (!std::strcmp(m, "source-face-id")) wantMode = tusdview::RenderMode::SourceFaceId;
+      else if (!std::strcmp(m, "coat-normal")) wantMode = tusdview::RenderMode::CoatNormal;
+      else if (!std::strcmp(m, "coat-weight")) wantMode = tusdview::RenderMode::CoatWeight;
+      else if (!std::strcmp(m, "coat-color")) wantMode = tusdview::RenderMode::CoatColor;
+      else if (!std::strcmp(m, "coat-roughness")) wantMode = tusdview::RenderMode::CoatRoughness;
+      else if (!std::strcmp(m, "specular-f0")) wantMode = tusdview::RenderMode::SpecularF0;
+      else if (!std::strcmp(m, "ior-f0")) wantMode = tusdview::RenderMode::IorF0;
       else { LOGE("--mode: unknown '%s'", m); return 1; }
     } else if (std::strcmp(argv[i], "--select") == 0 && (i + 1) < argc) {
       // Select a prim by absolute path once loaded (highlights it; a GeomSubset
@@ -642,7 +780,7 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
       std::printf(
           "Usage: tusdview [--config PATH] [--backend gl|vk] [--rt] [--frames N] "
-          "[--screenshot out.png|out.ppm]\n"
+          "[--size WxH] [--screenshot out.png|out.jpg|out.ppm]\n"
           "                [--max-tris N] [--time-budget SECONDS] [--ui-scale S]\n"
           "                [--no-composition] [--defer-payloads | --load-payloads] "
           "[--defer-references] [--time CODE] [--skinning auto|cpu|gpu]\n"
@@ -659,6 +797,8 @@ int main(int argc, char** argv) {
           "(implies --backend vk).\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
+          "  --cuda-cache-dir PATH  Store compiled CUDA PTX in PATH (default: the "
+          "platform cache directory under tusdview/cuda).\n"
           "  --hip         Ray-trace the screenshot on HIP/ROCm (loaded at runtime "
           "via hipew + hiprtc; falls back if no AMD/ROCm device).\n"
           "  --rt-samples N  Supersampled AA for the --cuda/--hip screenshot "
@@ -668,6 +808,7 @@ int main(int argc, char** argv) {
           "instanced scenes (e.g. Moana Island).\n"
           "  --max-tris N  Cap triangles in the CUDA/HIP software RT scene.\n"
           "  --time-budget SECONDS  Stop the headless run after this wall-time budget.\n"
+          "  --size WxH    Set the render/window size. Overrides the startup config.\n"
           "  --ui-scale S  Override the interface scale factor.\n"
           "  --lod-stream  View-dependent district LOD: promote "
           "the camera-nearest districts to full under memory budgets.\n"
@@ -684,11 +825,16 @@ int main(int argc, char** argv) {
           "  --no-cull / --no-robust-frame  Disable frustum culling or robust "
           "outlier-resistant auto framing.\n"
           "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
+          "  --no-skeleton Hide skeleton helper overlays (useful for AOV comparisons).\n"
           "  --dome-ibl off|fast|quality  Control DomeLight IBL precomputation.\n"
           "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
           "Vulkan realtime preset for public large scenes. Profiles set existing "
           "large-scene knobs only; explicit CLI flags win. No texture resize or "
           "compression behavior is changed.\n"
+          "  --preview-cache auto|off|refresh  Reuse or rebuild a validated "
+          "bounds/camera preview cache (auto for large-scene profiles).\n"
+          "  --preview-cache-dir PATH  Override the platform preview cache directory.\n"
+          "  --preview-cache-max-gb N  Preview-cache size cap (default 8 GiB).\n"
           "  --compose-threads N  Composition worker count (default: hardware, capped).\n"
           "  --convert-threads N  Geometry conversion worker count.\n"
           "  --upload-budget-ms N  Interactive upload slice, 1..33 ms.\n"
@@ -713,7 +859,7 @@ int main(int argc, char** argv) {
           "metallic, emissive, opacity, position, barycentric, prim-id, mesh-id, "
           "purpose, missing-normals, double-sided, skin-weights, tangent, "
           "uv-checker, ao, curvature, instance-id, bvh-heatmap, soft-shadow, "
-          "kind, udim, uv1, blend-influence, texel-density, source-face-id.\n"
+          "kind, udim, uv1, blend-influence, texel-density, source-face-id, coat-normal, coat-weight, coat-color, coat-roughness, specular-f0, ior-f0.\n"
           "  --threaded    Use the optional dedicated GL/Vulkan render thread "
           "when built with TUSDVIEW_ENABLE_GL_THREAD.\n"
           "  --blend NAME=W  Manually set a blendshape weight (repeatable), "
@@ -728,7 +874,8 @@ int main(int argc, char** argv) {
           "  --defer-payloads  Lazy payloads: skip payload arcs on load; load on "
           "demand from the GUI (default for interactive runs).\n"
           "  --load-payloads   Compose payload arcs eagerly (default for "
-          "--frames/headless runs).\n"
+          "--frames/headless runs when no large-scene profile is active; "
+          "profiles defer unless this flag is explicit).\n"
           "  --defer-references  Also defer `references` arcs (loaded on demand "
           "like payloads). Non-standard: USD assumes references always resolve, "
           "so most scene content stays unloaded until requested.\n"
@@ -736,9 +883,19 @@ int main(int argc, char** argv) {
           "segments are permitted by default because USD anchors them to the "
           "authoring layer.\n"
           "  --texture-max-size N  Downsize decoded textures whose longest edge "
-          "exceeds N texels (0 = keep source size).\n"
+          "exceeds N texels (default 4096; 0 = keep source size).\n"
           "  --texture-budget-mb N  Best-effort decoded texture memory budget "
           "for viewer uploads (0 = unlimited).\n"
+          "  --async-texture-decode  Decode ordinary filesystem textures from "
+          "camera-prioritized background workers.\n"
+          "  --ptex-initial-faces N  Decode only the first N Ptex faces for the "
+          "startup atlas (0 = all), then refine visible meshes.\n"
+          "  --ptex-cache-mb N  Mutable physical page cache per Ptex texture "
+          "(1..4096 MiB).\n"
+          "  --curve-preview-prims N  Convert at most N Curves prims (0 = all; "
+          "interactive ALab default 64).\n"
+          "  --curve-preview-strands N  Retain at most N complete curve strands "
+          "(0 = all; interactive ALab default 100000).\n"
           "  --subdivision-level N  Scene-wide conversion-time subdivision "
           "surface refinement level (0 = off). Applies only to meshes whose USD "
           "subdivisionScheme is not none.\n"
@@ -749,9 +906,12 @@ int main(int argc, char** argv) {
           "--subdivision-prim overrides win.\n"
           "  --subdivision-auto-max-level N  Clamp --subdivision-auto levels "
           "(default 3, hard cap 10).\n"
-          "  --texture-compress off|bc  Request BCn texture compression. Backends "
-          "without BCn upload support warn and fall back to resized RGBA8.\n"
-          "  --texture-mips  Generate content-aware texture mip chains.\n"
+          "  --texture-compress off|bc|bc7|astc|etc2|auto  Request GPU texture "
+          "compression (default "
+          "auto; selects a supported BC/ASTC/ETC2 format). Backends without "
+          "block upload support fall back to resized RGBA8.\n"
+          "  --texture-mips on|off  Generate content-aware texture mip chains "
+          "(default on).\n"
           "  --texture-keep-compressed  Preserve supported KTX2 block payloads "
           "instead of decoding/re-encoding them.\n"
           "  --udim sparse|atlas  UDIM handling mode (default sparse; atlas rebakes "
@@ -765,8 +925,14 @@ int main(int argc, char** argv) {
           "every frame, so --screenshot captures are pixel-comparable).\n"
           "  --frame CODE  Alias for --time CODE.\n"
           "  --screenshot PATH  Save the viewport image after --frames.\n"
+          "  --render-report PATH  Write a schema-versioned JSON render report.\n"
+          "  --checkpoint-every N  Save the viewport every N fixed frames "
+          "(raster or Vulkan RT).\n"
+          "  --checkpoint-pattern PATH  Checkpoint filename containing {frame}; "
+          "default derives from --screenshot.\n"
           "  --window-shot PATH  Save the complete window, including UI.\n"
           "  --raster-lod / --rt-lod  Enable view-dependent raster or Vulkan-RT "
+          "LOD (--no-rt-lod disables RT LOD for deterministic full-scene capture); "
           "LOD; tune with --*-lod-full-px, --*-lod-cull-px, and --rt-lod-band.\n"
           "  --max-draw-meshes N / --max-gpu-mem G  Bound raster mesh count or "
           "geometry memory (GiB).\n"
@@ -951,6 +1117,14 @@ int main(int argc, char** argv) {
     if (effectiveProfile == LargeSceneProfile::ALab && allowParentPaths) {
       LOGI("large-scene-profile alab: parent-relative composition paths allowed");
     }
+    if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
+        maxFrames < 0) {
+      LOGI("large-scene-profile alab: interactive preview textures<=%d px, "
+           "compression=%s, mips=%s, curves<=64 prims/100000 strands",
+           maxTextureSizeExplicit ? textureOptions.maxTextureSize : 512,
+           textureCompressionExplicit ? "explicit" : "auto",
+           mipsExplicit ? (textureOptions.generateMips ? "on" : "off") : "off");
+    }
     if (maxAssetReadBytes > 0) {
       LOGI("large-scene-profile %s: max asset read bytes=%llu",
            ProfileName(effectiveProfile),
@@ -989,7 +1163,8 @@ int main(int argc, char** argv) {
   if (config.status == tusdview::ConfigLoadStatus::Loaded) {
     if (config.config.fontSizePx) app.setFontSize(*config.config.fontSizePx);
     if (config.config.windowScale) app.setWindowScale(*config.config.windowScale);
-    if (config.config.windowWidth && config.config.windowHeight) {
+    if (!windowSizeExplicit && config.config.windowWidth &&
+        config.config.windowHeight) {
       app.setWindowSize(*config.config.windowWidth, *config.config.windowHeight);
     }
     if (config.config.orbitSensitivity) {
@@ -1035,6 +1210,44 @@ int main(int argc, char** argv) {
     lo.composition = !noComposition;
     lo.compositionThreads = compositionThreads;
     lo.conversionThreads = conversionThreads;
+    lo.progressivePreview = effectiveProfile != LargeSceneProfile::Off &&
+                            !headless && maxFrames < 0;
+    lo.previewCache.mode = previewCacheExplicit
+                               ? previewCacheMode
+                               : (effectiveProfile != LargeSceneProfile::Off
+                                      ? tusdview::PreviewCacheMode::Auto
+                                      : tusdview::PreviewCacheMode::Off);
+    lo.previewCache.directory = previewCacheDir;
+    lo.previewCache.maxBytes = static_cast<size_t>(
+        previewCacheMaxGiB * 1024.0 * 1024.0 * 1024.0);
+    lo.previewCache.timing = timing;
+    // Island startup is dominated by eager Ptex fallback construction. Keep a
+    // bounded representative set and stream the remaining faces on demand.
+    if (effectiveProfile == LargeSceneProfile::Island) {
+      // Keep startup bounded; admitted meshes enqueue their remaining source
+      // faces for physical-cache streaming after the first usable frame.
+      lo.ptexInitialFaces = 16;
+      lo.ptexPhysicalCacheBytes = 8ull * 1024ull * 1024ull;
+      lo.curveTessellationSegments = 2;
+      if (maxDrawMeshes > 0) {
+        lo.maxMeshConversions = static_cast<size_t>(maxDrawMeshes);
+      }
+    } else if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
+               maxFrames < 0) {
+      // ALab's baked procedurals and texture set exceed ordinary workstation
+      // VRAM. Start with a shaded, topology-valid preview; explicit/headless
+      // production runs keep the requested quality settings.
+      lo.curveTessellationSegments = 1;
+      lo.maxCurvePrims = 64;
+      lo.maxCurveStrands = 100000;
+      lo.asyncTextureDecode = true;
+    }
+    if (ptexInitialFaces) lo.ptexInitialFaces = *ptexInitialFaces;
+    if (ptexCacheMB)
+      lo.ptexPhysicalCacheBytes = *ptexCacheMB * 1024ull * 1024ull;
+    if (asyncTextureDecode) lo.asyncTextureDecode = true;
+    if (curvePreviewPrims) lo.maxCurvePrims = *curvePreviewPrims;
+    if (curvePreviewStrands) lo.maxCurveStrands = *curvePreviewStrands;
     lo.timing = timing;
     lo.streamBufferBytes = streamBufferMB * 1024ull * 1024ull;
     if (effectiveProfile != LargeSceneProfile::Off) {
@@ -1064,6 +1277,15 @@ int main(int argc, char** argv) {
     lo.deferReferences = deferReferences;
     lo.allowParentRelativePaths = allowParentPaths;
     lo.textureOptions = textureOptions;
+    if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
+        maxFrames < 0) {
+      if (!maxTextureSizeExplicit) lo.textureOptions.maxTextureSize = 512;
+      if (!textureCompressionExplicit) {
+        lo.textureOptions.compression =
+            tusdview::TextureCompressionMode::Auto;
+      }
+      if (!mipsExplicit) lo.textureOptions.generateMips = false;
+    }
     lo.subdivisionLevel = std::max(0, subdivisionLevel.value_or(0));
     lo.subdivisionAuto = subdivisionAuto;
     lo.subdivisionAutoMaxLevel =
@@ -1095,9 +1317,11 @@ int main(int argc, char** argv) {
       LOGW("ignoring invalid --ui-scale %.3f (must be > 0.25)", *uiScale);
     }
   }
+  if (windowSizeExplicit) app.setWindowSize(windowWidth, windowHeight);
   app.setUseNextLoader(useNextLoader);
   app.setCullEnabled(!noCull);
   app.setShowGrid(showGrid);
+  app.setShowSkeleton(showSkeleton);
   app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
@@ -1115,8 +1339,12 @@ int main(int argc, char** argv) {
   app.setHeadless(headless);
   app.setThreaded(threaded);
   app.setCudaRt(wantCuda);
+  app.setCudaCacheDir(cudaCacheDir);
   app.setHipRt(wantHip);
   app.setRtSamples(rtSamples);
+  app.setRenderReport(renderReport);
+  app.setCheckpointOutput(checkpointEvery, checkpointPattern);
+  app.setLargeSceneProfile(ProfileName(effectiveProfile));
   app.setRtMaxInstances(static_cast<size_t>(rtMaxInstances));
   app.setLodStream(lodStream);
   app.setLodMaxMemGiB(lodMaxMem);

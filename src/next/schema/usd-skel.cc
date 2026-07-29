@@ -100,16 +100,18 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     ReadMatrix4dArray(prim, "bindTransforms", &out->bindTransforms);
   }
 
-  // jointNames (uniform token[])
-  {
+  // primvars:skel:jointNames fallback: only consulted when the plain
+  // `jointNames` above yielded nothing (appending to an already-read list
+  // duplicated names). Array authoring is the common form and was
+  // previously dropped — only scalar string/token was accepted.
+  if (out->jointNames.empty()) {
     const Value* val = prim.GetPropertyValue("primvars:skel:jointNames");
     if (val) {
-      const std::string* s = val->as_string();
-      if (s) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->jointNames = *toks;
+      } else if (const std::string* s = val->as_string()) {
         out->jointNames.push_back(*s);
-      }
-      const std::string* tok = val->as_token();
-      if (tok) {
+      } else if (const std::string* tok = val->as_token()) {
         out->jointNames.push_back(*tok);
       }
     }

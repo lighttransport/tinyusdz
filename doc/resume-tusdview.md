@@ -1,21 +1,98 @@
 # tusdview resume and current work state
 
-Last reviewed against merge commit `8ec26dc6c`: 2026-07-19.
+Last reviewed against `026d2a764`: 2026-07-24.
 
 The original first-display goal in this document is complete: the progressive
 OpenGL path reaches a useful frame in approximately 4.9-5.3 seconds under the
-documented Xvfb/Mesa benchmark. The active local work has moved to shared
-UsdPreviewSurface/material correctness across `tusdview`, its GL/Vulkan/CUDA/HIP
-backends, and `tusdrender`. The older Moana Island `tusdrender` notes formerly
-kept in the repository-root `resume.md` are preserved at the end as a secondary,
-mostly completed performance track.
+documented Xvfb/Mesa benchmark. The detailed audit below records the shared
+UsdPreviewSurface/material correctness work across `tusdview`, its
+GL/Vulkan/CUDA/HIP backends, and `tusdrender`. The active roadmap is now
+[`doc/tusdview-tasks.md`](tusdview-tasks.md); this file retains the detailed
+audit and performance history needed to resume that work.
+
+## Current status — 2026-07-23
+
+At `0e551db24`, the checked-in implementation and registered tests cover the
+canonical `RealtimePbrMaterial` path, PreviewSurface/OpenPBR/MaterialX core
+semantic textures, ordinary and UDIM sources, USDZ packaging parity, Vulkan
+ray query, CUDA, and capability-gated HIP coverage. Dome/light extraction,
+linked multi-light raster shading, raster shadow maps, six-face point shadows,
+native non-mesh extraction, GL non-mesh rendering, and progressive first-display
+loading are also implemented.
+
+Remaining implementation work is narrower:
+
+- Preserve all successfully evaluated constants and connections in degraded
+  OpenPBR/MaterialX materials while retaining structured path-qualified
+  diagnostics for unsupported lobes. The next-core neutral record now retains
+  every evaluatable `inputs:*` value; broader fixture coverage remains.
+- Native carrier viewport parity is implemented: Vulkan raster expands Points
+  into camera-facing discs and Curves into ribbons; click/region picking,
+  framing, hide/show/isolate, purpose filtering, and orange selection highlights
+  now cover carriers as well as meshes.
+- Camera extraction is now covered by a shared default/legacy equivalence gate.
+- The checked-in Points/Curves fixture now has a consolidated GL/Vulkan
+  silhouette-parity gate; it passes with backend-normalized coverage comparison.
+- Run the external `usd-assets` goldens and repeat the large-scene benchmark
+  when the documented corpus and required hardware are available.
+
+Depth of field, motion blur, stereo, arbitrary clipping planes, true area-light
+sampling, IES/portal/geometry lights, and emissive-mesh sampling remain
+explicitly deferred features, not current regressions.
+
+The focused GPU-backed headless gates were rerun during this review; external
+corpus and large-scene evidence remains inherited from the dated entries.
+
+The new `tusdview-camera-record-equivalence` gate compares default and legacy
+headless renders for perspective, orthographic, and stereo-role cameras. It
+passes with mean pixel delta 0.000 on the available Vulkan device and skips
+when Vulkan is unavailable.
+
+The focused `tusdview` CTest label passes 16 of 17 registered tests on llvmpipe,
+including the camera gate, native non-mesh smoke tests, and the GL/Vulkan
+carrier silhouette-parity gate. The remaining Vulkan ray-query linked-light
+test exceeds its 120-second software-device timeout after scene/BLAS setup, but
+passes on the RTX 3070 in 0.65 seconds. Vulkan raster native carriers now use
+the dedicated camera-facing path; viewport carrier
+selection/visibility/highlighting parity is covered.
+
+The available public large-scene assets were also exercised on 2026-07-23:
+Caldera, Island, and ALab all passed the configured Vulkan raster profile smoke
+run, and three Caldera corpus files passed the USD-assets Vulkan smoke harness.
+The public `usd-wg/assets` repository at revision
+`1b91f3c464891af259d51d9ee9ee9e6c357f7079` was exercised on the RTX 3070
+with NVIDIA 595.84. The corrected complete 280-file sweep passes in both Vulkan
+raster and ray query. Each mode reports 252 rendered, 3 rendered with expected
+warnings, 25 no-renderable layers, and zero load errors, backend errors,
+timeouts, or unexpected degradation.
+The follow-up found that `--size` was not parsed: the failed run captured a
+saved-layout-dependent `32x530` viewport instead of the requested `256x256`.
+The CLI now validates and honors `--size`, CLI size overrides startup config,
+and fixed-frame headless captures use the full requested viewport independently
+of saved ImGui docking state. A regression pins a `64x48` capture against a
+conflicting `32x530` config. All 510 rendered corpus baselines were therefore
+regenerated at exactly `256x256`; a second independent 20-file raster + ray
+query run matches 38/38 fingerprints, including CarbonFrameBike and both
+ElephantWithMonochord entry points. The follow-up also fixed next-core
+UsdShade NodeGraph surface pass-throughs, removing the Teapot-family degraded
+fallback. OpenChessSet external `.mtlx` references no longer produce
+degraded-material diagnostics: the next MaterialX layer importer now keeps
+each terminal shader inside the referenced Material subtree, which is the only
+namespace guaranteed to survive a USD reference. The localized shader inputs
+and NodeGraph outputs now retain their connections to anchored MaterialX image
+nodes. A focused Tydra regression covers base-color, metallic, roughness, and
+normal graphs. On llvmpipe Vulkan the Bishop asset reports 4 textures and the
+complete OpenChessSet reports 40 textures with `degraded_materials=0`,
+`missing_textures=0`, and `unsupported_mtlx=0`. The reboot loaded the matching
+595.84 kernel/userspace driver and completed the previously blocked hardware
+validation.
 
 ## Current audit: material correctness
 
-The tracked worktree is clean at the reviewed commit. Preserve the untracked
-`data/ball_basketball_realistic.usdz` and `tasks.md`; neither belongs to this
-work. The material work described below is committed in the two parents of the
-merge, not an uncommitted local patch.
+The reviewed commit had no tracked local edits. Preserve the current untracked
+assets and local MCP manifests; they are not evidence of viewer regressions and
+are outside the rendering-fidelity roadmap. The material work described below
+is committed rather than an uncommitted local patch.
 
 The current material patch spans the next UsdShade schema, Tydra conversion,
 shared LightRT/OpenPBR evaluation, viewer mesh/submesh data, all rendering
@@ -127,27 +204,213 @@ level-zero RT texture table: ordinary, compressed, and sparse-UDIM mip chains
 now use trilinear footprint LOD in Vulkan ray query and projected-triangle LOD
 in the shared CUDA/HIP tracer.
 
-Rendering-fidelity follow-up (2026-07-19): raster and RT material evaluation now
+Rendering-fidelity follow-up (2026-07-20): raster and RT material evaluation now
 share Cook-Torrance GGX, coat, and indirect occlusion semantics; authored camera
 filmback, aperture offsets, clipping, orthographic projection, conform policy,
 and exposure reach every backend. The default-next loader retains full shared
 light records and native Points/BasisCurves/HermiteCurves/NurbsCurves carriers.
 OpenGL draws camera-facing point discs and curve ribbons, while Vulkan ray query
-and CUDA/HIP trace width-aware solid proxies. The canonical remaining work is in
-`doc/tusdview-tasks.md`: Vulkan raster non-mesh drawing, click-picking, linked
-raster multi-light evaluation, and raster shadow maps remain open.
+and CUDA/HIP trace width-aware solid proxies. Linked raster multi-light
+evaluation and the deterministic raster shadow map are now implemented. The
+canonical remaining work is in `doc/tusdview-tasks.md`, led by loader-neutral
+material/texture parity, Linux visual parity, then omnidirectional raster
+shadows for point lights.
 
 The external usd-assets corpus was still unavailable at
 `/mnt/disk1/work/usd-assets`, so no new color goldens were generated. The
 checked-in manifest/expectation implementation remains ready for the next host
 where that public corpus is mounted.
 
-## Prioritized tusdview backlog
+## Archived priority snapshot — 2026-07-20
 
-This section incorporates the tusdview-related items from the repository-root
-`tasks.md`. That file is an older planning snapshot: several unchecked entries
-now have implementations or regression targets in the current worktree. The
-ordering below is the canonical remaining-work order. Priorities mean:
+`doc/tusdview-tasks.md` is the single source of truth for active work. The
+Linux-first order is:
+
+1. **P0:** create one Tydra-owned real-time PBR material record and prove
+   default `--next`/legacy extraction equivalence. **Implemented locally:** the
+   canonical `RealtimePbrMaterial` packer and a supported-material pixel parity
+   check now cover the common path.
+2. **P1–P2:** finish the semantic texture grid and prove ordinary/UDIM image
+   response through Xvfb OpenGL, Vulkan headless raster, Vulkan RT, and CUDA/HIP
+   where a Linux GPU is available. **Hardware evidence now exists:** an RTX 3070
+   gives exact default/legacy ordinary-texture Vulkan-raster parity and passes
+   isolated UDIM-opacity probes in Vulkan raster, Vulkan RT, and CUDA. Complete
+   the remaining semantic-grid and capability-gated HIP coverage before closing
+   the release gate. The corrected specular-workflow regression now makes a
+   genuine Xvfb GL versus headless Vulkan comparison (rather than selecting
+   Vulkan twice); it reports identical RTX 3070 green-highlight dominance.
+   The semantic harness now includes a vector normal AOV probe, independent
+   OpenPBR coat-normal response, texture-driven occlusion/coat coverage, and
+   external-versus-generated-USDZ normal-map parity. It now also covers base,
+   metalness, roughness, emission, and opacity ramps for PreviewSurface,
+   OpenPBR, and MaterialX standard surface. The default loader passes the
+   tested Vulkan-raster scalar routes, including the newly repaired MaterialX
+   `specular_roughness` route. After making the generated USDA strict-parser
+   compliant and repairing mixed MaterialX/UsdUVTexture plus coat-normal
+   conversion, PreviewSurface, OpenPBR, standard-surface scalar AOVs, and the
+   coat-normal, coat-weight, coat-color, and coat-roughness AOVs agree exactly
+   between default and legacy loaders (MAD 0.0). The dedicated coat channels
+   also pass Xvfb OpenGL, Vulkan ray query, and CUDA; HIP remains
+   capability-gated on this NVIDIA-only host.
+   The same matrix now includes evaluated `specular-f0` and `ior-f0` AOVs. It found that
+   the legacy adapter omitted PreviewSurface's `useSpecularWorkflow` flag;
+   after copying that field into the draw material, GL, Vulkan raster/ray
+   query, and CUDA all give exact default/legacy specular-texture pixels. IOR
+   fixtures now cover PreviewSurface, OpenPBR, and MaterialX Standard Surface
+   at two authored values. OpenPBR/Standard specular-color fixtures also pin
+   their distinct model: the color textures tint dielectric F0 derived from
+   `specular_ior`/`specular_IOR`, while PreviewSurface's explicit specular
+   workflow treats `specularColor` as F0 directly. All four available backends
+   pass both loader paths with exact default/legacy image parity (MAD 0.0).
+   Follow-up two-tile UDIM fixtures found that Vulkan raster still treated the
+   newer specular-color slot as ordinary-2D-only. A dedicated descriptor-array
+   binding and atlas-row route now preserve OpenPBR/Standard specular F0 across
+   tiles 1001 and 1002. Vulkan raster, Vulkan ray query, and CUDA pass the UDIM
+   fixtures through both loaders; HIP remains capability-gated.
+   Coat weight/color/roughness now have equivalent two-tile UDIM probes. Their
+   first paired run caught legacy `ND_image_float` UDIMs being uploaded through
+   an sRGB view; material-usage classification now makes scalar, normal, and
+   displacement textures raw regardless of decoder defaults. Vulkan raster
+   reaches MAD 0.0 across loaders, while Vulkan ray query and CUDA pass both
+   ordinary and UDIM coat probes.
+   Coat-normal now completes the coat UDIM set: its descriptor records UDIM
+   classification after deduplication, Vulkan raster samples a dedicated array,
+   and a directional two-tile AOV passes with MAD 0.0 across loaders as well as
+   passing Vulkan ray query and CUDA.
+3. **P3:** complete for point/zero-radius SphereLight emitters: GL and Vulkan
+   raster render/sample all six projected-depth cube faces, and the Vulkan
+   regression proves the bounded shadow. Keep finite non-zero area sampling as
+   representative-point behavior until a later area-light task.
+4. **P4–P6:** retain evaluated graph inputs for advanced lobes, then address
+   Vulkan non-mesh/picking and broader area-light, camera, and external-corpus
+   work.
+
+Lighting extraction follow-up (2026-07-22): a checked-in default/legacy light
+record comparison now covers RectLight and SphereLight shape, normalization,
+diffuse/specular multipliers, shadows, transforms, derived intensity, and
+collection state. Its first run found that the next RenderLight carrier omitted
+generic `inputs:shaping:cone:angle` for non-spot emitters; the field is now
+retained and both loaders agree within numeric tolerance. The fixture now spans
+Rect, Sphere, Distant, Disk, Cylinder, and Dome light records. Dome coverage
+found the next loader not deriving direction from its authored transform; its
+position and forward direction now match legacy. Dome projection format is now
+part of the dumped record, with latlong, mirrored-ball, and angular fixtures.
+The latlong case now includes a generated environment texture and compares
+asset retention plus the baked IBL carrier dimensions: 64/32/64/256 for
+specular, irradiance, BRDF LUT, and environment cube in both loaders.
+The registered Vulkan orientation image test renders an asymmetric latlong dome
+at 0 and 90 degrees: lighting changes by MAD 4.55 and both loader comparisons
+are exact (MAD 0.0).
+The same two scenes are now packaged as USDZ with the environment map inside
+the archive; default and legacy packaged images match the external assets
+exactly (package MAD 0.0).
+
+OpenGL advanced-UDIM follow-up: the semantic grid exposed GL sampling the
+representative 1001 image for specular F0, coat weight/color/roughness, and
+coat-normal UDIMs. Those slots now route their array textures through unused
+core UDIM sampler units per draw, preserving independent images without
+exceeding the GL 3.3 32-fragment-unit floor. Ordinary/UDIM response, loader
+parity, and package parity pass for both loaders.
+
+Displacement texture follow-up: Vulkan coarse and tessellated vertex paths now
+sample UDIM height arrays through the shared atlas LUT. The material descriptor
+records displacement UDIM intent after deduplication, and the bridge unit pins
+the new packed row. The checked-in Vulkan regression now compares flat height
+tiles against a raised second tile at an oblique view; its 2.37 mean absolute
+pixel response closes displaced-silhouette coverage for the next loader.
+PreviewSurface now runs the same flat/raised UDIM geometry oracle, also at 2.37
+MAD, with exact default/legacy pixels for both controls.
+The flat and raised Standard/Preview fixtures are now also packaged as USDZ.
+Both loaders compare their external and packaged displaced geometry, and the
+gate now includes Standard Surface in its loader-parity requirement.
+
+Core texture follow-up: the Preview, OpenPBR, and Standard Surface semantic
+grid now pairs its ordinary base color, packed metallic/roughness, and emission
+sources with two-tile UDIM variants. Vulkan raster passes all 24 AOV responses;
+emission is pixel-exact between the default and legacy loaders (MAD 0.0).
+The ordinary core fixtures are now also packaged as USDZ with base, packed ORM,
+and emission images. External/package parity passes across Vulkan raster,
+Vulkan RT, and CUDA through both loaders; only Vulkan RT Preview albedo carries
+the established sampling variance (MAD 0.314).
+
+PreviewSurface clearcoat follow-up: independent weight and roughness maps now
+cross ordinary and two-tile UDIM sources. Vulkan raster loader parity is exact;
+Vulkan RT and CUDA pass with maximum loader MAD 0.474.
+
+Standard Surface coat follow-up: weight, color, and roughness now each cross
+ordinary and two-tile UDIM sources. Vulkan raster loader parity is exact;
+Vulkan RT and CUDA pass with maximum loader MAD 0.474.
+Ordinary coat fixtures for Preview, OpenPBR, and Standard Surface are also
+stored as USDZ with their independent maps. All 48 external/package images are
+pixel-exact through both loaders in Vulkan raster, Vulkan RT, and CUDA.
+
+Standard Surface coat-normal follow-up: ordinary and two-tile UDIM normal maps
+now exercise the dedicated coat-normal AOV. Legacy reconstruction and both
+material-terminal conversion paths preserve `inputs:coat_normal` values and
+connections; raster loader parity is exact, and Vulkan RT/CUDA pass with
+maximum loader MAD 0.476.
+The ordinary OpenPBR and Standard fixtures now also run from stored USDZ
+packages; their images match the external USDA/PPM form exactly in Vulkan
+raster, Vulkan RT, and CUDA through both loaders.
+
+PreviewSurface specular-workflow follow-up: its `specularColor` source now has
+the same two-tile UDIM specular-F0 oracle as OpenPBR and Standard Surface.
+Raster and CUDA loader parity are exact; Vulkan RT passes with maximum loader
+MAD 0.314.
+Ordinary specular-F0 fixtures for all three families are also packaged as USDZ;
+external/package images match exactly through both loaders in Vulkan raster,
+Vulkan RT, and CUDA.
+
+Opacity texture follow-up: the semantic grid now covers ordinary and two-tile
+UDIM opacity for Preview, OpenPBR, and Standard Surface. This found legacy
+Standard Surface conversion replacing a graph connection with constant
+luminance; it now preserves the connection, with a focused Tydra unit and
+Vulkan default/legacy parity within MAD 0.018.
+The ordinary opacity fixtures are also packaged as USDZ; external/package
+images match exactly for all three families and both loaders in Vulkan raster,
+Vulkan RT, and CUDA.
+
+Occlusion texture follow-up: PreviewSurface's controlled indirect-light probe
+now pairs its ordinary raw scalar map with a two-tile UDIM; Vulkan response and
+default/legacy parity pass exactly (MAD 0.0).
+Its ordinary external and USDZ-packaged forms also match exactly in Vulkan
+raster, Vulkan RT, and CUDA through both loaders.
+
+Surface-normal follow-up: ordinary and two-tile UDIM normal maps now cover all
+three shader families with exact Vulkan loader parity. Native OpenPBR now
+reconstructs canonical `geometry_normal`/`geometry_tangent` aliases, and legacy
+Standard conversion preserves connected normal/tangent inputs; focused parser
+and Tydra units pin the two boundaries.
+All three ordinary normal fixtures now have USDZ forms; combined with the
+occlusion package gate, all 24 external/package comparisons are pixel-exact in
+Vulkan raster/RT and CUDA through both loaders.
+
+Vulkan RT core-grid follow-up: both loaders now pass 36 ordinary/UDIM semantic
+responses covering base, packed metallic/roughness, emission, opacity, and
+primary normals across all three shader families. The first run found texture
+presence detection stopping at Standard Surface's untextured `base_roughness`
+alias before its textured `specular_roughness`; the helper now scans every
+alias, the bridge unit pins it, and loader parity is within MAD 0.082.
+
+CUDA core-grid follow-up: color, emission, opacity, and normal cases passed on
+the first run, while the packed scalar oracle confused its low value 32 with
+CUDA's clear value 31 despite correct texels in the image. The controlled low
+signal is now 64. Metallic/roughness ordinary and UDIM cases pass across all
+three shader families on CUDA, Vulkan raster, and Vulkan RT, with exact loader
+parity.
+
+The complete RT semantic loader comparison is now registered as
+`tusdview-texture-semantic-rt-loader-parity`, covering Vulkan ray query, CUDA,
+and capability-gated HIP. Vulkan/CUDA pass the full two-loader matrix on the
+NVIDIA host in 221 seconds; HIP remains skipped there.
+
+Advanced OpenPBR/MaterialX lobes remain path-qualified degraded behavior until
+the core material record and its cross-backend image parity are complete.
+
+## Prioritized tusdview backlog — historical 2026-07-19 snapshot
+
+This section preserves the earlier completion record. It is not the current
+backlog; use `doc/tusdview-tasks.md` for prioritization.
 
 - **P0**: finish and prove the current material patch before starting another
   feature area.

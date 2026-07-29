@@ -277,11 +277,6 @@ void MakeRay(const CameraFrame &camera, float aspect, float sx, float sy,
 
 std::vector<VolumeData> BuildVolumes(const RenderScene &scene);
 
-static float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p);
-
-static bool RayAABBVol(const Vec3 &o, const Vec3 &d, const Vec3 &bmin,
-                       const Vec3 &bmax, float *t0, float *t1);
-
 Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
                       const Vec3 &wdir, Vec3 bg);
 

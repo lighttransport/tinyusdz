@@ -2024,13 +2024,13 @@ bool AsciiParser::ParsePurpose(Purpose *result) {
     return false;
   }
 
-  if (str == "\"default\"") {
+  if (str == "default") {
     (*result) = Purpose::Default;
-  } else if (str == "\"render\"") {
+  } else if (str == "render") {
     (*result) = Purpose::Render;
-  } else if (str == "\"proxy\"") {
+  } else if (str == "proxy") {
     (*result) = Purpose::Proxy;
-  } else if (str == "\"guide\"") {
+  } else if (str == "guide") {
     (*result) = Purpose::Guide;
   } else {
     PUSH_ERROR_AND_RETURN_TAG(kAscii, "Invalid purpose value: " + str + "\n");

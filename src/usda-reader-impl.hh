@@ -568,10 +568,13 @@ class USDAReader::Impl {
 
           if (parentPrimIdx == -1) {
             _toplevel_primspecs.push_back(size_t(primIdx));
-          } else {
+          } else if (size_t(parentPrimIdx) < _primspec_nodes.size()) {
             _primspec_nodes[size_t(parentPrimIdx)].children.push_back(
                 size_t(primIdx));
             return true;
+          } else {
+            DCOUT("Invalid parentPrimIdx: " << parentPrimIdx);
+            return false;
           }
 
           return true;

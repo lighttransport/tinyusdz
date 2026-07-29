@@ -143,6 +143,10 @@ class StreamReader {
       return 1;
     }
 
+    if (idx_ > length_) {
+      return 0;
+    }
+
     uint64_t len = n;
     if ((idx_ + len) > length_) {
       len = length_ - uint64_t(idx_);

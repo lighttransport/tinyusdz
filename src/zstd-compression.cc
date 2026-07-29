@@ -56,7 +56,8 @@ size_t ZstdCompression::GetDecompressedSize(const uint8_t *compressed,
 bool ZstdCompression::Decompress(const uint8_t *compressed,
                                   size_t compressedSize,
                                   std::vector<uint8_t> *output,
-                                  std::string *err) {
+                                  std::string *err,
+                                  size_t maxDecompressedSize) {
   if (!compressed || compressedSize == 0) {
     if (err) *err = "Invalid compressed data";
     return false;
@@ -71,6 +72,16 @@ bool ZstdCompression::Decompress(const uint8_t *compressed,
   size_t decompressedSize = GetDecompressedSize(compressed, compressedSize, err);
   if (decompressedSize == 0) {
     // err already set by GetDecompressedSize
+    return false;
+  }
+
+  // Enforce caller-specified memory budget ceiling
+  if (maxDecompressedSize > 0 && decompressedSize > maxDecompressedSize) {
+    if (err) {
+      *err = "Decompressed size (" + std::to_string(decompressedSize) +
+             " bytes) exceeds maximum allowed (" +
+             std::to_string(maxDecompressedSize) + " bytes)";
+    }
     return false;
   }
 

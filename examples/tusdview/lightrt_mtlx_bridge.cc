@@ -65,8 +65,13 @@ bool Vec3Param(const DrawMaterialCPU& mat,
 bool ParamHasTexture(const DrawMaterialCPU& mat,
                      std::initializer_list<const char*> shaders,
                      std::initializer_list<const char*> names) {
-  const DrawMaterialParamCPU* p = FindAny(mat, shaders, names);
-  return p && (p->texture >= 0 || p->renderTexture >= 0);
+  for (const char* shader : shaders) {
+    for (const char* name : names) {
+      const DrawMaterialParamCPU* p = FindParam(mat, shader, name);
+      if (p && (p->texture >= 0 || p->renderTexture >= 0)) return true;
+    }
+  }
+  return false;
 }
 
 bool HasTextureInput(const DrawMaterialCPU& mat) {
@@ -168,6 +173,30 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
   if (Vec3Param(mat, {"UsdPreviewSurface"}, {"emissiveColor"}, p->emissionColor)) {
     p->emission = (Luminance(p->emissionColor) > 0.0f) ? 1.0f : 0.0f;
   }
+
+  // Params retain the authored constant even when Tydra also resolved a live
+  // UVTexture connection. The raster fields above have already neutralized
+  // those constants; do the same for the canonical LightRT block, otherwise
+  // Vulkan ray query/CUDA multiply the texel by the stale fallback (most
+  // visibly metallic=0 and emissiveColor=(0,0,0)).
+  if (mat.baseColorTex >= 0) {
+    p->baseColor[0] = p->baseColor[1] = p->baseColor[2] = 1.0f;
+  }
+  if (mat.metallicTex >= 0) p->metalness = 1.0f;
+  if (mat.roughnessTex >= 0) p->specularRoughness = 1.0f;
+  if (mat.emissiveTex >= 0) {
+    p->emissionColor[0] = p->emissionColor[1] = p->emissionColor[2] = 1.0f;
+    p->emission = 1.0f;
+  }
+  if (mat.opacityTex >= 0) p->opacity = 1.0f;
+  if (mat.specularColorTex >= 0) {
+    p->specularColor[0] = p->specularColor[1] = p->specularColor[2] = 1.0f;
+  }
+  if (mat.coatWeightTex >= 0) p->coatWeight = 1.0f;
+  if (mat.coatColorTex >= 0) {
+    p->coatColor[0] = p->coatColor[1] = p->coatColor[2] = 1.0f;
+  }
+  if (mat.coatRoughnessTex >= 0) p->coatRoughness = 1.0f;
 }
 
 void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
@@ -186,6 +215,9 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"specular_weight"}, &p->specularWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"specular_color"}, p->specularColor);
+  if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"specular_color"})) {
+    p->specularColor[0] = p->specularColor[1] = p->specularColor[2] = 1.0f;
+  }
   FloatParam(mat, {"OpenPBRSurface"}, {"specular_roughness"},
              &p->specularRoughness);
   FloatParam(mat, {"OpenPBRSurface"}, {"base_roughness"},
@@ -224,6 +256,15 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   FloatParam(mat, {"OpenPBRSurface"}, {"coat_weight"}, &p->coatWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"coat_color"}, p->coatColor);
   FloatParam(mat, {"OpenPBRSurface"}, {"coat_roughness"}, &p->coatRoughness);
+  if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"coat_weight"})) {
+    p->coatWeight = 1.0f;
+  }
+  if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"coat_color"})) {
+    p->coatColor[0] = p->coatColor[1] = p->coatColor[2] = 1.0f;
+  }
+  if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"coat_roughness"})) {
+    p->coatRoughness = 1.0f;
+  }
   FloatParam(mat, {"OpenPBRSurface"}, {"coat_ior"}, &p->coatIor);
   FloatParam(mat, {"OpenPBRSurface"}, {"sheen_weight", "fuzz_weight"},
              &p->sheenWeight);
@@ -246,6 +287,10 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"geometry_opacity", "opacity"},
              &p->opacity);
+  if (ParamHasTexture(mat, {"OpenPBRSurface"},
+                      {"geometry_opacity", "opacity"})) {
+    p->opacity = 1.0f;
+  }
   Vec3Param(mat, {"OpenPBRSurface"}, {"geometry_normal", "normal"}, p->normal);
 }
 
@@ -909,7 +954,7 @@ bool EvaluateMaterialXStringToLightRtOpenPBR(const char* xml,
   return true;
 }
 
-void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
+void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
   if (!mat) return;
   DrawLightRtOpenPBRCPU p;
   if (mat->hasOpenPBRSurface) {
@@ -974,6 +1019,12 @@ void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
   if (mat->roughnessTex < 0) {
     mat->roughness = p.specularRoughness;
   }
+  mat->ior = p.specularIor;
+  if (mat->specularColorTex < 0) {
+    mat->specularColor[0] = p.specularColor[0];
+    mat->specularColor[1] = p.specularColor[1];
+    mat->specularColor[2] = p.specularColor[2];
+  }
   if (mat->emissiveTex < 0) {
     mat->emissive[0] = p.emissionColor[0] * p.emission;
     mat->emissive[1] = p.emissionColor[1] * p.emission;
@@ -987,6 +1038,10 @@ void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
   mat->coatRoughness = p.coatRoughness;
   mat->coatIor = p.coatIor;
   FloatParam(*mat, {"UsdPreviewSurface"}, {"occlusion"}, &mat->occlusion);
+}
+
+void BakeLightRtOpenPBR(DrawMaterialCPU* mat) {
+  BakeRealtimePbrMaterial(mat);
 }
 
 void PackLightRtOpenPBR(const DrawMaterialCPU& mat, float* dst) {
@@ -1033,6 +1088,44 @@ void PackRtMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   if (mat.emissiveSample.uvSet == 1) uvSetBits |= 16;
   if (mat.opacitySample.uvSet == 1) uvSetBits |= 32;
   dst[69] = static_cast<float>(uvSetBits);
+  dst[70] = mat.occlusionTexScale;
+  dst[71] = mat.occlusionTexBias;
+  // Extra slots keep the same slot*6 UV-transform convention: 12 = occlusion,
+  // 13 = coat weight, 14 = coat color, 15 = coat roughness.
+  StoreUvCompact(mat.occlusionSample.uv, dst + 72);
+  StoreUvCompact(mat.coatWeightSample.uv, dst + 78);
+  StoreUvCompact(mat.coatColorSample.uv, dst + 84);
+  StoreUvCompact(mat.coatRoughnessSample.uv, dst + 90);
+  // Scalar slots default to channel 0 (R) when nothing was authored.
+  dst[96] = static_cast<float>(mat.occlusionChannel < 0 ? 0
+                                                        : mat.occlusionChannel);
+  dst[97] = static_cast<float>(
+      mat.coatWeightSample.channel < 0 ? 0 : mat.coatWeightSample.channel);
+  dst[98] = static_cast<float>(mat.coatRoughnessSample.channel < 0
+                                   ? 0
+                                   : mat.coatRoughnessSample.channel);
+  int uvSetBits2 = 0;
+  if (mat.occlusionSample.uvSet == 1) uvSetBits2 |= 1;
+  if (mat.coatWeightSample.uvSet == 1) uvSetBits2 |= 2;
+  if (mat.coatColorSample.uvSet == 1) uvSetBits2 |= 4;
+  if (mat.coatRoughnessSample.uvSet == 1) uvSetBits2 |= 8;
+  dst[99] = static_cast<float>(uvSetBits2);
+  Store4(mat.coatWeightSample.scale, dst + 100);
+  Store4(mat.coatWeightSample.bias, dst + 104);
+  Store4(mat.coatColorSample.scale, dst + 108);
+  Store4(mat.coatColorSample.bias, dst + 112);
+  Store4(mat.coatRoughnessSample.scale, dst + 116);
+  Store4(mat.coatRoughnessSample.bias, dst + 120);
+  StoreUvCompact(mat.specularColorSample.uv, dst + 124);
+  dst[130] = static_cast<float>(mat.specularColorSample.uvSet);
+  dst[131] = mat.useSpecularWorkflow ? 1.0f : 0.0f;
+  Store4(mat.specularColorSample.scale, dst + 132);
+  Store4(mat.specularColorSample.bias, dst + 136);
+  dst[139] = mat.openPbrSpecularModel ? 1.0f : 0.0f;
+  StoreUvCompact(mat.coatNormalSample.uv, dst + 140);
+  dst[146] = static_cast<float>(mat.coatNormalSample.uvSet);
+  Store4(mat.coatNormalSample.scale, dst + 147);
+  Store4(mat.coatNormalSample.bias, dst + 151);
 }
 
 void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
@@ -1055,8 +1148,17 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[16 * 4 + 3] = mat.metallicTexBias;
   dst[17 * 4 + 0] = mat.roughnessTexScale;
   dst[17 * 4 + 1] = mat.roughnessTexBias;
-  dst[17 * 4 + 2] = mat.displacementTexScale;
-  dst[17 * 4 + 3] = mat.displacementTexBias;
+  // Ptex and UDIM displacement are baked before raster upload. Disable the
+  // vertex-stage sample so the baked surface is not moved a second time (the
+  // vertex stage cannot select a Ptex face and the CPU bake handles both paths).
+  dst[17 * 4 + 2] = (mat.displacementSample.isPtex ||
+                     mat.displacementSample.isUdim)
+                         ? 0.0f
+                         : mat.displacementTexScale;
+  dst[17 * 4 + 3] = (mat.displacementSample.isPtex ||
+                     mat.displacementSample.isUdim)
+                         ? 0.0f
+                         : mat.displacementTexBias;
   // Per-slot UV set. Displacement stays on uv0: it is sampled in the vertex /
   // tessellation stages, which do not carry the second set.
   dst[18 * 4 + 0] = static_cast<float>(mat.baseColorSample.uvSet);
@@ -1071,7 +1173,10 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[19 * 4 + 0] = mat.specularColor[0];
   dst[19 * 4 + 1] = mat.specularColor[1];
   dst[19 * 4 + 2] = mat.specularColor[2];
-  dst[19 * 4 + 3] = mat.useSpecularWorkflow ? -mat.ior : mat.ior;
+  dst[19 * 4 + 3] = mat.useSpecularWorkflow
+                         ? -mat.ior
+                         : (mat.openPbrSpecularModel ? mat.ior + 100.0f
+                                                     : mat.ior);
   StoreUvVec4Rows(mat.opacitySample.uv, dst + 20 * 4);
   dst[22 * 4 + 0] = static_cast<float>(mat.opacityChannel);
   dst[22 * 4 + 1] = mat.opacityTexScale;
@@ -1096,6 +1201,88 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[28 * 4 + 0] = mat.coatColor[0];
   dst[28 * 4 + 1] = mat.coatColor[1];
   dst[28 * 4 + 2] = mat.coatColor[2];
+  StoreUvVec4Rows(mat.occlusionSample.uv, dst + 29 * 4);
+  dst[31 * 4 + 0] = static_cast<float>(mat.occlusionChannel);
+  dst[31 * 4 + 1] = mat.occlusionTexScale;
+  dst[31 * 4 + 2] = mat.occlusionTexBias;
+  dst[31 * 4 + 3] = static_cast<float>(mat.occlusionSample.uvSet);
+  dst[24 * 4 + 2] = static_cast<float>(std::max(mat.occlusionTex, 0));
+  // The ordinary-binding push flag distinguishes a 2D specular map from a
+  // UDIM map; retain -1 here only when the semantic slot is genuinely absent.
+  dst[24 * 4 + 3] = static_cast<float>(mat.specularColorTex);
+  // Extra semantic slots. The loaders neutralize the matching constant to 1.0
+  // when a texture is bound, so the shader always multiplies constant * texel.
+  StoreUvVec4Rows(mat.specularColorSample.uv, dst + 32 * 4);
+  StoreUvVec4Rows(mat.coatWeightSample.uv, dst + 34 * 4);
+  StoreUvVec4Rows(mat.coatColorSample.uv, dst + 36 * 4);
+  StoreUvVec4Rows(mat.coatRoughnessSample.uv, dst + 38 * 4);
+  // A negative channel selector means "whole value"; the scalar coat slots
+  // default that to channel 0 (R).
+  dst[40 * 4 + 0] = static_cast<float>(
+      mat.coatWeightSample.channel < 0 ? 0 : mat.coatWeightSample.channel);
+  dst[40 * 4 + 1] = static_cast<float>(
+      mat.coatRoughnessSample.channel < 0 ? 0
+                                          : mat.coatRoughnessSample.channel);
+  dst[40 * 4 + 2] = static_cast<float>(mat.coatWeightSample.uvSet);
+  dst[40 * 4 + 3] = static_cast<float>(mat.coatRoughnessSample.uvSet);
+  dst[41 * 4 + 0] = static_cast<float>(mat.specularColorSample.uvSet);
+  dst[41 * 4 + 1] = static_cast<float>(mat.coatColorSample.uvSet);
+  Store4(mat.specularColorSample.scale, dst + 42 * 4);
+  Store4(mat.specularColorSample.bias, dst + 43 * 4);
+  Store4(mat.coatWeightSample.scale, dst + 44 * 4);
+  Store4(mat.coatWeightSample.bias, dst + 45 * 4);
+  Store4(mat.coatColorSample.scale, dst + 46 * 4);
+  Store4(mat.coatColorSample.bias, dst + 47 * 4);
+  Store4(mat.coatRoughnessSample.scale, dst + 48 * 4);
+  Store4(mat.coatRoughnessSample.bias, dst + 49 * 4);
+  StoreUvVec4Rows(mat.coatNormalSample.uv, dst + 50 * 4);
+  Store4(mat.coatNormalSample.scale, dst + 52 * 4);
+  Store4(mat.coatNormalSample.bias, dst + 53 * 4);
+  dst[53 * 4 + 3] = static_cast<float>(mat.coatNormalSample.uvSet);
+  dst[52 * 4 + 3] = mat.coatNormalTex >= 0 ? 1.0f : 0.0f;
+  dst[54 * 4 + 0] = static_cast<float>(mat.specularColorTex);
+  dst[54 * 4 + 1] = static_cast<float>(mat.coatWeightTex);
+  dst[54 * 4 + 2] = static_cast<float>(mat.coatColorTex);
+  dst[54 * 4 + 3] = static_cast<float>(mat.coatRoughnessTex);
+  dst[55 * 4 + 0] = mat.coatNormalSample.isUdim
+                         ? static_cast<float>(mat.coatNormalTex)
+                         : -1.0f;
+  dst[55 * 4 + 1] = mat.displacementSample.isUdim
+                         ? static_cast<float>(mat.displacementTex)
+                         : -1.0f;
+  // Ptex base-color atlas: (rect texel offset, face count, enabled, reserved).
+  // The face id itself is fetched from the per-triangle source-face SSBO.
+  dst[56 * 4 + 0] = mat.baseColorSample.isPtex
+                         ? static_cast<float>(
+                               mat.baseColorSample.ptexRectTexelOffset)
+                         : 0.0f;
+  dst[56 * 4 + 1] = mat.baseColorSample.isPtex
+                         ? static_cast<float>(mat.baseColorSample.ptexFaceCount)
+                         : 0.0f;
+  dst[56 * 4 + 2] = mat.baseColorSample.isPtex
+                         ? 1.0f
+                         : 0.0f;
+  dst[56 * 4 + 3] = 0.0f;
+  auto packPtexInfo = [dst](int slot, const DrawTexSampleCPU& sample) {
+    dst[slot * 4 + 0] = sample.isPtex
+                             ? static_cast<float>(sample.ptexRectTexelOffset)
+                             : 0.0f;
+    dst[slot * 4 + 1] = sample.isPtex
+                             ? static_cast<float>(sample.ptexFaceCount)
+                             : 0.0f;
+    dst[slot * 4 + 2] = sample.isPtex ? 1.0f : 0.0f;
+    dst[slot * 4 + 3] = 0.0f;
+  };
+  packPtexInfo(57, mat.metallicSample);
+  packPtexInfo(58, mat.roughnessSample);
+  packPtexInfo(59, mat.normalSample);
+  packPtexInfo(60, mat.emissiveSample);
+  packPtexInfo(61, mat.opacitySample);
+  packPtexInfo(62, mat.occlusionSample);
+  packPtexInfo(63, mat.specularColorSample);
+  packPtexInfo(64, mat.coatWeightSample);
+  packPtexInfo(65, mat.coatColorSample);
+  packPtexInfo(66, mat.coatRoughnessSample);
 }
 
 }  // namespace tusdview

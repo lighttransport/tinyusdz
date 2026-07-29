@@ -1186,7 +1186,7 @@ const char *c_tinyusd_token_str(const c_tinyusd_token_t *tok) {
   }
 
   auto *p = reinterpret_cast<const tinyusdz::value::token *>(tok);
-  return p->str().c_str();
+  return p->c_str();
 }
 
 size_t c_tinyusd_token_size(const c_tinyusd_token_t *tok) {
@@ -1298,7 +1298,7 @@ const char *c_tinyusd_token_vector_str(const c_tinyusd_token_vector_t *sv, const
     return nullptr;
   }
 
-  return p->at(idx).str().c_str();
+  return p->at(idx).c_str();
 }
 
 c_tinyusd_string_t *c_tinyusd_string_new_empty() {
@@ -1955,6 +1955,7 @@ int c_tinyusd_stage_traverse(const CTinyUSDStage *_stage,
     if (_err) {
       c_tinyusd_string_replace(_err, err.c_str());
     }
+    return 0;
   }
 
   return 1;
@@ -2152,4 +2153,3 @@ static_assert(sizeof(c_tinyusd_half4_t) == sizeof(uint16_t) * 4, "");
 static_assert(sizeof(c_tinyusd_quath_t) == sizeof(uint16_t) * 4, "");
 static_assert(sizeof(c_tinyusd_quatf_t) == sizeof(float) * 4, "");
 static_assert(sizeof(c_tinyusd_quatd_t) == sizeof(double) * 4, "");
-

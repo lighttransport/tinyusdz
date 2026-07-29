@@ -43,6 +43,11 @@ static uint32_t ComputeCRC32(const uint8_t* data, size_t len) {
   return crc ^ 0xFFFFFFFFu;
 }
 
+static size_t FilePositionOrZero(std::ofstream& ofs) {
+  const std::streampos pos = ofs.tellp();
+  return pos < std::streampos(0) ? 0 : static_cast<size_t>(pos);
+}
+
 // ============================================================
 // ZIP constants
 // ============================================================
@@ -230,10 +235,18 @@ USDZWriteResult WriteUSDZToFile(const std::string& filename, const Stage& stage)
     return result;
   }
   ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+  ofs.flush();
+  if (!ofs.good()) {
+    result.success = false;
+    result.error = "Write failed (disk full?) for file: " + filename;
+    result.bytes_written = FilePositionOrZero(ofs);
+    return result;
+  }
   result.bytes_written = buf.size();
   result.success = true;
   return result;
 }
+
 
 USDZWriteResult WriteUSDZFromUSDCToMemory(std::vector<uint8_t>& buffer,
                                            const uint8_t* usdc_data,
@@ -318,6 +331,13 @@ USDZWriteResult WriteUSDZFromUSDCToFile(const std::string& filename,
     return result;
   }
   ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
+  ofs.flush();
+  if (!ofs.good()) {
+    result.success = false;
+    result.error = "Write failed (disk full?) for file: " + filename;
+    result.bytes_written = FilePositionOrZero(ofs);
+    return result;
+  }
   result.bytes_written = buf.size();
   result.success = true;
   return result;

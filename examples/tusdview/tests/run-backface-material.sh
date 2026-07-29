@@ -17,9 +17,20 @@ else
   trap 'rm -rf "$OUT"' EXIT
 fi
 RUN=()
-if command -v xvfb-run >/dev/null 2>&1; then
+if [ -n "${DISPLAY:-}" ] && command -v xdpyinfo >/dev/null 2>&1 &&
+   xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+  :
+elif command -v xvfb-run >/dev/null 2>&1; then
   RUN=(xvfb-run -a)
 fi
+
+run_bounded() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "${TUSDVIEW_BACKFACE_RENDER_TIMEOUT:-60s}" "$@"
+  else
+    "$@"
+  fi
+}
 
 cat > "$OUT/backface.usda" <<'USDA'
 #usda 1.0
@@ -200,15 +211,20 @@ PY
       # CUDA/HIP own their screenshots at process shutdown and therefore remain
       # isolated launches; raster/Vulkan-RT cases use the persistent batch above.
       # shellcheck disable=SC2086
-      "${RUN[@]}" env XDG_CONFIG_HOME="$OUT/config" \
+      run_bounded "${RUN[@]}" env XDG_CONFIG_HOME="$OUT/config" \
         "$BIN" "${headless_args[@]}" $backend_args --frames 2 \
         --size 1280x720 \
         --camera "$camera" --screenshot "$img" "$asset" >"$log" 2>&1
+      launch_rc=$?
       marker='render stats'
       [ "$backend" = cuda ] && marker='CUDA RT wrote'
       [ "$backend" = hip ] && marker='HIP RT wrote'
       if ! grep -q "$marker" "$log" || [ ! -s "$img" ]; then
-        echo "SKIP: $backend backend unavailable"
+        if [ "$launch_rc" -eq 124 ] || [ "$launch_rc" -eq 137 ]; then
+          echo "SKIP: $backend backend probe timed out"
+        else
+          echo "SKIP: $backend backend unavailable"
+        fi
         grep -Ei 'CUDA|HIP|ray tracing|ray trace|failed|unavailable' "$log" | tail -8 || true
         ok=0
         break

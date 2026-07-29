@@ -3078,6 +3078,22 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     // must use the texture, not the (0.18) fallback (usd-wg TextureTransformTest).
     DCOUT(fmt::format("{} is attribute connection.", param_name));
 
+    // Some USD-authored OpenPBR/standard_surface graphs use a direct
+    // UsdUVTexture connection even though the terminal shader is classified
+    // as MaterialX. Prefer that concrete USD texture node when present; the
+    // MaterialX graph resolver is for ND_image/NodeGraph connections and would
+    // otherwise reject this valid mixed graph and retain only the fallback.
+    if (is_materialx) {
+      const UsdUVTexture *direct_texture{nullptr};
+      const Shader *direct_shader{nullptr};
+      Path direct_path;
+      auto direct_result = GetConnectedUVTexture(
+          env.stage, param, &direct_path, &direct_texture, &direct_shader);
+      if (direct_result && *direct_result && direct_texture && direct_shader) {
+        is_materialx = false;
+      }
+    }
+
     // Check if this is a MaterialX connection to a NodeGraph
     if (is_materialx && param.get_connections().size() == 1) {
       const Path &conn_path = param.get_connections()[0];
@@ -3783,9 +3799,12 @@ static OpenPBRSurface ConvertMtlxStandardSurfaceToOpenPBRSurface(
   dst.emission_luminance = src.emission;
   dst.emission_color = src.emission_color;
 
-  // Opacity: StandardSurface is color3f, OpenPBR is float — take luminance
-  // Using Rec.709 luminance: 0.2126*R + 0.7152*G + 0.0722*B
-  {
+  // Opacity: StandardSurface is color3f, OpenPBR is float. Preserve a graph
+  // connection so ConvertOpenPBRSurfaceShader can resolve its texture; only
+  // reduce an authored constant to Rec.709 luminance.
+  if (src.opacity.has_connections()) {
+    dst.opacity.set_connections(src.opacity.get_connections());
+  } else {
     value::color3f opacity{1.0f, 1.0f, 1.0f};
     src.opacity.get_value().get(value::TimeCode::Default(), &opacity);
     const float alpha = 0.2126f * opacity[0] + 0.7152f * opacity[1] +
@@ -3796,13 +3815,17 @@ static OpenPBRSurface ConvertMtlxStandardSurfaceToOpenPBRSurface(
   // Geometry (normal, tangent)
   // StandardSurface uses TypedAttribute (optional, no fallback),
   // OpenPBR uses TypedAttributeWithFallback. Extract value if authored.
-  if (src.normal.authored()) {
+  if (src.normal.has_connections()) {
+    dst.normal.set_connections(src.normal.get_connections());
+  } else if (src.normal.authored()) {
     auto nval = src.normal.get_value();  // nonstd::optional<Animatable<normal3f>>
     if (nval) {
       dst.normal.set_value(*nval);
     }
   }
-  if (src.tangent.authored()) {
+  if (src.tangent.has_connections()) {
+    dst.tangent.set_connections(src.tangent.get_connections());
+  } else if (src.tangent.authored()) {
     auto tval = src.tangent.get_value();  // nonstd::optional<Animatable<vector3f>>
     if (tval) {
       dst.tangent.set_value(*tval);
@@ -4346,6 +4369,22 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to convert MtlxOpenPBRSurface : {}", surfacePath.prim_part()));
       }
+      // geometry_coat_normal has no field in the compatibility
+      // OpenPBRSurface intermediate. Preserve its direct UsdUVTexture or
+      // MaterialX image connection before the NodeGraph-specific normal-map
+      // extraction below (which may refine/override it).
+      TypedAttributeWithFallback<Animatable<value::normal3f>> coat_normal{
+          value::normal3f{0.0f, 0.0f, 1.0f}};
+      coat_normal.set_connections(
+          mtlx_openpbr->geometry_coat_normal.get_connections());
+      if (!ConvertPreviewSurfaceShaderParam(
+              env, surfacePath, coat_normal,
+              "geometry_coat_normal", openpbr_shader.coat_normal,
+              /*is_materialx=*/true)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to convert OpenPBR coat normal : {}",
+            surfacePath.prim_part()));
+      }
 
       // Extract tangent rotation, normal map scale, and normal map texture from NodeGraph connections
       const Prim *material_prim{nullptr};
@@ -4373,6 +4412,31 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       if (!ConvertOpenPBRSurfaceShader(env, surfacePath, converted_openpbr, &openpbr_shader, /* is_materialx */ true)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to convert MtlxAutodeskStandardSurface : {}", surfacePath.prim_part()));
+      }
+      if (mtlx_standard->coat_normal.authored() ||
+          mtlx_standard->coat_normal.has_connections()) {
+        TypedAttributeWithFallback<Animatable<value::normal3f>> coat_normal{
+            value::normal3f{0.0f, 0.0f, 1.0f}};
+        coat_normal.set_connections(
+            mtlx_standard->coat_normal.get_connections());
+        const auto coat_normal_value = mtlx_standard->coat_normal.get_value();
+        if (coat_normal_value) {
+          coat_normal.set_value(*coat_normal_value);
+        }
+        if (!ConvertPreviewSurfaceShaderParam(
+                env, surfacePath, coat_normal, "coat_normal",
+                openpbr_shader.coat_normal, /*is_materialx=*/true)) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Failed to convert Standard Surface coat normal : {}",
+              surfacePath.prim_part()));
+        }
+      }
+      if (!ConvertPreviewSurfaceShaderParam(
+              env, surfacePath, mtlx_standard->displacement, "displacement",
+              openpbr_shader.displacement, /*is_materialx=*/true)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to convert Standard Surface displacement : {}",
+            surfacePath.prim_part()));
       }
 
       // Extract normal map and tangent info from NodeGraph connections
@@ -4612,6 +4676,34 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                   "Failed to convert MtlxAutodeskStandardSurface : {}",
                   mtlxSurfacePath.prim_part()));
             } else {
+              if (mtlx_standard->coat_normal.authored() ||
+                  mtlx_standard->coat_normal.has_connections()) {
+                TypedAttributeWithFallback<Animatable<value::normal3f>>
+                    coat_normal{value::normal3f{0.0f, 0.0f, 1.0f}};
+                coat_normal.set_connections(
+                    mtlx_standard->coat_normal.get_connections());
+                const auto coat_normal_value =
+                    mtlx_standard->coat_normal.get_value();
+                if (coat_normal_value) {
+                  coat_normal.set_value(*coat_normal_value);
+                }
+                if (!ConvertPreviewSurfaceShaderParam(
+                        env, mtlxSurfacePath, coat_normal, "coat_normal",
+                        openpbr_shader.coat_normal,
+                        /*is_materialx=*/true)) {
+                  PUSH_ERROR_AND_RETURN(fmt::format(
+                      "Failed to convert Standard Surface coat normal : {}",
+                      mtlxSurfacePath.prim_part()));
+                }
+              }
+              if (!ConvertPreviewSurfaceShaderParam(
+                      env, mtlxSurfacePath, mtlx_standard->displacement,
+                      "displacement", openpbr_shader.displacement,
+                      /*is_materialx=*/true)) {
+                PUSH_ERROR_AND_RETURN(fmt::format(
+                    "Failed to convert Standard Surface displacement : {}",
+                    mtlxSurfacePath.prim_part()));
+              }
               const Prim *material_prim_for_ng = nullptr;
               if (!env.stage.find_prim_at_path(mat_abs_path,
                                                material_prim_for_ng, &err)) {

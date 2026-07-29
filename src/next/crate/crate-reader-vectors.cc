@@ -37,7 +37,7 @@ bool CrateReader::Impl::UnpackTokenOrStringVector(ValueRep rep,
       if (idxs[i] >= tokens_.size()) return false;
       s = tokens_.str(idxs[i]);
     } else {
-      GetString(idxs[i], s);
+      if (!GetString(idxs[i], s)) return false;
     }
     data[i] = std::move(s);
   }

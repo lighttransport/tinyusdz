@@ -195,8 +195,10 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
       if (dmat && dmat->hasDisplacement()) {
         for (int k = 0; k < 3; ++k) {
           float h = dmat->displacementTex >= 0
-                        ? SampleTextureRed(scene, dmat->displacementTex,
-                                           wuv[k * 2], wuv[k * 2 + 1]) *
+                        ? SampleTextureRed(
+                              scene, dmat->displacementTex, wuv[k * 2],
+                              wuv[k * 2 + 1],
+                              hasFace ? m.sourceFaceId[t / 3] : UINT32_MAX) *
                                   dmat->displacementTexScale +
                               dmat->displacementTexBias
                         : dmat->displacementConst;
@@ -421,12 +423,29 @@ void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
   }
 }
 
+uint32_t RtLightCollectionMaskForMesh(
+    const std::vector<DrawLightCPU>& lights, int meshIndex, bool shadow) {
+  uint32_t mask = 0u;
+  const size_t count = std::min(lights.size(),
+                                static_cast<size_t>(kMaxRtLinkedLights));
+  for (size_t i = 0; i < count; ++i) {
+    const DrawLightCPU& light = lights[i];
+    const bool all = shadow ? light.shadowLinksAll : light.lightLinksAll;
+    const std::vector<int>& linked = shadow ? light.shadowLinkMeshIndices
+                                            : light.lightLinkMeshIndices;
+    if (all || std::find(linked.begin(), linked.end(), meshIndex) != linked.end())
+      mask |= uint32_t{1} << static_cast<uint32_t>(i);
+  }
+  return mask;
+}
+
 void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
                            const std::vector<DrawMaterialCPU>& materials,
                            HostTextureTable* out) {
   if (!out) return;
   *out = HostTextureTable{};
-  out->matTex.assign(std::max<size_t>(materials.size(), 1) * 6, -1);
+  out->matTex.assign(
+      std::max<size_t>(materials.size(), 1) * kRtMaterialTexSlots, -1);
   out->matTexParam.assign(std::max<size_t>(materials.size(), 1) *
                               kRtMaterialTextureParamFloats,
                           0.0f);
@@ -479,6 +498,7 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
     int expectedW = image.width;
     int expectedH = image.height;
     for (const light3d::Image& mip : sourceMips) {
+      if (tex.isPtex) break;  // face rectangles describe the base atlas only
       expectedW = std::max(1, expectedW / 2);
       expectedH = std::max(1, expectedH / 2);
       if (mip.width != expectedW || mip.height != expectedH ||
@@ -494,6 +514,12 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       td.wrapS = tex.wrapS;
       td.wrapT = tex.wrapT;
       td.srgb = tex.srgb ? 1 : 0;
+      td.isPtex = tex.isPtex ? 1 : 0;
+      td.ptexCols = tex.ptexAtlasCols;
+      td.ptexRows = tex.ptexAtlasRows;
+      td.ptexTileEdge = static_cast<int>(tex.ptexTileEdge);
+      td.ptexRectTexelOffset = static_cast<int>(tex.ptexRectTexelOffset);
+      td.ptexFaceCount = static_cast<int>(tex.ptexFaceRects.size());
       td.mipCount = static_cast<int>(levels.size() - level);
       td.firstMip = td.mipCount > 1 ? id + static_cast<int>(level) + 1 : -1;
       for (int& layer : td.udimLayer) layer = -1;
@@ -538,12 +564,18 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
   };
   for (size_t i = 0; i < materials.size(); ++i) {
     const DrawMaterialCPU& dm = materials[i];
-    out->matTex[i * 6 + 0] = mapTex(dm.baseColorTex);
-    out->matTex[i * 6 + 1] = mapTex(dm.metallicTex);
-    out->matTex[i * 6 + 2] = mapTex(dm.roughnessTex);
-    out->matTex[i * 6 + 3] = mapTex(dm.normalTex);
-    out->matTex[i * 6 + 4] = mapTex(dm.emissiveTex);
-    out->matTex[i * 6 + 5] = mapTex(dm.opacityTex);
+    out->matTex[i * kRtMaterialTexSlots + 0] = mapTex(dm.baseColorTex);
+    out->matTex[i * kRtMaterialTexSlots + 1] = mapTex(dm.metallicTex);
+    out->matTex[i * kRtMaterialTexSlots + 2] = mapTex(dm.roughnessTex);
+    out->matTex[i * kRtMaterialTexSlots + 3] = mapTex(dm.normalTex);
+    out->matTex[i * kRtMaterialTexSlots + 4] = mapTex(dm.emissiveTex);
+    out->matTex[i * kRtMaterialTexSlots + 5] = mapTex(dm.opacityTex);
+    out->matTex[i * kRtMaterialTexSlots + 6] = mapTex(dm.occlusionTex);
+    out->matTex[i * kRtMaterialTexSlots + 7] = mapTex(dm.coatWeightTex);
+    out->matTex[i * kRtMaterialTexSlots + 8] = mapTex(dm.coatColorTex);
+    out->matTex[i * kRtMaterialTexSlots + 9] = mapTex(dm.coatRoughnessTex);
+    out->matTex[i * kRtMaterialTexSlots + 10] = mapTex(dm.specularColorTex);
+    out->matTex[i * kRtMaterialTexSlots + 11] = mapTex(dm.coatNormalTex);
     PackRtMaterialTextureParams(
         dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
   }
@@ -603,11 +635,13 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
     InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
     const size_t count = src.points.size() / 3;
     const float scale = CarrierWorldScale(src.world);
+    // A subdivided octahedron (subdivide each of 8 faces into 4) producing
+    // 32 triangles per point -- better than the previous 8-triangle octahedron,
+    // giving a noticeably rounder appearance without the full icosahedron.
     static const float dirs[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
                                       {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-    static const uint32_t faces[8][3] = {{0, 2, 4}, {2, 1, 4}, {1, 3, 4},
-                                         {3, 0, 4}, {2, 0, 5}, {1, 2, 5},
-                                         {3, 1, 5}, {0, 3, 5}};
+    static const uint32_t edges[12][2] = {{0,2},{2,1},{1,3},{3,0},{0,4},{2,4},
+                                           {1,4},{3,4},{0,5},{2,5},{1,5},{3,5}};
     for (size_t i = 0; i < count; ++i) {
       float center[3];
       CarrierWorldPoint(src.world, &src.points[i * 3], center);
@@ -625,19 +659,61 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
                                 ? 1.0f
                                 : src.opacities[src.opacities.size() > i ? i : 0];
       const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+      // Add the 6 octahedron base vertices.
       for (const auto& dir : dirs) {
         const float p[3] = {center[0] + dir[0] * width * 0.5f,
                             center[1] + dir[1] * width * 0.5f,
                             center[2] + dir[2] * width * 0.5f};
         AddProxyVertex(p, dir, color, opacity, &mesh);
       }
-      for (const auto& face : faces) {
-        mesh.indices.push_back(base + face[0]);
-        mesh.indices.push_back(base + face[1]);
-        mesh.indices.push_back(base + face[2]);
+      // Add the 12 edge-midpoint vertices (normalized for spherical proxy).
+      for (const auto& edge : edges) {
+        const float* d0 = dirs[edge[0]];
+        const float* d1 = dirs[edge[1]];
+        float dir[3] = {d0[0] + d1[0], d0[1] + d1[1], d0[2] + d1[2]};
+        float len = std::sqrt(dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
+        if (len > 1e-8f) { dir[0]/=len; dir[1]/=len; dir[2]/=len; }
+        const float p[3] = {center[0] + dir[0] * width * 0.5f,
+                            center[1] + dir[1] * width * 0.5f,
+                            center[2] + dir[2] * width * 0.5f};
+        AddProxyVertex(p, dir, color, opacity, &mesh);
+      }
+      // 4 triangles per original octahedron face, using subdivide pattern:
+      // face (a,b,c) -> (a, ab, ac), (ab, b, bc), (ac, bc, c), (ab, bc, ac)
+      // where ab = edge midpoint of a-b, etc. Edge indices match edges[] order:
+      //   v0-v2=0, v2-v1=1, v1-v3=2, v3-v0=3, v0-v4=4, v2-v4=5,
+      //   v1-v4=6, v3-v4=7, v0-v5=8, v2-v5=9, v1-v5=10, v3-v5=11
+      static const int face_edges[8][3] = {
+        {0,4,5},  // top: v0 v2 v4
+        {1,5,6},  // top: v2 v1 v4
+        {2,6,7},  // top: v1 v3 v4
+        {3,7,4},  // top: v3 v0 v4
+        {8,9,0},  // bot: v0 v5 v2 (edge 0 reversed: v2-v0 = same as v0-v2)
+        {9,10,1}, // bot: v2 v5 v1
+        {10,11,2},// bot: v1 v5 v3
+        {11,8,3}  // bot: v3 v5 v0
+      };
+      for (const auto& fe : face_edges) {
+        const uint32_t a = base + fe[0], b = base + fe[1], c = base + fe[2];
+        // (v0, v0v2_mid, v0v4_mid)
+        mesh.indices.push_back(a);
+        mesh.indices.push_back(base + 6 + fe[0]);
+        mesh.indices.push_back(base + 6 + fe[1]);
+        // (v0v2_mid, v2, v2v4_mid)
+        mesh.indices.push_back(base + 6 + fe[0]);
+        mesh.indices.push_back(b);
+        mesh.indices.push_back(base + 6 + fe[2]);
+        // (v0v4_mid, v2v4_mid, v4)
+        mesh.indices.push_back(base + 6 + fe[1]);
+        mesh.indices.push_back(base + 6 + fe[2]);
+        mesh.indices.push_back(c);
+        // (v0v2_mid, v2v4_mid, v0v4_mid)
+        mesh.indices.push_back(base + 6 + fe[0]);
+        mesh.indices.push_back(base + 6 + fe[2]);
+        mesh.indices.push_back(base + 6 + fe[1]);
       }
     }
-    mesh.submeshes[0].indexCount = mesh.indices.size();
+    mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
     if (!mesh.indices.empty()) proxies.push_back(std::move(mesh));
   }
 
@@ -687,11 +763,13 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
               src.opacities[src.opacities.size() > i + 1 ? i + 1 : 0];
           opacity = 0.5f * (o0 + o1);
         }
+        constexpr int kSegments = 8;
         const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
         for (int ring = 0; ring < 2; ++ring) {
           const float* center = ring == 0 ? p0 : p1;
-          for (int k = 0; k < 4; ++k) {
-            const float angle = 1.57079632679f * static_cast<float>(k);
+          for (int k = 0; k < kSegments; ++k) {
+            const float angle = 6.28318530718f * static_cast<float>(k) /
+                                static_cast<float>(kSegments);
             const float normal[3] = {side[0] * std::cos(angle) + up[0] * std::sin(angle),
                                      side[1] * std::cos(angle) + up[1] * std::sin(angle),
                                      side[2] * std::cos(angle) + up[2] * std::sin(angle)};
@@ -701,16 +779,18 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
             AddProxyVertex(p, normal, color, opacity, &mesh);
           }
         }
-        for (uint32_t k = 0; k < 4; ++k) {
-          const uint32_t next = (k + 1) & 3u;
+        for (uint32_t k = 0; k < static_cast<uint32_t>(kSegments); ++k) {
+          const uint32_t next = (k + 1) % static_cast<uint32_t>(kSegments);
           mesh.indices.insert(mesh.indices.end(),
-                              {base + k, base + 4 + k, base + 4 + next,
-                               base + k, base + 4 + next, base + next});
+                              {base + k, base + kSegments + k,
+                               base + kSegments + next,
+                               base + k, base + kSegments + next,
+                               base + next});
         }
       }
       begin = end;
     }
-    mesh.submeshes[0].indexCount = mesh.indices.size();
+    mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
     if (!mesh.indices.empty()) proxies.push_back(std::move(mesh));
   }
   return proxies;
@@ -770,6 +850,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     float tint[4];
     int blasRoot;
     int proto;          // index into protoBox
+    int meshIndex;
   };
   std::vector<InstSrc> isrc;
   std::vector<std::array<float, 6>> protoBox;  // {lo.xyz, hi.xyz} per accepted mesh
@@ -825,6 +906,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
       s.tint[3] = mb.instTint[k * 4 + 3];
       s.blasRoot = blasRoot;
       s.proto = proto;
+      s.meshIndex = mbi < scene.meshes.size() ? static_cast<int>(mbi) : -1;
       isrc.push_back(s);
     }
     if (np > 0 && isrc.size() >= instCap) out->truncated = true;
@@ -843,6 +925,10 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     I.tint[2] = s.tint[2]; I.tint[3] = s.tint[3];
     I.blasRoot = s.blasRoot;
     I.instId = static_cast<int>(i);
+    I.directLightMask = RtLightCollectionMaskForMesh(
+        scene.lights, s.meshIndex, false);
+    I.shadowLightMask = RtLightCollectionMaskForMesh(
+        scene.lights, s.meshIndex, true);
     const auto& box = protoBox[s.proto];
     float wlo[3], whi[3];
     O2WAabb(s.o2w, box.data(), box.data() + 3, wlo, whi);

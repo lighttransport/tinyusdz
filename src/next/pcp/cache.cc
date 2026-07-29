@@ -350,10 +350,27 @@ struct SrcCache {
  private:
   std::vector<Src> &emplace_at(size_t slot, uint64_t h, const std::string &k,
                                bool was_tomb) {
-    const uint32_t vi = static_cast<uint32_t>(vals_.size());
-    keys_.emplace_back(k);
-    vals_.emplace_back();
-    live_.push_back(1);
+    uint32_t vi;
+    if (was_tomb) {
+      vi = static_cast<uint32_t>(live_.size());
+      for (uint32_t di = 0; di < live_.size(); ++di) {
+        if (!live_[di]) { vi = di; break; }
+      }
+      if (vi < live_.size()) {
+        keys_[vi] = k;
+        vals_[vi].clear();
+        live_[vi] = 1;
+      } else {
+        keys_.emplace_back(k);
+        vals_.emplace_back();
+        live_.push_back(1);
+      }
+    } else {
+      vi = static_cast<uint32_t>(vals_.size());
+      keys_.emplace_back(k);
+      vals_.emplace_back();
+      live_.push_back(1);
+    }
     slots_[slot].hash = h;
     slots_[slot].idx = vi;
     slots_[slot].state = 1;
@@ -621,9 +638,47 @@ bool Cache::PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn
   return impl_->PrewarmPrimIndices(paths, warn, err);
 }
 
-bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err) {
+bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err,
+                       const PreviewCallback& preview_callback) {
   if (!stage) return false;
-  return impl_->BuildStage(stage, warn, err);
+  return impl_->BuildStage(stage, warn, err, preview_callback);
+}
+
+std::vector<std::string> Cache::GetLayerDependencies() const {
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  std::vector<std::string> dependencies;
+  auto physical_identifier = [](std::string identifier) {
+    // Variant content has a synthetic layer-stack id
+    // variant:<host>:<site>:<set>:<selection>. Its bytes live in <host>, which
+    // is the dependency cache validation must stat. Nested variants unwrap
+    // repeatedly. Keep Windows drive-letter colons: only the final three
+    // composition suffixes are removed each iteration.
+    while (identifier.compare(0, 8, "variant:") == 0) {
+      std::string host = identifier.substr(8);
+      bool valid = true;
+      for (int suffix = 0; suffix < 3; ++suffix) {
+        const size_t colon = host.rfind(':');
+        if (colon == std::string::npos) { valid = false; break; }
+        host.resize(colon);
+      }
+      if (!valid) break;
+      identifier.swap(host);
+    }
+    return identifier;
+  };
+  for (const LayerStack& stack : impl_->layer_stacks) {
+    for (const std::string& identifier : stack.layer_identifiers) {
+      const std::string physical = physical_identifier(identifier);
+      if (!physical.empty()) dependencies.push_back(physical);
+    }
+  }
+  if (!impl_->root_identifier.empty()) {
+    dependencies.push_back(impl_->root_identifier);
+  }
+  std::sort(dependencies.begin(), dependencies.end());
+  dependencies.erase(std::unique(dependencies.begin(), dependencies.end()),
+                     dependencies.end());
+  return dependencies;
 }
 
 Cache::MemoryStats Cache::GetMemoryStats() const {
@@ -706,7 +761,7 @@ void Cache::TrimTransientCaches() {
   impl_->path_intern.clear();
   impl_->nm_pool_.clear();
   impl_->nm_pool_.push_back(NamespaceMapping{});
-  std::vector<std::pair<uint32_t, std::string>>().swap(impl_->fill_);
+  std::vector<std::pair<uint32_t, const std::vector<Src>*>>().swap(impl_->fill_);
 }
 
 const PrimSpec *Cache::ComposePrim(const Path &prim_path, std::string *warn,
@@ -862,6 +917,10 @@ void Cache::ClearCompositionIssues() {
 
 void Cache::Invalidate(const Path &prim_path) { impl_->Invalidate(prim_path); }
 void Cache::InvalidateLayer(const std::string &id) { impl_->InvalidateLayer(id); }
+bool Cache::ReloadLayer(const std::string &id, std::string *warn,
+                        std::string *err) {
+  return impl_->ReloadLayer(id, warn, err);
+}
 
 bool Cache::HasComputedPrimIndex(const Path &prim_path) const {
   NEXT_PCP_READ_LOCK(impl_->api_mu_);

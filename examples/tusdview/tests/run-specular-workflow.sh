@@ -24,6 +24,8 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 missing"; exit $SKIP
 
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
+CONFIG="$OUT/config.json"
+printf '%s\n' '{"window_size":{"width":256,"height":256}}' > "$CONFIG"
 XVFB=""
 if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
   XVFB="xvfb-run -a"
@@ -79,9 +81,16 @@ declare -A dom
 for spec in "gl:--backend gl" "vk:--backend vk"; do
   tag="${spec%%:*}"; args="${spec#*:}"
   img="$OUT/spec_${tag}.ppm"
-  # shellcheck disable=SC2086
-  $XVFB "$BIN" --headless $args --frames 3 --screenshot "$img" "$OUT/spec.usda" \
-      >"$OUT/${tag}.log" 2>&1
+  if [ "$tag" = gl ]; then
+    # GL needs a display. `--headless` intentionally selects Vulkan, so do not
+    # pass it here or this comparison silently exercises Vulkan twice.
+    # shellcheck disable=SC2086
+    $XVFB "$BIN" $args --config "$CONFIG" --frames 3 --screenshot "$img" \
+        "$OUT/spec.usda" >"$OUT/${tag}.log" 2>&1
+  else
+    "$BIN" --headless $args --config "$CONFIG" --frames 3 --screenshot "$img" \
+        "$OUT/spec.usda" >"$OUT/${tag}.log" 2>&1
+  fi
   if ! grep -q 'render stats' "$OUT/${tag}.log"; then
     echo "SKIP: $tag backend unavailable"; continue
   fi

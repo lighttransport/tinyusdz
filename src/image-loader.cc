@@ -162,6 +162,23 @@ namespace {
 // image is 1 GiB; fp32 would be 4 GiB).
 static constexpr size_t kMaxDecodedImageBytes = size_t(2048) * 1024 * 1024;  // 2 GiB
 
+// Compute max bytes from a memory-limit-in-MB setting using uint64_t to avoid
+// overflow on 32-bit platforms. Clamps to SIZE_MAX if the result exceeds it.
+inline size_t MaxMemoryBytes(uint64_t limit_mb) {
+  constexpr uint64_t kBytesPerMiB = uint64_t(1024) * uint64_t(1024);
+#if SIZE_MAX < UINT64_MAX
+  constexpr uint64_t kMaxBytes =
+      uint64_t((std::numeric_limits<size_t>::max)());
+#else
+  constexpr uint64_t kMaxBytes =
+      (std::numeric_limits<uint64_t>::max)();
+#endif
+  if (limit_mb > (kMaxBytes / kBytesPerMiB)) {
+    return (std::numeric_limits<size_t>::max)();
+  }
+  return static_cast<size_t>(limit_mb * kBytesPerMiB);
+}
+
 #if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
 
 bool DecodeImageWUFF(const uint8_t *bytes, const size_t size,
@@ -206,6 +223,15 @@ bool DecodeImageSTB(const uint8_t *bytes, const size_t size,
   // some GPU drivers do not support 24-bit images for Vulkan
   req_comp = 4;
   int bits = 8;
+
+  // stb_image API accepts buffer size as `int`. Reject inputs larger than
+  // INT_MAX to avoid silent size truncation.
+  if (size > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    if (err) {
+      (*err) += "Image data too large (> 2GB) for stb_image decoder: " + uri + "\n";
+    }
+    return false;
+  }
 
   // It is possible that the image we want to load is a 16bit per channel image
   // We are going to attempt to load it as 16bit per channel, and if it worked,
@@ -287,6 +313,10 @@ bool GetImageInfoSTB(const uint8_t *bytes, const size_t size,
   (void)uri;
   (void)err;
 
+  if (size > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    return false;
+  }
+
   int w = 0, h = 0, comp = 0;
 
   int ret = stbi_info_from_memory(bytes, int(size), &w, &h, &comp);
@@ -307,6 +337,9 @@ bool GetImageInfoSTB(const uint8_t *bytes, const size_t size,
 
 // Check if the image is HDR (Radiance RGBE format)
 bool IsHDRFromMemory(const uint8_t *bytes, const size_t size) {
+  if (size > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    return false;
+  }
   return stbi_is_hdr_from_memory(bytes, int(size)) != 0;
 }
 
@@ -316,6 +349,13 @@ bool DecodeImageHDR(const uint8_t *bytes, const size_t size,
                     const std::string &uri, Image *image, std::string *warn,
                     std::string *err) {
   (void)warn;
+
+  if (size > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    if (err) {
+      (*err) += "HDR image data too large (> 2GB): " + uri + "\n";
+    }
+    return false;
+  }
 
   int w = 0, h = 0, comp = 0;
 
@@ -376,6 +416,10 @@ bool GetImageInfoHDR(const uint8_t *bytes, const size_t size,
   (void)warn;
   (void)uri;
   (void)err;
+
+  if (size > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    return false;
+  }
 
   int w = 0, h = 0, comp = 0;
 
@@ -746,6 +790,11 @@ bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
 
   if (!ret) {
     (*err) += "Failed to load TIFF/DNG image: " + uri + "\n";
+    return false;
+  }
+
+  if (images.empty()) {
+    (*err) += "No images decoded from TIFF/DNG: " + uri + "\n";
     return false;
   }
 
@@ -1176,6 +1225,10 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
 nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
     const uint8_t *addr, size_t sz, const std::string &uri) {
   image::ImageResult ret;
+  // Keep provenance attached regardless of which decoder handles the bytes.
+  // This is especially useful for nanoimage/TinyEXR diagnostics and for
+  // downstream texture-cache keys when the source came from a USDZ archive.
+  ret.image.uri = uri;
   std::string err;
 
 #if defined(TINYUSDZ_WITH_TEXTOOLS)
@@ -1363,7 +1416,7 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromFile(
   std::string filepath = filename;
 
   std::vector<uint8_t> data;
-  size_t max_bytes = size_t(1024 * 1024 * max_memory_limit_in_mb);
+  size_t max_bytes = MaxMemoryBytes(uint64_t(max_memory_limit_in_mb));
   std::string err;
   if (!io::ReadWholeFile(&data, &err, filepath, max_bytes,
                          /* userdata */ nullptr)) {

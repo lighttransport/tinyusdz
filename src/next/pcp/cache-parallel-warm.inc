@@ -4,7 +4,8 @@
 // TinyUSDZ Next - PCP Cache parallel source warming and index prewarm.
 // Included inside Cache::Impl.
 
-  bool BuildStage(Stage *stage, std::string *warn, std::string *err) {
+  bool BuildStage(Stage *stage, std::string *warn, std::string *err,
+                  const Cache::PreviewCallback &preview_callback) {
     NEXT_PCP_LOCK(api_mu_);
     auto out = std::unique_ptr<Layer>(new Layer());
 
@@ -55,6 +56,7 @@
     if (warm_threads > 1)
       ParallelWarmSources(root_names, warm_threads, warn, err);
 #endif
+    const auto structure_t0 = std::chrono::steady_clock::now();
     // Structure pass (serial): walk every root, fixing each prim's slot/parent/
     // child-order/instancing and recording its (slot, sources) for opinion fill.
     fill_.clear();
@@ -62,22 +64,34 @@
       BuildStage(out.get(), {Path("/" + nm), Path("/" + nm), 0, true, 1},
                  warn, err);
     }
+    const auto structure_t1 = std::chrono::steady_clock::now();
+    if (preview_callback) {
+      // The callback receives an independent immutable-in-practice Stage. The
+      // authoritative layer remains owned here and is filled below only after
+      // the callback returns, so a consumer may retain the preview safely.
+      Layer preview_layer = BuildPreviewLayer(*out);
+      preview_layer.meta() = root->meta();
+      preview_layer.meta().subLayers.clear();
+      preview_layer.meta().relocates.clear();
+      preview_layer.finalize();
+      Stage preview_stage;
+      preview_stage.SetRootLayer(std::move(preview_layer));
+      if (!preview_callback(std::move(preview_stage))) {
+        if (err && err->empty()) *err = "stage preview callback cancelled";
+        return false;
+      }
+    }
     // Opinion-fill pass: compose every slot's opinions, in parallel when
     // num_threads > 1 (each slot is independent; sources_cache is read-only here).
     auto fill_t0 = std::chrono::steady_clock::now();
     FillOpinions(out.get());
+    const auto fill_t1 = std::chrono::steady_clock::now();
     if (options.enable_timing) {
       prof_compose_ns_ +=
           std::chrono::duration_cast<std::chrono::nanoseconds>(
-              std::chrono::steady_clock::now() - fill_t0).count();
+              fill_t1 - fill_t0).count();
     }
-    std::vector<std::pair<uint32_t, std::string>>().swap(fill_);
-    if (options.enable_timing) {
-      TUSDZ_LOG_I("[next_build] sources=" + FormatMilliseconds(prof_sources_ns_ / 1e6) +
-                  "ms compose=" + FormatMilliseconds(prof_compose_ns_ / 1e6) +
-                  "ms register=" + FormatMilliseconds(prof_reg_ns_ / 1e6) + "ms");
-    }
-
+    std::vector<std::pair<uint32_t, const std::vector<Src>*>>().swap(fill_);
     switch (options.instance_flatten_mode) {
       case InstanceFlattenMode::Holder:
         FlattenInstances(out.get());
@@ -88,8 +102,26 @@
       case InstanceFlattenMode::Native:
         break;
     }
+    const auto flatten_t1 = std::chrono::steady_clock::now();
 
     out->finalize();
+    const auto finalize_t1 = std::chrono::steady_clock::now();
+    if (options.enable_timing) {
+      auto elapsed_ms = [](std::chrono::steady_clock::duration duration) {
+        return std::chrono::duration<double, std::milli>(duration).count();
+      };
+      TUSDZ_LOG_I("[next_build] sources=" +
+                  FormatMilliseconds(prof_sources_ns_ / 1e6) +
+                  "ms structure=" +
+                  FormatMilliseconds(elapsed_ms(structure_t1 - structure_t0)) +
+                  "ms compose=" + FormatMilliseconds(prof_compose_ns_ / 1e6) +
+                  "ms register=" + FormatMilliseconds(prof_reg_ns_ / 1e6) +
+                  "ms flatten=" +
+                  FormatMilliseconds(elapsed_ms(flatten_t1 - fill_t1)) +
+                  "ms finalize=" +
+                  FormatMilliseconds(elapsed_ms(finalize_t1 - flatten_t1)) +
+                  "ms");
+    }
     out->meta() = root->meta();
     // Stage metadata comes from the ROOT layer only. pxr does NOT fall back
     // to sublayer-authored stage fields (verified against the 26.05 oracle:
@@ -217,11 +249,15 @@
     out->build_path_index();
     std::unordered_map<std::string, std::string> fpath;  // proto -> "/Flattened_Prototype_j"
     {
+      std::unordered_set<std::string> used;
+      for (uint32_t i = 0; i < out->prim_count(); ++i) {
+        if (const PrimSpec *p = out->prim(i)) used.insert(p->path().str());
+      }
       size_t n = 1;
       for (const std::string &proto : ordered) {
         std::string p;
         do { p = "/Flattened_Prototype_" + UIntToStr(n++); }
-        while (out->prim_at_path(p) != nullptr);  // skip user-named clashes
+        while (!used.insert(p).second);  // skip user-named clashes
         fpath[proto] = p;
       }
     }

@@ -29,6 +29,21 @@ layout(set = 0, binding = 12) uniform samplerCube uIrradianceMap;
 layout(set = 0, binding = 13) uniform samplerCube uPrefilteredMap;
 layout(set = 0, binding = 14) uniform sampler2D uBrdfLut;
 layout(set = 0, binding = 15) uniform sampler2DArray uRoughnessUdimTex;
+layout(set = 0, binding = 17) uniform sampler2D uOcclusionTex;
+layout(set = 0, binding = 18) uniform sampler2DArray uOcclusionUdimTex;
+layout(set = 0, binding = 19) uniform sampler2D uShadowMap;
+// Extra material slots (ordinary 2D only; UDIM sources are treated as unbound).
+layout(set = 0, binding = 20) uniform sampler2D uSpecularColorTex;
+layout(set = 0, binding = 21) uniform sampler2D uCoatWeightTex;
+layout(set = 0, binding = 22) uniform sampler2D uCoatColorTex;
+layout(set = 0, binding = 23) uniform sampler2D uCoatRoughnessTex;
+layout(set = 0, binding = 24) uniform sampler2D uCoatNormalTex;
+layout(set = 0, binding = 25) uniform samplerCube uPointShadowMap;
+layout(set = 0, binding = 26) uniform sampler2DArray uSpecularColorUdimTex;
+layout(set = 0, binding = 27) uniform sampler2DArray uCoatWeightUdimTex;
+layout(set = 0, binding = 28) uniform sampler2DArray uCoatColorUdimTex;
+layout(set = 0, binding = 29) uniform sampler2DArray uCoatRoughnessUdimTex;
+layout(set = 0, binding = 30) uniform sampler2DArray uCoatNormalUdimTex;
 // Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
 // first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
 layout(set = 1, binding = 6, std430) readonly buffer Faces { uint faceId[]; };
@@ -49,6 +64,9 @@ layout(set = 2, binding = 0) uniform Frame {
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
   vec4 iblParams;     // .x = prefiltered mip count, .y = exposure stops
+  mat4 shadowViewProj;
+  vec4 pointShadowLight; // xyz position, w = point cube shadow enabled
+  mat4 pointShadowViewProj[6];
 } fr;
 
 struct MaterialTexParam {
@@ -77,6 +95,38 @@ struct MaterialTexParam {
   vec4 roughUv0; vec4 roughUv1; // roughUv0.w = UV-set selector
   vec4 coatParams;    // weight, roughness, ior, occlusion
   vec4 coatColor;
+  vec4 occlusionUv0; vec4 occlusionUv1;
+  vec4 occlusionParams; // channel, scale, bias, uvSet
+  // Extra semantic slots (specular color / coat weight / coat color / coat
+  // roughness). The loaders neutralize the matching constant to 1.0 whenever a
+  // texture is bound, so constant * texel is always the right combine.
+  vec4 specColorUv0; vec4 specColorUv1;
+  vec4 coatWeightUv0; vec4 coatWeightUv1;
+  vec4 coatColorUv0; vec4 coatColorUv1;
+  vec4 coatRoughUv0; vec4 coatRoughUv1;
+  // coatWeightChannel, coatRoughnessChannel, coatWeightUvSet, coatRoughUvSet
+  vec4 coatTexParams;
+  // specColorUvSet, coatColorUvSet, unused, unused
+  vec4 extraUvSets;
+  vec4 specColorScale; vec4 specColorBias;
+  vec4 coatWeightScale; vec4 coatWeightBias;
+  vec4 coatColorScale; vec4 coatColorBias;
+  vec4 coatRoughScale; vec4 coatRoughBias;
+  vec4 coatNormalUv0; vec4 coatNormalUv1;
+  vec4 coatNormalScale; vec4 coatNormalBias;
+  vec4 semanticUdimSlots;
+  vec4 semanticUdimSlots2;
+  vec4 ptexBaseInfo; // rect texel offset, face count, enabled, reserved
+  vec4 ptexMetalInfo;
+  vec4 ptexRoughInfo;
+  vec4 ptexNormalInfo;
+  vec4 ptexEmissiveInfo;
+  vec4 ptexOpacityInfo;
+  vec4 ptexOcclusionInfo;
+  vec4 ptexSpecularInfo;
+  vec4 ptexCoatWeightInfo;
+  vec4 ptexCoatColorInfo;
+  vec4 ptexCoatRoughInfo;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -137,9 +187,11 @@ vec4 sampleUdim(sampler2DArray tex, int slot, vec2 uv, vec4 missing) {
 vec3 computeF0(vec3 base, float metallic) {
   vec4 sp = mtp.p[max(pc.ids.x, 0)].specParams;
   if (sp.w < 0.0) return sp.rgb;                 // specular workflow
-  float ior = max(1.0, abs(sp.w));
+  bool openPbr = sp.w > 100.0;
+  float ior = max(1.0, openPbr ? sp.w - 100.0 : sp.w);
   float d = (ior - 1.0) / (ior + 1.0);
-  return mix(vec3(d * d), base, clamp(metallic, 0.0, 1.0));
+  vec3 dielectric = vec3(d * d) * (openPbr ? sp.rgb : vec3(1.0));
+  return mix(dielectric, base, clamp(metallic, 0.0, 1.0));
 }
 
 const float kPi = 3.14159265358979323846;
@@ -178,11 +230,65 @@ float channelOf(vec4 c, float chf) {
   return c.r;
 }
 
+uint sourceFaceForPtex() {
+  if ((pc.ids.y & 0x80) == 0) return 0u;
+  uint base = uint((pc.ids.y >> 8) & 0xFFFFFF);
+  return faceId[base + uint(gl_PrimitiveID)];
+}
+
+vec2 ptexUv(sampler2D tex, vec2 uv, vec4 info) {
+  if (info.z <= 0.5 || (pc.ids.y & 0x80) == 0) return uv;
+  uint face = sourceFaceForPtex();
+  if (face >= uint(info.y)) return uv;
+  ivec2 size = textureSize(tex, 0);
+  int base = int(info.x + 0.5) + int(face) * 8;
+  uint value[4];
+  for (int component = 0; component < 4; ++component) {
+    int lo = base + component * 2;
+    float a = texelFetch(tex, ivec2(lo % size.x, lo / size.x), 0).a;
+    float b = texelFetch(tex, ivec2((lo + 1) % size.x,
+                                    (lo + 1) / size.x), 0).a;
+    value[component] = uint(a * 255.0 + 0.5) |
+                       (uint(b * 255.0 + 0.5) << 8u);
+  }
+  if (value[2] == 0u || value[3] == 0u) return uv;
+  vec2 px = vec2(float(value[0]), float(value[1])) +
+            vec2(clamp(uv.x, 0.0, 1.0), 1.0 - clamp(uv.y, 0.0, 1.0)) *
+            vec2(float(value[2] - 1u), float(value[3] - 1u));
+  return (px + vec2(0.5)) / vec2(size);
+}
+
 vec4 sampleBaseColor(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.x > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.baseUv0, m.baseUv1);
-  vec4 c = ((pc.ids.w & 1) != 0)
+  uint ptexFace = sourceFaceForPtex();
+  vec2 ptexUv = tuv;
+  bool validPtex = m.ptexBaseInfo.z > 0.5 && (pc.ids.y & 0x80) != 0 &&
+                   ptexFace < uint(m.ptexBaseInfo.y);
+  if (validPtex) {
+    uint values[4];
+    int base = int(m.ptexBaseInfo.x + 0.5) + int(ptexFace) * 8;
+    ivec2 size = textureSize(uBaseColorTex, 0);
+    for (int component = 0; component < 4; ++component) {
+      int lo = base + component * 2;
+      float a = texelFetch(uBaseColorTex,
+                           ivec2(lo % size.x, lo / size.x), 0).a;
+      float b = texelFetch(uBaseColorTex,
+                           ivec2((lo + 1) % size.x, (lo + 1) / size.x), 0).a;
+      values[component] = uint(a * 255.0 + 0.5) |
+                          (uint(b * 255.0 + 0.5) << 8u);
+    }
+    vec2 px = vec2(float(values[0]), float(values[1])) +
+              vec2(clamp(tuv.x, 0.0, 1.0),
+                   1.0 - clamp(tuv.y, 0.0, 1.0)) *
+              vec2(float(max(values[2], 1u) - 1u),
+                   float(max(values[3], 1u) - 1u));
+    ptexUv = (px + vec2(0.5)) / vec2(size);
+  }
+  vec4 c = validPtex
+      ? texture(uBaseColorTex, ptexUv)
+      : ((pc.ids.w & 1) != 0)
       ? sampleUdim(uBaseColorUdimTex, int(m.udimSlots0.x + 0.5), tuv,
                    vec4(1.0, 0.0, 1.0, 1.0))
       : texture(uBaseColorTex, tuv);
@@ -193,6 +299,7 @@ vec4 sampleMetallic(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.y > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.mrUv0, m.mrUv1);
+  tuv = ptexUv(uMetallicTex, tuv, m.ptexMetalInfo);
   return ((pc.ids.w & 2) != 0)
       ? sampleUdim(uMetallicUdimTex, int(m.udimSlots0.y + 0.5), tuv,
                    vec4(1.0, 0.0, 1.0, 1.0))
@@ -203,6 +310,7 @@ vec4 sampleRoughness(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.roughUv0.w > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.roughUv0, m.roughUv1);
+  tuv = ptexUv(uRoughnessTex, tuv, m.ptexRoughInfo);
   return ((pc.ids.w & 512) != 0)
       ? sampleUdim(uRoughnessUdimTex, int(m.udimSlots1.y + 0.5), tuv,
                    vec4(1.0))
@@ -213,6 +321,7 @@ vec4 sampleNormal(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.z > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.normalUv0, m.normalUv1);
+  tuv = ptexUv(uNormalTex, tuv, m.ptexNormalInfo);
   vec4 c = ((pc.ids.w & 4) != 0)
       ? sampleUdim(uNormalUdimTex, int(m.udimSlots0.z + 0.5), tuv,
                    vec4(0.5, 0.5, 1.0, 1.0))
@@ -224,6 +333,7 @@ vec4 sampleEmissive(vec2 uv) {
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.uvSets.w > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.emissiveUv0, m.emissiveUv1);
+  tuv = ptexUv(uEmissiveTex, tuv, m.ptexEmissiveInfo);
   vec4 c = ((pc.ids.w & 8) != 0)
       ? sampleUdim(uEmissiveUdimTex, int(m.udimSlots0.w + 0.5), tuv,
                    vec4(1.0, 0.0, 1.0, 1.0))
@@ -231,16 +341,126 @@ vec4 sampleEmissive(vec2 uv) {
   return c * m.emissiveScale + m.emissiveBias;
 }
 
+vec3 applyCoatNormalMap(vec3 n) {
+  MaterialTexParam m = matTexParam();
+  if (m.coatNormalScale.w < 0.5) return n;
+  vec2 suv = m.coatNormalBias.w > 0.5 ? vUV1 : vUV;
+  vec2 uv = xformUv(suv, m.coatNormalUv0, m.coatNormalUv1);
+  vec4 sampledNormal = m.semanticUdimSlots2.x >= 0.0
+      ? sampleUdim(uCoatNormalUdimTex, int(m.semanticUdimSlots2.x + 0.5), uv,
+                   vec4(0.5, 0.5, 1.0, 1.0))
+      : texture(uCoatNormalTex, uv);
+  vec3 nm = (sampledNormal * m.coatNormalScale +
+             m.coatNormalBias).xyz;
+  vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
+  vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+  float r = du1.x * du2.y - du2.x * du1.y;
+  vec3 t = dp1 * du2.y - dp2 * du1.y;
+  t = (abs(r) > 1e-8) ? t / r : dp1;
+  t = normalize(t - n * dot(n, t));
+  vec3 b = normalize(cross(n, t)) * (r < 0.0 ? -1.0 : 1.0);
+  return normalize(mat3(t, b, n) * nm);
+}
+
 float sampleOpacity(vec2 uv) {
   if ((pc.ids.w & 64) == 0) return 1.0;
   MaterialTexParam m = matTexParam();
   vec2 suv = (m.opacityParams.w > 0.5) ? vUV1 : uv;
   vec2 tuv = xformUv(suv, m.opacityUv0, m.opacityUv1);
+  tuv = ptexUv(uOpacityTex, tuv, m.ptexOpacityInfo);
   vec4 c = ((pc.ids.w & 128) != 0)
       ? sampleUdim(uOpacityUdimTex, int(m.udimSlots1.x + 0.5), tuv, vec4(1.0))
       : texture(uOpacityTex, tuv);
   return clamp(channelOf(c, m.opacityParams.x) * m.opacityParams.y +
                m.opacityParams.z, 0.0, 1.0);
+}
+
+float sampleOcclusion(vec2 uv) {
+  if ((pc.ids.w & 1024) == 0) return 1.0;
+  MaterialTexParam m = matTexParam();
+  vec2 suv = (m.occlusionParams.w > 0.5) ? vUV1 : uv;
+  vec2 tuv = xformUv(suv, m.occlusionUv0, m.occlusionUv1);
+  vec4 c = ((pc.ids.w & 2048) != 0)
+      ? sampleUdim(uOcclusionUdimTex, int(m.udimSlots1.z + 0.5), tuv,
+                   vec4(1.0))
+      : texture(uOcclusionTex, tuv);
+  return clamp(channelOf(c, m.occlusionParams.x) * m.occlusionParams.y +
+               m.occlusionParams.z, 0.0, 1.0);
+}
+
+// Scalar coat slot: returns 1.0 when unbound so constant * 1.0 is a no-op.
+// A negative packed channel selector means "use channel 0 (R)".
+float sampleCoatScalar(sampler2D tex, bool has, vec4 uv0, vec4 uv1,
+                       float uvSet, float channel, vec4 scale, vec4 bias) {
+  if (!has) return 1.0;
+  vec2 suv = (uvSet > 0.5) ? vUV1 : vUV;
+  float ch = (channel < 0.0) ? 0.0 : channel;
+  vec4 c = texture(tex, xformUv(suv, uv0, uv1)) * scale + bias;
+  return clamp(channelOf(c, ch), 0.0, 1.0);
+}
+
+vec3 sampleColorSlot(sampler2D tex, bool has, vec4 uv0, vec4 uv1, float uvSet,
+                     vec4 scale, vec4 bias) {
+  if (!has) return vec3(1.0);
+  vec2 suv = (uvSet > 0.5) ? vUV1 : vUV;
+  return (texture(tex, xformUv(suv, uv0, uv1)) * scale + bias).rgb;
+}
+
+float sampleCoatScalarUdim(sampler2D tex, sampler2DArray udimTex,
+                           bool ordinary, float row, vec4 uv0, vec4 uv1,
+                           float uvSet, float channel, vec4 scale, vec4 bias,
+                           vec4 ptexInfo) {
+  bool udim = !ordinary && row >= 0.0;
+  if (!ordinary && !udim) return 1.0;
+  vec2 suv = uvSet > 0.5 ? vUV1 : vUV;
+  vec2 uv = xformUv(suv, uv0, uv1);
+  uv = ptexUv(tex, uv, ptexInfo);
+  vec4 c = udim ? sampleUdim(udimTex, int(row + 0.5), uv, vec4(1.0))
+                : texture(tex, uv);
+  return clamp(channelOf(c * scale + bias, channel < 0.0 ? 0.0 : channel),
+               0.0, 1.0);
+}
+
+vec3 sampleCoatColorUdim(bool ordinary, float row, vec4 uv0, vec4 uv1,
+                         float uvSet, vec4 scale, vec4 bias, vec4 ptexInfo) {
+  bool udim = !ordinary && row >= 0.0;
+  if (!ordinary && !udim) return vec3(1.0);
+  vec2 suv = uvSet > 0.5 ? vUV1 : vUV;
+  vec2 uv = xformUv(suv, uv0, uv1);
+  uv = ptexUv(uCoatColorTex, uv, ptexInfo);
+  vec4 c = udim ? sampleUdim(uCoatColorUdimTex, int(row + 0.5), uv,
+                             vec4(1.0))
+                : texture(uCoatColorTex, uv);
+  return (c * scale + bias).rgb;
+}
+
+float sampleShadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
+  if (fr.pointShadowLight.w > 0.5) {
+    vec3 d = worldPos - fr.pointShadowLight.xyz;
+    vec3 a = abs(d);
+    int face = a.x >= a.y && a.x >= a.z ? (d.x >= 0.0 ? 0 : 1)
+             : (a.y >= a.z ? (d.y >= 0.0 ? 2 : 3) : (d.z >= 0.0 ? 4 : 5));
+    vec4 clip = fr.pointShadowViewProj[face] * vec4(worldPos, 1.0);
+    vec3 p = clip.xyz / clip.w;
+    if (p.z <= 0.0 || p.z >= 1.0) return 1.0;
+    float bias = max(0.00035, 0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
+    return p.z - bias <= texture(uPointShadowMap, normalize(d)).r ? 1.0 : 0.0;
+  }
+  if (fr.iblParams.w < 0.5) return 1.0;
+  vec4 clip = fr.shadowViewProj * vec4(worldPos, 1.0);
+  vec3 p = clip.xyz / clip.w;
+  p.xy = p.xy * 0.5 + 0.5;
+  p.y = 1.0 - p.y;
+  if (p.z <= 0.0 || p.z >= 1.0 || any(lessThan(p.xy, vec2(0.0))) ||
+      any(greaterThan(p.xy, vec2(1.0)))) return 1.0;
+  float bias = max(0.00035, 0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)));
+  vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+  float visible = 0.0;
+  for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x)
+      visible += p.z - bias <= texture(uShadowMap, p.xy + vec2(x, y) * texel).r
+                     ? 1.0 : 0.0;
+  return visible / 9.0;
 }
 
 vec3 applyNormalMap(vec3 n) {
@@ -280,10 +500,13 @@ void main() {
                    ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
                    : normalize(vNormalW);
   vec3 N = applyNormalMap(Nbase);
+  vec3 coatN = applyCoatNormalMap(N);
   // Debug AOVs.
-  if (fr.mode.x != 0) {
+  if (fr.mode.x != 0 && fr.mode.x != 36 && fr.mode.x != 37 &&
+      fr.mode.x != 38 && fr.mode.x != 39 && fr.mode.x != 40) {
     vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
     if (fr.mode.x == 2) { outColor = vec4(N * 0.5 + 0.5, 1.0); return; }
+    if (fr.mode.x == 35) { outColor = vec4(coatN * 0.5 + 0.5, 1.0); return; }
     if (fr.mode.x == 3) { outColor = vec4(idColor(pc.ids.x), 1.0); return; }
     if (fr.mode.x == 4) { outColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }
     if (fr.mode.x == 6) {
@@ -422,13 +645,71 @@ void main() {
 
   // Real-time Cook-Torrance preview, matching light3d/material.cpp.
   vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+  vec3 coatNf = (dot(coatN, V) < 0.0) ? -coatN : coatN;
   float NoV = max(dot(Nf, V), 1e-4);
   float rgh = clamp(roughness, 0.02, 1.0);
   float met = clamp(metallic, 0.0, 1.0);
   vec3 F0 = computeF0(base, met);
   MaterialTexParam pbr = matTexParam();
-  float coatWeight = clamp(pbr.coatParams.x, 0.0, 1.0);
-  float coatRoughness = clamp(pbr.coatParams.y, 0.02, 1.0);
+  // inputs:specularColor texture modulates F0, but only in the specular
+  // workflow (where F0 *is* specularColor). Vulkan has the sampler budget for
+  // this slot; the GL path deliberately omits it.
+  if (pbr.specParams.w < 0.0 || pbr.specParams.w > 100.0) {
+    vec2 specSrc = pbr.extraUvSets.x > 0.5 ? vUV1 : vUV;
+    vec2 specUv = xformUv(specSrc, pbr.specColorUv0, pbr.specColorUv1);
+    specUv = ptexUv(uSpecularColorTex, specUv, pbr.ptexSpecularInfo);
+    bool ordinarySpec = (pc.ids.w & 4096) != 0;
+    bool udimSpec = !ordinarySpec && pbr.udimSlots1.w >= 0.0;
+    vec4 specSample = udimSpec
+        ? sampleUdim(uSpecularColorUdimTex,
+                     int(pbr.udimSlots1.w + 0.5), specUv, vec4(1.0))
+        : texture(uSpecularColorTex, specUv);
+    bool hasSpec = udimSpec || ordinarySpec;
+    if (hasSpec) F0 *= (specSample * pbr.specColorScale + pbr.specColorBias).rgb;
+  }
+  if (fr.mode.x == 39) { outColor = vec4(F0, 1.0); return; }
+  if (fr.mode.x == 40) {
+    float encodedIor = abs(pbr.specParams.w);
+    float ior = max(encodedIor > 100.0 ? encodedIor - 100.0 : encodedIor, 1.0);
+    float d = (ior - 1.0) / (ior + 1.0);
+    outColor = vec4(vec3(d * d), 1.0); return;
+  }
+  float coatWeight = clamp(pbr.coatParams.x *
+                               sampleCoatScalarUdim(uCoatWeightTex,
+                                                uCoatWeightUdimTex,
+                                                (pc.ids.w & 8192) != 0,
+                                                pbr.semanticUdimSlots.y,
+                                                pbr.coatWeightUv0,
+                                                pbr.coatWeightUv1,
+                                                pbr.coatTexParams.z,
+                                                pbr.coatTexParams.x,
+                                                pbr.coatWeightScale,
+                                                pbr.coatWeightBias,
+                                                pbr.ptexCoatWeightInfo),
+                           0.0, 1.0);
+  float coatRoughness = clamp(pbr.coatParams.y *
+                                  sampleCoatScalarUdim(uCoatRoughnessTex,
+                                                   uCoatRoughnessUdimTex,
+                                                   (pc.ids.w & 32768) != 0,
+                                                   pbr.semanticUdimSlots.w,
+                                                   pbr.coatRoughUv0,
+                                                   pbr.coatRoughUv1,
+                                                   pbr.coatTexParams.w,
+                                                   pbr.coatTexParams.y,
+                                                   pbr.coatRoughScale,
+                                                   pbr.coatRoughBias,
+                                                   pbr.ptexCoatRoughInfo),
+                              0.02, 1.0);
+  vec3 coatTint = pbr.coatColor.rgb *
+                  sampleCoatColorUdim((pc.ids.w & 16384) != 0,
+                                  pbr.semanticUdimSlots.z,
+                                  pbr.coatColorUv0, pbr.coatColorUv1,
+                                  pbr.extraUvSets.y, pbr.coatColorScale,
+                                  pbr.coatColorBias,
+                                  pbr.ptexCoatColorInfo);
+  if (fr.mode.x == 36) { outColor = vec4(vec3(coatWeight), 1.0); return; }
+  if (fr.mode.x == 37) { outColor = vec4(coatTint, 1.0); return; }
+  if (fr.mode.x == 38) { outColor = vec4(vec3(coatRoughness), 1.0); return; }
   float coatIor = max(pbr.coatParams.z, 1.0);
   float coatD = (coatIor - 1.0) / (coatIor + 1.0);
   vec3 direct = vec3(0.0);
@@ -469,15 +750,21 @@ void main() {
                     geometrySchlickGGX(NoL, rgh) * F /
                     max(4.0 * NoV * NoL, 1e-5);
     vec3 diffuse = (vec3(1.0) - F) * (1.0 - met) * base / kPi;
+    float coatNoL = max(dot(coatNf, L), 0.0);
+    float coatNoV = max(dot(coatNf, V), 1e-4);
+    float coatNoH = max(dot(coatNf, H), 0.0);
     vec3 coatF = fresnelSchlick(VoH, vec3(coatD * coatD));
-    vec3 coatSpecular = distributionGGX(NoH, coatRoughness) *
-                        geometrySchlickGGX(NoV, coatRoughness) *
-                        geometrySchlickGGX(NoL, coatRoughness) * coatF /
-                        max(4.0 * NoV * NoL, 1e-5);
-    vec3 brdf = diffuse * lc.w +
-                (specular * (vec3(1.0) - coatF * coatWeight) +
-                 coatSpecular * pbr.coatColor.rgb * coatWeight) * ss.x;
-    direct += brdf * lc.rgb * (attenuation * shape * NoL);
+    vec3 coatSpecular = distributionGGX(coatNoH, coatRoughness) *
+                        geometrySchlickGGX(coatNoV, coatRoughness) *
+                        geometrySchlickGGX(coatNoL, coatRoughness) * coatF /
+                        max(4.0 * coatNoV * coatNoL, 1e-5);
+    vec3 baseBrdf = diffuse * lc.w +
+                    specular * (vec3(1.0) - coatF * coatWeight) * ss.x;
+    vec3 coatBrdf = coatSpecular * coatTint * coatWeight * ss.x;
+    float visibility = (int(li) == int(fr.iblParams.z + 0.5))
+                           ? sampleShadow(vWorldPos, Nf, L) : 1.0;
+    direct += (baseBrdf * NoL + coatBrdf * coatNoL) * lc.rgb *
+              (attenuation * shape * visibility);
   }
   if (fr.rasterLightInfo.x == 0u) {
     vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
@@ -513,13 +800,13 @@ void main() {
                            vec2(max(dot(Nf, V), 0.0), coatRoughness)).rg;
     vec3 coatF0 = vec3(coatD * coatD);
     vec3 coatIbl = coatPref * (coatF0 * coatDfg.x + coatDfg.y) *
-                   pbr.coatColor.rgb * coatWeight;
+                   coatTint * coatWeight;
     ambient = (baseIbl * (1.0 - coatWeight * coatF0) + coatIbl) *
               fr.iblColor.rgb;
   } else {
     ambient = base * 0.12;
   }
-  ambient *= clamp(pbr.coatParams.w, 0.0, 1.0);
+  ambient *= clamp(pbr.coatParams.w, 0.0, 1.0) * sampleOcclusion(vUV);
   vec3 c = linearToSrgb((ambient + direct + emissive) * exp2(fr.iblParams.y));
   if (pc.matAux.z > 1.5 && opacity < 1.0) {
     c *= opacity;  // pipeline uses premultiplied alpha blending

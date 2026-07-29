@@ -243,7 +243,7 @@ function materialXTextureOpsKey(ops) {
     for (const input of (op.node?.inputs || [])) {
       if (input.value !== undefined) values[input.name] = input.value;
     }
-    return `${op.category}:${JSON.stringify(values)}`;
+    return `${op.category}:${op.sourceInput || ''}:${JSON.stringify(values)}`;
   }).join('|');
 }
 
@@ -252,21 +252,14 @@ function materialXOpsNeedBake(ops) {
   const hasCombine = ops.some((op) => String(op.category || '').startsWith('combine'));
   return ops.some((op) =>
     op.category === 'power' || op.category === 'multiply' ||
-    op.category === 'add' || op.category === 'invert' ||
+    op.category === 'add' || op.category === 'subtract' ||
+    op.category === 'invert' || op.category === 'ifgreater' ||
+    op.category === 'ifgreatereq' || op.category === 'ifequal' ||
     (op.category === 'extract' && !hasCombine));
 }
 
-function bakeMaterialXTextureOps(texture, ops) {
-  if (!texture?.image || !materialXOpsNeedBake(ops)) return;
-  const image = texture.image;
-  const canvas = document.createElement('canvas');
-  canvas.width = image.width;
-  canvas.height = image.height;
-  const context = canvas.getContext('2d');
-  if (!context) return;
-  context.drawImage(image, 0, 0);
-  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-  const data = imageData.data;
+export function applyMaterialXPixelOps(data, ops) {
+  if (!data || !materialXOpsNeedBake(ops)) return data;
   const hasCombine = ops.some((op) => String(op.category || '').startsWith('combine'));
 
   // Graph traversal records output-to-image order. Pixel operations execute in
@@ -309,6 +302,40 @@ function bakeMaterialXTextureOps(texture, ops) {
         data[i + 1] = Math.min(255, Math.max(0, Math.round(data[i + 1] + o[1] * 255)));
         data[i + 2] = Math.min(255, Math.max(0, Math.round(data[i + 2] + o[2] * 255)));
       }
+    } else if (op.category === 'subtract') {
+      const sourceInput = op.sourceInput || 'in1';
+      const lhs = components(inputValue('in1'));
+      const rhs = components(inputValue('in2'));
+      for (let i = 0; i < data.length; i += 4) {
+        for (let channel = 0; channel < 3; ++channel) {
+          const current = data[i + channel] / 255;
+          const a = sourceInput === 'in1' ? current : lhs[channel];
+          const b = sourceInput === 'in2' ? current : rhs[channel];
+          data[i + channel] = Math.round(Math.min(1, Math.max(0, a - b)) * 255);
+        }
+      }
+    } else if (op.category === 'ifgreater' || op.category === 'ifgreatereq' ||
+               op.category === 'ifequal') {
+      const sourceInput = op.sourceInput || '';
+      const value1 = components(inputValue('value1'));
+      const value2 = components(inputValue('value2'));
+      const whenTrue = components(inputValue('in1'));
+      const whenFalse = components(inputValue('in2'));
+      for (let i = 0; i < data.length; i += 4) {
+        for (let channel = 0; channel < 3; ++channel) {
+          const current = data[i + channel] / 255;
+          const a = sourceInput === 'value1' ? current : value1[channel];
+          const b = sourceInput === 'value2' ? current : value2[channel];
+          let condition = false;
+          if (op.category === 'ifgreater') condition = a > b;
+          else if (op.category === 'ifgreatereq') condition = a >= b;
+          else condition = Math.abs(a - b) <= Number.EPSILON * Math.max(1, Math.abs(a), Math.abs(b));
+          const selected = condition
+            ? (sourceInput === 'in1' ? current : whenTrue[channel])
+            : (sourceInput === 'in2' ? current : whenFalse[channel]);
+          data[i + channel] = Math.round(Math.min(1, Math.max(0, selected)) * 255);
+        }
+      }
     } else if (op.category === 'invert') {
       for (let i = 0; i < data.length; i += 4) {
         data[i] = 255 - data[i];
@@ -326,6 +353,20 @@ function bakeMaterialXTextureOps(texture, ops) {
       }
     }
   }
+  return data;
+}
+
+function bakeMaterialXTextureOps(texture, ops) {
+  if (!texture?.image || !materialXOpsNeedBake(ops)) return;
+  const image = texture.image;
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.drawImage(image, 0, 0);
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  applyMaterialXPixelOps(imageData.data, ops);
   context.putImageData(imageData, 0, 0);
   texture.image = canvas;
   texture.needsUpdate = true;
@@ -372,9 +413,11 @@ export function materialXTextureSpecForParam(nodeGraphData, paramName) {
     const category = materialXCategory(node);
     const passThrough = category.startsWith('convert') || category.startsWith('texcoord') ||
       category.startsWith('normalmap') || category.startsWith('heighttonormal');
-    const nextOps = passThrough ? ops : [...ops, { name: nodeName, category, node }];
     for (const input of (node.inputs || [])) {
       if (!input.nodename) continue;
+      const nextOps = passThrough ? ops : [...ops, {
+        name: nodeName, category, node, sourceInput: input.name
+      }];
       const found = trace(input.nodename, nextOps, nextVisited);
       if (found) return found;
     }
@@ -658,16 +701,23 @@ export function normalizeNextMaterialData(materialRecord = {}, texturePaths = {}
 
 export function createNextMaterial(entry, adapter, textureManager, skipTextures) {
   const src = entry.material || {};
+  // Keep unbound geometry consistent with the legacy loader.  The legacy
+  // path uses a neutral MeshStandardMaterial(0x888888, roughness 0.6), while
+  // treating the synthetic .8 linear baseColor emitted by RenderStream as an
+  // authored PreviewSurface makes these scenes visibly too bright.
+  const isDefaultMaterial = src.primPath === '__default';
   const paths = entry.texturePaths || {};
   const hasOpacityMap = !!paths.opacity && !skipTextures;
   const authoredAlphaTest = (src.opacityThreshold ?? -1) > 0 ? src.opacityThreshold : 0;
-  const material = new THREE.MeshPhysicalMaterial({
+  const MaterialType = isDefaultMaterial ? THREE.MeshStandardMaterial : THREE.MeshPhysicalMaterial;
+  const material = new MaterialType({
     // A connected shader input replaces its fallback value; it is not a tint.
-    color: paths.baseColor && !skipTextures ? new THREE.Color(1, 1, 1) :
+    color: isDefaultMaterial ? new THREE.Color(0x888888) :
+      (paths.baseColor && !skipTextures ? new THREE.Color(1, 1, 1) :
       new THREE.Color(src.baseColor?.[0] ?? 0.8, src.baseColor?.[1] ?? 0.8,
-        src.baseColor?.[2] ?? 0.8),
+        src.baseColor?.[2] ?? 0.8)),
     metalness: src.metallic ?? 0,
-    roughness: src.roughness ?? 0.5,
+    roughness: isDefaultMaterial ? 0.6 : (src.roughness ?? 0.5),
     emissive: new THREE.Color(src.emissive?.[0] ?? 0, src.emissive?.[1] ?? 0, src.emissive?.[2] ?? 0),
     transparent: (src.opacity ?? 1) < 1 || hasOpacityMap,
     opacity: src.opacity ?? 1,

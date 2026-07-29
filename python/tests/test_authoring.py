@@ -139,6 +139,18 @@ def test_remove_prim_and_staleness():
         st.remove_prim("/nope")
 
 
+def test_attribute_metadata_integer_range():
+    st = tinyusdz.Stage.create()
+    p = st.define_prim("/p", "Xform")
+    p.set("count", 1)
+    attr = p.attribute("count")
+    attr.set_metadata("elementSize", 2**31 - 1)
+    with pytest.raises(OverflowError):
+        attr.set_metadata("elementSize", 2**31)
+    with pytest.raises(OverflowError):
+        attr.set_metadata("elementSize", -(2**31) - 1)
+
+
 def test_metadata_and_sublayers():
     st = tinyusdz.Stage.create()
     st.set_metadata("doc", "my doc")

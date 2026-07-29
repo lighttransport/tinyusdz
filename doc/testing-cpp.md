@@ -154,6 +154,36 @@ ctest --print-labels
 # benchmark
 ```
 
+The tusdview viewer example registers GPU-dependent tests under the `tusdview` ctest label:
+
+| Name | What it tests | Skip condition |
+|------|---------------|----------------|
+| `tusdview_lighting_test` | Non-mesh RT proxy topology + opacity | None (compiled unit) |
+| `tusdview_lightrt_bridge_test` | LightRT/OpenPBR material packing ABI | None (compiled unit) |
+| `tusdview_openpbr_material_test` | OpenPBR material extraction | None (compiled unit) |
+| `tusdview_texture_pipeline_test` | Image decode/mip/descriptor pipeline | None (compiled unit) |
+| `tusdview_lightrt_mtlx_eval_test` | MaterialX ND_image evaluation | None (compiled unit) |
+| `tusdview_geometry_primvar_test` | Geometry primvar reconstruction | None (compiled unit) |
+| `tusdview_camera_nav_test` | Camera navigation | None (compiled unit) |
+| `tusdview-next-nonmesh-extraction` | Default-loader Points/Curves records | Vulkan backend |
+| `tusdview-gl-nonmesh-render` | GL carrier-render for Points/Curves | No GL context |
+| `tusdview-vk-nonmesh-render` | VK carrier-render for Points/Curves | No Vulkan backend |
+| `tusdview-dome-orientation` | DomeLight IBL orientation | No GPU |
+| `tusdview-light-record-equivalence` | Next/legacy light record parity | `xvfb-run` |
+| `tusdview-camera-record-equivalence` | Next/legacy camera record parity | `xvfb-run` |
+| `tusdview-shadow-alpha-inst` | Alpha-cutout + PointInstancer shadow | No GPU |
+| `tusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
+| `tusdview-gl-vk-parity` | GL/VK raster image agreement | No GPU |
+| `tusdview-raster-shadow-map` | Raster shadow map regression | No GPU |
+
+```bash
+# Run all tusdview tests
+ctest -L tusdview --output-on-failure
+
+# Run individual test
+ctest -R tusdview-camera-record-equivalence --output-on-failure
+```
+
 Useful commands:
 
 ```bash

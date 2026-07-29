@@ -54,6 +54,10 @@ set(TUSDVIEW_SOURCES
     config.cc
     scene_loader.cc
     next_scene_loader.cc
+    preview_cache.cc
+    texture_residency_policy.cc
+    ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+    ptex_atlas.cc
     mesh_build.cc
     texture_tools.cc
     lightrt_mtlx_bridge.cc
@@ -136,7 +140,57 @@ add_executable(${EXAMPLE_TARGET}
     $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
 add_dependencies(${EXAMPLE_TARGET} tusdview_lightrt_mtlx)
 
+# Helper: apply -Weverything (Clang) / -Wall (GCC) to a C++ target's CXX sources.
+function(tusdview_set_warning_flags target)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(_flags_list
+        -Weverything -Wno-poison-system-directories -Wno-padded
+        -Wno-c++98-compat -Wno-c++98-compat-pedantic
+        -Wno-documentation -Wno-documentation-unknown-command
+        -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors
+        -Wno-sign-conversion -Wno-float-equal -Wno-old-style-cast
+        -Wno-double-promotion -Wno-missing-prototypes
+        -Wno-covered-switch-default -Wno-zero-as-null-pointer-constant
+        -Wno-nrvo -Wno-weak-vtables
+        -Wno-reserved-macro-identifier -Wno-reserved-identifier
+        -Wno-tautological-unsigned-zero-compare -Wno-unknown-warning-option
+        -Wno-undef -Wno-implicit-int-float-conversion
+        -Wno-implicit-float-conversion -Wno-shorten-64-to-32
+        -Wno-ms-bitfield-padding -Wno-mismatched-tags)
+    if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
+      list(APPEND _flags_list -Wno-unsafe-buffer-usage)
+    endif()
+    if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
+      list(APPEND _flags_list -Wno-switch-default)
+    endif()
+    if(NOT TINYUSDZ_NO_WERROR)
+      list(APPEND _flags_list -Werror)
+    endif()
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    set(_flags_list -Wall)
+    if(NOT TINYUSDZ_NO_WERROR)
+      list(APPEND _flags_list -Werror)
+    endif()
+  endif()
+  target_compile_options(${target} PRIVATE
+      $<$<COMPILE_LANGUAGE:CXX>:${_flags_list}>)
+endfunction()
+
 if(TINYUSDZ_BUILD_TESTS)
+  add_executable(tusdview_ptex_atlas_test
+      tests/ptex_atlas_test.cc
+      ptex_atlas.cc
+      displacement_bake.cc)
+  target_compile_features(tusdview_ptex_atlas_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_ptex_atlas_test)
+  target_include_directories(tusdview_ptex_atlas_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_ptex_atlas_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+
   add_executable(tusdview_lightrt_bridge_test
       tests/lightrt_bridge_test.cc
       lightrt_mtlx_bridge.cc
@@ -146,6 +200,7 @@ if(TINYUSDZ_BUILD_TESTS)
       displacement_bake.cc
       $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
   target_compile_features(tusdview_lightrt_bridge_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_lightrt_bridge_test)
   target_include_directories(tusdview_lightrt_bridge_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${PROJECT_SOURCE_DIR}/src
@@ -166,6 +221,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${COMMON_DIR}/light3d/math.cpp
       $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
   target_compile_features(tusdview_openpbr_material_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_openpbr_material_test)
   target_include_directories(tusdview_openpbr_material_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${PROJECT_SOURCE_DIR}/src
@@ -189,6 +245,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${COMMON_DIR}/light3d/math.cpp
       $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
   target_compile_features(tusdview_lighting_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_lighting_test)
   target_include_directories(tusdview_lighting_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${PROJECT_SOURCE_DIR}/src
@@ -210,6 +267,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${COMMON_DIR}/light3d/math.cpp
       $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
   target_compile_features(tusdview_geometry_primvar_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_geometry_primvar_test)
   target_include_directories(tusdview_geometry_primvar_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${PROJECT_SOURCE_DIR}/src
@@ -231,6 +289,7 @@ if(TINYUSDZ_BUILD_TESTS)
       ${COMMON_DIR}/light3d/math.cpp
       $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
   target_compile_features(tusdview_texture_pipeline_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_texture_pipeline_test)
   target_include_directories(tusdview_texture_pipeline_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${PROJECT_SOURCE_DIR}/src
@@ -263,7 +322,38 @@ if(TINYUSDZ_BUILD_TESTS)
       camera_nav.cc
       ${COMMON_DIR}/light3d/math.cpp)
   target_compile_features(tusdview_camera_nav_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_camera_nav_test)
   target_include_directories(tusdview_camera_nav_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${COMMON_DIR})
+
+  add_executable(tusdview_preview_cache_test
+      tests/preview_cache_test.cc
+      preview_cache.cc)
+  target_compile_features(tusdview_preview_cache_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_preview_cache_test)
+  target_include_directories(tusdview_preview_cache_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external)
+  target_link_libraries(tusdview_preview_cache_test PRIVATE tinyusdz_next)
+
+  add_executable(tusdview_texture_residency_policy_test
+      tests/texture_residency_policy_test.cc
+      texture_residency_policy.cc)
+  target_compile_features(tusdview_texture_residency_policy_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_texture_residency_policy_test)
+  target_include_directories(tusdview_texture_residency_policy_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(tusdview_rt_lod_test
+      tests/rt_lod_test.cc
+      rt_lod.cc
+      ${COMMON_DIR}/light3d/camera.cpp
+      ${COMMON_DIR}/light3d/math.cpp)
+  target_compile_features(tusdview_rt_lod_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_rt_lod_test)
+  target_include_directories(tusdview_rt_lod_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${COMMON_DIR})
 
@@ -273,13 +363,17 @@ if(TINYUSDZ_BUILD_TESTS)
   # enable_testing() before this subdirectory is added. All are self-contained
   # (no GPU/display) and take no arguments; non-zero exit == failure.
   foreach(tv_test
+      tusdview_ptex_atlas_test
       tusdview_lightrt_bridge_test
       tusdview_openpbr_material_test
       tusdview_lighting_test
       tusdview_geometry_primvar_test
       tusdview_texture_pipeline_test
       tusdview_lightrt_mtlx_eval_test
-      tusdview_camera_nav_test)
+      tusdview_camera_nav_test
+      tusdview_preview_cache_test
+      tusdview_texture_residency_policy_test
+      tusdview_rt_lod_test)
     add_test(NAME ${tv_test} COMMAND ${tv_test})
     set_tests_properties(${tv_test} PROPERTIES LABELS "tusdview")
   endforeach()
@@ -484,6 +578,40 @@ if(TUSDVIEW_ENABLE_GL_THREAD)
   endif()
   message(STATUS "tusdview: experimental threaded GL/Vulkan render path ENABLED (--threaded)")
 endif()
+
+# ---------------------------------------------------------------------------
+# Warning flags (same policy as the core library)
+# ---------------------------------------------------------------------------
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(TUSDVIEW_CXX_FLAGS
+      "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-documentation-unknown-command -Wno-unused-member-function -Wno-switch-enum -Wno-exit-time-destructors -Wno-sign-conversion -Wno-float-equal -Wno-old-style-cast -Wno-double-promotion -Wno-missing-prototypes -Wno-covered-switch-default -Wno-zero-as-null-pointer-constant -Wno-nrvo -Wno-weak-vtables -Wno-reserved-macro-identifier -Wno-reserved-identifier -Wno-tautological-unsigned-zero-compare -Wno-unknown-warning-option -Wno-undef -Wno-implicit-int-float-conversion -Wno-implicit-float-conversion -Wno-shorten-64-to-32 -Wno-ms-bitfield-padding -Wno-mismatched-tags"
+  )
+  if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
+    set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Wno-unsafe-buffer-usage")
+  endif()
+  if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
+    set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Wno-switch-default")
+  endif()
+  if(NOT TINYUSDZ_NO_WERROR)
+    set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Werror")
+  endif()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+  set(TUSDVIEW_CXX_FLAGS "-Wall")
+  if(NOT TINYUSDZ_NO_WERROR)
+    set(TUSDVIEW_CXX_FLAGS "${TUSDVIEW_CXX_FLAGS} -Werror")
+  endif()
+endif()
+
+# Apply -Weverything only to project-owned C++ sources in tusdview.
+set_source_files_properties(${TUSDVIEW_SOURCES}
+    PROPERTIES COMPILE_FLAGS ${TUSDVIEW_CXX_FLAGS})
+
+# Vendored C/C++ third-party code: suppress all warnings.
+set_source_files_properties(
+    ${TUSDVIEW_COMMON_SOURCES}
+    ${COMMON_DIR}/imgui/imgui_impl_vulkan.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c
+    PROPERTIES COMPILE_FLAGS "-w")
 
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

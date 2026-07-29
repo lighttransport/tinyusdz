@@ -653,9 +653,9 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
       std::string nx = norm(x, true), ny = norm(y, false);
       bool setlike = listop_key(key);
       if (!setlike) {
-        size_t a = 0;
-        while (a < x.size() && is_ws(x[a])) ++a;
-        setlike = (x.compare(a, 4, "rel ") == 0);
+        size_t pos = 0;
+        while (pos < x.size() && is_ws(x[pos])) ++pos;
+        setlike = (x.compare(pos, 4, "rel ") == 0);
       }
       if (setlike) return setlike_equal(nx, ny);
       nx = canon_decl(nx);
@@ -675,7 +675,7 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
     to_units(lb, hdrB, ub);
     std::unordered_map<std::string, size_t> mb;
     for (size_t k = 0; k < ub.size(); ++k) mb.emplace(ub[k].key, k);
-    std::vector<bool> bused(ub.size(), false);
+    std::vector<bool> bused_u(ub.size(), false);
     std::vector<std::pair<std::string, std::string>> mods;  // (a, b)
     std::vector<std::string> dels, adds;
     for (const auto &u : ua) {
@@ -686,7 +686,7 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
         }
         continue;
       }
-      bused[it->second] = true;
+      bused_u[it->second] = true;
       if (!semeq_key(u.key, u.text, ub[it->second].text) &&
           (line_matches_domain(u.text, ctx.domain) ||
            line_matches_domain(ub[it->second].text, ctx.domain))) {
@@ -694,7 +694,7 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
       }
     }
     for (size_t k = 0; k < ub.size(); ++k)
-      if (!bused[k] && line_matches_domain(ub[k].text, ctx.domain)) {
+      if (!bused_u[k] && line_matches_domain(ub[k].text, ctx.domain)) {
         adds.push_back(ub[k].text);
       }
     const bool hdrDiff = !semeq(hdrA, hdrB) &&

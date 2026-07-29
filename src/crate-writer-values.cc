@@ -984,6 +984,16 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
   // Phase 1: Write out-of-line value data based on type
   // This handles values that cannot be inlined in the 48-bit payload
 
+  // RAII guard: increments dict_nesting_depth_ at scope entry and decrements
+  // on scope exit (including early returns). Used by the dict and CustomDataType
+  // branches below. Guard checks itself are at the branch sites, not in the ctor,
+  // so each branch can produce its own error message.
+  struct DictDepthGuard {
+    int& depth_;
+    explicit DictDepthGuard(int& d) : depth_(d) { ++depth_; }
+    ~DictDepthGuard() { --depth_; }
+  };
+
   if (const std::string* unregistered = value.GetUnregisteredValueString()) {
     const int64_t wrapper_start = Tell();
 
@@ -1287,9 +1297,21 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
   WRITE_VEC_ARRAY(value::int2, 2, "Vec2i")
   WRITE_VEC_ARRAY(value::int3, 3, "Vec3i")
   WRITE_VEC_ARRAY(value::int4, 4, "Vec4i")
-  WRITE_VEC_ARRAY(value::uint2, 2, "Vec2u")
-  WRITE_VEC_ARRAY(value::uint3, 3, "Vec3u")
-  WRITE_VEC_ARRAY(value::uint4, 4, "Vec4u")
+  // uint2/3/4 have no CRATE_DATA_TYPE_VEC2U/3U/4U in the crate format — they
+  // cannot be stored in USDC. Reject with a clear error instead of silently
+  // writing an INVALID-typed ValueRep that readers will reject or skip.
+  else if (value.as<std::vector<value::uint2>>()) {
+    if (err) *err = "uint2 array cannot be stored in USDC (no crate type code)";
+    return -1;
+  }
+  else if (value.as<std::vector<value::uint3>>()) {
+    if (err) *err = "uint3 array cannot be stored in USDC (no crate type code)";
+    return -1;
+  }
+  else if (value.as<std::vector<value::uint4>>()) {
+    if (err) *err = "uint4 array cannot be stored in USDC (no crate type code)";
+    return -1;
+  }
   WRITE_QUATH_ARRAY(value::quath, "Quath")
   WRITE_QUAT_ARRAY(value::quatf, "Quatf")
   WRITE_QUAT_ARRAY(value::quatd, "Quatd")
@@ -1515,6 +1537,13 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
     }
   }
   else if (auto* dict_val = value.as<value::dict>()) {
+    // Bounds-check recursive dictionary nesting before we touch any state.
+    if (dict_nesting_depth_ > 64) {
+      if (err) *err = "Dictionary nesting too deep.";
+      return -1;
+    }
+    DictDepthGuard _dg(dict_nesting_depth_);
+
     uint64_t count = dict_val->size();
 
     // Calculate size of dictionary structure:
@@ -1715,6 +1744,13 @@ int64_t CrateWriter::WriteValueBody(const crate::CrateValue& value,
   // out-of-line values would write to value_data_end_offset_ which still points
   // to the start of the dictionary, corrupting the data.
   else if (auto* custom_data = value.as<CustomDataType>()) {
+    // Bounds-check recursive dictionary nesting before we touch any state.
+    if (dict_nesting_depth_ > 64) {
+      if (err) *err = "CustomData nesting too deep.";
+      return -1;
+    }
+    DictDepthGuard _dg(dict_nesting_depth_);
+
     uint64_t count = custom_data->size();
 
     // Calculate size of dictionary structure:

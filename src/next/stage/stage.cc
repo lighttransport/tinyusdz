@@ -174,6 +174,13 @@ bool UsdPrim::HasProperty(const std::string& name) const {
          GetSchemaRegistry().FindProperty(*source, name) != nullptr;
 }
 
+bool UsdPrim::HasAuthoredProperty(const std::string& name) const {
+  if (!spec_) return false;
+  const PrimSpec* source = ChildSourceSpec();
+  return spec_->property(name) != nullptr ||
+         (source != spec_ && source->property(name) != nullptr);
+}
+
 const Value* UsdPrim::GetPropertyValue(const std::string& name) const {
   if (!spec_) return nullptr;
   if (const Value* value = spec_->property_value(name)) {
@@ -420,36 +427,46 @@ bool UsdPrim::GetForwardedRelationshipTargets(
   std::unordered_set<std::string> visited_relationships;
   std::unordered_set<std::string> unique_targets;
 
-  std::function<void(const PrimSpec&, const std::string&)> forward;
-  forward = [&](const PrimSpec& owner, const std::string& relationship_name) {
-    const std::vector<Path>* raw = owner.relationship(relationship_name);
-    if (!raw) return;
+  struct ForwardFrame {
+    const PrimSpec* owner;
+    std::string rel_name;
+    size_t target_pos;
+  };
+  std::vector<ForwardFrame> fwd_stack;
+  fwd_stack.push_back({root_owner, name, 0});
+  visited_relationships.insert(root_owner->path().append_property(name).str());
 
-    for (const Path& target : *raw) {
-      const std::string lookup_string =
-          map_prefix(target.str(), instance_root, prototype_root);
-      const std::string output_string =
-          map_prefix(target.str(), prototype_root, instance_root);
-      const Path lookup_target(lookup_string);
-      if (target.has_property()) {
-        const PrimSpec* target_prim =
-            layer_->prim_at_path(lookup_target.prim_path());
-        if (target_prim &&
-            target_prim->relationship(lookup_target.property_name()) != nullptr) {
-          if (visited_relationships.insert(lookup_string).second) {
-            forward(*target_prim, lookup_target.property_name());
-          }
-          continue;
+  while (!fwd_stack.empty()) {
+    ForwardFrame& f = fwd_stack.back();
+    const std::vector<Path>* raw = f.owner->relationship(f.rel_name);
+    if (!raw) { fwd_stack.pop_back(); continue; }
+
+    if (f.target_pos >= raw->size()) {
+      fwd_stack.pop_back();
+      continue;
+    }
+
+    const Path& target = (*raw)[f.target_pos++];
+    const std::string lookup_string =
+        map_prefix(target.str(), instance_root, prototype_root);
+    const std::string output_string =
+        map_prefix(target.str(), prototype_root, instance_root);
+    const Path lookup_target(lookup_string);
+    if (target.has_property()) {
+      const PrimSpec* target_prim =
+          layer_->prim_at_path(lookup_target.prim_path());
+      if (target_prim &&
+          target_prim->relationship(lookup_target.property_name()) != nullptr) {
+        if (visited_relationships.insert(lookup_string).second) {
+          fwd_stack.push_back({target_prim, lookup_target.property_name(), 0});
         }
-      }
-      if (unique_targets.insert(output_string).second) {
-        targets->push_back(Path(output_string));
+        continue;
       }
     }
-  };
-
-  visited_relationships.insert(root_owner->path().append_property(name).str());
-  forward(*root_owner, name);
+    if (unique_targets.insert(output_string).second) {
+      targets->push_back(Path(output_string));
+    }
+  }
   return true;
 }
 
@@ -625,6 +642,20 @@ Stage::~Stage() = default;
 Stage::Stage(Stage&&) noexcept = default;
 Stage& Stage::operator=(Stage&&) noexcept = default;
 
+Stage Stage::Clone() const {
+  Stage out;
+  if (root_layer_) {
+    out.root_layer_.reset(new Layer(root_layer_->Clone()));
+  }
+  out.sub_layers_.reserve(sub_layers_.size());
+  for (const auto& layer : sub_layers_) {
+    out.sub_layers_.emplace_back(
+        layer ? new Layer(layer->Clone()) : nullptr);
+  }
+  out.meta_ = meta_;
+  return out;
+}
+
 void Stage::SetRootLayer(Layer&& layer) {
   root_layer_ = std::make_unique<Layer>(std::move(layer));
   UpdateMetaFromRootLayer();
@@ -754,19 +785,40 @@ bool Stage::HasPrimAtPath(const std::string& path) const {
 
 bool Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
                           const std::function<bool(const UsdPrim&)>& callback) const {
+  // Iterative DFS with explicit stack to avoid stack overflow on deep scenes.
+  struct Frame {
+    uint32_t idx;
+    size_t child_pos;
+  };
+  std::vector<Frame> stack;
+
   const PrimSpec* spec = layer->prim(prim_index);
   if (!spec) return true;
 
   UsdPrim prim(spec, layer, prim_index);
-
-  // Call callback, stop if returns false
   if (!callback(prim)) return false;
 
-  // Recurse to children, propagate stop signal
-  for (uint32_t child_idx : spec->child_indices()) {
-    if (!TraverseImpl(child_idx, layer, callback)) {
-      return false;
+  stack.push_back({prim_index, 0});
+
+  while (!stack.empty()) {
+    Frame& f = stack.back();
+    const PrimSpec* parent = layer->prim(f.idx);
+    if (!parent) { stack.pop_back(); continue; }
+
+    const auto& children = parent->child_indices();
+    if (f.child_pos >= children.size()) {
+      stack.pop_back();
+      continue;
     }
+
+    uint32_t child_idx = children[f.child_pos++];
+    const PrimSpec* child_spec = layer->prim(child_idx);
+    if (!child_spec) continue;
+
+    UsdPrim child_prim(child_spec, layer, child_idx);
+    if (!callback(child_prim)) return false;
+
+    stack.push_back({child_idx, 0});
   }
   return true;
 }
@@ -812,15 +864,13 @@ double Stage::GetTimeCodesPerSecond() const {
 }
 
 bool Stage::HasTimeSamples() const {
-  // Check if any prim has time samples
   bool has_samples = false;
   Traverse([&](const UsdPrim& prim) {
-    (void)prim;
-    // Check all properties for time samples
-    // Simplified: just check if endTimeCode > startTimeCode
-    if (meta_.endTimeCode > meta_.startTimeCode) {
-      has_samples = true;
-      return false;  // Stop traversal
+    for (const std::string& prop_name : prim.GetPropertyNames()) {
+      if (prim.HasTimeSamples(prop_name)) {
+        has_samples = true;
+        return false;
+      }
     }
     return true;
   });

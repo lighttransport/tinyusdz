@@ -318,6 +318,20 @@ void test_array_range_split_parity() {
     assert(!IsChunkableArray(Value::MakeIntArray({1, 2, 3, 4}), trunc));
   }
 
+  // Invalid caller-supplied ranges must fail before indexing or emitting any
+  // text. This covers both scalar and component-backed arrays.
+  {
+    PrintOptions opts;
+    Value ints = Value::MakeIntArray({1, 2, 3});
+    Value points = Value::MakeFloat3Array({0, 1, 2, 3, 4, 5});
+    std::string out;
+    StreamWriter writer(&out);
+    assert(!PrintArrayRangeToStream(writer, ints, opts, 0, 4, true, true));
+    assert(!PrintArrayRangeToStream(writer, ints, opts, 3, 2, true, true));
+    assert(!PrintArrayRangeToStream(writer, points, opts, 1, 3, true, true));
+    assert(out.empty());
+  }
+
   std::cout << "  array range split parity passed!\n\n";
 }
 
@@ -386,9 +400,15 @@ void test_layer_printer() {
   // Set layer metadata
   layer.meta().defaultPrim = "World";
   layer.meta().upAxis = "Y";
+  layer.meta().doc = "layer \"doc\" with \\ slash";
 
   // Create root prim
   builder.begin_prim("World", "Xform");
+  builder.current()->meta().doc() = "prim \"doc\" with \\ slash";
+  builder.current()->meta().references.push_back(
+      "@asset.usda@</P>?layerOffset=10:2");
+  builder.current()->meta().references.push_back("</Internal>");
+  builder.current()->meta().references.push_back("bare.usda");
   builder.end_prim();
 
   // Create child mesh
@@ -417,6 +437,12 @@ void test_layer_printer() {
   assert(contains(output, "Cube"));
   assert(contains(output, "extent"));
   assert(contains(output, "points"));
+  assert(contains(output, "doc = \"layer \\\"doc\\\" with \\\\ slash\""));
+  assert(contains(output, "@asset.usda@</P> (offset = 10; scale = 2)"));
+  assert(contains(output, "</Internal>"));
+  assert(contains(output, "@bare.usda@"));
+  LoadResult reparsed = LoadUSDAFromString(output.data(), output.size());
+  assert(reparsed.success && "debug layer output must reparse");
 
   std::cout << "  prim-printer tests passed!\n\n";
 }
@@ -470,6 +496,85 @@ void test_stage_writer() {
   std::cout << "  Wrote " << result.bytes_written << " bytes to /tmp/test_output.usda\n";
 
   std::cout << "  usda-writer tests passed!\n\n";
+}
+
+void test_deep_stage_writer() {
+  std::cout << "Testing deep stage writer traversal...\n";
+
+  constexpr size_t kDepth = 8192;
+  StageBuilder builder;
+  LayerBuilder& layer = builder.GetLayerBuilder();
+  for (size_t i = 0; i < kDepth; ++i) {
+    layer.begin_prim("P", "Xform");
+  }
+  Stage stage = builder.Build();
+
+  USDAWriteOptions opts;
+  opts.indent.clear();  // Keep the regression output O(depth), not O(depth^2).
+  const std::string text = WriteUSDAToString(stage, opts);
+  assert(!text.empty());
+  size_t definitions = 0;
+  for (size_t pos = 0; (pos = text.find("def Xform", pos)) != std::string::npos;
+       pos += 9) {
+    ++definitions;
+  }
+  assert(definitions == kDepth);
+  std::cout << "  deep stage writer traversal passed!\n\n";
+}
+
+void test_deep_variant_writer() {
+  std::cout << "Testing deep variant writer traversal...\n";
+
+  // This depth overflowed the recursive writer stack (especially under ASan
+  // and in WASM). Build bottom-up so test setup itself is non-recursive.
+  constexpr size_t kDepth = 8192;
+  VariantSetData nested;
+  for (size_t i = 0; i < kDepth; ++i) {
+    VariantData option;
+    option.name = "o";
+    if (!nested.name.empty()) {
+      option.variantSets.push_back(std::move(nested));
+    }
+
+    VariantSetData outer;
+    outer.name = "v";
+    outer.variants.push_back(std::move(option));
+    nested = std::move(outer);
+  }
+
+  StageBuilder builder;
+  LayerBuilder& layer = builder.GetLayerBuilder();
+  layer.begin_prim("Root", "Xform");
+  layer.current()->meta().variantSets().push_back(std::move(nested));
+  layer.end_prim();
+  Stage stage = builder.Build();
+
+  USDAWriteOptions opts;
+  opts.indent.clear();  // Keep the regression output O(depth), not O(depth^2).
+  const std::string text = WriteUSDAToString(stage, opts);
+  assert(!text.empty());
+  size_t definitions = 0;
+  for (size_t pos = 0;
+       (pos = text.find("variantSet \"v\"", pos)) != std::string::npos;
+       pos += 14) {
+    ++definitions;
+  }
+  assert(definitions == kDepth);
+
+  // Copying recursively-owned variant data must use the same explicit-depth
+  // discipline as writing and teardown.
+  const PrimSpec* root = stage.GetRootLayer()->prim_at_path("/Root");
+  assert(root && !root->meta().variantSets().empty());
+  VariantData copied = root->meta().variantSets()[0].variants[0];
+  size_t copied_depth = 1;
+  const VariantData* current = &copied;
+  while (!current->variantSets.empty()) {
+    current = &current->variantSets[0].variants[0];
+    ++copied_depth;
+  }
+  assert(copied_depth == kDepth);
+
+  std::cout << "  deep variant writer traversal passed!\n\n";
 }
 
 void test_time_samples() {
@@ -1185,6 +1290,8 @@ int main() {
     test_default_with_timesamples();
     test_layer_printer();
     test_stage_writer();
+    test_deep_stage_writer();
+    test_deep_variant_writer();
     test_time_samples();
     test_roundtrip();
     test_parallel_writer_parity();
