@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <string>
 #include <vector>
 
 #include "external/miniz.h"
@@ -517,7 +519,17 @@ void RunVirtualFallbackDownsample() {
 }
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  // The camera-demand integration test needs a deterministic native Ptex asset
+  // but must not commit a binary fixture. Reuse this writer so CTest generates
+  // the two-face source in its temporary directory.
+  if (argc == 3 && std::string(argv[1]) == "--write-synthetic") {
+    const std::vector<uint8_t> bytes = SyntheticPtex(0, 3);
+    std::ofstream out(argv[2], std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+    return out.good() ? 0 : 1;
+  }
   TestPhysicalPageCache();
   for (uint32_t type = 0; type < 4; ++type) RunType(type);
   RunType(0, 2);

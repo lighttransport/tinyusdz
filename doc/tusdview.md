@@ -703,12 +703,21 @@ the alpha-only face table is patched after each upload. Reusing a slot first
 redirects its old face to the permanent coarse fallback, so every face remains
 valid during streaming and eviction.
 
+Raster demand is camera-driven at mesh granularity. A mesh contributes its
+source-face ids only after its world bounds enter the current view; off-camera
+meshes retain their delta-varint-compressed ids and cause no Ptex decode. A
+later camera move admits newly visible meshes and page decode/upload runs in an
+independent 2 ms frame slice. Vulkan/CUDA/HIP RT captures still request the
+complete admitted face set because their ray footprint is not represented by
+the raster visibility mask.
+
 OpenGL raster, Vulkan raster, and Vulkan ray query share this mutable atlas
 path. Mutable GL atlases sample level zero only, avoiding stale generated mips;
 Vulkan uses partial transfer updates with explicit layout transitions. Atlases
 that already fit at requested quality reserve no page-cache memory.
 
-Render reports expose `ptex_gpu_physical_slots`, `ptex_gpu_page_uploads`,
+Render reports expose `ptex_requested_meshes`, `ptex_requested_faces`,
+`ptex_gpu_physical_slots`, `ptex_gpu_page_uploads`,
 `ptex_gpu_page_misses`, and `ptex_gpu_page_evictions`. For a small diagnostic
 scene that would not naturally need paging, set
 `TUSDVIEW_PTEX_FORCE_RESIDENCY=1` together with a constrained (for example,

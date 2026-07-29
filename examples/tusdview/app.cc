@@ -481,6 +481,10 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   size_t ptexRequestedFaces = 0;
   for (const auto& requests : ptexRequestedFaces_)
     ptexRequestedFaces += requests.size();
+  const size_t ptexConsideredMeshes = static_cast<size_t>(std::count(
+      ptexMeshRequested_.begin(), ptexMeshRequested_.end(), uint8_t{1}));
+  const size_t ptexRequestedMeshes = static_cast<size_t>(std::count(
+      ptexMeshDemanded_.begin(), ptexMeshDemanded_.end(), uint8_t{1}));
   for (const DrawTextureCPU& texture : draw_.textures) {
     if (!texture.isPtex) continue;
     ++ptexTextures;
@@ -545,6 +549,8 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"ptex_gpu_page_misses", ptexGpuMisses},
       {"ptex_gpu_page_evictions", ptexGpuEvictions},
       {"ptex_requested_faces", ptexRequestedFaces},
+      {"ptex_considered_meshes", ptexConsideredMeshes},
+      {"ptex_requested_meshes", ptexRequestedMeshes},
       {"ptex_displaced_meshes", ptexDisplacedMeshes},
       {"ptex_slots",
        {{"base_color", ptexBase},
@@ -1254,11 +1260,16 @@ void App::compactDeferredMeshAux(size_t meshIndex) {
   deferredAuxCompressedBytes_ += aux.wire.size() + aux.sourceFaces.size();
 }
 
-void App::collectPtexRequests(const DrawMeshCPU& mesh) {
-  if (mesh.sourceFaceId.empty() || draw_.materials.empty()) return;
+bool App::collectPtexRequests(
+    const DrawMeshCPU& mesh, const std::vector<uint32_t>* sourceFaces) {
+  const std::vector<uint32_t>& faces = sourceFaces ? *sourceFaces
+                                                   : mesh.sourceFaceId;
+  if (faces.empty() || draw_.materials.empty()) return false;
+  bool referencedPtex = false;
   if (ptexRequestedFaces_.size() < draw_.textures.size()) {
     ptexRequestedFaces_.resize(draw_.textures.size());
     ptexRequestedFaceSets_.resize(draw_.textures.size());
+    ptexRequestCursors_.resize(draw_.textures.size());
   }
   for (const DrawSubmesh& submesh : mesh.submeshes) {
     int textureIds[26];
@@ -1295,19 +1306,72 @@ void App::collectPtexRequests(const DrawMeshCPU& mesh) {
     if (submesh.backfaceMaterialId != submesh.materialId)
       appendMaterial(submesh.backfaceMaterialId);
     if (textureCount == 0) continue;
+    referencedPtex = true;
 
     const size_t firstTriangle = static_cast<size_t>(submesh.indexOffset) / 3u;
     const size_t endTriangle = std::min(
-        mesh.sourceFaceId.size(),
+        faces.size(),
         (static_cast<size_t>(submesh.indexOffset) + submesh.indexCount) / 3u);
     for (size_t triangle = firstTriangle; triangle < endTriangle; ++triangle) {
-      const uint32_t face = mesh.sourceFaceId[triangle];
+      const uint32_t face = faces[triangle];
       for (size_t i = 0; i < textureCount; ++i) {
         const size_t textureId = static_cast<size_t>(textureIds[i]);
-        if (ptexRequestedFaceSets_[textureId].insert(face).second)
+        if (ptexRequestedFaceSets_[textureId].insert(face).second) {
           ptexRequestedFaces_[textureId].push_back(face);
+          // A texture already passed by the residency walker has new work.
+          nextPtexTexture_ = std::min(nextPtexTexture_, textureId);
+        }
       }
     }
+  }
+  return referencedPtex;
+}
+
+void App::updatePtexResidency() {
+  if (!renderer_ || draw_.textures.empty() || rtOwnsScreenshot_) return;
+  const std::vector<uint8_t>& visible = gui_.viewVisibility();
+  if (visible.empty()) return;
+  if (ptexMeshRequested_.size() < draw_.meshes.size())
+    ptexMeshRequested_.resize(draw_.meshes.size(), uint8_t{0});
+  if (ptexMeshDemanded_.size() < draw_.meshes.size())
+    ptexMeshDemanded_.resize(draw_.meshes.size(), uint8_t{0});
+
+  const size_t resident = std::min(
+      draw_.meshes.size(),
+      static_cast<size_t>(std::max(0, renderer_->meshCount())));
+  for (size_t meshIndex = 0; meshIndex < resident; ++meshIndex) {
+    if (ptexMeshRequested_[meshIndex] || meshIndex >= visible.size() ||
+        visible[meshIndex] == 0)
+      continue;
+    const DrawMeshCPU& mesh = draw_.meshes[meshIndex];
+    bool referencedPtex = false;
+    if (!mesh.sourceFaceId.empty()) {
+      referencedPtex = collectPtexRequests(mesh);
+    } else if (meshIndex < deferredMeshAux_.size() &&
+               deferredMeshAux_[meshIndex].sourceFaceCount > 0) {
+      std::vector<uint32_t> decoded;
+      if (DecodeDeltaVarints(deferredMeshAux_[meshIndex].sourceFaces,
+                             deferredMeshAux_[meshIndex].sourceFaceCount,
+                             &decoded)) {
+        referencedPtex = collectPtexRequests(mesh, &decoded);
+      } else {
+        LOGW("could not decode deferred Ptex face ids for mesh %zu", meshIndex);
+      }
+    }
+    ptexMeshDemanded_[meshIndex] = referencedPtex ? uint8_t{1} : uint8_t{0};
+    ptexMeshRequested_[meshIndex] = 1;
+  }
+
+  // Page decode/upload is independent of mesh and ordinary-texture streaming.
+  // Bound it to a small slice so a newly visible Ptex-heavy mesh cannot hitch
+  // an otherwise interactive frame.
+  const auto start = std::chrono::steady_clock::now();
+  constexpr double kPtexFrameBudgetMs = 2.0;
+  while (!stepPtexResidency(kPtexFrameBudgetMs)) {
+    const double elapsed = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - start)
+                               .count();
+    if (elapsed >= kPtexFrameBudgetMs) break;
   }
 }
 
@@ -1414,10 +1478,13 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     nextTex_ = 0;
     nextVolume_ = 0;
     nextPtexTexture_ = 0;
-    nextPtexFace_ = 0;
     ptexPhysicalCaches_.clear();
+    ptexReaders_.clear();
     ptexRequestedFaces_.clear();
     ptexRequestedFaceSets_.clear();
+    ptexRequestCursors_.clear();
+    ptexMeshRequested_.clear();
+    ptexMeshDemanded_.clear();
   }
 
   if (ok) {
@@ -1507,20 +1574,31 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     // Threaded: post upload + the CPU-geometry free together so they run, in order,
     // on the render thread (the free must not precede the upload it feeds).
     const bool freeCpu = ok && useNextLoader_ && !cudaRt_ && !hipRt_;
-    if (ok) {
+    if (ok && rtOwnsScreenshot_) {
       for (const DrawMeshCPU& mesh : draw_.meshes) collectPtexRequests(mesh);
     }
     // When the RT path owns the screenshot the rasterized scene is never drawn,
     // so skip the (potentially huge) raster upload entirely.
     if (!rtOwnsScreenshot_) {
-      postGpu([this, freeCpu] {
+      const bool preserveDeferredAux = freeCpu && !renderThreadActive_;
+      if (preserveDeferredAux) deferredMeshAux_.resize(draw_.meshes.size());
+      postGpu([this, freeCpu, preserveDeferredAux] {
         std::string uerr;
         renderer_->uploadScene(draw_, &uerr);
         // Deformable meshes keep their CPU geometry: RT re-poses from it every
         // frame (and RT can be toggled on at any time).
-        if (freeCpu)
-          for (DrawMeshCPU& m : draw_.meshes)
-            if (!MeshIsDeformable(m)) FreeMeshGeometryCPU(m);
+        if (freeCpu) {
+          for (size_t i = 0; i < draw_.meshes.size(); ++i) {
+            DrawMeshCPU& mesh = draw_.meshes[i];
+            if (MeshIsDeformable(mesh)) continue;
+            if (preserveDeferredAux) {
+              FreeMeshSurfaceCPU(mesh);
+              compactDeferredMeshAux(i);
+            } else {
+              FreeMeshGeometryCPU(mesh);
+            }
+          }
+        }
       });
       if (std::any_of(draw_.textures.begin(), draw_.textures.end(),
                       [](const DrawTextureCPU& texture) {
@@ -1901,7 +1979,6 @@ void App::drainProgressiveLoad() {
         streamRendererBegun_ = true;
       }
       DrawMeshCPU mesh = std::move(event.mesh);
-      collectPtexRequests(mesh);
       const size_t vertices = mesh.vertices.size();
       const size_t triangles = mesh.indices.size() / 3;
       const size_t effectiveTriangles =
@@ -1926,6 +2003,8 @@ void App::drainProgressiveLoad() {
       if (mesh.purpose != "guide" && effectiveTriangles > 0)
         streamHasUsefulGeometry_ = true;
       draw_.meshes.push_back(std::move(mesh));
+      ptexMeshRequested_.push_back(uint8_t{0});
+      ptexMeshDemanded_.push_back(uint8_t{0});
       deferredMeshAux_.emplace_back();
       DrawMeshCPU& retained = draw_.meshes.back();
       if (useNextLoader_ && !cudaRt_ && !hipRt_ && !MeshIsDeformable(retained)) {
@@ -2012,8 +2091,13 @@ void App::drainProgressiveLoad() {
       nextTex_ = draw_.textures.size();
       nextVolume_ = 0;
       nextPtexTexture_ = 0;
-      nextPtexFace_ = 0;
       ptexPhysicalCaches_.clear();
+      ptexReaders_.clear();
+      ptexRequestedFaces_.clear();
+      ptexRequestedFaceSets_.clear();
+      ptexRequestCursors_.clear();
+      ptexMeshRequested_.assign(draw_.meshes.size(), uint8_t{0});
+      ptexMeshDemanded_.assign(draw_.meshes.size(), uint8_t{0});
       progressiveActive_ = !draw_.meshes.empty() || !draw_.points.empty() ||
                            !draw_.curves.empty() || !draw_.textures.empty() ||
                            !draw_.volumes.empty();
@@ -2082,7 +2166,6 @@ void App::stepProgressiveUpload() {
   };
   // Geometry first so meshes appear, normally ~8ms/frame.
   while (nextMesh_ < draw_.meshes.size()) {
-    collectPtexRequests(draw_.meshes[nextMesh_]);
     renderer_->appendMesh(draw_.meshes[nextMesh_]);
     if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
         !MeshIsDeformable(draw_.meshes[nextMesh_]))
@@ -2186,12 +2269,14 @@ bool App::stepPtexResidency(double deadlineMs) {
   if (ptexPhysicalCaches_.size() != draw_.textures.size()) {
     ptexPhysicalCaches_.resize(draw_.textures.size());
   }
+  if (ptexReaders_.size() != draw_.textures.size()) {
+    ptexReaders_.resize(draw_.textures.size());
+  }
   while (nextPtexTexture_ < draw_.textures.size()) {
     DrawTextureCPU& texture = draw_.textures[nextPtexTexture_];
     if (texture.ptexPhysicalCacheSlots == 0 ||
         texture.ptexSourceData.empty() || texture.ptexFaceRects.empty()) {
       ++nextPtexTexture_;
-      nextPtexFace_ = 0;
       continue;
     }
     if (!ptexPhysicalCaches_[nextPtexTexture_]) {
@@ -2200,33 +2285,36 @@ bool App::stepPtexResidency(double deadlineMs) {
               texture.ptexPhysicalCacheSlots);
     }
     const bool demandDriven = texture.ptexDemandDriven;
+    if (ptexRequestCursors_.size() < draw_.textures.size())
+      ptexRequestCursors_.resize(draw_.textures.size());
     const size_t requestedCount =
         nextPtexTexture_ < ptexRequestedFaces_.size()
             ? ptexRequestedFaces_[nextPtexTexture_].size()
             : 0u;
     const size_t residencyFaceCount =
         demandDriven ? requestedCount : texture.ptexFaceRects.size();
-    if (nextPtexFace_ >= residencyFaceCount) {
-      if (nextPtexTexture_ < ptexRequestedFaceSets_.size())
-        ptexRequestedFaceSets_[nextPtexTexture_].clear();
+    size_t& cursor = ptexRequestCursors_[nextPtexTexture_];
+    if (cursor >= residencyFaceCount) {
       ++nextPtexTexture_;
-      nextPtexFace_ = 0;
       continue;
     }
 
-    tinyusdz::ptx::Reader reader;
     std::string error;
-    if (!tinyusdz::ptx::Reader::OpenMemory(texture.ptexSourceData.data(),
-                                           texture.ptexSourceData.size(),
-                                           &reader, &error)) {
-      LOGW("Ptex residency source reopen failed: %s", error.c_str());
-      ++nextPtexTexture_;
-      nextPtexFace_ = 0;
-      continue;
+    if (!ptexReaders_[nextPtexTexture_]) {
+      auto reader = std::make_unique<tinyusdz::ptx::Reader>();
+      if (!tinyusdz::ptx::Reader::OpenMemory(texture.ptexSourceData.data(),
+                                             texture.ptexSourceData.size(),
+                                             reader.get(), &error)) {
+        LOGW("Ptex residency source reopen failed: %s", error.c_str());
+        ++nextPtexTexture_;
+        continue;
+      }
+      ptexReaders_[nextPtexTexture_] = std::move(reader);
     }
+    const tinyusdz::ptx::Reader& reader = *ptexReaders_[nextPtexTexture_];
     const uint32_t face = demandDriven
-                              ? ptexRequestedFaces_[nextPtexTexture_][nextPtexFace_++]
-                              : nextPtexFace_++;
+                              ? ptexRequestedFaces_[nextPtexTexture_][cursor++]
+                              : static_cast<uint32_t>(cursor++);
     if (face >= texture.ptexFaceRects.size() ||
         face >= reader.info().faceInfo.size()) {
       LOGW("Ptex face request %u is out of range", face);
@@ -4166,6 +4254,7 @@ int App::run(const std::string& initialFile, int maxFrames,
                    loadActive_)) {
         gui_.renderViewportScene();
         updateTextureResidency();
+        updatePtexResidency();
       }
 
       // Grab the composited window on the final frame (--window-shot).
