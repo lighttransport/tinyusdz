@@ -539,6 +539,8 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"materials", draw_.materials.size()},
       {"textures", draw_.textures.size()},
       {"ptex_textures", ptexTextures},
+      {"ptex_initial_faces", loadOpts_.ptexInitialFaces},
+      {"ptex_physical_cache_bytes", loadOpts_.ptexPhysicalCacheBytes},
       {"ptex_faces", ptexFaces},
       {"ptex_atlas_bytes", ptexAtlasBytes},
       {"ptex_downsampled_faces", ptexDownsampledFaces},

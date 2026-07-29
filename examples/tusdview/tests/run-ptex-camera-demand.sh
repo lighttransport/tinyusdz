@@ -59,7 +59,8 @@ EOF
 log="$out/run.log"
 if ! env TUSDVIEW_PTEX_FORCE_RESIDENCY=1 timeout 60s \
     "$viewer" --headless --backend vk --next \
-    --large-scene-profile island --frames 4 --size 192x128 --camera /Camera \
+    --large-scene-profile island --ptex-initial-faces 1 --ptex-cache-mb 4 \
+    --frames 4 --size 192x128 --camera /Camera \
     --screenshot "$out/result.png" --render-report "$out/report.json" \
     "$out/scene.usda" >"$log" 2>&1; then
   if grep -Eq 'no compatible Vulkan|no Vulkan device|renderer init failed' "$log"; then
@@ -79,6 +80,8 @@ r = report["render_stats"]
 assert s["ptex_considered_meshes"] == 1, s
 assert s["ptex_requested_meshes"] == 1, s
 assert s["ptex_requested_faces"] == 1, s
+assert s["ptex_initial_faces"] == 1, s
+assert s["ptex_physical_cache_bytes"] == 4 * 1024 * 1024, s
 assert s["ptex_async_jobs_launched"] >= 1, s
 assert s["ptex_async_jobs_completed"] == s["ptex_async_jobs_launched"], s
 assert s["ptex_gpu_page_uploads"] >= 1, s
