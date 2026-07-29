@@ -530,15 +530,43 @@ selected tusdview/tusdrender modes:
 The harness writes a TSV result table and classifies each pass as `rendered`,
 `rendered_with_warnings`, `no_renderable`, `load_error`, `timeout`,
 `backend_unavailable`, or `backend_error`. It is registered as
-`tusdview-usd-assets-render-smoke`, but skips unless `USD_ASSETS_ROOT` is set.
+`tusdview-usd-assets-broad-smoke`, but skips unless `USD_ASSETS_ROOT` and
+`TUSDVIEW_RUN_USD_ASSETS_BROAD=1` are set.
 The tusdrender modes use `-autoframe` and the renderer's existing scene-light /
-headlight fallback. This is basic load-and-render coverage, not a detailed
-lighting match or perceptual golden-image test.
+headlight fallback. Use `--profile usd-assets-curated` for the short material
+set or `--profile usd-assets-broad` for a bounded cross-section spanning
+composition, primvars, subdivision, analytic geometry, transforms, textures,
+transparency, MaterialX, large composed scenes, and animated/skinned USDZ
+assets. `--time CODE` evaluates both tusdview and tusdrender at a representative
+animation time. The broad profile intentionally avoids rendering every helper
+layer, since material-only and camera-only layers mostly add expected
+`no_renderable` results rather than fidelity coverage. External gates use
+`--require-profile-complete`, so a renamed or incomplete corpus cannot silently
+reduce the advertised coverage.
+
+```sh
+USD_ASSETS_ROOT=/path/to/usd-assets \
+  TUSDVIEW_RUN_USD_ASSETS_BROAD=1 \
+  ctest --test-dir build_ninja -R tusdview-usd-assets-broad-smoke -V
+```
+
+The runner can also be invoked directly for one backend while iterating:
 
 ```sh
 USD_ASSETS_ROOT=/path/to/usd-assets \
   TUSDVIEW=./build_ninja/tusdview \
-  examples/tusdview/tests/run-usd-assets-render-smoke.sh
+  examples/tusdview/tests/run-usd-assets-render-smoke.sh \
+    --profile usd-assets-broad --modes vk-raster --time 1
+```
+
+Animation has a separate cross-time gate. It renders representative transform,
+point-interpolation, and skinned USDZ samples at time codes 0 and 1, then fails
+if an available backend produces no image changes at all:
+
+```sh
+USD_ASSETS_ROOT=/path/to/usd-assets \
+  TUSDVIEW_RUN_USD_ASSETS_ANIMATION=1 \
+  ctest --test-dir build_ninja -R tusdview-usd-assets-animation-smoke -V
 ```
 
 On an NVIDIA PRIME/offload host where Vulkan otherwise sees only llvmpipe, use
