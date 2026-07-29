@@ -2503,6 +2503,17 @@ if(TINYUSDZ_BUILD_TESTS)
                          SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "tusdview")
 
     add_test(
+      NAME tusdview-ptex-camera-demand
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_PTEX_GENERATOR=$<TARGET_FILE:tusdview_ptex_atlas_test>"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-ptex-camera-demand.sh"
+      )
+    set_tests_properties(tusdview-ptex-camera-demand PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 90 LABELS "tusdview")
+
+    add_test(
       NAME tusdview-vk-render
       COMMAND ${CMAKE_COMMAND} -E env
               "TUSDVIEW=$<TARGET_FILE:tusdview>"

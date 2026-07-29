@@ -309,7 +309,10 @@ class App
                    bool alreadyUploaded = false);  // upload + bind on main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
   bool stepPtexResidency(double deadlineMs);
-  void collectPtexRequests(const DrawMeshCPU& mesh);
+  bool collectPtexRequests(
+      const DrawMeshCPU& mesh,
+      const std::vector<uint32_t>* sourceFaces = nullptr);
+  void updatePtexResidency();
   void drainProgressiveLoad();   // consume loader-produced meshes on context thread
   void ensureWireAuxReady();     // make resident wire buffers complete atomically
   // Static shaded previews keep diagnostic topology in a delta-varint stream
@@ -620,10 +623,19 @@ class App
   size_t nextTex_{0};
   size_t nextVolume_{0};  // UsdVol volumes uploaded so far
   size_t nextPtexTexture_{0};
-  uint32_t nextPtexFace_{0};
   std::vector<std::unique_ptr<PtexPhysicalPageCache>> ptexPhysicalCaches_;
+  // Parsed Ptex metadata is immutable and can be reused for every page. Keeping
+  // one reader per texture avoids reparsing large face/level tables for each
+  // 2 ms refinement slice.
+  std::vector<std::unique_ptr<tinyusdz::ptx::Reader>> ptexReaders_;
   std::vector<std::vector<uint32_t>> ptexRequestedFaces_;
   std::vector<std::unordered_set<uint32_t>> ptexRequestedFaceSets_;
+  std::vector<size_t> ptexRequestCursors_;
+  // A raster mesh contributes Ptex pages only after its world bounds enter the
+  // current camera frustum. This remains false for off-camera meshes, avoiding
+  // the old full-scene request burst at admission time.
+  std::vector<uint8_t> ptexMeshRequested_;
+  std::vector<uint8_t> ptexMeshDemanded_;
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // Experimental threaded rendering. renderThreadActive_ is true only when
