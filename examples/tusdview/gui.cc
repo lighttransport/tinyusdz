@@ -3277,7 +3277,9 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
                       {cell.wmx[0], cell.wmx[1], cell.wmx[2]}) ==
           light3d::CullResult::Outside)
         continue;
-      upper += cell.count;
+      upper += (lod && !degenerate && IsSubpixelAggregateCell(cell, lodCam))
+                   ? 0u
+                   : cell.count;
     }
     out->xforms.reserve(static_cast<size_t>(upper) * 12);
     if (hc) out->colors.reserve(static_cast<size_t>(upper) * 3);
@@ -3287,6 +3289,22 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
           fr.testAABB({cell.wmn[0], cell.wmn[1], cell.wmn[2]},
                       {cell.wmx[0], cell.wmx[1], cell.wmx[2]});
       if (cr == light3d::CullResult::Outside) continue;
+      if (lod && !degenerate && IsSubpixelAggregateCell(cell, lodCam)) {
+        // Individually sub-pixel populations still carry visible aggregate
+        // density (vegetation, debris, crowds). Preserve that density with
+        // one bounded cell proxy instead of erasing every placement or
+        // allocating one proxy per instance.
+        if (doProxy) {
+          static const float kIdentity[12] = {
+              1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+          float bx[12];
+          BoxFitXform(kIdentity, cell.wmn, cell.wmx, bx);
+          proxyOut->xforms.insert(proxyOut->xforms.end(), bx, bx + 12);
+          proxyOut->colors.insert(proxyOut->colors.end(), m.flatColor,
+                                  m.flatColor + 3);
+        }
+        continue;
+      }
       const bool inside = (cr == light3d::CullResult::Inside);
       for (std::uint32_t i = cell.begin; i < cell.begin + cell.count; ++i)
         emit(grid->order[i], inside);

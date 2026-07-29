@@ -1447,6 +1447,7 @@ bool VulkanRenderer::createPipeline(std::string* err) {
       VkGraphicsPipelineCreateInfo shadowCi = ci;
       shadowCi.pStages = shadowStages;
       shadowCi.pColorBlendState = &shadowCb;
+      shadowCi.renderPass = shadowPass_;
       if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &shadowCi,
                                     nullptr, &shadowPipeline_) != VK_SUCCESS)
         shadowPipeline_ = VK_NULL_HANDLE;
