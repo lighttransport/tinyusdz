@@ -187,6 +187,10 @@ class App
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
   // Write a stable machine-readable summary when run() exits.
   void setRenderReport(const std::string& path) { renderReportPath_ = path; }
+  void setCheckpointOutput(int every, const std::string& pattern) {
+    checkpointEvery_ = every > 0 ? every : 0;
+    checkpointPattern_ = pattern;
+  }
   // Name of the resolved large-scene production profile (off/auto/island/etc.).
   // Kept in the report so captures are reproducible without parsing logs.
   void setLargeSceneProfile(const std::string& profile) {
@@ -409,6 +413,9 @@ class App
   int windowHeight_{0};
   std::string windowShot_;
   std::string renderReportPath_;
+  int checkpointEvery_{0};
+  std::string checkpointPattern_;
+  size_t checkpointCount_{0};
   std::string largeSceneProfile_ = "off";
   int reportCaptureWidth_{0};
   int reportCaptureHeight_{0};

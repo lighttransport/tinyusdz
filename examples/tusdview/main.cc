@@ -163,6 +163,8 @@ int main(int argc, char** argv) {
   std::string file;
   std::string screenshot;
   std::string renderReport;
+  int checkpointEvery = 0;
+  std::string checkpointPattern;
   std::string windowShot;
   int maxFrames = -1;
   int windowWidth = 0;
@@ -323,6 +325,16 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "--render-report") == 0 &&
                (i + 1) < argc) {
       renderReport = argv[++i];
+    } else if (std::strcmp(argv[i], "--checkpoint-every") == 0 &&
+               (i + 1) < argc) {
+      checkpointEvery = std::atoi(argv[++i]);
+      if (checkpointEvery < 1) {
+        LOGE("--checkpoint-every must be at least 1");
+        return 1;
+      }
+    } else if (std::strcmp(argv[i], "--checkpoint-pattern") == 0 &&
+               (i + 1) < argc) {
+      checkpointPattern = argv[++i];
     } else if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
       maxTris = std::atoll(argv[++i]);
       maxTrisExplicit = true;
@@ -900,6 +912,10 @@ int main(int argc, char** argv) {
           "  --frame CODE  Alias for --time CODE.\n"
           "  --screenshot PATH  Save the viewport image after --frames.\n"
           "  --render-report PATH  Write a schema-versioned JSON render report.\n"
+          "  --checkpoint-every N  Save the viewport every N fixed frames "
+          "(raster or Vulkan RT).\n"
+          "  --checkpoint-pattern PATH  Checkpoint filename containing {frame}; "
+          "default derives from --screenshot.\n"
           "  --window-shot PATH  Save the complete window, including UI.\n"
           "  --raster-lod / --rt-lod  Enable view-dependent raster or Vulkan-RT "
           "LOD (--no-rt-lod disables RT LOD for deterministic full-scene capture); "
@@ -1196,7 +1212,8 @@ int main(int argc, char** argv) {
     if (effectiveProfile == LargeSceneProfile::Island) {
       // Keep startup bounded; admitted meshes enqueue their remaining source
       // faces for physical-cache streaming after the first usable frame.
-      lo.ptexInitialFaces = 256;
+      lo.ptexInitialFaces = 16;
+      lo.ptexPhysicalCacheBytes = 8ull * 1024ull * 1024ull;
       lo.curveTessellationSegments = 2;
       if (maxDrawMeshes > 0) {
         lo.maxMeshConversions = static_cast<size_t>(maxDrawMeshes);
@@ -1309,6 +1326,7 @@ int main(int argc, char** argv) {
   app.setHipRt(wantHip);
   app.setRtSamples(rtSamples);
   app.setRenderReport(renderReport);
+  app.setCheckpointOutput(checkpointEvery, checkpointPattern);
   app.setLargeSceneProfile(ProfileName(effectiveProfile));
   app.setRtMaxInstances(static_cast<size_t>(rtMaxInstances));
   app.setLodStream(lodStream);

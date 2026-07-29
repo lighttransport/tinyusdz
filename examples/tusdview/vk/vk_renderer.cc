@@ -4152,15 +4152,8 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
     uploadSkinningFrame(ident);
   }
 
-  // Ray tracing (ray query) resources, when the device + shader support it.
-  if (rtSupported_) {
-    std::string rterr;
-    if (!createRtResources(&rterr)) {
-      LOGD("ray tracing: createRtResources failed: %s", rterr.c_str());
-      destroyRt();
-      rtSupported_ = false;  // fall back to rasterization
-    }
-  }
+  // Ray-query resources and the expensive compute pipeline are created lazily
+  // by setRayTracing(). Raster startup must never compile an unused RT shader.
   techniqueLabel_ = rtSupported_ ? "Vulkan (raster)" : "Vulkan";
   caps_.backend_name = techniqueLabel_.c_str();
   caps_.supportsRayTracing = rtSupported_;
@@ -4547,11 +4540,7 @@ void VulkanRenderer::destroyScene() {
   if (volumePool_) vkResetDescriptorPool(device_, volumePool_, 0);
 
   // Per-scene acceleration structure + RT scene buffers (rebuilt on next trace).
-  if (tlas_) { if (pfnDestroyAS_) pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
-  if (tlasBuf_) { vkDestroyBuffer(device_, tlasBuf_, nullptr); tlasBuf_ = VK_NULL_HANDLE; }
-  if (tlasMem_) { vkFreeMemory(device_, tlasMem_, nullptr); tlasMem_ = VK_NULL_HANDLE; }
-  if (instBuf_) { vkDestroyBuffer(device_, instBuf_, nullptr); instBuf_ = VK_NULL_HANDLE; }
-  if (instMem_) { vkFreeMemory(device_, instMem_, nullptr); instMem_ = VK_NULL_HANDLE; }
+  destroyTlasChunks();
   if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
   if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
   if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
@@ -6670,6 +6659,41 @@ void VulkanRenderer::rebuildRtTextureTable() {
   ++rtAccumGen_;
 }
 
+void VulkanRenderer::destroyTlasChunks() {
+  if (tlas_) {
+    if (pfnDestroyAS_) pfnDestroyAS_(device_, tlas_, nullptr);
+    tlas_ = VK_NULL_HANDLE;
+  }
+  if (tlasBuf_) {
+    vkDestroyBuffer(device_, tlasBuf_, nullptr);
+    tlasBuf_ = VK_NULL_HANDLE;
+  }
+  if (tlasMem_) {
+    vkFreeMemory(device_, tlasMem_, nullptr);
+    tlasMem_ = VK_NULL_HANDLE;
+  }
+  if (instBuf_) {
+    vkDestroyBuffer(device_, instBuf_, nullptr);
+    instBuf_ = VK_NULL_HANDLE;
+  }
+  if (instMem_) {
+    vkFreeMemory(device_, instMem_, nullptr);
+    instMem_ = VK_NULL_HANDLE;
+  }
+  for (ExtraTlasChunk& chunk : extraTlasChunks_) {
+    if (chunk.as && pfnDestroyAS_) pfnDestroyAS_(device_, chunk.as, nullptr);
+    if (chunk.asBuffer) vkDestroyBuffer(device_, chunk.asBuffer, nullptr);
+    if (chunk.asMemory) vkFreeMemory(device_, chunk.asMemory, nullptr);
+    if (chunk.instanceBuffer)
+      vkDestroyBuffer(device_, chunk.instanceBuffer, nullptr);
+    if (chunk.instanceMemory)
+      vkFreeMemory(device_, chunk.instanceMemory, nullptr);
+  }
+  extraTlasChunks_.clear();
+  rtTlasChunkCount_ = 0;
+  rtTlasChunkStride_ = 0;
+}
+
 void VulkanRenderer::rebuildTlas() {
   if (!rtSupported_ || meshes_.empty() || !rtSet_) return;
   // No vkDeviceWaitIdle: the caller (presentImpl) has already waited the in-flight
@@ -6680,11 +6704,9 @@ void VulkanRenderer::rebuildTlas() {
   auto tlasT0 = std::chrono::steady_clock::now();
 
   // Drop the previous per-scene TLAS + scene buffers.
-  if (tlas_) { pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
-  if (tlasBuf_) { vkDestroyBuffer(device_, tlasBuf_, nullptr); tlasBuf_ = VK_NULL_HANDLE; }
-  if (tlasMem_) { vkFreeMemory(device_, tlasMem_, nullptr); tlasMem_ = VK_NULL_HANDLE; }
-  if (instBuf_) { vkDestroyBuffer(device_, instBuf_, nullptr); instBuf_ = VK_NULL_HANDLE; }
-  if (instMem_) { vkFreeMemory(device_, instMem_, nullptr); instMem_ = VK_NULL_HANDLE; }
+  destroyTlasChunks();
+  rtTlasInputInstances_ = 0;
+  rtBuildIncomplete_ = false;
   if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
   if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
   if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
@@ -6911,11 +6933,47 @@ void VulkanRenderer::rebuildTlas() {
     instInfos.push_back(info);
   }
   if (insts.empty()) return;
-  if (rtMaxInstanceCount_ > 0 && insts.size() > rtMaxInstanceCount_) {
-    LOGW("[vk_rt] limiting TLAS instances from %zu to Vulkan max %u",
-         insts.size(), rtMaxInstanceCount_);
-    insts.resize(rtMaxInstanceCount_);
-    instInfos.resize(rtMaxInstanceCount_);
+  rtTlasInputInstances_ = insts.size();
+  rtBuildIncomplete_ = false;
+  constexpr uint32_t kMaxTlasChunks = 4u;  // must match raytrace.comp
+  if (rtMaxInstanceCount_ == 0) {
+    LOGE("[vk_rt] device reports a zero TLAS instance limit");
+    return;
+  }
+  uint32_t chunkStride = rtMaxInstanceCount_;
+  if (const char* forced =
+          std::getenv("TUSDVIEW_RT_TLAS_CHUNK_INSTANCES")) {
+    const unsigned long requested = std::strtoul(forced, nullptr, 10);
+    if (requested > 0)
+      chunkStride = static_cast<uint32_t>(
+          std::min<unsigned long>(requested, rtMaxInstanceCount_));
+  }
+  uint32_t maxTlasChunks = kMaxTlasChunks;
+  if (const char* forcedChunks =
+          std::getenv("TUSDVIEW_RT_TLAS_MAX_CHUNKS")) {
+    const unsigned long requested = std::strtoul(forcedChunks, nullptr, 10);
+    if (requested > 0)
+      maxTlasChunks = static_cast<uint32_t>(
+          std::min<unsigned long>(requested, kMaxTlasChunks));
+  }
+  const uint64_t multiTlasCapacity =
+      uint64_t{chunkStride} * uint64_t{maxTlasChunks};
+  if (insts.size() > multiTlasCapacity) {
+    rtBuildIncomplete_ = true;
+    LOGE("[vk_rt] %zu instances exceed the non-truncating multi-TLAS capacity "
+         "of %llu (%u chunks x %u); refusing a partial render",
+         insts.size(), static_cast<unsigned long long>(multiTlasCapacity),
+         maxTlasChunks, chunkStride);
+    return;
+  }
+  rtTlasChunkStride_ = chunkStride;
+  rtTlasChunkCount_ = static_cast<uint32_t>(
+      (insts.size() + rtTlasChunkStride_ - 1u) / rtTlasChunkStride_);
+  if (rtTlasChunkCount_ > 1u) {
+    LOGI("[vk_rt] non-truncating multi-TLAS: %zu instances in %u chunks "
+         "(stride %u, device limit %u/chunk)",
+         insts.size(), rtTlasChunkCount_, rtTlasChunkStride_,
+         rtMaxInstanceCount_);
   }
   if (rtTiming) {
     auto tb = std::chrono::steady_clock::now();
@@ -6928,20 +6986,6 @@ void VulkanRenderer::rebuildTlas() {
                  double(instInfos.size() * sizeof(InstanceInfoGPU)) / 1e9);
   }
 
-  // Instances buffer (AS build input, device address).
-  createHostBuffer(insts.size() * sizeof(VkAccelerationStructureInstanceKHR),
-                   VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-                   insts.data(), &instBuf_, &instMem_, /*deviceAddress=*/true);
-
-  VkAccelerationStructureGeometryKHR geom{};
-  geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-  geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-  geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-  geom.geometry.instances.sType =
-      VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-  geom.geometry.instances.data.deviceAddress = bufferDeviceAddress(instBuf_);
-
-  const uint32_t instCount = static_cast<uint32_t>(insts.size());
   // PREFER_FAST_BUILD for settle rebuilds was on the large-scene.md 2.8 list. It
   // is NOT worth taking: on Island the TLAS build itself is 0.7-4.6 ms of a
   // 600-8400 ms rebuild (which is dominated by the BLAS builds and the instance
@@ -6951,64 +6995,117 @@ void VulkanRenderer::rebuildTlas() {
   // where the balance differs; measure the "AS build" line below before flipping it.
   static const bool kTlasFastBuild =
       std::getenv("TUSDVIEW_TLAS_FAST_BUILD") != nullptr;
-  VkAccelerationStructureBuildGeometryInfoKHR bgi{};
-  bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-  bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-  bgi.flags = kTlasFastBuild
-                  ? VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR
-                  : VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-  bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-  bgi.geometryCount = 1;
-  bgi.pGeometries = &geom;
+  extraTlasChunks_.resize(rtTlasChunkCount_ > 0 ? rtTlasChunkCount_ - 1u : 0u);
+  double asMs = 0.0;
+  VkDeviceSize totalTlasBytes = 0;
+  VkDeviceSize maxScratchBytes = 0;
+  auto buildTlasChunk = [&](uint32_t chunkIndex, size_t begin,
+                            uint32_t instCount) -> bool {
+    VkAccelerationStructureKHR* outAs = &tlas_;
+    VkBuffer* outAsBuffer = &tlasBuf_;
+    VkDeviceMemory* outAsMemory = &tlasMem_;
+    VkBuffer* outInstanceBuffer = &instBuf_;
+    VkDeviceMemory* outInstanceMemory = &instMem_;
+    if (chunkIndex > 0u) {
+      ExtraTlasChunk& chunk = extraTlasChunks_[chunkIndex - 1u];
+      outAs = &chunk.as;
+      outAsBuffer = &chunk.asBuffer;
+      outAsMemory = &chunk.asMemory;
+      outInstanceBuffer = &chunk.instanceBuffer;
+      outInstanceMemory = &chunk.instanceMemory;
+    }
+    if (!createHostBuffer(
+            VkDeviceSize(instCount) * sizeof(VkAccelerationStructureInstanceKHR),
+            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+            insts.data() + begin, outInstanceBuffer, outInstanceMemory,
+            /*deviceAddress=*/true)) {
+      return false;
+    }
+    VkAccelerationStructureGeometryKHR geom{};
+    geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geom.geometry.instances.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geom.geometry.instances.data.deviceAddress =
+        bufferDeviceAddress(*outInstanceBuffer);
 
-  VkAccelerationStructureBuildSizesInfoKHR sizes{};
-  sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-  pfnGetASBuildSizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bgi,
-                      &instCount, &sizes);
+    VkAccelerationStructureBuildGeometryInfoKHR bgi{};
+    bgi.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    bgi.flags = kTlasFastBuild
+                    ? VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR
+                    : VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    bgi.geometryCount = 1;
+    bgi.pGeometries = &geom;
 
-  if (!createDeviceBuffer(sizes.accelerationStructureSize,
-                          VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
-                          &tlasBuf_, &tlasMem_)) {
-    return;
+    VkAccelerationStructureBuildSizesInfoKHR sizes{};
+    sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    pfnGetASBuildSizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                        &bgi, &instCount, &sizes);
+    if (!createDeviceBuffer(
+            sizes.accelerationStructureSize,
+            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, outAsBuffer,
+            outAsMemory)) {
+      return false;
+    }
+    VkAccelerationStructureCreateInfoKHR aci{};
+    aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    aci.buffer = *outAsBuffer;
+    aci.size = sizes.accelerationStructureSize;
+    aci.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    if (pfnCreateAS_(device_, &aci, nullptr, outAs) != VK_SUCCESS) return false;
+
+    VkBuffer scratch = VK_NULL_HANDLE;
+    VkDeviceMemory scratchMemory = VK_NULL_HANDLE;
+    if (!createDeviceBuffer(sizes.buildScratchSize + scratchAlign_,
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &scratch,
+                            &scratchMemory)) {
+      return false;
+    }
+    VkDeviceAddress scratchAddress = bufferDeviceAddress(scratch);
+    scratchAddress =
+        (scratchAddress + scratchAlign_ - 1) &
+        ~(static_cast<VkDeviceAddress>(scratchAlign_) - 1);
+    bgi.dstAccelerationStructure = *outAs;
+    bgi.scratchData.deviceAddress = scratchAddress;
+    VkAccelerationStructureBuildRangeInfoKHR range{};
+    range.primitiveCount = instCount;
+    const VkAccelerationStructureBuildRangeInfoKHR* rangePtr = &range;
+    const auto chunkStart = std::chrono::steady_clock::now();
+    VkCommandBuffer commandBuffer = beginOneShot();
+    pfnCmdBuildAS_(commandBuffer, 1, &bgi, &rangePtr);
+    endOneShot(commandBuffer);
+    asMs += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - chunkStart)
+                .count();
+    totalTlasBytes += sizes.accelerationStructureSize;
+    maxScratchBytes = std::max(maxScratchBytes, sizes.buildScratchSize);
+    vkDestroyBuffer(device_, scratch, nullptr);
+    vkFreeMemory(device_, scratchMemory, nullptr);
+    return true;
+  };
+  for (uint32_t chunkIndex = 0; chunkIndex < rtTlasChunkCount_; ++chunkIndex) {
+    const size_t begin = size_t(chunkIndex) * rtTlasChunkStride_;
+    const uint32_t count = static_cast<uint32_t>(
+        std::min<size_t>(rtTlasChunkStride_, insts.size() - begin));
+    if (!buildTlasChunk(chunkIndex, begin, count)) {
+      rtBuildIncomplete_ = true;
+      LOGE("[vk_rt] failed to build TLAS chunk %u/%u", chunkIndex + 1u,
+           rtTlasChunkCount_);
+      destroyTlasChunks();
+      return;
+    }
   }
-  VkAccelerationStructureCreateInfoKHR aci{};
-  aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-  aci.buffer = tlasBuf_;
-  aci.size = sizes.accelerationStructureSize;
-  aci.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-  if (pfnCreateAS_(device_, &aci, nullptr, &tlas_) != VK_SUCCESS) return;
-
-  VkBuffer scratch = VK_NULL_HANDLE;
-  VkDeviceMemory scratchMem = VK_NULL_HANDLE;
-  if (!createDeviceBuffer(sizes.buildScratchSize + scratchAlign_,
-                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &scratch, &scratchMem)) {
-    return;
-  }
-  VkDeviceAddress sa = bufferDeviceAddress(scratch);
-  sa = (sa + scratchAlign_ - 1) & ~(static_cast<VkDeviceAddress>(scratchAlign_) - 1);
-  bgi.dstAccelerationStructure = tlas_;
-  bgi.scratchData.deviceAddress = sa;
-
-  VkAccelerationStructureBuildRangeInfoKHR range{};
-  range.primitiveCount = instCount;
-  const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
-  auto asT0 = std::chrono::steady_clock::now();
-  VkCommandBuffer cb = beginOneShot();
-  pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
-  endOneShot(cb);
-  const double asMs =
-      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                asT0)
-          .count();
-  vkDestroyBuffer(device_, scratch, nullptr);
-  vkFreeMemory(device_, scratchMem, nullptr);
   if (rtTiming) {
     auto tt = std::chrono::steady_clock::now();
     std::fprintf(stderr,
                  "[vk_rt] TLAS: storage %.2f GB, scratch %.2f GB, AS build %.1f ms "
                  "(%s), total build %.1f ms\n",
-                 double(sizes.accelerationStructureSize) / 1e9,
-                 double(sizes.buildScratchSize) / 1e9, asMs,
+                 double(totalTlasBytes) / 1e9,
+                 double(maxScratchBytes) / 1e9, asMs,
                  kTlasFastBuild ? "fast-build" : "fast-trace",
                  std::chrono::duration<double, std::milli>(tt - tlasT0).count());
     uint64_t used = 0, budget = 0;
@@ -7071,10 +7168,14 @@ void VulkanRenderer::rebuildTlas() {
   // Update descriptors: TLAS(0), meshDesc(2), material(3), instInfo(4),
   // LightRT material block(6), packed lights(7). Image(1) and accumulation image(5)
   // are set elsewhere.
+  std::array<VkAccelerationStructureKHR, kMaxTlasChunks> tlasDescriptors{};
+  tlasDescriptors.fill(tlas_);
+  for (uint32_t i = 1u; i < rtTlasChunkCount_; ++i)
+    tlasDescriptors[i] = extraTlasChunks_[i - 1u].as;
   VkWriteDescriptorSetAccelerationStructureKHR asInfo{};
   asInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-  asInfo.accelerationStructureCount = 1;
-  asInfo.pAccelerationStructures = &tlas_;
+  asInfo.accelerationStructureCount = kMaxTlasChunks;
+  asInfo.pAccelerationStructures = tlasDescriptors.data();
   VkDescriptorBufferInfo descInfo{meshDescBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo matInfo{rtMatBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo instInfo{instInfoBuf_, 0, VK_WHOLE_SIZE};
@@ -7089,7 +7190,7 @@ void VulkanRenderer::rebuildTlas() {
   w[0].pNext = &asInfo;
   w[0].dstSet = rtSet_;
   w[0].dstBinding = 0;
-  w[0].descriptorCount = 1;
+  w[0].descriptorCount = kMaxTlasChunks;
   w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
   w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   w[1].dstSet = rtSet_;
@@ -7180,10 +7281,11 @@ void VulkanRenderer::rebuildTlas() {
 
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
+  constexpr uint32_t kMaxTlasChunks = 4u;  // must match raytrace.comp
   VkDescriptorSetLayoutBinding b[15]{};
   b[0].binding = 0;
   b[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-  b[0].descriptorCount = 1;
+  b[0].descriptorCount = kMaxTlasChunks;
   b[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
   b[1].binding = 1;
   b[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -7222,7 +7324,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
            "rt descriptor set layout");
 
   VkDescriptorPoolSize ps[4]{};
-  ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1};
+  ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kMaxTlasChunks};
   ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
   ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 9};
   ps[3] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
@@ -7412,10 +7514,12 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.clearColor[3] = exposure_;
   for (int i = 0; i < 3; ++i) { pc.sceneMin[i] = sceneMin_[i]; pc.sceneExtent[i] = sceneExtent_[i]; }
   pc.sceneMin[3] = static_cast<float>(rtAccumFrame_);      // accumulated sample index
-  pc.sceneExtent[3] = rtAccumEnabled_ ? 1.0f : 0.0f;        // accumulate enable
+  pc.sceneExtent[3] = (rtAccumEnabled_ ? 1.0f : -1.0f) *
+                      static_cast<float>(std::max(rtTlasChunkCount_, 1u));
   pc.lens[0] = cameraLens_.focusDistance;
   pc.lens[1] = cameraLens_.apertureRadius;
   pc.lens[2] = cameraLens_.enabled() ? 1.0f : 0.0f;
+  pc.lens[3] = static_cast<float>(rtTlasChunkStride_);
   vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
                      &pc);
   vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
@@ -7471,6 +7575,22 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
 
 void VulkanRenderer::setRayTracing(bool enable) {
   bool want = enable && rtSupported_;
+  if (want && rtPipeline_ == VK_NULL_HANDLE) {
+    std::string error;
+    const auto start = std::chrono::steady_clock::now();
+    if (!createRtResources(&error)) {
+      LOGW("ray tracing initialization failed: %s", error.c_str());
+      destroyRt();
+      rtSupported_ = false;
+      caps_.supportsRayTracing = false;
+      want = false;
+    } else {
+      rtInitMs_ = std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - start)
+                      .count();
+      LOGI("Vulkan ray tracing resources initialized in %.1f ms", rtInitMs_);
+    }
+  }
   if (want == rtActive_) return;
   rtActive_ = want;
   techniqueLabel_ = rtActive_ ? "Vulkan (ray query)" : "Vulkan (raster)";
@@ -7486,11 +7606,7 @@ void VulkanRenderer::setLodCamera(const RtLodCamera& cam, bool reselect) {
 }
 
 void VulkanRenderer::destroyRt() {
-  if (tlas_) { if (pfnDestroyAS_) pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
-  if (tlasBuf_) { vkDestroyBuffer(device_, tlasBuf_, nullptr); tlasBuf_ = VK_NULL_HANDLE; }
-  if (tlasMem_) { vkFreeMemory(device_, tlasMem_, nullptr); tlasMem_ = VK_NULL_HANDLE; }
-  if (instBuf_) { vkDestroyBuffer(device_, instBuf_, nullptr); instBuf_ = VK_NULL_HANDLE; }
-  if (instMem_) { vkFreeMemory(device_, instMem_, nullptr); instMem_ = VK_NULL_HANDLE; }
+  destroyTlasChunks();
   if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
   if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
   if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }

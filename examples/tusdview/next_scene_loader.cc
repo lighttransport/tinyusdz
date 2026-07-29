@@ -2425,6 +2425,7 @@ struct NextTexCache {
   size_t ptexAtlasPerTextureBytes = 256ull * 1024ull * 1024ull;
   size_t ptexAtlasBytes = 0;
   uint32_t ptexInitialFaces = 0;
+  size_t ptexPhysicalCacheBytes = 32ull * 1024ull * 1024ull;
   double ptexBuildSeconds = 0.0;
   size_t ptexBuildCount = 0;
   bool ptexBudgetWarned = false;
@@ -2730,7 +2731,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
       atlasOptions.maxAtlasBytes =
           std::min(tc.ptexAtlasPerTextureBytes, remaining);
       atlasOptions.maxPhysicalCacheBytes =
-          std::min<size_t>(32ull * 1024ull * 1024ull,
+          std::min<size_t>(tc.ptexPhysicalCacheBytes,
                            atlasOptions.maxAtlasBytes / 4u);
       atlasOptions.forcePhysicalCache =
           std::getenv("TUSDVIEW_PTEX_FORCE_RESIDENCY") != nullptr;
@@ -4629,6 +4630,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   NextTexCache texCache;
   texCache.opt = &opts.textureOptions;  // kept-compressed KTX2 passthrough
   texCache.ptexInitialFaces = opts.ptexInitialFaces;
+  if (opts.ptexPhysicalCacheBytes > 0)
+    texCache.ptexPhysicalCacheBytes = opts.ptexPhysicalCacheBytes;
   if (opts.textureOptions.textureBudgetMB > 0) {
     texCache.ptexAtlasBudgetBytes =
         size_t(opts.textureOptions.textureBudgetMB) * size_t{1024} *

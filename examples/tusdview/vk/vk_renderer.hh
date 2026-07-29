@@ -97,6 +97,15 @@ class VulkanRenderer final : public Renderer {
   const RendererCaps& caps() const override { return caps_; }
   bool rayTracingAvailable() const override { return rtSupported_; }
   bool rayTracingActive() const override { return rtActive_; }
+  uint32_t rayTracingAccumulatedSamples() const override {
+    return rtActive_ && tlas_ != VK_NULL_HANDLE ? rtAccumFrame_ + 1u : 0u;
+  }
+  uint32_t rayTracingTlasChunks() const override { return rtTlasChunkCount_; }
+  double rayTracingInitializationMs() const override { return rtInitMs_; }
+  uint64_t rayTracingInputInstances() const override {
+    return rtTlasInputInstances_;
+  }
+  bool rayTracingBuildIncomplete() const override { return rtBuildIncomplete_; }
   void setRayTracing(bool enable) override;
   void setLodCamera(const RtLodCamera& cam, bool reselect) override;
   void shutdown() override;
@@ -860,6 +869,15 @@ class VulkanRenderer final : public Renderer {
   // Drop the BLAS of prototypes this pose does not render at Full. Without this
   // the BLAS set only ever grows as the camera visits new regions.
   void evictBlasNotIn(const std::vector<uint32_t>& keepMeshIds);
+  void destroyTlasChunks();
+
+  struct ExtraTlasChunk {
+    VkAccelerationStructureKHR as{VK_NULL_HANDLE};
+    VkBuffer asBuffer{VK_NULL_HANDLE};
+    VkDeviceMemory asMemory{VK_NULL_HANDLE};
+    VkBuffer instanceBuffer{VK_NULL_HANDLE};
+    VkDeviceMemory instanceMemory{VK_NULL_HANDLE};
+  };
 
   VkAccelerationStructureKHR tlas_{VK_NULL_HANDLE};
   VkBuffer tlasBuf_{VK_NULL_HANDLE};
@@ -867,6 +885,11 @@ class VulkanRenderer final : public Renderer {
   VkBuffer instBuf_{VK_NULL_HANDLE};       // VkAccelerationStructureInstanceKHR[]
   VkDeviceMemory instMem_{VK_NULL_HANDLE};
   VkDeviceSize instCap_{0};
+  std::vector<ExtraTlasChunk> extraTlasChunks_;
+  uint32_t rtTlasChunkCount_{0};
+  uint32_t rtTlasChunkStride_{0};
+  uint64_t rtTlasInputInstances_{0};
+  bool rtBuildIncomplete_{false};
   VkBuffer meshDescBuf_{VK_NULL_HANDLE};    // per-mesh {addrs, matId, normalMat}
   VkDeviceMemory meshDescMem_{VK_NULL_HANDLE};
   VkDeviceSize meshDescCap_{0};
@@ -913,6 +936,7 @@ class VulkanRenderer final : public Renderer {
   uint64_t rtAccumGen_{0};          // bumped on geometry / viewport invalidation
   uint64_t lastRtAccumGen_{~0ull};  // generation of the last traced frame
   bool rtAccumEnabled_{true};       // master toggle for progressive accumulation
+  double rtInitMs_{0.0};            // lazy ray-query pipeline creation time
 
   // View-dependent LOD: camera snapshot used by rebuildTlas to classify instances.
   // Default (lodEnabled=false) reproduces the all-Full, no-cull TLAS exactly.

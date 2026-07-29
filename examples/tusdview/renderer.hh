@@ -449,6 +449,13 @@ class Renderer {
   virtual bool rayTracingAvailable() const { return false; }
   // Whether the ray-tracing technique is currently active.
   virtual bool rayTracingActive() const { return false; }
+  // Number of samples represented by the current progressive RT image. Zero
+  // for raster/backends without progressive accumulation.
+  virtual uint32_t rayTracingAccumulatedSamples() const { return 0; }
+  virtual uint32_t rayTracingTlasChunks() const { return 0; }
+  virtual double rayTracingInitializationMs() const { return 0.0; }
+  virtual uint64_t rayTracingInputInstances() const { return 0; }
+  virtual bool rayTracingBuildIncomplete() const { return false; }
   // Switch the active technique between rasterization (false) and ray tracing
   // (true). No-op / ignored when ray tracing is unavailable. Both techniques
   // consume the same uploaded scene, so toggling needs no reload.
