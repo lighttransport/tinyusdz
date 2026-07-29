@@ -86,6 +86,18 @@ void AppendMaterialTextureSlots(const DrawMaterialCPU& material,
   }
 }
 
+void ReleaseOrdinaryTexturePayload(DrawTextureCPU* texture) {
+  if (!texture || texture->isUdim || texture->isPtex) return;
+  texture->image.data.clear();
+  texture->image.data.shrink_to_fit();
+  texture->mipImages.clear();
+  texture->mipImages.shrink_to_fit();
+  texture->compressed.data.clear();
+  texture->compressed.data.shrink_to_fit();
+  texture->compressed.mips.clear();
+  texture->compressed.mips.shrink_to_fit();
+}
+
 }  // anonymous namespace
 
 std::vector<int> App::selectedTextureSlots() const {
@@ -189,11 +201,12 @@ void App::updateTextureResidency() {
              double(residentBytes) / (1024.0 * 1024.0));
       }
       if (!renderThreadActive_) {
-        if (!ready.texture.compressed.data.empty()) {
-          ready.texture.image.data.clear();
-          ready.texture.image.data.shrink_to_fit();
-        }
         draw_.textures[ready.slot] = std::move(ready.texture);
+        // The backend has consumed or retained what it needs. Keep only source
+        // identity and sampling metadata in the application; eviction/full-res
+        // promotion re-decodes the ordinary file instead of pinning a duplicate
+        // CPU block/raw payload for every resident texture.
+        ReleaseOrdinaryTexturePayload(&draw_.textures[ready.slot]);
       }
     }
     textureDecodeJobs_.erase(textureDecodeJobs_.begin() +
@@ -213,9 +226,7 @@ void App::updateTextureResidency() {
       if (state.residentBytes > 0) {
         postGpu([this, slot] { renderer_->evictTexture(slot); });
         DrawTextureCPU& texture = draw_.textures[static_cast<size_t>(slot)];
-        texture.image.data.clear();
-        texture.compressed.data.clear();
-        texture.compressed.mips.clear();
+        ReleaseOrdinaryTexturePayload(&texture);
         texture.deferredDecode = true;
       }
       const uint64_t generation = state.generation;
@@ -367,9 +378,7 @@ void App::updateTextureResidency() {
     });
     residentBytes -= textureResidency_[victim].residentBytes;
     DrawTextureCPU& texture = draw_.textures[victim];
-    texture.image.data.clear();
-    texture.compressed.data.clear();
-    texture.compressed.mips.clear();
+    ReleaseOrdinaryTexturePayload(&texture);
     texture.deferredDecode = true;
     textureResidency_[victim] = TextureResidencySlot{};
   }
