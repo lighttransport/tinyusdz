@@ -122,6 +122,11 @@ kernel source, NVRTC version, virtual architecture, and compiler options, then
 validated by the CUDA driver before use. Invalid entries are discarded and
 rebuilt atomically.
 
+During host BLAS/TLAS construction, `--cuda` prints a progress line every five
+seconds with the current phase and completed/total work. This makes a massive
+scene's geometry, instance-assembly, TLAS, or upload bottleneck explicit even
+when the synchronous capture has not produced its render report yet.
+
 NVRTC 13.x has a severe optimizer-time regression for this kernel when targeting
 virtual architectures 100 and newer. On those compiler/device combinations,
 tusdview emits forward-compatible optimized `compute_90` PTX instead; CUDA 12.x

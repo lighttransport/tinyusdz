@@ -4543,10 +4543,36 @@ int App::run(const std::string& initialFile, int maxFrames,
     // The tracer builds from draw_ geometry, which the next loader hands over in
     // its REST pose (the deform lives in the GPU skin/morph channels). Pose it.
     poseNextDrawForTracer(animTime_);
+    auto buildCudaScene = [&]() {
+      BuildProgress progress;
+      std::atomic<bool> monitoring{true};
+      const auto started = std::chrono::steady_clock::now();
+      std::thread monitor([&]() {
+        int seconds = 0;
+        while (monitoring.load(std::memory_order_relaxed)) {
+          std::this_thread::sleep_for(std::chrono::seconds(1));
+          if (!monitoring.load(std::memory_order_relaxed) || (++seconds % 5) != 0)
+            continue;
+          const int phase = progress.phase.load(std::memory_order_relaxed);
+          const size_t done = progress.done.load(std::memory_order_relaxed);
+          const size_t total = progress.total.load(std::memory_order_relaxed);
+          LOGI("CUDA scene build: %s %zu/%zu (%.0f s)",
+               BuildProgress::phaseName(phase), done, total,
+               std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                             started)
+                   .count());
+        }
+      });
+      const bool ok = cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_,
+                                        &cerr, gui_.displacementScale(),
+                                        &progress);
+      monitoring.store(false, std::memory_order_relaxed);
+      monitor.join();
+      return ok;
+    };
     if (!cudaTracer_.init(&cerr)) {
       LOGW("CUDA ray tracing unavailable: %s", cerr.c_str());
-    } else if (!cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
-                                  gui_.displacementScale())) {
+    } else if (!buildCudaScene()) {
       LOGW("CUDA ray tracing build failed: %s", cerr.c_str());
     } else {
       // Use the requested window size for the screenshot. The viewport probe is
