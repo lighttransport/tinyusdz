@@ -268,6 +268,7 @@ int main(int argc, char** argv) {
   bool mipsExplicit = false;
   std::optional<int> subdivisionLevel;
   bool subdivisionAuto = false;
+  bool asyncTextureDecode = false;
   bool subdivisionAutoExplicit = false;
   int subdivisionAutoMaxLevel = 3;
   bool subdivisionAutoMaxExplicit = false;
@@ -505,6 +506,8 @@ int main(int argc, char** argv) {
         textureOptions.textureBudgetMB = 0;
       }
       textureBudgetExplicit = true;
+    } else if (std::strcmp(argv[i], "--async-texture-decode") == 0) {
+      asyncTextureDecode = true;
     } else if (std::strcmp(argv[i], "--subdivision-level") == 0 && (i + 1) < argc) {
       subdivisionLevel = std::max(0, std::atoi(argv[++i]));
     } else if (std::strncmp(argv[i], "--subdivision-level=", 20) == 0) {
@@ -860,6 +863,8 @@ int main(int argc, char** argv) {
           "exceeds N texels (default 4096; 0 = keep source size).\n"
           "  --texture-budget-mb N  Best-effort decoded texture memory budget "
           "for viewer uploads (0 = unlimited).\n"
+          "  --async-texture-decode  Decode ordinary filesystem textures from "
+          "camera-prioritized background workers.\n"
           "  --curve-preview-prims N  Convert at most N Curves prims (0 = all; "
           "interactive ALab default 64).\n"
           "  --curve-preview-strands N  Retain at most N complete curve strands "
@@ -1205,6 +1210,7 @@ int main(int argc, char** argv) {
       lo.maxCurveStrands = 100000;
       lo.asyncTextureDecode = true;
     }
+    if (asyncTextureDecode) lo.asyncTextureDecode = true;
     if (curvePreviewPrims) lo.maxCurvePrims = *curvePreviewPrims;
     if (curvePreviewStrands) lo.maxCurveStrands = *curvePreviewStrands;
     lo.timing = timing;

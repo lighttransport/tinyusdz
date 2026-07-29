@@ -54,36 +54,47 @@ void GlfwErrorCallback(int code, const char* desc) {
   LOGE("glfw error %d: %s", code, desc);
 }
 
+size_t EstimateTextureResidentBytes(const DrawTextureCPU& texture) {
+  size_t compressedBytes = texture.compressed.data.size();
+  for (const DrawCompressedMipCPU& mip : texture.compressed.mips)
+    compressedBytes += mip.data.size();
+  if (compressedBytes > 0) return compressedBytes;
+  size_t bytes = size_t(std::max(texture.image.width, 0)) *
+                 size_t(std::max(texture.image.height, 0)) * 4u;
+  for (const light3d::Image& mip : texture.mipImages) {
+    bytes += size_t(std::max(mip.width, 0)) *
+             size_t(std::max(mip.height, 0)) * 4u;
+  }
+  if (texture.mipImages.empty() && !texture.streamingMutable) bytes += bytes / 3u;
+  return bytes;
+}
+
+void AppendMaterialTextureSlots(const DrawMaterialCPU& material,
+                                size_t textureCount,
+                                std::vector<int>* slots) {
+  const int ids[] = {
+      material.baseColorTex,      material.metallicTex,
+      material.roughnessTex,      material.normalTex,
+      material.coatNormalTex,     material.emissiveTex,
+      material.opacityTex,        material.occlusionTex,
+      material.specularColorTex,  material.coatWeightTex,
+      material.coatColorTex,      material.coatRoughnessTex,
+      material.displacementTex,
+  };
+  for (int id : ids) {
+    if (id >= 0 && static_cast<size_t>(id) < textureCount) slots->push_back(id);
+  }
+}
+
 }  // anonymous namespace
 
 std::vector<int> App::selectedTextureSlots() const {
   std::vector<int> slots;
   const int meshIndex = gui_.selectedMeshIndex();
-  if (meshIndex < 0 || static_cast<size_t>(meshIndex) >= draw_.meshes.size())
+  if (meshIndex < 0 ||
+      static_cast<size_t>(meshIndex) >= textureSlotsByMesh_.size())
     return slots;
-  auto appendMaterial = [&](int materialId) {
-    if (materialId < 0 || static_cast<size_t>(materialId) >= draw_.materials.size())
-      return;
-    const DrawMaterialCPU& m = draw_.materials[static_cast<size_t>(materialId)];
-    const int ids[] = {
-        m.baseColorTex,       m.metallicTex,      m.roughnessTex,
-        m.normalTex,          m.coatNormalTex,    m.emissiveTex,
-        m.opacityTex,         m.occlusionTex,     m.specularColorTex,
-        m.coatWeightTex,      m.coatColorTex,     m.coatRoughnessTex,
-        m.displacementTex,
-    };
-    for (int id : ids) {
-      if (id >= 0 && static_cast<size_t>(id) < textureResidency_.size())
-        slots.push_back(id);
-    }
-  };
-  for (const DrawSubmesh& submesh :
-       draw_.meshes[static_cast<size_t>(meshIndex)].submeshes) {
-    appendMaterial(submesh.materialId);
-  }
-  std::sort(slots.begin(), slots.end());
-  slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
-  return slots;
+  return textureSlotsByMesh_[static_cast<size_t>(meshIndex)];
 }
 
 void App::resetTextureResidency() {
@@ -95,17 +106,36 @@ void App::resetTextureResidency() {
   }
   textureDecodeJobs_.clear();
   textureResidency_.assign(draw_.textures.size(), TextureResidencySlot{});
+  textureSlotsByMesh_.clear();
+  textureSlotsByMesh_.resize(draw_.meshes.size());
+  textureMarginVisible_.clear();
+  textureCameraSignatureValid_ = false;
+  for (size_t meshIndex = 0; meshIndex < draw_.meshes.size(); ++meshIndex) {
+    std::vector<int>& slots = textureSlotsByMesh_[meshIndex];
+    for (const DrawSubmesh& submesh : draw_.meshes[meshIndex].submeshes) {
+      if (submesh.materialId < 0 ||
+          static_cast<size_t>(submesh.materialId) >= draw_.materials.size())
+        continue;
+      AppendMaterialTextureSlots(
+          draw_.materials[static_cast<size_t>(submesh.materialId)],
+          draw_.textures.size(), &slots);
+    }
+    std::sort(slots.begin(), slots.end());
+    slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
+  }
   for (size_t i = 0; i < draw_.textures.size(); ++i) {
     if (!draw_.textures[i].deferredDecode) {
       textureResidency_[i].state = TextureResidencyState::FullResident;
-      textureResidency_[i].residentBytes = renderer_->textureResidentBytes(
-          static_cast<int>(i));
+      textureResidency_[i].residentBytes =
+          renderThreadActive_
+              ? EstimateTextureResidentBytes(draw_.textures[i])
+              : renderer_->textureResidentBytes(static_cast<int>(i));
     }
   }
 }
 
 void App::updateTextureResidency() {
-  if (!renderer_ || textureResidency_.empty() || renderThreadActive_) return;
+  if (!renderer_ || textureResidency_.empty()) return;
   using Clock = std::chrono::steady_clock;
   const auto now = Clock::now();
 
@@ -125,17 +155,46 @@ void App::updateTextureResidency() {
                         ? TextureResidencyState::CoarseResident
                         : TextureResidencyState::Failed;
     } else {
-      renderer_->uploadTexture(static_cast<int>(ready.slot), ready.texture);
+      size_t residentBytes = 0;
+      if (renderThreadActive_) {
+        residentBytes = EstimateTextureResidentBytes(ready.texture);
+        auto upload =
+            std::make_shared<DrawTextureCPU>(std::move(ready.texture));
+        // Keep identity/dimensions for UI and future source re-decode, while the
+        // render-thread closure exclusively owns the large staging payload.
+        DrawTextureCPU& retained = draw_.textures[ready.slot];
+        retained.image.width = upload->image.width;
+        retained.image.height = upload->image.height;
+        retained.image.channels = upload->image.channels;
+        retained.deferredDecode = false;
+        retained.requestedCompressed = upload->requestedCompressed;
+        retained.compressed.format = upload->compressed.format;
+        retained.compressed.width = upload->compressed.width;
+        retained.compressed.height = upload->compressed.height;
+        postGpu([this, slot = ready.slot, upload = std::move(upload)] {
+          renderer_->uploadTexture(static_cast<int>(slot), *upload);
+        });
+      } else {
+        renderer_->uploadTexture(static_cast<int>(ready.slot), ready.texture);
+        residentBytes =
+            renderer_->textureResidentBytes(static_cast<int>(ready.slot));
+      }
       state.state = ready.full ? TextureResidencyState::FullResident
                                : TextureResidencyState::CoarseResident;
-      state.residentBytes =
-          renderer_->textureResidentBytes(static_cast<int>(ready.slot));
+      state.residentBytes = residentBytes;
       state.lastWanted = now;
-      if (!ready.texture.compressed.data.empty()) {
-        ready.texture.image.data.clear();
-        ready.texture.image.data.shrink_to_fit();
+      if (loadOpts_.timing) {
+        LOGI("texture residency: slot %zu %s resident (%.2f MiB)",
+             ready.slot, ready.full ? "full" : "coarse",
+             double(residentBytes) / (1024.0 * 1024.0));
       }
-      draw_.textures[ready.slot] = std::move(ready.texture);
+      if (!renderThreadActive_) {
+        if (!ready.texture.compressed.data.empty()) {
+          ready.texture.image.data.clear();
+          ready.texture.image.data.shrink_to_fit();
+        }
+        draw_.textures[ready.slot] = std::move(ready.texture);
+      }
     }
     textureDecodeJobs_.erase(textureDecodeJobs_.begin() +
                              static_cast<std::ptrdiff_t>(i));
@@ -152,7 +211,7 @@ void App::updateTextureResidency() {
       TextureResidencySlot& state = textureResidency_[static_cast<size_t>(slot)];
       ++state.generation;
       if (state.residentBytes > 0) {
-        renderer_->evictTexture(slot);
+        postGpu([this, slot] { renderer_->evictTexture(slot); });
         DrawTextureCPU& texture = draw_.textures[static_cast<size_t>(slot)];
         texture.image.data.clear();
         texture.compressed.data.clear();
@@ -170,39 +229,57 @@ void App::updateTextureResidency() {
   std::vector<int> priority(textureResidency_.size(),
                             backgroundTextureRefinement_ ? 3 : 4);
   const std::vector<uint8_t>& visible = gui_.viewVisibility();
-  light3d::Mat4 expandedProj = camera_.proj(false);
-  expandedProj.m[0] /= 1.2f;
-  expandedProj.m[5] /= 1.2f;
-  const light3d::Frustum expanded = light3d::Frustum::fromViewProjection(
-      expandedProj * camera_.view());
-  auto markMaterial = [&](int materialId, int p) {
-    if (materialId < 0 || static_cast<size_t>(materialId) >= draw_.materials.size())
-      return;
-    const DrawMaterialCPU& m = draw_.materials[static_cast<size_t>(materialId)];
-    const int ids[] = {m.baseColorTex, m.metallicTex, m.roughnessTex,
-                       m.normalTex, m.coatNormalTex, m.emissiveTex,
-                       m.opacityTex, m.occlusionTex, m.specularColorTex,
-                       m.coatWeightTex, m.coatColorTex, m.coatRoughnessTex,
-                       m.displacementTex};
-    for (int id : ids) {
-      if (id >= 0 && static_cast<size_t>(id) < priority.size())
-        priority[static_cast<size_t>(id)] =
-            std::min(priority[static_cast<size_t>(id)], p);
-    }
+  const light3d::Vec3 eye = camera_.eye();
+  const light3d::Vec3 target = camera_.target();
+  const std::array<float, 15> cameraSignature = {
+      eye.x,
+      eye.y,
+      eye.z,
+      target.x,
+      target.y,
+      target.z,
+      camera_.fovYDeg(),
+      camera_.aspect(),
+      camera_.orthographicHeight(),
+      camera_.lensShiftX(),
+      camera_.lensShiftY(),
+      static_cast<float>(camera_.projection() == CameraProjection::Orthographic),
+      static_cast<float>(camera_.conform()),
+      camera_.nearPlane(),
+      camera_.farPlane(),
   };
+  if (!textureCameraSignatureValid_ ||
+      cameraSignature != textureCameraSignature_ ||
+      textureMarginVisible_.size() != draw_.meshes.size()) {
+    textureCameraSignature_ = cameraSignature;
+    textureCameraSignatureValid_ = true;
+    textureMarginVisible_.assign(draw_.meshes.size(), uint8_t{0});
+    light3d::Mat4 expandedProj = camera_.proj(false);
+    expandedProj.m[0] /= 1.2f;
+    expandedProj.m[5] /= 1.2f;
+    const light3d::Frustum expanded = light3d::Frustum::fromViewProjection(
+        expandedProj * camera_.view());
+    for (size_t meshIndex = 0; meshIndex < draw_.meshes.size(); ++meshIndex) {
+      const DrawMeshCPU& mesh = draw_.meshes[meshIndex];
+      const light3d::Vec3 mn{mesh.aabbMin[0], mesh.aabbMin[1], mesh.aabbMin[2]};
+      const light3d::Vec3 mx{mesh.aabbMax[0], mesh.aabbMax[1], mesh.aabbMax[2]};
+      textureMarginVisible_[meshIndex] =
+          expanded.testAABB(mn, mx) != light3d::CullResult::Outside ? 1u : 0u;
+    }
+  }
   for (size_t meshIndex = 0; meshIndex < draw_.meshes.size(); ++meshIndex) {
-    const DrawMeshCPU& mesh = draw_.meshes[meshIndex];
     int p = 4;
     if (meshIndex < visible.size() && visible[meshIndex]) {
       p = 1;
-    } else {
-      const light3d::Vec3 mn{mesh.aabbMin[0], mesh.aabbMin[1], mesh.aabbMin[2]};
-      const light3d::Vec3 mx{mesh.aabbMax[0], mesh.aabbMax[1], mesh.aabbMax[2]};
-      if (expanded.testAABB(mn, mx) != light3d::CullResult::Outside) p = 2;
+    } else if (meshIndex < textureMarginVisible_.size() &&
+               textureMarginVisible_[meshIndex]) {
+      p = 2;
     }
-    if (p < 4) {
-      for (const DrawSubmesh& submesh : mesh.submeshes)
-        markMaterial(submesh.materialId, p);
+    if (p < 4 && meshIndex < textureSlotsByMesh_.size()) {
+      for (int slot : textureSlotsByMesh_[meshIndex]) {
+        priority[static_cast<size_t>(slot)] =
+            std::min(priority[static_cast<size_t>(slot)], p);
+      }
     }
   }
   for (int slot : selected) priority[static_cast<size_t>(slot)] = 0;
@@ -285,7 +362,9 @@ void App::updateTextureResidency() {
         victim = i;
     }
     if (victim == textureResidency_.size()) break;
-    renderer_->evictTexture(static_cast<int>(victim));
+    postGpu([this, victim] {
+      renderer_->evictTexture(static_cast<int>(victim));
+    });
     residentBytes -= textureResidency_[victim].residentBytes;
     DrawTextureCPU& texture = draw_.textures[victim];
     texture.image.data.clear();
@@ -1362,6 +1441,12 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
           for (DrawMeshCPU& m : draw_.meshes)
             if (!MeshIsDeformable(m)) FreeMeshGeometryCPU(m);
       });
+      if (std::any_of(draw_.textures.begin(), draw_.textures.end(),
+                      [](const DrawTextureCPU& texture) {
+                        return texture.deferredDecode;
+                      })) {
+        resetTextureResidency();
+      }
       // Headless/non-threaded one-shot uploads can still refine Ptex pages over
       // subsequent frames. Mark the ordinary scene stages complete and retain
       // only compact native sources after the fallback atlas reaches the GPU.
@@ -1830,7 +1915,14 @@ void App::drainProgressiveLoad() {
             (!draw_.textures[i].image.data.empty() ||
              !draw_.textures[i].compressed.data.empty() ||
              draw_.textures[i].streamingMutable)) {
-          renderer_->uploadTexture(static_cast<int>(i), draw_.textures[i]);
+          if (renderThreadActive_) {
+            auto upload = std::make_shared<DrawTextureCPU>(draw_.textures[i]);
+            postGpu([this, i, upload = std::move(upload)] {
+              renderer_->uploadTexture(static_cast<int>(i), *upload);
+            });
+          } else {
+            renderer_->uploadTexture(static_cast<int>(i), draw_.textures[i]);
+          }
         }
       }
       resetTextureResidency();
@@ -3937,6 +4029,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       // render thread. The main loop never touches GL or blocks on the GPU.
       auto pkt = std::make_unique<FramePacket>();
       gui_.renderViewportScene(pkt.get());
+      updateTextureResidency();
       glfwGetFramebufferSize(window_, &pkt->fbW, &pkt->fbH);
       pkt->wantCapture =
           (maxFrames >= 0 && frameCount == maxFrames - 1 && !screenshot.empty());

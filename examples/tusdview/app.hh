@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -523,6 +524,12 @@ class App
     DrawTextureCPU texture;
   };
   std::vector<TextureResidencySlot> textureResidency_;
+  // Compact scene-stable adjacency used by the per-frame camera policy. Avoids
+  // repeatedly expanding every DrawMaterialCPU texture field for every mesh.
+  std::vector<std::vector<int>> textureSlotsByMesh_;
+  std::vector<uint8_t> textureMarginVisible_;
+  std::array<float, 15> textureCameraSignature_{};
+  bool textureCameraSignatureValid_{false};
   std::vector<std::future<TextureDecodeResult>> textureDecodeJobs_;
   bool backgroundTextureRefinement_{true};
 

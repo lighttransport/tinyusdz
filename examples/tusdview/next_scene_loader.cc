@@ -2664,7 +2664,10 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   if (tc.deferOrdinary && !tinyusdz::io::IsUDIMPath(asset) &&
       !EndsWithPtx(asset) && !EndsWithKtx2(asset) && rt.ktx2_hint.empty()) {
     DrawTextureCPU dt;
-    dt.assetIdentifier = asset;
+    dt.assetIdentifier =
+        tinyusdz::io::IsAbsPath(asset) || !tc.decoder
+            ? asset
+            : tinyusdz::io::JoinPath(tc.decoder->options().base_dir, asset);
     dt.srgb = srgb;
     dt.wrapS = NextWrapToDraw(rt.wrap_s);
     dt.wrapT = NextWrapToDraw(rt.wrap_t);
@@ -4650,7 +4653,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     texOpts.usdz = &usdzArchive;
   }
   texCache.decoder = std::make_unique<tydn::TextureDecoder>(texOpts);
-  texCache.deferOrdinary = opts.asyncTextureDecode && stream && !texOpts.usdz;
+  texCache.deferOrdinary = opts.asyncTextureDecode && !texOpts.usdz;
 
   // Resolve a material prim path to a DrawScene material index (cached by path).
   // Unbound / unconvertible -> 0 (default gray material).
