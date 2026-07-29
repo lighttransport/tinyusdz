@@ -57,11 +57,13 @@ USD_ASSETS_ROOT="${USD_ASSETS_ROOT:-}"
 OUT_DIR="${TUSDVIEW_USD_ASSETS_OUT:-}"
 LIMIT="${TUSDVIEW_USD_ASSETS_LIMIT:-0}"
 PROFILE="${TUSDVIEW_USD_ASSETS_PROFILE:-all}"
+REQUIRE_PROFILE_COMPLETE="${TUSDVIEW_USD_ASSETS_REQUIRE_PROFILE_COMPLETE:-0}"
 FRAMES="${TUSDVIEW_USD_ASSETS_FRAMES:-4}"
 SIZE="${TUSDVIEW_USD_ASSETS_SIZE:-256x256}"
 WIDTH="${SIZE%x*}"
 HEIGHT="${SIZE#*x}"
 TIMEOUT_DUR="${TUSDVIEW_USD_ASSETS_TIMEOUT:-45s}"
+TIME_CODE="${TUSDVIEW_USD_ASSETS_TIME:-}"
 MODES="${TUSDVIEW_USD_ASSETS_MODES:-vk-raster,vk-rt,cuda-rt,tusdr-cpu,tusdr-vk,tusdr-vkr}"
 VK_DEVICE="${TUSDVIEW_VK_DEVICE:-}"
 # Permit '..' (parent-directory) segments in composition asset paths for the
@@ -96,11 +98,14 @@ Options:
   --root DIR       Asset root (same as USD_ASSETS_ROOT)
   --out DIR        Output dir (default: temporary dir)
   --limit N        Limit discovered USD files (default: all)
-  --profile NAME   Asset profile when --files is omitted: all or usd-assets-curated
+  --profile NAME   Asset profile when --files is omitted: all,
+                   usd-assets-curated, or usd-assets-broad
+  --require-profile-complete  Fail when a selected profile asset is missing
   --modes LIST     Comma list: gl-raster,vk-raster,vk-rt,cuda-rt,hip-rt,tusdr-cpu,tusdr-vk,tusdr-vkr
   --size WxH       tusdview --size (default: 256x256)
   --frames N       tusdview --frames (default: 4)
   --timeout DUR    Per-render timeout(1) duration (default: 45s)
+  --time CODE      Evaluate animated assets at this USD time code
   --vk-device DEV  Forward --vk-device DEV to Vulkan modes
   --fail-on LIST   Comma statuses that make the script fail
   --golden FILE    Compare rendered fingerprints against a golden TSV baseline
@@ -127,10 +132,12 @@ while [ "$#" -gt 0 ]; do
     --out) OUT_DIR="$2"; shift 2 ;;
     --limit) LIMIT="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
+    --require-profile-complete) REQUIRE_PROFILE_COMPLETE=1; shift ;;
     --modes) MODES="$2"; shift 2 ;;
     --size) SIZE="$2"; shift 2 ;;
     --frames) FRAMES="$2"; shift 2 ;;
     --timeout) TIMEOUT_DUR="$2"; shift 2 ;;
+    --time) TIME_CODE="$2"; shift 2 ;;
     --vk-device) VK_DEVICE="$2"; shift 2 ;;
     --fail-on) FAIL_ON="$2"; shift 2 ;;
     --golden) GOLDEN_FILE="$2"; shift 2 ;;
@@ -417,6 +424,7 @@ run_one() {
       tusdr-vkr) args=("$asset" "$out" -vkr) ;;
     esac
     args+=(-w "$WIDTH" -height "$HEIGHT" -autoframe -samples 1)
+    [ -n "$TIME_CODE" ] && args+=(-timecode "$TIME_CODE")
     cmd+=(env "$TUSDRENDER_BIN" "${args[@]}")
   else
     if [ "$use_vk_env" -eq 1 ] && [ -n "$VK_DEVICE" ]; then
@@ -426,6 +434,7 @@ run_one() {
       1|ON|on|true|TRUE|yes|YES) args+=(--allow-parent-paths) ;;
     esac
     args+=(--frames "$FRAMES" --size "$SIZE" --screenshot "$out" "$asset")
+    [ -n "$TIME_CODE" ] && args+=(--time "$TIME_CODE")
 
     if [ "$use_xvfb_for_viewer" -eq 1 ] && ! use_external_xvfb; then
       cmd+=(xvfb-run -a env)
@@ -577,9 +586,15 @@ if [ -n "$ASSET_FILES" ]; then
   done
 else
   ASSETS=()
+  PROFILE_MISSING=0
   add_profile_asset() {
     local p="$USD_ASSETS_ROOT/$1"
-    [ -f "$p" ] && ASSETS+=("$p")
+    if [ -f "$p" ]; then
+      ASSETS+=("$p")
+    else
+      PROFILE_MISSING=$((PROFILE_MISSING + 1))
+      echo "WARN: profile asset not found, skipping: $p" >&2
+    fi
   }
   case "$PROFILE" in
     all)
@@ -602,11 +617,64 @@ else
         add_profile_asset "$f"
       done
       ;;
+    usd-assets-broad)
+      # A bounded cross-section of usd-wg/assets. Keep this list focused on
+      # top-level scenes or deliberately useful schema leaves: rendering every
+      # layer in the corpus mostly measures expected empty material/camera
+      # layers and obscures scene-fidelity regressions.
+      for f in \
+        docs/CompositionPuzzles/PayloadAndReference/solution/shot.usda \
+        docs/CompositionPuzzles/VariantSetAndLocal1/puzzle_1.usda \
+        docs/PrimvarInterpolation/primvar_interpolation.usda \
+        test_assets/foundation/stage_composition/payload/payload_same_folder.usda \
+        test_assets/foundation/stage_composition/references/reference_same_folder.usda \
+        test_assets/foundation/stage_composition/subLayer/sublayer_same_folder.usda \
+        test_assets/foundation/stage_composition/purpose.usda \
+        test_assets/schemaTests/usdGeom/extent/no_extent.usda \
+        test_assets/schemaTests/usdGeom/meshes/normals_types/normalsTypes.usda \
+        test_assets/schemaTests/usdGeom/meshes/points_types/pointsTypes.usda \
+        test_assets/schemaTests/usdGeom/meshes/doubleSided/doubleSided_quad.usda \
+        test_assets/schemaTests/usdGeom/meshes/subdiv_bilinear/subdiv_bilinear.usda \
+        test_assets/schemaTests/usdGeom/meshes/subdiv_catmullClark/subdiv_catmullClark.usda \
+        test_assets/schemaTests/usdGeom/meshes/subdiv_loop_triangles/subdiv_loop_triangles.usda \
+        test_assets/schemaTests/usdGeom/primitives/all_primitives.usda \
+        test_assets/schemaTests/usdGeom/transforms/complex_transform.usda \
+        test_assets/References/OverridingReferencedInternalReferencesTest.usda \
+        intent-vfx/scenes/simpleAssetScene.usd \
+        intent-vfx/scenes/teapotScene.usd \
+        test_assets/AlphaBlendModeTest/AlphaBlendModeTest.usd \
+        test_assets/AlphaBlendSortTest/AlphaBlendSortTest.usda \
+        test_assets/MaterialXTest/basic.usda \
+        test_assets/MaterialXTest/basicTextured.usda \
+        test_assets/TextureCoordinateTest/TextureCoordinateTestMaterialX.usda \
+        test_assets/TextureTransformTest/TextureTransformTest.usd \
+        test_assets/TextureFileFormatTests/all_files.usda \
+        test_assets/NormalsTextureBiasAndScale/NormalsTextureBiasAndScale.usdz \
+        test_assets/RoughnessTest/RoughnessTest.usdz \
+        full_assets/SubdivisionSurfaces/Creases_SpinningPyramids.usda \
+        full_assets/StandardShaderBall/standard_shader_ball_scene.usda \
+        full_assets/Teapot/Teapot.usd \
+        full_assets/OpenChessSet/chess_set.usda \
+        full_assets/UsdCookie/UsdCookie.usdz \
+        test_assets/USDZ/AnimatedCube/AnimatedCube.usdz \
+        test_assets/USDZ/AnimatedTriangle/AnimatedTriangle.usdz \
+        test_assets/USDZ/BoxAnimated/BoxAnimated.usdz \
+        test_assets/USDZ/InterpolationTest/InterpolationTest.usdz \
+        test_assets/USDZ/CesiumMan/CesiumMan.usdz \
+        test_assets/USDZ/RiggedFigure/RiggedFigure.usdz \
+        test_assets/USDZ/RiggedSimple/RiggedSimple.usdz; do
+        add_profile_asset "$f"
+      done
+      ;;
     *)
-      echo "ERROR: unknown asset profile '$PROFILE' (expected all or usd-assets-curated)" >&2
+      echo "ERROR: unknown asset profile '$PROFILE' (expected all, usd-assets-curated, or usd-assets-broad)" >&2
       exit 1
       ;;
   esac
+  if [ "$REQUIRE_PROFILE_COMPLETE" = "1" ] && [ "$PROFILE_MISSING" -ne 0 ]; then
+    echo "ERROR: profile '$PROFILE' is incomplete: $PROFILE_MISSING asset(s) missing" >&2
+    exit 1
+  fi
 fi
 
 if [ "${#ASSETS[@]}" -eq 0 ]; then
@@ -626,6 +694,7 @@ echo "out    : $OUT_DIR"
 echo "modes  : $MODES"
 echo "profile: $PROFILE"
 echo "size   : $SIZE, frames: $FRAMES, timeout: $TIMEOUT_DUR"
+[ -n "$TIME_CODE" ] && echo "time   : $TIME_CODE"
 [ -n "$VK_DEVICE" ] && echo "vk dev : $VK_DEVICE"
 echo
 

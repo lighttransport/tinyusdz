@@ -3335,7 +3335,48 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-usd-assets-classification
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+      # Bounded but broad cross-renderer coverage for the external usd-wg/assets
+      # checkout. This is separately opt-in because it exercises 40 scenes over
+      # four backends and is intentionally much heavier than the self-contained
+      # profile/classification regressions below.
+      add_test(
+        NAME tusdview-usd-assets-broad-smoke
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                "TUSDRENDER=$<TARGET_FILE:tusdrender>"
+                "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_BROAD"
+                "TUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
+                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh"
+                     --profile usd-assets-broad
+                     --require-profile-complete
+                     --modes vk-raster,vk-rt,tusdr-cpu,tusdr-vk
+                     --time 1
+        )
+      set_tests_properties(tusdview-usd-assets-broad-smoke PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 7200
+                           LABELS "tusdview;external;usd-assets")
+
+      add_test(
+        NAME tusdview-usd-assets-animation-smoke
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                "TUSDRENDER=$<TARGET_FILE:tusdrender>"
+                "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_ANIMATION"
+                "TUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
+                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-animation-smoke.sh"
+        )
+      set_tests_properties(tusdview-usd-assets-animation-smoke PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 3600
+                           LABELS "tusdview;external;usd-assets;animation")
     endif()
+
+    add_test(
+      NAME tusdview-usd-assets-broad-profile
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-broad-profile.sh"
+      )
+    set_tests_properties(tusdview-usd-assets-broad-profile PROPERTIES TIMEOUT 120)
   endif()
 
   #
