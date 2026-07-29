@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TinyUSDZ color-management regression</title>
+  <style>
+    html,body{margin:0;height:100%;background:#16181b;color:#eee;font:14px system-ui}
+    #app{height:100%;display:grid;grid-template-columns:minmax(0,1fr) 330px}
+    canvas{width:100%;height:100%;display:block}
+    aside{padding:18px;background:#202329;overflow:auto}
+    pre{white-space:pre-wrap;font:12px ui-monospace,monospace}
+    .pass{color:#76df91}.fail{color:#ff7474}.skip{color:#efca70}
+  </style>
+</head>
+<body><main id="app"><div id="view"></div><aside><h1>Color regression</h1>
+  <p>Macbeth/ColorChecker values are linear AP0 references from OpenColorIO.
+  Validation uses render-target pixel readback, independent of monitor gamut.</p>
+  <div id="status">running…</div><pre id="report"></pre></aside></main>
+  <script type="module" src="/colorspace-regression.js"></script>
+</body>
+</html>

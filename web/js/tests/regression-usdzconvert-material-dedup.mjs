@@ -17,7 +17,12 @@ import {
 import {
   NextRenderSceneAdapter,
 } from '../src/tinyusdz/TinyUSDZLoader.js';
-import { buildNextThreeNode } from '../src/tinyusdz/NextRenderSceneUtils.js';
+import {
+  buildNextThreeNode,
+  findNextArchiveEntry,
+  loadNextArchiveTexture,
+  nextArchiveUDIMLayout,
+} from '../src/tinyusdz/NextRenderSceneUtils.js';
 import { extractSkinnedMeshData } from '../src/tinyusdz/USDSceneSkinningData.js';
 import { buildSkeletonDataFromUSD } from '../src/tinyusdz/USDSkeletonData.js';
 import { applyUSDSceneSkinningPipeline } from '../src/tinyusdz/USDSceneSkinningPipeline.js';
@@ -381,6 +386,71 @@ await test('next lazy texture reset defers archive release until active loads se
   await loading;
   assert.equal(releaseCount, 1, 'archive bytes should release after in-flight load settles');
   assert.equal(material.map, undefined, 'aborted texture load should not mutate stale material');
+});
+
+await test('next archive textures reuse worker-prefetched browser images', async () => {
+  const image = { width: 4, height: 4 };
+  let requestedPath = '';
+  const texture = await loadNextArchiveTexture({
+    getArchiveTextureBytes() {
+      return new Uint8Array([1]);
+    },
+    getPrefetchedArchiveImage(path) {
+      requestedPath = path;
+      return Promise.resolve({ image, flipY: true });
+    },
+  }, 'textures/card.png', 'color', { wrapS: 'mirror', wrapT: 'clamp' });
+  assert.equal(requestedPath, 'textures/card.png');
+  assert.equal(texture.image, image);
+  assert.equal(texture.colorSpace, THREE.SRGBColorSpace);
+  assert.equal(texture.wrapS, THREE.MirroredRepeatWrapping);
+  assert.equal(texture.wrapT, THREE.ClampToEdgeWrapping);
+  assert.equal(texture.flipY, true);
+});
+
+await test('next worker archive lookup retains anonymous UDIM tiles', async () => {
+  const first = new Uint8Array([1, 2, 3]);
+  const second = new Uint8Array([4, 5, 6]);
+  const entries = new Map([
+    ['textures/surface.1001.png', first],
+    ['textures/surface.1002.png', second],
+  ]);
+  assert.equal(findNextArchiveEntry(entries, './textures/surface.1001.png')?.bytes,
+    first);
+  const layout = nextArchiveUDIMLayout(entries, './textures/surface.<UDIM>.png');
+  assert.equal(layout.columns, 2);
+  assert.equal(layout.rows, 1);
+  assert.deepEqual(layout.tiles.map(({ id, u, v, path }) => ({ id, u, v, path })), [
+    { id: 1001, u: 0, v: 0, path: 'textures/surface.1001.png' },
+    { id: 1002, u: 1, v: 0, path: 'textures/surface.1002.png' },
+  ]);
+  assert.equal(nextArchiveUDIMLayout(entries, './textures/missing.<UDIM>.png'), null);
+});
+
+await test('next missing UDIM diagnostics are deduplicated and preserve fallbacks', async () => {
+  const manager = new NextTextureLoadingManager();
+  const material = { color: new THREE.Color(0.2, 0.4, 0.8) };
+  const adapter = {
+    getArchiveUDIMTiles() { return null; },
+    getArchiveTextureBytes() { return null; },
+  };
+  manager.queueTexture(material, 'map', adapter,
+    'textures/missing.<UDIM>.png', 'color');
+  manager.queueTexture(material, 'normalMap', adapter,
+    'textures/missing.<UDIM>.png', 'data');
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const status = await manager.startLoading({ concurrency: 2, yieldInterval: 0 });
+    assert.equal(status.failed, 2);
+  } finally {
+    console.warn = previousWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.equal(material.map, undefined);
+  assert.equal(material.normalMap, undefined);
+  assert.deepEqual(material.color.toArray(), [0.2, 0.4, 0.8]);
 });
 
 await test('next materials preserve opacity maps without double-applying RGBA alpha', () => {

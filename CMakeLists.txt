@@ -605,6 +605,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/value-types-matrix.cc
     ${PROJECT_SOURCE_DIR}/src/value-types-lerp.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.cc
+    ${PROJECT_SOURCE_DIR}/src/color-transform.cc
     ${PROJECT_SOURCE_DIR}/src/color-space.hh
     ${PROJECT_SOURCE_DIR}/src/usd-validation.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
@@ -692,6 +693,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/color-management.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/color-management.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-all.cc
@@ -2279,6 +2282,17 @@ if(TINYUSDZ_BUILD_TESTS)
               ${CMAKE_BINARY_DIR}/tools/tusdrender
     )
     set_tests_properties(tool-tusdrender-legacy-texture
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_test(
+      NAME tool-tusdrender-colorspace-regression
+      COMMAND ${TUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_colorspace_regression.py
+              "$<TARGET_FILE:tusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              --output ${CMAKE_BINARY_DIR}/tools/tusdrender/colorspace-regression
+    )
+    set_tests_properties(tool-tusdrender-colorspace-regression
                          PROPERTIES SKIP_RETURN_CODE 77)
 
     # -autoframe on a FLAT scene (a quad / ground plane) used to frame it exactly

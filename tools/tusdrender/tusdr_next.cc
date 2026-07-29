@@ -837,16 +837,35 @@ std::string AnchorAssetNext(const tinyusdz::next::UsdPrim &prim,
 int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
                           WrapMode ws, WrapMode wt, bool srgb,
                           const Vec3 &scale = Vec3{1.0f, 1.0f, 1.0f},
-                          const Vec3 &bias = Vec3{0.0f, 0.0f, 0.0f}) {
+                          const Vec3 &bias = Vec3{0.0f, 0.0f, 0.0f},
+                          const tinyusdz::color::ColorTransform *color_transform =
+                              nullptr) {
   // Key on ALL scale/bias channels: keying only .x collided two materials
   // sharing a file with equal red-scale but different green/blue scale, so the
   // second silently reused the first's tint.
-  const std::string key =
+  std::string key =
       asset_path + "|" + std::to_string(int(ws)) + "," +
       std::to_string(int(wt)) + (srgb ? "|s" : "|r") + "|" +
       std::to_string(scale.x) + "," + std::to_string(scale.y) + "," +
       std::to_string(scale.z) + "|" + std::to_string(bias.x) + "," +
-      std::to_string(bias.y) + "," + std::to_string(bias.z);
+      std::to_string(bias.y) + "," + std::to_string(bias.z) + "|" +
+      (color_transform ? color_transform->source.name : std::string()) + ">" +
+      (color_transform ? color_transform->destination.name : std::string());
+  if (color_transform) {
+    const auto append_float_bits = [&](float value) {
+      uint32_t bits = 0;
+      std::memcpy(&bits, &value, sizeof(bits));
+      key += "," + std::to_string(bits);
+    };
+    key += "|" +
+           std::to_string(static_cast<int>(color_transform->source.kind)) +
+           "," + (color_transform->bypass ? "1" : "0");
+    append_float_bits(color_transform->source.gamma);
+    append_float_bits(color_transform->source.linear_bias);
+    for (float coefficient : color_transform->matrix) {
+      append_float_bits(coefficient);
+    }
+  }
   auto it = tc.by_key.find(key);
   if (it != tc.by_key.end()) return it->second;
 
@@ -870,6 +889,7 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     t.wrap_s = ws;
     t.wrap_t = wt;
     t.srgb = srgb;
+    if (color_transform) t.color_transform = *color_transform;
     t.scale = scale;
     t.bias = bias;
     t.build_mips();
@@ -893,6 +913,7 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     udim.wrap_s = ws;
     udim.wrap_t = wt;
     udim.srgb = srgb;
+    if (color_transform) udim.color_transform = *color_transform;
     udim.scale = scale;
     udim.bias = bias;
     for (int tile_id = 1001; tile_id <= 1100; ++tile_id) {
@@ -1501,16 +1522,51 @@ bool LoadRenderTexture(const tinyusdz::tydra::next::RenderScene &scene,
   // (linear) was sRGB-decoded a second time, crushing the midtones -- and
   // disagreeing with the legacy resolver, which honors the attribute.
   bool effective_srgb = srgb;
-  if (tex.source_color_space == "raw" || tex.source_color_space == "Raw" ||
-      tex.source_color_space == "linear") {
+  std::string source_space = tex.source_color_space;
+  if (source_space.empty() || source_space == "auto") {
+    source_space = srgb ? "srgb_rec709_scene" : "raw";
+  }
+  tinyusdz::color::ColorSpaceDesc source_desc;
+  tinyusdz::color::ColorSpaceDesc display_desc;
+  tinyusdz::color::ColorTransform color_transform;
+  const tinyusdz::color::ColorTransform *color_transform_ptr = nullptr;
+  if (tex.color_transform_valid &&
+      tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene", &display_desc)) {
+    source_desc.name = source_space;
+    source_desc.gamma = tex.source_gamma;
+    source_desc.linear_bias = tex.source_linear_bias;
+    source_desc.kind = tex.source_color_is_data
+                           ? tinyusdz::color::ColorSpaceKind::Data
+                           : tinyusdz::color::ColorSpaceKind::Color;
+    color_transform.source = source_desc;
+    color_transform.destination = display_desc;
+    color_transform.bypass = tex.color_transform_bypass;
+    std::copy(tex.source_to_display_linear,
+              tex.source_to_display_linear + 9, color_transform.matrix);
+    color_transform_ptr = &color_transform;
+    effective_srgb = !tex.source_color_is_data &&
+                     std::fabs(tex.source_gamma - 2.4f) < 1.0e-5f &&
+                     std::fabs(tex.source_linear_bias - 0.055f) < 1.0e-5f;
+  } else if (tinyusdz::color::GetBuiltinColorSpace(source_space, &source_desc) &&
+      tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene", &display_desc) &&
+      tinyusdz::color::BuildColorTransform(source_desc, display_desc,
+                                           &color_transform)) {
+    color_transform_ptr = &color_transform;
+    // Keep the sRGB hint for linear-light texture resizing. Sampling uses the
+    // full transform below (and therefore does not double-decode); linear/data
+    // spaces must not fall through to the compatibility sRGB decoder.
+    effective_srgb =
+        tinyusdz::color::CanonicalizeToken(source_space).rfind("srgb_", 0) == 0;
+  } else if (source_space == "raw" || source_space == "Raw" ||
+             source_space == "linear") {
     effective_srgb = false;
-  } else if (tex.source_color_space == "sRGB" ||
-             tex.source_color_space == "srgb") {
+  } else if (source_space == "sRGB" || source_space == "srgb") {
     effective_srgb = true;
   }
   const int32_t id =
       LoadTextureCached(tc, asset, ToTusdrWrap(tex.wrap_s),
-                        ToTusdrWrap(tex.wrap_t), effective_srgb, scale, bias);
+                        ToTusdrWrap(tex.wrap_t), effective_srgb, scale, bias,
+                        color_transform_ptr);
   if (id < 0) return false;
   *out = id;
   return true;
@@ -1716,6 +1772,16 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
                             &resolved.clearcoat_rough_tex);
   }
 
+  const float *m = scratch.working_to_display_linear;
+  const auto to_display = [m](const Vec3 &v) {
+    return Vec3{m[0] * v.x + m[1] * v.y + m[2] * v.z,
+                m[3] * v.x + m[4] * v.y + m[5] * v.z,
+                m[6] * v.x + m[7] * v.y + m[8] * v.z};
+  };
+  resolved.base_color = to_display(resolved.base_color);
+  resolved.emission = to_display(resolved.emission);
+  resolved.specular_color = to_display(resolved.specular_color);
+
   *job = resolved;
   return true;
 }
@@ -1741,9 +1807,24 @@ bool TextureNear(int32_t a, int32_t b, const TextureCache &tc) {
   if (ta.width != tb.width || ta.height != tb.height ||
       ta.channels != tb.channels || ta.is_udim != tb.is_udim ||
       ta.wrap_s != tb.wrap_s || ta.wrap_t != tb.wrap_t ||
-      ta.srgb != tb.srgb || !MatNear(ta.scale, tb.scale) ||
+      ta.srgb != tb.srgb ||
+      ta.color_transform.source.name != tb.color_transform.source.name ||
+      ta.color_transform.destination.name !=
+          tb.color_transform.destination.name ||
+      ta.color_transform.source.gamma != tb.color_transform.source.gamma ||
+      ta.color_transform.source.linear_bias !=
+          tb.color_transform.source.linear_bias ||
+      ta.color_transform.source.kind != tb.color_transform.source.kind ||
+      ta.color_transform.bypass != tb.color_transform.bypass ||
+      !MatNear(ta.scale, tb.scale) ||
       !MatNear(ta.bias, tb.bias)) {
     return false;
+  }
+  for (size_t i = 0; i < 9; ++i) {
+    if (std::fabs(ta.color_transform.matrix[i] -
+                  tb.color_transform.matrix[i]) > 1.0e-6f) {
+      return false;
+    }
   }
   if (ta.is_udim) {
     if (ta.udim_tiles.size() != tb.udim_tiles.size()) return false;

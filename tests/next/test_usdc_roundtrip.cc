@@ -8,6 +8,7 @@
 #include <iostream>
 #include <fstream>
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -26,6 +27,7 @@
 #include "next/parser/ascii-parser.hh"
 #include "next/layer/property-index.hh"
 #include "next/pcp/prim-index.hh"
+#include "next/schema/color-space.hh"
 
 using namespace tinyusdz::next;
 
@@ -1367,6 +1369,88 @@ void test_comprehensive_usdc_fixture() {
             << wr.bytes_written << " bytes)\n\n";
 }
 
+void test_roundtrip_color_management_schemas() {
+  std::cout << "Testing color-management schema USDC roundtrip...\n";
+  const char* usda = R"USD(#usda 1.0
+(
+    renderSettingsPrimPath = "/World/Settings"
+)
+def Xform "World" (
+    prepend apiSchemas = ["ColorSpaceDefinitionAPI:studio_ap1"]
+)
+{
+    uniform token colorSpaceDefinition:studio_ap1:name = "studio_ap1"
+    float2 colorSpaceDefinition:studio_ap1:redChroma = (0.7131959, 0.2926889)
+    float2 colorSpaceDefinition:studio_ap1:greenChroma = (0.1595086, 0.8387885)
+    float2 colorSpaceDefinition:studio_ap1:blueChroma = (0.1286730, 0.0438956)
+    float2 colorSpaceDefinition:studio_ap1:whitePoint = (0.3127, 0.3290)
+    float colorSpaceDefinition:studio_ap1:gamma = 1
+    float colorSpaceDefinition:studio_ap1:linearBias = 0
+    def RenderSettings "Settings" {
+        uniform token renderingColorSpace = "studio_ap1"
+    }
+    def Material "Mat" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    ) {
+        string config:mtlx:version = "1.39"
+        string config:mtlx:namespace = "lookdev"
+        string config:mtlx:colorspace = "studio_ap1"
+        string config:mtlx:sourceUri = "looks/materials.mtlx"
+        token outputs:mtlx:surface.connect = </World/Mat/Surface.outputs:out>
+        def Shader "Surface" {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.25, 0.5, 0.75) (
+                colorSpace = "studio_ap1"
+            )
+            token outputs:out
+        }
+    }
+}
+)USD";
+
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  std::vector<uint8_t> bytes;
+  USDCWriteResult written = WriteUSDCToMemory(bytes, loaded.stage);
+  assert(written.success);
+  USDCLoadResult read = LoadUSDCFromMemory(bytes.data(), bytes.size());
+  assert(read.success);
+  const Layer* layer = read.stage.GetRootLayer();
+  assert(layer && layer->meta().renderSettingsPrimPath_set);
+  assert(layer->meta().renderSettingsPrimPath == "/World/Settings");
+
+  const PrimSpec* world = MustPrim(layer, "/World");
+  assert(world->meta().apiSchemas().size() == 1);
+  assert(world->meta().apiSchemas()[0] ==
+         "ColorSpaceDefinitionAPI:studio_ap1");
+  const Value* red = MustProp(
+      world, "colorSpaceDefinition:studio_ap1:redChroma");
+  assert(red->as_float2());
+  assert(std::fabs(red->as_float2()[0] - 0.7131959f) < 1.0e-6f);
+
+  const PrimSpec* material = MustPrim(layer, "/World/Mat");
+  assert(material->meta().apiSchemas().size() == 1);
+  assert(material->meta().apiSchemas()[0] == "MaterialXConfigAPI");
+  const Value* config = MustProp(material, "config:mtlx:colorspace");
+  assert(config->as_string() && *config->as_string() == "studio_ap1");
+  const Value* source_uri = MustProp(material, "config:mtlx:sourceUri");
+  assert(source_uri->as_string() &&
+         *source_uri->as_string() == "looks/materials.mtlx");
+
+  const PrimSpec* shader = MustPrim(layer, "/World/Mat/Surface");
+  const PropMeta* base_meta = shader->property_meta("inputs:base_color");
+  assert(base_meta && (base_meta->authored & PropMeta::kColorSpace));
+  assert(base_meta->colorSpace == "studio_ap1");
+
+  color_management::ColorSpaceDesc definition;
+  std::string error;
+  assert(color_management::ResolveColorSpaceDefinition(
+      read.stage.GetPrimAtPath("/World/Mat/Surface"), "studio_ap1",
+      &definition, &error));
+  assert(::tinyusdz::color::IsLinear(definition));
+  std::cout << "  color-management schema USDC roundtrip passed!\n\n";
+}
+
 // Inline-authored variants must round-trip through crate: the writer
 // materializes bracketed holder prims from VariantSetData, and the reader
 // reconstructs set/option names + selection from them.
@@ -1771,6 +1855,8 @@ void test_roundtrip_writer_audit_cluster() {
   Layer layer;
   layer.meta().colorConfiguration = "./ocio/config.ocio";
   layer.meta().colorManagementSystem = "ocio";
+  layer.meta().renderSettingsPrimPath = "/Render/settings";
+  layer.meta().renderSettingsPrimPath_set = true;
   LayerBuilder b(layer);
   b.begin_prim("P", "Scope");
   b.current()->meta().instanceable = false;
@@ -1797,6 +1883,8 @@ void test_roundtrip_writer_audit_cluster() {
   assert(rl);
   assert(rl->meta().colorConfiguration == "./ocio/config.ocio");
   assert(rl->meta().colorManagementSystem == "ocio");
+  assert(rl->meta().renderSettingsPrimPath_set);
+  assert(rl->meta().renderSettingsPrimPath == "/Render/settings");
   const PrimSpec* p = rl->prim_at_path("/P");
   assert(p);
   assert(!p->meta().instanceable);
@@ -2108,6 +2196,7 @@ int main() {
     test_roundtrip_writer_audit_cluster();
     test_roundtrip_deferred_items();
     test_roundtrip_api_schemas();
+    test_roundtrip_color_management_schemas();
     test_comprehensive_usdc_fixture();
     test_roundtrip_schema_types();
     test_roundtrip_layer_metadata();

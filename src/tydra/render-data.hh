@@ -777,6 +777,21 @@ struct TextureImage {
   ColorSpace usdColorSpace{
       ColorSpace::sRGB};  // original color space info in UsdUVTexture(asset meta or sourceColorSpace attrib)
 
+  // Resolved authored source -> display-linear Rec.709 transform. This keeps
+  // ColorSpaceDefinitionAPI data available to lazy native/Web texture users,
+  // which otherwise only see the legacy ColorSpace enum after conversion.
+  std::string sourceColorSpaceName{"auto"};
+  bool colorTransformValid{false};
+  bool colorTransformApplied{false};
+  bool colorTransformBypass{true};
+  bool sourceColorIsData{false};
+  float sourceGamma{1.0f};
+  float sourceLinearBias{0.0f};
+  float sourceToDisplayLinear[9] = {
+      1.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f,
+      0.0f, 0.0f, 1.0f};
+
   int32_t width{-1};
   int32_t height{-1};
   int32_t channels{-1};  // e.g. 3 for RGB.
@@ -1721,6 +1736,14 @@ struct SceneMetadata
   double metersPerUnit{1.0}; // default [m]
 
   bool autoPlay{true};
+
+  std::string renderSettingsPrimPath;
+  std::string workingColorSpace{"lin_rec709_scene"};
+  // Row-major working-linear RGB to linear Rec.709.
+  std::array<float, 9> workingToDisplayLinear{{
+      1.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f,
+      0.0f, 0.0f, 1.0f}};
 
   // If you want to lookup more thing on USD Stage Metadata, Use Stage::metas()
 };

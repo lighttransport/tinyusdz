@@ -652,6 +652,10 @@ class USDAReader::Impl {
           if (metas.colorManagementSystem) {
             _stage.metas().colorManagementSystem = metas.colorManagementSystem.value();
           }
+          if (metas.renderSettingsPrimPath) {
+            _stage.metas().renderSettingsPrimPath =
+                metas.renderSettingsPrimPath.value();
+          }
           if (metas.owner) {
             _stage.metas().owner = metas.owner.value();
           }

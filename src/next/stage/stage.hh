@@ -37,6 +37,8 @@ struct StageMeta {
   std::string colorManagementSystem;
   bool colorConfiguration_set = false;
   bool colorManagementSystem_set = false;
+  std::string renderSettingsPrimPath;
+  bool renderSettingsPrimPath_set = false;
   std::string doc;
   std::string comment;
   std::string owner;

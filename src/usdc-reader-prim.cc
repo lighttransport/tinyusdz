@@ -344,6 +344,30 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       sdata.is_triple_quoted = hasNewline(sdata.value);
       metas->comment = sdata;
       DCOUT("comment = " << metas->comment.value);
+    } else if (fv.first == "colorConfiguration") {
+      if (auto v = fv.second.get_value<value::AssetPath>()) {
+        metas->colorConfiguration = v.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`colorConfiguration` must be `asset` type, but got " +
+            fv.second.type_name());
+      }
+    } else if (fv.first == "colorManagementSystem") {
+      if (auto v = fv.second.get_value<value::token>()) {
+        metas->colorManagementSystem = v.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`colorManagementSystem` must be `token` type, but got " +
+            fv.second.type_name());
+      }
+    } else if (fv.first == "renderSettingsPrimPath") {
+      if (auto v = fv.second.get_value<std::string>()) {
+        metas->renderSettingsPrimPath = v.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`renderSettingsPrimPath` must be `string` type, but got " +
+            fv.second.type_name());
+      }
     } else if (fv.second.IsUnregisteredValue()) {
       // Unregistered layer metadata (pxr SdfUnregisteredValue): the crate
       // stores the raw USDA text of the value (quotes included for string

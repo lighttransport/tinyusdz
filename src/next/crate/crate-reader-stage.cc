@@ -300,6 +300,14 @@ bool CrateReader::Impl::BuildStage() {
           layer.meta().colorManagementSystem = *s;
           layer.meta().colorManagementSystem_set = true;
         }
+      } else if (field.first == "renderSettingsPrimPath") {
+        if (const std::string* s = field.second.as_string()) {
+          layer.meta().renderSettingsPrimPath = *s;
+          layer.meta().renderSettingsPrimPath_set = true;
+        } else if (const std::string* s = field.second.as_token()) {
+          layer.meta().renderSettingsPrimPath = *s;
+          layer.meta().renderSettingsPrimPath_set = true;
+        }
       } else if (field.first == "documentation" || field.first == "doc") {
         if (const std::string* s = field.second.as_string()) {
           layer.meta().doc = *s;

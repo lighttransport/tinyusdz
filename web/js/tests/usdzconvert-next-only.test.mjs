@@ -17,6 +17,10 @@ import {
   NextTextureLoadingManager,
   textureColorRole
 } from '../src/tinyusdz/NextRenderSceneUtils.js';
+import {
+  installTextureColorTransform,
+  textureColorTransform
+} from '../src/tinyusdz/ColorSpaceUtils.js';
 
 const COMPOUND_ROTATION_DECAL_BYTES = new Uint8Array(fs.readFileSync(
   new URL('../../../tests/usda/xform-rotatexyz-decal-001.usda', import.meta.url)));
@@ -309,6 +313,118 @@ await testAsync('next texture roles preserve linear wide-gamut inputs', async ()
   assert.equal(textureColorRole('map', 'lin_displayp3'), 'data');
   assert.equal(textureColorRole('map', 'acescg'), 'data');
   assert.equal(textureColorRole('map', 'srgb_displayp3'), 'color');
+  assert.equal(textureColorRole('map', 'lin_ap1_scene'), 'data');
+  assert.equal(textureColorRole('map', 'lin_ap0_scene'), 'data');
+  assert.equal(textureColorRole('map', 'srgb_p3d65_scene'), 'color');
+});
+
+await testAsync('next injects wide-gamut texture transforms into Three shaders', async () => {
+  const ap1 = textureColorTransform('lin_ap1_scene');
+  assert.equal(ap1.colorRole, 'data');
+  assert.equal(ap1.bypass, false);
+  const material = new THREE.MeshStandardMaterial();
+  installTextureColorTransform(material, 'map', ap1);
+  const shader = { fragmentShader:
+    '#include <map_fragment>\n#include <emissivemap_fragment>' };
+  material.onBeforeCompile(shader, {});
+  assert.match(shader.fragmentShader, /mat3\(/);
+  assert.match(shader.fragmentShader, /1\.705050993/);
+  assert.doesNotMatch(shader.fragmentShader, /#include <map_fragment>/);
+  assert.match(material.customProgramCacheKey(), /lin_ap1_scene/);
+  material.dispose();
+});
+
+await testAsync('next injects resolved custom texture definitions', async () => {
+  const custom = textureColorTransform('studio_ap0', 'lin_rec709_scene', {
+    colorTransformValid: true,
+    colorTransformBypass: false,
+    sourceColorIsData: false,
+    sourceGamma: 1,
+    sourceLinearBias: 0,
+    sourceToDisplayLinear: [
+      2.521686, -1.134130, -0.387556,
+      -0.276480, 1.372719, -0.096239,
+      -0.015378, -0.152975, 1.168353
+    ]
+  });
+  assert.equal(custom.canonical, 'studio_ap0');
+  assert.equal(custom.colorRole, 'data');
+  assert.equal(custom.bypass, false);
+  const material = new THREE.MeshStandardMaterial();
+  installTextureColorTransform(material, 'map', custom);
+  const shader = { fragmentShader:
+    '#include <map_fragment>\n#include <emissivemap_fragment>' };
+  material.onBeforeCompile(shader, {});
+  assert.match(shader.fragmentShader, /2\.521686/);
+  material.dispose();
+
+  const piecewise = textureColorTransform('studio_piecewise',
+    'lin_rec709_scene', {
+      colorTransformValid: true,
+      colorTransformBypass: false,
+      sourceColorIsData: false,
+      sourceGamma: 2.2,
+      sourceLinearBias: 0.05,
+      sourceToDisplayLinear: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+    });
+  const piecewiseMaterial = new THREE.MeshStandardMaterial();
+  installTextureColorTransform(piecewiseMaterial, 'map', piecewise);
+  const piecewiseShader = { fragmentShader:
+    '#include <map_fragment>\n#include <emissivemap_fragment>' };
+  piecewiseMaterial.onBeforeCompile(piecewiseShader, {});
+  assert.match(piecewiseShader.fragmentShader, /mix\(/);
+  assert.match(piecewiseShader.fragmentShader, /step\(/);
+  piecewiseMaterial.dispose();
+});
+
+await testAsync('next queues authored texture colorspace transforms', async () => {
+  const manager = new NextTextureLoadingManager();
+  const material = createNextMaterial({
+    material: {
+      baseColor: [1, 1, 1],
+      textureMetadata: {
+        baseColor: {
+          sourceColorSpace: 'studio_ap0',
+          colorTransformValid: true,
+          colorTransformBypass: false,
+          sourceColorIsData: false,
+          sourceGamma: 1,
+          sourceLinearBias: 0,
+          sourceToDisplayLinear: [
+            2.521686, -1.134130, -0.387556,
+            -0.276480, 1.372719, -0.096239,
+            -0.015378, -0.152975, 1.168353
+          ]
+        }
+      }
+    },
+    texturePaths: { baseColor: './wide.png' }
+  }, {}, manager, false);
+  assert.equal(manager.tasks.length, 1);
+  assert.equal(manager.tasks[0].colorRole, 'data');
+  assert.equal(manager.tasks[0].colorTransform.canonical, 'studio_ap0');
+  assert.equal(manager.tasks[0].colorTransform.bypass, false);
+  assert(Math.abs(manager.tasks[0].colorTransform.matrix[0] - 2.521686) < 1e-9);
+  material.dispose();
+});
+
+await testAsync('next honors zero OpenPBR emission luminance', async () => {
+  const material = createNextMaterial({
+    material: {
+      shaderType: 'OpenPBR',
+      emissive: [1, 1, 1],
+      materialXJson: JSON.stringify({
+        openPBR: {
+          emissionColor: { value: [1, 1, 1, 1] },
+          emissionLuminance: { value: [0, 0, 0, 0] }
+        }
+      })
+    },
+    texturePaths: {}
+  }, {}, null, true);
+  assert.deepEqual(material.emissive.toArray(), [1, 1, 1]);
+  assert.equal(material.emissiveIntensity, 0);
+  material.dispose();
 });
 
 await testAsync('next texture graph preserves image power operations', async () => {
@@ -491,6 +607,155 @@ await testAsync('next mesh-only RenderStream retains authoritative MaterialX dat
       ['base_color', 'emission_color']);
     assert.equal(stream.getStats().renderSceneMaterials, 1,
       'mesh-only mode should run graph conversion for the MaterialX terminal');
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next evaluates MaterialX conditionals and preserves geometry metadata', async () => {
+  const fixture = `#usda 1.0
+def Xform "World" {
+  def Mesh "Geom" {
+    rel material:binding = </World/Material>
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }
+  def Material "Material" {
+    token outputs:mtlx:surface.connect = </World/Material/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      color3f inputs:base_color.connect = </World/Material/Graph.outputs:base>
+      float inputs:specular_ior = 1.7
+      float inputs:specular_anisotropy = 0.6
+      float inputs:specular_rotation = 0.25
+      float inputs:coat_weight = 0.4
+      float inputs:coat_roughness = 0.2
+      float inputs:sheen_weight = 0.3
+      float inputs:transmission_weight = 0.25
+      float inputs:transmission_depth = 2
+      float inputs:thin_film_weight = 0.5
+      float inputs:thin_film_thickness = 450
+      normal3f inputs:geometry_normal.connect = </World/Material/Graph.outputs:normal>
+      vector3f inputs:geometry_tangent.connect = </World/Material/Graph.outputs:tangent>
+      token outputs:surface
+    }
+    def NodeGraph "Graph" {
+      color3f outputs:base.connect = </World/Material/Graph/Choose.outputs:out>
+      normal3f outputs:normal.connect = </World/Material/Graph/NormalMap.outputs:out>
+      vector3f outputs:tangent.connect = </World/Material/Graph/Rotate.outputs:out>
+      def Shader "Choose" {
+        uniform token info:id = "ND_ifgreatereq_color3"
+        float inputs:value1 = 0.5
+        float inputs:value2 = 0.5
+        color3f inputs:in1 = (0.2, 0.4, 0.8)
+        color3f inputs:in2 = (1, 0, 0)
+        color3f outputs:out
+      }
+      def Shader "NormalMap" {
+        uniform token info:id = "ND_normalmap_float"
+        vector3f inputs:in = (0, 0, 1)
+        float inputs:scale = 0.35
+        normal3f outputs:out
+      }
+      def Shader "Direction" {
+        uniform token info:id = "ND_normalize_vector3"
+        vector3f inputs:in = (2, 0, 0)
+        vector3f outputs:out
+      }
+      def Shader "Rotate" {
+        uniform token info:id = "ND_rotate3d_vector3"
+        vector3f inputs:in.connect = </World/Material/Graph/Direction.outputs:out>
+        float inputs:amount = 45
+        vector3f outputs:out
+      }
+    }
+  }
+}`;
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    const result = stream.begin(new TextEncoder().encode(fixture));
+    assert.ok(result?.success, result?.error || stream.error());
+    const entry = stream.getMesh(0);
+    assert.deepEqual(entry.material.baseColor.map((v) => Number(v.toFixed(6))),
+      [0.2, 0.4, 0.8]);
+    const json = JSON.parse(entry.material.materialXJson);
+    assert.equal(json.openPBR.normalMapScale, 0.35);
+    assert.equal(json.openPBR.tangentRotation, 45);
+    const material = createNextMaterial({
+      material: entry.material,
+      texturePaths: {}
+    }, {}, null, true);
+    assert.equal(material.ior, 1.7);
+    assert.equal(material.anisotropy, 0.6);
+    assert.equal(material.anisotropyRotation, Math.PI / 2);
+    assert.equal(material.clearcoat, 0.4);
+    assert.equal(material.clearcoatRoughness, 0.2);
+    assert.equal(material.sheen, 0.3);
+    assert.equal(material.transmission, 0.25);
+    assert.equal(material.thickness, 2);
+    assert.equal(material.iridescence, 0.5);
+    assert.deepEqual(material.iridescenceThicknessRange, [450, 450]);
+    assert.equal(material.emissiveIntensity, 0);
+    assert.deepEqual(material.normalScale.toArray(), [0.35, 0.35]);
+    assert.equal(material.userData.nextTangentRotation, 45);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next caches semantically identical anonymous MaterialX graphs', async () => {
+  const mesh = (name, material, x) => `
+  def Mesh "${name}" {
+    rel material:binding = </World/${material}>
+    point3f[] points = [(${x}, 0, 0), (${x + 1}, 0, 0), (${x}, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }`;
+  const material = (name, color) => `
+  def Material "${name}" {
+    token outputs:mtlx:surface.connect = </World/${name}/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      color3f inputs:base_color.connect = </World/${name}/Graph.outputs:base>
+      token outputs:surface
+    }
+    def NodeGraph "Graph" {
+      color3f outputs:base.connect = </World/${name}/Graph/Constant.outputs:out>
+      def Shader "Constant" {
+        uniform token info:id = "ND_constant_color3"
+        color3f inputs:value = ${color}
+        color3f outputs:out
+      }
+    }
+  }`;
+  const fixture = `#usda 1.0
+def Xform "World" {
+${mesh('GeomA', 'MaterialA', 0)}
+${mesh('GeomB', 'MaterialB', 2)}
+${mesh('GeomC', 'MaterialC', 4)}
+${material('MaterialA', '(0.1, 0.2, 0.3)')}
+${material('MaterialB', '(0.1, 0.2, 0.3)')}
+${material('MaterialC', '(0.8, 0.2, 0.1)')}
+}`;
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    stream.setMaterialDedup(true);
+    stream.setMeshMerge(true);
+    const result = stream.begin(new TextEncoder().encode(fixture));
+    assert.ok(result?.success, result?.error || stream.error());
+    const stats = stream.getStats();
+    assert.equal(stats.sourceMaterials, 3);
+    assert.equal(stats.optimizedMaterials, 2);
+    assert.equal(stats.materialGraphCacheHits, 1);
+    assert.equal(stats.materialGraphCacheMisses, 2);
+    assert.equal(stats.renderSceneMaterials, 2,
+      'duplicate graph must be eliminated before render-material conversion');
+    assert.ok(stats.geometryMaterializedBytes + stats.geometryBorrowedBytes > 0);
   } finally {
     stream.end();
     stream.delete();

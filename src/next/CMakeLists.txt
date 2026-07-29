@@ -9,6 +9,7 @@ project(tinyusdz_next C CXX)
 
 # Define source files
 set(TINYUSDZ_NEXT_SOURCES
+    ../color-transform.cc
     # Type system
     types/type-info.cc
     types/value.cc
@@ -76,6 +77,7 @@ set(TINYUSDZ_NEXT_SOURCES
     schema/schema-registry.cc
     schema/geom-point-instancer.cc
     schema/geom-xform.cc
+    schema/color-space.cc
     schema/usd-lux.cc
     schema/usd-geom-camera.cc
     schema/usd-shade.cc
@@ -147,6 +149,10 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Stage (composed scene)
     stage/stage.hh
+
+    # Color management shared with render consumers
+    ../color-transform.hh
+    schema/color-space.hh
 
     # ASCII parser
     parser/lexer.hh
@@ -787,6 +793,14 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     # node and the corpus checkout are present; set USD_WG_ASSETS_DIR to point
     # at a usd-wg/assets clone.
     find_program(TINYUSDZ_NEXT_NODE_EXECUTABLE NAMES node nodejs)
+    if(TINYUSDZ_NEXT_NODE_EXECUTABLE)
+        add_test(
+            NAME next_compare_usda_asset_paths
+            COMMAND ${TINYUSDZ_NEXT_NODE_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-compare-usda-asset-paths.cjs)
+        set_tests_properties(next_compare_usda_asset_paths
+            PROPERTIES LABELS "next;pxrdiff")
+    endif()
     # Pinned OpenUSD oracle for the pxr differential gates below. Set
     # TINYUSDZ_PXR_USDCAT to relocate it.
     if(DEFINED ENV{TINYUSDZ_PXR_USDCAT})

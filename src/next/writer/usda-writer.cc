@@ -307,6 +307,11 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
                     EscapeString(meta.colorManagementSystem));
   }
 
+  if (meta.renderSettingsPrimPath_set || !meta.renderSettingsPrimPath.empty()) {
+    lines.push_back(opts.indent + "renderSettingsPrimPath = " +
+                    EscapeString(meta.renderSettingsPrimPath));
+  }
+
   {
     std::string s;
     if (meta.customLayerData_set ||
@@ -1865,6 +1870,8 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.colorManagementSystem = stage_meta.colorManagementSystem;
   meta.colorConfiguration_set = stage_meta.colorConfiguration_set;
   meta.colorManagementSystem_set = stage_meta.colorManagementSystem_set;
+  meta.renderSettingsPrimPath = stage_meta.renderSettingsPrimPath;
+  meta.renderSettingsPrimPath_set = stage_meta.renderSettingsPrimPath_set;
   meta.doc = stage_meta.doc;
   meta.comment = stage_meta.comment;
   meta.owner = stage_meta.owner;

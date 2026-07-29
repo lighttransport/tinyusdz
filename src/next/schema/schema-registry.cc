@@ -110,6 +110,24 @@ SchemaRegistry::SchemaRegistry() {
 #include "generated/aousd-core-schema-definitions.inc"
 #undef AOUSD_SCHEMA_DECLARE
 #undef AOUSD_SCHEMA_FALLBACK
+
+  // Current OpenUSD spells ColorSpaceDefinitionAPI as a multiple-apply API.
+  // Keep the generated AOUSD 1.0.1 unqualified declarations above for read
+  // compatibility and add the standard instantiated property namespace.
+  add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:name",
+      "token", Token("custom"));
+  add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:redChroma",
+      "float2", Value::MakeFloat2(1.0f, 0.0f));
+  add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:greenChroma",
+      "float2", Value::MakeFloat2(0.0f, 1.0f));
+  add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:blueChroma",
+      "float2", Value::MakeFloat2(0.0f, 0.0f));
+  add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:whitePoint",
+      "float2", Value::MakeFloat2(1.0f / 3.0f, 1.0f / 3.0f));
+  add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:gamma",
+      "float", Value(1.0f));
+  add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:linearBias",
+      "float", Value(0.0f));
   add("Imageable", "visibility", "token", Token("inherited"));
   add("Imageable", "purpose", "token", Token("default"));
   add("Xformable", "xformOpOrder", "token[]",

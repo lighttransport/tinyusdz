@@ -145,6 +145,7 @@ class AsciiParser {
     // AOUSD Core Spec fields
     nonstd::optional<value::AssetPath> colorConfiguration;
     nonstd::optional<value::token> colorManagementSystem;
+    nonstd::optional<std::string> renderSettingsPrimPath;
     nonstd::optional<std::string> owner;
     nonstd::optional<bool> hasOwnedSubLayers;
     nonstd::optional<std::map<std::string, MetaVariable>> expressionVariables;

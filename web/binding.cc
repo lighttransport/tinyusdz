@@ -3997,6 +3997,14 @@ class TinyUSDZLoaderNative {
         // Return legacy format for backward compatibility
         emscripten::val mat = emscripten::val::object();
 
+        emscripten::val mtlx_config = emscripten::val::object();
+        mtlx_config.set("authored", material.materialXConfig.authored);
+        mtlx_config.set("version", material.materialXConfig.version);
+        mtlx_config.set("namespace", material.materialXConfig.name_space);
+        mtlx_config.set("colorspace", material.materialXConfig.colorspace);
+        mtlx_config.set("sourceUri", material.materialXConfig.source_uri);
+        mat.set("materialXConfig", mtlx_config);
+
         // Check if material has UsdPreviewSurface
         if (!material.hasUsdPreviewSurface()) {
           mat.set("error", "Material does not have UsdPreviewSurface shader");
@@ -4473,6 +4481,18 @@ class TinyUSDZLoaderNative {
     img.set("decoded", bool(i.decoded));
     img.set("colorSpace", to_string(i.colorSpace));
     img.set("usdColorSpace", to_string(i.usdColorSpace));
+    img.set("sourceColorSpaceName", i.sourceColorSpaceName);
+    img.set("colorTransformValid", i.colorTransformValid);
+    img.set("colorTransformApplied", i.colorTransformApplied);
+    img.set("colorTransformBypass", i.colorTransformBypass);
+    img.set("sourceColorIsData", i.sourceColorIsData);
+    img.set("sourceGamma", i.sourceGamma);
+    img.set("sourceLinearBias", i.sourceLinearBias);
+    emscripten::val source_to_display = emscripten::val::array();
+    for (size_t index = 0; index < 9; ++index) {
+      source_to_display.set(index, i.sourceToDisplayLinear[index]);
+    }
+    img.set("sourceToDisplayLinear", source_to_display);
     img.set("bufferId", int(i.buffer_id));
 
     if ((i.buffer_id >= 0) && (i.buffer_id < render_scene_.buffers.size())) {
@@ -4759,6 +4779,18 @@ class TinyUSDZLoaderNative {
     out.set("decoded", bool(i.decoded));
     out.set("colorSpace", to_string(i.colorSpace));
     out.set("usdColorSpace", to_string(i.usdColorSpace));
+    out.set("sourceColorSpaceName", i.sourceColorSpaceName);
+    out.set("colorTransformValid", i.colorTransformValid);
+    out.set("colorTransformApplied", i.colorTransformApplied);
+    out.set("colorTransformBypass", i.colorTransformBypass);
+    out.set("sourceColorIsData", i.sourceColorIsData);
+    out.set("sourceGamma", i.sourceGamma);
+    out.set("sourceLinearBias", i.sourceLinearBias);
+    emscripten::val source_to_display = emscripten::val::array();
+    for (size_t index = 0; index < 9; ++index) {
+      source_to_display.set(index, i.sourceToDisplayLinear[index]);
+    }
+    out.set("sourceToDisplayLinear", source_to_display);
     out.set("uri", i.asset_identifier);
     out.set("bufferId", int(i.buffer_id));
     return out;
@@ -5458,6 +5490,14 @@ class TinyUSDZLoaderNative {
     metadata.set("framesPerSecond", render_scene_.meta.framesPerSecond);
     metadata.set("timeCodesPerSecond", render_scene_.meta.timeCodesPerSecond);
     metadata.set("autoPlay", render_scene_.meta.autoPlay);
+    metadata.set("renderSettingsPrimPath",
+                 render_scene_.meta.renderSettingsPrimPath);
+    metadata.set("workingColorSpace", render_scene_.meta.workingColorSpace);
+    emscripten::val working_to_display = emscripten::val::array();
+    for (float value : render_scene_.meta.workingToDisplayLinear) {
+      working_to_display.call<void>("push", value);
+    }
+    metadata.set("workingToDisplayLinear", working_to_display);
 
     if (render_scene_.meta.startTimeCode) {
       metadata.set("startTimeCode", render_scene_.meta.startTimeCode.value());
