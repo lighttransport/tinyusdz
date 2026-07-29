@@ -2466,6 +2466,20 @@ if(TINYUSDZ_BUILD_TESTS)
   # Windowless Vulkan render regression. This works on both hardware and
   # software Vulkan devices and self-skips when no Vulkan device is available.
   if(UNIX AND NOT APPLE AND TARGET tusdview)
+    # Opt-in external Island production smoke. With no ISLAND_USD environment
+    # variable this returns 77 immediately, proving the corpus remains optional
+    # in ordinary CI while making the real-data gate discoverable via CTest.
+    add_test(
+      NAME tusdview-island-production-smoke
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-island-production-smoke.sh"
+      )
+    set_tests_properties(tusdview-island-production-smoke PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 5400
+                         LABELS "tusdview;external;island")
+
     add_test(
       NAME tusdview-vk-render
       COMMAND ${CMAKE_COMMAND} -E env

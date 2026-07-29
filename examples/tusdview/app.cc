@@ -469,6 +469,8 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   }
   report["resolution"] = {{"width", width}, {"height", height}};
 
+  const Gui::RenderStats renderStats = gui_.renderStats();
+
   size_t ptexTextures = 0, ptexFaces = 0, ptexAtlasBytes = 0;
   size_t ptexDownsampledFaces = 0, ptexFallbackTextures = 0;
   uint64_t ptexCacheHits = 0, ptexCacheMisses = 0, ptexCacheEvictions = 0;
@@ -577,6 +579,13 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"upload_budget_ms", uploadBudgetMs_},
       {"raster_lod", rasterLodEnabled_},
       {"rt_lod", rtLodEnabled_},
+      {"visible_meshes", renderStats.visibleMeshes},
+      {"total_meshes", renderStats.totalMeshes},
+      {"visible_instances", renderStats.visibleInstances},
+      {"total_instances", renderStats.totalInstances},
+      {"lod_proxy_instances", renderStats.proxyInstances},
+      {"drawn_triangles", renderStats.drawnTriangles},
+      {"draw_calls", renderStats.drawCalls},
       {"elapsed_seconds",
        std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                      runStart_)
@@ -4251,9 +4260,9 @@ int App::run(const std::string& initialFile, int maxFrames,
   if (maxFrames >= 0) {
     const Gui::RenderStats rs = gui_.renderStats();
     LOGI("render stats: meshes %zu/%zu visible, instances %zu/%zu visible, "
-         "drawn tris %zu, draw calls %zu",
+         "LOD proxies %zu, drawn tris %zu, draw calls %zu",
          rs.visibleMeshes, rs.totalMeshes, rs.visibleInstances,
-         rs.totalInstances, rs.drawnTriangles, rs.drawCalls);
+         rs.totalInstances, rs.proxyInstances, rs.drawnTriangles, rs.drawCalls);
   }
 
   auto shot = [&](const std::string& path, bool window) {

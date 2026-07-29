@@ -18,6 +18,10 @@ if [[ ! -x "$viewer" ]]; then
   echo "FAIL: tusdview executable not found: $viewer" >&2
   exit 1
 fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "SKIP: python3 is required to validate Island render reports"
+  exit 77
+fi
 
 mkdir -p "$out_dir"
 common=(--next --frames 2 --load-payloads --texture-compress auto
@@ -56,7 +60,36 @@ run_capture() {
     echo "FAIL: $backend $size did not produce screenshot/report" >&2
     return 1
   fi
-  echo "PASS: $backend $size"
+  if ! python3 -c '
+import json, sys
+p = sys.argv[1]
+with open(p, encoding="utf-8") as f:
+    r = json.load(f)
+required = ("scene_stats", "texture_residency", "memory", "render",
+            "degradation_reasons")
+missing = [key for key in required if key not in r]
+render_required = ("visible_meshes", "total_meshes", "visible_instances",
+                   "total_instances", "lod_proxy_instances",
+                   "drawn_triangles", "draw_calls", "elapsed_seconds")
+missing += ["render." + key for key in render_required
+            if key not in r.get("render", {})]
+if r.get("schema_version") != 1:
+    missing.append("schema_version=1")
+if r.get("status") != "ok":
+    missing.append("status=ok")
+if missing:
+    raise SystemExit("invalid report %s: missing/invalid %s" %
+                     (p, ", ".join(missing)))
+' "${stem}.json"; then
+    echo "FAIL: $backend $size produced an invalid render report" >&2
+    return 1
+  fi
+  local elapsed rss proxies degradation
+  elapsed="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["render"]["elapsed_seconds"])' "${stem}.json")"
+  rss="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["memory"]["host_peak_rss_mib"])' "${stem}.json")"
+  proxies="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["render"]["lod_proxy_instances"])' "${stem}.json")"
+  degradation="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["degradation_reasons"]))' "${stem}.json")"
+  echo "PASS: $backend $size (${elapsed}s, RSS ${rss} MiB, ${proxies} LOD proxies, ${degradation} degradation reasons)"
 }
 
 failures=0

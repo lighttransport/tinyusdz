@@ -317,6 +317,13 @@ CALDERA=/path/to/caldera.usda ISLAND=/path/to/island.usda ALAB=/path/to/alab.usd
   bash examples/tusdview/tests/run-large-scene-profiles.sh
 # Use TUSDVIEW_SCENE_TIMEOUT=10m (default) to bound each large-scene run.
 
+# Production Island matrix with schema-validated JSON reports. This is also a
+# CTest entry that cleanly skips when ISLAND_USD is absent. Override the default
+# 720p gl/vk/vk-rt matrix during a quick smoke as shown here:
+ISLAND_USD=/path/to/island.usda ISLAND_CAMERA=/island/cam/shotCam \
+ISLAND_CAPTURE_SIZES=320x200 ISLAND_CAPTURE_BACKENDS=vk \
+  ctest --test-dir build_ninja -R tusdview-island-production-smoke -V
+
 # Interactive large-scene profiles persist their compact composition preview.
 # Force a cold rebuild when validating preview generation, or disable it:
 ./build_ninja/tusdview --large-scene-profile island \

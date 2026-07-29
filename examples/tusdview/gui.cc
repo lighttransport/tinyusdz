@@ -2791,6 +2791,8 @@ void Gui::drawStats() {
         ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.1f, 1.0f), "(culling\xE2\x80\xA6)");
       }
     }
+    if (statProxyInstances_ > 0)
+      ImGui::Text("LOD proxy instances: %zu", statProxyInstances_);
     ImGui::Text("Drawn triangles: %zu", statNonInstTris_ + statInstTris_);
     ImGui::Text("Draw calls: %zu", statDrawCalls_);
     ImGui::Text("Materials: %zu", draw_->materials.size());
@@ -3460,6 +3462,7 @@ void Gui::uploadProxies(CullJobMesh* instProxy) {
     instProxy->colors.clear();
     instProxy->count = 0;
   }
+  statProxyInstances_ = xf.size() / 12;
   if (lastProxyValid_ && xf == lastProxyXforms_ && col == lastProxyColors_) return;
   lastProxyXforms_ = xf;
   lastProxyColors_ = col;
