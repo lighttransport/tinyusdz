@@ -1186,8 +1186,10 @@ def Xform "World"
   assert(openpbr.shader_type == RenderMaterial::ShaderType::OpenPBR);
   assert(openpbr.openpbr);
   assert(std::abs(openpbr.openpbr->base_color.value.x - 0.0f) < 0.001f);
-  assert(std::abs(openpbr.openpbr->base_color.value.y - 0.214041f) < 0.001f);
-  assert(std::abs(openpbr.openpbr->base_color.value.z - 0.787412f) < 0.001f);
+  // Each authored source enters the graph's linear working space before node
+  // math: 1 - linearized_sRGB(1, 0.5, 0.1).
+  assert(std::abs(openpbr.openpbr->base_color.value.y - 0.785959f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->base_color.value.z - 0.989977f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_metalness.value.x - 0.8f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_roughness.value.x - 0.35f) < 0.001f);
   assert(std::abs(openpbr.openpbr->specular_anisotropy.value.x - 0.11f) < 0.001f);
@@ -5071,6 +5073,8 @@ def Xform "World" (
             color3f inputs:specular_color.connect = </World/MtlxTextureMat/ApiImage.outputs:out>
             color3f inputs:coat_color.connect = </World/MtlxTextureMat/Override.outputs:out>
             float inputs:coat = 1
+            color3f inputs:sheen_color.connect = </World/MtlxTextureMat/Mix.outputs:out>
+            float inputs:sheen_weight = 1
             token outputs:out
         }
         def Shader "Image"
@@ -5091,6 +5095,30 @@ def Xform "World" (
             color3f inputs:value = (0.2, 0.3, 0.4) (
                 colorSpace = "lin_rec709_scene"
             )
+            color3f outputs:out
+        }
+        def Shader "Encoded"
+        {
+            uniform token info:id = "ND_constant_color3"
+            color3f inputs:value = (0.5, 0, 0) (
+                colorSpace = "srgb_rec709_scene"
+            )
+            color3f outputs:out
+        }
+        def Shader "Linear"
+        {
+            uniform token info:id = "ND_constant_color3"
+            color3f inputs:value = (0, 0.5, 0) (
+                colorSpace = "lin_rec709_scene"
+            )
+            color3f outputs:out
+        }
+        def Shader "Mix"
+        {
+            uniform token info:id = "ND_mix_color3"
+            color3f inputs:bg.connect = </World/MtlxTextureMat/Encoded.outputs:out>
+            color3f inputs:fg.connect = </World/MtlxTextureMat/Linear.outputs:out>
+            float inputs:mix = 0.5
             color3f outputs:out
         }
         def Shader "ApiImage" (
@@ -5229,6 +5257,20 @@ def Xform "World" (
     assert(std::fabs(explicit_coat_display[channel] -
                      expected_explicit_coat[channel]) < 3.0e-4f);
   }
+  const Float4& mixed_sheen = mtlx_material_ptr->openpbr->sheen_color.value;
+  const float mixed_sheen_display[3] = {
+      result.scene.working_to_display_linear[0] * mixed_sheen.x +
+          result.scene.working_to_display_linear[1] * mixed_sheen.y +
+          result.scene.working_to_display_linear[2] * mixed_sheen.z,
+      result.scene.working_to_display_linear[3] * mixed_sheen.x +
+          result.scene.working_to_display_linear[4] * mixed_sheen.y +
+          result.scene.working_to_display_linear[5] * mixed_sheen.z,
+      result.scene.working_to_display_linear[6] * mixed_sheen.x +
+          result.scene.working_to_display_linear[7] * mixed_sheen.y +
+          result.scene.working_to_display_linear[8] * mixed_sheen.z};
+  assert(std::fabs(mixed_sheen_display[0] - 0.1070205f) < 3.0e-4f);
+  assert(std::fabs(mixed_sheen_display[1] - 0.25f) < 3.0e-4f);
+  assert(std::fabs(mixed_sheen_display[2]) < 3.0e-4f);
   const RenderMaterial& material = *material_ptr;
   assert(material.preview_surface);
   const Float4& ap1 = material.preview_surface->diffuse_color.value;

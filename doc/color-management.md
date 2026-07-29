@@ -20,6 +20,12 @@ texture parameters. Scalar/vector data maps (roughness, normals, masks, and
 similar inputs) remain raw and are not reinterpreted through the document
 working space. A property-level opinion always overrides the document default.
 
+Constant MaterialX graphs convert each color-typed leaf into the document
+working space before evaluating arithmetic, mix, HSV, and other utility nodes.
+The graph result is converted once from the document space to the selected
+rendering working space. This permits differently tagged inputs in one graph
+without mixing encoded or mismatched-primary values.
+
 The rendering working space uses an explicit converter/`RenderStream` override,
 then stage metadata `renderSettingsPrimPath`, then `lin_rec709_scene`. The
 selected `RenderSettings.renderingColorSpace` must identify a linear space.
@@ -50,6 +56,10 @@ def Scope "World" (
 The old non-instance API/property spelling remains readable for compatibility.
 The USD validator checks duplicate, incomplete, invalid, and unknown
 definitions and validates `renderingColorSpace`.
+
+Texture cache identity includes the resolved asset path and effective color
+transform. Reusing one image as color and data, or using scoped definitions
+with the same token name, therefore retains separate converted image entries.
 
 ## Material and MaterialX behavior
 

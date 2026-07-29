@@ -26,6 +26,7 @@
 
 #include "common-utils.hh"
 #include "common-types.hh"
+#include "color-management.hh"
 #include "enum-handlers.hh"
 #include "../tiny-hashmap.hh"
 #include "image-loader.hh"
@@ -135,7 +136,47 @@ static const Prim *FindNodeGraphPrimForPath(
 // (separate/swizzle); single-output nodes ignore it.
 static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     const Stage &stage, const Prim *ng_prim, const Shader *shader,
-    int max_depth, const std::string &output_name = "");
+    int max_depth, const std::string &evaluation_space,
+    const std::string &output_name = "");
+
+static const Prim *FindPrimForShader(const Prim *root, const Shader *shader) {
+  if (!root || !shader) return nullptr;
+  if (root->as<Shader>() == shader) return root;
+  for (const Prim &child : root->children()) {
+    if (const Prim *found = FindPrimForShader(&child, shader)) return found;
+  }
+  return nullptr;
+}
+
+static bool TransformMtlxColorInput(
+    const Stage &stage, const Prim *shader_prim, const Attribute &attribute,
+    const std::string &evaluation_space, MtlxConstVal *value) {
+  if (!shader_prim || !value || value->n < 3 || evaluation_space.empty()) {
+    return false;
+  }
+  std::string source;
+  bool authored = false;
+  if (!color_management::ComputeColorSpaceName(
+          stage, shader_prim->absolute_path(), &attribute.metas(), &source,
+          &authored)) {
+    return false;
+  }
+  if (!authored) source = evaluation_space;
+  color::ColorTransform transform;
+  if (!color_management::BuildColorTransform(
+          stage, shader_prim->absolute_path(), source, evaluation_space,
+          &transform)) {
+    return false;
+  }
+  float rgb[3] = {value->v[0], value->v[1], value->v[2]};
+  color::TransformRGB(transform, rgb);
+  value->v[0] = rgb[0];
+  value->v[1] = rgb[1];
+  value->v[2] = rgb[2];
+  value->color_managed =
+      transform.source.kind != color::ColorSpaceKind::Data;
+  return true;
+}
 
 static nonstd::expected<std::pair<const Prim *, const Shader *>, std::string>
 ResolveNodeGraphTarget(const Stage &stage, const Path &connection_path,
@@ -315,9 +356,10 @@ static void ExtractMtlxTexcoordInfoFromConnection(
 // Helper: resolve a generic input to MtlxConstVal (constant or connected)
 static nonstd::expected<MtlxConstVal, std::string> ResolveInput(
     const Stage &stage, const Prim *ng_prim,
+    const Prim *shader_prim,
     const std::map<std::string, Property> &props,
     const std::string &input_name, const std::string &node_type,
-    int max_depth) {
+    int max_depth, const std::string &evaluation_space) {
   auto it = props.find(input_name);
   if (it == props.end()) {
     return nonstd::make_unexpected(
@@ -338,7 +380,7 @@ static nonstd::expected<MtlxConstVal, std::string> ResolveInput(
       auto target = ResolveNodeGraphTarget(stage, conn, &out_name);
       if (!target) return nonstd::make_unexpected(target.error());
       return EvaluateMtlxConstant(stage, target->first, target->second,
-                                  max_depth - 1, out_name);
+                                  max_depth - 1, evaluation_space, out_name);
     }
     const Shader *next = FindShaderInNodeGraph(stage, ng_prim, conn.prim_part());
     if (!next) {
@@ -348,7 +390,8 @@ static nonstd::expected<MtlxConstVal, std::string> ResolveInput(
     std::string out_name = conn.prop_part();
     // USD stores MaterialX outputs as "outputs:<name>"; strip the schema prefix.
     if (out_name.compare(0, 8, "outputs:") == 0) out_name = out_name.substr(8);
-    return EvaluateMtlxConstant(stage, ng_prim, next, max_depth - 1, out_name);
+    return EvaluateMtlxConstant(stage, ng_prim, next, max_depth - 1,
+                                evaluation_space, out_name);
   }
 
   // Read constant value
@@ -356,14 +399,24 @@ static nonstd::expected<MtlxConstVal, std::string> ResolveInput(
     return MtlxConstVal::Float(*vf);
   }
   if (auto vc = attr.get_value<value::color3f>()) {
-    return MtlxConstVal::Color3((*vc)[0], (*vc)[1], (*vc)[2]);
+    MtlxConstVal result = MtlxConstVal::Color3((*vc)[0], (*vc)[1], (*vc)[2]);
+    if (!TransformMtlxColorInput(stage, shader_prim, attr, evaluation_space,
+                                 &result)) {
+      return nonstd::make_unexpected("Failed to transform MaterialX color3 input");
+    }
+    return result;
   }
   if (auto vf3 = attr.get_value<value::float3>()) {
     return MtlxConstVal::Color3((*vf3)[0], (*vf3)[1], (*vf3)[2]);
   }
   if (auto vc4 = attr.get_value<value::color4f>()) {
-    return MtlxConstVal::Color4((*vc4)[0], (*vc4)[1], (*vc4)[2],
-                                (*vc4)[3]);
+    MtlxConstVal result = MtlxConstVal::Color4(
+        (*vc4)[0], (*vc4)[1], (*vc4)[2], (*vc4)[3]);
+    if (!TransformMtlxColorInput(stage, shader_prim, attr, evaluation_space,
+                                 &result)) {
+      return nonstd::make_unexpected("Failed to transform MaterialX color4 input");
+    }
+    return result;
   }
   if (auto vf4 = attr.get_value<value::float4>()) {
     return MtlxConstVal::Color4((*vf4)[0], (*vf4)[1], (*vf4)[2],
@@ -386,10 +439,12 @@ static nonstd::expected<MtlxConstVal, std::string> ResolveInput(
 // Helper: convenience wrapper for ResolveInput
 static nonstd::expected<MtlxConstVal, std::string> RI(
     const Stage &stage, const Prim *ng_prim,
+    const Prim *shader_prim,
     const std::map<std::string, Property> &props,
     const std::string &input_name, const std::string &node_type,
-    int max_depth) {
-  return ResolveInput(stage, ng_prim, props, input_name, node_type, max_depth);
+    int max_depth, const std::string &evaluation_space) {
+  return ResolveInput(stage, ng_prim, shader_prim, props, input_name,
+                      node_type, max_depth, evaluation_space);
 }
 
 // Per-component binary operation on MtlxConstVal
@@ -397,6 +452,7 @@ static MtlxConstVal BinOp(const MtlxConstVal &a, const MtlxConstVal &b,
                            float (*op)(float, float)) {
   int nc = (std::max)(a.n, b.n);
   MtlxConstVal r; r.n = nc;
+  r.color_managed = a.color_managed || b.color_managed;
   for (int i = 0; i < nc; ++i) {
     float va = (i < a.n) ? a.v[static_cast<size_t>(i)] : a.v[0];
     float vb = (i < b.n) ? b.v[static_cast<size_t>(i)] : b.v[0];
@@ -470,6 +526,7 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     const Prim *ng_prim,
     const Shader *shader,
     int max_depth,
+    const std::string &evaluation_space,
     const std::string &output_name) {
   if (max_depth <= 0) {
     return nonstd::make_unexpected("Max evaluation depth exceeded");
@@ -480,9 +537,11 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
 
   const std::string &nt = shader->info_id;
   const auto &props = GetShaderProps(shader);
+  const Prim *shader_prim = FindPrimForShader(ng_prim, shader);
 
   // Macro-style shorthand for resolving inputs
-  #define RESOLVE(name) RI(stage, ng_prim, props, name, nt, max_depth)
+  #define RESOLVE(name) RI(stage, ng_prim, shader_prim, props, name, nt, \
+                           max_depth, evaluation_space)
 
   // --- Constant nodes ---
   if (nt == "ND_constant_float" || nt == "ND_constant_color3" ||
@@ -551,7 +610,7 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
       nt.find("ND_acos_") == 0) {
     auto v = RESOLVE("inputs:in");
     if (!v) return nonstd::make_unexpected(v.error());
-    MtlxConstVal r; r.n = v->n;
+    MtlxConstVal r; r.n = v->n; r.color_managed = v->color_managed;
     for (int i = 0; i < v->n; ++i) {
       float x = v->v[static_cast<size_t>(i)];
       float y = 0.0f;
@@ -582,11 +641,16 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     // float→color3: broadcast, color3→float: take first component
     if (nt.find("_float_color3") != std::string::npos ||
         nt.find("_float_vector3") != std::string::npos) {
-      return MtlxConstVal::Color3(v->as_float(), v->as_float(), v->as_float());
+      MtlxConstVal r =
+          MtlxConstVal::Color3(v->as_float(), v->as_float(), v->as_float());
+      r.color_managed = v->color_managed;
+      return r;
     }
     if (nt.find("_color3_float") != std::string::npos ||
         nt.find("_vector3_float") != std::string::npos) {
-      return MtlxConstVal::Float(v->v[0]);
+      MtlxConstVal r = MtlxConstVal::Float(v->v[0]);
+      r.color_managed = v->color_managed;
+      return r;
     }
     // color3<->vector3 are the same layout
     return *v;
@@ -598,7 +662,9 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     if (!v) return nonstd::make_unexpected(v.error());
     // Rec.709 luminance coefficients
     float lum = 0.2126f * v->v[0] + 0.7152f * v->v[1] + 0.0722f * v->v[2];
-    return MtlxConstVal::Color3(lum, lum, lum);
+    MtlxConstVal r = MtlxConstVal::Color3(lum, lum, lum);
+    r.color_managed = v->color_managed;
+    return r;
   }
 
   // --- Dot product (vector3 → float) ---
@@ -619,10 +685,12 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     if (!a) return nonstd::make_unexpected(a.error());
     auto b = RESOLVE("inputs:in2");
     if (!b) return nonstd::make_unexpected(b.error());
-    return MtlxConstVal::Color3(
+    MtlxConstVal r = MtlxConstVal::Color3(
         a->v[1] * b->v[2] - a->v[2] * b->v[1],
         a->v[2] * b->v[0] - a->v[0] * b->v[2],
         a->v[0] * b->v[1] - a->v[1] * b->v[0]);
+    r.color_managed = a->color_managed || b->color_managed;
+    return r;
   }
 
   // --- Magnitude (vector3 → float) ---
@@ -631,7 +699,9 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     if (!v) return nonstd::make_unexpected(v.error());
     float mag = 0.0f;
     for (int i = 0; i < v->n; ++i) mag += v->v[static_cast<size_t>(i)] * v->v[static_cast<size_t>(i)];
-    return MtlxConstVal::Float(std::sqrt(mag));
+    MtlxConstVal r = MtlxConstVal::Float(std::sqrt(mag));
+    r.color_managed = v->color_managed;
+    return r;
   }
 
   // --- Normalize (vector3 → vector3) ---
@@ -642,7 +712,7 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     for (int i = 0; i < v->n; ++i) mag += v->v[static_cast<size_t>(i)] * v->v[static_cast<size_t>(i)];
     mag = std::sqrt(mag);
     if (mag < 1e-7f) return *v;
-    MtlxConstVal r; r.n = v->n;
+    MtlxConstVal r; r.n = v->n; r.color_managed = v->color_managed;
     for (int i = 0; i < v->n; ++i) r.v[static_cast<size_t>(i)] = v->v[static_cast<size_t>(i)] / mag;
     return r;
   }
@@ -681,6 +751,8 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     auto hi = RESOLVE("inputs:high");
     if (!hi) return nonstd::make_unexpected(hi.error());
     MtlxConstVal r; r.n = v->n;
+    r.color_managed = v->color_managed || lo->color_managed ||
+                      hi->color_managed;
     for (int i = 0; i < v->n; ++i) {
       size_t ui = static_cast<size_t>(i);
       float l = (i < lo->n) ? lo->v[ui] : lo->v[0];
@@ -702,7 +774,7 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     const float a = amt ? amt->as_float() : 1.0f;  // amount defaults to 1
     const float lum =
         0.2126f * v->v[0] + 0.7152f * v->v[1] + 0.0722f * v->v[2];
-    MtlxConstVal r; r.n = v->n;
+    MtlxConstVal r; r.n = v->n; r.color_managed = v->color_managed;
     for (int i = 0; i < v->n; ++i) {
       size_t ui = static_cast<size_t>(i);
       r.v[ui] = lum + (v->v[ui] - lum) * a;
@@ -721,6 +793,7 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     float t = mx->as_float();
     int nc = (std::max)(bg->n, fg->n);
     MtlxConstVal r; r.n = nc;
+    r.color_managed = bg->color_managed || fg->color_managed;
     for (int i = 0; i < nc; ++i) {
       float a = (i < bg->n) ? bg->v[static_cast<size_t>(i)] : bg->v[0];
       float b = (i < fg->n) ? fg->v[static_cast<size_t>(i)] : fg->v[0];
@@ -743,6 +816,9 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     if (!outhi) return nonstd::make_unexpected(outhi.error());
     int nc = v->n;
     MtlxConstVal r; r.n = nc;
+    r.color_managed = v->color_managed || inlo->color_managed ||
+                      inhi->color_managed || outlo->color_managed ||
+                      outhi->color_managed;
     for (int i = 0; i < nc; ++i) {
       size_t ui = static_cast<size_t>(i);
       float vi = v->v[ui];
@@ -764,6 +840,7 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     auto c2 = RESOLVE("inputs:in2");
     if (!c2) return nonstd::make_unexpected(c2.error());
     MtlxConstVal r; r.n = 2;
+    r.color_managed = c1->color_managed || c2->color_managed;
     r.v[0] = c1->as_float();
     r.v[1] = c2->as_float();
     return r;
@@ -777,7 +854,11 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     if (!c2) return nonstd::make_unexpected(c2.error());
     auto c3 = RESOLVE("inputs:in3");
     if (!c3) return nonstd::make_unexpected(c3.error());
-    return MtlxConstVal::Color3(c1->as_float(), c2->as_float(), c3->as_float());
+    MtlxConstVal r =
+        MtlxConstVal::Color3(c1->as_float(), c2->as_float(), c3->as_float());
+    r.color_managed = c1->color_managed || c2->color_managed ||
+                      c3->color_managed;
+    return r;
   }
 
   // --- Combine4 (four floats -> color4/vector4) ---
@@ -790,8 +871,11 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     if (!c3) return nonstd::make_unexpected(c3.error());
     auto c4 = RESOLVE("inputs:in4");
     if (!c4) return nonstd::make_unexpected(c4.error());
-    return MtlxConstVal::Color4(c1->as_float(), c2->as_float(),
-                                c3->as_float(), c4->as_float());
+    MtlxConstVal r = MtlxConstVal::Color4(
+        c1->as_float(), c2->as_float(), c3->as_float(), c4->as_float());
+    r.color_managed = c1->color_managed || c2->color_managed ||
+                      c3->color_managed || c4->color_managed;
+    return r;
   }
 
   // --- Extract (vectorN → float by index) ---
@@ -802,7 +886,10 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     if (!idx) return nonstd::make_unexpected(idx.error());
     int i = static_cast<int>(idx->as_float());
     if (i < 0 || i >= in_v->n) i = 0;
-    return MtlxConstVal::Float(in_v->v[static_cast<size_t>(i)]);
+    MtlxConstVal r =
+        MtlxConstVal::Float(in_v->v[static_cast<size_t>(i)]);
+    r.color_managed = in_v->color_managed;
+    return r;
   }
 
   // --- Separate2/3/4 (vectorN → per-channel float outputs) ---
@@ -816,7 +903,10 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     int ch = MtlxOutputChannelIndex(output_name);
     if (ch < 0) return *in_v;  // unnamed output
     if (ch >= in_v->n) ch = in_v->n - 1;
-    return MtlxConstVal::Float(in_v->v[static_cast<size_t>(ch)]);
+    MtlxConstVal r =
+        MtlxConstVal::Float(in_v->v[static_cast<size_t>(ch)]);
+    r.color_managed = in_v->color_managed;
+    return r;
   }
 
   // --- Swizzle (reorder/broadcast channels via a "channels" string) ---
@@ -833,6 +923,7 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     if (channels.empty()) return *in_v;
     MtlxConstVal r;
     r.n = (std::min)(static_cast<int>(channels.size()), 4);
+    r.color_managed = in_v->color_managed;
     for (int i = 0; i < r.n; ++i) {
       int ch = MtlxSwizzleCharIndex(channels[static_cast<size_t>(i)]);
       float val = 0.0f;
@@ -872,10 +963,12 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     HSVtoRGB(h, s, v_hsv, or_r, or_g, or_b);
 
     float f = fac->as_float();
-    return MtlxConstVal::Color3(
+    MtlxConstVal r = MtlxConstVal::Color3(
         in_v->v[0] * (1.0f - f) + or_r * f,
         in_v->v[1] * (1.0f - f) + or_g * f,
         in_v->v[2] * (1.0f - f) + or_b * f);
+    r.color_managed = in_v->color_managed;
+    return r;
   }
 
   if (nt == "ND_hsvadjust_color3") {
@@ -895,7 +988,9 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
 
     float or_r, or_g, or_b;
     HSVtoRGB(h, s, v_hsv, or_r, or_g, or_b);
-    return MtlxConstVal::Color3(or_r, or_g, or_b);
+    MtlxConstVal r = MtlxConstVal::Color3(or_r, or_g, or_b);
+    r.color_managed = in_v->color_managed;
+    return r;
   }
 
   #undef RESOLVE
@@ -1021,13 +1116,15 @@ ResolveNodeGraphTarget(const Stage &stage, const Path &connection_path,
 }  // namespace
 
 nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxNodeGraphAsConstant(
-    const Stage &stage, const Path &connection_path) {
+    const Stage &stage, const Path &connection_path,
+    const std::string &evaluation_space) {
   std::string target_out_name;
   auto target =
       ResolveNodeGraphTarget(stage, connection_path, &target_out_name);
   if (!target) return nonstd::make_unexpected(target.error());
   return EvaluateMtlxConstant(stage, target->first, target->second,
-                              /*max_depth=*/10, target_out_name);
+                              /*max_depth=*/10, evaluation_space,
+                              target_out_name);
 }
 
 nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(

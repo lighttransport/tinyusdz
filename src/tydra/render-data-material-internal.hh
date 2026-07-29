@@ -37,6 +37,7 @@ struct MtlxNodeGraphInfo {
 struct MtlxConstVal {
   std::array<float, 4> v{{0.0f, 0.0f, 0.0f, 0.0f}};
   int n{0};  // number of components: 1=float, 2=vector2, 3=color3, 4=color4
+  bool color_managed{false};
 
   static MtlxConstVal Float(float f) { MtlxConstVal r; r.v[0]=f; r.n=1; return r; }
   static MtlxConstVal Color3(float r, float g, float b) {
@@ -54,7 +55,8 @@ struct MtlxConstVal {
 
 // MaterialX node-graph evaluation entry points (defined in render-data-material-mtlx.cc).
 nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxNodeGraphAsConstant(
-    const Stage &stage, const Path &connection_path);
+    const Stage &stage, const Path &connection_path,
+    const std::string &evaluation_space);
 
 nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
     const Stage &stage, const Prim *material_prim,

@@ -59,7 +59,7 @@ def Xform "Root" (
     prepend apiSchemas = ["ColorSpaceAPI", "CollectionAPI:lookset"]
 )
 {
-    uniform token colorSpace:name = "lin_rec709_scene"
+    uniform token colorSpace:name = "sRGB"
     uniform token collection:lookset:expansionRule = "expandPrims"
     uniform bool collection:lookset:includeRoot = 1
     rel collection:lookset:includes = [</Root>]
@@ -142,10 +142,19 @@ void usd_validation_invalid_color_space_test(void) {
   const char *usda = R"(#usda 1.0
 
 def Scope "Root" (
-    prepend apiSchemas = ["ColorSpaceAPI"]
+    prepend apiSchemas = ["ColorSpaceAPI", "ColorSpaceDefinitionAPI:bad",
+        "ColorSpaceDefinitionAPI:dupA", "ColorSpaceDefinitionAPI:dupB"]
 )
 {
     uniform token colorSpace:name = "not_a_real_color_space"
+    uniform token colorSpaceDefinition:bad:name = "bad"
+    float2 colorSpaceDefinition:bad:redChroma = (0, 0)
+    float2 colorSpaceDefinition:bad:greenChroma = (0, 0)
+    float2 colorSpaceDefinition:bad:blueChroma = (0, 0)
+    float2 colorSpaceDefinition:bad:whitePoint = (0, 0)
+    float colorSpaceDefinition:bad:gamma = 0
+    uniform token colorSpaceDefinition:dupA:name = "duplicated"
+    uniform token colorSpaceDefinition:dupB:name = "duplicated"
 }
 )";
 
@@ -162,6 +171,8 @@ def Scope "Root" (
   const USDValidationResult result = ValidateLayerAgainstAOUSDCore(layer);
   TEST_CHECK(!result.ok());
   TEST_CHECK(HasRule(result, "core.schema.ColorSpaceAPI.name"));
+  TEST_CHECK(HasRule(result, "core.schema.ColorSpaceDefinitionAPI.invalid"));
+  TEST_CHECK(HasRule(result, "core.schema.ColorSpaceDefinitionAPI.duplicate"));
 }
 
 void usd_validation_layer_metadata_test(void) {

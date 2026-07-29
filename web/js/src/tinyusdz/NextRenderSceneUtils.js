@@ -11,6 +11,17 @@ export function defaultTextureConcurrency() {
   return Math.max(4, Math.min(16, cores || 8));
 }
 
+function nextTextureColorTransformKey(transform) {
+  if (!transform) return '';
+  return JSON.stringify([
+    transform.canonical || '',
+    Boolean(transform.bypass),
+    Number(transform.gamma ?? 1),
+    Number(transform.linearBias ?? 0),
+    Array.from(transform.matrix || [], Number)
+  ]);
+}
+
 export class NextTextureLoadingManager {
   constructor() {
     this.tasks = [];
@@ -33,7 +44,7 @@ export class NextTextureLoadingManager {
     const wrapS = nextTextureWrapMode(sampler?.wrapS);
     const wrapT = nextTextureWrapMode(sampler?.wrapT);
     const opsKey = materialXTextureOpsKey(materialXOps);
-    const transformKey = colorTransform?.canonical || '';
+    const transformKey = nextTextureColorTransformKey(colorTransform);
     const key = `${role}:${wrapS}:${wrapT}:${assetPath}:${opsKey}:${transformKey}`;
     let task = this.taskMap.get(key);
     if (!task) {

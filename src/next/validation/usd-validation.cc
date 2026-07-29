@@ -45,6 +45,7 @@
 #include "../prim/path.hh"
 #include "../types/type-id.hh"
 #include "../types/value.hh"
+#include "color-transform.hh"
 
 namespace tinyusdz {
 namespace next {
@@ -4879,8 +4880,9 @@ ColorSpaceSet CollectLocalColorSpaceDefinitions(
       local_defs.insert("custom");
       for (const char *prop_name : {"name", "colorSpaceDefinition:name"}) {
         std::string value;
-        if (GetTokenProperty(ps, prop_name, &value) && !value.empty()) {
-          local_defs.insert(value);
+      if (GetTokenProperty(ps, prop_name, &value) && !value.empty()) {
+        local_defs.insert(value);
+        local_defs.insert(::tinyusdz::color::CanonicalizeToken(value));
         }
       }
       continue;
@@ -4891,6 +4893,7 @@ ColorSpaceSet CollectLocalColorSpaceDefinitions(
         "colorSpaceDefinition:" + schema.instance_name + ":name";
     if (GetTokenProperty(ps, name_prop, &value) && !value.empty()) {
       local_defs.insert(value);
+      local_defs.insert(::tinyusdz::color::CanonicalizeToken(value));
     }
   }
   return local_defs;
@@ -4901,10 +4904,69 @@ bool IsKnownColorSpaceToken(const std::string &token,
   if (token.empty()) {
     return true;
   }
-  if (IsCanonicalColorSpaceToken(token)) {
+  const std::string canonical =
+      ::tinyusdz::color::CanonicalizeToken(token);
+  if (IsCanonicalColorSpaceToken(canonical)) {
     return true;
   }
-  return visible_custom_spaces.count(token) > 0;
+  return visible_custom_spaces.count(token) > 0 ||
+         visible_custom_spaces.count(canonical) > 0;
+}
+
+void ValidateLocalColorSpaceDefinitions(
+    const PrimSpec &ps, const std::vector<AppliedSchema> &applied_schemas,
+    const std::string &location, USDValidationResult *result) {
+  std::map<std::string, std::string> names;
+  for (const AppliedSchema &schema : applied_schemas) {
+    if (schema.name != "ColorSpaceDefinitionAPI") continue;
+    const bool legacy = schema.instance_name.empty();
+    const std::string prefix = legacy
+        ? std::string()
+        : "colorSpaceDefinition:" + schema.instance_name + ":";
+    std::string name = legacy ? "custom" : schema.instance_name;
+    std::string authored_name;
+    if (GetTokenProperty(ps, prefix + "name", &authored_name) &&
+        !authored_name.empty()) {
+      name = authored_name;
+    }
+    const std::string canonical =
+        ::tinyusdz::color::CanonicalizeToken(name);
+    auto inserted = names.emplace(canonical, schema.instance_name);
+    if (!inserted.second) {
+      AddError(result, "core.schema.ColorSpaceDefinitionAPI.duplicate",
+               location, "multiple definitions resolve to color space `" +
+                             canonical + "`");
+    }
+
+    float red[2] = {1.0f, 0.0f};
+    float green[2] = {0.0f, 1.0f};
+    float blue[2] = {0.0f, 0.0f};
+    float white[2] = {1.0f / 3.0f, 1.0f / 3.0f};
+    const auto read_float2 = [&](const std::string &property, float out[2]) {
+      const Value *value = GetAttrValue(ps, property);
+      if (!value) return;
+      if (const float *lanes = value->as_float2()) {
+        out[0] = lanes[0];
+        out[1] = lanes[1];
+      }
+    };
+    read_float2(prefix + "redChroma", red);
+    read_float2(prefix + "greenChroma", green);
+    read_float2(prefix + "blueChroma", blue);
+    read_float2(prefix + "whitePoint", white);
+    double gamma = 1.0;
+    double bias = 0.0;
+    (void)GetNumericScalarProperty(ps, prefix + "gamma", &gamma);
+    (void)GetNumericScalarProperty(ps, prefix + "linearBias", &bias);
+    ::tinyusdz::color::ColorSpaceDesc definition;
+    if (!::tinyusdz::color::MakeColorSpaceFromChromaticities(
+            canonical, red, green, blue, white, static_cast<float>(gamma),
+            static_cast<float>(bias), &definition)) {
+      AddError(result, "core.schema.ColorSpaceDefinitionAPI.invalid",
+               location, "definition `" + canonical +
+                             "` has invalid chromaticities or transfer curve");
+    }
+  }
 }
 
 void ValidateColorSpaceToken(const std::string &token,
@@ -5990,6 +6052,10 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
       HasAppliedSchema(applied_schemas, "ColorSpaceAPI");
   const bool has_color_space_definition_api =
       HasAppliedSchema(applied_schemas, "ColorSpaceDefinitionAPI");
+  if (options.core && has_color_space_definition_api) {
+    ValidateLocalColorSpaceDefinitions(ps, applied_schemas, prim_location,
+                                       result);
+  }
 
   // Per-property checks (attribute slots + relationships).
   for (const std::string &prop_name : AllPropertyNames(ps)) {
