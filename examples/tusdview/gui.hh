@@ -205,12 +205,14 @@ class Gui {
     size_t totalMeshes{0};
     size_t visibleInstances{0};
     size_t totalInstances{0};
+    size_t proxyInstances{0};
     size_t drawnTriangles{0};
     size_t drawCalls{0};
   };
   RenderStats renderStats() const {
     return {statVisibleMeshes_, draw_ ? draw_->meshes.size() : 0,
             statVisibleInstances_, statTotalInstances_,
+            statProxyInstances_,
             statNonInstTris_ + statInstTris_, statDrawCalls_};
   }
 
@@ -383,6 +385,7 @@ class Gui {
   size_t statVisibleMeshes_{0};
   size_t statTotalInstances_{0};
   size_t statVisibleInstances_{0};  // owned by cullInstances
+  size_t statProxyInstances_{0};    // aggregate/non-instanced box LOD proxies
   size_t statNonInstTris_{0};       // visible non-instanced triangles (per-mesh pass)
   size_t statInstTris_{0};          // visible instanced triangles (cullInstances)
   size_t statDrawCalls_{0};
