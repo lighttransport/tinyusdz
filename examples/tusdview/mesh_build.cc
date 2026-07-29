@@ -1298,7 +1298,7 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
     return true;
   };
   for (DrawTextureCPU& tex : out->textures) {
-    if (tex.isPtex) continue;
+    if (tex.isPtex || tex.deferredDecode) continue;
     // Kept-compressed KTX2 passthrough: the compressed payload is final and
     // `image` is empty, so there is nothing to build a mip chain from (the KTX2
     // level 0 is uploaded directly; multi-level KTX2 mips are a follow-up).

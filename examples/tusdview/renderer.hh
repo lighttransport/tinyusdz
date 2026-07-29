@@ -336,6 +336,7 @@ class Renderer {
     beginScene(scene.materials, static_cast<int>(scene.textures.size()));
     setLights(scene.lights, scene.meshes.size());
     for (size_t i = 0; i < scene.textures.size(); ++i) {
+      if (scene.textures[i].deferredDecode) continue;
       uploadTexture(static_cast<int>(i), scene.textures[i]);
     }
     static const bool timeit = std::getenv("TUSDVIEW_TIME_UPLOAD") != nullptr;
