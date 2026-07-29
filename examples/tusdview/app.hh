@@ -532,6 +532,13 @@ class App
   bool textureCameraSignatureValid_{false};
   std::vector<std::future<TextureDecodeResult>> textureDecodeJobs_;
   bool backgroundTextureRefinement_{true};
+  uint64_t textureDecodeRawBytes_{0};
+  uint64_t textureDecodeGpuBytes_{0};
+  uint64_t texturePeakResidentBytes_{0};
+  uint64_t textureCoarseUploads_{0};
+  uint64_t textureFullUploads_{0};
+  uint64_t textureDecodeFailures_{0};
+  uint64_t textureEvictions_{0};
 
   std::thread loadThread_;
   LoadControl loadCtrl_;

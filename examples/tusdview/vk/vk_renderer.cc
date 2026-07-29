@@ -4874,7 +4874,7 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   rtTexturesCpu_[index] = t;
   // Ray-query textures are packed into a host-built SSBO. A streamed
   // coarse/full replacement must rebuild that table before the next RT frame.
-  if (rtActive_) tlasDirty_ = true;
+  if (rtActive_) rtTextureTableDirty_ = true;
   const VkImage oldImg = texSlotImgs_[index];
   const VkDeviceMemory oldMem = texSlotMems_[index];
   const VkImageView oldView = texSlotViews_[index];
@@ -4997,7 +4997,7 @@ void VulkanRenderer::evictTexture(int slot) {
   texUdimArrayMems_[index] = VK_NULL_HANDLE;
   texIsUdim_[index] = 0;
   if (index < rtTexturesCpu_.size()) rtTexturesCpu_[index] = DrawTextureCPU{};
-  if (rtActive_) tlasDirty_ = true;
+  if (rtActive_) rtTextureTableDirty_ = true;
   refreshMaterialDescriptors();
 
   if (oldView && oldView != whiteView_)
@@ -6597,6 +6597,78 @@ void VulkanRenderer::evictBlasNotIn(const std::vector<uint32_t>& keepMeshIds) {
 // coarse grid (build cost + memory) is not worth it.
 static constexpr std::uint32_t kRtLodGridMinInstances = 4096;
 
+void VulkanRenderer::rebuildRtTextureTable() {
+  if (!device_ || !rtSet_) return;
+
+  if (rtTexelBuf_) vkDestroyBuffer(device_, rtTexelBuf_, nullptr);
+  if (rtTexelMem_) vkFreeMemory(device_, rtTexelMem_, nullptr);
+  if (rtTexDescBuf_) vkDestroyBuffer(device_, rtTexDescBuf_, nullptr);
+  if (rtTexDescMem_) vkFreeMemory(device_, rtTexDescMem_, nullptr);
+  if (rtMatTexBuf_) vkDestroyBuffer(device_, rtMatTexBuf_, nullptr);
+  if (rtMatTexMem_) vkFreeMemory(device_, rtMatTexMem_, nullptr);
+  if (rtMatTexParamBuf_) vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr);
+  if (rtMatTexParamMem_) vkFreeMemory(device_, rtMatTexParamMem_, nullptr);
+  rtTexelBuf_ = VK_NULL_HANDLE;
+  rtTexelMem_ = VK_NULL_HANDLE;
+  rtTexDescBuf_ = VK_NULL_HANDLE;
+  rtTexDescMem_ = VK_NULL_HANDLE;
+  rtMatTexBuf_ = VK_NULL_HANDLE;
+  rtMatTexMem_ = VK_NULL_HANDLE;
+  rtMatTexParamBuf_ = VK_NULL_HANDLE;
+  rtMatTexParamMem_ = VK_NULL_HANDLE;
+
+  HostTextureTable textures;
+  BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &textures);
+  const uint32_t dummyTexel = 0xffffffffu;
+  HostTextureDesc dummyDesc;
+  for (int& layer : dummyDesc.udimLayer) layer = -1;
+  if (textures.matTex.empty()) textures.matTex.assign(kRtMaterialTexSlots, -1);
+  if (textures.matTexParam.empty())
+    textures.matTexParam.assign(kRtMaterialTextureParamFloats, 0.0f);
+
+  createHostBuffer(textures.texels.empty() ? sizeof(dummyTexel)
+                                            : textures.texels.size(),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   textures.texels.empty()
+                       ? static_cast<const void*>(&dummyTexel)
+                       : static_cast<const void*>(textures.texels.data()),
+                   &rtTexelBuf_, &rtTexelMem_);
+  createHostBuffer(textures.textures.empty()
+                       ? sizeof(dummyDesc)
+                       : textures.textures.size() * sizeof(HostTextureDesc),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   textures.textures.empty()
+                       ? static_cast<const void*>(&dummyDesc)
+                       : static_cast<const void*>(textures.textures.data()),
+                   &rtTexDescBuf_, &rtTexDescMem_);
+  createHostBuffer(textures.matTex.size() * sizeof(int),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, textures.matTex.data(),
+                   &rtMatTexBuf_, &rtMatTexMem_);
+  createHostBuffer(textures.matTexParam.size() * sizeof(float),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   textures.matTexParam.data(), &rtMatTexParamBuf_,
+                   &rtMatTexParamMem_);
+
+  const VkDescriptorBufferInfo infos[4] = {
+      {rtTexelBuf_, 0, VK_WHOLE_SIZE},
+      {rtTexDescBuf_, 0, VK_WHOLE_SIZE},
+      {rtMatTexBuf_, 0, VK_WHOLE_SIZE},
+      {rtMatTexParamBuf_, 0, VK_WHOLE_SIZE},
+  };
+  VkWriteDescriptorSet writes[4]{};
+  for (uint32_t i = 0; i < 4; ++i) {
+    writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[i].dstSet = rtSet_;
+    writes[i].dstBinding = 11 + i;
+    writes[i].descriptorCount = 1;
+    writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[i].pBufferInfo = &infos[i];
+  }
+  vkUpdateDescriptorSets(device_, 4, writes, 0, nullptr);
+  rtTextureTableDirty_ = false;
+  ++rtAccumGen_;
+}
+
 void VulkanRenderer::rebuildTlas() {
   if (!rtSupported_ || meshes_.empty() || !rtSet_) return;
   // No vkDeviceWaitIdle: the caller (presentImpl) has already waited the in-flight
@@ -7101,6 +7173,7 @@ void VulkanRenderer::rebuildTlas() {
   vkUpdateDescriptorSets(device_, 13, w, 0, nullptr);
 
   tlasDirty_ = false;
+  rtTextureTableDirty_ = false;
   ++rtAccumGen_;  // geometry changed -> restart progressive accumulation
 }
 
@@ -8246,7 +8319,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   // vkDeviceWaitIdle and stall only on that one frame. The build itself is still
   // synchronous (its own one-shot submissions); fully overlapping it with the live
   // TLAS would need a background AS-build thread (follow-on).
-  if (rtFrame && tlasDirty_) rebuildTlas();
+  if (rtFrame && tlasDirty_)
+    rebuildTlas();
+  else if (rtFrame && rtTextureTableDirty_)
+    rebuildRtTextureTable();
 
   // Headless: no swapchain to acquire from — composite into our own image ring.
   uint32_t imageIndex = frame_;

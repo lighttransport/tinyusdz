@@ -324,6 +324,7 @@ class VulkanRenderer final : public Renderer {
   void initBoxProxyRaster();            // static box geometry for raster LOD proxies
   void drawBoxProxies(VkCommandBuffer cb);  // upload + instanced draw of box proxies
   void rebuildTlas();                  // (re)build TLAS + MeshDesc/Material SSBOs
+  void rebuildRtTextureTable();        // refresh bindings 11..14, keep AS intact
   void createRtImage();                // storage image sized to the viewport
   void traceRt(VkCommandBuffer cb);    // dispatch + copy into colorImg_
 
@@ -824,6 +825,7 @@ class VulkanRenderer final : public Renderer {
   float sceneMin_[3]{0, 0, 0};      // position-AOV scene bbox
   float sceneExtent_[3]{1, 1, 1};
   bool tlasDirty_{true};      // TLAS / SSBOs need rebuild
+  bool rtTextureTableDirty_{false};  // texture SSBOs changed; no AS rebuild needed
   std::string techniqueLabel_{"Vulkan"};  // caps_.backend_name points here
   uint32_t scratchAlign_{256};
   // Visible USD purposes for the RT TLAS (bit i = PurposeId i; default: guide
