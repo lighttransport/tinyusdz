@@ -42,6 +42,7 @@
 #include "next_scene_loader.hh"
 #include "next/tinyusdz-next.hh"  // tnext::Stage (per-frame --next morph weights)
 #include "skinning.hh"
+#include "texture_residency_policy.hh"
 
 #if defined(HAVE_NFD)
 #include "nfd.h"
@@ -117,6 +118,13 @@ void App::resetTextureResidency() {
     if (job.valid()) job.wait();
   }
   textureDecodeJobs_.clear();
+  textureDecodeRawBytes_ = 0;
+  textureDecodeGpuBytes_ = 0;
+  texturePeakResidentBytes_ = 0;
+  textureCoarseUploads_ = 0;
+  textureFullUploads_ = 0;
+  textureDecodeFailures_ = 0;
+  textureEvictions_ = 0;
   textureResidency_.assign(draw_.textures.size(), TextureResidencySlot{});
   textureSlotsByMesh_.clear();
   textureSlotsByMesh_.resize(draw_.meshes.size());
@@ -163,10 +171,17 @@ void App::updateTextureResidency() {
     if (ready.generation != state.generation) {
       // The user released the slot while this decode was in flight.
     } else if (!ready.ok) {
+      ++textureDecodeFailures_;
       state.state = state.residentBytes > 0
                         ? TextureResidencyState::CoarseResident
                         : TextureResidencyState::Failed;
     } else {
+      textureDecodeRawBytes_ += ready.texture.image.data.size();
+      textureDecodeGpuBytes_ += EstimateTextureResidentBytes(ready.texture);
+      if (ready.full)
+        ++textureFullUploads_;
+      else
+        ++textureCoarseUploads_;
       size_t residentBytes = 0;
       if (renderThreadActive_) {
         residentBytes = EstimateTextureResidentBytes(ready.texture);
@@ -225,6 +240,7 @@ void App::updateTextureResidency() {
       ++state.generation;
       if (state.residentBytes > 0) {
         postGpu([this, slot] { renderer_->evictTexture(slot); });
+        ++textureEvictions_;
         DrawTextureCPU& texture = draw_.textures[static_cast<size_t>(slot)];
         ReleaseOrdinaryTexturePayload(&texture);
         texture.deferredDecode = true;
@@ -237,8 +253,10 @@ void App::updateTextureResidency() {
   backgroundTextureRefinement_ = gui_.backgroundTextureRefinement();
 
   // Slot priority: selected, visible frustum, 20%-expanded frustum, background.
-  std::vector<int> priority(textureResidency_.size(),
-                            backgroundTextureRefinement_ ? 3 : 4);
+  std::vector<TextureDemandPriority> priority(
+      textureResidency_.size(),
+      backgroundTextureRefinement_ ? TextureDemandPriority::Background
+                                   : TextureDemandPriority::None);
   const std::vector<uint8_t>& visible = gui_.viewVisibility();
   const light3d::Vec3 eye = camera_.eye();
   const light3d::Vec3 target = camera_.target();
@@ -279,41 +297,44 @@ void App::updateTextureResidency() {
     }
   }
   for (size_t meshIndex = 0; meshIndex < draw_.meshes.size(); ++meshIndex) {
-    int p = 4;
+    TextureDemandPriority p = TextureDemandPriority::None;
     if (meshIndex < visible.size() && visible[meshIndex]) {
-      p = 1;
+      p = TextureDemandPriority::Visible;
     } else if (meshIndex < textureMarginVisible_.size() &&
                textureMarginVisible_[meshIndex]) {
-      p = 2;
+      p = TextureDemandPriority::Margin;
     }
-    if (p < 4 && meshIndex < textureSlotsByMesh_.size()) {
+    if (p != TextureDemandPriority::None &&
+        meshIndex < textureSlotsByMesh_.size()) {
       for (int slot : textureSlotsByMesh_[meshIndex]) {
         priority[static_cast<size_t>(slot)] =
             std::min(priority[static_cast<size_t>(slot)], p);
       }
     }
   }
-  for (int slot : selected) priority[static_cast<size_t>(slot)] = 0;
+  for (int slot : selected)
+    priority[static_cast<size_t>(slot)] = TextureDemandPriority::Selected;
   for (size_t i = 0; i < priority.size(); ++i) {
-    if (priority[i] < 3) textureResidency_[i].lastWanted = now;
+    if (priority[i] < TextureDemandPriority::Background)
+      textureResidency_[i].lastWanted = now;
   }
 
   // Launch no more than four independent decoders. Selected slots bypass the
   // coarse edge cap; ordinary visible/background work uses the preview profile.
-  std::vector<size_t> candidates;
+  std::vector<uint8_t> decodeEligible(textureResidency_.size(), uint8_t{0});
   for (size_t i = 0; i < textureResidency_.size(); ++i) {
     const TextureResidencySlot& state = textureResidency_[i];
     const bool wantsFull = selectedMask[i] || state.forceFull;
     const bool canDecode = state.state == TextureResidencyState::Unloaded ||
                            (wantsFull && state.state ==
                                              TextureResidencyState::CoarseResident);
-    if (canDecode && priority[i] < 4 &&
-        !draw_.textures[i].assetIdentifier.empty())
-      candidates.push_back(i);
+    decodeEligible[i] = canDecode && priority[i] != TextureDemandPriority::None &&
+                                !draw_.textures[i].assetIdentifier.empty()
+                            ? 1u
+                            : 0u;
   }
-  std::stable_sort(candidates.begin(), candidates.end(), [&](size_t a, size_t b) {
-    return priority[a] < priority[b];
-  });
+  const std::vector<size_t> candidates =
+      OrderTextureDecodeCandidates(priority, decodeEligible);
   const uint64_t totalBudget = loadOpts_.textureOptions.textureBudgetMB > 0
                                    ? uint64_t(loadOpts_.textureOptions.textureBudgetMB) *
                                          1024ull * 1024ull
@@ -361,21 +382,23 @@ void App::updateTextureResidency() {
                              : 0;
   const size_t allowed = baseBudget ? baseBudget + reserve : 0;
   while (allowed && residentBytes > allowed) {
-    size_t victim = textureResidency_.size();
+    std::vector<TextureEvictionCandidate> evictionCandidates;
+    evictionCandidates.reserve(textureResidency_.size());
     for (size_t i = 0; i < textureResidency_.size(); ++i) {
       const TextureResidencySlot& state = textureResidency_[i];
-      if (selectedMask[i] || state.residentBytes == 0 ||
-          state.state == TextureResidencyState::Decoding ||
-          now - state.lastWanted < std::chrono::seconds(2))
-        continue;
-      if (victim == textureResidency_.size() ||
-          state.lastWanted < textureResidency_[victim].lastWanted)
-        victim = i;
+      evictionCandidates.push_back(TextureEvictionCandidate{
+          i, std::chrono::duration<double>(now - state.lastWanted).count(),
+          state.residentBytes, selectedMask[i] != 0,
+          state.state == TextureResidencyState::Decoding});
     }
-    if (victim == textureResidency_.size()) break;
+    const size_t victimIndex = ChooseTextureEvictionVictim(
+        evictionCandidates.data(), evictionCandidates.size(), 2.0);
+    if (victimIndex == evictionCandidates.size()) break;
+    const size_t victim = evictionCandidates[victimIndex].slot;
     postGpu([this, victim] {
       renderer_->evictTexture(static_cast<int>(victim));
     });
+    ++textureEvictions_;
     residentBytes -= textureResidency_[victim].residentBytes;
     DrawTextureCPU& texture = draw_.textures[victim];
     ReleaseOrdinaryTexturePayload(&texture);
@@ -389,6 +412,8 @@ void App::updateTextureResidency() {
   info.total = textureResidency_.size();
   info.queued = textureDecodeJobs_.size();
   info.backgroundRefinement = backgroundTextureRefinement_;
+  texturePeakResidentBytes_ =
+      std::max<uint64_t>(texturePeakResidentBytes_, residentBytes);
   for (const TextureResidencySlot& state : textureResidency_) {
     if (state.residentBytes > 0) ++info.resident;
   }
@@ -416,6 +441,25 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
     report["backend"]["device"] = rtDevice.empty() ? caps.gpu_name : rtDevice;
     report["backend"]["api"] = caps.api_info;
   }
+  uint64_t residentTextureBytes = 0;
+  uint64_t residentTextureSlots = 0;
+  for (const TextureResidencySlot& slot : textureResidency_) {
+    residentTextureBytes += slot.residentBytes;
+    if (slot.residentBytes > 0) ++residentTextureSlots;
+  }
+  report["texture_residency"] = {
+      {"slots", textureResidency_.size()},
+      {"resident_slots", residentTextureSlots},
+      {"resident_bytes", residentTextureBytes},
+      {"peak_resident_bytes", texturePeakResidentBytes_},
+      {"decoded_raw_bytes", textureDecodeRawBytes_},
+      {"uploaded_gpu_bytes", textureDecodeGpuBytes_},
+      {"coarse_uploads", textureCoarseUploads_},
+      {"full_uploads", textureFullUploads_},
+      {"decode_failures", textureDecodeFailures_},
+      {"evictions", textureEvictions_},
+      {"background_refinement", backgroundTextureRefinement_},
+  };
   int width = 0, height = 0;
   if (reportCaptureWidth_ > 0 && reportCaptureHeight_ > 0) {
     width = reportCaptureWidth_;
