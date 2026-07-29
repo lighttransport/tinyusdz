@@ -54,6 +54,7 @@ set(TUSDVIEW_SOURCES
     config.cc
     scene_loader.cc
     next_scene_loader.cc
+    preview_cache.cc
     ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
     ptex_atlas.cc
     mesh_build.cc
@@ -325,6 +326,17 @@ if(TINYUSDZ_BUILD_TESTS)
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${COMMON_DIR})
 
+  add_executable(tusdview_preview_cache_test
+      tests/preview_cache_test.cc
+      preview_cache.cc)
+  target_compile_features(tusdview_preview_cache_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_preview_cache_test)
+  target_include_directories(tusdview_preview_cache_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external)
+  target_link_libraries(tusdview_preview_cache_test PRIVATE tinyusdz_next)
+
   # Register the tusdview unit tests with ctest. They were built here but never
   # registered (this file had no add_test at all), so a regression in any of
   # them went unnoticed. Works because the top-level CMakeLists.txt calls
@@ -338,7 +350,8 @@ if(TINYUSDZ_BUILD_TESTS)
       tusdview_geometry_primvar_test
       tusdview_texture_pipeline_test
       tusdview_lightrt_mtlx_eval_test
-      tusdview_camera_nav_test)
+      tusdview_camera_nav_test
+      tusdview_preview_cache_test)
     add_test(NAME ${tv_test} COMMAND ${tv_test})
     set_tests_properties(${tv_test} PROPERTIES LABELS "tusdview")
   endforeach()

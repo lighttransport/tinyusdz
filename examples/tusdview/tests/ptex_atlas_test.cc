@@ -242,6 +242,23 @@ void RunType(uint32_t type, uint16_t channels = 1) {
   CHECK(std::fabs(tusdview::SampleTextureRed(scene, 0, 0.37f, 0.61f, 1) -
                   0.75f) < 0.02f);
 
+  // Demand-driven startup atlases reserve later faces for physical-page
+  // streaming instead of decoding every face eagerly.
+  if (rects.size() >= 2) {
+    tusdview::PtexAtlasOptions lazy = options;
+    lazy.initialFaceLimit = 1;
+    lazy.maxPhysicalCacheBytes = 64u * 64u * 4u;
+    light3d::Image lazyAtlas;
+    std::vector<tusdview::DrawPtexFaceRectCPU> lazyRects;
+    tusdview::PtexAtlasBuildStats lazyStats;
+    CHECK(tusdview::BuildPtexAtlas(reader, lazy, false, &lazyAtlas,
+                                   &lazyRects, &lazyStats, &error));
+    CHECK(lazyRects.size() == rects.size());
+    CHECK(lazyRects[0].reserved == 0);
+    CHECK(lazyRects[1].reserved == 1);
+    CHECK(lazyStats.decodedFaces < stats.decodedFaces);
+  }
+
   const auto& r0 = rects[0];
   const size_t rgba = (size_t(r0.y) * atlas.width + r0.x) * 4u;
   CHECK(std::abs(int(atlas.data[rgba + 1]) - (channels > 2 ? 128 : 64)) <= 1);

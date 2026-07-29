@@ -1094,6 +1094,16 @@ void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
 // live outside the anonymous namespace (external linkage).
 void ClassifyTextureUsage(DrawScene* out);  // defined below (near FinalizeDrawTextures)
 
+void CompressDrawTexture(const TextureRuntimeOptions& opt,
+                         DrawTextureCPU* texture) {
+  if (!texture || opt.compression == TextureCompressionMode::Off ||
+      texture->isPtex || texture->compressedFinal) {
+    return;
+  }
+  texture->requestedCompressed = true;
+  CompressTexture(texture, opt.compression, opt.caps, texture->isNormalMap);
+}
+
 void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
   if (!out || opt.compression == TextureCompressionMode::Off) return;
   // Classify usage first so a normal map is not compressed onto a BC1/BC3 color

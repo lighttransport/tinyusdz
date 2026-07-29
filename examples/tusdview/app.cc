@@ -56,6 +56,257 @@ void GlfwErrorCallback(int code, const char* desc) {
 
 }  // anonymous namespace
 
+std::vector<int> App::selectedTextureSlots() const {
+  std::vector<int> slots;
+  const int meshIndex = gui_.selectedMeshIndex();
+  if (meshIndex < 0 || static_cast<size_t>(meshIndex) >= draw_.meshes.size())
+    return slots;
+  auto appendMaterial = [&](int materialId) {
+    if (materialId < 0 || static_cast<size_t>(materialId) >= draw_.materials.size())
+      return;
+    const DrawMaterialCPU& m = draw_.materials[static_cast<size_t>(materialId)];
+    const int ids[] = {
+        m.baseColorTex,       m.metallicTex,      m.roughnessTex,
+        m.normalTex,          m.coatNormalTex,    m.emissiveTex,
+        m.opacityTex,         m.occlusionTex,     m.specularColorTex,
+        m.coatWeightTex,      m.coatColorTex,     m.coatRoughnessTex,
+        m.displacementTex,
+    };
+    for (int id : ids) {
+      if (id >= 0 && static_cast<size_t>(id) < textureResidency_.size())
+        slots.push_back(id);
+    }
+  };
+  for (const DrawSubmesh& submesh :
+       draw_.meshes[static_cast<size_t>(meshIndex)].submeshes) {
+    appendMaterial(submesh.materialId);
+  }
+  std::sort(slots.begin(), slots.end());
+  slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
+  return slots;
+}
+
+void App::resetTextureResidency() {
+  // A reload joins the scene loader first. At most four independent filesystem
+  // decodes can still be finishing here; consuming them keeps future teardown
+  // deterministic and prevents results crossing scene generations.
+  for (std::future<TextureDecodeResult>& job : textureDecodeJobs_) {
+    if (job.valid()) job.wait();
+  }
+  textureDecodeJobs_.clear();
+  textureResidency_.assign(draw_.textures.size(), TextureResidencySlot{});
+  for (size_t i = 0; i < draw_.textures.size(); ++i) {
+    if (!draw_.textures[i].deferredDecode) {
+      textureResidency_[i].state = TextureResidencyState::FullResident;
+      textureResidency_[i].residentBytes = renderer_->textureResidentBytes(
+          static_cast<int>(i));
+    }
+  }
+}
+
+void App::updateTextureResidency() {
+  if (!renderer_ || textureResidency_.empty() || renderThreadActive_) return;
+  using Clock = std::chrono::steady_clock;
+  const auto now = Clock::now();
+
+  // Publish completed work without blocking the frame.
+  for (size_t i = 0; i < textureDecodeJobs_.size();) {
+    std::future<TextureDecodeResult>& job = textureDecodeJobs_[i];
+    if (job.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+      ++i;
+      continue;
+    }
+    TextureDecodeResult ready = job.get();
+    TextureResidencySlot& state = textureResidency_[ready.slot];
+    if (ready.generation != state.generation) {
+      // The user released the slot while this decode was in flight.
+    } else if (!ready.ok) {
+      state.state = state.residentBytes > 0
+                        ? TextureResidencyState::CoarseResident
+                        : TextureResidencyState::Failed;
+    } else {
+      renderer_->uploadTexture(static_cast<int>(ready.slot), ready.texture);
+      state.state = ready.full ? TextureResidencyState::FullResident
+                               : TextureResidencyState::CoarseResident;
+      state.residentBytes =
+          renderer_->textureResidentBytes(static_cast<int>(ready.slot));
+      state.lastWanted = now;
+      if (!ready.texture.compressed.data.empty()) {
+        ready.texture.image.data.clear();
+        ready.texture.image.data.shrink_to_fit();
+      }
+      draw_.textures[ready.slot] = std::move(ready.texture);
+    }
+    textureDecodeJobs_.erase(textureDecodeJobs_.begin() +
+                             static_cast<std::ptrdiff_t>(i));
+  }
+
+  const std::vector<int> selected = selectedTextureSlots();
+  std::vector<uint8_t> selectedMask(textureResidency_.size(), uint8_t{0});
+  for (int slot : selected) selectedMask[static_cast<size_t>(slot)] = 1;
+  if (gui_.wantRefineSelectedTextures()) {
+    for (int slot : selected) textureResidency_[static_cast<size_t>(slot)].forceFull = true;
+  }
+  if (gui_.wantReleaseSelectedTextures()) {
+    for (int slot : selected) {
+      TextureResidencySlot& state = textureResidency_[static_cast<size_t>(slot)];
+      ++state.generation;
+      if (state.residentBytes > 0) {
+        renderer_->evictTexture(slot);
+        DrawTextureCPU& texture = draw_.textures[static_cast<size_t>(slot)];
+        texture.image.data.clear();
+        texture.compressed.data.clear();
+        texture.compressed.mips.clear();
+        texture.deferredDecode = true;
+      }
+      const uint64_t generation = state.generation;
+      state = TextureResidencySlot{};
+      state.generation = generation;
+    }
+  }
+  backgroundTextureRefinement_ = gui_.backgroundTextureRefinement();
+
+  // Slot priority: selected, visible frustum, 20%-expanded frustum, background.
+  std::vector<int> priority(textureResidency_.size(),
+                            backgroundTextureRefinement_ ? 3 : 4);
+  const std::vector<uint8_t>& visible = gui_.viewVisibility();
+  light3d::Mat4 expandedProj = camera_.proj(false);
+  expandedProj.m[0] /= 1.2f;
+  expandedProj.m[5] /= 1.2f;
+  const light3d::Frustum expanded = light3d::Frustum::fromViewProjection(
+      expandedProj * camera_.view());
+  auto markMaterial = [&](int materialId, int p) {
+    if (materialId < 0 || static_cast<size_t>(materialId) >= draw_.materials.size())
+      return;
+    const DrawMaterialCPU& m = draw_.materials[static_cast<size_t>(materialId)];
+    const int ids[] = {m.baseColorTex, m.metallicTex, m.roughnessTex,
+                       m.normalTex, m.coatNormalTex, m.emissiveTex,
+                       m.opacityTex, m.occlusionTex, m.specularColorTex,
+                       m.coatWeightTex, m.coatColorTex, m.coatRoughnessTex,
+                       m.displacementTex};
+    for (int id : ids) {
+      if (id >= 0 && static_cast<size_t>(id) < priority.size())
+        priority[static_cast<size_t>(id)] =
+            std::min(priority[static_cast<size_t>(id)], p);
+    }
+  };
+  for (size_t meshIndex = 0; meshIndex < draw_.meshes.size(); ++meshIndex) {
+    const DrawMeshCPU& mesh = draw_.meshes[meshIndex];
+    int p = 4;
+    if (meshIndex < visible.size() && visible[meshIndex]) {
+      p = 1;
+    } else {
+      const light3d::Vec3 mn{mesh.aabbMin[0], mesh.aabbMin[1], mesh.aabbMin[2]};
+      const light3d::Vec3 mx{mesh.aabbMax[0], mesh.aabbMax[1], mesh.aabbMax[2]};
+      if (expanded.testAABB(mn, mx) != light3d::CullResult::Outside) p = 2;
+    }
+    if (p < 4) {
+      for (const DrawSubmesh& submesh : mesh.submeshes)
+        markMaterial(submesh.materialId, p);
+    }
+  }
+  for (int slot : selected) priority[static_cast<size_t>(slot)] = 0;
+  for (size_t i = 0; i < priority.size(); ++i) {
+    if (priority[i] < 3) textureResidency_[i].lastWanted = now;
+  }
+
+  // Launch no more than four independent decoders. Selected slots bypass the
+  // coarse edge cap; ordinary visible/background work uses the preview profile.
+  std::vector<size_t> candidates;
+  for (size_t i = 0; i < textureResidency_.size(); ++i) {
+    const TextureResidencySlot& state = textureResidency_[i];
+    const bool wantsFull = selectedMask[i] || state.forceFull;
+    const bool canDecode = state.state == TextureResidencyState::Unloaded ||
+                           (wantsFull && state.state ==
+                                             TextureResidencyState::CoarseResident);
+    if (canDecode && priority[i] < 4 &&
+        !draw_.textures[i].assetIdentifier.empty())
+      candidates.push_back(i);
+  }
+  std::stable_sort(candidates.begin(), candidates.end(), [&](size_t a, size_t b) {
+    return priority[a] < priority[b];
+  });
+  const uint64_t totalBudget = loadOpts_.textureOptions.textureBudgetMB > 0
+                                   ? uint64_t(loadOpts_.textureOptions.textureBudgetMB) *
+                                         1024ull * 1024ull
+                                   : 0;
+  const uint64_t perDecodeBudget =
+      totalBudget && !textureResidency_.empty()
+          ? std::max<uint64_t>(1ull << 20, totalBudget / textureResidency_.size())
+          : 0;
+  for (size_t slot : candidates) {
+    if (textureDecodeJobs_.size() >= 4) break;
+    TextureResidencySlot& state = textureResidency_[slot];
+    const bool full = selectedMask[slot] || state.forceFull;
+    TextureRuntimeOptions runtime = loadOpts_.textureOptions;
+    if (full) runtime.maxTextureSize = 0;
+    DrawTextureCPU placeholder = draw_.textures[slot];
+    placeholder.deferredDecode = true;
+    state.state = TextureResidencyState::Decoding;
+    const uint64_t generation = state.generation;
+    textureDecodeJobs_.push_back(std::async(
+        std::launch::async,
+        [slot, full, generation, placeholder = std::move(placeholder), runtime,
+         perDecodeBudget]() mutable {
+          TextureDecodeResult result;
+          result.slot = slot;
+          result.full = full;
+          result.generation = generation;
+          result.ok = DecodeDeferredDrawTexture(placeholder, runtime,
+                                                full ? 0 : perDecodeBudget,
+                                                &result.texture);
+          return result;
+        }));
+  }
+
+  // Budget eviction: selected full-res gets a 10% reserve capped at 1 GiB.
+  size_t residentBytes = 0;
+  for (const TextureResidencySlot& state : textureResidency_)
+    residentBytes += state.residentBytes;
+  const size_t baseBudget = static_cast<size_t>(totalBudget);
+  size_t selectedResidentBytes = 0;
+  for (size_t i = 0; i < textureResidency_.size(); ++i) {
+    if (selectedMask[i]) selectedResidentBytes += textureResidency_[i].residentBytes;
+  }
+  const size_t reserve = selectedResidentBytes > 0
+                             ? std::min<size_t>(baseBudget / 10u, 1ull << 30)
+                             : 0;
+  const size_t allowed = baseBudget ? baseBudget + reserve : 0;
+  while (allowed && residentBytes > allowed) {
+    size_t victim = textureResidency_.size();
+    for (size_t i = 0; i < textureResidency_.size(); ++i) {
+      const TextureResidencySlot& state = textureResidency_[i];
+      if (selectedMask[i] || state.residentBytes == 0 ||
+          state.state == TextureResidencyState::Decoding ||
+          now - state.lastWanted < std::chrono::seconds(2))
+        continue;
+      if (victim == textureResidency_.size() ||
+          state.lastWanted < textureResidency_[victim].lastWanted)
+        victim = i;
+    }
+    if (victim == textureResidency_.size()) break;
+    renderer_->evictTexture(static_cast<int>(victim));
+    residentBytes -= textureResidency_[victim].residentBytes;
+    DrawTextureCPU& texture = draw_.textures[victim];
+    texture.image.data.clear();
+    texture.compressed.data.clear();
+    texture.compressed.mips.clear();
+    texture.deferredDecode = true;
+    textureResidency_[victim] = TextureResidencySlot{};
+  }
+
+  Gui::TextureResidencyInfo info;
+  info.residentBytes = residentBytes;
+  info.budgetBytes = baseBudget;
+  info.total = textureResidency_.size();
+  info.queued = textureDecodeJobs_.size();
+  info.backgroundRefinement = backgroundTextureRefinement_;
+  for (const TextureResidencySlot& state : textureResidency_) {
+    if (state.residentBytes > 0) ++info.resident;
+  }
+  gui_.setTextureResidencyInfo(info);
+}
+
 void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   if (renderReportPath_.empty()) return;
   using json = nlohmann::json;
@@ -65,6 +316,8 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
                                     : "error";
   report["exit_code"] = exitCode;
   report["scene"] = scenePath;
+  report["profile"] = largeSceneProfile_;
+  report["camera"] = cameraName_.empty() ? "auto" : cameraName_;
   report["backend"] = json::object();
   if (renderer_) {
     const RendererCaps& caps = renderer_->caps();
@@ -91,6 +344,9 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   uint64_t ptexPageDecodedBytes = 0;
   uint64_t ptexPhysicalSlots = 0, ptexGpuUploads = 0, ptexGpuHits = 0;
   uint64_t ptexGpuMisses = 0, ptexGpuEvictions = 0;
+  size_t ptexRequestedFaces = 0;
+  for (const auto& requests : ptexRequestedFaces_)
+    ptexRequestedFaces += requests.size();
   for (const DrawTextureCPU& texture : draw_.textures) {
     if (!texture.isPtex) continue;
     ++ptexTextures;
@@ -154,6 +410,7 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"ptex_gpu_page_hits", ptexGpuHits},
       {"ptex_gpu_page_misses", ptexGpuMisses},
       {"ptex_gpu_page_evictions", ptexGpuEvictions},
+      {"ptex_requested_faces", ptexRequestedFaces},
       {"ptex_displaced_meshes", ptexDisplacedMeshes},
       {"ptex_slots",
        {{"base_color", ptexBase},
@@ -185,11 +442,18 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"gpu_total_mib", gpuTotal}};
   report["render"] = {
       {"samples", rtSamples_},
+      {"upload_budget_ms", uploadBudgetMs_},
+      {"raster_lod", rasterLodEnabled_},
+      {"rt_lod", rtLodEnabled_},
       {"elapsed_seconds",
        std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                      runStart_)
            .count()},
       {"truncated", draw_.truncated}};
+  report["limits"] = {
+      {"gpu_memory_budget_bytes", gpuMemBudgetBytes_},
+      {"max_full_meshes", maxFullMeshes_},
+      {"rt_max_instances", rtMaxInstances_}};
   std::vector<std::string> degradationReasons = draw_.skipped;
   if (draw_.truncated) {
     degradationReasons.push_back(
@@ -830,6 +1094,63 @@ void App::compactDeferredMeshAux(size_t meshIndex) {
   deferredAuxCompressedBytes_ += aux.wire.size() + aux.sourceFaces.size();
 }
 
+void App::collectPtexRequests(const DrawMeshCPU& mesh) {
+  if (mesh.sourceFaceId.empty() || draw_.materials.empty()) return;
+  if (ptexRequestedFaces_.size() < draw_.textures.size()) {
+    ptexRequestedFaces_.resize(draw_.textures.size());
+    ptexRequestedFaceSets_.resize(draw_.textures.size());
+  }
+  for (const DrawSubmesh& submesh : mesh.submeshes) {
+    int textureIds[26];
+    size_t textureCount = 0;
+    auto appendMaterial = [&](int materialId) {
+      if (materialId < 0 || static_cast<size_t>(materialId) >= draw_.materials.size())
+        return;
+      const DrawMaterialCPU& m = draw_.materials[static_cast<size_t>(materialId)];
+      const std::pair<int, bool> slots[] = {
+          {m.baseColorTex, m.baseColorSample.isPtex},
+          {m.metallicTex, m.metallicSample.isPtex},
+          {m.roughnessTex, m.roughnessSample.isPtex},
+          {m.normalTex, m.normalSample.isPtex},
+          {m.coatNormalTex, m.coatNormalSample.isPtex},
+          {m.emissiveTex, m.emissiveSample.isPtex},
+          {m.opacityTex, m.opacitySample.isPtex},
+          {m.occlusionTex, m.occlusionSample.isPtex},
+          {m.specularColorTex, m.specularColorSample.isPtex},
+          {m.coatWeightTex, m.coatWeightSample.isPtex},
+          {m.coatColorTex, m.coatColorSample.isPtex},
+          {m.coatRoughnessTex, m.coatRoughnessSample.isPtex},
+          {m.displacementTex, m.displacementSample.isPtex}};
+      for (const auto& slot : slots) {
+        if (!slot.second || slot.first < 0 ||
+            static_cast<size_t>(slot.first) >= draw_.textures.size())
+          continue;
+        bool duplicate = false;
+        for (size_t i = 0; i < textureCount; ++i)
+          duplicate = duplicate || textureIds[i] == slot.first;
+        if (!duplicate) textureIds[textureCount++] = slot.first;
+      }
+    };
+    appendMaterial(submesh.materialId);
+    if (submesh.backfaceMaterialId != submesh.materialId)
+      appendMaterial(submesh.backfaceMaterialId);
+    if (textureCount == 0) continue;
+
+    const size_t firstTriangle = static_cast<size_t>(submesh.indexOffset) / 3u;
+    const size_t endTriangle = std::min(
+        mesh.sourceFaceId.size(),
+        (static_cast<size_t>(submesh.indexOffset) + submesh.indexCount) / 3u);
+    for (size_t triangle = firstTriangle; triangle < endTriangle; ++triangle) {
+      const uint32_t face = mesh.sourceFaceId[triangle];
+      for (size_t i = 0; i < textureCount; ++i) {
+        const size_t textureId = static_cast<size_t>(textureIds[i]);
+        if (ptexRequestedFaceSets_[textureId].insert(face).second)
+          ptexRequestedFaces_[textureId].push_back(face);
+      }
+    }
+  }
+}
+
 bool App::restoreDeferredMeshAux(size_t meshIndex) {
   if (meshIndex >= deferredMeshAux_.size()) return true;
   DeferredMeshAux& aux = deferredMeshAux_[meshIndex];
@@ -935,6 +1256,8 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     nextPtexTexture_ = 0;
     nextPtexFace_ = 0;
     ptexPhysicalCaches_.clear();
+    ptexRequestedFaces_.clear();
+    ptexRequestedFaceSets_.clear();
   }
 
   if (ok) {
@@ -1024,6 +1347,9 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     // Threaded: post upload + the CPU-geometry free together so they run, in order,
     // on the render thread (the free must not precede the upload it feeds).
     const bool freeCpu = ok && useNextLoader_ && !cudaRt_ && !hipRt_;
+    if (ok) {
+      for (const DrawMeshCPU& mesh : draw_.meshes) collectPtexRequests(mesh);
+    }
     // When the RT path owns the screenshot the rasterized scene is never drawn,
     // so skip the (potentially huge) raster upload entirely.
     if (!rtOwnsScreenshot_) {
@@ -1353,7 +1679,45 @@ void App::drainProgressiveLoad() {
 
   ProgressiveSceneEvent event;
   while (loadStream_->tryPop(&event)) {
-    if (event.type == ProgressiveSceneEvent::Type::Resources) {
+    if (event.type == ProgressiveSceneEvent::Type::PreviewScene) {
+      DrawScene preview = std::move(event.scene);
+      renderer_->beginScene(preview.materials,
+                            static_cast<int>(preview.textures.size()));
+      for (const DrawMeshCPU& mesh : preview.meshes) {
+        renderer_->appendMeshSurface(mesh);
+      }
+      draw_ = std::move(preview);
+      streamRendererBegun_ = true;
+      streamPreviewActive_ = true;
+      streamHasUsefulGeometry_ = !draw_.meshes.empty();
+      if (!draw_.meshes.empty()) {
+        for (int k = 0; k < 3; ++k) {
+          streamBoundsMin_[k] = draw_.meshes[0].aabbMin[k];
+          streamBoundsMax_[k] = draw_.meshes[0].aabbMax[k];
+        }
+        camera_.fitToScene(streamBoundsMin_, streamBoundsMax_);
+        streamCameraFramed_ = true;
+      }
+      if (loadOpts_.timing) {
+        LOGI("timing: composition preview uploaded %.3f s (%zu boxes)",
+             std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          runStart_)
+                 .count(),
+             draw_.meshes.empty() ? 0 : draw_.meshes[0].instanceCount());
+      }
+    } else if (event.type == ProgressiveSceneEvent::Type::Reset) {
+      renderer_->beginScene({}, 0);
+      draw_ = DrawScene{};
+      deferredMeshAux_.clear();
+      streamRendererBegun_ = false;
+      streamPreviewActive_ = false;
+      streamHasUsefulGeometry_ = false;
+      streamCameraFramed_ = false;
+      for (int k = 0; k < 3; ++k) {
+        streamBoundsMin_[k] = 1e30f;
+        streamBoundsMax_[k] = -1e30f;
+      }
+    } else if (event.type == ProgressiveSceneEvent::Type::Resources) {
       if (!streamRendererBegun_) {
         renderer_->beginScene(event.materials, event.textureCount);
         streamRendererBegun_ = true;
@@ -1371,6 +1735,7 @@ void App::drainProgressiveLoad() {
         streamRendererBegun_ = true;
       }
       DrawMeshCPU mesh = std::move(event.mesh);
+      collectPtexRequests(mesh);
       const size_t vertices = mesh.vertices.size();
       const size_t triangles = mesh.indices.size() / 3;
       const size_t effectiveTriangles =
@@ -1415,8 +1780,31 @@ void App::drainProgressiveLoad() {
              vertices, triangles);
       }
       if (elapsedMs() >= budgetMs) break;
+    } else if (event.type == ProgressiveSceneEvent::Type::Texture) {
+      if (event.textureSlot < 0) continue;
+      const size_t slot = static_cast<size_t>(event.textureSlot);
+      if (draw_.textures.size() <= slot) draw_.textures.resize(slot + 1);
+      renderer_->uploadTexture(event.textureSlot, event.texture);
+      // The block payload is the resident source after upload. Keep its asset
+      // identity for future refinement, but drop the 4x larger RGBA staging.
+      if (!event.texture.compressed.data.empty()) {
+        event.texture.image.data.clear();
+        event.texture.image.data.shrink_to_fit();
+      }
+      draw_.textures[slot] = std::move(event.texture);
+      if (loadOpts_.timing &&
+          (slot < 4 || ((slot + 1) % 32) == 0)) {
+        LOGI("timing: async texture %zu ready %.3f s (%dx%d, compressed=%s)",
+             slot,
+             std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          runStart_).count(),
+             draw_.textures[slot].image.width,
+             draw_.textures[slot].image.height,
+             draw_.textures[slot].compressed.data.empty() ? "no" : "yes");
+      }
     } else if (event.type == ProgressiveSceneEvent::Type::Complete) {
       std::vector<DrawMeshCPU> streamedMeshes = std::move(draw_.meshes);
+      std::vector<DrawTextureCPU> streamedTextures = std::move(draw_.textures);
       DrawScene finalScene = std::move(event.scene);
       renderer_->syncSceneResources(finalScene.materials,
                                     static_cast<int>(finalScene.textures.size()));
@@ -1426,9 +1814,29 @@ void App::drainProgressiveLoad() {
         renderer_->appendCurves(curves);
       draw_ = std::move(finalScene);
       draw_.meshes = std::move(streamedMeshes);
+      if (draw_.textures.size() < streamedTextures.size())
+        draw_.textures.resize(streamedTextures.size());
+      for (size_t i = 0; i < streamedTextures.size(); ++i) {
+        if (!streamedTextures[i].image.data.empty() ||
+            !streamedTextures[i].compressed.data.empty()) {
+          draw_.textures[i] = std::move(streamedTextures[i]);
+        }
+      }
+      // Deferred ordinary slots are scheduled from live camera demand. Upload
+      // only specialized synchronous payloads here; they remain outside the
+      // generic residency manager.
+      for (size_t i = 0; i < draw_.textures.size(); ++i) {
+        if (!draw_.textures[i].deferredDecode &&
+            (!draw_.textures[i].image.data.empty() ||
+             !draw_.textures[i].compressed.data.empty() ||
+             draw_.textures[i].streamingMutable)) {
+          renderer_->uploadTexture(static_cast<int>(i), draw_.textures[i]);
+        }
+      }
+      resetTextureResidency();
       draw_.vertexCount = streamUploadedVertices_;
       nextMesh_ = draw_.meshes.size();
-      nextTex_ = 0;
+      nextTex_ = draw_.textures.size();
       nextVolume_ = 0;
       nextPtexTexture_ = 0;
       nextPtexFace_ = 0;
@@ -1437,6 +1845,7 @@ void App::drainProgressiveLoad() {
                            !draw_.curves.empty() || !draw_.textures.empty() ||
                            !draw_.volumes.empty();
       streamCompleteSeen_ = true;
+      gui_.setSceneMutating(false);
       if (!streamFullConversionLogged_ && loadOpts_.timing) {
         streamFullConversionLogged_ = true;
         LOGI("timing: full scene converted %.3f s",
@@ -1451,6 +1860,7 @@ void App::drainProgressiveLoad() {
       }
     } else if (event.type == ProgressiveSceneEvent::Type::Failed) {
       streamCompleteSeen_ = true;
+      gui_.setSceneMutating(false);
       if (pendingLoaded_) pendingLoaded_->err = std::move(event.error);
     }
   }
@@ -1499,6 +1909,7 @@ void App::stepProgressiveUpload() {
   };
   // Geometry first so meshes appear, normally ~8ms/frame.
   while (nextMesh_ < draw_.meshes.size()) {
+    collectPtexRequests(draw_.meshes[nextMesh_]);
     renderer_->appendMesh(draw_.meshes[nextMesh_]);
     if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
         !MeshIsDeformable(draw_.meshes[nextMesh_]))
@@ -1615,7 +2026,16 @@ bool App::stepPtexResidency(double deadlineMs) {
           std::make_unique<PtexPhysicalPageCache>(
               texture.ptexPhysicalCacheSlots);
     }
-    if (nextPtexFace_ >= texture.ptexFaceRects.size()) {
+    const bool demandDriven = texture.ptexDemandDriven;
+    const size_t requestedCount =
+        nextPtexTexture_ < ptexRequestedFaces_.size()
+            ? ptexRequestedFaces_[nextPtexTexture_].size()
+            : 0u;
+    const size_t residencyFaceCount =
+        demandDriven ? requestedCount : texture.ptexFaceRects.size();
+    if (nextPtexFace_ >= residencyFaceCount) {
+      if (nextPtexTexture_ < ptexRequestedFaceSets_.size())
+        ptexRequestedFaceSets_[nextPtexTexture_].clear();
       ++nextPtexTexture_;
       nextPtexFace_ = 0;
       continue;
@@ -1631,7 +2051,14 @@ bool App::stepPtexResidency(double deadlineMs) {
       nextPtexFace_ = 0;
       continue;
     }
-    const uint32_t face = nextPtexFace_++;
+    const uint32_t face = demandDriven
+                              ? ptexRequestedFaces_[nextPtexTexture_][nextPtexFace_++]
+                              : nextPtexFace_++;
+    if (face >= texture.ptexFaceRects.size() ||
+        face >= reader.info().faceInfo.size()) {
+      LOGW("Ptex face request %u is out of range", face);
+      continue;
+    }
     const tinyusdz::ptx::FaceInfo& info = reader.info().faceInfo[face];
     uint32_t mip = 0;
     uint32_t width = info.width(), height = info.height();
@@ -1882,6 +2309,7 @@ void App::startLoadAsync(const std::string& path) {
     loadStream_ = std::make_shared<ProgressiveSceneStream>(maxBytes);
     streamLoadActive_ = true;
     streamRendererBegun_ = false;
+    streamPreviewActive_ = false;
     streamCompleteSeen_ = false;
     streamCameraFramed_ = false;
     streamFirstUploadLogged_ = false;
@@ -1902,6 +2330,7 @@ void App::startLoadAsync(const std::string& path) {
       streamBoundsMax_[a] = -1e30f;
     }
     draw_ = DrawScene{};
+    gui_.setSceneMutating(true);
   }
   std::shared_ptr<ProgressiveSceneStream> stream = loadStream_;
   int autoW = 0, autoH = 0;
@@ -2084,6 +2513,7 @@ void App::cancelAndJoinLoad() {
   loadStream_.reset();
   streamLoadActive_ = false;
   streamCompleteSeen_ = false;
+  gui_.setSceneMutating(false);
 }
 
 void App::readAnimationRange() {
@@ -3528,6 +3958,7 @@ int App::run(const std::string& initialFile, int maxFrames,
                  !(quitAfterFullUpload_ && streamFirstFrameLogged_ &&
                    loadActive_)) {
         gui_.renderViewportScene();
+        updateTextureResidency();
       }
 
       // Grab the composited window on the final frame (--window-shot).

@@ -181,7 +181,9 @@ class Gui {
   void setCullEnabled(bool on) { cullEnabled_ = on; }
   // Offload per-instance culling to a worker thread (interactive responsiveness).
   // Disabled in headless so screenshots stay synchronous/deterministic.
-  void setCullAsync(bool on) { cullAsync_ = on; }
+  void setCullAsync(bool on);
+  // Suspend culling while progressive loading mutates DrawScene::meshes.
+  void setSceneMutating(bool on);
   bool hasSkinningModeRequest() const { return hasSkinningModeRequest_; }
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {
@@ -222,6 +224,23 @@ class Gui {
   }
   const std::string& selectedPath() const { return selPath_; }
   int selectedMeshIndex() const { return selMeshIndex_; }
+  const std::vector<uint8_t>& viewVisibility() const { return viewVisible_; }
+  struct TextureResidencyInfo {
+    size_t residentBytes{0};
+    size_t budgetBytes{0};
+    size_t resident{0};
+    size_t queued{0};
+    size_t total{0};
+    bool backgroundRefinement{true};
+  };
+  void setTextureResidencyInfo(const TextureResidencyInfo& info) {
+    textureResidencyInfo_ = info;
+  }
+  bool wantRefineSelectedTextures() const { return refineSelectedTextures_; }
+  bool wantReleaseSelectedTextures() const { return releaseSelectedTextures_; }
+  bool backgroundTextureRefinement() const {
+    return textureResidencyInfo_.backgroundRefinement;
+  }
   void saveCameraBookmark(int slot);
   bool loadCameraBookmark(int slot);
   bool hasCameraBookmark(int slot) const;
@@ -383,6 +402,7 @@ class Gui {
   void joinCullWorker();     // join + reset; called from setScene + ~Gui
   void cullWorkerMain();     // runs on the worker thread (CPU only, reads snapshots)
   bool cullAsync_{true};
+  bool sceneMutating_{false};
   float lastCullVP_[16]{};
   bool lastCullValid_{false};
   bool lastCullEnabled_{false};
@@ -472,6 +492,9 @@ class Gui {
   std::vector<uint8_t> meshVisible_;
   std::vector<uint8_t> carrierVisible_;
   std::vector<uint8_t> viewVisible_;
+  TextureResidencyInfo textureResidencyInfo_;
+  bool refineSelectedTextures_{false};
+  bool releaseSelectedTextures_{false};
   bool revealSelectionInHierarchy_{false};
 
   struct InspectorPropRow {

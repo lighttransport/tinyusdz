@@ -4571,6 +4571,24 @@ void VulkanRenderer::destroyScene() {
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
   tlasDirty_ = true;
 
+  for (auto v : texSlotViews_) {
+    if (v && v != whiteView_) vkDestroyImageView(device_, v, nullptr);
+  }
+  for (auto i : texSlotImgs_) {
+    if (i) vkDestroyImage(device_, i, nullptr);
+  }
+  for (auto m : texSlotMems_) {
+    if (m) vkFreeMemory(device_, m, nullptr);
+  }
+  for (auto v : texUdimArrayViews_) {
+    if (v && v != dummyArrayView_) vkDestroyImageView(device_, v, nullptr);
+  }
+  for (auto i : texUdimArrayImgs_) {
+    if (i) vkDestroyImage(device_, i, nullptr);
+  }
+  for (auto m : texUdimArrayMems_) {
+    if (m) vkFreeMemory(device_, m, nullptr);
+  }
   for (auto v : texViews_) vkDestroyImageView(device_, v, nullptr);
   for (auto i : texImgs_) vkDestroyImage(device_, i, nullptr);
   for (auto m : texMems_) vkFreeMemory(device_, m, nullptr);
@@ -4581,10 +4599,14 @@ void VulkanRenderer::destroyScene() {
   texUdimArrayDescs_.clear();
   texSlotViews_.clear();
   texSlotImgs_.clear();
+  texSlotMems_.clear();
+  texSlotBytes_.clear();
   texSlotWidths_.clear();
   texSlotHeights_.clear();
   texRegionUpdatable_.clear();
   texUdimArrayViews_.clear();
+  texUdimArrayImgs_.clear();
+  texUdimArrayMems_.clear();
   texIsUdim_.clear();
   if (udimLutAtlasView_) vkDestroyImageView(device_, udimLutAtlasView_, nullptr);
   if (udimLutAtlasImg_) vkDestroyImage(device_, udimLutAtlasImg_, nullptr);
@@ -4648,6 +4670,10 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                        whiteView_);
   texSlotImgs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
                       VK_NULL_HANDLE);
+  texSlotMems_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                      VK_NULL_HANDLE);
+  texSlotBytes_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                       0);
   texSlotWidths_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
                         0);
   texSlotHeights_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
@@ -4657,6 +4683,12 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   texUdimArrayViews_.assign(
       textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
       dummyArrayView_);
+  texUdimArrayImgs_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+      VK_NULL_HANDLE);
+  texUdimArrayMems_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+      VK_NULL_HANDLE);
   texIsUdim_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
   if (createUdimLookupAtlas(textureCount))
     udimLutAtlasDesc_ = allocTexDescriptor(udimLutAtlasView_);
@@ -4838,7 +4870,14 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
 
 void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (slot < 0 || static_cast<size_t>(slot) >= texDescs_.size()) return;
-  rtTexturesCpu_[static_cast<size_t>(slot)] = t;
+  const size_t index = static_cast<size_t>(slot);
+  rtTexturesCpu_[index] = t;
+  const VkImage oldImg = texSlotImgs_[index];
+  const VkDeviceMemory oldMem = texSlotMems_[index];
+  const VkImageView oldView = texSlotViews_[index];
+  const VkImage oldArrayImg = texUdimArrayImgs_[index];
+  const VkDeviceMemory oldArrayMem = texUdimArrayMems_[index];
+  const VkImageView oldArrayView = texUdimArrayViews_[index];
   VkImage img = VK_NULL_HANDLE;
   VkDeviceMemory mem = VK_NULL_HANDLE;
   VkImageView view = VK_NULL_HANDLE;
@@ -4851,15 +4890,15 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                             t.mipImages.empty() ? nullptr : &t.mipImages, t.srgb);
   }
   if (ok) {
-    texImgs_.push_back(img);
-    texMems_.push_back(mem);
-    texViews_.push_back(view);
-    texDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(view);
-    texSlotViews_[static_cast<size_t>(slot)] = view;
-    texSlotImgs_[static_cast<size_t>(slot)] = img;
-    texSlotWidths_[static_cast<size_t>(slot)] = t.image.width;
-    texSlotHeights_[static_cast<size_t>(slot)] = t.image.height;
-    texRegionUpdatable_[static_cast<size_t>(slot)] =
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device_, img, &requirements);
+    texSlotViews_[index] = view;
+    texSlotImgs_[index] = img;
+    texSlotMems_[index] = mem;
+    texSlotBytes_[index] = static_cast<size_t>(requirements.size);
+    texSlotWidths_[index] = t.image.width;
+    texSlotHeights_[index] = t.image.height;
+    texRegionUpdatable_[index] =
         !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
                 (!t.image.data.empty() || t.streamingMutable) &&
                 !(t.requestedCompressed &&
@@ -4883,25 +4922,92 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
       }
     }
   }
-  if (t.isUdim && static_cast<size_t>(slot) < texUdimArrayDescs_.size()) {
+  if (ok && t.isUdim && index < texUdimArrayDescs_.size()) {
     VkImage arrImg = VK_NULL_HANDLE;
     VkDeviceMemory arrMem = VK_NULL_HANDLE;
     VkImageView arrView = VK_NULL_HANDLE;
     if (createUdimTextureArrayImage(t, &arrImg, &arrMem, &arrView) &&
         updateUdimLookupAtlasRow(slot, t)) {
-      texImgs_.push_back(arrImg);
-      texMems_.push_back(arrMem);
-      texViews_.push_back(arrView);
-      texUdimArrayDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(arrView);
-      texUdimArrayViews_[static_cast<size_t>(slot)] = arrView;
-      texIsUdim_[static_cast<size_t>(slot)] = 1;
+      VkMemoryRequirements requirements{};
+      vkGetImageMemoryRequirements(device_, arrImg, &requirements);
+      texSlotBytes_[index] += static_cast<size_t>(requirements.size);
+      texUdimArrayImgs_[index] = arrImg;
+      texUdimArrayMems_[index] = arrMem;
+      texUdimArrayViews_[index] = arrView;
+      texIsUdim_[index] = 1;
     } else {
       if (arrView) vkDestroyImageView(device_, arrView, nullptr);
       if (arrImg) vkDestroyImage(device_, arrImg, nullptr);
       if (arrMem) vkFreeMemory(device_, arrMem, nullptr);
+      texUdimArrayImgs_[index] = VK_NULL_HANDLE;
+      texUdimArrayMems_[index] = VK_NULL_HANDLE;
+      texUdimArrayViews_[index] = dummyArrayView_;
+      texIsUdim_[index] = 0;
     }
+  } else if (ok) {
+    texUdimArrayImgs_[index] = VK_NULL_HANDLE;
+    texUdimArrayMems_[index] = VK_NULL_HANDLE;
+    texUdimArrayViews_[index] = dummyArrayView_;
+    texIsUdim_[index] = 0;
   }
   refreshMaterialDescriptors();
+  // Texture creation submits through endOneShot(), which waits the graphics
+  // queue. Once descriptors point at the replacement, prior slot allocations
+  // are no longer referenced by either submitted work or future draws.
+  if (ok) {
+    if (oldView && oldView != whiteView_)
+      vkDestroyImageView(device_, oldView, nullptr);
+    if (oldImg) vkDestroyImage(device_, oldImg, nullptr);
+    if (oldMem) vkFreeMemory(device_, oldMem, nullptr);
+    if (oldArrayView && oldArrayView != dummyArrayView_)
+      vkDestroyImageView(device_, oldArrayView, nullptr);
+    if (oldArrayImg) vkDestroyImage(device_, oldArrayImg, nullptr);
+    if (oldArrayMem) vkFreeMemory(device_, oldArrayMem, nullptr);
+  }
+}
+
+void VulkanRenderer::evictTexture(int slot) {
+  if (!device_ || slot < 0 || static_cast<size_t>(slot) >= texSlotImgs_.size())
+    return;
+  const size_t index = static_cast<size_t>(slot);
+  if (!texSlotImgs_[index] && !texUdimArrayImgs_[index]) return;
+
+  // One frame is in flight. Waiting its fence is sufficient and avoids the
+  // device-wide idle formerly needed by scene replacement.
+  vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+  const VkImageView oldView = texSlotViews_[index];
+  const VkImage oldImg = texSlotImgs_[index];
+  const VkDeviceMemory oldMem = texSlotMems_[index];
+  const VkImageView oldArrayView = texUdimArrayViews_[index];
+  const VkImage oldArrayImg = texUdimArrayImgs_[index];
+  const VkDeviceMemory oldArrayMem = texUdimArrayMems_[index];
+
+  texSlotViews_[index] = whiteView_;
+  texSlotImgs_[index] = VK_NULL_HANDLE;
+  texSlotMems_[index] = VK_NULL_HANDLE;
+  texSlotBytes_[index] = 0;
+  texSlotWidths_[index] = 0;
+  texSlotHeights_[index] = 0;
+  texRegionUpdatable_[index] = 0;
+  texUdimArrayViews_[index] = dummyArrayView_;
+  texUdimArrayImgs_[index] = VK_NULL_HANDLE;
+  texUdimArrayMems_[index] = VK_NULL_HANDLE;
+  texIsUdim_[index] = 0;
+  refreshMaterialDescriptors();
+
+  if (oldView && oldView != whiteView_)
+    vkDestroyImageView(device_, oldView, nullptr);
+  if (oldImg) vkDestroyImage(device_, oldImg, nullptr);
+  if (oldMem) vkFreeMemory(device_, oldMem, nullptr);
+  if (oldArrayView && oldArrayView != dummyArrayView_)
+    vkDestroyImageView(device_, oldArrayView, nullptr);
+  if (oldArrayImg) vkDestroyImage(device_, oldArrayImg, nullptr);
+  if (oldArrayMem) vkFreeMemory(device_, oldArrayMem, nullptr);
+}
+
+size_t VulkanRenderer::textureResidentBytes(int slot) const {
+  if (slot < 0 || static_cast<size_t>(slot) >= texSlotBytes_.size()) return 0;
+  return texSlotBytes_[static_cast<size_t>(slot)];
 }
 
 bool VulkanRenderer::updateTextureRegion(int slot, int x, int y, int w, int h,

@@ -928,6 +928,22 @@ void Gui::clearSelection() {
   inspectorCacheRows_.clear();
 }
 
+void Gui::setCullAsync(bool on) {
+  if (cullAsync_ == on) return;
+  joinCullWorker();
+  cullAsync_ = on;
+  lastCullValid_ = false;
+}
+
+void Gui::setSceneMutating(bool on) {
+  if (sceneMutating_ == on) return;
+  joinCullWorker();
+  sceneMutating_ = on;
+  lastCullValid_ = false;
+  instGrids_.clear();
+  instGridsFor_ = nullptr;
+}
+
 void Gui::setSelectionListSingle(const std::string& absPath, int meshIndex) {
   selectionList_.clear();
   if (!absPath.empty()) selectionList_.push_back({absPath, meshIndex});
@@ -1619,13 +1635,12 @@ void Gui::drawHierarchy() {
 }
 
 void Gui::drawInspector() {
+  refineSelectedTextures_ = false;
+  releaseSelectedTextures_ = false;
   ImGui::Begin("Inspector");
   if (nextStage_) {
     drawNextInspector();
-    ImGui::End();
-    return;
-  }
-  if (selPrim_) {
+  } else if (selPrim_) {
     rebuildInspectorCache();
     drawSelectionBreadcrumbs("##inspector-breadcrumbs");
     ImGui::TextWrapped("%s", selPath_.c_str());
@@ -1873,6 +1888,24 @@ void Gui::drawInspector() {
     HintWrapped("(RenderScene node; no matching Stage prim)");
   } else {
     HintWrapped("Select a prim in the Hierarchy.");
+  }
+  if (textureResidencyInfo_.total > 0) {
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Texture residency",
+                                ImGuiTreeNodeFlags_DefaultOpen)) {
+      const double mib = 1024.0 * 1024.0;
+      ImGui::Text("%zu / %zu resident", textureResidencyInfo_.resident,
+                  textureResidencyInfo_.total);
+      ImGui::Text("%.1f / %.1f MiB, %zu queued",
+                  double(textureResidencyInfo_.residentBytes) / mib,
+                  double(textureResidencyInfo_.budgetBytes) / mib,
+                  textureResidencyInfo_.queued);
+      if (ImGui::Button("Refine selected")) refineSelectedTextures_ = true;
+      ImGui::SameLine();
+      if (ImGui::Button("Release selected")) releaseSelectedTextures_ = true;
+      ImGui::Checkbox("Background refinement",
+                      &textureResidencyInfo_.backgroundRefinement);
+    }
   }
   ImGui::End();
 }
@@ -3421,6 +3454,10 @@ void Gui::uploadProxies(CullJobMesh* instProxy) {
 
 void Gui::cullInstances() {
   if (!draw_ || !renderer_ || !cam_) return;
+  // Uploaded progressive chunks already contain their full instance set. Draw
+  // them as-is until Complete makes the scene immutable and async culling can
+  // safely resume.
+  if (sceneMutating_) return;
   // Only instanced prototypes carry instanceXforms; nothing to do otherwise --
   // except the box proxies raster LOD substituted for small NON-instanced meshes,
   // which still need their upload (a scene can be entirely non-instanced).

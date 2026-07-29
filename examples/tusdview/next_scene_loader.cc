@@ -13,10 +13,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <future>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
+#include <sstream>
 #include <tuple>
 #include <thread>
 #include <unordered_map>
@@ -49,6 +53,7 @@
 #include "tydra/texture-util.hh"       // tydra::ResizeImage (UDIM tile normalize)
 #include "image-loader.hh"             // DomeLight envmap decode (IBL bake)
 #include "mesh_build.hh"               // UpdatePreviewLight
+#include "preview_cache.hh"
 #include "displacement_bake.hh"        // Ptex-aware coarse geometry bake
 #include "lightrt_mtlx_bridge.hh"      // BakeLightRtOpenPBR (next material bake)
 #include "texture_tools.hh"            // TexToolsBuildDomeIbl / ProbeToEquirect
@@ -63,6 +68,29 @@ namespace tnext = ::tinyusdz::next;
 using matrix4d = ::tinyusdz::value::matrix4d;
 
 namespace {
+class PreviewCacheWriters {
+ public:
+  ~PreviewCacheWriters() {
+    for (std::thread& writer : writers_) {
+      if (writer.joinable()) writer.join();
+    }
+  }
+
+  void Start(std::function<void()> work) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    writers_.emplace_back(std::move(work));
+  }
+
+ private:
+  std::mutex mutex_;
+  std::vector<std::thread> writers_;
+};
+
+void StartPreviewCacheWriter(std::function<void()> work) {
+  static PreviewCacheWriters writers;
+  writers.Start(std::move(work));
+}
+
 size_t ProcessRssMiB() {
 #if defined(__linux__)
   FILE* file = std::fopen("/proc/self/statm", "r");
@@ -117,6 +145,27 @@ ProgressiveSceneStream::ProgressiveSceneStream(size_t maxBytes)
 
 ProgressiveSceneStream::~ProgressiveSceneStream() { cancel(); }
 
+bool ProgressiveSceneStream::pushPreview(DrawScene&& scene) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (cancelled_) return false;
+  QueuedEvent queued;
+  queued.event.type = ProgressiveSceneEvent::Type::PreviewScene;
+  queued.event.scene = std::move(scene);
+  queue_.push_back(std::move(queued));
+  ready_.notify_one();
+  return true;
+}
+
+bool ProgressiveSceneStream::pushReset() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (cancelled_) return false;
+  QueuedEvent queued;
+  queued.event.type = ProgressiveSceneEvent::Type::Reset;
+  queue_.push_back(std::move(queued));
+  ready_.notify_one();
+  return true;
+}
+
 bool ProgressiveSceneStream::pushResources(
     const std::vector<DrawMaterialCPU>& materials, int textureCount,
     const std::string& upAxis) {
@@ -149,6 +198,18 @@ bool ProgressiveSceneStream::pushMesh(
   queued.event.mesh = std::move(mesh);
   queued.bytes = bytes;
   queuedBytes_ += bytes;
+  queue_.push_back(std::move(queued));
+  ready_.notify_one();
+  return true;
+}
+
+bool ProgressiveSceneStream::pushTexture(int slot, DrawTextureCPU&& texture) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (cancelled_) return false;
+  QueuedEvent queued;
+  queued.event.type = ProgressiveSceneEvent::Type::Texture;
+  queued.event.textureSlot = slot;
+  queued.event.texture = std::move(texture);
   queue_.push_back(std::move(queued));
   ready_.notify_one();
   return true;
@@ -251,6 +312,196 @@ inline matrix4d Mul4(const matrix4d& a, const matrix4d& b) {
       r.m[j][i] = v;
     }
   return r;
+}
+
+struct PreviewBound {
+  matrix4d boxToWorld{matrix4d::identity()};
+  float worldMin[3]{0.0f, 0.0f, 0.0f};
+  float worldMax[3]{0.0f, 0.0f, 0.0f};
+  float color[3]{0.62f, 0.68f, 0.76f};
+  size_t sourceOrder{0};
+  bool cameraFacing{true};
+  float cameraDistance{0.0f};
+};
+
+bool PreviewExtent(const tnext::UsdPrim& prim, float mn[3], float mx[3]) {
+  const tnext::Value* value = prim.GetPropertyValue("extent");
+  if (!value) value = prim.GetPropertyValue("extentsHint");
+  if (!value) return false;
+  tnext::Value materialized;
+  if (value->is_lazy()) {
+    materialized = value->materialized_copy();
+    value = &materialized;
+  }
+  if (const std::vector<float>* f = value->as_float_array()) {
+    if (f->size() < 6) return false;
+    for (int k = 0; k < 3; ++k) {
+      mn[k] = (*f)[k];
+      mx[k] = (*f)[k + 3];
+    }
+    return true;
+  }
+  if (const std::vector<double>* d = value->as_double_array()) {
+    if (d->size() < 6) return false;
+    for (int k = 0; k < 3; ++k) {
+      mn[k] = static_cast<float>((*d)[k]);
+      mx[k] = static_cast<float>((*d)[k + 3]);
+    }
+    return true;
+  }
+  return false;
+}
+
+void CollectPreviewBounds(const tnext::Stage& stage, const tnext::UsdPrim& prim,
+                          double time, std::vector<PreviewBound>* bounds) {
+  if (!prim.IsActive()) return;
+  const tnext::Value* visibility = prim.GetPropertyValue("visibility");
+  if (visibility && visibility->as_token() &&
+      *visibility->as_token() == "invisible") return;
+
+  float mn[3], mx[3];
+  if (PreviewExtent(prim, mn, mx)) {
+    double world16[16];
+    if (tydn::ComputeWorldTransform(stage, prim, world16, time)) {
+      matrix4d local = matrix4d::identity();
+      for (int k = 0; k < 3; ++k) {
+        local.m[k][k] = static_cast<double>(mx[k] - mn[k]);
+        local.m[3][k] = static_cast<double>(0.5f * (mn[k] + mx[k]));
+      }
+      PreviewBound bound;
+      bound.boxToWorld = Mul4(local, Mat4dFromArray(world16));
+      bound.sourceOrder = bounds->size();
+      for (int k = 0; k < 3; ++k) {
+        bound.worldMin[k] = std::numeric_limits<float>::max();
+        bound.worldMax[k] = -std::numeric_limits<float>::max();
+      }
+      for (int corner = 0; corner < 8; ++corner) {
+        const double x = (corner & 1) ? 0.5 : -0.5;
+        const double y = (corner & 2) ? 0.5 : -0.5;
+        const double z = (corner & 4) ? 0.5 : -0.5;
+        for (int k = 0; k < 3; ++k) {
+          const float p = static_cast<float>(
+              x * bound.boxToWorld.m[0][k] +
+              y * bound.boxToWorld.m[1][k] +
+              z * bound.boxToWorld.m[2][k] + bound.boxToWorld.m[3][k]);
+          bound.worldMin[k] = std::min(bound.worldMin[k], p);
+          bound.worldMax[k] = std::max(bound.worldMax[k], p);
+        }
+      }
+      if (const tnext::Value* color =
+              prim.GetPropertyValue("primvars:displayColor")) {
+        if (const std::vector<float>* c = color->as_float_array()) {
+          if (c->size() >= 3) {
+            for (int k = 0; k < 3; ++k) bound.color[k] = (*c)[k];
+          }
+        }
+      }
+      bounds->push_back(std::move(bound));
+    }
+  }
+  for (const tnext::UsdPrim& child : prim.GetChildren()) {
+    CollectPreviewBounds(stage, child, time, bounds);
+  }
+}
+
+DrawScene BuildCheckpointPreview(const tnext::Stage& stage, double time,
+                                 size_t maxBoxes,
+                                 const std::string& cameraName) {
+  DrawScene draw;
+  draw.upAxis = (stage.GetUpAxis() == "Z" || stage.GetUpAxis() == "z") ? "Z" : "Y";
+  std::vector<PreviewBound> bounds;
+  for (const tnext::UsdPrim& root : stage.GetRootPrims()) {
+    CollectPreviewBounds(stage, root, time, &bounds);
+  }
+
+  NextCameraPose camera;
+  if (FindNextCamera(stage, cameraName, time, &camera)) {
+    for (PreviewBound& bound : bounds) {
+      float delta[3];
+      float distance2 = 0.0f;
+      for (int k = 0; k < 3; ++k) {
+        const float center = 0.5f * (bound.worldMin[k] + bound.worldMax[k]);
+        delta[k] = center - camera.eye[k];
+        distance2 += delta[k] * delta[k];
+      }
+      bound.cameraDistance = std::sqrt(distance2);
+      bound.cameraFacing = delta[0] * camera.forward[0] +
+                               delta[1] * camera.forward[1] +
+                               delta[2] * camera.forward[2] >
+                           0.0f;
+    }
+    std::stable_sort(bounds.begin(), bounds.end(),
+                     [](const PreviewBound& a, const PreviewBound& b) {
+                       if (a.cameraFacing != b.cameraFacing) return a.cameraFacing;
+                       if (a.cameraDistance != b.cameraDistance)
+                         return a.cameraDistance < b.cameraDistance;
+                       return a.sourceOrder < b.sourceOrder;
+                     });
+  }
+  if (bounds.size() > maxBoxes) bounds.resize(maxBoxes);
+  if (bounds.empty()) return draw;
+
+  DrawMeshCPU mesh;
+  mesh.name = "__composition_preview_bounds";
+  mesh.absPath = "/__composition_preview_bounds";
+  mesh.purpose = "proxy";
+  mesh.geometricNormal = true;
+  static const float corners[8][3] = {
+      {-0.5f, -0.5f, -0.5f}, {0.5f, -0.5f, -0.5f},
+      {0.5f, 0.5f, -0.5f},   {-0.5f, 0.5f, -0.5f},
+      {-0.5f, -0.5f, 0.5f},  {0.5f, -0.5f, 0.5f},
+      {0.5f, 0.5f, 0.5f},    {-0.5f, 0.5f, 0.5f}};
+  for (const auto& p : corners) {
+    mesh.vertices.push_back({p[0], p[1], p[2], 0.0f, 0.0f, 1.0f, 0.0f, 0.0f});
+  }
+  static const uint32_t indices[] = {
+      0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4,
+      3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5};
+  mesh.indices.assign(indices, indices + sizeof(indices) / sizeof(indices[0]));
+  mesh.submeshes.push_back({0, static_cast<uint32_t>(mesh.indices.size()), -1});
+  for (int i = 0; i < 16; ++i) mesh.world[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+  for (const PreviewBound& bound : bounds) {
+    float o2w[12];
+    Mat4dToO2W(bound.boxToWorld, o2w);
+    mesh.instanceXforms.insert(mesh.instanceXforms.end(), o2w, o2w + 12);
+    mesh.instanceColors.insert(mesh.instanceColors.end(), bound.color,
+                               bound.color + 3);
+    for (int k = 0; k < 3; ++k) {
+      if (mesh.instanceCount() == 1) {
+        mesh.aabbMin[k] = bound.worldMin[k];
+        mesh.aabbMax[k] = bound.worldMax[k];
+      } else {
+        mesh.aabbMin[k] = std::min(mesh.aabbMin[k], bound.worldMin[k]);
+        mesh.aabbMax[k] = std::max(mesh.aabbMax[k], bound.worldMax[k]);
+      }
+      mesh.protoAabbMin[k] = -0.5f;
+      mesh.protoAabbMax[k] = 0.5f;
+    }
+  }
+  draw.vertexCount = mesh.vertices.size();
+  draw.triangleCount = mesh.indices.size() / 3;
+  draw.meshes.push_back(std::move(mesh));
+  return draw;
+}
+
+std::string PreviewFingerprint(const LoadOptions& options) {
+  std::ostringstream out;
+  out << "composition=" << options.composition
+      << ";payload=" << static_cast<int>(options.payloadPolicy)
+      << ";deferReferences=" << options.deferReferences
+      << ";parentPaths=" << options.allowParentRelativePaths
+      << ";viewCamera=" << options.viewCamera
+      << ";time=" << std::setprecision(17) << options.timecode;
+  for (const std::string& path : options.payloadWhitelist) {
+    out << ";payloadPath=" << path;
+  }
+  for (const auto& prim : options.variantOverrides) {
+    for (const auto& selection : prim.second) {
+      out << ";variant=" << prim.first << ':' << selection.first << '='
+          << selection.second;
+    }
+  }
+  return out.str();
 }
 
 // Per-instance local transform from position + orientation quaternion + scale,
@@ -2173,7 +2424,11 @@ struct NextTexCache {
   // shelf packing enough headroom for differently-shaped face sets.
   size_t ptexAtlasPerTextureBytes = 256ull * 1024ull * 1024ull;
   size_t ptexAtlasBytes = 0;
+  uint32_t ptexInitialFaces = 0;
+  double ptexBuildSeconds = 0.0;
+  size_t ptexBuildCount = 0;
   bool ptexBudgetWarned = false;
+  bool deferOrdinary = false;
 };
 
 // ".ktx2" suffix (case-insensitive).
@@ -2214,6 +2469,35 @@ bool DecodeNextImage(NextTexCache& tc, const std::string& asset,
   out->channels = 4;
   out->data = std::move(img.pixels);
   return true;
+}
+
+bool DecodeDeferredDrawTextureImpl(const DrawTextureCPU& placeholder,
+                                   const TextureRuntimeOptions& runtime,
+                                   uint64_t budgetBytes,
+                                   DrawTextureCPU* decoded) {
+  if (!decoded || placeholder.assetIdentifier.empty() ||
+      !placeholder.deferredDecode || placeholder.isUdim || placeholder.isPtex ||
+      EndsWithKtx2(placeholder.assetIdentifier)) {
+    return false;
+  }
+  tydn::TextureDecodeOptions options;
+  options.max_edge = runtime.maxTextureSize > 0
+                         ? static_cast<uint32_t>(runtime.maxTextureSize)
+                         : 0u;
+  options.budget_bytes = budgetBytes;
+  tydn::TextureDecoder decoder(options);
+  tydn::DecodedImage image;
+  if (!decoder.Decode(placeholder.assetIdentifier, placeholder.srgb, &image))
+    return false;
+
+  *decoded = placeholder;
+  decoded->image.width = static_cast<int>(image.width);
+  decoded->image.height = static_cast<int>(image.height);
+  decoded->image.channels = 4;
+  decoded->image.data = std::move(image.pixels);
+  decoded->deferredDecode = false;
+  CompressDrawTexture(runtime, decoded);
+  return !decoded->image.data.empty() || !decoded->compressed.data.empty();
 }
 
 // Ptex remains a native face source, but a representative page is useful to
@@ -2373,6 +2657,24 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   auto it = tc.byKey.find(key);
   if (it != tc.byKey.end()) return it->second;
 
+  // Interactive large-scene material discovery must not read texture pixels.
+  // Reserve the stable slot now; a bounded post-geometry worker stage fills it.
+  // Keep archive, UDIM, Ptex, and kept-compressed KTX paths synchronous until
+  // their shared readers have explicit concurrent ownership.
+  if (tc.deferOrdinary && !tinyusdz::io::IsUDIMPath(asset) &&
+      !EndsWithPtx(asset) && !EndsWithKtx2(asset) && rt.ktx2_hint.empty()) {
+    DrawTextureCPU dt;
+    dt.assetIdentifier = asset;
+    dt.srgb = srgb;
+    dt.wrapS = NextWrapToDraw(rt.wrap_s);
+    dt.wrapT = NextWrapToDraw(rt.wrap_t);
+    dt.deferredDecode = true;
+    const int idx = static_cast<int>(draw->textures.size());
+    draw->textures.push_back(std::move(dt));
+    tc.byKey[key] = idx;
+    return idx;
+  }
+
   // UDIM: tydra-next carries the literal `<UDIM>` token through, so expand +
   // decode tiles ourselves into a sampler2DArray-backed UDIM texture.
   if (tinyusdz::io::IsUDIMPath(asset)) {
@@ -2406,6 +2708,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
     if (!built && tc.decoder->ReadAssetBytes(asset, &bytes) &&
         ::tinyusdz::ptx::Reader::OpenMemory(bytes.data(), bytes.size(), &ptx,
                                             &ptxErr)) {
+      const auto ptexBuildBegin = std::chrono::steady_clock::now();
       const ::tinyusdz::ptx::Info& pi = ptx.info();
       dt.ptexFaces = pi.faces;
       dt.ptexLevels = pi.levels;
@@ -2428,6 +2731,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
                            atlasOptions.maxAtlasBytes / 4u);
       atlasOptions.forcePhysicalCache =
           std::getenv("TUSDVIEW_PTEX_FORCE_RESIDENCY") != nullptr;
+      atlasOptions.initialFaceLimit = tc.ptexInitialFaces;
       PtexAtlasBuildStats atlasStats;
       if (!BuildPtexAtlas(ptx, atlasOptions, srgb, &dt.image,
                           &dt.ptexFaceRects, &atlasStats, &ptxErr)) {
@@ -2451,8 +2755,14 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
           dt.ptexSourceData = std::move(bytes);
           dt.streamingMutable = true;
           dt.ptexForceResidency = atlasOptions.forcePhysicalCache;
+          dt.ptexDemandDriven = atlasOptions.initialFaceLimit > 0;
         }
       }
+      tc.ptexBuildSeconds +=
+          std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                        ptexBuildBegin)
+              .count();
+      ++tc.ptexBuildCount;
       built = true;
     }
   }
@@ -3056,6 +3366,14 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
 }
 
 }  // namespace
+
+bool DecodeDeferredDrawTexture(const DrawTextureCPU& placeholder,
+                               const TextureRuntimeOptions& runtime,
+                               uint64_t budgetBytes,
+                               DrawTextureCPU* decoded) {
+  return DecodeDeferredDrawTextureImpl(placeholder, runtime, budgetBytes,
+                                       decoded);
+}
 
 bool FindNextCamera(const tnext::Stage& stage, const std::string& name,
                     double time, NextCameraPose* out) {
@@ -4084,6 +4402,32 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   auto session = (out_session && *out_session)
                      ? *out_session
                      : std::make_shared<tnext::StageSession>();
+  const bool sessionWasOpen = session->IsOpen();
+  const std::string previewFingerprint = PreviewFingerprint(opts);
+  bool previewPublished = false;
+  bool previewCacheHit = false;
+  tnext::StageSnapshot generatedPreview;
+  if (!sessionWasOpen && stream && opts.progressivePreview &&
+      opts.previewCache.mode != PreviewCacheMode::Off) {
+    const auto cacheBegin = std::chrono::steady_clock::now();
+    PreviewCacheLookup cached =
+        LoadPreviewCache(opts.previewCache, path, previewFingerprint);
+    if (cached.hit) {
+      const double previewTime = std::isfinite(opts.timecode) ? opts.timecode : 0.0;
+      DrawScene proxy = BuildCheckpointPreview(cached.stage, previewTime, 20000,
+                                               opts.viewCamera);
+      if (!proxy.meshes.empty()) {
+        previewPublished = stream->pushPreview(std::move(proxy));
+        previewCacheHit = previewPublished;
+      }
+    }
+    if (timing) {
+      LOGI("preview cache: %s in %.3f s", cached.reason.c_str(),
+           std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                        cacheBegin)
+               .count());
+    }
+  }
   tnext::StageSessionOptions session_options;
   session_options.compose = opts.composition;
   session_options.max_total_memory = opts.maxMemoryBytes;
@@ -4130,6 +4474,23 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           return !ctrl->cancel.load();
         };
   }
+  if (stream && opts.progressivePreview && !previewCacheHit) {
+    session_options.preview_callback =
+        [stream, &previewPublished, &generatedPreview,
+         &opts](const tnext::StagePreview& preview) {
+          if (!preview.snapshot || stream->cancelled()) return false;
+          generatedPreview = preview.snapshot;
+          const double previewTime = std::isfinite(opts.timecode)
+                                         ? opts.timecode
+                                         : 0.0;
+          DrawScene proxy = BuildCheckpointPreview(*preview.snapshot,
+                                                   previewTime, 20000,
+                                                   opts.viewCamera);
+          if (proxy.meshes.empty()) return true;
+          previewPublished = stream->pushPreview(std::move(proxy));
+          return previewPublished;
+        };
+  }
   bool opened = session->IsOpen();
   if (opened) {
     if (session->GetVariantSelections() != opts.variantOverrides) {
@@ -4158,6 +4519,38 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     return false;
   }
   const auto composedAt = std::chrono::steady_clock::now();
+  const std::vector<std::string> previewDependencies =
+      generatedPreview ? session->GetLayerDependencies()
+                       : std::vector<std::string>{};
+  if (previewPublished && stream && !stream->pushReset()) return false;
+  if (generatedPreview && !previewCacheHit) {
+    // Cache publication is independent of authoritative conversion. Keep the
+    // snapshot alive in a background writer so a large USDC serialization
+    // cannot delay the first real mesh. Writers join during orderly shutdown;
+    // StorePreviewCache publishes its manifest last if the process is killed.
+    const PreviewCacheOptions cacheOptions = opts.previewCache;
+    const std::string cachePath = path;
+    const std::string cacheFingerprint = previewFingerprint;
+    const tnext::StageSnapshot cachePreview = generatedPreview;
+    StartPreviewCacheWriter(
+        [cacheOptions, cachePath, cacheFingerprint, cachePreview,
+         previewDependencies, timing]() {
+      const auto cacheBegin = std::chrono::steady_clock::now();
+      std::string cacheReason;
+      const bool stored = StorePreviewCache(
+          cacheOptions, cachePath, cacheFingerprint, *cachePreview,
+          previewDependencies, &cacheReason);
+      if (timing) {
+        LOGI("preview cache: %s%s in %.3f s",
+             stored ? "stored" : "not stored: ",
+             stored ? "" : cacheReason.c_str(),
+             std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          cacheBegin)
+                 .count());
+      }
+        });
+    generatedPreview = {};
+  }
   if (timing) {
     LOGI("next timing: compose %.3f s",
          std::chrono::duration<double>(composedAt - loadBegin).count());
@@ -4201,6 +4594,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   cfg.mesh.triangulation_method = tydn::MeshConfig::TriangulationMethod::Earcut;
   cfg.mesh.compute_normals = true;
   cfg.mesh.build_vertex_indices = true;
+  cfg.curves.tessellation_segments =
+      std::max<uint32_t>(1u, opts.curveTessellationSegments);
   // Keep the converter from decoding texture pixels: it records RenderTexture
   // metadata (asset path, wrap, scale/bias, channel) regardless, and we decode
   // the pixels ourselves in LoadNextTexture (base dir / .usdz aware).
@@ -4230,6 +4625,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // materializes every texture at full resolution.
   NextTexCache texCache;
   texCache.opt = &opts.textureOptions;  // kept-compressed KTX2 passthrough
+  texCache.ptexInitialFaces = opts.ptexInitialFaces;
   if (opts.textureOptions.textureBudgetMB > 0) {
     texCache.ptexAtlasBudgetBytes =
         size_t(opts.textureOptions.textureBudgetMB) * size_t{1024} *
@@ -4254,6 +4650,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     texOpts.usdz = &usdzArchive;
   }
   texCache.decoder = std::make_unique<tydn::TextureDecoder>(texOpts);
+  texCache.deferOrdinary = opts.asyncTextureDecode && stream && !texOpts.usdz;
 
   // Resolve a material prim path to a DrawScene material index (cached by path).
   // Unbound / unconvertible -> 0 (default gray material).
@@ -4389,15 +4786,119 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
       const std::vector<tnext::Path>* protos = p.GetRelationship("prototypes");
       if (protos) {
-        // Bucket instance indices by prototype for an O(instances) pass.
-        std::vector<std::vector<uint32_t>> byProto(protos->size());
-        for (size_t i = 0; i < n; ++i) {
-          if (PointInstanceHidden(i, n, ids, hiddenSet)) continue;
-          int pi = (i < protoIdx.size()) ? protoIdx[i] : 0;
-          if (pi >= 0 && pi < int(protos->size())) byProto[pi].push_back(uint32_t(i));
-        }
         static const float kIdentQuat[4] = {1, 0, 0, 0};  // real-first (w,x,y,z)
         static const float kUnitScale[3] = {1, 1, 1};
+        if (stream) {
+          // Publish one bounded preview chunk instead of waiting for every
+          // placement of a massive instancer. Remaining placements stay
+          // consolidated per prototype, avoiding hundreds of intermediate
+          // draws while still exposing first geometry early.
+          constexpr size_t kProgressiveInstanceChunk = size_t(64) << 10;
+          std::vector<tnext::UsdPrim> protoRoots(protos->size());
+          std::vector<std::vector<matrix4d>> placementChunks(protos->size());
+          std::vector<std::vector<float>> colorChunks;
+          if (perInstColor) colorChunks.resize(protos->size());
+          for (size_t pi = 0; pi < protos->size(); ++pi) {
+            protoRoots[pi] = stage.GetPrimAtPath((*protos)[pi]);
+            if (!protoRoots[pi].IsValid()) continue;
+            std::vector<tnext::UsdPrim> protoMeshes;
+            tydn::GatherMeshPrims(protoRoots[pi], &protoMeshes);
+            for (const tnext::UsdPrim& mp : protoMeshes)
+              consumed.insert(mp.GetPath().str());
+            placementChunks[pi].reserve(kProgressiveInstanceChunk);
+            if (perInstColor)
+              colorChunks[pi].reserve(kProgressiveInstanceChunk * 3u);
+          }
+          auto flushPlacementChunk = [&](size_t pi) {
+            if (placementChunks[pi].empty() || !protoRoots[pi].IsValid()) return;
+            EmitInstancedProto(
+                stage, conv, protoRoots[pi], placementChunks[pi],
+                perInstColor ? &colorChunks[pi] : nullptr, time,
+                opts.gpuSkinning, draw, &bounds, &instTotal, &effectiveTris,
+                instBudget, &consumed, &resolveProtoMat);
+            placementChunks[pi].clear();
+            if (perInstColor) colorChunks[pi].clear();
+            publishAvailableMeshes();
+          };
+          size_t pendingInstances = 0;
+          bool previewPublished = false;
+          for (size_t i = 0; i < n && streamOk; ++i) {
+            if (static_cast<size_t>(instTotal) + pendingInstances >= instBudget)
+              break;
+            if (PointInstanceHidden(i, n, ids, hiddenSet)) continue;
+            const int protoIndex = (i < protoIdx.size()) ? protoIdx[i] : 0;
+            if (protoIndex < 0 || protoIndex >= int(protos->size())) continue;
+            const size_t pi = static_cast<size_t>(protoIndex);
+            if (!protoRoots[pi].IsValid()) continue;
+            const float* q =
+                (orients.size() >= (i + 1) * 4) ? &orients[i * 4] : kIdentQuat;
+            const float* s =
+                (scales.size() >= (i + 1) * 3) ? &scales[i * 3] : kUnitScale;
+            placementChunks[pi].push_back(
+                Mul4(InstanceTRS(&positions[i * 3], q, s), instancer_world));
+            if (perInstColor) {
+              colorChunks[pi].push_back(instCol[i * 3 + 0]);
+              colorChunks[pi].push_back(instCol[i * 3 + 1]);
+              colorChunks[pi].push_back(instCol[i * 3 + 2]);
+            }
+            ++pendingInstances;
+            if (!previewPublished &&
+                placementChunks[pi].size() >= kProgressiveInstanceChunk) {
+              pendingInstances -= placementChunks[pi].size();
+              flushPlacementChunk(pi);
+              previewPublished = true;
+            }
+          }
+          for (size_t pi = 0; pi < protos->size() && streamOk; ++pi) {
+            pendingInstances -= placementChunks[pi].size();
+            flushPlacementChunk(pi);
+          }
+          if (!streamOk) return;
+        } else {
+        // Generate placements directly into prototype buckets. The small count
+        // pass below reserves exact capacities; unlike the previous path it
+        // does not retain one uint32 index for every visible instance before
+        // revisiting them. At Island scale that removes a 150+ MiB allocation
+        // and its associated random bucket writes.
+        std::vector<std::vector<matrix4d>> placementsByProto(protos->size());
+        std::vector<std::vector<float>> colorsByProto;
+        if (perInstColor) colorsByProto.resize(protos->size());
+        const size_t remainingInstances =
+            static_cast<size_t>(instTotal) < instBudget
+                ? instBudget - static_cast<size_t>(instTotal)
+                : 0u;
+        std::vector<size_t> placementCounts(protos->size(), 0u);
+        size_t countedInstances = 0;
+        for (size_t i = 0; i < n && countedInstances < remainingInstances; ++i) {
+          if (PointInstanceHidden(i, n, ids, hiddenSet)) continue;
+          const int pi = (i < protoIdx.size()) ? protoIdx[i] : 0;
+          if (pi < 0 || pi >= int(protos->size())) continue;
+          ++placementCounts[static_cast<size_t>(pi)];
+          ++countedInstances;
+        }
+        for (size_t pi = 0; pi < protos->size(); ++pi) {
+          placementsByProto[pi].reserve(placementCounts[pi]);
+          if (perInstColor) colorsByProto[pi].reserve(placementCounts[pi] * 3u);
+        }
+        size_t bucketedInstances = 0;
+        for (size_t i = 0; i < n && bucketedInstances < remainingInstances; ++i) {
+          if (PointInstanceHidden(i, n, ids, hiddenSet)) continue;
+          const int pi = (i < protoIdx.size()) ? protoIdx[i] : 0;
+          if (pi < 0 || pi >= int(protos->size())) continue;
+          const float* q =
+              (orients.size() >= (i + 1) * 4) ? &orients[i * 4] : kIdentQuat;
+          const float* s =
+              (scales.size() >= (i + 1) * 3) ? &scales[i * 3] : kUnitScale;
+          placementsByProto[static_cast<size_t>(pi)].push_back(
+              Mul4(InstanceTRS(&positions[i * 3], q, s), instancer_world));
+          if (perInstColor) {
+            std::vector<float>& colors = colorsByProto[static_cast<size_t>(pi)];
+            colors.push_back(instCol[i * 3 + 0]);
+            colors.push_back(instCol[i * 3 + 1]);
+            colors.push_back(instCol[i * 3 + 2]);
+          }
+          ++bucketedInstances;
+        }
 
         for (size_t pi = 0; pi < protos->size(); ++pi) {
           tnext::UsdPrim protoRoot = stage.GetPrimAtPath((*protos)[pi]);
@@ -4409,34 +4910,18 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           tydn::GatherMeshPrims(protoRoot, &protoMeshes);
           for (const tnext::UsdPrim& mp : protoMeshes)
             consumed.insert(mp.GetPath().str());
-          if (byProto[pi].empty()) continue;
+          if (placementsByProto[pi].empty()) continue;
           // One world placement (+ optional per-instance color) per visible
           // instance; EmitInstancedProto bakes mesh_rel*placement and recurses into
           // any nested instancers under the prototype.
-          std::vector<matrix4d> placements;
-          std::vector<float> colors;
-          placements.reserve(byProto[pi].size());
-          if (perInstColor) colors.reserve(byProto[pi].size() * 3);
-          for (uint32_t i : byProto[pi]) {
-            const float* q =
-                (orients.size() >= (i + 1) * 4) ? &orients[i * 4] : kIdentQuat;
-            const float* s =
-                (scales.size() >= (i + 1) * 3) ? &scales[i * 3] : kUnitScale;
-            placements.push_back(
-                Mul4(InstanceTRS(&positions[i * 3], q, s), instancer_world));
-            if (perInstColor) {
-              colors.push_back(instCol[i * 3 + 0]);
-              colors.push_back(instCol[i * 3 + 1]);
-              colors.push_back(instCol[i * 3 + 2]);
-            }
-          }
-          EmitInstancedProto(stage, conv, protoRoot, placements,
-                             perInstColor ? &colors : nullptr, time,
+          EmitInstancedProto(stage, conv, protoRoot, placementsByProto[pi],
+                             perInstColor ? &colorsByProto[pi] : nullptr, time,
                              opts.gpuSkinning, draw, &bounds, &instTotal,
                              &effectiveTris, instBudget, &consumed,
                              &resolveProtoMat);
           publishAvailableMeshes();
           if (!streamOk) return;
+        }
         }
       }
       return;  // do not descend into a PointInstancer's prototypes as geometry
@@ -4469,6 +4954,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   extractOpts.collect_records = true;
   tydn::RenderExtractResult extracted;
   tydn::CollectRenderPrims(stage, extractOpts, &extracted);
+  const auto renderTraversalAt = std::chrono::steady_clock::now();
+  if (timing)
+    LOGI("next timing: render-stage traversal %.3f s",
+         std::chrono::duration<double>(renderTraversalAt - pointInstancesAt)
+             .count());
 
   auto copyChunked = [](const tydn::FloatChunked& src,
                         std::vector<float>* dst) {
@@ -4546,7 +5036,21 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // RenderCurves already contains tessellated centerlines for Basis, NURBS and
   // Hermite schemas. Retain those samples and their interpolated widths/colors;
   // linear/control data is used only when tessellation produced no samples.
+  size_t curvePrimsConverted = 0;
+  size_t curvePrimsDeferred = 0;
+  size_t curveStrandsRetained = 0;
+  size_t curveStrandsDeferred = 0;
   for (const tydn::RenderPrimRecord& rec : extracted.curves) {
+    if (opts.maxCurvePrims > 0 &&
+        curvePrimsConverted >= opts.maxCurvePrims) {
+      ++curvePrimsDeferred;
+      continue;
+    }
+    if (opts.maxCurveStrands > 0 &&
+        curveStrandsRetained >= opts.maxCurveStrands) {
+      ++curvePrimsDeferred;
+      continue;
+    }
     tydn::RenderCurves rc;
     if (!conv.ConvertCurves(rec.prim, &rc)) {
       draw->skipped.push_back("Curves '" + rec.path + "': conversion failed");
@@ -4581,10 +5085,82 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       draw->skipped.push_back("Curves '" + rec.path + "': empty centerline");
       continue;
     }
+    ++curvePrimsConverted;
+    if (opts.maxCurveStrands > 0 && !dc.vertexCounts.empty()) {
+      const size_t remaining = opts.maxCurveStrands - curveStrandsRetained;
+      if (dc.vertexCounts.size() > remaining) {
+        const std::vector<uint32_t> sourceCounts = dc.vertexCounts;
+        const size_t sourcePointCount = dc.points.size() / 3;
+        const size_t stride =
+            std::max<size_t>(1, (sourceCounts.size() + remaining - 1) /
+                                    std::max<size_t>(remaining, 1));
+        std::vector<size_t> offsets(sourceCounts.size() + 1, 0);
+        for (size_t i = 0; i < sourceCounts.size(); ++i)
+          offsets[i + 1] = offsets[i] + sourceCounts[i];
+        std::vector<size_t> selected;
+        for (size_t i = 0; i < sourceCounts.size() && selected.size() < remaining;
+             i += stride) {
+          selected.push_back(i);
+        }
+        auto sampleAttribute = [&](const std::vector<float>& source, size_t comps,
+                                   std::vector<float>* sampled) {
+          if (source.empty()) return;
+          if (source.size() == comps) {
+            *sampled = source;
+            return;
+          }
+          const bool perPoint = source.size() == sourcePointCount * comps;
+          const bool perCurve = source.size() == sourceCounts.size() * comps;
+          if (!perPoint && !perCurve) return;
+          for (size_t curve : selected) {
+            const size_t begin = perPoint ? offsets[curve] : curve;
+            const size_t count = perPoint ? sourceCounts[curve] : 1;
+            sampled->insert(sampled->end(), source.begin() + begin * comps,
+                            source.begin() + (begin + count) * comps);
+          }
+        };
+        DrawCurvesCPU sampled;
+        sampled.name = dc.name;
+        sampled.absPath = dc.absPath;
+        sampled.purpose = dc.purpose;
+        sampled.materialId = dc.materialId;
+        std::memcpy(sampled.world, dc.world, sizeof(sampled.world));
+        for (size_t curve : selected) {
+          sampled.vertexCounts.push_back(sourceCounts[curve]);
+          sampled.points.insert(sampled.points.end(),
+                                dc.points.begin() + offsets[curve] * 3,
+                                dc.points.begin() + offsets[curve + 1] * 3);
+        }
+        sampleAttribute(dc.widths, 1, &sampled.widths);
+        sampleAttribute(dc.colors, 3, &sampled.colors);
+        sampleAttribute(dc.opacities, 1, &sampled.opacities);
+        curveStrandsDeferred += sourceCounts.size() - selected.size();
+        dc = std::move(sampled);
+      }
+    }
+    curveStrandsRetained += dc.vertexCounts.size();
     RowMatrixToColumnMajor(rec.world, dc.world);
     addCarrierBounds(rec.world, dc.points, dc.widths, dc.aabbMin, dc.aabbMax);
     draw->curves.push_back(std::move(dc));
   }
+  if (curvePrimsDeferred > 0 || curveStrandsDeferred > 0) {
+    draw->truncated = true;
+    draw->skipped.push_back(
+        "procedural preview deferred " + std::to_string(curvePrimsDeferred) +
+        " Curves prim(s) and " + std::to_string(curveStrandsDeferred) +
+        " strand(s); request full quality to refine");
+    if (timing) {
+      LOGI("next: procedural preview retained %zu Curves prim(s) / %zu "
+           "strand(s), deferred %zu prim(s) / %zu strand(s)",
+           curvePrimsConverted, curveStrandsRetained, curvePrimsDeferred,
+           curveStrandsDeferred);
+    }
+  }
+  const auto carrierGeometryAt = std::chrono::steady_clock::now();
+  if (timing)
+    LOGI("next timing: points/curves conversion %.3f s",
+         std::chrono::duration<double>(carrierGeometryAt - renderTraversalAt)
+             .count());
 
   // --- 3a-native. Scenegraph (instanceable) instances: prims that share an
   //     instance_prototype are flattened by the converter (one mesh set per
@@ -4661,7 +5237,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   const auto nativeInstancesAt = std::chrono::steady_clock::now();
   if (timing)
     LOGI("next timing: native-instance extraction %.3f s",
-         std::chrono::duration<double>(nativeInstancesAt - pointInstancesAt).count());
+         std::chrono::duration<double>(nativeInstancesAt - carrierGeometryAt)
+             .count());
   if (timing) LogProcessMemory("after native instances");
 
   tnext::Stage::StaticGeometryReleaseStats incrementalReleased;
@@ -4892,7 +5469,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                              opts.uploadStagingBytes / bytesPerBatchVertex)
           : (size_t(8) << 20);
   const size_t kBatchVtxCap =
-      std::min<size_t>(size_t(8) << 20, stagingVertexCap);
+      std::min<size_t>(stream ? (size_t(512) << 10) : (size_t(8) << 20),
+                       stagingVertexCap);
 
   auto flushBatch = [&](Batch& b) {
     if (b.dm.vertices.empty()) return;
@@ -4979,6 +5557,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     std::string materialPath;
     double world[16];
     bool deferredProxy{false};
+    float viewPriority{-1.0f};
   };
   std::vector<PendingMeshPrim> meshPrims;
   {
@@ -5036,21 +5615,118 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       ctrl->meshesDone.store(0);
     }
   }
-  const size_t pendingMeshCount = meshPrims.size();
+
+  // Namespace order is unrelated to what the startup camera can see. Rank
+  // authored extents before geometry inspection/conversion so bounded mesh and
+  // VRAM budgets are spent on the useful frame first. Items without extents
+  // retain stable relative order behind visible bounded items.
+  if (!opts.viewCamera.empty() && meshPrims.size() > 1) {
+    NextCameraPose viewCamera;
+    if (FindNextCamera(stage, opts.viewCamera, time, &viewCamera)) {
+      size_t rankedCount = 0;
+      for (PendingMeshPrim& pending : meshPrims) {
+        float localMin[3], localMax[3];
+        tnext::UsdPrim boundPrim = pending.prim;
+        double boundWorld[16];
+        std::memcpy(boundWorld, pending.world, sizeof(boundWorld));
+        if (!PreviewExtent(boundPrim, localMin, localMax)) {
+          std::string ancestorPath = pending.path;
+          bool foundAncestor = false;
+          while (ancestorPath.size() > 1) {
+            const size_t slash = ancestorPath.find_last_of('/');
+            ancestorPath = (slash == std::string::npos || slash == 0)
+                               ? "/"
+                               : ancestorPath.substr(0, slash);
+            boundPrim = stage.GetPrimAtPath(ancestorPath);
+            if (boundPrim.IsValid() &&
+                PreviewExtent(boundPrim, localMin, localMax)) {
+              tydn::ComputeWorldTransform(stage, boundPrim, boundWorld, time);
+              foundAncestor = true;
+              break;
+            }
+          }
+          if (!foundAncestor) continue;
+        }
+        float worldMin[3] = {std::numeric_limits<float>::max(),
+                             std::numeric_limits<float>::max(),
+                             std::numeric_limits<float>::max()};
+        float worldMax[3] = {-std::numeric_limits<float>::max(),
+                             -std::numeric_limits<float>::max(),
+                             -std::numeric_limits<float>::max()};
+        for (int corner = 0; corner < 8; ++corner) {
+          float p[3];
+          TransformRowPoint(boundWorld,
+                            (corner & 1) ? localMax[0] : localMin[0],
+                            (corner & 2) ? localMax[1] : localMin[1],
+                            (corner & 4) ? localMax[2] : localMin[2], p);
+          for (int k = 0; k < 3; ++k) {
+            worldMin[k] = std::min(worldMin[k], p[k]);
+            worldMax[k] = std::max(worldMax[k], p[k]);
+          }
+        }
+        float toCenter[3];
+        float radius2 = 0.0f;
+        float distance2 = 0.0f;
+        for (int k = 0; k < 3; ++k) {
+          const float center = 0.5f * (worldMin[k] + worldMax[k]);
+          const float half = 0.5f * (worldMax[k] - worldMin[k]);
+          toCenter[k] = center - viewCamera.eye[k];
+          radius2 += half * half;
+          distance2 += toCenter[k] * toCenter[k];
+        }
+        const float distance = std::sqrt(std::max(distance2, 1.0e-12f));
+        const float depth = toCenter[0] * viewCamera.forward[0] +
+                            toCenter[1] * viewCamera.forward[1] +
+                            toCenter[2] * viewCamera.forward[2];
+        const float radius = std::sqrt(radius2);
+        const float projected = radius / std::max(distance - radius, 1.0f);
+        const float alignment = depth / distance;
+        // Use a conservative diagonal cone (16:9 around the authored vertical
+        // FOV), expanded by the bound's angular radius. Exact per-frame frustum
+        // culling still happens in Gui after upload; this is only admission
+        // order and therefore deliberately favors false positives.
+        constexpr float kPi = 3.14159265358979323846f;
+        const float halfY = std::clamp(viewCamera.fovYDeg, 1.0f, 179.0f) *
+                            (kPi / 360.0f);
+        const float halfDiag = std::atan(std::tan(halfY) * 2.04f);
+        const float angularRadius =
+            std::asin(std::min(1.0f, radius / distance));
+        const bool inFront = depth + radius > 0.0f;
+        const bool inView = inFront &&
+            alignment >= std::cos(std::min(kPi, halfDiag + angularRadius));
+        pending.viewPriority = (inView ? 2.0e6f : inFront ? 1.0e6f : 0.0f) +
+                               projected;
+        ++rankedCount;
+      }
+      std::stable_sort(meshPrims.begin(), meshPrims.end(),
+                       [](const PendingMeshPrim& a,
+                          const PendingMeshPrim& b) {
+                         return a.viewPriority > b.viewPriority;
+                       });
+      if (timing) {
+        LOGI("next: camera-prioritized %zu/%zu mesh extents for '%s'",
+             rankedCount, meshPrims.size(), opts.viewCamera.c_str());
+      }
+    } else if (timing) {
+      LOGW("next: view-priority camera '%s' was not found",
+           opts.viewCamera.c_str());
+    }
+  }
   const auto collectMeshesAt = std::chrono::steady_clock::now();
   if (timing)
     LOGI("next timing: render-prim collection %.3f s",
          std::chrono::duration<double>(collectMeshesAt - nativeInstancesAt).count());
   const auto prototypesAt = std::chrono::steady_clock::now();
-  if (timing) {
-    LOGI("next timing: prototypes/material setup %.3f s",
-         std::chrono::duration<double>(prototypesAt - composedAt).count());
-  }
+  if (timing)
+    LOGI("next timing: post-extraction setup %.3f s",
+         std::chrono::duration<double>(prototypesAt - collectMeshesAt).count());
 
   bool capped = false;
   long long totalTris = 0;
   size_t admittedGeometryBytes = 0;
   size_t budgetSkippedMeshCount = 0;
+  size_t lazySkippedMeshCount = 0;
+  size_t convertedSourceMeshCount = 0;
   // Weld effectiveness: emitted vertices vs authored points. ~1.0 means the
   // faceVarying split cost nothing; a ratio near the corners-per-point count
   // means the weld is not catching (see FillFlatGeometry).
@@ -5158,7 +5834,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
   unsigned convertThreads = opts.conversionThreads
       ? opts.conversionThreads
-      : std::min(8u, std::max(1u, std::thread::hardware_concurrency()));
+      // Island-scale scenes spend most of conversion in independent mesh
+      // extraction.  Allow more workers by default on large hosts while
+      // retaining a hard cap so peak temporary geometry remains bounded.
+      : std::min(16u, std::max(1u, std::thread::hardware_concurrency()));
   convertThreads = std::clamp(convertThreads, 1u, 64u);
   convertThreads = std::min<unsigned>(
       convertThreads, static_cast<unsigned>(meshPrims.size()));
@@ -5255,6 +5934,17 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   for (size_t meshIndex = 0; meshIndex < meshPrims.size(); ++meshIndex) {
     if (ctrl && ctrl->cancel.load()) break;
     if (capped) break;
+    if (opts.maxMeshConversions > 0 &&
+        convertedSourceMeshCount >= opts.maxMeshConversions) {
+      lazySkippedMeshCount = meshPrims.size() - meshIndex;
+      draw->truncated = true;
+      for (size_t pendingIndex = meshIndex;
+           pendingIndex < meshPrims.size(); ++pendingIndex) {
+        converted[pendingIndex].reset();
+        releasePendingPrim(&meshPrims[pendingIndex].prim);
+      }
+      break;
+    }
     if (ctrl) ctrl->meshesDone.fetch_add(1);
 
     PendingMeshPrim& pending = meshPrims[meshIndex];
@@ -5354,6 +6044,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       releasePendingPrim(&meshRecord.prim);
       continue;
     }
+    ++convertedSourceMeshCount;
     weldedVertices += loc.vertices.size();
     sourcePoints += m.point_count();
     admittedGeometryBytes +=
@@ -5842,7 +6533,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   if (parallelConvert) {
     LOGI("next: converted %zu meshes with %u workers in %.2f s "
          "(bounded chunks of %zu)",
-         pendingMeshCount, convertThreads, parallelConvertSeconds,
+         convertedSourceMeshCount, convertThreads, parallelConvertSeconds,
          kConvertChunk);
   }
   const auto meshesAt = std::chrono::steady_clock::now();
@@ -5856,6 +6547,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     if (!warn->empty()) *warn += "\n";
     *warn += "next: skipped " + std::to_string(budgetSkippedMeshCount) +
              " mesh(es) exceeding the GPU geometry budget";
+  }
+  if (lazySkippedMeshCount > 0 && warn) {
+    if (!warn->empty()) *warn += "\n";
+    *warn += "next: deferred conversion of " +
+             std::to_string(lazySkippedMeshCount) +
+             " mesh(es) beyond the large-scene preview limit";
   }
   if (supersededProxyCount > 0) {
     LOGI("next: %zu proxy-purpose mesh(es) superseded by render-purpose geometry",
@@ -5995,8 +6692,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // compression pass runs here; without this `--texture-compress` would be inert
   // on the (default) --next path, which builds its textures itself instead of
   // going through mesh_build's BuildDrawTextures.
-  ApplyTextureCompression(opts.textureOptions, draw);
-  FinalizeDrawTextures(opts.textureOptions, draw);
+  if (texCache.deferOrdinary) {
+    // Classify normal/alpha/packed-map usage while material slot indices are
+    // intact. The application owns decoding from here: it can prioritize the
+    // current frustum/selection and evict under the live GPU residency budget.
+    FinalizeDrawTextures(opts.textureOptions, draw);
+  } else {
+    ApplyTextureCompression(opts.textureOptions, draw);
+    FinalizeDrawTextures(opts.textureOptions, draw);
+  }
   BakeRTDisplacement(draw);
 
   if (texCache.decoder && !draw->textures.empty()) {
@@ -6021,6 +6725,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     return false;
   }
   if (timing) {
+    LOGI("next timing: ptex atlas build %.3f s (%zu file(s))",
+         texCache.ptexBuildSeconds, texCache.ptexBuildCount);
     LOGI("next timing: finalize %.3f s, total %.3f s",
          std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                       meshesAt).count(),

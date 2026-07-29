@@ -1258,6 +1258,77 @@ void test_stage_session_payloads_and_cancel() {
   std::cout << "  StageSession payload/cancel tests passed!" << std::endl;
 }
 
+void test_stage_session_preview_and_dependencies() {
+  std::cout << "Testing StageSession preview checkpoint/dependencies..."
+            << std::endl;
+  const char* root_path = "/tmp/tinyusdz_next_preview_root.usda";
+  const char* sub_path = "/tmp/tinyusdz_next_preview_sub.usda";
+  {
+    std::ofstream ofs(sub_path);
+    ofs << R"(#usda 1.0
+def Mesh "FromSub" {
+  float3[] extent = [(-1, -2, -3), (1, 2, 3)]
+  double3 xformOp:translate = (4, 5, 6)
+  uniform token[] xformOpOrder = ["xformOp:translate"]
+  int expensive = 7
+}
+)";
+  }
+  {
+    std::ofstream ofs(root_path);
+    ofs << "#usda 1.0\n( subLayers = [@tinyusdz_next_preview_sub.usda@] )\n"
+           "def Xform \"Root\" { def Scope \"Child\" {} }\n";
+  }
+
+  StageSnapshot retained_preview;
+  int preview_calls = 0;
+  StageSessionOptions options;
+  options.preview_callback = [&](const StagePreview& preview) {
+    ++preview_calls;
+    assert(!preview.namespace_complete);
+    assert(preview.spatial_subset);
+    assert(!preview.authoritative);
+    assert(preview.snapshot);
+    assert(preview.snapshot->GetPrimAtPath("/FromSub").IsValid());
+    assert(preview.snapshot->GetPrimAtPath("/FromSub").GetTypeName() ==
+           "Mesh");
+    assert(preview.snapshot->GetPrimAtPath("/FromSub")
+               .GetPropertyValue("extent") != nullptr);
+    assert(preview.snapshot->GetPrimAtPath("/FromSub")
+               .GetPropertyValue("xformOp:translate") != nullptr);
+    // The structure checkpoint precedes full opinion filling.
+    assert(preview.snapshot->GetPrimAtPath("/FromSub")
+               .GetPropertyValue("expensive") == nullptr);
+    retained_preview = preview.snapshot;
+    return true;
+  };
+
+  StageSession session;
+  assert(session.OpenFile(root_path, options));
+  assert(preview_calls == 1);
+  assert(retained_preview);
+  const Value* final_value =
+      session.GetStage().GetPrimAtPath("/FromSub").GetPropertyValue("expensive");
+  assert(final_value && final_value->as_int() && *final_value->as_int() == 7);
+  // Completion must not mutate the separately-owned preview.
+  assert(retained_preview->GetPrimAtPath("/FromSub")
+             .GetPropertyValue("expensive") == nullptr);
+
+  const std::vector<std::string> dependencies =
+      session.GetLayerDependencies();
+  assert(std::is_sorted(dependencies.begin(), dependencies.end()));
+  assert(std::adjacent_find(dependencies.begin(), dependencies.end()) ==
+         dependencies.end());
+  assert(std::find(dependencies.begin(), dependencies.end(), root_path) !=
+         dependencies.end());
+  assert(std::find(dependencies.begin(), dependencies.end(), sub_path) !=
+         dependencies.end());
+
+  std::remove(root_path);
+  std::remove(sub_path);
+  std::cout << "  StageSession preview/dependency tests passed!" << std::endl;
+}
+
 // ============================================================
 // Regression: Matrix type name lookup (previously Matrix2f/Matrix3f/Matrix4f
 // shared the "matrix2d"/"matrix3d"/"matrix4d" name with their double siblings,
@@ -1812,6 +1883,7 @@ int main() {
     test_load_usd_from_memory();
     test_stage_session_variants();
     test_stage_session_payloads_and_cancel();
+    test_stage_session_preview_and_dependencies();
 
     std::cout << std::endl;
     std::cout << "All tests passed!" << std::endl;

@@ -9,7 +9,9 @@
 #include "pcp/cache.hh"
 #include "reader/usdz-reader.hh"
 #include "resolver/asset-resolver.hh"
+#include "../logger.hh"
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -422,7 +424,7 @@ struct StageSession::Impl {
 #endif
   }
 
-  void UpdateMemoryStats() {
+  void UpdateMemoryStats(const size_t* known_stage_bytes = nullptr) {
     StageSessionMemoryStats next;
     if (cache) {
       const pcp::Cache::MemoryStats cache_stats = cache->GetMemoryStats();
@@ -432,7 +434,9 @@ struct StageSession::Impl {
       next.prim_index_count = cache_stats.prim_index_count;
       next.composed_prim_count = cache_stats.composed_prim_count;
     }
-    next.composed_stage_bytes = stage ? stage->GetMemoryUsage() : 0;
+    next.composed_stage_bytes = known_stage_bytes
+                                    ? *known_stage_bytes
+                                    : (stage ? stage->GetMemoryUsage() : 0);
     next.estimated_total_bytes = next.source_layer_bytes +
                                  next.transient_cache_bytes +
                                  next.composed_stage_bytes;
@@ -456,7 +460,8 @@ struct StageSession::Impl {
     return false;
   }
 
-  bool CheckMemoryBudgetFor(const Stage& candidate, DiagnosticDomain domain) {
+  bool CheckMemoryBudgetFor(const Stage& candidate, DiagnosticDomain domain,
+                            StageSessionMemoryStats* accepted = nullptr) {
     StageSessionMemoryStats projected = memory_stats;
     if (cache) {
       const pcp::Cache::MemoryStats cache_stats = cache->GetMemoryStats();
@@ -472,6 +477,10 @@ struct StageSession::Impl {
                                       projected.composed_stage_bytes;
     if (options.max_total_memory == 0 ||
         projected.estimated_total_bytes <= options.max_total_memory) {
+      projected.peak_estimated_total_bytes = std::max(
+          memory_stats.peak_estimated_total_bytes,
+          projected.estimated_total_bytes);
+      if (accepted) *accepted = projected;
       return true;
     }
     error = "aggregate memory budget exceeded: estimated " +
@@ -590,11 +599,33 @@ struct StageSession::Impl {
     error.clear();
     if (!Progress(phase, 0.0f, "composing stage")) return false;
     Stage next_stage;
-    if (!cache->BuildStage(&next_stage, &warning, &error)) {
+    pcp::Cache::PreviewCallback preview_callback;
+    if (phase == ProgressPhase::Compose && options.preview_callback) {
+      preview_callback = [this](Stage&& preview_stage) {
+        if (!Progress(ProgressPhase::PreviewCompose, 0.0f,
+                      "publishing stage preview")) {
+          return false;
+        }
+        StagePreview preview;
+        preview.snapshot.revision = revision + 1;
+        preview.snapshot.stage.reset(new Stage(std::move(preview_stage)));
+        if (!options.preview_callback(preview)) {
+          error = "stage preview callback cancelled";
+          AddDiagnostic(DiagnosticSeverity::Error, DiagnosticDomain::Load,
+                        "cancelled", error, root_identifier);
+          return false;
+        }
+        return Progress(ProgressPhase::PreviewCompose, 1.0f,
+                        "stage preview ready");
+      };
+    }
+    if (!cache->BuildStage(&next_stage, &warning, &error, preview_callback)) {
       RecordMessages(DiagnosticDomain::Compose);
       return false;
     }
-    if (!CheckMemoryBudgetFor(next_stage, DiagnosticDomain::Compose)) {
+    StageSessionMemoryStats accepted_memory;
+    if (!CheckMemoryBudgetFor(next_stage, DiagnosticDomain::Compose,
+                              &accepted_memory)) {
       return false;
     }
     const uint64_t next_revision = revision + 1;
@@ -604,10 +635,11 @@ struct StageSession::Impl {
     revision = next_revision;
     last_changes = std::move(changes);
     RecordMessages(DiagnosticDomain::Compose);
-    UpdateMemoryStats();
+    memory_stats = accepted_memory;
     if (options.cache_retention == CacheRetention::LayersOnly) {
       cache->TrimTransientCaches();
-      UpdateMemoryStats();
+      const size_t composed_stage_bytes = memory_stats.composed_stage_bytes;
+      UpdateMemoryStats(&composed_stage_bytes);
     }
     return Progress(phase, 1.0f, "stage ready");
   }
@@ -620,6 +652,8 @@ StageSession& StageSession::operator=(StageSession&&) noexcept = default;
 
 bool StageSession::OpenFile(const std::string& filename,
                             const StageSessionOptions& options) {
+  using Clock = std::chrono::steady_clock;
+  const auto open_begin = Clock::now();
   std::unique_ptr<Impl> next(new Impl());
   next->options = options;
   next->root_identifier = filename;
@@ -638,6 +672,7 @@ bool StageSession::OpenFile(const std::string& filename,
     impl_ = std::move(next);
     return false;
   }
+  const auto root_loaded = Clock::now();
   // Composition arcs in a package are relative to its root entry, not to the
   // directory containing the .usdz file. Keep the public root identifier as the
   // filename, but anchor the composition cache at package.usdz[root.usd].
@@ -690,10 +725,24 @@ bool StageSession::OpenFile(const std::string& filename,
     impl_ = std::move(next);
     return false;
   }
+  const auto cache_opened = Clock::now();
   next->cache.reset(new pcp::Cache(std::move(*opened)));
   if (!next->Rebuild(ProgressPhase::Compose)) {
     impl_ = std::move(next);
     return false;
+  }
+  const auto stage_built = Clock::now();
+  if (options.composition.enable_timing) {
+    auto milliseconds = [](Clock::duration duration) {
+      return std::chrono::duration<double, std::milli>(duration).count();
+    };
+    TUSDZ_LOG_I("[next_session] root_load=" +
+                std::to_string(milliseconds(root_loaded - open_begin)) +
+                "ms cache_open=" +
+                std::to_string(milliseconds(cache_opened - root_loaded)) +
+                "ms rebuild=" +
+                std::to_string(milliseconds(stage_built - cache_opened)) +
+                "ms");
   }
   next->open = true;
   impl_ = std::move(next);
@@ -878,6 +927,11 @@ StageSession::GetCompositionIssues() const {
              ? impl_->cache->GetCompositionIssues()
              : (impl_ ? impl_->released_composition_issues
                       : std::vector<pcp::Cache::CompositionIssue>());
+}
+
+std::vector<std::string> StageSession::GetLayerDependencies() const {
+  if (!impl_ || !impl_->cache) return {};
+  return impl_->cache->GetLayerDependencies();
 }
 const std::vector<Diagnostic>& StageSession::GetDiagnostics() const {
   return impl_->diagnostics;

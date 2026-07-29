@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -17,6 +18,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "frame_packet.hh"
@@ -184,6 +186,11 @@ class App
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
   // Write a stable machine-readable summary when run() exits.
   void setRenderReport(const std::string& path) { renderReportPath_ = path; }
+  // Name of the resolved large-scene production profile (off/auto/island/etc.).
+  // Kept in the report so captures are reproducible without parsing logs.
+  void setLargeSceneProfile(const std::string& profile) {
+    largeSceneProfile_ = profile;
+  }
   // --max-instances N: cap the CUDA/HIP 2-level-BVH instance count (0 = no cap).
   void setRtMaxInstances(size_t n) { rtMaxInstances_ = n; }
   // --lod-stream: view-dependent district LOD pre-pass (needs --next). Promotes
@@ -193,7 +200,10 @@ class App
   void setLodMaxVramGiB(double g) { lodMaxVramGiB_ = g; }
   // --camera <name>: frame the viewer on a named USD Camera (either loader) instead
   // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
-  void setCameraName(const std::string& n) { cameraName_ = n; }
+  void setCameraName(const std::string& n) {
+    cameraName_ = n;
+    loadOpts_.viewCamera = n;
+  }
   void setCameraConform(CameraConform conform) { camera_.setConform(conform); }
   void setViewDirection(float x, float y, float z) {
     viewDir_[0] = x; viewDir_[1] = y; viewDir_[2] = z;
@@ -279,6 +289,9 @@ class App
   // deterministic) and the async path (keeps the UI responsive).
   void loadFileBlocking(const std::string& path);
   void startLoadAsync(const std::string& path);
+  void resetTextureResidency();
+  void updateTextureResidency();
+  std::vector<int> selectedTextureSlots() const;
   // Record a successfully-opened scene at the front of the recent list (dedup,
   // capped), refresh the menu, and persist to the config path.
   void addRecentScene(const std::string& path);
@@ -291,6 +304,7 @@ class App
                    bool alreadyUploaded = false);  // upload + bind on main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
   bool stepPtexResidency(double deadlineMs);
+  void collectPtexRequests(const DrawMeshCPU& mesh);
   void drainProgressiveLoad();   // consume loader-produced meshes on context thread
   void ensureWireAuxReady();     // make resident wire buffers complete atomically
   // Static shaded previews keep diagnostic topology in a delta-varint stream
@@ -394,6 +408,7 @@ class App
   int windowHeight_{0};
   std::string windowShot_;
   std::string renderReportPath_;
+  std::string largeSceneProfile_ = "off";
   int reportCaptureWidth_{0};
   int reportCaptureHeight_{0};
   bool headless_{false};  // windowless offscreen rendering (Vulkan only)
@@ -486,6 +501,31 @@ class App
   bool warnedMeshIndexMismatch_{false};
 
   // Async loading
+  enum class TextureResidencyState : uint8_t {
+    Unloaded,
+    Decoding,
+    CoarseResident,
+    FullResident,
+    Failed,
+  };
+  struct TextureResidencySlot {
+    TextureResidencyState state{TextureResidencyState::Unloaded};
+    std::chrono::steady_clock::time_point lastWanted{};
+    size_t residentBytes{0};
+    bool forceFull{false};
+    uint64_t generation{0};
+  };
+  struct TextureDecodeResult {
+    size_t slot{0};
+    bool full{false};
+    bool ok{false};
+    uint64_t generation{0};
+    DrawTextureCPU texture;
+  };
+  std::vector<TextureResidencySlot> textureResidency_;
+  std::vector<std::future<TextureDecodeResult>> textureDecodeJobs_;
+  bool backgroundTextureRefinement_{true};
+
   std::thread loadThread_;
   LoadControl loadCtrl_;
   std::atomic<bool> loadFinished_{false};
@@ -495,6 +535,7 @@ class App
   std::shared_ptr<ProgressiveSceneStream> loadStream_;
   bool streamLoadActive_{false};
   bool streamRendererBegun_{false};
+  bool streamPreviewActive_{false};
   bool streamCompleteSeen_{false};
   bool streamCameraFramed_{false};
   bool streamFirstUploadLogged_{false};
@@ -560,6 +601,8 @@ class App
   size_t nextPtexTexture_{0};
   uint32_t nextPtexFace_{0};
   std::vector<std::unique_ptr<PtexPhysicalPageCache>> ptexPhysicalCaches_;
+  std::vector<std::vector<uint32_t>> ptexRequestedFaces_;
+  std::vector<std::unordered_set<uint32_t>> ptexRequestedFaceSets_;
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
   // Experimental threaded rendering. renderThreadActive_ is true only when

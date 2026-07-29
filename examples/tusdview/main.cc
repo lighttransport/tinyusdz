@@ -184,6 +184,11 @@ int main(int argc, char** argv) {
   float rasterLodFullPx = 0.0f; // 0 => keep App default
   float rasterLodCullPx = -1.0f;// <0 => keep App default
   LargeSceneProfile largeSceneProfile = LargeSceneProfile::Off;
+  tusdview::PreviewCacheMode previewCacheMode =
+      tusdview::PreviewCacheMode::Auto;
+  bool previewCacheExplicit = false;
+  std::string previewCacheDir;
+  double previewCacheMaxGiB = 8.0;
   bool maxTrisExplicit = false;
   bool maxGpuMemExplicit = false;
   bool maxDrawMeshesExplicit = false;
@@ -219,6 +224,8 @@ int main(int argc, char** argv) {
   bool lodStream = false;     // --lod-stream: view-dependent district LOD (needs --next)
   double lodMaxMem = 0.0;     // --max-mem GiB: host budget for --lod-stream (0=auto)
   double lodMaxVram = 0.0;    // --max-vram GiB: GPU budget for --lod-stream (0=auto)
+  std::optional<size_t> curvePreviewPrims;
+  std::optional<size_t> curvePreviewStrands;
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
   bool wantMaterialId = false; // --material-id: start in material-id viz mode
   std::optional<tusdview::RenderMode> wantMode;  // --mode <name>: any render mode
@@ -257,6 +264,8 @@ int main(int argc, char** argv) {
   bool domeIblExplicit = false;
   bool maxTextureSizeExplicit = false;
   bool textureBudgetExplicit = false;
+  bool textureCompressionExplicit = false;
+  bool mipsExplicit = false;
   std::optional<int> subdivisionLevel;
   bool subdivisionAuto = false;
   bool subdivisionAutoExplicit = false;
@@ -366,6 +375,36 @@ int main(int argc, char** argv) {
         LOGE("--large-scene-profile must be off, auto, caldera, island, or alab");
         return 1;
       }
+    } else if (std::strcmp(argv[i], "--preview-cache") == 0) {
+      if ((i + 1) >= argc) {
+        LOGE("--preview-cache requires auto, off, or refresh");
+        return 1;
+      }
+      const std::string mode = argv[++i];
+      if (mode == "auto") previewCacheMode = tusdview::PreviewCacheMode::Auto;
+      else if (mode == "off") previewCacheMode = tusdview::PreviewCacheMode::Off;
+      else if (mode == "refresh") previewCacheMode = tusdview::PreviewCacheMode::Refresh;
+      else { LOGE("--preview-cache must be auto, off, or refresh"); return 1; }
+      previewCacheExplicit = true;
+    } else if (std::strncmp(argv[i], "--preview-cache=", 16) == 0) {
+      const std::string mode = argv[i] + 16;
+      if (mode == "auto") previewCacheMode = tusdview::PreviewCacheMode::Auto;
+      else if (mode == "off") previewCacheMode = tusdview::PreviewCacheMode::Off;
+      else if (mode == "refresh") previewCacheMode = tusdview::PreviewCacheMode::Refresh;
+      else { LOGE("--preview-cache must be auto, off, or refresh"); return 1; }
+      previewCacheExplicit = true;
+    } else if (std::strcmp(argv[i], "--preview-cache-dir") == 0) {
+      if ((i + 1) >= argc || argv[i + 1][0] == '\0') {
+        LOGE("--preview-cache-dir requires a non-empty path");
+        return 1;
+      }
+      previewCacheDir = argv[++i];
+    } else if (std::strcmp(argv[i], "--preview-cache-max-gb") == 0) {
+      if ((i + 1) >= argc) {
+        LOGE("--preview-cache-max-gb requires a number");
+        return 1;
+      }
+      previewCacheMaxGiB = std::max(0.0, std::atof(argv[++i]));
     } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--compose-threads") == 0 && (i + 1) < argc) {
@@ -499,6 +538,7 @@ int main(int argc, char** argv) {
       }
       subdivisionPrimLevels[prim] = level;
     } else if (std::strcmp(argv[i], "--texture-compress") == 0 && (i + 1) < argc) {
+      textureCompressionExplicit = true;
       const char* mode = argv[++i];
       if (std::strcmp(mode, "off") == 0) {
         textureOptions.compression = tusdview::TextureCompressionMode::Off;
@@ -528,6 +568,7 @@ int main(int argc, char** argv) {
         return 1;
       }
     } else if (std::strcmp(argv[i], "--texture-mips") == 0 && (i + 1) < argc) {
+      mipsExplicit = true;
       const char* mode = argv[++i];
       if (std::strcmp(mode, "off") == 0) {
         textureOptions.generateMips = false;
@@ -605,6 +646,13 @@ int main(int argc, char** argv) {
       if (rtSamples < 1) rtSamples = 1;
     } else if (std::strcmp(argv[i], "--lod-stream") == 0) {
       lodStream = true;
+    } else if (std::strcmp(argv[i], "--curve-preview-prims") == 0 &&
+               i + 1 < argc) {
+      curvePreviewPrims = static_cast<size_t>(std::strtoull(argv[++i], nullptr, 10));
+    } else if (std::strcmp(argv[i], "--curve-preview-strands") == 0 &&
+               i + 1 < argc) {
+      curvePreviewStrands =
+          static_cast<size_t>(std::strtoull(argv[++i], nullptr, 10));
     } else if (std::strcmp(argv[i], "--max-mem") == 0 && i + 1 < argc) {
       lodMaxMem = std::atof(argv[++i]);
       lodMaxMemExplicit = true;
@@ -758,6 +806,10 @@ int main(int argc, char** argv) {
           "Vulkan realtime preset for public large scenes. Profiles set existing "
           "large-scene knobs only; explicit CLI flags win. No texture resize or "
           "compression behavior is changed.\n"
+          "  --preview-cache auto|off|refresh  Reuse or rebuild a validated "
+          "bounds/camera preview cache (auto for large-scene profiles).\n"
+          "  --preview-cache-dir PATH  Override the platform preview cache directory.\n"
+          "  --preview-cache-max-gb N  Preview-cache size cap (default 8 GiB).\n"
           "  --compose-threads N  Composition worker count (default: hardware, capped).\n"
           "  --convert-threads N  Geometry conversion worker count.\n"
           "  --upload-budget-ms N  Interactive upload slice, 1..33 ms.\n"
@@ -808,6 +860,10 @@ int main(int argc, char** argv) {
           "exceeds N texels (default 4096; 0 = keep source size).\n"
           "  --texture-budget-mb N  Best-effort decoded texture memory budget "
           "for viewer uploads (0 = unlimited).\n"
+          "  --curve-preview-prims N  Convert at most N Curves prims (0 = all; "
+          "interactive ALab default 64).\n"
+          "  --curve-preview-strands N  Retain at most N complete curve strands "
+          "(0 = all; interactive ALab default 100000).\n"
           "  --subdivision-level N  Scene-wide conversion-time subdivision "
           "surface refinement level (0 = off). Applies only to meshes whose USD "
           "subdivisionScheme is not none.\n"
@@ -1025,6 +1081,14 @@ int main(int argc, char** argv) {
     if (effectiveProfile == LargeSceneProfile::ALab && allowParentPaths) {
       LOGI("large-scene-profile alab: parent-relative composition paths allowed");
     }
+    if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
+        maxFrames < 0) {
+      LOGI("large-scene-profile alab: interactive preview textures<=%d px, "
+           "compression=%s, mips=%s, curves<=64 prims/100000 strands",
+           maxTextureSizeExplicit ? textureOptions.maxTextureSize : 512,
+           textureCompressionExplicit ? "explicit" : "auto",
+           mipsExplicit ? (textureOptions.generateMips ? "on" : "off") : "off");
+    }
     if (maxAssetReadBytes > 0) {
       LOGI("large-scene-profile %s: max asset read bytes=%llu",
            ProfileName(effectiveProfile),
@@ -1110,6 +1174,39 @@ int main(int argc, char** argv) {
     lo.composition = !noComposition;
     lo.compositionThreads = compositionThreads;
     lo.conversionThreads = conversionThreads;
+    lo.progressivePreview = effectiveProfile != LargeSceneProfile::Off &&
+                            !headless && maxFrames < 0;
+    lo.previewCache.mode = previewCacheExplicit
+                               ? previewCacheMode
+                               : (effectiveProfile != LargeSceneProfile::Off
+                                      ? tusdview::PreviewCacheMode::Auto
+                                      : tusdview::PreviewCacheMode::Off);
+    lo.previewCache.directory = previewCacheDir;
+    lo.previewCache.maxBytes = static_cast<size_t>(
+        previewCacheMaxGiB * 1024.0 * 1024.0 * 1024.0);
+    lo.previewCache.timing = timing;
+    // Island startup is dominated by eager Ptex fallback construction. Keep a
+    // bounded representative set and stream the remaining faces on demand.
+    if (effectiveProfile == LargeSceneProfile::Island) {
+      // Keep startup bounded; admitted meshes enqueue their remaining source
+      // faces for physical-cache streaming after the first usable frame.
+      lo.ptexInitialFaces = 256;
+      lo.curveTessellationSegments = 2;
+      if (maxDrawMeshes > 0) {
+        lo.maxMeshConversions = static_cast<size_t>(maxDrawMeshes);
+      }
+    } else if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
+               maxFrames < 0) {
+      // ALab's baked procedurals and texture set exceed ordinary workstation
+      // VRAM. Start with a shaded, topology-valid preview; explicit/headless
+      // production runs keep the requested quality settings.
+      lo.curveTessellationSegments = 1;
+      lo.maxCurvePrims = 64;
+      lo.maxCurveStrands = 100000;
+      lo.asyncTextureDecode = true;
+    }
+    if (curvePreviewPrims) lo.maxCurvePrims = *curvePreviewPrims;
+    if (curvePreviewStrands) lo.maxCurveStrands = *curvePreviewStrands;
     lo.timing = timing;
     lo.streamBufferBytes = streamBufferMB * 1024ull * 1024ull;
     if (effectiveProfile != LargeSceneProfile::Off) {
@@ -1139,6 +1236,15 @@ int main(int argc, char** argv) {
     lo.deferReferences = deferReferences;
     lo.allowParentRelativePaths = allowParentPaths;
     lo.textureOptions = textureOptions;
+    if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
+        maxFrames < 0) {
+      if (!maxTextureSizeExplicit) lo.textureOptions.maxTextureSize = 512;
+      if (!textureCompressionExplicit) {
+        lo.textureOptions.compression =
+            tusdview::TextureCompressionMode::Auto;
+      }
+      if (!mipsExplicit) lo.textureOptions.generateMips = false;
+    }
     lo.subdivisionLevel = std::max(0, subdivisionLevel.value_or(0));
     lo.subdivisionAuto = subdivisionAuto;
     lo.subdivisionAutoMaxLevel =
@@ -1196,6 +1302,7 @@ int main(int argc, char** argv) {
   app.setHipRt(wantHip);
   app.setRtSamples(rtSamples);
   app.setRenderReport(renderReport);
+  app.setLargeSceneProfile(ProfileName(effectiveProfile));
   app.setRtMaxInstances(static_cast<size_t>(rtMaxInstances));
   app.setLodStream(lodStream);
   app.setLodMaxMemGiB(lodMaxMem);

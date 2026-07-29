@@ -127,7 +127,12 @@ struct Diagnostic {
   std::string asset_path;
 };
 
-enum class ProgressPhase : uint8_t { RootLoad, Compose, Recompose };
+enum class ProgressPhase : uint8_t {
+  RootLoad,
+  Compose,
+  Recompose,
+  PreviewCompose,
+};
 
 struct ProgressEvent {
   ProgressPhase phase = ProgressPhase::RootLoad;
@@ -149,6 +154,15 @@ struct StageSessionMemoryStats {
   size_t composed_prim_count = 0;
 };
 
+struct StagePreview {
+  StageSnapshot snapshot;
+  // The snapshot is a compact spatial subset: bound/camera prims and their
+  // transform ancestors. Full namespace, geometry and shading are absent.
+  bool namespace_complete = false;
+  bool spatial_subset = true;
+  bool authoritative = false;
+};
+
 struct StageSessionOptions {
   LoadUSDOptions load;
   pcp::CompositionOptions composition;
@@ -161,6 +175,10 @@ struct StageSessionOptions {
   CacheRetention cache_retention = CacheRetention::Full;
   using ProgressCallback = std::function<bool(const ProgressEvent&)>;
   ProgressCallback progress_callback;
+  using PreviewCallback = std::function<bool(const StagePreview&)>;
+  // Invoked synchronously on the loading thread during initial composition.
+  // The snapshot owns a separate Stage and may safely be retained.
+  PreviewCallback preview_callback;
 };
 
 struct StageEditResult {
@@ -225,6 +243,7 @@ class StageSession {
   pcp::CompositionOptions::VariantSelectionMap GetVariantSelections() const;
   std::vector<Path> GetDeferredPayloadPaths() const;
   std::vector<pcp::Cache::CompositionIssue> GetCompositionIssues() const;
+  std::vector<std::string> GetLayerDependencies() const;
   const std::vector<Diagnostic>& GetDiagnostics() const;
   StageSessionMemoryStats GetMemoryStats() const;
   void TrimCaches();

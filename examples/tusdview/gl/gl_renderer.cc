@@ -1748,6 +1748,43 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   }
   gpu.width = t.image.width;
   gpu.height = t.image.height;
+  auto imageBytes = [](const light3d::Image& image) {
+    return image.data.empty()
+               ? size_t(std::max(image.width, 0)) *
+                     size_t(std::max(image.height, 0)) * 4u
+               : image.data.size();
+  };
+  auto compressedBytes = [](const DrawCompressedImageCPU& image) {
+    size_t bytes = image.data.size();
+    for (const DrawCompressedMipCPU& mip : image.mips) bytes += mip.data.size();
+    return bytes;
+  };
+  if (t.isUdim && !t.udimTiles.empty()) {
+    for (const DrawUdimTileCPU& tile : t.udimTiles) {
+      const size_t compressed = compressedBytes(tile.compressed);
+      gpu.residentBytes += compressed ? compressed : imageBytes(tile.image);
+      if (!compressed) {
+        for (const light3d::Image& mip : tile.mipImages)
+          gpu.residentBytes += imageBytes(mip);
+      }
+    }
+    // The ordinary 2D fallback is also allocated for UDIM materials.
+    const size_t fallbackCompressed = compressedBytes(t.compressed);
+    gpu.residentBytes +=
+        fallbackCompressed ? fallbackCompressed : imageBytes(t.image);
+  } else {
+    const size_t compressed = compressedBytes(t.compressed);
+    gpu.residentBytes = compressed ? compressed : imageBytes(t.image);
+    if (!compressed) {
+      for (const light3d::Image& mip : t.mipImages)
+        gpu.residentBytes += imageBytes(mip);
+    }
+  }
+  // GL generates a complete chain when the CPU did not provide one.
+  if (t.mipImages.empty() && t.compressed.mips.empty() &&
+      !t.streamingMutable) {
+    gpu.residentBytes += gpu.residentBytes / 3u;
+  }
   gpu.regionUpdatable = !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
                         (!t.image.data.empty() || t.streamingMutable) &&
                         !(t.requestedCompressed &&
@@ -1772,6 +1809,19 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
       remaining -= static_cast<size_t>(count);
     }
   }
+}
+
+void GLRenderer::evictTexture(int slot) {
+  if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return;
+  GLTexture& texture = textures_[static_cast<size_t>(slot)];
+  if (texture.tex2d) glDeleteTextures(1, &texture.tex2d);
+  if (texture.arrayTex) glDeleteTextures(1, &texture.arrayTex);
+  texture = GLTexture{};
+}
+
+size_t GLRenderer::textureResidentBytes(int slot) const {
+  if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return 0;
+  return textures_[static_cast<size_t>(slot)].residentBytes;
 }
 
 bool GLRenderer::updateTextureRegion(int slot, int x, int y, int w, int h,

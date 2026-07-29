@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Repeatable opt-in production captures. No Island path or output is checked in.
-set -euo pipefail
+set -uo pipefail
 
 viewer="${TUSDVIEW:-build_ninja/tusdview}"
 scene="${ISLAND_USD:-}"
@@ -8,6 +8,7 @@ camera="${ISLAND_CAMERA:-}"
 out_dir="${ISLAND_CAPTURE_DIR:-/tmp/tusdview-island-captures}"
 sizes="${ISLAND_CAPTURE_SIZES:-1280x720}"
 backends="${ISLAND_CAPTURE_BACKENDS:-gl vk vk-rt}"
+capture_timeout="${ISLAND_CAPTURE_TIMEOUT:-600s}"
 
 if [[ -z "$scene" || ! -f "$scene" ]]; then
   echo "SKIP: set ISLAND_USD to the external Island root layer"
@@ -38,20 +39,35 @@ run_capture() {
                 "$scene")
   echo "CAPTURE: $backend $size"
   if [[ "$backend" == gl ]]; then
-    env __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    timeout --kill-after=10s "$capture_timeout" \
+      env __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
       /usr/bin/time -v xvfb-run -a "${cmd[@]}" >"${stem}.log" 2>&1
   else
-    env __NV_PRIME_RENDER_OFFLOAD=1 \
+    timeout --kill-after=10s "$capture_timeout" \
+      env __NV_PRIME_RENDER_OFFLOAD=1 \
       /usr/bin/time -v "${cmd[@]}" >"${stem}.log" 2>&1
   fi
-  test -s "${stem}.png"
-  test -s "${stem}.json"
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "FAIL: $backend $size exited with $rc (see ${stem}.log)" >&2
+    return 1
+  fi
+  if [[ ! -s "${stem}.png" || ! -s "${stem}.json" ]]; then
+    echo "FAIL: $backend $size did not produce screenshot/report" >&2
+    return 1
+  fi
+  echo "PASS: $backend $size"
 }
 
+failures=0
 for size in $sizes; do
   for backend in $backends; do
-    run_capture "$backend" "$size"
+    run_capture "$backend" "$size" || failures=$((failures + 1))
   done
 done
 
+if [[ $failures -ne 0 ]]; then
+  echo "FAIL: $failures Island capture(s) failed; logs/reports are in $out_dir" >&2
+  exit 1
+fi
 echo "OK: Island captures and JSON reports are in $out_dir"

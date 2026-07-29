@@ -20,6 +20,7 @@
 #include "../stage/stage.hh"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,6 +33,12 @@ namespace pcp {
 
 class Cache {
  public:
+  // Called once after namespace discovery, but before the (potentially
+  // expensive) full opinion-fill pass. The compact Stage contains spatial
+  // endpoints (bounds/cameras) and their transform ancestors. It is separate
+  // and move-only, so retaining it cannot race authoritative BuildStage work.
+  using PreviewCallback = std::function<bool(Stage&&)>;
+
   struct MemoryStats {
     size_t source_layer_bytes = 0;
     size_t transient_cache_bytes = 0;
@@ -113,7 +120,13 @@ class Cache {
                           std::string *err);
 
   /// Materialize the fully-composed scene into `stage` (a fresh root Layer).
-  bool BuildStage(Stage *stage, std::string *warn, std::string *err);
+  bool BuildStage(Stage *stage, std::string *warn, std::string *err,
+                  const PreviewCallback& preview_callback = {});
+
+  /// Resolved identifiers for every layer participating in the current
+  /// composition, including the root. Sorted and deduplicated so callers can
+  /// construct deterministic cache manifests without borrowing Layer objects.
+  std::vector<std::string> GetLayerDependencies() const;
 
   /// Approximate logical residency owned by the composition cache. Source
   /// layers are counted once even when several layer stacks reference them.

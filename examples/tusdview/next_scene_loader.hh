@@ -38,6 +38,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     std::shared_ptr<tinyusdz::next::StageSession>* out_session = nullptr,
                     ProgressiveSceneStream* stream = nullptr);
 
+// Decode one ordinary filesystem texture reserved by the async next-loader.
+// Each call owns its decoder and is safe to run on an application worker.
+// Archive, UDIM, Ptex and kept-compressed KTX textures never use this path.
+bool DecodeDeferredDrawTexture(const DrawTextureCPU& placeholder,
+                               const TextureRuntimeOptions& runtime,
+                               uint64_t budgetBytes,
+                               DrawTextureCPU* decoded);
+
 // A USD camera resolved from the `next` stage, in world space: `eye` position,
 // unit `forward` (the camera looks down its local -Z) and `up` (local +Y), and
 // the vertical field of view in degrees (from focalLength / verticalAperture).
