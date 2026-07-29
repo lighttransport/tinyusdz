@@ -16,7 +16,12 @@
 
 ## Releases
 
-### 25.07 v0.9.x 
+### 26.xx v1.0.0 (dev)
+
+* `dev` branch.
+* First major release of TinyUSDZ
+
+### 25.07 v0.9.x (stable)
 
 * Robust USDA/USDC/USDZ parsing.
 * Robust USDA writer.
