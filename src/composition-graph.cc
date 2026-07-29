@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
+#include <limits>
 #include <sstream>
 
 #include "common-macros.inc"
@@ -158,6 +160,13 @@ InstanceKey ComputeInstanceKey(const PrimIndex &index,
 
 CompNode &GetMutableNode(PrimIndex &index TINYUSDZ_LIFETIMEBOUND,
                          uint16_t node_idx) {
+  // node_idx is typically from GetStrengthOrder() or DeferredPayloadInfo.
+  // The latter can be stale if the deferred-payload index is corrupted,
+  // so guard against out-of-bounds access (defense-in-depth).
+  if (node_idx >= index._nodes.size()) {
+    static thread_local CompNode s_sentinel{};
+    return s_sentinel;
+  }
   return index._nodes[node_idx];
 }
 
@@ -200,6 +209,9 @@ uint16_t CompositionContext::AddLayerStack(const Layer *layer,
     }
   }
 
+  if (_layer_stacks.size() >= static_cast<size_t>((std::numeric_limits<uint16_t>::max)())) {
+    return CompNode::kInvalidIndex;
+  }
   uint16_t idx = static_cast<uint16_t>(_layer_stacks.size());
   LayerStackEntry entry;
   entry.layer = layer;
@@ -215,6 +227,9 @@ uint16_t CompositionContext::AddMapExpression(const NamespaceMapping &mapping,
     return CompNode::kInvalidIndex;  // identity mapping
   }
 
+  if (_map_expressions.size() >= static_cast<size_t>((std::numeric_limits<uint16_t>::max)())) {
+    return CompNode::kInvalidIndex;
+  }
   uint16_t idx = static_cast<uint16_t>(_map_expressions.size());
   MapExpr expr;
   expr.mapping = mapping;
@@ -2142,7 +2157,42 @@ bool CompositionGraph::BuildStage(Stage *stage, std::string *warn,
   }
 
   // Use existing LayerToStage for the final conversion
+  // Verify no duplicate sibling names in the composed layer (test-gate gap:
+  // every inline child was a duplicate prim on both composition paths, and 171
+  // ctests + the whole roundtrip corpus missed it for the entire life of the
+  // bug because the roundtrip compares flattened output where identical twins
+  // collapse harmlessly, and nothing asserted sibling uniqueness).
+  if (!ValidateNoDuplicateSiblingNames(composed_layer, warn, err)) {
+    return false;
+  }
   return LayerToStage(std::move(composed_layer), stage, warn, err);
+}
+
+bool ValidateNoDuplicateSiblingNames(const Layer &layer, std::string *warn,
+                                     std::string *err) {
+  (void)warn;
+  std::function<bool(const PrimSpec &, const std::string &)> check =
+      [&](const PrimSpec &ps, const std::string &parent_path) -> bool {
+    std::unordered_set<std::string> seen;
+    for (const PrimSpec &child : ps.children()) {
+      if (!seen.insert(child.name()).second) {
+        if (err)
+          *err = "Duplicate sibling prim '" + child.name() + "' under '" +
+                 parent_path + "'";
+        return false;
+      }
+      if (!check(child,
+                 parent_path.empty() ? child.name()
+                                     : parent_path + "/" + child.name())) {
+        return false;
+      }
+    }
+    return true;
+  };
+  for (const auto &prim_pair : layer.primspecs()) {
+    if (!check(prim_pair.second, prim_pair.first)) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------

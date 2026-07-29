@@ -304,6 +304,9 @@ class OpenPBRSurfaceShader {
   // Coat normal and tangent for separate coat layer normal mapping
   ShaderParam<vec3> coat_normal{{0.0f, 0.0f, 1.0f}};
   ShaderParam<vec3> coat_tangent{{1.0f, 0.0f, 0.0f}};
+  // MaterialX standard_surface height input. OpenPBR has no corresponding
+  // lobe, but render consumers share this geometry path with PreviewSurface.
+  ShaderParam<float> displacement{0.0f};
   float coat_tangent_rotation{0.0f};
   float coat_normal_map_scale{1.0f};
 

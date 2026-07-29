@@ -30,6 +30,7 @@
 #include "lz4-compression.hh"
 #include "zstd-compression.hh"
 #include "security-policy.hh"
+#include "safe-arithmetic.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "string-pool.hh"
@@ -50,6 +51,24 @@
 namespace tinyusdz {
 
 namespace {
+
+// Compute max bytes from a memory-limit-in-MB setting using uint64_t to avoid
+// overflow on 32-bit platforms (where size_t is 32-bit). Returns SIZE_MAX when
+// the result exceeds the addressable range (clamped rather than wrapped).
+inline size_t MaxMemoryBytes(uint64_t limit_mb) {
+  constexpr uint64_t kBytesPerMiB = uint64_t(1024) * uint64_t(1024);
+#if SIZE_MAX < UINT64_MAX
+  constexpr uint64_t kMaxBytes =
+      uint64_t((std::numeric_limits<size_t>::max)());
+#else
+  constexpr uint64_t kMaxBytes =
+      (std::numeric_limits<uint64_t>::max)();
+#endif
+  if (limit_mb > (kMaxBytes / kBytesPerMiB)) {
+    return (std::numeric_limits<size_t>::max)();
+  }
+  return static_cast<size_t>(limit_mb * kBytesPerMiB);
+}
 
 FILE *ProfileOutput() {
 #if defined(__clang__)
@@ -170,21 +189,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   bool swap_endian = false;  // @FIXME
 
-  size_t max_length;
-
-  // 32bit env
-  if (sizeof(void *) == 4) {
-    if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
-      max_length = (std::numeric_limits<uint32_t>::max)();
-    } else {
-      max_length =
-          size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-    }
-  } else {
-    // TODO: Set hard limit?
-    max_length =
-        size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-  }
+  size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
 
   DCOUT("Max length = " << max_length);
 
@@ -215,11 +220,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   if (!reader.ReadUSDC()) {
     if (warn) {
-      (*warn) = reader.GetWarning();
+      (*warn) += reader.GetWarning();
     }
 
     if (err) {
-      (*err) = reader.GetError();
+      (*err) += reader.GetError();
     }
     return false;
   }
@@ -232,11 +237,11 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
     if (!reader.ReconstructStage(stage)) {
       DCOUT("Failed to reconstruct Stage from Crate.");
       if (warn) {
-        (*warn) = reader.GetWarning();
+        (*warn) += reader.GetWarning();
       }
 
       if (err) {
-        (*err) = reader.GetError();
+        (*err) += reader.GetError();
       }
       return false;
     }
@@ -248,14 +253,14 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   }
 
   if (warn) {
-    (*warn) = reader.GetWarning();
+    (*warn) += reader.GetWarning();
   }
 
   // Reconstruct OK but may have some error.
   // TODO(syoyo): Return false in strict mode.
   if (err) {
     DCOUT(reader.GetError());
-    (*err) = reader.GetError();
+    (*err) += reader.GetError();
   }
 
   DCOUT("Reconstructed Stage from USDC file.");
@@ -313,7 +318,7 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
 
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       if (err) {
@@ -425,11 +430,15 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     // read in the variable name
     uint16_t name_len;
     memcpy(&name_len, &local_header[26], sizeof(uint16_t));
-    if ((offset + name_len) > length) {
-      if (err) {
-        (*err) += "Invalid ZIP data\n";
+    {
+      size_t next_offset;
+      if (!safe::add(offset, size_t(name_len), &next_offset) ||
+          next_offset > length) {
+        if (err) {
+          (*err) += "Invalid ZIP data\n";
+        }
+        return false;
       }
-      return false;
     }
 
     std::string varname(name_len, ' ');
@@ -448,13 +457,20 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       return false;
     }
 
-    offset += name_len;
+    if (!safe::add(offset, size_t(name_len), &offset)) {
+      if (err) {
+        (*err) += "Integer overflow in ZIP entry name length.\n";
+      }
+      return false;
+    }
 
     // read in the extra field
     uint16_t extra_field_len;
     memcpy(&extra_field_len, &local_header[28], sizeof(uint16_t));
     if (extra_field_len > 0) {
-      if (offset + extra_field_len > length) {
+      size_t next_offset;
+      if (!safe::add(offset, size_t(extra_field_len), &next_offset) ||
+          next_offset > length) {
         if (err) {
           (*err) += "Invalid extra field length in ZIP data\n";
         }
@@ -462,7 +478,12 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       }
     }
 
-    offset += extra_field_len;
+    if (!safe::add(offset, size_t(extra_field_len), &offset)) {
+      if (err) {
+        (*err) += "Integer overflow in ZIP extra field length.\n";
+      }
+      return false;
+    }
 
     // In strict USDZ, data must be aligned at a 64-byte boundary. Keep
     // ValidateUSDZ() strict, but allow the loader to read unaligned stored ZIP
@@ -498,7 +519,7 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       return false;
     }
 
-    if (uncompr_bytes > (length - offset)) {
+    if (offset > length || uncompr_bytes > (length - offset)) {
       if (!assets) {
         // Detection mode (IsUSDZ / IsUSD): only a prefix of the file was read
         // (IsUSDZ reads ~256 bytes), so the first entry's data legitimately
@@ -522,12 +543,26 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
       DCOUT("USDZasset[" << assets->size() << "] " << varname << ", byte_begin " << offset << ", length " << uncompr_bytes << "\n");
       info.filename = varname;
       info.byte_begin = offset;
-      info.byte_end = offset + uncompr_bytes;
+      {
+        size_t end_offset;
+        if (!safe::add(offset, size_t(uncompr_bytes), &end_offset)) {
+          if (err) {
+            (*err) += "Integer overflow in ZIP uncompressed size.\n";
+          }
+          return false;
+        }
+        info.byte_end = end_offset;
+      }
 
       assets->push_back(info);
     }
 
-    offset += uncompr_bytes;
+    if (!safe::add(offset, size_t(uncompr_bytes), &offset)) {
+      if (err) {
+        (*err) += "Integer overflow in ZIP uncompressed size.\n";
+      }
+      return false;
+    }
   }
 
   if (assets && offset < length) {
@@ -747,7 +782,7 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       return false;
@@ -863,7 +898,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
                       std::string *warn, std::string *err,
                       const USDLoadOptions &options) {
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
-  std::string base_dir = io::GetBaseDir(_filename);
+  std::string base_dir = io::GetBaseDir(filepath);
 
   if (io::IsMMapSupported()) {
     io::MMapFileHandle handle;
@@ -884,7 +919,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       }
     }
 
-    bool ret = LoadUSDAFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
+    bool ret = LoadUSDAFromMemory(handle.addr, size_t(handle.size), base_dir, stage, warn,
                               err, options);
 
     {
@@ -902,7 +937,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       if (err) {
@@ -911,7 +946,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       return false;
     }
 
-    return LoadUSDAFromMemory(data.data(), data.size(), filepath, stage, warn,
+    return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,
                               err, options);
   }
 }
@@ -923,7 +958,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
   PreInternCommonStrings();
 
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
-  std::string base_dir = io::GetBaseDir(_filename);
+  std::string base_dir = io::GetBaseDir(filepath);
 
   if (io::IsMMapSupported()) {
     io::MMapFileHandle handle;
@@ -944,7 +979,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
       }
     }
 
-    bool ret = LoadUSDFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
+    bool ret = LoadUSDFromMemory(handle.addr, size_t(handle.size), base_dir, stage, warn,
                               err, options);
     bool keep_mmap = false;
     if (ret && options.mmap_zero_copy && stage && stage->has_mmap_zero_copy()) {
@@ -969,7 +1004,7 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
     return ret;
   } else {
     std::vector<uint8_t> data;
-    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                            /* userdata */ nullptr)) {
       return false;
@@ -1014,7 +1049,7 @@ static bool LoadUSDFromMemoryImpl(const uint8_t *addr, const size_t length,
     }
 
     // Check against memory budget
-    size_t max_length = size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+    size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
     if (decompressed_size > max_length) {
       if (err) {
         (*err) += "Decompressed USD size (" + std::to_string(decompressed_size) +
@@ -1304,21 +1339,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
 
   bool swap_endian = false;  // @FIXME
 
-  size_t max_length;
-
-  // 32bit env
-  if (sizeof(void *) == 4) {
-    if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
-      max_length = (std::numeric_limits<uint32_t>::max)();
-    } else {
-      max_length =
-          size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-    }
-  } else {
-    // TODO: Set hard limit?
-    max_length =
-        size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
-  }
+  size_t max_length = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
 
   DCOUT("Max length = " << max_length);
 
@@ -1349,11 +1370,11 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
 
   if (!reader.ReadUSDC()) {
     if (warn) {
-      (*warn) = reader.GetWarning();
+      (*warn) += reader.GetWarning();
     }
 
     if (err) {
-      (*err) = reader.GetError();
+      (*err) += reader.GetError();
     }
     return false;
   }
@@ -1366,11 +1387,11 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
     if (!reader.get_as_layer(layer)) {
       DCOUT("Failed to reconstruct Layer from Crate.");
       if (warn) {
-        (*warn) = reader.GetWarning();
+        (*warn) += reader.GetWarning();
       }
 
       if (err) {
-        (*err) = reader.GetError();
+        (*err) += reader.GetError();
       }
       return false;
     }
@@ -1386,14 +1407,14 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   }
 
   if (warn) {
-    (*warn) = reader.GetWarning();
+    (*warn) += reader.GetWarning();
   }
 
   // Reconstruct OK but may have some error.
   // TODO(syoyo): Return false in strict mode.
   if (err) {
     DCOUT(reader.GetError());
-    (*err) = reader.GetError();
+    (*err) += reader.GetError();
   }
 
   DCOUT("Reconstructed Stage from USDC file.");
@@ -1600,46 +1621,29 @@ bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
 }
 
 
-// Copy assetresolver state to all PrimSpec in the tree.
-static bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
-                                 const std::string &cwp,
-                                 const std::vector<std::string> &search_paths) {
-  if (depth > (1024 * 1024 * 512)) {
-    return false;
-  }
+// Copy asset-resolver state to the complete PrimSpec tree without consuming the
+// process stack on deeply nested or variant-heavy input.
+static void PropagateAssetResolverState(
+    PrimSpec &root, const std::string &cwp,
+    const std::vector<std::string> &search_paths) {
+  DCOUT("current_working_path: " << cwp);
+  DCOUT("search_paths: " << search_paths);
 
-  if (depth == 0) {
-    DCOUT("current_working_path: " << cwp);
-    DCOUT("search_paths: " << search_paths);
-  }
+  std::vector<PrimSpec *> stack;
+  stack.push_back(&root);
+  while (!stack.empty()) {
+    PrimSpec *ps = stack.back();
+    stack.pop_back();
+    ps->set_asset_resolution_state(cwp, search_paths);
 
-  ps.set_asset_resolution_state(cwp, search_paths);
-
-  for (auto &child : ps.children()) {
-    if (!PropagateAssetResolverState(depth + 1, child, cwp, search_paths)) {
-      return false;
-    }
-  }
-
-  // Also stamp prims authored INSIDE variant blocks (and their nested
-  // variantSets). Without this, a prim that only exists in a variant -- e.g.
-  // ALab's `geo_vis` proxy `GEO_PROXY` -- loads with an EMPTY working path; when
-  // that variant is later selected and its payload/reference composed, the empty
-  // cwp falls back to the resolver's stale global working path (the dir of
-  // whatever asset was loaded last, e.g. a sibling `render_high/mesh` payload),
-  // so its relative `@display_high/mesh/...@` payload resolves one dir wrong and
-  // is dropped. Variant content must carry the SAME anchor as the prim that owns
-  // the variantSet.
-  for (auto &variant_set_item : ps.variantSets()) {
-    for (auto &variant_item : variant_set_item.second.variantSet) {
-      if (!PropagateAssetResolverState(depth + 1, variant_item.second, cwp,
-                                       search_paths)) {
-        return false;
+    for (auto &child : ps->children()) stack.push_back(&child);
+    // Variant content carries the same anchor as the owning PrimSpec.
+    for (auto &variant_set_item : ps->variantSets()) {
+      for (auto &variant_item : variant_set_item.second.variantSet) {
+        stack.push_back(&variant_item.second);
       }
     }
   }
-
-  return true;
 }
 
 bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
@@ -1680,7 +1684,7 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
     // Save current working path to each PrimSpec in the layer
     // for the subsequent composition operation.
     for (auto &root_ps : layer->primspecs()) {
-      PropagateAssetResolverState(0, root_ps.second, basedir, search_paths);
+      PropagateAssetResolverState(root_ps.second, basedir, search_paths);
     }
   }
 
@@ -1697,10 +1701,10 @@ bool LoadLayerFromFile(const std::string &_filename, Layer *stage,
 
   // TODO: Use AssetResolutionResolver.
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
-  std::string base_dir = io::GetBaseDir(_filename);
+  std::string base_dir = io::GetBaseDir(filepath);
 
   std::vector<uint8_t> data;
-  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+  size_t max_bytes = MaxMemoryBytes(uint64_t(options.max_memory_limit_in_mb));
   if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     return false;

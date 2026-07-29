@@ -6,7 +6,9 @@
 #include "crate-reader-internal.hh"
 #include "../layer/array-edit.hh"
 #include "../writer/value-printer.hh"
+#include "safe-arithmetic.hh"
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -314,8 +316,17 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       if (!reader_->read_u64(n)) return false;
       if (n > options_.max_array_elements) return false;
       if (!reader_->has_elements(static_cast<size_t>(n), 16)) return false;
-      std::vector<double> vals(static_cast<size_t>(n) * 2);
-      if (n && !reader_->read(vals.data(), vals.size() * sizeof(double))) return false;
+      if (n > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+        return false;
+      }
+      size_t scalar_count = 0;
+      size_t byte_count = 0;
+      if (!safe::mul(static_cast<size_t>(n), size_t{2}, &scalar_count) ||
+          !safe::mul(scalar_count, sizeof(double), &byte_count)) {
+        return false;
+      }
+      std::vector<double> vals(scalar_count);
+      if (n && !reader_->read(vals.data(), byte_count)) return false;
       out = Value::MakeDoubleArray(std::move(vals));
       return true;
     }
@@ -355,10 +366,13 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
         if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
           return false;
         }
+        if (!std::isfinite(offset) || !std::isfinite(scale)) return false;
       }
       std::string asset;
-      GetString(asset_idx, asset);
-      std::string prim = (path_idx < paths_.size()) ? paths_[path_idx] : "";
+      if (!GetString(asset_idx, asset) || path_idx >= paths_.size()) {
+        return false;
+      }
+      const std::string& prim = paths_[path_idx];
       // Internal arcs (no asset) render as "</Prim>", matching the usda parser.
       std::string arc;
       if (!asset.empty()) arc = "@" + asset + "@";
@@ -388,7 +402,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       uint32_t sidx = 0;
       if (!reader_->read_u32(sidx)) return false;
       std::string text;
-      GetString(sidx, text);
+      if (!GetString(sidx, text)) return false;
       out = Value::MakeStringLike(text, TypeId::PathExpression);
       return true;
     }
@@ -407,8 +421,16 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       uint64_t n = 0;
       if (!reader_->read_u64(n)) return false;
       if (n > options_.max_array_elements) return false;
+      if (n > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+        return false;
+      }
+      size_t pair_count = 0;
+      if (!safe::mul(static_cast<size_t>(n), size_t{2}, &pair_count) ||
+          !reader_->has_elements(static_cast<size_t>(n), size_t{8})) {
+        return false;
+      }
       std::vector<std::string> pairs;
-      pairs.reserve(static_cast<size_t>(n) * 2);
+      pairs.reserve(pair_count);
       for (uint64_t i = 0; i < n; ++i) {
         uint32_t src = 0, dst = 0;
         if (!reader_->read_u32(src) || !reader_->read_u32(dst)) return false;

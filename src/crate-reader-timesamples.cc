@@ -166,6 +166,13 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
       PUSH_ERROR_AND_RETURN_TAG(
           kTag, "Failed to unpack value of TimeSample's `times` element.");
     }
+    {
+      size_t times_cache_bytes;
+      if (!safe::mul(times.size(), sizeof(double), &times_cache_bytes)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: times.size() * sizeof(double)");
+      }
+      CHECK_MEMORY_USAGE(times_cache_bytes);
+    }
     ScopedSpinLock<SpinMutex> lk(_times_cache_mutex);
     _shared_times_cache[times_payload] =
         std::make_shared<std::vector<double>>(times);
@@ -249,6 +256,13 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   // This avoids an additional pre-scan pass here.
 
   // Pre-allocate for the known number of samples to avoid repeated reallocation
+  {
+    size_t times_samples_bytes;
+    if (!safe::mul(times.size(), sizeof(double) * 2, &times_samples_bytes)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow: times.size() * sizeof(double) * 2");
+    }
+    CHECK_MEMORY_USAGE(times_samples_bytes);
+  }
   d->reserve(times.size());
 
   if (!UnpackValueRepsToTimeSamples(times, value_reps, d)) {

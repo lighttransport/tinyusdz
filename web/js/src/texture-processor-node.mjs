@@ -10,9 +10,13 @@
 //   destroy();
 import os from 'node:os';
 import { Worker } from 'node:worker_threads';
+import { textureConcurrencyForBudget } from './texture-memory-budget.mjs';
 
 export function createNodeTextureProcessor(opts = {}) {
-  const concurrency = Math.max(1, opts.concurrency || (os.cpus().length - 1));
+  const requestedConcurrency = Math.max(
+      1, opts.concurrency || (os.cpus().length - 1));
+  const concurrency = textureConcurrencyForBudget(
+      requestedConcurrency, opts.memoryBudgetBytes || 0);
   const workers = [];
   const idle = [];
   const waiters = [];

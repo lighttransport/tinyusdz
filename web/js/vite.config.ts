@@ -10,7 +10,11 @@ export default defineConfig(({ command }) => {
   // The browser loaders consume generated Emscripten glue from
   // src/tinyusdz. Keep every `vite`-based demo command self-contained instead
   // of requiring developers to know which bootstrap command produces it.
-  if (command === 'serve') {
+  // Browser regression runners can prepare the modules explicitly before
+  // starting Vite. Skipping the hook in that case avoids consuming the
+  // runner's short server-start timeout (and prevents symlinked worktree paths
+  // from making CMake reconfigure the same build under a different spelling).
+  if (command === 'serve' && process.env.TINYUSDZ_SKIP_WASM_PREPARE !== '1') {
     execFileSync('bash', [
       path.resolve(__dirname, '../demo/scripts/prepare-local-tinyusdz.sh'),
     ], { stdio: 'inherit' });

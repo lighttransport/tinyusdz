@@ -10,8 +10,11 @@
 #include "../crate/crate-data-source.hh"
 
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <new>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace tinyusdz {
 namespace next {
@@ -189,6 +192,40 @@ bool IsDoubleBackedArray(TypeId id) {
   }
 }
 
+bool FitsValueArraySize(size_t count) {
+  return count <=
+         static_cast<size_t>((std::numeric_limits<uint32_t>::max)());
+}
+
+bool IsValidComponentArray(size_t scalar_count, TypeId elem_type,
+                           uint32_t comps_per_elem, bool storage_matches) {
+  if (!storage_matches || comps_per_elem == 0 ||
+      GetComponentCount(elem_type) != comps_per_elem ||
+      scalar_count % comps_per_elem != 0) {
+    return false;
+  }
+  return FitsValueArraySize(scalar_count / comps_per_elem);
+}
+
+size_t ComponentArraySize(size_t scalar_count, size_t components) {
+  if (components == 0 || scalar_count % components != 0) return 0;
+  return scalar_count / components;
+}
+
+bool IsValueArrayType(TypeId id) {
+  return IsFloatBackedArray(id) || IsDoubleBackedArray(id) ||
+         IsIntBackedArray(id) || IsUIntBackedArray(id) ||
+         id == TypeId::Int64 || id == TypeId::UInt64 || id == TypeId::Bool ||
+         UsesStringStorage(id);
+}
+
+bool FinalizeLazyDecode(const LazyArrayRef& ref, Value* decoded) {
+  if (!decoded || decoded->is_lazy() || !decoded->is_array()) return false;
+  if (decoded->array_size() != ref.element_count) return false;
+  decoded->retag_role(ref.value_type);
+  return decoded->type_id() == ref.value_type;
+}
+
 }  // anonymous namespace
 
 // ============================================================
@@ -363,6 +400,7 @@ Value Value::MakeQuatd(double x, double y, double z, double w) {
 
 Value Value::MakeMatrix2f(const float* data) {
   Value v;
+  if (!data) return v;
   v.type_id_ = TypeId::Matrix2f;
   std::memcpy(v.storage_, data, 4 * sizeof(float));
   return v;
@@ -370,6 +408,7 @@ Value Value::MakeMatrix2f(const float* data) {
 
 Value Value::MakeMatrix3f(const float* data) {
   Value v;
+  if (!data) return v;
   v.type_id_ = TypeId::Matrix3f;
   std::memcpy(v.storage_, data, 9 * sizeof(float));
   return v;
@@ -377,6 +416,7 @@ Value Value::MakeMatrix3f(const float* data) {
 
 Value Value::MakeMatrix4f(const float* data) {
   Value v;
+  if (!data) return v;
   v.type_id_ = TypeId::Matrix4f;
   std::memcpy(v.storage_, data, 16 * sizeof(float));
   return v;
@@ -384,6 +424,7 @@ Value Value::MakeMatrix4f(const float* data) {
 
 Value Value::MakeMatrix2d(const double* data) {
   Value v;
+  if (!data) return v;
   v.type_id_ = TypeId::Matrix2d;
   std::memcpy(v.storage_, data, 4 * sizeof(double));
   return v;
@@ -391,6 +432,7 @@ Value Value::MakeMatrix2d(const double* data) {
 
 Value Value::MakeMatrix3d(const double* data) {
   Value v;
+  if (!data) return v;
   v.type_id_ = TypeId::Matrix3d;
   std::memcpy(v.storage_, data, 9 * sizeof(double));
   return v;
@@ -398,6 +440,7 @@ Value Value::MakeMatrix3d(const double* data) {
 
 Value Value::MakeMatrix4d(const double* data) {
   Value v;
+  if (!data) return v;
   v.type_id_ = TypeId::Matrix4d;
   std::memcpy(v.storage_, data, 16 * sizeof(double));
   return v;
@@ -527,15 +570,18 @@ Value Value::MakeTexcoord2f(float u, float v_coord) {
 
 Value Value::MakeFromRaw(TypeId type_id, const void* data) {
   Value v;
-  v.type_id_ = type_id;
+  if (!data || type_id == TypeId::Invalid || type_id == TypeId::Dictionary) {
+    return v;
+  }
 
   if (UsesStringStorage(type_id)) {
+    v.type_id_ = type_id;
     new (v.storage_) StringStorage{std::string(static_cast<const char*>(data))};
   } else {
-    size_t size = GetTypeSize(type_id);
-    if (size > 0 && size <= kSBOSize) {
-      std::memcpy(v.storage_, data, size);
-    }
+    const size_t size = GetTypeSize(type_id);
+    if (size == 0 || size > kSBOSize) return v;
+    v.type_id_ = type_id;
+    std::memcpy(v.storage_, data, size);
   }
   return v;
 }
@@ -545,6 +591,7 @@ Value Value::MakeFromRaw(TypeId type_id, const void* data) {
 // ============================================================
 
 Value Value::MakeFloatArray(const std::vector<float>& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v;
   v.type_id_ = TypeId::Float;
   v.is_array_ = true;
@@ -554,6 +601,7 @@ Value Value::MakeFloatArray(const std::vector<float>& data) {
 }
 
 Value Value::MakeFloatArray(std::vector<float>&& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v;
   v.type_id_ = TypeId::Float;
   v.is_array_ = true;
@@ -563,6 +611,7 @@ Value Value::MakeFloatArray(std::vector<float>&& data) {
 }
 
 Value Value::MakeIntArray(const std::vector<int32_t>& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v;
   v.type_id_ = TypeId::Int;
   v.is_array_ = true;
@@ -572,6 +621,7 @@ Value Value::MakeIntArray(const std::vector<int32_t>& data) {
 }
 
 Value Value::MakeIntArray(std::vector<int32_t>&& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v;
   v.type_id_ = TypeId::Int;
   v.is_array_ = true;
@@ -581,6 +631,9 @@ Value Value::MakeIntArray(std::vector<int32_t>&& data) {
 }
 
 Value Value::MakeFloat2Array(const std::vector<float>& data) {
+  if (!IsValidComponentArray(data.size(), TypeId::Float2, 2, true)) {
+    return Value();
+  }
   Value v;
   v.type_id_ = TypeId::Float2;
   v.is_array_ = true;
@@ -590,6 +643,9 @@ Value Value::MakeFloat2Array(const std::vector<float>& data) {
 }
 
 Value Value::MakeFloat2Array(std::vector<float>&& data) {
+  if (!IsValidComponentArray(data.size(), TypeId::Float2, 2, true)) {
+    return Value();
+  }
   Value v;
   v.type_id_ = TypeId::Float2;
   v.is_array_ = true;
@@ -599,6 +655,9 @@ Value Value::MakeFloat2Array(std::vector<float>&& data) {
 }
 
 Value Value::MakeFloat3Array(const std::vector<float>& data) {
+  if (!IsValidComponentArray(data.size(), TypeId::Float3, 3, true)) {
+    return Value();
+  }
   Value v;
   v.type_id_ = TypeId::Float3;
   v.is_array_ = true;
@@ -608,6 +667,9 @@ Value Value::MakeFloat3Array(const std::vector<float>& data) {
 }
 
 Value Value::MakeFloat3Array(std::vector<float>&& data) {
+  if (!IsValidComponentArray(data.size(), TypeId::Float3, 3, true)) {
+    return Value();
+  }
   Value v;
   v.type_id_ = TypeId::Float3;
   v.is_array_ = true;
@@ -618,46 +680,55 @@ Value Value::MakeFloat3Array(std::vector<float>&& data) {
 
 // New array types
 Value Value::MakeDoubleArray(const std::vector<double>& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Double; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   new (v.storage_) ArrayHandle(std::make_shared<DoubleArrayStorage>(data)); return v;
 }
 Value Value::MakeDoubleArray(std::vector<double>&& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Double; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   new (v.storage_) ArrayHandle(std::make_shared<DoubleArrayStorage>(std::move(data))); return v;
 }
 Value Value::MakeInt64Array(const std::vector<int64_t>& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Int64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   new (v.storage_) ArrayHandle(std::make_shared<Int64ArrayStorage>(data)); return v;
 }
 Value Value::MakeInt64Array(std::vector<int64_t>&& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Int64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   new (v.storage_) ArrayHandle(std::make_shared<Int64ArrayStorage>(std::move(data))); return v;
 }
 Value Value::MakeUIntArray(const std::vector<uint32_t>& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::UInt; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   new (v.storage_) ArrayHandle(std::make_shared<UIntArrayStorage>(data)); return v;
 }
 Value Value::MakeUIntArray(std::vector<uint32_t>&& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::UInt; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   new (v.storage_) ArrayHandle(std::make_shared<UIntArrayStorage>(std::move(data))); return v;
 }
 Value Value::MakeUInt64Array(const std::vector<uint64_t>& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::UInt64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   new (v.storage_) ArrayHandle(std::make_shared<UInt64ArrayStorage>(data)); return v;
 }
 Value Value::MakeUInt64Array(std::vector<uint64_t>&& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::UInt64; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   new (v.storage_) ArrayHandle(std::make_shared<UInt64ArrayStorage>(std::move(data))); return v;
 }
 Value Value::MakeBoolArray(const std::vector<bool>& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Bool; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   std::vector<uint8_t> tmp(data.size());
@@ -665,11 +736,13 @@ Value Value::MakeBoolArray(const std::vector<bool>& data) {
   new (v.storage_) ArrayHandle(std::make_shared<BoolArrayStorage>(std::move(tmp))); return v;
 }
 Value Value::MakeTokenArray(const std::vector<std::string>& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   new (v.storage_) ArrayHandle(std::make_shared<TokenArrayStorage>(data)); return v;
 }
 Value Value::MakeTokenArray(std::vector<std::string>&& data) {
+  if (!FitsValueArraySize(data.size())) return Value();
   Value v; v.type_id_ = TypeId::Token; v.is_array_ = true;
   v.array_size_ = static_cast<uint32_t>(data.size());
   new (v.storage_) ArrayHandle(std::make_shared<TokenArrayStorage>(std::move(data))); return v;
@@ -677,6 +750,10 @@ Value Value::MakeTokenArray(std::vector<std::string>&& data) {
 
 Value Value::MakeFloatCompArray(std::vector<float>&& data, TypeId elem_type,
                                 uint32_t comps_per_elem) {
+  if (!IsValidComponentArray(data.size(), elem_type, comps_per_elem,
+                             IsFloatBackedArray(elem_type))) {
+    return Value();
+  }
   Value v;
   v.type_id_ = elem_type;
   v.is_array_ = true;
@@ -689,6 +766,10 @@ Value Value::MakeFloatCompArray(std::vector<float>&& data, TypeId elem_type,
 
 Value Value::MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
                                  uint32_t comps_per_elem) {
+  if (!IsValidComponentArray(data.size(), elem_type, comps_per_elem,
+                             IsDoubleBackedArray(elem_type))) {
+    return Value();
+  }
   Value v;
   v.type_id_ = elem_type;
   v.is_array_ = true;
@@ -701,6 +782,10 @@ Value Value::MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
 
 Value Value::MakeUIntCompArray(std::vector<uint32_t>&& data, TypeId elem_type,
                                uint32_t comps_per_elem) {
+  if (!IsValidComponentArray(data.size(), elem_type, comps_per_elem,
+                             IsUIntBackedArray(elem_type))) {
+    return Value();
+  }
   Value v;
   v.type_id_ = elem_type;
   v.is_array_ = true;
@@ -713,6 +798,9 @@ Value Value::MakeUIntCompArray(std::vector<uint32_t>&& data, TypeId elem_type,
 
 Value Value::MakeStringLikeArray(std::vector<std::string>&& data,
                                  TypeId elem_type) {
+  if (!UsesStringStorage(elem_type) || !FitsValueArraySize(data.size())) {
+    return Value();
+  }
   Value v;
   v.type_id_ = elem_type;  // Token, String or AssetPath
   v.is_array_ = true;
@@ -723,6 +811,10 @@ Value Value::MakeStringLikeArray(std::vector<std::string>&& data,
 
 Value Value::MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
                               uint32_t comps_per_elem) {
+  if (!IsValidComponentArray(data.size(), elem_type, comps_per_elem,
+                             IsIntBackedArray(elem_type))) {
+    return Value();
+  }
   Value v;
   v.type_id_ = elem_type;
   v.is_array_ = true;
@@ -737,9 +829,58 @@ Value Value::MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
 // Queries and accessors
 // ============================================================
 
+size_t Value::array_size() const {
+  if (!is_array_) return 0;
+  if (is_lazy_) return array_size_;
+
+  if (UsesStringStorage(type_id_)) {
+    const auto* storage = static_cast<const TokenArrayStorage*>(
+        ArraySlot(storage_)->get());
+    return storage->data.size();
+  }
+  const size_t components = GetComponentCount(type_id_);
+  if (components == 0) return 0;
+  if (IsFloatBackedArray(type_id_)) {
+    const auto* storage = static_cast<const FloatArrayStorage*>(
+        ArraySlot(storage_)->get());
+    return ComponentArraySize(storage->data.size(), components);
+  }
+  if (IsDoubleBackedArray(type_id_)) {
+    const auto* storage = static_cast<const DoubleArrayStorage*>(
+        ArraySlot(storage_)->get());
+    return ComponentArraySize(storage->data.size(), components);
+  }
+  if (IsIntBackedArray(type_id_)) {
+    const auto* storage = static_cast<const IntArrayStorage*>(
+        ArraySlot(storage_)->get());
+    return ComponentArraySize(storage->data.size(), components);
+  }
+  if (IsUIntBackedArray(type_id_)) {
+    const auto* storage = static_cast<const UIntArrayStorage*>(
+        ArraySlot(storage_)->get());
+    return ComponentArraySize(storage->data.size(), components);
+  }
+  if (type_id_ == TypeId::Int64) {
+    const auto* storage = static_cast<const Int64ArrayStorage*>(
+        ArraySlot(storage_)->get());
+    return storage->data.size();
+  }
+  if (type_id_ == TypeId::UInt64) {
+    const auto* storage = static_cast<const UInt64ArrayStorage*>(
+        ArraySlot(storage_)->get());
+    return storage->data.size();
+  }
+  if (type_id_ == TypeId::Bool) {
+    const auto* storage = static_cast<const BoolArrayStorage*>(
+        ArraySlot(storage_)->get());
+    return storage->data.size();
+  }
+  return 0;
+}
+
 void Value::retag_role(TypeId new_type) {
   if (new_type == type_id_ || new_type == TypeId::Invalid ||
-      type_id_ == TypeId::Invalid || is_lazy_ || is_block_) {
+      type_id_ == TypeId::Invalid || is_block_) {
     return;
   }
   // Only role re-tags: same scalar component type and component count, so the
@@ -762,6 +903,7 @@ void Value::retag_role(TypeId new_type) {
         (oldc == TypeId::UInt && newc == TypeId::Int);
     if (!int_uint_pair) return;
     if (GetComponentCount(type_id_) != GetComponentCount(new_type)) return;
+    if (is_lazy_) return;  // would require changing the backing storage class
     if (is_array_) {
       ensure_materialized();
       ArrayHandle& h = *ArraySlot(storage_);
@@ -781,6 +923,16 @@ void Value::retag_role(TypeId new_type) {
     return;
   }
   if (GetComponentCount(type_id_) != GetComponentCount(new_type)) return;
+  if (is_lazy_) {
+    // Role aliases share the same scalar type, arity, and on-disk bytes. Keep
+    // the payload lazy while ensuring materialization preserves the role too.
+    LazyArrayRef* ref;
+    std::memcpy(&ref, storage_, sizeof(ref));
+    if (!ref) return;
+    type_id_ = new_type;
+    ref->value_type = new_type;
+    return;
+  }
   if (!is_array_ && GetTypeSize(type_id_) != GetTypeSize(new_type)) return;
   type_id_ = new_type;
 }
@@ -819,7 +971,41 @@ void Value::destroy() {
     // owner — the copy-on-write release).
     ArraySlot(storage_)->~ArrayHandle();
   } else if (type_id_ == TypeId::Dictionary) {
+    // Releasing the last handle through shared_ptr's normal destructor makes
+    // Dict -> Value -> Dict teardown recurse once per nesting level. Move
+    // uniquely-owned child handles out before destroying each Dict so even
+    // API-constructed deep dictionaries use an explicit heap work stack.
+    DictHandle root = std::move(*DictSlot(storage_));
     DictSlot(storage_)->~DictHandle();
+    std::vector<DictHandle> pending;
+    pending.push_back(std::move(root));
+    while (!pending.empty()) {
+      DictHandle current = std::move(pending.back());
+      pending.pop_back();
+      if (!current || current.use_count() != 1) {
+        // Another Value still owns it. Dropping this reference cannot destroy
+        // the Dict, and the eventual final owner will perform this traversal.
+        continue;
+      }
+
+      for (auto &entry : current->entries) {
+        Value &child = entry.second;
+        if (child.type_id_ != TypeId::Dictionary || child.is_array_ ||
+            child.is_lazy_) {
+          continue;
+        }
+        DictHandle nested = std::move(*DictSlot(child.storage_));
+        DictSlot(child.storage_)->~DictHandle();
+        child.type_id_ = TypeId::Invalid;
+        child.is_array_ = false;
+        child.is_lazy_ = false;
+        child.dirty_ = false;
+        child.is_block_ = false;
+        child.array_size_ = 0;
+        pending.push_back(std::move(nested));
+      }
+      current.reset();
+    }
   } else if (UsesStringStorage(type_id_)) {
     reinterpret_cast<StringStorage*>(storage_)->~StringStorage();
   }
@@ -904,6 +1090,11 @@ Value Value::MakeBlock() {
 
 Value Value::MakeLazyArray(const LazyArrayRef& ref) {
   Value v;
+  if (!ref.source || !IsValueArrayType(ref.value_type) ||
+      ref.element_count >
+      static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)())) {
+    return v;
+  }
   v.type_id_ = ref.value_type;
   v.is_array_ = true;
   v.is_lazy_ = true;
@@ -929,6 +1120,7 @@ void Value::materialize() {
 
   Value decoded;
   bool ok = (ptr && ptr->source) ? ptr->source->MaterializeArray(*ptr, &decoded) : false;
+  if (ok) ok = FinalizeLazyDecode(*ptr, &decoded);
 
   delete ptr;  // releases the shared_ptr<CrateDataSource>
 
@@ -954,7 +1146,8 @@ Value Value::materialized_copy() const {
   if (is_lazy_) {
     const LazyArrayRef* ref = lazy_ref();
     Value decoded;
-    if (ref && ref->source && ref->source->MaterializeArray(*ref, &decoded)) {
+    if (ref && ref->source && ref->source->MaterializeArray(*ref, &decoded) &&
+        FinalizeLazyDecode(*ref, &decoded)) {
       return decoded;  // NRVO / move: steals the decoded array handle.
     }
     return Value();  // decode failed -> empty (prints "None")
@@ -966,24 +1159,107 @@ Value Value::materialized_copy() const {
 void* Value::data_ptr() {
   ensure_materialized();
   if (is_array_) {
+    const bool supported = IsFloatBackedArray(type_id_) ||
+                           IsDoubleBackedArray(type_id_) ||
+                           IsIntBackedArray(type_id_) ||
+                           IsUIntBackedArray(type_id_) ||
+                           type_id_ == TypeId::Int64 ||
+                           type_id_ == TypeId::UInt64 ||
+                           type_id_ == TypeId::Bool ||
+                           UsesStringStorage(type_id_);
+    if (!supported) return nullptr;
+    dirty_ = true;
     DetachArray(storage_);  // mutable raw access: privatize the buffer
-    return ArraySlot(storage_)->get();
+    ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+    if (!ptr) return nullptr;
+    if (IsFloatBackedArray(type_id_)) {
+      auto& data = static_cast<FloatArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (IsDoubleBackedArray(type_id_)) {
+      auto& data = static_cast<DoubleArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (IsIntBackedArray(type_id_)) {
+      auto& data = static_cast<IntArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (IsUIntBackedArray(type_id_)) {
+      auto& data = static_cast<UIntArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (type_id_ == TypeId::Int64) {
+      auto& data = static_cast<Int64ArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (type_id_ == TypeId::UInt64) {
+      auto& data = static_cast<UInt64ArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (type_id_ == TypeId::Bool) {
+      auto& data = static_cast<BoolArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    auto& data = static_cast<TokenArrayStorage*>(ptr)->data;
+    return data.empty() ? nullptr : data.data();
   }
   if (type_id_ == TypeId::Dictionary) {
     DetachDict(storage_);
     return DictSlot(storage_)->get();
   }
+  if (UsesStringStorage(type_id_)) {
+    return reinterpret_cast<StringStorage*>(storage_)->value.data();
+  }
+  if (type_id_ == TypeId::Invalid) return nullptr;
   return storage_;
 }
 
 const void* Value::data_ptr() const {
   ensure_materialized();
   if (is_array_) {
-    return ArraySlot(storage_)->get();
+    const ArrayStorageBase* ptr = ArraySlot(storage_)->get();
+    if (!ptr) return nullptr;
+    if (IsFloatBackedArray(type_id_)) {
+      const auto& data = static_cast<const FloatArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (IsDoubleBackedArray(type_id_)) {
+      const auto& data = static_cast<const DoubleArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (IsIntBackedArray(type_id_)) {
+      const auto& data = static_cast<const IntArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (IsUIntBackedArray(type_id_)) {
+      const auto& data = static_cast<const UIntArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (type_id_ == TypeId::Int64) {
+      const auto& data = static_cast<const Int64ArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (type_id_ == TypeId::UInt64) {
+      const auto& data = static_cast<const UInt64ArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (type_id_ == TypeId::Bool) {
+      const auto& data = static_cast<const BoolArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    if (UsesStringStorage(type_id_)) {
+      const auto& data = static_cast<const TokenArrayStorage*>(ptr)->data;
+      return data.empty() ? nullptr : data.data();
+    }
+    return nullptr;
   }
   if (type_id_ == TypeId::Dictionary) {
     return DictSlot(storage_)->get();
   }
+  if (UsesStringStorage(type_id_)) {
+    return reinterpret_cast<const StringStorage*>(storage_)->value.data();
+  }
+  if (type_id_ == TypeId::Invalid) return nullptr;
   return storage_;
 }
 
@@ -1284,8 +1560,8 @@ const std::vector<float>* Value::as_float_array() const {
 
 std::vector<float>* Value::as_float_array() {
   ensure_materialized();
-  dirty_ = true;
   if (!is_array_ || !IsFloatBackedArray(type_id_)) return nullptr;
+  dirty_ = true;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<FloatArrayStorage*>(ptr)->data;
@@ -1300,8 +1576,8 @@ const std::vector<int32_t>* Value::as_int_array() const {
 
 std::vector<int32_t>* Value::as_int_array() {
   ensure_materialized();
+  if (!is_array_ || !IsIntBackedArray(type_id_)) return nullptr;
   dirty_ = true;
-  if (type_id_ != TypeId::Int || !is_array_) return nullptr;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<IntArrayStorage*>(ptr)->data;
@@ -1314,8 +1590,9 @@ const std::vector<double>* Value::as_double_array() const {
   return &static_cast<DoubleArrayStorage*>(ptr)->data;
 }
 std::vector<double>* Value::as_double_array() {
-  ensure_materialized(); dirty_ = true;
+  ensure_materialized();
   if (!is_array_ || !IsDoubleBackedArray(type_id_)) return nullptr;
+  dirty_ = true;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<DoubleArrayStorage*>(ptr)->data;
@@ -1327,8 +1604,9 @@ const std::vector<int64_t>* Value::as_int64_array() const {
   return &static_cast<Int64ArrayStorage*>(ptr)->data;
 }
 std::vector<int64_t>* Value::as_int64_array() {
-  ensure_materialized(); dirty_ = true;
+  ensure_materialized();
   if (type_id_ != TypeId::Int64 || !is_array_) return nullptr;
+  dirty_ = true;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<Int64ArrayStorage*>(ptr)->data;
@@ -1340,8 +1618,9 @@ const std::vector<uint32_t>* Value::as_uint_array() const {
   return &static_cast<UIntArrayStorage*>(ptr)->data;
 }
 std::vector<uint32_t>* Value::as_uint_array() {
-  ensure_materialized(); dirty_ = true;
+  ensure_materialized();
   if (!is_array_ || !IsUIntBackedArray(type_id_)) return nullptr;
+  dirty_ = true;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<UIntArrayStorage*>(ptr)->data;
@@ -1353,8 +1632,9 @@ const std::vector<uint64_t>* Value::as_uint64_array() const {
   return &static_cast<UInt64ArrayStorage*>(ptr)->data;
 }
 std::vector<uint64_t>* Value::as_uint64_array() {
-  ensure_materialized(); dirty_ = true;
+  ensure_materialized();
   if (type_id_ != TypeId::UInt64 || !is_array_) return nullptr;
+  dirty_ = true;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<UInt64ArrayStorage*>(ptr)->data;
@@ -1367,9 +1647,9 @@ const std::vector<uint8_t>* Value::as_bool_array() const {
 }
 const std::vector<std::string>* Value::as_token_array() const {
   ensure_materialized();
-  // Token / String / AssetPath arrays share the string-vector storage.
-  if (!is_array_ || (type_id_ != TypeId::Token && type_id_ != TypeId::String &&
-                     type_id_ != TypeId::AssetPath)) return nullptr;
+  // Token / String / AssetPath / PathExpression arrays share the
+  // string-vector storage.
+  if (!is_array_ || !UsesStringStorage(type_id_)) return nullptr;
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<TokenArrayStorage*>(ptr)->data;
 }
@@ -1379,62 +1659,105 @@ const std::vector<std::string>* Value::as_token_array() const {
 // ============================================================
 
 bool Value::operator==(const Value& other) const {
-  ensure_materialized();
-  other.ensure_materialized();
-  if (type_id_ != other.type_id_) return false;
-  if (is_array_ != other.is_array_) return false;
-  if (is_block_ != other.is_block_) return false;  // block != declared-only/empty
-  if (is_array_ && array_size_ != other.array_size_) return false;
-  if (type_id_ == TypeId::Invalid) return true;
-
-  if (is_array_) {
-    if (IsFloatBackedArray(type_id_)) {
-      return *as_float_array() == *other.as_float_array();
-    } else if (IsDoubleBackedArray(type_id_)) {
-      return *as_double_array() == *other.as_double_array();
-    } else if (type_id_ == TypeId::Int) {
-      return *as_int_array() == *other.as_int_array();
-    } else if (type_id_ == TypeId::Int64) {
-      return *as_int64_array() == *other.as_int64_array();
-    } else if (IsUIntBackedArray(type_id_)) {
-      return *as_uint_array() == *other.as_uint_array();
-    } else if (type_id_ == TypeId::UInt64) {
-      return *as_uint64_array() == *other.as_uint64_array();
-    } else if (type_id_ == TypeId::Bool) {
-      return *as_bool_array() == *other.as_bool_array();
-    } else if (type_id_ == TypeId::Token || type_id_ == TypeId::String ||
-               type_id_ == TypeId::AssetPath) {
-      return *as_token_array() == *other.as_token_array();
-    } else if (IsIntBackedArray(type_id_)) {  // Int2/Int3/Int4 arrays
-      return *as_int_array() == *other.as_int_array();
+  struct ValuePair {
+    const Value* lhs{nullptr};
+    const Value* rhs{nullptr};
+  };
+  struct DictPair {
+    const Dict* lhs{nullptr};
+    const Dict* rhs{nullptr};
+    bool operator==(const DictPair& other_pair) const {
+      return lhs == other_pair.lhs && rhs == other_pair.rhs;
     }
-    return false;
-  }
-
-  if (type_id_ == TypeId::Dictionary) {
-    const Dict* a = as_dictionary();
-    const Dict* b = other.as_dictionary();
-    if (!a || !b) return a == b;
-    if (a == b) return true;  // same shared buffer
-    if (a->entries.size() != b->entries.size()) return false;
-    for (size_t i = 0; i < a->entries.size(); ++i) {
-      if (a->entries[i].first != b->entries[i].first) return false;
-      if (!(a->entries[i].second == b->entries[i].second)) return false;
+  };
+  struct DictPairHash {
+    size_t operator()(const DictPair& pair) const {
+      const size_t lhs_hash = std::hash<const Dict*>()(pair.lhs);
+      const size_t rhs_hash = std::hash<const Dict*>()(pair.rhs);
+      return lhs_hash ^ (rhs_hash + size_t(0x9e3779b9U) +
+                         (lhs_hash << 6U) + (lhs_hash >> 2U));
     }
-    return true;
+  };
+
+  std::vector<ValuePair> pending;
+  std::unordered_set<DictPair, DictPairHash> compared_dicts;
+  pending.push_back(ValuePair{this, &other});
+
+  while (!pending.empty()) {
+    const ValuePair pair = pending.back();
+    pending.pop_back();
+    const Value& lhs = *pair.lhs;
+    const Value& rhs = *pair.rhs;
+    lhs.ensure_materialized();
+    rhs.ensure_materialized();
+    if (lhs.type_id_ != rhs.type_id_) return false;
+    if (lhs.is_array_ != rhs.is_array_) return false;
+    // A value block differs from both declared-only and empty values.
+    if (lhs.is_block_ != rhs.is_block_) return false;
+    if (lhs.is_array_ && lhs.array_size() != rhs.array_size()) return false;
+    if (lhs.type_id_ == TypeId::Invalid) continue;
+
+    if (lhs.is_array_) {
+      bool equal = false;
+      if (IsFloatBackedArray(lhs.type_id_)) {
+        equal = *lhs.as_float_array() == *rhs.as_float_array();
+      } else if (IsDoubleBackedArray(lhs.type_id_)) {
+        equal = *lhs.as_double_array() == *rhs.as_double_array();
+      } else if (lhs.type_id_ == TypeId::Int) {
+        equal = *lhs.as_int_array() == *rhs.as_int_array();
+      } else if (lhs.type_id_ == TypeId::Int64) {
+        equal = *lhs.as_int64_array() == *rhs.as_int64_array();
+      } else if (IsUIntBackedArray(lhs.type_id_)) {
+        equal = *lhs.as_uint_array() == *rhs.as_uint_array();
+      } else if (lhs.type_id_ == TypeId::UInt64) {
+        equal = *lhs.as_uint64_array() == *rhs.as_uint64_array();
+      } else if (lhs.type_id_ == TypeId::Bool) {
+        equal = *lhs.as_bool_array() == *rhs.as_bool_array();
+      } else if (UsesStringStorage(lhs.type_id_)) {
+        equal = *lhs.as_token_array() == *rhs.as_token_array();
+      } else if (IsIntBackedArray(lhs.type_id_)) {
+        equal = *lhs.as_int_array() == *rhs.as_int_array();
+      }
+      if (!equal) return false;
+      continue;
+    }
+
+    if (lhs.type_id_ == TypeId::Dictionary) {
+      const Dict* a = lhs.as_dictionary();
+      const Dict* b = rhs.as_dictionary();
+      if (!a || !b) {
+        if (a != b) return false;
+        continue;
+      }
+      if (a == b) continue;
+      if (!compared_dicts.insert(DictPair{a, b}).second) continue;
+      if (a->entries.size() != b->entries.size()) return false;
+      for (size_t i = a->entries.size(); i > 0; --i) {
+        const auto& lhs_entry = a->entries[i - 1];
+        const auto& rhs_entry = b->entries[i - 1];
+        if (lhs_entry.first != rhs_entry.first) return false;
+        pending.push_back(
+            ValuePair{&lhs_entry.second, &rhs_entry.second});
+      }
+      continue;
+    }
+
+    if (UsesStringStorage(lhs.type_id_)) {
+      if (reinterpret_cast<const StringStorage*>(lhs.storage_)->value !=
+          reinterpret_cast<const StringStorage*>(rhs.storage_)->value) {
+        return false;
+      }
+      continue;
+    }
+
+    const size_t size = GetTypeSize(lhs.type_id_);
+    if (size == 0) return false;
+    if (std::memcmp(lhs.storage_, rhs.storage_, size) != 0) {
+      return false;
+    }
   }
 
-  if (UsesStringStorage(type_id_)) {
-    return reinterpret_cast<const StringStorage*>(storage_)->value ==
-           reinterpret_cast<const StringStorage*>(other.storage_)->value;
-  }
-
-  size_t size = GetTypeSize(type_id_);
-  if (size > 0) {
-    return std::memcmp(storage_, other.storage_, size) == 0;
-  }
-
-  return false;
+  return true;
 }
 
 // ============================================================
@@ -1509,7 +1832,7 @@ uint64_t Value::hash() const {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
                         arr->size() * sizeof(uint8_t));
       }
-    } else if (type_id_ == TypeId::Token) {
+    } else if (UsesStringStorage(type_id_)) {
       const auto* arr = as_token_array();
       if (arr) {
         for (const std::string& s : *arr) {
@@ -1522,18 +1845,68 @@ uint64_t Value::hash() const {
     return h;
   }
 
-  // Hash dictionary entries recursively (order-sensitive, matching operator==).
+  // Hash dictionary entries in post-order (order-sensitive, matching
+  // operator==) without consuming one C++ stack frame per nesting level.
   if (type_id_ == TypeId::Dictionary) {
-    if (const Dict* d = as_dictionary()) {
-      for (const auto& kv : d->entries) {
-        h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(kv.first.data()),
-                        kv.first.size());
-        h *= 1099511628211ULL;
-        h ^= kv.second.hash();
-        h *= 1099511628211ULL;
+    const Dict* root = as_dictionary();
+    if (!root) return h;
+
+    struct HashFrame {
+      const Dict* dict{nullptr};
+      size_t next_entry{0};
+      uint64_t hash{static_cast<uint64_t>(TypeId::Dictionary)};
+    };
+    std::vector<HashFrame> pending;
+    std::unordered_set<const Dict*> active;
+    std::unordered_map<const Dict*, uint64_t> completed;
+    pending.push_back(HashFrame{root, 0,
+                                static_cast<uint64_t>(TypeId::Dictionary)});
+    active.insert(root);
+
+    while (!pending.empty()) {
+      HashFrame& frame = pending.back();
+      if (frame.next_entry == frame.dict->entries.size()) {
+        const uint64_t child_hash = frame.hash;
+        completed[frame.dict] = child_hash;
+        active.erase(frame.dict);
+        pending.pop_back();
+        if (pending.empty()) return child_hash;
+        pending.back().hash ^= child_hash;
+        pending.back().hash *= 1099511628211ULL;
+        continue;
+      }
+
+      const auto& kv = frame.dict->entries[frame.next_entry++];
+      frame.hash ^=
+          fnv1a_hash(reinterpret_cast<const uint8_t*>(kv.first.data()),
+                     kv.first.size());
+      frame.hash *= 1099511628211ULL;
+
+      const Dict* nested =
+          kv.second.is_dictionary() ? kv.second.as_dictionary() : nullptr;
+      if (!nested) {
+        frame.hash ^= kv.second.hash();
+        frame.hash *= 1099511628211ULL;
+        continue;
+      }
+
+      const auto complete_it = completed.find(nested);
+      if (complete_it != completed.end()) {
+        frame.hash ^= complete_it->second;
+        frame.hash *= 1099511628211ULL;
+      } else if (active.find(nested) != active.end()) {
+        // Mutable dictionary access can construct shared_ptr cycles that
+        // cannot appear in parsed USD. Fold a stable dictionary marker rather
+        // than looping forever on such API-created graphs.
+        frame.hash ^= static_cast<uint64_t>(TypeId::Dictionary);
+        frame.hash *= 1099511628211ULL;
+      } else {
+        active.insert(nested);
+        pending.push_back(HashFrame{
+            nested, 0, static_cast<uint64_t>(TypeId::Dictionary)});
       }
     }
-    return h;
+    return h;  // unreachable, retained for defensive compiler flow analysis
   }
 
   // Hash string types
@@ -1626,114 +1999,16 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
 Value LerpValue(const Value& a, const Value& b, double t) {
   if (a.type_id() != b.type_id()) return a;  // held on type mismatch
 
-  // Arrays and quaternions: delegate to the full interpolator (per-lane
-  // lerp for float/double/half-backed arrays, per-element slerp for quat
-  // arrays and scalars). This function used to HOLD all of these, so array
-  // timeSamples queried between keys snapped to the earlier sample.
-  if (a.is_array() || a.type_id() == TypeId::Quatf ||
-      a.type_id() == TypeId::Quatd || a.type_id() == TypeId::TimeCode) {
+  // Delegate every interpolatable type to the full interpolator (per-lane
+  // lerp for float/double/half-backed values, slerp for quats). The previous
+  // hand-rolled scalar switch here silently HELD Half/Half2/3/4, the
+  // semantic half aliases, Quath, and Matrix2f/3f/2d/3d, so timeSamples of
+  // those types snapped to the earlier key when queried between samples.
+  if (a.is_array() || TimeInterpolator::IsLinearInterpolatable(a.type_id())) {
     Value r = TimeInterpolator::InterpolateValues(a, b, t);
     return (r.type_id() == TypeId::Invalid) ? a : r;
   }
-  const double s = 1.0 - t;
-  auto lf = [&](float x, float y) { return static_cast<float>(s * x + t * y); };
-  auto ld = [&](double x, double y) { return s * x + t * y; };
-
-  switch (a.type_id()) {
-    case TypeId::Float: {
-      const float* pa = a.as_float();
-      const float* pb = b.as_float();
-      if (pa && pb) return Value(lf(*pa, *pb));
-      break;
-    }
-    case TypeId::Double: {
-      const double* pa = a.as_double();
-      const double* pb = b.as_double();
-      if (pa && pb) return Value(ld(*pa, *pb));
-      break;
-    }
-    case TypeId::Float2: {
-      const float* pa = a.as_float2();
-      const float* pb = b.as_float2();
-      if (pa && pb) return Value::MakeFloat2(lf(pa[0], pb[0]), lf(pa[1], pb[1]));
-      break;
-    }
-    case TypeId::Float3:
-    case TypeId::Point3f:
-    case TypeId::Vector3f:
-    case TypeId::Normal3f:
-    case TypeId::Color3f: {
-      const float* pa = a.as_float3();
-      const float* pb = b.as_float3();
-      if (!pa || !pb) break;
-      const float x = lf(pa[0], pb[0]), y = lf(pa[1], pb[1]), z = lf(pa[2], pb[2]);
-      switch (a.type_id()) {
-        case TypeId::Point3f: return Value::MakePoint3f(x, y, z);
-        case TypeId::Vector3f: return Value::MakeVector3f(x, y, z);
-        case TypeId::Normal3f: return Value::MakeNormal3f(x, y, z);
-        case TypeId::Color3f: return Value::MakeColor3f(x, y, z);
-        default: return Value::MakeFloat3(x, y, z);
-      }
-    }
-    case TypeId::Float4:
-    case TypeId::Color4f: {
-      const float* pa = a.as_float4();
-      const float* pb = b.as_float4();
-      if (!pa || !pb) break;
-      const float x = lf(pa[0], pb[0]), y = lf(pa[1], pb[1]);
-      const float z = lf(pa[2], pb[2]), w = lf(pa[3], pb[3]);
-      if (a.type_id() == TypeId::Color4f) return Value::MakeColor4f(x, y, z, w);
-      return Value::MakeFloat4(x, y, z, w);
-    }
-    case TypeId::Double2: {
-      const double* pa = a.as_double2();
-      const double* pb = b.as_double2();
-      if (pa && pb) return Value::MakeDouble2(ld(pa[0], pb[0]), ld(pa[1], pb[1]));
-      break;
-    }
-    case TypeId::Double3:
-    case TypeId::Point3d:
-    case TypeId::Vector3d:
-    case TypeId::Normal3d: {
-      const double* pa = a.as_double3();
-      const double* pb = b.as_double3();
-      if (!pa || !pb) break;
-      const double x = ld(pa[0], pb[0]), y = ld(pa[1], pb[1]), z = ld(pa[2], pb[2]);
-      switch (a.type_id()) {
-        case TypeId::Point3d: return Value::MakePoint3d(x, y, z);
-        case TypeId::Vector3d: return Value::MakeVector3d(x, y, z);
-        case TypeId::Normal3d: return Value::MakeNormal3d(x, y, z);
-        default: return Value::MakeDouble3(x, y, z);
-      }
-    }
-    case TypeId::Double4: {
-      const double* pa = a.as_double4();
-      const double* pb = b.as_double4();
-      if (pa && pb)
-        return Value::MakeDouble4(ld(pa[0], pb[0]), ld(pa[1], pb[1]),
-                                  ld(pa[2], pb[2]), ld(pa[3], pb[3]));
-      break;
-    }
-    case TypeId::Matrix4f: {
-      const float* pa = a.as_matrix4f();
-      const float* pb = b.as_matrix4f();
-      if (!pa || !pb) break;
-      float m[16];
-      for (int i = 0; i < 16; ++i) m[i] = lf(pa[i], pb[i]);
-      return Value::MakeMatrix4f(m);
-    }
-    case TypeId::Matrix4d: {
-      const double* pa = a.as_matrix4d();
-      const double* pb = b.as_matrix4d();
-      if (!pa || !pb) break;
-      double m[16];
-      for (int i = 0; i < 16; ++i) m[i] = ld(pa[i], pb[i]);
-      return Value::MakeMatrix4d(m);
-    }
-    default:
-      break;  // non-interpolatable (int/bool/string/token/quat/...) -> held
-  }
-  return a;
+  return a;  // non-interpolatable (int/bool/string/token/...) -> held
 }
 
 }  // namespace next

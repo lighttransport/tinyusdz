@@ -1109,11 +1109,12 @@
             for (const VariantData& option : set.variants) {
               if (option.name != selected->second) continue;
               for (const auto& opinion : option.variantSelections) {
-                auto existing = sels->find(opinion.first);
-                if (existing == sels->end() || existing->second != opinion.second) {
-                  (*sels)[opinion.first] = opinion.second;
-                  changed = true;
-                }
+                // `sels` is strength-ordered and pre-seeded with caller
+                // overrides. A selected option may fill a still-unknown
+                // sibling/nested selection, but must not replace a stronger
+                // opinion that is already present.
+                changed = sels->emplace(opinion.first, opinion.second).second ||
+                          changed;
               }
               break;
             }

@@ -81,6 +81,17 @@ void BuildDrawScene(const tinyusdz::tydra::RenderScene& rs, DrawScene* out,
 // Build DrawVolumeCPU entries from RenderScene::volumes (UsdVol / OpenVDB).
 void BuildDrawVolumes(const tinyusdz::tydra::RenderScene& rs, DrawScene* out);
 
+// Build a DrawCameraCPU from a row-major world matrix and a tydra::RenderCamera
+// (legacy loader). Caller sets `name`, `absPath`, `displayName`.
+DrawCameraCPU MakeDrawCameraFromTydra(
+    const tinyusdz::value::matrix4d& worldMatrix,
+    const tinyusdz::tydra::RenderCamera& cam);
+
+// Build camera records from a legacy Tydra RenderScene by walking its
+// node tree for Camera nodes and extracting world pose + lens from the parallel
+// RenderCamera. Used for loader-equivalence testing.
+void BuildDrawCameras(const tinyusdz::tydra::RenderScene& rs, DrawScene* out);
+
 // Streaming variant: run `converter.ConvertToRenderSceneStreaming` and build the
 // DrawScene incrementally as elements are produced (mesh geometry as each mesh
 // converts, world placement when the node hierarchy is built, textures and
@@ -101,6 +112,7 @@ bool BuildDrawSceneStreaming(tinyusdz::tydra::RenderSceneConverter& converter,
 // `--next` loader — whose own texture decoder already applies those — can call
 // just this one.
 void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out);
+void CompressDrawTexture(const TextureRuntimeOptions& opt, DrawTextureCPU* texture);
 
 // Classify texture usage from the built materials, then build the content-aware
 // CPU mip chains (and per-level compressed payloads when compression is on).

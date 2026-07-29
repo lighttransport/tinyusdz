@@ -340,6 +340,19 @@ void test_write_from_usdc() {
   PASS();
 }
 
+void test_write_failure() {
+  TEST("Report file write failure");
+#if defined(__linux__)
+  auto stage = MakeTestStage();
+  auto result = WriteUSDZToFile("/dev/full", stage);
+  if (result.success || result.error.empty() ||
+      result.bytes_written > (size_t{1} << 30)) {
+    FAIL("/dev/full write was not reported safely"); return;
+  }
+#endif
+  PASS();
+}
+
 int main() {
   printf("USDZ Writer Tests\n");
   printf("=================\n\n");
@@ -352,6 +365,7 @@ int main() {
   test_usdz_memory_caps();
   test_usdc_from_usdz();
   test_write_from_usdc();
+  test_write_failure();
 
   printf("\n%d/%d tests passed\n", pass_count, test_count);
   return pass_count == test_count ? 0 : 1;

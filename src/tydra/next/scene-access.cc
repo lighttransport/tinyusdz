@@ -860,16 +860,28 @@ std::vector<UsdPrim> GetDescendants(const UsdPrim& prim) {
   std::vector<UsdPrim> result;
   if (!prim.IsValid()) return result;
 
-  // Recursive traversal
-  std::function<void(const UsdPrim&)> traverse = [&](const UsdPrim& p) {
-    auto children = p.GetChildren();
-    for (const auto& child : children) {
-      result.push_back(child);
-      traverse(child);
-    }
-  };
+  // Iterative pre-order DFS. Stages parsed from USDA have a depth limit, but
+  // callers can build Layers programmatically; recursing here made a valid
+  // deep hierarchy exhaust the native/WASM stack.
+  std::vector<UsdPrim> stack;
+  std::vector<UsdPrim> children = prim.GetChildren();
+  stack.reserve(children.size());
+  for (auto it = children.rbegin(); it != children.rend(); ++it) {
+    stack.push_back(*it);
+  }
 
-  traverse(prim);
+  while (!stack.empty()) {
+    UsdPrim current = stack.back();
+    stack.pop_back();
+    if (!current.IsValid()) continue;
+
+    result.push_back(current);
+
+    children = current.GetChildren();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      stack.push_back(*it);
+    }
+  }
   return result;
 }
 

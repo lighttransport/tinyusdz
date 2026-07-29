@@ -965,12 +965,12 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
         if (a >= 0.0f) out->opacity *= ClampFloat(a, 0.0f, 1.0f);
       }
       if (lt.clearcoat_tex_id >= 0) {
-        float cc = SampleScalarTexAniso(*textures, lt.clearcoat_tex_id,
-                                        lt.clearcoat_ch, u, v, have_fp, dudx, dvdx,
-                                        dudy, dvdy, kMaxAniso,
-                                        lt.clearcoat_tex_scale,
-                                        lt.clearcoat_tex_bias);
-        if (cc >= 0.0f) out->clearcoat = ClampFloat(cc, 0.0f, 1.0f);
+        float clearcoat_val = SampleScalarTexAniso(*textures, lt.clearcoat_tex_id,
+                                         lt.clearcoat_ch, u, v, have_fp, dudx, dvdx,
+                                         dudy, dvdy, kMaxAniso,
+                                         lt.clearcoat_tex_scale,
+                                         lt.clearcoat_tex_bias);
+        if (clearcoat_val >= 0.0f) out->clearcoat = ClampFloat(clearcoat_val, 0.0f, 1.0f);
       }
       if (lt.clearcoat_rough_tex_id >= 0) {
         float cr = SampleScalarTexAniso(*textures, lt.clearcoat_rough_tex_id,

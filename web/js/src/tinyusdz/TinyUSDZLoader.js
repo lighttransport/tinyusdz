@@ -153,7 +153,13 @@ function nextHeapView(native, desc) {
 
 function nextAnimationFrame() {
     return new Promise((resolve) => {
-        if (typeof requestAnimationFrame === 'function') {
+        // Dedicated workers may expose requestAnimationFrame, but it can be
+        // throttled to multi-second intervals when the owning page is not
+        // visible (headless/Xvfb and background tabs). Worker conversion only
+        // needs to yield to its task queue; reserve rAF for the window where it
+        // actually synchronizes UI progress with painting.
+        if (typeof document !== 'undefined' &&
+            typeof requestAnimationFrame === 'function') {
             requestAnimationFrame(() => resolve());
         } else {
             setTimeout(resolve, 0);
@@ -323,8 +329,9 @@ export class NextRenderSceneAdapter {
     }
 
     static _rootEntry(entries) {
-        return entries.find((entry) => /\.usdc$/i.test(entry.name)) ||
-            entries.find((entry) => this._isUsdName(entry.name));
+        // USDZ defines the first archive entry as its default layer. Do not
+        // prefer a later USDC dependency over an earlier USDA root.
+        return entries.find((entry) => this._isUsdName(entry.name));
     }
 
     static async create(native, bytes, filename = 'scene.usdz', options = {}) {
@@ -362,6 +369,10 @@ export class NextRenderSceneAdapter {
             animationCopyMs: 0,
             entityCopyMs: 0,
             meshCopyMs: 0,
+            nativeMeshGetMs: 0,
+            jsMeshCopyMs: 0,
+            meshUdimMs: 0,
+            meshYieldMs: 0,
             totalMs: 0
         };
         const archiveStart = now();
@@ -397,12 +408,10 @@ export class NextRenderSceneAdapter {
                 throw new Error('TinyUSDZ next backend could not find a USD root layer in the USDZ archive.');
             }
             rootAssetName = this._normTexPathStatic(root.name);
-            // Prefer the owned USDC root path for crate-reader progress and
-            // lower native memory pressure. USDA-root USDZ files are passed as
-            // the full archive so next-core can detect and load them.
-            if (/\.usdc$/i.test(root.name)) {
-                crate = root.data;
-            }
+            // RenderStream consumes a root layer, not the surrounding archive.
+            // Pass either USDA or USDC bytes directly; archive entries remain
+            // available below for textures and dependent USD layers.
+            crate = root.data;
             let copiedEntries = 0;
             for (const entry of entries) {
                 if (!entry.name.endsWith('/')) {
@@ -730,14 +739,22 @@ export class NextRenderSceneAdapter {
                         50 + Math.min(45, (i / Math.max(1, meshCount)) * 45),
                         `Materializing meshes ${i}/${meshCount}`,
                         { meshCurrent: i, meshTotal: meshCount });
+                    const yieldStart = now();
                     await yieldForProgress();
+                    timings.meshYieldMs += now() - yieldStart;
                 }
+                const meshGetStart = now();
                 const mesh = renderStream.getMesh(i);
+                timings.nativeMeshGetMs += now() - meshGetStart;
                 if (!mesh || mesh.error) {
                     throw new Error(mesh?.error || `RenderStream mesh ${i} failed`);
                 }
+                const meshJsCopyStart = now();
                 const copiedMesh = this._copyMesh(native, mesh, i);
+                timings.jsMeshCopyMs += now() - meshJsCopyStart;
+                const udimStart = now();
                 this._applyUDIMLayout(copiedMesh, archiveEntries);
+                timings.meshUdimMs += now() - udimStart;
                 meshes.push(copiedMesh);
             }
             report('mesh-copy', 95, `Materialized meshes ${meshCount}/${meshCount}`,
@@ -1715,8 +1732,13 @@ class TinyUSDZLoader extends Loader {
             // RenderStream is a reduced legacy shim). `wasm=` stays the
             // explicit override in both directions.
             const wasmParam = getParam("wasm");
-            const backendWantsNext = options.backend === 'next' ||
-                getParam("backend") === "next";
+            // An explicit caller selection must win over the page query. This
+            // lets demos switch backends at runtime without a stale
+            // `backend=next` URL forcing every newly-created loader to use the
+            // next-only module.
+            const backendWantsNext = options.backend !== undefined
+                ? options.backend === 'next'
+                : getParam("backend") === "next";
             const use_next_only_wasm = wasmParam === "legacy"
                 ? false
                 : (options.useNextOnlyWasm === true ||

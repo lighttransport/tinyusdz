@@ -55,13 +55,18 @@ def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
             f.write('{"window_size":{"width":320,"height":320}}\n')
     cmd = [binary, loader, "--headless", "--mode", "depth", "--camera", camera,
            "--frames", "3", "--time", str(time), "--config", config,
+           "--no-skeleton",
            "--screenshot", out,
            *backend, *extra, scene]
+    timeout = float(e.get("TUSDVIEW_DEFORM_RENDER_TIMEOUT", "60"))
     try:
         r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                           env=e, timeout=120)
-    except subprocess.TimeoutExpired:
-        return False, "render timed out"
+                           env=e, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        partial = exc.stdout or b""
+        if isinstance(partial, bytes):
+            partial = partial.decode(errors="replace")
+        return False, (f"render timed out after {timeout:g}s\n{partial}")
     log = r.stdout.decode(errors="replace")
     return (r.returncode == 0 and os.path.exists(out) and
             os.path.getsize(out) > 0), log
@@ -125,6 +130,15 @@ def main():
     camera = sys.argv[5] if len(sys.argv) > 5 else "Cam"
     rest_t = sys.argv[6] if len(sys.argv) > 6 else "1"
     pose_t = sys.argv[7] if len(sys.argv) > 7 else "20"
+    try:
+        render_timeout = float(
+            os.environ.get("TUSDVIEW_DEFORM_RENDER_TIMEOUT", "60"))
+        if render_timeout <= 0:
+            raise ValueError
+    except ValueError:
+        print("FAIL: TUSDVIEW_DEFORM_RENDER_TIMEOUT must be a positive number "
+              "of seconds")
+        return 1
     # The CUDA/HIP tracers build their BVH from draw_ geometry, so they take the
     # deform through poseNextDrawForTracer rather than the vertex shader. Same
     # claim, different plumbing -- and until that landed they were pinned to the
@@ -159,6 +173,8 @@ def main():
                                backend=backend)
     if not rest_ok or not backend_available(rest_log):
         print(f"SKIP: the {which} backend produced no image (unavailable here?)")
+        if rest_log:
+            print(rest_log.rstrip())
         return SKIP
     gpu_ok, gpu_log = render(binary, scene, gpu, pose_t, camera,
                              backend=backend)
@@ -197,12 +213,9 @@ def main():
         return 1
 
     # The two LOADERS must also agree, and not just on the mesh: the whole frame.
-    # The scene box drives the ground grid, the depth normalization and the
-    # auto-fit, and the next loader used to take it from the 8 corners of each
-    # mesh's local bbox pushed through its world matrix (loose under rotation) and
-    # then never refresh it after the deform (so an animated load framed on the
-    # REST pose). Both are now derived the way the Tydra path derives them: from
-    # the posed vertices.
+    # Skeleton helpers are disabled above because they are editor overlays, not
+    # depth-AOV geometry, and the next native-instancing path does not populate
+    # the legacy RenderScene skeleton carrier used to draw them.
     legacy = os.path.join(work, f"{tag}_legacy.png")
     legacy_ok = False
     if which == "raster":
@@ -212,13 +225,10 @@ def main():
         ldiff = mean_diff(gpu, legacy)
         if ldiff > MAX_LOADER_DIFF:
             print(f"FAIL: {tag}: the next and legacy loaders do not render the same "
-                  f"frame (mean depth diff {ldiff:.3f} > {MAX_LOADER_DIFF}) even "
-                  f"though the next deform matches its own CPU bake ({diff:.3f}). "
-                  f"That points at the SCENE BOUNDS, not the deform: the next "
-                  f"loader has to take its box from the batches' vertices (not from "
-                  f"corner-transformed local bboxes) AND refresh it for the pose at "
-                  f"each time code (BuildNextPosedSceneBounds), or the grid and the "
-                  f"depth ramp sit somewhere the legacy path does not put them.")
+                  f"helper-free depth frame (mean diff {ldiff:.3f} > "
+                  f"{MAX_LOADER_DIFF}) even though the next deform matches its own "
+                  f"CPU bake ({diff:.3f}). Check posed geometry, scene bounds, and "
+                  f"depth normalization.")
             return 1
         print(f"PASS: {tag}: GPU deform matches the CPU bake (mean depth diff "
               f"{diff:.3f}; the deform moves depth by {pose:.3f}); the legacy loader "

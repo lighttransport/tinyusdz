@@ -479,6 +479,11 @@ bool CrateReader::Impl::ReadFields() {
           AddError("Array ValueRep element count exceeds addressable memory");
           return false;
         }
+        if (count >
+            static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)())) {
+          AddError("Array ValueRep element count exceeds Value capacity");
+          return false;
+        }
         bool valid_lazy_block = false;
         if (lazy_over_cap_ok && source_) {
           LazyArrayRef lr;

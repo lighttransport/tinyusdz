@@ -1,0 +1,172 @@
+#version 450
+
+// Non-mesh fragment shader for Points (billboard with spherical normal) and
+// Curves (flat ribbon normals).  Full PBR evaluation matching mesh.frag.
+
+layout(location = 0) in vec2 vLocal;
+layout(location = 1) in vec4 vColor;
+layout(location = 2) in vec3 vWorldPos;
+layout(location = 3) in vec3 vView;
+layout(location = 4) flat in int vInstanceId;
+
+// Frame UBO (set 2, binding 0) — same layout as mesh.frag
+struct RasterLight { vec4 positionType; vec4 directionAngle;
+                     vec4 colorDiffuse; vec4 specularShape; };
+layout(set = 2, binding = 0) uniform Frame {
+  vec4 disp;
+  mat4 viewProj;
+  vec4 camPos;
+  vec4 sceneMin;
+  vec4 sceneExtent;
+  vec4 lightDir;
+  vec4 lightColor;
+  RasterLight rasterLights[16];
+  uvec4 rasterLightInfo;
+  ivec4 mode;
+  mat4 envRot;
+  vec4 iblColor;
+  vec4 iblParams;
+  mat4 shadowViewProj;
+  vec4 pointShadowLight;
+  mat4 pointShadowViewProj[6];
+} fr;
+
+layout(push_constant) uniform Push {
+  int uKind;
+  int uMaterialId;
+  int uCarrierId;
+  int uPurpose;
+  int uRenderMode;
+  vec3 uCameraRight;
+  vec3 uCameraUp;
+} pc;
+
+layout(location = 0) out vec4 fragColor;
+
+vec3 idColor(int id) {
+  uint h = (uint(max(id, 0)) + 1u) * 2654435761u;
+  return vec3(float(h & 255u), float((h >> 8u) & 255u),
+              float((h >> 16u) & 255u)) * (1.0 / 255.0);
+}
+
+vec3 linearToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+  return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));
+}
+
+float D(float nh, float r) {
+  float a = max(r * r, 0.002);
+  float a2 = a * a;
+  float d = nh * nh * (a2 - 1.0) + 1.0;
+  return a2 / max(3.14159265 * d * d, 1e-6);
+}
+
+float G1(float nx, float r) {
+  float k = (r + 1.0) * (r + 1.0) * 0.125;
+  return nx / max(nx * (1.0 - k) + k, 1e-6);
+}
+
+vec3 F(float vh, vec3 f0) {
+  return f0 + (vec3(1.0) - f0) * pow(1.0 - clamp(vh, 0.0, 1.0), 5.0);
+}
+
+void main() {
+  vec3 N;
+  if (pc.uKind == 0) {
+    // Point billboard: circular discard + spherical normal proxy
+    float rr = dot(vLocal, vLocal);
+    if (rr > 1.0) discard;
+    vec3 camRight = normalize(pc.uCameraRight);
+    vec3 camUp = normalize(pc.uCameraUp);
+    N = normalize(camRight * vLocal.x + camUp * vLocal.y +
+                  normalize(vView) * sqrt(max(0.0, 1.0 - rr)));
+  } else {
+    // Curve ribbon: view direction as normal
+    N = normalize(vView);
+  }
+
+  // Render mode AOVs
+  if (pc.uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1); return; }
+  if (pc.uRenderMode == 3) { fragColor = vec4(idColor(pc.uMaterialId), 1); return; }
+  if (pc.uRenderMode == 15) { fragColor = vec4(idColor(vInstanceId), 1); return; }
+  if (pc.uRenderMode == 16) { fragColor = vec4(idColor(pc.uCarrierId), 1); return; }
+  if (pc.uRenderMode == 18) {
+    vec3 c = pc.uPurpose == 1 ? vec3(0.3,0.7,1) :
+             pc.uPurpose == 2 ? vec3(1,0.6,0.2) :
+             pc.uPurpose == 3 ? vec3(0.8,0.3,1) : vec3(0.7);
+    fragColor = vec4(c, 1); return;
+  }
+  if (pc.uRenderMode == 7) { fragColor = vec4(vColor.rgb, 1); return; }
+  if (pc.uRenderMode == 12) { fragColor = vec4(vec3(vColor.a), 1); return; }
+  if (pc.uRenderMode != 0) { fragColor = vec4(0.18, 0.18, 0.18, 1); return; }
+
+  vec3 V = normalize(vView);
+  float nv = max(dot(N, V), 1e-4);
+  float roughness = 0.5;
+  vec3 direct = vec3(0);
+
+  for (int li = 0; li < 16; ++li) {
+    if (li >= int(fr.rasterLightInfo.x)) break;
+    uvec4 info = fr.rasterLightInfo;
+    if ((info.y & (1u << uint(li))) == 0u) continue;
+
+    vec4 pt = fr.rasterLights[li].positionType;
+    vec4 da = fr.rasterLights[li].directionAngle;
+    vec4 lc = fr.rasterLights[li].colorDiffuse;
+    vec4 ss = fr.rasterLights[li].specularShape;
+    int lt = int(pt.w + 0.5);
+
+    vec3 L;
+    float att = 1.0;
+    if (lt == 5) {
+      L = normalize(da.xyz);
+    } else {
+      vec3 q = pt.xyz - vWorldPos;
+      float d2 = max(dot(q, q), 1e-6);
+      L = q * inversesqrt(d2);
+      att = 1.0 / d2;
+    }
+
+    float shape = 1.0;
+    if (ss.w > 0.5 && lt != 5) {
+      float cc = dot(normalize(da.xyz), -L);
+      float o = cos(radians(clamp(da.w, 0, 180)));
+      float inn = cos(radians(clamp(da.w * (1 - clamp(ss.y, 0, 1)), 0, 180)));
+      shape = smoothstep(o, max(inn, o + 1e-5), cc) *
+              pow(max(cc, 0), max(ss.z, 0));
+    }
+
+    float nl = max(dot(N, L), 0);
+    if (nl <= 0 || shape <= 0) continue;
+
+    vec3 H = normalize(V + L);
+    float nh = max(dot(N, H), 0);
+    float vh = max(dot(V, H), 0);
+
+    vec3 ff = F(vh, vec3(0.04));
+    float spec = D(nh, roughness) * G1(nv, roughness) * G1(nl, roughness) *
+                 ff.x / max(4.0 * nv * nl, 1e-5);
+    vec3 diff = (vec3(1.0) - ff) * vColor.rgb * (1.0 / 3.14159265);
+
+    direct += (diff * lc.w + spec * ss.x) * lc.rgb * (att * shape * nl);
+  }
+
+  // Fallback to single key light when no multi-light data
+  if (fr.rasterLightInfo.x == 0) {
+    vec3 L = normalize(fr.lightDir.xyz);
+    vec3 H = normalize(V + L);
+    float nl = max(dot(N, L), 0);
+    float nh = max(dot(N, H), 0);
+    float vh = max(dot(V, H), 0);
+    vec3 ff = F(vh, vec3(0.04));
+    float spec = D(nh, roughness) * G1(nv, roughness) * G1(nl, roughness) *
+                 ff.x / max(4.0 * nv * nl, 1e-5);
+    vec3 diff = (vec3(1.0) - ff) * vColor.rgb * (1.0 / 3.14159265);
+    direct = (diff + spec) * fr.lightColor.xyz * nl;
+  }
+
+  vec3 col = vColor.rgb * 0.12 + direct;
+  fragColor = vec4(linearToSrgb(col * exp2(fr.camPos.w)), vColor.a);
+}

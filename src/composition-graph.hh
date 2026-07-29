@@ -241,7 +241,11 @@ class PrimIndex {
   const CompNode &GetRootNode() const { return _nodes[0]; }
 
   /// Access a node by index.
-  const CompNode &GetNode(uint16_t idx) const { return _nodes[idx]; }
+  const CompNode &GetNode(uint16_t idx) const {
+    // Caller must ensure idx < _nodes.size() (from GetStrengthOrder etc.).
+    // The mutable accessor (in composition-graph.cc) also bounds-checks.
+    return _nodes[idx];
+  }
 
   /// Number of nodes in the graph.
   uint16_t GetNodeCount() const {
@@ -304,6 +308,11 @@ bool ComposePrimSpecFromIndex(const std::vector<LayerStackEntry> &layer_stacks,
                               const std::vector<std::string> &path_table,
                               const PrimIndex &index, PrimSpec *out,
                               std::string *warn, std::string *err);
+
+// Recursively check that no PrimSpec has two children with the same name.
+// Returns true on success. Only called in debug builds.
+bool ValidateNoDuplicateSiblingNames(const Layer &layer, std::string *warn,
+                                     std::string *err);
 
 // ---------------------------------------------------------------------------
 // InstanceKey -- for instancing deduplication

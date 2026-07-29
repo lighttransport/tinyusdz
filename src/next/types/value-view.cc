@@ -36,14 +36,16 @@ bool BorrowLazyFlatArray(const Value& value, TypeId component_type,
     *out = ArrayView<T>{nullptr, 0, true};
     return true;
   }
-  if (ref->block_offset == 0 || ref->block_len < 8) return false;
+  const uint64_t header_bytes =
+      CrateArrayCountHeaderBytes(ref->source->version());
+  if (ref->block_offset == 0 || ref->block_len < header_bytes) return false;
   const uint64_t flat_count = ref->element_count * uint64_t(comps);
   const uint64_t byte_count = flat_count * uint64_t(sizeof(T));
   if (flat_count / comps != ref->element_count) return false;
   if (byte_count / sizeof(T) != flat_count) return false;
   if (flat_count > uint64_t((std::numeric_limits<size_t>::max)())) return false;
-  if (byte_count > ref->block_len - 8) return false;
-  const uint64_t data_off = ref->block_offset + 8;
+  if (byte_count > ref->block_len - header_bytes) return false;
+  const uint64_t data_off = ref->block_offset + header_bytes;
   if (data_off < ref->block_offset || data_off > ref->source->size()) return false;
   if (byte_count > ref->source->size() - data_off) return false;
   const uintptr_t addr =
@@ -98,14 +100,16 @@ bool CanBorrowLazyFlat(const Value& value) {
   if (comps == 0) return false;
   if (ref->src_elem_stride != comps * ts) return false;
   if (ref->element_count == 0) return true;
-  if (ref->block_offset == 0 || ref->block_len < 8) return false;
+  const uint64_t header_bytes =
+      CrateArrayCountHeaderBytes(ref->source->version());
+  if (ref->block_offset == 0 || ref->block_len < header_bytes) return false;
   const uint64_t flat_count = ref->element_count * uint64_t(comps);
   const uint64_t byte_count = flat_count * uint64_t(ts);
   if (flat_count / comps != ref->element_count) return false;
   if (byte_count / ts != flat_count) return false;
   if (flat_count > uint64_t((std::numeric_limits<size_t>::max)())) return false;
-  if (byte_count > ref->block_len - 8) return false;
-  const uint64_t data_off = ref->block_offset + 8;
+  if (byte_count > ref->block_len - header_bytes) return false;
+  const uint64_t data_off = ref->block_offset + header_bytes;
   if (data_off < ref->block_offset || data_off > ref->source->size()) return false;
   if (byte_count > ref->source->size() - data_off) return false;
   const uintptr_t addr =

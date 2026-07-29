@@ -29,6 +29,7 @@
 #include "unit-materialx.h"
 #include "unit-task-queue.h"
 #include "unit-png-stream.h"
+#include "unit-ptx.h"
 #include "unit-imageproc.h"
 #include "unit-tydra.h"
 #include "unit-tydra-subdivision.h"
@@ -89,6 +90,9 @@
 
 
 TEST_LIST = {
+  { "ptx_reader_rejects_invalid_input_test", ptx_reader_rejects_invalid_input_test },
+  { "ptx_reader_island_fixture_test", ptx_reader_island_fixture_test },
+  { "ptx_reader_synthetic_fixture_test", ptx_reader_synthetic_fixture_test },
   { "ascii_parse_int64_valid_test", ascii_parse_int64_valid_test },
   { "ascii_parse_int64_excessive_digits_test", ascii_parse_int64_excessive_digits_test },
   { "ascii_parse_uint64_valid_test", ascii_parse_uint64_valid_test },
@@ -191,6 +195,8 @@ TEST_LIST = {
   { "usdpreviewsurface_displacement_test", usdpreviewsurface_displacement_test },
   { "usduvtexture_uvset_test", usduvtexture_uvset_test },
   { "openpbr_opacity_precedence_test", openpbr_opacity_precedence_test },
+  { "openpbr_geometry_connection_alias_test",
+    openpbr_geometry_connection_alias_test },
   { "tydra_subdivision_catmullclark_test", tydra_subdivision_catmullclark_test },
   { "tydra_subdivision_loop_test", tydra_subdivision_loop_test },
   { "tydra_subdivision_bilinear_test", tydra_subdivision_bilinear_test },
@@ -675,6 +681,7 @@ TEST_LIST = {
   { "compgraph_payload_deferred_test", compgraph_payload_deferred_test },
   { "compgraph_build_stage_simple_test", compgraph_build_stage_simple_test },
   { "compgraph_build_stage_no_duplicate_children_test", compgraph_build_stage_no_duplicate_children_test },
+  { "compgraph_validate_no_duplicate_sibling_names_test", compgraph_validate_no_duplicate_sibling_names_test },
   { "compgraph_build_stage_wide_deep_test", compgraph_build_stage_wide_deep_test },
   { "compgraph_build_stage_inherits_test", compgraph_build_stage_inherits_test },
   { "compgraph_random_flat_prims_test", compgraph_random_flat_prims_test },
@@ -806,6 +813,16 @@ TEST_LIST = {
   { "security_resolver_overreported_custom_asset_rejected_test", security_resolver_overreported_custom_asset_rejected_test },
   { "security_nested_zstd_depth_rejected_test", security_nested_zstd_depth_rejected_test },
   { "security_sha256_overflow_rejected_test", security_sha256_overflow_rejected_test },
+  { "security_stage_move_cache_test", security_stage_move_cache_test },
+  { "security_base122_roundtrip_test", security_base122_roundtrip_test },
+  { "security_strutil_unwrap_edge_test", security_strutil_unwrap_edge_test },
+  { "security_zstd_max_decompressed_size_test", security_zstd_max_decompressed_size_test },
+  { "security_findfile_traversal_rejected_test", security_findfile_traversal_rejected_test },
+  { "security_common_utils_overflow_test", security_common_utils_overflow_test },
+  { "security_merge_path_overflow_test", security_merge_path_overflow_test },
+  { "security_safe_mul_add_tests", security_safe_mul_add_tests },
+  { "security_unwrap_triple_delim_test", security_unwrap_triple_delim_test },
+  { "security_is_safe_asset_path_test", security_is_safe_asset_path_test },
   // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
   { "usdz_writer_is_usdz_prefix_detection_test", usdz_writer_is_usdz_prefix_detection_test },

@@ -19,6 +19,8 @@ layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); 0 
 // renderer binds black (red=0) when the submesh has no displacement, so this is an
 // unconditional no-op there -- no push-constant lane is spent on an enable flag.
 layout(set = 0, binding = 16) uniform sampler2D uDisplacementTex;
+layout(set = 0, binding = 5) uniform sampler2D uUdimLutAtlas;
+layout(set = 0, binding = 31) uniform sampler2DArray uDisplacementUdimTex;
 struct RasterLight { vec4 positionType; vec4 directionAngle;
                      vec4 colorDiffuse; vec4 specularShape; };
 // Frame-constant UBO (set 5): disp sliders + camera. The vertex stage derives
@@ -38,6 +40,9 @@ layout(set = 2, binding = 0) uniform Frame {
   mat4 envRot;        // world -> environment rotation (dome IBL)
   vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
   vec4 iblParams;     // .x = prefiltered mip count
+  mat4 shadowViewProj;
+  vec4 pointShadowLight;
+  mat4 pointShadowViewProj[6];
 } fr;
 struct MaterialTexParam {
   vec4 baseUv0; vec4 baseUv1;
@@ -61,6 +66,25 @@ struct MaterialTexParam {
   vec4 roughUv0; vec4 roughUv1;
   vec4 coatParams;
   vec4 coatColor;
+  vec4 occlusionUv0; vec4 occlusionUv1;
+  vec4 occlusionParams;
+  // Padding rows so the std430 array stride stays byte-identical with
+  // mesh.frag, which uses these extra semantic texture slots.
+  vec4 specColorUv0; vec4 specColorUv1;
+  vec4 coatWeightUv0; vec4 coatWeightUv1;
+  vec4 coatColorUv0; vec4 coatColorUv1;
+  vec4 coatRoughUv0; vec4 coatRoughUv1;
+  vec4 coatTexParams;
+  vec4 extraUvSets;
+  vec4 specColorScale; vec4 specColorBias;
+  vec4 coatWeightScale; vec4 coatWeightBias;
+  vec4 coatColorScale; vec4 coatColorBias;
+  vec4 coatRoughScale; vec4 coatRoughBias;
+  vec4 coatNormalUv0; vec4 coatNormalUv1;
+  vec4 coatNormalScale; vec4 coatNormalBias;
+  vec4 semanticUdimSlots;
+  vec4 semanticUdimSlots2;
+  vec4 ptexBaseInfo;
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 // Per-vertex displayColor + displayOpacity (set 24): 4 floats per vertex.
@@ -76,6 +100,17 @@ layout(push_constant) uniform PushConstants {
   vec4 emissive;    // .xyz emissive (AOV)
   ivec4 ids;        // .x matId, .y flags, .z meshId
 } pc;
+
+vec4 sampleDisplacement(vec2 uv, float row) {
+  int tile = 1001 + int(floor(uv.x)) + 10 * int(floor(uv.y));
+  int idx = tile - 1001;
+  if (idx < 0 || idx >= 100) return vec4(0.0);
+  int layer = int(texelFetch(uUdimLutAtlas, ivec2(idx, int(row + 0.5)), 0).r *
+                  255.0 + 0.5) - 1;
+  if (layer < 0) return vec4(0.0);
+  return textureLod(uDisplacementUdimTex,
+                    vec3(fract(uv), float(layer)), 0.0);
+}
 
 layout(location = 0) out vec3 vNormalW;
 layout(location = 1) out vec2 vUV;
@@ -99,7 +134,11 @@ void main() {
   vec2 duv = vec2(dot(vec3(aUV, 1.0), mtp.p[mid].dispUv0.xyz),
                   dot(vec3(aUV, 1.0), mtp.p[mid].dispUv1.xyz));
   vec2 dsb = pc.ids.x >= 0 ? mtp.p[mid].scalar1.zw : vec2(1.0, 0.0);
-  float disp = textureLod(uDisplacementTex, duv, 0.0).r * dsb.x + dsb.y;
+  float dispRow = mtp.p[mid].semanticUdimSlots2.y;
+  float height = dispRow >= 0.0
+      ? sampleDisplacement(duv, dispRow).r
+      : textureLod(uDisplacementTex, duv, 0.0).r;
+  float disp = height * dsb.x + dsb.y;
   // Guard normalize(): geometric-normal meshes (e.g. the --next flat preview)
   // store a zero normal, and normalize(vec3(0)) is NaN. With no displacement that
   // NaN still propagates (NaN * 0 == NaN) into pos -> gl_Position, clipping the
@@ -130,5 +169,7 @@ void main() {
                       vtxcol.c[4 * gl_VertexIndex + 2],
                       vtxcol.c[4 * gl_VertexIndex + 3])
                : vec4(1.0);
-  gl_Position = fr.viewProj * pc.model * vec4(pos, 1.0);
+  gl_Position = (pc.ids.z <= -3 ? fr.pointShadowViewProj[-3 - pc.ids.z]
+                 : (pc.ids.z == -2 ? fr.shadowViewProj : fr.viewProj)) *
+                pc.model * vec4(pos, 1.0);
 }

@@ -1565,6 +1565,12 @@ class RenderStream {
     emscripten::val r = emscripten::val::object();
     end();
     error_.clear();
+    stats_ = Stats{};
+    stats_.input_copy_ms = pending_input_copy_ms_;
+    stats_.input_bytes = pending_input_bytes_;
+    pending_input_copy_ms_ = 0.0;
+    pending_input_bytes_ = 0;
+    const double stage_load_start_ms = emscripten_get_now();
     if (IsUSDCBytes(crate)) {
       tinyusdz::next::USDCLoadOptions opts;
       opts.crate_options.progress_callback =
@@ -1603,11 +1609,13 @@ class RenderStream {
         return r;
       }
     }
+    stats_.stage_load_ms = emscripten_get_now() - stage_load_start_ms;
     // Record authored variant sets (consumed by composition below), then
     // compose in place when the layer carries composition arcs — variants,
     // internal references, inherits/specializes. External arcs cannot anchor
     // for memory roots and surface as warnings (multi-layer scenes go through
     // NextFlattenSession instead).
+    const double composition_start_ms = emscripten_get_now();
     collectVariantSets_();
     if (tinyusdz::next::StageNeedsComposition(stage_)) {
       tinyusdz::next::pcp::CompositionOptions copts;
@@ -1622,11 +1630,16 @@ class RenderStream {
         return r;
       }
     }
+    stats_.composition_ms = emscripten_get_now() - composition_start_ms;
+    const double mesh_discovery_start_ms = emscripten_get_now();
     meshes_ = tinyusdz::next::GetAllMeshes(stage_);
-    stats_ = Stats{};
+    stats_.mesh_discovery_ms =
+        emscripten_get_now() - mesh_discovery_start_ms;
     stats_.source_mesh_count = meshes_.size();
     if (mesh_merge_) {
+      const double optimize_start_ms = emscripten_get_now();
       buildOptimizedOutputs_();
+      stats_.optimize_ms = emscripten_get_now() - optimize_start_ms;
     }
     if (!mesh_only_) {
       buildRenderScene_();
@@ -1660,6 +1673,7 @@ class RenderStream {
 
   // Begin from a JS Uint8Array (one copy into the WASM heap, then adopted).
   emscripten::val begin(emscripten::val bytes) {
+    const double input_copy_start_ms = emscripten_get_now();
     const size_t size = bytes["byteLength"].as<size_t>();
     constexpr size_t kMaxLayerBytes = size_t(1) << 30;  // 1 GiB
     if (size > kMaxLayerBytes) {
@@ -1679,6 +1693,8 @@ class RenderStream {
           size, reinterpret_cast<uint8_t *>(&s[0])));
       heapView.call<void>("set", view);
     }
+    pending_input_copy_ms_ = emscripten_get_now() - input_copy_start_ms;
+    pending_input_bytes_ = size;
     return beginOwned(std::move(s));
   }
 
@@ -2432,6 +2448,16 @@ class RenderStream {
     s.set("meshMerge", mesh_merge_);
     s.set("meshMergeBakeTransform", mesh_merge_bake_transform_);
     s.set("flattenRenderTree", flatten_render_tree_);
+    s.set("nativeStageLoadMs", stats_.stage_load_ms);
+    s.set("nativeInputCopyMs", stats_.input_copy_ms);
+    s.set("nativeInputBytes", static_cast<double>(stats_.input_bytes));
+    s.set("nativeCompositionMs", stats_.composition_ms);
+    s.set("nativeMeshDiscoveryMs", stats_.mesh_discovery_ms);
+    s.set("nativeOptimizeMs", stats_.optimize_ms);
+    s.set("materialIdentityHits",
+          static_cast<int>(stats_.material_identity_hits));
+    s.set("materialIdentityMisses",
+          static_cast<int>(stats_.material_identity_misses));
     size_t provided_asset_bytes = 0;
     for (const auto& asset : clip_assets_) {
       provided_asset_bytes += asset.second.size();
@@ -2560,6 +2586,9 @@ class RenderStream {
     materials_.clear();
     material_key_to_id_.clear();
     material_path_to_id_.clear();
+    material_identity_to_id_.clear();
+    local_matrix_cache_.clear();
+    world_matrix_cache_.clear();
     source_material_keys_.clear();
     source_texture_keys_.clear();
     texture_keys_.clear();
@@ -2794,6 +2823,14 @@ class RenderStream {
     size_t merged_mesh_count = 0;
     size_t merge_group_count = 0;
     size_t skipped_merge_count = 0;
+    size_t input_bytes = 0;
+    double input_copy_ms = 0.0;
+    double stage_load_ms = 0.0;
+    double composition_ms = 0.0;
+    double mesh_discovery_ms = 0.0;
+    double optimize_ms = 0.0;
+    size_t material_identity_hits = 0;
+    size_t material_identity_misses = 0;
   };
 
   emscripten::val outputSourceMesh_(int i) {
@@ -2812,10 +2849,12 @@ class RenderStream {
       return out;
     }
 
+    const int32_t material_id = materialIdForBoundPrim_(prim);
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
     out.set("primPath", prim.GetPath().str());
-    out.set("doubleSided", matBool_(prim, "doubleSided", false));
+    out.set("doubleSided",
+            effectiveDoubleSided_(prim, material_id, s_points_));
     out.set("points", heapF_(s_points_, 3));
     if (!soup && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
     if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
@@ -2941,7 +2980,6 @@ class RenderStream {
     }
     out.set("localMatrix", matArray_(localMatrix_(prim)));
     out.set("worldMatrix", matArray_(worldMatrixForPrim_(prim)));
-    const int32_t material_id = materialIdForBoundPrim_(prim);
     out.set("materialId", material_id);
     out.set("material", materialObject_(material_id));
     addGeomSubsetMaterials_(prim, out);
@@ -3159,16 +3197,16 @@ class RenderStream {
   std::vector<float> matFloat_(const tinyusdz::next::UsdPrim &prim, const char *name) {
     const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    tinyusdz::next::Value tmp = *v;
-    const std::vector<float> *a = tmp.as_float_array();
-    return a ? *a : std::vector<float>{};
+    tinyusdz::next::Value tmp = v->materialized_copy();
+    std::vector<float> *a = tmp.as_float_array();
+    return a ? std::move(*a) : std::vector<float>{};
   }
   std::vector<int32_t> matInt_(const tinyusdz::next::UsdPrim &prim, const char *name) {
     const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    tinyusdz::next::Value tmp = *v;
-    const std::vector<int32_t> *a = tmp.as_int_array();
-    return a ? *a : std::vector<int32_t>{};
+    tinyusdz::next::Value tmp = v->materialized_copy();
+    std::vector<int32_t> *a = tmp.as_int_array();
+    return a ? std::move(*a) : std::vector<int32_t>{};
   }
   static bool matBool_(const tinyusdz::next::UsdPrim &prim, const char *name,
                        bool fallback) {
@@ -3176,6 +3214,88 @@ class RenderStream {
     if (!v) return fallback;
     if (const bool *b = v->as_bool()) return *b;
     return fallback;
+  }
+
+  static bool pointsArePlanar_(const std::vector<float> &points) {
+    const size_t count = points.size() / 3;
+    if (count < 3) return false;
+
+    float lo[3] = {points[0], points[1], points[2]};
+    float hi[3] = {points[0], points[1], points[2]};
+    for (size_t i = 1; i < count; ++i) {
+      for (size_t axis = 0; axis < 3; ++axis) {
+        const float value = points[i * 3 + axis];
+        lo[axis] = (std::min)(lo[axis], value);
+        hi[axis] = (std::max)(hi[axis], value);
+      }
+    }
+    const float scale = (std::max)({hi[0] - lo[0], hi[1] - lo[1],
+                                    hi[2] - lo[2]});
+    if (!(scale > 0.0f)) return false;
+    const float epsilon = (std::max)(scale * 1.0e-5f, 1.0e-7f);
+    const float epsilon_sq = epsilon * epsilon;
+
+    const float p0[3] = {points[0], points[1], points[2]};
+    size_t p1_index = count;
+    for (size_t i = 1; i < count; ++i) {
+      const float x = points[i * 3] - p0[0];
+      const float y = points[i * 3 + 1] - p0[1];
+      const float z = points[i * 3 + 2] - p0[2];
+      if (x * x + y * y + z * z > epsilon_sq) {
+        p1_index = i;
+        break;
+      }
+    }
+    if (p1_index == count) return false;
+    const float edge[3] = {points[p1_index * 3] - p0[0],
+                           points[p1_index * 3 + 1] - p0[1],
+                           points[p1_index * 3 + 2] - p0[2]};
+    float normal[3] = {0.0f, 0.0f, 0.0f};
+    float normal_length = 0.0f;
+    for (size_t i = 1; i < count; ++i) {
+      const float other[3] = {points[i * 3] - p0[0],
+                              points[i * 3 + 1] - p0[1],
+                              points[i * 3 + 2] - p0[2]};
+      normal[0] = edge[1] * other[2] - edge[2] * other[1];
+      normal[1] = edge[2] * other[0] - edge[0] * other[2];
+      normal[2] = edge[0] * other[1] - edge[1] * other[0];
+      normal_length = std::sqrt(normal[0] * normal[0] +
+                                normal[1] * normal[1] +
+                                normal[2] * normal[2]);
+      if (normal_length > epsilon_sq) break;
+    }
+    if (!(normal_length > epsilon_sq)) return false;
+    normal[0] /= normal_length;
+    normal[1] /= normal_length;
+    normal[2] /= normal_length;
+    for (size_t i = 1; i < count; ++i) {
+      const float distance =
+          (points[i * 3] - p0[0]) * normal[0] +
+          (points[i * 3 + 1] - p0[1]) * normal[1] +
+          (points[i * 3 + 2] - p0[2]) * normal[2];
+      if (std::abs(distance) > epsilon) return false;
+    }
+    return true;
+  }
+
+  bool effectiveDoubleSided_(const tinyusdz::next::UsdPrim &prim,
+                             int32_t material_id,
+                             const std::vector<float> &points) const {
+    // An authored USD opinion always wins, including an explicit false.
+    if (prim.HasAuthoredProperty("doubleSided")) {
+      return matBool_(prim, "doubleSided", false);
+    }
+    if (material_id < 0 ||
+        static_cast<size_t>(material_id) >= materials_.size()) {
+      return false;
+    }
+    // Some DCC exporters omit doubleSided on effect cards even though an
+    // opacity-mapped, zero-thickness mesh is semantically a billboard. Infer
+    // two-sided rendering only for that narrow case; opaque and volumetric
+    // geometry retains the USD default of back-face culling.
+    const MaterialRecord &material =
+        materials_[static_cast<size_t>(material_id)];
+    return !material.opacity_texture.empty() && pointsArePlanar_(points);
   }
 
   // Build render geometry for one mesh into the scratch (s_points_/s_normals_/
@@ -3734,6 +3854,183 @@ class RenderStream {
     *ss << "|opacitytex=" << normTexKey_(m.opacity_texture);
   }
 
+  bool ensureRenderMaterial_(const tinyusdz::next::UsdPrim &mat) {
+    if (!mat.IsValid()) return false;
+    const std::string path = mat.GetPath().str();
+    if (render_scene_.material_by_path.find(path) !=
+        render_scene_.material_by_path.end()) {
+      return true;
+    }
+
+    // meshOnly intentionally skips the full RenderScene hierarchy and geometry
+    // catalog. Material conversion is still required: otherwise getMesh()
+    // falls back to the universal PreviewSurface terminal and loses an
+    // authoritative outputs:mtlx:surface graph. Convert just this bound
+    // material into the otherwise-empty scene so worker conversion retains
+    // MaterialX values, node graphs, and texture metadata without rebuilding
+    // the potentially very large node hierarchy.
+    tr::ConverterConfig config;
+    config.time_code = 0.0;
+    config.material.load_textures = false;
+    config.material.allow_missing_textures = true;
+    tr::RenderSceneConverter converter(config);
+    tr::RenderMaterial material;
+    if (!converter.ConvertMaterial(stage_, mat, &material, &render_scene_)) {
+      return false;
+    }
+    const int32_t id = static_cast<int32_t>(render_scene_.materials.size());
+    render_scene_.material_by_path[material.prim_path] = id;
+    render_scene_.materials.push_back(std::move(material));
+    render_scene_valid_ = true;
+    return true;
+  }
+
+  bool requiresRenderMaterial_(const tinyusdz::next::UsdPrim &mat) const {
+    if (!mat.IsValid()) return false;
+
+    // PreviewSurface is decoded directly below and does not need the much
+    // heavier RenderSceneConverter. Keep that converter for MaterialX and
+    // other non-Preview terminals whose graph evaluation is authoritative.
+    if (const tinyusdz::next::PrimSpec *spec = mat.GetPrimSpec()) {
+      const std::vector<tinyusdz::next::Path> *mtlx =
+          spec->connection("outputs:mtlx:surface");
+      if (mtlx && !mtlx->empty()) return true;
+    }
+    if (const std::vector<tinyusdz::next::Path> *mtlx =
+            mat.GetRelationship("outputs:mtlx:surface")) {
+      if (!mtlx->empty()) return true;
+    }
+    if (const std::vector<tinyusdz::next::Path> *source =
+            mat.GetRelationship("mtlx:surface:source")) {
+      if (!source->empty()) return true;
+    }
+
+    const std::string surface_path =
+        tinyusdz::next::GetSurfaceShader(stage_, mat);
+    if (surface_path.empty()) return false;
+    const tinyusdz::next::UsdPrim surface =
+        stage_.GetPrimAtPath(surface_path);
+    return surface.IsValid() && !tinyusdz::next::IsPreviewSurface(surface);
+  }
+
+  std::string materialSourceIdentity_(
+      const tinyusdz::next::UsdPrim &mat) const {
+    if (!mat.IsValid()) return {};
+
+    // Do not use exporter provenance to bypass an authoritative MaterialX
+    // graph, even when the material also carries a PreviewSurface fallback.
+    if (const tinyusdz::next::PrimSpec *spec = mat.GetPrimSpec()) {
+      const std::vector<tinyusdz::next::Path> *mtlx =
+          spec->connection("outputs:mtlx:surface");
+      if (mtlx && !mtlx->empty()) return {};
+    }
+    if (const std::vector<tinyusdz::next::Path> *mtlx =
+            mat.GetRelationship("outputs:mtlx:surface")) {
+      if (!mtlx->empty()) return {};
+    }
+    if (const std::vector<tinyusdz::next::Path> *source =
+            mat.GetRelationship("mtlx:surface:source")) {
+      if (!source->empty()) return {};
+    }
+
+    bool has_preview_surface = false;
+    std::string source_asset;
+    const std::string material_path = mat.GetPath().str();
+    std::string signature;
+    signature.reserve(512);
+    auto append_text = [&](const std::string &text) {
+      signature.append(text);
+      signature.push_back('\0');
+    };
+    auto append_float = [&](float value) {
+      signature.append(reinterpret_cast<const char *>(&value), sizeof(value));
+    };
+    for (const tinyusdz::next::UsdPrim &child : mat.GetChildren()) {
+      if (tinyusdz::next::IsPreviewSurface(child)) {
+        has_preview_surface = true;
+        const char *scalar_names[] = {
+            "inputs:metallic", "inputs:roughness", "inputs:opacity",
+            "inputs:occlusion", "inputs:opacityThreshold"};
+        for (const char *name : scalar_names) {
+          const tinyusdz::next::Value *scalar_value =
+              child.GetPropertyValue(name);
+          float scalar = 0.0f;
+          append_text(name);
+          if (scalar_value && scalar_value->to_float(&scalar)) {
+            signature.push_back('\1');
+            append_float(scalar);
+          } else {
+            signature.push_back('\0');
+          }
+        }
+        const char *color_names[] = {
+            "inputs:diffuseColor", "inputs:emissiveColor"};
+        for (const char *name : color_names) {
+          const tinyusdz::next::Value *color_value =
+              child.GetPropertyValue(name);
+          float color[3] = {0.0f, 0.0f, 0.0f};
+          append_text(name);
+          if (color_value && color_value->to_float3(color)) {
+            signature.push_back('\1');
+            append_float(color[0]);
+            append_float(color[1]);
+            append_float(color[2]);
+          } else {
+            signature.push_back('\0');
+          }
+        }
+        const char *connection_names[] = {
+            "inputs:diffuseColor", "inputs:normal", "inputs:roughness",
+            "inputs:metallic", "inputs:occlusion", "inputs:emissiveColor",
+            "inputs:opacity"};
+        const tinyusdz::next::PrimSpec *child_spec = child.GetPrimSpec();
+        for (const char *name : connection_names) {
+          append_text(name);
+          const std::vector<tinyusdz::next::Path> *connections =
+              child_spec ? child_spec->connection(name) : nullptr;
+          if (!connections) {
+            signature.push_back('\0');
+            continue;
+          }
+          signature.push_back('\1');
+          for (const tinyusdz::next::Path &connection : *connections) {
+            std::string target = connection.str();
+            if (target.rfind(material_path, 0) == 0) {
+              target.erase(0, material_path.size());
+            }
+            append_text(target);
+          }
+        }
+      }
+      const tinyusdz::next::Value *value =
+          child.GetPropertyValue("info:unreal:sourceAsset");
+      if (value) {
+        if (const std::string *asset = value->as_asset_path()) {
+          source_asset = *asset;
+        } else if (const std::string *text = value->as_string()) {
+          source_asset = *text;
+        }
+      }
+
+      const tinyusdz::next::Value *file =
+          child.GetPropertyValue("inputs:file");
+      if (file) {
+        const std::string *asset = file->as_asset_path();
+        if (!asset) asset = file->as_string();
+        if (asset) {
+          append_text("tex");
+          append_text(child.GetName());
+          append_text(*asset);
+        }
+      }
+    }
+    if (!has_preview_surface || source_asset.empty()) return {};
+    std::string identity = std::string("unreal:") + source_asset;
+    identity.push_back('\0');
+    identity.append(signature);
+    return identity;
+  }
+
   MaterialRecord materialRecordForPrim_(
       const tinyusdz::next::UsdPrim &mat) {
     MaterialRecord rec;
@@ -3745,6 +4042,9 @@ class RenderStream {
       return rec;
     }
     rec.prim_path = mat.GetPath().str();
+    if (requiresRenderMaterial_(mat)) {
+      (void)ensureRenderMaterial_(mat);
+    }
     bool populated_from_render_scene = false;
     if (render_scene_valid_) {
       const auto material_it = render_scene_.material_by_path.find(rec.prim_path);
@@ -3867,6 +4167,17 @@ class RenderStream {
         rec.opacity_texture = rec.opacity_meta.path;
       }
     }
+    // A dual-terminal material commonly carries its alpha cutoff only on the
+    // PreviewSurface fallback while MaterialX supplies the actual shading
+    // graph. Preserve that cutoff even when the render catalog correctly chose
+    // outputs:mtlx:surface above.
+    if (rec.opacity_threshold <= 0.0f && shader.IsValid()) {
+      tinyusdz::next::PreviewSurfaceData ps;
+      if (tinyusdz::next::GetPreviewSurfaceData(stage_, shader, &ps) &&
+          ps.opacity_threshold > 0.0f) {
+        rec.opacity_threshold = ps.opacity_threshold;
+      }
+    }
     // The schema helper above intentionally models PreviewSurface only.
     // Pull evaluated OpenPBR values from the next render converter so
     // constant MaterialX node networks drive the Three.js fallback material.
@@ -3907,6 +4218,21 @@ class RenderStream {
   int32_t registerMaterial_(const tinyusdz::next::UsdPrim &mat) {
     const std::string mat_path = mat.IsValid() ? mat.GetPath().str()
                                                : std::string("__default");
+    const auto path_it = material_path_to_id_.find(mat_path);
+    if (path_it != material_path_to_id_.end()) return path_it->second;
+
+    const std::string source_identity =
+        material_dedup_ ? materialSourceIdentity_(mat) : std::string();
+    const auto identity_it = material_identity_to_id_.find(source_identity);
+    if (!source_identity.empty() &&
+        identity_it != material_identity_to_id_.end()) {
+      stats_.material_identity_hits++;
+      source_material_keys_.insert(mat_path);
+      material_path_to_id_[mat_path] = identity_it->second;
+      return identity_it->second;
+    }
+    if (!source_identity.empty()) stats_.material_identity_misses++;
+
     MaterialRecord rec = materialRecordForPrim_(mat);
     source_material_keys_.insert(mat_path);
     addTextureKey_("color", rec.base_color_texture, &source_texture_keys_);
@@ -3921,12 +4247,21 @@ class RenderStream {
 
     const std::string key = material_dedup_ ? rec.key : mat_path;
     auto it = material_key_to_id_.find(key);
-    if (it != material_key_to_id_.end()) return it->second;
+    if (it != material_key_to_id_.end()) {
+      material_path_to_id_[mat_path] = it->second;
+      if (!source_identity.empty()) {
+        material_identity_to_id_[source_identity] = it->second;
+      }
+      return it->second;
+    }
     rec.id = static_cast<int32_t>(materials_.size());
     rec.key = key;
     materials_.push_back(rec);
     material_key_to_id_[key] = rec.id;
     material_path_to_id_[mat_path] = rec.id;
+    if (!source_identity.empty()) {
+      material_identity_to_id_[source_identity] = rec.id;
+    }
     addTextureKey_("color", rec.base_color_texture, &texture_keys_);
     addTextureKey_("data", rec.normal_texture, &texture_keys_);
     addTextureKey_("data", rec.roughness_texture, &texture_keys_);
@@ -4035,6 +4370,7 @@ class RenderStream {
   bool appendToAccumulator_(const tinyusdz::next::UsdPrim &prim,
                             int source_index,
                             int32_t material_id,
+                            bool double_sided,
                             bool soup,
                             MergeAccumulator *acc) {
     if (!acc) return false;
@@ -4053,7 +4389,7 @@ class RenderStream {
       acc->first_source_index = source_index;
       acc->mesh.soup = soup;
       acc->mesh.material_id = material_id;
-      acc->mesh.double_sided = matBool_(prim, "doubleSided", false);
+      acc->mesh.double_sided = double_sided;
       acc->mesh.local_matrix = mesh_merge_bake_transform_ ? identityMatrix_()
                                                           : localMatrix_(prim);
       acc->mesh.world_matrix = mesh_merge_bake_transform_ ? identityMatrix_()
@@ -4125,7 +4461,8 @@ class RenderStream {
       }
       const bool has_normals = !s_normals_.empty();
       const bool has_uv = !s_uv_.empty();
-      const bool double_sided = matBool_(prim, "doubleSided", false);
+      const bool double_sided =
+          effectiveDoubleSided_(prim, material_id, s_points_);
       const std::array<double, 16> world = worldMatrixForPrim_(prim);
       std::ostringstream key;
       key << material_id << "|soup=" << soup << "|n=" << has_normals
@@ -4148,8 +4485,8 @@ class RenderStream {
           (next_vertices > kMaxGroupVertices || next_indices > kMaxGroupIndices)) {
         flushAccumulator_(&acc);
       }
-      if (!appendToAccumulator_(prim, static_cast<int>(i), material_id, soup,
-                                &acc)) {
+      if (!appendToAccumulator_(prim, static_cast<int>(i), material_id,
+                                double_sided, soup, &acc)) {
         // Heap too full to merge: flush the group and emit this mesh unmerged.
         flushAccumulator_(&acc);
         OutputMesh out;
@@ -4269,9 +4606,9 @@ class RenderStream {
       const tinyusdz::next::UsdPrim &prim, const char *name) {
     const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
     if (!v) return {};
-    tinyusdz::next::Value tmp = *v;
-    const std::vector<int32_t> *a = tmp.as_int_array();
-    return a ? *a : std::vector<int32_t>{};
+    tinyusdz::next::Value tmp = v->materialized_copy();
+    std::vector<int32_t> *a = tmp.as_int_array();
+    return a ? std::move(*a) : std::vector<int32_t>{};
   }
 
   // Area-weighted vertex normals from the triangulated indices.
@@ -4360,25 +4697,37 @@ class RenderStream {
     }
     return r;
   }
-  static std::array<double, 16> localMatrix_(
-      const tinyusdz::next::UsdPrim &prim) {
+  std::array<double, 16> localMatrix_(
+      const tinyusdz::next::UsdPrim &prim) const {
+    const std::string path = prim.GetPath().str();
+    const auto cached = local_matrix_cache_.find(path);
+    if (cached != local_matrix_cache_.end()) return cached->second;
     std::array<double, 16> m = identityMatrix_();
     tinyusdz::next::UsdGeomXform xform(prim);
     double raw[16];
-    if (!xform.ComputeLocalTransform(raw)) return m;
-    for (int i = 0; i < 16; ++i) m[static_cast<size_t>(i)] = raw[i];
+    if (xform.ComputeLocalTransform(raw)) {
+      for (int i = 0; i < 16; ++i) m[static_cast<size_t>(i)] = raw[i];
+    }
+    local_matrix_cache_.emplace(path, m);
     return m;
   }
-  static std::array<double, 16> worldMatrix_(
-      const tinyusdz::next::UsdPrim &prim) {
+
+  std::array<double, 16> worldMatrix_(
+      const tinyusdz::next::UsdPrim &prim) const {
     std::vector<tinyusdz::next::UsdPrim> chain;
+    std::array<double, 16> world = identityMatrix_();
     for (tinyusdz::next::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
+      const auto cached = world_matrix_cache_.find(p.GetPath().str());
+      if (cached != world_matrix_cache_.end()) {
+        world = cached->second;
+        break;
+      }
       chain.push_back(p);
     }
-    std::array<double, 16> world = identityMatrix_();
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
       const std::array<double, 16> local = localMatrix_(*it);
       world = multiplyMatrix_(local, world);
+      world_matrix_cache_[it->GetPath().str()] = world;
     }
     return world;
   }
@@ -4702,6 +5051,11 @@ class RenderStream {
   std::vector<MaterialRecord> materials_;
   std::unordered_map<std::string, int32_t> material_key_to_id_;
   std::unordered_map<std::string, int32_t> material_path_to_id_;
+  std::unordered_map<std::string, int32_t> material_identity_to_id_;
+  mutable std::unordered_map<std::string, std::array<double, 16>>
+      local_matrix_cache_;
+  mutable std::unordered_map<std::string, std::array<double, 16>>
+      world_matrix_cache_;
   std::set<std::string> source_material_keys_;
   std::set<std::string> source_texture_keys_;
   std::set<std::string> texture_keys_;
@@ -4752,6 +5106,8 @@ class RenderStream {
   std::map<std::string, std::string> variant_overrides_;
 
   Stats stats_;
+  double pending_input_copy_ms_ = 0.0;
+  size_t pending_input_bytes_ = 0;
   bool loaded_ = false;
   bool material_dedup_ = false;
   bool mesh_merge_ = false;

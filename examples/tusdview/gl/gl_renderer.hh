@@ -29,6 +29,11 @@ class GLRenderer final : public Renderer {
   void appendMeshSurface(const DrawMeshCPU& mesh) override;
   void uploadMeshAux(size_t meshIndex, const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
+  void evictTexture(int slot) override;
+  size_t textureResidentBytes(int slot) const override;
+  bool updateTextureRegion(int slot, int x, int y, int w, int h,
+                           const uint8_t* rgba,
+                           size_t rowBytes = 0) override;
   void setLights(const std::vector<DrawLightCPU>& lights,
                  size_t meshCount) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
@@ -112,6 +117,7 @@ class GLRenderer final : public Renderer {
     bool hasMorph{false};
     size_t indexCount{0};  // base surface indices; CPU copy may be released
     bool geometricNormal{false};     // shade with screen-derivative normal
+    bool rasterDisplacementBaked{false};
     int purposeId{0};                // USD purpose AOV: 0=default/1=render/2=proxy/3=guide
     int kindId{0};                   // USD kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
     std::vector<DrawSubmesh> submeshes;
@@ -137,6 +143,7 @@ class GLRenderer final : public Renderer {
     float alphaCutoff{0.5f};
     // Specular workflow + IOR for F0 (T12).
     bool useSpecularWorkflow{false};
+    bool openPbrSpecularModel{false};
     float specularColor[3]{0.0f, 0.0f, 0.0f};
     float ior{1.5f};
     float occlusion{1.0f};
@@ -148,16 +155,29 @@ class GLRenderer final : public Renderer {
     // lazily-uploaded textures appear without re-touching materials.
     int baseColorTex{-1}, metallicTex{-1}, roughnessTex{-1};
     int normalTex{-1}, emissiveTex{-1};
-    int opacityTex{-1};
+    int opacityTex{-1}, occlusionTex{-1};
+    // Coat lobe + specular-workflow F0 maps (previously constant-only).
+    int coatWeightTex{-1}, coatColorTex{-1}, coatRoughnessTex{-1};
+    int coatNormalTex{-1};
+    int specularColorTex{-1};
+    DrawTexSampleCPU coatWeightSample;
+    DrawTexSampleCPU coatColorSample;
+    DrawTexSampleCPU coatRoughnessSample;
+    DrawTexSampleCPU coatNormalSample;
+    DrawTexSampleCPU specularColorSample;
     DrawTexSampleCPU baseColorSample;
     DrawTexSampleCPU metallicSample;
     DrawTexSampleCPU roughnessSample;
     DrawTexSampleCPU normalSample;
     DrawTexSampleCPU emissiveSample;
     DrawTexSampleCPU opacitySample;
+    DrawTexSampleCPU occlusionSample;
     int opacityChannel{0};
     float opacityTexScale{1.0f};
     float opacityTexBias{0.0f};
+    int occlusionChannel{0};
+    float occlusionTexScale{1.0f};
+    float occlusionTexBias{0.0f};
     int metallicChannel{2};
     int roughnessChannel{1};
     float metallicTexScale{1.0f};
@@ -178,6 +198,7 @@ class GLRenderer final : public Renderer {
   void drawMeshes(const RenderFrameParams& params, bool wireframe,
                   const float* overrideEmissive,
                   AlphaPass alphaPass = AlphaPass::All);
+  void renderShadowMap(const RenderFrameParams& params);
   // Draw each mesh's original-polygon edge set (wireEbo) as GL_LINES, both the
   // non-instanced and instanced prototypes, in a flat color with a small NDC depth
   // bias so the lines sit just in front of the surface.
@@ -201,23 +222,32 @@ class GLRenderer final : public Renderer {
   GLint uPurpose_{-1};                                    // purpose AOV (per-draw)
   GLint uKind_{-1};                                       // kind AOV (per-draw)
   GLint uFaceIdTex_{-1}, uFaceBase_{-1}, uHasFaceId_{-1}; // source-face-id AOV
+  GLint uBasePtex_{-1}, uBasePtexGrid_{-1};              // Ptex atlas sampling
+  GLint uMetallicPtexGrid_{-1}, uRoughnessPtexGrid_{-1};
+  GLint uNormalPtexGrid_{-1}, uEmissivePtexGrid_{-1};
+  GLint uOpacityPtexGrid_{-1}, uOcclusionPtexGrid_{-1};
+  GLint uSpecularColorPtexGrid_{-1}, uCoatWeightPtexGrid_{-1};
+  GLint uCoatColorPtexGrid_{-1}, uCoatRoughnessPtexGrid_{-1};
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
-  GLint uUseSpecularWorkflow_{-1}, uSpecularColor_{-1}, uIor_{-1};  // F0 (T12)
+  GLint uUseSpecularWorkflow_{-1}, uOpenPbrSpecularModel_{-1};
+  GLint uSpecularColor_{-1}, uIor_{-1};  // F0 (T12)
   GLint uOcclusion_{-1}, uCoatWeight_{-1}, uCoatColor_{-1};
   GLint uCoatRoughness_{-1}, uCoatIor_{-1};
   GLint uExposure_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetallicTex_{-1}, uHasRoughnessTex_{-1};
   GLint uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
-  GLint uHasOpacityTex_{-1};
+  GLint uHasOpacityTex_{-1}, uHasOcclusionTex_{-1};
   GLint uBaseColorTexIsUdim_{-1}, uMetallicTexIsUdim_{-1}, uRoughnessTexIsUdim_{-1};
   GLint uNormalTexIsUdim_{-1}, uEmissiveTexIsUdim_{-1}, uOpacityTexIsUdim_{-1};
+  GLint uOcclusionTexIsUdim_{-1};
   GLint uBaseColorUv0_{-1}, uBaseColorUv1_{-1};
   GLint uMetallicUv0_{-1}, uMetallicUv1_{-1};
   GLint uRoughnessUv0_{-1}, uRoughnessUv1_{-1};
   GLint uNormalUv0_{-1}, uNormalUv1_{-1};
   GLint uEmissiveUv0_{-1}, uEmissiveUv1_{-1};
   GLint uOpacityUv0_{-1}, uOpacityUv1_{-1};
+  GLint uOcclusionUv0_{-1}, uOcclusionUv1_{-1};
   GLint uUvSet_{-1};  // per-slot UV set (base, metallic, normal, emissive)
   GLint uRoughnessUvSet_{-1};
   GLint uBaseColorTexScale_{-1}, uBaseColorTexBias_{-1};
@@ -228,7 +258,33 @@ class GLRenderer final : public Renderer {
   GLint uRoughnessTexScale_{-1}, uRoughnessTexBias_{-1};
   GLint uOpacityUvSet_{-1}, uOpacityChannel_{-1};
   GLint uOpacityTexScale_{-1}, uOpacityTexBias_{-1};
+  GLint uOcclusionUvSet_{-1}, uOcclusionChannel_{-1};
+  GLint uOcclusionTexScale_{-1}, uOcclusionTexBias_{-1};
+  // Coat lobe + specular-workflow F0 map uniforms.
+  GLint uHasSpecularColorTex_{-1};
+  GLint uSpecularColorUv0_{-1}, uSpecularColorUv1_{-1};
+  GLint uSpecularColorUvSet_{-1};
+  GLint uSpecularColorScale_{-1}, uSpecularColorBias_{-1};
+  GLint uHasCoatNormalTex_{-1};
+  GLint uCoatNormalUv0_{-1}, uCoatNormalUv1_{-1}, uCoatNormalUvSet_{-1};
+  GLint uCoatNormalScale_{-1}, uCoatNormalBias_{-1};
+  GLint uHasCoatWeightTex_{-1}, uHasCoatColorTex_{-1};
+  GLint uHasCoatRoughnessTex_{-1};
+  GLint uCoatWeightUv0_{-1}, uCoatWeightUv1_{-1};
+  GLint uCoatColorUv0_{-1}, uCoatColorUv1_{-1};
+  GLint uCoatRoughnessUv0_{-1}, uCoatRoughnessUv1_{-1};
+  GLint uCoatWeightUvSet_{-1}, uCoatColorUvSet_{-1};
+  GLint uCoatRoughnessUvSet_{-1};
+  GLint uCoatWeightChannel_{-1}, uCoatRoughnessChannel_{-1};
+  GLint uCoatWeightScale_{-1}, uCoatWeightBias_{-1};
+  GLint uCoatColorScale_{-1}, uCoatColorBias_{-1};
+  GLint uCoatRoughnessScale_{-1}, uCoatRoughnessBias_{-1};
+  GLint uAdvancedTexIsUdim_{-1}, uAdvancedUdimRoutes_{-1};
+  GLint uAdvancedUdimSlots_{-1};
+  GLint uCoatNormalTexIsUdim_{-1}, uCoatNormalUdimRoute_{-1};
+  GLint uCoatNormalUdimSlot_{-1};
   GLint uUdimSlots_{-1}, uOpacityUdimSlot_{-1}, uRoughnessUdimSlot_{-1};
+  GLint uOcclusionUdimSlot_{-1};
   GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)
   GLint uDisplacementConst_{-1}, uDisplacementScale_{-1};
   GLint uDisplacementTexScale_{-1}, uDisplacementTexBias_{-1};
@@ -270,6 +326,8 @@ class GLRenderer final : public Renderer {
   GLint iLightDir_{-1}, iLightColor_{-1}, iEmissive_{-1};
   GLint iHasIbl_{-1}, iIblColor_{-1}, iEnvRotation_{-1};  // dome IBL (diffuse)
   GLint iExposure_{-1};
+  GLint iHasShadowMap_{-1}, iShadowLightSlot_{-1}, iShadowViewProj_{-1};
+  GLint iHasPointShadowMap_{-1}, iPointShadowLightPos_{-1}, iPointShadowViewProj_{-1};
   // Instanced-program debug-AOV uniforms (mirror the non-instanced material shader).
   GLint iRenderMode_{-1}, iDepthScale_{-1}, iSceneMin_{-1}, iSceneExtent_{-1};
   GLint iMeshId_{-1}, iGeometricNormal_{-1}, iDoubleSided_{-1}, iPurpose_{-1}, iKind_{-1};
@@ -292,6 +350,28 @@ class GLRenderer final : public Renderer {
   float iblColor_[3]{1.0f, 1.0f, 1.0f};
   float iblRotation_[9]{1, 0, 0, 0, 1, 0, 0, 0, 1};  // world->env, column-major
   GLint uHasIbl_{-1}, uIblColor_{-1}, uEnvRotation_{-1}, uPrefilteredLods_{-1};
+  GLint uHasShadowMap_{-1}, uShadowLightSlot_{-1}, uShadowViewProj_{-1};
+  GLint uHasPointShadowMap_{-1}, uPointShadowLightPos_{-1}, uPointShadowViewProj_{-1};
+  GLuint shadowProgram_{0}, shadowInstProgram_{0}, shadowFbo_{0}, shadowDepthTex_{0},
+      pointShadowDepthTex_{0};
+  GLint sMVP_{-1}, sModel_{-1}, sNormalMat_{-1};
+  GLint sSkinningEnabled_{-1}, sExtendedSkinningEnabled_{-1};
+  GLint sBoneTexWidth_{-1}, sBoneMatrixCount_{-1}, sInfluenceTexWidth_{-1};
+  GLint sHasMorph_{-1}, sHasDisplacement_{-1}, sHasDisplacementTex_{-1};
+  GLint sDisplacementConst_{-1}, sDisplacementScale_{-1};
+  GLint sDisplacementTexScale_{-1}, sDisplacementTexBias_{-1};
+  GLint sAlphaMode_{-1}, sAlpha_{-1}, sAlphaCutoff_{-1};
+  GLint sHasBaseAlphaTex_{-1}, sHasOpacityTex_{-1};
+  GLint sBaseAlphaIsUdim_{-1}, sOpacityIsUdim_{-1};
+  GLint sBaseAlphaUdimSlot_{-1}, sOpacityUdimSlot_{-1};
+  GLint sBaseAlphaUv0_{-1}, sBaseAlphaUv1_{-1}, sBaseAlphaUvSet_{-1};
+  GLint sBaseAlphaScale_{-1}, sBaseAlphaBias_{-1};
+  GLint sOpacityUv0_{-1}, sOpacityUv1_{-1}, sOpacityUvSet_{-1};
+  GLint sOpacityChannel_{-1}, sOpacityScale_{-1}, sOpacityBias_{-1};
+  GLint siViewProj_{-1}, siSkinningEnabled_{-1}, siBoneTexWidth_{-1};
+  GLint siBoneMatrixCount_{-1}, siHasMorph_{-1};
+  RasterShadowCamera shadowCamera_;
+  RasterPointShadowCameras pointShadowCameras_;
   void destroyIblTextures();
 
   GLuint whiteTex_{0}, boneTex_{0};
@@ -333,6 +413,10 @@ class GLRenderer final : public Renderer {
     GLuint tex2d{0};
     GLuint arrayTex{0};
     bool isUdim{false};
+    bool regionUpdatable{false};
+    int width{0};
+    int height{0};
+    size_t residentBytes{0};
   };
   GLuint udimLutAtlas_{0};
   std::vector<GLTexture> textures_;
@@ -345,6 +429,7 @@ class GLRenderer final : public Renderer {
     int kind{0};       // 0 point billboard, 1 curve ribbon
     int materialId{-1};
     int carrierId{-1};
+    int carrierIndex{-1};
     int purposeId{0};
     bool translucent{false};
   };

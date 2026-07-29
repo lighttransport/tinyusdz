@@ -36,6 +36,7 @@ inline void RtPixelJitter(int s, int spp, float* jx, float* jy) {
   *jy = radical(s, 3) - 0.5f;
 }
 
+
 // Interleaved vertex: matches the GL330 / VK450 shader attribute layout
 //   location 0: vec3 aPosition  (offset 0)
 //   location 1: vec3 aNormal    (offset 12)
@@ -237,6 +238,10 @@ struct DrawMeshCPU {
   // displaced material. The raster path keeps using `vertices` (shader displacement
   // with live sliders); the VK ray-query BLAS/hit reads these instead.
   std::vector<DrawVertex> rtDisplacedVertices;
+  // True when rtDisplacedVertices contains Ptex displacement that raster
+  // backends must upload as the base geometry (their vertex stages cannot
+  // identify a polygon face before primitive assembly).
+  bool rasterDisplacementBaked{false};
 };
 
 // USD purpose token -> compact id used by the Purpose debug AOV (consistent across
@@ -314,6 +319,26 @@ struct DrawUvXformCPU {
   float ty{0.0f};
 };
 
+// Wrap modes (match light3d / GL semantics).
+enum class WrapMode : int { ClampToEdge = 0, Repeat = 1, Mirror = 2, ClampToBorder = 3 };
+
+// Source color space of a sampled texture. `Auto` defers to the image's own
+// metadata/heuristic, which is what every slot did implicitly before this was
+// carried per-slot.
+enum class DrawColorSpace : int { Auto = 0, Raw = 1, sRGB = 2 };
+
+// One self-contained description of how a material slot samples a texture.
+//
+// This used to hold only the UV transform, so a slot's image id, packed-channel
+// select, wrap modes, and color space lived either as parallel per-slot fields
+// on DrawMaterialCPU or were dropped entirely at the Draw boundary (wrap/color
+// space were recoverable only from the shared DrawTextureCPU, which is wrong
+// for two slots sampling one image with different intent -- e.g. an ORM map
+// read as Raw for roughness). Keeping them here makes every slot uniform and
+// lets a new slot be added without another five parallel arrays.
+//
+// The legacy parallel fields on DrawMaterialCPU are still populated for the
+// slots that had them, so existing backend code keeps working unchanged.
 struct DrawTexSampleCPU {
   DrawUvXformCPU uv;
   float scale[4]{1.0f, 1.0f, 1.0f, 1.0f};
@@ -322,6 +347,27 @@ struct DrawTexSampleCPU {
   // from the texture's UsdPrimvarReader varname against the bound mesh's UV-set
   // names. Meshes with one UV set (the overwhelming majority) always leave it 0.
   int uvSet{0};
+  // DrawScene::textures index, -1 when this slot samples no texture. Mirrors the
+  // per-slot `*Tex` field on DrawMaterialCPU.
+  int tex{-1};
+  // Selected packed channel (0=R..3=A), -1 when the whole value is used.
+  int channel{-1};
+  WrapMode wrapS{WrapMode::Repeat};
+  WrapMode wrapT{WrapMode::Repeat};
+  DrawColorSpace colorSpace{DrawColorSpace::Auto};
+  bool isUdim{false};
+  // Native Ptex atlas sampling metadata. `isPtex` distinguishes the slot;
+  // ptexFaceCount may be zero when the residency budget selected the
+  // representative-face fallback.
+  bool isPtex{false};
+  uint16_t ptexAtlasCols{0};
+  uint16_t ptexAtlasRows{0};
+  uint32_t ptexTileEdge{0};
+  // Linear texel offset of the embedded Ptex face-rectangle table and the
+  // number of records. Each record occupies eight alpha texels (little-endian
+  // uint16 x/y/width/height), so it survives sRGB texture uploads unchanged.
+  uint32_t ptexRectTexelOffset{0};
+  uint32_t ptexFaceCount{0};
 };
 
 enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };
@@ -368,6 +414,9 @@ struct DrawMaterialCPU {
   // directly; else F0 is the dielectric reflectance from `ior` lerped toward the
   // base color by metalness (ior 1.5 -> the fixed 0.04 the metallic path used).
   bool useSpecularWorkflow{false};
+  // OpenPBR/MaterialX Standard Surface uses specularColor as a tint on the
+  // dielectric IOR-derived F0, rather than Preview Surface's direct-F0 mode.
+  bool openPbrSpecularModel{false};
   float specularColor[3]{0.0f, 0.0f, 0.0f};
   float ior{1.5f};
   // Real-time PBR core shared by raster and RT. These are populated from the
@@ -390,6 +439,16 @@ struct DrawMaterialCPU {
   // DCCs commonly connect an independent grayscale/UDIM mask to
   // UsdPreviewSurface inputs:opacity.
   int opacityTex{-1};
+  // Ambient-occlusion scalar map. It modulates only indirect/ambient light.
+  int occlusionTex{-1};
+  // Specular-workflow F0 map. Only consulted when useSpecularWorkflow is set;
+  // in the metallic workflow F0 comes from ior/baseColor as before.
+  int specularColorTex{-1};
+  // Coat lobe maps. These were constant-only, so an authored coat weight/tint/
+  // roughness texture silently collapsed to its fallback constant.
+  int coatWeightTex{-1};
+  int coatColorTex{-1};
+  int coatRoughnessTex{-1};
   DrawTexSampleCPU baseColorSample;
   DrawTexSampleCPU metallicSample;
   DrawTexSampleCPU roughnessSample;
@@ -397,9 +456,21 @@ struct DrawMaterialCPU {
   DrawTexSampleCPU coatNormalSample;
   DrawTexSampleCPU emissiveSample;
   DrawTexSampleCPU opacitySample;
+  DrawTexSampleCPU occlusionSample;
+  DrawTexSampleCPU specularColorSample;
+  DrawTexSampleCPU coatWeightSample;
+  DrawTexSampleCPU coatColorSample;
+  DrawTexSampleCPU coatRoughnessSample;
+  // Full sample for the displacement map. `displacementUv` below is the older
+  // UV-only form kept for the existing displacement code paths; this carries the
+  // UV set and scale/bias so displacement can use UV set 1 like every other slot.
+  DrawTexSampleCPU displacementSample;
   int opacityChannel{0};
   float opacityTexScale{1.0f};
   float opacityTexBias{0.0f};
+  int occlusionChannel{0};
+  float occlusionTexScale{1.0f};
+  float occlusionTexBias{0.0f};
   int metallicChannel{2};  // glTF ORM default: B
   int roughnessChannel{1}; // glTF ORM default: G
   float metallicTexScale{1.0f};
@@ -420,8 +491,6 @@ struct DrawMaterialCPU {
   bool hasDisplacement() const { return displacementTex >= 0 || displacementConst != 0.0f; }
 };
 
-// Wrap modes (match light3d / GL semantics).
-enum class WrapMode : int { ClampToEdge = 0, Repeat = 1, Mirror = 2, ClampToBorder = 3 };
 enum class DrawCompressedFormat : int {
   None = 0,
   BC1 = 1,
@@ -450,6 +519,18 @@ struct DrawCompressedImageCPU {
   std::vector<DrawCompressedMipCPU> mips;
 };
 
+// Inner texel rectangle for one Ptex face in DrawTextureCPU::image. The atlas
+// may contain padding around this rectangle; sampling maps intrinsic face UVs
+// between the first and last inner texel centers.
+struct DrawPtexFaceRectCPU {
+  uint32_t x{0};
+  uint32_t y{0};
+  uint32_t width{0};
+  uint32_t height{0};
+  uint16_t mipLevel{0};
+  uint16_t reserved{0};
+};
+
 struct DrawUdimTileCPU {
   uint32_t udim{1001};
   uint32_t u{0};
@@ -467,6 +548,46 @@ struct DrawUdimTileCPU {
 struct DrawTextureCPU {
   light3d::Image image;  // always normalized to RGBA8 (channels == 4) on the CPU side
   std::string assetIdentifier;  // Tydra TextureImage::asset_identifier, if known
+  bool deferredDecode{false};  // slot exists; pixels arrive asynchronously
+  // Native Ptex source. `image` is a bounded face atlas when residency permits,
+  // or a representative-face fallback after the cumulative budget is spent.
+  bool isPtex{false};
+  // Allocate mutable RGBA8 storage even when `image.data` is empty. Streaming
+  // Ptex caches use this to reserve only their fixed physical atlas without a
+  // same-sized zero-filled CPU upload.
+  bool streamingMutable{false};
+  bool ptexForceResidency{false};  // diagnostic: stream even fitting faces
+  // Only refine faces referenced by admitted meshes. Enabled when the initial
+  // atlas deliberately leaves a tail of faces as reserved placeholders.
+  bool ptexDemandDriven{false};
+  uint32_t ptexFaces{0};
+  uint16_t ptexLevels{0};
+  uint16_t ptexChannels{0};
+  uint32_t ptexMaxFaceEdge{0};
+  uint32_t ptexDownsampledFaces{0};
+  uint64_t ptexAtlasBytes{0};
+  uint64_t ptexPageCacheHits{0};
+  uint64_t ptexPageCacheMisses{0};
+  uint64_t ptexPageCacheEvictions{0};
+  uint64_t ptexPageCachePeakBytes{0};
+  uint64_t ptexPageDecodedBytes{0};
+  uint64_t ptexGpuPageUploads{0};
+  uint64_t ptexGpuPageHits{0};
+  uint64_t ptexGpuPageMisses{0};
+  uint64_t ptexGpuPageEvictions{0};
+  uint16_t ptexAtlasCols{0};
+  uint16_t ptexAtlasRows{0};
+  uint32_t ptexTileEdge{0};
+  uint32_t ptexGutter{0};
+  uint32_t ptexRectTexelOffset{0};
+  uint32_t ptexPhysicalCacheOffsetY{0};
+  uint32_t ptexPhysicalCacheSlotEdge{0};
+  uint32_t ptexPhysicalCacheSlots{0};
+  std::vector<DrawPtexFaceRectCPU> ptexFaceRects;
+  // Compressed native source retained only when physical cache slots exist;
+  // pages are decoded on demand and the much larger full-resolution atlas is
+  // never materialized.
+  std::vector<uint8_t> ptexSourceData;
   int renderImageId{-1};        // source RenderScene::images index, or -1
   int renderUdimId{-1};         // source RenderScene::udim_textures index, or -1
   bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear scalar/normal data
@@ -646,6 +767,35 @@ struct DrawCurvesCPU {
   float aabbMax[3]{0, 0, 0};
 };
 
+struct DrawCameraCPU {
+  std::string name;
+  std::string absPath;
+  std::string displayName;
+  enum class Projection : int { Perspective = 0, Orthographic = 1 };
+  Projection projection{Projection::Perspective};
+  float eye[3]{0.0f, 0.0f, 0.0f};
+  float up[3]{0.0f, 1.0f, 0.0f};
+  float forward[3]{0.0f, 0.0f, -1.0f};
+  float focalLength{50.0f};
+  float horizontalAperture{20.955f};
+  float verticalAperture{15.2908f};
+  float horizontalApertureOffset{0.0f};
+  float verticalApertureOffset{0.0f};
+  float exposure{0.0f};
+  float focusDistance{0.0f};
+  float fStop{0.0f};
+  double shutterOpen{0.0};
+  double shutterClose{0.0};
+  enum class StereoRole : int { Mono = 0, Left = 1, Right = 2 };
+  StereoRole stereoRole{StereoRole::Mono};
+  // World-space clipping-plane equations (a,b,c,d), retained for backends
+  // that support arbitrary user clipping.
+  std::vector<float> clippingPlanes;
+  float zNear{0.1f};
+  float zFar{10000.0f};
+  float fovYDeg{45.0f};
+};
+
 struct DrawScene {
   std::vector<DrawMeshCPU> meshes;
   std::vector<DrawPointsCPU> points;
@@ -654,6 +804,7 @@ struct DrawScene {
   std::vector<DrawTextureCPU> textures;
   std::vector<DrawVolumeCPU> volumes;  // UsdVol volumes (OpenVDB)
   std::vector<DrawLightCPU> lights;    // USD light parameters for later shading
+  std::vector<DrawCameraCPU> cameras;  // USD camera records for loader-equivalence testing
   bool hasPreviewLight{false};
   // A single derived key light used by today's simple preview shaders. Full
   // multi-light evaluation will consume DrawLightCPU directly later.
@@ -706,7 +857,7 @@ struct DrawScene {
 
   bool empty() const {
     return meshes.empty() && points.empty() && curves.empty() &&
-           volumes.empty() && lights.empty();
+           volumes.empty() && lights.empty() && cameras.empty();
   }
 };
 

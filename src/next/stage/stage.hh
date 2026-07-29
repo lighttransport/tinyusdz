@@ -103,6 +103,10 @@ public:
   /// Check if prim has a property
   bool HasProperty(const std::string& name) const;
 
+  /// Check if a property is authored on the prim (or its instance-proxy
+  /// source), excluding schema fallback declarations.
+  bool HasAuthoredProperty(const std::string& name) const;
+
   /// Resolve at USD DefaultTime: authored default, then schema fallback.
   /// Time samples are never consulted.
   const Value* GetPropertyValue(const std::string& name) const;
@@ -226,6 +230,11 @@ public:
   Stage& operator=(Stage&&) noexcept;
   Stage(const Stage&) = delete;
   Stage& operator=(const Stage&) = delete;
+
+  /// Clone this stage. Array-valued properties retain their copy-on-write or
+  /// lazy backing, so snapshots can detach before a destructive compaction
+  /// without duplicating the largest payloads.
+  Stage Clone() const;
 
   // ============================================================
   // Loading
@@ -382,7 +391,7 @@ void Stage::Traverse(Fn&& callback) const {
 
   std::function<bool(const UsdPrim&)> fn = std::forward<Fn>(callback);
   for (uint32_t idx : root_layer_->root_indices()) {
-    TraverseImpl(idx, root_layer_.get(), fn);
+    if (!TraverseImpl(idx, root_layer_.get(), fn)) break;
   }
 }
 

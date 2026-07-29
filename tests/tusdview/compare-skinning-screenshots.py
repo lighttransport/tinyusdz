@@ -167,11 +167,15 @@ def run_viewer(args, mode, output_path):
         # to the Xvfb prefix. A stale forwarded X11 socket fails glfwInit; a
         # live forwarded display can open but still refuse a GL context
         # (GLX BadValue), which surfaces as glfwCreateWindow failing.
-        if (
-            proc.returncode != 0
-            and i + 1 < len(prefixes)
-            and ("glfwInit failed" in log or "glfwCreateWindow failed" in log)
-        ):
+        vulkan_display_fail = (
+            "no Vulkan physical devices" in log
+            or "no Vulkan physical device matches" in log
+            or "glfwInit failed" in log
+            or "glfwCreateWindow failed" in log
+            or "Failed to open display" in log
+            or "vkCreateSwapchain" in log
+        )
+        if proc.returncode != 0 and i + 1 < len(prefixes) and vulkan_display_fail:
             continue
         break
     # A software rasterizer (Xvfb / forwarded X11 give Mesa llvmpipe, which has

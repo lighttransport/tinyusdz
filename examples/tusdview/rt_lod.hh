@@ -41,6 +41,10 @@ struct RtLodCamera {
 struct RtLodGridCell {
   float wmn[3];
   float wmx[3];
+  // Largest world-space instance radius in this cell. Together with the
+  // nearest cell depth this gives a conservative upper bound on every
+  // placement's projected size without revisiting all instance transforms.
+  float maxInstanceRadius{0.0f};
   std::uint32_t begin{0};  // offset into RtLodGrid::order
   std::uint32_t count{0};
 };
@@ -77,6 +81,7 @@ struct RtLodInstance {
   float tint[3];
   float opacity{1.0f};
   std::uint32_t meshId;     // Full: real mesh; Proxy: boxMeshId
+  std::uint32_t sourceMeshId;  // original prototype, including for Proxy
   RtLod level;
   bool instanced;          // Full + non-instanced => shader useMaterial=1
 };
@@ -89,6 +94,12 @@ struct RtLodStats {
 // pixel half-extent given the camera focal length, using view-space depth so an
 // off-axis instance is not over-promoted by its larger Euclidean distance.
 float ProjectedRadiusPx(const float c[3], float r, const RtLodCamera& cam);
+
+// True when every placement in a grid cell is conservatively below the
+// per-instance cull threshold. Raster can retain the population as one cell
+// proxy instead of dropping its aggregate density.
+bool IsSubpixelAggregateCell(const RtLodGridCell& cell,
+                             const RtLodCamera& cam);
 
 // Build a coarse spatial grid over `proto`'s instance world AABBs for fast cell
 // rejection in SelectInstanceLOD. No-op (grid->valid = false) when the prototype is

@@ -165,7 +165,11 @@ bool CrateReader::Impl::BuildStage() {
   // Create layer and builder
   Layer layer;
   LayerBuilder builder(layer);
-  constexpr size_t kReportInterval = 512;
+  // Large production scenes can contain hundreds of thousands of specs. In
+  // WASM every progress report crosses into JavaScript, where the worker also
+  // checks its UI throttle. A coarser interval remains comfortably responsive
+  // while avoiding thousands of otherwise-no-op JS/WASM transitions.
+  constexpr size_t kReportInterval = 8192;
   auto report_stage = [&](const char* phase, size_t current,
                           size_t total) -> bool {
     if (current == 0 || current == total ||
@@ -581,7 +585,11 @@ bool CrateReader::Impl::BuildStage() {
       for (auto& f : property_raw_field_scratch) {
         if (f.first == "targetPaths") {
           std::vector<std::string> raw;
-          DecodePathTargets(f.second, raw, /*with_markers=*/true);
+          if (!DecodePathTargets(f.second, raw, /*with_markers=*/true)) {
+            AddWarning("Failed to decode relationship targets on " +
+                       prim_path + "." + ri.name);
+            continue;
+          }
           if (raw.size() == 1 && (raw[0] == "\x01" "E" || raw[0] == "\x01E")) {
             // Authored explicit-clear (`rel r = None`): a declared,
             // target-less relationship with an authored (explicit) edit.
@@ -616,6 +624,9 @@ bool CrateReader::Impl::BuildStage() {
           Value v;
           if (UnpackValue(f.second, v)) {
             if (const bool* b = v.as_bool()) ri.custom = *b;
+          } else {
+            AddWarning("Failed to decode relationship custom flag on " +
+                       prim_path + "." + ri.name);
           }
         } else if (f.first == "variability") {
           Value v;
@@ -625,6 +636,9 @@ bool CrateReader::Impl::BuildStage() {
               ri.uniform = (*s == "uniform");
               ri.varying = (*s == "varying");
             }
+          } else {
+            AddWarning("Failed to decode relationship variability on " +
+                       prim_path + "." + ri.name);
           }
         } else if (!DecodePropMetaField(f.first, f.second, ri.meta)) {
           Value value;
@@ -650,6 +664,9 @@ bool CrateReader::Impl::BuildStage() {
         Value v;
         if (UnpackValue(f.second, v)) {
           if (const std::string* s = v.as_token()) ai.type_name = *s;
+        } else {
+          AddWarning("Failed to decode typeName on " + prim_path + "." +
+                     ai.name);
         }
       } else if (f.first == "default") {
         if (f.second.is_array_edit()) {
@@ -662,13 +679,22 @@ bool CrateReader::Impl::BuildStage() {
           if (UnpackValue(f.second, v)) {
             ai.default_value = std::move(v);
             ai.has_default = true;
+          } else {
+            AddWarning("Failed to decode default value on " + prim_path +
+                       "." + ai.name);
           }
         }
       } else if (f.first == "timeSamples") {
-        DecodeTimeSamples(f.second, &ai.time_samples);
+        if (!DecodeTimeSamples(f.second, &ai.time_samples)) {
+          AddWarning("Failed to decode timeSamples on " + prim_path + "." +
+                     ai.name);
+        }
       } else if (f.first == "spline") {
         // Crate type-59 spline: decode to USDA text (PrimSpec's storage form).
-        DecodeSplineToText(f.second, &ai.spline_text);
+        if (!DecodeSplineToText(f.second, &ai.spline_text)) {
+          AddWarning("Failed to decode spline on " + prim_path + "." +
+                     ai.name);
+        }
       } else if (f.first == "connectionPaths") {
         std::vector<std::string> raw;
         if (DecodePathTargets(f.second, raw, /*with_markers=*/true)) {
@@ -703,11 +729,17 @@ bool CrateReader::Impl::BuildStage() {
             ai.connection_edit.is_explicit = true;
             ai.connection_targets = std::move(raw);
           }
+        } else {
+          AddWarning("Failed to decode connection paths on " + prim_path +
+                     "." + ai.name);
         }
       } else if (f.first == "variability") {
         Value v;
         if (UnpackValue(f.second, v)) {
           if (const std::string* s = v.as_token()) ai.uniform = (*s == "uniform");
+        } else {
+          AddWarning("Failed to decode variability on " + prim_path + "." +
+                     ai.name);
         }
       } else if (f.first == "custom") {
         // The legacy `custom` qualifier (pxr stores a bool field). Preserved on
@@ -715,6 +747,9 @@ bool CrateReader::Impl::BuildStage() {
         Value v;
         if (UnpackValue(f.second, v)) {
           if (const bool* b = v.as_bool()) ai.custom = *b;
+        } else {
+          AddWarning("Failed to decode custom flag on " + prim_path + "." +
+                     ai.name);
         }
       } else if (!DecodePropMetaField(f.first, f.second, ai.meta)) {
         Value value;
@@ -767,6 +802,11 @@ bool CrateReader::Impl::BuildStage() {
     auto& entry = prim_entries[entry_index];
     // Compute depth of this prim (number of '/' in path)
     size_t depth = std::count(entry.full_path.begin(), entry.full_path.end(), '/');
+    if (depth == 0) {
+      AddWarning("Ignoring malformed non-absolute prim path: " +
+                 entry.full_path);
+      continue;
+    }
 
     // Pop stack until we're at the correct parent level
     while (prim_stack.size() > depth - 1) {

@@ -78,8 +78,9 @@ public:
   /// Returns empty Value if types don't match or can't be interpolated
   static Value InterpolateValues(const Value& a, const Value& b, double t);
 
-private:
   static bool IsLinearInterpolatable(TypeId type);
+
+private:
 
   /// Find bracket indices for a given time
   /// Returns (lower_idx, upper_idx, is_exact_match)

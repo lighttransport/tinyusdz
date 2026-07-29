@@ -117,4 +117,37 @@ void value_clips_template_set_parse_test(void) {
   // templateStartTime=1, endTime=3, stride=1 -> 3 expanded clips (1,2,3).
   TEST_CHECK_(sets[0].assetPaths.size() == 3, "expanded assetPaths = %zu",
               sets[0].assetPaths.size());
+
+  ExpandedClipMetadata expanded;
+  err.clear();
+  ok = ExpandTemplateClipMetadata("clip.##.usd", 12.0, 25.0, 6.0,
+                                  0.5, &expanded, &err);
+  TEST_CHECK_(ok, "template expansion failed: %s", err.c_str());
+  TEST_CHECK(expanded.assetPaths ==
+             std::vector<std::string>({"clip.12.usd", "clip.18.usd",
+                                       "clip.24.usd"}));
+  const std::vector<std::pair<double, int>> expected_active = {
+      {12.5, 0}, {18.5, 1}, {24.5, 2}};
+  TEST_CHECK(expanded.active == expected_active);
+  const std::vector<std::pair<double, double>> expected_times = {
+      {11.5, 11.5}, {12.0, 12.0}, {18.0, 18.0},
+      {24.0, 24.0}, {25.5, 25.5}};
+  TEST_CHECK(expanded.times == expected_times);
+
+  err.clear();
+  TEST_CHECK(!ExpandTemplateClipMetadata("clip.#.usd", 0.0, 1.0,
+                                         1.0e-12, 0.0, &expanded, &err));
+  TEST_CHECK(err.find("expansion limit") != std::string::npos);
+
+  err.clear();
+  TEST_CHECK(!ExpandTemplateClipMetadata("clip.#.usd", 0.0, 1.0, 1.0,
+                                         2.0, &expanded, &err));
+  TEST_CHECK(err.find("templateActiveOffset") != std::string::npos);
+
+  err.clear();
+  TEST_CHECK(ExpandTemplateClipMetadata("clip.#.##.usd", 0.0, 0.3, 0.1,
+                                        0.0, &expanded, &err));
+  TEST_CHECK(expanded.assetPaths ==
+             std::vector<std::string>({"clip.0.00.usd", "clip.0.10.usd",
+                                       "clip.0.20.usd", "clip.0.30.usd"}));
 }

@@ -293,6 +293,16 @@ void stage_find_prim_by_id_test(void) {
     std::string err;
     bool found = stage.find_prim_by_prim_id(0, found_prim, &err);
     TEST_CHECK(!found);
+    TEST_CHECK(!err.empty());
+  }
+
+  // Mutable lookup reports the same invalid-ID diagnostic.
+  {
+    Prim *found_prim = nullptr;
+    std::string err;
+    bool found = stage.find_prim_by_prim_id(0, found_prim, &err);
+    TEST_CHECK(!found);
+    TEST_CHECK(!err.empty());
   }
 
   // Test caching - second lookup should use cache

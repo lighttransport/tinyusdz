@@ -158,16 +158,19 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
 }
 
 const ::tinyusdz::next::Value* ValueAtOrDefault(
-    const ::tinyusdz::next::UsdPrim& prim, const char* name, double time) {
+    const ::tinyusdz::next::UsdPrim& prim, const char* name, double time,
+    ::tinyusdz::next::Value* hold) {
   if (!std::isnan(time)) {
-    // Linear interpolation between samples (pxr semantics). The scratch slot
-    // is per-thread and callers consume the pointer before requesting the
-    // next value (single-live-pointer pattern throughout this TU).
-    static thread_local ::tinyusdz::next::Value scratch;
+    // Linear interpolation between samples (pxr semantics). The interpolated
+    // value is parked in the caller-owned `hold` slot (the ValueArrayRead's
+    // scratch) so the returned view stays valid while other attributes are
+    // read. A shared thread_local slot here previously dangled the first
+    // view whenever a caller read two animated attributes before consuming
+    // the first (e.g. TetMesh points + tetVertexIndices).
     ::tinyusdz::next::Value v = prim.GetInterpolatedValue(name, time);
     if (!v.is_empty()) {
-      scratch = std::move(v);
-      return &scratch;
+      *hold = std::move(v);
+      return hold;
     }
     if (const ::tinyusdz::next::Value* held = prim.GetValueAtTime(name, time)) {
       return held;
@@ -266,7 +269,7 @@ void CollectPrototypePaths(const ::tinyusdz::next::Stage& stage,
 bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<float>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetFloatArrayView(*v, &out->scratch, &out->view);
 }
@@ -274,7 +277,7 @@ bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                   double time, ValueArrayRead<int32_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetIntArrayView(*v, &out->scratch, &out->view);
 }
@@ -282,7 +285,7 @@ bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<int64_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetInt64ArrayView(*v, &out->scratch, &out->view);
 }
@@ -290,7 +293,7 @@ bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                    double time, ValueArrayRead<uint32_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetUIntArrayView(*v, &out->scratch, &out->view);
 }
@@ -298,7 +301,7 @@ bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                      double time, ValueArrayRead<uint64_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetUInt64ArrayView(*v, &out->scratch, &out->view);
 }

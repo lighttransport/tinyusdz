@@ -29,10 +29,10 @@ inline bool AnyShaderParamHasTexture(
   return false;
 }
 
-inline bool BuildLightRtOpenPBRParams(
-    const RenderMaterial &rm, tinyusdz::tydra::LightRtOpenPBRParams *out) {
+inline bool BuildRealtimePbrMaterial(
+    const RenderMaterial &rm, tinyusdz::tydra::RealtimePbrMaterial *out) {
   if (!out) return false;
-  tinyusdz::tydra::LightRtOpenPBRParams p;
+  tinyusdz::tydra::RealtimePbrMaterial p;
   if (rm.shader_type == RenderMaterial::ShaderType::PreviewSurface &&
       rm.preview_surface) {
     const PreviewSurfaceShader &s = *rm.preview_surface;
@@ -95,14 +95,22 @@ inline bool BuildLightRtOpenPBRParams(
         &s.coat_roughness, &s.coat_ior, &s.sheen_weight, &s.sheen_color,
         &s.sheen_roughness, &s.thin_film_weight, &s.thin_film_thickness,
         &s.thin_film_ior, &s.emission_luminance, &s.emission_color,
-        &s.opacity, &s.normal, &s.displacement});
+        &s.opacity, &s.normal, &s.coat_normal, &s.displacement});
     p.hasNormalInput = ShaderParamHasTexture(s.normal);
   } else {
     return false;
   }
-  tinyusdz::tydra::ClampLightRtOpenPBRParams(&p);
+  tinyusdz::tydra::ClampRealtimePbrMaterial(&p);
   *out = p;
   return true;
+}
+
+// Compatibility entry point for tusdrender and downstream callers. New code
+// should use BuildRealtimePbrMaterial to avoid coupling Tydra extraction to a
+// particular evaluator.
+inline bool BuildLightRtOpenPBRParams(
+    const RenderMaterial &rm, tinyusdz::tydra::LightRtOpenPBRParams *out) {
+  return BuildRealtimePbrMaterial(rm, out);
 }
 
 }  // namespace next

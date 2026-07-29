@@ -8,11 +8,15 @@
 // string-backed StreamWriter, so this whole printer is libc-stdio-free.
 
 #include "prim-printer.hh"
+#include "usda-format-utils.hh"
 #include "value-printer.hh"
 #include "stream-writer.hh"
 #include "dtoa.hh"
 #include "../strfmt.hh"
 #include "../layer/property-index.hh"
+
+#include <unordered_set>
+#include <vector>
 
 namespace tinyusdz {
 namespace next {
@@ -27,6 +31,36 @@ const char* GetSpecifierString(PrimSpecifier spec) {
     case PrimSpecifier::Class: return "class";
     default: return "def";
   }
+}
+
+// Escape a string for USDA output (duplicated from usda-writer.cc — debug-only).
+std::string EscapeString(const std::string& s) {
+  std::string result;
+  result.reserve(s.size() + 2);
+  result += '"';
+  for (char c : s) {
+    switch (c) {
+      case '"':  result += "\\\""; break;
+      case '\\': result += "\\\\"; break;
+      case '\n': result += "\\n"; break;
+      case '\r': result += "\\r"; break;
+      case '\t': result += "\\t"; break;
+      default: {
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (uc < 0x20 || uc == 0x7f) {
+          static const char* hexd = "0123456789abcdef";
+          result += "\\x";
+          result += hexd[uc >> 4];
+          result += hexd[uc & 0xf];
+        } else {
+          result += c;
+        }
+        break;
+      }
+    }
+  }
+  result += '"';
+  return result;
 }
 
 // ostream's default float formatting is "%.6g" (6 significant digits); match it
@@ -156,48 +190,54 @@ void PrintMetadata(StreamWriter& os, const PrimSpecMeta& meta, int depth,
 
   if (!has_meta) return;
 
-  // Print opening (metadata goes inside prim braces in USDA)
+  // Prim metadata is a parenthesized block between the prim declaration and
+  // its body. Emitting it inside the braces produces invalid USDA.
+  os << "\n";
+  PrintIndent(os, depth, opts.indent);
+  os << "(\n";
+  const int item_depth = depth + 1;
+
   if (!meta.active) {
-    PrintIndent(os, depth, opts.indent);
+    PrintIndent(os, item_depth, opts.indent);
     os << "active = false\n";
   }
   if (meta.hidden) {
-    PrintIndent(os, depth, opts.indent);
+    PrintIndent(os, item_depth, opts.indent);
     os << "hidden = true\n";
   }
   if (!meta.doc().empty()) {
-    PrintIndent(os, depth, opts.indent);
-    os << "doc = \"" << meta.doc() << "\"\n";
+    PrintIndent(os, item_depth, opts.indent);
+    os << "doc = " << EscapeString(meta.doc()) << "\n";
   }
   if (!meta.apiSchemas().empty()) {
-    PrintIndent(os, depth, opts.indent);
+    PrintIndent(os, item_depth, opts.indent);
     os << "apiSchemas = [";
     for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
       if (i > 0) os << ", ";
-      os << "\"" << meta.apiSchemas()[i] << "\"";
+      os << EscapeString(meta.apiSchemas()[i]);
     }
     os << "]\n";
   }
   if (!meta.references.empty()) {
-    PrintIndent(os, depth, opts.indent);
+    PrintIndent(os, item_depth, opts.indent);
     os << "references = [";
     for (size_t i = 0; i < meta.references.size(); ++i) {
       if (i > 0) os << ", ";
-      os << "@" << meta.references[i] << "@";
+      os << FormatArcRef(meta.references[i]);
     }
     os << "]\n";
   }
   if (!meta.payloads.empty()) {
-    PrintIndent(os, depth, opts.indent);
+    PrintIndent(os, item_depth, opts.indent);
     os << "payload = [";
     for (size_t i = 0; i < meta.payloads.size(); ++i) {
       if (i > 0) os << ", ";
-      os << "@" << meta.payloads[i] << "@";
+      os << FormatArcRef(meta.payloads[i]);
     }
     os << "]\n";
   }
   if (!meta.inherits.empty()) {
-    PrintIndent(os, depth, opts.indent);
+    PrintIndent(os, item_depth, opts.indent);
     os << "inherits = [";
     for (size_t i = 0; i < meta.inherits.size(); ++i) {
       if (i > 0) os << ", ";
@@ -206,7 +246,7 @@ void PrintMetadata(StreamWriter& os, const PrimSpecMeta& meta, int depth,
     os << "]\n";
   }
   if (!meta.specializes.empty()) {
-    PrintIndent(os, depth, opts.indent);
+    PrintIndent(os, item_depth, opts.indent);
     os << "specializes = [";
     for (size_t i = 0; i < meta.specializes.size(); ++i) {
       if (i > 0) os << ", ";
@@ -214,19 +254,13 @@ void PrintMetadata(StreamWriter& os, const PrimSpecMeta& meta, int depth,
     }
     os << "]\n";
   }
+
+  PrintIndent(os, depth, opts.indent);
+  os << ")";
 }
 
-// Forward declaration for recursion
-void PrintPrimSpecRecursive(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
-                            int depth, const PrimPrintOptions& opts);
-
-void PrintPrimSpecRecursive(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
-                            int depth, const PrimPrintOptions& opts) {
-  // Check max depth
-  if (opts.max_depth >= 0 && depth > opts.max_depth) {
-    return;
-  }
-
+void PrintPrimSpecStart(StreamWriter& os, const PrimSpec& spec, int depth,
+                        const PrimPrintOptions& opts) {
   // Print prim header
   PrintIndent(os, depth, opts.indent);
   os << GetSpecifierString(spec.specifier());
@@ -240,17 +274,16 @@ void PrintPrimSpecRecursive(StreamWriter& os, const PrimSpec& spec, const Layer&
   // Print prim name
   os << " \"" << spec.name() << "\"";
 
+  if (opts.print_metadata) {
+    PrintMetadata(os, spec.meta(), depth, opts);
+  }
+
   // Open brace
   os << "\n";
   PrintIndent(os, depth, opts.indent);
   os << "{\n";
 
   int content_depth = depth + 1;
-
-  // Print metadata
-  if (opts.print_metadata) {
-    PrintMetadata(os, spec.meta(), content_depth, opts);
-  }
 
   // Print properties
   const auto& slots = spec.properties().slots();
@@ -271,19 +304,55 @@ void PrintPrimSpecRecursive(StreamWriter& os, const PrimSpec& spec, const Layer&
   if (opts.print_relationships) {
     PrintRelationships(os, spec, content_depth, opts);
   }
+}
 
-  // Print children
-  for (uint32_t child_idx : spec.child_indices()) {
-    const PrimSpec* child = layer.prim(child_idx);
-    if (child) {
-      os << "\n";
-      PrintPrimSpecRecursive(os, *child, layer, content_depth, opts);
-    }
+void PrintPrimSpecHierarchy(StreamWriter& os, const PrimSpec& spec,
+                            const Layer& layer, int depth,
+                            const PrimPrintOptions& opts) {
+  if (opts.max_depth >= 0 && depth > opts.max_depth) {
+    return;
   }
 
-  // Close brace
-  PrintIndent(os, depth, opts.indent);
-  os << "}\n";
+  struct Frame {
+    const PrimSpec* spec{nullptr};
+    int depth{0};
+    size_t next_child{0};
+  };
+
+  std::vector<Frame> stack;
+  std::unordered_set<const PrimSpec*> visited;
+  PrintPrimSpecStart(os, spec, depth, opts);
+  stack.push_back(Frame{&spec, depth, 0});
+  visited.insert(&spec);
+
+  while (!stack.empty()) {
+    Frame& frame = stack.back();
+    const std::vector<uint32_t>& children = frame.spec->child_indices();
+    if (frame.next_child < children.size()) {
+      const uint32_t child_idx = children[frame.next_child++];
+      const PrimSpec* child = layer.prim(child_idx);
+      if (!child) {
+        continue;
+      }
+
+      // Match the recursive printer's blank line before every valid child,
+      // including one suppressed by max_depth.
+      os << "\n";
+      const int child_depth = frame.depth + 1;
+      if ((opts.max_depth >= 0 && child_depth > opts.max_depth) ||
+          !visited.insert(child).second) {
+        continue;
+      }
+
+      PrintPrimSpecStart(os, *child, child_depth, opts);
+      stack.push_back(Frame{child, child_depth, 0});
+      continue;
+    }
+
+    PrintIndent(os, frame.depth, opts.indent);
+    os << "}\n";
+    stack.pop_back();
+  }
 }
 
 // Print layer metadata
@@ -319,7 +388,7 @@ void PrintLayerMeta(StreamWriter& os, const LayerMeta& meta, const PrimPrintOpti
   }
   if (!meta.doc.empty()) {
     if (!first) os << "\n";
-    os << opts.indent << "doc = \"" << meta.doc << "\"";
+    os << opts.indent << "doc = " << EscapeString(meta.doc);
     first = false;
   }
   if (!meta.subLayers.empty()) {
@@ -370,12 +439,11 @@ void PrintPrim(StreamWriter& os, const UsdPrim& prim, const PrimPrintOptions& op
     os << " " << type_name;
   }
 
-  os << " \"" << spec->name() << "\"\n{\n";
-
-  // Print metadata
+  os << " \"" << spec->name() << "\"";
   if (opts.print_metadata) {
-    PrintMetadata(os, spec->meta(), 1, opts);
+    PrintMetadata(os, spec->meta(), 0, opts);
   }
+  os << "\n{\n";
 
   // Print properties
   const auto& slots = spec->properties().slots();
@@ -431,11 +499,11 @@ std::string PrintPrimSpec(const PrimSpec& spec, const PrimPrintOptions& opts) {
     ss << " " << type_name;
   }
 
-  ss << " \"" << spec.name() << "\"\n{\n";
-
+  ss << " \"" << spec.name() << "\"";
   if (opts.print_metadata) {
-    PrintMetadata(ss, spec.meta(), 1, opts);
+    PrintMetadata(ss, spec.meta(), 0, opts);
   }
+  ss << "\n{\n";
 
   const auto& slots = spec.properties().slots();
   size_t prop_count = 0;
@@ -470,13 +538,13 @@ void PrintPrimSpec(StreamWriter& os, const PrimSpec& spec, int depth, const Prim
     os << " " << type_name;
   }
 
-  os << " \"" << spec.name() << "\"\n";
+  os << " \"" << spec.name() << "\"";
+  if (opts.print_metadata) {
+    PrintMetadata(os, spec.meta(), depth, opts);
+  }
+  os << "\n";
   PrintIndent(os, depth, opts.indent);
   os << "{\n";
-
-  if (opts.print_metadata) {
-    PrintMetadata(os, spec.meta(), depth + 1, opts);
-  }
 
   const auto& slots = spec.properties().slots();
   size_t prop_count = 0;
@@ -515,7 +583,7 @@ void PrintLayer(StreamWriter& os, const Layer& layer, const PrimPrintOptions& op
   for (uint32_t root_idx : layer.root_indices()) {
     const PrimSpec* root = layer.prim(root_idx);
     if (root) {
-      PrintPrimSpecRecursive(os, *root, layer, 0, opts);
+      PrintPrimSpecHierarchy(os, *root, layer, 0, opts);
       os << "\n";
     }
   }

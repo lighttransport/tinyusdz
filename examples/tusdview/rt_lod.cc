@@ -58,6 +58,38 @@ float ProjectedRadiusPx(const float c[3], float r, const RtLodCamera& cam) {
   return cam.focalPx * r / depth;
 }
 
+bool IsSubpixelAggregateCell(const RtLodGridCell& cell,
+                             const RtLodCamera& cam) {
+  if (cell.maxInstanceRadius <= 0.0f) return false;
+  float nearDepth = 1e30f;
+  for (int ci = 0; ci < 8; ++ci) {
+    const float corner[3] = {
+        (ci & 1) ? cell.wmx[0] : cell.wmn[0],
+        (ci & 2) ? cell.wmx[1] : cell.wmn[1],
+        (ci & 4) ? cell.wmx[2] : cell.wmn[2]};
+    const float depth = (corner[0] - cam.eye.x) * cam.forward.x +
+                        (corner[1] - cam.eye.y) * cam.forward.y +
+                        (corner[2] - cam.eye.z) * cam.forward.z;
+    nearDepth = std::min(nearDepth, depth);
+  }
+  const float maxInstancePx = cam.focalPx * cell.maxInstanceRadius /
+                              std::max(nearDepth, cam.nearPlane);
+  const float center[3] = {0.5f * (cell.wmn[0] + cell.wmx[0]),
+                           0.5f * (cell.wmn[1] + cell.wmx[1]),
+                           0.5f * (cell.wmn[2] + cell.wmx[2])};
+  const float dx = cell.wmx[0] - cell.wmn[0];
+  const float dy = cell.wmx[1] - cell.wmn[1];
+  const float dz = cell.wmx[2] - cell.wmn[2];
+  const float cellRadius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
+  const float cellPx = ProjectedRadiusPx(center, cellRadius, cam);
+  // A population proxy is a density hint, not a replacement for a visibly
+  // large district. Cap it at eight pixels to avoid foreground megaboxes even
+  // when the ordinary per-instance proxy threshold is intentionally generous.
+  const float aggregatePx = std::max(cam.cullPx,
+                                     std::min(cam.fullPx, 8.0f));
+  return maxInstancePx < cam.cullPx && cellPx < aggregatePx;
+}
+
 void BuildRtLodGrid(const RtLodProto& proto, std::uint32_t minInstances,
                     RtLodGrid* grid) {
   grid->order.clear();
@@ -109,9 +141,9 @@ void BuildRtLodGrid(const RtLodProto& proto, std::uint32_t minInstances,
   // inv maps a center coord into [0,dim) along each axis (flat axes -> bin 0).
   const std::uint32_t ncell =
       std::uint32_t(dim[0]) * std::uint32_t(dim[1]) * std::uint32_t(dim[2]);
-  const float inv[3] = {ext[0] > flatEps ? dim[0] / ext[0] : 0.0f,
-                        ext[1] > flatEps ? dim[1] / ext[1] : 0.0f,
-                        ext[2] > flatEps ? dim[2] / ext[2] : 0.0f};
+  const float inv[3] = {ext[0] > flatEps ? static_cast<float>(dim[0]) / ext[0] : 0.0f,
+                        ext[1] > flatEps ? static_cast<float>(dim[1]) / ext[1] : 0.0f,
+                        ext[2] > flatEps ? static_cast<float>(dim[2]) / ext[2] : 0.0f};
 
   auto cellOf = [&](std::uint32_t k) -> std::uint32_t {
     int ix = std::min(int((cx[k] - gmn[0]) * inv[0]), dim[0] - 1);
@@ -137,11 +169,13 @@ void BuildRtLodGrid(const RtLodProto& proto, std::uint32_t minInstances,
     RtLodGridCell cell;
     cell.begin = b;
     cell.count = e - b;
+    cell.maxInstanceRadius = 0.0f;
     for (int r = 0; r < 3; ++r) { cell.wmn[r] = 1e30f; cell.wmx[r] = -1e30f; }
     for (std::uint32_t i = b; i < e; ++i) {
       const std::uint32_t k = grid->order[i];
       float center[3], radius, wmn[3], wmx[3];
       ProtoWorldBounds(&proto.instanceXforms[k * 12], mn, mx, center, &radius, wmn, wmx);
+      cell.maxInstanceRadius = std::max(cell.maxInstanceRadius, radius);
       for (int r = 0; r < 3; ++r) {
         cell.wmn[r] = std::min(cell.wmn[r], wmn[r]);
         cell.wmx[r] = std::max(cell.wmx[r], wmx[r]);
@@ -231,6 +265,7 @@ RtLodStats SelectInstanceLOD(const RtLodProto* protos, std::uint32_t protoCount,
       inst.opacity = proto.instanceOpacities ? proto.instanceOpacities[k]
                                              : proto.flatOpacity;
       inst.opacity = std::max(0.0f, std::min(1.0f, inst.opacity));
+      inst.sourceMeshId = proto.meshId;
       if (level == RtLod::Proxy) {
         BoxFitXform(o2w, mn, mx, inst.xform);
         inst.meshId = boxMeshId;
@@ -263,18 +298,17 @@ RtLodStats SelectInstanceLOD(const RtLodProto* protos, std::uint32_t protoCount,
           continue;
         }
         // Conservative projected radius: nearest cell depth, full-cell radius.
-        float ccen[3], crad, nearDepth = 1e30f;
-        for (int r = 0; r < 3; ++r) ccen[r] = 0.5f * (cell.wmn[r] + cell.wmx[r]);
+        float crad, nearDepth = 1e30f;
         const float cdx = cell.wmx[0] - cell.wmn[0], cdy = cell.wmx[1] - cell.wmn[1],
                     cdz = cell.wmx[2] - cell.wmn[2];
         crad = 0.5f * std::sqrt(cdx * cdx + cdy * cdy + cdz * cdz);
-        for (int corner = 0; corner < 8; ++corner) {
-          const float p[3] = {(corner & 1) ? cell.wmx[0] : cell.wmn[0],
-                              (corner & 2) ? cell.wmx[1] : cell.wmn[1],
-                              (corner & 4) ? cell.wmx[2] : cell.wmn[2]};
-          const float depth = (p[0] - cam.eye.x) * cam.forward.x +
-                              (p[1] - cam.eye.y) * cam.forward.y +
-                              (p[2] - cam.eye.z) * cam.forward.z;
+        for (int ci = 0; ci < 8; ++ci) {
+          const float corner[3] = {(ci & 1) ? cell.wmx[0] : cell.wmn[0],
+                              (ci & 2) ? cell.wmx[1] : cell.wmn[1],
+                              (ci & 4) ? cell.wmx[2] : cell.wmn[2]};
+          const float depth = (corner[0] - cam.eye.x) * cam.forward.x +
+                              (corner[1] - cam.eye.y) * cam.forward.y +
+                              (corner[2] - cam.eye.z) * cam.forward.z;
           nearDepth = std::min(nearDepth, depth);
         }
         const float cellPx =

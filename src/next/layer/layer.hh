@@ -338,6 +338,9 @@ public:
   /// Add relationship to current prim
   void add_relationship(const std::string& name, const Path& target);
 
+  /// Add an attribute connection to current prim
+  void add_connection(const std::string& name, const Path& target);
+
   /// Set metadata on current prim
   void set_active(bool active);
   void set_hidden(bool hidden);

@@ -17,6 +17,7 @@
 #include <string>
 
 #include "gpu_scene.hh"
+#include "rt_camera.hh"
 #include "rt_lod.hh"  // RtLodCamera (view-dependent RT LOD)
 
 struct GLFWwindow;
@@ -72,6 +73,12 @@ enum class RenderMode : int {
   BlendInfluence = 32,    // per-vertex blendshape displacement magnitude (raster)
   TexelDensity = 33,      // UV-to-world area ratio (view-independent texel density)
   SourceFaceId = 34,      // original USD face id before triangulation (hashed)
+  CoatNormal = 35,        // independently authored coat-layer shading normal
+  CoatWeight = 36,        // evaluated coat-layer scalar weight
+  CoatColor = 37,         // evaluated coat-layer tint
+  CoatRoughness = 38,     // evaluated coat-layer roughness
+  SpecularF0 = 39,        // evaluated specular-workflow reflectance
+  IorF0 = 40,             // dielectric F0 derived from authored IOR
 };
 enum class SkinningMode : int { Auto = 0, CPU = 1, GPU = 2 };
 
@@ -108,6 +115,7 @@ struct RenderFrameParams {
   const float* proj{nullptr};  // column-major 4x4 (GL: Z[-1,1]; VK: Z[0,1])
   float cameraPos[3]{0, 0, 0};
   float exposure{0.0f};  // photographic exposure in stops (linear multiplier 2^x)
+  RtCameraLens cameraLens;
   RenderMode mode{RenderMode::Shaded};
   // Wireframe overlay state, cycled with the 'v' key (GL backend):
   //   0 = off (shaded fill only)
@@ -148,6 +156,11 @@ struct RenderFrameParams {
   // (GL + VK raster). It may include transient view/frustum filtering.
   const uint8_t* meshVisible{nullptr};
   int meshVisibleCount{0};
+
+  // Native carrier visibility mask. Indices are DrawScene::points followed by
+  // DrawScene::curves, matching the upload order in uploadScene().
+  const uint8_t* carrierVisible{nullptr};
+  int carrierVisibleCount{0};
 
   // Persistent user hide/isolate mask for Vulkan RT. Unlike meshVisible this
   // must not contain frustum culling: off-screen geometry still casts shadows.
@@ -228,6 +241,37 @@ class Renderer {
   virtual void appendVolume(const DrawVolumeCPU& /*vol*/) {}
   // Fill texture slot `slot`; materials referencing it switch from white to it.
   virtual void uploadTexture(int slot, const DrawTextureCPU& tex) = 0;
+  // Return a texture slot to the backend's fallback texture. Implementations
+  // must make replacement/destruction safe with respect to submitted frames.
+  virtual void evictTexture(int slot) = 0;
+  // Approximate live GPU allocation owned by one texture slot. This is the
+  // quantity used by the application residency budget (not CPU staging bytes).
+  virtual size_t textureResidentBytes(int slot) const = 0;
+  // Replace an RGBA8 rectangle in an already-uploaded ordinary 2D texture.
+  // Used by bounded Ptex page streaming; compressed and array textures reject
+  // updates. `rowBytes` permits uploading a sub-rectangle from a larger CPU
+  // image without repacking it (zero means tightly packed width*4).
+  virtual bool updateTextureRegion(int /*slot*/, int /*x*/, int /*y*/, int /*w*/,
+                                   int /*h*/, const uint8_t* /*rgba*/,
+                                   size_t /*rowBytes*/ = 0) {
+    return false;
+  }
+  struct TextureRegionUpdate {
+    int x{0}, y{0}, width{0}, height{0};
+    size_t rowBytes{0};
+    std::vector<uint8_t> rgba;
+  };
+  virtual bool updateTextureRegions(
+      int slot, const std::vector<TextureRegionUpdate>& updates) {
+    for (const TextureRegionUpdate& update : updates) {
+      if (!updateTextureRegion(slot, update.x, update.y, update.width,
+                               update.height, update.rgba.data(),
+                               update.rowBytes)) {
+        return false;
+      }
+    }
+    return true;
+  }
   virtual void uploadSkinningFrame(const SkinningFrameCPU& /*skin*/) {}
   // Per-instance frustum culling: replace mesh `meshIndex`'s drawn instance set
   // with `count` visible instances (xforms = 12 floats/instance, 3x4 o2w row-major;
@@ -292,6 +336,7 @@ class Renderer {
     beginScene(scene.materials, static_cast<int>(scene.textures.size()));
     setLights(scene.lights, scene.meshes.size());
     for (size_t i = 0; i < scene.textures.size(); ++i) {
+      if (scene.textures[i].deferredDecode) continue;
       uploadTexture(static_cast<int>(i), scene.textures[i]);
     }
     static const bool timeit = std::getenv("TUSDVIEW_TIME_UPLOAD") != nullptr;
@@ -404,6 +449,13 @@ class Renderer {
   virtual bool rayTracingAvailable() const { return false; }
   // Whether the ray-tracing technique is currently active.
   virtual bool rayTracingActive() const { return false; }
+  // Number of samples represented by the current progressive RT image. Zero
+  // for raster/backends without progressive accumulation.
+  virtual uint32_t rayTracingAccumulatedSamples() const { return 0; }
+  virtual uint32_t rayTracingTlasChunks() const { return 0; }
+  virtual double rayTracingInitializationMs() const { return 0.0; }
+  virtual uint64_t rayTracingInputInstances() const { return 0; }
+  virtual bool rayTracingBuildIncomplete() const { return false; }
   // Switch the active technique between rasterization (false) and ray tracing
   // (true). No-op / ignored when ray tracing is unavailable. Both techniques
   // consume the same uploaded scene, so toggling needs no reload.

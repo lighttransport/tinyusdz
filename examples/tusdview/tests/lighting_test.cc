@@ -151,6 +151,134 @@ int main() {
     std::fprintf(stderr, "raster light bound/direction mismatch\n");
     return 1;
   }
+  if (bounded.shadowLightSlot != 0) {
+    std::fprintf(stderr, "first enabled distant shadow selection mismatch\n");
+    return 1;
+  }
+  std::vector<tusdview::DrawLightCPU> shadowFallback(3);
+  shadowFallback[0].type = tusdview::DrawLightCPU::Type::Sphere;
+  shadowFallback[0].hasShaping = true;
+  shadowFallback[0].shadowEnable = false;
+  shadowFallback[1].type = tusdview::DrawLightCPU::Type::Sphere;
+  shadowFallback[1].hasShaping = true;
+  shadowFallback[2].type = tusdview::DrawLightCPU::Type::Rect;
+  const tusdview::RasterLightSet fallback =
+      tusdview::PackRasterLights(shadowFallback, 0);
+  if (fallback.shadowLightSlot != 1) {
+    std::fprintf(stderr, "shaped-sphere shadow fallback selection mismatch\n");
+    return 1;
+  }
+  std::vector<tusdview::DrawLightCPU> areaFallback(2);
+  areaFallback[0].type = tusdview::DrawLightCPU::Type::Point;
+  areaFallback[0].shadowEnable = false;
+  areaFallback[1].type = tusdview::DrawLightCPU::Type::Rect;
+  areaFallback[1].position[1] = 4.0f;
+  areaFallback[1].direction[1] = -1.0f;
+  const tusdview::RasterLightSet areaLights =
+      tusdview::PackRasterLights(areaFallback, 0);
+  if (areaLights.shadowLightSlot != 1) {
+    std::fprintf(stderr, "one-sided area-light shadow fallback mismatch\n");
+    return 1;
+  }
+  std::vector<tusdview::DrawLightCPU> linkedShadow(1);
+  linkedShadow[0].type = tusdview::DrawLightCPU::Type::Distant;
+  linkedShadow[0].shadowLinksAll = false;
+  linkedShadow[0].shadowLinkMeshIndices = {1};
+  const tusdview::RasterLightSet linked =
+      tusdview::PackRasterLights(linkedShadow, 3);
+  if (tusdview::RasterShadowIncludesMesh(linked, 0) ||
+      !tusdview::RasterShadowIncludesMesh(linked, 1) ||
+      tusdview::RasterShadowIncludesMesh(linked, 2)) {
+    std::fprintf(stderr, "raster shadow-link mask mismatch\n");
+    return 1;
+  }
+  linkedShadow[0].lightLinksAll = false;
+  linkedShadow[0].lightLinkMeshIndices = {0, 2};
+  linkedShadow.push_back(tusdview::DrawLightCPU{});
+  linkedShadow[1].lightLinksAll = true;
+  linkedShadow[1].shadowLinksAll = false;
+  linkedShadow[1].shadowLinkMeshIndices = {2};
+  if (tusdview::RtLightCollectionMaskForMesh(linkedShadow, 0, false) != 3u ||
+      tusdview::RtLightCollectionMaskForMesh(linkedShadow, 1, false) != 2u ||
+      tusdview::RtLightCollectionMaskForMesh(linkedShadow, 2, true) != 2u ||
+      tusdview::RtLightCollectionMaskForMesh(linkedShadow, 1, true) != 1u) {
+    std::fprintf(stderr, "RT light/shadow collection mask mismatch\n");
+    return 1;
+  }
+  const float shadowMin[3] = {-2.0f, -1.0f, -3.0f};
+  const float shadowExtent[3] = {4.0f, 2.0f, 6.0f};
+  std::vector<tusdview::DrawLightCPU> pointShadow(1);
+  pointShadow[0].type = tusdview::DrawLightCPU::Type::Point;
+  pointShadow[0].position[1] = 4.0f;
+  const tusdview::RasterLightSet pointLights =
+      tusdview::PackRasterLights(pointShadow, 0);
+  tusdview::RasterShadowCamera pointShadowCamera;
+  if (pointLights.shadowLightSlot != 0 ||
+      !tusdview::BuildRasterShadowCamera(pointLights, shadowMin, shadowExtent,
+                                         true, &pointShadowCamera) ||
+      pointShadowCamera.perspective) {
+    std::fprintf(stderr, "point-light shadow approximation mismatch\n");
+    return 1;
+  }
+  tusdview::RasterPointShadowCameras pointCubeGl;
+  tusdview::RasterPointShadowCameras pointCubeVk;
+  bool oppositeFacesDiffer = false;
+  if (!tusdview::BuildRasterPointShadowCameras(pointLights, shadowMin,
+                                                shadowExtent, false,
+                                                &pointCubeGl) ||
+      !tusdview::BuildRasterPointShadowCameras(pointLights, shadowMin,
+                                                shadowExtent, true,
+                                                &pointCubeVk) ||
+      pointCubeGl.lightSlot != 0 || pointCubeVk.lightSlot != 0 ||
+      !(pointCubeGl.farPlane > pointCubeGl.nearPlane) ||
+      !(pointCubeVk.farPlane > pointCubeVk.nearPlane)) {
+    std::fprintf(stderr, "point-light cube shadow camera mismatch\n");
+    return 1;
+  }
+  for (int i = 0; i < 16; ++i) {
+    if (!Near(pointCubeGl.viewProj[0].m[i], pointCubeGl.viewProj[1].m[i])) {
+      oppositeFacesDiffer = true;
+      break;
+    }
+  }
+  if (!oppositeFacesDiffer) {
+    std::fprintf(stderr, "opposite point-light cube faces are identical\n");
+    return 1;
+  }
+  if (tusdview::BuildRasterPointShadowCameras(bounded, shadowMin,
+                                               shadowExtent, true,
+                                               &pointCubeVk)) {
+    std::fprintf(stderr, "non-point light unexpectedly produced cube shadows\n");
+    return 1;
+  }
+  tusdview::RasterShadowCamera glShadow;
+  tusdview::RasterShadowCamera vkShadow;
+  if (!tusdview::BuildRasterShadowCamera(bounded, shadowMin, shadowExtent,
+                                         false, &glShadow) ||
+      !tusdview::BuildRasterShadowCamera(bounded, shadowMin, shadowExtent,
+                                         true, &vkShadow) ||
+      glShadow.lightSlot != 0 || glShadow.perspective ||
+      vkShadow.lightSlot != 0 || vkShadow.perspective ||
+      !(glShadow.farPlane > glShadow.nearPlane)) {
+    std::fprintf(stderr, "distant shadow camera fitting mismatch\n");
+    return 1;
+  }
+  tusdview::RasterShadowCamera sphereShadow;
+  if (!tusdview::BuildRasterShadowCamera(fallback, shadowMin, shadowExtent,
+                                         false, &sphereShadow) ||
+      sphereShadow.lightSlot != 1 || !sphereShadow.perspective ||
+      !(sphereShadow.farPlane > sphereShadow.nearPlane)) {
+    std::fprintf(stderr, "sphere shadow camera fitting mismatch\n");
+    return 1;
+  }
+  tusdview::RasterShadowCamera areaShadow;
+  if (!tusdview::BuildRasterShadowCamera(areaLights, shadowMin, shadowExtent,
+                                         true, &areaShadow) ||
+      areaShadow.lightSlot != 1 || areaShadow.perspective ||
+      !(areaShadow.farPlane > areaShadow.nearPlane)) {
+    std::fprintf(stderr, "area-light shadow camera fitting mismatch\n");
+    return 1;
+  }
   if (!key.hasShaping || key.shapingIesFile != "profiles/key.ies" ||
       !Near(key.shapingIesAngleScale, 1.25f) || !key.shapingIesNormalize ||
       key.lightLinksAll || !key.hasSpectralEmission ||
@@ -388,7 +516,7 @@ int main() {
   tusdview::HostScene carrierHost;
   if (!tusdview::BuildHostScene(carrierScene, 0, 0, 0.0f, &carrierHost,
                                 &err) ||
-      carrierHost.triCount != 16 || carrierHost.instCount != 2) {
+      carrierHost.triCount != 48 || carrierHost.instCount != 2) {
     std::fprintf(stderr, "non-mesh RT proxy build failed: %s (%zu tris, %zu inst)\n",
                  err.c_str(), carrierHost.triCount, carrierHost.instCount);
     return 1;

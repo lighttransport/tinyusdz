@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "next/composition/composition.hh"
+#include "next/eval/value-clip.hh"
 #include "next/layer/listop-field-table.hh"
 #include "next/prim/identifier.hh"
 #include "next/eval/attribute-eval.hh"
@@ -1394,6 +1395,62 @@ void TestSchemaFallbackAndValueClips() {
          std::fabs(*cached_clip.value.as_float() - 3.5f) < 1e-6f &&
          clip_load_count == 1 &&
          "caller-owned clip cache must reuse stages across queries");
+
+  LoadResult template_result = Parse(
+      "def Xform \"Root\" ( clips = { dictionary default = {\n"
+      "  asset templateAssetPath = @clip.##.usd@\n"
+      "  double templateStartTime = 12\n"
+      "  double templateEndTime = 25\n"
+      "  double templateStride = 6\n"
+      "  double templateActiveOffset = 0.5\n"
+      "} } ) {}\n");
+  assert(template_result.success);
+  std::vector<ValueClipSet> template_sets;
+  std::string template_error;
+  assert(ParseValueClipSets(template_result.stage.GetPrimAtPath("/Root"),
+                            &template_sets, &template_error));
+  assert(template_sets.size() == 1);
+  assert(template_sets[0].asset_paths ==
+         std::vector<std::string>({"clip.12.usd", "clip.18.usd",
+                                   "clip.24.usd"}));
+  const std::vector<std::pair<double, int>> expected_template_active = {
+      {12.5, 0}, {18.5, 1}, {24.5, 2}};
+  assert(template_sets[0].active == expected_template_active);
+  const std::vector<std::pair<double, double>> expected_template_times = {
+      {11.5, 11.5}, {12.0, 12.0}, {18.0, 18.0},
+      {24.0, 24.0}, {25.5, 25.5}};
+  assert(template_sets[0].times == expected_template_times);
+
+  LoadResult excessive_template = Parse(
+      "def Xform \"Root\" ( clips = { dictionary default = {\n"
+      "  asset templateAssetPath = @clip.#.usd@\n"
+      "  double templateStartTime = 0\n"
+      "  double templateEndTime = 1\n"
+      "  double templateStride = 1e-12\n"
+      "} } ) {}\n");
+  assert(excessive_template.success);
+  template_sets.clear();
+  template_error.clear();
+  assert(!ParseValueClipSets(excessive_template.stage.GetPrimAtPath("/Root"),
+                             &template_sets, &template_error));
+  assert(template_error.find("expansion limit") != std::string::npos);
+
+  LoadResult fractional_template = Parse(
+      "def Xform \"Root\" ( clips = { dictionary default = {\n"
+      "  asset templateAssetPath = @clip.#.##.usd@\n"
+      "  double templateStartTime = 0\n"
+      "  double templateEndTime = 0.3\n"
+      "  double templateStride = 0.1\n"
+      "} } ) {}\n");
+  assert(fractional_template.success);
+  template_sets.clear();
+  template_error.clear();
+  assert(ParseValueClipSets(fractional_template.stage.GetPrimAtPath("/Root"),
+                            &template_sets, &template_error));
+  assert(template_sets.size() == 1);
+  assert(template_sets[0].asset_paths ==
+         std::vector<std::string>({"clip.0.00.usd", "clip.0.10.usd",
+                                   "clip.0.20.usd", "clip.0.30.usd"}));
 
   // clipSets is independent from the clips dictionary and defines
   // strongest-to-weakest set traversal.

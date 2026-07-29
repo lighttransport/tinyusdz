@@ -655,9 +655,18 @@ bool BorrowMMapArray(const tinyusdz::Stage &stage, const std::string &prim_path,
   if (reinterpret_cast<uintptr_t>(bytes) % alignof(T) == 0) {
     ptr = reinterpret_cast<const T *>(bytes);
   }
+  // On 64-bit hosts this is always false (size_t == uint64_t), but the guard
+  // is needed for 32-bit targets where size_t < uint64_t.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wtautological-type-limit-compare"
+#endif
   if (ref->element_count > uint64_t((std::numeric_limits<size_t>::max)())) {
     return false;
   }
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
   out->data = ptr;
   out->bytes = bytes;
   out->count = static_cast<size_t>(ref->element_count);
@@ -1606,13 +1615,13 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
       }
       direct->direct_paths.insert(path);
     }
-  } else if (const tinyusdz::GeomNurbsCurves *curves = prim.as<tinyusdz::GeomNurbsCurves>()) {
+  } else if (const tinyusdz::GeomNurbsCurves *nurbsCurves = prim.as<tinyusdz::GeomNurbsCurves>()) {
     std::vector<tinyusdz::value::point3f> points;
     std::vector<int> counts;
     std::vector<float> widths;
-    if (EvalAnim(stage, curves->points, "points", time, &points) &&
-        EvalAnim(stage, curves->curveVertexCounts, "curveVertexCounts", time, &counts)) {
-      EvalAnim(stage, curves->widths, "widths", time, &widths);
+    if (EvalAnim(stage, nurbsCurves->points, "points", time, &points) &&
+        EvalAnim(stage, nurbsCurves->curveVertexCounts, "curveVertexCounts", time, &counts)) {
+      EvalAnim(stage, nurbsCurves->widths, "widths", time, &widths);
       AppendLinearCurveStrands(points, counts, widths, world, round_points,
                                round_radii, round_first, round_count,
                                &direct->round_curve_info, bounds);
@@ -1621,15 +1630,15 @@ void TraverseDirectPrims(const tinyusdz::Stage &stage, const tinyusdz::Prim &pri
   } else if (const tinyusdz::GeomNurbsPatch *patch = prim.as<tinyusdz::GeomNurbsPatch>()) {
     AddNurbsPatchTriangles(stage, *patch, world, time, vertices, tris, bounds);
     direct->direct_paths.insert(path);
-  } else if (const tinyusdz::GeomHermiteCurves *curves = prim.as<tinyusdz::GeomHermiteCurves>()) {
+  } else if (const tinyusdz::GeomHermiteCurves *hermiteCurves = prim.as<tinyusdz::GeomHermiteCurves>()) {
     std::vector<tinyusdz::value::point3f> points;
     std::vector<tinyusdz::value::vector3f> tangents;
     std::vector<int> counts;
     std::vector<float> widths;
-    if (EvalAnim(stage, curves->points, "points", time, &points) &&
-        EvalAnim(stage, curves->curveVertexCounts, "curveVertexCounts", time, &counts) &&
-        EvalAnim(stage, curves->tangents, "tangents", time, &tangents)) {
-      EvalAnim(stage, curves->widths, "widths", time, &widths);
+    if (EvalAnim(stage, hermiteCurves->points, "points", time, &points) &&
+        EvalAnim(stage, hermiteCurves->curveVertexCounts, "curveVertexCounts", time, &counts) &&
+        EvalAnim(stage, hermiteCurves->tangents, "tangents", time, &tangents)) {
+      EvalAnim(stage, hermiteCurves->widths, "widths", time, &widths);
       size_t cursor = 0;
       for (int c : counts) {
         if (c < 2 || cursor + size_t(c) > points.size() ||

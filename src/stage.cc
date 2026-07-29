@@ -189,8 +189,60 @@ Stage &Stage::operator=(const Stage &other) {
   return *this;
 }
 
-Stage::Stage(Stage &&) noexcept = default;
-Stage &Stage::operator=(Stage &&) noexcept = default;
+Stage::Stage(Stage &&other) noexcept
+    : _root_nodes(std::move(other._root_nodes)),
+      _root_node_nameSet(std::move(other._root_node_nameSet)),
+      name(std::move(other.name)),
+      default_root_node(std::move(other.default_root_node)),
+      stage_metas(std::move(other.stage_metas)),
+      _err(std::move(other._err)),
+      _warn(std::move(other._warn)),
+      _dirty(true),
+      _prim_id_dirty(true),
+      _mmap_table(std::move(other._mmap_table)),
+      _mmap_source(std::move(other._mmap_source)),
+      _mmap_file_owner(std::move(other._mmap_file_owner)),
+      _mmap_buffer_owner(std::move(other._mmap_buffer_owner)) {
+  // Clear caches: the moved-from Stage's cached const Prim* point into this
+  // Stage's _root_nodes after the vector move. A moved-from Stage is still
+  // valid (C++ contract), so its next lookup must not return stale pointers.
+  _prim_path_cache.clear();
+  _prim_id_cache.clear();
+  _cache_mu = std::make_shared<std::mutex>();
+  other._dirty = true;
+  other._prim_id_dirty = true;
+  other._prim_path_cache.clear();
+  other._prim_id_cache.clear();
+  other._cache_mu = std::make_shared<std::mutex>();
+}
+
+Stage &Stage::operator=(Stage &&other) noexcept {
+  if (this != &other) {
+    _root_nodes = std::move(other._root_nodes);
+    _root_node_nameSet = std::move(other._root_node_nameSet);
+    name = std::move(other.name);
+    default_root_node = std::move(other.default_root_node);
+    stage_metas = std::move(other.stage_metas);
+    _err = std::move(other._err);
+    _warn = std::move(other._warn);
+    _dirty = true;
+    _prim_id_dirty = true;
+    _mmap_table = std::move(other._mmap_table);
+    _mmap_source = std::move(other._mmap_source);
+    _mmap_file_owner = std::move(other._mmap_file_owner);
+    _mmap_buffer_owner = std::move(other._mmap_buffer_owner);
+    _prim_path_cache.clear();
+    _prim_id_cache.clear();
+    _cache_mu = std::make_shared<std::mutex>();
+    // Clear caches in the moved-from Stage too (same rationale as move ctor).
+    other._dirty = true;
+    other._prim_id_dirty = true;
+    other._prim_path_cache.clear();
+    other._prim_id_cache.clear();
+    other._cache_mu = std::make_shared<std::mutex>();
+  }
+  return *this;
+}
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     const Path &path) const {
@@ -315,8 +367,15 @@ static bool FindPrimByPrimIdIterative(uint64_t prim_id,
     }
   }
 
-  // Iterative DFS
+  // Iterative DFS with iteration ceiling to prevent CPU-exhaustion on
+  // maliciously large prim trees.
+  static constexpr size_t kMaxIter = 1024 * 1024;  // 1M
+  size_t iter = 0;
   while (!stack.empty()) {
+    if (++iter > kMaxIter) {
+      return false;
+    }
+
     auto &top = stack.back();
     const Prim *current = top.first;
     size_t &child_idx = top.second;
@@ -391,15 +450,24 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
 
 bool Stage::find_prim_by_prim_id(const uint64_t prim_id, Prim *&prim,
                                  std::string *err) {
-  const Prim *c_prim{nullptr};
-  if (!find_prim_by_prim_id(prim_id, c_prim, err)) {
+  if (prim_id < 1) {
+    if (err) {
+      (*err) = "Input prim_id must be 1 or greater.";
+    }
     return false;
   }
 
-  // remove const
-  prim = const_cast<Prim *>(c_prim);
-
-  return true;
+  // Walk the prim tree directly (const version shares the same logic via
+  // FindPrimByPrimIdIterative which operates on _root_nodes). Setting dirty
+  // flags ensures any cache populated by a concurrent const lookup is skipped.
+  const Prim *p{nullptr};
+  if (FindPrimByPrimIdIterative(prim_id, _root_nodes, &p)) {
+    prim = const_cast<Prim *>(p);
+    _dirty = true;
+    _prim_id_dirty = true;
+    return true;
+  }
+  return false;
 }
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
@@ -823,6 +891,7 @@ bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
   }
 
   _dirty = true;
+  _prim_id_dirty = true;
 
   return true;
 }
@@ -832,6 +901,7 @@ namespace {
 // Split an absolute prim path "/A/B/C" into ["A","B","C"].
 bool SplitAbsPrimPath(const Path &path, std::vector<std::string> *out) {
   if (!path.is_valid() || !path.is_absolute_path()) return false;
+  if (!out) return false;
   const std::string s = std::string(path.prim_part());
   if (s.empty() || s[0] != '/') return false;
   out->clear();
@@ -964,13 +1034,14 @@ bool Stage::RenamePrim(const Path &path, const std::string &new_name,
 
   if (!parent) _root_node_nameSet.clear();
   if (!compute_absolute_prim_path() && err) {
-    *err = _err;
+    *err = "RenamePrim: compute_absolute_prim_path failed\n" + _err;
     return false;
   }
   _dirty = true;
   _prim_id_dirty = true;
   return true;
 }
+
 
 bool Stage::RemovePrim(const Path &path, std::string *err) {
   std::vector<std::string> comps;
@@ -1142,15 +1213,8 @@ std::string DumpPrimTreeIterative(const std::vector<Prim> &root_prims) {
     stack.emplace_back(&(*it), 0);
   }
 
-  constexpr uint32_t kMaxDepth = 1024 * 1024 * 128;
-
   while (!stack.empty()) {
     StackEntry &entry = stack.back();
-
-    if (entry.depth > kMaxDepth) {
-      stack.pop_back();
-      continue;
-    }
 
     if (entry.child_idx == SIZE_MAX) {
       // First visit: output this node

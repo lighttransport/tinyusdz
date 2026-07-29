@@ -1,0 +1,80 @@
+// SPDX-License-Identifier: Apache-2.0
+// Minimal, lazy Ptex container reader used by the renderers.
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace tinyusdz {
+namespace ptx {
+
+enum class DataType : uint32_t { UInt8 = 0, UInt16 = 1, Half = 2, Float = 3 };
+
+struct FaceInfo {
+  uint8_t ures = 0;  // log2 horizontal resolution
+  uint8_t vres = 0;  // log2 vertical resolution
+  uint8_t adjEdges = 0;
+  uint8_t flags = 0;
+  uint32_t adjFaces[4] = {0xffffffffu, 0xffffffffu, 0xffffffffu,
+                          0xffffffffu};
+  bool constant() const { return (flags & 1u) != 0; }
+  uint32_t width() const { return 1u << ures; }
+  uint32_t height() const { return 1u << vres; }
+};
+
+struct Info {
+  DataType dataType = DataType::UInt8;
+  uint32_t meshType = 1;  // 0 triangle, 1 quad
+  uint32_t alphaChannel = 0xffffffffu;
+  uint16_t channels = 0;
+  uint16_t levels = 0;
+  uint32_t faces = 0;
+  std::vector<FaceInfo> faceInfo;
+};
+
+struct FaceImage {
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint16_t channels = 0;
+  DataType dataType = DataType::UInt8;
+  // Channels are interleaved, v-major, matching the Ptex specification.
+  std::vector<uint8_t> data;
+};
+
+class Reader {
+ public:
+  Reader() = default;
+
+  static bool OpenFile(const std::string& path, Reader* out, std::string* err);
+  static bool OpenMemory(const uint8_t* data, size_t size, Reader* out,
+                         std::string* err);
+
+  const Info& info() const { return info_; }
+
+  // Decode one face at one mip level. Only the requested face is inflated;
+  // source bytes remain owned by the Reader. max_bytes bounds the destination.
+  bool ReadFace(uint32_t face, uint32_t level, size_t max_bytes,
+                FaceImage* out, std::string* err) const;
+
+ private:
+  const uint8_t* data_ = nullptr;
+  size_t size_ = 0;
+  std::vector<uint8_t> owned_;
+  Info info_;
+  std::vector<uint8_t> constantData_;
+  struct Level {
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    uint32_t headerSize = 0;
+    uint32_t faces = 0;
+  };
+  std::vector<Level> levels_;
+  std::vector<uint8_t> levelInfoBytes_;
+  uint64_t levelDataOffset_ = 0;
+
+  bool Parse(std::string* err);
+};
+
+}  // namespace ptx
+}  // namespace tinyusdz

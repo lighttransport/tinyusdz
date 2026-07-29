@@ -30,6 +30,9 @@ int AddImage(tydra::RenderScene* scene, tydra::ColorSpace colorSpace) {
   img.channels = 4;
   img.texelComponentType = tydra::ComponentType::UInt8;
   img.colorSpace = colorSpace;
+  // BuildDrawScene preserves the authored USD color space per material
+  // connection, rather than the decoded working color space alone.
+  img.usdColorSpace = colorSpace;
   img.asset_identifier = "asset_" + std::to_string(scene->images.size()) + ".png";
   const int imageId = static_cast<int>(scene->images.size());
   scene->images.push_back(std::move(img));
@@ -61,6 +64,11 @@ int main() {
   const int roughImage = AddImage(&scene, tydra::ColorSpace::Raw);
   const int emissiveImage = AddImage(&scene, tydra::ColorSpace::sRGB_Texture);
   const int normalImage = AddImage(&scene, tydra::ColorSpace::Raw);
+  const int opacityImage = AddImage(&scene, tydra::ColorSpace::Raw);
+  const int coatWeightImage = AddImage(&scene, tydra::ColorSpace::Raw);
+  const int coatColorImage = AddImage(&scene, tydra::ColorSpace::sRGB_Texture);
+  const int coatRoughImage = AddImage(&scene, tydra::ColorSpace::Raw);
+  const int specularImage = AddImage(&scene, tydra::ColorSpace::sRGB_Texture);
 
   const int baseTex = AddTexture(&scene, baseImage, tydra::UVTexture::Channel::RGB);
   const int metalTex = AddTexture(&scene, mrImage, tydra::UVTexture::Channel::B);
@@ -68,6 +76,20 @@ int main() {
   const int emissiveTex =
       AddTexture(&scene, emissiveImage, tydra::UVTexture::Channel::RGB);
   const int normalTex = AddTexture(&scene, normalImage, tydra::UVTexture::Channel::RGB);
+  const int opacityTex = AddTexture(&scene, opacityImage, tydra::UVTexture::Channel::A);
+  const int coatWeightTex =
+      AddTexture(&scene, coatWeightImage, tydra::UVTexture::Channel::G);
+  const int coatColorTex =
+      AddTexture(&scene, coatColorImage, tydra::UVTexture::Channel::RGB);
+  const int coatRoughTex =
+      AddTexture(&scene, coatRoughImage, tydra::UVTexture::Channel::B);
+  const int specularTex =
+      AddTexture(&scene, specularImage, tydra::UVTexture::Channel::RGB);
+  // A second UVTexture pointing at the metallic image must deduplicate to the
+  // same DrawScene texture slot. This catches adapters that leave a material
+  // sample carrying the source RenderScene index instead of the mapped id.
+  const int sharedMrTex =
+      AddTexture(&scene, mrImage, tydra::UVTexture::Channel::RGB);
 
   scene.textures[static_cast<size_t>(metalTex)].scale[2] = 0.25f;
   scene.textures[static_cast<size_t>(metalTex)].bias[2] = 0.10f;
@@ -78,6 +100,15 @@ int main() {
   scene.textures[static_cast<size_t>(normalTex)].transform.m[1][1] = 3.0f;
   scene.textures[static_cast<size_t>(normalTex)].transform.m[2][0] = 0.25f;
   scene.textures[static_cast<size_t>(normalTex)].transform.m[2][1] = 0.5f;
+  scene.textures[static_cast<size_t>(sharedMrTex)].has_transform2d = true;
+  scene.textures[static_cast<size_t>(sharedMrTex)].transform =
+      scene.textures[static_cast<size_t>(normalTex)].transform;
+  scene.textures[static_cast<size_t>(opacityTex)].scale[3] = 0.75f;
+  scene.textures[static_cast<size_t>(opacityTex)].bias[3] = 0.05f;
+  scene.textures[static_cast<size_t>(coatWeightTex)].scale[1] = 0.65f;
+  scene.textures[static_cast<size_t>(coatWeightTex)].bias[1] = 0.15f;
+  scene.textures[static_cast<size_t>(coatRoughTex)].scale[2] = 0.55f;
+  scene.textures[static_cast<size_t>(coatRoughTex)].bias[2] = 0.25f;
 
   tydra::OpenPBRSurfaceShader shader;
   shader.base_color.value = {0.2f, 0.4f, 0.6f};
@@ -87,15 +118,20 @@ int main() {
   shader.base_roughness.value = 0.35f;
   shader.base_roughness.texture_id = roughTex;
   shader.normal.texture_id = normalTex;
-  shader.coat_normal.texture_id = normalTex;
+  shader.coat_normal.texture_id = sharedMrTex;
   shader.coat_weight.value = 0.6f;
+  shader.coat_weight.texture_id = coatWeightTex;
   shader.coat_color.value = {0.7f, 0.8f, 0.9f};
+  shader.coat_color.texture_id = coatColorTex;
   shader.coat_roughness.value = 0.2f;
+  shader.coat_roughness.texture_id = coatRoughTex;
+  shader.specular_color.texture_id = specularTex;
   shader.coat_ior.value = 1.4f;
   shader.emission_luminance.value = 3.0f;
   shader.emission_color.value = {0.1f, 0.2f, 0.3f};
   shader.emission_color.texture_id = emissiveTex;
   shader.opacity.value = 0.7f;
+  shader.opacity.texture_id = opacityTex;
   shader.transmission_weight.value = 0.2f;
   shader.subsurface_weight.value = 0.3f;
   shader.sheen_weight.value = 0.4f;
@@ -163,23 +199,66 @@ int main() {
                  draw.materials.size());
     return 1;
   }
-  if (draw.textures.size() != 5) {
-    std::fprintf(stderr, "expected five independent/deduplicated textures, got %zu\n",
+  if (draw.textures.size() != 10) {
+    std::fprintf(stderr, "expected ten independent/deduplicated textures, got %zu\n",
                  draw.textures.size());
     return 1;
   }
   if (draw.textures[0].assetIdentifier != "asset_0.png" ||
       draw.textures[0].renderImageId != baseImage ||
       draw.textures[4].assetIdentifier != "asset_4.png" ||
-      draw.textures[4].renderImageId != normalImage) {
+      draw.textures[4].renderImageId != normalImage ||
+      draw.textures[9].assetIdentifier != "asset_9.png" ||
+      draw.textures[9].renderImageId != specularImage) {
     std::fprintf(stderr, "texture source metadata was not preserved\n");
     return 1;
   }
 
   const tusdview::DrawMaterialCPU& mat = draw.materials[0];
   if (mat.baseColorTex < 0 || mat.metallicTex < 0 || mat.roughnessTex < 0 || mat.normalTex < 0 ||
-      mat.coatNormalTex < 0 || mat.emissiveTex < 0) {
+      mat.coatNormalTex < 0 || mat.emissiveTex < 0 || mat.opacityTex < 0 ||
+      mat.coatWeightTex < 0 || mat.coatColorTex < 0 ||
+      mat.coatRoughnessTex < 0 || mat.specularColorTex < 0) {
     std::fprintf(stderr, "OpenPBR texture slots were not populated\n");
+    return 1;
+  }
+  if (mat.baseColorSample.tex != mat.baseColorTex ||
+      mat.metallicSample.tex != mat.metallicTex ||
+      mat.roughnessSample.tex != mat.roughnessTex ||
+      mat.normalSample.tex != mat.normalTex ||
+      mat.coatNormalSample.tex != mat.coatNormalTex ||
+      mat.emissiveSample.tex != mat.emissiveTex ||
+      mat.opacitySample.tex != mat.opacityTex ||
+      mat.coatWeightSample.tex != mat.coatWeightTex ||
+      mat.coatColorSample.tex != mat.coatColorTex ||
+      mat.coatRoughnessSample.tex != mat.coatRoughnessTex ||
+      mat.specularColorSample.tex != mat.specularColorTex) {
+    std::fprintf(stderr, "OpenPBR texture descriptors are not self-contained\n");
+    return 1;
+  }
+  // Every semantic slot must retain its own sampling intent after image
+  // deduplication. In particular, scalar/normal inputs are Raw even when a
+  // color input is sRGB, and the per-connection wrap mode belongs on the
+  // descriptor rather than only on DrawScene::textures.
+  const auto hasSamplingIntent = [](const tusdview::DrawTexSampleCPU& sample,
+                                    tusdview::DrawColorSpace colorSpace) {
+    return sample.wrapS == tusdview::WrapMode::Repeat &&
+           sample.wrapT == tusdview::WrapMode::Mirror &&
+           sample.colorSpace == colorSpace;
+  };
+  if (!hasSamplingIntent(mat.baseColorSample, tusdview::DrawColorSpace::sRGB) ||
+      !hasSamplingIntent(mat.metallicSample, tusdview::DrawColorSpace::Raw) ||
+      !hasSamplingIntent(mat.roughnessSample, tusdview::DrawColorSpace::Raw) ||
+      !hasSamplingIntent(mat.normalSample, tusdview::DrawColorSpace::Raw) ||
+      !hasSamplingIntent(mat.coatNormalSample, tusdview::DrawColorSpace::Raw) ||
+      !hasSamplingIntent(mat.emissiveSample, tusdview::DrawColorSpace::sRGB) ||
+      !hasSamplingIntent(mat.opacitySample, tusdview::DrawColorSpace::Raw) ||
+      !hasSamplingIntent(mat.coatWeightSample, tusdview::DrawColorSpace::Raw) ||
+      !hasSamplingIntent(mat.coatColorSample, tusdview::DrawColorSpace::sRGB) ||
+      !hasSamplingIntent(mat.coatRoughnessSample, tusdview::DrawColorSpace::Raw) ||
+      !hasSamplingIntent(mat.specularColorSample, tusdview::DrawColorSpace::sRGB)) {
+    std::fprintf(stderr,
+                 "OpenPBR texture descriptor wrap/color-space intent was lost\n");
     return 1;
   }
   if (mat.metallicTex != mat.baseColorTex + 1) {
@@ -201,7 +280,7 @@ int main() {
   }
   if (!Near(mat.baseColor[0], 1.0f) || !Near(mat.metallic, 1.0f) ||
       !Near(mat.roughness, 1.0f) || !Near(mat.emissive[0], 3.0f) ||
-      !Near(mat.alpha, 0.7f)) {
+      !Near(mat.alpha, 1.0f)) {
     std::fprintf(stderr, "OpenPBR textured neutral factors are wrong\n");
     return 1;
   }
@@ -210,10 +289,19 @@ int main() {
     std::fprintf(stderr, "OpenPBR normal texture unpack defaults are wrong\n");
     return 1;
   }
-  if (!Near(mat.coatWeight, 0.6f) || !Near(mat.coatColor[0], 0.7f) ||
-      !Near(mat.coatColor[1], 0.8f) || !Near(mat.coatColor[2], 0.9f) ||
-      !Near(mat.coatRoughness, 0.2f) || !Near(mat.coatIor, 1.4f)) {
-    std::fprintf(stderr, "OpenPBR realtime coat constants were not preserved\n");
+  if (!Near(mat.coatWeight, 1.0f) || !Near(mat.coatColor[0], 1.0f) ||
+      !Near(mat.coatColor[1], 1.0f) || !Near(mat.coatColor[2], 1.0f) ||
+      !Near(mat.coatRoughness, 1.0f) || !Near(mat.coatIor, 1.4f)) {
+    std::fprintf(stderr, "OpenPBR textured coat factors were not neutralized\n");
+    return 1;
+  }
+  if (mat.opacityChannel != 3 || !Near(mat.opacityTexScale, 0.75f) ||
+      !Near(mat.opacityTexBias, 0.05f) ||
+      !Near(mat.coatWeightSample.scale[1], 0.65f) ||
+      !Near(mat.coatWeightSample.bias[1], 0.15f) ||
+      !Near(mat.coatRoughnessSample.scale[2], 0.55f) ||
+      !Near(mat.coatRoughnessSample.bias[2], 0.25f)) {
+    std::fprintf(stderr, "OpenPBR scalar texture descriptors were not preserved\n");
     return 1;
   }
   if (!Near(mat.normalSample.uv.m00, 2.0f) ||
@@ -237,7 +325,7 @@ int main() {
     std::fprintf(stderr, "OpenPBR normal parameter UV transform was not preserved\n");
     return 1;
   }
-  if (mat.coatNormalTex != mat.normalTex ||
+  if (mat.coatNormalTex != mat.metallicTex ||
       !Near(mat.coatNormalSample.scale[0], 2.0f) ||
       !Near(mat.coatNormalSample.bias[0], -1.0f) ||
       !Near(mat.coatNormalSample.uv.m00, 2.0f) ||
@@ -270,7 +358,14 @@ int main() {
       !Near(mat.lightRtOpenPBR.metalness, 1.0f) ||
       !Near(mat.lightRtOpenPBR.specularRoughness, 1.0f) ||
       !Near(mat.lightRtOpenPBR.emissionColor[0], 1.0f) ||
-      !Near(mat.lightRtOpenPBR.emission, 3.0f)) {
+      !Near(mat.lightRtOpenPBR.emission, 3.0f) ||
+      !Near(mat.lightRtOpenPBR.opacity, 1.0f) ||
+      !Near(mat.lightRtOpenPBR.coatWeight, 1.0f) ||
+      !Near(mat.lightRtOpenPBR.coatColor[0], 1.0f) ||
+      !Near(mat.lightRtOpenPBR.coatColor[1], 1.0f) ||
+      !Near(mat.lightRtOpenPBR.coatColor[2], 1.0f) ||
+      !Near(mat.lightRtOpenPBR.coatRoughness, 1.0f) ||
+      !Near(mat.lightRtOpenPBR.specularColor[0], 1.0f)) {
     std::fprintf(stderr, "LightRT/OpenPBR texture neutral factors are wrong\n");
     return 1;
   }

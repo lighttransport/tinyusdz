@@ -22,12 +22,15 @@ namespace tusdview {
 // and 7 rows carrying the order-2 SH irradiance (27 floats, coeff-major RGB;
 // the RT surface ambient term).
 constexpr int kRtLightParamFloats = 80;
+constexpr int kMaxRtLinkedLights = 32;
 
 // Pack a DrawLightCPU into the vec4-friendly RT light layout. `mappedEnvmapTexture`
 // is backend-specific: HostScene maps to its compact RT texture table, while
 // raster/RT backends may pass their own texture slot id.
 void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
                        float* dst);
+uint32_t RtLightCollectionMaskForMesh(const std::vector<DrawLightCPU>& lights,
+                                      int meshIndex, bool shadow);
 
 // Live progress for a (possibly background-threaded) scene build. Polled by the
 // UI to show a responsive progress overlay during the multi-second build.
@@ -53,6 +56,8 @@ struct Inst {
   float tint[4];   // per-instance color/opacity
   int blasRoot;    // global node index of this instance's BLAS root
   int instId;      // stable instance id (instance-id AOV)
+  uint32_t directLightMask;
+  uint32_t shadowLightMask;
 };
 
 // Per-volume params (must match `VolParam` in the trace kernel).
@@ -74,6 +79,12 @@ struct HostTextureDesc {
   int wrapT{0};
   int srgb{0};
   int isUdim{0};
+  int isPtex{0};
+  int ptexCols{0};
+  int ptexRows{0};
+  int ptexTileEdge{0};
+  int ptexRectTexelOffset{0};
+  int ptexFaceCount{0};
   int mipCount{1};       // levels including this descriptor's base level
   int firstMip{-1};      // descriptor id of level 1; consecutive thereafter
   int udimLayer[100]{};  // texture descriptor ids for tiles 1001..1100
@@ -121,8 +132,8 @@ struct HostScene {
   // 56 floats/material: vec4-friendly LightRT/OpenPBR constant fallback.
   // See lightrt_mtlx_bridge.hh PackLightRtOpenPBR.
   std::vector<float> matLightRt;
-  // Six semantic slots/material: base, metallic, roughness, normal, emissive,
-  // opacity. Packed ORM inputs may map multiple slots to one texture.
+  // kRtMaterialTexSlots semantic slots/material. Packed inputs may map several
+  // semantics to one texture; see lightrt_mtlx_bridge.hh for the stable order.
   std::vector<int> matTex;
   // UV affine rows, scale/bias vectors and scalar channel selectors. See
   // lightrt_mtlx_bridge.hh PackRtMaterialTextureParams.

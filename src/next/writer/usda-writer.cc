@@ -7,6 +7,7 @@
 #include "value-printer.hh"
 #include "stream-writer.hh"
 #include "dtoa.hh"
+#include "usda-format-utils.hh"
 #include "../crate/lazy-array.hh"
 #include "../strfmt.hh"
 #include "../layer/property-index.hh"
@@ -138,59 +139,6 @@ const char* SpecifierKeyword(PrimSpecifier spec) {
 // per prim/property on the hot path. The cache is thread_local so it stays
 // correct under the parallel subtree stitcher (each worker has its own
 // StreamWriter). Byte-identical to emitting `indent` in a loop for any unit.
-// Render a canonical arc string for usda text. Arc strings are stored as
-// "@asset@</prim>" / "</prim>" (internal) / bare asset path, optionally with
-// the internal layer-offset suffix "?layerOffset=offset:scale" — the suffix
-// must be re-emitted in pxr syntax `(offset = N; scale = M)` (pxr rejects the
-// internal form).
-std::string FormatArcRef(const std::string& arc) {
-  std::string body = arc;
-  std::string suffix;
-  size_t q = body.find("?layerOffset=");
-  if (q != std::string::npos) {
-    const char* c = body.c_str() + q + 13;
-    char* endp = nullptr;
-    double off = std::strtod(c, &endp);
-    double scl = (endp && *endp == ':') ? std::strtod(endp + 1, nullptr) : 1.0;
-    body.resize(q);
-    if (off != 0.0 || scl != 1.0) {
-      suffix = " (";
-      if (off != 0.0) {
-        suffix += "offset = " + dtos(off);
-        if (scl != 1.0) suffix += "; ";
-      }
-      if (scl != 1.0) suffix += "scale = " + dtos(scl);
-      suffix += ")";
-    }
-  }
-  std::string out;
-  if (!body.empty() && body[0] == '<') {
-    out = body;  // internal arc
-  } else if (!body.empty() && body[0] == '@') {
-    // Already-delimited asset form (possibly with a <prim> suffix): if the
-    // asset segment contains an inner '@', re-delimit it triple-@.
-    size_t close = body.find('@', 1);
-    std::string asset =
-        (close != std::string::npos) ? body.substr(1, close - 1) : "";
-    std::string rest =
-        (close != std::string::npos) ? body.substr(close + 1) : "";
-    if (asset.find('@') != std::string::npos || rest.find('@') == 0) {
-      // Conservative re-parse: extract asset by the LAST '@' before any '<'.
-      size_t lt = body.find('<');
-      size_t last_at = (lt == std::string::npos ? body : body.substr(0, lt))
-                           .rfind('@');
-      asset = body.substr(1, last_at - 1);
-      rest = body.substr(last_at + 1);
-      out = FormatAssetPathForUsda(asset) + rest;
-    } else {
-      out = body;
-    }
-  } else {
-    out = FormatAssetPathForUsda(body);
-  }
-  return out + suffix;
-}
-
 void WriteIndent(StreamWriter& os, int depth, const std::string& indent) {
   if (depth <= 0 || indent.empty()) return;
   thread_local std::string pad;    // cached repetition of `unit`
@@ -864,22 +812,74 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
 // contributes only what the inline data lacks.
 void WriteVariantSets(StreamWriter& os,
                       const std::vector<VariantSetData>& sets,
-                      const Layer& layer, const std::string& owner_path,
-                      int depth, const USDAWriteOptions& opts,
+                      const Layer& layer, const std::string& initial_owner_path,
+                      int initial_depth, const USDAWriteOptions& opts,
                       SegmentSink* segsink) {
-  for (const VariantSetData& vs : sets) {
-    // A declaration-only variant set (`prepend variantSets = "v"` with no local
-    // content / options) is emitted only as the `variantSets` declaration, not
-    // as an empty `variantSet "v" = {}` block — matching pxr, which never emits
-    // the empty block.
-    if (vs.variants.empty()) continue;
-    os << "\n";
-    WriteIndent(os, depth, opts.indent);
-    os << "variantSet " << EscapeString(vs.name) << " = {\n";
-    for (const VariantData& var : vs.variants) {
-      const std::string holder_path =
-          owner_path + "/{" + vs.name + "=" + var.name + "}";
-      const PrimSpec* holder = layer.prim_at_path(holder_path);
+  enum class VariantPhase {
+    BeginSet,
+    BeginVariant,
+    AfterInlineNested,
+    AfterHolderNested,
+  };
+  struct VariantFrame {
+    const std::vector<VariantSetData>* sets;
+    size_t owner_path_size;
+    int depth;
+    size_t set_index{0};
+    size_t variant_index{0};
+    VariantPhase phase{VariantPhase::BeginSet};
+    const PrimSpec* holder{nullptr};
+  };
+
+  // Nested variant sets are recursively owned data, but writing them does not
+  // need to consume one C++ stack frame per level. The explicit continuation
+  // phases preserve the exact inline/holder output order of the recursive
+  // implementation. Keep one mutable owner path rather than copying every
+  // ancestor path into every frame (which would retain O(depth^2) bytes).
+  std::string owner_path = initial_owner_path;
+  std::vector<VariantFrame> stack;
+  stack.push_back(VariantFrame{&sets, owner_path.size(), initial_depth});
+  while (!stack.empty()) {
+    VariantFrame& frame = stack.back();
+    if (frame.phase == VariantPhase::BeginSet) {
+      while (frame.set_index < frame.sets->size() &&
+             (*frame.sets)[frame.set_index].variants.empty()) {
+        ++frame.set_index;
+      }
+      if (frame.set_index >= frame.sets->size()) {
+        stack.pop_back();
+        continue;
+      }
+
+      const VariantSetData& vs = (*frame.sets)[frame.set_index];
+      // A declaration-only variant set (`prepend variantSets = "v"` with no
+      // local content / options) is emitted only as the `variantSets`
+      // declaration, not as an empty `variantSet "v" = {}` block — matching
+      // pxr, which never emits the empty block.
+      os << "\n";
+      WriteIndent(os, frame.depth, opts.indent);
+      os << "variantSet " << EscapeString(vs.name) << " = {\n";
+      frame.variant_index = 0;
+      frame.phase = VariantPhase::BeginVariant;
+      continue;
+    }
+
+    const VariantSetData& vs = (*frame.sets)[frame.set_index];
+    if (frame.phase == VariantPhase::BeginVariant) {
+      if (frame.variant_index >= vs.variants.size()) {
+        WriteIndent(os, frame.depth, opts.indent);
+        os << "}\n";
+        ++frame.set_index;
+        frame.phase = VariantPhase::BeginSet;
+        continue;
+      }
+
+      const VariantData& var = vs.variants[frame.variant_index];
+      const int depth = frame.depth;
+      owner_path.resize(frame.owner_path_size);
+      owner_path += "/{" + vs.name + "=" + var.name + "}";
+      frame.holder = layer.prim_at_path(owner_path);
+      const PrimSpec* holder = frame.holder;
 
       WriteIndent(os, depth + 1, opts.indent);
       os << EscapeString(var.name);
@@ -1033,11 +1033,21 @@ void WriteVariantSets(StreamWriter& os,
         os << "\n";
       }
 
-      // Nested variant sets authored on this option.
+      // Nested inline sets run before content/holder contributions. Save the
+      // continuation before pushing because vector growth invalidates `frame`.
+      frame.phase = VariantPhase::AfterInlineNested;
       if (!var.variantSets.empty()) {
-        WriteVariantSets(os, var.variantSets, layer, holder_path, depth + 2,
-                         opts, segsink);
+        stack.push_back(
+            VariantFrame{&var.variantSets, owner_path.size(), depth + 2});
       }
+      continue;
+    }
+
+    const VariantData& var = vs.variants[frame.variant_index];
+    const int depth = frame.depth;
+    const PrimSpec* holder = frame.holder;
+
+    if (frame.phase == VariantPhase::AfterInlineNested) {
 
       // Variant CHILD prims + holder extras. Inline content sub-layer first
       // (USDA representation), then holder contributions not already covered
@@ -1093,11 +1103,21 @@ void WriteVariantSets(StreamWriter& os,
           WriteRelationship(os, rel_name, *targets, *holder,
                             htable.find(rel_name), depth + 2, opts);
         }
-        // Holder-side nested sets (crate representation).
+        // Holder-side nested sets (crate representation) run after the
+        // holder's own properties/relationships and before ordinary children.
+        frame.phase = VariantPhase::AfterHolderNested;
         if (var.variantSets.empty() && !holder->meta().variantSets().empty()) {
-          WriteVariantSets(os, holder->meta().variantSets(), layer,
-                           holder_path, depth + 2, opts, segsink);
+          stack.push_back(VariantFrame{&holder->meta().variantSets(),
+                                       owner_path.size(), depth + 2});
+          continue;
         }
+      }
+      frame.phase = VariantPhase::AfterHolderNested;
+      continue;
+    }
+
+    if (frame.phase == VariantPhase::AfterHolderNested) {
+      if (holder) {
         for (uint32_t ci : holder->child_indices()) {
           const PrimSpec* child = layer.prim(ci);
           if (!child) continue;
@@ -1111,20 +1131,21 @@ void WriteVariantSets(StreamWriter& os,
       }
       WriteIndent(os, depth + 1, opts.indent);
       os << "}\n";
+      owner_path.resize(frame.owner_path_size);
+      frame.holder = nullptr;
+      ++frame.variant_index;
+      frame.phase = VariantPhase::BeginVariant;
+      continue;
     }
-    WriteIndent(os, depth, opts.indent);
-    os << "}\n";
   }
 }
 
-void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
-                   int depth, const USDAWriteOptions& opts,
-                   SegmentSink* segsink) {
-  // Composed-stage output: pxr usdcat --flatten DROPS deactivated prims
-  // (and their subtrees) from the flattened layer entirely. The in-memory
-  // stage keeps them (IsActive stays queryable); only the flatten output
-  // prunes.
-  if (opts.composed_stage_output && !spec.meta().active) return;
+// Write one prim's header and body opinions, but not its ordinary children or
+// closing brace. WritePrimSpec owns hierarchy traversal so API-created deep
+// layers do not consume one C++ stack frame per prim.
+void WritePrimSpecOpen(StreamWriter& os, const PrimSpec& spec,
+                       const Layer& layer, int depth,
+                       const USDAWriteOptions& opts, SegmentSink* segsink) {
   // Write prim definition line
   WriteIndent(os, depth, opts.indent);
   os << SpecifierKeyword(spec.specifier());
@@ -1501,23 +1522,60 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
   WriteVariantSets(os, spec.meta().variantSets(), layer, spec.path().str(),
                    content_depth, opts, segsink);
 
-  // Write children. When `segsink` is active (the parallel build walk), the same
-  // sink propagates so each child's large array values are offloaded too.
-  // Bracketed variant HOLDER prims ("{set=var}", crate representation) are not
-  // real children: their names/selections are emitted via the variantSets
-  // metadata + bodies above, and printing them as defs would be invalid USDA.
-  for (uint32_t child_idx : spec.child_indices()) {
-    const PrimSpec* child = layer.prim(child_idx);
-    if (child) {
-      const std::string& cn = child->name();
-      if (cn.size() >= 2 && cn.front() == '{' && cn.back() == '}') continue;
-      os << "\n";
-      WritePrimSpec(os, *child, layer, content_depth, opts, segsink);
-    }
-  }
+}
 
-  WriteIndent(os, depth, opts.indent);
-  os << "}\n";
+void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
+                   int depth, const USDAWriteOptions& opts,
+                   SegmentSink* segsink) {
+  // Composed-stage output: pxr usdcat --flatten DROPS deactivated prims
+  // (and their subtrees) from the flattened layer entirely. The in-memory
+  // stage keeps them (IsActive stays queryable); only the flatten output
+  // prunes.
+  if (opts.composed_stage_output && !spec.meta().active) return;
+
+  struct Frame {
+    const PrimSpec* prim;
+    int depth;
+    size_t next_child;
+    bool opened;
+  };
+  std::vector<Frame> stack;
+  stack.push_back(Frame{&spec, depth, 0, false});
+
+  while (!stack.empty()) {
+    Frame& frame = stack.back();
+    if (!frame.opened) {
+      WritePrimSpecOpen(os, *frame.prim, layer, frame.depth, opts, segsink);
+      frame.opened = true;
+    }
+
+    // When `segsink` is active (the parallel build walk), the same sink
+    // propagates so each child's large array values are offloaded too.
+    // Bracketed variant HOLDER prims ("{set=var}", crate representation) are
+    // not real children: their selections are emitted through variantSets.
+    bool descended = false;
+    const auto& children = frame.prim->child_indices();
+    while (frame.next_child < children.size()) {
+      const PrimSpec* child = layer.prim(children[frame.next_child++]);
+      if (!child) continue;
+      const std::string& name = child->name();
+      if (name.size() >= 2 && name.front() == '{' && name.back() == '}') {
+        continue;
+      }
+      if (opts.composed_stage_output && !child->meta().active) continue;
+
+      const int child_depth = frame.depth + 1;
+      os << "\n";
+      stack.push_back(Frame{child, child_depth, 0, false});
+      descended = true;
+      break;
+    }
+    if (descended) continue;
+
+    WriteIndent(os, frame.depth, opts.indent);
+    os << "}\n";
+    stack.pop_back();
+  }
 }
 
 void WriteRootPrimOrder(StreamWriter& os, const LayerMeta& meta) {

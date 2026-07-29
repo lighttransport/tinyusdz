@@ -197,6 +197,24 @@ void layer_check_unresolved_refs_test(void) {
     bool has_refs = layer.check_unresolved_references();
     TEST_CHECK(!has_refs);
   }
+
+  // Respect the requested traversal depth.
+  {
+    Layer layer;
+    PrimSpec root(Specifier::Def, "Xform", "Root");
+    PrimSpec child(Specifier::Def, "Xform", "Child");
+
+    Reference ref;
+    ref.asset_path = value::AssetPath("other.usda");
+    std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
+    refs.push_back({ListEditQual::ResetToExplicit, {ref}});
+    child.metas().references = refs;
+    root.children().push_back(child);
+
+    layer.add_primspec("Root", root);
+    TEST_CHECK(!layer.check_unresolved_references(/* max_depth */ 0));
+    TEST_CHECK(layer.check_unresolved_references(/* max_depth */ 1));
+  }
 }
 
 void layer_check_unresolved_payload_test(void) {

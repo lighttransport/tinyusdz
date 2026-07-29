@@ -1589,6 +1589,9 @@ struct RenderCamera {
   float horizontalApertureOffset{0.0f}; // [mm]
   float verticalApertureOffset{0.0f}; // [mm]
   float exposure{0.0f};
+  float focusDistance{5.0f};
+  float fStop{0.0f};
+  std::vector<value::float4> clippingPlanes;
 
   // vertical FOV in radian
   inline float yfov() {

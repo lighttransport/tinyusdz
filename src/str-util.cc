@@ -43,6 +43,17 @@
 
 namespace tinyusdz {
 
+namespace {
+
+void appendHexEscape(unsigned char value, std::string *out) {
+  static constexpr char kHex[] = "0123456789abcdef";
+  *out += "\\x";
+  *out += kHex[(value >> 4) & 0x0f];
+  *out += kHex[value & 0x0f];
+}
+
+}  // namespace
+
 std::string buildEscapedAndQuotedStringForUSDA(const std::string &str) {
   // Rule for triple quote string:
   //
@@ -68,76 +79,82 @@ std::string buildEscapedAndQuotedStringForUSDA(const std::string &str) {
 
   bool has_newline = hasNewline(str);
 
-  std::string s;
+  std::string delim;
+  bool escape_delimiter = false;
 
   if (has_newline) {
     bool has_triple_single_quoted_string = hasTripleQuotes(str, false);
     bool has_triple_double_quoted_string = hasTripleQuotes(str, true);
 
-    std::string delim = "\"\"\"";
+    delim = "\"\"\"";
     if (has_triple_single_quoted_string && has_triple_double_quoted_string) {
-      s = escapeSingleQuote(str, true);
-    } else if (has_triple_single_quoted_string) {
-      s = escapeSingleQuote(str, false);
+      escape_delimiter = true;
     } else if (has_triple_double_quoted_string) {
       delim = "'''";
-      s = str;
-    } else {
-      s = str;
     }
-
-    s = quote(escapeControlSequence(s), delim);
-
   } else {
     // single quote string.
     bool has_single_quote = hasQuotes(str, false);
     bool has_double_quote = hasQuotes(str, true);
 
-    std::string delim = "\"";
+    delim = "\"";
     if (has_single_quote && has_double_quote) {
-      s = escapeSingleQuote(str, true);
-    } else if (has_single_quote) {
-      s = escapeSingleQuote(str, false);
+      escape_delimiter = true;
     } else if (has_double_quote) {
       delim = "'";
-      s = str;
-    } else {
-      s = str;
     }
-
-    s = quote(escapeControlSequence(s), delim);
   }
 
-  return s;
+  // Escape the original text in one pass. Escaping quotes first and then
+  // escaping backslashes cannot distinguish an inserted quote escape from a
+  // literal backslash followed by a quote, and either loses or doubles one of
+  // them on roundtrip.
+  std::string escaped;
+  escaped.reserve(str.size() + 8);
+  for (char c : str) {
+    const unsigned char value = static_cast<unsigned char>(c);
+    if (c == '\\') {
+      escaped += "\\\\";
+    } else if (c == '\t') {
+      escaped += "\\t";
+    } else if (c == '\r') {
+      escaped += "\\r";
+    } else if ((value < 0x20 && c != '\n') || value == 0x7f) {
+      appendHexEscape(value, &escaped);
+    } else if (escape_delimiter && c == delim[0]) {
+      escaped += '\\';
+      escaped += c;
+    } else {
+      escaped += c;
+    }
+  }
+
+  return quote(escaped, delim);
 }
 
 std::string escapeControlSequence(const std::string &str) {
   std::string s;
+  s.reserve(str.size());
 
   for (size_t i = 0; i < str.size(); i++) {
-    if (str[i] == '\a') {
-      s += "\\x07";
-    } else if (str[i] == '\b') {
-      s += "\\x08";
-    } else if (str[i] == '\t') {
+    const char c = str[i];
+    const unsigned char value = static_cast<unsigned char>(c);
+    if (c == '\t') {
       s += "\\t";
-    } else if (str[i] == '\v') {
-      s += "\\x0b";
-    } else if (str[i] == '\f') {
-      s += "\\x0c";
-    } else if (str[i] == '\\') {
-      // skip escaping backshash for escaped quote string: \' \"
-      if (i + 1 < str.size()) {
-        if ((str[i + 1] == '"') || (str[i + 1] == '\'')) {
-          s += str[i];
-        } else {
-          s += "\\\\";
-        }
-      } else {
-        s += "\\\\";
-      }
+    } else if (c == '\n') {
+      s += "\\n";
+    } else if (c == '\r') {
+      s += "\\r";
+    } else if (c == '\\') {
+      // Escape backslash as \\ always; the following quote (if any) will be
+      // handled by its own case below, producing \\\" for a literal \ followed
+      // by ".  The old code emitted just \ (un-escaped) before \", which
+      // silently lost the backslash on roundtrip.
+      s += "\\\\";
+    } else if (value < 0x20 || value == 0x7f) {
+      appendHexEscape(value, &s);
     } else {
-      s += str[i];
+      s += c;
     }
   }
 
