@@ -4872,6 +4872,9 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (slot < 0 || static_cast<size_t>(slot) >= texDescs_.size()) return;
   const size_t index = static_cast<size_t>(slot);
   rtTexturesCpu_[index] = t;
+  // Ray-query textures are packed into a host-built SSBO. A streamed
+  // coarse/full replacement must rebuild that table before the next RT frame.
+  if (rtActive_) tlasDirty_ = true;
   const VkImage oldImg = texSlotImgs_[index];
   const VkDeviceMemory oldMem = texSlotMems_[index];
   const VkImageView oldView = texSlotViews_[index];
@@ -4993,6 +4996,8 @@ void VulkanRenderer::evictTexture(int slot) {
   texUdimArrayImgs_[index] = VK_NULL_HANDLE;
   texUdimArrayMems_[index] = VK_NULL_HANDLE;
   texIsUdim_[index] = 0;
+  if (index < rtTexturesCpu_.size()) rtTexturesCpu_[index] = DrawTextureCPU{};
+  if (rtActive_) tlasDirty_ = true;
   refreshMaterialDescriptors();
 
   if (oldView && oldView != whiteView_)
