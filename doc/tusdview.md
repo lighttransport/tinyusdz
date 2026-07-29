@@ -706,8 +706,11 @@ valid during streaming and eviction.
 Raster demand is camera-driven at mesh granularity. A mesh contributes its
 source-face ids only after its world bounds enter the current view; off-camera
 meshes retain their delta-varint-compressed ids and cause no Ptex decode. A
-later camera move admits newly visible meshes and page decode/upload runs in an
-independent 2 ms frame slice. Vulkan/CUDA/HIP RT captures still request the
+later camera move admits newly visible meshes. Page inflation runs on a
+background worker; completed pages are assigned deterministic LRU slots and
+uploaded on the context thread in an independent 2 ms frame slice. Parsed Ptex
+face/level tables are retained per texture rather than reopened for every page.
+Vulkan/CUDA/HIP RT captures still request the
 complete admitted face set because their ray footprint is not represented by
 the raster visibility mask.
 
@@ -718,7 +721,8 @@ that already fit at requested quality reserve no page-cache memory.
 
 Render reports expose `ptex_requested_meshes`, `ptex_requested_faces`,
 `ptex_gpu_physical_slots`, `ptex_gpu_page_uploads`,
-`ptex_gpu_page_misses`, and `ptex_gpu_page_evictions`. For a small diagnostic
+`ptex_gpu_page_misses`, `ptex_gpu_page_evictions`, and the launched/completed
+asynchronous page-job counts. For a small diagnostic
 scene that would not naturally need paging, set
 `TUSDVIEW_PTEX_FORCE_RESIDENCY=1` together with a constrained (for example,
 64 MiB) `--texture-budget-mb` value to exercise replacement deterministically.

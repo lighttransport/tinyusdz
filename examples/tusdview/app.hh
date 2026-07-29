@@ -309,6 +309,16 @@ class App
                    bool alreadyUploaded = false);  // upload + bind on main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
   bool stepPtexResidency(double deadlineMs);
+  struct PtexDecodeResult {
+    size_t texture{0};
+    uint32_t face{0};
+    light3d::Image page;
+    DrawPtexFaceRectCPU rect;
+    std::string error;
+    bool ok{false};
+  };
+  bool finishPtexDecode(bool wait, bool discard);
+  void clearPtexDecode();
   bool collectPtexRequests(
       const DrawMeshCPU& mesh,
       const std::vector<uint32_t>* sourceFaces = nullptr);
@@ -627,7 +637,11 @@ class App
   // Parsed Ptex metadata is immutable and can be reused for every page. Keeping
   // one reader per texture avoids reparsing large face/level tables for each
   // 2 ms refinement slice.
-  std::vector<std::unique_ptr<tinyusdz::ptx::Reader>> ptexReaders_;
+  std::vector<std::shared_ptr<tinyusdz::ptx::Reader>> ptexReaders_;
+  std::future<PtexDecodeResult> ptexDecodeFuture_;
+  bool ptexDecodeActive_{false};
+  uint64_t ptexAsyncJobsLaunched_{0};
+  uint64_t ptexAsyncJobsCompleted_{0};
   std::vector<std::vector<uint32_t>> ptexRequestedFaces_;
   std::vector<std::unordered_set<uint32_t>> ptexRequestedFaceSets_;
   std::vector<size_t> ptexRequestCursors_;
