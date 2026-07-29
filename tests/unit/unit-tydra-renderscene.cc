@@ -397,6 +397,32 @@ def Xform "World" (
       }
     }
   }
+  def Xform "Inherited" {
+    def Mesh "Mesh" (
+      prepend apiSchemas = ["MaterialBindingAPI"]
+    ) {
+      point3f[] points = [(4,0,0),(5,0,0),(4,1,0)]
+      int[] faceVertexCounts = [3]
+      int[] faceVertexIndices = [0,1,2]
+      rel material:binding = </World/Inherited/Mat>
+    }
+    def Material "Mat" {
+      token outputs:surface.connect = </World/Inherited/Mat/Surface.outputs:surface>
+      def Shader "Surface" {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </World/Inherited/Mat/Texture.outputs:rgb>
+        token outputs:surface
+      }
+      def Shader "Texture" (
+        prepend apiSchemas = ["ColorSpaceAPI"]
+      ) {
+        uniform token colorSpace:name = "lin_ap1_scene"
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @custom.png@
+        float3 outputs:rgb
+      }
+    }
+  }
 }
 )";
 
@@ -419,15 +445,25 @@ def Xform "World" (
   TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
   if (!ok || scene.images.empty()) return;
 
-  // Same asset and token name, but two scoped definitions. Image caching must
-  // retain both resolved transforms rather than aliasing by filename/token.
-  TEST_CHECK(scene.images.size() == 2);
-  if (scene.images.size() != 2) return;
+  // Same asset and token name, but two scoped definitions, plus an ordinary
+  // UsdUVTexture inheriting ColorSpaceAPI. Each effective transform gets its
+  // own cache entry.
+  TEST_CHECK(scene.images.size() == 3);
+  if (scene.images.size() != 3) return;
   const tydra::TextureImage *image_ptr = nullptr;
+  const tydra::TextureImage *inherited_ptr = nullptr;
   for (const tydra::TextureImage &candidate : scene.images) {
     if (candidate.sourceToDisplayLinear[0] > 2.0f) image_ptr = &candidate;
+    if (candidate.sourceColorSpaceName == "lin_ap1_scene") {
+      inherited_ptr = &candidate;
+    }
   }
   TEST_CHECK(image_ptr != nullptr);
+  TEST_CHECK(inherited_ptr != nullptr);
+  if (inherited_ptr) {
+    TEST_CHECK(inherited_ptr->colorTransformValid);
+    TEST_CHECK(!inherited_ptr->colorTransformBypass);
+  }
   if (!image_ptr) return;
   const tydra::TextureImage &image = *image_ptr;
   TEST_CHECK(image.usdColorSpace == tydra::ColorSpace::Custom);
@@ -482,6 +518,7 @@ def Xform "Root" {
         uniform token info:id = "ND_UsdPreviewSurface_surfaceshader"
         color3f inputs:diffuseColor.connect = </Root/Materials/MyMat/NG.outputs:diff_out>
         color3f inputs:emissiveColor.connect = </Root/Materials/MyMat/NG.outputs:emis_out>
+        color3f inputs:specularColor.connect = </Root/Materials/MyMat/NG.outputs:mixed_out>
         float inputs:roughness.connect = </Root/Materials/MyMat/NG.outputs:rough_out>
         float inputs:metallic.connect = </Root/Materials/MyMat/NG.outputs:metal_out>
         float inputs:clearcoat.connect = </Root/Materials/MyMat/NG.outputs:coat_out>
@@ -491,6 +528,7 @@ def Xform "Root" {
       def NodeGraph "NG" {
         color3f outputs:diff_out.connect = </Root/Materials/MyMat/NG/swizzleNode.outputs:out>
         color3f outputs:emis_out.connect = </Root/Materials/MyMat/NG/satNode.outputs:out>
+        color3f outputs:mixed_out.connect = </Root/Materials/MyMat/NG/mixNode.outputs:out>
         float outputs:rough_out.connect = </Root/Materials/MyMat/NG/sepNode.outputs:outg>
         float outputs:metal_out.connect = </Root/Materials/MyMat/NG/smoothNode.outputs:out>
         float outputs:coat_out.connect = </Root/Materials/MyMat/NG/condNode.outputs:out>
@@ -533,6 +571,27 @@ def Xform "Root" {
           uniform token info:id = "ND_saturate_color3"
           color3f inputs:in.connect = </Root/Materials/MyMat/NG/constNode.outputs:out>
           float inputs:amount = 0.0
+          color3f outputs:out
+        }
+        def Shader "encodedColor" {
+          uniform token info:id = "ND_constant_color3"
+          color3f inputs:value = (0.5, 0, 0) (
+            colorSpace = "srgb_rec709_scene"
+          )
+          color3f outputs:out
+        }
+        def Shader "linearColor" {
+          uniform token info:id = "ND_constant_color3"
+          color3f inputs:value = (0, 0.5, 0) (
+            colorSpace = "lin_rec709_scene"
+          )
+          color3f outputs:out
+        }
+        def Shader "mixNode" {
+          uniform token info:id = "ND_mix_color3"
+          color3f inputs:bg.connect = </Root/Materials/MyMat/NG/encodedColor.outputs:out>
+          color3f inputs:fg.connect = </Root/Materials/MyMat/NG/linearColor.outputs:out>
+          float inputs:mix = 0.5
           color3f outputs:out
         }
         def Shader "combine4Node" {
@@ -612,6 +671,13 @@ def Xform "Root" {
   TEST_CHECK(near(s.emissiveColor.value[2], 0.51536f));
   TEST_MSG("saturate emissiveColor = (%f,%f,%f)", s.emissiveColor.value[0],
            s.emissiveColor.value[1], s.emissiveColor.value[2]);
+
+  // Convert each source into the graph's linear Rec.709 space before mixing.
+  TEST_MSG("mixed specularColor = (%f,%f,%f)", s.specularColor.value[0],
+           s.specularColor.value[1], s.specularColor.value[2]);
+  TEST_CHECK(near(s.specularColor.value[0], 0.1070205f));
+  TEST_CHECK(near(s.specularColor.value[1], 0.25f));
+  TEST_CHECK(near(s.specularColor.value[2], 0.0f));
 }
 
 // ---------------------------------------------------------------------------
@@ -881,12 +947,12 @@ def Xform "Root" {
         float outputs:rough_out.connect = </Root/Materials/MyMat/NG/RoughImage.outputs:out>
         def Shader "ColorImage" {
           uniform token info:id = "ND_image_color3"
-          asset inputs:file = @color.png@
+          asset inputs:file = @shared.png@
           color3f outputs:out
         }
         def Shader "RoughImage" {
           uniform token info:id = "ND_image_float"
-          asset inputs:file = @roughness.png@
+          asset inputs:file = @shared.png@
           float outputs:out
         }
         def Shader "ApiImage" (
@@ -894,7 +960,7 @@ def Xform "Root" {
         ) {
           uniform token colorSpace:name = "lin_rec709_scene"
           uniform token info:id = "ND_image_color3"
-          asset inputs:file = @inherited.png@
+          asset inputs:file = @shared.png@
           color3f outputs:out
         }
       }
@@ -942,6 +1008,7 @@ def Xform "Root" {
   TEST_CHECK(s.roughness.texture_id >= 0);
   if (s.diffuseColor.texture_id < 0 || s.emissiveColor.texture_id < 0 ||
       s.roughness.texture_id < 0) return;
+  TEST_CHECK(scene.images.size() == 3);
 
   const auto textureImageFor = [&](int32_t texture_id)
       -> const tydra::TextureImage & {

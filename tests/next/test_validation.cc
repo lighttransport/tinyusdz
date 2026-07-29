@@ -380,6 +380,42 @@ def Material "Mat"
         "unknown UsdPreviewSurface input warns");
 }
 
+static void test_color_space_rules() {
+  std::cout << "[core.schema.ColorSpace*]\n";
+  const std::string usda = R"(#usda 1.0
+def Scope "Alias" (
+    prepend apiSchemas = ["ColorSpaceAPI"]
+)
+{
+    uniform token colorSpace:name = "sRGB"
+}
+def Scope "Definitions" (
+    prepend apiSchemas = ["ColorSpaceDefinitionAPI:bad",
+        "ColorSpaceDefinitionAPI:dupA", "ColorSpaceDefinitionAPI:dupB"]
+)
+{
+    uniform token colorSpaceDefinition:bad:name = "bad"
+    float2 colorSpaceDefinition:bad:redChroma = (0, 0)
+    float2 colorSpaceDefinition:bad:greenChroma = (0, 0)
+    float2 colorSpaceDefinition:bad:blueChroma = (0, 0)
+    float2 colorSpaceDefinition:bad:whitePoint = (0, 0)
+    float colorSpaceDefinition:bad:gamma = 0
+    uniform token colorSpaceDefinition:dupA:name = "duplicated"
+    uniform token colorSpaceDefinition:dupB:name = "duplicated"
+}
+)";
+  USDValidationResult result;
+  CHECK(Validate(usda, ValidationOptions(), &result), "parses");
+  CHECK(CountErrors(result, "core.schema.ColorSpaceAPI.name") == 0,
+        "runtime-supported alias is accepted");
+  CHECK(CountErrors(result,
+                    "core.schema.ColorSpaceDefinitionAPI.invalid") == 1,
+        "invalid chromaticities and curve are rejected");
+  CHECK(CountErrors(result,
+                    "core.schema.ColorSpaceDefinitionAPI.duplicate") == 1,
+        "duplicate resolved definition names are rejected");
+}
+
 static void test_materialx_rules() {
   std::cout << "[shade.materialX.*]\n";
   const std::string usda = R"(#usda 1.0
@@ -800,6 +836,7 @@ int main() {
   test_geom_group_toggle();
   test_geom_primitive_and_subset();
   test_shade_rules();
+  test_color_space_rules();
   test_materialx_rules();
   test_lux_rules();
   test_physics_rules();

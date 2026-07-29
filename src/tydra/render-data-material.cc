@@ -73,6 +73,7 @@ namespace tydra {
 namespace {
 
 using TydraPerfClock = std::chrono::steady_clock;
+constexpr int32_t kWorkingColorValueTextureId = -2;
 
 static uint64_t ElapsedNs(const TydraPerfClock::time_point &start) {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -2191,33 +2192,55 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   }
 #endif  // TINYUSDZ_WITH_TEXTOOLS
 
+  std::string authored_color_space;
+  bool authored_color_space_set = false;
+  const AttrMetas *file_metadata = has_file ? &texture.file.metas() : nullptr;
+  if (!color_management::ComputeColorSpaceName(
+          env.stage, tex_abs_path, file_metadata, &authored_color_space,
+          &authored_color_space_set)) {
+    authored_color_space.clear();
+    authored_color_space_set = false;
+  }
+
+  UsdUVTexture::SourceColorSpace resolved_source_color_space =
+      UsdUVTexture::SourceColorSpace::Auto;
+  std::string source_color_space_error;
+  const bool resolved_source_color_space_valid =
+      authored_color_space_set ||
+      ResolveSourceColorSpace(env.stage, texture.sourceColorSpace, env.timecode,
+                              env.tinterp, &resolved_source_color_space,
+                              &source_color_space_error);
+
   // TextureImage and BufferData
   {
     // Check image cache first - if the same asset path was already loaded,
     // reuse the existing image to avoid redundant I/O and memory usage
-    std::string cacheKey = assetPath.GetAssetPath();
-    if (has_file && texture.file.metas().has_colorSpace()) {
-      const value::token token = texture.file.metas().get_colorSpace();
-      ColorSpace builtin_space;
-      if (!InferColorSpace(token, &builtin_space)) {
-        tinyusdz::color::ColorTransform custom_transform;
-        std::string transform_error;
-        if (color_management::BuildColorTransform(
-                env.stage, tex_abs_path, token.str(), "lin_rec709_scene",
-                &custom_transform, &transform_error)) {
-          cacheKey += "|custom:" + tex_abs_path.prim_part() + ":" +
-                      token.str() + ":" +
-                      std::to_string(custom_transform.source.gamma) + ":" +
-                      std::to_string(custom_transform.source.linear_bias);
-          for (float coefficient : custom_transform.matrix) {
-            cacheKey += ":" + std::to_string(coefficient);
-          }
+    std::string cacheKey = env.asset_resolver.resolve(assetPath.GetAssetPath());
+    if (cacheKey.empty()) cacheKey = assetPath.GetAssetPath();
+    if (authored_color_space_set) {
+      tinyusdz::color::ColorTransform transform;
+      std::string transform_error;
+      if (color_management::BuildColorTransform(
+              env.stage, tex_abs_path, authored_color_space,
+              "lin_rec709_scene", &transform, &transform_error)) {
+        cacheKey += "|source:" +
+                    tinyusdz::color::CanonicalizeToken(authored_color_space) +
+                    ":" + std::to_string(transform.source.gamma) + ":" +
+                    std::to_string(transform.source.linear_bias);
+        for (float coefficient : transform.matrix) {
+          cacheKey += ":" + std::to_string(coefficient);
         }
+      } else {
+        cacheKey += "|invalid-source:" + authored_color_space + ":" +
+                    tex_abs_path.prim_part();
       }
+    } else if (resolved_source_color_space_valid) {
+      cacheKey += "|source:" +
+                  to_string(resolved_source_color_space);
     }
 
     // UDIM texture (e.g. `diffuse.<UDIM>.png`)?
-    const bool is_udim = io::IsUDIMPath(cacheKey);
+    const bool is_udim = io::IsUDIMPath(assetPath.GetAssetPath());
     const bool udim_keep_as_is =
         is_udim && !env.material_config.combine_udim_tiles;
 
@@ -2240,18 +2263,19 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       // and record a sparse `tydra::UDIMTexture` for web editing.
       std::vector<UDIMTile> tiles;
       std::string udim_warn, udim_err;
-      if (!ExpandUDIMTiles(cacheKey, env.asset_resolver,
+      if (!ExpandUDIMTiles(assetPath.GetAssetPath(), env.asset_resolver,
                            env.material_config.udim_max_tiles, &tiles,
                            &udim_warn, &udim_err)) {
         if (udim_warn.size()) PushWarn(udim_warn);
         if (!env.material_config.allow_texture_load_failure &&
             !env.material_config.allow_missing_asset) {
           PUSH_ERROR_AND_RETURN(fmt::format(
-              "Failed to expand UDIM tiles for `{}`: {}", cacheKey, udim_err));
+              "Failed to expand UDIM tiles for `{}`: {}",
+              assetPath.GetAssetPath(), udim_err));
         }
         PUSH_WARN(fmt::format(
             "Failed to expand UDIM tiles for `{}`. Skip. reason = {}",
-            cacheKey, udim_err));
+            assetPath.GetAssetPath(), udim_err));
       } else {
         if (udim_warn.size()) PushWarn(udim_warn);
 
@@ -2262,7 +2286,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         }
 
         UDIMTexture udim;
-        udim.asset_identifier = cacheKey;
+        udim.asset_identifier = assetPath.GetAssetPath();
         udim.prim_name = tex_abs_path.element_name();
         udim.abs_path = tex_abs_path.prim_part();
 
@@ -2480,12 +2504,13 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
     bool sourceColorSpaceSet = false;
     bool inferColorSpaceFailed = false;
-    if (has_file && texture.file.metas().has_colorSpace()) {
+    if (authored_color_space_set) {
       ColorSpace cs;
-      value::token cs_token = texture.file.metas().get_colorSpace();
+      value::token cs_token(authored_color_space);
       if (InferColorSpace(cs_token, &cs)) {
         texImage.usdColorSpace = cs;
         (void)storeColorTransform(cs_token.str());
+        sourceColorSpaceSet = true;
         DCOUT("Inferred colorSpace: " << to_string(cs));
       } else if (storeColorTransform(cs_token.str())) {
         texImage.usdColorSpace = tydra::ColorSpace::Custom;
@@ -2496,17 +2521,14 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       }
     }
 
-    if (inferColorSpaceFailed || !has_file || !texture.file.metas().has_colorSpace()) {
+    if (!authored_color_space_set) {
       // NOTE: Apply `inputs:sourceColorSpace` resolution even when the
       // attribute is not authored: its fallback value is `auto`
       // (UsdPreviewSurface spec), which must resolve from the texture's
       // bit depth/channel count instead of assuming sRGB.
       {
-        UsdUVTexture::SourceColorSpace cs;
-        std::string source_color_space_err;
-        if (ResolveSourceColorSpace(env.stage, texture.sourceColorSpace,
-                                    env.timecode, env.tinterp, &cs,
-                                    &source_color_space_err)) {
+        const UsdUVTexture::SourceColorSpace cs = resolved_source_color_space;
+        if (resolved_source_color_space_valid) {
           if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
             sourceColorSpaceSet = true;
@@ -2528,27 +2550,30 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                 ((texImage.channels == 3) || (texImage.channels ==4))) {
                 texImage.usdColorSpace = tydra::ColorSpace::sRGB;
                 sourceColorSpaceSet = true;
+                (void)storeColorTransform("sRGB");
               } else {
                 // For auto mode, non-8bit RGB(A) textures should be used as
                 // read rather than warned about as ambiguous sRGB candidates.
                 texImage.usdColorSpace = tydra::ColorSpace::Raw;
                 sourceColorSpaceSet = true;
+                (void)storeColorTransform("raw");
               }
             } else {
               texImage.usdColorSpace = tydra::ColorSpace::Unknown;
               sourceColorSpaceSet = true;
             }
           }
-        } else if (!source_color_space_err.empty()) {
+        } else if (!source_color_space_error.empty()) {
           PUSH_WARN(fmt::format(
               "Failed to resolve `inputs:sourceColorSpace`: {}",
-              source_color_space_err));
+              source_color_space_error));
         }
       }
     }
 
-    if (!sourceColorSpaceSet && inferColorSpaceFailed && has_file) {
-      value::token cs_token = texture.file.metas().get_colorSpace();
+    if (!sourceColorSpaceSet && inferColorSpaceFailed &&
+        authored_color_space_set) {
+      value::token cs_token(authored_color_space);
       PUSH_ERROR_AND_RETURN(
           fmt::format("Invalid or unknown colorSpace metadataum: {}. Please "
                       "report an issue to TinyUSDZ github repo.",
@@ -3291,6 +3316,13 @@ static bool TransformShaderColorConstant(
     const std::string &working_color_space, bool is_materialx,
     ShaderParam<vec3> *parameter, std::string *error) {
   if (!parameter || parameter->is_texture()) return true;
+  // -2 is an internal handoff marker used only between MaterialX constant
+  // folding and this post-conversion pass. Restore the public invalid-texture
+  // sentinel after avoiding a second color transform.
+  if (parameter->texture_id == kWorkingColorValueTextureId) {
+    parameter->texture_id = -1;
+    return true;
+  }
   Path source_prim_path = shader_abs_path;
   AttrMetas source_metadata = metadata;
   if (connection) {
@@ -3598,8 +3630,12 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
         } else {
           // No texture found — try evaluating the node graph as a constant
           // value (e.g., ND_add_float or ND_multiply_color3 with constant inputs).
-          auto const_result =
-              EvaluateMtlxNodeGraphAsConstant(env.stage, conn_path);
+          std::string evaluation_space = "lin_rec709_scene";
+          (void)MaterialXConfiguredColorSpace(env.stage, shader_abs_path,
+                                               &evaluation_space);
+          std::string mtlx_const_err;
+          auto const_result = EvaluateMtlxNodeGraphAsConstant(
+              env.stage, conn_path, evaluation_space);
           if (const_result) {
             DCOUT(fmt::format("MaterialX constant evaluation {}.{} components={}",
                               shader_abs_path.prim_part(), param_name,
@@ -3609,7 +3645,31 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
               memcpy(&dst_param.value, &v, sizeof(float));
               return true;
             }
-            if (std::is_same<T, value::color3f>::value && const_result->is_color3()) {
+            if (std::is_same<T, value::color3f>::value &&
+                const_result->is_color3() && const_result->color_managed) {
+              value::color3f c;
+              c[0] = const_result->v[0];
+              c[1] = const_result->v[1];
+              c[2] = const_result->v[2];
+              color::ColorTransform transform;
+              std::string transform_error;
+              if (!color_management::BuildColorTransform(
+                      env.stage, shader_abs_path, evaluation_space,
+                      _working_color_space, &transform, &transform_error)) {
+                mtlx_const_err = transform_error;
+              } else {
+                float rgb[3] = {c[0], c[1], c[2]};
+                color::TransformRGB(transform, rgb);
+                c[0] = rgb[0];
+                c[1] = rgb[1];
+                c[2] = rgb[2];
+                memcpy(&dst_param.value, &c, sizeof(value::color3f));
+                dst_param.texture_id = kWorkingColorValueTextureId;
+                return true;
+              }
+            }
+            if (std::is_same<T, value::color3f>::value &&
+                const_result->is_color3()) {
               value::color3f c;
               c[0] = const_result->v[0];
               c[1] = const_result->v[1];
@@ -3622,8 +3682,21 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
               float f = const_result->as_float();
               value::color3f c;
               c[0] = f; c[1] = f; c[2] = f;
-              memcpy(&dst_param.value, &c, sizeof(value::color3f));
-              return true;
+              color::ColorTransform transform;
+              std::string transform_error;
+              if (color_management::BuildColorTransform(
+                      env.stage, shader_abs_path, evaluation_space,
+                      _working_color_space, &transform, &transform_error)) {
+                float rgb[3] = {c[0], c[1], c[2]};
+                color::TransformRGB(transform, rgb);
+                c[0] = rgb[0];
+                c[1] = rgb[1];
+                c[2] = rgb[2];
+                memcpy(&dst_param.value, &c, sizeof(value::color3f));
+                dst_param.texture_id = kWorkingColorValueTextureId;
+                return true;
+              }
+              mtlx_const_err = transform_error;
             }
             // Color3 result used for float (take first component)
             if (std::is_same<T, float>::value && const_result->is_color3()) {
@@ -3635,8 +3708,9 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           // Capture the constant-evaluator's diagnostic (e.g. "Unsupported node
           // type ...") so it can be surfaced in the fallback warning below;
           // otherwise it is lost (it only reached DCOUT before).
-          const std::string mtlx_const_err =
-              const_result ? std::string() : const_result.error();
+          if (!const_result && mtlx_const_err.empty()) {
+            mtlx_const_err = const_result.error();
+          }
           // Interface passthrough: the connection may target a Material /
           // Shader / NodeGraph interface input that holds a constant value
           // (e.g. `Material.inputs:metalness = 1`, common in flattened

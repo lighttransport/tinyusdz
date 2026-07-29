@@ -506,6 +506,22 @@ await test('next textures preserve authored USD wrap modes', () => {
     { wrapS: 'repeat', wrapT: 'black' });
   assert.equal(manager.total, 2,
     'one image with different authored samplers must not share a texture object');
+
+  const scopedTransforms = new NextTextureLoadingManager();
+  const firstTransform = {
+    canonical: 'studio', bypass: false, gamma: 1, linearBias: 0,
+    matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  };
+  const secondTransform = {
+    canonical: 'studio', bypass: false, gamma: 2.2, linearBias: 0,
+    matrix: [0.9, 0.1, 0, 0, 1, 0, 0, 0, 1]
+  };
+  scopedTransforms.queueTexture({}, 'map', {}, 'shared.png', 'data', null,
+    null, firstTransform);
+  scopedTransforms.queueTexture({}, 'map', {}, 'shared.png', 'data', null,
+    null, secondTransform);
+  assert.equal(scopedTransforms.total, 2,
+    'scoped definitions with the same name but different transforms must not deduplicate');
 });
 
 await test('next material subsets compact alternating faces into bounded draw groups', () => {
