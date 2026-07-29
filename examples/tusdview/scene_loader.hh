@@ -48,6 +48,10 @@ struct LoadOptions {
   // Number of Ptex faces to materialize in the startup fallback atlas. Zero
   // preserves eager construction; remaining faces are populated on demand.
   uint32_t ptexInitialFaces{0};
+  // Fixed physical page-cache bytes reserved per Ptex texture. Zero selects
+  // the ordinary 32 MiB default; large-scene profiles can choose a smaller
+  // first-preview residency without changing generic fidelity.
+  size_t ptexPhysicalCacheBytes{0};
   // Samples per cubic/NURBS curve span. Linear curves are unchanged. Large
   // scene preview profiles may lower this while ordinary loads keep 8.
   uint32_t curveTessellationSegments{8};

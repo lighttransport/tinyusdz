@@ -55,7 +55,8 @@ struct InstInfo {
   vec4 tint;         // per-instance color/opacity or flatColor/flatOpacity
 };
 
-layout(set = 0, binding = 0) uniform accelerationStructureEXT TLAS;
+#define MAX_TLAS_CHUNKS 4u
+layout(set = 0, binding = 0) uniform accelerationStructureEXT TLAS[MAX_TLAS_CHUNKS];
 layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outImg;
 layout(set = 0, binding = 2, scalar) readonly buffer Meshes { MeshDesc meshes[]; };
 // 3 vec4 per material: [0]=baseColor.rgb + alpha,
@@ -107,9 +108,17 @@ layout(push_constant) uniform PC {
   vec4 lightDir;     // xyz = unit direction *towards* the light, w = depthScale
   vec4 clearColor;   // rgb background for ray misses, w = exposure stops
   vec4 sceneMin;     // xyz = position AOV bbox min, w = accumulated sample index
-  vec4 sceneExtent;  // xyz = position AOV bbox size, w = accumulate enable (>0.5)
-  vec4 lens;         // focus distance, aperture radius, enabled, reserved
+  vec4 sceneExtent;  // xyz bbox; abs(w)=TLAS chunks, positive=accumulation enabled
+  vec4 lens;         // focus distance, aperture radius, enabled, TLAS chunk stride
 } pc;
+
+uint globalInstanceId(uint chunk, int localId) {
+  // Every non-final TLAS contains exactly the device's advertised maximum
+  // instance count. That limit (<= 2^24-1) is exactly representable as float.
+  return chunk * uint(pc.lens.w) + uint(localId);
+}
+
+uint tlasChunkCount() { return uint(abs(pc.sceneExtent.w) + 0.5); }
 
 // Radical-inverse (Halton) low-discrepancy sequence for sub-pixel jitter.
 float halton(uint i, uint b) {
@@ -500,24 +509,48 @@ void main() {
                                           : pc.clearColor.rgb;
   vec3 outc = bgc;
 
-  rayQueryEXT rq;
-  rayQueryInitializeEXT(rq, TLAS, 0u, 0xFF, origin, 1e-3, dir, 1e30);
-  while (rayQueryProceedEXT(rq)) {
-    if (rayQueryGetIntersectionTypeEXT(rq, false) ==
-        gl_RayQueryCandidateIntersectionTriangleEXT) {
-      uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(rq, false));
-      int cp = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
-      vec2 cb = rayQueryGetIntersectionBarycentricsEXT(rq, false);
-      bool cf = rayQueryGetIntersectionFrontFaceEXT(rq, false);
-      if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(rq);
+  bool primaryHit = false;
+  uint primaryIid = 0u;
+  int primaryPrim = 0;
+  vec2 primaryBc = vec2(0.0);
+  bool primaryFront = true;
+  float primaryT = 1e30;
+  mat4x3 primaryO2w;
+  for (uint ti = 0u; ti < tlasChunkCount(); ++ti) {
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, TLAS[ti], 0u, 0xFF, origin, 1e-3, dir,
+                          primaryT);
+    while (rayQueryProceedEXT(rq)) {
+      if (rayQueryGetIntersectionTypeEXT(rq, false) ==
+          gl_RayQueryCandidateIntersectionTriangleEXT) {
+        uint ci = globalInstanceId(
+            ti, rayQueryGetIntersectionInstanceIdEXT(rq, false));
+        int cp = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
+        vec2 cb = rayQueryGetIntersectionBarycentricsEXT(rq, false);
+        bool cf = rayQueryGetIntersectionFrontFaceEXT(rq, false);
+        if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(rq);
+      }
+    }
+    if (rayQueryGetIntersectionTypeEXT(rq, true) ==
+        gl_RayQueryCommittedIntersectionTriangleEXT) {
+      float candidateT = rayQueryGetIntersectionTEXT(rq, true);
+      if (candidateT < primaryT) {
+        primaryHit = true;
+        primaryT = candidateT;
+        primaryIid = globalInstanceId(
+            ti, rayQueryGetIntersectionInstanceIdEXT(rq, true));
+        primaryPrim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
+        primaryBc = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+        primaryFront = rayQueryGetIntersectionFrontFaceEXT(rq, true);
+        primaryO2w = rayQueryGetIntersectionObjectToWorldEXT(rq, true);
+      }
     }
   }
 
   // Dome env background on miss (shaded mode only): sample the baked env cube
   // scaled by the dome's effectiveColor.
   if (int(pc.camPos.w + 0.5) == 0 &&
-      rayQueryGetIntersectionTypeEXT(rq, true) !=
-          gl_RayQueryCommittedIntersectionTriangleEXT) {
+      !primaryHit) {
     uint numL = uint(lightRows.length()) / RT_LIGHT_ROWS;
     for (uint li = 0u; li < numL; ++li) {
       vec4 l0 = light(li, 0u);  // .x type, .y flags, .z mapped envmap tex
@@ -534,18 +567,17 @@ void main() {
     }
   }
 
-  if (rayQueryGetIntersectionTypeEXT(rq, true) ==
-      gl_RayQueryCommittedIntersectionTriangleEXT) {
-    uint iid = uint(rayQueryGetIntersectionInstanceIdEXT(rq, true));  // TLAS instance index
-    int prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
-    vec2 bc = rayQueryGetIntersectionBarycentricsEXT(rq, true);
-    float t = rayQueryGetIntersectionTEXT(rq, true);
+  if (primaryHit) {
+    uint iid = primaryIid;
+    int prim = primaryPrim;
+    vec2 bc = primaryBc;
+    float t = primaryT;
     vec3 hit = origin + dir * t;
 
     InstInfo ii = insts[iid];
     MeshDesc md = meshes[ii.meshId];
     uint mid = selectedMaterial(
-        md, prim, rayQueryGetIntersectionFrontFaceEXT(rq, true));
+        md, prim, primaryFront);
     Verts vb = Verts(md.vtxAddr);
     Idx ib = Idx(md.idxAddr);
     uint i0 = ib.i[prim * 3u + 0u];
@@ -563,7 +595,7 @@ void main() {
 
     // Object->world for this instance (instance transform for instanced meshes,
     // the mesh's world for non-instanced).
-    mat4x3 o2w = rayQueryGetIntersectionObjectToWorldEXT(rq, true);
+    mat4x3 o2w = primaryO2w;
     vec3 wp0 = o2w * vec4(fetchPos(vb, i0), 1.0);
     vec3 wp1 = o2w * vec4(fetchPos(vb, i1), 1.0);
     vec3 wp2 = o2w * vec4(fetchPos(vb, i2), 1.0);
@@ -935,26 +967,32 @@ void main() {
       if (nl <= 0.0 || shape <= 0.0) continue;
       float shadow = 1.0;
       if (rmode == 0 && (flags & 2) != 0) {
-        rayQueryEXT sq;
-        rayQueryInitializeEXT(sq, TLAS, gl_RayFlagsTerminateOnFirstHitEXT,
-                              0xFF, hit + N * 1e-3, 1e-3, L,
-                              max(maxShadowT - 2e-3, 1e-3));
-        while (rayQueryProceedEXT(sq)) {
-          if (rayQueryGetIntersectionTypeEXT(sq, false) ==
-              gl_RayQueryCandidateIntersectionTriangleEXT) {
-            uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(sq, false));
-            int cp = rayQueryGetIntersectionPrimitiveIndexEXT(sq, false);
-            vec2 cb = rayQueryGetIntersectionBarycentricsEXT(sq, false);
-            bool cf = rayQueryGetIntersectionFrontFaceEXT(sq, false);
-            bool linked = li < 32u
-                ? (insts[ci].shadowLightMask & (1u << li)) != 0u
-                : (flags & (1 << 6)) != 0;
-            if (linked && materialAllowsHit(ci, cp, cb, cf))
-              rayQueryConfirmIntersectionEXT(sq);
+        bool shadowHit = false;
+        for (uint ti = 0u; ti < tlasChunkCount() && !shadowHit; ++ti) {
+          rayQueryEXT sq;
+          rayQueryInitializeEXT(sq, TLAS[ti],
+                                gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
+                                hit + N * 1e-3, 1e-3, L,
+                                max(maxShadowT - 2e-3, 1e-3));
+          while (rayQueryProceedEXT(sq)) {
+            if (rayQueryGetIntersectionTypeEXT(sq, false) ==
+                gl_RayQueryCandidateIntersectionTriangleEXT) {
+              uint ci = globalInstanceId(
+                  ti, rayQueryGetIntersectionInstanceIdEXT(sq, false));
+              int cp = rayQueryGetIntersectionPrimitiveIndexEXT(sq, false);
+              vec2 cb = rayQueryGetIntersectionBarycentricsEXT(sq, false);
+              bool cf = rayQueryGetIntersectionFrontFaceEXT(sq, false);
+              bool linked = li < 32u
+                  ? (insts[ci].shadowLightMask & (1u << li)) != 0u
+                  : (flags & (1 << 6)) != 0;
+              if (linked && materialAllowsHit(ci, cp, cb, cf))
+                rayQueryConfirmIntersectionEXT(sq);
+            }
           }
+          shadowHit = rayQueryGetIntersectionTypeEXT(sq, true) !=
+                      gl_RayQueryCommittedIntersectionNoneEXT;
         }
-        if (rayQueryGetIntersectionTypeEXT(sq, true) !=
-            gl_RayQueryCommittedIntersectionNoneEXT) shadow = 0.0;
+        if (shadowHit) shadow = 0.0;
       }
       vec3 H = normalize(L + V);
       float nh = max(dot(N, H), 0.0);
@@ -1205,22 +1243,29 @@ void main() {
       float occ = 0.0;
       for (int s = 0; s < NS; ++s) {
         vec3 sd = cosHemi(Ng, rnd(seed), rnd(seed));
-        rayQueryEXT aq;
-        rayQueryInitializeEXT(aq, TLAS,
-                              gl_RayFlagsTerminateOnFirstHitEXT,
-                              0xFF, hit + Ng * (aoRadius * 1e-2), 1e-4, sd, aoRadius);
-        while (rayQueryProceedEXT(aq)) {
-          if (rayQueryGetIntersectionTypeEXT(aq, false) ==
-              gl_RayQueryCandidateIntersectionTriangleEXT) {
-            uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(aq, false));
-            int cp = rayQueryGetIntersectionPrimitiveIndexEXT(aq, false);
-            vec2 cb = rayQueryGetIntersectionBarycentricsEXT(aq, false);
-            bool cf = rayQueryGetIntersectionFrontFaceEXT(aq, false);
-            if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(aq);
+        bool aoHit = false;
+        for (uint ti = 0u; ti < tlasChunkCount() && !aoHit; ++ti) {
+          rayQueryEXT aq;
+          rayQueryInitializeEXT(aq, TLAS[ti],
+                                gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
+                                hit + Ng * (aoRadius * 1e-2), 1e-4, sd,
+                                aoRadius);
+          while (rayQueryProceedEXT(aq)) {
+            if (rayQueryGetIntersectionTypeEXT(aq, false) ==
+                gl_RayQueryCandidateIntersectionTriangleEXT) {
+              uint ci = globalInstanceId(
+                  ti, rayQueryGetIntersectionInstanceIdEXT(aq, false));
+              int cp = rayQueryGetIntersectionPrimitiveIndexEXT(aq, false);
+              vec2 cb = rayQueryGetIntersectionBarycentricsEXT(aq, false);
+              bool cf = rayQueryGetIntersectionFrontFaceEXT(aq, false);
+              if (materialAllowsHit(ci, cp, cb, cf))
+                rayQueryConfirmIntersectionEXT(aq);
+            }
           }
+          aoHit = rayQueryGetIntersectionTypeEXT(aq, true) !=
+                  gl_RayQueryCommittedIntersectionNoneEXT;
         }
-        if (rayQueryGetIntersectionTypeEXT(aq, true) !=
-            gl_RayQueryCommittedIntersectionNoneEXT) occ += 1.0;
+        if (aoHit) occ += 1.0;
       }
       outc = vec3(1.0 - occ / float(NS));
     } else if (rmode == 28) {  // soft shadow / sky visibility toward the light
@@ -1232,22 +1277,28 @@ void main() {
       for (int s = 0; s < NS; ++s) {
         float a = rnd(seed) * 6.2831853, rr = sqrt(rnd(seed)) * coneR;
         vec3 sd = normalize(Lc + tt * (rr * cos(a)) + bb * (rr * sin(a)));
-        rayQueryEXT sq;
-        rayQueryInitializeEXT(sq, TLAS,
-                              gl_RayFlagsTerminateOnFirstHitEXT,
-                              0xFF, hit + N * 1e-3, 1e-3, sd, 1e30);
-        while (rayQueryProceedEXT(sq)) {
-          if (rayQueryGetIntersectionTypeEXT(sq, false) ==
-              gl_RayQueryCandidateIntersectionTriangleEXT) {
-            uint ci = uint(rayQueryGetIntersectionInstanceIdEXT(sq, false));
-            int cp = rayQueryGetIntersectionPrimitiveIndexEXT(sq, false);
-            vec2 cb = rayQueryGetIntersectionBarycentricsEXT(sq, false);
-            bool cf = rayQueryGetIntersectionFrontFaceEXT(sq, false);
-            if (materialAllowsHit(ci, cp, cb, cf)) rayQueryConfirmIntersectionEXT(sq);
+        bool softShadowHit = false;
+        for (uint ti = 0u; ti < tlasChunkCount() && !softShadowHit; ++ti) {
+          rayQueryEXT sq;
+          rayQueryInitializeEXT(sq, TLAS[ti],
+                                gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
+                                hit + N * 1e-3, 1e-3, sd, 1e30);
+          while (rayQueryProceedEXT(sq)) {
+            if (rayQueryGetIntersectionTypeEXT(sq, false) ==
+                gl_RayQueryCandidateIntersectionTriangleEXT) {
+              uint ci = globalInstanceId(
+                  ti, rayQueryGetIntersectionInstanceIdEXT(sq, false));
+              int cp = rayQueryGetIntersectionPrimitiveIndexEXT(sq, false);
+              vec2 cb = rayQueryGetIntersectionBarycentricsEXT(sq, false);
+              bool cf = rayQueryGetIntersectionFrontFaceEXT(sq, false);
+              if (materialAllowsHit(ci, cp, cb, cf))
+                rayQueryConfirmIntersectionEXT(sq);
+            }
           }
+          softShadowHit = rayQueryGetIntersectionTypeEXT(sq, true) !=
+                          gl_RayQueryCommittedIntersectionNoneEXT;
         }
-        if (rayQueryGetIntersectionTypeEXT(sq, true) ==
-            gl_RayQueryCommittedIntersectionNoneEXT) vis += 1.0;
+        if (!softShadowHit) vis += 1.0;
       }
       outc = vec3(vis / float(NS));
     }

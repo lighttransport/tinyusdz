@@ -2481,6 +2481,28 @@ if(TINYUSDZ_BUILD_TESTS)
                          LABELS "tusdview;external;island")
 
     add_test(
+      NAME tusdview-progressive-checkpoints
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-progressive-checkpoints.sh"
+      )
+    set_tests_properties(tusdview-progressive-checkpoints PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 150 LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-vk-multitlas
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-multitlas.sh"
+      )
+    set_tests_properties(tusdview-vk-multitlas PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "tusdview")
+
+    add_test(
       NAME tusdview-vk-render
       COMMAND ${CMAKE_COMMAND} -E env
               "TUSDVIEW=$<TARGET_FILE:tusdview>"

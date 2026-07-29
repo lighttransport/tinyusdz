@@ -300,6 +300,20 @@ test scene: mean |diff| 0.16/255, 0.06% of channels >32/255).
 ./build_ninja/tusdview --headless --frames 8 --screenshot out.png model.usdz
 ./build_ninja/tusdview --headless --rt --frames 8 --screenshot rt.png model.usdz
 
+Vulkan ray-query splits scenes larger than the device's per-TLAS instance limit
+into as many as four TLAS chunks (about 67 million instances on common NVIDIA
+drivers). Primary, alpha, linked-shadow, AO, and soft-shadow rays traverse every
+chunk while preserving the global instance ID. It refuses a partial RT render if
+the four-chunk capacity is exceeded; use explicit `--rt-lod` for a degraded
+preview instead.
+
+# Save deterministic intermediate convergence images at frames 4, 8, ... .
+# The same controls work for raster and Vulkan ray-query; {frame} expands to a
+# zero-padded fixed-frame index and the JSON report records count/sample state.
+./build_ninja/tusdview --headless --rt --frames 16 \
+  --checkpoint-every 4 --checkpoint-pattern 'checkpoints/shot-{frame}.png' \
+  --screenshot shot-final.png --render-report shot.json model.usdz
+
 # Large-scene realtime presets: resolve Vulkan/LOD/budget flags and render a
 # deferred-payload overview first. Payload roots with authored extents use them;
 # otherwise compact marker boxes preserve the composed spatial distribution.

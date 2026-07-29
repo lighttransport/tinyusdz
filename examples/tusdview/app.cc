@@ -574,8 +574,19 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"gpu_memory_available", haveGpuMemory},
       {"gpu_used_mib", gpuUsed},
       {"gpu_total_mib", gpuTotal}};
+  const uint32_t vkAccumulatedSamples =
+      renderer_ ? renderer_->rayTracingAccumulatedSamples() : 0u;
+  const bool rtBuildIncomplete =
+      renderer_ && renderer_->rayTracingBuildIncomplete();
   report["render"] = {
-      {"samples", rtSamples_},
+      {"samples", vkAccumulatedSamples > 0 ? vkAccumulatedSamples
+                                           : static_cast<uint32_t>(rtSamples_)},
+      {"rt_initialization_ms",
+       renderer_ ? renderer_->rayTracingInitializationMs() : 0.0},
+      {"tlas_chunks", renderer_ ? renderer_->rayTracingTlasChunks() : 0u},
+      {"rt_input_instances",
+       renderer_ ? renderer_->rayTracingInputInstances() : 0u},
+      {"rt_build_incomplete", rtBuildIncomplete},
       {"upload_budget_ms", uploadBudgetMs_},
       {"raster_lod", rasterLodEnabled_},
       {"rt_lod", rtLodEnabled_},
@@ -586,11 +597,14 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
       {"lod_proxy_instances", renderStats.proxyInstances},
       {"drawn_triangles", renderStats.drawnTriangles},
       {"draw_calls", renderStats.drawCalls},
+      {"checkpoint_every", checkpointEvery_},
+      {"checkpoint_count", checkpointCount_},
+      {"checkpoint_pattern", checkpointPattern_},
       {"elapsed_seconds",
        std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                      runStart_)
            .count()},
-      {"truncated", draw_.truncated}};
+      {"truncated", draw_.truncated || rtBuildIncomplete}};
   report["limits"] = {
       {"gpu_memory_budget_bytes", gpuMemBudgetBytes_},
       {"max_full_meshes", maxFullMeshes_},
@@ -599,6 +613,11 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
   if (draw_.truncated) {
     degradationReasons.push_back(
         "scene truncated or proxied by configured render budgets");
+  }
+  if (rtBuildIncomplete) {
+    degradationReasons.push_back(
+        "Vulkan RT acceleration structure build incomplete; no partial TLAS "
+        "render was accepted");
   }
   if (ptexDownsampledFaces > 0) {
     degradationReasons.push_back(
@@ -3671,6 +3690,7 @@ void App::applyNavCommand(const StreamNav& c) {
 int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
   runStart_ = std::chrono::steady_clock::now();
+  checkpointCount_ = 0;
   auto finishRun = [&](int code) {
     writeRenderReport(initialFile, code);
     return code;
@@ -3702,6 +3722,36 @@ int App::run(const std::string& initialFile, int maxFrames,
   // single-threaded so the capture/encode happen on the context-owning thread.
   if (streamHttpPort_ > 0) renderThreadActive_ = false;
 #endif
+  if (checkpointEvery_ > 0) {
+    if (maxFrames < 1) {
+      LOGE("--checkpoint-every requires --frames N with N >= 1");
+      return finishRun(1);
+    }
+    if (cudaRt_ || hipRt_) {
+      LOGE("--checkpoint-every currently supports raster and Vulkan RT; "
+           "CUDA/HIP use --rt-samples for a single deterministic output");
+      return finishRun(1);
+    }
+    if (checkpointPattern_.empty()) {
+      if (screenshot.empty()) {
+        LOGE("--checkpoint-every requires --checkpoint-pattern or --screenshot");
+        return finishRun(1);
+      }
+      const std::filesystem::path shotPath(screenshot);
+      const std::string ext = shotPath.has_extension()
+                                  ? shotPath.extension().string()
+                                  : std::string(".png");
+      checkpointPattern_ =
+          (shotPath.parent_path() /
+           (shotPath.stem().string() + ".checkpoint-{frame}" + ext))
+              .string();
+    }
+    if (checkpointPattern_.find("{frame}") == std::string::npos) {
+      LOGE("--checkpoint-pattern must contain {frame}");
+      return finishRun(1);
+    }
+  }
+
   if (headless_) {
     if (backend_ != Backend::Vulkan) {
       LOGE("--headless requires the Vulkan backend (pass --backend vk)");
@@ -4084,6 +4134,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     // Render after same-frame action consumption but before ImGui submit. The
     // viewport window already emitted ImGui::Image with the texture handle; both
     // GL and Vulkan sample the texture contents later during present().
+    const bool checkpointDue =
+        checkpointEvery_ > 0 && ((frameCount + 1) % checkpointEvery_ == 0);
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
     if (renderThreadActive_) {
       // Build the CPU-side frame packet (camera/params + compacted instance data)
@@ -4093,7 +4145,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       gui_.renderViewportScene(pkt.get());
       updateTextureResidency();
       glfwGetFramebufferSize(window_, &pkt->fbW, &pkt->fbH);
-      pkt->wantCapture =
+      pkt->wantCapture = checkpointDue ||
           (maxFrames >= 0 && frameCount == maxFrames - 1 && !screenshot.empty());
       pkt->seq = ++pktSubmitSeq_;
       ImGui::Render();
@@ -4186,6 +4238,46 @@ int App::run(const std::string& initialFile, int maxFrames,
                                std::chrono::steady_clock::now() - tp0)
                                .count();
         std::fprintf(stderr, "[frame] present(GPU+readback)=%.1fms\n", pms);
+      }
+    }
+
+    if (checkpointDue) {
+      std::vector<uint8_t> rgba;
+      int captureW = 0, captureH = 0;
+      bool captured = false;
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+      if (renderThreadActive_) {
+        rgba = renderCapture_;
+        captureW = renderCaptureW_;
+        captureH = renderCaptureH_;
+        captured = !rgba.empty();
+      } else
+#endif
+      {
+        captured = renderer_->captureViewport(&rgba, &captureW, &captureH);
+      }
+      std::string checkpointPath = checkpointPattern_;
+      char frameText[16];
+      std::snprintf(frameText, sizeof(frameText), "%06d", frameCount + 1);
+      checkpointPath.replace(checkpointPath.find("{frame}"), 7, frameText);
+      std::error_code checkpointDirError;
+      const std::filesystem::path checkpointFile(checkpointPath);
+      if (!checkpointFile.parent_path().empty()) {
+        std::filesystem::create_directories(checkpointFile.parent_path(),
+                                            checkpointDirError);
+      }
+      std::string checkpointErr;
+      if (!checkpointDirError && captured &&
+          WriteScreenshotImage(checkpointPath, rgba, captureW,
+                                           captureH, &checkpointErr)) {
+        ++checkpointCount_;
+        LOGI("wrote checkpoint %s (%dx%d, frame %d)",
+             checkpointPath.c_str(), captureW, captureH, frameCount + 1);
+      } else {
+        LOGW("failed to write checkpoint %s: %s", checkpointPath.c_str(),
+             checkpointDirError
+                 ? checkpointDirError.message().c_str()
+                 : (captured ? checkpointErr.c_str() : "capture unavailable"));
       }
     }
 
