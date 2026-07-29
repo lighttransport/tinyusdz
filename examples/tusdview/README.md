@@ -191,6 +191,22 @@ displays it with an ImGui docking UI.
     stream in lazily** (surfaces show base color until their texture lands).
     The render loop never stalls on one big upload. Headless `--frames`
     uploads synchronously for deterministic screenshots.
+  - With an authored `--camera` (including the Caldera profile default), mesh
+    admission inherits model/district extents and ranks conservative in-view
+    bounds first. Static material batches are capped at 512K vertices during
+    interactive streaming, so one scene-wide batch cannot delay the first real
+    raster frame; exact frustum and projected-size LOD still run per frame.
+  - The interactive **ALab** profile treats baked procedurals as refinement:
+    loaded Curves use one tessellation sample per span and retain at most 64
+    curve prims / 100,000 complete strands. Textures start at a 512px edge cap,
+    use online device-native block compression, and skip eager mip generation.
+    Explicit texture CLI choices and headless captures retain their requested
+    quality.
+    Ordinary filesystem textures reserve stable material slots without reading
+    pixels; after geometry publication, up to four workers decode, resize, and
+    CPU-encode GPU-native blocks while the viewport remains interactive. Each
+    completed texture uploads independently. USDZ, UDIM, Ptex, and
+    kept-compressed KTX2 retain their specialized synchronous readers for now.
 - **Interruptible / budgeted loading** so huge scenes can't freeze the app or
   thrash VRAM:
   - **Cancel** button in the loading modal (and an automatic conversion
@@ -267,6 +283,12 @@ cmake --build build -j16 --target tusdview
 ./build/tusdview --defer-references scene.usda       # also defer references (opt-in, non-standard)
 ./build/tusdview --no-composition scene.usda        # root layer only (no arcs)
 
+# Large-scene startup preview cache (interactive large-scene profiles):
+./build/tusdview --large-scene-profile island scene.usda
+./build/tusdview --large-scene-profile island --preview-cache refresh scene.usda
+./build/tusdview --preview-cache off scene.usda
+./build/tusdview --preview-cache-dir /fast/cache --preview-cache-max-gb 4 scene.usda
+
 # Animation: scrub/play interactively from the Timeline panel, or render a
 # static frame at a specific USD time code (headless screenshot of frame 12):
 ./build/tusdview --frames 4 --time 12 --screenshot frame12.ppm anim.usda
@@ -277,6 +299,15 @@ cmake --build build -j16 --target tusdview
 
 Note: `--frames` loads synchronously (deterministic screenshots); interactive
 runs load on the worker thread.
+
+Interactive large-scene profiles cache their compact spatial preview as a
+versioned USDC file. A warm run can display that preview while authoritative
+composition continues in the background. Cache entries are invalidated when the
+root or any physical composition dependency changes; composition policy,
+payload/reference choices, variants, parent paths, and time code are part of the
+cache key. `auto` is the large-profile default, `refresh` rebuilds the entry,
+and `off` disables both reads and writes. The default cache limit is 8 GiB with
+oldest-entry eviction.
 
 ### Startup config
 

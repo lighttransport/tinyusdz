@@ -236,15 +236,56 @@ void CopyWithClampGutter(const light3d::Image& face, const Placement& p,
   // Ptex rows begin at v=0 (bottom). Atlas images are top-row-first, so reverse
   // source Y while copying the inner rectangle.
   for (uint32_t y = 0; y < p.height; ++y) {
-    for (uint32_t x = 0; x < p.width; ++x) {
-      CopyPixel(face, x, p.height - 1u - y, atlas, p.x + x, p.y + y);
-    }
+    const uint32_t sy = p.height - 1u - y;
+    std::memcpy(atlas->data.data() +
+                    (size_t(p.y + y) * atlas->width + p.x) * 4u,
+                face.data.data() + (size_t(sy) * face.width) * 4u,
+                size_t(p.width) * 4u);
   }
   for (uint32_t d = 1; d <= gutter; ++d) {
     for (uint32_t x = 0; x < p.width; ++x) {
       CopyPixel(*atlas, p.x + x, p.y, atlas, p.x + x, p.y - d);
       CopyPixel(*atlas, p.x + x, p.y + p.height - 1u, atlas, p.x + x,
                 p.y + p.height - 1u + d);
+    }
+    for (uint32_t y = 0; y < p.height; ++y) {
+      CopyPixel(*atlas, p.x, p.y + y, atlas, p.x - d, p.y + y);
+      CopyPixel(*atlas, p.x + p.width - 1u, p.y + y, atlas,
+                p.x + p.width - 1u + d, p.y + y);
+    }
+  }
+  for (uint32_t gy = 0; gy < gutter; ++gy) {
+    for (uint32_t gx = 0; gx < gutter; ++gx) {
+      CopyPixel(*atlas, p.x, p.y, atlas, p.x - 1u - gx, p.y - 1u - gy);
+      CopyPixel(*atlas, p.x + p.width - 1u, p.y, atlas,
+                p.x + p.width + gx, p.y - 1u - gy);
+      CopyPixel(*atlas, p.x, p.y + p.height - 1u, atlas,
+                p.x - 1u - gx, p.y + p.height + gy);
+      CopyPixel(*atlas, p.x + p.width - 1u, p.y + p.height - 1u, atlas,
+                p.x + p.width + gx, p.y + p.height + gy);
+    }
+  }
+}
+
+// Common Island fast path: most coarse color faces are already RGBA8 at the
+// selected mip. Avoid allocating a temporary Image and converting every pixel
+// before copying into the atlas. The atlas still uses the same vertically
+// flipped convention and clamp gutters as the generic path.
+void CopyRgba8FaceWithClampGutter(const tinyusdz::ptx::FaceImage& face,
+                                  const Placement& p, uint32_t gutter,
+                                  light3d::Image* atlas) {
+  for (uint32_t y = 0; y < p.height; ++y) {
+    const uint32_t sy = p.height - 1u - y;
+    std::memcpy(atlas->data.data() +
+                    (size_t(p.y + y) * atlas->width + p.x) * 4u,
+                face.data.data() + (size_t(sy) * face.width) * 4u,
+                size_t(p.width) * 4u);
+  }
+  for (uint32_t d = 1; d <= gutter; ++d) {
+    for (uint32_t x = 0; x < p.width; ++x) {
+      CopyPixel(*atlas, p.x + x, p.y, atlas, p.x + x, p.y - d);
+      CopyPixel(*atlas, p.x + x, p.y + p.height - 1u, atlas,
+                p.x + x, p.y + p.height - 1u + d);
     }
     for (uint32_t y = 0; y < p.height; ++y) {
       CopyPixel(*atlas, p.x, p.y + y, atlas, p.x - d, p.y + y);
@@ -399,6 +440,12 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
     p.baseMip = p.mip;
     p.baseWidth = w;
     p.baseHeight = h;
+    if (options.initialFaceLimit > 0 &&
+        face >= options.initialFaceLimit) {
+      p.width = 1;
+      p.height = 1;
+      p.virtualDownsample = true;
+    }
   }
 
   uint32_t atlasWidth = 0, atlasHeight = 0, imageHeight = 0;
@@ -512,6 +559,17 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
   faceRects->assign(info.faces, DrawPtexFaceRectCPU{});
   PtexFacePageCache pageCache(options.maxDecodedCacheBytes);
   for (const Placement& p : placements) {
+    if (options.initialFaceLimit > 0 &&
+        p.face >= options.initialFaceLimit) {
+      DrawPtexFaceRectCPU& rect = (*faceRects)[p.face];
+      rect.x = p.x;
+      rect.y = p.y;
+      rect.width = 1;
+      rect.height = 1;
+      rect.mipLevel = 0;
+      rect.reserved = 1u;
+      continue;
+    }
     std::string readErr;
     const tinyusdz::ptx::FaceImage* decoded = pageCache.Fetch(
         reader, p.face, p.mip, options.maxDecodedFaceBytes, &readErr);
@@ -525,9 +583,15 @@ bool BuildPtexAtlas(const tinyusdz::ptx::Reader& reader,
     }
     localStats.decodedFaces++;
     localStats.decodedBytes += decoded->data.size();
-    const light3d::Image rgba =
-        ResizeFace(ConvertFace(*decoded), p.width, p.height);
-    CopyWithClampGutter(rgba, p, options.gutter, image);
+    if (decoded->dataType == tinyusdz::ptx::DataType::UInt8 &&
+        decoded->channels == 4 && decoded->width == p.width &&
+        decoded->height == p.height) {
+      CopyRgba8FaceWithClampGutter(*decoded, p, options.gutter, image);
+    } else {
+      const light3d::Image rgba =
+          ResizeFace(ConvertFace(*decoded), p.width, p.height);
+      CopyWithClampGutter(rgba, p, options.gutter, image);
+    }
     DrawPtexFaceRectCPU& rect = (*faceRects)[p.face];
     rect.x = p.x;
     rect.y = p.y;

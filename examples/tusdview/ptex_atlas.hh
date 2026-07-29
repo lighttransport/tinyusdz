@@ -27,6 +27,9 @@ struct PtexAtlasOptions {
   // fallback faces. The total image, including this cache and the face table,
   // still obeys maxAtlasBytes/maxAtlasEdge.
   size_t maxPhysicalCacheBytes{0};
+  // If nonzero, only this many face fallbacks are built at startup. Remaining
+  // faces receive one-pixel reserved entries and are filled by page streaming.
+  uint32_t initialFaceLimit{0};
   // Test/diagnostic override. Normal builds reserve slots only when the atlas
   // budget forced at least one face below its requested mip.
   bool forcePhysicalCache{false};

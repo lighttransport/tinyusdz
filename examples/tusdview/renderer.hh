@@ -241,6 +241,12 @@ class Renderer {
   virtual void appendVolume(const DrawVolumeCPU& /*vol*/) {}
   // Fill texture slot `slot`; materials referencing it switch from white to it.
   virtual void uploadTexture(int slot, const DrawTextureCPU& tex) = 0;
+  // Return a texture slot to the backend's fallback texture. Implementations
+  // must make replacement/destruction safe with respect to submitted frames.
+  virtual void evictTexture(int slot) = 0;
+  // Approximate live GPU allocation owned by one texture slot. This is the
+  // quantity used by the application residency budget (not CPU staging bytes).
+  virtual size_t textureResidentBytes(int slot) const = 0;
   // Replace an RGBA8 rectangle in an already-uploaded ordinary 2D texture.
   // Used by bounded Ptex page streaming; compressed and array textures reject
   // updates. `rowBytes` permits uploading a sub-rectangle from a larger CPU

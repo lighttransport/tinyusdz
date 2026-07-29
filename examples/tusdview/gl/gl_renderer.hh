@@ -29,6 +29,8 @@ class GLRenderer final : public Renderer {
   void appendMeshSurface(const DrawMeshCPU& mesh) override;
   void uploadMeshAux(size_t meshIndex, const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
+  void evictTexture(int slot) override;
+  size_t textureResidentBytes(int slot) const override;
   bool updateTextureRegion(int slot, int x, int y, int w, int h,
                            const uint8_t* rgba,
                            size_t rowBytes = 0) override;
@@ -414,6 +416,7 @@ class GLRenderer final : public Renderer {
     bool regionUpdatable{false};
     int width{0};
     int height{0};
+    size_t residentBytes{0};
   };
   GLuint udimLutAtlas_{0};
   std::vector<GLTexture> textures_;

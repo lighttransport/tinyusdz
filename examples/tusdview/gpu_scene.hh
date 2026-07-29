@@ -548,6 +548,7 @@ struct DrawUdimTileCPU {
 struct DrawTextureCPU {
   light3d::Image image;  // always normalized to RGBA8 (channels == 4) on the CPU side
   std::string assetIdentifier;  // Tydra TextureImage::asset_identifier, if known
+  bool deferredDecode{false};  // slot exists; pixels arrive asynchronously
   // Native Ptex source. `image` is a bounded face atlas when residency permits,
   // or a representative-face fallback after the cumulative budget is spent.
   bool isPtex{false};
@@ -556,6 +557,9 @@ struct DrawTextureCPU {
   // same-sized zero-filled CPU upload.
   bool streamingMutable{false};
   bool ptexForceResidency{false};  // diagnostic: stream even fitting faces
+  // Only refine faces referenced by admitted meshes. Enabled when the initial
+  // atlas deliberately leaves a tail of faces as reserved placeholders.
+  bool ptexDemandDriven{false};
   uint32_t ptexFaces{0};
   uint16_t ptexLevels{0};
   uint16_t ptexChannels{0};

@@ -317,6 +317,16 @@ CALDERA=/path/to/caldera.usda ISLAND=/path/to/island.usda ALAB=/path/to/alab.usd
   bash examples/tusdview/tests/run-large-scene-profiles.sh
 # Use TUSDVIEW_SCENE_TIMEOUT=10m (default) to bound each large-scene run.
 
+# Interactive large-scene profiles persist their compact composition preview.
+# Force a cold rebuild when validating preview generation, or disable it:
+./build_ninja/tusdview --large-scene-profile island \
+  --preview-cache refresh /path/to/island.usda
+./build_ninja/tusdview --large-scene-profile island \
+  --preview-cache off /path/to/island.usda
+# Optional storage controls (default limit: 8 GiB):
+./build_ninja/tusdview --large-scene-profile island \
+  --preview-cache-dir /fast/cache --preview-cache-max-gb 4 /path/to/island.usda
+
 # OpenGL (needs a window/context) on a headless host — wrap in a virtual X server
 # with a 24-bit visual:
 xvfb-run -a -s "-screen 0 1280x800x24" \
@@ -330,6 +340,38 @@ On an RTX 5060 Ti through the NVIDIA/Xvfb path below, first proxy frames measure
 0.55 GB (ALab). A 120-frame Island proxy run on a 1920x1080 Xvfb surface
 measured 75.0 ms present/readback p95 (81.3 ms maximum); Vulkan CPU
 record/submit p95 was 0.3 ms.
+
+The preview cache key includes the composition, payload/reference, variant,
+parent-path, and time-code choices. Its manifest records every physical layer
+dependency, including package archives, and rejects an entry if any dependency
+size or modification time changes. The cached preview is display-only: the
+authoritative composed stage replaces it when background composition finishes.
+Use `--timing` to report cache validation/load/store time separately from
+composition and first useful frame.
+
+For interactive Caldera loads, the profile camera also drives conversion order.
+Leaf meshes without extents inherit the nearest model/district extent for this
+ranking; conservative in-view bounds are converted before off-camera and
+unbounded fallback work. Interactive material batches are limited to 512K
+vertices, allowing those camera-relevant results to upload incrementally instead
+of waiting for a multi-million-triangle scene-wide batch.
+
+The interactive ALab profile starts with a bounded refinement tier because its
+complete texture and baked-procedural working set exceeds typical GPU memory.
+Payloads are initially deferred. When loaded, Curves are tessellated minimally
+and sampled as complete strands (up to 64 curve prims and 100,000 strands), so
+hair topology and per-point attributes remain valid. Textures are decoded with a
+512px edge ceiling, compressed online to a supported block format, and uploaded
+without an eager mip pyramid. Headless runs and explicit texture CLI overrides
+are not reduced.
+
+Ordinary ALab filesystem textures use stable placeholder slots during material
+conversion. After geometry has been published, a bounded four-worker stage
+decodes, resizes, and CPU-encodes supported GPU block formats; ready payloads are
+sent individually to the render thread. This is asynchronous decode/compression
+and incremental GPU upload, not GPU-compute encoding. Archive, UDIM, Ptex, and
+kept-compressed KTX2 inputs remain on their specialized synchronous paths until
+their readers have independent concurrent ownership.
 
 `.png` and `.ppm` outputs are both supported; `--frames N` loads synchronously so
 screenshots are deterministic. Pixel-compare two screenshots (e.g. backend or

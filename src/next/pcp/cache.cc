@@ -638,9 +638,47 @@ bool Cache::PrewarmPrimIndices(const std::vector<Path> &paths, std::string *warn
   return impl_->PrewarmPrimIndices(paths, warn, err);
 }
 
-bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err) {
+bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err,
+                       const PreviewCallback& preview_callback) {
   if (!stage) return false;
-  return impl_->BuildStage(stage, warn, err);
+  return impl_->BuildStage(stage, warn, err, preview_callback);
+}
+
+std::vector<std::string> Cache::GetLayerDependencies() const {
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  std::vector<std::string> dependencies;
+  auto physical_identifier = [](std::string identifier) {
+    // Variant content has a synthetic layer-stack id
+    // variant:<host>:<site>:<set>:<selection>. Its bytes live in <host>, which
+    // is the dependency cache validation must stat. Nested variants unwrap
+    // repeatedly. Keep Windows drive-letter colons: only the final three
+    // composition suffixes are removed each iteration.
+    while (identifier.compare(0, 8, "variant:") == 0) {
+      std::string host = identifier.substr(8);
+      bool valid = true;
+      for (int suffix = 0; suffix < 3; ++suffix) {
+        const size_t colon = host.rfind(':');
+        if (colon == std::string::npos) { valid = false; break; }
+        host.resize(colon);
+      }
+      if (!valid) break;
+      identifier.swap(host);
+    }
+    return identifier;
+  };
+  for (const LayerStack& stack : impl_->layer_stacks) {
+    for (const std::string& identifier : stack.layer_identifiers) {
+      const std::string physical = physical_identifier(identifier);
+      if (!physical.empty()) dependencies.push_back(physical);
+    }
+  }
+  if (!impl_->root_identifier.empty()) {
+    dependencies.push_back(impl_->root_identifier);
+  }
+  std::sort(dependencies.begin(), dependencies.end());
+  dependencies.erase(std::unique(dependencies.begin(), dependencies.end()),
+                     dependencies.end());
+  return dependencies;
 }
 
 Cache::MemoryStats Cache::GetMemoryStats() const {
@@ -723,7 +761,7 @@ void Cache::TrimTransientCaches() {
   impl_->path_intern.clear();
   impl_->nm_pool_.clear();
   impl_->nm_pool_.push_back(NamespaceMapping{});
-  std::vector<std::pair<uint32_t, std::string>>().swap(impl_->fill_);
+  std::vector<std::pair<uint32_t, const std::vector<Src>*>>().swap(impl_->fill_);
 }
 
 const PrimSpec *Cache::ComposePrim(const Path &prim_path, std::string *warn,
