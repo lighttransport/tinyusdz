@@ -361,7 +361,7 @@ int c_tinyusd_stage_load_from_memory(CTinyUSDStage *stage,
                                      CTinyUSDFormat format,
                                      c_tinyusd_string_t *warn,
                                      c_tinyusd_string_t *err) {
-  if (!stage || !data) return 0;
+  if (!stage || !data || nbytes == 0) return 0;
   std::string w, e;
   bool ok = false;
 
