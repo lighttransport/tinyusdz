@@ -852,7 +852,12 @@ class ChunkedTypedArray {
     if (!_chunks.empty()) {
       size_type last_chunk_elements =
           _total_size - (needed_chunks - 1) * _elements_per_chunk;
-      size_type last_chunk_bytes = last_chunk_elements * sizeof(T);
+      size_t last_chunk_bytes;
+      if (!safe::mul(last_chunk_elements, sizeof(T),
+                     &last_chunk_bytes)) {
+        _chunks.back().clear();
+        return;
+      }
       _chunks.back().resize(last_chunk_bytes);
       _chunks.back().shrink_to_fit();
     }
