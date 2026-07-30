@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "options.hh"
+
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <thread>
+
+namespace tusdql {
+
+namespace {
+
+bool ParseInt(const char* s, int* out) {
+  if (!s || !*s) return false;
+  char* end = nullptr;
+  long v = std::strtol(s, &end, 10);
+  if (end == s || *end != '\0') return false;
+  *out = static_cast<int>(v);
+  return true;
+}
+
+bool ParseSize(const char* s, int* w, int* h) {
+  if (!s) return false;
+  const char* x = std::strchr(s, 'x');
+  if (!x) x = std::strchr(s, 'X');
+  if (!x) return false;
+  std::string ws(s, static_cast<size_t>(x - s));
+  int pw = 0, ph = 0;
+  if (!ParseInt(ws.c_str(), &pw)) return false;
+  if (!ParseInt(x + 1, &ph)) return false;
+  if (pw <= 0 || ph <= 0) return false;
+  *w = pw;
+  *h = ph;
+  return true;
+}
+
+// Returns nullptr when the flag is missing its value.
+const char* Value(int argc, char** argv, int* i) {
+  if (*i + 1 >= argc) return nullptr;
+  *i += 1;
+  return argv[*i];
+}
+
+}  // namespace
+
+const char* UsageText() {
+  return
+      "tusdquicklook — minimal portable USD Quick Look viewer\n"
+      "\n"
+      "usage: tusdquicklook [file-or-dir] [options]\n"
+      "\n"
+      "  --max-mem <MB>          preview memory cap (default 512)\n"
+      "  --backend auto|cpu|gl   renderer selection (default auto)\n"
+      "  --spp <N>               progressive sample target (default 16)\n"
+      "  --threads <N>           worker threads (default min(nproc, 8))\n"
+      "  --no-shadows            disable shadow rays\n"
+      "  --ao                    add an ambient-occlusion pass\n"
+      "  --no-compose            skip USD composition\n"
+      "  --recursive             recurse into subfolders when browsing\n"
+      "  --size <WxH>            window size (default 1280x720)\n"
+      "  --screenshot <png>      headless: render one file, write PNG, exit\n"
+      "  --frames <N>            progressive steps before --screenshot (default 8)\n"
+      "  -v, --verbose           verbose logging\n"
+      "  -h, --help              this message\n";
+}
+
+bool ParseOptions(int argc, char** argv, Options* opts, bool* want_help,
+                  std::string* err) {
+  *want_help = false;
+  bool have_positional = false;
+
+  for (int i = 1; i < argc; i++) {
+    const std::string a = argv[i];
+
+    if (a == "-h" || a == "--help") {
+      *want_help = true;
+      return true;
+    } else if (a == "-v" || a == "--verbose") {
+      opts->verbose = true;
+    } else if (a == "--no-shadows") {
+      opts->shadows = false;
+    } else if (a == "--ao") {
+      opts->ao = true;
+    } else if (a == "--no-compose") {
+      opts->compose = false;
+    } else if (a == "--recursive") {
+      opts->recursive = true;
+    } else if (a == "--max-mem") {
+      const char* v = Value(argc, argv, &i);
+      int mb = 0;
+      if (!v || !ParseInt(v, &mb) || mb <= 0) {
+        *err = "--max-mem requires a positive integer (MB)";
+        return false;
+      }
+      opts->max_mem_bytes = static_cast<uint64_t>(mb) << 20;
+    } else if (a == "--backend") {
+      const char* v = Value(argc, argv, &i);
+      if (!v) {
+        *err = "--backend requires auto|cpu|gl";
+        return false;
+      }
+      const std::string b = v;
+      if (b == "auto") {
+        opts->backend = BackendChoice::Auto;
+      } else if (b == "cpu") {
+        opts->backend = BackendChoice::Cpu;
+      } else if (b == "gl") {
+        opts->backend = BackendChoice::Gl;
+      } else {
+        *err = "--backend must be one of: auto, cpu, gl";
+        return false;
+      }
+    } else if (a == "--spp") {
+      const char* v = Value(argc, argv, &i);
+      if (!v || !ParseInt(v, &opts->spp) || opts->spp <= 0) {
+        *err = "--spp requires a positive integer";
+        return false;
+      }
+    } else if (a == "--threads") {
+      const char* v = Value(argc, argv, &i);
+      if (!v || !ParseInt(v, &opts->threads) || opts->threads < 0) {
+        *err = "--threads requires a non-negative integer";
+        return false;
+      }
+    } else if (a == "--frames") {
+      const char* v = Value(argc, argv, &i);
+      if (!v || !ParseInt(v, &opts->frames) || opts->frames <= 0) {
+        *err = "--frames requires a positive integer";
+        return false;
+      }
+    } else if (a == "--size") {
+      const char* v = Value(argc, argv, &i);
+      if (!v || !ParseSize(v, &opts->width, &opts->height)) {
+        *err = "--size requires WxH, e.g. 1280x720";
+        return false;
+      }
+    } else if (a == "--screenshot") {
+      const char* v = Value(argc, argv, &i);
+      if (!v) {
+        *err = "--screenshot requires an output .png path";
+        return false;
+      }
+      opts->screenshot = v;
+    } else if (!a.empty() && a[0] == '-') {
+      *err = "unknown option: " + a;
+      return false;
+    } else {
+      if (have_positional) {
+        *err = "more than one file/directory given: " + a;
+        return false;
+      }
+      opts->path = a;
+      have_positional = true;
+    }
+  }
+
+  return true;
+}
+
+int ResolveThreadCount(const Options& opts) {
+  if (opts.threads > 0) return opts.threads;
+  unsigned hc = std::thread::hardware_concurrency();
+  if (hc == 0) hc = 4;
+  // This is a previewer, not a farm renderer: cap so it stays a good citizen
+  // on a busy workstation.
+  return static_cast<int>(std::min<unsigned>(hc, 8u));
+}
+
+}  // namespace tusdql

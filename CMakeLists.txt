@@ -110,6 +110,9 @@ option(TINYUSDZ_WITH_TCMALLOC
 option(TINYUSDZ_BUILD_GUI_VIEWER
        "Build the interactive GUI USD viewer example 'tusdview' (requires OpenGL/GLFW; Vulkan optional). Pulls in window-system deps; keep OFF for headless CI."
        OFF)
+option(TINYUSDZ_BUILD_QUICKLOOK
+       "Build the minimal portable USD Quick Look viewer 'tusdquicklook' (software UI via vendored lightui, CPU ray tracing; no GPU required)."
+       OFF)
 option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
        ${TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
@@ -2101,6 +2104,12 @@ if(TINYUSDZ_BUILD_EXAMPLES)
 
     if (TINYUSDZ_BUILD_GUI_VIEWER)
       add_subdirectory(examples/tusdview)
+    endif()
+
+    # Independent of TINYUSDZ_BUILD_GUI_VIEWER on purpose: tusdquicklook shares
+    # no code with tusdview and needs no window-system or GPU dependency.
+    if (TINYUSDZ_BUILD_QUICKLOOK)
+      add_subdirectory(examples/tusdquicklook)
     endif()
 
     if (TINYUSDZ_WITH_MCP_SERVER)
