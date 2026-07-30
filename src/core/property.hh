@@ -224,9 +224,11 @@ class Property {
   void set_listedit_qual(ListEditQual qual) { _listOpQual = qual; }
 
   // get_attribute: Returns const reference to stored Attribute
-  // Throws std::bad_variant_access if not an attribute
+  // Returns empty Attribute if not an attribute
   const Attribute &get_attribute() const TINYUSDZ_LIFETIMEBOUND {
-    return std::get<Attribute>(_data);
+    static const Attribute s_empty;
+    const Attribute *p = std::get_if<Attribute>(&_data);
+    return p ? *p : s_empty;
   }
 
   // attribute: Returns mutable reference to stored Attribute
@@ -252,9 +254,11 @@ class Property {
   }
 
   // get_relationship: Returns const reference to stored Relationship
-  // Throws std::bad_variant_access if not a relationship
+  // Returns empty Relationship if not a relationship
   const Relationship &get_relationship() const TINYUSDZ_LIFETIMEBOUND {
-    return std::get<Relationship>(_data);
+    static const Relationship s_empty;
+    const Relationship *p = std::get_if<Relationship>(&_data);
+    return p ? *p : s_empty;
   }
 
   // relationship: Returns mutable reference to stored Relationship

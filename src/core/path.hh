@@ -193,6 +193,7 @@ class Path {
   bool get_path_type(PathType &ty) {
     if (_path_type) {
       ty = _path_type.value();
+      return true;
     }
     return false;
   }

@@ -992,7 +992,12 @@ bool RenderSceneConverter::ConvertVolume(
     // Store the dense float voxels in a BufferData.
     BufferData buf;
     buf.componentType = ComponentType::Float;
-    std::vector<uint8_t> bytes(g->data.size() * sizeof(float));
+    size_t byte_size;
+    if (!safe::mul(g->data.size(), sizeof(float), &byte_size)) {
+      DCOUT("VDB grid data size overflow.");
+      continue;
+    }
+    std::vector<uint8_t> bytes(byte_size);
     std::memcpy(bytes.data(), g->data.data(), bytes.size());
     SetBufferDataBytes(buf, std::move(bytes));
     f.buffer_id = int64_t(buffers.size());
