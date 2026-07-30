@@ -587,11 +587,12 @@ DecompressResult DecompressIntegers(const uint8_t* src, size_t src_size,
   }
 
   if (is_64bit) {
-    if (num_integers > (std::numeric_limits<size_t>::max)() / sizeof(uint64_t)) {
+    size_t nbytes;
+    if (!safe::mul(num_integers, sizeof(uint64_t), &nbytes)) {
       result.error = "Integer overflow in decompressed buffer size (64-bit)";
       return result;
     }
-    result.data.resize(num_integers * sizeof(uint64_t));
+    result.data.resize(nbytes);
     if (!DecodeIntegers64(src, src_size,
                           reinterpret_cast<uint64_t*>(result.data.data()),
                           num_integers)) {
@@ -600,11 +601,12 @@ DecompressResult DecompressIntegers(const uint8_t* src, size_t src_size,
       return result;
     }
   } else {
-    if (num_integers > (std::numeric_limits<size_t>::max)() / sizeof(uint32_t)) {
+    size_t nbytes;
+    if (!safe::mul(num_integers, sizeof(uint32_t), &nbytes)) {
       result.error = "Integer overflow in decompressed buffer size (32-bit)";
       return result;
     }
-    result.data.resize(num_integers * sizeof(uint32_t));
+    result.data.resize(nbytes);
     if (!DecodeIntegers(src, src_size,
                         reinterpret_cast<uint32_t*>(result.data.data()),
                         num_integers)) {

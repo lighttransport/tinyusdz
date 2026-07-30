@@ -102,7 +102,9 @@ class ChunkedArray {
       size_t space_in_chunk = kElementsPerChunk - offset;
       size_t to_copy = (remaining < space_in_chunk) ? remaining : space_in_chunk;
 
-      std::memcpy(chunks_[chunk_idx].get() + offset, src, to_copy * sizeof(T));
+      size_t copy_bytes;
+      if (!safe::mul(to_copy, sizeof(T), &copy_bytes)) return false;
+      std::memcpy(chunks_[chunk_idx].get() + offset, src, copy_bytes);
 
       src += to_copy;
       size_ += to_copy;
@@ -159,7 +161,9 @@ class ChunkedArray {
     if (used_in_tail < kElementsPerChunk) {
       T* exact = new (std::nothrow) T[used_in_tail];
       if (!exact) return;  // keep the full-size chunk; compaction is optional
-      std::memcpy(exact, chunks_.back().get(), used_in_tail * sizeof(T));
+      size_t tail_bytes;
+      if (!safe::mul(used_in_tail, sizeof(T), &tail_bytes)) return;
+      std::memcpy(exact, chunks_.back().get(), tail_bytes);
       chunks_.back().reset(exact);
       tail_capacity_ = used_in_tail;
     }
@@ -263,7 +267,9 @@ class ChunkedArray {
     for (size_t i = 0; i < chunks_.size() && copied < size_; ++i) {
       size_t count = chunk_size(i);
       if (count == 0) break;
-      std::memcpy(dest + copied, chunks_[i].get(), count * sizeof(T));
+      size_t chunk_bytes;
+      if (!safe::mul(count, sizeof(T), &chunk_bytes)) return;
+      std::memcpy(dest + copied, chunks_[i].get(), chunk_bytes);
       copied += count;
     }
   }
@@ -363,7 +369,12 @@ class ChunkedArray {
         alloc_failed_ = true;
         return false;
       }
-      std::memcpy(full, chunks_.back().get(), tail_capacity_ * sizeof(T));
+      size_t tail_bytes;
+      if (!safe::mul(tail_capacity_, sizeof(T), &tail_bytes)) {
+        alloc_failed_ = true;
+        return false;
+      }
+      std::memcpy(full, chunks_.back().get(), tail_bytes);
       chunks_.back().reset(full);
       tail_capacity_ = kElementsPerChunk;
     }
