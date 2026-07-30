@@ -758,24 +758,20 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
   }
 
   f.seekg(0, f.end);
-  size_t sz = static_cast<size_t>(f.tellg());
+  std::streamoff pos = f.tellg();
   f.seekg(0, f.beg);
 
-  if (int64_t(sz) < 0) {
+  if (pos < 0) {
     if (err) {
-      (*err) += "Invalid file size : " + filepath +
-                " (does the path point to a directory?)";
+      (*err) += "Failed to determine file size for : " + filepath + "\n";
     }
     return false;
-  } else if (sz == 0) {
+  }
+  size_t sz = static_cast<size_t>(pos);
+
+  if (sz == 0) {
     if (err) {
       (*err) += "File is empty : " + filepath + "\n";
-    }
-    return false;
-  } else if (uint64_t(sz) >= uint64_t((std::numeric_limits<int64_t>::max)())) {
-    // Posixish environment.
-    if (err) {
-      (*err) += "Invalid File(Pipe or special device?) : " + filepath + "\n";
     }
     return false;
   }
@@ -811,9 +807,14 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
                     void *userdata) {
   (void)userdata;
 
-  // hard limit to 1MB.
-  max_read_bytes =
-      (std::max)(1u, (std::min)(uint32_t(1024 * 1024), max_read_bytes));
+  // Hard limit to 1MB. Clamp to prevent overflow in downstream size_t casts.
+  if (max_read_bytes > 1024 * 1024) {
+    max_read_bytes = 1024 * 1024;
+  }
+  // Clamp to at least 1 byte so the zero-byte case is handled downstream.
+  if (max_read_bytes < 1) {
+    max_read_bytes = 1;
+  }
 
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
   if (tinyusdz::io::asset_manager) {
@@ -885,6 +886,8 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
     return false;
   }
 
+  // Note: std::ifstream follows symlinks on POSIX. For symlink-attack
+  // resistant reads use MMapFile with O_NOFOLLOW instead.
   f.seekg(0, f.end);
   size_t sz = static_cast<size_t>(f.tellg());
   f.seekg(0, f.beg);
@@ -1224,6 +1227,32 @@ std::string FindFile(const std::string &filename,
     return filename;
   }
 
+  // Reject filenames containing parent-directory references before any
+  // early return (the OS would resolve the ".." and may find a file,
+  // bypassing the security check). Use segment-based rather than substring
+  // matching to properly detect path segments like ".." while allowing
+  // filenames that merely contain ".." as a substring (e.g., "file..txt").
+  {
+    size_t i = 0;
+    const size_t n = filename.size();
+    bool has_parent_ref = false;
+    while (i < n) {
+      size_t j = filename.find('/', i);
+      if (j == std::string::npos) {
+        j = n;
+      }
+      std::string segment = filename.substr(i, j - i);
+      if (segment == "..") {
+        has_parent_ref = true;
+        break;
+      }
+      i = (j < n) ? j + 1 : j;
+    }
+    if (has_parent_ref) {
+      return std::string();
+    }
+  }
+
   // An ABSOLUTE path must be tried as-is, whether or not search paths are set:
   // JoinPath(dir, "/abs/path") produces "<dir>//abs/path", which never exists, so
   // the loop below can only ever miss. Before this, an absolute asset path failed
@@ -1241,12 +1270,6 @@ std::string FindFile(const std::string &filename,
     if (io::FileExists(absPath, /* userdata */ nullptr)) {
       return absPath;
     }
-  }
-
-  // Reject filenames containing parent-directory references to prevent
-  // directory traversal escapes from the search path root.
-  if (filename.find("..") != std::string::npos) {
-    return std::string();
   }
 
   for (size_t i = 0; i < search_paths.size(); i++) {

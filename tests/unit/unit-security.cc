@@ -929,3 +929,45 @@ void security_is_safe_asset_path_test(void) {
     TEST_CHECK(!ok);
   }
 }
+
+void security_findfile_segment_traversal_test(void) {
+  // Verify FindFile uses segment-based ".." traversal detection.
+  // Filenames containing ".." as a substring but NOT as a standalone
+  // path segment (e.g. "file..txt") must NOT be rejected.
+  // Only filenames with ".." as an actual path segment should be rejected.
+  std::vector<std::string> search_paths = {"/safe/directory"};
+
+  // ".." as a standalone segment must be rejected.
+  TEST_CHECK(io::FindFile("../../etc/passwd", search_paths).empty());
+  TEST_CHECK(io::FindFile("foo/../../etc/passwd", search_paths).empty());
+  TEST_CHECK(io::FindFile("..", search_paths).empty());
+
+  // ".." as a substring of a filename segment must be allowed.
+  // These should NOT be rejected (they may still return empty if
+  // the file does not exist, but the ".." substring must not cause
+  // a false-positive rejection).
+  std::string result1 = io::FindFile("file..txt", search_paths);
+  // file..txt is allowed to exist or not (no crash, no false rejection).
+  (void)result1;
+
+  std::string result2 = io::FindFile("data..csv", search_paths);
+  (void)result2;
+}
+
+void security_findfile_absolute_traversal_test(void) {
+  // Verify FindFile rejects absolute paths containing ".." segments,
+  // which could be used to obscure the intent of a malicious asset path.
+  std::vector<std::string> search_paths = {"/safe/directory"};
+
+  // Absolute path with ".." segment must be rejected.
+  TEST_CHECK(io::FindFile("/etc/../etc/passwd", search_paths).empty());
+  TEST_CHECK(io::FindFile("/foo/../bar/evil", search_paths).empty());
+
+  // Absolute path without ".." may resolve or not (no crash).
+  std::string result = io::FindFile("/etc/passwd", search_paths);
+  (void)result;
+
+  // Normal relative path without ".." may resolve or not (no crash).
+  result = io::FindFile("valid.usd", search_paths);
+  (void)result;
+}

@@ -16,3 +16,10 @@ void layer_metas_test(void);
 void layer_asset_resolution_state_test(void);
 void layer_memory_estimation_test(void);
 void layer_moved_from_is_valid_test(void);
+
+void layer_find_primspec_at_same_leaf_name_test(void);
+void layer_find_primspec_at_cache_full_path_test(void);
+
+void layer_deep_namespace_depth_test(void);
+void layer_children_by_parent_test(void);
+void layer_max_prim_path_length_test(void);

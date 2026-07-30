@@ -320,16 +320,32 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
     name = "textures/" + base;
   }
   // Reject paths that still contain unsafe archive syntax after sanitization.
-  if (name.find('\0') != std::string::npos ||
-      name.find('\\') != std::string::npos ||
-      name.find(':') != std::string::npos ||
-      name.find("..") != std::string::npos ||
-      name.find("//") != std::string::npos ||
-      tinyusdz::startsWith(name, "/") ||
-      tinyusdz::startsWith(name, "./") ||
-      tinyusdz::startsWith(name, "../") ||
-      tinyusdz::endsWith(name, "/")) {
-    name = "textures/texture";
+  // Use segment-based traversal check: any "/" separated segment that is
+  // exactly ".." is rejected, regardless of its position in the path.
+  {
+    bool has_traversal = (name.find('\0') != std::string::npos) ||
+                         (name.find('\\') != std::string::npos) ||
+                         (name.find(':') != std::string::npos) ||
+                         (name.find("//") != std::string::npos) ||
+                         tinyusdz::startsWith(name, "/") ||
+                         tinyusdz::startsWith(name, "./") ||
+                         tinyusdz::startsWith(name, "../") ||
+                         tinyusdz::endsWith(name, "/");
+    if (!has_traversal) {
+      // Also check for ".." as a standalone path segment.
+      size_t p = 0;
+      while (p < name.size()) {
+        size_t next = name.find('/', p);
+        std::string seg = (next == std::string::npos)
+                          ? name.substr(p)
+                          : name.substr(p, next - p);
+        if (seg == "..") { has_traversal = true; break; }
+        p = (next == std::string::npos) ? name.size() : next + 1;
+      }
+    }
+    if (has_traversal) {
+      name = "textures/texture";
+    }
   }
   // Enforce maximum archive name length.
   if (name.size() > kMaxArchiveNameLen) {

@@ -2105,11 +2105,11 @@ bool CompositionGraph::BuildStage(Stage *stage, std::string *warn,
   // Build a parent_path -> direct-children index once, so child lookup during
   // recursive composition is O(1) per parent instead of scanning all of
   // _prim_indices for every prim (previously O(N^2) overall, with a substr
-  // allocation per probe). The parent of "/A/B/C" is "/A/B"; root-level prims
-  // ("/Foo") map to parent "" and are composed by the loop below directly.
-  // _prim_indices is unordered, so the per-parent child order here matches the
-  // previous full-scan order.
-  std::unordered_map<std::string,
+  // allocation per probe; now O(1) via string_view key). The parent of
+  // "/A/B/C" is "/A/B"; root-level prims ("/Foo") map to parent "" and are
+  // composed by the loop below directly. _prim_indices is unordered, so the
+  // per-parent child order here matches the previous full-scan order.
+  std::unordered_map<std::string_view,
                      std::vector<std::pair<std::string, const PrimIndex *>>>
       children_by_parent;
   children_by_parent.reserve(_prim_indices.size());
@@ -2117,7 +2117,7 @@ bool CompositionGraph::BuildStage(Stage *stage, std::string *warn,
     const std::string &p = pair.first;
     size_t slash = p.find_last_of('/');
     if (slash == std::string::npos) continue;
-    children_by_parent[p.substr(0, slash)].push_back({p, pair.second.get()});
+    children_by_parent[std::string_view(p.data(), slash)].push_back({p, pair.second.get()});
   }
 
   // Recursively compose the direct children of parent_path into parent_ps.
