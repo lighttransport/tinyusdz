@@ -158,12 +158,12 @@ class PrimSpec {
   /// key = variant name
   /// value = variats
   ///
-  const VariantSelectionMap get_variant_selection_map() const {
-    VariantSelectionMap vsmap;
+  const VariantSelectionMap &get_variant_selection_map() const {
     if (metas().variants.has_value()) {
-      vsmap = metas().variants.value();
+      return metas().variants.value();
     }
-    return vsmap;
+    static const VariantSelectionMap s_empty;
+    return s_empty;
   }
 
   ///

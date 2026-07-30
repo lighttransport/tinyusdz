@@ -382,53 +382,84 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   }
 
   // Other 'facevarying' attributes are now 'vertex' variability
-  if (normals_ptr) {
-    mesh.normals.set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.normals.data()),
-        vertex_output.normals.size() * sizeof(value::float3));
-    mesh.normals.variability = VertexVariability::Vertex;
-  }
+  {
+    size_t byte_size;
+    if (normals_ptr) {
+      if (!safe::mul(vertex_output.normals.size(), sizeof(value::float3),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Normal buffer size overflow.");
+      }
+      mesh.normals.set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.normals.data()),
+          byte_size);
+      mesh.normals.variability = VertexVariability::Vertex;
+    }
 
-  if (texcoord0_ptr) {
-    mesh.texcoords[0].set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.uv0s.data()),
-        vertex_output.uv0s.size() * sizeof(value::float2));
-    mesh.texcoords[0].variability = VertexVariability::Vertex;
-  }
+    if (texcoord0_ptr) {
+      if (!safe::mul(vertex_output.uv0s.size(), sizeof(value::float2),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Texcoord0 buffer size overflow.");
+      }
+      mesh.texcoords[0].set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.uv0s.data()),
+          byte_size);
+      mesh.texcoords[0].variability = VertexVariability::Vertex;
+    }
 
-  if (texcoord1_ptr) {
-    mesh.texcoords[1].set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.uv1s.data()),
-        vertex_output.uv1s.size() * sizeof(value::float2));
-    mesh.texcoords[1].variability = VertexVariability::Vertex;
-  }
+    if (texcoord1_ptr) {
+      if (!safe::mul(vertex_output.uv1s.size(), sizeof(value::float2),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Texcoord1 buffer size overflow.");
+      }
+      mesh.texcoords[1].set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.uv1s.data()),
+          byte_size);
+      mesh.texcoords[1].variability = VertexVariability::Vertex;
+    }
 
-  if (tangents_ptr) {
-    mesh.tangents.set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.tangents.data()),
-        vertex_output.tangents.size() * sizeof(value::float3));
-    mesh.tangents.variability = VertexVariability::Vertex;
-  }
+    if (tangents_ptr) {
+      if (!safe::mul(vertex_output.tangents.size(), sizeof(value::float3),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Tangent buffer size overflow.");
+      }
+      mesh.tangents.set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.tangents.data()),
+          byte_size);
+      mesh.tangents.variability = VertexVariability::Vertex;
+    }
 
-  if (binormals_ptr) {
-    mesh.binormals.set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.binormals.data()),
-        vertex_output.binormals.size() * sizeof(value::float3));
-    mesh.binormals.variability = VertexVariability::Vertex;
-  }
+    if (binormals_ptr) {
+      if (!safe::mul(vertex_output.binormals.size(), sizeof(value::float3),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Binormal buffer size overflow.");
+      }
+      mesh.binormals.set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.binormals.data()),
+          byte_size);
+      mesh.binormals.variability = VertexVariability::Vertex;
+    }
 
-  if (colors_ptr) {
-    mesh.vertex_colors.set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.colors.data()),
-        vertex_output.colors.size() * sizeof(value::float3));
-    mesh.vertex_colors.variability = VertexVariability::Vertex;
-  }
+    if (colors_ptr) {
+      if (!safe::mul(vertex_output.colors.size(), sizeof(value::float3),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Color buffer size overflow.");
+      }
+      mesh.vertex_colors.set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.colors.data()),
+          byte_size);
+      mesh.vertex_colors.variability = VertexVariability::Vertex;
+    }
 
-  if (opacities_ptr) {
-    mesh.vertex_opacities.set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()),
-        vertex_output.opacities.size() * sizeof(float));
-    mesh.vertex_opacities.variability = VertexVariability::Vertex;
+    if (opacities_ptr) {
+      if (!safe::mul(vertex_output.opacities.size(), sizeof(float),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Opacity buffer size overflow.");
+      }
+      mesh.vertex_opacities.set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()),
+          byte_size);
+      mesh.vertex_opacities.variability = VertexVariability::Vertex;
+    }
   }
 
   if (mesh.is_triangulated()) {
