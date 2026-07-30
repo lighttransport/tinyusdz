@@ -1225,6 +1225,10 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
 nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
     const uint8_t *addr, size_t sz, const std::string &uri) {
   image::ImageResult ret;
+  // Keep provenance attached regardless of which decoder handles the bytes.
+  // This is especially useful for nanoimage/TinyEXR diagnostics and for
+  // downstream texture-cache keys when the source came from a USDZ archive.
+  ret.image.uri = uri;
   std::string err;
 
 #if defined(TINYUSDZ_WITH_TEXTOOLS)

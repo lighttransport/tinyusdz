@@ -89,6 +89,7 @@ class Gui {
   void setUploadStatus(const UploadStatus& s) { upload_ = s; }
   void setTimeline(const TimelineInfo& t) { timeline_ = t; }
   void setSkinning(const SkinningInfo& s) { skinning_ = s; }
+  void setCameraLens(const RtCameraLens& lens) { cameraLens_ = lens; }
   void setBudget(LoadControl* b) { budget_ = b; }
   void setShowGrid(bool on) { showGrid_ = on; }
   void setShowSkeleton(bool on) { showSkeleton_ = on; }
@@ -180,7 +181,9 @@ class Gui {
   void setCullEnabled(bool on) { cullEnabled_ = on; }
   // Offload per-instance culling to a worker thread (interactive responsiveness).
   // Disabled in headless so screenshots stay synchronous/deterministic.
-  void setCullAsync(bool on) { cullAsync_ = on; }
+  void setCullAsync(bool on);
+  // Suspend culling while progressive loading mutates DrawScene::meshes.
+  void setSceneMutating(bool on);
   bool hasSkinningModeRequest() const { return hasSkinningModeRequest_; }
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {
@@ -202,12 +205,14 @@ class Gui {
     size_t totalMeshes{0};
     size_t visibleInstances{0};
     size_t totalInstances{0};
+    size_t proxyInstances{0};
     size_t drawnTriangles{0};
     size_t drawCalls{0};
   };
   RenderStats renderStats() const {
     return {statVisibleMeshes_, draw_ ? draw_->meshes.size() : 0,
             statVisibleInstances_, statTotalInstances_,
+            statProxyInstances_,
             statNonInstTris_ + statInstTris_, statDrawCalls_};
   }
 
@@ -221,6 +226,23 @@ class Gui {
   }
   const std::string& selectedPath() const { return selPath_; }
   int selectedMeshIndex() const { return selMeshIndex_; }
+  const std::vector<uint8_t>& viewVisibility() const { return viewVisible_; }
+  struct TextureResidencyInfo {
+    size_t residentBytes{0};
+    size_t budgetBytes{0};
+    size_t resident{0};
+    size_t queued{0};
+    size_t total{0};
+    bool backgroundRefinement{true};
+  };
+  void setTextureResidencyInfo(const TextureResidencyInfo& info) {
+    textureResidencyInfo_ = info;
+  }
+  bool wantRefineSelectedTextures() const { return refineSelectedTextures_; }
+  bool wantReleaseSelectedTextures() const { return releaseSelectedTextures_; }
+  bool backgroundTextureRefinement() const {
+    return textureResidencyInfo_.backgroundRefinement;
+  }
   void saveCameraBookmark(int slot);
   bool loadCameraBookmark(int slot);
   bool hasCameraBookmark(int slot) const;
@@ -287,6 +309,7 @@ class Gui {
 
   Renderer* renderer_{nullptr};
   OrbitCamera* cam_{nullptr};
+  RtCameraLens cameraLens_;
   const LoadedScene* loaded_{nullptr};
   const DrawScene* draw_{nullptr};
 
@@ -362,6 +385,7 @@ class Gui {
   size_t statVisibleMeshes_{0};
   size_t statTotalInstances_{0};
   size_t statVisibleInstances_{0};  // owned by cullInstances
+  size_t statProxyInstances_{0};    // aggregate/non-instanced box LOD proxies
   size_t statNonInstTris_{0};       // visible non-instanced triangles (per-mesh pass)
   size_t statInstTris_{0};          // visible instanced triangles (cullInstances)
   size_t statDrawCalls_{0};
@@ -381,6 +405,7 @@ class Gui {
   void joinCullWorker();     // join + reset; called from setScene + ~Gui
   void cullWorkerMain();     // runs on the worker thread (CPU only, reads snapshots)
   bool cullAsync_{true};
+  bool sceneMutating_{false};
   float lastCullVP_[16]{};
   bool lastCullValid_{false};
   bool lastCullEnabled_{false};
@@ -470,6 +495,9 @@ class Gui {
   std::vector<uint8_t> meshVisible_;
   std::vector<uint8_t> carrierVisible_;
   std::vector<uint8_t> viewVisible_;
+  TextureResidencyInfo textureResidencyInfo_;
+  bool refineSelectedTextures_{false};
+  bool releaseSelectedTextures_{false};
   bool revealSelectionInHierarchy_{false};
 
   struct InspectorPropRow {

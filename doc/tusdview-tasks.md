@@ -10,7 +10,33 @@ audit** and (B) the **texture-compression / KTX2** work -- are complete.  The
 active work is now the USD rendering-fidelity roadmap below.  This file is the
 canonical task list; the repository-root `tasks.md` is historical planning
 input and must not be used as evidence that an unchecked feature is missing.
-Updated 2026-07-25 through `17c963b4c`.
+Updated 2026-07-26 through `4fd04a430`.
+
+The viewer's default texture residency path now uses a 4096-texel coarse LOD,
+adaptive GPU block compression, KTX2 passthrough, and content-aware mip chains;
+`--texture-max-size 0`, `--texture-compress off`, and `--texture-mips off` are
+explicit opt-outs.
+
+### Core-next / Tydra-next live-edit foundation
+
+- [x] Add immutable, revisioned `StageSnapshot` publication and typed
+  `StageChangeSet` results for payload, variant, rebuild, and dependency-layer
+  reload edits. Failed edits retain the previously published stage; old
+  snapshots remain readable and geometry compaction detaches copy-on-write.
+- [x] Add a persistent `tydra::next::RenderSession` with stable resource IDs
+  and transactional typed remove/upsert callbacks. The first implementation
+  conservatively reconverts the stage internally, but filters emitted updates
+  by the core change set and preserves the renderer-facing incremental ABI.
+  Duplicate authored resource keys receive deterministic occurrence suffixes,
+  and removal transactions are regression-tested alongside stable mesh upserts.
+  Empty render change sets now advance the transactional sink revision without
+  running the Stage-to-RenderScene converter or emitting resource updates.
+- [x] Make tusdview retain the published immutable stage while its shared
+  session recomposes on the loader thread, preventing UI, camera, and animation
+  reads from observing an invalidated `GetStage()` reference.
+- [ ] Replace tusdview's post-edit full DrawScene rebuild with a DrawScene/GPU
+  `SceneUpdateSink`; retain the existing streaming converter for initial loads
+  and very large geometry.
 
 ---
 
@@ -42,14 +68,63 @@ silently becoming the default material.
 | **P3** | Exact omnidirectional point-light raster shadows | **Implemented and Vulkan-verified:** six depth faces replace the one-sided finite approximation for point/zero-radius SphereLight emitters. |
 | **P4** | Preserve evaluated graph inputs for advanced OpenPBR/MaterialX lobes | **Implemented for degradation:** constants and connected texture descriptors survive while unsupported lobes remain path-qualified diagnostics. |
 | **P5** | Vulkan raster Points/Curves and native-carrier picking | **Implemented and focused-test verified:** Vulkan uses camera-facing point discs/curve ribbons, shared carrier masks, selection highlights, and picking. The checked-in cross-rasterizer silhouette oracle passes. |
-| **P6** | Area-light sampling, IES/portal/geometry/emissive lights, DOF/motion/stereo, and external-corpus goldens | Requires broader rendering scope or unavailable data; retain structured diagnostics and capability skips in the meantime. |
+| **P6** | Raster area-light sampling, IES/portal/geometry/emissive lights, camera motion/stereo, and external-corpus goldens | RT sphere/disk/rect/cylinder surface sampling is implemented; the remaining items require broader rendering scope or unavailable data. |
 
 P0–P2 are one material-parity release gate. CUDA/HIP checks remain conditional
 on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 
 ### Latest changes and verification
 
-- The focused `tusdview` label is green at **17/17**. Windowed MCP batch
+- Post-sync verification found and fixed double-padding of CPU-baked morph
+  bounds for instanced prototypes. CPU baking had already applied the blend
+  shape before `ComputeMorphExtent` expanded the bounds a second time; the
+  live GPU path correctly expands rest geometry only once. The unchanged
+  strict raster and Vulkan-RT depth-image thresholds now pass, and the
+  four-case morph-culling regression remains green.
+- The GL/Vulkan parity gate now launches a real windowed OpenGL renderer and a
+  headless Vulkan renderer, asserts the selected renderer from each log, uses
+  the current CMake target, and compares matched viewport dimensions. Material,
+  shadow-alpha, and degraded-lobe fixtures pass the existing 5% oracle. Native
+  Points/Curves remain covered by their dedicated silhouette-IoU oracle, whose
+  tolerance models raster-edge differences instead of duplicating the wrong
+  byte-pixel metric.
+- The generic backend parity test once again compares Vulkan raster with
+  Vulkan ray query by default rather than registering an unconditional
+  single-backend skip. Optional CUDA/HIP probes in the backface and semantic
+  matrices are bounded; a failed first capability probe is cached so every
+  fixture is not forced to repeat the same timeout.
+- CUDA runtime compilation now negotiates the highest virtual compute
+  architecture supported by the dynamically loaded NVRTC without exceeding
+  the physical device. This allows an older toolkit to emit forward-compatible
+  PTX for a newer GPU instead of requesting an architecture the compiler does
+  not recognize. CUDA 11 NVRTC on an RTX 5060 Ti passes the full deformation
+  parity oracle (GPU/CPU depth MAD 0.000), opacity regression, and both-loader
+  GeomSubset RT regression. Deformation capability probes also have a
+  configurable 60-second per-render bound and retain partial logs on timeout.
+- NVRTC PTX is now persistent across tusdview processes. The platform default
+  lives under `tusdview/cuda` in the user cache, and `--cuda-cache-dir PATH`
+  selects a job-local/shared location. Cache keys cover source, NVRTC version,
+  virtual architecture, and options; cached modules are driver-validated and
+  writes are atomic. NVRTC 13.x targets `compute_90` for this architecture-
+  independent kernel to avoid its measured optimizer regression at virtual
+  architectures 100+; CUDA 12.9 retains native `compute_120` behavior. A
+  capability-gated cold/default-path plus warm/CLI-path regression requires
+  exact output pixels.
+- Cache acceptance now also replaces the keyed PTX with invalid contents and
+  requires driver rejection, atomic recompilation, and exact recovered pixels.
+  A GPU-independent CLI test covers separate and `--cuda-cache-dir=PATH` forms
+  plus missing/empty-path diagnostics. Failed NVRTC or module initialization
+  now releases the partial CUDA context/module instead of letting a later
+  `init()` mistake the leftover context for a usable kernel.
+  The cache implementation deliberately avoids `std::filesystem`; its private,
+  limited file layer uses strings, streams, `stat`, `mkdir`, `rename`, and
+  `remove` with small POSIX/Windows branches.
+- The refreshed focused `tusdview` label is green at **23/23**. The serial
+  native gate is green at **208/208 nonfailing**, with seven explicit
+  capability/data skips. Stable `next` is green at **35/35 nonfailing**, with
+  its documented AOUSD value-resolution skip. No Caldera, Island, or ALab
+  environment roots were available for a new large-scene measurement.
+- Windowed MCP batch
   captures now request a deterministic 1024x768 window, reject a collapsed
   1-pixel viewport as not ready, and retry until the viewport is usable.
 - Deterministic deformation comparison now uses `--no-skeleton`. The previous
@@ -109,6 +184,11 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 - [x] Carry complete ordinary/compressed/UDIM mip chains into the RT texture
   table and use ray-footprint LOD plus trilinear filtering in Vulkan, CUDA, and
   HIP.
+- [x] Make the vendored fuzz-tested nanoimage decoder the default backend for
+  PNG/JPEG/BMP/TGA while retaining TinyEXR v3 as the default OpenEXR backend.
+  Image provenance (`Image::uri`) is preserved uniformly across decoder paths,
+  including USDZ-resolved assets. NVIDIA hardware semantic AOV and RT
+  loader-parity matrices pass with the default nanoimage build.
 - [x] Pin packed-map, sparse-UDIM, scalar-color-space, and external/USDZ parity
   for every covered semantic slot. A compact checked-in fixture set remains an
   acceptance-gate packaging task.
@@ -160,8 +240,14 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 - [x] Add `--camera-conform fit|crop|horizontal|vertical|none` (default `fit`),
   with matching config and GUI controls, and use the same projection in all
   backends and headless rendering.
-- [ ] Keep depth of field, shutter/motion blur, stereo, and arbitrary clipping
-  planes as documented future work.
+- [ ] Finish depth of field, shutter/motion blur, stereo, and arbitrary clipping
+  planes across all backends. Authored thin-lens depth of field is implemented
+  in Vulkan ray query and the shared CUDA/HIP tracer, with capability-gated
+  Vulkan and CUDA image regressions; raster remains open. All camera records survive
+  both loader paths (focus distance, f-stop, shutter interval, stereo role, and
+  float4 clipping-plane equations), and the camera-equivalence gate pins those
+  carriers. This also corrected the legacy
+  `focusDistance` fallback from 0 to the USD fallback value 5.
 
 ### P6 -- Lighting
 
@@ -203,6 +289,13 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   and only authored shadow casters can occlude them. Selective membership is
   exact for the first 32 stage-order light records; later records retain
   collection-all behavior.
+- [x] Sample finite SphereLight, DiskLight, RectLight, and CylinderLight
+  surfaces in Vulkan ray query and the shared CUDA/HIP tracer. Sampling is
+  deterministic per pixel, accumulated sample, and light; zero-radius or
+  otherwise degenerate shapes retain the exact representative-point path.
+  Capability-gated CUDA and Vulkan image regressions compare a finite RectLight
+  penumbra against the zero-radius hard-shadow reference. Raster finite-area
+  sampling remains open.
 - [x] Diagnose rather than silently approximate GeometryLight, PortalLight,
   IES, and emissive-mesh light sampling until dedicated implementations land.
 
@@ -273,18 +366,27 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
 
 ## Active-roadmap verification evidence
 
-Latest focused verification on 2026-07-25:
+Latest focused verification on 2026-07-26:
 
-- The fixture packaging milestone is green: `ctest -L tusdview` passes 17/17;
-  the serial native CTest reports 194 passes and seven documented
-  capability/data skips; and stable `next` tests report 34 passes and one
-  explicit skip. The complete semantic material gate passes in 287.76 seconds
-  with exact default/legacy AOV comparisons; its HIP cases are capability
-  skipped. The separate RT loader-parity gate is also capability-skipped on
-  this runtime because the requested Vulkan RT/CUDA vector backend is
-  unavailable. The corpus flatten comparator passes after the checked scene
-  was made self-contained. The available Caldera large-scene profile passes;
-  Island, ALab, and the external usd-assets corpus are not mounted.
+- `ctest -L tusdview -j1` passes 23/23 in 44.77 seconds. A full serial native
+  run passes all 208 registered tests in 1103.09 seconds with zero failures;
+  seven tests explicitly skip for external fixture, HIP, CUDA, or mounted-
+  corpus availability. The semantic AOV matrix passes in 264.06 seconds and
+  the separate Vulkan-RT loader-parity matrix passes in 215.15 seconds.
+  `build-next-ninja-review` passes all 35 registered tests in 49.68 seconds,
+  with only the documented AOUSD value-resolution skip. The Caldera, Island,
+  and ALab environment roots are unset, so no new large-scene claim is made.
+  No Vulkan shader source changed in this post-sync repair, so embedded SPIR-V
+  was not regenerated.
+
+- After CUDA runtime-compiler architecture negotiation and persistent caching,
+  the focused label remains green at 23/23 (52.94 seconds). The dedicated cold
+  default-path/warm CLI-path cache regression passes in 31.54 seconds on NVRTC
+  13.2 and the RTX 5060 Ti. Starting from one empty shared cache, the CUDA
+  deformation, opacity, and next/legacy GeomSubset gates all pass in 51.54
+  seconds total (32.47, 13.85, and 5.21 seconds respectively), versus roughly
+  223 seconds when each process repeatedly paid the pathological native-target
+  compile or its timeout.
 
 - Offline RTX 3070 verification used the documented `--headless` Vulkan path.
   Vulkan raster and Vulkan ray query both passed the UDIM opacity-cutout probe

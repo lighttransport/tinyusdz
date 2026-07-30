@@ -7,9 +7,11 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <cctype>
 #include <utility>
 
 #include "image-loader.hh"
+#include "ptx-loader.hh"
 #include "next/reader/usdz-reader.hh"
 #include "safe-arithmetic.hh"
 #include "tydra/texture-util.hh"
@@ -203,6 +205,14 @@ bool ResizeDecoded(DecodedImage* img, uint32_t w, uint32_t h, bool srgb) {
   return true;
 }
 
+bool HasPtxExtension(const std::string& asset) {
+  if (asset.size() < 4) return false;
+  const size_t p = asset.size() - 3;
+  return std::tolower(static_cast<unsigned char>(asset[p])) == 'p' &&
+         std::tolower(static_cast<unsigned char>(asset[p + 1])) == 't' &&
+         std::tolower(static_cast<unsigned char>(asset[p + 2])) == 'x';
+}
+
 // Scale both edges by `ratio`, never below 1 texel.
 void ScaledExtent(const DecodedImage& img, double ratio, uint32_t* w,
                   uint32_t* h) {
@@ -261,6 +271,78 @@ bool TextureDecoder::Decode(const std::string& asset, bool srgb,
 
   decoded_bytes_ += img.byte_size();
   *out = std::move(img);
+  return true;
+}
+
+bool TextureDecoder::DecodePtexFace(const std::string& asset, uint32_t face,
+                                    uint32_t level, bool srgb, DecodedImage* out) {
+  if (!out || !HasPtxExtension(asset)) return false;
+  const std::string key = asset + "#" + std::to_string(face) + ":" +
+                          std::to_string(level) + (srgb ? ":s" : ":l");
+  auto cached = ptex_cache_.find(key);
+  if (cached != ptex_cache_.end()) {
+    ptex_lru_.splice(ptex_lru_.end(), ptex_lru_, cached->second.lru);
+    *out = cached->second.image;
+    return true;
+  }
+
+  std::vector<uint8_t> source;
+  if (!ReadAssetBytes(asset, &source)) return false;
+  ::tinyusdz::ptx::Reader reader;
+  std::string err;
+  if (!::tinyusdz::ptx::Reader::OpenMemory(source.data(), source.size(),
+                                           &reader, &err)) return false;
+  ::tinyusdz::ptx::FaceImage faceImage;
+  const size_t budget = 256ull * 1024ull * 1024ull;
+  if (!reader.ReadFace(face, level, budget, &faceImage, &err) ||
+      faceImage.dataType != ::tinyusdz::ptx::DataType::UInt8 ||
+      faceImage.channels == 0 || faceImage.channels > 4)
+    return false;
+  size_t pixels = size_t(faceImage.width) * faceImage.height;
+  out->width = faceImage.width;
+  out->height = faceImage.height;
+  out->channels = 4;
+  out->pixels.assign(pixels * 4, 255);
+  for (size_t i = 0; i < pixels; ++i) {
+    const uint8_t* s = faceImage.data.data() + i * faceImage.channels;
+    uint8_t* d = out->pixels.data() + i * 4;
+    d[0] = s[0];
+    d[1] = faceImage.channels > 1 ? s[1] : s[0];
+    d[2] = faceImage.channels > 2 ? s[2] : s[0];
+    d[3] = faceImage.channels > 3 ? s[3] : 255;
+  }
+  if (options_.max_edge > 0 && std::max(out->width, out->height) > options_.max_edge) {
+    const double ratio = double(options_.max_edge) /
+                         double(std::max(out->width, out->height));
+    uint32_t w = std::max(1u, static_cast<uint32_t>(std::floor(out->width * ratio)));
+    uint32_t h = std::max(1u, static_cast<uint32_t>(std::floor(out->height * ratio)));
+    if (!ResizeDecoded(out, w, h, srgb)) return false;
+    ++downscaled_;
+  }
+  decoded_bytes_ += out->byte_size();
+
+  // Keep a bounded LRU of decoded face pages. The source PTX bytes and the
+  // temporary planar decode are released before returning, so RSS is bounded
+  // by the page cache rather than by the complete texture set.
+  const uint64_t cap = options_.budget_bytes > 0
+                           ? std::min<uint64_t>(options_.budget_bytes,
+                                               128ull * 1024ull * 1024ull)
+                           : 64ull * 1024ull * 1024ull;
+  if (cap > 0 && out->byte_size() <= cap) {
+    while (!ptex_lru_.empty() && ptex_cache_bytes_ + out->byte_size() > cap) {
+      const std::string& old = ptex_lru_.front();
+      auto it = ptex_cache_.find(old);
+      if (it != ptex_cache_.end()) {
+        ptex_cache_bytes_ -= it->second.image.byte_size();
+        ptex_cache_.erase(it);
+      }
+      ptex_lru_.pop_front();
+    }
+    ptex_lru_.push_back(key);
+    auto pos = std::prev(ptex_lru_.end());
+    ptex_cache_bytes_ += out->byte_size();
+    ptex_cache_.emplace(key, PtexCacheEntry{*out, pos});
+  }
   return true;
 }
 

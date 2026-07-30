@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "gpu_scene.hh"  // DrawScene
+#include "preview_cache.hh"
 #include "io-util.hh"  // tinyusdz::io::MMapFileHandle
 #include "layer.hh"
 #include "load_control.hh"
@@ -44,6 +45,34 @@ struct LoadOptions {
   // Explicit performance controls. Zero selects the hardware-derived default.
   unsigned compositionThreads{0};
   unsigned conversionThreads{0};
+  // Number of Ptex faces to materialize in the startup fallback atlas. Zero
+  // preserves eager construction; remaining faces are populated on demand.
+  uint32_t ptexInitialFaces{0};
+  // Fixed physical page-cache bytes reserved per Ptex texture. Zero selects
+  // the ordinary 32 MiB default; large-scene profiles can choose a smaller
+  // first-preview residency without changing generic fidelity.
+  size_t ptexPhysicalCacheBytes{0};
+  // Samples per cubic/NURBS curve span. Linear curves are unchanged. Large
+  // scene preview profiles may lower this while ordinary loads keep 8.
+  uint32_t curveTessellationSegments{8};
+  // Interactive procedural preview limits. Zero keeps every curves prim/strand.
+  // Sampling retains complete polylines so hair topology remains valid.
+  size_t maxCurvePrims{0};
+  size_t maxCurveStrands{0};
+  // Register ordinary texture slots during material conversion, then decode,
+  // resize and compress them after geometry publication on bounded workers.
+  bool asyncTextureDecode{false};
+  // Optional source-mesh conversion cap for large-scene preview profiles.
+  // Remaining prims stay unmaterialized instead of paying CPU conversion cost.
+  size_t maxMeshConversions{0};
+  // Publish a bounds/camera proxy scene from next-core's namespace checkpoint
+  // while authoritative opinion composition continues.
+  bool progressivePreview{false};
+  // Optional authored camera used to prioritize mesh conversion/admission.
+  // Geometry with large projected coverage in front of this camera streams
+  // before off-camera detail; empty preserves deterministic stage order.
+  std::string viewCamera;
+  PreviewCacheOptions previewCache;
   bool timing{false};
 
   // Compose USD composition arcs (subLayers/references/payload/inherits/
@@ -97,12 +126,16 @@ struct LoadOptions {
 // render/context thread. A complete event contains scene-wide metadata and
 // resources; streamed meshes have already been removed from its DrawScene.
 struct ProgressiveSceneEvent {
-  enum class Type { Resources, Mesh, Complete, Failed };
+  enum class Type {
+    PreviewScene, Reset, Resources, Mesh, Texture, Complete, Failed
+  };
   Type type{Type::Failed};
   std::vector<DrawMaterialCPU> materials;
   int textureCount{0};
   std::string upAxis{"Y"};
   DrawMeshCPU mesh;
+  DrawTextureCPU texture;
+  int textureSlot{-1};
   DrawScene scene;
   std::string error;
 };
@@ -117,9 +150,12 @@ class ProgressiveSceneStream {
   ProgressiveSceneStream(const ProgressiveSceneStream&) = delete;
   ProgressiveSceneStream& operator=(const ProgressiveSceneStream&) = delete;
 
+  bool pushPreview(DrawScene&& scene);
+  bool pushReset();
   bool pushResources(const std::vector<DrawMaterialCPU>& materials,
                      int textureCount, const std::string& upAxis);
   bool pushMesh(DrawMeshCPU&& mesh, const std::atomic<bool>* cancelled = nullptr);
+  bool pushTexture(int slot, DrawTextureCPU&& texture);
   void pushComplete(DrawScene&& scene);
   void pushFailed(std::string error);
   bool tryPop(ProgressiveSceneEvent* event);
