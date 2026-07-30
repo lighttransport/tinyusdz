@@ -12,6 +12,7 @@
 
 #include "c-internal.hh"
 #include "tydra/next/render-converter.hh"
+#include "safe-arithmetic.hh"
 #include "tydra/next/render-data.hh"
 
 namespace td = tinyusdz::tydra::next;
@@ -48,7 +49,11 @@ tusd_status ViewFromChunked(tusd_render_scene* scene,
   const size_t n = arr.size();
   if (components == 0) return Fail(TUSD_ERR_INTERNAL, "zero components");
   out->count = n / components;
-  out->nbytes = n * sizeof(T);
+  size_t nbytes;
+  if (!safe::mul(n, sizeof(T), &nbytes)) {
+    return Fail(TUSD_ERR_OUT_OF_MEMORY, "buffer size overflow");
+  }
+  out->nbytes = nbytes;
   if (n == 0) return TUSD_OK;
 
   if (arr.is_contiguous()) {
@@ -58,7 +63,7 @@ tusd_status ViewFromChunked(tusd_render_scene* scene,
   std::lock_guard<std::mutex> lk(scene->mu);
   auto it = scene->flat_cache.find(key);
   if (it == scene->flat_cache.end()) {
-    std::vector<uint8_t> flat(n * sizeof(T));
+    std::vector<uint8_t> flat(nbytes);
     arr.copy_to(reinterpret_cast<T*>(flat.data()));
     it = scene->flat_cache.emplace(key, std::move(flat)).first;
   }
@@ -75,7 +80,9 @@ tusd_status ViewFromVector(const std::vector<T>& v, uint8_t comp_type,
   out->components = components;
   out->count = components ? v.size() / components : 0;
   out->data = v.empty() ? nullptr : v.data();
-  out->nbytes = v.size() * sizeof(T);
+  if (!safe::mul(v.size(), sizeof(T), &out->nbytes)) {
+    out->nbytes = 0;
+  }
   return TUSD_OK;
 }
 
@@ -87,7 +94,9 @@ tusd_status ViewFromMatrixVector(const std::vector<td::Matrix4>& v,
   out->count = v.size();
   out->data = v.empty() ? nullptr : v.data();
   // Matrix4 is alignas(64) but sizeof is exactly 16 floats.
-  out->nbytes = v.size() * sizeof(td::Matrix4);
+  if (!safe::mul(v.size(), sizeof(td::Matrix4), &out->nbytes)) {
+    out->nbytes = 0;
+  }
   return TUSD_OK;
 }
 

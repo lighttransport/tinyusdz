@@ -18,6 +18,7 @@
 #include <cstring>
 #include <new>
 #include <vector>
+#include "safe-arithmetic.hh"
 #include <memory>
 
 namespace tinyusdz {
@@ -344,8 +345,13 @@ class ChunkedArray {
     // push_back below cannot throw-abort under -fno-exceptions.
     const size_t needed_chunks =
         (n + kElementsPerChunk - 1) / kElementsPerChunk;
-    if (needed_chunks > chunks_.capacity() &&
-        !ProbeAlloc(needed_chunks * sizeof(chunks_[0]) * 2)) {
+    size_t probe_bytes;
+    if (!safe::mul3(needed_chunks, sizeof(chunks_[0]), size_t(2),
+                    &probe_bytes)) {
+      alloc_failed_ = true;
+      return false;
+    }
+    if (needed_chunks > chunks_.capacity() && !ProbeAlloc(probe_bytes)) {
       alloc_failed_ = true;
       return false;
     }
