@@ -3,6 +3,7 @@
 //
 // Tydra Next - Render Scene Converter Implementation
 
+#include "safe-arithmetic.hh"
 #include "render-converter.hh"
 #include "next/eval/value-clip.hh"
 #include "next/resolver/asset-resolver.hh"
@@ -3942,14 +3943,16 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
   // allocates ~64B per triangulated corner and the Lengyel path ~40B per
   // point. A failed probe skips tangents for this mesh (they are optional)
   // instead of abort()ing the module under -fno-exceptions.
-  const size_t probe_bytes =
-      (config_.mesh.tangent_method ==
-           MeshConfig::TangentComputationMethod::Lengyel &&
-       vertex_normals && vertex_uvs)
-          ? np * (3 + 3 + 4) * sizeof(float)
-          : tri_corner_count * 64;
-  if (WouldOverflowSizeMul(tri_corner_count, 64) ||
-      !ProbeAlloc(probe_bytes)) {
+  bool probe_overflow = false;
+  size_t probe_bytes;
+  if (config_.mesh.tangent_method ==
+          MeshConfig::TangentComputationMethod::Lengyel &&
+      vertex_normals && vertex_uvs) {
+    probe_overflow = !safe::mul3(np, size_t(10), sizeof(float), &probe_bytes);
+  } else {
+    probe_overflow = !safe::mul(tri_corner_count, size_t(64), &probe_bytes);
+  }
+  if (probe_overflow || !ProbeAlloc(probe_bytes)) {
     warnings_.push_back("Out of memory computing tangents for mesh '" +
                         mesh->prim_path + "'; tangents skipped");
     return false;

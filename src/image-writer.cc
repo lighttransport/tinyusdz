@@ -481,7 +481,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
               hplanes[size_t(c)][i] = src[i * size_t(comps) + size_t(c)];
         } else if (image.format == Image::PixelFormat::Float &&
                    image.bpp == 32) {
-          if (image.data.size() < npix * sizeof(float))
+          size_t float_bytes;
+          if (!safe::mul(npix, sizeof(float), &float_bytes))
+            return nonstd::make_unexpected(
+                "EXR: float buffer size overflow.");
+          if (image.data.size() < float_bytes)
             return nonstd::make_unexpected("EXR: float buffer too small.");
           ptype = EXR_PIXEL_FLOAT;
           const float *src = reinterpret_cast<const float *>(image.data.data());
@@ -650,7 +654,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
       std::vector<float> fdata;
       const float *fptr = nullptr;
       if (image.format == Image::PixelFormat::Float && image.bpp == 32) {
-        if (image.data.size() < npix * sizeof(float)) {
+        size_t float_bytes;
+        if (!safe::mul(npix, sizeof(float), &float_bytes))
+          return nonstd::make_unexpected(
+              "EXR: float buffer size overflow.");
+        if (image.data.size() < float_bytes) {
           return nonstd::make_unexpected("EXR: float buffer too small.");
         }
         fptr = reinterpret_cast<const float *>(image.data.data());
