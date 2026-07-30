@@ -30,6 +30,7 @@ struct tusd_render_scene {
 };
 
 namespace {
+namespace safe = tinyusdz::safe;
 
 uint64_t CacheKey(uint8_t domain, int32_t id, uint32_t sub, uint8_t which) {
   return (uint64_t(domain) << 56) | (uint64_t(uint32_t(id)) << 24) |
