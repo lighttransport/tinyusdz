@@ -110,16 +110,28 @@ int main() {
   mat.specularColorSample.uv.m00 = 0.91f;
   mat.specularColorSample.uv.ty = 0.19f;
   mat.specularColorSample.uvSet = 1;
+  mat.specularColorSample.isPtex = true;
+  mat.specularColorSample.ptexRectTexelOffset = 101;
+  mat.specularColorSample.ptexFaceCount = 7;
   mat.useSpecularWorkflow = true;
   mat.coatWeightSample.scale[1] = 0.61f;
   mat.coatWeightSample.bias[1] = 0.13f;
   mat.coatWeightSample.uvSet = 1;
+  mat.coatWeightSample.isPtex = true;
+  mat.coatWeightSample.ptexRectTexelOffset = 202;
+  mat.coatWeightSample.ptexFaceCount = 8;
   mat.coatColorSample.scale[2] = 0.71f;
   mat.coatColorSample.bias[0] = 0.14f;
   mat.coatColorSample.uvSet = 1;
+  mat.coatColorSample.isPtex = true;
+  mat.coatColorSample.ptexRectTexelOffset = 303;
+  mat.coatColorSample.ptexFaceCount = 9;
   mat.coatRoughnessSample.scale[3] = 0.81f;
   mat.coatRoughnessSample.bias[3] = 0.15f;
   mat.coatRoughnessSample.uvSet = 1;
+  mat.coatRoughnessSample.isPtex = true;
+  mat.coatRoughnessSample.ptexRectTexelOffset = 404;
+  mat.coatRoughnessSample.ptexFaceCount = 10;
   mat.coatNormalSample.uv.m00 = 0.83f;
   mat.coatNormalSample.uv.ty = 0.23f;
   mat.coatNormalSample.uvSet = 1;
@@ -254,12 +266,22 @@ int main() {
     std::fprintf(stderr, "unexpected RT texture-param packing\n");
     return 1;
   }
+  if (!Near(directRasterTexPack[63 * 4 + 0], 101.0f) ||
+      !Near(directRasterTexPack[63 * 4 + 1], 7.0f) ||
+      !Near(directRasterTexPack[64 * 4 + 0], 202.0f) ||
+      !Near(directRasterTexPack[65 * 4 + 1], 9.0f) ||
+      !Near(directRasterTexPack[66 * 4 + 0], 404.0f)) {
+    std::fprintf(stderr, "advanced raster Ptex metadata was not packed\n");
+    return 1;
+  }
   if (!Near(directRasterTexPack[8 * 4 + 0], 2.0f) ||
       !Near(directRasterTexPack[8 * 4 + 6], 0.5f) ||
       !Near(directRasterTexPack[16 * 4 + 0], 0.0f) ||
       !Near(directRasterTexPack[16 * 4 + 1], 3.0f) ||
-      !Near(directRasterTexPack[17 * 4 + 2], 1.25f) ||
-      !Near(directRasterTexPack[17 * 4 + 3], -0.25f) ||
+      // UDIM displacement is baked into CPU geometry before raster upload;
+      // the vertex-stage scale/bias must therefore remain disabled.
+      !Near(directRasterTexPack[17 * 4 + 2], 0.0f) ||
+      !Near(directRasterTexPack[17 * 4 + 3], 0.0f) ||
       !Near(directRasterTexPack[18 * 4 + 0], 1.0f) ||
       !Near(directRasterTexPack[18 * 4 + 1], 1.0f) ||
       !Near(directRasterTexPack[18 * 4 + 2], 1.0f) ||

@@ -28,6 +28,12 @@ def Xform "World" {
   def Camera "MainCam" {
     float2 clippingRange = (0.1, 10000)
     float exposure = 0.5
+    float focusDistance = 8
+    float fStop = 2.8
+    double shutter:open = -0.25
+    double shutter:close = 0.5
+    uniform token stereoRole = "left"
+    float4[] clippingPlanes = [(1, 0, 0, -2), (0, 1, 0, -3)]
     float focalLength = 35
     float horizontalAperture = 36
     float horizontalApertureOffset = 0.1
@@ -42,6 +48,12 @@ def Xform "World" {
   def Camera "OrthoCam" {
     float2 clippingRange = (1, 500)
     float exposure = 0
+    float focusDistance = 20
+    float fStop = 8
+    double shutter:open = 0
+    double shutter:close = 0
+    uniform token stereoRole = "right"
+    float4[] clippingPlanes = [(0, 0, 1, -4)]
     float focalLength = 50
     float horizontalAperture = 20.955
     float verticalAperture = 15.291
@@ -91,7 +103,7 @@ def read(p):
     for line in open(p):
         if not line.strip(): continue
         tokens = line.split()
-        if len(tokens) < 21:
+        if len(tokens) < 29:
             print(f"short record ({len(tokens)} tokens): {line.strip()}")
             raise SystemExit(1)
         rows.append(tokens)
@@ -127,6 +139,13 @@ if len(a) != 3 or len(b) != 3:
 # 19 forward[0]
 # 20 forward[1]
 # 21 forward[2]
+# 22 focusDistance
+# 23 fStop
+# 24 shutterOpen
+# 25 shutterClose
+# 26 stereoRole (0 mono, 1 left, 2 right)
+# 27 clipping plane count
+# 28 clipping plane weighted checksum
 
 for ci, (x, y) in enumerate(zip(a, b)):
     # Compare absolute paths
@@ -137,13 +156,26 @@ for ci, (x, y) in enumerate(zip(a, b)):
     if x[2] != y[2]:
         print(f"camera {ci} projection: next={x[2]} legacy={y[2]}")
         raise SystemExit(1)
-    # Compare numeric fields (indices 3..21)
-    for fi in range(3, 22):
+    # Compare numeric fields (indices 3..28)
+    for fi in range(3, 29):
         u = float(x[fi])
         v = float(y[fi])
         if not math.isclose(u, v, rel_tol=1e-4, abs_tol=1e-4):
             print(f"camera {ci} field {fi} ({x[1]}): next={u} legacy={v}")
             raise SystemExit(1)
+
+expected_advanced = {
+    "/World/MainCam": (8.0, 2.8, -0.25, 0.5, 1, 2),
+    "/World/OrthoCam": (20.0, 8.0, 0.0, 0.0, 2, 1),
+    "/World/Rig/RigCam": (5.0, 0.0, 0.0, 0.0, 0, 0),
+}
+for row in a:
+    got = tuple(float(row[i]) for i in range(22, 28))
+    want = expected_advanced[row[1]]
+    if any(not math.isclose(g, w, rel_tol=1e-4, abs_tol=1e-4)
+           for g, w in zip(got, want)):
+        print(f"advanced camera fields {row[1]}: got={got} want={want}")
+        raise SystemExit(1)
 
 print(f"PASS: {len(a)} default/legacy camera records equivalent")
 PY

@@ -233,6 +233,11 @@ public:
   Stage(const Stage&) = delete;
   Stage& operator=(const Stage&) = delete;
 
+  /// Clone this stage. Array-valued properties retain their copy-on-write or
+  /// lazy backing, so snapshots can detach before a destructive compaction
+  /// without duplicating the largest payloads.
+  Stage Clone() const;
+
   // ============================================================
   // Loading
   // ============================================================

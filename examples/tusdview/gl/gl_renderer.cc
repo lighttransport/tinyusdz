@@ -236,6 +236,18 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uFaceIdTex_ = glGetUniformLocation(program_, "uFaceIdTex");
   uFaceBase_ = glGetUniformLocation(program_, "uFaceBase");
   uHasFaceId_ = glGetUniformLocation(program_, "uHasFaceId");
+  uBasePtex_ = glGetUniformLocation(program_, "uBasePtex");
+  uBasePtexGrid_ = glGetUniformLocation(program_, "uBasePtexGrid");
+  uMetallicPtexGrid_ = glGetUniformLocation(program_, "uMetallicPtexGrid");
+  uRoughnessPtexGrid_ = glGetUniformLocation(program_, "uRoughnessPtexGrid");
+  uNormalPtexGrid_ = glGetUniformLocation(program_, "uNormalPtexGrid");
+  uEmissivePtexGrid_ = glGetUniformLocation(program_, "uEmissivePtexGrid");
+  uOpacityPtexGrid_ = glGetUniformLocation(program_, "uOpacityPtexGrid");
+  uOcclusionPtexGrid_ = glGetUniformLocation(program_, "uOcclusionPtexGrid");
+  uSpecularColorPtexGrid_ = glGetUniformLocation(program_, "uSpecularColorPtexGrid");
+  uCoatWeightPtexGrid_ = glGetUniformLocation(program_, "uCoatWeightPtexGrid");
+  uCoatColorPtexGrid_ = glGetUniformLocation(program_, "uCoatColorPtexGrid");
+  uCoatRoughnessPtexGrid_ = glGetUniformLocation(program_, "uCoatRoughnessPtexGrid");
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
@@ -1721,8 +1733,12 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
           useCompressed ? t.compressed.mips.size() : t.mipImages.size();
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,
                       static_cast<GLint>(levels));
-    } else {
+    } else if (!t.streamingMutable) {
       glGenerateMipmap(GL_TEXTURE_2D);
+    } else {
+      // Mutable page atlases update level zero incrementally. Sampling stale
+      // generated levels would expose evicted pages around minification.
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
     }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
@@ -1730,10 +1746,106 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
   }
+  gpu.width = t.image.width;
+  gpu.height = t.image.height;
+  auto imageBytes = [](const light3d::Image& image) {
+    return image.data.empty()
+               ? size_t(std::max(image.width, 0)) *
+                     size_t(std::max(image.height, 0)) * 4u
+               : image.data.size();
+  };
+  auto compressedBytes = [](const DrawCompressedImageCPU& image) {
+    size_t bytes = image.data.size();
+    for (const DrawCompressedMipCPU& mip : image.mips) bytes += mip.data.size();
+    return bytes;
+  };
+  if (t.isUdim && !t.udimTiles.empty()) {
+    for (const DrawUdimTileCPU& tile : t.udimTiles) {
+      const size_t compressed = compressedBytes(tile.compressed);
+      gpu.residentBytes += compressed ? compressed : imageBytes(tile.image);
+      if (!compressed) {
+        for (const light3d::Image& mip : tile.mipImages)
+          gpu.residentBytes += imageBytes(mip);
+      }
+    }
+    // The ordinary 2D fallback is also allocated for UDIM materials.
+    const size_t fallbackCompressed = compressedBytes(t.compressed);
+    gpu.residentBytes +=
+        fallbackCompressed ? fallbackCompressed : imageBytes(t.image);
+  } else {
+    const size_t compressed = compressedBytes(t.compressed);
+    gpu.residentBytes = compressed ? compressed : imageBytes(t.image);
+    if (!compressed) {
+      for (const light3d::Image& mip : t.mipImages)
+        gpu.residentBytes += imageBytes(mip);
+    }
+  }
+  // GL generates a complete chain when the CPU did not provide one.
+  if (t.mipImages.empty() && t.compressed.mips.empty() &&
+      !t.streamingMutable) {
+    gpu.residentBytes += gpu.residentBytes / 3u;
+  }
+  gpu.regionUpdatable = !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
+                        (!t.image.data.empty() || t.streamingMutable) &&
+                        !(t.requestedCompressed &&
+                          t.compressed.format != DrawCompressedFormat::None &&
+                          !t.compressed.data.empty());
   GLTexture& old = textures_[static_cast<size_t>(slot)];
   if (old.tex2d) glDeleteTextures(1, &old.tex2d);
   if (old.arrayTex) glDeleteTextures(1, &old.arrayTex);
   old = gpu;
+  if (t.isPtex && t.ptexRectTexelOffset <
+                      static_cast<uint32_t>(t.image.width * t.image.height)) {
+    size_t linear = t.ptexRectTexelOffset;
+    size_t remaining = t.ptexFaceRects.size() * 8u;
+    while (remaining > 0) {
+      const int x = static_cast<int>(linear % size_t(t.image.width));
+      const int y = static_cast<int>(linear / size_t(t.image.width));
+      const int count = static_cast<int>(
+          std::min(remaining, size_t(t.image.width - x)));
+      updateTextureRegion(slot, x, y, count, 1,
+                          t.image.data.data() + linear * 4u);
+      linear += static_cast<size_t>(count);
+      remaining -= static_cast<size_t>(count);
+    }
+  }
+}
+
+void GLRenderer::evictTexture(int slot) {
+  if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return;
+  GLTexture& texture = textures_[static_cast<size_t>(slot)];
+  if (texture.tex2d) glDeleteTextures(1, &texture.tex2d);
+  if (texture.arrayTex) glDeleteTextures(1, &texture.arrayTex);
+  texture = GLTexture{};
+}
+
+size_t GLRenderer::textureResidentBytes(int slot) const {
+  if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return 0;
+  return textures_[static_cast<size_t>(slot)].residentBytes;
+}
+
+bool GLRenderer::updateTextureRegion(int slot, int x, int y, int w, int h,
+                                     const uint8_t* rgba, size_t rowBytes) {
+  if (slot < 0 || static_cast<size_t>(slot) >= textures_.size() || !rgba ||
+      x < 0 || y < 0 || w <= 0 || h <= 0) {
+    return false;
+  }
+  GLTexture& texture = textures_[static_cast<size_t>(slot)];
+  if (!texture.regionUpdatable || !texture.tex2d ||
+      x + w > texture.width || y + h > texture.height) {
+    return false;
+  }
+  const size_t stride = rowBytes ? rowBytes : size_t(w) * 4u;
+  if (stride < size_t(w) * 4u || (stride & 3u) != 0) return false;
+  glBindTexture(GL_TEXTURE_2D, texture.tex2d);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(stride / 4u));
+  glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                  rgba);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return true;
 }
 
 void GLRenderer::destroyIblTextures() {
@@ -1938,6 +2050,7 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   gm.doubleSided = sm.doubleSided;
   gm.purposeId = PurposeId(sm.purpose);
   gm.kindId = sm.kindId;
+  gm.rasterDisplacementBaked = sm.rasterDisplacementBaked;
   gm.skinned = sm.jointIdx.size() == sm.vertices.size() * 4 &&
                sm.jointWt.size() == sm.vertices.size() * 4;
   gm.extendedSkinned =
@@ -1965,9 +2078,14 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   glBindVertexArray(gm.vao);
   glGenBuffers(1, &gm.vbo);
   glBindBuffer(GL_ARRAY_BUFFER, gm.vbo);
+  const std::vector<DrawVertex>& rasterVertices =
+      sm.rasterDisplacementBaked &&
+              sm.rtDisplacedVertices.size() == sm.vertices.size()
+          ? sm.rtDisplacedVertices
+          : sm.vertices;
   glBufferData(GL_ARRAY_BUFFER,
-               static_cast<GLsizeiptr>(sm.vertices.size() * sizeof(DrawVertex)),
-               sm.vertices.data(), GL_STATIC_DRAW);
+               static_cast<GLsizeiptr>(rasterVertices.size() * sizeof(DrawVertex)),
+               rasterVertices.data(), GL_STATIC_DRAW);
   glGenBuffers(1, &gm.ebo);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.ebo);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER,
@@ -2185,9 +2303,14 @@ void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
   glBindVertexArray(gm.vao);
   glGenBuffers(1, &gm.vbo);
   glBindBuffer(GL_ARRAY_BUFFER, gm.vbo);
+  const std::vector<DrawVertex>& rasterVertices =
+      sm.rasterDisplacementBaked &&
+              sm.rtDisplacedVertices.size() == sm.vertices.size()
+          ? sm.rtDisplacedVertices
+          : sm.vertices;
   glBufferData(GL_ARRAY_BUFFER,
-               static_cast<GLsizeiptr>(sm.vertices.size() * sizeof(DrawVertex)),
-               sm.vertices.data(), GL_STATIC_DRAW);
+               static_cast<GLsizeiptr>(rasterVertices.size() * sizeof(DrawVertex)),
+               rasterVertices.data(), GL_STATIC_DRAW);
   glGenBuffers(1, &gm.ebo);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gm.ebo);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER,
@@ -2269,6 +2392,7 @@ void GLRenderer::appendMeshImpl(const DrawMeshCPU& sm, bool includeAux) {
   }
 
   gm.geometricNormal = sm.geometricNormal;
+  gm.rasterDisplacementBaked = sm.rasterDisplacementBaked;
   gm.purposeId = PurposeId(sm.purpose);
   gm.kindId = sm.kindId;
   // Per-vertex displayColor (divisor 0). Non-instanced meshes bind it at attrib 9
@@ -3041,7 +3165,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       // follows the displaced surface. Unit 7 always bound (white when disabled) to
       // keep the sampler complete.
       const bool displaced =
-          params.displacement &&
+          params.displacement && !mesh.rasterDisplacementBaked &&
           ((materialId >= 0 &&
             static_cast<size_t>(materialId) < materials_.size())
                ? materials_[static_cast<size_t>(materialId)].hasDisplacement()
@@ -3149,6 +3273,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uAlphaMode_, 0);
         glUniform1f(uAlphaCutoff_, 0.5f);
         glUniform1i(uHasBaseColorTex_, 0);
+        glUniform1i(uBasePtex_, 0);
+        glUniform2f(uBasePtexGrid_, 1.0f, 1.0f);
         glUniform1i(uHasMetallicTex_, 0);
         glUniform1i(uHasRoughnessTex_, 0);
         glUniform1i(uHasNormalTex_, 0);
@@ -3238,6 +3364,40 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1i(uRoughnessUvSet_, mat.roughnessSample.uvSet);
         glUniform4fv(uBaseColorTexScale_, 1, mat.baseColorSample.scale);
         glUniform4fv(uBaseColorTexBias_, 1, mat.baseColorSample.bias);
+        glUniform1i(uBasePtex_, mat.baseColorSample.isPtex ? 1 : 0);
+        glUniform2f(uBasePtexGrid_,
+                   static_cast<float>(mat.baseColorSample.ptexRectTexelOffset),
+                   static_cast<float>(mat.baseColorSample.ptexFaceCount));
+        glUniform2f(uMetallicPtexGrid_,
+                    static_cast<float>(mat.metallicSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.metallicSample.ptexFaceCount));
+        glUniform2f(uRoughnessPtexGrid_,
+                    static_cast<float>(mat.roughnessSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.roughnessSample.ptexFaceCount));
+        glUniform2f(uNormalPtexGrid_,
+                    static_cast<float>(mat.normalSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.normalSample.ptexFaceCount));
+        glUniform2f(uEmissivePtexGrid_,
+                    static_cast<float>(mat.emissiveSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.emissiveSample.ptexFaceCount));
+        glUniform2f(uOpacityPtexGrid_,
+                    static_cast<float>(mat.opacitySample.ptexRectTexelOffset),
+                    static_cast<float>(mat.opacitySample.ptexFaceCount));
+        glUniform2f(uOcclusionPtexGrid_,
+                    static_cast<float>(mat.occlusionSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.occlusionSample.ptexFaceCount));
+        glUniform2f(uSpecularColorPtexGrid_,
+                    static_cast<float>(mat.specularColorSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.specularColorSample.ptexFaceCount));
+        glUniform2f(uCoatWeightPtexGrid_,
+                    static_cast<float>(mat.coatWeightSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.coatWeightSample.ptexFaceCount));
+        glUniform2f(uCoatColorPtexGrid_,
+                    static_cast<float>(mat.coatColorSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.coatColorSample.ptexFaceCount));
+        glUniform2f(uCoatRoughnessPtexGrid_,
+                    static_cast<float>(mat.coatRoughnessSample.ptexRectTexelOffset),
+                    static_cast<float>(mat.coatRoughnessSample.ptexFaceCount));
         glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
         glUniform4fv(uNormalTexBias_, 1, mat.normalSample.bias);
         glUniform4fv(uEmissiveTexScale_, 1, mat.emissiveSample.scale);
@@ -3658,7 +3818,9 @@ void GLRenderer::renderShadowMap(const RenderFrameParams& params) {
                                       static_cast<size_t>(sub.materialId) < materials_.size()
                                   ? materials_[static_cast<size_t>(sub.materialId)]
                                   : fallback;
-      const bool displaced = params.displacement && mat.hasDisplacement();
+      const bool displaced = params.displacement &&
+                             !mesh.rasterDisplacementBaked &&
+                             mat.hasDisplacement();
       glUniform1i(sHasDisplacement_, displaced);
       glUniform1i(sHasDisplacementTex_, displaced && mat.displacementTex >= 0);
       glUniform1f(sDisplacementConst_, mat.displacementConst);

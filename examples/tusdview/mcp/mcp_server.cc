@@ -87,7 +87,7 @@ json MCPServer::buildToolsList() const {
       json::array({"op"})));
   tools.push_back(tool(
       "screenshot",
-      "Capture the current viewport to an image file (PNG/PPM by extension) for "
+      "Capture the current viewport to an image file (PNG/JPEG/PPM by extension) for "
       "visual debugging. Camera moves from the 'viewport' tool apply on the next "
       "frame, so orbit/pan/dolly then call screenshot as a separate request.",
       {{"path", strProp("output image path (.png or .ppm)")}},

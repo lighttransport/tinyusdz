@@ -20,6 +20,7 @@
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
+#include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/pcp/cache.hh"
@@ -5332,6 +5333,173 @@ def Xform "World" (
   std::cout << "  RenderSettings color management: PASSED\n";
 }
 
+class RecordingSceneUpdateSink final : public SceneUpdateSink {
+ public:
+  bool BeginUpdate(uint64_t base, uint64_t next, bool full) override {
+    base_revision = base;
+    new_revision = next;
+    full_resync = full;
+    mesh_upserts = 0;
+    removes = 0;
+    mesh_removes = 0;
+    return true;
+  }
+  bool Remove(const RemovedRenderResource& removed) override {
+    ++removes;
+    if (removed.kind == RenderResourceKind::Mesh) ++mesh_removes;
+    return true;
+  }
+  bool UpsertMesh(RenderId id, const RenderMesh& mesh) override {
+    ++mesh_upserts;
+    mesh_ids[mesh.prim_path] = id;
+    if (!mesh.points.empty()) last_mesh_x = mesh.points[0];
+    return true;
+  }
+  bool EndUpdate() override { return true; }
+
+  uint64_t base_revision = 0;
+  uint64_t new_revision = 0;
+  bool full_resync = false;
+  size_t mesh_upserts = 0;
+  size_t removes = 0;
+  size_t mesh_removes = 0;
+  float last_mesh_x = 0.0f;
+  std::map<std::string, RenderId> mesh_ids;
+};
+
+void TestIncrementalRenderSession() {
+  std::cout << "Testing incremental RenderSession...\n";
+  auto source = [](float x) {
+    std::string text = "#usda 1.0\ndef Mesh \"M\" {\n";
+    text += "    int[] faceVertexCounts = [3]\n";
+    text += "    int[] faceVertexIndices = [0, 1, 2]\n";
+    text += "    point3f[] points = [(" + std::to_string(x);
+    text += ", 0, 0), (1, 0, 0), (0, 1, 0)]\n}\n";
+    return text;
+  };
+
+  LoadResult first = LoadUSDAFromString(source(0.0f));
+  assert(first.success);
+  StageSnapshot first_snapshot;
+  first_snapshot.revision = 1;
+  first_snapshot.stage.reset(new Stage(std::move(first.stage)));
+
+  RecordingSceneUpdateSink sink;
+  RenderSession render_session;
+  RenderUpdateResult initial =
+      render_session.Initialize(first_snapshot, &sink);
+  if (!initial) std::cerr << "RenderSession init failed: " << initial.error << "\n";
+  assert(initial);
+  assert(sink.full_resync);
+  assert(sink.mesh_upserts == 1);
+  const RenderId mesh_id = sink.mesh_ids.at("/M");
+  assert(std::fabs(sink.last_mesh_x) < 1.0e-6f);
+
+  LoadResult second = LoadUSDAFromString(source(2.0f));
+  assert(second.success);
+  StageSnapshot second_snapshot;
+  second_snapshot.revision = 2;
+  second_snapshot.stage.reset(new Stage(std::move(second.stage)));
+  StageChangeSet changes;
+  changes.base_revision = 1;
+  changes.new_revision = 2;
+  PrimChange mesh_change;
+  mesh_change.path = Path("/M");
+  mesh_change.flags = StageChangeFlag::Topology;
+  mesh_change.properties.push_back("points");
+  changes.prims.push_back(std::move(mesh_change));
+  RenderUpdateResult update =
+      render_session.Apply(second_snapshot, changes, &sink);
+  assert(update);
+  assert(!sink.full_resync);
+  assert(sink.mesh_upserts == 1);
+  assert(sink.mesh_ids.at("/M") == mesh_id);
+  assert(std::fabs(sink.last_mesh_x - 2.0f) < 1.0e-6f);
+  assert(sink.removes == 0);
+  assert(render_session.revision() == second_snapshot.revision);
+
+  LoadResult third = LoadUSDAFromString("#usda 1.0\n");
+  assert(third.success);
+  StageSnapshot third_snapshot;
+  third_snapshot.revision = 3;
+  third_snapshot.stage.reset(new Stage(std::move(third.stage)));
+  StageChangeSet removal;
+  removal.base_revision = 2;
+  removal.new_revision = 3;
+  PrimChange removed_mesh;
+  removed_mesh.path = Path("/M");
+  removed_mesh.flags = StageChangeFlag::Resync;
+  removal.prims.push_back(std::move(removed_mesh));
+  RenderUpdateResult removed =
+      render_session.Apply(third_snapshot, removal, &sink);
+  assert(removed);
+  assert(!sink.full_resync);
+  assert(sink.mesh_upserts == 0);
+  assert(sink.mesh_removes == 1);
+  assert(sink.removes >= 1);
+  assert(removed.remove_count == sink.removes);
+  assert(render_session.revision() == 3);
+
+  StageSnapshot no_op_snapshot;
+  no_op_snapshot.revision = 4;
+  no_op_snapshot.stage = third_snapshot.stage;
+  StageChangeSet no_op;
+  no_op.base_revision = 3;
+  no_op.new_revision = 4;
+  RenderUpdateResult no_op_update =
+      render_session.Apply(no_op_snapshot, no_op, &sink);
+  assert(no_op_update);
+  assert(!sink.full_resync);
+  assert(no_op_update.upsert_count == 0);
+  assert(no_op_update.remove_count == 0);
+  assert(sink.mesh_upserts == 0);
+  assert(sink.removes == 0);
+  assert(render_session.revision() == 4);
+  std::cout << "  incremental RenderSession: PASSED\n";
+}
+
+void TestPtexMaterialInterfaceAsset() {
+  std::cout << "Testing Ptex material-interface asset forwarding...\n";
+  const char* usda = "#usda 1.0\ndef Xform \"World\"\n{\n"
+                    "    def Material \"Mat\"\n"
+                    "    {\n"
+                    "        asset inputs:surfaceMap = @maps/surface.ptx@\n"
+                    "        token outputs:surface.connect = </World/Mat/Surface.outputs:surface>\n"
+                    "        def Shader \"Surface\"\n"
+                    "        {\n"
+                    "            uniform token info:id = \"UsdPreviewSurface\"\n"
+                    "            color3f inputs:diffuseColor.connect = </World/Mat/Ptex.outputs:resultRGB>\n"
+                    "            token outputs:surface\n"
+                    "        }\n"
+                    "        def Shader \"Ptex\"\n"
+                    "        {\n"
+                    "            uniform token info:id = \"HwPtexTexture\"\n"
+                    "            asset inputs:file.connect = </World/Mat.inputs:surfaceMap>\n"
+                    "            color3f outputs:resultRGB\n"
+                    "        }\n"
+                    "    }\n"
+                    "    def Mesh \"Quad\"\n"
+                    "    {\n"
+                    "        point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]\n"
+                    "        int[] faceVertexCounts = [4]\n"
+                    "        int[] faceVertexIndices = [0,1,2,3]\n"
+                    "        rel material:binding = </World/Mat>\n"
+                    "    }\n"
+                    "}\n";
+
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  ConverterConfig config;
+  config.material.load_textures = false;
+  RenderSceneConverter converter(config);
+  ConvertResult converted = converter.Convert(loaded.stage);
+  assert(converted.success);
+  assert(converted.scene.textures.size() == 1);
+  assert(converted.scene.textures[0].asset_path == "maps/surface.ptx");
+  assert(converted.scene.images[0].resolved_path == "maps/surface.ptx");
+  std::cout << "  Ptex material-interface asset forwarding: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -5389,6 +5557,8 @@ int main() {
   TestP2AuditFixes();
   TestLegacyParityExtraction();
   TestRenderColorManagement();
+  TestIncrementalRenderSession();
+  TestPtexMaterialInterfaceAsset();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

@@ -36,6 +36,7 @@ inline void RtPixelJitter(int s, int spp, float* jx, float* jy) {
   *jy = radical(s, 3) - 0.5f;
 }
 
+
 // Interleaved vertex: matches the GL330 / VK450 shader attribute layout
 //   location 0: vec3 aPosition  (offset 0)
 //   location 1: vec3 aNormal    (offset 12)
@@ -237,6 +238,10 @@ struct DrawMeshCPU {
   // displaced material. The raster path keeps using `vertices` (shader displacement
   // with live sliders); the VK ray-query BLAS/hit reads these instead.
   std::vector<DrawVertex> rtDisplacedVertices;
+  // True when rtDisplacedVertices contains Ptex displacement that raster
+  // backends must upload as the base geometry (their vertex stages cannot
+  // identify a polygon face before primitive assembly).
+  bool rasterDisplacementBaked{false};
 };
 
 // USD purpose token -> compact id used by the Purpose debug AOV (consistent across
@@ -351,6 +356,18 @@ struct DrawTexSampleCPU {
   WrapMode wrapT{WrapMode::Repeat};
   DrawColorSpace colorSpace{DrawColorSpace::Auto};
   bool isUdim{false};
+  // Native Ptex atlas sampling metadata. `isPtex` distinguishes the slot;
+  // ptexFaceCount may be zero when the residency budget selected the
+  // representative-face fallback.
+  bool isPtex{false};
+  uint16_t ptexAtlasCols{0};
+  uint16_t ptexAtlasRows{0};
+  uint32_t ptexTileEdge{0};
+  // Linear texel offset of the embedded Ptex face-rectangle table and the
+  // number of records. Each record occupies eight alpha texels (little-endian
+  // uint16 x/y/width/height), so it survives sRGB texture uploads unchanged.
+  uint32_t ptexRectTexelOffset{0};
+  uint32_t ptexFaceCount{0};
 };
 
 enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };
@@ -502,6 +519,18 @@ struct DrawCompressedImageCPU {
   std::vector<DrawCompressedMipCPU> mips;
 };
 
+// Inner texel rectangle for one Ptex face in DrawTextureCPU::image. The atlas
+// may contain padding around this rectangle; sampling maps intrinsic face UVs
+// between the first and last inner texel centers.
+struct DrawPtexFaceRectCPU {
+  uint32_t x{0};
+  uint32_t y{0};
+  uint32_t width{0};
+  uint32_t height{0};
+  uint16_t mipLevel{0};
+  uint16_t reserved{0};
+};
+
 struct DrawUdimTileCPU {
   uint32_t udim{1001};
   uint32_t u{0};
@@ -519,6 +548,46 @@ struct DrawUdimTileCPU {
 struct DrawTextureCPU {
   light3d::Image image;  // always normalized to RGBA8 (channels == 4) on the CPU side
   std::string assetIdentifier;  // Tydra TextureImage::asset_identifier, if known
+  bool deferredDecode{false};  // slot exists; pixels arrive asynchronously
+  // Native Ptex source. `image` is a bounded face atlas when residency permits,
+  // or a representative-face fallback after the cumulative budget is spent.
+  bool isPtex{false};
+  // Allocate mutable RGBA8 storage even when `image.data` is empty. Streaming
+  // Ptex caches use this to reserve only their fixed physical atlas without a
+  // same-sized zero-filled CPU upload.
+  bool streamingMutable{false};
+  bool ptexForceResidency{false};  // diagnostic: stream even fitting faces
+  // Only refine faces referenced by admitted meshes. Enabled when the initial
+  // atlas deliberately leaves a tail of faces as reserved placeholders.
+  bool ptexDemandDriven{false};
+  uint32_t ptexFaces{0};
+  uint16_t ptexLevels{0};
+  uint16_t ptexChannels{0};
+  uint32_t ptexMaxFaceEdge{0};
+  uint32_t ptexDownsampledFaces{0};
+  uint64_t ptexAtlasBytes{0};
+  uint64_t ptexPageCacheHits{0};
+  uint64_t ptexPageCacheMisses{0};
+  uint64_t ptexPageCacheEvictions{0};
+  uint64_t ptexPageCachePeakBytes{0};
+  uint64_t ptexPageDecodedBytes{0};
+  uint64_t ptexGpuPageUploads{0};
+  uint64_t ptexGpuPageHits{0};
+  uint64_t ptexGpuPageMisses{0};
+  uint64_t ptexGpuPageEvictions{0};
+  uint16_t ptexAtlasCols{0};
+  uint16_t ptexAtlasRows{0};
+  uint32_t ptexTileEdge{0};
+  uint32_t ptexGutter{0};
+  uint32_t ptexRectTexelOffset{0};
+  uint32_t ptexPhysicalCacheOffsetY{0};
+  uint32_t ptexPhysicalCacheSlotEdge{0};
+  uint32_t ptexPhysicalCacheSlots{0};
+  std::vector<DrawPtexFaceRectCPU> ptexFaceRects;
+  // Compressed native source retained only when physical cache slots exist;
+  // pages are decoded on demand and the much larger full-resolution atlas is
+  // never materialized.
+  std::vector<uint8_t> ptexSourceData;
   int renderImageId{-1};        // source RenderScene::images index, or -1
   int renderUdimId{-1};         // source RenderScene::udim_textures index, or -1
   bool srgb{false};      // sRGB color data (baseColor/emissive) vs linear scalar/normal data
@@ -713,6 +782,15 @@ struct DrawCameraCPU {
   float horizontalApertureOffset{0.0f};
   float verticalApertureOffset{0.0f};
   float exposure{0.0f};
+  float focusDistance{0.0f};
+  float fStop{0.0f};
+  double shutterOpen{0.0};
+  double shutterClose{0.0};
+  enum class StereoRole : int { Mono = 0, Left = 1, Right = 2 };
+  StereoRole stereoRole{StereoRole::Mono};
+  // World-space clipping-plane equations (a,b,c,d), retained for backends
+  // that support arbitrary user clipping.
+  std::vector<float> clippingPlanes;
   float zNear{0.1f};
   float zFar{10000.0f};
   float fovYDeg{45.0f};

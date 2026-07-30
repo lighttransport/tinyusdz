@@ -103,6 +103,10 @@ if(NOT TARGET tinyusdz_next)
                    ${CMAKE_BINARY_DIR}/tusdrender_next_build)
 endif()
 target_link_libraries(tusdrender tinyusdz_next tydra_next)
+# tydra_next's lazy Ptex decoder uses symbols supplied by the main static
+# library.  Keep that archive after tydra_next so single-pass static linkers
+# resolve the dependency (the initial common-library link above precedes it).
+target_link_libraries(tusdrender ${TINYUSDZ_TARGET_STATIC})
 
 # tusdrender itself spawns std::thread workers for the mesh-stream and render
 # passes, so link the threading runtime explicitly (not just transitively via

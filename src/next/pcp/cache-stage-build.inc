@@ -43,7 +43,13 @@
         continue;
       }
       auto ps0 = prof ? ProfClock::now() : ProfClock::time_point{};
-      const std::vector<Src> &srcs = SourcesForPath(w.src_path, warn, err);
+      // Parallel warm keys stack-0 sources directly by the composed path.
+      // Avoid SourcesKey's path-string copy on the overwhelmingly common hit;
+      // retain the full resolver for an unwarmed/mutated miss.
+      const std::vector<Src>* cached_srcs = sources_cache.find(w.src_path.str());
+      const std::vector<Src> &srcs = cached_srcs
+                                         ? *cached_srcs
+                                         : SourcesForPath(w.src_path, warn, err);
       auto ps1 = prof ? ProfClock::now() : ProfClock::time_point{};
 
       // STRUCTURE PASS: fix this prim's slot, parent, child order and instancing
@@ -107,7 +113,7 @@
         out->set_parent(idx, w.parent_idx);
       }
       // Opinions for this slot are filled (in parallel) after the whole walk.
-      fill_.push_back({idx, w.src_path.str()});
+      fill_.push_back({idx, &srcs});
 
       if (is_instance) continue;  // prototype provides the subtree
 

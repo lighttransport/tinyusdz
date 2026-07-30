@@ -96,7 +96,14 @@ std::string GetSurfaceShader(const Stage& /* stage */, const UsdPrim& material) 
 
 std::string GetDisplacementShader(const Stage& /* stage */, const UsdPrim& material) {
   if (!IsMaterial(material)) return "";
-  return GetTerminalShaderPath(material, "outputs:displacement");
+  std::string path = GetTerminalShaderPath(material, "outputs:displacement");
+  if (path.empty()) {
+    // RenderMan-authored production layers commonly expose only the ri render
+    // context. Preserve that terminal so renderer adapters can translate a
+    // supported PxrDisplace graph instead of silently dropping displacement.
+    path = GetTerminalShaderPath(material, "outputs:ri:displacement");
+  }
+  return path;
 }
 
 std::string GetVolumeShader(const Stage& /* stage */, const UsdPrim& material) {

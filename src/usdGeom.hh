@@ -787,7 +787,7 @@ struct GeomCamera : public GPrim {
       value::float2({0.1f, 1000000.0f})};
   TypedAttributeWithFallback<Animatable<float>> exposure{0.0f};  // in EV
   TypedAttributeWithFallback<Animatable<float>> focalLength{50.0f};
-  TypedAttributeWithFallback<Animatable<float>> focusDistance{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> focusDistance{5.0f};
   TypedAttributeWithFallback<Animatable<float>> horizontalAperture{20.965f};
   TypedAttributeWithFallback<Animatable<float>> horizontalApertureOffset{0.0f};
   TypedAttributeWithFallback<Animatable<float>> verticalAperture{15.2908f};

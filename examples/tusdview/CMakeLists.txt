@@ -54,6 +54,10 @@ set(TUSDVIEW_SOURCES
     config.cc
     scene_loader.cc
     next_scene_loader.cc
+    preview_cache.cc
+    texture_residency_policy.cc
+    ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+    ptex_atlas.cc
     mesh_build.cc
     texture_tools.cc
     lightrt_mtlx_bridge.cc
@@ -173,6 +177,20 @@ function(tusdview_set_warning_flags target)
 endfunction()
 
 if(TINYUSDZ_BUILD_TESTS)
+  add_executable(tusdview_ptex_atlas_test
+      tests/ptex_atlas_test.cc
+      ptex_atlas.cc
+      displacement_bake.cc)
+  target_compile_features(tusdview_ptex_atlas_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_ptex_atlas_test)
+  target_include_directories(tusdview_ptex_atlas_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_ptex_atlas_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+
   add_executable(tusdview_lightrt_bridge_test
       tests/lightrt_bridge_test.cc
       lightrt_mtlx_bridge.cc
@@ -309,19 +327,53 @@ if(TINYUSDZ_BUILD_TESTS)
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${COMMON_DIR})
 
+  add_executable(tusdview_preview_cache_test
+      tests/preview_cache_test.cc
+      preview_cache.cc)
+  target_compile_features(tusdview_preview_cache_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_preview_cache_test)
+  target_include_directories(tusdview_preview_cache_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external)
+  target_link_libraries(tusdview_preview_cache_test PRIVATE tinyusdz_next)
+
+  add_executable(tusdview_texture_residency_policy_test
+      tests/texture_residency_policy_test.cc
+      texture_residency_policy.cc)
+  target_compile_features(tusdview_texture_residency_policy_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_texture_residency_policy_test)
+  target_include_directories(tusdview_texture_residency_policy_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_executable(tusdview_rt_lod_test
+      tests/rt_lod_test.cc
+      rt_lod.cc
+      ${COMMON_DIR}/light3d/camera.cpp
+      ${COMMON_DIR}/light3d/math.cpp)
+  target_compile_features(tusdview_rt_lod_test PRIVATE cxx_std_17)
+  tusdview_set_warning_flags(tusdview_rt_lod_test)
+  target_include_directories(tusdview_rt_lod_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${COMMON_DIR})
+
   # Register the tusdview unit tests with ctest. They were built here but never
   # registered (this file had no add_test at all), so a regression in any of
   # them went unnoticed. Works because the top-level CMakeLists.txt calls
   # enable_testing() before this subdirectory is added. All are self-contained
   # (no GPU/display) and take no arguments; non-zero exit == failure.
   foreach(tv_test
+      tusdview_ptex_atlas_test
       tusdview_lightrt_bridge_test
       tusdview_openpbr_material_test
       tusdview_lighting_test
       tusdview_geometry_primvar_test
       tusdview_texture_pipeline_test
       tusdview_lightrt_mtlx_eval_test
-      tusdview_camera_nav_test)
+      tusdview_camera_nav_test
+      tusdview_preview_cache_test
+      tusdview_texture_residency_policy_test
+      tusdview_rt_lod_test)
     add_test(NAME ${tv_test} COMMAND ${tv_test})
     set_tests_properties(${tv_test} PROPERTIES LABELS "tusdview")
   endforeach()

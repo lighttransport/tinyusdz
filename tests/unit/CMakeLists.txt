@@ -29,6 +29,7 @@ set(TEST_SOURCES
 	unit-materialx.cc
 	unit-task-queue.cc
 	unit-png-stream.cc
+	unit-ptx.cc
 	unit-imageproc.cc
 	unit-tydra.cc
 	unit-tydra-subdivision.cc

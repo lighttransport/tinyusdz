@@ -40,6 +40,7 @@
 #include "layer/prim-spec.hh"
 #include "layer/layer.hh"
 #include "stage/stage.hh"
+#include "stage/change-set.hh"
 
 // Parsers
 #include "parser/lexer.hh"
@@ -126,7 +127,12 @@ struct Diagnostic {
   std::string asset_path;
 };
 
-enum class ProgressPhase : uint8_t { RootLoad, Compose, Recompose };
+enum class ProgressPhase : uint8_t {
+  RootLoad,
+  Compose,
+  Recompose,
+  PreviewCompose,
+};
 
 struct ProgressEvent {
   ProgressPhase phase = ProgressPhase::RootLoad;
@@ -148,6 +154,15 @@ struct StageSessionMemoryStats {
   size_t composed_prim_count = 0;
 };
 
+struct StagePreview {
+  StageSnapshot snapshot;
+  // The snapshot is a compact spatial subset: bound/camera prims and their
+  // transform ancestors. Full namespace, geometry and shading are absent.
+  bool namespace_complete = false;
+  bool spatial_subset = true;
+  bool authoritative = false;
+};
+
 struct StageSessionOptions {
   LoadUSDOptions load;
   pcp::CompositionOptions composition;
@@ -160,6 +175,22 @@ struct StageSessionOptions {
   CacheRetention cache_retention = CacheRetention::Full;
   using ProgressCallback = std::function<bool(const ProgressEvent&)>;
   ProgressCallback progress_callback;
+  using PreviewCallback = std::function<bool(const StagePreview&)>;
+  // Invoked synchronously on the loading thread during initial composition.
+  // The snapshot owns a separate Stage and may safely be retained.
+  PreviewCallback preview_callback;
+};
+
+struct StageEditResult {
+  bool success = false;
+  StageSnapshot snapshot;
+  StageChangeSet changes;
+  std::vector<Diagnostic> diagnostics;
+  std::string warning;
+  std::string error;
+
+  // Implicit for source compatibility with the former bool edit API.
+  operator bool() const { return success; }
 };
 
 /// Persistent next-core document. It keeps the resolver and PCP cache alive so
@@ -176,6 +207,9 @@ class StageSession {
   bool OpenFile(const std::string& filename,
                 const StageSessionOptions& options = {});
 
+  StageSnapshot GetSnapshot() const;
+  /// Compatibility view. The reference is invalidated by the next successful
+  /// edit; new persistent consumers should retain GetSnapshot() instead.
   const Stage& GetStage() const;
   // Transfer the composed Stage out of a one-shot session and release its PCP
   // cache. The session becomes closed; payload/variant edits are no longer
@@ -186,25 +220,30 @@ class StageSession {
   bool IsOpen() const;
   bool IsComposed() const;
 
-  bool Rebuild();
-  bool LoadPayload(const Path& prim_path,
-                   pcp::Cache::LoadPolicy policy =
-                       pcp::Cache::LoadPolicy::WithDescendants);
-  bool UnloadPayload(const Path& prim_path);
-  bool LoadPayloads(const std::vector<Path>& prim_paths,
-                    pcp::Cache::LoadPolicy policy =
-                        pcp::Cache::LoadPolicy::WithDescendants);
-  bool SetVariantSelection(const Path& prim_path,
-                           const std::string& variant_set,
-                           const std::string& selection);
-  bool ClearVariantSelection(const Path& prim_path,
-                             const std::string& variant_set);
-  bool SetVariantSelections(
+  StageEditResult Rebuild();
+  StageEditResult LoadPayload(const Path& prim_path,
+                              pcp::Cache::LoadPolicy policy =
+                                  pcp::Cache::LoadPolicy::WithDescendants);
+  StageEditResult UnloadPayload(const Path& prim_path);
+  StageEditResult LoadPayloads(
+      const std::vector<Path>& prim_paths,
+      pcp::Cache::LoadPolicy policy =
+          pcp::Cache::LoadPolicy::WithDescendants);
+  StageEditResult SetVariantSelection(const Path& prim_path,
+                                      const std::string& variant_set,
+                                      const std::string& selection);
+  StageEditResult ClearVariantSelection(const Path& prim_path,
+                                        const std::string& variant_set);
+  StageEditResult SetVariantSelections(
       const pcp::CompositionOptions::VariantSelectionMap& selections);
+  /// Re-read a dependency layer and transactionally publish the recomposed
+  /// stage. Passing the root identifier performs a full reopen.
+  StageEditResult ReloadLayer(const std::string& resolved_layer_id);
 
   pcp::CompositionOptions::VariantSelectionMap GetVariantSelections() const;
   std::vector<Path> GetDeferredPayloadPaths() const;
   std::vector<pcp::Cache::CompositionIssue> GetCompositionIssues() const;
+  std::vector<std::string> GetLayerDependencies() const;
   const std::vector<Diagnostic>& GetDiagnostics() const;
   StageSessionMemoryStats GetMemoryStats() const;
   void TrimCaches();
