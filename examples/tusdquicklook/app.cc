@@ -3,8 +3,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <thread>
 
 extern "C" {
@@ -13,9 +18,34 @@ extern "C" {
 
 namespace tusdql {
 
-App::App(const Options& opts) : opts_(opts), theme_(DefaultTheme()) {}
+namespace fs = std::filesystem;
+
+namespace {
+
+std::string ToLower(std::string s) {
+  for (char& c : s) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return s;
+}
+
+bool IsImagePathInternal(const std::string& path) {
+  const size_t dot = path.find_last_of('.');
+  if (dot == std::string::npos) return false;
+  const size_t slash = path.find_last_of("/\\");
+  if (slash != std::string::npos && dot < slash) return false;
+  const std::string ext = ToLower(path.substr(dot));
+  return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" ||
+         ext == ".gif" || ext == ".tga";
+}
+
+}  // namespace
+
+App::App(const Options& opts)
+    : opts_(opts), theme_(DefaultTheme()), view_mode_(ViewMode::UsdPreview) {}
 
 App::~App() {
+  StopImageWorkers();
   if (font_) {
     lui_font_destroy(font_);
     font_ = nullptr;
@@ -81,7 +111,7 @@ bool App::Init() {
     if (headless_) {
       viewport_message_ = sel->name;
       if (sel->over_budget) {
-        viewport_message_ = sel->name + " — too large for quick look (projected " +
+        viewport_message_ = sel->name + " - too large for quick look (projected " +
                             FormatBytes(sel->projected_bytes) + ", budget " +
                             FormatBytes(budget_.total) + ")";
         viewport_message_is_error_ = true;
@@ -91,6 +121,9 @@ bool App::Init() {
     }
   } else {
     viewport_message_ = "no USD files in this folder";
+  }
+  if (view_mode_ == ViewMode::ImageBrowser) {
+    BuildImageItems();
   }
 
   if (headless_) {
@@ -117,6 +150,7 @@ bool App::Busy() const {
   // instead of blocking so results appear as they arrive rather than on the
   // next mouse move.
   if (loader_.running() || !scene_complete_) return true;
+  if (view_mode_ == ViewMode::ImageBrowser && HasImageBrowserWork()) return true;
   return renderer_ && !scene_.meshes.empty() && !render_status_.converged;
 }
 
@@ -128,6 +162,7 @@ int App::Run() {
   // cannot catch that, since they never touch the event loop.
   while (!quit_) {
     if (DrainLoadEvents()) needs_redraw_ = true;
+    if (DrainImageThumbnailEvents()) needs_redraw_ = true;
 
     // Progressive refinement: keep repainting until the image converges.
     if (renderer_ && !scene_.meshes.empty() && !render_status_.converged) {
@@ -157,9 +192,10 @@ int App::Run() {
       }
       // Nothing to do this tick: yield rather than spin. A previewer that pins
       // a core while it waits on a worker would defeat the point.
-      if (!got_event && !needs_redraw_ && !StreamHasWork()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(4));
-      }
+        if (!got_event && !needs_redraw_ && !StreamHasWork() &&
+            !HasImageBrowserWork()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(4));
+        }
     } else {
       // Idle and converged: block until something actually happens.
       if (!lui_window_wait_event(window_, &ev)) break;
@@ -246,63 +282,130 @@ bool App::HandleEvent(const lui_event_t& ev) {
       if ((ev.data.key.mods & LUI_MOD_CTRL) && ev.data.key.key == 'q') {
         return false;
       }
-      const int rows = VisibleRows();
-      switch (ev.data.key.key) {
+        const int rows = VisibleRows();
+        switch (ev.data.key.key) {
+        case 't':
+          ToggleViewMode();
+          needs_redraw_ = true;
+          break;
         case LUI_KEY_UP:
-          if (browser_.MoveSelection(-1)) {
+          if (view_mode_ == ViewMode::ImageBrowser) {
+            if (MoveImageSelection(-image_columns_)) {
+              needs_redraw_ = true;
+            }
+          } else if (browser_.MoveSelection(-1)) {
             browser_.EnsureSelectionVisible(rows);
             if (const FileEntry* s = browser_.SelectedEntry()) PreviewFile(*s);
             needs_redraw_ = true;
           }
           break;
         case LUI_KEY_DOWN:
-          if (browser_.MoveSelection(1)) {
+          if (view_mode_ == ViewMode::ImageBrowser) {
+            if (MoveImageSelection(image_columns_)) {
+              needs_redraw_ = true;
+            }
+          } else if (browser_.MoveSelection(1)) {
             browser_.EnsureSelectionVisible(rows);
             if (const FileEntry* s = browser_.SelectedEntry()) PreviewFile(*s);
             needs_redraw_ = true;
           }
           break;
         case LUI_KEY_PAGE_UP:
-          if (browser_.MoveSelection(-std::max(1, rows - 1))) {
+          if (view_mode_ == ViewMode::ImageBrowser) {
+            if (MoveImageSelection(-std::max(1, rows - 1) * image_columns_)) {
+              needs_redraw_ = true;
+            }
+          } else if (browser_.MoveSelection(-std::max(1, rows - 1))) {
             browser_.EnsureSelectionVisible(rows);
             if (const FileEntry* s = browser_.SelectedEntry()) PreviewFile(*s);
             needs_redraw_ = true;
           }
           break;
         case LUI_KEY_PAGE_DOWN:
-          if (browser_.MoveSelection(std::max(1, rows - 1))) {
+          if (view_mode_ == ViewMode::ImageBrowser) {
+            if (MoveImageSelection(std::max(1, rows - 1) * image_columns_)) {
+              needs_redraw_ = true;
+            }
+          } else if (browser_.MoveSelection(std::max(1, rows - 1))) {
             browser_.EnsureSelectionVisible(rows);
             if (const FileEntry* s = browser_.SelectedEntry()) PreviewFile(*s);
             needs_redraw_ = true;
           }
           break;
         case LUI_KEY_HOME:
-          if (browser_.Select(0)) {
+          if (view_mode_ == ViewMode::ImageBrowser) {
+            bool selected = false;
+            {
+              std::lock_guard<std::mutex> lock(image_mu_);
+              if (!image_items_.empty() && selected_image_ != 0) {
+                selected_image_ = 0;
+                selected = true;
+              }
+            }
+            if (selected) {
+              needs_redraw_ = true;
+            }
+          } else if (browser_.Select(0)) {
             browser_.EnsureSelectionVisible(rows);
             if (const FileEntry* s = browser_.SelectedEntry()) PreviewFile(*s);
             needs_redraw_ = true;
           }
           break;
         case LUI_KEY_END:
-          if (browser_.Select(browser_.RowCount() - 1)) {
+          if (view_mode_ == ViewMode::ImageBrowser) {
+            int last = -1;
+            {
+              std::lock_guard<std::mutex> lock(image_mu_);
+              last = static_cast<int>(image_items_.size()) - 1;
+            }
+            if (selected_image_ != last && last >= 0) {
+              selected_image_ = last;
+              needs_redraw_ = true;
+            }
+          } else if (browser_.Select(browser_.RowCount() - 1)) {
             browser_.EnsureSelectionVisible(rows);
             if (const FileEntry* s = browser_.SelectedEntry()) PreviewFile(*s);
             needs_redraw_ = true;
           }
           break;
         case LUI_KEY_RETURN:
-          ActivateSelection();
-          browser_.EnsureSelectionVisible(rows);
+          if (view_mode_ == ViewMode::ImageBrowser) {
+            std::string name;
+            {
+              std::lock_guard<std::mutex> lock(image_mu_);
+              if (selected_image_ >= 0 &&
+                  selected_image_ < static_cast<int>(image_items_.size())) {
+                name = image_items_[static_cast<size_t>(selected_image_)].name;
+              }
+            }
+              if (!name.empty()) viewport_message_ = name;
+          } else {
+            ActivateSelection();
+            browser_.EnsureSelectionVisible(rows);
+          }
           break;
         default:
           if (ev.data.key.key == 'r' && !(ev.data.key.mods & LUI_MOD_CTRL)) {
-            std::string berr;
-            if (browser_.Refresh(&berr)) needs_redraw_ = true;
+            RefreshFolder();
           } else if (ev.data.key.key == 'f') {
             // Give the camera back to auto-framing.
             camera_user_controlled_ = false;
             camera_framed_ = false;
             needs_redraw_ = true;
+          } else if ((ev.data.key.mods == 0) &&
+                     (ev.data.key.key == '[' || ev.data.key.key == '{')) {
+            const int next = std::max(kImageMinColumns, image_columns_ - 1);
+            if (next != image_columns_) {
+              image_columns_ = next;
+              if (view_mode_ == ViewMode::ImageBrowser) needs_redraw_ = true;
+            }
+          } else if ((ev.data.key.mods == 0) &&
+                     (ev.data.key.key == ']' || ev.data.key.key == '}')) {
+            const int next = std::min(kImageMaxColumns, image_columns_ + 1);
+            if (next != image_columns_) {
+              image_columns_ = next;
+              if (view_mode_ == ViewMode::ImageBrowser) needs_redraw_ = true;
+            }
           }
           break;
       }
@@ -323,9 +426,16 @@ bool App::HandleEvent(const lui_event_t& ev) {
         }
       } else if (lvg_rect_contains_point(&l.viewport, x, y) &&
                  ev.data.scroll.delta_y != 0.0f) {
-        camera_user_controlled_ = true;
-        camera_.Dolly(ev.data.scroll.delta_y > 0.0f ? 1.12f : 1.0f / 1.12f);
-        needs_redraw_ = true;
+        if (view_mode_ == ViewMode::ImageBrowser) {
+          if (ScrollImageByMouseWheel(
+                  static_cast<int>(ev.data.scroll.delta_y > 0.0f ? 1 : -1))) {
+            needs_redraw_ = true;
+          }
+        } else {
+          camera_user_controlled_ = true;
+          camera_.Dolly(ev.data.scroll.delta_y > 0.0f ? 1.12f : 1.0f / 1.12f);
+          needs_redraw_ = true;
+        }
       }
       break;
     }
@@ -334,11 +444,54 @@ bool App::HandleEvent(const lui_event_t& ev) {
       const Layout l = ComputeLayout(theme_, surf_w_, surf_h_, left_pane_w_);
       const int x = ev.data.mouse_button.x;
       const int y = ev.data.mouse_button.y;
+      const lvg_rect_t reset_btn = ResetButtonRect(l.toolbar);
+      const lvg_rect_t refresh_btn = RefreshButtonRect(l.toolbar);
+      if (lvg_rect_contains_point(&reset_btn, x, y) &&
+          ev.data.mouse_button.button == LUI_MOUSE_LEFT) {
+        ResetShadingAndViewport();
+        needs_redraw_ = true;
+        break;
+      } else if (lvg_rect_contains_point(&refresh_btn, x, y) &&
+                 ev.data.mouse_button.button == LUI_MOUSE_LEFT) {
+        RefreshFolder();
+        needs_redraw_ = true;
+        break;
+      }
       if (lvg_rect_contains_point(&l.splitter, x, y)) {
         dragging_splitter_ = true;
         drag_origin_x_ = x;
         drag_origin_w_ = left_pane_w_;
       } else if (lvg_rect_contains_point(&l.viewport, x, y)) {
+        if (view_mode_ == ViewMode::ImageBrowser &&
+            ev.data.mouse_button.button == LUI_MOUSE_LEFT) {
+          const ImageGridGeometry geo =
+              ComputeImageGridGeometry(l.viewport.width, l.viewport.height);
+          if (geo.cell_w > 0 && geo.cell_h > 0) {
+            const int gx = x - l.viewport.x;
+            const int gy = y - l.viewport.y;
+            const int gx_cell = gx / std::max(1, geo.cell_w);
+            const int gy_cell = gy / std::max(1, geo.cell_h) + image_scroll_;
+            const int idx = gy_cell * geo.columns + gx_cell;
+            std::string clicked_name;
+            if (gx >= 0 && gy >= 0 && idx >= 0 &&
+                idx < static_cast<int>(image_items_.size())) {
+              {
+                std::lock_guard<std::mutex> lock(image_mu_);
+                if (idx >= 0 &&
+                    idx < static_cast<int>(image_items_.size())) {
+                  selected_image_ = idx;
+                  clicked_name = image_items_[static_cast<size_t>(idx)].name;
+                }
+              }
+              needs_redraw_ = true;
+              if (ev.data.mouse_button.clicks >= 2 && !clicked_name.empty()) {
+                viewport_message_ = clicked_name;
+              }
+            }
+          }
+          break;
+        }
+
         // Left drag orbits, middle/right drag pans.
         drag_mode_ = (ev.data.mouse_button.button == LUI_MOUSE_LEFT)
                          ? DragMode::Orbit
@@ -353,7 +506,7 @@ bool App::HandleEvent(const lui_event_t& ev) {
           // which is harmless.
           if (ev.data.mouse_button.clicks >= 2) {
             ActivateSelection();
-          } else if (changed) {
+          } else if (changed && view_mode_ == ViewMode::UsdPreview) {
             if (const FileEntry* s = browser_.SelectedEntry()) PreviewFile(*s);
           }
           needs_redraw_ = true;
@@ -412,7 +565,11 @@ void App::DrawFrame(lvg_surface_t* surf) {
   DrawToolbar(&canvas, l.toolbar);
   DrawListPane(&canvas, l.list);
   DrawSplitter(&canvas, l.splitter);
-  DrawViewport(&canvas, l.viewport);
+  if (view_mode_ == ViewMode::ImageBrowser) {
+    DrawImageBrowser(&canvas, l.viewport);
+  } else {
+    DrawViewport(&canvas, l.viewport);
+  }
   DrawStatusBar(&canvas, l.statusbar);
 
   lvg_canvas_flush(&canvas);
@@ -422,9 +579,35 @@ void App::DrawToolbar(lvg_canvas_t* c, const lvg_rect_t& r) {
   FillRect(c, r, theme_.panel);
   lvg_canvas_fill_rect(c, r.x, r.y + r.height - 1, r.width, 1, theme_.border);
 
+  const lvg_rect_t refresh_button = RefreshButtonRect(r);
+  const lvg_rect_t reset_button = ResetButtonRect(r);
   const int baseline = r.y + (r.height + lui_font_ascent(font_)) / 2 - 2;
-  DrawTextEllipsized(c, font_, r.x + theme_.pad, baseline,
-                     r.width - 2 * theme_.pad, status_left_, theme_.text);
+  if (refresh_button.width > 0 && refresh_button.height > 0) {
+    FillRect(c, refresh_button, theme_.selection);
+    StrokeRect(c, refresh_button, theme_.text_dim);
+    DrawTextCentered(c, font_, refresh_button, "Refresh", theme_.text);
+  }
+  if (reset_button.width > 0 && reset_button.height > 0) {
+    FillRect(c, reset_button, theme_.selection);
+    StrokeRect(c, reset_button, theme_.text_dim);
+    DrawTextCentered(c, font_, reset_button, "Reset", theme_.text);
+  }
+
+  int left_max = r.width - 2 * theme_.pad;
+  if (reset_button.width > 0) {
+    left_max = std::max(0, reset_button.x - (r.x + theme_.pad));
+  }
+  if (refresh_button.width > 0) {
+    left_max =
+        std::min(left_max, std::max(0, refresh_button.x - (r.x + theme_.pad)));
+  }
+  if (left_max > 0) {
+    const std::string mode = (view_mode_ == ViewMode::ImageBrowser)
+                                ? " [image]"
+                                : " [usd]";
+    DrawTextEllipsized(c, font_, r.x + theme_.pad, baseline, left_max,
+                       status_left_ + mode, theme_.text);
+  }
 }
 
 void App::DrawListPane(lvg_canvas_t* c, const lvg_rect_t& r) {
@@ -502,6 +685,81 @@ int App::VisibleRows() const {
   return std::max(0, l.list.height / theme_.row_h);
 }
 
+lvg_rect_t App::ResetButtonRect(const lvg_rect_t& toolbar) const {
+  const int button_w = 64;
+  const int button_h = std::max(16, toolbar.height - 2 * theme_.pad);
+  const int required_text_w = 140;
+  const int refresh_w = RefreshButtonRect(toolbar).width;
+  const int reserved = button_w + (refresh_w > 0 ? theme_.pad + refresh_w : 0);
+
+  const int available_left =
+      std::max(0, toolbar.width - reserved - required_text_w - theme_.pad);
+  if (available_left <= 0) return lvg_rect_t{};
+  if (button_h <= 0) return lvg_rect_t{};
+
+  if (refresh_w > 0) {
+    return lvg_rect_make(toolbar.x + toolbar.width - reserved - theme_.pad,
+                         toolbar.y + (toolbar.height - button_h) / 2,
+                         button_w, button_h);
+  }
+  return lvg_rect_make(toolbar.x + toolbar.width - button_w - theme_.pad,
+                       toolbar.y + (toolbar.height - button_h) / 2,
+                       button_w, button_h);
+}
+
+lvg_rect_t App::RefreshButtonRect(const lvg_rect_t& toolbar) const {
+  const int button_w = 72;
+  const int button_h = std::max(16, toolbar.height - 2 * theme_.pad);
+  const int required_text_w = 140;
+  const int spacing = theme_.pad;
+  const int needed = button_w + spacing + required_text_w;
+
+  const int available_left = std::max(0, toolbar.width - needed - theme_.pad);
+  if (available_left <= 0) return lvg_rect_t{};
+  if (button_h <= 0) return lvg_rect_t{};
+
+  return lvg_rect_make(toolbar.x + toolbar.width - button_w - theme_.pad,
+                       toolbar.y + (toolbar.height - button_h) / 2,
+                       button_w, button_h);
+}
+
+void App::RefreshFolder() {
+  std::string berr;
+  if (browser_.Refresh(&berr)) {
+    status_left_ = browser_.dir();
+    viewport_message_is_error_ = false;
+    if (view_mode_ == ViewMode::ImageBrowser) {
+      BuildImageItems();
+    }
+    if (const FileEntry* sel = browser_.SelectedEntry()) {
+      if (view_mode_ == ViewMode::UsdPreview && !sel->is_dir) {
+        PreviewFile(*sel);
+      } else if (sel->is_dir && sel->over_budget) {
+        status_right_ = "empty folder";
+      }
+    }
+    needs_redraw_ = true;
+    return;
+  }
+
+  viewport_message_ = berr;
+  viewport_message_is_error_ = true;
+  needs_redraw_ = true;
+}
+
+void App::ResetShadingAndViewport() {
+  camera_ = OrbitCamera{};
+  if (scene_.bounds.valid) camera_.y_up = scene_.y_up;
+
+  camera_user_controlled_ = false;
+  camera_framed_ = false;
+  framed_at_mesh_count_ = 0;
+  if (renderer_) {
+    renderer_->SetScene(&scene_);
+    renderer_->SetCamera(camera_);
+  }
+}
+
 void App::ActivateSelection() {
   const FileEntry* sel = browser_.SelectedEntry();
   if (!sel) return;
@@ -510,12 +768,19 @@ void App::ActivateSelection() {
     std::string berr;
     if (browser_.DescendSelected(&berr)) {
       status_left_ = browser_.dir();
+      if (view_mode_ == ViewMode::ImageBrowser) {
+        BuildImageItems();
+      }
       viewport_message_.clear();
       viewport_message_is_error_ = false;
-      if (const FileEntry* next = browser_.SelectedEntry()) {
-        PreviewFile(*next);
-      } else {
-        viewport_message_ = "no USD files in this folder";
+      if (view_mode_ == ViewMode::UsdPreview) {
+        if (const FileEntry* next = browser_.SelectedEntry()) {
+          PreviewFile(*next);
+        } else {
+          viewport_message_ = "no USD files in this folder";
+        }
+      } else if (!browser_.SelectedEntry()) {
+        viewport_message_ = "no files in this folder";
       }
     } else if (!berr.empty()) {
       viewport_message_ = berr;
@@ -537,7 +802,7 @@ void App::PreviewFile(const FileEntry& entry) {
   if (entry.over_budget) {
     // Refused before opening: no allocation, no partial load. The user still
     // gets a specific reason and the numbers behind it.
-    viewport_message_ = entry.name + " — too large for quick look (projected " +
+    viewport_message_ = entry.name + " - too large for quick look (projected " +
                         FormatBytes(entry.projected_bytes) + ", budget " +
                         FormatBytes(budget_.total) + ")";
     viewport_message_is_error_ = true;
@@ -561,6 +826,19 @@ bool App::StreamHasWork() const {
   return stream && stream->queued_bytes() > 0;
 }
 
+bool App::HasImageBrowserWork() const {
+  if (view_mode_ != ViewMode::ImageBrowser) return false;
+  std::lock_guard<std::mutex> lock(image_mu_);
+  if (!image_task_queue_.empty()) return true;
+  for (const ImageItem& item : image_items_) {
+    if (item.status == ImageStatus::Pending ||
+        item.status == ImageStatus::Loading) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool App::DrainLoadEvents() {
   LoadStream* stream = loader_.stream();
   if (!stream) return false;
@@ -575,6 +853,51 @@ bool App::DrainLoadEvents() {
 
   if (changed) UpdateStatus();
   return changed;
+}
+
+bool App::DrainImageThumbnailEvents() {
+  std::deque<ImageThumbnailEvent> pending;
+  {
+    std::lock_guard<std::mutex> lock(image_mu_);
+    if (image_events_.empty()) return false;
+    pending.swap(image_events_);
+  }
+
+  bool changed = false;
+  while (!pending.empty()) {
+    ApplyImageThumbnailEvent(std::move(pending.front()));
+    pending.pop_front();
+    changed = true;
+  }
+  return changed;
+}
+
+void App::ApplyImageThumbnailEvent(ImageThumbnailEvent&& ev) {
+  if (ev.generation != image_generation_.load(std::memory_order_relaxed))
+    return;
+
+  {
+    std::lock_guard<std::mutex> lock(image_mu_);
+    if (ev.index >= image_items_.size()) return;
+
+    ImageItem& item = image_items_[ev.index];
+    if (ev.ok) {
+      auto pixels = std::make_shared<std::vector<uint32_t>>(
+          std::move(ev.argb_pixels));
+      item.pixels = std::move(pixels);
+      item.width = ev.width;
+      item.height = ev.height;
+      item.status = ImageStatus::Ready;
+      item.error.clear();
+    } else {
+      item.status = ImageStatus::Error;
+      item.error = std::move(ev.error);
+      item.pixels.reset();
+      item.width = 0;
+      item.height = 0;
+    }
+  }
+  UpdateImageStatus();
 }
 
 void App::ApplyLoadEvent(LoadEvent&& ev) {
@@ -638,9 +961,14 @@ void App::ApplyLoadEvent(LoadEvent&& ev) {
 }
 
 void App::UpdateStatus() {
+  if (view_mode_ == ViewMode::ImageBrowser) {
+    UpdateImageStatus();
+    return;
+  }
+
   const LoadPhase phase = loader_.control_valid()
-                              ? loader_.control().phase.load()
-                              : LoadPhase::Idle;
+                             ? loader_.control().phase.load()
+                             : LoadPhase::Idle;
 
   char buf[256];
   if (loader_.running() && phase != LoadPhase::Done) {
@@ -683,6 +1011,518 @@ void App::UpdateStatus() {
     else if (scene_.degraded.textures_dropped) why = "textures dropped";
     status_right_ += "  [degraded: " + why + "]";
   }
+}
+
+void App::ToggleViewMode() {
+  if (view_mode_ == ViewMode::UsdPreview) {
+    view_mode_ = ViewMode::ImageBrowser;
+    if (selected_image_ < 0 && !image_items_.empty()) selected_image_ = 0;
+    UpdateImageStatus();
+    status_left_ = browser_.dir();
+  } else {
+    view_mode_ = ViewMode::UsdPreview;
+    viewport_message_is_error_ = false;
+    status_left_ = browser_.dir();
+    if (const FileEntry* sel = browser_.SelectedEntry()) {
+      if (!sel->is_dir && !sel->over_budget) {
+        viewport_message_ = sel->name;
+      } else {
+        viewport_message_ = "select a USD file to preview";
+      }
+    }
+    UpdateStatus();
+  }
+  if (view_mode_ == ViewMode::ImageBrowser) {
+    if (!image_workers_started_) {
+      StartImageWorkers();
+    }
+    BuildImageItems();
+  } else {
+    // Keep image processing off while in USD preview mode.
+    {
+      std::lock_guard<std::mutex> lock(image_mu_);
+      image_items_.clear();
+      image_task_queue_.clear();
+      image_events_.clear();
+      selected_image_ = -1;
+      image_scroll_ = 0;
+    }
+  }
+  needs_redraw_ = true;
+}
+
+void App::BuildImageItems() {
+  if (view_mode_ != ViewMode::ImageBrowser) return;
+  if (headless_) return;
+  EnsureImageCacheDir();
+
+  const fs::path scan_root = fs::path(browser_.dir());
+  std::vector<ImageItem> items;
+  std::error_code ec;
+
+  auto collect_relative_label = [&](const fs::path& p) -> std::string {
+    std::string label = p.filename().string();
+    if (browser_.recursive()) {
+      std::error_code rel_ec;
+      const fs::path rel = fs::relative(p, scan_root, rel_ec);
+      if (!rel_ec && !rel.empty() && rel != p.filename()) {
+        label = rel.string();
+      }
+    }
+    return label;
+  };
+
+  auto add_image = [&](const fs::path& p) {
+    const std::string spath = p.lexically_normal().string();
+    if (!IsImagePathInternal(spath)) {
+      return;
+    }
+    ImageItem item;
+    item.path = spath;
+    item.name = collect_relative_label(p);
+    item.status = ImageStatus::Pending;
+    item.cache_path = ImageCachePathForPath(item.path);
+    items.push_back(std::move(item));
+  };
+
+  if (browser_.recursive()) {
+    fs::recursive_directory_iterator it(
+        scan_root, fs::directory_options::skip_permission_denied, ec);
+    if (ec) {
+      viewport_message_ = "cannot read folder for images: " + browser_.dir();
+      viewport_message_is_error_ = true;
+      std::lock_guard<std::mutex> lock(image_mu_);
+      image_items_.clear();
+      image_task_queue_.clear();
+      image_events_.clear();
+      selected_image_ = -1;
+      image_scroll_ = 0;
+      return;
+    }
+    for (const auto& de : it) {
+      std::error_code ec2;
+      if (!de.is_regular_file(ec2) || ec2) continue;
+      add_image(de.path());
+    }
+  } else {
+    fs::directory_iterator it(
+        scan_root, fs::directory_options::skip_permission_denied, ec);
+    if (ec) {
+      viewport_message_ = "cannot read folder for images: " + browser_.dir();
+      viewport_message_is_error_ = true;
+      std::lock_guard<std::mutex> lock(image_mu_);
+      image_items_.clear();
+      image_task_queue_.clear();
+      image_events_.clear();
+      selected_image_ = -1;
+      image_scroll_ = 0;
+      return;
+    }
+    for (const auto& de : it) {
+      std::error_code ec2;
+      if (!de.is_regular_file(ec2) || ec2) continue;
+      add_image(de.path());
+    }
+  }
+
+  std::sort(items.begin(), items.end(), [](const ImageItem& a, const ImageItem& b) {
+    const std::string la = ToLower(a.name);
+    const std::string lb = ToLower(b.name);
+    if (la != lb) return la < lb;
+    return a.name < b.name;
+  });
+
+  std::lock_guard<std::mutex> lock(image_mu_);
+  image_generation_.fetch_add(1, std::memory_order_relaxed);
+  image_items_.clear();
+  image_task_queue_.clear();
+  image_events_.clear();
+
+  const std::size_t generation = image_generation_.load(std::memory_order_relaxed);
+
+  image_items_ = std::move(items);
+
+  selected_image_ = image_items_.empty() ? -1 : 0;
+  image_scroll_ = 0;
+
+  for (size_t i = 0; i < image_items_.size(); i++) {
+    image_items_[i].status = ImageStatus::Loading;
+    ImageTask task{i, generation, image_items_[i].path};
+    image_task_queue_.push_back(std::move(task));
+  }
+
+  if (image_workers_started_) {
+    image_cv_.notify_all();
+  }
+
+  UpdateImageStatus();
+}
+
+void App::StartImageWorkers() {
+  if (headless_ || image_workers_started_) return;
+  image_workers_started_ = true;
+  image_workers_stop_ = false;
+  EnsureImageCacheDir();
+  image_cache_disabled_.store(false);
+
+  size_t hw = std::thread::hardware_concurrency();
+  size_t nthreads = std::max<size_t>(1, hw / 4);
+  if (nthreads == 0) nthreads = 1;
+
+  image_workers_.reserve(nthreads);
+  for (size_t i = 0; i < nthreads; i++) {
+    image_workers_.emplace_back(&App::ThumbnailWorkerLoop, this);
+  }
+}
+
+void App::StopImageWorkers() {
+  if (!image_workers_started_) return;
+  {
+    std::lock_guard<std::mutex> lock(image_mu_);
+    image_workers_stop_ = true;
+  }
+  image_cv_.notify_all();
+  for (std::thread& t : image_workers_) {
+    if (t.joinable()) t.join();
+  }
+  image_workers_.clear();
+  image_workers_started_ = false;
+  image_workers_stop_ = false;
+  image_task_queue_.clear();
+  image_events_.clear();
+}
+
+void App::ThumbnailWorkerLoop() {
+  while (true) {
+    ImageTask task;
+    {
+      std::unique_lock<std::mutex> lock(image_mu_);
+      image_cv_.wait(lock, [this] {
+        return image_workers_stop_ || !image_task_queue_.empty();
+      });
+      if (image_workers_stop_) return;
+      if (image_task_queue_.empty()) continue;
+      task = std::move(image_task_queue_.front());
+      image_task_queue_.pop_front();
+      if (task.generation != image_generation_.load(std::memory_order_relaxed)) continue;
+      if (task.index < image_items_.size()) {
+        image_items_[task.index].status = ImageStatus::Loading;
+      }
+    }
+
+    ImageThumbnailEvent ev;
+    ev.index = task.index;
+    ev.generation = task.generation;
+    ev.path = task.path;
+    ev.ok = false;
+
+    if (task.generation != image_generation_.load(std::memory_order_relaxed)) continue;
+
+    std::string cache_path;
+    {
+      std::lock_guard<std::mutex> lock(image_mu_);
+      if (task.index >= image_items_.size()) continue;
+      cache_path = image_items_[task.index].cache_path;
+    }
+
+    DecodedImage image;
+    bool got_thumbnail = false;
+    if (!cache_path.empty() && LoadCachedThumbnail(cache_path, &image)) {
+      got_thumbnail = true;
+    }
+
+    if (!got_thumbnail && LoadAndDownscaleImage(task.path, &image)) {
+      got_thumbnail = true;
+      if (!cache_path.empty() && !image_cache_disabled_.load()) {
+        if (!SaveThumbnailToCache(cache_path, image)) {
+          image_cache_disabled_.store(true);
+          ev.error = "cache write skipped";
+        }
+      }
+    }
+
+    if (!got_thumbnail) {
+      ev.error = "failed to decode image";
+    } else {
+      ev.ok = true;
+      ev.width = static_cast<int>(image.width);
+      ev.height = static_cast<int>(image.height);
+      ev.argb_pixels.resize(image.rgba.size() / 4);
+      for (size_t i = 0; i < image.rgba.size() / 4; i++) {
+        const size_t s = i * 4;
+        const uint8_t r = image.rgba[s];
+        const uint8_t g = image.rgba[s + 1];
+        const uint8_t b = image.rgba[s + 2];
+        const uint8_t a = image.rgba[s + 3];
+        ev.argb_pixels[i] = (uint32_t(a) << 24) | (uint32_t(r) << 16) |
+                            (uint32_t(g) << 8) | uint32_t(b);
+      }
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(image_mu_);
+      image_events_.push_back(std::move(ev));
+    }
+  }
+}
+
+void App::EnsureImageCacheDir() {
+  if (!image_cache_dir_.empty()) return;
+  std::error_code ec;
+  fs::path base = fs::temp_directory_path(ec);
+  if (ec) return;
+  base /= "tusdquicklook";
+  base /= "cache";
+  base /= "images";
+  fs::create_directories(base, ec);
+  if (ec) return;
+  image_cache_dir_ = base.string();
+  if (!image_cache_dir_.empty()) EnforceImageCacheLimit();
+}
+
+std::string App::ImageCacheDir() const { return image_cache_dir_; }
+
+std::uint64_t App::Hash64(std::string_view s) const {
+  const uint64_t kOffset = 1469598103934665603ull;
+  const uint64_t kPrime = 1099511628211ull;
+  uint64_t h = kOffset;
+  for (unsigned char c : s) {
+    h ^= c;
+    h *= kPrime;
+  }
+  return h;
+}
+
+std::string App::ImageCachePathForPath(const std::string& path) const {
+  std::error_code ec;
+  const auto sz = fs::file_size(fs::path(path), ec);
+  if (ec) return std::string();
+  uint64_t mtime = 0;
+  const auto t = fs::last_write_time(fs::path(path), ec);
+  if (!ec) {
+    mtime = static_cast<uint64_t>(t.time_since_epoch().count());
+  }
+  if (ImageCacheDir().empty()) return std::string();
+
+  std::ostringstream key;
+  key << path << "|" << sz << "|" << mtime;
+  const std::uint64_t digest = Hash64(key.str());
+  std::ostringstream hex;
+  hex << std::hex << std::nouppercase << digest;
+  fs::path p(image_cache_dir_);
+  p /= (hex.str() + ".png");
+  return p.string();
+}
+
+bool App::SpaceAvailableForCache(std::size_t bytes_needed) const {
+  std::error_code ec;
+  const fs::path dir = fs::path(ImageCacheDir());
+  if (dir.empty()) return false;
+  const fs::space_info si = fs::space(dir, ec);
+  if (ec) return false;
+  constexpr std::size_t kReserve = 64ull * 1024ull * 1024ull;
+  return si.available >= kReserve + bytes_needed;
+}
+
+bool App::ReadFileBytes(const std::string& path, std::vector<uint8_t>* out) const {
+  if (!out) return false;
+  out->clear();
+  std::ifstream ifs(path, std::ios::binary);
+  if (!ifs) return false;
+  ifs.seekg(0, std::ios::end);
+  const std::streampos end = ifs.tellg();
+  if (end <= 0) return false;
+  ifs.seekg(0, std::ios::beg);
+  out->resize(static_cast<size_t>(end));
+  if (!ifs.read(reinterpret_cast<char*>(out->data()),
+               static_cast<std::streamsize>(out->size()))) {
+    return false;
+  }
+  return true;
+}
+
+bool App::LoadCachedThumbnail(const std::string& cache_path,
+                              DecodedImage* out) const {
+  if (cache_path.empty() || !out) return false;
+  std::vector<uint8_t> bytes;
+  if (!ReadFileBytes(cache_path, &bytes)) return false;
+  return DecodeImageToRgba(bytes.data(), bytes.size(), kImageCacheMaxDim, out);
+}
+
+bool App::LoadAndDownscaleImage(const std::string& path, DecodedImage* out) const {
+  if (!out) return false;
+  std::vector<uint8_t> bytes;
+  if (!ReadFileBytes(path, &bytes)) return false;
+  return DecodeImageToRgba(bytes.data(), bytes.size(), kImageCacheMaxDim, out);
+}
+
+bool App::SaveThumbnailToCache(const std::string& cache_path,
+                              const DecodedImage& image) const {
+  if (cache_path.empty()) return false;
+  if (image.width <= 0 || image.height <= 0 || image.rgba.empty()) return false;
+  const size_t needed = size_t(image.width) * size_t(image.height) * 4;
+  if (!SpaceAvailableForCache(needed)) {
+    return false;
+  }
+
+  std::vector<uint32_t> argb(size_t(image.width) * size_t(image.height));
+  for (size_t i = 0; i < argb.size(); i++) {
+    const size_t s = i * 4;
+    const uint8_t r = image.rgba[s];
+    const uint8_t g = image.rgba[s + 1];
+    const uint8_t b = image.rgba[s + 2];
+    const uint8_t a = image.rgba[s + 3];
+    argb[i] = (uint32_t(a) << 24) | (uint32_t(r) << 16) |
+              (uint32_t(g) << 8) | uint32_t(b);
+  }
+
+  lvg_surface_t surf = lvg_surface_wrap(argb.data(), int(image.width),
+                                        int(image.height), int(image.width));
+  if (lvg_surface_save_png(&surf, cache_path.c_str()) != 0) return false;
+  EnforceImageCacheLimit();
+  return true;
+}
+
+void App::EnforceImageCacheLimit() const {
+  const std::string dir = ImageCacheDir();
+  if (dir.empty()) return;
+  std::error_code ec;
+  std::vector<std::pair<fs::path, uint64_t>> files;
+  uint64_t total = 0;
+  for (const auto& de : fs::directory_iterator(dir, ec)) {
+    if (ec) return;
+    if (!de.is_regular_file(ec) || ec) continue;
+    fs::path p = de.path();
+    if (p.extension() != ".png") continue;
+    const uint64_t sz = static_cast<uint64_t>(fs::file_size(p, ec));
+    if (ec) continue;
+    const uint64_t mtime =
+        static_cast<uint64_t>(fs::last_write_time(p, ec).time_since_epoch().count());
+    if (ec) continue;
+    files.push_back({p, mtime});
+    total += sz;
+  }
+  if (total <= kImageCacheMaxBytes) return;
+
+  std::sort(files.begin(), files.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; });
+
+  for (const auto& it : files) {
+    if (total <= kImageCacheMaxBytes) break;
+    const uint64_t sz = static_cast<uint64_t>(fs::file_size(it.first, ec));
+    if (!ec) {
+      fs::remove(it.first, ec);
+      if (!ec) total = (total > sz) ? total - sz : 0;
+    }
+    ec.clear();
+  }
+}
+
+void App::UpdateImageStatus() {
+  std::vector<ImageStatus> statuses;
+  std::lock_guard<std::mutex> lock(image_mu_);
+  statuses.reserve(image_items_.size());
+  for (const ImageItem& item : image_items_) {
+    statuses.push_back(item.status);
+  }
+  const bool cache_disabled = image_cache_disabled_.load();
+
+  if (statuses.empty()) {
+    status_right_ = "images: 0";
+    if (status_left_.empty()) status_left_ = browser_.dir();
+    return;
+  }
+
+  int ready = 0;
+  for (ImageStatus s : statuses) {
+    if (s == ImageStatus::Ready) ready++;
+  }
+
+  status_right_ = "images " + std::to_string(ready) + "/" +
+                  std::to_string(statuses.size());
+  if (cache_disabled) status_right_ += " [cache disabled]";
+
+  const std::string cache_dir = ImageCacheDir();
+  if (!cache_dir.empty()) {
+    std::error_code ec;
+    const fs::space_info si = fs::space(fs::path(cache_dir), ec);
+    if (!ec) {
+      status_right_ += "  cache " + FormatBytes(si.available) + " free";
+    }
+  }
+}
+
+bool App::MoveImageSelection(int delta) {
+  std::size_t image_count = 0;
+  {
+    std::lock_guard<std::mutex> lock(image_mu_);
+    image_count = image_items_.size();
+  }
+  if (image_count == 0) return false;
+
+  const int old = selected_image_;
+  const int next = std::max(
+      0, std::min(static_cast<int>(image_count) - 1,
+                                        selected_image_ + delta));
+  if (next == selected_image_) return false;
+  selected_image_ = next;
+
+  const Layout l = ComputeLayout(theme_, surf_w_, surf_h_, left_pane_w_);
+  const auto geo = ComputeImageGridGeometry(l.viewport.width, l.viewport.height);
+  if (geo.cell_h <= 0 || geo.columns <= 0) return true;
+
+  const int rows_visible =
+      std::max(1, l.viewport.height / std::max(1, geo.cell_h));
+  const int total_rows = static_cast<int>(
+      (image_count + static_cast<size_t>(geo.columns) - 1) / geo.columns);
+  const int max_scroll = std::max(0, total_rows - rows_visible);
+  const int target_row = selected_image_ / geo.columns;
+  if (target_row < image_scroll_) image_scroll_ = target_row;
+  else if (target_row >= image_scroll_ + rows_visible)
+    image_scroll_ = target_row - rows_visible + 1;
+  if (image_scroll_ < 0) image_scroll_ = 0;
+  if (image_scroll_ > max_scroll) image_scroll_ = max_scroll;
+  return next != old;
+}
+
+bool App::ScrollImageByMouseWheel(int delta_y) {
+  std::size_t image_count = 0;
+  {
+    std::lock_guard<std::mutex> lock(image_mu_);
+    image_count = image_items_.size();
+  }
+  if (image_count == 0) return false;
+
+  const Layout l = ComputeLayout(theme_, surf_w_, surf_h_, left_pane_w_);
+  const auto geo = ComputeImageGridGeometry(l.viewport.width, l.viewport.height);
+  if (geo.cell_h <= 0 || geo.columns <= 0) return false;
+  const int rows_visible =
+      std::max(1, l.viewport.height / std::max(1, geo.cell_h));
+  const int total_rows = static_cast<int>(
+      (image_count + static_cast<size_t>(geo.columns) - 1) / geo.columns);
+  const int max_scroll = std::max(0, total_rows - rows_visible);
+  const int next = std::max(0, std::min(max_scroll, image_scroll_ + delta_y));
+  if (next == image_scroll_) return false;
+  image_scroll_ = next;
+  return true;
+}
+
+App::ImageGridGeometry App::ComputeImageGridGeometry(int viewport_w,
+                                                    int viewport_h) const {
+  ImageGridGeometry g;
+  g.columns = std::max(kImageMinColumns, std::min(kImageMaxColumns, image_columns_));
+  g.label_h = theme_.row_h;
+  if (viewport_w <= 0) {
+    g.cell_w = 0;
+    g.cell_h = 0;
+    g.image_sz = 0;
+    return g;
+  }
+  g.cell_w = std::max(120, viewport_w / std::max(1, g.columns));
+  g.image_sz = std::max(48, g.cell_w - 2 * theme_.pad);
+  g.cell_h = g.image_sz + g.label_h + theme_.pad * 2;
+  if (g.cell_h <= 0) g.cell_h = 0;
+  return g;
 }
 
 void App::DrawSplitter(lvg_canvas_t* c, const lvg_rect_t& r) {
@@ -818,6 +1658,131 @@ void App::DrawViewport(lvg_canvas_t* c, const lvg_rect_t& r) {
   inner.x += theme_.pad * 2;
   inner.width = std::max(0, r.width - theme_.pad * 4);
   DrawTextWrappedCentered(c, font_, inner, msg, color, 3);
+}
+
+void App::DrawImageBrowser(lvg_canvas_t* c, const lvg_rect_t& r) {
+  FillRectVGradient(c, r, theme_.viewport_top, theme_.viewport_bottom);
+  const ImageGridGeometry geo = ComputeImageGridGeometry(r.width, r.height);
+
+  if (geo.cell_w <= 0 || geo.cell_h <= 0) {
+    const std::string msg = "image browser cannot layout this window";
+    DrawTextWrappedCentered(c, font_, r, msg, theme_.warn, 2);
+    return;
+  }
+
+  std::size_t image_count = 0;
+  {
+    std::lock_guard<std::mutex> lock(image_mu_);
+    image_count = image_items_.size();
+  }
+  if (image_count == 0) {
+    const std::string msg = "no supported images in this folder";
+    DrawTextWrappedCentered(c, font_, r, msg, theme_.text_dim, 2);
+    return;
+  }
+
+  const int visible_rows = std::max(1, r.height / geo.cell_h);
+  const int total_rows =
+      static_cast<int>((image_count + geo.columns - 1) / geo.columns);
+  const int max_scroll = std::max(0, total_rows - visible_rows);
+  if (image_scroll_ < 0) image_scroll_ = 0;
+  if (image_scroll_ > max_scroll) image_scroll_ = max_scroll;
+
+  lvg_canvas_set_clip(c, &r);
+  for (int row = 0; row < visible_rows; row++) {
+    const int item_row = image_scroll_ + row;
+    const int y = r.y + row * geo.cell_h;
+    for (int col = 0; col < geo.columns; col++) {
+      const int idx = item_row * geo.columns + col;
+      if (idx >= static_cast<int>(image_count)) break;
+      struct {
+        std::string name;
+        std::string error;
+        ImageStatus status = ImageStatus::Pending;
+        int width = 0;
+        int height = 0;
+        std::shared_ptr<std::vector<uint32_t>> pixels;
+      } item;
+
+      {
+        std::lock_guard<std::mutex> lock(image_mu_);
+        if (idx >= static_cast<int>(image_items_.size())) break;
+        const ImageItem& src = image_items_[static_cast<size_t>(idx)];
+        item.name = src.name;
+        item.error = src.error;
+        item.status = src.status;
+        item.width = src.width;
+        item.height = src.height;
+        item.pixels = src.pixels;
+      }
+
+      const int x = r.x + col * geo.cell_w;
+      const lvg_rect_t cell =
+          lvg_rect_make(x, y, geo.cell_w, geo.cell_h);
+
+      if (idx == selected_image_) {
+        FillRect(c, cell, theme_.selection);
+      } else if ((item_row & 1) == 0 && (col & 1) == 0) {
+        FillRect(c, cell, theme_.panel_alt);
+      }
+
+      FillRect(c, lvg_rect_make(cell.x + theme_.pad, cell.y + theme_.pad,
+                               std::max(20, geo.image_sz),
+                               std::max(20, geo.image_sz)),
+              item.status == ImageStatus::Ready ? theme_.panel_alt
+                                               : theme_.panel);
+      StrokeRect(c, lvg_rect_make(cell.x + theme_.pad, cell.y + theme_.pad,
+                                 std::max(20, geo.image_sz),
+                                 std::max(20, geo.image_sz)),
+                theme_.border);
+
+      const int image_x = cell.x + (geo.cell_w - geo.image_sz) / 2;
+      const int image_y = cell.y + theme_.pad;
+      if (item.status == ImageStatus::Ready && item.pixels &&
+          !item.pixels->empty() && item.width > 0 && item.height > 0) {
+        lvg_surface_t src = lvg_surface_wrap(
+            item.pixels->data(), item.width,
+            item.height, item.width);
+        lvg_canvas_draw_image(c, image_x, image_y, geo.image_sz, geo.image_sz,
+                              &src, nullptr, LVG_IMAGE_FILTER_BILINEAR);
+      } else {
+        const std::string msg =
+            item.status == ImageStatus::Error ? "!"
+            : item.status == ImageStatus::Loading ? "..."
+                                                : "";
+        DrawTextCentered(c, font_,
+                         lvg_rect_make(image_x, image_y, geo.image_sz, geo.image_sz),
+                         msg, theme_.text_dim);
+      }
+
+      const int text_y =
+          y + geo.image_sz + theme_.pad + (theme_.row_h - lui_font_ascent(font_)) / 2;
+      lvg_color_t text_color = theme_.text;
+      if (item.status == ImageStatus::Error) text_color = theme_.error;
+      DrawTextEllipsized(c, font_, x + theme_.pad, text_y,
+                         std::max(0, geo.cell_w - 2 * theme_.pad), item.name,
+                         text_color);
+      if (item.status == ImageStatus::Error && !item.error.empty()) {
+        DrawTextEllipsized(c, font_, x + theme_.pad,
+                           text_y + theme_.row_h,
+                           std::max(0, geo.cell_w - 2 * theme_.pad),
+                           item.error, theme_.warn);
+      }
+    }
+  }
+  lvg_canvas_reset_clip(c);
+
+  DrawImageStatusOverlay(c, r);
+}
+
+void App::DrawImageStatusOverlay(lvg_canvas_t* c, const lvg_rect_t& r) {
+  const std::string msg =
+      image_cache_disabled_
+          ? "thumbnail cache disabled (low disk)  [t] toggle USD preview"
+          : "[t] image browser  [+] columns  [ ] columns  [r] refresh";
+  DrawTextCentered(c, font_, lvg_rect_make(r.x + theme_.pad, r.y + r.height - 24,
+                                          r.width - theme_.pad * 2, 18),
+                   msg, theme_.text_dim);
 }
 
 void App::DrawStatusBar(lvg_canvas_t* c, const lvg_rect_t& r) {

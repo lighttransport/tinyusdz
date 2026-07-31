@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// tusdquicklook — application shell.
+// tusdquicklook application shell.
 //
 // Thread model (see the design doc): the App object lives on the UI thread and
 // owns the window, the surface and all widget state. It never blocks on a load
@@ -8,9 +8,16 @@
 // top of each frame.
 #pragma once
 
+#include <cstddef>
+#include <atomic>
 #include <cstdint>
+#include <condition_variable>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "browser.hh"
 #include "budget.hh"
@@ -18,6 +25,7 @@
 #include "camera.hh"
 #include "options.hh"
 #include "ql_scene.hh"
+#include "image_decode.hh"
 #include "render/renderer.hh"
 #include "ui.hh"
 
@@ -51,6 +59,9 @@ class App {
   const std::string& LastError() const { return err_; }
 
  private:
+  struct ImageTask;
+  struct ImageThumbnailEvent;
+
   // Repaint everything into `surf`. `surf` is the window surface in the
   // interactive path and an offscreen surface when headless.
   void DrawFrame(lvg_surface_t* surf);
@@ -60,6 +71,9 @@ class App {
   void DrawSplitter(lvg_canvas_t* c, const lvg_rect_t& r);
   void DrawViewport(lvg_canvas_t* c, const lvg_rect_t& r);
   void DrawStatusBar(lvg_canvas_t* c, const lvg_rect_t& r);
+  void DrawImageBrowser(lvg_canvas_t* c, const lvg_rect_t& r);
+  lvg_rect_t ResetButtonRect(const lvg_rect_t& toolbar) const;
+  lvg_rect_t RefreshButtonRect(const lvg_rect_t& toolbar) const;
 
   // Returns false when the app should quit.
   bool HandleEvent(const lui_event_t& ev);
@@ -82,6 +96,9 @@ class App {
   // Fold one worker event into scene_. Shared by the interactive drain and the
   // synchronous headless run.
   void ApplyLoadEvent(LoadEvent&& ev);
+  // Apply one completed thumbnail event from background workers.
+  bool DrainImageThumbnailEvents();
+  void ApplyImageThumbnailEvent(ImageThumbnailEvent&& ev);
 
   // Recompute the status line from the current load/render state.
   void UpdateStatus();
@@ -93,10 +110,45 @@ class App {
   bool EnsureRenderer(const lvg_rect_t& viewport);
   // Frame the scene bounds unless the user has taken control of the camera.
   void AutoFrameIfNeeded(const lvg_rect_t& viewport);
+  // Reset the viewport framing and rebuild shading/light caches.
+  void ResetShadingAndViewport();
+  void ToggleViewMode();
+  void BuildImageItems();
+  void StartImageWorkers();
+  void StopImageWorkers();
+  void ThumbnailWorkerLoop();
+  void EnsureImageCacheDir();
+  std::string ImageCacheDir() const;
+  std::string ImageCachePathForPath(const std::string& path) const;
+  std::uint64_t Hash64(std::string_view s) const;
+  void EnforceImageCacheLimit() const;
+  bool SpaceAvailableForCache(std::size_t bytes_needed) const;
+  bool ReadFileBytes(const std::string& path, std::vector<uint8_t>* out) const;
+  bool LoadCachedThumbnail(const std::string& cache_path,
+                          DecodedImage* out) const;
+  bool LoadAndDownscaleImage(const std::string& path, DecodedImage* out) const;
+  bool SaveThumbnailToCache(const std::string& cache_path,
+                           const DecodedImage& image) const;
+  void UpdateImageStatus();
+  bool HasImageBrowserWork() const;
+  bool MoveImageSelection(int delta);
+  bool ScrollImageByMouseWheel(int delta_y);
+  void DrawImageStatusOverlay(lvg_canvas_t* c, const lvg_rect_t& r);
+  struct ImageGridGeometry {
+    int columns = 4;
+    int cell_w = 0;
+    int cell_h = 0;
+    int image_sz = 0;
+    int label_h = 0;
+  };
+  ImageGridGeometry ComputeImageGridGeometry(int viewport_w, int viewport_h) const;
 
   // True while a load or a progressive render still has work to do; the event
   // loop polls instead of blocking in that case.
   bool Busy() const;
+
+  // Re-scan the current folder and refresh the current selection preview.
+  void RefreshFolder();
 
   Options opts_;
   const Theme& theme_;
@@ -147,6 +199,57 @@ class App {
   // Status line fields; filled in by later stages (loader, renderer).
   std::string status_left_;
   std::string status_right_;
+
+  enum class ViewMode : uint8_t { UsdPreview, ImageBrowser };
+  enum class ImageStatus : uint8_t { Pending, Loading, Ready, Error };
+
+  struct ImageItem {
+    std::string path;
+    std::string name;
+    std::string cache_path;
+    ImageStatus status = ImageStatus::Pending;
+    std::shared_ptr<std::vector<uint32_t>> pixels;
+    int width = 0;
+    int height = 0;
+    std::string error;
+  };
+
+  struct ImageTask {
+    std::size_t index = 0;
+    std::uint64_t generation = 0;
+    std::string path;
+  };
+
+  struct ImageThumbnailEvent {
+    std::size_t index = 0;
+    std::uint64_t generation = 0;
+    bool ok = false;
+    std::string path;
+    std::vector<uint32_t> argb_pixels;
+    int width = 0;
+    int height = 0;
+    std::string error;
+  };
+
+  ViewMode view_mode_ = ViewMode::UsdPreview;
+  std::vector<ImageItem> image_items_;
+  int selected_image_ = -1;
+  int image_scroll_ = 0;
+  int image_columns_ = 4;
+  std::atomic<std::size_t> image_generation_{0};
+  std::deque<ImageTask> image_task_queue_;
+  std::deque<ImageThumbnailEvent> image_events_;
+  std::vector<std::thread> image_workers_;
+  std::condition_variable image_cv_;
+  mutable std::mutex image_mu_;
+  bool image_workers_stop_ = false;
+  bool image_workers_started_ = false;
+  std::string image_cache_dir_;
+  std::atomic<bool> image_cache_disabled_{false};
+  static constexpr std::uint64_t kImageCacheMaxBytes = 100ull * 1024ull * 1024ull;
+  static constexpr int kImageCacheMaxDim = 320;
+  static constexpr int kImageMinColumns = 2;
+  static constexpr int kImageMaxColumns = 10;
 
   std::string err_;
 };

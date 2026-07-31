@@ -72,7 +72,12 @@ void BuildLightRig(const QlScene& scene, const float eye[3],
                    const float up[3], ShadingContext* out) {
   out->scene = &scene;
   out->y_up = scene.y_up;
+  out->ambient[0] = 0.03f;
+  out->ambient[1] = 0.035f;
+  out->ambient[2] = 0.04f;
   out->scene_radius = std::max(scene.bounds.Radius(), 1e-4f);
+  out->has_ground = false;
+  out->ground_y = 0.0f;
   out->lights.clear();
   out->headlight_rig = false;
 
