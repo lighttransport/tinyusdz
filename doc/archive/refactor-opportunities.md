@@ -1,5 +1,10 @@
 # TimeSamples / Animatable Refactor — COMPLETE
 
+> **ARCHIVED — completed record.** The TimeSamples/Animatable refactor shipped in
+> 2026-05; `TypedTimeSamples<T>` was deleted. Kept for history — it is no longer an
+> active TODO. The current memory/performance picture lives in
+> [`../memory-and-performance.md`](../memory-and-performance.md). Last verified 2026-07.
+
 Date: 2026-05-22 (plan) → completed on branch `refactor-2026may`.
 
 **Status: DONE.** `TypedTimeSamples<T>` has been deleted entirely. `value::TimeSamples`
@@ -11,7 +16,7 @@ the green gate held throughout (clang + gcc builds, `ctest` 14 suites incl.
 
 This file is kept as a record of what was wrong and what shipped; it is no longer an
 active TODO. For the broader memory/performance picture see
-[memory-and-performance.md](memory-and-performance.md).
+[../memory-and-performance.md](../memory-and-performance.md).
 
 ---
 

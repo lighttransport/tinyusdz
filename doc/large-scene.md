@@ -7,7 +7,7 @@ how TinyUSDZ loads them within a bounded RAM budget (target: **fit a parse into
 16 GB**, geometry deferred), plus the remaining implementation work.
 
 See also [instancing.md](instancing.md) for the Island instancing analysis, and
-[midscale-benchmark.md](midscale-benchmark.md) for middle-scale public scenes
+[benchmarks.md](benchmarks.md) for middle-scale public scenes
 (Pixar Kitchen_set, Intel Moore Lane) that render interactively *without* the
 large-scene budgeting flags described here.
 
@@ -281,6 +281,89 @@ camera; the TLAS now skips purposes hidden in the UI and the mine district
 ray-traces correctly (see §2.8 for the measured recipe). The VK-raster flat
 shading still wants the smooth-normal + headlight treatment the tusdrender
 preview already uses. For full LOD, see §2.6.2.
+
+### 2.6.1-b Next-core benchmark recipes (`next_usdcat` + `tydra_to_renderscene`)
+
+For reproducible next-core timing and memory checks on public large scenes, use the
+following commands from a `build_ninja` tree where both tools are built:
+
+```sh
+BUILD_DIR="${BUILD_DIR:-./build_ninja}"
+NEXT_TUSD="${NEXT_TUSD:-${BUILD_DIR}/next_usdcat}"
+NEXT_RENDER="${NEXT_RENDER:-${BUILD_DIR}/tydra_to_renderscene}"
+```
+
+1) `next_usdcat`: `compose` and `timing` with native payload policy:
+
+```sh
+[ -x "$NEXT_TUSD" ] || { echo "SKIP: next_usdcat not found at $NEXT_TUSD"; exit 0; }
+if [ ! -f "$1" ]; then
+  echo "SKIP: input missing: $1"
+  exit 0
+fi
+
+# Structural compose profile (deferred geometry payloads)
+TINYUSDZ_NEXT_TIMING=1 "$NEXT_TUSD" -l \
+  --compose-threads-auto --defer-payloads "$1"
+
+# Flattened USDA output check (native instance flattening behavior)
+TINYUSDZ_NEXT_TIMING=1 "$NEXT_TUSD" -f \
+  --compose-threads-auto --defer-payloads -o "/tmp/$(basename "$1").usda" "$1"
+
+# Flattened USDC output profile
+TINYUSDZ_NEXT_TIMING=1 "$NEXT_TUSD" -f \
+  --compose-threads-auto --load-payloads -o "/tmp/$(basename "$1").usdc" "$1"
+```
+
+2) `tydra_to_renderscene`: `--next` conversion and low-memory release path:
+
+```sh
+[ -x "$NEXT_RENDER" ] || { echo "SKIP: tydra_to_renderscene not found at $NEXT_RENDER"; exit 0; }
+if [ ! -f "$1" ]; then
+  echo "SKIP: input missing: $1"
+  exit 0
+fi
+
+"$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
+  --memstat --timecode 0 "$1"
+
+# Static-scene benchmark (skip time-sample animation extraction)
+"$NEXT_RENDER" --next --compose-threads-auto --defer-payloads --no-animation \
+  --memstat --timecode 0 "$1"
+
+# Low-memory mode (releases next Stage static geometry arrays after conversion)
+"$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
+  --lowmem --memstat --timecode 0 "$1"
+```
+
+3) Scene-specific invocation examples used in this document:
+
+```sh
+# Caldera (proxy composition baseline)
+CALDERA=/mnt/disk1/data/caldera/caldera.usda
+[ -f "$CALDERA" ] && TINYUSDZ_NEXT_TIMING=1 "$NEXT_TUSD" -l \
+  --compose-threads-auto --defer-payloads "$CALDERA"
+
+# ALab merged scene proxy mode
+ALAB=/mnt/disk1/data/alab/_merged_ALab/entry.usda
+[ -f "$ALAB" ] && "$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
+  --lowmem --memstat "$ALAB"
+
+# Moana Island payload-heavy scene
+ISLAND=/mnt/disk1/data/island/usd/island.usda
+[ -f "$ISLAND" ] && "$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
+  --lowmem --memstat "$ISLAND"
+```
+
+For comparisons between commits/branches:
+
+- Keep both runs on the same payload mode (`--defer-payloads` vs `--load-payloads`).
+- Pin thread policy (`--compose-threads-auto` or a fixed value) for less run-to-run
+  variance.
+- Capture `/proc/self/status` `VmRSS` and tool prints around `--memstat` to
+  separate conversion cost from stage materialization cost.
+- Use `--no-animation` for static-scene conversion comparisons (without
+  per-prim time-sample scans) when timing geometry + scene traversal only.
 
 ### 2.6.2 Full LOD (`districtLod = full`) — per-shot, not whole-island
 
@@ -806,7 +889,7 @@ pass the cross-backend tolerance test):
   lines (VK_EXT_memory_budget).
 
 **tusdview** (`T=./build/tusdview`, `ISL=/mnt/disk1/data/island/usd/island.usda`,
-`CAL=/mnt/disk01/data/caldera/caldera.usda`):
+`CAL=/mnt/disk1/data/caldera/caldera.usda`):
 
 | Config | Recipe | VRAM peak | Steady frame | Fits |
 |---|---|---|---|---|
@@ -842,14 +925,16 @@ full-set row is the compaction headline: 42.8 M instances now render in
 5.5 GiB bar, but leaves no margin for a real desktop, so it is listed as the
 15 GiB config.
 
-**Remaining follow-ons (P2, unimplemented):** tusdview BLAS-compaction port
-(island RT 4.2 → est. ~2.7 GiB); device-local node/block buffers for the
-`-vk` compute path; tiled ray/hit dispatch; TLAS `PREFER_FAST_BUILD` for
-settle rebuilds; a `--vram-budget <GiB>` umbrella flag deriving
-`--max-gpu-mem`/texture budgets/auto `--rt-lod` from the memory-budget query;
-raster LOD for *non-instanced* meshes (the island `--raster-lod` frame is
-bound by 55 M non-instanced drawn tris — the instanced side is already
-solved).
+**Remaining follow-ons (P2, unimplemented):** device-local node/block buffers for
+the `-vk` compute path; tiled ray/hit dispatch; TLAS `PREFER_FAST_BUILD` for
+settle rebuilds; a `--vram-budget <GiB>` umbrella flag for **tusdrender**
+(tusdview has it: `examples/tusdview/main.cc` — the one number the whole budget
+tree descends from); raster LOD for *non-instanced* meshes (the island
+`--raster-lod` frame is bound by 55 M non-instanced drawn tris — the instanced
+side is already solved). The two headline follow-ons from the 2026-07 round are
+now done: the **tusdview BLAS-compaction port** (`TUSDVIEW_BLAS_COMPACT`,
+`examples/tusdview/vk/vk_renderer.cc`), and the island RT 4.2 → est. ~2.7 GiB
+saving it was expected to deliver.
 
 ### 2.9 Host-memory matrix: weld ratio + texture cap (`--next`, 2026-07-11)
 

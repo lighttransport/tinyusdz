@@ -1,5 +1,9 @@
 # tusdview resume and current work state
 
+> **ARCHIVED — superseded.** The active tusdview roadmap is
+> [`../tusdview-tasks.md`](../tusdview-tasks.md); this file retains the detailed
+> audit and performance history. Last verified 2026-07.
+
 Last reviewed against `026d2a764`: 2026-07-24.
 
 The original first-display goal in this document is complete: the progressive
@@ -7,7 +11,7 @@ OpenGL path reaches a useful frame in approximately 4.9-5.3 seconds under the
 documented Xvfb/Mesa benchmark. The detailed audit below records the shared
 UsdPreviewSurface/material correctness work across `tusdview`, its
 GL/Vulkan/CUDA/HIP backends, and `tusdrender`. The active roadmap is now
-[`doc/tusdview-tasks.md`](tusdview-tasks.md); this file retains the detailed
+[`doc/tusdview-tasks.md`](../tusdview-tasks.md); this file retains the detailed
 audit and performance history needed to resume that work.
 
 ## Current status — 2026-07-23
@@ -596,7 +600,7 @@ rendered image.
 
 ## Repository and constraints
 
-- Repository: `/mnt/nvme02/work/tinyusdz-repo/tusdview`
+- Repository: `/mnt/nvme02/work/tinyusdz-repo/dev`
 - Read and follow the repository `AGENTS.md` before editing.
 - Preserve all unrelated dirty-worktree changes and untracked files.
 - Use `apply_patch` for edits.
@@ -611,7 +615,7 @@ rendered image.
 Status as of 2026-07-18. The `--next` primvars / texturing / texture-VRAM
 workstream is **done and pushed**, including GPU skinning (raster, both backends,
 instanced prototypes included) and the large-scene verification (numbers in
-[large-scene.md §2.9](large-scene.md)).
+[large-scene.md §2.9](../large-scene.md)).
 
 Done locally on 2026-07-18: Vulkan/CUDA/HIP ray tracing now consumes the same
 six semantic material slots as raster (base color, metallic, roughness, normal,
@@ -1053,7 +1057,7 @@ Remaining Island-specific work:
    footprint lever has already been used.
 2. Instanced curve prototypes are always built as round hair. Authored
    normal-driven flat/ribbon curves are not separated per prototype.
-3. Refresh the per-element table in `doc/island-benchmark.md` with
+3. Refresh the per-element table in `doc/benchmarks.md` (Part 1, Island) with
    `bench_island.py`; headline isCoral/isBeach/full-island numbers were current,
    but some small-element rows predated the final footprint and display-color
    changes.

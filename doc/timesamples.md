@@ -75,44 +75,28 @@ Unit tests: `tests/unit/unit-timesamples.cc` (function `timesamples_test()`)
 ./build/unit-test-tinyusdz timesamples_test
 ```
 
+## Time-sampled value deduplication
+
+**Status:** implemented (see [`crate-writer.md`](crate-writer.md) for the full
+detail). The USDC writer now deduplicates time-sample values both **per
+attribute** (frames within one attribute that share an identical value collapse
+to a single on-disk `ValueRep`, via `ComputeValueDedupDescriptor` in
+`src/crate-writer-values.cc`) and **globally across the whole write** via a
+writer-lifetime `value_dedup_map_` (`unordered_multimap<size_t, ValueDedupEntry>`
+in `src/crate-writer.hh`) keyed by `NanAwareHash(wire_tag, bytes)` and shared by
+every out-of-line value of the entire write, with a memory budget
+(`GetValueDedupBudgetBytes`, default `max_memory_bytes/4` capped at 512 MB) so a
+pathological all-unique scene cannot balloon writer memory.
+
+This was originally proposed here as future work after the `bool[]` visibility-
+mask blow-up (an animated `bool[]` whose 1500 identical frames inflated a 78 MB
+root layer to 384 MB; per-attribute dedup brings it back to ~114 MB). The global
+map additionally recovers sharing *across* attributes (identical rest poses /
+identity transforms / shared sub-curves), which the per-attribute map misses.
+
 ## Future Work / TODO
 
-### Global (cross-attribute) timesample value deduplication
-
-**Status:** not implemented (future work). Tracked here; not currently scheduled.
-
-The USDC writer deduplicates time-sample values **per attribute**
-(`ComputeArrayDedupDescriptor` + a per-TimeSamples `value_dedup_map` in
-`src/crate-writer-values.cc`): within one attribute, frames that share an
-identical value collapse to a single on-disk `ValueRep`. This is what fixed the
-`bool[]` visibility-mask blow-up (an animated `bool[]` whose 1500 frames were
-identical inflated an 78 MB root layer to 384 MB; per-attribute dedup brings it
-back to ~114 MB).
-
-What remains: for a large animated scene the rewritten root USDC is still **~114 MB
-vs the 78 MB input**. The residual is ~1.385 M *genuinely-unique* scalar
-`float3`/`double3` xform-animation samples — distinct every frame, so
-per-attribute value-dedup cannot collapse them (`dedup_hit = 0`). OpenUSD's crate
-writer deduplicates **globally across the whole file**: many prims animate with
-identical rest poses / identity transforms / shared sub-curves, so a single
-`unordered_map<VtArray<T>, ValueRep>` spanning all attributes recovers sharing
-that the per-attribute map misses.
-
-Sketch of the work:
-
-- Promote the per-TimeSamples `value_dedup_map` to a **writer-lifetime** map
-  keyed on `(content hash, wire_tag)`, populated as every attribute's
-  time-sample values are packed. Reuse `NanAwareHash` and the existing
-  `ComputeArrayDedupDescriptor` keys.
-- Memory cost is the concern: the global map retains one key (the canonical
-  bytes) per *unique* value for the whole write. Cap retention (e.g. skip very
-  large unique arrays, or an LRU) so a pathological all-unique scene does not
-  balloon writer memory — respect `Options::max_memory_bytes`.
-- Verify byte-savings on the large animated scene and confirm no regression vs the
-  per-attribute path (a globally-deduped `ValueRep` must still carry the correct
-  type/array/compressed bits — same contract as the per-attribute reuse).
-
-### Related: more compact scalar-timesample encoding
+### More compact scalar-timesample encoding
 
 Even with global dedup, 1.4 M unique scalar samples each cost a `ValueRep`
 (8 bytes) + an out-of-line value + a time (8 bytes). A column-oriented encoding

@@ -110,9 +110,13 @@ GI/visibility tracing.)
 ./build/tusdview --headless --cuda --mode bvh-heatmap --frames 4 --screenshot h.ppm model.usda
 ```
 
-The **`tusdview-cuda-render`** ctest exercises this end-to-end; it SKIPs
-(return 77) when no NVIDIA device / NVRTC is available so non-NVIDIA CI stays
-green.
+The **`examples/tusdview/tests/run-cuda-render.sh`** harness exercises this
+end-to-end; it SKIPs (return 77) when no NVIDIA device / NVRTC is available so
+non-NVIDIA CI stays green. It is not a registered ctest — run it by hand:
+
+```sh
+TUSDVIEW=./build/tusdview examples/tusdview/tests/run-cuda-render.sh
+```
 
 ## HIP/ROCm ray-tracing run test (verified working on AMD)
 
@@ -134,13 +138,15 @@ needed). Like `--cuda`, the HIP path owns the screenshot and supports all
 ./build/tusdview --headless --hip --rt-samples 4 --frames 4 --screenshot aa.ppm model.usda
 ```
 
-The **`tusdview-hip-render`** ctest exercises this end-to-end; it SKIPs
-(return 77) when no AMD/ROCm device is available so non-AMD CI stays green.
-Verified on AMD Radeon RX 9070 XT (gfx1201).
+The **`examples/tusdview/tests/run-hip-render.sh`** harness exercises this
+end-to-end; it SKIPs (return 77) when no AMD/ROCm device is available so
+non-AMD CI stays green. Like the CUDA harness it is not a registered ctest:
 
 ```sh
-cd build && ctest -R tusdview-cuda-render --output-on-failure
+TUSDVIEW=./build/tusdview examples/tusdview/tests/run-hip-render.sh
 ```
+
+Verified on AMD Radeon RX 9070 XT (gfx1201).
 
 **Verified working — NVIDIA GeForce RTX 5060 Ti (Linux, driver `610.43.02`,
 NVRTC 12/13), 2026-06-28.** Renders the full scene (suzanne, 968 tris) non-blank
@@ -427,8 +433,8 @@ selected tusdview/tusdrender modes:
 
 The harness writes a TSV result table and classifies each pass as `rendered`,
 `rendered_with_warnings`, `no_renderable`, `load_error`, `timeout`,
-`backend_unavailable`, or `backend_error`. It is registered as
-`tusdview-usd-assets-render-smoke`, but skips unless `USD_ASSETS_ROOT` is set.
+`backend_unavailable`, or `backend_error`. It is a manual script (not a
+registered ctest); it skips unless `USD_ASSETS_ROOT` is set.
 The tusdrender modes use `-autoframe` and the renderer's existing scene-light /
 headlight fallback. This is basic load-and-render coverage, not a detailed
 lighting match or perceptual golden-image test.

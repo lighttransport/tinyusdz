@@ -3,7 +3,7 @@
 //
 // TinyUSDZ Next - PCP composition benchmark + struct memory stats.
 //
-// Phase-0 instrumentation for doc/refator-next.md: captures the baseline
+// Phase-0 instrumentation for doc/refactor-next.md: captures the baseline
 // numbers that the later optimization phases (cycle-frame chain, FindSpecs
 // memoization, interned keys, CoW values, PrimSpec footprint) are measured
 // against.

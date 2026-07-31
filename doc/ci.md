@@ -106,14 +106,19 @@ If the publish step fails after wheels build successfully, wheels are kept as wo
 
 ### Pre-release / RC tags
 
-PyPI accepts PEP 440 pre-releases (`vX.Y.ZrcN`, `vX.Y.Z-rcN`, `vX.Y.Z.devN`, etc.). The tag pattern `v*.*.*` matches them all. `setuptools_scm` normalizes the hyphenated form (`v0.9.9-rc1`) to the PEP 440 canonical form (`0.9.9rc1`) on the wheel. To make a real RC:
+The `v*.*.*` tag pattern matches pre-release tags too (`v0.9.9-rc1`), but the
+**`publish` job skips any tag containing `-`** (`.github/workflows/wheels.yml`:
+`!contains(github.ref, '-')`) — pre-release wheels/sdist are still built and
+kept as run artifacts, they are just not uploaded to PyPI. Only final
+`vX.Y.Z` tags reach PyPI. To make a real RC (built and artifacted, npm-published
+to `preview`, not PyPI-published):
 
 1. Set `version_rev = "rc1"` in `src/tinyusdz.hh` (cosmetic; C++ side only).
 2. Set `"version": "0.9.9-rc1"` in `web/npm/package.json` and `web/js/package.json` (npm/semver uses the hyphenated pre-release form; do not strip the hyphen).
 3. Push tag `v0.9.9-rc1` — by convention RC tags are cut from `dev`, not `release`. Stable tags (`vX.Y.Z` with no suffix) still come from `release`.
-4. Install with `pip install --pre tinyusdz`.
+4. Install with `pip install tinyusdz --pre` only after a manual PyPI upload of the workflow artifacts (the automated publish intentionally skips).
 
-Confirmed shipped example: `v0.9.9-rc1` → PyPI `tinyusdz==0.9.9rc1`, npm `tinyusdz@0.9.9-rc1` under `dist-tags.preview`.
+Confirmed shipped example: `v0.9.9-rc1` → npm `tinyusdz@0.9.9-rc1` under `dist-tags.preview`; PyPI did not receive the RC (by design).
 
 ## 4. NPM publish — manual workflow dispatch
 

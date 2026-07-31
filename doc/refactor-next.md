@@ -226,8 +226,9 @@ and behavior-neutral split work:
    and optional pxrUSD `usdcat` comparison when available.
 6. **Remaining feature gaps** — keep broadening low-memory flatten coverage for
    mixed USDA/USDC/USDZ dependency graphs. Basic filesystem USDA sublayers and
-   references are supported and covered. Compressed bool arrays are explicitly
-   rejected by policy and covered by regression tests.
+   references are supported and covered. Compressed bool arrays are decoded
+   (compressed-integral lanes canonicalized to true/false in
+   `src/next/crate/crate-reader-arrays.cc`) and covered by regression tests.
 
 Recently closed cleanup items:
 
@@ -615,8 +616,10 @@ crashes** in the first minutes, all now fixed and pinned by
 Post-fix soak (clang, ASAN+UBSAN): USDA 590k runs, USDC ~bil runs across
 sessions, compose 1.86M runs — all clean.
 
-Corpus gate (`next_corpus_parse`, usd-wg/assets, 280 files): **15 PASS /
-46 WARN / 219 FAIL, 0 CRASH**. Registered as a regression ratchet
-(`--max-fail 220`); the 219 failures are known next parser gaps (list-op
-qualifiers, dictionary metadata, compressed/extra array types — Phases 7-8),
-not crashes. Ratchet down as gaps close.
+Corpus gate (`next_corpus_parse`, usd-wg/assets, 280 files): **0 FAIL /
+0 CRASH** — every corpus file now loads (a few USDC files still report
+warnings on unsupported binary value types). Registered as a regression
+ratchet (`--max-fail 3`, `src/next/CMakeLists.txt`); the ratchet replaced
+the original `--max-fail 220` baseline (15 PASS / 46 WARN / 219 FAIL) as the
+list-op qualifier, dictionary-metadata, and compressed/extra array-type gaps
+closed. Ratchet down further as remaining warnings close.

@@ -305,7 +305,7 @@ data as soon as it has been merged into the target.
 | **Data structure** | PcpPrimIndex DAG per prim | Flat PrimSpec tree (single working Layer) |
 | **Algorithm** | Recursive, task-queue based | Iterative, phase-by-phase across whole tree |
 | **Opinion retention** | All opinions preserved in DAG | Eagerly merged (destructive) |
-| **Code size** | ~10,000+ lines (PCP module) | ~2,700 lines (composition.cc + .hh + reconstruct) |
+| **Code size** | ~10,000+ lines (PCP module) | ~6,160 lines (composition.cc + .hh + composition-reconstruct.cc) |
 | **LIVRPS encoding** | PcpArcType enum values + strength comparator | Sequential phase execution in CompositeAllArcs() |
 | **Relocate position** | Between V and R in arc type enum | Applied after all arcs as final pass |
 | **Specializes** | Propagated to graph root nodes | Applied as last composition phase |
@@ -343,8 +343,9 @@ SubLayers are composed before `CompositeAllArcs()` is called.
 that local opinions override.
 
 - Multiple inherit targets per prim are supported (processed in list order)
-- ListEditQual is handled: prepend/append use `InheritPrimSpec()`, delete/order
-  warn and skip (cannot undo flattened opinions)
+- All ListEditQual ops are handled: `ResolveListOps()` folds prepend/append/
+  delete/order into a single ordered path list, then each target is applied via
+  `InheritPrimSpec()`; `add` is deprecated and treated as `append` with a warning
 - Cycle detection via visited path set prevents infinite recursion
 - Implied inherits: multi-level propagation from referenced/payload layers.
   When a referenced prim has `inherits`, those paths are propagated via
@@ -368,8 +369,9 @@ References correctly use:
 - Layer offset application per Spec 10.3.2.2
 - Arc origin tracking per Spec 10.3.2.3
 
-- `delete` and `order` list edit qualifiers warn and skip (cannot undo
-  flattened opinions in our model)
+- `delete` is handled by a pre-pass that filters matching arcs out of the
+  prepend/append lists; `order` warns and skips (would require preserving the
+  prepend/append merge distinction)
 - Cycle detection via visited `(asset_path, prim_path)` set
 
 ### P (Payloads): Correct
@@ -570,7 +572,9 @@ shared mesh data.
 | Edit restrictions | No enforcement that instance prims can't be overridden | Spec 11.3.3 |
 
 Detection and grouping (the instance *key* path) is implemented; the remaining
-work is the memory-sharing/population side.
+work is the memory-sharing/population side. See
+[`instancing.md`](instancing.md) for the full OpenUSD model and the scaling plan
+for island-sized scenes.
 
 ---
 

@@ -113,18 +113,22 @@ decompression buffer goes through it. Tracked via `USDCMemoryUsageReport`
 
 Major CrateReader hotspots: the token array (up to 64M tokens), field array (up to 256M),
 spec/fieldset array (up to 256M), reused decompression buffers, and the live fieldsets map
-(large with lazy loading disabled). TimeSamples dedup uses a single unified
-`_dedup_array_cache` (ValueRep encodes the element type in its bits, so keys from
-different types never collide — the 22 type-specific caches were consolidated into one).
+(large with lazy loading disabled). TimeSamples dedup uses a per-array `dedup_map`
+(`HashMap<uint64_t, size_t>` in `src/crate-reader-timesamples.cc`): the ValueRep's raw
+data bits key to the first sample index that produced it, and repeated frames call
+`duplicate_sample()` for a zero-copy share. ValueRep encodes the element type in its
+bits, so keys from different types never collide (the 22 type-specific caches were
+consolidated into one map).
 
-`TINYUSDZ_USDC_LAZY` enables deferred fieldset decoding (properties unpacked on access).
+`use_lazy_property_construction` (`src/usdc-reader.hh`, default true) enables deferred
+fieldset decoding (properties unpacked on access).
 The old lazy *fieldset cache* was **removed** — it reused cache entries across FVPairs
 sharing field_ids, producing corrupted `xformOpOrder` comparisons; the lazy path now
 decodes into a per-call scratch buffer (more CPU, correct, lower peak).
 
 The USDA parser (`ascii-parser.cc`) uses the same `CHECK_MEMORY_USAGE` accumulator
 (`_memory_usage += nbytes; if (> _max_memory_limit_bytes) return false;`), default limit
-128 GB (`usda-reader.hh`).
+16 GB (`usda-reader.hh`).
 
 `Stage::estimate_memory_usage()` (`stage.cc`) does a full iterative stack-based traversal
 of the Prim tree: per Prim it estimates `_data` (`Value::estimate_memory_usage()`), string
@@ -168,18 +172,21 @@ texcoords/colors/opacities/JointAndWeight/ShapeTarget/MaterialSubset; and mesh d
 buffers (textures) + Node tree + RenderMaterial + AnimationClip + SkelHierarchy +
 TextureImage.
 
-`MeshConverterConfig` memory options (`render-data.hh`):
+`MeshConverterConfig` memory options (`src/tydra/render-data-converter.hh`):
 
 | Option | Default | Effect |
 |--------|---------|--------|
-| `tangent_storage` | Packed1010102 (WASM) / PackedFp16 (native) | 67–83% tangent saving |
-| `normal_storage` | SNorm8x3 default (also SNorm16x3 / 10_10_10_2) | up to 75% normal saving |
+| `tangent_storage` | PackedFp16 (native) / PackedSNorm8 (WASM) | packed tangent + handedness, no separate binormal |
+| `normal_storage` | Float3 (native) / PackedSNorm8 (WASM) | SNorm8x3 = 3 bytes/vertex (75% saving) |
 | `compute_tangents_only_with_normal_map` | true | skip tangents without a normal map |
 | `defer_tangent_computation` | false (true in WASM) | defer tangent work |
-| `lowmem` | false (true in WASM) | free source GeomMesh after conversion |
 | `build_vertex_indices` | true | dedup vertices |
+| `lowmem` | false (true in WASM) | free source GeomMesh after conversion |
 | `preserve_texel_bitdepth` | false (true in WASM) | keep uint8 textures |
 | `load_texture_assets` | true | false to skip texture loading |
+
+(`lowmem`, `preserve_texel_bitdepth`, and `load_texture_assets` now live on
+`SceneConfig` in the same header.)
 
 WASM memory limits (`max_memory_limit_mb_` in `binding.cc`): 2 GB (32-bit), 8 GB
 (64-bit/MEMORY64).
@@ -207,8 +214,9 @@ from the mmap'd buffer.
    keyed by `"prim_path\0attr_name"`, attached to the Stage after `ReconstructStage`.
 3. **Stage** (`stage.hh/cc`): holds optional `MMapArrayTable` + `MMapDataSource` (both
    `unique_ptr`; not copied on Stage copy).
-4. **Tydra** (`render-data.cc`): `TryReadMMapArray<T>()` validates bounds/alignment via
-   `MMapDataSource::get_ptr<T>()` and `memcpy`s from mmap; `TryReadMMapArrayWithIndices<T>`
+4. **Tydra** (`src/tydra/render-data-mesh.cc`): `TryReadMMapArray<T>()` (line ~865) validates
+   bounds/alignment via `MMapDataSource::get_ptr<T>()` and `memcpy`s from mmap;
+   `TryReadMMapArrayWithIndices<T>`
    expands indexed primvars (int index arrays are LZ4-compressed, so always materialized).
    Falls back to `EvaluateTypedAnimatableAttribute` / `flatten_with_indices` otherwise.
    Used for `points`, authored `normals`, `primvars:normals`, `texcoord2f` primvars.
@@ -419,7 +427,7 @@ intended for refcounts / type tags / cache-coherency flags.
 
 ## refactor-next Phase-0 baselines (2026-06-10, HEAD 59801312)
 
-Baselines for the `src/next` optimization roadmap (`doc/refator-next.md`),
+Baselines for the `src/next` optimization roadmap (`doc/refactor-next.md`),
 captured with `bench_pcp_compose` and `bench_lazy_mem` (Release, gcc,
 Linux x86-64). Re-measure after each phase and diff here. For the current
 standalone `next` smoke tests and benchmark entrypoint, run:

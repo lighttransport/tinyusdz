@@ -269,6 +269,78 @@ on a usable Linux GPU; lack of that hardware is a skip, not evidence of parity.
   No Vulkan shader sources changed in this fixture-only milestone, so embedded
   SPIR-V was not regenerated.
 
+### External usd-assets disk1 batch — run log
+
+Batch smoke-render results for the
+[usd-wg/assets](https://github.com/usd-wg/assets) corpus rendered through both
+viewers, driven by the wrapper script
+`examples/tusdview/tests/run-usd-assets-disk1.sh` (which funnels into
+`examples/tusdview/tests/run-usd-assets-render-smoke.sh`, writing `results.tsv`,
+`results.json`, and per-render `.ppm`/`.png` + `.log` into the output dir).
+
+**Run — 2026-07-08** (superseded for freshness by the corrected RTX 3070 /
+NVIDIA 595.84 sweep above, which covers the same corpus in Vulkan raster and ray
+query with 510 deterministic fingerprints):
+
+- **Corpus:** `/mnt/disk1/work/usd-assets` (a local usd-wg/assets checkout), 280
+  USD-family files (`*.usd|*.usda|*.usdc|*.usdz`).
+- **Modes (4):** tusdview `vk-raster`, tusdview `vk-rt`, tusdrender `tusdr-cpu`,
+  tusdrender `tusdr-vk`.
+- **Total renders:** 1120 (280 × 4).
+- **Settings:** `--allow-parent-paths` on (usd-wg/assets uses `../` references),
+  headless via Xvfb, 45s per-render timeout, 256×256.
+- **Result:** **PASS** (exit 0) — 0 `timeout`, 0 `backend_error`, 0
+  `degraded_material`.
+
+| Status                   | Total | vk-raster | vk-rt | tusdr-cpu | tusdr-vk |
+|--------------------------|------:|----------:|------:|----------:|---------:|
+| `rendered`               |   762 |       221 |   221 |       157 |      163 |
+| `rendered_with_warnings` |   204 |        30 |    30 |        30 |      114 |
+| `no_renderable`          |   146 |        28 |    28 |        90 |        — |
+| `load_error`             |     8 |         1 |     1 |         3 |        3 |
+
+Only `timeout`, `backend_error` fail the batch (crashes / hangs / backend
+breakage). `load_error` / `no_renderable` are reported but not failed, because a
+broad external corpus legitimately contains intentionally-invalid assets and
+geometry-less layers. The 8 `load_error` files are all `*_invalid.usda` fixtures
+from `test_assets/foundation/stage_composition/` — intentionally malformed
+composition whose purpose is to fail to compose (tusdview and tusdrender split on
+*which* of these hard-error vs. load-empty; failing is the correct outcome). The
+146 `no_renderable` files are mostly geometry-less: composition-doc `.usda`s
+(`CompositionPuzzles/…`), materials-only sublayers (`example_materials.usda`), and
+camera layers (`camera.usda`); `tusdr-cpu` reports more because its next-loader
+treats some sublayer-only files as empty where the raster path still finds
+fallback geometry.
+
+Two tusdview/tydra fixes were validated by that run, both clean across all 1120
+renders:
+
+1. **Parent-relative asset paths** — usd-wg/assets uses `../` references.
+   tusdview rejected them by default (security policy); the harness now passes
+   `--allow-parent-paths`, and the tydra texture/light asset resolver honors the
+   same policy (previously it hard-stripped `..` regardless). Result:
+   `MaterialXTest/basicTextured.usda` `load_error → rendered`;
+   `StandardShaderBall` textures resolve (`missing_textures 8 → 0`).
+2. **NodeGraph-wrapped surface shaders** — MaterialX materials wrap the surface
+   Shader inside a NodeGraph; the legacy `ConvertMaterial` required a direct
+   Shader connection. It now follows NodeGraph passthroughs (authored output or
+   child surface Shader) and demotes unresolved MaterialX terminals / fileless
+   `<image>` nodes to warnings. Result: `StandardShaderBall`
+   `degraded_material → rendered_with_warnings`; **0 degraded_material** in the
+   whole corpus.
+
+Reproducing (opt-in; SKIPs unless the gate is set and the corpus exists):
+
+```bash
+# full batch (both tools, all modes); usd-wg/assets checkout at /mnt/disk1/work/usd-assets
+examples/tusdview/tests/run-usd-assets-disk1.sh
+# narrow / redirect:
+examples/tusdview/tests/run-usd-assets-disk1.sh --limit 20 --out /tmp/batch
+examples/tusdview/tests/run-usd-assets-disk1.sh --modes vk-raster,tusdr-cpu
+TUSDVIEW_USD_ASSETS_DISK1=1 ctest -R tusdview-usd-assets-disk1 --output-on-failure
+# point USD_ASSETS_ROOT elsewhere to run against another corpus
+```
+
 ---
 
 ## Active-roadmap verification evidence

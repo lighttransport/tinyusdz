@@ -1,5 +1,13 @@
 # Resume: `src/next` pcp composition — relocate/specialize gaps (COMPLETE)
 
+> **ARCHIVED — completed.** The next-vs-pxr flatten differential gate is at 0
+> untagged FAIL (the xfail ledger `tests/next/next-pxr-flatten-xfail.txt` has no
+> untagged entries). The "REMAINING"/"STILL FAILING" clusters A–E in the body
+> were superseded — the fixes landed in the commits listed at the top of this
+> doc. Current composition status lives in
+> [`../pcp.md`](../pcp.md) and [`../ousd-vs-tusdz.md`](../ousd-vs-tusdz.md).
+> Last verified 2026-07.
+
 Handoff for a fresh coding-agent session. The next-vs-pxr **flatten differential**
 gate is at **756 pass / 0 untagged / 0 FAIL** of 798 inputs (campaign started at
 181 listed / 597 passing). **All untagged differential cases are now fixed.** This
