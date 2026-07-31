@@ -323,6 +323,14 @@ option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minim
 option(TINYUSDZ_WITH_TEXTOOLS
        "Build vendored tir/texcomp/texpipe/envmap texture tools" ON)
 
+# Vendored textools/tinyexr upstream self-tests are disabled by default: they
+# exercise third-party code (not TinyUSDZ), and changes to that vendored copy
+# are not part of the TinyUSDZ regression gate. Re-enable with -D
+# TINYUSDZ_BUILD_TEXTOOLS_TESTS=ON when validating an upstream sync.
+option(TINYUSDZ_BUILD_TEXTOOLS_TESTS
+       "Build vendored textools (tir/texcomp/texpipe/envmap) upstream self-tests"
+       OFF)
+
 # -- ColorIO --
 option(TINYUSDZ_WITH_COLORIO
        "Build with Color IO Baked LUT support(through tinycolorio)" ON)
@@ -2182,11 +2190,11 @@ endif()
 if(TINYUSDZ_BUILD_TESTS)
   #
   # textools (vendored tir/texcomp/texpipe/envmap) upstream self-tests.
-  # Plain-C main() programs, no GPU/display needed. These were dropped from
-  # CMake in a merge while the sources stayed under src/external/textools;
-  # re-register so `ctest -L textools` runs them again.
+  # Plain-C main() programs, no GPU/display needed. Disabled by default
+  # (TINYUSDZ_BUILD_TEXTOOLS_TESTS=OFF): these test vendored third-party code,
+  # not TinyUSDZ. Enable explicitly when validating a textools sync.
   #
-  if(TINYUSDZ_WITH_TEXTOOLS)
+  if(TINYUSDZ_WITH_TEXTOOLS AND TINYUSDZ_BUILD_TEXTOOLS_TESTS)
     set(TEXTOOLS_TEST_PROGRAMS
       "textools_tir_test|${TEXTOOLS_DIR}/resize/tests/tir_test.c|textools-tir"
       "textools_tir_f16_test|${TEXTOOLS_DIR}/resize/tests/tir_f16_test.c|textools-tir-f16"
