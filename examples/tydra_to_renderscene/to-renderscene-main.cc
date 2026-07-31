@@ -512,8 +512,10 @@ int main(int argc, char **argv) {
 
   // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
   tinyusdz::tydra::RenderScene render_scene;
+#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
   tinyusdz::tydra::next::RenderScene next_render_scene;
   bool next_render_scene_ready = false;
+#endif
 
   config_info.push_back({"input_file", filepath});
   config_info.push_back({"is_usdz", is_usdz ? "true" : "false"});
@@ -730,12 +732,14 @@ int main(int argc, char **argv) {
   if (profile) {
     double _conv_ms = std::chrono::duration<double, std::milli>(_t_conv_end - _t_conv_begin).count();
     std::cerr << "[timing] RenderScene conversion: " << _conv_ms << " ms\n";
+#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
     if (use_next_pipeline) {
       const auto next_stats = next_render_scene.get_stats();
       std::cerr << "[timing] Next RenderScene nodes: " << next_stats.node_count
                 << ", meshes: " << next_stats.mesh_count
                 << ", triangles: " << next_stats.total_triangles << "\n";
     }
+#endif
   }
 
   if (!ret) {
@@ -743,6 +747,7 @@ int main(int argc, char **argv) {
   }
 
   if (memstat) {
+#if defined(TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE)
     if (use_next_pipeline && next_render_scene_ready) {
       const auto& stats = next_render_scene.get_stats();
       size_t render_mem = next_render_scene.memory_usage();
@@ -802,6 +807,7 @@ int main(int argc, char **argv) {
         std::cout << "    Total buffer memory: " << format_memory_size(total_buf) << "\n";
       }
     }
+#endif  // TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE
     std::cout << "\n";
   }
 
