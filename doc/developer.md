@@ -33,9 +33,8 @@ Notes:
   staged manifest; the checked-in `web/npm/package.json` is the fallback
   baseline when the input matches it).
 - Keep `src/tinyusdz.hh`, `web/npm/package.json`, and `web/js/package.json`
-  mutually consistent with the version you are cutting. As of writing,
-  `web/npm/package.json` (0.9.10) is ahead of `src/tinyusdz.hh` (0.9.9-rc6) —
-  sync them before the next release.
+  mutually consistent with the version you are cutting. As of the 1.0.0 bump
+  they are in sync at 1.0.0.
 
 ## 3. PyPI: wheel build + publish (`wheels.yml`)
 
@@ -82,7 +81,7 @@ Skipped: PyPy, musllinux/windows i686, win32. Linux uses manylinux_2_28 images.
 
 | Input | Required | Default | Meaning |
 |---|---|---|---|
-| `release_version` | yes | — | Semver of the published package (e.g. `0.9.10` or `0.9.10-rc1`); validated by `stage-package.mjs` (`SEMVER_RE`) |
+| `release_version` | yes | — | Semver of the published package (e.g. `1.0.0` or `1.0.0-rc1`); validated by `stage-package.mjs` (`SEMVER_RE`) |
 | `npm_tag` | yes | `preview` | npm dist-tag (`latest` for stable, `preview` for RCs) |
 
 Run it from the GitHub UI (Actions → "Build and publish wasm" → Run workflow),
@@ -92,7 +91,7 @@ or via CLI — **`--ref` matters**:
 # RCs are cut from dev; stable from release. The workflow file (and its
 # inputs) is resolved from the ref you pass.
 gh workflow run wasmPublish.yml --ref dev \
-  -f release_version=0.9.10-rc1 -f npm_tag=preview
+  -f release_version=1.0.0-rc1 -f npm_tag=preview
 ```
 
 Using a ref whose `wasmPublish.yml` copy lacks the inputs you set fails with
@@ -152,7 +151,7 @@ unzip -p dist/tinyusdz-*.whl tinyusdz/_version.py | head
 cd web/npm
 npm ci
 # Stage with the intended version (no WASM rebuild unless you changed web/):
-npm run build:stage -- --release-version=0.9.10
+npm run build:stage -- --release-version=1.0.0
 npm run validate
 npm run pack:dry-run      # npm pack dry run
 # Full local WASM rebuild (needs Node 24 + emsdk; see build-wasm.sh):
