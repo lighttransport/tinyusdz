@@ -25,9 +25,13 @@ PropNameTable::~PropNameTable() = default;
 #if defined(TINYUSDZ_ENABLE_THREAD)
 void PropNameTable::freeze() { frozen_.store(true, std::memory_order_release); }
 void PropNameTable::unfreeze() { frozen_.store(false, std::memory_order_release); }
+bool PropNameTable::is_frozen() const {
+  return frozen_.load(std::memory_order_acquire);
+}
 #else
 void PropNameTable::freeze() {}
 void PropNameTable::unfreeze() {}
+bool PropNameTable::is_frozen() const { return false; }
 #endif
 
 PropNameId PropNameTable::intern(const std::string& name) {
@@ -235,6 +239,54 @@ void PropNameTable::register_common_names() {
   intern("primvars:skel:jointIndices");
   intern("primvars:skel:jointWeights");
   intern("primvars:skel:geomBindTransform");
+
+  // Schema-accessor names (geom-mesh / geom-xform / geom-point-instancer /
+  // stage / tydra render-converter / scene-access kId* functions). These are
+  // intern()ed from render-time accessors; pre-registering them keeps every
+  // post-compose intern a HIT so the frozen lock-free table (see freeze())
+  // is never unfrozen by a render-phase schema accessor.
+  intern("primvars:uv");
+  intern("primvars:uv:indices");
+  intern("primvars:st:indices");
+  intern("primvars:displayColor");
+  intern("primvars:displayOpacity");
+  intern("protoIndices");
+  intern("positions");
+  intern("orientations");
+  intern("angularVelocities");
+  intern("invisibleIds");
+  intern("inactiveIds");
+  intern("curveVertexCounts");
+  intern("indices");
+  intern("tetVertexIndices");
+  intern("outputs:out");
+  intern("clippingRange");
+  intern("projection");
+  intern("focalLength");
+  intern("horizontalAperture");
+  intern("verticalAperture");
+  intern("focusDistance");
+  intern("fStop");
+  intern("shutter:open");
+  intern("shutter:close");
+  intern("inputs:colorTemperature");
+  intern("inputs:enableColorTemperature");
+  intern("inputs:diffuse");
+  intern("inputs:specular");
+  intern("inputs:normalize");
+  intern("inputs:enableShadows");
+  intern("inputs:shadow:enable");
+  intern("inputs:shadow:color");
+  intern("inputs:shadow:distance");
+  intern("inputs:shadow:falloff");
+  intern("inputs:shadow:falloffGamma");
+  intern("inputs:shaping:cone:angle");
+  intern("inputs:shaping:cone:softness");
+  intern("inputs:shaping:focus");
+  intern("inputs:shaping:focusTint");
+  intern("inputs:shaping:ies:angleScale");
+  intern("inputs:shaping:ies:normalize");
+  intern("inputs:shaping:ies:file");
 }
 
 // Global singleton. Registration happens inside the (thread-safe) static

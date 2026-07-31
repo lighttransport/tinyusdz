@@ -491,15 +491,23 @@ out of the main regression suite:
 
 Regression coverage to keep in mind when touching `next`:
 
-- `test_stage.cc` — PropNameId overloads must be invalid-id-safe, and the
+- `test_stage.cc` — PropNameId overloads must be invalid-id-safe, the
   stage-level `HasTimeSamples()` / `HasValueClips()` scans must match the
-  flat root-layer prim array.
+  flat root-layer prim array, and every schema-accessor name must be
+  pre-registered in `PropNameTable::register_common_names()` (a render-phase
+  `intern()` miss on the frozen table unfreezes it, disabling the lock-free
+  render path — see `property-index.cc`).
 - `test_schemas.cc` — schema accessors (UsdGeomMesh etc.) must return empty /
   schema-fallback values on prims missing the queried arrays.
 - `test_tydra_next.cc` — the animation-extraction gate
   (`animation.enabled && (HasTimeSamples() || HasValueClips())`) must keep
   emitting AnimationClips for value-clip-only stages (authored-time-sample
-  stages, static stages, and `animation.enabled = false` are covered too).
+  stages, static stages, and `animation.enabled = false` are covered too,
+  on both `Convert()` and `ConvertToSink()`); schema/tydra accessors must
+  never unfreeze the frozen name table; the skeleton joint remap must resolve
+  leaf-name `skel:joints` tokens through the fallback scan; and
+  `retain_geometry = false` must release static stage arrays while keeping
+  time-sampled ones.
 
 Build and run them on demand in a separate build directory. The preferred
 entrypoint is:

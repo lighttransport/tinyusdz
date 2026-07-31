@@ -563,9 +563,71 @@ void test_stage_animation_scans() {
   std::cout << "  Stage animation scans: PASSED" << std::endl;
 }
 
+// Regression: every name the schema/tydra accessors intern() at render time
+// must be pre-registered by PropNameTable::register_common_names(). Run FIRST,
+// before any fixture interning, so find() validity == registration
+// completeness. A render-phase intern() MISS on the frozen table unfreezes it
+// (property-index.cc), silently disabling the lock-free render path and
+// racing concurrent lock-free readers.
+void test_name_table_registration() {
+  std::cout << "Testing name-table registration completeness..." << std::endl;
+
+  // Names interned by the kId* accessors in geom-mesh.cc, geom-xform.cc,
+  // geom-point-instancer.cc, stage.cc and tydra/next/render-converter.cc.
+  static const char* kAccessorNames[] = {
+      "accelerations",        "angularVelocities",  "clippingRange",
+      "cornerIndices",        "cornerSharpnesses",  "creaseIndices",
+      "creaseLengths",        "creaseSharpnesses",  "curveVertexCounts",
+      "doubleSided",          "extent",             "faceVertexCounts",
+      "faceVertexIndices",    "focalLength",        "focusDistance",
+      "fStop",                "holeIndices",        "horizontalAperture",
+      "ids",                  "inactiveIds",        "indices",
+      "inputs:angle",         "inputs:color",       "inputs:colorTemperature",
+      "inputs:diffuse",       "inputs:enableColorTemperature",
+      "inputs:enableShadows", "inputs:exposure",    "inputs:height",
+      "inputs:intensity",     "inputs:length",      "inputs:normalize",
+      "inputs:radius",        "inputs:shadow:color",
+      "inputs:shadow:distance", "inputs:shadow:enable",
+      "inputs:shadow:falloff",  "inputs:shadow:falloffGamma",
+      "inputs:shaping:cone:angle", "inputs:shaping:cone:softness",
+      "inputs:shaping:focus", "inputs:shaping:focusTint",
+      "inputs:shaping:ies:angleScale", "inputs:shaping:ies:file",
+      "inputs:shaping:ies:normalize",  "inputs:specular",
+      "inputs:texture:file",  "inputs:texture:format", "inputs:width",
+      "invisibleIds",         "normals",            "orientation",
+      "orientations",         "outputs:out",        "positions",
+      "primvars:displayColor", "primvars:displayOpacity",
+      "primvars:st",          "primvars:st:indices", "primvars:uv",
+      "primvars:uv:indices",  "projection",         "protoIndices",
+      "scales",               "shutter:close",      "shutter:open",
+      "tetVertexIndices",     "velocities",         "verticalAperture",
+      "visibility",           "widths",             "xformOp:orient",
+      "xformOp:rotateX",      "xformOp:rotateXYZ",  "xformOp:rotateY",
+      "xformOp:rotateZ",      "xformOp:scale",      "xformOp:transform",
+      "xformOp:translate",    "xformOpOrder",
+  };
+
+  PropNameTable& table = GetPropNameTable();
+  table.freeze();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  assert(table.is_frozen());
+#endif
+  for (const char* name : kAccessorNames) {
+    const PropNameId id = table.find(name);
+    if (!id.is_valid()) {
+      std::cerr << "  UNREGISTERED accessor name: " << name << std::endl;
+    }
+    assert(id.is_valid() && "accessor name must be pre-registered");
+  }
+  table.unfreeze();
+
+  std::cout << "  Name-table registration completeness: PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "=== Stage Tests ===" << std::endl;
 
+  test_name_table_registration();
   test_stage_builder();
   test_stage_prim_access();
   test_usd_prim();
