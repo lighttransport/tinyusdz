@@ -130,7 +130,7 @@ Notes:
 
 A head-to-head against Pixar `usdrecord` (CPU **hdEmbree**) on the Disney Moana
 Island per-element geometry files lives in
-[`doc/island-benchmark.md`](../../doc/island-benchmark.md), with the reproducible
+[`doc/benchmarks.md`](../../doc/benchmarks.md) (Part 1 — Island), with the reproducible
 harness [`bench_island.py`](bench_island.py). Summary: tusdrender is 2.9–14×
 faster with 2–9× lower RSS on light/medium elements. UsdGeomPointInstancer
 geometry (the XGen ground cover / foliage) is expanded through the two-level

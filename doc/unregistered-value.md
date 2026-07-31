@@ -212,7 +212,11 @@ using Dictionary = CustomDataType;  // alias to CustomDataType
 
 **any_value** (`src/value-types.hh`, `class any_value`):
 - Purpose-built type-erased container (replaced linb::any)
-- 48-byte Small Buffer Optimization (SBO)
+- 16-byte Small Buffer Optimization (SBO): scalars/float3 and smaller stay
+  inline; larger payloads use a shared copy-on-write heap block —
+  `sizeof(any_value)` = 24
+- A single shared per-type descriptor pointer (`TypeDesc*`) drives
+  destroy/copy/move/compare operations
 - Direct `type_id`/`underlying_type_id` members
 
 **Crate Type IDs** (`src/crate-format.hh`):
@@ -292,7 +296,7 @@ Float detection (`src/ascii-parser.cc`, the token-reading number path):
 | **Parser numeric variant** | `variant<uint64_t, int64_t, double, ...>` | Separate `parseInt`/`ParseFloat`/`ParseDouble` functions |
 | **Integer width in parser** | 64-bit (`int64_t`/`uint64_t`) | Per declared dict type: 32-bit (`int`/`uint`) or 64-bit (`int64`/`uint64`) |
 | **Dict sub-value types** | Broad (most USD types) | Broad (numeric, vector, matrix, quat, role types; nested dict) — see list above; no `timecode` |
-| **Type erasure** | `VtValue` (boost/std any) | `any_value` (48-byte SBO, purpose-built) |
+| **Type erasure** | `VtValue` (boost/std any) | `any_value` (24-byte SBO + COW, purpose-built) |
 | **Crate type ID** | 53 (UnregisteredValue) | 53 (same) |
 | **Security model** | General purpose | `MetaVariable` disallows TimeSamples / Connections / Relationships / `custom`; value must be assigned |
 

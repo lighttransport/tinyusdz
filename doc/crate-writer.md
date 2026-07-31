@@ -21,7 +21,8 @@ The TinyUSDZ USDC Crate Writer writes USD Stage data to binary USDC (Crate) form
 - Unit tests: `tests/unit/unit-crate-writer.cc`
 
 **`next` writer (`src/next/crate/`):** a single `crate-writer.cc` translation unit
-that `#include`s the `Impl` body split across `crate-writer-{impl,write,tables,passthrough,values,properties,fields,sections}.inc` (+ `crate-writer-types.{hh,cc}`, `crate-writer.hh`). Public API in `src/next/writer/usdc-writer.{hh,cc}` (`WriteUSDCToFile`/`WriteUSDCToMemory`/`WriteLayerToUSDC*`); built directly from a composed `next::Layer` (no `stage-converter` step). Tests: `tests/next/test_usdc_{writer,roundtrip,reader,malformed}.cc`. A lazy-array **pass-through** (`crate-writer-passthrough.inc`, `TryPassThrough`) copies a POD array block verbatim from the memory-mapped source crate when the type/version are compatible, so a read→write of an unchanged array never re-encodes.
+that `#include`s the `Impl` body split across `crate-writer-{impl,write,tables,passthrough,values,properties,fields,sections}.inc` (+ `crate-writer-types.{hh,cc}`, `crate-writer.hh`). Public API in `src/next/writer/usdc-writer.{hh,cc}` (`WriteUSDCToFile`/`WriteUSDCToMemory`/`WriteLayerToUSDC*`); built directly from a composed `next::Layer` (no `stage-converter` step). Tests: `tests/next/test_usdc_{writer,roundtrip,malformed}.cc` (the reader is
+exercised by `test_usdc.cc` / `test_usdcat_roundtrip.cc`). A lazy-array **pass-through** (`crate-writer-passthrough.inc`, `TryPassThrough`) copies a POD array block verbatim from the memory-mapped source crate when the type/version are compatible, so a read→write of an unchanged array never re-encodes.
 
 ## Usage
 
@@ -154,6 +155,22 @@ TinyUSDZ inlining lives in `CrateWriter::TryInlineValue` (`crate-writer-inline.c
 3. **Never inlined**: double (64 bits > 48-bit payload), vectors, matrices, and all arrays — written to the VALUE section.
 4. **Value-deduplicated**: out-of-line values hashed (NaN-aware XXH3) and stored once.
 5. **Array-deduplicated**: separate path; empty arrays inlined.
+
+### Global (writer-lifetime) Value Deduplication
+
+Beyond per-value hashing, the classic writer's dedup map is **writer-lifetime**:
+`CrateWriter::value_dedup_map_` is a `std::unordered_multimap<size_t, ValueDedupEntry>`
+keyed by `NanAwareHash(wire_tag, bytes)` and shared by *every* out-of-line value
+of the whole write (all attributes, including every TimeSamples block) — it is
+never cleared per-attribute. This recovers sharing *across* attributes (identical
+rest poses, identity transforms, shared sub-curves) that a per-attribute map
+misses. Keys are computed by `ComputeValueDedupDescriptor`
+(`src/crate-writer-values.cc`), with a memory budget honored via
+`CanRetainDeduplicatedValue` → `GetValueDedupBudgetBytes`
+(default `max_memory_bytes/4`, capped at 512 MB) so a pathological all-unique
+scene cannot balloon writer memory. See `doc/timesamples.md` for the motivating
+case (the `bool[]` visibility-mask blow-up) and the column-oriented scalar
+encoding that remains open.
 
 ## Array Compression (v0.5.0+)
 
@@ -310,10 +327,11 @@ Separate attribute/connection/relationship specs and Variant/VariantSet authorin
 
 Specific to `src/next/crate/`. Profiled on the public large scenes via
 `TINYUSDZ_NEXT_TIMING=1 build-next-release/next_usdcat -f -o out.usdc <root>`
-(`--write-threads N` or default auto), write to a **seekable file**, not `/dev/null`
+(`--compose-threads N` / `--compose-threads-auto` control *composition* threads),
+write to a **seekable file**, not `/dev/null`
 — the crate writer seek-patches headers). `CrateWriteOptions::num_threads`
-(auto-capped in the library; `next_usdcat` now takes thread count from CLI `--write-threads`)
-controls the parallel paths; output is byte-identical across thread counts.
+(the *write* thread count; auto-capped in the library)
+controls the parallel write paths; output is byte-identical across thread counts.
 
 ## What the write phase is bound by
 

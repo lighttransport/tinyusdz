@@ -113,8 +113,9 @@ however, support only a **subset** of MuJoCo features and reads a few extra
   fixed & spatial tendons, `<general>`/muscle actuators, equality
   connect/weld/joint, `<contact><exclude>`, keyframes — all **Full** above.
 - **MJX-relevant `<custom><numeric>`** (e.g. `max_contact_points`,
-  `max_geom_pairs`) — currently **Missing**; worth preserving as
-  `mjc:custom:*` since MJX reads them at compile time.
+  `max_geom_pairs`) — **Preserved** as `mjc:custom:*` (numeric) /
+  `mjc:customtext:*` (text), which is what MJX reads at compile time
+  (`<tuple>` entries are still dropped).
 - **MJX-unsupported MuJoCo features** (so absence in the converter is benign
   for MJX targets): `<deformable>`/flex, some sensor types, `<hfield>`/`<sdf>`
   collisions, muscle *dynamics* (geometry/params convert, the solver model does

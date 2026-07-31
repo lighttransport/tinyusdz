@@ -147,11 +147,12 @@ CMake registers these tests when the corresponding targets are built (most in th
 
 `usdc-parser-unit-test` is set to run after `unit-test-tinyusdz` (it globs `*-runtime.usdc` fixtures the unit suite generates).
 
-Only `bench-parse-opt` has a `ctest` label today:
+The `ctest` labels in use today are `benchmark`, `osd-verify`, `textools`, and
+`tusdview`:
 
 ```bash
 ctest --print-labels
-# benchmark
+# benchmark, osd-verify, textools, tusdview
 ```
 
 Useful commands:
@@ -269,8 +270,10 @@ Major source groups in `tests/unit/` (see `tests/unit/CMakeLists.txt` for the fu
 - Physics / simulation: `unit-physics`, `unit-ik`, `unit-rb-collision`, `unit-rb-dynamics`
 - Security and utility coverage: `unit-security`, `unit-task-queue`, `unit-tiny-container`, `unit-tiny-hashmap`, `unit-handle-allocator`, `unit-ioutil`, `unit-pathutil`, `unit-pprint`
 - PXR compat API: `unit-pxr-compat-api` (conditionally compiled with `TINYUSDZ_WITH_PXR_COMPAT_API`)
+- Array/time-samples dedup: `unit-dedup` (CrateWriter value dedup, cross-attribute timeSamples dedup, shared times arrays, default scalar dedup)
 
-`unit-dedup.cc` is present but temporarily disabled in `CMakeLists.txt` (needs API updates).
+The unit suite currently registers **~1,022 tests** (see `TEST_LIST` in
+`tests/unit/unit-main.cc`).
 
 Run it directly:
 
@@ -680,26 +683,15 @@ Relevant fuzz entry points include:
 
 ## Disabled Tests (TODO/FIXME)
 
-The USDC memory-budget and variant PrimSpec/roundtrip tests that were disabled
-after the `spec-2026-mar` merge have since been **re-enabled** — they are all
-active registrations in `tests/unit/unit-main.cc`, and their static fixtures
-(`variantSet-collision-001.usdc`, `variantSet-prim-001.usdc` in `tests/usdc/`)
-load successfully.
+The USDC memory-budget, variant PrimSpec/roundtrip, and array-dedup tests that
+were disabled after the `spec-2026-mar` merge have since been **re-enabled** —
+all are active registrations in `tests/unit/unit-main.cc` (`unit-dedup.cc` is
+back in `TEST_SOURCES`; the dedup suite now also covers cross-attribute
+timeSamples dedup, default scalar dedup, and shared times arrays), and the
+static fixtures (`variantSet-collision-001.usdc`,
+`variantSet-prim-001.usdc` in `tests/usdc/`) load successfully.
 
-The only Acutest tests still disabled are the array-dedup tests. They live in
-`tests/unit/unit-dedup.cc`, which is commented out of `TEST_SOURCES` in
-`tests/unit/CMakeLists.txt`; the six matching registrations are commented out in
-`tests/unit/unit-main.cc`:
-
-- `dedup_float_array_test`
-- `dedup_double_array_test`
-- `dedup_int_array_test`
-- `dedup_unique_arrays_test`
-- `dedup_string_array_test`
-- `dedup_matrix4d_test`
-
-To re-enable them: update `unit-dedup.cc` to the current CrateWriter dedup API,
-re-add `unit-dedup.cc` to `TEST_SOURCES`, and uncomment the registrations.
+There are currently **no disabled Acutest tests**.
 
 (Note: `crate_writer_validation_disabled_test` and `column_wrap_disabled_test`
 are *active* tests despite "disabled" in their names — each verifies behavior

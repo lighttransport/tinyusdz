@@ -1,5 +1,13 @@
 # Shared material-evaluation layer — scope
 
+> **ARCHIVED — Phases 0–2 implemented.** The shared material-evaluation layer
+> landed: the shared OpenPBR param block lives in `src/tydra/openpbr-params.hh`
+> (used by both `tools/tusdrender/` and `examples/tusdview/`), tusdrender's
+> default material resolver is `TydraNext`, and `mtlxrender/bsdf.c` now compiles
+> into `lightrt_c` (used by the `lightrt-bsdf` shading option). Only Phase 3
+> (GPU BRDF alignment across GLSL/CUDA/HIP) remains; it is tracked in
+> `doc/tusdview-tasks.md`. Last verified 2026-07.
+
 Scoping doc for resume-tusdview.md §9's headline item: *"Move toward a shared
 material-evaluation layer for tusdview and tusdrender."* This is the largest
 single effort in the remaining work. This document maps the current divergent
