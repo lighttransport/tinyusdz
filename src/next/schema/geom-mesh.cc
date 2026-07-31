@@ -17,11 +17,65 @@ UsdGeomMesh::UsdGeomMesh(const UsdPrim& prim) : prim_(prim) {
   }
 }
 
+namespace {
+
+const PropNameId& kIdFaceVertexCounts() {
+  static const PropNameId id = GetPropNameTable().intern("faceVertexCounts");
+  return id;
+}
+
+const PropNameId& kIdFaceVertexIndices() {
+  static const PropNameId id = GetPropNameTable().intern("faceVertexIndices");
+  return id;
+}
+
+const PropNameId& kIdPoints() {
+  static const PropNameId id = GetPropNameTable().find("points");
+  return id;
+}
+
+const PropNameId& kIdNormals() {
+  static const PropNameId id = GetPropNameTable().find("normals");
+  return id;
+}
+
+const PropNameId& kIdExtent() {
+  static const PropNameId id = GetPropNameTable().find("extent");
+  return id;
+}
+
+const PropNameId& kIdPrimvarsSt() {
+  static const PropNameId id = GetPropNameTable().find("primvars:st");
+  return id;
+}
+
+const PropNameId& kIdPrimvarsUv() {
+  static const PropNameId id = GetPropNameTable().intern("primvars:uv");
+  return id;
+}
+
+const PropNameId& kIdPrimvarsStIndices() {
+  static const PropNameId id = GetPropNameTable().intern("primvars:st:indices");
+  return id;
+}
+
+const PropNameId& kIdPrimvarsUvIndices() {
+  static const PropNameId id = GetPropNameTable().intern("primvars:uv:indices");
+  return id;
+}
+
+const PropNameId& kIdSubdivisionScheme() {
+  static const PropNameId id = GetPropNameTable().find("subdivisionScheme");
+  return id;
+}
+
+}  // namespace
+
 std::vector<int> UsdGeomMesh::GetFaceVertexCounts() const {
   std::vector<int> result;
   if (!IsValid()) return result;
 
-  const Value* val = prim_.GetPropertyValue("faceVertexCounts");
+  const Value* val = prim_.GetPropertyValue(kIdFaceVertexCounts());
   if (!val) return result;
 
   const std::vector<int32_t>* arr = val->as_int_array();
@@ -35,7 +89,7 @@ std::vector<int> UsdGeomMesh::GetFaceVertexIndices() const {
   std::vector<int> result;
   if (!IsValid()) return result;
 
-  const Value* val = prim_.GetPropertyValue("faceVertexIndices");
+  const Value* val = prim_.GetPropertyValue(kIdFaceVertexIndices());
   if (!val) return result;
 
   const std::vector<int32_t>* arr = val->as_int_array();
@@ -48,7 +102,7 @@ std::vector<int> UsdGeomMesh::GetFaceVertexIndices() const {
 size_t UsdGeomMesh::GetFaceCount() const {
   if (!IsValid()) return 0;
 
-  const Value* val = prim_.GetPropertyValue("faceVertexCounts");
+  const Value* val = prim_.GetPropertyValue(kIdFaceVertexCounts());
   if (!val) return 0;
 
   const std::vector<int32_t>* arr = val->as_int_array();
@@ -58,7 +112,7 @@ size_t UsdGeomMesh::GetFaceCount() const {
 size_t UsdGeomMesh::GetPointCount() const {
   if (!IsValid()) return 0;
 
-  const Value* val = prim_.GetPropertyValue("points");
+  const Value* val = prim_.GetPropertyValue(kIdPoints());
   if (!val) return 0;
 
   // Points are float3[], so divide by 3
@@ -70,7 +124,7 @@ std::vector<float> UsdGeomMesh::GetPoints() const {
   std::vector<float> result;
   if (!IsValid()) return result;
 
-  const Value* val = prim_.GetPropertyValue("points");
+  const Value* val = prim_.GetPropertyValue(kIdPoints());
   if (!val) return result;
 
   const std::vector<float>* arr = val->as_float_array();
@@ -83,7 +137,7 @@ std::vector<float> UsdGeomMesh::GetPoints() const {
 bool UsdGeomMesh::GetPoints(std::vector<float>& x, std::vector<float>& y, std::vector<float>& z) const {
   if (!IsValid()) return false;
 
-  const Value* val = prim_.GetPropertyValue("points");
+  const Value* val = prim_.GetPropertyValue(kIdPoints());
   if (!val) return false;
 
   const std::vector<float>* arr = val->as_float_array();
@@ -106,7 +160,7 @@ std::vector<float> UsdGeomMesh::GetNormals() const {
   std::vector<float> result;
   if (!IsValid()) return result;
 
-  const Value* val = prim_.GetPropertyValue("normals");
+  const Value* val = prim_.GetPropertyValue(kIdNormals());
   if (!val) return result;
 
   const std::vector<float>* arr = val->as_float_array();
@@ -118,13 +172,13 @@ std::vector<float> UsdGeomMesh::GetNormals() const {
 
 bool UsdGeomMesh::HasNormals() const {
   if (!IsValid()) return false;
-  return prim_.HasProperty("normals");
+  return prim_.HasProperty(kIdNormals());
 }
 
 bool UsdGeomMesh::GetExtent(float* min, float* max) const {
   if (!IsValid() || !min || !max) return false;
 
-  const Value* val = prim_.GetPropertyValue("extent");
+  const Value* val = prim_.GetPropertyValue(kIdExtent());
   if (!val) return false;
 
   // Extent is float3[2] - min and max corners
@@ -141,9 +195,9 @@ std::vector<float> UsdGeomMesh::GetUVs() const {
   if (!IsValid()) return result;
 
   // Try common UV primvar names
-  const Value* val = prim_.GetPropertyValue("primvars:st");
+  const Value* val = prim_.GetPropertyValue(kIdPrimvarsSt());
   if (!val) {
-    val = prim_.GetPropertyValue("primvars:uv");
+    val = prim_.GetPropertyValue(kIdPrimvarsUv());
   }
   if (!val) return result;
 
@@ -156,16 +210,16 @@ std::vector<float> UsdGeomMesh::GetUVs() const {
 
 bool UsdGeomMesh::HasUVs() const {
   if (!IsValid()) return false;
-  return prim_.HasProperty("primvars:st") || prim_.HasProperty("primvars:uv");
+  return prim_.HasProperty(kIdPrimvarsSt()) || prim_.HasProperty(kIdPrimvarsUv());
 }
 
 std::vector<int> UsdGeomMesh::GetUVIndices() const {
   std::vector<int> result;
   if (!IsValid()) return result;
 
-  const Value* val = prim_.GetPropertyValue("primvars:st:indices");
+  const Value* val = prim_.GetPropertyValue(kIdPrimvarsStIndices());
   if (!val) {
-    val = prim_.GetPropertyValue("primvars:uv:indices");
+    val = prim_.GetPropertyValue(kIdPrimvarsUvIndices());
   }
   if (!val) return result;
 
@@ -179,7 +233,7 @@ std::vector<int> UsdGeomMesh::GetUVIndices() const {
 std::string UsdGeomMesh::GetSubdivisionScheme() const {
   if (!IsValid()) return "none";
 
-  const Value* val = prim_.GetPropertyValue("subdivisionScheme");
+  const Value* val = prim_.GetPropertyValue(kIdSubdivisionScheme());
   if (!val) return "none";
 
   const std::string* scheme = val->as_token();
@@ -199,15 +253,15 @@ std::vector<float> UsdGeomMesh::GetPointsAtTimecode(double timecode) const {
   Value hold;
   const Value* val = nullptr;
   if (!std::isnan(timecode)) {
-    Value v = prim_.GetInterpolatedValue("points", timecode);
+    Value v = prim_.GetInterpolatedValue(kIdPoints(), timecode);
     if (!v.is_empty()) {
       hold = std::move(v);
       val = &hold;
     } else {
-      val = prim_.GetValueAtTime("points", timecode);
+      val = prim_.GetValueAtTime(kIdPoints(), timecode);
     }
   }
-  if (!val) val = prim_.GetPropertyValue("points");
+  if (!val) val = prim_.GetPropertyValue(kIdPoints());
   if (!val) return result;
 
   const std::vector<float>* arr = val->as_float_array();
@@ -219,12 +273,12 @@ std::vector<float> UsdGeomMesh::GetPointsAtTimecode(double timecode) const {
 
 bool UsdGeomMesh::HasAnimatedPoints() const {
   if (!IsValid()) return false;
-  return prim_.HasTimeSamples("points");
+  return prim_.HasTimeSamples(kIdPoints());
 }
 
 std::vector<double> UsdGeomMesh::GetPointsTimeSamples() const {
   if (!IsValid()) return {};
-  return prim_.GetTimeSampleTimes("points");
+  return prim_.GetTimeSampleTimes(kIdPoints());
 }
 
 bool IsMesh(const UsdPrim& prim) {

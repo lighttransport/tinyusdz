@@ -737,7 +737,14 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
     copts.strict_aousd_conformance =
         copts.strict_aousd_conformance ||
         comp_opts->strict_aousd_conformance;
-    if (comp_opts->num_threads >= 1) copts.num_threads = comp_opts->num_threads;
+    // -1/0 keep the default policy above:
+    //  -1 -> auto (hardware_concurrency on threaded builds)
+    //  0  -> explicit serial (1)
+    if (comp_opts->num_threads == 0) {
+      copts.num_threads = 1;
+    } else if (comp_opts->num_threads > 1) {
+      copts.num_threads = comp_opts->num_threads;
+    }
     copts.enable_timing = comp_opts->enable_timing || copts.enable_timing;
     if (comp_opts->payload_policy) copts.payload_policy = comp_opts->payload_policy;
     if (comp_opts->payload_policy_with_prim) {

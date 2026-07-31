@@ -120,25 +120,55 @@ struct ValueArrayRead {
 
 bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<float>* out);
+bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim,
+                    const ::tinyusdz::next::PropNameId& name,
+                    double time, ValueArrayRead<float>* out);
 bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+                  double time, ValueArrayRead<int32_t>* out);
+bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim,
+                  const ::tinyusdz::next::PropNameId& name,
                   double time, ValueArrayRead<int32_t>* out);
 bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<int64_t>* out);
+bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim,
+                    const ::tinyusdz::next::PropNameId& name,
+                    double time, ValueArrayRead<int64_t>* out);
 bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                    double time, ValueArrayRead<uint32_t>* out);
+bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim,
+                   const ::tinyusdz::next::PropNameId& name,
+                   double time, ValueArrayRead<uint32_t>* out);
 bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+                     double time, ValueArrayRead<uint64_t>* out);
+bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim,
+                     const ::tinyusdz::next::PropNameId& name,
                      double time, ValueArrayRead<uint64_t>* out);
 
 std::vector<float> ReadFloatArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
                                       const char* name, double time);
+std::vector<float> ReadFloatArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                      const ::tinyusdz::next::PropNameId& name,
+                                      double time);
 std::vector<int32_t> ReadIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
                                       const char* name, double time);
+std::vector<int32_t> ReadIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                      const ::tinyusdz::next::PropNameId& name,
+                                      double time);
 std::vector<int64_t> ReadInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
                                         const char* name, double time);
+std::vector<int64_t> ReadInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                        const ::tinyusdz::next::PropNameId& name,
+                                        double time);
 std::vector<uint32_t> ReadUIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
                                         const char* name, double time);
+std::vector<uint32_t> ReadUIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                        const ::tinyusdz::next::PropNameId& name,
+                                        double time);
 std::vector<uint64_t> ReadUInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
                                           const char* name, double time);
+std::vector<uint64_t> ReadUInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                          const ::tinyusdz::next::PropNameId& name,
+                                          double time);
 
 }  // namespace next
 }  // namespace tydra
