@@ -3226,6 +3226,148 @@ def Xform "Root"
   std::cout << "  Next value-clip baking: PASSED\n";
 }
 
+// Regression: the animation-extraction gate
+// (config_.animation.enabled && (stage.HasTimeSamples() ||
+// stage.HasValueClips())) must (a) NOT skip stages whose animation arrives
+// entirely from value clips (no authored time samples anywhere — this was
+// broken by an earlier gate that only checked HasTimeSamples()), (b) skip
+// static stages, and (c) honor config_.animation.enabled = false.
+void TestAnimationExtractionGate() {
+  std::cout << "Testing animation extraction gate...\n";
+
+  // (1) Authored time samples, no clips.
+  const std::string ts_stage = R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate.timeSamples = {
+        0: (1, 2, 3),
+        2: (5, 6, 7)
+    }
+}
+)";
+
+  // (2) Value clips only: the composed root layer has NO authored time
+  // samples; animation comes from the external clip stages.
+  const std::string clip_stage = R"(#usda 1.0
+(
+    startTimeCode = 0
+    endTimeCode = 2
+)
+def Xform "Root" (
+    clips = {
+        dictionary default = {
+            double2[] active = [(0, 0), (2, 1)]
+            asset[] assetPaths = [@clip_0.usda@, @clip_1.usda@]
+            string primPath = "/Root"
+            double2[] times = [(0, 0), (2, 2)]
+            bool interpolateMissingClipValues = true
+        }
+    }
+)
+{
+}
+)";
+
+  // (3) Static: neither time samples nor clips.
+  const std::string static_stage = R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate = (1, 2, 3)
+}
+)";
+
+  const std::map<std::string, std::string> assets = {
+      {"clip_0.usda", R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate = (1, 2, 3)
+}
+)"},
+      {"clip_1.usda", R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate = (5, 6, 7)
+}
+)"}};
+
+  auto make_loader = [&assets](const std::string& path, Stage* stage,
+                               std::string* warn, std::string* err) {
+    const auto it = assets.find(path);
+    if (it == assets.end()) {
+      if (err) *err = "missing test clip";
+      return false;
+    }
+    LoadResult clip = LoadUSDAFromString(it->second);
+    if (!clip.success) {
+      if (err) *err = clip.error_summary;
+      return false;
+    }
+    *stage = std::move(clip.stage);
+    return true;
+  };
+
+  // (1) Authored time samples -> animations emitted; HasTimeSamples true,
+  // HasValueClips false.
+  {
+    LoadResult loaded = LoadUSDAFromString(ts_stage);
+    assert(loaded.success);
+    assert(loaded.stage.HasTimeSamples());
+    assert(!loaded.stage.HasValueClips());
+    ConverterConfig config;
+    RenderSceneConverter converter(config);
+    ConvertResult converted = converter.Convert(loaded.stage);
+    assert(converted.success);
+    assert(converted.scene.animations.size() == 1 &&
+           "authored time samples must produce an AnimationClip");
+  }
+
+  // (2) Value clips only -> animations STILL emitted (regression gate).
+  {
+    LoadResult loaded = LoadUSDAFromString(clip_stage);
+    assert(loaded.success);
+    assert(!loaded.stage.HasTimeSamples() &&
+           "clip-only stage must have no authored time samples");
+    assert(loaded.stage.HasValueClips() &&
+           "clip-only stage must be detected by HasValueClips");
+    ConverterConfig config;
+    config.animation.clip_stage_loader = make_loader;
+    RenderSceneConverter converter(config);
+    ConvertResult converted = converter.Convert(loaded.stage);
+    assert(converted.success);
+    assert(converted.scene.animations.size() == 1 &&
+           "clip-only stage must still be animation-extracted");
+  }
+
+  // (3) Static stage -> no animations, no animation reserve.
+  {
+    LoadResult loaded = LoadUSDAFromString(static_stage);
+    assert(loaded.success);
+    assert(!loaded.stage.HasTimeSamples());
+    assert(!loaded.stage.HasValueClips());
+    ConverterConfig config;
+    RenderSceneConverter converter(config);
+    ConvertResult converted = converter.Convert(loaded.stage);
+    assert(converted.success);
+    assert(converted.scene.animations.empty() &&
+           "static stage must produce no AnimationClips");
+  }
+
+  // (4) animation.enabled = false -> no animations even with time samples.
+  {
+    LoadResult loaded = LoadUSDAFromString(ts_stage);
+    assert(loaded.success);
+    ConverterConfig config;
+    config.animation.enabled = false;
+    RenderSceneConverter converter(config);
+    ConvertResult converted = converter.Convert(loaded.stage);
+    assert(converted.success);
+    assert(converted.scene.animations.empty() &&
+           "animation.enabled=false must suppress AnimationClips");
+  }
+
+  std::cout << "  Animation extraction gate: PASSED\n";
+}
+
 void TestMeshParityCleanups() {
   std::cout << "Testing mesh parity cleanups...\n";
   const char* usda = R"(#usda 1.0
@@ -4925,6 +5067,7 @@ int main() {
   TestPhysicsAnnotations();
   TestRenderConverterCurves();
   TestValueClipBaking();
+  TestAnimationExtractionGate();
   TestMeshParityCleanups();
   TestHalfPrecisionXformOps();
   TestMultiSkeletonJointRemap();
