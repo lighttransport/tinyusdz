@@ -1,4 +1,4 @@
-# tusdquicklook — minimal portable USD Quick Look viewer.
+# tusdquicklook minimal portable USD Quick Look viewer.
 #
 # Deliberately independent of examples/tusdview: no ImGui, no GLFW, no glslang,
 # no volk/cuew. The UI is the vendored software-rendered lightui; the default
@@ -46,6 +46,24 @@ target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/src/external/lightrt
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+if(MSVC)
+  # VS2026 toolchain headers guard C11/C++ runtime interop with version checks
+  # that are stricter than current compiler support.
+  target_compile_options(${EXAMPLE_TARGET} PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>
+  )
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
+endif()
+
+if(TINYUSDZ_BUILD_QUICKLOOK AND NOT TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS)
+  # Keep quicklook lightweight by default: avoid building tinyusdz_textools
+  # unless explicitly requested.
+  if (TINYUSDZ_WITH_TEXTOOLS)
+    message(STATUS "tusdquicklook: forcing TINYUSDZ_WITH_TEXTOOLS OFF (pass -DTINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON to enable)")
+  endif()
+  set(TINYUSDZ_WITH_TEXTOOLS OFF CACHE BOOL "Build vendored tir/texcomp/texpipe/envmap texture tools" FORCE)
+endif()
 
 # The `next` lazy loader + tydra_next streaming converter are the whole reason
 # this app can hold a small memory budget. Build them on demand, the same way

@@ -325,6 +325,19 @@ option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minim
 
 option(TINYUSDZ_WITH_TEXTOOLS
        "Build vendored tir/texcomp/texpipe/envmap texture tools" ON)
+option(TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS
+       "Build vendored tir/texcomp/texpipe/envmap texture tools in quicklook-only builds" OFF)
+
+if(TINYUSDZ_BUILD_QUICKLOOK AND NOT TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS)
+  # Quicklook is intentionally a minimal, dependency-light path. Disabling
+  # texture-tools here avoids building tinyusdz_textools unless explicitly
+  # requested.
+  if (TINYUSDZ_WITH_TEXTOOLS)
+    message(STATUS "tinyusdz: disabling TINYUSDZ_WITH_TEXTOOLS for quicklook-only build "
+                   "(set -DTINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON to force)")
+  endif()
+  set(TINYUSDZ_WITH_TEXTOOLS OFF CACHE BOOL "Build vendored tir/texcomp/texpipe/envmap texture tools" FORCE)
+endif()
 
 # -- ColorIO --
 option(TINYUSDZ_WITH_COLORIO
@@ -420,6 +433,11 @@ if(MSVC)
   # clobber std::numeric_limits<T>::max()/min() calls project-wide with
   # cryptic C2589/C2059 syntax errors.
   add_compile_definitions(NOMINMAX)
+
+  # MSVC 2022 toolchain + STL header compatibility guard can trip this
+  # repository's older C++17 compatibility target set in CI/partner envs.
+  # Keep enabled for all targets to avoid STL1001 noise from legacy headers.
+  add_compile_definitions(_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 endif()
 
 # [ccache]
