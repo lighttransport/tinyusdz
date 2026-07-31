@@ -55,10 +55,12 @@ int main(int argc, char **argv) {
   pcp::InstanceFlattenMode inst_mode = pcp::InstanceFlattenMode::Holder;
   pcp::PrototypeNumbering proto_num = pcp::PrototypeNumbering::Deterministic;
   // Parallel composition is OPT-IN via --compose-threads N (default 1 = serial,
-  // no threading). It is byte-identical to serial; it helps small compose-bound
-  // scenes and currently regresses huge instanced ones, so it stays off by
-  // default. (Independent of the writer's TINYUSDZ_NEXT_NUM_THREADS.)
+  // no threading). -1 means auto = hardware concurrency.
+  // It is byte-identical to serial; it helps small compose-bound scenes and
+  // currently regresses huge instanced ones, so it stays off by default.
+  // (Independent of the writer's TINYUSDZ_NEXT_NUM_THREADS.)
   int compose_threads = 1;
+  bool load_payloads = true;
   // --variant-fallback set=opt1,opt2  (repeatable). Stock pxr registers NO
   // fallbacks; the AOUSD supplemental corpus expectations were generated in
   // an environment with the classic standin->render fallback, so its runner
@@ -109,7 +111,20 @@ int main(int argc, char **argv) {
       }
     } else if (std::strcmp(argv[i], "--compose-threads") == 0 && i + 1 < argc) {
       compose_threads = std::atoi(argv[++i]);  // opt-in parallel compose (>1)
-      if (compose_threads < 1) compose_threads = 1;
+      if (compose_threads == 0) {
+        compose_threads = 1;
+      } else if (compose_threads < -1) {
+        std::fprintf(stderr,
+                     "Invalid --compose-threads value '%d' (must be -1 or >= 1)\n",
+                     compose_threads);
+        return 2;
+      }
+    } else if (std::strcmp(argv[i], "--compose-threads-auto") == 0) {
+      compose_threads = -1;
+    } else if (std::strcmp(argv[i], "--load-payloads") == 0) {
+      load_payloads = true;
+    } else if (std::strcmp(argv[i], "--defer-payloads") == 0) {
+      load_payloads = false;
     } else if (std::strcmp(argv[i], "--variant-fallback") == 0 && i + 1 < argc) {
       std::string spec(argv[++i]);
       const size_t eq = spec.find('=');
@@ -136,7 +151,8 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "Usage: next_usdcat [-l|-f|--rewrite-layer] [-o out.usda] "
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
-                         "[--compose-threads N] "
+                         "[--compose-threads N] [--compose-threads-auto] "
+                         "[--load-payloads|--defer-payloads] "
                          "[--aousd-strict] "
                          "[--require-prim /Path] "
                          "file.usd[acz]\n");
@@ -266,8 +282,10 @@ int main(int argc, char **argv) {
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
     // Parallel compose (pre-warm sources_cache) is OPT-IN via --compose-threads N
-    // and byte-identical to serial. Default 1 = serial (no threading).
+    // and byte-identical to serial. Default 1 = serial (no threading),
+    // -1 = auto hardware concurrency.
     opts.num_threads = compose_threads;
+    opts.load_payloads = load_payloads;
     // Forward the CLI timing flag to the library (which no longer reads the env):
     // gates the [next_compose]/[next_build]/[next_warm] diagnostics.
     opts.enable_timing = timing;

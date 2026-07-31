@@ -102,6 +102,7 @@ public:
 
   /// Check if prim has a property
   bool HasProperty(const std::string& name) const;
+  bool HasProperty(PropNameId name_id) const;
 
   /// Resolve at USD DefaultTime: authored default, then schema fallback.
   /// Time samples are never consulted.
@@ -127,17 +128,26 @@ public:
   // TimeSamples
   // ============================================================
 
+  /// Fast check if this prim has any time-sampled property.
+  bool HasAnyTimeSamples() const;
+
   /// Check if property has time samples
   bool HasTimeSamples(const std::string& name) const;
+  bool HasTimeSamples(PropNameId name_id) const;
 
   /// Get all time sample times for a property
   std::vector<double> GetTimeSampleTimes(const std::string& name) const;
+  std::vector<double> GetTimeSampleTimes(PropNameId name_id) const;
+  const std::vector<std::pair<double, uint32_t>>* GetTimeSamples(
+      PropNameId name_id) const;
 
   /// Get value at specific time (returns closest sample, no interpolation)
   const Value* GetValueAtTime(const std::string& name, double time) const;
+  const Value* GetValueAtTime(PropNameId name_id, double time) const;
 
   /// Get interpolated value at time (linear interpolation for numeric types)
   Value GetInterpolatedValue(const std::string& name, double time) const;
+  Value GetInterpolatedValue(PropNameId name_id, double time) const;
 
   // ============================================================
   // Relationships
@@ -309,6 +319,10 @@ public:
   /// Check if stage has time samples
   bool HasTimeSamples() const;
 
+  /// Check if any prim in the stage carries value-clip metadata (`clips`
+  /// dictionary on the prim spec). Lightweight metadata-only scan.
+  bool HasValueClips() const;
+
   // ============================================================
   // Metadata
   // ============================================================
@@ -360,6 +374,11 @@ public:
   /// O(properties) rather than rescanning the whole stage per prim.
   StaticGeometryReleaseStats ReleaseStaticGeometryArraysForPrim(
       const UsdPrim& prim, size_t min_array_elements = 256);
+  /// Const overload for metadata-only processing pipelines that only need
+  /// non-owning access to the composed stage. The actual arrays are still
+  /// mutated to drop cached values.
+  StaticGeometryReleaseStats ReleaseStaticGeometryArraysForPrim(
+      const UsdPrim& prim, size_t min_array_elements = 256) const;
 
 private:
   std::unique_ptr<Layer> root_layer_;

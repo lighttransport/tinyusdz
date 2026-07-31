@@ -17,6 +17,16 @@ using ::tinyusdz::next::Path;
 using ::tinyusdz::next::PrimSpec;
 using ::tinyusdz::next::PropMeta;
 
+namespace {
+
+const ::tinyusdz::next::PropNameId& kXformOpOrder() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("xformOpOrder");
+  return id;
+}
+
+}  // namespace
+
 //
 // Prim type checking
 //
@@ -144,12 +154,16 @@ std::vector<UsdPrim> FindPrims(const Stage& stage, PrimPredicate pred) {
 
 const Value* GetAttribute(const UsdPrim& prim, const std::string& name) {
   if (!prim.IsValid()) return nullptr;
-  return prim.GetPropertyValue(name);
+  auto name_id = tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return nullptr;
+  return prim.GetPropertyValue(name_id);
 }
 
 const Value* GetAttributeAtTime(const UsdPrim& prim, const std::string& name, double time) {
   if (!prim.IsValid()) return nullptr;
-  return prim.GetValueAtTime(name, time);
+  auto name_id = tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return nullptr;
+  return prim.GetValueAtTime(name_id, time);
 }
 
 bool GetFloat(const UsdPrim& prim, const std::string& name, float* out) {
@@ -545,17 +559,19 @@ void MatMulD(double* dst, const double* a, const double* b) {
 // the previous, time-unaware behaviour).
 const Value* PropAtTime(const UsdPrim& prim, const std::string& name,
                         double time) {
-  if (std::isnan(time)) return prim.GetPropertyValue(name);
+  auto name_id = tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return nullptr;
+  if (std::isnan(time)) return prim.GetPropertyValue(name_id);
   // Linear interpolation between samples (pxr semantics); held/default
   // fallback. Scratch is per-thread; callers consume the pointer before the
   // next PropAtTime call (single-live-pointer pattern in this TU).
   static thread_local Value scratch;
-  Value v = prim.GetInterpolatedValue(name, time);
+  Value v = prim.GetInterpolatedValue(name_id, time);
   if (!v.is_empty()) {
     scratch = std::move(v);
     return &scratch;
   }
-  return prim.GetValueAtTime(name, time);
+  return prim.GetValueAtTime(name_id, time);
 }
 
 // Read a 3-component op value (translate/scale/rotate) as double, trying
@@ -665,7 +681,7 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
   if (!prim.IsValid()) return false;
 
   // xformOpOrder is uniform (not time-sampled) -> default value.
-  const Value* orderv = prim.GetPropertyValue("xformOpOrder");
+  const Value* orderv = prim.GetPropertyValue(kXformOpOrder());
   const std::vector<std::string>* order =
       orderv ? orderv->as_token_array() : nullptr;
   if (!order || order->empty()) return true;  // no ops -> identity
@@ -827,7 +843,7 @@ bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, float* matri
 
 bool HasResetXformStack(const UsdPrim& prim) {
   if (!prim.IsValid()) return false;
-  const Value* orderv = prim.GetPropertyValue("xformOpOrder");
+  const Value* orderv = prim.GetPropertyValue(kXformOpOrder());
   const std::vector<std::string>* order =
       orderv ? orderv->as_token_array() : nullptr;
   if (!order || order->empty()) return false;
@@ -1008,7 +1024,7 @@ namespace {
 std::vector<std::string> ReadTokenArray(const UsdPrim& prim,
                                         const std::string& name) {
   std::vector<std::string> out;
-  if (const Value* v = prim.GetPropertyValue(name)) {
+  if (const Value* v = GetAttribute(prim, name)) {
     if (const std::vector<std::string>* toks = v->as_token_array()) out = *toks;
   }
   return out;
@@ -1017,7 +1033,7 @@ std::vector<std::string> ReadTokenArray(const UsdPrim& prim,
 // Read a matrix4d[] / double[] array as flat doubles (16 per matrix).
 std::vector<double> ReadDoubleArray(const UsdPrim& prim,
                                     const std::string& name) {
-  const Value* v = prim.GetPropertyValue(name);
+  const Value* v = GetAttribute(prim, name);
   if (!v) return {};
   if (const std::vector<double>* a = v->as_double_array()) return *a;
   // Fall back to a float-backed array (some encoders store as float).
@@ -1226,7 +1242,7 @@ const Value* ResolveConnection(const Stage& stage, const UsdPrim& prim, const st
     if (!next.IsValid()) break;
 
     // A value on the target ends the chain.
-    if (const Value* v = next.GetPropertyValue(prop)) {
+    if (const Value* v = GetAttribute(next, prop)) {
       return v;
     }
     cur = next;

@@ -14,11 +14,52 @@ namespace next {
 
 UsdGeomXform::UsdGeomXform(const UsdPrim& prim) : prim_(prim) {}
 
+namespace {
+
+const PropNameId& kIdXformOpOrder() {
+  static const PropNameId id = GetPropNameTable().intern("xformOpOrder");
+  return id;
+}
+const PropNameId& kIdTranslate() {
+  static const PropNameId id = GetPropNameTable().intern("xformOp:translate");
+  return id;
+}
+const PropNameId& kIdScale() {
+  static const PropNameId id = GetPropNameTable().intern("xformOp:scale");
+  return id;
+}
+const PropNameId& kIdRotateX() {
+  static const PropNameId id = GetPropNameTable().intern("xformOp:rotateX");
+  return id;
+}
+const PropNameId& kIdRotateY() {
+  static const PropNameId id = GetPropNameTable().intern("xformOp:rotateY");
+  return id;
+}
+const PropNameId& kIdRotateZ() {
+  static const PropNameId id = GetPropNameTable().intern("xformOp:rotateZ");
+  return id;
+}
+const PropNameId& kIdRotateXYZ() {
+  static const PropNameId id = GetPropNameTable().intern("xformOp:rotateXYZ");
+  return id;
+}
+const PropNameId& kIdOrient() {
+  static const PropNameId id = GetPropNameTable().intern("xformOp:orient");
+  return id;
+}
+const PropNameId& kIdTransform() {
+  static const PropNameId id = GetPropNameTable().intern("xformOp:transform");
+  return id;
+}
+
+}  // namespace
+
 std::vector<std::string> UsdGeomXform::GetXformOpOrder() const {
   std::vector<std::string> result;
   if (!IsValid()) return result;
 
-  const Value* v = prim_.GetPropertyValue("xformOpOrder");
+  const Value* v = prim_.GetPropertyValue(kIdXformOpOrder());
   if (!v) return result;
   if (const std::vector<std::string>* toks = v->as_token_array()) {
     result = *toks;
@@ -183,7 +224,9 @@ std::vector<XformOp> UsdGeomXform::GetXformOps() const {
     op.type = ParseOpType(actual_name);
 
     // Get the value
-    const Value* val = prim_.GetPropertyValue(actual_name);
+    const auto op_prop_id = GetPropNameTable().find(actual_name);
+    const Value* val = (op_prop_id.is_valid() ? prim_.GetPropertyValue(op_prop_id)
+                                              : nullptr);
     if (val) {
       op.value = *val;
     }
@@ -197,14 +240,14 @@ bool UsdGeomXform::HasAnimatedTransform() const {
   if (!IsValid()) return false;
 
   // Check common transform properties
-  if (prim_.HasTimeSamples("xformOp:translate")) return true;
-  if (prim_.HasTimeSamples("xformOp:scale")) return true;
-  if (prim_.HasTimeSamples("xformOp:rotateX")) return true;
-  if (prim_.HasTimeSamples("xformOp:rotateY")) return true;
-  if (prim_.HasTimeSamples("xformOp:rotateZ")) return true;
-  if (prim_.HasTimeSamples("xformOp:rotateXYZ")) return true;
-  if (prim_.HasTimeSamples("xformOp:orient")) return true;
-  if (prim_.HasTimeSamples("xformOp:transform")) return true;
+  if (prim_.HasTimeSamples(kIdTranslate())) return true;
+  if (prim_.HasTimeSamples(kIdScale())) return true;
+  if (prim_.HasTimeSamples(kIdRotateX())) return true;
+  if (prim_.HasTimeSamples(kIdRotateY())) return true;
+  if (prim_.HasTimeSamples(kIdRotateZ())) return true;
+  if (prim_.HasTimeSamples(kIdRotateXYZ())) return true;
+  if (prim_.HasTimeSamples(kIdOrient())) return true;
+  if (prim_.HasTimeSamples(kIdTransform())) return true;
 
   return false;
 }
@@ -212,7 +255,7 @@ bool UsdGeomXform::HasAnimatedTransform() const {
 bool UsdGeomXform::GetTranslation(float* x, float* y, float* z) const {
   if (!IsValid() || !x || !y || !z) return false;
 
-  const Value* val = prim_.GetPropertyValue("xformOp:translate");
+  const Value* val = prim_.GetPropertyValue(kIdTranslate());
   if (!val) return false;
 
   // Try float3
@@ -237,7 +280,7 @@ bool UsdGeomXform::GetTranslation(float* x, float* y, float* z) const {
 bool UsdGeomXform::GetTranslation(double* x, double* y, double* z) const {
   if (!IsValid() || !x || !y || !z) return false;
 
-  const Value* val = prim_.GetPropertyValue("xformOp:translate");
+  const Value* val = prim_.GetPropertyValue(kIdTranslate());
   if (!val) return false;
 
   const double* d3 = val->as_double3();
@@ -258,7 +301,7 @@ bool UsdGeomXform::GetTranslation(double* x, double* y, double* z) const {
 bool UsdGeomXform::GetScale(float* x, float* y, float* z) const {
   if (!IsValid() || !x || !y || !z) return false;
 
-  const Value* val = prim_.GetPropertyValue("xformOp:scale");
+  const Value* val = prim_.GetPropertyValue(kIdScale());
   if (!val) return false;
 
   const float* f3 = val->as_float3();
@@ -282,7 +325,7 @@ bool UsdGeomXform::GetRotation(float* x, float* y, float* z) const {
   if (!IsValid() || !x || !y || !z) return false;
 
   // Try rotateXYZ first
-  const Value* val = prim_.GetPropertyValue("xformOp:rotateXYZ");
+  const Value* val = prim_.GetPropertyValue(kIdRotateXYZ());
   if (val) {
     const float* f3 = val->as_float3();
     if (f3) {
@@ -295,19 +338,19 @@ bool UsdGeomXform::GetRotation(float* x, float* y, float* z) const {
   *x = *y = *z = 0.0f;
   bool found = false;
 
-  val = prim_.GetPropertyValue("xformOp:rotateX");
+  val = prim_.GetPropertyValue(kIdRotateX());
   if (val) {
     const float* f = val->as_float();
     if (f) { *x = *f; found = true; }
   }
 
-  val = prim_.GetPropertyValue("xformOp:rotateY");
+  val = prim_.GetPropertyValue(kIdRotateY());
   if (val) {
     const float* f = val->as_float();
     if (f) { *y = *f; found = true; }
   }
 
-  val = prim_.GetPropertyValue("xformOp:rotateZ");
+  val = prim_.GetPropertyValue(kIdRotateZ());
   if (val) {
     const float* f = val->as_float();
     if (f) { *z = *f; found = true; }
@@ -319,7 +362,7 @@ bool UsdGeomXform::GetRotation(float* x, float* y, float* z) const {
 bool UsdGeomXform::GetOrientation(float* w, float* x, float* y, float* z) const {
   if (!IsValid() || !w || !x || !y || !z) return false;
 
-  const Value* val = prim_.GetPropertyValue("xformOp:orient");
+  const Value* val = prim_.GetPropertyValue(kIdOrient());
   if (!val) return false;
 
   // Quaternion stored as (w, x, y, z) or (x, y, z, w) depending on convention
@@ -443,15 +486,15 @@ bool UsdGeomXform::GetTranslationAtTimecode(double timecode, float* x,
   Value hold;
   const Value* val = nullptr;
   if (!std::isnan(timecode)) {
-    Value v = prim_.GetInterpolatedValue("xformOp:translate", timecode);
+    Value v = prim_.GetInterpolatedValue(kIdTranslate(), timecode);
     if (!v.is_empty()) {
       hold = std::move(v);
       val = &hold;
     } else {
-      val = prim_.GetValueAtTime("xformOp:translate", timecode);
+      val = prim_.GetValueAtTime(kIdTranslate(), timecode);
     }
   }
-  if (!val) val = prim_.GetPropertyValue("xformOp:translate");
+  if (!val) val = prim_.GetPropertyValue(kIdTranslate());
   if (!val) return false;
 
   const float* f3 = val->as_float3();
