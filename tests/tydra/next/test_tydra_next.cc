@@ -4303,6 +4303,61 @@ def Xform "World"
   std::cout << "  Geometry release vs animated arrays: PASSED\n";
 }
 
+// Regression: ConvertAnimation iterates TimeSampleStorage's raw (time,
+// value_offset) pairs directly (it is sorted with last-wins upsert). A USDA
+// file whose timeSamples keys are authored OUT OF ORDER must still produce
+// monotonically increasing AnimationClip keyframes.
+void TestAnimationKeyframeOrdering() {
+  std::cout << "Testing animation keyframe ordering...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate.timeSamples = {
+        4: (40, 0, 0),
+        1: (10, 0, 0),
+        3: (30, 0, 0),
+        1: (11, 0, 0)
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: "
+              << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.animations.size() == 1);
+  const AnimationClip& clip = result.scene.animations[0];
+  assert(clip.prim_path == "/Root");
+
+  bool saw_translation = false;
+  for (const AnimationChannel& ch : clip.channels) {
+    if (ch.target_path != AnimationChannel::TargetPath::Translation) continue;
+    saw_translation = true;
+    // Sorted, deduplicated (last-wins): 1 (11), 3 (30), 4 (40).
+    assert(ch.keyframes.size() == 3);
+    for (size_t i = 1; i < ch.keyframes.size(); ++i) {
+      assert(ch.keyframes[i].time > ch.keyframes[i - 1].time &&
+             "keyframes must be in ascending time order");
+    }
+    assert(std::fabs(ch.keyframes[0].time - 1.0) < 1e-9);
+    assert(std::fabs(ch.keyframes[0].value.x - 11.0f) < 0.001f);
+    assert(std::fabs(ch.keyframes[1].time - 3.0) < 1e-9);
+    assert(std::fabs(ch.keyframes[1].value.x - 30.0f) < 0.001f);
+    assert(std::fabs(ch.keyframes[2].time - 4.0) < 1e-9);
+    assert(std::fabs(ch.keyframes[2].value.x - 40.0f) < 0.001f);
+  }
+  assert(saw_translation);
+
+  std::cout << "  Animation keyframe ordering: PASSED\n";
+}
 
 // 2026-07 audit UsdSkel cluster: quat-array slerp between keys, indexed skin
 // primvar expansion, token-array joints/blendShapes in GetSkelAnimationData,
@@ -5416,6 +5471,7 @@ int main() {
   TestMultiSkeletonJointRemap();
   TestSkeletonJointRemapLeafTokens();
   TestGeometryReleaseSkipsAnimatedArrays();
+  TestAnimationKeyframeOrdering();
   TestLightLinkingAndDomeFormat();
   TestStandardSurfaceNoRecursion();
   TestUsdSkelParityFixes();

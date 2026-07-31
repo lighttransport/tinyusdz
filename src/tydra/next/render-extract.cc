@@ -181,16 +181,6 @@ const ::tinyusdz::next::Value* ValueAtOrDefault(
   return prim.GetPropertyValue(name_id);
 }
 
-const ::tinyusdz::next::Value* ValueAtOrDefault(
-    const ::tinyusdz::next::UsdPrim& prim, const char* name, double time,
-    ::tinyusdz::next::Value* hold) {
-  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
-  if (!name_id.is_valid()) {
-    return nullptr;
-  }
-  return ValueAtOrDefault(prim, name_id, time, hold);
-}
-
 }  // namespace
 
 bool IsAnalyticGeomTypeName(const std::string& type_name) {
