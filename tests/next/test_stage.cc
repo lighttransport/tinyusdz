@@ -465,6 +465,104 @@ void test_default_time_timesample_fallback() {
   std::cout << "  Explicit default-time semantics: PASSED" << std::endl;
 }
 
+// Regression: every PropNameId overload must be safe when handed an invalid
+// id (e.g. GetPropNameTable().find("unknown") -> invalid). The interned-id
+// lookup pass (geom-mesh/geom-xform/schema/stage accessors) relies on this.
+void test_propnameid_invalid_id() {
+  std::cout << "Testing PropNameId invalid-id safety..." << std::endl;
+
+  StageBuilder builder;
+  builder.SetDefaultPrim("World");
+  LayerBuilder& lb = builder.GetLayerBuilder();
+
+  lb.begin_prim("World", "Xform");
+    lb.begin_prim("Mesh", "Mesh");
+    lb.add_property("points", Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
+    lb.add_time_sample("points", 0.0, Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
+    lb.add_time_sample("points", 1.0, Value::MakeFloat3Array(std::vector<float>{1, 1, 1, 2, 1, 1, 1, 2, 1}));
+    lb.end_prim();
+  lb.end_prim();
+
+  Stage stage = builder.Build();
+  UsdPrim mesh = stage.GetPrimAtPath("/World/Mesh");
+  assert(mesh.IsValid());
+
+  const PropNameId invalid = GetPropNameTable().find("doesNotExist");
+  assert(!invalid.is_valid() && "fixture id must be invalid");
+
+  // Known-good property id (must exist after the add_property above).
+  const PropNameId points = GetPropNameTable().find("points");
+  assert(points.is_valid() && "points must be interned by the builder");
+
+  // String overloads keep working.
+  assert(mesh.HasProperty("points"));
+  assert(mesh.HasTimeSamples("points"));
+  assert(!mesh.GetTimeSampleTimes("points").empty());
+
+  // Invalid id: every PropNameId overload returns the safe empty value.
+  assert(!mesh.HasProperty(invalid));
+  assert(mesh.GetPropertyValue(invalid) == nullptr);
+  assert(mesh.GetPropertyValueOrEarliestTimeSample(invalid) == nullptr);
+  assert(mesh.EarliestTimeSampleValue(invalid) == nullptr);
+  assert(!mesh.HasTimeSamples(invalid));
+  assert(mesh.GetTimeSampleTimes(invalid).empty());
+  assert(mesh.GetTimeSamples(invalid) == nullptr);
+  assert(mesh.GetValueAtTime(invalid, 0.0) == nullptr);
+  assert(mesh.GetInterpolatedValue(invalid, 0.0).is_empty());
+
+  // Valid id still resolves after the invalid-id probes.
+  assert(mesh.HasProperty(points));
+  assert(mesh.GetPropertyValue(points) != nullptr);
+  assert(mesh.HasTimeSamples(points));
+  assert(mesh.GetTimeSamples(points) != nullptr);
+  assert(mesh.GetValueAtTime(points, 0.5) != nullptr);
+  assert(!mesh.GetInterpolatedValue(points, 0.5).is_empty());
+
+  std::cout << "  PropNameId invalid-id safety: PASSED" << std::endl;
+}
+
+// Regression: the stage-level animation scans rewritten to iterate the root
+// layer's flat prim array (no per-property traversal). HasTimeSamples must be
+// true iff any prim has authored time samples; HasValueClips must be false
+// for a plain stage and true for a stage whose prims carry `clips` metadata.
+void test_stage_animation_scans() {
+  std::cout << "Testing Stage::HasTimeSamples / HasValueClips..." << std::endl;
+
+  // Static stage: neither.
+  {
+    StageBuilder builder;
+    builder.SetDefaultPrim("World");
+    LayerBuilder& lb = builder.GetLayerBuilder();
+    lb.begin_prim("World", "Xform");
+      lb.begin_prim("Mesh", "Mesh");
+      lb.add_property("points", Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
+      lb.end_prim();
+    lb.end_prim();
+    Stage stage = builder.Build();
+    assert(!stage.HasTimeSamples() && "static stage must have no time samples");
+    assert(!stage.HasValueClips() && "static stage must have no value clips");
+  }
+
+  // Stage with authored time samples.
+  {
+    StageBuilder builder;
+    builder.SetDefaultPrim("World");
+    LayerBuilder& lb = builder.GetLayerBuilder();
+    lb.begin_prim("World", "Xform");
+      lb.begin_prim("Mesh", "Mesh");
+      lb.add_property("points", Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
+      lb.add_time_sample("points", 0.0, Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
+      lb.add_time_sample("points", 1.0, Value::MakeFloat3Array(std::vector<float>{1, 1, 1, 2, 1, 1, 1, 2, 1}));
+      lb.end_prim();
+    lb.end_prim();
+    Stage stage = builder.Build();
+    assert(stage.HasTimeSamples() && "time-sampled stage must be detected");
+    assert(!stage.HasValueClips() && "no clips metadata on this stage");
+  }
+
+  std::cout << "  Stage animation scans: PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "=== Stage Tests ===" << std::endl;
 
@@ -478,6 +576,8 @@ int main() {
   test_attribute_eval_convenience();
   test_stage_move();
   test_default_time_timesample_fallback();
+  test_propnameid_invalid_id();
+  test_stage_animation_scans();
 
   std::cout << "\n=== All Stage tests PASSED ===" << std::endl;
   return 0;

@@ -94,6 +94,72 @@ void test_mesh_schema() {
   PASS();
 }
 
+// Regression: schema accessors on a prim missing the queried arrays must
+// return empty/safe values (the interned PropNameId lookup pass uses
+// GetPropNameTable().find() for some names, which yields an invalid id when
+// the property was never registered; every accessor must no-op on that).
+void test_mesh_schema_missing_arrays() {
+  TEST("Mesh getters on missing arrays");
+  {
+    StageBuilder sb;
+    sb.SetDefaultPrim("Test");
+    auto& layer = sb.GetLayerBuilder();
+
+    // A Mesh with topology but no points/normals/UVs/extent/subdivisionScheme.
+    layer.begin_prim("BareMesh", "Mesh");
+    layer.add_property("faceVertexCounts", Value::MakeIntArray({4, 4}));
+    layer.add_property("faceVertexIndices", Value::MakeIntArray({0, 1, 2, 3, 4, 5, 6, 7}));
+    layer.end_prim();
+
+    layer.finalize();
+    Stage stage = sb.Build();
+    auto prim = stage.GetPrimAtPath("/BareMesh");
+    if (!prim.IsValid()) { FAIL("prim not found"); return; }
+
+    UsdGeomMesh mesh(prim);
+    assert(mesh.IsValid());
+    assert(mesh.GetFaceCount() == 2 && "faceVertexCounts must still resolve");
+    assert(mesh.GetFaceVertexIndices().size() == 8);
+    assert(mesh.GetPointCount() == 0 && "missing points -> 0");
+    assert(mesh.GetPoints().empty());
+    std::vector<float> xv, yv, zv;
+    assert(!mesh.GetPoints(xv, yv, zv) && "missing points -> false");
+    assert(mesh.GetNormals().empty());
+    assert(!mesh.HasNormals());
+    float mn[3] = {0, 0, 0}, mx[3] = {0, 0, 0};
+    assert(!mesh.GetExtent(mn, mx) && "missing extent -> false");
+    assert(mesh.GetUVs().empty() && "missing primvars:st/uv -> empty");
+    assert(!mesh.HasUVs());
+    assert(mesh.GetUVIndices().empty());
+    assert(mesh.GetSubdivisionScheme() == "catmullClark" &&
+           "missing subdivisionScheme -> schema fallback");
+    assert(mesh.GetPointsAtTimecode(0.0).empty());
+    assert(!mesh.HasAnimatedPoints());
+    assert(mesh.GetPointsTimeSamples().empty());
+  }
+
+  // A Mesh with an authored default point value still resolves through the
+  // interned-id path.
+  {
+    StageBuilder sb;
+    sb.SetDefaultPrim("Test");
+    auto& layer = sb.GetLayerBuilder();
+    layer.begin_prim("PointMesh", "Mesh");
+    std::vector<float> pts = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    layer.add_property("points", Value::MakeFloat3Array(pts));
+    layer.end_prim();
+    layer.finalize();
+    Stage stage2 = sb.Build();
+    auto p2 = stage2.GetPrimAtPath("/PointMesh");
+    if (!p2.IsValid()) { FAIL("PointMesh not found"); return; }
+    UsdGeomMesh mesh2(p2);
+    assert(mesh2.GetPointCount() == 3 && "authored points must resolve");
+    assert(mesh2.GetPoints().size() == 9);
+  }
+
+  PASS();
+}
+
 void test_xform_schema() {
   TEST("IsXform");
   auto stage = MakeTestStage();
@@ -405,6 +471,7 @@ int main() {
   printf("============\n\n");
 
   test_mesh_schema();
+  test_mesh_schema_missing_arrays();
   test_point_instancer_schema();
   test_point_instancer_interpolation();
   test_mesh_xform_timecode_interpolation();

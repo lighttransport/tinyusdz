@@ -489,6 +489,18 @@ out of the main regression suite:
 - Treat its results as informational only — **not** a merge/regression gate.
   Do not wire `next` into the full regression gate until the suite is hardened.
 
+Regression coverage to keep in mind when touching `next`:
+
+- `test_stage.cc` — PropNameId overloads must be invalid-id-safe, and the
+  stage-level `HasTimeSamples()` / `HasValueClips()` scans must match the
+  flat root-layer prim array.
+- `test_schemas.cc` — schema accessors (UsdGeomMesh etc.) must return empty /
+  schema-fallback values on prims missing the queried arrays.
+- `test_tydra_next.cc` — the animation-extraction gate
+  (`animation.enabled && (HasTimeSamples() || HasValueClips())`) must keep
+  emitting AnimationClips for value-clip-only stages (authored-time-sample
+  stages, static stages, and `animation.enabled = false` are covered too).
+
 Build and run them on demand in a separate build directory. The preferred
 entrypoint is:
 
