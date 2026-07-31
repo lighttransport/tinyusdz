@@ -74,6 +74,8 @@ documents live in [archive/](archive/).
 
 - [build-and-examples.md](build-and-examples.md) — Build commands, CMake
   options, examples and tools.
+- [developer.md](developer.md) — PyPI and npm build/publish workflow details
+  (wheels.yml / wasmPublish.yml, local verification, release checklist).
 - [testing-cpp.md](testing-cpp.md) — C++ test infrastructure and regression
   procedure.
 - [python_binding.md](python_binding.md) — Python binding build and maintenance.

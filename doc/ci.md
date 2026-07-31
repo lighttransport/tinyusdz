@@ -2,6 +2,11 @@
 
 Version-bump, tagging, and publish procedure for TinyUSDZ.
 
+> Workflow-level detail (the `wheels.yml` / `wasmPublish.yml` pipeline
+> internals, build matrix, publish gates, and local verification commands)
+> lives in [developer.md](developer.md). This file covers versions, tags, and
+> the step order.
+
 ## Version sources
 
 | Component | File | How version is set |
