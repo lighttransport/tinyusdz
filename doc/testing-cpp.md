@@ -147,12 +147,13 @@ CMake registers these tests when the corresponding targets are built (most in th
 
 `usdc-parser-unit-test` is set to run after `unit-test-tinyusdz` (it globs `*-runtime.usdc` fixtures the unit suite generates).
 
-The `ctest` labels in use today are `benchmark`, `osd-verify`, `textools`, and
-`tusdview`:
+The `ctest` labels in use today are `benchmark`, `osd-verify`, and `tusdview`;
+the `textools` label exists only when the vendored textools upstream self-tests
+are explicitly enabled (`-DTINYUSDZ_BUILD_TEXTOOLS_TESTS=ON`, default OFF):
 
 ```bash
 ctest --print-labels
-# benchmark, osd-verify, textools, tusdview
+# benchmark, osd-verify, tusdview
 ```
 
 Useful commands:
