@@ -7732,7 +7732,18 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
         if (expected_elements == 0) {
           expected_elements = element_count;
           channel.element_count = element_count;
-          channel.array_values.reserve(samples->size() * values->size());
+          // Best-effort reserve only: the product of two file-controlled
+          // counts (time-sample count x per-sample array width) can amplify
+          // well past the parsed layer size, and std::vector::reserve throws
+          // (terminating this no-exception build) on an over-large or
+          // overflowed count. Saturate and cap; growth falls back to the
+          // ordinary append path below.
+          const size_t want =
+              SaturatingMul(samples->size(), values->size());
+          constexpr size_t kMaxSkelArrayReserve = 256u * 1024u * 1024u;
+          if (want <= kMaxSkelArrayReserve) {
+            channel.array_values.reserve(want);
+          }
           // Width validation: blendShapeWeights samples must be as wide as
           // the declared blendShapes list, or weights drive the wrong shapes.
           if (target_path == AnimationChannel::TargetPath::Weights &&
