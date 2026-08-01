@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """Decode two PNGs and report the fraction of differing 3D-viewport pixels.
 
-Compares only the render viewport: the left file-list pane and the status bar
-are excluded. The status bar prints live process RSS, which legitimately differs
-between runs, so including it would make every comparison flaky.
+Compares only the render viewport. Three bands of UI chrome are excluded,
+because each of them legitimately differs between two runs and would otherwise
+show up as a rendering difference:
+
+  left pane   file list -- differs whenever the two renders are of files in
+              different directories
+  toolbar     shows the current directory, same problem
+  status bar  prints live process RSS, which differs run to run
 
 usage: pngdiff.py <a.png> <b.png> [viewport_x_fraction] [status_bar_px]
+                  [toolbar_px]
 """
 import sys, zlib, struct
 
@@ -63,10 +69,13 @@ if (wa, ha) != (wb, hb):
     raise SystemExit('size mismatch')
 x_frac = float(sys.argv[3]) if len(sys.argv) > 3 else 0.55
 status_px = int(sys.argv[4]) if len(sys.argv) > 4 else 30
+# Theme toolbar_h is 26; round up so a caption descender cannot leak in.
+toolbar_px = int(sys.argv[5]) if len(sys.argv) > 5 else 28
 x0 = int(wa * x_frac)
-y1 = max(1, ha - status_px)
+y0 = min(toolbar_px, max(0, ha - 1))
+y1 = max(y0 + 1, ha - status_px)
 diff = total = 0
-for y in range(0, y1, 2):
+for y in range(y0, y1, 2):
     A, B = ra[y], rb[y]
     for x in range(x0, wa, 2):
         oa, ob = x * ba, x * bb
