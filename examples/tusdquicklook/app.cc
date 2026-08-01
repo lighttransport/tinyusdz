@@ -373,6 +373,17 @@ bool App::HandleEvent(const lui_event_t& ev) {
           ToggleViewMode();
           needs_redraw_ = true;
           break;
+        case '1': case '2': case '3': case '4':
+        case '5': case '6': case '7': {
+          // Shading mode by number, in the combo's order.
+          const int idx = ev.data.key.key - '1';
+          if (idx < kShadingModeCount) {
+            shading_mode_ = static_cast<ShadingMode>(idx);
+            ApplyRenderSettings();
+            needs_redraw_ = true;
+          }
+          break;
+        }
         case 'g':
           // Cycle the backend preference. EnsureRenderer picks the change up on
           // the next frame, which is also where the switch actually happens —

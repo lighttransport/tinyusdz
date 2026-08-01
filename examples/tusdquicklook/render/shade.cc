@@ -207,8 +207,82 @@ void BackgroundGradient(float out_bottom[3], float out_top[3]) {
   }
 }
 
+void ShadeAov(const ShadingContext& ctx, const SurfaceHit& hit,
+              const float view_dir[3], float eye_distance, float out_rgb[3]) {
+  out_rgb[0] = out_rgb[1] = out_rgb[2] = 0.0f;
+  if (!ctx.scene) return;
+
+  const QlMaterial& mat = MaterialFor(*ctx.scene, hit.material_id);
+
+  switch (ctx.mode) {
+    case ShadingMode::Albedo: {
+      // The same base value ShadeSurface starts from, with no lighting.
+      out_rgb[0] = mat.base_color[0];
+      out_rgb[1] = mat.base_color[1];
+      out_rgb[2] = mat.base_color[2];
+      if (mat.base_color_tex >= 0 && hit.has_uv &&
+          mat.base_color_tex < static_cast<int>(ctx.scene->textures.size())) {
+        float rgba[4];
+        SampleTexture(ctx.scene->textures[size_t(mat.base_color_tex)],
+                      hit.uv[0], hit.uv[1], rgba);
+        out_rgb[0] = rgba[0];
+        out_rgb[1] = rgba[1];
+        out_rgb[2] = rgba[2];
+      }
+      break;
+    }
+    case ShadingMode::Normal: {
+      // Same view-facing flip ShadeSurface applies, so the two agree on which
+      // side of a single-sided surface is being shown.
+      float v[3] = {-view_dir[0], -view_dir[1], -view_dir[2]};
+      Normalize(v);
+      float n[3] = {hit.normal[0], hit.normal[1], hit.normal[2]};
+      if (Dot(n, v) < 0.0f) {
+        n[0] = -n[0];
+        n[1] = -n[1];
+        n[2] = -n[2];
+      }
+      for (int i = 0; i < 3; i++) out_rgb[i] = n[i] * 0.5f + 0.5f;
+      break;
+    }
+    case ShadingMode::Uv:
+      // Untextured geometry has no UVs at all; show it as black rather than
+      // as a bogus (0,0) corner sample.
+      if (hit.has_uv) {
+        out_rgb[0] = hit.uv[0];
+        out_rgb[1] = hit.uv[1];
+      }
+      break;
+    case ShadingMode::Roughness:
+      out_rgb[0] = out_rgb[1] = out_rgb[2] = mat.roughness;
+      break;
+    case ShadingMode::Metallic:
+      out_rgb[0] = out_rgb[1] = out_rgb[2] = mat.metallic;
+      break;
+    case ShadingMode::Depth: {
+      // Distance from the eye, normalized into the camera's clip range and
+      // inverted so near is bright. Computed from the hit position on both
+      // backends -- never from a depth buffer, which would not match.
+      const float span = std::max(1e-6f, ctx.depth_far - ctx.depth_near);
+      float t = (eye_distance - ctx.depth_near) / span;
+      t = std::max(0.0f, std::min(1.0f, t));
+      out_rgb[0] = out_rgb[1] = out_rgb[2] = 1.0f - t;
+      break;
+    }
+    case ShadingMode::Shaded:
+      break;
+  }
+}
+
 void ShadeBackground(const ShadingContext& ctx, const float direction[3],
                      float out_rgb[3]) {
+  // Debug modes get a black background so the AOV reads on its own, and so the
+  // two backends cannot disagree about a gradient that is not being measured.
+  if (ctx.mode != ShadingMode::Shaded) {
+    out_rgb[0] = out_rgb[1] = out_rgb[2] = 0.0f;
+    return;
+  }
+
   // Vertical gradient in the stage's up axis, so a Z-up scene does not get a
   // sideways sky.
   const float up_component = ctx.y_up ? direction[1] : direction[2];

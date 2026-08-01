@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "options.hh"
 #include "ql_scene.hh"
 
 namespace tusdql {
@@ -30,6 +31,13 @@ struct ShadingContext {
   float ground_y = 0.0f;
   bool has_ground = false;
   bool y_up = true;
+
+  // Debug visualization. Anything but Shaded bypasses lighting entirely and
+  // shows one input to the shading model directly.
+  ShadingMode mode = ShadingMode::Shaded;
+  // Distances used to normalize the Depth mode. Set per frame from the camera.
+  float depth_near = 0.1f;
+  float depth_far = 100.0f;
 };
 
 // Pick the lights to shade with. Authored lights win; otherwise a key/fill/rim
@@ -59,7 +67,22 @@ void ShadeSurface(const ShadingContext& ctx, const SurfaceHit& hit,
                   const float view_dir[3], OcclusionFn occluded, void* user,
                   float out_rgb[3]);
 
-// Background for rays that miss everything, in linear RGB.
+// Debug visualization of one shading input, in linear RGB. Used instead of
+// ShadeSurface whenever ctx.mode != Shaded.
+//
+// PARITY: the GL fragment shader in gl_raster.cc reproduces these expressions
+// exactly, and the smoke test holds the two backends to a tighter tolerance
+// here than for shaded output (there is no lighting to disagree about). Any
+// term either side would derive independently -- screen derivatives,
+// gl_FragCoord.z -- must not appear.
+//
+// `eye_distance` is |eye - hit.position|, which the GL side recomputes from the
+// interpolated world position rather than from the depth buffer.
+void ShadeAov(const ShadingContext& ctx, const SurfaceHit& hit,
+              const float view_dir[3], float eye_distance, float out_rgb[3]);
+
+// Background for rays that miss everything, in linear RGB. In a debug mode
+// this is black on both backends, so the AOV is not diluted by the gradient.
 void ShadeBackground(const ShadingContext& ctx, const float direction[3],
                      float out_rgb[3]);
 

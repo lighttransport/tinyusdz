@@ -159,6 +159,54 @@ if [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
   grep -Eq '^\[tusdquicklook\] renderer: (gl|cpu) ' "$OUT/b_report.err" \
     || fail "--verbose did not report the live renderer"
   echo "backend reporting: ok ($(grep -Eo 'renderer: [a-z]+' "$OUT/b_report.err" | head -1))"
+
+  # 4c. Debug AOVs. These carry no lighting, so the GLSL and shade.cc are
+  #     computing the same arithmetic or they are not -- which makes them a
+  #     tighter parity signal than the shaded image. They must also each differ
+  #     from the others, or a mode that silently renders nothing would pass.
+  if command -v python3 >/dev/null 2>&1 && [ -f "$DIFF_PY" ]; then
+    prev=""
+    for mode in albedo normal uv roughness metallic depth; do
+      for backend in cpu gl; do
+        "$BIN" "$ROOT/models/suzanne-pbr.usda" --backend "$backend" \
+          --shading-mode "$mode" --screenshot "$OUT/aov_${mode}_$backend.png" \
+          --size 480x360 --frames 4 >/dev/null 2>&1 \
+          || fail "--shading-mode $mode --backend $backend: non-zero exit"
+      done
+      frac="$(python3 "$DIFF_PY" "$OUT/aov_${mode}_cpu.png" \
+                                 "$OUT/aov_${mode}_gl.png")"
+      awk -v f="$frac" 'BEGIN { exit !(f <= 0.05) }' \
+        || fail "shading mode $mode: cpu and gl disagree over ${frac}"
+      if [ -n "$prev" ]; then
+        d="$(python3 "$DIFF_PY" "$OUT/aov_${prev}_cpu.png" \
+                                "$OUT/aov_${mode}_cpu.png")"
+        awk -v f="$d" 'BEGIN { exit !(f > 0.0) }' \
+          || fail "shading modes $prev and $mode render identically"
+      fi
+      prev="$mode"
+    done
+    echo "shading modes: ok (6 AOVs, cpu/gl parity and all distinct)"
+  fi
+
+  # The thread-count independence must hold in a debug mode too. Pin the CPU
+  # backend: worker threads are a CPU-tracer concept, and letting `auto` choose
+  # would compare two GL images (or one of each, if a GL context happens to
+  # fail) instead of what this is testing. Compare the viewport only -- the
+  # status bar reports live RSS, which legitimately differs run to run.
+  if command -v python3 >/dev/null 2>&1 && [ -f "$DIFF_PY" ]; then
+    "$BIN" "$ROOT/models/cube-previewsurface.usda" --backend cpu --threads 1 \
+      --spp 4 --shading-mode normal --screenshot "$OUT/aov_t1.png" \
+      --size 480x360 --frames 4 >/dev/null 2>&1 \
+      || fail "aov --threads 1: non-zero exit"
+    "$BIN" "$ROOT/models/cube-previewsurface.usda" --backend cpu --threads 8 \
+      --spp 4 --shading-mode normal --screenshot "$OUT/aov_t8.png" \
+      --size 480x360 --frames 4 >/dev/null 2>&1 \
+      || fail "aov --threads 8: non-zero exit"
+    frac="$(python3 "$DIFF_PY" "$OUT/aov_t1.png" "$OUT/aov_t8.png")"
+    awk -v f="$frac" 'BEGIN { exit !(f == 0) }' \
+      || fail "shading mode normal: --threads 1 and 8 differ over ${frac}"
+    echo "aov thread determinism: ok"
+  fi
 fi
 
 # 5. Bad input must fail cleanly with a message, not a crash.
