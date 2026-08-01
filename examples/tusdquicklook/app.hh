@@ -161,6 +161,13 @@ class App {
   RenderSettings CurrentRenderSettings() const;
   void ApplyRenderSettings();
 
+  // Advance camera_ toward camera_goal_. Returns true while still moving.
+  // Always a no-op assignment when headless or --no-smoothing, so a screenshot
+  // never depends on wall-clock timing.
+  bool StepCameraMotion(float dt);
+  // Pick the surface under (x, y) in the viewport and orbit around it.
+  bool PickAt(const lvg_rect_t& viewport, int x, int y);
+
   // Backend management. The renderer can be created, destroyed and re-created
   // at any point in the session, so `desired_backend_` is a live preference
   // rather than a one-shot startup decision.
@@ -186,7 +193,19 @@ class App {
   bool scene_complete_ = false;
 
   std::unique_ptr<Renderer> renderer_;
+  // Shared with the CPU renderer. Owned here so picking keeps working while
+  // the GL backend is live, and so a backend switch never rebuilds the BVH.
+  std::shared_ptr<PickAccel> accel_ = std::make_shared<PickAccel>();
+
+  // camera_ is what is displayed; camera_goal_ is what input edits. They are
+  // the same object unless smoothing is on and motion is still settling.
   OrbitCamera camera_;
+  OrbitCamera camera_goal_;
+  bool camera_animating_ = false;
+  // Last picked surface, for shift+F framing and '.' refocus.
+  bool have_pick_ = false;
+  float pick_point_[3] = {0, 0, 0};
+  size_t pick_mesh_ = 0;
   RenderStatus render_status_;
 
   // Live UI state seeded from opts_, so a toolbar change and a CLI flag reach

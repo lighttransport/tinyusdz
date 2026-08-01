@@ -206,6 +206,9 @@ bool App::Busy() const {
   // A visible toast animates, so the loop must keep ticking until it expires —
   // and must stop as soon as it does, or the app never goes idle again.
   if (ToastActive()) return true;
+  // A settling camera is work: the loop has to keep drawing until it arrives.
+  // ApproachToward snaps and clears the flag, so this always terminates.
+  if (camera_animating_) return true;
   return renderer_ && !scene_.meshes.empty() && !render_status_.converged;
 }
 
@@ -491,10 +494,28 @@ bool App::HandleEvent(const lui_event_t& ev) {
         default:
           if (ev.data.key.key == 'r' && !(ev.data.key.mods & LUI_MOD_CTRL)) {
             RefreshFolder();
+          } else if (ev.data.key.key == 'f' &&
+                     (ev.data.key.mods & LUI_MOD_SHIFT) && have_pick_ &&
+                     pick_mesh_ < scene_.meshes.size()) {
+            // Shift+F frames just the picked mesh.
+            const Layout fl = ComputeLayout(theme_, surf_w_, surf_h_,
+                                            left_pane_w_);
+            const float aspect =
+                fl.viewport.height > 0
+                    ? float(fl.viewport.width) / float(fl.viewport.height)
+                    : 1.0f;
+            camera_goal_.FrameBounds(scene_.meshes[pick_mesh_].bounds, aspect);
+            camera_user_controlled_ = true;
+            needs_redraw_ = true;
           } else if (ev.data.key.key == 'f') {
             // Give the camera back to auto-framing.
             camera_user_controlled_ = false;
             camera_framed_ = false;
+            needs_redraw_ = true;
+          } else if (ev.data.key.key == '.' && have_pick_) {
+            // Re-centre on the last pick without re-picking.
+            camera_goal_.SetTarget(pick_point_);
+            camera_user_controlled_ = true;
             needs_redraw_ = true;
           } else if ((ev.data.key.mods == 0) &&
                      (ev.data.key.key == '[' || ev.data.key.key == '{')) {
@@ -537,7 +558,8 @@ bool App::HandleEvent(const lui_event_t& ev) {
           }
         } else {
           camera_user_controlled_ = true;
-          camera_.Dolly(ev.data.scroll.delta_y > 0.0f ? 1.12f : 1.0f / 1.12f);
+          camera_goal_.Dolly(ev.data.scroll.delta_y > 0.0f ? 1.12f
+                                                          : 1.0f / 1.12f);
           needs_redraw_ = true;
         }
       }
@@ -596,6 +618,16 @@ bool App::HandleEvent(const lui_event_t& ev) {
           break;
         }
 
+        // Double-click re-centres the orbit on whatever is under the cursor,
+        // which is what makes anything bigger than one object navigable.
+        if (ev.data.mouse_button.button == LUI_MOUSE_LEFT &&
+            ev.data.mouse_button.clicks >= 2) {
+          if (PickAt(l.viewport, x, y)) {
+            needs_redraw_ = true;
+            break;
+          }
+        }
+
         // Left drag orbits, middle/right drag pans.
         drag_mode_ = (ev.data.mouse_button.button == LUI_MOUSE_LEFT)
                          ? DragMode::Orbit
@@ -643,9 +675,9 @@ bool App::HandleEvent(const lui_event_t& ev) {
           if (drag_mode_ == DragMode::Orbit) {
             // ~half a turn across the viewport width.
             const float scale = 3.14159265f / std::max(1, l.viewport.width);
-            camera_.Orbit(-float(dx) * scale, float(dy) * scale);
+            camera_goal_.Orbit(-float(dx) * scale, float(dy) * scale);
           } else {
-            camera_.Pan(float(dx), float(dy), l.viewport.height);
+            camera_goal_.Pan(float(dx), float(dy), l.viewport.height);
           }
           needs_redraw_ = true;
         }
@@ -664,6 +696,8 @@ void App::DrawFrame(lvg_surface_t* surf) {
 
   const Layout l = ComputeLayout(theme_, surf->width, surf->height,
                                  left_pane_w_);
+
+  StepCameraMotion(kFrameDt);
 
   if (widgets_ready_) {
     PlaceWidgets(l);
@@ -1019,7 +1053,13 @@ void App::RefreshFolder() {
 
 void App::ResetShadingAndViewport() {
   camera_ = OrbitCamera{};
-  if (scene_.bounds.valid) camera_.y_up = scene_.y_up;
+  camera_goal_ = camera_;
+  camera_animating_ = false;
+  have_pick_ = false;
+  if (scene_.bounds.valid) {
+    camera_.y_up = scene_.y_up;
+    camera_goal_.y_up = scene_.y_up;
+  }
 
   camera_user_controlled_ = false;
   camera_framed_ = false;
@@ -1853,7 +1893,7 @@ bool App::CreateRenderer(BackendChoice backend, const lvg_rect_t& viewport,
     next = CreateGlRenderer(viewport.width, viewport.height, rs, needed, err);
     if (!next) return false;
   } else {
-    next = CreateCpuRenderer();
+    next = CreateCpuRenderer(accel_);
     if (!next) {
       if (err) *err = "could not create the CPU renderer";
       return false;
@@ -1930,6 +1970,40 @@ void App::DemoteToCpu(const std::string& why, const lvg_rect_t& viewport) {
   CreateRenderer(BackendChoice::Cpu, viewport, &err);
 }
 
+bool App::StepCameraMotion(float dt) {
+  // Headless output must not depend on how many frames happened to elapse, and
+  // --no-smoothing is the same request made explicitly.
+  if (headless_ || !opts_.camera_smoothing) {
+    camera_ = camera_goal_;
+    camera_animating_ = false;
+    return false;
+  }
+
+  const float radius = std::max(scene_.bounds.Radius(), 1e-4f);
+  camera_animating_ = camera_.ApproachToward(camera_goal_, dt, radius);
+  return camera_animating_;
+}
+
+bool App::PickAt(const lvg_rect_t& viewport, int x, int y) {
+  if (!accel_ || viewport.width <= 0 || viewport.height <= 0) return false;
+
+  PickHit hit;
+  // The pick uses the displayed camera: the user aimed at what is on screen,
+  // not at where a still-settling camera is heading.
+  if (!accel_->Trace(camera_, x - viewport.x, y - viewport.y, viewport.width,
+                     viewport.height, &hit)) {
+    return false;
+  }
+
+  have_pick_ = true;
+  pick_mesh_ = hit.mesh_index;
+  for (int i = 0; i < 3; i++) pick_point_[i] = hit.position[i];
+
+  camera_goal_.SetTarget(hit.position);
+  camera_user_controlled_ = true;
+  return true;
+}
+
 std::string App::BackendStatusText() const {
   std::string s = (live_backend_ == BackendChoice::Gl) ? "gl" : "cpu";
   if (!live_device_.empty()) {
@@ -1964,6 +2038,11 @@ void App::CycleBackend() {
 
 bool App::EnsureRenderer(const lvg_rect_t& viewport) {
   if (viewport.width <= 0 || viewport.height <= 0) return false;
+
+  // The BVH backs picking as well as CPU shading, so it is kept current
+  // regardless of which backend is drawing.
+  if (accel_->scene() != &scene_) accel_->SetScene(&scene_);
+  accel_->Sync(ResolveThreadCount(opts_));
 
   const BackendChoice wanted = ResolveBackend();
   if (!renderer_ || live_backend_ != wanted) {
@@ -2003,6 +2082,9 @@ void App::AutoFrameIfNeeded(const lvg_rect_t& viewport) {
   }
   camera_framed_ = true;
   framed_at_mesh_count_ = scene_.stats.mesh_count;
+  // Auto-framing is not user motion: snap the goal to it rather than animating
+  // toward a target that keeps moving as geometry streams in.
+  camera_goal_ = camera_;
 }
 
 void App::DrawViewport(lvg_canvas_t* c, const lvg_rect_t& r) {

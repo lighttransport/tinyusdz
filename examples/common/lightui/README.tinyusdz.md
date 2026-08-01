@@ -39,6 +39,21 @@ Worth reporting upstream. Verified with the interactive smoke test under Xvfb
 (`examples/tusdquicklook/tests/run-quicklook-gui-smoke.sh`), which hangs without
 the patch.
 
+**`src/platform/x11/platform_x11.c` — synthesize multi-click counts.**
+
+`lui_event_t::mouse_button.clicks` is documented as "1 = single, 2 = double",
+but the X11 backend hardcoded it to `1`. X11 reports every button press
+independently and has no notion of a double-click, so unless the backend
+tracks the run, no application on Linux can ever observe one — silently
+breaking every double-click feature (in tusdquicklook, both descend-into-
+directory in the file list and click-to-focus in the viewport).
+
+The patch tracks the last press (button, time, position) and extends the run
+when the next press is the same button within 400 ms and 4 px, matching the
+conventional thresholds. Releases report the count of the press that opened
+the run. The Win32 and Cocoa backends get this from the OS and are untouched.
+Worth reporting upstream.
+
 **`src/{statusbar,toolbar,propgrid,toast}.c` — optional font-aware text.**
 
 Upstream draws each character in these four widgets as a 5x10 filled rectangle
