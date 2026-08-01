@@ -10,6 +10,7 @@
 #define LIGHTUI_TOAST_H
 
 #include "layout.h"
+#include "font.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +52,9 @@ typedef struct {
     int               spacing;       /* gap between toasts (4)             */
     int               margin;        /* horizontal margin (8 per side)     */
     int               corner_radius; /* (4)                                */
+
+    lui_font_t       *font;  /* optional; not owned. NULL keeps the
+                              * block-glyph fallback. */
 } lui_toast_t;
 
 /* ---- API ---------------------------------------------------------------- */

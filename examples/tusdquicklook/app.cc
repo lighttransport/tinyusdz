@@ -22,6 +22,17 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// Toolbar control widths. Wide enough for the longest label ("roughness",
+// "auto") at the theme font size without measuring at layout time.
+constexpr int kModeComboW = 104;
+constexpr int kBackendComboW = 72;
+// Status-bar section widths. The left section auto-stretches into the rest.
+constexpr int kStatusBackendW = 320;
+constexpr int kStatusMemW = 260;
+// Nominal frame time for toast fade. The loop is event-driven, so this is a
+// pacing constant, not a measurement: a toast lives ~4s of frames either way.
+constexpr float kFrameDt = 1.0f / 60.0f;
+
 std::string ToLower(std::string s) {
   for (char& c : s) {
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -179,6 +190,9 @@ bool App::Init() {
     return false;
   }
   lui_window_get_physical_size(window_, &surf_w_, &surf_h_);
+  // Widgets exist only in the windowed path: headless has nothing to interact
+  // with, and a toast there would make the screenshot time-dependent.
+  InitWidgets();
   lui_window_show(window_);
   return true;
 }
@@ -189,6 +203,9 @@ bool App::Busy() const {
   // next mouse move.
   if (loader_.running() || !scene_complete_) return true;
   if (view_mode_ == ViewMode::ImageBrowser && HasImageBrowserWork()) return true;
+  // A visible toast animates, so the loop must keep ticking until it expires —
+  // and must stop as soon as it does, or the app never goes idle again.
+  if (ToastActive()) return true;
   return renderer_ && !scene_.meshes.empty() && !render_status_.converged;
 }
 
@@ -303,6 +320,36 @@ int App::RunHeadless() {
 }
 
 bool App::HandleEvent(const lui_event_t& ev) {
+  // lightui widgets get first refusal on pointer events. An open dropdown must
+  // swallow clicks that would otherwise land on the toolbar or the viewport
+  // behind it, so this runs before any of the app's own hit-testing.
+  if (widgets_ready_ && (ev.type == LUI_EVENT_MOUSE_DOWN ||
+                         ev.type == LUI_EVENT_MOUSE_UP ||
+                         ev.type == LUI_EVENT_MOUSE_MOVE)) {
+    lui_combo_t* combos[2] = {&mode_combo_, &backend_combo_};
+    for (lui_combo_t* cb : combos) {
+      const bool was_open = cb->open;
+      if (cb->widget.on_event && cb->widget.on_event(&cb->widget, &ev)) {
+        needs_redraw_ = true;
+        return true;
+      }
+      // Opening or closing changes what is on screen even when the widget did
+      // not claim the event.
+      if (cb->open != was_open) needs_redraw_ = true;
+    }
+    // A click anywhere else dismisses an open dropdown rather than leaving it
+    // hanging over the viewport.
+    if (ev.type == LUI_EVENT_MOUSE_DOWN) {
+      for (lui_combo_t* cb : combos) {
+        if (cb->open) {
+          cb->open = false;
+          needs_redraw_ = true;
+          return true;
+        }
+      }
+    }
+  }
+
   switch (ev.type) {
     case LUI_EVENT_QUIT:
       return false;
@@ -607,6 +654,15 @@ void App::DrawFrame(lvg_surface_t* surf) {
   const Layout l = ComputeLayout(theme_, surf->width, surf->height,
                                  left_pane_w_);
 
+  if (widgets_ready_) {
+    PlaceWidgets(l);
+    // Toasts fade; advance them before drawing so an expired one disappears
+    // this frame and Busy() can go false again.
+    if (toast_.widget.animate) {
+      toast_.widget.animate(&toast_.widget, kFrameDt);
+    }
+  }
+
   lvg_canvas_clear(&canvas, theme_.bg);
   DrawToolbar(&canvas, l.toolbar);
   DrawListPane(&canvas, l.list);
@@ -616,9 +672,150 @@ void App::DrawFrame(lvg_surface_t* surf) {
   } else {
     DrawViewport(&canvas, l.viewport);
   }
+  // Refresh the status text only now: DrawViewport is what creates or switches
+  // the renderer, so reading the live backend any earlier reports the previous
+  // frame's answer -- and once the image converges there is no next frame to
+  // correct it, leaving a GL session permanently labelled "cpu".
+  if (widgets_ready_) SyncWidgetState();
   DrawStatusBar(&canvas, l.statusbar);
 
+  // Overlays last, so an open dropdown or a toast is never clipped by the
+  // panels drawn after the widget that owns it.
+  if (widgets_ready_) {
+    lui_combo_draw_dropdown(&mode_combo_, &canvas);
+    lui_combo_draw_dropdown(&backend_combo_, &canvas);
+    if (toast_.toast_count > 0 && toast_.widget.draw) {
+      toast_.widget.draw(&toast_.widget, &canvas);
+    }
+  }
+
   lvg_canvas_flush(&canvas);
+}
+
+void App::OnModeComboChanged(int index, const char* /*item*/, void* user) {
+  App* self = static_cast<App*>(user);
+  if (index < 0 || index >= kShadingModeCount) return;
+  self->shading_mode_ = static_cast<ShadingMode>(index);
+  self->ApplyRenderSettings();
+  self->needs_redraw_ = true;
+}
+
+void App::OnBackendComboChanged(int index, const char* /*item*/, void* user) {
+  App* self = static_cast<App*>(user);
+  const BackendChoice choices[3] = {BackendChoice::Auto, BackendChoice::Cpu,
+                                    BackendChoice::Gl};
+  if (index < 0 || index > 2) return;
+  self->desired_backend_ = choices[index];
+  if (self->desired_backend_ == BackendChoice::Gl) {
+    // An explicit retry clears a previous failure, same as the 'g' hotkey.
+    self->gl_disabled_ = false;
+    self->gl_error_.clear();
+  }
+  // EnsureRenderer performs the actual switch on the next frame; tearing the
+  // renderer down from inside an event handler would free pixels the current
+  // frame may still be holding.
+  self->needs_redraw_ = true;
+}
+
+void App::InitWidgets() {
+  if (widgets_ready_) return;
+
+  lui_combo_init(&mode_combo_);
+  mode_combo_.font = font_;
+  for (int i = 0; i < kShadingModeCount; i++) {
+    lui_combo_add_item(&mode_combo_,
+                       ShadingModeName(static_cast<ShadingMode>(i)));
+  }
+  lui_combo_set_selected(&mode_combo_, static_cast<int>(shading_mode_));
+  mode_combo_.on_change = &App::OnModeComboChanged;
+  mode_combo_.on_change_user = this;
+
+  lui_combo_init(&backend_combo_);
+  backend_combo_.font = font_;
+  lui_combo_add_item(&backend_combo_, "auto");
+  lui_combo_add_item(&backend_combo_, "cpu");
+  lui_combo_add_item(&backend_combo_, "gl");
+  lui_combo_set_selected(
+      &backend_combo_, desired_backend_ == BackendChoice::Auto ? 0
+                       : desired_backend_ == BackendChoice::Cpu ? 1
+                                                                : 2);
+  backend_combo_.on_change = &App::OnBackendComboChanged;
+  backend_combo_.on_change_user = this;
+
+  lui_statusbar_init(&statusbar_);
+  statusbar_.font = font_;
+  statusbar_.bg_color = theme_.panel;
+  statusbar_.text_color = theme_.text_dim;
+  statusbar_.border_color = theme_.border;
+  statusbar_.separator_color = theme_.border;
+  // Left section auto-stretches; the rest are sized by content at draw time.
+  lui_statusbar_add_section(&statusbar_, "ready", 0);
+  lui_statusbar_add_section(&statusbar_, "", kStatusBackendW);
+  lui_statusbar_add_section(&statusbar_, "", kStatusMemW);
+
+  lui_toast_init(&toast_);
+  toast_.font = font_;
+
+  widgets_ready_ = true;
+
+  // The startup probe runs before there is a window to show a toast on, so a
+  // GL request that was already refused is reported here instead. Without
+  // this the GUI would just quietly come up on the CPU.
+  if (gl_disabled_ && desired_backend_ == BackendChoice::Gl) {
+    Notify("GL unavailable (" + gl_error_ + ")", LUI_TOAST_WARNING);
+  }
+}
+
+void App::PlaceWidgets(const Layout& l) {
+  // A parentless widget's `computed` rect is its absolute rect.
+  const int combo_h = std::min(l.toolbar.height - 4, 24);
+  const int y = l.toolbar.y + (l.toolbar.height - combo_h) / 2;
+
+  const int mode_w = kModeComboW;
+  const int backend_w = kBackendComboW;
+  // Right-aligned, inboard of the Reset/Refresh buttons.
+  const lvg_rect_t reset = ResetButtonRect(l.toolbar);
+  const int right_edge =
+      (reset.width > 0) ? reset.x - theme_.pad
+                        : l.toolbar.x + l.toolbar.width - theme_.pad;
+
+  backend_combo_.widget.computed =
+      lvg_rect_make(right_edge - backend_w, y, backend_w, combo_h);
+  mode_combo_.widget.computed = lvg_rect_make(
+      right_edge - backend_w - theme_.pad - mode_w, y, mode_w, combo_h);
+
+  statusbar_.widget.computed = l.statusbar;
+  toast_.widget.computed = l.viewport;
+}
+
+void App::SyncWidgetState() {
+  // The widgets mirror app state rather than owning it, so a hotkey and a
+  // click land in the same place.
+  lui_combo_set_selected(&mode_combo_, static_cast<int>(shading_mode_));
+  lui_combo_set_selected(
+      &backend_combo_, desired_backend_ == BackendChoice::Auto ? 0
+                       : desired_backend_ == BackendChoice::Cpu ? 1
+                                                                : 2);
+
+  lui_statusbar_set_text(&statusbar_, 0,
+                         status_right_.empty() ? "ready"
+                                               : status_right_.c_str());
+  lui_statusbar_set_text(&statusbar_, 1, BackendStatusText().c_str());
+  const std::string mem = "mem " + budget_.FormatUsage() + "  rss " +
+                          FormatBytes(MemBudget::ProcessRSS());
+  lui_statusbar_set_text(&statusbar_, 2, mem.c_str());
+}
+
+bool App::ToastActive() const {
+  return widgets_ready_ && toast_.toast_count > 0;
+}
+
+void App::Notify(const std::string& message, lui_toast_type_t type) {
+  // Headless has no one to show a toast to, and drawing one would make the
+  // screenshot depend on wall-clock time.
+  if (headless_ || !widgets_ready_) return;
+  lui_toast_show(&toast_, message.c_str(), type, 4.0f);
+  needs_redraw_ = true;
 }
 
 void App::DrawToolbar(lvg_canvas_t* c, const lvg_rect_t& r) {
@@ -639,6 +836,16 @@ void App::DrawToolbar(lvg_canvas_t* c, const lvg_rect_t& r) {
     DrawTextCentered(c, font_, reset_button, "Reset", theme_.text);
   }
 
+  // The two combos are real lightui widgets; they draw their closed state here
+  // and their dropdown later, as an overlay, so it is not clipped by whatever
+  // is drawn after the toolbar.
+  if (widgets_ready_) {
+    if (mode_combo_.widget.draw) mode_combo_.widget.draw(&mode_combo_.widget, c);
+    if (backend_combo_.widget.draw) {
+      backend_combo_.widget.draw(&backend_combo_.widget, c);
+    }
+  }
+
   int left_max = r.width - 2 * theme_.pad;
   if (reset_button.width > 0) {
     left_max = std::max(0, reset_button.x - (r.x + theme_.pad));
@@ -646,6 +853,12 @@ void App::DrawToolbar(lvg_canvas_t* c, const lvg_rect_t& r) {
   if (refresh_button.width > 0) {
     left_max =
         std::min(left_max, std::max(0, refresh_button.x - (r.x + theme_.pad)));
+  }
+  // Keep the directory caption clear of the combos.
+  if (widgets_ready_ && mode_combo_.widget.computed.width > 0) {
+    left_max = std::min(
+        left_max,
+        std::max(0, mode_combo_.widget.computed.x - (r.x + theme_.pad)));
   }
   if (left_max > 0) {
     const std::string mode = (view_mode_ == ViewMode::ImageBrowser)
@@ -1670,6 +1883,9 @@ void App::SwitchBackend(BackendChoice backend, const lvg_rect_t& viewport) {
                    "renderer\n",
                    err.c_str());
     }
+    if (desired_backend_ == BackendChoice::Gl) {
+      Notify("GL unavailable (" + err + ")", LUI_TOAST_WARNING);
+    }
     std::string cerr;
     if (CreateRenderer(BackendChoice::Cpu, viewport, &cerr) && opts_.verbose) {
       std::fprintf(stderr, "[tusdquicklook] renderer: %s (%s)\n",
@@ -1690,6 +1906,8 @@ void App::DemoteToCpu(const std::string& why, const lvg_rect_t& viewport) {
   std::fprintf(stderr, "[tusdquicklook] GL backend lost (%s); falling back to "
                        "the CPU renderer\n",
                why.c_str());
+  Notify("GL lost (" + why + ") \xE2\x80\x94 switched to CPU",
+         LUI_TOAST_WARNING);
   renderer_.reset();
   std::string err;
   CreateRenderer(BackendChoice::Cpu, viewport, &err);
@@ -1697,7 +1915,14 @@ void App::DemoteToCpu(const std::string& why, const lvg_rect_t& viewport) {
 
 std::string App::BackendStatusText() const {
   std::string s = (live_backend_ == BackendChoice::Gl) ? "gl" : "cpu";
-  if (!live_device_.empty()) s += " \xC2\xB7 " + live_device_;
+  if (!live_device_.empty()) {
+    // GL_RENDERER carries transport/ISA noise ("NVIDIA GeForce RTX 5060
+    // Ti/PCIe/SSE2"); the model name is the useful part.
+    std::string device = live_device_;
+    const size_t slash = device.find('/');
+    if (slash != std::string::npos) device.resize(slash);
+    s += " \xC2\xB7 " + device;
+  }
   // Never let a silent demotion pass for a deliberate choice.
   if (live_backend_ != BackendChoice::Gl && gl_disabled_ &&
       desired_backend_ != BackendChoice::Cpu) {
@@ -1935,6 +2160,14 @@ void App::DrawImageStatusOverlay(lvg_canvas_t* c, const lvg_rect_t& r) {
 }
 
 void App::DrawStatusBar(lvg_canvas_t* c, const lvg_rect_t& r) {
+  // A real lui_statusbar_t: phase / live backend / memory, in three sections.
+  // Its text is refreshed by SyncWidgetState() at the top of the frame.
+  if (widgets_ready_ && statusbar_.widget.draw) {
+    statusbar_.widget.draw(&statusbar_.widget, c);
+    return;
+  }
+
+  // Headless never builds widgets, so it keeps the hand-drawn bar.
   FillRect(c, r, theme_.panel);
   lvg_canvas_fill_rect(c, r.x, r.y, r.width, 1, theme_.border);
 
@@ -1942,10 +2175,7 @@ void App::DrawStatusBar(lvg_canvas_t* c, const lvg_rect_t& r) {
 
   // Show tracked-vs-cap plus process RSS: the first is what the budget governs,
   // the second is the number that actually gets a process OOM-killed.
-  // Which backend is actually live, and — when it is not the one asked for —
-  // why. A demotion must never look like a deliberate choice.
-  const std::string right = BackendStatusText() + "   mem " +
-                            budget_.FormatUsage() + "  rss " +
+  const std::string right = "mem " + budget_.FormatUsage() + "  rss " +
                             FormatBytes(MemBudget::ProcessRSS());
 
   const int right_w = DrawTextRight(c, font_, r.x + r.width - theme_.pad,
