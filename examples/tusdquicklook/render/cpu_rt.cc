@@ -248,6 +248,8 @@ void CpuRenderer::PrepareShading() {
   camera_.Eye(eye);
   camera_.Basis(right, up, fwd);
   BuildLightRig(*scene_, eye, fwd, right, up, &shading_);
+  // After the rig: BuildEnvironment reads y_up, which BuildLightRig sets.
+  BuildEnvironment(*scene_, settings_.ibl, &shading_);
   shading_.shadows = settings_.shadows;
   shading_.mode = settings_.mode;
   shading_.depth_near = camera_.near_clip;

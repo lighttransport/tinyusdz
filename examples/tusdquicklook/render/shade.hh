@@ -32,6 +32,17 @@ struct ShadingContext {
   bool has_ground = false;
   bool y_up = true;
 
+  // Image-based lighting. `env_sh` is the diffuse irradiance projected onto 9
+  // spherical harmonics -- 27 floats that GL takes as uniforms, so both
+  // backends evaluate the identical polynomial rather than each integrating
+  // the environment their own way.
+  bool ibl = false;
+  float env_sh[9][3] = {};
+  const QlTexture* env_tex = nullptr;
+  const QlTexture* env_prefiltered[QlScene::kEnvPrefilterLevels] = {};
+  float env_rotation = 0.0f;
+  float env_intensity = 1.0f;
+
   // Debug visualization. Anything but Shaded bypasses lighting entirely and
   // shows one input to the shading model directly.
   ShadingMode mode = ShadingMode::Shaded;
@@ -45,6 +56,22 @@ struct ShadingContext {
 void BuildLightRig(const QlScene& scene, const float eye[3],
                    const float forward[3], const float right[3],
                    const float up[3], ShadingContext* out);
+
+// Project the scene's environment map onto SH9 and point the context at the
+// prefiltered chain. A fixed single-threaded loop over a downsampled image:
+// no importance sampling, no RNG, so it is bit-identical for any --threads and
+// reproducible as GL uniforms. Call after BuildLightRig.
+void BuildEnvironment(const QlScene& scene, bool ibl_enabled,
+                      ShadingContext* out);
+
+// Direction -> latlong UV, and the inverse. Shared with the GLSL so the two
+// backends agree on which way the environment faces.
+void DirectionToLatLong(const ShadingContext& ctx, const float dir[3],
+                        float* out_u, float* out_v);
+
+// Diffuse irradiance from the SH9 basis, in linear RGB.
+void EvaluateEnvIrradiance(const ShadingContext& ctx, const float n[3],
+                           float out_rgb[3]);
 
 // Everything a hit needs to be shaded, filled in by the tracer.
 struct SurfaceHit {

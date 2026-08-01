@@ -466,6 +466,47 @@ QlMaterial ConvertMaterial(const tyn::RenderMaterial& src,
   return dst;
 }
 
+// Box-blur a latlong environment into successively rougher levels. Wraps in u
+// (the seam is continuous) and clamps in v (the poles are not). Deterministic
+// and single-threaded: the result is uploaded to GL verbatim, so any variation
+// here would show up as a backend disagreement.
+QlTexture BlurEnvLevel(const QlTexture& src, int radius) {
+  QlTexture dst;
+  dst.width = src.width;
+  dst.height = src.height;
+  dst.srgb = false;  // already linearized by the caller
+  dst.wrap_repeat_s = true;
+  dst.wrap_repeat_t = false;
+  dst.rgba.assign(size_t(src.width) * src.height * 4, 0);
+
+  const int w = int(src.width);
+  const int h = int(src.height);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      int acc[4] = {0, 0, 0, 0};
+      int n = 0;
+      for (int dy = -radius; dy <= radius; dy++) {
+        int sy = y + dy;
+        if (sy < 0) sy = 0;
+        if (sy >= h) sy = h - 1;
+        for (int dx = -radius; dx <= radius; dx++) {
+          int sx = (x + dx) % w;
+          if (sx < 0) sx += w;
+          const uint8_t* p =
+              src.rgba.data() + (size_t(sy) * size_t(w) + size_t(sx)) * 4;
+          for (int c = 0; c < 4; c++) acc[c] += p[c];
+          n++;
+        }
+      }
+      uint8_t* q = dst.rgba.data() + (size_t(y) * size_t(w) + size_t(x)) * 4;
+      for (int c = 0; c < 4; c++) {
+        q[c] = static_cast<uint8_t>(acc[c] / std::max(1, n));
+      }
+    }
+  }
+  return dst;
+}
+
 bool ConvertLight(const tyn::RenderLight& src, QlLight* out) {
   QlLight l;
   switch (src.type) {
@@ -650,6 +691,8 @@ class QlSceneSink : public tyn::SceneSink {
       QlLight out;
       if (ConvertLight(l, &out)) ev.lights.push_back(out);
     }
+
+    BuildEnvironmentTextures(&ev, image_to_texture);
     for (const tyn::RenderCamera& c : catalog_.cameras) {
       ev.cameras.push_back(ConvertCamera(c));
     }
@@ -776,6 +819,10 @@ class QlSceneSink : public tyn::SceneSink {
   // Shared tail for both BuildQlMesh paths (de-indexed and not):
   // validity plus the tangent frame a normal-mapped material needs.
   bool FinishMesh(QlMesh* out);
+  // Resolve the environment (--env, else an authored DomeLight), linearize it
+  // and build the roughness chain into ev->textures.
+  void BuildEnvironmentTextures(LoadEvent* ev,
+                                const std::vector<int>& image_to_texture);
 
   LoadControl* ctrl_;
   LoadStream* stream_;
@@ -894,6 +941,114 @@ void BuildTangents(QlMesh* mesh) {
     const float* bt = &bitan[v * 3];
     mesh->tangents[v * 4 + 3] =
         (cx * bt[0] + cy * bt[1] + cz * bt[2]) < 0.0f ? -1.0f : 1.0f;
+  }
+}
+
+void QlSceneSink::BuildEnvironmentTextures(
+    LoadEvent* ev, const std::vector<int>& image_to_texture) {
+  // --env wins over any authored dome: it is the deterministic input the
+  // headless IBL test relies on, and an explicit override should override.
+  QlTexture env;
+  bool have_env = false;
+
+  if (!opts_.env_path.empty()) {
+    std::vector<uint8_t> bytes;
+    DecodedImage img;
+    TextureSource src;
+    src.Init(opts_.env_path, budget_.stage);
+    if (src.Read(opts_.env_path, &bytes) &&
+        DecodeImageToRgba(bytes.data(), bytes.size(), QlTexture::kMaxEnvDim,
+                          &img)) {
+      env.width = img.width;
+      env.height = img.height;
+      env.rgba.assign(img.rgba.begin(), img.rgba.end());
+      env.srgb = true;  // ordinary LDR images are sRGB-encoded
+      env.wrap_repeat_s = true;
+      env.wrap_repeat_t = false;
+      have_env = env.valid();
+    } else {
+      degraded_.detail = "could not read --env image";
+    }
+  }
+
+  if (!have_env) {
+    // Authored DomeLight. tydra resolves its texture like any other, so it is
+    // already decoded and sitting in ev->textures.
+    for (const tyn::RenderLight& l : catalog_.lights) {
+      if (l.type != tyn::LightType::Dome) continue;
+      const int32_t tex_id = l.params.dome.texture_id;
+      if (tex_id < 0 ||
+          tex_id >= static_cast<int32_t>(catalog_.textures.size())) {
+        continue;
+      }
+      const int32_t image_id = catalog_.textures[size_t(tex_id)].image_id;
+      if (image_id < 0 ||
+          image_id >= static_cast<int32_t>(image_to_texture.size())) {
+        continue;
+      }
+      const int slot = image_to_texture[size_t(image_id)];
+      if (slot < 0 || slot >= static_cast<int>(ev->textures.size())) continue;
+
+      env = ev->textures[size_t(slot)];  // copy: the chain needs its own base
+      env.wrap_repeat_s = true;
+      env.wrap_repeat_t = false;
+      ev->env_intensity = l.intensity * std::pow(2.0f, l.exposure);
+      have_env = env.valid();
+      break;
+    }
+  }
+
+  if (!have_env) return;
+
+  // Linearize once, so every level of the chain and the SH projection work in
+  // linear and GL can upload the whole set as plain RGBA8.
+  if (env.srgb) {
+    for (size_t i = 0; i + 3 < env.rgba.size(); i += 4) {
+      for (int c = 0; c < 3; c++) {
+        const float v = float(env.rgba[i + c]) * (1.0f / 255.0f);
+        const float lin = v <= 0.04045f
+                              ? v / 12.92f
+                              : std::pow((v + 0.055f) / 1.055f, 2.4f);
+        env.rgba[i + c] = FloatToU8(lin);
+      }
+    }
+    env.srgb = false;
+  }
+
+  // Roughness levels: progressively wider box blurs of the base. Cheap, and
+  // more importantly identical on both backends because GL never filters this
+  // itself -- it samples the very same pixels.
+  //
+  // Every level is built from `env` BEFORE anything is pushed: appending to
+  // ev->textures reallocates it, so blurring from a reference into that vector
+  // would read a dangling base.
+  static const int kRadius[QlScene::kEnvPrefilterLevels] = {0, 2, 5, 11};
+  std::vector<QlTexture> levels;
+  levels.reserve(QlScene::kEnvPrefilterLevels);
+  for (int i = 0; i < QlScene::kEnvPrefilterLevels; i++) {
+    if (kRadius[i] == 0) continue;
+    QlTexture level = BlurEnvLevel(env, kRadius[i]);
+    if (!level.valid()) break;
+    levels.push_back(std::move(level));
+  }
+
+  ev->env_texture = static_cast<int>(ev->textures.size());
+  ev->textures.push_back(std::move(env));
+
+  size_t next_level = 0;
+  for (int i = 0; i < QlScene::kEnvPrefilterLevels; i++) {
+    if (kRadius[i] == 0) {
+      ev->env_prefiltered[i] = ev->env_texture;
+      continue;
+    }
+    if (next_level >= levels.size()) {
+      // Ran out of levels: fall back to the sharpest one we have rather than
+      // leaving a hole the renderers would have to special-case.
+      ev->env_prefiltered[i] = ev->env_texture;
+      continue;
+    }
+    ev->env_prefiltered[i] = static_cast<int>(ev->textures.size());
+    ev->textures.push_back(std::move(levels[next_level++]));
   }
 }
 
