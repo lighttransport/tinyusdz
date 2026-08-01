@@ -22,6 +22,7 @@
 #include <thread>
 #include <vector>
 
+#include "render/pick.hh"
 #include "render/renderer.hh"
 #include "render/shade.hh"
 
@@ -40,14 +41,10 @@ constexpr int kCoarseFactor = 8;
 // never takes the transparency path.
 const QlMaterial kFallbackMaterial{};
 
-struct BlasEntry {
-  lrt_tri_scene* scene = nullptr;
-  size_t mesh_index = 0;
-};
-
 class CpuRenderer final : public Renderer {
  public:
-  ~CpuRenderer() override { ReleaseAccel(); }
+  explicit CpuRenderer(std::shared_ptr<PickAccel> accel)
+      : accel_(std::move(accel)) {}
 
   bool Init(int width, int height, const RenderSettings& settings,
             std::string* err) override {
@@ -71,16 +68,19 @@ class CpuRenderer final : public Renderer {
 
   void SetScene(const QlScene* scene) override {
     scene_ = scene;
-    ReleaseAccel();
-    synced_mesh_count_ = 0;
+    // The acceleration structure is shared with the app (which picks against
+    // it) and survives a backend switch, so it is pointed at the scene here
+    // but never owned or rebuilt from inside the renderer.
+    if (accel_) accel_->SetScene(scene);
     ResetProgression();
   }
 
   void SyncScene() override {
-    if (!scene_) return;
-    if (scene_->meshes.size() == synced_mesh_count_) return;
-    BuildAccel();
-    ResetProgression();
+    if (!scene_ || !accel_) return;
+    if (accel_->Sync(settings_.threads)) {
+      shading_valid_ = false;
+      ResetProgression();
+    }
   }
 
   void SetCamera(const OrbitCamera& camera) override {
@@ -114,8 +114,6 @@ class CpuRenderer final : public Renderer {
   }
 
  private:
-  void ReleaseAccel();
-  void BuildAccel();
   void ResetProgression();
   void PrepareShading();
 
@@ -147,10 +145,7 @@ class CpuRenderer final : public Renderer {
   std::vector<float> accum_;      // linear RGB accumulation
   std::vector<uint32_t> pixels_;  // 0xAARRGGBB, blit ready
 
-  std::vector<BlasEntry> blas_;
-  std::vector<lrt_tri_scene*> blas_ptrs_;
-  lrt_tlas* tlas_ = nullptr;
-  size_t synced_mesh_count_ = 0;
+  std::shared_ptr<PickAccel> accel_;
 
   ShadingContext shading_;
   bool shading_valid_ = false;
@@ -162,77 +157,6 @@ class CpuRenderer final : public Renderer {
 };
 
 // ---------------------------------------------------------------------------
-
-void CpuRenderer::ReleaseAccel() {
-  if (tlas_) {
-    lrt_tlas_free(tlas_);
-    tlas_ = nullptr;
-  }
-  for (BlasEntry& e : blas_) {
-    if (e.scene) lrt_tri_scene_free(e.scene);
-  }
-  blas_.clear();
-  blas_ptrs_.clear();
-}
-
-void CpuRenderer::BuildAccel() {
-  ReleaseAccel();
-  if (!scene_ || scene_->meshes.empty()) {
-    synced_mesh_count_ = scene_ ? scene_->meshes.size() : 0;
-    return;
-  }
-
-  lrt_tri_build_options opts{};
-  // LBVH: a previewer wants the image on screen, not the last 10% of traversal
-  // speed, and the build is the user-visible latency here.
-  opts.quality = LRT_TRI_BUILD_FAST;
-  opts.layout = LRT_TRI_LAYOUT_AUTO;
-  opts.max_leaf_size = 0;
-  opts.num_threads = static_cast<unsigned>(settings_.threads);
-
-  blas_.reserve(scene_->meshes.size());
-  blas_ptrs_.reserve(scene_->meshes.size());
-  std::vector<lrt_instance> instances;
-  instances.reserve(scene_->meshes.size());
-
-  for (size_t i = 0; i < scene_->meshes.size(); i++) {
-    const QlMesh& m = scene_->meshes[i];
-    if (m.triangle_count() == 0) continue;
-
-    lrt_result err = LRT_RESULT_OK;
-    lrt_tri_scene* bs = lrt_tri_scene_build_indexed(
-        m.positions.data(), m.vertex_count(), m.indices.data(),
-        m.triangle_count(), &opts, &err);
-    if (!bs) continue;
-
-    BlasEntry entry;
-    entry.scene = bs;
-    entry.mesh_index = i;
-    const uint32_t blas_id = static_cast<uint32_t>(blas_.size());
-    blas_.push_back(entry);
-    blas_ptrs_.push_back(bs);
-
-    lrt_instance inst{};
-    inst.blas_id = blas_id;
-    // Identity 3x4: positions were already baked into world space by the
-    // loader, so the TLAS exists purely to key hits back to a mesh.
-    inst.obj2world[0] = 1.0f;
-    inst.obj2world[5] = 1.0f;
-    inst.obj2world[10] = 1.0f;
-    inst.instance_id = blas_id;
-    inst.mask = 0xFFFFFFFFu;
-    instances.push_back(inst);
-  }
-
-  if (!instances.empty()) {
-    lrt_result err = LRT_RESULT_OK;
-    tlas_ = lrt_tlas_build(blas_ptrs_.data(), blas_ptrs_.size(),
-                           instances.data(), instances.size(), &opts, &err);
-  }
-
-  synced_mesh_count_ = scene_->meshes.size();
-  shading_valid_ = false;
-}
 
 void CpuRenderer::ResetProgression() {
   coarse_done_ = false;
@@ -263,7 +187,8 @@ void CpuRenderer::PrepareShading() {
 
 bool CpuRenderer::Occluded(const float origin[3], const float direction[3],
                            float max_distance) const {
-  if (!tlas_) return false;
+  const lrt_tlas* tlas = accel_ ? accel_->tlas() : nullptr;
+  if (!tlas) return false;
   lrt_ray ray{};
   ray.org[0] = origin[0];
   ray.org[1] = origin[1];
@@ -273,7 +198,7 @@ bool CpuRenderer::Occluded(const float origin[3], const float direction[3],
   ray.dir[2] = direction[2];
   ray.tmin = 0.0f;
   ray.tmax = max_distance;
-  return lrt_tlas_occluded1(tlas_, &ray, 0xFFFFFFFFu) != 0;
+  return lrt_tlas_occluded1(tlas, &ray, 0xFFFFFFFFu) != 0;
 }
 
 bool CpuRenderer::OccludedThunk(void* user, const float origin[3],
@@ -307,7 +232,8 @@ void CpuRenderer::TracePixel(int px, int py, int sample_index,
   float origin[3], direction[3];
   camera_.GenerateRay(px, py, width_, height_, jx, jy, origin, direction);
 
-  if (!tlas_) {
+  const lrt_tlas* tlas = accel_ ? accel_->tlas() : nullptr;
+  if (!tlas) {
     ShadeBackground(shading_, direction, out_rgb);
     return;
   }
@@ -330,20 +256,20 @@ void CpuRenderer::TracePixel(int px, int py, int sample_index,
   ray.tmax = 1e30f;
 
   lrt_tlas_hit hit{};
-  if (!lrt_tlas_intersect1(tlas_, &ray, 0xFFFFFFFFu, &hit)) {
+  if (!lrt_tlas_intersect1(tlas, &ray, 0xFFFFFFFFu, &hit)) {
     float bg[3];
     ShadeBackground(shading_, direction, bg);
     for (int i = 0; i < 3; i++) out_rgb[i] += bg[i] * transmittance;
     return;
   }
 
-  if (hit.inst_id >= blas_.size()) {
+  if (hit.inst_id >= accel_->instance_count()) {
     float bg[3];
     ShadeBackground(shading_, direction, bg);
     for (int i = 0; i < 3; i++) out_rgb[i] += bg[i] * transmittance;
     return;
   }
-  const QlMesh& mesh = scene_->meshes[blas_[hit.inst_id].mesh_index];
+  const QlMesh& mesh = scene_->meshes[accel_->mesh_index(hit.inst_id)];
   const size_t tri = hit.prim_id;
   if (tri * 3 + 2 >= mesh.indices.size()) {
     float bg[3];
@@ -634,8 +560,9 @@ RenderStatus CpuRenderer::RenderStep(double budget_ms) {
 
 }  // namespace
 
-std::unique_ptr<Renderer> CreateCpuRenderer() {
-  return std::unique_ptr<Renderer>(new CpuRenderer());
+std::unique_ptr<Renderer> CreateCpuRenderer(
+    std::shared_ptr<PickAccel> accel) {
+  return std::unique_ptr<Renderer>(new CpuRenderer(std::move(accel)));
 }
 
 }  // namespace tusdql

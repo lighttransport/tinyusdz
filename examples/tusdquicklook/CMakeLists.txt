@@ -24,6 +24,7 @@ set(TUSDQUICKLOOK_SOURCES
     camera.cc
     render/shade.cc
     render/cpu_rt.cc
+    render/pick.cc
     render/gl_raster.cc
     render/gl_context_egl.cc
 )

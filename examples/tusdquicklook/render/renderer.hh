@@ -12,6 +12,7 @@
 #include <string>
 
 #include "camera.hh"
+#include "render/pick.hh"
 #include "options.hh"
 #include "ql_scene.hh"
 
@@ -80,7 +81,9 @@ class Renderer {
 };
 
 // Backed by lightrt's CPU BVH kernel; always available, no GPU required.
-std::unique_ptr<Renderer> CreateCpuRenderer();
+// Takes the shared acceleration structure rather than building its own, so
+// exactly one BVH exists however often the backend is switched.
+std::unique_ptr<Renderer> CreateCpuRenderer(std::shared_ptr<PickAccel> accel);
 
 struct GlProbeResult {
   bool available = false;
