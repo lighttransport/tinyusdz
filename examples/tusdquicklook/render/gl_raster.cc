@@ -222,6 +222,14 @@ uniform float u_light_intensity[8];
 uniform vec3 u_ambient;
 uniform float u_up_is_y;
 
+// Debug AOV selector, matching tusdql::ShadingMode. Must reproduce ShadeAov()
+// in shade.cc exactly; the smoke test compares the two backends per mode.
+uniform int u_mode;          // 0 shaded, 1 albedo, 2 normal, 3 uv,
+                             // 4 roughness, 5 metallic, 6 depth
+uniform int u_has_uv;
+uniform float u_depth_near;
+uniform float u_depth_far;
+
 out vec4 frag_color;
 
 const float PI = 3.14159265359;
@@ -252,6 +260,30 @@ void main() {
   vec3 v = normalize(u_eye - v_world);
   vec3 n = normalize(v_normal);
   if (dot(n, v) < 0.0) n = -n;
+
+  if (u_mode != 0) {
+    vec3 aov = vec3(0.0);
+    if (u_mode == 1) {
+      aov = base;
+    } else if (u_mode == 2) {
+      aov = n * 0.5 + 0.5;
+    } else if (u_mode == 3) {
+      if (u_has_uv != 0) aov = vec3(v_uv, 0.0);
+    } else if (u_mode == 4) {
+      aov = vec3(u_roughness);
+    } else if (u_mode == 5) {
+      aov = vec3(u_metallic);
+    } else if (u_mode == 6) {
+      // Eye distance from the interpolated world position, never
+      // gl_FragCoord.z: the CPU tracer has no depth buffer to match.
+      float span = max(1e-6, u_depth_far - u_depth_near);
+      float t = clamp((length(u_eye - v_world) - u_depth_near) / span,
+                      0.0, 1.0);
+      aov = vec3(1.0 - t);
+    }
+    frag_color = vec4(aov, 1.0);
+    return;
+  }
 
   float a = max(1e-3, u_roughness * u_roughness);
   float NoV = max(dot(n, v), 1e-4);
@@ -796,6 +828,12 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
     gl_.UseProgram(bg_program_);
     float bottom[3], top[3];
     BackgroundGradient(bottom, top);
+    // ShadeBackground() returns black in a debug mode; collapsing both
+    // gradient endpoints reproduces that without a second shader, and keeps
+    // shade.cc the single source of truth for what the background is.
+    if (settings_.mode != ShadingMode::Shaded) {
+      for (int i = 0; i < 3; i++) bottom[i] = top[i] = 0.0f;
+    }
     gl_.Uniform3fv(gl_.GetUniformLocation(bg_program_, "u_forward"), 1, fwd);
     gl_.Uniform3fv(gl_.GetUniformLocation(bg_program_, "u_right"), 1, right);
     gl_.Uniform3fv(gl_.GetUniformLocation(bg_program_, "u_up"), 1, up);
@@ -844,7 +882,15 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
   const GLint u_rough = gl_.GetUniformLocation(program_, "u_roughness");
   const GLint u_metal = gl_.GetUniformLocation(program_, "u_metallic");
   const GLint u_has_tex = gl_.GetUniformLocation(program_, "u_has_texture");
+  const GLint u_has_uv = gl_.GetUniformLocation(program_, "u_has_uv");
   gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_base_color_tex"), 0);
+
+  gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_mode"),
+                static_cast<int>(settings_.mode));
+  gl_.Uniform1f(gl_.GetUniformLocation(program_, "u_depth_near"),
+                camera_.near_clip);
+  gl_.Uniform1f(gl_.GetUniformLocation(program_, "u_depth_far"),
+                camera_.far_clip);
 
   static const QlMaterial kDefaultMaterial{};
   for (const GlMesh& m : meshes_) {
@@ -863,6 +909,9 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
                          size_t(mat.base_color_tex) < textures_.size() &&
                          textures_[size_t(mat.base_color_tex)] != 0;
     gl_.Uniform1i(u_has_tex, use_tex ? 1 : 0);
+    // The CPU side reports has_uv from the mesh's UV array, not from whether a
+    // texture is bound, so the UV AOV must use the same test.
+    gl_.Uniform1i(u_has_uv, m.has_uv ? 1 : 0);
     if (use_tex) {
       gl_.ActiveTexture(GL_TEXTURE0);
       gl_.BindTexture(GL_TEXTURE_2D, textures_[size_t(mat.base_color_tex)]);

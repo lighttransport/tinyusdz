@@ -245,6 +245,9 @@ void CpuRenderer::PrepareShading() {
   camera_.Basis(right, up, fwd);
   BuildLightRig(*scene_, eye, fwd, right, up, &shading_);
   shading_.shadows = settings_.shadows;
+  shading_.mode = settings_.mode;
+  shading_.depth_near = camera_.near_clip;
+  shading_.depth_far = camera_.far_clip;
   shading_valid_ = true;
 }
 
@@ -385,6 +388,21 @@ void CpuRenderer::TracePixel(int px, int py, int sample_index,
     surf.uv[0] = t0[0] * bw + t1[0] * bu + t2[0] * bv;
     surf.uv[1] = t0[1] * bw + t1[1] * bu + t2[1] * bv;
     surf.has_uv = true;
+  }
+
+  if (shading_.mode != ShadingMode::Shaded) {
+    // Debug AOVs are constant per pixel, so accumulation converges on the
+    // first sample. The normal loop still runs, which keeps the sample
+    // sequence -- and therefore the thread-count independence -- identical to
+    // the shaded path.
+    float eye[3];
+    camera_.Eye(eye);
+    const float dx = surf.position[0] - eye[0];
+    const float dy = surf.position[1] - eye[1];
+    const float dz = surf.position[2] - eye[2];
+    ShadeAov(shading_, surf, direction,
+             std::sqrt(dx * dx + dy * dy + dz * dz), out_rgb);
+    return;
   }
 
   ShadeSurface(shading_, surf, direction, &CpuRenderer::OccludedThunk,
