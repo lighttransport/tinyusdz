@@ -41,7 +41,28 @@ const char* Value(int argc, char** argv, int* i) {
   return argv[*i];
 }
 
+// Index-aligned with ShadingMode.
+const char* const kShadingModeNames[kShadingModeCount] = {
+    "shaded", "albedo", "normal", "uv", "roughness", "metallic", "depth",
+};
+
 }  // namespace
+
+const char* ShadingModeName(ShadingMode mode) {
+  const int i = static_cast<int>(mode);
+  if (i < 0 || i >= kShadingModeCount) return "shaded";
+  return kShadingModeNames[i];
+}
+
+bool ParseShadingMode(const std::string& name, ShadingMode* out) {
+  for (int i = 0; i < kShadingModeCount; i++) {
+    if (name == kShadingModeNames[i]) {
+      *out = static_cast<ShadingMode>(i);
+      return true;
+    }
+  }
+  return false;
+}
 
 const char* UsageText() {
   return
@@ -55,6 +76,11 @@ const char* UsageText() {
       "  --threads <N>           worker threads (default min(nproc, 8))\n"
       "  --no-shadows            disable shadow rays\n"
       "  --ao                    add an ambient-occlusion pass\n"
+      "  --shading-mode <mode>   shaded|albedo|normal|uv|roughness|metallic|depth\n"
+      "                          (default shaded)\n"
+      "  --env <file>            equirectangular environment map for IBL\n"
+      "  --no-ibl                disable image-based lighting\n"
+      "  --no-smoothing          disable damped camera motion\n"
       "  --no-compose            skip USD composition\n"
       "  --recursive             recurse into subfolders when browsing\n"
       "  --size <WxH>            window size (default 1280x720)\n"
@@ -83,6 +109,25 @@ bool ParseOptions(int argc, char** argv, Options* opts, bool* want_help,
       opts->ao = true;
     } else if (a == "--no-compose") {
       opts->compose = false;
+    } else if (a == "--no-ibl") {
+      opts->ibl = false;
+    } else if (a == "--no-smoothing") {
+      opts->camera_smoothing = false;
+    } else if (a == "--shading-mode") {
+      const char* v = Value(argc, argv, &i);
+      if (!v || !ParseShadingMode(v, &opts->shading_mode)) {
+        *err =
+            "--shading-mode must be one of: shaded, albedo, normal, uv, "
+            "roughness, metallic, depth";
+        return false;
+      }
+    } else if (a == "--env") {
+      const char* v = Value(argc, argv, &i);
+      if (!v) {
+        *err = "--env requires an image path";
+        return false;
+      }
+      opts->env_path = v;
     } else if (a == "--recursive") {
       opts->recursive = true;
     } else if (a == "--max-mem") {

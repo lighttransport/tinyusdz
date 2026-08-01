@@ -75,6 +75,9 @@ constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
 constexpr GLenum GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
 constexpr GLenum GL_VERSION = 0x1F02;
 constexpr GLenum GL_RENDERER = 0x1F01;
+constexpr GLenum GL_NO_ERROR = 0;
+constexpr GLenum GL_OUT_OF_MEMORY = 0x0505;
+constexpr GLenum GL_CONTEXT_LOST = 0x0507;  // GL 4.5 / KHR_robustness
 constexpr GLenum GL_EXTENSIONS = 0x1F03;
 constexpr GLenum GL_NUM_EXTENSIONS = 0x821D;
 constexpr GLenum GL_SRGB8_ALPHA8 = 0x8C43;
@@ -141,6 +144,7 @@ struct Gl {
   void (*ReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*) = nullptr;
   const unsigned char* (*GetString)(GLenum) = nullptr;
   void (*GetIntegerv)(GLenum, GLint*) = nullptr;
+  GLenum (*GetError)() = nullptr;
 
   bool Load(GlGetProcFn get);
 };
@@ -170,7 +174,7 @@ bool Gl::Load(GlGetProcFn get) {
   BIND(BindRenderbuffer); BIND(RenderbufferStorage); BIND(GenTextures);
   BIND(DeleteTextures); BIND(BindTexture); BIND(ActiveTexture);
   BIND(TexImage2D); BIND(TexParameteri); BIND(GenerateMipmap);
-  BIND(ReadPixels); BIND(GetString); BIND(GetIntegerv);
+  BIND(ReadPixels); BIND(GetString); BIND(GetIntegerv); BIND(GetError);
 #undef BIND
   return ok;
 }
@@ -339,12 +343,14 @@ class GlRasterRenderer final : public Renderer {
   void SetScene(const QlScene* scene) override;
   void SyncScene() override;
   void SetCamera(const OrbitCamera& camera) override;
+  void SetSettings(const RenderSettings& settings) override;
   RenderStatus RenderStep(double budget_ms) override;
 
   const uint32_t* Pixels() const override { return pixels_.data(); }
   int width() const override { return width_; }
   int height() const override { return height_; }
   const char* Name() const override { return "gl"; }
+  const char* DeviceName() const override { return device_name_.c_str(); }
 
   // Free VRAM in bytes; 0 when the driver does not report it.
   uint64_t QueryFreeVram();
@@ -381,6 +387,7 @@ class GlRasterRenderer final : public Renderer {
 
   ShadingContext shading_;
   bool dirty_ = true;
+  std::string device_name_;
 };
 
 bool GlRasterRenderer::Init(int width, int height,
@@ -392,6 +399,10 @@ bool GlRasterRenderer::Init(int width, int height,
   if (!gl_.Load(ctx_->GetProcLoader())) {
     if (err) *err = "could not resolve the required GL 3.3 entry points";
     return false;
+  }
+
+  if (const unsigned char* r = gl_.GetString(GL_RENDERER)) {
+    device_name_ = reinterpret_cast<const char*>(r);
   }
 
   if (!CreateProgram(err)) return false;
@@ -678,6 +689,13 @@ void GlRasterRenderer::SetCamera(const OrbitCamera& camera) {
   dirty_ = true;
 }
 
+void GlRasterRenderer::SetSettings(const RenderSettings& settings) {
+  settings_ = settings;
+  // The light rig is rebuilt from settings in RenderStep, and every uniform is
+  // re-sent on a dirty frame, so a redraw is all this needs.
+  dirty_ = true;
+}
+
 void GlRasterRenderer::BuildViewProj(float out[16]) const {
   float eye[3], right[3], up[3], fwd[3];
   camera_.Eye(eye);
@@ -742,7 +760,15 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
     return status;
   }
 
-  ctx_->MakeCurrent();
+  // From here on the GPU can go away under us — a suspended session, a driver
+  // reset, an evicted context. Every failure below is reported as device_lost
+  // so the app demotes to the CPU tracer instead of showing a frozen frame.
+  if (!ctx_->MakeCurrent()) {
+    status.device_lost = true;
+    status.error = "GL context could not be made current";
+    status.converged = true;
+    return status;
+  }
 
   float eye[3], right[3], up[3], fwd[3];
   camera_.Eye(eye);
@@ -750,6 +776,12 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
   BuildLightRig(*scene_, eye, fwd, right, up, &shading_);
 
   gl_.BindFramebuffer(GL_FRAMEBUFFER, fbo_);
+  if (gl_.CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    status.device_lost = true;
+    status.error = "GL framebuffer became incomplete";
+    status.converged = true;
+    return status;
+  }
   gl_.Viewport(0, 0, width_, height_);
   gl_.Enable(GL_DEPTH_TEST);
   gl_.Disable(GL_CULL_FACE);  // preview content has inconsistent winding
@@ -845,6 +877,26 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
                  readback_.data());
   gl_.BindFramebuffer(GL_FRAMEBUFFER, 0);
 
+  // Drain the error queue. Transient GL errors do not invalidate the pixels we
+  // just read, but GL_OUT_OF_MEMORY and a context reset do — treat those as
+  // device loss and leave `pixels_` untouched so the last good frame stays up
+  // until the CPU renderer takes over.
+  if (gl_.GetError) {
+    GLenum first = GL_NO_ERROR;
+    for (int i = 0; i < 16; i++) {
+      const GLenum e = gl_.GetError();
+      if (e == GL_NO_ERROR) break;
+      if (first == GL_NO_ERROR) first = e;
+    }
+    if (first == GL_OUT_OF_MEMORY || first == GL_CONTEXT_LOST) {
+      status.device_lost = true;
+      status.error = (first == GL_OUT_OF_MEMORY) ? "GL reported out of memory"
+                                                 : "GL context was lost";
+      status.converged = true;
+      return status;
+    }
+  }
+
   // GL origin is bottom-left; lightvg surfaces are top-down. Flip while packing
   // RGBA8 into 0xAARRGGBB.
   for (int y = 0; y < height_; y++) {
@@ -864,6 +916,45 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
 }
 
 }  // namespace
+
+GlProbeResult ProbeGlBackend() {
+  GlProbeResult r;
+
+  std::unique_ptr<GlContext> ctx = CreateHeadlessGlContext(&r.error);
+  if (!ctx) return r;
+  if (!ctx->MakeCurrent()) {
+    r.error = "GL context could not be made current";
+    return r;
+  }
+
+  Gl gl;
+  if (!gl.Load(ctx->GetProcLoader())) {
+    r.error = "could not resolve the required GL 3.3 entry points";
+    return r;
+  }
+
+  if (const unsigned char* s = gl.GetString(GL_RENDERER)) {
+    r.device = reinterpret_cast<const char*>(s);
+  }
+  if (const unsigned char* s = gl.GetString(GL_VERSION)) {
+    r.version = reinterpret_cast<const char*>(s);
+  }
+
+  if (gl.GetIntegerv) {
+    GLint kb = 0;
+    gl.GetIntegerv(GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX, &kb);
+    if (kb > 0) {
+      r.free_vram = uint64_t(kb) * 1024ull;
+    } else {
+      GLint ati[4] = {0, 0, 0, 0};
+      gl.GetIntegerv(TEXTURE_FREE_MEMORY_ATI, ati);
+      if (ati[0] > 0) r.free_vram = uint64_t(ati[0]) * 1024ull;
+    }
+  }
+
+  r.available = true;
+  return r;
+}
 
 std::unique_ptr<Renderer> CreateGlRenderer(int width, int height,
                                            const RenderSettings& settings,

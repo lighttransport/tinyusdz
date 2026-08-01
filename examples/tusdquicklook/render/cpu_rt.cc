@@ -85,12 +85,29 @@ class CpuRenderer final : public Renderer {
     ResetProgression();
   }
 
+  void SetSettings(const RenderSettings& settings) override {
+    const int threads = std::max(1, settings.threads);
+    settings_ = settings;
+    settings_.threads = threads;
+    // The light rig folds in shadows/IBL, so it has to be rebuilt too.
+    shading_valid_ = false;
+    ResetProgression();
+    device_name_.clear();
+  }
+
   RenderStatus RenderStep(double budget_ms) override;
 
   const uint32_t* Pixels() const override { return pixels_.data(); }
   int width() const override { return width_; }
   int height() const override { return height_; }
   const char* Name() const override { return "cpu"; }
+
+  const char* DeviceName() const override {
+    if (device_name_.empty()) {
+      device_name_ = std::to_string(settings_.threads) + " threads";
+    }
+    return device_name_.c_str();
+  }
 
  private:
   void ReleaseAccel();
@@ -118,6 +135,7 @@ class CpuRenderer final : public Renderer {
 
   const QlScene* scene_ = nullptr;
   RenderSettings settings_;
+  mutable std::string device_name_;
   OrbitCamera camera_;
 
   int width_ = 1;

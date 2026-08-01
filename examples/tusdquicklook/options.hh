@@ -15,6 +15,26 @@ enum class BackendChoice {
   Gl,
 };
 
+// What the viewport shows. Everything but Shaded is a debug AOV: a direct view
+// of one input to the shading model, with no lighting. Both backends must
+// compute these identically — see the parity note in render/shade.hh.
+enum class ShadingMode : uint8_t {
+  Shaded,
+  Albedo,
+  Normal,
+  Uv,
+  Roughness,
+  Metallic,
+  Depth,
+};
+
+// Lowercase CLI/UI name, e.g. "roughness". Never null.
+const char* ShadingModeName(ShadingMode mode);
+// Parse a name produced by ShadingModeName. False when unrecognized.
+bool ParseShadingMode(const std::string& name, ShadingMode* out);
+// UI order, terminated by count. Kept in sync with the enum.
+constexpr int kShadingModeCount = 7;
+
 struct Options {
   // File or directory to open. Empty = current directory.
   std::string path;
@@ -33,6 +53,19 @@ struct Options {
   bool ao = false;
   bool compose = true;
   bool recursive = false;
+
+  ShadingMode shading_mode = ShadingMode::Shaded;
+
+  // Image-based lighting from a dome light (or --env). Off falls back to the
+  // flat hemispheric ambient term.
+  bool ibl = true;
+  // Explicit equirectangular environment map, overriding any authored dome.
+  // Also what makes the headless IBL test deterministic.
+  std::string env_path;
+
+  // Damped camera motion. Always off headless so --frames output cannot depend
+  // on wall-clock timing.
+  bool camera_smoothing = true;
 
   int width = 1280;
   int height = 720;
