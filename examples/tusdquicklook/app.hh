@@ -32,6 +32,9 @@
 extern "C" {
 #include <lightui/lightui.h>
 #include <lightui/window.h>
+#include <lightui/combo.h>
+#include <lightui/statusbar.h>
+#include <lightui/toast.h>
 }
 
 namespace tusdql {
@@ -217,6 +220,27 @@ class App {
 
   lui_window_t* window_ = nullptr;
   lui_font_t* font_ = nullptr;
+
+  // lightui widgets. These are placed by hand into the rects ComputeLayout
+  // produces rather than through lui_layout_compute: the shell geometry is a
+  // fixed toolbar/list/splitter/viewport/status split that the flow layout
+  // would only re-derive. A parentless widget's `computed` rect is already its
+  // absolute rect, so setting it directly is all the placement they need.
+  bool widgets_ready_ = false;
+  lui_combo_t mode_combo_{};     // shading mode
+  lui_combo_t backend_combo_{};  // auto / cpu / gl
+  lui_statusbar_t statusbar_{};
+  lui_toast_t toast_{};
+
+  void InitWidgets();
+  void PlaceWidgets(const Layout& l);
+  void SyncWidgetState();
+  // True while a toast is still on screen, so Busy() keeps the loop animating
+  // until it expires and then lets the app go idle again.
+  bool ToastActive() const;
+  void Notify(const std::string& message, lui_toast_type_t type);
+  static void OnModeComboChanged(int index, const char* item, void* user);
+  static void OnBackendComboChanged(int index, const char* item, void* user);
 
   int surf_w_ = 0;
   int surf_h_ = 0;

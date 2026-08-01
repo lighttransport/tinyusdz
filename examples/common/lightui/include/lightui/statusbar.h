@@ -10,6 +10,7 @@
 #define LIGHTUI_STATUSBAR_H
 
 #include "layout.h"
+#include "font.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,6 +46,9 @@ typedef struct {
     lvg_color_t              text_color;
     lvg_color_t              separator_color;
     lvg_color_t              border_color;
+
+    lui_font_t              *font;  /* optional; not owned. NULL keeps the
+                                     * block-glyph fallback. */
 } lui_statusbar_t;
 
 /* ---- API ---------------------------------------------------------------- */

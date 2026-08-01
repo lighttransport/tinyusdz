@@ -50,6 +50,7 @@ list(APPEND LIGHTUI_SOURCES
     src/label.c
     src/button.c
     src/checkbox.c
+    src/combo.c
     src/slider.c
     src/scroll.c
     src/treeview.c

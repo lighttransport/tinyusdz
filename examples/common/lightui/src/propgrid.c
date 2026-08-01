@@ -25,17 +25,31 @@ static inline int pg_clampi(int v, int lo, int hi)
     return v;
 }
 
-/* Draw a string as 5x10 filled rectangles with 7px advance. */
-static void pg_draw_text(lvg_canvas_t *canvas, int x, int y,
-                         const char *text, lvg_color_t color, int max_x)
+/* Draw a string with the grid's font, or as 5x10 filled rectangles with 7px
+ * advance when no font is set. */
+static void pg_draw_text_f(lvg_canvas_t *canvas, int x, int y,
+                           const char *text, lvg_color_t color, int max_x,
+                           lui_font_t *font)
 {
     if (!text) return;
+#ifdef LUI_HAVE_FONTS
+    if (font) {
+        /* y is the block-glyph top; shift to a baseline for real glyphs. */
+        lui_canvas_draw_text(canvas, x, y + lui_font_ascent(font), text, -1,
+                             font, color);
+        return;
+    }
+#else
+    (void)font;
+#endif
     for (int i = 0; text[i] && x + 5 <= max_x; i++) {
         if (text[i] != ' ')
             lvg_canvas_fill_rect(canvas, x, y, 5, 10, color);
         x += 7;
     }
 }
+#define pg_draw_text(canvas, x, y, text, color, max_x) \
+    pg_draw_text_f((canvas), (x), (y), (text), (color), (max_x), pg->font)
 
 /* Format a float into a short buffer. */
 static void pg_fmt_float(char *buf, int sz, float v)

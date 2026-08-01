@@ -10,6 +10,7 @@
 #define LIGHTUI_TOOLBAR_H
 
 #include "layout.h"
+#include "font.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,6 +79,9 @@ typedef struct {
     /* Callback */
     lui_toolbar_click_fn on_click;
     void                *on_click_user;
+
+    lui_font_t       *font;  /* optional; not owned. NULL keeps the
+                              * block-glyph fallback. */
 } lui_toolbar_t;
 
 /* ---- API ---------------------------------------------------------------- */

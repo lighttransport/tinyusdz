@@ -57,12 +57,24 @@ static void toast_draw(lui_widget_t *w, lvg_canvas_t *canvas)
 
         /* Message text */
         int cx = tx + 8;
-        int cy = ty + (t->toast_height - 10) / 2;
         int max_x = tx + tw - 8;
+#ifdef LUI_HAVE_FONTS
+        if (t->font) {
+            int cy = ty + lui_font_ascent(t->font) +
+                     (t->toast_height - lui_font_line_height(t->font)) / 2;
+            lui_canvas_draw_text(canvas, cx, cy, entry->message,
+                                 entry->message_len, t->font, t->text_color);
+        } else {
+#endif
+        int cy = ty + (t->toast_height - 10) / 2;
         for (int c = 0; c < entry->message_len && cx + 5 <= max_x; c++) {
             lvg_canvas_fill_rect(canvas, cx, cy, 5, 10, t->text_color);
             cx += 7;
         }
+#ifdef LUI_HAVE_FONTS
+        }
+#endif
+        (void)max_x;
 
         ty += t->toast_height + t->spacing;
     }

@@ -39,6 +39,35 @@ Worth reporting upstream. Verified with the interactive smoke test under Xvfb
 (`examples/tusdquicklook/tests/run-quicklook-gui-smoke.sh`), which hangs without
 the patch.
 
+**`src/{statusbar,toolbar,propgrid,toast}.c` — optional font-aware text.**
+
+Upstream draws each character in these four widgets as a 5x10 filled rectangle
+with a 7px advance, so their text renders as rows of grey blocks. Widgets that
+already carry a `lui_font_t *font` (`combo`, `tabs`, `label`, `menu`, `radio`,
+`text_input`, `numentry`, `text_edit`) render real glyphs instead. An app that
+mixes the two — as tusdquicklook does — gets legible combo labels next to an
+illegible status bar.
+
+The patch adds the same optional `lui_font_t *font` field to these four
+widgets and takes the glyph path when it is set, following the existing
+pattern in `src/combo.c`:
+
+```c
+#ifdef LUI_HAVE_FONTS
+    if (w->font) { lui_canvas_draw_text(canvas, tx, ty, s, len, w->font, col); }
+    else {
+#endif
+        /* existing 5x10 rect fallback, unchanged */
+#ifdef LUI_HAVE_FONTS
+    }
+#endif
+```
+
+Behaviour is bit-identical when `font == NULL`, which is the default after
+`lui_*_init()`, so upstream callers are unaffected. `propgrid.c` routes its
+`pg_draw_text()` helper through a `pg_draw_text_f()` that takes the font; the
+macro keeps the six call sites unchanged. Worth reporting upstream.
+
 ## What was vendored
 
 Kept: `include/`, `lightvg/`, `lighttype/` (minus `font_freetype.c`),
