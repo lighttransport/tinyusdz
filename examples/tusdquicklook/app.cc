@@ -1180,6 +1180,12 @@ void App::ApplyLoadEvent(LoadEvent&& ev) {
       scene_.textures = std::move(ev.textures);
       scene_.lights = std::move(ev.lights);
       scene_.cameras = std::move(ev.cameras);
+      scene_.env_texture = ev.env_texture;
+      for (int i = 0; i < QlScene::kEnvPrefilterLevels; i++) {
+        scene_.env_prefiltered[i] = ev.env_prefiltered[i];
+      }
+      scene_.env_rotation = ev.env_rotation;
+      scene_.env_intensity = ev.env_intensity;
       scene_.stats.material_count = scene_.materials.size();
       scene_.stats.texture_count = scene_.textures.size();
       scene_.stats.light_count = scene_.lights.size();

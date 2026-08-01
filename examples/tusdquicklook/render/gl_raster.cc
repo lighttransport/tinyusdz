@@ -253,6 +253,18 @@ uniform float u_light_intensity[8];
 uniform vec3 u_ambient;
 uniform float u_up_is_y;
 
+// Image-based lighting. The SH coefficients and the prefiltered levels are all
+// computed on the CPU (BuildEnvironment / BlurEnvLevel) and handed over as-is,
+// so GL never integrates or filters the environment itself.
+uniform int u_has_ibl;
+uniform vec3 u_env_sh[9];
+uniform float u_env_rotation;
+uniform float u_env_intensity;
+uniform sampler2D u_env_level0;
+uniform sampler2D u_env_level1;
+uniform sampler2D u_env_level2;
+uniform sampler2D u_env_level3;
+
 // Debug AOV selector, matching tusdql::ShadingMode. Must reproduce ShadeAov()
 // in shade.cc exactly; the smoke test compares the two backends per mode.
 uniform int u_mode;          // 0 shaded, 1 albedo, 2 normal, 3 uv,
@@ -280,6 +292,55 @@ float V_Smith(float NoV, float NoL, float a) {
 
 vec3 F_Schlick(vec3 f0, float VoH) {
   return f0 + (1.0 - f0) * pow(1.0 - min(VoH, 1.0), 5.0);
+}
+
+// Mirrors DirectionToLatLong() in shade.cc.
+vec2 env_uv(vec3 d) {
+  float up = mix(d.z, d.y, u_up_is_y);
+  float zc = mix(d.y, d.z, u_up_is_y);
+  float phi = atan(zc, d.x) + u_env_rotation;
+  const float TWO_PI = 6.28318530718;
+  phi = phi - TWO_PI * floor(phi / TWO_PI);
+  // SampleTexture flips v, and so does the texture fetch below, so this
+  // matches the CPU's (u, v) exactly.
+  return vec2(phi / TWO_PI, 0.5 + asin(clamp(up, -1.0, 1.0)) / PI);
+}
+
+vec3 env_sample_level(int level, vec2 uv) {
+  vec2 t = vec2(uv.x, 1.0 - uv.y);
+  if (level <= 0) return texture(u_env_level0, t).rgb;
+  if (level == 1) return texture(u_env_level1, t).rgb;
+  if (level == 2) return texture(u_env_level2, t).rgb;
+  return texture(u_env_level3, t).rgb;
+}
+
+// Roughness-blended lookup into the CPU-built chain; same index math as
+// SampleEnvPrefiltered().
+vec3 env_prefiltered(vec3 d, float roughness) {
+  float lod = clamp(roughness, 0.0, 1.0) * 3.0;
+  int lo = int(min(lod, 3.0));
+  int hi = min(lo + 1, 3);
+  float t = lod - float(lo);
+  vec2 uv = env_uv(d);
+  return mix(env_sample_level(lo, uv), env_sample_level(hi, uv), t) *
+         u_env_intensity;
+}
+
+// SH9 irradiance reconstruction; same polynomial as EvaluateEnvIrradiance().
+vec3 env_irradiance(vec3 n) {
+  float b[9];
+  b[0] = 0.282095;
+  b[1] = 0.488603 * n.y;
+  b[2] = 0.488603 * n.z;
+  b[3] = 0.488603 * n.x;
+  b[4] = 1.092548 * n.x * n.y;
+  b[5] = 1.092548 * n.y * n.z;
+  b[6] = 0.315392 * (3.0 * n.z * n.z - 1.0);
+  b[7] = 1.092548 * n.x * n.z;
+  b[8] = 0.546274 * (n.x * n.x - n.y * n.y);
+  vec3 acc = vec3(0.0);
+  for (int i = 0; i < 9; i++) acc += u_env_sh[i] * b[i];
+  return max(acc, vec3(0.0));
 }
 
 // Mirrors EvaluateMaterial() in shade.cc. Every slot falls back to its scalar
@@ -392,9 +453,19 @@ void main() {
     color += (diff + spec) * u_light_color[i] * u_light_intensity[i] * NoL;
   }
 
-  float up_component = mix(n.z, n.y, u_up_is_y);
-  float hemi = 0.5 + 0.5 * up_component;
-  color += diffuse_albedo * u_ambient * (0.4 + 0.6 * hemi);
+  if (u_has_ibl != 0) {
+    vec3 r = reflect(-v, n);
+    vec3 spec_env = env_prefiltered(r, roughness);
+    float fade = pow(1.0 - clamp(NoV, 0.0, 1.0), 5.0);
+    vec3 f90 = max(vec3(1.0 - roughness), f0);
+    vec3 fresnel_env = f0 + (f90 - f0) * fade;
+    color += diffuse_albedo * env_irradiance(n);
+    color += spec_env * fresnel_env;
+  } else {
+    float up_component = mix(n.z, n.y, u_up_is_y);
+    float hemi = 0.5 + 0.5 * up_component;
+    color += diffuse_albedo * u_ambient * (0.4 + 0.6 * hemi);
+  }
   color += emissive;
 
   // Blend mode carries alpha out; everything else is opaque by this point
@@ -429,12 +500,34 @@ uniform float u_up_is_y;
 uniform vec3 u_bottom;
 uniform vec3 u_top;
 
+// With an environment loaded the background IS the environment, matching
+// ShadeBackground(). Same mapping as the forward shader's env_uv().
+uniform int u_has_env;
+uniform sampler2D u_env_tex;
+uniform float u_env_rotation;
+uniform float u_env_intensity;
+
 out vec4 frag_color;
+
+const float PI = 3.14159265359;
 
 void main() {
   vec3 dir = normalize(u_forward
                      + u_right * (v_ndc.x * u_tan_half * u_aspect)
                      + u_up * (v_ndc.y * u_tan_half));
+
+  if (u_has_env != 0) {
+    float up = mix(dir.z, dir.y, u_up_is_y);
+    float zc = mix(dir.y, dir.z, u_up_is_y);
+    float phi = atan(zc, dir.x) + u_env_rotation;
+    const float TWO_PI = 6.28318530718;
+    phi = phi - TWO_PI * floor(phi / TWO_PI);
+    vec2 uv = vec2(phi / TWO_PI, 0.5 + asin(clamp(up, -1.0, 1.0)) / PI);
+    vec3 c = texture(u_env_tex, vec2(uv.x, 1.0 - uv.y)).rgb * u_env_intensity;
+    frag_color = vec4(c, 1.0);
+    return;
+  }
+
   float up_component = mix(dir.z, dir.y, u_up_is_y);
   float t = clamp(up_component * 0.5 + 0.5, 0.0, 1.0);
   frag_color = vec4(mix(u_bottom, u_top, t), 1.0);
@@ -927,6 +1020,7 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
   camera_.Eye(eye);
   camera_.Basis(right, up, fwd);
   BuildLightRig(*scene_, eye, fwd, right, up, &shading_);
+  BuildEnvironment(*scene_, settings_.ibl, &shading_);
 
   gl_.BindFramebuffer(GL_FRAMEBUFFER, fbo_);
   if (gl_.CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
@@ -966,6 +1060,24 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
                   shading_.y_up ? 1.0f : 0.0f);
     gl_.Uniform3fv(gl_.GetUniformLocation(bg_program_, "u_bottom"), 1, bottom);
     gl_.Uniform3fv(gl_.GetUniformLocation(bg_program_, "u_top"), 1, top);
+
+    // The environment replaces the gradient, except in a debug mode where the
+    // background is black on both backends.
+    const bool bg_env = shading_.ibl && scene_->env_texture >= 0 &&
+                        settings_.mode == ShadingMode::Shaded &&
+                        size_t(scene_->env_texture) < textures_.size() &&
+                        textures_[size_t(scene_->env_texture)] != 0;
+    gl_.Uniform1i(gl_.GetUniformLocation(bg_program_, "u_has_env"),
+                  bg_env ? 1 : 0);
+    if (bg_env) {
+      gl_.Uniform1i(gl_.GetUniformLocation(bg_program_, "u_env_tex"), 0);
+      gl_.Uniform1f(gl_.GetUniformLocation(bg_program_, "u_env_rotation"),
+                    shading_.env_rotation);
+      gl_.Uniform1f(gl_.GetUniformLocation(bg_program_, "u_env_intensity"),
+                    shading_.env_intensity);
+      gl_.ActiveTexture(GL_TEXTURE0);
+      gl_.BindTexture(GL_TEXTURE_2D, textures_[size_t(scene_->env_texture)]);
+    }
     gl_.BindVertexArray(empty_vao_);
     gl_.DrawArrays(GL_TRIANGLES, 0, 3);
     gl_.BindVertexArray(0);
@@ -1038,6 +1150,48 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
 
   gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_mode"),
                 static_cast<int>(settings_.mode));
+
+  // IBL: 9 SH coefficients plus the prefiltered chain, all computed on the CPU.
+  // Units 6-9 are reserved for the chain so they never collide with the
+  // material maps bound per mesh on units 0-5.
+  bool ibl_ready = shading_.ibl;
+  if (ibl_ready) {
+    for (int i = 0; i < QlScene::kEnvPrefilterLevels; i++) {
+      const int id = scene_->env_prefiltered[i] >= 0
+                         ? scene_->env_prefiltered[i]
+                         : scene_->env_texture;
+      if (id < 0 || size_t(id) >= textures_.size() ||
+          textures_[size_t(id)] == 0) {
+        ibl_ready = false;
+        break;
+      }
+    }
+  }
+  gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_has_ibl"),
+                ibl_ready ? 1 : 0);
+  if (ibl_ready) {
+    for (int i = 0; i < 9; i++) {
+      char name[32];
+      std::snprintf(name, sizeof(name), "u_env_sh[%d]", i);
+      gl_.Uniform3fv(gl_.GetUniformLocation(program_, name), 1,
+                     shading_.env_sh[i]);
+    }
+    gl_.Uniform1f(gl_.GetUniformLocation(program_, "u_env_rotation"),
+                  shading_.env_rotation);
+    gl_.Uniform1f(gl_.GetUniformLocation(program_, "u_env_intensity"),
+                  shading_.env_intensity);
+    static const char* kLevelNames[QlScene::kEnvPrefilterLevels] = {
+        "u_env_level0", "u_env_level1", "u_env_level2", "u_env_level3"};
+    for (int i = 0; i < QlScene::kEnvPrefilterLevels; i++) {
+      const int unit = 6 + i;
+      const int id = scene_->env_prefiltered[i] >= 0
+                         ? scene_->env_prefiltered[i]
+                         : scene_->env_texture;
+      gl_.Uniform1i(gl_.GetUniformLocation(program_, kLevelNames[i]), unit);
+      gl_.ActiveTexture(GL_TEXTURE0 + GLenum(unit));
+      gl_.BindTexture(GL_TEXTURE_2D, textures_[size_t(id)]);
+    }
+  }
   gl_.Uniform1f(gl_.GetUniformLocation(program_, "u_depth_near"),
                 camera_.near_clip);
   gl_.Uniform1f(gl_.GetUniformLocation(program_, "u_depth_far"),

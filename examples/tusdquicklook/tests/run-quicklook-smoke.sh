@@ -206,6 +206,56 @@ if [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
     echo "textured parity: ok (${frac} of viewport differs)"
   fi
 
+  # 4e. Image-based lighting. The environment is projected to SH and prefiltered
+  #     on the CPU and handed to GL verbatim, so the two must agree closely. The
+  #     map is generated here rather than checked in, which also keeps the case
+  #     independent of what test assets happen to exist.
+  if command -v python3 >/dev/null 2>&1 && [ -f "$DIFF_PY" ]; then
+    python3 - "$OUT/env.png" <<'PY'
+import struct, sys, zlib, math
+w, h = 128, 64
+rows = b''
+for y in range(h):
+    row = b'\x00'
+    for x in range(w):
+        v = 1 - (y + 0.5) / h
+        el = (v - 0.5) * math.pi
+        s = max(0.0, math.sin(el))
+        r, g, b = int(40 + 180 * s), int(60 + 150 * s), int(90 + 140 * s)
+        if abs(x / w - 0.25) < 0.06 and abs(v - 0.75) < 0.10:
+            r, g, b = 255, 240, 200          # a sun, so direction matters
+        row += bytes([r, g, b])
+    rows += row
+def chunk(t, d):
+    return (struct.pack('>I', len(d)) + t + d +
+            struct.pack('>I', zlib.crc32(t + d) & 0xffffffff))
+open(sys.argv[1], 'wb').write(
+    b'\x89PNG\r\n\x1a\n' +
+    chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) +
+    chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+PY
+    for backend in cpu gl; do
+      "$BIN" "$ROOT/models/suzanne-pbr.usda" --backend "$backend" \
+        --env "$OUT/env.png" --screenshot "$OUT/ibl_$backend.png" \
+        --size 480x360 --frames 4 >/dev/null 2>&1 \
+        || fail "--env --backend $backend: non-zero exit"
+      check_renders_geometry "$OUT/ibl_$backend.png" "$OUT/bg.png" 0.03 \
+        "ibl backend=$backend"
+    done
+    frac="$(python3 "$DIFF_PY" "$OUT/ibl_cpu.png" "$OUT/ibl_gl.png")"
+    awk -v f="$frac" 'BEGIN { exit !(f <= 0.10) }' \
+      || fail "IBL: cpu and gl disagree over ${frac} of the viewport"
+
+    # --no-ibl must actually turn it off, or the flag is decorative.
+    "$BIN" "$ROOT/models/suzanne-pbr.usda" --backend cpu --env "$OUT/env.png" \
+      --no-ibl --screenshot "$OUT/ibl_off.png" --size 480x360 --frames 4 \
+      >/dev/null 2>&1 || fail "--no-ibl: non-zero exit"
+    d="$(python3 "$DIFF_PY" "$OUT/ibl_cpu.png" "$OUT/ibl_off.png")"
+    awk -v f="$d" 'BEGIN { exit !(f > 0.0) }' \
+      || fail "--no-ibl rendered identically to IBL"
+    echo "ibl: ok (${frac} cpu-vs-gl, --no-ibl changes ${d})"
+  fi
+
   # The thread-count independence must hold in a debug mode too. Pin the CPU
   # backend: worker threads are a CPU-tracer concept, and letting `auto` choose
   # would compare two GL images (or one of each, if a GL context happens to

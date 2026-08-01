@@ -218,6 +218,183 @@ void BackgroundGradient(float out_bottom[3], float out_top[3]) {
   }
 }
 
+// Roughness-selected sample from the CPU-built prefiltered chain, blended
+// between two adjacent levels. GL does the identical lookup into the identical
+// uploaded pixels -- nothing is prefiltered on the GPU.
+void SampleEnvPrefiltered(const ShadingContext& ctx, const float dir[3],
+                          float roughness, float out_rgb[3]) {
+  out_rgb[0] = out_rgb[1] = out_rgb[2] = 0.0f;
+  if (!ctx.ibl) return;
+
+  const int levels = QlScene::kEnvPrefilterLevels;
+  const float lod =
+      std::max(0.0f, std::min(1.0f, roughness)) * float(levels - 1);
+  const int lo = std::min(int(lod), levels - 1);
+  const int hi = std::min(lo + 1, levels - 1);
+  const float t = lod - float(lo);
+
+  float u, v;
+  DirectionToLatLong(ctx, dir, &u, &v);
+
+  const QlTexture* a = ctx.env_prefiltered[lo] ? ctx.env_prefiltered[lo]
+                                               : ctx.env_tex;
+  const QlTexture* b = ctx.env_prefiltered[hi] ? ctx.env_prefiltered[hi]
+                                               : ctx.env_tex;
+  if (!a || !b) return;
+
+  float ca[4], cb[4];
+  SampleTexture(*a, u, v, ca);
+  SampleTexture(*b, u, v, cb);
+  for (int i = 0; i < 3; i++) {
+    out_rgb[i] = (ca[i] + (cb[i] - ca[i]) * t) * ctx.env_intensity;
+  }
+}
+
+void DirectionToLatLong(const ShadingContext& ctx, const float dir[3],
+                        float* out_u, float* out_v) {
+  // Up axis follows the stage, so a Z-up scene does not get a sideways sky.
+  const float up = ctx.y_up ? dir[1] : dir[2];
+  const float x = ctx.y_up ? dir[0] : dir[0];
+  const float z = ctx.y_up ? dir[2] : dir[1];
+
+  float phi = std::atan2(z, x) + ctx.env_rotation;
+  // Wrap into [0, 2pi) so the seam lands in the same place on both backends.
+  const float two_pi = 2.0f * kPi;
+  phi = phi - two_pi * std::floor(phi / two_pi);
+
+  *out_u = phi / two_pi;
+  // v = 1 at the zenith; SampleTexture flips v, so this lands row 0 at the top.
+  *out_v = 0.5f + std::asin(std::max(-1.0f, std::min(1.0f, up))) / kPi;
+}
+
+void EvaluateEnvIrradiance(const ShadingContext& ctx, const float n[3],
+                           float out_rgb[3]) {
+  out_rgb[0] = out_rgb[1] = out_rgb[2] = 0.0f;
+  if (!ctx.ibl) return;
+
+  // Ramamoorthi/Hanrahan irradiance reconstruction. The convolution constants
+  // are folded into the coefficients at build time, so this is a plain
+  // polynomial that the GLSL reproduces verbatim.
+  const float x = n[0], y = n[1], z = n[2];
+  const float basis[9] = {
+      0.282095f,
+      0.488603f * y, 0.488603f * z, 0.488603f * x,
+      1.092548f * x * y, 1.092548f * y * z,
+      0.315392f * (3.0f * z * z - 1.0f),
+      1.092548f * x * z, 0.546274f * (x * x - y * y),
+  };
+  for (int c = 0; c < 3; c++) {
+    float v = 0.0f;
+    for (int i = 0; i < 9; i++) v += ctx.env_sh[i][c] * basis[i];
+    out_rgb[c] = std::max(0.0f, v);
+  }
+}
+
+void BuildEnvironment(const QlScene& scene, bool ibl_enabled,
+                      ShadingContext* out) {
+  out->ibl = false;
+  out->env_tex = nullptr;
+  for (int i = 0; i < QlScene::kEnvPrefilterLevels; i++) {
+    out->env_prefiltered[i] = nullptr;
+  }
+  for (int i = 0; i < 9; i++) out->env_sh[i][0] = out->env_sh[i][1] =
+      out->env_sh[i][2] = 0.0f;
+
+  if (!ibl_enabled || !scene.has_env()) return;
+  if (size_t(scene.env_texture) >= scene.textures.size()) return;
+  const QlTexture& env = scene.textures[size_t(scene.env_texture)];
+  if (!env.valid()) return;
+
+  out->env_tex = &env;
+  out->env_rotation = scene.env_rotation;
+  out->env_intensity = scene.env_intensity;
+  for (int i = 0; i < QlScene::kEnvPrefilterLevels; i++) {
+    const int id = scene.env_prefiltered[i];
+    if (id >= 0 && size_t(id) < scene.textures.size() &&
+        scene.textures[size_t(id)].valid()) {
+      out->env_prefiltered[i] = &scene.textures[size_t(id)];
+    }
+  }
+
+  // Project to SH9. Deterministic scan over every texel, weighted by solid
+  // angle -- not importance sampled, which would break both the thread
+  // determinism and the CPU/GL parity the tests hold us to.
+  double acc[9][3] = {};
+  double total_weight = 0.0;
+  const int w = int(env.width);
+  const int h = int(env.height);
+  for (int y = 0; y < h; y++) {
+    // Texel row centre -> polar angle. Row 0 is the top of the image, which
+    // DirectionToLatLong maps to v = 1, i.e. the zenith.
+    const float v = 1.0f - (float(y) + 0.5f) / float(h);
+    const float theta = (v - 0.5f) * kPi;      // -pi/2 .. pi/2
+    const float sin_t = std::sin(theta);
+    const float cos_t = std::cos(theta);
+    // Solid angle shrinks toward the poles.
+    const double row_weight = double(cos_t);
+
+    for (int x = 0; x < w; x++) {
+      const float u = (float(x) + 0.5f) / float(w);
+      const float phi = u * 2.0f * kPi - out->env_rotation;
+
+      float d[3];
+      const float horiz = cos_t;
+      if (out->y_up) {
+        d[0] = horiz * std::cos(phi);
+        d[1] = sin_t;
+        d[2] = horiz * std::sin(phi);
+      } else {
+        d[0] = horiz * std::cos(phi);
+        d[1] = horiz * std::sin(phi);
+        d[2] = sin_t;
+      }
+
+      const uint8_t* p =
+          env.rgba.data() + (size_t(y) * size_t(w) + size_t(x)) * 4;
+      float rgb[3];
+      for (int c = 0; c < 3; c++) {
+        rgb[c] = float(p[c]) * (1.0f / 255.0f);
+        if (env.srgb) rgb[c] = SrgbToLinear(rgb[c]);
+        rgb[c] *= out->env_intensity;
+      }
+
+      const float basis[9] = {
+          0.282095f,
+          0.488603f * d[1], 0.488603f * d[2], 0.488603f * d[0],
+          1.092548f * d[0] * d[1], 1.092548f * d[1] * d[2],
+          0.315392f * (3.0f * d[2] * d[2] - 1.0f),
+          1.092548f * d[0] * d[2], 0.546274f * (d[0] * d[0] - d[1] * d[1]),
+      };
+      for (int i = 0; i < 9; i++) {
+        for (int c = 0; c < 3; c++) {
+          acc[i][c] += double(basis[i]) * double(rgb[c]) * row_weight;
+        }
+      }
+      total_weight += row_weight;
+    }
+  }
+
+  if (total_weight <= 0.0) return;
+
+  // Normalize to the sphere, then fold in the cosine-convolution constants so
+  // the reconstruction above is a bare polynomial.
+  const double norm = 4.0 * double(kPi) / total_weight;
+  static const float kConv[9] = {
+      3.141593f,                                  // l=0
+      2.094395f, 2.094395f, 2.094395f,            // l=1
+      0.785398f, 0.785398f, 0.785398f, 0.785398f, 0.785398f,  // l=2
+  };
+  for (int i = 0; i < 9; i++) {
+    for (int c = 0; c < 3; c++) {
+      // The 1/pi turns irradiance into outgoing Lambertian radiance, which is
+      // what the shading loop wants to multiply by the albedo.
+      out->env_sh[i][c] =
+          float(acc[i][c] * norm) * kConv[i] * (1.0f / kPi);
+    }
+  }
+  out->ibl = true;
+}
+
 void EvaluateMaterial(const ShadingContext& ctx, const SurfaceHit& hit,
                       const float view_dir[3], EvaluatedMaterial* out) {
   *out = EvaluatedMaterial{};
@@ -382,6 +559,17 @@ void ShadeBackground(const ShadingContext& ctx, const float direction[3],
     return;
   }
 
+  // With an environment loaded, the background IS the environment -- showing a
+  // gradient behind an IBL-lit object would look obviously wrong.
+  if (ctx.ibl && ctx.env_tex) {
+    float u, v;
+    DirectionToLatLong(ctx, direction, &u, &v);
+    float rgba[4];
+    SampleTexture(*ctx.env_tex, u, v, rgba);
+    for (int i = 0; i < 3; i++) out_rgb[i] = rgba[i] * ctx.env_intensity;
+    return;
+  }
+
   // Vertical gradient in the stage's up axis, so a Z-up scene does not get a
   // sideways sky.
   const float up_component = ctx.y_up ? direction[1] : direction[2];
@@ -488,13 +676,45 @@ void ShadeSurface(const ShadingContext& ctx, const SurfaceHit& hit,
     }
   }
 
-  // Ambient: a cheap hemispheric term so unlit faces are not pure black.
-  const float up_component = ctx.y_up ? n[1] : n[2];
-  const float hemi = 0.5f + 0.5f * up_component;
-  for (int i = 0; i < 3; i++) {
-    out_rgb[i] += diffuse_albedo[i] * ctx.ambient[i] * (0.4f + 0.6f * hemi);
-    out_rgb[i] += em.emissive[i];
+  if (ctx.ibl) {
+    // Real environment lighting replaces the flat ambient guess: SH9
+    // irradiance for the diffuse lobe, and a roughness-selected level of the
+    // prefiltered chain for the specular one.
+    float irradiance[3];
+    EvaluateEnvIrradiance(ctx, n, irradiance);
+
+    float reflected[3];
+    const float ndv = Dot(n, v);
+    for (int i = 0; i < 3; i++) reflected[i] = 2.0f * ndv * n[i] - v[i];
+    Normalize(reflected);
+
+    float spec_env[3] = {0, 0, 0};
+    SampleEnvPrefiltered(ctx, reflected, em.roughness, spec_env);
+
+    // Single-scatter split-sum approximation with an analytic DFG fit, so no
+    // BRDF LUT texture has to be built or kept in sync between backends.
+    float fresnel_env[3];
+    const float fade = std::pow(1.0f - std::min(std::max(ndv, 0.0f), 1.0f),
+                                5.0f);
+    for (int i = 0; i < 3; i++) {
+      const float f90 = std::max(1.0f - em.roughness, f0[i]);
+      fresnel_env[i] = f0[i] + (f90 - f0[i]) * fade;
+    }
+
+    for (int i = 0; i < 3; i++) {
+      out_rgb[i] += diffuse_albedo[i] * irradiance[i];
+      out_rgb[i] += spec_env[i] * fresnel_env[i];
+    }
+  } else {
+    // Ambient: a cheap hemispheric term so unlit faces are not pure black.
+    const float up_component = ctx.y_up ? n[1] : n[2];
+    const float hemi = 0.5f + 0.5f * up_component;
+    for (int i = 0; i < 3; i++) {
+      out_rgb[i] += diffuse_albedo[i] * ctx.ambient[i] * (0.4f + 0.6f * hemi);
+    }
   }
+
+  for (int i = 0; i < 3; i++) out_rgb[i] += em.emissive[i];
 }
 
 uint32_t PackLinearToArgb(const float rgb[3]) {

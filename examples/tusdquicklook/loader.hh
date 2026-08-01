@@ -98,6 +98,11 @@ struct LoadEvent {
   std::vector<QlTexture> textures;
   std::vector<QlLight> lights;
   std::vector<QlCameraDesc> cameras;
+  // Environment: index into `textures` plus its prefiltered chain, or -1.
+  int env_texture = -1;
+  int env_prefiltered[QlScene::kEnvPrefilterLevels] = {-1, -1, -1, -1};
+  float env_rotation = 0.0f;
+  float env_intensity = 1.0f;
 
   // Mesh
   QlMesh mesh;

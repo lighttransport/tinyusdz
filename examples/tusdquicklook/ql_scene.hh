@@ -38,6 +38,10 @@ struct QlAabb {
 // kMaxTextureDim so a 4K map costs ~1 MB instead of 64 MB.
 struct QlTexture {
   static constexpr uint32_t kMaxTextureDim = 512;
+  // Environment maps are sampled by direction rather than by UV, and a small
+  // one is plenty for a preview: 512x256 is ~512 KB, tracked like everything
+  // else.
+  static constexpr uint32_t kMaxEnvDim = 512;
 
   uint32_t width = 0;
   uint32_t height = 0;
@@ -175,6 +179,18 @@ struct QlScene {
   QlAabb bounds;
   bool y_up = true;  // false = Z-up stage
   float meters_per_unit = 1.0f;
+
+  // Image-based lighting. `env_texture` indexes `textures` and holds a
+  // latlong (equirectangular) environment, from an authored DomeLight or from
+  // --env. The prefiltered chain is roughness-indexed and built once on the
+  // CPU so both backends sample identical pixels.
+  static constexpr int kEnvPrefilterLevels = 4;
+  int env_texture = -1;
+  int env_prefiltered[kEnvPrefilterLevels] = {-1, -1, -1, -1};
+  float env_rotation = 0.0f;   // radians about the up axis
+  float env_intensity = 1.0f;
+
+  bool has_env() const { return env_texture >= 0; }
 
   QlSceneStats stats;
   QlDegradation degraded;
