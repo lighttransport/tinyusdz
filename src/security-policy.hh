@@ -98,6 +98,13 @@ inline bool ValidateAndNormalizeAssetPath(const std::string &path,
   std::string p = path;
   std::replace(p.begin(), p.end(), '\\', '/');
 
+  // Reject paths containing null bytes — they can confuse downstream
+  // C string consumers (e.g. fopen, stat) and are never legitimate
+  // in asset paths.
+  if (p.find('\0') != std::string::npos) {
+    return false;
+  }
+
   if (p.size() >= 2 &&
       ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) &&
       p[1] == ':') {

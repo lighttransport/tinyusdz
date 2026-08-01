@@ -409,6 +409,7 @@
       uint32_t depth;
     };
     std::vector<WItem> stack;
+    stack.reserve(128);
     stack.push_back({root, root_depth});
     while (!stack.empty()) {
       WItem it = stack.back();
@@ -444,39 +445,48 @@
   // build sees, property emission is name-ordered (parse-order-independent), and
   // any un-warmed path resolves serially.
   void ParallelWarmSources(const std::vector<std::string> &root_names, int nt,
-                           std::string *warn, std::string *err) {
+                          std::string *warn, std::string *err) {
     using PWClock = std::chrono::steady_clock;
     const bool prof = options.enable_timing;
     auto t_start = prof ? PWClock::now() : PWClock::time_point{};
     const size_t want = static_cast<size_t>(nt) * 4;
     const uint32_t kMaxFrontierDepth = 8;
-    std::vector<std::pair<Path, uint32_t>> level;  // (src_path, depth)
+    struct FrontierItem {
+      Path path;
+      uint32_t depth;
+    };
+    std::vector<FrontierItem> level;
+    level.reserve(root_names.size());
     for (const std::string &nm : root_names) {
       level.push_back({Path("/" + nm), 1});
     }
-    for (uint32_t d = 0; d < kMaxFrontierDepth && level.size() < want; ++d) {
-      std::vector<std::pair<Path, uint32_t>> next;
+    for (uint32_t d = 1;
+         d < kMaxFrontierDepth && level.size() < want;
+         ++d) {
+      std::vector<FrontierItem> next;
+      next.reserve(std::min(level.size() * 4, want));
       bool grew = false;
-      for (auto &pr : level) {
-        if (pr.second > options.max_namespace_depth) {
-          next.push_back(pr);
+      for (const FrontierItem &entry : level) {
+        const Path &p = entry.path;
+        if (entry.depth > options.max_namespace_depth) {
+          next.push_back(entry);
           continue;
         }
-        const std::vector<Src> &srcs = SourcesForPath(pr.first, warn, err);
+        const std::vector<Src> &srcs = SourcesForPath(p, warn, err);
         // Instancing-aware (see WarmSubtree): an instanceable prim's subtree is
         // composed at most once (its prototype), so do not expand the frontier
         // into it -- treat it as a leaf root the worker will stop at immediately.
         if (options.detect_instances && IsInstanceableSources(srcs)) {
-          next.push_back(pr);
+          next.push_back(entry);
           continue;
         }
         const std::vector<std::string> children = ComposeChildNames(srcs);
         if (children.empty()) {
-          next.push_back(pr);  // leaf: nothing below to parallelize
+          next.push_back(entry);  // leaf: nothing below to parallelize
         } else {
           grew = true;
           for (const std::string &cn : children) {
-            next.push_back({pr.first.append_child(cn), pr.second + 1});
+            next.push_back({p.append_child(cn), entry.depth + 1});
           }
         }
       }
@@ -528,7 +538,7 @@
         for (;;) {
           size_t i = next_node.fetch_add(1);
           if (i >= level.size()) break;
-          wk->WarmSubtree(level[i].first, level[i].second, pw, pe);
+          wk->WarmSubtree(level[i].path, level[i].depth, pw, pe);
         }
       });
     }

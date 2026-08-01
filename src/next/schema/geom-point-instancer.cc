@@ -14,21 +14,76 @@ namespace tinyusdz {
 namespace next {
 namespace {
 
+const ::tinyusdz::next::PropNameId& kIdProtoIndices() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("protoIndices");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdPositions() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("positions");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdOrientations() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("orientations");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdScales() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("scales");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdVelocities() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("velocities");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdAngularVelocities() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("angularVelocities");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdIds() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("ids");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInvisibleIds() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("invisibleIds");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInactiveIds() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inactiveIds");
+  return id;
+}
+
 // Linear interpolation between samples (pxr semantics), held/default
 // fallback. The interpolated value is parked in the caller-owned `hold`
 // slot (the ArrayScratch) so returned views stay valid while other
 // attributes are read.
-const Value* ValueAtOrDefault(const UsdPrim& prim, const char* name,
+const Value* ValueAtOrDefault(const UsdPrim& prim, const PropNameId name_id,
                               double time, Value* hold) {
+  if (!name_id.is_valid()) return nullptr;
   if (!std::isnan(time)) {
-    Value v = prim.GetInterpolatedValue(name, time);
+    Value v = prim.GetInterpolatedValue(name_id, time);
     if (!v.is_empty()) {
       *hold = std::move(v);
       return hold;
     }
-    if (const Value* held = prim.GetValueAtTime(name, time)) return held;
+    if (const Value* held = prim.GetValueAtTime(name_id, time)) return held;
   }
-  return prim.GetPropertyValue(name);
+  return prim.GetPropertyValue(name_id);
 }
 
 template <typename T>
@@ -37,22 +92,69 @@ std::vector<T> CopyView(const ArrayView<T>& view) {
   return std::vector<T>(view.begin(), view.end());
 }
 
-bool ReadFloatView(const UsdPrim& prim, const char* name, double time,
+bool ReadFloatView(const UsdPrim& prim, const PropNameId name_id, double time,
                    ArrayScratch<float>* scratch, ArrayView<float>* view) {
-  const Value* v = ValueAtOrDefault(prim, name, time, &scratch->materialized);
+  const Value* v = ValueAtOrDefault(prim, name_id, time, &scratch->materialized);
   return v && GetFloatArrayView(*v, scratch, view);
 }
 
-bool ReadIntView(const UsdPrim& prim, const char* name, double time,
+bool ReadIntView(const UsdPrim& prim, const PropNameId name_id, double time,
                  ArrayScratch<int32_t>* scratch, ArrayView<int32_t>* view) {
-  const Value* v = ValueAtOrDefault(prim, name, time, &scratch->materialized);
+  const Value* v = ValueAtOrDefault(prim, name_id, time, &scratch->materialized);
   return v && GetIntArrayView(*v, scratch, view);
 }
 
-bool ReadInt64View(const UsdPrim& prim, const char* name, double time,
+bool ReadInt64View(const UsdPrim& prim, const PropNameId name_id, double time,
                    ArrayScratch<int64_t>* scratch, ArrayView<int64_t>* view) {
-  const Value* v = ValueAtOrDefault(prim, name, time, &scratch->materialized);
+  const Value* v = ValueAtOrDefault(prim, name_id, time, &scratch->materialized);
   return v && GetInt64ArrayView(*v, scratch, view);
+}
+
+bool ReadFloatView(const UsdPrim& prim, const char* name, double time,
+                  ArrayScratch<float>* scratch, ArrayView<float>* view) {
+  return ReadFloatView(prim,
+                       tinyusdz::next::GetPropNameTable().find(name), time,
+                       scratch, view);
+}
+
+bool ReadIntView(const UsdPrim& prim, const char* name, double time,
+                ArrayScratch<int32_t>* scratch, ArrayView<int32_t>* view) {
+  return ReadIntView(prim, tinyusdz::next::GetPropNameTable().find(name), time,
+                     scratch, view);
+}
+
+bool ReadInt64View(const UsdPrim& prim, const char* name, double time,
+                  ArrayScratch<int64_t>* scratch, ArrayView<int64_t>* view) {
+  return ReadInt64View(prim,
+                       tinyusdz::next::GetPropNameTable().find(name), time,
+                       scratch, view);
+}
+
+std::vector<float> ReadFloatArrayById(const UsdPrim& prim, PropNameId name_id,
+                                     double time) {
+  if (!prim.IsValid() || !name_id.is_valid()) return {};
+  ArrayScratch<float> scratch;
+  ArrayView<float> view;
+  return ReadFloatView(prim, name_id, time, &scratch, &view) ? CopyView(view)
+                                                           : std::vector<float>();
+}
+
+std::vector<int32_t> ReadIntArrayById(const UsdPrim& prim, PropNameId name_id,
+                                     double time) {
+  if (!prim.IsValid() || !name_id.is_valid()) return {};
+  ArrayScratch<int32_t> scratch;
+  ArrayView<int32_t> view;
+  return ReadIntView(prim, name_id, time, &scratch, &view) ? CopyView(view)
+                                                           : std::vector<int32_t>();
+}
+
+std::vector<int64_t> ReadInt64ArrayById(const UsdPrim& prim,
+                                        PropNameId name_id, double time) {
+  if (!prim.IsValid() || !name_id.is_valid()) return {};
+  ArrayScratch<int64_t> scratch;
+  ArrayView<int64_t> view;
+  return ReadInt64View(prim, name_id, time, &scratch, &view) ? CopyView(view)
+                                                           : std::vector<int64_t>();
 }
 
 void SetIdentity(double m[16]) {
@@ -147,52 +249,52 @@ std::vector<int64_t> UsdGeomPointInstancer::GetInt64Array(const char* name,
 }
 
 std::vector<int32_t> UsdGeomPointInstancer::GetProtoIndices(double time) const {
-  return GetIntArray("protoIndices", time);
+  return ReadIntArrayById(prim_, kIdProtoIndices(), time);
 }
 
 std::vector<float> UsdGeomPointInstancer::GetPositions(double time) const {
-  return GetFloatArray("positions", time);
+  return ReadFloatArrayById(prim_, kIdPositions(), time);
 }
 
 std::vector<float> UsdGeomPointInstancer::GetOrientations(double time) const {
-  return GetFloatArray("orientations", time);
+  return ReadFloatArrayById(prim_, kIdOrientations(), time);
 }
 
 std::vector<float> UsdGeomPointInstancer::GetScales(double time) const {
-  return GetFloatArray("scales", time);
+  return ReadFloatArrayById(prim_, kIdScales(), time);
 }
 
 std::vector<float> UsdGeomPointInstancer::GetVelocities(double time) const {
-  return GetFloatArray("velocities", time);
+  return ReadFloatArrayById(prim_, kIdVelocities(), time);
 }
 
 std::vector<float> UsdGeomPointInstancer::GetAngularVelocities(double time) const {
-  return GetFloatArray("angularVelocities", time);
+  return ReadFloatArrayById(prim_, kIdAngularVelocities(), time);
 }
 
 std::vector<int64_t> UsdGeomPointInstancer::GetIds(double time) const {
-  return GetInt64Array("ids", time);
+  return ReadInt64ArrayById(prim_, kIdIds(), time);
 }
 
 std::vector<int64_t> UsdGeomPointInstancer::GetInvisibleIds(double time) const {
-  return GetInt64Array("invisibleIds", time);
+  return ReadInt64ArrayById(prim_, kIdInvisibleIds(), time);
 }
 
 std::vector<int64_t> UsdGeomPointInstancer::GetInactiveIds() const {
-  return GetInt64Array("inactiveIds", 0.0);
+  return ReadInt64ArrayById(prim_, kIdInactiveIds(), 0.0);
 }
 
 size_t UsdGeomPointInstancer::GetInstanceCount(double time) const {
   if (!IsValid()) return 0;
   ArrayScratch<int32_t> proto_scratch;
   ArrayView<int32_t> proto_indices;
-  if (ReadIntView(prim_, "protoIndices", time, &proto_scratch, &proto_indices) &&
+  if (ReadIntView(prim_, kIdProtoIndices(), time, &proto_scratch, &proto_indices) &&
       !proto_indices.empty()) {
     return proto_indices.size;
   }
   ArrayScratch<float> position_scratch;
   ArrayView<float> positions;
-  return ReadFloatView(prim_, "positions", time, &position_scratch, &positions)
+  return ReadFloatView(prim_, kIdPositions(), time, &position_scratch, &positions)
              ? positions.size / 3
              : 0;
 }
@@ -206,10 +308,10 @@ bool UsdGeomPointInstancer::HasValidInstanceArrays(
   const std::vector<Path> prototypes = GetPrototypes();
   ArrayScratch<int32_t> proto_scratch;
   ArrayView<int32_t> proto_indices;
-  ReadIntView(prim_, "protoIndices", time, &proto_scratch, &proto_indices);
+  ReadIntView(prim_, kIdProtoIndices(), time, &proto_scratch, &proto_indices);
   ArrayScratch<float> position_scratch;
   ArrayView<float> positions;
-  ReadFloatView(prim_, "positions", time, &position_scratch, &positions);
+  ReadFloatView(prim_, kIdPositions(), time, &position_scratch, &positions);
   const size_t n = proto_indices.size;
   if (prototypes.empty()) {
     if (reason) *reason = "missing prototypes relationship";
@@ -231,28 +333,28 @@ bool UsdGeomPointInstancer::HasValidInstanceArrays(
   }
   ArrayScratch<float> orientation_scratch;
   ArrayView<float> orientations;
-  ReadFloatView(prim_, "orientations", time, &orientation_scratch, &orientations);
+  ReadFloatView(prim_, kIdOrientations(), time, &orientation_scratch, &orientations);
   if (!orientations.empty() && orientations.size != n * 4) {
     if (reason) *reason = "orientations size does not match protoIndices";
     return false;
   }
   ArrayScratch<float> scale_scratch;
   ArrayView<float> scales;
-  ReadFloatView(prim_, "scales", time, &scale_scratch, &scales);
+  ReadFloatView(prim_, kIdScales(), time, &scale_scratch, &scales);
   if (!scales.empty() && scales.size != n * 3) {
     if (reason) *reason = "scales size does not match protoIndices";
     return false;
   }
   ArrayScratch<float> velocity_scratch;
   ArrayView<float> velocities;
-  ReadFloatView(prim_, "velocities", time, &velocity_scratch, &velocities);
+  ReadFloatView(prim_, kIdVelocities(), time, &velocity_scratch, &velocities);
   if (!velocities.empty() && velocities.size != n * 3) {
     if (reason) *reason = "velocities size does not match protoIndices";
     return false;
   }
   ArrayScratch<float> angular_velocity_scratch;
   ArrayView<float> angular_velocities;
-  ReadFloatView(prim_, "angularVelocities", time, &angular_velocity_scratch,
+  ReadFloatView(prim_, kIdAngularVelocities(), time, &angular_velocity_scratch,
                 &angular_velocities);
   if (!angular_velocities.empty() && angular_velocities.size != n * 3) {
     if (reason) *reason = "angularVelocities size does not match protoIndices";
@@ -260,7 +362,7 @@ bool UsdGeomPointInstancer::HasValidInstanceArrays(
   }
   ArrayScratch<int64_t> ids_scratch;
   ArrayView<int64_t> ids;
-  ReadInt64View(prim_, "ids", time, &ids_scratch, &ids);
+  ReadInt64View(prim_, kIdIds(), time, &ids_scratch, &ids);
   if (!ids.empty() && ids.size != n) {
     if (reason) *reason = "ids size does not match protoIndices";
     return false;
@@ -275,19 +377,19 @@ UsdGeomPointInstancer::ComputeInstanceTransforms(double time) const {
   if (!IsValid()) return out;
   ArrayScratch<int32_t> proto_scratch;
   ArrayView<int32_t> proto_indices;
-  ReadIntView(prim_, "protoIndices", time, &proto_scratch, &proto_indices);
+  ReadIntView(prim_, kIdProtoIndices(), time, &proto_scratch, &proto_indices);
   ArrayScratch<float> position_scratch;
   ArrayView<float> positions;
-  ReadFloatView(prim_, "positions", time, &position_scratch, &positions);
+  ReadFloatView(prim_, kIdPositions(), time, &position_scratch, &positions);
   if (proto_indices.empty() || positions.size != proto_indices.size * 3) {
     return out;
   }
   ArrayScratch<float> orientation_scratch;
   ArrayView<float> orientations;
-  ReadFloatView(prim_, "orientations", time, &orientation_scratch, &orientations);
+  ReadFloatView(prim_, kIdOrientations(), time, &orientation_scratch, &orientations);
   ArrayScratch<float> scale_scratch;
   ArrayView<float> scales;
-  ReadFloatView(prim_, "scales", time, &scale_scratch, &scales);
+  ReadFloatView(prim_, kIdScales(), time, &scale_scratch, &scales);
   const size_t n = proto_indices.size;
   out.resize(n);
   for (size_t i = 0; i < n; ++i) {

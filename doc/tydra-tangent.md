@@ -359,11 +359,11 @@ The `true` (normalized) flag tells the GPU to denormalize integer values to [-1,
 
 ## Benchmark Tool
 
-`tests/feat/tangent/bench_tangent.cc` provides a standalone benchmark comparing all methods with quality measurement and quantization analysis.
+`tests/feat/tangent/bench_tangent.cc` provides a standalone benchmark comparing all methods with quality measurement and quantization analysis. It is not wired into the CMake build — compile it by hand against the built tinyusdz static lib (mikktspace is already inside it):
 
 ```bash
-cd tests/feat/tangent
-make
+g++ -O2 -std=c++17 -Isrc -Isrc/external tests/feat/tangent/bench_tangent.cc \
+    build/libtinyusdz.a -o bench_tangent
 ./bench_tangent --quality --sizes 32,128,512 --ico-levels 3,5
 ```
 

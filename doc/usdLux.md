@@ -27,7 +27,7 @@ TinyUSDZ supports the full USD lighting schema (UsdLux) including parsing, recon
 | `DomeLight` | NonboundableLight | `file`, `textureFormat`, `guideRadius` (1e5), `portals` |
 | `GeometryLight` | NonboundableLight | `geometry` relationship (deprecated in USD) |
 | `PortalLight` | NonboundableLight | `geometry` relationship |
-| `PluginLight` | NonboundableLight | Plugin-defined |
+| `PluginLight` | Xformable + Collection | `shaderId` (plugin-defined via shader registry) |
 
 ### Boundable vs Non-boundable
 
@@ -239,7 +239,7 @@ Property tables are organized as:
 
 ## LTE Spectral Emission (Extension)
 
-TinyUSDZ includes an experimental SpectralAPI for wavelength-dependent light emission:
+TinyUSDZ includes an experimental SpectralAPI for wavelength-dependent light emission. The `SpectralEmission` struct now lives in `src/tydra/render-data-shader.hh` (shared by the shader/light pipeline) and is carried through to `RenderLight::spd_emission` (`src/tydra/render-data.hh`):
 
 ```cpp
 struct SpectralEmission {
@@ -256,13 +256,17 @@ This is applied to the base light classes and carried through to `RenderLight`.
 
 ## Type IDs
 
-Runtime type identification for light prims:
+Runtime type identification for light prims (`src/value-types.hh`):
 
 ```
-TYPE_ID_LUX_SPHERE, TYPE_ID_LUX_CYLINDER, TYPE_ID_LUX_RECT,
-TYPE_ID_LUX_DISK, TYPE_ID_LUX_DISTANT, TYPE_ID_LUX_DOME,
-TYPE_ID_LUX_GEOMETRY, TYPE_ID_LUX_PORTAL, TYPE_ID_LUX_PLUGIN
+TYPE_ID_LUX_SPHERE, TYPE_ID_LUX_DOME, TYPE_ID_LUX_CYLINDER,
+TYPE_ID_LUX_DISK, TYPE_ID_LUX_RECT, TYPE_ID_LUX_DISTANT,
+TYPE_ID_LUX_GEOMETRY, TYPE_ID_LUX_PORTAL, TYPE_ID_LUX_PLUGIN,
+TYPE_ID_LUX_DOME_1, TYPE_ID_LUX_LIGHT_FILTER, TYPE_ID_LUX_PLUGIN_LIGHT_FILTER
 ```
+
+(`DomeLight_1` for the older DomeLight variant; `LightFilter` /
+`PluginLightFilter` are the light-filter prims.)
 
 ---
 
@@ -275,13 +279,17 @@ TYPE_ID_LUX_GEOMETRY, TYPE_ID_LUX_PORTAL, TYPE_ID_LUX_PLUGIN
 - Transform and world-space position/direction extraction
 - Color temperature computation
 - Intensity + exposure computation
+- Light linking (`light:lightLink` / `light:shadowLink` collections resolved
+  against scene geometry via `ResolveLightLinking()` —
+  `src/tydra/render-data-anim.cc`, mirrored in `src/tydra/next/render-converter.cc`)
+- MeshLightAPI area lights (mesh marked as area light during `ConvertMesh`,
+  `src/tydra/render-data-mesh.cc`)
 
 ### Partial
-- MeshLightAPI / VolumeLightAPI (struct defined, limited Tydra support)
+- VolumeLightAPI (struct defined, limited Tydra support)
 - LightFilter (struct defined, no evaluation)
 - LTE SpectralAPI (carried through pipeline, no physical rendering)
 
 ### Not Implemented
 - IES profile loading and evaluation
-- Light linking (light:shadowLink, light:lightLink collections)
 - Procedural light filter evaluation

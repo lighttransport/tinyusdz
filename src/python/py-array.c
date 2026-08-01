@@ -118,6 +118,15 @@ static PyObject* element_to_python(const tusd_value_view* view,
                                    Py_ssize_t idx) {
   const int as_bool = (view->type == TUSD_TYPE_BOOL);
   const size_t comps = view->components ? view->components : 1;
+  if (idx < 0) {
+    return NULL;
+  }
+  if (comps > 1) {
+    size_t uidx = (size_t)idx;
+    if (uidx > (size_t)-1 / comps) {
+      return NULL;
+    }
+  }
   const size_t base = (size_t)idx * comps;
   if (comps == 1) {
     return component_to_python(view->data, view->storage, base, as_bool);

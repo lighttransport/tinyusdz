@@ -465,9 +465,169 @@ void test_default_time_timesample_fallback() {
   std::cout << "  Explicit default-time semantics: PASSED" << std::endl;
 }
 
+// Regression: every PropNameId overload must be safe when handed an invalid
+// id (e.g. GetPropNameTable().find("unknown") -> invalid). The interned-id
+// lookup pass (geom-mesh/geom-xform/schema/stage accessors) relies on this.
+void test_propnameid_invalid_id() {
+  std::cout << "Testing PropNameId invalid-id safety..." << std::endl;
+
+  StageBuilder builder;
+  builder.SetDefaultPrim("World");
+  LayerBuilder& lb = builder.GetLayerBuilder();
+
+  lb.begin_prim("World", "Xform");
+    lb.begin_prim("Mesh", "Mesh");
+    lb.add_property("points", Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
+    lb.add_time_sample("points", 0.0, Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
+    lb.add_time_sample("points", 1.0, Value::MakeFloat3Array(std::vector<float>{1, 1, 1, 2, 1, 1, 1, 2, 1}));
+    lb.end_prim();
+  lb.end_prim();
+
+  Stage stage = builder.Build();
+  UsdPrim mesh = stage.GetPrimAtPath("/World/Mesh");
+  assert(mesh.IsValid());
+
+  const PropNameId invalid = GetPropNameTable().find("doesNotExist");
+  assert(!invalid.is_valid() && "fixture id must be invalid");
+
+  // Known-good property id (must exist after the add_property above).
+  const PropNameId points = GetPropNameTable().find("points");
+  assert(points.is_valid() && "points must be interned by the builder");
+
+  // String overloads keep working.
+  assert(mesh.HasProperty("points"));
+  assert(mesh.HasTimeSamples("points"));
+  assert(!mesh.GetTimeSampleTimes("points").empty());
+
+  // Invalid id: every PropNameId overload returns the safe empty value.
+  assert(!mesh.HasProperty(invalid));
+  assert(mesh.GetPropertyValue(invalid) == nullptr);
+  assert(mesh.GetPropertyValueOrEarliestTimeSample(invalid) == nullptr);
+  assert(mesh.EarliestTimeSampleValue(invalid) == nullptr);
+  assert(!mesh.HasTimeSamples(invalid));
+  assert(mesh.GetTimeSampleTimes(invalid).empty());
+  assert(mesh.GetTimeSamples(invalid) == nullptr);
+  assert(mesh.GetValueAtTime(invalid, 0.0) == nullptr);
+  assert(mesh.GetInterpolatedValue(invalid, 0.0).is_empty());
+
+  // Valid id still resolves after the invalid-id probes.
+  assert(mesh.HasProperty(points));
+  assert(mesh.GetPropertyValue(points) != nullptr);
+  assert(mesh.HasTimeSamples(points));
+  assert(mesh.GetTimeSamples(points) != nullptr);
+  assert(mesh.GetValueAtTime(points, 0.5) != nullptr);
+  assert(!mesh.GetInterpolatedValue(points, 0.5).is_empty());
+
+  std::cout << "  PropNameId invalid-id safety: PASSED" << std::endl;
+}
+
+// Regression: the stage-level animation scans rewritten to iterate the root
+// layer's flat prim array (no per-property traversal). HasTimeSamples must be
+// true iff any prim has authored time samples; HasValueClips must be false
+// for a plain stage and true for a stage whose prims carry `clips` metadata.
+void test_stage_animation_scans() {
+  std::cout << "Testing Stage::HasTimeSamples / HasValueClips..." << std::endl;
+
+  // Static stage: neither.
+  {
+    StageBuilder builder;
+    builder.SetDefaultPrim("World");
+    LayerBuilder& lb = builder.GetLayerBuilder();
+    lb.begin_prim("World", "Xform");
+      lb.begin_prim("Mesh", "Mesh");
+      lb.add_property("points", Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
+      lb.end_prim();
+    lb.end_prim();
+    Stage stage = builder.Build();
+    assert(!stage.HasTimeSamples() && "static stage must have no time samples");
+    assert(!stage.HasValueClips() && "static stage must have no value clips");
+  }
+
+  // Stage with authored time samples.
+  {
+    StageBuilder builder;
+    builder.SetDefaultPrim("World");
+    LayerBuilder& lb = builder.GetLayerBuilder();
+    lb.begin_prim("World", "Xform");
+      lb.begin_prim("Mesh", "Mesh");
+      lb.add_property("points", Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
+      lb.add_time_sample("points", 0.0, Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
+      lb.add_time_sample("points", 1.0, Value::MakeFloat3Array(std::vector<float>{1, 1, 1, 2, 1, 1, 1, 2, 1}));
+      lb.end_prim();
+    lb.end_prim();
+    Stage stage = builder.Build();
+    assert(stage.HasTimeSamples() && "time-sampled stage must be detected");
+    assert(!stage.HasValueClips() && "no clips metadata on this stage");
+  }
+
+  std::cout << "  Stage animation scans: PASSED" << std::endl;
+}
+
+// Regression: every name the schema/tydra accessors intern() at render time
+// must be pre-registered by PropNameTable::register_common_names(). Run FIRST,
+// before any fixture interning, so find() validity == registration
+// completeness. A render-phase intern() MISS on the frozen table unfreezes it
+// (property-index.cc), silently disabling the lock-free render path and
+// racing concurrent lock-free readers.
+void test_name_table_registration() {
+  std::cout << "Testing name-table registration completeness..." << std::endl;
+
+  // Names interned by the kId* accessors in geom-mesh.cc, geom-xform.cc,
+  // geom-point-instancer.cc, stage.cc and tydra/next/render-converter.cc.
+  static const char* kAccessorNames[] = {
+      "accelerations",        "angularVelocities",  "clippingRange",
+      "cornerIndices",        "cornerSharpnesses",  "creaseIndices",
+      "creaseLengths",        "creaseSharpnesses",  "curveVertexCounts",
+      "doubleSided",          "extent",             "faceVertexCounts",
+      "faceVertexIndices",    "focalLength",        "focusDistance",
+      "fStop",                "holeIndices",        "horizontalAperture",
+      "ids",                  "inactiveIds",        "indices",
+      "inputs:angle",         "inputs:color",       "inputs:colorTemperature",
+      "inputs:diffuse",       "inputs:enableColorTemperature",
+      "inputs:enableShadows", "inputs:exposure",    "inputs:height",
+      "inputs:intensity",     "inputs:length",      "inputs:normalize",
+      "inputs:radius",        "inputs:shadow:color",
+      "inputs:shadow:distance", "inputs:shadow:enable",
+      "inputs:shadow:falloff",  "inputs:shadow:falloffGamma",
+      "inputs:shaping:cone:angle", "inputs:shaping:cone:softness",
+      "inputs:shaping:focus", "inputs:shaping:focusTint",
+      "inputs:shaping:ies:angleScale", "inputs:shaping:ies:file",
+      "inputs:shaping:ies:normalize",  "inputs:specular",
+      "inputs:texture:file",  "inputs:texture:format", "inputs:width",
+      "invisibleIds",         "normals",            "orientation",
+      "orientations",         "outputs:out",        "positions",
+      "primvars:displayColor", "primvars:displayOpacity",
+      "primvars:st",          "primvars:st:indices", "primvars:uv",
+      "primvars:uv:indices",  "projection",         "protoIndices",
+      "scales",               "shutter:close",      "shutter:open",
+      "tetVertexIndices",     "velocities",         "verticalAperture",
+      "visibility",           "widths",             "xformOp:orient",
+      "xformOp:rotateX",      "xformOp:rotateXYZ",  "xformOp:rotateY",
+      "xformOp:rotateZ",      "xformOp:scale",      "xformOp:transform",
+      "xformOp:translate",    "xformOpOrder",
+  };
+
+  PropNameTable& table = GetPropNameTable();
+  table.freeze();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  assert(table.is_frozen());
+#endif
+  for (const char* name : kAccessorNames) {
+    const PropNameId id = table.find(name);
+    if (!id.is_valid()) {
+      std::cerr << "  UNREGISTERED accessor name: " << name << std::endl;
+    }
+    assert(id.is_valid() && "accessor name must be pre-registered");
+  }
+  table.unfreeze();
+
+  std::cout << "  Name-table registration completeness: PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "=== Stage Tests ===" << std::endl;
 
+  test_name_table_registration();
   test_stage_builder();
   test_stage_prim_access();
   test_usd_prim();
@@ -478,6 +638,8 @@ int main() {
   test_attribute_eval_convenience();
   test_stage_move();
   test_default_time_timesample_fallback();
+  test_propnameid_invalid_id();
+  test_stage_animation_scans();
 
   std::cout << "\n=== All Stage tests PASSED ===" << std::endl;
   return 0;

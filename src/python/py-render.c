@@ -581,7 +581,9 @@ static PyObject* RNode_get_children(PyObject* self, void* closure) {
   tusd_state* st = tusd_state_from_obj(self);
   if (!st) return NULL;
   size_t n = tusd_render_node_children(item_scene(it), it->id, NULL, 0);
-  int32_t* ids = (int32_t*)PyMem_Malloc((n ? n : 1) * sizeof(int32_t));
+  size_t ids_n = n ? n : 1;
+  if (ids_n > SIZE_MAX / sizeof(int32_t)) return PyErr_NoMemory();
+  int32_t* ids = (int32_t*)PyMem_Malloc(ids_n * sizeof(int32_t));
   if (!ids) return PyErr_NoMemory();
   tusd_render_node_children(item_scene(it), it->id, ids, n);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);

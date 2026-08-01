@@ -92,4 +92,4 @@ for typical files.
 - `src/typed-array.hh` - TypedArray implementation
 - `src/timesamples.hh` - TimeSamples flat binary-storage path
 - `src/crate-reader-timesamples.cc` - Crate format TimeSamples reader
-- `doc/refactor-opportunities.md` - Full refactoring history
+- `doc/archive/refactor-opportunities.md` - Full refactoring history

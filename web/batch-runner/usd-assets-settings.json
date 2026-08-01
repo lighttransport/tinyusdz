@@ -1,0 +1,107 @@
+{
+  "output": "./previews",
+  "width": 1280,
+  "height": 720,
+  "defaults": {
+    "camera": {
+      "az": 0.8,
+      "el": 0.35,
+      "fov": 50,
+      "padding": 1.1
+    },
+    "clear": [0.12, 0.12, 0.14, 1.0],
+    "backend": "legacy"
+  },
+  "categories": {
+    "primitives": {
+      "camera": { "el": 0.35, "dist": 4.0 }
+    },
+    "meshes": {
+      "camera": { "el": 0.3, "dist": 4.5 }
+    },
+    "transforms": {
+      "camera": { "el": 0.25, "dist": 5.5 }
+    },
+    "extent": {
+      "camera": { "az": 0.6, "el": 0.3, "dist": 4.5 }
+    },
+    "foundation_stage": {
+      "camera": { "az": 0.7, "el": 0.3, "dist": 5.0 }
+    },
+    "composition": {
+      "camera": { "az": 0.6, "el": 0.3, "dist": 6.0 }
+    },
+    "common": {
+      "camera": { "az": 0.6, "el": 0.3, "dist": 5.0 }
+    },
+    "usdz": {
+      "camera": { "az": 2.2, "el": 0.3, "dist": 4.5 },
+      "clear": [0.16, 0.18, 0.22, 1.0]
+    },
+    "textured_materials": {
+      "camera": { "az": 0.4, "el": 0.25, "dist": 5.0 }
+    },
+    "relationship_encapsulation": {
+      "camera": { "az": 0.5, "el": 0.25, "dist": 6.5 }
+    },
+    "references_test": {
+      "camera": { "az": 0.5, "el": 0.3, "dist": 5.0 }
+    },
+    "full_teapot": {
+      "camera": { "az": 0.6, "el": 0.25, "dist": 6.0 }
+    },
+    "full_shaderball": {
+      "camera": { "az": 0.5, "el": 0.2, "dist": 7.0 }
+    },
+    "full_chess": {
+      "camera": { "az": 0.3, "el": 0.15, "dist": 14.0 }
+    },
+    "full_vehicles": {
+      "camera": { "az": 0.6, "el": 0.2, "dist": 8.0 }
+    },
+    "full_other": {
+      "camera": { "az": 0.6, "el": 0.2, "dist": 7.0 }
+    },
+    "intent_vfx": {
+      "camera": { "az": 0.6, "el": 0.3, "dist": 6.0 }
+    }
+  },
+  "assets": {
+    "all_primitives": {
+      "camera": { "az": 0.3, "el": 0.2, "dist": 8.0 }
+    },
+    "AlphaBlendModeTest": {
+      "camera": { "az": 0.2, "el": 0.15, "dist": 8.0 }
+    },
+    "CesiumMan": {
+      "camera": { "az": 2.2, "el": 0.3, "dist": 4.5 }
+    },
+    "DamagedHelmet": {
+      "camera": { "az": 1.4, "el": 0.15, "dist": 3.5 }
+    },
+    "BrainStem": {
+      "camera": { "az": 2.2, "el": 0.3, "dist": 4.0 }
+    },
+    "RiggedFigure": {
+      "camera": { "az": 2.2, "el": 0.3, "dist": 4.5 }
+    },
+    "RiggedSimple": {
+      "camera": { "az": 2.2, "el": 0.3, "dist": 4.5 }
+    },
+    "OpenChessSet": {
+      "camera": { "az": 0.3, "el": 0.15, "dist": 14.0 }
+    },
+    "CarbonFrameBike": {
+      "camera": { "az": 0.8, "el": 0.15, "dist": 8.0 }
+    },
+    "UsdCookie": {
+      "camera": { "az": 0.6, "el": 0.2, "dist": 5.0 }
+    },
+    "McUsd": {
+      "camera": { "az": 0.5, "el": 0.2, "dist": 5.0 }
+    },
+    "standard_shader_ball_scene": {
+      "camera": { "az": 0.5, "el": 0.2, "dist": 7.0 }
+    }
+  }
+}

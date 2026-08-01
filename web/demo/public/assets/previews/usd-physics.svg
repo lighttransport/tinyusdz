@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#18181b"/>
+  <defs><filter id="g"><feGaussianBlur stdDeviation="1.5"/></filter></defs>
+  <!-- Grid -->
+  <g opacity="0.06">
+    <line x1="0" y1="60" x2="640" y2="60" stroke="#fff" stroke-width=".5"/>
+    <line x1="0" y1="120" x2="640" y2="120" stroke="#fff" stroke-width=".5"/>
+    <line x1="0" y1="180" x2="640" y2="180" stroke="#fff" stroke-width=".5"/>
+    <line x1="0" y1="240" x2="640" y2="240" stroke="#fff" stroke-width=".5"/>
+    <line x1="0" y1="300" x2="640" y2="300" stroke="#fff" stroke-width=".5"/>
+  </g>
+  <!-- Base -->
+  <rect x="240" y="270" width="160" height="40" rx="6" fill="#6b7280"/>
+  <!-- Arm -->
+  <g>
+    <rect x="290" y="140" width="100" height="24" rx="4" fill="#38bdf8" transform="rotate(-25, 340, 270)"/>
+    <rect x="280" y="260" width="130" height="16" rx="3" fill="#38bdf8" transform="rotate(-25, 340, 270)"/>
+    <circle cx="325" cy="260" r="14" fill="#e5e7eb"/>
+    <rect x="310" y="60" width="80" height="20" rx="4" fill="#5eead4" transform="rotate(15, 340, 140)"/>
+    <rect x="300" y="120" width="110" height="14" rx="3" fill="#5eead4" transform="rotate(15, 340, 140)"/>
+    <circle cx="340" cy="140" r="12" fill="#e5e7eb"/>
+    <rect x="380" y="40" width="30" height="50" rx="6" fill="#f59e0b" transform="rotate(15, 340, 140)"/>
+  </g>
+  <!-- Labels -->
+  <text x="320" y="28" text-anchor="middle" fill="#38bdf8" font-family="system-ui" font-size="11" font-weight="600">ROBOTIC ARM SIMULATION</text>
+  <circle cx="40" cy="18" r="5" fill="#38bdf8"/>
+  <text x="52" y="22" fill="#a0a0a8" font-family="system-ui" font-size="10">MuJoCo Physics</text>
+  <circle cx="40" cy="34" r="5" fill="#f59e0b" opacity=".5"/>
+  <text x="52" y="38" fill="#a0a0a8" font-family="system-ui" font-size="10">USD Rest Pose</text>
+  <circle cx="160" cy="18" r="5" fill="#34d399"/>
+  <text x="172" y="22" fill="#a0a0a8" font-family="system-ui" font-size="10">200 Hz Servo</text>
+</svg>

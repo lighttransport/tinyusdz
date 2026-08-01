@@ -1010,7 +1010,7 @@ void print_help() {
 // Address/thread sanitizers reserve tens of TB of virtual address space at
 // startup; an RLIMIT_AS cap makes the sanitizer runtime abort with cryptic
 // "out of memory: failed to allocate ... InternalMmapVector" errors before
-// main() even runs. Skip the cap in sanitized builds. See doc/tsan.md.
+// main() even runs. Skip the cap in sanitized builds. See doc/sanitizers.md.
 #if defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__)
 #define TUSDCAT_NO_AS_LIMIT 1
 #elif defined(__has_feature)

@@ -23,6 +23,7 @@ ref/openusd-venv/
 ref/dist/
 ref/dist*/
 web/demo/dist/
+web/demo/assets-src/
 web/site/dist/
 web/build_ninja/
 web/cmake-build/

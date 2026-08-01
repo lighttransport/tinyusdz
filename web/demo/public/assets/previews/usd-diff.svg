@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#18181b"/>
+  <!-- Side A -->
+  <rect x="24" y="20" width="284" height="320" rx="8" fill="#101013" stroke="#303038" stroke-width="1"/>
+  <rect x="24" y="20" width="284" height="24" rx="8" fill="rgba(56,189,248,.08)" stroke="none"/>
+  <rect x="24" y="44" width="284" height="1" fill="#303038"/>
+  <text x="36" y="36" fill="#38bdf8" font-family="system-ui" font-size="9" font-weight="700">SCENE A</text>
+  <rect x="36" y="52" width="260" height="252" rx="4" fill="#080809"/>
+  <g opacity=".06" fill="none" stroke="#38bdf8" stroke-width="1.5">
+    <ellipse cx="166" cy="180" rx="40" ry="40"/>
+    <ellipse cx="148" cy="153" rx="6" ry="4"/>
+    <ellipse cx="184" cy="153" rx="6" ry="4"/>
+  </g>
+  <rect x="36" y="312" width="260" height="20" rx="3" fill="var(--panel)"/>
+  <text x="44" y="325" fill="#71717a" font-family="system-ui" font-size="8">4 meshes · 3 mats · 1.2K tris</text>
+  <!-- Divider -->
+  <rect x="316" y="20" width="2" height="320" rx="1" fill="#303038"/>
+  <!-- Side B -->
+  <rect x="326" y="20" width="288" height="320" rx="8" fill="#101013" stroke="#303038" stroke-width="1"/>
+  <rect x="326" y="20" width="288" height="24" rx="8" fill="rgba(167,139,250,.08)" stroke="none"/>
+  <rect x="326" y="44" width="288" height="1" fill="#303038"/>
+  <text x="338" y="36" fill="#a78bfa" font-family="system-ui" font-size="9" font-weight="700">SCENE B</text>
+  <rect x="338" y="52" width="264" height="252" rx="4" fill="#080809"/>
+  <g opacity=".06" fill="none" stroke="#a78bfa" stroke-width="1.5">
+    <ellipse cx="470" cy="180" rx="30" ry="30"/>
+    <ellipse cx="458" cy="162" rx="5" ry="3"/>
+    <ellipse cx="482" cy="162" rx="5" ry="3"/>
+    <path d="M450 195 Q470 210 490 195" stroke="#a78bfa" fill="none" stroke-width="1.5"/>
+  </g>
+  <rect x="338" y="312" width="264" height="20" rx="3" fill="var(--panel)"/>
+  <text x="346" y="325" fill="#71717a" font-family="system-ui" font-size="8">3 meshes · 2 mats · 0.9K tris</text>
+  <!-- Diff indicator between panels -->
+  <g transform="translate(314, 240)">
+    <text x="0" y="0" text-anchor="middle" fill="#b794f6" font-family="system-ui" font-size="7">━</text>
+    <text x="0" y="12" text-anchor="middle" fill="#f08a8a" font-family="system-ui" font-size="6">-1</text>
+    <text x="0" y="22" text-anchor="middle" fill="#f08a8a" font-family="system-ui" font-size="6">-1</text>
+    <text x="0" y="32" text-anchor="middle" fill="#f08a8a" font-family="system-ui" font-size="6">-0.3K</text>
+  </g>
+  <text x="32" y="14" fill="#b794f6" font-family="system-ui" font-size="11" font-weight="600">USD DIFF</text>
+</svg>

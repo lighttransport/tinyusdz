@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#18181b"/>
+  <!-- Layer stack panel -->
+  <rect x="24" y="20" width="220" height="320" rx="8" fill="#202025" stroke="#303038" stroke-width="1"/>
+  <!-- Layer cards -->
+  <rect x="36" y="32" width="196" height="36" rx="6" fill="#1c1c20" stroke="#38bdf8" stroke-width="1.5"/>
+  <rect x="36" y="32" width="3" height="36" rx="1" fill="#38bdf8"/>
+  <text x="44" y="46" fill="#38bdf8" font-family="system-ui" font-size="7" font-weight="700">SUBLAYER</text>
+  <text x="44" y="58" fill="#ededf0" font-family="system-ui" font-size="8">suzanne-pbr.usda</text>
+  <rect x="36" y="76" width="196" height="36" rx="6" fill="#1c1c20" stroke="#38bdf8" stroke-width="1.5"/>
+  <rect x="36" y="76" width="3" height="36" rx="1" fill="#38bdf8"/>
+  <text x="44" y="90" fill="#38bdf8" font-family="system-ui" font-size="7" font-weight="700">SUBLAYER</text>
+  <text x="44" y="102" fill="#ededf0" font-family="system-ui" font-size="8">suzanne.usdc</text>
+  <rect x="36" y="120" width="196" height="36" rx="6" fill="#1c1c20" stroke="#34d399" stroke-width="1.5"/>
+  <rect x="36" y="120" width="3" height="36" rx="1" fill="#34d399"/>
+  <text x="44" y="134" fill="#34d399" font-family="system-ui" font-size="7" font-weight="700">OVER</text>
+  <text x="44" y="146" fill="#ededf0" font-family="system-ui" font-size="8">root_pbr (translate)</text>
+  <rect x="36" y="164" width="196" height="36" rx="6" fill="#1c1c20" stroke="#34d399" stroke-width="1.5"/>
+  <rect x="36" y="164" width="3" height="36" rx="1" fill="#34d399"/>
+  <text x="44" y="178" fill="#34d399" font-family="system-ui" font-size="7" font-weight="700">OVER</text>
+  <text x="44" y="190" fill="#ededf0" font-family="system-ui" font-size="8">Suzanne (translate)</text>
+  <!-- Arrow connecting layers -->
+  <line x1="48" y1="68" x2="48" y2="76" stroke="#474751" stroke-width="1"/>
+  <line x1="48" y1="112" x2="48" y2="120" stroke="#474751" stroke-width="1"/>
+  <!-- Composed result -->
+  <rect x="260" y="20" width="356" height="320" rx="8" fill="#101013" stroke="#303038" stroke-width="1"/>
+  <rect x="272" y="32" width="332" height="296" rx="4" fill="#0e0e10"/>
+  <!-- Two Suzanne shapes -->
+  <g opacity="0.1" fill="#a78bfa">
+    <ellipse cx="350" cy="180" rx="40" ry="40"/>
+    <ellipse cx="335" cy="155" rx="6" ry="4"/>
+    <ellipse cx="365" cy="155" rx="6" ry="4"/>
+    <ellipse cx="510" cy="180" rx="40" ry="40"/>
+    <ellipse cx="495" cy="155" rx="6" ry="4"/>
+    <ellipse cx="525" cy="155" rx="6" ry="4"/>
+  </g>
+  <!-- Label on result -->
+  <rect x="420" y="290" width="64" height="18" rx="4" fill="#1c1c20" stroke="#303038"/>
+  <text x="452" y="302" text-anchor="middle" fill="#71717a" font-family="system-ui" font-size="7">COMPOSED</text>
+  <!-- Labels -->
+  <text x="32" y="14" fill="#b794f6" font-family="system-ui" font-size="11" font-weight="600">COMPOSITION LAYER STACK</text>
+</svg>

@@ -7,6 +7,8 @@
 #include <cmath>
 #include <limits>
 
+#include "../safe-arithmetic.hh"
+
 namespace tinyusdz {
 namespace tydra {
 
@@ -114,47 +116,60 @@ bool RaytracingScene::build_acceleration_structure(
 }
 
 size_t RaytracingScene::estimate_memory_usage() const {
+  // Safe estimation using saturating arithmetic: on overflow a contribution
+  // is skipped rather than producing a silently-wrapped (under-)estimate.
   size_t total = 0;
+  auto add_size = [&total](size_t count, size_t elem_size) {
+    size_t bytes;
+    if (safe::mul(count, elem_size, &bytes)) {
+      size_t sum;
+      if (safe::add(total, bytes, &sum)) total = sum;
+    }
+  };
+  auto add_val = [&total](size_t val) {
+    size_t sum;
+    if (safe::add(total, val, &sum)) total = sum;
+  };
 
   // Geometries
   for (const auto& geom : geometries) {
-    total += geom.vertices.size() * sizeof(vec3);
-    total += geom.indices.size() * sizeof(uint32_t);
-    total += geom.normals.size() * sizeof(vec3);
-    total += geom.texcoords0.size() * sizeof(vec2);
-    total += geom.texcoords1.size() * sizeof(vec2);
-    total += geom.colors.size() * sizeof(vec4);
-    total += geom.tangents.size() * sizeof(vec4);
-    total += geom.material_ids.size() * sizeof(uint32_t);
-    total += geom.face_normals.size() * sizeof(vec3);
-    total += geom.joint_indices.size() * sizeof(vec4);
-    total += geom.joint_weights.size() * sizeof(vec4);
+    add_size(geom.vertices.size(), sizeof(vec3));
+    add_size(geom.indices.size(), sizeof(uint32_t));
+    add_size(geom.normals.size(), sizeof(vec3));
+    add_size(geom.texcoords0.size(), sizeof(vec2));
+    add_size(geom.texcoords1.size(), sizeof(vec2));
+    add_size(geom.colors.size(), sizeof(vec4));
+    add_size(geom.tangents.size(), sizeof(vec4));
+    add_size(geom.material_ids.size(), sizeof(uint32_t));
+    add_size(geom.face_normals.size(), sizeof(vec3));
+    add_size(geom.joint_indices.size(), sizeof(vec4));
+    add_size(geom.joint_weights.size(), sizeof(vec4));
   }
 
   // Materials
-  total += materials.size() * sizeof(RTMaterial);
+  add_size(materials.size(), sizeof(RTMaterial));
 
   // Lights
   for (const auto& light : lights) {
-    total += sizeof(RTLight);
+    add_val(sizeof(RTLight));
     if (light.envmap_sampling.has_value()) {
       const auto& sampling = light.envmap_sampling.value();
-      total += sampling.cdf.size() * sizeof(float);
-      total += sampling.pdf.size() * sizeof(float);
+      add_size(sampling.cdf.size(), sizeof(float));
+      add_size(sampling.pdf.size(), sizeof(float));
     }
   }
 
   // Instances
-  total += instances.size() * sizeof(RTInstance);
+  add_size(instances.size(), sizeof(RTInstance));
   for (const auto& inst : instances) {
-    total += inst.material_overrides.size() * sizeof(uint32_t);
+    add_size(inst.material_overrides.size(), sizeof(uint32_t));
   }
 
   // Cameras
-  total += cameras.size() * sizeof(RTCamera);
+  add_size(cameras.size(), sizeof(RTCamera));
 
   // Acceleration structure
-  total += accel_structure.stats.memory_bytes;
+  add_val(accel_structure.stats.memory_bytes);
 
   return total;
 }

@@ -24,13 +24,18 @@ static void StageIter_dealloc(PyObject* self) {
 
 static int stageiter_push(TusdStageIter* it, tusd_prim prim) {
   if (it->top == it->cap) {
-    Py_ssize_t newcap = it->cap ? it->cap * 2 : 64;
+    size_t newcap = it->cap ? (size_t)it->cap * 2 : 64;
+    if (newcap > SIZE_MAX / sizeof(tusd_prim)) {
+      PyErr_NoMemory();
+      return -1;
+    }
     tusd_prim* mem = (tusd_prim*)PyMem_Realloc(
-        it->stack, (size_t)newcap * sizeof(tusd_prim));
+        it->stack, newcap * sizeof(tusd_prim));
     if (!mem) {
       PyErr_NoMemory();
       return -1;
     }
+    it->cap = (Py_ssize_t)newcap;
     it->stack = mem;
     it->cap = newcap;
   }
