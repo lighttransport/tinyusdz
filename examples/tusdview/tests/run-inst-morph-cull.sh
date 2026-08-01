@@ -32,7 +32,16 @@ if [ ! -x "$TUSDVIEW" ]; then
   exit $SKIP
 fi
 
-OUT="$(mktemp -d)/inst_morph_cull.png"
+TMP_DIR="$(mktemp -d)"
+OUT="$TMP_DIR/inst_morph_cull.png"
+
+# Pin the window size. Without it the window falls back to whatever the display
+# offers, and under xvfb-run that leaves a ~32px-wide 3D viewport once the
+# docked panels take their share -- narrow enough that the instances fall
+# outside the frustum and are (correctly) culled, so the stat this test asserts
+# reflects the window geometry rather than the culling logic under test.
+CONFIG="$TMP_DIR/config.json"
+printf '%s\n' '{"window_size":{"width":800,"height":600}}' > "$CONFIG"
 RUN=()
 if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
   RUN=(xvfb-run -a)
@@ -40,8 +49,8 @@ fi
 
 # --frames loads synchronously (deterministic); the morph weight is 1.0 (static),
 # so no timeline is needed -- this exercises the culling path at full morph.
-LOG="$("${RUN[@]}" "$TUSDVIEW" --backend "$BACKEND" --next --frames 4 \
-       --screenshot "$OUT" "$ASSET" 2>&1)"
+LOG="$("${RUN[@]}" "$TUSDVIEW" --backend "$BACKEND" --next --config "$CONFIG" \
+       --frames 4 --screenshot "$OUT" "$ASSET" 2>&1)"
 echo "$LOG"
 
 if ! echo "$LOG" | grep -q "render stats"; then
