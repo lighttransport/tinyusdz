@@ -256,6 +256,79 @@ PY
     echo "ibl: ok (${frac} cpu-vs-gl, --no-ibl changes ${d})"
   fi
 
+  # 4f. Alpha modes. Two separate bars, because the two are not equally hard:
+  #     non-overlapping surfaces are pure mode correctness and must match
+  #     tightly, while overlapping blended ones are resolved by sorting in GL
+  #     and by walking the ray on the CPU, which cannot agree pixel-for-pixel.
+  ALPHA="$ROOT/models/tusdquicklook-alpha-modes.usda"
+  if command -v python3 >/dev/null 2>&1 && [ -f "$DIFF_PY" ] && [ -f "$ALPHA" ]; then
+    for backend in cpu gl; do
+      "$BIN" "$ALPHA" --backend "$backend" --screenshot "$OUT/al_$backend.png" \
+        --size 700x400 --frames 6 >/dev/null 2>&1 \
+        || fail "alpha modes --backend $backend: non-zero exit"
+    done
+    frac="$(python3 "$DIFF_PY" "$OUT/al_cpu.png" "$OUT/al_gl.png")"
+    awk -v f="$frac" 'BEGIN { exit !(f <= 0.05) }' \
+      || fail "alpha modes: cpu and gl disagree over ${frac}"
+
+    # A cutout below its threshold must render as if the surface were not in
+    # the scene at all. Comparing against a variant with the mesh removed says
+    # exactly that, with no dependence on where the quad lands on screen.
+    #
+    # The baseline is re-rendered from a copy inside $OUT: pngdiff excludes the
+    # file list and the status bar but NOT the toolbar, which shows the current
+    # directory, so comparing a render from models/ against one from $OUT would
+    # differ by the caption alone.
+    cp "$ALPHA" "$OUT/alpha-full.usda"
+    "$BIN" "$OUT/alpha-full.usda" --backend cpu \
+      --screenshot "$OUT/al_full.png" --size 700x400 --frames 6 \
+      >/dev/null 2>&1 || fail "alpha baseline: non-zero exit"
+    python3 - "$ALPHA" "$OUT/alpha-no-below.usda" "$OUT/alpha-below-opaque.usda" <<'PY'
+import re, sys
+src = open(sys.argv[1]).read()
+# Drop the CutoutBelow mesh entirely.
+removed = re.sub(r'\n    def Mesh "CutoutBelow"\n    \{.*?\n    \}\n', '\n',
+                 src, count=1, flags=re.S)
+if removed == src:
+    raise SystemExit('could not remove CutoutBelow mesh')
+open(sys.argv[2], 'w').write(removed)
+# Same asset, but that material's opacity now clears the threshold.
+raised = src.replace('float inputs:opacity = 0.2', 'float inputs:opacity = 0.9')
+if raised == src:
+    raise SystemExit('could not raise CutoutBelow opacity')
+open(sys.argv[3], 'w').write(raised)
+PY
+    for variant in no-below below-opaque; do
+      "$BIN" "$OUT/alpha-$variant.usda" --backend cpu \
+        --screenshot "$OUT/al_$variant.png" --size 700x400 --frames 6 \
+        >/dev/null 2>&1 || fail "alpha variant $variant: non-zero exit"
+    done
+    d="$(python3 "$DIFF_PY" "$OUT/al_full.png" "$OUT/al_no-below.png")"
+    awk -v f="$d" 'BEGIN { exit !(f == 0) }' \
+      || fail "cutout below threshold is visible (differs from absent by ${d})"
+    d2="$(python3 "$DIFF_PY" "$OUT/al_full.png" "$OUT/al_below-opaque.png")"
+    awk -v f="$d2" 'BEGIN { exit !(f > 0.0) }' \
+      || fail "opacityThreshold ignored: raising opacity changed nothing"
+    echo "alpha modes: ok (${frac} cpu-vs-gl, cutout==absent, threshold honored)"
+  fi
+
+  # Overlapping blended surfaces: sort order vs layered accumulation.
+  OVL="$ROOT/models/tusdview-transparency.usda"
+  if command -v python3 >/dev/null 2>&1 && [ -f "$DIFF_PY" ] && [ -f "$OVL" ]; then
+    for backend in cpu gl; do
+      # 480x360 to match the background reference the geometry check uses.
+      "$BIN" "$OVL" --backend "$backend" --screenshot "$OUT/ov_$backend.png" \
+        --size 480x360 --frames 6 >/dev/null 2>&1 \
+        || fail "overlapping blend --backend $backend: non-zero exit"
+      check_renders_geometry "$OUT/ov_$backend.png" "$OUT/bg.png" 0.03 \
+        "blend backend=$backend"
+    done
+    frac="$(python3 "$DIFF_PY" "$OUT/ov_cpu.png" "$OUT/ov_gl.png")"
+    awk -v f="$frac" 'BEGIN { exit !(f <= 0.20) }' \
+      || fail "overlapping blend: cpu and gl disagree over ${frac} (limit 0.20)"
+    echo "overlapping blend: ok (${frac} of viewport differs, limit 0.20)"
+  fi
+
   # The thread-count independence must hold in a debug mode too. Pin the CPU
   # backend: worker threads are a CPU-tracer concept, and letting `auto` choose
   # would compare two GL images (or one of each, if a GL context happens to
