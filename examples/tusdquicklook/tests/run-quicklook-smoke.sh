@@ -66,8 +66,7 @@ i=0
 rendered=0
 for asset in \
     "$ROOT/models/cube-previewsurface.usda" \
-    "$ROOT/models/suzanne-pbr.usda" \
-    "$ROOT/data/ball_basketball_realistic.usdz" ; do
+    "$ROOT/models/suzanne-pbr.usda" ; do
   [ -f "$asset" ] || continue
   i=$((i + 1))
   name="asset$i"
@@ -80,8 +79,45 @@ done
 
 # 3. Budget degradation: a tight cap must still exit 0 and stay under the cap,
 #    reporting the refusal rather than crashing or being OOM-killed.
-if [ -f "$ROOT/data/ball_basketball_realistic.usdz" ]; then
-  "$BIN" "$ROOT/data/ball_basketball_realistic.usdz" --max-mem 8 \
+#
+#    The asset is generated rather than checked in. It has to be big enough to
+#    bust an 8 MB budget, and the largest tracked model (suzanne-pbr, 623 KB)
+#    fits inside one -- which would leave this check passing while proving
+#    nothing. A ~3 MB grid projects to ~39 MB and is refused pre-open, which is
+#    the rung of the ladder worth asserting.
+BIG="$OUT/big-grid.usda"
+if command -v python3 >/dev/null 2>&1; then
+  python3 - "$BIG" <<'PY'
+import sys
+N = 180  # N*N verts, (N-1)^2*2 tris
+pts, sts, idx = [], [], []
+for j in range(N):
+    for i in range(N):
+        x = i / (N - 1) * 2 - 1
+        z = j / (N - 1) * 2 - 1
+        y = 0.025 * ((x * 3) ** 2 - (z * 3) ** 2)
+        pts.append(f"({x:.5f}, {y:.5f}, {z:.5f})")
+        sts.append(f"({i/(N-1):.5f}, {j/(N-1):.5f})")
+for j in range(N - 1):
+    for i in range(N - 1):
+        a = j * N + i; b = a + 1; c = a + N; d = c + 1
+        idx += [a, b, d, a, d, c]
+open(sys.argv[1], "w").write(f"""#usda 1.0
+(defaultPrim = "W" upAxis = "Y")
+def Xform "W" {{
+  def Mesh "Grid" {{
+    int[] faceVertexCounts = [{", ".join(["3"] * (len(idx)//3))}]
+    int[] faceVertexIndices = [{", ".join(map(str, idx))}]
+    point3f[] points = [{", ".join(pts)}]
+    texCoord2f[] primvars:st = [{", ".join(sts)}] (interpolation = "vertex")
+  }}
+}}
+""")
+PY
+fi
+
+if [ -f "$BIG" ]; then
+  "$BIN" "$BIG" --max-mem 8 \
     --screenshot "$OUT/tight.png" --size 400x240 >/dev/null \
     || fail "tight budget: non-zero exit (should degrade, not fail)"
   check_png "$OUT/tight.png" "tight-budget"
@@ -92,10 +128,9 @@ fi
 #     and require it to stay within a generous multiple of the cap -- generous
 #     because the cap governs tracked preview data, while RSS also carries the
 #     binary, the allocator and the embedded font.
-if command -v /usr/bin/time >/dev/null 2>&1 && \
-   [ -f "$ROOT/data/ball_basketball_realistic.usdz" ]; then
+if command -v /usr/bin/time >/dev/null 2>&1 && [ -f "$BIG" ]; then
   /usr/bin/time -f '%M' -o "$OUT/rss.txt" \
-    "$BIN" "$ROOT/data/ball_basketball_realistic.usdz" --max-mem 128 \
+    "$BIN" "$BIG" --max-mem 128 \
     --screenshot "$OUT/capped.png" --size 480x360 --frames 4 >/dev/null \
     || fail "capped run: non-zero exit"
   peak_kb="$(tail -n1 "$OUT/rss.txt" | tr -dc '0-9')"
