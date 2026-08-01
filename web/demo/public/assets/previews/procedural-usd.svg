@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#18181b"/>
+  <!-- Editor panel -->
+  <rect x="24" y="20" width="280" height="320" rx="8" fill="#202025" stroke="#303038" stroke-width="1"/>
+  <rect x="36" y="32" width="256" height="24" rx="4" fill="#1c1c20" stroke="#303038"/>
+  <text x="44" y="48" fill="#71717a" font-family="system-ui" font-size="8">Templates:</text>
+  <rect x="100" y="36" width="80" height="16" rx="3" fill="#303038"/>
+  <text x="144" y="48" text-anchor="middle" fill="#a0a0a8" font-family="system-ui" font-size="7">Cube + Sphere</text>
+  <rect x="186" y="36" width="42" height="16" rx="3" fill="#b794f6"/>
+  <text x="207" y="48" text-anchor="middle" fill="#121214" font-family="system-ui" font-size="7" font-weight="700">Load</text>
+  <!-- Code lines -->
+  <text x="40" y="72" fill="#f2c879" font-family="monospace" font-size="7">{</text>
+  <text x="44" y="84" fill="#5eead4" font-family="monospace" font-size="7">"materials": {</text>
+  <text x="52" y="96" fill="#f08a8a" font-family="monospace" font-size="7">"red": {</text>
+  <text x="60" y="108" fill="#b794f6" font-family="monospace" font-size="7">"color": [1, 0.2, 0.2],</text>
+  <text x="60" y="120" fill="#b794f6" font-family="monospace" font-size="7">"roughness": 0.3</text>
+  <text x="52" y="132" fill="#f08a8a" font-family="monospace" font-size="7">},</text>
+  <text x="44" y="144" fill="#5eead4" font-family="monospace" font-size="7">"prims": [</text>
+  <text x="52" y="156" fill="#f2c879" font-family="monospace" font-size="7">{ "type": "Mesh",</text>
+  <text x="60" y="168" fill="#b794f6" font-family="monospace" font-size="7">"shape": "cube",</text>
+  <text x="60" y="180" fill="#b794f6" font-family="monospace" font-size="7">"material": "red"</text>
+  <text x="52" y="192" fill="#f2c879" font-family="monospace" font-size="7">}</text>
+  <text x="44" y="204" fill="#5eead4" font-family="monospace" font-size="7">]</text>
+  <text x="40" y="216" fill="#f2c879" font-family="monospace" font-size="7">}</text>
+  <!-- Viewport -->
+  <rect x="320" y="20" width="296" height="320" rx="8" fill="#101013" stroke="#303038" stroke-width="1"/>
+  <rect x="332" y="32" width="272" height="248" rx="4" fill="#0e0e10"/>
+  <!-- Red cube + blue sphere -->
+  <rect x="350" y="160" width="36" height="36" rx="4" fill="#f05a5a" opacity=".5"/>
+  <circle cx="450" cy="170" r="20" fill="#5a7aff" opacity=".4"/>
+  <!-- Stats bar -->
+  <rect x="332" y="288" width="272" height="32" rx="4" fill="#1c1c20" stroke="#303038" stroke-width=".5"/>
+  <text x="346" y="308" fill="#71717a" font-family="system-ui" font-size="8">Meshes: 3</text>
+  <text x="432" y="308" fill="#71717a" font-family="system-ui" font-size="8">Mats: 2</text>
+  <text x="510" y="308" fill="#71717a" font-family="system-ui" font-size="8">Tris: 4.2K</text>
+  <text x="580" y="308" fill="#34d399" font-family="system-ui" font-size="8">60</text>
+  <text x="32" y="14" fill="#b794f6" font-family="system-ui" font-size="11" font-weight="600">PROCEDURAL USD BUILDER</text>
+</svg>

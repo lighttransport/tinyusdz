@@ -96,6 +96,130 @@ export const DEMOS = [
     enableExport: true,
     image: './assets/previews/export.jpg',
     href: './export.html'
+  },
+  {
+    id: 'usd-assets',
+    title: 'USD Assets Browser',
+    subtitle: 'Browse and preview curated USD assets from the usd-wg/assets corpus over HTTP.',
+    defaultAsset: '',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-assets.svg',
+    href: './usd-assets.html'
+  },
+  {
+    id: 'usd-physics',
+    title: 'USD Physics + MuJoCo',
+    subtitle: 'Simulates a USD physics robotic arm with MuJoCo WASM physics. Interactive joint servo control.',
+    defaultAsset: './assets/physics-robot-arm.usda',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-physics.svg',
+    href: './usd-physics.html'
+  },
+  {
+    id: 'material-editor',
+    title: 'Material Editor',
+    subtitle: 'Load a USD scene and edit PBR material parameters (color, metalness, roughness, clearcoat, IOR) in real time.',
+    defaultAsset: './assets/suzanne-pbr.usda',
+    preferredMaterialType: 'usdpreviewsurface',
+    image: './assets/previews/material-editor.svg',
+    href: './material-editor.html'
+  },
+  {
+    id: 'animation-timeline',
+    title: 'Animation Timeline',
+    subtitle: 'Scrub through USD skeletal and node animations with play/pause, speed control, clip switching, and looping.',
+    defaultAsset: './assets/multi-clip-skeleton.usda',
+    preferredMaterialType: 'auto',
+    enableSkinning: true,
+    showSkeleton: true,
+    enableAnimation: true,
+    image: './assets/previews/animation-timeline.svg',
+    href: './animation-timeline.html'
+  },
+  {
+    id: 'usd-inspector',
+    title: 'USD Inspector',
+    subtitle: 'Explore USD scene structure: prim hierarchy tree, stage metadata, mesh properties, and material parameters.',
+    defaultAsset: './assets/suzanne-pbr.usda',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-inspector.svg',
+    href: './usd-inspector.html'
+  },
+  {
+    id: 'composition-viz',
+    title: 'Composition Layer Viz',
+    subtitle: 'Visualizes how USD composition arcs (subLayers, references, payloads, overrides) stack to produce the final scene.',
+    defaultAsset: './assets/usd-composite-sample.usda',
+    preferredMaterialType: 'auto',
+    useComposition: true,
+    image: './assets/previews/composition-viz.svg',
+    href: './composition-viz.html'
+  },
+  {
+    id: 'streaming-viz',
+    title: 'Streaming Loading Viz',
+    subtitle: 'Visualizes WASM heap timeline, HTTP fetch waterfall, and per-phase memory breakdown during USD asset loading.',
+    defaultAsset: '',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/streaming-viz.svg',
+    href: './streaming-viz.html'
+  },
+  {
+    id: 'viewer-toolkit',
+    title: 'Viewer Toolkit',
+    subtitle: 'Full-featured USD viewer with wireframe/flat/shaded/textured modes, exposure control, wireframe overlay, backface culling, and display toggles.',
+    defaultAsset: './assets/suzanne-pbr.usda',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/viewer-toolkit.svg',
+    href: './viewer-toolkit.html'
+  },
+  {
+    id: 'animation-blending',
+    title: 'Animation Blending',
+    subtitle: 'Crossfade and blend between USD skeletal animation clips with per-clip weights, timeline scrub, and smooth transitions.',
+    defaultAsset: './assets/multi-clip-skeleton.usda',
+    preferredMaterialType: 'auto',
+    enableSkinning: true,
+    showSkeleton: true,
+    enableAnimation: true,
+    image: './assets/previews/animation-blending.svg',
+    href: './animation-blending.html'
+  },
+  {
+    id: 'procedural-usd',
+    title: 'Procedural USD Builder',
+    subtitle: 'Build USD scenes from JSON with a library of shapes (cube, sphere, cylinder, cone, torus, capsule) and materials.',
+    defaultAsset: '',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/procedural-usd.svg',
+    href: './procedural-usd.html'
+  },
+  {
+    id: 'usdz-packager',
+    title: 'USDZ Packager',
+    subtitle: 'Load a USD scene, inspect embedded textures and assets, and export as USDA, USDC, or USDZ with size breakdown.',
+    defaultAsset: './assets/suzanne-pbr.usda',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usdz-packager.svg',
+    href: './usdz-packager.html'
+  },
+  {
+    id: 'usd-diff',
+    title: 'USD Diff',
+    subtitle: 'Compare two USD files side by side with synchronized camera and detailed metric differences.',
+    defaultAsset: '',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/usd-diff.svg',
+    href: './usd-diff.html'
+  },
+  {
+    id: 'backend-compare',
+    title: 'Backend Comparison',
+    subtitle: 'Compare legacy vs next rendering backends side by side with synchronized cameras and per-backend stats.',
+    defaultAsset: './assets/suzanne-pbr.usda',
+    preferredMaterialType: 'auto',
+    image: './assets/previews/backend-compare.svg',
+    href: './backend-compare.html'
   }
 ];
 

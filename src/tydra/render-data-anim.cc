@@ -690,9 +690,16 @@ bool RenderSceneConverter::LoadValueClipLayer(
     return false;
   }
 
-  const std::string resolved_asset_path = env.asset_resolver.resolve(assetPath);
+  const std::string sanitized = utils::SanitizeAssetPath(
+      assetPath, env.asset_resolver.get_allow_parent_relative_paths());
+  if (sanitized.empty()) {
+    PUSH_WARN(fmt::format("Unsafe clip layer asset path: {}", assetPath));
+    return false;
+  }
+
+  const std::string resolved_asset_path = env.asset_resolver.resolve(sanitized);
   if (resolved_asset_path.empty()) {
-    PUSH_WARN(fmt::format("Failed to resolve clip layer asset path: {}", assetPath));
+    PUSH_WARN(fmt::format("Failed to resolve clip layer asset path: {}", sanitized));
     return false;
   }
 
@@ -737,9 +744,16 @@ bool RenderSceneConverter::LoadValueClipStage(
     return false;
   }
 
-  const std::string resolved_asset_path = env.asset_resolver.resolve(assetPath);
+  const std::string sanitized = utils::SanitizeAssetPath(
+      assetPath, env.asset_resolver.get_allow_parent_relative_paths());
+  if (sanitized.empty()) {
+    PUSH_WARN(fmt::format("Unsafe clip stage asset path: {}", assetPath));
+    return false;
+  }
+
+  const std::string resolved_asset_path = env.asset_resolver.resolve(sanitized);
   if (resolved_asset_path.empty()) {
-    PUSH_WARN(fmt::format("Failed to resolve clip stage asset path: {}", assetPath));
+    PUSH_WARN(fmt::format("Failed to resolve clip stage asset path: {}", sanitized));
     return false;
   }
 
@@ -1516,7 +1530,11 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
     }
 
     if (env.scene_config.value_clip_sample_rate > 0.0f && has_range) {
-      double dt = 1.0 / double(env.scene_config.value_clip_sample_rate);
+      double sample_rate = double(env.scene_config.value_clip_sample_rate);
+      if (sample_rate <= 0.0) {
+        return false;
+      }
+      double dt = 1.0 / sample_rate;
       if (dt > 0.0) {
         for (double t = start_t; t <= end_t + dt * 0.5; t += dt) {
           double clamped_t = (t > end_t) ? end_t : t;

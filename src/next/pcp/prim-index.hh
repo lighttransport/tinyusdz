@@ -199,6 +199,7 @@ struct CompositionOptions {
   // concatenation; an identically-authored arc in two sublayers expands twice).
   bool apply_list_ops = true;
   int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).
+                                   // -1 => auto (hardware_concurrency when threads exist)
 
   // Per-layer file/input memory cap for layers loaded by the compositor
   // (sublayers, references, payloads). 0 = no limit.

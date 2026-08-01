@@ -133,6 +133,9 @@ struct AnimationConfig {
   // supplied by the application so the converter remains filesystem- and
   // archive-agnostic.
   bool bake_value_clips = true;
+  // Enable animation extraction. Disable this for static-scene pipelines to
+  // avoid per-prim time-sample scans when animations are not needed.
+  bool enabled = true;
   using ClipStageLoader = std::function<bool(
       const std::string& asset_path, ::tinyusdz::next::Stage* stage,
       std::string* warn, std::string* err)>;

@@ -941,6 +941,7 @@ void EncodeBC3AlphaBlock(const uint8_t rgba[16][4], uint8_t* out) {
 }
 #endif  // !TUSDVIEW_WITH_TEXTOOLS
 
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
 // Resolve a requested compression mode to a concrete block format the device
 // can actually sample, given its capabilities. `opaque` only affects the BCn
 // (BC1 vs BC3) auto choice; ASTC/ETC2/BC7 carry alpha regardless. Falls back
@@ -990,6 +991,7 @@ DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
   }
   return DrawCompressedFormat::None;
 }
+#endif  // TUSDVIEW_WITH_TEXTOOLS
 
 bool EncodeBCn(const light3d::Image& img, bool srgb,
                TextureCompressionMode mode, const TextureCompressCaps& caps,

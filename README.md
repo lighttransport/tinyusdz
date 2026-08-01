@@ -130,18 +130,26 @@ environment in addition to memory limits.
 
 ## Documentation
 
+- [doc/README.md](doc/README.md): index of all documentation.
 - [doc/api-status.md](doc/api-status.md): OpenUSD schema coverage.
 - [doc/composition.md](doc/composition.md): composition (LIVRPS arcs), instancing, and variants.
 - [doc/pcp.md](doc/pcp.md): composition-graph engine API reference.
-- [doc/timesamples.md](doc/timesamples.md): time-sample evaluation.
+- [doc/instancing.md](doc/instancing.md): OpenUSD instancing model and the island-scaling plan.
+- [doc/timesamples.md](doc/timesamples.md): time-sample evaluation and deduplication.
 - [doc/usdLux.md](doc/usdLux.md): lighting schemas and Tydra conversion.
 - [doc/usd-physics.md](doc/usd-physics.md): UsdPhysics, MuJoCo, and Newton support.
 - [doc/materialx.md](doc/materialx.md): MaterialX and OpenPBR material support.
 - [doc/skinning.md](doc/skinning.md): skeletal animation and skinning.
 - [doc/tydra-tangent.md](doc/tydra-tangent.md): tangent generation.
 - [doc/memory-and-performance.md](doc/memory-and-performance.md): memory profile and performance notes.
+- [doc/benchmarks.md](doc/benchmarks.md): Island and mid-scale scene benchmarks.
+- [doc/large-scene.md](doc/large-scene.md): loading 10-20 GB production scenes within a RAM budget.
+- [doc/sanitizers.md](doc/sanitizers.md): ASan/TSan build and run notes.
+- [doc/refactor-next.md](doc/refactor-next.md): `src/next` optimization and hardening roadmap.
 - [doc/mcp.md](doc/mcp.md): MCP server work.
 - [doc/ci.md](doc/ci.md): release and publishing notes.
+
+Completed or superseded documents live in [doc/archive/](doc/archive/).
 
 ## License
 

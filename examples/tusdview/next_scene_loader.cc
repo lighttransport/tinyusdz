@@ -2448,6 +2448,7 @@ bool EndsWithPtx(const std::string& s) {
          std::tolower(static_cast<unsigned char>(s[s.size() - 1])) == 'x';
 }
 
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
 // Resolve `rel` (a companion named relative to the same layer as the texture)
 // against an already-resolved sibling asset path.
 std::string ResolveSiblingAsset(const std::string& resolved,
@@ -2458,6 +2459,7 @@ std::string ResolveSiblingAsset(const std::string& resolved,
   if (p == std::string::npos) return rel;
   return resolved.substr(0, p + 1) + rel;
 }
+#endif  // TUSDVIEW_WITH_TEXTOOLS
 
 // Decode an asset into an RGBA8 light3d::Image through the shared decoder.
 bool DecodeNextImage(NextTexCache& tc, const std::string& asset,

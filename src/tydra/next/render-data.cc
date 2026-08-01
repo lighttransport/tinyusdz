@@ -6,6 +6,8 @@
 #include "render-data.hh"
 #include <cmath>
 
+#include "safe-arithmetic.hh"
+
 namespace tinyusdz {
 namespace tydra {
 namespace next {
@@ -13,13 +15,19 @@ namespace {
 
 template <typename T>
 size_t VectorBytes(const std::vector<T>& v) {
-  return v.capacity() * sizeof(T);
+  size_t bytes;
+  if (!safe::mul(v.capacity(), sizeof(T), &bytes)) return 0;
+  return bytes;
 }
 
 size_t StringVectorBytes(const std::vector<std::string>& v) {
-  size_t total = v.capacity() * sizeof(std::string);
+  size_t cap_bytes;
+  if (!safe::mul(v.capacity(), sizeof(std::string), &cap_bytes)) return 0;
+  size_t total = cap_bytes;
   for (const std::string& s : v) {
-    total += s.capacity();
+    size_t sum;
+    if (!safe::add(total, s.capacity(), &sum)) return total;
+    total = sum;
   }
   return total;
 }
@@ -287,16 +295,23 @@ size_t RenderScene::memory_usage() const {
     total += img.memory_usage();
   }
 
-  // Estimate for other containers
-  total += nodes.size() * sizeof(SceneNode);
-  total += point_instance_draws.size() * sizeof(RenderPointInstanceDraw);
-  total += materials.size() * sizeof(RenderMaterial);
-  total += textures.size() * sizeof(RenderTexture);
-  total += lights.size() * sizeof(RenderLight);
-  total += cameras.size() * sizeof(RenderCamera);
-  total += animations.size() * sizeof(AnimationClip);
-  total += skeletons.size() * sizeof(Skeleton);
-  total += unsupported_renderables.size() * sizeof(UnsupportedRenderable);
+  // Estimate for other containers (saturating on overflow)
+  auto add_size = [&total](size_t count, size_t elem_size) {
+    size_t bytes;
+    if (safe::mul(count, elem_size, &bytes)) {
+      size_t sum;
+      if (safe::add(total, bytes, &sum)) total = sum;
+    }
+  };
+  add_size(nodes.size(), sizeof(SceneNode));
+  add_size(point_instance_draws.size(), sizeof(RenderPointInstanceDraw));
+  add_size(materials.size(), sizeof(RenderMaterial));
+  add_size(textures.size(), sizeof(RenderTexture));
+  add_size(lights.size(), sizeof(RenderLight));
+  add_size(cameras.size(), sizeof(RenderCamera));
+  add_size(animations.size(), sizeof(AnimationClip));
+  add_size(skeletons.size(), sizeof(Skeleton));
+  add_size(unsupported_renderables.size(), sizeof(UnsupportedRenderable));
 
   return total;
 }

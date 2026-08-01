@@ -123,9 +123,15 @@ static int variants_from_dict(PyObject* dict, variant_overrides* v) {
   }
   Py_ssize_t n = PyDict_Size(dict);
   if (n <= 0) return 0;
-  v->sets = (const char**)PyMem_Malloc((size_t)n * sizeof(char*));
-  v->names = (const char**)PyMem_Malloc((size_t)n * sizeof(char*));
-  v->tmps = (PyObject**)PyMem_Malloc((size_t)n * 2 * sizeof(PyObject*));
+  size_t alloc_n = (size_t)n;
+  if (alloc_n > SIZE_MAX / sizeof(char*) ||
+      alloc_n > SIZE_MAX / sizeof(PyObject*) / 2) {
+    PyErr_NoMemory();
+    return -1;
+  }
+  v->sets = (const char**)PyMem_Malloc(alloc_n * sizeof(char*));
+  v->names = (const char**)PyMem_Malloc(alloc_n * sizeof(char*));
+  v->tmps = (PyObject**)PyMem_Malloc(alloc_n * 2 * sizeof(PyObject*));
   if (!v->sets || !v->names || !v->tmps) {
     PyMem_Free(v->sets);
     PyMem_Free(v->names);

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#18181b"/>
+  <!-- Viewport area -->
+  <rect x="24" y="20" width="592" height="270" rx="8" fill="#101013" stroke="#303038" stroke-width="1"/>
+  <!-- Skeleton figure -->
+  <g opacity="0.2" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round">
+    <circle cx="320" cy="120" r="20"/>
+    <line x1="320" y1="140" x2="320" y2="200"/>
+    <line x1="320" y1="165" x2="270" y2="145"/>
+    <line x1="320" y1="165" x2="370" y2="145"/>
+    <line x1="320" y1="200" x2="280" y2="250"/>
+    <line x1="320" y1="200" x2="360" y2="250"/>
+  </g>
+  <!-- Timeline bar -->
+  <rect x="24" y="300" width="592" height="40" rx="8" fill="#1c1c20" stroke="#303038" stroke-width="1"/>
+  <rect x="36" y="316" width="568" height="8" rx="4" fill="#26262c"/>
+  <rect x="36" y="316" width="280" height="8" rx="4" fill="#b794f6" opacity=".6"/>
+  <rect x="316" y="308" width="4" height="24" rx="2" fill="#b794f6"/>
+  <!-- Controls -->
+  <rect x="36" y="300" width="32" height="40" fill="transparent"/>
+  <polygon points="44,314 44,326 56,320" fill="#a0a0a8"/>
+  <text x="90" y="326" fill="#a0a0a8" font-family="system-ui" font-size="9">1.234s / 3.000s</text>
+  <text x="210" y="326" fill="#474751" font-family="system-ui" font-size="9">|</text>
+  <text x="220" y="326" fill="#a0a0a8" font-family="system-ui" font-size="9">Speed 1×</text>
+  <text x="310" y="326" fill="#a0a0a8" font-family="system-ui" font-size="9">Clip: Idle</text>
+  <!-- Frame markers -->
+  <g opacity="0.15">
+    <line x1="76" y1="316" x2="76" y2="324" stroke="#fff" stroke-width=".5"/>
+    <line x1="152" y1="316" x2="152" y2="324" stroke="#fff" stroke-width=".5"/>
+    <line x1="228" y1="316" x2="228" y2="324" stroke="#fff" stroke-width=".5"/>
+    <line x1="304" y1="316" x2="304" y2="324" stroke="#fff" stroke-width=".5"/>
+    <line x1="380" y1="316" x2="380" y2="324" stroke="#fff" stroke-width=".5"/>
+  </g>
+  <!-- Labels -->
+  <text x="32" y="14" fill="#38bdf8" font-family="system-ui" font-size="11" font-weight="600">ANIMATION TIMELINE</text>
+  <text x="440" y="326" fill="#34d399" font-family="system-ui" font-size="9">● Loop</text>
+  <text x="510" y="326" fill="#f59e0b" font-family="system-ui" font-size="9">● 3 clips</text>
+</svg>

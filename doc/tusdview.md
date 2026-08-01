@@ -133,9 +133,13 @@ tusdview emits forward-compatible optimized `compute_90` PTX instead; CUDA 12.x
 and older retain their highest supported architecture. This changes only the
 runtime-compiled CUDA tracer and does not affect Vulkan embedded SPIR-V.
 
-The **`tusdview-cuda-render`** ctest exercises this end-to-end; it SKIPs
-(return 77) when no NVIDIA device / NVRTC is available so non-NVIDIA CI stays
-green.
+The **`examples/tusdview/tests/run-cuda-render.sh`** harness exercises this
+end-to-end; it SKIPs (return 77) when no NVIDIA device / NVRTC is available so
+non-NVIDIA CI stays green. It is not a registered ctest — run it by hand:
+
+```sh
+TUSDVIEW=./build/tusdview examples/tusdview/tests/run-cuda-render.sh
+```
 
 When `--camera` selects an authored perspective camera with positive
 `focusDistance` and `fStop`, Vulkan ray query and the shared CUDA/HIP kernel use
@@ -166,13 +170,15 @@ needed). Like `--cuda`, the HIP path owns the screenshot and supports all
 ./build/tusdview --headless --hip --rt-samples 4 --frames 4 --screenshot aa.ppm model.usda
 ```
 
-The **`tusdview-hip-render`** ctest exercises this end-to-end; it SKIPs
-(return 77) when no AMD/ROCm device is available so non-AMD CI stays green.
-Verified on AMD Radeon RX 9070 XT (gfx1201).
+The **`examples/tusdview/tests/run-hip-render.sh`** harness exercises this
+end-to-end; it SKIPs (return 77) when no AMD/ROCm device is available so
+non-AMD CI stays green. Like the CUDA harness it is not a registered ctest:
 
 ```sh
-cd build && ctest -R tusdview-cuda-render --output-on-failure
+TUSDVIEW=./build/tusdview examples/tusdview/tests/run-hip-render.sh
 ```
+
+Verified on AMD Radeon RX 9070 XT (gfx1201).
 
 **Verified working — NVIDIA GeForce RTX 5060 Ti (Linux, driver `610.43.02`,
 NVRTC 12/13), 2026-06-28.** Renders the full scene (suzanne, 968 tris) non-blank

@@ -6,6 +6,7 @@
 #include "layer.hh"
 #include "../prim/identifier.hh"
 #include <algorithm>
+#include <unordered_set>
 
 namespace tinyusdz {
 namespace next {
@@ -94,19 +95,23 @@ void Layer::apply_namespace_ordering() {
                   const std::vector<PrimSpec>& prims) {
     if (!indices || order.empty() || indices->empty()) return;
     std::vector<uint32_t> result;
+    std::unordered_set<uint32_t> in_result;
     result.reserve(indices->size());
+    in_result.reserve(indices->size());
     for (const std::string& wanted : order) {
       for (uint32_t idx : *indices) {
         if (idx < prims.size() && prims[idx].name() == wanted &&
-            std::find(result.begin(), result.end(), idx) == result.end()) {
+            !in_result.count(idx)) {
           result.push_back(idx);
+          in_result.insert(idx);
           break;
         }
       }
     }
     for (uint32_t idx : *indices) {
-      if (std::find(result.begin(), result.end(), idx) == result.end()) {
+      if (!in_result.count(idx)) {
         result.push_back(idx);
+        in_result.insert(idx);
       }
     }
     *indices = std::move(result);

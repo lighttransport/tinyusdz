@@ -25,3 +25,5 @@ void security_merge_path_overflow_test(void);
 void security_safe_mul_add_tests(void);
 void security_unwrap_triple_delim_test(void);
 void security_is_safe_asset_path_test(void);
+void security_findfile_segment_traversal_test(void);
+void security_findfile_absolute_traversal_test(void);

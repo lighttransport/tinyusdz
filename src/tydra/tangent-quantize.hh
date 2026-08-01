@@ -41,6 +41,8 @@
 #include <vector>
 
 #include "value-types.hh"
+#include "../safe-arithmetic.hh"
+#include "../nonstd/expected.hpp"
 
 namespace tinyusdz {
 namespace tydra {
@@ -465,10 +467,11 @@ inline bool QuantizeNormalsSNorm16x3(
 inline VertexAttribute PackToVertexAttribute(
     const std::vector<PackedTangent1010102> &packed) {
   VertexAttribute attr;
+  size_t byte_size;
+  if (!safe::mul(packed.size(), sizeof(uint32_t), &byte_size)) return attr;
   attr.format = VertexAttributeFormat::Uint;
-  attr.data.resize(packed.size() * sizeof(uint32_t));
-  std::memcpy(attr.data.data(), packed.data(),
-              packed.size() * sizeof(uint32_t));
+  attr.data.resize(byte_size);
+  std::memcpy(attr.data.data(), packed.data(), byte_size);
   return attr;
 }
 
@@ -477,9 +480,11 @@ inline VertexAttribute PackToVertexAttribute(
 inline VertexAttribute PackToVertexAttribute(
     const std::vector<PackedTangentSNorm8x4> &packed) {
   VertexAttribute attr;
+  size_t byte_size;
+  if (!safe::mul(packed.size(), size_t(4), &byte_size)) return attr;
   attr.format = VertexAttributeFormat::Char4;
-  attr.data.resize(packed.size() * 4);
-  std::memcpy(attr.data.data(), packed.data(), packed.size() * 4);
+  attr.data.resize(byte_size);
+  std::memcpy(attr.data.data(), packed.data(), byte_size);
   return attr;
 }
 
@@ -488,10 +493,12 @@ inline VertexAttribute PackToVertexAttribute(
 inline VertexAttribute PackToVertexAttribute(
     const std::vector<PackedTangentFp16x4> &packed) {
   VertexAttribute attr;
+  size_t byte_size;
+  if (!safe::mul(packed.size(), sizeof(PackedTangentFp16x4), &byte_size))
+    return attr;
   attr.format = VertexAttributeFormat::Half4;
-  attr.data.resize(packed.size() * sizeof(PackedTangentFp16x4));
-  std::memcpy(attr.data.data(), packed.data(),
-              packed.size() * sizeof(PackedTangentFp16x4));
+  attr.data.resize(byte_size);
+  std::memcpy(attr.data.data(), packed.data(), byte_size);
   return attr;
 }
 
@@ -500,9 +507,11 @@ inline VertexAttribute PackToVertexAttribute(
 inline VertexAttribute PackNormalsToVertexAttribute(
     const std::vector<PackedNormalSNorm8x3> &packed) {
   VertexAttribute attr;
+  size_t byte_size;
+  if (!safe::mul(packed.size(), size_t(3), &byte_size)) return attr;
   attr.format = VertexAttributeFormat::Char3;
-  attr.data.resize(packed.size() * 3);
-  std::memcpy(attr.data.data(), packed.data(), packed.size() * 3);
+  attr.data.resize(byte_size);
+  std::memcpy(attr.data.data(), packed.data(), byte_size);
   return attr;
 }
 
@@ -511,10 +520,12 @@ inline VertexAttribute PackNormalsToVertexAttribute(
 inline VertexAttribute PackNormalsToVertexAttribute(
     const std::vector<PackedNormalSNorm16x3> &packed) {
   VertexAttribute attr;
+  size_t byte_size;
+  if (!safe::mul(packed.size(), sizeof(PackedNormalSNorm16x3), &byte_size))
+    return attr;
   attr.format = VertexAttributeFormat::Short3;
-  attr.data.resize(packed.size() * sizeof(PackedNormalSNorm16x3));
-  std::memcpy(attr.data.data(), packed.data(),
-              packed.size() * sizeof(PackedNormalSNorm16x3));
+  attr.data.resize(byte_size);
+  std::memcpy(attr.data.data(), packed.data(), byte_size);
   return attr;
 }
 

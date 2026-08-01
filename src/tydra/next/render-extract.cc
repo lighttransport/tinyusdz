@@ -158,7 +158,8 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
 }
 
 const ::tinyusdz::next::Value* ValueAtOrDefault(
-    const ::tinyusdz::next::UsdPrim& prim, const char* name, double time,
+    const ::tinyusdz::next::UsdPrim& prim,
+    const ::tinyusdz::next::PropNameId& name_id, double time,
     ::tinyusdz::next::Value* hold) {
   if (!std::isnan(time)) {
     // Linear interpolation between samples (pxr semantics). The interpolated
@@ -167,16 +168,17 @@ const ::tinyusdz::next::Value* ValueAtOrDefault(
     // read. A shared thread_local slot here previously dangled the first
     // view whenever a caller read two animated attributes before consuming
     // the first (e.g. TetMesh points + tetVertexIndices).
-    ::tinyusdz::next::Value v = prim.GetInterpolatedValue(name, time);
+    ::tinyusdz::next::Value v = prim.GetInterpolatedValue(name_id, time);
     if (!v.is_empty()) {
       *hold = std::move(v);
       return hold;
     }
-    if (const ::tinyusdz::next::Value* held = prim.GetValueAtTime(name, time)) {
+    if (const ::tinyusdz::next::Value* held =
+            prim.GetValueAtTime(name_id, time)) {
       return held;
     }
   }
-  return prim.GetPropertyValue(name);
+  return prim.GetPropertyValue(name_id);
 }
 
 }  // namespace
@@ -203,6 +205,12 @@ bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
                         RenderExtractResult* out) {
   if (!out) return false;
   *out = RenderExtractResult();
+  if (options.collect_records) {
+    const size_t estimated_records = stage.GetPrimCount();
+    if (estimated_records > 0) {
+      out->records.reserve(estimated_records);
+    }
+  }
   double identity[16];
   Identity(identity);
   for (const ::tinyusdz::next::UsdPrim& root : stage.GetRootPrims()) {
@@ -267,47 +275,110 @@ void CollectPrototypePaths(const ::tinyusdz::next::Stage& stage,
 }
 
 bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
-                    double time, ValueArrayRead<float>* out) {
+                  double time, ValueArrayRead<float>* out) {
+  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) {
+    return false;
+  }
+  return ReadFloatArray(prim, name_id, time, out);
+}
+
+bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim,
+                   const ::tinyusdz::next::PropNameId& name_id,
+                   double time, ValueArrayRead<float>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
+  const ::tinyusdz::next::Value* v =
+      ValueAtOrDefault(prim, name_id, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetFloatArrayView(*v, &out->scratch, &out->view);
 }
 
+bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+                    double time, ValueArrayRead<int64_t>* out) {
+  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) {
+    return false;
+  }
+  return ReadInt64Array(prim, name_id, time, out);
+}
+
 bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                   double time, ValueArrayRead<int32_t>* out) {
+  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) {
+    return false;
+  }
+  return ReadIntArray(prim, name_id, time, out);
+}
+
+bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim,
+                  const ::tinyusdz::next::PropNameId& name_id,
+                  double time, ValueArrayRead<int32_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
+  const ::tinyusdz::next::Value* v =
+      ValueAtOrDefault(prim, name_id, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetIntArrayView(*v, &out->scratch, &out->view);
 }
 
-bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
-                    double time, ValueArrayRead<int64_t>* out) {
+bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+                   double time, ValueArrayRead<uint32_t>* out) {
+  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) {
+    return false;
+  }
+  return ReadUIntArray(prim, name_id, time, out);
+}
+
+bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim,
+                   const ::tinyusdz::next::PropNameId& name_id,
+                   double time, ValueArrayRead<int64_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
+  const ::tinyusdz::next::Value* v =
+      ValueAtOrDefault(prim, name_id, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetInt64ArrayView(*v, &out->scratch, &out->view);
 }
 
-bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
-                   double time, ValueArrayRead<uint32_t>* out) {
+bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
+                     double time, ValueArrayRead<uint64_t>* out) {
+  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) {
+    return false;
+  }
+  return ReadUInt64Array(prim, name_id, time, out);
+}
+
+bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim,
+                  const ::tinyusdz::next::PropNameId& name_id, double time,
+                  ValueArrayRead<uint32_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
+  const ::tinyusdz::next::Value* v =
+      ValueAtOrDefault(prim, name_id, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetUIntArrayView(*v, &out->scratch, &out->view);
 }
 
-bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
-                     double time, ValueArrayRead<uint64_t>* out) {
+bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim,
+                    const ::tinyusdz::next::PropNameId& name_id, double time,
+                    ValueArrayRead<uint64_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->scratch.materialized);
+  const ::tinyusdz::next::Value* v =
+      ValueAtOrDefault(prim, name_id, time, &out->scratch.materialized);
   if (!v) return false;
   return ::tinyusdz::next::GetUInt64ArrayView(*v, &out->scratch, &out->view);
 }
 
 std::vector<float> ReadFloatArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
                                       const char* name, double time) {
+  ValueArrayRead<float> r;
+  if (!ReadFloatArray(prim, name, time, &r)) return {};
+  return std::vector<float>(r.begin(), r.end());
+}
+
+std::vector<float> ReadFloatArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                      const ::tinyusdz::next::PropNameId& name,
+                                      double time) {
   ValueArrayRead<float> r;
   if (!ReadFloatArray(prim, name, time, &r)) return {};
   return std::vector<float>(r.begin(), r.end());
@@ -320,8 +391,24 @@ std::vector<int32_t> ReadIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
   return std::vector<int32_t>(r.begin(), r.end());
 }
 
+std::vector<int32_t> ReadIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                      const ::tinyusdz::next::PropNameId& name,
+                                      double time) {
+  ValueArrayRead<int32_t> r;
+  if (!ReadIntArray(prim, name, time, &r)) return {};
+  return std::vector<int32_t>(r.begin(), r.end());
+}
+
 std::vector<int64_t> ReadInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
                                         const char* name, double time) {
+  ValueArrayRead<int64_t> r;
+  if (!ReadInt64Array(prim, name, time, &r)) return {};
+  return std::vector<int64_t>(r.begin(), r.end());
+}
+
+std::vector<int64_t> ReadInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                        const ::tinyusdz::next::PropNameId& name,
+                                        double time) {
   ValueArrayRead<int64_t> r;
   if (!ReadInt64Array(prim, name, time, &r)) return {};
   return std::vector<int64_t>(r.begin(), r.end());
@@ -334,8 +421,24 @@ std::vector<uint32_t> ReadUIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
   return std::vector<uint32_t>(r.begin(), r.end());
 }
 
+std::vector<uint32_t> ReadUIntArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                        const ::tinyusdz::next::PropNameId& name,
+                                        double time) {
+  ValueArrayRead<uint32_t> r;
+  if (!ReadUIntArray(prim, name, time, &r)) return {};
+  return std::vector<uint32_t>(r.begin(), r.end());
+}
+
 std::vector<uint64_t> ReadUInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
                                           const char* name, double time) {
+  ValueArrayRead<uint64_t> r;
+  if (!ReadUInt64Array(prim, name, time, &r)) return {};
+  return std::vector<uint64_t>(r.begin(), r.end());
+}
+
+std::vector<uint64_t> ReadUInt64ArrayCopy(const ::tinyusdz::next::UsdPrim& prim,
+                                          const ::tinyusdz::next::PropNameId& name,
+                                          double time) {
   ValueArrayRead<uint64_t> r;
   if (!ReadUInt64Array(prim, name, time, &r)) return {};
   return std::vector<uint64_t>(r.begin(), r.end());

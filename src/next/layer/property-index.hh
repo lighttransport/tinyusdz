@@ -73,6 +73,10 @@ public:
   void freeze();
   void unfreeze();
 
+  /// True while the table is frozen for lock-free concurrent reads. No-op
+  /// (always false) in non-threaded builds, where freeze() is a no-op.
+  bool is_frozen() const;
+
   // Common property name IDs (pre-registered for O(1) access)
   PropNameId id_points;       // "points"
   PropNameId id_normals;      // "normals"

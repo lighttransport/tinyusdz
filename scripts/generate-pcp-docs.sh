@@ -9,7 +9,8 @@
 #
 # Options:
 #   -i, --input FILE      Input markdown file (default: ../doc/pcp.md)
-#   -o, --output FILE     Output HTML file (default: ../doc/pcp.html)
+#   -o, --output FILE     Output HTML file (default: ../doc/pcp.html;
+#                         the generated file is a build artifact — gitignore it)
 #   -t, --title TITLE     HTML document title
 #   -h, --help            Show this help message
 #   -v, --verbose         Enable verbose output
@@ -37,7 +38,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Default values
 INPUT_FILE="${PROJECT_ROOT}/doc/pcp.md"
-OUTPUT_FILE="${PROJECT_ROOT}/doc/static/pcp.html"
+OUTPUT_FILE="${PROJECT_ROOT}/doc/pcp.html"
 TITLE="PCP API Documentation"
 VERBOSE=0
 WATCH_MODE=0

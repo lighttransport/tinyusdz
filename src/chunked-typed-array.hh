@@ -742,7 +742,12 @@ class ChunkedTypedArray {
       if (needed_chunks > 0 && count > 0) {
         size_type last_chunk_elements =
             count - (needed_chunks - 1) * _elements_per_chunk;
-        size_type last_chunk_bytes = last_chunk_elements * sizeof(T);
+        size_t last_chunk_bytes;
+        if (!safe::mul(last_chunk_elements, sizeof(T),
+                       &last_chunk_bytes)) {
+          _chunks.back().clear();
+          return;
+        }
         _chunks.back().resize(last_chunk_bytes);
       }
     } else {
@@ -847,7 +852,12 @@ class ChunkedTypedArray {
     if (!_chunks.empty()) {
       size_type last_chunk_elements =
           _total_size - (needed_chunks - 1) * _elements_per_chunk;
-      size_type last_chunk_bytes = last_chunk_elements * sizeof(T);
+      size_t last_chunk_bytes;
+      if (!safe::mul(last_chunk_elements, sizeof(T),
+                     &last_chunk_bytes)) {
+        _chunks.back().clear();
+        return;
+      }
       _chunks.back().resize(last_chunk_bytes);
       _chunks.back().shrink_to_fit();
     }
@@ -868,7 +878,9 @@ class ChunkedTypedArray {
       // Copy from spans
       size_type copied = 0;
       for (const auto& span : _mmap_spans) {
-        std::memcpy(dest + copied, span.data, span.size * sizeof(T));
+        size_t span_bytes;
+        if (!safe::mul(span.size, sizeof(T), &span_bytes)) return false;
+        std::memcpy(dest + copied, span.data, span_bytes);
         copied += span.size;
       }
     } else {
@@ -877,7 +889,9 @@ class ChunkedTypedArray {
       for (size_type chunk_idx = 0; chunk_idx < _chunks.size(); ++chunk_idx) {
         size_type elements_in_chunk =
             std::min(_elements_per_chunk, _total_size - copied);
-        size_type bytes_to_copy = elements_in_chunk * sizeof(T);
+        size_t bytes_to_copy;
+        if (!safe::mul(elements_in_chunk, sizeof(T), &bytes_to_copy))
+          return false;
         std::memcpy(dest + copied, _chunks[chunk_idx].data(), bytes_to_copy);
         copied += elements_in_chunk;
       }
@@ -905,7 +919,9 @@ class ChunkedTypedArray {
     for (size_type chunk_idx = 0; chunk_idx < _chunks.size(); ++chunk_idx) {
       size_type elements_to_copy =
           std::min(_elements_per_chunk, count - copied);
-      size_type bytes_to_copy = elements_to_copy * sizeof(T);
+      size_t bytes_to_copy;
+      if (!safe::mul(elements_to_copy, sizeof(T), &bytes_to_copy))
+        return false;
       std::memcpy(_chunks[chunk_idx].data(), src + copied, bytes_to_copy);
       copied += elements_to_copy;
     }
@@ -1120,12 +1136,22 @@ class ChunkedTypedArray {
       _chunks.emplace_back();
       if (_chunks.size() < needed_chunks) {
         // Full chunk
-        _chunks.back().resize(_elements_per_chunk * sizeof(T));
+        size_t chunk_bytes;
+        if (!safe::mul(_elements_per_chunk, sizeof(T), &chunk_bytes)) {
+          _chunks.back().clear();
+          return;
+        }
+        _chunks.back().resize(chunk_bytes);
       } else {
         // Last chunk - may be partial
         size_type remaining_elements =
             count - (_chunks.size() - 1) * _elements_per_chunk;
-        _chunks.back().resize(remaining_elements * sizeof(T));
+        size_t remaining_bytes;
+        if (!safe::mul(remaining_elements, sizeof(T), &remaining_bytes)) {
+          _chunks.back().clear();
+          return;
+        }
+        _chunks.back().resize(remaining_bytes);
       }
     }
 
@@ -1133,7 +1159,12 @@ class ChunkedTypedArray {
     if (!_chunks.empty()) {
       size_type last_chunk_elements =
           count - (needed_chunks - 1) * _elements_per_chunk;
-      size_type last_chunk_bytes = last_chunk_elements * sizeof(T);
+      size_t last_chunk_bytes;
+      if (!safe::mul(last_chunk_elements, sizeof(T),
+                     &last_chunk_bytes)) {
+        _chunks.back().clear();
+        return;
+      }
       if (_chunks.back().size() != last_chunk_bytes) {
         _chunks.back().resize(last_chunk_bytes);
       }

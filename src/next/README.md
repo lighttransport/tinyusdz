@@ -297,7 +297,7 @@ current cleanup/refactor queue rather than a historical checklist.
   ASCII parser metadata/prim/helper/timeSamples/variant units have landed. The
   remaining split work is opportunistic cleanup around smaller EncodeValue
   subhelpers or future sections being edited anyway.
-- Keep `doc/refator-next.md`, `doc/memory-and-performance.md`, and this README
+- Keep `doc/refactor-next.md`, `doc/memory-and-performance.md`, and this README
   synchronized with landed behavior and benchmark deltas. Update
   `doc/testing-cpp.md` when next test coverage changes.
 - Keep `scripts/run-next-checks.sh` as the canonical standalone smoke test for

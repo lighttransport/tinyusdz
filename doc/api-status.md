@@ -188,18 +188,23 @@ MjcActuator, MjcTendon, MjcKeyframe, MjcSensor (concrete); MjcSceneAPI, MjcJoint
 
 | Schema | Type | Status | Notes |
 |--------|------|--------|-------|
-| Volume | concrete | stub | Placeholder struct in `core/model-scope.hh` (holds `OpenVDBAsset`/`VoxAsset`), no type trait, not in pipeline |
-| OpenVDBAsset | concrete | stub | Placeholder struct in `core/model-scope.hh`, no type trait, not in pipeline |
-| Field3DAsset | concrete | -- | |
-| VolumeFieldBase | abstract | -- | |
-| VolumeFieldAsset | abstract | -- | |
-| FieldBase | abstract | -- | |
-| FieldAsset | abstract | -- | |
+| Volume | concrete | done | Typed GPrim-derived (`src/usdGeom.hh`), schema attrs modeled, reconstructed in `src/prim-reconstruct-vol.cc` |
+| FieldAsset | concrete | done | `GPrim`-derived base for field assets; pxr 25.x renamed it to `VolumeFieldAsset` (both names handled, see `src/next/schema/schema-registry.cc`) |
+| OpenVDBAsset | concrete | done | `FieldAsset`-derived |
+| Field3DAsset | concrete | done | `FieldAsset`-derived |
+| VolumeFieldBase | abstract | -- | pxr 25.x name for the former `FieldBase` abstract base |
+| VolumeFieldAsset | abstract | -- | pxr 25.x name for the former `FieldAsset` abstract base |
 | ParticleField | concrete | -- | |
 | ParticleField3DGaussianSplat | concrete | -- | Gaussian splatting |
 | 11 ParticleField API schemas | API (single) | -- | Position, orientation, scale, opacity, kernel, radiance |
 
-**Coverage: 0/9 concrete (2 stub), 0/11 API -- 0%**
+**Coverage: 4/6 concrete, 0/11 API** (Volume, FieldAsset, OpenVDBAsset,
+Field3DAsset implemented; ParticleField / ParticleField3DGaussianSplat
+remain; VolumeFieldBase / VolumeFieldAsset are abstract bases)
+
+> Note: `core/model-scope.hh` carries a corrective comment — the UsdVol prims
+> (Volume, FieldAsset, OpenVDBAsset, Field3DAsset) are GPrim-derived and defined
+> in `usdGeom.hh`, not placeholder structs.
 
 ---
 
@@ -207,13 +212,13 @@ MjcActuator, MjcTendon, MjcKeyframe, MjcSensor (concrete); MjcSceneAPI, MjcJoint
 
 | Schema | Type | Status | Notes |
 |--------|------|--------|-------|
-| RenderSettings | concrete | -- | |
-| RenderProduct | concrete | -- | |
-| RenderVar | concrete | -- | |
+| RenderSettings | concrete | stub | Recognized placeholder prim (typed, in pipeline for parse + pprint + roundtrip); schema attrs stay generic (`props`) |
+| RenderProduct | concrete | stub | Same placeholder treatment |
+| RenderVar | concrete | stub | Same placeholder treatment |
 | RenderPass | concrete | -- | |
 | RenderSettingsBase | abstract | -- | |
 
-**Coverage: 0/5 -- 0%**
+**Coverage: 0/5 fully typed (3 placeholder-stub)**
 
 ---
 
@@ -243,9 +248,10 @@ The following OpenUSD domains are renderer/DCC-specific and are out of scope for
 | **UsdRi** | StatementsAPI, RiMaterialAPI, RiSplineAPI | RenderMan-specific |
 | **UsdHydra** | HydraGenerativeProceduralAPI | Hydra renderer-specific |
 | **UsdUI** | Backdrop, NodeGraphNodeAPI, SceneGraphPrimAPI, AccessibilityAPI | DCC UI metadata |
-| **UsdProc** | GenerativeProcedural | Requires runtime procedural engine |
 
-These prims are preserved as generic `Model` prims when encountered, so data is not lost during roundtrip.
+Unsupported schemas are preserved as generic `Model` prims when encountered, so
+data is not lost during roundtrip. (UsdProc's `GenerativeProcedural` is now a
+recognized placeholder prim — see `core/model-scope.hh` — not a generic Model.)
 
 ---
 
@@ -260,12 +266,14 @@ These prims are preserved as generic `Model` prims when encountered, so data is 
 | UsdPhysics | 8/8 (100%) | 9/9 (100%) | 17/17 (100%) |
 | UsdMedia | 1/1 (100%) | 1/1 (100%) | 2/2 (100%) |
 | Preliminary AR | 7/7 (100%) | 4/4 (100%) | 11/11 (100%) |
-| UsdVol | 0/9 (0%) | 0/11 (0%) | 0/20 (0%) |
-| UsdRender | 0/5 (0%) | -- | 0/5 (0%) |
-| **Total (supported)** | **55/69 (80%)** | **31/42 (74%)** | **86/111 (77%)** |
-| Unsupported | -- | -- | 12 schemas (UsdRi, UsdHydra, UsdUI, UsdProc) |
+| UsdVol | 4/6 (67%) | 0/11 (0%) | 4/17 (24%) |
+| UsdRender | 0/5 (0%; 3 placeholder-stub) | -- | 0/5 (0%) |
+| **Total (supported)** | **59/66 (89%)** | **31/42 (74%)** | **90/108 (83%)** |
+| Unsupported | -- | -- | 8 schemas (UsdRi, UsdHydra, UsdUI) |
 
 ### Remaining gaps
 
-1. **UsdVol** -- Volume and Gaussian splat support (20 schemas)
-2. **UsdRender** -- Render settings for offline rendering (5 schemas)
+1. **UsdVol** -- ParticleField / ParticleField3DGaussianSplat concrete prims and
+   the 11 ParticleField API schemas (13 schemas; Gaussian splat support)
+2. **UsdRender** -- fully-typed render settings (RenderSettings/RenderProduct/
+   RenderVar are placeholder-stubs; RenderPass not implemented)

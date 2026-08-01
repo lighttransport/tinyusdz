@@ -25,6 +25,8 @@
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/pcp/cache.hh"
 #include "next/reader/usda-reader.hh"
+#include "next/schema/geom-mesh.hh"
+#include "next/schema/geom-point-instancer.hh"
 #include "next/schema/geom-xform.hh"
 #include "next/schema/usd-skel.hh"
 
@@ -338,7 +340,7 @@ def Xform "World"
   auto meshes = FindMeshes(stage);
   assert(meshes.size() == 1);
   assert(meshes[0].GetName() == "Cube");
-  assert(IsMesh(meshes[0]));
+  assert(::tinyusdz::next::IsMesh(meshes[0]));
 
   // Find cameras
   auto cameras = FindCameras(stage);
@@ -3276,8 +3278,306 @@ def Xform "Root"
   std::cout << "  Next value-clip baking: PASSED\n";
 }
 
+// Regression: the animation-extraction gate
+// (config_.animation.enabled && (stage.HasTimeSamples() ||
+// stage.HasValueClips())) must (a) NOT skip stages whose animation arrives
+// entirely from value clips (no authored time samples anywhere — this was
+// broken by an earlier gate that only checked HasTimeSamples()), (b) skip
+// static stages, and (c) honor config_.animation.enabled = false.
+void TestAnimationExtractionGate() {
+  std::cout << "Testing animation extraction gate...\n";
+
+  // (1) Authored time samples, no clips.
+  const std::string ts_stage = R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate.timeSamples = {
+        0: (1, 2, 3),
+        2: (5, 6, 7)
+    }
+}
+)";
+
+  // (2) Value clips only: the composed root layer has NO authored time
+  // samples; animation comes from the external clip stages.
+  const std::string clip_stage = R"(#usda 1.0
+(
+    startTimeCode = 0
+    endTimeCode = 2
+)
+def Xform "Root" (
+    clips = {
+        dictionary default = {
+            double2[] active = [(0, 0), (2, 1)]
+            asset[] assetPaths = [@clip_0.usda@, @clip_1.usda@]
+            string primPath = "/Root"
+            double2[] times = [(0, 0), (2, 2)]
+            bool interpolateMissingClipValues = true
+        }
+    }
+)
+{
+}
+)";
+
+  // (3) Static: neither time samples nor clips.
+  const std::string static_stage = R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate = (1, 2, 3)
+}
+)";
+
+  const std::map<std::string, std::string> assets = {
+      {"clip_0.usda", R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate = (1, 2, 3)
+}
+)"},
+      {"clip_1.usda", R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate = (5, 6, 7)
+}
+)"}};
+
+  auto make_loader = [&assets](const std::string& path, Stage* stage,
+                               std::string* warn, std::string* err) {
+    const auto it = assets.find(path);
+    if (it == assets.end()) {
+      if (err) *err = "missing test clip";
+      return false;
+    }
+    LoadResult clip = LoadUSDAFromString(it->second);
+    if (!clip.success) {
+      if (err) *err = clip.error_summary;
+      return false;
+    }
+    *stage = std::move(clip.stage);
+    return true;
+  };
+
+  // (1) Authored time samples -> animations emitted; HasTimeSamples true,
+  // HasValueClips false.
+  {
+    LoadResult loaded = LoadUSDAFromString(ts_stage);
+    assert(loaded.success);
+    assert(loaded.stage.HasTimeSamples());
+    assert(!loaded.stage.HasValueClips());
+    ConverterConfig config;
+    RenderSceneConverter converter(config);
+    ConvertResult converted = converter.Convert(loaded.stage);
+    assert(converted.success);
+    assert(converted.scene.animations.size() == 1 &&
+           "authored time samples must produce an AnimationClip");
+  }
+
+  // (2) Value clips only -> animations STILL emitted (regression gate).
+  {
+    LoadResult loaded = LoadUSDAFromString(clip_stage);
+    assert(loaded.success);
+    assert(!loaded.stage.HasTimeSamples() &&
+           "clip-only stage must have no authored time samples");
+    assert(loaded.stage.HasValueClips() &&
+           "clip-only stage must be detected by HasValueClips");
+    ConverterConfig config;
+    config.animation.clip_stage_loader = make_loader;
+    RenderSceneConverter converter(config);
+    ConvertResult converted = converter.Convert(loaded.stage);
+    assert(converted.success);
+    assert(converted.scene.animations.size() == 1 &&
+           "clip-only stage must still be animation-extracted");
+  }
+
+  // (3) Static stage -> no animations, no animation reserve.
+  {
+    LoadResult loaded = LoadUSDAFromString(static_stage);
+    assert(loaded.success);
+    assert(!loaded.stage.HasTimeSamples());
+    assert(!loaded.stage.HasValueClips());
+    ConverterConfig config;
+    RenderSceneConverter converter(config);
+    ConvertResult converted = converter.Convert(loaded.stage);
+    assert(converted.success);
+    assert(converted.scene.animations.empty() &&
+           "static stage must produce no AnimationClips");
+  }
+
+  // (4) animation.enabled = false -> no animations even with time samples.
+  {
+    LoadResult loaded = LoadUSDAFromString(ts_stage);
+    assert(loaded.success);
+    ConverterConfig config;
+    config.animation.enabled = false;
+    RenderSceneConverter converter(config);
+    ConvertResult converted = converter.Convert(loaded.stage);
+    assert(converted.success);
+    assert(converted.scene.animations.empty() &&
+           "animation.enabled=false must suppress AnimationClips");
+  }
+
+  // (5) The same gate must hold on the ConvertToSink path.
+  {
+    // (5a) clip-only stage -> animations still emitted through the sink.
+    LoadResult loaded = LoadUSDAFromString(clip_stage);
+    assert(loaded.success);
+    ConverterConfig config;
+    config.animation.clip_stage_loader = make_loader;
+    RenderSceneConverter converter(config);
+    RetainedStreamSink sink;
+    StreamConvertResult streamed = converter.ConvertToSink(loaded.stage, &sink);
+    assert(streamed.success);
+    assert(sink.scene.animations.size() == 1 &&
+           "sink: clip-only stage must still be animation-extracted");
+
+    // (5b) static stage -> no animations through the sink.
+    LoadResult static_loaded = LoadUSDAFromString(static_stage);
+    assert(static_loaded.success);
+    RenderSceneConverter static_converter(ConverterConfig{});
+    RetainedStreamSink static_sink;
+    StreamConvertResult streamed_static =
+        static_converter.ConvertToSink(static_loaded.stage, &static_sink);
+    assert(streamed_static.success);
+    assert(static_sink.scene.animations.empty() &&
+           "sink: static stage must produce no AnimationClips");
+
+    // (5c) enabled = false -> no animations through the sink.
+    LoadResult ts_loaded = LoadUSDAFromString(ts_stage);
+    assert(ts_loaded.success);
+    ConverterConfig disabled_config;
+    disabled_config.animation.enabled = false;
+    RenderSceneConverter disabled_converter(disabled_config);
+    RetainedStreamSink disabled_sink;
+    StreamConvertResult streamed_disabled =
+        disabled_converter.ConvertToSink(ts_loaded.stage, &disabled_sink);
+    assert(streamed_disabled.success);
+    assert(disabled_sink.scene.animations.empty() &&
+           "sink: animation.enabled=false must suppress AnimationClips");
+  }
+
+  std::cout << "  Animation extraction gate: PASSED\n";
+}
+
+// Regression: schema/tydra accessors must never unfreeze the global
+// PropNameTable during the render phase. The compose fill pass freezes it for
+// lock-free concurrent reads; a render-phase intern() MISS (a name neither
+// registered by register_common_names() nor authored in the scene) unfreezes
+// it permanently and races lock-free readers. Every accessor name must be
+// pre-registered so intern() always HITs.
+void TestNameTableFreezeStability() {
+  std::cout << "Testing frozen name-table stability under accessors...\n";
+
+  // Every prim deliberately OMITS the optional names the accessors query
+  // (uv, normals, widths, ids, rotateX, inputs:*, focalLength, ...) so any
+  // missing registration is a first-time intern on the frozen table.
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Mesh "Bare"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+    }
+    def Xform "Xf"
+    {
+        double3 xformOp:translate = (1, 2, 3)
+    }
+    def BasisCurves "Curve"
+    {
+        int[] curveVertexCounts = [2]
+        point3f[] points = [(0, 0, 0), (1, 1, 1)]
+    }
+    def PointInstancer "Inst"
+    {
+        int[] protoIndices = [0]
+        point3f[] positions = [(0, 0, 0)]
+    }
+    def SphereLight "Light"
+    {
+    }
+    def Camera "Cam"
+    {
+    }
+}
+)";
+
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!loaded.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: "
+              << loaded.error_summary << ")\n";
+    return;
+  }
+
+  PropNameTable& table = GetPropNameTable();
+  const size_t size_before = table.size();
+  table.freeze();
+
+  // Schema accessors on the fixtures (geom-xform, geom-mesh,
+  // geom-point-instancer intern()s).
+  {
+    auto xf = loaded.stage.GetPrimAtPath("/World/Xf");
+    assert(xf.IsValid());
+    UsdGeomXform xform(xf);
+    float rot[3] = {0, 0, 0};
+    xform.GetRotation(&rot[0], &rot[1], &rot[2]);  // rotateXYZ/rotateX/Y/Z
+    float w = 0, x = 0, y = 0, z = 0;
+    xform.GetOrientation(&w, &x, &y, &z);  // xformOp:orient
+    auto ops = xform.GetXformOps();  // xformOpOrder
+
+    auto bare = loaded.stage.GetPrimAtPath("/World/Bare");
+    assert(bare.IsValid());
+    UsdGeomMesh mesh(bare);
+    mesh.GetUVs();       // primvars:st / primvars:uv
+    mesh.HasUVs();       // primvars:st / primvars:uv
+    mesh.GetUVIndices(); // primvars:st:indices / primvars:uv:indices
+
+    auto inst = loaded.stage.GetPrimAtPath("/World/Inst");
+    assert(inst.IsValid());
+    UsdGeomPointInstancer pi(inst);
+    pi.GetPositions(0.0);
+    pi.GetProtoIndices(0.0);
+    pi.GetOrientations(0.0);
+    pi.GetScales(0.0);
+    pi.GetVelocities(0.0);
+    pi.GetAngularVelocities(0.0);
+    pi.GetIds(0.0);
+    pi.GetInvisibleIds(0.0);
+    pi.GetInactiveIds();
+  }
+
+  // Converter on the same stage: touches the render-converter kId* names
+  // (inputs:*, focalLength, projection, clippingRange, shutter:*, widths,
+  // displayColor/displayOpacity, tetVertexIndices, ...) and, with
+  // retain_geometry = false, the stage.cc IsStaticGeometryArray names.
+  {
+    ConverterConfig config;
+    config.mesh.retain_geometry = false;
+    RenderSceneConverter converter(config);
+    ConvertResult result = converter.Convert(loaded.stage);
+    assert(result.success);
+  }
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  assert(table.is_frozen() &&
+         "render-phase accessors must not unfreeze the name table");
+#endif
+  assert(table.size() == size_before &&
+         "render-phase accessors must not intern new names");
+
+  // Sensitivity: a genuinely new name must still unfreeze -- proves this
+  // harness would catch a regression that lets any intern miss through.
+  table.intern("zzz_unregistered_probe_name_7f3a");
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  assert(!table.is_frozen());
+#endif
+  table.unfreeze();
+
+  std::cout << "  Frozen name-table stability: PASSED\n";
+}
+
 void TestMeshParityCleanups() {
-  std::cout << "Testing mesh parity cleanups...\n";
   const char* usda = R"(#usda 1.0
 def Xform "World"
 {
@@ -3913,6 +4213,239 @@ def Xform "World"
   std::cout << "  UsdSkel parity fixes: PASSED\n";
 }
 
+// Regression: the skeleton joint-order remap builds an O(1) lookup keyed on
+// each joint's full path (or name). A mesh skel:joints token in LEAF form
+// (e.g. "Spine" for "Root/Pelvis/Spine") misses that map and must resolve
+// through the JointTokenMatches fallback scan -- the map-key path only
+// matches exact path/name equality.
+void TestSkeletonJointRemapLeafTokens() {
+  std::cout << "Testing skeleton joint remap with leaf-name tokens...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def SkelRoot "Char"
+    {
+        def Skeleton "Skel"
+        {
+            uniform token[] joints = ["Root", "Root/Pelvis/Spine"]
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,3,0,1))
+            ]
+        }
+
+        # Mesh skel:joints uses LEAF names; jointIndices are mesh-local.
+        def Mesh "Body"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            uniform token[] skel:joints = ["Spine", "Root"]
+            int[] primvars:skel:jointIndices = [0, 1, 0, 1] (elementSize = 1)
+            float[] primvars:skel:jointWeights = [1, 1, 1, 1] (elementSize = 1)
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: "
+              << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.skeletons.size() == 1);
+  assert(result.scene.meshes.size() == 1);
+  const RenderMesh& mesh = result.scene.meshes[0];
+  assert(mesh.skin);
+  assert(mesh.skin->skeleton_id == 0);
+
+  // Local index 0 = "Spine" (leaf) -> skeleton joint 1
+  // ("Root/Pelvis/Spine"); local index 1 = "Root" -> joint 0. The leaf
+  // tokens miss the path-keyed lookup and exercise the fallback scan.
+  assert(mesh.skin->joint_indices.size() == 4);
+  assert(mesh.skin->joint_indices[0] == 1);
+  assert(mesh.skin->joint_indices[1] == 0);
+  assert(mesh.skin->joint_indices[2] == 1);
+  assert(mesh.skin->joint_indices[3] == 0);
+
+  std::cout << "  Skeleton joint remap leaf tokens: PASSED\n";
+}
+
+// Regression: ReleaseStaticGeometryArraysForPrim (retain_geometry = false)
+// must drop STATIC geometry arrays from the composed stage, but must skip
+// TIME-SAMPLED properties (release_static_array_value guard) so animated
+// sources survive conversion intact.
+void TestGeometryReleaseSkipsAnimatedArrays() {
+  std::cout << "Testing geometry release vs time-sampled arrays...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    startTimeCode = 0
+    endTimeCode = 1
+)
+
+def Xform "World"
+{
+    def Mesh "Static"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+    }
+    def Mesh "Animated"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        point3f[] points.timeSamples = {
+            0: [(0, 0, 0), (1, 0, 0), (0, 1, 0)],
+            1: [(1, 1, 1), (2, 1, 1), (1, 2, 1)]
+        }
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        double3 xformOp:translate.timeSamples = {
+            0: (0, 0, 0),
+            1: (5, 0, 0)
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: "
+              << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  config.mesh.retain_geometry = false;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.meshes.size() == 2);
+  assert(result.scene.animations.size() == 1);
+
+  // Conversion itself already ran on the authored data.
+  int animated_mesh_id = -1;
+  int static_mesh_id = -1;
+  for (int32_t id = 0; id < static_cast<int32_t>(result.scene.meshes.size());
+       ++id) {
+    const std::string& path =
+        result.scene.meshes[static_cast<size_t>(id)].prim_path;
+    if (path == "/World/Animated") animated_mesh_id = id;
+    if (path == "/World/Static") static_mesh_id = id;
+  }
+  assert(animated_mesh_id >= 0 && static_mesh_id >= 0);
+
+  // retain_geometry = false also releases the OUTPUT mesh geometry
+  // (ReleaseMeshGeometry -- metadata-only/proxy contract), so the scene
+  // meshes carry no points or triangles.
+  assert(result.scene.meshes[static_cast<size_t>(animated_mesh_id)]
+             .point_count() == 0 &&
+         "proxy meshes carry no retained points");
+  assert(result.scene.meshes[static_cast<size_t>(static_mesh_id)]
+             .point_count() == 0);
+
+  // Static mesh: source arrays released from the composed stage.
+  {
+    auto prim = lr.stage.GetPrimAtPath("/World/Static");
+    assert(prim.IsValid());
+    assert(prim.GetPropertyValue("points") == nullptr &&
+           "static points must be released");
+    assert(prim.GetPropertyValue("faceVertexCounts") == nullptr);
+  }
+
+  // Animated mesh: time-sampled arrays retained, animation intact.
+  {
+    auto prim = lr.stage.GetPrimAtPath("/World/Animated");
+    assert(prim.IsValid());
+    assert(prim.HasTimeSamples("points") &&
+           "time-sampled points must NOT be released");
+    assert(prim.HasTimeSamples("xformOp:translate"));
+    assert(prim.GetPropertyValue("faceVertexCounts") == nullptr &&
+           "static topology of the animated mesh may be released");
+    const AnimationClip& clip = result.scene.animations[0];
+    assert(clip.prim_path == "/World/Animated");
+    bool saw_translation = false;
+    for (const AnimationChannel& ch : clip.channels) {
+      if (ch.target_path == AnimationChannel::TargetPath::Translation) {
+        saw_translation = true;
+        assert(ch.keyframes.size() == 2);
+        assert(std::fabs(ch.keyframes[1].value.x - 5.0f) < 0.001f);
+      }
+    }
+    assert(saw_translation && "animated translate must be baked");
+  }
+
+  std::cout << "  Geometry release vs animated arrays: PASSED\n";
+}
+
+// Regression: ConvertAnimation iterates TimeSampleStorage's raw (time,
+// value_offset) pairs directly (it is sorted with last-wins upsert). A USDA
+// file whose timeSamples keys are authored OUT OF ORDER must still produce
+// monotonically increasing AnimationClip keyframes.
+void TestAnimationKeyframeOrdering() {
+  std::cout << "Testing animation keyframe ordering...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate.timeSamples = {
+        4: (40, 0, 0),
+        1: (10, 0, 0),
+        3: (30, 0, 0),
+        1: (11, 0, 0)
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: "
+              << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.animations.size() == 1);
+  const AnimationClip& clip = result.scene.animations[0];
+  assert(clip.prim_path == "/Root");
+
+  bool saw_translation = false;
+  for (const AnimationChannel& ch : clip.channels) {
+    if (ch.target_path != AnimationChannel::TargetPath::Translation) continue;
+    saw_translation = true;
+    // Sorted, deduplicated (last-wins): 1 (11), 3 (30), 4 (40).
+    assert(ch.keyframes.size() == 3);
+    for (size_t i = 1; i < ch.keyframes.size(); ++i) {
+      assert(ch.keyframes[i].time > ch.keyframes[i - 1].time &&
+             "keyframes must be in ascending time order");
+    }
+    assert(std::fabs(ch.keyframes[0].time - 1.0) < 1e-9);
+    assert(std::fabs(ch.keyframes[0].value.x - 11.0f) < 0.001f);
+    assert(std::fabs(ch.keyframes[1].time - 3.0) < 1e-9);
+    assert(std::fabs(ch.keyframes[1].value.x - 30.0f) < 0.001f);
+    assert(std::fabs(ch.keyframes[2].time - 4.0) < 1e-9);
+    assert(std::fabs(ch.keyframes[2].value.x - 40.0f) < 0.001f);
+  }
+  assert(saw_translation);
+
+  std::cout << "  Animation keyframe ordering: PASSED\n";
+}
 
 // 2026-07 audit UsdSkel cluster: quat-array slerp between keys, indexed skin
 // primvar expansion, token-array joints/blendShapes in GetSkelAnimationData,
@@ -5156,6 +5689,12 @@ int main() {
 
   std::cout << "\n";
 
+  // Run before fixture-heavy tests so the global name table only holds
+  // registered names (maximizes intern-miss coverage).
+  TestNameTableFreezeStability();
+
+  std::cout << "\n";
+
   // RenderData tests
   TestRenderMesh();
   TestRenderScene();
@@ -5186,10 +5725,14 @@ int main() {
   TestPhysicsAnnotations();
   TestRenderConverterCurves();
   TestValueClipBaking();
+  TestAnimationExtractionGate();
   TestMeshParityCleanups();
   TestHalfPrecisionXformOps();
   TestCompoundRotationTransformParity();
   TestMultiSkeletonJointRemap();
+  TestSkeletonJointRemapLeafTokens();
+  TestGeometryReleaseSkipsAnimatedArrays();
+  TestAnimationKeyframeOrdering();
   TestLightLinkingAndDomeFormat();
   TestStandardSurfaceNoRecursion();
   TestUsdSkelParityFixes();
