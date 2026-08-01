@@ -23,6 +23,17 @@ inline void Normalize(float v[3]) {
   }
 }
 
+// Same, but reports whether the vector was long enough to be meaningful, so a
+// degenerate tangent frame can be skipped rather than producing garbage.
+inline bool NormalizeChecked(float v[3]) {
+  const float len = std::sqrt(Dot(v, v));
+  if (len <= 1e-20f) return false;
+  v[0] /= len;
+  v[1] /= len;
+  v[2] /= len;
+  return true;
+}
+
 inline float SrgbToLinear(float c) {
   return c <= 0.04045f ? c / 12.92f
                        : std::pow((c + 0.055f) / 1.055f, 2.4f);
@@ -207,44 +218,132 @@ void BackgroundGradient(float out_bottom[3], float out_top[3]) {
   }
 }
 
+void EvaluateMaterial(const ShadingContext& ctx, const SurfaceHit& hit,
+                      const float view_dir[3], EvaluatedMaterial* out) {
+  *out = EvaluatedMaterial{};
+  if (!ctx.scene) return;
+
+  const QlMaterial& mat = MaterialFor(*ctx.scene, hit.material_id);
+  const auto& textures = ctx.scene->textures;
+  const bool can_sample = hit.has_uv;
+
+  auto sample = [&](int tex, float rgba[4]) -> bool {
+    if (!can_sample || tex < 0 || tex >= static_cast<int>(textures.size())) {
+      return false;
+    }
+    SampleTexture(textures[size_t(tex)], hit.uv[0], hit.uv[1], rgba);
+    return true;
+  };
+  auto channel = [](const float rgba[4], uint8_t c) {
+    return rgba[c < 4 ? c : 0];
+  };
+
+  float rgba[4];
+
+  out->base[0] = mat.base_color[0];
+  out->base[1] = mat.base_color[1];
+  out->base[2] = mat.base_color[2];
+  out->alpha = mat.opacity;
+  if (sample(mat.base_color_tex, rgba)) {
+    out->base[0] = rgba[0];
+    out->base[1] = rgba[1];
+    out->base[2] = rgba[2];
+    // A base-colour map's alpha is the surface's alpha unless a dedicated
+    // opacity map overrides it below.
+    out->alpha = mat.opacity * rgba[3];
+  }
+
+  out->emissive[0] = mat.emissive[0];
+  out->emissive[1] = mat.emissive[1];
+  out->emissive[2] = mat.emissive[2];
+  if (sample(mat.emissive_tex, rgba)) {
+    out->emissive[0] = mat.emissive[0] * rgba[0];
+    out->emissive[1] = mat.emissive[1] * rgba[1];
+    out->emissive[2] = mat.emissive[2] * rgba[2];
+  }
+
+  out->roughness = mat.roughness;
+  if (sample(mat.roughness_tex, rgba)) {
+    out->roughness = channel(rgba, mat.roughness_channel);
+  }
+  out->metallic = mat.metallic;
+  if (sample(mat.metallic_tex, rgba)) {
+    out->metallic = channel(rgba, mat.metallic_channel);
+  }
+  if (sample(mat.opacity_tex, rgba)) {
+    out->alpha = mat.opacity * channel(rgba, mat.opacity_channel);
+  }
+
+  out->roughness = std::max(0.02f, std::min(1.0f, out->roughness));
+  out->metallic = std::max(0.0f, std::min(1.0f, out->metallic));
+  out->alpha = std::max(0.0f, std::min(1.0f, out->alpha));
+
+  // Shading normal: interpolated, flipped toward the viewer, then perturbed by
+  // the normal map in the interpolated tangent frame.
+  float v[3] = {-view_dir[0], -view_dir[1], -view_dir[2]};
+  Normalize(v);
+  float n[3] = {hit.normal[0], hit.normal[1], hit.normal[2]};
+  if (Dot(n, v) < 0.0f) {
+    n[0] = -n[0];
+    n[1] = -n[1];
+    n[2] = -n[2];
+  }
+
+  if (mat.normal_tex >= 0 && hit.has_tangent && sample(mat.normal_tex, rgba)) {
+    // Tangent-space normal, [0,1] -> [-1,1]. The map is sampled linearly
+    // (the loader forces srgb off for data slots).
+    float tn[3] = {rgba[0] * 2.0f - 1.0f, rgba[1] * 2.0f - 1.0f,
+                   rgba[2] * 2.0f - 1.0f};
+    tn[0] *= mat.normal_scale;
+    tn[1] *= mat.normal_scale;
+
+    // Gram-Schmidt the tangent against the (already flipped) normal.
+    float t[3] = {hit.tangent[0], hit.tangent[1], hit.tangent[2]};
+    const float td = Dot(t, n);
+    for (int i = 0; i < 3; i++) t[i] -= n[i] * td;
+    if (NormalizeChecked(t)) {
+      const float sign = hit.tangent[3] < 0.0f ? -1.0f : 1.0f;
+      float b[3] = {(n[1] * t[2] - n[2] * t[1]) * sign,
+                    (n[2] * t[0] - n[0] * t[2]) * sign,
+                    (n[0] * t[1] - n[1] * t[0]) * sign};
+      float m[3];
+      for (int i = 0; i < 3; i++) {
+        m[i] = t[i] * tn[0] + b[i] * tn[1] + n[i] * tn[2];
+      }
+      if (NormalizeChecked(m)) {
+        n[0] = m[0];
+        n[1] = m[1];
+        n[2] = m[2];
+      }
+    }
+  }
+
+  out->normal[0] = n[0];
+  out->normal[1] = n[1];
+  out->normal[2] = n[2];
+}
+
 void ShadeAov(const ShadingContext& ctx, const SurfaceHit& hit,
               const float view_dir[3], float eye_distance, float out_rgb[3]) {
   out_rgb[0] = out_rgb[1] = out_rgb[2] = 0.0f;
   if (!ctx.scene) return;
 
-  const QlMaterial& mat = MaterialFor(*ctx.scene, hit.material_id);
+  // Every AOV reads the same resolved material the shaded path does, so a
+  // debug view shows what shading is actually using -- including the maps.
+  EvaluatedMaterial em;
+  EvaluateMaterial(ctx, hit, view_dir, &em);
 
   switch (ctx.mode) {
-    case ShadingMode::Albedo: {
-      // The same base value ShadeSurface starts from, with no lighting.
-      out_rgb[0] = mat.base_color[0];
-      out_rgb[1] = mat.base_color[1];
-      out_rgb[2] = mat.base_color[2];
-      if (mat.base_color_tex >= 0 && hit.has_uv &&
-          mat.base_color_tex < static_cast<int>(ctx.scene->textures.size())) {
-        float rgba[4];
-        SampleTexture(ctx.scene->textures[size_t(mat.base_color_tex)],
-                      hit.uv[0], hit.uv[1], rgba);
-        out_rgb[0] = rgba[0];
-        out_rgb[1] = rgba[1];
-        out_rgb[2] = rgba[2];
-      }
+    case ShadingMode::Albedo:
+      out_rgb[0] = em.base[0];
+      out_rgb[1] = em.base[1];
+      out_rgb[2] = em.base[2];
       break;
-    }
-    case ShadingMode::Normal: {
-      // Same view-facing flip ShadeSurface applies, so the two agree on which
-      // side of a single-sided surface is being shown.
-      float v[3] = {-view_dir[0], -view_dir[1], -view_dir[2]};
-      Normalize(v);
-      float n[3] = {hit.normal[0], hit.normal[1], hit.normal[2]};
-      if (Dot(n, v) < 0.0f) {
-        n[0] = -n[0];
-        n[1] = -n[1];
-        n[2] = -n[2];
-      }
-      for (int i = 0; i < 3; i++) out_rgb[i] = n[i] * 0.5f + 0.5f;
+    case ShadingMode::Normal:
+      // The shading normal, so a normal map is visible here rather than the
+      // smooth interpolated one.
+      for (int i = 0; i < 3; i++) out_rgb[i] = em.normal[i] * 0.5f + 0.5f;
       break;
-    }
     case ShadingMode::Uv:
       // Untextured geometry has no UVs at all; show it as black rather than
       // as a bogus (0,0) corner sample.
@@ -254,10 +353,10 @@ void ShadeAov(const ShadingContext& ctx, const SurfaceHit& hit,
       }
       break;
     case ShadingMode::Roughness:
-      out_rgb[0] = out_rgb[1] = out_rgb[2] = mat.roughness;
+      out_rgb[0] = out_rgb[1] = out_rgb[2] = em.roughness;
       break;
     case ShadingMode::Metallic:
-      out_rgb[0] = out_rgb[1] = out_rgb[2] = mat.metallic;
+      out_rgb[0] = out_rgb[1] = out_rgb[2] = em.metallic;
       break;
     case ShadingMode::Depth: {
       // Distance from the eye, normalized into the camera's clip range and
@@ -300,44 +399,32 @@ void ShadeSurface(const ShadingContext& ctx, const SurfaceHit& hit,
   out_rgb[0] = out_rgb[1] = out_rgb[2] = 0.0f;
   if (!ctx.scene) return;
 
+  EvaluatedMaterial em;
+  EvaluateMaterial(ctx, hit, view_dir, &em);
   const QlMaterial& mat = MaterialFor(*ctx.scene, hit.material_id);
 
-  float base[3] = {mat.base_color[0], mat.base_color[1], mat.base_color[2]};
-  if (mat.base_color_tex >= 0 && hit.has_uv &&
-      mat.base_color_tex < static_cast<int>(ctx.scene->textures.size())) {
-    float rgba[4];
-    SampleTexture(ctx.scene->textures[size_t(mat.base_color_tex)], hit.uv[0],
-                  hit.uv[1], rgba);
-    base[0] = rgba[0];
-    base[1] = rgba[1];
-    base[2] = rgba[2];
-  }
+  const float* base = em.base;
 
   // v points from the surface toward the eye.
   float v[3] = {-view_dir[0], -view_dir[1], -view_dir[2]};
   Normalize(v);
 
-  float n[3] = {hit.normal[0], hit.normal[1], hit.normal[2]};
-  // Always shade the side we can see. Preview content is full of single-sided
-  // geometry with inconsistent winding; flipping is far friendlier than showing
-  // black holes.
-  if (Dot(n, v) < 0.0f) {
-    n[0] = -n[0];
-    n[1] = -n[1];
-    n[2] = -n[2];
-  }
+  // EvaluateMaterial already flipped the normal toward the viewer (preview
+  // content is full of single-sided geometry with inconsistent winding) and
+  // applied any normal map.
+  float n[3] = {em.normal[0], em.normal[1], em.normal[2]};
 
-  const float alpha = std::max(1e-3f, mat.roughness * mat.roughness);
+  const float alpha = std::max(1e-3f, em.roughness * em.roughness);
   const float n_dot_v = std::max(Dot(n, v), 1e-4f);
 
   // Metals take their reflectance from the base color; dielectrics use 4%.
   float f0[3];
   for (int i = 0; i < 3; i++) {
-    f0[i] = 0.04f * (1.0f - mat.metallic) + base[i] * mat.metallic;
+    f0[i] = 0.04f * (1.0f - em.metallic) + base[i] * em.metallic;
   }
   float diffuse_albedo[3];
   for (int i = 0; i < 3; i++) {
-    diffuse_albedo[i] = base[i] * (1.0f - mat.metallic);
+    diffuse_albedo[i] = base[i] * (1.0f - em.metallic);
   }
 
   const float shadow_eps =
@@ -406,7 +493,7 @@ void ShadeSurface(const ShadingContext& ctx, const SurfaceHit& hit,
   const float hemi = 0.5f + 0.5f * up_component;
   for (int i = 0; i < 3; i++) {
     out_rgb[i] += diffuse_albedo[i] * ctx.ambient[i] * (0.4f + 0.6f * hemi);
-    out_rgb[i] += mat.emissive[i];
+    out_rgb[i] += em.emissive[i];
   }
 }
 

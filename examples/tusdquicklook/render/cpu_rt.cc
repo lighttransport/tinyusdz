@@ -36,6 +36,10 @@ namespace {
 constexpr int kTileSize = 32;
 constexpr int kCoarseFactor = 8;
 
+// Stand-in for a mesh with no material binding. Opaque, so unbound geometry
+// never takes the transparency path.
+const QlMaterial kFallbackMaterial{};
+
 struct BlasEntry {
   lrt_tri_scene* scene = nullptr;
   size_t mesh_index = 0;
@@ -306,26 +310,43 @@ void CpuRenderer::TracePixel(int px, int py, int sample_index,
     return;
   }
 
+  // Transparency is resolved by walking the ray forward through successive
+  // hits rather than by sorting: a cutout hit below its threshold is skipped
+  // entirely, and a blended hit contributes its share and lets the rest of the
+  // ray keep going. Bounded so a pathological stack of transparent shells
+  // cannot stall a frame.
+  constexpr int kMaxAlphaLayers = 8;
+  float transmittance = 1.0f;
+  out_rgb[0] = out_rgb[1] = out_rgb[2] = 0.0f;
+  float ray_tmin = 0.0f;
+
+  for (int layer = 0; layer < kMaxAlphaLayers; layer++) {
   lrt_ray ray{};
   std::memcpy(ray.org, origin, sizeof(ray.org));
   std::memcpy(ray.dir, direction, sizeof(ray.dir));
-  ray.tmin = 0.0f;
+  ray.tmin = ray_tmin;
   ray.tmax = 1e30f;
 
   lrt_tlas_hit hit{};
   if (!lrt_tlas_intersect1(tlas_, &ray, 0xFFFFFFFFu, &hit)) {
-    ShadeBackground(shading_, direction, out_rgb);
+    float bg[3];
+    ShadeBackground(shading_, direction, bg);
+    for (int i = 0; i < 3; i++) out_rgb[i] += bg[i] * transmittance;
     return;
   }
 
   if (hit.inst_id >= blas_.size()) {
-    ShadeBackground(shading_, direction, out_rgb);
+    float bg[3];
+    ShadeBackground(shading_, direction, bg);
+    for (int i = 0; i < 3; i++) out_rgb[i] += bg[i] * transmittance;
     return;
   }
   const QlMesh& mesh = scene_->meshes[blas_[hit.inst_id].mesh_index];
   const size_t tri = hit.prim_id;
   if (tri * 3 + 2 >= mesh.indices.size()) {
-    ShadeBackground(shading_, direction, out_rgb);
+    float bg[3];
+    ShadeBackground(shading_, direction, bg);
+    for (int i = 0; i < 3; i++) out_rgb[i] += bg[i] * transmittance;
     return;
   }
 
@@ -390,6 +411,20 @@ void CpuRenderer::TracePixel(int px, int py, int sample_index,
     surf.has_uv = true;
   }
 
+  // Interpolated tangent frame, only carried for normal-mapped materials.
+  if (!mesh.tangents.empty() && size_t(i2) * 4 + 3 < mesh.tangents.size()) {
+    const float* g0 = &mesh.tangents[size_t(i0) * 4];
+    const float* g1 = &mesh.tangents[size_t(i1) * 4];
+    const float* g2 = &mesh.tangents[size_t(i2) * 4];
+    for (int i = 0; i < 3; i++) {
+      surf.tangent[i] = g0[i] * bw + g1[i] * bu + g2[i] * bv;
+    }
+    // The handedness is constant per vertex; interpolating it would produce a
+    // meaningless value across a seam, so take the provoking vertex's sign.
+    surf.tangent[3] = g0[3];
+    surf.has_tangent = true;
+  }
+
   if (shading_.mode != ShadingMode::Shaded) {
     // Debug AOVs are constant per pixel, so accumulation converges on the
     // first sample. The normal loop still runs, which keeps the sample
@@ -405,8 +440,45 @@ void CpuRenderer::TracePixel(int px, int py, int sample_index,
     return;
   }
 
+  const QlMaterial& hit_mat =
+      (mesh.material_id >= 0 &&
+       mesh.material_id < static_cast<int>(scene_->materials.size()))
+          ? scene_->materials[size_t(mesh.material_id)]
+          : kFallbackMaterial;
+
+  float alpha = 1.0f;
+  if (hit_mat.alpha_mode != QlMaterial::AlphaMode::Opaque) {
+    EvaluatedMaterial em;
+    EvaluateMaterial(shading_, surf, direction, &em);
+    alpha = em.alpha;
+    if (hit_mat.alpha_mode == QlMaterial::AlphaMode::Mask) {
+      // Cutout is binary: below the threshold the surface is not there at all.
+      if (alpha < hit_mat.alpha_cutoff) {
+        ray_tmin = hit.t + std::max(shading_.scene_radius * 1e-5f, 1e-6f);
+        continue;
+      }
+      alpha = 1.0f;
+    }
+  }
+
+  float shaded[3];
   ShadeSurface(shading_, surf, direction, &CpuRenderer::OccludedThunk,
-               const_cast<CpuRenderer*>(this), out_rgb);
+               const_cast<CpuRenderer*>(this), shaded);
+  for (int i = 0; i < 3; i++) out_rgb[i] += shaded[i] * alpha * transmittance;
+
+  transmittance *= (1.0f - alpha);
+  if (transmittance <= 1.0f / 255.0f) return;
+
+  // Keep going for whatever shows through this surface.
+  ray_tmin = hit.t + std::max(shading_.scene_radius * 1e-5f, 1e-6f);
+  }
+
+  // Ran out of layers: whatever is still transmitting sees the background.
+  if (transmittance > 0.0f) {
+    float bg[3];
+    ShadeBackground(shading_, direction, bg);
+    for (int i = 0; i < 3; i++) out_rgb[i] += bg[i] * transmittance;
+  }
 }
 
 // ---------------------------------------------------------------------------

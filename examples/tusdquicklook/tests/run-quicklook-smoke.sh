@@ -188,6 +188,24 @@ if [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
     echo "shading modes: ok (6 AOVs, cpu/gl parity and all distinct)"
   fi
 
+  # 4d. TEXTURED parity. The backend parity check above uses an untextured
+  #     asset, which is how a vertical UV flip in the GL path went unnoticed:
+  #     every textured render was mirrored relative to the tracer. Albedo is
+  #     used because it is the texture with no lighting on top of it.
+  if command -v python3 >/dev/null 2>&1 && [ -f "$DIFF_PY" ] &&
+     [ -f "$ROOT/models/texture-cat-plane.usda" ]; then
+    for backend in cpu gl; do
+      "$BIN" "$ROOT/models/texture-cat-plane.usda" --backend "$backend" \
+        --shading-mode albedo --screenshot "$OUT/tex_$backend.png" \
+        --size 480x360 --frames 4 >/dev/null 2>&1 \
+        || fail "textured parity --backend $backend: non-zero exit"
+    done
+    frac="$(python3 "$DIFF_PY" "$OUT/tex_cpu.png" "$OUT/tex_gl.png")"
+    awk -v f="$frac" 'BEGIN { exit !(f <= 0.05) }' \
+      || fail "textured cpu/gl disagree over ${frac} (UV orientation? filtering?)"
+    echo "textured parity: ok (${frac} of viewport differs)"
+  fi
+
   # The thread-count independence must hold in a debug mode too. Pin the CPU
   # backend: worker threads are a CPU-tracer concept, and letting `auto` choose
   # would compare two GL images (or one of each, if a GL context happens to
