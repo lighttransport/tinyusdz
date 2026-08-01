@@ -416,6 +416,7 @@ CMakeUserPresets.json
 !models/tusdview-curves-ribbons.usda
 !models/tusdview-nurbs-patch.usda
 !models/tusdview-transparency.usda
+!models/tusdquicklook-alpha-modes.usda
 !tests/usdc/dedup-global-001.usdc
 !aousd/validation_*.usda
 # Test-generated runtime artifacts (roundtrip/runtime tests)

@@ -149,6 +149,9 @@ class CpuRenderer final : public Renderer {
 
   ShadingContext shading_;
   bool shading_valid_ = false;
+  // Whether any material uses cutout. When nothing does, shadow rays take the
+  // cheap boolean occlusion test instead of walking hits.
+  bool any_cutout_ = false;
 
   // Progression state
   bool coarse_done_ = false;
@@ -178,6 +181,15 @@ void CpuRenderer::PrepareShading() {
   shading_.mode = settings_.mode;
   shading_.depth_near = camera_.near_clip;
   shading_.depth_far = camera_.far_clip;
+
+  any_cutout_ = false;
+  for (const QlMaterial& m : scene_->materials) {
+    if (m.alpha_mode == QlMaterial::AlphaMode::Mask) {
+      any_cutout_ = true;
+      break;
+    }
+  }
+
   shading_valid_ = true;
 }
 
@@ -198,7 +210,64 @@ bool CpuRenderer::Occluded(const float origin[3], const float direction[3],
   ray.dir[2] = direction[2];
   ray.tmin = 0.0f;
   ray.tmax = max_distance;
-  return lrt_tlas_occluded1(tlas, &ray, 0xFFFFFFFFu) != 0;
+
+  if (!scene_ || !any_cutout_) {
+    // Nothing in the scene can be cut away, so the cheap boolean test is
+    // exact.
+    return lrt_tlas_occluded1(tlas, &ray, 0xFFFFFFFFu) != 0;
+  }
+
+  // A cutout surface below its threshold is not there, and something that is
+  // not there cannot cast a shadow. lrt_tlas_occluded1 answers "is anything in
+  // the way", which is the wrong question once alpha can remove a hit, so walk
+  // forward and skip the ones that were cut away.
+  constexpr int kMaxCutoutLayers = 8;
+  for (int layer = 0; layer < kMaxCutoutLayers; layer++) {
+    lrt_tlas_hit hit{};
+    if (!lrt_tlas_intersect1(tlas, &ray, 0xFFFFFFFFu, &hit)) return false;
+    if (hit.inst_id >= accel_->instance_count()) return true;
+
+    const size_t mesh_index = accel_->mesh_index(hit.inst_id);
+    if (mesh_index >= scene_->meshes.size()) return true;
+    const QlMesh& mesh = scene_->meshes[mesh_index];
+    const QlMaterial& mat =
+        (mesh.material_id >= 0 &&
+         mesh.material_id < static_cast<int>(scene_->materials.size()))
+            ? scene_->materials[size_t(mesh.material_id)]
+            : kFallbackMaterial;
+
+    if (mat.alpha_mode != QlMaterial::AlphaMode::Mask) return true;
+
+    // Evaluate the cutout at the hit. Only the UV is needed, so this builds a
+    // minimal SurfaceHit rather than the full shading one.
+    SurfaceHit surf;
+    surf.material_id = mesh.material_id;
+    const size_t tri = hit.prim_id;
+    if (tri * 3 + 2 >= mesh.indices.size()) return true;
+    if (!mesh.uvs.empty()) {
+      const uint32_t i0 = mesh.indices[tri * 3 + 0];
+      const uint32_t i1 = mesh.indices[tri * 3 + 1];
+      const uint32_t i2 = mesh.indices[tri * 3 + 2];
+      if (size_t(i2) * 2 + 1 < mesh.uvs.size()) {
+        const float bu = hit.u, bv = hit.v, bw = 1.0f - bu - bv;
+        const float* t0 = &mesh.uvs[size_t(i0) * 2];
+        const float* t1 = &mesh.uvs[size_t(i1) * 2];
+        const float* t2 = &mesh.uvs[size_t(i2) * 2];
+        surf.uv[0] = t0[0] * bw + t1[0] * bu + t2[0] * bv;
+        surf.uv[1] = t0[1] * bw + t1[1] * bu + t2[1] * bv;
+        surf.has_uv = true;
+      }
+    }
+
+    EvaluatedMaterial em;
+    EvaluateMaterial(shading_, surf, direction, &em);
+    if (em.alpha >= mat.alpha_cutoff) return true;
+
+    // Cut away: keep looking past it.
+    ray.tmin = hit.t + std::max(shading_.scene_radius * 1e-5f, 1e-6f);
+    if (ray.tmin >= ray.tmax) return false;
+  }
+  return true;
 }
 
 bool CpuRenderer::OccludedThunk(void* user, const float origin[3],
