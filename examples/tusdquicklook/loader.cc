@@ -347,6 +347,23 @@ QlMaterial ConvertMaterial(const tyn::RenderMaterial& src,
     return image_to_texture[size_t(image_id)];
   };
 
+  // Which component of a packed map carries this scalar. The common ORM
+  // layout is occlusion.r / roughness.g / metallic.b, but the asset says so
+  // through the texture's output channel and we honour that.
+  auto resolve_channel = [&](int32_t texture_id, uint8_t fallback) -> uint8_t {
+    if (texture_id < 0 ||
+        texture_id >= static_cast<int32_t>(scene.textures.size())) {
+      return fallback;
+    }
+    switch (scene.textures[size_t(texture_id)].output_channel) {
+      case tyn::RenderTexture::Channel::R: return 0;
+      case tyn::RenderTexture::Channel::G: return 1;
+      case tyn::RenderTexture::Channel::B: return 2;
+      case tyn::RenderTexture::Channel::A: return 3;
+      default: return fallback;
+    }
+  };
+
   if (src.shader_type == tyn::RenderMaterial::ShaderType::PreviewSurface &&
       src.preview_surface) {
     const tyn::PreviewSurfaceShader& s = *src.preview_surface;
@@ -363,10 +380,43 @@ QlMaterial ConvertMaterial(const tyn::RenderMaterial& src,
       dst.emissive[0] = s.emissive_color.value.x;
       dst.emissive[1] = s.emissive_color.value.y;
       dst.emissive[2] = s.emissive_color.value.z;
+    } else if (s.emissive_color.is_texture()) {
+      dst.emissive_tex = resolve_texture(s.emissive_color.texture_id);
+      dst.emissive[0] = dst.emissive[1] = dst.emissive[2] = 1.0f;
     }
-    if (s.roughness.is_value()) dst.roughness = s.roughness.as_float();
-    if (s.metallic.is_value()) dst.metallic = s.metallic.as_float();
-    if (s.opacity.is_value()) dst.opacity = s.opacity.as_float();
+    if (s.roughness.is_value()) {
+      dst.roughness = s.roughness.as_float();
+    } else if (s.roughness.is_texture()) {
+      dst.roughness_tex = resolve_texture(s.roughness.texture_id);
+      dst.roughness_channel = resolve_channel(s.roughness.texture_id, 1);
+    }
+    if (s.metallic.is_value()) {
+      dst.metallic = s.metallic.as_float();
+    } else if (s.metallic.is_texture()) {
+      dst.metallic_tex = resolve_texture(s.metallic.texture_id);
+      dst.metallic_channel = resolve_channel(s.metallic.texture_id, 2);
+    }
+    if (s.opacity.is_value()) {
+      dst.opacity = s.opacity.as_float();
+    } else if (s.opacity.is_texture()) {
+      dst.opacity_tex = resolve_texture(s.opacity.texture_id);
+      dst.opacity_channel = resolve_channel(s.opacity.texture_id, 3);
+    }
+    if (s.normal.is_texture()) {
+      dst.normal_tex = resolve_texture(s.normal.texture_id);
+    }
+    // UsdPreviewSurface: a non-zero opacityThreshold means cutout, and the
+    // surface is fully opaque above it. Otherwise a sub-unit opacity (or an
+    // opacity map) means real blending.
+    const float threshold = s.opacity_threshold.is_value()
+                                ? s.opacity_threshold.as_float()
+                                : 0.0f;
+    if (threshold > 0.0f) {
+      dst.alpha_mode = QlMaterial::AlphaMode::Mask;
+      dst.alpha_cutoff = threshold;
+    } else if (dst.opacity_tex >= 0 || dst.opacity < 1.0f) {
+      dst.alpha_mode = QlMaterial::AlphaMode::Blend;
+    }
   } else if (src.shader_type == tyn::RenderMaterial::ShaderType::OpenPBR &&
              src.openpbr) {
     const tyn::OpenPBRSurfaceShader& s = *src.openpbr;
@@ -380,11 +430,28 @@ QlMaterial ConvertMaterial(const tyn::RenderMaterial& src,
     }
     if (s.specular_roughness.is_value()) {
       dst.roughness = s.specular_roughness.as_float();
+    } else if (s.specular_roughness.is_texture()) {
+      dst.roughness_tex = resolve_texture(s.specular_roughness.texture_id);
+      dst.roughness_channel = resolve_channel(s.specular_roughness.texture_id, 1);
     }
     if (s.base_metalness.is_value()) {
       dst.metallic = s.base_metalness.as_float();
+    } else if (s.base_metalness.is_texture()) {
+      dst.metallic_tex = resolve_texture(s.base_metalness.texture_id);
+      dst.metallic_channel = resolve_channel(s.base_metalness.texture_id, 2);
     }
-    if (s.opacity.is_value()) dst.opacity = s.opacity.as_float();
+    if (s.opacity.is_value()) {
+      dst.opacity = s.opacity.as_float();
+    } else if (s.opacity.is_texture()) {
+      dst.opacity_tex = resolve_texture(s.opacity.texture_id);
+      dst.opacity_channel = resolve_channel(s.opacity.texture_id, 3);
+    }
+    if (s.normal.is_texture()) {
+      dst.normal_tex = resolve_texture(s.normal.texture_id);
+    }
+    if (dst.opacity_tex >= 0 || dst.opacity < 1.0f) {
+      dst.alpha_mode = QlMaterial::AlphaMode::Blend;
+    }
     if (s.emission_color.is_value() && s.emission_luminance.is_value()) {
       const float lum = s.emission_luminance.as_float();
       dst.emissive[0] = s.emission_color.value.x * lum;
@@ -553,6 +620,32 @@ class QlSceneSink : public tyn::SceneSink {
     for (const tyn::RenderMaterial& m : catalog_.materials) {
       ev.materials.push_back(ConvertMaterial(m, catalog_, image_to_texture));
     }
+
+    // A map bound to a data slot carries numbers, not colour, whatever its
+    // metadata claims. Assets routinely tag normal/ORM maps as sRGB, and
+    // decoding those through the transfer curve gives silently wrong
+    // roughness and skewed normals -- so the binding wins over the tag.
+    {
+      auto force_linear = [&](int tex) {
+        if (tex >= 0 && tex < static_cast<int>(ev.textures.size())) {
+          ev.textures[size_t(tex)].srgb = false;
+        }
+      };
+      for (const QlMaterial& m : ev.materials) {
+        force_linear(m.normal_tex);
+        force_linear(m.roughness_tex);
+        force_linear(m.metallic_tex);
+        force_linear(m.opacity_tex);
+      }
+    }
+
+    // Tangents cost 16 bytes per vertex and are only meaningful for a normal
+    // map, so record which materials actually want them. Meshes bound to
+    // anything else stay 16 B/vertex lighter -- which matters under --max-mem.
+    material_needs_tangents_.assign(ev.materials.size(), false);
+    for (size_t i = 0; i < ev.materials.size(); i++) {
+      material_needs_tangents_[i] = ev.materials[i].needs_tangents();
+    }
     for (const tyn::RenderLight& l : catalog_.lights) {
       QlLight out;
       if (ConvertLight(l, &out)) ev.lights.push_back(out);
@@ -680,6 +773,9 @@ class QlSceneSink : public tyn::SceneSink {
 
  private:
   bool BuildQlMesh(int32_t id, const tyn::RenderMesh& src, QlMesh* out);
+  // Shared tail for both BuildQlMesh paths (de-indexed and not):
+  // validity plus the tangent frame a normal-mapped material needs.
+  bool FinishMesh(QlMesh* out);
 
   LoadControl* ctrl_;
   LoadStream* stream_;
@@ -689,6 +785,8 @@ class QlSceneSink : public tyn::SceneSink {
   tyn::RenderScene catalog_;
   std::vector<tyn::Matrix4> mesh_world_;
   std::vector<bool> mesh_visible_;
+  // Indexed by material id: does anything bound to it need a tangent frame?
+  std::vector<bool> material_needs_tangents_;
 
   QlAabb bounds_;
   bool y_up_ = true;
@@ -712,6 +810,103 @@ class QlSceneSink : public tyn::SceneSink {
 // buffer as-is (the common case, and the cheap one). When normals or UVs are
 // face-varying we de-index into per-corner arrays, because a single index
 // buffer cannot address two different attribute layouts.
+// Per-triangle tangent accumulation (Lengyel), orthonormalized per vertex.
+// Computed here rather than taken from tydra so it is paid for only by the
+// meshes that actually carry a normal map, and so the tracer and the raster
+// path share one definition -- screen-space derivatives would not match.
+void BuildTangents(QlMesh* mesh) {
+  const size_t vcount = mesh->vertex_count();
+  if (vcount == 0 || mesh->uvs.size() < vcount * 2 ||
+      mesh->normals.size() < vcount * 3) {
+    return;
+  }
+
+  std::vector<float> tan(vcount * 3, 0.0f);
+  std::vector<float> bitan(vcount * 3, 0.0f);
+
+  for (size_t t = 0; t + 2 < mesh->indices.size(); t += 3) {
+    const uint32_t a = mesh->indices[t + 0];
+    const uint32_t b = mesh->indices[t + 1];
+    const uint32_t c = mesh->indices[t + 2];
+    if (a >= vcount || b >= vcount || c >= vcount) continue;
+
+    const float* pa = &mesh->positions[size_t(a) * 3];
+    const float* pb = &mesh->positions[size_t(b) * 3];
+    const float* pc = &mesh->positions[size_t(c) * 3];
+    const float* ua = &mesh->uvs[size_t(a) * 2];
+    const float* ub = &mesh->uvs[size_t(b) * 2];
+    const float* uc = &mesh->uvs[size_t(c) * 2];
+
+    const float e1[3] = {pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]};
+    const float e2[3] = {pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]};
+    const float du1 = ub[0] - ua[0], dv1 = ub[1] - ua[1];
+    const float du2 = uc[0] - ua[0], dv2 = uc[1] - ua[1];
+
+    const float det = du1 * dv2 - du2 * dv1;
+    // A degenerate UV triangle carries no tangent information; skipping it
+    // leaves the vertex to be resolved by its other faces.
+    if (std::fabs(det) < 1e-20f) continue;
+    const float r = 1.0f / det;
+
+    const float tdir[3] = {(e1[0] * dv2 - e2[0] * dv1) * r,
+                           (e1[1] * dv2 - e2[1] * dv1) * r,
+                           (e1[2] * dv2 - e2[2] * dv1) * r};
+    const float bdir[3] = {(e2[0] * du1 - e1[0] * du2) * r,
+                           (e2[1] * du1 - e1[1] * du2) * r,
+                           (e2[2] * du1 - e1[2] * du2) * r};
+
+    for (uint32_t idx : {a, b, c}) {
+      for (int i = 0; i < 3; i++) {
+        tan[size_t(idx) * 3 + i] += tdir[i];
+        bitan[size_t(idx) * 3 + i] += bdir[i];
+      }
+    }
+  }
+
+  mesh->tangents.assign(vcount * 4, 0.0f);
+  for (size_t v = 0; v < vcount; v++) {
+    const float* n = &mesh->normals[v * 3];
+    float* t = &tan[v * 3];
+
+    // Gram-Schmidt against the normal.
+    const float nd = n[0] * t[0] + n[1] * t[1] + n[2] * t[2];
+    float o[3] = {t[0] - n[0] * nd, t[1] - n[1] * nd, t[2] - n[2] * nd};
+    float len = std::sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+    if (len < 1e-12f) {
+      // No usable tangent: pick any vector perpendicular to the normal so the
+      // frame stays well-formed instead of collapsing to zero.
+      const float ax = std::fabs(n[0]) < 0.9f ? 1.0f : 0.0f;
+      o[0] = ax - n[0] * n[0] * ax;
+      o[1] = -n[1] * n[0] * ax + (ax == 0.0f ? 1.0f : 0.0f) * (1.0f - n[1] * n[1]);
+      o[2] = -n[2] * n[0] * ax;
+      len = std::sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+      if (len < 1e-12f) {
+        o[0] = 1.0f; o[1] = 0.0f; o[2] = 0.0f;
+        len = 1.0f;
+      }
+    }
+    for (int i = 0; i < 3; i++) mesh->tangents[v * 4 + i] = o[i] / len;
+
+    // Handedness: does the accumulated bitangent agree with n x t?
+    const float cx = n[1] * o[2] - n[2] * o[1];
+    const float cy = n[2] * o[0] - n[0] * o[2];
+    const float cz = n[0] * o[1] - n[1] * o[0];
+    const float* bt = &bitan[v * 3];
+    mesh->tangents[v * 4 + 3] =
+        (cx * bt[0] + cy * bt[1] + cz * bt[2]) < 0.0f ? -1.0f : 1.0f;
+  }
+}
+
+bool QlSceneSink::FinishMesh(QlMesh* out) {
+  if (out->triangle_count() == 0) return false;
+  if (out->material_id >= 0 &&
+      size_t(out->material_id) < material_needs_tangents_.size() &&
+      material_needs_tangents_[size_t(out->material_id)]) {
+    BuildTangents(out);
+  }
+  return true;
+}
+
 bool QlSceneSink::BuildQlMesh(int32_t id, const tyn::RenderMesh& src,
                               QlMesh* out) {
   if (!src.is_triangulated || src.triangulated_indices.empty()) return false;
@@ -786,7 +981,7 @@ bool QlSceneSink::BuildQlMesh(int32_t id, const tyn::RenderMesh& src,
       if (vi >= point_count) return false;  // corrupt topology: drop the mesh
       out->indices.push_back(vi);
     }
-    return out->triangle_count() > 0;
+    return FinishMesh(out);
   }
 
   // De-indexed path. triangulated_face_vertex_indices maps each triangulated
@@ -832,7 +1027,7 @@ bool QlSceneSink::BuildQlMesh(int32_t id, const tyn::RenderMesh& src,
     }
     out->indices.push_back(static_cast<uint32_t>(i));
   }
-  return out->triangle_count() > 0;
+  return FinishMesh(out);
 }
 
 }  // namespace

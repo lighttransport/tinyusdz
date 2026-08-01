@@ -55,7 +55,27 @@ struct SurfaceHit {
   bool has_uv = false;
   int material_id = -1;
   bool backfacing = false;
+  // Interpolated tangent (xyz) and bitangent sign (w). Only meaningful when
+  // has_tangent -- normal mapping uses this rather than screen derivatives,
+  // which the raster path would compute differently from the tracer.
+  float tangent[4] = {1, 0, 0, 1};
+  bool has_tangent = false;
 };
+
+// A material with all of its maps resolved at one hit.
+struct EvaluatedMaterial {
+  float base[3] = {0.8f, 0.8f, 0.8f};
+  float emissive[3] = {0, 0, 0};
+  float roughness = 0.5f;
+  float metallic = 0.0f;
+  float alpha = 1.0f;
+  float normal[3] = {0, 1, 0};  // shading normal, after normal mapping
+};
+
+// Resolve every texture slot at a hit. Shared by ShadeSurface and ShadeAov so
+// the debug views show exactly what the shaded image is using.
+void EvaluateMaterial(const ShadingContext& ctx, const SurfaceHit& hit,
+                      const float view_dir[3], EvaluatedMaterial* out);
 
 // Occlusion test callback: returns true when `origin -> direction` is blocked
 // within `max_distance`. Supplied by the tracer so shading stays backend-free.

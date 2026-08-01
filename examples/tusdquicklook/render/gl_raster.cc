@@ -82,6 +82,9 @@ constexpr GLenum GL_EXTENSIONS = 0x1F03;
 constexpr GLenum GL_NUM_EXTENSIONS = 0x821D;
 constexpr GLenum GL_SRGB8_ALPHA8 = 0x8C43;
 constexpr GLenum GL_FRAMEBUFFER_SRGB = 0x8DB9;
+constexpr GLenum GL_BLEND = 0x0BE2;
+constexpr GLenum GL_SRC_ALPHA = 0x0302;
+constexpr GLenum GL_ONE_MINUS_SRC_ALPHA = 0x0303;
 
 // NVX_gpu_memory_info / ATI_meminfo VRAM queries.
 constexpr GLenum GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX = 0x9049;
@@ -145,6 +148,8 @@ struct Gl {
   const unsigned char* (*GetString)(GLenum) = nullptr;
   void (*GetIntegerv)(GLenum, GLint*) = nullptr;
   GLenum (*GetError)() = nullptr;
+  void (*BlendFunc)(GLenum, GLenum) = nullptr;
+  void (*DepthMask)(GLboolean) = nullptr;
 
   bool Load(GlGetProcFn get);
 };
@@ -175,6 +180,7 @@ bool Gl::Load(GlGetProcFn get) {
   BIND(DeleteTextures); BIND(BindTexture); BIND(ActiveTexture);
   BIND(TexImage2D); BIND(TexParameteri); BIND(GenerateMipmap);
   BIND(ReadPixels); BIND(GetString); BIND(GetIntegerv); BIND(GetError);
+  BIND(BlendFunc); BIND(DepthMask);
 #undef BIND
   return ok;
 }
@@ -185,17 +191,20 @@ const char* kVertexShader = R"(#version 330 core
 layout(location = 0) in vec3 in_position;
 layout(location = 1) in vec3 in_normal;
 layout(location = 2) in vec2 in_uv;
+layout(location = 3) in vec4 in_tangent;
 
 uniform mat4 u_view_proj;
 
 out vec3 v_world;
 out vec3 v_normal;
 out vec2 v_uv;
+out vec4 v_tangent;
 
 void main() {
   v_world = in_position;
   v_normal = in_normal;
   v_uv = in_uv;
+  v_tangent = in_tangent;
   gl_Position = u_view_proj * vec4(in_position, 1.0);
 }
 )";
@@ -206,6 +215,7 @@ const char* kFragmentShader = R"(#version 330 core
 in vec3 v_world;
 in vec3 v_normal;
 in vec2 v_uv;
+in vec4 v_tangent;
 
 uniform vec3 u_eye;
 uniform vec3 u_base_color;
@@ -214,6 +224,27 @@ uniform float u_roughness;
 uniform float u_metallic;
 uniform int u_has_texture;
 uniform sampler2D u_base_color_tex;
+
+// Material maps. Each *_map uniform is 0 when the slot is unbound, so the
+// shader falls back to the scalar exactly as EvaluateMaterial() does.
+uniform int u_has_normal_map;
+uniform int u_has_roughness_map;
+uniform int u_has_metallic_map;
+uniform int u_has_emissive_map;
+uniform int u_has_opacity_map;
+uniform sampler2D u_normal_tex;
+uniform sampler2D u_roughness_tex;
+uniform sampler2D u_metallic_tex;
+uniform sampler2D u_emissive_tex;
+uniform sampler2D u_opacity_tex;
+uniform int u_roughness_channel;
+uniform int u_metallic_channel;
+uniform int u_opacity_channel;
+uniform float u_normal_scale;
+uniform int u_has_tangent;
+uniform int u_alpha_mode;      // 0 opaque, 1 mask, 2 blend
+uniform float u_alpha_cutoff;
+uniform float u_opacity;
 
 uniform int u_light_count;
 uniform vec3 u_light_dir[8];    // direction the light travels
@@ -251,15 +282,71 @@ vec3 F_Schlick(vec3 f0, float VoH) {
   return f0 + (1.0 - f0) * pow(1.0 - min(VoH, 1.0), 5.0);
 }
 
+// Mirrors EvaluateMaterial() in shade.cc. Every slot falls back to its scalar
+// when unbound, and the normal map is applied in the interpolated tangent
+// frame -- never from screen derivatives, which the tracer cannot reproduce.
+float pick_channel(vec4 c, int idx) {
+  if (idx == 0) return c.r;
+  if (idx == 1) return c.g;
+  if (idx == 2) return c.b;
+  return c.a;
+}
+
 void main() {
+  // USD st has v=0 at the bottom, but the image rows uploaded to GL run
+  // top-down, so t=0 is the top row. SampleTexture() on the CPU flips for this;
+  // GL has to as well or every texture comes out mirrored vertically. v_uv
+  // itself stays authored, so the UV debug view still shows the real values.
+  vec2 tex_uv = vec2(v_uv.x, 1.0 - v_uv.y);
+
   vec3 base = u_base_color;
+  float alpha = u_opacity;
   if (u_has_texture != 0) {
-    base = texture(u_base_color_tex, v_uv).rgb;
+    vec4 bc = texture(u_base_color_tex, tex_uv);
+    base = bc.rgb;
+    alpha = u_opacity * bc.a;
   }
+
+  float roughness = u_roughness;
+  if (u_has_roughness_map != 0) {
+    roughness = pick_channel(texture(u_roughness_tex, tex_uv),
+                             u_roughness_channel);
+  }
+  float metallic = u_metallic;
+  if (u_has_metallic_map != 0) {
+    metallic = pick_channel(texture(u_metallic_tex, tex_uv), u_metallic_channel);
+  }
+  if (u_has_opacity_map != 0) {
+    alpha = u_opacity * pick_channel(texture(u_opacity_tex, tex_uv),
+                                     u_opacity_channel);
+  }
+  vec3 emissive = u_emissive;
+  if (u_has_emissive_map != 0) {
+    emissive = u_emissive * texture(u_emissive_tex, tex_uv).rgb;
+  }
+
+  roughness = clamp(roughness, 0.02, 1.0);
+  metallic = clamp(metallic, 0.0, 1.0);
+  alpha = clamp(alpha, 0.0, 1.0);
+
+  // Cutout: below the threshold the surface is not there at all.
+  if (u_alpha_mode == 1 && alpha < u_alpha_cutoff) discard;
 
   vec3 v = normalize(u_eye - v_world);
   vec3 n = normalize(v_normal);
   if (dot(n, v) < 0.0) n = -n;
+
+  if (u_has_normal_map != 0 && u_has_tangent != 0) {
+    vec3 tn = texture(u_normal_tex, tex_uv).rgb * 2.0 - 1.0;
+    tn.xy *= u_normal_scale;
+    vec3 t = v_tangent.xyz - n * dot(v_tangent.xyz, n);
+    if (dot(t, t) > 1e-20) {
+      t = normalize(t);
+      vec3 b = cross(n, t) * (v_tangent.w < 0.0 ? -1.0 : 1.0);
+      vec3 m = t * tn.x + b * tn.y + n * tn.z;
+      if (dot(m, m) > 1e-20) n = normalize(m);
+    }
+  }
 
   if (u_mode != 0) {
     vec3 aov = vec3(0.0);
@@ -270,9 +357,9 @@ void main() {
     } else if (u_mode == 3) {
       if (u_has_uv != 0) aov = vec3(v_uv, 0.0);
     } else if (u_mode == 4) {
-      aov = vec3(u_roughness);
+      aov = vec3(roughness);
     } else if (u_mode == 5) {
-      aov = vec3(u_metallic);
+      aov = vec3(metallic);
     } else if (u_mode == 6) {
       // Eye distance from the interpolated world position, never
       // gl_FragCoord.z: the CPU tracer has no depth buffer to match.
@@ -285,11 +372,11 @@ void main() {
     return;
   }
 
-  float a = max(1e-3, u_roughness * u_roughness);
+  float a = max(1e-3, roughness * roughness);
   float NoV = max(dot(n, v), 1e-4);
 
-  vec3 f0 = mix(vec3(0.04), base, u_metallic);
-  vec3 diffuse_albedo = base * (1.0 - u_metallic);
+  vec3 f0 = mix(vec3(0.04), base, metallic);
+  vec3 diffuse_albedo = base * (1.0 - metallic);
 
   vec3 color = vec3(0.0);
   for (int i = 0; i < u_light_count && i < 8; i++) {
@@ -308,9 +395,11 @@ void main() {
   float up_component = mix(n.z, n.y, u_up_is_y);
   float hemi = 0.5 + 0.5 * up_component;
   color += diffuse_albedo * u_ambient * (0.4 + 0.6 * hemi);
-  color += u_emissive;
+  color += emissive;
 
-  frag_color = vec4(color, 1.0);
+  // Blend mode carries alpha out; everything else is opaque by this point
+  // (cutout already discarded, opaque is 1.0 by definition).
+  frag_color = vec4(color, u_alpha_mode == 2 ? alpha : 1.0);
 }
 )";
 
@@ -359,10 +448,16 @@ struct GlMesh {
   GLuint vbo_pos = 0;
   GLuint vbo_nrm = 0;
   GLuint vbo_uv = 0;
+  GLuint vbo_tan = 0;
   GLuint ebo = 0;
   GLsizei index_count = 0;
   int material_id = -1;
   bool has_uv = false;
+  bool has_tangent = false;
+  // World-space centroid, captured at upload. meshes_ skips empty meshes, so
+  // its indices do not line up with scene_->meshes -- carrying the centroid
+  // here avoids having to map back.
+  float centroid[3] = {0, 0, 0};
 };
 
 class GlRasterRenderer final : public Renderer {
@@ -564,6 +659,7 @@ void GlRasterRenderer::ReleaseGpu() {
     if (m.vbo_pos) gl_.DeleteBuffers(1, &m.vbo_pos);
     if (m.vbo_nrm) gl_.DeleteBuffers(1, &m.vbo_nrm);
     if (m.vbo_uv) gl_.DeleteBuffers(1, &m.vbo_uv);
+    if (m.vbo_tan) gl_.DeleteBuffers(1, &m.vbo_tan);
     if (m.ebo) gl_.DeleteBuffers(1, &m.ebo);
     if (m.vao) gl_.DeleteVertexArrays(1, &m.vao);
   }
@@ -598,6 +694,7 @@ void GlRasterRenderer::SetScene(const QlScene* scene) {
     if (m.vbo_pos) gl_.DeleteBuffers(1, &m.vbo_pos);
     if (m.vbo_nrm) gl_.DeleteBuffers(1, &m.vbo_nrm);
     if (m.vbo_uv) gl_.DeleteBuffers(1, &m.vbo_uv);
+    if (m.vbo_tan) gl_.DeleteBuffers(1, &m.vbo_tan);
     if (m.ebo) gl_.DeleteBuffers(1, &m.ebo);
     if (m.vao) gl_.DeleteVertexArrays(1, &m.vao);
   }
@@ -660,6 +757,8 @@ void GlRasterRenderer::UploadScene() {
     m.material_id = src.material_id;
     m.index_count = GLsizei(src.indices.size());
     m.has_uv = !src.uvs.empty();
+    m.has_tangent = !src.tangents.empty();
+    src.bounds.Center(m.centroid);
 
     gl_.GenVertexArrays(1, &m.vao);
     gl_.BindVertexArray(m.vao);
@@ -702,6 +801,28 @@ void GlRasterRenderer::UploadScene() {
     gl_.BufferData(GL_ARRAY_BUFFER, GLsizeiptr(uv_bytes), uv_src, GL_STATIC_DRAW);
     gl_.EnableVertexAttribArray(2);
     gl_.VertexAttribPointer(2, 2, GL_FLOAT, 0, 0, nullptr);
+
+    // Tangents are only present for normal-mapped materials. The attribute
+    // still has to be bound for every mesh or the shader reads garbage, so an
+    // unmapped mesh gets a cheap constant frame it will never sample.
+    std::vector<float> tangents;
+    const float* tan_src = src.tangents.data();
+    size_t tan_bytes = src.tangents.size() * sizeof(float);
+    if (src.tangents.empty()) {
+      tangents.assign(src.vertex_count() * 4, 0.0f);
+      for (size_t v = 0; v < src.vertex_count(); v++) {
+        tangents[v * 4 + 0] = 1.0f;
+        tangents[v * 4 + 3] = 1.0f;
+      }
+      tan_src = tangents.data();
+      tan_bytes = tangents.size() * sizeof(float);
+    }
+    gl_.GenBuffers(1, &m.vbo_tan);
+    gl_.BindBuffer(GL_ARRAY_BUFFER, m.vbo_tan);
+    gl_.BufferData(GL_ARRAY_BUFFER, GLsizeiptr(tan_bytes), tan_src,
+                   GL_STATIC_DRAW);
+    gl_.EnableVertexAttribArray(3);
+    gl_.VertexAttribPointer(3, 4, GL_FLOAT, 0, 0, nullptr);
 
     gl_.GenBuffers(1, &m.ebo);
     gl_.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ebo);
@@ -883,7 +1004,37 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
   const GLint u_metal = gl_.GetUniformLocation(program_, "u_metallic");
   const GLint u_has_tex = gl_.GetUniformLocation(program_, "u_has_texture");
   const GLint u_has_uv = gl_.GetUniformLocation(program_, "u_has_uv");
+  const GLint u_has_tan = gl_.GetUniformLocation(program_, "u_has_tangent");
+  const GLint u_opacity = gl_.GetUniformLocation(program_, "u_opacity");
+  const GLint u_alpha_mode = gl_.GetUniformLocation(program_, "u_alpha_mode");
+  const GLint u_alpha_cutoff =
+      gl_.GetUniformLocation(program_, "u_alpha_cutoff");
+  const GLint u_normal_scale =
+      gl_.GetUniformLocation(program_, "u_normal_scale");
+  const GLint u_rough_ch =
+      gl_.GetUniformLocation(program_, "u_roughness_channel");
+  const GLint u_metal_ch =
+      gl_.GetUniformLocation(program_, "u_metallic_channel");
+  const GLint u_opacity_ch =
+      gl_.GetUniformLocation(program_, "u_opacity_channel");
+  const GLint u_has_nrm_map =
+      gl_.GetUniformLocation(program_, "u_has_normal_map");
+  const GLint u_has_rough_map =
+      gl_.GetUniformLocation(program_, "u_has_roughness_map");
+  const GLint u_has_metal_map =
+      gl_.GetUniformLocation(program_, "u_has_metallic_map");
+  const GLint u_has_emis_map =
+      gl_.GetUniformLocation(program_, "u_has_emissive_map");
+  const GLint u_has_opac_map =
+      gl_.GetUniformLocation(program_, "u_has_opacity_map");
+
+  // Fixed sampler units, matching the bind_map calls below.
   gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_base_color_tex"), 0);
+  gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_normal_tex"), 1);
+  gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_roughness_tex"), 2);
+  gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_metallic_tex"), 3);
+  gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_emissive_tex"), 4);
+  gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_opacity_tex"), 5);
 
   gl_.Uniform1i(gl_.GetUniformLocation(program_, "u_mode"),
                 static_cast<int>(settings_.mode));
@@ -893,32 +1044,92 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
                 camera_.far_clip);
 
   static const QlMaterial kDefaultMaterial{};
-  for (const GlMesh& m : meshes_) {
-    const QlMaterial& mat =
-        (m.material_id >= 0 &&
-         m.material_id < static_cast<int>(scene_->materials.size()))
-            ? scene_->materials[size_t(m.material_id)]
-            : kDefaultMaterial;
+
+  auto material_of = [&](const GlMesh& m) -> const QlMaterial& {
+    return (m.material_id >= 0 &&
+            m.material_id < static_cast<int>(scene_->materials.size()))
+               ? scene_->materials[size_t(m.material_id)]
+               : kDefaultMaterial;
+  };
+
+  // Bind a map to its texture unit, reporting whether the slot is live so the
+  // shader can fall back to the scalar exactly as EvaluateMaterial does.
+  auto bind_map = [&](int tex, int unit, GLint has_uniform, bool has_uv) {
+    const bool live = has_uv && tex >= 0 && size_t(tex) < textures_.size() &&
+                      textures_[size_t(tex)] != 0;
+    gl_.Uniform1i(has_uniform, live ? 1 : 0);
+    if (live) {
+      gl_.ActiveTexture(GL_TEXTURE0 + GLenum(unit));
+      gl_.BindTexture(GL_TEXTURE_2D, textures_[size_t(tex)]);
+    }
+    return live;
+  };
+
+  auto draw_mesh = [&](const GlMesh& m) {
+    const QlMaterial& mat = material_of(m);
 
     gl_.Uniform3fv(u_base, 1, mat.base_color);
     gl_.Uniform3fv(u_emis, 1, mat.emissive);
     gl_.Uniform1f(u_rough, mat.roughness);
     gl_.Uniform1f(u_metal, mat.metallic);
+    gl_.Uniform1f(u_opacity, mat.opacity);
+    gl_.Uniform1i(u_alpha_mode, static_cast<int>(mat.alpha_mode));
+    gl_.Uniform1f(u_alpha_cutoff, mat.alpha_cutoff);
+    gl_.Uniform1f(u_normal_scale, mat.normal_scale);
+    gl_.Uniform1i(u_rough_ch, mat.roughness_channel);
+    gl_.Uniform1i(u_metal_ch, mat.metallic_channel);
+    gl_.Uniform1i(u_opacity_ch, mat.opacity_channel);
 
-    const bool use_tex = m.has_uv && mat.base_color_tex >= 0 &&
-                         size_t(mat.base_color_tex) < textures_.size() &&
-                         textures_[size_t(mat.base_color_tex)] != 0;
-    gl_.Uniform1i(u_has_tex, use_tex ? 1 : 0);
+    bind_map(mat.base_color_tex, 0, u_has_tex, m.has_uv);
+    bind_map(mat.normal_tex, 1, u_has_nrm_map, m.has_uv);
+    bind_map(mat.roughness_tex, 2, u_has_rough_map, m.has_uv);
+    bind_map(mat.metallic_tex, 3, u_has_metal_map, m.has_uv);
+    bind_map(mat.emissive_tex, 4, u_has_emis_map, m.has_uv);
+    bind_map(mat.opacity_tex, 5, u_has_opac_map, m.has_uv);
+
     // The CPU side reports has_uv from the mesh's UV array, not from whether a
     // texture is bound, so the UV AOV must use the same test.
     gl_.Uniform1i(u_has_uv, m.has_uv ? 1 : 0);
-    if (use_tex) {
-      gl_.ActiveTexture(GL_TEXTURE0);
-      gl_.BindTexture(GL_TEXTURE_2D, textures_[size_t(mat.base_color_tex)]);
-    }
+    gl_.Uniform1i(u_has_tan, m.has_tangent ? 1 : 0);
 
     gl_.BindVertexArray(m.vao);
     gl_.DrawElements(GL_TRIANGLES, m.index_count, GL_UNSIGNED_INT, nullptr);
+  };
+
+  // Opaque and cutout first with depth writes on, then blended geometry
+  // back-to-front with writes off. The tracer resolves transparency by walking
+  // the ray instead, so the two will not agree pixel-for-pixel on overlapping
+  // transparent shells -- the smoke test gives blended assets their own,
+  // looser tolerance for that reason.
+  std::vector<const GlMesh*> blended;
+  for (const GlMesh& m : meshes_) {
+    if (material_of(m).alpha_mode == QlMaterial::AlphaMode::Blend) {
+      blended.push_back(&m);
+      continue;
+    }
+    draw_mesh(m);
+  }
+
+  if (!blended.empty()) {
+    float eye_pos[3];
+    camera_.Eye(eye_pos);
+    auto centroid_distance = [&](const GlMesh* m) {
+      const float dx = m->centroid[0] - eye_pos[0];
+      const float dy = m->centroid[1] - eye_pos[1];
+      const float dz = m->centroid[2] - eye_pos[2];
+      return dx * dx + dy * dy + dz * dz;
+    };
+    std::sort(blended.begin(), blended.end(),
+              [&](const GlMesh* a, const GlMesh* b) {
+                return centroid_distance(a) > centroid_distance(b);
+              });
+
+    gl_.Enable(GL_BLEND);
+    gl_.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    gl_.DepthMask(0);
+    for (const GlMesh* m : blended) draw_mesh(*m);
+    gl_.DepthMask(1);
+    gl_.Disable(GL_BLEND);
   }
   gl_.BindVertexArray(0);
 

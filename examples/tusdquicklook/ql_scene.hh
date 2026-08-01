@@ -55,13 +55,39 @@ struct QlTexture {
 // A flattened UsdPreviewSurface / OpenPBR surface. Only what the direct-lighting
 // shader actually evaluates.
 struct QlMaterial {
+  // How a partially transparent surface is resolved. Blend is the expensive
+  // one: it needs back-to-front ordering on the raster path and a layered
+  // walk on the tracer, so it is only selected when the asset asks for it.
+  enum class AlphaMode : uint8_t { Opaque, Mask, Blend };
+
   float base_color[3] = {0.8f, 0.8f, 0.8f};
   float emissive[3] = {0.0f, 0.0f, 0.0f};
   float roughness = 0.5f;
   float metallic = 0.0f;
   float opacity = 1.0f;
-  int base_color_tex = -1;  // index into QlScene::textures, -1 = none
   bool double_sided = false;
+
+  // Indices into QlScene::textures; -1 = none. The data maps (normal,
+  // roughness, metallic, opacity) are loaded with QlTexture::srgb false so
+  // both backends sample them linearly.
+  int base_color_tex = -1;
+  int normal_tex = -1;
+  int roughness_tex = -1;
+  int metallic_tex = -1;
+  int emissive_tex = -1;
+  int opacity_tex = -1;
+
+  // Which channel carries the scalar, for maps that pack several together
+  // (the usual ORM layout is occlusion.r / roughness.g / metallic.b).
+  uint8_t roughness_channel = 1;
+  uint8_t metallic_channel = 2;
+  uint8_t opacity_channel = 3;
+
+  float normal_scale = 1.0f;
+  AlphaMode alpha_mode = AlphaMode::Opaque;
+  float alpha_cutoff = 0.5f;
+
+  bool needs_tangents() const { return normal_tex >= 0; }
 };
 
 // World-space triangle mesh. Positions are pre-transformed by the node's world
@@ -74,6 +100,9 @@ struct QlMesh {
   QlVec<float> normals;        // 3 per vertex; empty = use geometric normals
   QlVec<float> uvs;            // 2 per vertex; empty = no texturing
   QlVec<uint32_t> indices;     // 3 per triangle
+  // 4 per vertex (xyz + bitangent sign); empty unless the bound material has a
+  // normal map. At 16 B/vertex this is not carried speculatively.
+  QlVec<float> tangents;
 
   int material_id = -1;
   bool is_proxy = false;  // extent box stand-in, not the authored geometry
