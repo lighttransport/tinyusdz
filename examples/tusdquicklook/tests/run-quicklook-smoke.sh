@@ -149,6 +149,16 @@ if [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
       || fail "cpu and gl backends disagree over ${frac} of the viewport"
     echo "backend parity: ok (${frac} of viewport differs between cpu and gl)"
   fi
+
+  # The app must always report which backend is actually live, so a demotion to
+  # the CPU renderer can never be mistaken for a deliberate choice.
+  "$BIN" "$ROOT/models/suzanne-pbr.usda" --backend gl --verbose \
+    --screenshot "$OUT/b_report.png" --size 480x360 --frames 4 \
+    >/dev/null 2>"$OUT/b_report.err" \
+    || fail "--backend gl --verbose: non-zero exit"
+  grep -Eq '^\[tusdquicklook\] renderer: (gl|cpu) ' "$OUT/b_report.err" \
+    || fail "--verbose did not report the live renderer"
+  echo "backend reporting: ok ($(grep -Eo 'renderer: [a-z]+' "$OUT/b_report.err" | head -1))"
 fi
 
 # 5. Bad input must fail cleanly with a message, not a crash.

@@ -150,6 +150,30 @@ class App {
   // Re-scan the current folder and refresh the current selection preview.
   void RefreshFolder();
 
+  // The single funnel for everything that changes the image but is not the
+  // scene or the camera. CurrentRenderSettings() folds the CLI options together
+  // with the live UI state; ApplyRenderSettings() pushes the result at the
+  // renderer, which resets accumulation. Nothing else may touch renderer
+  // settings.
+  RenderSettings CurrentRenderSettings() const;
+  void ApplyRenderSettings();
+
+  // Backend management. The renderer can be created, destroyed and re-created
+  // at any point in the session, so `desired_backend_` is a live preference
+  // rather than a one-shot startup decision.
+  bool GlAffordable() const;
+  // Fold the user's preference together with what is actually usable.
+  BackendChoice ResolveBackend() const;
+  bool CreateRenderer(BackendChoice backend, const lvg_rect_t& viewport,
+                      std::string* err);
+  void SwitchBackend(BackendChoice backend, const lvg_rect_t& viewport);
+  // A backend that failed mid-session: disable it for good and drop to CPU.
+  void DemoteToCpu(const std::string& why, const lvg_rect_t& viewport);
+  // "gl · llvmpipe" / "cpu (gl: no EGL display)". For the status bar.
+  std::string BackendStatusText() const;
+  // Advance desired_backend_ auto -> cpu -> gl -> auto.
+  void CycleBackend();
+
   Options opts_;
   const Theme& theme_;
   PreviewBudget budget_;
@@ -161,6 +185,24 @@ class App {
   std::unique_ptr<Renderer> renderer_;
   OrbitCamera camera_;
   RenderStatus render_status_;
+
+  // Live UI state seeded from opts_, so a toolbar change and a CLI flag reach
+  // the renderer by the same path.
+  ShadingMode shading_mode_ = ShadingMode::Shaded;
+  bool ibl_enabled_ = true;
+  bool shadows_enabled_ = true;
+  float exposure_ = 0.0f;
+
+  // What the user wants vs what is actually running. They differ whenever GL
+  // was asked for and could not be delivered.
+  BackendChoice desired_backend_ = BackendChoice::Auto;
+  BackendChoice live_backend_ = BackendChoice::Cpu;
+  std::string live_device_;
+  // Set once GL has failed, so `auto` stops trying and the UI can say why
+  // instead of silently rendering on the CPU.
+  bool gl_disabled_ = false;
+  std::string gl_error_;
+  GlProbeResult gl_probe_;
   // Cleared on every new file; set the moment the user touches the camera, so
   // auto-framing stops fighting them.
   bool camera_user_controlled_ = false;

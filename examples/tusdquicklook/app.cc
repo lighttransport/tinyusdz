@@ -65,6 +65,44 @@ bool App::Init() {
   // the platform layer, and lui_init() opens the display. Skipping it when
   // headless is what lets --screenshot work over ssh and in CI with no X.
   headless_ = !opts_.screenshot.empty();
+
+  // Seed the live UI state from the CLI so the toolbar and the flags are the
+  // same setting, not two.
+  shading_mode_ = opts_.shading_mode;
+  ibl_enabled_ = opts_.ibl;
+  shadows_enabled_ = opts_.shadows;
+  desired_backend_ = opts_.backend;
+
+  // Probe once so the UI can offer GL honestly instead of guessing, and so
+  // --verbose reports the device before any scene is loaded. Skipped when the
+  // user pinned the CPU: creating a throwaway context would be pure cost.
+  if (desired_backend_ != BackendChoice::Cpu) {
+    gl_probe_ = ProbeGlBackend();
+    if (!gl_probe_.available) {
+      gl_disabled_ = true;
+      gl_error_ = gl_probe_.error;
+      if (desired_backend_ == BackendChoice::Gl) {
+        // Explicitly requested and not deliverable: say so unconditionally,
+        // then fall back rather than refusing to show anything.
+        std::fprintf(stderr,
+                     "[tusdquicklook] GL backend unavailable (%s); using the "
+                     "CPU renderer\n",
+                     gl_error_.c_str());
+      }
+    }
+    if (opts_.verbose) {
+      if (gl_probe_.available) {
+        std::fprintf(stderr,
+                     "[tusdquicklook] gl probe: %s / %s, free VRAM %llu MB\n",
+                     gl_probe_.device.c_str(), gl_probe_.version.c_str(),
+                     static_cast<unsigned long long>(gl_probe_.free_vram >> 20));
+      } else {
+        std::fprintf(stderr, "[tusdquicklook] gl probe: unavailable (%s)\n",
+                     gl_probe_.error.c_str());
+      }
+    }
+  }
+
   if (!headless_) {
     if (!lui_init()) {
       err_ =
@@ -286,6 +324,14 @@ bool App::HandleEvent(const lui_event_t& ev) {
         switch (ev.data.key.key) {
         case 't':
           ToggleViewMode();
+          needs_redraw_ = true;
+          break;
+        case 'g':
+          // Cycle the backend preference. EnsureRenderer picks the change up on
+          // the next frame, which is also where the switch actually happens —
+          // creating a context from inside an event handler would tear down the
+          // renderer while DrawViewport still holds its pixels.
+          CycleBackend();
           needs_redraw_ = true;
           break;
         case LUI_KEY_UP:
@@ -1530,61 +1576,157 @@ void App::DrawSplitter(lvg_canvas_t* c, const lvg_rect_t& r) {
   if (dragging_splitter_) FillRect(c, r, theme_.accent);
 }
 
+RenderSettings App::CurrentRenderSettings() const {
+  RenderSettings rs;
+  rs.spp = opts_.spp;
+  rs.threads = ResolveThreadCount(opts_);
+  rs.shadows = shadows_enabled_;
+  rs.ao = opts_.ao;
+  rs.mode = shading_mode_;
+  rs.ibl = ibl_enabled_;
+  rs.exposure = exposure_;
+  return rs;
+}
+
+void App::ApplyRenderSettings() {
+  if (renderer_) renderer_->SetSettings(CurrentRenderSettings());
+}
+
+bool App::GlAffordable() const {
+  // A GL driver costs ~100 MB of RSS that the budget cannot track (it lives in
+  // the driver, not behind PoolAlloc). Under a tight cap that overhead dwarfs
+  // the preview itself, so `auto` stays on the CPU; an explicit gl request
+  // still gets what it asked for.
+  return budget_.total >= (256ull << 20);
+}
+
+BackendChoice App::ResolveBackend() const {
+  if (desired_backend_ == BackendChoice::Auto) {
+    return (GlAffordable() && !gl_disabled_) ? BackendChoice::Gl
+                                             : BackendChoice::Cpu;
+  }
+  if (desired_backend_ == BackendChoice::Gl && gl_disabled_) {
+    return BackendChoice::Cpu;
+  }
+  return desired_backend_;
+}
+
+bool App::CreateRenderer(BackendChoice backend, const lvg_rect_t& viewport,
+                         std::string* err) {
+  const RenderSettings rs = CurrentRenderSettings();
+  std::unique_ptr<Renderer> next;
+
+  if (backend == BackendChoice::Gl) {
+    // Rough VRAM need: geometry + textures, plus the framebuffers.
+    const uint64_t needed =
+        scene_.ByteSize() + uint64_t(viewport.width) * viewport.height * 8;
+    next = CreateGlRenderer(viewport.width, viewport.height, rs, needed, err);
+    if (!next) return false;
+  } else {
+    next = CreateCpuRenderer();
+    if (!next) {
+      if (err) *err = "could not create the CPU renderer";
+      return false;
+    }
+    if (!next->Init(viewport.width, viewport.height, rs, err)) return false;
+  }
+
+  // The renderer holds nothing that cannot be rebuilt from the app's own state,
+  // which is what makes switching safe at any time — including mid-load.
+  renderer_ = std::move(next);
+  renderer_->SetScene(&scene_);
+  renderer_->SyncScene();
+  renderer_->SetCamera(camera_);
+  renderer_->SetSettings(rs);
+  renderer_->Resize(viewport.width, viewport.height);
+
+  live_backend_ = backend;
+  live_device_ = renderer_->DeviceName();
+  return true;
+}
+
+void App::SwitchBackend(BackendChoice backend, const lvg_rect_t& viewport) {
+  std::string err;
+  // Release the old one first: an EGL context and its driver allocations should
+  // not be held while the replacement asks for its own.
+  renderer_.reset();
+
+  if (CreateRenderer(backend, viewport, &err)) {
+    if (opts_.verbose) {
+      std::fprintf(stderr, "[tusdquicklook] renderer: %s (%s)\n",
+                   renderer_->Name(), live_device_.c_str());
+    }
+    return;
+  }
+
+  if (backend == BackendChoice::Gl) {
+    // GL was asked for and could not be had. Say why once, remember it so we
+    // stop retrying every frame, and fall back rather than showing nothing.
+    gl_disabled_ = true;
+    gl_error_ = err;
+    if (desired_backend_ == BackendChoice::Gl || opts_.verbose) {
+      std::fprintf(stderr,
+                   "[tusdquicklook] GL backend unavailable (%s); using the CPU "
+                   "renderer\n",
+                   err.c_str());
+    }
+    std::string cerr;
+    if (CreateRenderer(BackendChoice::Cpu, viewport, &cerr) && opts_.verbose) {
+      std::fprintf(stderr, "[tusdquicklook] renderer: %s (%s)\n",
+                   renderer_->Name(), live_device_.c_str());
+    }
+    return;
+  }
+
+  std::fprintf(stderr, "[tusdquicklook] renderer unavailable: %s\n",
+               err.c_str());
+}
+
+void App::DemoteToCpu(const std::string& why, const lvg_rect_t& viewport) {
+  // Device loss is permanent for this session: whatever killed the context is
+  // unlikely to fix itself, and retrying each frame would stutter forever.
+  gl_disabled_ = true;
+  gl_error_ = why;
+  std::fprintf(stderr, "[tusdquicklook] GL backend lost (%s); falling back to "
+                       "the CPU renderer\n",
+               why.c_str());
+  renderer_.reset();
+  std::string err;
+  CreateRenderer(BackendChoice::Cpu, viewport, &err);
+}
+
+std::string App::BackendStatusText() const {
+  std::string s = (live_backend_ == BackendChoice::Gl) ? "gl" : "cpu";
+  if (!live_device_.empty()) s += " \xC2\xB7 " + live_device_;
+  // Never let a silent demotion pass for a deliberate choice.
+  if (live_backend_ != BackendChoice::Gl && gl_disabled_ &&
+      desired_backend_ != BackendChoice::Cpu) {
+    s += "  (gl: " + gl_error_ + ")";
+  }
+  return s;
+}
+
+void App::CycleBackend() {
+  switch (desired_backend_) {
+    case BackendChoice::Auto: desired_backend_ = BackendChoice::Cpu; break;
+    case BackendChoice::Cpu:  desired_backend_ = BackendChoice::Gl;  break;
+    case BackendChoice::Gl:   desired_backend_ = BackendChoice::Auto; break;
+  }
+  // A deliberate request to try GL again clears a previous failure: the user
+  // may have fixed the driver, or just wants the error re-reported.
+  if (desired_backend_ == BackendChoice::Gl) {
+    gl_disabled_ = false;
+    gl_error_.clear();
+  }
+}
+
 bool App::EnsureRenderer(const lvg_rect_t& viewport) {
   if (viewport.width <= 0 || viewport.height <= 0) return false;
 
-  if (!renderer_) {
-    RenderSettings rs;
-    rs.spp = opts_.spp;
-    rs.threads = ResolveThreadCount(opts_);
-    rs.shadows = opts_.shadows;
-    rs.ao = opts_.ao;
-
-    // GPU first when asked for, but never at the cost of starting up: a missing
-    // libEGL, an unusable driver or too little free VRAM all fall back to the
-    // CPU tracer, which needs no GPU at all.
-    // A GL driver costs ~100 MB of RSS that the budget cannot track (it lives
-    // in the driver, not behind PoolAlloc). Under a tight cap that overhead
-    // dwarfs the preview itself, so `auto` stays on the CPU; an explicit
-    // --backend gl still gets what it asked for.
-    const bool gl_affordable = budget_.total >= (256ull << 20);
-    if (opts_.backend == BackendChoice::Gl ||
-        (opts_.backend == BackendChoice::Auto && gl_affordable)) {
-      // Rough VRAM need: geometry + textures, plus the framebuffers.
-      const uint64_t needed = scene_.ByteSize() +
-                              uint64_t(viewport.width) * viewport.height * 8;
-      std::string gerr;
-      renderer_ = CreateGlRenderer(viewport.width, viewport.height, rs, needed,
-                                   &gerr);
-      if (!renderer_) {
-        if (opts_.backend == BackendChoice::Gl) {
-          // Explicitly requested: say why we could not honour it, then fall
-          // back rather than refusing to show anything.
-          std::fprintf(stderr,
-                       "[tusdquicklook] GL backend unavailable (%s); using the "
-                       "CPU renderer\n",
-                       gerr.c_str());
-        } else if (opts_.verbose) {
-          std::fprintf(stderr, "[tusdquicklook] GL backend unavailable: %s\n",
-                       gerr.c_str());
-        }
-      }
-    }
-
-    if (!renderer_) {
-      renderer_ = CreateCpuRenderer();
-      if (!renderer_) return false;
-      std::string rerr;
-      if (!renderer_->Init(viewport.width, viewport.height, rs, &rerr)) {
-        renderer_.reset();
-        return false;
-      }
-    }
-
-    if (opts_.verbose) {
-      std::fprintf(stderr, "[tusdquicklook] renderer: %s\n", renderer_->Name());
-    }
-    renderer_->SetScene(&scene_);
+  const BackendChoice wanted = ResolveBackend();
+  if (!renderer_ || live_backend_ != wanted) {
+    SwitchBackend(wanted, viewport);
+    if (!renderer_) return false;
   }
 
   renderer_->Resize(viewport.width, viewport.height);
@@ -1632,7 +1774,14 @@ void App::DrawViewport(lvg_canvas_t* c, const lvg_rect_t& r) {
     const double budget_ms = headless_ ? 2000.0 : 12.0;
     render_status_ = renderer_->RenderStep(budget_ms);
 
-    const uint32_t* px = renderer_->Pixels();
+    if (render_status_.device_lost) {
+      // Swap the backend out and render the replacement's first frame now, so
+      // the loss costs the user a frame rather than a blank viewport.
+      DemoteToCpu(render_status_.error, r);
+      if (renderer_) render_status_ = renderer_->RenderStep(budget_ms);
+    }
+
+    const uint32_t* px = renderer_ ? renderer_->Pixels() : nullptr;
     if (px && renderer_->width() == r.width &&
         renderer_->height() == r.height) {
       // The renderer already produces lightvg's native 0xAARRGGBB, so this is a
@@ -1793,7 +1942,10 @@ void App::DrawStatusBar(lvg_canvas_t* c, const lvg_rect_t& r) {
 
   // Show tracked-vs-cap plus process RSS: the first is what the budget governs,
   // the second is the number that actually gets a process OOM-killed.
-  const std::string right = "mem " + budget_.FormatUsage() + "  rss " +
+  // Which backend is actually live, and — when it is not the one asked for —
+  // why. A demotion must never look like a deliberate choice.
+  const std::string right = BackendStatusText() + "   mem " +
+                            budget_.FormatUsage() + "  rss " +
                             FormatBytes(MemBudget::ProcessRSS());
 
   const int right_w = DrawTextRight(c, font_, r.x + r.width - theme_.pad,

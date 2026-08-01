@@ -12,6 +12,7 @@
 #include <string>
 
 #include "camera.hh"
+#include "options.hh"
 #include "ql_scene.hh"
 
 namespace tusdql {
@@ -23,6 +24,11 @@ struct RenderStatus {
   int tiles_done = 0;
   int tiles_total = 0;
   bool produced_pixels = false;  // something new to show since the last step
+
+  // The backend can no longer render (context lost, framebuffer incomplete,
+  // driver error). The app demotes to CPU and shows `error`.
+  bool device_lost = false;
+  std::string error;
 };
 
 struct RenderSettings {
@@ -30,6 +36,10 @@ struct RenderSettings {
   int threads = 4;
   bool shadows = true;
   bool ao = false;
+
+  ShadingMode mode = ShadingMode::Shaded;
+  bool ibl = true;
+  float exposure = 0.0f;  // stops
 };
 
 class Renderer {
@@ -49,6 +59,11 @@ class Renderer {
 
   virtual void SetCamera(const OrbitCamera& camera) = 0;
 
+  // Replace the render settings. Like SetScene/SetCamera this invalidates all
+  // accumulated samples, so it is the single funnel for anything that changes
+  // the image (shading mode, IBL, exposure, shadows).
+  virtual void SetSettings(const RenderSettings& settings) = 0;
+
   // Do up to `budget_ms` of work and return what changed. Called from the UI
   // thread between event drains, so it must respect the budget.
   virtual RenderStatus RenderStep(double budget_ms) = 0;
@@ -59,10 +74,26 @@ class Renderer {
   virtual int height() const = 0;
 
   virtual const char* Name() const = 0;
+  // Human-readable device behind this backend ("llvmpipe", "NVIDIA ...", or a
+  // CPU thread count). Shown in the status bar. Never null.
+  virtual const char* DeviceName() const { return ""; }
 };
 
 // Backed by lightrt's CPU BVH kernel; always available, no GPU required.
 std::unique_ptr<Renderer> CreateCpuRenderer();
+
+struct GlProbeResult {
+  bool available = false;
+  std::string device;      // GL_RENDERER, when we got that far
+  std::string version;     // GL_VERSION
+  std::string error;       // why not, when !available
+  uint64_t free_vram = 0;  // 0 when the driver does not report it
+};
+
+// Create a throwaway context to find out whether GL is usable at all, without
+// committing to it. Cheap enough to call once at startup so the UI can offer
+// (or grey out) the GL backend honestly instead of guessing.
+GlProbeResult ProbeGlBackend();
 
 // Offscreen GL 3.3 raster. Returns nullptr (reason in `err`) when no headless
 // context can be created or the GPU reports too little free VRAM for
