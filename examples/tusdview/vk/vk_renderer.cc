@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 
 #include "imgui.h"
@@ -46,6 +48,70 @@
 namespace tusdview {
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// Persistent VkPipelineCache for the ray-query compute pipeline.
+//
+// The driver compiles that shader on every launch, and on recent NVIDIA parts
+// it is pathologically slow -- measured at 38.2 s of a 38.9 s ray-tracing
+// init on an RTX 5060 Ti (driver 610.43.02), which is long enough to time out
+// every MCP-driven vk-rt test before the transport even comes up. This is the
+// same class of problem the CUDA path documents for NVRTC, and it gets the
+// same treatment: keep the compiled result on disk.
+//
+// Correctness does not depend on our key being right. A VkPipelineCache blob
+// carries vendor/device/driver identifiers and a UUID, and the driver ignores
+// data that does not match, falling back to a normal compile.
+// ---------------------------------------------------------------------------
+
+std::string RtPipelineCacheEnv(const char* name) {
+  const char* v = std::getenv(name);
+  return v ? std::string(v) : std::string();
+}
+
+std::string RtPipelineCacheDir() {
+#if defined(_WIN32)
+  const std::string base = RtPipelineCacheEnv("LOCALAPPDATA");
+  return base.empty() ? std::string() : base + "\\tusdview\\vk";
+#elif defined(__APPLE__)
+  const std::string home = RtPipelineCacheEnv("HOME");
+  return home.empty() ? std::string() : home + "/Library/Caches/tusdview/vk";
+#else
+  const std::string xdg = RtPipelineCacheEnv("XDG_CACHE_HOME");
+  if (!xdg.empty()) return xdg + "/tusdview/vk";
+  const std::string home = RtPipelineCacheEnv("HOME");
+  return home.empty() ? std::string() : home + "/.cache/tusdview/vk";
+#endif
+}
+
+uint64_t RtHashBytes(uint64_t hash, const void* data, size_t size) {
+  const auto* bytes = static_cast<const uint8_t*>(data);
+  for (size_t i = 0; i < size; ++i) {
+    hash ^= bytes[i];
+    hash *= UINT64_C(1099511628211);
+  }
+  return hash;
+}
+
+// Keyed by the SPIR-V plus the device and driver it was compiled for, so a
+// driver update or a different GPU lands on a different file rather than
+// repeatedly loading a blob the driver will reject.
+std::string RtPipelineCachePath(const VkPhysicalDeviceProperties& props,
+                                const void* spv, size_t spvSize) {
+  const std::string dir = RtPipelineCacheDir();
+  if (dir.empty()) return std::string();
+  uint64_t hash = UINT64_C(14695981039346656037);
+  hash = RtHashBytes(hash, spv, spvSize);
+  hash = RtHashBytes(hash, &props.vendorID, sizeof(props.vendorID));
+  hash = RtHashBytes(hash, &props.deviceID, sizeof(props.deviceID));
+  hash = RtHashBytes(hash, &props.driverVersion, sizeof(props.driverVersion));
+  hash = RtHashBytes(hash, props.pipelineCacheUUID,
+                     sizeof(props.pipelineCacheUUID));
+  char hex[17] = {};
+  std::snprintf(hex, sizeof(hex), "%016llx",
+                static_cast<unsigned long long>(hash));
+  return dir + "/raytrace-" + hex + ".pipelinecache";
+}
 
 constexpr uint32_t kRasterDescriptorSetCount = 4;
 constexpr uint32_t kMaterialBindingCount = 32;
@@ -7359,6 +7425,43 @@ bool VulkanRenderer::createRtResources(std::string* err) {
     if (err) *err = "rt shader module";
     return false;
   }
+  // Warm the pipeline cache from disk before compiling. On a cold cache this
+  // costs a stat; on a warm one it turns a ~38 s driver compile into a load.
+  VkPhysicalDeviceProperties props{};
+  vkGetPhysicalDeviceProperties(phys_, &props);
+  const std::string cachePath =
+      RtPipelineCachePath(props, raytrace_comp_spv, sizeof(raytrace_comp_spv));
+  std::vector<uint8_t> cacheBlob;
+  if (!cachePath.empty()) {
+    std::ifstream in(cachePath, std::ios::binary);
+    if (in) {
+      in.seekg(0, std::ios::end);
+      const std::streamoff sz = in.tellg();
+      if (sz > 0) {
+        in.seekg(0, std::ios::beg);
+        cacheBlob.resize(static_cast<size_t>(sz));
+        if (!in.read(reinterpret_cast<char*>(cacheBlob.data()), sz)) {
+          cacheBlob.clear();
+        }
+      }
+    }
+  }
+
+  VkPipelineCache pipeCache = VK_NULL_HANDLE;
+  {
+    VkPipelineCacheCreateInfo pcci{};
+    pcci.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    pcci.initialDataSize = cacheBlob.size();
+    pcci.pInitialData = cacheBlob.empty() ? nullptr : cacheBlob.data();
+    // A rejected blob is not an error: the driver validates the header and
+    // simply starts empty, which only costs us the compile we were doing
+    // before anyway.
+    if (vkCreatePipelineCache(device_, &pcci, nullptr, &pipeCache) !=
+        VK_SUCCESS) {
+      pipeCache = VK_NULL_HANDLE;
+    }
+  }
+
   VkComputePipelineCreateInfo cpci{};
   cpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
   cpci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -7366,9 +7469,42 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   cpci.stage.module = cs;
   cpci.stage.pName = "main";
   cpci.layout = rtPipelineLayout_;
-  VkResult r = vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &cpci, nullptr,
+  VkResult r = vkCreateComputePipelines(device_, pipeCache, 1, &cpci, nullptr,
                                         &rtPipeline_);
   vkDestroyShaderModule(device_, cs, nullptr);
+
+  // Persist whatever the driver produced. Written to a temporary and renamed so
+  // a crash or a concurrent viewer cannot leave a half-written blob behind --
+  // the driver would reject it, but only after the next launch paid to read it.
+  if (pipeCache != VK_NULL_HANDLE) {
+    if (r == VK_SUCCESS && !cachePath.empty()) {
+      size_t sz = 0;
+      if (vkGetPipelineCacheData(device_, pipeCache, &sz, nullptr) ==
+              VK_SUCCESS && sz > 0 && sz != cacheBlob.size()) {
+        std::vector<uint8_t> out(sz);
+        if (vkGetPipelineCacheData(device_, pipeCache, &sz, out.data()) ==
+            VK_SUCCESS) {
+          std::error_code ec;
+          std::filesystem::create_directories(
+              std::filesystem::path(cachePath).parent_path(), ec);
+          const std::string tmp =
+              cachePath + ".tmp" + std::to_string(
+                  static_cast<unsigned long long>(
+                      std::chrono::steady_clock::now()
+                          .time_since_epoch()
+                          .count()));
+          {
+            std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
+            if (o) o.write(reinterpret_cast<const char*>(out.data()),
+                           static_cast<std::streamsize>(sz));
+          }
+          std::filesystem::rename(tmp, cachePath, ec);
+          if (ec) std::filesystem::remove(tmp, ec);
+        }
+      }
+    }
+    vkDestroyPipelineCache(device_, pipeCache, nullptr);
+  }
   if (r != VK_SUCCESS) {
     if (err) {
       *err = "rt compute pipeline (VkResult " +
