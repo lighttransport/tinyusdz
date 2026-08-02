@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -69,7 +70,6 @@ constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800;
 constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802;
 constexpr GLenum GL_TEXTURE_WRAP_T = 0x2803;
 constexpr GLenum GL_LINEAR = 0x2601;
-constexpr GLenum GL_LINEAR_MIPMAP_LINEAR = 0x2703;
 constexpr GLenum GL_REPEAT = 0x2901;
 constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
 constexpr GLenum GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
@@ -106,6 +106,7 @@ struct Gl {
   void (*DeleteVertexArrays)(GLsizei, const GLuint*) = nullptr;
   void (*BindVertexArray)(GLuint) = nullptr;
   void (*EnableVertexAttribArray)(GLuint) = nullptr;
+  void (*DisableVertexAttribArray)(GLuint) = nullptr;
   void (*VertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei,
                               const void*) = nullptr;
   GLuint (*CreateShader)(GLenum) = nullptr;
@@ -143,13 +144,13 @@ struct Gl {
   void (*TexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum,
                      GLenum, const void*) = nullptr;
   void (*TexParameteri)(GLenum, GLenum, GLint) = nullptr;
-  void (*GenerateMipmap)(GLenum) = nullptr;
   void (*ReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*) = nullptr;
   const unsigned char* (*GetString)(GLenum) = nullptr;
   void (*GetIntegerv)(GLenum, GLint*) = nullptr;
   GLenum (*GetError)() = nullptr;
   void (*BlendFunc)(GLenum, GLenum) = nullptr;
   void (*DepthMask)(GLboolean) = nullptr;
+  void (*VertexAttrib4f)(GLuint, GLfloat, GLfloat, GLfloat, GLfloat) = nullptr;
 
   bool Load(GlGetProcFn get);
 };
@@ -167,6 +168,7 @@ bool Gl::Load(GlGetProcFn get) {
   BIND(DrawElements); BIND(DrawArrays); BIND(GenBuffers); BIND(DeleteBuffers); BIND(BindBuffer);
   BIND(BufferData); BIND(GenVertexArrays); BIND(DeleteVertexArrays);
   BIND(BindVertexArray); BIND(EnableVertexAttribArray);
+  BIND(DisableVertexAttribArray);
   BIND(VertexAttribPointer); BIND(CreateShader); BIND(ShaderSource);
   BIND(CompileShader); BIND(GetShaderiv); BIND(GetShaderInfoLog);
   BIND(DeleteShader); BIND(CreateProgram); BIND(AttachShader); BIND(LinkProgram);
@@ -178,9 +180,9 @@ bool Gl::Load(GlGetProcFn get) {
   BIND(CheckFramebufferStatus); BIND(GenRenderbuffers); BIND(DeleteRenderbuffers);
   BIND(BindRenderbuffer); BIND(RenderbufferStorage); BIND(GenTextures);
   BIND(DeleteTextures); BIND(BindTexture); BIND(ActiveTexture);
-  BIND(TexImage2D); BIND(TexParameteri); BIND(GenerateMipmap);
+  BIND(TexImage2D); BIND(TexParameteri);
   BIND(ReadPixels); BIND(GetString); BIND(GetIntegerv); BIND(GetError);
-  BIND(BlendFunc); BIND(DepthMask);
+  BIND(BlendFunc); BIND(DepthMask); BIND(VertexAttrib4f);
 #undef BIND
   return ok;
 }
@@ -555,6 +557,11 @@ struct GlMesh {
 
 class GlRasterRenderer final : public Renderer {
  public:
+  GlRasterRenderer(uint64_t required_vram, uint64_t max_gpu_mem,
+                   GlProbeResult* probe)
+      : required_vram_(required_vram),
+        max_gpu_mem_(max_gpu_mem),
+        probe_(probe) {}
   ~GlRasterRenderer() override { ReleaseGpu(); }
 
   bool Init(int width, int height, const RenderSettings& settings,
@@ -582,6 +589,8 @@ class GlRasterRenderer final : public Renderer {
   void ReleaseGpu();
   void UploadScene();
   void BuildViewProj(float out[16]) const;
+  uint64_t EstimateVram() const;
+  bool CheckResourceBudget();
 
   std::unique_ptr<GlContext> ctx_;
   Gl gl_;
@@ -592,7 +601,7 @@ class GlRasterRenderer final : public Renderer {
   int width_ = 1;
   int height_ = 1;
   std::vector<uint32_t> pixels_;
-  std::vector<uint8_t> readback_;
+  std::vector<uint8_t> row_scratch_;
 
   GLuint program_ = 0;
   GLuint bg_program_ = 0;
@@ -605,9 +614,14 @@ class GlRasterRenderer final : public Renderer {
   std::vector<GLuint> textures_;
   size_t uploaded_mesh_count_ = 0;
 
+  uint64_t required_vram_ = 0;
+  uint64_t max_gpu_mem_ = 0;
+  GlProbeResult* probe_ = nullptr;
+
   ShadingContext shading_;
   bool dirty_ = true;
   std::string device_name_;
+  std::string resource_error_;
 };
 
 bool GlRasterRenderer::Init(int width, int height,
@@ -615,15 +629,71 @@ bool GlRasterRenderer::Init(int width, int height,
   settings_ = settings;
 
   ctx_ = CreateHeadlessGlContext(err);
-  if (!ctx_) return false;
+  if (!ctx_) {
+    if (probe_) {
+      probe_->available = false;
+      probe_->error = err ? *err : "no headless GL context";
+    }
+    return false;
+  }
   if (!gl_.Load(ctx_->GetProcLoader())) {
     if (err) *err = "could not resolve the required GL 3.3 entry points";
+    if (probe_) {
+      probe_->available = false;
+      probe_->error = err ? *err : "could not resolve GL entry points";
+    }
     return false;
   }
 
   if (const unsigned char* r = gl_.GetString(GL_RENDERER)) {
     device_name_ = reinterpret_cast<const char*>(r);
   }
+
+  const bool software_renderer =
+      device_name_.find("llvmpipe") != std::string::npos ||
+      device_name_.find("softpipe") != std::string::npos ||
+      device_name_.find("Software") != std::string::npos;
+  // Mesa's software drivers sometimes expose the NVX/ATI memory enums with a
+  // process-dependent host-memory number. It is not VRAM headroom, so do not
+  // turn that unstable value into an intermittent auto-backend decision.
+  const uint64_t free_vram = software_renderer ? 0 : QueryFreeVram();
+
+  if (probe_) {
+    probe_->available = true;
+    probe_->device = device_name_;
+    if (const unsigned char* v = gl_.GetString(GL_VERSION)) {
+      probe_->version = reinterpret_cast<const char*>(v);
+    }
+    probe_->required_vram = required_vram_;
+    probe_->gpu_budget = max_gpu_mem_;
+    probe_->free_vram = free_vram;
+  }
+
+  uint64_t effective_budget = max_gpu_mem_;
+  constexpr uint64_t kDriverReserve = 256ull << 20;
+  if (free_vram > 0) {
+    effective_budget = free_vram > kDriverReserve
+                           ? std::min(effective_budget,
+                                      free_vram - kDriverReserve)
+                           : 0;
+  }
+  if (required_vram_ > effective_budget) {
+    if (err) {
+      *err = "not enough GPU memory (estimate " +
+             std::to_string(required_vram_ >> 20) + " MB, budget " +
+             std::to_string(effective_budget >> 20) + " MB)";
+    }
+    if (probe_) {
+      probe_->available = false;
+      probe_->error = err ? *err : "not enough GPU memory";
+      probe_->gpu_budget = effective_budget;
+    }
+    return false;
+  }
+  // Keep the effective (free-VRAM-aware) value for later scene/resize checks;
+  // the initial configured cap is no longer the actual usable budget.
+  max_gpu_mem_ = effective_budget;
+  if (probe_) probe_->gpu_budget = effective_budget;
 
   if (!CreateProgram(err)) return false;
 
@@ -734,7 +804,7 @@ bool GlRasterRenderer::CreateTargets(std::string* err) {
   }
 
   pixels_.assign(size_t(width_) * height_, 0xFF101014u);
-  readback_.assign(size_t(width_) * height_ * 4, 0);
+  row_scratch_.assign(size_t(width_) * 4, 0);
   dirty_ = true;
   return true;
 }
@@ -775,6 +845,7 @@ void GlRasterRenderer::Resize(int width, int height) {
   height_ = height;
   if (ctx_) {
     ctx_->MakeCurrent();
+    if (!CheckResourceBudget()) return;
     std::string err;
     CreateTargets(&err);
   }
@@ -802,14 +873,46 @@ void GlRasterRenderer::SetScene(const QlScene* scene) {
 
 void GlRasterRenderer::SyncScene() {
   if (!scene_ || !ctx_) return;
-  if (scene_->meshes.size() == uploaded_mesh_count_ && !textures_.empty()) return;
+  if (!CheckResourceBudget()) return;
   if (scene_->meshes.size() == uploaded_mesh_count_ &&
-      scene_->textures.empty()) {
+      textures_.size() == scene_->textures.size()) {
     return;
   }
   ctx_->MakeCurrent();
   UploadScene();
   dirty_ = true;
+}
+
+uint64_t GlRasterRenderer::EstimateVram() const {
+  const uint64_t pixels = uint64_t(std::max(1, width_)) *
+                          uint64_t(std::max(1, height_));
+  constexpr uint64_t kBytesPerPixel = 8;  // RGBA8 + depth24, conservatively.
+  const uint64_t framebuffer =
+      pixels > std::numeric_limits<uint64_t>::max() / kBytesPerPixel
+          ? std::numeric_limits<uint64_t>::max()
+          : pixels * kBytesPerPixel;
+  const uint64_t scene_bytes = scene_ ? scene_->ByteSize() : 0;
+  if (scene_bytes > std::numeric_limits<uint64_t>::max() - framebuffer) {
+    return std::numeric_limits<uint64_t>::max();
+  }
+  return scene_bytes + framebuffer;
+}
+
+bool GlRasterRenderer::CheckResourceBudget() {
+  required_vram_ = EstimateVram();
+  if (probe_) probe_->required_vram = required_vram_;
+  if (required_vram_ <= max_gpu_mem_) {
+    resource_error_.clear();
+    return true;
+  }
+  resource_error_ = "not enough GPU memory (estimate " +
+                    std::to_string(required_vram_ >> 20) + " MB, budget " +
+                    std::to_string(max_gpu_mem_ >> 20) + " MB)";
+  if (probe_) {
+    probe_->available = false;
+    probe_->error = resource_error_;
+  }
+  return false;
 }
 
 void GlRasterRenderer::UploadScene() {
@@ -831,14 +934,15 @@ void GlRasterRenderer::UploadScene() {
                      t.srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, GLsizei(t.width),
                      GLsizei(t.height), 0, GL_RGBA, GL_UNSIGNED_BYTE,
                      t.rgba.data());
-      gl_.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                        GL_LINEAR_MIPMAP_LINEAR);
+      gl_.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
       gl_.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
       gl_.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
                         t.wrap_repeat_s ? GL_REPEAT : GL_CLAMP_TO_EDGE);
       gl_.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
                         t.wrap_repeat_t ? GL_REPEAT : GL_CLAMP_TO_EDGE);
-      gl_.GenerateMipmap(GL_TEXTURE_2D);
+      // The CPU sampler is bilinear without mip levels. Keeping only the base
+      // level both matches it more closely and saves roughly one third of the
+      // driver's texture allocation on a constrained GPU.
     }
   }
 
@@ -863,59 +967,49 @@ void GlRasterRenderer::UploadScene() {
     gl_.EnableVertexAttribArray(0);
     gl_.VertexAttribPointer(0, 3, GL_FLOAT, 0, 0, nullptr);
 
-    // A mesh without authored normals still needs the attribute bound; fill it
-    // with the position so the shader's normalize() is defined, then rely on
-    // the per-face flat fallback being close enough for a preview.
-    std::vector<float> normals;
-    const float* normal_src = src.normals.data();
-    size_t normal_bytes = src.normals.size() * sizeof(float);
+    // A mesh without authored normals still needs the attribute bound. Reuse
+    // the position VBO as a cheap defined fallback instead of allocating a
+    // second CPU/GPU array just to carry a duplicate stream.
     if (src.normals.empty()) {
-      normals.assign(src.positions.begin(), src.positions.end());
-      normal_src = normals.data();
-      normal_bytes = normals.size() * sizeof(float);
+      gl_.BindBuffer(GL_ARRAY_BUFFER, m.vbo_pos);
+    } else {
+      gl_.GenBuffers(1, &m.vbo_nrm);
+      gl_.BindBuffer(GL_ARRAY_BUFFER, m.vbo_nrm);
+      gl_.BufferData(GL_ARRAY_BUFFER,
+                     GLsizeiptr(src.normals.size() * sizeof(float)),
+                     src.normals.data(), GL_STATIC_DRAW);
     }
-    gl_.GenBuffers(1, &m.vbo_nrm);
-    gl_.BindBuffer(GL_ARRAY_BUFFER, m.vbo_nrm);
-    gl_.BufferData(GL_ARRAY_BUFFER, GLsizeiptr(normal_bytes), normal_src,
-                   GL_STATIC_DRAW);
     gl_.EnableVertexAttribArray(1);
     gl_.VertexAttribPointer(1, 3, GL_FLOAT, 0, 0, nullptr);
 
-    std::vector<float> uvs;
-    const float* uv_src = src.uvs.data();
-    size_t uv_bytes = src.uvs.size() * sizeof(float);
-    if (src.uvs.empty()) {
-      uvs.assign(src.vertex_count() * 2, 0.0f);
-      uv_src = uvs.data();
-      uv_bytes = uvs.size() * sizeof(float);
+    if (!src.uvs.empty()) {
+      gl_.GenBuffers(1, &m.vbo_uv);
+      gl_.BindBuffer(GL_ARRAY_BUFFER, m.vbo_uv);
+      gl_.BufferData(GL_ARRAY_BUFFER,
+                     GLsizeiptr(src.uvs.size() * sizeof(float)),
+                     src.uvs.data(), GL_STATIC_DRAW);
+      gl_.EnableVertexAttribArray(2);
+      gl_.VertexAttribPointer(2, 2, GL_FLOAT, 0, 0, nullptr);
+    } else {
+      gl_.DisableVertexAttribArray(2);
+      gl_.VertexAttrib4f(2, 0.0f, 0.0f, 0.0f, 1.0f);
     }
-    gl_.GenBuffers(1, &m.vbo_uv);
-    gl_.BindBuffer(GL_ARRAY_BUFFER, m.vbo_uv);
-    gl_.BufferData(GL_ARRAY_BUFFER, GLsizeiptr(uv_bytes), uv_src, GL_STATIC_DRAW);
-    gl_.EnableVertexAttribArray(2);
-    gl_.VertexAttribPointer(2, 2, GL_FLOAT, 0, 0, nullptr);
 
     // Tangents are only present for normal-mapped materials. The attribute
     // still has to be bound for every mesh or the shader reads garbage, so an
     // unmapped mesh gets a cheap constant frame it will never sample.
-    std::vector<float> tangents;
-    const float* tan_src = src.tangents.data();
-    size_t tan_bytes = src.tangents.size() * sizeof(float);
-    if (src.tangents.empty()) {
-      tangents.assign(src.vertex_count() * 4, 0.0f);
-      for (size_t v = 0; v < src.vertex_count(); v++) {
-        tangents[v * 4 + 0] = 1.0f;
-        tangents[v * 4 + 3] = 1.0f;
-      }
-      tan_src = tangents.data();
-      tan_bytes = tangents.size() * sizeof(float);
+    if (!src.tangents.empty()) {
+      gl_.GenBuffers(1, &m.vbo_tan);
+      gl_.BindBuffer(GL_ARRAY_BUFFER, m.vbo_tan);
+      gl_.BufferData(GL_ARRAY_BUFFER,
+                     GLsizeiptr(src.tangents.size() * sizeof(float)),
+                     src.tangents.data(), GL_STATIC_DRAW);
+      gl_.EnableVertexAttribArray(3);
+      gl_.VertexAttribPointer(3, 4, GL_FLOAT, 0, 0, nullptr);
+    } else {
+      gl_.DisableVertexAttribArray(3);
+      gl_.VertexAttrib4f(3, 1.0f, 0.0f, 0.0f, 1.0f);
     }
-    gl_.GenBuffers(1, &m.vbo_tan);
-    gl_.BindBuffer(GL_ARRAY_BUFFER, m.vbo_tan);
-    gl_.BufferData(GL_ARRAY_BUFFER, GLsizeiptr(tan_bytes), tan_src,
-                   GL_STATIC_DRAW);
-    gl_.EnableVertexAttribArray(3);
-    gl_.VertexAttribPointer(3, 4, GL_FLOAT, 0, 0, nullptr);
 
     gl_.GenBuffers(1, &m.ebo);
     gl_.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ebo);
@@ -995,6 +1089,13 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
   status.tiles_done = 1;
 
   if (!ctx_ || !scene_) {
+    status.converged = true;
+    return status;
+  }
+
+  if (!resource_error_.empty()) {
+    status.device_lost = true;
+    status.error = resource_error_;
     status.converged = true;
     return status;
   }
@@ -1288,7 +1389,7 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
   gl_.BindVertexArray(0);
 
   gl_.ReadPixels(0, 0, width_, height_, GL_RGBA, GL_UNSIGNED_BYTE,
-                 readback_.data());
+                 pixels_.data());
   gl_.BindFramebuffer(GL_FRAMEBUFFER, 0);
 
   // Drain the error queue. Transient GL errors do not invalidate the pixels we
@@ -1311,16 +1412,27 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
     }
   }
 
-  // GL origin is bottom-left; lightvg surfaces are top-down. Flip while packing
-  // RGBA8 into 0xAARRGGBB.
-  for (int y = 0; y < height_; y++) {
-    const uint8_t* src =
-        readback_.data() + size_t(height_ - 1 - y) * size_t(width_) * 4;
-    uint32_t* dst = pixels_.data() + size_t(y) * size_t(width_);
+  // GL origin is bottom-left; lightvg surfaces are top-down. Swap row pairs
+  // while packing RGBA8 into 0xAARRGGBB.
+  auto pack_row = [&](const uint8_t* src, uint32_t* dst) {
     for (int x = 0; x < width_; x++) {
       dst[x] = 0xFF000000u | (uint32_t(src[x * 4 + 0]) << 16) |
                (uint32_t(src[x * 4 + 1]) << 8) | uint32_t(src[x * 4 + 2]);
     }
+  };
+  uint8_t* raw = reinterpret_cast<uint8_t*>(pixels_.data());
+  for (int y = 0; y < height_ / 2; y++) {
+    uint8_t* top = raw + size_t(height_ - 1 - y) * size_t(width_) * 4;
+    uint8_t* bottom = raw + size_t(y) * size_t(width_) * 4;
+    std::memcpy(row_scratch_.data(), top, row_scratch_.size());
+    pack_row(bottom,
+             pixels_.data() + size_t(height_ - 1 - y) * size_t(width_));
+    pack_row(row_scratch_.data(), pixels_.data() + size_t(y) * size_t(width_));
+  }
+  if (height_ & 1) {
+    const int y = height_ / 2;
+    pack_row(raw + size_t(y) * size_t(width_) * 4,
+             pixels_.data() + size_t(y) * size_t(width_));
   }
 
   dirty_ = false;
@@ -1331,67 +1443,15 @@ RenderStatus GlRasterRenderer::RenderStep(double /*budget_ms*/) {
 
 }  // namespace
 
-GlProbeResult ProbeGlBackend() {
-  GlProbeResult r;
-
-  std::unique_ptr<GlContext> ctx = CreateHeadlessGlContext(&r.error);
-  if (!ctx) return r;
-  if (!ctx->MakeCurrent()) {
-    r.error = "GL context could not be made current";
-    return r;
-  }
-
-  Gl gl;
-  if (!gl.Load(ctx->GetProcLoader())) {
-    r.error = "could not resolve the required GL 3.3 entry points";
-    return r;
-  }
-
-  if (const unsigned char* s = gl.GetString(GL_RENDERER)) {
-    r.device = reinterpret_cast<const char*>(s);
-  }
-  if (const unsigned char* s = gl.GetString(GL_VERSION)) {
-    r.version = reinterpret_cast<const char*>(s);
-  }
-
-  if (gl.GetIntegerv) {
-    GLint kb = 0;
-    gl.GetIntegerv(GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX, &kb);
-    if (kb > 0) {
-      r.free_vram = uint64_t(kb) * 1024ull;
-    } else {
-      GLint ati[4] = {0, 0, 0, 0};
-      gl.GetIntegerv(TEXTURE_FREE_MEMORY_ATI, ati);
-      if (ati[0] > 0) r.free_vram = uint64_t(ati[0]) * 1024ull;
-    }
-  }
-
-  r.available = true;
-  return r;
-}
-
 std::unique_ptr<Renderer> CreateGlRenderer(int width, int height,
                                            const RenderSettings& settings,
                                            uint64_t required_vram_bytes,
+                                           uint64_t max_gpu_mem_bytes,
+                                           GlProbeResult* probe,
                                            std::string* err) {
-  auto r = std::unique_ptr<GlRasterRenderer>(new GlRasterRenderer());
+  auto r = std::unique_ptr<GlRasterRenderer>(new GlRasterRenderer(
+      required_vram_bytes, max_gpu_mem_bytes, probe));
   if (!r->Init(width, height, settings, err)) return nullptr;
-
-  // Only claim the GPU when the driver reports enough headroom. When it reports
-  // nothing (common on Mesa/llvmpipe and on macOS) we accept, since the CPU
-  // fallback is what a software rasterizer would give us anyway.
-  const uint64_t free_vram = r->QueryFreeVram();
-  if (free_vram > 0) {
-    const uint64_t needed = required_vram_bytes + (256ull << 20);
-    if (free_vram < needed) {
-      if (err) {
-        *err = "not enough free VRAM for the scene (" +
-               std::to_string(free_vram >> 20) + " MB free, need " +
-               std::to_string(needed >> 20) + " MB)";
-      }
-      return nullptr;
-    }
-  }
   return std::unique_ptr<Renderer>(r.release());
 }
 

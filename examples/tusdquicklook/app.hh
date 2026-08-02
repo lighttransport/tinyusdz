@@ -29,6 +29,11 @@
 #include "render/renderer.hh"
 #include "ui.hh"
 
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+#include "mcp/mcp_host.hh"
+#include "mcp/mcp_server.hh"
+#endif
+
 extern "C" {
 #include <lightui/lightui.h>
 #include <lightui/window.h>
@@ -39,7 +44,11 @@ extern "C" {
 
 namespace tusdql {
 
-class App {
+class App
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+    : public McpHost
+#endif
+{
  public:
   explicit App(const Options& opts);
   ~App();
@@ -60,6 +69,23 @@ class App {
   int RunHeadless();
 
   const std::string& LastError() const { return err_; }
+
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+  nlohmann::json mcpLoadUsd(const nlohmann::json& args,
+                            std::string& err) override;
+  nlohmann::json mcpSceneInfo(const nlohmann::json& args,
+                              std::string& err) override;
+  nlohmann::json mcpListPrims(const nlohmann::json& args,
+                              std::string& err) override;
+  nlohmann::json mcpViewport(const nlohmann::json& args,
+                             std::string& err) override;
+  nlohmann::json mcpScreenshot(const nlohmann::json& args,
+                               std::string& err) override;
+  nlohmann::json mcpRenderSettings(const nlohmann::json& args,
+                                   std::string& err) override;
+  nlohmann::json mcpQuit(const nlohmann::json& args,
+                         std::string& err) override;
+#endif
 
  private:
   struct ImageTask;
@@ -126,7 +152,8 @@ class App {
   std::uint64_t Hash64(std::string_view s) const;
   void EnforceImageCacheLimit() const;
   bool SpaceAvailableForCache(std::size_t bytes_needed) const;
-  bool ReadFileBytes(const std::string& path, std::vector<uint8_t>* out) const;
+  bool ReadFileBytes(const std::string& path, std::vector<uint8_t>* out,
+                     uint64_t max_bytes = 64ull << 20) const;
   bool LoadCachedThumbnail(const std::string& cache_path,
                           DecodedImage* out) const;
   bool LoadAndDownscaleImage(const std::string& path, DecodedImage* out) const;
@@ -177,7 +204,8 @@ class App {
   bool CreateRenderer(BackendChoice backend, const lvg_rect_t& viewport,
                       std::string* err);
   void SwitchBackend(BackendChoice backend, const lvg_rect_t& viewport);
-  // A backend that failed mid-session: disable it for good and drop to CPU.
+  // A backend failure mid-session: drop to CPU, permanently for driver loss or
+  // temporarily for a scene-specific resource-cap refusal.
   void DemoteToCpu(const std::string& why, const lvg_rect_t& viewport);
   // "gl · llvmpipe" / "cpu (gl: no EGL display)". For the status bar.
   std::string BackendStatusText() const;
@@ -220,9 +248,13 @@ class App {
   BackendChoice desired_backend_ = BackendChoice::Auto;
   BackendChoice live_backend_ = BackendChoice::Cpu;
   std::string live_device_;
-  // Set once GL has failed, so `auto` stops trying and the UI can say why
-  // instead of silently rendering on the CPU.
+  // Set once GL has failed at the driver/context level, so `auto` stops trying
+  // and the UI can say why instead of silently rendering on the CPU.
   bool gl_disabled_ = false;
+  // A residency-cap refusal is scene-specific, not a broken driver. Keep the
+  // CPU fallback for this scene without retrying every frame; PreviewFile()
+  // clears it when the user selects another asset.
+  bool gl_budget_blocked_ = false;
   std::string gl_error_;
   GlProbeResult gl_probe_;
   // Cleared on every new file; set the moment the user touches the camera, so
@@ -337,6 +369,10 @@ class App {
   static constexpr int kImageMaxColumns = 10;
 
   std::string err_;
+
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+  std::unique_ptr<MCPServer> mcp_;
+#endif
 };
 
 }  // namespace tusdql
