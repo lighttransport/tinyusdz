@@ -20,6 +20,7 @@ cmake --build build --target tusdquicklook -j16
 
 ./build/tusdquicklook model.usdz --shading-mode normal   # a debug AOV
 ./build/tusdquicklook model.usdz --env studio.png        # light it with an HDRI
+./build/tusdquicklook model.usdz --max-mem 256 --max-gpu-mem 512
 ```
 
 Interactive: drag to orbit, middle/right-drag to pan, wheel to dolly,
@@ -104,12 +105,18 @@ lightui, and it works with no compositor. The fragment shader mirrors
 `render/shade.cc` — the ctest asserts the two backends agree within 10% of the
 viewport; they currently differ by ~1%.
 
-Note `auto` stays on the CPU below a 256 MB budget: a GL driver costs ~100 MB of
-RSS that the budget cannot track, which under a tight cap dwarfs the preview.
+GL setup is lazy: the process does not create a context, compile shaders, or
+allocate driver resources until GL is actually selected. `--max-gpu-mem <MB>`
+(default **512**) caps the estimated scene, framebuffer and texture residency;
+when the driver reports free VRAM, quicklook also keeps a 256 MB driver reserve.
+The estimate is rechecked as streamed meshes arrive and on viewport resize.
+Exceeding the cap demotes to CPU with the reason in the status bar; a later
+smaller asset can retry GL. `auto` stays on the CPU below a 256 MB host budget
+because a GL driver costs ~100 MB of RSS that the shared allocator cannot track.
 
-**Switching backends is a runtime operation**, not a startup decision. A probe
-at launch reports whether GL is really usable (device, version, free VRAM), the
-`g` key and the toolbar dropdown switch at any time, and a GL context lost
+**Switching backends is a runtime operation**, not a startup decision. The
+first GL selection reports the device, version, free VRAM, estimate and cap;
+the `g` key and toolbar dropdown switch at any time. A GL context lost
 mid-session — unusable framebuffer, `GL_OUT_OF_MEMORY`, `GL_CONTEXT_LOST` —
 demotes to the CPU tracer with the reason carried into the status bar. The rule
 is that a demotion must never be mistakable for a deliberate choice, so
@@ -182,13 +189,18 @@ to a tighter tolerance accordingly.
 ctest -R tusdquicklook --output-on-failure
 ```
 
+When MCP is enabled, `example-tusdquicklook-mcp-protocol` checks the JSON-RPC
+surface without a display, while `example-tusdquicklook-mcp-smoke` drives the
+live stdio queue under Xvfb and is skipped when no usable Xvfb display exists.
+
 `tests/run-quicklook-smoke.sh` runs entirely headless (no display, no GPU) and
 checks: geometry actually draws (each frame is compared against an empty-folder
 render — a colour histogram would not catch a blank viewport, since the gradient
 alone yields hundreds of colours), the budget bounds real RSS, `--threads 1` and
 `--threads 8` are pixel-identical, the three `--backend` modes all produce an
-image, `--verbose` always names the live renderer, and a missing file exits
-non-zero with a diagnostic.
+image, a 1 MiB GPU cap refuses before GL allocation and falls back to CPU,
+`--verbose` always names the live renderer, and a missing file exits non-zero
+with a diagnostic.
 
 Most of it is CPU-vs-GL parity, at deliberately different bars:
 
@@ -200,6 +212,25 @@ Most of it is CPU-vs-GL parity, at deliberately different bars:
 | IBL | 0.10 | environment built on CPU, uploaded to GL |
 | shaded | 0.10 | GL has no shadow maps |
 | overlapping blend | 0.20 | sorted vs layered; cannot match exactly |
+
+## MCP control
+
+The interactive viewer can expose a small local Model Context Protocol server.
+It keeps protocol threads away from the scene and renderer: tool calls are
+queued and executed by the normal UI loop. Start stdio, HTTP, or both:
+
+```
+./build_ninja/tusdquicklook model.usdz --mcp-stdio
+./build_ninja/tusdquicklook model.usdz --mcp-http=8765
+./build_ninja/tusdquicklook model.usdz --mcp
+```
+
+The HTTP endpoint is `http://localhost:8765/mcp`. It accepts one JSON-RPC POST
+per request. Available tools are `load_usd`, `get_scene_info`, `list_prims`,
+`viewport`, `screenshot`, `render_settings`, and `quit`. A screenshot is a PNG
+of the quicklook window; `width` and `height` can request a temporary offscreen
+size. MCP is intended for a trusted local client and is not authenticated.
+It is an interactive mode and cannot be combined with `--screenshot`.
 
 Two checks are structural rather than tolerance-based, because a threshold
 cannot express them: every shading mode must differ from every other (a mode
@@ -225,6 +256,22 @@ invisible to `--screenshot`:
 
 It also asserts the app actually goes idle when converged (0 CPU ticks over 3s
 in practice), which is the "less cpu" half of the brief.
+
+On an NVIDIA host, use the same offscreen wrapper as the main viewer's GPU
+debugging guide. This keeps the X server virtual while routing EGL/GLX through
+the NVIDIA vendor library:
+
+```
+xvfb-run -a -s "-screen 0 800x600x24" env \
+  __NV_PRIME_RENDER_OFFLOAD=1 \
+  __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+  ./build_ninja/tusdquicklook model.usdz --backend gl --frames 4 \
+    --size 640x480 --screenshot /tmp/tusdquicklook-nvidia.png --verbose
+```
+
+The optional `example-tusdquicklook-nvidia-smoke` test runs this command and
+skips with CTest's normal code 77 when Xvfb or a live NVIDIA driver is absent.
 
 Two things worth knowing if you extend the tests:
 

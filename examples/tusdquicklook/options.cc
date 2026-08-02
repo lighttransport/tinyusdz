@@ -71,9 +71,10 @@ const char* UsageText() {
       "usage: tusdquicklook [file-or-dir] [options]\n"
       "\n"
       "  --max-mem <MB>          preview memory cap (default 512)\n"
+      "  --max-gpu-mem <MB>      GL GPU residency cap (default 512)\n"
       "  --backend auto|cpu|gl   renderer selection (default auto)\n"
       "  --spp <N>               progressive sample target (default 16)\n"
-      "  --threads <N>           worker threads (default min(nproc, 8))\n"
+      "  --threads <N>           worker threads (default 4 UI / 8 headless)\n"
       "  --no-shadows            disable shadow rays\n"
       "  --ao                    add an ambient-occlusion pass\n"
       "  --shading-mode <mode>   shaded|albedo|normal|uv|roughness|metallic|depth\n"
@@ -86,6 +87,9 @@ const char* UsageText() {
       "  --size <WxH>            window size (default 1280x720)\n"
       "  --screenshot <png>      headless: render one file, write PNG, exit\n"
       "  --frames <N>            progressive steps before --screenshot (default 8)\n"
+      "  --mcp-stdio             MCP JSON-RPC on stdin/stdout\n"
+      "  --mcp-http[=PORT]       MCP HTTP server (default port 8765)\n"
+      "  --mcp                   enable both MCP transports\n"
       "  -v, --verbose           verbose logging\n"
       "  -h, --help              this message\n";
 }
@@ -138,6 +142,14 @@ bool ParseOptions(int argc, char** argv, Options* opts, bool* want_help,
         return false;
       }
       opts->max_mem_bytes = static_cast<uint64_t>(mb) << 20;
+    } else if (a == "--max-gpu-mem") {
+      const char* v = Value(argc, argv, &i);
+      int mb = 0;
+      if (!v || !ParseInt(v, &mb) || mb <= 0) {
+        *err = "--max-gpu-mem requires a positive integer (MB)";
+        return false;
+      }
+      opts->max_gpu_mem_bytes = static_cast<uint64_t>(mb) << 20;
     } else if (a == "--backend") {
       const char* v = Value(argc, argv, &i);
       if (!v) {
@@ -186,6 +198,25 @@ bool ParseOptions(int argc, char** argv, Options* opts, bool* want_help,
         return false;
       }
       opts->screenshot = v;
+    } else if (a == "--mcp-stdio") {
+      opts->mcp_stdio = true;
+    } else if (a == "--mcp-http" || a.rfind("--mcp-http=", 0) == 0) {
+      const char* v = nullptr;
+      if (a.rfind("--mcp-http=", 0) == 0) {
+        v = a.c_str() + std::strlen("--mcp-http=");
+      } else if (i + 1 < argc && argv[i + 1][0] >= '0' &&
+                 argv[i + 1][0] <= '9') {
+        v = argv[++i];
+      }
+      int port = 8765;
+      if (v && (!ParseInt(v, &port) || port <= 0 || port > 65535)) {
+        *err = "--mcp-http requires a port from 1 to 65535";
+        return false;
+      }
+      opts->mcp_http_port = port;
+    } else if (a == "--mcp") {
+      opts->mcp_stdio = true;
+      opts->mcp_http_port = 8765;
     } else if (!a.empty() && a[0] == '-') {
       *err = "unknown option: " + a;
       return false;
@@ -199,16 +230,32 @@ bool ParseOptions(int argc, char** argv, Options* opts, bool* want_help,
     }
   }
 
+  if ((opts->mcp_stdio || opts->mcp_http_port != 0) &&
+      !opts->screenshot.empty()) {
+    *err = "MCP transports require an interactive run (remove --screenshot)";
+    return false;
+  }
+#if !defined(TUSDQUICKLOOK_HAVE_MCP)
+  if (opts->mcp_stdio || opts->mcp_http_port != 0) {
+    *err = "MCP support is disabled; configure with -DTUSDQUICKLOOK_ENABLE_MCP=ON";
+    return false;
+  }
+#endif
+
   return true;
 }
 
 int ResolveThreadCount(const Options& opts) {
+  return ResolveThreadCount(opts, false);
+}
+
+int ResolveThreadCount(const Options& opts, bool interactive) {
   if (opts.threads > 0) return opts.threads;
   unsigned hc = std::thread::hardware_concurrency();
   if (hc == 0) hc = 4;
   // This is a previewer, not a farm renderer: cap so it stays a good citizen
   // on a busy workstation.
-  return static_cast<int>(std::min<unsigned>(hc, 8u));
+  return static_cast<int>(std::min<unsigned>(hc, interactive ? 4u : 8u));
 }
 
 }  // namespace tusdql

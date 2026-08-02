@@ -165,8 +165,10 @@ bool EndsWithPath(const std::string& haystack, const std::string& needle) {
 
 class TextureSource {
  public:
-  void Init(const std::string& root_path, size_t max_archive_bytes) {
+  void Init(const std::string& root_path, size_t max_archive_bytes,
+            size_t max_image_bytes) {
     root_path_ = root_path;
+    max_image_bytes_ = max_image_bytes;
     const size_t dot = root_path.find_last_of('.');
     std::string ext = dot == std::string::npos ? "" : root_path.substr(dot);
     for (char& c : ext) c = static_cast<char>(::tolower(c));
@@ -187,7 +189,7 @@ class TextureSource {
         }
         const uint8_t* data = zip_->EntryData(i);
         const size_t size = zip_->EntrySize(i);
-        if (!data || size == 0) return false;
+        if (!data || size == 0 || size > max_image_bytes_) return false;
         out->assign(data, data + size);
         return true;
       }
@@ -203,6 +205,10 @@ class TextureSource {
       std::fclose(f);
       return false;
     }
+    if (static_cast<uint64_t>(len) > max_image_bytes_) {
+      std::fclose(f);
+      return false;
+    }
     out->resize(static_cast<size_t>(len));
     const size_t got = std::fread(out->data(), 1, out->size(), f);
     std::fclose(f);
@@ -212,6 +218,7 @@ class TextureSource {
  private:
   std::string root_path_;
   std::unique_ptr<::tinyusdz::next::USDZReader> zip_;
+  size_t max_image_bytes_ = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -955,10 +962,10 @@ void QlSceneSink::BuildEnvironmentTextures(
     std::vector<uint8_t> bytes;
     DecodedImage img;
     TextureSource src;
-    src.Init(opts_.env_path, budget_.stage);
+    src.Init(opts_.env_path, budget_.stage, budget_.textures);
     if (src.Read(opts_.env_path, &bytes) &&
         DecodeImageToRgba(bytes.data(), bytes.size(), QlTexture::kMaxEnvDim,
-                          &img)) {
+                          &img, budget_.textures)) {
       env.width = img.width;
       env.height = img.height;
       env.rgba.assign(img.rgba.begin(), img.rgba.end());
@@ -1321,7 +1328,8 @@ void RunLoad(const std::string& path, const Options& opts,
   // Decode + downsample in one step, inside the loader, so the full-resolution
   // image is never handed back to the converter and peak stays at one image.
   TextureSource tex_source;
-  tex_source.Init(path, static_cast<size_t>(budget.stage));
+  tex_source.Init(path, static_cast<size_t>(budget.stage),
+                  static_cast<size_t>(budget.textures));
   std::atomic<uint64_t> texture_bytes_loaded{0};
   cfg.material.custom_texture_loader =
       [&](const std::string& asset_path, tyn::TextureImage* out) -> bool {
@@ -1333,7 +1341,8 @@ void RunLoad(const std::string& path, const Options& opts,
 
     DecodedImage img;
     if (!DecodeImageToRgba(bytes.data(), bytes.size(),
-                           QlTexture::kMaxTextureDim, &img)) {
+                           QlTexture::kMaxTextureDim, &img,
+                           budget.textures)) {
       return false;
     }
     bytes.clear();

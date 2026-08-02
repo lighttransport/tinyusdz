@@ -50,12 +50,22 @@ bool IsImagePathInternal(const std::string& path) {
          ext == ".gif" || ext == ".tga";
 }
 
+bool IsGlBudgetError(const std::string& error) {
+  return error.find("not enough GPU memory") != std::string::npos;
+}
+
 }  // namespace
 
 App::App(const Options& opts)
     : opts_(opts), theme_(DefaultTheme()), view_mode_(ViewMode::UsdPreview) {}
 
 App::~App() {
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+  if (mcp_) {
+    mcp_->stop();
+    mcp_.reset();
+  }
+#endif
   StopImageWorkers();
   if (font_) {
     lui_font_destroy(font_);
@@ -83,36 +93,6 @@ bool App::Init() {
   ibl_enabled_ = opts_.ibl;
   shadows_enabled_ = opts_.shadows;
   desired_backend_ = opts_.backend;
-
-  // Probe once so the UI can offer GL honestly instead of guessing, and so
-  // --verbose reports the device before any scene is loaded. Skipped when the
-  // user pinned the CPU: creating a throwaway context would be pure cost.
-  if (desired_backend_ != BackendChoice::Cpu) {
-    gl_probe_ = ProbeGlBackend();
-    if (!gl_probe_.available) {
-      gl_disabled_ = true;
-      gl_error_ = gl_probe_.error;
-      if (desired_backend_ == BackendChoice::Gl) {
-        // Explicitly requested and not deliverable: say so unconditionally,
-        // then fall back rather than refusing to show anything.
-        std::fprintf(stderr,
-                     "[tusdquicklook] GL backend unavailable (%s); using the "
-                     "CPU renderer\n",
-                     gl_error_.c_str());
-      }
-    }
-    if (opts_.verbose) {
-      if (gl_probe_.available) {
-        std::fprintf(stderr,
-                     "[tusdquicklook] gl probe: %s / %s, free VRAM %llu MB\n",
-                     gl_probe_.device.c_str(), gl_probe_.version.c_str(),
-                     static_cast<unsigned long long>(gl_probe_.free_vram >> 20));
-      } else {
-        std::fprintf(stderr, "[tusdquicklook] gl probe: unavailable (%s)\n",
-                     gl_probe_.error.c_str());
-      }
-    }
-  }
 
   if (!headless_) {
     if (!lui_init()) {
@@ -194,6 +174,19 @@ bool App::Init() {
   // with, and a toast there would make the screenshot time-dependent.
   InitWidgets();
   lui_window_show(window_);
+
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+  if (opts_.mcp_stdio || opts_.mcp_http_port != 0) {
+    mcp_ = std::make_unique<MCPServer>(this);
+    if (opts_.mcp_stdio) mcp_->startStdio();
+    if (opts_.mcp_http_port != 0 &&
+        !mcp_->startHttp(opts_.mcp_http_port)) {
+      err_ = "failed to start MCP HTTP server on port " +
+             std::to_string(opts_.mcp_http_port);
+      return false;
+    }
+  }
+#endif
   return true;
 }
 
@@ -209,6 +202,12 @@ bool App::Busy() const {
   // A settling camera is work: the loop has to keep drawing until it arrives.
   // ApproachToward snaps and clears the flag, so this always terminates.
   if (camera_animating_) return true;
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+  // MCP tool calls are queued by transport threads and need the main loop to
+  // keep draining even when the preview is idle. The short sleep in the busy
+  // path keeps this polling cheap when no request is pending.
+  if (mcp_) return true;
+#endif
   return renderer_ && !scene_.meshes.empty() && !render_status_.converged;
 }
 
@@ -219,6 +218,14 @@ int App::Run() {
   // blank until the user happens to move the mouse. Headless --screenshot runs
   // cannot catch that, since they never touch the event loop.
   while (!quit_) {
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+    if (mcp_) mcp_->drain();
+    if (mcp_ && opts_.mcp_http_port == 0 && mcp_->stdioClosed()) {
+      // A stdio client disappearing should not leave a hidden GUI process
+      // behind. With HTTP enabled, the HTTP transport owns the process lifetime.
+      quit_ = true;
+    }
+#endif
     if (DrainLoadEvents()) needs_redraw_ = true;
     if (DrainImageThumbnailEvents()) needs_redraw_ = true;
 
@@ -754,6 +761,7 @@ void App::OnBackendComboChanged(int index, const char* /*item*/, void* user) {
   if (self->desired_backend_ == BackendChoice::Gl) {
     // An explicit retry clears a previous failure, same as the 'g' hotkey.
     self->gl_disabled_ = false;
+    self->gl_budget_blocked_ = false;
     self->gl_error_.clear();
   }
   // EnsureRenderer performs the actual switch on the next frame; tearing the
@@ -803,11 +811,13 @@ void App::InitWidgets() {
 
   widgets_ready_ = true;
 
-  // The startup probe runs before there is a window to show a toast on, so a
-  // GL request that was already refused is reported here instead. Without
-  // this the GUI would just quietly come up on the CPU.
-  if (gl_disabled_ && desired_backend_ == BackendChoice::Gl) {
-    Notify("GL unavailable (" + gl_error_ + ")", LUI_TOAST_WARNING);
+  // A backend failure can happen on the first painted frame, after widgets
+  // exist. Surface it here if the user explicitly asked for GL.
+  if ((gl_disabled_ || gl_budget_blocked_) &&
+      desired_backend_ == BackendChoice::Gl) {
+    Notify((gl_budget_blocked_ ? "GL budget exceeded (" : "GL unavailable (") +
+               gl_error_ + ")",
+           LUI_TOAST_WARNING);
   }
 }
 
@@ -1118,6 +1128,11 @@ void App::PreviewFile(const FileEntry& entry) {
     viewport_message_is_error_ = true;
     status_right_ = "skipped (over budget)";
     return;
+  }
+
+  if (gl_budget_blocked_) {
+    gl_budget_blocked_ = false;
+    gl_error_.clear();
   }
 
   scene_.Clear();
@@ -1640,7 +1655,8 @@ bool App::SpaceAvailableForCache(std::size_t bytes_needed) const {
   return si.available >= kReserve + bytes_needed;
 }
 
-bool App::ReadFileBytes(const std::string& path, std::vector<uint8_t>* out) const {
+bool App::ReadFileBytes(const std::string& path, std::vector<uint8_t>* out,
+                        uint64_t max_bytes) const {
   if (!out) return false;
   out->clear();
   std::ifstream ifs(path, std::ios::binary);
@@ -1648,6 +1664,7 @@ bool App::ReadFileBytes(const std::string& path, std::vector<uint8_t>* out) cons
   ifs.seekg(0, std::ios::end);
   const std::streampos end = ifs.tellg();
   if (end <= 0) return false;
+  if (static_cast<uint64_t>(end) > max_bytes) return false;
   ifs.seekg(0, std::ios::beg);
   out->resize(static_cast<size_t>(end));
   if (!ifs.read(reinterpret_cast<char*>(out->data()),
@@ -1662,14 +1679,16 @@ bool App::LoadCachedThumbnail(const std::string& cache_path,
   if (cache_path.empty() || !out) return false;
   std::vector<uint8_t> bytes;
   if (!ReadFileBytes(cache_path, &bytes)) return false;
-  return DecodeImageToRgba(bytes.data(), bytes.size(), kImageCacheMaxDim, out);
+  return DecodeImageToRgba(bytes.data(), bytes.size(), kImageCacheMaxDim, out,
+                           64ull << 20);
 }
 
 bool App::LoadAndDownscaleImage(const std::string& path, DecodedImage* out) const {
   if (!out) return false;
   std::vector<uint8_t> bytes;
   if (!ReadFileBytes(path, &bytes)) return false;
-  return DecodeImageToRgba(bytes.data(), bytes.size(), kImageCacheMaxDim, out);
+  return DecodeImageToRgba(bytes.data(), bytes.size(), kImageCacheMaxDim, out,
+                           64ull << 20);
 }
 
 bool App::SaveThumbnailToCache(const std::string& cache_path,
@@ -1849,7 +1868,7 @@ void App::DrawSplitter(lvg_canvas_t* c, const lvg_rect_t& r) {
 RenderSettings App::CurrentRenderSettings() const {
   RenderSettings rs;
   rs.spp = opts_.spp;
-  rs.threads = ResolveThreadCount(opts_);
+  rs.threads = ResolveThreadCount(opts_, !headless_);
   rs.shadows = shadows_enabled_;
   rs.ao = opts_.ao;
   rs.mode = shading_mode_;
@@ -1871,11 +1890,12 @@ bool App::GlAffordable() const {
 }
 
 BackendChoice App::ResolveBackend() const {
+  const bool gl_unavailable = gl_disabled_ || gl_budget_blocked_;
   if (desired_backend_ == BackendChoice::Auto) {
-    return (GlAffordable() && !gl_disabled_) ? BackendChoice::Gl
-                                             : BackendChoice::Cpu;
+    return (GlAffordable() && !gl_unavailable) ? BackendChoice::Gl
+                                               : BackendChoice::Cpu;
   }
-  if (desired_backend_ == BackendChoice::Gl && gl_disabled_) {
+  if (desired_backend_ == BackendChoice::Gl && gl_unavailable) {
     return BackendChoice::Cpu;
   }
   return desired_backend_;
@@ -1890,7 +1910,8 @@ bool App::CreateRenderer(BackendChoice backend, const lvg_rect_t& viewport,
     // Rough VRAM need: geometry + textures, plus the framebuffers.
     const uint64_t needed =
         scene_.ByteSize() + uint64_t(viewport.width) * viewport.height * 8;
-    next = CreateGlRenderer(viewport.width, viewport.height, rs, needed, err);
+    next = CreateGlRenderer(viewport.width, viewport.height, rs, needed,
+                            opts_.max_gpu_mem_bytes, &gl_probe_, err);
     if (!next) return false;
   } else {
     next = CreateCpuRenderer(accel_);
@@ -1922,7 +1943,17 @@ void App::SwitchBackend(BackendChoice backend, const lvg_rect_t& viewport) {
   renderer_.reset();
 
   if (CreateRenderer(backend, viewport, &err)) {
+    if (backend == BackendChoice::Gl) gl_budget_blocked_ = false;
     if (opts_.verbose) {
+      if (backend == BackendChoice::Gl && gl_probe_.available) {
+        std::fprintf(stderr,
+                     "[tusdquicklook] gl probe: %s / %s, free VRAM %llu MB, "
+                     "estimate %llu MB, cap %llu MB\n",
+                     gl_probe_.device.c_str(), gl_probe_.version.c_str(),
+                     static_cast<unsigned long long>(gl_probe_.free_vram >> 20),
+                     static_cast<unsigned long long>(gl_probe_.required_vram >> 20),
+                     static_cast<unsigned long long>(gl_probe_.gpu_budget >> 20));
+      }
       std::fprintf(stderr, "[tusdquicklook] renderer: %s (%s)\n",
                    renderer_->Name(), live_device_.c_str());
     }
@@ -1930,18 +1961,22 @@ void App::SwitchBackend(BackendChoice backend, const lvg_rect_t& viewport) {
   }
 
   if (backend == BackendChoice::Gl) {
-    // GL was asked for and could not be had. Say why once, remember it so we
-    // stop retrying every frame, and fall back rather than showing nothing.
-    gl_disabled_ = true;
+    // A resource-cap refusal is recoverable when the user selects another
+    // scene; context/driver failures are session-wide and should not be
+    // retried every frame.
+    const bool budget_failure = IsGlBudgetError(err);
+    gl_budget_blocked_ = budget_failure;
+    gl_disabled_ = !budget_failure;
     gl_error_ = err;
     if (desired_backend_ == BackendChoice::Gl || opts_.verbose) {
-      std::fprintf(stderr,
-                   "[tusdquicklook] GL backend unavailable (%s); using the CPU "
-                   "renderer\n",
+      std::fprintf(stderr, "[tusdquicklook] GL %s (%s); using the CPU renderer\n",
+                   budget_failure ? "resource budget exceeded" : "backend unavailable",
                    err.c_str());
     }
     if (desired_backend_ == BackendChoice::Gl) {
-      Notify("GL unavailable (" + err + ")", LUI_TOAST_WARNING);
+      Notify((budget_failure ? "GL budget exceeded (" : "GL unavailable (") +
+                 err + ")",
+             LUI_TOAST_WARNING);
     }
     std::string cerr;
     if (CreateRenderer(BackendChoice::Cpu, viewport, &cerr) && opts_.verbose) {
@@ -1956,14 +1991,18 @@ void App::SwitchBackend(BackendChoice backend, const lvg_rect_t& viewport) {
 }
 
 void App::DemoteToCpu(const std::string& why, const lvg_rect_t& viewport) {
-  // Device loss is permanent for this session: whatever killed the context is
-  // unlikely to fix itself, and retrying each frame would stutter forever.
-  gl_disabled_ = true;
+  // Device loss is permanent for this session. A resource-cap refusal, on the
+  // other hand, only blocks GL for the current scene.
+  const bool budget_failure = IsGlBudgetError(why);
+  gl_disabled_ = !budget_failure;
+  gl_budget_blocked_ = budget_failure;
   gl_error_ = why;
-  std::fprintf(stderr, "[tusdquicklook] GL backend lost (%s); falling back to "
-                       "the CPU renderer\n",
+  std::fprintf(stderr, "[tusdquicklook] GL %s (%s); falling back to the CPU "
+                       "renderer\n",
+               budget_failure ? "resource budget exceeded" : "backend lost",
                why.c_str());
-  Notify("GL lost (" + why + ") \xE2\x80\x94 switched to CPU",
+  Notify((budget_failure ? "GL budget exceeded (" : "GL lost (") + why +
+             ") \xE2\x80\x94 switched to CPU",
          LUI_TOAST_WARNING);
   renderer_.reset();
   std::string err;
@@ -1986,6 +2025,9 @@ bool App::StepCameraMotion(float dt) {
 
 bool App::PickAt(const lvg_rect_t& viewport, int x, int y) {
   if (!accel_ || viewport.width <= 0 || viewport.height <= 0) return false;
+
+  if (accel_->scene() != &scene_) accel_->SetScene(&scene_);
+  accel_->Sync(ResolveThreadCount(opts_, !headless_));
 
   PickHit hit;
   // The pick uses the displayed camera: the user aimed at what is on screen,
@@ -2015,7 +2057,8 @@ std::string App::BackendStatusText() const {
     s += " \xC2\xB7 " + device;
   }
   // Never let a silent demotion pass for a deliberate choice.
-  if (live_backend_ != BackendChoice::Gl && gl_disabled_ &&
+  if (live_backend_ != BackendChoice::Gl &&
+      (gl_disabled_ || gl_budget_blocked_) &&
       desired_backend_ != BackendChoice::Cpu) {
     s += "  (gl: " + gl_error_ + ")";
   }
@@ -2032,6 +2075,7 @@ void App::CycleBackend() {
   // may have fixed the driver, or just wants the error re-reported.
   if (desired_backend_ == BackendChoice::Gl) {
     gl_disabled_ = false;
+    gl_budget_blocked_ = false;
     gl_error_.clear();
   }
 }
@@ -2039,10 +2083,9 @@ void App::CycleBackend() {
 bool App::EnsureRenderer(const lvg_rect_t& viewport) {
   if (viewport.width <= 0 || viewport.height <= 0) return false;
 
-  // The BVH backs picking as well as CPU shading, so it is kept current
-  // regardless of which backend is drawing.
+  // The CPU renderer and picking share the BVH. GL rasterization does not need
+  // it, so defer the build until one of those paths actually requests it.
   if (accel_->scene() != &scene_) accel_->SetScene(&scene_);
-  accel_->Sync(ResolveThreadCount(opts_));
 
   const BackendChoice wanted = ResolveBackend();
   if (!renderer_ || live_backend_ != wanted) {

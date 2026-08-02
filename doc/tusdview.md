@@ -642,6 +642,45 @@ These vars are how the GPU blendshape-morph optimizations were profiled on an
 RTX 3070 (the active-channel skip makes the morph's GPU cost scale with the number
 of *active* targets, not the total target count).
 
+### `tusdquicklook` on a constrained NVIDIA GPU
+
+The lightweight Quick Look viewer has its own offscreen GL 3.3 path and a
+separate `--max-gpu-mem` residency cap (512 MiB by default). Its GL context is
+created lazily, and a reported free-VRAM value is reduced by a 256 MiB driver
+reserve before the scene is accepted. This keeps a 2 GiB GPU usable for the
+preview without allowing the driver to consume the whole device:
+
+```sh
+xvfb-run -a -s "-screen 0 800x600x24" env \
+  __NV_PRIME_RENDER_OFFLOAD=1 \
+  __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+  ./build_ninja/tusdquicklook model.usdz --backend gl --max-gpu-mem 512 \
+    --frames 4 --size 640x480 --screenshot /tmp/tusdquicklook.png --verbose
+```
+
+The Quick Look NVIDIA smoke is registered as
+`example-tusdquicklook-nvidia-smoke`; it returns CTest skip code 77 when Xvfb
+or a live NVIDIA driver is unavailable.
+
+### `tusdquicklook` MCP control
+
+The interactive Quick Look app also exposes a small local MCP server. Use
+`--mcp-stdio` for newline-delimited JSON-RPC on stdin/stdout,
+`--mcp-http[=PORT]` for the HTTP endpoint (default `8765`), or `--mcp` for
+both. For example:
+
+```sh
+./build_ninja/tusdquicklook model.usdz --mcp-http=8765
+```
+
+POST MCP requests to `http://localhost:8765/mcp`. The available tools are
+`load_usd`, `get_scene_info`, `list_prims`, `viewport`, `screenshot`,
+`render_settings`, and `quit`. Tool calls are executed on the normal quicklook
+UI thread, and `get_scene_info` reports progressive load/render state. The
+interface is intended for trusted local clients and is not authenticated; it
+cannot be combined with the short-lived `--screenshot` mode.
+
 ## Vulkan validation layers (debugging the Vulkan/threaded paths)
 
 The Vulkan backend (raster, ray query, and the experimental `--threaded` render

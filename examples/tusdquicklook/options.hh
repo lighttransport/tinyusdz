@@ -44,10 +44,15 @@ struct Options {
   // more than the machine has.
   uint64_t max_mem_bytes = 512ull << 20;
 
+  // GPU residency cap for the optional GL backend. This is deliberately
+  // separate from max_mem_bytes: driver allocations are not visible to the
+  // shared host allocator budget.
+  uint64_t max_gpu_mem_bytes = 512ull << 20;
+
   BackendChoice backend = BackendChoice::Auto;
 
   int spp = 16;      // progressive sample target
-  int threads = 0;   // 0 = min(hardware_concurrency, 8)
+  int threads = 0;   // 0 = auto (interactive <= 4, headless <= 8)
 
   bool shadows = true;
   bool ao = false;
@@ -75,6 +80,11 @@ struct Options {
   int frames = 8;
 
   bool verbose = false;
+
+  // Embedded Model Context Protocol transports. These are interactive-only;
+  // headless --screenshot remains a short-lived deterministic render.
+  bool mcp_stdio = false;
+  int mcp_http_port = 0;  // 0 = disabled
 };
 
 // Parse argv. Returns false and fills `err` on a bad argument. Sets
@@ -84,7 +94,10 @@ bool ParseOptions(int argc, char** argv, Options* opts, bool* want_help,
 
 const char* UsageText();
 
-// Resolved thread count for the render/BVH workers.
+// Resolved thread count for the render/BVH workers. Explicit values are always
+// honored. `interactive` keeps the default preview path a good CPU citizen;
+// headless captures retain the faster eight-thread ceiling.
 int ResolveThreadCount(const Options& opts);
+int ResolveThreadCount(const Options& opts, bool interactive);
 
 }  // namespace tusdql

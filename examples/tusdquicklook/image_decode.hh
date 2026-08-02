@@ -26,9 +26,11 @@ struct DecodedImage {
 };
 
 // Decode `len` bytes and box-downsample so neither edge exceeds `max_dim`
-// (0 = no limit). Downsampling happens inside the decoder wrapper so a 4K map
-// never becomes a 64 MB allocation the caller has to hold.
+// (0 = no limit). `max_decoded_bytes` is a preflight/after-decode guard for
+// hostile dimensions; it prevents the decoder from expanding a tiny, highly
+// compressed image into an unbounded temporary (0 = 64 MiB default).
 bool DecodeImageToRgba(const void* data, size_t len, uint32_t max_dim,
-                       DecodedImage* out);
+                       DecodedImage* out,
+                       uint64_t max_decoded_bytes = 64ull << 20);
 
 }  // namespace tusdql
