@@ -55,6 +55,36 @@ bool IsGlBudgetError(const std::string& error) {
   return error.find("not enough GPU memory") != std::string::npos;
 }
 
+// Bounded shallow search for an image to use as a folder tile's preview
+// thumbnail: the folder's own files, then (one level only) its immediate
+// subfolders. Depth-limited so a folder with many subfolders doesn't turn
+// into an unbounded recursive scan; returns "" if nothing turns up.
+std::string FindRepresentativeImage(const fs::path& dir, int max_depth) {
+  std::error_code ec;
+  fs::directory_iterator it(
+      dir, fs::directory_options::skip_permission_denied, ec);
+  if (ec) return std::string();
+
+  std::vector<fs::path> subdirs;
+  for (const auto& de : it) {
+    std::error_code ec2;
+    if (de.is_regular_file(ec2) && !ec2) {
+      const std::string p = de.path().lexically_normal().string();
+      if (IsImagePathInternal(p)) return p;
+    } else if (de.is_directory(ec2) && !ec2) {
+      subdirs.push_back(de.path());
+    }
+  }
+  if (max_depth > 1) {
+    std::sort(subdirs.begin(), subdirs.end());
+    for (const auto& sd : subdirs) {
+      const std::string found = FindRepresentativeImage(sd, max_depth - 1);
+      if (!found.empty()) return found;
+    }
+  }
+  return std::string();
+}
+
 #if defined(_WIN32)
 // The custom (non-FreeType) glyph backend only understands single-font
 // sfnt files, not TrueType Collections — so this list is restricted to the
@@ -533,14 +563,24 @@ bool App::HandleEvent(const lui_event_t& ev) {
         case LUI_KEY_RETURN:
           if (view_mode_ == ViewMode::ImageBrowser) {
             std::string name;
+            std::string dir_path;
+            bool is_dir = false;
             {
               std::lock_guard<std::mutex> lock(image_mu_);
               if (selected_image_ >= 0 &&
                   selected_image_ < static_cast<int>(image_items_.size())) {
-                name = image_items_[static_cast<size_t>(selected_image_)].name;
+                const ImageItem& sel =
+                    image_items_[static_cast<size_t>(selected_image_)];
+                name = sel.name;
+                dir_path = sel.nav_path;
+                is_dir = sel.is_dir;
               }
             }
-              if (!name.empty()) viewport_message_ = name;
+            if (is_dir) {
+              EnterImageFolder(dir_path);
+            } else if (!name.empty()) {
+              viewport_message_ = name;
+            }
           } else {
             ActivateSelection();
             browser_.EnsureSelectionVisible(rows);
@@ -654,6 +694,8 @@ bool App::HandleEvent(const lui_event_t& ev) {
             const int gy_cell = gy / std::max(1, geo.cell_h) + image_scroll_;
             const int idx = gy_cell * geo.columns + gx_cell;
             std::string clicked_name;
+            std::string clicked_path;
+            bool clicked_is_dir = false;
             if (gx >= 0 && gy >= 0 && idx >= 0 &&
                 idx < static_cast<int>(image_items_.size())) {
               {
@@ -661,11 +703,18 @@ bool App::HandleEvent(const lui_event_t& ev) {
                 if (idx >= 0 &&
                     idx < static_cast<int>(image_items_.size())) {
                   selected_image_ = idx;
-                  clicked_name = image_items_[static_cast<size_t>(idx)].name;
+                  const ImageItem& clicked =
+                      image_items_[static_cast<size_t>(idx)];
+                  clicked_name = clicked.name;
+                  clicked_path = clicked.nav_path;
+                  clicked_is_dir = clicked.is_dir;
                 }
               }
               needs_redraw_ = true;
-              if (ev.data.mouse_button.clicks >= 2 && !clicked_name.empty()) {
+              if (ev.data.mouse_button.clicks >= 2 && clicked_is_dir) {
+                EnterImageFolder(clicked_path);
+              } else if (ev.data.mouse_button.clicks >= 2 &&
+                         !clicked_name.empty()) {
                 viewport_message_ = clicked_name;
               }
             }
@@ -1430,110 +1479,133 @@ void App::ToggleViewMode() {
   needs_redraw_ = true;
 }
 
+void App::EnterImageFolder(const std::string& dir_path) {
+  std::string berr;
+  if (!browser_.Open(dir_path, &berr)) {
+    if (!berr.empty()) {
+      viewport_message_ = berr;
+      viewport_message_is_error_ = true;
+    }
+    needs_redraw_ = true;
+    return;
+  }
+  status_left_ = browser_.dir();
+  viewport_message_.clear();
+  viewport_message_is_error_ = false;
+  BuildImageItems();
+  needs_redraw_ = true;
+}
+
 void App::BuildImageItems() {
   if (view_mode_ != ViewMode::ImageBrowser) return;
   if (headless_) return;
   EnsureImageCacheDir();
 
+  // Always the immediate contents of the current folder -- mirrors the left
+  // pane: subfolders are tiles you navigate into (EnterImageFolder), not
+  // something to recurse into implicitly.
   const fs::path scan_root = fs::path(browser_.dir());
-  std::vector<ImageItem> items;
+  std::vector<ImageItem> dirs;
+  std::vector<ImageItem> images;
   std::error_code ec;
 
-  auto collect_relative_label = [&](const fs::path& p) -> std::string {
-    std::string label = p.filename().u8string();
-    if (browser_.recursive()) {
-      std::error_code rel_ec;
-      const fs::path rel = fs::relative(p, scan_root, rel_ec);
-      if (!rel_ec && !rel.empty() && rel != p.filename()) {
-        label = rel.u8string();
+  fs::directory_iterator it(
+      scan_root, fs::directory_options::skip_permission_denied, ec);
+  if (ec) {
+    viewport_message_ = "cannot read folder for images: " + browser_.dir();
+    viewport_message_is_error_ = true;
+    std::lock_guard<std::mutex> lock(image_mu_);
+    image_items_.clear();
+    image_task_queue_.clear();
+    image_events_.clear();
+    selected_image_ = -1;
+    image_scroll_ = 0;
+    return;
+  }
+  for (const auto& de : it) {
+    std::error_code ec2;
+    if (de.is_directory(ec2) && !ec2) {
+      ImageItem item;
+      item.nav_path = de.path().lexically_normal().string();
+      item.name = de.path().filename().u8string();
+      item.is_dir = true;
+      // A representative image (if any turns up within a couple of levels)
+      // becomes the tile's thumbnail; otherwise it falls back to a plain
+      // folder icon. Cheap in practice: real trees are a handful of dirs
+      // deep, not thousands wide.
+      item.path = FindRepresentativeImage(de.path(), 2);
+      if (item.path.empty()) {
+        item.status = ImageStatus::Ready;  // no thumbnail to load
+      } else {
+        item.status = ImageStatus::Pending;
+        item.cache_path = ImageCachePathForPath(item.path);
       }
+      dirs.push_back(std::move(item));
+      continue;
     }
-    return label;
-  };
-
-  auto add_image = [&](const fs::path& p) {
-    const std::string spath = p.lexically_normal().string();
-    if (!IsImagePathInternal(spath)) {
-      return;
-    }
+    if (!de.is_regular_file(ec2) || ec2) continue;
+    const std::string spath = de.path().lexically_normal().string();
+    if (!IsImagePathInternal(spath)) continue;
     ImageItem item;
     item.path = spath;
-    item.name = collect_relative_label(p);
+    item.name = de.path().filename().u8string();
     item.status = ImageStatus::Pending;
     item.cache_path = ImageCachePathForPath(item.path);
-    items.push_back(std::move(item));
-  };
-
-  if (browser_.recursive()) {
-    fs::recursive_directory_iterator it(
-        scan_root, fs::directory_options::skip_permission_denied, ec);
-    if (ec) {
-      viewport_message_ = "cannot read folder for images: " + browser_.dir();
-      viewport_message_is_error_ = true;
-      std::lock_guard<std::mutex> lock(image_mu_);
-      image_items_.clear();
-      image_task_queue_.clear();
-      image_events_.clear();
-      selected_image_ = -1;
-      image_scroll_ = 0;
-      return;
-    }
-    for (const auto& de : it) {
-      std::error_code ec2;
-      if (!de.is_regular_file(ec2) || ec2) continue;
-      add_image(de.path());
-    }
-  } else {
-    fs::directory_iterator it(
-        scan_root, fs::directory_options::skip_permission_denied, ec);
-    if (ec) {
-      viewport_message_ = "cannot read folder for images: " + browser_.dir();
-      viewport_message_is_error_ = true;
-      std::lock_guard<std::mutex> lock(image_mu_);
-      image_items_.clear();
-      image_task_queue_.clear();
-      image_events_.clear();
-      selected_image_ = -1;
-      image_scroll_ = 0;
-      return;
-    }
-    for (const auto& de : it) {
-      std::error_code ec2;
-      if (!de.is_regular_file(ec2) || ec2) continue;
-      add_image(de.path());
-    }
+    images.push_back(std::move(item));
   }
 
-  std::sort(items.begin(), items.end(), [](const ImageItem& a, const ImageItem& b) {
+  auto by_name = [](const ImageItem& a, const ImageItem& b) {
     const std::string la = ToLower(a.name);
     const std::string lb = ToLower(b.name);
     if (la != lb) return la < lb;
     return a.name < b.name;
-  });
+  };
+  std::sort(dirs.begin(), dirs.end(), by_name);
+  std::sort(images.begin(), images.end(), by_name);
 
-  std::lock_guard<std::mutex> lock(image_mu_);
-  image_generation_.fetch_add(1, std::memory_order_relaxed);
-  image_items_.clear();
-  image_task_queue_.clear();
-  image_events_.clear();
+  std::vector<ImageItem> items;
+  items.reserve(dirs.size() + images.size() + 1);
+  if (scan_root.has_parent_path() && scan_root.parent_path() != scan_root) {
+    ImageItem up;
+    up.nav_path = scan_root.parent_path().lexically_normal().string();
+    up.name = "..";
+    up.is_dir = true;
+    up.status = ImageStatus::Ready;  // always a plain icon, no thumbnail
+    items.push_back(std::move(up));
+  }
+  for (auto& d : dirs) items.push_back(std::move(d));
+  for (auto& im : images) items.push_back(std::move(im));
 
-  const std::size_t generation = image_generation_.load(std::memory_order_relaxed);
+  {
+    std::lock_guard<std::mutex> lock(image_mu_);
+    image_generation_.fetch_add(1, std::memory_order_relaxed);
+    image_items_.clear();
+    image_task_queue_.clear();
+    image_events_.clear();
 
-  image_items_ = std::move(items);
+    const std::size_t generation = image_generation_.load(std::memory_order_relaxed);
 
-  selected_image_ = image_items_.empty() ? -1 : 0;
-  image_scroll_ = 0;
+    image_items_ = std::move(items);
 
-  for (size_t i = 0; i < image_items_.size(); i++) {
-    image_items_[i].status = ImageStatus::Loading;
-    ImageTask task{i, generation, image_items_[i].path};
-    image_task_queue_.push_back(std::move(task));
+    selected_image_ = image_items_.empty() ? -1 : 0;
+    image_scroll_ = 0;
+
+    for (size_t i = 0; i < image_items_.size(); i++) {
+      // Dir tiles with no representative image (path left empty) and the
+      // ".." tile have nothing to decode -- they stay Ready with no task.
+      if (image_items_[i].path.empty()) continue;
+      image_items_[i].status = ImageStatus::Loading;
+      ImageTask task{i, generation, image_items_[i].path};
+      image_task_queue_.push_back(std::move(task));
+    }
+
+    if (image_workers_started_) {
+      image_cv_.notify_all();
+    }
   }
 
-  if (image_workers_started_) {
-    image_cv_.notify_all();
-  }
-
+  // UpdateImageStatus() takes image_mu_ itself; must run after the lock
+  // above is released, not nested inside it (std::mutex isn't recursive).
   UpdateImageStatus();
 }
 
@@ -1806,6 +1878,7 @@ void App::UpdateImageStatus() {
   std::lock_guard<std::mutex> lock(image_mu_);
   statuses.reserve(image_items_.size());
   for (const ImageItem& item : image_items_) {
+    if (item.is_dir) continue;  // folder tiles aren't images
     statuses.push_back(item.status);
   }
   const bool cache_disabled = image_cache_disabled_.load();
@@ -2240,7 +2313,9 @@ void App::DrawImageBrowser(lvg_canvas_t* c, const lvg_rect_t& r) {
     image_count = image_items_.size();
   }
   if (image_count == 0) {
-    const std::string msg = "no supported images in this folder";
+    // image_items_ includes subfolder tiles and "..", so this is a true
+    // dead end: an empty folder at the filesystem root.
+    const std::string msg = "this folder is empty";
     DrawTextWrappedCentered(c, font_, r, msg, theme_.text_dim, 2);
     return;
   }
@@ -2266,6 +2341,7 @@ void App::DrawImageBrowser(lvg_canvas_t* c, const lvg_rect_t& r) {
         int width = 0;
         int height = 0;
         std::shared_ptr<std::vector<uint32_t>> pixels;
+        bool is_dir = false;
       } item;
 
       {
@@ -2278,6 +2354,7 @@ void App::DrawImageBrowser(lvg_canvas_t* c, const lvg_rect_t& r) {
         item.width = src.width;
         item.height = src.height;
         item.pixels = src.pixels;
+        item.is_dir = src.is_dir;
       }
 
       const int x = r.x + col * geo.cell_w;
@@ -2290,18 +2367,61 @@ void App::DrawImageBrowser(lvg_canvas_t* c, const lvg_rect_t& r) {
         FillRect(c, cell, theme_.panel_alt);
       }
 
-      FillRect(c, lvg_rect_make(cell.x + theme_.pad, cell.y + theme_.pad,
-                               std::max(20, geo.image_sz),
-                               std::max(20, geo.image_sz)),
-              item.status == ImageStatus::Ready ? theme_.panel_alt
-                                               : theme_.panel);
-      StrokeRect(c, lvg_rect_make(cell.x + theme_.pad, cell.y + theme_.pad,
-                                 std::max(20, geo.image_sz),
-                                 std::max(20, geo.image_sz)),
-                theme_.border);
-
+      const int slot_sz = std::max(20, geo.image_sz);
       const int image_x = cell.x + (geo.cell_w - geo.image_sz) / 2;
       const int image_y = cell.y + theme_.pad;
+
+      if (item.is_dir) {
+        const bool has_thumb = item.status == ImageStatus::Ready &&
+                               item.pixels && !item.pixels->empty() &&
+                               item.width > 0 && item.height > 0;
+        if (has_thumb) {
+          // Preview a representative image found inside the folder, same as
+          // an image tile, so browsing a folder of folders still shows what
+          // is in them -- with a small tab badge so it still reads as a
+          // folder, not a picture.
+          lvg_surface_t src = lvg_surface_wrap(item.pixels->data(),
+                                               item.width, item.height,
+                                               item.width);
+          lvg_canvas_draw_image(c, image_x, image_y, geo.image_sz,
+                                geo.image_sz, &src, nullptr,
+                                LVG_IMAGE_FILTER_BILINEAR);
+          StrokeRect(c, lvg_rect_make(image_x, image_y, slot_sz, slot_sz),
+                    theme_.border);
+          const int tab_w = slot_sz * 2 / 5;
+          const int tab_h = std::max(4, slot_sz / 6);
+          FillRect(c, lvg_rect_make(image_x, image_y, tab_w, tab_h),
+                  theme_.accent);
+        } else {
+          // No image found inside (or still decoding one): a simple
+          // two-rect folder pictogram (tab + body), matching the left
+          // pane's convention of coloring directories with theme_.accent
+          // rather than drawing a bitmap icon.
+          const int tab_w = slot_sz * 2 / 5;
+          const int tab_h = std::max(4, slot_sz / 6);
+          FillRect(c, lvg_rect_make(image_x, image_y, tab_w, tab_h),
+                  theme_.accent);
+          FillRect(c, lvg_rect_make(image_x, image_y + tab_h, slot_sz,
+                                   slot_sz - tab_h),
+                  theme_.accent);
+          StrokeRect(c, lvg_rect_make(image_x, image_y, slot_sz, slot_sz),
+                    theme_.border);
+        }
+
+        const int text_y = y + geo.image_sz + theme_.pad +
+                           (theme_.row_h - lui_font_ascent(font_)) / 2;
+        DrawTextEllipsized(c, font_, x + theme_.pad, text_y,
+                           std::max(0, geo.cell_w - 2 * theme_.pad),
+                           item.name + "/", theme_.accent);
+        continue;
+      }
+
+      FillRect(c, lvg_rect_make(image_x, image_y, slot_sz, slot_sz),
+              item.status == ImageStatus::Ready ? theme_.panel_alt
+                                               : theme_.panel);
+      StrokeRect(c, lvg_rect_make(image_x, image_y, slot_sz, slot_sz),
+                theme_.border);
+
       if (item.status == ImageStatus::Ready && item.pixels &&
           !item.pixels->empty() && item.width > 0 && item.height > 0) {
         lvg_surface_t src = lvg_surface_wrap(
@@ -2343,7 +2463,8 @@ void App::DrawImageStatusOverlay(lvg_canvas_t* c, const lvg_rect_t& r) {
   const std::string msg =
       image_cache_disabled_
           ? "thumbnail cache disabled (low disk)  [t] toggle USD preview"
-          : "[t] image browser  [+] columns  [ ] columns  [r] refresh";
+          : "[t] toggle preview  [Enter] open folder  [+] columns  "
+            "[ ] columns  [r] refresh";
   DrawTextCentered(c, font_, lvg_rect_make(r.x + theme_.pad, r.y + r.height - 24,
                                           r.width - theme_.pad * 2, 18),
                    msg, theme_.text_dim);
