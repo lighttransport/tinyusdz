@@ -32,14 +32,14 @@ xvfb-run -a -s "-screen 0 800x600x24" env \
   "$BIN" "$ROOT/models/suzanne-pbr.usda" --backend gl \
     --max-gpu-mem 512 --frames 4 --size 640x480 \
     --screenshot "$OUT/nvidia.png" --verbose \
-    >"$OUT/stdout.txt" 2>"$OUT/stderr.txt" \
-  || { cat "$OUT/stderr.txt" >&2; fail "NVIDIA GL render failed"; }
+    >"$OUT/output.txt" 2>&1 \
+  || { cat "$OUT/output.txt" >&2; fail "NVIDIA GL render failed"; }
 
 [ -s "$OUT/nvidia.png" ] || fail "NVIDIA GL render produced no PNG"
 head -c 8 "$OUT/nvidia.png" | od -An -tx1 | tr -d ' \n' \
   | grep -qi '^89504e470d0a1a0a$' || fail "output is not a PNG"
-grep -q 'renderer: gl ' "$OUT/stderr.txt" || {
-  cat "$OUT/stderr.txt" >&2
+grep -q 'renderer: gl ' "$OUT/output.txt" || {
+  cat "$OUT/output.txt" >&2
   fail "GL request did not stay on the NVIDIA GL renderer"
 }
 
