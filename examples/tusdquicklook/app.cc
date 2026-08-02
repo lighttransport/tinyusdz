@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -53,6 +54,38 @@ bool IsImagePathInternal(const std::string& path) {
 bool IsGlBudgetError(const std::string& error) {
   return error.find("not enough GPU memory") != std::string::npos;
 }
+
+#if defined(_WIN32)
+// The custom (non-FreeType) glyph backend only understands single-font
+// sfnt files, not TrueType Collections — so this list is restricted to the
+// standalone .ttf/.otf CJK fonts Windows actually ships (most East Asian
+// system fonts, e.g. Meiryo, Yu Gothic, MS Gothic, are .ttc and unusable
+// here). First match wins; missing files are silently skipped.
+const char* const kWindowsCjkFontCandidates[] = {
+    "NotoSansJP-VF.ttf",
+    "NotoSansSC-VF.ttf",
+    "NotoSansTC-VF.ttf",
+    "NotoSansKR-VF.ttf",
+    "NotoSerifJP-VF.ttf",
+    "yumin.ttf",
+    "malgun.ttf",
+};
+
+// Best-effort path to a UTF-8/CJK-capable system font. Empty when none of
+// the candidates are present (falls back to the embedded Latin-only font).
+std::string FindWindowsCjkFontPath() {
+  const char* sysroot = std::getenv("SystemRoot");
+  const fs::path fonts_dir = fs::path(sysroot ? sysroot : "C:\\Windows") / "Fonts";
+  std::error_code ec;
+  for (const char* name : kWindowsCjkFontCandidates) {
+    const fs::path candidate = fonts_dir / name;
+    if (fs::exists(candidate, ec) && !ec) {
+      return candidate.string();
+    }
+  }
+  return std::string();
+}
+#endif  // _WIN32
 
 }  // namespace
 
@@ -104,9 +137,24 @@ bool App::Init() {
     platform_up_ = true;
   }
 
-  font_ = lui_font_create_from_memory(lui_embedded_font_data(),
-                                      lui_embedded_font_size(),
-                                      theme_.font_px);
+  // Prefer a UTF-8/CJK-capable Windows system font so non-Latin prim names,
+  // asset paths, and metadata render as glyphs instead of tofu boxes; the
+  // embedded Hack font is Latin-only. Falls back to it wherever no such
+  // system font is found (non-Windows, or a CJK-less install).
+#if defined(_WIN32)
+  const std::string cjk_font_path = FindWindowsCjkFontPath();
+  if (!cjk_font_path.empty()) {
+    font_ = lui_font_create(cjk_font_path.c_str(), theme_.font_px);
+    if (font_ && opts_.verbose) {
+      std::fprintf(stderr, "[tusdquicklook] font: %s\n", cjk_font_path.c_str());
+    }
+  }
+#endif
+  if (!font_) {
+    font_ = lui_font_create_from_memory(lui_embedded_font_data(),
+                                        lui_embedded_font_size(),
+                                        theme_.font_px);
+  }
   if (!font_) {
     err_ = "failed to create the embedded font";
     return false;
@@ -1392,12 +1440,12 @@ void App::BuildImageItems() {
   std::error_code ec;
 
   auto collect_relative_label = [&](const fs::path& p) -> std::string {
-    std::string label = p.filename().string();
+    std::string label = p.filename().u8string();
     if (browser_.recursive()) {
       std::error_code rel_ec;
       const fs::path rel = fs::relative(p, scan_root, rel_ec);
       if (!rel_ec && !rel.empty() && rel != p.filename()) {
-        label = rel.string();
+        label = rel.u8string();
       }
     }
     return label;
