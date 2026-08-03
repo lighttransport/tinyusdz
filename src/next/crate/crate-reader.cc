@@ -319,7 +319,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
         out = Value::MakeDoubleArray(std::vector<double>());
         return true;
       }
-      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      if (!SeekToPayload(reader_.get(), rep)) return false;
       uint64_t n = 0;
       if (!reader_->read_u64(n)) return false;
       if (n > options_.max_array_elements) return false;
@@ -364,7 +364,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
         out = Value::MakeTokenArray(std::vector<std::string>());
         return true;
       }
-      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      if (!SeekToPayload(reader_.get(), rep)) return false;
       uint32_t asset_idx = 0, path_idx = 0;
       if (!reader_->read_u32(asset_idx) || !reader_->read_u32(path_idx)) {
         return false;
@@ -404,7 +404,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
     case CrateTypeId::PathExpression: {
       // SdfPathExpression (crate >= 0.10): the expression text as a u32
       // string index in the value stream.
-      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) {
+      if (!SeekToPayload(reader_.get(), rep)) {
         return false;
       }
       uint32_t sidx = 0;
@@ -423,7 +423,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
       // Surface as a flat token array of [src, dst, ...] pairs; the stage
       // builder folds them into PrimSpecMeta::relocates.
       if (rep.payload() == 0) { out = Value::MakeTokenArray({}); return true; }
-      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) {
+      if (!SeekToPayload(reader_.get(), rep)) {
         return false;
       }
       uint64_t n = 0;

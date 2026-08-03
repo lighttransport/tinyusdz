@@ -317,8 +317,10 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
   }
 
   StreamReader r(source->base(), source->size());
+  // payload_as_offset() sign-extends from bit 47; reject a negative offset
+  // rather than let the size_t cast truncate it (see SeekToPayload).
+  if (!SeekToPayload(&r, rep)) return false;
   const size_t off = static_cast<size_t>(rep.payload_as_offset());
-  if (!r.seek(off)) return false;
   const CrateVersion version = source->version();
   const uint64_t hdr = CrateArrayCountHeaderBytes(version);
   uint64_t count = 0;
@@ -383,7 +385,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 
   uint64_t count = 0;
   if (rep.payload() != 0) {
-    if (!r.seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!SeekToPayload(&r, rep)) return false;
     if (!ReadCrateArrayCount(r, version, &count)) return false;
   }
   if (count > max_elements) return false;

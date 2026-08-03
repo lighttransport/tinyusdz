@@ -13,14 +13,38 @@
 #include "crate-format.hh"      // CrateVersion, ValueRep, CrateTypeId
 #include "../types/type-id.hh"  // next::TypeId
 #include "lazy-array.hh"
+#include "stream-reader.hh"
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace tinyusdz {
 namespace next {
+
+class StreamReader;
+
+/// Seek a StreamReader to a ValueRep's payload offset.
+///
+/// payload_as_offset() SIGN-EXTENDS from bit 47, so a 48-bit payload with the
+/// top bit set yields a negative int64. On LP64 the cast to size_t made a huge
+/// value that seek() happened to reject; on a 32-bit target it TRUNCATES to an
+/// arbitrary in-bounds offset, silently redirecting the decode to
+/// attacker-chosen bytes. ReadFields already rejects off < 0 for top-level
+/// field reps -- this applies the same check everywhere else.
+inline bool SeekToPayload(StreamReader* r, ValueRep rep) {
+  if (!r) return false;
+  const int64_t off = rep.payload_as_offset();
+  if (off < 0) return false;
+  const uint64_t u = static_cast<uint64_t>(off);
+  if (u > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+    return false;
+  }
+  return r->seek(static_cast<size_t>(u));
+}
+
 
 class Value;
 class CrateDataSource : public LazyArraySource {
