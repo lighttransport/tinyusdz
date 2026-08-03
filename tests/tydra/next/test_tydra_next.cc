@@ -20,6 +20,7 @@
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
+#include "tydra/next/mem-budget.hh"
 #include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
 #include "tydra/next/urdf-to-usd.hh"
@@ -2913,6 +2914,56 @@ void TestLargeMeshTangents() {
   std::cout << "  multi-chunk mesh tangents passed!\n";
 }
 
+// MemBudget wiring: with a cap below what the scene needs, conversion must
+// degrade gracefully (warn + stop adding geometry) instead of running to OOM.
+// The converter's other limits are all per-prim, so this specifically covers
+// MANY small meshes summing past the cap -- the case none of them can see.
+void TestConverterMemoryBudget() {
+  std::cout << "Testing converter cumulative memory budget...\n";
+
+  // Many small meshes; each one individually passes every per-prim probe.
+  std::string usda = "#usda 1.0\n";
+  const int kMeshes = 400;
+  for (int i = 0; i < kMeshes; ++i) {
+    usda += "def Mesh \"M" + std::to_string(i) +
+            "\"\n{\n"
+            "  point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]\n"
+            "  int[] faceVertexCounts = [4]\n"
+            "  int[] faceVertexIndices = [0, 1, 2, 3]\n}\n";
+  }
+  LoadResult lr = LoadUSDAFromString(usda.c_str(), usda.size());
+  assert(lr.success);
+
+  const size_t saved_cap = MemBudget::Get().Cap();
+
+  // Baseline: the generous default cap converts everything.
+  {
+    ConverterConfig cfg;
+    RenderSceneConverter conv(cfg);
+    ConvertResult res = conv.Convert(lr.stage);
+    assert(res.success);
+    assert(res.scene.meshes.size() == static_cast<size_t>(kMeshes));
+  }
+
+  // A cap far below current RSS trips the guard on the first check.
+  {
+    MemBudget::Get().InitBytes(1);  // 1 byte: unsatisfiable by construction
+    ConverterConfig cfg;
+    RenderSceneConverter conv(cfg);
+    ConvertResult res = conv.Convert(lr.stage);
+    // Graceful: no crash, fewer meshes than authored, and a diagnostic.
+    assert(res.scene.meshes.size() < static_cast<size_t>(kMeshes));
+    bool warned = false;
+    for (const std::string& w : res.warnings) {
+      if (w.find("Memory budget reached") != std::string::npos) warned = true;
+    }
+    assert(warned);
+  }
+
+  MemBudget::Get().InitBytes(saved_cap);
+  std::cout << "  converter cumulative memory budget passed!\n";
+}
+
 void TestRenderConverterCurves() {
   std::cout << "Testing RenderConverter curves...\n";
 
@@ -5726,6 +5777,7 @@ int main() {
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();
   TestRenderConverterCurves();
+  TestConverterMemoryBudget();
   TestLargeMeshTangents();
   TestValueClipBaking();
   TestMeshParityCleanups();

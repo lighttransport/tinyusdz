@@ -355,6 +355,15 @@ class RenderSceneConverter {
   /// material.
   const RenderScene* color_config_scene_ = nullptr;
 
+  /// Cumulative (RSS-based) memory guard for the expensive phases; the
+  /// converter's other limits are all per-prim and cannot see a scene of many
+  /// small meshes summing past the cap. Latches once tripped so the rest of
+  /// the conversion degrades consistently rather than thrashing.
+  bool BudgetWouldExceed(size_t estimate, const char* phase);
+  size_t budget_pending_bytes_ = 0;
+  size_t budget_check_counter_ = 0;
+  bool budget_exceeded_ = false;
+
   // Material extraction
   bool ExtractPreviewSurface(const ::tinyusdz::next::Stage& stage,
                              const UsdPrim& shader_prim,
