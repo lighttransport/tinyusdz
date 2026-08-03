@@ -262,7 +262,12 @@ dirLight.shadow.camera.bottom = -5;
 dirLight.shadow.bias = -0.001;
 scene.add(dirLight);
 
-// Ground plane — polygonOffset pushes it behind co-planar grid lines
+// Ground helper (plane + grid toggle together). polygonOffset pushes the
+// plane behind co-planar grid lines.
+const groundHelper = new THREE.Group();
+groundHelper.name = 'GroundHelper';
+scene.add(groundHelper);
+
 const groundGeo = new THREE.PlaneGeometry(20, 20);
 const groundMat = new THREE.MeshStandardMaterial({
 	color: 0x222233, roughness: 0.9,
@@ -271,11 +276,11 @@ const groundMat = new THREE.MeshStandardMaterial({
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
-scene.add(ground);
+groundHelper.add(ground);
 
 // Grid — normal depth test so scene meshes correctly occlude it
 const gridHelper = new THREE.GridHelper(10, 20, 0x444466, 0x333355);
-scene.add(gridHelper);
+groundHelper.add(gridHelper);
 
 // The next backend can preview very large static/transform-animated scenes.
 // Avoid allocating and rendering a second full shadow pass for those meshes;
@@ -300,6 +305,7 @@ let isPlaying = true;
 let playbackSpeed = 1.0;
 let sceneTimeCodesPerSecond = 24; // USD timeCodesPerSecond (tracks store frame numbers)
 let showSkeletonVisualization = true;
+let showGroundGrid = true;
 
 const characterGroup = new THREE.Group();
 characterGroup.name = 'characterGroup';
@@ -1051,6 +1057,10 @@ function renderClipPanel() {
 	html += `<input type="checkbox" ${showSkeletonVisualization ? 'checked' : ''} onchange="window._toggleSkeletonVisualization(this.checked)">`;
 	html += '<span>Show Skeleton</span>';
 	html += '</label>';
+	html += '<label class="vis-toggle">';
+	html += `<input type="checkbox" ${showGroundGrid ? 'checked' : ''} onchange="window._toggleGroundGrid(this.checked)">`;
+	html += '<span>Show Ground Grid</span>';
+	html += '</label>';
 
 	content.innerHTML = html;
 
@@ -1190,6 +1200,11 @@ window._toggleSkeletonVisualization = function(visible) {
 			helper.update();
 		}
 	}
+};
+
+window._toggleGroundGrid = function(visible) {
+	showGroundGrid = !!visible;
+	groundHelper.visible = showGroundGrid;
 };
 
 // =====================================================

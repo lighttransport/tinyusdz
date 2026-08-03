@@ -191,7 +191,11 @@ directionalLight.shadow.camera.far = 50;
 directionalLight.shadow.bias = -0.001;
 scene.add(directionalLight);
 
-// Ground plane
+// Ground helper (plane + grid toggle together)
+const groundHelper = new THREE.Group();
+groundHelper.name = 'GroundHelper';
+scene.add(groundHelper);
+
 const groundGeometry = new THREE.PlaneGeometry(20, 20);
 const groundMaterial = new THREE.MeshStandardMaterial({
 	color: 0x333333,
@@ -201,11 +205,11 @@ const groundMaterial = new THREE.MeshStandardMaterial({
 const ground = new THREE.Mesh(groundGeometry, groundMaterial);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
-scene.add(ground);
+groundHelper.add(ground);
 
 // Grid helper
 const gridHelper = new THREE.GridHelper(20, 20, 0x666666, 0x444444);
-scene.add(gridHelper);
+groundHelper.add(gridHelper);
 
 // Skeleton visualization helpers
 let skeletonHelpers = []; // Array of skeleton helpers for multi-skeleton scenes
@@ -2148,6 +2152,10 @@ animationParams = {
 	toggleSkeleton: function() {
 		applySkeletonHelperOptions();
 	},
+	showGroundGrid: true,
+	toggleGroundGrid: function() {
+		groundHelper.visible = this.showGroundGrid;
+	},
 	skeletonDisplayMode: 'full',
 	updateSkeletonDisplay: function() {
 		applySkeletonHelperOptions();
@@ -2502,6 +2510,9 @@ visualFolder.add(animationParams, 'showMesh')
 visualFolder.add(animationParams, 'showSkeleton')
 	.name('Show Skeleton')
 	.onChange(() => animationParams.toggleSkeleton());
+visualFolder.add(animationParams, 'showGroundGrid')
+	.name('Show Ground Grid')
+	.onChange(() => animationParams.toggleGroundGrid());
 visualFolder.add(animationParams, 'skeletonDisplayMode', {
 	Full: 'full',
 	'Deforming Only': 'deforming'
