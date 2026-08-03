@@ -260,6 +260,12 @@ class MemPool {
   std::atomic<size_t> pooled_{0};
 };
 
+// PoolAlloc reports exhaustion by throwing std::bad_alloc, so it only exists in
+// exception-enabled builds. MemBudget/MemPool above are throw-free, which lets
+// -fno-exceptions translation units (the wasm converter) include this header
+// for the WouldExceed() phase guards and degrade gracefully instead.
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND) || defined(__EXCEPTIONS)
+
 // Allocator that routes std::vector storage through MemPool and accounts every
 // byte into MemBudget — so the triangle buffers are tracked precisely and a
 // stream that would bust the cap throws std::bad_alloc mid-flight (caught by the
@@ -294,6 +300,8 @@ struct PoolAlloc {
     return false;
   }
 };
+
+#endif  // exceptions enabled
 
 }  // namespace next
 }  // namespace tydra

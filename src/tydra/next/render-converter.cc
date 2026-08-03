@@ -4,6 +4,7 @@
 // Tydra Next - Render Scene Converter Implementation
 
 #include "render-converter.hh"
+#include "mem-budget.hh"
 #include "next/schema/color-space.hh"
 #include "next/eval/value-clip.hh"
 #include "next/resolver/asset-resolver.hh"
@@ -2697,6 +2698,15 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         config_.progress_callback(p, "Converting mesh: " + mesh_prim.GetName());
       }
 
+      // Cumulative budget guard: skip the rest of the geometry rather than
+      // let a scene of many individually-small meshes OOM the process.
+      if (BudgetWouldExceed(
+              BuildGeometryInfo(mesh_prim, GeometryKind::Mesh, -1)
+                  .estimated_resident_bytes,
+              "mesh conversion")) {
+        break;
+      }
+
       RenderMesh mesh;
       const bool converted = ConvertRenderableMesh(stage, mesh_prim, &mesh);
       if (converted && mesh.has_alloc_failure()) {
@@ -3722,6 +3732,16 @@ void RenderSceneConverter::DuplicatePointInstanceMeshes(RenderScene* scene) {
     const RenderMesh* src = scene->get_mesh(draw.mesh_id);
     if (!src) continue;
 
+    // Each clone adds transformed points/normals/tangents (topology is shared
+    // copy-on-write); charge that against the cumulative budget.
+    const size_t clone_estimate =
+        SaturatingMul(src->point_count(), 3 * sizeof(float) +
+                                              3 * sizeof(float) +
+                                              4 * sizeof(float));
+    if (BudgetWouldExceed(clone_estimate, "point-instance duplication")) {
+      break;
+    }
+
     RenderMesh expanded;
     if (!CloneMeshForPointInstance(*src, draw, &expanded)) {
       continue;
@@ -3955,6 +3975,42 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
   if (config_.mesh.compute_tangents && out->tangents.empty()) {
     ComputeVertexTangents(out);
   }
+  return true;
+}
+
+// Cumulative memory guard for the expensive conversion phases.
+//
+// The converter's own limits (ProbeAlloc, kMaxTempAllocBytes,
+// kMaxTriangulationCornerCount) are all PER-PRIM and fixed, so they cannot see
+// a scene of 100k individually-small meshes summing past the cap: every prim
+// passes its probe and the process still OOMs. MemBudget::WouldExceed() is
+// RSS-based, so it observes everything actually resident -- including every
+// ChunkedArray chunk -- without routing the converter's allocations through a
+// throwing allocator (the wasm build is -fno-exceptions).
+//
+// Throttled: WouldExceed() reads /proc/self/statm, far too expensive per mesh.
+// A cheap running total triggers a real check only once enough new bytes have
+// been requested, or every kBudgetCheckStride calls.
+bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
+                                             const char* phase) {
+  constexpr size_t kBudgetCheckStride = 256;
+  constexpr size_t kBudgetCheckBytes = 8u * 1024u * 1024u;
+
+  if (budget_exceeded_) return true;  // latched: stay degraded for this run
+
+  budget_pending_bytes_ = SaturatingAdd(budget_pending_bytes_, estimate);
+  const bool due = (++budget_check_counter_ % kBudgetCheckStride == 0) ||
+                   budget_pending_bytes_ >= kBudgetCheckBytes;
+  if (!due) return false;
+
+  const size_t pending = budget_pending_bytes_;
+  budget_pending_bytes_ = 0;
+  std::string why;
+  if (!MemBudget::Get().WouldExceed(pending, &why)) return false;
+
+  budget_exceeded_ = true;
+  warnings_.push_back(std::string("Memory budget reached during ") + phase +
+                      "; remaining geometry is skipped (" + why + ")");
   return true;
 }
 
@@ -4303,14 +4359,18 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
   // point. A failed probe skips tangents for this mesh (they are optional)
   // instead of abort()ing the module under -fno-exceptions.
   constexpr size_t kMikkBytesPerCorner = 80;
-  const size_t probe_bytes =
+  const size_t probe_bytes_pre =
       (config_.mesh.tangent_method ==
            MeshConfig::TangentComputationMethod::Lengyel &&
        vertex_normals && vertex_uvs)
           ? np * (3 + 3 + 4) * sizeof(float)
           : tri_corner_count * kMikkBytesPerCorner;
+  const size_t probe_bytes = probe_bytes_pre;
+  // ProbeAlloc only asks "can this ONE block be allocated"; the cumulative
+  // guard additionally refuses when the scene as a whole is at the cap.
   if (WouldOverflowSizeMul(tri_corner_count, kMikkBytesPerCorner) ||
-      !ProbeAlloc(probe_bytes)) {
+      !ProbeAlloc(probe_bytes) ||
+      BudgetWouldExceed(probe_bytes, "tangent generation")) {
     warnings_.push_back("Out of memory computing tangents for mesh '" +
                         mesh->prim_path + "'; tangents skipped");
     return false;
@@ -5911,6 +5971,19 @@ bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
 
 bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   if (mesh->face_vertex_counts.empty()) return false;
+
+  // Triangulation roughly doubles the index storage (triangulated_indices +
+  // triangulated_face_vertex_indices, 4 bytes each per corner) on top of the
+  // authored corners. The per-mesh kMaxTempAllocBytes check below bounds ONE
+  // mesh; this bounds the scene.
+  if (BudgetWouldExceed(
+          SaturatingMul(mesh->face_vertex_indices.size(), 2 * sizeof(uint32_t)),
+          "triangulation")) {
+    warnings_.push_back("Mesh '" + mesh->prim_path +
+                        "' not triangulated: memory budget reached");
+    return false;
+  }
+
   mesh->triangulated_indices.clear();  // re-entry / failure-path hardening
   mesh->triangulated_face_vertex_indices.clear();
 
