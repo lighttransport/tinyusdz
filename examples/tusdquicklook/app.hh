@@ -143,6 +143,9 @@ class App
   void ResetShadingAndViewport();
   void ToggleViewMode();
   void BuildImageItems();
+  // Navigates the browser into dir_path (a folder tile clicked/activated in
+  // the image grid) and rebuilds the grid for the new location.
+  void EnterImageFolder(const std::string& dir_path);
   void StartImageWorkers();
   void StopImageWorkers();
   void ThumbnailWorkerLoop();
@@ -321,6 +324,10 @@ class App
   enum class ImageStatus : uint8_t { Pending, Loading, Ready, Error };
 
   struct ImageItem {
+    // Thumbnail source: the image file itself, or -- for a folder tile --
+    // a representative image found inside it (empty if none, in which case
+    // the tile falls back to a plain folder icon). Decoded the same way
+    // either way, so folder tiles and image tiles share one load path.
     std::string path;
     std::string name;
     std::string cache_path;
@@ -329,6 +336,10 @@ class App
     int width = 0;
     int height = 0;
     std::string error;
+    // Subfolder of the scanned directory, shown as a folder tile in the
+    // grid; nav_path is where activating it navigates (EnterImageFolder).
+    bool is_dir = false;
+    std::string nav_path;
   };
 
   struct ImageTask {
