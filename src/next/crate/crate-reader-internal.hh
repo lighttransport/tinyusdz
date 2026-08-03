@@ -11,6 +11,7 @@
 #include "stream-reader.hh"
 #include "../layer/prim-spec.hh"  // PropMeta (property metadata decode)
 
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -166,6 +167,13 @@ class CrateReader::Impl {
   bool UnpackVec3h(ValueRep rep, Value& out);
   bool UnpackVec4h(ValueRep rep, Value& out);
   bool UnpackQuath(ValueRep rep, Value& out);
+
+  // Running total of bytes admitted through CheckByteAllocation, checked
+  // against AllocationBudget(). The per-allocation caps alone let N separate
+  // allocations each just under the cap sum without bound.
+  uint64_t alloc_total_ = 0;
+  static constexpr uint64_t kU64MaxBytes = ~uint64_t(0);
+  uint64_t AllocationBudget() const;
 
   bool CheckByteAllocation(uint64_t bytes, const char* what);
   bool CheckElementAllocation(uint64_t count, size_t elem_size,
