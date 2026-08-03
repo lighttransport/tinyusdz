@@ -35,7 +35,96 @@ const std::string* FindAssetPathRemap(
   return nullptr;
 }
 
+void CopyVariantDataShallow(const VariantData& src, VariantData* dst) {
+  dst->name = src.name;
+  dst->active = src.active;
+  dst->hidden = src.hidden;
+  dst->active_authored = src.active_authored;
+  dst->hidden_authored = src.hidden_authored;
+  dst->doc = src.doc;
+  dst->kind = src.kind;
+  dst->properties = src.properties;
+  dst->relationships = src.relationships;
+  dst->relationshipFlags = src.relationshipFlags;
+  dst->references = src.references;
+  dst->payloads = src.payloads;
+  dst->inherits = src.inherits;
+  dst->specializes = src.specializes;
+  dst->variantSelections = src.variantSelections;
+  dst->unknownMeta = src.unknownMeta;
+  dst->unknownFields = src.unknownFields;
+  dst->content = src.content;
+}
+
+void CopyVariantSetsIterative(const std::vector<VariantSetData>& src,
+                              std::vector<VariantSetData>* dst) {
+  struct CopyFrame {
+    const std::vector<VariantSetData>* src;
+    std::vector<VariantSetData>* dst;
+  };
+
+  dst->resize(src.size());
+  std::vector<CopyFrame> stack;
+  stack.push_back(CopyFrame{&src, dst});
+  while (!stack.empty()) {
+    const CopyFrame frame = stack.back();
+    stack.pop_back();
+    for (size_t si = 0; si < frame.src->size(); ++si) {
+      const VariantSetData& src_set = (*frame.src)[si];
+      VariantSetData& dst_set = (*frame.dst)[si];
+      dst_set.name = src_set.name;
+      dst_set.selected = src_set.selected;
+      dst_set.variants.resize(src_set.variants.size());
+      for (size_t vi = 0; vi < src_set.variants.size(); ++vi) {
+        const VariantData& src_option = src_set.variants[vi];
+        VariantData& dst_option = dst_set.variants[vi];
+        CopyVariantDataShallow(src_option, &dst_option);
+        if (!src_option.variantSets.empty()) {
+          dst_option.variantSets.resize(src_option.variantSets.size());
+          stack.push_back(
+              CopyFrame{&src_option.variantSets, &dst_option.variantSets});
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
+
+VariantData::VariantData() = default;
+VariantData::VariantData(const VariantData& other) {
+  CopyVariantDataShallow(other, this);
+  CopyVariantSetsIterative(other.variantSets, &variantSets);
+}
+VariantData::VariantData(VariantData&&) noexcept = default;
+VariantData& VariantData::operator=(const VariantData& other) {
+  if (this != &other) {
+    VariantData copy(other);
+    *this = std::move(copy);
+  }
+  return *this;
+}
+VariantData& VariantData::operator=(VariantData&&) noexcept = default;
+
+VariantData::~VariantData() {
+  // Variant sets recursively own more VariantData values. A default vector
+  // teardown consumes one C++ stack frame per nested option and can overflow
+  // for deeply authored API data even though writer traversal is iterative.
+  // Move descendants into an explicit worklist and detach each level before
+  // its ordinary destructor runs.
+  std::vector<VariantSetData> pending;
+  pending.swap(variantSets);
+  while (!pending.empty()) {
+    VariantSetData set = std::move(pending.back());
+    pending.pop_back();
+    for (VariantData& option : set.variants) {
+      for (VariantSetData& child : option.variantSets) {
+        pending.push_back(std::move(child));
+      }
+      option.variantSets.clear();
+    }
+  }
+}
 
 // ============================================================
 // TypeNameTable

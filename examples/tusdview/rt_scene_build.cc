@@ -626,11 +626,13 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
     InitProxyMesh(src.name, src.absPath, src.purpose, src.materialId, &mesh);
     const size_t count = src.points.size() / 3;
     const float scale = CarrierWorldScale(src.world);
+    // A subdivided octahedron (subdivide each of 8 faces into 4) producing
+    // 32 triangles per point -- better than the previous 8-triangle octahedron,
+    // giving a noticeably rounder appearance without the full icosahedron.
     static const float dirs[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},
                                       {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-    static const uint32_t faces[8][3] = {{0, 2, 4}, {2, 1, 4}, {1, 3, 4},
-                                         {3, 0, 4}, {2, 0, 5}, {1, 2, 5},
-                                         {3, 1, 5}, {0, 3, 5}};
+    static const uint32_t edges[12][2] = {{0,2},{2,1},{1,3},{3,0},{0,4},{2,4},
+                                           {1,4},{3,4},{0,5},{2,5},{1,5},{3,5}};
     for (size_t i = 0; i < count; ++i) {
       float center[3];
       CarrierWorldPoint(src.world, &src.points[i * 3], center);
@@ -648,16 +650,58 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
                                 ? 1.0f
                                 : src.opacities[src.opacities.size() > i ? i : 0];
       const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+      // Add the 6 octahedron base vertices.
       for (const auto& dir : dirs) {
         const float p[3] = {center[0] + dir[0] * width * 0.5f,
                             center[1] + dir[1] * width * 0.5f,
                             center[2] + dir[2] * width * 0.5f};
         AddProxyVertex(p, dir, color, opacity, &mesh);
       }
-      for (const auto& face : faces) {
-        mesh.indices.push_back(base + face[0]);
-        mesh.indices.push_back(base + face[1]);
-        mesh.indices.push_back(base + face[2]);
+      // Add the 12 edge-midpoint vertices (normalized for spherical proxy).
+      for (const auto& edge : edges) {
+        const float* d0 = dirs[edge[0]];
+        const float* d1 = dirs[edge[1]];
+        float dir[3] = {d0[0] + d1[0], d0[1] + d1[1], d0[2] + d1[2]};
+        float len = std::sqrt(dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
+        if (len > 1e-8f) { dir[0]/=len; dir[1]/=len; dir[2]/=len; }
+        const float p[3] = {center[0] + dir[0] * width * 0.5f,
+                            center[1] + dir[1] * width * 0.5f,
+                            center[2] + dir[2] * width * 0.5f};
+        AddProxyVertex(p, dir, color, opacity, &mesh);
+      }
+      // 4 triangles per original octahedron face, using subdivide pattern:
+      // face (a,b,c) -> (a, ab, ac), (ab, b, bc), (ac, bc, c), (ab, bc, ac)
+      // where ab = edge midpoint of a-b, etc. Edge indices match edges[] order:
+      //   v0-v2=0, v2-v1=1, v1-v3=2, v3-v0=3, v0-v4=4, v2-v4=5,
+      //   v1-v4=6, v3-v4=7, v0-v5=8, v2-v5=9, v1-v5=10, v3-v5=11
+      static const int face_edges[8][3] = {
+        {0,4,5},  // top: v0 v2 v4
+        {1,5,6},  // top: v2 v1 v4
+        {2,6,7},  // top: v1 v3 v4
+        {3,7,4},  // top: v3 v0 v4
+        {8,9,0},  // bot: v0 v5 v2 (edge 0 reversed: v2-v0 = same as v0-v2)
+        {9,10,1}, // bot: v2 v5 v1
+        {10,11,2},// bot: v1 v5 v3
+        {11,8,3}  // bot: v3 v5 v0
+      };
+      for (const auto& fe : face_edges) {
+        const uint32_t a = base + fe[0], b = base + fe[1], c = base + fe[2];
+        // (v0, v0v2_mid, v0v4_mid)
+        mesh.indices.push_back(a);
+        mesh.indices.push_back(base + 6 + fe[0]);
+        mesh.indices.push_back(base + 6 + fe[1]);
+        // (v0v2_mid, v2, v2v4_mid)
+        mesh.indices.push_back(base + 6 + fe[0]);
+        mesh.indices.push_back(b);
+        mesh.indices.push_back(base + 6 + fe[2]);
+        // (v0v4_mid, v2v4_mid, v4)
+        mesh.indices.push_back(base + 6 + fe[1]);
+        mesh.indices.push_back(base + 6 + fe[2]);
+        mesh.indices.push_back(c);
+        // (v0v2_mid, v2v4_mid, v0v4_mid)
+        mesh.indices.push_back(base + 6 + fe[0]);
+        mesh.indices.push_back(base + 6 + fe[2]);
+        mesh.indices.push_back(base + 6 + fe[1]);
       }
     }
     mesh.submeshes[0].indexCount = static_cast<uint32_t>(mesh.indices.size());
@@ -710,11 +754,13 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
               src.opacities[src.opacities.size() > i + 1 ? i + 1 : 0];
           opacity = 0.5f * (o0 + o1);
         }
+        constexpr int kSegments = 8;
         const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
         for (int ring = 0; ring < 2; ++ring) {
           const float* center = ring == 0 ? p0 : p1;
-          for (int k = 0; k < 4; ++k) {
-            const float angle = 1.57079632679f * static_cast<float>(k);
+          for (int k = 0; k < kSegments; ++k) {
+            const float angle = 6.28318530718f * static_cast<float>(k) /
+                                static_cast<float>(kSegments);
             const float normal[3] = {side[0] * std::cos(angle) + up[0] * std::sin(angle),
                                      side[1] * std::cos(angle) + up[1] * std::sin(angle),
                                      side[2] * std::cos(angle) + up[2] * std::sin(angle)};
@@ -724,11 +770,13 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene) {
             AddProxyVertex(p, normal, color, opacity, &mesh);
           }
         }
-        for (uint32_t k = 0; k < 4; ++k) {
-          const uint32_t next = (k + 1) & 3u;
+        for (uint32_t k = 0; k < static_cast<uint32_t>(kSegments); ++k) {
+          const uint32_t next = (k + 1) % static_cast<uint32_t>(kSegments);
           mesh.indices.insert(mesh.indices.end(),
-                              {base + k, base + 4 + k, base + 4 + next,
-                               base + k, base + 4 + next, base + next});
+                              {base + k, base + kSegments + k,
+                               base + kSegments + next,
+                               base + k, base + kSegments + next,
+                               base + next});
         }
       }
       begin = end;

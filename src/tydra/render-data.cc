@@ -27,6 +27,7 @@
 
 #include "common-utils.hh"
 #include "common-types.hh"
+#include "color-management.hh"
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
@@ -202,6 +203,11 @@ static std::string MaterialSignature(
   ss << "tag=" << int(mat.materialTag) << ";";
   ss << "disp=" << (mat.has_displacement ? 1 : 0) << ";";
   ss << "volume=" << (mat.has_volume ? 1 : 0) << ";";
+  ss << "mtlxConfig=" << (mat.materialXConfig.authored ? 1 : 0) << ";"
+     << mat.materialXConfig.version << ";"
+     << mat.materialXConfig.name_space << ";"
+     << mat.materialXConfig.colorspace << ";"
+     << mat.materialXConfig.source_uri << ";";
   if (mat.surfaceShader.has_value()) {
     const PreviewSurfaceShader &s = *mat.surfaceShader;
     ss << "preview{";
@@ -1619,6 +1625,16 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
 
+  color_management::RenderingColorConfig rendering_color;
+  std::string color_warning;
+  if (!color_management::ResolveRenderingColorConfig(
+          env.stage, env.material_config.render_settings_path,
+          &rendering_color, &color_warning)) {
+    PUSH_ERROR_AND_RETURN("Failed to resolve rendering color configuration.");
+  }
+  _working_color_space = rendering_color.working_space;
+  if (!color_warning.empty()) PushWarn(color_warning);
+
   const auto total_start = TydraPerfClock::now();
   double count_ms = 0.0;
   double skel_map_ms = 0.0;
@@ -2313,6 +2329,18 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
     const auto phase_start = TydraPerfClock::now();
     const auto &stage_metas = env.stage.metas();
 
+    render_scene.meta.renderSettingsPrimPath =
+        rendering_color.render_settings_path;
+    render_scene.meta.workingColorSpace = rendering_color.working_space;
+    color::ColorSpaceDesc display_linear;
+    color::ColorTransform display_transform;
+    if (color::GetBuiltinColorSpace("lin_rec709_scene", &display_linear) &&
+        color::BuildColorTransform(rendering_color.working_definition,
+                                   display_linear, &display_transform)) {
+      std::copy(display_transform.matrix, display_transform.matrix + 9,
+                render_scene.meta.workingToDisplayLinear.begin());
+    }
+
     // upAxis
     if (stage_metas.upAxis.authored()) {
       render_scene.meta.upAxis = to_string(stage_metas.upAxis.get_value());
@@ -2572,7 +2600,7 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
     (*cty) = ColorSpace::Raw;
   } else if (tok.str() == "Raw") {
     (*cty) = ColorSpace::Raw;
-  } else if (tok.str() == "srgb") {
+  } else if (tok.str() == "srgb" || tok.str() == "srgb_rec709_scene") {
     (*cty) = ColorSpace::sRGB;
   } else if (tok.str() == "sRGB") {
     (*cty) = ColorSpace::sRGB;
@@ -2584,25 +2612,33 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
     (*cty) = ColorSpace::Lin_sRGB;
   } else if (tok.str() == "rec709") {
     (*cty) = ColorSpace::Rec709;
-  } else if (tok.str() == "lin_rec709") {  // MaterialX linear Rec.709
+  } else if (tok.str() == "lin_rec709" ||
+             tok.str() == "lin_rec709_scene") {  // MaterialX/OpenUSD linear Rec.709
     (*cty) = ColorSpace::Lin_Rec709;
-  } else if (tok.str() == "g22_rec709") {  // MaterialX gamma 2.2 Rec.709
+  } else if (tok.str() == "g22_rec709" ||
+             tok.str() == "g22_rec709_scene") {  // MaterialX/OpenUSD gamma 2.2 Rec.709
     (*cty) = ColorSpace::g22_Rec709;
-  } else if (tok.str() == "g18_rec709") {  // MaterialX gamma 1.8 Rec.709
+  } else if (tok.str() == "g18_rec709" ||
+             tok.str() == "g18_rec709_scene") {  // MaterialX/OpenUSD gamma 1.8 Rec.709
     (*cty) = ColorSpace::g18_Rec709;
-  } else if (tok.str() == "lin_rec2020") {  // Linear Rec.2020
+  } else if (tok.str() == "lin_rec2020" ||
+             tok.str() == "lin_rec2020_scene") {  // Linear Rec.2020
     (*cty) = ColorSpace::Lin_Rec2020;
   } else if (tok.str() == "acescg") {  // Alternative ACES CG naming
     (*cty) = ColorSpace::Lin_ACEScg;
-  } else if (tok.str() == "lin_ap1") {  // Linear AP1 (same as ACEScg)
+  } else if (tok.str() == "lin_ap1" ||
+             tok.str() == "lin_ap1_scene") {  // Linear AP1 (same as ACEScg)
     (*cty) = ColorSpace::Lin_ACEScg;
-  } else if (tok.str() == "aces2065-1") {  // ACES 2065-1
+  } else if (tok.str() == "aces2065-1" ||
+             tok.str() == "lin_ap0_scene") {  // ACES 2065-1
     (*cty) = ColorSpace::ACES2065_1;
   } else if (tok.str() == "ocio") {
     (*cty) = ColorSpace::OCIO;
-  } else if (tok.str() == "lin_displayp3") {
+  } else if (tok.str() == "lin_displayp3" ||
+             tok.str() == "lin_p3d65_scene") {
     (*cty) = ColorSpace::Lin_DisplayP3;
-  } else if (tok.str() == "srgb_displayp3") {
+  } else if (tok.str() == "srgb_displayp3" ||
+             tok.str() == "srgb_p3d65_scene") {
     (*cty) = ColorSpace::sRGB_DisplayP3;
 
     //

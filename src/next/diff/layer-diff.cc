@@ -1305,6 +1305,11 @@ bool CompareLayerMetas(const LayerMeta &lhs, const LayerMeta &rhs,
     noteField("colorManagementSystem", lhs.colorManagementSystem,
               rhs.colorManagementSystem);
   }
+  if (lhs.renderSettingsPrimPath != rhs.renderSettingsPrimPath ||
+      lhs.renderSettingsPrimPath_set != rhs.renderSettingsPrimPath_set) {
+    noteField("renderSettingsPrimPath", lhs.renderSettingsPrimPath,
+              rhs.renderSettingsPrimPath);
+  }
 
   // subLayers (count + per-layer asset path / offset).
   bool subEqual = (lhs.subLayers.size() == rhs.subLayers.size());

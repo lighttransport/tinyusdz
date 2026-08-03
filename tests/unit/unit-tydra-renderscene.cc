@@ -8,8 +8,10 @@
 #include "unit-tydra-renderscene.h"
 
 #include <cstring>
+#include <cmath>
 
 #include "tinyusdz.hh"
+#include "tydra/color-management.hh"
 #include "tydra/render-data.hh"
 #include "tydra/render-data-converter.hh"
 #include "tydra/scene-access.hh"
@@ -203,6 +205,295 @@ def Xform "Root" {
   TEST_MSG("Expected at least 1 material, got %zu", scene.materials.size());
 }
 
+void tydra_renderscene_rendering_colorspace_test(void) {
+  const char *usda = R"(#usda 1.0
+(
+  renderSettingsPrimPath = "/World/Settings"
+)
+def Xform "World" (
+  prepend apiSchemas = ["ColorSpaceDefinitionAPI:studio"]
+) {
+  uniform token colorSpaceDefinition:studio:name = "studio_linear"
+  float2 colorSpaceDefinition:studio:redChroma = (0.64, 0.33)
+  float2 colorSpaceDefinition:studio:greenChroma = (0.30, 0.60)
+  float2 colorSpaceDefinition:studio:blueChroma = (0.15, 0.06)
+  float2 colorSpaceDefinition:studio:whitePoint = (0.3127, 0.3290)
+  float colorSpaceDefinition:studio:gamma = 1
+  float colorSpaceDefinition:studio:linearBias = 0
+  def RenderSettings "Settings" {
+    uniform token renderingColorSpace = "studio_linear"
+  }
+  def Mesh "Mesh" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+  ) {
+    point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0,1,2]
+    rel material:binding = </World/Mat>
+  }
+  def Material "Mat" {
+    token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (0.25, 0.5, 0.75) (
+        colorSpace = "srgb_rec709_scene"
+      )
+      color3f inputs:diffuseColor.timeSamples = {
+        1: (0.1, 0.2, 0.3),
+        2: (0.9, 0.6, 0.1),
+      }
+      color3f inputs:emissiveColor = (0.25, 0.5, 0.75) (
+        colorSpace = "raw"
+      )
+      token outputs:surface
+    }
+  }
+}
+def Scope "Legacy" (
+  prepend apiSchemas = ["ColorSpaceDefinitionAPI"]
+) {
+  uniform token name = "legacy_linear"
+  float2 redChroma = (0.64, 0.33)
+  float2 greenChroma = (0.30, 0.60)
+  float2 blueChroma = (0.15, 0.06)
+  float2 whitePoint = (0.3127, 0.3290)
+  float gamma = 1
+  float linearBias = 0
+}
+)";
+
+  Stage stage;
+  std::string warn, err;
+  bool ok = LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
+      "colorspace.usda", &stage, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+  if (!ok) return;
+
+  color::ColorSpaceDesc legacy_definition;
+  std::string definition_error;
+  ok = tydra::color_management::ResolveColorSpaceDefinition(
+      stage, Path("/Legacy", ""), "legacy_linear", &legacy_definition,
+      &definition_error);
+  TEST_CHECK(ok);
+  TEST_MSG("Legacy ColorSpaceDefinitionAPI failed: %s",
+           definition_error.c_str());
+  TEST_CHECK(color::IsLinear(legacy_definition));
+
+  tydra::color_management::RenderingColorConfig fallback;
+  std::string fallback_warning;
+  ok = tydra::color_management::ResolveRenderingColorConfig(
+      stage, "/missing", &fallback, &fallback_warning);
+  TEST_CHECK(ok);
+  TEST_CHECK(fallback.used_override);
+  TEST_CHECK(fallback.used_fallback);
+  TEST_CHECK(fallback.working_space == "lin_rec709_scene");
+  TEST_CHECK(!fallback_warning.empty());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  env.timecode = 1.5;
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  ok = converter.ConvertToRenderScene(env, &scene);
+  TEST_CHECK(ok);
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+  if (!ok || scene.materials.empty() ||
+      !scene.materials[0].surfaceShader) return;
+
+  TEST_CHECK(scene.meta.renderSettingsPrimPath == "/World/Settings");
+  TEST_CHECK(scene.meta.workingColorSpace == "studio_linear");
+  const auto &c = scene.materials[0].surfaceShader->diffuseColor.value;
+  float display[3] = {
+      scene.meta.workingToDisplayLinear[0] * c[0] +
+          scene.meta.workingToDisplayLinear[1] * c[1] +
+          scene.meta.workingToDisplayLinear[2] * c[2],
+      scene.meta.workingToDisplayLinear[3] * c[0] +
+          scene.meta.workingToDisplayLinear[4] * c[1] +
+          scene.meta.workingToDisplayLinear[5] * c[2],
+      scene.meta.workingToDisplayLinear[6] * c[0] +
+          scene.meta.workingToDisplayLinear[7] * c[1] +
+          scene.meta.workingToDisplayLinear[8] * c[2]};
+  // Interpolate authored samples in their source encoding first, then apply
+  // the source-to-working conversion to midpoint (0.5, 0.4, 0.2).
+  const float expected_display[3] = {0.214041f, 0.132868f, 0.0331048f};
+  for (int channel = 0; channel < 3; ++channel) {
+    TEST_CHECK(std::fabs(display[channel] - expected_display[channel]) <
+               2.0e-4f);
+    TEST_MSG("Unexpected display-linear channel %d: got %f", channel,
+             display[channel]);
+  }
+  const auto &raw = scene.materials[0].surfaceShader->emissiveColor.value;
+  const float expected_raw[3] = {0.25f, 0.5f, 0.75f};
+  for (int channel = 0; channel < 3; ++channel) {
+    TEST_CHECK(std::fabs(raw[channel] - expected_raw[channel]) < 1.0e-7f);
+    TEST_MSG("Raw channel %d was color transformed: got %f", channel,
+             raw[channel]);
+  }
+}
+
+void tydra_renderscene_custom_texture_colorspace_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "World" (
+  prepend apiSchemas = ["ColorSpaceDefinitionAPI:studio_ap0"]
+) {
+  uniform token colorSpaceDefinition:studio_ap0:name = "studio_ap0"
+  float2 colorSpaceDefinition:studio_ap0:redChroma = (0.7348552434, 0.2642253252)
+  float2 colorSpaceDefinition:studio_ap0:greenChroma = (-0.0061709125, 1.0113149590)
+  float2 colorSpaceDefinition:studio_ap0:blueChroma = (0.0159675593, -0.0642355031)
+  float2 colorSpaceDefinition:studio_ap0:whitePoint = (0.3127, 0.3290)
+  float colorSpaceDefinition:studio_ap0:gamma = 1
+  float colorSpaceDefinition:studio_ap0:linearBias = 0
+  def Mesh "Mesh" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+  ) {
+    point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0,1,2]
+    rel material:binding = </World/Mat>
+  }
+  def Material "Mat" {
+    token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor.connect = </World/Mat/Texture.outputs:rgb>
+      token outputs:surface
+    }
+    def Shader "Texture" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @custom.png@ (colorSpace = "studio_ap0")
+      float3 outputs:rgb
+    }
+  }
+  def Xform "Alt" (
+    prepend apiSchemas = ["ColorSpaceDefinitionAPI:studio_ap0"]
+  ) {
+    uniform token colorSpaceDefinition:studio_ap0:name = "studio_ap0"
+    float2 colorSpaceDefinition:studio_ap0:redChroma = (0.64, 0.33)
+    float2 colorSpaceDefinition:studio_ap0:greenChroma = (0.30, 0.60)
+    float2 colorSpaceDefinition:studio_ap0:blueChroma = (0.15, 0.06)
+    float2 colorSpaceDefinition:studio_ap0:whitePoint = (0.3127, 0.3290)
+    float colorSpaceDefinition:studio_ap0:gamma = 1
+    float colorSpaceDefinition:studio_ap0:linearBias = 0
+    def Mesh "Mesh" (
+      prepend apiSchemas = ["MaterialBindingAPI"]
+    ) {
+      point3f[] points = [(2,0,0),(3,0,0),(2,1,0)]
+      int[] faceVertexCounts = [3]
+      int[] faceVertexIndices = [0,1,2]
+      rel material:binding = </World/Alt/Mat>
+    }
+    def Material "Mat" {
+      token outputs:surface.connect = </World/Alt/Mat/Surface.outputs:surface>
+      def Shader "Surface" {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </World/Alt/Mat/Texture.outputs:rgb>
+        token outputs:surface
+      }
+      def Shader "Texture" {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @custom.png@ (colorSpace = "studio_ap0")
+        float3 outputs:rgb
+      }
+    }
+  }
+  def Xform "Inherited" {
+    def Mesh "Mesh" (
+      prepend apiSchemas = ["MaterialBindingAPI"]
+    ) {
+      point3f[] points = [(4,0,0),(5,0,0),(4,1,0)]
+      int[] faceVertexCounts = [3]
+      int[] faceVertexIndices = [0,1,2]
+      rel material:binding = </World/Inherited/Mat>
+    }
+    def Material "Mat" {
+      token outputs:surface.connect = </World/Inherited/Mat/Surface.outputs:surface>
+      def Shader "Surface" {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </World/Inherited/Mat/Texture.outputs:rgb>
+        token outputs:surface
+      }
+      def Shader "Texture" (
+        prepend apiSchemas = ["ColorSpaceAPI"]
+      ) {
+        uniform token colorSpace:name = "lin_ap1_scene"
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @custom.png@
+        float3 outputs:rgb
+      }
+    }
+  }
+}
+)";
+
+  Stage stage;
+  std::string warn, err;
+  bool ok = LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
+      "custom-texture-colorspace.usda", &stage, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+  if (!ok) return;
+
+  tydra::RenderSceneConverterEnv env(stage);
+  env.material_config.texture_image_loader_function = SyntheticTextureLoader;
+  env.material_config.linearize_color_space = true;
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  ok = converter.ConvertToRenderScene(env, &scene);
+  TEST_CHECK(ok);
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+  if (!ok || scene.images.empty()) return;
+
+  // Same asset and token name, but two scoped definitions, plus an ordinary
+  // UsdUVTexture inheriting ColorSpaceAPI. Each effective transform gets its
+  // own cache entry.
+  TEST_CHECK(scene.images.size() == 3);
+  if (scene.images.size() != 3) return;
+  const tydra::TextureImage *image_ptr = nullptr;
+  const tydra::TextureImage *inherited_ptr = nullptr;
+  for (const tydra::TextureImage &candidate : scene.images) {
+    if (candidate.sourceToDisplayLinear[0] > 2.0f) image_ptr = &candidate;
+    if (candidate.sourceColorSpaceName == "lin_ap1_scene") {
+      inherited_ptr = &candidate;
+    }
+  }
+  TEST_CHECK(image_ptr != nullptr);
+  TEST_CHECK(inherited_ptr != nullptr);
+  if (inherited_ptr) {
+    TEST_CHECK(inherited_ptr->colorTransformValid);
+    TEST_CHECK(!inherited_ptr->colorTransformBypass);
+  }
+  if (!image_ptr) return;
+  const tydra::TextureImage &image = *image_ptr;
+  TEST_CHECK(image.usdColorSpace == tydra::ColorSpace::Custom);
+  TEST_CHECK(image.colorSpace == tydra::ColorSpace::Lin_sRGB);
+  TEST_CHECK(image.sourceColorSpaceName == "studio_ap0");
+  TEST_CHECK(image.colorTransformValid);
+  TEST_CHECK(image.colorTransformApplied);
+  TEST_CHECK(!image.colorTransformBypass);
+  TEST_CHECK(image.buffer_id >= 0);
+  if (image.buffer_id < 0) return;
+  const tydra::BufferData &buffer =
+      scene.buffers[static_cast<size_t>(image.buffer_id)];
+  TEST_CHECK(buffer.componentType == tydra::ComponentType::Float);
+  TEST_CHECK(buffer.data.size() == 4 * sizeof(float));
+  if (buffer.data.size() != 4 * sizeof(float)) return;
+  float actual[4];
+  std::memcpy(actual, buffer.data.data(), sizeof(actual));
+  color::ColorTransform expected_transform;
+  ok = tydra::color_management::BuildColorTransform(
+      stage, Path("/World/Mat/Texture", ""), "studio_ap0",
+      "lin_rec709_scene", &expected_transform, &err);
+  TEST_CHECK(ok);
+  float expected[3] = {1.0f, 128.0f / 255.0f, 64.0f / 255.0f};
+  color::TransformRGB(expected_transform, expected);
+  for (int channel = 0; channel < 3; ++channel) {
+    TEST_CHECK(std::fabs(actual[channel] - expected[channel]) < 2.0e-5f);
+  }
+  TEST_CHECK(std::fabs(actual[3] - 1.0f) < 1.0e-7f);
+}
+
 // ---------------------------------------------------------------------------
 // d2. MaterialX NodeGraph constant folding of the newly-supported ops:
 //     swizzle, separate (per-channel output), smoothstep, ifgreatereq, saturate.
@@ -227,6 +518,7 @@ def Xform "Root" {
         uniform token info:id = "ND_UsdPreviewSurface_surfaceshader"
         color3f inputs:diffuseColor.connect = </Root/Materials/MyMat/NG.outputs:diff_out>
         color3f inputs:emissiveColor.connect = </Root/Materials/MyMat/NG.outputs:emis_out>
+        color3f inputs:specularColor.connect = </Root/Materials/MyMat/NG.outputs:mixed_out>
         float inputs:roughness.connect = </Root/Materials/MyMat/NG.outputs:rough_out>
         float inputs:metallic.connect = </Root/Materials/MyMat/NG.outputs:metal_out>
         float inputs:clearcoat.connect = </Root/Materials/MyMat/NG.outputs:coat_out>
@@ -236,6 +528,7 @@ def Xform "Root" {
       def NodeGraph "NG" {
         color3f outputs:diff_out.connect = </Root/Materials/MyMat/NG/swizzleNode.outputs:out>
         color3f outputs:emis_out.connect = </Root/Materials/MyMat/NG/satNode.outputs:out>
+        color3f outputs:mixed_out.connect = </Root/Materials/MyMat/NG/mixNode.outputs:out>
         float outputs:rough_out.connect = </Root/Materials/MyMat/NG/sepNode.outputs:outg>
         float outputs:metal_out.connect = </Root/Materials/MyMat/NG/smoothNode.outputs:out>
         float outputs:coat_out.connect = </Root/Materials/MyMat/NG/condNode.outputs:out>
@@ -278,6 +571,27 @@ def Xform "Root" {
           uniform token info:id = "ND_saturate_color3"
           color3f inputs:in.connect = </Root/Materials/MyMat/NG/constNode.outputs:out>
           float inputs:amount = 0.0
+          color3f outputs:out
+        }
+        def Shader "encodedColor" {
+          uniform token info:id = "ND_constant_color3"
+          color3f inputs:value = (0.5, 0, 0) (
+            colorSpace = "srgb_rec709_scene"
+          )
+          color3f outputs:out
+        }
+        def Shader "linearColor" {
+          uniform token info:id = "ND_constant_color3"
+          color3f inputs:value = (0, 0.5, 0) (
+            colorSpace = "lin_rec709_scene"
+          )
+          color3f outputs:out
+        }
+        def Shader "mixNode" {
+          uniform token info:id = "ND_mix_color3"
+          color3f inputs:bg.connect = </Root/Materials/MyMat/NG/encodedColor.outputs:out>
+          color3f inputs:fg.connect = </Root/Materials/MyMat/NG/linearColor.outputs:out>
+          float inputs:mix = 0.5
           color3f outputs:out
         }
         def Shader "combine4Node" {
@@ -357,6 +671,13 @@ def Xform "Root" {
   TEST_CHECK(near(s.emissiveColor.value[2], 0.51536f));
   TEST_MSG("saturate emissiveColor = (%f,%f,%f)", s.emissiveColor.value[0],
            s.emissiveColor.value[1], s.emissiveColor.value[2]);
+
+  // Convert each source into the graph's linear Rec.709 space before mixing.
+  TEST_MSG("mixed specularColor = (%f,%f,%f)", s.specularColor.value[0],
+           s.specularColor.value[1], s.specularColor.value[2]);
+  TEST_CHECK(near(s.specularColor.value[0], 0.1070205f));
+  TEST_CHECK(near(s.specularColor.value[1], 0.25f));
+  TEST_CHECK(near(s.specularColor.value[2], 0.0f));
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +716,9 @@ def Xform "Root" {
       float outputs:rough_out.connect = </Root/SharedNG/Nested/roughNode.outputs:out>
       def Shader "colorNode" {
         uniform token info:id = "ND_constant_color3"
-        color3f inputs:value = (0.25, 0.5, 0.75)
+        color3f inputs:value = (0.25, 0.5, 0.75) (
+          colorSpace = "srgb_rec709_scene"
+        )
         color3f outputs:out
       }
       def Shader "roughNode" {
@@ -432,9 +755,9 @@ def Xform "Root" {
   const tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
 
   auto near = [](float a, float b) { return std::fabs(a - b) < 1e-3f; };
-  TEST_CHECK(near(s.diffuseColor.value[0], 0.25f));
-  TEST_CHECK(near(s.diffuseColor.value[1], 0.5f));
-  TEST_CHECK(near(s.diffuseColor.value[2], 0.75f));
+  TEST_CHECK(near(s.diffuseColor.value[0], 0.0508761f));
+  TEST_CHECK(near(s.diffuseColor.value[1], 0.214041f));
+  TEST_CHECK(near(s.diffuseColor.value[2], 0.522522f));
   TEST_CHECK(near(s.roughness.value, 0.35f));
   TEST_MSG("nonlocal NG diffuse=(%f,%f,%f) roughness=%f",
            s.diffuseColor.value[0], s.diffuseColor.value[1],
@@ -589,8 +912,10 @@ def Xform "Root" {
 }
 
 // ---------------------------------------------------------------------------
-// d6. MaterialX texture color-space semantics. Color parameters should synthesize
-//     sRGB sourceColorSpace, while scalar/data parameters should synthesize Raw.
+// d6. MaterialX texture color-space semantics. Untagged color parameters use
+//     the MaterialX document working space, while scalar/data parameters stay
+//     Raw. This is distinct from the historical sRGB fallback used when no
+//     MaterialXConfigAPI opinion exists.
 // ---------------------------------------------------------------------------
 void tydra_renderscene_mtlx_texture_colorspace_test(void) {
   const char *usda = R"(#usda 1.0
@@ -604,26 +929,39 @@ def Xform "Root" {
     rel material:binding = </Root/Materials/MyMat>
   }
   def Scope "Materials" {
-    def Material "MyMat" {
+    def Material "MyMat" (
+      prepend apiSchemas = ["MaterialXConfigAPI"]
+    ) {
+      string config:mtlx:colorspace = "acescg"
       token outputs:surface.connect = </Root/Materials/MyMat/PreviewSurface.outputs:surface>
       def Shader "PreviewSurface" {
         uniform token info:id = "ND_UsdPreviewSurface_surfaceshader"
         color3f inputs:diffuseColor.connect = </Root/Materials/MyMat/NG.outputs:diff_out>
+        color3f inputs:emissiveColor.connect = </Root/Materials/MyMat/NG.outputs:api_out>
         float inputs:roughness.connect = </Root/Materials/MyMat/NG.outputs:rough_out>
         token outputs:surface
       }
       def NodeGraph "NG" {
         color3f outputs:diff_out.connect = </Root/Materials/MyMat/NG/ColorImage.outputs:out>
+        color3f outputs:api_out.connect = </Root/Materials/MyMat/NG/ApiImage.outputs:out>
         float outputs:rough_out.connect = </Root/Materials/MyMat/NG/RoughImage.outputs:out>
         def Shader "ColorImage" {
           uniform token info:id = "ND_image_color3"
-          asset inputs:file = @color.png@
+          asset inputs:file = @shared.png@
           color3f outputs:out
         }
         def Shader "RoughImage" {
           uniform token info:id = "ND_image_float"
-          asset inputs:file = @roughness.png@
+          asset inputs:file = @shared.png@
           float outputs:out
+        }
+        def Shader "ApiImage" (
+          prepend apiSchemas = ["ColorSpaceAPI"]
+        ) {
+          uniform token colorSpace:name = "lin_rec709_scene"
+          uniform token info:id = "ND_image_color3"
+          asset inputs:file = @shared.png@
+          color3f outputs:out
         }
       }
     }
@@ -638,6 +976,17 @@ def Xform "Root" {
       "test.usda", &stage, &warn, &err);
   TEST_CHECK(ok);
   TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  std::string inherited_source;
+  bool inherited_authored = false;
+  ok = tydra::color_management::ComputeColorSpaceName(
+      stage, Path("/Root/Materials/MyMat/NG/ApiImage", ""), nullptr,
+      &inherited_source, &inherited_authored);
+  TEST_CHECK(ok);
+  TEST_CHECK(inherited_authored);
+  TEST_MSG("Expected ColorSpaceAPI on ApiImage; resolved '%s'",
+           inherited_source.c_str());
+  TEST_CHECK(inherited_source == "lin_rec709_scene");
 
   tydra::RenderSceneConverterEnv env(stage);
   env.material_config.texture_image_loader_function = SyntheticTextureLoader;
@@ -655,18 +1004,40 @@ def Xform "Root" {
   if (!mat.surfaceShader) return;
   const tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
   TEST_CHECK(s.diffuseColor.texture_id >= 0);
+  TEST_CHECK(s.emissiveColor.texture_id >= 0);
   TEST_CHECK(s.roughness.texture_id >= 0);
-  if (s.diffuseColor.texture_id < 0 || s.roughness.texture_id < 0) return;
+  if (s.diffuseColor.texture_id < 0 || s.emissiveColor.texture_id < 0 ||
+      s.roughness.texture_id < 0) return;
+  TEST_CHECK(scene.images.size() == 3);
 
-  const auto textureImageColorSpace = [&](int32_t texture_id) {
+  const auto textureImageFor = [&](int32_t texture_id)
+      -> const tydra::TextureImage & {
     const tydra::UVTexture &tex = scene.textures[static_cast<size_t>(texture_id)];
-    return scene.images[static_cast<size_t>(tex.texture_image_id)].usdColorSpace;
+    return scene.images[static_cast<size_t>(tex.texture_image_id)];
   };
 
-  TEST_CHECK(textureImageColorSpace(s.diffuseColor.texture_id) ==
-             tydra::ColorSpace::sRGB);
-  TEST_CHECK(textureImageColorSpace(s.roughness.texture_id) ==
-             tydra::ColorSpace::Raw);
+  const tydra::TextureImage &color_image =
+      textureImageFor(s.diffuseColor.texture_id);
+  TEST_CHECK(color_image.usdColorSpace == tydra::ColorSpace::Lin_ACEScg);
+  TEST_CHECK(color_image.sourceColorSpaceName == "lin_ap1_scene");
+  TEST_CHECK(color_image.colorTransformValid);
+  TEST_CHECK(!color_image.colorTransformApplied);
+  TEST_CHECK(!color_image.colorTransformBypass);
+  TEST_CHECK(std::fabs(color_image.sourceToDisplayLinear[0] - 1.70505f) <
+             1.0e-4f);
+
+  const tydra::TextureImage &inherited_image =
+      textureImageFor(s.emissiveColor.texture_id);
+  TEST_CHECK(inherited_image.usdColorSpace == tydra::ColorSpace::Lin_Rec709);
+  TEST_CHECK(inherited_image.sourceColorSpaceName == "lin_rec709_scene");
+  TEST_CHECK(inherited_image.colorTransformValid);
+  TEST_CHECK(inherited_image.colorTransformBypass);
+
+  const tydra::TextureImage &data_image =
+      textureImageFor(s.roughness.texture_id);
+  TEST_CHECK(data_image.usdColorSpace == tydra::ColorSpace::Raw);
+  TEST_CHECK(data_image.sourceColorIsData);
+  TEST_CHECK(data_image.colorTransformBypass);
 }
 
 // ---------------------------------------------------------------------------

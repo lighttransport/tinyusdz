@@ -4,15 +4,26 @@
 
 namespace tusdr {
 
+namespace {
+Vec3 WorkingToDisplay(const RenderScene &scene, const Vec3 &value) {
+  const auto &m = scene.meta.workingToDisplayLinear;
+  return Vec3{m[0] * value.x + m[1] * value.y + m[2] * value.z,
+              m[3] * value.x + m[4] * value.y + m[5] * value.z,
+              m[6] * value.x + m[7] * value.y + m[8] * value.z};
+}
+}  // namespace
+
 Vec3 MaterialColor(const RenderScene &scene, const RenderMesh &mesh,
                    int material_id) {
   if (material_id >= 0 && size_t(material_id) < scene.materials.size()) {
     const RenderMaterial &mat = scene.materials[size_t(material_id)];
     if (mat.openPBRShader.has_value()) {
-      return Clamp01(FromFloat3(mat.openPBRShader->base_color.value));
+      return Clamp01(WorkingToDisplay(
+          scene, FromFloat3(mat.openPBRShader->base_color.value)));
     }
     if (mat.surfaceShader.has_value()) {
-      return Clamp01(FromFloat3(mat.surfaceShader->diffuseColor.value));
+      return Clamp01(WorkingToDisplay(
+          scene, FromFloat3(mat.surfaceShader->diffuseColor.value)));
     }
   }
   color3f c = mesh.displayColor;
@@ -23,7 +34,8 @@ Vec3 MaterialEmission(const RenderScene &scene, int material_id) {
   if (material_id >= 0 && size_t(material_id) < scene.materials.size()) {
     const RenderMaterial &mat = scene.materials[size_t(material_id)];
     if (mat.surfaceShader.has_value()) {
-      return FromFloat3(mat.surfaceShader->emissiveColor.value);
+      return WorkingToDisplay(
+          scene, FromFloat3(mat.surfaceShader->emissiveColor.value));
     }
   }
   return Vec3{0.0f, 0.0f, 0.0f};

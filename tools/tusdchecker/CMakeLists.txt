@@ -292,7 +292,6 @@ if(TINYUSDZ_BUILD_TESTS)
             ${PROJECT_SOURCE_DIR}/tests/usda/array-edit-compose-001.usda)
   set_tests_properties(tusdchecker_array_edit_compose_arc PROPERTIES
     PASS_REGULAR_EXPRESSION "Result: PASSED")
-
   # next-parser leniency parity with pxr's usda parser: sparse array edits
   # (preserved as raw text), float->int literal coercion, quoted-string asset
   # paths. Each fixture previously failed to parse (exit 2).

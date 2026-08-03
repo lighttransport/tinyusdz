@@ -776,6 +776,16 @@
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
+      if (layer.meta().renderSettingsPrimPath_set ||
+          !layer.meta().renderSettingsPrimPath.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("renderSettingsPrimPath");
+        f.value_rep = ValueRep::Make(
+            CrateTypeId::String,
+            InternString(layer.meta().renderSettingsPrimPath), false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
 
       // subLayers (StringVector — pxr's schema type; a token[] here reads back
       // in pxr as an empty sublayer list)

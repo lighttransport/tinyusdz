@@ -104,6 +104,10 @@ struct MaterialConfig {
   // Color space
   ColorSpace target_color_space = ColorSpace::Linear;
 
+  // Optional RenderSettings prim override. Empty selects the stage-level
+  // renderSettingsPrimPath, then the renderer's linear Rec.709 fallback.
+  std::string render_settings_path;
+
   // Texture loader callback (optional custom loader)
   using TextureLoader = std::function<bool(const std::string& path, TextureImage* out)>;
   TextureLoader custom_texture_loader;

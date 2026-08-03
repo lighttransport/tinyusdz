@@ -127,6 +127,54 @@ if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
       "(Node, visual-diff CLI, or prebuilt next-only WASM module not found)")
   endif()
 
+  # Color management has two complementary gates: direct legacy/next WASM
+  # value parity, and float render-target pixel readback in a headless browser.
+  # The browser runner starts its own loopback Vite server when no URL is given.
+  set(TINYUSDZ_COLORSPACE_BACKEND_TEST
+      "${PROJECT_SOURCE_DIR}/js/tests/colorspace-backend-parity.mjs")
+  set(TINYUSDZ_COLORSPACE_PIXEL_TEST
+      "${PROJECT_SOURCE_DIR}/js/tests/colorspace-render-batch.mjs")
+  set(TINYUSDZ_LEGACY_WASM_JS
+      "${PROJECT_SOURCE_DIR}/js/src/tinyusdz/tinyusdz.js")
+  set(TINYUSDZ_LEGACY_WASM_BINARY
+      "${PROJECT_SOURCE_DIR}/js/src/tinyusdz/tinyusdz.wasm")
+  if (TINYUSDZ_NODE_EXECUTABLE AND
+      EXISTS "${TINYUSDZ_COLORSPACE_BACKEND_TEST}" AND
+      EXISTS "${TINYUSDZ_LEGACY_WASM_JS}" AND
+      EXISTS "${TINYUSDZ_LEGACY_WASM_BINARY}" AND
+      EXISTS "${TINYUSDZ_NEXT_WASM_JS}" AND
+      EXISTS "${TINYUSDZ_NEXT_WASM_BINARY}")
+    add_test(
+      NAME wasm-regression-colorspace-backend-parity
+      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
+              "${TINYUSDZ_COLORSPACE_BACKEND_TEST}")
+    set_tests_properties(
+      wasm-regression-colorspace-backend-parity
+      PROPERTIES
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/js"
+        TIMEOUT 90
+        LABELS "wasm;colorspace;regression")
+
+    if (TINYUSDZ_CHROME_EXECUTABLE AND
+        EXISTS "${TINYUSDZ_COLORSPACE_PIXEL_TEST}" AND
+        EXISTS "${PROJECT_SOURCE_DIR}/js/node_modules/puppeteer/package.json" AND
+        EXISTS "${PROJECT_SOURCE_DIR}/js/node_modules/vite/bin/vite.js")
+      add_test(
+        NAME wasm-regression-colorspace-pixel-readback
+        COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"
+                "${TINYUSDZ_COLORSPACE_PIXEL_TEST}")
+      set_tests_properties(
+        wasm-regression-colorspace-pixel-readback
+        PROPERTIES
+          ENVIRONMENT
+            "PUPPETEER_EXECUTABLE_PATH=${TINYUSDZ_CHROME_EXECUTABLE};TINYUSDZ_COLORSPACE_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/test-artifacts/colorspace"
+          WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/js"
+          TIMEOUT 120
+          RUN_SERIAL TRUE
+          LABELS "wasm;colorspace;browser;pixel;regression")
+    endif()
+  endif()
+
   if (TINYUSDZ_NODE_EXECUTABLE)
     add_test(
       NAME wasm-js-loader-texture-compression

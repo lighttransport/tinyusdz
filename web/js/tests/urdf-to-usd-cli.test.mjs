@@ -7,7 +7,8 @@ import zlib from 'node:zlib';
 import {
   buildMujocoPayload,
   expandMujocoIncludes,
-  parseArgs
+  parseArgs,
+  verifyUSDA
 } from '../cli/urdf-to-usd.js';
 
 function test(name, fn) {
@@ -53,6 +54,121 @@ function withTempDir(fn) {
 test('parseArgs recognizes unsafe path escape hatch', () => {
   const opts = parseArgs(['scene.xml', '--input-format', 'mjcf', '--allow-unsafe-paths']);
   assert.equal(opts.allowUnsafePaths, true);
+});
+
+function fakeNativeUSDAText(usdaText) {
+  return {
+    exportAsUSDA: () => usdaText,
+    error: () => ''
+  };
+}
+
+test('verifyUSDA does not require articulation roots for static-only scenes', () => {
+  const usda = `
+    #usda 1.0
+    def Xform "World" (
+      prepend apiSchemas = ["PhysicsScene", "MjcSceneAPI", "NewtonSceneAPI"]
+    )
+    {
+      def Mesh "Ground" (
+        prepend apiSchemas = [
+          "PhysicsCollisionAPI",
+          "MjcCollisionAPI",
+          "NewtonCollisionAPI",
+          "PhysicsRigidBodyAPI",
+        ]
+      )
+      {
+      }
+    }
+  `;
+  const payload = {
+    links: [{ name: 'world', static: true }]
+  };
+  assert.doesNotThrow(() => {
+    verifyUSDA(fakeNativeUSDAText(usda), { links: 1, joints: 0, collisions: 1, visuals: 0, actuators: 0 }, payload);
+  });
+});
+
+test('verifyUSDA requires articulation root APIs when dynamic root links exist', () => {
+  const usdaWithoutRoots = `
+    #usda 1.0
+    def Xform "World" {
+      def Xform "WorldBody" {}
+    }
+  `;
+  const payload = {
+    links: [{ name: 'base' }],
+    joints: []
+  };
+  assert.throws(() => {
+    verifyUSDA(fakeNativeUSDAText(usdaWithoutRoots), { links: 1, joints: 0, collisions: 0, visuals: 0, actuators: 0 }, payload);
+  }, /Missing USDA tokens: .*PhysicsRigidBodyAPI.*NewtonArticulationRootAPI/);
+});
+
+test('verifyUSDA accepts typed physics joints for next backend scenes', () => {
+  const usdaWithTypedJoint = `
+    #usda 1.0
+      def Xform "World" (
+      prepend apiSchemas = ["PhysicsScene", "MjcSceneAPI", "NewtonSceneAPI"]
+    )
+    {
+      def Xform "Base" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"]
+      )
+      {
+      }
+      def Xform "Tip" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+      )
+      {
+      }
+      def PhysicsRevoluteJoint "J"
+      {
+        physics:axis = "Z"
+      }
+    }
+  `;
+  const payload = {
+    links: [{ name: 'base' }, { name: 'tip' }],
+    joints: [{ name: 'J', parent: 'base', child: 'tip' }]
+  };
+  assert.doesNotThrow(() => {
+    verifyUSDA(fakeNativeUSDAText(usdaWithTypedJoint), { links: 2, joints: 1, collisions: 0, visuals: 0, actuators: 0 }, payload);
+  });
+});
+
+test('verifyUSDA accepts legacy MjcJointAPI when typed joints are not present', () => {
+  const usdaWithMjcJoint = `
+    #usda 1.0
+      def Xform "World" (
+      prepend apiSchemas = ["PhysicsScene", "MjcSceneAPI", "NewtonSceneAPI"]
+    )
+    {
+      def Xform "Base" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"]
+      )
+      {
+      }
+      def Xform "Tip" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+      )
+      {
+      }
+      def Xform "J" (
+        prepend apiSchemas = ["MjcJointAPI"]
+      )
+      {
+      }
+    }
+  `;
+  const payload = {
+    links: [{ name: 'base' }, { name: 'tip' }],
+    joints: [{ name: 'J', parent: 'base', child: 'tip' }]
+  };
+  assert.doesNotThrow(() => {
+    verifyUSDA(fakeNativeUSDAText(usdaWithMjcJoint), { links: 2, joints: 1, collisions: 0, visuals: 0, actuators: 0 }, payload);
+  });
 });
 
 test('MJCF includes inside input root are allowed', () => withTempDir((dir) => {

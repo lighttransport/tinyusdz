@@ -41,6 +41,7 @@
 #include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/reader/usdc-reader.hh"
+#include "next/reader/usda-reader.hh"
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 #include "next/schema/geom-mesh.hh"
@@ -3996,6 +3997,14 @@ class TinyUSDZLoaderNative {
         // Return legacy format for backward compatibility
         emscripten::val mat = emscripten::val::object();
 
+        emscripten::val mtlx_config = emscripten::val::object();
+        mtlx_config.set("authored", material.materialXConfig.authored);
+        mtlx_config.set("version", material.materialXConfig.version);
+        mtlx_config.set("namespace", material.materialXConfig.name_space);
+        mtlx_config.set("colorspace", material.materialXConfig.colorspace);
+        mtlx_config.set("sourceUri", material.materialXConfig.source_uri);
+        mat.set("materialXConfig", mtlx_config);
+
         // Check if material has UsdPreviewSurface
         if (!material.hasUsdPreviewSurface()) {
           mat.set("error", "Material does not have UsdPreviewSurface shader");
@@ -4472,6 +4481,18 @@ class TinyUSDZLoaderNative {
     img.set("decoded", bool(i.decoded));
     img.set("colorSpace", to_string(i.colorSpace));
     img.set("usdColorSpace", to_string(i.usdColorSpace));
+    img.set("sourceColorSpaceName", i.sourceColorSpaceName);
+    img.set("colorTransformValid", i.colorTransformValid);
+    img.set("colorTransformApplied", i.colorTransformApplied);
+    img.set("colorTransformBypass", i.colorTransformBypass);
+    img.set("sourceColorIsData", i.sourceColorIsData);
+    img.set("sourceGamma", i.sourceGamma);
+    img.set("sourceLinearBias", i.sourceLinearBias);
+    emscripten::val source_to_display = emscripten::val::array();
+    for (size_t index = 0; index < 9; ++index) {
+      source_to_display.set(index, i.sourceToDisplayLinear[index]);
+    }
+    img.set("sourceToDisplayLinear", source_to_display);
     img.set("bufferId", int(i.buffer_id));
 
     if ((i.buffer_id >= 0) && (i.buffer_id < render_scene_.buffers.size())) {
@@ -4758,6 +4779,18 @@ class TinyUSDZLoaderNative {
     out.set("decoded", bool(i.decoded));
     out.set("colorSpace", to_string(i.colorSpace));
     out.set("usdColorSpace", to_string(i.usdColorSpace));
+    out.set("sourceColorSpaceName", i.sourceColorSpaceName);
+    out.set("colorTransformValid", i.colorTransformValid);
+    out.set("colorTransformApplied", i.colorTransformApplied);
+    out.set("colorTransformBypass", i.colorTransformBypass);
+    out.set("sourceColorIsData", i.sourceColorIsData);
+    out.set("sourceGamma", i.sourceGamma);
+    out.set("sourceLinearBias", i.sourceLinearBias);
+    emscripten::val source_to_display = emscripten::val::array();
+    for (size_t index = 0; index < 9; ++index) {
+      source_to_display.set(index, i.sourceToDisplayLinear[index]);
+    }
+    out.set("sourceToDisplayLinear", source_to_display);
     out.set("uri", i.asset_identifier);
     out.set("bufferId", int(i.buffer_id));
     return out;
@@ -5457,6 +5490,14 @@ class TinyUSDZLoaderNative {
     metadata.set("framesPerSecond", render_scene_.meta.framesPerSecond);
     metadata.set("timeCodesPerSecond", render_scene_.meta.timeCodesPerSecond);
     metadata.set("autoPlay", render_scene_.meta.autoPlay);
+    metadata.set("renderSettingsPrimPath",
+                 render_scene_.meta.renderSettingsPrimPath);
+    metadata.set("workingColorSpace", render_scene_.meta.workingColorSpace);
+    emscripten::val working_to_display = emscripten::val::array();
+    for (float value : render_scene_.meta.workingToDisplayLinear) {
+      working_to_display.call<void>("push", value);
+    }
+    metadata.set("workingToDisplayLinear", working_to_display);
 
     if (render_scene_.meta.startTimeCode) {
       metadata.set("startTimeCode", render_scene_.meta.startTimeCode.value());
@@ -10011,9 +10052,9 @@ emscripten::val convertFloat16ToFloat32Array(const emscripten::val& uint16Data) 
 // ============================================================================
 // RenderStream — incremental, low-memory render-data extraction.
 //
-// Loads ONLY the root USDC crate (the caller extracts it from the .usdz in JS
-// and keeps the texture entries there, off the WASM heap) into the next pipeline
-// with LAZY arrays, so the crate sits in the heap exactly once (~= input size).
+// Loads the root USD layer (the caller extracts it from the .usdz in JS and
+// keeps the texture entries there, off the WASM heap) into the next pipeline
+// with lazy arrays, so the source sits in the heap exactly once (~= input size).
 // getMesh(i) then materializes a SINGLE mesh's geometry on demand into a reused
 // scratch and returns zero-copy descriptors; the next getMesh(i) overwrites the
 // scratch, so at most one mesh's geometry is decoded at a time. Geometry arrays
@@ -10038,28 +10079,44 @@ class RenderStream {
   }
   void setFlattenRenderTree(bool enabled) { flatten_render_tree_ = enabled; }
 
-  // Adopt the root crate bytes by move and load lazily.
-  emscripten::val beginOwned(std::string &&crate) {
+  // Adopt the root USDA or USDC bytes by move and load lazily.
+  emscripten::val beginOwned(std::string &&source) {
     emscripten::val r = emscripten::val::object();
     end();
     error_.clear();
-    tinyusdz::next::USDCLoadOptions opts;
-    opts.crate_options.progress_callback =
-        [](const char *phase, size_t current, size_t total) -> bool {
-      reportNextCrateProgress(
-          phase, static_cast<double>(current), static_cast<double>(total));
-      return true;
-    };
-    tinyusdz::next::USDCLoadResult res =
-        tinyusdz::next::LoadUSDCFromMemoryOwned(std::move(crate), opts);
-    if (!res.success) {
-      error_ = res.error_summary.empty() ? std::string("USDC load failed")
-                                         : res.error_summary;
-      r.set("success", false);
-      r.set("error", error_);
-      return r;
+    if (source.size() >= 8 &&
+        std::memcmp(source.data(), "PXR-USDC", 8) == 0) {
+      tinyusdz::next::USDCLoadOptions opts;
+      opts.crate_options.progress_callback =
+          [](const char *phase, size_t current, size_t total) -> bool {
+        reportNextCrateProgress(
+            phase, static_cast<double>(current), static_cast<double>(total));
+        return true;
+      };
+      tinyusdz::next::USDCLoadResult res =
+          tinyusdz::next::LoadUSDCFromMemoryOwned(std::move(source), opts);
+      if (!res.success) {
+        error_ = res.error_summary.empty() ? std::string("USDC load failed")
+                                           : res.error_summary;
+        r.set("success", false);
+        r.set("error", error_);
+        return r;
+      }
+      stage_ = std::move(res.stage);
+    } else {
+      tinyusdz::next::LoadOptions opts;
+      opts.parse_options.enable_usda_lazy_arrays = true;
+      tinyusdz::next::LoadResult res =
+          tinyusdz::next::LoadUSDAFromStringOwned(std::move(source), opts);
+      if (!res.success) {
+        error_ = res.error_summary.empty() ? std::string("USDA load failed")
+                                           : res.error_summary;
+        r.set("success", false);
+        r.set("error", error_);
+        return r;
+      }
+      stage_ = std::move(res.stage);
     }
-    stage_ = std::move(res.stage);
     meshes_ = tinyusdz::next::GetAllMeshes(stage_);
     stats_ = Stats{};
     stats_.source_mesh_count = meshes_.size();

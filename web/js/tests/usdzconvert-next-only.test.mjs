@@ -4,17 +4,26 @@
 // tinyusdz_next_64.js.
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import * as THREE from 'three';
 
 import { convertFolderToUSDZ, loadWasm, unpackUSDZ } from '../src/usdzconvert.js';
 import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
 import {
+  applyMaterialXPixelOps,
   buildNextThreeNode,
   createNextMaterial,
   materialXTextureSpecForParam,
   NextTextureLoadingManager,
   textureColorRole
 } from '../src/tinyusdz/NextRenderSceneUtils.js';
+import {
+  installTextureColorTransform,
+  textureColorTransform
+} from '../src/tinyusdz/ColorSpaceUtils.js';
+
+const COMPOUND_ROTATION_DECAL_BYTES = new Uint8Array(fs.readFileSync(
+  new URL('../../../tests/usda/xform-rotatexyz-decal-001.usda', import.meta.url)));
 
 const SCENE_USDA = `#usda 1.0
 (
@@ -79,6 +88,34 @@ def Xform "World"
     }
 }
 `;
+
+const OPENPBR_NODEGRAPH_MESH_ONLY_USDA = OPENPBR_NODEGRAPH_SPHERE_USDA
+  .replace(`    def Sphere "Ball"
+    {
+        rel material:binding = </World/Mat>
+    }`, `    def Mesh "Ball"
+    {
+        rel material:binding = </World/Mat>
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }`)
+  .replace('            color3f inputs:diffuseColor = (1, 1, 1)',
+    `            color3f inputs:diffuseColor = (1, 1, 1)
+            float inputs:opacityThreshold = 0.5`)
+  .replace('            color3f inputs:base_color.connect = </World/Mat/Graph.outputs:result>',
+    `            color3f inputs:base_color.connect = </World/Mat/Graph.outputs:result>
+            float inputs:emission_luminance = 1
+            color3f inputs:emission_color.connect = </World/Mat/Graph.outputs:emission>`)
+  .replace('            color3f outputs:result.connect = </World/Mat/Graph/invert.outputs:out>',
+    `            color3f outputs:result.connect = </World/Mat/Graph/invert.outputs:out>
+            color3f outputs:emission.connect = </World/Mat/Graph/emissionImage.outputs:out>
+            def Shader "emissionImage"
+            {
+                uniform token info:id = "ND_image_color3"
+                asset inputs:file = @./decal.png@
+                color3f outputs:out
+            }`);
 
 const ENTITY_SCENE_USDA = `#usda 1.0
 (
@@ -186,6 +223,47 @@ def Xform "World"
         point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
     }
 
+    def Mesh "AlphaBillboard"
+    {
+        rel material:binding = </World/Mat>
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Mesh "AlphaBillboardCopy"
+    {
+        rel material:binding = </World/Mat>
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 2, 0), (1, 2, 0), (1, 3, 0), (0, 3, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Mesh "ExplicitFrontAlphaCard"
+    {
+        rel material:binding = </World/Mat>
+        uniform bool doubleSided = false
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Mesh "OpaqueCard"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4, 0, 0), (5, 0, 0), (5, 1, 0), (4, 1, 0)]
+    }
+
     def Mesh "Concave"
     {
         int[] faceVertexCounts = [5]
@@ -235,6 +313,118 @@ await testAsync('next texture roles preserve linear wide-gamut inputs', async ()
   assert.equal(textureColorRole('map', 'lin_displayp3'), 'data');
   assert.equal(textureColorRole('map', 'acescg'), 'data');
   assert.equal(textureColorRole('map', 'srgb_displayp3'), 'color');
+  assert.equal(textureColorRole('map', 'lin_ap1_scene'), 'data');
+  assert.equal(textureColorRole('map', 'lin_ap0_scene'), 'data');
+  assert.equal(textureColorRole('map', 'srgb_p3d65_scene'), 'color');
+});
+
+await testAsync('next injects wide-gamut texture transforms into Three shaders', async () => {
+  const ap1 = textureColorTransform('lin_ap1_scene');
+  assert.equal(ap1.colorRole, 'data');
+  assert.equal(ap1.bypass, false);
+  const material = new THREE.MeshStandardMaterial();
+  installTextureColorTransform(material, 'map', ap1);
+  const shader = { fragmentShader:
+    '#include <map_fragment>\n#include <emissivemap_fragment>' };
+  material.onBeforeCompile(shader, {});
+  assert.match(shader.fragmentShader, /mat3\(/);
+  assert.match(shader.fragmentShader, /1\.705050993/);
+  assert.doesNotMatch(shader.fragmentShader, /#include <map_fragment>/);
+  assert.match(material.customProgramCacheKey(), /lin_ap1_scene/);
+  material.dispose();
+});
+
+await testAsync('next injects resolved custom texture definitions', async () => {
+  const custom = textureColorTransform('studio_ap0', 'lin_rec709_scene', {
+    colorTransformValid: true,
+    colorTransformBypass: false,
+    sourceColorIsData: false,
+    sourceGamma: 1,
+    sourceLinearBias: 0,
+    sourceToDisplayLinear: [
+      2.521686, -1.134130, -0.387556,
+      -0.276480, 1.372719, -0.096239,
+      -0.015378, -0.152975, 1.168353
+    ]
+  });
+  assert.equal(custom.canonical, 'studio_ap0');
+  assert.equal(custom.colorRole, 'data');
+  assert.equal(custom.bypass, false);
+  const material = new THREE.MeshStandardMaterial();
+  installTextureColorTransform(material, 'map', custom);
+  const shader = { fragmentShader:
+    '#include <map_fragment>\n#include <emissivemap_fragment>' };
+  material.onBeforeCompile(shader, {});
+  assert.match(shader.fragmentShader, /2\.521686/);
+  material.dispose();
+
+  const piecewise = textureColorTransform('studio_piecewise',
+    'lin_rec709_scene', {
+      colorTransformValid: true,
+      colorTransformBypass: false,
+      sourceColorIsData: false,
+      sourceGamma: 2.2,
+      sourceLinearBias: 0.05,
+      sourceToDisplayLinear: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+    });
+  const piecewiseMaterial = new THREE.MeshStandardMaterial();
+  installTextureColorTransform(piecewiseMaterial, 'map', piecewise);
+  const piecewiseShader = { fragmentShader:
+    '#include <map_fragment>\n#include <emissivemap_fragment>' };
+  piecewiseMaterial.onBeforeCompile(piecewiseShader, {});
+  assert.match(piecewiseShader.fragmentShader, /mix\(/);
+  assert.match(piecewiseShader.fragmentShader, /step\(/);
+  piecewiseMaterial.dispose();
+});
+
+await testAsync('next queues authored texture colorspace transforms', async () => {
+  const manager = new NextTextureLoadingManager();
+  const material = createNextMaterial({
+    material: {
+      baseColor: [1, 1, 1],
+      textureMetadata: {
+        baseColor: {
+          sourceColorSpace: 'studio_ap0',
+          colorTransformValid: true,
+          colorTransformBypass: false,
+          sourceColorIsData: false,
+          sourceGamma: 1,
+          sourceLinearBias: 0,
+          sourceToDisplayLinear: [
+            2.521686, -1.134130, -0.387556,
+            -0.276480, 1.372719, -0.096239,
+            -0.015378, -0.152975, 1.168353
+          ]
+        }
+      }
+    },
+    texturePaths: { baseColor: './wide.png' }
+  }, {}, manager, false);
+  assert.equal(manager.tasks.length, 1);
+  assert.equal(manager.tasks[0].colorRole, 'data');
+  assert.equal(manager.tasks[0].colorTransform.canonical, 'studio_ap0');
+  assert.equal(manager.tasks[0].colorTransform.bypass, false);
+  assert(Math.abs(manager.tasks[0].colorTransform.matrix[0] - 2.521686) < 1e-9);
+  material.dispose();
+});
+
+await testAsync('next honors zero OpenPBR emission luminance', async () => {
+  const material = createNextMaterial({
+    material: {
+      shaderType: 'OpenPBR',
+      emissive: [1, 1, 1],
+      materialXJson: JSON.stringify({
+        openPBR: {
+          emissionColor: { value: [1, 1, 1, 1] },
+          emissionLuminance: { value: [0, 0, 0, 0] }
+        }
+      })
+    },
+    texturePaths: {}
+  }, {}, null, true);
+  assert.deepEqual(material.emissive.toArray(), [1, 1, 1]);
+  assert.equal(material.emissiveIntensity, 0);
+  material.dispose();
 });
 
 await testAsync('next texture graph preserves image power operations', async () => {
@@ -266,7 +456,51 @@ await testAsync('next texture graph preserves image power operations', async () 
   assert.equal(spec.filename, './checker.png');
   assert.equal(spec.colorspace, 'lin_rec709');
   assert.deepEqual(spec.ops.map((op) => op.category), ['power']);
+  assert.equal(spec.ops[0].sourceInput, 'in1');
   assert.deepEqual(spec.ops[0].node.inputs[1].value, [0.4545, 0.4545, 0.4545]);
+});
+
+await testAsync('next texture graph preserves conditional decal masks', async () => {
+  const graph = {
+    nodegraph: {
+      nodes: [
+        { name: 'image', category: 'image_vector4', inputs: [
+          { name: 'file', value: './opacity.png' }
+        ] },
+        { name: 'extract', category: 'extract_color3', inputs: [
+          { name: 'in', nodename: 'image' }, { name: 'index', value: 0 }
+        ] },
+        { name: 'threshold', category: 'ifgreatereq_float', inputs: [
+          { name: 'in1', value: 0 }, { name: 'in2', value: 1 },
+          { name: 'value1', nodename: 'extract' }, { name: 'value2', value: 0.5 }
+        ] },
+        { name: 'oneMinus', category: 'subtract_float', inputs: [
+          { name: 'in1', value: 1 }, { name: 'in2', nodename: 'threshold' }
+        ] }
+      ],
+      outputs: [{ name: 'opacity', nodename: 'oneMinus' }]
+    },
+    connections: [{ input: 'geometry_opacity', output: 'opacity' }]
+  };
+  const spec = materialXTextureSpecForParam(graph, 'geometry_opacity');
+  assert.equal(spec.filename, './opacity.png');
+  assert.deepEqual(spec.ops.map((op) => op.category),
+    ['subtract', 'ifgreatereq', 'extract']);
+  assert.deepEqual(spec.ops.map((op) => op.sourceInput),
+    ['in2', 'value1', 'in']);
+  const pixels = new Uint8ClampedArray([
+    0, 10, 20, 255,
+    127, 10, 20, 255,
+    128, 10, 20, 255,
+    255, 10, 20, 255
+  ]);
+  applyMaterialXPixelOps(pixels, spec.ops);
+  assert.deepEqual(Array.from(pixels), [
+    0, 0, 0, 255,
+    0, 0, 0, 255,
+    255, 255, 255, 255,
+    255, 255, 255, 255
+  ]);
 });
 
 await testAsync('next queues graph-derived opacity from a shared color image', async () => {
@@ -351,6 +585,285 @@ await testAsync('next RenderStream exposes analytic geometry and MaterialX node 
   }
 });
 
+await testAsync('next mesh-only RenderStream retains authoritative MaterialX data', async () => {
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    const bytes = new TextEncoder().encode(OPENPBR_NODEGRAPH_MESH_ONLY_USDA);
+    const result = stream.begin(bytes);
+    assert.ok(result?.success, result?.error || stream.error());
+    assert.equal(result.meshCount, 1);
+    const mesh = stream.getMesh(0);
+    assert.equal(mesh.material?.shaderType, 'OpenPBR',
+      'mesh-only mode must prefer outputs:mtlx:surface over the preview fallback');
+    assert.equal(mesh.material?.opacityThreshold, 0.5,
+      'mesh-only mode must retain the preview fallback alpha cutoff');
+    assert.equal(mesh.material?.emissiveTexture, './decal.png');
+    assert.deepEqual(mesh.material?.emissive, [1, 1, 1],
+      'mesh-only mode must retain the textured OpenPBR emission multiplier');
+    const graph = JSON.parse(mesh.material?.openPBRNodeGraphJson || 'null');
+    assert.equal(graph?.nodegraph?.name, 'Graph');
+    assert.deepEqual(graph?.connections?.map((connection) => connection.input),
+      ['base_color', 'emission_color']);
+    assert.equal(stream.getStats().renderSceneMaterials, 1,
+      'mesh-only mode should run graph conversion for the MaterialX terminal');
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next evaluates MaterialX conditionals and preserves geometry metadata', async () => {
+  const fixture = `#usda 1.0
+def Xform "World" {
+  def Mesh "Geom" {
+    rel material:binding = </World/Material>
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }
+  def Material "Material" {
+    token outputs:mtlx:surface.connect = </World/Material/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      color3f inputs:base_color.connect = </World/Material/Graph.outputs:base>
+      float inputs:specular_ior = 1.7
+      float inputs:specular_anisotropy = 0.6
+      float inputs:specular_rotation = 0.25
+      float inputs:coat_weight = 0.4
+      float inputs:coat_roughness = 0.2
+      float inputs:sheen_weight = 0.3
+      float inputs:transmission_weight = 0.25
+      float inputs:transmission_depth = 2
+      float inputs:thin_film_weight = 0.5
+      float inputs:thin_film_thickness = 450
+      normal3f inputs:geometry_normal.connect = </World/Material/Graph.outputs:normal>
+      vector3f inputs:geometry_tangent.connect = </World/Material/Graph.outputs:tangent>
+      token outputs:surface
+    }
+    def NodeGraph "Graph" {
+      color3f outputs:base.connect = </World/Material/Graph/Choose.outputs:out>
+      normal3f outputs:normal.connect = </World/Material/Graph/NormalMap.outputs:out>
+      vector3f outputs:tangent.connect = </World/Material/Graph/Rotate.outputs:out>
+      def Shader "Choose" {
+        uniform token info:id = "ND_ifgreatereq_color3"
+        float inputs:value1 = 0.5
+        float inputs:value2 = 0.5
+        color3f inputs:in1 = (0.2, 0.4, 0.8)
+        color3f inputs:in2 = (1, 0, 0)
+        color3f outputs:out
+      }
+      def Shader "NormalMap" {
+        uniform token info:id = "ND_normalmap_float"
+        vector3f inputs:in = (0, 0, 1)
+        float inputs:scale = 0.35
+        normal3f outputs:out
+      }
+      def Shader "Direction" {
+        uniform token info:id = "ND_normalize_vector3"
+        vector3f inputs:in = (2, 0, 0)
+        vector3f outputs:out
+      }
+      def Shader "Rotate" {
+        uniform token info:id = "ND_rotate3d_vector3"
+        vector3f inputs:in.connect = </World/Material/Graph/Direction.outputs:out>
+        float inputs:amount = 45
+        vector3f outputs:out
+      }
+    }
+  }
+}`;
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    const result = stream.begin(new TextEncoder().encode(fixture));
+    assert.ok(result?.success, result?.error || stream.error());
+    const entry = stream.getMesh(0);
+    assert.deepEqual(entry.material.baseColor.map((v) => Number(v.toFixed(6))),
+      [0.2, 0.4, 0.8]);
+    const json = JSON.parse(entry.material.materialXJson);
+    assert.equal(json.openPBR.normalMapScale, 0.35);
+    assert.equal(json.openPBR.tangentRotation, 45);
+    const material = createNextMaterial({
+      material: entry.material,
+      texturePaths: {}
+    }, {}, null, true);
+    assert.equal(material.ior, 1.7);
+    assert.equal(material.anisotropy, 0.6);
+    assert.equal(material.anisotropyRotation, Math.PI / 2);
+    assert.equal(material.clearcoat, 0.4);
+    assert.equal(material.clearcoatRoughness, 0.2);
+    assert.equal(material.sheen, 0.3);
+    assert.equal(material.transmission, 0.25);
+    assert.equal(material.thickness, 2);
+    assert.equal(material.iridescence, 0.5);
+    assert.deepEqual(material.iridescenceThicknessRange, [450, 450]);
+    assert.equal(material.emissiveIntensity, 0);
+    assert.deepEqual(material.normalScale.toArray(), [0.35, 0.35]);
+    assert.equal(material.userData.nextTangentRotation, 45);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next caches semantically identical anonymous MaterialX graphs', async () => {
+  const mesh = (name, material, x) => `
+  def Mesh "${name}" {
+    rel material:binding = </World/${material}>
+    point3f[] points = [(${x}, 0, 0), (${x + 1}, 0, 0), (${x}, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }`;
+  const material = (name, color) => `
+  def Material "${name}" {
+    token outputs:mtlx:surface.connect = </World/${name}/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+      color3f inputs:base_color.connect = </World/${name}/Graph.outputs:base>
+      token outputs:surface
+    }
+    def NodeGraph "Graph" {
+      color3f outputs:base.connect = </World/${name}/Graph/Constant.outputs:out>
+      def Shader "Constant" {
+        uniform token info:id = "ND_constant_color3"
+        color3f inputs:value = ${color}
+        color3f outputs:out
+      }
+    }
+  }`;
+  const fixture = `#usda 1.0
+def Xform "World" {
+${mesh('GeomA', 'MaterialA', 0)}
+${mesh('GeomB', 'MaterialB', 2)}
+${mesh('GeomC', 'MaterialC', 4)}
+${material('MaterialA', '(0.1, 0.2, 0.3)')}
+${material('MaterialB', '(0.1, 0.2, 0.3)')}
+${material('MaterialC', '(0.8, 0.2, 0.1)')}
+}`;
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    stream.setMaterialDedup(true);
+    stream.setMeshMerge(true);
+    const result = stream.begin(new TextEncoder().encode(fixture));
+    assert.ok(result?.success, result?.error || stream.error());
+    const stats = stream.getStats();
+    assert.equal(stats.sourceMaterials, 3);
+    assert.equal(stats.optimizedMaterials, 2);
+    assert.equal(stats.materialGraphCacheHits, 1);
+    assert.equal(stats.materialGraphCacheMisses, 2);
+    assert.equal(stats.renderSceneMaterials, 2,
+      'duplicate graph must be eliminated before render-material conversion');
+    assert.ok(stats.geometryMaterializedBytes + stats.geometryBorrowedBytes > 0);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next mesh-only PreviewSurface uses the lightweight material path', async () => {
+  const fixture = `#usda 1.0
+def Xform "World" {
+  def Mesh "First" {
+    rel material:binding = </World/Mat>
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }
+  def Mesh "Second" {
+    rel material:binding = </World/Mat>
+    point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }
+  def Material "Mat" {
+    token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (0.2, 0.4, 0.8)
+      token outputs:surface
+    }
+  }
+}`;
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    const result = stream.begin(new TextEncoder().encode(fixture));
+    assert.ok(result?.success, result?.error || stream.error());
+    assert.equal(stream.meshCount(), 2);
+    for (let i = 0; i < 2; ++i) {
+      const color = stream.getMesh(i).material?.baseColor;
+      assert.ok(color?.every((value, channel) =>
+        Math.abs(value - [0.2, 0.4, 0.8][channel]) < 1e-6));
+    }
+    const stats = stream.getStats();
+    assert.equal(stats.optimizedMaterials, 1,
+      'repeated bindings should reuse the cached material record');
+    assert.equal(stats.renderSceneMaterials, 0,
+      'plain PreviewSurface must not invoke full render-material conversion');
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next reuses equivalent Unreal material copies without merging variants', async () => {
+  const mesh = (name, material, x) => `
+  def Mesh "${name}" {
+    rel material:binding = </World/${material}>
+    point3f[] points = [(${x}, 0, 0), (${x + 1}, 0, 0), (${x}, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }`;
+  const material = (name, roughness) => `
+  def Material "${name}" {
+    token outputs:surface.connect = </World/${name}/Surface.outputs:surface>
+    def Shader "Surface" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor.connect = </World/${name}/Color.outputs:rgb>
+      float inputs:roughness = ${roughness}
+      token outputs:surface
+    }
+    def Shader "Color" {
+      uniform token info:id = "UsdUVTexture"
+      asset inputs:file = @shared.png@
+      color3f outputs:rgb
+    }
+    def Shader "Unreal" {
+      uniform asset info:unreal:sourceAsset = @/Game/Materials/MI_Shared.MI_Shared@
+      token outputs:out
+    }
+  }`;
+  const fixture = `#usda 1.0
+def Xform "World" {
+${mesh('First', 'MatA', 0)}
+${mesh('Second', 'MatB', 2)}
+${mesh('Variant', 'MatC', 4)}
+${material('MatA', 0.25)}
+${material('MatB', 0.25)}
+${material('MatC', 0.75)}
+}`;
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    stream.setMaterialDedup(true);
+    stream.setMeshMerge(true);
+    stream.setMeshMergeBakeTransform(true);
+    const result = stream.begin(new TextEncoder().encode(fixture));
+    assert.ok(result?.success, result?.error || stream.error());
+    const stats = stream.getStats();
+    assert.equal(stats.optimizedMaterials, 2,
+      'a scalar variation must remain a distinct material');
+    assert.equal(stats.materialIdentityHits, 1,
+      'the equivalent exported material copy should use the identity cache');
+    assert.equal(stats.materialIdentityMisses, 2);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
 await testAsync('next mesh merge preserves singleton mesh transforms', async () => {
   const fixture = `#usda 1.0
 def Xform "Parent" {
@@ -378,6 +891,115 @@ def Xform "Parent" {
   } finally {
     stream.end();
     stream.delete();
+  }
+});
+
+await testAsync('next mesh-only compound rotation keeps a decal on its wall', async () => {
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    const result = stream.begin(COMPOUND_ROTATION_DECAL_BYTES);
+    assert.ok(result?.success, result?.error || stream.error());
+    assert.equal(stream.meshCount(), 2);
+
+    let decal = null;
+    for (let i = 0; i < stream.meshCount(); ++i) {
+      const mesh = stream.getMesh(i);
+      if (mesh.primPath === '/Scene/Decal/Plane') decal = mesh;
+    }
+    assert.ok(decal, 'compound-rotated decal mesh should be present');
+
+    const expected = [
+      0, 2, 0, 0,
+      0, 0, 1, 0,
+      0.25, 0, 0, 0,
+      4, 0, 0, 1,
+    ];
+    assert.equal(decal.worldMatrix.length, expected.length);
+    for (let i = 0; i < expected.length; ++i) {
+      assert.ok(Math.abs(decal.worldMatrix[i] - expected[i]) < 1e-5,
+        `decal worldMatrix[${i}] should be ${expected[i]}, got ${decal.worldMatrix[i]}`);
+    }
+
+    const points = new Float32Array(native.HEAPU8.buffer,
+      Number(decal.points.ptr), Number(decal.points.length));
+    for (let i = 0; i < points.length; i += 3) {
+      const worldX = points[i] * decal.worldMatrix[0] +
+        points[i + 1] * decal.worldMatrix[4] +
+        points[i + 2] * decal.worldMatrix[8] + decal.worldMatrix[12];
+      assert.ok(Math.abs(worldX - 4) < 1e-5,
+        `decal vertex ${i / 3} should remain on wall plane x=4, got ${worldX}`);
+    }
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next merge-bake keeps compound-rotated decal vertices coplanar', async () => {
+  const stream = new native.RenderStream();
+  try {
+    stream.setMaterialDedup(true);
+    stream.setMeshMerge(true);
+    stream.setMeshMergeBakeTransform(true);
+    stream.setMeshOnly(true);
+    const result = stream.begin(COMPOUND_ROTATION_DECAL_BYTES);
+    assert.ok(result?.success, result?.error || stream.error());
+    assert.equal(stream.meshCount(), 1,
+      'anonymous wall and decal meshes should merge into one baked mesh');
+
+    const merged = stream.getMesh(0);
+    const points = new Float32Array(native.HEAPU8.buffer,
+      Number(merged.points.ptr), Number(merged.points.length));
+    assert.ok(points.length >= 24, 'merged wall and decal should retain both quads');
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (let i = 0; i < points.length; i += 3) {
+      minX = Math.min(minX, points[i]);
+      maxX = Math.max(maxX, points[i]);
+    }
+    assert.ok(Math.abs(minX - 4) < 1e-5 && Math.abs(maxX - 4) < 1e-5,
+      `merged wall/decal vertices should stay coplanar at x=4, got [${minX}, ${maxX}]`);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next loader optimization path preserves compound-rotated decal placement', async () => {
+  const loader = new TinyUSDZLoader({ suppressNativeInfoLogs: true });
+  await loader.init({ useMemory64: wasm64, useNextOnlyWasm: true });
+  const adapter = await new Promise((resolve, reject) => {
+    loader.parse(COMPOUND_ROTATION_DECAL_BYTES,
+      'xform-rotatexyz-decal-001.usda', resolve, reject, {
+        backend: 'next',
+        meshOnly: true,
+        materialDedup: true,
+        mergeMeshes: true,
+        mergeMeshesBakeTransform: true,
+        flattenRenderTree: false,
+      });
+  });
+  try {
+    assert.equal(adapter.numMeshes(), 1,
+      'loader optimization path should expose one merged wall/decal mesh');
+    const stats = adapter.getStats();
+    assert.equal(stats.sourceMeshes, 2);
+    assert.equal(stats.optimizedMeshes, 1);
+
+    const merged = adapter.getMeshCopy(0);
+    assert.ok(merged?.points instanceof Float32Array,
+      'loader adapter should copy merged vertices out of WASM memory');
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (let i = 0; i < merged.points.length; i += 3) {
+      minX = Math.min(minX, merged.points[i]);
+      maxX = Math.max(maxX, merged.points[i]);
+    }
+    assert.ok(Math.abs(minX - 4) < 1e-5 && Math.abs(maxX - 4) < 1e-5,
+      `loader wall/decal vertices should stay coplanar at x=4, got [${minX}, ${maxX}]`);
+  } finally {
+    adapter.delete();
   }
 });
 
@@ -469,6 +1091,33 @@ await testAsync('next mesh-only path uses robust concave triangulation', async (
     }
     assert.ok(Math.abs(area - 6) < 1e-5,
       `mesh-only earcut must preserve the concave notch (area ${area})`);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next merge keeps inferred alpha billboards double-sided', async () => {
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    stream.setMaterialDedup(true);
+    stream.setMeshMerge(true);
+    stream.setMeshMergeBakeTransform(true);
+    const result = stream.begin(new TextEncoder().encode(ENTITY_SCENE_USDA));
+    assert.ok(result?.success, result?.error || stream.error());
+    let mergedAlpha = null;
+    for (let i = 0; i < stream.meshCount(); ++i) {
+      const candidate = stream.getMesh(i);
+      if (candidate?.primPath?.startsWith('/__tinyusdz_next_merged/') &&
+          candidate?.material?.textureMetadata?.opacity?.path) {
+        mergedAlpha = candidate;
+        break;
+      }
+    }
+    assert.ok(mergedAlpha, 'alpha cards should participate in a merged output');
+    assert.equal(mergedAlpha.doubleSided, true,
+      'the merged alpha billboard output must preserve inferred sideness');
   } finally {
     stream.end();
     stream.delete();
@@ -655,13 +1304,27 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
 
     let concave = null;
     let concaveFaceVarying = null;
+    let alphaBillboard = null;
+    let explicitFrontAlphaCard = null;
+    let opaqueCard = null;
     for (let i = 0; i < adapter.numMeshes(); ++i) {
       const candidate = adapter.getMeshCopy(i);
       if (candidate?.primPath === '/World/Concave') concave = candidate;
       if (candidate?.primPath === '/World/ConcaveFaceVarying') {
         concaveFaceVarying = candidate;
       }
+      if (candidate?.primPath === '/World/AlphaBillboard') alphaBillboard = candidate;
+      if (candidate?.primPath === '/World/ExplicitFrontAlphaCard') {
+        explicitFrontAlphaCard = candidate;
+      }
+      if (candidate?.primPath === '/World/OpaqueCard') opaqueCard = candidate;
     }
+    assert.equal(alphaBillboard?.doubleSided, true,
+      `${label}: an unauthored planar alpha card should infer billboard sideness`);
+    assert.equal(explicitFrontAlphaCard?.doubleSided, false,
+      `${label}: an authored false doubleSided opinion must override inference`);
+    assert.equal(opaqueCard?.doubleSided, false,
+      `${label}: an opaque planar mesh must retain the USD front-side default`);
     assert.ok(concave?.indices?.length === 9,
       `${label}: concave pentagon should produce three triangles`);
     let triangleArea = 0;
@@ -747,6 +1410,12 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       return materials.every((material) => material.side === THREE.DoubleSide);
     }), `${label}: authored doubleSided should select Three.DoubleSide`);
+    const builtAlphaBillboard = built.node.getObjectByName('/World/AlphaBillboard');
+    const builtFrontAlphaCard = built.node.getObjectByName('/World/ExplicitFrontAlphaCard');
+    assert.equal(builtAlphaBillboard?.material?.side, THREE.DoubleSide,
+      `${label}: inferred billboard sideness should reach Three.js`);
+    assert.equal(builtFrontAlphaCard?.material?.side, THREE.FrontSide,
+      `${label}: explicit front-side alpha cards should remain culled`);
 
     const pruned = buildNextThreeNode(adapter, {
       skipTextures: true,

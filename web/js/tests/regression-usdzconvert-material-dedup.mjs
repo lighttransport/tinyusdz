@@ -2,15 +2,30 @@
 // Fixtures are deliberately anonymous: Prim/Mat/Texture names only.
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import * as THREE from 'three';
 
 import {
+  buildUSDZWithNewRoot,
   ZipStreamWriter,
   convertFolderToUSDZ,
   loadWasm,
   nextFlattenViaStreaming,
+  parseUSDZEntries,
   unpackUSDZ,
 } from '../src/usdzconvert.js';
+import {
+  NextRenderSceneAdapter,
+} from '../src/tinyusdz/TinyUSDZLoader.js';
+import {
+  buildNextThreeNode,
+  findNextArchiveEntry,
+  loadNextArchiveTexture,
+  nextArchiveUDIMLayout,
+} from '../src/tinyusdz/NextRenderSceneUtils.js';
+import { extractSkinnedMeshData } from '../src/tinyusdz/USDSceneSkinningData.js';
+import { buildSkeletonDataFromUSD } from '../src/tinyusdz/USDSkeletonData.js';
+import { applyUSDSceneSkinningPipeline } from '../src/tinyusdz/USDSceneSkinningPipeline.js';
 import {
   NextTextureLoadingManager,
   compactMaterialGroups,
@@ -19,6 +34,7 @@ import {
 } from '../src/tinyusdz/NextRenderSceneUtils.js';
 import {
   INVALID_FACE_INDEX_USDA,
+  ORIENTED_TRIANGLE_USDA,
   SIMPLE_TRIANGLE_USDA,
   TEXTURED_TWO_MATERIAL_USDA,
 } from './fixtures/regression-fixtures.mjs';
@@ -42,6 +58,11 @@ async function test(name, fn) {
 const wasm64 = process.env.TINYUSDZ_WASM64 === '1';
 const glue = wasm64 ? '../src/tinyusdz/tinyusdz_64.js' : '../src/tinyusdz/tinyusdz.js';
 const native = await loadWasm(() => import(new URL(glue, import.meta.url).href));
+const nextGlue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js' : '../src/tinyusdz/tinyusdz_next.js';
+const nextNative = await loadWasm(
+  () => import(new URL(nextGlue, import.meta.url).href),
+  { locateFile: (file) => new URL('../src/tinyusdz/' + file, import.meta.url).pathname }
+);
 
 function makePngTexture() {
   const png = native.repackChannels({
@@ -109,6 +130,122 @@ function materializeAllMeshes(stream) {
     assert.ok(mesh && !mesh.error, `mesh ${i} should materialize: ${mesh?.error || ''}`);
   }
 }
+
+await test('combined WASM next RenderStream accepts an in-memory USDA layer', () => {
+  const stream = renderStreamFor(encoder.encode(SIMPLE_TRIANGLE_USDA));
+  try {
+    assert.equal(stream.meshCount(), 1, 'USDA fixture should expose one mesh');
+    materializeAllMeshes(stream);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await test('next default material matches legacy fallback shading', () => {
+  const material = createNextMaterial({
+    material: { primPath: '__default', baseColor: [0.8, 0.8, 0.8] },
+    texturePaths: {}
+  }, null, null, true);
+  try {
+    assert.equal(material.type, 'MeshStandardMaterial');
+    assert.equal(material.color.getHex(), 0x888888);
+    assert.equal(material.roughness, 0.6);
+    assert.equal(material.metalness, 0);
+  } finally {
+    material.dispose();
+  }
+});
+
+await test('next scene binds USD skeleton meshes as SkinnedMesh', async () => {
+  const source = fs.readFileSync(
+    new URL('../../../models/synthetic-skin-16influences.usda', import.meta.url), 'utf8')
+    .replace('def SkelRoot "root"\n{', `def SkelRoot "root"
+{
+    double3 xformOp:scale = (0.01, 0.01, 0.01)
+    float3 xformOp:rotateXYZ = (90, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:rotateXYZ"]`);
+  const bytes = encoder.encode(source);
+  const usd = await NextRenderSceneAdapter.create(
+    nextNative, bytes, 'synthetic-skin-16influences.usda', { meshOnly: false });
+  try {
+    const skinData = extractSkinnedMeshData(usd, { verbose: false });
+    assert.ok(skinData.hasSkinnedMeshData, 'fixture should expose skin attributes');
+    const skeletonData = buildSkeletonDataFromUSD(usd, {
+      hasSkinnedMeshData: true,
+      logger: { log() {}, warn() {}, error() {} }
+    });
+    assert.equal(skeletonData.skeletonDataArray.length, 1);
+    const built = buildNextThreeNode(usd, { skipTextures: true, releaseBuildData: false });
+    const characterGroup = new THREE.Group();
+    const result = applyUSDSceneSkinningPipeline({
+      threeNode: built.node,
+      characterGroup,
+      skeletonDataArray: skeletonData.skeletonDataArray,
+      allSkinnedMeshUSDData: skinData.allSkinnedMeshUSDData,
+      skinnedMeshDataByName: skinData.skinnedMeshDataByName,
+      usdScene: usd,
+      logger: { log() {}, warn() {}, error() {} }
+    });
+    assert.equal(result.processedSkinnedCount, 1);
+    assert.ok(result.firstSkinnedMesh?.isSkinnedMesh,
+      'next backend must bind the mesh instead of rendering undeformed bind geometry');
+    const mesh = result.firstSkinnedMesh;
+    characterGroup.updateMatrixWorld(true);
+    mesh.skeleton.update();
+    const deformedBox = new THREE.Box3();
+    const point = new THREE.Vector3();
+    const positions = mesh.geometry.attributes.position;
+    for (let i = 0; i < positions.count; ++i) {
+      mesh.getVertexPosition(i, point);
+      point.applyMatrix4(mesh.matrixWorld);
+      deformedBox.expandByPoint(point);
+    }
+    const deformedSize = deformedBox.getSize(new THREE.Vector3());
+    assert.ok(Math.max(...deformedSize.toArray()) < 0.2,
+      `scaled/rotated SkelRoot must not inflate in GPU skinning space: ${deformedSize.toArray()}`);
+  } finally {
+    usd.delete();
+  }
+});
+
+await test('combined WASM next RenderStream preserves xformOp:orient', () => {
+  const stream = renderStreamFor(encoder.encode(ORIENTED_TRIANGLE_USDA));
+  try {
+    const mesh = stream.getMesh(0);
+    assert.ok(mesh && !mesh.error, `oriented mesh should materialize: ${mesh?.error || ''}`);
+    assert.ok(Array.isArray(mesh.worldMatrix) && mesh.worldMatrix.length === 16,
+      'oriented mesh should expose a world matrix');
+    assert.ok(Math.abs(mesh.worldMatrix[6] + 1) < 1e-4,
+      'xformOp:orient should rotate the row-major world matrix');
+    assert.ok(Math.abs(mesh.worldMatrix[9] - 1) < 1e-4,
+      'xformOp:orient should preserve the expected inverse-axis term');
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await test('combined WASM next adapter extracts a USDA root from USDZ', async () => {
+  const dependencyPackage = await makeUsdz(TEXTURED_TWO_MATERIAL_USDA);
+  const dependency = parseUSDZEntries(dependencyPackage.usdz)
+    .find((entry) => /\.usdc$/i.test(entry.name));
+  assert.ok(dependency, 'fixture should contain a USDC dependency layer');
+  const packaged = buildUSDZWithNewRoot(
+    'root.usda', encoder.encode(SIMPLE_TRIANGLE_USDA), [{
+      ...dependency,
+      name: 'dependency.usdc',
+    }]);
+  const scene = await NextRenderSceneAdapter.create(
+    native, packaged, 'fixture.usdz', { meshOnly: true });
+  try {
+    assert.equal(scene.numMeshes(), 1, 'USDA-root USDZ should expose one mesh');
+    const mesh = scene.getMeshCopy(0);
+    assert.ok(mesh && !mesh.error, `USDA-root mesh should materialize: ${mesh?.error || ''}`);
+  } finally {
+    scene.delete();
+  }
+});
 
 await test('next flatten does not allocate when required remap API is missing', () => {
   let allocations = 0;
@@ -251,6 +388,71 @@ await test('next lazy texture reset defers archive release until active loads se
   assert.equal(material.map, undefined, 'aborted texture load should not mutate stale material');
 });
 
+await test('next archive textures reuse worker-prefetched browser images', async () => {
+  const image = { width: 4, height: 4 };
+  let requestedPath = '';
+  const texture = await loadNextArchiveTexture({
+    getArchiveTextureBytes() {
+      return new Uint8Array([1]);
+    },
+    getPrefetchedArchiveImage(path) {
+      requestedPath = path;
+      return Promise.resolve({ image, flipY: true });
+    },
+  }, 'textures/card.png', 'color', { wrapS: 'mirror', wrapT: 'clamp' });
+  assert.equal(requestedPath, 'textures/card.png');
+  assert.equal(texture.image, image);
+  assert.equal(texture.colorSpace, THREE.SRGBColorSpace);
+  assert.equal(texture.wrapS, THREE.MirroredRepeatWrapping);
+  assert.equal(texture.wrapT, THREE.ClampToEdgeWrapping);
+  assert.equal(texture.flipY, true);
+});
+
+await test('next worker archive lookup retains anonymous UDIM tiles', async () => {
+  const first = new Uint8Array([1, 2, 3]);
+  const second = new Uint8Array([4, 5, 6]);
+  const entries = new Map([
+    ['textures/surface.1001.png', first],
+    ['textures/surface.1002.png', second],
+  ]);
+  assert.equal(findNextArchiveEntry(entries, './textures/surface.1001.png')?.bytes,
+    first);
+  const layout = nextArchiveUDIMLayout(entries, './textures/surface.<UDIM>.png');
+  assert.equal(layout.columns, 2);
+  assert.equal(layout.rows, 1);
+  assert.deepEqual(layout.tiles.map(({ id, u, v, path }) => ({ id, u, v, path })), [
+    { id: 1001, u: 0, v: 0, path: 'textures/surface.1001.png' },
+    { id: 1002, u: 1, v: 0, path: 'textures/surface.1002.png' },
+  ]);
+  assert.equal(nextArchiveUDIMLayout(entries, './textures/missing.<UDIM>.png'), null);
+});
+
+await test('next missing UDIM diagnostics are deduplicated and preserve fallbacks', async () => {
+  const manager = new NextTextureLoadingManager();
+  const material = { color: new THREE.Color(0.2, 0.4, 0.8) };
+  const adapter = {
+    getArchiveUDIMTiles() { return null; },
+    getArchiveTextureBytes() { return null; },
+  };
+  manager.queueTexture(material, 'map', adapter,
+    'textures/missing.<UDIM>.png', 'color');
+  manager.queueTexture(material, 'normalMap', adapter,
+    'textures/missing.<UDIM>.png', 'data');
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const status = await manager.startLoading({ concurrency: 2, yieldInterval: 0 });
+    assert.equal(status.failed, 2);
+  } finally {
+    console.warn = previousWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.equal(material.map, undefined);
+  assert.equal(material.normalMap, undefined);
+  assert.deepEqual(material.color.toArray(), [0.2, 0.4, 0.8]);
+});
+
 await test('next materials preserve opacity maps without double-applying RGBA alpha', () => {
   const queued = [];
   const manager = {
@@ -304,6 +506,22 @@ await test('next textures preserve authored USD wrap modes', () => {
     { wrapS: 'repeat', wrapT: 'black' });
   assert.equal(manager.total, 2,
     'one image with different authored samplers must not share a texture object');
+
+  const scopedTransforms = new NextTextureLoadingManager();
+  const firstTransform = {
+    canonical: 'studio', bypass: false, gamma: 1, linearBias: 0,
+    matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  };
+  const secondTransform = {
+    canonical: 'studio', bypass: false, gamma: 2.2, linearBias: 0,
+    matrix: [0.9, 0.1, 0, 0, 1, 0, 0, 0, 1]
+  };
+  scopedTransforms.queueTexture({}, 'map', {}, 'shared.png', 'data', null,
+    null, firstTransform);
+  scopedTransforms.queueTexture({}, 'map', {}, 'shared.png', 'data', null,
+    null, secondTransform);
+  assert.equal(scopedTransforms.total, 2,
+    'scoped definitions with the same name but different transforms must not deduplicate');
 });
 
 await test('next material subsets compact alternating faces into bounded draw groups', () => {

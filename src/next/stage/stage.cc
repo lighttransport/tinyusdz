@@ -252,6 +252,13 @@ bool UsdPrim::HasProperty(PropNameId name_id) const {
   return GetSchemaRegistry().FindProperty(*source, name) != nullptr;
 }
 
+bool UsdPrim::HasAuthoredProperty(const std::string& name) const {
+  if (!spec_) return false;
+  const PrimSpec* source = ChildSourceSpec();
+  return spec_->property(name) != nullptr ||
+          (source != spec_ && source->property(name) != nullptr);
+}
+
 const Value* UsdPrim::GetPropertyValue(const std::string& name) const {
   if (!spec_) return nullptr;
   if (const Value* value = spec_->property_value(name)) {
@@ -790,6 +797,8 @@ void Stage::UpdateMetaFromRootLayer() {
   meta_.colorManagementSystem = lm.colorManagementSystem;
   meta_.colorConfiguration_set = lm.colorConfiguration_set;
   meta_.colorManagementSystem_set = lm.colorManagementSystem_set;
+  meta_.renderSettingsPrimPath = lm.renderSettingsPrimPath;
+  meta_.renderSettingsPrimPath_set = lm.renderSettingsPrimPath_set;
   meta_.doc = lm.doc;
   meta_.comment = lm.comment;
   meta_.owner = lm.owner;

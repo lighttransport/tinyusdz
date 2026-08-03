@@ -5,6 +5,7 @@
 
 #include "safe-arithmetic.hh"
 #include "render-converter.hh"
+#include "next/schema/color-space.hh"
 #include "next/eval/value-clip.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "materialx.hh"
@@ -613,6 +614,47 @@ bool ResolveConnectedEndpoint(const Stage& stage,
   return false;
 }
 
+bool FindConnectedUtilityScalar(const Stage& stage, const UsdPrim& shader,
+                                const std::string& shader_input,
+                                const std::string& node_id_prefix,
+                                const std::string& node_input,
+                                double time_code, float* out) {
+  if (!out || !shader.IsValid()) return false;
+  ::tinyusdz::next::AttributeEval eval(&stage);
+  eval.SetTime(time_code);
+  const std::string property = "inputs:" + shader_input;
+  if (!eval.HasConnection(shader, property)) return false;
+  std::string current = eval.GetConnectionPath(shader, property);
+  std::set<std::string> visited;
+  for (int depth = 0; depth <= kMaxMtlxConstantDepth; ++depth) {
+    if (!visited.insert(current).second) return false;
+    std::string prim_path;
+    std::string prop_name;
+    if (!SplitConnectionPath(current, &prim_path, &prop_name)) return false;
+    const UsdPrim node = stage.GetPrimAtPath(prim_path);
+    if (!node.IsValid()) return false;
+    std::string id;
+    GetToken(node, "info:id", &id);
+    if (id.rfind(node_id_prefix, 0) == 0) {
+      if (std::optional<float> value =
+              eval.EvalFloat(node, "inputs:" + node_input)) {
+        *out = *value;
+        return true;
+      }
+      return false;
+    }
+    const ::tinyusdz::next::PrimSpec* spec = node.GetPrimSpec();
+    const std::vector<::tinyusdz::next::Path>* connections =
+        spec ? spec->connection(prop_name) : nullptr;
+    if (!connections || connections->empty()) {
+      connections = PrimaryDataInputConnection(node);
+    }
+    if (!connections || connections->empty()) return false;
+    current = (*connections)[0].str();
+  }
+  return false;
+}
+
 bool ResolveConnectedValue(const Stage& stage,
                            const std::string& connection_path,
                            double time_code,
@@ -717,6 +759,127 @@ ColorSpace ParseColorSpace(const std::string& token) {
   return ColorSpace::Unknown;
 }
 
+bool IsColorShaderInput(const UsdPrim& prim, const std::string& attr_name,
+                        const std::string& param_name) {
+  if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
+    if (const std::string* type = spec->property_type_name(attr_name)) {
+      if (type->rfind("color3", 0) == 0 || type->rfind("color4", 0) == 0) {
+        return true;
+      }
+    }
+  }
+  static const std::set<std::string> kColorInputs = {
+      "diffuseColor", "emissiveColor", "specularColor", "base_color",
+      "baseColor", "specular_color", "transmission_color",
+      "subsurface_color", "sheen_color", "coat_color", "emission_color"};
+  return kColorInputs.count(param_name) != 0;
+}
+
+bool MaterialXConfiguredColorSpace(const UsdPrim& prim, std::string* out) {
+  if (!out || !prim.IsValid()) return false;
+  std::string id;
+  if (!GetToken(prim, "info:id", &id) ||
+      (id.rfind("ND_", 0) != 0 && id != "image" &&
+       id != "tiledimage" && id != "open_pbr_surface" &&
+       id != "standard_surface")) {
+    return false;
+  }
+  for (UsdPrim current = prim; current.IsValid(); current = current.GetParent()) {
+    const Value* value =
+        current.GetPropertyValue("config:mtlx:colorspace");
+    if (!value) continue;
+    const std::string* token = value->as_token();
+    if (!token) token = value->as_string();
+    if (token && !token->empty()) {
+      *out = ::tinyusdz::color::CanonicalizeToken(*token);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ResolveConnectedColorSource(const Stage& stage,
+                                 const std::string& connection_path,
+                                 double time_code, UsdPrim* source_prim,
+                                 std::string* source_property) {
+  if (!source_prim || !source_property) return false;
+  std::string endpoint;
+  if (!ResolveConnectedEndpoint(stage, connection_path, time_code, &endpoint)) {
+    return false;
+  }
+  std::string prim_path;
+  std::string property;
+  if (!SplitConnectionPath(endpoint, &prim_path, &property)) return false;
+  UsdPrim prim = stage.GetPrimAtPath(prim_path);
+  if (!prim.IsValid()) return false;
+
+  // Prefer metadata on the resolved output itself. MaterialX constant and
+  // utility nodes usually put it on their value/data input instead, so scan
+  // those inputs before falling back to the terminal shader attribute.
+  if (const ::tinyusdz::next::PropMeta* meta =
+          prim.GetPropertyMeta(property)) {
+    if ((meta->authored & ::tinyusdz::next::PropMeta::kColorSpace) != 0u) {
+      *source_prim = prim;
+      *source_property = property;
+      return true;
+    }
+  }
+  std::string value_input;
+  for (const std::string& candidate : prim.GetPropertyNames()) {
+    if (candidate.rfind("inputs:", 0) != 0) continue;
+    if (value_input.empty() || candidate == "inputs:value" ||
+        candidate == "inputs:in") {
+      value_input = candidate;
+    }
+    if (const ::tinyusdz::next::PropMeta* meta =
+            prim.GetPropertyMeta(candidate)) {
+      if ((meta->authored & ::tinyusdz::next::PropMeta::kColorSpace) != 0u) {
+        *source_prim = prim;
+        *source_property = candidate;
+        return true;
+      }
+    }
+  }
+  if (!value_input.empty()) {
+    *source_prim = prim;
+    *source_property = value_input;
+    return true;
+  }
+  *source_prim = prim;
+  *source_property = property;
+  return true;
+}
+
+void ConvertShaderColorToWorking(const UsdPrim& prim,
+                                 const std::string& attr_name,
+                                 const std::string& param_name,
+                                 const RenderScene* scene,
+                                 ShaderParam* param) {
+  if (!scene || !param || param->is_texture() ||
+      !IsColorShaderInput(prim, attr_name, param_name)) {
+    return;
+  }
+  std::string source;
+  bool authored = false;
+  if (!::tinyusdz::next::color_management::ComputeColorSpaceName(
+          prim, attr_name, &source, &authored)) {
+    return;
+  }
+  if (!authored) {
+    (void)MaterialXConfiguredColorSpace(prim, &source);
+  }
+  ::tinyusdz::color::ColorTransform transform;
+  if (!::tinyusdz::next::color_management::BuildColorTransform(
+          prim, source, scene->working_color_space, &transform)) {
+    return;
+  }
+  float rgb[3] = {param->value.x, param->value.y, param->value.z};
+  ::tinyusdz::color::TransformRGB(transform, rgb);
+  param->value.x = rgb[0];
+  param->value.y = rgb[1];
+  param->value.z = rgb[2];
+}
+
 void SetParamFloat(ShaderParam* out, float x) {
   out->texture_id = -1;
   out->value = Float4(x, 0.0f, 0.0f, 0.0f);
@@ -810,6 +973,7 @@ bool ValueToShaderParam(const Value& value, ShaderParam* out) {
 struct MtlxConstantValue {
   std::array<float, 4> value{{0.0f, 0.0f, 0.0f, 0.0f}};
   int components = 0;
+  bool color_managed = false;
 
   float component(int i) const {
     return value[static_cast<size_t>(i < components ? i : 0)];
@@ -839,6 +1003,7 @@ MtlxConstantValue MtlxBinary(const MtlxConstantValue& a,
                              const std::function<float(float, float)>& op) {
   MtlxConstantValue out;
   out.components = std::max(a.components, b.components);
+  out.color_managed = a.color_managed || b.color_managed;
   for (int i = 0; i < out.components; ++i) {
     out.value[static_cast<size_t>(i)] = op(a.component(i), b.component(i));
   }
@@ -848,12 +1013,49 @@ MtlxConstantValue MtlxBinary(const MtlxConstantValue& a,
 bool EvalMtlxConstantConnection(const Stage& stage,
                                 const std::string& connection,
                                 double time_code,
+                                const std::string& evaluation_space,
                                 MtlxConstantValue* out,
                                 std::set<std::string>* visiting,
                                 int depth);
 
+bool TransformMtlxColorInput(const UsdPrim& node,
+                             const std::string& property,
+                             const std::string& evaluation_space,
+                             MtlxConstantValue* value) {
+  if (!value) return false;
+  if (value->components < 3 || evaluation_space.empty()) return true;
+  const ::tinyusdz::next::PrimSpec* spec = node.GetPrimSpec();
+  const std::string* type = spec ? spec->property_type_name(property) : nullptr;
+  if (!type || (type->rfind("color3", 0) != 0 &&
+                type->rfind("color4", 0) != 0)) {
+    return true;
+  }
+
+  std::string source;
+  bool authored = false;
+  if (!::tinyusdz::next::color_management::ComputeColorSpaceName(
+          node, property, &source, &authored)) {
+    return false;
+  }
+  if (!authored) source = evaluation_space;
+  ::tinyusdz::color::ColorTransform transform;
+  if (!::tinyusdz::next::color_management::BuildColorTransform(
+          node, source, evaluation_space, &transform)) {
+    return false;
+  }
+  float rgb[3] = {value->value[0], value->value[1], value->value[2]};
+  ::tinyusdz::color::TransformRGB(transform, rgb);
+  value->value[0] = rgb[0];
+  value->value[1] = rgb[1];
+  value->value[2] = rgb[2];
+  value->color_managed =
+      transform.source.kind != ::tinyusdz::color::ColorSpaceKind::Data;
+  return true;
+}
+
 bool EvalMtlxInput(const Stage& stage, const UsdPrim& node,
                    const std::string& input, double time_code,
+                   const std::string& evaluation_space,
                    MtlxConstantValue* out, std::set<std::string>* visiting,
                    int depth) {
   if (!out || depth > kMaxMtlxConstantDepth) return false;
@@ -863,7 +1065,8 @@ bool EvalMtlxInput(const Stage& stage, const UsdPrim& node,
       spec ? spec->connection(property) : nullptr;
   if (connections && !connections->empty()) {
     return EvalMtlxConstantConnection(stage, (*connections)[0].str(),
-                                      time_code, out, visiting, depth + 1);
+                                      time_code, evaluation_space, out,
+                                      visiting, depth + 1);
   }
   ::tinyusdz::next::AttributeEval eval(&stage);
   eval.SetTime(time_code);
@@ -871,11 +1074,14 @@ bool EvalMtlxInput(const Stage& stage, const UsdPrim& node,
   options.follow_connections = false;
   const ::tinyusdz::next::EvalResult result =
       eval.EvalWith(node, property, options);
-  return result.success && ValueToMtlxConstant(result.value, out);
+  return result.success && ValueToMtlxConstant(result.value, out) &&
+         TransformMtlxColorInput(node, property, evaluation_space, out);
 }
 
 bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
-                          double time_code, MtlxConstantValue* out,
+                          double time_code,
+                          const std::string& evaluation_space,
+                          MtlxConstantValue* out,
                           std::set<std::string>* visiting, int depth) {
   if (!out || !node.IsValid() || depth > kMaxMtlxConstantDepth || !visiting) {
     return false;
@@ -891,8 +1097,8 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
   std::string id;
   GetToken(node, "info:id", &id);
   auto input = [&](const char* name, MtlxConstantValue* value) {
-    return EvalMtlxInput(stage, node, name, time_code, value, visiting,
-                         depth + 1);
+    return EvalMtlxInput(stage, node, name, time_code, evaluation_space, value,
+                         visiting, depth + 1);
   };
   auto starts = [&id](const char* prefix) { return id.rfind(prefix, 0) == 0; };
 
@@ -932,6 +1138,8 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     if (!input("in", &value) || !input("low", &low) ||
         !input("high", &high)) return false;
     *out = value;
+    out->color_managed = value.color_managed || low.color_managed ||
+                         high.color_managed;
     for (int i = 0; i < out->components; ++i) {
       out->value[static_cast<size_t>(i)] = std::min(
           std::max(value.component(i), low.component(i)), high.component(i));
@@ -945,6 +1153,9 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
         !input("inhigh", &in_high) || !input("outlow", &out_low) ||
         !input("outhigh", &out_high)) return false;
     *out = value;
+    out->color_managed = value.color_managed || in_low.color_managed ||
+                         in_high.color_managed || out_low.color_managed ||
+                         out_high.color_managed;
     for (int i = 0; i < out->components; ++i) {
       const float denom = in_high.component(i) - in_low.component(i);
       const float t = std::abs(denom) > 1.0e-8f
@@ -963,6 +1174,8 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     }
     out->components = 3;
     out->value = {{a.component(0), b.component(0), c.component(0), 0.0f}};
+    out->color_managed =
+        a.color_managed || b.color_managed || c.color_managed;
     return true;
   }
 
@@ -973,6 +1186,48 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     if (component < 0 || component >= value.components) component = 0;
     out->components = 1;
     out->value[0] = value.value[static_cast<size_t>(component)];
+    out->color_managed = value.color_managed;
+    return true;
+  }
+
+  if (starts("ND_normalize_")) {
+    MtlxConstantValue value;
+    if (!input("in", &value)) return false;
+    float length_squared = 0.0f;
+    for (int i = 0; i < value.components; ++i) {
+      const float component = value.component(i);
+      length_squared += component * component;
+    }
+    const float length = std::sqrt(length_squared);
+    *out = value;
+    if (length > 1.0e-7f) {
+      for (int i = 0; i < out->components; ++i) {
+        out->value[static_cast<size_t>(i)] /= length;
+      }
+    }
+    return true;
+  }
+
+  if (starts("ND_ifgreater_") || starts("ND_ifgreatereq_") ||
+      starts("ND_ifequal_")) {
+    MtlxConstantValue value1, value2, when_true, when_false;
+    if (!input("value1", &value1) || !input("value2", &value2) ||
+        !input("in1", &when_true) || !input("in2", &when_false)) {
+      return false;
+    }
+    const float a = value1.component(0);
+    const float b = value2.component(0);
+    bool condition = false;
+    if (starts("ND_ifgreatereq_")) {
+      condition = a >= b;
+    } else if (starts("ND_ifgreater_")) {
+      condition = a > b;
+    } else {
+      const float scale = std::max({std::fabs(a), std::fabs(b), 1.0f});
+      condition = std::fabs(a - b) <=
+                  std::numeric_limits<float>::epsilon() * scale;
+    }
+    *out = condition ? when_true : when_false;
     return true;
   }
 
@@ -980,7 +1235,11 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
 
   if (id == "ND_hsv_adjust_color3" || id == "ND_hsvadjust_color3") {
     MtlxConstantValue color, hue, saturation, value, factor;
-    float hue_neutral = 0.5f;
+    // The standard MaterialX hsvadjust amount is a direct hue offset with
+    // (0, 1, 1) as its identity. Blender's separate-input variant exposes a
+    // UI control where 0.5 is neutral instead.
+    const float hue_neutral =
+        id == "ND_hsvadjust_color3" ? 0.0f : 0.5f;
     if (!input("in", &color)) return false;
     if (id == "ND_hsvadjust_color3") {
       MtlxConstantValue amount;
@@ -1010,8 +1269,6 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     }
     float s = maximum > 0.0f ? delta / maximum : 0.0f;
     float v = maximum;
-    // MaterialX HSV Adjust uses 0.5 as the neutral hue control (matching the
-    // node UI and legacy web evaluator), not 0.0 as a direct hue offset.
     h = std::fmod(h + (hue.component(0) - hue_neutral) + 1.0f, 1.0f);
     s *= saturation.component(0);
     v *= value.component(0);
@@ -1029,6 +1286,7 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     }
     const float mix = factor.component(0);
     out->components = 3;
+    out->color_managed = color.color_managed;
     for (int i = 0; i < 3; ++i) {
       out->value[static_cast<size_t>(i)] =
           color.component(i) * (1.0f - mix) + adjusted[i] * mix;
@@ -1041,6 +1299,7 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
 bool EvalMtlxConstantConnection(const Stage& stage,
                                 const std::string& connection,
                                 double time_code,
+                                const std::string& evaluation_space,
                                 MtlxConstantValue* out,
                                 std::set<std::string>* visiting,
                                 int depth) {
@@ -1054,11 +1313,12 @@ bool EvalMtlxConstantConnection(const Stage& stage,
       spec ? spec->connection(property) : nullptr;
   if (forwarded && !forwarded->empty()) {
     return EvalMtlxConstantConnection(stage, (*forwarded)[0].str(), time_code,
-                                      out, visiting, depth + 1);
+                                      evaluation_space, out, visiting,
+                                      depth + 1);
   }
   if (::tinyusdz::next::IsShader(prim)) {
-    return EvalMtlxConstantNode(stage, prim, time_code, out, visiting,
-                                depth + 1);
+    return EvalMtlxConstantNode(stage, prim, time_code, evaluation_space, out,
+                                visiting, depth + 1);
   }
   return false;
 }
@@ -2774,6 +3034,26 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     result.scene.start_time = meta.startTimeCode;
     result.scene.end_time = meta.endTimeCode;
     result.scene.frames_per_second = meta.timeCodesPerSecond;
+    ::tinyusdz::next::color_management::RenderingColorConfig color_config;
+    std::string color_warning;
+    (void)::tinyusdz::next::color_management::ResolveRenderingColorConfig(
+        stage, config_.material.render_settings_path, &color_config,
+        &color_warning);
+    result.scene.render_settings_path = color_config.render_settings_path;
+    result.scene.working_color_space = color_config.working_space;
+    ::tinyusdz::color::ColorSpaceDesc display_linear;
+    ::tinyusdz::color::ColorTransform working_to_display;
+    if (::tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene",
+                                                &display_linear) &&
+        ::tinyusdz::color::BuildColorTransform(
+            color_config.working_definition, display_linear,
+            &working_to_display)) {
+      for (size_t i = 0; i < 9; ++i) {
+        result.scene.working_to_display_linear[i] =
+            working_to_display.matrix[i];
+      }
+    }
+    if (!color_warning.empty()) warnings_.push_back(color_warning);
 
     RenderExtractOptions xopts;
     xopts.time_code = config_.time_code;
@@ -3204,6 +3484,25 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   catalog.start_time = meta.startTimeCode;
   catalog.end_time = meta.endTimeCode;
   catalog.frames_per_second = meta.timeCodesPerSecond;
+  ::tinyusdz::next::color_management::RenderingColorConfig color_config;
+  std::string color_warning;
+  (void)::tinyusdz::next::color_management::ResolveRenderingColorConfig(
+      stage, config_.material.render_settings_path, &color_config,
+      &color_warning);
+  catalog.render_settings_path = color_config.render_settings_path;
+  catalog.working_color_space = color_config.working_space;
+  ::tinyusdz::color::ColorSpaceDesc display_linear;
+  ::tinyusdz::color::ColorTransform working_to_display;
+  if (::tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene",
+                                              &display_linear) &&
+      ::tinyusdz::color::BuildColorTransform(
+          color_config.working_definition, display_linear,
+          &working_to_display)) {
+    for (size_t i = 0; i < 9; ++i) {
+      catalog.working_to_display_linear[i] = working_to_display.matrix[i];
+    }
+  }
+  if (!color_warning.empty()) warnings_.push_back(color_warning);
 
   RenderExtractOptions xopts;
   xopts.time_code = config_.time_code;
@@ -6519,6 +6818,28 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     return false;
   }
 
+  if (scene) {
+    ::tinyusdz::next::color_management::RenderingColorConfig color_config;
+    std::string color_warning;
+    if (::tinyusdz::next::color_management::ResolveRenderingColorConfig(
+            stage, config_.material.render_settings_path, &color_config,
+            &color_warning)) {
+      scene->render_settings_path = color_config.render_settings_path;
+      scene->working_color_space = color_config.working_space;
+      ::tinyusdz::color::ColorSpaceDesc display_linear;
+      ::tinyusdz::color::ColorTransform display_transform;
+      if (::tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene",
+                                                   &display_linear) &&
+          ::tinyusdz::color::BuildColorTransform(
+              color_config.working_definition, display_linear,
+              &display_transform)) {
+        std::copy(display_transform.matrix, display_transform.matrix + 9,
+                  scene->working_to_display_linear);
+      }
+      (void)color_warning;
+    }
+  }
+
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
   ExtractMaterialXConfig(prim, &out->mtlx_config);
@@ -7084,6 +7405,12 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
                           &out->tangent, scene)) {
     ExtractShaderParam(stage, shader_prim, "tangent", &out->tangent, scene);
   }
+  (void)FindConnectedUtilityScalar(
+      stage, shader_prim, "geometry_normal", "ND_normalmap_", "scale",
+      config_.time_code, &out->normal_map_scale);
+  (void)FindConnectedUtilityScalar(
+      stage, shader_prim, "geometry_tangent", "ND_rotate3d_", "amount",
+      config_.time_code, &out->tangent_rotation);
 
   return true;
 }
@@ -7108,10 +7435,26 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
 
   if (eval.HasConnection(shader_prim, attr_name)) {
     std::string connection_path = eval.GetConnectionPath(shader_prim, attr_name);
+    std::string evaluation_space = "lin_rec709_scene";
+    UsdPrim evaluation_context = shader_prim;
+    std::string evaluation_endpoint;
+    if (ResolveConnectedEndpoint(stage, connection_path, config_.time_code,
+                                 &evaluation_endpoint)) {
+      std::string evaluation_prim_path;
+      std::string evaluation_property;
+      if (SplitConnectionPath(evaluation_endpoint, &evaluation_prim_path,
+                              &evaluation_property)) {
+        UsdPrim candidate = stage.GetPrimAtPath(evaluation_prim_path);
+        if (candidate.IsValid()) evaluation_context = candidate;
+      }
+    }
+    (void)MaterialXConfiguredColorSpace(evaluation_context,
+                                        &evaluation_space);
     MtlxConstantValue evaluated;
     std::set<std::string> visiting;
     if (EvalMtlxConstantConnection(stage, connection_path, config_.time_code,
-                                   &evaluated, &visiting, 0)) {
+                                   evaluation_space, &evaluated, &visiting,
+                                   0)) {
       if (evaluated.components >= 3) {
         SetParamFloat3(out, evaluated.value[0], evaluated.value[1],
                        evaluated.value[2]);
@@ -7120,6 +7463,19 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
                        1.0f);
       } else {
         SetParamFloat(out, evaluated.value[0]);
+      }
+      if (scene && evaluated.components >= 3 && evaluated.color_managed &&
+          IsColorShaderInput(shader_prim, attr_name, param_name)) {
+        ::tinyusdz::color::ColorTransform transform;
+        if (::tinyusdz::next::color_management::BuildColorTransform(
+                evaluation_context, evaluation_space,
+                scene->working_color_space, &transform)) {
+          float rgb[3] = {out->value.x, out->value.y, out->value.z};
+          ::tinyusdz::color::TransformRGB(transform, rgb);
+          out->value.x = rgb[0];
+          out->value.y = rgb[1];
+          out->value.z = rgb[2];
+        }
       }
       return true;
     }
@@ -7136,6 +7492,19 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
 
     TextureNodeData tex_data;
     if (scene && ExtractTextureNodeData(stage, texture_prim, config_.time_code, &tex_data)) {
+      if (tex_data.source_color_space.empty() ||
+          tex_data.source_color_space == "auto") {
+        bool authored = false;
+        std::string inherited;
+        (void)::tinyusdz::next::color_management::ComputeColorSpaceName(
+            texture_prim, "inputs:file", &inherited, &authored);
+        if (authored) {
+          tex_data.source_color_space = inherited;
+        } else {
+          (void)MaterialXConfiguredColorSpace(
+              texture_prim, &tex_data.source_color_space);
+        }
+      }
       const ColorSpace cs = ParseColorSpace(tex_data.source_color_space);
       const ColorSpace image_color_space =
           cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
@@ -7186,6 +7555,27 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
                             tex_data.bias[2], tex_data.bias[3]);
       texture.image_id = image_id;
       texture.source_color_space = tex_data.source_color_space;
+      texture.target_color_space = scene->working_color_space;
+      {
+        std::string source_space = tex_data.source_color_space;
+        if (source_space.empty() || source_space == "auto") {
+          source_space = "srgb_rec709_scene";
+        }
+        ::tinyusdz::color::ColorTransform source_to_display;
+        if (::tinyusdz::next::color_management::BuildColorTransform(
+                texture_prim, source_space, "lin_rec709_scene",
+                &source_to_display)) {
+          texture.color_transform_valid = true;
+          texture.color_transform_bypass = source_to_display.bypass;
+          texture.source_color_is_data =
+              source_to_display.source.kind ==
+              ::tinyusdz::color::ColorSpaceKind::Data;
+          texture.source_gamma = source_to_display.source.gamma;
+          texture.source_linear_bias = source_to_display.source.linear_bias;
+          std::copy(source_to_display.matrix, source_to_display.matrix + 9,
+                    texture.source_to_display_linear);
+        }
+      }
       texture.output_channel =
           ChannelFromConnection(connection_path, texture_prim);
       // UsdTransform2d on the st chain (rotation is authored in degrees;
@@ -7205,6 +7595,13 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
     if (ResolveConnectedValue(stage, connection_path, config_.time_code,
                               &connected_value) &&
         ValueToShaderParam(connected_value, out)) {
+      UsdPrim color_prim = shader_prim;
+      std::string color_property = attr_name;
+      (void)ResolveConnectedColorSource(stage, connection_path,
+                                        config_.time_code, &color_prim,
+                                        &color_property);
+      ConvertShaderColorToWorking(color_prim, color_property, param_name,
+                                  scene, out);
       return true;
     }
   }
@@ -7214,11 +7611,15 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
   ::tinyusdz::next::EvalResult direct =
       eval.EvalWith(shader_prim, attr_name, direct_opts);
   if (direct.success && ValueToShaderParam(direct.value, out)) {
+    ConvertShaderColorToWorking(shader_prim, attr_name, param_name, scene,
+                                out);
     return true;
   }
 
   ::tinyusdz::next::EvalResult followed = eval.Eval(shader_prim, attr_name);
   if (followed.success && ValueToShaderParam(followed.value, out)) {
+    ConvertShaderColorToWorking(shader_prim, attr_name, param_name, scene,
+                                out);
     return true;
   }
 

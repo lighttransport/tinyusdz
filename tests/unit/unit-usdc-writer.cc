@@ -934,7 +934,9 @@ def Material "mtlx_mat" (
   prepend apiSchemas = ["MaterialXConfigAPI"]
 ) {
   string config:mtlx:version = "1.39"
+  string config:mtlx:namespace = "lookdev"
   string config:mtlx:colorspace = "acescg"
+  string config:mtlx:sourceUri = "looks/materials.mtlx"
   token outputs:surface.connect = </mtlx_mat/shader.outputs:surface>
 
   def Shader "shader" {
@@ -947,19 +949,23 @@ def Material "mtlx_mat" (
   Stage stage;
   std::string warn, err;
   bool ok = roundtrip(usda, &stage, &warn, &err);
-  if (!ok) {
-    TEST_MSG("roundtrip failed (may be expected if MaterialXConfigAPI parse not supported): %s", err.c_str());
-  }
-  // If roundtrip succeeded, verify the config; otherwise just check it didn't crash.
-  if (ok && stage.root_prims().size() > 0) {
-    const auto *mat = find_root<Material>(stage, "mtlx_mat");
-    if (mat && mat->materialXConfig.has_value()) {
-      TEST_CHECK(mat->materialXConfig->mtlx_version.authored());
-      TEST_CHECK(mat->materialXConfig->mtlx_colorspace.authored());
-    }
-  }
-  // Pass unconditionally — MaterialXConfigAPI parse support is optional
-  TEST_CHECK(true);
+  TEST_CHECK(ok);
+  TEST_MSG("MaterialXConfigAPI USDC roundtrip failed: %s", err.c_str());
+  if (!ok) return;
+  const auto *mat = find_root<Material>(stage, "mtlx_mat");
+  TEST_CHECK(mat != nullptr);
+  if (!mat) return;
+  TEST_CHECK(mat->materialXConfig.has_value());
+  if (!mat->materialXConfig) return;
+  const MaterialXConfigAPI &config = *mat->materialXConfig;
+  TEST_CHECK(config.mtlx_version.authored());
+  TEST_CHECK(config.mtlx_version.get_value() == "1.39");
+  TEST_CHECK(config.mtlx_namespace.authored());
+  TEST_CHECK(config.mtlx_namespace.get_value() == "lookdev");
+  TEST_CHECK(config.mtlx_colorspace.authored());
+  TEST_CHECK(config.mtlx_colorspace.get_value() == "acescg");
+  TEST_CHECK(config.mtlx_sourceUri.authored());
+  TEST_CHECK(config.mtlx_sourceUri.get_value() == "looks/materials.mtlx");
 }
 
 // =========================================================================
@@ -969,8 +975,16 @@ def Material "mtlx_mat" (
 void usdc_writer_apischemas_test(void) {
   const char *usda = R"(#usda 1.0
 def Mesh "mesh" (
-  prepend apiSchemas = ["MaterialBindingAPI"]
+  prepend apiSchemas = ["MaterialBindingAPI", "ColorSpaceAPI", "ColorSpaceDefinitionAPI:studio"]
 ) {
+  uniform token colorSpace:name = "lin_rec709_scene"
+  uniform token colorSpaceDefinition:studio:name = "studio"
+  float2 colorSpaceDefinition:studio:redChroma = (0.64, 0.33)
+  float2 colorSpaceDefinition:studio:greenChroma = (0.3, 0.6)
+  float2 colorSpaceDefinition:studio:blueChroma = (0.15, 0.06)
+  float2 colorSpaceDefinition:studio:whitePoint = (0.3127, 0.329)
+  float colorSpaceDefinition:studio:gamma = 1
+  float colorSpaceDefinition:studio:linearBias = 0
   point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
   int[] faceVertexIndices = [0,1,2]
   int[] faceVertexCounts = [3]
@@ -987,9 +1001,14 @@ def Material "mat" {}
   TEST_CHECK(mesh_prim->metas().has_apiSchemas());
   if (mesh_prim->metas().has_apiSchemas()) {
     auto schemas = mesh_prim->metas().get_apiSchemas();
-    TEST_CHECK(!schemas.names.empty());
-    if (!schemas.names.empty()) {
+    TEST_CHECK(schemas.names.size() == 3);
+    if (schemas.names.size() == 3) {
       TEST_CHECK(schemas.names[0].first == APISchemas::APIName::MaterialBindingAPI);
+      TEST_CHECK(schemas.names[1].first == APISchemas::APIName::ColorSpaceAPI);
+      TEST_CHECK(schemas.names[1].second.empty());
+      TEST_CHECK(schemas.names[2].first ==
+                 APISchemas::APIName::ColorSpaceDefinitionAPI);
+      TEST_CHECK(schemas.names[2].second == "studio");
     }
   }
 }

@@ -1479,6 +1479,74 @@ function normalizeValue(val) {
 }
 
 /**
+ * Resolve the filesystem portion of an asset identifier for semantic compare.
+ * This is deliberately opt-in: authored asset identifiers remain exact in the
+ * general comparator, while flatten-oracle tests may compare their resolved
+ * targets. Package-relative suffixes (`outer.usdz[inner.usda]`) are retained.
+ */
+function resolveAssetPathForCompare(assetPath, baseDir) {
+  if (!baseDir || typeof assetPath !== 'string' || assetPath.length === 0) {
+    return assetPath;
+  }
+
+  let outer = assetPath;
+  let packageSuffix = '';
+  const packageStart = outer.indexOf('[');
+  if (packageStart > 0 && outer.endsWith(']')) {
+    packageSuffix = outer.slice(packageStart);
+    outer = outer.slice(0, packageStart);
+  }
+
+  // Resolver schemes and anonymous identifiers are not filesystem paths.
+  // A Windows drive prefix is an absolute filesystem path, not a URI scheme.
+  const windowsAbsolute = /^[A-Za-z]:[\\/]/.test(outer);
+  if (!windowsAbsolute && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(outer)) {
+    return assetPath;
+  }
+
+  let resolved;
+  if (windowsAbsolute) {
+    resolved = path.win32.normalize(outer).replace(/\\/g, '/');
+  } else {
+    resolved = path.resolve(baseDir, outer);
+  }
+  return resolved + packageSuffix;
+}
+
+// Same formatting rules as normalizeValue(), but canonicalize parsed asset
+// values against the per-output source-layer anchor.
+function normalizeValueForCompare(val, options, side) {
+  if (!options || !options.resolveAssetPaths) return normalizeValue(val);
+  if (val && typeof val === 'object' && val.value !== undefined && val.line !== undefined) {
+    val = val.value;
+  }
+  if (val === null || val === undefined || typeof val !== 'object') {
+    return normalizeValue(val);
+  }
+  const baseDir = side === 1 ? options.assetPathBase1 : options.assetPathBase2;
+  if (val.type === 'asset') {
+    return '@' + resolveAssetPathForCompare(val.value, baseDir) + '@';
+  }
+  if (val.type === 'array') {
+    return '[' + val.value.map(v => normalizeValueForCompare(v, options, side)).join(', ') + ']';
+  }
+  if (val.type === 'tuple') {
+    return '(' + val.value.map(v => normalizeValueForCompare(v, options, side)).join(', ') + ')';
+  }
+  if (val.type === 'dictionary') {
+    const keys = Object.keys(val.value).sort();
+    return '{ ' + keys.map(k =>
+      `${k} = ${normalizeValueForCompare(val.value[k], options, side)}`).join(', ') + ' }';
+  }
+  if (val.type === 'timeSamples') {
+    const timeCodes = Object.keys(val.value).sort((a, b) => parseFloat(a) - parseFloat(b));
+    return '{ ' + timeCodes.map(tc =>
+      `${tc}: ${normalizeValueForCompare(val.value[tc], options, side)}`).join(', ') + ' }';
+  }
+  return normalizeValue(val);
+}
+
+/**
  * Check if a normalized value is numeric
  */
 function isNumericValue(normalizedValue) {
@@ -1518,7 +1586,7 @@ function areNumbersEqual(val1, val2, epsilon = 1e-6) {
  * @param {Object} val2 - Second timeSamples object
  * @param {boolean|number} epsilonOrIsHalf - Either epsilon tolerance (number) or isHalf flag (boolean)
  */
-function areTimeSamplesEqual(val1, val2, epsilonOrIsHalf = 1e-6) {
+function areTimeSamplesEqual(val1, val2, epsilonOrIsHalf = 1e-6, options = {}) {
   // Check if both are timeSamples objects
   if (!val1 || !val2 || val1.type !== 'timeSamples' || val2.type !== 'timeSamples') {
     return false;
@@ -1561,8 +1629,8 @@ function areTimeSamplesEqual(val1, val2, epsilonOrIsHalf = 1e-6) {
       }
     } else {
       // Compare values at this time
-      const v1 = normalizeValue(rawV1);
-      const v2 = normalizeValue(rawV2);
+      const v1 = normalizeValueForCompare(rawV1, options, 1);
+      const v2 = normalizeValueForCompare(rawV2, options, 2);
 
       // Use epsilon comparison for numeric values
       if (isNumericValue(v1) && isNumericValue(v2)) {
@@ -1589,7 +1657,7 @@ function compareUsda(usda1, usda2, options = {}) {
   const { verbose = false } = options;
 
   // Compare metadata
-  const metaDiff = compareObjects(usda1.metadata, usda2.metadata, 'metadata');
+  const metaDiff = compareObjects(usda1.metadata, usda2.metadata, 'metadata', options);
   differences.push(...metaDiff);
 
   // Build prim maps by path
@@ -1651,15 +1719,15 @@ function compareUsda(usda1, usda2, options = {}) {
     }
 
     // Compare attributes
-    const attrDiff = compareAttributes(prim1.attributes, prim2.attributes, path);
+    const attrDiff = compareAttributes(prim1.attributes, prim2.attributes, path, options);
     differences.push(...attrDiff);
 
     // Compare relationships (normalize listop qualifiers)
-    const relDiff = compareRelationships(prim1.relationships, prim2.relationships, path);
+    const relDiff = compareRelationships(prim1.relationships, prim2.relationships, path, options);
     differences.push(...relDiff);
 
     // Compare prim metadata
-    const primMetaDiff = compareObjects(prim1.metadata, prim2.metadata, `${path} metadata`);
+    const primMetaDiff = compareObjects(prim1.metadata, prim2.metadata, `${path} metadata`, options);
     differences.push(...primMetaDiff);
   }
 
@@ -1717,7 +1785,7 @@ function extractAttributeName(fullKey) {
 /**
  * Compare attributes between two prims
  */
-function compareAttributes(attrs1, attrs2, primPath) {
+function compareAttributes(attrs1, attrs2, primPath, options = {}) {
   const differences = [];
 
   // Create a map of normalized attribute names to their original keys
@@ -1792,14 +1860,14 @@ function compareAttributes(attrs1, attrs2, primPath) {
     // Special handling for timeSamples (compare before normalization)
     if (actualVal1 && typeof actualVal1 === 'object' && actualVal1.type === 'timeSamples' &&
         actualVal2 && typeof actualVal2 === 'object' && actualVal2.type === 'timeSamples') {
-      valuesEqual = areTimeSamplesEqual(actualVal1, actualVal2, isHalfAttr);
+      valuesEqual = areTimeSamplesEqual(actualVal1, actualVal2, isHalfAttr, options);
     } else if (isHalfAttr) {
       // Half-precision comparison: compare as binary representation
       valuesEqual = areValuesEqualAsHalf(actualVal1, actualVal2);
     } else {
       // Normal comparison path
-      const norm1 = normalizeValue(val1);
-      const norm2 = normalizeValue(val2);
+      const norm1 = normalizeValueForCompare(val1, options, 1);
+      const norm2 = normalizeValueForCompare(val2, options, 2);
 
       // Use epsilon comparison for numeric values
       if (isNumericValue(norm1) && isNumericValue(norm2)) {
@@ -1855,7 +1923,7 @@ function normalizeRelationshipName(name) {
  * Compare relationships between two prims
  * Normalizes listop qualifiers (delete/prepend/append/add/reorder) for comparison
  */
-function compareRelationships(rels1, rels2, primPath) {
+function compareRelationships(rels1, rels2, primPath, options = {}) {
   const differences = [];
 
   // Create maps of normalized names to original keys
@@ -1908,8 +1976,8 @@ function compareRelationships(rels1, rels2, primPath) {
       continue; // Both are declaration-only, equivalent
     }
 
-    const norm1 = normalizeValue(val1);
-    const norm2 = normalizeValue(val2);
+    const norm1 = normalizeValueForCompare(val1, options, 1);
+    const norm2 = normalizeValueForCompare(val2, options, 2);
 
     if (norm1 !== norm2) {
       differences.push({
@@ -1929,7 +1997,7 @@ function compareRelationships(rels1, rels2, primPath) {
 /**
  * Compare two objects
  */
-function compareObjects(obj1, obj2, context) {
+function compareObjects(obj1, obj2, context, options = {}) {
   const differences = [];
   const allKeys = new Set([...Object.keys(obj1), ...Object.keys(obj2)]);
 
@@ -1969,11 +2037,11 @@ function compareObjects(obj1, obj2, context) {
     // Special handling for timeSamples (compare before normalization)
     if (actualVal1 && typeof actualVal1 === 'object' && actualVal1.type === 'timeSamples' &&
         actualVal2 && typeof actualVal2 === 'object' && actualVal2.type === 'timeSamples') {
-      valuesEqual = areTimeSamplesEqual(actualVal1, actualVal2);
+      valuesEqual = areTimeSamplesEqual(actualVal1, actualVal2, 1e-6, options);
     } else {
       // Normal comparison path
-      const norm1 = normalizeValue(val1);
-      const norm2 = normalizeValue(val2);
+      const norm1 = normalizeValueForCompare(val1, options, 1);
+      const norm2 = normalizeValueForCompare(val2, options, 2);
 
       // Use epsilon comparison for numeric values
       if (isNumericValue(norm1) && isNumericValue(norm2)) {
@@ -2125,6 +2193,9 @@ Options:
   --detailed-diff         Show detailed diffs with line numbers and context
   --ignore-metadata       Ignore top-level metadata differences
   --ignore-types          Ignore attribute type differences
+  --resolve-asset-paths   Compare filesystem asset paths after lexical resolution
+  --asset-base1 <path>    Source-layer anchor for file/tool output 1
+  --asset-base2 <path>    Source-layer anchor for file/tool output 2
   --float-tolerance <n>   Tolerance for floating point comparison (default: 1e-6)
   --continue-on-error     Continue processing other files if one fails
   --json                  Output results as JSON
@@ -2282,8 +2353,15 @@ function compareSingleFile(inputFile, options) {
       return result;
     }
 
-    // Compare
-    let differences = compareUsda(usda1, usda2, options);
+    // Compare. Tool outputs both originate from this input layer, so relative
+    // assets share its directory unless the caller supplied explicit anchors.
+    const compareOptions = { ...options };
+    if (compareOptions.resolveAssetPaths) {
+      const inputBase = path.dirname(path.resolve(inputFile));
+      compareOptions.assetPathBase1 ||= inputBase;
+      compareOptions.assetPathBase2 ||= inputBase;
+    }
+    let differences = compareUsda(usda1, usda2, compareOptions);
 
     // Filter differences based on options
     if (options.ignoreMetadata) {
@@ -2325,6 +2403,9 @@ function main() {
     detailedDiff: false,
     ignoreMetadata: false,
     ignoreTypes: false,
+    resolveAssetPaths: false,
+    assetPathBase1: null,
+    assetPathBase2: null,
     floatTolerance: 1e-6,
     tusdcat: null,
     usdcat: null,
@@ -2359,6 +2440,15 @@ function main() {
         break;
       case '--ignore-types':
         options.ignoreTypes = true;
+        break;
+      case '--resolve-asset-paths':
+        options.resolveAssetPaths = true;
+        break;
+      case '--asset-base1':
+        options.assetPathBase1 = path.resolve(args[++i]);
+        break;
+      case '--asset-base2':
+        options.assetPathBase2 = path.resolve(args[++i]);
         break;
       case '--float-tolerance':
         options.floatTolerance = parseFloat(args[++i]);
@@ -2426,6 +2516,11 @@ function main() {
 
       const usda1 = parseUsda(content1);
       const usda2 = parseUsda(content2);
+
+      if (options.resolveAssetPaths) {
+        options.assetPathBase1 ||= path.dirname(path.resolve(options.files[0]));
+        options.assetPathBase2 ||= path.dirname(path.resolve(options.files[1]));
+      }
 
       // Compare
       if (!options.quiet && !options.json) {
@@ -2645,6 +2740,8 @@ module.exports = {
   parseUsda,
   compareUsda,
   normalizeValue,
+  normalizeValueForCompare,
+  resolveAssetPathForCompare,
   expandGlob,
   expandFilePatterns,
   isGlobPattern,

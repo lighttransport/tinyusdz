@@ -37,6 +37,8 @@ struct StageMeta {
   std::string colorManagementSystem;
   bool colorConfiguration_set = false;
   bool colorManagementSystem_set = false;
+  std::string renderSettingsPrimPath;
+  bool renderSettingsPrimPath_set = false;
   std::string doc;
   std::string comment;
   std::string owner;
@@ -103,6 +105,10 @@ public:
   /// Check if prim has a property
   bool HasProperty(const std::string& name) const;
   bool HasProperty(PropNameId name_id) const;
+
+  /// Check if a property is authored on the prim (or its instance-proxy
+  /// source), excluding schema fallback declarations.
+  bool HasAuthoredProperty(const std::string& name) const;
 
   /// Resolve at USD DefaultTime: authored default, then schema fallback.
   /// Time samples are never consulted.

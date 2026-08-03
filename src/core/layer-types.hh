@@ -63,6 +63,8 @@ struct LayerMetas {
   nonstd::optional<value::AssetPath> colorConfiguration;
   // colorManagementSystem: e.g. "ocio"
   nonstd::optional<value::token> colorManagementSystem;
+  // Default UsdRenderSettings prim used to select the rendering color space.
+  nonstd::optional<std::string> renderSettingsPrimPath;
   // owner: layer owner string
   nonstd::optional<std::string> owner;
   // hasOwnedSubLayers: whether sublayers are "owned" by this layer
@@ -104,6 +106,9 @@ struct LayerMetas {
     // comment and doc strings
     total += comment.value.capacity();
     total += doc.value.capacity();
+    if (renderSettingsPrimPath) {
+      total += renderSettingsPrimPath.value().capacity();
+    }
     // customLayerData (rough estimate - map of string to MetaVariable)
     for (const auto& kv : customLayerData) {
       total += kv.first.capacity();

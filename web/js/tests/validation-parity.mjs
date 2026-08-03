@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -56,6 +56,32 @@ function skipIfStaleWasm() {
   }
 }
 
+function spawnCommand(file, args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(file, args, {
+      cwd: repoRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (chunk) => {
+      stdout += String(chunk);
+    });
+    proc.stderr.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    proc.on('error', (error) => {
+      reject(error);
+    });
+    proc.on('close', () => {
+      if (stderr) {
+        stderr = stderr.trim();
+      }
+      resolve(stdout);
+    });
+  });
+}
+
 function parseNativeIssues(stdout) {
   const issues = [];
   for (const line of stdout.split(/\r?\n/)) {
@@ -74,17 +100,10 @@ function parseNativeIssues(stdout) {
   return issues;
 }
 
-function runNative(filePath) {
-  const proc = spawnSync(tusdcat, ['--validate-all', filePath], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  if (proc.error) {
-    throw proc.error;
-  }
-  assert.notEqual(proc.stdout, '', `tusdcat produced no validation report for ${filePath}`);
-  return parseNativeIssues(proc.stdout);
+async function runNative(filePath) {
+  const stdout = await spawnCommand(tusdcat, ['--validate-all', filePath]);
+  assert.notEqual(stdout, '', `tusdcat produced no validation report for ${filePath}`);
+  return parseNativeIssues(stdout);
 }
 
 async function runWeb(native, filePath) {
@@ -123,7 +142,7 @@ try {
   ];
 
   for (const filePath of allCases) {
-    const nativeIssues = runNative(filePath);
+    const nativeIssues = await runNative(filePath);
     const webIssues = await runWeb(native, filePath);
     compareIssues(filePath, nativeIssues, webIssues);
 
