@@ -4,6 +4,20 @@
 
 * npm or bun
 
+## Regression testing
+
+The complete web regression procedure is documented in
+[`docs/regression.md`](docs/regression.md). After installing dependencies and
+preparing the pinned Menagerie checkout:
+
+```bash
+npm run test:setup
+npm test
+```
+
+Focused profiles are available with `npm run test:node`, `npm run test:physics`,
+and `npm run test:browser`. Generated datasets and test artifacts are ignored.
+
 ## Setup
 
 ```

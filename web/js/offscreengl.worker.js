@@ -146,7 +146,7 @@ self.addEventListener('message', async (e) => {
 
 // ─── Init ──────────────────────────────────────────────────────────────────
 
-async function handleInit({ canvas, width, height, pixelRatio }) {
+async function handleInit({ canvas, width, height, pixelRatio, testMode = false }) {
     sendStatus('Initializing renderer…');
     try {
         initThreeJS(canvas, width, height, pixelRatio);
@@ -166,8 +166,12 @@ async function handleInit({ canvas, width, height, pixelRatio }) {
     sendStatus('Loading environment…');
     await loadEnvironment();
 
-    sendStatus('Loading default scene…');
-    await loadDefaultUSDFile();
+    if (testMode) {
+        sendStatus('Ready for test input');
+    } else {
+        sendStatus('Loading default scene…');
+        await loadDefaultUSDFile();
+    }
 
     animate();
 }
