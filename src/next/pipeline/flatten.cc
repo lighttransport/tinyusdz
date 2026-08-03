@@ -93,7 +93,7 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
                   std::string* err) {
   FlattenMemLog("after-read");
 
-  const Layer* root = root_owner.get();
+  const Layer* root = root_owner.get();  // nulled once composition succeeds
   if (!root) {
     if (err) *err = "no root layer";
     return false;
@@ -127,6 +127,13 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
       return false;
     }
     layer = composed.get();
+    // Release the RAW root layer: only `composed` is read from here on, and
+    // holding both through the write kept peak RSS at raw-root + composed +
+    // output simultaneously. The composed layer owns its own opinions, and any
+    // lazy Value keeps its own shared_ptr to the retained source buffer, so
+    // nothing below reads through `root_owner`.
+    root = nullptr;
+    root_owner.reset();
   }
   const auto after_compose = Clock::now();
   FlattenMemLog("after-compose");

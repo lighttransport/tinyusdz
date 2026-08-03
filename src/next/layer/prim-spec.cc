@@ -660,7 +660,17 @@ bool PrimSpec::set_property_value(PropNameId name_id, Value value) {
   PropSlot* slot = props_.find_mutable(name_id);
   if (!slot || slot->value_offset == UINT32_MAX) return false;
   if (!values_) return false;
-  uint32_t offset = values_->store(std::move(value));
+  // Replace IN PLACE like upsert_property() does. Appending instead left the
+  // previous Value -- potentially a multi-MB points/faceVertexIndices array --
+  // stranded in values_ forever (nothing compacts ValueStorage), so every
+  // array-edit / PathExpression resolution permanently doubled that
+  // attribute's memory.
+  uint32_t offset = slot->value_offset;
+  if (Value* dst = values_->get(offset)) {
+    *dst = std::move(value);
+  } else {
+    offset = values_->store(std::move(value));
+  }
   const Value* stored = values_->get(offset);
   slot->value_offset = offset;
   if (stored && stored->type_id() != TypeId::Invalid) {

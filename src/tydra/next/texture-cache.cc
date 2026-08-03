@@ -189,13 +189,18 @@ bool ResizeDecoded(DecodedImage* img, uint32_t w, uint32_t h, bool srgb) {
   src.channels = static_cast<int>(img->channels);
   src.bpp = 8;
   src.format = ::tinyusdz::Image::PixelFormat::UInt;
-  src.data = img->pixels;
+  // Move, don't copy: img->pixels is overwritten with dst.data below, so the
+  // source buffer is dead the moment ResizeImage returns. Copying held source
+  // + copy + destination (~3x an 8K RGBA image = 800 MB) instead of 2x, on
+  // exactly the oversized-texture path the budget exists to protect.
+  src.data = std::move(img->pixels);
 
   ::tinyusdz::Image dst;
   const ResizeFilter filter = srgb ? ResizeFilter::SRGB : ResizeFilter::Linear;
   std::string err;
   if (!ResizeImage(src, static_cast<int>(w), static_cast<int>(h), &dst, filter,
                    &err)) {
+    img->pixels = std::move(src.data);  // give the moved-from source back
     return false;
   }
   img->width = static_cast<uint32_t>(dst.width);
