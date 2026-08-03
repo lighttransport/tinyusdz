@@ -326,6 +326,14 @@ DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
     return result;
   }
 
+  // LZ4 takes srcSize as `int`. A blob larger than INT_MAX would pass a
+  // NEGATIVE srcSize, making LZ4 compute an end pointer BEHIND src and read
+  // out of bounds. kMaxLZ4ChunkSize is the same bound the compress side uses.
+  if (data_size > kMaxLZ4ChunkSize) {
+    result.error = "Compressed crate blob too large";
+    return result;
+  }
+
   result.data.resize(uncompressed_size);
   size_t out_pos = 0;
 
@@ -423,6 +431,28 @@ DecompressResult DecompressCrateBlobWithCapacityHint(
 
   const uint8_t* data_start = src + 1;
   const size_t data_size = src_size - 1;
+  if (data_size > kMaxLZ4ChunkSize) {  // see DecompressCrateBlob
+    result.error = "Compressed crate blob too large";
+    return result;
+  }
+
+  // Bound the doubling retry below by what LZ4 can physically produce: its
+  // maximum expansion ratio is 255:1. Without this a deliberately-corrupt blob
+  // (which never decodes successfully) drives the loop all the way to the 1 GiB
+  // limit, costing ~2 GiB of resize+decode work PER compressed array.
+  const size_t kMaxLZ4Ratio = 255;
+  size_t ratio_limit = (data_size > (std::numeric_limits<size_t>::max)() /
+                                        kMaxLZ4Ratio)
+                           ? (std::numeric_limits<size_t>::max)()
+                           : data_size * kMaxLZ4Ratio;
+  if (ratio_limit < uncompressed_size_limit) {
+    uncompressed_size_limit = ratio_limit;
+  }
+  if (uncompressed_size_limit == 0) {
+    result.success = true;
+    return result;
+  }
+
   size_t capacity =
       std::min(uncompressed_size_limit,
                (std::max)(size_t(1), initial_capacity));

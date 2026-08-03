@@ -23,6 +23,12 @@
 namespace tinyusdz {
 namespace next {
 
+/// Upper bound on the element count a growth op (`resize`/`minsize`) may ask
+/// for. Matches CrateReadOptions::max_array_elements. The op operand comes
+/// straight out of the file, so without this a few bytes of input drive an
+/// arbitrarily large std::vector<std::string>::resize().
+constexpr uint64_t kMaxArrayEditElements = 1ull << 30;
+
 /// Split a canonical PrintValue'd array "[e0, e1, ...]" into element texts.
 /// Only guaranteed for text this codebase printed (closed grammar: atoms,
 /// double-quoted strings, @assets@, (tuples)). Returns false on malformed

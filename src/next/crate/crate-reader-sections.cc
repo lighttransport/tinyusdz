@@ -851,7 +851,7 @@ bool CrateReader::Impl::ReadSpecs() {
       }
       specs_[i].path_index.value = path_vals[i];
       specs_[i].fieldset_index.value = fieldset_vals[i];
-      specs_[i].spec_type = static_cast<SpecType>(type_vals[i]);
+      specs_[i].spec_type = ToSpecType(type_vals[i]);
     }
     return true;
   }
@@ -885,21 +885,33 @@ bool CrateReader::Impl::ReadSpecs() {
       }
       uint32_t spec_type;
       std::memcpy(&spec_type, ptr, 4); ptr += 4;
-      specs_[i].spec_type = static_cast<SpecType>(spec_type);
+      specs_[i].spec_type = ToSpecType(spec_type);
     }
   } else {
     DecompressResult dr = DecompressIntegers(legacy_data.data(), legacy_data.size(),
                                               legacy_value_count, false);
     if (dr.success) {
-      const uint32_t* vals = reinterpret_cast<const uint32_t*>(dr.data.data());
+      // memcpy, not reinterpret_cast: dr.data is a vector<uint8_t> whose
+      // buffer has no uint32_t alignment guarantee (UB, and a trap on
+      // strict-alignment targets). The sibling decode paths above already
+      // do it this way.
+      size_t need_bytes = 0;
+      if (!safe::mul(legacy_value_count, sizeof(uint32_t), &need_bytes) ||
+          dr.data.size() < need_bytes) {
+        AddError("Decompressed specs shorter than expected");
+        return false;
+      }
       for (size_t i = 0; i < num_specs; i++) {
-        if (vals[i * 3 + 1] >= fieldset_indices_.size()) {
+        uint32_t triple[3];
+        std::memcpy(triple, dr.data.data() + i * 3 * sizeof(uint32_t),
+                    sizeof(triple));
+        if (triple[1] >= fieldset_indices_.size()) {
           AddError("Spec fieldset index out of range");
           return false;
         }
-        specs_[i].path_index.value = vals[i * 3];
-        specs_[i].fieldset_index.value = vals[i * 3 + 1];
-        specs_[i].spec_type = static_cast<SpecType>(vals[i * 3 + 2]);
+        specs_[i].path_index.value = triple[0];
+        specs_[i].fieldset_index.value = triple[1];
+        specs_[i].spec_type = ToSpecType(triple[2]);
       }
     } else {
       AddError("Failed to decompress specs with any format");
@@ -1001,6 +1013,16 @@ bool CrateReader::Impl::ReadPaths() {
     }
     return true;
   };
+
+  // `num_encoded` is an independent u64 from the file: it was only checked
+  // against the flat max_paths cap, NOT against the file-size-relative
+  // allocation guard that num_paths goes through. A ~60-byte crate declaring
+  // num_paths=1 / num_encoded=10M otherwise allocated ~130 MB across the four
+  // buffers below before reading a single byte.
+  if (!CheckElementAllocation(n, sizeof(uint32_t) * 3 + 1,
+                              "Path decode buffers")) {
+    return false;
+  }
 
   std::vector<uint32_t> path_indices(n);
   std::vector<uint32_t> element_tokens(n);

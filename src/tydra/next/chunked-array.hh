@@ -213,6 +213,30 @@ class ChunkedArray {
     return (*this)[idx];
   }
 
+  // Copy out N consecutive elements starting at `base`.
+  //
+  // NEVER take `&arr[i]` and then index off it: a chunk is a separate
+  // allocation, so a run of elements straddles the chunk boundary whenever
+  // `base % kElementsPerChunk + N > kElementsPerChunk`. For the interleaved
+  // vertex arrays that is routine (FloatChunked holds 16384 elements/chunk and
+  // 16384 % 3 == 1, so every ~5461st xyz triple straddles), and the tail chunk
+  // is exact-sized so reading past it is out of bounds even for N == 2.
+  // Callers must have bounds-checked `base + N <= size()`.
+  template <size_t N>
+  void read_n(size_t base, T* out) const {
+    const size_t chunk_idx = base / kElementsPerChunk;
+    const size_t offset = base % kElementsPerChunk;
+    if (offset + N <= kElementsPerChunk) {
+      const T* p = chunks_[chunk_idx].get() + offset;
+      for (size_t i = 0; i < N; ++i) out[i] = p[i];
+      return;
+    }
+    for (size_t i = 0; i < N; ++i) out[i] = (*this)[base + i];
+  }
+
+  void read2(size_t base, T* out) const { read_n<2>(base, out); }
+  void read3(size_t base, T* out) const { read_n<3>(base, out); }
+
   T& front() { return (*this)[0]; }
   const T& front() const { return (*this)[0]; }
   T& back() { return (*this)[size_ - 1]; }

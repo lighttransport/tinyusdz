@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <unordered_set>
 #include <vector>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <atomic>
@@ -1547,6 +1548,19 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
   std::vector<Frame> stack;
   stack.push_back(Frame{&spec, depth, 0, false});
 
+  // Cycle guard. The explicit stack removed the C-stack overflow but not the
+  // non-termination: a malformed/adversarial USDC whose primChildren links
+  // form a cycle (A -> B -> A) otherwise writes output forever until OOM.
+  // Composition already assumes child indices can be stale or cyclic —
+  // Compositor::GraftSubtree carries the same defense.
+  // The `on_stack` set is what actually guarantees termination (a prim already
+  // open on this path is never re-entered, so depth is bounded by prim_count).
+  // kMaxWriteDepth is only a cheap backstop and must stay far above any
+  // legitimate hierarchy — test_deep_stage_writer alone nests 8192 deep.
+  std::unordered_set<const PrimSpec*> on_stack;
+  on_stack.insert(&spec);
+  constexpr int kMaxWriteDepth = 1 << 20;
+
   while (!stack.empty()) {
     Frame& frame = stack.back();
     if (!frame.opened) {
@@ -1570,6 +1584,11 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       if (opts.composed_stage_output && !child->meta().active) continue;
 
       const int child_depth = frame.depth + 1;
+      // Skip a child already open on this path (cycle) or beyond the depth
+      // ceiling, rather than recursing into it forever.
+      if (child_depth >= kMaxWriteDepth || !on_stack.insert(child).second) {
+        continue;
+      }
       os << "\n";
       stack.push_back(Frame{child, child_depth, 0, false});
       descended = true;
@@ -1579,6 +1598,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
 
     WriteIndent(os, frame.depth, opts.indent);
     os << "}\n";
+    on_stack.erase(frame.prim);
     stack.pop_back();
   }
 }

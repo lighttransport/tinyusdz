@@ -1813,34 +1813,68 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
   // first when flattening multi-set USDA), then the legacy single string.
   VariantSelection legacy = ParseVariantSelection(prim.meta().variantSelection);
 
-  for (const auto& vs : prim.meta().variantSets()) {
-    std::string chosen = vs.selected;
+  // Iterate a SNAPSHOT of the set names, never `prim.meta().variantSets()`
+  // directly: the body calls CopyLocalOpinions(prim, ...) / ResolveRefArc(),
+  // both of which push_back onto that very vector when the variant content
+  // contributes a set the prim does not have yet. A range-for over it is a
+  // use-after-free the moment the vector reallocates. Sets that appear DURING
+  // the pass are deliberately not applied here — the caller runs a second
+  // ApplyVariants pass for arcs merged by references.
+  std::vector<std::string> set_names;
+  set_names.reserve(prim.meta().variantSets().size());
+  for (const auto& vs : prim.meta().variantSets()) set_names.push_back(vs.name);
+
+  for (const std::string& set_name : set_names) {
+    // Re-look up the set each iteration; a prior iteration may have
+    // reallocated the vector.
+    auto find_set = [&prim](const std::string& n) -> const VariantSetData* {
+      for (const auto& s : prim.meta().variantSets()) {
+        if (s.name == n) return &s;
+      }
+      return nullptr;
+    };
+    const VariantSetData* vs_p = find_set(set_name);
+    if (!vs_p) continue;
+
+    std::string chosen = vs_p->selected;
     // Prim-scoped override ("<primPath>{<set>}") wins over the bare-set key.
     auto override_it = options_.variant_overrides.find(
-        prim.path().str() + "{" + vs.name + "}");
+        prim.path().str() + "{" + set_name + "}");
     if (override_it == options_.variant_overrides.end()) {
-      override_it = options_.variant_overrides.find(vs.name);
+      override_it = options_.variant_overrides.find(set_name);
     }
     if (override_it != options_.variant_overrides.end()) {
       chosen = override_it->second;
     }
     if (chosen.empty()) {
       for (const auto& sel : prim.meta().variantSelections()) {
-        if (sel.first == vs.name) {
+        if (sel.first == set_name) {
           chosen = sel.second;
           break;
         }
       }
     }
-    if (chosen.empty() && vs.name == legacy.variant_set) {
+    if (chosen.empty() && set_name == legacy.variant_set) {
       chosen = legacy.variant_name;
     }
     if (chosen.empty()) continue;
 
-    for (const auto& variant : vs.variants) {
+    // Copy the selected option out before applying it: ApplyOneVariant mutates
+    // `prim`, which owns the vector `variant` would otherwise point into (and
+    // the whole recursion below reads through that reference). VariantData
+    // copies are shallow in practice — Values are COW and `content` is a
+    // shared_ptr<Layer>.
+    bool have_variant = false;
+    VariantData selected_variant;
+    for (const auto& variant : vs_p->variants) {
       if (variant.name != chosen) continue;
-      ApplyOneVariant(prim, layer, anchor_path, depth, variant);
+      selected_variant = variant;
+      have_variant = true;
       break;
+    }
+    vs_p = nullptr;  // must not be used across the mutating calls below
+    if (have_variant) {
+      ApplyOneVariant(prim, layer, anchor_path, depth, selected_variant);
     }
 
     // Read the selected variant's holder prim ("<prim>/{vset=sel}"): copy its
@@ -1850,9 +1884,9 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
     // covers reader-produced variants whose content lives in the layer.)
     const std::string dst = prim.path().str();
     const std::string holder =
-        dst + "/{" + vs.name + "=" + chosen + "}";
+        dst + "/{" + set_name + "=" + chosen + "}";
     const std::string holder_legacy =
-        dst + "/" + prim.name() + "{" + vs.name + "=" + chosen + "}";
+        dst + "/" + prim.name() + "{" + set_name + "=" + chosen + "}";
     std::vector<std::string> holders{holder};
     if (holder_legacy != holder) holders.push_back(holder_legacy);
     for (const std::string& hp : holders) {
@@ -1870,7 +1904,7 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
     // "{vset=sel}" path segment. Unselected variant content keeps its brace
     // path and is filtered out at append time.
     const std::string holder_alt =
-        dst + "{" + vs.name + "=" + chosen + "}";
+        dst + "{" + set_name + "=" + chosen + "}";
     // Only arcs expanded for this prim can contribute matching variant-holder
     // paths. Older pending grafts belong to previously resolved prims; walking
     // them for every instance made large LOD-heavy scenes O(instances*grafts).
