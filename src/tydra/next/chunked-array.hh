@@ -16,13 +16,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
+#include <limits>
 #include <new>
 #include <vector>
 #include "safe-arithmetic.hh"
 #include <memory>
-#include <new>
 #include <type_traits>
-#include <vector>
 
 namespace tinyusdz {
 namespace tydra {
@@ -295,16 +295,23 @@ class ChunkedArray {
   }
 
   // Copy to pre-allocated buffer of exactly size() elements.
-  void copy_to(T* dest) const {
+  bool copy_to(T* dest) const {
+    if (size_ != 0 && !dest) return false;
     size_t copied = 0;
     for (size_t i = 0; i < chunks_.size() && copied < size_; ++i) {
       size_t count = chunk_size(i);
       if (count == 0) break;
       size_t chunk_bytes;
-      if (!safe::mul(count, sizeof(T), &chunk_bytes)) return;
+      if (!safe::mul(count, sizeof(T), &chunk_bytes)) return false;
       std::memcpy(dest + copied, chunks_[i].get(), chunk_bytes);
       copied += count;
     }
+    return copied == size_;
+  }
+
+  bool copy_to(T* dest, size_t dest_count) const {
+    if (dest_count < size_) return false;
+    return copy_to(dest);
   }
 
   // Iterator support

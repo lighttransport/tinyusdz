@@ -35,6 +35,13 @@ render() {
     cat "$log" >&2
     return 1
   fi
+  # --rt is intentionally a graceful fallback in tusdview. A device without
+  # ray-query support therefore exits successfully after rendering with the
+  # raster backend; this is still a capability skip for an RT-only test.
+  if grep -Eqi 'ray tracing is unavailable|ray-query unavailable' "$log"; then
+    echo "SKIP: Vulkan ray-query unavailable"
+    exit 77
+  fi
   [[ -s "$image" ]] || { echo "FAIL: missing $image" >&2; return 1; }
   if [[ "$variant" == multi ]] &&
      ! grep -q 'non-truncating multi-TLAS: 3 instances in 2 chunks' "$log"; then

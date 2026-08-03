@@ -8,6 +8,8 @@
 #include "next/prim/path.hh"
 #include <cstring>
 #include <cmath>
+#include <string_view>
+#include <unordered_map>
 
 namespace tinyusdz {
 namespace tydra {
@@ -557,9 +559,9 @@ void MatMulD(double* dst, const double* a, const double* b) {
 // Read a property either at the default value (NaN time) or held at a specific
 // time sample. A NaN time keeps the exact default-value path (byte-identical to
 // the previous, time-unaware behaviour).
-const Value* PropAtTime(const UsdPrim& prim, const std::string& name,
+const Value* PropAtTime(const UsdPrim& prim,
+                        ::tinyusdz::next::PropNameId name_id,
                         double time) {
-  auto name_id = tinyusdz::next::GetPropNameTable().find(name);
   if (!name_id.is_valid()) return nullptr;
   if (std::isnan(time)) return prim.GetPropertyValue(name_id);
   // Linear interpolation between samples (pxr semantics); held/default
@@ -577,9 +579,10 @@ const Value* PropAtTime(const UsdPrim& prim, const std::string& name,
 // Read a 3-component op value (translate/scale/rotate) as double, trying
 // float3 then double3 (matches the legacy evaluator's exact-type promotion),
 // then the converting read for authored half3 (raw half-bit lanes).
-bool ReadVec3D(const UsdPrim& prim, const std::string& name, double v[3],
+bool ReadVec3D(const UsdPrim& prim, ::tinyusdz::next::PropNameId name_id,
+               double v[3],
                double time) {
-  const Value* val = PropAtTime(prim, name, time);
+  const Value* val = PropAtTime(prim, name_id, time);
   if (!val) return false;
   if (const float* f = val->as_float3()) {
     v[0] = double(f[0]); v[1] = double(f[1]); v[2] = double(f[2]);
@@ -597,9 +600,10 @@ bool ReadVec3D(const UsdPrim& prim, const std::string& name, double v[3],
   return false;
 }
 
-bool ReadFloat1D(const UsdPrim& prim, const std::string& name, double* out,
+bool ReadFloat1D(const UsdPrim& prim, ::tinyusdz::next::PropNameId name_id,
+                 double* out,
                  double time) {
-  const Value* val = PropAtTime(prim, name, time);
+  const Value* val = PropAtTime(prim, name_id, time);
   if (!val) return false;
   if (const float* f = val->as_float()) { *out = double(*f); return true; }
   if (const double* d = val->as_double()) { *out = *d; return true; }
@@ -663,10 +667,10 @@ void Invert4x4D(const double* a, double* out) {
 
 // Strip "xformOp:" prefix and any ":suffix"; returns the bare op name
 // (e.g. "rotateXYZ"). Returns empty for non-xformOp tokens.
-std::string XformOpName(const std::string& tok) {
-  const std::string kPfx = "xformOp:";
-  if (tok.rfind(kPfx, 0) != 0) return std::string();
-  std::string rest = tok.substr(kPfx.size());
+std::string_view XformOpName(std::string_view tok) {
+  constexpr std::string_view kPfx = "xformOp:";
+  if (tok.rfind(kPfx, 0) != 0) return std::string_view();
+  std::string_view rest = tok.substr(kPfx.size());
   size_t colon = rest.find(':');
   if (colon != std::string::npos) rest = rest.substr(0, colon);
   return rest;
@@ -687,18 +691,19 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
   if (!order || order->empty()) return true;  // no ops -> identity
 
   for (size_t i = 0; i < order->size(); ++i) {
-    std::string tok = (*order)[i];
+    std::string_view tok = (*order)[i];
     bool inverted = false;
     if (tok.rfind("!invert!", 0) == 0) {
       inverted = true;
-      tok = tok.substr(8);
+      tok.remove_prefix(8);
     }
     if (tok == "!resetXformStack!") {
       if (i == 0 && reset) *reset = true;
       continue;
     }
-    const std::string op = XformOpName(tok);
+    const std::string_view op = XformOpName(tok);
     if (op.empty()) continue;
+    const auto name_id = ::tinyusdz::next::GetPropNameTable().find(tok);
 
     double m[16];
     SetIdentity(m);
@@ -706,7 +711,7 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
     if (op == "transform") {
       double mm[16];
       bool got = false;
-      if (const Value* val = PropAtTime(prim, tok, time)) {
+      if (const Value* val = PropAtTime(prim, name_id, time)) {
         if (const double* md = val->as_matrix4d()) {
           std::memcpy(mm, md, 16 * sizeof(double));
           got = true;
@@ -721,16 +726,16 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
       }
     } else if (op == "translate") {
       double v[3] = {0, 0, 0};
-      ReadVec3D(prim, tok, v, time);
+      ReadVec3D(prim, name_id, v, time);
       if (inverted) { v[0] = -v[0]; v[1] = -v[1]; v[2] = -v[2]; }
       MakeTranslationD(m, v[0], v[1], v[2]);
     } else if (op == "scale") {
       double v[3] = {1, 1, 1};
-      ReadVec3D(prim, tok, v, time);
+      ReadVec3D(prim, name_id, v, time);
       if (inverted) { v[0] = 1.0 / v[0]; v[1] = 1.0 / v[1]; v[2] = 1.0 / v[2]; }
       MakeScaleD(m, v[0], v[1], v[2]);
     } else if (op == "orient") {
-      const Value* val = PropAtTime(prim, tok, time);
+      const Value* val = PropAtTime(prim, name_id, time);
       double q[4] = {1, 0, 0, 0};  // w,x,y,z
       if (val) {
         float h[4];
@@ -746,14 +751,14 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
       MakeOrientD(m, q[0], q[1], q[2], q[3]);
     } else if (op == "rotateX" || op == "rotateY" || op == "rotateZ") {
       double a = 0;
-      ReadFloat1D(prim, tok, &a, time);
+      ReadFloat1D(prim, name_id, &a, time);
       if (inverted) a = -a;
       MakeRotAxisD(m, op[6], a);  // 'X'/'Y'/'Z'
     } else if (op.size() == 9 && op.rfind("rotate", 0) == 0) {
       // rotateXYZ / rotateZYX / ... : product of single-axis rotations in the
       // letter order (m = m * R_axis), exactly as XformEvaluator does.
       double v[3] = {0, 0, 0};
-      ReadVec3D(prim, tok, v, time);
+      ReadVec3D(prim, name_id, v, time);
       const char ax[3] = {op[6], op[7], op[8]};
       // map axis letter -> angle component (X->v[0], Y->v[1], Z->v[2]).
       auto angleFor = [&](char c) -> double {
@@ -880,10 +885,11 @@ std::vector<UsdPrim> GetDescendants(const UsdPrim& prim) {
   // callers can build Layers programmatically; recursing here made a valid
   // deep hierarchy exhaust the native/WASM stack.
   std::vector<UsdPrim> stack;
-  std::vector<UsdPrim> children = prim.GetChildren();
-  stack.reserve(children.size());
-  for (auto it = children.rbegin(); it != children.rend(); ++it) {
-    stack.push_back(*it);
+  const size_t child_count = prim.GetChildCount();
+  stack.reserve(child_count);
+  for (size_t i = child_count; i > 0; --i) {
+    const UsdPrim child = prim.GetChildAt(i - 1);
+    if (child.IsValid()) stack.push_back(child);
   }
 
   while (!stack.empty()) {
@@ -893,9 +899,10 @@ std::vector<UsdPrim> GetDescendants(const UsdPrim& prim) {
 
     result.push_back(current);
 
-    children = current.GetChildren();
-    for (auto it = children.rbegin(); it != children.rend(); ++it) {
-      stack.push_back(*it);
+    const size_t child_count = current.GetChildCount();
+    for (size_t i = child_count; i > 0; --i) {
+      const UsdPrim child = current.GetChildAt(i - 1);
+      if (child.IsValid()) stack.push_back(child);
     }
   }
   return result;
@@ -924,8 +931,10 @@ std::vector<GeomSubset> GetGeomSubsets(const UsdPrim& mesh_prim) {
   std::vector<GeomSubset> result;
   if (!mesh_prim.IsValid()) return result;
 
-  auto children = mesh_prim.GetChildren();
-  for (const auto& child : children) {
+  const size_t child_count = mesh_prim.GetChildCount();
+  for (size_t i = 0; i < child_count; ++i) {
+    const UsdPrim child = mesh_prim.GetChildAt(i);
+    if (!child.IsValid()) continue;
     if (IsGeomSubset(child)) {
       GeomSubset gs;
       gs.name = child.GetName();
@@ -1042,17 +1051,30 @@ std::vector<std::string> ReadTokenArray(const UsdPrim& prim,
   return out;
 }
 
-// Read a matrix4d[] / double[] array as flat doubles (16 per matrix).
-std::vector<double> ReadDoubleArray(const UsdPrim& prim,
-                                    const std::string& name) {
-  const Value* v = GetAttribute(prim, name);
-  if (!v) return {};
-  if (const std::vector<double>* a = v->as_double_array()) return *a;
-  // Fall back to a float-backed array (some encoders store as float).
-  if (const std::vector<float>* f = v->as_float_array()) {
-    return std::vector<double>(f->begin(), f->end());
+// Read a matrix4d[] / double[] array without materializing a conversion copy.
+// Some encoders author float[] instead; the view keeps that representation and
+// converts one lane at a time at the final destination.
+struct DoubleArrayView {
+  const std::vector<double>* doubles = nullptr;
+  const std::vector<float>* floats = nullptr;
+
+  size_t size() const {
+    return doubles ? doubles->size() : (floats ? floats->size() : 0);
   }
-  return {};
+
+  double operator[](size_t index) const {
+    return doubles ? (*doubles)[index] : double((*floats)[index]);
+  }
+};
+
+DoubleArrayView ReadDoubleArrayView(const UsdPrim& prim,
+                                    const std::string& name) {
+  DoubleArrayView view;
+  const Value* v = GetAttribute(prim, name);
+  if (!v) return view;
+  view.doubles = v->as_double_array();
+  if (!view.doubles) view.floats = v->as_float_array();
+  return view;
 }
 
 void FillIdentity(float* m16) {
@@ -1069,16 +1091,16 @@ std::vector<BlendShapeInfo> GetBlendShapes(const UsdPrim& mesh_prim) {
   // (relationship) paths. The per-shape point/normal offsets live in the
   // referenced BlendShape prims; resolving those requires a Stage, so callers
   // fetch them via the core GetBlendShapeData(stage, prim) using `path`.
-  const std::vector<std::string> names =
+  std::vector<std::string> names =
       ReadTokenArray(mesh_prim, "skel:blendShapes");
-  const std::vector<std::string> targets =
+  std::vector<std::string> targets =
       GetRelationshipTargets(mesh_prim, "skel:blendShapeTargets");
 
   const size_t n = std::max(names.size(), targets.size());
   result.resize(n);
   for (size_t i = 0; i < n; ++i) {
-    if (i < names.size()) result[i].name = names[i];
-    if (i < targets.size()) result[i].path = targets[i];
+    if (i < names.size()) result[i].name = std::move(names[i]);
+    if (i < targets.size()) result[i].path = std::move(targets[i]);
   }
   return result;
 }
@@ -1095,13 +1117,27 @@ bool GetSkeletonInfo(const UsdPrim& skel_prim, SkeletonInfo* out) {
   out->name = skel_prim.GetName();
   out->path = skel_prim.GetPath().str();
 
-  const std::vector<std::string> joints = ReadTokenArray(skel_prim, "joints");
-  out->joint_order = joints;
+  out->joint_order = ReadTokenArray(skel_prim, "joints");
+  const std::vector<std::string>& joints = out->joint_order;
 
-  const std::vector<double> bind = ReadDoubleArray(skel_prim, "bindTransforms");
-  const std::vector<double> rest = ReadDoubleArray(skel_prim, "restTransforms");
+  const DoubleArrayView bind =
+      ReadDoubleArrayView(skel_prim, "bindTransforms");
+  const DoubleArrayView rest =
+      ReadDoubleArrayView(skel_prim, "restTransforms");
 
   out->joints.resize(joints.size());
+  // Parent lookup is quadratic if every hierarchical joint scans the full
+  // skeleton. Keep the common small-skeleton path allocation-free, but use
+  // non-owning views into `joints` for large skeletons so lookup is O(1)
+  // without duplicating the authored path strings.
+  std::unordered_map<std::string_view, int32_t> joint_index;
+  if (joints.size() > 32) {
+    joint_index.reserve(joints.size());
+    joint_index.max_load_factor(0.7f);
+    for (size_t i = 0; i < joints.size(); ++i) {
+      joint_index.emplace(joints[i], static_cast<int32_t>(i));
+    }
+  }
   for (size_t i = 0; i < joints.size(); ++i) {
     JointInfo& j = out->joints[i];
     j.path = joints[i];
@@ -1112,22 +1148,39 @@ bool GetSkeletonInfo(const UsdPrim& skel_prim, SkeletonInfo* out) {
     j.name = (slash == std::string::npos) ? joints[i] : joints[i].substr(slash + 1);
     j.parent_index = -1;
     if (slash != std::string::npos) {
-      const std::string parent_path = joints[i].substr(0, slash);
-      for (size_t k = 0; k < joints.size(); ++k) {
-        if (joints[k] == parent_path) {
-          j.parent_index = static_cast<int32_t>(k);
-          break;
+      const std::string_view parent_path(joints[i].data(), slash);
+      if (!joint_index.empty()) {
+        const auto parent = joint_index.find(parent_path);
+        if (parent != joint_index.end()) {
+          j.parent_index = parent->second;
+        }
+      } else {
+        for (size_t k = 0; k < joints.size(); ++k) {
+          if (joints[k].size() == parent_path.size() &&
+              joints[k].compare(0, parent_path.size(), parent_path.data(),
+                                parent_path.size()) == 0) {
+            j.parent_index = static_cast<int32_t>(k);
+            break;
+          }
         }
       }
     }
 
-    if (i * 16 + 16 <= bind.size()) {
-      for (int e = 0; e < 16; ++e) j.bind_transform[e] = float(bind[i * 16 + e]);
+    size_t bind_offset = 0;
+    if (bind.size() >= 16 && i <= (bind.size() - 16) / 16) {
+      bind_offset = i * 16;
+      for (int e = 0; e < 16; ++e) {
+        j.bind_transform[e] = static_cast<float>(bind[bind_offset + e]);
+      }
     } else {
       FillIdentity(j.bind_transform);
     }
-    if (i * 16 + 16 <= rest.size()) {
-      for (int e = 0; e < 16; ++e) j.rest_transform[e] = float(rest[i * 16 + e]);
+    size_t rest_offset = 0;
+    if (rest.size() >= 16 && i <= (rest.size() - 16) / 16) {
+      rest_offset = i * 16;
+      for (int e = 0; e < 16; ++e) {
+        j.rest_transform[e] = static_cast<float>(rest[rest_offset + e]);
+      }
     } else {
       FillIdentity(j.rest_transform);
     }

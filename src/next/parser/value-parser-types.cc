@@ -114,14 +114,15 @@ const TypeNameEntry kTypeNames[] = {
 };
 
 const std::unordered_map<std::string, TypeId>& GetTypeNameMap() {
-  static std::unordered_map<std::string, TypeId> map;
-  static bool initialized = false;
-  if (!initialized) {
+  // Function-local static initialization is synchronized. The old mutable
+  // flag raced when concurrent USDA loads parsed their first typed value.
+  static const std::unordered_map<std::string, TypeId> map = [] {
+    std::unordered_map<std::string, TypeId> result;
     for (const auto& entry : kTypeNames) {
-      map[entry.name] = entry.id;
+      result.emplace(entry.name, entry.id);
     }
-    initialized = true;
-  }
+    return result;
+  }();
   return map;
 }
 

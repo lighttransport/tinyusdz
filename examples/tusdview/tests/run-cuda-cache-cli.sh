@@ -21,10 +21,10 @@ check_missing() {
 check_missing --cuda-cache-dir
 check_missing --cuda-cache-dir=
 
-"$BIN" --cuda-cache-dir=/tmp/tusdview-cache-cli --help 2>&1 |
-  grep -q -- '--cuda-cache-dir PATH' || {
-    echo "FAIL: equals-form cache directory was not accepted"
-    exit 1
-  }
+help_log="$($BIN --cuda-cache-dir=/tmp/tusdview-cache-cli --help 2>&1)"
+grep -q -- '--cuda-cache-dir PATH' <<<"$help_log" || {
+  echo "FAIL: equals-form cache directory was not accepted"
+  exit 1
+}
 
 echo "PASS: CUDA cache directory CLI forms and diagnostics"

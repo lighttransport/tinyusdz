@@ -73,7 +73,8 @@ run() {
 render() {
   local name="$1" scene="$2"; shift 2
   run "$BIN" --headless --backend vk --config "$OUT/config.json" --frames 4 \
-    --no-grid --mode shaded --view-dir 0,0,-1 --screenshot "$OUT/$name.ppm" \
+    --no-grid --mode shaded --dome-ibl low --view-dir 0,0,-1 \
+    --screenshot "$OUT/$name.ppm" \
     "$@" "$scene" >"$OUT/$name.log" 2>&1
 }
 render next-0 "$OUT/dome-0.usda" || { echo "SKIP: Vulkan unavailable"; exit "$SKIP"; }

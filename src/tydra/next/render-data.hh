@@ -201,21 +201,29 @@ struct VertexAttribute {
   size_t element_count() const {
     switch (format) {
       case VertexFormat::Float:
-      case VertexFormat::Int:
-      case VertexFormat::UInt:
         return float_data.size();
+      case VertexFormat::Int:
+        return int_data.size();
+      case VertexFormat::UInt:
+        return uint_data.size();
       case VertexFormat::Vec2:
-      case VertexFormat::IVec2:
-      case VertexFormat::UVec2:
         return float_data.size() / 2;
+      case VertexFormat::IVec2:
+        return int_data.size() / 2;
+      case VertexFormat::UVec2:
+        return uint_data.size() / 2;
       case VertexFormat::Vec3:
-      case VertexFormat::IVec3:
-      case VertexFormat::UVec3:
         return float_data.size() / 3;
+      case VertexFormat::IVec3:
+        return int_data.size() / 3;
+      case VertexFormat::UVec3:
+        return uint_data.size() / 3;
       case VertexFormat::Vec4:
-      case VertexFormat::IVec4:
-      case VertexFormat::UVec4:
         return float_data.size() / 4;
+      case VertexFormat::IVec4:
+        return int_data.size() / 4;
+      case VertexFormat::UVec4:
+        return uint_data.size() / 4;
     }
     return 0;
   }
@@ -404,6 +412,8 @@ struct RenderPoints {
   bool has_widths() const { return !widths.empty(); }
   bool has_colors() const { return !colors.empty(); }
   bool has_opacities() const { return !opacities.empty(); }
+  void compact();
+  bool has_alloc_failure() const;
   size_t memory_usage() const;
 };
 
@@ -465,6 +475,9 @@ struct RenderCurves {
   }
   bool has_widths() const { return !widths.empty(); }
   bool has_colors() const { return !colors.empty(); }
+  bool has_opacities() const { return !opacities.empty(); }
+  void compact();
+  bool has_alloc_failure() const;
   size_t memory_usage() const;
 };
 

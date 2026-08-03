@@ -186,6 +186,11 @@ tusdview under them — including **GPU-Assisted Validation** for shader
 descriptor-OOB / `VK_ERROR_DEVICE_LOST` faults that plain validation can't see.
 The procedure is in that doc; the threaded VK-RT case study is in
 [examples/tusdview/doc/threading-stage2.md](examples/tusdview/doc/threading-stage2.md).
+For NVIDIA hardware viewer regression under a headless display, use the
+documented `xvfb-run` + `TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON` procedure in
+[doc/testing-cpp.md](doc/testing-cpp.md#headless-nvidia-viewer-regression); do
+not force `TUSDVIEW_VK_DEVICE=nvidia` unless the configure-time Vulkan probe
+confirms an NVIDIA physical device.
 
 ## Testing
 

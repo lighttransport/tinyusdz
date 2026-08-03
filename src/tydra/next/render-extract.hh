@@ -49,6 +49,10 @@ struct RenderPrimRecord {
 
 struct RenderExtractOptions {
   double time_code = 0.0;
+  // Defensive traversal ceiling for composed or programmatically-created
+  // stages. Zero keeps the historical unlimited behavior.
+  size_t max_depth = 256;
+  size_t max_records = 0;
   bool include_inactive = false;
   bool stop_at_point_instancers = false;
   bool stop_at_native_instances = false;
@@ -62,6 +66,10 @@ struct RenderExtractOptions {
 struct RenderExtractResult {
   std::vector<RenderPrimRecord> records;
   std::vector<RenderPrimRecord> meshes;
+  // Points have mesh-like topology but a separate converter/data container.
+  // Keeping this list lets streaming conversion release `records` before
+  // decoding large point payloads.
+  std::vector<RenderPrimRecord> points;
   std::vector<RenderPrimRecord> point_instancers;
   std::vector<RenderPrimRecord> native_instances;
   std::vector<RenderPrimRecord> lights;
@@ -71,6 +79,7 @@ struct RenderExtractResult {
   std::vector<RenderPrimRecord> curves;
   std::vector<RenderPrimRecord> skeletons;
   std::unordered_set<std::string> native_prototype_holders;
+  bool limit_exceeded = false;
 };
 
 struct PointInstancerData {

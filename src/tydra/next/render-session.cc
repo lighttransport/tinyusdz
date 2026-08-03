@@ -98,6 +98,42 @@ struct RenderSession::Impl {
     return changes.stage_metadata_changed && kind == RenderResourceKind::Node;
   }
 
+  bool HasRenderEffect(const ::tinyusdz::next::StageChangeSet& changes) const {
+    if (changes.full_resync) return true;
+    if (changes.stage_metadata_changed) return true;
+    for (const auto& change : changes.prims) {
+      if (::tinyusdz::next::HasStageChange(
+              change.flags, ::tinyusdz::next::StageChangeFlag::Resync)) {
+        return true;
+      }
+      for (const auto& kind_map : ids) {
+        for (const auto& resource : kind_map.second) {
+          if (KindAffected(kind_map.first, change.flags) &&
+              PathRelated(resource.first, change.path.str())) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  RenderUpdateResult ApplyNoOp(const ::tinyusdz::next::StageSnapshot& snapshot,
+                               SceneUpdateSink* sink) {
+    RenderUpdateResult out;
+    out.revision = revision;
+    if (!sink->BeginUpdate(revision, snapshot.revision, false) ||
+        !sink->UpdateCatalog(scene) || !sink->EndUpdate()) {
+      out.error = "RenderSession: sink rejected no-op update";
+      sink->AbortUpdate();
+      return out;
+    }
+    revision = snapshot.revision;
+    out.revision = revision;
+    out.success = true;
+    return out;
+  }
+
   RenderId IdFor(RenderResourceKind kind, const std::string& key,
                  IdMap* next_keys) {
     IdMap& current = ids[kind];
@@ -155,17 +191,8 @@ struct RenderSession::Impl {
     // any render-affecting data (for example an edit batch that resolves to the
     // already-authored value). Preserve the sink's revision protocol without
     // paying for a complete Stage -> RenderScene conversion.
-    if (revision != 0 && changes.empty()) {
-      if (!sink->BeginUpdate(revision, snapshot.revision, false) ||
-          !sink->UpdateCatalog(scene) || !sink->EndUpdate()) {
-        out.error = "RenderSession: sink rejected no-op update";
-        sink->AbortUpdate();
-        return out;
-      }
-      revision = snapshot.revision;
-      out.revision = revision;
-      out.success = true;
-      return out;
+    if (revision != 0 && (changes.empty() || !HasRenderEffect(changes))) {
+      return ApplyNoOp(snapshot, sink);
     }
 
     ConvertResult converted = converter.Convert(*snapshot.stage);

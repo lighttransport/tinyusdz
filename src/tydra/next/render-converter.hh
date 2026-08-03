@@ -7,8 +7,10 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <functional>
+#include <unordered_map>
 
 #include "render-data.hh"
 #include "render-extract.hh"
@@ -152,6 +154,12 @@ struct ConverterConfig {
   CurvesConfig curves;
   PointInstancerConfig point_instancer;
   AnimationConfig animation;
+
+  // Defensive namespace limits for composed/programmatically-created stages.
+  // Zero disables the corresponding limit; depth defaults to the core's
+  // 256-level safety ceiling.
+  size_t max_render_depth = 256;
+  size_t max_render_records = 0;
 
   // Time code for evaluation
   double time_code = 0.0;
@@ -338,6 +346,11 @@ class RenderSceneConverter {
   /// Find-or-create an image record for `file`; returns its id (-1 on empty).
   int32_t ResolveImageId(RenderScene* scene, const std::string& file,
                          ColorSpace color_space, uint32_t asset_anchor_id = 0);
+  int32_t FindCachedImageId(RenderScene* scene, const std::string& resolved,
+                            ColorSpace color_space);
+  void RememberImageId(RenderScene* scene, const std::string& resolved,
+                       ColorSpace color_space, int32_t id);
+  void ResetImageIdCache();
 
   // Material extraction
   bool ExtractPreviewSurface(const ::tinyusdz::next::Stage& stage,
@@ -361,6 +374,13 @@ class RenderSceneConverter {
   ConverterConfig config_;
   std::string last_error_;
   std::vector<std::string> warnings_;
+  const RenderScene* image_cache_scene_ = nullptr;
+  // Keep only a compact path hash in the transient dedup index.  The
+  // resolved path is already retained by RenderScene::images; duplicating it
+  // here would turn a CPU optimization into a sizeable memory tax for scenes
+  // with many textures.  FindCachedImageId verifies candidates to make hash
+  // collisions harmless.
+  std::unordered_multimap<uint64_t, int32_t> image_id_cache_;
 };
 
 //
