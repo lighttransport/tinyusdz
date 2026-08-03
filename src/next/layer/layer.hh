@@ -47,6 +47,8 @@ struct LayerMeta {
   std::string colorManagementSystem;  // token
   bool colorConfiguration_set = false;
   bool colorManagementSystem_set = false;
+  std::string renderSettingsPrimPath;
+  bool renderSettingsPrimPath_set = false;
 
   std::string doc;
   std::string comment;
@@ -122,6 +124,10 @@ struct LayerMeta {
     if (!colorManagementSystem_set && weaker.colorManagementSystem_set) {
       colorManagementSystem = weaker.colorManagementSystem;
       colorManagementSystem_set = true;
+    }
+    if (!renderSettingsPrimPath_set && weaker.renderSettingsPrimPath_set) {
+      renderSettingsPrimPath = weaker.renderSettingsPrimPath;
+      renderSettingsPrimPath_set = true;
     }
     if (!upAxis_set && weaker.upAxis_set) {
       upAxis = weaker.upAxis;

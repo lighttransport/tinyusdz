@@ -1,0 +1,89 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# Minimal alpha-card sidedness comparison.
+#
+# Front view (+Z): both cards should be visible and front-lit.
+# Back view (-Z), culling off (usdview default): both remain visible, but only
+# ExplicitDoubleSided (right) requests a forward-facing shading normal. The
+# UnauthoredDefault card (left) uses the Gprim fallback doubleSided=false and
+# may therefore appear dark depending on lighting.
+# Back view (-Z), BackUnlessDoubleSided culling: only ExplicitDoubleSided is
+# visible.
+#
+# The TinyUSDZ next renderer intentionally treats an unauthored planar opacity
+# card as effectively double-sided for compatibility with DCC exporters that
+# omit the opinion. That inference is renderer policy, not composed USD state;
+# an explicitly authored false must still win.
+def Xform "World"
+{
+    def Scope "Looks"
+    {
+        def Material "BirdCutout"
+        {
+            token outputs:surface.connect = </World/Looks/BirdCutout/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/Looks/BirdCutout/BirdTexture.outputs:rgb>
+                float inputs:opacity.connect = </World/Looks/BirdCutout/BirdTexture.outputs:a>
+                float inputs:opacityThreshold = 0.5
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+
+            def Shader "PrimvarReader"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+
+            def Shader "BirdTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/alpha-billboard-bird.png@
+                token inputs:sourceColorSpace = "sRGB"
+                float2 inputs:st.connect = </World/Looks/BirdCutout/PrimvarReader.outputs:result>
+                token inputs:wrapS = "clamp"
+                token inputs:wrapT = "clamp"
+                float outputs:a
+                color3f outputs:rgb
+            }
+        }
+    }
+
+    def Mesh "UnauthoredDefault" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        rel material:binding = </World/Looks/BirdCutout>
+        point3f[] points = [(-2.2, -1, 0), (-0.2, -1, 0), (-0.2, 1, 0), (-2.2, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 0), (1, 1), (0, 1)] (
+            interpolation = "faceVarying"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+
+    def Mesh "ExplicitDoubleSided" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform bool doubleSided = true
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        rel material:binding = </World/Looks/BirdCutout>
+        point3f[] points = [(0.2, -1, 0), (2.2, -1, 0), (2.2, 1, 0), (0.2, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 0), (1, 1), (0, 1)] (
+            interpolation = "faceVarying"
+        )
+        uniform token subdivisionScheme = "none"
+    }
+}

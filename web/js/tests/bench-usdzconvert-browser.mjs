@@ -40,6 +40,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     includeUnusedTextures: false,
     maxUsdcMb: 0,
     maxMemMb: 0,
+    textureMemoryBudget: 0,
   };
   let pendingDir = null;
   for (let i = 0; i < argv.length; i++) {
@@ -74,6 +75,10 @@ function parseArgs(argv = process.argv.slice(2)) {
     else if (a === '--include-unused-textures') opts.includeUnusedTextures = true;
     else if (a === '--max-usdc-mb') opts.maxUsdcMb = Number(argv[++i]);
     else if (a === '--max-mem-mb') opts.maxMemMb = Number(argv[++i]);
+    else if (a === '--texture-memory-budget') {
+      opts.textureMemoryBudget = parseByteSize(argv[++i]);
+      if (!opts.textureMemoryBudget) throw new Error('--texture-memory-budget must be a positive byte size');
+    }
     else throw new Error(`Unknown option: ${a}`);
   }
   if (pendingDir) throw new Error('--scene without --root');
@@ -108,6 +113,9 @@ Options:
   --max-usdc-mb <n>            Raise USDC writer size cap (0 = conservative default;
                                2048 = cross-browser-safe 2 GB ceiling)
   --max-mem-mb <n>             Raise USDC writer memory cap (0 = default)
+  --texture-memory-budget <size>
+                               Best-effort browser texture working-set budget
+                               (e.g. 1GB); caps processor concurrency
   --timeout <ms>               Per-case timeout (default 1800000)
   --out <dir>                  Output dir (default tests/bench-usdzconvert)
   --port <n>                   vite port (default 5191)
@@ -116,6 +124,14 @@ Options:
 
 function posixPath(p) { return p.split(path.sep).join('/'); }
 function fileUrlPath(abs) { return `/@fs${posixPath(abs)}`; }
+
+function parseByteSize(value) {
+  const match = String(value || '').trim().match(/^([0-9]+(?:\.[0-9]+)?)\s*(b|kb|mb|gb)?$/i);
+  if (!match) return 0;
+  const units = { b: 1, kb: 1024, mb: 1024 ** 2, gb: 1024 ** 3 };
+  const bytes = Number(match[1]) * units[(match[2] || 'b').toLowerCase()];
+  return Number.isSafeInteger(Math.floor(bytes)) && bytes > 0 ? Math.floor(bytes) : 0;
+}
 
 function buildManifest(sceneDir, baseUrl) {
   const entries = [];
@@ -167,6 +183,21 @@ function startVite(port, fsAllowDir) {
 function browserLaunchOptions(opts) {
   const NV_ICD = '/usr/share/vulkan/icd.d/nvidia_icd.json';
   const NV_EGL = '/usr/share/glvnd/egl_vendor.d/10_nvidia.json';
+  let browserExecutable = process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (!browserExecutable) {
+    try {
+      const bundled = puppeteer.executablePath();
+      if (fs.existsSync(bundled)) browserExecutable = bundled;
+    } catch (_) {
+      // The exact Puppeteer revision is not installed; try system browsers.
+    }
+  }
+  browserExecutable ||= [
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/snap/bin/chromium',
+  ].find((candidate) => candidate && fs.existsSync(candidate));
   let useHw = opts.hw && !opts.sw;
   if (useHw) {
     const reasons = [];
@@ -199,6 +230,7 @@ function browserLaunchOptions(opts) {
       args,
       env: { ...process.env, ...hwEnv },
       protocolTimeout: opts.timeout + 60000,
+      ...(browserExecutable ? { executablePath: browserExecutable } : {}),
     },
   };
 }
@@ -223,6 +255,7 @@ async function runCase(browser, baseUrl, manifestUrl, scene, kase, opts) {
       includeUnusedTextures: opts.includeUnusedTextures ? '1' : '0',
       maxUsdcMb: String(opts.maxUsdcMb),
       maxMemMb: String(opts.maxMemMb),
+      textureMemoryBudget: String(opts.textureMemoryBudget),
     });
     await page.goto(`${baseUrl}/bench-usdzconvert.html?${params.toString()}`,
                     { waitUntil: 'load', timeout: opts.timeout });
@@ -278,7 +311,11 @@ async function main() {
   let browser;
   const rows = [];
   try {
-    await waitForServer(`${baseUrl}/bench-usdzconvert.html`, 30000, vite);
+    // Vite's local-development preflight may rebuild the generated WASM glue.
+    // A clean build routinely takes longer than 30 seconds, so give startup a
+    // bounded five-minute share of the per-case timeout.
+    await waitForServer(`${baseUrl}/bench-usdzconvert.html`,
+                        Math.min(opts.timeout, 300000), vite);
     const launch = browserLaunchOptions(opts);
     browser = await puppeteer.launch(launch.launch);
     const mode = launch.useHw ? 'ANGLE/Vulkan GPU' : 'SwiftShader/headless';
@@ -308,7 +345,9 @@ async function main() {
             `convert=${fmtMs(t.convertMs)} validate=${fmtMs(t.validateMs)}${res.validate?.skipped ? ' [validate skipped]' : (res.validate?.ok ? '' : ' [RELOAD FAIL]')} ` +
             `out=${(res.usdzBytes / 1e6).toFixed(0)}MB ` +
             `wasmHeap=${(res.wasmHeapBytes / 1e6 || 0).toFixed(0)}MB jsHeap=${(res.jsHeapBytes / 1e6 || 0).toFixed(0)}MB` +
-            (tex ? `  [tex: ${tex.processed} dec=${fmtMs(tex.decodeMs)} raster=${fmtMs(tex.rasterMs)} enc=${fmtMs(tex.encodeMs)}]` : ''));
+            (tex ? `  [tex: ${tex.processed} jobs=${res.textureConcurrency} ` +
+              `dec=${fmtMs(tex.decodeMs)} raster=${fmtMs(tex.rasterMs)} ` +
+              `enc=${fmtMs(tex.encodeMs)}]` : ''));
         } else {
           console.log(`\r  FAIL  ${label}: ${res.error}`);
           if (res.pageErrors?.length) console.log(`          page: ${res.pageErrors.slice(0, 2).join(' | ')}`);
@@ -323,12 +362,13 @@ async function main() {
   const jsonPath = path.join(opts.out, 'summary.json');
   fs.writeFileSync(jsonPath, JSON.stringify({ generatedAt: new Date().toISOString(), rows }, null, 2));
   const tsvPath = path.join(opts.out, 'summary.tsv');
-  fs.writeFileSync(tsvPath, ['status\tmode\tscene\tpipeline\tcodec\tformat\tresize\tgpu\tfetchMs\twasmInitMs\tconvertMs\tvalidateMs\tusdzBytes\twasmHeapBytes\tjsHeapBytes\ttexProcessed\ttexDecodeMs\ttexRasterMs\ttexEncodeMs\terror',
+  fs.writeFileSync(tsvPath, ['status\tmode\tscene\tpipeline\tcodec\tformat\tresize\tgpu\tfetchMs\twasmInitMs\tconvertMs\tvalidateMs\tusdzBytes\twasmHeapBytes\tjsHeapBytes\ttextureConcurrency\ttexProcessed\ttexDecodeMs\ttexRasterMs\ttexEncodeMs\terror',
     ...rows.map((r) => [
       r.ok ? 'PASS' : 'FAIL', r.mode, r.scene, r.pipeline || 'memory', r.codec, r.textureFormat, r.resize,
       r.gpu || '', Math.round(r.timings?.fetchMs ?? -1), Math.round(r.timings?.wasmInitMs ?? -1),
       Math.round(r.timings?.convertMs ?? -1), Math.round(r.timings?.validateMs ?? -1),
       r.usdzBytes ?? '', r.wasmHeapBytes ?? '', r.jsHeapBytes ?? '',
+      r.textureConcurrency ?? '',
       r.textureStats?.processed ?? '',
       Math.round(r.textureStats?.decodeMs ?? -1), Math.round(r.textureStats?.rasterMs ?? -1),
       Math.round(r.textureStats?.encodeMs ?? -1), r.error || '',

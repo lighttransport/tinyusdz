@@ -56,11 +56,18 @@ namespace {
 // overflow on 32-bit platforms (where size_t is 32-bit). Returns SIZE_MAX when
 // the result exceeds the addressable range (clamped rather than wrapped).
 inline size_t MaxMemoryBytes(uint64_t limit_mb) {
-  uint64_t bytes = uint64_t(1024) * uint64_t(1024) * limit_mb;
-  if (bytes > uint64_t((std::numeric_limits<size_t>::max)())) {
+  constexpr uint64_t kBytesPerMiB = uint64_t(1024) * uint64_t(1024);
+#if SIZE_MAX < UINT64_MAX
+  constexpr uint64_t kMaxBytes =
+      uint64_t((std::numeric_limits<size_t>::max)());
+#else
+  constexpr uint64_t kMaxBytes =
+      (std::numeric_limits<uint64_t>::max)();
+#endif
+  if (limit_mb > (kMaxBytes / kBytesPerMiB)) {
     return (std::numeric_limits<size_t>::max)();
   }
-  return static_cast<size_t>(bytes);
+  return static_cast<size_t>(limit_mb * kBytesPerMiB);
 }
 
 FILE *ProfileOutput() {

@@ -328,6 +328,62 @@ bool DecodeLegacyImageRGBA8(const RenderScene &scene,
   }
 }
 
+bool SetLegacyTextureColorTransform(tinyusdz::tydra::ColorSpace color_space,
+                                    Texture *texture) {
+  if (!texture) return false;
+  const char *source = nullptr;
+  using LegacyColorSpace = tinyusdz::tydra::ColorSpace;
+  switch (color_space) {
+    case LegacyColorSpace::sRGB:
+    case LegacyColorSpace::sRGB_Texture:
+      source = "srgb_rec709_scene";
+      break;
+    case LegacyColorSpace::Lin_sRGB:
+    case LegacyColorSpace::Lin_Rec709:
+      source = "lin_rec709_scene";
+      break;
+    case LegacyColorSpace::g22_Rec709:
+      source = "g22_rec709_scene";
+      break;
+    case LegacyColorSpace::g18_Rec709:
+      source = "g18_rec709_scene";
+      break;
+    case LegacyColorSpace::Raw:
+      source = "raw";
+      break;
+    case LegacyColorSpace::Lin_ACEScg:
+      source = "lin_ap1_scene";
+      break;
+    case LegacyColorSpace::ACES2065_1:
+      source = "lin_ap0_scene";
+      break;
+    case LegacyColorSpace::Lin_Rec2020:
+      source = "lin_rec2020_scene";
+      break;
+    case LegacyColorSpace::Lin_DisplayP3:
+      source = "lin_p3d65_scene";
+      break;
+    case LegacyColorSpace::sRGB_DisplayP3:
+      source = "srgb_p3d65_scene";
+      break;
+    default:
+      return false;
+  }
+  tinyusdz::color::ColorSpaceDesc source_desc;
+  tinyusdz::color::ColorSpaceDesc display_desc;
+  if (!tinyusdz::color::GetBuiltinColorSpace(source, &source_desc) ||
+      !tinyusdz::color::GetBuiltinColorSpace("lin_rec709_scene",
+                                             &display_desc) ||
+      !tinyusdz::color::BuildColorTransform(
+          source_desc, display_desc, &texture->color_transform)) {
+    return false;
+  }
+  // The full transform owns transfer decoding, including bypassed linear/data
+  // cases. Avoid applying the compatibility sRGB decoder a second time.
+  texture->srgb = false;
+  return true;
+}
+
 }  // namespace
 
 std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
@@ -357,8 +413,30 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
     }
     t.wrap_s = ToTusdrWrapLegacy(tex.wrapS);
     t.wrap_t = ToTusdrWrapLegacy(tex.wrapT);
-    t.srgb = scene.images[size_t(tex.texture_image_id)].colorSpace ==
-             tinyusdz::tydra::ColorSpace::sRGB;
+    const tinyusdz::tydra::TextureImage &image =
+        scene.images[size_t(tex.texture_image_id)];
+    const tinyusdz::tydra::ColorSpace image_color_space = image.colorSpace;
+    t.srgb = image_color_space == tinyusdz::tydra::ColorSpace::sRGB;
+    if (image.colorTransformValid && !image.colorTransformApplied) {
+      tinyusdz::color::ColorTransform transform;
+      transform.source.name = image.sourceColorSpaceName;
+      transform.source.gamma = image.sourceGamma;
+      transform.source.linear_bias = image.sourceLinearBias;
+      transform.source.kind = image.sourceColorIsData
+          ? tinyusdz::color::ColorSpaceKind::Data
+          : tinyusdz::color::ColorSpaceKind::Color;
+      (void)tinyusdz::color::GetBuiltinColorSpace(
+          "lin_rec709_scene", &transform.destination);
+      transform.bypass = image.colorTransformBypass;
+      std::copy(image.sourceToDisplayLinear,
+                image.sourceToDisplayLinear + 9, transform.matrix);
+      t.color_transform = transform;
+      t.srgb = !image.sourceColorIsData &&
+          std::fabs(image.sourceGamma - 2.4f) < 1.0e-5f &&
+          std::fabs(image.sourceLinearBias - 0.055f) < 1.0e-5f;
+    } else {
+      (void)SetLegacyTextureColorTransform(image_color_space, &t);
+    }
     // UsdUVTexture inputs:scale / inputs:bias (e.g. (2,2,2)/(-1,-1,-1) to unpack
     // a normal map); the integrator applies them post-sample.
     t.scale = Vec3{tex.scale[0], tex.scale[1], tex.scale[2]};
@@ -372,26 +450,40 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
 
   for (size_t i = 0; i < scene.materials.size(); ++i) {
     const tinyusdz::tydra::RenderMaterial &mat = scene.materials[i];
-    if (!mat.surfaceShader.has_value()) continue;
-    const tinyusdz::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
     LegacyMaterialTex &b = bindings[i];
-
-    b.diffuse = resolve(s.diffuseColor.texture_id);
-    b.emissive = resolve(s.emissiveColor.texture_id);
-    b.normal = resolve(s.normal.texture_id);
-    b.roughness = resolve(s.roughness.texture_id);
-    b.metallic = resolve(s.metallic.texture_id);
-    b.occlusion = resolve(s.occlusion.texture_id);
-    b.opacity = resolve(s.opacity.texture_id);
 
     auto chan = [&](int32_t tydra_id) -> uint8_t {
       if (tydra_id < 0 || size_t(tydra_id) >= scene.textures.size()) return 0;
       return ScalarChannel(scene.textures[size_t(tydra_id)]);
     };
-    b.roughness_ch = chan(s.roughness.texture_id);
-    b.metallic_ch = chan(s.metallic.texture_id);
-    b.occlusion_ch = chan(s.occlusion.texture_id);
-    b.opacity_ch = chan(s.opacity.texture_id);
+    if (mat.surfaceShader.has_value()) {
+      const tinyusdz::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
+      b.diffuse = resolve(s.diffuseColor.texture_id);
+      b.emissive = resolve(s.emissiveColor.texture_id);
+      b.normal = resolve(s.normal.texture_id);
+      b.roughness = resolve(s.roughness.texture_id);
+      b.metallic = resolve(s.metallic.texture_id);
+      b.occlusion = resolve(s.occlusion.texture_id);
+      b.opacity = resolve(s.opacity.texture_id);
+      b.roughness_ch = chan(s.roughness.texture_id);
+      b.metallic_ch = chan(s.metallic.texture_id);
+      b.occlusion_ch = chan(s.occlusion.texture_id);
+      b.opacity_ch = chan(s.opacity.texture_id);
+    } else if (mat.openPBRShader.has_value()) {
+      // MaterialX/OpenPBR textures use the same renderer slots as their
+      // Preview Surface counterparts. Previously only constants were read from
+      // openPBRShader, leaving every MaterialX texture unbound even though
+      // Tydra had decoded it and resolved its colorspace transform.
+      const tinyusdz::tydra::OpenPBRSurfaceShader &s = *mat.openPBRShader;
+      b.diffuse = resolve(s.base_color.texture_id);
+      b.normal = resolve(s.normal.texture_id);
+      b.roughness = resolve(s.base_roughness.texture_id);
+      b.metallic = resolve(s.base_metalness.texture_id);
+      b.opacity = resolve(s.opacity.texture_id);
+      b.roughness_ch = chan(s.base_roughness.texture_id);
+      b.metallic_ch = chan(s.base_metalness.texture_id);
+      b.opacity_ch = chan(s.opacity.texture_id);
+    }
   }
   return bindings;
 }

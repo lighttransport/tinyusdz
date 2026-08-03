@@ -441,6 +441,8 @@ static void RegisterStageMetas(
       AsciiParser::VariableDef(value::kAssetPath, "colorConfiguration");
   metas["colorManagementSystem"] =
       AsciiParser::VariableDef(value::kToken, "colorManagementSystem");
+  metas["renderSettingsPrimPath"] =
+      AsciiParser::VariableDef(value::kString, "renderSettingsPrimPath");
   metas["owner"] = AsciiParser::VariableDef(value::kString, "owner");
   metas["hasOwnedSubLayers"] =
       AsciiParser::VariableDef(value::kBool, "hasOwnedSubLayers");
@@ -634,6 +636,8 @@ static void RegisterAPISchemas(std::unordered_set<std::string> &d) {
   d.insert("MaterialBindingAPI");
   d.insert("SkelBindingAPI");
   d.insert("MaterialXConfigAPI");  // usdMtlx: config:mtlx:* on Material
+  d.insert("ColorSpaceAPI");
+  d.insert("ColorSpaceDefinitionAPI");
   d.insert("NewtonSceneAPI");
   d.insert("NewtonXpbdSceneAPI");
   d.insert("NewtonKaminoSceneAPI");

@@ -153,6 +153,12 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
             quote(metas.colorManagementSystem.value().str()) + "\n");
   }
 
+  if (metas.renderSettingsPrimPath) {
+    add("renderSettingsPrimPath",
+        pprint::Indent(indent) + "renderSettingsPrimPath = " +
+            quote(metas.renderSettingsPrimPath.value()) + "\n");
+  }
+
   if (metas.owner) {
     add("owner", pprint::Indent(indent) + "owner = " +
                      quote(metas.owner.value()) + "\n");

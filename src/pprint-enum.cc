@@ -48,6 +48,14 @@ std::string to_string(const APISchemas::APIName &name) {
       s = "CollectionAPI";
       break;
     }
+    case APISchemas::APIName::ColorSpaceAPI: {
+      s = "ColorSpaceAPI";
+      break;
+    }
+    case APISchemas::APIName::ColorSpaceDefinitionAPI: {
+      s = "ColorSpaceDefinitionAPI";
+      break;
+    }
     case APISchemas::APIName::ConnectableAPI: {
       s = "ConnectableAPI";
       break;

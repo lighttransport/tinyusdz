@@ -516,7 +516,7 @@ int main() {
   tusdview::HostScene carrierHost;
   if (!tusdview::BuildHostScene(carrierScene, 0, 0, 0.0f, &carrierHost,
                                 &err) ||
-      carrierHost.triCount != 16 || carrierHost.instCount != 2) {
+      carrierHost.triCount != 48 || carrierHost.instCount != 2) {
     std::fprintf(stderr, "non-mesh RT proxy build failed: %s (%zu tris, %zu inst)\n",
                  err.c_str(), carrierHost.triCount, carrierHost.instCount);
     return 1;

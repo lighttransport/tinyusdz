@@ -498,6 +498,85 @@ void test_stage_writer() {
   std::cout << "  usda-writer tests passed!\n\n";
 }
 
+void test_deep_stage_writer() {
+  std::cout << "Testing deep stage writer traversal...\n";
+
+  constexpr size_t kDepth = 8192;
+  StageBuilder builder;
+  LayerBuilder& layer = builder.GetLayerBuilder();
+  for (size_t i = 0; i < kDepth; ++i) {
+    layer.begin_prim("P", "Xform");
+  }
+  Stage stage = builder.Build();
+
+  USDAWriteOptions opts;
+  opts.indent.clear();  // Keep the regression output O(depth), not O(depth^2).
+  const std::string text = WriteUSDAToString(stage, opts);
+  assert(!text.empty());
+  size_t definitions = 0;
+  for (size_t pos = 0; (pos = text.find("def Xform", pos)) != std::string::npos;
+       pos += 9) {
+    ++definitions;
+  }
+  assert(definitions == kDepth);
+  std::cout << "  deep stage writer traversal passed!\n\n";
+}
+
+void test_deep_variant_writer() {
+  std::cout << "Testing deep variant writer traversal...\n";
+
+  // This depth overflowed the recursive writer stack (especially under ASan
+  // and in WASM). Build bottom-up so test setup itself is non-recursive.
+  constexpr size_t kDepth = 8192;
+  VariantSetData nested;
+  for (size_t i = 0; i < kDepth; ++i) {
+    VariantData option;
+    option.name = "o";
+    if (!nested.name.empty()) {
+      option.variantSets.push_back(std::move(nested));
+    }
+
+    VariantSetData outer;
+    outer.name = "v";
+    outer.variants.push_back(std::move(option));
+    nested = std::move(outer);
+  }
+
+  StageBuilder builder;
+  LayerBuilder& layer = builder.GetLayerBuilder();
+  layer.begin_prim("Root", "Xform");
+  layer.current()->meta().variantSets().push_back(std::move(nested));
+  layer.end_prim();
+  Stage stage = builder.Build();
+
+  USDAWriteOptions opts;
+  opts.indent.clear();  // Keep the regression output O(depth), not O(depth^2).
+  const std::string text = WriteUSDAToString(stage, opts);
+  assert(!text.empty());
+  size_t definitions = 0;
+  for (size_t pos = 0;
+       (pos = text.find("variantSet \"v\"", pos)) != std::string::npos;
+       pos += 14) {
+    ++definitions;
+  }
+  assert(definitions == kDepth);
+
+  // Copying recursively-owned variant data must use the same explicit-depth
+  // discipline as writing and teardown.
+  const PrimSpec* root = stage.GetRootLayer()->prim_at_path("/Root");
+  assert(root && !root->meta().variantSets().empty());
+  VariantData copied = root->meta().variantSets()[0].variants[0];
+  size_t copied_depth = 1;
+  const VariantData* current = &copied;
+  while (!current->variantSets.empty()) {
+    current = &current->variantSets[0].variants[0];
+    ++copied_depth;
+  }
+  assert(copied_depth == kDepth);
+
+  std::cout << "  deep variant writer traversal passed!\n\n";
+}
+
 void test_time_samples() {
   std::cout << "Testing time samples...\n";
 
@@ -1211,6 +1290,8 @@ int main() {
     test_default_with_timesamples();
     test_layer_printer();
     test_stage_writer();
+    test_deep_stage_writer();
+    test_deep_variant_writer();
     test_time_samples();
     test_roundtrip();
     test_parallel_writer_parity();

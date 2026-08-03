@@ -450,6 +450,13 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
 
 bool Stage::find_prim_by_prim_id(const uint64_t prim_id, Prim *&prim,
                                  std::string *err) {
+  if (prim_id < 1) {
+    if (err) {
+      (*err) = "Input prim_id must be 1 or greater.";
+    }
+    return false;
+  }
+
   // Walk the prim tree directly (const version shares the same logic via
   // FindPrimByPrimIdIterative which operates on _root_nodes). Setting dirty
   // flags ensures any cache populated by a concurrent const lookup is skipped.

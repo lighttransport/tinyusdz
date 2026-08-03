@@ -5,6 +5,7 @@
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-point-instancer.hh"
 #include "next/schema/geom-xform.hh"
+#include "next/schema/color-space.hh"
 #include "next/schema/usd-geom-camera.hh"
 #include "next/schema/usd-lux.hh"
 #include "next/schema/usd-shade.hh"
@@ -12,6 +13,7 @@
 #include <cassert>
 #include <string>
 #include <vector>
+#include <cmath>
 
 using namespace tinyusdz::next;
 
@@ -466,6 +468,286 @@ void test_prim_children() {
   PASS();
 }
 
+void test_color_transform_numeric() {
+  TEST("ColorTransformNumeric");
+  using tinyusdz::color::BuildColorTransform;
+  using tinyusdz::color::ColorSpaceDesc;
+  using tinyusdz::color::ColorTransform;
+  using tinyusdz::color::GetBuiltinColorSpace;
+
+  ColorSpaceDesc srgb, linear, ap0, raw;
+  if (!GetBuiltinColorSpace("sRGB", &srgb) ||
+      !GetBuiltinColorSpace("lin_srgb", &linear) ||
+      !GetBuiltinColorSpace("lin_ap0_scene", &ap0) ||
+      !GetBuiltinColorSpace("raw", &raw)) {
+    FAIL("builtin or alias lookup"); return;
+  }
+  if (srgb.name != "srgb_rec709_scene" ||
+      linear.name != "lin_rec709_scene" ||
+      !tinyusdz::color::IsLinear(linear) ||
+      !tinyusdz::color::IsData(raw)) {
+    FAIL("builtin classification"); return;
+  }
+
+  ColorTransform decode;
+  if (!BuildColorTransform(srgb, linear, &decode)) {
+    FAIL("sRGB decode transform"); return;
+  }
+  float samples[6] = {0.04045f, 0.5f, -0.5f, 1.0f, 0.0f, 0.25f};
+  tinyusdz::color::TransformRGBSpan(decode, samples, 2);
+  const float decoded[6] = {0.0031308f, 0.21404114f, -0.21404114f,
+                            1.0f, 0.0f, 0.05087609f};
+  for (int i = 0; i < 6; ++i) {
+    if (std::abs(samples[i] - decoded[i]) > 2.0e-5f) {
+      FAIL("sRGB decode numeric reference"); return;
+    }
+  }
+
+  ColorTransform encode;
+  if (!BuildColorTransform(linear, srgb, &encode)) {
+    FAIL("sRGB encode transform"); return;
+  }
+  float rgba[8] = {samples[0], samples[1], samples[2], 0.125f,
+                   samples[3], samples[4], samples[5], 0.75f};
+  tinyusdz::color::TransformRGBASpan(encode, rgba, 2);
+  const float roundtrip[8] = {0.04045f, 0.5f, -0.5f, 0.125f,
+                              1.0f, 0.0f, 0.25f, 0.75f};
+  for (int i = 0; i < 8; ++i) {
+    if (std::abs(rgba[i] - roundtrip[i]) > 2.0e-5f) {
+      FAIL("sRGB roundtrip or alpha preservation"); return;
+    }
+  }
+
+  ColorTransform gamut;
+  if (!BuildColorTransform(ap0, linear, &gamut)) {
+    FAIL("AP0 gamut transform"); return;
+  }
+  const float expected_matrix[9] = {
+      2.52168619f, -1.13413099f, -0.38755520f,
+     -0.27647991f,  1.37271909f, -0.09623917f,
+     -0.01537806f, -0.15297534f,  1.16835340f};
+  for (int i = 0; i < 9; ++i) {
+    if (std::abs(gamut.matrix[i] - expected_matrix[i]) > 3.0e-5f) {
+      FAIL("AP0 to Rec.709 matrix reference"); return;
+    }
+  }
+  float macbeth_dark_skin[3] = {0.11877f, 0.08709f, 0.05895f};
+  tinyusdz::color::TransformRGB(gamut, macbeth_dark_skin);
+  const float expected_patch[3] = {0.17788282f, 0.08103929f, 0.05372536f};
+  for (int i = 0; i < 3; ++i) {
+    if (std::abs(macbeth_dark_skin[i] - expected_patch[i]) > 3.0e-5f) {
+      FAIL("Macbeth AP0 patch reference"); return;
+    }
+  }
+
+  ColorTransform bypass;
+  if (!BuildColorTransform(raw, linear, &bypass) || !bypass.bypass) {
+    FAIL("raw bypass transform"); return;
+  }
+  float data[3] = {-2.0f, 0.5f, 4.0f};
+  tinyusdz::color::TransformRGB(bypass, data);
+  if (data[0] != -2.0f || data[1] != 0.5f || data[2] != 4.0f) {
+    FAIL("raw values changed"); return;
+  }
+
+  const float degenerate[2] = {0.0f, 0.0f};
+  const float white[2] = {0.3127f, 0.3290f};
+  ColorSpaceDesc invalid;
+  if (tinyusdz::color::MakeColorSpaceFromChromaticities(
+          "invalid", degenerate, degenerate, degenerate, white, 1.0f, 0.0f,
+          &invalid)) {
+    FAIL("degenerate primaries accepted"); return;
+  }
+  PASS();
+}
+
+void test_color_management() {
+  TEST("ColorManagement");
+  const std::string usda = R"USD(#usda 1.0
+(
+    renderSettingsPrimPath = "/World/Render/settings"
+)
+def Scope "World" (
+    prepend apiSchemas = ["ColorSpaceAPI", "ColorSpaceDefinitionAPI:studio",
+        "ColorSpaceDefinitionAPI:studio_ap0",
+        "ColorSpaceDefinitionAPI:dupA", "ColorSpaceDefinitionAPI:dupB"]
+)
+{
+    uniform token colorSpace:name = "srgb_rec709_scene"
+    uniform token colorSpaceDefinition:studio:name = "studio_linear"
+    float2 colorSpaceDefinition:studio:redChroma = (0.64, 0.33)
+    float2 colorSpaceDefinition:studio:greenChroma = (0.30, 0.60)
+    float2 colorSpaceDefinition:studio:blueChroma = (0.15, 0.06)
+    float2 colorSpaceDefinition:studio:whitePoint = (0.3127, 0.3290)
+    float colorSpaceDefinition:studio:gamma = 1
+    float colorSpaceDefinition:studio:linearBias = 0
+    uniform token colorSpaceDefinition:studio_ap0:name = "studio_ap0"
+    float2 colorSpaceDefinition:studio_ap0:redChroma = (0.7348552434, 0.2642253252)
+    float2 colorSpaceDefinition:studio_ap0:greenChroma = (-0.0061709125, 1.0113149590)
+    float2 colorSpaceDefinition:studio_ap0:blueChroma = (0.0159675593, -0.0642355031)
+    float2 colorSpaceDefinition:studio_ap0:whitePoint = (0.3127, 0.3290)
+    float colorSpaceDefinition:studio_ap0:gamma = 1
+    float colorSpaceDefinition:studio_ap0:linearBias = 0
+    uniform token colorSpaceDefinition:dupA:name = "ambiguous"
+    float2 colorSpaceDefinition:dupA:redChroma = (0.64, 0.33)
+    float2 colorSpaceDefinition:dupA:greenChroma = (0.30, 0.60)
+    float2 colorSpaceDefinition:dupA:blueChroma = (0.15, 0.06)
+    float2 colorSpaceDefinition:dupA:whitePoint = (0.3127, 0.3290)
+    float colorSpaceDefinition:dupA:gamma = 1
+    float colorSpaceDefinition:dupA:linearBias = 0
+    uniform token colorSpaceDefinition:dupB:name = "ambiguous"
+    float2 colorSpaceDefinition:dupB:redChroma = (0.64, 0.33)
+    float2 colorSpaceDefinition:dupB:greenChroma = (0.30, 0.60)
+    float2 colorSpaceDefinition:dupB:blueChroma = (0.15, 0.06)
+    float2 colorSpaceDefinition:dupB:whitePoint = (0.3127, 0.3290)
+    float colorSpaceDefinition:dupB:gamma = 1
+    float colorSpaceDefinition:dupB:linearBias = 0
+    def Shader "Shader"
+    {
+        color3f inputs:baseColor = (0.5, 0.25, 0.75) (
+            colorSpace = "lin_ap1_scene"
+        )
+    }
+    def Scope "Render"
+    {
+        def RenderSettings "settings"
+        {
+            uniform token renderingColorSpace = "studio_linear"
+        }
+        def RenderSettings "override"
+        {
+            uniform token renderingColorSpace = "lin_rec2020_scene"
+        }
+        def RenderSettings "nonlinear"
+        {
+            uniform token renderingColorSpace = "srgb_rec709_scene"
+        }
+    }
+}
+def Scope "Legacy" (
+    prepend apiSchemas = ["ColorSpaceDefinitionAPI"]
+)
+{
+    uniform token name = "legacy_linear"
+    float2 redChroma = (0.64, 0.33)
+    float2 greenChroma = (0.30, 0.60)
+    float2 blueChroma = (0.15, 0.06)
+    float2 whitePoint = (0.3127, 0.3290)
+    float gamma = 1
+    float linearBias = 0
+    def Shader "Shader" {}
+}
+)USD";
+  LoadResult loaded = LoadUSDAFromString(usda);
+  if (!loaded.success) { FAIL("parse"); return; }
+
+  const UsdPrim shader = loaded.stage.GetPrimAtPath("/World/Shader");
+  std::string source;
+  bool authored = false;
+  if (!color_management::ComputeColorSpaceName(
+          shader, "inputs:baseColor", &source, &authored) ||
+      !authored || source != "lin_ap1_scene") {
+    FAIL("property colorSpace precedence"); return;
+  }
+  if (!color_management::ComputeColorSpaceName(shader, "missing", &source,
+                                                &authored) ||
+      !authored || source != "srgb_rec709_scene") {
+    FAIL("inherited ColorSpaceAPI"); return;
+  }
+
+  color_management::RenderingColorConfig config;
+  std::string warning;
+  if (!color_management::ResolveRenderingColorConfig(
+          loaded.stage, std::string(), &config, &warning) ||
+      config.working_space != "studio_linear" || config.used_fallback ||
+      !warning.empty()) {
+    FAIL("RenderSettings working space"); return;
+  }
+
+  warning.clear();
+  if (!color_management::ResolveRenderingColorConfig(
+          loaded.stage, "/World/Render/override", &config, &warning) ||
+      !config.used_override || config.used_fallback ||
+      config.working_space != "lin_rec2020_scene" || !warning.empty()) {
+    FAIL("RenderSettings override precedence"); return;
+  }
+  warning.clear();
+  if (!color_management::ResolveRenderingColorConfig(
+          loaded.stage, "/World/Render/nonlinear", &config, &warning) ||
+      !config.used_override || !config.used_fallback ||
+      config.working_space != "lin_rec709_scene" || warning.empty()) {
+    FAIL("nonlinear working-space fallback"); return;
+  }
+  warning.clear();
+  if (!color_management::ResolveRenderingColorConfig(
+          loaded.stage, "/missing", &config, &warning) ||
+      !config.used_fallback || config.working_space != "lin_rec709_scene" ||
+      warning.empty()) {
+    FAIL("invalid RenderSettings fallback"); return;
+  }
+
+  const UsdPrim legacy = loaded.stage.GetPrimAtPath("/Legacy/Shader");
+  color_management::ColorSpaceDesc legacy_definition;
+  std::string definition_error;
+  if (!color_management::ResolveColorSpaceDefinition(
+          legacy, "legacy_linear", &legacy_definition, &definition_error) ||
+      !tinyusdz::color::IsLinear(legacy_definition) ||
+      !definition_error.empty()) {
+    FAIL("legacy ColorSpaceDefinitionAPI"); return;
+  }
+
+  if (!color_management::ComputeColorSpaceName(
+          loaded.stage.GetPrimAtPath("/Legacy"), "missing", &source,
+          &authored) || authored || source != "lin_rec709_scene") {
+    FAIL("default color space"); return;
+  }
+
+  color_management::ColorTransform transform;
+  std::string error;
+  if (!color_management::BuildColorTransform(
+          shader, "srgb_rec709_scene", "lin_rec709_scene", &transform,
+          &error)) {
+    FAIL("sRGB transform build"); return;
+  }
+  float linear[3] = {0.5f, 0.5f, 0.5f};
+  ::tinyusdz::color::TransformRGB(transform, linear);
+  if (std::abs(linear[0] - 0.214041f) > 1.0e-4f ||
+      std::abs(linear[1] - linear[0]) > 1.0e-5f ||
+      std::abs(linear[2] - linear[0]) > 1.0e-5f) {
+    FAIL("sRGB numeric transform"); return;
+  }
+
+  color_management::ColorTransform custom_gamut;
+  error.clear();
+  if (!color_management::BuildColorTransform(
+          shader, "studio_ap0", "lin_rec709_scene", &custom_gamut, &error)) {
+    FAIL("custom wide-gamut transform build"); return;
+  }
+  float custom_patch[3] = {0.11877f, 0.08709f, 0.05895f};
+  ::tinyusdz::color::TransformRGB(custom_gamut, custom_patch);
+  const float expected_patch[3] = {0.17788282f, 0.08103929f, 0.05372536f};
+  for (int i = 0; i < 3; ++i) {
+    if (std::abs(custom_patch[i] - expected_patch[i]) > 4.0e-5f) {
+      FAIL("custom AP0 definition numeric reference"); return;
+    }
+  }
+
+  color_management::ColorSpaceDesc rejected;
+  error.clear();
+  if (color_management::ResolveColorSpaceDefinition(
+          shader, "ambiguous", &rejected, &error) ||
+      error.find("Ambiguous ColorSpaceDefinitionAPI") == std::string::npos) {
+    FAIL("ambiguous custom definition diagnostic"); return;
+  }
+  error.clear();
+  if (color_management::ResolveColorSpaceDefinition(
+          shader, "missing_custom_space", &rejected, &error) ||
+      error.find("Unknown color space") == std::string::npos) {
+    FAIL("unknown color-space diagnostic"); return;
+  }
+  PASS();
+}
+
 int main() {
   printf("Schema Tests\n");
   printf("============\n\n");
@@ -481,6 +763,8 @@ int main() {
   test_shade_schema();
   test_material_binding_resolution();
   test_prim_children();
+  test_color_transform_numeric();
+  test_color_management();
 
   printf("\n%d/%d tests passed\n", pass_count, test_count);
   return pass_count == test_count ? 0 : 1;

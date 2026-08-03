@@ -349,6 +349,9 @@ struct MaterialConverterConfig {
   // behavior for callers that distinguish unbound geometry.
   bool assign_default_material{false};
   std::string default_material_name{"defaultMaterial"};
+  // Explicit UsdRenderSettings selection. Empty uses the stage-level
+  // renderSettingsPrimPath and then the linear Rec.709 fallback.
+  std::string render_settings_path;
   vec3 default_material_diffuse_color{0.18f, 0.18f, 0.18f};
   float default_material_roughness{0.5f};
   float default_material_metallic{0.0f};
@@ -974,6 +977,9 @@ class RenderSceneConverter {
   std::vector<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
   std::vector<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #endif
+
+  // Rendering working space selected for the current conversion.
+  std::string _working_color_space{"lin_rec709_scene"};
 
   // Pre-discovered skeleton/animation prims for ancestor-based discovery
   // These are set temporarily during ConvertToRenderScene

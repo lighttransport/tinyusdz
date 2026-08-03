@@ -5,8 +5,6 @@ let loader = null;
 let activeBytes = null;
 let activeName = '';
 
-const IMAGE_RE = /\.(png|jpg|jpeg|webp|gif|bmp|tif|tiff|exr|hdr|avif)$/i;
-
 async function ensureLoader() {
 	if (loader) return loader;
 	loader = new TinyUSDZLoader(null, {
@@ -28,52 +26,13 @@ function addTransferable(list, seen, value) {
 	list.push(buffer);
 }
 
-function normArchivePath(path) {
-	return String(path || '').replace(/\\/g, '/').replace(/^[./]+/, '').replace(/^\/+/, '');
-}
-
-function collectReferencedTexturePaths(meshes) {
-	const paths = new Set();
-	const addPath = (path) => {
-		const key = normArchivePath(path);
-		if (key) paths.add(key);
-	};
-	for (const mesh of meshes || []) {
-		for (const path of Object.values(mesh.texturePaths || {})) addPath(path);
-		for (const material of mesh.materials || []) {
-			for (const path of Object.values(material.texturePaths || {})) addPath(path);
-		}
-	}
-	return paths;
-}
-
-function isReferencedTextureEntry(name, referenced) {
-	const key = normArchivePath(name);
-	if (!key || !IMAGE_RE.test(key)) return false;
-	if (referenced.has(key)) return true;
-	for (const ref of referenced) {
-		if (key.endsWith('/' + ref) || ref.endsWith('/' + key)) return true;
-	}
-	return false;
-}
-
-function serializeNextScene(usd, includeArchiveEntries = false) {
+function serializeNextScene(usd) {
 	if (!isNextScene(usd)) {
 		throw new Error('worker conversion only supports next render scenes');
 	}
-	const archiveEntries = [];
 	const transfer = [];
 	const seen = new Set();
 	const meshes = usd.meshes || [];
-	if (includeArchiveEntries) {
-		const referenced = collectReferencedTexturePaths(meshes);
-		for (const [name, bytes] of usd.archiveEntries || []) {
-			if (!isReferencedTextureEntry(name, referenced)) continue;
-			const copy = new Uint8Array(bytes);
-			archiveEntries.push([name, copy]);
-			addTransferable(transfer, seen, copy);
-		}
-	}
 	for (const mesh of meshes) {
 		addTransferable(transfer, seen, mesh.points);
 		addTransferable(transfer, seen, mesh.indices);
@@ -86,8 +45,7 @@ function serializeNextScene(usd, includeArchiveEntries = false) {
 			filename: usd.filename || '',
 			meshes,
 			stats: usd.getStats ? usd.getStats() : (usd.stats || {}),
-			sceneMetadata: usd.getSceneMetadata ? usd.getSceneMetadata() : (usd.sceneMetadata || {}),
-			archiveEntries
+			sceneMetadata: usd.getSceneMetadata ? usd.getSceneMetadata() : (usd.sceneMetadata || {})
 		},
 		transfer
 	};
@@ -103,7 +61,8 @@ async function convert(id, msg) {
 		throw new Error('worker has no active USD bytes');
 	}
 
-	const { returnArchiveEntries = false, ...options } = msg.options || {};
+	const options = { ...(msg.options || {}) };
+	delete options.returnArchiveEntries;
 	const progressBase = Number.isFinite(msg.progressBase) ? msg.progressBase : 0;
 	const progressRange = Number.isFinite(msg.progressRange) ? msg.progressRange : 100;
 	let lastProgressPostMs = -Infinity;
@@ -146,7 +105,7 @@ async function convert(id, msg) {
 	});
 
 	try {
-		const { payload, transfer } = serializeNextScene(usd, !!returnArchiveEntries);
+		const { payload, transfer } = serializeNextScene(usd);
 		self.postMessage({ type: 'result', id, payload }, transfer);
 	} finally {
 		if (usd && typeof usd.delete === 'function') {

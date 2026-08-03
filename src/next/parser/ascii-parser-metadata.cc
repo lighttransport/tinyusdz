@@ -123,6 +123,12 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           layer_->meta().colorManagementSystem = value;
           layer_->meta().colorManagementSystem_set = true;
         }
+      } else if (key == "renderSettingsPrimPath") {
+        std::string value;
+        if (lexer_->expect(TokenType::String, value)) {
+          layer_->meta().renderSettingsPrimPath = value;
+          layer_->meta().renderSettingsPrimPath_set = true;
+        }
       } else if (key == "doc" || key == "documentation") {
         std::string value;
         if (lexer_->expect(TokenType::String, value)) {

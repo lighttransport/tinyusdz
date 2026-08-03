@@ -22,6 +22,7 @@
 #include "core/path.hh"
 #include "core/prim-enums.hh"
 #include "core/prim-spec.hh"
+#include "color-transform.hh"
 #include "enum-handlers.hh"
 #include "io-util.hh"
 #include "path-util.hh"
@@ -256,7 +257,8 @@ bool IsValidNamespacedIdentifier(const std::string &name) {
 
 bool IsMultipleApplySchemaName(const std::string &schema_name) {
   return schema_name == "CollectionAPI" || schema_name == "PhysicsDriveAPI" ||
-         schema_name == "PhysicsLimitAPI";
+         schema_name == "PhysicsLimitAPI" ||
+         schema_name == "ColorSpaceDefinitionAPI";
 }
 
 bool IsSingleApplySchemaName(const std::string &schema_name) {
@@ -3959,6 +3961,20 @@ bool IsColorSpaceDefinitionPropertyName(const std::string &prop_name) {
          prop_name == "colorSpaceDefinition:linearBias";
 }
 
+bool ParseColorSpaceDefinitionPropertyName(const std::string &prop_name,
+                                           std::string *instance,
+                                           std::string *field) {
+  const std::vector<std::string> segments = SplitString(prop_name, ':');
+  if (segments.size() == 3 && segments[0] == "colorSpaceDefinition" &&
+      !segments[1].empty() && !segments[2].empty() &&
+      IsColorSpaceDefinitionPropertyName(segments[2])) {
+    if (instance) *instance = segments[1];
+    if (field) *field = segments[2];
+    return true;
+  }
+  return false;
+}
+
 std::vector<AppliedSchema> CollectAppliedSchemas(const PrimMeta &metas) {
   std::vector<AppliedSchema> schemas;
   if (!metas.has_apiSchemas()) {
@@ -4234,33 +4250,43 @@ void ValidateRelationshipTargets(const Relationship &relationship,
   }
 }
 
-ColorSpaceSet CollectLocalColorSpaceDefinitions(const PrimSpec &ps) {
+ColorSpaceSet CollectLocalColorSpaceDefinitions(
+    const PrimSpec &ps, const std::vector<AppliedSchema> &applied_schemas) {
   ColorSpaceSet local_defs;
 
-  const auto applied_schemas = CollectAppliedSchemas(ps.metas());
   if (!HasAppliedSchema(applied_schemas, "ColorSpaceDefinitionAPI")) {
     return local_defs;
   }
 
-  local_defs.insert("custom");
-
-  const auto &props = ps.props();
-  const std::array<const char *, 2> name_props = {"name",
-                                                  "colorSpaceDefinition:name"};
-  for (const char *prop_name : name_props) {
-    auto it = props.find(prop_name);
-    if (it == props.end()) {
-      continue;
-    }
-
-    if (!it->second.is_attribute()) {
-      continue;
-    }
-
-    const Attribute &attr = it->second.get_attribute();
-    auto value = attr.get_value<value::token>();
-    if (value && !value->str().empty()) {
-      local_defs.insert(value->str());
+  const auto token_value = [&](const std::string &prop_name,
+                               std::string *out) {
+    auto it = ps.props().find(prop_name);
+    if (it == ps.props().end() || !it->second.is_attribute()) return false;
+    auto value = it->second.get_attribute().get_value<value::token>();
+    if (!value || value->str().empty()) return false;
+    if (out) *out = value->str();
+    return true;
+  };
+  for (const AppliedSchema &schema : applied_schemas) {
+    if (schema.name != "ColorSpaceDefinitionAPI") continue;
+    if (schema.instance_name.empty()) {
+      local_defs.insert("custom");
+      for (const char *name_prop : {"name", "colorSpaceDefinition:name"}) {
+        std::string value;
+        if (token_value(name_prop, &value)) {
+          local_defs.insert(value);
+          local_defs.insert(color::CanonicalizeToken(value));
+        }
+      }
+    } else {
+      local_defs.insert(schema.instance_name);
+      std::string value;
+      if (token_value("colorSpaceDefinition:" + schema.instance_name +
+                          ":name",
+                      &value)) {
+        local_defs.insert(value);
+        local_defs.insert(color::CanonicalizeToken(value));
+      }
     }
   }
 
@@ -4273,11 +4299,69 @@ bool IsKnownColorSpaceToken(const std::string &token,
     return true;
   }
 
-  if (IsCanonicalColorSpaceToken(token)) {
+  const std::string canonical = color::CanonicalizeToken(token);
+  if (IsCanonicalColorSpaceToken(canonical)) {
     return true;
   }
 
-  return visible_custom_spaces.count(token) > 0;
+  return visible_custom_spaces.count(token) > 0 ||
+         visible_custom_spaces.count(canonical) > 0;
+}
+
+void ValidateLocalColorSpaceDefinitions(
+    const PrimSpec &ps, const std::vector<AppliedSchema> &applied_schemas,
+    const std::string &location, USDValidationResult *result) {
+  std::map<std::string, std::string> names;
+  for (const AppliedSchema &schema : applied_schemas) {
+    if (schema.name != "ColorSpaceDefinitionAPI") continue;
+    const bool legacy = schema.instance_name.empty();
+    const std::string prefix = legacy
+        ? std::string()
+        : "colorSpaceDefinition:" + schema.instance_name + ":";
+    std::string name = legacy ? "custom" : schema.instance_name;
+    const Attribute *name_attr = GetAttribute(ps, prefix + "name");
+    if (name_attr && !name_attr->is_connection() && !name_attr->is_blocked()) {
+      auto token = name_attr->get_value<value::token>();
+      if (token && !token->str().empty()) name = token->str();
+    }
+    const std::string canonical = color::CanonicalizeToken(name);
+    auto inserted = names.emplace(canonical, schema.instance_name);
+    if (!inserted.second) {
+      AddError(result, "core.schema.ColorSpaceDefinitionAPI.duplicate",
+               location, "multiple definitions resolve to color space `" +
+                             canonical + "`");
+    }
+
+    const value::float2 r_default{1.0f, 0.0f};
+    const value::float2 g_default{0.0f, 1.0f};
+    const value::float2 b_default{0.0f, 0.0f};
+    const value::float2 w_default{1.0f / 3.0f, 1.0f / 3.0f};
+    value::float2 r = r_default;
+    value::float2 g = g_default;
+    value::float2 b = b_default;
+    value::float2 w = w_default;
+    (void)GetFloat2Property(ps, prefix + "redChroma", &r);
+    (void)GetFloat2Property(ps, prefix + "greenChroma", &g);
+    (void)GetFloat2Property(ps, prefix + "blueChroma", &b);
+    (void)GetFloat2Property(ps, prefix + "whitePoint", &w);
+    double gamma_value = 1.0;
+    double bias_value = 0.0;
+    (void)GetNumericScalarProperty(ps, prefix + "gamma", &gamma_value);
+    (void)GetNumericScalarProperty(ps, prefix + "linearBias", &bias_value);
+    const float red[2] = {r[0], r[1]};
+    const float green[2] = {g[0], g[1]};
+    const float blue[2] = {b[0], b[1]};
+    const float white[2] = {w[0], w[1]};
+    color::ColorSpaceDesc definition;
+    if (!color::MakeColorSpaceFromChromaticities(
+            canonical, red, green, blue, white,
+            static_cast<float>(gamma_value), static_cast<float>(bias_value),
+            &definition)) {
+      AddError(result, "core.schema.ColorSpaceDefinitionAPI.invalid",
+               location, "definition `" + canonical +
+                             "` has invalid chromaticities or transfer curve");
+    }
+  }
 }
 
 void ValidateColorSpaceToken(const std::string &token,
@@ -4424,7 +4508,13 @@ void ValidateLayerMetas(const Layer &layer, USDValidationResult *result) {
 void ValidateColorSpaceDefinitionProperty(
     const std::string &prop_name, const Property &prop,
     const std::string &location, USDValidationResult *result) {
-  if (prop_name == "name" || prop_name == "colorSpaceDefinition:name") {
+  std::string instance;
+  std::string field;
+  const bool current_multiple_apply =
+      ParseColorSpaceDefinitionPropertyName(prop_name, &instance, &field);
+  const std::string &effective_name = current_multiple_apply ? field : prop_name;
+  if (effective_name == "name" ||
+      effective_name == "colorSpaceDefinition:name") {
     ValidateTokenAttributeType(prop, "core.schema.ColorSpaceDefinitionAPI.name",
                                location, result);
     ValidateUniformAttribute(prop, "core.schema.ColorSpaceDefinitionAPI.name",
@@ -4432,14 +4522,14 @@ void ValidateColorSpaceDefinitionProperty(
     return;
   }
 
-  if (prop_name == "redChroma" ||
-      prop_name == "colorSpaceDefinition:redChroma" ||
-      prop_name == "greenChroma" ||
-      prop_name == "colorSpaceDefinition:greenChroma" ||
-      prop_name == "blueChroma" ||
-      prop_name == "colorSpaceDefinition:blueChroma" ||
-      prop_name == "whitePoint" ||
-      prop_name == "colorSpaceDefinition:whitePoint") {
+  if (effective_name == "redChroma" ||
+      effective_name == "colorSpaceDefinition:redChroma" ||
+      effective_name == "greenChroma" ||
+      effective_name == "colorSpaceDefinition:greenChroma" ||
+      effective_name == "blueChroma" ||
+      effective_name == "colorSpaceDefinition:blueChroma" ||
+      effective_name == "whitePoint" ||
+      effective_name == "colorSpaceDefinition:whitePoint") {
     ValidateFloat2AttributeType(
         prop, "core.schema.ColorSpaceDefinitionAPI.coordinates", location,
         result);
@@ -4449,9 +4539,10 @@ void ValidateColorSpaceDefinitionProperty(
     return;
   }
 
-  if (prop_name == "gamma" || prop_name == "colorSpaceDefinition:gamma" ||
-      prop_name == "linearBias" ||
-      prop_name == "colorSpaceDefinition:linearBias") {
+  if (effective_name == "gamma" ||
+      effective_name == "colorSpaceDefinition:gamma" ||
+      effective_name == "linearBias" ||
+      effective_name == "colorSpaceDefinition:linearBias") {
     ValidateFloatAttributeType(
         prop, "core.schema.ColorSpaceDefinitionAPI.curve", location, result);
     ValidateVaryingAttribute(prop, "core.schema.ColorSpaceDefinitionAPI.curve",
@@ -4984,9 +5075,7 @@ void ValidatePrimSpecRecursive(const PrimSpec &ps, const Path &prim_path,
 
   if (options.core) {
     for (const auto &schema : applied_schemas) {
-      if ((schema.name == "ColorSpaceAPI" ||
-           schema.name == "ColorSpaceDefinitionAPI") &&
-          !schema.instance_name.empty()) {
+      if (schema.name == "ColorSpaceAPI" && !schema.instance_name.empty()) {
         AddError(result, "core.schema.singleApply.instance", prim_location,
                  schema.name + " must not be authored with an instance name");
       }
@@ -4995,7 +5084,8 @@ void ValidatePrimSpecRecursive(const PrimSpec &ps, const Path &prim_path,
 
   ColorSpaceSet visible_color_spaces = inherited_color_spaces;
   if (options.core) {
-    const ColorSpaceSet local_defs = CollectLocalColorSpaceDefinitions(ps);
+    const ColorSpaceSet local_defs =
+        CollectLocalColorSpaceDefinitions(ps, applied_schemas);
     visible_color_spaces.insert(local_defs.begin(), local_defs.end());
   }
 
@@ -5003,6 +5093,10 @@ void ValidatePrimSpecRecursive(const PrimSpec &ps, const Path &prim_path,
       HasAppliedSchema(applied_schemas, "ColorSpaceAPI");
   const bool has_color_space_definition_api =
       HasAppliedSchema(applied_schemas, "ColorSpaceDefinitionAPI");
+  if (options.core && has_color_space_definition_api) {
+    ValidateLocalColorSpaceDefinitions(ps, applied_schemas, prim_location,
+                                       result);
+  }
 
   for (const auto &prop_entry : ps.props()) {
     const std::string &prop_name = prop_entry.first;
@@ -5044,11 +5138,24 @@ void ValidatePrimSpecRecursive(const PrimSpec &ps, const Path &prim_path,
                                  collection_instances, prop_location, result);
     } else if (options.core &&
                prop_name.rfind("colorSpaceDefinition:", 0) == 0) {
-      if (!has_color_space_definition_api) {
+      std::string definition_instance;
+      std::string definition_field;
+      const bool current_property = ParseColorSpaceDefinitionPropertyName(
+          prop_name, &definition_instance, &definition_field);
+      bool matching_application = false;
+      for (const AppliedSchema &schema : applied_schemas) {
+        if (schema.name == "ColorSpaceDefinitionAPI" &&
+            ((current_property && schema.instance_name == definition_instance) ||
+             (!current_property && schema.instance_name.empty()))) {
+          matching_application = true;
+          break;
+        }
+      }
+      if (!matching_application) {
         AddError(result, "core.schema.ColorSpaceDefinitionAPI.applied",
                  prop_location,
                  "ColorSpaceDefinitionAPI property is authored without "
-                 "applying ColorSpaceDefinitionAPI");
+                 "applying its matching ColorSpaceDefinitionAPI instance");
       }
       ValidateColorSpaceDefinitionProperty(prop_name, prop, prop_location,
                                            result);

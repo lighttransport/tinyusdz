@@ -26,6 +26,7 @@
 #include "next/reader/usda-reader.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-point-instancer.hh"
+#include "next/schema/color-space.hh"
 #include "next/schema/geom-xform.hh"
 #include "next/schema/usd-skel.hh"
 
@@ -138,6 +139,9 @@ void TestChunkedArrayAllocFailure() {
   assert(!arr.reserve(impossible));
   float dummy = 0.0f;
   assert(arr.append(&dummy, 0));  // zero-count append is a no-op success
+  assert(!arr.append(&dummy, (std::numeric_limits<size_t>::max)()));
+  assert(arr.size() == 10);
+  assert(!arr.append(nullptr, 1));
 
   // Small growth still works after a failed attempt (failure is latched for
   // inspection but does not poison the array).
@@ -351,6 +355,32 @@ def Xform "World"
   assert(std::abs(focal_length - 50.0f) < 0.001f);
 
   std::cout << "  Scene Access: PASSED\n";
+}
+
+void TestDeepSceneAccess() {
+  std::cout << "Testing deep Scene Access traversal...\n";
+
+  // USDA input is depth-limited, but public builders can create deeper valid
+  // layers. This used to recurse once per prim in GetDescendants and could
+  // exhaust the comparatively small WASM stack.
+  constexpr size_t kDepth = 8192;
+  StageBuilder builder;
+  LayerBuilder& layer = builder.GetLayerBuilder();
+  for (size_t i = 0; i < kDepth; ++i) {
+    layer.begin_prim("P", "Xform");
+  }
+  Stage stage = builder.Build();
+  UsdPrim root = stage.GetRootPrims().front();
+  const std::vector<UsdPrim> descendants = GetDescendants(root);
+  assert(descendants.size() == kDepth - 1);
+
+  size_t traversed = 0;
+  stage.Traverse([&](const UsdPrim&) {
+    ++traversed;
+    return true;
+  });
+  assert(traversed == kDepth);
+  std::cout << "  Deep Scene Access: PASSED\n";
 }
 
 void TestRenderExtract() {
@@ -999,18 +1029,24 @@ def Xform "World"
             float inputs:thin_film_thickness = 450
             float inputs:thin_film_ior = 1.7
             float inputs:geometry_opacity.connect = </World/OpenPBRMat/NG.outputs:opacity>
+            normal3f inputs:geometry_normal.connect = </World/OpenPBRMat/NG.outputs:normal>
+            vector3f inputs:geometry_tangent.connect = </World/OpenPBRMat/NG.outputs:tangent>
             token outputs:surface
         }
 
         def NodeGraph "NG"
         {
-            color3f outputs:out.connect = </World/OpenPBRMat/NG/Pass8.outputs:out>
+            color3f outputs:out.connect = </World/OpenPBRMat/NG/Choose.outputs:out>
             float outputs:opacity.connect = </World/OpenPBRMat/NG/OpacityExtract.outputs:out>
+            normal3f outputs:normal.connect = </World/OpenPBRMat/NG/NormalMap.outputs:out>
+            vector3f outputs:tangent.connect = </World/OpenPBRMat/NG/Rotate.outputs:out>
 
             def Shader "Constant"
             {
                 uniform token info:id = "ND_constant_color3"
-                color3f inputs:value = (1.0, 0.5, 0.1)
+                color3f inputs:value = (1.0, 0.5, 0.1) (
+                    colorSpace = "srgb_rec709_scene"
+                )
                 color3f outputs:out
             }
 
@@ -1042,6 +1078,39 @@ def Xform "World"
             def Shader "Pass6" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass5.outputs:out> color3f outputs:out }
             def Shader "Pass7" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass6.outputs:out> color3f outputs:out }
             def Shader "Pass8" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass7.outputs:out> color3f outputs:out }
+
+            def Shader "Choose"
+            {
+                uniform token info:id = "ND_ifgreatereq_color3"
+                float inputs:value1 = 0.5
+                float inputs:value2 = 0.5
+                color3f inputs:in1.connect = </World/OpenPBRMat/NG/Pass8.outputs:out>
+                color3f inputs:in2 = (1, 0, 0)
+                color3f outputs:out
+            }
+
+            def Shader "NormalMap"
+            {
+                uniform token info:id = "ND_normalmap_float"
+                vector3f inputs:in = (0, 0, 1)
+                float inputs:scale = 0.35
+                normal3f outputs:out
+            }
+
+            def Shader "Normalize"
+            {
+                uniform token info:id = "ND_normalize_vector3"
+                vector3f inputs:in = (2, 0, 0)
+                vector3f outputs:out
+            }
+
+            def Shader "Rotate"
+            {
+                uniform token info:id = "ND_rotate3d_vector3"
+                vector3f inputs:in.connect = </World/OpenPBRMat/NG/Normalize.outputs:out>
+                float inputs:amount = 45
+                vector3f outputs:out
+            }
 
             def Shader "OpacityImage"
             {
@@ -1119,8 +1188,10 @@ def Xform "World"
   assert(openpbr.shader_type == RenderMaterial::ShaderType::OpenPBR);
   assert(openpbr.openpbr);
   assert(std::abs(openpbr.openpbr->base_color.value.x - 0.0f) < 0.001f);
-  assert(std::abs(openpbr.openpbr->base_color.value.y - 0.5f) < 0.001f);
-  assert(std::abs(openpbr.openpbr->base_color.value.z - 0.9f) < 0.001f);
+  // Each authored source enters the graph's linear working space before node
+  // math: 1 - linearized_sRGB(1, 0.5, 0.1).
+  assert(std::abs(openpbr.openpbr->base_color.value.y - 0.785959f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->base_color.value.z - 0.989977f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_metalness.value.x - 0.8f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_roughness.value.x - 0.35f) < 0.001f);
   assert(std::abs(openpbr.openpbr->specular_anisotropy.value.x - 0.11f) < 0.001f);
@@ -1137,6 +1208,8 @@ def Xform "World"
   assert(std::abs(openpbr.openpbr->thin_film_thickness.value.x - 450.0f) <
          0.001f);
   assert(std::abs(openpbr.openpbr->thin_film_ior.value.x - 1.7f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->normal_map_scale - 0.35f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->tangent_rotation - 45.0f) < 0.001f);
   assert(openpbr.openpbr->opacity.is_texture());
   assert(openpbr.alpha_mode == RenderMaterial::AlphaMode::Blend);
   const int32_t opacity_texture_id = openpbr.openpbr->opacity.texture_id;
@@ -3648,6 +3721,45 @@ def Xform "World"
   std::cout << "  Half-precision xformOps: PASSED\n";
 }
 
+// Regression: compound Euler rotations must retain USD's authored axis order.
+// Reversing it displaces multi-axis, non-uniformly scaled decal meshes from the
+// surfaces they were authored against.
+void TestCompoundRotationTransformParity() {
+  std::cout << "Testing compound-rotation transform parity...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "Decal" {
+    double3 xformOp:translate = (287.6815490722656, 33.344390869140625, 8.929546356201172)
+    float3 xformOp:rotateXYZ = (89.99446, 7.4118885e-13, -179.99998)
+    float3 xformOp:scale = (3.2136297, 1.6068149, 0.87708235)
+    uniform token[] xformOpOrder = [
+        "xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"
+    ]
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+  UsdPrim decal = lr.stage.GetPrimAtPath("/Decal");
+  assert(decal.IsValid());
+
+  double extracted[16];
+  double schema[16];
+  assert(ComputeLocalTransform(decal, extracted, 0.0));
+  assert(UsdGeomXform(decal).ComputeLocalTransform(schema));
+  for (int i = 0; i < 16; ++i) {
+    assert(std::fabs(extracted[i] - schema[i]) < 1.0e-5);
+  }
+  assert(std::fabs(extracted[0] + 3.2136297) < 1.0e-5);
+  assert(std::fabs(extracted[6] - 1.6068149) < 1.0e-5);
+  assert(std::fabs(extracted[9] - 0.87708235) < 1.0e-5);
+  assert(std::fabs(extracted[12] - 287.6815490722656) < 1.0e-9);
+  assert(std::fabs(extracted[13] - 33.344390869140625) < 1.0e-9);
+  assert(std::fabs(extracted[14] - 8.929546356201172) < 1.0e-9);
+
+  std::cout << "  Compound-rotation transform parity: PASSED\n";
+}
+
 // Multi-skeleton joint-order remap: two skeletons whose SkelAnimations
 // author `joints` in an order DIFFERENT from the skeleton's own joint order.
 // Channels must target the right skeleton and joint_remap must map each
@@ -5169,6 +5281,7 @@ def Xform "World"
         }
     }
 }
+
 )";
 
   LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
@@ -5417,6 +5530,341 @@ def Xform "World"
   std::cout << "  P2 audit fixes: PASSED\n";
 }
 
+void TestRenderColorManagement() {
+  std::cout << "Testing RenderSettings color management...\n";
+  const char* usda = R"USD(#usda 1.0
+(
+    defaultPrim = "World"
+    renderSettingsPrimPath = "/World/settings"
+)
+def Xform "World" (
+    prepend apiSchemas = ["ColorSpaceDefinitionAPI:studio_ap0"]
+)
+{
+    uniform token colorSpaceDefinition:studio_ap0:name = "studio_ap0"
+    float2 colorSpaceDefinition:studio_ap0:redChroma = (0.7348552434, 0.2642253252)
+    float2 colorSpaceDefinition:studio_ap0:greenChroma = (-0.0061709125, 1.0113149590)
+    float2 colorSpaceDefinition:studio_ap0:blueChroma = (0.0159675593, -0.0642355031)
+    float2 colorSpaceDefinition:studio_ap0:whitePoint = (0.3127, 0.3290)
+    float colorSpaceDefinition:studio_ap0:gamma = 1
+    float colorSpaceDefinition:studio_ap0:linearBias = 0
+    def RenderSettings "settings"
+    {
+        uniform token renderingColorSpace = "lin_ap1_scene"
+    }
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.25, 0.5, 0.75) (
+                colorSpace = "srgb_rec709_scene"
+            )
+            color3f inputs:diffuseColor.timeSamples = {
+                1: (0.1, 0.2, 0.3),
+                2: (0.9, 0.6, 0.1),
+            }
+            color3f inputs:emissiveColor = (0.25, 0.5, 0.75) (
+                colorSpace = "raw"
+            )
+            token outputs:surface
+        }
+    }
+    def Material "TextureMat"
+    {
+        token outputs:surface.connect = </World/TextureMat/Surface.outputs:surface>
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/TextureMat/Tex.outputs:rgb>
+            token outputs:surface
+        }
+        def Shader "Tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @missing-wide-gamut.png@ (
+                colorSpace = "studio_ap0"
+            )
+            token inputs:sourceColorSpace = "sRGB"
+            float3 outputs:rgb
+        }
+    }
+    def Material "MtlxTextureMat" (
+        prepend apiSchemas = ["MaterialXConfigAPI"]
+    )
+    {
+        string config:mtlx:version = "1.39"
+        string config:mtlx:colorspace = "studio_ap0"
+        token outputs:mtlx:surface.connect = </World/MtlxTextureMat/Surface.outputs:out>
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color.connect = </World/MtlxTextureMat/Image.outputs:out>
+            color3f inputs:emission_color.connect = </World/MtlxTextureMat/Constant.outputs:out>
+            float inputs:emission_luminance = 1
+            color3f inputs:specular_color.connect = </World/MtlxTextureMat/ApiImage.outputs:out>
+            color3f inputs:coat_color.connect = </World/MtlxTextureMat/Override.outputs:out>
+            float inputs:coat = 1
+            color3f inputs:sheen_color.connect = </World/MtlxTextureMat/Mix.outputs:out>
+            float inputs:sheen_weight = 1
+            token outputs:out
+        }
+        def Shader "Image"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @missing-wide-gamut.png@
+            color3f outputs:out
+        }
+        def Shader "Constant"
+        {
+            uniform token info:id = "ND_constant_color3"
+            color3f inputs:value = (0.1, 0.2, 0.3)
+            color3f outputs:out
+        }
+        def Shader "Override"
+        {
+            uniform token info:id = "ND_constant_color3"
+            color3f inputs:value = (0.2, 0.3, 0.4) (
+                colorSpace = "lin_rec709_scene"
+            )
+            color3f outputs:out
+        }
+        def Shader "Encoded"
+        {
+            uniform token info:id = "ND_constant_color3"
+            color3f inputs:value = (0.5, 0, 0) (
+                colorSpace = "srgb_rec709_scene"
+            )
+            color3f outputs:out
+        }
+        def Shader "Linear"
+        {
+            uniform token info:id = "ND_constant_color3"
+            color3f inputs:value = (0, 0.5, 0) (
+                colorSpace = "lin_rec709_scene"
+            )
+            color3f outputs:out
+        }
+        def Shader "Mix"
+        {
+            uniform token info:id = "ND_mix_color3"
+            color3f inputs:bg.connect = </World/MtlxTextureMat/Encoded.outputs:out>
+            color3f inputs:fg.connect = </World/MtlxTextureMat/Linear.outputs:out>
+            float inputs:mix = 0.5
+            color3f outputs:out
+        }
+        def Shader "ApiImage" (
+            prepend apiSchemas = ["ColorSpaceAPI"]
+        )
+        {
+            uniform token colorSpace:name = "lin_rec709_scene"
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @missing-inherited.png@
+            color3f outputs:out
+        }
+    }
+    def Material "HsvMat"
+    {
+        token outputs:mtlx:surface.connect = </World/HsvMat/Surface.outputs:out>
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color.connect = </World/HsvMat/Hsv.outputs:out>
+            token outputs:out
+        }
+        def Shader "Hsv"
+        {
+            uniform token info:id = "ND_hsvadjust_color3"
+            color3f inputs:in = (0.9, 0.18, 0.42) (
+                colorSpace = "raw"
+            )
+            float3 inputs:amount = (0, 1, 1)
+            color3f outputs:out
+        }
+    }
+    def Xform "Alt" (
+        prepend apiSchemas = ["ColorSpaceDefinitionAPI:studio_ap0"]
+    )
+    {
+        uniform token colorSpaceDefinition:studio_ap0:name = "studio_ap0"
+        float2 colorSpaceDefinition:studio_ap0:redChroma = (0.64, 0.33)
+        float2 colorSpaceDefinition:studio_ap0:greenChroma = (0.30, 0.60)
+        float2 colorSpaceDefinition:studio_ap0:blueChroma = (0.15, 0.06)
+        float2 colorSpaceDefinition:studio_ap0:whitePoint = (0.3127, 0.3290)
+        float colorSpaceDefinition:studio_ap0:gamma = 1
+        float colorSpaceDefinition:studio_ap0:linearBias = 0
+        def Material "TextureMat"
+        {
+            token outputs:surface.connect = </World/Alt/TextureMat/Surface.outputs:surface>
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </World/Alt/TextureMat/Tex.outputs:rgb>
+                token outputs:surface
+            }
+            def Shader "Tex"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @missing-wide-gamut.png@ (
+                    colorSpace = "studio_ap0"
+                )
+                float3 outputs:rgb
+            }
+        }
+    }
+}
+)USD";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  ConverterConfig converter_config;
+  converter_config.time_code = 1.5;
+  RenderSceneConverter converter(converter_config);
+  ConvertResult result = converter.Convert(loaded.stage);
+  assert(result.success);
+  assert(result.scene.render_settings_path == "/World/settings");
+  assert(result.scene.working_color_space == "lin_ap1_scene");
+  assert(result.scene.materials.size() == 5);
+  const RenderMaterial* material_ptr = nullptr;
+  const RenderMaterial* mtlx_material_ptr = nullptr;
+  const RenderMaterial* hsv_material_ptr = nullptr;
+  for (const RenderMaterial& candidate : result.scene.materials) {
+    if (candidate.prim_path == "/World/Mat") material_ptr = &candidate;
+    if (candidate.prim_path == "/World/MtlxTextureMat") {
+      mtlx_material_ptr = &candidate;
+    }
+    if (candidate.prim_path == "/World/HsvMat") {
+      hsv_material_ptr = &candidate;
+    }
+  }
+  assert(material_ptr);
+  assert(mtlx_material_ptr);
+  assert(hsv_material_ptr);
+  assert(hsv_material_ptr->openpbr);
+  const Float4& hsv_identity = hsv_material_ptr->openpbr->base_color.value;
+  assert(std::fabs(hsv_identity.x - 0.9f) < 1.0e-6f);
+  assert(std::fabs(hsv_identity.y - 0.18f) < 1.0e-6f);
+  assert(std::fabs(hsv_identity.z - 0.42f) < 1.0e-6f);
+  assert(mtlx_material_ptr->openpbr);
+  assert(mtlx_material_ptr->openpbr->base_color.is_texture());
+  assert(mtlx_material_ptr->openpbr->specular_color.is_texture());
+  assert(mtlx_material_ptr->mtlx_config.authored);
+  assert(mtlx_material_ptr->mtlx_config.version == "1.39");
+  assert(mtlx_material_ptr->mtlx_config.colorspace == "studio_ap0");
+  const Float4& mtlx_emission =
+      mtlx_material_ptr->openpbr->emission_color.value;
+  const float mtlx_emission_display[3] = {
+      result.scene.working_to_display_linear[0] * mtlx_emission.x +
+          result.scene.working_to_display_linear[1] * mtlx_emission.y +
+          result.scene.working_to_display_linear[2] * mtlx_emission.z,
+      result.scene.working_to_display_linear[3] * mtlx_emission.x +
+          result.scene.working_to_display_linear[4] * mtlx_emission.y +
+          result.scene.working_to_display_linear[5] * mtlx_emission.z,
+      result.scene.working_to_display_linear[6] * mtlx_emission.x +
+          result.scene.working_to_display_linear[7] * mtlx_emission.y +
+          result.scene.working_to_display_linear[8] * mtlx_emission.z};
+  ::tinyusdz::color::ColorTransform mtlx_to_display;
+  assert(::tinyusdz::next::color_management::BuildColorTransform(
+      loaded.stage.GetPrimAtPath("/World/MtlxTextureMat/Constant"),
+      "studio_ap0", "lin_rec709_scene", &mtlx_to_display));
+  float expected_mtlx_emission[3] = {0.1f, 0.2f, 0.3f};
+  ::tinyusdz::color::TransformRGB(
+      mtlx_to_display, expected_mtlx_emission);
+  for (int channel = 0; channel < 3; ++channel) {
+    assert(std::fabs(mtlx_emission_display[channel] -
+                     expected_mtlx_emission[channel]) < 3.0e-4f);
+  }
+  const Float4& explicit_coat = mtlx_material_ptr->openpbr->coat_color.value;
+  const float explicit_coat_display[3] = {
+      result.scene.working_to_display_linear[0] * explicit_coat.x +
+          result.scene.working_to_display_linear[1] * explicit_coat.y +
+          result.scene.working_to_display_linear[2] * explicit_coat.z,
+      result.scene.working_to_display_linear[3] * explicit_coat.x +
+          result.scene.working_to_display_linear[4] * explicit_coat.y +
+          result.scene.working_to_display_linear[5] * explicit_coat.z,
+      result.scene.working_to_display_linear[6] * explicit_coat.x +
+          result.scene.working_to_display_linear[7] * explicit_coat.y +
+          result.scene.working_to_display_linear[8] * explicit_coat.z};
+  const float expected_explicit_coat[3] = {0.2f, 0.3f, 0.4f};
+  for (int channel = 0; channel < 3; ++channel) {
+    assert(std::fabs(explicit_coat_display[channel] -
+                     expected_explicit_coat[channel]) < 3.0e-4f);
+  }
+  const Float4& mixed_sheen = mtlx_material_ptr->openpbr->sheen_color.value;
+  const float mixed_sheen_display[3] = {
+      result.scene.working_to_display_linear[0] * mixed_sheen.x +
+          result.scene.working_to_display_linear[1] * mixed_sheen.y +
+          result.scene.working_to_display_linear[2] * mixed_sheen.z,
+      result.scene.working_to_display_linear[3] * mixed_sheen.x +
+          result.scene.working_to_display_linear[4] * mixed_sheen.y +
+          result.scene.working_to_display_linear[5] * mixed_sheen.z,
+      result.scene.working_to_display_linear[6] * mixed_sheen.x +
+          result.scene.working_to_display_linear[7] * mixed_sheen.y +
+          result.scene.working_to_display_linear[8] * mixed_sheen.z};
+  assert(std::fabs(mixed_sheen_display[0] - 0.1070205f) < 3.0e-4f);
+  assert(std::fabs(mixed_sheen_display[1] - 0.25f) < 3.0e-4f);
+  assert(std::fabs(mixed_sheen_display[2]) < 3.0e-4f);
+  const RenderMaterial& material = *material_ptr;
+  assert(material.preview_surface);
+  const Float4& ap1 = material.preview_surface->diffuse_color.value;
+  const float display[3] = {
+      result.scene.working_to_display_linear[0] * ap1.x +
+          result.scene.working_to_display_linear[1] * ap1.y +
+          result.scene.working_to_display_linear[2] * ap1.z,
+      result.scene.working_to_display_linear[3] * ap1.x +
+          result.scene.working_to_display_linear[4] * ap1.y +
+          result.scene.working_to_display_linear[5] * ap1.z,
+      result.scene.working_to_display_linear[6] * ap1.x +
+          result.scene.working_to_display_linear[7] * ap1.y +
+          result.scene.working_to_display_linear[8] * ap1.z};
+  // Interpolate the authored sRGB samples first: midpoint = (0.5, 0.4, 0.2),
+  // then convert that evaluated value to the selected linear working space.
+  assert(std::fabs(display[0] - 0.214041f) < 2.0e-4f);
+  assert(std::fabs(display[1] - 0.132868f) < 2.0e-4f);
+  assert(std::fabs(display[2] - 0.0331048f) < 2.0e-4f);
+  const Float4& raw = material.preview_surface->emissive_color.value;
+  assert(std::fabs(raw.x - 0.25f) < 1.0e-7f);
+  assert(std::fabs(raw.y - 0.5f) < 1.0e-7f);
+  assert(std::fabs(raw.z - 0.75f) < 1.0e-7f);
+  assert(result.scene.textures.size() == 4);
+  // Asset colorSpace metadata wins over inputs:sourceColorSpace and carries
+  // the selected render working space to native/web texture consumers.
+  const RenderTexture* ap0_texture = nullptr;
+  const RenderTexture* scoped_rec709_texture = nullptr;
+  const RenderTexture* inherited_rec709_texture = nullptr;
+  size_t ap0_texture_count = 0;
+  for (const RenderTexture& texture : result.scene.textures) {
+    assert(texture.target_color_space == "lin_ap1_scene");
+    assert(texture.color_transform_valid);
+    assert(!texture.source_color_is_data);
+    assert(std::fabs(texture.source_gamma - 1.0f) < 1.0e-7f);
+    if (texture.source_color_space == "lin_rec709_scene") {
+      assert(texture.color_transform_bypass);
+      inherited_rec709_texture = &texture;
+      continue;
+    }
+    assert(!texture.color_transform_bypass);
+    assert(texture.source_color_space == "studio_ap0");
+    if (texture.source_to_display_linear[0] > 2.0f) {
+      ap0_texture = &texture;
+      ++ap0_texture_count;
+    } else {
+      scoped_rec709_texture = &texture;
+    }
+  }
+  assert(ap0_texture);
+  assert(scoped_rec709_texture);
+  assert(inherited_rec709_texture);
+  assert(ap0_texture_count == 2);
+  assert(std::fabs(ap0_texture->source_to_display_linear[0] -
+                   2.521686f) < 2.0e-4f);
+  assert(std::fabs(scoped_rec709_texture->source_to_display_linear[0] -
+                   1.0f) < 2.0e-4f);
+  assert(std::fabs(inherited_rec709_texture->source_to_display_linear[0] -
+                   1.0f) < 2.0e-4f);
+  std::cout << "  RenderSettings color management: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -5444,6 +5892,7 @@ int main() {
 
   // Scene Access tests
   TestSceneAccess();
+  TestDeepSceneAccess();
   TestRenderExtract();
 
   std::cout << "\n";
@@ -5468,6 +5917,7 @@ int main() {
   TestAnimationExtractionGate();
   TestMeshParityCleanups();
   TestHalfPrecisionXformOps();
+  TestCompoundRotationTransformParity();
   TestMultiSkeletonJointRemap();
   TestSkeletonJointRemapLeafTokens();
   TestGeometryReleaseSkipsAnimatedArrays();
@@ -5481,6 +5931,7 @@ int main() {
   TestAuditReviewFixes();
   TestP2AuditFixes();
   TestLegacyParityExtraction();
+  TestRenderColorManagement();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

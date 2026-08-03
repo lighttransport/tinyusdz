@@ -165,7 +165,11 @@ bool CrateReader::Impl::BuildStage() {
   // Create layer and builder
   Layer layer;
   LayerBuilder builder(layer);
-  constexpr size_t kReportInterval = 512;
+  // Large production scenes can contain hundreds of thousands of specs. In
+  // WASM every progress report crosses into JavaScript, where the worker also
+  // checks its UI throttle. A coarser interval remains comfortably responsive
+  // while avoiding thousands of otherwise-no-op JS/WASM transitions.
+  constexpr size_t kReportInterval = 8192;
   auto report_stage = [&](const char* phase, size_t current,
                           size_t total) -> bool {
     if (current == 0 || current == total ||
@@ -295,6 +299,14 @@ bool CrateReader::Impl::BuildStage() {
         } else if (const std::string* s = field.second.as_string()) {
           layer.meta().colorManagementSystem = *s;
           layer.meta().colorManagementSystem_set = true;
+        }
+      } else if (field.first == "renderSettingsPrimPath") {
+        if (const std::string* s = field.second.as_string()) {
+          layer.meta().renderSettingsPrimPath = *s;
+          layer.meta().renderSettingsPrimPath_set = true;
+        } else if (const std::string* s = field.second.as_token()) {
+          layer.meta().renderSettingsPrimPath = *s;
+          layer.meta().renderSettingsPrimPath_set = true;
         }
       } else if (field.first == "documentation" || field.first == "doc") {
         if (const std::string* s = field.second.as_string()) {
@@ -798,6 +810,11 @@ bool CrateReader::Impl::BuildStage() {
     auto& entry = prim_entries[entry_index];
     // Compute depth of this prim (number of '/' in path)
     size_t depth = std::count(entry.full_path.begin(), entry.full_path.end(), '/');
+    if (depth == 0) {
+      AddWarning("Ignoring malformed non-absolute prim path: " +
+                 entry.full_path);
+      continue;
+    }
 
     // Pop stack until we're at the correct parent level
     while (prim_stack.size() > depth - 1) {

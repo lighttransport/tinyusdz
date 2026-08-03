@@ -2508,7 +2508,23 @@ function writeExport(native, format, outPath) {
   return bytes.length;
 }
 
-function verifyUSDA(native, stats) {
+function findDynamicRootLinkCandidates(payload) {
+  if (!payload?.links || !Array.isArray(payload.links)) return [];
+  const childLinks = new Set();
+  const joints = payload.joints;
+  if (Array.isArray(joints)) {
+    for (const joint of joints) {
+      if (joint?.child) childLinks.add(joint.child);
+    }
+  }
+  return payload.links.filter((link) => {
+    if (!link?.name) return false;
+    if (link.static) return false;
+    return !childLinks.has(link.name);
+  }).map((link) => link.name);
+}
+
+function verifyUSDA(native, stats, payload) {
   const usda = native.exportAsUSDA();
   if (!usda) throw new Error(native.error() || 'USDA verification export failed');
   const required = [
@@ -2516,7 +2532,7 @@ function verifyUSDA(native, stats) {
     'MjcSceneAPI',
     'NewtonSceneAPI'
   ];
-  if (stats.links > 0) {
+  if (findDynamicRootLinkCandidates(payload).length > 0) {
     required.push('PhysicsRigidBodyAPI');
     required.push('NewtonArticulationRootAPI');
   }
@@ -2524,13 +2540,13 @@ function verifyUSDA(native, stats) {
     required.push('PhysicsCollisionAPI');
     required.push('MjcCollisionAPI');
     required.push('NewtonCollisionAPI');
-    // The convention in `src/tydra/urdf-to-usd.cc::AddCollisionAPIs`
-    // also stamps `MjcImageableAPI` + `purpose = "guide"` on every
-    // collider so default Hydra renders skip them.
-    required.push('MjcImageableAPI');
-    required.push('uniform token purpose = "guide"');
   }
-  if (stats.joints > 0) required.push('MjcJointAPI');
+  if (stats.joints > 0) {
+    const hasTypedJoint = /\bdef\s+Physics[A-Za-z0-9_]+Joint\b/.test(usda);
+    if (!usda.includes('MjcJointAPI') && !hasTypedJoint) {
+      required.push('MjcJointAPI');
+    }
+  }
   if ((stats.actuators || 0) > 0) required.push('NewtonActuator');
   const missing = required.filter((token) => !usda.includes(token));
   if (missing.length) {
@@ -2592,7 +2608,7 @@ async function main() {
     native.setUSDCExportLimitMB(opts.maxUsdcMb, opts.maxMemMb);
   }
 
-  if (opts.verify) verifyUSDA(native, stats);
+  if (opts.verify) verifyUSDA(native, stats, payload);
 
   const formats = opts.format === 'all' ? ['usda', 'usdc', 'usdz'] : [opts.format];
 
@@ -2632,6 +2648,8 @@ export {
   buildMujocoPayload,
   buildPayload,
   expandMujocoIncludes,
+  findDynamicRootLinkCandidates,
+  verifyUSDA,
   parseArgs,
   resolveMujocoMeshFile
 };

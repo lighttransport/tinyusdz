@@ -38,6 +38,8 @@ struct APISchemas {
     MaterialXConfigAPI, // "MaterialXConfigAPI" (usdMtlx: config:mtlx:*)
 
     CollectionAPI,      // "CollectionAPI"
+    ColorSpaceAPI,      // "ColorSpaceAPI"
+    ColorSpaceDefinitionAPI,  // "ColorSpaceDefinitionAPI" (multi-apply)
     // usdGeom
     GeomModelAPI, // "GeomModelAPI"
     MotionAPI, // "MotionAPI"

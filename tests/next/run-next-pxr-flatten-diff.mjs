@@ -185,7 +185,17 @@ async function processOne(a, input, tmpdir, idx) {
     return { ...input, status: 'pxr-error', detail: `unparseable pxr output: ${e.message}` };
   }
 
-  const diffs = compareUsda(nextUsda, pxrUsda, { floatTolerance: a.floatTolerance });
+  // Both flattened outputs describe the same source layer. OpenUSD rewrites
+  // asset identifiers to absolute paths while next intentionally keeps them
+  // authored-relative, so compare their lexically-resolved targets using the
+  // original layer directory as the anchor (never the temporary output dir).
+  const assetPathBase = path.dirname(input.file);
+  const diffs = compareUsda(nextUsda, pxrUsda, {
+    floatTolerance: a.floatTolerance,
+    resolveAssetPaths: true,
+    assetPathBase1: assetPathBase,
+    assetPathBase2: assetPathBase,
+  });
   if (diffs.length === 0) return { ...input, status: 'pass' };
   return {
     ...input,

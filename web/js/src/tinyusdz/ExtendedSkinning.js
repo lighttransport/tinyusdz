@@ -13,6 +13,7 @@
 
 import * as THREE from 'three';
 import { toOwnedFloat32Array } from './TypedArrayOwnership.js';
+import { installTextureColorTransform } from './ColorSpaceUtils.js';
 
 /**
  * Skinning modes based on bone influence count
@@ -374,6 +375,17 @@ export function createExtendedSkinningMaterial(baseMaterial, options = {}) {
     material.customProgramCacheKey = function() {
         return `ext-skinning-${mode}-${maxInfluences}-${texelsPerVertex}`;
     };
+
+    // Material.clone() copies userData but the extended-skinning hook above
+    // replaces onBeforeCompile. Re-wrap it so AP0/AP1/P3/Rec.2020 color maps
+    // retain their fragment-stage transform on skinned meshes as well.
+    const colorTransforms = material.userData?.tinyusdzTextureColorTransforms;
+    if (colorTransforms) {
+        delete material.userData.tinyusdzTextureColorHookInstalled;
+        for (const [mapProperty, transform] of Object.entries(colorTransforms)) {
+            installTextureColorTransform(material, mapProperty, transform);
+        }
+    }
 
     material._extSkinMode = mode;
 

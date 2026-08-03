@@ -2578,6 +2578,14 @@ bool AsciiParser::ParseStageMetaOpt() {
     } else {
       PUSH_ERROR_AND_RETURN("`colorManagementSystem` isn't a token value.");
     }
+  } else if (varname == "renderSettingsPrimPath") {
+    if (auto pv = var.get_value<value::StringData>()) {
+      _stage_metas.renderSettingsPrimPath = pv.value().value;
+    } else if (auto pvs = var.get_value<std::string>()) {
+      _stage_metas.renderSettingsPrimPath = pvs.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`renderSettingsPrimPath` isn't a string value.");
+    }
   } else if (varname == "owner") {
     // AOUSD Core Spec: layer owner string
     if (auto pv = var.get_value<value::StringData>()) {

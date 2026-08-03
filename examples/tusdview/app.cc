@@ -862,8 +862,10 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       });
     }
     if (ok) {
-      LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s", loaded_.filepath.c_str(),
+      LOGI("loaded %s: %zu mesh(es), %zu tri(s), %zu materials, %zu textures%s",
+           loaded_.filepath.c_str(),
            draw_.meshes.size(), draw_.triangleCount,
+           draw_.materials.size(), draw_.textures.size(),
            draw_.truncated ? " [truncated: render budget]" : "");
     } else {
       LOGE("load failed: %s", loaded_.err.c_str());
@@ -907,6 +909,28 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
           l.ibl.lutSize, l.ibl.envCubeSize,
           static_cast<unsigned long long>(indexHash(l.lightLinkMeshIndices)),
           static_cast<unsigned long long>(indexHash(l.shadowLinkMeshIndices)));
+      }
+    }
+    if (std::getenv("TUSDVIEW_DUMP_CAMERA_RECORDS")) {
+      for (size_t i = 0; i < draw_.cameras.size(); ++i) {
+        const DrawCameraCPU& c = draw_.cameras[i];
+        std::fprintf(stderr,
+          "[tusdview-camera] %zu %s %s %d "
+          "%.9g %.9g %.9g %.9g %.9g %.9g "
+          "%.9g %.9g %.9g %.9g %.9g %.9g "
+          "%.9g %.9g %.9g %.9g %.9g %.9g\n",
+          i,
+          c.absPath.c_str(),
+          c.projection == DrawCameraCPU::Projection::Orthographic
+              ? "orthographic" : "perspective",
+          static_cast<int>(c.projection),
+          double(c.focalLength), double(c.horizontalAperture),
+          double(c.verticalAperture), double(c.horizontalApertureOffset),
+          double(c.verticalApertureOffset), double(c.exposure),
+          double(c.zNear), double(c.zFar), double(c.fovYDeg),
+          double(c.eye[0]), double(c.eye[1]), double(c.eye[2]),
+          double(c.up[0]), double(c.up[1]), double(c.up[2]),
+          double(c.forward[0]), double(c.forward[1]), double(c.forward[2]));
       }
     }
     const LoadDiagnostics diag =

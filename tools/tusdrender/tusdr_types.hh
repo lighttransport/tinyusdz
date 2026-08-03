@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "tusdr_math.hh"
+#include "color-transform.hh"
 #include "tinyusdz.hh"
 #include "value-types.hh"
 #include "xform.hh"
@@ -65,6 +66,10 @@ struct Texture {
   WrapMode wrap_s{WrapMode::Repeat};
   WrapMode wrap_t{WrapMode::Repeat};
   bool srgb{true};  // sourceColorSpace: decode sRGB->linear when sampled
+  // Full authored color transform for color textures. The destination is
+  // tusdrender's display-linear Rec.709 shading space. `srgb` remains as the
+  // compatibility fallback for legacy textures that do not carry a transform.
+  tinyusdz::color::ColorTransform color_transform;
   // UsdUVTexture inputs:scale / inputs:bias (applied post-sample by the caller,
   // e.g. (2,2,2)/(-1,-1,-1) to unpack a [0,1] normal map to [-1,1]).
   Vec3 scale{1.0f, 1.0f, 1.0f};
@@ -180,9 +185,24 @@ struct Texture {
     return a + (b - a) * ty;
   }
 
+  static Vec3 ApplyColorTransform(
+      Vec3 c, bool srgb,
+      const tinyusdz::color::ColorTransform *color_transform) {
+    if (color_transform && !color_transform->bypass) {
+      float rgb[3] = {c.x, c.y, c.z};
+      tinyusdz::color::TransformRGB(*color_transform, rgb);
+      return Vec3{rgb[0], rgb[1], rgb[2]};
+    }
+    if (srgb) {
+      return Vec3{SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z)};
+    }
+    return c;
+  }
+
   static Vec3 sample_data(const uint8_t *pixels, int width, int height,
                           int channels, const std::vector<Mip> &mips,
                           WrapMode wrap_s, WrapMode wrap_t, bool srgb,
+                          const tinyusdz::color::ColorTransform *color_transform,
                           float u, float v, float lod) {
     if (width <= 0 || height <= 0 || !pixels) return Vec3{0.5f, 0.5f, 0.5f};
     bool su = true, sv = true;
@@ -206,8 +226,7 @@ struct Texture {
       c = Vec3{c.x + (c1.x - c.x) * f, c.y + (c1.y - c.y) * f,
                c.z + (c1.z - c.z) * f};
     }
-    if (srgb) c = Vec3{SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z)};
-    return c;
+    return ApplyColorTransform(c, srgb, color_transform);
   }
 
   static float sample_channel_data(const uint8_t *pixels, int width, int height,
@@ -264,8 +283,8 @@ struct Texture {
         return Vec3{0.5f, 0.5f, 0.5f};
       }
       return sample_data(tile->pixels.data(), tile->width, tile->height,
-                         tile->channels, tile->mips, wrap_s, wrap_t, srgb, lu,
-                         lv, lod);
+                         tile->channels, tile->mips, wrap_s, wrap_t, srgb,
+                         &color_transform, lu, lv, lod);
     }
     if (width <= 0 || height <= 0 || pixels.empty()) {
       return Vec3{0.5f, 0.5f, 0.5f};
@@ -284,8 +303,7 @@ struct Texture {
       c = Vec3{c.x + (c1.x - c.x) * f, c.y + (c1.y - c.y) * f,
                c.z + (c1.z - c.z) * f};
     }
-    if (srgb) c = Vec3{SrgbToLinear(c.x), SrgbToLinear(c.y), SrgbToLinear(c.z)};
-    return c;
+    return ApplyColorTransform(c, srgb, &color_transform);
   }
 
   // Anisotropic sample: the UV footprint is a parallelogram whose axes are the

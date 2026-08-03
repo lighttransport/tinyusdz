@@ -11,6 +11,7 @@
 
 #include "common-utils.hh"
 #include "common-types.hh"
+#include "color-management.hh"
 #include "enum-handlers.hh"
 #include "../tiny-hashmap.hh"
 #include "image-loader.hh"
@@ -72,6 +73,7 @@ namespace tydra {
 namespace {
 
 using TydraPerfClock = std::chrono::steady_clock;
+constexpr int32_t kWorkingColorValueTextureId = -2;
 
 static uint64_t ElapsedNs(const TydraPerfClock::time_point &start) {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -2190,14 +2192,55 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   }
 #endif  // TINYUSDZ_WITH_TEXTOOLS
 
+  std::string authored_color_space;
+  bool authored_color_space_set = false;
+  const AttrMetas *file_metadata = has_file ? &texture.file.metas() : nullptr;
+  if (!color_management::ComputeColorSpaceName(
+          env.stage, tex_abs_path, file_metadata, &authored_color_space,
+          &authored_color_space_set)) {
+    authored_color_space.clear();
+    authored_color_space_set = false;
+  }
+
+  UsdUVTexture::SourceColorSpace resolved_source_color_space =
+      UsdUVTexture::SourceColorSpace::Auto;
+  std::string source_color_space_error;
+  const bool resolved_source_color_space_valid =
+      authored_color_space_set ||
+      ResolveSourceColorSpace(env.stage, texture.sourceColorSpace, env.timecode,
+                              env.tinterp, &resolved_source_color_space,
+                              &source_color_space_error);
+
   // TextureImage and BufferData
   {
     // Check image cache first - if the same asset path was already loaded,
     // reuse the existing image to avoid redundant I/O and memory usage
-    std::string cacheKey = assetPath.GetAssetPath();
+    std::string cacheKey = env.asset_resolver.resolve(assetPath.GetAssetPath());
+    if (cacheKey.empty()) cacheKey = assetPath.GetAssetPath();
+    if (authored_color_space_set) {
+      tinyusdz::color::ColorTransform transform;
+      std::string transform_error;
+      if (color_management::BuildColorTransform(
+              env.stage, tex_abs_path, authored_color_space,
+              "lin_rec709_scene", &transform, &transform_error)) {
+        cacheKey += "|source:" +
+                    tinyusdz::color::CanonicalizeToken(authored_color_space) +
+                    ":" + std::to_string(transform.source.gamma) + ":" +
+                    std::to_string(transform.source.linear_bias);
+        for (float coefficient : transform.matrix) {
+          cacheKey += ":" + std::to_string(coefficient);
+        }
+      } else {
+        cacheKey += "|invalid-source:" + authored_color_space + ":" +
+                    tex_abs_path.prim_part();
+      }
+    } else if (resolved_source_color_space_valid) {
+      cacheKey += "|source:" +
+                  to_string(resolved_source_color_space);
+    }
 
     // UDIM texture (e.g. `diffuse.<UDIM>.png`)?
-    const bool is_udim = io::IsUDIMPath(cacheKey);
+    const bool is_udim = io::IsUDIMPath(assetPath.GetAssetPath());
     const bool udim_keep_as_is =
         is_udim && !env.material_config.combine_udim_tiles;
 
@@ -2220,18 +2263,19 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       // and record a sparse `tydra::UDIMTexture` for web editing.
       std::vector<UDIMTile> tiles;
       std::string udim_warn, udim_err;
-      if (!ExpandUDIMTiles(cacheKey, env.asset_resolver,
+      if (!ExpandUDIMTiles(assetPath.GetAssetPath(), env.asset_resolver,
                            env.material_config.udim_max_tiles, &tiles,
                            &udim_warn, &udim_err)) {
         if (udim_warn.size()) PushWarn(udim_warn);
         if (!env.material_config.allow_texture_load_failure &&
             !env.material_config.allow_missing_asset) {
           PUSH_ERROR_AND_RETURN(fmt::format(
-              "Failed to expand UDIM tiles for `{}`: {}", cacheKey, udim_err));
+              "Failed to expand UDIM tiles for `{}`: {}",
+              assetPath.GetAssetPath(), udim_err));
         }
         PUSH_WARN(fmt::format(
             "Failed to expand UDIM tiles for `{}`. Skip. reason = {}",
-            cacheKey, udim_err));
+            assetPath.GetAssetPath(), udim_err));
       } else {
         if (udim_warn.size()) PushWarn(udim_warn);
 
@@ -2242,7 +2286,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         }
 
         UDIMTexture udim;
-        udim.asset_identifier = cacheKey;
+        udim.asset_identifier = assetPath.GetAssetPath();
         udim.prim_name = tex_abs_path.element_name();
         udim.abs_path = tex_abs_path.prim_part();
 
@@ -2437,36 +2481,62 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     // When both `colorSpace` metadata and `inputs:sourceColorSpace' attribute
     // exists, `colorSpace` metadata supercedes.
     // NOTE: `inputs:sourceColorSpace` attribute should be deprecated in favor of `colorSpace` metadata.
+    auto storeColorTransform = [&](const std::string &source) -> bool {
+      tinyusdz::color::ColorTransform transform;
+      std::string transform_error;
+      if (!color_management::BuildColorTransform(
+              env.stage, tex_abs_path, source, "lin_rec709_scene",
+              &transform, &transform_error)) {
+        return false;
+      }
+      texImage.sourceColorSpaceName =
+          tinyusdz::color::CanonicalizeToken(source);
+      texImage.colorTransformValid = true;
+      texImage.colorTransformBypass = transform.bypass;
+      texImage.sourceColorIsData =
+          transform.source.kind == tinyusdz::color::ColorSpaceKind::Data;
+      texImage.sourceGamma = transform.source.gamma;
+      texImage.sourceLinearBias = transform.source.linear_bias;
+      std::memcpy(texImage.sourceToDisplayLinear, transform.matrix,
+                  sizeof(texImage.sourceToDisplayLinear));
+      return true;
+    };
+
+    bool sourceColorSpaceSet = false;
     bool inferColorSpaceFailed = false;
-    if (has_file && texture.file.metas().has_colorSpace()) {
+    if (authored_color_space_set) {
       ColorSpace cs;
-      value::token cs_token = texture.file.metas().get_colorSpace();
+      value::token cs_token(authored_color_space);
       if (InferColorSpace(cs_token, &cs)) {
         texImage.usdColorSpace = cs;
+        (void)storeColorTransform(cs_token.str());
+        sourceColorSpaceSet = true;
         DCOUT("Inferred colorSpace: " << to_string(cs));
+      } else if (storeColorTransform(cs_token.str())) {
+        texImage.usdColorSpace = tydra::ColorSpace::Custom;
+        sourceColorSpaceSet = true;
+        DCOUT("Resolved custom colorSpace: " << cs_token.str());
       } else {
         inferColorSpaceFailed = true;
       }
     }
 
-    bool sourceColorSpaceSet = false;
-    if (inferColorSpaceFailed || !has_file || !texture.file.metas().has_colorSpace()) {
+    if (!authored_color_space_set) {
       // NOTE: Apply `inputs:sourceColorSpace` resolution even when the
       // attribute is not authored: its fallback value is `auto`
       // (UsdPreviewSurface spec), which must resolve from the texture's
       // bit depth/channel count instead of assuming sRGB.
       {
-        UsdUVTexture::SourceColorSpace cs;
-        std::string source_color_space_err;
-        if (ResolveSourceColorSpace(env.stage, texture.sourceColorSpace,
-                                    env.timecode, env.tinterp, &cs,
-                                    &source_color_space_err)) {
+        const UsdUVTexture::SourceColorSpace cs = resolved_source_color_space;
+        if (resolved_source_color_space_valid) {
           if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
             sourceColorSpaceSet = true;
+            (void)storeColorTransform("sRGB");
           } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
             texImage.usdColorSpace = tydra::ColorSpace::Raw;
             sourceColorSpaceSet = true;
+            (void)storeColorTransform("raw");
           } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
 
             if (tex_loaded) {
@@ -2480,27 +2550,30 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                 ((texImage.channels == 3) || (texImage.channels ==4))) {
                 texImage.usdColorSpace = tydra::ColorSpace::sRGB;
                 sourceColorSpaceSet = true;
+                (void)storeColorTransform("sRGB");
               } else {
                 // For auto mode, non-8bit RGB(A) textures should be used as
                 // read rather than warned about as ambiguous sRGB candidates.
                 texImage.usdColorSpace = tydra::ColorSpace::Raw;
                 sourceColorSpaceSet = true;
+                (void)storeColorTransform("raw");
               }
             } else {
               texImage.usdColorSpace = tydra::ColorSpace::Unknown;
               sourceColorSpaceSet = true;
             }
           }
-        } else if (!source_color_space_err.empty()) {
+        } else if (!source_color_space_error.empty()) {
           PUSH_WARN(fmt::format(
               "Failed to resolve `inputs:sourceColorSpace`: {}",
-              source_color_space_err));
+              source_color_space_error));
         }
       }
     }
 
-    if (!sourceColorSpaceSet && inferColorSpaceFailed && has_file) {
-      value::token cs_token = texture.file.metas().get_colorSpace();
+    if (!sourceColorSpaceSet && inferColorSpaceFailed &&
+        authored_color_space_set) {
+      value::token cs_token(authored_color_space);
       PUSH_ERROR_AND_RETURN(
           fmt::format("Invalid or unknown colorSpace metadataum: {}. Please "
                       "report an issue to TinyUSDZ github repo.",
@@ -2612,6 +2685,33 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             }
             texImage.colorSpace = tydra::ColorSpace::Raw;
 
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Custom &&
+                     texImage.colorTransformValid) {
+            std::vector<float> buf;
+            if (!u8_data_to_f32_buf(buf)) return false;
+            if (channels < 3) {
+              PUSH_ERROR_AND_RETURN(
+                  "Custom color-space texture requires at least 3 channels.");
+            }
+            tinyusdz::color::ColorTransform transform;
+            transform.source.name = texImage.sourceColorSpaceName;
+            transform.source.gamma = texImage.sourceGamma;
+            transform.source.linear_bias = texImage.sourceLinearBias;
+            transform.source.kind = texImage.sourceColorIsData
+                ? tinyusdz::color::ColorSpaceKind::Data
+                : tinyusdz::color::ColorSpaceKind::Color;
+            (void)tinyusdz::color::GetBuiltinColorSpace(
+                "lin_rec709_scene", &transform.destination);
+            transform.bypass = texImage.colorTransformBypass;
+            std::memcpy(transform.matrix, texImage.sourceToDisplayLinear,
+                        sizeof(transform.matrix));
+            for (size_t i = 0; i < width * height; ++i) {
+              tinyusdz::color::TransformRGB(
+                  transform, &buf[i * channels]);
+            }
+            store_f32_buf(buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
           } else if (texImage.usdColorSpace == tydra::ColorSpace::g22_Rec709) {
             // Gamma 2.2 u8 -> linear f32 (via gamma removal)
             std::vector<float> buf;
@@ -2663,6 +2763,31 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
           } else if (texImage.usdColorSpace == tydra::ColorSpace::Raw) {
             imageBuffer = std::move(assetImageBuffer);
             texImage.colorSpace = tydra::ColorSpace::Raw;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Custom &&
+                     texImage.colorTransformValid) {
+            if (channels < 3) {
+              PUSH_ERROR_AND_RETURN(
+                  "Custom color-space texture requires at least 3 channels.");
+            }
+            tinyusdz::color::ColorTransform transform;
+            transform.source.name = texImage.sourceColorSpaceName;
+            transform.source.gamma = texImage.sourceGamma;
+            transform.source.linear_bias = texImage.sourceLinearBias;
+            transform.source.kind = texImage.sourceColorIsData
+                ? tinyusdz::color::ColorSpaceKind::Data
+                : tinyusdz::color::ColorSpaceKind::Color;
+            (void)tinyusdz::color::GetBuiltinColorSpace(
+                "lin_rec709_scene", &transform.destination);
+            transform.bypass = texImage.colorTransformBypass;
+            std::memcpy(transform.matrix, texImage.sourceToDisplayLinear,
+                        sizeof(transform.matrix));
+            for (size_t i = 0; i < width * height; ++i) {
+              tinyusdz::color::TransformRGB(
+                  transform, &in_buf[i * channels]);
+            }
+            store_f32_buf(in_buf);
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
 
           } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_ACEScg) {
             // ACEScg (AP1 linear) -> linear sRGB
@@ -2812,6 +2937,11 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
           imageBuffer = std::move(assetImageBuffer);
         }
         texImage.colorSpace = texImage.usdColorSpace;
+      }
+
+      if (env.material_config.linearize_color_space &&
+          texImage.colorTransformValid) {
+        texImage.colorTransformApplied = true;
       }
 
       // Assign buffer id
@@ -3058,6 +3188,170 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   return true;
 }
 
+static const std::map<std::string, Property> *ColorSourceProperties(
+    const Prim &prim) {
+  if (const Material *p = prim.as<Material>()) return &p->props;
+  if (const NodeGraph *p = prim.as<NodeGraph>()) return &p->props;
+  if (const Shader *p = prim.as<Shader>()) {
+    if (const ShaderNode *node = p->value.as<ShaderNode>()) {
+      if (!node->props.empty()) return &node->props;
+    }
+    return &p->props;
+  }
+  return nullptr;
+}
+
+static bool ResolveConnectedColorSource(
+    const Stage &stage, const Path &connection, Path *source_prim_path,
+    AttrMetas *source_metadata, std::set<std::string> *visited,
+    int depth = 0) {
+  if (!source_prim_path || !source_metadata || !visited || depth > 32 ||
+      !connection.is_valid()) {
+    return false;
+  }
+  const std::string key = connection.full_path_name();
+  if (!visited->insert(key).second) return false;
+  const Prim *prim = nullptr;
+  std::string lookup_error;
+  if (!stage.find_prim_at_path(Path(connection.prim_part(), ""), prim,
+                               &lookup_error) || !prim) {
+    return false;
+  }
+  const std::map<std::string, Property> *props = ColorSourceProperties(*prim);
+  if (!props) return false;
+
+  const auto exact = props->find(connection.prop_part());
+  if (exact != props->end() && exact->second.is_attribute()) {
+    const Attribute &attribute = exact->second.get_attribute();
+    if (attribute.metas().has_colorSpace()) {
+      *source_prim_path = Path(connection.prim_part(), "");
+      *source_metadata = attribute.metas();
+      return true;
+    }
+    if (attribute.has_connections() && !attribute.connections().empty() &&
+        ResolveConnectedColorSource(stage, attribute.connections()[0],
+                                    source_prim_path, source_metadata, visited,
+                                    depth + 1)) {
+      return true;
+    }
+  }
+
+  // MaterialX constant/utility outputs commonly carry no metadata. Their
+  // value-bearing input is the authored color source, so prefer explicit
+  // input metadata and then a connected input recursively.
+  const Attribute *fallback_input = nullptr;
+  for (const auto &entry : *props) {
+    if (entry.first.rfind("inputs:", 0) != 0 ||
+        !entry.second.is_attribute()) {
+      continue;
+    }
+    const Attribute &attribute = entry.second.get_attribute();
+    if (!fallback_input || entry.first == "inputs:value" ||
+        entry.first == "inputs:in") {
+      fallback_input = &attribute;
+    }
+    if (attribute.metas().has_colorSpace()) {
+      *source_prim_path = Path(connection.prim_part(), "");
+      *source_metadata = attribute.metas();
+      return true;
+    }
+    if (attribute.has_connections() && !attribute.connections().empty() &&
+        ResolveConnectedColorSource(stage, attribute.connections()[0],
+                                    source_prim_path, source_metadata, visited,
+                                    depth + 1)) {
+      return true;
+    }
+  }
+  if (fallback_input) {
+    *source_prim_path = Path(connection.prim_part(), "");
+    *source_metadata = fallback_input->metas();
+    return true;
+  }
+  return false;
+}
+
+static bool MaterialXConfiguredColorSpace(const Stage &stage,
+                                          const Path &source_prim_path,
+                                          std::string *out) {
+  if (!out) return false;
+  // Graph resolvers commonly return the connected output property path. Stage
+  // prim lookup and ancestor traversal must start from its absolute prim path,
+  // otherwise a valid `/Mat/Graph/Image.outputs:out` silently misses the
+  // enclosing MaterialXConfigAPI.
+  const Path source_path(source_prim_path.prim_part(), "");
+  auto source_result = stage.GetPrimAtPath(source_path);
+  const Prim *source_prim = source_result ? source_result.value() : nullptr;
+  const Shader *source_shader = source_prim ? source_prim->as<Shader>() : nullptr;
+  if (!source_shader ||
+      (source_shader->info_id.rfind("ND_", 0) != 0 &&
+       source_shader->info_id != "image" &&
+       source_shader->info_id != "tiledimage")) {
+    return false;
+  }
+  Path current = source_path.get_parent_prim_path();
+  while (current.is_valid() && current.prim_part() != "/") {
+    auto candidate_result = stage.GetPrimAtPath(current);
+    const Prim *candidate = candidate_result
+        ? candidate_result.value() : nullptr;
+    const Material *material = candidate ? candidate->as<Material>() : nullptr;
+    if (material && material->materialXConfig) {
+      const std::string configured =
+          material->materialXConfig->mtlx_colorspace.get_value();
+      if (!configured.empty()) {
+        *out = color::CanonicalizeToken(configured);
+        return true;
+      }
+      return false;
+    }
+    const Path parent = current.get_parent_prim_path();
+    if (!parent.is_valid() || parent.prim_part() == current.prim_part()) break;
+    current = parent;
+  }
+  return false;
+}
+
+static bool TransformShaderColorConstant(
+    const RenderSceneConverterEnv &env, const Path &shader_abs_path,
+    const AttrMetas &metadata, const Path *connection,
+    const std::string &working_color_space, bool is_materialx,
+    ShaderParam<vec3> *parameter, std::string *error) {
+  if (!parameter || parameter->is_texture()) return true;
+  // -2 is an internal handoff marker used only between MaterialX constant
+  // folding and this post-conversion pass. Restore the public invalid-texture
+  // sentinel after avoiding a second color transform.
+  if (parameter->texture_id == kWorkingColorValueTextureId) {
+    parameter->texture_id = -1;
+    return true;
+  }
+  Path source_prim_path = shader_abs_path;
+  AttrMetas source_metadata = metadata;
+  if (connection) {
+    std::set<std::string> visited;
+    (void)ResolveConnectedColorSource(env.stage, *connection,
+                                      &source_prim_path, &source_metadata,
+                                      &visited);
+  }
+  std::string source;
+  bool authored = false;
+  if (!color_management::ComputeColorSpaceName(
+          env.stage, source_prim_path, &source_metadata, &source,
+          &authored)) return false;
+  if (!authored && is_materialx) {
+    (void)MaterialXConfiguredColorSpace(env.stage, source_prim_path, &source);
+  }
+  color::ColorTransform transform;
+  if (!color_management::BuildColorTransform(
+          env.stage, source_prim_path, source, working_color_space,
+          &transform, error)) return false;
+  float rgb[3] = {parameter->value[0], parameter->value[1],
+                  parameter->value[2]};
+  color::TransformRGB(transform, rgb);
+  parameter->value[0] = rgb[0];
+  parameter->value[1] = rgb[1];
+  parameter->value[2] = rgb[2];
+  return true;
+}
+
 template <typename T, typename Dty>
 bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     const RenderSceneConverterEnv &env, const Path &shader_abs_path,
@@ -3109,6 +3403,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
         const AssetInfo *assetInfo{nullptr};
         UVTexture::Channel mtlx_output_channel{UVTexture::Channel::RGB};
         MtlxTexcoordTransform mtlx_texcoord_transform;
+        std::string mtlx_input_color_space;
 
         auto mtlx_result = GetConnectedMtlxTexture(
             env.stage, param, &texPath, &image_shader, &st_varname, &assetInfo,
@@ -3132,6 +3427,10 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
                   auto asset_val = attr.get_value<value::AssetPath>();
                   if (asset_val) {
                     texAssetPath = *asset_val;
+                    if (attr.metas().has_colorSpace()) {
+                      mtlx_input_color_space =
+                          attr.metas().get_colorSpace().str();
+                    }
                     return true;
                   }
                 }
@@ -3268,12 +3567,9 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
             mtlx_assetInfo = *assetInfo;
           }
 
-          // Set sourceColorSpace based on parameter semantics.
-          // Color parameters (diffuseColor, emissiveColor, etc.) use sRGB,
-          // non-color parameters (roughness, metallic, normal, etc.) use Raw
-          // to prevent double-linearization.
-          // This matches hdSt's MaterialX texture handling where colorspace
-          // is inferred from the MaterialX nodedef's type.
+          // Explicit image metadata wins, then the MaterialX document working
+          // space recorded by MaterialXConfigAPI. Only unconfigured color
+          // inputs use the historical sRGB heuristic; data inputs remain Raw.
           {
             static const std::set<std::string> srgb_params = {
               "diffuseColor", "emissiveColor", "specularColor",
@@ -3281,13 +3577,30 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
               "coat_color", "sheen_color", "subsurface_color",
               "transmission_color", "fuzz_color",
             };
-            Animatable<UsdUVTexture::SourceColorSpace> cs;
-            if (srgb_params.count(param_name)) {
-              cs.set_default(UsdUVTexture::SourceColorSpace::SRGB);
-            } else {
-              cs.set_default(UsdUVTexture::SourceColorSpace::Raw);
+            const bool is_color = srgb_params.count(param_name) != 0;
+            std::string effective_color_space = mtlx_input_color_space;
+            if (is_color && effective_color_space.empty()) {
+              bool inherited_authored = false;
+              AttrMetas no_file_metadata;
+              (void)color_management::ComputeColorSpaceName(
+                  env.stage, Path(texPath.prim_part(), ""),
+                  &no_file_metadata, &effective_color_space,
+                  &inherited_authored);
+              if (!inherited_authored) {
+                effective_color_space.clear();
+                (void)MaterialXConfiguredColorSpace(
+                    env.stage, texPath, &effective_color_space);
+              }
             }
-            synth_tex.sourceColorSpace.set_value(cs);
+            if (is_color && !effective_color_space.empty()) {
+              synth_tex.file.metas().set_colorSpace(effective_color_space);
+            } else {
+              Animatable<UsdUVTexture::SourceColorSpace> cs;
+              cs.set_default(is_color
+                  ? UsdUVTexture::SourceColorSpace::SRGB
+                  : UsdUVTexture::SourceColorSpace::Raw);
+              synth_tex.sourceColorSpace.set_value(cs);
+            }
           }
 
           if (!ConvertUVTexture(env, texPath, mtlx_assetInfo, synth_tex, &rtex)) {
@@ -3317,8 +3630,12 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
         } else {
           // No texture found — try evaluating the node graph as a constant
           // value (e.g., ND_add_float or ND_multiply_color3 with constant inputs).
-          auto const_result =
-              EvaluateMtlxNodeGraphAsConstant(env.stage, conn_path);
+          std::string evaluation_space = "lin_rec709_scene";
+          (void)MaterialXConfiguredColorSpace(env.stage, shader_abs_path,
+                                               &evaluation_space);
+          std::string mtlx_const_err;
+          auto const_result = EvaluateMtlxNodeGraphAsConstant(
+              env.stage, conn_path, evaluation_space);
           if (const_result) {
             DCOUT(fmt::format("MaterialX constant evaluation {}.{} components={}",
                               shader_abs_path.prim_part(), param_name,
@@ -3328,7 +3645,31 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
               memcpy(&dst_param.value, &v, sizeof(float));
               return true;
             }
-            if (std::is_same<T, value::color3f>::value && const_result->is_color3()) {
+            if (std::is_same<T, value::color3f>::value &&
+                const_result->is_color3() && const_result->color_managed) {
+              value::color3f c;
+              c[0] = const_result->v[0];
+              c[1] = const_result->v[1];
+              c[2] = const_result->v[2];
+              color::ColorTransform transform;
+              std::string transform_error;
+              if (!color_management::BuildColorTransform(
+                      env.stage, shader_abs_path, evaluation_space,
+                      _working_color_space, &transform, &transform_error)) {
+                mtlx_const_err = transform_error;
+              } else {
+                float rgb[3] = {c[0], c[1], c[2]};
+                color::TransformRGB(transform, rgb);
+                c[0] = rgb[0];
+                c[1] = rgb[1];
+                c[2] = rgb[2];
+                memcpy(&dst_param.value, &c, sizeof(value::color3f));
+                dst_param.texture_id = kWorkingColorValueTextureId;
+                return true;
+              }
+            }
+            if (std::is_same<T, value::color3f>::value &&
+                const_result->is_color3()) {
               value::color3f c;
               c[0] = const_result->v[0];
               c[1] = const_result->v[1];
@@ -3341,8 +3682,21 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
               float f = const_result->as_float();
               value::color3f c;
               c[0] = f; c[1] = f; c[2] = f;
-              memcpy(&dst_param.value, &c, sizeof(value::color3f));
-              return true;
+              color::ColorTransform transform;
+              std::string transform_error;
+              if (color_management::BuildColorTransform(
+                      env.stage, shader_abs_path, evaluation_space,
+                      _working_color_space, &transform, &transform_error)) {
+                float rgb[3] = {c[0], c[1], c[2]};
+                color::TransformRGB(transform, rgb);
+                c[0] = rgb[0];
+                c[1] = rgb[1];
+                c[2] = rgb[2];
+                memcpy(&dst_param.value, &c, sizeof(value::color3f));
+                dst_param.texture_id = kWorkingColorValueTextureId;
+                return true;
+              }
+              mtlx_const_err = transform_error;
             }
             // Color3 result used for float (take first component)
             if (std::is_same<T, float>::value && const_result->is_color3()) {
@@ -3354,8 +3708,9 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           // Capture the constant-evaluator's diagnostic (e.g. "Unsupported node
           // type ...") so it can be surfaced in the fallback warning below;
           // otherwise it is lost (it only reached DCOUT before).
-          const std::string mtlx_const_err =
-              const_result ? std::string() : const_result.error();
+          if (!const_result && mtlx_const_err.empty()) {
+            mtlx_const_err = const_result.error();
+          }
           // Interface passthrough: the connection may target a Material /
           // Shader / NodeGraph interface input that holds a constant value
           // (e.g. `Material.inputs:metalness = 1`, common in flattened
@@ -3608,6 +3963,27 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 
 #undef CONVERT_PREVIEW_PARAM
 
+#define TRANSFORM_PREVIEW_COLOR(field)                                      \
+  {                                                                         \
+    std::string color_error;                                                \
+    const Path *color_connection =                                          \
+        (shader.field.has_connections() &&                                  \
+         !shader.field.get_connections().empty())                           \
+            ? &shader.field.get_connections()[0]                            \
+            : nullptr;                                                      \
+    if (!TransformShaderColorConstant(                                      \
+            env, shader_abs_path, shader.field.metas(),                     \
+            color_connection, _working_color_space, is_materialx,          \
+            &rshader.field,                                                 \
+            &color_error)) {                                                \
+      PushWarn("Failed to transform " #field " color: " + color_error);    \
+    }                                                                       \
+  }
+  TRANSFORM_PREVIEW_COLOR(diffuseColor)
+  TRANSFORM_PREVIEW_COLOR(emissiveColor)
+  TRANSFORM_PREVIEW_COLOR(specularColor)
+#undef TRANSFORM_PREVIEW_COLOR
+
   (*rshader_out) = rshader;
   return true;
 }
@@ -3712,6 +4088,33 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   CONVERT_OPENPBR_PARAM_MTLX(opacity, "opacity")
   CONVERT_OPENPBR_PARAM_MTLX(normal, "normal")
   CONVERT_OPENPBR_PARAM_MTLX(tangent, "tangent")
+
+#define TRANSFORM_OPENPBR_COLOR(field)                                      \
+  {                                                                         \
+    std::string color_error;                                                \
+    const Path *color_connection =                                          \
+        (shader.field.has_connections() &&                                  \
+         !shader.field.get_connections().empty())                           \
+            ? &shader.field.get_connections()[0]                            \
+            : nullptr;                                                      \
+    if (!TransformShaderColorConstant(                                      \
+            env, shader_abs_path, shader.field.metas(),                     \
+            color_connection, _working_color_space, is_materialx,          \
+            &rshader.field,                                                 \
+            &color_error)) {                                                \
+      PushWarn("Failed to transform " #field " color: " + color_error);    \
+    }                                                                       \
+  }
+  TRANSFORM_OPENPBR_COLOR(base_color)
+  TRANSFORM_OPENPBR_COLOR(specular_color)
+  TRANSFORM_OPENPBR_COLOR(transmission_color)
+  TRANSFORM_OPENPBR_COLOR(transmission_scatter)
+  TRANSFORM_OPENPBR_COLOR(subsurface_color)
+  TRANSFORM_OPENPBR_COLOR(sheen_color)
+  TRANSFORM_OPENPBR_COLOR(fuzz_color)
+  TRANSFORM_OPENPBR_COLOR(coat_color)
+  TRANSFORM_OPENPBR_COLOR(emission_color)
+#undef TRANSFORM_OPENPBR_COLOR
 
 #undef CONVERT_OPENPBR_PARAM
 
@@ -4242,6 +4645,14 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
   RenderMaterial rmat;
   rmat.abs_path = mat_abs_path.prim_part();
   rmat.name = mat_abs_path.element_name();
+  if (material.materialXConfig) {
+    const MaterialXConfigAPI &config = *material.materialXConfig;
+    rmat.materialXConfig.authored = true;
+    rmat.materialXConfig.version = config.mtlx_version.get_value();
+    rmat.materialXConfig.name_space = config.mtlx_namespace.get_value();
+    rmat.materialXConfig.colorspace = config.mtlx_colorspace.get_value();
+    rmat.materialXConfig.source_uri = config.mtlx_sourceUri.get_value();
+  }
   DCOUT("rmat.abs_path = " << rmat.abs_path);
   DCOUT("rmat.name = " << rmat.name);
   std::string err;

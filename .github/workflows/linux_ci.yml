@@ -203,6 +203,36 @@ jobs:
     - name: tests
       run: cd build_mcp && ctest --output-on-failure
 
+  # Build and run the hermetic tusdview unit tests (no GPU required). These
+  # compiled unit tests validate lighting, texture, material, geometry, and camera
+  # extraction. The tusdview GUI viewer (GLFW/Vulkan) is NOT built — only the
+  # test executables are compiled, keeping CI fast and dependency-free.
+  build-tusdview-hermetic:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: configure
+      run: |
+        CXX=clang++ CC=clang cmake -B build_tusdview -S . -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DTINYUSDZ_WITH_TYDRA=On \
+          -DTINYUSDZ_BUILD_EXAMPLES=On \
+          -DTINYUSDZ_BUILD_TESTS=On \
+          -DTINYUSDZ_BUILD_GUI_VIEWER=Off
+    - name: build tests
+      run: cmake --build build_tusdview -j2 --target tusdview_lighting_test \
+                                         --target tusdview_lightrt_bridge_test \
+                                         --target tusdview_openpbr_material_test \
+                                         --target tusdview_texture_pipeline_test \
+                                         --target tusdview_lightrt_mtlx_eval_test \
+                                         --target tusdview_geometry_primvar_test \
+                                         --target tusdview_camera_nav_test
+    - name: tests
+      run: |
+        cd build_tusdview && ctest --output-on-failure -R "tusdview_lighting|tusdview_lightrt_bridge|tusdview_openpbr|tusdview_texture_pipeline|tusdview_lightrt_mtlx|tusdview_geometry|tusdview_camera_nav"
+
   # Build with the experimental `next` (pcp large-scene) backend enabled.
   # The default build and the rest of CI do NOT compile src/next/ — it is gated
   # behind TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE — so this variant exists to keep the

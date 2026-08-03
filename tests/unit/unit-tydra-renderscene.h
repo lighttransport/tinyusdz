@@ -9,6 +9,8 @@ void tydra_renderscene_mtlx_nonlocal_nodegraph_test(void);
 void tydra_renderscene_mtlx_interface_inputs_test(void);
 void tydra_renderscene_mtlx_geomprop_texture_test(void);
 void tydra_renderscene_mtlx_texture_colorspace_test(void);
+void tydra_renderscene_rendering_colorspace_test(void);
+void tydra_renderscene_custom_texture_colorspace_test(void);
 void tydra_renderscene_sphere_light_test(void);
 void tydra_renderscene_camera_test(void);
 void tydra_renderscene_memory_estimation_test(void);

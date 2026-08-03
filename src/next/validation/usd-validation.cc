@@ -45,6 +45,7 @@
 #include "../prim/path.hh"
 #include "../types/type-id.hh"
 #include "../types/value.hh"
+#include "color-transform.hh"
 
 namespace tinyusdz {
 namespace next {
@@ -270,7 +271,8 @@ bool IsMaterialXAssetPath(const std::string &asset_path) {
 
 bool IsMultipleApplySchemaName(const std::string &schema_name) {
   return schema_name == "CollectionAPI" || schema_name == "PhysicsDriveAPI" ||
-         schema_name == "PhysicsLimitAPI";
+         schema_name == "PhysicsLimitAPI" ||
+         schema_name == "ColorSpaceDefinitionAPI";
 }
 
 bool IsKnownAPISchemaName(const std::string &schema_name) {
@@ -4852,17 +4854,46 @@ bool IsColorSpaceDefinitionPropertyName(const std::string &prop_name) {
          prop_name == "colorSpaceDefinition:linearBias";
 }
 
+bool ParseColorSpaceDefinitionPropertyName(const std::string &prop_name,
+                                           std::string *instance,
+                                           std::string *field) {
+  const std::vector<std::string> segments = SplitString(prop_name, ':');
+  if (segments.size() == 3 && segments[0] == "colorSpaceDefinition" &&
+      !segments[1].empty() && !segments[2].empty()) {
+    if (instance) *instance = segments[1];
+    if (field) *field = segments[2];
+    return IsColorSpaceDefinitionPropertyName(segments[2]);
+  }
+  return false;
+}
+
 ColorSpaceSet CollectLocalColorSpaceDefinitions(
     const PrimSpec &ps, const std::vector<AppliedSchema> &applied_schemas) {
   ColorSpaceSet local_defs;
   if (!HasAppliedSchema(applied_schemas, "ColorSpaceDefinitionAPI")) {
     return local_defs;
   }
-  local_defs.insert("custom");
-  for (const char *prop_name : {"name", "colorSpaceDefinition:name"}) {
+  for (const AppliedSchema &schema : applied_schemas) {
+    if (schema.name != "ColorSpaceDefinitionAPI") continue;
+    if (schema.instance_name.empty()) {
+      // Compatibility with pre-multiple-apply AOUSD drafts.
+      local_defs.insert("custom");
+      for (const char *prop_name : {"name", "colorSpaceDefinition:name"}) {
+        std::string value;
+      if (GetTokenProperty(ps, prop_name, &value) && !value.empty()) {
+        local_defs.insert(value);
+        local_defs.insert(::tinyusdz::color::CanonicalizeToken(value));
+        }
+      }
+      continue;
+    }
+    local_defs.insert(schema.instance_name);
     std::string value;
-    if (GetTokenProperty(ps, prop_name, &value) && !value.empty()) {
+    const std::string name_prop =
+        "colorSpaceDefinition:" + schema.instance_name + ":name";
+    if (GetTokenProperty(ps, name_prop, &value) && !value.empty()) {
       local_defs.insert(value);
+      local_defs.insert(::tinyusdz::color::CanonicalizeToken(value));
     }
   }
   return local_defs;
@@ -4873,10 +4904,69 @@ bool IsKnownColorSpaceToken(const std::string &token,
   if (token.empty()) {
     return true;
   }
-  if (IsCanonicalColorSpaceToken(token)) {
+  const std::string canonical =
+      ::tinyusdz::color::CanonicalizeToken(token);
+  if (IsCanonicalColorSpaceToken(canonical)) {
     return true;
   }
-  return visible_custom_spaces.count(token) > 0;
+  return visible_custom_spaces.count(token) > 0 ||
+         visible_custom_spaces.count(canonical) > 0;
+}
+
+void ValidateLocalColorSpaceDefinitions(
+    const PrimSpec &ps, const std::vector<AppliedSchema> &applied_schemas,
+    const std::string &location, USDValidationResult *result) {
+  std::map<std::string, std::string> names;
+  for (const AppliedSchema &schema : applied_schemas) {
+    if (schema.name != "ColorSpaceDefinitionAPI") continue;
+    const bool legacy = schema.instance_name.empty();
+    const std::string prefix = legacy
+        ? std::string()
+        : "colorSpaceDefinition:" + schema.instance_name + ":";
+    std::string name = legacy ? "custom" : schema.instance_name;
+    std::string authored_name;
+    if (GetTokenProperty(ps, prefix + "name", &authored_name) &&
+        !authored_name.empty()) {
+      name = authored_name;
+    }
+    const std::string canonical =
+        ::tinyusdz::color::CanonicalizeToken(name);
+    auto inserted = names.emplace(canonical, schema.instance_name);
+    if (!inserted.second) {
+      AddError(result, "core.schema.ColorSpaceDefinitionAPI.duplicate",
+               location, "multiple definitions resolve to color space `" +
+                             canonical + "`");
+    }
+
+    float red[2] = {1.0f, 0.0f};
+    float green[2] = {0.0f, 1.0f};
+    float blue[2] = {0.0f, 0.0f};
+    float white[2] = {1.0f / 3.0f, 1.0f / 3.0f};
+    const auto read_float2 = [&](const std::string &property, float out[2]) {
+      const Value *value = GetAttrValue(ps, property);
+      if (!value) return;
+      if (const float *lanes = value->as_float2()) {
+        out[0] = lanes[0];
+        out[1] = lanes[1];
+      }
+    };
+    read_float2(prefix + "redChroma", red);
+    read_float2(prefix + "greenChroma", green);
+    read_float2(prefix + "blueChroma", blue);
+    read_float2(prefix + "whitePoint", white);
+    double gamma = 1.0;
+    double bias = 0.0;
+    (void)GetNumericScalarProperty(ps, prefix + "gamma", &gamma);
+    (void)GetNumericScalarProperty(ps, prefix + "linearBias", &bias);
+    ::tinyusdz::color::ColorSpaceDesc definition;
+    if (!::tinyusdz::color::MakeColorSpaceFromChromaticities(
+            canonical, red, green, blue, white, static_cast<float>(gamma),
+            static_cast<float>(bias), &definition)) {
+      AddError(result, "core.schema.ColorSpaceDefinitionAPI.invalid",
+               location, "definition `" + canonical +
+                             "` has invalid chromaticities or transfer curve");
+    }
+  }
 }
 
 void ValidateColorSpaceToken(const std::string &token,
@@ -4896,7 +4986,13 @@ void ValidateColorSpaceDefinitionProperty(const PrimSpec &ps,
                                           const std::string &prop_name,
                                           const std::string &location,
                                           USDValidationResult *result) {
-  if (prop_name == "name" || prop_name == "colorSpaceDefinition:name") {
+  std::string instance;
+  std::string field;
+  const bool current_multiple_apply =
+      ParseColorSpaceDefinitionPropertyName(prop_name, &instance, &field);
+  const std::string &effective_name = current_multiple_apply ? field : prop_name;
+  if (effective_name == "name" ||
+      effective_name == "colorSpaceDefinition:name") {
     ValidateTokenAttributeType(ps, prop_name,
                                "core.schema.ColorSpaceDefinitionAPI.name",
                                location, result);
@@ -4906,14 +5002,14 @@ void ValidateColorSpaceDefinitionProperty(const PrimSpec &ps,
     return;
   }
 
-  if (prop_name == "redChroma" ||
-      prop_name == "colorSpaceDefinition:redChroma" ||
-      prop_name == "greenChroma" ||
-      prop_name == "colorSpaceDefinition:greenChroma" ||
-      prop_name == "blueChroma" ||
-      prop_name == "colorSpaceDefinition:blueChroma" ||
-      prop_name == "whitePoint" ||
-      prop_name == "colorSpaceDefinition:whitePoint") {
+  if (effective_name == "redChroma" ||
+      effective_name == "colorSpaceDefinition:redChroma" ||
+      effective_name == "greenChroma" ||
+      effective_name == "colorSpaceDefinition:greenChroma" ||
+      effective_name == "blueChroma" ||
+      effective_name == "colorSpaceDefinition:blueChroma" ||
+      effective_name == "whitePoint" ||
+      effective_name == "colorSpaceDefinition:whitePoint") {
     ValidateExactAttributeType(
         ps, prop_name, "float2",
         "core.schema.ColorSpaceDefinitionAPI.coordinates", location, result);
@@ -4923,9 +5019,10 @@ void ValidateColorSpaceDefinitionProperty(const PrimSpec &ps,
     return;
   }
 
-  if (prop_name == "gamma" || prop_name == "colorSpaceDefinition:gamma" ||
-      prop_name == "linearBias" ||
-      prop_name == "colorSpaceDefinition:linearBias") {
+  if (effective_name == "gamma" ||
+      effective_name == "colorSpaceDefinition:gamma" ||
+      effective_name == "linearBias" ||
+      effective_name == "colorSpaceDefinition:linearBias") {
     ValidateExactAttributeType(ps, prop_name, "float",
                                "core.schema.ColorSpaceDefinitionAPI.curve",
                                location, result);
@@ -5133,35 +5230,49 @@ void ValidateLayerMetas(const Layer &layer, USDValidationResult *result) {
 // Prim index (path -> type / specifier / skeleton joint count)
 // ---------------------------------------------------------------------------
 
-void BuildPrimIndexRecursive(const Layer &layer, uint32_t prim_index,
-                             const std::string &prim_path,
-                             PrimTypeByPath *prim_types,
-                             PrimSpecifierByPath *prim_specifiers,
-                             SkeletonJointCountByPath *skeleton_joints,
-                             std::unordered_set<uint32_t> *visited) {
-  const PrimSpec *ps = layer.prim(prim_index);
-  if (!ps || !prim_types || !prim_specifiers || !visited ||
-      !visited->insert(prim_index).second) {
+void BuildPrimIndex(const Layer &layer, uint32_t prim_index,
+                    const std::string &prim_path,
+                    PrimTypeByPath *prim_types,
+                    PrimSpecifierByPath *prim_specifiers,
+                    SkeletonJointCountByPath *skeleton_joints,
+                    std::unordered_set<uint32_t> *visited) {
+  if (!prim_types || !prim_specifiers || !visited) {
     return;
   }
 
-  (*prim_types)[prim_path] = ps->type_name();
-  (*prim_specifiers)[prim_path] = ps->specifier();
-  if (skeleton_joints && ps->type_name() == "Skeleton") {
-    std::vector<std::string> joints;
-    if (GetTokenArrayProperty(*ps, "joints", &joints)) {
-      (*skeleton_joints)[prim_path] = joints.size();
-    }
-  }
+  struct WorkItem {
+    uint32_t prim_index{0};
+    std::string prim_path;
+  };
+  std::vector<WorkItem> work;
+  work.push_back(WorkItem{prim_index, prim_path});
 
-  for (uint32_t child_index : ps->child_indices()) {
-    const PrimSpec *child = layer.prim(child_index);
-    if (!child) {
+  while (!work.empty()) {
+    WorkItem item = std::move(work.back());
+    work.pop_back();
+    const PrimSpec *ps = layer.prim(item.prim_index);
+    if (!ps || !visited->insert(item.prim_index).second) {
       continue;
     }
-    BuildPrimIndexRecursive(layer, child_index,
-                            prim_path + "/" + child->name(), prim_types,
-                            prim_specifiers, skeleton_joints, visited);
+
+    (*prim_types)[item.prim_path] = ps->type_name();
+    (*prim_specifiers)[item.prim_path] = ps->specifier();
+    if (skeleton_joints && ps->type_name() == "Skeleton") {
+      std::vector<std::string> joints;
+      if (GetTokenArrayProperty(*ps, "joints", &joints)) {
+        (*skeleton_joints)[item.prim_path] = joints.size();
+      }
+    }
+
+    const std::vector<uint32_t> &children = ps->child_indices();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      const PrimSpec *child = layer.prim(*it);
+      if (!child) {
+        continue;
+      }
+      work.push_back(
+          WorkItem{*it, item.prim_path + "/" + child->name()});
+    }
   }
 }
 
@@ -5636,23 +5747,30 @@ bool IsSelfContainedLayer(const Layer &layer) {
 }
 
 // ---------------------------------------------------------------------------
-// Recursive prim validation
+// Prim validation (explicit work stack; safe for deep hierarchies)
 // ---------------------------------------------------------------------------
 
-void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
-                               const std::string &prim_location,
-                               const ColorSpaceSet &inherited_color_spaces,
-                               const AncestorContext &ancestors,
-                               const ValidationOptions &options,
-                               const PrimTypeByPath &prim_types,
-                               const PrimSpecifierByPath &prim_specifiers,
-                               const SkeletonJointCountByPath &skeleton_joints,
-                               bool layer_self_contained,
-                               std::unordered_set<uint32_t> *visited,
-                               USDValidationResult *result) {
+struct PrimChildValidationState {
+  ColorSpaceSet color_spaces;
+  AncestorContext ancestors;
+};
+
+bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
+                         const std::string &prim_location,
+                         const ColorSpaceSet &inherited_color_spaces,
+                         const AncestorContext &ancestors,
+                         const ValidationOptions &options,
+                         const PrimTypeByPath &prim_types,
+                         const PrimSpecifierByPath &prim_specifiers,
+                         const SkeletonJointCountByPath &skeleton_joints,
+                         bool layer_self_contained,
+                         std::unordered_set<uint32_t> *visited,
+                         USDValidationResult *result,
+                         PrimChildValidationState *child_state) {
   const PrimSpec *psp = layer.prim(prim_index);
-  if (!psp || !visited || !visited->insert(prim_index).second) {
-    return;
+  if (!psp || !visited || !child_state ||
+      !visited->insert(prim_index).second) {
+    return false;
   }
   const PrimSpec &ps = *psp;
   const std::vector<AppliedSchema> applied_schemas = CollectAppliedSchemas(ps);
@@ -5915,8 +6033,7 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
 
   if (options.core) {
     for (const auto &schema : applied_schemas) {
-      if ((schema.name == "ColorSpaceAPI" ||
-           schema.name == "ColorSpaceDefinitionAPI") &&
+      if (schema.name == "ColorSpaceAPI" &&
           !schema.instance_name.empty()) {
         AddError(result, "core.schema.singleApply.instance", prim_location,
                  schema.name + " must not be authored with an instance name");
@@ -5935,6 +6052,10 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
       HasAppliedSchema(applied_schemas, "ColorSpaceAPI");
   const bool has_color_space_definition_api =
       HasAppliedSchema(applied_schemas, "ColorSpaceDefinitionAPI");
+  if (options.core && has_color_space_definition_api) {
+    ValidateLocalColorSpaceDefinitions(ps, applied_schemas, prim_location,
+                                       result);
+  }
 
   // Per-property checks (attribute slots + relationships).
   for (const std::string &prop_name : AllPropertyNames(ps)) {
@@ -5970,13 +6091,25 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
     } else if (options.core && StartsWith(prop_name, "collection:")) {
       ValidateCollectionProperty(ps, SplitString(prop_name, ':'), prop_name,
                                  collection_instances, prop_location, result);
-    } else if (options.core &&
-               StartsWith(prop_name, "colorSpaceDefinition:")) {
-      if (!has_color_space_definition_api) {
+    } else if (options.core && StartsWith(prop_name, "colorSpaceDefinition:")) {
+      std::string definition_instance;
+      std::string definition_field;
+      const bool current_property = ParseColorSpaceDefinitionPropertyName(
+          prop_name, &definition_instance, &definition_field);
+      bool matching_application = false;
+      for (const AppliedSchema &schema : applied_schemas) {
+        if (schema.name == "ColorSpaceDefinitionAPI" &&
+            ((current_property && schema.instance_name == definition_instance) ||
+             (!current_property && schema.instance_name.empty()))) {
+          matching_application = true;
+          break;
+        }
+      }
+      if (!matching_application) {
         AddError(result, "core.schema.ColorSpaceDefinitionAPI.applied",
                  prop_location,
                  "ColorSpaceDefinitionAPI property is authored without "
-                 "applying ColorSpaceDefinitionAPI");
+                 "applying its matching ColorSpaceDefinitionAPI instance");
       }
       ValidateColorSpaceDefinitionProperty(ps, prop_name, prop_location,
                                            result);
@@ -6079,16 +6212,59 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
     child_ctx.nearest_gprim_path = ancestors.nearest_gprim_path;
   }
 
-  for (uint32_t child_index : ps.child_indices()) {
-    const PrimSpec *child = layer.prim(child_index);
-    if (!child) {
+  child_state->color_spaces = std::move(visible_color_spaces);
+  child_state->ancestors = std::move(child_ctx);
+  return true;
+}
+
+void ValidatePrimSpecs(const Layer &layer, uint32_t prim_index,
+                       const std::string &prim_location,
+                       const ColorSpaceSet &inherited_color_spaces,
+                       const AncestorContext &ancestors,
+                       const ValidationOptions &options,
+                       const PrimTypeByPath &prim_types,
+                       const PrimSpecifierByPath &prim_specifiers,
+                       const SkeletonJointCountByPath &skeleton_joints,
+                       bool layer_self_contained,
+                       std::unordered_set<uint32_t> *visited,
+                       USDValidationResult *result) {
+  struct WorkItem {
+    uint32_t prim_index{0};
+    std::string prim_location;
+    ColorSpaceSet color_spaces;
+    AncestorContext ancestors;
+  };
+  std::vector<WorkItem> work;
+  work.push_back(
+      WorkItem{prim_index, prim_location, inherited_color_spaces, ancestors});
+
+  while (!work.empty()) {
+    WorkItem item = std::move(work.back());
+    work.pop_back();
+    PrimChildValidationState child_state;
+    if (!ValidateOnePrimSpec(
+            layer, item.prim_index, item.prim_location, item.color_spaces,
+            item.ancestors, options, prim_types, prim_specifiers,
+            skeleton_joints, layer_self_contained, visited, result,
+            &child_state)) {
       continue;
     }
-    ValidatePrimSpecRecursive(layer, child_index,
-                              prim_location + "/" + child->name(),
-                              visible_color_spaces, child_ctx, options,
-                              prim_types, prim_specifiers, skeleton_joints,
-                              layer_self_contained, visited, result);
+
+    const PrimSpec *ps = layer.prim(item.prim_index);
+    if (!ps) {
+      continue;
+    }
+    const std::vector<uint32_t> &children = ps->child_indices();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+      const PrimSpec *child = layer.prim(*it);
+      if (!child) {
+        continue;
+      }
+      work.push_back(WorkItem{*it,
+                              item.prim_location + "/" + child->name(),
+                              child_state.color_spaces,
+                              child_state.ancestors});
+    }
   }
 }
 
@@ -6252,18 +6428,9 @@ void ValidateStageMetadataPresence(const Layer &layer,
 
 namespace {
 
-// Layer validation core. `is_root_layer` is false for the synthetic graft
-// layers that hold variant option bodies: those carry no stage metadata of
-// their own, so the layer-scope arkit stage rules must not fire on them.
-USDValidationResult ValidateLayerImpl(const Layer &layer,
-                                      const ValidationOptions &options,
-                                      bool is_root_layer);
-
-std::string VariantIssueLocation(const std::string &owner,
-                                 const std::string &set_name,
-                                 const std::string &variant_name,
-                                 const std::string &nested_location) {
-  std::string base = owner + "{" + set_name + "=" + variant_name + "}";
+std::string MapVariantContentLocation(const std::string &base,
+                                      const std::string &nested_location) {
+  if (base.empty()) return nested_location;
   static const std::string kSelf = "/__self__";
   if (nested_location == kSelf) return base;
   if (StartsWith(nested_location, kSelf + "/")) {
@@ -6275,33 +6442,13 @@ std::string VariantIssueLocation(const std::string &owner,
   return base + ":" + nested_location;
 }
 
-void ValidateVariantSetsRecursive(
-    const std::vector<VariantSetData> &sets, const std::string &owner,
-    const ValidationOptions &options, USDValidationResult *result) {
-  if (!result) return;
-  for (const VariantSetData &set : sets) {
-    for (const VariantData &variant : set.variants) {
-      const std::string variant_owner =
-          owner + "{" + set.name + "=" + variant.name + "}";
-      if (variant.content) {
-        USDValidationResult nested =
-            ValidateLayerImpl(*variant.content, options,
-                              /* is_root_layer */ false);
-        for (USDValidationIssue &issue : nested.issues) {
-          issue.location = VariantIssueLocation(owner, set.name, variant.name,
-                                                issue.location);
-          result->issues.push_back(std::move(issue));
-        }
-      }
-      ValidateVariantSetsRecursive(variant.variantSets, variant_owner, options,
-                                   result);
-    }
-  }
-}
-
-USDValidationResult ValidateLayerImpl(const Layer &layer,
-                                      const ValidationOptions &options,
-                                      bool is_root_layer) {
+// Validate one layer without descending into variant-content layers.
+// `is_root_layer` is false for the synthetic graft layers that hold variant
+// option bodies: those carry no stage metadata of their own, so layer-scope
+// ARKit stage rules must not fire on them.
+USDValidationResult ValidateLayerLocal(const Layer &layer,
+                                       const ValidationOptions &options,
+                                       bool is_root_layer) {
   USDValidationResult result;
   result.checked_groups = options;
   // Container groups need the original package/crate bytes and are run by
@@ -6350,9 +6497,8 @@ USDValidationResult ValidateLayerImpl(const Layer &layer,
       if (!root) {
         continue;
       }
-      BuildPrimIndexRecursive(layer, root_index, "/" + root->name(),
-                              &prim_types, &prim_specifiers, &skeleton_joints,
-                              &visited);
+      BuildPrimIndex(layer, root_index, "/" + root->name(), &prim_types,
+                     &prim_specifiers, &skeleton_joints, &visited);
     }
   }
 
@@ -6362,19 +6508,97 @@ USDValidationResult ValidateLayerImpl(const Layer &layer,
     if (!root) {
       continue;
     }
-    ValidatePrimSpecRecursive(layer, root_index, "/" + root->name(),
-                              ColorSpaceSet(), root_ancestors, options,
-                              prim_types, prim_specifiers, skeleton_joints,
-                              layer_self_contained, &visited, &result);
+    ValidatePrimSpecs(layer, root_index, "/" + root->name(), ColorSpaceSet(),
+                      root_ancestors, options, prim_types, prim_specifiers,
+                      skeleton_joints, layer_self_contained, &visited,
+                      &result);
   }
 
-  // Validate every authored variant option, not only the selected option that
-  // composition materializes. Variant content uses a synthetic /__self__ root;
-  // rewrite that diagnostic namespace to an explicit {set=option} location.
-  for (const PrimSpec &prim : layer.prims()) {
-    if (!prim.meta().variantSets().empty()) {
-      ValidateVariantSetsRecursive(prim.meta().variantSets(), prim.path().str(),
-                                   options, &result);
+  return result;
+}
+
+USDValidationResult ValidateLayerImpl(const Layer &layer,
+                                      const ValidationOptions &options,
+                                      bool is_root_layer) {
+  enum class ActionKind { ValidateLayer, ValidateVariantSets, LeaveLayer };
+  struct Action {
+    ActionKind kind{ActionKind::ValidateLayer};
+    const Layer *layer{nullptr};
+    const std::vector<VariantSetData> *sets{nullptr};
+    bool is_root_layer{false};
+    std::string location;
+  };
+
+  USDValidationResult result;
+  result.checked_groups = options;
+  result.checked_groups.package = false;
+  result.checked_groups.crate = false;
+
+  std::vector<Action> work;
+  std::unordered_set<const Layer *> active_layers;
+  work.push_back(Action{ActionKind::ValidateLayer, &layer, nullptr,
+                        is_root_layer, std::string()});
+
+  while (!work.empty()) {
+    Action action = std::move(work.back());
+    work.pop_back();
+
+    if (action.kind == ActionKind::LeaveLayer) {
+      active_layers.erase(action.layer);
+      continue;
+    }
+
+    if (action.kind == ActionKind::ValidateVariantSets) {
+      if (!action.sets) continue;
+      // Push in reverse so the explicit LIFO work list retains the old
+      // set/option DFS order: content first, then nested variant sets.
+      for (auto set_it = action.sets->rbegin();
+           set_it != action.sets->rend(); ++set_it) {
+        for (auto variant_it = set_it->variants.rbegin();
+             variant_it != set_it->variants.rend(); ++variant_it) {
+          const std::string owner = action.location + "{" + set_it->name +
+                                    "=" + variant_it->name + "}";
+          if (!variant_it->variantSets.empty()) {
+            work.push_back(Action{ActionKind::ValidateVariantSets, nullptr,
+                                  &variant_it->variantSets, false, owner});
+          }
+          if (variant_it->content) {
+            work.push_back(Action{ActionKind::ValidateLayer,
+                                  variant_it->content.get(), nullptr, false,
+                                  owner});
+          }
+        }
+      }
+      continue;
+    }
+
+    if (!action.layer) continue;
+    if (!active_layers.insert(action.layer).second) {
+      AddError(&result, "core.composition.variantCycle", action.location,
+               "variant content contains a cycle to an ancestor layer");
+      continue;
+    }
+
+    USDValidationResult local =
+        ValidateLayerLocal(*action.layer, options, action.is_root_layer);
+    for (USDValidationIssue &issue : local.issues) {
+      issue.location =
+          MapVariantContentLocation(action.location, issue.location);
+      result.issues.push_back(std::move(issue));
+    }
+
+    // Leave only after all content reachable from this layer, allowing the
+    // active set to distinguish cycles from legitimate shared layer bodies.
+    work.push_back(Action{ActionKind::LeaveLayer, action.layer, nullptr, false,
+                          std::string()});
+    const std::vector<PrimSpec> &prims = action.layer->prims();
+    for (auto prim_it = prims.rbegin(); prim_it != prims.rend(); ++prim_it) {
+      const std::vector<VariantSetData> &sets = prim_it->meta().variantSets();
+      if (sets.empty()) continue;
+      const std::string owner = MapVariantContentLocation(
+          action.location, prim_it->path().str());
+      work.push_back(Action{ActionKind::ValidateVariantSets, nullptr, &sets,
+                            false, owner});
     }
   }
 
