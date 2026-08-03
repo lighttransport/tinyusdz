@@ -29,6 +29,11 @@ class GLRenderer final : public Renderer {
   void appendMeshSurface(const DrawMeshCPU& mesh) override;
   void uploadMeshAux(size_t meshIndex, const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
+  void evictTexture(int slot) override;
+  size_t textureResidentBytes(int slot) const override;
+  bool updateTextureRegion(int slot, int x, int y, int w, int h,
+                           const uint8_t* rgba,
+                           size_t rowBytes = 0) override;
   void setLights(const std::vector<DrawLightCPU>& lights,
                  size_t meshCount) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
@@ -112,6 +117,7 @@ class GLRenderer final : public Renderer {
     bool hasMorph{false};
     size_t indexCount{0};  // base surface indices; CPU copy may be released
     bool geometricNormal{false};     // shade with screen-derivative normal
+    bool rasterDisplacementBaked{false};
     int purposeId{0};                // USD purpose AOV: 0=default/1=render/2=proxy/3=guide
     int kindId{0};                   // USD kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
     std::vector<DrawSubmesh> submeshes;
@@ -216,6 +222,12 @@ class GLRenderer final : public Renderer {
   GLint uPurpose_{-1};                                    // purpose AOV (per-draw)
   GLint uKind_{-1};                                       // kind AOV (per-draw)
   GLint uFaceIdTex_{-1}, uFaceBase_{-1}, uHasFaceId_{-1}; // source-face-id AOV
+  GLint uBasePtex_{-1}, uBasePtexGrid_{-1};              // Ptex atlas sampling
+  GLint uMetallicPtexGrid_{-1}, uRoughnessPtexGrid_{-1};
+  GLint uNormalPtexGrid_{-1}, uEmissivePtexGrid_{-1};
+  GLint uOpacityPtexGrid_{-1}, uOcclusionPtexGrid_{-1};
+  GLint uSpecularColorPtexGrid_{-1}, uCoatWeightPtexGrid_{-1};
+  GLint uCoatColorPtexGrid_{-1}, uCoatRoughnessPtexGrid_{-1};
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
   GLint uUseSpecularWorkflow_{-1}, uOpenPbrSpecularModel_{-1};
@@ -401,6 +413,10 @@ class GLRenderer final : public Renderer {
     GLuint tex2d{0};
     GLuint arrayTex{0};
     bool isUdim{false};
+    bool regionUpdatable{false};
+    int width{0};
+    int height{0};
+    size_t residentBytes{0};
   };
   GLuint udimLutAtlas_{0};
   std::vector<GLTexture> textures_;

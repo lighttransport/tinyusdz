@@ -21,7 +21,9 @@
 #pragma once
 
 #include <cstdint>
+#include <list>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace tinyusdz {
@@ -75,6 +77,12 @@ class TextureDecoder {
   /// cannot be resolved or decoded; `out` is left untouched.
   bool Decode(const std::string& asset, bool srgb, DecodedImage* out);
 
+  // Decode one Ptex face/mip lazily to RGBA8. This never expands the complete
+  // Ptex file; the caller controls the destination budget. Non-Ptex assets
+  // return false.
+  bool DecodePtexFace(const std::string& asset, uint32_t face,
+                      uint32_t level, bool srgb, DecodedImage* out);
+
   /// Read `asset`'s raw bytes, resolving it exactly like Decode does (a .usdz
   /// entry when one is set, else `base_dir`-relative on disk). For assets a
   /// consumer must interpret itself rather than have decoded to pixels -- e.g. a
@@ -90,9 +98,16 @@ class TextureDecoder {
   const TextureDecodeOptions& options() const { return options_; }
 
  private:
+  struct PtexCacheEntry {
+    DecodedImage image;
+    std::list<std::string>::iterator lru;
+  };
   TextureDecodeOptions options_;
   uint64_t decoded_bytes_ = 0;
   uint64_t downscaled_ = 0;
+  std::unordered_map<std::string, PtexCacheEntry> ptex_cache_;
+  std::list<std::string> ptex_lru_;
+  uint64_t ptex_cache_bytes_ = 0;
 };
 
 /// Substitute the literal `<UDIM>` token in an asset path with a tile id.

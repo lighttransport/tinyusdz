@@ -11,6 +11,7 @@ set(TYDRA_NEXT_SOURCES
     scene-access.cc
     render-extract.cc
     render-converter.cc
+    render-session.cc
     texture-cache.cc
     urdf-to-usd.cc
     ../../external/mikktspace/mikktspace.c
@@ -22,6 +23,7 @@ set(TYDRA_NEXT_HEADERS
     scene-access.hh
     render-extract.hh
     render-converter.hh
+    render-session.hh
     resource-budget.hh
     texture-cache.hh
     urdf-to-usd.hh
@@ -53,6 +55,9 @@ target_include_directories(tydra_next PUBLIC
 # Compiler warnings
 if(MSVC)
     target_compile_options(tydra_next PRIVATE /W4)
+    # Keep MSVC toolchain + STL compatibility checks from aborting the build on
+    # older but still usable compiler versions.
+    target_compile_definitions(tydra_next PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 else()
     target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
 endif()
@@ -73,6 +78,17 @@ if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     else()
         target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
     endif()
+endif()
+
+# The lazy Ptex face decoder is part of the top-level tinyusdz static library
+# when this project is embedded.  Standalone Tydra-next builds need the small
+# reader and bundled deflate implementation locally instead.
+if(TARGET tinyusdz_static)
+    target_link_libraries(tydra_next PUBLIC tinyusdz_static)
+else()
+    target_sources(tydra_next PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../ptx-loader.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../external/miniz.c)
 endif()
 
 # Optional: Build test

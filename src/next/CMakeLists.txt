@@ -149,6 +149,7 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Stage (composed scene)
     stage/stage.hh
+    stage/change-set.hh
 
     # Color management shared with render consumers
     ../color-transform.hh
@@ -289,6 +290,10 @@ target_include_directories(tinyusdz_next PRIVATE
 # Compiler warnings
 if(MSVC)
     target_compile_options(tinyusdz_next PRIVATE /W4)
+    # Older MSVC toolset versions in some environments can trip STL/compiler
+    # version checks; this keeps compatibility with CI/toolchain combinations that
+    # still target this project.
+    target_compile_definitions(tinyusdz_next PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 else()
     target_compile_options(tinyusdz_next PRIVATE -Wall -Wextra -Wpedantic)
     # Disable some warnings for LZ4 C code
@@ -534,6 +539,7 @@ set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-session.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/texture-cache.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.cc
@@ -546,6 +552,7 @@ set(TYDRA_NEXT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-session.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/urdf-payload.hh
@@ -569,6 +576,7 @@ target_include_directories(tydra_next PUBLIC
 
 if(MSVC)
     target_compile_options(tydra_next PRIVATE /W4)
+    target_compile_definitions(tydra_next PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 else()
     target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
 endif()

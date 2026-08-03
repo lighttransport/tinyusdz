@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 
 #include "imgui.h"
@@ -46,6 +48,70 @@
 namespace tusdview {
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// Persistent VkPipelineCache for the ray-query compute pipeline.
+//
+// The driver compiles that shader on every launch, and on recent NVIDIA parts
+// it is pathologically slow -- measured at 38.2 s of a 38.9 s ray-tracing
+// init on an RTX 5060 Ti (driver 610.43.02), which is long enough to time out
+// every MCP-driven vk-rt test before the transport even comes up. This is the
+// same class of problem the CUDA path documents for NVRTC, and it gets the
+// same treatment: keep the compiled result on disk.
+//
+// Correctness does not depend on our key being right. A VkPipelineCache blob
+// carries vendor/device/driver identifiers and a UUID, and the driver ignores
+// data that does not match, falling back to a normal compile.
+// ---------------------------------------------------------------------------
+
+std::string RtPipelineCacheEnv(const char* name) {
+  const char* v = std::getenv(name);
+  return v ? std::string(v) : std::string();
+}
+
+std::string RtPipelineCacheDir() {
+#if defined(_WIN32)
+  const std::string base = RtPipelineCacheEnv("LOCALAPPDATA");
+  return base.empty() ? std::string() : base + "\\tusdview\\vk";
+#elif defined(__APPLE__)
+  const std::string home = RtPipelineCacheEnv("HOME");
+  return home.empty() ? std::string() : home + "/Library/Caches/tusdview/vk";
+#else
+  const std::string xdg = RtPipelineCacheEnv("XDG_CACHE_HOME");
+  if (!xdg.empty()) return xdg + "/tusdview/vk";
+  const std::string home = RtPipelineCacheEnv("HOME");
+  return home.empty() ? std::string() : home + "/.cache/tusdview/vk";
+#endif
+}
+
+uint64_t RtHashBytes(uint64_t hash, const void* data, size_t size) {
+  const auto* bytes = static_cast<const uint8_t*>(data);
+  for (size_t i = 0; i < size; ++i) {
+    hash ^= bytes[i];
+    hash *= UINT64_C(1099511628211);
+  }
+  return hash;
+}
+
+// Keyed by the SPIR-V plus the device and driver it was compiled for, so a
+// driver update or a different GPU lands on a different file rather than
+// repeatedly loading a blob the driver will reject.
+std::string RtPipelineCachePath(const VkPhysicalDeviceProperties& props,
+                                const void* spv, size_t spvSize) {
+  const std::string dir = RtPipelineCacheDir();
+  if (dir.empty()) return std::string();
+  uint64_t hash = UINT64_C(14695981039346656037);
+  hash = RtHashBytes(hash, spv, spvSize);
+  hash = RtHashBytes(hash, &props.vendorID, sizeof(props.vendorID));
+  hash = RtHashBytes(hash, &props.deviceID, sizeof(props.deviceID));
+  hash = RtHashBytes(hash, &props.driverVersion, sizeof(props.driverVersion));
+  hash = RtHashBytes(hash, props.pipelineCacheUUID,
+                     sizeof(props.pipelineCacheUUID));
+  char hex[17] = {};
+  std::snprintf(hex, sizeof(hex), "%016llx",
+                static_cast<unsigned long long>(hash));
+  return dir + "/raytrace-" + hex + ".pipelinecache";
+}
 
 constexpr uint32_t kRasterDescriptorSetCount = 4;
 constexpr uint32_t kMaterialBindingCount = 32;
@@ -281,6 +347,7 @@ struct RtPushC {
   float clearColor[4];
   float sceneMin[4];    // position AOV bbox
   float sceneExtent[4];
+  float lens[4];        // focus distance, aperture radius, enabled, reserved
 };
 
 // Per-mesh descriptor for the RT shader (scalar layout, must match raytrace.comp).
@@ -629,6 +696,8 @@ void VulkanRenderer::detectRtSupport() {
   if (asp.minAccelerationStructureScratchOffsetAlignment > 0) {
     scratchAlign_ = asp.minAccelerationStructureScratchOffsetAlignment;
   }
+  rtMaxInstanceCount_ = asp.maxInstanceCount;
+  LOGI("Vulkan RT limits: maxInstances=%u", rtMaxInstanceCount_);
 
   rtSupported_ = true;  // device-side OK; PFN load in createDevice may still veto
 #endif
@@ -1444,6 +1513,7 @@ bool VulkanRenderer::createPipeline(std::string* err) {
       VkGraphicsPipelineCreateInfo shadowCi = ci;
       shadowCi.pStages = shadowStages;
       shadowCi.pColorBlendState = &shadowCb;
+      shadowCi.renderPass = shadowPass_;
       if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &shadowCi,
                                     nullptr, &shadowPipeline_) != VK_SUCCESS)
         shadowPipeline_ = VK_NULL_HANDLE;
@@ -3023,7 +3093,8 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
                                         VkDeviceMemory* outMem, VkImageView* outView,
                                         const std::vector<light3d::Image>* mips,
                                         bool srgb) {
-  if (img.width <= 0 || img.height <= 0 || img.data.empty()) return false;
+  if (img.width <= 0 || img.height <= 0) return false;
+  const bool allocateOnly = img.data.empty();
   // sRGB color textures (base color / emissive) upload as _SRGB so the sampler
   // linearizes them for the linear-space lighting (T11); normal / metal-rough
   // stay _UNORM. Mirrors the compressed path, which already keyed on srgb.
@@ -3033,7 +3104,7 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   // Precomputed mip chain (FinalizeDrawTextures): validate the level sizes;
   // fall back to a single level when anything looks off.
   uint32_t mipLevels = 1;
-  if (mips && !mips->empty()) {
+  if (!allocateOnly && mips && !mips->empty()) {
     bool valid = true;
     int w = img.width, h = img.height;
     for (const light3d::Image& m : *mips) {
@@ -3068,7 +3139,8 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
 
   VkBuffer staging = VK_NULL_HANDLE;
   VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-  if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingSrc,
+  if (!allocateOnly &&
+      !createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingSrc,
                         &staging, &stagingMem)) {
     return false;
   }
@@ -3085,8 +3157,8 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
   ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   if (vkCreateImage(device_, &ici, nullptr, outImg) != VK_SUCCESS) {
-    vkDestroyBuffer(device_, staging, nullptr);
-    vkFreeMemory(device_, stagingMem, nullptr);
+    if (staging) vkDestroyBuffer(device_, staging, nullptr);
+    if (stagingMem) vkFreeMemory(device_, stagingMem, nullptr);
     return false;
   }
   VkMemoryRequirements req;
@@ -3103,8 +3175,8 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
     if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
     vkDestroyImage(device_, *outImg, nullptr);
     *outImg = VK_NULL_HANDLE;
-    vkDestroyBuffer(device_, staging, nullptr);
-    vkFreeMemory(device_, stagingMem, nullptr);
+    if (staging) vkDestroyBuffer(device_, staging, nullptr);
+    if (stagingMem) vkFreeMemory(device_, stagingMem, nullptr);
     return false;
   }
 
@@ -3123,24 +3195,29 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                        &toDst);
-  std::vector<VkBufferImageCopy> regions(mipLevels);
-  VkDeviceSize offset = 0;
-  int lw = img.width, lh = img.height;
-  for (uint32_t l = 0; l < mipLevels; ++l) {
-    VkBufferImageCopy& region = regions[l];
-    region = {};
-    region.bufferOffset = offset;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = l;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {static_cast<uint32_t>(lw), static_cast<uint32_t>(lh), 1};
-    offset += static_cast<VkDeviceSize>(
-        l == 0 ? img.data.size() : (*mips)[l - 1].data.size());
-    lw = std::max(1, lw / 2);
-    lh = std::max(1, lh / 2);
+  if (!allocateOnly) {
+    std::vector<VkBufferImageCopy> regions(mipLevels);
+    VkDeviceSize offset = 0;
+    int lw = img.width, lh = img.height;
+    for (uint32_t l = 0; l < mipLevels; ++l) {
+      VkBufferImageCopy& region = regions[l];
+      region = {};
+      region.bufferOffset = offset;
+      region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      region.imageSubresource.mipLevel = l;
+      region.imageSubresource.layerCount = 1;
+      region.imageExtent = {static_cast<uint32_t>(lw),
+                            static_cast<uint32_t>(lh), 1};
+      offset += static_cast<VkDeviceSize>(
+          l == 0 ? img.data.size() : (*mips)[l - 1].data.size());
+      lw = std::max(1, lw / 2);
+      lh = std::max(1, lh / 2);
+    }
+    vkCmdCopyBufferToImage(cb, staging, *outImg,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           static_cast<uint32_t>(regions.size()),
+                           regions.data());
   }
-  vkCmdCopyBufferToImage(cb, staging, *outImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                         static_cast<uint32_t>(regions.size()), regions.data());
   VkImageMemoryBarrier toRead = toDst;
   toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
   toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -3151,8 +3228,8 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
                        1, &toRead);
   endOneShot(cb);
 
-  vkDestroyBuffer(device_, staging, nullptr);
-  vkFreeMemory(device_, stagingMem, nullptr);
+  if (staging) vkDestroyBuffer(device_, staging, nullptr);
+  if (stagingMem) vkFreeMemory(device_, stagingMem, nullptr);
 
   VkImageViewCreateInfo vci{};
   vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -4141,15 +4218,8 @@ bool VulkanRenderer::init(GLFWwindow* window, std::string* err) {
     uploadSkinningFrame(ident);
   }
 
-  // Ray tracing (ray query) resources, when the device + shader support it.
-  if (rtSupported_) {
-    std::string rterr;
-    if (!createRtResources(&rterr)) {
-      LOGD("ray tracing: createRtResources failed: %s", rterr.c_str());
-      destroyRt();
-      rtSupported_ = false;  // fall back to rasterization
-    }
-  }
+  // Ray-query resources and the expensive compute pipeline are created lazily
+  // by setRayTracing(). Raster startup must never compile an unused RT shader.
   techniqueLabel_ = rtSupported_ ? "Vulkan (raster)" : "Vulkan";
   caps_.backend_name = techniqueLabel_.c_str();
   caps_.supportsRayTracing = rtSupported_;
@@ -4536,11 +4606,7 @@ void VulkanRenderer::destroyScene() {
   if (volumePool_) vkResetDescriptorPool(device_, volumePool_, 0);
 
   // Per-scene acceleration structure + RT scene buffers (rebuilt on next trace).
-  if (tlas_) { if (pfnDestroyAS_) pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
-  if (tlasBuf_) { vkDestroyBuffer(device_, tlasBuf_, nullptr); tlasBuf_ = VK_NULL_HANDLE; }
-  if (tlasMem_) { vkFreeMemory(device_, tlasMem_, nullptr); tlasMem_ = VK_NULL_HANDLE; }
-  if (instBuf_) { vkDestroyBuffer(device_, instBuf_, nullptr); instBuf_ = VK_NULL_HANDLE; }
-  if (instMem_) { vkFreeMemory(device_, instMem_, nullptr); instMem_ = VK_NULL_HANDLE; }
+  destroyTlasChunks();
   if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
   if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
   if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
@@ -4561,6 +4627,24 @@ void VulkanRenderer::destroyScene() {
   if (instInfoMem_) { vkFreeMemory(device_, instInfoMem_, nullptr); instInfoMem_ = VK_NULL_HANDLE; }
   tlasDirty_ = true;
 
+  for (auto v : texSlotViews_) {
+    if (v && v != whiteView_) vkDestroyImageView(device_, v, nullptr);
+  }
+  for (auto i : texSlotImgs_) {
+    if (i) vkDestroyImage(device_, i, nullptr);
+  }
+  for (auto m : texSlotMems_) {
+    if (m) vkFreeMemory(device_, m, nullptr);
+  }
+  for (auto v : texUdimArrayViews_) {
+    if (v && v != dummyArrayView_) vkDestroyImageView(device_, v, nullptr);
+  }
+  for (auto i : texUdimArrayImgs_) {
+    if (i) vkDestroyImage(device_, i, nullptr);
+  }
+  for (auto m : texUdimArrayMems_) {
+    if (m) vkFreeMemory(device_, m, nullptr);
+  }
   for (auto v : texViews_) vkDestroyImageView(device_, v, nullptr);
   for (auto i : texImgs_) vkDestroyImage(device_, i, nullptr);
   for (auto m : texMems_) vkFreeMemory(device_, m, nullptr);
@@ -4570,7 +4654,15 @@ void VulkanRenderer::destroyScene() {
   texDescs_.clear();
   texUdimArrayDescs_.clear();
   texSlotViews_.clear();
+  texSlotImgs_.clear();
+  texSlotMems_.clear();
+  texSlotBytes_.clear();
+  texSlotWidths_.clear();
+  texSlotHeights_.clear();
+  texRegionUpdatable_.clear();
   texUdimArrayViews_.clear();
+  texUdimArrayImgs_.clear();
+  texUdimArrayMems_.clear();
   texIsUdim_.clear();
   if (udimLutAtlasView_) vkDestroyImageView(device_, udimLutAtlasView_, nullptr);
   if (udimLutAtlasImg_) vkDestroyImage(device_, udimLutAtlasImg_, nullptr);
@@ -4632,9 +4724,27 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
                             dummyArrayDesc_);
   texSlotViews_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
                        whiteView_);
+  texSlotImgs_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                      VK_NULL_HANDLE);
+  texSlotMems_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                      VK_NULL_HANDLE);
+  texSlotBytes_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                       0);
+  texSlotWidths_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                        0);
+  texSlotHeights_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+                         0);
+  texRegionUpdatable_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
   texUdimArrayViews_.assign(
       textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
       dummyArrayView_);
+  texUdimArrayImgs_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+      VK_NULL_HANDLE);
+  texUdimArrayMems_.assign(
+      textureCount > 0 ? static_cast<size_t>(textureCount) : 0,
+      VK_NULL_HANDLE);
   texIsUdim_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
   if (createUdimLookupAtlas(textureCount))
     udimLutAtlasDesc_ = allocTexDescriptor(udimLutAtlasView_);
@@ -4816,7 +4926,17 @@ void VulkanRenderer::setLights(const std::vector<DrawLightCPU>& lights,
 
 void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (slot < 0 || static_cast<size_t>(slot) >= texDescs_.size()) return;
-  rtTexturesCpu_[static_cast<size_t>(slot)] = t;
+  const size_t index = static_cast<size_t>(slot);
+  rtTexturesCpu_[index] = t;
+  // Ray-query textures are packed into a host-built SSBO. A streamed
+  // coarse/full replacement must rebuild that table before the next RT frame.
+  if (rtActive_) rtTextureTableDirty_ = true;
+  const VkImage oldImg = texSlotImgs_[index];
+  const VkDeviceMemory oldMem = texSlotMems_[index];
+  const VkImageView oldView = texSlotViews_[index];
+  const VkImage oldArrayImg = texUdimArrayImgs_[index];
+  const VkDeviceMemory oldArrayMem = texUdimArrayMems_[index];
+  const VkImageView oldArrayView = texUdimArrayViews_[index];
   VkImage img = VK_NULL_HANDLE;
   VkDeviceMemory mem = VK_NULL_HANDLE;
   VkImageView view = VK_NULL_HANDLE;
@@ -4829,31 +4949,233 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                             t.mipImages.empty() ? nullptr : &t.mipImages, t.srgb);
   }
   if (ok) {
-    texImgs_.push_back(img);
-    texMems_.push_back(mem);
-    texViews_.push_back(view);
-    texDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(view);
-    texSlotViews_[static_cast<size_t>(slot)] = view;
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device_, img, &requirements);
+    texSlotViews_[index] = view;
+    texSlotImgs_[index] = img;
+    texSlotMems_[index] = mem;
+    texSlotBytes_[index] = static_cast<size_t>(requirements.size);
+    texSlotWidths_[index] = t.image.width;
+    texSlotHeights_[index] = t.image.height;
+    texRegionUpdatable_[index] =
+        !t.isUdim && t.image.width > 0 && t.image.height > 0 &&
+                (!t.image.data.empty() || t.streamingMutable) &&
+                !(t.requestedCompressed &&
+                  t.compressed.format != DrawCompressedFormat::None &&
+                  !t.compressed.data.empty())
+            ? 1
+            : 0;
+    if (t.isPtex && t.ptexRectTexelOffset <
+                        static_cast<uint32_t>(t.image.width * t.image.height)) {
+      size_t linear = t.ptexRectTexelOffset;
+      size_t remaining = t.ptexFaceRects.size() * 8u;
+      while (remaining > 0) {
+        const int x = static_cast<int>(linear % size_t(t.image.width));
+        const int y = static_cast<int>(linear / size_t(t.image.width));
+        const int count = static_cast<int>(
+            std::min(remaining, size_t(t.image.width - x)));
+        updateTextureRegion(slot, x, y, count, 1,
+                            t.image.data.data() + linear * 4u);
+        linear += static_cast<size_t>(count);
+        remaining -= static_cast<size_t>(count);
+      }
+    }
   }
-  if (t.isUdim && static_cast<size_t>(slot) < texUdimArrayDescs_.size()) {
+  if (ok && t.isUdim && index < texUdimArrayDescs_.size()) {
     VkImage arrImg = VK_NULL_HANDLE;
     VkDeviceMemory arrMem = VK_NULL_HANDLE;
     VkImageView arrView = VK_NULL_HANDLE;
     if (createUdimTextureArrayImage(t, &arrImg, &arrMem, &arrView) &&
         updateUdimLookupAtlasRow(slot, t)) {
-      texImgs_.push_back(arrImg);
-      texMems_.push_back(arrMem);
-      texViews_.push_back(arrView);
-      texUdimArrayDescs_[static_cast<size_t>(slot)] = allocTexDescriptor(arrView);
-      texUdimArrayViews_[static_cast<size_t>(slot)] = arrView;
-      texIsUdim_[static_cast<size_t>(slot)] = 1;
+      VkMemoryRequirements requirements{};
+      vkGetImageMemoryRequirements(device_, arrImg, &requirements);
+      texSlotBytes_[index] += static_cast<size_t>(requirements.size);
+      texUdimArrayImgs_[index] = arrImg;
+      texUdimArrayMems_[index] = arrMem;
+      texUdimArrayViews_[index] = arrView;
+      texIsUdim_[index] = 1;
     } else {
       if (arrView) vkDestroyImageView(device_, arrView, nullptr);
       if (arrImg) vkDestroyImage(device_, arrImg, nullptr);
       if (arrMem) vkFreeMemory(device_, arrMem, nullptr);
+      texUdimArrayImgs_[index] = VK_NULL_HANDLE;
+      texUdimArrayMems_[index] = VK_NULL_HANDLE;
+      texUdimArrayViews_[index] = dummyArrayView_;
+      texIsUdim_[index] = 0;
     }
+  } else if (ok) {
+    texUdimArrayImgs_[index] = VK_NULL_HANDLE;
+    texUdimArrayMems_[index] = VK_NULL_HANDLE;
+    texUdimArrayViews_[index] = dummyArrayView_;
+    texIsUdim_[index] = 0;
   }
   refreshMaterialDescriptors();
+  // Texture creation submits through endOneShot(), which waits the graphics
+  // queue. Once descriptors point at the replacement, prior slot allocations
+  // are no longer referenced by either submitted work or future draws.
+  if (ok) {
+    if (oldView && oldView != whiteView_)
+      vkDestroyImageView(device_, oldView, nullptr);
+    if (oldImg) vkDestroyImage(device_, oldImg, nullptr);
+    if (oldMem) vkFreeMemory(device_, oldMem, nullptr);
+    if (oldArrayView && oldArrayView != dummyArrayView_)
+      vkDestroyImageView(device_, oldArrayView, nullptr);
+    if (oldArrayImg) vkDestroyImage(device_, oldArrayImg, nullptr);
+    if (oldArrayMem) vkFreeMemory(device_, oldArrayMem, nullptr);
+  }
+}
+
+void VulkanRenderer::evictTexture(int slot) {
+  if (!device_ || slot < 0 || static_cast<size_t>(slot) >= texSlotImgs_.size())
+    return;
+  const size_t index = static_cast<size_t>(slot);
+  if (!texSlotImgs_[index] && !texUdimArrayImgs_[index]) return;
+
+  // One frame is in flight. Waiting its fence is sufficient and avoids the
+  // device-wide idle formerly needed by scene replacement.
+  vkWaitForFences(device_, 1, &inFlight_[frame_], VK_TRUE, UINT64_MAX);
+  const VkImageView oldView = texSlotViews_[index];
+  const VkImage oldImg = texSlotImgs_[index];
+  const VkDeviceMemory oldMem = texSlotMems_[index];
+  const VkImageView oldArrayView = texUdimArrayViews_[index];
+  const VkImage oldArrayImg = texUdimArrayImgs_[index];
+  const VkDeviceMemory oldArrayMem = texUdimArrayMems_[index];
+
+  texSlotViews_[index] = whiteView_;
+  texSlotImgs_[index] = VK_NULL_HANDLE;
+  texSlotMems_[index] = VK_NULL_HANDLE;
+  texSlotBytes_[index] = 0;
+  texSlotWidths_[index] = 0;
+  texSlotHeights_[index] = 0;
+  texRegionUpdatable_[index] = 0;
+  texUdimArrayViews_[index] = dummyArrayView_;
+  texUdimArrayImgs_[index] = VK_NULL_HANDLE;
+  texUdimArrayMems_[index] = VK_NULL_HANDLE;
+  texIsUdim_[index] = 0;
+  if (index < rtTexturesCpu_.size()) rtTexturesCpu_[index] = DrawTextureCPU{};
+  if (rtActive_) rtTextureTableDirty_ = true;
+  refreshMaterialDescriptors();
+
+  if (oldView && oldView != whiteView_)
+    vkDestroyImageView(device_, oldView, nullptr);
+  if (oldImg) vkDestroyImage(device_, oldImg, nullptr);
+  if (oldMem) vkFreeMemory(device_, oldMem, nullptr);
+  if (oldArrayView && oldArrayView != dummyArrayView_)
+    vkDestroyImageView(device_, oldArrayView, nullptr);
+  if (oldArrayImg) vkDestroyImage(device_, oldArrayImg, nullptr);
+  if (oldArrayMem) vkFreeMemory(device_, oldArrayMem, nullptr);
+}
+
+size_t VulkanRenderer::textureResidentBytes(int slot) const {
+  if (slot < 0 || static_cast<size_t>(slot) >= texSlotBytes_.size()) return 0;
+  return texSlotBytes_[static_cast<size_t>(slot)];
+}
+
+bool VulkanRenderer::updateTextureRegion(int slot, int x, int y, int w, int h,
+                                         const uint8_t* rgba,
+                                         size_t rowBytes) {
+  if (!rgba || w <= 0 || h <= 0) return false;
+  TextureRegionUpdate update;
+  update.x = x;
+  update.y = y;
+  update.width = w;
+  update.height = h;
+  update.rowBytes = rowBytes ? rowBytes : size_t(w) * 4u;
+  const size_t bytes = update.rowBytes * size_t(h);
+  update.rgba.assign(rgba, rgba + bytes);
+  return updateTextureRegions(slot, {std::move(update)});
+}
+
+bool VulkanRenderer::updateTextureRegions(
+    int slot, const std::vector<TextureRegionUpdate>& updates) {
+  if (!device_ || slot < 0 || static_cast<size_t>(slot) >= texSlotImgs_.size() ||
+      updates.empty()) {
+    return false;
+  }
+  const size_t index = static_cast<size_t>(slot);
+  if (!texRegionUpdatable_[index] || !texSlotImgs_[index]) return false;
+  size_t totalBytes = 0;
+  for (const TextureRegionUpdate& update : updates) {
+    const size_t stride = update.rowBytes
+                              ? update.rowBytes
+                              : size_t(update.width) * 4u;
+    if (update.x < 0 || update.y < 0 || update.width <= 0 ||
+        update.height <= 0 || update.x + update.width > texSlotWidths_[index] ||
+        update.y + update.height > texSlotHeights_[index] ||
+        stride < size_t(update.width) * 4u || (stride & 3u) != 0 ||
+        update.rgba.size() < stride * size_t(update.height) ||
+        totalBytes > std::numeric_limits<size_t>::max() -
+                         stride * size_t(update.height)) {
+      return false;
+    }
+    totalBytes += stride * size_t(update.height);
+  }
+  std::vector<uint8_t> packed;
+  packed.reserve(totalBytes);
+  for (const TextureRegionUpdate& update : updates) {
+    const size_t stride = update.rowBytes
+                              ? update.rowBytes
+                              : size_t(update.width) * 4u;
+    packed.insert(packed.end(), update.rgba.begin(),
+                  update.rgba.begin() +
+                      static_cast<std::ptrdiff_t>(stride * update.height));
+  }
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+  if (!createHostBuffer(static_cast<VkDeviceSize>(packed.size()),
+                        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, packed.data(),
+                        &staging, &stagingMem)) {
+    return false;
+  }
+
+  VkCommandBuffer cb = beginOneShot();
+  VkImageMemoryBarrier toDst{};
+  toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toDst.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toDst.image = texSlotImgs_[index];
+  toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  toDst.subresourceRange.levelCount = 1;
+  toDst.subresourceRange.layerCount = 1;
+  toDst.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toDst);
+  std::vector<VkBufferImageCopy> regions(updates.size());
+  VkDeviceSize offset = 0;
+  for (size_t i = 0; i < updates.size(); ++i) {
+    const TextureRegionUpdate& update = updates[i];
+    const size_t stride = update.rowBytes
+                              ? update.rowBytes
+                              : size_t(update.width) * 4u;
+    VkBufferImageCopy& region = regions[i];
+    region.bufferOffset = offset;
+    region.bufferRowLength = static_cast<uint32_t>(stride / 4u);
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {update.x, update.y, 0};
+    region.imageExtent = {static_cast<uint32_t>(update.width),
+                          static_cast<uint32_t>(update.height), 1};
+    offset += static_cast<VkDeviceSize>(stride) * update.height;
+  }
+  vkCmdCopyBufferToImage(cb, staging, texSlotImgs_[index],
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         static_cast<uint32_t>(regions.size()), regions.data());
+  VkImageMemoryBarrier toRead = toDst;
+  toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &toRead);
+  endOneShot(cb);
+  vkDestroyBuffer(device_, staging, nullptr);
+  vkFreeMemory(device_, stagingMem, nullptr);
+  return true;
 }
 
 void VulkanRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
@@ -5193,8 +5515,14 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     vboUsage |= rtExtra;
     eboUsage |= rtExtra;
   }
-  if (!createHostBuffer(sm.vertices.size() * sizeof(DrawVertex), vboUsage,
-                        sm.vertices.data(), &gm.vbo, &gm.vboMem, rtSupported_, pool)) {
+  const std::vector<DrawVertex>& rasterVertices =
+      sm.rasterDisplacementBaked &&
+              sm.rtDisplacedVertices.size() == sm.vertices.size()
+          ? sm.rtDisplacedVertices
+          : sm.vertices;
+  if (!createHostBuffer(rasterVertices.size() * sizeof(DrawVertex), vboUsage,
+                        rasterVertices.data(), &gm.vbo, &gm.vboMem,
+                        rtSupported_, pool)) {
     return;
   }
   std::vector<uint32_t> zeroJoints;
@@ -6325,6 +6653,113 @@ void VulkanRenderer::evictBlasNotIn(const std::vector<uint32_t>& keepMeshIds) {
 // coarse grid (build cost + memory) is not worth it.
 static constexpr std::uint32_t kRtLodGridMinInstances = 4096;
 
+void VulkanRenderer::rebuildRtTextureTable() {
+  if (!device_ || !rtSet_) return;
+
+  if (rtTexelBuf_) vkDestroyBuffer(device_, rtTexelBuf_, nullptr);
+  if (rtTexelMem_) vkFreeMemory(device_, rtTexelMem_, nullptr);
+  if (rtTexDescBuf_) vkDestroyBuffer(device_, rtTexDescBuf_, nullptr);
+  if (rtTexDescMem_) vkFreeMemory(device_, rtTexDescMem_, nullptr);
+  if (rtMatTexBuf_) vkDestroyBuffer(device_, rtMatTexBuf_, nullptr);
+  if (rtMatTexMem_) vkFreeMemory(device_, rtMatTexMem_, nullptr);
+  if (rtMatTexParamBuf_) vkDestroyBuffer(device_, rtMatTexParamBuf_, nullptr);
+  if (rtMatTexParamMem_) vkFreeMemory(device_, rtMatTexParamMem_, nullptr);
+  rtTexelBuf_ = VK_NULL_HANDLE;
+  rtTexelMem_ = VK_NULL_HANDLE;
+  rtTexDescBuf_ = VK_NULL_HANDLE;
+  rtTexDescMem_ = VK_NULL_HANDLE;
+  rtMatTexBuf_ = VK_NULL_HANDLE;
+  rtMatTexMem_ = VK_NULL_HANDLE;
+  rtMatTexParamBuf_ = VK_NULL_HANDLE;
+  rtMatTexParamMem_ = VK_NULL_HANDLE;
+
+  HostTextureTable textures;
+  BuildHostTextureTable(rtTexturesCpu_, rtMaterialsCpu_, &textures);
+  const uint32_t dummyTexel = 0xffffffffu;
+  HostTextureDesc dummyDesc;
+  for (int& layer : dummyDesc.udimLayer) layer = -1;
+  if (textures.matTex.empty()) textures.matTex.assign(kRtMaterialTexSlots, -1);
+  if (textures.matTexParam.empty())
+    textures.matTexParam.assign(kRtMaterialTextureParamFloats, 0.0f);
+
+  createHostBuffer(textures.texels.empty() ? sizeof(dummyTexel)
+                                            : textures.texels.size(),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   textures.texels.empty()
+                       ? static_cast<const void*>(&dummyTexel)
+                       : static_cast<const void*>(textures.texels.data()),
+                   &rtTexelBuf_, &rtTexelMem_);
+  createHostBuffer(textures.textures.empty()
+                       ? sizeof(dummyDesc)
+                       : textures.textures.size() * sizeof(HostTextureDesc),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   textures.textures.empty()
+                       ? static_cast<const void*>(&dummyDesc)
+                       : static_cast<const void*>(textures.textures.data()),
+                   &rtTexDescBuf_, &rtTexDescMem_);
+  createHostBuffer(textures.matTex.size() * sizeof(int),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, textures.matTex.data(),
+                   &rtMatTexBuf_, &rtMatTexMem_);
+  createHostBuffer(textures.matTexParam.size() * sizeof(float),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   textures.matTexParam.data(), &rtMatTexParamBuf_,
+                   &rtMatTexParamMem_);
+
+  const VkDescriptorBufferInfo infos[4] = {
+      {rtTexelBuf_, 0, VK_WHOLE_SIZE},
+      {rtTexDescBuf_, 0, VK_WHOLE_SIZE},
+      {rtMatTexBuf_, 0, VK_WHOLE_SIZE},
+      {rtMatTexParamBuf_, 0, VK_WHOLE_SIZE},
+  };
+  VkWriteDescriptorSet writes[4]{};
+  for (uint32_t i = 0; i < 4; ++i) {
+    writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[i].dstSet = rtSet_;
+    writes[i].dstBinding = 11 + i;
+    writes[i].descriptorCount = 1;
+    writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[i].pBufferInfo = &infos[i];
+  }
+  vkUpdateDescriptorSets(device_, 4, writes, 0, nullptr);
+  rtTextureTableDirty_ = false;
+  ++rtAccumGen_;
+}
+
+void VulkanRenderer::destroyTlasChunks() {
+  if (tlas_) {
+    if (pfnDestroyAS_) pfnDestroyAS_(device_, tlas_, nullptr);
+    tlas_ = VK_NULL_HANDLE;
+  }
+  if (tlasBuf_) {
+    vkDestroyBuffer(device_, tlasBuf_, nullptr);
+    tlasBuf_ = VK_NULL_HANDLE;
+  }
+  if (tlasMem_) {
+    vkFreeMemory(device_, tlasMem_, nullptr);
+    tlasMem_ = VK_NULL_HANDLE;
+  }
+  if (instBuf_) {
+    vkDestroyBuffer(device_, instBuf_, nullptr);
+    instBuf_ = VK_NULL_HANDLE;
+  }
+  if (instMem_) {
+    vkFreeMemory(device_, instMem_, nullptr);
+    instMem_ = VK_NULL_HANDLE;
+  }
+  for (ExtraTlasChunk& chunk : extraTlasChunks_) {
+    if (chunk.as && pfnDestroyAS_) pfnDestroyAS_(device_, chunk.as, nullptr);
+    if (chunk.asBuffer) vkDestroyBuffer(device_, chunk.asBuffer, nullptr);
+    if (chunk.asMemory) vkFreeMemory(device_, chunk.asMemory, nullptr);
+    if (chunk.instanceBuffer)
+      vkDestroyBuffer(device_, chunk.instanceBuffer, nullptr);
+    if (chunk.instanceMemory)
+      vkFreeMemory(device_, chunk.instanceMemory, nullptr);
+  }
+  extraTlasChunks_.clear();
+  rtTlasChunkCount_ = 0;
+  rtTlasChunkStride_ = 0;
+}
+
 void VulkanRenderer::rebuildTlas() {
   if (!rtSupported_ || meshes_.empty() || !rtSet_) return;
   // No vkDeviceWaitIdle: the caller (presentImpl) has already waited the in-flight
@@ -6335,11 +6770,9 @@ void VulkanRenderer::rebuildTlas() {
   auto tlasT0 = std::chrono::steady_clock::now();
 
   // Drop the previous per-scene TLAS + scene buffers.
-  if (tlas_) { pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
-  if (tlasBuf_) { vkDestroyBuffer(device_, tlasBuf_, nullptr); tlasBuf_ = VK_NULL_HANDLE; }
-  if (tlasMem_) { vkFreeMemory(device_, tlasMem_, nullptr); tlasMem_ = VK_NULL_HANDLE; }
-  if (instBuf_) { vkDestroyBuffer(device_, instBuf_, nullptr); instBuf_ = VK_NULL_HANDLE; }
-  if (instMem_) { vkFreeMemory(device_, instMem_, nullptr); instMem_ = VK_NULL_HANDLE; }
+  destroyTlasChunks();
+  rtTlasInputInstances_ = 0;
+  rtBuildIncomplete_ = false;
   if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
   if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
   if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
@@ -6566,6 +6999,48 @@ void VulkanRenderer::rebuildTlas() {
     instInfos.push_back(info);
   }
   if (insts.empty()) return;
+  rtTlasInputInstances_ = insts.size();
+  rtBuildIncomplete_ = false;
+  constexpr uint32_t kMaxTlasChunks = 4u;  // must match raytrace.comp
+  if (rtMaxInstanceCount_ == 0) {
+    LOGE("[vk_rt] device reports a zero TLAS instance limit");
+    return;
+  }
+  uint32_t chunkStride = rtMaxInstanceCount_;
+  if (const char* forced =
+          std::getenv("TUSDVIEW_RT_TLAS_CHUNK_INSTANCES")) {
+    const unsigned long requested = std::strtoul(forced, nullptr, 10);
+    if (requested > 0)
+      chunkStride = static_cast<uint32_t>(
+          std::min<unsigned long>(requested, rtMaxInstanceCount_));
+  }
+  uint32_t maxTlasChunks = kMaxTlasChunks;
+  if (const char* forcedChunks =
+          std::getenv("TUSDVIEW_RT_TLAS_MAX_CHUNKS")) {
+    const unsigned long requested = std::strtoul(forcedChunks, nullptr, 10);
+    if (requested > 0)
+      maxTlasChunks = static_cast<uint32_t>(
+          std::min<unsigned long>(requested, kMaxTlasChunks));
+  }
+  const uint64_t multiTlasCapacity =
+      uint64_t{chunkStride} * uint64_t{maxTlasChunks};
+  if (insts.size() > multiTlasCapacity) {
+    rtBuildIncomplete_ = true;
+    LOGE("[vk_rt] %zu instances exceed the non-truncating multi-TLAS capacity "
+         "of %llu (%u chunks x %u); refusing a partial render",
+         insts.size(), static_cast<unsigned long long>(multiTlasCapacity),
+         maxTlasChunks, chunkStride);
+    return;
+  }
+  rtTlasChunkStride_ = chunkStride;
+  rtTlasChunkCount_ = static_cast<uint32_t>(
+      (insts.size() + rtTlasChunkStride_ - 1u) / rtTlasChunkStride_);
+  if (rtTlasChunkCount_ > 1u) {
+    LOGI("[vk_rt] non-truncating multi-TLAS: %zu instances in %u chunks "
+         "(stride %u, device limit %u/chunk)",
+         insts.size(), rtTlasChunkCount_, rtTlasChunkStride_,
+         rtMaxInstanceCount_);
+  }
   if (rtTiming) {
     auto tb = std::chrono::steady_clock::now();
     std::fprintf(stderr,
@@ -6577,20 +7052,6 @@ void VulkanRenderer::rebuildTlas() {
                  double(instInfos.size() * sizeof(InstanceInfoGPU)) / 1e9);
   }
 
-  // Instances buffer (AS build input, device address).
-  createHostBuffer(insts.size() * sizeof(VkAccelerationStructureInstanceKHR),
-                   VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-                   insts.data(), &instBuf_, &instMem_, /*deviceAddress=*/true);
-
-  VkAccelerationStructureGeometryKHR geom{};
-  geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-  geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-  geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-  geom.geometry.instances.sType =
-      VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-  geom.geometry.instances.data.deviceAddress = bufferDeviceAddress(instBuf_);
-
-  const uint32_t instCount = static_cast<uint32_t>(insts.size());
   // PREFER_FAST_BUILD for settle rebuilds was on the large-scene.md 2.8 list. It
   // is NOT worth taking: on Island the TLAS build itself is 0.7-4.6 ms of a
   // 600-8400 ms rebuild (which is dominated by the BLAS builds and the instance
@@ -6600,64 +7061,117 @@ void VulkanRenderer::rebuildTlas() {
   // where the balance differs; measure the "AS build" line below before flipping it.
   static const bool kTlasFastBuild =
       std::getenv("TUSDVIEW_TLAS_FAST_BUILD") != nullptr;
-  VkAccelerationStructureBuildGeometryInfoKHR bgi{};
-  bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-  bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-  bgi.flags = kTlasFastBuild
-                  ? VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR
-                  : VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-  bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-  bgi.geometryCount = 1;
-  bgi.pGeometries = &geom;
+  extraTlasChunks_.resize(rtTlasChunkCount_ > 0 ? rtTlasChunkCount_ - 1u : 0u);
+  double asMs = 0.0;
+  VkDeviceSize totalTlasBytes = 0;
+  VkDeviceSize maxScratchBytes = 0;
+  auto buildTlasChunk = [&](uint32_t chunkIndex, size_t begin,
+                            uint32_t instCount) -> bool {
+    VkAccelerationStructureKHR* outAs = &tlas_;
+    VkBuffer* outAsBuffer = &tlasBuf_;
+    VkDeviceMemory* outAsMemory = &tlasMem_;
+    VkBuffer* outInstanceBuffer = &instBuf_;
+    VkDeviceMemory* outInstanceMemory = &instMem_;
+    if (chunkIndex > 0u) {
+      ExtraTlasChunk& chunk = extraTlasChunks_[chunkIndex - 1u];
+      outAs = &chunk.as;
+      outAsBuffer = &chunk.asBuffer;
+      outAsMemory = &chunk.asMemory;
+      outInstanceBuffer = &chunk.instanceBuffer;
+      outInstanceMemory = &chunk.instanceMemory;
+    }
+    if (!createHostBuffer(
+            VkDeviceSize(instCount) * sizeof(VkAccelerationStructureInstanceKHR),
+            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+            insts.data() + begin, outInstanceBuffer, outInstanceMemory,
+            /*deviceAddress=*/true)) {
+      return false;
+    }
+    VkAccelerationStructureGeometryKHR geom{};
+    geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geom.geometry.instances.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geom.geometry.instances.data.deviceAddress =
+        bufferDeviceAddress(*outInstanceBuffer);
 
-  VkAccelerationStructureBuildSizesInfoKHR sizes{};
-  sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-  pfnGetASBuildSizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bgi,
-                      &instCount, &sizes);
+    VkAccelerationStructureBuildGeometryInfoKHR bgi{};
+    bgi.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    bgi.flags = kTlasFastBuild
+                    ? VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR
+                    : VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    bgi.geometryCount = 1;
+    bgi.pGeometries = &geom;
 
-  if (!createDeviceBuffer(sizes.accelerationStructureSize,
-                          VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
-                          &tlasBuf_, &tlasMem_)) {
-    return;
+    VkAccelerationStructureBuildSizesInfoKHR sizes{};
+    sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    pfnGetASBuildSizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                        &bgi, &instCount, &sizes);
+    if (!createDeviceBuffer(
+            sizes.accelerationStructureSize,
+            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, outAsBuffer,
+            outAsMemory)) {
+      return false;
+    }
+    VkAccelerationStructureCreateInfoKHR aci{};
+    aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    aci.buffer = *outAsBuffer;
+    aci.size = sizes.accelerationStructureSize;
+    aci.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    if (pfnCreateAS_(device_, &aci, nullptr, outAs) != VK_SUCCESS) return false;
+
+    VkBuffer scratch = VK_NULL_HANDLE;
+    VkDeviceMemory scratchMemory = VK_NULL_HANDLE;
+    if (!createDeviceBuffer(sizes.buildScratchSize + scratchAlign_,
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &scratch,
+                            &scratchMemory)) {
+      return false;
+    }
+    VkDeviceAddress scratchAddress = bufferDeviceAddress(scratch);
+    scratchAddress =
+        (scratchAddress + scratchAlign_ - 1) &
+        ~(static_cast<VkDeviceAddress>(scratchAlign_) - 1);
+    bgi.dstAccelerationStructure = *outAs;
+    bgi.scratchData.deviceAddress = scratchAddress;
+    VkAccelerationStructureBuildRangeInfoKHR range{};
+    range.primitiveCount = instCount;
+    const VkAccelerationStructureBuildRangeInfoKHR* rangePtr = &range;
+    const auto chunkStart = std::chrono::steady_clock::now();
+    VkCommandBuffer commandBuffer = beginOneShot();
+    pfnCmdBuildAS_(commandBuffer, 1, &bgi, &rangePtr);
+    endOneShot(commandBuffer);
+    asMs += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - chunkStart)
+                .count();
+    totalTlasBytes += sizes.accelerationStructureSize;
+    maxScratchBytes = std::max(maxScratchBytes, sizes.buildScratchSize);
+    vkDestroyBuffer(device_, scratch, nullptr);
+    vkFreeMemory(device_, scratchMemory, nullptr);
+    return true;
+  };
+  for (uint32_t chunkIndex = 0; chunkIndex < rtTlasChunkCount_; ++chunkIndex) {
+    const size_t begin = size_t(chunkIndex) * rtTlasChunkStride_;
+    const uint32_t count = static_cast<uint32_t>(
+        std::min<size_t>(rtTlasChunkStride_, insts.size() - begin));
+    if (!buildTlasChunk(chunkIndex, begin, count)) {
+      rtBuildIncomplete_ = true;
+      LOGE("[vk_rt] failed to build TLAS chunk %u/%u", chunkIndex + 1u,
+           rtTlasChunkCount_);
+      destroyTlasChunks();
+      return;
+    }
   }
-  VkAccelerationStructureCreateInfoKHR aci{};
-  aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-  aci.buffer = tlasBuf_;
-  aci.size = sizes.accelerationStructureSize;
-  aci.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-  if (pfnCreateAS_(device_, &aci, nullptr, &tlas_) != VK_SUCCESS) return;
-
-  VkBuffer scratch = VK_NULL_HANDLE;
-  VkDeviceMemory scratchMem = VK_NULL_HANDLE;
-  if (!createDeviceBuffer(sizes.buildScratchSize + scratchAlign_,
-                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &scratch, &scratchMem)) {
-    return;
-  }
-  VkDeviceAddress sa = bufferDeviceAddress(scratch);
-  sa = (sa + scratchAlign_ - 1) & ~(static_cast<VkDeviceAddress>(scratchAlign_) - 1);
-  bgi.dstAccelerationStructure = tlas_;
-  bgi.scratchData.deviceAddress = sa;
-
-  VkAccelerationStructureBuildRangeInfoKHR range{};
-  range.primitiveCount = instCount;
-  const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
-  auto asT0 = std::chrono::steady_clock::now();
-  VkCommandBuffer cb = beginOneShot();
-  pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
-  endOneShot(cb);
-  const double asMs =
-      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                asT0)
-          .count();
-  vkDestroyBuffer(device_, scratch, nullptr);
-  vkFreeMemory(device_, scratchMem, nullptr);
   if (rtTiming) {
     auto tt = std::chrono::steady_clock::now();
     std::fprintf(stderr,
                  "[vk_rt] TLAS: storage %.2f GB, scratch %.2f GB, AS build %.1f ms "
                  "(%s), total build %.1f ms\n",
-                 double(sizes.accelerationStructureSize) / 1e9,
-                 double(sizes.buildScratchSize) / 1e9, asMs,
+                 double(totalTlasBytes) / 1e9,
+                 double(maxScratchBytes) / 1e9, asMs,
                  kTlasFastBuild ? "fast-build" : "fast-trace",
                  std::chrono::duration<double, std::milli>(tt - tlasT0).count());
     uint64_t used = 0, budget = 0;
@@ -6720,10 +7234,14 @@ void VulkanRenderer::rebuildTlas() {
   // Update descriptors: TLAS(0), meshDesc(2), material(3), instInfo(4),
   // LightRT material block(6), packed lights(7). Image(1) and accumulation image(5)
   // are set elsewhere.
+  std::array<VkAccelerationStructureKHR, kMaxTlasChunks> tlasDescriptors{};
+  tlasDescriptors.fill(tlas_);
+  for (uint32_t i = 1u; i < rtTlasChunkCount_; ++i)
+    tlasDescriptors[i] = extraTlasChunks_[i - 1u].as;
   VkWriteDescriptorSetAccelerationStructureKHR asInfo{};
   asInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-  asInfo.accelerationStructureCount = 1;
-  asInfo.pAccelerationStructures = &tlas_;
+  asInfo.accelerationStructureCount = kMaxTlasChunks;
+  asInfo.pAccelerationStructures = tlasDescriptors.data();
   VkDescriptorBufferInfo descInfo{meshDescBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo matInfo{rtMatBuf_, 0, VK_WHOLE_SIZE};
   VkDescriptorBufferInfo instInfo{instInfoBuf_, 0, VK_WHOLE_SIZE};
@@ -6738,7 +7256,7 @@ void VulkanRenderer::rebuildTlas() {
   w[0].pNext = &asInfo;
   w[0].dstSet = rtSet_;
   w[0].dstBinding = 0;
-  w[0].descriptorCount = 1;
+  w[0].descriptorCount = kMaxTlasChunks;
   w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
   w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   w[1].dstSet = rtSet_;
@@ -6823,15 +7341,17 @@ void VulkanRenderer::rebuildTlas() {
   vkUpdateDescriptorSets(device_, 13, w, 0, nullptr);
 
   tlasDirty_ = false;
+  rtTextureTableDirty_ = false;
   ++rtAccumGen_;  // geometry changed -> restart progressive accumulation
 }
 
 bool VulkanRenderer::createRtResources(std::string* err) {
 #if defined(TUSDVIEW_HAVE_RT_SHADER) && TUSDVIEW_HAVE_RT_SHADER
+  constexpr uint32_t kMaxTlasChunks = 4u;  // must match raytrace.comp
   VkDescriptorSetLayoutBinding b[15]{};
   b[0].binding = 0;
   b[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-  b[0].descriptorCount = 1;
+  b[0].descriptorCount = kMaxTlasChunks;
   b[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
   b[1].binding = 1;
   b[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -6870,7 +7390,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
            "rt descriptor set layout");
 
   VkDescriptorPoolSize ps[4]{};
-  ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1};
+  ps[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kMaxTlasChunks};
   ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
   ps[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 9};
   ps[3] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
@@ -6905,6 +7425,43 @@ bool VulkanRenderer::createRtResources(std::string* err) {
     if (err) *err = "rt shader module";
     return false;
   }
+  // Warm the pipeline cache from disk before compiling. On a cold cache this
+  // costs a stat; on a warm one it turns a ~38 s driver compile into a load.
+  VkPhysicalDeviceProperties props{};
+  vkGetPhysicalDeviceProperties(phys_, &props);
+  const std::string cachePath =
+      RtPipelineCachePath(props, raytrace_comp_spv, sizeof(raytrace_comp_spv));
+  std::vector<uint8_t> cacheBlob;
+  if (!cachePath.empty()) {
+    std::ifstream in(cachePath, std::ios::binary);
+    if (in) {
+      in.seekg(0, std::ios::end);
+      const std::streamoff sz = in.tellg();
+      if (sz > 0) {
+        in.seekg(0, std::ios::beg);
+        cacheBlob.resize(static_cast<size_t>(sz));
+        if (!in.read(reinterpret_cast<char*>(cacheBlob.data()), sz)) {
+          cacheBlob.clear();
+        }
+      }
+    }
+  }
+
+  VkPipelineCache pipeCache = VK_NULL_HANDLE;
+  {
+    VkPipelineCacheCreateInfo pcci{};
+    pcci.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    pcci.initialDataSize = cacheBlob.size();
+    pcci.pInitialData = cacheBlob.empty() ? nullptr : cacheBlob.data();
+    // A rejected blob is not an error: the driver validates the header and
+    // simply starts empty, which only costs us the compile we were doing
+    // before anyway.
+    if (vkCreatePipelineCache(device_, &pcci, nullptr, &pipeCache) !=
+        VK_SUCCESS) {
+      pipeCache = VK_NULL_HANDLE;
+    }
+  }
+
   VkComputePipelineCreateInfo cpci{};
   cpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
   cpci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -6912,9 +7469,42 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   cpci.stage.module = cs;
   cpci.stage.pName = "main";
   cpci.layout = rtPipelineLayout_;
-  VkResult r = vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &cpci, nullptr,
+  VkResult r = vkCreateComputePipelines(device_, pipeCache, 1, &cpci, nullptr,
                                         &rtPipeline_);
   vkDestroyShaderModule(device_, cs, nullptr);
+
+  // Persist whatever the driver produced. Written to a temporary and renamed so
+  // a crash or a concurrent viewer cannot leave a half-written blob behind --
+  // the driver would reject it, but only after the next launch paid to read it.
+  if (pipeCache != VK_NULL_HANDLE) {
+    if (r == VK_SUCCESS && !cachePath.empty()) {
+      size_t sz = 0;
+      if (vkGetPipelineCacheData(device_, pipeCache, &sz, nullptr) ==
+              VK_SUCCESS && sz > 0 && sz != cacheBlob.size()) {
+        std::vector<uint8_t> out(sz);
+        if (vkGetPipelineCacheData(device_, pipeCache, &sz, out.data()) ==
+            VK_SUCCESS) {
+          std::error_code ec;
+          std::filesystem::create_directories(
+              std::filesystem::path(cachePath).parent_path(), ec);
+          const std::string tmp =
+              cachePath + ".tmp" + std::to_string(
+                  static_cast<unsigned long long>(
+                      std::chrono::steady_clock::now()
+                          .time_since_epoch()
+                          .count()));
+          {
+            std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
+            if (o) o.write(reinterpret_cast<const char*>(out.data()),
+                           static_cast<std::streamsize>(sz));
+          }
+          std::filesystem::rename(tmp, cachePath, ec);
+          if (ec) std::filesystem::remove(tmp, ec);
+        }
+      }
+    }
+    vkDestroyPipelineCache(device_, pipeCache, nullptr);
+  }
   if (r != VK_SUCCESS) {
     if (err) {
       *err = "rt compute pipeline (VkResult " +
@@ -7060,7 +7650,12 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.clearColor[3] = exposure_;
   for (int i = 0; i < 3; ++i) { pc.sceneMin[i] = sceneMin_[i]; pc.sceneExtent[i] = sceneExtent_[i]; }
   pc.sceneMin[3] = static_cast<float>(rtAccumFrame_);      // accumulated sample index
-  pc.sceneExtent[3] = rtAccumEnabled_ ? 1.0f : 0.0f;        // accumulate enable
+  pc.sceneExtent[3] = (rtAccumEnabled_ ? 1.0f : -1.0f) *
+                      static_cast<float>(std::max(rtTlasChunkCount_, 1u));
+  pc.lens[0] = cameraLens_.focusDistance;
+  pc.lens[1] = cameraLens_.apertureRadius;
+  pc.lens[2] = cameraLens_.enabled() ? 1.0f : 0.0f;
+  pc.lens[3] = static_cast<float>(rtTlasChunkStride_);
   vkCmdPushConstants(cb, rtPipelineLayout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtPushC),
                      &pc);
   vkCmdDispatch(cb, (static_cast<uint32_t>(vpW_) + 7) / 8,
@@ -7116,6 +7711,22 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
 
 void VulkanRenderer::setRayTracing(bool enable) {
   bool want = enable && rtSupported_;
+  if (want && rtPipeline_ == VK_NULL_HANDLE) {
+    std::string error;
+    const auto start = std::chrono::steady_clock::now();
+    if (!createRtResources(&error)) {
+      LOGW("ray tracing initialization failed: %s", error.c_str());
+      destroyRt();
+      rtSupported_ = false;
+      caps_.supportsRayTracing = false;
+      want = false;
+    } else {
+      rtInitMs_ = std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - start)
+                      .count();
+      LOGI("Vulkan ray tracing resources initialized in %.1f ms", rtInitMs_);
+    }
+  }
   if (want == rtActive_) return;
   rtActive_ = want;
   techniqueLabel_ = rtActive_ ? "Vulkan (ray query)" : "Vulkan (raster)";
@@ -7131,11 +7742,7 @@ void VulkanRenderer::setLodCamera(const RtLodCamera& cam, bool reselect) {
 }
 
 void VulkanRenderer::destroyRt() {
-  if (tlas_) { if (pfnDestroyAS_) pfnDestroyAS_(device_, tlas_, nullptr); tlas_ = VK_NULL_HANDLE; }
-  if (tlasBuf_) { vkDestroyBuffer(device_, tlasBuf_, nullptr); tlasBuf_ = VK_NULL_HANDLE; }
-  if (tlasMem_) { vkFreeMemory(device_, tlasMem_, nullptr); tlasMem_ = VK_NULL_HANDLE; }
-  if (instBuf_) { vkDestroyBuffer(device_, instBuf_, nullptr); instBuf_ = VK_NULL_HANDLE; }
-  if (instMem_) { vkFreeMemory(device_, instMem_, nullptr); instMem_ = VK_NULL_HANDLE; }
+  destroyTlasChunks();
   if (meshDescBuf_) { vkDestroyBuffer(device_, meshDescBuf_, nullptr); meshDescBuf_ = VK_NULL_HANDLE; }
   if (meshDescMem_) { vkFreeMemory(device_, meshDescMem_, nullptr); meshDescMem_ = VK_NULL_HANDLE; }
   if (rtMatBuf_) { vkDestroyBuffer(device_, rtMatBuf_, nullptr); rtMatBuf_ = VK_NULL_HANDLE; }
@@ -7376,6 +7983,11 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   if (params.proj) std::memcpy(proj_, params.proj, sizeof(proj_));
   for (int i = 0; i < 3; ++i) cameraPos_[i] = params.cameraPos[i];
   exposure_ = params.exposure;
+  if (cameraLens_.focusDistance != params.cameraLens.focusDistance ||
+      cameraLens_.apertureRadius != params.cameraLens.apertureRadius) {
+    cameraLens_ = params.cameraLens;
+    ++rtAccumGen_;
+  }
   for (int i = 0; i < 3; ++i) lightDir_[i] = params.lightDir[i];
   for (int i = 0; i < 3; ++i) lightColor_[i] = params.lightColor[i];
   for (int i = 0; i < 4; ++i) clear_[i] = params.clearColor[i];
@@ -7960,7 +8572,10 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
   // vkDeviceWaitIdle and stall only on that one frame. The build itself is still
   // synchronous (its own one-shot submissions); fully overlapping it with the live
   // TLAS would need a background AS-build thread (follow-on).
-  if (rtFrame && tlasDirty_) rebuildTlas();
+  if (rtFrame && tlasDirty_)
+    rebuildTlas();
+  else if (rtFrame && rtTextureTableDirty_)
+    rebuildRtTextureTable();
 
   // Headless: no swapchain to acquire from — composite into our own image ring.
   uint32_t imageIndex = frame_;

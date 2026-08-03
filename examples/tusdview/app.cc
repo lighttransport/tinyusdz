@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <string>
@@ -22,6 +23,7 @@
 #include <utility>
 
 #ifndef _WIN32
+#include <sys/resource.h>
 #include <unistd.h>  // sysconf (RSS page size for the post-RT-build free log)
 #endif
 
@@ -32,6 +34,7 @@
 #include "gui_style.hh"
 #include "image-writer.hh"
 #include "external/stb_image_resize2.h"  // stbir_resize (impl lives in the lib)
+#include "external/jsonhpp/nlohmann/json.hpp"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "log.hh"
@@ -39,6 +42,7 @@
 #include "next_scene_loader.hh"
 #include "next/tinyusdz-next.hh"  // tnext::Stage (per-frame --next morph weights)
 #include "skinning.hh"
+#include "texture_residency_policy.hh"
 
 #if defined(HAVE_NFD)
 #include "nfd.h"
@@ -47,9 +51,617 @@
 namespace tusdview {
 
 namespace {
+bool AppendPtexFaceTableUpdates(
+    const DrawTextureCPU& texture, uint32_t face,
+    const DrawPtexFaceRectCPU& rect,
+    std::vector<Renderer::TextureRegionUpdate>* updates);
+
 void GlfwErrorCallback(int code, const char* desc) {
   LOGE("glfw error %d: %s", code, desc);
 }
+
+size_t EstimateTextureResidentBytes(const DrawTextureCPU& texture) {
+  size_t compressedBytes = texture.compressed.data.size();
+  for (const DrawCompressedMipCPU& mip : texture.compressed.mips)
+    compressedBytes += mip.data.size();
+  if (compressedBytes > 0) return compressedBytes;
+  size_t bytes = size_t(std::max(texture.image.width, 0)) *
+                 size_t(std::max(texture.image.height, 0)) * 4u;
+  for (const light3d::Image& mip : texture.mipImages) {
+    bytes += size_t(std::max(mip.width, 0)) *
+             size_t(std::max(mip.height, 0)) * 4u;
+  }
+  if (texture.mipImages.empty() && !texture.streamingMutable) bytes += bytes / 3u;
+  return bytes;
+}
+
+void AppendMaterialTextureSlots(const DrawMaterialCPU& material,
+                                size_t textureCount,
+                                std::vector<int>* slots) {
+  const int ids[] = {
+      material.baseColorTex,      material.metallicTex,
+      material.roughnessTex,      material.normalTex,
+      material.coatNormalTex,     material.emissiveTex,
+      material.opacityTex,        material.occlusionTex,
+      material.specularColorTex,  material.coatWeightTex,
+      material.coatColorTex,      material.coatRoughnessTex,
+      material.displacementTex,
+  };
+  for (int id : ids) {
+    if (id >= 0 && static_cast<size_t>(id) < textureCount) slots->push_back(id);
+  }
+}
+
+void ReleaseOrdinaryTexturePayload(DrawTextureCPU* texture) {
+  if (!texture || texture->isUdim || texture->isPtex) return;
+  texture->image.data.clear();
+  texture->image.data.shrink_to_fit();
+  texture->mipImages.clear();
+  texture->mipImages.shrink_to_fit();
+  texture->compressed.data.clear();
+  texture->compressed.data.shrink_to_fit();
+  texture->compressed.mips.clear();
+  texture->compressed.mips.shrink_to_fit();
+}
+
+}  // anonymous namespace
+
+std::vector<int> App::selectedTextureSlots() const {
+  std::vector<int> slots;
+  const int meshIndex = gui_.selectedMeshIndex();
+  if (meshIndex < 0 ||
+      static_cast<size_t>(meshIndex) >= textureSlotsByMesh_.size())
+    return slots;
+  return textureSlotsByMesh_[static_cast<size_t>(meshIndex)];
+}
+
+void App::resetTextureResidency() {
+  // A reload joins the scene loader first. At most four independent filesystem
+  // decodes can still be finishing here; consuming them keeps future teardown
+  // deterministic and prevents results crossing scene generations.
+  for (std::future<TextureDecodeResult>& job : textureDecodeJobs_) {
+    if (job.valid()) job.wait();
+  }
+  textureDecodeJobs_.clear();
+  textureDecodeRawBytes_ = 0;
+  textureDecodeGpuBytes_ = 0;
+  texturePeakResidentBytes_ = 0;
+  textureCoarseUploads_ = 0;
+  textureFullUploads_ = 0;
+  textureDecodeFailures_ = 0;
+  textureEvictions_ = 0;
+  textureResidency_.assign(draw_.textures.size(), TextureResidencySlot{});
+  textureSlotsByMesh_.clear();
+  textureSlotsByMesh_.resize(draw_.meshes.size());
+  textureMarginVisible_.clear();
+  textureCameraSignatureValid_ = false;
+  for (size_t meshIndex = 0; meshIndex < draw_.meshes.size(); ++meshIndex) {
+    std::vector<int>& slots = textureSlotsByMesh_[meshIndex];
+    for (const DrawSubmesh& submesh : draw_.meshes[meshIndex].submeshes) {
+      if (submesh.materialId < 0 ||
+          static_cast<size_t>(submesh.materialId) >= draw_.materials.size())
+        continue;
+      AppendMaterialTextureSlots(
+          draw_.materials[static_cast<size_t>(submesh.materialId)],
+          draw_.textures.size(), &slots);
+    }
+    std::sort(slots.begin(), slots.end());
+    slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
+  }
+  for (size_t i = 0; i < draw_.textures.size(); ++i) {
+    if (!draw_.textures[i].deferredDecode) {
+      textureResidency_[i].state = TextureResidencyState::FullResident;
+      textureResidency_[i].residentBytes =
+          renderThreadActive_
+              ? EstimateTextureResidentBytes(draw_.textures[i])
+              : renderer_->textureResidentBytes(static_cast<int>(i));
+    }
+  }
+}
+
+void App::updateTextureResidency() {
+  if (!renderer_ || textureResidency_.empty()) return;
+  using Clock = std::chrono::steady_clock;
+  const auto now = Clock::now();
+
+  // Publish completed work without blocking the frame.
+  for (size_t i = 0; i < textureDecodeJobs_.size();) {
+    std::future<TextureDecodeResult>& job = textureDecodeJobs_[i];
+    if (job.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+      ++i;
+      continue;
+    }
+    TextureDecodeResult ready = job.get();
+    TextureResidencySlot& state = textureResidency_[ready.slot];
+    if (ready.generation != state.generation) {
+      // The user released the slot while this decode was in flight.
+    } else if (!ready.ok) {
+      ++textureDecodeFailures_;
+      state.state = state.residentBytes > 0
+                        ? TextureResidencyState::CoarseResident
+                        : TextureResidencyState::Failed;
+    } else {
+      textureDecodeRawBytes_ += ready.texture.image.data.size();
+      textureDecodeGpuBytes_ += EstimateTextureResidentBytes(ready.texture);
+      if (ready.full)
+        ++textureFullUploads_;
+      else
+        ++textureCoarseUploads_;
+      size_t residentBytes = 0;
+      if (renderThreadActive_) {
+        residentBytes = EstimateTextureResidentBytes(ready.texture);
+        auto upload =
+            std::make_shared<DrawTextureCPU>(std::move(ready.texture));
+        // Keep identity/dimensions for UI and future source re-decode, while the
+        // render-thread closure exclusively owns the large staging payload.
+        DrawTextureCPU& retained = draw_.textures[ready.slot];
+        retained.image.width = upload->image.width;
+        retained.image.height = upload->image.height;
+        retained.image.channels = upload->image.channels;
+        retained.deferredDecode = false;
+        retained.requestedCompressed = upload->requestedCompressed;
+        retained.compressed.format = upload->compressed.format;
+        retained.compressed.width = upload->compressed.width;
+        retained.compressed.height = upload->compressed.height;
+        postGpu([this, slot = ready.slot, upload = std::move(upload)] {
+          renderer_->uploadTexture(static_cast<int>(slot), *upload);
+        });
+      } else {
+        renderer_->uploadTexture(static_cast<int>(ready.slot), ready.texture);
+        residentBytes =
+            renderer_->textureResidentBytes(static_cast<int>(ready.slot));
+      }
+      state.state = ready.full ? TextureResidencyState::FullResident
+                               : TextureResidencyState::CoarseResident;
+      state.residentBytes = residentBytes;
+      state.lastWanted = now;
+      if (loadOpts_.timing) {
+        LOGI("texture residency: slot %zu %s resident (%.2f MiB)",
+             ready.slot, ready.full ? "full" : "coarse",
+             double(residentBytes) / (1024.0 * 1024.0));
+      }
+      if (!renderThreadActive_) {
+        draw_.textures[ready.slot] = std::move(ready.texture);
+        // The backend has consumed or retained what it needs. Keep only source
+        // identity and sampling metadata in the application; eviction/full-res
+        // promotion re-decodes the ordinary file instead of pinning a duplicate
+        // CPU block/raw payload for every resident texture.
+        ReleaseOrdinaryTexturePayload(&draw_.textures[ready.slot]);
+      }
+    }
+    textureDecodeJobs_.erase(textureDecodeJobs_.begin() +
+                             static_cast<std::ptrdiff_t>(i));
+  }
+
+  const std::vector<int> selected = selectedTextureSlots();
+  std::vector<uint8_t> selectedMask(textureResidency_.size(), uint8_t{0});
+  for (int slot : selected) selectedMask[static_cast<size_t>(slot)] = 1;
+  if (gui_.wantRefineSelectedTextures()) {
+    for (int slot : selected) textureResidency_[static_cast<size_t>(slot)].forceFull = true;
+  }
+  if (gui_.wantReleaseSelectedTextures()) {
+    for (int slot : selected) {
+      TextureResidencySlot& state = textureResidency_[static_cast<size_t>(slot)];
+      ++state.generation;
+      if (state.residentBytes > 0) {
+        postGpu([this, slot] { renderer_->evictTexture(slot); });
+        ++textureEvictions_;
+        DrawTextureCPU& texture = draw_.textures[static_cast<size_t>(slot)];
+        ReleaseOrdinaryTexturePayload(&texture);
+        texture.deferredDecode = true;
+      }
+      const uint64_t generation = state.generation;
+      state = TextureResidencySlot{};
+      state.generation = generation;
+    }
+  }
+  backgroundTextureRefinement_ = gui_.backgroundTextureRefinement();
+
+  // Slot priority: selected, visible frustum, 20%-expanded frustum, background.
+  std::vector<TextureDemandPriority> priority(
+      textureResidency_.size(),
+      backgroundTextureRefinement_ ? TextureDemandPriority::Background
+                                   : TextureDemandPriority::None);
+  const std::vector<uint8_t>& visible = gui_.viewVisibility();
+  const light3d::Vec3 eye = camera_.eye();
+  const light3d::Vec3 target = camera_.target();
+  const std::array<float, 15> cameraSignature = {
+      eye.x,
+      eye.y,
+      eye.z,
+      target.x,
+      target.y,
+      target.z,
+      camera_.fovYDeg(),
+      camera_.aspect(),
+      camera_.orthographicHeight(),
+      camera_.lensShiftX(),
+      camera_.lensShiftY(),
+      static_cast<float>(camera_.projection() == CameraProjection::Orthographic),
+      static_cast<float>(camera_.conform()),
+      camera_.nearPlane(),
+      camera_.farPlane(),
+  };
+  if (!textureCameraSignatureValid_ ||
+      cameraSignature != textureCameraSignature_ ||
+      textureMarginVisible_.size() != draw_.meshes.size()) {
+    textureCameraSignature_ = cameraSignature;
+    textureCameraSignatureValid_ = true;
+    textureMarginVisible_.assign(draw_.meshes.size(), uint8_t{0});
+    light3d::Mat4 expandedProj = camera_.proj(false);
+    expandedProj.m[0] /= 1.2f;
+    expandedProj.m[5] /= 1.2f;
+    const light3d::Frustum expanded = light3d::Frustum::fromViewProjection(
+        expandedProj * camera_.view());
+    for (size_t meshIndex = 0; meshIndex < draw_.meshes.size(); ++meshIndex) {
+      const DrawMeshCPU& mesh = draw_.meshes[meshIndex];
+      const light3d::Vec3 mn{mesh.aabbMin[0], mesh.aabbMin[1], mesh.aabbMin[2]};
+      const light3d::Vec3 mx{mesh.aabbMax[0], mesh.aabbMax[1], mesh.aabbMax[2]};
+      textureMarginVisible_[meshIndex] =
+          expanded.testAABB(mn, mx) != light3d::CullResult::Outside ? 1u : 0u;
+    }
+  }
+  for (size_t meshIndex = 0; meshIndex < draw_.meshes.size(); ++meshIndex) {
+    TextureDemandPriority p = TextureDemandPriority::None;
+    if (meshIndex < visible.size() && visible[meshIndex]) {
+      p = TextureDemandPriority::Visible;
+    } else if (meshIndex < textureMarginVisible_.size() &&
+               textureMarginVisible_[meshIndex]) {
+      p = TextureDemandPriority::Margin;
+    }
+    if (p != TextureDemandPriority::None &&
+        meshIndex < textureSlotsByMesh_.size()) {
+      for (int slot : textureSlotsByMesh_[meshIndex]) {
+        priority[static_cast<size_t>(slot)] =
+            std::min(priority[static_cast<size_t>(slot)], p);
+      }
+    }
+  }
+  for (int slot : selected)
+    priority[static_cast<size_t>(slot)] = TextureDemandPriority::Selected;
+  for (size_t i = 0; i < priority.size(); ++i) {
+    if (priority[i] < TextureDemandPriority::Background)
+      textureResidency_[i].lastWanted = now;
+  }
+
+  // Launch no more than four independent decoders. Selected slots bypass the
+  // coarse edge cap; ordinary visible/background work uses the preview profile.
+  std::vector<uint8_t> decodeEligible(textureResidency_.size(), uint8_t{0});
+  for (size_t i = 0; i < textureResidency_.size(); ++i) {
+    const TextureResidencySlot& state = textureResidency_[i];
+    const bool wantsFull = selectedMask[i] || state.forceFull;
+    const bool canDecode = state.state == TextureResidencyState::Unloaded ||
+                           (wantsFull && state.state ==
+                                             TextureResidencyState::CoarseResident);
+    decodeEligible[i] = canDecode && priority[i] != TextureDemandPriority::None &&
+                                !draw_.textures[i].assetIdentifier.empty()
+                            ? 1u
+                            : 0u;
+  }
+  const std::vector<size_t> candidates =
+      OrderTextureDecodeCandidates(priority, decodeEligible);
+  const uint64_t totalBudget = loadOpts_.textureOptions.textureBudgetMB > 0
+                                   ? uint64_t(loadOpts_.textureOptions.textureBudgetMB) *
+                                         1024ull * 1024ull
+                                   : 0;
+  const uint64_t perDecodeBudget =
+      totalBudget && !textureResidency_.empty()
+          ? std::max<uint64_t>(1ull << 20, totalBudget / textureResidency_.size())
+          : 0;
+  for (size_t slot : candidates) {
+    if (textureDecodeJobs_.size() >= 4) break;
+    TextureResidencySlot& state = textureResidency_[slot];
+    const bool full = selectedMask[slot] || state.forceFull;
+    TextureRuntimeOptions runtime = loadOpts_.textureOptions;
+    if (full) runtime.maxTextureSize = 0;
+    DrawTextureCPU placeholder = draw_.textures[slot];
+    placeholder.deferredDecode = true;
+    state.state = TextureResidencyState::Decoding;
+    const uint64_t generation = state.generation;
+    textureDecodeJobs_.push_back(std::async(
+        std::launch::async,
+        [slot, full, generation, placeholder = std::move(placeholder), runtime,
+         perDecodeBudget]() mutable {
+          TextureDecodeResult result;
+          result.slot = slot;
+          result.full = full;
+          result.generation = generation;
+          result.ok = DecodeDeferredDrawTexture(placeholder, runtime,
+                                                full ? 0 : perDecodeBudget,
+                                                &result.texture);
+          return result;
+        }));
+  }
+
+  // Budget eviction: selected full-res gets a 10% reserve capped at 1 GiB.
+  size_t residentBytes = 0;
+  for (const TextureResidencySlot& state : textureResidency_)
+    residentBytes += state.residentBytes;
+  const size_t baseBudget = static_cast<size_t>(totalBudget);
+  size_t selectedResidentBytes = 0;
+  for (size_t i = 0; i < textureResidency_.size(); ++i) {
+    if (selectedMask[i]) selectedResidentBytes += textureResidency_[i].residentBytes;
+  }
+  const size_t reserve = selectedResidentBytes > 0
+                             ? std::min<size_t>(baseBudget / 10u, 1ull << 30)
+                             : 0;
+  const size_t allowed = baseBudget ? baseBudget + reserve : 0;
+  while (allowed && residentBytes > allowed) {
+    std::vector<TextureEvictionCandidate> evictionCandidates;
+    evictionCandidates.reserve(textureResidency_.size());
+    for (size_t i = 0; i < textureResidency_.size(); ++i) {
+      const TextureResidencySlot& state = textureResidency_[i];
+      evictionCandidates.push_back(TextureEvictionCandidate{
+          i, std::chrono::duration<double>(now - state.lastWanted).count(),
+          state.residentBytes, selectedMask[i] != 0,
+          state.state == TextureResidencyState::Decoding});
+    }
+    const size_t victimIndex = ChooseTextureEvictionVictim(
+        evictionCandidates.data(), evictionCandidates.size(), 2.0);
+    if (victimIndex == evictionCandidates.size()) break;
+    const size_t victim = evictionCandidates[victimIndex].slot;
+    postGpu([this, victim] {
+      renderer_->evictTexture(static_cast<int>(victim));
+    });
+    ++textureEvictions_;
+    residentBytes -= textureResidency_[victim].residentBytes;
+    DrawTextureCPU& texture = draw_.textures[victim];
+    ReleaseOrdinaryTexturePayload(&texture);
+    texture.deferredDecode = true;
+    textureResidency_[victim] = TextureResidencySlot{};
+  }
+
+  Gui::TextureResidencyInfo info;
+  info.residentBytes = residentBytes;
+  info.budgetBytes = baseBudget;
+  info.total = textureResidency_.size();
+  info.queued = textureDecodeJobs_.size();
+  info.backgroundRefinement = backgroundTextureRefinement_;
+  texturePeakResidentBytes_ =
+      std::max<uint64_t>(texturePeakResidentBytes_, residentBytes);
+  for (const TextureResidencySlot& state : textureResidency_) {
+    if (state.residentBytes > 0) ++info.resident;
+  }
+  gui_.setTextureResidencyInfo(info);
+}
+
+void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
+  if (renderReportPath_.empty()) return;
+  using json = nlohmann::json;
+  json report = json::object();
+  report["schema_version"] = 1;
+  report["status"] = exitCode == 0 ? (draw_.empty() ? "no_scene" : "ok")
+                                    : "error";
+  report["exit_code"] = exitCode;
+  report["scene"] = scenePath;
+  report["profile"] = largeSceneProfile_;
+  report["camera"] = cameraName_.empty() ? "auto" : cameraName_;
+  report["backend"] = json::object();
+  if (renderer_) {
+    const RendererCaps& caps = renderer_->caps();
+    report["backend"]["name"] = cudaRt_ ? "CUDA" : (hipRt_ ? "HIP" : caps.backend_name);
+    const std::string rtDevice =
+        cudaRt_ ? cudaTracer_.deviceName()
+                : (hipRt_ ? hipTracer_.deviceName() : std::string());
+    report["backend"]["device"] = rtDevice.empty() ? caps.gpu_name : rtDevice;
+    report["backend"]["api"] = caps.api_info;
+  }
+  uint64_t residentTextureBytes = 0;
+  uint64_t residentTextureSlots = 0;
+  for (const TextureResidencySlot& slot : textureResidency_) {
+    residentTextureBytes += slot.residentBytes;
+    if (slot.residentBytes > 0) ++residentTextureSlots;
+  }
+  report["texture_residency"] = {
+      {"slots", textureResidency_.size()},
+      {"resident_slots", residentTextureSlots},
+      {"resident_bytes", residentTextureBytes},
+      {"peak_resident_bytes", texturePeakResidentBytes_},
+      {"decoded_raw_bytes", textureDecodeRawBytes_},
+      {"uploaded_gpu_bytes", textureDecodeGpuBytes_},
+      {"coarse_uploads", textureCoarseUploads_},
+      {"full_uploads", textureFullUploads_},
+      {"decode_failures", textureDecodeFailures_},
+      {"evictions", textureEvictions_},
+      {"background_refinement", backgroundTextureRefinement_},
+  };
+  int width = 0, height = 0;
+  if (reportCaptureWidth_ > 0 && reportCaptureHeight_ > 0) {
+    width = reportCaptureWidth_;
+    height = reportCaptureHeight_;
+  } else if (renderer_) {
+    renderer_->viewportSize(&width, &height);
+  }
+  report["resolution"] = {{"width", width}, {"height", height}};
+
+  const Gui::RenderStats renderStats = gui_.renderStats();
+
+  size_t ptexTextures = 0, ptexFaces = 0, ptexAtlasBytes = 0;
+  size_t ptexDownsampledFaces = 0, ptexFallbackTextures = 0;
+  uint64_t ptexCacheHits = 0, ptexCacheMisses = 0, ptexCacheEvictions = 0;
+  uint64_t ptexCachePeakBytes = 0;
+  uint64_t ptexPageDecodedBytes = 0;
+  uint64_t ptexPhysicalSlots = 0, ptexGpuUploads = 0, ptexGpuHits = 0;
+  uint64_t ptexGpuMisses = 0, ptexGpuEvictions = 0;
+  size_t ptexRequestedFaces = 0;
+  for (const auto& requests : ptexRequestedFaces_)
+    ptexRequestedFaces += requests.size();
+  const size_t ptexConsideredMeshes = static_cast<size_t>(std::count(
+      ptexMeshRequested_.begin(), ptexMeshRequested_.end(), uint8_t{1}));
+  const size_t ptexRequestedMeshes = static_cast<size_t>(std::count(
+      ptexMeshDemanded_.begin(), ptexMeshDemanded_.end(), uint8_t{1}));
+  for (const DrawTextureCPU& texture : draw_.textures) {
+    if (!texture.isPtex) continue;
+    ++ptexTextures;
+    ptexFaces += texture.ptexFaceRects.size();
+    ptexAtlasBytes += texture.ptexAtlasBytes > 0
+                          ? texture.ptexAtlasBytes
+                          : texture.image.data.size();
+    ptexDownsampledFaces += texture.ptexDownsampledFaces;
+    ptexCacheHits += texture.ptexPageCacheHits;
+    ptexCacheMisses += texture.ptexPageCacheMisses;
+    ptexCacheEvictions += texture.ptexPageCacheEvictions;
+    ptexCachePeakBytes =
+        std::max(ptexCachePeakBytes, texture.ptexPageCachePeakBytes);
+    ptexPageDecodedBytes += texture.ptexPageDecodedBytes;
+    ptexPhysicalSlots += texture.ptexPhysicalCacheSlots;
+    ptexGpuUploads += texture.ptexGpuPageUploads;
+    ptexGpuHits += texture.ptexGpuPageHits;
+    ptexGpuMisses += texture.ptexGpuPageMisses;
+    ptexGpuEvictions += texture.ptexGpuPageEvictions;
+    if (texture.ptexFaceRects.empty()) ++ptexFallbackTextures;
+  }
+  size_t ptexDisplacedMeshes = 0;
+  for (const DrawMeshCPU& mesh : draw_.meshes)
+    if (mesh.rasterDisplacementBaked) ++ptexDisplacedMeshes;
+  size_t ptexBase = 0, ptexNormal = 0, ptexRoughness = 0, ptexMetallic = 0;
+  size_t ptexOpacity = 0, ptexEmissive = 0, ptexDisplacement = 0;
+  size_t ptexOcclusion = 0, ptexSpecular = 0, ptexCoatWeight = 0;
+  size_t ptexCoatColor = 0, ptexCoatRoughness = 0;
+  for (const DrawMaterialCPU& material : draw_.materials) {
+    ptexBase += material.baseColorSample.isPtex ? 1u : 0u;
+    ptexNormal += material.normalSample.isPtex ? 1u : 0u;
+    ptexRoughness += material.roughnessSample.isPtex ? 1u : 0u;
+    ptexMetallic += material.metallicSample.isPtex ? 1u : 0u;
+    ptexOpacity += material.opacitySample.isPtex ? 1u : 0u;
+    ptexEmissive += material.emissiveSample.isPtex ? 1u : 0u;
+    ptexDisplacement += material.displacementSample.isPtex ? 1u : 0u;
+    ptexOcclusion += material.occlusionSample.isPtex ? 1u : 0u;
+    ptexSpecular += material.specularColorSample.isPtex ? 1u : 0u;
+    ptexCoatWeight += material.coatWeightSample.isPtex ? 1u : 0u;
+    ptexCoatColor += material.coatColorSample.isPtex ? 1u : 0u;
+    ptexCoatRoughness += material.coatRoughnessSample.isPtex ? 1u : 0u;
+  }
+  report["scene_stats"] = {
+      {"meshes", draw_.meshes.size()},
+      {"vertices", draw_.vertexCount},
+      {"triangles", draw_.triangleCount},
+      {"materials", draw_.materials.size()},
+      {"textures", draw_.textures.size()},
+      {"ptex_textures", ptexTextures},
+      {"ptex_initial_faces", loadOpts_.ptexInitialFaces},
+      {"ptex_physical_cache_bytes", loadOpts_.ptexPhysicalCacheBytes},
+      {"ptex_faces", ptexFaces},
+      {"ptex_atlas_bytes", ptexAtlasBytes},
+      {"ptex_downsampled_faces", ptexDownsampledFaces},
+      {"ptex_fallback_textures", ptexFallbackTextures},
+      {"ptex_page_cache_hits", ptexCacheHits},
+      {"ptex_page_cache_misses", ptexCacheMisses},
+      {"ptex_page_cache_evictions", ptexCacheEvictions},
+      {"ptex_page_cache_peak_bytes", ptexCachePeakBytes},
+      {"ptex_page_decoded_bytes", ptexPageDecodedBytes},
+      {"ptex_gpu_physical_slots", ptexPhysicalSlots},
+      {"ptex_gpu_page_uploads", ptexGpuUploads},
+      {"ptex_gpu_page_hits", ptexGpuHits},
+      {"ptex_gpu_page_misses", ptexGpuMisses},
+      {"ptex_gpu_page_evictions", ptexGpuEvictions},
+      {"ptex_requested_faces", ptexRequestedFaces},
+      {"ptex_considered_meshes", ptexConsideredMeshes},
+      {"ptex_requested_meshes", ptexRequestedMeshes},
+      {"ptex_async_jobs_launched", ptexAsyncJobsLaunched_},
+      {"ptex_async_jobs_completed", ptexAsyncJobsCompleted_},
+      {"ptex_displaced_meshes", ptexDisplacedMeshes},
+      {"ptex_slots",
+       {{"base_color", ptexBase},
+        {"normal", ptexNormal},
+        {"roughness", ptexRoughness},
+        {"metallic", ptexMetallic},
+        {"opacity", ptexOpacity},
+        {"emissive", ptexEmissive},
+        {"displacement", ptexDisplacement},
+        {"occlusion", ptexOcclusion},
+        {"specular_color", ptexSpecular},
+        {"coat_weight", ptexCoatWeight},
+        {"coat_color", ptexCoatColor},
+        {"coat_roughness", ptexCoatRoughness}}}};
+
+  size_t gpuUsed = 0, gpuTotal = 0;
+  const bool haveGpuMemory =
+      renderer_ && renderer_->gpuMemoryMB(&gpuUsed, &gpuTotal);
+  size_t peakRssMiB = 0;
+#if defined(__linux__)
+  struct rusage usage {};
+  if (::getrusage(RUSAGE_SELF, &usage) == 0)
+    peakRssMiB = static_cast<size_t>(usage.ru_maxrss) / 1024u;
+#endif
+  report["memory"] = {
+      {"host_peak_rss_mib", peakRssMiB},
+      {"gpu_memory_available", haveGpuMemory},
+      {"gpu_used_mib", gpuUsed},
+      {"gpu_total_mib", gpuTotal}};
+  const uint32_t vkAccumulatedSamples =
+      renderer_ ? renderer_->rayTracingAccumulatedSamples() : 0u;
+  const bool rtBuildIncomplete =
+      renderer_ && renderer_->rayTracingBuildIncomplete();
+  report["render"] = {
+      {"samples", vkAccumulatedSamples > 0 ? vkAccumulatedSamples
+                                           : static_cast<uint32_t>(rtSamples_)},
+      {"rt_initialization_ms",
+       renderer_ ? renderer_->rayTracingInitializationMs() : 0.0},
+      {"tlas_chunks", renderer_ ? renderer_->rayTracingTlasChunks() : 0u},
+      {"rt_input_instances",
+       renderer_ ? renderer_->rayTracingInputInstances() : 0u},
+      {"rt_build_incomplete", rtBuildIncomplete},
+      {"upload_budget_ms", uploadBudgetMs_},
+      {"raster_lod", rasterLodEnabled_},
+      {"rt_lod", rtLodEnabled_},
+      {"visible_meshes", renderStats.visibleMeshes},
+      {"total_meshes", renderStats.totalMeshes},
+      {"visible_instances", renderStats.visibleInstances},
+      {"total_instances", renderStats.totalInstances},
+      {"lod_proxy_instances", renderStats.proxyInstances},
+      {"drawn_triangles", renderStats.drawnTriangles},
+      {"draw_calls", renderStats.drawCalls},
+      {"checkpoint_every", checkpointEvery_},
+      {"checkpoint_count", checkpointCount_},
+      {"checkpoint_pattern", checkpointPattern_},
+      {"elapsed_seconds",
+       std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                     runStart_)
+           .count()},
+      {"truncated", draw_.truncated || rtBuildIncomplete}};
+  report["limits"] = {
+      {"gpu_memory_budget_bytes", gpuMemBudgetBytes_},
+      {"max_full_meshes", maxFullMeshes_},
+      {"rt_max_instances", rtMaxInstances_}};
+  std::vector<std::string> degradationReasons = draw_.skipped;
+  if (draw_.truncated) {
+    degradationReasons.push_back(
+        "scene truncated or proxied by configured render budgets");
+  }
+  if (rtBuildIncomplete) {
+    degradationReasons.push_back(
+        "Vulkan RT acceleration structure build incomplete; no partial TLAS "
+        "render was accepted");
+  }
+  if (ptexDownsampledFaces > 0) {
+    degradationReasons.push_back(
+        "Ptex faces downsampled to fit atlas edge/residency limits");
+  }
+  if (ptexFallbackTextures > 0) {
+    degradationReasons.push_back(
+        "Ptex atlas fallback used for one or more textures");
+  }
+  report["degradation_reasons"] = std::move(degradationReasons);
+
+  std::error_code ec;
+  const std::filesystem::path path(renderReportPath_);
+  if (!path.parent_path().empty())
+    std::filesystem::create_directories(path.parent_path(), ec);
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  if (!output) {
+    LOGW("failed to write render report '%s'", renderReportPath_.c_str());
+    return;
+  }
+  output << report.dump(2) << '\n';
+  if (!output) {
+    LOGW("failed to finish render report '%s'", renderReportPath_.c_str());
+  } else {
+    LOGI("wrote render report %s", renderReportPath_.c_str());
+  }
+}
+
+namespace {
 
 // --next blendshape capability: the next loader emits GPU morph channels rather
 // than the RenderScene targets SceneHasBlendShapes() looks for.
@@ -657,6 +1269,188 @@ void App::compactDeferredMeshAux(size_t meshIndex) {
   deferredAuxCompressedBytes_ += aux.wire.size() + aux.sourceFaces.size();
 }
 
+bool App::collectPtexRequests(
+    const DrawMeshCPU& mesh, const std::vector<uint32_t>* sourceFaces) {
+  const std::vector<uint32_t>& faces = sourceFaces ? *sourceFaces
+                                                   : mesh.sourceFaceId;
+  if (faces.empty() || draw_.materials.empty()) return false;
+  bool referencedPtex = false;
+  if (ptexRequestedFaces_.size() < draw_.textures.size()) {
+    ptexRequestedFaces_.resize(draw_.textures.size());
+    ptexRequestedFaceSets_.resize(draw_.textures.size());
+    ptexRequestCursors_.resize(draw_.textures.size());
+  }
+  for (const DrawSubmesh& submesh : mesh.submeshes) {
+    int textureIds[26];
+    size_t textureCount = 0;
+    auto appendMaterial = [&](int materialId) {
+      if (materialId < 0 || static_cast<size_t>(materialId) >= draw_.materials.size())
+        return;
+      const DrawMaterialCPU& m = draw_.materials[static_cast<size_t>(materialId)];
+      const std::pair<int, bool> slots[] = {
+          {m.baseColorTex, m.baseColorSample.isPtex},
+          {m.metallicTex, m.metallicSample.isPtex},
+          {m.roughnessTex, m.roughnessSample.isPtex},
+          {m.normalTex, m.normalSample.isPtex},
+          {m.coatNormalTex, m.coatNormalSample.isPtex},
+          {m.emissiveTex, m.emissiveSample.isPtex},
+          {m.opacityTex, m.opacitySample.isPtex},
+          {m.occlusionTex, m.occlusionSample.isPtex},
+          {m.specularColorTex, m.specularColorSample.isPtex},
+          {m.coatWeightTex, m.coatWeightSample.isPtex},
+          {m.coatColorTex, m.coatColorSample.isPtex},
+          {m.coatRoughnessTex, m.coatRoughnessSample.isPtex},
+          {m.displacementTex, m.displacementSample.isPtex}};
+      for (const auto& slot : slots) {
+        if (!slot.second || slot.first < 0 ||
+            static_cast<size_t>(slot.first) >= draw_.textures.size())
+          continue;
+        bool duplicate = false;
+        for (size_t i = 0; i < textureCount; ++i)
+          duplicate = duplicate || textureIds[i] == slot.first;
+        if (!duplicate) textureIds[textureCount++] = slot.first;
+      }
+    };
+    appendMaterial(submesh.materialId);
+    if (submesh.backfaceMaterialId != submesh.materialId)
+      appendMaterial(submesh.backfaceMaterialId);
+    if (textureCount == 0) continue;
+    referencedPtex = true;
+
+    const size_t firstTriangle = static_cast<size_t>(submesh.indexOffset) / 3u;
+    const size_t endTriangle = std::min(
+        faces.size(),
+        (static_cast<size_t>(submesh.indexOffset) + submesh.indexCount) / 3u);
+    for (size_t triangle = firstTriangle; triangle < endTriangle; ++triangle) {
+      const uint32_t face = faces[triangle];
+      for (size_t i = 0; i < textureCount; ++i) {
+        const size_t textureId = static_cast<size_t>(textureIds[i]);
+        if (ptexRequestedFaceSets_[textureId].insert(face).second) {
+          ptexRequestedFaces_[textureId].push_back(face);
+          // A texture already passed by the residency walker has new work.
+          nextPtexTexture_ = std::min(nextPtexTexture_, textureId);
+        }
+      }
+    }
+  }
+  return referencedPtex;
+}
+
+void App::updatePtexResidency() {
+  if (!renderer_ || draw_.textures.empty() || rtOwnsScreenshot_) return;
+  const std::vector<uint8_t>& visible = gui_.viewVisibility();
+  if (visible.empty()) return;
+  if (ptexMeshRequested_.size() < draw_.meshes.size())
+    ptexMeshRequested_.resize(draw_.meshes.size(), uint8_t{0});
+  if (ptexMeshDemanded_.size() < draw_.meshes.size())
+    ptexMeshDemanded_.resize(draw_.meshes.size(), uint8_t{0});
+
+  const size_t resident = std::min(
+      draw_.meshes.size(),
+      static_cast<size_t>(std::max(0, renderer_->meshCount())));
+  for (size_t meshIndex = 0; meshIndex < resident; ++meshIndex) {
+    if (ptexMeshRequested_[meshIndex] || meshIndex >= visible.size() ||
+        visible[meshIndex] == 0)
+      continue;
+    const DrawMeshCPU& mesh = draw_.meshes[meshIndex];
+    bool referencedPtex = false;
+    if (!mesh.sourceFaceId.empty()) {
+      referencedPtex = collectPtexRequests(mesh);
+    } else if (meshIndex < deferredMeshAux_.size() &&
+               deferredMeshAux_[meshIndex].sourceFaceCount > 0) {
+      std::vector<uint32_t> decoded;
+      if (DecodeDeltaVarints(deferredMeshAux_[meshIndex].sourceFaces,
+                             deferredMeshAux_[meshIndex].sourceFaceCount,
+                             &decoded)) {
+        referencedPtex = collectPtexRequests(mesh, &decoded);
+      } else {
+        LOGW("could not decode deferred Ptex face ids for mesh %zu", meshIndex);
+      }
+    }
+    ptexMeshDemanded_[meshIndex] = referencedPtex ? uint8_t{1} : uint8_t{0};
+    ptexMeshRequested_[meshIndex] = 1;
+  }
+
+  // Page decode/upload is independent of mesh and ordinary-texture streaming.
+  // Bound it to a small slice so a newly visible Ptex-heavy mesh cannot hitch
+  // an otherwise interactive frame.
+  const auto start = std::chrono::steady_clock::now();
+  constexpr double kPtexFrameBudgetMs = 2.0;
+  while (!stepPtexResidency(kPtexFrameBudgetMs)) {
+    const double elapsed = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - start)
+                               .count();
+    if (elapsed >= kPtexFrameBudgetMs) break;
+  }
+}
+
+bool App::finishPtexDecode(bool wait, bool discard) {
+  if (!ptexDecodeActive_) return true;
+  if (!wait && ptexDecodeFuture_.wait_for(std::chrono::seconds(0)) !=
+                   std::future_status::ready)
+    return false;
+  PtexDecodeResult decoded = ptexDecodeFuture_.get();
+  ptexDecodeActive_ = false;
+  ++ptexAsyncJobsCompleted_;
+  if (discard || !decoded.ok) {
+    if (!discard && !decoded.error.empty())
+      LOGW("Ptex face %u residency decode failed: %s", decoded.face,
+           decoded.error.c_str());
+    return true;
+  }
+  if (decoded.texture >= draw_.textures.size() ||
+      decoded.texture >= ptexPhysicalCaches_.size() ||
+      !ptexPhysicalCaches_[decoded.texture])
+    return true;
+
+  DrawTextureCPU& texture = draw_.textures[decoded.texture];
+  PtexPhysicalPageAssignment assignment;
+  PtexPhysicalPageCache& cache = *ptexPhysicalCaches_[decoded.texture];
+  if (!cache.Request(decoded.face, &assignment)) return true;
+  texture.ptexGpuPageHits = cache.hits();
+  texture.ptexGpuPageMisses = cache.misses();
+  texture.ptexGpuPageEvictions = cache.evictions();
+  if (assignment.hit) return true;
+
+  const uint32_t slotEdge = texture.ptexPhysicalCacheSlotEdge;
+  if (slotEdge == 0) return true;
+  const uint32_t slotsPerRow =
+      static_cast<uint32_t>(texture.image.width) / slotEdge;
+  if (slotsPerRow == 0) return true;
+  const uint32_t outerX = (assignment.slot % slotsPerRow) * slotEdge;
+  const uint32_t outerY = texture.ptexPhysicalCacheOffsetY +
+                          (assignment.slot / slotsPerRow) * slotEdge;
+  decoded.rect.x += outerX;
+  decoded.rect.y += outerY;
+  std::vector<Renderer::TextureRegionUpdate> updates;
+  if (assignment.evictedFace != ~uint32_t{0}) {
+    AppendPtexFaceTableUpdates(texture, assignment.evictedFace,
+                               texture.ptexFaceRects[assignment.evictedFace],
+                               &updates);
+  }
+  Renderer::TextureRegionUpdate pageUpdate;
+  pageUpdate.x = static_cast<int>(outerX);
+  pageUpdate.y = static_cast<int>(outerY);
+  pageUpdate.width = decoded.page.width;
+  pageUpdate.height = decoded.page.height;
+  pageUpdate.rowBytes = size_t(decoded.page.width) * 4u;
+  pageUpdate.rgba = std::move(decoded.page.data);
+  updates.push_back(std::move(pageUpdate));
+  AppendPtexFaceTableUpdates(texture, decoded.face, decoded.rect, &updates);
+  if (!renderer_->updateTextureRegions(static_cast<int>(decoded.texture),
+                                       updates)) {
+    LOGW("Ptex face %u residency upload failed", decoded.face);
+    return true;
+  }
+  ++texture.ptexGpuPageUploads;
+  return true;
+}
+
+void App::clearPtexDecode() {
+  finishPtexDecode(/*wait=*/true, /*discard=*/true);
+  ptexReaders_.clear();
+}
+
 bool App::restoreDeferredMeshAux(size_t meshIndex) {
   if (meshIndex >= deferredMeshAux_.size()) return true;
   DeferredMeshAux& aux = deferredMeshAux_[meshIndex];
@@ -759,6 +1553,16 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     nextAux_ = 0;
     nextTex_ = 0;
     nextVolume_ = 0;
+    nextPtexTexture_ = 0;
+    ptexPhysicalCaches_.clear();
+    ptexReaders_.clear();
+    ptexRequestedFaces_.clear();
+    ptexRequestedFaceSets_.clear();
+    ptexRequestCursors_.clear();
+    ptexMeshRequested_.clear();
+    ptexMeshDemanded_.clear();
+    ptexAsyncJobsLaunched_ = 0;
+    ptexAsyncJobsCompleted_ = 0;
   }
 
   if (ok) {
@@ -848,18 +1652,59 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     // Threaded: post upload + the CPU-geometry free together so they run, in order,
     // on the render thread (the free must not precede the upload it feeds).
     const bool freeCpu = ok && useNextLoader_ && !cudaRt_ && !hipRt_;
+    if (ok && rtOwnsScreenshot_) {
+      for (const DrawMeshCPU& mesh : draw_.meshes) collectPtexRequests(mesh);
+    }
     // When the RT path owns the screenshot the rasterized scene is never drawn,
     // so skip the (potentially huge) raster upload entirely.
     if (!rtOwnsScreenshot_) {
-      postGpu([this, freeCpu] {
+      const bool preserveDeferredAux = freeCpu && !renderThreadActive_;
+      if (preserveDeferredAux) deferredMeshAux_.resize(draw_.meshes.size());
+      postGpu([this, freeCpu, preserveDeferredAux] {
         std::string uerr;
         renderer_->uploadScene(draw_, &uerr);
         // Deformable meshes keep their CPU geometry: RT re-poses from it every
         // frame (and RT can be toggled on at any time).
-        if (freeCpu)
-          for (DrawMeshCPU& m : draw_.meshes)
-            if (!MeshIsDeformable(m)) FreeMeshGeometryCPU(m);
+        if (freeCpu) {
+          for (size_t i = 0; i < draw_.meshes.size(); ++i) {
+            DrawMeshCPU& mesh = draw_.meshes[i];
+            if (MeshIsDeformable(mesh)) continue;
+            if (preserveDeferredAux) {
+              FreeMeshSurfaceCPU(mesh);
+              compactDeferredMeshAux(i);
+            } else {
+              FreeMeshGeometryCPU(mesh);
+            }
+          }
+        }
       });
+      if (std::any_of(draw_.textures.begin(), draw_.textures.end(),
+                      [](const DrawTextureCPU& texture) {
+                        return texture.deferredDecode;
+                      })) {
+        resetTextureResidency();
+      }
+      // Headless/non-threaded one-shot uploads can still refine Ptex pages over
+      // subsequent frames. Mark the ordinary scene stages complete and retain
+      // only compact native sources after the fallback atlas reaches the GPU.
+      if (ok && !renderThreadActive_) {
+        bool havePtexPages = false;
+        for (DrawTextureCPU& texture : draw_.textures) {
+          if (!texture.ptexSourceData.empty() &&
+              texture.ptexPhysicalCacheSlots > 0) {
+            havePtexPages = true;
+            if (!cudaRt_ && !hipRt_) {
+              texture.image.data.clear();
+              texture.image.data.shrink_to_fit();
+            }
+          }
+        }
+        nextMesh_ = draw_.meshes.size();
+        nextAux_ = draw_.meshes.size();
+        nextTex_ = draw_.textures.size();
+        nextVolume_ = draw_.volumes.size();
+        progressiveActive_ = havePtexPages;
+      }
     }
     if (ok) {
       LOGI("loaded %s: %zu mesh(es), %zu tri(s), %zu materials, %zu textures%s",
@@ -914,11 +1759,16 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     if (std::getenv("TUSDVIEW_DUMP_CAMERA_RECORDS")) {
       for (size_t i = 0; i < draw_.cameras.size(); ++i) {
         const DrawCameraCPU& c = draw_.cameras[i];
+        double clippingChecksum = 0.0;
+        for (size_t p = 0; p < c.clippingPlanes.size(); ++p) {
+          clippingChecksum += double(p + 1) * c.clippingPlanes[p];
+        }
         std::fprintf(stderr,
           "[tusdview-camera] %zu %s %s %d "
           "%.9g %.9g %.9g %.9g %.9g %.9g "
           "%.9g %.9g %.9g %.9g %.9g %.9g "
-          "%.9g %.9g %.9g %.9g %.9g %.9g\n",
+          "%.9g %.9g %.9g %.9g %.9g %.9g "
+          "%.9g %.9g %.17g %.17g %d %zu %.17g\n",
           i,
           c.absPath.c_str(),
           c.projection == DrawCameraCPU::Projection::Orthographic
@@ -930,7 +1780,10 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
           double(c.zNear), double(c.zFar), double(c.fovYDeg),
           double(c.eye[0]), double(c.eye[1]), double(c.eye[2]),
           double(c.up[0]), double(c.up[1]), double(c.up[2]),
-          double(c.forward[0]), double(c.forward[1]), double(c.forward[2]));
+          double(c.forward[0]), double(c.forward[1]), double(c.forward[2]),
+          double(c.focusDistance), double(c.fStop), c.shutterOpen,
+          c.shutterClose, static_cast<int>(c.stereoRole),
+          c.clippingPlanes.size() / 4, clippingChecksum);
       }
     }
     const LoadDiagnostics diag =
@@ -967,14 +1820,15 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     const int upAxis = (draw_.upAxis == "Z") ? 2 : 1;
     camera_.setUpAxis(upAxis);
     NextCameraPose campose;
+    cameraLens_ = RtCameraLens{};
     // Either loader can be framed on a named USD camera. The legacy path reads the
     // camera out of the converted RenderScene (FindLegacyCamera); it used to just
     // warn "need --next" and auto-fit instead, which meant the two loaders could
     // never be pointed at the same camera -- and so could not be compared.
     const bool haveCamera =
         !cameraName_.empty() &&
-        (useNextLoader_ && nextSession_
-             ? FindNextCamera(nextSession_->GetStage(), cameraName_, animTime_,
+        (useNextLoader_ && nextStageSnapshot_
+             ? FindNextCamera(*nextStageSnapshot_, cameraName_, animTime_,
                               &campose)
              : (loaded_.ok &&
                 FindLegacyCamera(loaded_.render, cameraName_, &campose)));
@@ -1023,6 +1877,11 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       camera_.setAutoClip(false);
       camera_.setClipPlanes(campose.zNear, campose.zFar);
       camera_.setOrbit(target, yaw, pitch, d);
+      // USD camera optics are authored in tenths of a scene unit. The physical
+      // aperture radius is focalLength / (2 * fStop).
+      cameraLens_ = MakeRtCameraLens(
+          campose.focalLength, campose.focusDistance, campose.fStop,
+          campose.projection == CameraProjection::Perspective);
       LOGI("camera: framing USD camera '%s' (%s, fovY %.1f deg, clip %.2f..%.0f)",
            cameraName_.c_str(),
            campose.projection == CameraProjection::Orthographic ? "orthographic"
@@ -1090,7 +1949,8 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     }
   }
   gui_.setScene(&loaded_, &draw_);
-  gui_.setNextStage(nextSession_ ? &nextSession_->GetStage() : nullptr);
+  gui_.setCameraLens(cameraLens_);
+  gui_.setNextStage(nextStageSnapshot_.get());
   {
     std::vector<std::string> deferred;
     if (nextSession_) {
@@ -1141,7 +2001,46 @@ void App::drainProgressiveLoad() {
 
   ProgressiveSceneEvent event;
   while (loadStream_->tryPop(&event)) {
-    if (event.type == ProgressiveSceneEvent::Type::Resources) {
+    if (event.type == ProgressiveSceneEvent::Type::PreviewScene) {
+      DrawScene preview = std::move(event.scene);
+      renderer_->beginScene(preview.materials,
+                            static_cast<int>(preview.textures.size()));
+      for (const DrawMeshCPU& mesh : preview.meshes) {
+        renderer_->appendMeshSurface(mesh);
+      }
+      draw_ = std::move(preview);
+      streamRendererBegun_ = true;
+      streamPreviewActive_ = true;
+      streamHasUsefulGeometry_ = !draw_.meshes.empty();
+      if (!draw_.meshes.empty()) {
+        for (int k = 0; k < 3; ++k) {
+          streamBoundsMin_[k] = draw_.meshes[0].aabbMin[k];
+          streamBoundsMax_[k] = draw_.meshes[0].aabbMax[k];
+        }
+        camera_.fitToScene(streamBoundsMin_, streamBoundsMax_);
+        streamCameraFramed_ = true;
+      }
+      if (loadOpts_.timing) {
+        LOGI("timing: composition preview uploaded %.3f s (%zu boxes)",
+             std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          runStart_)
+                 .count(),
+             draw_.meshes.empty() ? 0 : draw_.meshes[0].instanceCount());
+      }
+    } else if (event.type == ProgressiveSceneEvent::Type::Reset) {
+      clearPtexDecode();
+      renderer_->beginScene({}, 0);
+      draw_ = DrawScene{};
+      deferredMeshAux_.clear();
+      streamRendererBegun_ = false;
+      streamPreviewActive_ = false;
+      streamHasUsefulGeometry_ = false;
+      streamCameraFramed_ = false;
+      for (int k = 0; k < 3; ++k) {
+        streamBoundsMin_[k] = 1e30f;
+        streamBoundsMax_[k] = -1e30f;
+      }
+    } else if (event.type == ProgressiveSceneEvent::Type::Resources) {
       if (!streamRendererBegun_) {
         renderer_->beginScene(event.materials, event.textureCount);
         streamRendererBegun_ = true;
@@ -1183,6 +2082,8 @@ void App::drainProgressiveLoad() {
       if (mesh.purpose != "guide" && effectiveTriangles > 0)
         streamHasUsefulGeometry_ = true;
       draw_.meshes.push_back(std::move(mesh));
+      ptexMeshRequested_.push_back(uint8_t{0});
+      ptexMeshDemanded_.push_back(uint8_t{0});
       deferredMeshAux_.emplace_back();
       DrawMeshCPU& retained = draw_.meshes.back();
       if (useNextLoader_ && !cudaRt_ && !hipRt_ && !MeshIsDeformable(retained)) {
@@ -1203,8 +2104,32 @@ void App::drainProgressiveLoad() {
              vertices, triangles);
       }
       if (elapsedMs() >= budgetMs) break;
+    } else if (event.type == ProgressiveSceneEvent::Type::Texture) {
+      if (event.textureSlot < 0) continue;
+      const size_t slot = static_cast<size_t>(event.textureSlot);
+      if (draw_.textures.size() <= slot) draw_.textures.resize(slot + 1);
+      renderer_->uploadTexture(event.textureSlot, event.texture);
+      // The block payload is the resident source after upload. Keep its asset
+      // identity for future refinement, but drop the 4x larger RGBA staging.
+      if (!event.texture.compressed.data.empty()) {
+        event.texture.image.data.clear();
+        event.texture.image.data.shrink_to_fit();
+      }
+      draw_.textures[slot] = std::move(event.texture);
+      if (loadOpts_.timing &&
+          (slot < 4 || ((slot + 1) % 32) == 0)) {
+        LOGI("timing: async texture %zu ready %.3f s (%dx%d, compressed=%s)",
+             slot,
+             std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          runStart_).count(),
+             draw_.textures[slot].image.width,
+             draw_.textures[slot].image.height,
+             draw_.textures[slot].compressed.data.empty() ? "no" : "yes");
+      }
     } else if (event.type == ProgressiveSceneEvent::Type::Complete) {
+      clearPtexDecode();
       std::vector<DrawMeshCPU> streamedMeshes = std::move(draw_.meshes);
+      std::vector<DrawTextureCPU> streamedTextures = std::move(draw_.textures);
       DrawScene finalScene = std::move(event.scene);
       renderer_->syncSceneResources(finalScene.materials,
                                     static_cast<int>(finalScene.textures.size()));
@@ -1214,14 +2139,50 @@ void App::drainProgressiveLoad() {
         renderer_->appendCurves(curves);
       draw_ = std::move(finalScene);
       draw_.meshes = std::move(streamedMeshes);
+      if (draw_.textures.size() < streamedTextures.size())
+        draw_.textures.resize(streamedTextures.size());
+      for (size_t i = 0; i < streamedTextures.size(); ++i) {
+        if (!streamedTextures[i].image.data.empty() ||
+            !streamedTextures[i].compressed.data.empty()) {
+          draw_.textures[i] = std::move(streamedTextures[i]);
+        }
+      }
+      // Deferred ordinary slots are scheduled from live camera demand. Upload
+      // only specialized synchronous payloads here; they remain outside the
+      // generic residency manager.
+      for (size_t i = 0; i < draw_.textures.size(); ++i) {
+        if (!draw_.textures[i].deferredDecode &&
+            (!draw_.textures[i].image.data.empty() ||
+             !draw_.textures[i].compressed.data.empty() ||
+             draw_.textures[i].streamingMutable)) {
+          if (renderThreadActive_) {
+            auto upload = std::make_shared<DrawTextureCPU>(draw_.textures[i]);
+            postGpu([this, i, upload = std::move(upload)] {
+              renderer_->uploadTexture(static_cast<int>(i), *upload);
+            });
+          } else {
+            renderer_->uploadTexture(static_cast<int>(i), draw_.textures[i]);
+          }
+        }
+      }
+      resetTextureResidency();
       draw_.vertexCount = streamUploadedVertices_;
       nextMesh_ = draw_.meshes.size();
-      nextTex_ = 0;
+      nextTex_ = draw_.textures.size();
       nextVolume_ = 0;
+      nextPtexTexture_ = 0;
+      ptexPhysicalCaches_.clear();
+      ptexReaders_.clear();
+      ptexRequestedFaces_.clear();
+      ptexRequestedFaceSets_.clear();
+      ptexRequestCursors_.clear();
+      ptexMeshRequested_.assign(draw_.meshes.size(), uint8_t{0});
+      ptexMeshDemanded_.assign(draw_.meshes.size(), uint8_t{0});
       progressiveActive_ = !draw_.meshes.empty() || !draw_.points.empty() ||
                            !draw_.curves.empty() || !draw_.textures.empty() ||
                            !draw_.volumes.empty();
       streamCompleteSeen_ = true;
+      gui_.setSceneMutating(false);
       if (!streamFullConversionLogged_ && loadOpts_.timing) {
         streamFullConversionLogged_ = true;
         LOGI("timing: full scene converted %.3f s",
@@ -1236,6 +2197,7 @@ void App::drainProgressiveLoad() {
       }
     } else if (event.type == ProgressiveSceneEvent::Type::Failed) {
       streamCompleteSeen_ = true;
+      gui_.setSceneMutating(false);
       if (pendingLoaded_) pendingLoaded_->err = std::move(event.error);
     }
   }
@@ -1310,6 +2272,13 @@ void App::stepProgressiveUpload() {
   if (nextMesh_ >= draw_.meshes.size() && auxReady) {
     while (nextTex_ < draw_.textures.size()) {
       renderer_->uploadTexture(static_cast<int>(nextTex_), draw_.textures[nextTex_]);
+      if (!cudaRt_ && !hipRt_ && draw_.textures[nextTex_].isPtex &&
+          !draw_.textures[nextTex_].ptexSourceData.empty()) {
+        // Fallback pixels are now device-resident. Keep only compact native
+        // Ptex bytes for on-demand page decode.
+        draw_.textures[nextTex_].image.data.clear();
+        draw_.textures[nextTex_].image.data.shrink_to_fit();
+      }
       ++nextTex_;
       if (elapsedMs() > tailBudgetMs) break;
     }
@@ -1317,6 +2286,13 @@ void App::stepProgressiveUpload() {
   // UsdVol volumes (OpenVDB) after meshes + textures.
   if (nextMesh_ >= draw_.meshes.size() && auxReady &&
       nextTex_ >= draw_.textures.size()) {
+    while (!stepPtexResidency(tailBudgetMs - elapsedMs())) {
+      if (elapsedMs() > tailBudgetMs) break;
+    }
+  }
+  const bool ptexReady = nextPtexTexture_ >= draw_.textures.size();
+  if (nextMesh_ >= draw_.meshes.size() && auxReady &&
+      nextTex_ >= draw_.textures.size() && ptexReady) {
     while (nextVolume_ < draw_.volumes.size()) {
       renderer_->appendVolume(draw_.volumes[nextVolume_]);
       ++nextVolume_;
@@ -1325,12 +2301,152 @@ void App::stepProgressiveUpload() {
   }
   if (nextMesh_ >= draw_.meshes.size() && auxReady &&
       nextTex_ >= draw_.textures.size() &&
+      ptexReady &&
       nextVolume_ >= draw_.volumes.size()) {
     progressiveActive_ = false;
   }
 }
 
+namespace {
+
+bool AppendPtexFaceTableUpdates(
+    const DrawTextureCPU& texture, uint32_t face,
+    const DrawPtexFaceRectCPU& rect,
+    std::vector<Renderer::TextureRegionUpdate>* updates) {
+  if (!updates || face >= texture.ptexFaceRects.size() ||
+      texture.image.width <= 0) {
+    return false;
+  }
+  uint8_t texels[8u * 4u];
+  EncodePtexFaceRectTexels(rect, texels);
+  size_t linear = size_t(texture.ptexRectTexelOffset) + size_t(face) * 8u;
+  size_t consumed = 0;
+  while (consumed < 8u) {
+    const int x = static_cast<int>(linear % size_t(texture.image.width));
+    const int y = static_cast<int>(linear / size_t(texture.image.width));
+    const int count = static_cast<int>(
+        std::min<size_t>(8u - consumed, size_t(texture.image.width - x)));
+    Renderer::TextureRegionUpdate update;
+    update.x = x;
+    update.y = y;
+    update.width = count;
+    update.height = 1;
+    update.rowBytes = size_t(count) * 4u;
+    update.rgba.assign(texels + consumed * 4u,
+                       texels + (consumed + size_t(count)) * 4u);
+    updates->push_back(std::move(update));
+    linear += static_cast<size_t>(count);
+    consumed += static_cast<size_t>(count);
+  }
+  return true;
+}
+
+}  // namespace
+
+bool App::stepPtexResidency(double deadlineMs) {
+  if (ptexDecodeActive_) {
+    if (!finishPtexDecode(/*wait=*/false, /*discard=*/false)) return false;
+    // Limit context-thread work to one completed page upload per call.
+    return false;
+  }
+  if (nextPtexTexture_ >= draw_.textures.size()) return true;
+  if (deadlineMs <= 0.0) return false;
+  if (ptexPhysicalCaches_.size() != draw_.textures.size()) {
+    ptexPhysicalCaches_.resize(draw_.textures.size());
+  }
+  if (ptexReaders_.size() != draw_.textures.size()) {
+    ptexReaders_.resize(draw_.textures.size());
+  }
+  while (nextPtexTexture_ < draw_.textures.size()) {
+    DrawTextureCPU& texture = draw_.textures[nextPtexTexture_];
+    if (texture.ptexPhysicalCacheSlots == 0 ||
+        texture.ptexSourceData.empty() || texture.ptexFaceRects.empty()) {
+      ++nextPtexTexture_;
+      continue;
+    }
+    if (!ptexPhysicalCaches_[nextPtexTexture_]) {
+      ptexPhysicalCaches_[nextPtexTexture_] =
+          std::make_unique<PtexPhysicalPageCache>(
+              texture.ptexPhysicalCacheSlots);
+    }
+    const bool demandDriven = texture.ptexDemandDriven;
+    if (ptexRequestCursors_.size() < draw_.textures.size())
+      ptexRequestCursors_.resize(draw_.textures.size());
+    const size_t requestedCount =
+        nextPtexTexture_ < ptexRequestedFaces_.size()
+            ? ptexRequestedFaces_[nextPtexTexture_].size()
+            : 0u;
+    const size_t residencyFaceCount =
+        demandDriven ? requestedCount : texture.ptexFaceRects.size();
+    size_t& cursor = ptexRequestCursors_[nextPtexTexture_];
+    if (cursor >= residencyFaceCount) {
+      ++nextPtexTexture_;
+      continue;
+    }
+
+    std::string error;
+    if (!ptexReaders_[nextPtexTexture_]) {
+      auto reader = std::make_shared<tinyusdz::ptx::Reader>();
+      if (!tinyusdz::ptx::Reader::OpenMemory(texture.ptexSourceData.data(),
+                                             texture.ptexSourceData.size(),
+                                             reader.get(), &error)) {
+        LOGW("Ptex residency source reopen failed: %s", error.c_str());
+        ++nextPtexTexture_;
+        continue;
+      }
+      ptexReaders_[nextPtexTexture_] = std::move(reader);
+    }
+    const std::shared_ptr<tinyusdz::ptx::Reader> reader =
+        ptexReaders_[nextPtexTexture_];
+    const uint32_t face = demandDriven
+                              ? ptexRequestedFaces_[nextPtexTexture_][cursor++]
+                              : static_cast<uint32_t>(cursor++);
+    if (face >= texture.ptexFaceRects.size() ||
+        face >= reader->info().faceInfo.size()) {
+      LOGW("Ptex face request %u is out of range", face);
+      continue;
+    }
+    const tinyusdz::ptx::FaceInfo& info = reader->info().faceInfo[face];
+    uint32_t mip = 0;
+    uint32_t width = info.width(), height = info.height();
+    while (mip + 1u < reader->info().levels && texture.ptexTileEdge > 0 &&
+           std::max(width, height) > texture.ptexTileEdge) {
+      ++mip;
+      width = std::max(1u, width >> 1u);
+      height = std::max(1u, height >> 1u);
+    }
+
+    // The permanent fallback already has this quality (or better). Physical
+    // slots are reserved only for faces forced below the desired mip by the
+    // global atlas budget.
+    if (!texture.ptexForceResidency &&
+        texture.ptexFaceRects[face].mipLevel <= mip &&
+        texture.ptexFaceRects[face].reserved == 0) {
+      continue;
+    }
+
+    const size_t textureIndex = nextPtexTexture_;
+    const uint32_t gutter = texture.ptexGutter;
+    ptexDecodeFuture_ = std::async(
+        std::launch::async,
+        [reader, textureIndex, face, mip, gutter]() {
+          PtexDecodeResult result;
+          result.texture = textureIndex;
+          result.face = face;
+          result.ok = BuildPtexPage(*reader, face, mip, gutter,
+                                    64ull * 1024ull * 1024ull, &result.page,
+                                    &result.rect, &result.error);
+          return result;
+        });
+    ptexDecodeActive_ = true;
+    ++ptexAsyncJobsLaunched_;
+    return false;
+  }
+  return true;
+}
+
 void App::loadFileBlocking(const std::string& path) {
+  clearPtexDecode();
   loadCtrl_.resetProgress();
   LoadedScene tmp;
   DrawScene drawTmp;
@@ -1358,7 +2474,7 @@ void App::loadFileBlocking(const std::string& path) {
     tmp.filepath = path;
     tmp.render.meta.upAxis = drawTmp.upAxis;  // drive camera/grid up-axis
     if (session) {
-      const tinyusdz::next::Stage& stage = session->GetStage();
+      const tinyusdz::next::Stage& stage = *session->GetSnapshot().stage;
       const double s = stage.GetStartTimeCode();
       const double e = stage.GetEndTimeCode();
       const double fps = stage.GetTimeCodesPerSecond();
@@ -1371,6 +2487,8 @@ void App::loadFileBlocking(const std::string& path) {
     loaded_ = std::move(tmp);
     draw_ = ok ? std::move(drawTmp) : DrawScene{};
     nextSession_ = ok ? std::move(session) : nullptr;
+    nextStageSnapshot_ = nextSession_ ? nextSession_->GetSnapshot().stage
+                                      : nullptr;
     applyLoaded(ok, /*progressive=*/false);
     return;
   }
@@ -1507,6 +2625,7 @@ void App::startLoadAsync(const std::string& path) {
     loadStream_ = std::make_shared<ProgressiveSceneStream>(maxBytes);
     streamLoadActive_ = true;
     streamRendererBegun_ = false;
+    streamPreviewActive_ = false;
     streamCompleteSeen_ = false;
     streamCameraFramed_ = false;
     streamFirstUploadLogged_ = false;
@@ -1527,6 +2646,7 @@ void App::startLoadAsync(const std::string& path) {
       streamBoundsMax_[a] = -1e30f;
     }
     draw_ = DrawScene{};
+    gui_.setSceneMutating(true);
   }
   std::shared_ptr<ProgressiveSceneStream> stream = loadStream_;
   int autoW = 0, autoH = 0;
@@ -1670,6 +2790,7 @@ void App::finishLoadIfReady() {
   if (!loadFinished_.load(std::memory_order_acquire)) return;
   if (streamLoadActive_ && !streamCompleteSeen_) return;
   if (loadThread_.joinable()) loadThread_.join();  // sync point: worker fully done
+  clearPtexDecode();  // readers point into the outgoing draw_'s source bytes
   loaded_ = std::move(*pendingLoaded_);
   const bool ok = loaded_.ok;
   const bool alreadyUploaded = streamLoadActive_ && ok;
@@ -1681,6 +2802,8 @@ void App::finishLoadIfReady() {
     draw_ = DrawScene{};
   }
   nextSession_ = ok ? std::move(pendingNextSession_) : nullptr;
+  nextStageSnapshot_ = nextSession_ ? nextSession_->GetSnapshot().stage
+                                    : nullptr;
   pendingNextSession_.reset();
   pendingLoaded_.reset();
   pendingDraw_.reset();
@@ -1693,6 +2816,7 @@ void App::finishLoadIfReady() {
 void App::cancelAndJoinLoad() {
   // A pending file load supersedes any in-flight playback re-evaluation (which
   // reads loaded_ on a worker thread): stop it before loaded_ is replaced.
+  clearPtexDecode();
   cancelAndJoinReconvert();
   if (loadStream_) loadStream_->cancel();
   if (loadThread_.joinable()) {
@@ -1707,6 +2831,7 @@ void App::cancelAndJoinLoad() {
   loadStream_.reset();
   streamLoadActive_ = false;
   streamCompleteSeen_ = false;
+  gui_.setSceneMutating(false);
 }
 
 void App::readAnimationRange() {
@@ -1980,7 +3105,7 @@ void App::updateGpuSkinningFrameIfNeeded() {
 }
 
 void App::updateNextDeformFrameIfNeeded() {
-  if (!useNextLoader_ || !nextSession_ || !loaded_.ok) return;
+  if (!useNextLoader_ || !nextStageSnapshot_ || !loaded_.ok) return;
   if (skinningEffective_ != SkinningMode::GPU) return;
   const bool hasSkin = draw_.boneMatrixCount > 0;
   if (!hasNextMorph_ && !hasSkin) return;
@@ -2003,7 +3128,7 @@ void App::updateNextDeformFrameIfNeeded() {
   // moving rig cannot cull or LOD itself out of the frame.
   {
     float bmin[3], bmax[3];
-    if (BuildNextPosedSceneBounds(nextSession_->GetStage(), draw_, animTime_,
+    if (BuildNextPosedSceneBounds(*nextStageSnapshot_, draw_, animTime_,
                                   gui_.blendOverrides(), bmin, bmax)) {
       for (int k = 0; k < 3; ++k) {
         draw_.aabbMin[k] = bmin[k];
@@ -2022,7 +3147,7 @@ void App::updateNextDeformFrameIfNeeded() {
     static const bool kRtTiming = std::getenv("TUSDVIEW_RT_TIMING") != nullptr;
     const auto skinT0 = std::chrono::steady_clock::now();
     std::vector<RtSkinnedMeshUpload> uploads;
-    if (BuildNextRtDeformedVertices(nextSession_->GetStage(), draw_, animTime_,
+    if (BuildNextRtDeformedVertices(*nextStageSnapshot_, draw_, animTime_,
                                     gui_.blendOverrides(), &uploads)) {
       if (kRtTiming) {
         size_t verts = 0;
@@ -2049,13 +3174,13 @@ void App::updateNextDeformFrameIfNeeded() {
   // Renderer uploads go through postGpu() so they run on the render thread when
   // it owns the context (threaded path); inline otherwise. See the note in
   // updateGpuSkinningFrameIfNeeded.
-  if (hasSkin && BuildNextSkinningFrame(nextSession_->GetStage(), &draw_,
+  if (hasSkin && BuildNextSkinningFrame(*nextStageSnapshot_, &draw_,
                                         animTime_, &skinFrame_)) {
     postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
   }
   if (hasNextMorph_) {
     std::vector<std::pair<int, std::vector<float>>> coeffs;
-    BuildNextMorphWeights(nextSession_->GetStage(), draw_, animTime_,
+    BuildNextMorphWeights(*nextStageSnapshot_, draw_, animTime_,
                           gui_.blendOverrides(), &coeffs);
     postGpu([this, mc = std::move(coeffs)]() {
       for (const auto& c : mc) renderer_->updateMorphWeights(c.first, c.second);
@@ -2065,7 +3190,7 @@ void App::updateNextDeformFrameIfNeeded() {
 }
 
 bool App::sceneIsNextDeformable() const {
-  return useNextLoader_ && nextSession_ && loaded_.ok &&
+  return useNextLoader_ && nextStageSnapshot_ && loaded_.ok &&
          (hasNextMorph_ || draw_.boneMatrixCount > 0);
 }
 
@@ -2094,7 +3219,7 @@ bool App::poseNextDrawForTracer(double time) {
     if (i < draw_.meshes.size()) draw_.meshes[i].vertices = kv.second;
   }
   std::vector<RtSkinnedMeshUpload> uploads;
-  if (!BuildNextRtDeformedVertices(nextSession_->GetStage(), draw_, time,
+  if (!BuildNextRtDeformedVertices(*nextStageSnapshot_, draw_, time,
                                    gui_.blendOverrides(), &uploads)) {
     return false;
   }
@@ -2507,7 +3632,8 @@ bool App::renderHipViewport() {
   std::string cerr;
   // spp=1: single sample for interactive frame rate (no supersampled AA).
   if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
-                       sceneExtent, w, h, &rgba, &cerr, /*spp=*/1)) {
+                       sceneExtent, w, h, &rgba, &cerr, /*spp=*/1,
+                       &cameraLens_)) {
     renderer_->uploadViewportImage(rgba.data(), w, h);
   } else {
     LOGW("HIP ray trace failed: %s", cerr.c_str());
@@ -2709,6 +3835,11 @@ void App::applyNavCommand(const StreamNav& c) {
 int App::run(const std::string& initialFile, int maxFrames,
              const std::string& screenshot) {
   runStart_ = std::chrono::steady_clock::now();
+  checkpointCount_ = 0;
+  auto finishRun = [&](int code) {
+    writeRenderReport(initialFile, code);
+    return code;
+  };
   std::string err;
   // Headless composite size (no monitor to clamp to); used for the windowless
   // ImGui DisplaySize and the offscreen composite image.
@@ -2736,10 +3867,40 @@ int App::run(const std::string& initialFile, int maxFrames,
   // single-threaded so the capture/encode happen on the context-owning thread.
   if (streamHttpPort_ > 0) renderThreadActive_ = false;
 #endif
+  if (checkpointEvery_ > 0) {
+    if (maxFrames < 1) {
+      LOGE("--checkpoint-every requires --frames N with N >= 1");
+      return finishRun(1);
+    }
+    if (cudaRt_ || hipRt_) {
+      LOGE("--checkpoint-every currently supports raster and Vulkan RT; "
+           "CUDA/HIP use --rt-samples for a single deterministic output");
+      return finishRun(1);
+    }
+    if (checkpointPattern_.empty()) {
+      if (screenshot.empty()) {
+        LOGE("--checkpoint-every requires --checkpoint-pattern or --screenshot");
+        return finishRun(1);
+      }
+      const std::filesystem::path shotPath(screenshot);
+      const std::string ext = shotPath.has_extension()
+                                  ? shotPath.extension().string()
+                                  : std::string(".png");
+      checkpointPattern_ =
+          (shotPath.parent_path() /
+           (shotPath.stem().string() + ".checkpoint-{frame}" + ext))
+              .string();
+    }
+    if (checkpointPattern_.find("{frame}") == std::string::npos) {
+      LOGE("--checkpoint-pattern must contain {frame}");
+      return finishRun(1);
+    }
+  }
+
   if (headless_) {
     if (backend_ != Backend::Vulkan) {
       LOGE("--headless requires the Vulkan backend (pass --backend vk)");
-      return 1;
+      return finishRun(1);
     }
     // A streaming server runs an open-ended loop (no one-shot screenshot bound).
     if (maxFrames < 0 && streamHttpPort_ <= 0)
@@ -2748,7 +3909,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   } else {
     if (!initWindow(&err)) {
       LOGE("%s", err.c_str());
-      return 1;
+      return finishRun(1);
     }
     ++windowGeneration_;
   }
@@ -2763,7 +3924,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 #endif
   if (!renderer_) {
     LOGE("no renderer for requested backend");
-    return 1;
+    return finishRun(1);
   }
   ++rendererGeneration_;
   renderer_->setDevicePreference(devicePreference_);
@@ -2778,12 +3939,12 @@ int App::run(const std::string& initialFile, int maxFrames,
     // until the render thread finishes init.
     if (!initImGui(&err)) {
       LOGE("ImGui init failed: %s", err.c_str());
-      return 1;
+      return finishRun(1);
     }
     if (backend_ == Backend::GL) glfwMakeContextCurrent(nullptr);
     if (!startRenderThread()) {
       LOGE("render thread init failed: %s", err.c_str());
-      return 1;
+      return finishRun(1);
     }
     // Vulkan ray tracing: rayTracingAvailable() reads device support set by init()
     // (already finished — startRenderThread joined on it). setRayTracing() only flips
@@ -2811,11 +3972,11 @@ int App::run(const std::string& initialFile, int maxFrames,
         renderer_ = CreateGLRenderer();
         if (!renderer_ || !renderer_->init(window_, &err)) {
           LOGE("renderer init failed: %s", err.c_str());
-          return 1;
+          return finishRun(1);
         }
       } else {
         LOGE("renderer init failed: %s", err.c_str());
-        return 1;
+        return finishRun(1);
       }
     }
 
@@ -2834,7 +3995,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 
     if (!initImGui(&err)) {
       LOGE("ImGui init failed: %s", err.c_str());
-      return 1;
+      return finishRun(1);
     }
   }
 
@@ -2849,7 +4010,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   }
 
   gui_.setScene(&loaded_, &draw_);
-  gui_.setNextStage(nextSession_ ? &nextSession_->GetStage() : nullptr);
+  gui_.setNextStage(nextStageSnapshot_.get());
   gui_.setDeferredPayloadPaths({});
   gui_.setBudget(&loadCtrl_);
   gui_.setCaptureViewportOnly(headless_ && maxFrames >= 0 &&
@@ -3118,6 +4279,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     // Render after same-frame action consumption but before ImGui submit. The
     // viewport window already emitted ImGui::Image with the texture handle; both
     // GL and Vulkan sample the texture contents later during present().
+    const bool checkpointDue =
+        checkpointEvery_ > 0 && ((frameCount + 1) % checkpointEvery_ == 0);
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
     if (renderThreadActive_) {
       // Build the CPU-side frame packet (camera/params + compacted instance data)
@@ -3125,8 +4288,9 @@ int App::run(const std::string& initialFile, int maxFrames,
       // render thread. The main loop never touches GL or blocks on the GPU.
       auto pkt = std::make_unique<FramePacket>();
       gui_.renderViewportScene(pkt.get());
+      updateTextureResidency();
       glfwGetFramebufferSize(window_, &pkt->fbW, &pkt->fbH);
-      pkt->wantCapture =
+      pkt->wantCapture = checkpointDue ||
           (maxFrames >= 0 && frameCount == maxFrames - 1 && !screenshot.empty());
       pkt->seq = ++pktSubmitSeq_;
       ImGui::Render();
@@ -3146,6 +4310,8 @@ int App::run(const std::string& initialFile, int maxFrames,
                  !(quitAfterFullUpload_ && streamFirstFrameLogged_ &&
                    loadActive_)) {
         gui_.renderViewportScene();
+        updateTextureResidency();
+        updatePtexResidency();
       }
 
       // Grab the composited window on the final frame (--window-shot).
@@ -3221,6 +4387,46 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
     }
 
+    if (checkpointDue) {
+      std::vector<uint8_t> rgba;
+      int captureW = 0, captureH = 0;
+      bool captured = false;
+#if defined(TUSDVIEW_ENABLE_GL_THREAD)
+      if (renderThreadActive_) {
+        rgba = renderCapture_;
+        captureW = renderCaptureW_;
+        captureH = renderCaptureH_;
+        captured = !rgba.empty();
+      } else
+#endif
+      {
+        captured = renderer_->captureViewport(&rgba, &captureW, &captureH);
+      }
+      std::string checkpointPath = checkpointPattern_;
+      char frameText[16];
+      std::snprintf(frameText, sizeof(frameText), "%06d", frameCount + 1);
+      checkpointPath.replace(checkpointPath.find("{frame}"), 7, frameText);
+      std::error_code checkpointDirError;
+      const std::filesystem::path checkpointFile(checkpointPath);
+      if (!checkpointFile.parent_path().empty()) {
+        std::filesystem::create_directories(checkpointFile.parent_path(),
+                                            checkpointDirError);
+      }
+      std::string checkpointErr;
+      if (!checkpointDirError && captured &&
+          WriteScreenshotImage(checkpointPath, rgba, captureW,
+                                           captureH, &checkpointErr)) {
+        ++checkpointCount_;
+        LOGI("wrote checkpoint %s (%dx%d, frame %d)",
+             checkpointPath.c_str(), captureW, captureH, frameCount + 1);
+      } else {
+        LOGW("failed to write checkpoint %s: %s", checkpointPath.c_str(),
+             checkpointDirError
+                 ? checkpointDirError.message().c_str()
+                 : (captured ? checkpointErr.c_str() : "capture unavailable"));
+      }
+    }
+
     // Deferred actions (after the frame, outside the ImGui frame state).
 #if defined(TUSDVIEW_HAVE_MCP)
     if (mcp_) mcp_->drain();  // run queued MCP tool calls on the main thread
@@ -3292,9 +4498,9 @@ int App::run(const std::string& initialFile, int maxFrames,
   if (maxFrames >= 0) {
     const Gui::RenderStats rs = gui_.renderStats();
     LOGI("render stats: meshes %zu/%zu visible, instances %zu/%zu visible, "
-         "drawn tris %zu, draw calls %zu",
+         "LOD proxies %zu, drawn tris %zu, draw calls %zu",
          rs.visibleMeshes, rs.totalMeshes, rs.visibleInstances,
-         rs.totalInstances, rs.drawnTriangles, rs.drawCalls);
+         rs.totalInstances, rs.proxyInstances, rs.drawnTriangles, rs.drawCalls);
   }
 
   auto shot = [&](const std::string& path, bool window) {
@@ -3318,6 +4524,8 @@ int App::run(const std::string& initialFile, int maxFrames,
                   : renderer_->captureViewport(&rgba, &w, &h);
     }
     if (ok && w > 0 && h > 0) {
+      reportCaptureWidth_ = w;
+      reportCaptureHeight_ = h;
       std::string shotErr;
       if (WriteScreenshotImage(path, rgba, w, h, &shotErr)) {
         LOGI("wrote %s (%dx%d)", path.c_str(), w, h);
@@ -3335,10 +4543,36 @@ int App::run(const std::string& initialFile, int maxFrames,
     // The tracer builds from draw_ geometry, which the next loader hands over in
     // its REST pose (the deform lives in the GPU skin/morph channels). Pose it.
     poseNextDrawForTracer(animTime_);
+    auto buildCudaScene = [&]() {
+      BuildProgress progress;
+      std::atomic<bool> monitoring{true};
+      const auto started = std::chrono::steady_clock::now();
+      std::thread monitor([&]() {
+        int seconds = 0;
+        while (monitoring.load(std::memory_order_relaxed)) {
+          std::this_thread::sleep_for(std::chrono::seconds(1));
+          if (!monitoring.load(std::memory_order_relaxed) || (++seconds % 5) != 0)
+            continue;
+          const int phase = progress.phase.load(std::memory_order_relaxed);
+          const size_t done = progress.done.load(std::memory_order_relaxed);
+          const size_t total = progress.total.load(std::memory_order_relaxed);
+          LOGI("CUDA scene build: %s %zu/%zu (%.0f s)",
+               BuildProgress::phaseName(phase), done, total,
+               std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                             started)
+                   .count());
+        }
+      });
+      const bool ok = cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_,
+                                        &cerr, gui_.displacementScale(),
+                                        &progress);
+      monitoring.store(false, std::memory_order_relaxed);
+      monitor.join();
+      return ok;
+    };
     if (!cudaTracer_.init(&cerr)) {
       LOGW("CUDA ray tracing unavailable: %s", cerr.c_str());
-    } else if (!cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
-                                  gui_.displacementScale())) {
+    } else if (!buildCudaScene()) {
       LOGW("CUDA ray tracing build failed: %s", cerr.c_str());
     } else {
       // Use the requested window size for the screenshot. The viewport probe is
@@ -3375,7 +4609,10 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       std::vector<uint8_t> rgba;
       if (cudaTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
-                            sceneExtent, w, h, &rgba, &cerr, rtSamples_)) {
+                            sceneExtent, w, h, &rgba, &cerr, rtSamples_,
+                            &cameraLens_)) {
+        reportCaptureWidth_ = w;
+        reportCaptureHeight_ = h;
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("CUDA RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
@@ -3388,7 +4625,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         LOGW("CUDA ray trace failed: %s", cerr.c_str());
       }
     }
-    return 0;  // CUDA path owns the screenshot; skip the rasterized capture.
+    return finishRun(0);  // CUDA owns the screenshot.
   }
 
   // HIP/ROCm ray tracing: AMD counterpart of the CUDA path above (HIP runtime +
@@ -3445,7 +4682,10 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       std::vector<uint8_t> rgba;
       if (hipTracer_.trace(inv.m, pv.m, camPos, lightDir, clear, camera_.exposure(), rmode, depthScale, sceneMin,
-                           sceneExtent, w, h, &rgba, &cerr, rtSamples_)) {
+                           sceneExtent, w, h, &rgba, &cerr, rtSamples_,
+                           &cameraLens_)) {
+        reportCaptureWidth_ = w;
+        reportCaptureHeight_ = h;
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
           LOGI("HIP RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(), w, h,
@@ -3458,12 +4698,12 @@ int App::run(const std::string& initialFile, int maxFrames,
         LOGW("HIP ray trace failed: %s", cerr.c_str());
       }
     }
-    return 0;  // HIP path owns the screenshot; skip the rasterized capture.
+    return finishRun(0);  // HIP owns the screenshot.
   }
 
   shot(screenshot, /*window=*/false);
   shot(windowShot_, /*window=*/true);
-  return 0;
+  return finishRun(0);
 }
 
 }  // namespace tusdview

@@ -1107,6 +1107,12 @@ bool RenderSceneConverter::BuildSingleNode(
         if (geomCamera->exposure.get_value().get_scalar(&val_f)) {
           rcam.exposure = val_f;
         }
+        if (geomCamera->focusDistance.get_value().get_scalar(&val_f)) {
+          rcam.focusDistance = val_f;
+        }
+        if (geomCamera->fStop.get_value().get_scalar(&val_f)) {
+          rcam.fStop = val_f;
+        }
 
         value::float2 range_val;
         if (geomCamera->clippingRange.get_value().get_scalar(&range_val)) {
@@ -1117,6 +1123,15 @@ bool RenderSceneConverter::BuildSingleNode(
         GeomCamera::Projection proj_val;
         if (geomCamera->projection.get_value().get_scalar(&proj_val)) {
           rcam.projection = proj_val;
+        }
+        rcam.stereoRole = geomCamera->stereoRole.get_value();
+        geomCamera->shutterOpen.get_value().get_scalar(&rcam.shutterOpen);
+        geomCamera->shutterClose.get_value().get_scalar(&rcam.shutterClose);
+        if (geomCamera->clippingPlanes.authored()) {
+          auto planes = geomCamera->clippingPlanes.get_value();
+          if (planes.has_value()) {
+            planes->get_default(&rcam.clippingPlanes);
+          }
         }
 
         size_t cam_id = cameras.size();

@@ -935,10 +935,8 @@ static uint32_t tc_astc_bitmap_mismatch_popcnt(const uint64_t bbits[3],
                                                uint32_t words) {
     uint32_t direct = 0, inverse = 0, w;
     for (w = 0; w < words; ++w) {
-        direct += (uint32_t)__builtin_popcountll((bbits[w] ^ seed_bits[w]) &
-                                                 mask[w]);
-        inverse += (uint32_t)__builtin_popcountll((bbits[w] ^ ~seed_bits[w]) &
-                                                  mask[w]);
+        direct += tc_popcount64((bbits[w] ^ seed_bits[w]) & mask[w]);
+        inverse += tc_popcount64((bbits[w] ^ ~seed_bits[w]) & mask[w]);
     }
     return direct < inverse ? direct : inverse;
 }

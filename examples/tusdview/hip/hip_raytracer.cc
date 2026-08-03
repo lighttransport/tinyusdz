@@ -25,6 +25,7 @@ struct Cam {
   float sceneMin[4];   // position AOV bbox
   float sceneExtent[4];
   float vp[16];        // world->clip (wireframe edge projection)
+  float lens[4];       // focus distance, aperture radius, enabled, reserved
 };
 
 // Trace kernel source, shared with the CUDA backend (compiled at runtime by
@@ -247,7 +248,8 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
                           float exposure,
                           int renderMode, float depthScale, const float sceneMin[3],
                           const float sceneExtent[3], int w, int h,
-                          std::vector<uint8_t>* rgba, std::string* err, int spp) {
+                          std::vector<uint8_t>* rgba, std::string* err, int spp,
+                          const RtCameraLens* lens) {
   if (!ready_ || !dTris_) { if (err) *err = "HIP scene not built"; return false; }
   CU_OK(hipSetDevice(device_), "hipSetDevice");
   const size_t bytes = size_t(w) * h * 4;
@@ -279,6 +281,11 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   cam.camPos[3] = exposure;
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
+  if (lens && lens->enabled()) {
+    cam.lens[0] = lens->focusDistance;
+    cam.lens[1] = lens->apertureRadius;
+    cam.lens[2] = 1.0f;
+  }
   void* dT = reinterpret_cast<void*>(dTris_), *dN = reinterpret_cast<void*>(dNrms_),
         *dC = reinterpret_cast<void*>(dCols_), *dG = reinterpret_cast<void*>(dGeo_),
         *dM = reinterpret_cast<void*>(dMat_), *dBM = reinterpret_cast<void*>(dBackMat_),

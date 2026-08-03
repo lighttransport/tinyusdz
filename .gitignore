@@ -416,11 +416,18 @@ CMakeUserPresets.json
 !models/tusdview-curves-ribbons.usda
 !models/tusdview-nurbs-patch.usda
 !models/tusdview-transparency.usda
+!models/tusdquicklook-alpha-modes.usda
 !tests/usdc/dedup-global-001.usdc
 !aousd/validation_*.usda
 # Test-generated runtime artifacts (roundtrip/runtime tests)
 tests/usdc/memory-budget-*-runtime.usdc
 tests/usdc/variant-*-runtime.usdc
+# In-source CMake residue. `cmake .` run from a source directory by mistake
+# drops these next to the sources; CMakeCache.txt in particular was reaching
+# commits because only CMakeFiles/ and Makefile were listed here.
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
 CMakeFiles/
 Makefile
 cmake_install.cmake

@@ -390,6 +390,7 @@ void CopyTexSample(const tydra::UVTexture& uv, DrawTexSampleCPU* out) {
   };
   out->wrapS = wrap(uv.wrapS);
   out->wrapT = wrap(uv.wrapT);
+  out->isUdim = uv.is_udim;
   // -1 = use the whole value; only genuinely scalar outputs record a channel.
   switch (uv.connectedOutputChannel) {
     case tydra::UVTexture::Channel::R: out->channel = 0; break;
@@ -940,6 +941,7 @@ void EncodeBC3AlphaBlock(const uint8_t rgba[16][4], uint8_t* out) {
 }
 #endif  // !TUSDVIEW_WITH_TEXTOOLS
 
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
 // Resolve a requested compression mode to a concrete block format the device
 // can actually sample, given its capabilities. `opaque` only affects the BCn
 // (BC1 vs BC3) auto choice; ASTC/ETC2/BC7 carry alpha regardless. Falls back
@@ -989,6 +991,7 @@ DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
   }
   return DrawCompressedFormat::None;
 }
+#endif  // TUSDVIEW_WITH_TEXTOOLS
 
 bool EncodeBCn(const light3d::Image& img, bool srgb,
                TextureCompressionMode mode, const TextureCompressCaps& caps,
@@ -1093,6 +1096,16 @@ void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
 // live outside the anonymous namespace (external linkage).
 void ClassifyTextureUsage(DrawScene* out);  // defined below (near FinalizeDrawTextures)
 
+void CompressDrawTexture(const TextureRuntimeOptions& opt,
+                         DrawTextureCPU* texture) {
+  if (!texture || opt.compression == TextureCompressionMode::Off ||
+      texture->isPtex || texture->compressedFinal) {
+    return;
+  }
+  texture->requestedCompressed = true;
+  CompressTexture(texture, opt.compression, opt.caps, texture->isNormalMap);
+}
+
 void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
   if (!out || opt.compression == TextureCompressionMode::Off) return;
   // Classify usage first so a normal map is not compressed onto a BC1/BC3 color
@@ -1102,6 +1115,7 @@ void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
   ClassifyTextureUsage(out);
   size_t n = 0, raw = 0, comp = 0;
   for (DrawTextureCPU& tex : out->textures) {
+    if (tex.isPtex) continue;
     if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
     tex.requestedCompressed = true;
     CompressTexture(&tex, opt.compression, opt.caps, tex.isNormalMap);
@@ -1286,6 +1300,7 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
     return true;
   };
   for (DrawTextureCPU& tex : out->textures) {
+    if (tex.isPtex || tex.deferredDecode) continue;
     // Kept-compressed KTX2 passthrough: the compressed payload is final and
     // `image` is empty, so there is nothing to build a mip chain from (the KTX2
     // level 0 is uploaded directly; multi-level KTX2 mips are a follow-up).
@@ -2103,6 +2118,23 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
     syncSampleTex(&dm.coatColorSample, dm.coatColorTex);
     syncSampleTex(&dm.coatRoughnessSample, dm.coatRoughnessTex);
     syncSampleTex(&dm.displacementSample, dm.displacementTex);
+    auto syncPtex = [&](DrawTexSampleCPU* sample, int tex) {
+      if (!sample || tex < 0 || static_cast<size_t>(tex) >= out->textures.size()) return;
+      const DrawTextureCPU& t = out->textures[static_cast<size_t>(tex)];
+      sample->isPtex = t.isPtex;
+      sample->ptexAtlasCols = t.ptexAtlasCols;
+      sample->ptexAtlasRows = t.ptexAtlasRows;
+      sample->ptexTileEdge = t.ptexTileEdge;
+      sample->ptexRectTexelOffset = t.ptexRectTexelOffset;
+      sample->ptexFaceCount = static_cast<uint32_t>(t.ptexFaceRects.size());
+    };
+    syncPtex(&dm.baseColorSample, dm.baseColorTex);
+    syncPtex(&dm.metallicSample, dm.metallicTex);
+    syncPtex(&dm.roughnessSample, dm.roughnessTex);
+    syncPtex(&dm.normalSample, dm.normalTex);
+    syncPtex(&dm.emissiveSample, dm.emissiveTex);
+    syncPtex(&dm.opacitySample, dm.opacityTex);
+    syncPtex(&dm.displacementSample, dm.displacementTex);
     // else: leave default gray.
     BakeRealtimePbrMaterial(&dm);
     DiagnoseUnsupportedRealtimeLobes(dm, out);
@@ -3817,6 +3849,25 @@ DrawCameraCPU MakeDrawCameraFromTydra(
   dc.horizontalApertureOffset = cam.horizontalApertureOffset;
   dc.verticalApertureOffset = cam.verticalApertureOffset;
   dc.exposure = cam.exposure;
+  dc.focusDistance = cam.focusDistance;
+  dc.fStop = cam.fStop;
+  dc.shutterOpen = cam.shutterOpen;
+  dc.shutterClose = cam.shutterClose;
+  switch (cam.stereoRole) {
+    case tinyusdz::GeomCamera::StereoRole::Left:
+      dc.stereoRole = DrawCameraCPU::StereoRole::Left;
+      break;
+    case tinyusdz::GeomCamera::StereoRole::Right:
+      dc.stereoRole = DrawCameraCPU::StereoRole::Right;
+      break;
+    default:
+      dc.stereoRole = DrawCameraCPU::StereoRole::Mono;
+      break;
+  }
+  dc.clippingPlanes.reserve(cam.clippingPlanes.size() * 4);
+  for (const tinyusdz::value::float4& plane : cam.clippingPlanes) {
+    for (size_t i = 0; i < 4; ++i) dc.clippingPlanes.push_back(plane[i]);
+  }
   dc.zNear = std::max(1.0e-4f, cam.znear);
   dc.zFar = std::max(dc.zNear + 1.0e-3f, cam.zfar);
   dc.projection =
