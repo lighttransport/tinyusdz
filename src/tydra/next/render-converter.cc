@@ -1198,19 +1198,17 @@ void BuildCompactInstances(
   }
 }
 
+// O(1) copy-on-write share. This is the copy engine behind every
+// point-instance mesh clone: the topology, UV sets, colors and primvars of a
+// clone are byte-identical to the prototype's and were previously duplicated
+// in full, so N instances of a 50k-tri prototype cost N x the WHOLE mesh
+// rather than N x (points+normals+tangents) + 1 x the rest. ChunkedArray
+// detaches on the first write through either holder, so a consumer that does
+// mutate a clone still gets private storage.
 template <typename Chunked>
 void CopyChunkedArray(const Chunked& src, Chunked* dst) {
   if (!dst) return;
-  dst->reserve(src.size());
-  // Chunk-at-a-time, not element-at-a-time: per-element push_back costs an
-  // ensure_capacity() call plus a chunk-pointer indirection for EVERY element,
-  // where append() memcpys a whole 64KB chunk. This is the copy engine behind
-  // every point-instance mesh clone.
-  for (size_t c = 0; c < src.chunk_count(); ++c) {
-    const size_t n = src.chunk_size(c);
-    if (n == 0) break;
-    dst->append(src.chunk_data(c), n);
-  }
+  dst->share_from(src);
 }
 
 Float3 TransformPoint(const Matrix4& m, float x, float y, float z) {

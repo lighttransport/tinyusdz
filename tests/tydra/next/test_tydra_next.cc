@@ -195,6 +195,70 @@ void TestChunkedArrayStraddlingReads() {
   std::cout << "  ChunkedArray straddling reads passed!\n";
 }
 
+// Copy-on-write sharing: share_from() must alias the chunks (O(1), no byte
+// duplication) and the FIRST write through EITHER holder must take a private
+// copy so the other is unaffected.
+void TestChunkedArrayShareCow() {
+  std::cout << "Testing ChunkedArray copy-on-write sharing...\n";
+
+  constexpr size_t N = 50000;  // spans many chunks
+  ChunkedArray<uint32_t> a;
+  for (size_t i = 0; i < N; ++i) a.push_back(static_cast<uint32_t>(i));
+  assert(!a.is_shared());
+
+  ChunkedArray<uint32_t> b;
+  b.share_from(a);
+  assert(b.size() == N);
+  assert(a.is_shared() && b.is_shared());
+  // Same bytes, same buffers. NOTE: read through CONST refs -- the non-const
+  // chunk_data() hands out a writable pointer and so must detach.
+  {
+    const ChunkedArray<uint32_t>& ca = a;
+    const ChunkedArray<uint32_t>& cb = b;
+    assert(ca.chunk_data(0) == cb.chunk_data(0));
+  }
+  for (size_t i = 0; i < N; i += 997) assert(b[i] == static_cast<uint32_t>(i));
+
+  // Write through the clone: it detaches, the original keeps its values.
+  b[42] = 999999u;
+  assert(b[42] == 999999u);
+  assert(a[42] == 42u);
+  {
+    const ChunkedArray<uint32_t>& ca = a;
+    const ChunkedArray<uint32_t>& cb = b;
+    assert(ca.chunk_data(0) != cb.chunk_data(0));
+  }
+  for (size_t i = 0; i < N; i += 997) {
+    if (i == 42) continue;
+    assert(a[i] == static_cast<uint32_t>(i));
+    assert(b[i] == static_cast<uint32_t>(i));
+  }
+
+  // Writing through the ORIGINAL of a live share must detach too.
+  ChunkedArray<uint32_t> c;
+  c.share_from(a);
+  a[7] = 12345u;
+  assert(a[7] == 12345u);
+  assert(c[7] == 7u);
+
+  // append() after clear() writes into existing capacity -- it must still
+  // detach, or it would scribble over the array it shares with.
+  ChunkedArray<uint32_t> d;
+  d.share_from(c);
+  d.clear();
+  const uint32_t fill[4] = {8, 8, 8, 8};
+  d.append(fill, 4);
+  assert(d.size() == 4 && d[0] == 8u);
+  assert(c.size() == N && c[0] == 0u);
+
+  // Sharing an empty array is a no-op, not a crash.
+  ChunkedArray<uint32_t> e, f;
+  f.share_from(e);
+  assert(f.size() == 0 && !f.is_shared());
+
+  std::cout << "  ChunkedArray copy-on-write sharing passed!\n";
+}
+
 void TestChunkedArrayLarge() {
   std::cout << "Testing ChunkedArray with large data...\n";
 
@@ -5627,6 +5691,7 @@ int main() {
   TestChunkedArrayAllocFailure();
   TestChunkedArrayLarge();
   TestChunkedArrayStraddlingReads();
+  TestChunkedArrayShareCow();
   TestChunkedArrayAppend();
   TestChunkedArrayIterator();
 
