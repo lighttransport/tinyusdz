@@ -826,7 +826,7 @@ int main(int argc, char** argv) {
           "outlier-resistant auto framing.\n"
           "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
           "  --no-skeleton Hide skeleton helper overlays (useful for AOV comparisons).\n"
-          "  --dome-ibl off|fast|quality  Control DomeLight IBL precomputation.\n"
+          "  --dome-ibl off|low|high  Control DomeLight IBL precomputation.\n"
           "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
           "Vulkan realtime preset for public large scenes. Profiles set existing "
           "large-scene knobs only; explicit CLI flags win. No texture resize or "
@@ -1197,6 +1197,17 @@ int main(int argc, char** argv) {
     }
     for (const auto& kv : config.config.subdivisionPrimLevels) {
       subdivisionPrimLevels.emplace(kv.first, kv.second);
+    }
+  }
+  // Test/headless wrappers can select the hardware Vulkan device without
+  // rewriting every manifest or shell command. Keep CLI precedence, then the
+  // environment, then the startup config above. "auto" deliberately leaves
+  // the normal device selection untouched.
+  if (!vkDeviceExplicit) {
+    const char* envVkDevice = std::getenv("TUSDVIEW_VK_DEVICE");
+    if (envVkDevice && *envVkDevice &&
+        std::strcmp(envVkDevice, "auto") != 0) {
+      devicePreference.vulkanDevice = envVkDevice;
     }
   }
   // Persist the recent-scenes list back to the resolved config path (the default

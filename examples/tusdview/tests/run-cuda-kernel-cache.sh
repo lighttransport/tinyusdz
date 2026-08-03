@@ -33,6 +33,11 @@ run_viewer env XDG_CACHE_HOME="$OUT/xdg-cache" XDG_CONFIG_HOME="$OUT/config-home
 cold_rc=$?
 if ! grep -q 'CUDA RT wrote' "$cold_log" || [ ! -s "$cold_img" ]; then
   if grep -q 'CUDA kernel cache miss' "$cold_log"; then
+    if grep -Eqi 'NVRTC|invalid value for --gpu-architecture|CUDA ray tracing unavailable|no CUDA device' "$cold_log"; then
+      echo "SKIP: CUDA/NVRTC cannot compile for the selected device"
+      tail -20 "$cold_log"
+      exit "$SKIP"
+    fi
     echo "FAIL: CUDA/NVRTC was available but the cold cache run failed (exit $cold_rc)"
     cat "$cold_log"
     exit 1

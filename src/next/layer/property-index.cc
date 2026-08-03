@@ -115,9 +115,31 @@ PropNameId PropNameTable::find(const std::string& name) const {
   return PropNameId{};
 }
 
+PropNameId PropNameTable::find(std::string_view name) const {
+  // C++17's unordered_map has no heterogeneous find(). Probe the selected
+  // bucket directly so the string_view path stays allocation-free.
+  const auto lookup = [this](std::string_view view) -> PropNameId {
+    const size_t bucket_count = name_to_id_.bucket_count();
+    if (bucket_count == 0) return PropNameId{};
+    const size_t bucket = PropNameHash{}(view) % bucket_count;
+    for (auto it = name_to_id_.cbegin(bucket);
+         it != name_to_id_.cend(bucket); ++it) {
+      if (PropNameEqual{}(it->first, view)) return PropNameId{it->second};
+    }
+    return PropNameId{};
+  };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (!frozen_.load(std::memory_order_acquire)) {
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+    return lookup(name);
+  }
+#endif
+  return lookup(name);
+}
+
 PropNameId PropNameTable::find(const char* name) const {
   if (!name) return PropNameId{};
-  return find(std::string(name));
+  return find(std::string_view(name));
 }
 
 void PropNameTable::register_common_names() {

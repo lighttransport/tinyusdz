@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <limits>
 #include <unordered_set>
 
 #include "tydra/next/chunked-array.hh"
@@ -22,6 +23,7 @@
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
+#include "tydra/next/texture-cache.hh"
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/pcp/cache.hh"
 #include "next/reader/usda-reader.hh"
@@ -224,6 +226,63 @@ void TestChunkedArrayIterator() {
   std::cout << "  ChunkedArray iterator: PASSED\n";
 }
 
+void TestRenderDataSafety() {
+  std::cout << "Testing render-data safety helpers...\n";
+
+  VertexAttribute ints;
+  ints.format = VertexFormat::IVec3;
+  ints.int_data.append(std::vector<int32_t>{1, 2, 3, 4, 5, 6}.data(), 6);
+  assert(ints.element_count() == 2);
+
+  VertexAttribute uints;
+  uints.format = VertexFormat::UVec2;
+  const uint32_t values[] = {1, 2, 3, 4};
+  assert(uints.uint_data.append(values, 4));
+  assert(uints.element_count() == 2);
+
+  RenderCamera camera;
+  camera.focal_length = 0.0f;
+  camera.vertical_aperture = 24.0f;
+  camera.horizontal_aperture = 36.0f;
+  assert(camera.fov_x() == 0.0f && camera.fov_y() == 0.0f);
+
+  RenderPointInstancer instancer;
+  instancer.prototype_paths.resize(1);
+  instancer.prototype_node_ids.resize(1);
+  instancer.prototype_mesh_offsets = {1, 0};
+  assert(instancer.prototype_mesh_count(0) == 0);
+  assert(!instancer.has_valid_prototype_mesh_bindings());
+
+  RenderPoints points;
+  points.points.push_back(1.0f);
+  points.compact();
+  assert(!points.has_alloc_failure());
+  RenderCurves curves;
+  curves.tessellated_points.push_back(1.0f);
+  curves.compact();
+  assert(!curves.has_alloc_failure());
+
+  std::cout << "  render-data safety helpers: PASSED\n";
+}
+
+void TestTextureBudgetLease() {
+  std::cout << "Testing resident texture budget leases...\n";
+  auto state = std::make_shared<tinyusdz::next::TextureBudgetState>(8);
+  assert(state->try_add(8));
+  {
+    DecodedImage first;
+    first.pixels.resize(8);
+    first.budget_lease = std::make_shared<tinyusdz::next::TextureBudgetLease>(
+        state, 8);
+    DecodedImage second = first;
+    first.budget_lease.reset();
+    assert(state->resident.load(std::memory_order_relaxed) == 8);
+    second.budget_lease.reset();
+  }
+  assert(state->resident.load(std::memory_order_relaxed) == 0);
+  std::cout << "  resident texture budget leases: PASSED\n";
+}
+
 //
 // RenderData Tests
 //
@@ -369,17 +428,31 @@ void TestDeepSceneAccess() {
   for (size_t i = 0; i < kDepth; ++i) {
     layer.begin_prim("P", "Xform");
   }
+  layer.begin_prim("Leaf", "Mesh");
   Stage stage = builder.Build();
   UsdPrim root = stage.GetRootPrims().front();
   const std::vector<UsdPrim> descendants = GetDescendants(root);
-  assert(descendants.size() == kDepth - 1);
+  assert(descendants.size() == kDepth);
+
+  std::vector<UsdPrim> meshes;
+  GatherMeshPrims(root, &meshes);
+  assert(meshes.size() == 1);
+  assert(meshes.front().GetName() == "Leaf");
+
+  RenderExtractOptions extract_options;
+  extract_options.collect_records = false;
+  extract_options.max_depth = 0;  // Exercise the iterative path past the default cap.
+  RenderExtractResult extracted;
+  assert(CollectRenderPrims(stage, extract_options, &extracted));
+  assert(extracted.meshes.size() == 1);
+  assert(extracted.meshes.front().prim.GetName() == "Leaf");
 
   size_t traversed = 0;
   stage.Traverse([&](const UsdPrim&) {
     ++traversed;
     return true;
   });
-  assert(traversed == kDepth);
+  assert(traversed == kDepth + 1);
   std::cout << "  Deep Scene Access: PASSED\n";
 }
 
@@ -527,6 +600,13 @@ void TestRenderConverter() {
   assert(ComputeVramLimit(GiB(8)) == GiB(6));
   assert(ComputeVramLimit(GiB(10)) == GiB(8));
   assert(ComputeVramLimit(GiB(24)) == GiB(12));
+  const ResourceBudget extreme_budget = ComputeResourceBudget(
+      (std::numeric_limits<uint64_t>::max)(),
+      (std::numeric_limits<uint64_t>::max)());
+  assert(extreme_budget.host_limit <=
+         (std::numeric_limits<uint64_t>::max)());
+  assert(extreme_budget.gpu_texture_limit <=
+         (std::numeric_limits<uint64_t>::max)());
 
   const char* usda = R"(#usda 1.0
 (
@@ -5686,6 +5766,8 @@ int main() {
   TestChunkedArrayLarge();
   TestChunkedArrayAppend();
   TestChunkedArrayIterator();
+  TestRenderDataSafety();
+  TestTextureBudgetLease();
 
   std::cout << "\n";
 

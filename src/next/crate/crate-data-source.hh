@@ -66,6 +66,7 @@ class CrateDataSource : public LazyArraySource {
   /// Set the crate version once it has been parsed from the bootstrap header.
   /// (The buffer is adopted before the header is read.)
   void set_version(CrateVersion v) { version_ = v; }
+  void set_max_array_elements(size_t n) { max_array_elements_ = n; }
 
   /// Install the decoded token / string-index tables (used for token-array
   /// materialization and write-time index remapping).
@@ -102,6 +103,7 @@ class CrateDataSource : public LazyArraySource {
   CrateVersion version_{};  // value-initialized to 0.0.0
   std::vector<std::string> tokens_;
   std::vector<uint32_t> string_indices_;
+  size_t max_array_elements_ = 1024ull * 1024ull * 1024ull;
 };
 
 /// Shared array-block decoder — the single source of truth used by both the

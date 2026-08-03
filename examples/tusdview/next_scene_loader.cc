@@ -36,6 +36,7 @@
 
 // `next` + tydra-next (built on demand; see CMakeLists.txt).
 #include "next/tinyusdz-next.hh"
+#include "next/eval/attribute-eval.hh" // time/connection-aware light inputs
 #include "next/reader/usdz-reader.hh"  // USDZReader (embedded --next textures)
 #include "next/schema/usd-shade.hh"    // GetInheritedBoundMaterialPath
 #include "next/schema/usd-skel.hh"     // GetSkeletonData / GetSkelAnimationData
@@ -3958,6 +3959,8 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
                      double time, const TextureRuntimeOptions& texOpts,
                      DrawScene* draw) {
   const std::string baseDir = tinyusdz::io::GetBaseDir(usdPath);
+  tnext::AttributeEval lightEval(&stage);
+  lightEval.SetTime(time);
 
   auto fillConverted = [&](const tnext::UsdPrim& p, DrawLightCPU* dst) {
     tydn::RenderLight src;
@@ -4142,22 +4145,19 @@ void BuildNextLights(const tnext::Stage& stage, tydn::RenderSceneConverter& conv
       }
 
       light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::Automatic;
-      if (const tnext::Value* v = p.GetPropertyValue("inputs:texture:format")) {
-        if (const std::string* tk = v->as_token()) {
-          if (*tk == "latlong")
-            light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::Latlong;
-          else if (*tk == "mirroredBall")
-            light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::MirroredBall;
-          else if (*tk == "angular")
-            light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::Angular;
-        }
+      if (const auto format = lightEval.EvalToken(p, "inputs:texture:format")) {
+        if (*format == "latlong")
+          light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::Latlong;
+        else if (*format == "mirroredBall")
+          light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::MirroredBall;
+        else if (*format == "angular")
+          light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::Angular;
       }
 
-      const tnext::Value* fv = p.GetPropertyValue("inputs:texture:file");
-      const std::string* ap = fv ? fv->as_asset_path() : nullptr;
-      if (ap && !ap->empty()) {
-        light.textureFile = *ap;
-        std::string tpath = *ap;
+      const auto textureFile = lightEval.EvalAssetPath(p, "inputs:texture:file");
+      if (textureFile && !textureFile->empty()) {
+        light.textureFile = *textureFile;
+        std::string tpath = *textureFile;
         if (!tpath.empty() && tpath[0] != '/' && !baseDir.empty()) {
           tpath = baseDir + "/" + tpath;
         }

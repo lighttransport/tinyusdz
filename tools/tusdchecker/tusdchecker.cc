@@ -1098,6 +1098,32 @@ std::string ResolveDependencyPath(const std::string& anchor,
   return path.lexically_normal().string();
 }
 
+bool HasResolvableUdimTile(const std::string& resolved_template) {
+  namespace fs = std::filesystem;
+  constexpr char kUdimToken[] = "<UDIM>";
+  constexpr int kFirstUdimTile = 1001;
+  constexpr int kLastUdimTile = 1100;
+
+  const fs::path path(resolved_template);
+  const std::string filename = path.filename().string();
+  const size_t token_pos = filename.find(kUdimToken);
+  if (token_pos == std::string::npos) return false;
+
+  const fs::path directory = path.parent_path().empty()
+                                 ? fs::path(".")
+                                 : path.parent_path();
+  const std::string prefix = filename.substr(0, token_pos);
+  const std::string suffix =
+      filename.substr(token_pos + std::strlen(kUdimToken));
+  for (int tile = kFirstUdimTile; tile <= kLastUdimTile; ++tile) {
+    const std::string candidate =
+        prefix + std::to_string(tile) + suffix;
+    std::error_code ec;
+    if (fs::exists(directory / candidate, ec) && !ec) return true;
+  }
+  return false;
+}
+
 std::string MapComposedPath(const std::string& source_path,
                             const std::string& source_prefix,
                             const std::string& target_prefix) {
@@ -1227,16 +1253,26 @@ void ValidateDependencyResolution(const Layer& layer,
   std::vector<std::string> ordered(dependencies.begin(), dependencies.end());
   std::sort(ordered.begin(), ordered.end());
   for (const std::string& authored : ordered) {
-    // Skip URIs, search-path style references, and templated asset paths
-    // (<UDIM>, clip templates) -- they resolve through mechanisms the default
-    // filesystem resolver does not model, exactly like pxr's checker skips
-    // non-file-resolvable identifiers.
+    // URIs and package/search-path identifiers require a resolver that this
+    // dependency-free tool does not model. UDIM templates are different: pxr's
+    // MissingReferenceValidator checks tiles 1001..1100 and reports the
+    // template unresolved when none exists, so mirror that behavior here.
     if (authored.find("://") != std::string::npos ||
-        authored.find('<') != std::string::npos ||
         authored.find('[') != std::string::npos) {
       continue;
     }
     const std::string resolved = ResolveDependencyPath(anchor, authored);
+    if (authored.find("<UDIM>") != std::string::npos) {
+      if (!HasResolvableUdimTile(resolved)) {
+        AddIssue(result, USDValidationSeverity::Warning,
+                 "core.dependency.unresolvable", "<layer>",
+                 "authored dependency `" + authored +
+                     "` does not resolve to an existing file (" + resolved +
+                     ")");
+      }
+      continue;
+    }
+    if (authored.find('<') != std::string::npos) continue;
     std::error_code ec;
     if (!std::filesystem::exists(resolved, ec)) {
       AddIssue(result, USDValidationSeverity::Warning,

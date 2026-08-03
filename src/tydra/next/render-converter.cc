@@ -51,6 +51,20 @@ constexpr size_t kMaxTriangulationCornerCount = 150'000'000u;
 constexpr uint32_t kEarcutMaxVertices = 16384;
 constexpr size_t kMaxTempAllocBytes = 256u * 1024u * 1024u;
 
+uint64_t ImageCacheHash(const std::string& resolved,
+                        ColorSpace color_space) noexcept {
+  // FNV-1a is fast for these short, path-like keys and avoids allocating a
+  // second copy of every resolved path just to use an unordered_map.
+  uint64_t hash = 1469598103934665603ull;
+  hash ^= static_cast<uint8_t>(color_space);
+  hash *= 1099511628211ull;
+  for (const unsigned char byte : resolved) {
+    hash ^= byte;
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
 const ::tinyusdz::next::PropNameId& kIdVisibility() {
   static const ::tinyusdz::next::PropNameId id =
       ::tinyusdz::next::GetPropNameTable().intern("visibility");
@@ -2555,13 +2569,34 @@ GeometryInfo BuildGeometryInfo(const UsdPrim& prim, GeometryKind kind,
     estimate = SaturatingAdd(
         estimate,
         SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 24));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdTetVertexIndices()), 16));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdHoleIndices()), 8));
   } else if (kind == GeometryKind::Points) {
     estimate = SaturatingMul(info.point_count, 48);
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdWidths()), 8));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 16));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
   } else {
     estimate = SaturatingMul(info.point_count, 40);
     estimate = SaturatingAdd(
         estimate,
         SaturatingMul(AuthoredArraySize(prim, kIdCurveVertexCounts()), 8));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdWidths()), 12));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 20));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
   }
   info.estimated_resident_bytes = estimate;
   return info;
@@ -2785,6 +2820,7 @@ void ReleaseSourceMeshStaticArrays(const Stage& stage, const UsdPrim& mesh_prim)
 ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
   ConvertResult result;
   warnings_.clear();
+  ResetImageIdCache();
 
   // Built with -fno-exceptions: the conversion helpers report failures via
   // return codes / the warnings_ list rather than throwing, so no try/catch.
@@ -2807,9 +2843,15 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 
     RenderExtractOptions xopts;
     xopts.time_code = config_.time_code;
+    xopts.max_depth = config_.max_render_depth;
+    xopts.max_records = config_.max_render_records;
     xopts.collect_other = true;
     RenderExtractResult extracted;
     CollectRenderPrims(stage, xopts, &extracted);
+    if (extracted.limit_exceeded) {
+      result.error = "render extraction limit exceeded";
+      return result;
+    }
 
     // Build node hierarchy first
     if (config_.progress_callback) {
@@ -2857,7 +2899,12 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
                             "' of type '" + rec.type_name + "'");
       }
 
-      if (!has_time_samples) continue;
+      if (!has_time_samples ||
+          (!stage.HasValueClips() &&
+           (!rec.prim.GetPrimSpec() ||
+            !rec.prim.GetPrimSpec()->has_any_time_samples()))) {
+        continue;
+      }
       AnimationClip clip;
       if (ConvertAnimation(stage, rec.prim, &clip)) {
         const auto node_it = result.scene.node_by_path.find(rec.path);
@@ -2922,13 +2969,13 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       if (rec.type_name != "Points") continue;
       RenderPoints points;
       if (ConvertPoints(rec.prim, &points)) {
-        if (points.points.alloc_failed() || points.widths.alloc_failed() ||
-            points.colors.alloc_failed()) {
+        if (points.has_alloc_failure()) {
           warnings_.push_back("Out of memory converting Points '" + rec.path +
                               "'; the prim was skipped");
           continue;
         }
         int32_t points_id = static_cast<int32_t>(result.scene.points.size());
+        points.compact();
         result.scene.points_by_path[points.prim_path] = points_id;
         result.scene.points.push_back(std::move(points));
         if (!config_.mesh.retain_geometry) {
@@ -2943,16 +2990,13 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     for (const auto& rec : extracted.curves) {
       RenderCurves curves;
       if (ConvertCurves(rec.prim, &curves)) {
-        if (curves.points.alloc_failed() || curves.widths.alloc_failed() ||
-            curves.colors.alloc_failed() ||
-            curves.tessellated_points.alloc_failed() ||
-            curves.tessellated_widths.alloc_failed() ||
-            curves.tessellated_colors.alloc_failed()) {
+        if (curves.has_alloc_failure()) {
           warnings_.push_back("Out of memory converting curves '" + rec.path +
                               "'; the prim was skipped");
           continue;
         }
         int32_t curves_id = static_cast<int32_t>(result.scene.curves.size());
+        curves.compact();
         result.scene.curves_by_path[curves.prim_path] = curves_id;
         result.scene.curves.push_back(std::move(curves));
         if (!config_.mesh.retain_geometry) {
@@ -3211,6 +3255,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
                                                         SceneSink* sink) {
   StreamConvertResult result;
   warnings_.clear();
+  ResetImageIdCache();
   if (!sink) {
     result.error = "ConvertToSink: null scene sink";
     return result;
@@ -3237,9 +3282,15 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
 
   RenderExtractOptions xopts;
   xopts.time_code = config_.time_code;
+  xopts.max_depth = config_.max_render_depth;
+  xopts.max_records = config_.max_render_records;
   xopts.collect_other = true;
   RenderExtractResult extracted;
   CollectRenderPrims(stage, xopts, &extracted);
+  if (extracted.limit_exceeded) {
+    result.error = "render extraction limit exceeded";
+    return result;
+  }
   const bool emit_animations =
       config_.animation.enabled &&
       (stage.HasTimeSamples() || stage.HasValueClips());
@@ -3252,10 +3303,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   BuildNodeHierarchy(extracted, &catalog);
   ExtractPhysicsAnnotations(stage, &catalog);
   catalog.meshes.reserve(extracted.meshes.size());
-  size_t point_record_count = 0;
-  for (const RenderPrimRecord& rec : extracted.records) {
-    if (rec.type_name == "Points") ++point_record_count;
-  }
+  const size_t point_record_count = extracted.points.size();
   catalog.points.reserve(point_record_count);
   catalog.curves.reserve(extracted.curves.size());
   catalog.point_instancers.reserve(extracted.point_instancers.size());
@@ -3285,7 +3333,12 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
                           "' of type '" + rec.type_name + "'");
     }
 
-    if (!has_time_samples) continue;
+    if (!has_time_samples ||
+        (!stage.HasValueClips() &&
+         (!rec.prim.GetPrimSpec() ||
+          !rec.prim.GetPrimSpec()->has_any_time_samples()))) {
+      continue;
+    }
     AnimationClip clip;
     if (ConvertAnimation(stage, rec.prim, &clip)) {
       const auto node = catalog.node_by_path.find(rec.path);
@@ -3361,8 +3414,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     AssignMeshMaterialBinding(stage, catalog, &placeholder);
     AssignNodeDataId(&catalog, placeholder.prim_path, static_cast<int32_t>(i));
   }
-  for (const RenderPrimRecord& rec : extracted.records) {
-    if (rec.type_name != "Points") continue;
+  for (const RenderPrimRecord& rec : extracted.points) {
     const int32_t id = static_cast<int32_t>(catalog.points.size());
     RenderPoints placeholder;
     placeholder.name = rec.prim.GetName();
@@ -3417,6 +3469,11 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     result.error = "scene sink rejected catalog";
     return result;
   }
+  // The catalog and all non-geometry metadata are now owned by the sink.
+  // Release the traversal-order duplicate before the first large geometry
+  // payload is decoded; kind-specific lists still provide the conversion
+  // order below.
+  std::vector<RenderPrimRecord>().swap(extracted.records);
 
   const auto abort = [&](const std::string& error, bool cancelled) {
     sink->AbortScene();
@@ -3476,8 +3533,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   }
 
   int32_t points_id = 0;
-  for (const RenderPrimRecord& rec : extracted.records) {
-    if (rec.type_name != "Points") continue;
+  for (const RenderPrimRecord& rec : extracted.points) {
     if (cancellation_requested()) {
       abort("conversion cancelled", true);
       return result;
@@ -3499,9 +3555,16 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     }
     RenderPoints points;
     if (ConvertPoints(rec.prim, &points)) {
+      if (points.has_alloc_failure()) {
+        warnings_.push_back("Out of memory converting Points '" + rec.path +
+                            "'; the prim was skipped");
+        ++points_id;
+        continue;
+      }
       if (!config_.mesh.retain_geometry) {
         ReleaseSourceMeshStaticArrays(stage, rec.prim);
       }
+      points.compact();
       if (!sink->AddPoints(points_id, std::move(points))) {
         abort("scene sink rejected points", false);
         return result;
@@ -3532,6 +3595,11 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     }
     RenderCurves curves;
     if (!ConvertCurves(extracted.curves[i].prim, &curves)) continue;
+    if (curves.has_alloc_failure()) {
+      warnings_.push_back("Out of memory converting curves '" +
+                          extracted.curves[i].path + "'; the prim was skipped");
+      continue;
+    }
     if (!config_.mesh.retain_geometry) {
       ReleaseSourceMeshStaticArrays(stage, extracted.curves[i].prim);
     }
@@ -3541,6 +3609,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     if (found != binding_catalog.material_by_path.end()) {
       curves.material_id = found->second;
     }
+    curves.compact();
     if (!sink->AddCurves(static_cast<int32_t>(i), std::move(curves))) {
       abort("scene sink rejected curves", false);
       return result;
@@ -3738,10 +3807,7 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
 
 void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extracted,
                                               RenderScene* scene) {
-  std::unordered_map<std::string, int32_t> path_to_node;
   const size_t record_count = extracted.records.size();
-  path_to_node.reserve(record_count);
-  path_to_node.max_load_factor(0.7f);
   scene->nodes.reserve(record_count);
   scene->node_by_path.reserve(record_count);
   scene->node_by_path.max_load_factor(0.7f);
@@ -3788,15 +3854,14 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
     }
 
     int32_t node_id = static_cast<int32_t>(scene->nodes.size());
-    path_to_node[node.prim_path] = node_id;
     scene->node_by_path[node.prim_path] = node_id;
 
     // Set parent
     std::string parent_path = GetParentPath(node.prim_path);
     bool parent_visible = true;
     if (!parent_path.empty() && parent_path != "/") {
-      auto it = path_to_node.find(parent_path);
-      if (it != path_to_node.end()) {
+      auto it = scene->node_by_path.find(parent_path);
+      if (it != scene->node_by_path.end()) {
         node.parent_id = it->second;
         scene->nodes[it->second].children.push_back(node_id);
         parent_visible = scene->nodes[it->second].visible;
@@ -4301,14 +4366,19 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
           (sb.joint_indices.size() % point_count) == 0) {
         influences = sb.joint_indices.size() / point_count;
       }
+      size_t expected_influence_count = 0;
+      const bool influence_count_valid =
+          safe::mul(point_count, influences, &expected_influence_count);
       if (influences > 0 && point_count > 1 &&
+          influence_count_valid &&
           sb.joint_indices.size() == influences) {
-        const std::vector<int32_t> indices = sb.joint_indices;
-        const std::vector<float> weights = sb.joint_weights;
-        sb.joint_indices.clear();
-        sb.joint_weights.clear();
-        sb.joint_indices.reserve(point_count * influences);
-        sb.joint_weights.reserve(point_count * influences);
+        // Move the authored tuple out while constructing the expanded form.
+        // Copying it first kept three full influence buffers resident (the
+        // authored arrays, their copies, and the expanded result).
+        std::vector<int32_t> indices = std::move(sb.joint_indices);
+        std::vector<float> weights = std::move(sb.joint_weights);
+        sb.joint_indices.reserve(expected_influence_count);
+        sb.joint_weights.reserve(expected_influence_count);
         for (size_t point = 0; point < point_count; ++point) {
           sb.joint_indices.insert(sb.joint_indices.end(), indices.begin(),
                                   indices.end());
@@ -4317,23 +4387,30 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
         }
       }
       if (influences == 0 || point_count == 0 ||
-          sb.joint_indices.size() != point_count * influences) {
+          !influence_count_valid ||
+          sb.joint_indices.size() != expected_influence_count) {
         warnings_.push_back("Ignoring malformed skin influences on " +
                             prim.GetPath().str());
       } else {
         size_t output_influences = influences;
         std::vector<int32_t> reduced_indices;
         std::vector<float> reduced_weights;
+        size_t reduced_count = 0;
+        size_t reduced_bytes = 0;
+        const bool reduction_size_valid =
+            safe::mul(point_count,
+                      static_cast<size_t>(config_.mesh.target_bone_count),
+                      &reduced_count) &&
+            safe::mul(reduced_count, size_t{8}, &reduced_bytes);
         if (config_.mesh.enable_bone_reduction &&
             config_.mesh.target_bone_count > 0 &&
             config_.mesh.target_bone_count < influences &&
             // ~8B per point-influence pair of temporaries; on a nearly-full
             // heap keep the authored influences instead of abort()ing.
-            !WouldOverflowSizeMul(point_count, output_influences * 8) &&
-            ProbeAlloc(point_count * config_.mesh.target_bone_count * 8)) {
+            reduction_size_valid && ProbeAlloc(reduced_bytes)) {
           output_influences = config_.mesh.target_bone_count;
-          reduced_indices.resize(point_count * output_influences, 0);
-          reduced_weights.resize(point_count * output_influences, 0.0f);
+          reduced_indices.resize(reduced_count, 0);
+          reduced_weights.resize(reduced_count, 0.0f);
           std::vector<std::pair<float, int32_t>> ranked(influences);
           for (size_t point = 0; point < point_count; ++point) {
             const size_t source = point * influences;
@@ -6519,19 +6596,64 @@ int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
   const std::string resolved = ResolveAssetPath(file, asset_anchor_id);
   const ColorSpace csp =
       color_space == ColorSpace::Unknown ? ColorSpace::sRGB : color_space;
-  for (size_t i = 0; i < scene->images.size(); ++i) {
-    if (scene->images[i].resolved_path == resolved &&
-        scene->images[i].color_space == csp) {
-      return static_cast<int32_t>(i);
-    }
-  }
+  const int32_t cached = FindCachedImageId(scene, resolved, csp);
+  if (cached >= 0) return cached;
   TextureImage image;
   image.name = file;
   image.resolved_path = resolved;
   image.color_space = csp;
   const int32_t id = static_cast<int32_t>(scene->images.size());
   scene->images.push_back(std::move(image));
+  RememberImageId(scene, resolved, csp, id);
   return id;
+}
+
+int32_t RenderSceneConverter::FindCachedImageId(
+    RenderScene* scene, const std::string& resolved, ColorSpace color_space) {
+  if (!scene) return -1;
+  if (image_cache_scene_ != scene) {
+    image_id_cache_.clear();
+    image_cache_scene_ = scene;
+  }
+  const uint64_t hash = ImageCacheHash(resolved, color_space);
+  const auto candidates = image_id_cache_.equal_range(hash);
+  for (auto it = candidates.first; it != candidates.second; ++it) {
+    if (it->second >= 0 && static_cast<size_t>(it->second) < scene->images.size()) {
+      const TextureImage& image = scene->images[static_cast<size_t>(it->second)];
+      if (image.resolved_path == resolved && image.color_space == color_space) {
+        return it->second;
+      }
+    }
+  }
+
+  // A caller may have populated the scene catalog before the converter sees an
+  // image. Pay the compatibility scan once, then make subsequent references O(1).
+  for (size_t i = 0; i < scene->images.size(); ++i) {
+    if (scene->images[i].resolved_path == resolved &&
+        scene->images[i].color_space == color_space) {
+      const int32_t id = static_cast<int32_t>(i);
+      image_id_cache_.emplace(hash, id);
+      return id;
+    }
+  }
+  return -1;
+}
+
+void RenderSceneConverter::RememberImageId(RenderScene* scene,
+                                           const std::string& resolved,
+                                           ColorSpace color_space,
+                                           int32_t id) {
+  if (!scene) return;
+  if (image_cache_scene_ != scene) {
+    image_id_cache_.clear();
+    image_cache_scene_ = scene;
+  }
+  image_id_cache_.emplace(ImageCacheHash(resolved, color_space), id);
+}
+
+void RenderSceneConverter::ResetImageIdCache() {
+  image_id_cache_.clear();
+  image_cache_scene_ = nullptr;
 }
 
 bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
@@ -6637,7 +6759,10 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
       }
     }
   }
-  for (const auto& child : prim.GetChildren()) {
+  const size_t child_count = prim.GetChildCount();
+  for (size_t i = 0; i < child_count; ++i) {
+    const UsdPrim child = prim.GetChildAt(i);
+    if (!child.IsValid()) continue;
     candidates.push_back(child);
   }
 
@@ -7245,14 +7370,8 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
           cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
       const std::string resolved =
           ResolveAssetPath(tex_data.file, AssetAnchorOf(texture_prim));
-      int32_t image_id = -1;
-      for (size_t i = 0; i < scene->images.size(); ++i) {
-        if (scene->images[i].resolved_path == resolved &&
-            scene->images[i].color_space == image_color_space) {
-          image_id = static_cast<int32_t>(i);
-          break;
-        }
-      }
+      int32_t image_id =
+          FindCachedImageId(scene, resolved, image_color_space);
       if (image_id < 0) {
         TextureImage image;
         image.name = texture_prim.IsValid() ? texture_prim.GetName() : tex_data.file;
@@ -7275,6 +7394,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
         }
         image_id = static_cast<int32_t>(scene->images.size());
         scene->images.push_back(std::move(image));
+        RememberImageId(scene, resolved, image_color_space, image_id);
       }
 
       RenderTexture texture;
