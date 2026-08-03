@@ -1148,8 +1148,17 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[16 * 4 + 3] = mat.metallicTexBias;
   dst[17 * 4 + 0] = mat.roughnessTexScale;
   dst[17 * 4 + 1] = mat.roughnessTexBias;
-  dst[17 * 4 + 2] = mat.displacementTexScale;
-  dst[17 * 4 + 3] = mat.displacementTexBias;
+  // Ptex and UDIM displacement are baked before raster upload. Disable the
+  // vertex-stage sample so the baked surface is not moved a second time (the
+  // vertex stage cannot select a Ptex face and the CPU bake handles both paths).
+  dst[17 * 4 + 2] = (mat.displacementSample.isPtex ||
+                     mat.displacementSample.isUdim)
+                         ? 0.0f
+                         : mat.displacementTexScale;
+  dst[17 * 4 + 3] = (mat.displacementSample.isPtex ||
+                     mat.displacementSample.isUdim)
+                         ? 0.0f
+                         : mat.displacementTexBias;
   // Per-slot UV set. Displacement stays on uv0: it is sampled in the vertex /
   // tessellation stages, which do not carry the second set.
   dst[18 * 4 + 0] = static_cast<float>(mat.baseColorSample.uvSet);
@@ -1241,6 +1250,39 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[55 * 4 + 1] = mat.displacementSample.isUdim
                          ? static_cast<float>(mat.displacementTex)
                          : -1.0f;
+  // Ptex base-color atlas: (rect texel offset, face count, enabled, reserved).
+  // The face id itself is fetched from the per-triangle source-face SSBO.
+  dst[56 * 4 + 0] = mat.baseColorSample.isPtex
+                         ? static_cast<float>(
+                               mat.baseColorSample.ptexRectTexelOffset)
+                         : 0.0f;
+  dst[56 * 4 + 1] = mat.baseColorSample.isPtex
+                         ? static_cast<float>(mat.baseColorSample.ptexFaceCount)
+                         : 0.0f;
+  dst[56 * 4 + 2] = mat.baseColorSample.isPtex
+                         ? 1.0f
+                         : 0.0f;
+  dst[56 * 4 + 3] = 0.0f;
+  auto packPtexInfo = [dst](int slot, const DrawTexSampleCPU& sample) {
+    dst[slot * 4 + 0] = sample.isPtex
+                             ? static_cast<float>(sample.ptexRectTexelOffset)
+                             : 0.0f;
+    dst[slot * 4 + 1] = sample.isPtex
+                             ? static_cast<float>(sample.ptexFaceCount)
+                             : 0.0f;
+    dst[slot * 4 + 2] = sample.isPtex ? 1.0f : 0.0f;
+    dst[slot * 4 + 3] = 0.0f;
+  };
+  packPtexInfo(57, mat.metallicSample);
+  packPtexInfo(58, mat.roughnessSample);
+  packPtexInfo(59, mat.normalSample);
+  packPtexInfo(60, mat.emissiveSample);
+  packPtexInfo(61, mat.opacitySample);
+  packPtexInfo(62, mat.occlusionSample);
+  packPtexInfo(63, mat.specularColorSample);
+  packPtexInfo(64, mat.coatWeightSample);
+  packPtexInfo(65, mat.coatColorSample);
+  packPtexInfo(66, mat.coatRoughnessSample);
 }
 
 }  // namespace tusdview

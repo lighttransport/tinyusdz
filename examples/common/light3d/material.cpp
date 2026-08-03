@@ -534,6 +534,20 @@ uniform int uKind;           // kind AOV: 0=none/1=component/2=group/3=assembly/
 uniform usamplerBuffer uFaceIdTex;  // per-triangle source face id (source-face-id AOV)
 uniform int uFaceBase;       // first triangle of this submesh (gl_PrimitiveID is submesh-local)
 uniform bool uHasFaceId;
+// Base-color Ptex uses an embedded face-rectangle table. The source-face buffer
+// supplies the record for the current triangle; UVs are intrinsic face-local.
+uniform bool uBasePtex;
+uniform vec2 uBasePtexGrid; // rectangle texel offset, face count
+uniform vec2 uMetallicPtexGrid;
+uniform vec2 uRoughnessPtexGrid;
+uniform vec2 uNormalPtexGrid;
+uniform vec2 uEmissivePtexGrid;
+uniform vec2 uOpacityPtexGrid;
+uniform vec2 uOcclusionPtexGrid;
+uniform vec2 uSpecularColorPtexGrid;
+uniform vec2 uCoatWeightPtexGrid;
+uniform vec2 uCoatColorPtexGrid;
+uniform vec2 uCoatRoughnessPtexGrid;
 
 // Stable distinct color per material id (-1 -> neutral gray).
 vec3 idColor(int id) {
@@ -585,6 +599,28 @@ vec4 sampleRoutedUdim(int route, int slot, vec2 uv, vec4 missing) {
 
 vec2 xformUv(vec2 uv, vec3 row0, vec3 row1) {
     return vec2(dot(vec3(uv, 1.0), row0), dot(vec3(uv, 1.0), row1));
+}
+
+vec2 ptexUv(sampler2D tex, vec2 uv, vec2 grid) {
+    if (grid.y <= 0.5 || !uHasFaceId) return uv;
+    int face = int(texelFetch(uFaceIdTex, uFaceBase + gl_PrimitiveID).r);
+    int count = int(grid.y + 0.5);
+    if (face < 0 || face >= count) return uv;
+    ivec2 size = textureSize(tex, 0);
+    int base = int(grid.x + 0.5) + face * 8;
+    uint value[4];
+    for (int component = 0; component < 4; ++component) {
+        int lo = base + component * 2;
+        ivec2 p0 = ivec2(lo % size.x, lo / size.x);
+        ivec2 p1 = ivec2((lo + 1) % size.x, (lo + 1) / size.x);
+        value[component] = uint(texelFetch(tex, p0, 0).a * 255.0 + 0.5) |
+                           (uint(texelFetch(tex, p1, 0).a * 255.0 + 0.5) << 8u);
+    }
+    if (value[2] == 0u || value[3] == 0u) return uv;
+    vec2 t = clamp(uv, 0.0, 1.0);
+    vec2 px = vec2(value[0], value[1]) +
+              vec2(t.x, 1.0 - t.y) * vec2(value[2] - 1u, value[3] - 1u);
+    return (px + vec2(0.5)) / vec2(size);
 }
 
 // Linear -> sRGB OETF for the final shaded output. sRGB base-color textures are
@@ -641,6 +677,7 @@ float sampleOcclusion() {
     if (!uHasOcclusionTex) return 1.0;
     vec2 uv = (uOcclusionUvSet == 1) ? vUV1 : vUV;
     vec2 tuv = xformUv(uv, uOcclusionUv0, uOcclusionUv1);
+    tuv = ptexUv(uOcclusionTex, tuv, uOcclusionPtexGrid);
     vec4 c = uOcclusionTexIsUdim
         ? sampleUdim(uOcclusionUdimTex, uOcclusionUdimSlot, tuv, vec4(1.0))
         : texture(uOcclusionTex, tuv);
@@ -653,10 +690,11 @@ float sampleOcclusion() {
 // the caller multiplies the two unconditionally.
 float sampleCoatScalar(sampler2D tex, bool has, bool isUdim, int udimRoute,
                        int udimSlot, vec3 uv0, vec3 uv1, int uvSet, int ch,
-                       vec4 scale, vec4 bias) {
+                       vec4 scale, vec4 bias, vec2 ptexGrid) {
     if (!has) return 1.0;
     vec2 uv = (uvSet == 1) ? vUV1 : vUV;
     uv = xformUv(uv, uv0, uv1);
+    uv = ptexUv(tex, uv, ptexGrid);
     vec4 texel = isUdim ? sampleRoutedUdim(udimRoute, udimSlot, uv, vec4(1.0))
                         : texture(tex, uv);
     vec4 c = texel * scale + bias;
@@ -665,10 +703,11 @@ float sampleCoatScalar(sampler2D tex, bool has, bool isUdim, int udimRoute,
 
 vec3 sampleCoatColor(sampler2D tex, bool has, bool isUdim, int udimRoute,
                      int udimSlot, vec3 uv0, vec3 uv1, int uvSet, vec4 scale,
-                     vec4 bias) {
+                     vec4 bias, vec2 ptexGrid) {
     if (!has) return vec3(1.0);
     vec2 uv = (uvSet == 1) ? vUV1 : vUV;
     uv = xformUv(uv, uv0, uv1);
+    uv = ptexUv(tex, uv, ptexGrid);
     vec4 texel = isUdim ? sampleRoutedUdim(udimRoute, udimSlot, uv, vec4(1.0))
                         : texture(tex, uv);
     return (texel * scale + bias).rgb;
@@ -714,6 +753,31 @@ void main() {
 
     if (uHasBaseColorTex) {
         vec2 uv = xformUv(uUvSet.x == 1 ? vUV1 : vUV, uBaseColorUv0, uBaseColorUv1);
+        if (uBasePtex && uHasFaceId) {
+            int face = int(texelFetch(uFaceIdTex, uFaceBase + gl_PrimitiveID).r);
+            int count = int(uBasePtexGrid.y + 0.5);
+            if (face >= 0 && face < count) {
+                ivec2 size = textureSize(uBaseColorTex, 0);
+                int base = int(uBasePtexGrid.x + 0.5) + face * 8;
+                uint value[4];
+                for (int component = 0; component < 4; ++component) {
+                    int lo = base + component * 2;
+                    float a = texelFetch(uBaseColorTex,
+                                        ivec2(lo % size.x, lo / size.x), 0).a;
+                    float b = texelFetch(uBaseColorTex,
+                                        ivec2((lo + 1) % size.x,
+                                              (lo + 1) / size.x), 0).a;
+                    value[component] = uint(a * 255.0 + 0.5) |
+                                       (uint(b * 255.0 + 0.5) << 8u);
+                }
+                vec2 px = vec2(float(value[0]), float(value[1])) +
+                          vec2(clamp(uv.x, 0.0, 1.0),
+                               1.0 - clamp(uv.y, 0.0, 1.0)) *
+                          vec2(float(max(value[2], 1u) - 1u),
+                               float(max(value[3], 1u) - 1u));
+                uv = (px + vec2(0.5)) / vec2(size);
+            }
+        }
         vec4 texel = uBaseColorTexIsUdim
                          ? sampleUdim(uBaseColorUdimTex, uUdimSlots.x, uv,
                                       vec4(1.0, 0.0, 1.0, 1.0))
@@ -724,6 +788,7 @@ void main() {
     }
     if (uHasMetallicTex) {
         vec2 uv = xformUv(uUvSet.y == 1 ? vUV1 : vUV, uMetallicUv0, uMetallicUv1);
+        uv = ptexUv(uMetallicTex, uv, uMetallicPtexGrid);
         vec4 texel = uMetallicTexIsUdim
                       ? sampleUdim(uMetallicUdimTex, uUdimSlots.y, uv, vec4(1.0))
                       : texture(uMetallicTex, uv);
@@ -731,6 +796,7 @@ void main() {
     }
     if (uHasRoughnessTex) {
         vec2 uv = xformUv(uRoughnessUvSet == 1 ? vUV1 : vUV, uRoughnessUv0, uRoughnessUv1);
+        uv = ptexUv(uRoughnessTex, uv, uRoughnessPtexGrid);
         vec4 texel = uRoughnessTexIsUdim
                       ? sampleUdim(uRoughnessUdimTex, uRoughnessUdimSlot, uv, vec4(1.0))
                       : texture(uRoughnessTex, uv);
@@ -738,6 +804,7 @@ void main() {
     }
     if (uHasEmissiveTex) {
         vec2 uv = xformUv(uUvSet.w == 1 ? vUV1 : vUV, uEmissiveUv0, uEmissiveUv1);
+        uv = ptexUv(uEmissiveTex, uv, uEmissivePtexGrid);
         vec4 texel = uEmissiveTexIsUdim
                          ? sampleUdim(uEmissiveUdimTex, uUdimSlots.w, uv,
                                       vec4(1.0, 0.0, 1.0, 1.0))
@@ -750,6 +817,7 @@ void main() {
                  : normalize(vNormal);
     if (uHasNormalTex) {
         vec2 uv = xformUv(uUvSet.z == 1 ? vUV1 : vUV, uNormalUv0, uNormalUv1);
+        uv = ptexUv(uNormalTex, uv, uNormalPtexGrid);
         vec3 tangentNormal = ((uNormalTexIsUdim
                                   ? sampleUdim(uNormalUdimTex, uUdimSlots.z, uv,
                                                vec4(0.5, 0.5, 1.0, 1.0))
@@ -793,6 +861,7 @@ void main() {
     if (uHasOpacityTex) {
         vec2 uv = xformUv(uOpacityUvSet == 1 ? vUV1 : vUV,
                           uOpacityUv0, uOpacityUv1);
+        uv = ptexUv(uOpacityTex, uv, uOpacityPtexGrid);
         // Missing opacity UDIM tiles are opaque, not magenta/channel-dependent.
         vec4 ot = uOpacityTexIsUdim
                       ? sampleUdim(uOpacityUdimTex, uOpacityUdimSlot, uv, vec4(1.0))
@@ -913,7 +982,7 @@ void main() {
                               uAdvancedUdimSlots.x,
                               uSpecularColorUv0, uSpecularColorUv1,
                               uSpecularColorUvSet, uSpecularColorScale,
-                              uSpecularColorBias);
+                              uSpecularColorBias, uSpecularColorPtexGrid);
     }
     if (uRenderMode == 39) { fragColor = vec4(F0, 1.0); return; }
     if (uRenderMode == 40) {
@@ -927,7 +996,8 @@ void main() {
                                       uAdvancedUdimSlots.y,
                                       uCoatWeightUv0, uCoatWeightUv1,
                                       uCoatWeightUvSet, uCoatWeightChannel,
-                                      uCoatWeightScale, uCoatWeightBias),
+                                      uCoatWeightScale, uCoatWeightBias,
+                                      uCoatWeightPtexGrid),
                      0.0, 1.0);
     float cr = clamp(uCoatRoughness *
                      sampleCoatScalar(uCoatRoughnessTex, uHasCoatRoughnessTex,
@@ -937,7 +1007,8 @@ void main() {
                                       uCoatRoughnessUv0, uCoatRoughnessUv1,
                                       uCoatRoughnessUvSet,
                                       uCoatRoughnessChannel,
-                                      uCoatRoughnessScale, uCoatRoughnessBias),
+                                      uCoatRoughnessScale, uCoatRoughnessBias,
+                                      uCoatRoughnessPtexGrid),
                      0.02, 1.0);
     vec3 coatTint = uCoatColor * sampleCoatColor(uCoatColorTex, uHasCoatColorTex,
                                                  uAdvancedTexIsUdim.z,
@@ -946,7 +1017,8 @@ void main() {
                                                  uCoatColorUv0, uCoatColorUv1,
                                                  uCoatColorUvSet,
                                                  uCoatColorScale,
-                                                 uCoatColorBias);
+                                                 uCoatColorBias,
+                                                 uCoatColorPtexGrid);
     if (uRenderMode == 36) { fragColor = vec4(vec3(cw), 1.0); return; }
     if (uRenderMode == 37) { fragColor = vec4(coatTint, 1.0); return; }
     if (uRenderMode == 38) { fragColor = vec4(vec3(cr), 1.0); return; }

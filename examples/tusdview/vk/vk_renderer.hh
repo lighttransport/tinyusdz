@@ -52,6 +52,13 @@ class VulkanRenderer final : public Renderer {
   void appendCurves(const DrawCurvesCPU& curves) override;
   void appendVolume(const DrawVolumeCPU& vol) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
+  void evictTexture(int slot) override;
+  size_t textureResidentBytes(int slot) const override;
+  bool updateTextureRegion(int slot, int x, int y, int w, int h,
+                           const uint8_t* rgba,
+                           size_t rowBytes = 0) override;
+  bool updateTextureRegions(
+      int slot, const std::vector<TextureRegionUpdate>& updates) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
@@ -90,6 +97,15 @@ class VulkanRenderer final : public Renderer {
   const RendererCaps& caps() const override { return caps_; }
   bool rayTracingAvailable() const override { return rtSupported_; }
   bool rayTracingActive() const override { return rtActive_; }
+  uint32_t rayTracingAccumulatedSamples() const override {
+    return rtActive_ && tlas_ != VK_NULL_HANDLE ? rtAccumFrame_ + 1u : 0u;
+  }
+  uint32_t rayTracingTlasChunks() const override { return rtTlasChunkCount_; }
+  double rayTracingInitializationMs() const override { return rtInitMs_; }
+  uint64_t rayTracingInputInstances() const override {
+    return rtTlasInputInstances_;
+  }
+  bool rayTracingBuildIncomplete() const override { return rtBuildIncomplete_; }
   void setRayTracing(bool enable) override;
   void setLodCamera(const RtLodCamera& cam, bool reselect) override;
   void shutdown() override;
@@ -317,6 +333,7 @@ class VulkanRenderer final : public Renderer {
   void initBoxProxyRaster();            // static box geometry for raster LOD proxies
   void drawBoxProxies(VkCommandBuffer cb);  // upload + instanced draw of box proxies
   void rebuildTlas();                  // (re)build TLAS + MeshDesc/Material SSBOs
+  void rebuildRtTextureTable();        // refresh bindings 11..14, keep AS intact
   void createRtImage();                // storage image sized to the viewport
   void traceRt(VkCommandBuffer cb);    // dispatch + copy into colorImg_
 
@@ -730,7 +747,15 @@ class VulkanRenderer final : public Renderer {
   std::vector<VkDescriptorSet> texDescs_;
   std::vector<VkDescriptorSet> texUdimArrayDescs_;
   std::vector<VkImageView> texSlotViews_;
+  std::vector<VkImage> texSlotImgs_;
+  std::vector<VkDeviceMemory> texSlotMems_;
+  std::vector<size_t> texSlotBytes_;
+  std::vector<int> texSlotWidths_;
+  std::vector<int> texSlotHeights_;
+  std::vector<uint8_t> texRegionUpdatable_;
   std::vector<VkImageView> texUdimArrayViews_;
+  std::vector<VkImage> texUdimArrayImgs_;
+  std::vector<VkDeviceMemory> texUdimArrayMems_;
   std::vector<uint8_t> texIsUdim_;
   VkImage udimLutAtlasImg_{VK_NULL_HANDLE};
   VkDeviceMemory udimLutAtlasMem_{VK_NULL_HANDLE};
@@ -792,6 +817,7 @@ class VulkanRenderer final : public Renderer {
   float proj_[16];
   float cameraPos_[3]{0, 0, 0};
   float exposure_{0.0f};
+  RtCameraLens cameraLens_;
   float lightDir_[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float lightColor_[3]{1.0f, 1.0f, 1.0f};
   float clear_[4]{0.12f, 0.12f, 0.13f, 1.0f};
@@ -799,6 +825,7 @@ class VulkanRenderer final : public Renderer {
   // --- Ray tracing (ray query) state ---
   bool rtSupported_{false};   // device + shader available
   bool rtActive_{false};      // RT technique currently selected
+  uint32_t rtMaxInstanceCount_{0};  // VK acceleration-structure limit
   int rtMode_{0};             // RenderMode (wireframe/matId/AOV) for RT + raster
   float depthScale_{1.0f};    // depth-AOV normalizer (scene extent)
   bool displacement_{true};   // apply UsdPreviewSurface displacement (coarse)
@@ -807,6 +834,7 @@ class VulkanRenderer final : public Renderer {
   float sceneMin_[3]{0, 0, 0};      // position-AOV scene bbox
   float sceneExtent_[3]{1, 1, 1};
   bool tlasDirty_{true};      // TLAS / SSBOs need rebuild
+  bool rtTextureTableDirty_{false};  // texture SSBOs changed; no AS rebuild needed
   std::string techniqueLabel_{"Vulkan"};  // caps_.backend_name points here
   uint32_t scratchAlign_{256};
   // Visible USD purposes for the RT TLAS (bit i = PurposeId i; default: guide
@@ -841,6 +869,15 @@ class VulkanRenderer final : public Renderer {
   // Drop the BLAS of prototypes this pose does not render at Full. Without this
   // the BLAS set only ever grows as the camera visits new regions.
   void evictBlasNotIn(const std::vector<uint32_t>& keepMeshIds);
+  void destroyTlasChunks();
+
+  struct ExtraTlasChunk {
+    VkAccelerationStructureKHR as{VK_NULL_HANDLE};
+    VkBuffer asBuffer{VK_NULL_HANDLE};
+    VkDeviceMemory asMemory{VK_NULL_HANDLE};
+    VkBuffer instanceBuffer{VK_NULL_HANDLE};
+    VkDeviceMemory instanceMemory{VK_NULL_HANDLE};
+  };
 
   VkAccelerationStructureKHR tlas_{VK_NULL_HANDLE};
   VkBuffer tlasBuf_{VK_NULL_HANDLE};
@@ -848,6 +885,11 @@ class VulkanRenderer final : public Renderer {
   VkBuffer instBuf_{VK_NULL_HANDLE};       // VkAccelerationStructureInstanceKHR[]
   VkDeviceMemory instMem_{VK_NULL_HANDLE};
   VkDeviceSize instCap_{0};
+  std::vector<ExtraTlasChunk> extraTlasChunks_;
+  uint32_t rtTlasChunkCount_{0};
+  uint32_t rtTlasChunkStride_{0};
+  uint64_t rtTlasInputInstances_{0};
+  bool rtBuildIncomplete_{false};
   VkBuffer meshDescBuf_{VK_NULL_HANDLE};    // per-mesh {addrs, matId, normalMat}
   VkDeviceMemory meshDescMem_{VK_NULL_HANDLE};
   VkDeviceSize meshDescCap_{0};
@@ -894,6 +936,7 @@ class VulkanRenderer final : public Renderer {
   uint64_t rtAccumGen_{0};          // bumped on geometry / viewport invalidation
   uint64_t lastRtAccumGen_{~0ull};  // generation of the last traced frame
   bool rtAccumEnabled_{true};       // master toggle for progressive accumulation
+  double rtInitMs_{0.0};            // lazy ray-query pipeline creation time
 
   // View-dependent LOD: camera snapshot used by rebuildTlas to classify instances.
   // Default (lodEnabled=false) reproduces the all-Full, no-cull TLAS exactly.

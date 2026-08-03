@@ -31,7 +31,7 @@ COVERAGE_TOL="${TUSDVIEW_PARITY_COVERAGE_TOL:-48}"  # informational only
 # Default: a lightweight set from the repo's test fixtures.
 FILES="${TUSDVIEW_PARITY_FILES:-$REPO_ROOT/tests/usda/tusdview-shadow-alpha-inst.usda $REPO_ROOT/tests/usda/cube-001.usda}"
 # Backends to compare (subset of: vk-raster vk-rt cuda-rt).
-BACKENDS="${TUSDVIEW_PARITY_BACKENDS:-vk-raster}"
+BACKENDS="${TUSDVIEW_PARITY_BACKENDS:-vk-raster vk-rt}"
 
 if [ ! -x "$TUSDVIEW" ]; then
   echo "SKIP: tusdview binary not found at $TUSDVIEW (set TUSDVIEW=...)"

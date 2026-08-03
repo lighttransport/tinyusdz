@@ -693,6 +693,15 @@ run() {
   fi
 }
 ran=0; fail=0; vk_software=0
+declare -A backend_available=()
+declare -A backend_unavailable=()
+GL_RUN=()
+if [ -n "${DISPLAY:-}" ] && command -v xdpyinfo >/dev/null 2>&1 &&
+   xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+  : # Prefer a usable inherited display when it exposes hardware OpenGL.
+elif command -v xvfb-run >/dev/null 2>&1; then
+  GL_RUN=(xvfb-run -a)
+fi
 want_mode() {
   local needle="$1" item
   for item in ${TUSDVIEW_SEMANTIC_MODES:-albedo metallic roughness emissive opacity vector coat-normal occlusion coat-weight coat-color coat-roughness specular-f0 ior-f0}; do
@@ -709,17 +718,36 @@ want_family() {
 }
 case_run() {
   local tag="$1" marker="$2" source="$3" mode="$4" kind="$5" case_id="$6"; shift 6
+  local backend_key="${tag%-legacy}"
+  if [ "${backend_unavailable[$backend_key]:-0}" = 1 ]; then return; fi
   local img="$OUT/$tag-$case_id.ppm" log="$OUT/$tag-$case_id.log"
-  if [[ "$tag" = gl* ]] && [ -z "${DISPLAY:-}" ]; then
-    command -v xvfb-run >/dev/null || { echo 'SKIP: no Xvfb for GL'; return; }
-    run xvfb-run -a "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$img" "$source" >"$log" 2>&1
+  if [[ "$tag" = gl* ]]; then
+    run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$img" "$source" >"$log" 2>&1
   else
     run "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$img" "$source" >"$log" 2>&1
   fi
+  local run_rc=$?
   if grep -q '\[tusdview\]\[error\] load failed:' "$log"; then
     echo "FAIL: $tag $case_id asset load"; fail=1; return
   fi
-  if ! grep -q "$marker" "$log" || [ ! -s "$img" ]; then echo "SKIP: $tag $kind unavailable"; return; fi
+  if ! grep -q "$marker" "$log"; then
+    if [ "${backend_available[$backend_key]:-0}" = 1 ]; then
+      echo "FAIL: $tag $kind stopped producing its backend marker (exit $run_rc)"
+      fail=1
+    else
+      backend_unavailable[$backend_key]=1
+      if [ "$run_rc" -eq 124 ] || [ "$run_rc" -eq 137 ]; then
+        echo "SKIP: $tag backend probe timed out; skipping its remaining cases"
+      else
+        echo "SKIP: $tag backend unavailable; skipping its remaining cases"
+      fi
+    fi
+    return
+  fi
+  backend_available[$backend_key]=1
+  if [ ! -s "$img" ]; then
+    echo "FAIL: $tag $kind produced no screenshot"; fail=1; return
+  fi
   [[ "$tag" = vk-raster* ]] && grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer' "$log" && vk_software=1
   ran=$((ran+1)); probe "$img" "$kind" || { echo "FAIL: $tag $kind"; fail=1; }
   if [[ "$tag" = *-legacy ]] && [ "$kind" != coat ]; then
@@ -730,8 +758,8 @@ case_run() {
   fi
   if [ "$case_id" = preview-vector ]; then
     local packed="$OUT/$tag-vector-usdz.ppm"
-    if [[ "$tag" = gl* ]] && [ -z "${DISPLAY:-}" ]; then
-      run xvfb-run -a "$@" --config "$OUT/config.json" --mode normals --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$OUT/normal.usdz" >"$OUT/$tag-vector-usdz.log" 2>&1
+    if [[ "$tag" = gl* ]]; then
+      run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode normals --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$OUT/normal.usdz" >"$OUT/$tag-vector-usdz.log" 2>&1
     else
       run "$@" --config "$OUT/config.json" --mode normals --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$OUT/normal.usdz" >"$OUT/$tag-vector-usdz.log" 2>&1
     fi
@@ -764,8 +792,8 @@ case_run() {
   esac
   if [ -n "$package" ]; then
     local packed="$OUT/$tag-$case_id-usdz.ppm"
-    if [[ "$tag" = gl* ]] && [ -z "${DISPLAY:-}" ]; then
-      run xvfb-run -a "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
+    if [[ "$tag" = gl* ]]; then
+      run "${GL_RUN[@]}" "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
     else
       run "$@" --config "$OUT/config.json" --mode "$mode" --frames 4 --view-dir 0,0,-1 --screenshot "$packed" "$package" >"$OUT/$tag-$case_id-usdz.log" 2>&1
     fi

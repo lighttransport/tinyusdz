@@ -30,6 +30,9 @@ cmake --build build_ninja -j16 --target tusdview
   configure log. Force a GL-only build with `-DTUSDVIEW_WITH_VULKAN=OFF`.
   (Regenerate the embedded SPIR-V with `vk/shaders/build-shaders.sh` after a
   shader change — that script is the only thing that needs `glslangValidator`.)
+  Common PNG/JPEG/BMP/TGA decoding uses the vendored fuzz-tested nanoimage
+  backend by default (`-DTINYUSDZ_WITH_NANOIMAGE=ON`); TinyEXR v3 remains the
+  default OpenEXR backend and preserves fp16/HDR data for the texture pipeline.
   The raster descriptor ABI uses four bound sets (material images, per-mesh
   deformation data, frame data, and material parameters), matching Vulkan's
   guaranteed `maxBoundDescriptorSets` minimum. This includes software devices
@@ -41,13 +44,14 @@ cmake --build build_ninja -j16 --target tusdview
   header is the only step that needs a `GL_EXT_ray_query`-capable glslang (≈
   glslang ≥ 11); build one once with `examples/common/build-glslang.sh` if you
   edit `vk/shaders/raytrace.comp`.
-  Vulkan, CUDA, and HIP RT consume the same six-slot semantic texture table
-  (base color, metallic, roughness, normal, emissive, opacity), including UV1,
-  transforms, sRGB decode, compressed-only sources, and sparse UDIMs. Masked
-  texels are rejected during traversal. Complete ordinary/compressed/UDIM mip
-  chains use trilinear filtering: ray-differential footprint LOD in Vulkan and
-  projected-triangle LOD in CUDA/HIP. Raster-style anisotropy remains future
-  work.
+  Vulkan, CUDA, and HIP RT consume the same semantic texture table (base color,
+  metallic, roughness, normal, emissive, opacity, occlusion, specular color,
+  and coat weight/color/roughness), including UV1, transforms, sRGB decode,
+  compressed-only sources, sparse UDIMs, and native Ptex face-local sampling.
+  Masked texels are rejected during traversal. Complete ordinary/compressed/
+  UDIM mip chains use trilinear filtering: ray-differential footprint LOD in
+  Vulkan and projected-triangle LOD in CUDA/HIP. Raster-style anisotropy
+  remains future work.
 - **Experimental threaded render path** (a dedicated render thread owns the GL
   context / Vulkan queue so the UI never blocks on the GPU; opt-in `--threaded`)
   is gated behind a default-OFF option:
@@ -110,6 +114,25 @@ GI/visibility tracing.)
 ./build/tusdview --headless --cuda --mode bvh-heatmap --frames 4 --screenshot h.ppm model.usda
 ```
 
+The NVRTC-generated PTX is cached across processes. The default location is the
+platform cache directory under `tusdview/cuda` (`$XDG_CACHE_HOME/tusdview/cuda`
+or `~/.cache/tusdview/cuda` on Linux). Use `--cuda-cache-dir PATH` to select a
+different directory, for example a job-local CI cache. Entries are keyed by the
+kernel source, NVRTC version, virtual architecture, and compiler options, then
+validated by the CUDA driver before use. Invalid entries are discarded and
+rebuilt atomically.
+
+During host BLAS/TLAS construction, `--cuda` prints a progress line every five
+seconds with the current phase and completed/total work. This makes a massive
+scene's geometry, instance-assembly, TLAS, or upload bottleneck explicit even
+when the synchronous capture has not produced its render report yet.
+
+NVRTC 13.x has a severe optimizer-time regression for this kernel when targeting
+virtual architectures 100 and newer. On those compiler/device combinations,
+tusdview emits forward-compatible optimized `compute_90` PTX instead; CUDA 12.x
+and older retain their highest supported architecture. This changes only the
+runtime-compiled CUDA tracer and does not affect Vulkan embedded SPIR-V.
+
 The **`examples/tusdview/tests/run-cuda-render.sh`** harness exercises this
 end-to-end; it SKIPs (return 77) when no NVIDIA device / NVRTC is available so
 non-NVIDIA CI stays green. It is not a registered ctest — run it by hand:
@@ -117,6 +140,15 @@ non-NVIDIA CI stays green. It is not a registered ctest — run it by hand:
 ```sh
 TUSDVIEW=./build/tusdview examples/tusdview/tests/run-cuda-render.sh
 ```
+
+When `--camera` selects an authored perspective camera with positive
+`focusDistance` and `fStop`, Vulkan ray query and the shared CUDA/HIP kernel use
+a deterministic thin-lens model. The aperture radius is derived from USD's
+tenths-of-a-scene-unit focal length, and rays converge on the authored focus
+plane. Vulkan progressively accumulates lens samples while `--rt-samples`
+controls CUDA/HIP sampling. Orthographic cameras and `fStop = 0` retain the
+exact pinhole path. `tusdview-camera-dof-{vulkan,cuda}` compare the two modes
+and capability-skip when their backend is unavailable.
 
 ## HIP/ROCm ray-tracing run test (verified working on AMD)
 
@@ -234,10 +266,14 @@ With `TINYUSDZ_WITH_TEXTOOLS=ON` (default; see
 tir/texcomp/texpipe/envmap libraries:
 
 - Texture resize (`--texture-max-size`, `--texture-budget-mb`) runs through
-  `tir` (sRGB-aware, premultiplied-alpha filtering) instead of stb.
-- `--texture-compress off|bc|bc7` uses the `texcomp` encoders (`bc` picks
-  BC1/BC3 by alpha; `bc7` needs BPTC support — GL 4.2 ext / VK BC feature).
-- `--texture-mips on` builds content-aware CPU mip chains via `texpipe`
+  `tir` (sRGB-aware, premultiplied-alpha filtering) instead of stb. The viewer
+  defaults to a 4096-texel longest edge; `--texture-max-size 0` restores source
+  size.
+- Adaptive GPU block compression is enabled by default (`--texture-compress
+  auto`), using `texcomp` and selecting a supported BC/ASTC/ETC2 format;
+  `--texture-compress off` disables it. Unsupported formats fall back to
+  resized RGBA8.
+- `--texture-mips on` (default) builds content-aware CPU mip chains via `texpipe`
   (sRGB-correct filtering, alpha-coverage preservation for Mask materials,
   normal-map renormalization, variance-aware roughness-channel minification,
   wrap-mode-aware filter edges). GL uploads the precomputed levels instead of
@@ -258,8 +294,11 @@ tir/texcomp/texpipe/envmap libraries:
   enabled DistantLight, otherwise the first finite light; the pass uses 3x3 PCF,
   honors direct versus shadow light-link collections, alpha cutouts, and Vulkan
   instanced prototypes. Finite area shapes still use their representative
-  position, and exact omnidirectional point/sphere/cylinder shadows remain
-  future work.
+  position in raster. Vulkan ray query and the shared CUDA/HIP tracer instead
+  take deterministic surface samples for sphere, disk, rect, and cylinder
+  emitters; progressive samples converge their penumbrae, while zero-sized
+  lights preserve the point-emitter path. Exact omnidirectional finite-light
+  raster shadows remain future work.
 
 `tusdrender -ibl envmap` opts the offline renderer into the same envmap-library
 precompute (default stays the built-in reference; measured parity on a dome
@@ -271,6 +310,20 @@ test scene: mean |diff| 0.16/255, 0.06% of channels >32/255).
 # Vulkan, no X server at all (renders into an offscreen image + reads it back):
 ./build_ninja/tusdview --headless --frames 8 --screenshot out.png model.usdz
 ./build_ninja/tusdview --headless --rt --frames 8 --screenshot rt.png model.usdz
+
+Vulkan ray-query splits scenes larger than the device's per-TLAS instance limit
+into as many as four TLAS chunks (about 67 million instances on common NVIDIA
+drivers). Primary, alpha, linked-shadow, AO, and soft-shadow rays traverse every
+chunk while preserving the global instance ID. It refuses a partial RT render if
+the four-chunk capacity is exceeded; use explicit `--rt-lod` for a degraded
+preview instead.
+
+# Save deterministic intermediate convergence images at frames 4, 8, ... .
+# The same controls work for raster and Vulkan ray-query; {frame} expands to a
+# zero-padded fixed-frame index and the JSON report records count/sample state.
+./build_ninja/tusdview --headless --rt --frames 16 \
+  --checkpoint-every 4 --checkpoint-pattern 'checkpoints/shot-{frame}.png' \
+  --screenshot shot-final.png --render-report shot.json model.usdz
 
 # Large-scene realtime presets: resolve Vulkan/LOD/budget flags and render a
 # deferred-payload overview first. Payload roots with authored extents use them;
@@ -289,6 +342,23 @@ CALDERA=/path/to/caldera.usda ISLAND=/path/to/island.usda ALAB=/path/to/alab.usd
   bash examples/tusdview/tests/run-large-scene-profiles.sh
 # Use TUSDVIEW_SCENE_TIMEOUT=10m (default) to bound each large-scene run.
 
+# Production Island matrix with schema-validated JSON reports. This is also a
+# CTest entry that cleanly skips when ISLAND_USD is absent. Override the default
+# 720p gl/vk/vk-rt matrix during a quick smoke as shown here:
+ISLAND_USD=/path/to/island.usda ISLAND_CAMERA=/island/cam/shotCam \
+ISLAND_CAPTURE_SIZES=320x200 ISLAND_CAPTURE_BACKENDS=vk \
+  ctest --test-dir build_ninja -R tusdview-island-production-smoke -V
+
+# Interactive large-scene profiles persist their compact composition preview.
+# Force a cold rebuild when validating preview generation, or disable it:
+./build_ninja/tusdview --large-scene-profile island \
+  --preview-cache refresh /path/to/island.usda
+./build_ninja/tusdview --large-scene-profile island \
+  --preview-cache off /path/to/island.usda
+# Optional storage controls (default limit: 8 GiB):
+./build_ninja/tusdview --large-scene-profile island \
+  --preview-cache-dir /fast/cache --preview-cache-max-gb 4 /path/to/island.usda
+
 # OpenGL (needs a window/context) on a headless host — wrap in a virtual X server
 # with a 24-bit visual:
 xvfb-run -a -s "-screen 0 1280x800x24" \
@@ -302,6 +372,38 @@ On an RTX 5060 Ti through the NVIDIA/Xvfb path below, first proxy frames measure
 0.55 GB (ALab). A 120-frame Island proxy run on a 1920x1080 Xvfb surface
 measured 75.0 ms present/readback p95 (81.3 ms maximum); Vulkan CPU
 record/submit p95 was 0.3 ms.
+
+The preview cache key includes the composition, payload/reference, variant,
+parent-path, and time-code choices. Its manifest records every physical layer
+dependency, including package archives, and rejects an entry if any dependency
+size or modification time changes. The cached preview is display-only: the
+authoritative composed stage replaces it when background composition finishes.
+Use `--timing` to report cache validation/load/store time separately from
+composition and first useful frame.
+
+For interactive Caldera loads, the profile camera also drives conversion order.
+Leaf meshes without extents inherit the nearest model/district extent for this
+ranking; conservative in-view bounds are converted before off-camera and
+unbounded fallback work. Interactive material batches are limited to 512K
+vertices, allowing those camera-relevant results to upload incrementally instead
+of waiting for a multi-million-triangle scene-wide batch.
+
+The interactive ALab profile starts with a bounded refinement tier because its
+complete texture and baked-procedural working set exceeds typical GPU memory.
+Payloads are initially deferred. When loaded, Curves are tessellated minimally
+and sampled as complete strands (up to 64 curve prims and 100,000 strands), so
+hair topology and per-point attributes remain valid. Textures are decoded with a
+512px edge ceiling, compressed online to a supported block format, and uploaded
+without an eager mip pyramid. Headless runs and explicit texture CLI overrides
+are not reduced.
+
+Ordinary ALab filesystem textures use stable placeholder slots during material
+conversion. After geometry has been published, a bounded four-worker stage
+decodes, resizes, and CPU-encodes supported GPU block formats; ready payloads are
+sent individually to the render thread. This is asynchronous decode/compression
+and incremental GPU upload, not GPU-compute encoding. Archive, UDIM, Ptex, and
+kept-compressed KTX2 inputs remain on their specialized synchronous paths until
+their readers have independent concurrent ownership.
 
 `.png` and `.ppm` outputs are both supported; `--frames N` loads synchronously so
 screenshots are deterministic. Pixel-compare two screenshots (e.g. backend or
@@ -433,16 +535,44 @@ selected tusdview/tusdrender modes:
 
 The harness writes a TSV result table and classifies each pass as `rendered`,
 `rendered_with_warnings`, `no_renderable`, `load_error`, `timeout`,
-`backend_unavailable`, or `backend_error`. It is a manual script (not a
-registered ctest); it skips unless `USD_ASSETS_ROOT` is set.
+`backend_unavailable`, or `backend_error`. It is registered as
+`tusdview-usd-assets-broad-smoke`, but skips unless `USD_ASSETS_ROOT` and
+`TUSDVIEW_RUN_USD_ASSETS_BROAD=1` are set.
 The tusdrender modes use `-autoframe` and the renderer's existing scene-light /
-headlight fallback. This is basic load-and-render coverage, not a detailed
-lighting match or perceptual golden-image test.
+headlight fallback. Use `--profile usd-assets-curated` for the short material
+set or `--profile usd-assets-broad` for a bounded cross-section spanning
+composition, primvars, subdivision, analytic geometry, transforms, textures,
+transparency, MaterialX, large composed scenes, and animated/skinned USDZ
+assets. `--time CODE` evaluates both tusdview and tusdrender at a representative
+animation time. The broad profile intentionally avoids rendering every helper
+layer, since material-only and camera-only layers mostly add expected
+`no_renderable` results rather than fidelity coverage. External gates use
+`--require-profile-complete`, so a renamed or incomplete corpus cannot silently
+reduce the advertised coverage.
+
+```sh
+USD_ASSETS_ROOT=/path/to/usd-assets \
+  TUSDVIEW_RUN_USD_ASSETS_BROAD=1 \
+  ctest --test-dir build_ninja -R tusdview-usd-assets-broad-smoke -V
+```
+
+The runner can also be invoked directly for one backend while iterating:
 
 ```sh
 USD_ASSETS_ROOT=/path/to/usd-assets \
   TUSDVIEW=./build_ninja/tusdview \
-  examples/tusdview/tests/run-usd-assets-render-smoke.sh
+  examples/tusdview/tests/run-usd-assets-render-smoke.sh \
+    --profile usd-assets-broad --modes vk-raster --time 1
+```
+
+Animation has a separate cross-time gate. It renders representative transform,
+point-interpolation, and skinned USDZ samples at time codes 0 and 1, then fails
+if an available backend produces no image changes at all:
+
+```sh
+USD_ASSETS_ROOT=/path/to/usd-assets \
+  TUSDVIEW_RUN_USD_ASSETS_ANIMATION=1 \
+  ctest --test-dir build_ninja -R tusdview-usd-assets-animation-smoke -V
 ```
 
 On an NVIDIA PRIME/offload host where Vulkan otherwise sees only llvmpipe, use
@@ -600,3 +730,46 @@ root-caused — see the "Validation-layer findings" section of
 [`threading-stage2.md`](../examples/tusdview/doc/threading-stage2.md) for the full
 worked example (a missing `ImDrawData::Textures` clone left the ImGui font
 descriptor empty → device loss).
+
+### Bounded native Ptex residency
+
+The `--next` texture path keeps a coarse face-complete Ptex atlas inside
+`--texture-budget-mb`. If fitting all requested face mips would exceed that
+budget, it also reserves a fixed physical page cache (up to 32 MiB per texture,
+and always inside the same total budget). Requested-quality faces are decoded
+from the retained compressed `.ptx` source and uploaded over subsequent frames;
+the alpha-only face table is patched after each upload. Reusing a slot first
+redirects its old face to the permanent coarse fallback, so every face remains
+valid during streaming and eviction.
+
+Use `--ptex-initial-faces N` to control startup work (`0` restores eager/all
+faces) and `--ptex-cache-mb N` to set the per-texture physical cache. Explicit
+values override large-scene profile defaults, making production captures and
+memory-limit rehearsals reproducible.
+
+Raster demand is camera-driven at mesh granularity. A mesh contributes its
+source-face ids only after its world bounds enter the current view; off-camera
+meshes retain their delta-varint-compressed ids and cause no Ptex decode. A
+later camera move admits newly visible meshes. Page inflation runs on a
+background worker; completed pages are assigned deterministic LRU slots and
+uploaded on the context thread in an independent 2 ms frame slice. Parsed Ptex
+face/level tables are retained per texture rather than reopened for every page.
+Vulkan/CUDA/HIP RT captures still request the
+complete admitted face set because their ray footprint is not represented by
+the raster visibility mask.
+
+OpenGL raster, Vulkan raster, and Vulkan ray query share this mutable atlas
+path. Mutable GL atlases sample level zero only, avoiding stale generated mips;
+Vulkan uses partial transfer updates with explicit layout transitions. Atlases
+that already fit at requested quality reserve no page-cache memory.
+
+Render reports expose `ptex_requested_meshes`, `ptex_requested_faces`,
+`ptex_gpu_physical_slots`, `ptex_gpu_page_uploads`,
+`ptex_gpu_page_misses`, `ptex_gpu_page_evictions`, and the launched/completed
+asynchronous page-job counts. For a small diagnostic
+scene that would not naturally need paging, set
+`TUSDVIEW_PTEX_FORCE_RESIDENCY=1` together with a constrained (for example,
+64 MiB) `--texture-budget-mb` value to exercise replacement deterministically.
+When authored mip levels are insufficient to keep every face represented, the
+fallback builder performs an additional bounded coarse resample; native source
+data remains available for requested-quality page upgrades.

@@ -58,11 +58,15 @@ def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
            "--no-skeleton",
            "--screenshot", out,
            *backend, *extra, scene]
+    timeout = float(e.get("TUSDVIEW_DEFORM_RENDER_TIMEOUT", "60"))
     try:
         r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                           env=e, timeout=120)
-    except subprocess.TimeoutExpired:
-        return False, "render timed out"
+                           env=e, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        partial = exc.stdout or b""
+        if isinstance(partial, bytes):
+            partial = partial.decode(errors="replace")
+        return False, (f"render timed out after {timeout:g}s\n{partial}")
     log = r.stdout.decode(errors="replace")
     return (r.returncode == 0 and os.path.exists(out) and
             os.path.getsize(out) > 0), log
@@ -126,6 +130,15 @@ def main():
     camera = sys.argv[5] if len(sys.argv) > 5 else "Cam"
     rest_t = sys.argv[6] if len(sys.argv) > 6 else "1"
     pose_t = sys.argv[7] if len(sys.argv) > 7 else "20"
+    try:
+        render_timeout = float(
+            os.environ.get("TUSDVIEW_DEFORM_RENDER_TIMEOUT", "60"))
+        if render_timeout <= 0:
+            raise ValueError
+    except ValueError:
+        print("FAIL: TUSDVIEW_DEFORM_RENDER_TIMEOUT must be a positive number "
+              "of seconds")
+        return 1
     # The CUDA/HIP tracers build their BVH from draw_ geometry, so they take the
     # deform through poseNextDrawForTracer rather than the vertex shader. Same
     # claim, different plumbing -- and until that landed they were pinned to the
@@ -160,6 +173,8 @@ def main():
                                backend=backend)
     if not rest_ok or not backend_available(rest_log):
         print(f"SKIP: the {which} backend produced no image (unavailable here?)")
+        if rest_log:
+            print(rest_log.rstrip())
         return SKIP
     gpu_ok, gpu_log = render(binary, scene, gpu, pose_t, camera,
                              backend=backend)

@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "gpu_scene.hh"
+#include "rt_camera.hh"
 
 namespace tusdview {
 
@@ -34,6 +35,9 @@ class CudaRayTracer {
   // once; subsequent calls are no-ops returning the cached result.
   bool init(std::string* err);
   bool initialized() const { return ctx_ != nullptr; }
+  // Override the platform tusdview CUDA-kernel cache directory. An empty path
+  // keeps the platform default (for example ~/.cache/tusdview/cuda on Linux).
+  void setCacheDirectory(const std::string& path) { cacheDirectory_ = path; }
 
   // Flatten `scene` into world-space triangles, build a BVH, and upload everything
   // to the device. `maxTris` caps the flattened triangle count (instances are
@@ -60,12 +64,13 @@ class CudaRayTracer {
              int renderMode,
              float depthScale, const float sceneMin[3], const float sceneExtent[3],
              int w, int h, std::vector<uint8_t>* rgba, std::string* err,
-             int spp = 1);
+             int spp = 1, const RtCameraLens* lens = nullptr);
 
   const char* deviceName() const { return deviceName_.c_str(); }
 
  private:
   void freeScene();
+  void freeRuntime();
 
   // Opaque CUDA handles (void* to avoid leaking cuew/driver types into the header).
   void* ctx_{nullptr};       // CUcontext
@@ -118,6 +123,7 @@ class CudaRayTracer {
   size_t nodeCount_{0};
   bool truncated_{false};
   std::string deviceName_;
+  std::string cacheDirectory_;
 };
 
 }  // namespace tusdview

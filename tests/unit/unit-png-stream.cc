@@ -53,6 +53,7 @@ void CheckPixelsEqual(const std::vector<uint8_t> &png,
   TEST_CHECK(bool(dec));
   if (!dec) return;
   const auto &im = dec.value().image;
+  TEST_CHECK(im.uri == "mem");
   TEST_CHECK(im.width == ref.width);
   TEST_CHECK(im.height == ref.height);
   // Compare only the channels present in the reference (decoders may expand to

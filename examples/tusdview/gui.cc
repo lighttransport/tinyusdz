@@ -928,6 +928,22 @@ void Gui::clearSelection() {
   inspectorCacheRows_.clear();
 }
 
+void Gui::setCullAsync(bool on) {
+  if (cullAsync_ == on) return;
+  joinCullWorker();
+  cullAsync_ = on;
+  lastCullValid_ = false;
+}
+
+void Gui::setSceneMutating(bool on) {
+  if (sceneMutating_ == on) return;
+  joinCullWorker();
+  sceneMutating_ = on;
+  lastCullValid_ = false;
+  instGrids_.clear();
+  instGridsFor_ = nullptr;
+}
+
 void Gui::setSelectionListSingle(const std::string& absPath, int meshIndex) {
   selectionList_.clear();
   if (!absPath.empty()) selectionList_.push_back({absPath, meshIndex});
@@ -1619,13 +1635,12 @@ void Gui::drawHierarchy() {
 }
 
 void Gui::drawInspector() {
+  refineSelectedTextures_ = false;
+  releaseSelectedTextures_ = false;
   ImGui::Begin("Inspector");
   if (nextStage_) {
     drawNextInspector();
-    ImGui::End();
-    return;
-  }
-  if (selPrim_) {
+  } else if (selPrim_) {
     rebuildInspectorCache();
     drawSelectionBreadcrumbs("##inspector-breadcrumbs");
     ImGui::TextWrapped("%s", selPath_.c_str());
@@ -1873,6 +1888,24 @@ void Gui::drawInspector() {
     HintWrapped("(RenderScene node; no matching Stage prim)");
   } else {
     HintWrapped("Select a prim in the Hierarchy.");
+  }
+  if (textureResidencyInfo_.total > 0) {
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Texture residency",
+                                ImGuiTreeNodeFlags_DefaultOpen)) {
+      const double mib = 1024.0 * 1024.0;
+      ImGui::Text("%zu / %zu resident", textureResidencyInfo_.resident,
+                  textureResidencyInfo_.total);
+      ImGui::Text("%.1f / %.1f MiB, %zu queued",
+                  double(textureResidencyInfo_.residentBytes) / mib,
+                  double(textureResidencyInfo_.budgetBytes) / mib,
+                  textureResidencyInfo_.queued);
+      if (ImGui::Button("Refine selected")) refineSelectedTextures_ = true;
+      ImGui::SameLine();
+      if (ImGui::Button("Release selected")) releaseSelectedTextures_ = true;
+      ImGui::Checkbox("Background refinement",
+                      &textureResidencyInfo_.backgroundRefinement);
+    }
   }
   ImGui::End();
 }
@@ -2758,6 +2791,8 @@ void Gui::drawStats() {
         ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.1f, 1.0f), "(culling\xE2\x80\xA6)");
       }
     }
+    if (statProxyInstances_ > 0)
+      ImGui::Text("LOD proxy instances: %zu", statProxyInstances_);
     ImGui::Text("Drawn triangles: %zu", statNonInstTris_ + statInstTris_);
     ImGui::Text("Draw calls: %zu", statDrawCalls_);
     ImGui::Text("Materials: %zu", draw_->materials.size());
@@ -3244,7 +3279,9 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
                       {cell.wmx[0], cell.wmx[1], cell.wmx[2]}) ==
           light3d::CullResult::Outside)
         continue;
-      upper += cell.count;
+      upper += (lod && !degenerate && IsSubpixelAggregateCell(cell, lodCam))
+                   ? 0u
+                   : cell.count;
     }
     out->xforms.reserve(static_cast<size_t>(upper) * 12);
     if (hc) out->colors.reserve(static_cast<size_t>(upper) * 3);
@@ -3254,6 +3291,22 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
           fr.testAABB({cell.wmn[0], cell.wmn[1], cell.wmn[2]},
                       {cell.wmx[0], cell.wmx[1], cell.wmx[2]});
       if (cr == light3d::CullResult::Outside) continue;
+      if (lod && !degenerate && IsSubpixelAggregateCell(cell, lodCam)) {
+        // Individually sub-pixel populations still carry visible aggregate
+        // density (vegetation, debris, crowds). Preserve that density with
+        // one bounded cell proxy instead of erasing every placement or
+        // allocating one proxy per instance.
+        if (doProxy) {
+          static const float kIdentity[12] = {
+              1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+          float bx[12];
+          BoxFitXform(kIdentity, cell.wmn, cell.wmx, bx);
+          proxyOut->xforms.insert(proxyOut->xforms.end(), bx, bx + 12);
+          proxyOut->colors.insert(proxyOut->colors.end(), m.flatColor,
+                                  m.flatColor + 3);
+        }
+        continue;
+      }
       const bool inside = (cr == light3d::CullResult::Inside);
       for (std::uint32_t i = cell.begin; i < cell.begin + cell.count; ++i)
         emit(grid->order[i], inside);
@@ -3409,6 +3462,7 @@ void Gui::uploadProxies(CullJobMesh* instProxy) {
     instProxy->colors.clear();
     instProxy->count = 0;
   }
+  statProxyInstances_ = xf.size() / 12;
   if (lastProxyValid_ && xf == lastProxyXforms_ && col == lastProxyColors_) return;
   lastProxyXforms_ = xf;
   lastProxyColors_ = col;
@@ -3421,6 +3475,10 @@ void Gui::uploadProxies(CullJobMesh* instProxy) {
 
 void Gui::cullInstances() {
   if (!draw_ || !renderer_ || !cam_) return;
+  // Uploaded progressive chunks already contain their full instance set. Draw
+  // them as-is until Complete makes the scene immutable and async culling can
+  // safely resume.
+  if (sceneMutating_) return;
   // Only instanced prototypes carry instanceXforms; nothing to do otherwise --
   // except the box proxies raster LOD substituted for small NON-instanced meshes,
   // which still need their upload (a scene can be entirely non-instanced).
@@ -4147,6 +4205,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   p.cameraPos[1] = eye.y;
   p.cameraPos[2] = eye.z;
   p.exposure = cam_->exposure();
+  p.cameraLens = cameraLens_;
   p.mode = mode_;
   p.wireMode = wireCycle_;  // 'v' key: 0 off / 1 wire-only / 2 wire+shaded
   p.displacement = displacementEnabled_;
@@ -4243,6 +4302,7 @@ void Gui::renderViewportScene(FramePacket* packet) {
   std::memcpy(packet->proj, projM.m, sizeof(packet->proj));
   packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
   packet->exposure = p.exposure;
+  packet->cameraLens = p.cameraLens;
   packet->mode = p.mode;
   for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
   for (int i = 0; i < 3; ++i) {

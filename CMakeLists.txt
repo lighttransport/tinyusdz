@@ -110,6 +110,9 @@ option(TINYUSDZ_WITH_TCMALLOC
 option(TINYUSDZ_BUILD_GUI_VIEWER
        "Build the interactive GUI USD viewer example 'tusdview' (requires OpenGL/GLFW; Vulkan optional). Pulls in window-system deps; keep OFF for headless CI."
        OFF)
+option(TINYUSDZ_BUILD_QUICKLOOK
+       "Build the minimal portable USD Quick Look viewer 'tusdquicklook' (software UI via vendored lightui, CPU ray tracing; no GPU required)."
+       OFF)
 option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
        ${TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
@@ -299,7 +302,7 @@ option(TINYUSDZ_USE_WUFFS_IMAGE_LOADER
 # When enabled, replaces the stb_image backend for common image formats.
 #
 option(TINYUSDZ_WITH_NANOIMAGE
-       "Use nanoimage to load jpg/png/bmp/tga images (replaces stb_image for these formats)" OFF)
+       "Use nanoimage to load jpg/png/bmp/tga images (replaces stb_image for these formats)" ON)
 # -----------
 
 # Set ON if you use wuffs implementation outside of TinyUSDZ library in your app to avoid multiple symbol def error.
@@ -322,6 +325,19 @@ option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minim
 
 option(TINYUSDZ_WITH_TEXTOOLS
        "Build vendored tir/texcomp/texpipe/envmap texture tools" ON)
+option(TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS
+       "Build vendored tir/texcomp/texpipe/envmap texture tools in quicklook-only builds" OFF)
+
+if(TINYUSDZ_BUILD_QUICKLOOK AND NOT TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS)
+  # Quicklook is intentionally a minimal, dependency-light path. Disabling
+  # texture-tools here avoids building tinyusdz_textools unless explicitly
+  # requested.
+  if (TINYUSDZ_WITH_TEXTOOLS)
+    message(STATUS "tinyusdz: disabling TINYUSDZ_WITH_TEXTOOLS for quicklook-only build "
+                   "(set -DTINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON to force)")
+  endif()
+  set(TINYUSDZ_WITH_TEXTOOLS OFF CACHE BOOL "Build vendored tir/texcomp/texpipe/envmap texture tools" FORCE)
+endif()
 
 # Vendored textools/tinyexr upstream self-tests are disabled by default: they
 # exercise third-party code (not TinyUSDZ), and changes to that vendored copy
@@ -425,6 +441,11 @@ if(MSVC)
   # clobber std::numeric_limits<T>::max()/min() calls project-wide with
   # cryptic C2589/C2059 syntax errors.
   add_compile_definitions(NOMINMAX)
+
+  # MSVC 2022 toolchain + STL header compatibility guard can trip this
+  # repository's older C++17 compatibility target set in CI/partner envs.
+  # Keep enabled for all targets to avoid STL1001 noise from legacy headers.
+  add_compile_definitions(_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 endif()
 
 # [ccache]
@@ -620,6 +641,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
+    ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/image-util.cc
     ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
@@ -2113,6 +2135,12 @@ if(TINYUSDZ_BUILD_EXAMPLES)
       add_subdirectory(examples/tusdview)
     endif()
 
+    # Independent of TINYUSDZ_BUILD_GUI_VIEWER on purpose: tusdquicklook shares
+    # no code with tusdview and needs no window-system or GPU dependency.
+    if (TINYUSDZ_BUILD_QUICKLOOK)
+      add_subdirectory(examples/tusdquicklook)
+    endif()
+
     if (TINYUSDZ_WITH_MCP_SERVER)
       add_subdirectory(examples/mcp_server)
     endif()
@@ -2487,6 +2515,53 @@ if(TINYUSDZ_BUILD_TESTS)
   # Windowless Vulkan render regression. This works on both hardware and
   # software Vulkan devices and self-skips when no Vulkan device is available.
   if(UNIX AND NOT APPLE AND TARGET tusdview)
+    # Opt-in external Island production smoke. With no ISLAND_USD environment
+    # variable this returns 77 immediately, proving the corpus remains optional
+    # in ordinary CI while making the real-data gate discoverable via CTest.
+    add_test(
+      NAME tusdview-island-production-smoke
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-island-production-smoke.sh"
+      )
+    set_tests_properties(tusdview-island-production-smoke PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 5400
+                         LABELS "tusdview;external;island")
+
+    add_test(
+      NAME tusdview-progressive-checkpoints
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-progressive-checkpoints.sh"
+      )
+    set_tests_properties(tusdview-progressive-checkpoints PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 150 LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-vk-multitlas
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-multitlas.sh"
+      )
+    set_tests_properties(tusdview-vk-multitlas PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-ptex-camera-demand
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_PTEX_GENERATOR=$<TARGET_FILE:tusdview_ptex_atlas_test>"
+              bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-ptex-camera-demand.sh"
+      )
+    set_tests_properties(tusdview-ptex-camera-demand PROPERTIES
+                         SKIP_RETURN_CODE 77 TIMEOUT 90 LABELS "tusdview")
+
     add_test(
       NAME tusdview-vk-render
       COMMAND ${CMAKE_COMMAND} -E env
@@ -2534,7 +2609,9 @@ if(TINYUSDZ_BUILD_TESTS)
 
     add_test(
       NAME tusdview-aousd-conformance
-      COMMAND bash
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-aousd-conformance.sh"
       )
     set_tests_properties(tusdview-aousd-conformance PROPERTIES
@@ -2542,7 +2619,9 @@ if(TINYUSDZ_BUILD_TESTS)
 
     add_test(
       NAME tusdview-gl-vk-parity
-      COMMAND bash
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-gl-vk-parity.sh"
       )
     set_tests_properties(tusdview-gl-vk-parity PROPERTIES
@@ -2551,6 +2630,7 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(
       NAME tusdview-backend-parity
       COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
               "TUSDVIEW_PARITY_FRAMES=1" "TUSDVIEW_PARITY_SIZE=96x96"
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backend-parity.sh"
       )
@@ -2798,6 +2878,8 @@ if(TINYUSDZ_BUILD_TESTS)
         set_tests_properties(tusdview-deform-${deform_case}
                              PROPERTIES SKIP_RETURN_CODE 77)
       endforeach()
+      set_tests_properties(tusdview-deform-instanced-proto
+                           PROPERTIES LABELS "tusdview")
 
       # An instanced prototype under the RAY TRACER: RT cannot use the raster vertex
       # shader's deform (the BLAS is built from vertex buffers, so the geometry itself
@@ -2814,7 +2896,7 @@ if(TINYUSDZ_BUILD_TESTS)
                 rt
         )
       set_tests_properties(tusdview-deform-instanced-proto-rt
-                           PROPERTIES SKIP_RETURN_CODE 77)
+                           PROPERTIES SKIP_RETURN_CODE 77 LABELS "tusdview")
 
       # The CUDA tracer builds its BVH from draw_ geometry, so it takes the deform
       # through poseNextDrawForTracer instead of the vertex shader. It used to be
@@ -2830,6 +2912,24 @@ if(TINYUSDZ_BUILD_TESTS)
                 cuda
         )
       set_tests_properties(tusdview-deform-cuda PROPERTIES SKIP_RETURN_CODE 77)
+
+      add_test(
+        NAME tusdview-cuda-kernel-cache
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                bash
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cuda-kernel-cache.sh"
+        )
+      set_tests_properties(tusdview-cuda-kernel-cache
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 210)
+
+      add_test(
+        NAME tusdview-cuda-cache-cli
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                bash
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cuda-cache-cli.sh"
+        )
 
       # LEGACY loader: an animated --time load must pose the mesh ONCE. It bakes the
       # pose into the geometry at load, and the rest-pose load that keeps the shader
@@ -2902,8 +3002,48 @@ if(TINYUSDZ_BUILD_TESTS)
               "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-record-equivalence.sh"
               "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
     )
-    set_tests_properties(tusdview-camera-record-equivalence
+      set_tests_properties(tusdview-camera-record-equivalence
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-camera-dof-cuda
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-dof-cuda.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(tusdview-camera-dof-cuda
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-camera-dof-vulkan
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-camera-dof-vulkan.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(tusdview-camera-dof-vulkan
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-area-light-cuda
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-area-light-cuda.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(tusdview-area-light-cuda
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+                                    LABELS "tusdview")
+
+    add_test(
+      NAME tusdview-area-light-vulkan
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-area-light-vulkan.sh"
+              "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(tusdview-area-light-vulkan
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
                                     LABELS "tusdview")
 
     add_test(
@@ -3024,7 +3164,7 @@ if(TINYUSDZ_BUILD_TESTS)
               bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backface-material.sh"
       )
     set_tests_properties(tusdview-backface-material
-                         PROPERTIES SKIP_RETURN_CODE 77)
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 
     # doubleSided (audit T8): a single-sided mesh back-face culls, a doubleSided
     # one does not -- identically on GL and Vulkan. The --next loader used to
@@ -3244,7 +3384,48 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-usd-assets-classification
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+      # Bounded but broad cross-renderer coverage for the external usd-wg/assets
+      # checkout. This is separately opt-in because it exercises 40 scenes over
+      # four backends and is intentionally much heavier than the self-contained
+      # profile/classification regressions below.
+      add_test(
+        NAME tusdview-usd-assets-broad-smoke
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                "TUSDRENDER=$<TARGET_FILE:tusdrender>"
+                "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_BROAD"
+                "TUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
+                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh"
+                     --profile usd-assets-broad
+                     --require-profile-complete
+                     --modes vk-raster,vk-rt,tusdr-cpu,tusdr-vk
+                     --time 1
+        )
+      set_tests_properties(tusdview-usd-assets-broad-smoke PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 7200
+                           LABELS "tusdview;external;usd-assets")
+
+      add_test(
+        NAME tusdview-usd-assets-animation-smoke
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                "TUSDRENDER=$<TARGET_FILE:tusdrender>"
+                "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_ANIMATION"
+                "TUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
+                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-animation-smoke.sh"
+        )
+      set_tests_properties(tusdview-usd-assets-animation-smoke PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 3600
+                           LABELS "tusdview;external;usd-assets;animation")
     endif()
+
+    add_test(
+      NAME tusdview-usd-assets-broad-profile
+      COMMAND bash
+              "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-broad-profile.sh"
+      )
+    set_tests_properties(tusdview-usd-assets-broad-profile PROPERTIES TIMEOUT 120)
   endif()
 
   #

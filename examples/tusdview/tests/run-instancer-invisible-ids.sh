@@ -22,6 +22,14 @@ fi
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+
+# Pin the window size. Without it the window falls back to whatever the display
+# offers, and under xvfb-run that leaves a ~32px-wide 3D viewport once the
+# docked panels take their share -- narrow enough that both instances fall
+# outside the frustum and are (correctly) culled, so the stat this test asserts
+# reflects the window geometry rather than the id filtering under test.
+CONFIG="$TMP_DIR/config.json"
+printf '%s\n' '{"window_size":{"width":800,"height":600}}' > "$CONFIG"
 TOP_ASSET="$TMP_DIR/pointinstancer_invisible_ids.usda"
 NESTED_ASSET="$TMP_DIR/nested_pointinstancer_invisible_ids.usda"
 
@@ -101,8 +109,8 @@ run_case() {
   local asset="$2"
   local out="$TMP_DIR/${label}.png"
   local log
-  log="$("${RUN[@]}" "$TUSDVIEW" --backend "$BACKEND" --next --frames 4 \
-         --screenshot "$out" "$asset" 2>&1)"
+  log="$("${RUN[@]}" "$TUSDVIEW" --backend "$BACKEND" --next --config "$CONFIG" \
+         --frames 4 --screenshot "$out" "$asset" 2>&1)"
   echo "$log"
 
   if ! echo "$log" | grep -q "render stats"; then
