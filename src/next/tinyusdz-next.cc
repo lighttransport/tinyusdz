@@ -495,7 +495,7 @@ struct StageSession::Impl {
   void EnsureUniqueStage() {
     if (!stage) {
       stage.reset(new Stage());
-    } else if (!stage.unique()) {
+    } else if (stage.use_count() != 1) {
       stage.reset(new Stage(stage->Clone()));
     }
   }
@@ -768,7 +768,7 @@ Stage StageSession::TakeStage() {
   impl_->released_composition_issues.clear();
   Stage out;
   if (impl_->stage) {
-    if (impl_->stage.unique()) {
+    if (impl_->stage.use_count() == 1) {
       out = std::move(*impl_->stage);
     } else {
       out = impl_->stage->Clone();
