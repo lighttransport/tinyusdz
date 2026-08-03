@@ -8,6 +8,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <functional>
 
 #include "render-data.hh"
@@ -339,6 +340,20 @@ class RenderSceneConverter {
   /// Find-or-create an image record for `file`; returns its id (-1 on empty).
   int32_t ResolveImageId(RenderScene* scene, const std::string& file,
                          ColorSpace color_space, uint32_t asset_anchor_id = 0);
+
+  /// O(1) image dedup, replacing the linear scan over scene->images that both
+  /// dedup sites used (O(n^2) with a long-path string compare per step).
+  static std::string ImageKey(const std::string& resolved_path, ColorSpace cs);
+  int32_t FindImageId(const RenderScene* scene,
+                      const std::string& resolved_path, ColorSpace cs);
+  void RememberImageId(const RenderScene* scene,
+                       const std::string& resolved_path, ColorSpace cs,
+                       int32_t id);
+  std::unordered_map<std::string, int32_t> image_id_by_key_;
+  /// Scene the rendering color config has already been resolved into; the
+  /// result is stage/config-invariant, so it must not be recomputed per
+  /// material.
+  const RenderScene* color_config_scene_ = nullptr;
 
   // Material extraction
   bool ExtractPreviewSurface(const ::tinyusdz::next::Stage& stage,

@@ -200,6 +200,10 @@
 
   void SetLoadRules(const LoadRules &rules) {
     NEXT_PCP_LOCK(api_mu_);
+    // Idempotent call: viewer code and round-trip tests re-apply the same rule
+    // set routinely, and nuking every prim index / composed spec / instancing
+    // group for it forced a full stage recomposition for nothing.
+    if (rules.rules() == load_rules_.rules()) return;
     load_rules_ = rules;
     // A wholesale rule change can affect any prim; drop everything (lazy
     // rebuild). Deferred state is recomputed as prims recompose.
@@ -211,6 +215,12 @@
     prototype_by_key.clear();
     prototype_of.clear();
     instances_by_prototype.clear();
+    // Must be cleared with the rest of the instancing state. Leaving it grew
+    // without bound across recompositions AND corrupted prototype numbering:
+    // the parallel warm path picks prototypes by scanning it in REVERSE
+    // (cache-parallel-warm.inc), so stale/duplicated keys changed which
+    // prototype won.
+    instance_key_order.clear();
     composed_cache_.clear();  // Phase 10
     composed_children_.clear();
     issues_.clear();  // fresh diagnostics for the recomposition.
