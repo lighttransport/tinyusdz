@@ -152,6 +152,49 @@ void TestChunkedArrayAllocFailure() {
   std::cout << "  ChunkedArray allocation failure: PASSED\n";
 }
 
+// Regression: `&arr[i]` followed by pointer indexing read past the chunk
+// allocation. FloatChunked holds 16384 elements per 64KB chunk and
+// 16384 % 3 == 1, so an xyz triple straddles a chunk boundary every ~5461
+// points; the tail chunk is exact-sized, so even a 2-element run overruns
+// there. read2()/read3() must return the right values across every boundary.
+void TestChunkedArrayStraddlingReads() {
+  std::cout << "Testing ChunkedArray straddling multi-element reads...\n";
+
+  constexpr size_t kPerChunk = ChunkedArray<float>::kElementsPerChunk;
+  static_assert(kPerChunk % 3 == 1, "test targets the straddling geometry");
+
+  // Enough points to cross several chunk boundaries, with a partial tail.
+  const size_t npoints = kPerChunk * 2 + 777;
+  ChunkedArray<float> pts;
+  pts.reserve(npoints * 3);
+  for (size_t i = 0; i < npoints * 3; ++i) {
+    pts.push_back(static_cast<float>(i));
+  }
+  assert(pts.chunk_count() > 1);
+
+  for (size_t p = 0; p < npoints; ++p) {
+    float xyz[3];
+    pts.read3(p * 3, xyz);
+    for (int c = 0; c < 3; ++c) {
+      assert(xyz[c] == static_cast<float>(p * 3 + c));
+    }
+  }
+
+  // read2 over the very last pair, i.e. right against the exact-sized tail.
+  ChunkedArray<float> uv;
+  const size_t nuv = kPerChunk + 5;
+  uv.reserve(nuv * 2);
+  for (size_t i = 0; i < nuv * 2; ++i) uv.push_back(static_cast<float>(i));
+  for (size_t p = 0; p < nuv; ++p) {
+    float st[2];
+    uv.read2(p * 2, st);
+    assert(st[0] == static_cast<float>(p * 2));
+    assert(st[1] == static_cast<float>(p * 2 + 1));
+  }
+
+  std::cout << "  ChunkedArray straddling reads passed!\n";
+}
+
 void TestChunkedArrayLarge() {
   std::cout << "Testing ChunkedArray with large data...\n";
 
@@ -2729,6 +2772,81 @@ def Xform "Root"
   assert(scene.physics.articulation_roots[0] == "/Root/Body");
 
   std::cout << "  USD Physics annotations: PASSED\n";
+}
+
+// Regression for the ChunkedArray straddle OOB in the tangent generator.
+// The Lengyel path read points/normals/uvs via `&mesh->points[i*3]` and then
+// indexed off that pointer, which runs past the chunk allocation once a mesh
+// exceeds kElementsPerChunk/3 (~5461) points. Build a grid well past that and
+// require every tangent to come out finite and correct.
+void TestLargeMeshTangents() {
+  std::cout << "Testing tangents on a multi-chunk mesh...\n";
+
+  constexpr uint32_t N = 100;  // 10000 points > 16384/3
+  std::string pts, sts, nrm, counts, indices;
+  for (uint32_t y = 0; y < N; ++y) {
+    for (uint32_t x = 0; x < N; ++x) {
+      if (!pts.empty()) { pts += ", "; sts += ", "; nrm += ", "; }
+      pts += "(" + std::to_string(x) + ", " + std::to_string(y) + ", 0)";
+      sts += "(" + std::to_string(x) + ", " + std::to_string(y) + ")";
+      nrm += "(0, 0, 1)";
+    }
+  }
+  for (uint32_t y = 0; y + 1 < N; ++y) {
+    for (uint32_t x = 0; x + 1 < N; ++x) {
+      const uint32_t i0 = y * N + x, i1 = i0 + 1, i2 = i0 + N + 1,
+                     i3 = i0 + N;
+      if (!counts.empty()) { counts += ", "; indices += ", "; }
+      counts += "4";
+      indices += std::to_string(i0) + ", " + std::to_string(i1) + ", " +
+                 std::to_string(i2) + ", " + std::to_string(i3);
+    }
+  }
+
+  const std::string usda =
+      "#usda 1.0\n"
+      "def Mesh \"Grid\"\n{\n"
+      "  point3f[] points = [" + pts + "]\n"
+      "  normal3f[] normals = [" + nrm + "] (interpolation = \"vertex\")\n"
+      "  texCoord2f[] primvars:st = [" + sts +
+      "] (interpolation = \"vertex\")\n"
+      "  int[] faceVertexCounts = [" + counts + "]\n"
+      "  int[] faceVertexIndices = [" + indices + "]\n}\n";
+
+  LoadResult lr = LoadUSDAFromString(usda.c_str(), usda.size());
+  assert(lr.success);
+
+  const MeshConfig::TangentComputationMethod methods[] = {
+      MeshConfig::TangentComputationMethod::Lengyel,
+      MeshConfig::TangentComputationMethod::Hybrid,
+      MeshConfig::TangentComputationMethod::MikkTSpace,
+  };
+  for (auto method : methods) {
+    ConverterConfig cfg;
+    cfg.mesh.compute_tangents = true;
+    cfg.mesh.tangent_method = method;
+    cfg.mesh.build_vertex_indices = false;  // keep the authored point order
+    RenderSceneConverter conv(cfg);
+    ConvertResult res = conv.Convert(lr.stage);
+    assert(res.success);
+    auto it = res.scene.mesh_by_path.find("/Grid");
+    assert(it != res.scene.mesh_by_path.end());
+    RenderMesh& m = res.scene.meshes[static_cast<size_t>(it->second)];
+    assert(m.point_count() > 5461);  // must span multiple float chunks
+    assert(m.tangents.size() % 4 == 0);
+    assert(m.tangents.size() > 0);
+    for (size_t i = 0; i < m.tangents.size(); ++i) {
+      assert(std::isfinite(m.tangents[i]));
+    }
+    // Planar grid with axis-aligned UVs: tangent is +X everywhere.
+    for (size_t v = 0; v + 3 < m.tangents.size(); v += 4) {
+      assert(std::fabs(m.tangents[v + 0] - 1.0f) < 1e-3f);
+      assert(std::fabs(m.tangents[v + 1]) < 1e-3f);
+      assert(std::fabs(m.tangents[v + 2]) < 1e-3f);
+    }
+  }
+
+  std::cout << "  multi-chunk mesh tangents passed!\n";
 }
 
 void TestRenderConverterCurves() {
@@ -5508,6 +5626,7 @@ int main() {
   TestChunkedArrayShrinkToFit();
   TestChunkedArrayAllocFailure();
   TestChunkedArrayLarge();
+  TestChunkedArrayStraddlingReads();
   TestChunkedArrayAppend();
   TestChunkedArrayIterator();
 
@@ -5542,6 +5661,7 @@ int main() {
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();
   TestRenderConverterCurves();
+  TestLargeMeshTangents();
   TestValueClipBaking();
   TestMeshParityCleanups();
   TestHalfPrecisionXformOps();
