@@ -3689,6 +3689,10 @@ async function buildScene() {
 }
 
 function fitCameraToObject(object) {
+    // NextRenderSceneUtils reconstructs USD xforms with matrixAutoUpdate
+    // disabled. Update the world matrices before measuring the bounds, or
+    // translated children are framed at the origin until the first render.
+    object.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(object);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
