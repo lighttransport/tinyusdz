@@ -1202,8 +1202,14 @@ template <typename Chunked>
 void CopyChunkedArray(const Chunked& src, Chunked* dst) {
   if (!dst) return;
   dst->reserve(src.size());
-  for (size_t i = 0; i < src.size(); ++i) {
-    dst->push_back(src[i]);
+  // Chunk-at-a-time, not element-at-a-time: per-element push_back costs an
+  // ensure_capacity() call plus a chunk-pointer indirection for EVERY element,
+  // where append() memcpys a whole 64KB chunk. This is the copy engine behind
+  // every point-instance mesh clone.
+  for (size_t c = 0; c < src.chunk_count(); ++c) {
+    const size_t n = src.chunk_size(c);
+    if (n == 0) break;
+    dst->append(src.chunk_data(c), n);
   }
 }
 
@@ -4289,17 +4295,23 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
     return false;
   }
 
-  // Pre-flight the temporary buffers: the corner-expanded MikkTSpace path
-  // allocates ~64B per triangulated corner and the Lengyel path ~40B per
+  // Pre-flight the temporary buffers. The corner-expanded MikkTSpace path holds
+  // positions(12) + normals(12) + uvs(8) + tri_counts(~1.3) + tangents(12) +
+  // binormals(12) simultaneously across the tangent call = ~58 B per
+  // triangulated corner; kMikkBytesPerCorner adds margin for the fv_out(16)
+  // phase, which overlaps only partially because the dead inputs are released
+  // first (see below). The old estimate of 64 both understated the peak and
+  // probed a single block rather than the sum. The Lengyel path is ~40B per
   // point. A failed probe skips tangents for this mesh (they are optional)
   // instead of abort()ing the module under -fno-exceptions.
+  constexpr size_t kMikkBytesPerCorner = 80;
   const size_t probe_bytes =
       (config_.mesh.tangent_method ==
            MeshConfig::TangentComputationMethod::Lengyel &&
        vertex_normals && vertex_uvs)
           ? np * (3 + 3 + 4) * sizeof(float)
-          : tri_corner_count * 64;
-  if (WouldOverflowSizeMul(tri_corner_count, 64) ||
+          : tri_corner_count * kMikkBytesPerCorner;
+  if (WouldOverflowSizeMul(tri_corner_count, kMikkBytesPerCorner) ||
       !ProbeAlloc(probe_bytes)) {
     warnings_.push_back("Out of memory computing tangents for mesh '" +
                         mesh->prim_path + "'; tangents skipped");
@@ -4468,6 +4480,13 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
     return false;
   }
 
+  // Positions, UVs and the face-size list are dead once the tangent call
+  // returns; release them BEFORE allocating fv_out so the two do not stack
+  // (24 B/corner, i.e. ~720 MB on a 30M-corner mesh).
+  { std::vector<value::float3>().swap(fv_positions); }
+  { std::vector<value::float2>().swap(fv_uvs); }
+  { std::vector<uint32_t>().swap(tri_counts); }
+
   std::vector<float> fv_out(tri_corner_count * 4, 0.0f);
   for (size_t i = 0; i < tri_corner_count; ++i) {
     const value::float3& n = fv_normals[i];
@@ -4483,6 +4502,12 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
     fv_out[i * 4 + 2] = t[2];
     fv_out[i * 4 + 3] = sign;
   }
+
+  // Same again: normals/tangents/binormals are consumed by the loop above and
+  // must not stay resident alongside vertex_out below (36 B/corner).
+  { std::vector<value::float3>().swap(fv_normals); }
+  { std::vector<value::float3>().swap(fv_tangents); }
+  { std::vector<value::float3>().swap(fv_binormals); }
 
   if (vertex_normals && vertex_uvs) {
     std::vector<float> vertex_out(np * 4, 0.0f);
@@ -4696,18 +4721,25 @@ Interpolation ParsePrimvarInterp(const std::string& s) {
 
 // Flatten a primvar Value into floats (float/half/double backed, any comps).
 // Returns comps per element (0 = unsupported/absent).
-uint32_t PrimvarToFloats(const Value& v, std::vector<float>* out) {
+// `*view` is set to the float array to read from: the SOURCE array itself when
+// the primvar is already float-backed (no copy), otherwise `scratch` holding
+// the converted values. Copying unconditionally cost a full extra transient of
+// every UV/color/normal primvar (40 MB for a 5M-vertex `st` set) on top of the
+// copies the caller already makes.
+uint32_t PrimvarToFloats(const Value& v, std::vector<float>* scratch,
+                         const std::vector<float>** view) {
   if (!v.is_array()) return 0;
   const uint32_t comps =
       static_cast<uint32_t>(GetComponentCount(v.type_id()));
   if (comps == 0) return 0;
   if (const std::vector<float>* fa = v.as_float_array()) {
-    out->assign(fa->begin(), fa->end());
+    *view = fa;
     return comps;
   }
   if (const std::vector<double>* da = v.as_double_array()) {
-    out->reserve(da->size());
-    for (double d : *da) out->push_back(static_cast<float>(d));
+    scratch->reserve(da->size());
+    for (double d : *da) scratch->push_back(static_cast<float>(d));
+    *view = scratch;
     return comps;
   }
   return 0;
@@ -4841,8 +4873,14 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
 
   for (Primvar& pv : primvars) {
     if (!pv.value) continue;
+    // Skinning primvars are consumed by the skin binding (GetSkinBinding), not
+    // by the generic vertex-attribute channel. Skip BEFORE flattening: the
+    // check used to sit below, after a full copy of the array had been made.
+    if (pv.name.rfind("skel:", 0) == 0) continue;
+
     std::vector<float> data;
-    const uint32_t comps = PrimvarToFloats(*pv.value, &data);
+    const std::vector<float>* fdata = nullptr;
+    const uint32_t comps = PrimvarToFloats(*pv.value, &data, &fdata);
     const bool is_uv0 = (pv.name == uv_base);
     const bool is_uv1 = (!uv_second.empty() && pv.name == uv_second);
     const bool is_color = (pv.name == "displayColor");
@@ -4863,10 +4901,6 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       }
       return ParsePrimvarInterp(pv.interpolation);
     };
-
-    // Skinning primvars are consumed by the skin binding (GetSkinBinding),
-    // not by the generic vertex-attribute channel.
-    if (pv.name.rfind("skel:", 0) == 0) continue;
 
     if (comps == 0) {
       // Non-float primvar: only representable as a generic int attribute.
@@ -4900,17 +4934,18 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     // buffers carry no index channel).
     if (!pv.indices.empty() && builtin) {
       std::vector<float> expanded;
-      if (!expand_indexed(data, comps, pv.indices, &expanded)) {
+      if (!expand_indexed(*fdata, comps, pv.indices, &expanded)) {
         warnings_.push_back("Mesh '" + mesh->prim_path + "': primvar '" +
                             pv.name + "' has out-of-range indices; dropped");
         continue;
       }
       data = std::move(expanded);
+      fdata = &data;
     }
 
     if (builtin) {
       // Size must match the declared interpolation or a consumer indexes OOB.
-      const size_t elems = data.size() / comps;
+      const size_t elems = fdata->size() / comps;
       const Interpolation interp = resolve_interp(elems);
       if (elems != expected_elems(interp)) {
         warnings_.push_back(
@@ -4919,25 +4954,25 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
         continue;
       }
       if (is_uv0 && comps == 2) {
-        mesh->texcoords_0.append(data.data(), data.size());
+        mesh->texcoords_0.append(fdata->data(), fdata->size());
         mesh->texcoords_0_interp = interp;
         mesh->texcoords_0_name = pv.name;
       } else if (is_uv1 && comps == 2) {
-        mesh->texcoords_1.append(data.data(), data.size());
+        mesh->texcoords_1.append(fdata->data(), fdata->size());
         mesh->texcoords_1_interp = interp;
         mesh->texcoords_1_name = pv.name;
       } else if (is_color && (comps == 3 || comps == 4)) {
-        mesh->colors.append(data.data(), data.size());
+        mesh->colors.append(fdata->data(), fdata->size());
         mesh->colors_interp = interp;
       } else if (is_opacity && comps == 1) {
         // displayOpacity as a render channel (legacy exposes it alongside
         // displayColor; consumers combine it as the vertex-color alpha).
-        mesh->opacities.append(data.data(), data.size());
+        mesh->opacities.append(fdata->data(), fdata->size());
         mesh->opacities_interp = interp;
       } else if (is_normals && comps == 3) {
         // primvars:normals takes precedence over the raw `normals` attribute.
         mesh->normals.clear();
-        mesh->normals.append(data.data(), data.size());
+        mesh->normals.append(fdata->data(), fdata->size());
         mesh->normals_interp = interp;
       }
       continue;
@@ -4952,10 +4987,10 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
                                : VertexFormat::Vec4;
     if (comps > 4) continue;  // matrices etc.: not a vertex attribute
     attr.interpolation = resolve_interp(
-        pv.indices.empty() ? (data.size() / comps) : pv.indices.size());
-    attr.float_data.append(data.data(), data.size());
+        pv.indices.empty() ? (fdata->size() / comps) : pv.indices.size());
+    attr.float_data.append(fdata->data(), fdata->size());
     bool idx_ok = true;
-    const size_t elems = data.size() / comps;
+    const size_t elems = fdata->size() / comps;
     for (int32_t raw : pv.indices) {
       if (raw < 0 || static_cast<size_t>(raw) >= elems) {
         idx_ok = false;
