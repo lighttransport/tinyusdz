@@ -370,7 +370,7 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
 
 bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
   if (rep.type_id() != CrateTypeId::Dictionary) return false;
-  if (depth > 64) return false;
+  if (depth > kMaxValueNestDepth) return false;
   if (rep.payload() == 0) {
     out = Value::MakeDictionary();
     return true;
@@ -420,7 +420,7 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     if (vr.type_id() == CrateTypeId::Dictionary) {
       if (!DecodeDictionary(vr, cv, depth + 1)) return false;
     } else if (vr.type_id() != CrateTypeId::Invalid &&
-               !UnpackValue(vr, cv)) {
+               !UnpackValue(vr, cv, depth + 1)) {
       return false;
     }
     d->set(std::move(key), std::move(cv));

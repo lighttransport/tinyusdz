@@ -204,6 +204,10 @@ bool USDZReader::Open(const uint8_t* data, size_t size,
 }
 
 const std::string& USDZReader::EntryName(size_t index) const {
+  // Bounds-check like EntryData()/EntrySize() below: an out-of-range index
+  // otherwise returns a reference into freed/unrelated memory.
+  static const std::string kEmpty;
+  if (index >= entries_.size()) return kEmpty;
   return entries_[index].name;
 }
 

@@ -178,7 +178,13 @@ bool CrateReader::Impl::UnpackArrayEditData(ValueRep rep, ArrayEditData* out) {
   return true;
 }
 
-bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
+bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
+  // Shared ceiling with DecodeDictionary — see the header comment.
+  if (depth > kMaxValueNestDepth) {
+    AddWarning("Value nesting too deep; value dropped");
+    return false;
+  }
+
   // VtArrayEdit reps (crate 0.14) are not VALUES: the attribute-spec decode
   // intercepts them (UnpackArrayEditData) and stores the structured edit on
   // the PrimSpec. Reaching here means an edit rep appeared in a context that
@@ -263,7 +269,9 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
           nested.type_id() != CrateTypeId::Dictionary) {
         return false;
       }
-      return UnpackValue(nested, out);
+      // Count the wrapper hop: this re-entry is exactly what let a cycle of
+      // UnregisteredValue-wrapped dictionaries recurse without bound.
+      return UnpackValue(nested, out, depth + 1);
     }
     case CrateTypeId::Half: return UnpackHalf(rep, out);
     case CrateTypeId::Vec2i: return UnpackVec2i(rep, out);
@@ -408,7 +416,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     }
 
     case CrateTypeId::Dictionary:
-      return DecodeDictionary(rep, out, 0);
+      return DecodeDictionary(rep, out, depth);
 
     case CrateTypeId::Relocates: {
       // SdfRelocates (crate >= 0.11): [u64 count][(u32 src, u32 dst)*].

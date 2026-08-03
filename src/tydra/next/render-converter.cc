@@ -4316,12 +4316,15 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
     const uint32_t i1 = mesh->triangulated_indices[t * 3 + 1];
     const uint32_t i2 = mesh->triangulated_indices[t * 3 + 2];
     if (i0 >= np || i1 >= np || i2 >= np) continue;
-    const float* p0 = &mesh->points[i0 * 3];
-    const float* p1 = &mesh->points[i1 * 3];
-    const float* p2 = &mesh->points[i2 * 3];
-    const float* u0 = &mesh->texcoords_0[i0 * 2];
-    const float* u1 = &mesh->texcoords_0[i1 * 2];
-    const float* u2 = &mesh->texcoords_0[i2 * 2];
+    // Copy out, never `&chunked[i]` + offset: an xyz/uv run straddles the
+    // chunk boundary (see ChunkedArray::read_n).
+    float p0[3], p1[3], p2[3], u0[2], u1[2], u2[2];
+    mesh->points.read3(i0 * 3, p0);
+    mesh->points.read3(i1 * 3, p1);
+    mesh->points.read3(i2 * 3, p2);
+    mesh->texcoords_0.read2(i0 * 2, u0);
+    mesh->texcoords_0.read2(i1 * 2, u1);
+    mesh->texcoords_0.read2(i2 * 2, u2);
     const float e1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
     const float e2[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
     const float du1 = u1[0] - u0[0], dv1 = u1[1] - u0[1];
@@ -4346,7 +4349,8 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
 
   std::vector<float> out_tan(np * 4, 0.0f);
   for (size_t v = 0; v < np; ++v) {
-    const float* n = &mesh->normals[v * 3];
+    float n[3];
+    mesh->normals.read3(v * 3, n);
     const float* tv = &tan[v * 3];
     // Gram-Schmidt orthogonalize t against n.
     const float ndt = n[0] * tv[0] + n[1] * tv[1] + n[2] * tv[2];

@@ -184,7 +184,7 @@ bool CrateReader::Impl::UnpackTimeSamples(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::DecodeTimeSamples(
-    ValueRep rep, std::vector<std::pair<double, Value>>* out) {
+    ValueRep rep, std::vector<std::pair<double, Value>>* out, int depth) {
   if (!out || rep.type_id() != CrateTypeId::TimeSamples) return false;
   out->clear();
   if (rep.is_inlined()) return false;  // inlined TimeSamples not produced
@@ -213,7 +213,7 @@ bool CrateReader::Impl::DecodeTimeSamples(
   if (!AddSignedOffset(times_pos, 8, &off_v_field)) return false;
 
   Value times_val;
-  if (!UnpackValue(ValueRep(times_rep_raw), times_val)) return false;
+  if (!UnpackValue(ValueRep(times_rep_raw), times_val, depth + 1)) return false;
   const std::vector<double>* times = times_val.as_double_array();
   if (!times) return false;
   for (double time : *times) {
@@ -249,7 +249,7 @@ bool CrateReader::Impl::DecodeTimeSamples(
   out->reserve(count);
   for (size_t i = 0; i < count; ++i) {
     Value v;  // a ValueBlock sample (no authored value at this time) stays empty
-    if (!UnpackValue(sample_reps[i], v)) {
+    if (!UnpackValue(sample_reps[i], v, depth + 1)) {
       out->clear();
       return false;
     }
