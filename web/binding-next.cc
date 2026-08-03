@@ -1873,6 +1873,12 @@ class RenderStream {
     stats_.mesh_discovery_ms =
         emscripten_get_now() - mesh_discovery_start_ms;
     stats_.source_mesh_count = meshes_.size();
+    // GetAllMeshes() exposes composed instance children whose GetParent()
+    // chain does not include the instance root. Seed transform caches from
+    // the render traversal before mesh-only optimization so baking sees the
+    // same composed world transforms as the node hierarchy. A full
+    // RenderScene is intentionally not built for mesh-only workers.
+    buildMeshTransformCaches_();
     if (mesh_merge_) {
       const double optimize_start_ms = emscripten_get_now();
       buildOptimizedOutputs_();
@@ -5054,6 +5060,22 @@ class RenderStream {
       }
     }
     return r;
+  }
+  void buildMeshTransformCaches_() {
+    tr::RenderExtractOptions options;
+    options.collect_records = false;
+    tr::RenderExtractResult extracted;
+    if (!tr::CollectRenderPrims(stage_, options, &extracted)) return;
+    for (const tr::RenderPrimRecord &record : extracted.meshes) {
+      std::array<double, 16> local;
+      std::array<double, 16> world;
+      for (int i = 0; i < 16; ++i) {
+        local[static_cast<size_t>(i)] = record.local[i];
+        world[static_cast<size_t>(i)] = record.world[i];
+      }
+      local_matrix_cache_[record.path] = local;
+      world_matrix_cache_[record.path] = world;
+    }
   }
   std::array<double, 16> localMatrix_(
       const tinyusdz::next::UsdPrim &prim) const {

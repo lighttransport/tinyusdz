@@ -1908,6 +1908,37 @@ bool JointTokenMatches(const SkeletonJoint& joint, const std::string& token) {
   return false;
 }
 
+using JointIndexLookup = std::unordered_map<std::string, int32_t>;
+
+JointIndexLookup BuildJointIndexLookup(const Skeleton& skeleton) {
+  JointIndexLookup lookup;
+  lookup.reserve(skeleton.joints.size() * 3);
+  for (size_t i = 0; i < skeleton.joints.size(); ++i) {
+    const SkeletonJoint& joint = skeleton.joints[i];
+    const int32_t index = static_cast<int32_t>(i);
+    lookup.emplace(joint.path, index);
+    lookup.emplace(joint.name, index);
+    lookup.emplace(LeafNameFromJointPath(joint.path), index);
+  }
+  return lookup;
+}
+
+int32_t FindJointIndex(const Skeleton& skeleton,
+                       const JointIndexLookup& lookup,
+                       const std::string& token) {
+  const auto exact = lookup.find(token);
+  if (exact != lookup.end()) return exact->second;
+  // Preserve support for relative multi-segment tokens. This uncommon path
+  // keeps the original matching semantics without penalizing exact paths and
+  // leaf names used by ordinary UsdSkel exports.
+  for (size_t i = 0; i < skeleton.joints.size(); ++i) {
+    if (JointTokenMatches(skeleton.joints[i], token)) {
+      return static_cast<int32_t>(i);
+    }
+  }
+  return -1;
+}
+
 // Material-driven UV primvar promotion: a UsdPrimvarReader varname that the
 // mesh's own UV-set selection (MeshConfig::uv_primvar_names) did not pick only
 // survives as a generic mesh.primvars entry, which no texture consumer samples.
@@ -2064,6 +2095,11 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
 
 void ResolveSkeletalAnimationTargets(RenderScene* scene) {
   if (!scene) return;
+  std::vector<JointIndexLookup> joint_lookups;
+  joint_lookups.reserve(scene->skeletons.size());
+  for (const Skeleton& skeleton : scene->skeletons) {
+    joint_lookups.push_back(BuildJointIndexLookup(skeleton));
+  }
   for (size_t ai = 0; ai < scene->animations.size(); ++ai) {
     AnimationClip& clip = scene->animations[ai];
     for (AnimationChannel& channel : clip.channels) {
@@ -2084,12 +2120,7 @@ void ResolveSkeletalAnimationTargets(RenderScene* scene) {
           const Skeleton& skel = scene->skeletons[si];
           size_t matches = 0;
           for (const std::string& token : channel.joint_order) {
-            for (const SkeletonJoint& joint : skel.joints) {
-              if (JointTokenMatches(joint, token)) {
-                ++matches;
-                break;
-              }
-            }
+            if (FindJointIndex(skel, joint_lookups[si], token) >= 0) ++matches;
           }
           if (matches > best_matches) {
             best_matches = matches;
@@ -2105,17 +2136,12 @@ void ResolveSkeletalAnimationTargets(RenderScene* scene) {
         continue;
       }
       const Skeleton& skel = scene->skeletons[static_cast<size_t>(skeleton_id)];
+      const JointIndexLookup& lookup =
+          joint_lookups[static_cast<size_t>(skeleton_id)];
       channel.target_skeleton_path = skel.prim_path;
       channel.joint_remap.reserve(channel.joint_order.size());
       for (const std::string& token : channel.joint_order) {
-        int32_t joint_id = -1;
-        for (size_t ji = 0; ji < skel.joints.size(); ++ji) {
-          if (JointTokenMatches(skel.joints[ji], token)) {
-            joint_id = static_cast<int32_t>(ji);
-            break;
-          }
-        }
-        channel.joint_remap.push_back(joint_id);
+        channel.joint_remap.push_back(FindJointIndex(skel, lookup, token));
       }
       scene->skeletons[static_cast<size_t>(skeleton_id)].animation_id =
           static_cast<int32_t>(ai);
@@ -2902,16 +2928,12 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
           mesh.skin->skeleton_id >= 0) {
         const Skeleton& skel =
             result.scene.skeletons[static_cast<size_t>(mesh.skin->skeleton_id)];
+        const JointIndexLookup joint_lookup = BuildJointIndexLookup(skel);
         std::vector<int32_t> remap(mesh.skin->mesh_joint_order.size(), -1);
         bool identity = true;
         for (size_t k = 0; k < mesh.skin->mesh_joint_order.size(); ++k) {
           const std::string& token = mesh.skin->mesh_joint_order[k];
-          for (size_t ji = 0; ji < skel.joints.size(); ++ji) {
-            if (JointTokenMatches(skel.joints[ji], token)) {
-              remap[k] = static_cast<int32_t>(ji);
-              break;
-            }
-          }
+          remap[k] = FindJointIndex(skel, joint_lookup, token);
           if (remap[k] != static_cast<int32_t>(k)) identity = false;
           if (remap[k] < 0) {
             warnings_.push_back("Mesh " + mesh.prim_path +
@@ -7649,26 +7671,17 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
 
       uint32_t expected_elements = 0;
       for (double t : times) {
-        ::tinyusdz::next::SkelAnimationData data;
-        if (!::tinyusdz::next::GetSkelAnimationDataAtTime(stage, prim, &data,
-                                                          t)) {
-          continue;
-        }
-
-        const std::vector<float>* values = nullptr;
-        if (target_path == AnimationChannel::TargetPath::Translation &&
-            data.hasTranslations) {
-          values = &data.translations;
-        } else if (target_path == AnimationChannel::TargetPath::Rotation &&
-                   data.hasRotations) {
-          values = &data.rotations;
-        } else if (target_path == AnimationChannel::TargetPath::Scale &&
-                   data.hasScales) {
-          values = &data.scales;
-        } else if (target_path == AnimationChannel::TargetPath::Weights &&
-                   data.hasBlendShapes) {
-          values = &data.blendShapeWeights;
-        }
+        // Read only this channel. GetSkelAnimationDataAtTime evaluates and
+        // copies translations, rotations, scales and blend-shape weights on
+        // every call; invoking it once per property made long clips perform
+        // the complete animation decode up to four times.
+        // `times` contains exact authored sample times, so borrow the stored
+        // Value directly. AttributeEval/GetInterpolatedValue returns a Value
+        // by copy; for a 3000-joint rig that copied tens of thousands of
+        // floats once per frame and then copied them again into the channel.
+        const Value* sampled = prim.GetValueAtTime(prop_name, t);
+        const std::vector<float>* values =
+            sampled ? sampled->as_float_array() : nullptr;
         if (!values || values->empty() || ((*values).size() % stride) != 0) {
           continue;
         }

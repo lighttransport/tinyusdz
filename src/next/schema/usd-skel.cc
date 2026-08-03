@@ -7,6 +7,7 @@
 #include "../strfmt.hh"
 #include <cstring>
 #include <algorithm>
+#include <unordered_map>
 
 namespace tinyusdz {
 namespace next {
@@ -380,6 +381,12 @@ bool BuildSkelTopology(const std::vector<std::string>& joints,
 
   dst.resize(joints.size(), -1);
 
+  std::unordered_map<std::string, int> joint_by_path;
+  joint_by_path.reserve(joints.size());
+  for (size_t i = 0; i < joints.size(); ++i) {
+    joint_by_path.emplace(joints[i], static_cast<int>(i));
+  }
+
   // Build parent index from joint paths
   for (size_t i = 0; i < joints.size(); ++i) {
     const std::string& path = joints[i];
@@ -399,12 +406,10 @@ bool BuildSkelTopology(const std::vector<std::string>& joints,
     bool found = false;
     std::string parentPath = path.substr(0, lastSlash);
     while (!parentPath.empty()) {
-      for (size_t j = 0; j < joints.size(); ++j) {
-        if (joints[j] == parentPath) {
-          dst[i] = static_cast<int>(j);
-          found = true;
-          break;
-        }
+      const auto parent = joint_by_path.find(parentPath);
+      if (parent != joint_by_path.end()) {
+        dst[i] = parent->second;
+        found = true;
       }
       if (found) break;
       const size_t up = parentPath.rfind('/');
