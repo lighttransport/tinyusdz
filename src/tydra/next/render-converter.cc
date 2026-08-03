@@ -5980,6 +5980,12 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   }
   mesh->face_triangle_offsets.assign(mesh->face_vertex_counts.size() + 1, 0);
   size_t idx_offset = 0;
+  // Hoisted out of the per-face loop: constructing the nested vector inside it
+  // cost two heap allocations per n-gon (1M allocations for a 500k-n-gon mesh).
+  // clear() keeps the ring's capacity across faces.
+  using EarcutPoint2 = std::array<double, 2>;
+  std::vector<std::vector<EarcutPoint2>> earcut_polygon(1);
+
   for (size_t f = 0; f < mesh->face_vertex_counts.size(); ++f) {
     mesh->face_triangle_offsets[f] =
         static_cast<uint32_t>(mesh->triangulated_indices.size() / 3);
@@ -6041,8 +6047,9 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
           // earcut allocation paths.
           used_earcut = false;
         } else {
-        using Point2 = std::array<double, 2>;
-        std::vector<std::vector<Point2>> polygon(1);
+        using Point2 = EarcutPoint2;
+        std::vector<std::vector<Point2>>& polygon = earcut_polygon;
+        polygon[0].clear();
         polygon[0].reserve(nverts);
 
         // Newell normal chooses the projection plane with the largest area,
@@ -6293,6 +6300,44 @@ uint32_t RenderSceneConverter::AssetAnchorOf(const UsdPrim& prim) {
   return spec ? spec->asset_anchor_id() : 0u;
 }
 
+// Dedup key for scene->images. Both image-dedup sites used a linear scan with
+// full string compares over every image already in the scene -- O(n^2) with a
+// long-path comparison per step (a 5000-image scene cost ~12.5M string
+// compares). image_id_by_key_ makes it O(1); FindImageId/RememberImageId are
+// the single place that maintains it.
+std::string RenderSceneConverter::ImageKey(const std::string& resolved_path,
+                                           ColorSpace cs) {
+  // '\x1f' = unit separator, never valid in a path.
+  return resolved_path + '\x1f' +
+         std::to_string(static_cast<int>(cs));
+}
+
+int32_t RenderSceneConverter::FindImageId(const RenderScene* scene,
+                                          const std::string& resolved_path,
+                                          ColorSpace cs) {
+  if (!scene) return -1;
+  // Rebuild lazily if the caller mutated scene->images behind our back (or
+  // this is a fresh scene), so the map can never report a stale index.
+  if (image_id_by_key_.size() != scene->images.size()) {
+    image_id_by_key_.clear();
+    image_id_by_key_.reserve(scene->images.size());
+    for (size_t i = 0; i < scene->images.size(); ++i) {
+      image_id_by_key_.emplace(
+          ImageKey(scene->images[i].resolved_path, scene->images[i].color_space),
+          static_cast<int32_t>(i));
+    }
+  }
+  auto it = image_id_by_key_.find(ImageKey(resolved_path, cs));
+  return it == image_id_by_key_.end() ? -1 : it->second;
+}
+
+void RenderSceneConverter::RememberImageId(const RenderScene* scene,
+                                           const std::string& resolved_path,
+                                           ColorSpace cs, int32_t id) {
+  (void)scene;
+  image_id_by_key_.emplace(ImageKey(resolved_path, cs), id);
+}
+
 int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
                                              const std::string& file,
                                              ColorSpace color_space,
@@ -6301,18 +6346,15 @@ int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
   const std::string resolved = ResolveAssetPath(file, asset_anchor_id);
   const ColorSpace csp =
       color_space == ColorSpace::Unknown ? ColorSpace::sRGB : color_space;
-  for (size_t i = 0; i < scene->images.size(); ++i) {
-    if (scene->images[i].resolved_path == resolved &&
-        scene->images[i].color_space == csp) {
-      return static_cast<int32_t>(i);
-    }
-  }
+  const int32_t hit = FindImageId(scene, resolved, csp);
+  if (hit >= 0) return hit;
   TextureImage image;
   image.name = file;
   image.resolved_path = resolved;
   image.color_space = csp;
   const int32_t id = static_cast<int32_t>(scene->images.size());
   scene->images.push_back(std::move(image));
+  RememberImageId(scene, resolved, csp, id);
   return id;
 }
 
@@ -6331,7 +6373,13 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     return false;
   }
 
-  if (scene) {
+  // The rendering color config depends only on `stage` and
+  // config_.material.render_settings_path -- both invariant across a
+  // conversion -- yet this did a stage path lookup, token canonicalization,
+  // color-space resolve and a 3x3 transform build once PER MATERIAL, writing
+  // the identical result to `scene` every time.
+  if (scene && scene != color_config_scene_) {
+    color_config_scene_ = scene;
     ::tinyusdz::next::color_management::RenderingColorConfig color_config;
     std::string color_warning;
     if (::tinyusdz::next::color_management::ResolveRenderingColorConfig(
@@ -7097,14 +7145,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
           cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
       const std::string resolved =
           ResolveAssetPath(tex_data.file, AssetAnchorOf(texture_prim));
-      int32_t image_id = -1;
-      for (size_t i = 0; i < scene->images.size(); ++i) {
-        if (scene->images[i].resolved_path == resolved &&
-            scene->images[i].color_space == image_color_space) {
-          image_id = static_cast<int32_t>(i);
-          break;
-        }
-      }
+      int32_t image_id = FindImageId(scene, resolved, image_color_space);
       if (image_id < 0) {
         TextureImage image;
         image.name = texture_prim.IsValid() ? texture_prim.GetName() : tex_data.file;
@@ -7126,7 +7167,10 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
           }
         }
         image_id = static_cast<int32_t>(scene->images.size());
+        // Key on the RESOLVED path/colorspace we looked up with -- a loaded
+        // image may carry different values, and the next lookup uses these.
         scene->images.push_back(std::move(image));
+        RememberImageId(scene, resolved, image_color_space, image_id);
       }
 
       RenderTexture texture;

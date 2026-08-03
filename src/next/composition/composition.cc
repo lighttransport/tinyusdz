@@ -1582,8 +1582,12 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
   //                                  layer is not materialized for one prim);
   //   - otherwise                  → compose the whole layer (always safe).
   const Layer* ext = raw;
-  if (SubtreeHasComposableArcs(*raw, tp)) {
-    ext = SubtreeIsSelfContained(*raw, tp)
+  // Memoized: both verdicts are full linear scans of `raw`, and they run
+  // BEFORE the composed_ext_cache_ lookup inside GetComposedExternalLayer, so
+  // recomputing them per arc made that cache useless.
+  const SubtreeArcInfo arc_info = GetSubtreeArcInfo(*raw, resolved, tp);
+  if (arc_info.has_arcs) {
+    ext = arc_info.self_contained
               ? GetComposedExternalLayer(resolved, tp)
               : GetComposedExternalLayer(resolved, std::string());
     if (!ext) ext = raw;  // fall back to raw on composition failure
@@ -1957,6 +1961,111 @@ const Layer* Compositor::GetCachedLayer(const std::string& path) {
   return result;
 }
 
+const Compositor::LayerArcIndex& Compositor::GetLayerArcIndex(
+    const Layer& raw, const std::string& resolved_path) {
+  if (!layer_arc_index_) {
+    layer_arc_index_ = std::make_shared<std::map<std::string, LayerArcIndex>>();
+  }
+  auto it = layer_arc_index_->find(resolved_path);
+  if (it != layer_arc_index_->end()) return it->second;
+
+  // Built once per layer: ONE pass over the prims, and every arc string is
+  // parsed once rather than once per referencing arc.
+  LayerArcIndex idx;
+  idx.has_sublayers = !raw.meta().subLayers.empty();
+  for (size_t i = 0; i < raw.prim_count(); ++i) {
+    const PrimSpec* p = raw.prim(static_cast<uint32_t>(i));
+    if (!p || !PrimHasComposableArcs(*p)) continue;
+    const auto& m = p->meta();
+    ArcPrimEntry e;
+    e.path = p->path().str();
+    e.has_class_arc = !m.inherits.empty() || !m.specializes.empty();
+    for (const auto& r : m.references) {
+      const CompositionArc a = Compositor::ParseReference(r);
+      if (a.is_internal) e.internal_targets.push_back(a.prim_path);
+    }
+    for (const auto& pl : m.payloads) {
+      const CompositionArc a = Compositor::ParsePayload(pl);
+      if (a.is_internal) e.internal_targets.push_back(a.prim_path);
+    }
+    idx.arc_prims.push_back(std::move(e));
+  }
+  std::sort(idx.arc_prims.begin(), idx.arc_prims.end(),
+            [](const ArcPrimEntry& a, const ArcPrimEntry& b) {
+              return a.path < b.path;
+            });
+  return (*layer_arc_index_)[resolved_path] = std::move(idx);
+}
+
+Compositor::SubtreeArcInfo Compositor::GetSubtreeArcInfo(
+    const Layer& raw, const std::string& resolved_path,
+    const std::string& subtree_root) {
+  if (!subtree_arc_cache_) {
+    subtree_arc_cache_ = std::make_shared<std::map<std::string, SubtreeArcInfo>>();
+  }
+  // '\x1f' = unit separator, never valid in a path or asset string.
+  const std::string key = resolved_path + '\x1f' + subtree_root;
+  auto it = subtree_arc_cache_->find(key);
+  if (it != subtree_arc_cache_->end()) return it->second;
+
+  // Answer from the per-layer index: the arc-bearing prims of the subtree are
+  // the contiguous range [subtree_root, subtree_root + "/\xff") of the sorted
+  // paths, plus possibly the root itself. This replaces a FULL scan of the
+  // referenced layer (and a re-parse of every arc string) per reference arc,
+  // which made a scene of N references into an M-prim library O(N*M) and
+  // defeated composed_ext_cache_ entirely.
+  const LayerArcIndex& idx = GetLayerArcIndex(raw, resolved_path);
+  const std::string prefix = subtree_root + "/";
+
+  auto lower = std::lower_bound(
+      idx.arc_prims.begin(), idx.arc_prims.end(), subtree_root,
+      [](const ArcPrimEntry& e, const std::string& v) { return e.path < v; });
+
+  SubtreeArcInfo info;
+  info.has_arcs = false;
+  info.self_contained = !idx.has_sublayers;
+  for (auto e = lower; e != idx.arc_prims.end(); ++e) {
+    if (!PathInSubtree(e->path, subtree_root, prefix)) {
+      // Sorted order: the first path past the prefix range ends it. (An exact
+      // match on subtree_root sorts first, so this only fires after it.)
+      if (e->path > prefix) break;
+      continue;
+    }
+    info.has_arcs = true;
+    if (e->has_class_arc) {
+      info.self_contained = false;
+      break;
+    }
+    bool escapes = false;
+    for (const std::string& t : e->internal_targets) {
+      if (!PathInSubtree(t, subtree_root, prefix)) {
+        escapes = true;
+        break;
+      }
+    }
+    if (escapes) {
+      info.self_contained = false;
+      break;
+    }
+  }
+  if (!info.has_arcs) info.self_contained = false;
+  (*subtree_arc_cache_)[key] = info;
+  return info;
+}
+
+bool Compositor::GetLayerHasArcs(const Layer& raw,
+                                 const std::string& resolved_path) {
+  if (!layer_arc_cache_) {
+    layer_arc_cache_ = std::make_shared<std::map<std::string, bool>>();
+  }
+  auto it = layer_arc_cache_->find(resolved_path);
+  if (it != layer_arc_cache_->end()) return it->second;
+  const LayerArcIndex& idx = GetLayerArcIndex(raw, resolved_path);
+  const bool v = !idx.arc_prims.empty() || idx.has_sublayers;
+  (*layer_arc_cache_)[resolved_path] = v;
+  return v;
+}
+
 const Layer* Compositor::GetComposedExternalLayer(
     const std::string& resolved_path, const std::string& subtree_root) {
   if (!composed_ext_cache_) {
@@ -1982,7 +2091,7 @@ const Layer* Compositor::GetComposedExternalLayer(
 
   // Nothing to expand → graft the raw layer directly (no clone/compose cost).
   // (Subtree callers already verified the subtree has arcs.)
-  if (subtree_root.empty() && !LayerHasComposableArcs(*raw)) return raw;
+  if (subtree_root.empty() && !GetLayerHasArcs(*raw, resolved_path)) return raw;
 
   // Cross-layer cycle guard: already composing this key → fall back to raw so
   // the recursion terminates (the in-progress layer's own arcs still resolve in
@@ -2015,6 +2124,20 @@ const Layer* Compositor::GetComposedExternalLayer(
   sub.options_ = opts;
   sub.composed_ext_cache_ = composed_ext_cache_;
   sub.composing_ext_ = composing_ext_;
+  // Share the arc-verdict memos too, so a nested composition does not redo the
+  // full-layer scans the outer one already paid for.
+  if (!subtree_arc_cache_) {
+    subtree_arc_cache_ = std::make_shared<std::map<std::string, SubtreeArcInfo>>();
+  }
+  if (!layer_arc_cache_) {
+    layer_arc_cache_ = std::make_shared<std::map<std::string, bool>>();
+  }
+  if (!layer_arc_index_) {
+    layer_arc_index_ = std::make_shared<std::map<std::string, LayerArcIndex>>();
+  }
+  sub.subtree_arc_cache_ = subtree_arc_cache_;
+  sub.layer_arc_cache_ = layer_arc_cache_;
+  sub.layer_arc_index_ = layer_arc_index_;
 
   std::unique_ptr<Layer> composed = sub.Compose(*input, resolved_path);
   for (const auto& e : sub.errors_) errors_.push_back(e);
