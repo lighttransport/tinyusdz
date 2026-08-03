@@ -9,9 +9,10 @@
 #
 # A roundtrip PASSes when the kinematic structure is preserved:
 #   forward "links"  == return "bodies"   AND   forward "joints" == return "joints"
-# (Mesh *visual* geometry is summarized as point/face counts by
-# extractPhysicsSceneJSON and re-emitted as placeholder cubes, so visual counts
-# are reported but not asserted.)
+# Mesh visual geometry is summarized and reported but is not part of the
+# kinematic pass/fail assertion. The return leg preserves render meshes when
+# available and uses a placeholder OBJ only when a render-only conversion
+# warning prevents extraction.
 #
 # Usage:
 #   web/js/run-mjcf-roundtrip.sh                  # curated representative set
@@ -39,6 +40,7 @@ REV="$SCRIPT_DIR/cli/usd-to-mjcf.js"
 CLOSURE=0
 SWEEP=0
 EXPLICIT=()
+JSON_OUT=""
 MAX_USDC_MB="${MAX_USDC_MB:-2048}"
 MAX_MEM_MB="${MAX_MEM_MB:-4096}"
 
@@ -74,6 +76,8 @@ while [[ $# -gt 0 ]]; do
       MAX_MEM_MB="$2"; shift 2 ;;
     --out-dir|--out)
       OUT_DIR="$2"; shift 2 ;;
+    --json)
+      JSON_OUT="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,40p' "$0"; exit 0 ;;
     -*)
@@ -131,10 +135,30 @@ printf '%s\n' "-----------------------------------------------------------------
 
 PASS=0; FAIL=0; ERR=0
 FAILED_LIST=()
+JSON_ROWS=()
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+add_json_row() {
+  local robot model result links joints visuals collisions usd mjcf
+  robot="$(json_escape "$1")"
+  model="$(json_escape "$2")"
+  result="$(json_escape "$3")"
+  links="${4:-}"; joints="${5:-}"; visuals="${6:-}"; collisions="${7:-}"
+  usd="$(json_escape "${8:-}")"; mjcf="$(json_escape "${9:-}")"
+  JSON_ROWS+=("{\"robot\":\"$robot\",\"model\":\"$model\",\"result\":\"$result\",\"links\":\"$links\",\"joints\":\"$joints\",\"visuals\":\"$visuals\",\"collisions\":\"$collisions\",\"usd\":\"$usd\",\"mjcf\":\"$mjcf\"}")
+}
 
 run_one() {
   local mjcf="$1"
-  [ -f "$mjcf" ] || { printf '%-26s %-22s %58s\n' "?" "$mjcf" "MISSING-FILE"; ERR=$((ERR+1)); FAILED_LIST+=("$mjcf (missing)"); return; }
+  if [ ! -f "$mjcf" ]; then
+    printf '%-26s %-22s %58s\n' "?" "$mjcf" "MISSING-FILE"
+    ERR=$((ERR+1)); FAILED_LIST+=("$mjcf (missing)")
+    add_json_row "?" "$mjcf" "MISSING-FILE" "" "" "" "" "" ""
+    return
+  fi
   local name robotdir sub odir usd out_mjcf
   name="$(basename "$mjcf")"; name="${name%.*}"
   robotdir="$(dirname "$mjcf")"
@@ -154,7 +178,9 @@ run_one() {
   if [ $frc -ne 0 ]; then
     printf '%-26s %-22s %58s\n' "$sub" "$name" "FWD-ERROR"
     [ -n "${VERBOSE:-}" ] && echo "    $(echo "$fout" | tail -1)"
-    ERR=$((ERR+1)); FAILED_LIST+=("$sub/$name (forward: $(echo "$fout" | tail -1))"); return
+    ERR=$((ERR+1)); FAILED_LIST+=("$sub/$name (forward: $(echo "$fout" | tail -1))")
+    add_json_row "$sub" "$name" "FWD-ERROR" "" "" "" "" "$usd" "$out_mjcf"
+    return
   fi
   fline="$(echo "$fout" | grep '^Verified')"
   L="$(get links "$fline")"; J="$(get joints "$fline")"
@@ -167,7 +193,9 @@ run_one() {
   if [ $rrc -ne 0 ]; then
     printf '%-26s %-22s %58s\n' "$sub" "$name" "REV-ERROR"
     [ -n "${VERBOSE:-}" ] && echo "    $(echo "$rout" | tail -1)"
-    ERR=$((ERR+1)); FAILED_LIST+=("$sub/$name (return: $(echo "$rout" | tail -1))"); return
+    ERR=$((ERR+1)); FAILED_LIST+=("$sub/$name (return: $(echo "$rout" | tail -1))")
+    add_json_row "$sub" "$name" "REV-ERROR" "$L" "$J" "$V" "$C" "$usd" "$out_mjcf"
+    return
   fi
   rline="$(echo "$rout" | grep '^Wrote')"
   B="$(get bodies "$rline")"; J2="$(get joints "$rline")"
@@ -201,6 +229,7 @@ run_one() {
 
   printf '%-26s %-22s %8s %8s %8s %8s  %s\n' \
     "$sub" "$name" "$L→$B" "$J→$J2" "$V→$V2" "$C→$C2" "$result"
+  add_json_row "$sub" "$name" "$result" "$L→$B" "$J→$J2" "$V→$V2" "$C→$C2" "$usd" "$out_mjcf"
 }
 
 START=$(date +%s)
@@ -215,5 +244,24 @@ if [ "${#FAILED_LIST[@]}" -gt 0 ]; then
   for f in "${FAILED_LIST[@]}"; do echo "  - $f"; done
 fi
 echo "outputs under: $OUT_DIR"
+
+if [ -n "$JSON_OUT" ]; then
+  mkdir -p "$(dirname "$JSON_OUT")"
+  {
+    echo '{'
+    echo "  \"models\": ["
+    for ((i = 0; i < ${#JSON_ROWS[@]}; i++)); do
+      if [ "$i" -lt $((${#JSON_ROWS[@]} - 1)) ]; then
+        echo "    ${JSON_ROWS[$i]},"
+      else
+        echo "    ${JSON_ROWS[$i]}"
+      fi
+    done
+    echo '  ],'
+    echo "  \"counts\": {\"models\": ${#MODELS[@]}, \"pass\": $PASS, \"fail\": $FAIL, \"error\": $ERR}"
+    echo '}'
+  } > "$JSON_OUT"
+  echo "json summary: $JSON_OUT"
+fi
 
 [ "$FAIL" -eq 0 ] && [ "$ERR" -eq 0 ]

@@ -191,6 +191,14 @@ See `doc/testing-cpp.md` for full details on the C++ test infrastructure, and us
 
 The stable `next` module (`src/next/`, `tests/next/`) is a standalone CMake project with its own Debug test build. It does not appear in the main native `ctest` tree, so run it explicitly as part of the regression gate (see [Stable `next` library tests](doc/testing-cpp.md#stable-next-library-tests)).
 
+### Web/WASM regression procedure
+
+The complete procedure is maintained in
+[web/js/docs/regression.md](web/js/docs/regression.md). That document is the
+single source of truth for setup, WASM builds, Node/physics/browser profiles,
+Menagerie coverage, CTest integration, pass criteria, and the non-threaded WASM
+configuration.
+
 ### Pre-merge checklist
 
 Before merging refactors or feature branches, confirm all required checks pass:
@@ -218,11 +226,12 @@ ctest --test-dir build-next --output-on-failure
 3. Run web/WASM checks when web or JS-facing code changed
 
 ```bash
-cd web
-emcmake cmake -S . -B build
-cmake --build build -j16
-ctest --test-dir build --output-on-failure
+cd web/js
+npm test
 ```
+
+See [web/js/docs/regression.md](web/js/docs/regression.md) for setup,
+WASM builds, focused profiles, browser modes, and CTest integration.
 
 4. Run Pixar compatibility regression if available
 
@@ -264,12 +273,8 @@ cmake -S "$ROOT_DIR/src/next" -B "$ROOT_DIR/build-next" \
 cmake --build "$ROOT_DIR/build-next" -j"$JOBS"
 ctest --test-dir "$ROOT_DIR/build-next" --output-on-failure
 
-cd "$ROOT_DIR/web"
-if [ -f "$ROOT_DIR/web/CMakeLists.txt" ]; then
-  emcmake cmake -S . -B build
-  cmake --build build -j"$JOBS"
-  ctest --test-dir build --output-on-failure
-fi
+cd "$ROOT_DIR/web/js"
+npm test
 
 if [ -x "$ROOT_DIR/tests/run-usdcat-compare.sh" ]; then
   USDCAT_PATH="${USDCAT_PATH:-$HOME/local/USD/dist/bin/usdcat}"
