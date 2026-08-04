@@ -355,9 +355,27 @@ public:
   void finalize();
 
 private:
+  /// Index of the prim already at `path_str`, or UINT32_MAX.
+  ///
+  /// begin_prim() must re-open an existing prim rather than append a second
+  /// spec with the same path (two same-path specs corrupt a crate write). That
+  /// check used to be a LINEAR SCAN of the parent's children -- or of the root
+  /// prims -- on every single begin_prim(), making construction of a layer
+  /// with N siblings under one parent O(N^2). Building a 40k-prim library took
+  /// 34s, essentially all of it in this scan; it is the same shape a USDA/USDC
+  /// reader or a URDF/MJCF importer hits on any wide layer.
+  ///
+  /// Same parent + same name is exactly the same path, so a path->index map is
+  /// an equivalent test at O(1). It is rebuilt if the layer gains prims behind
+  /// the builder's back, so it can never go stale.
+  uint32_t FindExistingPrim(const std::string& path_str);
+
   Layer& layer_;
   std::vector<uint32_t> prim_stack_;  // Stack of parent indices
   uint32_t current_index_ = UINT32_MAX;
+  std::unordered_map<std::string, uint32_t> path_index_;
+  size_t indexed_prim_count_ = 0;
+  bool path_index_built_ = false;
 };
 
 }  // namespace next
