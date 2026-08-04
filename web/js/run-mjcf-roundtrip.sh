@@ -107,7 +107,13 @@ discover_all() {
       grep -q "<worldbody" "$f" 2>/dev/null || continue
       grep -q "<body" "$f" 2>/dev/null || continue
       cand="$f"; break
-    done < <(ls "$dir"*.xml 2>/dev/null | sort)
+    # LC_ALL=C: byte order, matching the JS discovery in
+    # tests/screenshot-offscreen-batch.mjs (String.sort is code-unit order).
+    # A UTF-8 locale collates punctuation differently -- it ranks "g1_mjx.xml"
+    # before "g1.xml" -- so the two steps picked DIFFERENT primary models for
+    # 8 Menagerie dirs, and the render sweep then failed looking for a .usdc
+    # this script had never produced.
+    done < <(ls "$dir"*.xml 2>/dev/null | LC_ALL=C sort)
     [ -n "$cand" ] && echo "$cand"
   done
 }
