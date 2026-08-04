@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 
 namespace tinyusdz {
 namespace tydra {
@@ -149,7 +150,22 @@ struct MtlxMaterialInfo {
   std::string displacement_shader;
   std::string volume_shader;
 
-  std::vector<MtlxNodeInfo> nodes;
+  // The node list is a property of the DOCUMENT, not of any one material, so
+  // every material in a .mtlx shares it. Held by shared_ptr: rebuilding it per
+  // material made ParseMtlx O(materials * nodes) in both time and memory (each
+  // MtlxNodeInfo carries four std::maps, so 50 materials x 2000 nodes meant
+  // 100k node objects and ~400k red-black-tree allocations where 2000 would
+  // do). Never null after a successful ParseMtlx; use nodes() to read it.
+  std::shared_ptr<const std::vector<MtlxNodeInfo>> shared_nodes;
+
+  static const std::vector<MtlxNodeInfo>& empty_nodes() {
+    static const std::vector<MtlxNodeInfo> kEmpty;
+    return kEmpty;
+  }
+  const std::vector<MtlxNodeInfo>& nodes() const {
+    return shared_nodes ? *shared_nodes : empty_nodes();
+  }
+
   std::map<std::string, MtlxTextureData> textures;
 };
 

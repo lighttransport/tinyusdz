@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 
 #include "texture-cache.hh"
+#include "usdz-entry-match.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -22,31 +23,14 @@ namespace next {
 
 namespace {
 
-// Match a USD asset path against a .usdz entry name. Entries are archive-
-// relative and may carry a directory prefix the authored path omits, so accept
-// an exact match, a path-suffix match on a directory boundary, or a basename
-// match as the last resort.
-bool UsdzEntryMatches(const std::string& entry, const std::string& asset) {
-  std::string a = asset;
-  if (a.rfind("./", 0) == 0) a = a.substr(2);
-  if (entry == a) return true;
-  if (entry.size() > a.size() &&
-      entry.compare(entry.size() - a.size(), a.size(), a) == 0 &&
-      entry[entry.size() - a.size() - 1] == '/') {
-    return true;
-  }
-  auto base = [](const std::string& s) {
-    const size_t p = s.find_last_of('/');
-    return p == std::string::npos ? s : s.substr(p + 1);
-  };
-  return base(entry) == base(a);
-}
-
 bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
+                     const std::vector<size_t>* usdz_candidates,
                      ::tinyusdz::Image* out) {
   if (asset.empty()) return false;
-  if (opt.usdz) {
-    for (size_t i = 0; i < opt.usdz->NumEntries(); ++i) {
+  if (opt.usdz && usdz_candidates) {
+    // Candidates are in entry order, so the first match is the same entry the
+    // full scan used to pick.
+    for (size_t i : *usdz_candidates) {
       if (!UsdzEntryMatches(opt.usdz->EntryName(i), asset)) continue;
       auto res = ::tinyusdz::image::LoadImageFromMemory(
           opt.usdz->EntryData(i), opt.usdz->EntrySize(i),
@@ -69,10 +53,11 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
 // Raw bytes of an asset, resolved exactly like LoadSourceImage (usdz entry first,
 // then base_dir-relative on disk).
 bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
+                     const std::vector<size_t>* usdz_candidates,
                      std::vector<uint8_t>* out) {
   if (asset.empty() || !out) return false;
-  if (opt.usdz) {
-    for (size_t i = 0; i < opt.usdz->NumEntries(); ++i) {
+  if (opt.usdz && usdz_candidates) {
+    for (size_t i : *usdz_candidates) {
       if (!UsdzEntryMatches(opt.usdz->EntryName(i), asset)) continue;
       const uint8_t* p = opt.usdz->EntryData(i);
       const size_t n = opt.usdz->EntrySize(i);
@@ -227,9 +212,24 @@ void ScaledExtent(const DecodedImage& img, double ratio, uint32_t* w,
 
 }  // namespace
 
+const std::vector<size_t>* TextureDecoder::UsdzCandidates(
+    const std::string& asset) const {
+  if (!options_.usdz) return nullptr;
+  if (!usdz_index_built_) {
+    usdz_index_built_ = true;
+    const size_t n = options_.usdz->NumEntries();
+    usdz_by_base_.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      usdz_by_base_[UsdzAssetBaseKey(options_.usdz->EntryName(i))].push_back(i);
+    }
+  }
+  auto it = usdz_by_base_.find(UsdzAssetBaseKey(asset));
+  return it == usdz_by_base_.end() ? nullptr : &it->second;
+}
+
 bool TextureDecoder::ReadAssetBytes(const std::string& asset,
                                    std::vector<uint8_t>* out) const {
-  return ReadSourceBytes(options_, asset, out);
+  return ReadSourceBytes(options_, asset, UsdzCandidates(asset), out);
 }
 
 bool TextureDecoder::Decode(const std::string& asset, bool srgb,
@@ -237,7 +237,7 @@ bool TextureDecoder::Decode(const std::string& asset, bool srgb,
   if (!out) return false;
 
   ::tinyusdz::Image src;
-  if (!LoadSourceImage(options_, asset, &src)) return false;
+  if (!LoadSourceImage(options_, asset, UsdzCandidates(asset), &src)) return false;
   if (!NarrowTo8Bit(&src)) return false;
 
   DecodedImage img;

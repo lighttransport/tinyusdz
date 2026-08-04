@@ -662,14 +662,11 @@ bool MtlxConverter::ParseMtlx(const std::string& mtlx_content,
     return false;
   }
 
-  for (const auto& mat : doc.GetMaterials()) {
-    MtlxMaterialInfo info;
-    info.name = mat->GetName();
-    info.surface_shader = mat->GetSurfaceShader();
-    info.displacement_shader = mat->GetDisplacementShader();
-    info.volume_shader = mat->GetVolumeShader();
-
-    // Collect nodes
+  // Build the document's node list ONCE and share it with every material; it
+  // does not vary per material (see MtlxMaterialInfo::shared_nodes).
+  auto shared_nodes = std::make_shared<std::vector<MtlxNodeInfo>>();
+  {
+    shared_nodes->reserve(doc.GetNodes().size());
     for (const auto& node : doc.GetNodes()) {
       MtlxNodeInfo node_info;
       node_info.name = node->GetName();
@@ -695,9 +692,18 @@ bool MtlxConverter::ParseMtlx(const std::string& mtlx_content,
         }
       }
 
-      info.nodes.push_back(std::move(node_info));
+      shared_nodes->push_back(std::move(node_info));
     }
+  }
 
+  materials->reserve(doc.GetMaterials().size());
+  for (const auto& mat : doc.GetMaterials()) {
+    MtlxMaterialInfo info;
+    info.name = mat->GetName();
+    info.surface_shader = mat->GetSurfaceShader();
+    info.displacement_shader = mat->GetDisplacementShader();
+    info.volume_shader = mat->GetVolumeShader();
+    info.shared_nodes = shared_nodes;
     materials->push_back(std::move(info));
   }
 

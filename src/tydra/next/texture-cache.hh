@@ -108,6 +108,17 @@ class TextureDecoder {
   std::unordered_map<std::string, PtexCacheEntry> ptex_cache_;
   std::list<std::string> ptex_lru_;
   uint64_t ptex_cache_bytes_ = 0;
+
+  /// basename -> .usdz entry indices, in entry order. Built lazily on the
+  /// first usdz-backed lookup. Every tier of the entry/asset match (exact,
+  /// directory-boundary suffix, basename) implies equal basenames, so
+  /// restricting the scan to one bucket is exactly equivalent to walking all
+  /// entries -- but turns loading T textures out of an E-entry archive from
+  /// O(T*E) comparisons (with up to three string allocations per candidate)
+  /// into O(T) bucket lookups.
+  mutable std::unordered_map<std::string, std::vector<size_t>> usdz_by_base_;
+  mutable bool usdz_index_built_ = false;
+  const std::vector<size_t>* UsdzCandidates(const std::string& asset) const;
 };
 
 /// Substitute the literal `<UDIM>` token in an asset path with a tile id.

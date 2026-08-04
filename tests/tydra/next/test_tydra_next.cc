@@ -21,6 +21,7 @@
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/mem-budget.hh"
+#include "tydra/next/usdz-entry-match.hh"
 #include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
 #include "tydra/next/urdf-to-usd.hh"
@@ -3029,6 +3030,55 @@ def Xform "W"
   std::cout << "  light-link collection path ranges passed!\n";
 }
 
+// .usdz entry matching. TextureDecoder prefilters candidate entries by
+// basename, which is only valid because EVERY tier below implies the
+// basenames are equal -- these cases pin that invariant along with the
+// matching rules themselves.
+void TestUsdzEntryMatching() {
+  std::cout << "Testing usdz entry matching...\n";
+  using tinyusdz::tydra::next::UsdzEntryMatches;
+
+  // Exact.
+  assert(UsdzEntryMatches("tex.png", "tex.png"));
+  // Leading "./" on the authored path is ignored.
+  assert(UsdzEntryMatches("tex.png", "./tex.png"));
+  assert(UsdzEntryMatches("textures/tex.png", "./textures/tex.png"));
+  // Entry carries a directory prefix the authored path omits.
+  assert(UsdzEntryMatches("assets/textures/tex.png", "textures/tex.png"));
+  assert(UsdzEntryMatches("a/b/c/tex.png", "tex.png"));
+  // Basename fallback: differing directories still match.
+  assert(UsdzEntryMatches("one/tex.png", "two/tex.png"));
+
+  // Suffix must land on a '/' boundary, not mid-name. "othertex.png" ends with
+  // "tex.png" but is a different file -- it may only match by basename, which
+  // it does not.
+  assert(!UsdzEntryMatches("othertex.png", "tex.png"));
+  assert(!UsdzEntryMatches("tex.png", "othertex.png"));
+  // Different basenames never match.
+  assert(!UsdzEntryMatches("a/other.png", "b/tex.png"));
+  assert(!UsdzEntryMatches("", "tex.png"));
+
+  // The prefilter invariant: any match implies equal basenames.
+  auto basename = [](const std::string& p) {
+    const size_t q = p.find_last_of('/');
+    return q == std::string::npos ? p : p.substr(q + 1);
+  };
+  const char* entries[] = {"tex.png", "a/tex.png", "a/b/tex.png",
+                           "othertex.png", "a/other.png", "tex.PNG"};
+  const char* assets[] = {"tex.png", "./tex.png", "textures/tex.png",
+                          "other.png", "othertex.png"};
+  for (const char* e : entries) {
+    for (const char* a : assets) {
+      if (!UsdzEntryMatches(e, a)) continue;
+      std::string an = a;
+      if (an.rfind("./", 0) == 0) an = an.substr(2);
+      assert(basename(e) == basename(an));
+    }
+  }
+
+  std::cout << "  usdz entry matching passed!\n";
+}
+
 void TestRenderConverterCurves() {
   std::cout << "Testing RenderConverter curves...\n";
 
@@ -5844,6 +5894,7 @@ int main() {
   TestRenderConverterCurves();
   TestConverterMemoryBudget();
   TestLightLinkCollectionRanges();
+  TestUsdzEntryMatching();
   TestLargeMeshTangents();
   TestValueClipBaking();
   TestMeshParityCleanups();
