@@ -361,6 +361,24 @@ void Gui::drawLoadingModal() {
     ImGui::TextUnformatted("Loading on a background thread...");
     ImGui::TextDisabled("%s", loadStatus_.path.c_str());
     ImGui::Separator();
+    const auto phaseName = [&]() {
+      switch (static_cast<LoadDetailPhase>(loadStatus_.detailPhase)) {
+        case LoadDetailPhase::Parsing: return "Parsing USD";
+        case LoadDetailPhase::Composing: return "Composing stage";
+        case LoadDetailPhase::Converting: return "Converting geometry";
+        case LoadDetailPhase::ProcessingTextures: return "Processing textures";
+        case LoadDetailPhase::Finalizing: return "Finalizing scene";
+      }
+      return "Loading";
+    };
+    ImGui::Text("Phase: %s", phaseName());
+    if (loadStatus_.texturesTotal > 0) {
+      const float textureFrac = static_cast<float>(loadStatus_.texturesDone) /
+                                static_cast<float>(loadStatus_.texturesTotal);
+      ImGui::ProgressBar(std::clamp(textureFrac, 0.0f, 1.0f), ImVec2(300, 0));
+      ImGui::Text("Textures: %lld / %lld", loadStatus_.texturesDone,
+                  loadStatus_.texturesTotal);
+    }
     if (loadStatus_.meshesTotal > 0) {
       const float meshFrac = static_cast<float>(loadStatus_.meshesDone) /
                              static_cast<float>(loadStatus_.meshesTotal);
@@ -368,19 +386,19 @@ void Gui::drawLoadingModal() {
                              ? 0.2f + 0.8f * meshFrac
                              : meshFrac;
       ImGui::ProgressBar(std::clamp(frac, 0.0f, 1.0f), ImVec2(300, 0));
-      ImGui::Text("Converting meshes: %lld / %lld", loadStatus_.meshesDone,
+      ImGui::Text("Meshes: %lld / %lld", loadStatus_.meshesDone,
                   loadStatus_.meshesTotal);
     } else if (loadStatus_.payloadsTotal > 0) {
       const float payloadFrac = static_cast<float>(loadStatus_.payloadsDone) /
                                 static_cast<float>(loadStatus_.payloadsTotal);
       ImGui::ProgressBar(std::clamp(0.2f * payloadFrac, 0.0f, 0.2f),
                          ImVec2(300, 0));
-      ImGui::Text("Resolving payloads: %lld / %lld",
+      ImGui::Text("Payloads: %lld / %lld",
                   loadStatus_.payloadsDone, loadStatus_.payloadsTotal);
     } else {
       ImGui::ProgressBar(std::clamp(loadStatus_.phaseProgress, 0.0f, 1.0f),
                          ImVec2(300, 0));
-      ImGui::Text("Parsing / composing...");
+      ImGui::Text("Stage progress: %.0f%%", loadStatus_.phaseProgress * 100.0f);
     }
     ImGui::Text("Elapsed: %.1f s", loadStatus_.elapsed);
     ImGui::Spacing();
@@ -419,7 +437,7 @@ void Gui::drawProgressOverlay() {
     if (upload_.active) {
       ImGui::TextUnformatted("Streaming scene to GPU\xE2\x80\xA6");
       bar("meshes", upload_.meshesDone, upload_.meshesTotal);
-      if (upload_.meshesDone >= upload_.meshesTotal && upload_.texTotal > 0)
+      if (upload_.texTotal > 0)
         bar("textures", upload_.texDone, upload_.texTotal);
       if (upload_.volTotal > 0) bar("volumes", upload_.volDone, upload_.volTotal);
     }

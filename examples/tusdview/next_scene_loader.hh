@@ -38,6 +38,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     std::shared_ptr<tinyusdz::next::StageSession>* out_session = nullptr,
                     ProgressiveSceneStream* stream = nullptr);
 
+bool UpdateNextAnimatedMeshWorlds(const tinyusdz::next::Stage& stage,
+                                  DrawScene* draw, double time);
+
 // Decode one ordinary filesystem texture reserved by the async next-loader.
 // Each call owns its decoder and is safe to run on an application worker.
 // Archive, UDIM, Ptex and kept-compressed KTX textures never use this path.

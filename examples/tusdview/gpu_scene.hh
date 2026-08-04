@@ -184,6 +184,7 @@ struct DrawMeshCPU {
   float flatOpacity{1.0f};
 
   float world[16];  // column-major (light3d::Mat4 layout), world transform
+  bool animatedWorld{false};
   // USD row-vector matrix copied with the same convention as `world`.
   float skinGeomBind[16];
   int skelId{-1};

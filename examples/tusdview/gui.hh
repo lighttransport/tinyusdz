@@ -46,7 +46,10 @@ class Gui {
     long long meshesTotal{0};
     long long payloadsDone{0};
     long long payloadsTotal{0};
+    long long texturesDone{0};
+    long long texturesTotal{0};
     int stage{0};
+    int detailPhase{0};
     float phaseProgress{0.0f};
     float elapsed{0.0f};
   };

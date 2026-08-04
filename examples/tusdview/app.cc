@@ -228,6 +228,7 @@ void App::updateTextureResidency() {
         // CPU block/raw payload for every resident texture.
         ReleaseOrdinaryTexturePayload(&draw_.textures[ready.slot]);
       }
+      loadCtrl_.texturesDone.fetch_add(1);
     }
     textureDecodeJobs_.erase(textureDecodeJobs_.begin() +
                              static_cast<std::ptrdiff_t>(i));
@@ -2268,8 +2269,10 @@ void App::stepProgressiveUpload() {
     }
   }
   const bool auxReady = !streamAuxEager_ || nextAux_ >= draw_.meshes.size();
-  // Then stream textures (meshes show base color until their texture lands).
-  if (nextMesh_ >= draw_.meshes.size() && auxReady) {
+  // Stream ready textures independently of the geometry tail. Large meshes can
+  // take several frames to upload; waiting for all of them left already-decoded
+  // materials on the gray fallback for the whole interval.
+  if (auxReady) {
     while (nextTex_ < draw_.textures.size()) {
       renderer_->uploadTexture(static_cast<int>(nextTex_), draw_.textures[nextTex_]);
       if (!cudaRt_ && !hipRt_ && draw_.textures[nextTex_].isPtex &&
@@ -2962,7 +2965,26 @@ void App::updateSkinningEffective() {
 void App::updateGpuSkinningFrameIfNeeded() {
   // --next has no RenderScene for Tydra to pose from; it re-poses from its
   // retained Stage instead (bone matrices + GPU morph coefficients).
-  if (useNextLoader_) { updateNextDeformFrameIfNeeded(); return; }
+  if (useNextLoader_) {
+    if (nextStageSnapshot_ && loaded_.ok && !progressiveActive_ &&
+        renderer_->meshCount() == static_cast<int>(draw_.meshes.size())) {
+      if (UpdateNextAnimatedMeshWorlds(*nextStageSnapshot_, &draw_, animTime_)) {
+        std::vector<std::pair<int, std::array<float, 16>>> worldUploads;
+        for (size_t i = 0; i < draw_.meshes.size(); ++i) {
+          if (!draw_.meshes[i].animatedWorld) continue;
+          std::array<float, 16> world;
+          std::memcpy(world.data(), draw_.meshes[i].world, sizeof(world));
+          worldUploads.push_back({static_cast<int>(i), world});
+        }
+        postGpu([this, uploads = std::move(worldUploads)]() {
+          for (const auto& upload : uploads)
+            renderer_->updateMeshWorld(upload.first, upload.second.data());
+        });
+      }
+    }
+    updateNextDeformFrameIfNeeded();
+    return;
+  }
   if (skinningEffective_ != SkinningMode::GPU || !loaded_.ok) return;
   const bool hasMorph = SceneHasBlendShapes(loaded_.render);
   const bool mixed = SceneHasNonSkeletalAnimation(loaded_.render);
@@ -3269,6 +3291,20 @@ void App::requestReconvert(double t) {
   // Skip while a fresh file load is streaming (loaded_/draw_ are in flux); the
   // worker would also race the load writing loaded_.
   if (!loaded_.ok || loadActive_) return;
+
+  // The next loader keeps the render scene resident and applies animation in
+  // place (world-transform uploads and, when supported, GPU deformation).
+  // Sending its timeline through RenderSceneAtTime is incorrect: that worker
+  // consumes the legacy RenderScene representation, which is intentionally
+  // empty for a next-loader load.  Apart from doing needless work, swapping
+  // that failed result during playback makes the viewport report that there
+  // are no renderable meshes.
+  if (useNextLoader_) {
+    reconvApplied_ = t;
+    skinFrameTime_ = std::numeric_limits<double>::quiet_NaN();
+    return;
+  }
+
   if (skinningEffective_ == SkinningMode::GPU) {
     reconvApplied_ = t;
     skinFrameTime_ = std::numeric_limits<double>::quiet_NaN();
@@ -4143,7 +4179,10 @@ int App::run(const std::string& initialFile, int maxFrames,
     ls.meshesTotal = loadCtrl_.meshesTotal.load();
     ls.payloadsDone = loadCtrl_.payloadsDone.load();
     ls.payloadsTotal = loadCtrl_.payloadsTotal.load();
+    ls.texturesDone = loadCtrl_.texturesDone.load();
+    ls.texturesTotal = loadCtrl_.texturesTotal.load();
     ls.stage = loadCtrl_.stage.load();
+    ls.detailPhase = loadCtrl_.detailPhase.load();
     ls.phaseProgress = static_cast<float>(loadCtrl_.phasePermille.load()) / 1000.0f;
     ls.elapsed = loadActive_ ? std::chrono::duration<float>(
                                    std::chrono::steady_clock::now() - loadStart_)

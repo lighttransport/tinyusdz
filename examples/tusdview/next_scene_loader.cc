@@ -39,6 +39,7 @@
 #include "next/reader/usdz-reader.hh"  // USDZReader (embedded --next textures)
 #include "next/schema/usd-shade.hh"    // GetInheritedBoundMaterialPath
 #include "next/schema/usd-skel.hh"     // GetSkeletonData / GetSkelAnimationData
+#include "next/schema/geom-xform.hh"   // HasAnimatedTransform
 #include "tydra/scene-access.hh"       // SkinPointsLBS / ConcatJointTransforms
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-extract.hh"
@@ -1158,6 +1159,13 @@ std::string ResolveNextPurpose(const tnext::Stage& stage,
   return ResolveNextPurpose(stage.GetPrimAtPath(abs));
 }
 
+bool HasAnimatedNextWorld(const tnext::UsdPrim& mesh) {
+  for (tnext::UsdPrim p = mesh; p.IsValid(); p = p.GetParent()) {
+    if (tnext::UsdGeomXform(p).HasAnimatedTransform()) return true;
+  }
+  return false;
+}
+
 // Resolve the SkelAnimation that drives a mesh's blendshapes, returning a
 // blendShape-name -> weight map. The next converter emits no skel/morph data, so
 // we read straight from the stage: prefer a `skel:animationSource` relationship
@@ -1465,6 +1473,8 @@ struct NextSkinBinding {
   std::vector<float> vwgt;  // nv * numInfl
 };
 
+constexpr int kNextInfluenceTexWidth = 1024;
+
 // false = not skinned, or the skin data is missing/inconsistent (callers then
 // leave the mesh in its rest pose).
 bool ResolveNextSkinBinding(const tnext::Stage& stage,
@@ -1565,6 +1575,28 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
     return false;
   }
 
+  // Dense point-joint rigs (often thousands of joints, one per sampled point)
+  // use animated translations as deformation samples. Their authored rotation
+  // and scale channels are exporter bookkeeping, not bone rotations; applying
+  // them to the rest local transforms produces the characteristic exploded
+  // mesh seen in AnimFinal_LowRes. Keep this in sync with the legacy/Tydra
+  // IsPointJointSkeleton heuristic.
+  bool translationOnly = false;
+  if (nj >= 512) {
+    size_t roots = 0;
+    size_t rootChildren = 0;
+    for (int parent : topo) {
+      if (parent < 0) {
+        ++roots;
+      } else if (parent == 0) {
+        ++rootChildren;
+      }
+    }
+    translationOnly = nj >= 1024 ||
+                      (nj > 0 && rootChildren + 1 == nj) ||
+                      (roots == 1 && rootChildren + 1 == nj);
+  }
+
   const bool haveRest = skel.restTransforms.size() == nj * 16;
   const bool haveBind = skel.bindTransforms.size() == nj * 16;
   std::vector<matrix4d> restLocal(nj), bindWorld(nj);
@@ -1607,7 +1639,8 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
           t3[1] = anim.translations[a * 3 + 1];
           t3[2] = anim.translations[a * 3 + 2];
         }
-        if (anim.hasRotations && (a + 1) * 4 <= anim.rotations.size()) {
+        if (!translationOnly && anim.hasRotations &&
+            (a + 1) * 4 <= anim.rotations.size()) {
           // next's canonical quat layout is REAL-FIRST (w, x, y, z) -- the crate
           // reader swizzles disk's imaginary-first order into it (see
           // CrateReader::Impl::UnpackQuatf), and ASCII parses in authored order.
@@ -1616,7 +1649,8 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
           q.imag[1] = anim.rotations[a * 4 + 2];
           q.imag[2] = anim.rotations[a * 4 + 3];
         }
-        if (anim.hasScales && (a + 1) * 3 <= anim.scales.size()) {
+        if (!translationOnly && anim.hasScales &&
+            (a + 1) * 3 <= anim.scales.size()) {
           s3[0] = anim.scales[a * 3 + 0];
           s3[1] = anim.scales[a * 3 + 1];
           s3[2] = anim.scales[a * 3 + 2];
@@ -1633,6 +1667,16 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
   }
   // Synthesize the bind pose from the rest world transform when bind is absent.
   if (!haveBind) {
+    std::vector<matrix4d> restWorld;
+    if (tinyusdz::tydra::ConcatJointTransforms(topo, restLocal, &restWorld) &&
+        restWorld.size() == nj) {
+      bindWorld = std::move(restWorld);
+    }
+  } else if (translationOnly) {
+    // Dense point-joint rigs use rest-world transforms as their effective bind
+    // pose. The authored bindTransforms in these exports are not the bind
+    // space used by the point samples; matching the Tydra path here prevents
+    // the inverse-bind step from magnifying the mesh.
     std::vector<matrix4d> restWorld;
     if (tinyusdz::tydra::ConcatJointTransforms(topo, restLocal, &restWorld) &&
         restWorld.size() == nj) {
@@ -1727,9 +1771,10 @@ bool BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
 // to bake into the vertices (row-vector, row-major); it is folded into the bone
 // matrices instead of the attributes -- see BuildNextSkinningFrame.
 //
-// The GPU attribute path carries the 4 strongest influences per vertex (the
-// shader's fixed 4-wide skin); meshes authored with more are renormalized onto
-// those 4, matching mesh_build.cc's Tydra-path behavior.
+// The GPU attribute path carries the four strongest influences for the fast
+// common case and also retains the complete variable-length influence list in
+// DrawMeshCPU's influence texture stream. The latter is required for rigs such
+// as AnimFinal_LowRes, where a vertex may have dozens of meaningful weights.
 // Returns false when the mesh is not skinned (caller leaves it alone).
 bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
                       double time, DrawMeshCPU* dm,
@@ -1752,6 +1797,9 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
   const int ni = bind.numInfl;
   dm->jointIdx.assign(nv * 4, 0u);
   dm->jointWt.assign(nv * 4, 0.0f);
+  dm->influenceOffsetCount.assign(nv * 2, 0u);
+  dm->influenceTexels.clear();
+  dm->maxInfluencesPerVertex = 0;
   for (size_t v = 0; v < nv; ++v) {
     // Top-4 influences by weight.
     std::array<std::pair<float, int>, 4> top{};  // (weight, joint)
@@ -1777,6 +1825,47 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
       dm->jointWt[v * 4 + size_t(s)] =
           sum > 0.0f ? top[size_t(s)].first / sum : 0.0f;
     }
+
+    // Keep every authored influence, remapped to this mesh's absolute bone
+    // rows. Normalize once here so raster, CPU fallback, and RT all consume
+    // exactly the same weights. The first four attributes above remain a
+    // compact fallback for backends/shaders that cannot use the stream.
+    const uint32_t offset =
+        static_cast<uint32_t>(dm->influenceTexels.size() / 4);
+    double fullSum = 0.0;
+    for (int k = 0; k < ni; ++k) {
+      const float w = bind.vwgt[v * size_t(ni) + size_t(k)];
+      const int j = bind.vidx[v * size_t(ni) + size_t(k)];
+      if (!(w > 0.0f) || !std::isfinite(w) || j < 0) continue;
+      dm->influenceTexels.push_back(static_cast<float>(base + j));
+      dm->influenceTexels.push_back(w);
+      dm->influenceTexels.push_back(0.0f);
+      dm->influenceTexels.push_back(0.0f);
+      fullSum += static_cast<double>(w);
+    }
+    uint32_t count = static_cast<uint32_t>(dm->influenceTexels.size() / 4) - offset;
+    if (fullSum > 0.0) {
+      const float inv = static_cast<float>(1.0 / fullSum);
+      for (uint32_t k = 0; k < count; ++k)
+        dm->influenceTexels[(static_cast<size_t>(offset + k) * 4) + 1] *= inv;
+    } else {
+      count = 0;
+    }
+    dm->influenceOffsetCount[v * 2 + 0] = offset;
+    dm->influenceOffsetCount[v * 2 + 1] = count;
+    dm->maxInfluencesPerVertex =
+        std::max(dm->maxInfluencesPerVertex, static_cast<int>(count));
+  }
+  if (!dm->influenceTexels.empty()) {
+    const size_t texels = dm->influenceTexels.size() / 4;
+    dm->influenceTexWidth = kNextInfluenceTexWidth;
+    dm->influenceTexHeight = static_cast<int>(
+        (texels + static_cast<size_t>(kNextInfluenceTexWidth) - 1) /
+        static_cast<size_t>(kNextInfluenceTexWidth));
+    dm->influenceTexels.resize(
+        static_cast<size_t>(dm->influenceTexWidth) *
+            static_cast<size_t>(dm->influenceTexHeight) * 4,
+        0.0f);
   }
 
   DrawScene::NextSkelBinding nb;
@@ -2430,6 +2519,7 @@ struct NextTexCache {
   size_t ptexBuildCount = 0;
   bool ptexBudgetWarned = false;
   bool deferOrdinary = false;
+  LoadControl* progress = nullptr;
 };
 
 // ".ktx2" suffix (case-insensitive).
@@ -2659,6 +2749,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
       std::to_string(static_cast<int>(rt.wrap_t));
   auto it = tc.byKey.find(key);
   if (it != tc.byKey.end()) return it->second;
+  if (tc.progress) tc.progress->texturesTotal.fetch_add(1);
 
   // Interactive large-scene material discovery must not read texture pixels.
   // Reserve the stable slot now; a bounded post-geometry worker stage fills it.
@@ -2686,6 +2777,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   if (tinyusdz::io::IsUDIMPath(asset)) {
     const int uidx = LoadNextUdimTexture(tc, draw, rt, asset, srgb);
     tc.byKey[key] = uidx;
+    if (tc.progress) tc.progress->texturesDone.fetch_add(1);
     return uidx;
   }
 
@@ -2796,6 +2888,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
 #endif
   if (!built && !DecodeNextImage(tc, asset, srgb, &dt.image)) {
     tc.byKey[key] = -1;  // negative-cache the miss
+    if (tc.progress) tc.progress->texturesDone.fetch_add(1);
     return -1;
   }
   if (!built) dt.assetIdentifier = asset;
@@ -2805,6 +2898,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   const int idx = static_cast<int>(draw->textures.size());
   draw->textures.push_back(std::move(dt));
   tc.byKey[key] = idx;
+  if (tc.progress) tc.progress->texturesDone.fetch_add(1);
   return idx;
 }
 
@@ -3381,6 +3475,42 @@ bool DecodeDeferredDrawTexture(const DrawTextureCPU& placeholder,
                                        decoded);
 }
 
+bool UpdateNextAnimatedMeshWorlds(const tnext::Stage& stage, DrawScene* draw,
+                                  double time) {
+  if (!draw) return false;
+  bool changed = false;
+  for (DrawMeshCPU& mesh : draw->meshes) {
+    if (!mesh.animatedWorld || mesh.absPath.empty()) continue;
+    const tnext::UsdPrim prim = stage.GetPrimAtPath(mesh.absPath);
+    if (!prim.IsValid()) continue;
+    double world[16];
+    if (!tydn::ComputeWorldTransform(stage, prim, world, time)) continue;
+    float next[16];
+    for (int i = 0; i < 16; ++i) next[i] = static_cast<float>(world[i]);
+    const bool matrixChanged = std::memcmp(mesh.world, next, sizeof(next)) != 0;
+    if (matrixChanged) std::memcpy(mesh.world, next, sizeof(next));
+    // Keep CPU-side culling/picking bounds aligned with the animated matrix.
+    const float xs[2] = {mesh.restAabbMin[0], mesh.restAabbMax[0]};
+    const float ys[2] = {mesh.restAabbMin[1], mesh.restAabbMax[1]};
+    const float zs[2] = {mesh.restAabbMin[2], mesh.restAabbMax[2]};
+    for (int k = 0; k < 3; ++k) {
+      mesh.aabbMin[k] = std::numeric_limits<float>::max();
+      mesh.aabbMax[k] = -std::numeric_limits<float>::max();
+    }
+    for (float x : xs) for (float y : ys) for (float z : zs) {
+      const float p[3] = {x, y, z};
+      for (int c = 0; c < 3; ++c) {
+        const float v = p[0] * next[c] + p[1] * next[4 + c] +
+                        p[2] * next[8 + c] + next[12 + c];
+        mesh.aabbMin[c] = std::min(mesh.aabbMin[c], v);
+        mesh.aabbMax[c] = std::max(mesh.aabbMax[c], v);
+      }
+    }
+    changed = changed || matrixChanged;
+  }
+  return changed;
+}
+
 bool FindNextCamera(const tnext::Stage& stage, const std::string& name,
                     double time, NextCameraPose* out) {
   for (const tnext::UsdPrim& root : stage.GetRootPrims()) {
@@ -3865,6 +3995,10 @@ bool BuildNextRtDeformedVertices(
     if (nv == 0) continue;  // CPU geometry freed: nothing to re-pose from
     const bool skinned = hasSkin && m.jointIdx.size() == nv * 4 &&
                          m.jointWt.size() == nv * 4;
+    const bool extendedSkinned =
+        skinned && m.influenceOffsetCount.size() == nv * 2 &&
+        !m.influenceTexels.empty() && m.influenceTexels.size() % 4 == 0 &&
+        m.maxInfluencesPerVertex > 4;
     auto ci = coeffByMesh.find(static_cast<int>(mi));
     const bool morphed = ci != coeffByMesh.end() &&
                          m.morphOffsetCount.size() == nv * 2 &&
@@ -3907,21 +4041,47 @@ bool BuildNextRtDeformedVertices(
       // applies -- the two must not drift apart.
       if (skinned) {
         double acc[3] = {0, 0, 0}, accn[3] = {0, 0, 0}, wsum = 0.0;
-        for (int k = 0; k < 4; ++k) {
-          const float w = m.jointWt[v * 4 + static_cast<size_t>(k)];
-          if (!(w > 0.0f)) continue;
-          const uint32_t j = m.jointIdx[v * 4 + static_cast<size_t>(k)];
-          if (j >= bones.size()) continue;
-          const matrix4d& B = bones[j];
-          for (int c = 0; c < 3; ++c) {
-            acc[c] += double(w) * (double(p[0]) * B.m[0][c] +
-                                   double(p[1]) * B.m[1][c] +
-                                   double(p[2]) * B.m[2][c] + B.m[3][c]);
-            accn[c] += double(w) * (double(rest_n[0]) * B.m[0][c] +
-                                    double(rest_n[1]) * B.m[1][c] +
-                                    double(rest_n[2]) * B.m[2][c]);
+        if (extendedSkinned) {
+          const uint32_t offset = m.influenceOffsetCount[v * 2 + 0];
+          const uint32_t count = m.influenceOffsetCount[v * 2 + 1];
+          const size_t texelCount = m.influenceTexels.size() / 4;
+          for (uint32_t k = 0; k < count; ++k) {
+            const size_t texel = static_cast<size_t>(offset) + k;
+            if (texel >= texelCount) break;
+            const size_t base = texel * 4;
+            const float w = m.influenceTexels[base + 1];
+            if (!(w > 0.0f)) continue;
+            const uint32_t j = static_cast<uint32_t>(std::max(
+                0.0f, m.influenceTexels[base] + 0.5f));
+            if (j >= bones.size()) continue;
+            const matrix4d& B = bones[j];
+            for (int c = 0; c < 3; ++c) {
+              acc[c] += double(w) * (double(p[0]) * B.m[0][c] +
+                                     double(p[1]) * B.m[1][c] +
+                                     double(p[2]) * B.m[2][c] + B.m[3][c]);
+              accn[c] += double(w) * (double(rest_n[0]) * B.m[0][c] +
+                                      double(rest_n[1]) * B.m[1][c] +
+                                      double(rest_n[2]) * B.m[2][c]);
+            }
+            wsum += double(w);
           }
-          wsum += double(w);
+        } else {
+          for (int k = 0; k < 4; ++k) {
+            const float w = m.jointWt[v * 4 + static_cast<size_t>(k)];
+            if (!(w > 0.0f)) continue;
+            const uint32_t j = m.jointIdx[v * 4 + static_cast<size_t>(k)];
+            if (j >= bones.size()) continue;
+            const matrix4d& B = bones[j];
+            for (int c = 0; c < 3; ++c) {
+              acc[c] += double(w) * (double(p[0]) * B.m[0][c] +
+                                     double(p[1]) * B.m[1][c] +
+                                     double(p[2]) * B.m[2][c] + B.m[3][c]);
+              accn[c] += double(w) * (double(rest_n[0]) * B.m[0][c] +
+                                      double(rest_n[1]) * B.m[1][c] +
+                                      double(rest_n[2]) * B.m[2][c]);
+            }
+            wsum += double(w);
+          }
         }
         if (wsum > 0.0) {
           for (int c = 0; c < 3; ++c) p[c] = static_cast<float>(acc[c] / wsum);
@@ -4474,6 +4634,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   if (ctrl) {
     session_options.progress_callback =
         [ctrl](const tnext::ProgressEvent& event) {
+          ctrl->detailPhase.store(static_cast<int>(
+              event.phase == tnext::ProgressPhase::RootLoad
+                  ? LoadDetailPhase::Parsing
+                  : LoadDetailPhase::Composing));
           ctrl->stage.store(static_cast<int>(event.phase));
           ctrl->phasePermille.store(static_cast<int>(
               std::clamp(event.progress, 0.0f, 1.0f) * 1000.0f));
@@ -4574,6 +4738,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   if (out_session) *out_session = session;
   if (warn && !session->GetWarning().empty()) *warn = session->GetWarning();
   const tnext::Stage& stage = session->GetStage();
+  if (ctrl) ctrl->detailPhase.store(static_cast<int>(LoadDetailPhase::Converting));
   const std::vector<tnext::Path> deferredPayloads =
       session->GetDeferredPayloadPaths();
   if (!deferredPayloads.empty()) {
@@ -4630,6 +4795,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // cap and byte budget are applied while decoding, so a large scene never
   // materializes every texture at full resolution.
   NextTexCache texCache;
+  texCache.progress = ctrl;
   texCache.opt = &opts.textureOptions;  // kept-compressed KTX2 passthrough
   texCache.ptexInitialFaces = opts.ptexInitialFaces;
   if (opts.ptexPhysicalCacheBytes > 0)
@@ -5319,9 +5485,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // are one baked pose, so they do not bound the rig over the animation (the GPU
     // path signals the same thing through anySkin).
     bool anyCpuSkin = false;
+    bool anyExtendedSkin = false;
     // A morphed mesh gets a batch to ITSELF (the key carries a unique id), so the
     // batch's channel ids and its bound SkelAnimation are unambiguous.
     bool anyMorph = false;
+    bool animatedWorld = false;
     int matId = 0;
     int backMatId = -1;
   };
@@ -5333,9 +5501,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // double-sided meshes must not merge. morphId is 0 for ordinary meshes and
   // unique per BLENDSHAPED mesh: morph channel ids and the bound SkelAnimation
   // are per-mesh, so two morphed meshes must not share a batch.
-  std::map<std::tuple<std::string, bool, bool, int, int, int, int>, Batch> open;
+  std::map<std::tuple<std::string, bool, bool, int, int, int, int, int>, Batch> open;
   int nextMorphBatchId = 0;
   int nextLightLinkBatchId = 0;
+  int nextAnimatedWorldBatchId = 0;
 
   // Full UsdShade binding semantics: the purpose fallback chain
   // (material:binding:preview -> material:binding -> material:binding:full) AND
@@ -5496,9 +5665,31 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       std::memset(b.dm.skinGeomBind, 0, sizeof(b.dm.skinGeomBind));
       b.dm.skinGeomBind[0] = b.dm.skinGeomBind[5] = b.dm.skinGeomBind[10] =
           b.dm.skinGeomBind[15] = 1.0f;
+      if (b.anyExtendedSkin &&
+          b.dm.influenceOffsetCount.size() == b.dm.vertices.size() * 2 &&
+          !b.dm.influenceTexels.empty()) {
+        const size_t texels = b.dm.influenceTexels.size() / 4;
+        b.dm.influenceTexWidth = kNextInfluenceTexWidth;
+        b.dm.influenceTexHeight = static_cast<int>(
+            (texels + static_cast<size_t>(kNextInfluenceTexWidth) - 1) /
+            static_cast<size_t>(kNextInfluenceTexWidth));
+        b.dm.influenceTexels.resize(
+            static_cast<size_t>(b.dm.influenceTexWidth) *
+                static_cast<size_t>(b.dm.influenceTexHeight) * 4,
+            0.0f);
+      } else {
+        b.dm.influenceOffsetCount.clear();
+        b.dm.influenceTexels.clear();
+        b.dm.influenceTexWidth = b.dm.influenceTexHeight = 0;
+        b.dm.maxInfluencesPerVertex = 0;
+      }
     } else {
       b.dm.jointIdx.clear();
       b.dm.jointWt.clear();
+      b.dm.influenceOffsetCount.clear();
+      b.dm.influenceTexels.clear();
+      b.dm.influenceTexWidth = b.dm.influenceTexHeight = 0;
+      b.dm.maxInfluencesPerVertex = 0;
     }
     // This batch's OWN world bounds, over its (already world-baked) vertices.
     // Copying the running scene-bounds accumulator here instead -- as this used to
@@ -5542,12 +5733,33 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.aabbMin[k] = lo[k] - b.dm.morphExtent[k];
         b.dm.aabbMax[k] = hi[k] + b.dm.morphExtent[k];
       }
+      if (b.animatedWorld) {
+        const float xs[2] = {lo[0], hi[0]};
+        const float ys[2] = {lo[1], hi[1]};
+        const float zs[2] = {lo[2], hi[2]};
+        for (int k = 0; k < 3; ++k) {
+          b.dm.aabbMin[k] = std::numeric_limits<float>::max();
+          b.dm.aabbMax[k] = -std::numeric_limits<float>::max();
+        }
+        for (float x : xs) for (float y : ys) for (float z : zs) {
+          const float p[3] = {x, y, z};
+          for (int c = 0; c < 3; ++c) {
+            const float v = p[0] * b.dm.world[c] +
+                            p[1] * b.dm.world[4 + c] +
+                            p[2] * b.dm.world[8 + c] + b.dm.world[12 + c];
+            b.dm.aabbMin[c] = std::min(b.dm.aabbMin[c], v);
+            b.dm.aabbMax[c] = std::max(b.dm.aabbMax[c], v);
+          }
+        }
+      }
     }
     b.dm.submeshes.push_back(
         DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), b.matId,
                     b.backMatId});
-    std::memset(b.dm.world, 0, sizeof(b.dm.world));
-    b.dm.world[0] = b.dm.world[5] = b.dm.world[10] = b.dm.world[15] = 1.0f;
+    if (!b.animatedWorld) {
+      std::memset(b.dm.world, 0, sizeof(b.dm.world));
+      b.dm.world[0] = b.dm.world[5] = b.dm.world[10] = b.dm.world[15] = 1.0f;
+    }
     draw->triangleCount += b.dm.indices.size() / 3;
     draw->meshes.push_back(std::move(b.dm));
     b = Batch();
@@ -5905,7 +6117,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                 FillFlatGeometry(result->mesh, &result->draw,
                                  &result->vertexToPoint)) {
               if (!result->mesh.has_skin() &&
-                  !result->mesh.has_blend_shapes()) {
+                  !result->mesh.has_blend_shapes() &&
+                  !HasAnimatedNextWorld(meshPrims[i].prim)) {
                 TransformDrawVertices(meshPrims[i].world, &result->draw);
                 result->worldBaked = true;
               }
@@ -6122,12 +6335,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             BakeSkinning(stage, mp, time, &loc, vertexToPoint, m.point_count());
       }
     }
+    const bool animatedWorld = HasAnimatedNextWorld(mp);
     // A morphed mesh must not share a batch with anything else: its channel ids
     // and its bound animation are its own. 0 = poolable with other static meshes.
     const int morphBatchId =
         (loc.morphChannelCount > 0) ? ++nextMorphBatchId : 0;
     const int lightLinkBatchId =
         hasAuthoredLightLinks ? ++nextLightLinkBatchId : 0;
+    const int animatedWorldBatchId =
+        animatedWorld ? ++nextAnimatedWorldBatchId : 0;
     float Mf[16];
     for (int k = 0; k < 16; ++k) Mf[k] = static_cast<float>(mw16[k]);
     const float* M = Mf;  // row-major, p*M (same as the converter's node xform)
@@ -6135,7 +6351,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // World-transform vertices in place (positions + normals), so both the
     // single- and multi-material append paths just copy the vertex. Static
     // meshes take this path in parallel with conversion/welding above.
-    if (!worldBaked) TransformDrawVertices(mw16, &loc);
+    if (!worldBaked && !animatedWorld) TransformDrawVertices(mw16, &loc);
     // The morph deltas are MESH-LOCAL (BlendShape offsets), but the vertices are
     // now world-baked and every consumer -- the vertex shader (deform.glsl) and
     // BuildNextRtDeformedVertices alike -- adds the delta straight onto the
@@ -6240,14 +6456,22 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     const bool hasUv1 = loc.uv1.size() == loc.vertices.size() * 2;
     const bool hasSkin = loc.jointIdx.size() == loc.vertices.size() * 4 &&
                          loc.jointWt.size() == loc.vertices.size() * 4;
+    const bool hasExtendedSkin =
+        hasSkin && loc.influenceOffsetCount.size() == loc.vertices.size() * 2 &&
+        !loc.influenceTexels.empty() && loc.influenceTexels.size() % 4 == 0;
     // Give `b` skin attribute arrays sized to the vertices it already holds
     // (zero-weight = unskinned), so the two arrays stay parallel to b.dm.vertices.
     auto openSkin = [&](Batch& b) {
       if (cpuSkinned) b.anyCpuSkin = true;
-      if (!hasSkin || b.anySkin) return;
-      b.dm.jointIdx.assign(b.dm.vertices.size() * 4, 0u);
-      b.dm.jointWt.assign(b.dm.vertices.size() * 4, 0.0f);
-      b.anySkin = true;
+      if (hasSkin && !b.anySkin) {
+        b.dm.jointIdx.assign(b.dm.vertices.size() * 4, 0u);
+        b.dm.jointWt.assign(b.dm.vertices.size() * 4, 0.0f);
+        b.anySkin = true;
+      }
+      if (hasExtendedSkin && !b.anyExtendedSkin) {
+        b.dm.influenceOffsetCount.assign(b.dm.vertices.size() * 2, 0u);
+        b.anyExtendedSkin = true;
+      }
     };
     // Append vertex `i`'s influences (or zeros when this mesh is unskinned but
     // the batch is already carrying skin attributes).
@@ -6256,6 +6480,29 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       for (size_t k = 0; k < 4; ++k) {
         b.dm.jointIdx.push_back(hasSkin ? loc.jointIdx[i * 4 + k] : 0u);
         b.dm.jointWt.push_back(hasSkin ? loc.jointWt[i * 4 + k] : 0.0f);
+      }
+      if (b.anyExtendedSkin) {
+        if (hasExtendedSkin) {
+          const uint32_t base = static_cast<uint32_t>(b.dm.influenceTexels.size() / 4);
+          const uint32_t src = loc.influenceOffsetCount[i * 2 + 0];
+          const uint32_t count = loc.influenceOffsetCount[i * 2 + 1];
+          for (uint32_t k = 0; k < count; ++k) {
+            const size_t e = static_cast<size_t>(src + k) * 4;
+            if (e + 3 >= loc.influenceTexels.size()) break;
+            b.dm.influenceTexels.insert(b.dm.influenceTexels.end(),
+                                        loc.influenceTexels.begin() + e,
+                                        loc.influenceTexels.begin() + e + 4);
+          }
+          const uint32_t actual =
+              static_cast<uint32_t>(b.dm.influenceTexels.size() / 4) - base;
+          b.dm.influenceOffsetCount.push_back(base);
+          b.dm.influenceOffsetCount.push_back(actual);
+          b.dm.maxInfluencesPerVertex =
+              std::max(b.dm.maxInfluencesPerVertex, static_cast<int>(actual));
+        } else {
+          b.dm.influenceOffsetCount.push_back(0u);
+          b.dm.influenceOffsetCount.push_back(0u);
+        }
       }
     };
     // GPU morph. The channel metadata is per MESH, and a morphed mesh owns its
@@ -6303,7 +6550,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           morphBatchId != 0 ? morphBatchId
                             : (needsPtex ? ++nextMorphBatchId : 0);
       Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, wholeMat,
-                       wholeBackMat, batchIsolationId, lightLinkBatchId}];
+                       wholeBackMat, batchIsolationId, lightLinkBatchId,
+                       animatedWorldBatchId}];
       b.matId = wholeMat;
       b.backMatId = wholeBackMat;
       if (!b.dm.vertices.empty() &&
@@ -6313,6 +6561,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.purpose = purpose;
       b.dm.geometricNormal = loc.geometricNormal;
       b.dm.doubleSided = m.double_sided;
+      if (animatedWorld && b.dm.vertices.empty()) {
+        b.animatedWorld = true;
+        b.dm.animatedWorld = true;
+        b.dm.absPath = loc.absPath;
+        for (int k = 0; k < 16; ++k)
+          b.dm.world[k] = static_cast<float>(mw16[k]);
+      }
       if (hasAuthoredLightLinks) b.dm.absPath = loc.absPath;
       if (loc.instanceCount() > 0) {
         for (int k = 0; k < 3; ++k) {
@@ -6396,7 +6651,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             morphBatchId != 0 ? morphBatchId
                               : (needsPtex ? ++nextMorphBatchId : 0);
         Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, gm.first,
-                         gm.second, batchIsolationId, lightLinkBatchId}];
+                         gm.second, batchIsolationId, lightLinkBatchId,
+                         animatedWorldBatchId}];
         b.matId = gm.first;
         b.backMatId = gm.second;
         if (!b.dm.vertices.empty() &&
@@ -6406,6 +6662,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.purpose = purpose;
         b.dm.geometricNormal = loc.geometricNormal;
         b.dm.doubleSided = m.double_sided;
+        if (animatedWorld && b.dm.vertices.empty()) {
+          b.animatedWorld = true;
+          b.dm.animatedWorld = true;
+          b.dm.absPath = loc.absPath;
+          for (int k = 0; k < 16; ++k)
+            b.dm.world[k] = static_cast<float>(mw16[k]);
+        }
         if (hasAuthoredLightLinks) b.dm.absPath = loc.absPath;
         if (hasC && !b.anyColor) {
           b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
@@ -6700,14 +6963,77 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // compression pass runs here; without this `--texture-compress` would be inert
   // on the (default) --next path, which builds its textures itself instead of
   // going through mesh_build's BuildDrawTextures.
+  if (ctrl) {
+    ctrl->detailPhase.store(static_cast<int>(LoadDetailPhase::ProcessingTextures));
+    ctrl->texturesTotal.store(static_cast<long long>(draw->textures.size()));
+  }
+  const auto textureFinalizeBegin = std::chrono::steady_clock::now();
+  size_t decodedTextureBytes = 0;
+  for (const DrawTextureCPU& tex : draw->textures) {
+    auto imageBytes = [](const light3d::Image& image) -> size_t {
+      if (!image.data.empty()) return image.data.size();
+      if (image.width <= 0 || image.height <= 0 || image.channels <= 0)
+        return 0;
+      return static_cast<size_t>(image.width) *
+             static_cast<size_t>(image.height) *
+             static_cast<size_t>(image.channels);
+    };
+    if (tex.isUdim && !tex.udimTiles.empty()) {
+      for (const DrawUdimTileCPU& tile : tex.udimTiles)
+        decodedTextureBytes += imageBytes(tile.image);
+    } else {
+      decodedTextureBytes += imageBytes(tex.image);
+    }
+  }
+  const size_t textureBudgetBytes = opts.textureOptions.textureBudgetMB > 0
+                                        ? static_cast<size_t>(opts.textureOptions.textureBudgetMB) *
+                                              1024ull * 1024ull
+                                        : opts.textureGpuBudgetBytes;
+  // Use half the available texture budget as the "comfortably resident"
+  // threshold. This leaves room for geometry, framebuffers, and future
+  // texture refinement while avoiding a costly CPU encode for small scenes.
+  const bool texturesFitComfortably =
+      opts.optimizeTextureUpload && textureBudgetBytes > 0 &&
+      decodedTextureBytes <= textureBudgetBytes / 2u;
+  const bool skipCompression =
+      texturesFitComfortably && !opts.textureCompressionExplicit &&
+      opts.textureOptions.compression == TextureCompressionMode::Auto;
+  const bool skipMips = texturesFitComfortably && !opts.textureMipsExplicit;
+  TextureRuntimeOptions processingOptions = opts.textureOptions;
+  if (skipCompression) processingOptions.compression = TextureCompressionMode::Off;
+  if (skipMips) processingOptions.generateMips = false;
+  if (skipCompression || skipMips) {
+    ClassifyTextureUsage(draw);
+    LOGI("next: skipping CPU texture processing (%zu textures, %.1f MiB "
+         "decoded; budget %.1f MiB)%s%s",
+         draw->textures.size(),
+         double(decodedTextureBytes) / (1024.0 * 1024.0),
+         double(textureBudgetBytes) / (1024.0 * 1024.0),
+         skipCompression ? ", compression" : "",
+         skipMips ? ", mips" : "");
+  }
   if (texCache.deferOrdinary) {
     // Classify normal/alpha/packed-map usage while material slot indices are
     // intact. The application owns decoding from here: it can prioritize the
     // current frustum/selection and evict under the live GPU residency budget.
-    FinalizeDrawTextures(opts.textureOptions, draw);
+    FinalizeDrawTextures(processingOptions, draw);
   } else {
-    ApplyTextureCompression(opts.textureOptions, draw);
-    FinalizeDrawTextures(opts.textureOptions, draw);
+    ApplyTextureCompression(processingOptions, draw);
+    FinalizeDrawTextures(processingOptions, draw);
+  }
+  if (ctrl) {
+    ctrl->texturesTotal.store(static_cast<long long>(draw->textures.size()));
+    ctrl->detailPhase.store(static_cast<int>(LoadDetailPhase::Finalizing));
+  }
+  if (timing) {
+    LOGI("next timing: texture processing %.3f s (%zu texture(s), %lld/%lld completed)",
+         std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                       textureFinalizeBegin).count(),
+         draw->textures.size(),
+         ctrl ? ctrl->texturesDone.load() :
+                static_cast<long long>(draw->textures.size()),
+         ctrl ? ctrl->texturesTotal.load() :
+                static_cast<long long>(draw->textures.size()));
   }
   BakeRTDisplacement(draw);
 
