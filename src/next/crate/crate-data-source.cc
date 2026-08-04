@@ -362,6 +362,42 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
       out->block_len = 0;
       return true;
     }
+
+    // Bound element_count by what comp_size could possibly decode to.
+    //
+    // Without this the count is independent of the payload: a handful of
+    // compressed bytes could advertise ~1e9 elements (the flat
+    // max_array_elements cap), and Value::array_size() reports that verbatim
+    // for a lazy value -- so a consumer sizing a buffer from it allocates on
+    // the file's number long before materialization refuses the array.
+    //
+    // The bound is derived from the codec rather than guessed. USD integer
+    // compression spends 2 bits of code per element before LZ4
+    // (ComputeDeltaCodeBytes: ceil(count*2/8) = ceil(count/4) bytes), and
+    // LZ4's compression ratio is asymptotically capped near 255:1 (a long
+    // match costs ~1 byte per additional 255). So
+    //     ceil(count/4) <= pre_lz4 <= comp_size * 255
+    // giving count <= 1020 * comp_size.
+    //
+    // Measured against real files: the worst ratio in tests/usdc is 12, but a
+    // 28 MB MJCF-converted mesh asset reaches 912.6 -- 89% of the theoretical
+    // 1020, which both confirms the derivation and shows how little headroom
+    // a bound of exactly 1020 would leave. kSafety keeps 4x on top of theory,
+    // so the check kills the "a few bytes claim a billion elements" shape
+    // without going anywhere near plausible content.
+    constexpr uint64_t kElemsPerCompressedByte = 1020;
+    constexpr uint64_t kSafety = 4;
+    if (comp_size == 0) {
+      if (count != 0) return false;
+    } else if (comp_size <= (std::numeric_limits<uint64_t>::max)() /
+                                (kElemsPerCompressedByte * kSafety)) {
+      const uint64_t max_count =
+          comp_size * kElemsPerCompressedByte * kSafety;
+      if (count > max_count) {
+        return false;  // caller falls through to eager decode, which errors
+      }
+    }
+
     out->block_len = hdr + 8ull + comp_size;
   } else if (!compressed && out->src_elem_stride > 0) {
     // Block layout: [count header][count*stride bytes].
