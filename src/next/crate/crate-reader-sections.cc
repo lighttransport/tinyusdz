@@ -300,7 +300,16 @@ bool CrateReader::Impl::ReadTokens() {
 bool CrateReader::Impl::ReadStrings() {
   const CrateSection* section = toc_.find("STRINGS");
   if (!section) {
-    return true;
+    // Required, like the other five structural sections (TOKENS / FIELDS /
+    // FIELDSETS / SPECS / PATHS all error here). This one silently accepted
+    // its absence, so a crate missing STRINGS loaded "successfully" with an
+    // empty string table -- every GetString() then fails and the affected
+    // opinions are quietly dropped. OpenUSD rejects the same file outright
+    // ("Crate file missing STRINGS section"), and all 240 crate files in
+    // tests/ and models/ carry the section, so requiring it costs nothing and
+    // removes a silent-data-loss path.
+    AddError("Missing STRINGS section");
+    return false;
   }
 
   if (!reader_->seek(static_cast<size_t>(section->start))) {
