@@ -106,6 +106,7 @@ bool BuildDrawSceneStreaming(tinyusdz::tydra::RenderSceneConverter& converter,
                              const TextureRuntimeOptions& textureOptions = {});
 
 // --- Texture post-passes, shared by the legacy and `--next` scene loaders ----
+void ClassifyTextureUsage(DrawScene* out);
 // Encode the already-decoded DrawScene textures to a GPU block format
 // (`--texture-compress`), cap-gated by TextureRuntimeOptions::caps. Split out of
 // ApplyTextureRuntimeOptions (which also does the size cap / byte budget) so the

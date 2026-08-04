@@ -911,7 +911,7 @@ int main(int argc, char** argv) {
           "auto; selects a supported BC/ASTC/ETC2 format). Backends without "
           "block upload support fall back to resized RGBA8.\n"
           "  --texture-mips on|off  Generate content-aware texture mip chains "
-          "(default on).\n"
+          "(default on; interactive --next default off).\n"
           "  --texture-keep-compressed  Preserve supported KTX2 block payloads "
           "instead of decoding/re-encoding them.\n"
           "  --udim sparse|atlas  UDIM handling mode (default sparse; atlas rebakes "
@@ -1277,6 +1277,10 @@ int main(int argc, char** argv) {
     lo.deferReferences = deferReferences;
     lo.allowParentRelativePaths = allowParentPaths;
     lo.textureOptions = textureOptions;
+    lo.optimizeTextureUpload = useNextLoader && !headless && maxFrames < 0;
+    lo.textureGpuBudgetBytes = vramCapacity / 4u;
+    lo.textureCompressionExplicit = textureCompressionExplicit;
+    lo.textureMipsExplicit = mipsExplicit;
     if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
         maxFrames < 0) {
       if (!maxTextureSizeExplicit) lo.textureOptions.maxTextureSize = 512;
@@ -1285,6 +1289,16 @@ int main(int argc, char** argv) {
             tusdview::TextureCompressionMode::Auto;
       }
       if (!mipsExplicit) lo.textureOptions.generateMips = false;
+    }
+    // Interactive --next loads should reach a usable frame promptly. Content-
+    // aware CPU mip generation is expensive for ordinary USDZ texture sets
+    // (StandingRunForward is 22 textures), while the renderer can sample the
+    // uploaded base level immediately. Keep the existing quality choice for
+    // headless/benchmark runs and honor an explicit --texture-mips on.
+    if (useNextLoader && !headless && maxFrames < 0 && !mipsExplicit) {
+      lo.textureOptions.generateMips = false;
+      LOGI("interactive --next: deferring CPU texture mip generation "
+           "(use --texture-mips on to enable)");
     }
     lo.subdivisionLevel = std::max(0, subdivisionLevel.value_or(0));
     lo.subdivisionAuto = subdivisionAuto;

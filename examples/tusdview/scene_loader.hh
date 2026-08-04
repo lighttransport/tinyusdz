@@ -62,6 +62,12 @@ struct LoadOptions {
   // Register ordinary texture slots during material conversion, then decode,
   // resize and compress them after geometry publication on bounded workers.
   bool asyncTextureDecode{false};
+  // Interactive fast path: when decoded textures fit comfortably in the
+  // device texture budget, avoid CPU block compression/mip generation.
+  bool optimizeTextureUpload{false};
+  size_t textureGpuBudgetBytes{0};
+  bool textureCompressionExplicit{false};
+  bool textureMipsExplicit{false};
   // Optional source-mesh conversion cap for large-scene preview profiles.
   // Remaining prims stay unmaterialized instead of paying CPU conversion cost.
   size_t maxMeshConversions{0};

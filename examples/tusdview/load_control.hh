@@ -8,6 +8,14 @@
 
 namespace tusdview {
 
+enum class LoadDetailPhase {
+  Parsing = 0,
+  Composing,
+  Converting,
+  ProcessingTextures,
+  Finalizing,
+};
+
 struct LoadControl {
   // --- cancellation (UI -> worker) ---
   std::atomic<bool> cancel{false};
@@ -18,7 +26,10 @@ struct LoadControl {
   std::atomic<long long> meshesTotal{0};
   std::atomic<long long> payloadsDone{0};
   std::atomic<long long> payloadsTotal{0};
+  std::atomic<long long> texturesDone{0};
+  std::atomic<long long> texturesTotal{0};
   std::atomic<int> phasePermille{0};
+  std::atomic<int> detailPhase{static_cast<int>(LoadDetailPhase::Parsing)};
 
   // --- budgets (set before a load; enforced by worker) ---
   // Abort Tydra conversion if it runs longer than this (0 = unlimited).
@@ -35,7 +46,10 @@ struct LoadControl {
     meshesTotal.store(0);
     payloadsDone.store(0);
     payloadsTotal.store(0);
+    texturesDone.store(0);
+    texturesTotal.store(0);
     phasePermille.store(0);
+    detailPhase.store(static_cast<int>(LoadDetailPhase::Parsing));
   }
 };
 
