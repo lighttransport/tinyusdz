@@ -1,0 +1,9 @@
+#usda 1.0
+# Same, with the selection made by the REFERENCING prim, a payload arc on
+# the option, and a second variant set nested inside the option.
+def "World" (
+    prepend references = @./variant-arc-nestedlib.usda@</Asset>
+    variants = { string lod = "high" }
+)
+{
+}

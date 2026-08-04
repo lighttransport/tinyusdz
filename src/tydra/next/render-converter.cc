@@ -2161,6 +2161,82 @@ bool PathIsAtOrUnder(const std::string& path, const std::string& root) {
          path.compare(0, root.size(), root) == 0 && path[root.size()] == '/';
 }
 
+// Mesh paths sorted lexicographically, built ONCE per ResolveLightLinking call
+// and shared by every light and both link kinds.
+//
+// A prim path and all its descendants form a CONTIGUOUS range in sorted order
+// ("/A" then "/A/..." then anything after, since '/' sorts below every
+// character that can start a sibling's name), so a collection target resolves
+// by two binary searches instead of a full scan with a string prefix compare
+// per mesh. The old shape was O(lights * meshes * targets): 500 lights x
+// 200k meshes x 10 targets x 2 link kinds is ~2e9 string comparisons.
+class MeshPathIndex {
+ public:
+  explicit MeshPathIndex(const RenderScene& scene) {
+    sorted_.reserve(scene.meshes.size());
+    for (size_t i = 0; i < scene.meshes.size(); ++i) {
+      sorted_.push_back({&scene.meshes[i].prim_path, static_cast<int32_t>(i)});
+    }
+    std::sort(sorted_.begin(), sorted_.end(),
+              [](const Entry& a, const Entry& b) { return *a.path < *b.path; });
+    stamp_.assign(scene.meshes.size(), 0);
+  }
+
+  size_t mesh_count() const { return sorted_.size(); }
+
+  // Half-open [begin, end) over sorted_ covering the STRICT descendants of
+  // `root` (use ExactMatch for `root` itself). Descendants are exactly the
+  // entries with the prefix "root/", and since '/' is 0x2F they occupy
+  // ["root/", "root0") -- two binary searches, no prefix compare per mesh.
+  void DescendantRange(const std::string& root, size_t* begin,
+                       size_t* end) const {
+    if (root.empty()) { *begin = *end = 0; return; }
+    const std::string lo_key = root + "/";
+    std::string hi_key = root;
+    hi_key += static_cast<char>('/' + 1);  // '0'
+    *begin = LowerBound(lo_key);
+    *end = LowerBound(hi_key);
+    if (*end < *begin) *end = *begin;
+  }
+
+  int32_t ExactMatch(const std::string& path) const {
+    const size_t i = LowerBound(path);
+    if (i < sorted_.size() && *sorted_[i].path == path) {
+      return sorted_[i].mesh_index;
+    }
+    return -1;
+  }
+
+  int32_t MeshAt(size_t sorted_pos) const {
+    return sorted_[sorted_pos].mesh_index;
+  }
+
+  // Generation-stamped marking: no O(meshes) clear between lights.
+  void NewGeneration() { ++generation_; }
+  void Mark(int32_t mesh_index) {
+    stamp_[static_cast<size_t>(mesh_index)] = generation_;
+  }
+  bool Marked(int32_t mesh_index) const {
+    return stamp_[static_cast<size_t>(mesh_index)] == generation_;
+  }
+
+ private:
+  size_t LowerBound(const std::string& key) const {
+    const auto it = std::lower_bound(
+        sorted_.begin(), sorted_.end(), key,
+        [](const Entry& e, const std::string& v) { return *e.path < v; });
+    return static_cast<size_t>(it - sorted_.begin());
+  }
+
+  struct Entry {
+    const std::string* path;
+    int32_t mesh_index;
+  };
+  std::vector<Entry> sorted_;
+  mutable std::vector<uint32_t> stamp_;
+  uint32_t generation_ = 0;
+};
+
 // Resolve one CollectionAPI instance (collection:<name>:*) on a light prim
 // to RenderScene mesh indices, mirroring legacy ResolveLightLinking:
 // excludes take hierarchical precedence, includeRoot adds the light prim's
@@ -2170,9 +2246,11 @@ bool PathIsAtOrUnder(const std::string& path, const std::string& root) {
 // collections are not evaluated (no path-expression parser in next) and
 // also keep the links-all default.
 void ResolveLightLinkInstance(const UsdPrim& prim, const RenderScene& scene,
+                              MeshPathIndex& index,
                               const std::string& instance_name,
                               bool* links_all,
                               std::vector<int32_t>* mesh_indices) {
+  (void)scene;
   const std::string base = "collection:" + instance_name + ":";
   if (prim.HasProperty(base + "membershipExpression")) return;
 
@@ -2191,39 +2269,66 @@ void ResolveLightLinkInstance(const UsdPrim& prim, const RenderScene& scene,
 
   *links_all = false;
   mesh_indices->clear();
-  for (size_t mi = 0; mi < scene.meshes.size(); ++mi) {
-    const std::string& mesh_path = scene.meshes[mi].prim_path;
-    bool excluded = false;
-    if (excludes) {
-      for (const ::tinyusdz::next::Path& p : *excludes) {
-        if (PathIsAtOrUnder(mesh_path, p.str())) { excluded = true; break; }
-      }
-    }
-    if (excluded) continue;
 
-    bool included = include_root && PathIsAtOrUnder(mesh_path, owner_path);
-    if (!included && includes) {
-      for (const ::tinyusdz::next::Path& p : *includes) {
-        if (explicit_only ? (mesh_path == p.str())
-                          : PathIsAtOrUnder(mesh_path, p.str())) {
-          included = true;
-          break;
-        }
+  // Mark the excluded set first (excludes take hierarchical precedence), then
+  // walk only the meshes the includes actually name. Cost is proportional to
+  // the matched subtrees, not to the whole scene.
+  index.NewGeneration();
+  if (excludes) {
+    for (const ::tinyusdz::next::Path& p : *excludes) {
+      const std::string ep = p.str();
+      const int32_t exact = index.ExactMatch(ep);
+      if (exact >= 0) index.Mark(exact);
+      size_t b = 0, e = 0;
+      index.DescendantRange(ep, &b, &e);
+      for (size_t i = b; i < e; ++i) index.Mark(index.MeshAt(i));
+    }
+  }
+
+  std::vector<int32_t> candidates;
+  auto add_subtree = [&](const std::string& root) {
+    const int32_t exact = index.ExactMatch(root);
+    if (exact >= 0) candidates.push_back(exact);
+    size_t b = 0, e = 0;
+    index.DescendantRange(root, &b, &e);
+    for (size_t i = b; i < e; ++i) candidates.push_back(index.MeshAt(i));
+  };
+
+  if (include_root) add_subtree(owner_path);
+  if (includes) {
+    for (const ::tinyusdz::next::Path& p : *includes) {
+      const std::string ip = p.str();
+      if (explicit_only) {
+        const int32_t exact = index.ExactMatch(ip);
+        if (exact >= 0) candidates.push_back(exact);
+      } else {
+        add_subtree(ip);
       }
     }
-    if (included) mesh_indices->push_back(static_cast<int32_t>(mi));
+  }
+
+  // Sorting by mesh index preserves the scene order the previous full scan
+  // emitted; unique() collapses overlapping include targets.
+  std::sort(candidates.begin(), candidates.end());
+  candidates.erase(std::unique(candidates.begin(), candidates.end()),
+                   candidates.end());
+  for (int32_t mi : candidates) {
+    if (!index.Marked(mi)) mesh_indices->push_back(mi);
   }
 }
 
 void ResolveLightLinking(const Stage& stage, RenderScene* scene) {
   if (!scene) return;
+  if (scene->lights.empty()) return;
+  // Built once and reused by every light and both link kinds.
+  MeshPathIndex index(*scene);
   for (RenderLight& light : scene->lights) {
     UsdPrim prim = stage.GetPrimAtPath(light.prim_path);
     if (!prim.IsValid()) continue;
-    ResolveLightLinkInstance(prim, *scene, "lightLink",
+    ResolveLightLinkInstance(prim, *scene, index, "lightLink",
                              &light.light_links_all,
                              &light.light_link_mesh_indices);
-    ResolveLightLinkInstance(prim, *scene, "shadowLink",
+    ResolveLightLinkInstance(prim, *scene, index, "shadowLink",
                              &light.shadow_links_all,
                              &light.shadow_link_mesh_indices);
   }
