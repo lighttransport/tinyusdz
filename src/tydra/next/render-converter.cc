@@ -5097,10 +5097,10 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       attr.name = pv.name;
       attr.format = VertexFormat::Int;
       attr.interpolation = resolve_interp(
-          pv.indices.empty() ? ia->size() : pv.indices.size());
+          pv.indices().empty() ? ia->size() : pv.indices().size());
       attr.int_data.append(ia->data(), ia->size());
       bool idx_ok = true;
-      for (int32_t raw : pv.indices) {
+      for (int32_t raw : pv.indices()) {
         if (raw < 0 || static_cast<size_t>(raw) >= ia->size()) {
           idx_ok = false;
           break;
@@ -5118,9 +5118,9 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
 
     // Indexed builtin primvars are expanded to direct form (the builtin
     // buffers carry no index channel).
-    if (!pv.indices.empty() && builtin) {
+    if (!pv.indices().empty() && builtin) {
       std::vector<float> expanded;
-      if (!expand_indexed(*fdata, comps, pv.indices, &expanded)) {
+      if (!expand_indexed(*fdata, comps, pv.indices(), &expanded)) {
         warnings_.push_back("Mesh '" + mesh->prim_path + "': primvar '" +
                             pv.name + "' has out-of-range indices; dropped");
         continue;
@@ -5173,11 +5173,11 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
                                : VertexFormat::Vec4;
     if (comps > 4) continue;  // matrices etc.: not a vertex attribute
     attr.interpolation = resolve_interp(
-        pv.indices.empty() ? (fdata->size() / comps) : pv.indices.size());
+        pv.indices().empty() ? (fdata->size() / comps) : pv.indices().size());
     attr.float_data.append(fdata->data(), fdata->size());
     bool idx_ok = true;
     const size_t elems = fdata->size() / comps;
-    for (int32_t raw : pv.indices) {
+    for (int32_t raw : pv.indices()) {
       if (raw < 0 || static_cast<size_t>(raw) >= elems) {
         idx_ok = false;
         break;

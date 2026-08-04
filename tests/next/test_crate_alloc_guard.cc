@@ -195,6 +195,35 @@ int main() {
     }
   }
 
+  // max_elements is what bounds the count a COMPRESSED block may advertise.
+  // Its decoded size is not derivable from the block (USD integer compression
+  // is two-stage -- delta/byte-code then LZ4 -- so no fixed expansion ratio
+  // holds), and Value::array_size() hands element_count straight to callers
+  // for a lazy value. The lazy reader therefore passes the configured
+  // max_array_elements here rather than SIZE_MAX; this pins that the cap is
+  // actually enforced.
+  {
+    std::string bytes(8, '\0');
+    PutU64(bytes, 4000000000ull);  // ~4e9 elements ...
+    PutU64(bytes, 2ull);           // ... from a 2-byte compressed payload
+    bytes.push_back(0);
+    bytes.push_back(1);
+    auto source = MakeSource(std::move(bytes));
+    ValueRep rep = ValueRep::Make(CrateTypeId::Int, /*payload=*/8,
+                                  /*is_array=*/true,
+                                  /*is_inlined=*/false,
+                                  /*is_compressed=*/true);
+    LazyArrayRef ref;
+    // Rejected under a sane cap ...
+    assert(!ProbeArrayBlock(source, rep, size_t(1) << 30, &ref));
+    // ... and accepted only when the caller asks for no bound at all, which
+    // is exactly what crate-reader-arrays.cc no longer does.
+    LazyArrayRef unbounded;
+    assert(ProbeArrayBlock(source, rep,
+                           (std::numeric_limits<size_t>::max)(), &unbounded));
+    assert(unbounded.element_count == 4000000000ull);
+  }
+
   // ProbeArrayBlock is intentionally conservative for layouts we cannot safely
   // pass through. It reports the logical count/type but leaves block_len zero,
   // which forces callers to decode/reject instead of copying guessed bytes.

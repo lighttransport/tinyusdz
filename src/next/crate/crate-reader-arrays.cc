@@ -28,8 +28,13 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   if (options_.lazy_arrays && source_ &&
       CrateArrayTypeCanBeLazy(type_id, rep.is_compressed())) {
     LazyArrayRef lr;
+    // Pass the configured cap, not SIZE_MAX: otherwise a lazy Value could
+    // advertise an element count (via Value::array_size()) that eager decode
+    // would have rejected outright, and a consumer sizing a buffer from it
+    // allocates on that number long before materialization refuses the array.
     if (ProbeArrayBlock(source_, rep,
-                        (std::numeric_limits<size_t>::max)(), &lr) &&
+                        static_cast<size_t>(options_.max_array_elements),
+                        &lr) &&
         lr.element_count <=
             static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)()) &&
         (rep.payload() == 0 || lr.block_len > 0)) {

@@ -327,12 +327,17 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
   if (!ReadCrateArrayCount(r, version, &count)) return false;
   if (count > max_elements) return false;
 
-  out->element_count = count;
-  out->block_offset = off;
-
   const CrateTypeId t = rep.type_id();
   const bool compressed = rep.is_compressed();
 
+  out->element_count = count;
+  out->block_offset = off;
+
+  // NOTE: element_count is intentionally NOT rejected here when the block runs
+  // past EOF -- callers rely on the probe succeeding with block_len = 0 so the
+  // decoder can report the error (see test_crate_alloc_guard). What keeps a
+  // LAZY value honest is the caller's `block_len > 0` gate plus `max_elements`
+  // (crate-reader-arrays.cc), not this function.
   if (compressed && (t == CrateTypeId::Int || t == CrateTypeId::UInt)) {
     // Block layout: [count header][u64 comp_size][comp_size bytes].
     uint64_t comp_size = 0;
