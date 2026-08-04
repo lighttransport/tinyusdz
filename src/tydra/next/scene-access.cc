@@ -358,6 +358,18 @@ std::vector<std::string> GetTokenArray(const UsdPrim& prim,
   return result;
 }
 
+const std::vector<int32_t>* GetIntArrayView(const UsdPrim& prim,
+                                            const std::string& name) {
+  const Value* val = GetAttribute(prim, name);
+  return val ? val->as_int_array() : nullptr;
+}
+
+const std::vector<float>* GetFloatArrayView(const UsdPrim& prim,
+                                            const std::string& name) {
+  const Value* val = GetAttribute(prim, name);
+  return val ? val->as_float_array() : nullptr;
+}
+
 std::vector<int32_t> GetIntArray(const UsdPrim& prim, const std::string& name) {
   std::vector<int32_t> result;
   const Value* val = GetAttribute(prim, name);
@@ -1181,13 +1193,16 @@ bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
       }
       vals = std::move(expanded);
     };
-    const std::vector<int32_t> ji_idx =
-        GetIntArray(mesh_prim, "primvars:skel:jointIndices:indices");
-    const std::vector<int32_t> jw_idx =
-        GetIntArray(mesh_prim, "primvars:skel:jointWeights:indices");
-    expand_indexed(out->joint_indices, ji_idx,
+    // Views: these index arrays are only read. On a dense skin each can be
+    // tens of MB, and the expansion below already builds the owned result.
+    static const std::vector<int32_t> kNoIdx;
+    const std::vector<int32_t>* ji_idx =
+        GetIntArrayView(mesh_prim, "primvars:skel:jointIndices:indices");
+    const std::vector<int32_t>* jw_idx =
+        GetIntArrayView(mesh_prim, "primvars:skel:jointWeights:indices");
+    expand_indexed(out->joint_indices, ji_idx ? *ji_idx : kNoIdx,
                    elem_size("primvars:skel:jointIndices"));
-    expand_indexed(out->joint_weights, jw_idx,
+    expand_indexed(out->joint_weights, jw_idx ? *jw_idx : kNoIdx,
                    elem_size("primvars:skel:jointWeights"));
   }
   if (!out->joint_indices.empty() || !out->joint_weights.empty()) any = true;

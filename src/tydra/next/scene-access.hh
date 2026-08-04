@@ -101,6 +101,17 @@ bool GetMatrix4d(const UsdPrim& prim, const std::string& name, double* matrix16)
 std::vector<float> GetFloatArray(const UsdPrim& prim, const std::string& name);
 std::vector<int32_t> GetIntArray(const UsdPrim& prim, const std::string& name);
 
+/// Read-only VIEWS of the same arrays (nullptr when absent or of another
+/// type). They point into the stage's attribute storage and must not outlive
+/// it. Prefer these wherever the caller only reads: the Get*Array() forms
+/// above duplicate the whole array, which for something like
+/// `primvars:skel:jointIndices:indices` on a dense skin is tens of MB copied
+/// and thrown away.
+const std::vector<int32_t>* GetIntArrayView(const UsdPrim& prim,
+                                            const std::string& name);
+const std::vector<float>* GetFloatArrayView(const UsdPrim& prim,
+                                            const std::string& name);
+
 //
 // Relationship access
 //
