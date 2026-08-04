@@ -216,12 +216,32 @@ int main() {
     LazyArrayRef ref;
     // Rejected under a sane cap ...
     assert(!ProbeArrayBlock(source, rep, size_t(1) << 30, &ref));
-    // ... and accepted only when the caller asks for no bound at all, which
-    // is exactly what crate-reader-arrays.cc no longer does.
+    // ... AND with no cap at all: the count is now also bounded by what the
+    // compressed payload could physically decode to, so an absurd count can
+    // no longer be published just because the caller asked for no limit.
     LazyArrayRef unbounded;
-    assert(ProbeArrayBlock(source, rep,
-                           (std::numeric_limits<size_t>::max)(), &unbounded));
-    assert(unbounded.element_count == 4000000000ull);
+    assert(!ProbeArrayBlock(source, rep,
+                            (std::numeric_limits<size_t>::max)(), &unbounded));
+  }
+
+  // ... while a count the payload CAN plausibly back is still accepted. USD
+  // integer compression spends >= 2 bits per element before LZ4, and LZ4
+  // cannot beat ~255:1, so 2 compressed bytes back at most a few thousand
+  // elements. 8000 sits inside the margin the bound allows.
+  {
+    std::string bytes(8, '\0');
+    PutU64(bytes, 8000ull);
+    PutU64(bytes, 2ull);
+    bytes.push_back(0);
+    bytes.push_back(1);
+    auto source = MakeSource(std::move(bytes));
+    ValueRep rep = ValueRep::Make(CrateTypeId::Int, /*payload=*/8,
+                                  /*is_array=*/true,
+                                  /*is_inlined=*/false,
+                                  /*is_compressed=*/true);
+    LazyArrayRef ref;
+    assert(ProbeArrayBlock(source, rep, size_t(1) << 30, &ref));
+    assert(ref.element_count == 8000ull);
   }
 
   // ProbeArrayBlock is intentionally conservative for layouts we cannot safely

@@ -261,6 +261,59 @@ void TestChunkedArrayShareCow() {
   std::cout << "  ChunkedArray copy-on-write sharing passed!\n";
 }
 
+// Budget-tracked chunk allocation. Two properties matter: the accounting
+// must BALANCE (every charge released, including through copy-on-write shares
+// and shrink_to_fit's tail rewrite), and a refusal must surface as
+// alloc_failed() rather than a crash or a silent short array.
+void TestChunkedArrayBudgetTracking() {
+  std::cout << "Testing ChunkedArray budget tracking...\n";
+
+  const size_t saved_cap = MemBudget::Get().Cap();
+  MemBudget::Get().InitBytes(size_t(1) << 30);   // generous
+  const size_t base = MemBudget::Get().Tracked();
+  MemBudget::InstallChunkedArrayTracking();
+
+  {
+    ChunkedArray<float> a;
+    for (size_t i = 0; i < 200000; ++i) a.push_back(float(i));
+    assert(!a.alloc_failed());
+    // The budget now sees the geometry, which is the whole point.
+    assert(MemBudget::Get().Tracked() > base);
+
+    ChunkedArray<float> b;
+    b.share_from(a);                 // share: no new charge
+    const size_t shared = MemBudget::Get().Tracked();
+    b[0] = 1.0f;                     // detach: takes a private copy
+    assert(MemBudget::Get().Tracked() > shared);
+
+    a.shrink_to_fit();
+    b.shrink_to_fit();
+  }
+  // Everything destroyed -> every charge released.
+  assert(MemBudget::Get().Tracked() == base);
+
+  // A cap that cannot be met must be reported, not crashed through.
+  MemBudget::Get().InitBytes(1);
+  {
+    ChunkedArray<float> tiny;
+    for (size_t i = 0; i < 100000; ++i) tiny.push_back(float(i));
+    assert(tiny.alloc_failed());
+    // Whatever it did keep is self-consistent and readable.
+    for (size_t i = 0; i < tiny.size(); ++i) (void)tiny[i];
+  }
+
+  MemBudget::UninstallChunkedArrayTracking();
+  MemBudget::Get().InitBytes(saved_cap);
+  // With the hooks removed, allocation is unaffected again.
+  {
+    ChunkedArray<float> c;
+    for (size_t i = 0; i < 100000; ++i) c.push_back(float(i));
+    assert(!c.alloc_failed());
+  }
+
+  std::cout << "  ChunkedArray budget tracking passed!\n";
+}
+
 void TestChunkedArrayLarge() {
   std::cout << "Testing ChunkedArray with large data...\n";
 
@@ -5921,6 +5974,7 @@ int main() {
   TestChunkedArrayLarge();
   TestChunkedArrayStraddlingReads();
   TestChunkedArrayShareCow();
+  TestChunkedArrayBudgetTracking();
   TestChunkedArrayAppend();
   TestChunkedArrayIterator();
 

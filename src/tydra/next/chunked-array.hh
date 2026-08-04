@@ -43,6 +43,61 @@ inline bool ProbeAlloc(size_t bytes) {
   return true;
 }
 
+// Optional accounting hooks for chunk allocations.
+//
+// A budget wants to (a) see the bulk geometry it is supposed to be bounding
+// and (b) refuse an allocation that would bust the cap, at the point of
+// allocation rather than only at the next phase boundary. MemBudget provides
+// exactly that through non-throwing TryAdd/Sub -- but this header cannot
+// include mem-budget.hh (it drags in <fstream>, <mutex> and windows.h into
+// every translation unit that touches a mesh), and PoolAlloc is unusable here
+// anyway because it reports exhaustion by throwing and the wasm converter is
+// built -fno-exceptions.
+//
+// So the dependency is inverted: this header declares the hooks, and whoever
+// owns the budget installs them (MemBudget::InstallChunkedArrayTracking()).
+// Unset by default -- one predictable null check per 64KB chunk, which is
+// nothing next to the allocation itself.
+//
+// Single-threaded install, like the rest of the conversion pipeline.
+using ChunkAllocHook = bool (*)(size_t bytes);  // false => refuse
+using ChunkFreeHook = void (*)(size_t bytes);
+
+inline ChunkAllocHook& ChunkAllocHookRef() {
+  static ChunkAllocHook hook = nullptr;
+  return hook;
+}
+inline ChunkFreeHook& ChunkFreeHookRef() {
+  static ChunkFreeHook hook = nullptr;
+  return hook;
+}
+inline void SetChunkAllocHooks(ChunkAllocHook alloc, ChunkFreeHook free_hook) {
+  ChunkAllocHookRef() = alloc;
+  ChunkFreeHookRef() = free_hook;
+}
+
+/// Allocate `n` elements, charged to the budget if one is installed. Returns
+/// nullptr when the allocation fails OR the budget refuses it -- callers
+/// already treat that as an allocation failure (latching alloc_failed()), so a
+/// bust becomes a clean skip at the point of allocation instead of an OOM
+/// between phase checks.
+template <typename T>
+inline T* AllocChunkElems(size_t n) {
+  const size_t bytes = n * sizeof(T);
+  ChunkAllocHook hook = ChunkAllocHookRef();
+  if (hook && !hook(bytes)) return nullptr;
+  T* p = new (std::nothrow) T[n];
+  if (!p && hook) ChunkFreeHookRef()(bytes);  // hand the reservation back
+  return p;
+}
+
+/// Release a charge. The chunks themselves are owned by unique_ptr, so the
+/// raw delete[] stays there; only the accounting is unwound here.
+inline void UnchargeChunkBytes(size_t bytes) {
+  if (bytes == 0) return;
+  if (ChunkFreeHook hook = ChunkFreeHookRef()) hook(bytes);
+}
+
 // ChunkedArray: Fixed-size chunk allocation for large arrays
 // - Each chunk is allocated separately (no realloc)
 // - Elements accessed via index or iterator
@@ -202,7 +257,17 @@ class ChunkedArray {
     const size_t needed_chunks =
         size_ / kElementsPerChunk + (size_ % kElementsPerChunk != 0);
     while (chunks_mut().size() > needed_chunks) {
+      // Only the LAST chunk can be a shrunken (exact) tail; read its size
+      // before dropping it. Whatever becomes the new last is full.
+      const size_t bytes =
+          (tail_capacity_ ? tail_capacity_ : kElementsPerChunk) * sizeof(T);
       chunks_mut().pop_back();
+      chunks_storage_->charged_bytes -=
+          (bytes < chunks_storage_->charged_bytes)
+              ? bytes
+              : chunks_storage_->charged_bytes;
+      UnchargeChunkBytes(bytes);
+      tail_capacity_ = kElementsPerChunk;
     }
     if (chunks_mut().empty()) {
       tail_capacity_ = 0;
@@ -211,10 +276,20 @@ class ChunkedArray {
     tail_capacity_ = kElementsPerChunk;  // dropped chunks restore full tails
     const size_t used_in_tail = size_ - (chunks_mut().size() - 1) * kElementsPerChunk;
     if (used_in_tail < kElementsPerChunk) {
-      T* exact = new (std::nothrow) T[used_in_tail];
+      T* exact = AllocChunkElems<T>(used_in_tail);
       if (!exact) return;  // keep the full-size chunk; compaction is optional
       std::memcpy(exact, chunks_mut().back().get(), used_in_tail * sizeof(T));
-      chunks_mut().back().reset(exact);
+      chunks_mut().back().reset(exact);  // raw delete[] of the full tail
+      // AllocChunkElems charged the NEW (exact) tail; release the FULL chunk
+      // it replaced -- not the difference, or the new tail is counted twice.
+      const size_t added = used_in_tail * sizeof(T);
+      const size_t released = kElementsPerChunk * sizeof(T);
+      chunks_storage_->charged_bytes += added;
+      chunks_storage_->charged_bytes -=
+          (released < chunks_storage_->charged_bytes)
+              ? released
+              : chunks_storage_->charged_bytes;
+      UnchargeChunkBytes(released);
       tail_capacity_ = used_in_tail;
     }
   }
@@ -465,13 +540,15 @@ class ChunkedArray {
       // been shrunk to tail_capacity_.
       const size_t n =
           (i + 1 == src.size()) ? tail_capacity_ : kElementsPerChunk;
-      T* c = new (std::nothrow) T[n];
+      T* c = AllocChunkElems<T>(n);
       if (!c) {
         alloc_failed_ = true;
         // Keep sharing rather than hand back a truncated array; the caller's
-        // write is dropped along with the latched failure flag.
+        // write is dropped along with the latched failure flag. `copy` is
+        // discarded here and its ~Chunks unwinds whatever it charged.
         return;
       }
+      copy->charged_bytes += n * sizeof(T);
       if (src[i]) std::memcpy(c, src[i].get(), n * sizeof(T));
       copy->v.push_back(std::unique_ptr<T[]>(c));
     }
@@ -508,22 +585,29 @@ class ChunkedArray {
     // A shrunken (exact-size) tail chunk must grow back to full capacity
     // before more chunks are appended, so only the LAST chunk is ever short.
     if (!chunks_mut().empty() && tail_capacity_ < kElementsPerChunk) {
-      T* full = new (std::nothrow) T[kElementsPerChunk];
+      T* full = AllocChunkElems<T>(kElementsPerChunk);
       if (!full) {
         alloc_failed_ = true;
         return false;
       }
+      const size_t old_tail_bytes = tail_capacity_ * sizeof(T);
       std::memcpy(full, chunks_mut().back().get(), tail_capacity_ * sizeof(T));
-      chunks_mut().back().reset(full);
+      chunks_mut().back().reset(full);  // raw delete[] of the short tail
+      // AllocChunkElems already charged the FULL chunk; give back the short
+      // tail it replaced.
+      chunks_storage_->charged_bytes +=
+          (kElementsPerChunk * sizeof(T)) - old_tail_bytes;
+      UnchargeChunkBytes(old_tail_bytes);
       tail_capacity_ = kElementsPerChunk;
     }
     while (capacity() < n) {
-      T* chunk = new (std::nothrow) T[kElementsPerChunk];
+      T* chunk = AllocChunkElems<T>(kElementsPerChunk);
       if (!chunk) {
         alloc_failed_ = true;
         return false;
       }
       chunks_mut().push_back(std::unique_ptr<T[]>(chunk));
+      chunks_storage_->charged_bytes += kElementsPerChunk * sizeof(T);
       tail_capacity_ = kElementsPerChunk;
     }
     return true;
@@ -534,6 +618,12 @@ class ChunkedArray {
   // and the size queries never have to detach.
   struct Chunks {
     std::vector<std::unique_ptr<T[]>> v;
+    // Bytes charged to the budget for the chunks in `v`. Owned by the shared
+    // storage, not by the ChunkedArray: with copy-on-write sharing the holders
+    // come and go, but the charge must be released exactly once, when the last
+    // one drops the storage.
+    size_t charged_bytes = 0;
+    ~Chunks() { UnchargeChunkBytes(charged_bytes); }
   };
   std::shared_ptr<Chunks> chunks_storage_;
   // Set whenever this instance has shared its storage with, or taken it from,
