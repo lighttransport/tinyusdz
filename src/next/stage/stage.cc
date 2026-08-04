@@ -759,6 +759,22 @@ Stage::~Stage() = default;
 Stage::Stage(Stage&&) noexcept = default;
 Stage& Stage::operator=(Stage&&) noexcept = default;
 
+Stage Stage::Clone() const {
+  Stage out;
+  if (root_layer_) {
+    out.SetRootLayer(root_layer_->Clone());
+  }
+  for (const auto& sub_layer : sub_layers_) {
+    if (sub_layer) {
+      out.AddSubLayer(sub_layer->Clone());
+    }
+  }
+  // SetRootLayer derives metadata from the cloned root layer. Preserve any
+  // stage-level metadata that was authored or updated after loading.
+  out.meta_ = meta_;
+  return out;
+}
+
 void Stage::SetRootLayer(Layer&& layer) {
   root_layer_ = std::make_unique<Layer>(std::move(layer));
   UpdateMetaFromRootLayer();
