@@ -197,6 +197,11 @@ public:
                                    const std::string& resolved_path,
                                    const std::string& subtree_root);
   bool GetLayerHasArcs(const Layer& raw, const std::string& resolved_path);
+  /// Clone the `root_path` subtree of `src` using the cached sorted path
+  /// range. Equivalent to the former linear-scan ExtractSubtree.
+  std::unique_ptr<Layer> ExtractSubtreeIndexed(const Layer& src,
+                                               const std::string& resolved_path,
+                                               const std::string& root_path);
 
   /// One arc-bearing prim of a referenced layer, as recorded in LayerArcIndex.
   struct ArcPrimEntry {
@@ -211,6 +216,13 @@ public:
   struct LayerArcIndex {
     std::vector<ArcPrimEntry> arc_prims;  // sorted by `path`
     bool has_sublayers = false;
+    /// ALL prim indices of the layer, sorted by path. Lets a subtree be
+    /// extracted by binary-searching its contiguous path range instead of
+    /// rescanning every prim: ExtractSubtree ran once per distinct referenced
+    /// prim, so a scene pulling K prims out of an L-prim library was O(K*L)
+    /// (3200 refs into 40k prims spent ~8.6s of a 12s compose there).
+    /// Indices, not string pointers -- a Layer's prim vector can reallocate.
+    std::vector<uint32_t> paths_sorted;
   };
   const LayerArcIndex& GetLayerArcIndex(const Layer& raw,
                                         const std::string& resolved_path);
