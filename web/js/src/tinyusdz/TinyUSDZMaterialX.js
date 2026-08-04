@@ -1420,12 +1420,16 @@ function _detectHSVAdjustPattern(nodes, nodeMap) {
         const in1 = _getInputInfo(combineNode, 'in1');
         const in2 = _getInputInfo(combineNode, 'in2');
         const in3 = _getInputInfo(combineNode, 'in3');
+        // ND_hsvadjust_color3 uses a direct hue offset, while the optimized
+        // ND_hsv_adjust_color3 form uses 0.5 as its neutral hue input.
+        // Preserve the authored offset when changing node variants.
+        const hueInput = (in1?.value ?? 0) + 0.5;
 
         patterns.push({
             type: 'hsv_adjust',
             outputNode: hsvNode.name,
             inputNode: inInput.type === 'connection' ? inInput.nodename : null,
-            hue: in1?.type === 'value' ? in1.value : 0,
+            hue: hueInput,
             saturation: in2?.type === 'value' ? in2.value : 1,
             value: in3?.type === 'value' ? in3.value : 1,
             nodesToRemove: [combineNode.name],
@@ -1435,12 +1439,12 @@ function _detectHSVAdjustPattern(nodes, nodeMap) {
                 type: 'ND_hsv_adjust_color3',
                 inputs: inInput.type === 'connection' ? [
                     { name: 'in', nodename: inInput.nodename, output: 'out' },
-                    { name: 'hue', type: 'float', value: in1?.value ?? 0 },
+                    { name: 'hue', type: 'float', value: hueInput },
                     { name: 'saturation', type: 'float', value: in2?.value ?? 1 },
                     { name: 'value', type: 'float', value: in3?.value ?? 1 }
                 ] : [
                     { name: 'in', type: 'color3f', value: inInput.value },
-                    { name: 'hue', type: 'float', value: in1?.value ?? 0 },
+                    { name: 'hue', type: 'float', value: hueInput },
                     { name: 'saturation', type: 'float', value: in2?.value ?? 1 },
                     { name: 'value', type: 'float', value: in3?.value ?? 1 }
                 ]
