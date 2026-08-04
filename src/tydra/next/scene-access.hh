@@ -154,10 +154,28 @@ struct GeomSubset {
   std::string name;
   std::string path;
   std::string family_name;
-  std::vector<int32_t> indices;
+  /// VIEW of the subset's authored `indices` array -- it points into the
+  /// composed layer's Value storage and is NOT owned, so it stays valid only
+  /// as long as the Stage that produced it. Copying the array here cost a
+  /// full duplicate of every subset's face-index list per mesh, on top of the
+  /// working copy the consumer builds anyway. Null when unauthored; use
+  /// indices() for an empty-safe read.
+  const std::vector<int32_t>* indices_view = nullptr;
+
+  static const std::vector<int32_t>& empty_indices() {
+    static const std::vector<int32_t> kEmpty;
+    return kEmpty;
+  }
+  const std::vector<int32_t>& indices() const {
+    return indices_view ? *indices_view : empty_indices();
+  }
+
   std::string material_path;
 };
 
+/// GeomSubset children of `mesh_prim`. The returned subsets hold VIEWS into
+/// the stage's attribute storage (see GeomSubset::indices_view); they must not
+/// outlive it.
 std::vector<GeomSubset> GetGeomSubsets(const UsdPrim& mesh_prim);
 
 //

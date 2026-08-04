@@ -3741,8 +3741,8 @@ void RenderSceneConverter::AssignMeshMaterialBinding(const Stage& stage,
     // sanitization dropped faces, route them through the old->new remap
     // first so the surviving faces keep their bindings.
     std::vector<uint32_t> faces;
-    faces.reserve(sub.indices.size());
-    for (int32_t fi : sub.indices) {
+    faces.reserve(sub.indices().size());
+    for (int32_t fi : sub.indices()) {
       if (fi < 0) continue;
       uint32_t face = static_cast<uint32_t>(fi);
       if (mesh->sanitize_dropped_faces > 0) {
