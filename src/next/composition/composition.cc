@@ -45,53 +45,11 @@ bool PathInSubtree(const std::string& path, const std::string& root,
                           path.compare(0, root_slash.size(), root_slash) == 0);
 }
 
-// Does the prim at `root_path` in `layer`, OR any of its descendants, author a
-// composable arc? Lets a reference to an arc-free prim of an otherwise
-// arc-bearing library layer skip whole-layer pre-composition (composing an
-// arc-free subtree changes nothing, so grafting the raw layer is identical).
-bool SubtreeHasComposableArcs(const Layer& layer, const std::string& root_path) {
-  const std::string prefix = root_path + "/";
-  for (size_t i = 0; i < layer.prim_count(); ++i) {
-    const PrimSpec* p = layer.prim(static_cast<uint32_t>(i));
-    if (p && PathInSubtree(p->path().str(), root_path, prefix) &&
-        PrimHasComposableArcs(*p)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Can the prim at `root_path` (+ descendants) be composed IN ISOLATION — i.e.
-// does every composition arc it authors resolve either externally, or to a prim
-// WITHIN the subtree? Only then is composing just the subtree identical to
-// composing it inside the whole layer, so the unreferenced bulk of a large
-// library layer need not be materialized. Conservative: sublayers, any
-// inherit/specialize (these target class prims that virtually always live
-// outside the subtree), or any INTERNAL reference/payload whose target escapes
-// the subtree make it false (→ whole-layer composition, which is always safe).
-bool SubtreeIsSelfContained(const Layer& layer, const std::string& root_path) {
-  if (!layer.meta().subLayers.empty()) return false;
-  const std::string prefix = root_path + "/";
-  for (size_t i = 0; i < layer.prim_count(); ++i) {
-    const PrimSpec* p = layer.prim(static_cast<uint32_t>(i));
-    if (!p || !PathInSubtree(p->path().str(), root_path, prefix)) continue;
-    const auto& m = p->meta();
-    if (!m.inherits.empty() || !m.specializes.empty()) return false;
-    for (const auto& r : m.references) {
-      const CompositionArc a = Compositor::ParseReference(r);
-      if (a.is_internal && !PathInSubtree(a.prim_path, root_path, prefix)) {
-        return false;
-      }
-    }
-    for (const auto& pl : m.payloads) {
-      const CompositionArc a = Compositor::ParsePayload(pl);
-      if (a.is_internal && !PathInSubtree(a.prim_path, root_path, prefix)) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
+// NOTE: the former SubtreeHasComposableArcs()/SubtreeIsSelfContained() helpers
+// are gone. Both were full linear scans of the referenced layer run per
+// reference arc; Compositor::GetSubtreeArcInfo() answers the same two
+// questions from the per-layer arc index (built once, queried by binary
+// search over the sorted path range).
 
 // AOUSD §6.6.2 / §12.2: dictionary opinions combine recursively. Keys from
 // the stronger value keep their values; missing keys (including nested keys)
