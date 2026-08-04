@@ -192,7 +192,22 @@ struct Primvar {
   // instead infer a mode from the element count.
   bool interpolation_authored = false;
   const Value* value;
-  std::vector<int32_t> indices;  // Optional indices for indexed primvars
+
+  /// VIEW of the primvar's authored `:indices` array (nullptr when absent).
+  /// Like `value` above, it points into the stage's attribute storage and is
+  /// NOT owned -- it stays valid only as long as the Stage that produced it.
+  /// Copying every index array here duplicated arrays the caller often throws
+  /// away immediately (the render converter skips `skel:`-prefixed primvars
+  /// outright). Use indices() for an empty-safe read.
+  const std::vector<int32_t>* indices_view = nullptr;
+
+  static const std::vector<int32_t>& empty_indices() {
+    static const std::vector<int32_t> kEmpty;
+    return kEmpty;
+  }
+  const std::vector<int32_t>& indices() const {
+    return indices_view ? *indices_view : empty_indices();
+  }
 };
 
 std::vector<Primvar> GetPrimvars(const UsdPrim& prim);

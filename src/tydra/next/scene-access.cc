@@ -969,9 +969,11 @@ std::vector<Primvar> GetPrimvars(const UsdPrim& prim) {
           pv.interpolation = "constant";  // USD spec default (pxr/legacy parity)
         }
 
-        // Get indices if present
+        // Get indices if present (view, not a copy -- see Primvar::indices_view)
         std::string indices_attr = name + ":indices";
-        pv.indices = GetIntArray(prim, indices_attr);
+        if (const Value* iv = GetAttribute(prim, indices_attr)) {
+          pv.indices_view = iv->as_int_array();
+        }
 
         result.push_back(std::move(pv));
       }
@@ -1008,7 +1010,9 @@ Primvar GetPrimvar(const UsdPrim& prim, const std::string& name) {
     }
 
     std::string indices_attr = full_name + ":indices";
-    pv.indices = GetIntArray(prim, indices_attr);
+    if (const Value* iv = GetAttribute(prim, indices_attr)) {
+      pv.indices_view = iv->as_int_array();
+    }
   }
 
   return pv;
