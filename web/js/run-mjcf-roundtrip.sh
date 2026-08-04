@@ -188,6 +188,22 @@ run_one() {
     add_json_row "$sub" "$name" "FWD-ERROR" "" "" "" "" "$usd" "$out_mjcf"
     return
   fi
+  # The forward converter exited 0 -- but verify it actually produced the file.
+  # Without this, a forward step that exits 0 without writing shows up as
+  # REV-ERROR ("ENOENT ... .usdc"), blaming the return trip for the forward
+  # step's failure. That misattribution cost real debugging time on an
+  # intermittent all-67-models failure whose root cause is still unknown, so
+  # capture the forward output here where it is still available.
+  if [ ! -s "$usd" ]; then
+    printf '%-26s %-22s %58s\n' "$sub" "$name" "FWD-NO-OUTPUT"
+    echo "    forward exited 0 but wrote no usdc: $usd"
+    echo "    forward output: $(echo "$fout" | tail -3 | tr '\n' ' ')"
+    ERR=$((ERR+1))
+    FAILED_LIST+=("$sub/$name (forward exited 0 but produced no output: $(echo "$fout" | tail -1))")
+    add_json_row "$sub" "$name" "FWD-NO-OUTPUT" "" "" "" "" "$usd" "$out_mjcf"
+    return
+  fi
+
   fline="$(echo "$fout" | grep '^Verified')"
   L="$(get links "$fline")"; J="$(get joints "$fline")"
   V="$(get 'visual meshes' "$fline")"; C="$(get collisions "$fline")"
