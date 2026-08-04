@@ -31,6 +31,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   loadWasm,
   unpackUSDZ,
@@ -260,8 +261,20 @@ async function main() {
 }
 
 // Run only when invoked directly (not when imported by tests).
-const invokedDirectly = process.argv[1] &&
-  import.meta.url === new URL(`file://${process.argv[1]}`).href;
+// Realpath both sides -- see the matching note in cli/urdf-to-usd.js: a
+// checkout reached through a symlinked parent otherwise makes this false and
+// the CLI silently does nothing and exits 0.
+const invokedDirectly = (() => {
+  if (!process.argv[1]) return false;
+  const self = fileURLToPath(import.meta.url);
+  const invoked = path.resolve(process.argv[1]);
+  if (self === invoked) return true;
+  try {
+    return fs.realpathSync(self) === fs.realpathSync(invoked);
+  } catch {
+    return false;
+  }
+})();
 if (invokedDirectly) {
   main().catch((err) => { console.error('Error:', err && err.message ? err.message : err); process.exit(2); });
 }
