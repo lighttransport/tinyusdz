@@ -63,6 +63,17 @@ struct CrateReadOptions {
   /// path automatically when mmap is unavailable (non-posix / WASM) or the
   /// mapping fails. The mapping stays alive as long as any lazy value (or the
   /// reader) references it. Set false to force the owned-buffer path.
+  ///
+  /// SET THIS FALSE FOR UNTRUSTED INPUT ON A SHARED FILESYSTEM. A mapping is
+  /// sized once, at open, and every bounds check in the reader is against that
+  /// size. If another process truncates the file while the mapping is alive,
+  /// touching a page past the new EOF raises SIGBUS -- a hard crash that no
+  /// bounds check can prevent and that this reader cannot turn into a clean
+  /// error. Because lazy array values keep the mapping alive, the window lasts
+  /// well beyond the load itself. The owned-buffer path reads the bytes once
+  /// up front and is immune. A truncation noticed during the load is reported
+  /// as a warning (see CrateDataSource::MappedFileShrank), but that is
+  /// after-the-fact detection, not protection.
   bool use_mmap = true;
 };
 

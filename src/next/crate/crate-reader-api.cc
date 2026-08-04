@@ -65,6 +65,22 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
     return std::move(result_);
   }
 
+  // The structural tables are read; if the file shrank underneath the mapping
+  // while we were reading it, say so. We survived this time (the truncated
+  // region went untouched), but any lazy value still referencing the mapping
+  // can hit SIGBUS later -- see CrateDataSource::MappedFileShrank().
+  if (source_ && source_->is_mmapped()) {
+    size_t now = 0;
+    if (source_->MappedFileShrank(&now)) {
+      AddWarning("Mapped file shrank while being read (" +
+                 std::to_string(source_->size()) + " -> " +
+                 std::to_string(now) +
+                 " bytes); lazily-read values may fault. Use "
+                 "CrateReadOptions::use_mmap = false for files that other "
+                 "processes may rewrite.");
+    }
+  }
+
   result_.success = result_.errors.empty();
   result_.version = version_;
   return std::move(result_);

@@ -73,6 +73,26 @@ class CrateDataSource : public LazyArraySource {
 
   /// Whether this source is backed by a memory mapping (vs an owned buffer).
   bool is_mmapped() const override { return mmap_base_ != nullptr; }
+
+  /// Has the mapped file shrunk (or been replaced by a shorter one) since it
+  /// was mapped?
+  ///
+  /// A read-only MAP_PRIVATE mapping is sized once, at open. Every bounds
+  /// check in the reader is against THAT size, so if another process truncates
+  /// the file while the mapping is alive, touching a page past the new EOF
+  /// raises SIGBUS -- which no bounds check can prevent, and which no amount of
+  /// validation in this reader can turn into a clean error. The mapping also
+  /// outlives the reader: lazy array values hold the source alive, so the
+  /// exposure lasts until the last opinion referencing it is dropped.
+  ///
+  /// This cannot make the mapping safe. It detects the race after the fact --
+  /// when we happened not to touch the truncated region -- so a caller gets a
+  /// diagnosable warning instead of silently reading a file that changed
+  /// underneath it. Untrusted input on a shared filesystem should set
+  /// CrateReadOptions::use_mmap = false rather than rely on this.
+  ///
+  /// Returns false for non-mmap sources and when the size cannot be determined.
+  bool MappedFileShrank(size_t* current_size = nullptr) const;
   bool can_borrow() const override {
     // Both owned buffer and mmap-backed buffers remain stable while the source
     // object is alive, so array views can safely borrow from them.
@@ -121,6 +141,10 @@ class CrateDataSource : public LazyArraySource {
     !defined(__wasi__) &&                                         \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
   void* mmap_addr_ = nullptr;           // region to munmap in the destructor
+  // Path the mapping came from, kept so MappedFileShrank() can re-stat it. A
+  // path rather than a retained fd: a scene can reference hundreds of layers
+  // and holding an fd per mapped layer risks the descriptor limit.
+  std::string mmap_path_;
 #endif
 
   CrateVersion version_{};  // value-initialized to 0.0.0
