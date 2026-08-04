@@ -1420,6 +1420,29 @@ void AppendPointInstanceDraws(int32_t instancer_id,
   if (!instancer->valid) return;
 
   const size_t instance_count = instancer->instance_count();
+
+  // Reserve up front: a RenderPointInstanceDraw is ~84 bytes (mostly a
+  // Matrix4), so 1M instances grow ~84 MB by geometric doubling -- a ~1.5x
+  // transient spike plus ~20 full reallocation memcpys. The upper bound is
+  // instances x the widest prototype mesh run.
+  {
+    size_t max_run = 0;
+    for (size_t i = 0; i + 1 < instancer->prototype_mesh_offsets.size(); ++i) {
+      const size_t run = instancer->prototype_mesh_offsets[i + 1] -
+                         instancer->prototype_mesh_offsets[i];
+      if (run > max_run) max_run = run;
+    }
+    if (max_run > 0 && !WouldOverflowSizeMul(instance_count, max_run)) {
+      const size_t upper = instance_count * max_run;
+      // Only pre-size when the bound is realistic; a pathological prototype
+      // table should not drive a huge speculative reservation.
+      if (upper <= scene->point_instance_draws.size() + (size_t(1) << 22)) {
+        scene->point_instance_draws.reserve(
+            scene->point_instance_draws.size() + upper);
+      }
+    }
+  }
+
   for (size_t instance_index = 0; instance_index < instance_count; ++instance_index) {
     if (!instancer->instance_visible.empty() &&
         !instancer->instance_visible[instance_index]) {
@@ -2021,6 +2044,9 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
         FloatChunked promoted;
         if (attr.has_indices()) {
           const size_t elems = attr.float_data.size() / 2;
+          // Both counts are known up front; without reserve() a 1M-vertex UV
+          // set grows 122 chunks one push_back at a time.
+          promoted.reserve(attr.indices.size() * 2);
           for (size_t k = 0; k < attr.indices.size(); ++k) {
             const uint32_t idx = attr.indices[k];
             if (idx >= elems) {
@@ -2032,8 +2058,12 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
             promoted.push_back(attr.float_data[idx * 2 + 1]);
           }
         } else {
-          for (size_t k = 0; k < attr.float_data.size(); ++k) {
-            promoted.push_back(attr.float_data[k]);
+          // Straight copy: go chunk-at-a-time rather than element-at-a-time.
+          promoted.reserve(attr.float_data.size());
+          for (size_t c = 0; c < attr.float_data.chunk_count(); ++c) {
+            const size_t n = attr.float_data.chunk_size(c);
+            if (n == 0) break;
+            promoted.append(attr.float_data.chunk_data(c), n);
           }
         }
         if (promoted.alloc_failed()) {
@@ -6388,10 +6418,19 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
     uint32_t i0 = mesh->triangulated_indices[t * 3 + 0];
     uint32_t i1 = mesh->triangulated_indices[t * 3 + 1];
     uint32_t i2 = mesh->triangulated_indices[t * 3 + 2];
+    // Bounds-check the triangle, as the tangent path already does. Nothing
+    // here re-validated triangulated_indices against the point count, so a
+    // mesh whose topology survived sanitization with an out-of-range corner
+    // read (and accumulated into) memory past both points and normals.
+    if (i0 >= num_points || i1 >= num_points || i2 >= num_points) continue;
 
-    float p0[3] = {mesh->points[i0*3], mesh->points[i0*3+1], mesh->points[i0*3+2]};
-    float p1[3] = {mesh->points[i1*3], mesh->points[i1*3+1], mesh->points[i1*3+2]};
-    float p2[3] = {mesh->points[i2*3], mesh->points[i2*3+1], mesh->points[i2*3+2]};
+    // One chunk resolution per point instead of three. (The normals
+    // accumulation below is inherently random-access -- i0/i1/i2 are arbitrary
+    // vertex indices -- so it cannot be made chunk-sequential.)
+    float p0[3], p1[3], p2[3];
+    mesh->points.read3(i0 * 3, p0);
+    mesh->points.read3(i1 * 3, p1);
+    mesh->points.read3(i2 * 3, p2);
 
     // Edge vectors
     float e1[3] = {p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2]};
