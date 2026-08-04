@@ -3079,6 +3079,69 @@ void TestUsdzEntryMatching() {
   std::cout << "  usdz entry matching passed!\n";
 }
 
+// faceVertexIndices pointing past the points array must be rejected by
+// TriangulateMesh itself, not merely by SanitizeMeshTopology upstream: the
+// triangulator is also reached from ConvertGeomPrimitive/ConvertBoundsProxy
+// and from the self-triangulation inside ComputeVertexNormals/Tangents, none
+// of which sanitize first. Every index feeds mesh->points lookups (the quad
+// diagonal test, the earcut projection) and lands in triangulated_indices,
+// which normal/tangent generation later dereferences.
+void TestTriangulateOutOfRangeIndices() {
+  std::cout << "Testing triangulation with out-of-range indices...\n";
+
+  // 4 points, but faces reference vertex 9 (quad path) and vertex 12 (n-gon
+  // earcut path). One face is entirely valid and must survive.
+  const char* usda = R"(#usda 1.0
+def Mesh "M"
+{
+    point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]
+    int[] faceVertexCounts = [3, 4, 5]
+    int[] faceVertexIndices = [
+        0, 1, 2,
+        0, 1, 2, 9,
+        0, 1, 2, 3, 12
+    ]
+}
+)";
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  for (bool compute_normals : {false, true}) {
+    ConverterConfig cfg;
+    cfg.mesh.triangulate = true;
+    cfg.mesh.compute_normals = compute_normals;
+    cfg.mesh.build_vertex_indices = false;
+    RenderSceneConverter conv(cfg);
+    ConvertResult res = conv.Convert(lr.stage);
+    assert(res.success);
+    auto it = res.scene.mesh_by_path.find("/M");
+    if (it == res.scene.mesh_by_path.end()) continue;  // dropped is also safe
+    const RenderMesh& m = res.scene.meshes[static_cast<size_t>(it->second)];
+
+    // Whatever survived must be in range -- this is the invariant every
+    // downstream consumer relies on.
+    const uint32_t np = static_cast<uint32_t>(m.point_count());
+    for (size_t i = 0; i < m.triangulated_indices.size(); ++i) {
+      assert(m.triangulated_indices[i] < np);
+    }
+    // face_triangle_offsets stays monotonic and consistent with the output.
+    if (!m.face_triangle_offsets.empty()) {
+      for (size_t i = 1; i < m.face_triangle_offsets.size(); ++i) {
+        assert(m.face_triangle_offsets[i] >= m.face_triangle_offsets[i - 1]);
+      }
+      assert(m.face_triangle_offsets.back() ==
+             m.triangulated_indices.size() / 3);
+    }
+    if (compute_normals && m.has_normals()) {
+      for (size_t i = 0; i < m.normals.size(); ++i) {
+        assert(std::isfinite(m.normals[i]));
+      }
+    }
+  }
+
+  std::cout << "  triangulation with out-of-range indices passed!\n";
+}
+
 void TestRenderConverterCurves() {
   std::cout << "Testing RenderConverter curves...\n";
 
@@ -5895,6 +5958,7 @@ int main() {
   TestConverterMemoryBudget();
   TestLightLinkCollectionRanges();
   TestUsdzEntryMatching();
+  TestTriangulateOutOfRangeIndices();
   TestLargeMeshTangents();
   TestValueClipBaking();
   TestMeshParityCleanups();

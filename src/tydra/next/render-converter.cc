@@ -2184,13 +2184,6 @@ void ResolveSkeletalAnimationTargets(RenderScene* scene) {
   }
 }
 
-bool PathIsAtOrUnder(const std::string& path, const std::string& root) {
-  if (root.empty() || path.empty()) return false;
-  if (path == root) return true;
-  return path.size() > root.size() &&
-         path.compare(0, root.size(), root) == 0 && path[root.size()] == '/';
-}
-
 // Mesh paths sorted lexicographically, built ONCE per ResolveLightLinking call
 // and shared by every light and both link kinds.
 //
@@ -6192,15 +6185,45 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   using EarcutPoint2 = std::array<double, 2>;
   std::vector<std::vector<EarcutPoint2>> earcut_polygon(1);
 
+  const uint32_t point_count = static_cast<uint32_t>(mesh->point_count());
+  size_t oob_faces = 0;
+
   for (size_t f = 0; f < mesh->face_vertex_counts.size(); ++f) {
     mesh->face_triangle_offsets[f] =
         static_cast<uint32_t>(mesh->triangulated_indices.size() / 3);
     const uint32_t nverts = mesh->face_vertex_counts[f];
     if (idx_offset + nverts > mesh->face_vertex_indices.size()) return false;
+
+    // Bounds-check the face's VERTEX INDICES, not just the corner range.
+    // Everything downstream indexes mesh->points by these values -- the quad
+    // shorter-diagonal test, the earcut Newell normal and projection -- and
+    // they land in triangulated_indices, which ComputeVertexNormals/Tangents
+    // later dereference.
+    //
+    // This is defense-in-depth, NOT a fix for a reachable bug: the ConvertMesh
+    // path runs SanitizeMeshTopology first, which already drops out-of-range
+    // faces (verified -- disabling this check does not trip ASan on a mesh
+    // whose faceVertexIndices point past the points array). What it buys is a
+    // LOCAL guarantee: TriangulateMesh is also entered from
+    // ConvertGeomPrimitive/ConvertBoundsProxy and from the self-triangulation
+    // in ComputeVertexNormals/ComputeVertexTangents, none of which sanitize,
+    // so today's safety there rests on those callers happening to build
+    // self-consistent topology. Its two sibling functions already validate
+    // their own indices; this makes the triangulator consistent with them.
+    // An out-of-range face contributes zero triangles, exactly like a hole.
+    bool face_in_range = true;
+    for (uint32_t i = 0; i < nverts; ++i) {
+      if (mesh->face_vertex_indices[idx_offset + i] >= point_count) {
+        face_in_range = false;
+        break;
+      }
+    }
+    if (!face_in_range) ++oob_faces;
+
     const bool is_hole = std::binary_search(mesh->hole_faces.begin(),
                                             mesh->hole_faces.end(),
                                             static_cast<uint32_t>(f));
-    if (nverts >= 3 && !is_hole) {
+    if (nverts >= 3 && !is_hole && face_in_range) {
       auto emit_triangle = [&](uint32_t a, uint32_t b, uint32_t c) {
         if (mesh->left_handed) std::swap(b, c);
         const uint32_t corners[3] = {a, b, c};
@@ -6307,8 +6330,21 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
             const Point2& b = ring[(i + 1) % ring.size()];
             ring_area2 += a[0] * b[1] - b[0] * a[1];
           }
+          // earcut's output indexes the ring it was handed; verify rather
+          // than trust, since every value feeds ring[] and emit_triangle().
+          bool local_in_range = true;
+          for (uint32_t li : local) {
+            if (li >= ring.size()) { local_in_range = false; break; }
+          }
+          if (!local_in_range) {
+            warnings_.push_back("Earcut produced out-of-range indices for face " +
+                                std::to_string(f) + " of " + mesh->prim_path +
+                                "; using triangle fan fallback");
+            used_earcut = false;
+          }
           double tri_cross = 0.0;
-          for (size_t i = 0; i < local.size() && tri_cross == 0.0; i += 3) {
+          for (size_t i = 0; local_in_range && i < local.size() && tri_cross == 0.0;
+               i += 3) {
             const Point2& a = ring[local[i]];
             const Point2& b = ring[local[i + 1]];
             const Point2& c = ring[local[i + 2]];
@@ -6317,7 +6353,7 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
           }
           const bool flip = (ring_area2 != 0.0) && (tri_cross != 0.0) &&
                             ((ring_area2 > 0.0) != (tri_cross > 0.0));
-          for (size_t i = 0; i < local.size(); i += 3) {
+          for (size_t i = 0; local_in_range && i < local.size(); i += 3) {
             if (flip) {
               emit_triangle(local[i], local[i + 2], local[i + 1]);
             } else {
@@ -6342,6 +6378,14 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   }
   mesh->face_triangle_offsets[mesh->face_vertex_counts.size()] =
       static_cast<uint32_t>(mesh->triangulated_indices.size() / 3);
+
+  if (oob_faces > 0) {
+    warnings_.push_back(
+        "Mesh '" + mesh->prim_path + "': dropped " +
+        std::to_string(oob_faces) +
+        " face(s) whose faceVertexIndices are out of range for " +
+        std::to_string(point_count) + " points");
+  }
 
   mesh->is_triangulated = true;
   return true;
