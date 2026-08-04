@@ -917,8 +917,11 @@ std::vector<GeomSubset> GetGeomSubsets(const UsdPrim& mesh_prim) {
 
       GetToken(child, "familyName", &gs.family_name);
 
-      // Get indices
-      gs.indices = GetIntArray(child, "indices");
+      // View, not a copy: the array lives in the stage's Value storage and
+      // the consumer builds its own working copy regardless.
+      if (const Value* iv = GetAttribute(child, "indices")) {
+        gs.indices_view = iv->as_int_array();
+      }
 
       // Get material binding
       gs.material_path = GetBoundMaterial(child);
