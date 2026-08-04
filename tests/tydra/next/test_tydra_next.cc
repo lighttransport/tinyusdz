@@ -2964,6 +2964,71 @@ void TestConverterMemoryBudget() {
   std::cout << "  converter cumulative memory budget passed!\n";
 }
 
+// Light-link collection resolution after the sorted-prefix-range rewrite.
+// The important trap is the sibling whose name EXTENDS an include target
+// ("/W/C" vs "/W/C2"): a naive prefix test matches both, so the range must
+// stop at the '/' boundary.
+void TestLightLinkCollectionRanges() {
+  std::cout << "Testing light-link collection path ranges...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "W"
+{
+    def Xform "A"
+    {
+        def Mesh "M0" { point3f[] points = [(0,0,0), (1,0,0), (1,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0, 1, 2] }
+        def Xform "B"
+        {
+            def Mesh "M1" { point3f[] points = [(0,0,0), (1,0,0), (1,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0, 1, 2] }
+        }
+    }
+    def Xform "C"
+    {
+        def Mesh "M2" { point3f[] points = [(0,0,0), (1,0,0), (1,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0, 1, 2] }
+    }
+    def Xform "C2"
+    {
+        def Mesh "M3" { point3f[] points = [(0,0,0), (1,0,0), (1,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0, 1, 2] }
+    }
+    def SphereLight "L"
+    {
+        rel collection:lightLink:includes = [</W/A>, </W/C>]
+        rel collection:lightLink:excludes = [</W/A/B>]
+    }
+}
+)";
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+  ConverterConfig cfg;
+  RenderSceneConverter conv(cfg);
+  ConvertResult res = conv.Convert(lr.stage);
+  assert(res.success);
+  assert(res.scene.lights.size() == 1);
+
+  const RenderLight& light = res.scene.lights[0];
+  assert(!light.light_links_all);
+
+  std::set<std::string> linked;
+  for (int32_t mi : light.light_link_mesh_indices) {
+    linked.insert(res.scene.meshes[static_cast<size_t>(mi)].prim_path);
+  }
+  // /W/A subtree minus the excluded /W/A/B, plus the /W/C subtree.
+  assert(linked.count("/W/A/M0") == 1);
+  assert(linked.count("/W/C/M2") == 1);
+  assert(linked.count("/W/A/B/M1") == 0);  // excluded
+  // "/W/C2" merely shares a prefix with "/W/C" -- it is NOT a descendant.
+  assert(linked.count("/W/C2/M3") == 0);
+  assert(linked.size() == 2);
+
+  // Emitted in ascending mesh-index order, as the previous full scan did.
+  for (size_t i = 1; i < light.light_link_mesh_indices.size(); ++i) {
+    assert(light.light_link_mesh_indices[i - 1] <
+           light.light_link_mesh_indices[i]);
+  }
+
+  std::cout << "  light-link collection path ranges passed!\n";
+}
+
 void TestRenderConverterCurves() {
   std::cout << "Testing RenderConverter curves...\n";
 
@@ -5778,6 +5843,7 @@ int main() {
   TestPhysicsAnnotations();
   TestRenderConverterCurves();
   TestConverterMemoryBudget();
+  TestLightLinkCollectionRanges();
   TestLargeMeshTangents();
   TestValueClipBaking();
   TestMeshParityCleanups();

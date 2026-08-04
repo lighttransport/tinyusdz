@@ -1,0 +1,11 @@
+#usda 1.0
+# Regression: a reference authored INSIDE a variant option that is itself
+# reached through a reference to another asset. The arc is resolved by
+# ApplyOneVariant at the option's strength, not via the host prim's
+# references list (which composition clears after its own pass) -- so the
+# referenced geometry must survive into the flattened output.
+def "World" (
+    prepend references = @./variant-arc-lib.usda@</Asset>
+)
+{
+}
