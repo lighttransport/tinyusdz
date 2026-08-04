@@ -177,6 +177,43 @@ bool CrateReader::Impl::ReadTOC() {
     }
   }
 
+  // Structural consistency, reported as WARNINGS rather than errors.
+  //
+  // Each section above is individually in-bounds and every subsequent read is
+  // bounds-checked, so a duplicate or overlapping TOC is not memory-unsafe --
+  // rejecting such a file would refuse content pxr may well still read. But it
+  // does mean the file presents mutually inconsistent structural tables (and
+  // toc_.find() silently takes the FIRST match), which is worth surfacing.
+  // num_sections is capped at 100 above, so the pairwise scan is trivial.
+  for (size_t i = 0; i < toc_.sections.size(); ++i) {
+    for (size_t j = i + 1; j < toc_.sections.size(); ++j) {
+      if (toc_.sections[i].name_str() == toc_.sections[j].name_str()) {
+        AddWarning("Duplicate TOC section '" + toc_.sections[i].name_str() +
+                   "'; the first one is used");
+      }
+    }
+  }
+
+  {
+    std::vector<size_t> order(toc_.sections.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [this](size_t a, size_t b) {
+      return toc_.sections[a].start < toc_.sections[b].start;
+    });
+    for (size_t k = 1; k < order.size(); ++k) {
+      const CrateSection& prev = toc_.sections[order[k - 1]];
+      const CrateSection& cur = toc_.sections[order[k]];
+      if (prev.size == 0) continue;
+      // Both are already validated as non-negative and in-bounds.
+      const uint64_t prev_end = static_cast<uint64_t>(prev.start) +
+                                static_cast<uint64_t>(prev.size);
+      if (static_cast<uint64_t>(cur.start) < prev_end) {
+        AddWarning("Overlapping TOC sections '" + prev.name_str() + "' and '" +
+                   cur.name_str() + "'");
+      }
+    }
+  }
+
   return true;
 }
 

@@ -72,10 +72,25 @@ std::shared_ptr<CrateDataSource> CrateDataSource::MmapFile(
   ds->mmap_addr_ = addr;
   ds->mmap_size_ = len;
   ds->mmap_base_ = reinterpret_cast<const uint8_t*>(addr);
+  ds->mmap_path_ = filename;
   return ds;
 #else
   (void)filename;
   return nullptr;
+#endif
+}
+
+bool CrateDataSource::MappedFileShrank(size_t* current_size) const {
+#if defined(TINYUSDZ_NEXT_HAVE_MMAP)
+  if (!mmap_base_ || mmap_path_.empty()) return false;
+  struct stat st;
+  if (::stat(mmap_path_.c_str(), &st) != 0 || st.st_size < 0) return false;
+  const size_t now = static_cast<size_t>(st.st_size);
+  if (current_size) *current_size = now;
+  return now < mmap_size_;
+#else
+  (void)current_size;
+  return false;
 #endif
 }
 
