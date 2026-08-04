@@ -25,7 +25,9 @@
 #include <new>
 #include <string>
 #include <vector>
-#if defined(__linux__)
+#if defined(__EMSCRIPTEN__)
+#include <emscripten/heap.h>
+#elif defined(__linux__)
 #include <unistd.h>
 #elif defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -137,16 +139,25 @@ class MemBudget {
     return true;
   }
 
-  // Process RSS in bytes; 0 if unavailable. Linux: /proc/self/statm (pages).
-  // Windows: working set via GetProcessMemoryInfo.
+  // Process RSS in bytes; 0 if unavailable.
+  //   wasm:    grown linear-heap size (there is no /proc, and the heap IS the
+  //            memory bound that matters on wasm32).
+  //   Windows: working set via GetProcessMemoryInfo.
+  //   Linux:   /proc/self/statm (pages).
+  // NOTE: the /proc branch is guarded on __linux__ rather than used as the
+  // fallback for every non-Windows target -- it referenced _SC_PAGESIZE
+  // without <unistd.h> being included off-Linux, which broke the emscripten
+  // build as soon as a wasm translation unit included this header.
   static size_t ProcessRSS() {
-#if defined(_WIN32)
+#if defined(__EMSCRIPTEN__)
+    return static_cast<size_t>(emscripten_get_heap_size());
+#elif defined(_WIN32)
     PROCESS_MEMORY_COUNTERS pmc;
     if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
       return size_t(pmc.WorkingSetSize);
     }
     return 0;
-#else
+#elif defined(__linux__)
     std::ifstream f("/proc/self/statm");
     if (!f) return 0;
     size_t total_pages = 0, rss_pages = 0;
@@ -154,13 +165,17 @@ class MemBudget {
     if (!f) return 0;
     long pg = sysconf(_SC_PAGESIZE);
     return rss_pages * size_t(pg > 0 ? pg : 4096);
+#else
+    return 0;  // unknown platform: budget guards become inert, never wrong
 #endif
   }
 
   // Available system memory in bytes; 0 if unavailable. Linux: /proc/meminfo
   // MemAvailable. Windows: GlobalMemoryStatusEx ullAvailPhys.
   static size_t AvailableSystemMemory() {
-#if defined(_WIN32)
+#if defined(__EMSCRIPTEN__)
+    return 0;  // no host meminfo; callers fall back to their configured cap
+#elif defined(_WIN32)
     MEMORYSTATUSEX st;
     st.dwLength = sizeof(st);
     if (GlobalMemoryStatusEx(&st)) {
