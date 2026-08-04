@@ -87,9 +87,18 @@ bool Reader::OpenFile(const std::string& path, Reader* out, std::string* err) {
   if (!f) return Fail(err, "cannot open Ptex file");
   const std::streamoff n = f.tellg();
   if (n <= 0) return Fail(err, "empty Ptex file");
-  out->owned_.resize(static_cast<size_t>(n));
+  // streamoff is 64-bit, but streamsize and size_t are 32-bit on wasm32, so a
+  // large file would silently truncate in the resize and in the read length
+  // (the read then "succeeds" against a short buffer). Reject explicitly.
+  const uint64_t n64 = static_cast<uint64_t>(n);
+  if (n64 > static_cast<uint64_t>((std::numeric_limits<std::streamsize>::max)()) ||
+      n64 > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+    return Fail(err, "Ptex file too large for this platform");
+  }
+  out->owned_.resize(static_cast<size_t>(n64));
   f.seekg(0, std::ios::beg);
-  if (!f.read(reinterpret_cast<char*>(out->owned_.data()), n)) {
+  if (!f.read(reinterpret_cast<char*>(out->owned_.data()),
+              static_cast<std::streamsize>(n64))) {
     return Fail(err, "cannot read Ptex file");
   }
   out->data_ = out->owned_.data();
