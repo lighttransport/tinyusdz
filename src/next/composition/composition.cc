@@ -29,14 +29,8 @@ bool PrimHasComposableArcs(const PrimSpec& p) {
          !m.specializes.empty();
 }
 
-// Does any prim in `layer` (or a sublayer) author a composable arc?
-bool LayerHasComposableArcs(const Layer& layer) {
-  for (size_t i = 0; i < layer.prim_count(); ++i) {
-    const PrimSpec* p = layer.prim(static_cast<uint32_t>(i));
-    if (p && PrimHasComposableArcs(*p)) return true;
-  }
-  return !layer.meta().subLayers.empty();
-}
+// NOTE: LayerHasComposableArcs() is gone too -- Compositor::GetLayerHasArcs()
+// answers it from the cached per-layer arc index instead of rescanning.
 
 // Is `path` equal to `root` or a descendant of it?
 bool PathInSubtree(const std::string& path, const std::string& root,
@@ -192,21 +186,9 @@ void ApplyRelationshipEdit(std::vector<Path>* values, const ArcEdit& edit) {
 // layer and are stale, but composition (flat iteration + path lookups, with
 // GraftSubtree validating / falling back to a path scan) does not rely on them
 // — the same way Compose()'s own output carries stale child_indices.
-std::unique_ptr<Layer> ExtractSubtree(const Layer& src,
-                                      const std::string& root_path) {
-  auto out = std::make_unique<Layer>();
-  const std::string prefix = root_path + "/";
-  for (size_t i = 0; i < src.prim_count(); ++i) {
-    const PrimSpec* p = src.prim(static_cast<uint32_t>(i));
-    if (!p) continue;
-    const std::string& pp = p->path().str();
-    if (!PathInSubtree(pp, root_path, prefix)) continue;
-    const uint32_t idx = out->add_prim(p->Clone());
-    if (pp == root_path) out->add_root(idx);
-  }
-  out->build_path_index();
-  return out;
-}
+// NOTE: the former linear-scan ExtractSubtree() is gone; the subtree is now
+// cloned from the per-layer sorted path range (Compositor::ExtractSubtreeIndexed),
+// so pulling K prims out of an L-prim library is no longer O(K*L).
 
 }  // namespace
 
@@ -1952,7 +1934,53 @@ const Compositor::LayerArcIndex& Compositor::GetLayerArcIndex(
             [](const ArcPrimEntry& a, const ArcPrimEntry& b) {
               return a.path < b.path;
             });
+
+  idx.paths_sorted.reserve(raw.prim_count());
+  for (size_t i = 0; i < raw.prim_count(); ++i) {
+    if (raw.prim(static_cast<uint32_t>(i))) {
+      idx.paths_sorted.push_back(static_cast<uint32_t>(i));
+    }
+  }
+  std::sort(idx.paths_sorted.begin(), idx.paths_sorted.end(),
+            [&raw](uint32_t a, uint32_t b) {
+              return raw.prim(a)->path().str() < raw.prim(b)->path().str();
+            });
+
   return (*layer_arc_index_)[resolved_path] = std::move(idx);
+}
+
+std::unique_ptr<Layer> Compositor::ExtractSubtreeIndexed(
+    const Layer& src, const std::string& resolved_path,
+    const std::string& root_path) {
+  const LayerArcIndex& idx = GetLayerArcIndex(src, resolved_path);
+  const std::vector<uint32_t>& sorted = idx.paths_sorted;
+  auto path_of = [&src](uint32_t i) -> const std::string& {
+    return src.prim(i)->path().str();
+  };
+  auto lower = [&](const std::string& key) {
+    return std::lower_bound(sorted.begin(), sorted.end(), key,
+                            [&](uint32_t i, const std::string& v) {
+                              return path_of(i) < v;
+                            });
+  };
+
+  auto out = std::make_unique<Layer>();
+  // The root itself, then its descendants: paths with the prefix "root/"
+  // occupy ["root/", "root0") since '/' is 0x2F (see MeshPathIndex in
+  // tydra-next for the same construction).
+  auto it = lower(root_path);
+  if (it != sorted.end() && path_of(*it) == root_path) {
+    const uint32_t idx_out = out->add_prim(src.prim(*it)->Clone());
+    out->add_root(idx_out);
+  }
+  const std::string lo_key = root_path + "/";
+  std::string hi_key = root_path;
+  hi_key += static_cast<char>('/' + 1);
+  for (auto d = lower(lo_key), e = lower(hi_key); d != e; ++d) {
+    out->add_prim(src.prim(*d)->Clone());
+  }
+  out->build_path_index();
+  return out;
 }
 
 Compositor::SubtreeArcInfo Compositor::GetSubtreeArcInfo(
@@ -2070,7 +2098,7 @@ const Layer* Compositor::GetComposedExternalLayer(
   std::unique_ptr<Layer> extracted;
   const Layer* input = raw;
   if (!subtree_root.empty()) {
-    extracted = ExtractSubtree(*raw, subtree_root);
+    extracted = ExtractSubtreeIndexed(*raw, resolved_path, subtree_root);
     input = extracted.get();
   }
 
