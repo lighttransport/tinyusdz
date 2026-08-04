@@ -14,6 +14,8 @@ Environment overrides:
   BUILD_TYPE           CMake build type (default: Debug)
   THREADS              TINYUSDZ_NEXT_ENABLE_THREAD value (default: OFF)
   ALSO_THREADS         Also build+test a THREADS=ON pass (default: 1; 0 skips)
+  RUN_FUZZ             Build the libFuzzer harnesses and replay the seed
+                       corpus through each when nonzero (needs clang)
   THREADS_BUILD_DIR    Build dir for that pass (default: $BUILD_DIR-threads)
   RUN_BENCH            Run opt-in memory/perf benchmarks when nonzero
   RUN_CORPUS           Run opt-in usd-wg asset corpus gate when nonzero
@@ -99,4 +101,41 @@ if [ "$ALSO_THREADS" != "0" ] && [ "$THREADS" != "ON" ]; then
   cmake --build "$THREADS_BUILD_DIR" -j"$JOBS"
   ctest --test-dir "$THREADS_BUILD_DIR" --output-on-failure -L next \
     -LE 'benchmark|corpus'
+fi
+
+# Opt-in: build the libFuzzer harnesses and replay the seed corpus through
+# each one (-runs=0). This is NOT a fuzzing session -- it is a few seconds that
+# keeps the harnesses compiling and proves the corpus is clean, which is what
+# rots when nobody runs them. Real fuzzing is a separate, long job; see
+# tests/fuzzer/README.md.
+if [ "${RUN_FUZZ:-0}" != "0" ]; then
+  echo
+  echo "=== fuzzer harnesses: build + seed-corpus replay ==="
+  FUZZ_BUILD_DIR="${FUZZ_BUILD_DIR:-$BUILD_DIR-fuzz}"
+  cmake -S "$ROOT_DIR/src/next" -B "$FUZZ_BUILD_DIR" \
+    -DTINYUSDZ_NEXT_BUILD_FUZZERS=ON \
+    -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo
+  cmake --build "$FUZZ_BUILD_DIR" -j"$JOBS"
+
+  FUZZ_SEEDS="$(mktemp -d)"
+  trap 'rm -rf "$FUZZ_SEEDS"' EXIT
+  # next_usdc re-prepends the PXR-USDC magic, so seeds carry it stripped.
+  python3 - "$ROOT_DIR" "$FUZZ_SEEDS" <<'PYEOF'
+import glob, os, sys
+root, out = sys.argv[1], sys.argv[2]
+os.makedirs(os.path.join(out, "usdc"), exist_ok=True)
+os.makedirs(os.path.join(out, "usda"), exist_ok=True)
+for f in glob.glob(os.path.join(root, "tests/usdc/*.usdc")):
+    d = open(f, "rb").read()
+    if d[:8] == b"PXR-USDC":
+        open(os.path.join(out, "usdc", os.path.basename(f)), "wb").write(d[8:])
+for f in glob.glob(os.path.join(root, "tests/usda/*.usda"))[:400]:
+    open(os.path.join(out, "usda", os.path.basename(f)), "wb").write(
+        open(f, "rb").read())
+PYEOF
+  "$FUZZ_BUILD_DIR/fuzz_next_usdc" -runs=0 "$FUZZ_SEEDS/usdc"
+  "$FUZZ_BUILD_DIR/fuzz_next_usda" -runs=0 "$FUZZ_SEEDS/usda"
+  "$FUZZ_BUILD_DIR/fuzz_next_compose" -runs=0 \
+    "$ROOT_DIR/tests/fuzzer/next_compose_seeds"
 fi
