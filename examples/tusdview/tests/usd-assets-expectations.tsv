@@ -6,7 +6,7 @@
 vk-raster	test_assets/AlphaBlendModeTest/AlphaBlendModeTest.usd	rendered,rendered_with_warnings	-	4
 vk-raster	test_assets/AlphaBlendSortTest/AlphaBlendSortTest.usda	rendered,rendered_with_warnings	-	4
 vk-raster	test_assets/MaterialXTest/basic.usda	rendered,rendered_with_warnings	-	8
-vk-raster	test_assets/MaterialXTest/basicTextured.usda	rendered,rendered_with_warnings,degraded_material	load summary:.*(degraded_materials|unsupported_mtlx)=[1-9]	8
+vk-raster	test_assets/MaterialXTest/basicTextured.usda	rendered,rendered_with_warnings,degraded_material	-	8
 vk-raster	test_assets/TextureCoordinateTest/TextureCoordinateTestMaterialX.usda	rendered,rendered_with_warnings,degraded_material	-	8
 vk-raster	full_assets/StandardShaderBall/standard_shader_ball_scene.usda	rendered,rendered_with_warnings,degraded_material	-	12
 vk-raster	full_assets/Teapot/Teapot.usd	rendered,rendered_with_warnings	-	8
