@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 
 #include "texture-cache.hh"
+#include "next/safe-file-size.hh"
 #include "usdz-entry-match.hh"
 
 #include <algorithm>
@@ -72,10 +73,10 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
   }
   std::ifstream f(path, std::ios::binary | std::ios::ate);
   if (!f) return false;
-  const std::streamoff n = f.tellg();
-  if (n <= 0) return false;
+  size_t n = 0;
+  if (!::tinyusdz::next::SafeStreamSize(f, 0, &n)) return false;
   f.seekg(0, std::ios::beg);
-  out->resize(static_cast<size_t>(n));
+  out->resize(n);
   return bool(f.read(reinterpret_cast<char*>(out->data()),
                      static_cast<std::streamsize>(n)));
 }

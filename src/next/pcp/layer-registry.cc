@@ -4,6 +4,7 @@
 // TinyUSDZ Next - PCP LayerRegistry implementation
 
 #include "layer-registry.hh"
+#include "../safe-file-size.hh"
 
 #include "../layer/asset-anchor.hh"
 #include "../layer/layer.hh"
@@ -290,18 +291,22 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
       if (err) *err += "Failed to open MaterialX layer: " + resolved_path + "\n";
       return nullptr;
     }
-    const std::streamoff end = f.tellg();
-    if (end <= 0 ||
-        static_cast<uint64_t>(end) >
-            static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+    // A MaterialX document is XML; 256 MB is far past anything real, and the
+    // bound must be UNCONDITIONAL -- the old max_memory check only applied
+    // when a budget was configured, and the size_t comparison it sat next to
+    // is a no-op on LP64. A directory reports LLONG_MAX here (see
+    // SafeStreamSize) and reached std::string(n, '\0'), which threw an
+    // uncaught length_error and killed the process.
+    constexpr uint64_t kMaxMtlxBytes = 256ull * 1024 * 1024;
+    const uint64_t mtlx_cap =
+        options.max_memory > 0
+            ? (static_cast<uint64_t>(options.max_memory) < kMaxMtlxBytes
+                   ? static_cast<uint64_t>(options.max_memory)
+                   : kMaxMtlxBytes)
+            : kMaxMtlxBytes;
+    size_t size = 0;
+    if (!SafeStreamSize(f, mtlx_cap, &size)) {
       if (err) *err += "Invalid MaterialX layer size: " + resolved_path + "\n";
-      return nullptr;
-    }
-    const size_t size = static_cast<size_t>(end);
-    if (options.max_memory > 0 && size > options.max_memory) {
-      if (err) {
-        *err += "MaterialX layer exceeds max_memory: " + resolved_path + "\n";
-      }
       return nullptr;
     }
     std::string data(size, '\0');

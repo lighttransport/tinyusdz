@@ -1,4 +1,5 @@
 #include "usdz-reader.hh"
+#include "../safe-file-size.hh"
 #include <cstring>
 #include <algorithm>
 #include <cctype>
@@ -76,14 +77,10 @@ bool USDZReader::OpenFile(const std::string& filename,
     error_ = "failed to open USDZ file: " + filename;
     return false;
   }
-  std::streampos end = ifs.tellg();
-  if (end < std::streampos(0)) {
-    error_ = "failed to determine USDZ file size: " + filename;
-    return false;
-  }
-  size_t sz = static_cast<size_t>(end);
-  if (options.max_archive_size > 0 && sz > options.max_archive_size) {
-    error_ = "USDZ archive exceeds maximum memory limit";
+  size_t sz = 0;
+  if (!SafeStreamSize(ifs, static_cast<uint64_t>(options.max_archive_size),
+                      &sz)) {
+    error_ = "invalid or oversized USDZ file size: " + filename;
     return false;
   }
   ifs.seekg(0);
