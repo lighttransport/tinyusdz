@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDC CrateReader public API wrappers
 
 #include "crate-reader-internal.hh"
+#include "../safe-file-size.hh"
 
 #include "crate-data-source.hh"
 
@@ -140,21 +141,19 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
     return result;
   }
 
-  std::streamsize size = file.tellg();
-  if (size < 0) {
+  // Unconditional bound: max_memory is optional, and a directory reports
+  // LLONG_MAX here (see SafeStreamSize) which reached std::string(n, '\0').
+  size_t fsize = 0;
+  if (!SafeStreamSize(file, static_cast<uint64_t>(options_.max_memory),
+                      &fsize)) {
     CrateReadResult result;
-    result.errors.push_back({0, "Failed to determine file size"});
+    result.errors.push_back({0, "Invalid or oversized file size"});
     return result;
   }
-  if (options_.max_memory &&
-      static_cast<uint64_t>(size) > static_cast<uint64_t>(options_.max_memory)) {
-    CrateReadResult result;
-    result.errors.push_back({0, "File exceeds max_memory budget"});
-    return result;
-  }
+  const std::streamsize size = static_cast<std::streamsize>(fsize);
   file.seekg(0, std::ios::beg);
 
-  std::string data(static_cast<size_t>(size), '\0');
+  std::string data(fsize, '\0');
   if (!file.read(&data[0], size)) {
     CrateReadResult result;
     result.errors.push_back({0, "Failed to read file contents"});
