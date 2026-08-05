@@ -991,7 +991,12 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
                     "float2 and texcoord2f must share layout for memcpy");
       uvs.resize(f2.size());
       if (!f2.empty()) {
-        std::memcpy(uvs.data(), f2.data(), f2.size() * sizeof(value::float2));
+        size_t byte_size;
+        if (!safe::mul(f2.size(), sizeof(value::float2), &byte_size)) {
+          return nonstd::make_unexpected(
+              "Integer overflow: f2.size() * sizeof(value::float2)");
+        }
+        std::memcpy(uvs.data(), f2.data(), byte_size);
       }
     }
   }
@@ -2491,60 +2496,91 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh, uint32_t max
   // Other 'facevarying' attributes are now 'vertex' variability.
   // Free each vertex_output field immediately after set_buffer() copies it,
   // to avoid simultaneous peak overlap of source + destination.
-  if (normals_ptr) {
-    mesh.normals.set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.normals.data()),
-        vertex_output.normals.size() * sizeof(value::float3));
-    mesh.normals.variability = VertexVariability::Vertex;
-    { std::vector<value::float3> tmp; vertex_output.normals.swap(tmp); }
-  }
+  {
+    size_t byte_size;
+    if (normals_ptr) {
+      if (!safe::mul(vertex_output.normals.size(), sizeof(value::float3),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Normal buffer size overflow.");
+      }
+      mesh.normals.set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.normals.data()),
+          byte_size);
+      mesh.normals.variability = VertexVariability::Vertex;
+      { std::vector<value::float3> tmp; vertex_output.normals.swap(tmp); }
+    }
 
-  if (texcoord0_ptr) {
-    mesh.texcoords[0].set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.uv0s.data()),
-        vertex_output.uv0s.size() * sizeof(value::float2));
-    mesh.texcoords[0].variability = VertexVariability::Vertex;
-    { std::vector<value::float2> tmp; vertex_output.uv0s.swap(tmp); }
-  }
+    if (texcoord0_ptr) {
+      if (!safe::mul(vertex_output.uv0s.size(), sizeof(value::float2),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Texcoord0 buffer size overflow.");
+      }
+      mesh.texcoords[0].set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.uv0s.data()),
+          byte_size);
+      mesh.texcoords[0].variability = VertexVariability::Vertex;
+      { std::vector<value::float2> tmp; vertex_output.uv0s.swap(tmp); }
+    }
 
-  if (texcoord1_ptr) {
-    mesh.texcoords[1].set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.uv1s.data()),
-        vertex_output.uv1s.size() * sizeof(value::float2));
-    mesh.texcoords[1].variability = VertexVariability::Vertex;
-    { std::vector<value::float2> tmp; vertex_output.uv1s.swap(tmp); }
-  }
+    if (texcoord1_ptr) {
+      if (!safe::mul(vertex_output.uv1s.size(), sizeof(value::float2),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Texcoord1 buffer size overflow.");
+      }
+      mesh.texcoords[1].set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.uv1s.data()),
+          byte_size);
+      mesh.texcoords[1].variability = VertexVariability::Vertex;
+      { std::vector<value::float2> tmp; vertex_output.uv1s.swap(tmp); }
+    }
 
-  if (tangents_ptr) {
-    mesh.tangents.set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.tangents.data()),
-        vertex_output.tangents.size() * sizeof(value::float3));
-    mesh.tangents.variability = VertexVariability::Vertex;
-    { std::vector<value::float3> tmp; vertex_output.tangents.swap(tmp); }
-  }
+    if (tangents_ptr) {
+      if (!safe::mul(vertex_output.tangents.size(), sizeof(value::float3),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Tangent buffer size overflow.");
+      }
+      mesh.tangents.set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.tangents.data()),
+          byte_size);
+      mesh.tangents.variability = VertexVariability::Vertex;
+      { std::vector<value::float3> tmp; vertex_output.tangents.swap(tmp); }
+    }
 
-  if (binormals_ptr) {
-    mesh.binormals.set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.binormals.data()),
-        vertex_output.binormals.size() * sizeof(value::float3));
-    mesh.binormals.variability = VertexVariability::Vertex;
-    { std::vector<value::float3> tmp; vertex_output.binormals.swap(tmp); }
-  }
+    if (binormals_ptr) {
+      if (!safe::mul(vertex_output.binormals.size(), sizeof(value::float3),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Binormal buffer size overflow.");
+      }
+      mesh.binormals.set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.binormals.data()),
+          byte_size);
+      mesh.binormals.variability = VertexVariability::Vertex;
+      { std::vector<value::float3> tmp; vertex_output.binormals.swap(tmp); }
+    }
 
-  if (colors_ptr) {
-    mesh.vertex_colors.set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.colors.data()),
-        vertex_output.colors.size() * sizeof(value::float3));
-    mesh.vertex_colors.variability = VertexVariability::Vertex;
-    { std::vector<value::float3> tmp; vertex_output.colors.swap(tmp); }
-  }
+    if (colors_ptr) {
+      if (!safe::mul(vertex_output.colors.size(), sizeof(value::float3),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Color buffer size overflow.");
+      }
+      mesh.vertex_colors.set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.colors.data()),
+          byte_size);
+      mesh.vertex_colors.variability = VertexVariability::Vertex;
+      { std::vector<value::float3> tmp; vertex_output.colors.swap(tmp); }
+    }
 
-  if (opacities_ptr) {
-    mesh.vertex_opacities.set_buffer(
-        reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()),
-        vertex_output.opacities.size() * sizeof(float));
-    mesh.vertex_opacities.variability = VertexVariability::Vertex;
-    { std::vector<float> tmp; vertex_output.opacities.swap(tmp); }
+    if (opacities_ptr) {
+      if (!safe::mul(vertex_output.opacities.size(), sizeof(float),
+                     &byte_size)) {
+        PUSH_ERROR_AND_RETURN("Opacity buffer size overflow.");
+      }
+      mesh.vertex_opacities.set_buffer(
+          reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()),
+          byte_size);
+      mesh.vertex_opacities.variability = VertexVariability::Vertex;
+      { std::vector<float> tmp; vertex_output.opacities.swap(tmp); }
+    }
   }
 
   if (mesh.is_triangulated()) {
@@ -3249,9 +3285,12 @@ bool RenderSceneConverter::ConvertMesh(
   // replication, constant untouched).
   //
   if (want_subdivision) {
+    size_t cp_byte_size;
+    if (!safe::mul(dst.points.size(), sizeof(value::float3), &cp_byte_size)) {
+      PUSH_ERROR_AND_RETURN("Control point buffer size overflow.");
+    }
     std::vector<float> control_points(dst.points.size() * 3);
-    memcpy(control_points.data(), dst.points.data(),
-           dst.points.size() * sizeof(value::float3));
+    memcpy(control_points.data(), dst.points.data(), cp_byte_size);
 
     // Float-typed attributes that refine with the geometry. Direction-like
     // attributes (tangents/binormals) are renormalized after refinement.
@@ -3598,8 +3637,13 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     dst.points.resize(refined.points.size() / 3);
-    memcpy(dst.points.data(), refined.points.data(),
-           refined.points.size() * sizeof(float));
+    {
+      size_t rp_byte_size;
+      if (!safe::mul(refined.points.size(), sizeof(float), &rp_byte_size)) {
+        PUSH_ERROR_AND_RETURN("Refined points buffer size overflow.");
+      }
+      memcpy(dst.points.data(), refined.points.data(), rp_byte_size);
+    }
     dst.usdFaceVertexCounts = std::move(refined.face_vertex_counts);
     dst.usdFaceVertexIndices = std::move(refined.face_vertex_indices);
     subdiv_face_source = std::move(refined.face_source);
@@ -4880,17 +4924,25 @@ bool RenderSceneConverter::ConvertMesh(
         continue;
       }
       shapeTarget.pointIndices = std::move(sit->second.indices);
-      const std::vector<float> &flat = sit->second.point_offsets;
-      shapeTarget.pointOffsets.resize(flat.size() / 3);
-      memcpy(shapeTarget.pointOffsets.data(), flat.data(),
-             flat.size() * sizeof(float));
+      {
+        const std::vector<float> &flat = sit->second.point_offsets;
+        size_t flat_byte_size;
+        if (!safe::mul(flat.size(), sizeof(float), &flat_byte_size)) {
+          PUSH_ERROR_AND_RETURN("Blendshape offset buffer size overflow.");
+        }
+        shapeTarget.pointOffsets.resize(flat.size() / 3);
+        memcpy(shapeTarget.pointOffsets.data(), flat.data(), flat_byte_size);
+      }
       for (auto &ib_kv : sit->second.inbetween_offsets) {
         InbetweenShapeTarget ibt;
         ibt.weight = ib_kv.first;
         const std::vector<float> &ib_flat = ib_kv.second;
+        size_t ib_flat_byte_size;
+        if (!safe::mul(ib_flat.size(), sizeof(float), &ib_flat_byte_size)) {
+          PUSH_ERROR_AND_RETURN("Inbetween offset buffer size overflow.");
+        }
         ibt.pointOffsets.resize(ib_flat.size() / 3);
-        memcpy(ibt.pointOffsets.data(), ib_flat.data(),
-               ib_flat.size() * sizeof(float));
+        memcpy(ibt.pointOffsets.data(), ib_flat.data(), ib_flat_byte_size);
         shapeTarget.inbetweens[ibt.weight] = std::move(ibt);
       }
       dst.targets[bs->name] = shapeTarget;
@@ -5044,8 +5096,14 @@ bool RenderSceneConverter::ConvertMesh(
       return false;
     }
 
-    dst.normals.set_buffer(reinterpret_cast<const uint8_t *>(normals.data()),
-                           normals.size() * sizeof(vec3));
+    {
+      size_t nrm_byte_size;
+      if (!safe::mul(normals.size(), sizeof(vec3), &nrm_byte_size)) {
+        return false;
+      }
+      dst.normals.set_buffer(
+          reinterpret_cast<const uint8_t *>(normals.data()), nrm_byte_size);
+    }
     dst.normals.elementSize = 1;
     dst.normals.variability = VertexVariability::Vertex;
     dst.normals.format = VertexAttributeFormat::Vec3;
@@ -5315,9 +5373,16 @@ bool RenderSceneConverter::ConvertMesh(
               vtxT[vi][2] /= len;
             }
           }
-          dst.tangents.set_buffer(
-              reinterpret_cast<const uint8_t *>(vtxT.data()),
-              vtxT.size() * sizeof(value::float3));
+          {
+            size_t tang_byte_size;
+            if (!safe::mul(vtxT.size(), sizeof(value::float3),
+                           &tang_byte_size)) {
+              return false;
+            }
+            dst.tangents.set_buffer(
+                reinterpret_cast<const uint8_t *>(vtxT.data()),
+                tang_byte_size);
+          }
           dst.tangents.variability = VertexVariability::Vertex;
         }
 
@@ -5343,9 +5408,16 @@ bool RenderSceneConverter::ConvertMesh(
               vtxB[vi][2] /= len;
             }
           }
-          dst.binormals.set_buffer(
-              reinterpret_cast<const uint8_t *>(vtxB.data()),
-              vtxB.size() * sizeof(value::float3));
+          {
+            size_t bin_byte_size;
+            if (!safe::mul(vtxB.size(), sizeof(value::float3),
+                           &bin_byte_size)) {
+              return false;
+            }
+            dst.binormals.set_buffer(
+                reinterpret_cast<const uint8_t *>(vtxB.data()),
+                bin_byte_size);
+          }
           dst.binormals.variability = VertexVariability::Vertex;
         }
       } else {

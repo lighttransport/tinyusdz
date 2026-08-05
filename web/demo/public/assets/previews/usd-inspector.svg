@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#18181b"/>
+  <!-- Viewport -->
+  <rect x="24" y="20" width="320" height="320" rx="8" fill="#101013" stroke="#303038" stroke-width="1"/>
+  <rect x="36" y="32" width="296" height="296" rx="4" fill="#0e0e10"/>
+  <!-- Suzanne silhouette -->
+  <g opacity="0.08" fill="#a78bfa">
+    <ellipse cx="184" cy="200" rx="50" ry="50"/>
+    <ellipse cx="164" cy="170" rx="8" ry="6"/>
+    <ellipse cx="204" cy="170" rx="8" ry="6"/>
+    <ellipse cx="164" cy="175" rx="4" ry="2"/>
+    <ellipse cx="204" cy="175" rx="4" ry="2"/>
+    <path d="M175 210 Q184 230 193 210" stroke="#a78bfa" fill="none" stroke-width="2"/>
+  </g>
+  <!-- Inspector panel -->
+  <rect x="360" y="20" width="256" height="320" rx="8" fill="#202025" stroke="#303038" stroke-width="1"/>
+  <!-- Tab bar -->
+  <rect x="360" y="20" width="256" height="28" rx="8" fill="#18181b"/>
+  <rect x="360" y="48" width="256" height="1" fill="#303038"/>
+  <text x="380" y="38" fill="#b794f6" font-family="system-ui" font-size="9" font-weight="700">TREE</text>
+  <text x="430" y="38" fill="#474751" font-family="system-ui" font-size="9">DETAIL</text>
+  <text x="490" y="38" fill="#474751" font-family="system-ui" font-size="9">STAGE</text>
+  <!-- Tree rows -->
+  <rect x="372" y="56" width="10" height="10" rx="2" fill="#303038"/>
+  <polygon points="374,59 374,63 378,61" fill="#71717a"/>
+  <rect x="388" y="56" width="22" height="10" rx="3" fill="#2d3748"/>
+  <text x="392" y="64" fill="#a0bee8" font-family="system-ui" font-size="6">XFORM</text>
+  <text x="414" y="64" fill="#ededf0" font-family="system-ui" font-size="9">root_pbr</text>
+  <rect x="390" y="72" width="10" height="10" rx="2" fill="#303038"/>
+  <polygon points="392,75 392,79 396,77" fill="#71717a"/>
+  <rect x="406" y="72" width="20" height="10" rx="3" fill="#1a3a2a"/>
+  <text x="409" y="80" fill="#5eead4" font-family="system-ui" font-size="6">MESH</text>
+  <text x="430" y="80" fill="#ededf0" font-family="system-ui" font-size="9">Suzanne</text>
+  <rect x="390" y="90" width="10" height="10" rx="2" fill="#303038"/>
+  <rect x="406" y="90" width="20" height="10" rx="3" fill="#3a1a2a"/>
+  <text x="409" y="98" fill="#f9a8d4" font-family="system-ui" font-size="6">MAT</text>
+  <text x="430" y="98" fill="#ededf0" font-family="system-ui" font-size="9">Material_001</text>
+  <!-- Selection highlight -->
+  <rect x="370" y="72" width="234" height="22" rx="3" fill="rgba(183,148,246,.1)" stroke="#b794f6" stroke-width=".5"/>
+  <!-- Labels -->
+  <text x="32" y="14" fill="#a78bfa" font-family="system-ui" font-size="11" font-weight="600">USD PRIM INSPECTOR</text>
+</svg>

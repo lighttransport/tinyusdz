@@ -10,6 +10,7 @@
 #define LIGHTUI_PROPGRID_H
 
 #include "layout.h"
+#include "font.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,6 +69,9 @@ typedef struct {
 
     lui_propgrid_change_fn on_change;
     void                  *on_change_user;
+
+    lui_font_t       *font;  /* optional; not owned. NULL keeps the
+                              * block-glyph fallback. */
 } lui_propgrid_t;
 
 /** Initialise a property grid with default appearance. */

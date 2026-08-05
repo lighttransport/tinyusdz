@@ -951,7 +951,10 @@ bool HasMtlxBinding(const tinyusdz::next::UsdPrim& prim) {
 
   if (prim.GetRelationship("outputs:mtlx:surface")) return true;
 
-  for (const tinyusdz::next::UsdPrim& child : prim.GetChildren()) {
+  const size_t child_count = prim.GetChildCount();
+  for (size_t i = 0; i < child_count; ++i) {
+    const tinyusdz::next::UsdPrim child = prim.GetChildAt(i);
+    if (!child.IsValid()) continue;
     if (HasMtlxBinding(child)) return true;
   }
 

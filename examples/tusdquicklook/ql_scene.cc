@@ -42,7 +42,8 @@ float QlAabb::Radius() const {
 
 size_t QlMesh::byte_size() const {
   return positions.size() * sizeof(float) + normals.size() * sizeof(float) +
-         uvs.size() * sizeof(float) + indices.size() * sizeof(uint32_t);
+         uvs.size() * sizeof(float) + tangents.size() * sizeof(float) +
+         indices.size() * sizeof(uint32_t);
 }
 
 void QlScene::Clear() {

@@ -36,11 +36,39 @@ bool NameLess(const std::string& a, const std::string& b) {
   return a < b;
 }
 
+std::string TrimWS(const std::string& in) {
+  size_t b = 0;
+  while (b < in.size() &&
+         std::isspace(static_cast<unsigned char>(in[b]))) {
+    b++;
+  }
+  size_t e = in.size();
+  while (e > b &&
+         std::isspace(static_cast<unsigned char>(in[e - 1]))) {
+    e--;
+  }
+  return in.substr(b, e - b);
+}
+
 }  // namespace
 
 bool IsUsdPath(const std::string& path) {
   const std::string ext = Extension(path);
   return ext == ".usd" || ext == ".usda" || ext == ".usdc" || ext == ".usdz";
+}
+
+std::string NormalizeInputPath(std::string in) {
+  in = TrimWS(in);
+  if (in.size() >= 2) {
+    if ((in.front() == '"' && in.back() == '"') ||
+        (in.front() == '\'' && in.back() == '\'')) {
+      in = TrimWS(in.substr(1, in.size() - 2));
+    }
+  }
+  if (!in.empty() && in[0] == '@') {
+    in = in.substr(1);
+  }
+  return in;
 }
 
 uint64_t ProjectMemoryForFile(const std::string& path, uint64_t file_size) {
@@ -75,12 +103,20 @@ uint64_t ProjectMemoryForFile(const std::string& path, uint64_t file_size) {
 
 bool Browser::Open(const std::string& path, std::string* err) {
   std::error_code ec;
-  const std::string in = path.empty() ? std::string(".") : path;
+  std::string in = path.empty() ? std::string(".") : path;
+  in = NormalizeInputPath(std::move(in));
+  if (in.empty()) in = ".";
 
-  const fs::path p(in);
+  fs::path p(in);
+  fs::path abs = fs::absolute(p, ec);
+  if (!ec) {
+    p = abs;
+  }
+  p = p.lexically_normal();
+
   const fs::file_status st = fs::status(p, ec);
   if (ec || !fs::exists(st)) {
-    if (err) *err = "no such file or directory: " + in;
+    if (err) *err = "no such file or directory: " + p.string();
     return false;
   }
 
@@ -158,7 +194,7 @@ bool Browser::Scan(const std::string& dir, std::string* err) {
       const std::string p = de.path().string();
       if (!IsUsdPath(p)) continue;
       add_file(de.path(),
-               fs::relative(de.path(), root, ec2).string());
+               fs::relative(de.path(), root, ec2).u8string());
     }
   } else {
     fs::directory_iterator it(
@@ -171,14 +207,14 @@ bool Browser::Scan(const std::string& dir, std::string* err) {
       std::error_code ec2;
       if (de.is_directory(ec2) && !ec2) {
         FileEntry e;
-        e.name = de.path().filename().string();
+        e.name = de.path().filename().u8string();
         e.path = de.path().lexically_normal().string();
         e.is_dir = true;
         dirs.push_back(std::move(e));
       } else if (de.is_regular_file(ec2) && !ec2) {
         const std::string p = de.path().string();
         if (!IsUsdPath(p)) continue;
-        add_file(de.path(), de.path().filename().string());
+        add_file(de.path(), de.path().filename().u8string());
       }
     }
   }

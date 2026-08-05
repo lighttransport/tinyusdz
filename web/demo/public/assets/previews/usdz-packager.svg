@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#18181b"/>
+  <rect x="24" y="20" width="280" height="320" rx="8" fill="#101013" stroke="#303038" stroke-width="1"/>
+  <rect x="36" y="32" width="256" height="296" rx="4" fill="#0e0e10"/>
+  <g opacity="0.08" fill="#a78bfa">
+    <ellipse cx="164" cy="200" rx="50" ry="50"/>
+    <ellipse cx="144" cy="170" rx="8" ry="6"/>
+    <ellipse cx="184" cy="170" rx="8" ry="6"/>
+  </g>
+  <rect x="320" y="20" width="296" height="320" rx="8" fill="#202025" stroke="#303038" stroke-width="1"/>
+  <!-- Scene stats -->
+  <rect x="332" y="32" width="272" height="64" rx="4" fill="#1c1c20" stroke="#303038" stroke-width=".5"/>
+  <text x="340" y="48" fill="#a0a0a8" font-family="system-ui" font-size="8" font-weight="600">SCENE</text>
+  <text x="340" y="64" fill="#71717a" font-family="system-ui" font-size="8">Meshes</text><text x="590" y="64" text-anchor="end" fill="#ededf0" font-family="system-ui" font-size="8">4</text>
+  <text x="340" y="78" fill="#71717a" font-family="system-ui" font-size="8">Materials</text><text x="590" y="78" text-anchor="end" fill="#ededf0" font-family="system-ui" font-size="8">3</text>
+  <text x="460" y="64" fill="#71717a" font-family="system-ui" font-size="8">Textures</text><text x="590" y="64" text-anchor="end" fill="#ededf0" font-family="system-ui" font-size="8">5</text>
+  <!-- Export buttons -->
+  <rect x="332" y="106" width="272" height="36" rx="4" fill="#1c1c20" stroke="#303038" stroke-width=".5"/>
+  <rect x="340" y="114" width="82" height="20" rx="4" fill="#b794f6"/>
+  <text x="381" y="128" text-anchor="middle" fill="#121214" font-family="system-ui" font-size="8" font-weight="700">USDA</text>
+  <rect x="428" y="114" width="82" height="20" rx="4" fill="#303038"/>
+  <text x="469" y="128" text-anchor="middle" fill="#a0a0a8" font-family="system-ui" font-size="8">USDC</text>
+  <rect x="516" y="114" width="82" height="20" rx="4" fill="#303038"/>
+  <text x="557" y="128" text-anchor="middle" fill="#a0a0a8" font-family="system-ui" font-size="8">USDZ</text>
+  <!-- Textures list -->
+  <rect x="332" y="152" width="272" height="64" rx="4" fill="#1c1c20" stroke="#303038" stroke-width=".5"/>
+  <text x="340" y="168" fill="#a0a0a8" font-family="system-ui" font-size="8" font-weight="600">TEXTURES</text>
+  <text x="340" y="184" fill="#ededf0" font-family="system-ui" font-size="8">🎨 BaseColor.png</text><text x="590" y="184" text-anchor="end" fill="#71717a" font-family="system-ui" font-size="7">2.1 MB</text>
+  <text x="340" y="198" fill="#ededf0" font-family="system-ui" font-size="8">🎨 Normal.png</text><text x="590" y="198" text-anchor="end" fill="#71717a" font-family="system-ui" font-size="7">1.8 MB</text>
+  <text x="340" y="212" fill="#ededf0" font-family="system-ui" font-size="8">🎨 Roughness.png</text><text x="590" y="212" text-anchor="end" fill="#71717a" font-family="system-ui" font-size="7">0.9 MB</text>
+  <!-- USDZ contents -->
+  <rect x="332" y="226" width="272" height="102" rx="4" fill="#1c1c20" stroke="#303038" stroke-width=".5"/>
+  <text x="340" y="242" fill="#a0a0a8" font-family="system-ui" font-size="8" font-weight="600">USDZ CONTENTS (8 entries · 5.2 MB)</text>
+  <text x="340" y="258" fill="#ededf0" font-family="system-ui" font-size="8">📦 root.usdc</text><text x="590" y="258" text-anchor="end" fill="#71717a" font-family="system-ui" font-size="7">64 KB</text>
+  <text x="340" y="272" fill="#ededf0" font-family="system-ui" font-size="8">🖼 BaseColor.png</text><text x="590" y="272" text-anchor="end" fill="#71717a" font-family="system-ui" font-size="7">2.1 MB</text>
+  <text x="340" y="286" fill="#ededf0" font-family="system-ui" font-size="8">🖼 Normal.png</text><text x="590" y="286" text-anchor="end" fill="#71717a" font-family="system-ui" font-size="7">1.8 MB</text>
+  <text x="340" y="300" fill="#ededf0" font-family="system-ui" font-size="8">🖼 Roughness.png</text><text x="590" y="300" text-anchor="end" fill="#71717a" font-family="system-ui" font-size="7">0.9 MB</text>
+  <text x="340" y="314" fill="#ededf0" font-family="system-ui" font-size="8">📄 metadata.txt</text><text x="590" y="314" text-anchor="end" fill="#71717a" font-family="system-ui" font-size="7">0.3 KB</text>
+  <text x="32" y="14" fill="#b794f6" font-family="system-ui" font-size="11" font-weight="600">USDZ PACKAGER</text>
+</svg>

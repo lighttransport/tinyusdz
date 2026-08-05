@@ -1,4 +1,4 @@
-# tusdquicklook — minimal portable USD Quick Look viewer.
+# tusdquicklook minimal portable USD Quick Look viewer.
 #
 # Deliberately independent of examples/tusdview: no ImGui, no GLFW, no glslang,
 # no volk/cuew. The UI is the vendored software-rendered lightui; the default
@@ -24,6 +24,7 @@ set(TUSDQUICKLOOK_SOURCES
     camera.cc
     render/shade.cc
     render/cpu_rt.cc
+    render/pick.cc
     render/gl_raster.cc
     render/gl_context_egl.cc
 )
@@ -40,12 +41,53 @@ list(APPEND TUSDQUICKLOOK_SOURCES
 add_executable(${EXAMPLE_TARGET} ${TUSDQUICKLOOK_SOURCES})
 add_sanitizers(${EXAMPLE_TARGET})
 
+option(TUSDQUICKLOOK_ENABLE_MCP
+       "Build tusdquicklook's embedded MCP stdio + HTTP interface" ON)
+if(TUSDQUICKLOOK_ENABLE_MCP)
+  target_sources(${EXAMPLE_TARGET} PRIVATE
+      mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
+      ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
+      TUSDQUICKLOOK_HAVE_MCP=1 NO_SSL NO_CGI)
+  target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
+  if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+    set_source_files_properties(
+        mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
+        PROPERTIES COMPILE_OPTIONS "-fexceptions")
+  elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+    set_source_files_properties(
+        mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
+        PROPERTIES COMPILE_OPTIONS "/EHsc")
+  endif()
+  message(STATUS "tusdquicklook: embedded MCP ENABLED (stdio + HTTP)")
+else()
+  message(STATUS "tusdquicklook: embedded MCP disabled")
+endif()
+
 target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/examples/common
     ${PROJECT_SOURCE_DIR}/src/external/lightrt
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+if(MSVC)
+  # VS2026 toolchain headers guard C11/C++ runtime interop with version checks
+  # that are stricter than current compiler support.
+  target_compile_options(${EXAMPLE_TARGET} PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>
+  )
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
+endif()
+
+if(TINYUSDZ_BUILD_QUICKLOOK AND NOT TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS)
+  # Keep quicklook lightweight by default: avoid building tinyusdz_textools
+  # unless explicitly requested.
+  if (TINYUSDZ_WITH_TEXTOOLS)
+    message(STATUS "tusdquicklook: forcing TINYUSDZ_WITH_TEXTOOLS OFF (pass -DTINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON to enable)")
+  endif()
+  set(TINYUSDZ_WITH_TEXTOOLS OFF CACHE BOOL "Build vendored tir/texcomp/texpipe/envmap texture tools" FORCE)
+endif()
 
 # The `next` lazy loader + tydra_next streaming converter are the whole reason
 # this app can hold a small memory budget. Build them on demand, the same way
@@ -95,4 +137,49 @@ if(TINYUSDZ_BUILD_TESTS AND UNIX)
                    $<TARGET_FILE:${EXAMPLE_TARGET}>
                    ${PROJECT_SOURCE_DIR})
   set_tests_properties(example-tusdquicklook-gui-smoke PROPERTIES TIMEOUT 180)
+
+  if(TUSDQUICKLOOK_ENABLE_MCP)
+    add_executable(tusdquicklook-mcp-protocol-test
+        tests/mcp_protocol_test.cc
+        mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc
+        ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
+    add_sanitizers(tusdquicklook-mcp-protocol-test)
+    target_include_directories(tusdquicklook-mcp-protocol-test PRIVATE
+        ${PROJECT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(tusdquicklook-mcp-protocol-test PRIVATE
+        NO_SSL NO_CGI)
+    target_link_libraries(tusdquicklook-mcp-protocol-test PRIVATE
+        ${CMAKE_DL_LIBS} Threads::Threads)
+    if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+      set_source_files_properties(
+          tests/mcp_protocol_test.cc mcp/mcp_server.cc mcp/mcp_http.cc
+          mcp/mcp_stdio.cc PROPERTIES COMPILE_OPTIONS "-fexceptions")
+    elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+      set_source_files_properties(
+          tests/mcp_protocol_test.cc mcp/mcp_server.cc mcp/mcp_http.cc
+          mcp/mcp_stdio.cc PROPERTIES COMPILE_OPTIONS "/EHsc")
+    endif()
+    add_test(NAME example-tusdquicklook-mcp-protocol
+             COMMAND tusdquicklook-mcp-protocol-test)
+
+    # The MCP server drives the same windowed event loop, so exercise the stdio
+    # handshake and main-thread tool queue under Xvfb as well.
+    add_test(NAME example-tusdquicklook-mcp-smoke
+             COMMAND ${CMAKE_COMMAND} -E env bash
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/run-quicklook-mcp-smoke.sh
+                     $<TARGET_FILE:${EXAMPLE_TARGET}>
+                     ${PROJECT_SOURCE_DIR})
+    set_tests_properties(example-tusdquicklook-mcp-smoke PROPERTIES
+                         TIMEOUT 180 SKIP_RETURN_CODE 77)
+  endif()
+
+  # Real NVIDIA offload smoke. The script is capability-gated and returns 77
+  # when this machine has no live driver, so ordinary CPU/Mesa CI stays green.
+  add_test(NAME example-tusdquicklook-nvidia-smoke
+           COMMAND ${CMAKE_COMMAND} -E env bash
+                   ${CMAKE_CURRENT_SOURCE_DIR}/tests/run-quicklook-nvidia-smoke.sh
+                   $<TARGET_FILE:${EXAMPLE_TARGET}>
+                   ${PROJECT_SOURCE_DIR})
+  set_tests_properties(example-tusdquicklook-nvidia-smoke PROPERTIES
+                       TIMEOUT 180 SKIP_RETURN_CODE 77)
 endif()

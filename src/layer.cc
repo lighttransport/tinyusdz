@@ -248,8 +248,8 @@ struct LayerImpl {
   LayerMetas _metas;
 
   // Cached primspec path.
-  // key : prim_part string (e.g. "/path/bora")
-  mutable std::map<std::string, const PrimSpec *> _primspec_path_cache;
+  // key : full_path_name (e.g. "/A/B/C")
+  mutable std::unordered_map<std::string, const PrimSpec *> _primspec_path_cache;
   mutable bool _dirty{true};
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -584,7 +584,7 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
     _impl->_dirty = false;
   } else {
     // First find from a cache.
-    auto ret = _impl->_primspec_path_cache.find(path.prim_part());
+    auto ret = _impl->_primspec_path_cache.find(path.full_path_name());
     if (ret != _impl->_primspec_path_cache.end()) {
       DCOUT("Found cache.");
       (*ps) = ret->second;
@@ -605,7 +605,7 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
 #if defined(TINYUSDZ_ENABLE_THREAD)
       cache_lock.lock();
 #endif
-      _impl->_primspec_path_cache[path.prim_part()] = pv.value();
+      _impl->_primspec_path_cache[path.full_path_name()] = pv.value();
       return true;
     }
   }

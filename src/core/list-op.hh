@@ -5,6 +5,7 @@
 //
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -158,74 +159,76 @@ std::vector<T> ComposeListOp(const ListOp<T> &op,
   }
 
   std::vector<T> result;
+  result.reserve(op.GetPrependedItems().size() + existing.size() +
+                 op.GetAddedItems().size() + op.GetAppendedItems().size());
 
   // Prepend
-  for (const auto &item : op.GetPrependedItems()) {
+  const auto &prepended = op.GetPrependedItems();
+  for (const auto &item : prepended) {
     result.push_back(item);
   }
 
-  // Added (treat as appended per spec deprecation 6.6.3.10)
-  // and existing items minus deleted
-  auto is_deleted = [&op](const T &item) {
-    for (const auto &d : op.GetDeletedItems()) {
-      if (d == item) return true;
-    }
-    return false;
-  };
-
+  // Existing items minus deleted, minus already prepended
+  const auto &deleted = op.GetDeletedItems();
   for (const auto &item : existing) {
-    if (!is_deleted(item)) {
-      // Check not already in prepended
-      bool already_prepended = false;
-      for (const auto &p : op.GetPrependedItems()) {
-        if (p == item) { already_prepended = true; break; }
-      }
-      if (!already_prepended) {
-        result.push_back(item);
-      }
+    // Skip deleted
+    bool skip = false;
+    for (const auto &d : deleted) {
+      if (item == d) { skip = true; break; }
     }
+    if (skip) continue;
+    // Skip already prepended
+    for (const auto &p : prepended) {
+      if (item == p) { skip = true; break; }
+    }
+    if (skip) continue;
+    result.push_back(item);
   }
 
+  // Added items not already present in result
   for (const auto &item : op.GetAddedItems()) {
-    // Add only if not already present
     bool found = false;
     for (const auto &r : result) {
-      if (r == item) { found = true; break; }
+      if (item == r) { found = true; break; }
     }
     if (!found) {
       result.push_back(item);
     }
   }
 
-  // Append
+  // Append: remove existing then re-add at end
   for (const auto &item : op.GetAppendedItems()) {
-    // Remove from current position if exists, then append
-    auto it = result.begin();
-    while (it != result.end()) {
-      if (*it == item) { it = result.erase(it); } else { ++it; }
-    }
+    auto it = std::remove(result.begin(), result.end(), item);
+    result.erase(it, result.end());
     result.push_back(item);
   }
 
-  // Ordering (reorder items to match ordered_items order)
+  // Ordering — use flag-vector to avoid the second O(M×N) pass
   if (op.HasOrderedItems()) {
     const auto &order = op.GetOrderedItems();
     std::vector<T> ordered;
+    ordered.reserve(result.size());
+
+    std::vector<bool> placed(result.size(), false);
 
     // First add items in the specified order
     for (const auto &o : order) {
-      for (const auto &r : result) {
-        if (r == o) { ordered.push_back(r); break; }
+      for (size_t i = 0; i < result.size(); i++) {
+        if (!placed[i] && result[i] == o) {
+          ordered.push_back(o);
+          placed[i] = true;
+          break;
+        }
       }
     }
-    // Then add remaining items not in the order list
-    for (const auto &r : result) {
-      bool in_order = false;
-      for (const auto &o : order) {
-        if (r == o) { in_order = true; break; }
+
+    // Then add remaining items not in the order list (O(M) pass)
+    for (size_t i = 0; i < result.size(); i++) {
+      if (!placed[i]) {
+        ordered.push_back(result[i]);
       }
-      if (!in_order) { ordered.push_back(r); }
     }
+
     result = std::move(ordered);
   }
 

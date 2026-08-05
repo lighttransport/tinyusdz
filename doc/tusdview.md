@@ -133,9 +133,13 @@ tusdview emits forward-compatible optimized `compute_90` PTX instead; CUDA 12.x
 and older retain their highest supported architecture. This changes only the
 runtime-compiled CUDA tracer and does not affect Vulkan embedded SPIR-V.
 
-The **`tusdview-cuda-render`** ctest exercises this end-to-end; it SKIPs
-(return 77) when no NVIDIA device / NVRTC is available so non-NVIDIA CI stays
-green.
+The **`examples/tusdview/tests/run-cuda-render.sh`** harness exercises this
+end-to-end; it SKIPs (return 77) when no NVIDIA device / NVRTC is available so
+non-NVIDIA CI stays green. It is not a registered ctest — run it by hand:
+
+```sh
+TUSDVIEW=./build/tusdview examples/tusdview/tests/run-cuda-render.sh
+```
 
 When `--camera` selects an authored perspective camera with positive
 `focusDistance` and `fStop`, Vulkan ray query and the shared CUDA/HIP kernel use
@@ -166,13 +170,15 @@ needed). Like `--cuda`, the HIP path owns the screenshot and supports all
 ./build/tusdview --headless --hip --rt-samples 4 --frames 4 --screenshot aa.ppm model.usda
 ```
 
-The **`tusdview-hip-render`** ctest exercises this end-to-end; it SKIPs
-(return 77) when no AMD/ROCm device is available so non-AMD CI stays green.
-Verified on AMD Radeon RX 9070 XT (gfx1201).
+The **`examples/tusdview/tests/run-hip-render.sh`** harness exercises this
+end-to-end; it SKIPs (return 77) when no AMD/ROCm device is available so
+non-AMD CI stays green. Like the CUDA harness it is not a registered ctest:
 
 ```sh
-cd build && ctest -R tusdview-cuda-render --output-on-failure
+TUSDVIEW=./build/tusdview examples/tusdview/tests/run-hip-render.sh
 ```
+
+Verified on AMD Radeon RX 9070 XT (gfx1201).
 
 **Verified working — NVIDIA GeForce RTX 5060 Ti (Linux, driver `610.43.02`,
 NVRTC 12/13), 2026-06-28.** Renders the full scene (suzanne, 968 tris) non-blank
@@ -474,8 +480,15 @@ pgrep -a Xvfb || true
 
 On hybrid/offload systems, the default Vulkan device visible inside a headless
 or sandboxed session may be Mesa/llvmpipe even when an NVIDIA GPU is installed.
-Wrap the viewer in Xvfb and pass the NVIDIA GLVND offload environment, then
-select the NVIDIA Vulkan device explicitly:
+There are two separate selections to make:
+
+* OpenGL uses the NVIDIA GLVND/PRIME environment variables while Xvfb supplies
+  the window system.
+* Vulkan needs an explicit device selector when automatic enumeration chooses
+  llvmpipe. GLVND variables do not select a Vulkan physical device.
+
+For a direct viewer run, wrap it in Xvfb, pass the GLVND environment, and use
+the `--vk-device nvidia` command-line option:
 
 ```sh
 xvfb-run -a env \
@@ -489,6 +502,23 @@ xvfb-run -a env \
 
 Startup logs print `renderer`, `GPU`, and `API` for both OpenGL and Vulkan, so a
 headless run can reject llvmpipe without requiring `glxinfo`.
+
+The variables used by the viewer test harnesses have narrower meanings:
+
+| Variable | Consumer | Meaning |
+| --- | --- | --- |
+| `__NV_PRIME_RENDER_OFFLOAD=1` | NVIDIA GLVND | Route an OpenGL context to the NVIDIA GPU. |
+| `__GLX_VENDOR_LIBRARY_NAME=nvidia` | NVIDIA GLVND | Select NVIDIA's GLX implementation. |
+| `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json` | NVIDIA GLVND | Select NVIDIA's EGL vendor when multiple vendors are installed. |
+| `TUSDVIEW_VK_DEVICE=nvidia` | Tydra/tusdview shell harnesses | Forward `--vk-device nvidia` to Vulkan viewer runs. Direct `tusdview` uses the CLI option itself. |
+| `TUSDVIEW_NVIDIA_OFFLOAD=1` | USD-assets smoke harness | Enable the NVIDIA GLVND environment for viewer invocations. |
+| `TUSDVIEW_XVFB=1` | USD-assets smoke harness | Force the harness to wrap windowed viewer modes in `xvfb-run -a`. |
+| `TUSDVIEW_XVFB=external` | USD-assets smoke harness | Use the caller's existing `DISPLAY`, for an externally started Xvfb. |
+
+Use `TUSDVIEW_XVFB=0` for true headless Vulkan/CUDA/HIP modes; those modes do
+not need X11. Use `TUSDVIEW_XVFB=external` only after setting `DISPLAY` to a
+known-good X server, for example `DISPLAY=localhost:88` when Xvfb was started
+with `-nolisten unix -listen tcp`.
 
 The GL/VK screenshot ctests (`tusdview-skinning-screenshot-diff`,
 `tusdview-instanced-prototype-skinning`, `tusdview-uv-set-routing`) apply this
@@ -513,6 +543,33 @@ If `--vk-device nvidia` fails and the candidate list only shows `llvmpipe`,
 the offload environment did not reach the Vulkan loader/driver. Verify that the
 NVIDIA GLVND vendor file exists and that the command is running under Xvfb (or
 a real X session) with the offload variables above.
+
+For the complete native CTest viewer coverage, configure with
+`-DTINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON`. At configure time CMake checks the
+NVIDIA kernel device, the GLVND vendor file, and `vulkaninfo --summary`. When
+the Vulkan summary contains an NVIDIA physical device, CMake attaches the GL
+offload environment and `TUSDVIEW_VK_DEVICE=nvidia` to every `tusdview-*` test
+(including tests that launch their own `xvfb-run`). If only the GL pieces are
+visible, it attaches GL offload but leaves Vulkan device selection automatic;
+this avoids turning a software fallback into a hard Vulkan initialization
+failure. Unrelated tests are unchanged.
+
+```sh
+cmake -S . -B build_ninja -G Ninja \
+  -DTINYUSDZ_BUILD_TESTS=ON -DTINYUSDZ_BUILD_GUI_VIEWER=ON \
+  -DTINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON
+cmake --build build_ninja -j16
+xvfb-run -a -s "-screen 0 1280x800x24" \
+  ctest --test-dir build_ninja -R '^tusdview' --output-on-failure
+```
+
+The configure log reports whether the NVIDIA Vulkan device was confirmed. Do
+not add `TUSDVIEW_VK_DEVICE=nvidia` manually when that probe fails: verify the
+driver/ICD visibility first, or let the test skip/fall back to its normal
+software-device policy. To run the entire native CTest matrix under the same
+headless display, replace `-R '^tusdview'` with no `ctest` filter; the standalone
+`next` and OpenUSD comparison commands remain as shown in
+[`doc/testing-cpp.md`](testing-cpp.md).
 
 ### External usd-assets smoke rendering
 
@@ -621,9 +678,11 @@ xvfb-run -a ./build_ninja/tusdview --backend gl --frames 8 --screenshot out.png 
 xvfb-run -a glxinfo | grep "OpenGL renderer"   # -> NVIDIA GeForce ... (was: llvmpipe)
 ```
 
-- The **Vulkan** backend already selects the discrete GPU on its own — these vars
-  are not needed for `--backend vk` (confirm via `vulkaninfo --summary` or the
-  device name printed by tusdview at startup).
+- The **Vulkan** backend does not use these GLVND variables for device
+  selection. It normally auto-selects a suitable device; when Xvfb or a
+  container makes llvmpipe win, pass `--vk-device nvidia` (or let the test
+  harness forward `TUSDVIEW_VK_DEVICE=nvidia`) after confirming the device with
+  `vulkaninfo --summary`.
 - **Caveat — wall-clock is misleading here.** PRIME renders on the NVIDIA GPU but
   *presents* through the software xvfb X server, so each frame pays a GPU→X blit
   (~89 ms/frame observed) that has nothing to do with draw cost. **Measure GPU-side,
@@ -635,6 +694,45 @@ xvfb-run -a glxinfo | grep "OpenGL renderer"   # -> NVIDIA GeForce ... (was: llv
 These vars are how the GPU blendshape-morph optimizations were profiled on an
 RTX 3070 (the active-channel skip makes the morph's GPU cost scale with the number
 of *active* targets, not the total target count).
+
+### `tusdquicklook` on a constrained NVIDIA GPU
+
+The lightweight Quick Look viewer has its own offscreen GL 3.3 path and a
+separate `--max-gpu-mem` residency cap (512 MiB by default). Its GL context is
+created lazily, and a reported free-VRAM value is reduced by a 256 MiB driver
+reserve before the scene is accepted. This keeps a 2 GiB GPU usable for the
+preview without allowing the driver to consume the whole device:
+
+```sh
+xvfb-run -a -s "-screen 0 800x600x24" env \
+  __NV_PRIME_RENDER_OFFLOAD=1 \
+  __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+  ./build_ninja/tusdquicklook model.usdz --backend gl --max-gpu-mem 512 \
+    --frames 4 --size 640x480 --screenshot /tmp/tusdquicklook.png --verbose
+```
+
+The Quick Look NVIDIA smoke is registered as
+`example-tusdquicklook-nvidia-smoke`; it returns CTest skip code 77 when Xvfb
+or a live NVIDIA driver is unavailable.
+
+### `tusdquicklook` MCP control
+
+The interactive Quick Look app also exposes a small local MCP server. Use
+`--mcp-stdio` for newline-delimited JSON-RPC on stdin/stdout,
+`--mcp-http[=PORT]` for the HTTP endpoint (default `8765`), or `--mcp` for
+both. For example:
+
+```sh
+./build_ninja/tusdquicklook model.usdz --mcp-http=8765
+```
+
+POST MCP requests to `http://localhost:8765/mcp`. The available tools are
+`load_usd`, `get_scene_info`, `list_prims`, `viewport`, `screenshot`,
+`render_settings`, and `quit`. Tool calls are executed on the normal quicklook
+UI thread, and `get_scene_info` reports progressive load/render state. The
+interface is intended for trusted local clients and is not authenticated; it
+cannot be combined with the short-lived `--screenshot` mode.
 
 ## Vulkan validation layers (debugging the Vulkan/threaded paths)
 

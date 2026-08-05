@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <deque>
 #include <unordered_map>
@@ -31,6 +32,36 @@ struct PropNameId {
   bool operator<(PropNameId other) const { return id < other.id; }
 };
 
+// Keep owned strings as map keys while allowing allocation-free read-only
+// probes from string_view callers.
+struct PropNameHash {
+  using is_transparent = void;
+
+  size_t operator()(const std::string& name) const noexcept {
+    return std::hash<std::string_view>{}(name);
+  }
+  size_t operator()(std::string_view name) const noexcept {
+    return std::hash<std::string_view>{}(name);
+  }
+};
+
+struct PropNameEqual {
+  using is_transparent = void;
+
+  bool operator()(const std::string& lhs, const std::string& rhs) const noexcept {
+    return lhs == rhs;
+  }
+  bool operator()(std::string_view lhs, std::string_view rhs) const noexcept {
+    return lhs == rhs;
+  }
+  bool operator()(const std::string& lhs, std::string_view rhs) const noexcept {
+    return std::string_view(lhs) == rhs;
+  }
+  bool operator()(std::string_view lhs, const std::string& rhs) const noexcept {
+    return lhs == std::string_view(rhs);
+  }
+};
+
 /// Property name interning table
 /// All property names are stored once and referenced by ID
 /// Thread-safe for reads after initial population
@@ -49,6 +80,7 @@ public:
 
   /// Try to find existing ID without creating (O(1) average)
   PropNameId find(const std::string& name) const;
+  PropNameId find(std::string_view name) const;
   PropNameId find(const char* name) const;
 
   /// Get total count of interned names
@@ -81,6 +113,10 @@ public:
   void freeze();
   void unfreeze();
 
+  /// True while the table is frozen for lock-free concurrent reads. No-op
+  /// (always false) in non-threaded builds, where freeze() is a no-op.
+  bool is_frozen() const;
+
   // Common property name IDs (pre-registered for O(1) access)
   PropNameId id_points;       // "points"
   PropNameId id_normals;      // "normals"
@@ -104,7 +140,8 @@ private:
   // on push_back, so a concurrent intern() (parallel composition) cannot dangle
   // that reference (a vector realloc would).
   std::deque<std::string> names_;
-  std::unordered_map<std::string, uint32_t> name_to_id_;
+  std::unordered_map<std::string, uint32_t, PropNameHash, PropNameEqual>
+      name_to_id_;
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // The global table is interned into concurrently when referenced layers are
   // parsed on worker threads (parallel composition pre-warm). Read-mostly: a

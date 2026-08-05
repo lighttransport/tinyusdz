@@ -160,10 +160,16 @@ static int apply_normalized(tusd_state* st, tusd_stage* stage,
       { Py_XDECREF(kind_tmp); return -1; }
     }
     Py_ssize_t n = PyTuple_Size(items);
+    size_t arr_n = (size_t)(n > 0 ? n : 1);
+    if (arr_n > SIZE_MAX / sizeof(char*) ||
+        arr_n > SIZE_MAX / sizeof(PyObject*)) {
+      PyErr_NoMemory();
+      { Py_XDECREF(kind_tmp); return -1; }
+    }
     const char** arr = (const char**)PyMem_Malloc(
-        (size_t)(n > 0 ? n : 1) * sizeof(char*));
+        arr_n * sizeof(char*));
     PyObject** tmps = (PyObject**)PyMem_Malloc(
-        (size_t)(n > 0 ? n : 1) * sizeof(PyObject*));
+        arr_n * sizeof(PyObject*));
     if (!arr || !tmps) {
       PyMem_Free(arr);
       PyMem_Free(tmps);
@@ -300,7 +306,9 @@ static PyObject* TimeSamples_get_times(PyObject* self, void* closure) {
       timesamples_context((TusdTimeSamples*)self, &prim, &stage, &name);
   if (!st) return NULL;
   size_t n = tusd_attr_timesample_count(prim->prim, name);
-  double* times = (double*)PyMem_Malloc((n ? n : 1) * sizeof(double));
+  size_t times_n = n ? n : 1;
+  if (times_n > SIZE_MAX / sizeof(double)) return PyErr_NoMemory();
+  double* times = (double*)PyMem_Malloc(times_n * sizeof(double));
   if (!times) return PyErr_NoMemory();
   tusd_attr_timesample_times(prim->prim, name, times, n);
   PyObject* tup = PyTuple_New((Py_ssize_t)n);
@@ -850,10 +858,16 @@ static PyObject* Rel_set_targets(PyObject* self, PyObject* args) {
   PyObject* fast = PySequence_Fast(seq, "targets must be a sequence of str");
   if (!fast) return NULL;
   Py_ssize_t n = PySequence_Size(fast);
+  size_t arr_n = (size_t)(n > 0 ? n : 1);
+  if (arr_n > SIZE_MAX / sizeof(char*) ||
+      arr_n > SIZE_MAX / sizeof(PyObject*)) {
+    Py_DECREF(fast);
+    return PyErr_NoMemory();
+  }
   const char** arr =
-      (const char**)PyMem_Malloc((size_t)(n > 0 ? n : 1) * sizeof(char*));
+      (const char**)PyMem_Malloc(arr_n * sizeof(char*));
   PyObject** tmps =
-      (PyObject**)PyMem_Malloc((size_t)(n > 0 ? n : 1) * sizeof(PyObject*));
+      (PyObject**)PyMem_Malloc(arr_n * sizeof(PyObject*));
   if (!arr || !tmps) {
     PyMem_Free(arr);
     PyMem_Free(tmps);

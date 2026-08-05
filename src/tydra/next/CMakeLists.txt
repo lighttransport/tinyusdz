@@ -55,6 +55,9 @@ target_include_directories(tydra_next PUBLIC
 # Compiler warnings
 if(MSVC)
     target_compile_options(tydra_next PRIVATE /W4)
+    # Keep MSVC toolchain + STL compatibility checks from aborting the build on
+    # older but still usable compiler versions.
+    target_compile_definitions(tydra_next PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 else()
     target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
 endif()

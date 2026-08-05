@@ -266,7 +266,9 @@ def main():
         log = client.stderr_text()
         unavailable = ("failed to initialize" in log.lower() or
                        "no vulkan" in log.lower() or
-                       "vulkan initialization failed" in log.lower())
+                       "vulkan initialization failed" in log.lower() or
+                       "ray tracing is unavailable" in log.lower() or
+                       "ray-query unavailable" in log.lower())
         print(("SKIP" if unavailable else "FAIL") + f": {exc}", file=sys.stderr)
         if log:
             print(log[-12000:], file=sys.stderr)

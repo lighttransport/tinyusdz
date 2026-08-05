@@ -10,6 +10,7 @@
 #include "stream-reader.hh"
 #include "../types/value.hh"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <type_traits>
@@ -127,8 +128,13 @@ void CrateDataSource::DiscardRange(uint64_t offset, uint64_t length) const {
 
 bool CrateDataSource::MaterializeArray(const LazyArrayRef& ref, Value* out) const {
   if (!out) return false;
+  const uint64_t size_limit =
+      static_cast<uint64_t>((std::numeric_limits<size_t>::max)());
+  const size_t ref_limit = ref.max_elements > size_limit
+                               ? (std::numeric_limits<size_t>::max)()
+                               : static_cast<size_t>(ref.max_elements);
   return DecodeCrateArray(base(), size(), ref.rep, version_, tokens_,
-                          /*max_elements=*/1024ull * 1024ull * 1024ull, out);
+                          std::min(ref_limit, max_array_elements_), out);
 }
 
 // ============================================================

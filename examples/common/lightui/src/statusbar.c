@@ -61,6 +61,12 @@ static void statusbar_draw(lui_widget_t *w, lvg_canvas_t *canvas)
         /* Draw text in section */
         int text_len = sb->sections[i].text_len;
         int text_w = text_len * 7;
+#ifdef LUI_HAVE_FONTS
+        if (sb->font) {
+            text_w = lui_font_measure_text(sb->font, sb->sections[i].text,
+                                           text_len);
+        }
+#endif
         int tx;
 
         switch (sb->sections[i].alignment) {
@@ -75,11 +81,39 @@ static void statusbar_draw(lui_widget_t *w, lvg_canvas_t *canvas)
             break;
         }
 
+#ifdef LUI_HAVE_FONTS
+        if (sb->font) {
+            int ty = wr.y + lui_font_ascent(sb->font) +
+                     (wr.height - lui_font_line_height(sb->font)) / 2;
+            /* Clip to the section, like the block-glyph path below does, so a
+             * long value cannot bleed into the next section. Trim whole UTF-8
+             * sequences, never a trailing continuation byte. */
+            int draw_len = text_len;
+            int avail = sx + sec_w - 4 - tx;
+            while (draw_len > 0 &&
+                   lui_font_measure_text(sb->font, sb->sections[i].text,
+                                         draw_len) > avail) {
+                draw_len--;
+                while (draw_len > 0 &&
+                       ((unsigned char)sb->sections[i].text[draw_len] & 0xC0)
+                           == 0x80) {
+                    draw_len--;
+                }
+            }
+            if (draw_len > 0) {
+                lui_canvas_draw_text(canvas, tx, ty, sb->sections[i].text,
+                                     draw_len, sb->font, sb->text_color);
+            }
+        } else {
+#endif
         int ty = wr.y + (wr.height - 10) / 2;
         for (int c = 0; c < text_len && tx + 5 <= sx + sec_w; c++) {
             lvg_canvas_fill_rect(canvas, tx, ty, 5, 10, sb->text_color);
             tx += 7;
         }
+#ifdef LUI_HAVE_FONTS
+        }
+#endif
 
         sx += sec_w;
 

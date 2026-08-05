@@ -113,7 +113,7 @@ For package build details, see [python_binding.md](python_binding.md).
   handler tutorial.
 - [../examples/progressive_composition](../examples/progressive_composition):
   progressive composition example.
-- [../examples/usddiff](../examples/usddiff): USD diff utility.
+- [../tools/tusddiff](../tools/tusddiff): USD diff utility (Tydra diff-and-compare API).
 - [../examples/usd_to_gltf](../examples/usd_to_gltf): USD to glTF example.
 
 Not every directory under `examples/` is built by the top-level CMake build, and

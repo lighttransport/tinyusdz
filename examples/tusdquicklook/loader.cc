@@ -165,8 +165,10 @@ bool EndsWithPath(const std::string& haystack, const std::string& needle) {
 
 class TextureSource {
  public:
-  void Init(const std::string& root_path, size_t max_archive_bytes) {
+  void Init(const std::string& root_path, size_t max_archive_bytes,
+            size_t max_image_bytes) {
     root_path_ = root_path;
+    max_image_bytes_ = max_image_bytes;
     const size_t dot = root_path.find_last_of('.');
     std::string ext = dot == std::string::npos ? "" : root_path.substr(dot);
     for (char& c : ext) c = static_cast<char>(::tolower(c));
@@ -187,7 +189,7 @@ class TextureSource {
         }
         const uint8_t* data = zip_->EntryData(i);
         const size_t size = zip_->EntrySize(i);
-        if (!data || size == 0) return false;
+        if (!data || size == 0 || size > max_image_bytes_) return false;
         out->assign(data, data + size);
         return true;
       }
@@ -203,6 +205,10 @@ class TextureSource {
       std::fclose(f);
       return false;
     }
+    if (static_cast<uint64_t>(len) > max_image_bytes_) {
+      std::fclose(f);
+      return false;
+    }
     out->resize(static_cast<size_t>(len));
     const size_t got = std::fread(out->data(), 1, out->size(), f);
     std::fclose(f);
@@ -212,6 +218,7 @@ class TextureSource {
  private:
   std::string root_path_;
   std::unique_ptr<::tinyusdz::next::USDZReader> zip_;
+  size_t max_image_bytes_ = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -347,6 +354,23 @@ QlMaterial ConvertMaterial(const tyn::RenderMaterial& src,
     return image_to_texture[size_t(image_id)];
   };
 
+  // Which component of a packed map carries this scalar. The common ORM
+  // layout is occlusion.r / roughness.g / metallic.b, but the asset says so
+  // through the texture's output channel and we honour that.
+  auto resolve_channel = [&](int32_t texture_id, uint8_t fallback) -> uint8_t {
+    if (texture_id < 0 ||
+        texture_id >= static_cast<int32_t>(scene.textures.size())) {
+      return fallback;
+    }
+    switch (scene.textures[size_t(texture_id)].output_channel) {
+      case tyn::RenderTexture::Channel::R: return 0;
+      case tyn::RenderTexture::Channel::G: return 1;
+      case tyn::RenderTexture::Channel::B: return 2;
+      case tyn::RenderTexture::Channel::A: return 3;
+      default: return fallback;
+    }
+  };
+
   if (src.shader_type == tyn::RenderMaterial::ShaderType::PreviewSurface &&
       src.preview_surface) {
     const tyn::PreviewSurfaceShader& s = *src.preview_surface;
@@ -363,10 +387,43 @@ QlMaterial ConvertMaterial(const tyn::RenderMaterial& src,
       dst.emissive[0] = s.emissive_color.value.x;
       dst.emissive[1] = s.emissive_color.value.y;
       dst.emissive[2] = s.emissive_color.value.z;
+    } else if (s.emissive_color.is_texture()) {
+      dst.emissive_tex = resolve_texture(s.emissive_color.texture_id);
+      dst.emissive[0] = dst.emissive[1] = dst.emissive[2] = 1.0f;
     }
-    if (s.roughness.is_value()) dst.roughness = s.roughness.as_float();
-    if (s.metallic.is_value()) dst.metallic = s.metallic.as_float();
-    if (s.opacity.is_value()) dst.opacity = s.opacity.as_float();
+    if (s.roughness.is_value()) {
+      dst.roughness = s.roughness.as_float();
+    } else if (s.roughness.is_texture()) {
+      dst.roughness_tex = resolve_texture(s.roughness.texture_id);
+      dst.roughness_channel = resolve_channel(s.roughness.texture_id, 1);
+    }
+    if (s.metallic.is_value()) {
+      dst.metallic = s.metallic.as_float();
+    } else if (s.metallic.is_texture()) {
+      dst.metallic_tex = resolve_texture(s.metallic.texture_id);
+      dst.metallic_channel = resolve_channel(s.metallic.texture_id, 2);
+    }
+    if (s.opacity.is_value()) {
+      dst.opacity = s.opacity.as_float();
+    } else if (s.opacity.is_texture()) {
+      dst.opacity_tex = resolve_texture(s.opacity.texture_id);
+      dst.opacity_channel = resolve_channel(s.opacity.texture_id, 3);
+    }
+    if (s.normal.is_texture()) {
+      dst.normal_tex = resolve_texture(s.normal.texture_id);
+    }
+    // UsdPreviewSurface: a non-zero opacityThreshold means cutout, and the
+    // surface is fully opaque above it. Otherwise a sub-unit opacity (or an
+    // opacity map) means real blending.
+    const float threshold = s.opacity_threshold.is_value()
+                                ? s.opacity_threshold.as_float()
+                                : 0.0f;
+    if (threshold > 0.0f) {
+      dst.alpha_mode = QlMaterial::AlphaMode::Mask;
+      dst.alpha_cutoff = threshold;
+    } else if (dst.opacity_tex >= 0 || dst.opacity < 1.0f) {
+      dst.alpha_mode = QlMaterial::AlphaMode::Blend;
+    }
   } else if (src.shader_type == tyn::RenderMaterial::ShaderType::OpenPBR &&
              src.openpbr) {
     const tyn::OpenPBRSurfaceShader& s = *src.openpbr;
@@ -380,11 +437,28 @@ QlMaterial ConvertMaterial(const tyn::RenderMaterial& src,
     }
     if (s.specular_roughness.is_value()) {
       dst.roughness = s.specular_roughness.as_float();
+    } else if (s.specular_roughness.is_texture()) {
+      dst.roughness_tex = resolve_texture(s.specular_roughness.texture_id);
+      dst.roughness_channel = resolve_channel(s.specular_roughness.texture_id, 1);
     }
     if (s.base_metalness.is_value()) {
       dst.metallic = s.base_metalness.as_float();
+    } else if (s.base_metalness.is_texture()) {
+      dst.metallic_tex = resolve_texture(s.base_metalness.texture_id);
+      dst.metallic_channel = resolve_channel(s.base_metalness.texture_id, 2);
     }
-    if (s.opacity.is_value()) dst.opacity = s.opacity.as_float();
+    if (s.opacity.is_value()) {
+      dst.opacity = s.opacity.as_float();
+    } else if (s.opacity.is_texture()) {
+      dst.opacity_tex = resolve_texture(s.opacity.texture_id);
+      dst.opacity_channel = resolve_channel(s.opacity.texture_id, 3);
+    }
+    if (s.normal.is_texture()) {
+      dst.normal_tex = resolve_texture(s.normal.texture_id);
+    }
+    if (dst.opacity_tex >= 0 || dst.opacity < 1.0f) {
+      dst.alpha_mode = QlMaterial::AlphaMode::Blend;
+    }
     if (s.emission_color.is_value() && s.emission_luminance.is_value()) {
       const float lum = s.emission_luminance.as_float();
       dst.emissive[0] = s.emission_color.value.x * lum;
@@ -396,6 +470,47 @@ QlMaterial ConvertMaterial(const tyn::RenderMaterial& src,
   dst.roughness = std::max(0.02f, std::min(1.0f, dst.roughness));
   dst.metallic = std::max(0.0f, std::min(1.0f, dst.metallic));
   dst.opacity = std::max(0.0f, std::min(1.0f, dst.opacity));
+  return dst;
+}
+
+// Box-blur a latlong environment into successively rougher levels. Wraps in u
+// (the seam is continuous) and clamps in v (the poles are not). Deterministic
+// and single-threaded: the result is uploaded to GL verbatim, so any variation
+// here would show up as a backend disagreement.
+QlTexture BlurEnvLevel(const QlTexture& src, int radius) {
+  QlTexture dst;
+  dst.width = src.width;
+  dst.height = src.height;
+  dst.srgb = false;  // already linearized by the caller
+  dst.wrap_repeat_s = true;
+  dst.wrap_repeat_t = false;
+  dst.rgba.assign(size_t(src.width) * src.height * 4, 0);
+
+  const int w = int(src.width);
+  const int h = int(src.height);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      int acc[4] = {0, 0, 0, 0};
+      int n = 0;
+      for (int dy = -radius; dy <= radius; dy++) {
+        int sy = y + dy;
+        if (sy < 0) sy = 0;
+        if (sy >= h) sy = h - 1;
+        for (int dx = -radius; dx <= radius; dx++) {
+          int sx = (x + dx) % w;
+          if (sx < 0) sx += w;
+          const uint8_t* p =
+              src.rgba.data() + (size_t(sy) * size_t(w) + size_t(sx)) * 4;
+          for (int c = 0; c < 4; c++) acc[c] += p[c];
+          n++;
+        }
+      }
+      uint8_t* q = dst.rgba.data() + (size_t(y) * size_t(w) + size_t(x)) * 4;
+      for (int c = 0; c < 4; c++) {
+        q[c] = static_cast<uint8_t>(acc[c] / std::max(1, n));
+      }
+    }
+  }
   return dst;
 }
 
@@ -553,10 +668,38 @@ class QlSceneSink : public tyn::SceneSink {
     for (const tyn::RenderMaterial& m : catalog_.materials) {
       ev.materials.push_back(ConvertMaterial(m, catalog_, image_to_texture));
     }
+
+    // A map bound to a data slot carries numbers, not colour, whatever its
+    // metadata claims. Assets routinely tag normal/ORM maps as sRGB, and
+    // decoding those through the transfer curve gives silently wrong
+    // roughness and skewed normals -- so the binding wins over the tag.
+    {
+      auto force_linear = [&](int tex) {
+        if (tex >= 0 && tex < static_cast<int>(ev.textures.size())) {
+          ev.textures[size_t(tex)].srgb = false;
+        }
+      };
+      for (const QlMaterial& m : ev.materials) {
+        force_linear(m.normal_tex);
+        force_linear(m.roughness_tex);
+        force_linear(m.metallic_tex);
+        force_linear(m.opacity_tex);
+      }
+    }
+
+    // Tangents cost 16 bytes per vertex and are only meaningful for a normal
+    // map, so record which materials actually want them. Meshes bound to
+    // anything else stay 16 B/vertex lighter -- which matters under --max-mem.
+    material_needs_tangents_.assign(ev.materials.size(), false);
+    for (size_t i = 0; i < ev.materials.size(); i++) {
+      material_needs_tangents_[i] = ev.materials[i].needs_tangents();
+    }
     for (const tyn::RenderLight& l : catalog_.lights) {
       QlLight out;
       if (ConvertLight(l, &out)) ev.lights.push_back(out);
     }
+
+    BuildEnvironmentTextures(&ev, image_to_texture);
     for (const tyn::RenderCamera& c : catalog_.cameras) {
       ev.cameras.push_back(ConvertCamera(c));
     }
@@ -680,6 +823,13 @@ class QlSceneSink : public tyn::SceneSink {
 
  private:
   bool BuildQlMesh(int32_t id, const tyn::RenderMesh& src, QlMesh* out);
+  // Shared tail for both BuildQlMesh paths (de-indexed and not):
+  // validity plus the tangent frame a normal-mapped material needs.
+  bool FinishMesh(QlMesh* out);
+  // Resolve the environment (--env, else an authored DomeLight), linearize it
+  // and build the roughness chain into ev->textures.
+  void BuildEnvironmentTextures(LoadEvent* ev,
+                                const std::vector<int>& image_to_texture);
 
   LoadControl* ctrl_;
   LoadStream* stream_;
@@ -689,6 +839,8 @@ class QlSceneSink : public tyn::SceneSink {
   tyn::RenderScene catalog_;
   std::vector<tyn::Matrix4> mesh_world_;
   std::vector<bool> mesh_visible_;
+  // Indexed by material id: does anything bound to it need a tangent frame?
+  std::vector<bool> material_needs_tangents_;
 
   QlAabb bounds_;
   bool y_up_ = true;
@@ -712,6 +864,211 @@ class QlSceneSink : public tyn::SceneSink {
 // buffer as-is (the common case, and the cheap one). When normals or UVs are
 // face-varying we de-index into per-corner arrays, because a single index
 // buffer cannot address two different attribute layouts.
+// Per-triangle tangent accumulation (Lengyel), orthonormalized per vertex.
+// Computed here rather than taken from tydra so it is paid for only by the
+// meshes that actually carry a normal map, and so the tracer and the raster
+// path share one definition -- screen-space derivatives would not match.
+void BuildTangents(QlMesh* mesh) {
+  const size_t vcount = mesh->vertex_count();
+  if (vcount == 0 || mesh->uvs.size() < vcount * 2 ||
+      mesh->normals.size() < vcount * 3) {
+    return;
+  }
+
+  std::vector<float> tan(vcount * 3, 0.0f);
+  std::vector<float> bitan(vcount * 3, 0.0f);
+
+  for (size_t t = 0; t + 2 < mesh->indices.size(); t += 3) {
+    const uint32_t a = mesh->indices[t + 0];
+    const uint32_t b = mesh->indices[t + 1];
+    const uint32_t c = mesh->indices[t + 2];
+    if (a >= vcount || b >= vcount || c >= vcount) continue;
+
+    const float* pa = &mesh->positions[size_t(a) * 3];
+    const float* pb = &mesh->positions[size_t(b) * 3];
+    const float* pc = &mesh->positions[size_t(c) * 3];
+    const float* ua = &mesh->uvs[size_t(a) * 2];
+    const float* ub = &mesh->uvs[size_t(b) * 2];
+    const float* uc = &mesh->uvs[size_t(c) * 2];
+
+    const float e1[3] = {pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]};
+    const float e2[3] = {pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]};
+    const float du1 = ub[0] - ua[0], dv1 = ub[1] - ua[1];
+    const float du2 = uc[0] - ua[0], dv2 = uc[1] - ua[1];
+
+    const float det = du1 * dv2 - du2 * dv1;
+    // A degenerate UV triangle carries no tangent information; skipping it
+    // leaves the vertex to be resolved by its other faces.
+    if (std::fabs(det) < 1e-20f) continue;
+    const float r = 1.0f / det;
+
+    const float tdir[3] = {(e1[0] * dv2 - e2[0] * dv1) * r,
+                           (e1[1] * dv2 - e2[1] * dv1) * r,
+                           (e1[2] * dv2 - e2[2] * dv1) * r};
+    const float bdir[3] = {(e2[0] * du1 - e1[0] * du2) * r,
+                           (e2[1] * du1 - e1[1] * du2) * r,
+                           (e2[2] * du1 - e1[2] * du2) * r};
+
+    for (uint32_t idx : {a, b, c}) {
+      for (int i = 0; i < 3; i++) {
+        tan[size_t(idx) * 3 + i] += tdir[i];
+        bitan[size_t(idx) * 3 + i] += bdir[i];
+      }
+    }
+  }
+
+  mesh->tangents.assign(vcount * 4, 0.0f);
+  for (size_t v = 0; v < vcount; v++) {
+    const float* n = &mesh->normals[v * 3];
+    float* t = &tan[v * 3];
+
+    // Gram-Schmidt against the normal.
+    const float nd = n[0] * t[0] + n[1] * t[1] + n[2] * t[2];
+    float o[3] = {t[0] - n[0] * nd, t[1] - n[1] * nd, t[2] - n[2] * nd};
+    float len = std::sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+    if (len < 1e-12f) {
+      // No usable tangent: pick any vector perpendicular to the normal so the
+      // frame stays well-formed instead of collapsing to zero.
+      const float ax = std::fabs(n[0]) < 0.9f ? 1.0f : 0.0f;
+      o[0] = ax - n[0] * n[0] * ax;
+      o[1] = -n[1] * n[0] * ax + (ax == 0.0f ? 1.0f : 0.0f) * (1.0f - n[1] * n[1]);
+      o[2] = -n[2] * n[0] * ax;
+      len = std::sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+      if (len < 1e-12f) {
+        o[0] = 1.0f; o[1] = 0.0f; o[2] = 0.0f;
+        len = 1.0f;
+      }
+    }
+    for (int i = 0; i < 3; i++) mesh->tangents[v * 4 + i] = o[i] / len;
+
+    // Handedness: does the accumulated bitangent agree with n x t?
+    const float cx = n[1] * o[2] - n[2] * o[1];
+    const float cy = n[2] * o[0] - n[0] * o[2];
+    const float cz = n[0] * o[1] - n[1] * o[0];
+    const float* bt = &bitan[v * 3];
+    mesh->tangents[v * 4 + 3] =
+        (cx * bt[0] + cy * bt[1] + cz * bt[2]) < 0.0f ? -1.0f : 1.0f;
+  }
+}
+
+void QlSceneSink::BuildEnvironmentTextures(
+    LoadEvent* ev, const std::vector<int>& image_to_texture) {
+  // --env wins over any authored dome: it is the deterministic input the
+  // headless IBL test relies on, and an explicit override should override.
+  QlTexture env;
+  bool have_env = false;
+
+  if (!opts_.env_path.empty()) {
+    std::vector<uint8_t> bytes;
+    DecodedImage img;
+    TextureSource src;
+    src.Init(opts_.env_path, budget_.stage, budget_.textures);
+    if (src.Read(opts_.env_path, &bytes) &&
+        DecodeImageToRgba(bytes.data(), bytes.size(), QlTexture::kMaxEnvDim,
+                          &img, budget_.textures)) {
+      env.width = img.width;
+      env.height = img.height;
+      env.rgba.assign(img.rgba.begin(), img.rgba.end());
+      env.srgb = true;  // ordinary LDR images are sRGB-encoded
+      env.wrap_repeat_s = true;
+      env.wrap_repeat_t = false;
+      have_env = env.valid();
+    } else {
+      degraded_.detail = "could not read --env image";
+    }
+  }
+
+  if (!have_env) {
+    // Authored DomeLight. tydra resolves its texture like any other, so it is
+    // already decoded and sitting in ev->textures.
+    for (const tyn::RenderLight& l : catalog_.lights) {
+      if (l.type != tyn::LightType::Dome) continue;
+      const int32_t tex_id = l.params.dome.texture_id;
+      if (tex_id < 0 ||
+          tex_id >= static_cast<int32_t>(catalog_.textures.size())) {
+        continue;
+      }
+      const int32_t image_id = catalog_.textures[size_t(tex_id)].image_id;
+      if (image_id < 0 ||
+          image_id >= static_cast<int32_t>(image_to_texture.size())) {
+        continue;
+      }
+      const int slot = image_to_texture[size_t(image_id)];
+      if (slot < 0 || slot >= static_cast<int>(ev->textures.size())) continue;
+
+      env = ev->textures[size_t(slot)];  // copy: the chain needs its own base
+      env.wrap_repeat_s = true;
+      env.wrap_repeat_t = false;
+      ev->env_intensity = l.intensity * std::pow(2.0f, l.exposure);
+      have_env = env.valid();
+      break;
+    }
+  }
+
+  if (!have_env) return;
+
+  // Linearize once, so every level of the chain and the SH projection work in
+  // linear and GL can upload the whole set as plain RGBA8.
+  if (env.srgb) {
+    for (size_t i = 0; i + 3 < env.rgba.size(); i += 4) {
+      for (int c = 0; c < 3; c++) {
+        const float v = float(env.rgba[i + c]) * (1.0f / 255.0f);
+        const float lin = v <= 0.04045f
+                              ? v / 12.92f
+                              : std::pow((v + 0.055f) / 1.055f, 2.4f);
+        env.rgba[i + c] = FloatToU8(lin);
+      }
+    }
+    env.srgb = false;
+  }
+
+  // Roughness levels: progressively wider box blurs of the base. Cheap, and
+  // more importantly identical on both backends because GL never filters this
+  // itself -- it samples the very same pixels.
+  //
+  // Every level is built from `env` BEFORE anything is pushed: appending to
+  // ev->textures reallocates it, so blurring from a reference into that vector
+  // would read a dangling base.
+  static const int kRadius[QlScene::kEnvPrefilterLevels] = {0, 2, 5, 11};
+  std::vector<QlTexture> levels;
+  levels.reserve(QlScene::kEnvPrefilterLevels);
+  for (int i = 0; i < QlScene::kEnvPrefilterLevels; i++) {
+    if (kRadius[i] == 0) continue;
+    QlTexture level = BlurEnvLevel(env, kRadius[i]);
+    if (!level.valid()) break;
+    levels.push_back(std::move(level));
+  }
+
+  ev->env_texture = static_cast<int>(ev->textures.size());
+  ev->textures.push_back(std::move(env));
+
+  size_t next_level = 0;
+  for (int i = 0; i < QlScene::kEnvPrefilterLevels; i++) {
+    if (kRadius[i] == 0) {
+      ev->env_prefiltered[i] = ev->env_texture;
+      continue;
+    }
+    if (next_level >= levels.size()) {
+      // Ran out of levels: fall back to the sharpest one we have rather than
+      // leaving a hole the renderers would have to special-case.
+      ev->env_prefiltered[i] = ev->env_texture;
+      continue;
+    }
+    ev->env_prefiltered[i] = static_cast<int>(ev->textures.size());
+    ev->textures.push_back(std::move(levels[next_level++]));
+  }
+}
+
+bool QlSceneSink::FinishMesh(QlMesh* out) {
+  if (out->triangle_count() == 0) return false;
+  if (out->material_id >= 0 &&
+      size_t(out->material_id) < material_needs_tangents_.size() &&
+      material_needs_tangents_[size_t(out->material_id)]) {
+    BuildTangents(out);
+  }
+  return true;
+}
+
 bool QlSceneSink::BuildQlMesh(int32_t id, const tyn::RenderMesh& src,
                               QlMesh* out) {
   if (!src.is_triangulated || src.triangulated_indices.empty()) return false;
@@ -786,7 +1143,7 @@ bool QlSceneSink::BuildQlMesh(int32_t id, const tyn::RenderMesh& src,
       if (vi >= point_count) return false;  // corrupt topology: drop the mesh
       out->indices.push_back(vi);
     }
-    return out->triangle_count() > 0;
+    return FinishMesh(out);
   }
 
   // De-indexed path. triangulated_face_vertex_indices maps each triangulated
@@ -832,7 +1189,7 @@ bool QlSceneSink::BuildQlMesh(int32_t id, const tyn::RenderMesh& src,
     }
     out->indices.push_back(static_cast<uint32_t>(i));
   }
-  return out->triangle_count() > 0;
+  return FinishMesh(out);
 }
 
 }  // namespace
@@ -971,7 +1328,8 @@ void RunLoad(const std::string& path, const Options& opts,
   // Decode + downsample in one step, inside the loader, so the full-resolution
   // image is never handed back to the converter and peak stays at one image.
   TextureSource tex_source;
-  tex_source.Init(path, static_cast<size_t>(budget.stage));
+  tex_source.Init(path, static_cast<size_t>(budget.stage),
+                  static_cast<size_t>(budget.textures));
   std::atomic<uint64_t> texture_bytes_loaded{0};
   cfg.material.custom_texture_loader =
       [&](const std::string& asset_path, tyn::TextureImage* out) -> bool {
@@ -983,7 +1341,8 @@ void RunLoad(const std::string& path, const Options& opts,
 
     DecodedImage img;
     if (!DecodeImageToRgba(bytes.data(), bytes.size(),
-                           QlTexture::kMaxTextureDim, &img)) {
+                           QlTexture::kMaxTextureDim, &img,
+                           budget.textures)) {
       return false;
     }
     bytes.clear();

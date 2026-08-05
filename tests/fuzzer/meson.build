@@ -273,3 +273,11 @@ executable('fuzz_orm_texture_bounds',
   include_directories : incdirs,
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_layer_find_primspec',
+  'layer_find_primspec_fuzzmain.cc',
+  tinyusdz_sources,
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )

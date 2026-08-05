@@ -26,6 +26,7 @@ import {
   nextCountsFromScene,
   readNextSceneMeta
 } from 'tinyusdz-next-demo-utils';
+import { Report } from './app-report.js';
 
 RectAreaLightUniformsLib.init();
 
@@ -144,8 +145,12 @@ class DemoApp {
           <section class="viewport-wrap">
             <div id="viewport" class="viewport"></div>
             <div id="drop-hint" class="drop-hint">Drop USDA, USDC, USD, or USDZ</div>
-            <div id="status" class="status">Initializing...</div>
-          </section>
+              <div id="status" class="status">Initializing...</div>
+              <div id="tusd-loader" class="tusd-loader hidden">
+                <div class="loader-progress"><div class="loader-bar" style="width:10%"></div></div>
+                <div class="loader-text">Loading TinyUSDZ WASM…</div>
+              </div>
+            </section>
           <aside class="info-panel">
             <h2>Controls</h2>
             <div id="gui-container" class="gui-container"></div>
@@ -300,20 +305,27 @@ class DemoApp {
   async ensureLoader() {
     if (this.loader) return this.loader;
 
-    this.setStatus('Initializing TinyUSDZ WASM...');
     this.loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 });
-    await this.loader.init({
-      useZstdCompressedWasm: false,
-      useMemory64: false,
-      backend: this.params.backend,
-      useNextOnlyWasm: this.params.backend === 'next'
-    });
+    try {
+      await Report.steps('Initializing TinyUSDZ', [
+        { label: 'Loading WASM module', run: () => this.loader.init({
+          useZstdCompressedWasm: false,
+          useMemory64: false,
+          backend: this.params.backend,
+          useNextOnlyWasm: this.params.backend === 'next'
+        })},
+      ]);
+    } catch (e) {
+      Report.err(e, 'WASM initialization failed').action('Retry', () => this.ensureLoader());
+      throw e;
+    }
     TinyUSDZLoaderUtils.setTinyUSDZ(this.loader.native_);
     setMaterialXTinyUSDZ(this.loader.native_);
     this.loader.setMaxMemoryLimitMB(512);
     if (this.config.enableSkinning) {
       this.loader.setRoundBoneCount(true);
     }
+    Report.done();
     return this.loader;
   }
 
@@ -339,6 +351,7 @@ class DemoApp {
     this.setStatus(`Loading ${label}...`);
     try {
       const data = await this.fetchBytes(url, label);
+      Report.progress(20, 'Downloaded USD');
       this.currentSourceBytes = new Uint8Array(data);
       this.currentSourceName = url.split(/[?#]/)[0].split('/').pop() || 'scene.usd';
       this.currentSourceUrl = url;
@@ -350,12 +363,16 @@ class DemoApp {
       } else if (this.config.useLayerExport && this.params.backend === 'legacy') {
         usd = await this.loadLayerForExport(url);
       } else {
+        Report.progress(40, 'Parsing USD');
         usd = await this.parseUSD(data, this.currentSourceName);
       }
+      Report.progress(60, 'Building scene');
       await this.displayUSD(usd, label);
+      Report.done();
     } catch (error) {
       console.error(error);
       this.setStatus(`Failed: ${error.message}`);
+      Report.err(error, 'Loading failed').action('Retry', () => this.loadURL(url, label));
     }
   }
 
@@ -371,9 +388,11 @@ class DemoApp {
         ? this.parseLayerForExport(data, file.name)
         : await this.parseUSD(data, file.name);
       await this.displayUSD(usd, file.name);
+      Report.done();
     } catch (error) {
       console.error(error);
       this.setStatus(`Failed: ${error.message}`);
+      Report.err(error, `Loading ${file.name}`).action('Retry', () => this.loadFile(file));
     }
   }
 

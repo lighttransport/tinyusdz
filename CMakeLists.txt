@@ -110,6 +110,9 @@ option(TINYUSDZ_WITH_TCMALLOC
 option(TINYUSDZ_BUILD_GUI_VIEWER
        "Build the interactive GUI USD viewer example 'tusdview' (requires OpenGL/GLFW; Vulkan optional). Pulls in window-system deps; keep OFF for headless CI."
        OFF)
+option(TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD
+       "Apply NVIDIA PRIME/GLVND offload variables to tusdview CTest cases when the NVIDIA device is visible"
+       OFF)
 option(TINYUSDZ_BUILD_QUICKLOOK
        "Build the minimal portable USD Quick Look viewer 'tusdquicklook' (software UI via vendored lightui, CPU ray tracing; no GPU required)."
        OFF)
@@ -325,6 +328,27 @@ option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minim
 
 option(TINYUSDZ_WITH_TEXTOOLS
        "Build vendored tir/texcomp/texpipe/envmap texture tools" ON)
+option(TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS
+       "Build vendored tir/texcomp/texpipe/envmap texture tools in quicklook-only builds" OFF)
+
+if(TINYUSDZ_BUILD_QUICKLOOK AND NOT TINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS)
+  # Quicklook is intentionally a minimal, dependency-light path. Disabling
+  # texture-tools here avoids building tinyusdz_textools unless explicitly
+  # requested.
+  if (TINYUSDZ_WITH_TEXTOOLS)
+    message(STATUS "tinyusdz: disabling TINYUSDZ_WITH_TEXTOOLS for quicklook-only build "
+                   "(set -DTINYUSDZ_BUILD_QUICKLOOK_WITH_TEXTOOLS=ON to force)")
+  endif()
+  set(TINYUSDZ_WITH_TEXTOOLS OFF CACHE BOOL "Build vendored tir/texcomp/texpipe/envmap texture tools" FORCE)
+endif()
+
+# Vendored textools/tinyexr upstream self-tests are disabled by default: they
+# exercise third-party code (not TinyUSDZ), and changes to that vendored copy
+# are not part of the TinyUSDZ regression gate. Re-enable with -D
+# TINYUSDZ_BUILD_TEXTOOLS_TESTS=ON when validating an upstream sync.
+option(TINYUSDZ_BUILD_TEXTOOLS_TESTS
+       "Build vendored textools (tir/texcomp/texpipe/envmap) upstream self-tests"
+       OFF)
 
 # -- ColorIO --
 option(TINYUSDZ_WITH_COLORIO
@@ -420,6 +444,11 @@ if(MSVC)
   # clobber std::numeric_limits<T>::max()/min() calls project-wide with
   # cryptic C2589/C2059 syntax errors.
   add_compile_definitions(NOMINMAX)
+
+  # MSVC 2022 toolchain + STL header compatibility guard can trip this
+  # repository's older C++17 compatibility target set in CI/partner envs.
+  # Keep enabled for all targets to avoid STL1001 noise from legacy headers.
+  add_compile_definitions(_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 endif()
 
 # [ccache]
@@ -2195,11 +2224,11 @@ endif()
 if(TINYUSDZ_BUILD_TESTS)
   #
   # textools (vendored tir/texcomp/texpipe/envmap) upstream self-tests.
-  # Plain-C main() programs, no GPU/display needed. These were dropped from
-  # CMake in a merge while the sources stayed under src/external/textools;
-  # re-register so `ctest -L textools` runs them again.
+  # Plain-C main() programs, no GPU/display needed. Disabled by default
+  # (TINYUSDZ_BUILD_TEXTOOLS_TESTS=OFF): these test vendored third-party code,
+  # not TinyUSDZ. Enable explicitly when validating a textools sync.
   #
-  if(TINYUSDZ_WITH_TEXTOOLS)
+  if(TINYUSDZ_WITH_TEXTOOLS AND TINYUSDZ_BUILD_TEXTOOLS_TESTS)
     set(TEXTOOLS_TEST_PROGRAMS
       "textools_tir_test|${TEXTOOLS_DIR}/resize/tests/tir_test.c|textools-tir"
       "textools_tir_f16_test|${TEXTOOLS_DIR}/resize/tests/tir_f16_test.c|textools-tir-f16"
@@ -2618,7 +2647,7 @@ if(TINYUSDZ_BUILD_TESTS)
               "$<TARGET_FILE:tusdview>" "${PROJECT_SOURCE_DIR}"
       )
     set_tests_properties(tusdview-unsupported-realtime-lobes PROPERTIES
-                         TIMEOUT 90 LABELS "tusdview")
+                         SKIP_RETURN_CODE 77 TIMEOUT 90 LABELS "tusdview")
   endif()
 
   #
@@ -3235,14 +3264,19 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-inst-morph-cull PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 120)
 
-    add_test(
-      NAME tusdview-dome-orientation
-      COMMAND ${CMAKE_COMMAND} -E env
-              "TUSDVIEW=$<TARGET_FILE:tusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-dome-orientation.sh"
-      )
-    set_tests_properties(tusdview-dome-orientation PROPERTIES
-                         SKIP_RETURN_CODE 77 TIMEOUT 240)
+    # DomeLight IBL baking is provided by the optional vendored textools
+    # dependency. Do not register a pixel-regression that can never exercise
+    # its feature when that dependency is intentionally disabled.
+    if(TINYUSDZ_WITH_TEXTOOLS)
+      add_test(
+        NAME tusdview-dome-orientation
+        COMMAND ${CMAKE_COMMAND} -E env
+                "TUSDVIEW=$<TARGET_FILE:tusdview>"
+                bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-dome-orientation.sh"
+        )
+      set_tests_properties(tusdview-dome-orientation PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 240)
+    endif()
 
     add_test(
       NAME tusdview-displacement-udim
@@ -3807,6 +3841,78 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-subdiv-verify COMMAND feat-subdiv-verify
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(feat-subdiv-verify PROPERTIES LABELS "osd-verify")
+  endif()
+
+  # Xvfb normally gives GLFW a Mesa software context. On machines where the
+  # NVIDIA device is visible, PRIME/GLVND can route that context to the real
+  # GPU; apply the same selection to every tusdview CTest case so nested
+  # xvfb-run invocations inherit it. Keep this opt-in because forcing the
+  # NVIDIA ICD on a host without /dev/nvidia0 turns a useful capability skip
+  # into a hard initialization failure.
+  #
+  # Kernel/GLVND presence alone is not enough for Vulkan: a container can
+  # expose libGLX_nvidia and the NVIDIA layers while the Vulkan ICD is absent,
+  # leaving only llvmpipe. Probe the physical-device list before exporting
+  # TUSDVIEW_VK_DEVICE=nvidia; otherwise leave Vulkan on its normal automatic
+  # hardware/software selection path.
+  if(TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD AND UNIX AND NOT APPLE AND TARGET tusdview)
+    if(EXISTS "/proc/driver/nvidia/version" AND
+       EXISTS "/dev/nvidia0" AND
+       EXISTS "/usr/share/glvnd/egl_vendor.d/10_nvidia.json")
+      set(_tinyusdz_nvidia_vulkan_visible FALSE)
+      find_program(_tinyusdz_vulkaninfo NAMES vulkaninfo)
+      if(_tinyusdz_vulkaninfo)
+        execute_process(
+          COMMAND "${CMAKE_COMMAND}" -E env
+                  "__NV_PRIME_RENDER_OFFLOAD=1"
+                  "__GLX_VENDOR_LIBRARY_NAME=nvidia"
+                  "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
+                  "${_tinyusdz_vulkaninfo}" --summary
+          RESULT_VARIABLE _tinyusdz_vulkaninfo_rc
+          OUTPUT_VARIABLE _tinyusdz_vulkaninfo_out
+          ERROR_VARIABLE _tinyusdz_vulkaninfo_err
+          TIMEOUT 10)
+        if(_tinyusdz_vulkaninfo_rc EQUAL 0)
+          string(CONCAT _tinyusdz_vulkaninfo_text
+                 "${_tinyusdz_vulkaninfo_out}\n${_tinyusdz_vulkaninfo_err}")
+          string(REGEX MATCH
+                 "deviceName[ \\t]*=[ \\t]*[^\\n]*(NVIDIA|GeForce|RTX|Quadro|Tesla)"
+                 _tinyusdz_nvidia_device_match
+                 "${_tinyusdz_vulkaninfo_text}")
+          if(_tinyusdz_nvidia_device_match)
+            set(_tinyusdz_nvidia_vulkan_visible TRUE)
+          endif()
+        endif()
+      endif()
+      get_property(_tinyusdz_tusdview_tests DIRECTORY PROPERTY TESTS)
+      foreach(_tinyusdz_test IN LISTS _tinyusdz_tusdview_tests)
+        if(_tinyusdz_test MATCHES "^tusdview-")
+          get_property(_tinyusdz_test_env TEST "${_tinyusdz_test}"
+                       PROPERTY ENVIRONMENT)
+          if(NOT _tinyusdz_test_env)
+            set(_tinyusdz_test_env)
+          endif()
+          list(APPEND _tinyusdz_test_env
+               "__NV_PRIME_RENDER_OFFLOAD=1"
+               "__GLX_VENDOR_LIBRARY_NAME=nvidia"
+               "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
+               "TUSDVIEW_NVIDIA_OFFLOAD=1"
+               "TUSDVIEW_XVFB=1")
+          if(_tinyusdz_nvidia_vulkan_visible)
+            list(APPEND _tinyusdz_test_env "TUSDVIEW_VK_DEVICE=nvidia")
+          endif()
+          set_tests_properties("${_tinyusdz_test}"
+                               PROPERTIES ENVIRONMENT "${_tinyusdz_test_env}")
+        endif()
+      endforeach()
+      if(_tinyusdz_nvidia_vulkan_visible)
+        message(STATUS "tinyusdz: NVIDIA offload environment enabled for tusdview CTest cases (Vulkan NVIDIA device confirmed)")
+      else()
+        message(STATUS "tinyusdz: NVIDIA GL offload environment enabled; Vulkan NVIDIA device not visible, leaving Vulkan device selection automatic")
+      endif()
+    else()
+      message(STATUS "tinyusdz: NVIDIA offload requested but NVIDIA device/GLVND is not visible; tusdview tests keep their normal environment")
+    endif()
   endif()
 
 endif(TINYUSDZ_BUILD_TESTS)

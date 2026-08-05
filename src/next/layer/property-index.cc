@@ -60,6 +60,7 @@ void PropNameTable::unfreeze() {
 #else
 void PropNameTable::freeze() {}
 void PropNameTable::unfreeze() {}
+bool PropNameTable::is_frozen() const { return false; }
 #endif
 
 PropNameId PropNameTable::intern(const std::string& name) {
@@ -158,9 +159,31 @@ PropNameId PropNameTable::find(const std::string& name) const {
   return PropNameId{};
 }
 
+PropNameId PropNameTable::find(std::string_view name) const {
+  // C++17's unordered_map has no heterogeneous find(). Probe the selected
+  // bucket directly so the string_view path stays allocation-free.
+  const auto lookup = [this](std::string_view view) -> PropNameId {
+    const size_t bucket_count = name_to_id_.bucket_count();
+    if (bucket_count == 0) return PropNameId{};
+    const size_t bucket = PropNameHash{}(view) % bucket_count;
+    for (auto it = name_to_id_.cbegin(bucket);
+         it != name_to_id_.cend(bucket); ++it) {
+      if (PropNameEqual{}(it->first, view)) return PropNameId{it->second};
+    }
+    return PropNameId{};
+  };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (!frozen_.load(std::memory_order_acquire)) {
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+    return lookup(name);
+  }
+#endif
+  return lookup(name);
+}
+
 PropNameId PropNameTable::find(const char* name) const {
   if (!name) return PropNameId{};
-  return find(std::string(name));
+  return find(std::string_view(name));
 }
 
 void PropNameTable::register_common_names() {
@@ -282,6 +305,54 @@ void PropNameTable::register_common_names() {
   intern("primvars:skel:jointIndices");
   intern("primvars:skel:jointWeights");
   intern("primvars:skel:geomBindTransform");
+
+  // Schema-accessor names (geom-mesh / geom-xform / geom-point-instancer /
+  // stage / tydra render-converter / scene-access kId* functions). These are
+  // intern()ed from render-time accessors; pre-registering them keeps every
+  // post-compose intern a HIT so the frozen lock-free table (see freeze())
+  // is never unfrozen by a render-phase schema accessor.
+  intern("primvars:uv");
+  intern("primvars:uv:indices");
+  intern("primvars:st:indices");
+  intern("primvars:displayColor");
+  intern("primvars:displayOpacity");
+  intern("protoIndices");
+  intern("positions");
+  intern("orientations");
+  intern("angularVelocities");
+  intern("invisibleIds");
+  intern("inactiveIds");
+  intern("curveVertexCounts");
+  intern("indices");
+  intern("tetVertexIndices");
+  intern("outputs:out");
+  intern("clippingRange");
+  intern("projection");
+  intern("focalLength");
+  intern("horizontalAperture");
+  intern("verticalAperture");
+  intern("focusDistance");
+  intern("fStop");
+  intern("shutter:open");
+  intern("shutter:close");
+  intern("inputs:colorTemperature");
+  intern("inputs:enableColorTemperature");
+  intern("inputs:diffuse");
+  intern("inputs:specular");
+  intern("inputs:normalize");
+  intern("inputs:enableShadows");
+  intern("inputs:shadow:enable");
+  intern("inputs:shadow:color");
+  intern("inputs:shadow:distance");
+  intern("inputs:shadow:falloff");
+  intern("inputs:shadow:falloffGamma");
+  intern("inputs:shaping:cone:angle");
+  intern("inputs:shaping:cone:softness");
+  intern("inputs:shaping:focus");
+  intern("inputs:shaping:focusTint");
+  intern("inputs:shaping:ies:angleScale");
+  intern("inputs:shaping:ies:normalize");
+  intern("inputs:shaping:ies:file");
 }
 
 // Global singleton. Registration happens inside the (thread-safe) static

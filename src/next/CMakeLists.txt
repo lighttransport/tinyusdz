@@ -290,6 +290,10 @@ target_include_directories(tinyusdz_next PRIVATE
 # Compiler warnings
 if(MSVC)
     target_compile_options(tinyusdz_next PRIVATE /W4)
+    # Older MSVC toolset versions in some environments can trip STL/compiler
+    # version checks; this keeps compatibility with CI/toolchain combinations that
+    # still target this project.
+    target_compile_definitions(tinyusdz_next PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 else()
     target_compile_options(tinyusdz_next PRIVATE -Wall -Wextra -Wpedantic)
     # Disable some warnings for LZ4 C code
@@ -579,6 +583,7 @@ target_include_directories(tydra_next PUBLIC
 
 if(MSVC)
     target_compile_options(tydra_next PRIVATE /W4)
+    target_compile_definitions(tydra_next PRIVATE _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH)
 else()
     target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
 endif()
