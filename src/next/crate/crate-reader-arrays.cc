@@ -38,6 +38,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
         lr.element_count <=
             static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)()) &&
         (rep.payload() == 0 || lr.block_len > 0)) {
+      lr.max_elements = options_.max_array_elements;
       out = Value::MakeLazyArray(lr);
       return true;
     }

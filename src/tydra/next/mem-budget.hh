@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <new>
 #include <string>
@@ -59,7 +60,14 @@ class MemBudget {
   // cap_override_gib <= 0 -> the shared 32 GiB-target host policy.
   void Init(double cap_override_gib) {
     if (cap_override_gib > 0.0) {
-      cap_ = size_t(cap_override_gib * double(size_t(1) << 30));
+      const long double requested =
+          static_cast<long double>(cap_override_gib) *
+          static_cast<long double>(size_t(1) << 30);
+      const long double max_size = static_cast<long double>(
+          (std::numeric_limits<size_t>::max)());
+      cap_ = requested >= max_size
+                 ? (std::numeric_limits<size_t>::max)()
+                 : static_cast<size_t>(requested);
     } else {
       size_t avail = AvailableSystemMemory();
       const uint64_t target_capacity =
@@ -84,7 +92,9 @@ class MemBudget {
           tinyusdz::tydra::next::ComputeResourceBudget(avail, 0).host_limit;
       if (host_limit) cap_bytes = std::min<uint64_t>(cap_bytes, host_limit);
     }
-    cap_ = static_cast<size_t>(cap_bytes);
+    cap_ = cap_bytes > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())
+               ? (std::numeric_limits<size_t>::max)()
+               : static_cast<size_t>(cap_bytes);
     base_.store(0);
     tracked_.store(0);
     peak_tracked_.store(0);
@@ -108,20 +118,20 @@ class MemBudget {
   // Atomically reserve `bytes` of tracked allocation; false if it would exceed
   // the cap (cap_ - base_). Used by PoolAlloc::allocate.
   bool TryAdd(size_t bytes) {
-    if (!cap_) {  // no limit configured
-      size_t v = tracked_.fetch_add(bytes, std::memory_order_relaxed) + bytes;
-      BumpPeak(v);
-      return true;
-    }
     size_t base = base_.load(std::memory_order_relaxed);
     size_t limit = cap_ > base ? cap_ - base : 0;
-    size_t prev = tracked_.fetch_add(bytes, std::memory_order_relaxed);
-    if (prev + bytes > limit) {
-      tracked_.fetch_sub(bytes, std::memory_order_relaxed);
-      return false;
+    size_t prev = tracked_.load(std::memory_order_relaxed);
+    for (;;) {
+      if (bytes > (std::numeric_limits<size_t>::max)() - prev) return false;
+      const size_t next = prev + bytes;
+      if (cap_ && next > limit) return false;
+      if (tracked_.compare_exchange_weak(prev, next,
+                                         std::memory_order_relaxed,
+                                         std::memory_order_relaxed)) {
+        BumpPeak(next);
+        return true;
+      }
     }
-    BumpPeak(prev + bytes);
-    return true;
   }
   void Sub(size_t bytes) {
     tracked_.fetch_sub(bytes, std::memory_order_relaxed);
@@ -132,7 +142,7 @@ class MemBudget {
   bool WouldExceed(size_t extra_estimate, std::string *why = nullptr) const {
     if (!cap_) return false;
     size_t rss = ProcessRSS();
-    if (rss + extra_estimate <= cap_) return false;
+    if (extra_estimate <= cap_ - std::min(rss, cap_)) return false;
     if (why) {
       *why = "memory cap " + GiB(cap_) + " would be exceeded (current RSS " +
              GiB(rss) + " + estimated " + GiB(extra_estimate) + ")";
@@ -269,12 +279,16 @@ class MemPool {
   void Free(void *p, size_t bytes) {
     if (!p) return;
     int b = Bucket(bytes);
-    if (b >= 0 &&
-        pooled_.load(std::memory_order_relaxed) + BucketBytes(b) <= kMaxPooled) {
+    if (b >= 0) {
       std::lock_guard<std::mutex> lk(mu_[b]);
-      free_[b].push_back(p);
-      pooled_.fetch_add(BucketBytes(b), std::memory_order_relaxed);
-      return;
+      const size_t bucket_bytes = BucketBytes(b);
+      const size_t pooled = pooled_.load(std::memory_order_relaxed);
+      if (pooled <= kMaxPooled &&
+          bucket_bytes <= kMaxPooled - pooled) {
+        free_[b].push_back(p);
+        pooled_.fetch_add(bucket_bytes, std::memory_order_relaxed);
+        return;
+      }
     }
     std::free(p);
   }
@@ -286,6 +300,7 @@ class MemPool {
   static constexpr size_t kMaxPooled = size_t(256) << 20;  // retain <=256 MiB
   static int Bucket(size_t bytes) {
     if (bytes == 0) bytes = 1;
+    if (bytes > (size_t(1) << kMaxShift)) return -1;
     int s = kMinShift;
     while ((size_t(1) << s) < bytes) ++s;
     if (s > kMaxShift) return -1;
@@ -314,6 +329,9 @@ struct PoolAlloc {
   template <class U>
   PoolAlloc(const PoolAlloc<U> &) noexcept {}
   T *allocate(std::size_t n) {
+    if (n > (std::numeric_limits<std::size_t>::max)() / sizeof(T)) {
+      throw std::bad_alloc();
+    }
     std::size_t bytes = n * sizeof(T);
     if (!MemBudget::Get().TryAdd(bytes)) throw std::bad_alloc();
     void *p = MemPool::Get().Alloc(bytes);
@@ -324,6 +342,7 @@ struct PoolAlloc {
     return static_cast<T *>(p);
   }
   void deallocate(T *p, std::size_t n) noexcept {
+    if (n > (std::numeric_limits<std::size_t>::max)() / sizeof(T)) return;
     std::size_t bytes = n * sizeof(T);
     MemPool::Get().Free(p, bytes);
     MemBudget::Get().Sub(bytes);

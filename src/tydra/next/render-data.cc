@@ -6,6 +6,8 @@
 #include "render-data.hh"
 #include <cmath>
 
+#include "safe-arithmetic.hh"
+
 namespace tinyusdz {
 namespace tydra {
 namespace next {
@@ -13,13 +15,19 @@ namespace {
 
 template <typename T>
 size_t VectorBytes(const std::vector<T>& v) {
-  return v.capacity() * sizeof(T);
+  size_t bytes;
+  if (!safe::mul(v.capacity(), sizeof(T), &bytes)) return 0;
+  return bytes;
 }
 
 size_t StringVectorBytes(const std::vector<std::string>& v) {
-  size_t total = v.capacity() * sizeof(std::string);
+  size_t cap_bytes;
+  if (!safe::mul(v.capacity(), sizeof(std::string), &cap_bytes)) return 0;
+  size_t total = cap_bytes;
   for (const std::string& s : v) {
-    total += s.capacity();
+    size_t sum;
+    if (!safe::add(total, s.capacity(), &sum)) return total;
+    total = sum;
   }
   return total;
 }
@@ -131,8 +139,20 @@ size_t RenderMesh::memory_usage() const {
 }
 
 //
-// RenderPointInstancer
+// RenderPoints
 //
+
+void RenderPoints::compact() {
+  points.shrink_to_fit();
+  widths.shrink_to_fit();
+  colors.shrink_to_fit();
+  opacities.shrink_to_fit();
+}
+
+bool RenderPoints::has_alloc_failure() const {
+  return points.alloc_failed() || widths.alloc_failed() ||
+         colors.alloc_failed() || opacities.alloc_failed();
+}
 
 size_t RenderPoints::memory_usage() const {
   size_t total = sizeof(*this);
@@ -148,6 +168,26 @@ size_t RenderPoints::memory_usage() const {
 //
 // RenderCurves
 //
+
+void RenderCurves::compact() {
+  points.shrink_to_fit();
+  widths.shrink_to_fit();
+  colors.shrink_to_fit();
+  opacities.shrink_to_fit();
+  tessellated_points.shrink_to_fit();
+  tessellated_widths.shrink_to_fit();
+  tessellated_colors.shrink_to_fit();
+  tessellated_opacities.shrink_to_fit();
+}
+
+bool RenderCurves::has_alloc_failure() const {
+  return points.alloc_failed() || widths.alloc_failed() ||
+         colors.alloc_failed() || opacities.alloc_failed() ||
+         tessellated_points.alloc_failed() ||
+         tessellated_widths.alloc_failed() ||
+         tessellated_colors.alloc_failed() ||
+         tessellated_opacities.alloc_failed();
+}
 
 size_t RenderCurves::memory_usage() const {
   size_t total = sizeof(*this);
@@ -197,8 +237,9 @@ size_t RenderPointInstancer::memory_usage() const {
 
 size_t RenderPointInstancer::prototype_mesh_count(size_t prototype_index) const {
   if (prototype_index + 1 >= prototype_mesh_offsets.size()) return 0;
-  return prototype_mesh_offsets[prototype_index + 1] -
-         prototype_mesh_offsets[prototype_index];
+  const uint32_t begin = prototype_mesh_offsets[prototype_index];
+  const uint32_t end = prototype_mesh_offsets[prototype_index + 1];
+  return end >= begin ? static_cast<size_t>(end - begin) : 0;
 }
 
 bool RenderPointInstancer::has_valid_prototype_mesh_bindings() const {
@@ -241,7 +282,8 @@ bool RenderPointInstancer::has_valid_draw_range(size_t total_draw_count) const {
 //
 
 float RenderCamera::fov_y() const {
-  if (type == CameraType::Orthographic) {
+  if (type == CameraType::Orthographic || focal_length <= 0.0f ||
+      vertical_aperture <= 0.0f) {
     return 0.0f;
   }
   // fov_y = 2 * atan(vertical_aperture / (2 * focal_length))
@@ -249,7 +291,8 @@ float RenderCamera::fov_y() const {
 }
 
 float RenderCamera::fov_x() const {
-  if (type == CameraType::Orthographic) {
+  if (type == CameraType::Orthographic || focal_length <= 0.0f ||
+      horizontal_aperture <= 0.0f) {
     return 0.0f;
   }
   return 2.0f * std::atan(horizontal_aperture / (2.0f * focal_length));
@@ -287,16 +330,23 @@ size_t RenderScene::memory_usage() const {
     total += img.memory_usage();
   }
 
-  // Estimate for other containers
-  total += nodes.size() * sizeof(SceneNode);
-  total += point_instance_draws.size() * sizeof(RenderPointInstanceDraw);
-  total += materials.size() * sizeof(RenderMaterial);
-  total += textures.size() * sizeof(RenderTexture);
-  total += lights.size() * sizeof(RenderLight);
-  total += cameras.size() * sizeof(RenderCamera);
-  total += animations.size() * sizeof(AnimationClip);
-  total += skeletons.size() * sizeof(Skeleton);
-  total += unsupported_renderables.size() * sizeof(UnsupportedRenderable);
+  // Estimate for other containers (saturating on overflow)
+  auto add_size = [&total](size_t count, size_t elem_size) {
+    size_t bytes;
+    if (safe::mul(count, elem_size, &bytes)) {
+      size_t sum;
+      if (safe::add(total, bytes, &sum)) total = sum;
+    }
+  };
+  add_size(nodes.size(), sizeof(SceneNode));
+  add_size(point_instance_draws.size(), sizeof(RenderPointInstanceDraw));
+  add_size(materials.size(), sizeof(RenderMaterial));
+  add_size(textures.size(), sizeof(RenderTexture));
+  add_size(lights.size(), sizeof(RenderLight));
+  add_size(cameras.size(), sizeof(RenderCamera));
+  add_size(animations.size(), sizeof(AnimationClip));
+  add_size(skeletons.size(), sizeof(Skeleton));
+  add_size(unsupported_renderables.size(), sizeof(UnsupportedRenderable));
 
   return total;
 }

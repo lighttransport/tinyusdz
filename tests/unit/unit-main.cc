@@ -731,6 +731,11 @@ TEST_LIST = {
   { "layer_asset_resolution_state_test", layer_asset_resolution_state_test },
   { "layer_memory_estimation_test", layer_memory_estimation_test },
   { "layer_moved_from_is_valid_test", layer_moved_from_is_valid_test },
+  { "layer_find_primspec_at_same_leaf_name_test", layer_find_primspec_at_same_leaf_name_test },
+  { "layer_find_primspec_at_cache_full_path_test", layer_find_primspec_at_cache_full_path_test },
+  { "layer_deep_namespace_depth_test", layer_deep_namespace_depth_test },
+  { "layer_children_by_parent_test", layer_children_by_parent_test },
+  { "layer_max_prim_path_length_test", layer_max_prim_path_length_test },
   // PrimSpec tests
   { "primspec_create_test", primspec_create_test },
   { "primspec_specifiers_test", primspec_specifiers_test },
@@ -827,6 +832,8 @@ TEST_LIST = {
   { "security_safe_mul_add_tests", security_safe_mul_add_tests },
   { "security_unwrap_triple_delim_test", security_unwrap_triple_delim_test },
   { "security_is_safe_asset_path_test", security_is_safe_asset_path_test },
+  { "security_findfile_segment_traversal_test", security_findfile_segment_traversal_test },
+  { "security_findfile_absolute_traversal_test", security_findfile_absolute_traversal_test },
   // USDZ writer and validation tests
   { "usdz_writer_basic_roundtrip_test", usdz_writer_basic_roundtrip_test },
   { "usdz_writer_is_usdz_prefix_detection_test", usdz_writer_is_usdz_prefix_detection_test },

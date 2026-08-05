@@ -30,7 +30,7 @@ The gaps selected for the 2026-07-11 remediation pass and the 2026-07-12 deeper 
 | Strict versus compatibility policy | **Implemented** | USDA, USDC, composition, and evaluation expose `strict_aousd_conformance`; USDC strict reads promote lossy warnings to errors and strict writes reject raw fields that Crate cannot encode (splines now encode as type-59). |
 | Relationship forwarding | **Implemented for ordinary and native instance-proxy paths** | Raw and recursively forwarded targets retain ordering/dedup/cycle behavior. Prototype targets are mapped into each instance namespace; instance roots also expose prototype properties and relationship names. |
 | Elective authored state | **Generated coverage table complete for the AOUSD document-model inventory** | A generated 75-field table classifies every reviewed elective field as typed, structural, or opaque-preserved. `displayGroupOrder` and property `comment` are now typed/authored through USDA, USDC, and composition; deprecated fields remain intentionally opaque but lossless. |
-| Supplemental AOUSD suite | **Integrated; ratcheted baseline recorded** | An optional external-corpus CTest adapter covers foundational data, all 54 USDA/USDC format assets, all 138 composition expectations (including expected prim paths), and all eight value-resolution entry layers without vendoring binary assets. Current composition result is 116/138; the other integrated groups pass. |
+| Supplemental AOUSD suite | **Integrated; ratcheted baseline recorded** | An optional external-corpus CTest adapter covers foundational data, all 54 USDA/USDC format assets, all 138 composition expectations (including expected prim paths), and all eight value-resolution entry layers without vendoring binary assets. Current composition result is **138/138 pass, 0 measured gaps** (see [Verification performed](#verification-performed)); the other integrated groups pass. |
 | Expression variables | **Implemented for composition asset-path substitution** | Backtick direct-variable and quoted `${NAME}` interpolation is evaluated for reference/payload paths with closer-to-root stack precedence. Policy is explicit: disabled, warn-and-preserve, or require-resolved; undefined/non-string/unsupported expressions produce typed diagnostics. |
 | USDC follow-up audit | **Fixed for bounded findings** | Omitted reference paths, compression dispatch, documentation, and sparse ordering are fixed. Unknown Layer, Prim, Attribute, and Relationship fields now retain their token, typed value, and `UnregisteredValue` source and rewrite interoperably instead of being dropped or rejected merely for being unknown. |
 | Interpolation breadth | **Implemented for AOUSD §12.6 types** | Every normative scalar, vector, matrix, and quaternion family plus held fallback is covered; semantic aliases preserve their declared roles. Numeric array interpolation remains an implementation extension, not part of the §12.6 compliance claim. |
@@ -564,11 +564,17 @@ Tydra is not an SDR/plugin shader registry. It evaluates selected Preview Surfac
 
 **Fix needed:** distinguish “unsupported but preserved,” “approximated,” and “failed” material/light results in the public render data. Add a strict mode that refuses approximations. If broader support is desired, use a registered node-definition/evaluator interface rather than expanding a monolithic name switch.
 
-### TYDRA-ANIM-001 — Tydra clip baking duplicates core policy (P2)
+### TYDRA-ANIM-001 — Tydra clip baking duplicates core policy (P2) — **Fixed**
 
-Tydra's optional value-clip baking remains valuable and has conversion-specific sampling caps. Core stage query semantics now exist in `eval/value-clip`, but Tydra still contains its earlier metadata parser/sampling implementation, creating a divergence risk.
-
-**Fix needed:** make Tydra request a bounded sampling plan from the core resolver and delete the duplicate metadata semantics. Retain conversion-level sample caps as resource policy, with an explicit truncation diagnostic.
+Tydra's value-clip metadata parsing, active-clip selection, and stage→clip time
+mapping now come from the **core resolver** (`next/eval/value-clip.hh`:
+`ParseValueClipSets` + `ResolveValueClipFromSets`) instead of a drifted local
+copy (the old duplicate lacked jump-discontinuity handling, had a stale
+out-of-range mapping, no `clipSets` ordering edits, no manifest gating, and no
+nested-clip recursion). Tydra only retains the bake-time sampling caps as
+resource policy with a truncation diagnostic: `bake_value_clips`
+(`src/tydra/next/render-converter.hh`, default true) and
+`max_value_clip_samples` (default 10000).
 
 ### Product-scope differences
 
@@ -692,7 +698,7 @@ The generated-coverage/supplemental pass adds 13 generated AOUSD Core schema pro
 
 Configure the optional full gate with `-DTINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT=/path/to/core-spec-supplemental-release_dec2025`. The ordinary tree does not require or download this external corpus; `next_aousd_generated_tables` always checks the committed generated tables.
 
-With that external path configured, the complete standalone regression run passes **32/32** CTest targets. The composition ratchet (`--max-composition-fail`) is now **0**: every supplemental composition case must pass, so any file-format, data-type, value-entry, or composition regression fails the gate.
+With that external path configured, the complete standalone regression run passes **36/36** CTest targets (all `add_test` entries in `src/next/CMakeLists.txt`, including the corpus and supplemental gates). The composition ratchet (`--max-composition-fail`) is now **0**: every supplemental composition case must pass, so any file-format, data-type, value-entry, or composition regression fails the gate.
 
 The ratchet reached 0 in three reductions: 36 → 22 → 0. The first pass fixed uppercase USDA booleans, empty internal arcs selecting the layer-stack `defaultPrim`, instance-proxy lookup without subtree duplication, invalid/conflicting relocate rejection, chained post-relocation source paths, composed-namespace internal references with cycle bounds, implied-class selection strength, and variant-option selections targeting sibling variant sets.
 

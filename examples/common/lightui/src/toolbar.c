@@ -129,11 +129,22 @@ static void tb_draw(lui_widget_t *w, lvg_canvas_t *canvas)
         /* Label text below icon (if space) */
         int label_len = (int)strlen(item->label);
         if (label_len > 0 && !tb->vertical && ir.height >= tb->button_size + 12) {
+            lvg_color_t tc = item->enabled ? tb->icon_default : tb->disabled_color;
+#ifdef LUI_HAVE_FONTS
+            if (tb->font) {
+                int tw = lui_font_measure_text(tb->font, item->label, label_len);
+                lui_canvas_draw_text(canvas, ir.x + (ir.width - tw) / 2,
+                                     iy + icon_sz + 2 + lui_font_ascent(tb->font),
+                                     item->label, label_len, tb->font, tc);
+            } else {
+#endif
             int tx = ir.x + (ir.width - label_len * 5) / 2;
             int ty = iy + icon_sz + 2;
-            lvg_color_t tc = item->enabled ? tb->icon_default : tb->disabled_color;
             for (int c = 0; c < label_len && c < 4; c++)
                 lvg_canvas_fill_rect(canvas, tx + c * 6, ty, 4, 6, tc);
+#ifdef LUI_HAVE_FONTS
+            }
+#endif
         }
     }
 }

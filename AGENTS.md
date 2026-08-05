@@ -98,7 +98,7 @@ python/                    CPython abi3 wheel (built from
   README.md                  User-facing Python docs
 
 tests/                     C++ tests + roundtrip + Python harness
-  unit/                      Acutest-based unit tests (unit-*.cc, 580+
+  unit/                      Acutest-based unit tests (unit-*.cc, ~1020
                              tests)
   usda/                      USDA test fixture files
   usdc/                      USDC test fixture files
@@ -114,10 +114,12 @@ examples/                  Standalone example apps (separate builds):
                            c_api_example, mcp_server, file_format,
                            js-script, progressive_composition, etc.
 models/                    Test USD files for development
-doc/                       Documentation (testing-cpp.md,
-                           how-to-implement-feature.md, ci.md —
-                           release/publish
-                           procedure, etc.)
+ doc/                       Documentation (index: doc/README.md;
+                            testing-cpp.md,
+                            how-to-implement-feature.md, ci.md —
+                            release/publish
+                            procedure, etc.; archived docs in
+                            doc/archive/)
 aousd/                     AOUSD spec text + crate-impl docs (NOT the
                            PDFs themselves — those are gitignored)
 scripts/                   Build/bootstrap scripts for various
@@ -184,6 +186,11 @@ tusdview under them — including **GPU-Assisted Validation** for shader
 descriptor-OOB / `VK_ERROR_DEVICE_LOST` faults that plain validation can't see.
 The procedure is in that doc; the threaded VK-RT case study is in
 [examples/tusdview/doc/threading-stage2.md](examples/tusdview/doc/threading-stage2.md).
+For NVIDIA hardware viewer regression under a headless display, use the
+documented `xvfb-run` + `TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON` procedure in
+[doc/testing-cpp.md](doc/testing-cpp.md#headless-nvidia-viewer-regression); do
+not force `TUSDVIEW_VK_DEVICE=nvidia` unless the configure-time Vulkan probe
+confirms an NVIDIA physical device.
 
 ## Testing
 
@@ -311,7 +318,7 @@ node tests/compare-usda.js --detailed-diff \
 
 | Name | What It Tests |
 |------|---------------|
-| `unit-test-tinyusdz` | 140+ Acutest unit tests (parser, writer, math, materials, etc.) |
+| `unit-test-tinyusdz` | ~1020 Acutest unit tests (parser, writer, math, materials, etc.) |
 | `usda-parser-unit-test` | Load all `tests/usda/*.usda` + expected-failure cases |
 | `usdc-parser-unit-test` | Load all `tests/usdc/*.usdc` files |
 | `usda-roundtrip-test` | USDA parse -> export -> reparse -> compare |
@@ -359,7 +366,7 @@ Concise imperative subjects (e.g. "Fix double-quoting in USDC metadata"). Body o
 
 ## Release / Versioning
 
-Cutting a release (version bump, git tag, PyPI wheel publish, npm package publish) is documented in **[doc/ci.md](doc/ci.md)**. Read it before bumping any version or pushing a `v*.*.*` tag — the tag push triggers an automated PyPI publish via `.github/workflows/wheels.yml` (OIDC trusted publishing), and the npm publish is a manual `workflow_dispatch` on `.github/workflows/wasmPublish.yml`. The version sources that need hand-editing are `src/tinyusdz.hh` (C++ constants) and `web/{npm,js}/package.json` (npm packages); the Python wheel version is derived from the git tag by `setuptools_scm` and must NOT be edited by hand.
+Cutting a release (version bump, git tag, PyPI wheel publish, npm package publish) is documented in **[doc/ci.md](doc/ci.md)**. Read it before bumping any version or pushing a `v*.*.*` tag — a final `vX.Y.Z` tag push triggers an automated PyPI publish via `.github/workflows/wheels.yml` (OIDC trusted publishing; pre-release tags with a `-` suffix skip the PyPI publish by design), and the npm publish is a manual `workflow_dispatch` on `.github/workflows/wasmPublish.yml`. The version sources that need hand-editing are `src/tinyusdz.hh` (C++ constants) and `web/{npm,js}/package.json` (npm packages); the Python wheel version is derived from the git tag by `setuptools_scm` and must NOT be edited by hand.
 
 ### Versioning and tagging checklist
 

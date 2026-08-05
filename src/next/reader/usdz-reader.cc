@@ -39,23 +39,59 @@ bool CheckedAdd(size_t a, size_t b, size_t* out) {
   return true;
 }
 
+// URL-decode a percent-encoded string in-place.
+// Returns false if the input contains an invalid percent sequence.
+static bool URLDecode(std::string *s) {
+  std::string out;
+  out.reserve(s->size());
+  for (size_t i = 0; i < s->size(); i++) {
+    if ((*s)[i] == '%') {
+      if (i + 2 >= s->size()) return false;
+      auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        return -1;
+      };
+      int hi = hex((*s)[i + 1]);
+      int lo = hex((*s)[i + 2]);
+      if (hi < 0 || lo < 0) return false;
+      out.push_back(static_cast<char>((hi << 4) | lo));
+      i += 2;
+    } else {
+      out.push_back((*s)[i]);
+    }
+  }
+  *s = std::move(out);
+  return true;
+}
+
 bool IsSafeEntryName(const std::string& name) {
-  if (name.empty() || name.front() == '/' || name.front() == '\\' ||
-      name.find('\\') != std::string::npos ||
-      name.find('\0') != std::string::npos) {
+  if (name.empty()) return false;
+
+  // Normalize: normalize backslashes, then URL-decode, so that
+  // percent-encoded path separators / segments cannot bypass the check.
+  std::string n = name;
+  for (char &c : n) {
+    if (c == '\\') c = '/';
+  }
+  if (!URLDecode(&n)) return false;
+
+  if (n.front() == '/' ||
+      n.find('\0') != std::string::npos) {
     return false;
   }
-  if (name.size() >= 2 &&
-      ((name[0] >= 'A' && name[0] <= 'Z') ||
-       (name[0] >= 'a' && name[0] <= 'z')) &&
-      name[1] == ':') {
+  if (n.size() >= 2 &&
+      ((n[0] >= 'A' && n[0] <= 'Z') ||
+       (n[0] >= 'a' && n[0] <= 'z')) &&
+      n[1] == ':') {
     return false;
   }
   size_t start = 0;
-  while (start < name.size()) {
-    const size_t slash = name.find('/', start);
-    const size_t end = slash == std::string::npos ? name.size() : slash;
-    const std::string part = name.substr(start, end - start);
+  while (start < n.size()) {
+    const size_t slash = n.find('/', start);
+    const size_t end = slash == std::string::npos ? n.size() : slash;
+    const std::string part = n.substr(start, end - start);
     if (part.empty() || part == "." || part == "..") return false;
     if (slash == std::string::npos) return true;
     start = slash + 1;

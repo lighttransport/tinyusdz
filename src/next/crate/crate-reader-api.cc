@@ -22,6 +22,7 @@ CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
   }
 
   source_ = CrateDataSource::Adopt(std::move(bytes), CrateVersion{});
+  source_->set_max_array_elements(options_.max_array_elements);
   return ParseFromSource();
 }
 
@@ -88,7 +89,7 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
 }
 
 CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
-  if (!data) {
+  if (!data && size != 0) {
     result_ = CrateReadResult();
     AddError("Invalid input data");
     return std::move(result_);
@@ -98,6 +99,7 @@ CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
     AddError("Input exceeds max_memory budget");
     return std::move(result_);
   }
+  if (size == 0) return ReadFromString(std::string());
   return ReadFromString(std::string(reinterpret_cast<const char*>(data), size));
 }
 
@@ -106,6 +108,11 @@ CrateReadResult CrateReader::Impl::ReadOwned(std::string&& owned) {
 }
 
 CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
+  if (!filename || !*filename) {
+    CrateReadResult result;
+    result.errors.push_back({0, "Invalid filename"});
+    return result;
+  }
   if (options_.max_memory) {
     std::ifstream probe(filename, std::ios::binary | std::ios::ate);
     if (!probe.is_open()) {
@@ -130,6 +137,7 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
   if (options_.use_mmap) {
     if (auto src = CrateDataSource::MmapFile(filename)) {
       source_ = std::move(src);
+      source_->set_max_array_elements(options_.max_array_elements);
       return ParseFromSource();
     }
   }
@@ -154,7 +162,7 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
   file.seekg(0, std::ios::beg);
 
   std::string data(fsize, '\0');
-  if (!file.read(&data[0], size)) {
+  if (size != 0 && !file.read(data.data(), size)) {
     CrateReadResult result;
     result.errors.push_back({0, "Failed to read file contents"});
     return result;

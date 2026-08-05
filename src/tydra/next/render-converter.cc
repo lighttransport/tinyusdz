@@ -3,6 +3,7 @@
 //
 // Tydra Next - Render Scene Converter Implementation
 
+#include "safe-arithmetic.hh"
 #include "render-converter.hh"
 #include "mem-budget.hh"
 #include "next/schema/color-space.hh"
@@ -25,6 +26,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <unordered_map>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -50,6 +52,465 @@ constexpr float kAlphaEpsilon = 1.0e-6f;
 constexpr size_t kMaxTriangulationCornerCount = 150'000'000u;
 constexpr uint32_t kEarcutMaxVertices = 16384;
 constexpr size_t kMaxTempAllocBytes = 256u * 1024u * 1024u;
+
+uint64_t ImageCacheHash(const std::string& resolved,
+                        ColorSpace color_space) noexcept {
+  // FNV-1a is fast for these short, path-like keys and avoids allocating a
+  // second copy of every resolved path just to use an unordered_map.
+  uint64_t hash = 1469598103934665603ull;
+  hash ^= static_cast<uint8_t>(color_space);
+  hash *= 1099511628211ull;
+  for (const unsigned char byte : resolved) {
+    hash ^= byte;
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+const ::tinyusdz::next::PropNameId& kIdVisibility() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("visibility");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdOutputsOut() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("outputs:out");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdClippingRange() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("clippingRange");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdFaceVertexCounts() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("faceVertexCounts");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdFaceVertexIndices() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("faceVertexIndices");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdOrientation() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("orientation");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdDoubleSided() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("doubleSided");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdHoleIndices() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("holeIndices");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdPoints() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("points");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdTetVertexIndices() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("tetVertexIndices");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdNormals() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("normals");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdDisplayColor() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("primvars:displayColor");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdDisplayOpacity() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("primvars:displayOpacity");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdPrimvarsSt() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("primvars:st");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdExtent() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("extent");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdCurveVertexCounts() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("curveVertexCounts");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdWidths() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("widths");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsColor() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:color");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsIntensity() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:intensity");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsExposure() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:exposure");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsNormalize() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:normalize");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsEnableColorTemperature() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:enableColorTemperature");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsColorTemperature() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:colorTemperature");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsDiffuse() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:diffuse");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsSpecular() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:specular");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShapingConeAngle() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:cone:angle");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShapingFocus() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:focus");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShapingFocusTint() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:focusTint");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShapingConeSoftness() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:cone:softness");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShapingIesAngleScale() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:ies:angleScale");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShapingIesNormalize() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:ies:normalize");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShapingIesFile() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shaping:ies:file");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsRadius() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:radius");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsWidth() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:width");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsHeight() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:height");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsLength() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:length");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsAngle() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:angle");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsTextureFormat() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:texture:format");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShadowEnable() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shadow:enable");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsEnableShadows() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:enableShadows");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShadowColor() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shadow:color");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShadowDistance() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shadow:distance");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShadowFalloff() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shadow:falloff");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsShadowFalloffGamma() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:shadow:falloffGamma");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdInputsTextureFile() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("inputs:texture:file");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdProjection() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("projection");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdFocalLength() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("focalLength");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdHorizontalAperture() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("horizontalAperture");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdVerticalAperture() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("verticalAperture");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdFocusDistance() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("focusDistance");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdShutterOpen() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("shutter:open");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdShutterClose() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("shutter:close");
+  return id;
+}
+
+const ::tinyusdz::next::PropNameId& kIdFStop() {
+  static const ::tinyusdz::next::PropNameId id =
+      ::tinyusdz::next::GetPropNameTable().intern("fStop");
+  return id;
+}
+
+bool GetBool(const UsdPrim& prim, const ::tinyusdz::next::PropNameId& name_id,
+             bool* out) {
+  if (!out) return false;
+  const Value* val = prim.GetPropertyValue(name_id);
+  if (!val) return false;
+  const bool* b = val->as_bool();
+  if (!b) return false;
+  *out = *b;
+  return true;
+}
+
+bool GetFloat(const UsdPrim& prim, const ::tinyusdz::next::PropNameId& name_id,
+              float* out) {
+  if (!out) return false;
+  const Value* val = prim.GetPropertyValue(name_id);
+  if (!val) return false;
+  const float* f = val->as_float();
+  if (f) {
+    *out = *f;
+    return true;
+  }
+  const double* d = val->as_double();
+  if (d) {
+    *out = static_cast<float>(*d);
+    return true;
+  }
+  return false;
+}
+
+bool GetFloat3(const UsdPrim& prim, const ::tinyusdz::next::PropNameId& name_id,
+               float* x, float* y, float* z) {
+  if (!x || !y || !z) return false;
+  const Value* val = prim.GetPropertyValue(name_id);
+  if (!val) return false;
+  const float* f3 = val->as_float3();
+  if (f3) {
+    x[0] = f3[0];
+    y[0] = f3[1];
+    z[0] = f3[2];
+    return true;
+  }
+  const double* d3 = val->as_double3();
+  if (d3) {
+    x[0] = static_cast<float>(d3[0]);
+    y[0] = static_cast<float>(d3[1]);
+    z[0] = static_cast<float>(d3[2]);
+    return true;
+  }
+  return false;
+}
+
+bool GetDouble(const UsdPrim& prim,
+               const ::tinyusdz::next::PropNameId& name_id, double* out) {
+  if (!out) return false;
+  const Value* val = prim.GetPropertyValue(name_id);
+  if (!val) return false;
+  const double* d = val->as_double();
+  if (d) {
+    *out = *d;
+    return true;
+  }
+  const float* f = val->as_float();
+  if (f) {
+    *out = *f;
+    return true;
+  }
+  return false;
+}
+
+bool GetToken(const UsdPrim& prim,
+             const ::tinyusdz::next::PropNameId& name_id, std::string* out) {
+  if (!out) return false;
+  const Value* val = prim.GetPropertyValue(name_id);
+  if (!val) return false;
+  const std::string* token = val->as_token();
+  if (token) {
+    *out = *token;
+    return true;
+  }
+  const std::string* str = val->as_string();
+  if (!str) return false;
+  *out = *str;
+  return true;
+}
+
+bool GetBool(const UsdPrim& prim, const char* name, bool* out) {
+  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return false;
+  return GetBool(prim, name_id, out);
+}
+
+bool GetFloat(const UsdPrim& prim, const char* name, float* out) {
+  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return false;
+  return GetFloat(prim, name_id, out);
+}
+
+bool GetDouble(const UsdPrim& prim, const char* name, double* out) {
+  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return false;
+  return GetDouble(prim, name_id, out);
+}
+
+bool GetToken(const UsdPrim& prim, const char* name, std::string* out) {
+  const auto name_id = ::tinyusdz::next::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return false;
+  return GetToken(prim, name_id, out);
+}
+
+bool GetBool(const UsdPrim& prim, const std::string& name, bool* out) {
+  return GetBool(prim, name.c_str(), out);
+}
+
+bool GetDouble(const UsdPrim& prim, const std::string& name, double* out) {
+  return GetDouble(prim, name.c_str(), out);
+}
+
+bool GetToken(const UsdPrim& prim, const std::string& name, std::string* out) {
+  return GetToken(prim, name.c_str(), out);
+}
+
+size_t AuthoredArraySize(const UsdPrim& prim,
+                        const ::tinyusdz::next::PropNameId& name_id) {
+  const Value* value = prim.GetPropertyValue(name_id);
+  return value && value->is_array() ? value->array_size() : 0;
+}
 
 bool WouldOverflowSizeMul(size_t a, size_t b) {
   if (a == 0 || b == 0) return false;
@@ -263,7 +724,7 @@ RenderTexture::Channel ChannelFromConnection(
   // roughness and metallic maps sample R while color/normal maps sample RGB.
   if (channel == "out" && texture_prim.IsValid()) {
     std::string type;
-    if (const Value* value = texture_prim.GetPropertyValue("outputs:out")) {
+    if (const Value* value = texture_prim.GetPropertyValue(kIdOutputsOut())) {
       if (const std::string* token = value->as_token()) type = *token;
       else if (const std::string* str = value->as_string()) type = *str;
     }
@@ -1496,7 +1957,7 @@ std::string LeafNameFromJointPath(const std::string& path) {
 }
 
 bool LocalVisibility(const UsdPrim& prim) {
-  const Value* value = prim.GetPropertyValue("visibility");
+  const Value* value = prim.GetPropertyValue(kIdVisibility());
   if (!value) return true;
   if (const std::string* token = value->as_token()) {
     return *token != "invisible";
@@ -1882,6 +2343,27 @@ bool ReadStringLikeProperty(const UsdPrim& prim, const std::string& name,
   if (GetString(prim, name, out) || GetToken(prim, name, out)) return true;
   const Value* v = GetAttribute(prim, name);
   if (!v) return false;
+  if (const std::string* ap = v->as_asset_path()) {
+    *out = *ap;
+    return true;
+  }
+  return false;
+}
+
+bool ReadStringLikeProperty(const UsdPrim& prim,
+                           const ::tinyusdz::next::PropNameId& name_id,
+                           std::string* out) {
+  if (!out) return false;
+  const Value* v = prim.GetPropertyValue(name_id);
+  if (!v) return false;
+  if (const std::string* s = v->as_string()) {
+    *out = *s;
+    return true;
+  }
+  if (const std::string* t = v->as_token()) {
+    *out = *t;
+    return true;
+  }
   if (const std::string* ap = v->as_asset_path()) {
     *out = *ap;
     return true;
@@ -2440,10 +2922,10 @@ void FillGeneratedMesh(const UsdPrim& prim,
     }
   }
   std::string orientation;
-  if (GetToken(prim, "orientation", &orientation)) {
+  if (GetToken(prim, kIdOrientation(), &orientation)) {
     out->left_handed = (orientation == "leftHanded");
   }
-  GetBool(prim, "doubleSided", &out->double_sided);
+  GetBool(prim, kIdDoubleSided(), &out->double_sided);
   if (!points.empty()) {
     out->bbox_min = Float3(1e30f, 1e30f, 1e30f);
     out->bbox_max = Float3(-1e30f, -1e30f, -1e30f);
@@ -2473,13 +2955,8 @@ size_t SaturatingMul(size_t a, size_t b) {
   return a * b;
 }
 
-size_t AuthoredArraySize(const UsdPrim& prim, const char* name) {
-  const Value* value = GetAttribute(prim, name);
-  return value && value->is_array() ? value->array_size() : 0;
-}
-
 bool HasAuthoredExtent(const UsdPrim& prim) {
-  return AuthoredArraySize(prim, "extent") >= 2;
+  return AuthoredArraySize(prim, kIdExtent()) >= 2;
 }
 
 GeometryInfo BuildGeometryInfo(const UsdPrim& prim, GeometryKind kind,
@@ -2489,12 +2966,12 @@ GeometryInfo BuildGeometryInfo(const UsdPrim& prim, GeometryKind kind,
   info.id = id;
   info.prim_path = prim.GetPath().str();
   info.type_name = prim.GetTypeName();
-  info.point_count = AuthoredArraySize(prim, "points");
+  info.point_count = AuthoredArraySize(prim, kIdPoints());
   info.has_authored_extent = HasAuthoredExtent(prim);
 
   size_t estimate = 0;
   if (kind == GeometryKind::Mesh) {
-    info.index_count = AuthoredArraySize(prim, "faceVertexIndices");
+    info.index_count = AuthoredArraySize(prim, kIdFaceVertexIndices());
     // Account for decoded source arrays, render arrays, triangulation, and
     // face-varying remaps. This intentionally errs high for residency policy.
     estimate = SaturatingMul(info.point_count, 24);
@@ -2502,22 +2979,43 @@ GeometryInfo BuildGeometryInfo(const UsdPrim& prim, GeometryKind kind,
                              SaturatingMul(info.index_count, 16));
     estimate = SaturatingAdd(
         estimate,
-        SaturatingMul(AuthoredArraySize(prim, "faceVertexCounts"), 8));
+        SaturatingMul(AuthoredArraySize(prim, kIdFaceVertexCounts()), 8));
     estimate = SaturatingAdd(
-        estimate, SaturatingMul(AuthoredArraySize(prim, "normals"), 24));
-    estimate = SaturatingAdd(
-        estimate,
-        SaturatingMul(AuthoredArraySize(prim, "primvars:st"), 16));
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdNormals()), 24));
     estimate = SaturatingAdd(
         estimate,
-        SaturatingMul(AuthoredArraySize(prim, "primvars:displayColor"), 24));
+        SaturatingMul(AuthoredArraySize(prim, kIdPrimvarsSt()), 16));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 24));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdTetVertexIndices()), 16));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdHoleIndices()), 8));
   } else if (kind == GeometryKind::Points) {
     estimate = SaturatingMul(info.point_count, 48);
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdWidths()), 8));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 16));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
   } else {
     estimate = SaturatingMul(info.point_count, 40);
     estimate = SaturatingAdd(
         estimate,
-        SaturatingMul(AuthoredArraySize(prim, "curveVertexCounts"), 8));
+        SaturatingMul(AuthoredArraySize(prim, kIdCurveVertexCounts()), 8));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdWidths()), 12));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 20));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
   }
   info.estimated_resident_bytes = estimate;
   return info;
@@ -2527,7 +3025,7 @@ bool ReadExtent(const UsdPrim& prim, double time, value::float3* minimum,
                 value::float3* maximum) {
   if (!minimum || !maximum) return false;
   ValueArrayRead<float> extent;
-  if (!ReadFloatArray(prim, "extent", time, &extent) || extent.size() < 6) {
+  if (!ReadFloatArray(prim, kIdExtent(), time, &extent) || extent.size() < 6) {
     return false;
   }
   *minimum = value::float3{extent[0], extent[1], extent[2]};
@@ -2726,6 +3224,12 @@ void ReleaseMeshGeometry(RenderMesh* mesh, bool keep_binding_inputs,
   std::vector<uint32_t>().swap(mesh->hole_faces);
 }
 
+void ReleaseSourceMeshStaticArrays(const Stage& stage, const UsdPrim& mesh_prim) {
+  constexpr size_t kLowmemStaticReleaseThreshold = 1;
+  stage.ReleaseStaticGeometryArraysForPrim(mesh_prim,
+                                          kLowmemStaticReleaseThreshold);
+}
+
 }  // namespace
 
 //
@@ -2735,6 +3239,7 @@ void ReleaseMeshGeometry(RenderMesh* mesh, bool keep_binding_inputs,
 ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
   ConvertResult result;
   warnings_.clear();
+  ResetImageIdCache();
 
   // Built with -fno-exceptions: the conversion helpers report failures via
   // return codes / the warnings_ list rather than throwing, so no try/catch.
@@ -2777,9 +3282,15 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 
     RenderExtractOptions xopts;
     xopts.time_code = config_.time_code;
+    xopts.max_depth = config_.max_render_depth;
+    xopts.max_records = config_.max_render_records;
     xopts.collect_other = true;
     RenderExtractResult extracted;
     CollectRenderPrims(stage, xopts, &extracted);
+    if (extracted.limit_exceeded) {
+      result.error = "render extraction limit exceeded";
+      return result;
+    }
 
     // Build node hierarchy first
     if (config_.progress_callback) {
@@ -2787,20 +3298,52 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
     BuildNodeHierarchy(extracted, &result.scene);
     ExtractPhysicsAnnotations(stage, &result.scene);
-    for (const RenderPrimRecord& rec : extracted.records) {
-      if (rec.type_name == "Points") continue;
-      if (!IsUnsupportedRenderableTypeName(rec.type_name)) continue;
-      UnsupportedRenderable unsupported;
-      unsupported.prim_path = rec.path;
-      unsupported.type_name = rec.type_name;
-      unsupported.reason =
-          "recognized by extraction but not converted to render geometry";
-      result.scene.unsupported_renderables.push_back(unsupported);
-      warnings_.push_back("Unsupported renderable prim '" + rec.path +
-                          "' of type '" + rec.type_name + "'");
+    result.scene.unsupported_renderables.reserve(
+        std::min<size_t>(extracted.records.size(), 128));
+    const bool emit_animations =
+        config_.animation.enabled &&
+        (stage.HasTimeSamples() || stage.HasValueClips());
+    if (emit_animations) {
+      result.scene.animations.reserve(extracted.records.size());
     }
+    size_t point_prim_count = 0;
+    for (const RenderPrimRecord& rec : extracted.records) {
+      if (rec.type_name == "Points") ++point_prim_count;
+    }
+    result.scene.meshes.reserve(extracted.meshes.size());
+    result.scene.points.reserve(point_prim_count);
+    result.scene.curves.reserve(extracted.curves.size());
+    result.scene.point_instancers.reserve(extracted.point_instancers.size());
+    result.scene.lights.reserve(extracted.lights.size());
+    result.scene.cameras.reserve(extracted.cameras.size());
+    result.scene.materials.reserve(extracted.materials.size());
+    result.scene.skeletons.reserve(extracted.skeletons.size());
+    result.scene.mesh_by_path.reserve(extracted.meshes.size());
+    result.scene.points_by_path.reserve(point_prim_count);
+    result.scene.curves_by_path.reserve(extracted.curves.size());
+    result.scene.point_instancer_by_path.reserve(extracted.point_instancers.size());
+    result.scene.material_by_path.reserve(extracted.materials.size());
 
-    for (const auto& rec : extracted.records) {
+    const bool has_time_samples = emit_animations;
+    for (const RenderPrimRecord& rec : extracted.records) {
+      if (rec.type_name != "Points" &&
+          IsUnsupportedRenderableTypeName(rec.type_name)) {
+        UnsupportedRenderable unsupported;
+        unsupported.prim_path = rec.path;
+        unsupported.type_name = rec.type_name;
+        unsupported.reason =
+            "recognized by extraction but not converted to render geometry";
+        result.scene.unsupported_renderables.push_back(unsupported);
+        warnings_.push_back("Unsupported renderable prim '" + rec.path +
+                            "' of type '" + rec.type_name + "'");
+      }
+
+      if (!has_time_samples ||
+          (!stage.HasValueClips() &&
+           (!rec.prim.GetPrimSpec() ||
+            !rec.prim.GetPrimSpec()->has_any_time_samples()))) {
+        continue;
+      }
       AnimationClip clip;
       if (ConvertAnimation(stage, rec.prim, &clip)) {
         const auto node_it = result.scene.node_by_path.find(rec.path);
@@ -2857,6 +3400,9 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         // Release chunk-allocation slack before retaining: thousands of small
         // meshes each holding 64KB-minimum chunks otherwise OOM wasm32.
         mesh.compact();
+        if (!config_.mesh.retain_geometry) {
+          ReleaseSourceMeshStaticArrays(stage, mesh_prim);
+        }
         int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
         result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
         result.scene.meshes.push_back(std::move(mesh));
@@ -2871,15 +3417,18 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       if (rec.type_name != "Points") continue;
       RenderPoints points;
       if (ConvertPoints(rec.prim, &points)) {
-        if (points.points.alloc_failed() || points.widths.alloc_failed() ||
-            points.colors.alloc_failed()) {
+        if (points.has_alloc_failure()) {
           warnings_.push_back("Out of memory converting Points '" + rec.path +
                               "'; the prim was skipped");
           continue;
         }
         int32_t points_id = static_cast<int32_t>(result.scene.points.size());
+        points.compact();
         result.scene.points_by_path[points.prim_path] = points_id;
         result.scene.points.push_back(std::move(points));
+        if (!config_.mesh.retain_geometry) {
+          ReleaseSourceMeshStaticArrays(stage, rec.prim);
+        }
         AssignNodeDataId(&result.scene, rec.path, points_id);
       } else {
         warnings_.push_back("Failed to convert Points: " + rec.path);
@@ -2889,18 +3438,18 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     for (const auto& rec : extracted.curves) {
       RenderCurves curves;
       if (ConvertCurves(rec.prim, &curves)) {
-        if (curves.points.alloc_failed() || curves.widths.alloc_failed() ||
-            curves.colors.alloc_failed() ||
-            curves.tessellated_points.alloc_failed() ||
-            curves.tessellated_widths.alloc_failed() ||
-            curves.tessellated_colors.alloc_failed()) {
+        if (curves.has_alloc_failure()) {
           warnings_.push_back("Out of memory converting curves '" + rec.path +
                               "'; the prim was skipped");
           continue;
         }
         int32_t curves_id = static_cast<int32_t>(result.scene.curves.size());
+        curves.compact();
         result.scene.curves_by_path[curves.prim_path] = curves_id;
         result.scene.curves.push_back(std::move(curves));
+        if (!config_.mesh.retain_geometry) {
+          ReleaseSourceMeshStaticArrays(stage, rec.prim);
+        }
         AssignNodeDataId(&result.scene, rec.path, curves_id);
       } else {
         warnings_.push_back("Failed to convert curves prim: " + rec.path);
@@ -2996,7 +3545,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         if (light.type == LightType::Dome) {
           light.params.dome.texture_id = -1;
           std::string tex;
-          const Value* fv = GetAttribute(rec.prim, "inputs:texture:file");
+          const Value* fv = rec.prim.GetPropertyValue(kIdInputsTextureFile());
           if (fv) {
             if (const std::string* ap = fv->as_asset_path()) tex = *ap;
             else if (const std::string* s = fv->as_string()) tex = *s;
@@ -3053,13 +3602,35 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
 
     // Resolve mesh skin bindings to skeleton ids (skeletons converted above).
+    std::unordered_map<std::string, int32_t> skeleton_id_by_path;
+    skeleton_id_by_path.reserve(extracted.skeletons.size());
+    for (size_t si = 0; si < extracted.skeletons.size(); ++si) {
+      skeleton_id_by_path.emplace(extracted.skeletons[si].path,
+                                  static_cast<int32_t>(si));
+    }
+    std::vector<std::unordered_map<std::string, int32_t>> skeleton_joint_lookup;
+    if (!result.scene.skeletons.empty()) {
+      skeleton_joint_lookup.resize(result.scene.skeletons.size());
+      for (size_t si = 0; si < result.scene.skeletons.size(); ++si) {
+        const auto& skel = result.scene.skeletons[si];
+        if (skel.joints.empty()) continue;
+        auto& lookup = skeleton_joint_lookup[si];
+        lookup.reserve(skel.joints.size());
+        lookup.max_load_factor(0.7f);
+        for (size_t ji = 0; ji < skel.joints.size(); ++ji) {
+          const SkeletonJoint& joint = skel.joints[ji];
+          const std::string& key = joint.path.empty() ? joint.name : joint.path;
+          if (!key.empty()) {
+            lookup.emplace(key, static_cast<int32_t>(ji));
+          }
+        }
+      }
+    }
     for (RenderMesh& mesh : result.scene.meshes) {
       if (!mesh.skin || mesh.skin->skeleton_path.empty()) continue;
-      for (size_t si = 0; si < result.scene.skeletons.size(); ++si) {
-        if (result.scene.skeletons[si].prim_path == mesh.skin->skeleton_path) {
-          mesh.skin->skeleton_id = static_cast<int32_t>(si);
-          break;
-        }
+      const auto sit = skeleton_id_by_path.find(mesh.skin->skeleton_path);
+      if (sit != skeleton_id_by_path.end()) {
+        mesh.skin->skeleton_id = sit->second;
       }
 
       // Mesh-local `skel:joints`: jointIndices index into the mesh's own
@@ -3070,12 +3641,23 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
           mesh.skin->skeleton_id >= 0) {
         const Skeleton& skel =
             result.scene.skeletons[static_cast<size_t>(mesh.skin->skeleton_id)];
-        const JointIndexLookup joint_lookup = BuildJointIndexLookup(skel);
+        const auto& joint_lookup =
+            skeleton_joint_lookup[static_cast<size_t>(mesh.skin->skeleton_id)];
         std::vector<int32_t> remap(mesh.skin->mesh_joint_order.size(), -1);
         bool identity = true;
         for (size_t k = 0; k < mesh.skin->mesh_joint_order.size(); ++k) {
           const std::string& token = mesh.skin->mesh_joint_order[k];
-          remap[k] = FindJointIndex(skel, joint_lookup, token);
+          auto it = joint_lookup.find(token);
+          if (it != joint_lookup.end()) {
+            remap[k] = it->second;
+          } else {
+            for (size_t ji = 0; ji < skel.joints.size(); ++ji) {
+              if (JointTokenMatches(skel.joints[ji], token)) {
+                remap[k] = static_cast<int32_t>(ji);
+                break;
+              }
+            }
+          }
           if (remap[k] != static_cast<int32_t>(k)) identity = false;
           if (remap[k] < 0) {
             warnings_.push_back("Mesh " + mesh.prim_path +
@@ -3121,6 +3703,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
                                                         SceneSink* sink) {
   StreamConvertResult result;
   warnings_.clear();
+  ResetImageIdCache();
   if (!sink) {
     result.error = "ConvertToSink: null scene sink";
     return result;
@@ -3166,9 +3749,19 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
 
   RenderExtractOptions xopts;
   xopts.time_code = config_.time_code;
+  xopts.max_depth = config_.max_render_depth;
+  xopts.max_records = config_.max_render_records;
   xopts.collect_other = true;
   RenderExtractResult extracted;
   CollectRenderPrims(stage, xopts, &extracted);
+  if (extracted.limit_exceeded) {
+    result.error = "render extraction limit exceeded";
+    return result;
+  }
+  const bool emit_animations =
+      config_.animation.enabled &&
+      (stage.HasTimeSamples() || stage.HasValueClips());
+  const bool has_time_samples = emit_animations;
   if (cancellation_requested()) {
     result.cancelled = true;
     result.error = "conversion cancelled";
@@ -3176,7 +3769,25 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   }
   BuildNodeHierarchy(extracted, &catalog);
   ExtractPhysicsAnnotations(stage, &catalog);
-
+  catalog.meshes.reserve(extracted.meshes.size());
+  const size_t point_record_count = extracted.points.size();
+  catalog.points.reserve(point_record_count);
+  catalog.curves.reserve(extracted.curves.size());
+  catalog.point_instancers.reserve(extracted.point_instancers.size());
+  catalog.lights.reserve(extracted.lights.size());
+  catalog.cameras.reserve(extracted.cameras.size());
+  catalog.skeletons.reserve(extracted.skeletons.size());
+  catalog.materials.reserve(extracted.materials.size());
+  catalog.mesh_by_path.reserve(extracted.meshes.size());
+  catalog.point_instancer_by_path.reserve(extracted.point_instancers.size());
+  catalog.points_by_path.reserve(point_record_count);
+  catalog.curves_by_path.reserve(extracted.curves.size());
+  catalog.material_by_path.reserve(extracted.materials.size());
+  catalog.unsupported_renderables.reserve(
+      std::min<size_t>(extracted.records.size(), 128));
+  if (emit_animations) {
+    catalog.animations.reserve(extracted.records.size());
+  }
   for (const RenderPrimRecord& rec : extracted.records) {
     if (rec.type_name != "Points" &&
         IsUnsupportedRenderableTypeName(rec.type_name)) {
@@ -3189,6 +3800,12 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
                           "' of type '" + rec.type_name + "'");
     }
 
+    if (!has_time_samples ||
+        (!stage.HasValueClips() &&
+         (!rec.prim.GetPrimSpec() ||
+          !rec.prim.GetPrimSpec()->has_any_time_samples()))) {
+      continue;
+    }
     AnimationClip clip;
     if (ConvertAnimation(stage, rec.prim, &clip)) {
       const auto node = catalog.node_by_path.find(rec.path);
@@ -3230,7 +3847,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     for (int i = 0; i < 16; ++i) light.transform.m[i] = float(rec.world[i]);
     if (light.type == LightType::Dome) {
       std::string texture;
-      if (const Value* value = GetAttribute(rec.prim, "inputs:texture:file")) {
+      if (const Value* value = rec.prim.GetPropertyValue(kIdInputsTextureFile())) {
         if (const std::string* p = value->as_asset_path()) texture = *p;
         else if (const std::string* p = value->as_string()) texture = *p;
         else if (const std::string* p = value->as_token()) texture = *p;
@@ -3264,9 +3881,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     AssignMeshMaterialBinding(stage, catalog, &placeholder);
     AssignNodeDataId(&catalog, placeholder.prim_path, static_cast<int32_t>(i));
   }
-  catalog.points.reserve(extracted.records.size());
-  for (const RenderPrimRecord& rec : extracted.records) {
-    if (rec.type_name != "Points") continue;
+  for (const RenderPrimRecord& rec : extracted.points) {
     const int32_t id = static_cast<int32_t>(catalog.points.size());
     RenderPoints placeholder;
     placeholder.name = rec.prim.GetName();
@@ -3311,6 +3926,8 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   RenderScene binding_catalog;
   binding_catalog.material_by_path = catalog.material_by_path;
   std::unordered_map<std::string, int32_t> skeleton_by_path;
+  skeleton_by_path.reserve(extracted.skeletons.size());
+  skeleton_by_path.max_load_factor(0.7f);
   for (size_t i = 0; i < catalog.skeletons.size(); ++i) {
     skeleton_by_path[catalog.skeletons[i].prim_path] = static_cast<int32_t>(i);
   }
@@ -3319,6 +3936,11 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     result.error = "scene sink rejected catalog";
     return result;
   }
+  // The catalog and all non-geometry metadata are now owned by the sink.
+  // Release the traversal-order duplicate before the first large geometry
+  // payload is decoded; kind-specific lists still provide the conversion
+  // order below.
+  std::vector<RenderPrimRecord>().swap(extracted.records);
 
   const auto abort = [&](const std::string& error, bool cancelled) {
     sink->AbortScene();
@@ -3359,6 +3981,9 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
                           prim.GetPath().str());
       continue;
     }
+    if (!config_.mesh.retain_geometry) {
+      ReleaseSourceMeshStaticArrays(stage, prim);
+    }
     AssignMeshMaterialBinding(stage, binding_catalog, &mesh);
     if (mesh.skin) {
       const auto skeleton = skeleton_by_path.find(mesh.skin->skeleton_path);
@@ -3375,8 +4000,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   }
 
   int32_t points_id = 0;
-  for (const RenderPrimRecord& rec : extracted.records) {
-    if (rec.type_name != "Points") continue;
+  for (const RenderPrimRecord& rec : extracted.points) {
     if (cancellation_requested()) {
       abort("conversion cancelled", true);
       return result;
@@ -3398,6 +4022,16 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     }
     RenderPoints points;
     if (ConvertPoints(rec.prim, &points)) {
+      if (points.has_alloc_failure()) {
+        warnings_.push_back("Out of memory converting Points '" + rec.path +
+                            "'; the prim was skipped");
+        ++points_id;
+        continue;
+      }
+      if (!config_.mesh.retain_geometry) {
+        ReleaseSourceMeshStaticArrays(stage, rec.prim);
+      }
+      points.compact();
       if (!sink->AddPoints(points_id, std::move(points))) {
         abort("scene sink rejected points", false);
         return result;
@@ -3428,12 +4062,21 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     }
     RenderCurves curves;
     if (!ConvertCurves(extracted.curves[i].prim, &curves)) continue;
+    if (curves.has_alloc_failure()) {
+      warnings_.push_back("Out of memory converting curves '" +
+                          extracted.curves[i].path + "'; the prim was skipped");
+      continue;
+    }
+    if (!config_.mesh.retain_geometry) {
+      ReleaseSourceMeshStaticArrays(stage, extracted.curves[i].prim);
+    }
     const std::string material =
         FindInheritedMaterialBinding(stage, curves.prim_path);
     const auto found = binding_catalog.material_by_path.find(material);
     if (found != binding_catalog.material_by_path.end()) {
       curves.material_id = found->second;
     }
+    curves.compact();
     if (!sink->AddCurves(static_cast<int32_t>(i), std::move(curves))) {
       abort("scene sink rejected curves", false);
       return result;
@@ -3631,7 +4274,10 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
 
 void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extracted,
                                               RenderScene* scene) {
-  std::unordered_map<std::string, int32_t> path_to_node;
+  const size_t record_count = extracted.records.size();
+  scene->nodes.reserve(record_count);
+  scene->node_by_path.reserve(record_count);
+  scene->node_by_path.max_load_factor(0.7f);
 
   for (const RenderPrimRecord& rec : extracted.records) {
     const UsdPrim& prim = rec.prim;
@@ -3675,15 +4321,14 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
     }
 
     int32_t node_id = static_cast<int32_t>(scene->nodes.size());
-    path_to_node[node.prim_path] = node_id;
     scene->node_by_path[node.prim_path] = node_id;
 
     // Set parent
     std::string parent_path = GetParentPath(node.prim_path);
     bool parent_visible = true;
     if (!parent_path.empty() && parent_path != "/") {
-      auto it = path_to_node.find(parent_path);
-      if (it != path_to_node.end()) {
+      auto it = scene->node_by_path.find(parent_path);
+      if (it != scene->node_by_path.end()) {
         node.parent_id = it->second;
         scene->nodes[it->second].children.push_back(node_id);
         parent_visible = scene->nodes[it->second].visible;
@@ -3915,9 +4560,9 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
   if (type == "TetMesh") {
     ValueArrayRead<float> authored_points;
     ValueArrayRead<int32_t> authored_tets;
-    if (!ReadFloatArray(prim, "points", config_.time_code, &authored_points) ||
+    if (!ReadFloatArray(prim, kIdPoints(), config_.time_code, &authored_points) ||
         authored_points.empty() || (authored_points.view.size % 3) != 0 ||
-        !ReadIntArray(prim, "tetVertexIndices", config_.time_code,
+        !ReadIntArray(prim, kIdTetVertexIndices(), config_.time_code,
                       &authored_tets) ||
         authored_tets.empty() || (authored_tets.view.size % 4) != 0) {
       last_error_ = "Invalid TetMesh points or tetVertexIndices";
@@ -4234,14 +4879,19 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
           (sb.joint_indices.size() % point_count) == 0) {
         influences = sb.joint_indices.size() / point_count;
       }
+      size_t expected_influence_count = 0;
+      const bool influence_count_valid =
+          safe::mul(point_count, influences, &expected_influence_count);
       if (influences > 0 && point_count > 1 &&
+          influence_count_valid &&
           sb.joint_indices.size() == influences) {
-        const std::vector<int32_t> indices = sb.joint_indices;
-        const std::vector<float> weights = sb.joint_weights;
-        sb.joint_indices.clear();
-        sb.joint_weights.clear();
-        sb.joint_indices.reserve(point_count * influences);
-        sb.joint_weights.reserve(point_count * influences);
+        // Move the authored tuple out while constructing the expanded form.
+        // Copying it first kept three full influence buffers resident (the
+        // authored arrays, their copies, and the expanded result).
+        std::vector<int32_t> indices = std::move(sb.joint_indices);
+        std::vector<float> weights = std::move(sb.joint_weights);
+        sb.joint_indices.reserve(expected_influence_count);
+        sb.joint_weights.reserve(expected_influence_count);
         for (size_t point = 0; point < point_count; ++point) {
           sb.joint_indices.insert(sb.joint_indices.end(), indices.begin(),
                                   indices.end());
@@ -4250,23 +4900,30 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
         }
       }
       if (influences == 0 || point_count == 0 ||
-          sb.joint_indices.size() != point_count * influences) {
+          !influence_count_valid ||
+          sb.joint_indices.size() != expected_influence_count) {
         warnings_.push_back("Ignoring malformed skin influences on " +
                             prim.GetPath().str());
       } else {
         size_t output_influences = influences;
         std::vector<int32_t> reduced_indices;
         std::vector<float> reduced_weights;
+        size_t reduced_count = 0;
+        size_t reduced_bytes = 0;
+        const bool reduction_size_valid =
+            safe::mul(point_count,
+                      static_cast<size_t>(config_.mesh.target_bone_count),
+                      &reduced_count) &&
+            safe::mul(reduced_count, size_t{8}, &reduced_bytes);
         if (config_.mesh.enable_bone_reduction &&
             config_.mesh.target_bone_count > 0 &&
             config_.mesh.target_bone_count < influences &&
             // ~8B per point-influence pair of temporaries; on a nearly-full
             // heap keep the authored influences instead of abort()ing.
-            !WouldOverflowSizeMul(point_count, output_influences * 8) &&
-            ProbeAlloc(point_count * config_.mesh.target_bone_count * 8)) {
+            reduction_size_valid && ProbeAlloc(reduced_bytes)) {
           output_influences = config_.mesh.target_bone_count;
-          reduced_indices.resize(point_count * output_influences, 0);
-          reduced_weights.resize(point_count * output_influences, 0.0f);
+          reduced_indices.resize(reduced_count, 0);
+          reduced_weights.resize(reduced_count, 0.0f);
           std::vector<std::pair<float, int32_t>> ranked(influences);
           for (size_t point = 0; point < point_count; ++point) {
             const size_t source = point * influences;
@@ -4487,16 +5144,19 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
   // point. A failed probe skips tangents for this mesh (they are optional)
   // instead of abort()ing the module under -fno-exceptions.
   constexpr size_t kMikkBytesPerCorner = 80;
-  const size_t probe_bytes_pre =
-      (config_.mesh.tangent_method ==
-           MeshConfig::TangentComputationMethod::Lengyel &&
-       vertex_normals && vertex_uvs)
-          ? np * (3 + 3 + 4) * sizeof(float)
-          : tri_corner_count * kMikkBytesPerCorner;
-  const size_t probe_bytes = probe_bytes_pre;
+  size_t probe_bytes = 0;
+  bool probe_overflow = false;
+  if (config_.mesh.tangent_method ==
+          MeshConfig::TangentComputationMethod::Lengyel &&
+      vertex_normals && vertex_uvs) {
+    probe_overflow = !safe::mul3(np, size_t(10), sizeof(float), &probe_bytes);
+  } else {
+    probe_overflow =
+        !safe::mul(tri_corner_count, kMikkBytesPerCorner, &probe_bytes);
+  }
   // ProbeAlloc only asks "can this ONE block be allocated"; the cumulative
   // guard additionally refuses when the scene as a whole is at the cap.
-  if (WouldOverflowSizeMul(tri_corner_count, kMikkBytesPerCorner) ||
+  if (probe_overflow ||
       !ProbeAlloc(probe_bytes) ||
       BudgetWouldExceed(probe_bytes, "tangent generation")) {
     warnings_.push_back("Out of memory computing tangents for mesh '" +
@@ -4811,7 +5471,7 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
 bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* mesh) {
   // Get face vertex counts
   ValueArrayRead<int32_t> face_counts;
-  ReadIntArray(prim, "faceVertexCounts", config_.time_code, &face_counts);
+  ReadIntArray(prim, kIdFaceVertexCounts(), config_.time_code, &face_counts);
   if (face_counts.empty()) {
     last_error_ = "Mesh has no faceVertexCounts";
     return false;
@@ -4824,7 +5484,7 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
 
   // Get face vertex indices
   ValueArrayRead<int32_t> indices;
-  ReadIntArray(prim, "faceVertexIndices", config_.time_code, &indices);
+  ReadIntArray(prim, kIdFaceVertexIndices(), config_.time_code, &indices);
   if (indices.empty()) {
     last_error_ = "Mesh has no faceVertexIndices";
     return false;
@@ -4836,16 +5496,16 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
   }
 
   std::string orientation;
-  if (GetToken(prim, "orientation", &orientation)) {
+  if (GetToken(prim, kIdOrientation(), &orientation)) {
     mesh->left_handed = (orientation == "leftHanded");
   }
 
-  GetBool(prim, "doubleSided", &mesh->double_sided);
+  GetBool(prim, kIdDoubleSided(), &mesh->double_sided);
 
   // holeIndices: face indices excluded from rendering.
   {
     ValueArrayRead<int32_t> holes;
-    if (ReadIntArray(prim, "holeIndices", config_.time_code, &holes)) {
+    if (ReadIntArray(prim, kIdHoleIndices(), config_.time_code, &holes)) {
       for (int32_t h : holes) {
         if (h >= 0) mesh->hole_faces.push_back(static_cast<uint32_t>(h));
       }
@@ -4858,7 +5518,7 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
 
 bool RenderSceneConverter::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh) {
   ValueArrayRead<float> points;
-  ReadFloatArray(prim, "points", config_.time_code, &points);
+  ReadFloatArray(prim, kIdPoints(), config_.time_code, &points);
   if (points.empty()) {
     last_error_ = "Invalid points data";
     return false;
@@ -5032,7 +5692,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
   // below, takes precedence per USD).
   {
     ValueArrayRead<float> normals;
-    if (ReadFloatArray(prim, "normals", config_.time_code, &normals) &&
+    if (ReadFloatArray(prim, kIdNormals(), config_.time_code, &normals) &&
         !normals.empty()) {
       std::string interp_tok = "vertex";
       if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
@@ -5203,7 +5863,7 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
   }
 
   ValueArrayRead<float> points;
-  if (!ReadFloatArray(prim, "points", config_.time_code, &points) ||
+  if (!ReadFloatArray(prim, kIdPoints(), config_.time_code, &points) ||
       points.empty() || (points.view.size % 3) != 0) {
     last_error_ = "Invalid Points.points data";
     return false;
@@ -5214,7 +5874,7 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
   out->points.append(points.view.data, points.view.size);
 
   ValueArrayRead<float> widths;
-  if (ReadFloatArray(prim, "widths", config_.time_code, &widths) &&
+  if (ReadFloatArray(prim, kIdWidths(), config_.time_code, &widths) &&
       !widths.empty()) {
     const size_t n = out->point_count();
     if (widths.view.size == 1 || widths.view.size == n) {
@@ -5226,7 +5886,7 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
   }
 
   ValueArrayRead<float> colors;
-  if (ReadFloatArray(prim, "primvars:displayColor", config_.time_code,
+  if (ReadFloatArray(prim, kIdDisplayColor(), config_.time_code,
                      &colors) &&
       !colors.empty()) {
     std::string interp_tok;
@@ -5262,7 +5922,7 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
   }
 
   ValueArrayRead<float> opacities;
-  if (ReadFloatArray(prim, "primvars:displayOpacity", config_.time_code,
+  if (ReadFloatArray(prim, kIdDisplayOpacity(), config_.time_code,
                      &opacities) &&
       !opacities.empty()) {
     std::string interp_tok;
@@ -5463,13 +6123,13 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
   out->prim_path = prim.GetPath().str();
 
   ValueArrayRead<int32_t> counts;
-  if (!ReadIntArray(prim, "curveVertexCounts", config_.time_code, &counts) ||
+  if (!ReadIntArray(prim, kIdCurveVertexCounts(), config_.time_code, &counts) ||
       counts.empty()) {
     last_error_ = "Invalid curves.curveVertexCounts data";
     return false;
   }
   ValueArrayRead<float> points;
-  if (!ReadFloatArray(prim, "points", config_.time_code, &points) ||
+  if (!ReadFloatArray(prim, kIdPoints(), config_.time_code, &points) ||
       points.empty() || (points.view.size % 3) != 0) {
     last_error_ = "Invalid curves.points data";
     return false;
@@ -5694,7 +6354,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
   // widths (classified by element count; default schema interp is vertex).
   //
   ValueArrayRead<float> widths;
-  if (ReadFloatArray(prim, "widths", config_.time_code, &widths) &&
+  if (ReadFloatArray(prim, kIdWidths(), config_.time_code, &widths) &&
       !widths.empty()) {
     const size_t m = widths.view.size;
     if (m == 1) {
@@ -5719,7 +6379,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
   // displayColor (control data only; rgb).
   //
   ValueArrayRead<float> colors;
-  if (ReadFloatArray(prim, "primvars:displayColor", config_.time_code,
+  if (ReadFloatArray(prim, kIdDisplayColor(), config_.time_code,
                      &colors) &&
       !colors.empty() && (colors.view.size % 3) == 0) {
     std::string interp_tok = "constant";
@@ -5764,7 +6424,7 @@ bool RenderSceneConverter::ConvertCurves(const UsdPrim& prim,
   // displayOpacity follows the same constant/uniform/vertex/varying rules as
   // displayColor and is resampled onto the tessellated centerline below.
   ValueArrayRead<float> opacities;
-  if (ReadFloatArray(prim, "primvars:displayOpacity", config_.time_code,
+  if (ReadFloatArray(prim, kIdDisplayOpacity(), config_.time_code,
                      &opacities) && !opacities.empty()) {
     std::string interp_tok = "constant";
     if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
@@ -6605,8 +7265,8 @@ int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
   const std::string resolved = ResolveAssetPath(file, asset_anchor_id);
   const ColorSpace csp =
       color_space == ColorSpace::Unknown ? ColorSpace::sRGB : color_space;
-  const int32_t hit = FindImageId(scene, resolved, csp);
-  if (hit >= 0) return hit;
+  const int32_t cached = FindCachedImageId(scene, resolved, csp);
+  if (cached >= 0) return cached;
   TextureImage image;
   image.name = file;
   image.resolved_path = resolved;
@@ -6615,6 +7275,54 @@ int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
   scene->images.push_back(std::move(image));
   RememberImageId(scene, resolved, csp, id);
   return id;
+}
+
+int32_t RenderSceneConverter::FindCachedImageId(
+    RenderScene* scene, const std::string& resolved, ColorSpace color_space) {
+  if (!scene) return -1;
+  if (image_cache_scene_ != scene) {
+    image_id_cache_.clear();
+    image_cache_scene_ = scene;
+  }
+  const uint64_t hash = ImageCacheHash(resolved, color_space);
+  const auto candidates = image_id_cache_.equal_range(hash);
+  for (auto it = candidates.first; it != candidates.second; ++it) {
+    if (it->second >= 0 && static_cast<size_t>(it->second) < scene->images.size()) {
+      const TextureImage& image = scene->images[static_cast<size_t>(it->second)];
+      if (image.resolved_path == resolved && image.color_space == color_space) {
+        return it->second;
+      }
+    }
+  }
+
+  // A caller may have populated the scene catalog before the converter sees an
+  // image. Pay the compatibility scan once, then make subsequent references O(1).
+  for (size_t i = 0; i < scene->images.size(); ++i) {
+    if (scene->images[i].resolved_path == resolved &&
+        scene->images[i].color_space == color_space) {
+      const int32_t id = static_cast<int32_t>(i);
+      image_id_cache_.emplace(hash, id);
+      return id;
+    }
+  }
+  return -1;
+}
+
+void RenderSceneConverter::RememberImageId(RenderScene* scene,
+                                           const std::string& resolved,
+                                           ColorSpace color_space,
+                                           int32_t id) {
+  if (!scene) return;
+  if (image_cache_scene_ != scene) {
+    image_id_cache_.clear();
+    image_cache_scene_ = scene;
+  }
+  image_id_cache_.emplace(ImageCacheHash(resolved, color_space), id);
+}
+
+void RenderSceneConverter::ResetImageIdCache() {
+  image_id_cache_.clear();
+  image_cache_scene_ = nullptr;
 }
 
 bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
@@ -6748,7 +7456,10 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
       }
     }
   }
-  for (const auto& child : prim.GetChildren()) {
+  const size_t child_count = prim.GetChildCount();
+  for (size_t i = 0; i < child_count; ++i) {
+    const UsdPrim child = prim.GetChildAt(i);
+    if (!child.IsValid()) continue;
     candidates.push_back(child);
   }
 
@@ -7404,7 +8115,8 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
           cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
       const std::string resolved =
           ResolveAssetPath(tex_data.file, AssetAnchorOf(texture_prim));
-      int32_t image_id = FindImageId(scene, resolved, image_color_space);
+      int32_t image_id =
+          FindCachedImageId(scene, resolved, image_color_space);
       if (image_id < 0) {
         TextureImage image;
         image.name = texture_prim.IsValid() ? texture_prim.GetName() : tex_data.file;
@@ -7558,26 +8270,23 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   }
 
   // Common properties
-  GetFloat3(prim, "inputs:color", &out->color.x, &out->color.y, &out->color.z);
-  GetFloat(prim, "inputs:intensity", &out->intensity);
-  GetFloat(prim, "inputs:exposure", &out->exposure);
-  GetBool(prim, "inputs:normalize", &out->normalize);
-  GetBool(prim, "inputs:enableColorTemperature",
-          &out->enable_color_temperature);
-  GetFloat(prim, "inputs:colorTemperature", &out->color_temperature);
-  GetFloat(prim, "inputs:diffuse", &out->diffuse);
-  GetFloat(prim, "inputs:specular", &out->specular);
-  GetFloat(prim, "inputs:shaping:cone:angle", &out->shaping_cone_angle);
-  GetFloat(prim, "inputs:shaping:focus", &out->shaping_focus);
-  GetFloat3(prim, "inputs:shaping:focusTint", &out->shaping_focus_tint.x,
+  GetFloat3(prim, kIdInputsColor(), &out->color.x, &out->color.y, &out->color.z);
+  GetFloat(prim, kIdInputsIntensity(), &out->intensity);
+  GetFloat(prim, kIdInputsExposure(), &out->exposure);
+  GetBool(prim, kIdInputsNormalize(), &out->normalize);
+  GetBool(prim, kIdInputsEnableColorTemperature(), &out->enable_color_temperature);
+  GetFloat(prim, kIdInputsColorTemperature(), &out->color_temperature);
+  GetFloat(prim, kIdInputsDiffuse(), &out->diffuse);
+  GetFloat(prim, kIdInputsSpecular(), &out->specular);
+  GetFloat(prim, kIdInputsShapingConeAngle(), &out->shaping_cone_angle);
+  GetFloat(prim, kIdInputsShapingFocus(), &out->shaping_focus);
+  GetFloat3(prim, kIdInputsShapingFocusTint(), &out->shaping_focus_tint.x,
             &out->shaping_focus_tint.y, &out->shaping_focus_tint.z);
-  GetFloat(prim, "inputs:shaping:cone:softness",
-           &out->shaping_cone_softness);
-  ReadStringLikeProperty(prim, "inputs:shaping:ies:file",
-                         &out->shaping_ies_file);
-  GetFloat(prim, "inputs:shaping:ies:angleScale",
-           &out->shaping_ies_angle_scale);
-  GetBool(prim, "inputs:shaping:ies:normalize", &out->shaping_ies_normalize);
+  GetFloat(prim, kIdInputsShapingConeSoftness(), &out->shaping_cone_softness);
+  ReadStringLikeProperty(prim, kIdInputsShapingIesFile(),
+                        &out->shaping_ies_file);
+  GetFloat(prim, kIdInputsShapingIesAngleScale(), &out->shaping_ies_angle_scale);
+  GetBool(prim, kIdInputsShapingIesNormalize(), &out->shaping_ies_normalize);
   out->light_link_targets = ReadRelationshipTargets(prim, "light:link");
   if (out->light_link_targets.empty()) {
     out->light_link_targets = ReadRelationshipTargets(prim, "collection:lightLink:includes");
@@ -7596,10 +8305,10 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   switch (out->type) {
     case LightType::Sphere: {
       out->params.sphere.radius = 0.5f;
-      GetFloat(prim, "inputs:radius", &out->params.sphere.radius);
+      GetFloat(prim, kIdInputsRadius(), &out->params.sphere.radius);
       // Cone shaping on a sphere light makes it a spot light.
       float cone_angle = 0.0f;
-      if (GetFloat(prim, "inputs:shaping:cone:angle", &cone_angle)) {
+      if (GetFloat(prim, kIdInputsShapingConeAngle(), &cone_angle)) {
         out->type = LightType::Spot;
         out->params.spot.angle = cone_angle * 3.14159265358979323846f / 180.0f;
       }
@@ -7608,26 +8317,26 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
     case LightType::Rect:
       out->params.rect.width = 1.0f;
       out->params.rect.height = 1.0f;
-      GetFloat(prim, "inputs:width", &out->params.rect.width);
-      GetFloat(prim, "inputs:height", &out->params.rect.height);
+      GetFloat(prim, kIdInputsWidth(), &out->params.rect.width);
+      GetFloat(prim, kIdInputsHeight(), &out->params.rect.height);
       break;
     case LightType::Disk:
       out->params.disk.radius = 0.5f;
-      GetFloat(prim, "inputs:radius", &out->params.disk.radius);
+      GetFloat(prim, kIdInputsRadius(), &out->params.disk.radius);
       break;
     case LightType::Cylinder:
       out->params.cylinder.radius = 0.5f;
       out->params.cylinder.length = 1.0f;
-      GetFloat(prim, "inputs:radius", &out->params.cylinder.radius);
-      GetFloat(prim, "inputs:length", &out->params.cylinder.length);
+      GetFloat(prim, kIdInputsRadius(), &out->params.cylinder.radius);
+      GetFloat(prim, kIdInputsLength(), &out->params.cylinder.length);
       break;
     case LightType::Directional:
       out->params.distant.angle = 0.53f;
-      GetFloat(prim, "inputs:angle", &out->params.distant.angle);
+      GetFloat(prim, kIdInputsAngle(), &out->params.distant.angle);
       break;
     case LightType::Dome: {
       std::string format;
-      if (GetToken(prim, "inputs:texture:format", &format)) {
+      if (GetToken(prim, kIdInputsTextureFormat(), &format)) {
         if (format == "latlong") {
           out->params.dome.texture_format =
               RenderLight::DomeTextureFormat::Latlong;
@@ -7650,14 +8359,14 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
 
   // Shadow settings (UsdLux authors `inputs:shadow:enable`; accept the
   // legacy `inputs:enableShadows` spelling too).
-  if (!GetBool(prim, "inputs:shadow:enable", &out->enable_shadow)) {
-    GetBool(prim, "inputs:enableShadows", &out->enable_shadow);
+  if (!GetBool(prim, kIdInputsShadowEnable(), &out->enable_shadow)) {
+    GetBool(prim, kIdInputsEnableShadows(), &out->enable_shadow);
   }
-  GetFloat3(prim, "inputs:shadow:color", &out->shadow_color.x,
+  GetFloat3(prim, kIdInputsShadowColor(), &out->shadow_color.x,
             &out->shadow_color.y, &out->shadow_color.z);
-  GetFloat(prim, "inputs:shadow:distance", &out->shadow_distance);
-  GetFloat(prim, "inputs:shadow:falloff", &out->shadow_falloff);
-  GetFloat(prim, "inputs:shadow:falloffGamma", &out->shadow_falloff_gamma);
+  GetFloat(prim, kIdInputsShadowDistance(), &out->shadow_distance);
+  GetFloat(prim, kIdInputsShadowFalloff(), &out->shadow_falloff);
+  GetFloat(prim, kIdInputsShadowFalloffGamma(), &out->shadow_falloff_gamma);
 
   return true;
 }
@@ -7677,21 +8386,21 @@ bool RenderSceneConverter::ConvertCamera(const UsdPrim& prim, RenderCamera* out)
 
   // Projection type
   std::string projection;
-  GetToken(prim, "projection", &projection);
+  GetToken(prim, kIdProjection(), &projection);
   out->type = (projection == "orthographic") ?
               CameraType::Orthographic : CameraType::Perspective;
 
   // Lens parameters
-  GetFloat(prim, "focalLength", &out->focal_length);
-  GetFloat(prim, "horizontalAperture", &out->horizontal_aperture);
-  GetFloat(prim, "verticalAperture", &out->vertical_aperture);
+  GetFloat(prim, kIdFocalLength(), &out->focal_length);
+  GetFloat(prim, kIdHorizontalAperture(), &out->horizontal_aperture);
+  GetFloat(prim, kIdVerticalAperture(), &out->vertical_aperture);
   GetFloat(prim, "horizontalApertureOffset",
            &out->horizontal_aperture_offset);
   GetFloat(prim, "verticalApertureOffset", &out->vertical_aperture_offset);
 
   // Clipping
   float clip_range[2] = {0.1f, 10000.0f};
-  const Value* clip_val = GetAttribute(prim, "clippingRange");
+  const Value* clip_val = prim.GetPropertyValue(kIdClippingRange());
   if (clip_val) {
     const float* cr = clip_val->as_float2();
     if (cr) {
@@ -7703,8 +8412,8 @@ bool RenderSceneConverter::ConvertCamera(const UsdPrim& prim, RenderCamera* out)
   out->far_clip = clip_range[1];
 
   // Depth of field / exposure
-  GetFloat(prim, "focusDistance", &out->focus_distance);
-  GetFloat(prim, "fStop", &out->fstop);
+  GetFloat(prim, kIdFocusDistance(), &out->focus_distance);
+  GetFloat(prim, kIdFStop(), &out->fstop);
   GetFloat(prim, "exposure", &out->exposure);
 
   std::string stereo_role;
@@ -7727,8 +8436,8 @@ bool RenderSceneConverter::ConvertCamera(const UsdPrim& prim, RenderCamera* out)
   }
 
   // Motion-blur shutter interval
-  GetDouble(prim, "shutter:open", &out->shutter_open);
-  GetDouble(prim, "shutter:close", &out->shutter_close);
+  GetDouble(prim, kIdShutterOpen(), &out->shutter_open);
+  GetDouble(prim, kIdShutterClose(), &out->shutter_close);
 
   return true;
 }
@@ -7875,8 +8584,9 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
                                             AnimationClip* out) {
   if (!out || !prim.IsValid()) return false;
 
+  const std::string prim_path = prim.GetPath().str();
   out->name = prim.GetName() + "_Anim";
-  out->prim_path = prim.GetPath().str();
+  out->prim_path = prim_path;
   out->start_time = std::numeric_limits<double>::max();
   out->end_time = -std::numeric_limits<double>::max();
 
@@ -7912,7 +8622,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
             entry.stage = std::move(clip_stage);
           } else {
             entry.error = "Unable to load value clip '" + asset_path +
-                          "' for " + prim.GetPath().str() +
+                          "' for " + prim_path +
                           (err.empty() ? std::string() : ": " + err);
             warnings_.push_back(entry.error);
           }
@@ -7927,7 +8637,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
       for (const ::tinyusdz::next::ValueClipSet& clip_set : clip_sets) {
         std::set<std::string> properties;
         const std::string clip_prim_path =
-            clip_set.prim_path.empty() ? prim.GetPath().str()
+            clip_set.prim_path.empty() ? prim_path
                                        : clip_set.prim_path;
         for (const std::string& asset_path : clip_set.asset_paths) {
           const auto stage_it = clip_cache.entries.find(asset_path);
@@ -7947,12 +8657,15 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
             stage, clip_set, config_.animation.max_value_clip_samples);
         for (const std::string& property : properties) {
           if (!baked_properties.insert(property).second) continue;
+          const auto prop_id =
+              ::tinyusdz::next::GetPropNameTable().find(property);
+          const bool has_property = prim.HasProperty(prop_id);
           AnimationChannel channel;
           channel.target_path =
               IsXformAnimationProperty(property)
                   ? TargetPathForXformOp(property)
                   : AnimationChannel::TargetPath::CustomProperty;
-          channel.target_prim_path = prim.GetPath().str();
+          channel.target_prim_path = prim_path;
           channel.property_name = property;
           channel.keyframes.reserve(sample_times.size());
 
@@ -7962,8 +8675,8 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
                 clip_sets, prim, property, stage_time,
                 config_.animation.clip_stage_loader, &value, nullptr, nullptr,
                 nullptr, &clip_cache);
-            if (!have_value && prim.HasProperty(property)) {
-              value = prim.GetInterpolatedValue(property, stage_time);
+            if (!have_value && has_property && prop_id.is_valid()) {
+              value = prim.GetInterpolatedValue(prop_id, stage_time);
               have_value = !value.is_empty();
             }
             if (!have_value) continue;
@@ -7983,7 +8696,7 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
         }
       }
     } else if (!clip_error.empty()) {
-      warnings_.push_back("Invalid value clips on " + prim.GetPath().str() +
+      warnings_.push_back("Invalid value clips on " + prim_path +
                           ": " + clip_error);
     }
   }
@@ -7997,14 +8710,15 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
     auto append_skel_channel = [&](const char* prop_name,
                                    AnimationChannel::TargetPath target_path,
                                    uint32_t stride) {
-      std::vector<double> times = prim.GetTimeSampleTimes(prop_name);
-      if (times.empty()) return;
-      std::sort(times.begin(), times.end());
-      times.erase(std::unique(times.begin(), times.end()), times.end());
+      const auto prop_id =
+          ::tinyusdz::next::GetPropNameTable().find(prop_name);
+      if (!prop_id.is_valid()) return;
+      const auto* samples = prim.GetTimeSamples(prop_id);
+      if (!samples || samples->empty()) return;
 
       AnimationChannel channel;
       channel.target_path = target_path;
-      channel.target_prim_path = prim.GetPath().str();
+      channel.target_prim_path = prim_path;
       channel.property_name = prop_name;
       channel.joint_order = joint_order;
       channel.blend_shape_order = blend_shape_order;
@@ -8012,6 +8726,10 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
       channel.is_skeletal = true;
 
       uint32_t expected_elements = 0;
+      std::vector<double> times;
+      times.reserve(samples->size());
+      for (const auto& sample : *samples) times.push_back(sample.first);
+      std::vector<float> swizzled;
       for (double t : times) {
         // Read only this channel. GetSkelAnimationDataAtTime evaluates and
         // copies translations, rotations, scales and blend-shape weights on
@@ -8033,14 +8751,25 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
         if (expected_elements == 0) {
           expected_elements = element_count;
           channel.element_count = element_count;
-          channel.array_values.reserve(times.size() * values->size());
+          // Best-effort reserve only: the product of two file-controlled
+          // counts (time-sample count x per-sample array width) can amplify
+          // well past the parsed layer size, and std::vector::reserve throws
+          // (terminating this no-exception build) on an over-large or
+          // overflowed count. Saturate and cap; growth falls back to the
+          // ordinary append path below.
+          const size_t want =
+              SaturatingMul(samples->size(), values->size());
+          constexpr size_t kMaxSkelArrayReserve = 256u * 1024u * 1024u;
+          if (want <= kMaxSkelArrayReserve) {
+            channel.array_values.reserve(want);
+          }
           // Width validation: blendShapeWeights samples must be as wide as
           // the declared blendShapes list, or weights drive the wrong shapes.
           if (target_path == AnimationChannel::TargetPath::Weights &&
               !blend_shape_order.empty() &&
               element_count != blend_shape_order.size()) {
             warnings_.push_back(
-                "SkelAnimation " + prim.GetPath().str() + " has " +
+                "SkelAnimation " + prim_path + " has " +
                 std::to_string(element_count) +
                 " blendShapeWeights per sample for " +
                 std::to_string(blend_shape_order.size()) +
@@ -8048,15 +8777,14 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
           }
         } else if (element_count != expected_elements) {
           warnings_.push_back("Skipping inconsistent SkelAnimation sample for " +
-                              prim.GetPath().str() + "." + prop_name);
+                              prim_path + "." + prop_name);
           continue;
         }
 
-        // next-core keeps quats REAL-FIRST (w, x, y, z); an AnimationChannel is
-        // the GPU-facing form and its rotation values are xyzw (what a
+        // next-core keeps quats REAL-FIRST (w, x, y, z); an AnimationChannel
+        // is the GPU-facing form and its rotation values are xyzw (what a
         // three.js QuaternionKeyframeTrack expects). Swizzle here, at the
         // boundary -- SkelAnimationData itself stays real-first.
-        std::vector<float> swizzled;
         if (target_path == AnimationChannel::TargetPath::Rotation) {
           swizzled.resize(values->size());
           for (size_t i = 0; i + 3 < values->size(); i += 4) {
@@ -8096,22 +8824,38 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
     }
   }
 
-  for (const std::string& prop_name : prim.GetPropertyNames()) {
-    const std::vector<double> times = prim.GetTimeSampleTimes(prop_name);
-    if (times.empty()) continue;
+  const ::tinyusdz::next::PrimSpec* prim_spec = prim.GetPrimSpec();
+  if (!prim_spec) {
+    if (out->channels.empty()) {
+      out->start_time = 0.0;
+      out->end_time = 0.0;
+      return false;
+    }
+    return true;
+  }
+
+  const std::vector<::tinyusdz::next::PropNameId> sampled_props =
+      prim_spec->time_sampled_properties();
+  for (const auto& prop_id : sampled_props) {
+    const std::string& prop_name =
+        ::tinyusdz::next::GetPropNameTable().get(prop_id);
+    const auto* samples = prim.GetTimeSamples(prop_id);
+    if (!samples || samples->empty()) continue;
 
     const bool is_xform = IsXformAnimationProperty(prop_name);
     AnimationChannel channel;
     channel.target_path = is_xform ? TargetPathForXformOp(prop_name)
                                    : AnimationChannel::TargetPath::CustomProperty;
-    channel.target_prim_path = prim.GetPath().str();
+    channel.target_prim_path = prim_path;
     channel.property_name = prop_name;
-    channel.keyframes.reserve(times.size());
+    channel.keyframes.reserve(samples->size());
 
-    for (double t : times) {
-      Value value = prim.GetInterpolatedValue(prop_name, t);
+    for (const auto& sample : *samples) {
+      const double t = sample.first;
       Float4 v;
-      if (!ValueToAnimationFloat4(prop_name, value, &v)) continue;
+      const Value* value = prim_spec->time_sample_value(sample.second);
+      if (!value) continue;
+      if (!ValueToAnimationFloat4(prop_name, *value, &v)) continue;
       channel.keyframes.push_back(Keyframe{t, v});
       out->start_time = std::min(out->start_time, t);
       out->end_time = std::max(out->end_time, t);

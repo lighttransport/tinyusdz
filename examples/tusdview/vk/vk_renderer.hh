@@ -824,6 +824,10 @@ class VulkanRenderer final : public Renderer {
 
   // --- Ray tracing (ray query) state ---
   bool rtSupported_{false};   // device + shader available
+  // Buffer device address is also used by the raster instanced skinning shader.
+  // It is a separate capability from ray queries: older GPUs may support the
+  // former while (correctly) reporting no RT feature set.
+  bool bufferDeviceAddressSupported_{false};
   bool rtActive_{false};      // RT technique currently selected
   uint32_t rtMaxInstanceCount_{0};  // VK acceleration-structure limit
   int rtMode_{0};             // RenderMode (wireframe/matId/AOV) for RT + raster

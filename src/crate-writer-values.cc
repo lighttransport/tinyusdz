@@ -747,7 +747,11 @@ bool CrateWriter::ComputeValueDedupDescriptor(const crate::CrateValue& cv,
 
     const std::vector<double>& times = ts->get_times();
     append_u64(static_cast<uint64_t>(times.size()));
-    append_raw(times.data(), times.size() * sizeof(double));
+    {
+      size_t ts_bytes;
+      if (!safe::mul(times.size(), sizeof(double), &ts_bytes)) return false;
+      append_raw(times.data(), ts_bytes);
+    }
 
     const Buffer<16>& blocked = ts->get_blocked();
     append_u64(static_cast<uint64_t>(blocked.size()));
@@ -764,7 +768,11 @@ bool CrateWriter::ComputeValueDedupDescriptor(const crate::CrateValue& cv,
 
     const std::vector<uint32_t>& counts = ts->get_array_counts();
     append_u64(static_cast<uint64_t>(counts.size()));
-    append_raw(counts.data(), counts.size() * sizeof(uint32_t));
+    {
+      size_t cnt_bytes;
+      if (!safe::mul(counts.size(), sizeof(uint32_t), &cnt_bytes)) return false;
+      append_raw(counts.data(), cnt_bytes);
+    }
 
     const std::vector<uint8_t>& data = ts->get_data();
     append_u64(static_cast<uint64_t>(data.size()));

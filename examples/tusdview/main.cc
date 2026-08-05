@@ -21,6 +21,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "security-policy.hh"
 
@@ -692,48 +693,59 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "--material-id") == 0) {
       wantMaterialId = true;
     } else if (std::strcmp(argv[i], "--mode") == 0 && (i + 1) < argc) {
+      static const std::pair<const char*, tusdview::RenderMode> kModeTable[] = {
+          {"shaded", tusdview::RenderMode::Shaded},
+          {"wireframe", tusdview::RenderMode::Wireframe},
+          {"normals", tusdview::RenderMode::Normals},
+          {"material-id", tusdview::RenderMode::MaterialId},
+          {"geom-normal", tusdview::RenderMode::GeomNormal},
+          {"uv", tusdview::RenderMode::Uv},
+          {"depth", tusdview::RenderMode::Depth},
+          {"albedo", tusdview::RenderMode::Albedo},
+          {"facing", tusdview::RenderMode::Facing},
+          {"roughness", tusdview::RenderMode::Roughness},
+          {"metallic", tusdview::RenderMode::Metallic},
+          {"emissive", tusdview::RenderMode::Emissive},
+          {"opacity", tusdview::RenderMode::Opacity},
+          {"position", tusdview::RenderMode::Position},
+          {"barycentric", tusdview::RenderMode::Barycentric},
+          {"prim-id", tusdview::RenderMode::PrimId},
+          {"mesh-id", tusdview::RenderMode::MeshId},
+          {"purpose", tusdview::RenderMode::Purpose},
+          {"missing-normals", tusdview::RenderMode::MissingNormals},
+          {"double-sided", tusdview::RenderMode::DoubleSided},
+          {"skin-weights", tusdview::RenderMode::SkinWeights},
+          {"tangent", tusdview::RenderMode::Tangent},
+          {"uv-checker", tusdview::RenderMode::UvChecker},
+          {"ao", tusdview::RenderMode::AmbientOcclusion},
+          {"curvature", tusdview::RenderMode::Curvature},
+          {"instance-id", tusdview::RenderMode::InstanceId},
+          {"bvh-heatmap", tusdview::RenderMode::BvhHeatmap},
+          {"soft-shadow", tusdview::RenderMode::SoftShadow},
+          {"kind", tusdview::RenderMode::Kind},
+          {"udim", tusdview::RenderMode::UdimTile},
+          {"uv1", tusdview::RenderMode::Uv1},
+          {"blend-influence", tusdview::RenderMode::BlendInfluence},
+          {"texel-density", tusdview::RenderMode::TexelDensity},
+          {"source-face-id", tusdview::RenderMode::SourceFaceId},
+          {"coat-normal", tusdview::RenderMode::CoatNormal},
+          {"coat-weight", tusdview::RenderMode::CoatWeight},
+          {"coat-color", tusdview::RenderMode::CoatColor},
+          {"coat-roughness", tusdview::RenderMode::CoatRoughness},
+          {"specular-f0", tusdview::RenderMode::SpecularF0},
+          {"ior-f0", tusdview::RenderMode::IorF0},
+      };
       const char* m = argv[++i];
-      if (!std::strcmp(m, "shaded")) wantMode = tusdview::RenderMode::Shaded;
-      else if (!std::strcmp(m, "wireframe")) wantMode = tusdview::RenderMode::Wireframe;
-      else if (!std::strcmp(m, "normals")) wantMode = tusdview::RenderMode::Normals;
-      else if (!std::strcmp(m, "material-id")) wantMode = tusdview::RenderMode::MaterialId;
-      else if (!std::strcmp(m, "geom-normal")) wantMode = tusdview::RenderMode::GeomNormal;
-      else if (!std::strcmp(m, "uv")) wantMode = tusdview::RenderMode::Uv;
-      else if (!std::strcmp(m, "depth")) wantMode = tusdview::RenderMode::Depth;
-      else if (!std::strcmp(m, "albedo")) wantMode = tusdview::RenderMode::Albedo;
-      else if (!std::strcmp(m, "facing")) wantMode = tusdview::RenderMode::Facing;
-      else if (!std::strcmp(m, "roughness")) wantMode = tusdview::RenderMode::Roughness;
-      else if (!std::strcmp(m, "metallic")) wantMode = tusdview::RenderMode::Metallic;
-      else if (!std::strcmp(m, "emissive")) wantMode = tusdview::RenderMode::Emissive;
-      else if (!std::strcmp(m, "opacity")) wantMode = tusdview::RenderMode::Opacity;
-      else if (!std::strcmp(m, "position")) wantMode = tusdview::RenderMode::Position;
-      else if (!std::strcmp(m, "barycentric")) wantMode = tusdview::RenderMode::Barycentric;
-      else if (!std::strcmp(m, "prim-id")) wantMode = tusdview::RenderMode::PrimId;
-      else if (!std::strcmp(m, "mesh-id")) wantMode = tusdview::RenderMode::MeshId;
-      else if (!std::strcmp(m, "purpose")) wantMode = tusdview::RenderMode::Purpose;
-      else if (!std::strcmp(m, "missing-normals")) wantMode = tusdview::RenderMode::MissingNormals;
-      else if (!std::strcmp(m, "double-sided")) wantMode = tusdview::RenderMode::DoubleSided;
-      else if (!std::strcmp(m, "skin-weights")) wantMode = tusdview::RenderMode::SkinWeights;
-      else if (!std::strcmp(m, "tangent")) wantMode = tusdview::RenderMode::Tangent;
-      else if (!std::strcmp(m, "uv-checker")) wantMode = tusdview::RenderMode::UvChecker;
-      else if (!std::strcmp(m, "ao")) wantMode = tusdview::RenderMode::AmbientOcclusion;
-      else if (!std::strcmp(m, "curvature")) wantMode = tusdview::RenderMode::Curvature;
-      else if (!std::strcmp(m, "instance-id")) wantMode = tusdview::RenderMode::InstanceId;
-      else if (!std::strcmp(m, "bvh-heatmap")) wantMode = tusdview::RenderMode::BvhHeatmap;
-      else if (!std::strcmp(m, "soft-shadow")) wantMode = tusdview::RenderMode::SoftShadow;
-      else if (!std::strcmp(m, "kind")) wantMode = tusdview::RenderMode::Kind;
-      else if (!std::strcmp(m, "udim")) wantMode = tusdview::RenderMode::UdimTile;
-      else if (!std::strcmp(m, "uv1")) wantMode = tusdview::RenderMode::Uv1;
-      else if (!std::strcmp(m, "blend-influence")) wantMode = tusdview::RenderMode::BlendInfluence;
-      else if (!std::strcmp(m, "texel-density")) wantMode = tusdview::RenderMode::TexelDensity;
-      else if (!std::strcmp(m, "source-face-id")) wantMode = tusdview::RenderMode::SourceFaceId;
-      else if (!std::strcmp(m, "coat-normal")) wantMode = tusdview::RenderMode::CoatNormal;
-      else if (!std::strcmp(m, "coat-weight")) wantMode = tusdview::RenderMode::CoatWeight;
-      else if (!std::strcmp(m, "coat-color")) wantMode = tusdview::RenderMode::CoatColor;
-      else if (!std::strcmp(m, "coat-roughness")) wantMode = tusdview::RenderMode::CoatRoughness;
-      else if (!std::strcmp(m, "specular-f0")) wantMode = tusdview::RenderMode::SpecularF0;
-      else if (!std::strcmp(m, "ior-f0")) wantMode = tusdview::RenderMode::IorF0;
-      else { LOGE("--mode: unknown '%s'", m); return 1; }
+      const auto* modeIt = std::find_if(
+          std::begin(kModeTable), std::end(kModeTable),
+          [m](const std::pair<const char*, tusdview::RenderMode>& entry) {
+            return std::strcmp(m, entry.first) == 0;
+          });
+      if (modeIt == std::end(kModeTable)) {
+        LOGE("--mode: unknown '%s'", m);
+        return 1;
+      }
+      wantMode = modeIt->second;
     } else if (std::strcmp(argv[i], "--select") == 0 && (i + 1) < argc) {
       // Select a prim by absolute path once loaded (highlights it; a GeomSubset
       // highlights just its faces). Also handy for headless screenshots.
@@ -826,7 +838,7 @@ int main(int argc, char** argv) {
           "outlier-resistant auto framing.\n"
           "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
           "  --no-skeleton Hide skeleton helper overlays (useful for AOV comparisons).\n"
-          "  --dome-ibl off|fast|quality  Control DomeLight IBL precomputation.\n"
+          "  --dome-ibl off|low|high  Control DomeLight IBL precomputation.\n"
           "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
           "Vulkan realtime preset for public large scenes. Profiles set existing "
           "large-scene knobs only; explicit CLI flags win. No texture resize or "
@@ -1197,6 +1209,17 @@ int main(int argc, char** argv) {
     }
     for (const auto& kv : config.config.subdivisionPrimLevels) {
       subdivisionPrimLevels.emplace(kv.first, kv.second);
+    }
+  }
+  // Test/headless wrappers can select the hardware Vulkan device without
+  // rewriting every manifest or shell command. Keep CLI precedence, then the
+  // environment, then the startup config above. "auto" deliberately leaves
+  // the normal device selection untouched.
+  if (!vkDeviceExplicit) {
+    const char* envVkDevice = std::getenv("TUSDVIEW_VK_DEVICE");
+    if (envVkDevice && *envVkDevice &&
+        std::strcmp(envVkDevice, "auto") != 0) {
+      devicePreference.vulkanDevice = envVkDevice;
     }
   }
   // Persist the recent-scenes list back to the resolved config path (the default

@@ -33,6 +33,7 @@ export default defineConfig(({ command, mode }) => {
             { find: 'tinyusdz', replacement: tinyusdzRoot },
             { find: 'fzstd', replacement: path.resolve(__dirname, 'node_modules/fzstd') },
             { find: 'three', replacement: path.resolve(__dirname, 'node_modules/three') },
+            { find: 'tinyusdz-js', replacement: path.resolve(__dirname, '../js') },
         ],
     },
     build: {
@@ -48,13 +49,26 @@ export default defineConfig(({ command, mode }) => {
             asset_resolver: path.resolve(__dirname, 'asset-resolver.html'),
             composition: path.resolve(__dirname, 'composition.html'),
             export_demo: path.resolve(__dirname, 'export.html'),
+            usd_assets: path.resolve(__dirname, 'usd-assets.html'),
+            usd_physics: path.resolve(__dirname, 'usd-physics.html'),
+            material_editor: path.resolve(__dirname, 'material-editor.html'),
+            animation_timeline: path.resolve(__dirname, 'animation-timeline.html'),
+            usd_inspector: path.resolve(__dirname, 'usd-inspector.html'),
+            composition_viz: path.resolve(__dirname, 'composition-viz.html'),
+            streaming_viz: path.resolve(__dirname, 'streaming-viz.html'),
+            viewer_toolkit: path.resolve(__dirname, 'viewer-toolkit.html'),
+            animation_blending: path.resolve(__dirname, 'animation-blending.html'),
+            procedural_usd: path.resolve(__dirname, 'procedural-usd.html'),
+            usdz_packager: path.resolve(__dirname, 'usdz-packager.html'),
+            usd_diff: path.resolve(__dirname, 'usd-diff.html'),
+            backend_compare: path.resolve(__dirname, 'backend-compare.html'),
           },
         },
-        minify: false,
-        terserOptions: false, // Disable terser completely
+        minify: true,
+        cssMinify: true,
     },
     optimizeDeps: {
-        exclude: ['tinyusdz'],
+        exclude: ['tinyusdz', '@lighttransport/mujoco-wasm'],
     },
     // Use only gzip here. Vite will emit the WASM referenced by the npm package.
     plugins: [

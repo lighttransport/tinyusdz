@@ -28,6 +28,7 @@ import glob
 _NVIDIA_GLVND_JSON = "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
 
 _gpu_vendor_cache = "unprobed"
+_vulkan_vendor_cache = {}
 
 
 def detect_gpu():
@@ -66,9 +67,46 @@ def vk_device_args(backend):
     default (possibly software) device keeps the callers' skip behavior.
     """
     vendor = detect_gpu()
-    if backend in ("vk", "vulkan") and vendor:
+    if (backend in ("vk", "vulkan") and vendor and
+            _vulkan_has_vendor(vendor)):
         return ["--vk-device", vendor]
     return []
+
+
+def _vulkan_has_vendor(vendor):
+    """Return whether Vulkan enumerates a physical device for ``vendor``.
+
+    The kernel module and GLVND libraries may be present in a container while
+    the matching Vulkan ICD is missing. Do not turn that ordinary software
+    fallback into a hard ``--vk-device`` initialization failure.
+    """
+    if vendor in _vulkan_vendor_cache:
+        return _vulkan_vendor_cache[vendor]
+    vulkaninfo = shutil.which("vulkaninfo")
+    if not vulkaninfo:
+        _vulkan_vendor_cache[vendor] = False
+        return False
+    try:
+        result = subprocess.run(
+            [vulkaninfo, "--summary"], stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, timeout=10, check=False,
+            env=gpu_offload_env())
+    except (OSError, subprocess.TimeoutExpired):
+        _vulkan_vendor_cache[vendor] = False
+        return False
+    if result.returncode != 0:
+        _vulkan_vendor_cache[vendor] = False
+        return False
+
+    output = result.stdout.decode(errors="replace")
+    patterns = {
+        "nvidia": r"deviceName\s*=.*(?:NVIDIA|GeForce|RTX|Quadro|Tesla)",
+        "amd": r"deviceName\s*=.*(?:AMD|Radeon|RADV)",
+    }
+    found = bool(re.search(patterns.get(vendor, vendor), output,
+                            re.IGNORECASE))
+    _vulkan_vendor_cache[vendor] = found
+    return found
 
 
 def gpu_offload_env(base=None):

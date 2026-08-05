@@ -10,6 +10,7 @@
 
 #include <cctype>
 #include <cstring>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
@@ -118,6 +119,7 @@ char Lexer::current_char() const {
 }
 
 char Lexer::peek_char(size_t offset) const {
+  if (offset > (std::numeric_limits<size_t>::max)() - pos_) return '\0';
   size_t idx = pos_ + offset;
   return (idx < length_) ? data_[idx] : '\0';
 }
@@ -141,6 +143,10 @@ void Lexer::skip_whitespace() {
           break;
         }
         advance();
+      }
+      if (pos_ >= length_) {
+        set_fatal_error("Unterminated block comment");
+        return;
       }
     } else {
       break;

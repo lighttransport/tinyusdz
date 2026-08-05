@@ -122,6 +122,27 @@ USDA and re-parsed as an uncomposed Layer). `groups` selects rule groups: any of
 issues: [{ severity, rule_id, location, message }] }`. `checked_groups` reports
 which groups actually ran, so a core-only `ok` is not mistaken for full coverage.
 
+### Diff (USD layer comparison)
+
+| Tool | Description | Key Args |
+|------|-------------|----------|
+| `diff_open` | Diff two USD layers (path/data/uuid), optionally flattened, ULP-tolerant float compare; caches the result in the session and returns a summary | `left`, `right`, `flatten` |
+| `diff_summary` | Summary (counts + reason tally) of the cached diff | — |
+| `diff_paths` | Filtered, paginated list of changed paths from the cached diff; `group_by` returns aggregated `{key,count}` groups | `reason`, `path_substr`, `kind`, `group_by`, `offset`, `limit` |
+| `diff_tree` | Subtree rollup of change counts under a path (navigable overview) | `path`, `depth` |
+| `diff_prim` | Full per-prim diff detail (reasons + old/new values) from the cached diff | `path` |
+| `diff_text` | Full rendered text diff (token-heavy escape hatch) | — |
+| `diff_json` | Full structured JSON diff (token-heavy escape hatch) | — |
+
+### USDZ / Texture
+
+| Tool | Description | Key Args |
+|------|-------------|----------|
+| `usdz_convert` | Convert a USD file to an ARKit-friendly USDZ (flatten + texture resize/re-encode with fpnge) | `input`, `output`, `fitMinTextureSize`, `fitMinQuality` |
+| `usdz_pack` | Pack the current session stage into a USDZ (file or base64) | `uri`, `arkitCompatible` |
+| `texture_resize` | Resize a base64 image and re-encode (PNG via fpnge) | `data`, `format`, `pngEncoder` |
+| `texture_repack` | Merge channels from base64 images into one image (e.g. R=gloss, G=roughness) | `r`, `g`, `b`, `a`, `width`, `height`, `format` |
+
 ### Scripting
 
 | Tool | Description | Key Args |
@@ -149,6 +170,12 @@ which groups actually ran, so a core-only `ok` is not mistaken for full coverage
 | `list_primspecs` | List root PrimSpecs in a loaded Layer |
 | `get_usd_description` | Get description of a loaded USD Layer |
 | `get_all_usd_descriptions` | Get descriptions of all loaded USD Layers |
+| `debug_primspec_dump` | Dump a loaded Layer PrimSpec as deterministic JSON for debugging | `path`, `max_depth` |
+
+> Note: `attr_connections`, `payload_list`, and `variant_define` have dispatch
+> entries in `src/tydra/mcp-tools.cc` but are **not registered** with `add_tool`,
+> so the server does not advertise them in `tools/list` — they are dead
+> documentation entries kept here for parity with the dispatch table.
 
 ## JavaScript Scripting
 

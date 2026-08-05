@@ -188,6 +188,90 @@ void OrbitCamera::GenerateRay(int px, int py, int width, int height,
   Normalize(direction);
 }
 
+void OrbitCamera::SetTarget(const float p[3]) {
+  // Keep the eye where it is and re-aim: the picked point becomes the pivot
+  // without the view lurching, which is what makes click-to-focus feel like
+  // aiming rather than teleporting.
+  float eye[3];
+  Eye(eye);
+
+  const float dx = eye[0] - p[0];
+  const float dy = eye[1] - p[1];
+  const float dz = eye[2] - p[2];
+  const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+  if (dist < 1e-6f) {
+    // Degenerate: the eye is sitting on the point. Keep the old distance and
+    // just move the pivot, rather than producing a zero-length view vector.
+    for (int i = 0; i < 3; i++) target[i] = p[i];
+    return;
+  }
+
+  for (int i = 0; i < 3; i++) target[i] = p[i];
+  distance = dist;
+
+  // Re-derive the angles from the preserved eye position.
+  const float up_c = y_up ? dy : dz;
+  pitch = std::asin(std::max(-1.0f, std::min(1.0f, up_c / dist)));
+  const float a = y_up ? dx : dx;
+  const float b = y_up ? dz : dy;
+  yaw = std::atan2(b, a);
+}
+
+bool OrbitCamera::ApproachToward(const OrbitCamera& goal, float dt,
+                                 float scene_radius) {
+  // Exponential smoothing, frame-rate independent: the fraction of the
+  // remaining distance covered depends on elapsed time, not on how often this
+  // happens to be called.
+  const float rate = 18.0f;
+  float t = 1.0f - std::exp(-rate * std::max(0.0f, dt));
+  if (t > 1.0f) t = 1.0f;
+
+  // Angles are interpolated on the shorter arc so a wrap past +-pi does not
+  // send the camera the long way round.
+  auto lerp_angle = [&](float from, float to) {
+    float d = to - from;
+    while (d > 3.14159265358979f) d -= 6.28318530717959f;
+    while (d < -3.14159265358979f) d += 6.28318530717959f;
+    return from + d * t;
+  };
+
+  const float radius = std::max(scene_radius, 1e-6f);
+  const float pos_eps = radius * 1e-4f;
+  const float ang_eps = 1e-4f;
+
+  float d_target = 0.0f;
+  for (int i = 0; i < 3; i++) {
+    d_target = std::max(d_target, std::fabs(goal.target[i] - target[i]));
+  }
+  float d_yaw = goal.yaw - yaw;
+  while (d_yaw > 3.14159265358979f) d_yaw -= 6.28318530717959f;
+  while (d_yaw < -3.14159265358979f) d_yaw += 6.28318530717959f;
+
+  const bool settled =
+      d_target <= pos_eps && std::fabs(d_yaw) <= ang_eps &&
+      std::fabs(goal.pitch - pitch) <= ang_eps &&
+      std::fabs(goal.distance - distance) <= radius * 1e-4f &&
+      std::fabs(goal.fov_y - fov_y) <= ang_eps;
+
+  if (settled) {
+    // Snap, so Differs() reports equal and the renderer stops resetting.
+    *this = goal;
+    return false;
+  }
+
+  for (int i = 0; i < 3; i++) {
+    target[i] += (goal.target[i] - target[i]) * t;
+  }
+  yaw = lerp_angle(yaw, goal.yaw);
+  pitch += (goal.pitch - pitch) * t;
+  distance += (goal.distance - distance) * t;
+  fov_y += (goal.fov_y - fov_y) * t;
+  near_clip = goal.near_clip;
+  far_clip = goal.far_clip;
+  y_up = goal.y_up;
+  return true;
+}
+
 bool OrbitCamera::Differs(const OrbitCamera& o) const {
   auto ne = [](float a, float b) { return std::fabs(a - b) > 1e-7f; };
   return ne(target[0], o.target[0]) || ne(target[1], o.target[1]) ||

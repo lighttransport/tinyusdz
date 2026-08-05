@@ -99,6 +99,7 @@ class ordered_dict {
       if (key == _keys[i]) {
         idx = i;
         erased = true;
+        break;
       }
     }
 
@@ -124,7 +125,7 @@ class ordered_dict {
   }
 
 
-  bool at(const std::string &key, const T *dst) const {
+  bool at(const std::string &key, T *dst) const {
     if (!_m.count(key)) {
       // This should not happen though.
       return false;

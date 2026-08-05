@@ -46,6 +46,15 @@ typedef struct {
     lui_event_t   pending_text;
 } lui_window_x11_t;
 
+/* Multi-click run state. X11 has no notion of a double-click, so the run is
+ * tracked here (see the ButtonPress handler). Process-global rather than
+ * per-window: a click run cannot span windows anyway. */
+static lui_mouse_button_t x11_click_button = LUI_MOUSE_LEFT;
+static unsigned long      x11_click_time   = 0;
+static int                x11_click_x      = 0;
+static int                x11_click_y      = 0;
+static int                x11_click_count  = 0;
+
 /* -------------------------------------------------------------------------
  * Forward declarations
  * ------------------------------------------------------------------------- */
@@ -334,7 +343,37 @@ static bool x11_translate_event(lui_window_x11_t *xw,
         out->data.mouse_button.x       = xe->xbutton.x;
         out->data.mouse_button.y       = xe->xbutton.y;
         out->data.mouse_button.button  = mb;
-        out->data.mouse_button.clicks  = 1;
+
+        /* Multi-click counting. X11 reports every press independently, so the
+         * count has to be synthesized here or lui_event_t::clicks is stuck at
+         * 1 and no application can ever see a double-click. Same button, close
+         * in time and in space, extends the run. */
+        if (xe->type == ButtonPress) {
+            static const unsigned long kMultiClickMs = 400;
+            static const int kMultiClickSlopPx = 4;
+            unsigned long t = xe->xbutton.time;
+            int dx = xe->xbutton.x - x11_click_x;
+            int dy = xe->xbutton.y - x11_click_y;
+            if (dx < 0) dx = -dx;
+            if (dy < 0) dy = -dy;
+            if (mb == x11_click_button &&
+                t >= x11_click_time &&
+                (t - x11_click_time) <= kMultiClickMs &&
+                dx <= kMultiClickSlopPx && dy <= kMultiClickSlopPx) {
+                x11_click_count++;
+            } else {
+                x11_click_count = 1;
+            }
+            x11_click_button = mb;
+            x11_click_time   = t;
+            x11_click_x      = xe->xbutton.x;
+            x11_click_y      = xe->xbutton.y;
+            out->data.mouse_button.clicks = x11_click_count;
+        } else {
+            /* A release belongs to the press that opened the run. */
+            out->data.mouse_button.clicks = x11_click_count > 0
+                                          ? x11_click_count : 1;
+        }
         return true;
     }
 

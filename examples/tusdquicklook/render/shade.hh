@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "options.hh"
 #include "ql_scene.hh"
 
 namespace tusdql {
@@ -30,6 +31,24 @@ struct ShadingContext {
   float ground_y = 0.0f;
   bool has_ground = false;
   bool y_up = true;
+
+  // Image-based lighting. `env_sh` is the diffuse irradiance projected onto 9
+  // spherical harmonics -- 27 floats that GL takes as uniforms, so both
+  // backends evaluate the identical polynomial rather than each integrating
+  // the environment their own way.
+  bool ibl = false;
+  float env_sh[9][3] = {};
+  const QlTexture* env_tex = nullptr;
+  const QlTexture* env_prefiltered[QlScene::kEnvPrefilterLevels] = {};
+  float env_rotation = 0.0f;
+  float env_intensity = 1.0f;
+
+  // Debug visualization. Anything but Shaded bypasses lighting entirely and
+  // shows one input to the shading model directly.
+  ShadingMode mode = ShadingMode::Shaded;
+  // Distances used to normalize the Depth mode. Set per frame from the camera.
+  float depth_near = 0.1f;
+  float depth_far = 100.0f;
 };
 
 // Pick the lights to shade with. Authored lights win; otherwise a key/fill/rim
@@ -37,6 +56,22 @@ struct ShadingContext {
 void BuildLightRig(const QlScene& scene, const float eye[3],
                    const float forward[3], const float right[3],
                    const float up[3], ShadingContext* out);
+
+// Project the scene's environment map onto SH9 and point the context at the
+// prefiltered chain. A fixed single-threaded loop over a downsampled image:
+// no importance sampling, no RNG, so it is bit-identical for any --threads and
+// reproducible as GL uniforms. Call after BuildLightRig.
+void BuildEnvironment(const QlScene& scene, bool ibl_enabled,
+                      ShadingContext* out);
+
+// Direction -> latlong UV, and the inverse. Shared with the GLSL so the two
+// backends agree on which way the environment faces.
+void DirectionToLatLong(const ShadingContext& ctx, const float dir[3],
+                        float* out_u, float* out_v);
+
+// Diffuse irradiance from the SH9 basis, in linear RGB.
+void EvaluateEnvIrradiance(const ShadingContext& ctx, const float n[3],
+                           float out_rgb[3]);
 
 // Everything a hit needs to be shaded, filled in by the tracer.
 struct SurfaceHit {
@@ -47,7 +82,27 @@ struct SurfaceHit {
   bool has_uv = false;
   int material_id = -1;
   bool backfacing = false;
+  // Interpolated tangent (xyz) and bitangent sign (w). Only meaningful when
+  // has_tangent -- normal mapping uses this rather than screen derivatives,
+  // which the raster path would compute differently from the tracer.
+  float tangent[4] = {1, 0, 0, 1};
+  bool has_tangent = false;
 };
+
+// A material with all of its maps resolved at one hit.
+struct EvaluatedMaterial {
+  float base[3] = {0.8f, 0.8f, 0.8f};
+  float emissive[3] = {0, 0, 0};
+  float roughness = 0.5f;
+  float metallic = 0.0f;
+  float alpha = 1.0f;
+  float normal[3] = {0, 1, 0};  // shading normal, after normal mapping
+};
+
+// Resolve every texture slot at a hit. Shared by ShadeSurface and ShadeAov so
+// the debug views show exactly what the shaded image is using.
+void EvaluateMaterial(const ShadingContext& ctx, const SurfaceHit& hit,
+                      const float view_dir[3], EvaluatedMaterial* out);
 
 // Occlusion test callback: returns true when `origin -> direction` is blocked
 // within `max_distance`. Supplied by the tracer so shading stays backend-free.
@@ -59,7 +114,22 @@ void ShadeSurface(const ShadingContext& ctx, const SurfaceHit& hit,
                   const float view_dir[3], OcclusionFn occluded, void* user,
                   float out_rgb[3]);
 
-// Background for rays that miss everything, in linear RGB.
+// Debug visualization of one shading input, in linear RGB. Used instead of
+// ShadeSurface whenever ctx.mode != Shaded.
+//
+// PARITY: the GL fragment shader in gl_raster.cc reproduces these expressions
+// exactly, and the smoke test holds the two backends to a tighter tolerance
+// here than for shaded output (there is no lighting to disagree about). Any
+// term either side would derive independently -- screen derivatives,
+// gl_FragCoord.z -- must not appear.
+//
+// `eye_distance` is |eye - hit.position|, which the GL side recomputes from the
+// interpolated world position rather than from the depth buffer.
+void ShadeAov(const ShadingContext& ctx, const SurfaceHit& hit,
+              const float view_dir[3], float eye_distance, float out_rgb[3]);
+
+// Background for rays that miss everything, in linear RGB. In a debug mode
+// this is black on both backends, so the AOV is not diluted by the gradient.
 void ShadeBackground(const ShadingContext& ctx, const float direction[3],
                      float out_rgb[3]);
 

@@ -16,6 +16,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "safe-arithmetic.hh"
 #include "nonstd/expected.hpp"
 #include "nonstd/span.hpp"
 // NOTE: logger.hh is intentionally NOT included here. typed-array.hh uses no
@@ -63,8 +64,11 @@ class TypedArray {
   // Constructor from existing data (copies data)
   TypedArray(const T* data, size_type count) {
     if (data && count > 0) {
-      _storage.resize(count * sizeof(T));
-      std::memcpy(_storage.data(), data, count * sizeof(T));
+      size_t nbytes;
+      if (safe::mul(count, sizeof(T), &nbytes)) {
+        _storage.resize(nbytes);
+        std::memcpy(_storage.data(), data, nbytes);
+      }
     }
   }
 
@@ -216,12 +220,22 @@ class TypedArray {
   }
 
   void resize(size_type count) {
-    _storage.resize(count * sizeof(T));
+    size_t nbytes;
+    if (!safe::mul(count, sizeof(T), &nbytes)) {
+      _storage.clear();
+      return;
+    }
+    _storage.resize(nbytes);
   }
 
   void resize(size_type count, const T& value) {
     size_type old_size = size();
-    _storage.resize(count * sizeof(T));
+    size_t nbytes;
+    if (!safe::mul(count, sizeof(T), &nbytes)) {
+      _storage.clear();
+      return;
+    }
+    _storage.resize(nbytes);
 
     // Initialize new elements with the given value
     for (size_type i = old_size; i < count; ++i) {
@@ -230,7 +244,9 @@ class TypedArray {
   }
 
   void reserve(size_type new_capacity) {
-    _storage.reserve(new_capacity * sizeof(T));
+    size_t nbytes;
+    if (!safe::mul(new_capacity, sizeof(T), &nbytes)) return;
+    _storage.reserve(nbytes);
   }
 
   void shrink_to_fit() {
@@ -352,8 +368,10 @@ class TypedArray {
     }
 
     size_type src_count = size();
-    size_type required_bytes = src_count * sizeof(N);
-    // size_type current_bytes = _storage.size();
+    size_t required_bytes;
+    if (!safe::mul(src_count, sizeof(N), &required_bytes)) {
+      return TypedArray<N>();
+    }
 
     // Check if we can expand in-place or need reallocation
     if (required_bytes <= _storage.capacity()) {

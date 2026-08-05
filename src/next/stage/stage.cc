@@ -15,49 +15,118 @@ namespace next {
 namespace {
 
 bool IsStaticGeometryArray(const std::string& type,
-                           const std::string& property) {
+                          const PropNameId property_id) {
+  const auto& names = GetPropNameTable();
+  const std::string& property = names.get(property_id);
   const bool primvar = property.compare(0, 9, "primvars:") == 0;
   if (type == "Mesh") {
     if (primvar) return true;
-    static const char* names[] = {
-        "points",          "normals",           "velocities",
-        "accelerations",  "faceVertexCounts",  "faceVertexIndices",
-        "holeIndices",    "cornerIndices",     "cornerSharpnesses",
-        "creaseIndices",  "creaseLengths",     "creaseSharpnesses"};
-    for (const char* name : names)
-      if (property == name) return true;
+    static const PropNameId kIdPoints =
+        GetPropNameTable().intern("points");
+    static const PropNameId kIdNormals =
+        GetPropNameTable().intern("normals");
+    static const PropNameId kIdVelocities =
+        GetPropNameTable().intern("velocities");
+    static const PropNameId kIdAccelerations =
+        GetPropNameTable().intern("accelerations");
+    static const PropNameId kIdFaceVertexCounts =
+        GetPropNameTable().intern("faceVertexCounts");
+    static const PropNameId kIdFaceVertexIndices =
+        GetPropNameTable().intern("faceVertexIndices");
+    static const PropNameId kIdHoleIndices =
+        GetPropNameTable().intern("holeIndices");
+    static const PropNameId kIdCornerIndices =
+        GetPropNameTable().intern("cornerIndices");
+    static const PropNameId kIdCornerSharpnesses =
+        GetPropNameTable().intern("cornerSharpnesses");
+    static const PropNameId kIdCreaseIndices =
+        GetPropNameTable().intern("creaseIndices");
+    static const PropNameId kIdCreaseLengths =
+        GetPropNameTable().intern("creaseLengths");
+    static const PropNameId kIdCreaseSharpnesses =
+        GetPropNameTable().intern("creaseSharpnesses");
+    if ((property_id == kIdPoints) || (property_id == kIdNormals) ||
+        (property_id == kIdVelocities) || (property_id == kIdAccelerations) ||
+        (property_id == kIdFaceVertexCounts) ||
+        (property_id == kIdFaceVertexIndices) ||
+        (property_id == kIdHoleIndices) || (property_id == kIdCornerIndices) ||
+        (property_id == kIdCornerSharpnesses) ||
+        (property_id == kIdCreaseIndices) ||
+        (property_id == kIdCreaseLengths) ||
+        (property_id == kIdCreaseSharpnesses)) {
+      return true;
+    }
     return false;
   }
   if (type == "PointInstancer") {
     if (primvar) return true;
-    static const char* names[] = {
-        "protoIndices", "positions", "orientations", "scales",
-        "velocities", "angularVelocities", "accelerations", "ids",
-        "invisibleIds"};
-    for (const char* name : names)
-      if (property == name) return true;
+    static const PropNameId kIdProtoIndices =
+        GetPropNameTable().intern("protoIndices");
+    static const PropNameId kIdPositions =
+        GetPropNameTable().intern("positions");
+    static const PropNameId kIdOrientations =
+        GetPropNameTable().intern("orientations");
+    static const PropNameId kIdScales =
+        GetPropNameTable().intern("scales");
+    static const PropNameId kIdVelocities =
+        GetPropNameTable().intern("velocities");
+    static const PropNameId kIdAngularVelocities =
+        GetPropNameTable().intern("angularVelocities");
+    static const PropNameId kIdAccelerations =
+        GetPropNameTable().intern("accelerations");
+    static const PropNameId kIdIds = GetPropNameTable().intern("ids");
+    static const PropNameId kIdInvisibleIds =
+        GetPropNameTable().intern("invisibleIds");
+    if ((property_id == kIdProtoIndices) ||
+        (property_id == kIdPositions) ||
+        (property_id == kIdOrientations) || (property_id == kIdScales) ||
+        (property_id == kIdVelocities) ||
+        (property_id == kIdAngularVelocities) ||
+        (property_id == kIdAccelerations) || (property_id == kIdIds) ||
+        (property_id == kIdInvisibleIds)) {
+      return true;
+    }
     return false;
   }
   if (type == "BasisCurves" || type == "Points") {
     if (primvar) return true;
-    static const char* names[] = {"points", "normals", "widths",
-                                  "velocities", "accelerations", "ids",
-                                  "curveVertexCounts"};
-    for (const char* name : names)
-      if (property == name) return true;
+    static const PropNameId kIdPoints =
+        GetPropNameTable().intern("points");
+    static const PropNameId kIdNormals =
+        GetPropNameTable().intern("normals");
+    static const PropNameId kIdWidths =
+        GetPropNameTable().intern("widths");
+    static const PropNameId kIdVelocities =
+        GetPropNameTable().intern("velocities");
+    static const PropNameId kIdAccelerations =
+        GetPropNameTable().intern("accelerations");
+    static const PropNameId kIdIds = GetPropNameTable().intern("ids");
+    static const PropNameId kIdCurveVertexCounts =
+        GetPropNameTable().intern("curveVertexCounts");
+    if ((property_id == kIdPoints) || (property_id == kIdNormals) ||
+        (property_id == kIdWidths) || (property_id == kIdVelocities) ||
+        (property_id == kIdAccelerations) || (property_id == kIdIds) ||
+        (property_id == kIdCurveVertexCounts)) {
+      return true;
+    }
     return false;
   }
-  return type == "GeomSubset" && property == "indices";
+  if (type == "GeomSubset") {
+    static const PropNameId kIdIndices =
+        GetPropNameTable().intern("indices");
+    return property_id == kIdIndices;
+  }
+  return false;
 }
 
 Stage::StaticGeometryReleaseStats ReleasePrimStaticGeometryArrays(
     PrimSpec* prim, size_t min_array_elements) {
   Stage::StaticGeometryReleaseStats stats;
   if (!prim) return stats;
-  PropNameTable& names = GetPropNameTable();
+  const std::string& prim_type = prim->type_name();
   for (const PropSlot& slot : prim->properties().slots()) {
     const PropNameId id = slot.name_id;
-    if (!IsStaticGeometryArray(prim->type_name(), names.get(id))) continue;
+    if (!IsStaticGeometryArray(prim_type, id)) continue;
     // release_static_array_value changes only the slot's offset and its Value;
     // PropIndex storage/order is stable, so this iteration does not invalidate.
     const size_t bytes = prim->release_static_array_value(
@@ -172,6 +241,15 @@ bool UsdPrim::HasProperty(const std::string& name) const {
   return spec_->property(name) != nullptr ||
          (source != spec_ && source->property(name) != nullptr) ||
          GetSchemaRegistry().FindProperty(*source, name) != nullptr;
+}
+
+bool UsdPrim::HasProperty(PropNameId name_id) const {
+  if (!spec_ || !name_id.is_valid()) return false;
+  const PrimSpec* source = ChildSourceSpec();
+  if (spec_->property(name_id) != nullptr) return true;
+  if (source != spec_ && source->property(name_id) != nullptr) return true;
+  const std::string& name = GetPropNameTable().get(name_id);
+  return GetSchemaRegistry().FindProperty(*source, name) != nullptr;
 }
 
 bool UsdPrim::HasAuthoredProperty(const std::string& name) const {
@@ -296,6 +374,16 @@ bool UsdPrim::HasTimeSamples(const std::string& name) const {
   return spec_->has_time_samples(name_id);
 }
 
+bool UsdPrim::HasTimeSamples(PropNameId name_id) const {
+  if (!spec_ || !name_id.is_valid()) return false;
+  return spec_->has_time_samples(name_id);
+}
+
+bool UsdPrim::HasAnyTimeSamples() const {
+  if (!spec_) return false;
+  return spec_->has_any_time_samples();
+}
+
 std::vector<double> UsdPrim::GetTimeSampleTimes(const std::string& name) const {
   std::vector<double> times;
   if (!spec_) return times;
@@ -313,11 +401,35 @@ std::vector<double> UsdPrim::GetTimeSampleTimes(const std::string& name) const {
   return times;
 }
 
+std::vector<double> UsdPrim::GetTimeSampleTimes(PropNameId name_id) const {
+  std::vector<double> times;
+  if (!spec_ || !name_id.is_valid()) return times;
+  const auto* samples = spec_->time_samples(name_id);
+  if (!samples) return times;
+
+  times.reserve(samples->size());
+  for (const auto& sample : *samples) {
+    times.push_back(sample.first);
+  }
+  return times;
+}
+
+const std::vector<std::pair<double, uint32_t>>* UsdPrim::GetTimeSamples(
+    PropNameId name_id) const {
+  if (!spec_ || !name_id.is_valid()) return nullptr;
+  return spec_->time_samples(name_id);
+}
+
 const Value* UsdPrim::GetValueAtTime(const std::string& name, double time) const {
   if (!spec_) return nullptr;
 
   PropNameId name_id = GetPropNameTable().find(name);
   if (!name_id.is_valid()) return nullptr;
+  return GetValueAtTime(name_id, time);
+}
+
+const Value* UsdPrim::GetValueAtTime(PropNameId name_id, double time) const {
+  if (!spec_ || !name_id.is_valid()) return nullptr;
 
   const auto* samples = spec_->time_samples(name_id);
   if (!samples || samples->empty()) {
@@ -355,6 +467,11 @@ Value UsdPrim::GetInterpolatedValue(const std::string& name, double time) const 
 
   PropNameId name_id = GetPropNameTable().find(name);
   if (!name_id.is_valid()) return Value();
+  return GetInterpolatedValue(name_id, time);
+}
+
+Value UsdPrim::GetInterpolatedValue(PropNameId name_id, double time) const {
+  if (!spec_ || !name_id.is_valid()) return Value();
 
   const auto* samples = spec_->time_samples(name_id);
   if (!samples || samples->empty()) {
@@ -859,17 +976,25 @@ double Stage::GetTimeCodesPerSecond() const {
 }
 
 bool Stage::HasTimeSamples() const {
-  bool has_samples = false;
-  Traverse([&](const UsdPrim& prim) {
-    for (const std::string& prop_name : prim.GetPropertyNames()) {
-      if (prim.HasTimeSamples(prop_name)) {
-        has_samples = true;
-        return false;
-      }
-    }
-    return true;
-  });
-  return has_samples;
+  if (!root_layer_) return false;
+  const size_t prim_count = root_layer_->prim_count();
+  for (size_t i = 0; i < prim_count; ++i) {
+    const PrimSpec* prim = root_layer_->prim(static_cast<uint32_t>(i));
+    if (!prim) continue;
+    if (prim->has_any_time_samples()) return true;
+  }
+  return false;
+}
+
+bool Stage::HasValueClips() const {
+  if (!root_layer_) return false;
+  const size_t prim_count = root_layer_->prim_count();
+  for (size_t i = 0; i < prim_count; ++i) {
+    const PrimSpec* prim = root_layer_->prim(static_cast<uint32_t>(i));
+    if (!prim) continue;
+    if (prim->meta().clips().as_dictionary()) return true;
+  }
+  return false;
 }
 
 size_t Stage::GetPrimCount() const {
@@ -942,6 +1067,13 @@ Stage::StaticGeometryReleaseStats Stage::ReleaseStaticGeometryArraysForPrim(
   PrimSpec* mutable_prim = root_layer_->prim_mutable(prim.GetIndex());
   if (!mutable_prim || mutable_prim != prim.GetPrimSpec()) return {};
   return ReleasePrimStaticGeometryArrays(mutable_prim, min_array_elements);
+}
+
+Stage::StaticGeometryReleaseStats Stage::ReleaseStaticGeometryArraysForPrim(
+    const UsdPrim& prim, size_t min_array_elements) const {
+  if (!root_layer_) return {};
+  return const_cast<Stage*>(this)->ReleaseStaticGeometryArraysForPrim(
+      prim, min_array_elements);
 }
 
 // ============================================================

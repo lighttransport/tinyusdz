@@ -21,13 +21,62 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <list>
+#include <limits>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace tinyusdz {
 namespace next {
+
+struct TextureBudgetState {
+  explicit TextureBudgetState(uint64_t limit_bytes) : limit(limit_bytes) {}
+
+  bool try_add(uint64_t bytes) {
+    if (limit == 0) {
+      uint64_t old = resident.load(std::memory_order_relaxed);
+      for (;;) {
+        if (bytes > (std::numeric_limits<uint64_t>::max)() - old) return false;
+        if (resident.compare_exchange_weak(old, old + bytes,
+                                           std::memory_order_relaxed,
+                                           std::memory_order_relaxed)) {
+          return true;
+        }
+      }
+    }
+    uint64_t old = resident.load(std::memory_order_relaxed);
+    for (;;) {
+      if (old > limit || bytes > limit - old) return false;
+      if (resident.compare_exchange_weak(old, old + bytes,
+                                         std::memory_order_relaxed,
+                                         std::memory_order_relaxed)) {
+        return true;
+      }
+    }
+  }
+
+  void release(uint64_t bytes) {
+    resident.fetch_sub(bytes, std::memory_order_relaxed);
+  }
+
+  uint64_t limit = 0;
+  std::atomic<uint64_t> resident{0};
+};
+
+struct TextureBudgetLease {
+  TextureBudgetLease(std::shared_ptr<TextureBudgetState> budget_state,
+                     uint64_t resident_bytes)
+      : state(std::move(budget_state)), bytes(resident_bytes) {}
+
+  std::shared_ptr<TextureBudgetState> state;
+  uint64_t bytes = 0;
+  ~TextureBudgetLease() {
+    if (state && bytes) state->release(bytes);
+  }
+};
 class USDZReader;
 }  // namespace next
 
@@ -41,6 +90,7 @@ struct DecodedImage {
   uint32_t height = 0;
   uint8_t channels = 4;
   std::vector<uint8_t> pixels;  // width * height * channels
+  std::shared_ptr<::tinyusdz::next::TextureBudgetLease> budget_lease;
 
   bool empty() const { return pixels.empty(); }
   size_t byte_size() const { return pixels.size(); }
@@ -53,10 +103,11 @@ struct TextureDecodeOptions {
   const ::tinyusdz::next::USDZReader* usdz = nullptr;
   /// Longest-edge cap in texels. 0 = keep the source resolution.
   uint32_t max_edge = 0;
-  /// Best-effort cap on the total decoded bytes handed out by this decoder.
-  /// Once the running total would exceed it, further images are shrunk to fit.
-  /// 0 = unbounded.
+  /// Cap on resident decoded bytes owned by this decoder and its returned
+  /// images. Images may be downscaled to fit; 0 = unbounded.
   uint64_t budget_bytes = 0;
+  /// Conservative encoded source-image byte ceiling. 0 = no ceiling.
+  uint64_t max_source_bytes = 0;
   /// Expand every image to 4 channels. Consumers whose GPU texture format is
   /// RGBA8 want this; a CPU sampler that honours the source channel count
   /// should turn it off rather than pay for a synthetic alpha channel.
@@ -64,13 +115,13 @@ struct TextureDecodeOptions {
 };
 
 /// Resolves an asset path (filesystem or .usdz entry), decodes it to RGBA8, and
-/// shrinks it to fit the configured size cap and byte budget. Callers keep their
-/// own dedupe map -- this only owns the budget accounting, so no pixels are held
-/// alive here.
+/// shrinks it to fit the configured size cap and resident byte budget.
 class TextureDecoder {
  public:
   explicit TextureDecoder(TextureDecodeOptions options)
-      : options_(std::move(options)) {}
+      : options_(std::move(options)),
+        budget_state_(std::make_shared<::tinyusdz::next::TextureBudgetState>(
+            options_.budget_bytes)) {}
 
   /// Decode `asset` into `out`. `srgb` selects the resize filter's color space
   /// (sRGB data is filtered in linear light). Returns false when the asset
@@ -90,8 +141,10 @@ class TextureDecoder {
   /// the asset cannot be resolved or read.
   bool ReadAssetBytes(const std::string& asset, std::vector<uint8_t>* out) const;
 
-  /// Running total of the decoded bytes handed out (post-shrink).
-  uint64_t decoded_bytes() const { return decoded_bytes_; }
+  /// Current resident decoded bytes, including retained Ptex cache entries.
+  uint64_t decoded_bytes() const {
+    return budget_state_->resident.load(std::memory_order_relaxed);
+  }
   /// How many images were shrunk by the size cap or the byte budget.
   uint64_t downscaled_count() const { return downscaled_; }
 
@@ -103,7 +156,7 @@ class TextureDecoder {
     std::list<std::string>::iterator lru;
   };
   TextureDecodeOptions options_;
-  uint64_t decoded_bytes_ = 0;
+  std::shared_ptr<::tinyusdz::next::TextureBudgetState> budget_state_;
   uint64_t downscaled_ = 0;
   std::unordered_map<std::string, PtexCacheEntry> ptex_cache_;
   std::list<std::string> ptex_lru_;
@@ -119,6 +172,7 @@ class TextureDecoder {
   mutable std::unordered_map<std::string, std::vector<size_t>> usdz_by_base_;
   mutable bool usdz_index_built_ = false;
   const std::vector<size_t>* UsdzCandidates(const std::string& asset) const;
+  bool AttachBudgetLease(DecodedImage* image, bool srgb);
 };
 
 /// Substitute the literal `<UDIM>` token in an asset path with a tile id.

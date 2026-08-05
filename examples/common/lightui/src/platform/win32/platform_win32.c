@@ -80,6 +80,50 @@ static uint32_t get_mods(void)
 }
 
 /* -------------------------------------------------------------------------
+ * Win32 VK_* -> lui portable key-code mapping
+ *
+ * lui_event_t.data.key.key is documented (event.h) as X11 keysym-compatible:
+ * lowercase ASCII for letters, raw ASCII for digits/punctuation, and
+ * 0xFF5x-range codes for navigation keys. Win32 delivers uppercase VK_A..
+ * VK_Z and its own VK_UP/VK_HOME/etc. codes, which never match either
+ * convention, so every non-digit shortcut and all arrow/Home/End/PageUp/
+ * PageDown/Backspace/Tab/Return/Escape handling was silently dead on
+ * Windows. Route everything through this table instead of forwarding wp.
+ * ------------------------------------------------------------------------- */
+static int win32_translate_key(WPARAM vk)
+{
+    switch (vk) {
+    case VK_BACK:   return LUI_KEY_BACKSPACE;
+    case VK_TAB:    return LUI_KEY_TAB;
+    case VK_RETURN: return LUI_KEY_RETURN;
+    case VK_ESCAPE: return LUI_KEY_ESCAPE;
+    case VK_HOME:   return LUI_KEY_HOME;
+    case VK_LEFT:   return LUI_KEY_LEFT;
+    case VK_UP:     return LUI_KEY_UP;
+    case VK_RIGHT:  return LUI_KEY_RIGHT;
+    case VK_DOWN:   return LUI_KEY_DOWN;
+    case VK_PRIOR:  return LUI_KEY_PAGE_UP;
+    case VK_NEXT:   return LUI_KEY_PAGE_DOWN;
+    case VK_END:    return LUI_KEY_END;
+    case VK_INSERT: return LUI_KEY_INSERT;
+    case VK_DELETE: return LUI_KEY_DELETE;
+    default: break;
+    }
+
+    /* Letters, digits, and OEM punctuation: resolve to the unshifted
+     * character for the active keyboard layout (so this stays correct on
+     * non-US layouts too) and lowercase letters, since callers read shift
+     * state from event mods rather than baking it into the key code. */
+    UINT ch = MapVirtualKeyW((UINT)vk, MAPVK_VK_TO_CHAR);
+    if (ch >= 32 && ch < 127) {
+        if (ch >= 'A' && ch <= 'Z') ch = ch - 'A' + 'a';
+        return (int)ch;
+    }
+
+    return (int)vk;
+}
+
+/* -------------------------------------------------------------------------
  * WndProc
  * ------------------------------------------------------------------------- */
 static LRESULT CALLBACK lui_wndproc(HWND hwnd, UINT msg,
@@ -146,7 +190,7 @@ static LRESULT CALLBACK lui_wndproc(HWND hwnd, UINT msg,
     case WM_SYSKEYDOWN:
         memset(&ev, 0, sizeof(ev));
         ev.type           = LUI_EVENT_KEY_DOWN;
-        ev.data.key.key      = (int)wp;
+        ev.data.key.key      = win32_translate_key(wp);
         ev.data.key.scancode = (uint32_t)((lp >> 16) & 0xFF);
         ev.data.key.mods     = get_mods();
         ev.data.key.repeat   = (lp & (1 << 30)) != 0;
@@ -157,7 +201,7 @@ static LRESULT CALLBACK lui_wndproc(HWND hwnd, UINT msg,
     case WM_SYSKEYUP:
         memset(&ev, 0, sizeof(ev));
         ev.type           = LUI_EVENT_KEY_UP;
-        ev.data.key.key      = (int)wp;
+        ev.data.key.key      = win32_translate_key(wp);
         ev.data.key.scancode = (uint32_t)((lp >> 16) & 0xFF);
         ev.data.key.mods     = get_mods();
         win32_push_event(ww, &ev);

@@ -38,6 +38,20 @@ struct OrbitCamera {
   void GenerateRay(int px, int py, int width, int height, float jitter_x,
                    float jitter_y, float origin[3], float direction[3]) const;
 
+  // Re-centre the orbit on `p` without moving the eye: the view does not jump,
+  // but everything afterwards orbits around what was picked.
+  void SetTarget(const float p[3]);
+
+  // Move toward `goal` with an exponential damper. Returns false once the
+  // residual is below `scene_radius`-relative epsilon, at which point this
+  // camera is snapped exactly to the goal.
+  //
+  // Settling exactly is a hard requirement, not a nicety: the app treats "still
+  // animating" as being busy, so a damper that only ever approaches its goal
+  // would keep the event loop spinning forever and never let the process go
+  // idle.
+  bool ApproachToward(const OrbitCamera& goal, float dt, float scene_radius);
+
   // True when the two cameras would produce a different image.
   bool Differs(const OrbitCamera& other) const;
 };
