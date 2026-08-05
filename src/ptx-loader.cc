@@ -2,6 +2,7 @@
 #include "ptx-loader.hh"
 
 #include <algorithm>
+#include <climits>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -26,7 +27,10 @@ bool Range(size_t off, size_t n, size_t size) {
   size_t end = 0;
   return Add(off, n, &end) && end <= size;
 }
-uint16_t U16(const uint8_t* p) { return uint16_t(p[0]) | uint16_t(p[1]) << 8; }
+uint16_t U16(const uint8_t* p) {
+  return static_cast<uint16_t>(uint16_t(p[0]) |
+                               static_cast<uint16_t>(uint16_t(p[1]) << 8));
+}
 uint32_t U32(const uint8_t* p) {
   return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 |
          uint32_t(p[3]) << 24;
@@ -39,10 +43,12 @@ size_t BytesPerComponent(DataType t) {
 }
 bool Inflate(const uint8_t* src, size_t srcSize, size_t dstSize,
              std::vector<uint8_t>* dst, std::string* err) {
+#if SIZE_MAX > ULONG_MAX
   if (dstSize > static_cast<size_t>(std::numeric_limits<mz_ulong>::max())) {
     if (err) *err = "Ptex block is too large";
     return false;
   }
+#endif
   dst->resize(dstSize);
   mz_ulong n = static_cast<mz_ulong>(dstSize);
   const int rc = mz_uncompress(dst->data(), &n, src, static_cast<mz_ulong>(srcSize));

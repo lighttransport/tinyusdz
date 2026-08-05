@@ -333,14 +333,14 @@ std::string SanitizeArchiveName(const std::string &assetPath) {
                          tinyusdz::endsWith(name, "/");
     if (!has_traversal) {
       // Also check for ".." as a standalone path segment.
-      size_t p = 0;
-      while (p < name.size()) {
-        size_t next = name.find('/', p);
+      size_t pos = 0;
+      while (pos < name.size()) {
+        size_t next = name.find('/', pos);
         std::string seg = (next == std::string::npos)
-                          ? name.substr(p)
-                          : name.substr(p, next - p);
+                          ? name.substr(pos)
+                          : name.substr(pos, next - pos);
         if (seg == "..") { has_traversal = true; break; }
-        p = (next == std::string::npos) ? name.size() : next + 1;
+        pos = (next == std::string::npos) ? name.size() : next + 1;
       }
     }
     if (has_traversal) {
