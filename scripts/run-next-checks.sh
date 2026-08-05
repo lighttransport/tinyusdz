@@ -138,4 +138,6 @@ PYEOF
   "$FUZZ_BUILD_DIR/fuzz_next_usda" -runs=0 "$FUZZ_SEEDS/usda"
   "$FUZZ_BUILD_DIR/fuzz_next_compose" -runs=0 \
     "$ROOT_DIR/tests/fuzzer/next_compose_seeds"
+  "$FUZZ_BUILD_DIR/fuzz_next_roundtrip" -runs=0 \
+    "$FUZZ_SEEDS/usda"
 fi

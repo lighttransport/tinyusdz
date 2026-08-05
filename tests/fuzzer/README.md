@@ -52,8 +52,9 @@ $ ./fuzz_intcoding_decompress -rss_limit_mb=8192 -jobs 4
 
 ## src/next harnesses
 
-The `next` module has three of its own libFuzzer harnesses -- `next_usdc`
-(crate reader), `next_usda` (ascii parser) and `next_compose` (composition).
+The `next` module has four of its own libFuzzer harnesses -- `next_usdc`
+(crate reader), `next_usda` (ASCII parser), `next_compose` (composition), and
+`next_roundtrip` (USDA/USDC/USDZ writer and reader round trips).
 They are built from `src/next`, not from the top-level project, and are off by
 default because they require clang:
 
@@ -89,11 +90,15 @@ $ ./build-fuzz/fuzz_next_usdc -jobs=8 -workers=8 -max_total_time=1500 \
 
 Check a corpus without fuzzing (fast, useful in CI) with `-runs=0`.
 
-`scripts/run-next-checks.sh RUN_FUZZ=1` does exactly that: it builds the three
+`scripts/run-next-checks.sh RUN_FUZZ=1` does exactly that: it builds the four
 harnesses and replays the seed corpus through each, which keeps them compiling
 and the seeds clean without a long fuzzing session.
+
+`next_roundtrip` consumes the USDA seed corpus directly. Each parseable seed is
+serialized to USDA, USDC, and USDZ, then the generated outputs are read back;
+expected parse or writer rejection is ignored, while crashes and sanitizer
+failures are reported by libFuzzer.
 
 ## PoC and regressesions
 
 PoC/regression dataset is managed in separate git repo. https://github.com/lighttransport/usd-fuzz
-
