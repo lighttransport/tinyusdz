@@ -48,7 +48,6 @@ class GLRenderer final : public Renderer {
   void updateProxyInstances(const float* xforms, const float* tints,
                             uint32_t count) override;
   void updateMeshWorld(int meshIndex, const float world[16]) override;
-  void replaceMesh(int meshIndex, const DrawMeshCPU& mesh) override;
   int meshCount() const override { return static_cast<int>(meshes_.size()); }
   void resizeViewport(int width, int height) override;
   void newFrame() override;

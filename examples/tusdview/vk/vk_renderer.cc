@@ -3239,7 +3239,14 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vci.subresourceRange.levelCount = mipLevels;
   vci.subresourceRange.layerCount = 1;
-  return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
+  if (vkCreateImageView(device_, &vci, nullptr, outView) != VK_SUCCESS) {
+    vkDestroyImage(device_, *outImg, nullptr);
+    vkFreeMemory(device_, *outMem, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    *outMem = VK_NULL_HANDLE;
+    return false;
+  }
+  return true;
 }
 
 bool VulkanRenderer::createCompressedTextureImage(const DrawCompressedImageCPU& img,
@@ -3403,7 +3410,14 @@ bool VulkanRenderer::createCompressedTextureImage(const DrawCompressedImageCPU& 
   vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vci.subresourceRange.levelCount = mipLevels;
   vci.subresourceRange.layerCount = 1;
-  return vkCreateImageView(device_, &vci, nullptr, outView) == VK_SUCCESS;
+  if (vkCreateImageView(device_, &vci, nullptr, outView) != VK_SUCCESS) {
+    vkDestroyImage(device_, *outImg, nullptr);
+    vkFreeMemory(device_, *outMem, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    *outMem = VK_NULL_HANDLE;
+    return false;
+  }
+  return true;
 }
 
 bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
@@ -4398,7 +4412,11 @@ bool VulkanRenderer::createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usag
   fi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
   fi.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
   if (deviceAddress) ai.pNext = &fi;
-  if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) return false;
+  if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) {
+    vkDestroyBuffer(device_, *buf, nullptr);
+    *buf = VK_NULL_HANDLE;
+    return false;
+  }
   if (timeit) { g_chb.alloc += NowS() - ta; ta = NowS(); }
   vkBindBufferMemory(device_, *buf, *mem, 0);
   if (timeit) { g_chb.bind += NowS() - ta; ta = NowS(); }
@@ -4439,7 +4457,11 @@ bool VulkanRenderer::createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags us
   ai.allocationSize = req.size;
   ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits,
                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) return false;
+  if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) {
+    vkDestroyBuffer(device_, *buf, nullptr);
+    *buf = VK_NULL_HANDLE;
+    return false;
+  }
   vkBindBufferMemory(device_, *buf, *mem, 0);
   return true;
 }
@@ -4472,6 +4494,10 @@ bool VulkanRenderer::createDeviceLocalBuffer(VkDeviceSize size,
   VkBuffer stg = VK_NULL_HANDLE;
   VkDeviceMemory stgMem = VK_NULL_HANDLE;
   if (!createHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, &stg, &stgMem)) {
+    vkDestroyBuffer(device_, *buf, nullptr);
+    vkFreeMemory(device_, *mem, nullptr);
+    *buf = VK_NULL_HANDLE;
+    *mem = VK_NULL_HANDLE;
     return false;
   }
   VkCommandBuffer cb = beginOneShot();
@@ -7080,12 +7106,36 @@ void VulkanRenderer::rebuildTlas() {
       outInstanceBuffer = &chunk.instanceBuffer;
       outInstanceMemory = &chunk.instanceMemory;
     }
+    // Build into locals and only commit to the out-fields on success so a
+    // failure mid-chunk destroys exactly what this invocation allocated
+    // (createHostBuffer/createDeviceBuffer now self-clean their own partial
+    // state, but the buffers they returned must be released here).
+    VkBuffer instBuf = VK_NULL_HANDLE;
+    VkDeviceMemory instMem = VK_NULL_HANDLE;
+    VkBuffer asBuf = VK_NULL_HANDLE;
+    VkDeviceMemory asMem = VK_NULL_HANDLE;
+    VkAccelerationStructureKHR as = VK_NULL_HANDLE;
+    VkBuffer scratch = VK_NULL_HANDLE;
+    VkDeviceMemory scratchMemory = VK_NULL_HANDLE;
+    auto failCleanup = [&]() {
+      if (as) pfnDestroyAS_(device_, as, nullptr);
+      if (asBuf) vkDestroyBuffer(device_, asBuf, nullptr);
+      if (asMem) vkFreeMemory(device_, asMem, nullptr);
+      if (instBuf) vkDestroyBuffer(device_, instBuf, nullptr);
+      if (instMem) vkFreeMemory(device_, instMem, nullptr);
+      *outAs = VK_NULL_HANDLE;
+      *outAsBuffer = VK_NULL_HANDLE;
+      *outAsMemory = VK_NULL_HANDLE;
+      *outInstanceBuffer = VK_NULL_HANDLE;
+      *outInstanceMemory = VK_NULL_HANDLE;
+      return false;
+    };
     if (!createHostBuffer(
             VkDeviceSize(instCount) * sizeof(VkAccelerationStructureInstanceKHR),
             VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-            insts.data() + begin, outInstanceBuffer, outInstanceMemory,
+            insts.data() + begin, &instBuf, &instMem,
             /*deviceAddress=*/true)) {
-      return false;
+      return failCleanup();
     }
     VkAccelerationStructureGeometryKHR geom{};
     geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -7093,8 +7143,7 @@ void VulkanRenderer::rebuildTlas() {
     geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
     geom.geometry.instances.sType =
         VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    geom.geometry.instances.data.deviceAddress =
-        bufferDeviceAddress(*outInstanceBuffer);
+    geom.geometry.instances.data.deviceAddress = bufferDeviceAddress(instBuf);
 
     VkAccelerationStructureBuildGeometryInfoKHR bgi{};
     bgi.sType =
@@ -7113,29 +7162,28 @@ void VulkanRenderer::rebuildTlas() {
                         &bgi, &instCount, &sizes);
     if (!createDeviceBuffer(
             sizes.accelerationStructureSize,
-            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, outAsBuffer,
-            outAsMemory)) {
-      return false;
+            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, &asBuf,
+            &asMem)) {
+      return failCleanup();
     }
     VkAccelerationStructureCreateInfoKHR aci{};
     aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-    aci.buffer = *outAsBuffer;
+    aci.buffer = asBuf;
     aci.size = sizes.accelerationStructureSize;
     aci.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    if (pfnCreateAS_(device_, &aci, nullptr, outAs) != VK_SUCCESS) return false;
+    if (pfnCreateAS_(device_, &aci, nullptr, &as) != VK_SUCCESS)
+      return failCleanup();
 
-    VkBuffer scratch = VK_NULL_HANDLE;
-    VkDeviceMemory scratchMemory = VK_NULL_HANDLE;
     if (!createDeviceBuffer(sizes.buildScratchSize + scratchAlign_,
                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &scratch,
                             &scratchMemory)) {
-      return false;
+      return failCleanup();
     }
     VkDeviceAddress scratchAddress = bufferDeviceAddress(scratch);
     scratchAddress =
         (scratchAddress + scratchAlign_ - 1) &
         ~(static_cast<VkDeviceAddress>(scratchAlign_) - 1);
-    bgi.dstAccelerationStructure = *outAs;
+    bgi.dstAccelerationStructure = as;
     bgi.scratchData.deviceAddress = scratchAddress;
     VkAccelerationStructureBuildRangeInfoKHR range{};
     range.primitiveCount = instCount;
@@ -7151,6 +7199,11 @@ void VulkanRenderer::rebuildTlas() {
     maxScratchBytes = std::max(maxScratchBytes, sizes.buildScratchSize);
     vkDestroyBuffer(device_, scratch, nullptr);
     vkFreeMemory(device_, scratchMemory, nullptr);
+    *outInstanceBuffer = instBuf;
+    *outInstanceMemory = instMem;
+    *outAsBuffer = asBuf;
+    *outAsMemory = asMem;
+    *outAs = as;
     return true;
   };
   for (uint32_t chunkIndex = 0; chunkIndex < rtTlasChunkCount_; ++chunkIndex) {
@@ -7550,7 +7603,11 @@ void VulkanRenderer::createRtImage() {
     mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     mai.allocationSize = req.size;
     mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(device_, &mai, nullptr, mem) != VK_SUCCESS) return false;
+    if (vkAllocateMemory(device_, &mai, nullptr, mem) != VK_SUCCESS) {
+      vkDestroyImage(device_, *img, nullptr);
+      *img = VK_NULL_HANDLE;
+      return false;
+    }
     vkBindImageMemory(device_, *img, *mem, 0);
     VkImageViewCreateInfo vci{};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -7560,7 +7617,14 @@ void VulkanRenderer::createRtImage() {
     vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     vci.subresourceRange.levelCount = 1;
     vci.subresourceRange.layerCount = 1;
-    return vkCreateImageView(device_, &vci, nullptr, view) == VK_SUCCESS;
+    if (vkCreateImageView(device_, &vci, nullptr, view) != VK_SUCCESS) {
+      vkDestroyImage(device_, *img, nullptr);
+      vkFreeMemory(device_, *mem, nullptr);
+      *img = VK_NULL_HANDLE;
+      *mem = VK_NULL_HANDLE;
+      return false;
+    }
+    return true;
   };
 
   if (!makeStorageImage(colorFormat_,
@@ -7568,8 +7632,22 @@ void VulkanRenderer::createRtImage() {
                         &rtImage_, &rtImageMem_, &rtImageView_))
     return;
   if (!makeStorageImage(VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT,
-                        &accumImage_, &accumImageMem_, &accumImageView_))
+                        &accumImage_, &accumImageMem_, &accumImageView_)) {
+    // Accumulation image failed; do not leave the rt image half-created.
+    if (rtImageView_) {
+      vkDestroyImageView(device_, rtImageView_, nullptr);
+      rtImageView_ = VK_NULL_HANDLE;
+    }
+    if (rtImage_) {
+      vkDestroyImage(device_, rtImage_, nullptr);
+      rtImage_ = VK_NULL_HANDLE;
+    }
+    if (rtImageMem_) {
+      vkFreeMemory(device_, rtImageMem_, nullptr);
+      rtImageMem_ = VK_NULL_HANDLE;
+    }
     return;
+  }
 
   // Transition both UNDEFINED -> GENERAL (kept GENERAL between frames).
   VkCommandBuffer cb = beginOneShot();
@@ -7848,7 +7926,11 @@ void VulkanRenderer::resizeViewport(int width, int height) {
     ai.allocationSize = req.size;
     ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits,
                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) return false;
+    if (vkAllocateMemory(device_, &ai, nullptr, mem) != VK_SUCCESS) {
+      vkDestroyImage(device_, *img, nullptr);
+      *img = VK_NULL_HANDLE;
+      return false;
+    }
     vkBindImageMemory(device_, *img, *mem, 0);
     VkImageViewCreateInfo vci{};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -7858,7 +7940,24 @@ void VulkanRenderer::resizeViewport(int width, int height) {
     vci.subresourceRange.aspectMask = aspect;
     vci.subresourceRange.levelCount = 1;
     vci.subresourceRange.layerCount = 1;
-    return vkCreateImageView(device_, &vci, nullptr, view) == VK_SUCCESS;
+    if (vkCreateImageView(device_, &vci, nullptr, view) != VK_SUCCESS) {
+      vkDestroyImage(device_, *img, nullptr);
+      vkFreeMemory(device_, *mem, nullptr);
+      *img = VK_NULL_HANDLE;
+      *mem = VK_NULL_HANDLE;
+      return false;
+    }
+    return true;
+  };
+
+  auto makeRequired =
+      [&](uint32_t width, uint32_t height, VkFormat fmt, VkImageUsageFlags usage,
+          VkImageAspectFlags aspect, VkImage* img, VkDeviceMemory* mem,
+          VkImageView* view) -> bool {
+    if (makeImage(width, height, fmt, usage, aspect, img, mem, view)) return true;
+    LOGE("[vk] resizeViewport: failed to allocate %ux%u %s image", width, height,
+         fmt == depthFormat_ ? "depth" : "color");
+    return false;
   };
 
   // colorImg_ is rendered as a color attachment, sampled by ImGui, AND used as a
@@ -7867,13 +7966,48 @@ void VulkanRenderer::resizeViewport(int width, int height) {
   // (TRANSFER_SRC). Without these usage bits both copies are undefined behavior --
   // which surfaced as an intermittent all-black viewport capture on the threaded
   // VK-RT path (the driver returned garbage for the spec-invalid copy/barrier).
-  makeImage(static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), colorFormat_,
-            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-            VK_IMAGE_ASPECT_COLOR_BIT, &colorImg_, &colorMem_, &colorView_);
-  makeImage(static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), depthFormat_,
-            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-            VK_IMAGE_ASPECT_DEPTH_BIT, &depthImg_, &depthMem_, &depthView_);
+  const bool colorOk = makeRequired(
+      static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), colorFormat_,
+      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+      VK_IMAGE_ASPECT_COLOR_BIT, &colorImg_, &colorMem_, &colorView_);
+  const bool depthOk = makeRequired(
+      static_cast<uint32_t>(vpW_), static_cast<uint32_t>(vpH_), depthFormat_,
+      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT,
+      &depthImg_, &depthMem_, &depthView_);
+  if (!colorOk || !depthOk) {
+    // Keep the previous dims invalid so the next frame retries the resize. Do
+    // NOT leave a framebuffer bound to half-allocated attachments.
+    if (offscreenFb_) {
+      vkDestroyFramebuffer(device_, offscreenFb_, nullptr);
+      offscreenFb_ = VK_NULL_HANDLE;
+    }
+    if (colorView_) {
+      vkDestroyImageView(device_, colorView_, nullptr);
+      colorView_ = VK_NULL_HANDLE;
+    }
+    if (colorImg_) {
+      vkDestroyImage(device_, colorImg_, nullptr);
+      colorImg_ = VK_NULL_HANDLE;
+    }
+    if (colorMem_) {
+      vkFreeMemory(device_, colorMem_, nullptr);
+      colorMem_ = VK_NULL_HANDLE;
+    }
+    if (depthView_) {
+      vkDestroyImageView(device_, depthView_, nullptr);
+      depthView_ = VK_NULL_HANDLE;
+    }
+    if (depthImg_) {
+      vkDestroyImage(device_, depthImg_, nullptr);
+      depthImg_ = VK_NULL_HANDLE;
+    }
+    if (depthMem_) {
+      vkFreeMemory(device_, depthMem_, nullptr);
+      depthMem_ = VK_NULL_HANDLE;
+    }
+    return;
+  }
 
   VkImageView atts[2] = {colorView_, depthView_};
   VkFramebufferCreateInfo fci{};
@@ -7884,23 +8018,33 @@ void VulkanRenderer::resizeViewport(int width, int height) {
   fci.width = static_cast<uint32_t>(vpW_);
   fci.height = static_cast<uint32_t>(vpH_);
   fci.layers = 1;
-  vkCreateFramebuffer(device_, &fci, nullptr, &offscreenFb_);
+  if (vkCreateFramebuffer(device_, &fci, nullptr, &offscreenFb_) != VK_SUCCESS) {
+    offscreenFb_ = VK_NULL_HANDLE;
+    LOGE("[vk] resizeViewport: framebuffer creation failed");
+  }
 
   if (!shadowFb_) {
-    makeImage(2048, 2048, colorFormat_, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-              VK_IMAGE_ASPECT_COLOR_BIT, &shadowColorImg_, &shadowColorMem_,
-              &shadowColorView_);
-    makeImage(2048, 2048, depthFormat_,
-              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                  VK_IMAGE_USAGE_SAMPLED_BIT,
-              VK_IMAGE_ASPECT_DEPTH_BIT, &shadowDepthImg_, &shadowDepthMem_,
-              &shadowDepthView_);
+    const bool shadowColorOk = makeImage(
+        2048, 2048, colorFormat_, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        VK_IMAGE_ASPECT_COLOR_BIT, &shadowColorImg_, &shadowColorMem_,
+        &shadowColorView_);
+    const bool shadowDepthOk = makeImage(
+        2048, 2048, depthFormat_,
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        VK_IMAGE_ASPECT_DEPTH_BIT, &shadowDepthImg_, &shadowDepthMem_,
+        &shadowDepthView_);
     VkImageView shadowAttachments[2] = {shadowColorView_, shadowDepthView_};
     VkFramebufferCreateInfo sfci = fci;
     sfci.renderPass = shadowPass_;
     sfci.pAttachments = shadowAttachments;
     sfci.width = sfci.height = 2048;
-    vkCreateFramebuffer(device_, &sfci, nullptr, &shadowFb_);
+    if (shadowColorOk && shadowDepthOk &&
+        vkCreateFramebuffer(device_, &sfci, nullptr, &shadowFb_) != VK_SUCCESS) {
+      shadowFb_ = VK_NULL_HANDLE;
+    }
+    if (!shadowColorOk || !shadowDepthOk || !shadowFb_) {
+      LOGE("[vk] resizeViewport: shadow map allocation failed; shadows disabled");
+    }
     VkImageCreateInfo pointIci{};
     pointIci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     pointIci.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
@@ -7914,33 +8058,79 @@ void VulkanRenderer::resizeViewport(int width, int height) {
     pointIci.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                      VK_IMAGE_USAGE_SAMPLED_BIT;
     pointIci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    vkCreateImage(device_, &pointIci, nullptr, &pointShadowDepthImg_);
-    VkMemoryRequirements pointReq{};
-    vkGetImageMemoryRequirements(device_, pointShadowDepthImg_, &pointReq);
-    VkMemoryAllocateInfo pointAi{};
-    pointAi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    pointAi.allocationSize = pointReq.size;
-    pointAi.memoryTypeIndex = findMemoryType(pointReq.memoryTypeBits,
-                                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    vkAllocateMemory(device_, &pointAi, nullptr, &pointShadowDepthMem_);
-    vkBindImageMemory(device_, pointShadowDepthImg_, pointShadowDepthMem_, 0);
-    VkImageViewCreateInfo pointView{};
-    pointView.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    pointView.image = pointShadowDepthImg_;
-    pointView.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-    pointView.format = depthFormat_;
-    pointView.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    pointView.subresourceRange.levelCount = 1;
-    pointView.subresourceRange.layerCount = 6;
-    vkCreateImageView(device_, &pointView, nullptr, &pointShadowDepthView_);
-    for (uint32_t face = 0; face < 6; ++face) {
-      pointView.viewType = VK_IMAGE_VIEW_TYPE_2D;
-      pointView.subresourceRange.baseArrayLayer = face;
-      pointView.subresourceRange.layerCount = 1;
-      vkCreateImageView(device_, &pointView, nullptr, &pointShadowFaceViews_[face]);
-      VkImageView attachments[2] = {shadowColorView_, pointShadowFaceViews_[face]};
-      sfci.pAttachments = attachments;
-      vkCreateFramebuffer(device_, &sfci, nullptr, &pointShadowFbs_[face]);
+    VkImage pointImg = VK_NULL_HANDLE;
+    VkDeviceMemory pointMem = VK_NULL_HANDLE;
+    bool pointOk = false;
+    if (vkCreateImage(device_, &pointIci, nullptr, &pointImg) == VK_SUCCESS) {
+      VkMemoryRequirements pointReq{};
+      vkGetImageMemoryRequirements(device_, pointImg, &pointReq);
+      VkMemoryAllocateInfo pointAi{};
+      pointAi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+      pointAi.allocationSize = pointReq.size;
+      pointAi.memoryTypeIndex =
+          findMemoryType(pointReq.memoryTypeBits,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+      if (vkAllocateMemory(device_, &pointAi, nullptr, &pointMem) ==
+          VK_SUCCESS) {
+        if (vkBindImageMemory(device_, pointImg, pointMem, 0) == VK_SUCCESS) {
+          VkImageViewCreateInfo pointView{};
+          pointView.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+          pointView.image = pointImg;
+          pointView.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+          pointView.format = depthFormat_;
+          pointView.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+          pointView.subresourceRange.levelCount = 1;
+          pointView.subresourceRange.layerCount = 6;
+          if (vkCreateImageView(device_, &pointView, nullptr,
+                                &pointShadowDepthView_) == VK_SUCCESS) {
+            pointOk = true;
+            for (uint32_t face = 0; face < 6; ++face) {
+              pointView.viewType = VK_IMAGE_VIEW_TYPE_2D;
+              pointView.subresourceRange.baseArrayLayer = face;
+              pointView.subresourceRange.layerCount = 1;
+              if (vkCreateImageView(device_, &pointView, nullptr,
+                                    &pointShadowFaceViews_[face]) != VK_SUCCESS) {
+                pointShadowFaceViews_[face] = VK_NULL_HANDLE;
+                pointOk = false;
+                break;
+              }
+              VkImageView attachments[2] = {shadowColorView_,
+                                            pointShadowFaceViews_[face]};
+              sfci.pAttachments = attachments;
+              if (vkCreateFramebuffer(device_, &sfci, nullptr,
+                                      &pointShadowFbs_[face]) != VK_SUCCESS) {
+                pointShadowFbs_[face] = VK_NULL_HANDLE;
+                pointOk = false;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (pointOk) {
+      pointShadowDepthImg_ = pointImg;
+      pointShadowDepthMem_ = pointMem;
+    } else {
+      // Partial point-shadow state: tear down everything this attempt made and
+      // retry on the next resize instead of leaving NULL-bound framebuffers.
+      if (pointShadowDepthView_) {
+        vkDestroyImageView(device_, pointShadowDepthView_, nullptr);
+        pointShadowDepthView_ = VK_NULL_HANDLE;
+      }
+      for (uint32_t face = 0; face < 6; ++face) {
+        if (pointShadowFaceViews_[face]) {
+          vkDestroyImageView(device_, pointShadowFaceViews_[face], nullptr);
+          pointShadowFaceViews_[face] = VK_NULL_HANDLE;
+        }
+        if (pointShadowFbs_[face]) {
+          vkDestroyFramebuffer(device_, pointShadowFbs_[face], nullptr);
+          pointShadowFbs_[face] = VK_NULL_HANDLE;
+        }
+      }
+      if (pointImg) vkDestroyImage(device_, pointImg, nullptr);
+      if (pointMem) vkFreeMemory(device_, pointMem, nullptr);
+      LOGE("[vk] resizeViewport: point-shadow cube allocation failed");
     }
     refreshMaterialDescriptors();
   }
