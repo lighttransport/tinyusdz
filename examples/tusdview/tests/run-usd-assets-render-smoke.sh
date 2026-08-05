@@ -75,6 +75,16 @@ ALLOW_PARENT="${TUSDVIEW_USD_ASSETS_ALLOW_PARENT:-0}"
 NVIDIA_OFFLOAD="${TUSDVIEW_NVIDIA_OFFLOAD:-auto}"
 USE_XVFB="${TUSDVIEW_XVFB:-auto}"
 FAIL_ON="${TUSDVIEW_USD_ASSETS_FAIL_ON:-load_error,timeout,backend_error}"
+# CPU texture quality for the tusdview modes. tusdview now skips the CPU
+# mip-generation + BCn-compression pipeline by default whenever the decoded
+# textures fit within half the device VRAM (OpenChessSet's 640 MB is ~1/16 of a
+# 16 GB card), so ordinary smoke scenes skip conversion automatically. This knob
+# forces the choice regardless of that default:
+#   full         tusdview default (skip conversion when textures fit in VRAM/2)
+#   uncompressed --texture-compress off
+#   no-mips      --texture-mips off
+#   none         --texture-compress off --texture-mips off
+TEXTURE_OPTS="${TUSDVIEW_USD_ASSETS_TEXTURES:-full}"
 # Golden-fingerprint regression layer (opt-in). Point GOLDEN at a TSV baseline
 # (mode<TAB>asset<TAB>fingerprint). With GOLDEN_UPDATE=1 the baseline is
 # (re)written from this run instead of compared. GOLDEN_TOL is the max L1
@@ -108,6 +118,8 @@ Options:
   --time CODE      Evaluate animated assets at this USD time code
   --vk-device DEV  Forward --vk-device DEV to Vulkan modes
   --fail-on LIST   Comma statuses that make the script fail
+  --textures KIND  CPU texture quality for tusdview modes: full,
+                   uncompressed, no-mips, or none (default: full)
   --golden FILE    Compare rendered fingerprints against a golden TSV baseline
   --update-golden FILE  (Re)write the golden baseline from this run
   --golden-kind K  Fingerprint kind: hash or coverage (default: hash)
@@ -123,6 +135,7 @@ Environment:
   TUSDVIEW_XVFB=auto|1|0|external
   TUSDVIEW_USD_ASSETS_GOLDEN=FILE  TUSDVIEW_USD_ASSETS_GOLDEN_UPDATE=1
   TUSDVIEW_USD_ASSETS_EXPECTATIONS=FILE
+  TUSDVIEW_USD_ASSETS_TEXTURES=full|uncompressed|no-mips|none
 EOF
 }
 
@@ -140,6 +153,7 @@ while [ "$#" -gt 0 ]; do
     --time) TIME_CODE="$2"; shift 2 ;;
     --vk-device) VK_DEVICE="$2"; shift 2 ;;
     --fail-on) FAIL_ON="$2"; shift 2 ;;
+    --textures) TEXTURE_OPTS="$2"; shift 2 ;;
     --golden) GOLDEN_FILE="$2"; shift 2 ;;
     --update-golden) GOLDEN_FILE="$2"; GOLDEN_UPDATE=1; shift 2 ;;
     --golden-kind) GOLDEN_KIND="$2"; shift 2 ;;
@@ -164,6 +178,14 @@ case "$GOLDEN_KIND" in
     ;;
   *)
     echo "ERROR: invalid golden kind '$GOLDEN_KIND' (expected hash or coverage)" >&2
+    exit 1
+    ;;
+esac
+
+case "$TEXTURE_OPTS" in
+  full|uncompressed|no-mips|none) ;;
+  *)
+    echo "ERROR: invalid texture options '$TEXTURE_OPTS' (expected full, uncompressed, no-mips, or none)" >&2
     exit 1
     ;;
 esac
@@ -433,6 +455,11 @@ run_one() {
     case "$ALLOW_PARENT" in
       1|ON|on|true|TRUE|yes|YES) args+=(--allow-parent-paths) ;;
     esac
+    case "$TEXTURE_OPTS" in
+      uncompressed) args+=(--texture-compress off) ;;
+      no-mips) args+=(--texture-mips off) ;;
+      none) args+=(--texture-compress off --texture-mips off) ;;
+    esac
     args+=(--frames "$FRAMES" --size "$SIZE" --screenshot "$out" "$asset")
     [ -n "$TIME_CODE" ] && args+=(--time "$TIME_CODE")
 
@@ -696,6 +723,7 @@ echo "profile: $PROFILE"
 echo "size   : $SIZE, frames: $FRAMES, timeout: $TIMEOUT_DUR"
 [ -n "$TIME_CODE" ] && echo "time   : $TIME_CODE"
 [ -n "$VK_DEVICE" ] && echo "vk dev : $VK_DEVICE"
+echo "tex    : $TEXTURE_OPTS"
 echo
 
 fail=0

@@ -269,16 +269,18 @@ tir/texcomp/texpipe/envmap libraries:
   `tir` (sRGB-aware, premultiplied-alpha filtering) instead of stb. The viewer
   defaults to a 4096-texel longest edge; `--texture-max-size 0` restores source
   size.
-- Adaptive GPU block compression is enabled by default (`--texture-compress
-  auto`), using `texcomp` and selecting a supported BC/ASTC/ETC2 format;
-  `--texture-compress off` disables it. Unsupported formats fall back to
-  resized RGBA8.
-- `--texture-mips on` (default) builds content-aware CPU mip chains via `texpipe`
-  (sRGB-correct filtering, alpha-coverage preservation for Mask materials,
-  normal-map renormalization, variance-aware roughness-channel minification,
-  wrap-mode-aware filter edges). GL uploads the precomputed levels instead of
-  `glGenerateMipmap`; Vulkan gains real mip chains (it previously sampled only
-  level 0).
+- Adaptive GPU block compression (`--texture-compress auto`, using `texcomp`
+  and selecting a supported BC/ASTC/ETC2 format; `--texture-compress off`
+  disables it) and content-aware CPU mip chains (`--texture-mips on`, via
+  `texpipe`: sRGB-correct filtering, alpha-coverage preservation for Mask
+  materials, normal-map renormalization, variance-aware roughness-channel
+  minification, wrap-mode-aware filter edges) are **skipped by default when the
+  decoded textures fit within half the device VRAM** (e.g. a 640 MB set on a
+  16 GB card). Ordinary scenes keep uncompressed RGBA8 resident without the CPU
+  conversion cost; only sets exceeding ~VRAM/2 (or an explicit
+  `--texture-compress` / `--texture-mips` flag) pay for compression and mips.
+  GL uploads the precomputed levels instead of `glGenerateMipmap`; Vulkan gains
+  real mip chains (it previously sampled only level 0).
 - `--dome-ibl off|low|high` (default high) bakes DomeLight split-sum IBL at
   load via the `envmap` library from the HDR float envmap (EXR half/float and
   Radiance HDR decode correctly now): GGX-prefiltered specular cube chain,

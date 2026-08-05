@@ -1277,8 +1277,16 @@ int main(int argc, char** argv) {
     lo.deferReferences = deferReferences;
     lo.allowParentRelativePaths = allowParentPaths;
     lo.textureOptions = textureOptions;
-    lo.optimizeTextureUpload = useNextLoader && !headless && maxFrames < 0;
-    lo.textureGpuBudgetBytes = vramCapacity / 4u;
+    // Default: skip the expensive CPU mip-generation + BCn-compression pipeline
+    // whenever the decoded (uncompressed) textures fit comfortably in half the
+    // device VRAM. The loader treats half the texture budget as its "comfortable
+    // resident" ceiling, so a budget of the full VRAM means: convert only when
+    // textures exceed ~VRAM/2. An ordinary 1 GB RGBA8 texture set is ~1/16 of a
+    // 16 GB card and skips conversion entirely; a 16 GB card keeps uncompressed
+    // textures resident with room for geometry and framebuffers. Explicit
+    // --texture-compress / --texture-mips / --texture-budget-mb override this.
+    lo.optimizeTextureUpload = useNextLoader;
+    lo.textureGpuBudgetBytes = vramCapacity;
     lo.textureCompressionExplicit = textureCompressionExplicit;
     lo.textureMipsExplicit = mipsExplicit;
     if (effectiveProfile == LargeSceneProfile::ALab && !headless &&
@@ -1290,11 +1298,11 @@ int main(int argc, char** argv) {
       }
       if (!mipsExplicit) lo.textureOptions.generateMips = false;
     }
-    // Interactive --next loads should reach a usable frame promptly. Content-
-    // aware CPU mip generation is expensive for ordinary USDZ texture sets
-    // (StandingRunForward is 22 textures), while the renderer can sample the
-    // uploaded base level immediately. Keep the existing quality choice for
-    // headless/benchmark runs and honor an explicit --texture-mips on.
+    // Interactive --next loads should reach a usable frame promptly even for
+    // texture sets larger than VRAM/2 (where the comfortable-skip above does not
+    // apply): defer CPU mip generation so the uploaded base level can render
+    // immediately. Headless/benchmark runs rely on the comfortable-skip default
+    // above and honor an explicit --texture-mips on.
     if (useNextLoader && !headless && maxFrames < 0 && !mipsExplicit) {
       lo.textureOptions.generateMips = false;
       LOGI("interactive --next: deferring CPU texture mip generation "
