@@ -71,15 +71,33 @@ using matrix4d = ::tinyusdz::value::matrix4d;
 namespace {
 class PreviewCacheWriters {
  public:
+  // Bound concurrent cache writes. Each worker keeps a full StageSnapshot alive
+  // while serializing, so an unbounded queue would accumulate snapshots (and
+  // threads) across many loads. When the cap is hit the OLDEST writer is joined
+  // first -- it always completes since the work is a plain StorePreviewCache
+  // call -- keeping both thread count and retained snapshot memory bounded.
+  static constexpr size_t kMaxOutstanding = 4;
+
   ~PreviewCacheWriters() {
-    for (std::thread& writer : writers_) {
-      if (writer.joinable()) writer.join();
-    }
+    JoinAll();
   }
 
   void Start(std::function<void()> work) {
     std::lock_guard<std::mutex> lock(mutex_);
+    while (writers_.size() >= kMaxOutstanding) {
+      std::thread& oldest = writers_.front();
+      if (oldest.joinable()) oldest.join();
+      writers_.erase(writers_.begin());
+    }
     writers_.emplace_back(std::move(work));
+  }
+
+  void JoinAll() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (std::thread& writer : writers_) {
+      if (writer.joinable()) writer.join();
+    }
+    writers_.clear();
   }
 
  private:
@@ -1806,7 +1824,7 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
     for (auto& t : top) t = {0.0f, 0};
     for (int k = 0; k < ni; ++k) {
       const float w = bind.vwgt[v * size_t(ni) + size_t(k)];
-      if (!(w > 0.0f)) continue;
+      if (!std::isfinite(w) || !(w > 0.0f)) continue;
       const int j = bind.vidx[v * size_t(ni) + size_t(k)];
       // Insertion sort into the 4-slot top list.
       for (int s = 0; s < 4; ++s) {

@@ -1393,8 +1393,11 @@ bool App::finishPtexDecode(bool wait, bool discard) {
   PtexDecodeResult decoded = ptexDecodeFuture_.get();
   ptexDecodeActive_ = false;
   ++ptexAsyncJobsCompleted_;
-  if (discard || !decoded.ok) {
-    if (!discard && !decoded.error.empty())
+  // A decode launched for a previous scene generation must not publish its page
+  // into the current scene's texture array (defense-in-depth on top of the
+  // clearPtexDecode() wait at every swap site).
+  if (discard || !decoded.ok || decoded.sceneGen != ptexSceneGen_) {
+    if (!discard && !decoded.ok && !decoded.error.empty())
       LOGW("Ptex face %u residency decode failed: %s", decoded.face,
            decoded.error.c_str());
     return true;
@@ -1449,6 +1452,10 @@ bool App::finishPtexDecode(bool wait, bool discard) {
 
 void App::clearPtexDecode() {
   finishPtexDecode(/*wait=*/true, /*discard=*/true);
+  // Invalidate any decode that was launched before this clear (there can be none
+  // in flight now -- the wait above joined it), and stamp the next scene's
+  // launches with a fresh generation.
+  ++ptexSceneGen_;
   ptexReaders_.clear();
 }
 
@@ -2430,12 +2437,14 @@ bool App::stepPtexResidency(double deadlineMs) {
 
     const size_t textureIndex = nextPtexTexture_;
     const uint32_t gutter = texture.ptexGutter;
+    const uint64_t sceneGen = ptexSceneGen_;
     ptexDecodeFuture_ = std::async(
         std::launch::async,
-        [reader, textureIndex, face, mip, gutter]() {
+        [reader, textureIndex, face, mip, gutter, sceneGen]() {
           PtexDecodeResult result;
           result.texture = textureIndex;
           result.face = face;
+          result.sceneGen = sceneGen;
           result.ok = BuildPtexPage(*reader, face, mip, gutter,
                                     64ull * 1024ull * 1024ull, &result.page,
                                     &result.rect, &result.error);
@@ -2798,10 +2807,16 @@ void App::finishLoadIfReady() {
   const bool ok = loaded_.ok;
   const bool alreadyUploaded = streamLoadActive_ && ok;
   if (!streamLoadActive_) {
+    // The async cull worker may still be iterating the outgoing scene (non-
+    // streaming loads do not suspend culling). Join it + invalidate its grids
+    // BEFORE the swap frees the old DrawScene, not after (setScene's join in
+    // applyLoaded runs too late).
+    gui_.prepareSceneSwap();
     draw_ = ok ? std::move(*pendingDraw_) : DrawScene{};
   } else if (!ok) {
     // Do not leave a partially uploaded scene visible after the producer has
     // reported a terminal load failure.
+    gui_.prepareSceneSwap();
     draw_ = DrawScene{};
   }
   nextSession_ = ok ? std::move(pendingNextSession_) : nullptr;
@@ -3357,8 +3372,10 @@ void App::finishReconvertIfReady() {
       reconvDraw_) {
     // Swap in the re-evaluated geometry while keeping the initial load's
     // materials/textures (they don't animate). draw_ is mutated in place so the
-    // GUI's pointer (and selection/visibility state) stays valid — do NOT call
-    // setScene here.
+    // GUI's pointer (and selection/visibility state) stays valid -- do NOT call
+    // setScene here. The cull worker may be mid-iteration over the outgoing
+    // meshes (playback does not suspend culling); join + invalidate it first.
+    gui_.prepareSceneSwap();
     draw_.meshes = std::move(reconvDraw_->meshes);
     draw_.triangleCount = reconvDraw_->triangleCount;
     draw_.truncated = reconvDraw_->truncated;

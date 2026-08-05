@@ -187,6 +187,14 @@ class Gui {
   void setCullAsync(bool on);
   // Suspend culling while progressive loading mutates DrawScene::meshes.
   void setSceneMutating(bool on);
+  // Prepare for a caller-driven mutation/replacement of draw_ (an async load
+  // swap or a playback re-evaluation swap). Bumps the scene generation (so any
+  // in-flight cull worker aborts at its next mesh boundary), joins the worker
+  // (the actual memory-safety guarantee: it must not read geometry that the
+  // swap frees), and drops the per-prototype instance grids (their indices
+  // point into the outgoing scene's instance data). Must run on the main
+  // thread, immediately before the draw_ mutation.
+  void prepareSceneSwap();
   bool hasSkinningModeRequest() const { return hasSkinningModeRequest_; }
   SkinningMode requestedSkinningMode() const { return requestedSkinningMode_; }
   void clearActions() {
@@ -409,6 +417,13 @@ class Gui {
   void cullWorkerMain();     // runs on the worker thread (CPU only, reads snapshots)
   bool cullAsync_{true};
   bool sceneMutating_{false};
+  // Monotonic scene identity. The cull worker snapshots it at launch
+  // (cullJobGen_) and aborts if it changes mid-run, so a scene swap that races
+  // the worker cannot feed it torn mesh data. Incremented by setScene,
+  // setSceneMutating, and prepareSceneSwap (all of which also join the worker).
+  std::atomic<uint64_t> cullSceneGen_{0};
+  uint64_t cullJobGen_{0};   // generation the running worker snapshotted
+  bool cullAborted_{false};  // worker saw a generation change and bailed early
   float lastCullVP_[16]{};
   bool lastCullValid_{false};
   bool lastCullEnabled_{false};
@@ -471,7 +486,7 @@ class Gui {
   // Read-only after build, so the cull worker shares them via cullJobGrids_.
   std::vector<RtLodGrid> instGrids_;
   const DrawScene* instGridsFor_{nullptr};
-  void ensureInstanceGrids();  // (re)build instGrids_ when draw_ changes
+  void ensureInstanceGrids(uint64_t gen);  // (re)build instGrids_ when draw_ changes
   const std::vector<RtLodGrid>* cullJobGrids_{nullptr};
   std::thread cullThread_;
   std::atomic<bool> cullRunning_{false};

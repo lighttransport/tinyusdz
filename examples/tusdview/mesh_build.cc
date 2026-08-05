@@ -460,7 +460,7 @@ void WriteSkinVertex(const tydra::RenderMesh& mesh, size_t srcPoint,
   for (size_t k = 0; k < infl; ++k) {
     const float w = jw.jointWeights[src + k];
     const int ji = jw.jointIndices[src + k];
-    if (w <= 0.0f || ji < 0) continue;
+    if (!std::isfinite(w) || w <= 0.0f || ji < 0) continue;
     const uint32_t j = static_cast<uint32_t>(ji);
     for (size_t slot = 0; slot < top.size(); ++slot) {
       if (w > top[slot].first) {

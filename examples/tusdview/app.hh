@@ -312,6 +312,7 @@ class App
   struct PtexDecodeResult {
     size_t texture{0};
     uint32_t face{0};
+    uint64_t sceneGen{0};
     light3d::Image page;
     DrawPtexFaceRectCPU rect;
     std::string error;
@@ -640,6 +641,11 @@ class App
   std::vector<std::shared_ptr<tinyusdz::ptx::Reader>> ptexReaders_;
   std::future<PtexDecodeResult> ptexDecodeFuture_;
   bool ptexDecodeActive_{false};
+  // Bumped whenever draw_'s textures are replaced/freed (scene swap). A decode
+  // that was launched for an earlier generation must not publish its page into
+  // the new scene, so the result carries the generation it was launched with and
+  // finishPtexDecode drops any mismatch.
+  uint64_t ptexSceneGen_{0};
   uint64_t ptexAsyncJobsLaunched_{0};
   uint64_t ptexAsyncJobsCompleted_{0};
   std::vector<std::vector<uint32_t>> ptexRequestedFaces_;

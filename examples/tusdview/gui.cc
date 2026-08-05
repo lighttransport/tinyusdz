@@ -251,6 +251,9 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   // The cull worker reads the current DrawScene; join it before draw_ changes so
   // it never touches freed geometry.
   joinCullWorker();
+  ++cullSceneGen_;  // invalidate any worker snapshot; drop grids keyed to the old scene
+  instGrids_.clear();
+  instGridsFor_ = nullptr;
   lastCullValid_ = false;  // force a re-cull for the new scene
   loaded_ = loaded;
   draw_ = draw;
@@ -956,10 +959,22 @@ void Gui::setCullAsync(bool on) {
 void Gui::setSceneMutating(bool on) {
   if (sceneMutating_ == on) return;
   joinCullWorker();
+  ++cullSceneGen_;  // cull snapshots (grids) index the outgoing scene
   sceneMutating_ = on;
   lastCullValid_ = false;
   instGrids_.clear();
   instGridsFor_ = nullptr;
+}
+
+void Gui::prepareSceneSwap() {
+  // Invalidate the worker snapshot first so an in-flight worker aborts at its
+  // next mesh boundary instead of reading geometry the caller is about to free;
+  // then join it, which is the actual memory-safety barrier.
+  ++cullSceneGen_;
+  joinCullWorker();
+  instGrids_.clear();
+  instGridsFor_ = nullptr;
+  lastCullValid_ = false;
 }
 
 void Gui::setSelectionListSingle(const std::string& absPath, int meshIndex) {
@@ -3179,6 +3194,7 @@ void Gui::joinCullWorker() {
   if (cullThread_.joinable()) cullThread_.join();
   cullRunning_.store(false);
   cullDone_.store(false);
+  cullAborted_ = false;
 }
 
 namespace {
@@ -3189,13 +3205,23 @@ constexpr std::uint32_t kInstGridMinInstances = 4096;
 
 // (Re)build instGrids_ -- one coarse spatial grid per instanced prototype -- when
 // the scene changes. Read-only afterwards, so the cull worker can share them.
-void Gui::ensureInstanceGrids() {
+// `gen` is the worker's scene-generation snapshot (0 = synchronous path, no abort
+// check); if it changes mid-build the caller is swapping the scene out from under
+// us, so abort to avoid indexing freed/replaced instance data.
+void Gui::ensureInstanceGrids(uint64_t gen) {
   if (instGridsFor_ == draw_) return;
   instGrids_.clear();
   instGridsFor_ = draw_;
   if (!draw_) return;
   instGrids_.resize(draw_->meshes.size());
   for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+    if (gen != 0 &&
+        cullSceneGen_.load(std::memory_order_acquire) != gen) {
+      instGrids_.clear();
+      instGridsFor_ = nullptr;
+      cullAborted_ = true;
+      return;
+    }
     const DrawMeshCPU& m = draw_->meshes[mi];
     if (m.instanceCount() < kInstGridMinInstances) continue;
     RtLodProto p;
@@ -3244,6 +3270,10 @@ void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
   // (its whole cell already tested Inside); when LOD is on the AABB is always built
   // (its projected size drives Full / Proxy / Cull).
   auto emit = [&](std::uint32_t k, bool assumeInside) {
+    // The coarse grid may index instance data from an earlier scene snapshot
+    // (a mesh is replaced wholesale by playback re-evaluation); never read past
+    // the mesh's CURRENT instance count.
+    if (k >= ninst) return;
     const float* o2w = &m.instanceXforms[k * 12];
     float center[3], radius = 0.0f;
     if (!assumeInside || (lod && !degenerate)) {
@@ -3371,11 +3401,13 @@ RtLodCamera Gui::buildRasterLodCam() const {
 // Worker thread: compact every visible instanced mesh into cullJobResult_ from the
 // main-thread snapshots (cullJob*). No GPU calls, no live Gui/camera reads.
 void Gui::cullWorkerMain() {
+  const uint64_t gen = cullJobGen_;
   const DrawScene* d = cullJobDraw_;
   // Build the instance grids here (off the main thread) so the one-time build cost
   // on a huge scene -- O(instances) over the mega-prototypes -- never freezes the
   // UI; the first worker run is slower, later runs reap the cell-rejection speedup.
-  ensureInstanceGrids();
+  ensureInstanceGrids(gen);
+  if (cullAborted_) { cullDone_.store(true, std::memory_order_release); return; }
   const light3d::Frustum fr = light3d::Frustum::fromViewProjection(cullJobVP_);
   cullJobResult_.clear();
   cullJobProxy_.xforms.clear();
@@ -3384,6 +3416,14 @@ void Gui::cullWorkerMain() {
   cullJobProxy_.count = 0;
   size_t visInstances = 0, instTris = 0;
   for (size_t mi = 0; mi < d->meshes.size(); ++mi) {
+    // Abort at a mesh boundary if the scene was replaced under us (the main
+    // thread joins before swapping, so this is defense-in-depth -- it bounds the
+    // worker's tail so that join is fast).
+    if (cullSceneGen_.load(std::memory_order_acquire) != gen) {
+      cullAborted_ = true;
+      cullDone_.store(true, std::memory_order_release);
+      return;
+    }
     const DrawMeshCPU& m = d->meshes[mi];
     if (m.instanceCount() == 0) continue;
     const bool meshVisible =
@@ -3424,7 +3464,7 @@ void Gui::cullInstancesSync() {
   lastCullDraw_ = draw_;
   lastCullRasterLod_ = rasterLodEnabled_;
   lastCullWireMode_ = wireCycle_ != 0 || mode_ == RenderMode::Wireframe;
-  ensureInstanceGrids();
+  ensureInstanceGrids(/*gen=*/0);  // synchronous: no worker snapshot to guard
   const RtLodCamera lodCam = buildRasterLodCam();
   proxyResult_.xforms.clear();
   proxyResult_.colors.clear();
@@ -3514,6 +3554,21 @@ void Gui::cullInstances() {
   // (1) Apply a finished worker result on the main thread (the GPU upload).
   if (cullDone_.load(std::memory_order_acquire)) {
     if (cullThread_.joinable()) cullThread_.join();
+    if (cullAborted_) {
+      // The scene generation changed while the worker ran (defensive: the App
+      // also joins before swapping). Discard the partial compaction -- it may
+      // reference the outgoing scene -- and re-cull next frame.
+      cullAborted_ = false;
+      cullJobResult_.clear();
+      cullJobProxy_.xforms.clear();
+      cullJobProxy_.colors.clear();
+      cullJobProxy_.opacities.clear();
+      cullJobProxy_.count = 0;
+      cullDone_.store(false);
+      cullRunning_.store(false);
+      lastCullValid_ = false;
+      return;
+    }
     for (CullJobMesh& r : cullJobResult_) {
       size_t mi = r.meshIndex;
       uint32_t cnt = r.count;
@@ -3563,6 +3618,8 @@ void Gui::cullInstances() {
   cullJobViewVisible_ = viewVisible_;
   cullJobEnabled_ = cullEnabled_;
   cullJobDraw_ = draw_;
+  cullJobGen_ = cullSceneGen_.load(std::memory_order_relaxed);
+  cullAborted_ = false;
   cullJobGrids_ = &instGrids_;
   cullJobLodCam_ = buildRasterLodCam();  // camera read on main, used by the worker
   cullRunning_.store(true);

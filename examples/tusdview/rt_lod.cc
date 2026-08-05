@@ -103,14 +103,20 @@ void BuildRtLodGrid(const RtLodProto& proto, std::uint32_t minInstances,
   const float* mx = proto.protoAabbMax;
   if (!(mx[0] > mn[0] || mx[1] > mn[1] || mx[2] > mn[2])) return;  // degenerate
 
-  // Per-instance world AABB centers + overall center bounds.
-  std::vector<float> cx(n), cy(n), cz(n);
+  // Per-instance world AABBs + overall center bounds. The world AABB is
+  // computed once per instance and reused: the counting-sort cellOf() derives
+  // centers from it, and the per-cell min/max/radius accumulation reads it back,
+  // so the cell pass never re-transforms the proto corners (one O(n) transform
+  // pass instead of two on huge scenes). Center is an exact affine image of the
+  // box center, so 0.5*(wmn+wmx) reproduces the pass-1 center bit-for-bit.
+  std::vector<float> wmn(n * 3), wmx(n * 3);
   float gmn[3] = {1e30f, 1e30f, 1e30f}, gmx[3] = {-1e30f, -1e30f, -1e30f};
   for (std::uint32_t k = 0; k < n; ++k) {
-    float center[3], radius, wmn[3], wmx[3];
-    ProtoWorldBounds(&proto.instanceXforms[k * 12], mn, mx, center, &radius, wmn, wmx);
-    cx[k] = center[0]; cy[k] = center[1]; cz[k] = center[2];
+    float center[3], radius, mn3[3], mx3[3];
+    ProtoWorldBounds(&proto.instanceXforms[k * 12], mn, mx, center, &radius, mn3, mx3);
     for (int r = 0; r < 3; ++r) {
+      wmn[k * 3 + r] = mn3[r];
+      wmx[k * 3 + r] = mx3[r];
       gmn[r] = std::min(gmn[r], center[r]);
       gmx[r] = std::max(gmx[r], center[r]);
     }
@@ -146,9 +152,12 @@ void BuildRtLodGrid(const RtLodProto& proto, std::uint32_t minInstances,
                         ext[2] > flatEps ? static_cast<float>(dim[2]) / ext[2] : 0.0f};
 
   auto cellOf = [&](std::uint32_t k) -> std::uint32_t {
-    int ix = std::min(int((cx[k] - gmn[0]) * inv[0]), dim[0] - 1);
-    int iy = std::min(int((cy[k] - gmn[1]) * inv[1]), dim[1] - 1);
-    int iz = std::min(int((cz[k] - gmn[2]) * inv[2]), dim[2] - 1);
+    const float cx = 0.5f * (wmn[k * 3] + wmx[k * 3]);
+    const float cy = 0.5f * (wmn[k * 3 + 1] + wmx[k * 3 + 1]);
+    const float cz = 0.5f * (wmn[k * 3 + 2] + wmx[k * 3 + 2]);
+    int ix = std::min(int((cx - gmn[0]) * inv[0]), dim[0] - 1);
+    int iy = std::min(int((cy - gmn[1]) * inv[1]), dim[1] - 1);
+    int iz = std::min(int((cz - gmn[2]) * inv[2]), dim[2] - 1);
     ix = std::max(ix, 0); iy = std::max(iy, 0); iz = std::max(iz, 0);
     return std::uint32_t((iz * dim[1] + iy) * dim[0] + ix);
   };
@@ -173,12 +182,14 @@ void BuildRtLodGrid(const RtLodProto& proto, std::uint32_t minInstances,
     for (int r = 0; r < 3; ++r) { cell.wmn[r] = 1e30f; cell.wmx[r] = -1e30f; }
     for (std::uint32_t i = b; i < e; ++i) {
       const std::uint32_t k = grid->order[i];
-      float center[3], radius, wmn[3], wmx[3];
-      ProtoWorldBounds(&proto.instanceXforms[k * 12], mn, mx, center, &radius, wmn, wmx);
+      const float dx = wmx[k * 3] - wmn[k * 3];
+      const float dy = wmx[k * 3 + 1] - wmn[k * 3 + 1];
+      const float dz = wmx[k * 3 + 2] - wmn[k * 3 + 2];
+      const float radius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
       cell.maxInstanceRadius = std::max(cell.maxInstanceRadius, radius);
       for (int r = 0; r < 3; ++r) {
-        cell.wmn[r] = std::min(cell.wmn[r], wmn[r]);
-        cell.wmx[r] = std::max(cell.wmx[r], wmx[r]);
+        cell.wmn[r] = std::min(cell.wmn[r], wmn[k * 3 + r]);
+        cell.wmx[r] = std::max(cell.wmx[r], wmx[k * 3 + r]);
       }
     }
     grid->cells.push_back(cell);
