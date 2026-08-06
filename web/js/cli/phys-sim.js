@@ -10,7 +10,7 @@ import TinyUSDZFactory from '../src/tinyusdz/tinyusdz.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_USDA = path.resolve(__dirname, '../assets/physics-robot-arm.usda');
-const DEFAULT_MUJOCO_DIST = '/home/syoyo/work/mujoco/wasm/dist';
+const DEFAULT_MUJOCO_DIST = '/path/to/mujoco/wasm/dist';
 const MUJOCO_DIST = path.resolve(process.env.MUJOCO_WASM_DIR || DEFAULT_MUJOCO_DIST);
 const MUJOCO_JS = path.resolve(process.env.MUJOCO_PHYSICS_JS ||
   path.join(MUJOCO_DIST, 'mujoco_physics.js'));
