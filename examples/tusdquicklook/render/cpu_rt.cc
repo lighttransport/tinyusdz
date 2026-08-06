@@ -18,6 +18,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -46,10 +48,13 @@ class CpuRenderer final : public Renderer {
   explicit CpuRenderer(std::shared_ptr<PickAccel> accel)
       : accel_(std::move(accel)) {}
 
+  ~CpuRenderer() override { StopWorkers(); }
+
   bool Init(int width, int height, const RenderSettings& settings,
             std::string* err) override {
     settings_ = settings;
     if (settings_.threads < 1) settings_.threads = 1;
+    EnsureWorkers(settings_.threads);
     Resize(width, height);
     (void)err;
     return true;
@@ -93,6 +98,7 @@ class CpuRenderer final : public Renderer {
     const int threads = std::max(1, settings.threads);
     settings_ = settings;
     settings_.threads = threads;
+    EnsureWorkers(settings_.threads);
     // The light rig folds in shadows/IBL, so it has to be rebuilt too.
     shading_valid_ = false;
     ResetProgression();
@@ -120,6 +126,17 @@ class CpuRenderer final : public Renderer {
   void RenderCoarse();
   void RenderTile(int tile_index, int sample_index);
   void ResolveTileToPixels(int tile_index);
+  void EnsureWorkers(int count);
+  void StopWorkers();
+  void RunParallel(int count, const std::function<void(int)>& fn);
+  void WorkerLoop();
+
+  int SampleTarget() const {
+    // AOVs are direct views of one input and do not benefit from repeated
+    // lighting samples. Keep the coarse pass for fast coverage, then resolve
+    // one full sample and become idle.
+    return settings_.mode == ShadingMode::Shaded ? settings_.spp : 1;
+  }
 
   // Trace one primary ray; returns linear RGB.
   void TracePixel(int px, int py, int sample_index, float out_rgb[3]) const;
@@ -157,6 +174,18 @@ class CpuRenderer final : public Renderer {
   bool coarse_done_ = false;
   int sample_index_ = 0;
   int next_tile_ = 0;
+
+  std::mutex workers_mu_;
+  std::condition_variable workers_cv_;
+  std::condition_variable workers_done_cv_;
+  std::vector<std::thread> workers_;
+  std::function<void(int)> worker_job_;
+  std::atomic<int> worker_next_{0};
+  int worker_job_count_ = 0;
+  int worker_finished_ = 0;
+  uint64_t worker_generation_ = 0;
+  bool worker_job_active_ = false;
+  bool worker_stop_ = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -167,6 +196,87 @@ void CpuRenderer::ResetProgression() {
   next_tile_ = 0;
   shading_valid_ = false;
   std::fill(accum_.begin(), accum_.end(), 0.0f);
+}
+
+void CpuRenderer::EnsureWorkers(int count) {
+  count = std::max(1, count);
+  if (static_cast<int>(workers_.size()) == count) return;
+
+  StopWorkers();
+  {
+    std::lock_guard<std::mutex> lock(workers_mu_);
+    worker_stop_ = false;
+  }
+  workers_.reserve(static_cast<size_t>(count));
+  for (int i = 0; i < count; i++) {
+    workers_.emplace_back(&CpuRenderer::WorkerLoop, this);
+  }
+}
+
+void CpuRenderer::StopWorkers() {
+  if (workers_.empty()) return;
+  {
+    std::lock_guard<std::mutex> lock(workers_mu_);
+    worker_stop_ = true;
+    worker_job_active_ = false;
+  }
+  workers_cv_.notify_all();
+  for (std::thread& worker : workers_) {
+    if (worker.joinable()) worker.join();
+  }
+  workers_.clear();
+  worker_job_ = nullptr;
+  worker_stop_ = false;
+}
+
+void CpuRenderer::WorkerLoop() {
+  uint64_t seen_generation = 0;
+  for (;;) {
+    std::function<void(int)> job;
+    int job_count = 0;
+    {
+      std::unique_lock<std::mutex> lock(workers_mu_);
+      workers_cv_.wait(lock, [&] {
+        return worker_stop_ ||
+               (worker_job_active_ && worker_generation_ != seen_generation);
+      });
+      if (worker_stop_) return;
+      seen_generation = worker_generation_;
+      job = worker_job_;
+      job_count = worker_job_count_;
+    }
+
+    for (;;) {
+      const int index = worker_next_.fetch_add(1);
+      if (index >= job_count) break;
+      job(index);
+    }
+
+    std::lock_guard<std::mutex> lock(workers_mu_);
+    worker_finished_++;
+    if (worker_finished_ == static_cast<int>(workers_.size())) {
+      worker_job_active_ = false;
+      workers_done_cv_.notify_one();
+    }
+  }
+}
+
+void CpuRenderer::RunParallel(int count, const std::function<void(int)>& fn) {
+  if (count <= 0) return;
+  EnsureWorkers(std::max(1, settings_.threads));
+  {
+    std::lock_guard<std::mutex> lock(workers_mu_);
+    worker_job_ = fn;
+    worker_job_count_ = count;
+    worker_next_.store(0);
+    worker_finished_ = 0;
+    worker_generation_++;
+    worker_job_active_ = true;
+  }
+  workers_cv_.notify_all();
+
+  std::unique_lock<std::mutex> lock(workers_mu_);
+  workers_done_cv_.wait(lock, [&] { return !worker_job_active_; });
 }
 
 void CpuRenderer::PrepareShading() {
@@ -488,16 +598,8 @@ void CpuRenderer::RenderCoarse() {
   const int bw = (width_ + kCoarseFactor - 1) / kCoarseFactor;
   const int bh = (height_ + kCoarseFactor - 1) / kCoarseFactor;
 
-  const int nthreads = std::max(1, settings_.threads);
-  std::atomic<int> next_row{0};
-  std::vector<std::thread> workers;
-  workers.reserve(size_t(nthreads - 1));
-
-  auto body = [&] {
-    for (;;) {
-      const int by = next_row.fetch_add(1);
-      if (by >= bh) return;
-      for (int bx = 0; bx < bw; bx++) {
+  RunParallel(bh, [&](int by) {
+    for (int bx = 0; bx < bw; bx++) {
         const int px = std::min(width_ - 1, bx * kCoarseFactor + kCoarseFactor / 2);
         const int py = std::min(height_ - 1, by * kCoarseFactor + kCoarseFactor / 2);
         float rgb[3];
@@ -512,13 +614,8 @@ void CpuRenderer::RenderCoarse() {
           uint32_t* row = pixels_.data() + size_t(y) * width_;
           for (int x = x0; x < x1; x++) row[x] = packed;
         }
-      }
     }
-  };
-
-  for (int i = 0; i < nthreads - 1; i++) workers.emplace_back(body);
-  body();
-  for (std::thread& t : workers) t.join();
+  });
 }
 
 void CpuRenderer::RenderTile(int tile_index, int sample_index) {
@@ -550,7 +647,8 @@ void CpuRenderer::RenderTile(int tile_index, int sample_index) {
 
 RenderStatus CpuRenderer::RenderStep(double budget_ms) {
   RenderStatus status;
-  status.samples_target = settings_.spp;
+  const int sample_target = SampleTarget();
+  status.samples_target = sample_target;
   status.tiles_total = TileCount();
 
   if (!scene_) {
@@ -576,41 +674,30 @@ RenderStatus CpuRenderer::RenderStep(double budget_ms) {
     return status;
   }
 
-  if (sample_index_ >= settings_.spp) {
+  if (sample_index_ >= sample_target) {
     status.converged = true;
-    status.samples_done = settings_.spp;
+    status.samples_done = sample_target;
     status.tiles_done = status.tiles_total;
     return status;
   }
 
   // Render whole tiles until the millisecond budget runs out, so the UI stays
   // responsive no matter how heavy the scene is.
-  const int nthreads = std::max(1, settings_.threads);
   const int total_tiles = status.tiles_total;
 
-  while (elapsed_ms() < budget_ms && sample_index_ < settings_.spp) {
+  while (elapsed_ms() < budget_ms && sample_index_ < sample_target) {
     // Grab a batch of tiles proportional to the worker count; one batch is the
     // granularity at which we re-check the time budget.
-    const int batch = std::min(total_tiles - next_tile_, nthreads * 2);
+    const int batch = std::min(total_tiles - next_tile_,
+                               std::max(1, settings_.threads) * 2);
     if (batch <= 0) break;
 
-    std::atomic<int> cursor{next_tile_};
     const int batch_end = next_tile_ + batch;
     const int sample = sample_index_;
 
-    auto body = [&] {
-      for (;;) {
-        const int t = cursor.fetch_add(1);
-        if (t >= batch_end) return;
-        RenderTile(t, sample);
-      }
-    };
-
-    std::vector<std::thread> workers;
-    workers.reserve(size_t(nthreads - 1));
-    for (int i = 0; i < nthreads - 1; i++) workers.emplace_back(body);
-    body();
-    for (std::thread& t : workers) t.join();
+    RunParallel(batch, [&](int offset) {
+      RenderTile(next_tile_ + offset, sample);
+    });
 
     next_tile_ = batch_end;
     status.produced_pixels = true;
@@ -623,7 +710,8 @@ RenderStatus CpuRenderer::RenderStep(double budget_ms) {
 
   status.samples_done = sample_index_;
   status.tiles_done = next_tile_;
-  status.converged = sample_index_ >= settings_.spp;
+  status.converged = sample_index_ >= sample_target;
+  if (status.converged) status.tiles_done = total_tiles;
   return status;
 }
 

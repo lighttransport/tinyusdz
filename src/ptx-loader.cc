@@ -28,8 +28,8 @@ bool Range(size_t off, size_t n, size_t size) {
   return Add(off, n, &end) && end <= size;
 }
 uint16_t U16(const uint8_t* p) {
-  return static_cast<uint16_t>(uint16_t(p[0]) |
-                               static_cast<uint16_t>(uint16_t(p[1]) << 8));
+  return static_cast<uint16_t>(static_cast<uint16_t>(p[0]) |
+                               (static_cast<uint16_t>(p[1]) << 8));
 }
 uint32_t U32(const uint8_t* p) {
   return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 |
@@ -49,8 +49,9 @@ bool Inflate(const uint8_t* src, size_t srcSize, size_t dstSize,
     return false;
   }
 #endif
+  const mz_ulong dstSizeULong = static_cast<mz_ulong>(dstSize);
   dst->resize(dstSize);
-  mz_ulong n = static_cast<mz_ulong>(dstSize);
+  mz_ulong n = dstSizeULong;
   const int rc = mz_uncompress(dst->data(), &n, src, static_cast<mz_ulong>(srcSize));
   if (rc != MZ_OK || n != dstSize) {
     if (err) *err = "Ptex deflate block failed";
@@ -89,9 +90,23 @@ bool Reader::OpenFile(const std::string& path, Reader* out, std::string* err) {
   if (!f) return Fail(err, "cannot open Ptex file");
   const std::streamoff n = f.tellg();
   if (n <= 0) return Fail(err, "empty Ptex file");
-  out->owned_.resize(static_cast<size_t>(n));
+  // streamoff is 64-bit, but streamsize and size_t are 32-bit on wasm32, so a
+  // large file would silently truncate in the resize and in the read length
+  // (the read then "succeeds" against a short buffer). Reject explicitly.
+  // A DIRECTORY opens successfully here and reports LLONG_MAX, which passes
+  // both limits above on LP64 and then throws length_error out of resize().
+  // Bound it: no real Ptex file approaches 16 GiB.
+  constexpr uint64_t kMaxPtexBytes = 16ull << 30;
+  const uint64_t n64 = static_cast<uint64_t>(n);
+  if (n64 > kMaxPtexBytes ||
+      n64 > static_cast<uint64_t>((std::numeric_limits<std::streamsize>::max)()) ||
+      n64 > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+    return Fail(err, "Ptex file too large or not a regular file");
+  }
+  out->owned_.resize(static_cast<size_t>(n64));
   f.seekg(0, std::ios::beg);
-  if (!f.read(reinterpret_cast<char*>(out->owned_.data()), n)) {
+  if (!f.read(reinterpret_cast<char*>(out->owned_.data()),
+              static_cast<std::streamsize>(n64))) {
     return Fail(err, "cannot read Ptex file");
   }
   out->data_ = out->owned_.data();

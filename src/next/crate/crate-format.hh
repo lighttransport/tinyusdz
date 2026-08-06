@@ -385,6 +385,15 @@ enum class SpecType : uint32_t {
   VariantSet = 11,
 };
 
+/// Map a raw file-supplied uint32 onto SpecType. Values outside the
+/// enumerator range become Unknown rather than an out-of-range enum that any
+/// downstream table lookup or exhaustive switch would treat as live.
+inline SpecType ToSpecType(uint32_t v) {
+  return (v <= static_cast<uint32_t>(SpecType::VariantSet))
+             ? static_cast<SpecType>(v)
+             : SpecType::Unknown;
+}
+
 /// Spec definition (prim or property)
 struct CrateSpec {
   PathIndex path_index;       // Index into paths table

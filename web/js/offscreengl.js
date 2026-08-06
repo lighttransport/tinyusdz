@@ -23,6 +23,18 @@ const upAxisEl = document.getElementById('up-axis');
 const loadBtn = document.getElementById('load-btn');
 const fileInput = document.getElementById('file-input');
 const unsupportedOverlay = document.getElementById('unsupported-overlay');
+const testMode = new URLSearchParams(window.location.search).get('test') === '1';
+
+// Small, stable browser-driver surface.  It is intentionally read-only from
+// the page's perspective and is only populated when the page is used by a
+// regression harness.
+window.__offscreenTestState = {
+    testMode,
+    initialized: false,
+    ready: false,
+    loaded: [],
+    errors: [],
+};
 
 // ─── Browser capability check ──────────────────────────────────────────────
 
@@ -49,6 +61,7 @@ worker.postMessage(
         width: canvas.clientWidth,
         height: canvas.clientHeight,
         pixelRatio: window.devicePixelRatio || 1,
+        testMode,
     },
     [offscreen]   // <-- transferable list (zero-copy)
 );
@@ -75,6 +88,7 @@ worker.addEventListener('message', (e) => {
     if (type === 'status') {
         statusEl.textContent = message;
         statusEl.className = '';
+        if (message === 'Ready for test input') window.__offscreenTestState.ready = true;
     } else if (type === 'loaded') {
         statusEl.textContent = `Loaded: ${meshCount} meshes, ${materialCount} materials`;
         statusEl.className = '';
@@ -90,9 +104,15 @@ worker.addEventListener('message', (e) => {
         if (animationCountEl) animationCountEl.textContent = animations || 0;
         upAxisEl.textContent = upAxis || 'Y';
         modelInfoEl.style.display = 'block';
+        window.__offscreenTestState.loaded.push({
+            meshCount: meshCount || 0,
+            materialCount: materialCount || 0,
+            upAxis: upAxis || 'Y',
+        });
     } else if (type === 'error') {
         statusEl.textContent = `Error: ${message}`;
         statusEl.className = 'error';
+        window.__offscreenTestState.errors.push(String(message || 'unknown worker error'));
         console.error('[Worker error]', message);
     }
 });
@@ -100,8 +120,11 @@ worker.addEventListener('message', (e) => {
 worker.addEventListener('error', (e) => {
     statusEl.textContent = `Worker error: ${e.message}`;
     statusEl.className = 'error';
+    window.__offscreenTestState.errors.push(String(e.message || 'worker error'));
     console.error('[Worker uncaught error]', e);
 });
+
+window.__offscreenTestState.initialized = true;
 
 // ─── Pointer events (forwarded verbatim to worker) ─────────────────────────
 

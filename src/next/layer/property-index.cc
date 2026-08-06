@@ -23,10 +23,39 @@ PropNameTable::PropNameTable() = default;
 PropNameTable::~PropNameTable() = default;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
-void PropNameTable::freeze() { frozen_.store(true, std::memory_order_release); }
-void PropNameTable::unfreeze() { frozen_.store(false, std::memory_order_release); }
-bool PropNameTable::is_frozen() const {
-  return frozen_.load(std::memory_order_acquire);
+namespace {
+// Order the snapshot by the pointed-to name.
+struct FrozenLess {
+  bool operator()(const std::pair<const std::string*, uint32_t>& a,
+                  const std::string& b) const {
+    return *a.first < b;
+  }
+  bool operator()(const std::pair<const std::string*, uint32_t>& a,
+                  const std::pair<const std::string*, uint32_t>& b) const {
+    return *a.first < *b.first;
+  }
+};
+}  // namespace
+
+void PropNameTable::freeze() {
+  // Build the snapshot under the write lock so it is a consistent view, then
+  // publish it atomically. Readers only ever see a fully-built index.
+  auto idx = std::make_shared<FrozenIndex>();
+  {
+    std::unique_lock<std::shared_mutex> wlk(mu_);
+    idx->by_id.reserve(names_.size());
+    for (const std::string& n : names_) idx->by_id.push_back(&n);
+    idx->by_name.reserve(name_to_id_.size());
+    for (const auto& kv : name_to_id_) {
+      idx->by_name.emplace_back(&kv.first, kv.second);
+    }
+    std::sort(idx->by_name.begin(), idx->by_name.end(), FrozenLess{});
+  }
+  std::atomic_store(&frozen_, std::shared_ptr<const FrozenIndex>(idx));
+}
+
+void PropNameTable::unfreeze() {
+  std::atomic_store(&frozen_, std::shared_ptr<const FrozenIndex>());
 }
 #else
 void PropNameTable::freeze() {}
@@ -36,16 +65,17 @@ bool PropNameTable::is_frozen() const { return false; }
 
 PropNameId PropNameTable::intern(const std::string& name) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  if (frozen_.load(std::memory_order_acquire)) {
-    // Frozen fast path: the common compose-time intern is a HIT (every property
-    // name was interned at parse), so resolve it lock-free against the immutable
-    // map and stay frozen. Only a genuinely NEW name mutates the table, which
-    // can't coexist with lock-free readers -- so it unfreezes (back to locking)
-    // before inserting. Callers keep frozen lock-free reads and new interns in
-    // disjoint phases, so no reader is in flight at that transition.
-    auto it = name_to_id_.find(name);
-    if (it != name_to_id_.end()) return PropNameId{it->second};
-    frozen_.store(false, std::memory_order_release);
+  // Frozen fast path: the common compose-time intern is a HIT (every property
+  // name was interned at parse), so answer it lock-free from the snapshot.
+  // A MISS falls through to the locked path below and inserts into the live
+  // map — which the snapshot does not alias, so lock-free readers are
+  // untouched and the snapshot stays valid (just missing this one name).
+  if (auto idx = std::atomic_load(&frozen_)) {
+    auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), name,
+                               FrozenLess{});
+    if (it != idx->by_name.end() && *it->first == name) {
+      return PropNameId{it->second};
+    }
   }
   {
     std::shared_lock<std::shared_mutex> rlk(mu_);
@@ -84,10 +114,15 @@ PropNameId PropNameTable::intern(const char* name) {
 const std::string& PropNameTable::get(PropNameId id) const {
   static const std::string empty;
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  if (!frozen_.load(std::memory_order_acquire)) {
+  // Lock-free when the id is covered by the published snapshot. The deque
+  // elements it points at never relocate, so the reference stays valid even if
+  // another thread interns concurrently.
+  if (auto idx = std::atomic_load(&frozen_)) {
+    if (id.id < idx->by_id.size()) return *idx->by_id[id.id];
+  }
+  {
     // Shared lock: a concurrent intern() on another thread may push_back names_
-    // (parallel composition warms referenced layers on workers). When frozen the
-    // deque is immutable, so concurrent reads need no lock.
+    // (parallel composition warms referenced layers on workers).
     std::shared_lock<std::shared_mutex> rlk(mu_);
     if (id.id >= names_.size()) return empty;
     return names_[id.id];
@@ -99,10 +134,19 @@ const std::string& PropNameTable::get(PropNameId id) const {
 
 PropNameId PropNameTable::find(const std::string& name) const {
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  if (!frozen_.load(std::memory_order_acquire)) {
-    // Shared lock vs. a concurrent intern() rehash of name_to_id_. When frozen
-    // the map is immutable, so concurrent lookups need no lock -- this removes
-    // the rwlock cache-line contention that dominates multi-thread rendering.
+  // Lock-free hit against the immutable snapshot -- this is what removes the
+  // rwlock cache-line contention that dominated multi-thread rendering. A miss
+  // still has to consult the live map (a name may have been interned after the
+  // snapshot was published).
+  if (auto idx = std::atomic_load(&frozen_)) {
+    auto it = std::lower_bound(idx->by_name.begin(), idx->by_name.end(), name,
+                               FrozenLess{});
+    if (it != idx->by_name.end() && *it->first == name) {
+      return PropNameId{it->second};
+    }
+  }
+  {
+    // Shared lock vs. a concurrent intern() rehash of name_to_id_.
     std::shared_lock<std::shared_mutex> rlk(mu_);
     auto it = name_to_id_.find(name);
     return it != name_to_id_.end() ? PropNameId{it->second} : PropNameId{};
@@ -115,9 +159,31 @@ PropNameId PropNameTable::find(const std::string& name) const {
   return PropNameId{};
 }
 
+PropNameId PropNameTable::find(std::string_view name) const {
+  // C++17's unordered_map has no heterogeneous find(). Probe the selected
+  // bucket directly so the string_view path stays allocation-free.
+  const auto lookup = [this](std::string_view view) -> PropNameId {
+    const size_t bucket_count = name_to_id_.bucket_count();
+    if (bucket_count == 0) return PropNameId{};
+    const size_t bucket = PropNameHash{}(view) % bucket_count;
+    for (auto it = name_to_id_.cbegin(bucket);
+         it != name_to_id_.cend(bucket); ++it) {
+      if (PropNameEqual{}(it->first, view)) return PropNameId{it->second};
+    }
+    return PropNameId{};
+  };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (!std::atomic_load(&frozen_)) {
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+    return lookup(name);
+  }
+#endif
+  return lookup(name);
+}
+
 PropNameId PropNameTable::find(const char* name) const {
   if (!name) return PropNameId{};
-  return find(std::string(name));
+  return find(std::string_view(name));
 }
 
 void PropNameTable::register_common_names() {

@@ -86,74 +86,138 @@ std::string PurposeForPrim(const ::tinyusdz::next::UsdPrim& prim,
   return inherited.empty() ? std::string("default") : inherited;
 }
 
-void PushRecord(const RenderPrimRecord& rec, bool collect_records,
+void PushRecord(RenderPrimRecord&& rec, bool collect_records,
                 RenderExtractResult* out) {
   if (collect_records) out->records.push_back(rec);
+  if (rec.type_name == "Points") {
+    out->points.push_back(std::move(rec));
+    return;
+  }
   switch (rec.kind) {
-    case RenderPrimKind::Mesh: out->meshes.push_back(rec); break;
-    case RenderPrimKind::PointInstancer: out->point_instancers.push_back(rec); break;
+    case RenderPrimKind::Mesh: out->meshes.push_back(std::move(rec)); break;
+    case RenderPrimKind::PointInstancer:
+      out->point_instancers.push_back(std::move(rec));
+      break;
     case RenderPrimKind::NativeInstance:
-      out->native_instances.push_back(rec);
       if (!rec.native_prototype.empty())
         out->native_prototype_holders.insert(rec.native_prototype);
+      out->native_instances.push_back(std::move(rec));
       break;
-    case RenderPrimKind::Light: out->lights.push_back(rec); break;
-    case RenderPrimKind::Camera: out->cameras.push_back(rec); break;
-    case RenderPrimKind::Material: out->materials.push_back(rec); break;
-    case RenderPrimKind::Volume: out->volumes.push_back(rec); break;
-    case RenderPrimKind::Curve: out->curves.push_back(rec); break;
-    case RenderPrimKind::Skeleton: out->skeletons.push_back(rec); break;
+    case RenderPrimKind::Light: out->lights.push_back(std::move(rec)); break;
+    case RenderPrimKind::Camera: out->cameras.push_back(std::move(rec)); break;
+    case RenderPrimKind::Material:
+      out->materials.push_back(std::move(rec));
+      break;
+    case RenderPrimKind::Volume: out->volumes.push_back(std::move(rec)); break;
+    case RenderPrimKind::Curve: out->curves.push_back(std::move(rec)); break;
+    case RenderPrimKind::Skeleton:
+      out->skeletons.push_back(std::move(rec));
+      break;
     default: break;
   }
 }
 
-void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
+void CollectRec(const ::tinyusdz::next::UsdPrim& root,
                 const RenderExtractOptions& options,
                 const double parent_world[16],
                 const std::string& inherited_purpose,
                 const std::string& inherited_material,
                 const std::string& inherited_strong_material,
                 RenderExtractResult* out) {
-  if (!prim.IsActive() && !options.include_inactive) return;
+  struct Frame {
+    ::tinyusdz::next::UsdPrim prim;
+    std::string purpose;
+    std::string material;
+    std::string strong_material;
+    double parent_world[16];
+    size_t depth = 0;
+    // IsActive() walks all ancestors. Carry the accumulated state instead so
+    // a deep hierarchy remains O(number of prims), not O(depth squared).
+    bool active = true;
+  };
 
-  RenderPrimRecord rec;
-  rec.prim = prim;
-  rec.path = prim.GetPath().str();
-  rec.type_name = prim.GetTypeName();
-  rec.purpose = PurposeForPrim(prim, inherited_purpose);
-  const std::string local_material =
-      ::tinyusdz::next::GetBoundMaterialPath(prim);
-  const std::string nearest_material =
-      local_material.empty() ? inherited_material : local_material;
-  std::string strong_material = inherited_strong_material;
-  if (strong_material.empty() && !local_material.empty() &&
-      ::tinyusdz::next::BindingIsStrongerThanDescendants(prim)) {
-    strong_material = local_material;
-  }
-  rec.material_path = strong_material.empty() ? nearest_material
-                                               : strong_material;
-  ComputeLocalTransform(prim, rec.local, options.time_code);
-  if (HasResetXformStack(prim)) {
-    std::memcpy(rec.world, rec.local, sizeof(rec.world));
-  } else {
-    MulRowMajor(rec.local, parent_world, rec.world);
-  }
-  rec.kind = Classify(prim, rec.type_name, &rec.native_prototype);
-  if (rec.kind != RenderPrimKind::Other || options.collect_other) {
-    PushRecord(rec, options.collect_records, out);
-  }
+  std::vector<Frame> stack;
+  size_t emitted_records = 0;
+  Frame first;
+  first.prim = root;
+  first.purpose = inherited_purpose;
+  first.material = inherited_material;
+  first.strong_material = inherited_strong_material;
+  std::memcpy(first.parent_world, parent_world, sizeof(first.parent_world));
+  first.active = options.include_inactive || root.IsActive();
+  stack.push_back(std::move(first));
 
-  if (rec.kind == RenderPrimKind::PointInstancer &&
-      options.stop_at_point_instancers) {
-    return;
-  }
-  if (rec.kind == RenderPrimKind::NativeInstance &&
-      options.stop_at_native_instances) {
-    return;
-  }
-  for (const ::tinyusdz::next::UsdPrim& child : prim.GetChildren()) {
-    CollectRec(child, options, rec.world, rec.purpose, nearest_material,
-               strong_material, out);
+  while (!stack.empty()) {
+    Frame frame = std::move(stack.back());
+    stack.pop_back();
+    if (options.max_depth != 0 && frame.depth > options.max_depth) {
+      out->limit_exceeded = true;
+      continue;
+    }
+    const ::tinyusdz::next::UsdPrim& prim = frame.prim;
+    if (!frame.active && !options.include_inactive) continue;
+
+    RenderPrimRecord rec;
+    rec.prim = prim;
+    rec.path = prim.GetPath().str();
+    rec.type_name = prim.GetTypeName();
+    rec.purpose = PurposeForPrim(prim, frame.purpose);
+    const std::string local_material =
+        ::tinyusdz::next::GetBoundMaterialPath(prim);
+    const std::string nearest_material =
+        local_material.empty() ? frame.material : local_material;
+    std::string strong_material = frame.strong_material;
+    if (strong_material.empty() && !local_material.empty() &&
+        ::tinyusdz::next::BindingIsStrongerThanDescendants(prim)) {
+      strong_material = local_material;
+    }
+    rec.material_path = strong_material.empty() ? nearest_material
+                                                 : strong_material;
+    ComputeLocalTransform(prim, rec.local, options.time_code);
+    if (HasResetXformStack(prim)) {
+      std::memcpy(rec.world, rec.local, sizeof(rec.world));
+    } else {
+      MulRowMajor(rec.local, frame.parent_world, rec.world);
+    }
+    rec.kind = Classify(prim, rec.type_name, &rec.native_prototype);
+    const bool stop_children =
+        (rec.kind == RenderPrimKind::PointInstancer &&
+         options.stop_at_point_instancers) ||
+        (rec.kind == RenderPrimKind::NativeInstance &&
+         options.stop_at_native_instances);
+    const bool collect_this_record =
+        rec.kind != RenderPrimKind::Other || options.collect_other;
+    if (collect_this_record) {
+      if (options.max_records != 0 && emitted_records >= options.max_records) {
+        out->limit_exceeded = true;
+        continue;
+      }
+      ++emitted_records;
+    }
+
+    // GetChildren() materializes a vector for every prim.  The iterative
+    // extractor already owns its traversal stack, so walk the indexed child
+    // handles directly and avoid one temporary allocation per prim.
+    if (!stop_children) {
+      const size_t child_count = prim.GetChildCount();
+      for (size_t child_index = child_count; child_index > 0; --child_index) {
+        const ::tinyusdz::next::UsdPrim child_prim =
+            prim.GetChildAt(child_index - 1);
+        if (!child_prim.IsValid()) continue;
+        Frame child_frame;
+        child_frame.prim = child_prim;
+        child_frame.purpose = rec.purpose;
+        child_frame.material = nearest_material;
+        child_frame.strong_material = strong_material;
+        std::memcpy(child_frame.parent_world, rec.world,
+                    sizeof(child_frame.parent_world));
+        child_frame.depth = frame.depth + 1;
+        child_frame.active = options.include_inactive ||
+                             (frame.active && child_prim.GetMeta().active);
+        stack.push_back(std::move(child_frame));
+      }
+    }
+    if (collect_this_record) PushRecord(std::move(rec), options.collect_records, out);
   }
 }
 
@@ -255,9 +319,36 @@ bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
 void GatherMeshPrims(const ::tinyusdz::next::UsdPrim& root,
                      std::vector<::tinyusdz::next::UsdPrim>* out) {
   if (!out || !root.IsActive()) return;
-  if (root.GetTypeName() == "Mesh") out->push_back(root);
-  for (const ::tinyusdz::next::UsdPrim& child : root.GetChildren()) {
-    GatherMeshPrims(child, out);
+
+  // Keep traversal iterative: composed/programmatically-created stages can
+  // contain thousands of nested Xforms, and recursion here would turn input
+  // depth into native-stack exhaustion. Push children in reverse so the
+  // resulting order remains the same as the recursive (ascending child index)
+  // implementation.
+  struct Entry {
+    ::tinyusdz::next::UsdPrim prim;
+    bool active = true;
+  };
+  std::vector<Entry> stack;
+  stack.reserve(32);
+  stack.push_back(Entry{root, true});
+  while (!stack.empty()) {
+    const Entry entry = std::move(stack.back());
+    stack.pop_back();
+    const ::tinyusdz::next::UsdPrim& prim = entry.prim;
+    if (!entry.active) continue;
+    if (prim.GetTypeName() == "Mesh") out->push_back(prim);
+
+    const size_t child_count = prim.GetChildCount();
+    for (size_t i = child_count; i > 0; --i) {
+      const ::tinyusdz::next::UsdPrim child = prim.GetChildAt(i - 1);
+      if (child.IsValid()) {
+        // IsActive() walks every ancestor. The parent entry is already known
+        // active, so one local metadata check preserves its result without
+        // turning a deep chain into O(depth^2) work.
+        stack.push_back(Entry{child, entry.active && child.GetMeta().active});
+      }
+    }
   }
 }
 

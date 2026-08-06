@@ -50,6 +50,9 @@ struct LazyArrayRef {
   CrateTypeId crate_type = CrateTypeId::Invalid;  // exact on-disk type
   TypeId value_type = TypeId::Invalid;  // next TypeId materialize() would produce
   bool is_compressed = false;  // convenience copy of rep.is_compressed()
+  // Materialization may occur after the reader has returned. Preserve the
+  // read-time element policy instead of using a decoder-wide default.
+  uint64_t max_elements = 1024ull * 1024ull * 1024ull;
 };
 
 /// Probe only the block header (element count + layout) of an array ValueRep,

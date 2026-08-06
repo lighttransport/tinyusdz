@@ -6,7 +6,7 @@ using the TinyUSDZ WASM build. The pipeline drives two Node CLIs plus a runner:
 ```
 MJCF  ──cli/urdf-to-usd.js──▶  USD (PhysicsScene + Mjc* + Newton* schemas)
                                    │
-                                   └──cli/usd-to-mjcf.js──▶  MJCF (+ placeholder meshes)
+                                   └──cli/usd-to-mjcf.js──▶  MJCF
 ```
 
 ## Components
@@ -15,8 +15,12 @@ MJCF  ──cli/urdf-to-usd.js──▶  USD (PhysicsScene + Mjc* + Newton* sche
 | --- | --- |
 | `cli/urdf-to-usd.js` | Forward leg. Parses URDF **or** MJCF (`--input-format mjcf`), registers mesh geometry via `setVisualMesh`/`setCollisionMesh` (binary, by `meshRef`), calls `createURDFPhysicsScene`, then exports USDA/USDC/USDZ. |
 | `cli/usd-to-mjcf.js` | Return leg. Loads a USD stage, calls `extractPhysicsSceneJSON` for structure + `getMesh()` for real vertex data, rebuilds the kinematic tree, and emits MJCF with real `.obj` meshes. |
-| `run-mjcf-roundtrip.sh` | Runner. Drives both legs over the [`mujoco_menagerie`](https://github.com/google-deepmind/mujoco_menagerie) dataset and compares the body/joint counts that survived the trip. |
+| `run-mjcf-roundtrip.sh` | Focused runner. Drives both legs over the pinned [`mujoco_menagerie`](https://github.com/google-deepmind/mujoco_menagerie) dataset and compares the body/joint counts that survived the trip. |
 | `tests/screenshot-urdf-batch.mjs` | **Visual** verification. Drives the real `urdf.html` web demo in headless Chrome (Puppeteer): index assets, import MJCF (source view), click *URDF/MJCF → USD* (converted view), screenshot the split-view comparison per robot. |
+| `tests/screenshot-offscreen-batch.mjs` | **Worker visual** verification. Uploads each converted USD to `offscreengl.html`, checks the OffscreenCanvas Worker protocol, and captures the canvas. |
+
+The aggregate command that runs all of these together is documented in
+[`regression.md`](regression.md): `npm test`.
 
 ## Visual verification (screenshots)
 
@@ -41,7 +45,7 @@ pose), `--hw` (real GPU rendering), `--timeout` (default 180s). Output files are
 By default Chrome renders with **software WebGL** (`--use-angle=swiftshader`) so no GPU
 is needed. Software rendering is very slow for large scenes, though —
 `robot_soccer_kit` (65 links / **363 meshes** / ~104 MB USDC) times out under
-SwiftShader but completes in seconds with `--hw`.
+SwiftShader but completes with `--hw`.
 
 `--hw` renders on the real GPU via ANGLE's **Vulkan** backend (verified unmasked
 renderer: `ANGLE (NVIDIA, Vulkan 1.4 … GeForce RTX 3070)`). Chrome's *true* headless
@@ -59,8 +63,11 @@ xvfb-run -a node tests/screenshot-urdf-batch.mjs --all --hw
 ```
 
 Prereqs: an NVIDIA driver with the Vulkan ICD (`/usr/share/vulkan/icd.d/nvidia_icd.json`)
-and EGL vendor file (`/usr/share/glvnd/egl_vendor.d/10_nvidia.json`). Verified: the full
-`--all --hw` sweep renders 64/64 menagerie models on an RTX 3070 with no visible window.
+and EGL vendor file (`/usr/share/glvnd/egl_vendor.d/10_nvidia.json`). The aggregate
+`npm test` command uses hardware rendering when requested. Its regular UI check is
+intentionally curated because main-thread MJCF import is much slower for large
+textured scenes; exhaustive coverage is provided by the 67-model CLI closure and
+OffscreenCanvas Worker sweep.
 See <https://zenn.dev/syoyo/articles/4f084b2288428f> for why HW WebGL on headless Linux
 needs a framebuffer + Vulkan rather than `--headless=new`.
 

@@ -178,7 +178,13 @@ bool CrateReader::Impl::UnpackArrayEditData(ValueRep rep, ArrayEditData* out) {
   return true;
 }
 
-bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
+bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out, int depth) {
+  // Shared ceiling with DecodeDictionary — see the header comment.
+  if (depth > kMaxValueNestDepth) {
+    AddWarning("Value nesting too deep; value dropped");
+    return false;
+  }
+
   // VtArrayEdit reps (crate 0.14) are not VALUES: the attribute-spec decode
   // intercepts them (UnpackArrayEditData) and stores the structured edit on
   // the PrimSpec. Reaching here means an edit rep appeared in a context that
@@ -263,7 +269,9 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
           nested.type_id() != CrateTypeId::Dictionary) {
         return false;
       }
-      return UnpackValue(nested, out);
+      // Count the wrapper hop: this re-entry is exactly what let a cycle of
+      // UnregisteredValue-wrapped dictionaries recurse without bound.
+      return UnpackValue(nested, out, depth + 1);
     }
     case CrateTypeId::Half: return UnpackHalf(rep, out);
     case CrateTypeId::Vec2i: return UnpackVec2i(rep, out);
@@ -311,7 +319,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
         out = Value::MakeDoubleArray(std::vector<double>());
         return true;
       }
-      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      if (!SeekToPayload(reader_.get(), rep)) return false;
       uint64_t n = 0;
       if (!reader_->read_u64(n)) return false;
       if (n > options_.max_array_elements) return false;
@@ -356,7 +364,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
         out = Value::MakeTokenArray(std::vector<std::string>());
         return true;
       }
-      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      if (!SeekToPayload(reader_.get(), rep)) return false;
       uint32_t asset_idx = 0, path_idx = 0;
       if (!reader_->read_u32(asset_idx) || !reader_->read_u32(path_idx)) {
         return false;
@@ -396,7 +404,7 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::PathExpression: {
       // SdfPathExpression (crate >= 0.10): the expression text as a u32
       // string index in the value stream.
-      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) {
+      if (!SeekToPayload(reader_.get(), rep)) {
         return false;
       }
       uint32_t sidx = 0;
@@ -408,14 +416,14 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     }
 
     case CrateTypeId::Dictionary:
-      return DecodeDictionary(rep, out, 0);
+      return DecodeDictionary(rep, out, depth);
 
     case CrateTypeId::Relocates: {
       // SdfRelocates (crate >= 0.11): [u64 count][(u32 src, u32 dst)*].
       // Surface as a flat token array of [src, dst, ...] pairs; the stage
       // builder folds them into PrimSpecMeta::relocates.
       if (rep.payload() == 0) { out = Value::MakeTokenArray({}); return true; }
-      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) {
+      if (!SeekToPayload(reader_.get(), rep)) {
         return false;
       }
       uint64_t n = 0;

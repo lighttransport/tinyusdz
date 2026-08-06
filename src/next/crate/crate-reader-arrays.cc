@@ -28,11 +28,17 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   if (options_.lazy_arrays && source_ &&
       CrateArrayTypeCanBeLazy(type_id, rep.is_compressed())) {
     LazyArrayRef lr;
+    // Pass the configured cap, not SIZE_MAX: otherwise a lazy Value could
+    // advertise an element count (via Value::array_size()) that eager decode
+    // would have rejected outright, and a consumer sizing a buffer from it
+    // allocates on that number long before materialization refuses the array.
     if (ProbeArrayBlock(source_, rep,
-                        (std::numeric_limits<size_t>::max)(), &lr) &&
+                        static_cast<size_t>(options_.max_array_elements),
+                        &lr) &&
         lr.element_count <=
             static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)()) &&
         (rep.payload() == 0 || lr.block_len > 0)) {
+      lr.max_elements = options_.max_array_elements;
       out = Value::MakeLazyArray(lr);
       return true;
     }
@@ -45,7 +51,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   // data block to seek to. Otherwise seek to the block and read the count.
   uint64_t count = 0;
   if (rep.payload() != 0) {
-    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!SeekToPayload(reader_.get(), rep)) return false;
     // u32 count for crate < 0.7.0, u64 for >= 0.7.0 (pxr crateFile.cpp
     // _ReadUncompressedArray); element data immediately follows the count.
     if (!ReadCrateArrayCount(*reader_, version_, &count)) return false;

@@ -451,6 +451,17 @@ static std::string FindUsdcFixture(const char* basename) {
     std::ifstream f(path);
     if (f.good()) return path;
   }
+#ifdef TINYUSDZ_TEST_REPO_ROOT
+  // The relative prefixes above only resolve when the build directory sits
+  // directly under the repo root. Fall back to the root baked in at configure
+  // time so the test also works from an out-of-tree build dir.
+  {
+    std::string path =
+        std::string(TINYUSDZ_TEST_REPO_ROOT) + "/tests/usdc/" + basename;
+    std::ifstream f(path);
+    if (f.good()) return path;
+  }
+#endif
   return std::string();
 }
 

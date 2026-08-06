@@ -2654,8 +2654,27 @@ export {
   resolveMujocoMeshFile
 };
 
-const isMain = process.argv[1] &&
-  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+// Run only when invoked directly (not when imported by tests).
+//
+// Compare REALPATHS. import.meta.url is always symlink-resolved while
+// path.resolve(argv[1]) is not, so invoking this file through a symlinked
+// parent -- e.g. a checkout reached via ~/work -> /mnt/disk/work, which is
+// how many machines lay out a big-disk repo -- made this false. The script
+// then did nothing and exited 0: no conversion, no output file, no error.
+// In the MJCF roundtrip that surfaced as all 67 models failing with
+// "REV-ERROR ... ENOENT", blaming the return trip for a forward step that
+// had silently no-op'd.
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const self = fileURLToPath(import.meta.url);
+  const invoked = path.resolve(process.argv[1]);
+  if (self === invoked) return true;
+  try {
+    return fs.realpathSync(self) === fs.realpathSync(invoked);
+  } catch {
+    return false;
+  }
+})();
 
 if (isMain) {
   main().catch((err) => {

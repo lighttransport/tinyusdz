@@ -1,0 +1,26 @@
+#usda 1.0
+def Xform "Asset" (
+    variantSets = "lod"
+)
+{
+    variantSet "lod" = {
+        "high" (
+            prepend payload = @./variant-arc-target.usda@</Geo>
+        ) {
+            def Xform "Inner" (
+                variantSets = "det"
+                variants = { string det = "on" }
+            )
+            {
+                variantSet "det" = {
+                    "on" (
+                        prepend references = @./variant-arc-target.usda@</Geo>
+                    ) {
+                    }
+                    "off" {
+                    }
+                }
+            }
+        }
+    }
+}

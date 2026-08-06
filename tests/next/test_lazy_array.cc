@@ -98,8 +98,14 @@ int main() {
         CrateDataSource::Adopt(std::move(bytes), CrateVersion{0, 6, 0});
     LazyArrayRef ref;
     assert(ProbeArrayBlock(source, rep, 1024, &ref));
+    ref.max_elements = 1;
     Value lazy = Value::MakeLazyArray(ref);
     assert(lazy.is_lazy());
+
+    // A lazy value must retain the reader's element policy when it is
+    // materialized later; otherwise the deferred decode silently bypasses it.
+    Value rejected = lazy.materialized_copy();
+    assert(rejected.is_empty());
 
     std::string actual;
     StreamWriter writer(&actual);

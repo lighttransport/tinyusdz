@@ -635,21 +635,14 @@ UsdPrim UsdPrim::GetParent() const {
   if (last_slash == std::string::npos) return UsdPrim();
 
   std::string parent_path = path_str.substr(0, last_slash);
-  // O(1) via the path index when available.
+  // O(1) via the path index. There is no linear-scan fallback: prim_at_path()
+  // resolves through the very same path_to_index_ map, so a miss here means
+  // the prim genuinely is not in the layer -- the old fallback loop could
+  // never run (it was reached only when prim_at_path had already succeeded on
+  // a lookup that index_at_path had just failed, which is impossible).
   uint32_t pidx = layer_->index_at_path(parent_path);
-  if (pidx != UINT32_MAX) {
-    return UsdPrim(layer_->prim(pidx), layer_, pidx);
-  }
-  const PrimSpec* parent = layer_->prim_at_path(parent_path);
-  if (!parent) return UsdPrim();
-
-  // Fallback linear scan (path index not built yet)
-  for (size_t i = 0; i < layer_->prim_count(); ++i) {
-    if (layer_->prim(static_cast<uint32_t>(i)) == parent) {
-      return UsdPrim(parent, layer_, static_cast<uint32_t>(i));
-    }
-  }
-  return UsdPrim();
+  if (pidx == UINT32_MAX) return UsdPrim();
+  return UsdPrim(layer_->prim(pidx), layer_, pidx);
 }
 
 // For instance proxies, children are provided by the prototype prim's subtree.

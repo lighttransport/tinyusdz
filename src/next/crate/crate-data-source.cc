@@ -10,6 +10,7 @@
 #include "stream-reader.hh"
 #include "../types/value.hh"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <type_traits>
@@ -72,10 +73,25 @@ std::shared_ptr<CrateDataSource> CrateDataSource::MmapFile(
   ds->mmap_addr_ = addr;
   ds->mmap_size_ = len;
   ds->mmap_base_ = reinterpret_cast<const uint8_t*>(addr);
+  ds->mmap_path_ = filename;
   return ds;
 #else
   (void)filename;
   return nullptr;
+#endif
+}
+
+bool CrateDataSource::MappedFileShrank(size_t* current_size) const {
+#if defined(TINYUSDZ_NEXT_HAVE_MMAP)
+  if (!mmap_base_ || mmap_path_.empty()) return false;
+  struct stat st;
+  if (::stat(mmap_path_.c_str(), &st) != 0 || st.st_size < 0) return false;
+  const size_t now = static_cast<size_t>(st.st_size);
+  if (current_size) *current_size = now;
+  return now < mmap_size_;
+#else
+  (void)current_size;
+  return false;
 #endif
 }
 
@@ -112,8 +128,13 @@ void CrateDataSource::DiscardRange(uint64_t offset, uint64_t length) const {
 
 bool CrateDataSource::MaterializeArray(const LazyArrayRef& ref, Value* out) const {
   if (!out) return false;
+  const uint64_t size_limit =
+      static_cast<uint64_t>((std::numeric_limits<size_t>::max)());
+  const size_t ref_limit = ref.max_elements > size_limit
+                               ? (std::numeric_limits<size_t>::max)()
+                               : static_cast<size_t>(ref.max_elements);
   return DecodeCrateArray(base(), size(), ref.rep, version_, tokens_,
-                          /*max_elements=*/1024ull * 1024ull * 1024ull, out);
+                          std::min(ref_limit, max_array_elements_), out);
 }
 
 // ============================================================
@@ -317,20 +338,27 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
   }
 
   StreamReader r(source->base(), source->size());
+  // payload_as_offset() sign-extends from bit 47; reject a negative offset
+  // rather than let the size_t cast truncate it (see SeekToPayload).
+  if (!SeekToPayload(&r, rep)) return false;
   const size_t off = static_cast<size_t>(rep.payload_as_offset());
-  if (!r.seek(off)) return false;
   const CrateVersion version = source->version();
   const uint64_t hdr = CrateArrayCountHeaderBytes(version);
   uint64_t count = 0;
   if (!ReadCrateArrayCount(r, version, &count)) return false;
   if (count > max_elements) return false;
 
-  out->element_count = count;
-  out->block_offset = off;
-
   const CrateTypeId t = rep.type_id();
   const bool compressed = rep.is_compressed();
 
+  out->element_count = count;
+  out->block_offset = off;
+
+  // NOTE: element_count is intentionally NOT rejected here when the block runs
+  // past EOF -- callers rely on the probe succeeding with block_len = 0 so the
+  // decoder can report the error (see test_crate_alloc_guard). What keeps a
+  // LAZY value honest is the caller's `block_len > 0` gate plus `max_elements`
+  // (crate-reader-arrays.cc), not this function.
   if (compressed && (t == CrateTypeId::Int || t == CrateTypeId::UInt)) {
     // Block layout: [count header][u64 comp_size][comp_size bytes].
     uint64_t comp_size = 0;
@@ -340,6 +368,42 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
       out->block_len = 0;
       return true;
     }
+
+    // Bound element_count by what comp_size could possibly decode to.
+    //
+    // Without this the count is independent of the payload: a handful of
+    // compressed bytes could advertise ~1e9 elements (the flat
+    // max_array_elements cap), and Value::array_size() reports that verbatim
+    // for a lazy value -- so a consumer sizing a buffer from it allocates on
+    // the file's number long before materialization refuses the array.
+    //
+    // The bound is derived from the codec rather than guessed. USD integer
+    // compression spends 2 bits of code per element before LZ4
+    // (ComputeDeltaCodeBytes: ceil(count*2/8) = ceil(count/4) bytes), and
+    // LZ4's compression ratio is asymptotically capped near 255:1 (a long
+    // match costs ~1 byte per additional 255). So
+    //     ceil(count/4) <= pre_lz4 <= comp_size * 255
+    // giving count <= 1020 * comp_size.
+    //
+    // Measured against real files: the worst ratio in tests/usdc is 12, but a
+    // 28 MB MJCF-converted mesh asset reaches 912.6 -- 89% of the theoretical
+    // 1020, which both confirms the derivation and shows how little headroom
+    // a bound of exactly 1020 would leave. kSafety keeps 4x on top of theory,
+    // so the check kills the "a few bytes claim a billion elements" shape
+    // without going anywhere near plausible content.
+    constexpr uint64_t kElemsPerCompressedByte = 1020;
+    constexpr uint64_t kSafety = 4;
+    if (comp_size == 0) {
+      if (count != 0) return false;
+    } else if (comp_size <= (std::numeric_limits<uint64_t>::max)() /
+                                (kElemsPerCompressedByte * kSafety)) {
+      const uint64_t max_count =
+          comp_size * kElemsPerCompressedByte * kSafety;
+      if (count > max_count) {
+        return false;  // caller falls through to eager decode, which errors
+      }
+    }
+
     out->block_len = hdr + 8ull + comp_size;
   } else if (!compressed && out->src_elem_stride > 0) {
     // Block layout: [count header][count*stride bytes].
@@ -383,7 +447,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 
   uint64_t count = 0;
   if (rep.payload() != 0) {
-    if (!r.seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!SeekToPayload(&r, rep)) return false;
     if (!ReadCrateArrayCount(r, version, &count)) return false;
   }
   if (count > max_elements) return false;

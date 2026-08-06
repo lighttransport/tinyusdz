@@ -186,17 +186,25 @@ function jointTypeToMujoco(type) {
 // windows into the WASM heap, so we copy them out before the native object is
 // deleted. Points are link-local (the prim transform is baked by the render
 // scene converter).
-function collectRenderMeshes(native) {
+function collectRenderMeshes(native, warnings = []) {
   const map = new Map();
   const count = native.numMeshes ? native.numMeshes() : 0;
   for (let i = 0; i < count; i++) {
-    const m = native.getMeshCopy(i);
-    if (!m || !m.absPath || !m.points || m.points.length < 9) continue;
-    map.set(m.absPath, {
-      points: Float32Array.from(m.points),
-      indices: Int32Array.from(m.faceVertexIndices || []),
-      counts: Int32Array.from(m.faceVertexCounts || [])
-    });
+    try {
+      const m = native.getMeshCopy(i);
+      if (!m || !m.absPath || !m.points || m.points.length < 9) continue;
+      map.set(m.absPath, {
+        points: Float32Array.from(m.points),
+        indices: Int32Array.from(m.faceVertexIndices || []),
+        counts: Int32Array.from(m.faceVertexCounts || [])
+      });
+    } catch (error) {
+      // Physics JSON remains usable when a malformed render-only UV array
+      // prevents one mesh from materializing. The corresponding MJCF geom is
+      // emitted with the existing placeholder fallback, while the warning is
+      // surfaced to callers for follow-up.
+      warnings.push(`mesh ${i}: ${error.message || error}`);
+    }
   }
   return map;
 }
@@ -554,14 +562,25 @@ async function main() {
   const native = new tinyusdz.TinyUSDZLoaderNative();
   let extracted;
   let renderMeshes = new Map();
+  const renderWarnings = [];
   try {
-    if (!native.loadFromBinary(bytes, path.basename(inputPath))) {
+    // Physics extraction only needs the pristine layer. The ordinary stage
+    // load eagerly runs Tydra conversion, so one malformed render-only UV
+    // array would incorrectly make a structurally valid physics return-leg
+    // conversion fail before extractPhysicsSceneJSON can run.
+    if (!native.loadAsLayerFromBinary(bytes, path.basename(inputPath))) {
       throw new Error(native.error() || `Failed to load ${inputPath}`);
     }
     const jsonText = native.extractPhysicsSceneJSON();
     if (!jsonText) throw new Error(native.error() || 'extractPhysicsSceneJSON failed');
     extracted = JSON.parse(jsonText);
-    renderMeshes = collectRenderMeshes(native);
+    if (opts.emitMeshes) {
+      if (native.layerToRenderScene()) {
+        renderMeshes = collectRenderMeshes(native, renderWarnings);
+      } else {
+        renderWarnings.push(native.error() || 'LayerToRenderScene failed');
+      }
+    }
   } finally {
     native.delete();
   }
@@ -596,6 +615,10 @@ async function main() {
   if (opts.verbose) {
     console.log(`upAxis=${model.upAxis}, roots=${model.roots.map((r) => r.name).join(', ')}`);
     console.log(`mesh geoms=${stats.meshGeoms} (real=${stats.meshGeoms - stats.placeholderMeshes}, placeholder=${stats.placeholderMeshes}), meshes written=${opts.emitMeshes ? meshes.length : 0}`);
+  }
+  if (renderWarnings.length) {
+    console.warn(`Render mesh warnings: ${renderWarnings.length} (placeholder OBJ fallback used)`);
+    if (opts.verbose) for (const warning of renderWarnings) console.warn(`  ${warning}`);
   }
 }
 

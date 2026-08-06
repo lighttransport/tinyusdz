@@ -147,9 +147,9 @@ fi
 #    Use a size where the viewport is actually large: the file-list pane has a
 #    160px minimum, so a small window leaves almost no 3D area to compare.
 if [ -f "$ROOT/models/cube-previewsurface.usda" ]; then
-  "$BIN" "$ROOT/models/cube-previewsurface.usda" --threads 1 --spp 4 \
+  "$BIN" "$ROOT/models/cube-previewsurface.usda" --backend cpu --threads 1 --spp 4 \
     --screenshot "$OUT/t1.png" --size 480x360 --frames 8 >/dev/null
-  "$BIN" "$ROOT/models/cube-previewsurface.usda" --threads 8 --spp 4 \
+  "$BIN" "$ROOT/models/cube-previewsurface.usda" --backend cpu --threads 8 --spp 4 \
     --screenshot "$OUT/t8.png" --size 480x360 --frames 8 >/dev/null
   # Compare the viewport only: the status bar reports live process RSS, which
   # legitimately differs run to run, so a whole-image cmp would be flaky.
@@ -194,6 +194,20 @@ if [ -f "$ROOT/models/suzanne-pbr.usda" ]; then
   grep -Eq '^\[tusdquicklook\] renderer: (gl|cpu) ' "$OUT/b_report.err" \
     || fail "--verbose did not report the live renderer"
   echo "backend reporting: ok ($(grep -Eo 'renderer: [a-z]+' "$OUT/b_report.err" | head -1))"
+
+  # A 1 MiB GPU cap is below even the 1280x720 color+depth targets. GL must
+  # refuse before allocating them and leave a usable CPU preview behind.
+  "$BIN" "$ROOT/models/suzanne-pbr.usda" --backend gl --max-gpu-mem 1 \
+    --screenshot "$OUT/gpu_cap.png" --size 1280x720 --frames 2 \
+    --verbose \
+    >/dev/null 2>"$OUT/gpu_cap.err" \
+    || fail "GPU cap fallback: non-zero exit"
+  check_png "$OUT/gpu_cap.png" "GPU-cap fallback"
+  grep -Eq 'GL (resource budget exceeded|backend unavailable)' "$OUT/gpu_cap.err" \
+    || fail "GPU cap refusal was not reported"
+  grep -q 'renderer: cpu ' "$OUT/gpu_cap.err" \
+    || fail "GPU cap refusal did not fall back to CPU"
+  echo "GPU cap fallback: ok"
 
   # 4c. Debug AOVs. These carry no lighting, so the GLSL and shade.cc are
   #     computing the same arithmetic or they are not -- which makes them a

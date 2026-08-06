@@ -5,6 +5,7 @@
 
 #include "safe-arithmetic.hh"
 #include "render-converter.hh"
+#include "mem-budget.hh"
 #include "next/schema/color-space.hh"
 #include "next/eval/value-clip.hh"
 #include "next/resolver/asset-resolver.hh"
@@ -51,6 +52,20 @@ constexpr float kAlphaEpsilon = 1.0e-6f;
 constexpr size_t kMaxTriangulationCornerCount = 150'000'000u;
 constexpr uint32_t kEarcutMaxVertices = 16384;
 constexpr size_t kMaxTempAllocBytes = 256u * 1024u * 1024u;
+
+uint64_t ImageCacheHash(const std::string& resolved,
+                        ColorSpace color_space) noexcept {
+  // FNV-1a is fast for these short, path-like keys and avoids allocating a
+  // second copy of every resolved path just to use an unordered_map.
+  uint64_t hash = 1469598103934665603ull;
+  hash ^= static_cast<uint8_t>(color_space);
+  hash *= 1099511628211ull;
+  for (const unsigned char byte : resolved) {
+    hash ^= byte;
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
 
 const ::tinyusdz::next::PropNameId& kIdVisibility() {
   static const ::tinyusdz::next::PropNameId id =
@@ -1645,13 +1660,17 @@ void BuildCompactInstances(
   }
 }
 
+// O(1) copy-on-write share. This is the copy engine behind every
+// point-instance mesh clone: the topology, UV sets, colors and primvars of a
+// clone are byte-identical to the prototype's and were previously duplicated
+// in full, so N instances of a 50k-tri prototype cost N x the WHOLE mesh
+// rather than N x (points+normals+tangents) + 1 x the rest. ChunkedArray
+// detaches on the first write through either holder, so a consumer that does
+// mutate a clone still gets private storage.
 template <typename Chunked>
 void CopyChunkedArray(const Chunked& src, Chunked* dst) {
   if (!dst) return;
-  dst->reserve(src.size());
-  for (size_t i = 0; i < src.size(); ++i) {
-    dst->push_back(src[i]);
-  }
+  dst->share_from(src);
 }
 
 Float3 TransformPoint(const Matrix4& m, float x, float y, float z) {
@@ -1862,6 +1881,29 @@ void AppendPointInstanceDraws(int32_t instancer_id,
   if (!instancer->valid) return;
 
   const size_t instance_count = instancer->instance_count();
+
+  // Reserve up front: a RenderPointInstanceDraw is ~84 bytes (mostly a
+  // Matrix4), so 1M instances grow ~84 MB by geometric doubling -- a ~1.5x
+  // transient spike plus ~20 full reallocation memcpys. The upper bound is
+  // instances x the widest prototype mesh run.
+  {
+    size_t max_run = 0;
+    for (size_t i = 0; i + 1 < instancer->prototype_mesh_offsets.size(); ++i) {
+      const size_t run = instancer->prototype_mesh_offsets[i + 1] -
+                         instancer->prototype_mesh_offsets[i];
+      if (run > max_run) max_run = run;
+    }
+    if (max_run > 0 && !WouldOverflowSizeMul(instance_count, max_run)) {
+      const size_t upper = instance_count * max_run;
+      // Only pre-size when the bound is realistic; a pathological prototype
+      // table should not drive a huge speculative reservation.
+      if (upper <= scene->point_instance_draws.size() + (size_t(1) << 22)) {
+        scene->point_instance_draws.reserve(
+            scene->point_instance_draws.size() + upper);
+      }
+    }
+  }
+
   for (size_t instance_index = 0; instance_index < instance_count; ++instance_index) {
     if (!instancer->instance_visible.empty() &&
         !instancer->instance_visible[instance_index]) {
@@ -2376,6 +2418,37 @@ bool JointTokenMatches(const SkeletonJoint& joint, const std::string& token) {
   return false;
 }
 
+using JointIndexLookup = std::unordered_map<std::string, int32_t>;
+
+JointIndexLookup BuildJointIndexLookup(const Skeleton& skeleton) {
+  JointIndexLookup lookup;
+  lookup.reserve(skeleton.joints.size() * 3);
+  for (size_t i = 0; i < skeleton.joints.size(); ++i) {
+    const SkeletonJoint& joint = skeleton.joints[i];
+    const int32_t index = static_cast<int32_t>(i);
+    lookup.emplace(joint.path, index);
+    lookup.emplace(joint.name, index);
+    lookup.emplace(LeafNameFromJointPath(joint.path), index);
+  }
+  return lookup;
+}
+
+int32_t FindJointIndex(const Skeleton& skeleton,
+                       const JointIndexLookup& lookup,
+                       const std::string& token) {
+  const auto exact = lookup.find(token);
+  if (exact != lookup.end()) return exact->second;
+  // Preserve support for relative multi-segment tokens. This uncommon path
+  // keeps the original matching semantics without penalizing exact paths and
+  // leaf names used by ordinary UsdSkel exports.
+  for (size_t i = 0; i < skeleton.joints.size(); ++i) {
+    if (JointTokenMatches(skeleton.joints[i], token)) {
+      return static_cast<int32_t>(i);
+    }
+  }
+  return -1;
+}
+
 // Material-driven UV primvar promotion: a UsdPrimvarReader varname that the
 // mesh's own UV-set selection (MeshConfig::uv_primvar_names) did not pick only
 // survives as a generic mesh.primvars entry, which no texture consumer samples.
@@ -2453,6 +2526,9 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
         FloatChunked promoted;
         if (attr.has_indices()) {
           const size_t elems = attr.float_data.size() / 2;
+          // Both counts are known up front; without reserve() a 1M-vertex UV
+          // set grows 122 chunks one push_back at a time.
+          promoted.reserve(attr.indices.size() * 2);
           for (size_t k = 0; k < attr.indices.size(); ++k) {
             const uint32_t idx = attr.indices[k];
             if (idx >= elems) {
@@ -2464,8 +2540,12 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
             promoted.push_back(attr.float_data[idx * 2 + 1]);
           }
         } else {
-          for (size_t k = 0; k < attr.float_data.size(); ++k) {
-            promoted.push_back(attr.float_data[k]);
+          // Straight copy: go chunk-at-a-time rather than element-at-a-time.
+          promoted.reserve(attr.float_data.size());
+          for (size_t c = 0; c < attr.float_data.chunk_count(); ++c) {
+            const size_t n = attr.float_data.chunk_size(c);
+            if (n == 0) break;
+            promoted.append(attr.float_data.chunk_data(c), n);
           }
         }
         if (promoted.alloc_failed()) {
@@ -2532,6 +2612,11 @@ void PromoteMaterialUVPrimvars(RenderScene* scene,
 
 void ResolveSkeletalAnimationTargets(RenderScene* scene) {
   if (!scene) return;
+  std::vector<JointIndexLookup> joint_lookups;
+  joint_lookups.reserve(scene->skeletons.size());
+  for (const Skeleton& skeleton : scene->skeletons) {
+    joint_lookups.push_back(BuildJointIndexLookup(skeleton));
+  }
   for (size_t ai = 0; ai < scene->animations.size(); ++ai) {
     AnimationClip& clip = scene->animations[ai];
     for (AnimationChannel& channel : clip.channels) {
@@ -2552,12 +2637,7 @@ void ResolveSkeletalAnimationTargets(RenderScene* scene) {
           const Skeleton& skel = scene->skeletons[si];
           size_t matches = 0;
           for (const std::string& token : channel.joint_order) {
-            for (const SkeletonJoint& joint : skel.joints) {
-              if (JointTokenMatches(joint, token)) {
-                ++matches;
-                break;
-              }
-            }
+            if (FindJointIndex(skel, joint_lookups[si], token) >= 0) ++matches;
           }
           if (matches > best_matches) {
             best_matches = matches;
@@ -2573,17 +2653,12 @@ void ResolveSkeletalAnimationTargets(RenderScene* scene) {
         continue;
       }
       const Skeleton& skel = scene->skeletons[static_cast<size_t>(skeleton_id)];
+      const JointIndexLookup& lookup =
+          joint_lookups[static_cast<size_t>(skeleton_id)];
       channel.target_skeleton_path = skel.prim_path;
       channel.joint_remap.reserve(channel.joint_order.size());
       for (const std::string& token : channel.joint_order) {
-        int32_t joint_id = -1;
-        for (size_t ji = 0; ji < skel.joints.size(); ++ji) {
-          if (JointTokenMatches(skel.joints[ji], token)) {
-            joint_id = static_cast<int32_t>(ji);
-            break;
-          }
-        }
-        channel.joint_remap.push_back(joint_id);
+        channel.joint_remap.push_back(FindJointIndex(skel, lookup, token));
       }
       scene->skeletons[static_cast<size_t>(skeleton_id)].animation_id =
           static_cast<int32_t>(ai);
@@ -2591,12 +2666,81 @@ void ResolveSkeletalAnimationTargets(RenderScene* scene) {
   }
 }
 
-bool PathIsAtOrUnder(const std::string& path, const std::string& root) {
-  if (root.empty() || path.empty()) return false;
-  if (path == root) return true;
-  return path.size() > root.size() &&
-         path.compare(0, root.size(), root) == 0 && path[root.size()] == '/';
-}
+// Mesh paths sorted lexicographically, built ONCE per ResolveLightLinking call
+// and shared by every light and both link kinds.
+//
+// A prim path and all its descendants form a CONTIGUOUS range in sorted order
+// ("/A" then "/A/..." then anything after, since '/' sorts below every
+// character that can start a sibling's name), so a collection target resolves
+// by two binary searches instead of a full scan with a string prefix compare
+// per mesh. The old shape was O(lights * meshes * targets): 500 lights x
+// 200k meshes x 10 targets x 2 link kinds is ~2e9 string comparisons.
+class MeshPathIndex {
+ public:
+  explicit MeshPathIndex(const RenderScene& scene) {
+    sorted_.reserve(scene.meshes.size());
+    for (size_t i = 0; i < scene.meshes.size(); ++i) {
+      sorted_.push_back({&scene.meshes[i].prim_path, static_cast<int32_t>(i)});
+    }
+    std::sort(sorted_.begin(), sorted_.end(),
+              [](const Entry& a, const Entry& b) { return *a.path < *b.path; });
+    stamp_.assign(scene.meshes.size(), 0);
+  }
+
+  size_t mesh_count() const { return sorted_.size(); }
+
+  // Half-open [begin, end) over sorted_ covering the STRICT descendants of
+  // `root` (use ExactMatch for `root` itself). Descendants are exactly the
+  // entries with the prefix "root/", and since '/' is 0x2F they occupy
+  // ["root/", "root0") -- two binary searches, no prefix compare per mesh.
+  void DescendantRange(const std::string& root, size_t* begin,
+                       size_t* end) const {
+    if (root.empty()) { *begin = *end = 0; return; }
+    const std::string lo_key = root + "/";
+    std::string hi_key = root;
+    hi_key += static_cast<char>('/' + 1);  // '0'
+    *begin = LowerBound(lo_key);
+    *end = LowerBound(hi_key);
+    if (*end < *begin) *end = *begin;
+  }
+
+  int32_t ExactMatch(const std::string& path) const {
+    const size_t i = LowerBound(path);
+    if (i < sorted_.size() && *sorted_[i].path == path) {
+      return sorted_[i].mesh_index;
+    }
+    return -1;
+  }
+
+  int32_t MeshAt(size_t sorted_pos) const {
+    return sorted_[sorted_pos].mesh_index;
+  }
+
+  // Generation-stamped marking: no O(meshes) clear between lights.
+  void NewGeneration() { ++generation_; }
+  void Mark(int32_t mesh_index) {
+    stamp_[static_cast<size_t>(mesh_index)] = generation_;
+  }
+  bool Marked(int32_t mesh_index) const {
+    return stamp_[static_cast<size_t>(mesh_index)] == generation_;
+  }
+
+ private:
+  size_t LowerBound(const std::string& key) const {
+    const auto it = std::lower_bound(
+        sorted_.begin(), sorted_.end(), key,
+        [](const Entry& e, const std::string& v) { return *e.path < v; });
+    return static_cast<size_t>(it - sorted_.begin());
+  }
+
+  struct Entry {
+    const std::string* path;
+    int32_t mesh_index;
+  };
+  std::vector<Entry> sorted_;
+  mutable std::vector<uint32_t> stamp_;
+  uint32_t generation_ = 0;
+};
 
 // Resolve one CollectionAPI instance (collection:<name>:*) on a light prim
 // to RenderScene mesh indices, mirroring legacy ResolveLightLinking:
@@ -2607,9 +2751,11 @@ bool PathIsAtOrUnder(const std::string& path, const std::string& root) {
 // collections are not evaluated (no path-expression parser in next) and
 // also keep the links-all default.
 void ResolveLightLinkInstance(const UsdPrim& prim, const RenderScene& scene,
+                              MeshPathIndex& index,
                               const std::string& instance_name,
                               bool* links_all,
                               std::vector<int32_t>* mesh_indices) {
+  (void)scene;
   const std::string base = "collection:" + instance_name + ":";
   if (prim.HasProperty(base + "membershipExpression")) return;
 
@@ -2628,39 +2774,66 @@ void ResolveLightLinkInstance(const UsdPrim& prim, const RenderScene& scene,
 
   *links_all = false;
   mesh_indices->clear();
-  for (size_t mi = 0; mi < scene.meshes.size(); ++mi) {
-    const std::string& mesh_path = scene.meshes[mi].prim_path;
-    bool excluded = false;
-    if (excludes) {
-      for (const ::tinyusdz::next::Path& p : *excludes) {
-        if (PathIsAtOrUnder(mesh_path, p.str())) { excluded = true; break; }
-      }
-    }
-    if (excluded) continue;
 
-    bool included = include_root && PathIsAtOrUnder(mesh_path, owner_path);
-    if (!included && includes) {
-      for (const ::tinyusdz::next::Path& p : *includes) {
-        if (explicit_only ? (mesh_path == p.str())
-                          : PathIsAtOrUnder(mesh_path, p.str())) {
-          included = true;
-          break;
-        }
+  // Mark the excluded set first (excludes take hierarchical precedence), then
+  // walk only the meshes the includes actually name. Cost is proportional to
+  // the matched subtrees, not to the whole scene.
+  index.NewGeneration();
+  if (excludes) {
+    for (const ::tinyusdz::next::Path& p : *excludes) {
+      const std::string ep = p.str();
+      const int32_t exact = index.ExactMatch(ep);
+      if (exact >= 0) index.Mark(exact);
+      size_t b = 0, e = 0;
+      index.DescendantRange(ep, &b, &e);
+      for (size_t i = b; i < e; ++i) index.Mark(index.MeshAt(i));
+    }
+  }
+
+  std::vector<int32_t> candidates;
+  auto add_subtree = [&](const std::string& root) {
+    const int32_t exact = index.ExactMatch(root);
+    if (exact >= 0) candidates.push_back(exact);
+    size_t b = 0, e = 0;
+    index.DescendantRange(root, &b, &e);
+    for (size_t i = b; i < e; ++i) candidates.push_back(index.MeshAt(i));
+  };
+
+  if (include_root) add_subtree(owner_path);
+  if (includes) {
+    for (const ::tinyusdz::next::Path& p : *includes) {
+      const std::string ip = p.str();
+      if (explicit_only) {
+        const int32_t exact = index.ExactMatch(ip);
+        if (exact >= 0) candidates.push_back(exact);
+      } else {
+        add_subtree(ip);
       }
     }
-    if (included) mesh_indices->push_back(static_cast<int32_t>(mi));
+  }
+
+  // Sorting by mesh index preserves the scene order the previous full scan
+  // emitted; unique() collapses overlapping include targets.
+  std::sort(candidates.begin(), candidates.end());
+  candidates.erase(std::unique(candidates.begin(), candidates.end()),
+                   candidates.end());
+  for (int32_t mi : candidates) {
+    if (!index.Marked(mi)) mesh_indices->push_back(mi);
   }
 }
 
 void ResolveLightLinking(const Stage& stage, RenderScene* scene) {
   if (!scene) return;
+  if (scene->lights.empty()) return;
+  // Built once and reused by every light and both link kinds.
+  MeshPathIndex index(*scene);
   for (RenderLight& light : scene->lights) {
     UsdPrim prim = stage.GetPrimAtPath(light.prim_path);
     if (!prim.IsValid()) continue;
-    ResolveLightLinkInstance(prim, *scene, "lightLink",
+    ResolveLightLinkInstance(prim, *scene, index, "lightLink",
                              &light.light_links_all,
                              &light.light_link_mesh_indices);
-    ResolveLightLinkInstance(prim, *scene, "shadowLink",
+    ResolveLightLinkInstance(prim, *scene, index, "shadowLink",
                              &light.shadow_links_all,
                              &light.shadow_link_mesh_indices);
   }
@@ -2815,13 +2988,34 @@ GeometryInfo BuildGeometryInfo(const UsdPrim& prim, GeometryKind kind,
     estimate = SaturatingAdd(
         estimate,
         SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 24));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdTetVertexIndices()), 16));
+    estimate = SaturatingAdd(
+        estimate,
+        SaturatingMul(AuthoredArraySize(prim, kIdHoleIndices()), 8));
   } else if (kind == GeometryKind::Points) {
     estimate = SaturatingMul(info.point_count, 48);
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdWidths()), 8));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 16));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
   } else {
     estimate = SaturatingMul(info.point_count, 40);
     estimate = SaturatingAdd(
         estimate,
         SaturatingMul(AuthoredArraySize(prim, kIdCurveVertexCounts()), 8));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdWidths()), 12));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayColor()), 20));
+    estimate = SaturatingAdd(
+        estimate, SaturatingMul(AuthoredArraySize(prim, kIdDisplayOpacity()), 8));
   }
   info.estimated_resident_bytes = estimate;
   return info;
@@ -3045,6 +3239,7 @@ void ReleaseSourceMeshStaticArrays(const Stage& stage, const UsdPrim& mesh_prim)
 ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
   ConvertResult result;
   warnings_.clear();
+  ResetImageIdCache();
 
   // Built with -fno-exceptions: the conversion helpers report failures via
   // return codes / the warnings_ list rather than throwing, so no try/catch.
@@ -3087,9 +3282,15 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 
     RenderExtractOptions xopts;
     xopts.time_code = config_.time_code;
+    xopts.max_depth = config_.max_render_depth;
+    xopts.max_records = config_.max_render_records;
     xopts.collect_other = true;
     RenderExtractResult extracted;
     CollectRenderPrims(stage, xopts, &extracted);
+    if (extracted.limit_exceeded) {
+      result.error = "render extraction limit exceeded";
+      return result;
+    }
 
     // Build node hierarchy first
     if (config_.progress_callback) {
@@ -3137,7 +3338,12 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
                             "' of type '" + rec.type_name + "'");
       }
 
-      if (!has_time_samples) continue;
+      if (!has_time_samples ||
+          (!stage.HasValueClips() &&
+           (!rec.prim.GetPrimSpec() ||
+            !rec.prim.GetPrimSpec()->has_any_time_samples()))) {
+        continue;
+      }
       AnimationClip clip;
       if (ConvertAnimation(stage, rec.prim, &clip)) {
         const auto node_it = result.scene.node_by_path.find(rec.path);
@@ -3161,6 +3367,15 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
                   (mesh_progress_end - mesh_progress_start) * i /
                       std::max<size_t>(extracted.meshes.size(), 1);
         config_.progress_callback(p, "Converting mesh: " + mesh_prim.GetName());
+      }
+
+      // Cumulative budget guard: skip the rest of the geometry rather than
+      // let a scene of many individually-small meshes OOM the process.
+      if (BudgetWouldExceed(
+              BuildGeometryInfo(mesh_prim, GeometryKind::Mesh, -1)
+                  .estimated_resident_bytes,
+              "mesh conversion")) {
+        break;
       }
 
       RenderMesh mesh;
@@ -3202,13 +3417,13 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       if (rec.type_name != "Points") continue;
       RenderPoints points;
       if (ConvertPoints(rec.prim, &points)) {
-        if (points.points.alloc_failed() || points.widths.alloc_failed() ||
-            points.colors.alloc_failed()) {
+        if (points.has_alloc_failure()) {
           warnings_.push_back("Out of memory converting Points '" + rec.path +
                               "'; the prim was skipped");
           continue;
         }
         int32_t points_id = static_cast<int32_t>(result.scene.points.size());
+        points.compact();
         result.scene.points_by_path[points.prim_path] = points_id;
         result.scene.points.push_back(std::move(points));
         if (!config_.mesh.retain_geometry) {
@@ -3223,16 +3438,13 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     for (const auto& rec : extracted.curves) {
       RenderCurves curves;
       if (ConvertCurves(rec.prim, &curves)) {
-        if (curves.points.alloc_failed() || curves.widths.alloc_failed() ||
-            curves.colors.alloc_failed() ||
-            curves.tessellated_points.alloc_failed() ||
-            curves.tessellated_widths.alloc_failed() ||
-            curves.tessellated_colors.alloc_failed()) {
+        if (curves.has_alloc_failure()) {
           warnings_.push_back("Out of memory converting curves '" + rec.path +
                               "'; the prim was skipped");
           continue;
         }
         int32_t curves_id = static_cast<int32_t>(result.scene.curves.size());
+        curves.compact();
         result.scene.curves_by_path[curves.prim_path] = curves_id;
         result.scene.curves.push_back(std::move(curves));
         if (!config_.mesh.retain_geometry) {
@@ -3491,6 +3703,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
                                                         SceneSink* sink) {
   StreamConvertResult result;
   warnings_.clear();
+  ResetImageIdCache();
   if (!sink) {
     result.error = "ConvertToSink: null scene sink";
     return result;
@@ -3536,9 +3749,15 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
 
   RenderExtractOptions xopts;
   xopts.time_code = config_.time_code;
+  xopts.max_depth = config_.max_render_depth;
+  xopts.max_records = config_.max_render_records;
   xopts.collect_other = true;
   RenderExtractResult extracted;
   CollectRenderPrims(stage, xopts, &extracted);
+  if (extracted.limit_exceeded) {
+    result.error = "render extraction limit exceeded";
+    return result;
+  }
   const bool emit_animations =
       config_.animation.enabled &&
       (stage.HasTimeSamples() || stage.HasValueClips());
@@ -3551,10 +3770,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   BuildNodeHierarchy(extracted, &catalog);
   ExtractPhysicsAnnotations(stage, &catalog);
   catalog.meshes.reserve(extracted.meshes.size());
-  size_t point_record_count = 0;
-  for (const RenderPrimRecord& rec : extracted.records) {
-    if (rec.type_name == "Points") ++point_record_count;
-  }
+  const size_t point_record_count = extracted.points.size();
   catalog.points.reserve(point_record_count);
   catalog.curves.reserve(extracted.curves.size());
   catalog.point_instancers.reserve(extracted.point_instancers.size());
@@ -3584,7 +3800,12 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
                           "' of type '" + rec.type_name + "'");
     }
 
-    if (!has_time_samples) continue;
+    if (!has_time_samples ||
+        (!stage.HasValueClips() &&
+         (!rec.prim.GetPrimSpec() ||
+          !rec.prim.GetPrimSpec()->has_any_time_samples()))) {
+      continue;
+    }
     AnimationClip clip;
     if (ConvertAnimation(stage, rec.prim, &clip)) {
       const auto node = catalog.node_by_path.find(rec.path);
@@ -3660,8 +3881,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     AssignMeshMaterialBinding(stage, catalog, &placeholder);
     AssignNodeDataId(&catalog, placeholder.prim_path, static_cast<int32_t>(i));
   }
-  for (const RenderPrimRecord& rec : extracted.records) {
-    if (rec.type_name != "Points") continue;
+  for (const RenderPrimRecord& rec : extracted.points) {
     const int32_t id = static_cast<int32_t>(catalog.points.size());
     RenderPoints placeholder;
     placeholder.name = rec.prim.GetName();
@@ -3716,6 +3936,11 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     result.error = "scene sink rejected catalog";
     return result;
   }
+  // The catalog and all non-geometry metadata are now owned by the sink.
+  // Release the traversal-order duplicate before the first large geometry
+  // payload is decoded; kind-specific lists still provide the conversion
+  // order below.
+  std::vector<RenderPrimRecord>().swap(extracted.records);
 
   const auto abort = [&](const std::string& error, bool cancelled) {
     sink->AbortScene();
@@ -3775,8 +4000,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
   }
 
   int32_t points_id = 0;
-  for (const RenderPrimRecord& rec : extracted.records) {
-    if (rec.type_name != "Points") continue;
+  for (const RenderPrimRecord& rec : extracted.points) {
     if (cancellation_requested()) {
       abort("conversion cancelled", true);
       return result;
@@ -3798,9 +4022,16 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     }
     RenderPoints points;
     if (ConvertPoints(rec.prim, &points)) {
+      if (points.has_alloc_failure()) {
+        warnings_.push_back("Out of memory converting Points '" + rec.path +
+                            "'; the prim was skipped");
+        ++points_id;
+        continue;
+      }
       if (!config_.mesh.retain_geometry) {
         ReleaseSourceMeshStaticArrays(stage, rec.prim);
       }
+      points.compact();
       if (!sink->AddPoints(points_id, std::move(points))) {
         abort("scene sink rejected points", false);
         return result;
@@ -3831,6 +4062,11 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     }
     RenderCurves curves;
     if (!ConvertCurves(extracted.curves[i].prim, &curves)) continue;
+    if (curves.has_alloc_failure()) {
+      warnings_.push_back("Out of memory converting curves '" +
+                          extracted.curves[i].path + "'; the prim was skipped");
+      continue;
+    }
     if (!config_.mesh.retain_geometry) {
       ReleaseSourceMeshStaticArrays(stage, extracted.curves[i].prim);
     }
@@ -3840,6 +4076,7 @@ StreamConvertResult RenderSceneConverter::ConvertToSink(const Stage& stage,
     if (found != binding_catalog.material_by_path.end()) {
       curves.material_id = found->second;
     }
+    curves.compact();
     if (!sink->AddCurves(static_cast<int32_t>(i), std::move(curves))) {
       abort("scene sink rejected curves", false);
       return result;
@@ -4037,10 +4274,7 @@ void RenderSceneConverter::ExtractPhysicsAnnotations(const Stage& stage,
 
 void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extracted,
                                               RenderScene* scene) {
-  std::unordered_map<std::string, int32_t> path_to_node;
   const size_t record_count = extracted.records.size();
-  path_to_node.reserve(record_count);
-  path_to_node.max_load_factor(0.7f);
   scene->nodes.reserve(record_count);
   scene->node_by_path.reserve(record_count);
   scene->node_by_path.max_load_factor(0.7f);
@@ -4087,15 +4321,14 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
     }
 
     int32_t node_id = static_cast<int32_t>(scene->nodes.size());
-    path_to_node[node.prim_path] = node_id;
     scene->node_by_path[node.prim_path] = node_id;
 
     // Set parent
     std::string parent_path = GetParentPath(node.prim_path);
     bool parent_visible = true;
     if (!parent_path.empty() && parent_path != "/") {
-      auto it = path_to_node.find(parent_path);
-      if (it != path_to_node.end()) {
+      auto it = scene->node_by_path.find(parent_path);
+      if (it != scene->node_by_path.end()) {
         node.parent_id = it->second;
         scene->nodes[it->second].children.push_back(node_id);
         parent_visible = scene->nodes[it->second].visible;
@@ -4176,8 +4409,8 @@ void RenderSceneConverter::AssignMeshMaterialBinding(const Stage& stage,
     // sanitization dropped faces, route them through the old->new remap
     // first so the surviving faces keep their bindings.
     std::vector<uint32_t> faces;
-    faces.reserve(sub.indices.size());
-    for (int32_t fi : sub.indices) {
+    faces.reserve(sub.indices().size());
+    for (int32_t fi : sub.indices()) {
       if (fi < 0) continue;
       uint32_t face = static_cast<uint32_t>(fi);
       if (mesh->sanitize_dropped_faces > 0) {
@@ -4271,6 +4504,16 @@ void RenderSceneConverter::DuplicatePointInstanceMeshes(RenderScene* scene) {
     if (draw.expanded_mesh_id >= 0) continue;
     const RenderMesh* src = scene->get_mesh(draw.mesh_id);
     if (!src) continue;
+
+    // Each clone adds transformed points/normals/tangents (topology is shared
+    // copy-on-write); charge that against the cumulative budget.
+    const size_t clone_estimate =
+        SaturatingMul(src->point_count(), 3 * sizeof(float) +
+                                              3 * sizeof(float) +
+                                              4 * sizeof(float));
+    if (BudgetWouldExceed(clone_estimate, "point-instance duplication")) {
+      break;
+    }
 
     RenderMesh expanded;
     if (!CloneMeshForPointInstance(*src, draw, &expanded)) {
@@ -4508,6 +4751,42 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
   return true;
 }
 
+// Cumulative memory guard for the expensive conversion phases.
+//
+// The converter's own limits (ProbeAlloc, kMaxTempAllocBytes,
+// kMaxTriangulationCornerCount) are all PER-PRIM and fixed, so they cannot see
+// a scene of 100k individually-small meshes summing past the cap: every prim
+// passes its probe and the process still OOMs. MemBudget::WouldExceed() is
+// RSS-based, so it observes everything actually resident -- including every
+// ChunkedArray chunk -- without routing the converter's allocations through a
+// throwing allocator (the wasm build is -fno-exceptions).
+//
+// Throttled: WouldExceed() reads /proc/self/statm, far too expensive per mesh.
+// A cheap running total triggers a real check only once enough new bytes have
+// been requested, or every kBudgetCheckStride calls.
+bool RenderSceneConverter::BudgetWouldExceed(size_t estimate,
+                                             const char* phase) {
+  constexpr size_t kBudgetCheckStride = 256;
+  constexpr size_t kBudgetCheckBytes = 8u * 1024u * 1024u;
+
+  if (budget_exceeded_) return true;  // latched: stay degraded for this run
+
+  budget_pending_bytes_ = SaturatingAdd(budget_pending_bytes_, estimate);
+  const bool due = (++budget_check_counter_ % kBudgetCheckStride == 0) ||
+                   budget_pending_bytes_ >= kBudgetCheckBytes;
+  if (!due) return false;
+
+  const size_t pending = budget_pending_bytes_;
+  budget_pending_bytes_ = 0;
+  std::string why;
+  if (!MemBudget::Get().WouldExceed(pending, &why)) return false;
+
+  budget_exceeded_ = true;
+  warnings_.push_back(std::string("Memory budget reached during ") + phase +
+                      "; remaining geometry is skipped (" + why + ")");
+  return true;
+}
+
 bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out) {
   if (!out || !IsMesh(prim)) {
     last_error_ = "Invalid mesh prim";
@@ -4600,14 +4879,19 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
           (sb.joint_indices.size() % point_count) == 0) {
         influences = sb.joint_indices.size() / point_count;
       }
+      size_t expected_influence_count = 0;
+      const bool influence_count_valid =
+          safe::mul(point_count, influences, &expected_influence_count);
       if (influences > 0 && point_count > 1 &&
+          influence_count_valid &&
           sb.joint_indices.size() == influences) {
-        const std::vector<int32_t> indices = sb.joint_indices;
-        const std::vector<float> weights = sb.joint_weights;
-        sb.joint_indices.clear();
-        sb.joint_weights.clear();
-        sb.joint_indices.reserve(point_count * influences);
-        sb.joint_weights.reserve(point_count * influences);
+        // Move the authored tuple out while constructing the expanded form.
+        // Copying it first kept three full influence buffers resident (the
+        // authored arrays, their copies, and the expanded result).
+        std::vector<int32_t> indices = std::move(sb.joint_indices);
+        std::vector<float> weights = std::move(sb.joint_weights);
+        sb.joint_indices.reserve(expected_influence_count);
+        sb.joint_weights.reserve(expected_influence_count);
         for (size_t point = 0; point < point_count; ++point) {
           sb.joint_indices.insert(sb.joint_indices.end(), indices.begin(),
                                   indices.end());
@@ -4616,23 +4900,30 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
         }
       }
       if (influences == 0 || point_count == 0 ||
-          sb.joint_indices.size() != point_count * influences) {
+          !influence_count_valid ||
+          sb.joint_indices.size() != expected_influence_count) {
         warnings_.push_back("Ignoring malformed skin influences on " +
                             prim.GetPath().str());
       } else {
         size_t output_influences = influences;
         std::vector<int32_t> reduced_indices;
         std::vector<float> reduced_weights;
+        size_t reduced_count = 0;
+        size_t reduced_bytes = 0;
+        const bool reduction_size_valid =
+            safe::mul(point_count,
+                      static_cast<size_t>(config_.mesh.target_bone_count),
+                      &reduced_count) &&
+            safe::mul(reduced_count, size_t{8}, &reduced_bytes);
         if (config_.mesh.enable_bone_reduction &&
             config_.mesh.target_bone_count > 0 &&
             config_.mesh.target_bone_count < influences &&
             // ~8B per point-influence pair of temporaries; on a nearly-full
             // heap keep the authored influences instead of abort()ing.
-            !WouldOverflowSizeMul(point_count, output_influences * 8) &&
-            ProbeAlloc(point_count * config_.mesh.target_bone_count * 8)) {
+            reduction_size_valid && ProbeAlloc(reduced_bytes)) {
           output_influences = config_.mesh.target_bone_count;
-          reduced_indices.resize(point_count * output_influences, 0);
-          reduced_weights.resize(point_count * output_influences, 0.0f);
+          reduced_indices.resize(reduced_count, 0);
+          reduced_weights.resize(reduced_count, 0.0f);
           std::vector<std::pair<float, int32_t>> ranked(influences);
           for (size_t point = 0; point < point_count; ++point) {
             const size_t source = point * influences;
@@ -4843,20 +5134,31 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
     return false;
   }
 
-  // Pre-flight the temporary buffers: the corner-expanded MikkTSpace path
-  // allocates ~64B per triangulated corner and the Lengyel path ~40B per
+  // Pre-flight the temporary buffers. The corner-expanded MikkTSpace path holds
+  // positions(12) + normals(12) + uvs(8) + tri_counts(~1.3) + tangents(12) +
+  // binormals(12) simultaneously across the tangent call = ~58 B per
+  // triangulated corner; kMikkBytesPerCorner adds margin for the fv_out(16)
+  // phase, which overlaps only partially because the dead inputs are released
+  // first (see below). The old estimate of 64 both understated the peak and
+  // probed a single block rather than the sum. The Lengyel path is ~40B per
   // point. A failed probe skips tangents for this mesh (they are optional)
   // instead of abort()ing the module under -fno-exceptions.
+  constexpr size_t kMikkBytesPerCorner = 80;
+  size_t probe_bytes = 0;
   bool probe_overflow = false;
-  size_t probe_bytes;
   if (config_.mesh.tangent_method ==
           MeshConfig::TangentComputationMethod::Lengyel &&
       vertex_normals && vertex_uvs) {
     probe_overflow = !safe::mul3(np, size_t(10), sizeof(float), &probe_bytes);
   } else {
-    probe_overflow = !safe::mul(tri_corner_count, size_t(64), &probe_bytes);
+    probe_overflow =
+        !safe::mul(tri_corner_count, kMikkBytesPerCorner, &probe_bytes);
   }
-  if (probe_overflow || !ProbeAlloc(probe_bytes)) {
+  // ProbeAlloc only asks "can this ONE block be allocated"; the cumulative
+  // guard additionally refuses when the scene as a whole is at the cap.
+  if (probe_overflow ||
+      !ProbeAlloc(probe_bytes) ||
+      BudgetWouldExceed(probe_bytes, "tangent generation")) {
     warnings_.push_back("Out of memory computing tangents for mesh '" +
                         mesh->prim_path + "'; tangents skipped");
     return false;
@@ -4872,12 +5174,15 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
     const uint32_t i1 = mesh->triangulated_indices[t * 3 + 1];
     const uint32_t i2 = mesh->triangulated_indices[t * 3 + 2];
     if (i0 >= np || i1 >= np || i2 >= np) continue;
-    const float* p0 = &mesh->points[i0 * 3];
-    const float* p1 = &mesh->points[i1 * 3];
-    const float* p2 = &mesh->points[i2 * 3];
-    const float* u0 = &mesh->texcoords_0[i0 * 2];
-    const float* u1 = &mesh->texcoords_0[i1 * 2];
-    const float* u2 = &mesh->texcoords_0[i2 * 2];
+    // Copy out, never `&chunked[i]` + offset: an xyz/uv run straddles the
+    // chunk boundary (see ChunkedArray::read_n).
+    float p0[3], p1[3], p2[3], u0[2], u1[2], u2[2];
+    mesh->points.read3(i0 * 3, p0);
+    mesh->points.read3(i1 * 3, p1);
+    mesh->points.read3(i2 * 3, p2);
+    mesh->texcoords_0.read2(i0 * 2, u0);
+    mesh->texcoords_0.read2(i1 * 2, u1);
+    mesh->texcoords_0.read2(i2 * 2, u2);
     const float e1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
     const float e2[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
     const float du1 = u1[0] - u0[0], dv1 = u1[1] - u0[1];
@@ -4902,7 +5207,8 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
 
   std::vector<float> out_tan(np * 4, 0.0f);
   for (size_t v = 0; v < np; ++v) {
-    const float* n = &mesh->normals[v * 3];
+    float n[3];
+    mesh->normals.read3(v * 3, n);
     const float* tv = &tan[v * 3];
     // Gram-Schmidt orthogonalize t against n.
     const float ndt = n[0] * tv[0] + n[1] * tv[1] + n[2] * tv[2];
@@ -5020,6 +5326,13 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
     return false;
   }
 
+  // Positions, UVs and the face-size list are dead once the tangent call
+  // returns; release them BEFORE allocating fv_out so the two do not stack
+  // (24 B/corner, i.e. ~720 MB on a 30M-corner mesh).
+  { std::vector<value::float3>().swap(fv_positions); }
+  { std::vector<value::float2>().swap(fv_uvs); }
+  { std::vector<uint32_t>().swap(tri_counts); }
+
   std::vector<float> fv_out(tri_corner_count * 4, 0.0f);
   for (size_t i = 0; i < tri_corner_count; ++i) {
     const value::float3& n = fv_normals[i];
@@ -5035,6 +5348,12 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
     fv_out[i * 4 + 2] = t[2];
     fv_out[i * 4 + 3] = sign;
   }
+
+  // Same again: normals/tangents/binormals are consumed by the loop above and
+  // must not stay resident alongside vertex_out below (36 B/corner).
+  { std::vector<value::float3>().swap(fv_normals); }
+  { std::vector<value::float3>().swap(fv_tangents); }
+  { std::vector<value::float3>().swap(fv_binormals); }
 
   if (vertex_normals && vertex_uvs) {
     std::vector<float> vertex_out(np * 4, 0.0f);
@@ -5248,18 +5567,25 @@ Interpolation ParsePrimvarInterp(const std::string& s) {
 
 // Flatten a primvar Value into floats (float/half/double backed, any comps).
 // Returns comps per element (0 = unsupported/absent).
-uint32_t PrimvarToFloats(const Value& v, std::vector<float>* out) {
+// `*view` is set to the float array to read from: the SOURCE array itself when
+// the primvar is already float-backed (no copy), otherwise `scratch` holding
+// the converted values. Copying unconditionally cost a full extra transient of
+// every UV/color/normal primvar (40 MB for a 5M-vertex `st` set) on top of the
+// copies the caller already makes.
+uint32_t PrimvarToFloats(const Value& v, std::vector<float>* scratch,
+                         const std::vector<float>** view) {
   if (!v.is_array()) return 0;
   const uint32_t comps =
       static_cast<uint32_t>(GetComponentCount(v.type_id()));
   if (comps == 0) return 0;
   if (const std::vector<float>* fa = v.as_float_array()) {
-    out->assign(fa->begin(), fa->end());
+    *view = fa;
     return comps;
   }
   if (const std::vector<double>* da = v.as_double_array()) {
-    out->reserve(da->size());
-    for (double d : *da) out->push_back(static_cast<float>(d));
+    scratch->reserve(da->size());
+    for (double d : *da) scratch->push_back(static_cast<float>(d));
+    *view = scratch;
     return comps;
   }
   return 0;
@@ -5393,8 +5719,14 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
 
   for (Primvar& pv : primvars) {
     if (!pv.value) continue;
+    // Skinning primvars are consumed by the skin binding (GetSkinBinding), not
+    // by the generic vertex-attribute channel. Skip BEFORE flattening: the
+    // check used to sit below, after a full copy of the array had been made.
+    if (pv.name.rfind("skel:", 0) == 0) continue;
+
     std::vector<float> data;
-    const uint32_t comps = PrimvarToFloats(*pv.value, &data);
+    const std::vector<float>* fdata = nullptr;
+    const uint32_t comps = PrimvarToFloats(*pv.value, &data, &fdata);
     const bool is_uv0 = (pv.name == uv_base);
     const bool is_uv1 = (!uv_second.empty() && pv.name == uv_second);
     const bool is_color = (pv.name == "displayColor");
@@ -5416,10 +5748,6 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       return ParsePrimvarInterp(pv.interpolation);
     };
 
-    // Skinning primvars are consumed by the skin binding (GetSkinBinding),
-    // not by the generic vertex-attribute channel.
-    if (pv.name.rfind("skel:", 0) == 0) continue;
-
     if (comps == 0) {
       // Non-float primvar: only representable as a generic int attribute.
       if (builtin) continue;
@@ -5429,10 +5757,10 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       attr.name = pv.name;
       attr.format = VertexFormat::Int;
       attr.interpolation = resolve_interp(
-          pv.indices.empty() ? ia->size() : pv.indices.size());
+          pv.indices().empty() ? ia->size() : pv.indices().size());
       attr.int_data.append(ia->data(), ia->size());
       bool idx_ok = true;
-      for (int32_t raw : pv.indices) {
+      for (int32_t raw : pv.indices()) {
         if (raw < 0 || static_cast<size_t>(raw) >= ia->size()) {
           idx_ok = false;
           break;
@@ -5450,19 +5778,20 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
 
     // Indexed builtin primvars are expanded to direct form (the builtin
     // buffers carry no index channel).
-    if (!pv.indices.empty() && builtin) {
+    if (!pv.indices().empty() && builtin) {
       std::vector<float> expanded;
-      if (!expand_indexed(data, comps, pv.indices, &expanded)) {
+      if (!expand_indexed(*fdata, comps, pv.indices(), &expanded)) {
         warnings_.push_back("Mesh '" + mesh->prim_path + "': primvar '" +
                             pv.name + "' has out-of-range indices; dropped");
         continue;
       }
       data = std::move(expanded);
+      fdata = &data;
     }
 
     if (builtin) {
       // Size must match the declared interpolation or a consumer indexes OOB.
-      const size_t elems = data.size() / comps;
+      const size_t elems = fdata->size() / comps;
       const Interpolation interp = resolve_interp(elems);
       if (elems != expected_elems(interp)) {
         warnings_.push_back(
@@ -5471,25 +5800,25 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
         continue;
       }
       if (is_uv0 && comps == 2) {
-        mesh->texcoords_0.append(data.data(), data.size());
+        mesh->texcoords_0.append(fdata->data(), fdata->size());
         mesh->texcoords_0_interp = interp;
         mesh->texcoords_0_name = pv.name;
       } else if (is_uv1 && comps == 2) {
-        mesh->texcoords_1.append(data.data(), data.size());
+        mesh->texcoords_1.append(fdata->data(), fdata->size());
         mesh->texcoords_1_interp = interp;
         mesh->texcoords_1_name = pv.name;
       } else if (is_color && (comps == 3 || comps == 4)) {
-        mesh->colors.append(data.data(), data.size());
+        mesh->colors.append(fdata->data(), fdata->size());
         mesh->colors_interp = interp;
       } else if (is_opacity && comps == 1) {
         // displayOpacity as a render channel (legacy exposes it alongside
         // displayColor; consumers combine it as the vertex-color alpha).
-        mesh->opacities.append(data.data(), data.size());
+        mesh->opacities.append(fdata->data(), fdata->size());
         mesh->opacities_interp = interp;
       } else if (is_normals && comps == 3) {
         // primvars:normals takes precedence over the raw `normals` attribute.
         mesh->normals.clear();
-        mesh->normals.append(data.data(), data.size());
+        mesh->normals.append(fdata->data(), fdata->size());
         mesh->normals_interp = interp;
       }
       continue;
@@ -5504,11 +5833,11 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
                                : VertexFormat::Vec4;
     if (comps > 4) continue;  // matrices etc.: not a vertex attribute
     attr.interpolation = resolve_interp(
-        pv.indices.empty() ? (data.size() / comps) : pv.indices.size());
-    attr.float_data.append(data.data(), data.size());
+        pv.indices().empty() ? (fdata->size() / comps) : pv.indices().size());
+    attr.float_data.append(fdata->data(), fdata->size());
     bool idx_ok = true;
-    const size_t elems = data.size() / comps;
-    for (int32_t raw : pv.indices) {
+    const size_t elems = fdata->size() / comps;
+    for (int32_t raw : pv.indices()) {
       if (raw < 0 || static_cast<size_t>(raw) >= elems) {
         idx_ok = false;
         break;
@@ -6430,6 +6759,19 @@ bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
 
 bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   if (mesh->face_vertex_counts.empty()) return false;
+
+  // Triangulation roughly doubles the index storage (triangulated_indices +
+  // triangulated_face_vertex_indices, 4 bytes each per corner) on top of the
+  // authored corners. The per-mesh kMaxTempAllocBytes check below bounds ONE
+  // mesh; this bounds the scene.
+  if (BudgetWouldExceed(
+          SaturatingMul(mesh->face_vertex_indices.size(), 2 * sizeof(uint32_t)),
+          "triangulation")) {
+    warnings_.push_back("Mesh '" + mesh->prim_path +
+                        "' not triangulated: memory budget reached");
+    return false;
+  }
+
   mesh->triangulated_indices.clear();  // re-entry / failure-path hardening
   mesh->triangulated_face_vertex_indices.clear();
 
@@ -6497,15 +6839,51 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   }
   mesh->face_triangle_offsets.assign(mesh->face_vertex_counts.size() + 1, 0);
   size_t idx_offset = 0;
+  // Hoisted out of the per-face loop: constructing the nested vector inside it
+  // cost two heap allocations per n-gon (1M allocations for a 500k-n-gon mesh).
+  // clear() keeps the ring's capacity across faces.
+  using EarcutPoint2 = std::array<double, 2>;
+  std::vector<std::vector<EarcutPoint2>> earcut_polygon(1);
+
+  const uint32_t point_count = static_cast<uint32_t>(mesh->point_count());
+  size_t oob_faces = 0;
+
   for (size_t f = 0; f < mesh->face_vertex_counts.size(); ++f) {
     mesh->face_triangle_offsets[f] =
         static_cast<uint32_t>(mesh->triangulated_indices.size() / 3);
     const uint32_t nverts = mesh->face_vertex_counts[f];
     if (idx_offset + nverts > mesh->face_vertex_indices.size()) return false;
+
+    // Bounds-check the face's VERTEX INDICES, not just the corner range.
+    // Everything downstream indexes mesh->points by these values -- the quad
+    // shorter-diagonal test, the earcut Newell normal and projection -- and
+    // they land in triangulated_indices, which ComputeVertexNormals/Tangents
+    // later dereference.
+    //
+    // This is defense-in-depth, NOT a fix for a reachable bug: the ConvertMesh
+    // path runs SanitizeMeshTopology first, which already drops out-of-range
+    // faces (verified -- disabling this check does not trip ASan on a mesh
+    // whose faceVertexIndices point past the points array). What it buys is a
+    // LOCAL guarantee: TriangulateMesh is also entered from
+    // ConvertGeomPrimitive/ConvertBoundsProxy and from the self-triangulation
+    // in ComputeVertexNormals/ComputeVertexTangents, none of which sanitize,
+    // so today's safety there rests on those callers happening to build
+    // self-consistent topology. Its two sibling functions already validate
+    // their own indices; this makes the triangulator consistent with them.
+    // An out-of-range face contributes zero triangles, exactly like a hole.
+    bool face_in_range = true;
+    for (uint32_t i = 0; i < nverts; ++i) {
+      if (mesh->face_vertex_indices[idx_offset + i] >= point_count) {
+        face_in_range = false;
+        break;
+      }
+    }
+    if (!face_in_range) ++oob_faces;
+
     const bool is_hole = std::binary_search(mesh->hole_faces.begin(),
                                             mesh->hole_faces.end(),
                                             static_cast<uint32_t>(f));
-    if (nverts >= 3 && !is_hole) {
+    if (nverts >= 3 && !is_hole && face_in_range) {
       auto emit_triangle = [&](uint32_t a, uint32_t b, uint32_t c) {
         if (mesh->left_handed) std::swap(b, c);
         const uint32_t corners[3] = {a, b, c};
@@ -6558,8 +6936,9 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
           // earcut allocation paths.
           used_earcut = false;
         } else {
-        using Point2 = std::array<double, 2>;
-        std::vector<std::vector<Point2>> polygon(1);
+        using Point2 = EarcutPoint2;
+        std::vector<std::vector<Point2>>& polygon = earcut_polygon;
+        polygon[0].clear();
         polygon[0].reserve(nverts);
 
         // Newell normal chooses the projection plane with the largest area,
@@ -6611,8 +6990,21 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
             const Point2& b = ring[(i + 1) % ring.size()];
             ring_area2 += a[0] * b[1] - b[0] * a[1];
           }
+          // earcut's output indexes the ring it was handed; verify rather
+          // than trust, since every value feeds ring[] and emit_triangle().
+          bool local_in_range = true;
+          for (uint32_t li : local) {
+            if (li >= ring.size()) { local_in_range = false; break; }
+          }
+          if (!local_in_range) {
+            warnings_.push_back("Earcut produced out-of-range indices for face " +
+                                std::to_string(f) + " of " + mesh->prim_path +
+                                "; using triangle fan fallback");
+            used_earcut = false;
+          }
           double tri_cross = 0.0;
-          for (size_t i = 0; i < local.size() && tri_cross == 0.0; i += 3) {
+          for (size_t i = 0; local_in_range && i < local.size() && tri_cross == 0.0;
+               i += 3) {
             const Point2& a = ring[local[i]];
             const Point2& b = ring[local[i + 1]];
             const Point2& c = ring[local[i + 2]];
@@ -6621,7 +7013,7 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
           }
           const bool flip = (ring_area2 != 0.0) && (tri_cross != 0.0) &&
                             ((ring_area2 > 0.0) != (tri_cross > 0.0));
-          for (size_t i = 0; i < local.size(); i += 3) {
+          for (size_t i = 0; local_in_range && i < local.size(); i += 3) {
             if (flip) {
               emit_triangle(local[i], local[i + 2], local[i + 1]);
             } else {
@@ -6646,6 +7038,14 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   }
   mesh->face_triangle_offsets[mesh->face_vertex_counts.size()] =
       static_cast<uint32_t>(mesh->triangulated_indices.size() / 3);
+
+  if (oob_faces > 0) {
+    warnings_.push_back(
+        "Mesh '" + mesh->prim_path + "': dropped " +
+        std::to_string(oob_faces) +
+        " face(s) whose faceVertexIndices are out of range for " +
+        std::to_string(point_count) + " points");
+  }
 
   mesh->is_triangulated = true;
   return true;
@@ -6722,10 +7122,19 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
     uint32_t i0 = mesh->triangulated_indices[t * 3 + 0];
     uint32_t i1 = mesh->triangulated_indices[t * 3 + 1];
     uint32_t i2 = mesh->triangulated_indices[t * 3 + 2];
+    // Bounds-check the triangle, as the tangent path already does. Nothing
+    // here re-validated triangulated_indices against the point count, so a
+    // mesh whose topology survived sanitization with an out-of-range corner
+    // read (and accumulated into) memory past both points and normals.
+    if (i0 >= num_points || i1 >= num_points || i2 >= num_points) continue;
 
-    float p0[3] = {mesh->points[i0*3], mesh->points[i0*3+1], mesh->points[i0*3+2]};
-    float p1[3] = {mesh->points[i1*3], mesh->points[i1*3+1], mesh->points[i1*3+2]};
-    float p2[3] = {mesh->points[i2*3], mesh->points[i2*3+1], mesh->points[i2*3+2]};
+    // One chunk resolution per point instead of three. (The normals
+    // accumulation below is inherently random-access -- i0/i1/i2 are arbitrary
+    // vertex indices -- so it cannot be made chunk-sequential.)
+    float p0[3], p1[3], p2[3];
+    mesh->points.read3(i0 * 3, p0);
+    mesh->points.read3(i1 * 3, p1);
+    mesh->points.read3(i2 * 3, p2);
 
     // Edge vectors
     float e1[3] = {p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2]};
@@ -6810,6 +7219,44 @@ uint32_t RenderSceneConverter::AssetAnchorOf(const UsdPrim& prim) {
   return spec ? spec->asset_anchor_id() : 0u;
 }
 
+// Dedup key for scene->images. Both image-dedup sites used a linear scan with
+// full string compares over every image already in the scene -- O(n^2) with a
+// long-path comparison per step (a 5000-image scene cost ~12.5M string
+// compares). image_id_by_key_ makes it O(1); FindImageId/RememberImageId are
+// the single place that maintains it.
+std::string RenderSceneConverter::ImageKey(const std::string& resolved_path,
+                                           ColorSpace cs) {
+  // '\x1f' = unit separator, never valid in a path.
+  return resolved_path + '\x1f' +
+         std::to_string(static_cast<int>(cs));
+}
+
+int32_t RenderSceneConverter::FindImageId(const RenderScene* scene,
+                                          const std::string& resolved_path,
+                                          ColorSpace cs) {
+  if (!scene) return -1;
+  // Rebuild lazily if the caller mutated scene->images behind our back (or
+  // this is a fresh scene), so the map can never report a stale index.
+  if (image_id_by_key_.size() != scene->images.size()) {
+    image_id_by_key_.clear();
+    image_id_by_key_.reserve(scene->images.size());
+    for (size_t i = 0; i < scene->images.size(); ++i) {
+      image_id_by_key_.emplace(
+          ImageKey(scene->images[i].resolved_path, scene->images[i].color_space),
+          static_cast<int32_t>(i));
+    }
+  }
+  auto it = image_id_by_key_.find(ImageKey(resolved_path, cs));
+  return it == image_id_by_key_.end() ? -1 : it->second;
+}
+
+void RenderSceneConverter::RememberImageId(const RenderScene* scene,
+                                           const std::string& resolved_path,
+                                           ColorSpace cs, int32_t id) {
+  (void)scene;
+  image_id_by_key_.emplace(ImageKey(resolved_path, cs), id);
+}
+
 int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
                                              const std::string& file,
                                              ColorSpace color_space,
@@ -6818,19 +7265,64 @@ int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
   const std::string resolved = ResolveAssetPath(file, asset_anchor_id);
   const ColorSpace csp =
       color_space == ColorSpace::Unknown ? ColorSpace::sRGB : color_space;
-  for (size_t i = 0; i < scene->images.size(); ++i) {
-    if (scene->images[i].resolved_path == resolved &&
-        scene->images[i].color_space == csp) {
-      return static_cast<int32_t>(i);
-    }
-  }
+  const int32_t cached = FindCachedImageId(scene, resolved, csp);
+  if (cached >= 0) return cached;
   TextureImage image;
   image.name = file;
   image.resolved_path = resolved;
   image.color_space = csp;
   const int32_t id = static_cast<int32_t>(scene->images.size());
   scene->images.push_back(std::move(image));
+  RememberImageId(scene, resolved, csp, id);
   return id;
+}
+
+int32_t RenderSceneConverter::FindCachedImageId(
+    RenderScene* scene, const std::string& resolved, ColorSpace color_space) {
+  if (!scene) return -1;
+  if (image_cache_scene_ != scene) {
+    image_id_cache_.clear();
+    image_cache_scene_ = scene;
+  }
+  const uint64_t hash = ImageCacheHash(resolved, color_space);
+  const auto candidates = image_id_cache_.equal_range(hash);
+  for (auto it = candidates.first; it != candidates.second; ++it) {
+    if (it->second >= 0 && static_cast<size_t>(it->second) < scene->images.size()) {
+      const TextureImage& image = scene->images[static_cast<size_t>(it->second)];
+      if (image.resolved_path == resolved && image.color_space == color_space) {
+        return it->second;
+      }
+    }
+  }
+
+  // A caller may have populated the scene catalog before the converter sees an
+  // image. Pay the compatibility scan once, then make subsequent references O(1).
+  for (size_t i = 0; i < scene->images.size(); ++i) {
+    if (scene->images[i].resolved_path == resolved &&
+        scene->images[i].color_space == color_space) {
+      const int32_t id = static_cast<int32_t>(i);
+      image_id_cache_.emplace(hash, id);
+      return id;
+    }
+  }
+  return -1;
+}
+
+void RenderSceneConverter::RememberImageId(RenderScene* scene,
+                                           const std::string& resolved,
+                                           ColorSpace color_space,
+                                           int32_t id) {
+  if (!scene) return;
+  if (image_cache_scene_ != scene) {
+    image_id_cache_.clear();
+    image_cache_scene_ = scene;
+  }
+  image_id_cache_.emplace(ImageCacheHash(resolved, color_space), id);
+}
+
+void RenderSceneConverter::ResetImageIdCache() {
+  image_id_cache_.clear();
+  image_cache_scene_ = nullptr;
 }
 
 bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
@@ -6848,7 +7340,13 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     return false;
   }
 
-  if (scene) {
+  // The rendering color config depends only on `stage` and
+  // config_.material.render_settings_path -- both invariant across a
+  // conversion -- yet this did a stage path lookup, token canonicalization,
+  // color-space resolve and a 3x3 transform build once PER MATERIAL, writing
+  // the identical result to `scene` every time.
+  if (scene && scene != color_config_scene_) {
+    color_config_scene_ = scene;
     ::tinyusdz::next::color_management::RenderingColorConfig color_config;
     std::string color_warning;
     if (::tinyusdz::next::color_management::ResolveRenderingColorConfig(
@@ -6958,7 +7456,10 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
       }
     }
   }
-  for (const auto& child : prim.GetChildren()) {
+  const size_t child_count = prim.GetChildCount();
+  for (size_t i = 0; i < child_count; ++i) {
+    const UsdPrim child = prim.GetChildAt(i);
+    if (!child.IsValid()) continue;
     candidates.push_back(child);
   }
 
@@ -7614,14 +8115,8 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
           cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
       const std::string resolved =
           ResolveAssetPath(tex_data.file, AssetAnchorOf(texture_prim));
-      int32_t image_id = -1;
-      for (size_t i = 0; i < scene->images.size(); ++i) {
-        if (scene->images[i].resolved_path == resolved &&
-            scene->images[i].color_space == image_color_space) {
-          image_id = static_cast<int32_t>(i);
-          break;
-        }
-      }
+      int32_t image_id =
+          FindCachedImageId(scene, resolved, image_color_space);
       if (image_id < 0) {
         TextureImage image;
         image.name = texture_prim.IsValid() ? texture_prim.GetName() : tex_data.file;
@@ -7643,7 +8138,10 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
           }
         }
         image_id = static_cast<int32_t>(scene->images.size());
+        // Key on the RESOLVED path/colorspace we looked up with -- a loaded
+        // image may carry different values, and the next lookup uses these.
         scene->images.push_back(std::move(image));
+        RememberImageId(scene, resolved, image_color_space, image_id);
       }
 
       RenderTexture texture;
@@ -8228,29 +8726,22 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
       channel.is_skeletal = true;
 
       uint32_t expected_elements = 0;
+      std::vector<double> times;
+      times.reserve(samples->size());
+      for (const auto& sample : *samples) times.push_back(sample.first);
       std::vector<float> swizzled;
-      for (const auto& sample : *samples) {
-        const double t = sample.first;
-        ::tinyusdz::next::SkelAnimationData data;
-        if (!::tinyusdz::next::GetSkelAnimationDataAtTime(stage, prim, &data,
-                                                          t)) {
-          continue;
-        }
-
-        const std::vector<float>* values = nullptr;
-        if (target_path == AnimationChannel::TargetPath::Translation &&
-            data.hasTranslations) {
-          values = &data.translations;
-        } else if (target_path == AnimationChannel::TargetPath::Rotation &&
-                   data.hasRotations) {
-          values = &data.rotations;
-        } else if (target_path == AnimationChannel::TargetPath::Scale &&
-                   data.hasScales) {
-          values = &data.scales;
-        } else if (target_path == AnimationChannel::TargetPath::Weights &&
-                   data.hasBlendShapes) {
-          values = &data.blendShapeWeights;
-        }
+      for (double t : times) {
+        // Read only this channel. GetSkelAnimationDataAtTime evaluates and
+        // copies translations, rotations, scales and blend-shape weights on
+        // every call; invoking it once per property made long clips perform
+        // the complete animation decode up to four times.
+        // `times` contains exact authored sample times, so borrow the stored
+        // Value directly. AttributeEval/GetInterpolatedValue returns a Value
+        // by copy; for a 3000-joint rig that copied tens of thousands of
+        // floats once per frame and then copied them again into the channel.
+        const Value* sampled = prim.GetValueAtTime(prop_name, t);
+        const std::vector<float>* values =
+            sampled ? sampled->as_float_array() : nullptr;
         if (!values || values->empty() || ((*values).size() % stride) != 0) {
           continue;
         }

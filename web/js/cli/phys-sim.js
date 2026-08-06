@@ -10,9 +10,12 @@ import TinyUSDZFactory from '../src/tinyusdz/tinyusdz.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_USDA = path.resolve(__dirname, '../assets/physics-robot-arm.usda');
-const MUJOCO_DIST = '/home/syoyo/work/mujoco/wasm/dist';
-const MUJOCO_JS = path.join(MUJOCO_DIST, 'mujoco_physics.js');
-const MUJOCO_WASM = path.join(MUJOCO_DIST, 'mujoco_physics.wasm');
+const DEFAULT_MUJOCO_DIST = '/home/syoyo/work/mujoco/wasm/dist';
+const MUJOCO_DIST = path.resolve(process.env.MUJOCO_WASM_DIR || DEFAULT_MUJOCO_DIST);
+const MUJOCO_JS = path.resolve(process.env.MUJOCO_PHYSICS_JS ||
+  path.join(MUJOCO_DIST, 'mujoco_physics.js'));
+const MUJOCO_WASM = path.resolve(process.env.MUJOCO_PHYSICS_WASM ||
+  path.join(MUJOCO_DIST, 'mujoco_physics.wasm'));
 const DEG_TO_RAD = Math.PI / 180;
 const RAD_TO_DEG = 180 / Math.PI;
 
@@ -35,6 +38,7 @@ Options:
   --dump-physics-json    Print TinyUSDZ extracted physics JSON
   --require-newton       Require extracted Newton API schemas
   --json                 Print machine-readable result JSON
+  Environment: MUJOCO_WASM_DIR, MUJOCO_PHYSICS_JS, MUJOCO_PHYSICS_WASM
   -h, --help             Show this help
 `);
 }

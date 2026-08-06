@@ -345,6 +345,13 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc.cc
     )
     target_link_libraries(test_usdc_reader PRIVATE tinyusdz_next)
+    # Fixtures are found by walking relative prefixes from the working
+    # directory, which only resolves when the build dir sits directly under the
+    # repo root. Hand the real root in so the test also runs from an
+    # out-of-tree build dir (an ASan/threads/scratch build, or the second pass
+    # in scripts/run-next-checks.sh).
+    target_compile_definitions(test_usdc_reader PRIVATE
+        TINYUSDZ_TEST_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
     add_executable(test_layer
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_layer.cc
@@ -522,7 +529,7 @@ if(TINYUSDZ_NEXT_BUILD_FUZZERS)
     set(NEXT_FUZZ_LIB_FLAGS -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all)
     set(NEXT_FUZZ_BIN_FLAGS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
     target_compile_options(tinyusdz_next PRIVATE ${NEXT_FUZZ_LIB_FLAGS})
-    foreach(fz next_usdc next_usda next_compose)
+    foreach(fz next_usdc next_usda next_compose next_roundtrip)
         add_executable(fuzz_${fz}
             ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/${fz}_fuzzmain.cc
         )

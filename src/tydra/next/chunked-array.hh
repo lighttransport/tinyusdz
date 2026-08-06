@@ -16,6 +16,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
+#include <limits>
 #include <new>
 #include <vector>
 #include "safe-arithmetic.hh"
@@ -44,6 +46,61 @@ inline bool ProbeAlloc(size_t bytes) {
   return true;
 }
 
+// Optional accounting hooks for chunk allocations.
+//
+// A budget wants to (a) see the bulk geometry it is supposed to be bounding
+// and (b) refuse an allocation that would bust the cap, at the point of
+// allocation rather than only at the next phase boundary. MemBudget provides
+// exactly that through non-throwing TryAdd/Sub -- but this header cannot
+// include mem-budget.hh (it drags in <fstream>, <mutex> and windows.h into
+// every translation unit that touches a mesh), and PoolAlloc is unusable here
+// anyway because it reports exhaustion by throwing and the wasm converter is
+// built -fno-exceptions.
+//
+// So the dependency is inverted: this header declares the hooks, and whoever
+// owns the budget installs them (MemBudget::InstallChunkedArrayTracking()).
+// Unset by default -- one predictable null check per 64KB chunk, which is
+// nothing next to the allocation itself.
+//
+// Single-threaded install, like the rest of the conversion pipeline.
+using ChunkAllocHook = bool (*)(size_t bytes);  // false => refuse
+using ChunkFreeHook = void (*)(size_t bytes);
+
+inline ChunkAllocHook& ChunkAllocHookRef() {
+  static ChunkAllocHook hook = nullptr;
+  return hook;
+}
+inline ChunkFreeHook& ChunkFreeHookRef() {
+  static ChunkFreeHook hook = nullptr;
+  return hook;
+}
+inline void SetChunkAllocHooks(ChunkAllocHook alloc, ChunkFreeHook free_hook) {
+  ChunkAllocHookRef() = alloc;
+  ChunkFreeHookRef() = free_hook;
+}
+
+/// Allocate `n` elements, charged to the budget if one is installed. Returns
+/// nullptr when the allocation fails OR the budget refuses it -- callers
+/// already treat that as an allocation failure (latching alloc_failed()), so a
+/// bust becomes a clean skip at the point of allocation instead of an OOM
+/// between phase checks.
+template <typename T>
+inline T* AllocChunkElems(size_t n) {
+  const size_t bytes = n * sizeof(T);
+  ChunkAllocHook hook = ChunkAllocHookRef();
+  if (hook && !hook(bytes)) return nullptr;
+  T* p = new (std::nothrow) T[n];
+  if (!p && hook) ChunkFreeHookRef()(bytes);  // hand the reservation back
+  return p;
+}
+
+/// Release a charge. The chunks themselves are owned by unique_ptr, so the
+/// raw delete[] stays there; only the accounting is unwound here.
+inline void UnchargeChunkBytes(size_t bytes) {
+  if (bytes == 0) return;
+  if (ChunkFreeHook hook = ChunkFreeHookRef()) hook(bytes);
+}
+
 // ChunkedArray: Fixed-size chunk allocation for large arrays
 // - Each chunk is allocated separately (no realloc)
 // - Elements accessed via index or iterator
@@ -59,11 +116,39 @@ class ChunkedArray {
   ChunkedArray() = default;
   ~ChunkedArray() = default;
 
-  // Move only (no copy to avoid accidental large copies)
+  // Move only (no implicit copy, to avoid accidental large copies).
   ChunkedArray(ChunkedArray&&) = default;
   ChunkedArray& operator=(ChunkedArray&&) = default;
   ChunkedArray(const ChunkedArray&) = delete;
   ChunkedArray& operator=(const ChunkedArray&) = delete;
+
+  // O(1) copy-on-write share. The two arrays then reference the SAME chunks;
+  // the first write through EITHER of them transparently takes a private copy
+  // first (see detach_if_shared), so this is safe even if a consumer later
+  // mutates one of them. Used to clone a mesh's immutable topology and vertex
+  // attributes per point instance without duplicating the bytes: N instances
+  // of a prototype cost N x (points+normals+tangents) + 1 x everything else,
+  // instead of N x the whole mesh.
+  void share_from(const ChunkedArray& other) {
+    if (this == &other) return;
+    chunks_storage_ = other.chunks_storage_;
+    size_ = other.size_;
+    tail_capacity_ = other.tail_capacity_;
+    alloc_failed_ = other.alloc_failed_;
+    if (chunks_storage_) {
+      maybe_shared_ = true;
+      other.maybe_shared_ = true;
+    } else {
+      maybe_shared_ = false;
+    }
+  }
+
+  // True while the chunks are (possibly) shared with another array. Diagnostic
+  // / accounting aid: memory_usage() reports the full byte count on BOTH
+  // holders, so a budget must not add shared arrays twice.
+  bool is_shared() const {
+    return maybe_shared_ && chunks_storage_ && chunks_storage_.use_count() > 1;
+  }
 
   // Growth uses nothrow allocation: under -fno-exceptions (wasm) a throwing
   // operator new would abort the whole module, so a failed chunk allocation
@@ -73,10 +158,14 @@ class ChunkedArray {
   // after a conversion step and drop the prim with an error.
 
   // Reserve space for n elements (pre-allocates chunks)
-  bool reserve(size_t n) { return ensure_capacity(n); }
+  bool reserve(size_t n) {
+    detach_if_shared();
+    return ensure_capacity(n);
+  }
 
   // Add element, returns index (SIZE_MAX on allocation failure)
   size_t push_back(const T& value) {
+    detach_if_shared();
     size_t idx = size_;
     if (size_ == (std::numeric_limits<size_t>::max)()) {
       alloc_failed_ = true;
@@ -89,6 +178,7 @@ class ChunkedArray {
   }
 
   size_t push_back(T&& value) {
+    detach_if_shared();
     size_t idx = size_;
     if (size_ == (std::numeric_limits<size_t>::max)()) {
       alloc_failed_ = true;
@@ -103,6 +193,7 @@ class ChunkedArray {
   // Add multiple elements from contiguous array
   bool append(const T* data, size_t count) {
     if (count == 0) return true;
+    detach_if_shared();
     if (!data || count > (std::numeric_limits<size_t>::max)() - size_) {
       alloc_failed_ = true;
       return false;
@@ -118,9 +209,8 @@ class ChunkedArray {
       size_t space_in_chunk = kElementsPerChunk - offset;
       size_t to_copy = (remaining < space_in_chunk) ? remaining : space_in_chunk;
 
-      size_t copy_bytes;
-      if (!safe::mul(to_copy, sizeof(T), &copy_bytes)) return false;
-      std::memcpy(chunks_[chunk_idx].get() + offset, src, copy_bytes);
+      std::memcpy(chunks_storage_->v[chunk_idx].get() + offset, src,
+                  to_copy * sizeof(T));
 
       src += to_copy;
       size_ += to_copy;
@@ -132,12 +222,14 @@ class ChunkedArray {
   // Resize (may add uninitialized elements). On allocation failure the size
   // stays unchanged and false is returned — resize+fill callers must check.
   bool resize(size_t n) {
+    detach_if_shared();
     if (!ensure_capacity(n)) return false;
     size_ = n;
     return true;
   }
 
   bool resize(size_t n, const T& value) {
+    detach_if_shared();
     size_t old_size = size_;
     if (!ensure_capacity(n)) return false;
     size_ = n;
@@ -163,39 +255,60 @@ class ChunkedArray {
   // 2GB wasm32 heap on large prop scenes. Appending after shrink re-expands
   // the tail chunk transparently.
   void shrink_to_fit() {
+    if (!chunks_storage_) return;
+    detach_if_shared();
     const size_t needed_chunks =
         size_ / kElementsPerChunk + (size_ % kElementsPerChunk != 0);
-    while (chunks_.size() > needed_chunks) {
-      chunks_.pop_back();
+    while (chunks_mut().size() > needed_chunks) {
+      // Only the LAST chunk can be a shrunken (exact) tail; read its size
+      // before dropping it. Whatever becomes the new last is full.
+      const size_t bytes =
+          (tail_capacity_ ? tail_capacity_ : kElementsPerChunk) * sizeof(T);
+      chunks_mut().pop_back();
+      chunks_storage_->charged_bytes -=
+          (bytes < chunks_storage_->charged_bytes)
+              ? bytes
+              : chunks_storage_->charged_bytes;
+      UnchargeChunkBytes(bytes);
+      tail_capacity_ = kElementsPerChunk;
     }
-    if (chunks_.empty()) {
+    if (chunks_mut().empty()) {
       tail_capacity_ = 0;
       return;
     }
     tail_capacity_ = kElementsPerChunk;  // dropped chunks restore full tails
-    const size_t used_in_tail = size_ - (chunks_.size() - 1) * kElementsPerChunk;
+    const size_t used_in_tail = size_ - (chunks_mut().size() - 1) * kElementsPerChunk;
     if (used_in_tail < kElementsPerChunk) {
-      T* exact = new (std::nothrow) T[used_in_tail];
+      T* exact = AllocChunkElems<T>(used_in_tail);
       if (!exact) return;  // keep the full-size chunk; compaction is optional
-      size_t tail_bytes;
-      if (!safe::mul(used_in_tail, sizeof(T), &tail_bytes)) return;
-      std::memcpy(exact, chunks_.back().get(), tail_bytes);
-      chunks_.back().reset(exact);
+      std::memcpy(exact, chunks_mut().back().get(), used_in_tail * sizeof(T));
+      chunks_mut().back().reset(exact);  // raw delete[] of the full tail
+      // AllocChunkElems charged the NEW (exact) tail; release the FULL chunk
+      // it replaced -- not the difference, or the new tail is counted twice.
+      const size_t added = used_in_tail * sizeof(T);
+      const size_t released = kElementsPerChunk * sizeof(T);
+      chunks_storage_->charged_bytes += added;
+      chunks_storage_->charged_bytes -=
+          (released < chunks_storage_->charged_bytes)
+              ? released
+              : chunks_storage_->charged_bytes;
+      UnchargeChunkBytes(released);
       tail_capacity_ = used_in_tail;
     }
   }
 
   // Access
   T& operator[](size_t idx) {
+    detach_if_shared();
     size_t chunk_idx = idx / kElementsPerChunk;
     size_t offset = idx % kElementsPerChunk;
-    return chunks_[chunk_idx][offset];
+    return chunks_storage_->v[chunk_idx][offset];
   }
 
   const T& operator[](size_t idx) const {
     size_t chunk_idx = idx / kElementsPerChunk;
     size_t offset = idx % kElementsPerChunk;
-    return chunks_[chunk_idx][offset];
+    return chunks_storage_->v[chunk_idx][offset];
   }
 
   // Bounds-checked access. Built with -fno-exceptions, so an out-of-range index
@@ -218,6 +331,30 @@ class ChunkedArray {
     return (*this)[idx];
   }
 
+  // Copy out N consecutive elements starting at `base`.
+  //
+  // NEVER take `&arr[i]` and then index off it: a chunk is a separate
+  // allocation, so a run of elements straddles the chunk boundary whenever
+  // `base % kElementsPerChunk + N > kElementsPerChunk`. For the interleaved
+  // vertex arrays that is routine (FloatChunked holds 16384 elements/chunk and
+  // 16384 % 3 == 1, so every ~5461st xyz triple straddles), and the tail chunk
+  // is exact-sized so reading past it is out of bounds even for N == 2.
+  // Callers must have bounds-checked `base + N <= size()`.
+  template <size_t N>
+  void read_n(size_t base, T* out) const {
+    const size_t chunk_idx = base / kElementsPerChunk;
+    const size_t offset = base % kElementsPerChunk;
+    if (offset + N <= kElementsPerChunk) {
+      const T* p = chunks()[chunk_idx].get() + offset;
+      for (size_t i = 0; i < N; ++i) out[i] = p[i];
+      return;
+    }
+    for (size_t i = 0; i < N; ++i) out[i] = (*this)[base + i];
+  }
+
+  void read2(size_t base, T* out) const { read_n<2>(base, out); }
+  void read3(size_t base, T* out) const { read_n<3>(base, out); }
+
   T& front() { return (*this)[0]; }
   const T& front() const { return (*this)[0]; }
   T& back() { return (*this)[size_ - 1]; }
@@ -226,15 +363,15 @@ class ChunkedArray {
   size_t size() const { return size_; }
   bool empty() const { return size_ == 0; }
 
-  size_t chunk_count() const { return chunks_.size(); }
+  size_t chunk_count() const { return chunks().size(); }
   size_t capacity() const {
-    if (chunks_.empty()) return 0;
-    if ((chunks_.size() - 1) >
+    if (chunks().empty()) return 0;
+    if ((chunks().size() - 1) >
         ((std::numeric_limits<size_t>::max)() - tail_capacity_) /
             kElementsPerChunk) {
       return (std::numeric_limits<size_t>::max)();
     }
-    return (chunks_.size() - 1) * kElementsPerChunk + tail_capacity_;
+    return (chunks().size() - 1) * kElementsPerChunk + tail_capacity_;
   }
 
   // True when the data already lives in one contiguous block (fits in the
@@ -244,33 +381,34 @@ class ChunkedArray {
 
   // Memory usage in bytes
   size_t memory_usage() const {
-    if (chunks_.empty()) return sizeof(*this);
+    if (chunks().empty()) return sizeof(*this);
     const size_t max_size = (std::numeric_limits<size_t>::max)();
     const size_t tail_bytes = tail_capacity_ * sizeof(T);
     if (tail_bytes > max_size - sizeof(*this)) return max_size;
-    if ((chunks_.size() - 1) >
+    if ((chunks().size() - 1) >
         (max_size - tail_bytes - sizeof(*this)) / ChunkBytes) {
       return max_size;
     }
-    return (chunks_.size() - 1) * ChunkBytes + tail_bytes + sizeof(*this);
+    return (chunks().size() - 1) * ChunkBytes + tail_bytes + sizeof(*this);
   }
 
   // Get pointer to chunk data (for direct GPU upload)
   T* chunk_data(size_t chunk_idx) {
-    return chunks_[chunk_idx].get();
+    detach_if_shared();
+    return chunks_storage_->v[chunk_idx].get();
   }
 
   const T* chunk_data(size_t chunk_idx) const {
-    return chunks_[chunk_idx].get();
+    return chunks()[chunk_idx].get();
   }
 
   // Number of DATA elements in a chunk, derived from the logical size —
-  // NOT from chunks_.size(): reserve() (or clear() + smaller refill) leaves
+  // NOT from chunks().size(): reserve() (or clear() + smaller refill) leaves
   // more chunks allocated than the logical size covers, and sizing the "last"
   // chunk off the allocation count made copy_to()/flatten() read (and memcpy
   // into exact-sized destination buffers!) whole 64KB chunks past the end.
   size_t chunk_size(size_t chunk_idx) const {
-    if (chunk_idx >= chunks_.size() ||
+    if (chunk_idx >= chunks().size() ||
         chunk_idx > (std::numeric_limits<size_t>::max)() /
                         kElementsPerChunk) {
       return 0;
@@ -285,25 +423,30 @@ class ChunkedArray {
   std::vector<T> flatten() const {
     std::vector<T> result;
     result.reserve(size_);
-    for (size_t i = 0; i < chunks_.size(); ++i) {
+    for (size_t i = 0; i < chunks().size(); ++i) {
       size_t count = chunk_size(i);
       if (count == 0) break;
-      result.insert(result.end(), chunks_[i].get(), chunks_[i].get() + count);
+      result.insert(result.end(), chunks()[i].get(), chunks()[i].get() + count);
     }
     return result;
   }
 
   // Copy to pre-allocated buffer of exactly size() elements.
-  void copy_to(T* dest) const {
+  bool copy_to(T* dest) const {
+    if (size_ != 0 && !dest) return false;
     size_t copied = 0;
-    for (size_t i = 0; i < chunks_.size() && copied < size_; ++i) {
+    for (size_t i = 0; i < chunks().size() && copied < size_; ++i) {
       size_t count = chunk_size(i);
       if (count == 0) break;
-      size_t chunk_bytes;
-      if (!safe::mul(count, sizeof(T), &chunk_bytes)) return;
-      std::memcpy(dest + copied, chunks_[i].get(), chunk_bytes);
+      std::memcpy(dest + copied, chunks()[i].get(), count * sizeof(T));
       copied += count;
     }
+    return copied == size_;
+  }
+
+  bool copy_to(T* dest, size_t dest_count) const {
+    if (dest_count < size_) return false;
+    return copy_to(dest);
   }
 
   // Iterator support
@@ -377,8 +520,54 @@ class ChunkedArray {
   const_iterator cend() const { return const_iterator(this, size_); }
 
  private:
+  // Empty-safe read view of the chunk vector.
+  static const std::vector<std::unique_ptr<T[]>>& empty_chunks() {
+    static const std::vector<std::unique_ptr<T[]>> kEmpty;
+    return kEmpty;
+  }
+  const std::vector<std::unique_ptr<T[]>>& chunks() const {
+    return chunks_storage_ ? chunks_storage_->v : empty_chunks();
+  }
+  // Mutable access: MUST be preceded by detach_if_shared().
+  std::vector<std::unique_ptr<T[]>>& chunks_mut() {
+    if (!chunks_storage_) chunks_storage_ = std::make_shared<Chunks>();
+    return chunks_storage_->v;
+  }
+
+  // Take a private copy of the chunks if they are shared. Every mutating entry
+  // point calls this FIRST -- including ones that only overwrite existing
+  // elements (append after clear(), operator[] writes), not just ones that
+  // grow, since those write through the shared buffers just the same.
+  void detach_if_shared() {
+    if (!maybe_shared_) return;
+    maybe_shared_ = false;
+    if (!chunks_storage_ || chunks_storage_.use_count() <= 1) return;
+    auto copy = std::make_shared<Chunks>();
+    const std::vector<std::unique_ptr<T[]>>& src = chunks_storage_->v;
+    copy->v.reserve(src.size());
+    for (size_t i = 0; i < src.size(); ++i) {
+      // Every chunk is kElementsPerChunk long except the last, which may have
+      // been shrunk to tail_capacity_.
+      const size_t n =
+          (i + 1 == src.size()) ? tail_capacity_ : kElementsPerChunk;
+      T* c = AllocChunkElems<T>(n);
+      if (!c) {
+        alloc_failed_ = true;
+        // Keep sharing rather than hand back a truncated array; the caller's
+        // write is dropped along with the latched failure flag. `copy` is
+        // discarded here and its ~Chunks unwinds whatever it charged.
+        return;
+      }
+      copy->charged_bytes += n * sizeof(T);
+      if (src[i]) std::memcpy(c, src[i].get(), n * sizeof(T));
+      copy->v.push_back(std::unique_ptr<T[]>(c));
+    }
+    chunks_storage_ = std::move(copy);
+  }
+
   bool ensure_capacity(size_t n) {
     if (capacity() >= n) return true;
+    detach_if_shared();  // defensive: every caller already detached
     // No single C++ object may exceed PTRDIFF_MAX bytes. Reject before the
     // allocator probe: ASan and several wasm allocators abort (even for
     // nothrow new/malloc) when asked to probe an address-space-sized block.
@@ -392,47 +581,68 @@ class ChunkedArray {
     // Guard the chunk-vector growth too: reserve with a nothrow probe so the
     // push_back below cannot throw-abort under -fno-exceptions.
     const size_t needed_chunks =
-        (n + kElementsPerChunk - 1) / kElementsPerChunk;
-    size_t probe_bytes;
-    if (!safe::mul3(needed_chunks, sizeof(chunks_[0]), size_t(2),
-                    &probe_bytes)) {
+        n / kElementsPerChunk + (n % kElementsPerChunk != 0);
+    if (needed_chunks >
+        (std::numeric_limits<size_t>::max)() / sizeof(std::unique_ptr<T[]>) / 2) {
       alloc_failed_ = true;
       return false;
     }
-    if (needed_chunks > chunks_.capacity() && !ProbeAlloc(probe_bytes)) {
+    if (needed_chunks > chunks_mut().capacity() &&
+        !ProbeAlloc(needed_chunks * sizeof(std::unique_ptr<T[]>) * 2)) {
       alloc_failed_ = true;
       return false;
     }
     // A shrunken (exact-size) tail chunk must grow back to full capacity
     // before more chunks are appended, so only the LAST chunk is ever short.
-    if (!chunks_.empty() && tail_capacity_ < kElementsPerChunk) {
-      T* full = new (std::nothrow) T[kElementsPerChunk];
+    if (!chunks_mut().empty() && tail_capacity_ < kElementsPerChunk) {
+      T* full = AllocChunkElems<T>(kElementsPerChunk);
       if (!full) {
         alloc_failed_ = true;
         return false;
       }
-      size_t tail_bytes;
-      if (!safe::mul(tail_capacity_, sizeof(T), &tail_bytes)) {
-        alloc_failed_ = true;
-        return false;
-      }
-      std::memcpy(full, chunks_.back().get(), tail_bytes);
-      chunks_.back().reset(full);
+      const size_t old_tail_bytes = tail_capacity_ * sizeof(T);
+      std::memcpy(full, chunks_mut().back().get(), tail_capacity_ * sizeof(T));
+      chunks_mut().back().reset(full);  // raw delete[] of the short tail
+      // AllocChunkElems already charged the FULL chunk; give back the short
+      // tail it replaced.
+      chunks_storage_->charged_bytes +=
+          (kElementsPerChunk * sizeof(T)) - old_tail_bytes;
+      UnchargeChunkBytes(old_tail_bytes);
       tail_capacity_ = kElementsPerChunk;
     }
     while (capacity() < n) {
-      T* chunk = new (std::nothrow) T[kElementsPerChunk];
+      T* chunk = AllocChunkElems<T>(kElementsPerChunk);
       if (!chunk) {
         alloc_failed_ = true;
         return false;
       }
-      chunks_.push_back(std::unique_ptr<T[]>(chunk));
+      chunks_mut().push_back(std::unique_ptr<T[]>(chunk));
+      chunks_storage_->charged_bytes += kElementsPerChunk * sizeof(T);
       tail_capacity_ = kElementsPerChunk;
     }
     return true;
   }
 
-  std::vector<std::unique_ptr<T[]>> chunks_;
+  // Chunk storage, shared copy-on-write (see share_from). Only the CHUNKS are
+  // shared: size_/tail_capacity_/alloc_failed_ stay per-instance so clear()
+  // and the size queries never have to detach.
+  struct Chunks {
+    std::vector<std::unique_ptr<T[]>> v;
+    // Bytes charged to the budget for the chunks in `v`. Owned by the shared
+    // storage, not by the ChunkedArray: with copy-on-write sharing the holders
+    // come and go, but the charge must be released exactly once, when the last
+    // one drops the storage.
+    size_t charged_bytes = 0;
+    ~Chunks() { UnchargeChunkBytes(charged_bytes); }
+  };
+  std::shared_ptr<Chunks> chunks_storage_;
+  // Set whenever this instance has shared its storage with, or taken it from,
+  // another. Lets the mutating fast path test one predictable bool instead of
+  // an atomic use_count() load on every element write. Cleared once we know
+  // the storage is exclusively ours. NOT thread-safe -- RenderMesh conversion
+  // is single-threaded by construction.
+  mutable bool maybe_shared_ = false;
+
   size_t size_ = 0;
   // Element capacity of the LAST chunk (all others are kElementsPerChunk).
   // 0 when no chunks are allocated.

@@ -185,6 +185,48 @@ public:
   const Layer* GetComposedExternalLayer(const std::string& path,
                                         const std::string& subtree_root = "");
 
+  /// Verdicts about a referenced subtree, memoized per (layer, subtree root).
+  /// Recomputing them per arc is a full linear scan of the referenced layer
+  /// and defeats GetComposedExternalLayer's own cache -- see
+  /// subtree_arc_cache_.
+  struct SubtreeArcInfo {
+    bool has_arcs = false;
+    bool self_contained = false;  // only meaningful when has_arcs
+  };
+  SubtreeArcInfo GetSubtreeArcInfo(const Layer& raw,
+                                   const std::string& resolved_path,
+                                   const std::string& subtree_root);
+  bool GetLayerHasArcs(const Layer& raw, const std::string& resolved_path);
+  /// Clone the `root_path` subtree of `src` using the cached sorted path
+  /// range. Equivalent to the former linear-scan ExtractSubtree.
+  std::unique_ptr<Layer> ExtractSubtreeIndexed(const Layer& src,
+                                               const std::string& resolved_path,
+                                               const std::string& root_path);
+
+  /// One arc-bearing prim of a referenced layer, as recorded in LayerArcIndex.
+  struct ArcPrimEntry {
+    std::string path;
+    bool has_class_arc = false;  // inherits/specializes: never subtree-local
+    std::vector<std::string> internal_targets;  // internal ref/payload targets
+  };
+  /// Per-layer index of the arc-bearing prims, sorted by path, built ONCE per
+  /// layer. Answers both subtree verdicts by binary-searching the path-prefix
+  /// range instead of rescanning every prim (and re-parsing every arc string)
+  /// per reference arc.
+  struct LayerArcIndex {
+    std::vector<ArcPrimEntry> arc_prims;  // sorted by `path`
+    bool has_sublayers = false;
+    /// ALL prim indices of the layer, sorted by path. Lets a subtree be
+    /// extracted by binary-searching its contiguous path range instead of
+    /// rescanning every prim: ExtractSubtree ran once per distinct referenced
+    /// prim, so a scene pulling K prims out of an L-prim library was O(K*L)
+    /// (3200 refs into 40k prims spent ~8.6s of a 12s compose there).
+    /// Indices, not string pointers -- a Layer's prim vector can reallocate.
+    std::vector<uint32_t> paths_sorted;
+  };
+  const LayerArcIndex& GetLayerArcIndex(const Layer& raw,
+                                        const std::string& resolved_path);
+
   /// Clear the layer cache
   void ClearCache();
 
@@ -208,6 +250,20 @@ private:
   std::shared_ptr<std::map<std::string, std::shared_ptr<Layer>>>
       composed_ext_cache_;
   std::shared_ptr<std::set<std::string>> composing_ext_;
+
+  // Memo for the two subtree verdicts computed before the composed_ext_cache_
+  // lookup. Each is a FULL linear scan of the referenced layer's prims (and
+  // SubtreeIsSelfContained additionally string-parses every arc), so running
+  // them per reference arc defeated composed_ext_cache_ entirely: a scene with
+  // N references into an M-prim library layer cost O(N*M). Keyed
+  // "<resolved layer path>\n<subtree root path>"; shared with sub-Compositors
+  // like the caches above. Verdicts depend only on the layer's immutable
+  // content, so they are stable for a layer's lifetime in layer_cache_.
+  std::shared_ptr<std::map<std::string, SubtreeArcInfo>> subtree_arc_cache_;
+  std::shared_ptr<std::map<std::string, LayerArcIndex>> layer_arc_index_;
+  // Same idea for the whole-layer query (LayerHasComposableArcs), keyed by
+  // resolved layer path.
+  std::shared_ptr<std::map<std::string, bool>> layer_arc_cache_;
   // Resolved sublayer paths currently being composed (cycle guard; shared
   // across the recursion like composing_ext_).
   std::shared_ptr<std::set<std::string>> composing_sublayers_;

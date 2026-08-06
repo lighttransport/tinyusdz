@@ -747,8 +747,9 @@ bool VulkanRenderer::createDevice(std::string* err) {
   ci.queueCreateInfoCount = 1;
   ci.pQueueCreateInfos = &qci;
 
-  // Ray-tracing feature chain (only when supported; otherwise device is created
-  // exactly as before so the rasterization path is unaffected).
+  // Buffer device address is used by both ray tracing and the raster instanced
+  // skinning shader. Keep it independent from RT: a raster-only device such as
+  // GTX 1050 can still provide correct GPU skinning through buffer references.
   VkPhysicalDeviceRayQueryFeaturesKHR rqf{};
   rqf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
   rqf.rayQuery = VK_TRUE;
@@ -758,13 +759,26 @@ bool VulkanRenderer::createDevice(std::string* err) {
   asf.pNext = &rqf;
   VkPhysicalDeviceVulkan12Features v12{};
   v12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-  v12.bufferDeviceAddress = VK_TRUE;
-  v12.scalarBlockLayout = VK_TRUE;
-  v12.pNext = &asf;
+  VkPhysicalDeviceFeatures2 featureQuery{};
+  featureQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+  VkPhysicalDeviceVulkan12Features supported12{};
+  supported12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+  featureQuery.pNext = &supported12;
+  vkGetPhysicalDeviceFeatures2(phys_, &featureQuery);
+  bufferDeviceAddressSupported_ = supported12.bufferDeviceAddress &&
+                                  supported12.scalarBlockLayout &&
+                                  featureQuery.features.shaderInt64;
+  v12.bufferDeviceAddress = bufferDeviceAddressSupported_ ? VK_TRUE : VK_FALSE;
+  v12.scalarBlockLayout = bufferDeviceAddressSupported_ ? VK_TRUE : VK_FALSE;
   if (rtSupported_) {
+    v12.pNext = &asf;
     devExts.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
     devExts.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
     devExts.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    ci.pNext = &v12;
+  } else if (bufferDeviceAddressSupported_) {
+    // No RT extension chain is needed, but the Vulkan 1.2 feature struct still
+    // must be enabled for buffer references to be valid in raster shaders.
     ci.pNext = &v12;
   }
 
@@ -858,7 +872,7 @@ bool VulkanRenderer::createDevice(std::string* err) {
     enabledFeatures.multiDrawIndirect = VK_TRUE;
     enabledFeatures.drawIndirectFirstInstance = VK_TRUE;
   }
-  if (rtSupported_) {
+  if (rtSupported_ || bufferDeviceAddressSupported_) {
     enabledFeatures.shaderInt64 = VK_TRUE;
   }
   ci.pEnabledFeatures = &enabledFeatures;
@@ -875,8 +889,9 @@ bool VulkanRenderer::createDevice(std::string* err) {
     if (!vkCmdSetCullMode_) dynCullSupported_ = false;
   }
 
-  // Load the RT entrypoints (extension functions aren't statically exported).
-  if (rtSupported_) {
+  // Load buffer-device-address first. It is needed by raster GPU skinning even
+  // when the RT extension entrypoints are absent.
+  if (bufferDeviceAddressSupported_) {
     // bufferDeviceAddress is Vulkan 1.2 core here (not the KHR extension), so the
     // core entrypoint is what's exported; fall back to the KHR alias.
     pfnGetBufferDeviceAddress_ =
@@ -886,6 +901,14 @@ bool VulkanRenderer::createDevice(std::string* err) {
       pfnGetBufferDeviceAddress_ = reinterpret_cast<PFN_vkGetBufferDeviceAddressKHR>(
           vkGetDeviceProcAddr(device_, "vkGetBufferDeviceAddressKHR"));
     }
+    if (!pfnGetBufferDeviceAddress_) {
+      bufferDeviceAddressSupported_ = false;
+      LOGD("Vulkan buffer device address entrypoint unavailable; disabling address-based raster skinning");
+    }
+  }
+
+  // Load the RT entrypoints (extension functions aren't statically exported).
+  if (rtSupported_) {
     pfnGetASBuildSizes_ = reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(
         vkGetDeviceProcAddr(device_, "vkGetAccelerationStructureBuildSizesKHR"));
     pfnCreateAS_ = reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(
@@ -1670,7 +1693,7 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
   // leave instPipeline_ null -- the instanced draw sites all null-guard it, so
   // instanced prototypes are simply not drawn on such a device (graceful skip, not an
   // init failure). This is not the target hardware (desktop GPUs all expose it).
-  if (!mdiSupported_) {
+  if (!mdiSupported_ || !bufferDeviceAddressSupported_) {
     instPipeline_ = VK_NULL_HANDLE;
     instTranslucentPipeline_ = VK_NULL_HANDLE;
     return true;
@@ -5566,7 +5589,8 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   // MeshDesc.jointAddr / weightAddr and derives the dominant joint per vertex).
   // A skinned mesh also needs device addresses without RT: the INSTANCED vertex
   // shader reads joints/weights by address (DrawMeta), not as vertex attributes.
-  const bool skinAddressable = rtSupported_ || gm.skinned;
+  const bool skinAddressable = bufferDeviceAddressSupported_ &&
+                               (rtSupported_ || gm.skinned);
   const VkBufferUsageFlags skinUsage =
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
       (skinAddressable ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
@@ -5862,7 +5886,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   // AOV, the INSTANCED vertex shader fetches joints/weights by address (DrawMeta)
   // instead of through vertex-input state -- that is what lets a skinned prototype
   // stay instanced without adding vertex bindings the merged MDI path can't supply.
-  if (gm.skinned) {
+  if (gm.skinned && bufferDeviceAddressSupported_) {
     gm.jointAddr = bufferDeviceAddress(gm.jointVbo);
     gm.weightAddr = bufferDeviceAddress(gm.weightVbo);
   }

@@ -186,12 +186,25 @@ tusdview under them — including **GPU-Assisted Validation** for shader
 descriptor-OOB / `VK_ERROR_DEVICE_LOST` faults that plain validation can't see.
 The procedure is in that doc; the threaded VK-RT case study is in
 [examples/tusdview/doc/threading-stage2.md](examples/tusdview/doc/threading-stage2.md).
+For NVIDIA hardware viewer regression under a headless display, use the
+documented `xvfb-run` + `TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON` procedure in
+[doc/testing-cpp.md](doc/testing-cpp.md#headless-nvidia-viewer-regression); do
+not force `TUSDVIEW_VK_DEVICE=nvidia` unless the configure-time Vulkan probe
+confirms an NVIDIA physical device.
 
 ## Testing
 
 See `doc/testing-cpp.md` for full details on the C++ test infrastructure, and use [the Regression Test Procedure](doc/testing-cpp.md#regression-test-procedure) before merging/refactoring.
 
 The stable `next` module (`src/next/`, `tests/next/`) is a standalone CMake project with its own Debug test build. It does not appear in the main native `ctest` tree, so run it explicitly as part of the regression gate (see [Stable `next` library tests](doc/testing-cpp.md#stable-next-library-tests)).
+
+### Web/WASM regression procedure
+
+The complete procedure is maintained in
+[web/js/docs/regression.md](web/js/docs/regression.md). That document is the
+single source of truth for setup, WASM builds, Node/physics/browser profiles,
+Menagerie coverage, CTest integration, pass criteria, and the non-threaded WASM
+configuration.
 
 ### Pre-merge checklist
 
@@ -220,11 +233,12 @@ ctest --test-dir build-next --output-on-failure
 3. Run web/WASM checks when web or JS-facing code changed
 
 ```bash
-cd web
-emcmake cmake -S . -B build
-cmake --build build -j16
-ctest --test-dir build --output-on-failure
+cd web/js
+npm test
 ```
+
+See [web/js/docs/regression.md](web/js/docs/regression.md) for setup,
+WASM builds, focused profiles, browser modes, and CTest integration.
 
 4. Run Pixar compatibility regression if available
 
@@ -266,12 +280,8 @@ cmake -S "$ROOT_DIR/src/next" -B "$ROOT_DIR/build-next" \
 cmake --build "$ROOT_DIR/build-next" -j"$JOBS"
 ctest --test-dir "$ROOT_DIR/build-next" --output-on-failure
 
-cd "$ROOT_DIR/web"
-if [ -f "$ROOT_DIR/web/CMakeLists.txt" ]; then
-  emcmake cmake -S . -B build
-  cmake --build build -j"$JOBS"
-  ctest --test-dir build --output-on-failure
-fi
+cd "$ROOT_DIR/web/js"
+npm test
 
 if [ -x "$ROOT_DIR/tests/run-usdcat-compare.sh" ]; then
   USDCAT_PATH="${USDCAT_PATH:-$HOME/local/USD/dist/bin/usdcat}"

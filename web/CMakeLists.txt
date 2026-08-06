@@ -176,6 +176,25 @@ if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
   endif()
 
   if (TINYUSDZ_NODE_EXECUTABLE)
+    # Keep the complete web gate in web/js so npm and CTest exercise the same
+    # ordered procedure.  The Menagerie checkout is intentionally external;
+    # run setup-mujoco-menagerie.sh before invoking this test.
+    set(TINYUSDZ_WEB_REGRESSION_RUNNER
+        "${PROJECT_SOURCE_DIR}/js/tests/run-regression.mjs")
+    if (EXISTS "${TINYUSDZ_WEB_REGRESSION_RUNNER}")
+      add_test(
+        NAME wasm-regression-full
+        COMMAND "${TINYUSDZ_NODE_EXECUTABLE}" "${TINYUSDZ_WEB_REGRESSION_RUNNER}"
+                --profile full)
+      set_tests_properties(
+        wasm-regression-full
+        PROPERTIES
+          WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/js"
+          TIMEOUT 3600
+          RUN_SERIAL TRUE
+          LABELS "wasm;browser;physics;regression")
+    endif()
+
     add_test(
       NAME wasm-js-loader-texture-compression
       COMMAND "${TINYUSDZ_NODE_EXECUTABLE}"

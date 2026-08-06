@@ -177,6 +177,43 @@ bool CrateReader::Impl::ReadTOC() {
     }
   }
 
+  // Structural consistency, reported as WARNINGS rather than errors.
+  //
+  // Each section above is individually in-bounds and every subsequent read is
+  // bounds-checked, so a duplicate or overlapping TOC is not memory-unsafe --
+  // rejecting such a file would refuse content pxr may well still read. But it
+  // does mean the file presents mutually inconsistent structural tables (and
+  // toc_.find() silently takes the FIRST match), which is worth surfacing.
+  // num_sections is capped at 100 above, so the pairwise scan is trivial.
+  for (size_t i = 0; i < toc_.sections.size(); ++i) {
+    for (size_t j = i + 1; j < toc_.sections.size(); ++j) {
+      if (toc_.sections[i].name_str() == toc_.sections[j].name_str()) {
+        AddWarning("Duplicate TOC section '" + toc_.sections[i].name_str() +
+                   "'; the first one is used");
+      }
+    }
+  }
+
+  {
+    std::vector<size_t> order(toc_.sections.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [this](size_t a, size_t b) {
+      return toc_.sections[a].start < toc_.sections[b].start;
+    });
+    for (size_t k = 1; k < order.size(); ++k) {
+      const CrateSection& prev = toc_.sections[order[k - 1]];
+      const CrateSection& cur = toc_.sections[order[k]];
+      if (prev.size == 0) continue;
+      // Both are already validated as non-negative and in-bounds.
+      const uint64_t prev_end = static_cast<uint64_t>(prev.start) +
+                                static_cast<uint64_t>(prev.size);
+      if (static_cast<uint64_t>(cur.start) < prev_end) {
+        AddWarning("Overlapping TOC sections '" + prev.name_str() + "' and '" +
+                   cur.name_str() + "'");
+      }
+    }
+  }
+
   return true;
 }
 
@@ -263,7 +300,16 @@ bool CrateReader::Impl::ReadTokens() {
 bool CrateReader::Impl::ReadStrings() {
   const CrateSection* section = toc_.find("STRINGS");
   if (!section) {
-    return true;
+    // Required, like the other five structural sections (TOKENS / FIELDS /
+    // FIELDSETS / SPECS / PATHS all error here). This one silently accepted
+    // its absence, so a crate missing STRINGS loaded "successfully" with an
+    // empty string table -- every GetString() then fails and the affected
+    // opinions are quietly dropped. OpenUSD rejects the same file outright
+    // ("Crate file missing STRINGS section"), and all 240 crate files in
+    // tests/ and models/ carry the section, so requiring it costs nothing and
+    // removes a silent-data-loss path.
+    AddError("Missing STRINGS section");
+    return false;
   }
 
   if (!reader_->seek(static_cast<size_t>(section->start))) {
@@ -851,7 +897,7 @@ bool CrateReader::Impl::ReadSpecs() {
       }
       specs_[i].path_index.value = path_vals[i];
       specs_[i].fieldset_index.value = fieldset_vals[i];
-      specs_[i].spec_type = static_cast<SpecType>(type_vals[i]);
+      specs_[i].spec_type = ToSpecType(type_vals[i]);
     }
     return true;
   }
@@ -885,21 +931,33 @@ bool CrateReader::Impl::ReadSpecs() {
       }
       uint32_t spec_type;
       std::memcpy(&spec_type, ptr, 4); ptr += 4;
-      specs_[i].spec_type = static_cast<SpecType>(spec_type);
+      specs_[i].spec_type = ToSpecType(spec_type);
     }
   } else {
     DecompressResult dr = DecompressIntegers(legacy_data.data(), legacy_data.size(),
                                               legacy_value_count, false);
     if (dr.success) {
-      const uint32_t* vals = reinterpret_cast<const uint32_t*>(dr.data.data());
+      // memcpy, not reinterpret_cast: dr.data is a vector<uint8_t> whose
+      // buffer has no uint32_t alignment guarantee (UB, and a trap on
+      // strict-alignment targets). The sibling decode paths above already
+      // do it this way.
+      size_t need_bytes = 0;
+      if (!safe::mul(legacy_value_count, sizeof(uint32_t), &need_bytes) ||
+          dr.data.size() < need_bytes) {
+        AddError("Decompressed specs shorter than expected");
+        return false;
+      }
       for (size_t i = 0; i < num_specs; i++) {
-        if (vals[i * 3 + 1] >= fieldset_indices_.size()) {
+        uint32_t triple[3];
+        std::memcpy(triple, dr.data.data() + i * 3 * sizeof(uint32_t),
+                    sizeof(triple));
+        if (triple[1] >= fieldset_indices_.size()) {
           AddError("Spec fieldset index out of range");
           return false;
         }
-        specs_[i].path_index.value = vals[i * 3];
-        specs_[i].fieldset_index.value = vals[i * 3 + 1];
-        specs_[i].spec_type = static_cast<SpecType>(vals[i * 3 + 2]);
+        specs_[i].path_index.value = triple[0];
+        specs_[i].fieldset_index.value = triple[1];
+        specs_[i].spec_type = ToSpecType(triple[2]);
       }
     } else {
       AddError("Failed to decompress specs with any format");
@@ -1001,6 +1059,16 @@ bool CrateReader::Impl::ReadPaths() {
     }
     return true;
   };
+
+  // `num_encoded` is an independent u64 from the file: it was only checked
+  // against the flat max_paths cap, NOT against the file-size-relative
+  // allocation guard that num_paths goes through. A ~60-byte crate declaring
+  // num_paths=1 / num_encoded=10M otherwise allocated ~130 MB across the four
+  // buffers below before reading a single byte.
+  if (!CheckElementAllocation(n, sizeof(uint32_t) * 3 + 1,
+                              "Path decode buffers")) {
+    return false;
+  }
 
   std::vector<uint32_t> path_indices(n);
   std::vector<uint32_t> element_tokens(n);

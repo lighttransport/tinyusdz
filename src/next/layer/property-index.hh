@@ -8,11 +8,13 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <deque>
 #include <unordered_map>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <atomic>
+#include <memory>
 #include <shared_mutex>
 #endif
 
@@ -28,6 +30,36 @@ struct PropNameId {
   bool operator==(PropNameId other) const { return id == other.id; }
   bool operator!=(PropNameId other) const { return id != other.id; }
   bool operator<(PropNameId other) const { return id < other.id; }
+};
+
+// Keep owned strings as map keys while allowing allocation-free read-only
+// probes from string_view callers.
+struct PropNameHash {
+  using is_transparent = void;
+
+  size_t operator()(const std::string& name) const noexcept {
+    return std::hash<std::string_view>{}(name);
+  }
+  size_t operator()(std::string_view name) const noexcept {
+    return std::hash<std::string_view>{}(name);
+  }
+};
+
+struct PropNameEqual {
+  using is_transparent = void;
+
+  bool operator()(const std::string& lhs, const std::string& rhs) const noexcept {
+    return lhs == rhs;
+  }
+  bool operator()(std::string_view lhs, std::string_view rhs) const noexcept {
+    return lhs == rhs;
+  }
+  bool operator()(const std::string& lhs, std::string_view rhs) const noexcept {
+    return std::string_view(lhs) == rhs;
+  }
+  bool operator()(std::string_view lhs, const std::string& rhs) const noexcept {
+    return lhs == std::string_view(rhs);
+  }
 };
 
 /// Property name interning table
@@ -48,6 +80,7 @@ public:
 
   /// Try to find existing ID without creating (O(1) average)
   PropNameId find(const std::string& name) const;
+  PropNameId find(std::string_view name) const;
   PropNameId find(const char* name) const;
 
   /// Get total count of interned names
@@ -64,12 +97,19 @@ public:
   /// Freeze the table for lock-free concurrent reads. After composition the set
   /// of interned names is fixed; rendering does millions of find()/get() calls
   /// across many threads, and the per-call shared_lock then contends purely on
-  /// the lock's own cache line (a measured ~14% of an Island render). Once
-  /// frozen, find()/get() skip the lock entirely (concurrent reads of the now
-  /// immutable map/deque are safe). A subsequent intern() unfreezes (re-enabling
-  /// locking) so a later load/compose is still correct -- callers must not intern
-  /// concurrently with frozen lock-free reads (the load and render phases are
-  /// disjoint). No-op when built without TINYUSDZ_ENABLE_THREAD.
+  /// the lock's own cache line (a measured ~14% of an Island render).
+  ///
+  /// freeze() publishes an IMMUTABLE SNAPSHOT of the table; while one is
+  /// published, find()/get() answer from it with no lock at all. A later
+  /// intern() of a new name mutates only the live map/deque, which the snapshot
+  /// does not alias, so it can never disturb a lock-free reader. (The previous
+  /// scheme flipped `frozen_` to false and then rehashed the very map that
+  /// in-flight lock-free readers were walking -- a real data race, since
+  /// parallel composition interns on worker threads by design.) A lookup that
+  /// misses the snapshot falls back to the locked path, so a stale snapshot is
+  /// never wrong, only incomplete.
+  ///
+  /// No-op when built without TINYUSDZ_ENABLE_THREAD.
   void freeze();
   void unfreeze();
 
@@ -100,16 +140,29 @@ private:
   // on push_back, so a concurrent intern() (parallel composition) cannot dangle
   // that reference (a vector realloc would).
   std::deque<std::string> names_;
-  std::unordered_map<std::string, uint32_t> name_to_id_;
+  std::unordered_map<std::string, uint32_t, PropNameHash, PropNameEqual>
+      name_to_id_;
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // The global table is interned into concurrently when referenced layers are
   // parsed on worker threads (parallel composition pre-warm). Read-mostly: a
   // lookup takes a shared lock, the rare new-name insert an exclusive one.
   // Uncontended in the serial path (~ns) so single-threaded parse is unaffected.
   mutable std::shared_mutex mu_;
-  // When set, find()/get() bypass mu_ for lock-free concurrent reads (see
-  // freeze()). Acquire/release ordered against the populating writes.
-  std::atomic<bool> frozen_{false};
+
+  // Immutable lookup snapshot published by freeze(). `by_name` is sorted by
+  // name so a lookup is a branch-predictable binary search over flat storage
+  // (friendlier than unordered_map's pointer chase), and `by_id` indexes the
+  // stable deque elements. Nothing here is ever mutated after publication:
+  // intern() only touches names_/name_to_id_, so a lock-free reader holding a
+  // FrozenIndex is isolated from it.
+  struct FrozenIndex {
+    std::vector<std::pair<const std::string*, uint32_t>> by_name;
+    std::vector<const std::string*> by_id;
+  };
+  // shared_ptr so a reader that grabbed the snapshot keeps it alive across an
+  // unfreeze()/re-freeze(). Accessed via std::atomic_load/store (the free
+  // functions, so this stays C++11/14-compatible like the rest of the module).
+  std::shared_ptr<const FrozenIndex> frozen_;
 #endif
 };
 
