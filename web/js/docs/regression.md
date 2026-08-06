@@ -31,7 +31,7 @@ This configures `web/build_ninja` for the combined legacy module and
 `web/build_next_ninja` for the next-only module, then writes the four generated
 artifacts under `web/js/src/tinyusdz/`.
 
-MuJoCo physics-only tests use `/home/syoyo/work/mujoco/wasm/dist` by default for
+MuJoCo physics-only tests use `/path/to/mujoco/wasm/dist` by default for
 backward compatibility. Portable setups should set `MUJOCO_WASM_DIR`, or set
 `MUJOCO_PHYSICS_JS` and `MUJOCO_PHYSICS_WASM` directly.
 
