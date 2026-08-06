@@ -1,0 +1,17 @@
+#usda 1.0
+# Library asset whose variant OPTION authors the composition arc. The
+# selection is authored here.
+def Xform "Asset" (
+    variantSets = "lod"
+    variants = { string lod = "high" }
+)
+{
+    variantSet "lod" = {
+        "high" (
+            prepend references = @./variant-arc-target.usda@</Geo>
+        ) {
+        }
+        "low" {
+        }
+    }
+}

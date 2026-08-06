@@ -91,20 +91,20 @@ struct GlProbeResult {
   std::string version;     // GL_VERSION
   std::string error;       // why not, when !available
   uint64_t free_vram = 0;  // 0 when the driver does not report it
+  uint64_t required_vram = 0;
+  uint64_t gpu_budget = 0;
 };
 
-// Create a throwaway context to find out whether GL is usable at all, without
-// committing to it. Cheap enough to call once at startup so the UI can offer
-// (or grey out) the GL backend honestly instead of guessing.
-GlProbeResult ProbeGlBackend();
-
-// Offscreen GL 3.3 raster. Returns nullptr (reason in `err`) when no headless
-// context can be created or the GPU reports too little free VRAM for
-// `required_vram_bytes` of scene data — both are ordinary outcomes on a machine
-// without a GPU, and the caller falls back to the CPU renderer.
+// Offscreen GL 3.3 raster. Context creation and the resource-budget check are
+// intentionally lazy: GL is only initialized when this backend is selected,
+// and `probe` receives the resulting device/resource diagnostics.
+// Returns nullptr (reason in `err`) when no headless context can be created or
+// the resource estimate exceeds the configured GPU budget.
 std::unique_ptr<Renderer> CreateGlRenderer(int width, int height,
                                            const RenderSettings& settings,
                                            uint64_t required_vram_bytes,
+                                           uint64_t max_gpu_mem_bytes,
+                                           GlProbeResult* probe,
                                            std::string* err);
 
 }  // namespace tusdql

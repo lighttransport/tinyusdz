@@ -92,16 +92,27 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
     return false;
   }
   if (rep.payload() == 0) return true;  // empty
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!SeekToPayload(reader_.get(), rep)) return false;
 
   auto read_run = [&]() -> bool {
     uint64_t n = 0;
     if (!reader_->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
+    // Each element is 4 input bytes but produces a whole reconstructed path
+    // STRING (up to max_path_depth components). Require the file to actually
+    // hold the indices, and charge the produced strings against the allocation
+    // budget -- otherwise a ~1 MB crate drives `out` into the multi-GB range.
+    if (n > 0 && !reader_->has_elements(static_cast<size_t>(n), 4)) return false;
+    if (!CheckElementAllocation(n, sizeof(std::string), "Path list-op")) {
+      return false;
+    }
     for (uint64_t i = 0; i < n; ++i) {
       uint32_t idx = 0;
       if (!reader_->read_u32(idx)) return false;
       if (idx >= paths_.size()) return false;
+      if (!CheckByteAllocation(paths_[idx].size(), "Path list-op targets")) {
+        return false;
+      }
       // paths_ renders a property path as ".<primpath>/<prop>"; convert to the
       // canonical USD form "<primpath>.<prop>" so targets re-intern correctly
       // (and survive repeated round-trips). Prim targets pass through as-is.
@@ -168,7 +179,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     return false;
   }
   if (rep.payload() == 0) return true;  // empty listop
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!SeekToPayload(reader_.get(), rep)) return false;
 
   // Payload items carry a LayerOffset only from crate 0.8.0 on.
   const bool payload_has_offset =
@@ -249,6 +260,12 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     uint64_t n = 0;
     if (!reader_->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
+    // Each item produces a whole arc STRING from a few input bytes; charge the
+    // per-item container cost against the allocation budget (read_item itself
+    // is bounds-checked against the file for its own reads).
+    if (!CheckElementAllocation(n, sizeof(std::string), "Reference list-op")) {
+      return false;
+    }
     for (uint64_t i = 0; i < n; ++i) {
       if (!read_item(keep)) return false;
     }
@@ -293,7 +310,7 @@ bool CrateReader::Impl::DecodeVariantSelectionMap(
   out.clear();
   if (rep.type_id() != CrateTypeId::VariantSelectionMap) return false;
   if (rep.payload() == 0) return true;  // empty map
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!SeekToPayload(reader_.get(), rep)) return false;
   uint64_t count = 0;
   if (!reader_->read_u64(count)) return false;
   if (count > options_.max_array_elements) return false;
@@ -315,7 +332,7 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
     return false;
   }
   if (rep.payload() == 0) return true;  // empty listop
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!SeekToPayload(reader_.get(), rep)) return false;
 
   const bool is_token = (tid == CrateTypeId::TokenListOp);
   // One [u64 count][u32 idx]* run; collect its tokens when `keep`.
@@ -323,6 +340,13 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
     uint64_t n = 0;
     if (!reader_->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
+    // 4 input bytes per element, one whole token/string appended: require the
+    // indices to actually be in the file and charge the output.
+    if (n > 0 && !reader_->has_elements(static_cast<size_t>(n), 4)) return false;
+    if (keep && !CheckElementAllocation(n, sizeof(std::string),
+                                        "Token list-op")) {
+      return false;
+    }
     for (uint64_t i = 0; i < n; ++i) {
       uint32_t idx = 0;
       if (!reader_->read_u32(idx)) return false;
@@ -336,6 +360,7 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
         if (keep) s = std::move(decoded);
       }
       if (!keep) continue;
+      if (!CheckByteAllocation(s.size(), "Token list-op contents")) return false;
       out.push_back(std::move(s));
     }
     return true;
@@ -370,12 +395,12 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
 
 bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
   if (rep.type_id() != CrateTypeId::Dictionary) return false;
-  if (depth > 64) return false;
+  if (depth > kMaxValueNestDepth) return false;
   if (rep.payload() == 0) {
     out = Value::MakeDictionary();
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!SeekToPayload(reader_.get(), rep)) return false;
   uint64_t count = 0;
   if (!reader_->read_u64(count)) return false;
   if (count > options_.max_array_elements) return false;
@@ -420,7 +445,7 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     if (vr.type_id() == CrateTypeId::Dictionary) {
       if (!DecodeDictionary(vr, cv, depth + 1)) return false;
     } else if (vr.type_id() != CrateTypeId::Invalid &&
-               !UnpackValue(vr, cv)) {
+               !UnpackValue(vr, cv, depth + 1)) {
       return false;
     }
     d->set(std::move(key), std::move(cv));
@@ -460,7 +485,39 @@ bool CrateReader::Impl::CheckByteAllocation(uint64_t bytes, const char* what) {
     AddError(std::string(what) + " exceeds max_memory budget");
     return false;
   }
+
+  // CUMULATIVE budget. The checks above are per-allocation, so N separate
+  // allocations each just under the cap summed without any limit -- a file with
+  // many fields could still drive total RSS arbitrarily high. Track the running
+  // total against the same bound.
+  if (bytes > kU64MaxBytes - alloc_total_) {
+    AddError(std::string(what) + " exceeds cumulative allocation budget");
+    return false;
+  }
+  const uint64_t new_total = alloc_total_ + bytes;
+  if (new_total > AllocationBudget()) {
+    AddError(std::string(what) + " exceeds cumulative allocation budget");
+    return false;
+  }
+  alloc_total_ = new_total;
   return true;
+}
+
+// Total decoded bytes this reader may accumulate. Deliberately looser than the
+// per-allocation cap (a valid file legitimately decodes to several times its
+// on-disk size across many sections) while still bounded by the input.
+uint64_t CrateReader::Impl::AllocationBudget() const {
+  if (options_.max_memory) {
+    return static_cast<uint64_t>(options_.max_memory);
+  }
+  const uint64_t file_size =
+      reader_ ? static_cast<uint64_t>(reader_->size()) : 0;
+  constexpr uint64_t kCumulativeRatio = 512;
+  constexpr uint64_t kCumulativeSlack = 256ull * 1024 * 1024;  // 256 MiB
+  if (file_size > (kU64MaxBytes - kCumulativeSlack) / kCumulativeRatio) {
+    return kU64MaxBytes;
+  }
+  return file_size * kCumulativeRatio + kCumulativeSlack;
 }
 
 bool CrateReader::Impl::CheckElementAllocation(uint64_t count, size_t elem_size,

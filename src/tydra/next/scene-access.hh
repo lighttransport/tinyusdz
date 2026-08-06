@@ -101,6 +101,17 @@ bool GetMatrix4d(const UsdPrim& prim, const std::string& name, double* matrix16)
 std::vector<float> GetFloatArray(const UsdPrim& prim, const std::string& name);
 std::vector<int32_t> GetIntArray(const UsdPrim& prim, const std::string& name);
 
+/// Read-only VIEWS of the same arrays (nullptr when absent or of another
+/// type). They point into the stage's attribute storage and must not outlive
+/// it. Prefer these wherever the caller only reads: the Get*Array() forms
+/// above duplicate the whole array, which for something like
+/// `primvars:skel:jointIndices:indices` on a dense skin is tens of MB copied
+/// and thrown away.
+const std::vector<int32_t>* GetIntArrayView(const UsdPrim& prim,
+                                            const std::string& name);
+const std::vector<float>* GetFloatArrayView(const UsdPrim& prim,
+                                            const std::string& name);
+
 //
 // Relationship access
 //
@@ -154,10 +165,28 @@ struct GeomSubset {
   std::string name;
   std::string path;
   std::string family_name;
-  std::vector<int32_t> indices;
+  /// VIEW of the subset's authored `indices` array -- it points into the
+  /// composed layer's Value storage and is NOT owned, so it stays valid only
+  /// as long as the Stage that produced it. Copying the array here cost a
+  /// full duplicate of every subset's face-index list per mesh, on top of the
+  /// working copy the consumer builds anyway. Null when unauthored; use
+  /// indices() for an empty-safe read.
+  const std::vector<int32_t>* indices_view = nullptr;
+
+  static const std::vector<int32_t>& empty_indices() {
+    static const std::vector<int32_t> kEmpty;
+    return kEmpty;
+  }
+  const std::vector<int32_t>& indices() const {
+    return indices_view ? *indices_view : empty_indices();
+  }
+
   std::string material_path;
 };
 
+/// GeomSubset children of `mesh_prim`. The returned subsets hold VIEWS into
+/// the stage's attribute storage (see GeomSubset::indices_view); they must not
+/// outlive it.
 std::vector<GeomSubset> GetGeomSubsets(const UsdPrim& mesh_prim);
 
 //
@@ -174,7 +203,22 @@ struct Primvar {
   // instead infer a mode from the element count.
   bool interpolation_authored = false;
   const Value* value;
-  std::vector<int32_t> indices;  // Optional indices for indexed primvars
+
+  /// VIEW of the primvar's authored `:indices` array (nullptr when absent).
+  /// Like `value` above, it points into the stage's attribute storage and is
+  /// NOT owned -- it stays valid only as long as the Stage that produced it.
+  /// Copying every index array here duplicated arrays the caller often throws
+  /// away immediately (the render converter skips `skel:`-prefixed primvars
+  /// outright). Use indices() for an empty-safe read.
+  const std::vector<int32_t>* indices_view = nullptr;
+
+  static const std::vector<int32_t>& empty_indices() {
+    static const std::vector<int32_t> kEmpty;
+    return kEmpty;
+  }
+  const std::vector<int32_t>& indices() const {
+    return indices_view ? *indices_view : empty_indices();
+  }
 };
 
 std::vector<Primvar> GetPrimvars(const UsdPrim& prim);

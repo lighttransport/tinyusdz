@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDA ASCII Parser implementation
 
 #include "ascii-parser-internal.hh"
+#include "../safe-file-size.hh"
 #include "../strfmt.hh"
 #include "usda-lazy-source.hh"
 #include "value-parser.hh"
@@ -65,6 +66,11 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
   warnings_.clear();
   depth_ = 0;
   source_ = std::move(source);
+
+  if (!source_ && length != 0 && !data) {
+    AddError("Invalid null USDA input");
+    return false;
+  }
 
   if (options_.max_file_size > 0 && length > options_.max_file_size) {
     AddError("File size exceeds maximum allowed");
@@ -188,28 +194,26 @@ bool AsciiParser::Impl::ParseOwned(std::string&& data) {
 }
 
 bool AsciiParser::Impl::ParseFile(const char* filename) {
+  if (!filename || !*filename) {
+    AddError("Invalid USDA filename");
+    return false;
+  }
   std::ifstream file(filename, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
     AddError(std::string("Failed to open file: ") + filename);
     return false;
   }
 
-  const auto fsize = file.tellg();
-  if (fsize < 0) {
-    AddError("Failed to determine file size");
+  // Unconditional bound -- max_file_size is optional, and the size_t
+  // comparison this replaces was a no-op on LP64. A directory opens fine here
+  // and reports LLONG_MAX (see SafeStreamSize).
+  size_t size = 0;
+  if (!SafeStreamSize(file, static_cast<uint64_t>(options_.max_file_size),
+                      &size)) {
+    AddError("Invalid or oversized file");
     return false;
   }
-  if (static_cast<uintmax_t>(fsize) >
-      static_cast<uintmax_t>((std::numeric_limits<size_t>::max)())) {
-    AddError("File size exceeds addressable memory");
-    return false;
-  }
-  size_t size = static_cast<size_t>(fsize);
   file.seekg(0, std::ios::beg);
-  if (options_.max_file_size > 0 && size > options_.max_file_size) {
-    AddError("File size exceeds maximum allowed");
-    return false;
-  }
 
   if (options_.enable_usda_lazy_arrays) {
     std::string mmap_error;

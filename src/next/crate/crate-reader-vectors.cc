@@ -17,7 +17,7 @@ bool CrateReader::Impl::UnpackTokenOrStringVector(ValueRep rep,
     out = Value::MakeTokenArray(std::vector<std::string>{});
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!SeekToPayload(reader_.get(), rep)) return false;
   uint64_t n = 0;
   if (!reader_->read_u64(n)) return false;
   if (n > options_.max_array_elements) return false;
@@ -50,7 +50,7 @@ bool CrateReader::Impl::UnpackDoubleVector(ValueRep rep, Value& out) {
     out = Value::MakeDoubleArray(std::vector<double>{});
     return true;
   }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  if (!SeekToPayload(reader_.get(), rep)) return false;
   uint64_t n = 0;
   if (!reader_->read_u64(n)) return false;
   if (n > options_.max_array_elements) return false;

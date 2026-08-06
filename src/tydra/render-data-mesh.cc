@@ -3087,30 +3087,40 @@ bool RenderSceneConverter::ConvertMesh(
                                             prim_path_str, &_warn);
             if (ret) {
               VertexAttribute &vattr = ret.value();
+              // UV data is optional render metadata.  A malformed primvar
+              // must not make otherwise valid geometry unusable for physics
+              // conversion or offscreen rendering; skip only this UV slot.
+              bool valid = true;
 
               if (vattr.is_vertex()) {
                 if (vattr.vertex_count() != num_vertices) {
-                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_prim_path.prim_part(), num_vertices, vattr.vertex_count()));
+                  PUSH_WARN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}; skipping UV attribute", uvname, abs_prim_path.prim_part(), num_vertices, vattr.vertex_count()));
+                  valid = false;
                 }
               } else if (vattr.is_constant()) {
                 if (vattr.vertex_count() != 1) {
-                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_prim_path.prim_part(), 1, vattr.vertex_count()));
+                  PUSH_WARN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}; skipping UV attribute", uvname, abs_prim_path.prim_part(), 1, vattr.vertex_count()));
+                  valid = false;
                 }
               } else if (vattr.is_uniform()) {
                 if (vattr.vertex_count() != num_faces) {
-                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_prim_path.prim_part(), num_faces, vattr.vertex_count()));
+                  PUSH_WARN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}; skipping UV attribute", uvname, abs_prim_path.prim_part(), num_faces, vattr.vertex_count()));
+                  valid = false;
                 }
               } else if (vattr.is_facevarying()) {
                 if (vattr.vertex_count() != num_face_vertex_indices) {
-                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_prim_path.prim_part(), num_face_vertex_indices, vattr.vertex_count()));
+                  PUSH_WARN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}; skipping UV attribute", uvname, abs_prim_path.prim_part(), num_face_vertex_indices, vattr.vertex_count()));
+                  valid = false;
                 }
               } else {
-                PUSH_ERROR_AND_RETURN("Internal error. Unknown variability of texcoord attribute.");
-                return false;
+                PUSH_WARN("Internal error. Unknown variability of texcoord attribute; skipping UV attribute.");
+                valid = false;
               }
 
-              // Use move to avoid copy
-              uvAttrs.emplace(uint32_t(slotId), std::move(vattr));
+              if (valid) {
+                // Use move to avoid copy
+                uvAttrs.emplace(uint32_t(slotId), std::move(vattr));
+              }
             } else {
               PUSH_WARN("Failed to get texture coordinate for `"
                         << uvname << "` : " << ret.error());

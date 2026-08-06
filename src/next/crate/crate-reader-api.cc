@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDC CrateReader public API wrappers
 
 #include "crate-reader-internal.hh"
+#include "../safe-file-size.hh"
 
 #include "crate-data-source.hh"
 
@@ -21,6 +22,7 @@ CrateReadResult CrateReader::Impl::ReadFromString(std::string&& bytes) {
   }
 
   source_ = CrateDataSource::Adopt(std::move(bytes), CrateVersion{});
+  source_->set_max_array_elements(options_.max_array_elements);
   return ParseFromSource();
 }
 
@@ -65,13 +67,29 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
     return std::move(result_);
   }
 
+  // The structural tables are read; if the file shrank underneath the mapping
+  // while we were reading it, say so. We survived this time (the truncated
+  // region went untouched), but any lazy value still referencing the mapping
+  // can hit SIGBUS later -- see CrateDataSource::MappedFileShrank().
+  if (source_ && source_->is_mmapped()) {
+    size_t now = 0;
+    if (source_->MappedFileShrank(&now)) {
+      AddWarning("Mapped file shrank while being read (" +
+                 std::to_string(source_->size()) + " -> " +
+                 std::to_string(now) +
+                 " bytes); lazily-read values may fault. Use "
+                 "CrateReadOptions::use_mmap = false for files that other "
+                 "processes may rewrite.");
+    }
+  }
+
   result_.success = result_.errors.empty();
   result_.version = version_;
   return std::move(result_);
 }
 
 CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
-  if (!data) {
+  if (!data && size != 0) {
     result_ = CrateReadResult();
     AddError("Invalid input data");
     return std::move(result_);
@@ -81,6 +99,7 @@ CrateReadResult CrateReader::Impl::Read(const uint8_t* data, size_t size) {
     AddError("Input exceeds max_memory budget");
     return std::move(result_);
   }
+  if (size == 0) return ReadFromString(std::string());
   return ReadFromString(std::string(reinterpret_cast<const char*>(data), size));
 }
 
@@ -89,6 +108,11 @@ CrateReadResult CrateReader::Impl::ReadOwned(std::string&& owned) {
 }
 
 CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
+  if (!filename || !*filename) {
+    CrateReadResult result;
+    result.errors.push_back({0, "Invalid filename"});
+    return result;
+  }
   if (options_.max_memory) {
     std::ifstream probe(filename, std::ios::binary | std::ios::ate);
     if (!probe.is_open()) {
@@ -113,6 +137,7 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
   if (options_.use_mmap) {
     if (auto src = CrateDataSource::MmapFile(filename)) {
       source_ = std::move(src);
+      source_->set_max_array_elements(options_.max_array_elements);
       return ParseFromSource();
     }
   }
@@ -124,22 +149,20 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
     return result;
   }
 
-  std::streamsize size = file.tellg();
-  if (size < 0) {
+  // Unconditional bound: max_memory is optional, and a directory reports
+  // LLONG_MAX here (see SafeStreamSize) which reached std::string(n, '\0').
+  size_t fsize = 0;
+  if (!SafeStreamSize(file, static_cast<uint64_t>(options_.max_memory),
+                      &fsize)) {
     CrateReadResult result;
-    result.errors.push_back({0, "Failed to determine file size"});
+    result.errors.push_back({0, "Invalid or oversized file size"});
     return result;
   }
-  if (options_.max_memory &&
-      static_cast<uint64_t>(size) > static_cast<uint64_t>(options_.max_memory)) {
-    CrateReadResult result;
-    result.errors.push_back({0, "File exceeds max_memory budget"});
-    return result;
-  }
+  const std::streamsize size = static_cast<std::streamsize>(fsize);
   file.seekg(0, std::ios::beg);
 
-  std::string data(static_cast<size_t>(size), '\0');
-  if (!file.read(&data[0], size)) {
+  std::string data(fsize, '\0');
+  if (size != 0 && !file.read(data.data(), size)) {
     CrateReadResult result;
     result.errors.push_back({0, "Failed to read file contents"});
     return result;

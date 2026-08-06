@@ -194,7 +194,7 @@ bool Browser::Scan(const std::string& dir, std::string* err) {
       const std::string p = de.path().string();
       if (!IsUsdPath(p)) continue;
       add_file(de.path(),
-               fs::relative(de.path(), root, ec2).string());
+               fs::relative(de.path(), root, ec2).u8string());
     }
   } else {
     fs::directory_iterator it(
@@ -207,14 +207,14 @@ bool Browser::Scan(const std::string& dir, std::string* err) {
       std::error_code ec2;
       if (de.is_directory(ec2) && !ec2) {
         FileEntry e;
-        e.name = de.path().filename().string();
+        e.name = de.path().filename().u8string();
         e.path = de.path().lexically_normal().string();
         e.is_dir = true;
         dirs.push_back(std::move(e));
       } else if (de.is_regular_file(ec2) && !ec2) {
         const std::string p = de.path().string();
         if (!IsUsdPath(p)) continue;
-        add_file(de.path(), de.path().filename().string());
+        add_file(de.path(), de.path().filename().u8string());
       }
     }
   }

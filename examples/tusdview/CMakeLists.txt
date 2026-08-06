@@ -604,7 +604,7 @@ endif()
 
 # Apply -Weverything only to project-owned C++ sources in tusdview.
 set_source_files_properties(${TUSDVIEW_SOURCES}
-    PROPERTIES COMPILE_FLAGS ${TUSDVIEW_CXX_FLAGS})
+    PROPERTIES COMPILE_FLAGS "${TUSDVIEW_CXX_FLAGS}")
 
 # Vendored C/C++ third-party code: suppress all warnings.
 set_source_files_properties(

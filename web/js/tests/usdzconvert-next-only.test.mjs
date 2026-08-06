@@ -1017,14 +1017,16 @@ def Xform "First" (
   prepend references = </Prototype>
 ) {
   double3 xformOp:translate = (10, 0, 0)
-  uniform token[] xformOpOrder = ["xformOp:translate"]
+  double3 xformOp:scale = (0.01, 0.01, 0.01)
+  uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
 }
 def Xform "Second" (
   instanceable = true
   prepend references = </Prototype>
 ) {
   double3 xformOp:translate = (20, 0, 0)
-  uniform token[] xformOpOrder = ["xformOp:translate"]
+  double3 xformOp:scale = (0.01, 0.01, 0.01)
+  uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
 }`;
   const stream = new native.RenderStream();
   try {
@@ -1050,8 +1052,13 @@ def Xform "Second" (
       minX = Math.min(minX, points[i]);
       maxX = Math.max(maxX, points[i]);
     }
-    assert.ok(maxX - minX >= 1,
-      'baked instance triangles must retain non-zero spatial extent');
+    assert.ok(Math.abs(minX) < 1e-5,
+      `authored prototype must remain at the origin, got ${minX}`);
+    assert.ok(Math.abs(maxX - 10.01) < 1e-5,
+      `baked instance must retain root translation and scale, got ${maxX}`);
+    const xs = Array.from({ length: points.length / 3 }, (_, i) => points[i * 3]);
+    assert.ok(xs.some((x) => Math.abs(x - 10.01) < 1e-5),
+      'first baked instance must retain its root translation and scale');
   } finally {
     stream.end();
     stream.delete();

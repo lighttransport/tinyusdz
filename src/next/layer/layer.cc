@@ -373,6 +373,26 @@ Layer::Stats Layer::stats() const {
 LayerBuilder::LayerBuilder(Layer& layer)
     : layer_(layer) {}
 
+uint32_t LayerBuilder::FindExistingPrim(const std::string& path_str) {
+  // Rebuild when the layer was mutated outside the builder (or on first use),
+  // so the map can never disagree with the layer.
+  if (!path_index_built_ || layer_.prim_count() != indexed_prim_count_) {
+    path_index_.clear();
+    path_index_.reserve(layer_.prim_count());
+    for (size_t i = 0; i < layer_.prim_count(); ++i) {
+      if (const PrimSpec* p = layer_.prim(static_cast<uint32_t>(i))) {
+        // emplace, not operator[]: on a duplicate path keep the FIRST, which
+        // is what the linear scan this replaces returned.
+        path_index_.emplace(p->path().str(), static_cast<uint32_t>(i));
+      }
+    }
+    indexed_prim_count_ = layer_.prim_count();
+    path_index_built_ = true;
+  }
+  auto it = path_index_.find(path_str);
+  return it == path_index_.end() ? UINT32_MAX : it->second;
+}
+
 uint32_t LayerBuilder::begin_prim(const std::string& name, const std::string& type_name,
                                    PrimSpecifier specifier) {
   PrimSpec spec(name, type_name);
@@ -398,33 +418,14 @@ uint32_t LayerBuilder::begin_prim(const std::string& name, const std::string& ty
   // crate write (pxr: "invalid specs: spec repeated") — pxr errors on the
   // duplicate at parse time; merging keeps the file loadable while staying
   // single-spec-per-path.
-  if (!prim_stack_.empty()) {
-    const PrimSpec* parent = layer_.prim(prim_stack_.back());
-    if (parent) {
-      for (uint32_t ci : parent->child_indices()) {
-        const PrimSpec* child = layer_.prim(ci);
-        if (child && child->name() == name) {
-          current_index_ = ci;
-          if (!type_name.empty() && layer_.prim(ci)->type_name().empty()) {
-            layer_.prim_mutable(ci)->set_type_name(type_name);
-          }
-          prim_stack_.push_back(current_index_);
-          return current_index_;
-        }
-      }
+  const uint32_t existing = FindExistingPrim(path_str);
+  if (existing != UINT32_MAX) {
+    current_index_ = existing;
+    if (!type_name.empty() && layer_.prim(existing)->type_name().empty()) {
+      layer_.prim_mutable(existing)->set_type_name(type_name);
     }
-  } else {
-    for (uint32_t ri : layer_.root_indices()) {
-      const PrimSpec* root = layer_.prim(ri);
-      if (root && root->name() == name) {
-        current_index_ = ri;
-        if (!type_name.empty() && layer_.prim(ri)->type_name().empty()) {
-          layer_.prim_mutable(ri)->set_type_name(type_name);
-        }
-        prim_stack_.push_back(current_index_);
-        return current_index_;
-      }
-    }
+    prim_stack_.push_back(current_index_);
+    return current_index_;
   }
 
   current_index_ = layer_.add_prim(std::move(spec));
@@ -435,6 +436,10 @@ uint32_t LayerBuilder::begin_prim(const std::string& name, const std::string& ty
   } else {
     layer_.add_root(current_index_);
   }
+
+  // Keep the lookup map in step with the layer.
+  path_index_.emplace(path_str, current_index_);
+  indexed_prim_count_ = layer_.prim_count();
 
   // Push to stack
   prim_stack_.push_back(current_index_);

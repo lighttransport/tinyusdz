@@ -6,13 +6,41 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace tinyusdz {
 namespace tydra {
 namespace next {
 
-constexpr uint64_t GiB(uint64_t value) { return value << 30; }
-constexpr uint64_t MiB(uint64_t value) { return value << 20; }
+constexpr uint64_t GiB(uint64_t value) {
+  return value > ((std::numeric_limits<uint64_t>::max)() >> 30)
+             ? (std::numeric_limits<uint64_t>::max)()
+             : value << 30;
+}
+constexpr uint64_t MiB(uint64_t value) {
+  return value > ((std::numeric_limits<uint64_t>::max)() >> 20)
+             ? (std::numeric_limits<uint64_t>::max)()
+             : value << 20;
+}
+
+inline uint64_t Percent(uint64_t value, uint64_t percent) {
+  if (percent == 0) return 0;
+  // Split before multiplying so hostile capacity values cannot overflow the
+  // budget formulas.
+  const uint64_t whole = value / 100;
+  const uint64_t remainder = value % 100;
+  const uint64_t first =
+      whole > (std::numeric_limits<uint64_t>::max)() / percent
+          ? (std::numeric_limits<uint64_t>::max)()
+          : whole * percent;
+  const uint64_t second =
+      remainder > (std::numeric_limits<uint64_t>::max)() / percent
+          ? (std::numeric_limits<uint64_t>::max)()
+          : (remainder * percent) / 100;
+  return first > (std::numeric_limits<uint64_t>::max)() - second
+             ? (std::numeric_limits<uint64_t>::max)()
+             : first + second;
+}
 
 enum class LargeSceneQuality : uint8_t { Full, Adaptive, Proxy };
 
@@ -41,7 +69,7 @@ inline uint64_t ComputeVramLimit(uint64_t capacity) {
     return std::min(capacity, std::max(GiB(8), capacity / 2));
   }
   if (capacity > GiB(2)) return capacity - GiB(2);
-  return capacity * 3 / 4;
+  return capacity - capacity / 4;
 }
 
 inline ResourceBudget ComputeResourceBudget(uint64_t host_capacity,
@@ -56,10 +84,10 @@ inline ResourceBudget ComputeResourceBudget(uint64_t host_capacity,
           : std::max(GiB(1), host_capacity / uint64_t{8});
   budget.host_limit = host_capacity > host_reserve
                           ? host_capacity - host_reserve
-                          : host_capacity * 3 / 4;
-  budget.stage_limit = budget.host_limit * 55 / 100;
-  budget.cpu_geometry_limit = budget.host_limit * 25 / 100;
-  budget.io_cache_limit = budget.host_limit * 10 / 100;
+                          : host_capacity - host_capacity / 4;
+  budget.stage_limit = Percent(budget.host_limit, 55);
+  budget.cpu_geometry_limit = Percent(budget.host_limit, 25);
+  budget.io_cache_limit = Percent(budget.host_limit, 10);
 
   budget.vram_capacity = vram_capacity;
   budget.vram_limit = ComputeVramLimit(vram_capacity);
@@ -69,8 +97,8 @@ inline ResourceBudget ComputeResourceBudget(uint64_t host_capacity,
       budget.vram_limit > budget.upload_staging_limit
           ? budget.vram_limit - budget.upload_staging_limit
           : budget.vram_limit;
-  budget.gpu_geometry_limit = gpu_resident * 65 / 100;
-  budget.gpu_texture_limit = gpu_resident * 25 / 100;
+  budget.gpu_geometry_limit = Percent(gpu_resident, 65);
+  budget.gpu_texture_limit = Percent(gpu_resident, 25);
   budget.proxy_geometry_threshold =
       std::min(MiB(256), std::max(MiB(16), budget.gpu_geometry_limit / 16));
   return budget;

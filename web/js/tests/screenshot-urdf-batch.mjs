@@ -54,18 +54,9 @@ const ASSET_EXTS = new Set(['.stl', '.obj', '.mtl', '.png', '.jpg', '.jpeg', '.x
 const DEFAULT_ROBOTS = [
   'universal_robots_ur5e/ur5e.xml',
   'franka_emika_panda/panda.xml',
-  'kuka_iiwa_14/iiwa14.xml',
-  'trossen_vx300s/vx300s.xml',
   'unitree_go2/go2.xml',
-  'anybotics_anymal_c/anymal_c.xml',
-  'boston_dynamics_spot/spot_arm.xml',
-  'unitree_h1/h1.xml',
   'unitree_g1/g1_with_hands.xml',
-  'robotiq_2f85/2f85.xml',
-  'shadow_hand/right_hand.xml',
   'agility_cassie/cassie.xml',
-  'google_robot/robot.xml',
-  'skydio_x2/x2.xml'
 ];
 
 function parseArgs(argv = process.argv.slice(2)) {
@@ -157,6 +148,7 @@ function startVite(port) {
   const bin = path.join(WEB_JS_DIR, 'node_modules', '.bin', 'vite');
   const proc = spawn(bin, ['--port', String(port), '--strictPort'], {
     cwd: WEB_JS_DIR,
+    env: { ...process.env, TINYUSDZ_SKIP_WASM_PREPARE: '1' },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   proc.stdout.on('data', () => {});

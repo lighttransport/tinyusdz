@@ -353,8 +353,66 @@
     AssignPrototype(prim_path, ik, prefer_min);
   }
 
+  // Retire one group: drop `prim_path` from it and, if that empties it or the
+  // prim WAS the prototype, orphan the siblings and erase the group.
+  // `it` must be valid; returns the iterator to use next.
+  std::unordered_map<std::string, std::vector<std::string>>::iterator
+  DropInstancingFromGroup(
+      std::unordered_map<std::string, std::vector<std::string>>::iterator it,
+      const std::string &prim_path) {
+    auto &v = it->second;
+    v.erase(std::remove(v.begin(), v.end(), prim_path), v.end());
+    const bool was_prototype = (it->first == prim_path);
+    if (!was_prototype && !v.empty()) return ++it;
+    // The group's prototype is gone: orphan the remaining siblings so their
+    // prototype_of doesn't dangle to a dropped prototype. They re-group on
+    // the next recomposition. (Without this, IsInstance/GetPrototype could
+    // report a removed prototype after invalidating its subtree.)
+    for (const std::string &m : v) prototype_of.erase(m);
+    for (auto kit = prototype_by_key.begin(); kit != prototype_by_key.end();) {
+      if (kit->second == it->first) {
+        // instance_key_order mirrors prototype_by_key's keys; drop the entry
+        // here too or it grows without bound and skews the reverse scan the
+        // parallel warm path uses to pick prototypes.
+        instance_key_order.erase(std::remove(instance_key_order.begin(),
+                                             instance_key_order.end(),
+                                             kit->first),
+                                 instance_key_order.end());
+        kit = prototype_by_key.erase(kit);
+      } else {
+        ++kit;
+      }
+    }
+    return instances_by_prototype.erase(it);
+  }
+
   void DropInstancing(const std::string &prim_path) {
+    // Targeted: prototype_of is the reverse index, so the prim's own group (and
+    // its own group if it IS a prototype) are the only ones that can mention
+    // it. Walking EVERY prototype with an O(instances) std::remove made
+    // invalidating a K-prim subtree O(K * prototypes * instances) -- a
+    // multi-second stall on kitbashed scenes.
+    auto pit = prototype_of.find(prim_path);
+    const bool has_proto = pit != prototype_of.end();
+    const std::string proto = has_proto ? pit->second : std::string();
     prototype_of.erase(prim_path);
+
+    if (has_proto || instances_by_prototype.count(prim_path)) {
+      if (has_proto && proto != prim_path) {
+        auto git = instances_by_prototype.find(proto);
+        if (git != instances_by_prototype.end()) {
+          DropInstancingFromGroup(git, prim_path);
+        }
+      }
+      auto sit = instances_by_prototype.find(prim_path);
+      if (sit != instances_by_prototype.end()) {
+        DropInstancingFromGroup(sit, prim_path);
+      }
+      return;
+    }
+
+    // No reverse-index entry: fall back to the exhaustive sweep so a stale
+    // membership can never be left behind.
     for (auto it = instances_by_prototype.begin();
          it != instances_by_prototype.end();) {
       auto &v = it->second;
@@ -367,8 +425,15 @@
         // report a removed prototype after invalidating its subtree.)
         for (const std::string &m : v) prototype_of.erase(m);
         for (auto kit = prototype_by_key.begin(); kit != prototype_by_key.end();) {
-          if (kit->second == it->first) kit = prototype_by_key.erase(kit);
-          else ++kit;
+          if (kit->second == it->first) {
+            instance_key_order.erase(std::remove(instance_key_order.begin(),
+                                                 instance_key_order.end(),
+                                                 kit->first),
+                                     instance_key_order.end());
+            kit = prototype_by_key.erase(kit);
+          } else {
+            ++kit;
+          }
         }
         it = instances_by_prototype.erase(it);
       } else {

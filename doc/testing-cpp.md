@@ -101,6 +101,68 @@ prints a failure/warning summary. It continues across individual files so one
 failure does not hide later failures; inspect the summary and log even when the
 shell command itself completes.
 
+### Headless NVIDIA viewer regression
+
+The viewer tests are part of the native CTest tree only when
+`TINYUSDZ_BUILD_GUI_VIEWER=ON`. On an NVIDIA Linux host, run them under a
+24-bit Xvfb display and opt into CMake's NVIDIA offload environment:
+
+```bash
+cmake -S . -B build_ninja -G Ninja \
+  -DTINYUSDZ_BUILD_TESTS=ON \
+  -DTINYUSDZ_BUILD_EXAMPLES=ON \
+  -DTINYUSDZ_BUILD_GUI_VIEWER=ON \
+  -DTINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON
+cmake --build build_ninja -j16
+
+# Viewer-only hardware/display coverage:
+xvfb-run -a -s "-screen 0 1280x800x24" \
+  ctest --test-dir build_ninja -R '^tusdview' --output-on-failure
+
+# Full native CTest matrix, including the viewer tests:
+xvfb-run -a -s "-screen 0 1280x800x24" \
+  ctest --test-dir build_ninja --output-on-failure
+```
+
+`TINYUSDZ_TUSDVIEW_NVIDIA_OFFLOAD=ON` is evaluated during CMake configure. If
+the NVIDIA kernel device, GLVND vendor file, and an NVIDIA Vulkan physical
+device are visible, CMake injects the following into `tusdview-*` tests:
+
+```text
+__NV_PRIME_RENDER_OFFLOAD=1
+__GLX_VENDOR_LIBRARY_NAME=nvidia
+__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+TUSDVIEW_NVIDIA_OFFLOAD=1
+TUSDVIEW_XVFB=1
+TUSDVIEW_VK_DEVICE=nvidia
+```
+
+The Vulkan selector is added only when `vulkaninfo --summary` confirms an
+NVIDIA physical device. If the host exposes the kernel/GLVND files but not the
+Vulkan ICD or `/dev/nvidia0`, CMake leaves Vulkan selection automatic so the
+tests can use another device or return their normal skip code. Check the
+configure message before interpreting a Vulkan result.
+
+The three GLVND variables route OpenGL only. `TUSDVIEW_VK_DEVICE=nvidia` is a
+test-harness variable that forwards `--vk-device nvidia`; direct viewer runs
+should use the command-line option. True headless Vulkan/CUDA/HIP tests do not
+need Xvfb. For the complete variable reference, direct commands, AMD behavior,
+and recovery from a broken sandbox X socket, see
+[`doc/tusdview.md`](tusdview.md#vulkan-on-nvidia-primeoffload-under-xvfb).
+
+If `xvfb-run` cannot create `/tmp/.X11-unix` sockets in a container or managed
+sandbox, start Xvfb externally with Unix sockets disabled and use its TCP
+display instead:
+
+```bash
+Xvfb :88 -screen 0 1280x720x24 -ac -nolisten unix -nolisten local -listen tcp
+DISPLAY=localhost:88 ctest --test-dir build_ninja -R '^tusdview' --output-on-failure
+```
+
+For USD-assets smoke runs, use `TUSDVIEW_XVFB=external` with the same `DISPLAY`
+and set `TUSDVIEW_NVIDIA_OFFLOAD=1 TUSDVIEW_VK_DEVICE=nvidia` only after the
+Vulkan device probe succeeds.
+
 Useful variants:
 
 ```bash
@@ -179,7 +241,11 @@ The tusdview viewer example registers GPU-dependent tests under the `tusdview` c
 | `tusdview-raster-shadow-map` | Raster shadow map regression | No GPU |
 
 ```bash
-# Run all tusdview tests
+# Run every test whose name belongs to the tusdview matrix. The name filter
+# includes tests that do not carry the tusdview label.
+ctest -R '^tusdview' --output-on-failure
+
+# Run only the tests explicitly tagged with the tusdview label.
 ctest -L tusdview --output-on-failure
 
 # Run individual test

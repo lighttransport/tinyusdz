@@ -1,0 +1,115 @@
+# Web regression gate
+
+All web/WASM regression procedures live under `web/js`. The canonical gate is
+`npm test`; it runs the assertion-based Node/WASM suites, the USD Physics
+simulation, every pinned MuJoCo Menagerie model through MJCF → USD → MJCF, the
+`urdf.html` renderer, and the real OffscreenCanvas/Web Worker renderer. The
+regular UI path uses five representative models; the CLI closure and Worker
+path cover every discovered primary Menagerie model.
+
+## Setup
+
+```bash
+cd web/js
+npm ci                         # or npm install for local development
+npm run test:setup             # explicit network step; clones the locked SHA
+```
+
+The dataset is stored in ignored `web/js/.cache/mujoco_menagerie`. Set
+`MUJOCO_MENAGERIE` or `MENAGERIE_DIR` to use another checkout. The setup script
+detaches the checkout at `tests/fixtures/mujoco-menagerie.lock`; a moving branch
+is never used by the regression gate.
+
+Build both WASM modules before browser tests or after changing C++/WASM
+bindings:
+
+```bash
+bash ../demo/scripts/prepare-local-tinyusdz.sh
+```
+
+This configures `web/build_ninja` for the combined legacy module and
+`web/build_next_ninja` for the next-only module, then writes the four generated
+artifacts under `web/js/src/tinyusdz/`.
+
+MuJoCo physics-only tests use `/home/syoyo/work/mujoco/wasm/dist` by default for
+backward compatibility. Portable setups should set `MUJOCO_WASM_DIR`, or set
+`MUJOCO_PHYSICS_JS` and `MUJOCO_PHYSICS_WASM` directly.
+
+## Commands
+
+```bash
+npm test                       # complete gate, including all Menagerie models
+npm run test:node              # deterministic Node/WASM suites
+npm run test:physics           # fixture simulation + Menagerie CLI closure
+npm run test:browser           # conversion prerequisite + both browser paths
+npm run test:quick             # alias for the Node/WASM profile
+```
+
+For focused debugging, the original scripts remain available, for example:
+
+```bash
+node tests/regression-usdzconvert-material-dedup.mjs
+./run-mjcf-roundtrip.sh --all --closure
+node tests/screenshot-urdf-batch.mjs --all --sw
+node tests/screenshot-offscreen-batch.mjs --all --sw \
+  --converted-dir .regression/mjcf-roundtrip
+```
+
+The full runner writes temporary output under `web/js/.regression`. Successful
+runs remove it; use `--keep-output` to retain screenshots, converted USD/MJCF,
+per-model summaries, and the aggregate `summary.json`.
+
+`npm run test:browser` is independently runnable: if the Menagerie conversion
+summary is absent or incomplete, it first creates the full MJCF/USD/MJCF
+conversion output needed by both browser harnesses.
+
+## Browser modes
+
+Hardware runs should use Xvfb so Chrome remains off-screen while ANGLE/Vulkan
+uses the GPU. The aggregate runner wraps each browser phase in `xvfb-run` when
+it is available:
+
+```bash
+npm test
+```
+
+The browser runners automatically fall back to headless SwiftShader when the
+GPU/X11 prerequisites are unavailable. Use `--software` on
+`tests/run-regression.mjs` to force the fallback or `--hardware` to request the
+GPU path explicitly.
+
+The regular browser check loads each MJCF into `urdf.html`, converts it to USD,
+and verifies both visible views. The OffscreenCanvas check uploads the converted
+USD to `offscreengl.html`, verifies the Worker message protocol and mesh count,
+captures the canvas itself, and rejects blank renders and page errors.
+
+## Pass criteria
+
+- Every selected Node/WASM test exits zero.
+- The physics fixture extracts its Physics/MuJoCo annotations and completes the
+  MuJoCo simulation.
+- Every discovered primary Menagerie MJCF has a successful forward conversion,
+  return conversion, and closure count match.
+- The regular browser smoke models load without page errors and produce
+  nonblank split-view output.
+- The OffscreenCanvas Worker loads every converted model without worker errors
+  and produces nonblank canvas output.
+- Generated assets stay outside Git-tracked paths.
+
+## CTest integration and WASM threading
+
+The same aggregate runner is registered as `wasm-regression-full` when CMake
+browser regression tests are enabled:
+
+```bash
+ctest --test-dir ../build_ninja -R wasm-regression-full --output-on-failure
+```
+
+The default web build is deliberately non-threaded. Both
+`TINYUSDZ_ENABLE_THREAD` and `TINYUSDZ_NEXT_ENABLE_THREAD` must be `OFF`, and
+generated compile commands must contain no `-pthread`, `PTHREAD`, or
+`TINYUSDZ_ENABLE_THREAD` define. `std::shared_ptr` remains valid here because
+it provides ownership/lifetime semantics; it does not enable parallel
+execution. The next-core WASM build uses `shared_ptr::use_count()` ownership
+checks because `shared_ptr::unique()` is unavailable in the active C++20
+standard library.

@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Asset Resolution Implementation
 
 #include "asset-resolver.hh"
+#include "../safe-file-size.hh"
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -339,13 +340,13 @@ bool AssetResolver::ReadAsset(const std::string& resolved_path,
     if (err) *err += "ReadAsset: failed to open: " + resolved_path + "\n";
     return false;
   }
-  const std::streamoff size = f.tellg();
-  if (size < 0) {
-    if (err) *err += "ReadAsset: failed to stat: " + resolved_path + "\n";
+  size_t size = 0;
+  if (!SafeStreamSize(f, 0, &size)) {
+    if (err) *err += "ReadAsset: implausible file size: " + resolved_path + "\n";
     return false;
   }
   f.seekg(0, std::ios::beg);
-  out->resize(static_cast<size_t>(size));
+  out->resize(size);
   if (size > 0 &&
       !f.read(reinterpret_cast<char*>(out->data()), size)) {
     if (err) *err += "ReadAsset: short read: " + resolved_path + "\n";

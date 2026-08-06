@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <limits>
 #include <unordered_set>
 
 #include "tydra/next/chunked-array.hh"
@@ -20,7 +21,11 @@
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
+#include "tydra/next/mem-budget.hh"
+#include "tydra/next/usdz-entry-match.hh"
+#include "tydra/next/render-session.hh"
 #include "tydra/next/resource-budget.hh"
+#include "tydra/next/texture-cache.hh"
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/pcp/cache.hh"
 #include "next/reader/usda-reader.hh"
@@ -153,6 +158,166 @@ void TestChunkedArrayAllocFailure() {
   std::cout << "  ChunkedArray allocation failure: PASSED\n";
 }
 
+// Regression: `&arr[i]` followed by pointer indexing read past the chunk
+// allocation. FloatChunked holds 16384 elements per 64KB chunk and
+// 16384 % 3 == 1, so an xyz triple straddles a chunk boundary every ~5461
+// points; the tail chunk is exact-sized, so even a 2-element run overruns
+// there. read2()/read3() must return the right values across every boundary.
+void TestChunkedArrayStraddlingReads() {
+  std::cout << "Testing ChunkedArray straddling multi-element reads...\n";
+
+  constexpr size_t kPerChunk = ChunkedArray<float>::kElementsPerChunk;
+  static_assert(kPerChunk % 3 == 1, "test targets the straddling geometry");
+
+  // Enough points to cross several chunk boundaries, with a partial tail.
+  const size_t npoints = kPerChunk * 2 + 777;
+  ChunkedArray<float> pts;
+  pts.reserve(npoints * 3);
+  for (size_t i = 0; i < npoints * 3; ++i) {
+    pts.push_back(static_cast<float>(i));
+  }
+  assert(pts.chunk_count() > 1);
+
+  for (size_t p = 0; p < npoints; ++p) {
+    float xyz[3];
+    pts.read3(p * 3, xyz);
+    for (int c = 0; c < 3; ++c) {
+      assert(xyz[c] == static_cast<float>(p * 3 + c));
+    }
+  }
+
+  // read2 over the very last pair, i.e. right against the exact-sized tail.
+  ChunkedArray<float> uv;
+  const size_t nuv = kPerChunk + 5;
+  uv.reserve(nuv * 2);
+  for (size_t i = 0; i < nuv * 2; ++i) uv.push_back(static_cast<float>(i));
+  for (size_t p = 0; p < nuv; ++p) {
+    float st[2];
+    uv.read2(p * 2, st);
+    assert(st[0] == static_cast<float>(p * 2));
+    assert(st[1] == static_cast<float>(p * 2 + 1));
+  }
+
+  std::cout << "  ChunkedArray straddling reads passed!\n";
+}
+
+// Copy-on-write sharing: share_from() must alias the chunks (O(1), no byte
+// duplication) and the FIRST write through EITHER holder must take a private
+// copy so the other is unaffected.
+void TestChunkedArrayShareCow() {
+  std::cout << "Testing ChunkedArray copy-on-write sharing...\n";
+
+  constexpr size_t N = 50000;  // spans many chunks
+  ChunkedArray<uint32_t> a;
+  for (size_t i = 0; i < N; ++i) a.push_back(static_cast<uint32_t>(i));
+  assert(!a.is_shared());
+
+  ChunkedArray<uint32_t> b;
+  b.share_from(a);
+  assert(b.size() == N);
+  assert(a.is_shared() && b.is_shared());
+  // Same bytes, same buffers. NOTE: read through CONST refs -- the non-const
+  // chunk_data() hands out a writable pointer and so must detach.
+  {
+    const ChunkedArray<uint32_t>& ca = a;
+    const ChunkedArray<uint32_t>& cb = b;
+    assert(ca.chunk_data(0) == cb.chunk_data(0));
+  }
+  for (size_t i = 0; i < N; i += 997) assert(b[i] == static_cast<uint32_t>(i));
+
+  // Write through the clone: it detaches, the original keeps its values.
+  b[42] = 999999u;
+  assert(b[42] == 999999u);
+  assert(a[42] == 42u);
+  {
+    const ChunkedArray<uint32_t>& ca = a;
+    const ChunkedArray<uint32_t>& cb = b;
+    assert(ca.chunk_data(0) != cb.chunk_data(0));
+  }
+  for (size_t i = 0; i < N; i += 997) {
+    if (i == 42) continue;
+    assert(a[i] == static_cast<uint32_t>(i));
+    assert(b[i] == static_cast<uint32_t>(i));
+  }
+
+  // Writing through the ORIGINAL of a live share must detach too.
+  ChunkedArray<uint32_t> c;
+  c.share_from(a);
+  a[7] = 12345u;
+  assert(a[7] == 12345u);
+  assert(c[7] == 7u);
+
+  // append() after clear() writes into existing capacity -- it must still
+  // detach, or it would scribble over the array it shares with.
+  ChunkedArray<uint32_t> d;
+  d.share_from(c);
+  d.clear();
+  const uint32_t fill[4] = {8, 8, 8, 8};
+  d.append(fill, 4);
+  assert(d.size() == 4 && d[0] == 8u);
+  assert(c.size() == N && c[0] == 0u);
+
+  // Sharing an empty array is a no-op, not a crash.
+  ChunkedArray<uint32_t> e, f;
+  f.share_from(e);
+  assert(f.size() == 0 && !f.is_shared());
+
+  std::cout << "  ChunkedArray copy-on-write sharing passed!\n";
+}
+
+// Budget-tracked chunk allocation. Two properties matter: the accounting
+// must BALANCE (every charge released, including through copy-on-write shares
+// and shrink_to_fit's tail rewrite), and a refusal must surface as
+// alloc_failed() rather than a crash or a silent short array.
+void TestChunkedArrayBudgetTracking() {
+  std::cout << "Testing ChunkedArray budget tracking...\n";
+
+  const size_t saved_cap = MemBudget::Get().Cap();
+  MemBudget::Get().InitBytes(size_t(1) << 30);   // generous
+  const size_t base = MemBudget::Get().Tracked();
+  MemBudget::InstallChunkedArrayTracking();
+
+  {
+    ChunkedArray<float> a;
+    for (size_t i = 0; i < 200000; ++i) a.push_back(float(i));
+    assert(!a.alloc_failed());
+    // The budget now sees the geometry, which is the whole point.
+    assert(MemBudget::Get().Tracked() > base);
+
+    ChunkedArray<float> b;
+    b.share_from(a);                 // share: no new charge
+    const size_t shared = MemBudget::Get().Tracked();
+    b[0] = 1.0f;                     // detach: takes a private copy
+    assert(MemBudget::Get().Tracked() > shared);
+
+    a.shrink_to_fit();
+    b.shrink_to_fit();
+  }
+  // Everything destroyed -> every charge released.
+  assert(MemBudget::Get().Tracked() == base);
+
+  // A cap that cannot be met must be reported, not crashed through.
+  MemBudget::Get().InitBytes(1);
+  {
+    ChunkedArray<float> tiny;
+    for (size_t i = 0; i < 100000; ++i) tiny.push_back(float(i));
+    assert(tiny.alloc_failed());
+    // Whatever it did keep is self-consistent and readable.
+    for (size_t i = 0; i < tiny.size(); ++i) (void)tiny[i];
+  }
+
+  MemBudget::UninstallChunkedArrayTracking();
+  MemBudget::Get().InitBytes(saved_cap);
+  // With the hooks removed, allocation is unaffected again.
+  {
+    ChunkedArray<float> c;
+    for (size_t i = 0; i < 100000; ++i) c.push_back(float(i));
+    assert(!c.alloc_failed());
+  }
+
+  std::cout << "  ChunkedArray budget tracking passed!\n";
+}
+
 void TestChunkedArrayLarge() {
   std::cout << "Testing ChunkedArray with large data...\n";
 
@@ -222,6 +387,63 @@ void TestChunkedArrayIterator() {
   assert(sum == 4950);
 
   std::cout << "  ChunkedArray iterator: PASSED\n";
+}
+
+void TestRenderDataSafety() {
+  std::cout << "Testing render-data safety helpers...\n";
+
+  VertexAttribute ints;
+  ints.format = VertexFormat::IVec3;
+  ints.int_data.append(std::vector<int32_t>{1, 2, 3, 4, 5, 6}.data(), 6);
+  assert(ints.element_count() == 2);
+
+  VertexAttribute uints;
+  uints.format = VertexFormat::UVec2;
+  const uint32_t values[] = {1, 2, 3, 4};
+  assert(uints.uint_data.append(values, 4));
+  assert(uints.element_count() == 2);
+
+  RenderCamera camera;
+  camera.focal_length = 0.0f;
+  camera.vertical_aperture = 24.0f;
+  camera.horizontal_aperture = 36.0f;
+  assert(camera.fov_x() == 0.0f && camera.fov_y() == 0.0f);
+
+  RenderPointInstancer instancer;
+  instancer.prototype_paths.resize(1);
+  instancer.prototype_node_ids.resize(1);
+  instancer.prototype_mesh_offsets = {1, 0};
+  assert(instancer.prototype_mesh_count(0) == 0);
+  assert(!instancer.has_valid_prototype_mesh_bindings());
+
+  RenderPoints points;
+  points.points.push_back(1.0f);
+  points.compact();
+  assert(!points.has_alloc_failure());
+  RenderCurves curves;
+  curves.tessellated_points.push_back(1.0f);
+  curves.compact();
+  assert(!curves.has_alloc_failure());
+
+  std::cout << "  render-data safety helpers: PASSED\n";
+}
+
+void TestTextureBudgetLease() {
+  std::cout << "Testing resident texture budget leases...\n";
+  auto state = std::make_shared<tinyusdz::next::TextureBudgetState>(8);
+  assert(state->try_add(8));
+  {
+    DecodedImage first;
+    first.pixels.resize(8);
+    first.budget_lease = std::make_shared<tinyusdz::next::TextureBudgetLease>(
+        state, 8);
+    DecodedImage second = first;
+    first.budget_lease.reset();
+    assert(state->resident.load(std::memory_order_relaxed) == 8);
+    second.budget_lease.reset();
+  }
+  assert(state->resident.load(std::memory_order_relaxed) == 0);
+  std::cout << "  resident texture budget leases: PASSED\n";
 }
 
 //
@@ -369,17 +591,31 @@ void TestDeepSceneAccess() {
   for (size_t i = 0; i < kDepth; ++i) {
     layer.begin_prim("P", "Xform");
   }
+  layer.begin_prim("Leaf", "Mesh");
   Stage stage = builder.Build();
   UsdPrim root = stage.GetRootPrims().front();
   const std::vector<UsdPrim> descendants = GetDescendants(root);
-  assert(descendants.size() == kDepth - 1);
+  assert(descendants.size() == kDepth);
+
+  std::vector<UsdPrim> meshes;
+  GatherMeshPrims(root, &meshes);
+  assert(meshes.size() == 1);
+  assert(meshes.front().GetName() == "Leaf");
+
+  RenderExtractOptions extract_options;
+  extract_options.collect_records = false;
+  extract_options.max_depth = 0;  // Exercise the iterative path past the default cap.
+  RenderExtractResult extracted;
+  assert(CollectRenderPrims(stage, extract_options, &extracted));
+  assert(extracted.meshes.size() == 1);
+  assert(extracted.meshes.front().prim.GetName() == "Leaf");
 
   size_t traversed = 0;
   stage.Traverse([&](const UsdPrim&) {
     ++traversed;
     return true;
   });
-  assert(traversed == kDepth);
+  assert(traversed == kDepth + 1);
   std::cout << "  Deep Scene Access: PASSED\n";
 }
 
@@ -527,6 +763,13 @@ void TestRenderConverter() {
   assert(ComputeVramLimit(GiB(8)) == GiB(6));
   assert(ComputeVramLimit(GiB(10)) == GiB(8));
   assert(ComputeVramLimit(GiB(24)) == GiB(12));
+  const ResourceBudget extreme_budget = ComputeResourceBudget(
+      (std::numeric_limits<uint64_t>::max)(),
+      (std::numeric_limits<uint64_t>::max)());
+  assert(extreme_budget.host_limit <=
+         (std::numeric_limits<uint64_t>::max)());
+  assert(extreme_budget.gpu_texture_limit <=
+         (std::numeric_limits<uint64_t>::max)());
 
   const char* usda = R"(#usda 1.0
 (
@@ -2730,6 +2973,308 @@ def Xform "Root"
   assert(scene.physics.articulation_roots[0] == "/Root/Body");
 
   std::cout << "  USD Physics annotations: PASSED\n";
+}
+
+// Regression for the ChunkedArray straddle OOB in the tangent generator.
+// The Lengyel path read points/normals/uvs via `&mesh->points[i*3]` and then
+// indexed off that pointer, which runs past the chunk allocation once a mesh
+// exceeds kElementsPerChunk/3 (~5461) points. Build a grid well past that and
+// require every tangent to come out finite and correct.
+void TestLargeMeshTangents() {
+  std::cout << "Testing tangents on a multi-chunk mesh...\n";
+
+  constexpr uint32_t N = 100;  // 10000 points > 16384/3
+  std::string pts, sts, nrm, counts, indices;
+  for (uint32_t y = 0; y < N; ++y) {
+    for (uint32_t x = 0; x < N; ++x) {
+      if (!pts.empty()) { pts += ", "; sts += ", "; nrm += ", "; }
+      pts += "(" + std::to_string(x) + ", " + std::to_string(y) + ", 0)";
+      sts += "(" + std::to_string(x) + ", " + std::to_string(y) + ")";
+      nrm += "(0, 0, 1)";
+    }
+  }
+  for (uint32_t y = 0; y + 1 < N; ++y) {
+    for (uint32_t x = 0; x + 1 < N; ++x) {
+      const uint32_t i0 = y * N + x, i1 = i0 + 1, i2 = i0 + N + 1,
+                     i3 = i0 + N;
+      if (!counts.empty()) { counts += ", "; indices += ", "; }
+      counts += "4";
+      indices += std::to_string(i0) + ", " + std::to_string(i1) + ", " +
+                 std::to_string(i2) + ", " + std::to_string(i3);
+    }
+  }
+
+  const std::string usda =
+      "#usda 1.0\n"
+      "def Mesh \"Grid\"\n{\n"
+      "  point3f[] points = [" + pts + "]\n"
+      "  normal3f[] normals = [" + nrm + "] (interpolation = \"vertex\")\n"
+      "  texCoord2f[] primvars:st = [" + sts +
+      "] (interpolation = \"vertex\")\n"
+      "  int[] faceVertexCounts = [" + counts + "]\n"
+      "  int[] faceVertexIndices = [" + indices + "]\n}\n";
+
+  LoadResult lr = LoadUSDAFromString(usda.c_str(), usda.size());
+  assert(lr.success);
+
+  const MeshConfig::TangentComputationMethod methods[] = {
+      MeshConfig::TangentComputationMethod::Lengyel,
+      MeshConfig::TangentComputationMethod::Hybrid,
+      MeshConfig::TangentComputationMethod::MikkTSpace,
+  };
+  for (auto method : methods) {
+    ConverterConfig cfg;
+    cfg.mesh.compute_tangents = true;
+    cfg.mesh.tangent_method = method;
+    cfg.mesh.build_vertex_indices = false;  // keep the authored point order
+    RenderSceneConverter conv(cfg);
+    ConvertResult res = conv.Convert(lr.stage);
+    assert(res.success);
+    auto it = res.scene.mesh_by_path.find("/Grid");
+    assert(it != res.scene.mesh_by_path.end());
+    RenderMesh& m = res.scene.meshes[static_cast<size_t>(it->second)];
+    assert(m.point_count() > 5461);  // must span multiple float chunks
+    assert(m.tangents.size() % 4 == 0);
+    assert(m.tangents.size() > 0);
+    for (size_t i = 0; i < m.tangents.size(); ++i) {
+      assert(std::isfinite(m.tangents[i]));
+    }
+    // Planar grid with axis-aligned UVs: tangent is +X everywhere.
+    for (size_t v = 0; v + 3 < m.tangents.size(); v += 4) {
+      assert(std::fabs(m.tangents[v + 0] - 1.0f) < 1e-3f);
+      assert(std::fabs(m.tangents[v + 1]) < 1e-3f);
+      assert(std::fabs(m.tangents[v + 2]) < 1e-3f);
+    }
+  }
+
+  std::cout << "  multi-chunk mesh tangents passed!\n";
+}
+
+// MemBudget wiring: with a cap below what the scene needs, conversion must
+// degrade gracefully (warn + stop adding geometry) instead of running to OOM.
+// The converter's other limits are all per-prim, so this specifically covers
+// MANY small meshes summing past the cap -- the case none of them can see.
+void TestConverterMemoryBudget() {
+  std::cout << "Testing converter cumulative memory budget...\n";
+
+  // Many small meshes; each one individually passes every per-prim probe.
+  std::string usda = "#usda 1.0\n";
+  const int kMeshes = 400;
+  for (int i = 0; i < kMeshes; ++i) {
+    usda += "def Mesh \"M" + std::to_string(i) +
+            "\"\n{\n"
+            "  point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]\n"
+            "  int[] faceVertexCounts = [4]\n"
+            "  int[] faceVertexIndices = [0, 1, 2, 3]\n}\n";
+  }
+  LoadResult lr = LoadUSDAFromString(usda.c_str(), usda.size());
+  assert(lr.success);
+
+  const size_t saved_cap = MemBudget::Get().Cap();
+
+  // Baseline: the generous default cap converts everything.
+  {
+    ConverterConfig cfg;
+    RenderSceneConverter conv(cfg);
+    ConvertResult res = conv.Convert(lr.stage);
+    assert(res.success);
+    assert(res.scene.meshes.size() == static_cast<size_t>(kMeshes));
+  }
+
+  // A cap far below current RSS trips the guard on the first check.
+  {
+    MemBudget::Get().InitBytes(1);  // 1 byte: unsatisfiable by construction
+    ConverterConfig cfg;
+    RenderSceneConverter conv(cfg);
+    ConvertResult res = conv.Convert(lr.stage);
+    // Graceful: no crash, fewer meshes than authored, and a diagnostic.
+    assert(res.scene.meshes.size() < static_cast<size_t>(kMeshes));
+    bool warned = false;
+    for (const std::string& w : res.warnings) {
+      if (w.find("Memory budget reached") != std::string::npos) warned = true;
+    }
+    assert(warned);
+  }
+
+  MemBudget::Get().InitBytes(saved_cap);
+  std::cout << "  converter cumulative memory budget passed!\n";
+}
+
+// Light-link collection resolution after the sorted-prefix-range rewrite.
+// The important trap is the sibling whose name EXTENDS an include target
+// ("/W/C" vs "/W/C2"): a naive prefix test matches both, so the range must
+// stop at the '/' boundary.
+void TestLightLinkCollectionRanges() {
+  std::cout << "Testing light-link collection path ranges...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "W"
+{
+    def Xform "A"
+    {
+        def Mesh "M0" { point3f[] points = [(0,0,0), (1,0,0), (1,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0, 1, 2] }
+        def Xform "B"
+        {
+            def Mesh "M1" { point3f[] points = [(0,0,0), (1,0,0), (1,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0, 1, 2] }
+        }
+    }
+    def Xform "C"
+    {
+        def Mesh "M2" { point3f[] points = [(0,0,0), (1,0,0), (1,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0, 1, 2] }
+    }
+    def Xform "C2"
+    {
+        def Mesh "M3" { point3f[] points = [(0,0,0), (1,0,0), (1,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0, 1, 2] }
+    }
+    def SphereLight "L"
+    {
+        rel collection:lightLink:includes = [</W/A>, </W/C>]
+        rel collection:lightLink:excludes = [</W/A/B>]
+    }
+}
+)";
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+  ConverterConfig cfg;
+  RenderSceneConverter conv(cfg);
+  ConvertResult res = conv.Convert(lr.stage);
+  assert(res.success);
+  assert(res.scene.lights.size() == 1);
+
+  const RenderLight& light = res.scene.lights[0];
+  assert(!light.light_links_all);
+
+  std::set<std::string> linked;
+  for (int32_t mi : light.light_link_mesh_indices) {
+    linked.insert(res.scene.meshes[static_cast<size_t>(mi)].prim_path);
+  }
+  // /W/A subtree minus the excluded /W/A/B, plus the /W/C subtree.
+  assert(linked.count("/W/A/M0") == 1);
+  assert(linked.count("/W/C/M2") == 1);
+  assert(linked.count("/W/A/B/M1") == 0);  // excluded
+  // "/W/C2" merely shares a prefix with "/W/C" -- it is NOT a descendant.
+  assert(linked.count("/W/C2/M3") == 0);
+  assert(linked.size() == 2);
+
+  // Emitted in ascending mesh-index order, as the previous full scan did.
+  for (size_t i = 1; i < light.light_link_mesh_indices.size(); ++i) {
+    assert(light.light_link_mesh_indices[i - 1] <
+           light.light_link_mesh_indices[i]);
+  }
+
+  std::cout << "  light-link collection path ranges passed!\n";
+}
+
+// .usdz entry matching. TextureDecoder prefilters candidate entries by
+// basename, which is only valid because EVERY tier below implies the
+// basenames are equal -- these cases pin that invariant along with the
+// matching rules themselves.
+void TestUsdzEntryMatching() {
+  std::cout << "Testing usdz entry matching...\n";
+  using tinyusdz::tydra::next::UsdzEntryMatches;
+
+  // Exact.
+  assert(UsdzEntryMatches("tex.png", "tex.png"));
+  // Leading "./" on the authored path is ignored.
+  assert(UsdzEntryMatches("tex.png", "./tex.png"));
+  assert(UsdzEntryMatches("textures/tex.png", "./textures/tex.png"));
+  // Entry carries a directory prefix the authored path omits.
+  assert(UsdzEntryMatches("assets/textures/tex.png", "textures/tex.png"));
+  assert(UsdzEntryMatches("a/b/c/tex.png", "tex.png"));
+  // Basename fallback: differing directories still match.
+  assert(UsdzEntryMatches("one/tex.png", "two/tex.png"));
+
+  // Suffix must land on a '/' boundary, not mid-name. "othertex.png" ends with
+  // "tex.png" but is a different file -- it may only match by basename, which
+  // it does not.
+  assert(!UsdzEntryMatches("othertex.png", "tex.png"));
+  assert(!UsdzEntryMatches("tex.png", "othertex.png"));
+  // Different basenames never match.
+  assert(!UsdzEntryMatches("a/other.png", "b/tex.png"));
+  assert(!UsdzEntryMatches("", "tex.png"));
+
+  // The prefilter invariant: any match implies equal basenames.
+  auto basename = [](const std::string& p) {
+    const size_t q = p.find_last_of('/');
+    return q == std::string::npos ? p : p.substr(q + 1);
+  };
+  const char* entries[] = {"tex.png", "a/tex.png", "a/b/tex.png",
+                           "othertex.png", "a/other.png", "tex.PNG"};
+  const char* assets[] = {"tex.png", "./tex.png", "textures/tex.png",
+                          "other.png", "othertex.png"};
+  for (const char* e : entries) {
+    for (const char* a : assets) {
+      if (!UsdzEntryMatches(e, a)) continue;
+      std::string an = a;
+      if (an.rfind("./", 0) == 0) an = an.substr(2);
+      assert(basename(e) == basename(an));
+    }
+  }
+
+  std::cout << "  usdz entry matching passed!\n";
+}
+
+// faceVertexIndices pointing past the points array must be rejected by
+// TriangulateMesh itself, not merely by SanitizeMeshTopology upstream: the
+// triangulator is also reached from ConvertGeomPrimitive/ConvertBoundsProxy
+// and from the self-triangulation inside ComputeVertexNormals/Tangents, none
+// of which sanitize first. Every index feeds mesh->points lookups (the quad
+// diagonal test, the earcut projection) and lands in triangulated_indices,
+// which normal/tangent generation later dereferences.
+void TestTriangulateOutOfRangeIndices() {
+  std::cout << "Testing triangulation with out-of-range indices...\n";
+
+  // 4 points, but faces reference vertex 9 (quad path) and vertex 12 (n-gon
+  // earcut path). One face is entirely valid and must survive.
+  const char* usda = R"(#usda 1.0
+def Mesh "M"
+{
+    point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]
+    int[] faceVertexCounts = [3, 4, 5]
+    int[] faceVertexIndices = [
+        0, 1, 2,
+        0, 1, 2, 9,
+        0, 1, 2, 3, 12
+    ]
+}
+)";
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  for (bool compute_normals : {false, true}) {
+    ConverterConfig cfg;
+    cfg.mesh.triangulate = true;
+    cfg.mesh.compute_normals = compute_normals;
+    cfg.mesh.build_vertex_indices = false;
+    RenderSceneConverter conv(cfg);
+    ConvertResult res = conv.Convert(lr.stage);
+    assert(res.success);
+    auto it = res.scene.mesh_by_path.find("/M");
+    if (it == res.scene.mesh_by_path.end()) continue;  // dropped is also safe
+    const RenderMesh& m = res.scene.meshes[static_cast<size_t>(it->second)];
+
+    // Whatever survived must be in range -- this is the invariant every
+    // downstream consumer relies on.
+    const uint32_t np = static_cast<uint32_t>(m.point_count());
+    for (size_t i = 0; i < m.triangulated_indices.size(); ++i) {
+      assert(m.triangulated_indices[i] < np);
+    }
+    // face_triangle_offsets stays monotonic and consistent with the output.
+    if (!m.face_triangle_offsets.empty()) {
+      for (size_t i = 1; i < m.face_triangle_offsets.size(); ++i) {
+        assert(m.face_triangle_offsets[i] >= m.face_triangle_offsets[i - 1]);
+      }
+      assert(m.face_triangle_offsets.back() ==
+             m.triangulated_indices.size() / 3);
+    }
+    if (compute_normals && m.has_normals()) {
+      for (size_t i = 0; i < m.normals.size(); ++i) {
+        assert(std::isfinite(m.normals[i]));
+      }
+    }
+  }
+
+  std::cout << "  triangulation with out-of-range indices passed!\n";
 }
 
 void TestRenderConverterCurves() {
@@ -5865,6 +6410,173 @@ def Xform "World" (
   std::cout << "  RenderSettings color management: PASSED\n";
 }
 
+class RecordingSceneUpdateSink final : public SceneUpdateSink {
+ public:
+  bool BeginUpdate(uint64_t base, uint64_t next, bool full) override {
+    base_revision = base;
+    new_revision = next;
+    full_resync = full;
+    mesh_upserts = 0;
+    removes = 0;
+    mesh_removes = 0;
+    return true;
+  }
+  bool Remove(const RemovedRenderResource& removed) override {
+    ++removes;
+    if (removed.kind == RenderResourceKind::Mesh) ++mesh_removes;
+    return true;
+  }
+  bool UpsertMesh(RenderId id, const RenderMesh& mesh) override {
+    ++mesh_upserts;
+    mesh_ids[mesh.prim_path] = id;
+    if (!mesh.points.empty()) last_mesh_x = mesh.points[0];
+    return true;
+  }
+  bool EndUpdate() override { return true; }
+
+  uint64_t base_revision = 0;
+  uint64_t new_revision = 0;
+  bool full_resync = false;
+  size_t mesh_upserts = 0;
+  size_t removes = 0;
+  size_t mesh_removes = 0;
+  float last_mesh_x = 0.0f;
+  std::map<std::string, RenderId> mesh_ids;
+};
+
+void TestIncrementalRenderSession() {
+  std::cout << "Testing incremental RenderSession...\n";
+  auto source = [](float x) {
+    std::string text = "#usda 1.0\ndef Mesh \"M\" {\n";
+    text += "    int[] faceVertexCounts = [3]\n";
+    text += "    int[] faceVertexIndices = [0, 1, 2]\n";
+    text += "    point3f[] points = [(" + std::to_string(x);
+    text += ", 0, 0), (1, 0, 0), (0, 1, 0)]\n}\n";
+    return text;
+  };
+
+  LoadResult first = LoadUSDAFromString(source(0.0f));
+  assert(first.success);
+  StageSnapshot first_snapshot;
+  first_snapshot.revision = 1;
+  first_snapshot.stage.reset(new Stage(std::move(first.stage)));
+
+  RecordingSceneUpdateSink sink;
+  RenderSession render_session;
+  RenderUpdateResult initial =
+      render_session.Initialize(first_snapshot, &sink);
+  if (!initial) std::cerr << "RenderSession init failed: " << initial.error << "\n";
+  assert(initial);
+  assert(sink.full_resync);
+  assert(sink.mesh_upserts == 1);
+  const RenderId mesh_id = sink.mesh_ids.at("/M");
+  assert(std::fabs(sink.last_mesh_x) < 1.0e-6f);
+
+  LoadResult second = LoadUSDAFromString(source(2.0f));
+  assert(second.success);
+  StageSnapshot second_snapshot;
+  second_snapshot.revision = 2;
+  second_snapshot.stage.reset(new Stage(std::move(second.stage)));
+  StageChangeSet changes;
+  changes.base_revision = 1;
+  changes.new_revision = 2;
+  PrimChange mesh_change;
+  mesh_change.path = Path("/M");
+  mesh_change.flags = StageChangeFlag::Topology;
+  mesh_change.properties.push_back("points");
+  changes.prims.push_back(std::move(mesh_change));
+  RenderUpdateResult update =
+      render_session.Apply(second_snapshot, changes, &sink);
+  assert(update);
+  assert(!sink.full_resync);
+  assert(sink.mesh_upserts == 1);
+  assert(sink.mesh_ids.at("/M") == mesh_id);
+  assert(std::fabs(sink.last_mesh_x - 2.0f) < 1.0e-6f);
+  assert(sink.removes == 0);
+  assert(render_session.revision() == second_snapshot.revision);
+
+  LoadResult third = LoadUSDAFromString("#usda 1.0\n");
+  assert(third.success);
+  StageSnapshot third_snapshot;
+  third_snapshot.revision = 3;
+  third_snapshot.stage.reset(new Stage(std::move(third.stage)));
+  StageChangeSet removal;
+  removal.base_revision = 2;
+  removal.new_revision = 3;
+  PrimChange removed_mesh;
+  removed_mesh.path = Path("/M");
+  removed_mesh.flags = StageChangeFlag::Resync;
+  removal.prims.push_back(std::move(removed_mesh));
+  RenderUpdateResult removed =
+      render_session.Apply(third_snapshot, removal, &sink);
+  assert(removed);
+  assert(!sink.full_resync);
+  assert(sink.mesh_upserts == 0);
+  assert(sink.mesh_removes == 1);
+  assert(sink.removes >= 1);
+  assert(removed.remove_count == sink.removes);
+  assert(render_session.revision() == 3);
+
+  StageSnapshot no_op_snapshot;
+  no_op_snapshot.revision = 4;
+  no_op_snapshot.stage = third_snapshot.stage;
+  StageChangeSet no_op;
+  no_op.base_revision = 3;
+  no_op.new_revision = 4;
+  RenderUpdateResult no_op_update =
+      render_session.Apply(no_op_snapshot, no_op, &sink);
+  assert(no_op_update);
+  assert(!sink.full_resync);
+  assert(no_op_update.upsert_count == 0);
+  assert(no_op_update.remove_count == 0);
+  assert(sink.mesh_upserts == 0);
+  assert(sink.removes == 0);
+  assert(render_session.revision() == 4);
+  std::cout << "  incremental RenderSession: PASSED\n";
+}
+
+void TestPtexMaterialInterfaceAsset() {
+  std::cout << "Testing Ptex material-interface asset forwarding...\n";
+  const char* usda = "#usda 1.0\ndef Xform \"World\"\n{\n"
+                    "    def Material \"Mat\"\n"
+                    "    {\n"
+                    "        asset inputs:surfaceMap = @maps/surface.ptx@\n"
+                    "        token outputs:surface.connect = </World/Mat/Surface.outputs:surface>\n"
+                    "        def Shader \"Surface\"\n"
+                    "        {\n"
+                    "            uniform token info:id = \"UsdPreviewSurface\"\n"
+                    "            color3f inputs:diffuseColor.connect = </World/Mat/Ptex.outputs:resultRGB>\n"
+                    "            token outputs:surface\n"
+                    "        }\n"
+                    "        def Shader \"Ptex\"\n"
+                    "        {\n"
+                    "            uniform token info:id = \"HwPtexTexture\"\n"
+                    "            asset inputs:file.connect = </World/Mat.inputs:surfaceMap>\n"
+                    "            color3f outputs:resultRGB\n"
+                    "        }\n"
+                    "    }\n"
+                    "    def Mesh \"Quad\"\n"
+                    "    {\n"
+                    "        point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]\n"
+                    "        int[] faceVertexCounts = [4]\n"
+                    "        int[] faceVertexIndices = [0,1,2,3]\n"
+                    "        rel material:binding = </World/Mat>\n"
+                    "    }\n"
+                    "}\n";
+
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  ConverterConfig config;
+  config.material.load_textures = false;
+  RenderSceneConverter converter(config);
+  ConvertResult converted = converter.Convert(loaded.stage);
+  assert(converted.success);
+  assert(converted.scene.textures.size() == 1);
+  assert(converted.scene.textures[0].asset_path == "maps/surface.ptx");
+  assert(converted.scene.images[0].resolved_path == "maps/surface.ptx");
+  std::cout << "  Ptex material-interface asset forwarding: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -5873,8 +6585,13 @@ int main() {
   TestChunkedArrayShrinkToFit();
   TestChunkedArrayAllocFailure();
   TestChunkedArrayLarge();
+  TestChunkedArrayStraddlingReads();
+  TestChunkedArrayShareCow();
+  TestChunkedArrayBudgetTracking();
   TestChunkedArrayAppend();
   TestChunkedArrayIterator();
+  TestRenderDataSafety();
+  TestTextureBudgetLease();
 
   std::cout << "\n";
 
@@ -5913,6 +6630,11 @@ int main() {
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();
   TestRenderConverterCurves();
+  TestConverterMemoryBudget();
+  TestLightLinkCollectionRanges();
+  TestUsdzEntryMatching();
+  TestTriangulateOutOfRangeIndices();
+  TestLargeMeshTangents();
   TestValueClipBaking();
   TestAnimationExtractionGate();
   TestMeshParityCleanups();
@@ -5932,6 +6654,8 @@ int main() {
   TestP2AuditFixes();
   TestLegacyParityExtraction();
   TestRenderColorManagement();
+  TestIncrementalRenderSession();
+  TestPtexMaterialInterfaceAsset();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

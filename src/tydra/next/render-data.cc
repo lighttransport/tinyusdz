@@ -139,8 +139,20 @@ size_t RenderMesh::memory_usage() const {
 }
 
 //
-// RenderPointInstancer
+// RenderPoints
 //
+
+void RenderPoints::compact() {
+  points.shrink_to_fit();
+  widths.shrink_to_fit();
+  colors.shrink_to_fit();
+  opacities.shrink_to_fit();
+}
+
+bool RenderPoints::has_alloc_failure() const {
+  return points.alloc_failed() || widths.alloc_failed() ||
+         colors.alloc_failed() || opacities.alloc_failed();
+}
 
 size_t RenderPoints::memory_usage() const {
   size_t total = sizeof(*this);
@@ -156,6 +168,26 @@ size_t RenderPoints::memory_usage() const {
 //
 // RenderCurves
 //
+
+void RenderCurves::compact() {
+  points.shrink_to_fit();
+  widths.shrink_to_fit();
+  colors.shrink_to_fit();
+  opacities.shrink_to_fit();
+  tessellated_points.shrink_to_fit();
+  tessellated_widths.shrink_to_fit();
+  tessellated_colors.shrink_to_fit();
+  tessellated_opacities.shrink_to_fit();
+}
+
+bool RenderCurves::has_alloc_failure() const {
+  return points.alloc_failed() || widths.alloc_failed() ||
+         colors.alloc_failed() || opacities.alloc_failed() ||
+         tessellated_points.alloc_failed() ||
+         tessellated_widths.alloc_failed() ||
+         tessellated_colors.alloc_failed() ||
+         tessellated_opacities.alloc_failed();
+}
 
 size_t RenderCurves::memory_usage() const {
   size_t total = sizeof(*this);
@@ -205,8 +237,9 @@ size_t RenderPointInstancer::memory_usage() const {
 
 size_t RenderPointInstancer::prototype_mesh_count(size_t prototype_index) const {
   if (prototype_index + 1 >= prototype_mesh_offsets.size()) return 0;
-  return prototype_mesh_offsets[prototype_index + 1] -
-         prototype_mesh_offsets[prototype_index];
+  const uint32_t begin = prototype_mesh_offsets[prototype_index];
+  const uint32_t end = prototype_mesh_offsets[prototype_index + 1];
+  return end >= begin ? static_cast<size_t>(end - begin) : 0;
 }
 
 bool RenderPointInstancer::has_valid_prototype_mesh_bindings() const {
@@ -249,7 +282,8 @@ bool RenderPointInstancer::has_valid_draw_range(size_t total_draw_count) const {
 //
 
 float RenderCamera::fov_y() const {
-  if (type == CameraType::Orthographic) {
+  if (type == CameraType::Orthographic || focal_length <= 0.0f ||
+      vertical_aperture <= 0.0f) {
     return 0.0f;
   }
   // fov_y = 2 * atan(vertical_aperture / (2 * focal_length))
@@ -257,7 +291,8 @@ float RenderCamera::fov_y() const {
 }
 
 float RenderCamera::fov_x() const {
-  if (type == CameraType::Orthographic) {
+  if (type == CameraType::Orthographic || focal_length <= 0.0f ||
+      horizontal_aperture <= 0.0f) {
     return 0.0f;
   }
   return 2.0f * std::atan(horizontal_aperture / (2.0f * focal_length));

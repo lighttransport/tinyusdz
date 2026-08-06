@@ -1197,40 +1197,72 @@ bool ComputeDiffImpl(uint32_t depth, const std::string &path,
   ComputePropDiff(path, lhs, rhs, opts, propDiffs);
 
   // Children (matched by name; order changes are not reported as diffs).
-  std::map<std::string, const PrimSpec *> lhs_children;
-  std::map<std::string, const PrimSpec *> rhs_children;
-  for (uint32_t ci : lhs.child_indices()) {
-    if (const PrimSpec *c = lhsLayer.prim(ci)) lhs_children[c->name()] = c;
-  }
-  for (uint32_t ci : rhs.child_indices()) {
-    if (const PrimSpec *c = rhsLayer.prim(ci)) rhs_children[c->name()] = c;
-  }
+  //
+  // Sorted vectors of (name, spec) rather than two std::map<std::string, ...>
+  // built and destroyed for EVERY visited prim: the maps cost two red-black
+  // nodes plus a string copy per child, then three more lookup passes over
+  // them. These hold pointers into the specs' own names (no copies) and are
+  // merged in a single pass. Name order -- which the reported add/delete/
+  // modify lists depend on -- is preserved.
+  using ChildRef = std::pair<const std::string *, const PrimSpec *>;
+  auto by_name = [](const ChildRef &a, const ChildRef &b) {
+    return *a.first < *b.first;
+  };
+  auto collect = [&](const PrimSpec &parent, const Layer &layer,
+                     std::vector<ChildRef> *out) {
+    out->reserve(parent.child_indices().size());
+    for (uint32_t ci : parent.child_indices()) {
+      if (const PrimSpec *c = layer.prim(ci)) out->push_back({&c->name(), c});
+    }
+    std::stable_sort(out->begin(), out->end(), by_name);
+    // Duplicate names: keep the LAST, matching the previous `map[name] = c`.
+    if (!out->empty()) {
+      size_t w = 0;
+      for (size_t r = 1; r < out->size(); ++r) {
+        if (*(*out)[r].first == *(*out)[w].first) {
+          (*out)[w] = (*out)[r];
+        } else {
+          (*out)[++w] = (*out)[r];
+        }
+      }
+      out->resize(w + 1);
+    }
+  };
+
+  std::vector<ChildRef> lhs_children, rhs_children;
+  collect(lhs, lhsLayer, &lhs_children);
+  collect(rhs, rhsLayer, &rhs_children);
 
   PrimSpecDiff psDiff;
 
-  for (const auto &kv : rhs_children) {
-    if (lhs_children.find(kv.first) == lhs_children.end()) {
-      psDiff.addedPS.push_back(kv.first);
+  // Added first, then deleted, then modified -- the emission order the three
+  // separate map passes produced.
+  for (const ChildRef &r : rhs_children) {
+    if (!std::binary_search(lhs_children.begin(), lhs_children.end(), r,
+                            by_name)) {
+      psDiff.addedPS.push_back(*r.first);
       hasDiff = true;
     }
   }
-  for (const auto &kv : lhs_children) {
-    if (rhs_children.find(kv.first) == rhs_children.end()) {
-      psDiff.deletedPS.push_back(kv.first);
+  for (const ChildRef &l : lhs_children) {
+    if (!std::binary_search(rhs_children.begin(), rhs_children.end(), l,
+                            by_name)) {
+      psDiff.deletedPS.push_back(*l.first);
       hasDiff = true;
     }
   }
-  for (const auto &kv : lhs_children) {
-    auto it = rhs_children.find(kv.first);
-    if (it == rhs_children.end()) continue;
-    const std::string child_path = JoinPrimPath(path, kv.first);
+  for (const ChildRef &l : lhs_children) {
+    const auto it =
+        std::lower_bound(rhs_children.begin(), rhs_children.end(), l, by_name);
+    if (it == rhs_children.end() || *it->first != *l.first) continue;
+    const std::string child_path = JoinPrimPath(path, *l.first);
     std::vector<std::string> childReasons;
-    if (ComputeDiffImpl(depth + 1, child_path, lhsLayer, *kv.second, rhsLayer,
+    if (ComputeDiffImpl(depth + 1, child_path, lhsLayer, *l.second, rhsLayer,
                         *it->second, psDiffs, propDiffs, opts,
                         &childReasons)) {
-      psDiff.modifiedPS.push_back(kv.first);
+      psDiff.modifiedPS.push_back(*l.first);
       ModifiedPrimSpec mps;
-      mps.name = kv.first;
+      mps.name = *l.first;
       mps.reasons = std::move(childReasons);
       psDiff.modifiedDetails.push_back(std::move(mps));
       hasDiff = true;

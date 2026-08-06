@@ -14,11 +14,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <fstream>
 #include <string>
 #include <vector>
 
 #include "next/reader/usdc-reader.hh"
+#include "next/reader/usda-reader.hh"
+#include "next/pcp/layer-registry.hh"
+#include "next/layer/layer.hh"
+#include <memory>
 
 #ifndef CRASH_REGRESSION_DIR
 #define CRASH_REGRESSION_DIR "."
@@ -72,5 +78,58 @@ int main() {
   closedir(d);
 
   std::printf("crash regressions: %d input(s) replayed, no crash.\n", replayed);
+
+  // Regression: a DIRECTORY opens successfully with std::ifstream on POSIX and
+  // reports tellg() == LLONG_MAX. Every "read the whole file" path fed that
+  // straight into std::string(n, '\0') or vector::resize(n), which throws an
+  // uncaught std::length_error -- terminating the process. A USD file
+  // referencing `@./somedir.mtlx@` was enough; fuzz_next_compose found it.
+  //
+  // Every cap that should have caught it was conditional (`if (max_* > 0)`),
+  // so the default configuration was unguarded. Each reader must now reject a
+  // directory cleanly instead of dying.
+  {
+    const std::string dirpath = dir;  // a real directory
+    int checked = 0;
+
+    {
+      USDCLoadOptions o;
+      USDCLoadResult r = LoadUSDCFromFile(dirpath, o);
+      if (r.success) { std::printf("FAIL: usdc accepted a directory\n"); return 1; }
+      ++checked;
+    }
+    {
+      LoadOptions o;
+      LoadResult r = LoadUSDAFromFile(dirpath, o);
+      if (r.success) { std::printf("FAIL: usda accepted a directory\n"); return 1; }
+      ++checked;
+    }
+    {
+      // The exact shape the fuzzer produced: an asset path that RESOLVES TO A
+      // DIRECTORY and carries a layer extension, routed through the pcp layer
+      // registry. The extension matters -- the registry dispatches on it -- so
+      // the directory has to be named e.g. "foo.mtlx".
+      const std::string base =
+          "/tmp/tinyusdz_dir_asset_" + std::to_string(getpid());
+      const char *exts[] = {".mtlx", ".usda", ".usdc", ".usdz", ".usd"};
+      pcp::LayerLoadOptions o;
+      for (const char *ext : exts) {
+        const std::string dpath = base + ext;
+        if (mkdir(dpath.c_str(), 0700) != 0) continue;  // best effort
+        std::string warn2, err2;
+        std::shared_ptr<Layer> l2 =
+            pcp::LoadLayerFromFile(dpath, &warn2, &err2, o);
+        rmdir(dpath.c_str());
+        if (l2) {
+          std::printf("FAIL: layer registry accepted a directory (%s)\n", ext);
+          return 1;
+        }
+        ++checked;
+      }
+    }
+    std::printf("directory-as-asset: %d reader path(s) rejected cleanly.\n",
+                checked);
+  }
+
   return 0;
 }

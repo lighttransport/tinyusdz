@@ -21,11 +21,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <new>
 #include <string>
 #include <vector>
-#if defined(__linux__)
+#if defined(__EMSCRIPTEN__)
+#include <emscripten/heap.h>
+#elif defined(__linux__)
 #include <unistd.h>
 #elif defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -38,6 +41,7 @@
 #include <psapi.h>
 #endif
 
+#include "tydra/next/chunked-array.hh"
 #include "tydra/next/resource-budget.hh"
 
 namespace tinyusdz {
@@ -56,7 +60,14 @@ class MemBudget {
   // cap_override_gib <= 0 -> the shared 32 GiB-target host policy.
   void Init(double cap_override_gib) {
     if (cap_override_gib > 0.0) {
-      cap_ = size_t(cap_override_gib * double(size_t(1) << 30));
+      const long double requested =
+          static_cast<long double>(cap_override_gib) *
+          static_cast<long double>(size_t(1) << 30);
+      const long double max_size = static_cast<long double>(
+          (std::numeric_limits<size_t>::max)());
+      cap_ = requested >= max_size
+                 ? (std::numeric_limits<size_t>::max)()
+                 : static_cast<size_t>(requested);
     } else {
       size_t avail = AvailableSystemMemory();
       const uint64_t target_capacity =
@@ -81,7 +92,9 @@ class MemBudget {
           tinyusdz::tydra::next::ComputeResourceBudget(avail, 0).host_limit;
       if (host_limit) cap_bytes = std::min<uint64_t>(cap_bytes, host_limit);
     }
-    cap_ = static_cast<size_t>(cap_bytes);
+    cap_ = cap_bytes > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())
+               ? (std::numeric_limits<size_t>::max)()
+               : static_cast<size_t>(cap_bytes);
     base_.store(0);
     tracked_.store(0);
     peak_tracked_.store(0);
@@ -105,20 +118,20 @@ class MemBudget {
   // Atomically reserve `bytes` of tracked allocation; false if it would exceed
   // the cap (cap_ - base_). Used by PoolAlloc::allocate.
   bool TryAdd(size_t bytes) {
-    if (!cap_) {  // no limit configured
-      size_t v = tracked_.fetch_add(bytes, std::memory_order_relaxed) + bytes;
-      BumpPeak(v);
-      return true;
-    }
     size_t base = base_.load(std::memory_order_relaxed);
     size_t limit = cap_ > base ? cap_ - base : 0;
-    size_t prev = tracked_.fetch_add(bytes, std::memory_order_relaxed);
-    if (prev + bytes > limit) {
-      tracked_.fetch_sub(bytes, std::memory_order_relaxed);
-      return false;
+    size_t prev = tracked_.load(std::memory_order_relaxed);
+    for (;;) {
+      if (bytes > (std::numeric_limits<size_t>::max)() - prev) return false;
+      const size_t next = prev + bytes;
+      if (cap_ && next > limit) return false;
+      if (tracked_.compare_exchange_weak(prev, next,
+                                         std::memory_order_relaxed,
+                                         std::memory_order_relaxed)) {
+        BumpPeak(next);
+        return true;
+      }
     }
-    BumpPeak(prev + bytes);
-    return true;
   }
   void Sub(size_t bytes) {
     tracked_.fetch_sub(bytes, std::memory_order_relaxed);
@@ -129,7 +142,7 @@ class MemBudget {
   bool WouldExceed(size_t extra_estimate, std::string *why = nullptr) const {
     if (!cap_) return false;
     size_t rss = ProcessRSS();
-    if (rss + extra_estimate <= cap_) return false;
+    if (extra_estimate <= cap_ - std::min(rss, cap_)) return false;
     if (why) {
       *why = "memory cap " + GiB(cap_) + " would be exceeded (current RSS " +
              GiB(rss) + " + estimated " + GiB(extra_estimate) + ")";
@@ -137,16 +150,25 @@ class MemBudget {
     return true;
   }
 
-  // Process RSS in bytes; 0 if unavailable. Linux: /proc/self/statm (pages).
-  // Windows: working set via GetProcessMemoryInfo.
+  // Process RSS in bytes; 0 if unavailable.
+  //   wasm:    grown linear-heap size (there is no /proc, and the heap IS the
+  //            memory bound that matters on wasm32).
+  //   Windows: working set via GetProcessMemoryInfo.
+  //   Linux:   /proc/self/statm (pages).
+  // NOTE: the /proc branch is guarded on __linux__ rather than used as the
+  // fallback for every non-Windows target -- it referenced _SC_PAGESIZE
+  // without <unistd.h> being included off-Linux, which broke the emscripten
+  // build as soon as a wasm translation unit included this header.
   static size_t ProcessRSS() {
-#if defined(_WIN32)
+#if defined(__EMSCRIPTEN__)
+    return static_cast<size_t>(emscripten_get_heap_size());
+#elif defined(_WIN32)
     PROCESS_MEMORY_COUNTERS pmc;
     if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
       return size_t(pmc.WorkingSetSize);
     }
     return 0;
-#else
+#elif defined(__linux__)
     std::ifstream f("/proc/self/statm");
     if (!f) return 0;
     size_t total_pages = 0, rss_pages = 0;
@@ -154,13 +176,17 @@ class MemBudget {
     if (!f) return 0;
     long pg = sysconf(_SC_PAGESIZE);
     return rss_pages * size_t(pg > 0 ? pg : 4096);
+#else
+    return 0;  // unknown platform: budget guards become inert, never wrong
 #endif
   }
 
   // Available system memory in bytes; 0 if unavailable. Linux: /proc/meminfo
   // MemAvailable. Windows: GlobalMemoryStatusEx ullAvailPhys.
   static size_t AvailableSystemMemory() {
-#if defined(_WIN32)
+#if defined(__EMSCRIPTEN__)
+    return 0;  // no host meminfo; callers fall back to their configured cap
+#elif defined(_WIN32)
     MEMORYSTATUSEX st;
     st.dwLength = sizeof(st);
     if (GlobalMemoryStatusEx(&st)) {
@@ -182,6 +208,27 @@ class MemBudget {
     }
     return 0;
 #endif
+  }
+
+  /// Route ChunkedArray chunk allocations through this budget.
+  ///
+  /// Without it the budget only sees the process RSS at phase boundaries
+  /// (WouldExceed); the geometry buffers themselves are invisible to
+  /// Tracked()/PeakTracked(), and an allocation that busts the cap between two
+  /// phase checks is an OOM rather than a clean skip. With it installed, a
+  /// refused chunk makes ChunkedArray latch alloc_failed(), which every
+  /// converter path already treats as "drop this prim with a warning".
+  ///
+  /// Non-throwing by construction, so it is usable from the -fno-exceptions
+  /// wasm build -- unlike PoolAlloc, which reports exhaustion by throwing.
+  /// Process-wide and not thread-safe to install; call once at startup.
+  static void InstallChunkedArrayTracking() {
+    SetChunkAllocHooks(
+        [](size_t bytes) -> bool { return MemBudget::Get().TryAdd(bytes); },
+        [](size_t bytes) { MemBudget::Get().Sub(bytes); });
+  }
+  static void UninstallChunkedArrayTracking() {
+    SetChunkAllocHooks(nullptr, nullptr);
   }
 
   static std::string GiB(size_t bytes) {
@@ -232,12 +279,16 @@ class MemPool {
   void Free(void *p, size_t bytes) {
     if (!p) return;
     int b = Bucket(bytes);
-    if (b >= 0 &&
-        pooled_.load(std::memory_order_relaxed) + BucketBytes(b) <= kMaxPooled) {
+    if (b >= 0) {
       std::lock_guard<std::mutex> lk(mu_[b]);
-      free_[b].push_back(p);
-      pooled_.fetch_add(BucketBytes(b), std::memory_order_relaxed);
-      return;
+      const size_t bucket_bytes = BucketBytes(b);
+      const size_t pooled = pooled_.load(std::memory_order_relaxed);
+      if (pooled <= kMaxPooled &&
+          bucket_bytes <= kMaxPooled - pooled) {
+        free_[b].push_back(p);
+        pooled_.fetch_add(bucket_bytes, std::memory_order_relaxed);
+        return;
+      }
     }
     std::free(p);
   }
@@ -249,6 +300,7 @@ class MemPool {
   static constexpr size_t kMaxPooled = size_t(256) << 20;  // retain <=256 MiB
   static int Bucket(size_t bytes) {
     if (bytes == 0) bytes = 1;
+    if (bytes > (size_t(1) << kMaxShift)) return -1;
     int s = kMinShift;
     while ((size_t(1) << s) < bytes) ++s;
     if (s > kMaxShift) return -1;
@@ -259,6 +311,12 @@ class MemPool {
   std::vector<void *> free_[kNumBuckets];
   std::atomic<size_t> pooled_{0};
 };
+
+// PoolAlloc reports exhaustion by throwing std::bad_alloc, so it only exists in
+// exception-enabled builds. MemBudget/MemPool above are throw-free, which lets
+// -fno-exceptions translation units (the wasm converter) include this header
+// for the WouldExceed() phase guards and degrade gracefully instead.
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND) || defined(__EXCEPTIONS)
 
 // Allocator that routes std::vector storage through MemPool and accounts every
 // byte into MemBudget — so the triangle buffers are tracked precisely and a
@@ -271,6 +329,9 @@ struct PoolAlloc {
   template <class U>
   PoolAlloc(const PoolAlloc<U> &) noexcept {}
   T *allocate(std::size_t n) {
+    if (n > (std::numeric_limits<std::size_t>::max)() / sizeof(T)) {
+      throw std::bad_alloc();
+    }
     std::size_t bytes = n * sizeof(T);
     if (!MemBudget::Get().TryAdd(bytes)) throw std::bad_alloc();
     void *p = MemPool::Get().Alloc(bytes);
@@ -281,6 +342,7 @@ struct PoolAlloc {
     return static_cast<T *>(p);
   }
   void deallocate(T *p, std::size_t n) noexcept {
+    if (n > (std::numeric_limits<std::size_t>::max)() / sizeof(T)) return;
     std::size_t bytes = n * sizeof(T);
     MemPool::Get().Free(p, bytes);
     MemBudget::Get().Sub(bytes);
@@ -294,6 +356,8 @@ struct PoolAlloc {
     return false;
   }
 };
+
+#endif  // exceptions enabled
 
 }  // namespace next
 }  // namespace tydra

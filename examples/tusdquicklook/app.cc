@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -50,12 +51,84 @@ bool IsImagePathInternal(const std::string& path) {
          ext == ".gif" || ext == ".tga";
 }
 
+bool IsGlBudgetError(const std::string& error) {
+  return error.find("not enough GPU memory") != std::string::npos;
+}
+
+// Bounded shallow search for an image to use as a folder tile's preview
+// thumbnail: the folder's own files, then (one level only) its immediate
+// subfolders. Depth-limited so a folder with many subfolders doesn't turn
+// into an unbounded recursive scan; returns "" if nothing turns up.
+std::string FindRepresentativeImage(const fs::path& dir, int max_depth) {
+  std::error_code ec;
+  fs::directory_iterator it(
+      dir, fs::directory_options::skip_permission_denied, ec);
+  if (ec) return std::string();
+
+  std::vector<fs::path> subdirs;
+  for (const auto& de : it) {
+    std::error_code ec2;
+    if (de.is_regular_file(ec2) && !ec2) {
+      const std::string p = de.path().lexically_normal().string();
+      if (IsImagePathInternal(p)) return p;
+    } else if (de.is_directory(ec2) && !ec2) {
+      subdirs.push_back(de.path());
+    }
+  }
+  if (max_depth > 1) {
+    std::sort(subdirs.begin(), subdirs.end());
+    for (const auto& sd : subdirs) {
+      const std::string found = FindRepresentativeImage(sd, max_depth - 1);
+      if (!found.empty()) return found;
+    }
+  }
+  return std::string();
+}
+
+#if defined(_WIN32)
+// The custom (non-FreeType) glyph backend only understands single-font
+// sfnt files, not TrueType Collections — so this list is restricted to the
+// standalone .ttf/.otf CJK fonts Windows actually ships (most East Asian
+// system fonts, e.g. Meiryo, Yu Gothic, MS Gothic, are .ttc and unusable
+// here). First match wins; missing files are silently skipped.
+const char* const kWindowsCjkFontCandidates[] = {
+    "NotoSansJP-VF.ttf",
+    "NotoSansSC-VF.ttf",
+    "NotoSansTC-VF.ttf",
+    "NotoSansKR-VF.ttf",
+    "NotoSerifJP-VF.ttf",
+    "yumin.ttf",
+    "malgun.ttf",
+};
+
+// Best-effort path to a UTF-8/CJK-capable system font. Empty when none of
+// the candidates are present (falls back to the embedded Latin-only font).
+std::string FindWindowsCjkFontPath() {
+  const char* sysroot = std::getenv("SystemRoot");
+  const fs::path fonts_dir = fs::path(sysroot ? sysroot : "C:\\Windows") / "Fonts";
+  std::error_code ec;
+  for (const char* name : kWindowsCjkFontCandidates) {
+    const fs::path candidate = fonts_dir / name;
+    if (fs::exists(candidate, ec) && !ec) {
+      return candidate.string();
+    }
+  }
+  return std::string();
+}
+#endif  // _WIN32
+
 }  // namespace
 
 App::App(const Options& opts)
     : opts_(opts), theme_(DefaultTheme()), view_mode_(ViewMode::UsdPreview) {}
 
 App::~App() {
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+  if (mcp_) {
+    mcp_->stop();
+    mcp_.reset();
+  }
+#endif
   StopImageWorkers();
   if (font_) {
     lui_font_destroy(font_);
@@ -84,36 +157,6 @@ bool App::Init() {
   shadows_enabled_ = opts_.shadows;
   desired_backend_ = opts_.backend;
 
-  // Probe once so the UI can offer GL honestly instead of guessing, and so
-  // --verbose reports the device before any scene is loaded. Skipped when the
-  // user pinned the CPU: creating a throwaway context would be pure cost.
-  if (desired_backend_ != BackendChoice::Cpu) {
-    gl_probe_ = ProbeGlBackend();
-    if (!gl_probe_.available) {
-      gl_disabled_ = true;
-      gl_error_ = gl_probe_.error;
-      if (desired_backend_ == BackendChoice::Gl) {
-        // Explicitly requested and not deliverable: say so unconditionally,
-        // then fall back rather than refusing to show anything.
-        std::fprintf(stderr,
-                     "[tusdquicklook] GL backend unavailable (%s); using the "
-                     "CPU renderer\n",
-                     gl_error_.c_str());
-      }
-    }
-    if (opts_.verbose) {
-      if (gl_probe_.available) {
-        std::fprintf(stderr,
-                     "[tusdquicklook] gl probe: %s / %s, free VRAM %llu MB\n",
-                     gl_probe_.device.c_str(), gl_probe_.version.c_str(),
-                     static_cast<unsigned long long>(gl_probe_.free_vram >> 20));
-      } else {
-        std::fprintf(stderr, "[tusdquicklook] gl probe: unavailable (%s)\n",
-                     gl_probe_.error.c_str());
-      }
-    }
-  }
-
   if (!headless_) {
     if (!lui_init()) {
       err_ =
@@ -124,9 +167,24 @@ bool App::Init() {
     platform_up_ = true;
   }
 
-  font_ = lui_font_create_from_memory(lui_embedded_font_data(),
-                                      lui_embedded_font_size(),
-                                      theme_.font_px);
+  // Prefer a UTF-8/CJK-capable Windows system font so non-Latin prim names,
+  // asset paths, and metadata render as glyphs instead of tofu boxes; the
+  // embedded Hack font is Latin-only. Falls back to it wherever no such
+  // system font is found (non-Windows, or a CJK-less install).
+#if defined(_WIN32)
+  const std::string cjk_font_path = FindWindowsCjkFontPath();
+  if (!cjk_font_path.empty()) {
+    font_ = lui_font_create(cjk_font_path.c_str(), theme_.font_px);
+    if (font_ && opts_.verbose) {
+      std::fprintf(stderr, "[tusdquicklook] font: %s\n", cjk_font_path.c_str());
+    }
+  }
+#endif
+  if (!font_) {
+    font_ = lui_font_create_from_memory(lui_embedded_font_data(),
+                                        lui_embedded_font_size(),
+                                        theme_.font_px);
+  }
   if (!font_) {
     err_ = "failed to create the embedded font";
     return false;
@@ -194,6 +252,19 @@ bool App::Init() {
   // with, and a toast there would make the screenshot time-dependent.
   InitWidgets();
   lui_window_show(window_);
+
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+  if (opts_.mcp_stdio || opts_.mcp_http_port != 0) {
+    mcp_ = std::make_unique<MCPServer>(this);
+    if (opts_.mcp_stdio) mcp_->startStdio();
+    if (opts_.mcp_http_port != 0 &&
+        !mcp_->startHttp(opts_.mcp_http_port)) {
+      err_ = "failed to start MCP HTTP server on port " +
+             std::to_string(opts_.mcp_http_port);
+      return false;
+    }
+  }
+#endif
   return true;
 }
 
@@ -209,6 +280,12 @@ bool App::Busy() const {
   // A settling camera is work: the loop has to keep drawing until it arrives.
   // ApproachToward snaps and clears the flag, so this always terminates.
   if (camera_animating_) return true;
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+  // MCP tool calls are queued by transport threads and need the main loop to
+  // keep draining even when the preview is idle. The short sleep in the busy
+  // path keeps this polling cheap when no request is pending.
+  if (mcp_) return true;
+#endif
   return renderer_ && !scene_.meshes.empty() && !render_status_.converged;
 }
 
@@ -219,6 +296,14 @@ int App::Run() {
   // blank until the user happens to move the mouse. Headless --screenshot runs
   // cannot catch that, since they never touch the event loop.
   while (!quit_) {
+#if defined(TUSDQUICKLOOK_HAVE_MCP)
+    if (mcp_) mcp_->drain();
+    if (mcp_ && opts_.mcp_http_port == 0 && mcp_->stdioClosed()) {
+      // A stdio client disappearing should not leave a hidden GUI process
+      // behind. With HTTP enabled, the HTTP transport owns the process lifetime.
+      quit_ = true;
+    }
+#endif
     if (DrainLoadEvents()) needs_redraw_ = true;
     if (DrainImageThumbnailEvents()) needs_redraw_ = true;
 
@@ -478,14 +563,24 @@ bool App::HandleEvent(const lui_event_t& ev) {
         case LUI_KEY_RETURN:
           if (view_mode_ == ViewMode::ImageBrowser) {
             std::string name;
+            std::string dir_path;
+            bool is_dir = false;
             {
               std::lock_guard<std::mutex> lock(image_mu_);
               if (selected_image_ >= 0 &&
                   selected_image_ < static_cast<int>(image_items_.size())) {
-                name = image_items_[static_cast<size_t>(selected_image_)].name;
+                const ImageItem& sel =
+                    image_items_[static_cast<size_t>(selected_image_)];
+                name = sel.name;
+                dir_path = sel.nav_path;
+                is_dir = sel.is_dir;
               }
             }
-              if (!name.empty()) viewport_message_ = name;
+            if (is_dir) {
+              EnterImageFolder(dir_path);
+            } else if (!name.empty()) {
+              viewport_message_ = name;
+            }
           } else {
             ActivateSelection();
             browser_.EnsureSelectionVisible(rows);
@@ -599,6 +694,8 @@ bool App::HandleEvent(const lui_event_t& ev) {
             const int gy_cell = gy / std::max(1, geo.cell_h) + image_scroll_;
             const int idx = gy_cell * geo.columns + gx_cell;
             std::string clicked_name;
+            std::string clicked_path;
+            bool clicked_is_dir = false;
             if (gx >= 0 && gy >= 0 && idx >= 0 &&
                 idx < static_cast<int>(image_items_.size())) {
               {
@@ -606,11 +703,18 @@ bool App::HandleEvent(const lui_event_t& ev) {
                 if (idx >= 0 &&
                     idx < static_cast<int>(image_items_.size())) {
                   selected_image_ = idx;
-                  clicked_name = image_items_[static_cast<size_t>(idx)].name;
+                  const ImageItem& clicked =
+                      image_items_[static_cast<size_t>(idx)];
+                  clicked_name = clicked.name;
+                  clicked_path = clicked.nav_path;
+                  clicked_is_dir = clicked.is_dir;
                 }
               }
               needs_redraw_ = true;
-              if (ev.data.mouse_button.clicks >= 2 && !clicked_name.empty()) {
+              if (ev.data.mouse_button.clicks >= 2 && clicked_is_dir) {
+                EnterImageFolder(clicked_path);
+              } else if (ev.data.mouse_button.clicks >= 2 &&
+                         !clicked_name.empty()) {
                 viewport_message_ = clicked_name;
               }
             }
@@ -754,6 +858,7 @@ void App::OnBackendComboChanged(int index, const char* /*item*/, void* user) {
   if (self->desired_backend_ == BackendChoice::Gl) {
     // An explicit retry clears a previous failure, same as the 'g' hotkey.
     self->gl_disabled_ = false;
+    self->gl_budget_blocked_ = false;
     self->gl_error_.clear();
   }
   // EnsureRenderer performs the actual switch on the next frame; tearing the
@@ -803,11 +908,13 @@ void App::InitWidgets() {
 
   widgets_ready_ = true;
 
-  // The startup probe runs before there is a window to show a toast on, so a
-  // GL request that was already refused is reported here instead. Without
-  // this the GUI would just quietly come up on the CPU.
-  if (gl_disabled_ && desired_backend_ == BackendChoice::Gl) {
-    Notify("GL unavailable (" + gl_error_ + ")", LUI_TOAST_WARNING);
+  // A backend failure can happen on the first painted frame, after widgets
+  // exist. Surface it here if the user explicitly asked for GL.
+  if ((gl_disabled_ || gl_budget_blocked_) &&
+      desired_backend_ == BackendChoice::Gl) {
+    Notify((gl_budget_blocked_ ? "GL budget exceeded (" : "GL unavailable (") +
+               gl_error_ + ")",
+           LUI_TOAST_WARNING);
   }
 }
 
@@ -1120,6 +1227,11 @@ void App::PreviewFile(const FileEntry& entry) {
     return;
   }
 
+  if (gl_budget_blocked_) {
+    gl_budget_blocked_ = false;
+    gl_error_.clear();
+  }
+
   scene_.Clear();
   scene_complete_ = false;
   camera_user_controlled_ = false;
@@ -1367,110 +1479,133 @@ void App::ToggleViewMode() {
   needs_redraw_ = true;
 }
 
+void App::EnterImageFolder(const std::string& dir_path) {
+  std::string berr;
+  if (!browser_.Open(dir_path, &berr)) {
+    if (!berr.empty()) {
+      viewport_message_ = berr;
+      viewport_message_is_error_ = true;
+    }
+    needs_redraw_ = true;
+    return;
+  }
+  status_left_ = browser_.dir();
+  viewport_message_.clear();
+  viewport_message_is_error_ = false;
+  BuildImageItems();
+  needs_redraw_ = true;
+}
+
 void App::BuildImageItems() {
   if (view_mode_ != ViewMode::ImageBrowser) return;
   if (headless_) return;
   EnsureImageCacheDir();
 
+  // Always the immediate contents of the current folder -- mirrors the left
+  // pane: subfolders are tiles you navigate into (EnterImageFolder), not
+  // something to recurse into implicitly.
   const fs::path scan_root = fs::path(browser_.dir());
-  std::vector<ImageItem> items;
+  std::vector<ImageItem> dirs;
+  std::vector<ImageItem> images;
   std::error_code ec;
 
-  auto collect_relative_label = [&](const fs::path& p) -> std::string {
-    std::string label = p.filename().string();
-    if (browser_.recursive()) {
-      std::error_code rel_ec;
-      const fs::path rel = fs::relative(p, scan_root, rel_ec);
-      if (!rel_ec && !rel.empty() && rel != p.filename()) {
-        label = rel.string();
+  fs::directory_iterator it(
+      scan_root, fs::directory_options::skip_permission_denied, ec);
+  if (ec) {
+    viewport_message_ = "cannot read folder for images: " + browser_.dir();
+    viewport_message_is_error_ = true;
+    std::lock_guard<std::mutex> lock(image_mu_);
+    image_items_.clear();
+    image_task_queue_.clear();
+    image_events_.clear();
+    selected_image_ = -1;
+    image_scroll_ = 0;
+    return;
+  }
+  for (const auto& de : it) {
+    std::error_code ec2;
+    if (de.is_directory(ec2) && !ec2) {
+      ImageItem item;
+      item.nav_path = de.path().lexically_normal().string();
+      item.name = de.path().filename().u8string();
+      item.is_dir = true;
+      // A representative image (if any turns up within a couple of levels)
+      // becomes the tile's thumbnail; otherwise it falls back to a plain
+      // folder icon. Cheap in practice: real trees are a handful of dirs
+      // deep, not thousands wide.
+      item.path = FindRepresentativeImage(de.path(), 2);
+      if (item.path.empty()) {
+        item.status = ImageStatus::Ready;  // no thumbnail to load
+      } else {
+        item.status = ImageStatus::Pending;
+        item.cache_path = ImageCachePathForPath(item.path);
       }
+      dirs.push_back(std::move(item));
+      continue;
     }
-    return label;
-  };
-
-  auto add_image = [&](const fs::path& p) {
-    const std::string spath = p.lexically_normal().string();
-    if (!IsImagePathInternal(spath)) {
-      return;
-    }
+    if (!de.is_regular_file(ec2) || ec2) continue;
+    const std::string spath = de.path().lexically_normal().string();
+    if (!IsImagePathInternal(spath)) continue;
     ImageItem item;
     item.path = spath;
-    item.name = collect_relative_label(p);
+    item.name = de.path().filename().u8string();
     item.status = ImageStatus::Pending;
     item.cache_path = ImageCachePathForPath(item.path);
-    items.push_back(std::move(item));
-  };
-
-  if (browser_.recursive()) {
-    fs::recursive_directory_iterator it(
-        scan_root, fs::directory_options::skip_permission_denied, ec);
-    if (ec) {
-      viewport_message_ = "cannot read folder for images: " + browser_.dir();
-      viewport_message_is_error_ = true;
-      std::lock_guard<std::mutex> lock(image_mu_);
-      image_items_.clear();
-      image_task_queue_.clear();
-      image_events_.clear();
-      selected_image_ = -1;
-      image_scroll_ = 0;
-      return;
-    }
-    for (const auto& de : it) {
-      std::error_code ec2;
-      if (!de.is_regular_file(ec2) || ec2) continue;
-      add_image(de.path());
-    }
-  } else {
-    fs::directory_iterator it(
-        scan_root, fs::directory_options::skip_permission_denied, ec);
-    if (ec) {
-      viewport_message_ = "cannot read folder for images: " + browser_.dir();
-      viewport_message_is_error_ = true;
-      std::lock_guard<std::mutex> lock(image_mu_);
-      image_items_.clear();
-      image_task_queue_.clear();
-      image_events_.clear();
-      selected_image_ = -1;
-      image_scroll_ = 0;
-      return;
-    }
-    for (const auto& de : it) {
-      std::error_code ec2;
-      if (!de.is_regular_file(ec2) || ec2) continue;
-      add_image(de.path());
-    }
+    images.push_back(std::move(item));
   }
 
-  std::sort(items.begin(), items.end(), [](const ImageItem& a, const ImageItem& b) {
+  auto by_name = [](const ImageItem& a, const ImageItem& b) {
     const std::string la = ToLower(a.name);
     const std::string lb = ToLower(b.name);
     if (la != lb) return la < lb;
     return a.name < b.name;
-  });
+  };
+  std::sort(dirs.begin(), dirs.end(), by_name);
+  std::sort(images.begin(), images.end(), by_name);
 
-  std::lock_guard<std::mutex> lock(image_mu_);
-  image_generation_.fetch_add(1, std::memory_order_relaxed);
-  image_items_.clear();
-  image_task_queue_.clear();
-  image_events_.clear();
+  std::vector<ImageItem> items;
+  items.reserve(dirs.size() + images.size() + 1);
+  if (scan_root.has_parent_path() && scan_root.parent_path() != scan_root) {
+    ImageItem up;
+    up.nav_path = scan_root.parent_path().lexically_normal().string();
+    up.name = "..";
+    up.is_dir = true;
+    up.status = ImageStatus::Ready;  // always a plain icon, no thumbnail
+    items.push_back(std::move(up));
+  }
+  for (auto& d : dirs) items.push_back(std::move(d));
+  for (auto& im : images) items.push_back(std::move(im));
 
-  const std::size_t generation = image_generation_.load(std::memory_order_relaxed);
+  {
+    std::lock_guard<std::mutex> lock(image_mu_);
+    image_generation_.fetch_add(1, std::memory_order_relaxed);
+    image_items_.clear();
+    image_task_queue_.clear();
+    image_events_.clear();
 
-  image_items_ = std::move(items);
+    const std::size_t generation = image_generation_.load(std::memory_order_relaxed);
 
-  selected_image_ = image_items_.empty() ? -1 : 0;
-  image_scroll_ = 0;
+    image_items_ = std::move(items);
 
-  for (size_t i = 0; i < image_items_.size(); i++) {
-    image_items_[i].status = ImageStatus::Loading;
-    ImageTask task{i, generation, image_items_[i].path};
-    image_task_queue_.push_back(std::move(task));
+    selected_image_ = image_items_.empty() ? -1 : 0;
+    image_scroll_ = 0;
+
+    for (size_t i = 0; i < image_items_.size(); i++) {
+      // Dir tiles with no representative image (path left empty) and the
+      // ".." tile have nothing to decode -- they stay Ready with no task.
+      if (image_items_[i].path.empty()) continue;
+      image_items_[i].status = ImageStatus::Loading;
+      ImageTask task{i, generation, image_items_[i].path};
+      image_task_queue_.push_back(std::move(task));
+    }
+
+    if (image_workers_started_) {
+      image_cv_.notify_all();
+    }
   }
 
-  if (image_workers_started_) {
-    image_cv_.notify_all();
-  }
-
+  // UpdateImageStatus() takes image_mu_ itself; must run after the lock
+  // above is released, not nested inside it (std::mutex isn't recursive).
   UpdateImageStatus();
 }
 
@@ -1640,7 +1775,8 @@ bool App::SpaceAvailableForCache(std::size_t bytes_needed) const {
   return si.available >= kReserve + bytes_needed;
 }
 
-bool App::ReadFileBytes(const std::string& path, std::vector<uint8_t>* out) const {
+bool App::ReadFileBytes(const std::string& path, std::vector<uint8_t>* out,
+                        uint64_t max_bytes) const {
   if (!out) return false;
   out->clear();
   std::ifstream ifs(path, std::ios::binary);
@@ -1648,6 +1784,7 @@ bool App::ReadFileBytes(const std::string& path, std::vector<uint8_t>* out) cons
   ifs.seekg(0, std::ios::end);
   const std::streampos end = ifs.tellg();
   if (end <= 0) return false;
+  if (static_cast<uint64_t>(end) > max_bytes) return false;
   ifs.seekg(0, std::ios::beg);
   out->resize(static_cast<size_t>(end));
   if (!ifs.read(reinterpret_cast<char*>(out->data()),
@@ -1662,14 +1799,16 @@ bool App::LoadCachedThumbnail(const std::string& cache_path,
   if (cache_path.empty() || !out) return false;
   std::vector<uint8_t> bytes;
   if (!ReadFileBytes(cache_path, &bytes)) return false;
-  return DecodeImageToRgba(bytes.data(), bytes.size(), kImageCacheMaxDim, out);
+  return DecodeImageToRgba(bytes.data(), bytes.size(), kImageCacheMaxDim, out,
+                           64ull << 20);
 }
 
 bool App::LoadAndDownscaleImage(const std::string& path, DecodedImage* out) const {
   if (!out) return false;
   std::vector<uint8_t> bytes;
   if (!ReadFileBytes(path, &bytes)) return false;
-  return DecodeImageToRgba(bytes.data(), bytes.size(), kImageCacheMaxDim, out);
+  return DecodeImageToRgba(bytes.data(), bytes.size(), kImageCacheMaxDim, out,
+                           64ull << 20);
 }
 
 bool App::SaveThumbnailToCache(const std::string& cache_path,
@@ -1739,6 +1878,7 @@ void App::UpdateImageStatus() {
   std::lock_guard<std::mutex> lock(image_mu_);
   statuses.reserve(image_items_.size());
   for (const ImageItem& item : image_items_) {
+    if (item.is_dir) continue;  // folder tiles aren't images
     statuses.push_back(item.status);
   }
   const bool cache_disabled = image_cache_disabled_.load();
@@ -1849,7 +1989,7 @@ void App::DrawSplitter(lvg_canvas_t* c, const lvg_rect_t& r) {
 RenderSettings App::CurrentRenderSettings() const {
   RenderSettings rs;
   rs.spp = opts_.spp;
-  rs.threads = ResolveThreadCount(opts_);
+  rs.threads = ResolveThreadCount(opts_, !headless_);
   rs.shadows = shadows_enabled_;
   rs.ao = opts_.ao;
   rs.mode = shading_mode_;
@@ -1871,11 +2011,12 @@ bool App::GlAffordable() const {
 }
 
 BackendChoice App::ResolveBackend() const {
+  const bool gl_unavailable = gl_disabled_ || gl_budget_blocked_;
   if (desired_backend_ == BackendChoice::Auto) {
-    return (GlAffordable() && !gl_disabled_) ? BackendChoice::Gl
-                                             : BackendChoice::Cpu;
+    return (GlAffordable() && !gl_unavailable) ? BackendChoice::Gl
+                                               : BackendChoice::Cpu;
   }
-  if (desired_backend_ == BackendChoice::Gl && gl_disabled_) {
+  if (desired_backend_ == BackendChoice::Gl && gl_unavailable) {
     return BackendChoice::Cpu;
   }
   return desired_backend_;
@@ -1890,7 +2031,8 @@ bool App::CreateRenderer(BackendChoice backend, const lvg_rect_t& viewport,
     // Rough VRAM need: geometry + textures, plus the framebuffers.
     const uint64_t needed =
         scene_.ByteSize() + uint64_t(viewport.width) * viewport.height * 8;
-    next = CreateGlRenderer(viewport.width, viewport.height, rs, needed, err);
+    next = CreateGlRenderer(viewport.width, viewport.height, rs, needed,
+                            opts_.max_gpu_mem_bytes, &gl_probe_, err);
     if (!next) return false;
   } else {
     next = CreateCpuRenderer(accel_);
@@ -1922,7 +2064,17 @@ void App::SwitchBackend(BackendChoice backend, const lvg_rect_t& viewport) {
   renderer_.reset();
 
   if (CreateRenderer(backend, viewport, &err)) {
+    if (backend == BackendChoice::Gl) gl_budget_blocked_ = false;
     if (opts_.verbose) {
+      if (backend == BackendChoice::Gl && gl_probe_.available) {
+        std::fprintf(stderr,
+                     "[tusdquicklook] gl probe: %s / %s, free VRAM %llu MB, "
+                     "estimate %llu MB, cap %llu MB\n",
+                     gl_probe_.device.c_str(), gl_probe_.version.c_str(),
+                     static_cast<unsigned long long>(gl_probe_.free_vram >> 20),
+                     static_cast<unsigned long long>(gl_probe_.required_vram >> 20),
+                     static_cast<unsigned long long>(gl_probe_.gpu_budget >> 20));
+      }
       std::fprintf(stderr, "[tusdquicklook] renderer: %s (%s)\n",
                    renderer_->Name(), live_device_.c_str());
     }
@@ -1930,18 +2082,22 @@ void App::SwitchBackend(BackendChoice backend, const lvg_rect_t& viewport) {
   }
 
   if (backend == BackendChoice::Gl) {
-    // GL was asked for and could not be had. Say why once, remember it so we
-    // stop retrying every frame, and fall back rather than showing nothing.
-    gl_disabled_ = true;
+    // A resource-cap refusal is recoverable when the user selects another
+    // scene; context/driver failures are session-wide and should not be
+    // retried every frame.
+    const bool budget_failure = IsGlBudgetError(err);
+    gl_budget_blocked_ = budget_failure;
+    gl_disabled_ = !budget_failure;
     gl_error_ = err;
     if (desired_backend_ == BackendChoice::Gl || opts_.verbose) {
-      std::fprintf(stderr,
-                   "[tusdquicklook] GL backend unavailable (%s); using the CPU "
-                   "renderer\n",
+      std::fprintf(stderr, "[tusdquicklook] GL %s (%s); using the CPU renderer\n",
+                   budget_failure ? "resource budget exceeded" : "backend unavailable",
                    err.c_str());
     }
     if (desired_backend_ == BackendChoice::Gl) {
-      Notify("GL unavailable (" + err + ")", LUI_TOAST_WARNING);
+      Notify((budget_failure ? "GL budget exceeded (" : "GL unavailable (") +
+                 err + ")",
+             LUI_TOAST_WARNING);
     }
     std::string cerr;
     if (CreateRenderer(BackendChoice::Cpu, viewport, &cerr) && opts_.verbose) {
@@ -1956,14 +2112,18 @@ void App::SwitchBackend(BackendChoice backend, const lvg_rect_t& viewport) {
 }
 
 void App::DemoteToCpu(const std::string& why, const lvg_rect_t& viewport) {
-  // Device loss is permanent for this session: whatever killed the context is
-  // unlikely to fix itself, and retrying each frame would stutter forever.
-  gl_disabled_ = true;
+  // Device loss is permanent for this session. A resource-cap refusal, on the
+  // other hand, only blocks GL for the current scene.
+  const bool budget_failure = IsGlBudgetError(why);
+  gl_disabled_ = !budget_failure;
+  gl_budget_blocked_ = budget_failure;
   gl_error_ = why;
-  std::fprintf(stderr, "[tusdquicklook] GL backend lost (%s); falling back to "
-                       "the CPU renderer\n",
+  std::fprintf(stderr, "[tusdquicklook] GL %s (%s); falling back to the CPU "
+                       "renderer\n",
+               budget_failure ? "resource budget exceeded" : "backend lost",
                why.c_str());
-  Notify("GL lost (" + why + ") \xE2\x80\x94 switched to CPU",
+  Notify((budget_failure ? "GL budget exceeded (" : "GL lost (") + why +
+             ") \xE2\x80\x94 switched to CPU",
          LUI_TOAST_WARNING);
   renderer_.reset();
   std::string err;
@@ -1986,6 +2146,9 @@ bool App::StepCameraMotion(float dt) {
 
 bool App::PickAt(const lvg_rect_t& viewport, int x, int y) {
   if (!accel_ || viewport.width <= 0 || viewport.height <= 0) return false;
+
+  if (accel_->scene() != &scene_) accel_->SetScene(&scene_);
+  accel_->Sync(ResolveThreadCount(opts_, !headless_));
 
   PickHit hit;
   // The pick uses the displayed camera: the user aimed at what is on screen,
@@ -2015,7 +2178,8 @@ std::string App::BackendStatusText() const {
     s += " \xC2\xB7 " + device;
   }
   // Never let a silent demotion pass for a deliberate choice.
-  if (live_backend_ != BackendChoice::Gl && gl_disabled_ &&
+  if (live_backend_ != BackendChoice::Gl &&
+      (gl_disabled_ || gl_budget_blocked_) &&
       desired_backend_ != BackendChoice::Cpu) {
     s += "  (gl: " + gl_error_ + ")";
   }
@@ -2032,6 +2196,7 @@ void App::CycleBackend() {
   // may have fixed the driver, or just wants the error re-reported.
   if (desired_backend_ == BackendChoice::Gl) {
     gl_disabled_ = false;
+    gl_budget_blocked_ = false;
     gl_error_.clear();
   }
 }
@@ -2039,10 +2204,9 @@ void App::CycleBackend() {
 bool App::EnsureRenderer(const lvg_rect_t& viewport) {
   if (viewport.width <= 0 || viewport.height <= 0) return false;
 
-  // The BVH backs picking as well as CPU shading, so it is kept current
-  // regardless of which backend is drawing.
+  // The CPU renderer and picking share the BVH. GL rasterization does not need
+  // it, so defer the build until one of those paths actually requests it.
   if (accel_->scene() != &scene_) accel_->SetScene(&scene_);
-  accel_->Sync(ResolveThreadCount(opts_));
 
   const BackendChoice wanted = ResolveBackend();
   if (!renderer_ || live_backend_ != wanted) {
@@ -2149,7 +2313,9 @@ void App::DrawImageBrowser(lvg_canvas_t* c, const lvg_rect_t& r) {
     image_count = image_items_.size();
   }
   if (image_count == 0) {
-    const std::string msg = "no supported images in this folder";
+    // image_items_ includes subfolder tiles and "..", so this is a true
+    // dead end: an empty folder at the filesystem root.
+    const std::string msg = "this folder is empty";
     DrawTextWrappedCentered(c, font_, r, msg, theme_.text_dim, 2);
     return;
   }
@@ -2175,6 +2341,7 @@ void App::DrawImageBrowser(lvg_canvas_t* c, const lvg_rect_t& r) {
         int width = 0;
         int height = 0;
         std::shared_ptr<std::vector<uint32_t>> pixels;
+        bool is_dir = false;
       } item;
 
       {
@@ -2187,6 +2354,7 @@ void App::DrawImageBrowser(lvg_canvas_t* c, const lvg_rect_t& r) {
         item.width = src.width;
         item.height = src.height;
         item.pixels = src.pixels;
+        item.is_dir = src.is_dir;
       }
 
       const int x = r.x + col * geo.cell_w;
@@ -2199,18 +2367,61 @@ void App::DrawImageBrowser(lvg_canvas_t* c, const lvg_rect_t& r) {
         FillRect(c, cell, theme_.panel_alt);
       }
 
-      FillRect(c, lvg_rect_make(cell.x + theme_.pad, cell.y + theme_.pad,
-                               std::max(20, geo.image_sz),
-                               std::max(20, geo.image_sz)),
-              item.status == ImageStatus::Ready ? theme_.panel_alt
-                                               : theme_.panel);
-      StrokeRect(c, lvg_rect_make(cell.x + theme_.pad, cell.y + theme_.pad,
-                                 std::max(20, geo.image_sz),
-                                 std::max(20, geo.image_sz)),
-                theme_.border);
-
+      const int slot_sz = std::max(20, geo.image_sz);
       const int image_x = cell.x + (geo.cell_w - geo.image_sz) / 2;
       const int image_y = cell.y + theme_.pad;
+
+      if (item.is_dir) {
+        const bool has_thumb = item.status == ImageStatus::Ready &&
+                               item.pixels && !item.pixels->empty() &&
+                               item.width > 0 && item.height > 0;
+        if (has_thumb) {
+          // Preview a representative image found inside the folder, same as
+          // an image tile, so browsing a folder of folders still shows what
+          // is in them -- with a small tab badge so it still reads as a
+          // folder, not a picture.
+          lvg_surface_t src = lvg_surface_wrap(item.pixels->data(),
+                                               item.width, item.height,
+                                               item.width);
+          lvg_canvas_draw_image(c, image_x, image_y, geo.image_sz,
+                                geo.image_sz, &src, nullptr,
+                                LVG_IMAGE_FILTER_BILINEAR);
+          StrokeRect(c, lvg_rect_make(image_x, image_y, slot_sz, slot_sz),
+                    theme_.border);
+          const int tab_w = slot_sz * 2 / 5;
+          const int tab_h = std::max(4, slot_sz / 6);
+          FillRect(c, lvg_rect_make(image_x, image_y, tab_w, tab_h),
+                  theme_.accent);
+        } else {
+          // No image found inside (or still decoding one): a simple
+          // two-rect folder pictogram (tab + body), matching the left
+          // pane's convention of coloring directories with theme_.accent
+          // rather than drawing a bitmap icon.
+          const int tab_w = slot_sz * 2 / 5;
+          const int tab_h = std::max(4, slot_sz / 6);
+          FillRect(c, lvg_rect_make(image_x, image_y, tab_w, tab_h),
+                  theme_.accent);
+          FillRect(c, lvg_rect_make(image_x, image_y + tab_h, slot_sz,
+                                   slot_sz - tab_h),
+                  theme_.accent);
+          StrokeRect(c, lvg_rect_make(image_x, image_y, slot_sz, slot_sz),
+                    theme_.border);
+        }
+
+        const int text_y = y + geo.image_sz + theme_.pad +
+                           (theme_.row_h - lui_font_ascent(font_)) / 2;
+        DrawTextEllipsized(c, font_, x + theme_.pad, text_y,
+                           std::max(0, geo.cell_w - 2 * theme_.pad),
+                           item.name + "/", theme_.accent);
+        continue;
+      }
+
+      FillRect(c, lvg_rect_make(image_x, image_y, slot_sz, slot_sz),
+              item.status == ImageStatus::Ready ? theme_.panel_alt
+                                               : theme_.panel);
+      StrokeRect(c, lvg_rect_make(image_x, image_y, slot_sz, slot_sz),
+                theme_.border);
+
       if (item.status == ImageStatus::Ready && item.pixels &&
           !item.pixels->empty() && item.width > 0 && item.height > 0) {
         lvg_surface_t src = lvg_surface_wrap(
@@ -2252,7 +2463,8 @@ void App::DrawImageStatusOverlay(lvg_canvas_t* c, const lvg_rect_t& r) {
   const std::string msg =
       image_cache_disabled_
           ? "thumbnail cache disabled (low disk)  [t] toggle USD preview"
-          : "[t] image browser  [+] columns  [ ] columns  [r] refresh";
+          : "[t] toggle preview  [Enter] open folder  [+] columns  "
+            "[ ] columns  [r] refresh";
   DrawTextCentered(c, font_, lvg_rect_make(r.x + theme_.pad, r.y + r.height - 24,
                                           r.width - theme_.pad * 2, 18),
                    msg, theme_.text_dim);

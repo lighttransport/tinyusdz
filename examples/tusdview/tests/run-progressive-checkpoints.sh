@@ -59,6 +59,14 @@ PY
 run_mode raster
 run_mode rt --rt
 
+# --rt is a graceful fallback on devices without ray-query support. The
+# fallback exits successfully and writes ordinary one-sample checkpoints, but
+# that is not an RT convergence result and must be a capability skip.
+if grep -Eqi 'ray tracing is unavailable|ray-query unavailable' "$out/rt.log"; then
+  echo "SKIP: Vulkan ray-query unavailable"
+  exit 77
+fi
+
 if cmp -s "$out/rt-000002.png" "$out/rt-000004.png"; then
   echo "FAIL: progressive RT checkpoints are byte-identical" >&2
   exit 1

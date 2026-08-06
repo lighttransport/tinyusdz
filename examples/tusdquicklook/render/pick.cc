@@ -35,12 +35,6 @@ bool PickAccel::Sync(int threads) {
   if (!scene_) return false;
   if (scene_->meshes.size() == synced_mesh_count_) return false;
 
-  Release();
-  if (scene_->meshes.empty()) {
-    synced_mesh_count_ = 0;
-    return true;
-  }
-
   lrt_tri_build_options opts{};
   // LBVH: a previewer wants the image on screen, not the last 10% of traversal
   // speed, and the build is the user-visible latency here.
@@ -49,12 +43,22 @@ bool PickAccel::Sync(int threads) {
   opts.max_leaf_size = 0;
   opts.num_threads = static_cast<unsigned>(std::max(1, threads));
 
+  if (scene_->meshes.size() < synced_mesh_count_) {
+    // The loader only appends, but keep the invariant safe if a caller reuses
+    // a scene object in an unexpected way.
+    Release();
+    synced_mesh_count_ = 0;
+  }
+
   blas_.reserve(scene_->meshes.size());
   blas_ptrs_.reserve(scene_->meshes.size());
   std::vector<lrt_instance> instances;
   instances.reserve(scene_->meshes.size());
 
-  for (size_t i = 0; i < scene_->meshes.size(); i++) {
+  // BLASes are immutable once their mesh arrives. Keep them and only build the
+  // newly appended meshes; the TLAS below is the part that must be rebuilt to
+  // expose the new instances.
+  for (size_t i = synced_mesh_count_; i < scene_->meshes.size(); i++) {
     const QlMesh& m = scene_->meshes[i];
     if (m.triangle_count() == 0) continue;
 
@@ -67,18 +71,24 @@ bool PickAccel::Sync(int threads) {
     Entry entry;
     entry.scene = bs;
     entry.mesh_index = i;
-    const uint32_t blas_id = static_cast<uint32_t>(blas_.size());
     blas_.push_back(entry);
     blas_ptrs_.push_back(bs);
 
+  }
+
+  if (tlas_) {
+    lrt_tlas_free(tlas_);
+    tlas_ = nullptr;
+  }
+  for (size_t i = 0; i < blas_ptrs_.size(); i++) {
     lrt_instance inst{};
-    inst.blas_id = blas_id;
+    inst.blas_id = static_cast<uint32_t>(i);
     // Identity 3x4: positions were already baked into world space by the
     // loader, so the TLAS exists purely to key hits back to a mesh.
     inst.obj2world[0] = 1.0f;
     inst.obj2world[5] = 1.0f;
     inst.obj2world[10] = 1.0f;
-    inst.instance_id = blas_id;
+    inst.instance_id = static_cast<uint32_t>(i);
     inst.mask = 0xFFFFFFFFu;
     instances.push_back(inst);
   }

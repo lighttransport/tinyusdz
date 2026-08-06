@@ -212,8 +212,15 @@ bool ApplyArrayEdit(const ArrayEditData& edit, const Value* base,
         if (!NormalizeRefIndex(&a1, size)) continue;
         elems.erase(elems.begin() + static_cast<ptrdiff_t>(a1));
         break;
+      // `a1` on the growth ops is a raw file-controlled int64 (crate op stream
+      // / usda `resize N`) reaching std::vector<std::string>::resize(). A
+      // ~200-byte input asking for 2.8e14 elements otherwise means bad_alloc
+      // (fatal under -fno-exceptions) or an OOM kill.
       case ArrayEditOpRec::MinSize:
         if (a1 < 0) continue;
+        if (static_cast<uint64_t>(a1) > kMaxArrayEditElements) {
+          return fail("minsize " + std::to_string(a1) + " exceeds the limit");
+        }
         if (size < static_cast<size_t>(a1)) {
           elems.resize(static_cast<size_t>(a1),
                        op.has_fill ? op.literal
@@ -222,6 +229,9 @@ bool ApplyArrayEdit(const ArrayEditData& edit, const Value* base,
         break;
       case ArrayEditOpRec::SetSize:
         if (a1 < 0) continue;
+        if (static_cast<uint64_t>(a1) > kMaxArrayEditElements) {
+          return fail("resize " + std::to_string(a1) + " exceeds the limit");
+        }
         elems.resize(static_cast<size_t>(a1),
                      op.has_fill ? op.literal
                                  : DefaultElementText(elem_type));
