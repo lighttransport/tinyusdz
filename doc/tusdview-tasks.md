@@ -497,8 +497,8 @@ Latest focused verification on 2026-07-26:
   `coat-color`, and `coat-roughness` AOVs replace the former lighting-sensitive
   exception and likewise agree exactly between loaders on Vulkan raster and
   Xvfb OpenGL. Vulkan ray query and CUDA also pass all three evaluated coat
-  channels, including exact default/legacy comparisons. The default
-  CTest still runs the complete available matrix. A
+  channels, including exact default/legacy comparisons. CTest splits the
+  complete available matrix by backend so each shard reports progress. A
   focused bridge unit test independently locks the equivalent legacy/DrawScene
   path.
 - The semantic grid now uses a packed ORM-style source for metallic/roughness:
@@ -631,10 +631,10 @@ Latest focused verification on 2026-07-26:
   Raising the controlled low signal to 64 makes the response discriminating;
   CUDA, Vulkan raster, and Vulkan RT packed metallic/roughness cases now pass
   every family and loader with exact cross-loader pixels.
-- `tusdview-texture-semantic-rt-loader-parity` now makes the complete RT matrix
-  a registered gate rather than a manual spot check. It runs both loaders over
-  Vulkan ray query, CUDA, and HIP when available; the NVIDIA host passes the
-  Vulkan/CUDA matrix in 221 seconds with HIP capability-skipped.
+- `tusdview-texture-semantic-rt-loader-parity-*` now makes the complete RT
+  matrix a registered gate rather than a manual spot check. It runs as one
+  CTest shard per backend, retaining both loaders in each shard for image
+  parity; Vulkan ray query, CUDA, and HIP are capability-gated independently.
 - `tusdview_lightrt_bridge_test` now pins sparse-UDIM RT table addressing: tile
   1001 maps to the first complete mip chain, tile 1002 remains missing, and
   tile 1003 maps to a later independent complete chain. This ABI is shared by
