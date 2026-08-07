@@ -11,6 +11,7 @@
 #include "unit-usdz-convert.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -78,6 +79,13 @@ std::string TempDir() {
 }
 
 std::string TestFixturePath(const std::string &rel) {
+  if (const char *root = std::getenv("TINYUSDZ_TEST_FIXTURE_DIR")) {
+    if (*root != '\0') {
+      const std::string candidate = tinyusdz::io::JoinPath(root, rel);
+      if (tinyusdz::io::FileExists(candidate)) return candidate;
+    }
+  }
+
   // ctest sets WORKING_DIRECTORY to the test executable's directory, whose depth
   // below the repo root varies by platform/generator: build/ for single-config
   // Makefile/Ninja, but build/<Config>/ or build/tests/unit/<Config>/ for MSVC

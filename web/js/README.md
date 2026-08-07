@@ -263,6 +263,10 @@ and next WASM modules into `src/tinyusdz`. This requires Emscripten
 (`emcmake`), CMake, and Ninja. The generated `tinyusdz*.js` and
 `tinyusdz*.wasm` files are build artifacts and are not committed.
 
+The generated modules are build artifacts and are not committed. The
+published `TinyUSDZLoader` is next-first; demos and CLIs that need legacy
+behavior pass `backend: 'legacy'` explicitly.
+
 Experimental (WebGPU/WebGL2):
 
 ```bash

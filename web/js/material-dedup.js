@@ -554,8 +554,7 @@ async function ensureLoader(backend = 'legacy') {
 	await loader.init({
 		useZstdCompressedWasm: false,
 		useMemory64: false,
-		backend: moduleBackend,
-		useNextOnlyWasm: moduleBackend === 'next'
+		backend: moduleBackend
 	});
 	loaderModuleBackend = moduleBackend;
 	legacyAsyncSupport = null;

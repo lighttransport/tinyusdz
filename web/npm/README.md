@@ -48,6 +48,14 @@ async function loadScenes() {
 }
 ```
 
+`TinyUSDZLoader` selects the next-only module by default. Select the legacy
+product explicitly when an application depends on the legacy conversion path:
+
+```js
+await loader.init({ backend: 'legacy' });
+const scene = await loader.loadAsync(url, { backend: 'legacy' });
+```
+
 Deep imports such as `tinyusdz/TinyUSDZLoader.js` remain supported for existing code.
 
 ## Using zstd-compressed WASM
@@ -145,10 +153,10 @@ cd web/npm
 
 The script configures and builds:
 
-- `web/cmake-build` for wasm32 (legacy+next combined module)
-- `web/cmake-build64` for wasm64 (legacy+next combined module)
-- `web/cmake-build-next` for wasm32 next-only lean module (`TINYUSDZ_WASM_NEXT_ONLY=1`)
-- `web/cmake-build-next64` for wasm64 next-only lean module
+- `web/cmake-build` for wasm32 legacy (`TINYUSDZ_WASM_PRODUCT=legacy`)
+- `web/cmake-build64` for wasm64 legacy
+- `web/cmake-build-next` for wasm32 next (`TINYUSDZ_WASM_PRODUCT=next`)
+- `web/cmake-build-next64` for wasm64 next
 
 `web/CMakeLists.txt` then writes the generated outputs into `web/js/src/tinyusdz/`.
 
@@ -170,7 +178,9 @@ After `build-wasm.sh`, the following files should exist in `web/js/src/tinyusdz/
 - `tinyusdz_next_64.js`
 - `tinyusdz_next_64.wasm`
 
-The `tinyusdz_next*` modules are the lean next-core + tydra-next only builds used by `TinyUSDZLoader` when constructed with `{ next: true }` (wasm64 variant picked automatically when memory64 is requested/available).
+The `tinyusdz_next*` modules are the lean next-core + Tydra-next builds used
+by `TinyUSDZLoader` by default. The deprecated `useNextOnlyWasm` option and
+`nextWasm` query alias remain accepted during migration.
 
 The equivalent manual sequence is:
 

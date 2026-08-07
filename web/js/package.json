@@ -70,6 +70,7 @@
     "test:usdzconvert-next-only": "node tests/usdzconvert-next-only.test.mjs",
     "test:usdskel": "vite-node tests/usdskel-animation-test.js",
     "test:loader-fast-materials": "node tests/loader-utils-fast-materials.mjs",
+    "test:typed-array-ownership": "node tests/typed-array-ownership.test.mjs",
     "test:loader-texture-compression": "node tests/loader-utils-texture-compression.mjs",
     "test:loader-basis-ktx2": "node tests/loader-utils-basis-ktx2.mjs",
     "test:texture-compression-wasm": "node tests/texture-compression-wasm.mjs",

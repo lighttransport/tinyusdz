@@ -14,7 +14,7 @@ async function ensureLoader() {
 	// backend=next/wasm=next cannot select the module implicitly here. This
 	// worker is exclusively the next conversion path; load the full next-only
 	// RenderStream explicitly instead of the legacy USDC-only shim.
-	await loader.init({ backend: 'next', useNextOnlyWasm: true });
+	await loader.init({ backend: 'next' });
 	return loader;
 }
 

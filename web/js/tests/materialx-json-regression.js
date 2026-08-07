@@ -16,8 +16,10 @@ function readArrayBuffer(filename) {
 }
 
 async function loadUSD(filename) {
-  const loader = new TinyUSDZLoader();
-  await loader.init({ useMemory64: false });
+  // This fixture locks the legacy native MaterialX JSON schema, which is
+  // intentionally different from the next RenderStream material payload.
+  const loader = new TinyUSDZLoader(null, { backend: 'legacy' });
+  await loader.init({ useMemory64: false, backend: 'legacy' });
   loader.setMaxMemoryLimitMB(500);
 
   return new Promise((resolve, reject) => {
@@ -27,7 +29,7 @@ async function loadUSD(filename) {
 
 function materialToJSON(usd, materialId) {
   const result = usd.getMaterialWithFormat(materialId, 'json');
-  assert.equal(result.error, undefined, `material ${materialId} JSON export failed`);
+  assert.equal(result.error == null, true, `material ${materialId} JSON export failed`);
   return JSON.parse(result.data);
 }
 

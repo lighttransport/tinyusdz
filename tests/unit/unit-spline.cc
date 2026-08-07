@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <string>
@@ -472,6 +473,14 @@ void spline_binary_types_test(void) {
 // ---------------------------------------------------------------------------
 namespace {
 std::string SplineFixture(const std::string &rel) {
+  if (const char *root = std::getenv("TINYUSDZ_TEST_FIXTURE_DIR")) {
+    if (*root != '\0') {
+      const std::string candidate = std::string(root) + "/" + rel;
+      std::ifstream f(candidate, std::ios::binary);
+      if (f.good()) return candidate;
+    }
+  }
+
   const char *prefixes[] = {"", "../", "../../"};
   for (const char *p : prefixes) {
     std::string cand = std::string(p) + rel;

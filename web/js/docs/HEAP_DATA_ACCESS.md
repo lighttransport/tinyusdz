@@ -9,8 +9,10 @@ given Emscripten's growable heap.
 > *intermediate* copy into the JS heap: WebGL reads straight from a view onto
 > the WASM heap.
 
-See also [`WASM_TYPED_MEMORY_VIEW.md`](./WASM_TYPED_MEMORY_VIEW.md) for the
-separate use-after-`delete()` hazard.
+The shared `copyWasmArray()` helper in `TypedArrayOwnership.js` is the preferred
+way for adapters to turn a descriptor into owned JS storage. See also
+[`WASM_TYPED_MEMORY_VIEW.md`](./WASM_TYPED_MEMORY_VIEW.md) for the historical
+use-after-`delete()` post-mortem.
 
 ## Mental model (OpenGL-style, id-based)
 

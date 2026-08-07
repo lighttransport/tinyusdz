@@ -35,7 +35,7 @@
 
 #include "io-util.hh"  // AssetPathSuffixCandidates (UE-export suffix fallback)
 // next: low-memory lazy-ValueRep flatten pipeline (src/next/). Compiled out
-// in the legacy-only module (TINYUSDZ_WASM_LEGACY_ONLY).
+// in the legacy product (TINYUSDZ_WASM_PRODUCT=legacy).
 #if defined(TINYUSDZ_WASM_WITH_NEXT)
 #include "next/pipeline/flatten.hh"
 #include "next/pcp/layer-registry.hh"

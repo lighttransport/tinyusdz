@@ -44,10 +44,10 @@ build_target() {
   fi
 }
 
-build_target "${BUILD32_DIR}"
-build_target "${BUILD64_DIR}" -DTINYUSDZ_WASM64=1
-build_target "${BUILD_NEXT32_DIR}" -DTINYUSDZ_WASM_NEXT_ONLY=1
-build_target "${BUILD_NEXT64_DIR}" -DTINYUSDZ_WASM_NEXT_ONLY=1 -DTINYUSDZ_WASM64=1
+build_target "${BUILD32_DIR}" -DTINYUSDZ_WASM_PRODUCT=legacy
+build_target "${BUILD64_DIR}" -DTINYUSDZ_WASM_PRODUCT=legacy -DTINYUSDZ_WASM64=1
+build_target "${BUILD_NEXT32_DIR}" -DTINYUSDZ_WASM_PRODUCT=next
+build_target "${BUILD_NEXT64_DIR}" -DTINYUSDZ_WASM_PRODUCT=next -DTINYUSDZ_WASM64=1
 
 cat <<EOF
 [build-wasm] Complete.

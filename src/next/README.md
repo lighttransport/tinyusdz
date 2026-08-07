@@ -301,8 +301,9 @@ current cleanup/refactor queue rather than a historical checklist.
   synchronized with landed behavior and benchmark deltas. Update
   `doc/testing-cpp.md` when next test coverage changes.
 - Keep `scripts/run-next-checks.sh` as the canonical standalone smoke test for
-  the experimental next module. The main regression build still excludes `next`
-  by design.
+  the next module. The main regression build still excludes `next` by design;
+  next tests are run explicitly through the standalone build and web/WASM
+  next-product gates.
 
 ### Memory / Performance
 

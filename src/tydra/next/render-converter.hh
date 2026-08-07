@@ -8,9 +8,8 @@
 #pragma once
 
 #include <cstdint>
-#include <string>
-#include <unordered_map>
 #include <functional>
+#include <string>
 #include <unordered_map>
 
 #include "render-data.hh"

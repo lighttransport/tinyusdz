@@ -34,6 +34,22 @@ Relevant options in the current build configuration:
 - `TINYUSDZ_WITH_MODULE_USDC_WRITER=ON`
 - `TINYUSDZ_WITH_TYDRA=ON`
 - `TINYUSDZ_WITH_PXR_COMPAT_API=ON`
+- `TINYUSDZ_TEST_FIXTURE_DIR` — source-tree root containing `tests/`; set this
+  when the build directory is outside the checkout.
+
+CTest passes the fixture root to the unit tests, so an out-of-tree build can
+run the same tests without changing its working directory:
+
+```bash
+cmake -S . -B /tmp/tinyusdz-build -G Ninja \
+  -DTINYUSDZ_BUILD_TESTS=ON \
+  -DTINYUSDZ_TEST_FIXTURE_DIR="$PWD"
+cmake --build /tmp/tinyusdz-build
+ctest --test-dir /tmp/tinyusdz-build -R unit-test-tinyusdz --output-on-failure
+```
+
+The fixture root can also be supplied directly to a test executable with the
+`TINYUSDZ_TEST_FIXTURE_DIR` environment variable.
 
 ## Full Regression Tests
 
